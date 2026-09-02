@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Claude Code 会话的「后台管家」：进程保活 + 后台通知。
  *
- * 单例，App 启动时构造一次（见 RikkaHubApp）。两件事都必须在**页面之外**做 ——
+ * 单例，App 启动时构造一次（见 MinApp）。两件事都必须在**页面之外**做 ——
  * 页面被销毁正是这些逻辑最需要生效的时候。
  *
  * ## 1. 保活
@@ -215,7 +215,7 @@ class ClaudeCodePermissionReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        private const val ACTION_ANSWER = "me.rerere.rikkahub.action.CLAUDE_CODE_ANSWER_PERMISSION"
+        private const val ACTION_ANSWER = "dev.min.code.action.CLAUDE_CODE_ANSWER_PERMISSION"
         private const val EXTRA_SESSION_KEY = "session_key"
         private const val EXTRA_ALLOW = "allow"
 

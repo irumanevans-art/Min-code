@@ -75,8 +75,8 @@ class ClaudeCodeForegroundService : Service() {
     companion object {
         const val NOTIFICATION_ID = 2003
 
-        private const val ACTION_START = "me.rerere.rikkahub.action.CLAUDE_CODE_START"
-        private const val ACTION_STOP_ALL = "me.rerere.rikkahub.action.CLAUDE_CODE_STOP_ALL"
+        private const val ACTION_START = "dev.min.code.action.CLAUDE_CODE_START"
+        private const val ACTION_STOP_ALL = "dev.min.code.action.CLAUDE_CODE_STOP_ALL"
 
         /**
          * 最后一个会话结束后等这么久再停服务。
