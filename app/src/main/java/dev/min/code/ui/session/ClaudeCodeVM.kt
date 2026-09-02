@@ -1,0 +1,540 @@
+package dev.min.code.ui.session
+
+import android.app.Application
+import android.graphics.Bitmap
+import android.net.Uri
+import android.util.Base64
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonPrimitive
+import dev.min.code.core.claudecode.ClaudeCodeConfigStore
+import dev.min.code.core.claudecode.ClaudeCodeImage
+import dev.min.code.core.claudecode.ClaudeCodeInstaller
+import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.claudecode.ClaudeCodePermissionMode
+import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.claudecode.ClaudeCodeSessionStore
+import dev.min.code.core.claudecode.asStringOrNull
+import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
+import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.util.ImageUtils
+import me.rerere.workspace.WorkspaceStorageArea
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+
+class ClaudeCodeVM(
+    private val context: Application,
+    private val registry: ClaudeCodeSessionRegistry,
+    private val installer: ClaudeCodeInstaller,
+    private val workspaceRepository: WorkspaceRepository,
+    private val configStore: ClaudeCodeConfigStore,
+) : ViewModel() {
+    /** 活跃会话的状态（注册表在多个会话间切换时自动跟随） */
+    val session = registry.state
+
+    /** 正在跑的会话，供抽屉打运行中标记 */
+    val liveSessions = registry.liveSessions
+
+    /** 达到并发上限时给 UI 一个提示 */
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice = _notice.asStateFlow()
+
+    fun dismissNotice() { _notice.value = null }
+
+    /**
+     * 只对活跃会话生效的操作统一走这里。没有活跃会话时静默忽略 ——
+     * UI 在没有会话时显示的是启动面板，本来就点不到这些控件。
+     */
+    private inline fun onActive(block: (ClaudeCodeManager) -> Unit) {
+        registry.active()?.let(block)
+    }
+
+    /**
+     * 环境是否就绪。装/修的过程在 SetupVM 里，这里只判断"能不能开会话"；
+     * 三样缺一样，页面就把向导嵌进来。
+     */
+    data class SetupState(
+        val loading: Boolean = true,
+        val tokenFilled: Boolean = false,
+        val baseUrl: String = ClaudeCodeManager.DEFAULT_BASE_URL,
+        val rootfsReady: Boolean = false,
+        val nodeInstalled: Boolean = false,
+        val claudeInstalled: Boolean = false,
+        /** wrapper 装上了但原生二进制没到位（上次那个 100 MB 的平台包没下完） */
+        val cliIncomplete: Boolean = false,
+        /** 已安装的 CLI 版本。@latest 装出来的版本会随时间漂移，出问题时必须能看到装的是哪一版 */
+        val cliVersion: String? = null,
+        val installError: String? = null,
+    ) {
+        val ready: Boolean get() = tokenFilled && rootfsReady && claudeInstalled
+    }
+
+    private val _setup = MutableStateFlow(SetupState())
+    val setup = _setup.asStateFlow()
+
+    /** 磁盘上的 transcript（CLI 自己写的） */
+    private val _diskSessions = MutableStateFlow<List<ClaudeCodeSessionStore.SessionSummary>>(emptyList())
+
+    /** 抽屉里的一条 */
+    data class SessionEntry(
+        val id: String,
+        val title: String,
+        val updatedAt: Long,
+        val messageCount: Int,
+        /** 进程还活着（可以秒切，不用重启） */
+        val isLive: Boolean,
+        val isActive: Boolean,
+    )
+
+    /**
+     * 会话列表 = 磁盘 transcript ∪ 当前活着的会话。
+     *
+     * 不能只列磁盘：CLI 是**跑完一轮才把 transcript 落盘**的，所以刚开的、还没说过话的
+     * 会话在磁盘上根本没有文件 —— 之前"开了好几次会话但列表里只有一条、
+     * 正在用的那个还不在里面"就是这个原因。活着的会话必须从内存状态补进去。
+     *
+     * 但补进来的**必须真的还活着**（`LiveSession.isLive`）。注册表里会留着崩掉/已退出的
+     * 条目，之前不加过滤地把它们全渲染成"新会话"、`updatedAt = Long.MAX_VALUE` 还全部置顶，
+     * 于是每崩一次就多一行点不开的幽灵会话，把真正的历史挤到看不见的地方。
+     */
+    val sessions: StateFlow<List<SessionEntry>> =
+        combine(_diskSessions, registry.liveSessions, registry.state) { disk, live, active ->
+            val running = live.filter { it.isLive }
+            val liveIds = running.map { it.key }.toSet()
+            val activeId = active.sessionId
+            val fromDisk = disk.map { d ->
+                SessionEntry(d.id, d.title, d.updatedAt, d.messageCount,
+                    isLive = d.id in liveIds, isActive = d.id == activeId)
+            }
+            val known = fromDisk.map { it.id }.toSet()
+            // 活着但磁盘上还没有文件的，补一条占位
+            val orphanLive = running.filter { it.key !in known }.map {
+                SessionEntry(
+                    id = it.key,
+                    title = if (it.busy) "新会话（进行中）" else "新会话",
+                    updatedAt = Long.MAX_VALUE, // 还没落盘的排最前
+                    messageCount = 0,
+                    isLive = true,
+                    isActive = it.key == activeId,
+                )
+            }
+            (orphanLive + fromDisk).sortedWith(
+                compareByDescending<SessionEntry> { it.isLive }.thenByDescending { it.updatedAt }
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
+
+    init {
+        refresh()
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            runCatching {
+                val probe = registry.active() ?: registry.configProbe()
+                val token = probe.getToken()
+                val baseUrl = probe.getBaseUrl()
+                val status = installer.status(workspaceId)
+                _setup.update {
+                    it.copy(
+                        loading = false,
+                        tokenFilled = token.isNotBlank(),
+                        baseUrl = baseUrl,
+                        rootfsReady = status.rootfsReady || (status.nodeInstalled && status.claudeInstalled),
+                        nodeInstalled = status.nodeInstalled,
+                        claudeInstalled = status.claudeInstalled,
+                        cliIncomplete = status.cliIncomplete,
+                        cliVersion = status.cliVersion,
+                    )
+                }
+            }.onFailure {
+                _setup.update { s -> s.copy(loading = false, installError = it.message) }
+            }
+            refreshSessions()
+        }
+    }
+
+    /** 历史会话直接读 CLI 自己写的 transcript，不依赖 App 侧持久化 */
+    fun refreshSessions() {
+        viewModelScope.launch {
+            runCatching { (registry.active() ?: registry.configProbe()).listSessions() }
+                .onSuccess { _diskSessions.value = it }
+                .onFailure { _diskSessions.value = emptyList() }
+        }
+    }
+
+    fun saveToken(token: String) {
+        viewModelScope.launch {
+            runCatching { (registry.active() ?: registry.configProbe()).saveToken(token) }
+            refresh()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 环境与更新
+    //
+    // 和上面那套「安装向导」状态分开：向导只在没装好时出现一次，这里是装好之后
+    // 长期可用的维护面板，两者的生命周期和错误语义都不一样，混在 SetupState 里
+    // 会让「安装失败」和「更新失败」共用同一个字段。
+    // -----------------------------------------------------------------------
+
+    /** 面板里能跑的维护动作。同一时刻只允许一个。 */
+    enum class MaintenanceTask { UpdateCli, AptUpgrade, ReinstallNode }
+
+    data class MaintenanceState(
+        val loading: Boolean = false,
+        /** package.json 里的纯 semver（`2.1.258`）。**版本比较只能用这个** */
+        val cliVersion: String? = null,
+        /** wrapper 在但原生二进制缺失：版本号能读出来，会话却起不来。「更新」会顺手补齐 */
+        val cliIncomplete: Boolean = false,
+        val latestCliVersion: String? = null,
+        val nodeVersion: String? = null,
+        val npmVersion: String? = null,
+        val osName: String? = null,
+        val checking: Boolean = false,
+        val running: MaintenanceTask? = null,
+        val detail: String = "",
+        val progress: Float? = null,
+        val error: String? = null,
+        val lastResult: String? = null,
+    ) {
+        val busy: Boolean get() = running != null || checking || loading
+
+        /** 查过最新版、且确实比本地新。没查过时恒为 false，不去猜 */
+        val updateAvailable: Boolean
+            get() = ClaudeCodeInstaller.isNewerVersion(cliVersion, latestCliVersion)
+    }
+
+    private val _maintenance = MutableStateFlow(MaintenanceState())
+    val maintenance = _maintenance.asStateFlow()
+
+    fun dismissMaintenanceError() {
+        _maintenance.update { it.copy(error = null) }
+    }
+
+    /** 打开面板时拉一次。node/npm 版本要起 proot，所以是异步的，先渲染已知的部分 */
+    fun loadEnvironment() {
+        viewModelScope.launch {
+            _maintenance.update { it.copy(loading = true, error = null) }
+            val info = runCatching { installer.environment(workspaceId) }
+            _maintenance.update { state ->
+                info.fold(
+                    onSuccess = {
+                        state.copy(
+                            loading = false,
+                            osName = it.osName,
+                            nodeVersion = it.nodeVersion,
+                            npmVersion = it.npmVersion,
+                            cliVersion = it.cliVersion,
+                            cliIncomplete = it.cliIncomplete,
+                        )
+                    },
+                    onFailure = { state.copy(loading = false, error = it.message ?: it.toString()) },
+                )
+            }
+        }
+    }
+
+    fun checkCliUpdate() {
+        if (_maintenance.value.checking) return
+        viewModelScope.launch {
+            _maintenance.update { it.copy(checking = true, error = null) }
+            val result = runCatching { installer.fetchLatestCliVersion() }
+            _maintenance.update { state ->
+                result.fold(
+                    onSuccess = { state.copy(checking = false, latestCliVersion = it) },
+                    onFailure = {
+                        state.copy(checking = false, error = "查询最新版本失败：${it.message ?: it}")
+                    },
+                )
+            }
+        }
+    }
+
+    fun updateCli(useNpmMirror: Boolean) = runMaintenance(MaintenanceTask.UpdateCli) { onState ->
+        installer.updateCli(workspaceId, useNpmMirror, onState)
+    }
+
+    fun upgradeApt() = runMaintenance(MaintenanceTask.AptUpgrade) { onState ->
+        val summary = installer.upgradeApt(workspaceId, onState)
+        _maintenance.update { it.copy(lastResult = summary) }
+    }
+
+    /** 只重装 Node，不动 CLI —— 修 `/opt/node` 损坏用，不是升级（版本写死在安装器里） */
+    fun reinstallNode() = runMaintenance(MaintenanceTask.ReinstallNode) { onState ->
+        installer.install(workspaceId, forceNode = true, onState = onState)
+    }
+
+    /**
+     * 跑一个维护动作。
+     *
+     * **有会话在跑就直接拒绝**：npm / apt 会原地替换正在被执行的文件，
+     * 让它跑下去的结果是当前会话在半路上炸掉，而且现场很难看懂。
+     */
+    private fun runMaintenance(
+        task: MaintenanceTask,
+        block: suspend (onState: suspend (ClaudeCodeInstaller.InstallState) -> Unit) -> Unit,
+    ) {
+        if (_maintenance.value.running != null) return
+        // 必须过滤 isLive：注册表里会留着刚崩掉/已结束的壳（当前活跃项不会被 pruneDead 回收），
+        // 按 size 数的话，一个已经退出的会话也能把更新按钮锁死
+        val live = liveSessions.value.count { it.isLive }
+        if (live > 0) {
+            _maintenance.update {
+                it.copy(
+                    error = "有 $live 个会话正在运行。更新会替换掉正在执行的文件，" +
+                        "请先在侧边栏关闭全部会话再试。",
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            _maintenance.update {
+                it.copy(running = task, error = null, detail = "", progress = null, lastResult = null)
+            }
+            runCatching {
+                block { state ->
+                    when (state) {
+                        is ClaudeCodeInstaller.InstallState.Downloading -> _maintenance.update {
+                            it.copy(detail = state.detail, progress = state.progress)
+                        }
+
+                        is ClaudeCodeInstaller.InstallState.Running -> _maintenance.update {
+                            it.copy(detail = state.detail, progress = null)
+                        }
+
+                        is ClaudeCodeInstaller.InstallState.Done -> _maintenance.update {
+                            it.copy(lastResult = state.cliVersion?.let { v -> "现在是 $v" } ?: it.lastResult)
+                        }
+
+                        is ClaudeCodeInstaller.InstallState.Failed -> _maintenance.update {
+                            it.copy(error = state.message)
+                        }
+                    }
+                }
+            }.onFailure { e ->
+                _maintenance.update { it.copy(error = e.message ?: e.toString()) }
+            }
+            _maintenance.update { it.copy(running = null, progress = null, detail = "") }
+            // 版本变了：面板和安装向导那份状态都要跟上，否则启动面板还显示旧版本号
+            loadEnvironment()
+            refresh()
+        }
+    }
+
+    // --- 会话（多会话：注册表持有多个 manager，各自一个 CLI 进程） ---
+    fun start(options: ClaudeCodeManager.SessionOptions) {
+        if (registry.newSession(options) == null) atCapacity()
+    }
+
+    fun newSession() {
+        // 没有活跃会话时（刚启动 App）不能退回 SessionOptions() 的默认值 ——
+        // 那会把用户上次选的模型/effort 丢掉，新会话默默跑在 CLI 默认模型上
+        val options = registry.active()?.state?.value?.options
+            ?: registry.configProbe().lastOptions()
+        if (registry.newSession(options) == null) atCapacity()
+    }
+
+    /** 已在跑就直接切过去（不重启进程），否则新起一个并 --resume 续上 */
+    fun openSession(id: String) {
+        if (registry.openSession(id) == null) atCapacity()
+    }
+
+    /** 仅切换活跃会话 */
+    fun switchTo(key: String) = registry.switchTo(key)
+
+    /** 停掉某个会话的进程并从注册表移除 */
+    fun closeSession(key: String) = registry.closeSession(key)
+
+    private fun atCapacity() {
+        _notice.value = "同时最多运行 ${ClaudeCodeSessionRegistry.MAX_CONCURRENT} 个会话" +
+            "（每个会话是一个独立的 Node 进程，常驻数百 MB）。请先在会话列表里停掉一个。"
+    }
+
+    fun deleteSession(id: String) {
+        viewModelScope.launch {
+            registry.closeSession(id)
+            (registry.active() ?: registry.configProbe()).deleteSession(id)
+            refreshSessions()
+        }
+    }
+
+    fun renameSession(title: String) = onActive { it.renameSession(title) }
+
+    /**
+     * 把手机上的文件导入沙箱，返回 Claude Code 能直接用的路径。
+     *
+     * 工作区的 files/ 目录被 bind-mount 到沙箱里的 /workspace（ProotShellRunner 的
+     * `-b filesDir:/workspace`），而 CLI 的 cwd 就是 /workspace —— 所以导入之后
+     * 直接把 /workspace/<文件名> 写进提示词，Claude Code 用 Read 就能打开。
+     *
+     * 重名由 WorkspaceFileSystem.resolveConflict 处理，所以要用返回的实际文件名。
+     */
+    fun importFile(fileName: String, inputStream: InputStream, onDone: (String?) -> Unit) {
+        viewModelScope.launch {
+            val entry = runCatching {
+                workspaceRepository.importFile(
+                    id = workspaceId,
+                    area = WorkspaceStorageArea.FILES,
+                    destinationPath = "",
+                    fileName = fileName,
+                    inputStream = inputStream,
+                )
+            }.getOrNull()
+            onDone(entry?.let { "/workspace/${it.path.trimStart('/')}" })
+        }
+    }
+
+    /**
+     * 移除附件 = 真的把文件从工作区删掉。
+     * 只从输入框里抹掉一行路径是没用的：文件已经躺在 /workspace 里，
+     * Claude Code 照样 ls 得到、读得到。
+     */
+    fun deleteWorkspaceFile(guestPath: String) {
+        val rel = guestPath.removePrefix("/workspace").trimStart('/')
+        if (rel.isBlank()) return
+        viewModelScope.launch {
+            runCatching {
+                workspaceRepository.deleteFile(
+                    id = workspaceId,
+                    area = WorkspaceStorageArea.FILES,
+                    path = rel,
+                    recursive = false,
+                )
+            }
+        }
+    }
+
+    // --- 会话内控制（对应 Desktop 底栏），只作用于活跃会话 ---
+    fun send(text: String, images: List<ClaudeCodeImage> = emptyList()) =
+        onActive { it.send(text, images) }
+
+    /** `@` 提及的文件补全。没有活跃会话时给空表，输入框自然不弹候选。 */
+    suspend fun searchFiles(query: String): List<String> =
+        registry.active()?.searchFiles(query).orEmpty()
+
+    /**
+     * 相册图片 → image content block。
+     *
+     * 缩到长边 [IMAGE_MAX_EDGE]：Anthropic 对超过这个尺寸的图会自己缩放，
+     * 与其上传原图白花流量和 token，不如在本地缩好再发。统一转 JPEG ——
+     * 手机拍的照片本来就是 JPEG，PNG 编同一张图能大好几倍。
+     */
+    suspend fun loadImage(uri: Uri): ClaudeCodeImage? = withContext(Dispatchers.IO) {
+        val bitmap = ImageUtils.loadOptimizedBitmap(context, uri, IMAGE_MAX_EDGE)
+            ?: return@withContext null
+        val bytes = ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, IMAGE_JPEG_QUALITY, out)
+            out.toByteArray()
+        }
+        bitmap.recycle()
+        ClaudeCodeImage(
+            mediaType = "image/jpeg",
+            base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+        )
+    }
+
+    fun answerPermission(
+        allow: Boolean,
+        message: String? = null,
+        suggestion: dev.min.code.core.claudecode.PermissionSuggestion? = null,
+    ) = onActive { it.answerPermission(allow, message, suggestion) }
+
+    /** 应答 AskUserQuestion：把选项填回 updatedInput.answers。空 map = 跳过。 */
+    fun answerQuestions(answers: Map<String, String>) = onActive { it.answerQuestions(answers) }
+
+    fun interrupt() = onActive { it.interrupt() }
+    fun stop() = onActive { it.stopSession() }
+    fun setModel(model: String?) = onActive { it.setModel(model) }
+    fun setPermissionMode(mode: ClaudeCodePermissionMode) = onActive { it.setPermissionMode(mode) }
+    fun applyEffort(effort: String?, ultracode: Boolean = false) = onActive { it.applyEffort(effort, ultracode) }
+    fun refreshModels() = onActive { it.refreshModels() }
+    fun refreshPlan() = onActive { it.refreshPlan() }
+    fun refreshUsage() = onActive { it.refreshUsage() }
+    fun setCwd(path: String) = onActive { it.setCwd(path) }
+
+    /** 撤销一次编辑类工具造成的文件改动（只还原文件，对话历史不变） */
+    fun revertToolCall(toolUseId: String) = onActive { it.revertToolCall(toolUseId) }
+
+    // 不在 onCleared 里杀会话：ClaudeCodeManager 是 Koin single，
+    // 会话本就该比页面活得久（切到别的页面、转屏都会重建 VM）。
+    // 结束会话由用户在标题栏显式点「停止」。
+
+    // -----------------------------------------------------------------------
+    // 交互式斜杠命令（/mcp、/agents、/memory、/config、/permissions）
+    //
+    // 这些命令在 TUI 里是交互式编辑器，无头模式下渲染不出来。它们改的都是 Rootfs 里的
+    // 配置文件，所以这里直接透到 ClaudeCodeConfigStore —— 不经过 CLI，也就不受
+    // 会话是否在跑的影响（还没开会话时也能改）。
+    // -----------------------------------------------------------------------
+
+    suspend fun loadMcpServers() = configStore.loadMcpServers()
+
+    suspend fun saveMcpServer(server: ClaudeCodeConfigStore.McpServer, originalName: String?) =
+        configStore.saveMcpServer(server, originalName)
+
+    suspend fun deleteMcpServer(name: String) = configStore.deleteMcpServer(name)
+
+    suspend fun listAgents() = configStore.listAgents()
+
+    suspend fun saveAgent(agent: ClaudeCodeConfigStore.AgentDefinition) = configStore.saveAgent(agent)
+
+    suspend fun deleteAgent(agent: ClaudeCodeConfigStore.AgentDefinition) = configStore.deleteAgent(agent)
+
+    suspend fun loadMemory(userScope: Boolean): String = configStore.loadMemory(memoryScope(userScope))
+
+    suspend fun saveMemory(userScope: Boolean, text: String) =
+        configStore.saveMemory(memoryScope(userScope), text)
+
+    private fun memoryScope(userScope: Boolean) = if (userScope) {
+        ClaudeCodeConfigStore.MemoryScope.USER
+    } else {
+        ClaudeCodeConfigStore.MemoryScope.PROJECT
+    }
+
+    /** settings.json 里那几个标量字段，取不到就给空串（UI 是纯文本框） */
+    suspend fun loadSettings(): Map<String, String> {
+        val settings = configStore.loadSettings() ?: return emptyMap()
+        return listOf("outputStyle", "statusLine", "model")
+            .mapNotNull { key -> settings[key].asStringOrNull()?.let { key to it } }
+            .toMap()
+    }
+
+    /**
+     * 保存 settings.json 里的标量字段。**空串 = 删除该 key**，
+     * 而不是写一个空值 —— CLI 对 `"statusLine": ""` 的处理是当成一个空命令去跑。
+     */
+    suspend fun saveSimpleSettings(outputStyle: String, statusLine: String) =
+        configStore.updateSettings { draft ->
+            if (outputStyle.isBlank()) draft.remove("outputStyle")
+            else draft["outputStyle"] = JsonPrimitive(outputStyle.trim())
+            if (statusLine.isBlank()) draft.remove("statusLine")
+            else draft["statusLine"] = JsonPrimitive(statusLine.trim())
+        }
+
+    suspend fun loadPermissionRules(bucket: String) = configStore.loadPermissionRules(bucket)
+
+    suspend fun savePermissionRules(bucket: String, rules: List<String>) =
+        configStore.savePermissionRules(bucket, rules)
+
+    private companion object {
+        /**
+         * 图片缩到的长边像素。Anthropic 对超过 1568px 长边的图会在服务端自己缩，
+         * 上传原图只是白花流量 —— 而手机上随手一张截图就是 1080×2400。
+         */
+        const val IMAGE_MAX_EDGE = 1568
+
+        const val IMAGE_JPEG_QUALITY = 85
+    }
+}

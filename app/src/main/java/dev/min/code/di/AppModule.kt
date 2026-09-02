@@ -1,0 +1,56 @@
+package dev.min.code.di
+
+import dev.min.code.AppScope
+import dev.min.code.core.claudecode.ClaudeCodeConfigStore
+import dev.min.code.core.claudecode.ClaudeCodeInstaller
+import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.service.ClaudeCodeSessionSupervisor
+import dev.min.code.core.settings.SettingsStore
+import dev.min.code.ui.files.WorkspaceDetailVM
+import dev.min.code.ui.session.ClaudeCodeVM
+import dev.min.code.ui.settings.SettingsVM
+import dev.min.code.ui.setup.SetupVM
+import dev.min.code.ui.terminal.WorkspaceTerminalSessionManager
+import me.rerere.workspace.ProotShellRunner
+import me.rerere.workspace.RootfsInstaller
+import me.rerere.workspace.WorkspaceManager
+import org.koin.androidx.viewmodel.dsl.viewModel
+import org.koin.androidx.viewmodel.dsl.viewModelOf
+import org.koin.dsl.module
+import java.io.File
+
+val appModule = module {
+    single { AppScope() }
+    single { SettingsStore(get()) }
+
+    single {
+        val context: android.content.Context = get()
+        WorkspaceManager(
+            baseDir = File(context.filesDir, "workspaces"),
+            shellRunner = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
+        )
+    }
+    single { RootfsInstaller(get()) }
+    single { WorkspaceRepository(get(), get()) }
+
+    single { ClaudeCodeInstaller(get(), get()) }
+    // Rootfs 里那几个配置文件的读写层：/mcp、/agents、/memory、/config、/permissions
+    single { ClaudeCodeConfigStore(get(), get()) }
+    // 多会话：manager 是 factory，每个会话一个实例（各自一个 CLI 进程），由 registry 持有
+    factory { ClaudeCodeManager(get(), get(), get(), get()) }
+    single { ClaudeCodeSessionRegistry(factory = { get() }) }
+
+    // 保活与后台通知。createdAtStart：它订阅的是注册表，注册表可能在页面之外先动起来
+    single(createdAtStart = true) {
+        ClaudeCodeSessionSupervisor(context = get(), appScope = get(), registry = get())
+    }
+
+    single { WorkspaceTerminalSessionManager(get(), get()) }
+
+    viewModelOf(::ClaudeCodeVM)
+    viewModelOf(::SetupVM)
+    viewModelOf(::SettingsVM)
+    viewModel { WorkspaceDetailVM(id = it.get<String>(), repository = get(), terminalSessionManager = get()) }
+}

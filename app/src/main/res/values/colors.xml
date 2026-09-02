@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- 和 Compose 主题的 Paper 一致，冷启动那一帧不闪白/闪黑 -->
+  <color name="window_background">#FFFBFAF7</color>
+</resources>

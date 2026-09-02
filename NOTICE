@@ -1,0 +1,24 @@
+Min (dev.min.code)
+Copyright (C) 2026 the Min authors
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU Affero General Public License as published by the Free Software Foundation, either version 3
+of the License, or (at your option) any later version. See LICENSE.
+
+Third-party code and assets
+---------------------------
+* RikkaHub (https://github.com/rikkahub/rikkahub), AGPL-3.0
+  - `workspace/` module: proot launcher, rootfs installer/patcher, workspace file system, pty JNI
+  - `highlight/` module: syntax highlighting for Compose
+  - The Claude Code session/protocol layer and the workspace file/terminal pages were first written
+    inside a fork of RikkaHub ("Min") and moved here.
+* PRoot (https://proot-me.github.io/) with Termux patches (https://github.com/termux/proot), GPL-2.0
+  - `workspace/src/main/jniLibs/*/libproot_exec.so`, `libproot_loader.so`
+* Termux terminal-emulator / terminal-view (https://github.com/termux/termux-app), GPL-3.0
+* JetBrains markdown (https://github.com/JetBrains/markdown), Apache-2.0 (rikkahub fork)
+* HugeIcons (https://hugeicons.com) stroke set via com.github.rikkahub:hugeicons-compose
+* JetBrains Mono font, SIL Open Font License 1.1
+* Ubuntu base images are downloaded at runtime from cdimage.ubuntu.com (or a mirror);
+  Node.js from nodejs.org; @anthropic-ai/claude-code from registry.npmjs.org.
+
+Claude Code is a product of Anthropic, PBC. This project is not affiliated with Anthropic.

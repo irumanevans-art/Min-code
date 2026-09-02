@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- 会话保活：CPU 唤醒锁 + Wi-Fi 锁，只在会话真的在跑一轮任务时持有 -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+  <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+  <application
+    android:name=".MinApp"
+    android:allowBackup="false"
+    android:icon="@mipmap/ic_launcher"
+    android:label="@string/app_name"
+    android:supportsRtl="true"
+    android:theme="@style/Theme.Min"
+    android:enableOnBackInvokedCallback="true"
+    android:extractNativeLibs="true"
+    tools:targetApi="33">
+
+    <activity
+      android:name=".MainActivity"
+      android:exported="true"
+      android:launchMode="singleTask"
+      android:windowSoftInputMode="adjustResize"
+      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
+    <!--
+      Claude Code 的 CLI 进程是 App 的子进程，App 一进 cached 状态整棵进程树都会被回收。
+      前台服务是唯一能声明「正在替用户干活」的手段。类型声明两个：正常用 specialUse；
+      部分 ROM 拒绝它时退回 dataSync（Android 15+ 每天限 6 小时）。
+    -->
+    <service
+      android:name=".core.service.ClaudeCodeForegroundService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse|dataSync">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="user-invoked local coding agent runtime" />
+    </service>
+
+    <!-- 通知上「允许/拒绝」按钮的接收端：后台等审批时不必先把 App 切回前台 -->
+    <receiver
+      android:name=".core.service.ClaudeCodePermissionReceiver"
+      android:exported="false" />
+
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.fileprovider"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/file_paths" />
+    </provider>
+  </application>
+</manifest>

@@ -1,0 +1,362 @@
+package dev.min.code.ui.richtext
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import dev.min.code.ui.theme.JetbrainsMono
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.MarkdownTokenTypes
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.flavours.gfm.GFMElementTypes
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes
+import org.intellij.markdown.parser.MarkdownParser
+
+/**
+ * Markdown 渲染。用 JetBrains 的解析器出 AST，自己映射成 Compose 组件。
+ *
+ * 从头写而不是搬 RikkaHub 的 1300 行：那份带 LaTeX、HTML、Mermaid、WebView、引用跳转，
+ * 全是聊天场景的东西，每一样都拖一串依赖。Claude Code 的输出是段落、列表、代码块、
+ * 偶尔一张表 —— 这些够了。解析在后台线程做，流式输出时不会卡主线程。
+ */
+@Composable
+fun MarkdownBlock(
+    content: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = LocalTextStyle.current,
+) {
+    val parsed by produceState(initialValue = MarkdownDoc.EMPTY, content) {
+        value = withContext(Dispatchers.Default) { MarkdownDoc.parse(content) }
+    }
+    ProvideTextStyle(style) {
+        Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            parsed.root?.children?.forEach { BlockNode(it, parsed.text) }
+        }
+    }
+}
+
+class MarkdownDoc private constructor(val text: String, val root: ASTNode?) {
+    companion object {
+        val EMPTY = MarkdownDoc("", null)
+        private val parser = MarkdownParser(GFMFlavourDescriptor())
+
+        fun parse(text: String): MarkdownDoc {
+            if (text.isBlank()) return EMPTY
+            val tree = runCatching { parser.buildMarkdownTreeFromString(text) }.getOrNull()
+            return MarkdownDoc(text, tree)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 块级
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun BlockNode(node: ASTNode, text: String) {
+    when (node.type) {
+        MarkdownElementTypes.PARAGRAPH -> Paragraph(node, text)
+
+        MarkdownElementTypes.ATX_1, MarkdownElementTypes.SETEXT_1 -> Heading(node, text, MaterialTheme.typography.titleLarge)
+        MarkdownElementTypes.ATX_2, MarkdownElementTypes.SETEXT_2 -> Heading(node, text, MaterialTheme.typography.titleMedium)
+        MarkdownElementTypes.ATX_3, MarkdownElementTypes.ATX_4,
+        MarkdownElementTypes.ATX_5, MarkdownElementTypes.ATX_6 ->
+            Heading(node, text, MaterialTheme.typography.titleSmall)
+
+        MarkdownElementTypes.CODE_FENCE -> CodeFence(node, text)
+        MarkdownElementTypes.CODE_BLOCK -> HighlightCodeBlock(code = indentedCode(node, text), language = "")
+
+        MarkdownElementTypes.UNORDERED_LIST -> ListBlock(node, text, ordered = false)
+        MarkdownElementTypes.ORDERED_LIST -> ListBlock(node, text, ordered = true)
+
+        MarkdownElementTypes.BLOCK_QUOTE -> BlockQuote(node, text)
+
+        GFMElementTypes.TABLE -> Table(node, text)
+
+        MarkdownTokenTypes.HORIZONTAL_RULE -> HorizontalDivider(
+            modifier = Modifier.padding(vertical = 4.dp),
+            color = MaterialTheme.colorScheme.outlineVariant,
+        )
+
+        MarkdownElementTypes.HTML_BLOCK -> Text(
+            text = node.text(text).trim(),
+            fontFamily = JetbrainsMono,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        MarkdownTokenTypes.EOL, MarkdownTokenTypes.WHITE_SPACE -> Unit
+
+        // 顶层散落的行内节点（解析器偶尔会把裸文本直接挂在根上）
+        else -> if (node.children.isEmpty()) {
+            val raw = node.text(text)
+            if (raw.isNotBlank()) Text(raw.trim())
+        } else {
+            Paragraph(node, text)
+        }
+    }
+}
+
+@Composable
+private fun Paragraph(node: ASTNode, text: String) {
+    val annotated = inlineText(node, text)
+    if (annotated.text.isNotBlank()) Text(text = annotated)
+}
+
+@Composable
+private fun Heading(node: ASTNode, text: String, style: TextStyle) {
+    // 标题内容在 ATX_CONTENT / SETEXT_CONTENT 子节点里；ATX 标记本身（#）不渲染
+    val contentNode = node.children.firstOrNull {
+        it.type == MarkdownTokenTypes.ATX_CONTENT || it.type == MarkdownTokenTypes.SETEXT_CONTENT
+    } ?: node
+    Text(
+        text = inlineText(contentNode, text).trimStartSpaces(),
+        style = style,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+@Composable
+private fun CodeFence(node: ASTNode, text: String) {
+    val lang = node.children.firstOrNull { it.type == MarkdownTokenTypes.FENCE_LANG }?.text(text)?.trim().orEmpty()
+    // 正文 = 所有 CODE_FENCE_CONTENT 段落，中间的 EOL 原样保留
+    val code = buildString {
+        var started = false
+        node.children.forEach { child ->
+            when (child.type) {
+                MarkdownTokenTypes.CODE_FENCE_CONTENT -> { append(child.text(text)); started = true }
+                MarkdownTokenTypes.EOL -> if (started) append('\n')
+                else -> Unit
+            }
+        }
+    }.trimEnd('\n')
+    HighlightCodeBlock(code = code, language = lang)
+}
+
+private fun indentedCode(node: ASTNode, text: String): String =
+    node.text(text).lines().joinToString("\n") { it.removePrefix("    ").removePrefix("\t") }.trimEnd()
+
+@Composable
+private fun ListBlock(node: ASTNode, text: String, ordered: Boolean) {
+    var index = startNumber(node, text)
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        node.children.filter { it.type == MarkdownElementTypes.LIST_ITEM }.forEach { item ->
+            val checkbox = item.children.firstOrNull { it.type == GFMTokenTypes.CHECK_BOX }?.text(text)?.trim()
+            val marker = when {
+                checkbox != null -> if (checkbox.contains('x', ignoreCase = true)) "☑" else "☐"
+                ordered -> "${index++}."
+                else -> "•"
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = marker,
+                    modifier = Modifier.width(if (ordered) 22.dp else 14.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    item.children.forEach { child ->
+                        when (child.type) {
+                            MarkdownTokenTypes.LIST_BULLET, MarkdownTokenTypes.LIST_NUMBER,
+                            GFMTokenTypes.CHECK_BOX, MarkdownTokenTypes.WHITE_SPACE, MarkdownTokenTypes.EOL -> Unit
+                            else -> BlockNode(child, text)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun startNumber(list: ASTNode, text: String): Int =
+    list.children.firstOrNull { it.type == MarkdownElementTypes.LIST_ITEM }
+        ?.children?.firstOrNull { it.type == MarkdownTokenTypes.LIST_NUMBER }
+        ?.text(text)?.trim()?.trimEnd('.', ')')?.toIntOrNull() ?: 1
+
+@Composable
+private fun BlockQuote(node: ASTNode, text: String) {
+    Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(2.dp))
+                .background(MaterialTheme.colorScheme.outlineVariant)
+        )
+        Column(
+            modifier = Modifier.padding(start = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            ProvideTextStyle(LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
+                node.children.forEach { child ->
+                    if (child.type != MarkdownTokenTypes.BLOCK_QUOTE && child.type != MarkdownTokenTypes.WHITE_SPACE &&
+                        child.type != MarkdownTokenTypes.EOL
+                    ) BlockNode(child, text)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Table(node: ASTNode, text: String) {
+    val header = node.children.firstOrNull { it.type == GFMElementTypes.HEADER }
+    val rows = node.children.filter { it.type == GFMElementTypes.ROW }
+    val columns = header?.cells()?.size ?: rows.firstOrNull()?.cells()?.size ?: return
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(vertical = 2.dp),
+    ) {
+        header?.let { TableRow(it.cells(), columns, text, bold = true) }
+        rows.forEach { TableRow(it.cells(), columns, text, bold = false) }
+    }
+}
+
+private fun ASTNode.cells(): List<ASTNode> = children.filter { it.type == GFMTokenTypes.CELL }
+
+@Composable
+private fun TableRow(cells: List<ASTNode>, columns: Int, text: String, bold: Boolean) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+        repeat(columns) { i ->
+            val cell = cells.getOrNull(i)
+            Text(
+                text = cell?.let { inlineText(it, text).trimStartSpaces() } ?: AnnotatedString(""),
+                modifier = Modifier.weight(1f).padding(end = 6.dp),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
+                ),
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 行内
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun inlineText(node: ASTNode, text: String): AnnotatedString {
+    val codeBg = MaterialTheme.colorScheme.surfaceContainerHigh
+    val linkColor = MaterialTheme.colorScheme.primary
+    return buildAnnotatedString {
+        appendInline(node, text, codeBg, linkColor)
+    }
+}
+
+private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInline(
+    node: ASTNode,
+    text: String,
+    codeBg: Color,
+    linkColor: Color,
+) {
+    when (node.type) {
+        MarkdownTokenTypes.TEXT, MarkdownTokenTypes.WHITE_SPACE, MarkdownTokenTypes.COLON,
+        MarkdownTokenTypes.SINGLE_QUOTE, MarkdownTokenTypes.DOUBLE_QUOTE, MarkdownTokenTypes.LPAREN,
+        MarkdownTokenTypes.RPAREN, MarkdownTokenTypes.LBRACKET, MarkdownTokenTypes.RBRACKET,
+        MarkdownTokenTypes.LT, MarkdownTokenTypes.GT, MarkdownTokenTypes.EXCLAMATION_MARK,
+        MarkdownTokenTypes.EMPH, MarkdownTokenTypes.BACKTICK, MarkdownTokenTypes.HTML_TAG,
+        MarkdownTokenTypes.ATX_CONTENT, MarkdownTokenTypes.SETEXT_CONTENT -> {
+            if (node.children.isEmpty()) append(node.text(text))
+            else node.children.forEach { appendInline(it, text, codeBg, linkColor) }
+        }
+
+        // 段落里的换行是软换行 = 一个空格；硬换行（行尾两个空格）才是真换行
+        MarkdownTokenTypes.EOL -> append(' ')
+        MarkdownTokenTypes.HARD_LINE_BREAK -> append('\n')
+
+        MarkdownElementTypes.CODE_SPAN -> {
+            val raw = node.text(text)
+            val inner = raw.trim('`').trim()
+            withStyle(SpanStyle(fontFamily = JetbrainsMono, background = codeBg, fontSize = 13.sp)) { append(inner) }
+        }
+
+        MarkdownElementTypes.STRONG -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+            node.children.forEach { if (it.type != MarkdownTokenTypes.EMPH) appendInline(it, text, codeBg, linkColor) }
+        }
+
+        MarkdownElementTypes.EMPH -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+            node.children.forEach { if (it.type != MarkdownTokenTypes.EMPH) appendInline(it, text, codeBg, linkColor) }
+        }
+
+        GFMElementTypes.STRIKETHROUGH -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+            node.children.forEach { if (it.type != GFMTokenTypes.TILDE) appendInline(it, text, codeBg, linkColor) }
+        }
+
+        MarkdownElementTypes.INLINE_LINK -> {
+            val label = node.children.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }
+            val dest = node.children.firstOrNull { it.type == MarkdownElementTypes.LINK_DESTINATION }?.text(text)
+            if (dest != null) {
+                withLink(LinkAnnotation.Url(dest, TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)))) {
+                    if (label != null) label.children.forEach { c ->
+                        if (c.type != MarkdownTokenTypes.LBRACKET && c.type != MarkdownTokenTypes.RBRACKET) appendInline(c, text, codeBg, linkColor)
+                    } else append(dest)
+                }
+            } else append(node.text(text))
+        }
+
+        MarkdownElementTypes.AUTOLINK, GFMTokenTypes.GFM_AUTOLINK -> {
+            val url = node.text(text).trim('<', '>')
+            withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)))) {
+                append(url)
+            }
+        }
+
+        MarkdownElementTypes.IMAGE -> {
+            // 不加载图片：这里没有网络图片的场景，给出 alt/URL 就够
+            val alt = node.children.firstOrNull { it.type == MarkdownElementTypes.INLINE_LINK }
+                ?.children?.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }?.text(text)?.trim('[', ']')
+            withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append("[图片${alt?.let { "：$it" }.orEmpty()}]") }
+        }
+
+        else -> {
+            if (node.children.isEmpty()) append(node.text(text))
+            else node.children.forEach { appendInline(it, text, codeBg, linkColor) }
+        }
+    }
+}
+
+private fun ASTNode.text(source: String): String =
+    source.substring(startOffset.coerceIn(0, source.length), endOffset.coerceIn(0, source.length))
+
+/** 标题/表格单元格前面常带一个空格（`# ` 之后），去掉开头的空白但保留样式 */
+private fun AnnotatedString.trimStartSpaces(): AnnotatedString {
+    val n = text.indexOfFirst { !it.isWhitespace() }
+    return if (n <= 0) this else subSequence(n, length)
+}
