@@ -25,6 +25,10 @@ def nodes(root):
 
 
 def find(root, text: str):
+    # 先找完全相等的（"Allow" 不能撞上 "Allow Min to ..." 那个标题），再退回包含
+    for n in nodes(root):
+        if text == (n.get("text") or "").strip() or text == (n.get("content-desc") or "").strip():
+            return n
     for n in nodes(root):
         if text in (n.get("text") or "") or text in (n.get("content-desc") or ""):
             return n

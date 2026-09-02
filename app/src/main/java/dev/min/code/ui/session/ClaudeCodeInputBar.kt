@@ -187,7 +187,9 @@ internal fun ClaudeCodeInputBar(
     }
 
     fun openSettings(section: SettingsSection?) {
-        if (section == SettingsSection.MODEL) onRequestModels()
+        // 只要开 sheet 就拉一次模型目录（CLI 的 list_models + 中转站的 /v1/models，后者每会话只查一次）。
+        // 之前只在直接跳到「模型」分区时才拉，从摘要行进来再点开「模型」永远停在"正在查询"
+        onRequestModels()
         settingsSection = section
         settingsOpen = true
     }

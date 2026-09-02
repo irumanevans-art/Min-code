@@ -223,6 +223,27 @@ class ClaudeCodeControlPayloadTest {
         assertNull(models[0].displayName)
     }
 
+    /** 真实中转站的目录：display_name 等于 id 时视为没有；顺序 fable > opus > sonnet > haiku，同系列新的在前 */
+    @Test
+    fun `relay models are ordered by family then version`() {
+        val ids = listOf(
+            "claude-3-5-haiku-20241022", "claude-sonnet-4-5-20250929", "claude-opus-4-1-20250805",
+            "claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-4-8",
+        )
+        val body = """{"data":[${ids.joinToString(",") { "{\"id\":\"$it\",\"display_name\":\"$it\"}" }}]}"""
+        val models = ClaudeCodeManager.parseRelayModels(body)
+        assertEquals(
+            listOf(
+                "claude-fable-5-1", "claude-fable-5",
+                "claude-opus-5", "claude-opus-4-8", "claude-opus-4-1-20250805",
+                "claude-sonnet-5", "claude-sonnet-4-5-20250929",
+                "claude-3-5-haiku-20241022",
+            ),
+            models.map { it.id },
+        )
+        assertTrue(models.all { it.displayName == null })
+    }
+
     @Test(expected = IllegalStateException::class)
     fun `relay models reject a non list body`() {
         // 中转站把 /v1/models 当成未知路径返回一段 HTML/错误 JSON 时，必须报错而不是当成空列表

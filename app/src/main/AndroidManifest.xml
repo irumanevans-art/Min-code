@@ -13,6 +13,11 @@
   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
   <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
+  <!--
+    usesCleartextTraffic：不少中转站只有 http://。CLI 在 proot 里走自己的网络栈不受这个限制，
+    但 App 自己查 /v1/models、npm 元数据时会被系统拦成 "Cleartext HTTP traffic not permitted"。
+    向导和设置页对 http:// 地址都有明文风险提示，这里放行是和 CLI 保持一致。
+  -->
   <application
     android:name=".MinApp"
     android:allowBackup="false"
@@ -20,6 +25,7 @@
     android:label="@string/app_name"
     android:supportsRtl="true"
     android:theme="@style/Theme.Min"
+    android:usesCleartextTraffic="true"
     android:enableOnBackInvokedCallback="true"
     android:extractNativeLibs="true"
     tools:targetApi="33">

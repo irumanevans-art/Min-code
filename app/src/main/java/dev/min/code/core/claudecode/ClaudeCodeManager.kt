@@ -1698,10 +1698,41 @@ class ClaudeCodeManager(
             val all = data.mapNotNull { el ->
                 val obj = el.asJsonObjectOrNull() ?: return@mapNotNull null
                 val id = obj["id"].asStringOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                RelayModel(id = id, displayName = obj["display_name"].asStringOrNull()?.takeIf { it.isNotBlank() })
+                // 有的中转站把 display_name 填成和 id 一样的东西，那就等于没有
+                val display = obj["display_name"].asStringOrNull()?.trim()?.takeIf { it.isNotBlank() && it != id }
+                RelayModel(id = id, displayName = display)
             }.distinctBy { it.id }
             val claude = all.filter { it.id.contains("claude", ignoreCase = true) }
-            return (claude.ifEmpty { all }).sortedByDescending { it.id }
+            return (claude.ifEmpty { all }).sortedWith(RELAY_MODEL_ORDER)
+        }
+
+        /**
+         * 目录的排序：先按系列（fable > opus > sonnet > haiku > 其他），同系列新版本在前。
+         * 按字典序排的话 `claude-sonnet-5` 会压在所有 opus 上面，而用户最常找的是最新最强的那个。
+         */
+        private val RELAY_MODEL_ORDER: Comparator<RelayModel> = compareBy<RelayModel> { familyRank(it.id) }
+            .thenByDescending { versionKey(it.id) }
+            .thenBy { it.id }
+
+        private fun familyRank(id: String): Int {
+            val lower = id.lowercase()
+            return when {
+                "fable" in lower -> 0
+                "opus" in lower -> 1
+                "sonnet" in lower -> 2
+                "haiku" in lower -> 3
+                else -> 4
+            }
+        }
+
+        /** `claude-opus-4-5-20251101` → 4.5 + 日期；`claude-opus-5` → 5.0。数字段越多越具体，比不出来时看日期 */
+        private fun versionKey(id: String): Long {
+            val parts = Regex("[0-9]+").findAll(id).map { it.value }.toList()
+            val version = parts.filter { it.length <= 2 }.map { it.toInt() }
+            val major = version.getOrNull(0) ?: 0
+            val minor = version.getOrNull(1) ?: 0
+            val date = parts.firstOrNull { it.length == 8 }?.toLongOrNull() ?: 0L
+            return major * 1_000_000_000_000L + minor * 10_000_000_000L + date
         }
 
         /**
