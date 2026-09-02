@@ -793,6 +793,28 @@ private fun StartPanel(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        // 上次崩溃过就在这里说一声：没有联网上报，用户不主动去「关于」里看就永远不知道。
+        // 只提示、不弹窗——启动面板本来就是"停下来看一眼"的地方
+        val context = LocalContext.current
+        var crashed by remember { mutableStateOf(dev.min.code.core.crash.CrashRecorder.read(context) != null) }
+        if (crashed) {
+            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.errorContainer) {
+                Row(
+                    modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "上次运行崩溃过，报告在 设置 → 关于 里，可以复制出来发给人看。",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    TextButton(onClick = { dev.min.code.core.crash.CrashRecorder.clear(context); crashed = false }) {
+                        Text("清除", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
         session.errorMessage?.let {
             Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.errorContainer) {
                 Text(

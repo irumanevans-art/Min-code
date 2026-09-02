@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -60,8 +61,11 @@ fun MarkdownBlock(
     modifier: Modifier = Modifier,
     style: TextStyle = LocalTextStyle.current,
 ) {
-    val parsed by produceState(initialValue = MarkdownDoc.EMPTY, content) {
-        value = withContext(Dispatchers.Default) { MarkdownDoc.parse(content) }
+    // 短文本直接在组合里解析：LazyColumn 里每条新出现的项都先空一帧再填上，滚动时会闪。
+    // 只有长文本（流式输出的正文、大段工具结果）才放后台，那时慢一帧比卡主线程好。
+    val immediate = remember(content) { if (content.length <= SYNC_PARSE_LIMIT) MarkdownDoc.parse(content) else null }
+    val parsed by produceState(initialValue = immediate ?: MarkdownDoc.EMPTY, content) {
+        if (immediate == null) value = withContext(Dispatchers.Default) { MarkdownDoc.parse(content) }
     }
     ProvideTextStyle(style) {
         Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -69,6 +73,8 @@ fun MarkdownBlock(
         }
     }
 }
+
+private const val SYNC_PARSE_LIMIT = 4_000
 
 class MarkdownDoc private constructor(val text: String, val root: ASTNode?) {
     companion object {

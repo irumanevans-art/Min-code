@@ -38,3 +38,35 @@ x86_64 模拟器（Android 11+ 带 ARM 翻译）的 `Build.SUPPORTED_ABIS` 里�
 
 ### Metadata
 - Related Files: app/src/main/java/dev/min/code/core/rootfs/DeviceArch.kt
+
+---
+
+## [LRN-20260903-003] never_park_secrets_inside_the_repo_dir
+
+**Logged**: 2026-09-03T01:20:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: process
+
+### Summary
+把从设备 `run-as` 读出来的 token 临时存成 `tmp_token.txt` 放在仓库根目录，随手 `git add -A`
+就把它提交进去了（已用 amend + reflog expire + gc 清干净）。规则：临时文件一律放仓库外
+（`$TEMP`），`.gitignore` 里预先加 `/tmp_*`，提交前 `git status` 看一眼。
+
+---
+
+## [LRN-20260903-004] emulator_driven_verification_loop
+
+**Logged**: 2026-09-03T01:20:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+没有真机（vivo 需要在屏幕上确认 USB 安装）时，x86_64 模拟器（AVD `min_test`，headless
+`-no-window -gpu swiftshader_indirect`）能跑通整条链：rootfs（amd64）→ Node x64 → Claude Code
+linux-x64 原生二进制 → 真会话（Bash 工具 + 权限 sheet）。验证手段：
+`adb exec-out screencap -p`（Read 工具能直接看 PNG）+ `tools/uitap.py`（uiautomator dump 按文字点按钮；
+先精确匹配再包含匹配，否则 "Allow" 会撞上标题）。`adb shell input text` 不支持中文，提示词用 ASCII。
+Git Bash 里 `adb shell pm install /data/...` 要加 `MSYS_NO_PATHCONV=1`，否则路径被改成 C:/Program Files/...；
+带引号的 heredoc 会把 `\d` 折成 `\d`，Kotlin 正则用 `[0-9]` 代替。
