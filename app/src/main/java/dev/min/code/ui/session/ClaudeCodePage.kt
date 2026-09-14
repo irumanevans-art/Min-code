@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -71,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -461,7 +463,10 @@ private const val SIDEBAR_MIN_DP = 220f
 /** 大于屏宽比例后视为「盖住」；用很大的 dp 哨兵，实际 clamp 到 maxWidth */
 private const val SIDEBAR_COVER_DP = 100_000f
 private const val SIDEBAR_SNAP_COLLAPSE_DP = 160f
-private const val SIDEBAR_HANDLE_DP = 12f
+/** 视觉竖线宽度 */
+private const val SIDEBAR_HANDLE_LINE_DP = 12f
+/** 实际可点可拖的热区（比竖线宽，不然手指很难按住） */
+private const val SIDEBAR_HANDLE_HIT_DP = 28f
 
 @Composable
 private fun AdaptiveDrawer(
@@ -509,24 +514,43 @@ private fun WideSidebarScaffold(
     val scheme = MaterialTheme.colorScheme
     val sea = MaterialTheme.sea
     val resizeDesc = stringResource(R.string.session_sidebar_resize)
+    // 拖动中的实时宽度：写在这里而不是父级 saveable。
+    // 以前 pointerInput 的 key 里带了 widthDp，每拖一帧父级 setState → key 变 →
+    // 手势块被取消重建，看起来就像「一次只能挪几毫米」。
+    var dragWidthDp by remember { mutableFloatStateOf(Float.NaN) }
+    var dragging by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val maxW = maxWidth
         val maxDp = maxW.value
-        // 未盖住时给主区至少留一点；盖住态允许到全宽
+        // 未盖住时给主区至少留一点；盖住态允许到全宽（把手仍占 hit 宽）
         val softMax = (maxDp - 120f).coerceAtLeast(SIDEBAR_MIN_DP)
-        // 盖住态也要给分界把手留出宽度，否则 Row 会超出屏宽
-        val coverPaneDp = (maxDp - SIDEBAR_HANDLE_DP).coerceAtLeast(SIDEBAR_MIN_DP)
-        val covering = open && widthDp >= SIDEBAR_COVER_DP - 0.5f
-        val targetDp = when {
+        val coverPaneDp = (maxDp - SIDEBAR_HANDLE_HIT_DP).coerceAtLeast(SIDEBAR_MIN_DP)
+        val settledCovering = open && widthDp >= SIDEBAR_COVER_DP - 0.5f
+        val settledDp = when {
             !open -> 0f
-            covering -> coverPaneDp
+            settledCovering -> coverPaneDp
             else -> widthDp.coerceIn(SIDEBAR_MIN_DP, softMax)
         }
+        // 跟手：拖的时候直接用 dragWidth，不走弹簧；松手 / 点菜单收展才动画
+        val displayTarget = if (dragging && !dragWidthDp.isNaN()) dragWidthDp else settledDp
         val animatedWidth by animateDpAsState(
-            targetValue = targetDp.dp,
-            animationSpec = InkMotion.spatial(),
+            targetValue = displayTarget.dp,
+            animationSpec = if (dragging) {
+                androidx.compose.animation.core.snap()
+            } else {
+                InkMotion.spatial()
+            },
             label = "sidebar-width",
         )
+        val covering = open && (
+            (dragging && !dragWidthDp.isNaN() && dragWidthDp >= softMax) ||
+                (!dragging && settledCovering)
+            )
+        // 给 pointerInput 用的稳定引用：key 里绝不能放 widthDp / dragWidth
+        val onWidthDpRef = rememberUpdatedState(onWidthDp)
+        val onOpenRef = rememberUpdatedState(onOpen)
+        val widthDpRef = rememberUpdatedState(widthDp)
+
         Row(Modifier.fillMaxSize()) {
             if (animatedWidth > 0.dp) {
                 Box(
@@ -537,68 +561,76 @@ private fun WideSidebarScaffold(
                     drawer(animatedWidth)
                 }
             }
-            // 分界把手：按住横拖调宽；向左拖过阈值松手即收起；向右可拖满盖住主区
+            // 分界把手：热区 28dp，竖线仍细。按住横拖跟手调宽。
             if (open) {
-                val handleMod = Modifier
-                    .width(SIDEBAR_HANDLE_DP.dp)
-                    .fillMaxHeight()
-                    .semantics { contentDescription = resizeDesc }
-                    .pointerInput(maxDp, softMax, coverPaneDp, widthDp) {
-                        var accumulate = widthDp
-                        var dragging = false
-                        detectHorizontalDragGestures(
-                            onDragStart = {
-                                dragging = true
-                                accumulate = when {
-                                    widthDp >= SIDEBAR_COVER_DP - 0.5f -> coverPaneDp
-                                    else -> widthDp.coerceIn(SIDEBAR_MIN_DP, softMax)
-                                }
-                            },
-                            onHorizontalDrag = { _, dragAmount ->
-                                if (!dragging) return@detectHorizontalDragGestures
-                                val deltaDp = dragAmount / density.density
-                                accumulate = (accumulate + deltaDp).coerceIn(0f, coverPaneDp)
-                                onWidthDp(
-                                    when {
-                                        accumulate >= softMax -> SIDEBAR_COVER_DP
-                                        accumulate < SIDEBAR_SNAP_COLLAPSE_DP -> accumulate
-                                        else -> accumulate.coerceAtLeast(SIDEBAR_MIN_DP)
-                                    },
-                                )
-                            },
-                            onDragEnd = {
-                                dragging = false
-                                when {
-                                    accumulate < SIDEBAR_SNAP_COLLAPSE_DP -> {
-                                        onOpen(false)
-                                        onWidthDp(SIDEBAR_DEFAULT_DP)
-                                    }
-                                    accumulate >= softMax -> onWidthDp(SIDEBAR_COVER_DP)
-                                    else -> onWidthDp(accumulate.coerceIn(SIDEBAR_MIN_DP, softMax))
-                                }
-                            },
-                            onDragCancel = { dragging = false },
-                        )
-                    }
                 Box(
-                    handleMod.background(scheme.surfaceContainerLow),
+                    Modifier
+                        .width(SIDEBAR_HANDLE_HIT_DP.dp)
+                        .fillMaxHeight()
+                        .semantics { contentDescription = resizeDesc }
+                        // key 只跟屏宽相关；宽度变化不能拆掉手势
+                        .pointerInput(maxDp, softMax, coverPaneDp) {
+                            detectHorizontalDragGestures(
+                                onDragStart = {
+                                    dragging = true
+                                    val start = widthDpRef.value
+                                    dragWidthDp = when {
+                                        start >= SIDEBAR_COVER_DP - 0.5f -> coverPaneDp
+                                        else -> start.coerceIn(SIDEBAR_MIN_DP, softMax)
+                                    }
+                                },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val deltaDp = dragAmount / density.density
+                                    val cur = if (dragWidthDp.isNaN()) {
+                                        widthDpRef.value.coerceIn(0f, coverPaneDp)
+                                    } else {
+                                        dragWidthDp
+                                    }
+                                    dragWidthDp = (cur + deltaDp).coerceIn(0f, coverPaneDp)
+                                },
+                                onDragEnd = {
+                                    val end = if (dragWidthDp.isNaN()) settledDp else dragWidthDp
+                                    dragging = false
+                                    dragWidthDp = Float.NaN
+                                    when {
+                                        end < SIDEBAR_SNAP_COLLAPSE_DP -> {
+                                            onOpenRef.value(false)
+                                            onWidthDpRef.value(SIDEBAR_DEFAULT_DP)
+                                        }
+                                        end >= softMax -> onWidthDpRef.value(SIDEBAR_COVER_DP)
+                                        else -> onWidthDpRef.value(
+                                            end.coerceIn(SIDEBAR_MIN_DP, softMax),
+                                        )
+                                    }
+                                },
+                                onDragCancel = {
+                                    dragging = false
+                                    dragWidthDp = Float.NaN
+                                },
+                            )
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
-                    // 一条淡墨竖线 + 中段稍亮，提示「这里可以拖」
+                    // 热区透明，中间画细线；拖动时线略加重
                     Canvas(Modifier.fillMaxSize()) {
                         val cx = size.width / 2f
+                        val lineHalf = (SIDEBAR_HANDLE_LINE_DP.dp.toPx()) / 2f
                         drawLine(
-                            color = sea.ink.copy(alpha = 0.14f),
+                            color = sea.ink.copy(alpha = if (dragging) 0.22f else 0.14f),
                             start = Offset(cx, 0f),
                             end = Offset(cx, size.height),
                             strokeWidth = 1.dp.toPx(),
                         )
                         val mid = size.height / 2f
-                        drawLine(
-                            color = sea.ink.copy(alpha = 0.28f),
-                            start = Offset(cx, mid - 18.dp.toPx()),
-                            end = Offset(cx, mid + 18.dp.toPx()),
-                            strokeWidth = 2.dp.toPx(),
+                        drawRoundRect(
+                            color = sea.ink.copy(alpha = if (dragging) 0.45f else 0.28f),
+                            topLeft = Offset(cx - lineHalf.coerceAtMost(1.5f.dp.toPx()), mid - 22.dp.toPx()),
+                            size = Size(
+                                width = (lineHalf * 2f).coerceAtLeast(3.dp.toPx()),
+                                height = 44.dp.toPx(),
+                            ),
+                            cornerRadius = CornerRadius(2.dp.toPx()),
                         )
                     }
                 }
@@ -610,7 +642,7 @@ private fun WideSidebarScaffold(
             }
         }
         // 全覆盖时主区被侧栏盖住，右上角留一枚菜单把宽度收回常规值
-        if (covering) {
+        if (covering && !dragging) {
             Box(
                 Modifier
                     .align(Alignment.TopEnd)
