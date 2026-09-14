@@ -20,4 +20,20 @@ object RootfsSources {
 
     /** 官方在前，镜像兜底 */
     fun candidates(): List<String> = listOf(defaultUrl(), mirrorUrl())
+
+    /**
+     * 实际去下的地址列表。
+     *
+     * - 空 / 未填：官方再镜像，和向导点「下载并安装」一样
+     * - 填的就是官方预填地址：同样走官方再镜像（文件页对话框默认就是这个）
+     * - 其余手填：只用这一份，不擅自换源
+     */
+    fun urlsFor(userUrl: String?): List<String> = resolveUrls(userUrl, defaultUrl(), mirrorUrl())
+}
+
+/** 纯函数，单测不碰 [DeviceArch]。 */
+internal fun resolveUrls(userUrl: String?, official: String, mirror: String): List<String> {
+    val trimmed = userUrl?.trim().orEmpty()
+    if (trimmed.isEmpty() || trimmed == official) return listOf(official, mirror)
+    return listOf(trimmed)
 }

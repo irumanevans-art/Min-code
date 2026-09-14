@@ -59,6 +59,53 @@ class ClaudeCodeSessionStoreTest {
         assertEquals("aaa", sessions[0].id)
         assertEquals("帮我看下这个仓库", sessions[0].title)
         assertEquals(2, sessions[0].messageCount)
+        assertFalse(sessions[0].titled)
+    }
+
+    /** CLI 拟的名字（custom-title）优先于第一条用户消息，和终端会话列表一致 */
+    @Test
+    fun `prefers CLI custom-title over the first user message`() = runBlocking {
+        val linuxDir = linuxDirWith(
+            "aaa" to listOf(
+                userLine("C:\\Users\\11141\\Documents\\kimi\\workspace\\min-code。blob:file:///…。为这个项目建立一个自动的更新日志"),
+                """{"type":"custom-title","customTitle":"会话标题、置顶分类与更新日志"}""",
+            ),
+        )
+        val s = store.listSessions(linuxDir).single()
+        assertEquals("会话标题、置顶分类与更新日志", s.title)
+        assertTrue(s.titled)
+    }
+
+    /** 自动拟名是 ai-title；无头会话几乎只有这一行，没有 custom-title */
+    @Test
+    fun `prefers CLI ai-title over the first user message`() = runBlocking {
+        val linuxDir = linuxDirWith(
+            "aaa" to listOf(
+                userLine("请帮我看看这个界面为什么标题不对"),
+                """{"type":"ai-title","aiTitle":"会话列表标题显示问题"}""",
+            ),
+        )
+        val s = store.listSessions(linuxDir).single()
+        assertEquals("会话列表标题显示问题", s.title)
+        assertTrue(s.titled)
+        assertTrue(s.bodyText.contains("请帮我看看这个界面为什么标题不对"))
+    }
+
+    /** 人手 /rename（custom-title）必须压过自动拟名（ai-title） */
+    @Test
+    fun `custom-title wins over later ai-title`() = runBlocking {
+        val linuxDir = linuxDirWith(
+            "aaa" to listOf(
+                userLine("随便说一句"),
+                """{"type":"ai-title","aiTitle":"自动拟的名字"}""",
+                """{"type":"custom-title","customTitle":"我改过的名字"}""",
+                // 模拟 CLI 之后又刷了一次 ai-title —— 仍不能盖掉人手改名
+                """{"type":"ai-title","aiTitle":"又自动拟了一次"}""",
+            ),
+        )
+        val s = store.listSessions(linuxDir).single()
+        assertEquals("我改过的名字", s.title)
+        assertTrue(s.titled)
     }
 
     @Test
@@ -173,9 +220,33 @@ class ClaudeCodeSessionStoreTest {
     }
 
     @Test
+    fun `hasTranscript is true only when the jsonl exists`() = runBlocking {
+        val linuxDir = linuxDirWith("aaa" to listOf(userLine("hi")))
+        assertTrue(store.hasTranscript(linuxDir, "aaa"))
+        assertFalse(store.hasTranscript(linuxDir, "does-not-exist"))
+        assertFalse(store.hasTranscript(temp.newFolder("empty"), "aaa"))
+        assertFalse(store.hasTranscript(linuxDir, ""))
+        assertFalse(store.hasTranscript(linuxDir, "../aaa"))
+    }
+
+    @Test
     fun `deletes a session transcript`() = runBlocking {
         val linuxDir = linuxDirWith("gone" to listOf(userLine("待删")))
         assertTrue(store.deleteSession(linuxDir, "gone"))
         assertTrue(store.listSessions(linuxDir).isEmpty())
+    }
+
+    /** 删会话要把 sidecar（子 agent 目录、jsonl 备份）一起清掉，否则 CLI 内部还看得见 */
+    @Test
+    fun `deletes sidecar files and directories along with the transcript`() = runBlocking {
+        val linuxDir = linuxDirWith("gone" to listOf(userLine("待删")))
+        val projects = File(linuxDir, "root/.claude/projects/-workspace")
+        File(projects, "gone.jsonl.bak").writeText("backup")
+        File(projects, "gone").apply { mkdirs(); File(this, "agent.jsonl").writeText("{}") }
+
+        assertTrue(store.deleteSession(linuxDir, "gone"))
+        assertFalse(File(projects, "gone.jsonl").exists())
+        assertFalse(File(projects, "gone.jsonl.bak").exists())
+        assertFalse(File(projects, "gone").exists())
     }
 }

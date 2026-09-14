@@ -3,4 +3,16 @@
   <style name="Theme.Min" parent="Theme.Material3.DayNight.NoActionBar">
     <item name="android:windowBackground">@color/window_background</item>
   </style>
+
+  <!--
+    启动画面：纸白底上两色对角线的 Min（Cormorant 斜体，i 的点是太极）。
+    Android 12+ 走系统 SplashScreen；更早的版本由 core-splashscreen 用同一套资源模拟。
+    工作区加载状态在 Compose 的 LoadingScreen 中呈现（那里的海是真的海）。
+  -->
+  <style name="Theme.Min.Splash" parent="Theme.SplashScreen">
+    <item name="windowSplashScreenBackground">@color/window_background</item>
+    <item name="windowSplashScreenAnimatedIcon">@drawable/splash_mark</item>
+    <item name="windowSplashScreenAnimationDuration">360</item>
+    <item name="postSplashScreenTheme">@style/Theme.Min</item>
+  </style>
 </resources>

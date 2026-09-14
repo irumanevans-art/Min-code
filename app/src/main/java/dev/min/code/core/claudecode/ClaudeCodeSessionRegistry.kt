@@ -6,12 +6,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import java.util.UUID
 
@@ -41,6 +44,8 @@ class ClaudeCodeSessionRegistry(
         val model: String?,
         val busy: Boolean,
         val isActive: Boolean,
+        /** 这个会话的工作目录（guest 侧绝对路径）。会话终端按它决定 shell 开在哪儿 */
+        val cwd: String = "",
         /**
          * 正在等待审批的工具名；没有待批请求时为 null。
          *
@@ -51,6 +56,8 @@ class ClaudeCodeSessionRegistry(
         /** 顶栏那句实时状态（detail 优先，退回 phase），进通知副标题 */
         val statusText: String? = null,
         val errorMessage: String? = null,
+        /** CLI 实时拟的标题；抽屉合并时人手改名优先于它 */
+        val liveTitle: String? = null,
     ) {
         /**
          * 进程真的还活着。注册表里可能留着状态为 Closed/Failed 的条目（刚崩、还没被
@@ -83,6 +90,16 @@ class ClaudeCodeSessionRegistry(
         .stateIn(scope, SharingStarted.Eagerly, ClaudeCodeManager.SessionState())
 
     /**
+     * 活跃会话里被 Esc 撤回、要退还给输入框的消息。
+     *
+     * 只跟活跃会话：后台会话被撤回的消息塞进当前这个会话的输入框是张冠李戴。
+     * `replay = 0` —— 这是一次性事件，补发等于切回来时输入框又被填一遍。
+     */
+    val withdrawnMessages: SharedFlow<ComposerDraft> = activeManager
+        .flatMapLatest { it?.withdrawnMessages ?: emptyFlow() }
+        .shareIn(scope, SharingStarted.Eagerly, replay = 0)
+
+    /**
      * 当前活着的会话列表，供抽屉打运行中标记。
      *
      * 必须真的去 collect 每个 manager 的 state —— 只 combine(keys, activeKey) 再读 `.value`
@@ -100,9 +117,11 @@ class ClaudeCodeSessionRegistry(
                     model = st.model,
                     busy = st.busy,
                     isActive = key == active,
+                    cwd = st.cwd,
                     pendingPermissionTool = st.pendingPermission?.toolName,
                     statusText = st.statusDetail ?: st.statusPhase,
                     errorMessage = st.errorMessage,
+                    liveTitle = st.liveTitle,
                 )
             }
         }

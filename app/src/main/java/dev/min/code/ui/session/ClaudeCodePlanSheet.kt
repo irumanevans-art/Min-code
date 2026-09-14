@@ -7,13 +7,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.min.code.ui.components.InkSheet
+import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.richtext.MarkdownBlock
 
 /**
@@ -28,7 +29,7 @@ fun ClaudeCodePlanSheet(
     plan: String?,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
+    InkSheet(
         onDismissRequest = onDismiss,
         // 计划通常很长，半展开只能看到开头两行，不如一开就给足
         sheetState = rememberBottomSheetState(
@@ -43,7 +44,7 @@ fun ClaudeCodePlanSheet(
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 32.dp),
         ) {
-            Text("计划", style = MaterialTheme.typography.titleMedium)
+            SectionTitle("计划", modifier = Modifier.padding(vertical = 6.dp))
             if (plan.isNullOrBlank()) {
                 Text(
                     "当前没有计划。把权限模式切到 Plan，Claude 会先给出计划再动手。",

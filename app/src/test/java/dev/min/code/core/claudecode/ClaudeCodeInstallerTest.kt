@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * 安装器里那几个纯函数。
@@ -213,5 +214,76 @@ class ClaudeCodeInstallerTest {
         // 阈值必须落在两者之间，否则要么把 stub 当成装好了（ENOENT），要么永远判成没装
         assertTrue(ClaudeCodeInstaller.NATIVE_BIN_MIN_BYTES > 4096)
         assertTrue(ClaudeCodeInstaller.NATIVE_BIN_MIN_BYTES < 100L * 1024 * 1024)
+    }
+
+    /**
+     * 原生二进制是拷到 bin/claude.exe 再删掉平台包目录。
+     * wrapper 换了声明版本时，旧拷贝还在也必须重下。
+     */
+    @Test
+    fun `update refreshes native when the declared version changed`() {
+        assertTrue(
+            ClaudeCodeInstaller.shouldRefreshNativeBinary(
+                executablePresent = true,
+                declaredVersionBefore = "2.1.258",
+                declaredVersionAfter = "2.1.267",
+            ),
+        )
+    }
+
+    @Test
+    fun `update skips native when the copy already matches the wrapper`() {
+        assertFalse(
+            ClaudeCodeInstaller.shouldRefreshNativeBinary(
+                executablePresent = true,
+                declaredVersionBefore = "2.1.267",
+                declaredVersionAfter = "2.1.267",
+            ),
+        )
+    }
+
+    @Test
+    fun `update fetches native when the executable is missing but the wrapper declares it`() {
+        assertTrue(
+            ClaudeCodeInstaller.shouldRefreshNativeBinary(
+                executablePresent = false,
+                declaredVersionBefore = "2.1.258",
+                declaredVersionAfter = "2.1.267",
+            ),
+        )
+        // stub / 遗留 cli.js：文件不够大，但 wrapper 声明了平台包
+        assertTrue(
+            ClaudeCodeInstaller.shouldRefreshNativeBinary(
+                executablePresent = false,
+                declaredVersionBefore = null,
+                declaredVersionAfter = "2.1.267",
+            ),
+        )
+    }
+
+    @Test
+    fun `update leaves a JS-only layout alone`() {
+        // 老布局没有 optionalDependencies 平台包，不应去下根本不存在的原生包
+        assertFalse(
+            ClaudeCodeInstaller.shouldRefreshNativeBinary(
+                executablePresent = false,
+                declaredVersionBefore = null,
+                declaredVersionAfter = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a file under the threshold is not a native executable`() {
+        val linuxDir = kotlin.io.path.createTempDirectory("cli-linux").toFile()
+        val native = File(
+            linuxDir,
+            "opt/node/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+        )
+        native.parentFile!!.mkdirs()
+        native.writeBytes(ByteArray(4096))
+        assertFalse(ClaudeCodeInstaller.nativeExecutablePresent(linuxDir))
+        native.writeBytes(ByteArray((ClaudeCodeInstaller.NATIVE_BIN_MIN_BYTES + 1).toInt()))
+        assertTrue(ClaudeCodeInstaller.nativeExecutablePresent(linuxDir))
     }
 }

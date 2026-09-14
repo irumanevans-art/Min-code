@@ -259,6 +259,52 @@ class ClaudeCodeProtocolTest {
         assertEquals("Not logged in · Please run /login", result.resultText)
     }
 
+    /**
+     * CLI 2.1.270：`permission_denials:[{tool_name, tool_use_id, tool_input}]`。
+     * 2.1.269 起 path-scoped Read/Edit/Write 也会出现在这里。
+     */
+    @Test
+    fun `result permission_denials are parsed`() {
+        val frame = """{"type":"result","subtype":"success","duration_ms":3,"num_turns":1,
+            "permission_denials":[
+              {"tool_name":"Read","tool_use_id":"toolu_1","tool_input":{"file_path":"/etc/passwd"}},
+              {"tool_name":"Bash","tool_use_id":"toolu_2","tool_input":{"command":"rm -rf /"}}
+            ]}"""
+        val result = parseClaudeCodeEvents(frame).single() as ClaudeCodeEvent.Result
+        assertEquals(2, result.permissionDenials.size)
+        assertEquals("Read", result.permissionDenials[0].toolName)
+        assertEquals("toolu_1", result.permissionDenials[0].toolUseId)
+        assertEquals("/etc/passwd", result.permissionDenials[0].input["file_path"]?.jsonPrimitive?.contentOrNull)
+    }
+
+    /** Bash 2.1.269+：`tool_use_result.bashEditDiff` 拼成 unified diff，挂到第一块 tool_result */
+    @Test
+    fun `bashEditDiff from tool_use_result becomes editDiff`() {
+        val frame = """{"type":"user","message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"toolu_b","content":"ok\n"}
+          ]},"tool_use_result":{"stdout":"ok\n","stderr":"","interrupted":false,
+            "bashEditDiff":{"files":[{"filePath":"/workspace/a.txt","hunks":[
+              {"oldStart":1,"oldLines":1,"newStart":1,"newLines":2,
+               "lines":["-old","+new1","+new2"]}
+            ]}],"moreFiles":0}}}"""
+        val result = parseClaudeCodeEvents(frame).single() as ClaudeCodeEvent.ToolResult
+        assertEquals("toolu_b", result.toolUseId)
+        val diff = result.editDiff
+        assertTrue(diff != null && diff.contains("--- a//workspace/a.txt"))
+        assertTrue(diff != null && diff.contains("+new1"))
+        assertTrue(result.content.contains("ok"))
+    }
+
+    @Test
+    fun `bashEditDiff unavailable yields no editDiff`() {
+        val frame = """{"type":"user","message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"toolu_b","content":"hi"}
+          ]},"tool_use_result":{"stdout":"hi","stderr":"","interrupted":false,
+            "bashEditDiff":{"unavailable":true,"files":[],"moreFiles":0}}}"""
+        val result = parseClaudeCodeEvents(frame).single() as ClaudeCodeEvent.ToolResult
+        assertNull(result.editDiff)
+    }
+
     /** --include-partial-messages 的增量帧 */
     @Test
     fun `stream events map to partial text and thinking`() {
@@ -449,6 +495,25 @@ class ClaudeCodeProtocolTest {
         )
     }
 
+    /**
+     * 自动压缩后 CLI 把摘要写成一条 user 行，开头是
+     * "This session is being continued from a previous conversation."
+     * 回放成用户气泡就会变成截图里那一大段占位摘要。
+     */
+    @Test
+    fun `transcript compact summary is a system note not a user bubble`() {
+        val body = "This session is being continued from a previous conversation. " +
+            "The summary below covers the earlier portion of the conversation.\\n" +
+            "Analysis so far used 18432 tokens."
+        val event = parseTranscriptLine(
+            """{"type":"user","message":{"role":"user","content":"$body"}}"""
+        ).single() as ClaudeCodeEvent.SystemNote
+        assertFalse(event.isError)
+        assertTrue(event.text.contains("上下文已压缩"))
+        assertTrue(event.text.contains("18432"))
+        assertFalse(event.text.contains("This session is being continued"))
+    }
+
     /** transcript 的 tool_result 行仍然走工具结果路径，不能被当成用户文本 */
     @Test
     fun `transcript tool result rows still expand to tool results`() {
@@ -565,15 +630,76 @@ class ClaudeCodeProtocolTest {
         assertEquals("Authentication failed（HTTP 401）", event.text)
     }
 
+    /** 502 必须把状态码和中转站原文都露出来，不能糊成「API 请求失败」 */
     @Test
-    fun `model fallback is announced`() {
+    fun `api error 502 keeps status and formatted body`() {
         val event = parseClaudeCodeEvents(
-            """{"type":"system","subtype":"model_fallback","trigger":"model_not_found",
-               "original_model":"claude-fable-5","fallback_model":"claude-opus-5"}"""
+            """{"type":"system","subtype":"api_error","error":{
+               "message":"Bad gateway","status":502,
+               "formatted":"API Error: 502 Bad Gateway from relay"}}"""
         ).single() as ClaudeCodeEvent.SystemNote
         assertTrue(event.isError)
-        assertTrue(event.text.contains("claude-fable-5"))
-        assertTrue(event.text.contains("claude-opus-5"))
+        assertTrue(event.text.contains("502"))
+        assertTrue(event.text.contains("Bad Gateway"))
+    }
+
+    @Test
+    fun `model fallback is announced`() {
+        val events = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"model_fallback","trigger":"model_not_found",
+               "original_model":"claude-fable-5","fallback_model":"claude-opus-5"}"""
+        )
+        val note = events.filterIsInstance<ClaudeCodeEvent.SystemNote>().single()
+        assertTrue(note.isError)
+        assertTrue(note.text.contains("claude-fable-5"))
+        assertTrue(note.text.contains("claude-opus-5"))
+        val fallback = events.filterIsInstance<ClaudeCodeEvent.ModelFallback>().single()
+        assertEquals("claude-fable-5", fallback.originalModel)
+        assertEquals("claude-opus-5", fallback.fallbackModel)
+    }
+
+    /**
+     * Fable 5.1 / Opus 5 的安全分类器拒答（API stop_reason=refusal）。v2.1.261 的帧：
+     * `{subtype:"model_refusal_fallback", content, original_model, fallback_model, direction,
+     *   scope?, api_refusal_category?, api_refusal_explanation?, request_id?}`
+     * 与 `model_refusal_no_fallback`（没有 fallback_model）。两种都得出现在聊天流里；
+     * 有 fallback 时还要带 [ClaudeCodeEvent.ModelFallback] 让 chip 同步。
+     */
+    @Test
+    fun `refusal fallbacks are announced with the category`() {
+        val retried = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"model_refusal_fallback","direction":"retry",
+               "original_model":"claude-fable-5-1","fallback_model":"claude-opus-5",
+               "api_refusal_category":"cyber"}"""
+        )
+        val retriedNote = retried.filterIsInstance<ClaudeCodeEvent.SystemNote>().single()
+        assertTrue(retriedNote.isError)
+        assertTrue(retriedNote.text.contains("claude-opus-5"))
+        assertTrue(retriedNote.text.contains("cyber"))
+        assertEquals(
+            "claude-opus-5",
+            retried.filterIsInstance<ClaudeCodeEvent.ModelFallback>().single().fallbackModel,
+        )
+
+        val stuck = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"model_refusal_no_fallback",
+               "original_model":"claude-fable-5-1","api_refusal_explanation":"policy"}"""
+        )
+        val stuckNote = stuck.filterIsInstance<ClaudeCodeEvent.SystemNote>().single()
+        assertTrue(stuckNote.isError)
+        assertTrue(stuckNote.text.contains("claude-fable-5-1"))
+        assertTrue(stuckNote.text.contains("policy"))
+        assertNull(stuck.filterIsInstance<ClaudeCodeEvent.ModelFallback>().single().fallbackModel)
+
+        // CLI 自己写好的 content 优先，不再拼一句
+        val prose = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"model_refusal_fallback","content":"Switched to Opus 5 after a refusal",
+               "original_model":"claude-fable-5-1","fallback_model":"claude-opus-5"}"""
+        )
+        assertEquals(
+            "Switched to Opus 5 after a refusal",
+            prose.filterIsInstance<ClaudeCodeEvent.SystemNote>().single().text,
+        )
     }
 
     /** level=info 是"只在 transcript 模式显示"，不该刷给用户；warning 走红字 */
@@ -682,6 +808,16 @@ class ClaudeCodeProtocolTest {
         ).single() as ClaudeCodeEvent.ApiRetry
         assertNull(conn.errorStatus)
         assertEquals("unknown", conn.message)
+
+        // 中转站经常把 error 做成对象，formatted 里才有 HTTP 502
+        val gateway = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,
+               "retry_delay_ms":2000,"error":{"message":"unknown","status":502,
+               "formatted":"API Error: 502 Bad Gateway"}}"""
+        ).single() as ClaudeCodeEvent.ApiRetry
+        assertEquals(502, gateway.errorStatus)
+        assertEquals("unknown", gateway.message)
+        assertTrue(gateway.formatted!!.contains("502"))
     }
 
     /**
@@ -714,6 +850,17 @@ class ClaudeCodeProtocolTest {
 
         // 未来新增的枚举值原样透出, 不能吞掉
         assertTrue(reason("some_future_bucket", 500).contains("some_future_bucket"))
+
+        // 502 带 formatted 时必须把原文露出来
+        val gateway = ClaudeCodeManager.retryReason(
+            ClaudeCodeEvent.ApiRetry(
+                attempt = 1, maxRetries = 10, retryDelayMs = 1000,
+                errorStatus = 502, message = "unknown",
+                formatted = "API Error: 502 Bad Gateway from relay",
+            )
+        )
+        assertTrue("应带 502: $gateway", gateway.contains("502"))
+        assertTrue("应带原文: $gateway", gateway.contains("Bad Gateway"))
     }
 
     // endregion
@@ -812,6 +959,51 @@ class ClaudeCodeProtocolTest {
     }
 
     // endregion
+
+    @Test
+    fun `custom-title frames become CustomTitle events`() {
+        val live = parseClaudeCodeEvents(
+            """{"type":"custom-title","customTitle":"会话标题、置顶分类与更新日志"}""",
+        ).single() as ClaudeCodeEvent.CustomTitle
+        assertEquals("会话标题、置顶分类与更新日志", live.title)
+
+        val replayed = parseTranscriptLine(
+            """{"type":"custom-title","customTitle":"会话标题、置顶分类与更新日志","sessionId":"s"}""",
+        ).single() as ClaudeCodeEvent.CustomTitle
+        assertEquals("会话标题、置顶分类与更新日志", replayed.title)
+
+        assertTrue(parseClaudeCodeEvents("""{"type":"custom-title","customTitle":"  "}""").isEmpty())
+
+        // transcript 偶发 isMeta，标题仍要保住
+        val metaTitle = parseTranscriptLine(
+            """{"type":"custom-title","customTitle":"带 isMeta 的拟名","isMeta":true}""",
+        ).single() as ClaudeCodeEvent.CustomTitle
+        assertEquals("带 isMeta 的拟名", metaTitle.title)
+
+        val titled = parseTranscriptLine(
+            """{"type":"custom-title","title":"备用字段"}""",
+        ).single() as ClaudeCodeEvent.CustomTitle
+        assertEquals("备用字段", titled.title)
+    }
+
+    /** CLI 自动拟名写的是 ai-title / aiTitle，不是 custom-title */
+    @Test
+    fun `ai-title frames become CustomTitle events`() {
+        val live = parseClaudeCodeEvents(
+            """{"type":"ai-title","aiTitle":"min-code 界面与模型列表问题"}""",
+        ).single() as ClaudeCodeEvent.CustomTitle
+        assertEquals("min-code 界面与模型列表问题", live.title)
+
+        val fromDisk = parseTranscriptLine(
+            """{"type":"ai-title","aiTitle":"身份与2026年6月事件询问","sessionId":"s"}""",
+        ).single() as ClaudeCodeEvent.CustomTitle
+        assertEquals("身份与2026年6月事件询问", fromDisk.title)
+
+        val meta = parseTranscriptLine(
+            """{"type":"ai-title","aiTitle":"带 isMeta","isMeta":true}""",
+        ).single() as ClaudeCodeEvent.CustomTitle
+        assertEquals("带 isMeta", meta.title)
+    }
 
     /**
      * Node/npm/proot 会往 stderr 打一堆常规警告。全量当错误显示的话，

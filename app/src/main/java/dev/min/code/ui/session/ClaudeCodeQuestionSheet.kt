@@ -1,49 +1,45 @@
 package dev.min.code.ui.session
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalBottomSheetDefaults
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SheetValue
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.HelpCircle
 import dev.min.code.core.claudecode.ClaudeCodeEvent
 import dev.min.code.core.claudecode.ClaudeCodeQuestion
 import dev.min.code.core.claudecode.parseAskUserQuestions
+import dev.min.code.ui.components.InkButton
+import dev.min.code.ui.components.InkButtonTone
+import dev.min.code.ui.components.InkCheckbox
+import dev.min.code.ui.components.InkDivider
+import dev.min.code.ui.components.InkRadio
+import dev.min.code.ui.components.InkSheet
+import dev.min.code.ui.components.InkTextField
+import dev.min.code.ui.components.Notice
+import dev.min.code.ui.components.NoticeTone
+import dev.min.code.ui.components.PaperCard
+import dev.min.code.ui.components.PaperTone
+import dev.min.code.ui.components.Seal
+import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.sea
 
 /**
  * `AskUserQuestion` 的应答面板。
@@ -98,10 +94,10 @@ internal fun ClaudeCodeQuestionSheet(
         confirmValueChange = { it != SheetValue.Hidden },
     )
 
-    ModalBottomSheet(
+    InkSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        properties = ModalBottomSheetDefaults.properties(shouldDismissOnBackPress = false),
+        dismissible = false,
     ) {
         Column(
             modifier = Modifier
@@ -116,22 +112,21 @@ internal fun ClaudeCodeQuestionSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(HugeIcons.HelpCircle, null, Modifier.size(18.dp))
-                Text("Claude 有几个问题", style = MaterialTheme.typography.titleSmall)
+                Seal()
+                Text("Claude 有几个问题", style = MaterialTheme.typography.titleMedium)
             }
 
             if (questions.isEmpty()) {
                 // 解析不出问题时不能把用户卡在一个空面板里 —— 允许直接放行，
                 // 让 CLI 拿空答案继续，至少不会把会话锁死
-                Text(
-                    "读不出这次提问的内容（CLI 版本可能改了字段形状）。可以直接跳过。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                Notice(
+                    text = "读不出这次提问的内容（CLI 版本可能改了字段形状）。可以直接跳过。",
+                    tone = NoticeTone.Error,
                 )
             }
 
             questions.forEachIndexed { index, q ->
-                if (index > 0) HorizontalDivider()
+                if (index > 0) InkDivider()
                 QuestionBlock(
                     question = q,
                     selected = selected[q.question].orEmpty(),
@@ -170,8 +165,12 @@ internal fun ClaudeCodeQuestionSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("跳过") }
-                Button(
+                InkButton(
+                    onClick = onDismiss,
+                    tone = InkButtonTone.Paper,
+                    modifier = Modifier.weight(1f),
+                ) { Text("跳过") }
+                InkButton(
                     onClick = { onAnswer(questions.associate { it.question to answerOf(it) }) },
                     enabled = complete,
                     modifier = Modifier.weight(1f),
@@ -196,7 +195,7 @@ private fun QuestionBlock(
             Text(
                 it,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.sea.seaDeep,
             )
         }
         Text(question.question, style = MaterialTheme.typography.bodyMedium)
@@ -225,18 +224,16 @@ private fun QuestionBlock(
                 // preview 是等宽排版的比较素材（代码片段 / 版式草图），必须保留换行与空格，
                 // 所以横向滚动而不是折行 —— 折行会把对齐关系毁掉，预览就失去意义
                 option.preview?.takeIf { it.isNotBlank() }?.let { preview ->
-                    Surface(
+                    PaperCard(
                         modifier = Modifier.padding(top = 4.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        tone = PaperTone.Mid,
+                        padding = PaddingValues(8.dp),
                     ) {
                         Text(
                             preview,
-                            modifier = Modifier
-                                .horizontalScroll(rememberScrollState())
-                                .padding(8.dp),
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
                             style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = JetbrainsMono,
                             softWrap = false,
                         )
                     }
@@ -253,10 +250,10 @@ private fun QuestionBlock(
             label = "其他",
             onClick = onToggleCustom,
         ) {
-            OutlinedTextField(
+            InkTextField(
                 value = customText,
                 onValueChange = onCustomChange,
-                placeholder = { Text("自己写一个答案") },
+                placeholder = "自己写一个答案",
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 4.dp),
@@ -283,15 +280,18 @@ private fun OptionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        if (multiSelect) {
-            Checkbox(checked = checked, onCheckedChange = { onClick() })
-        } else {
-            RadioButton(selected = checked, onClick = onClick)
+        // 控件对齐标题的第一行：bodyMedium 行高 22，控件 18
+        Box(Modifier.padding(top = 2.dp, end = 12.dp)) {
+            if (multiSelect) {
+                InkCheckbox(checked = checked, onCheckedChange = { onClick() })
+            } else {
+                InkRadio(selected = checked, onClick = onClick)
+            }
         }
-        Column(Modifier.padding(top = 12.dp, start = 2.dp)) {
+        Column(Modifier.weight(1f)) {
             // 只有标题可点。整行可点会把输入框也变成"点一下就切换勾选"，
             // 于是根本没法把光标放进去打字。
             Text(

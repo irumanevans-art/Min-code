@@ -1,18 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  桌面图标 = 原图直接铺满。
-
-  原图放在**背景层**：背景层永远铺满整块图标、不会被 launcher 缩放；前景层放一张全透明图。
-  于是桌面上看到的就是完整的原图，只被各家 launcher 的 mask 切个圆角。
-
-  别把原图放前景层：部分 launcher 会对前景层做"图标归一化"缩放，那样四周会露出背景层的边。
-  也别把背景层设成透明去做镂空——实机（ColorOS）会自己补一块黑底，
-  这张图主体是黑长发，整个人会融进去，桌面上只剩一张小白脸浮在黑方块里。
-
-  monochrome 是主题图标用的单色字形，系统只认 alpha，塞不进一张不透明照片，所以单独生成。
+  桌面图标 = 两色对角线：左上海 #2B7FD6、右下沙 #EFE2C9；Cormorant 斜体 Min，
+  M 在上、in 在下，i 的点是对角线上的太极。位图由 tools/build_sea_assets.py 生成。
 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-  <background android:drawable="@mipmap/ic_launcher_background"/>
+  <background android:drawable="@color/paper"/>
   <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
-  <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>
+  <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>
 </adaptive-icon>

@@ -1,5 +1,7 @@
 package dev.min.code.ui.session
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,17 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SheetValue
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
@@ -30,12 +25,25 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.min.code.ui.components.InkButton
+import dev.min.code.ui.components.InkButtonTone
+import dev.min.code.ui.components.InkCheckbox
+import dev.min.code.ui.components.InkDivider
+import dev.min.code.ui.components.InkLineProgress
+import dev.min.code.ui.components.InkSheet
+import dev.min.code.ui.components.Notice
+import dev.min.code.ui.components.NoticeTone
+import dev.min.code.ui.components.PaperCard
+import dev.min.code.ui.components.Seal
+import dev.min.code.ui.components.SectionTitle
+import dev.min.code.ui.theme.InkMotion
+import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.sea
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
-import me.rerere.hugeicons.stroke.ArrowUp01
 
 /**
  * 环境与更新。
@@ -81,7 +89,7 @@ internal fun ClaudeCodeMaintenanceSheet(
     val blocked = liveSessionCount > 0
     val actionable = !state.busy && !blocked
 
-    ModalBottomSheet(
+    InkSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberBottomSheetState(
             SheetValue.Hidden,
@@ -96,20 +104,18 @@ internal fun ClaudeCodeMaintenanceSheet(
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                "环境与更新",
-                style = MaterialTheme.typography.titleMedium,
+            Row(
                 modifier = Modifier.padding(vertical = 10.dp),
-            )
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Seal()
+                Text("环境与更新", style = MaterialTheme.typography.titleMedium)
+            }
 
             // --- 环境信息 ---
-            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainer) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
+            PaperCard(modifier = Modifier.fillMaxWidth(), padding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     InfoRow("Linux", state.osName ?: placeholder(state.loading))
                     InfoRow(
                         label = "Node.js",
@@ -133,7 +139,7 @@ internal fun ClaudeCodeMaintenanceSheet(
                 Notice(
                     text = "CLI 的 npm 包在，但原生二进制缺失（上次那个约 100 MB 的平台包没有下完），" +
                         "会话启动会报 spawnSync … ENOENT。点下面「修复安装」补齐。",
-                    isError = true,
+                    tone = NoticeTone.Error,
                 )
             }
 
@@ -141,12 +147,12 @@ internal fun ClaudeCodeMaintenanceSheet(
                 Notice(
                     text = "有 $liveSessionCount 个会话正在运行。更新会替换掉正在执行的文件，" +
                         "请先在侧边栏关闭全部会话。",
-                    isError = true,
+                    tone = NoticeTone.Error,
                 )
             }
 
             // --- Claude Code CLI ---
-            BlockTitle("Claude Code CLI")
+            SectionTitle("Claude Code CLI", modifier = Modifier.padding(top = 4.dp))
             Text(
                 "官方 npm 包 @anthropic-ai/claude-code。安装时装的是 @latest，" +
                     "但那之后不会自动跟进 —— 要新版本得在这里手动更新。",
@@ -159,13 +165,19 @@ internal fun ClaudeCodeMaintenanceSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                OutlinedButton(onClick = onCheckUpdate, enabled = !state.checking && state.running == null) {
+                InkButton(
+                    onClick = onCheckUpdate,
+                    enabled = !state.checking && state.running == null,
+                    tone = InkButtonTone.Paper,
+                    compact = true,
+                    busy = state.checking,
+                ) {
                     Text(if (state.checking) "查询中…" else "检查更新")
                 }
                 Text(
                     text = updateHint(state),
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (state.updateAvailable) MaterialTheme.colorScheme.primary
+                    color = if (state.updateAvailable) MaterialTheme.sea.seaDeep
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -177,16 +189,18 @@ internal fun ClaudeCodeMaintenanceSheet(
             // claude-code 没有 —— 打开它等于同意从第三方镜像取 CLI 本体，必须是显式选择。
             Row(
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = actionable) { useNpmMirror = !useNpmMirror },
+                    .clickable(enabled = actionable) { useNpmMirror = !useNpmMirror }
+                    .padding(vertical = 6.dp),
             ) {
-                Checkbox(
+                InkCheckbox(
                     checked = useNpmMirror,
-                    onCheckedChange = { useNpmMirror = it },
+                    onCheckedChange = null,
                     enabled = actionable,
                 )
-                Column(Modifier.padding(start = 4.dp)) {
+                Column {
                     Text("用淘宝 npm 源更新", style = MaterialTheme.typography.bodySmall)
                     Text(
                         "国内快很多。原生二进制仍按官方 registry 的 sha512 校验，只有几 KB 的 wrapper 来自镜像。",
@@ -196,9 +210,10 @@ internal fun ClaudeCodeMaintenanceSheet(
                 }
             }
 
-            Button(
+            InkButton(
                 onClick = { onUpdateCli(useNpmMirror) },
                 enabled = actionable,
+                busy = state.running == ClaudeCodeVM.MaintenanceTask.UpdateCli,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
@@ -211,19 +226,21 @@ internal fun ClaudeCodeMaintenanceSheet(
                 )
             }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainerHighest)
+            InkDivider()
 
             // --- Ubuntu 软件包 ---
-            BlockTitle("Ubuntu 软件包")
+            SectionTitle("Ubuntu 软件包", modifier = Modifier.padding(top = 4.dp))
             Text(
                 "升级 Rootfs 里已装的 apt 包（Claude Code 自己装的 git、python3、ripgrep 等）。" +
                     "和 CLI 版本无关，可能耗时数分钟并消耗流量。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Button(
+            InkButton(
                 onClick = onUpgradeApt,
                 enabled = actionable,
+                tone = InkButtonTone.Paper,
+                busy = state.running == ClaudeCodeVM.MaintenanceTask.AptUpgrade,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
@@ -233,82 +250,80 @@ internal fun ClaudeCodeMaintenanceSheet(
             }
 
             // --- 进行中 / 结果 / 错误 ---
-            if (state.running != null) {
-                val progress = state.progress
-                if (progress != null) {
-                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                Text(
-                    state.detail.ifBlank { "正在处理…" },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            state.lastResult?.takeIf { state.running == null }?.let {
-                Notice(text = it, isError = false)
-            }
-            state.error?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 12,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainerHighest)
-
-            // --- 修复（默认折叠：这两项都不是日常操作，摆出来只会诱导误点） ---
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { repairOpen = !repairOpen }
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("修复", style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.weight(1f))
-                Icon(
-                    if (repairOpen) HugeIcons.ArrowUp01 else HugeIcons.ArrowDown01,
-                    contentDescription = if (repairOpen) "收起修复选项" else "展开修复选项",
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            if (repairOpen) {
-                Text(
-                    "Node.js 的版本被写死在 App 里（要配一份官方 SHA-256 校验和），" +
-                        "所以这里只能重装同一个版本来修损坏的运行时，不是升级。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedButton(
-                    onClick = onReinstallNode,
-                    enabled = actionable,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
+            AnimatedVisibility(visible = state.running != null, enter = InkMotion.expand, exit = InkMotion.collapse) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    InkLineProgress(progress = state.progress, modifier = Modifier.fillMaxWidth())
                     Text(
-                        if (state.running == ClaudeCodeVM.MaintenanceTask.ReinstallNode) "正在重装…"
-                        else "重装 Node.js 运行时"
+                        state.detail.ifBlank { "正在处理…" },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetbrainsMono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            state.lastResult?.takeIf { state.running == null }?.let {
+                Notice(text = it, tone = NoticeTone.Info)
+            }
+            state.error?.let {
+                Notice(text = it, tone = NoticeTone.Error, maxLines = 12)
+            }
 
-                Notice(
-                    text = "重装 Linux 环境会清空整个 Rootfs：Claude Code CLI、Node.js、" +
-                        "apt 装过的所有工具，以及 ~/.claude 下的全部会话记录都会一起消失，" +
-                        "之后要从头装一遍。只有环境彻底坏掉时才这么做。",
-                    isError = true,
-                )
-                OutlinedButton(
-                    onClick = onOpenWorkspace,
-                    enabled = state.running == null,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("前往工作区重装 Linux 环境")
+            InkDivider()
+
+            // --- 修复（默认折叠：这两项都不是日常操作，摆出来只会诱导误点） ---
+            val chevron by animateFloatAsState(if (repairOpen) 180f else 0f, InkMotion.spatial(), label = "repairChevron")
+            SectionTitle(
+                "修复",
+                modifier = Modifier
+                    .clickable { repairOpen = !repairOpen }
+                    .padding(vertical = 10.dp),
+                trailing = {
+                    Icon(
+                        HugeIcons.ArrowDown01,
+                        contentDescription = if (repairOpen) "收起修复选项" else "展开修复选项",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .graphicsLayer { rotationZ = chevron },
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+            )
+
+            AnimatedVisibility(visible = repairOpen, enter = InkMotion.expand, exit = InkMotion.collapse) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Node.js 的版本被写死在 App 里（要配一份官方 SHA-256 校验和），" +
+                            "所以这里只能重装同一个版本来修损坏的运行时，不是升级。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    InkButton(
+                        onClick = onReinstallNode,
+                        enabled = actionable,
+                        tone = InkButtonTone.Paper,
+                        busy = state.running == ClaudeCodeVM.MaintenanceTask.ReinstallNode,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (state.running == ClaudeCodeVM.MaintenanceTask.ReinstallNode) "正在重装…"
+                            else "重装 Node.js 运行时"
+                        )
+                    }
+
+                    Notice(
+                        text = "重装 Linux 环境会清空整个 Rootfs：Claude Code CLI、Node.js、" +
+                            "apt 装过的所有工具，以及 ~/.claude 下的全部会话记录都会一起消失，" +
+                            "之后要从头装一遍。只有环境彻底坏掉时才这么做。",
+                        tone = NoticeTone.Error,
+                    )
+                    InkButton(
+                        onClick = onOpenWorkspace,
+                        enabled = state.running == null,
+                        tone = InkButtonTone.Vermilion,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("前往工作区重装 Linux 环境")
+                    }
                 }
             }
         }
@@ -323,15 +338,6 @@ private fun updateHint(state: ClaudeCodeVM.MaintenanceState): String = when {
     state.latestCliVersion == null -> "未查询"
     state.updateAvailable -> "可更新到 ${state.latestCliVersion}"
     else -> "已是最新（${state.latestCliVersion}）"
-}
-
-@Composable
-private fun BlockTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(top = 4.dp),
-    )
 }
 
 @Composable
@@ -350,26 +356,9 @@ private fun InfoRow(label: String, value: String) {
         Text(
             text = value,
             style = MaterialTheme.typography.labelMedium,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = JetbrainsMono,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun Notice(text: String, isError: Boolean) {
-    Surface(
-        shape = MaterialTheme.shapes.small,
-        color = if (isError) MaterialTheme.colorScheme.errorContainer
-        else MaterialTheme.colorScheme.surfaceContainer,
-    ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(12.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (isError) MaterialTheme.colorScheme.onErrorContainer
-            else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

@@ -1,25 +1,42 @@
 package dev.min.code.ui.session
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.claudecode.asBooleanOrNull
+import dev.min.code.core.claudecode.asIntOrNull
+import dev.min.code.core.claudecode.asJsonArrayOrNull
+import dev.min.code.core.claudecode.asJsonObjectOrNull
+import dev.min.code.core.claudecode.asStringOrNull
+import dev.min.code.core.claudecode.parseAskUserQuestions
+import dev.min.code.ui.components.InkTextButton
+import dev.min.code.ui.richtext.DiffView
+import dev.min.code.ui.richtext.HighlightCodeBlock
+import dev.min.code.ui.richtext.MarkdownBlock
+import dev.min.code.ui.richtext.parseDiffStats
+import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.sea
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import me.rerere.hugeicons.HugeIcons
@@ -33,17 +50,6 @@ import me.rerere.hugeicons.stroke.GlobalSearch
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.Search01
-import dev.min.code.core.claudecode.ClaudeCodeManager
-import dev.min.code.core.claudecode.parseAskUserQuestions
-import dev.min.code.core.claudecode.asBooleanOrNull
-import dev.min.code.core.claudecode.asIntOrNull
-import dev.min.code.core.claudecode.asJsonArrayOrNull
-import dev.min.code.core.claudecode.asJsonObjectOrNull
-import dev.min.code.core.claudecode.asStringOrNull
-import dev.min.code.ui.richtext.DiffView
-import dev.min.code.ui.richtext.HighlightCodeBlock
-import dev.min.code.ui.richtext.MarkdownBlock
-import dev.min.code.ui.richtext.parseDiffStats
 
 /**
  * 工具调用的类型化渲染。
@@ -253,7 +259,14 @@ internal fun toolSummary(name: String, input: JsonObject): String {
 private const val SEP = " · "
 
 /** 折叠态右侧那个小角标：diff 给 `+12 −3`，其它给结果行数 */
-internal fun toolBadge(item: ClaudeCodeManager.ChatItem.ToolCall): String? = when (item.name) {
+internal fun toolBadge(item: ClaudeCodeManager.ChatItem.ToolCall): String? = when {
+    // 子任务优先报步数：Task 的"结果行数"是那份最终报告的长度，
+    // 而人想知道的是"它跑了多少步"——那才是决定要不要点开的信息
+    item.subItems.isNotEmpty() -> "${item.subItems.size} 步"
+    else -> toolResultBadge(item)
+}
+
+private fun toolResultBadge(item: ClaudeCodeManager.ChatItem.ToolCall): String? = when (item.name) {
     "Edit", "Write", "MultiEdit" -> {
         // 走 bounded 版本：这是折叠态就要算的东西，列表里每一行、每次重组都要过一遍，
         // 一个 200KB 的 Write 会在滚动时反复拼出同样大小的字符串
@@ -354,6 +367,11 @@ internal fun ToolCallDetail(
                 item.input["command"].asStringOrNull()?.let {
                     HighlightCodeBlock(code = it, language = "bash")
                 }
+                // CLI 2.1.269+：Bash 改文件时 tool_use_result.bashEditDiff 带来的 unified diff
+                val editDiff = item.editDiff?.takeIf { it.isNotBlank() }
+                if (editDiff != null) {
+                    DiffView(diff = editDiff, maxLines = MAX_DETAIL_LINES, showFileHeader = true)
+                }
                 ToolResultText(item)
             }
 
@@ -367,13 +385,8 @@ internal fun ToolCallDetail(
                 // 只在真的改过之后给撤销：Running 状态下文件还没变，按了只会得到一句
                 // "已还原"，而实际上什么都没发生
                 if (onRevert != null && item.status == ClaudeCodeManager.ChatItem.ToolCall.Status.Done) {
-                    TextButton(onClick = onRevert, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                        Icon(HugeIcons.ArrowTurnBackward, null, Modifier.size(14.dp))
-                        Text(
-                            "撤销此修改",
-                            modifier = Modifier.padding(start = 6.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                    InkTextButton(onClick = onRevert, icon = HugeIcons.ArrowTurnBackward) {
+                        Text("撤销此修改", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -399,6 +412,117 @@ internal fun ToolCallDetail(
                 ToolResultText(item)
             }
         }
+    }
+}
+
+/**
+ * 子任务的完整过程。
+ *
+ * 官方终端里子 agent 是一条**看不进去**的 sidechain：跑的时候只给一行计数，跑完只给
+ * 最终报告，中间那几十步想复盘就只能去翻 `~/.claude/projects` 底下的 jsonl。数据其实
+ * 一直在流里（帧上带着 `parent_tool_use_id`），缺的只是一个容器 —— 手机上折叠卡片天然就是。
+ *
+ * 注：上面那个路径**不能写成 glob**。Kotlin 的块注释是可以嵌套的，KDoc 里出现
+ * `斜杠星星` 会开一个内层注释，然后这段 KDoc 的结束符只关掉内层，外层一路吞到文件末尾 ——
+ * 表现是"这个文件后半截的函数全部 Unresolved reference"。
+ *
+ * 版式上刻意**比主流窄一号、加一条左边线**：让人一眼分清"这是子任务干的"，
+ * 而不是误以为主 agent 自己跑了这些工具。内容渲染器完全复用主流那套。
+ */
+@Composable
+internal fun SubagentTranscript(items: List<ClaudeCodeManager.ChatItem>) {
+    val line = MaterialTheme.colorScheme.outlineVariant
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawLine(
+                    color = line,
+                    start = Offset(0f, 0f),
+                    end = Offset(0f, size.height),
+                    strokeWidth = 1.5.dp.toPx(),
+                )
+            }
+            .padding(start = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = "子任务过程 · ${items.size} 步",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        items.forEach { item -> SubagentItem(item) }
+    }
+}
+
+@Composable
+private fun SubagentItem(item: ClaudeCodeManager.ChatItem) {
+    when (item) {
+        // 子 agent 的正文就是它的阶段性结论，值得直接读，不折叠
+        is ClaudeCodeManager.ChatItem.AssistantText ->
+            MarkdownBlock(content = item.text, modifier = Modifier.fillMaxWidth())
+
+        is ClaudeCodeManager.ChatItem.Thinking -> {
+            var expanded by remember(item.id) { mutableStateOf(false) }
+            Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
+                Text(
+                    text = "思考 · ${item.text.length} 字",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (expanded) {
+                    Text(
+                        text = item.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        is ClaudeCodeManager.ChatItem.ToolCall -> {
+            var expanded by remember(item.id) { mutableStateOf(false) }
+            Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetbrainsMono,
+                        color = if (item.isError) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = toolSummary(item.name, item.input),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetbrainsMono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                // 撤销不往下传：子 agent 的编辑没有走 App 侧的快照路径（快照是在主线程的
+                // tool_use 帧上打的），给一个按下去只会报错的按钮比没有按钮更糟
+                if (expanded) ToolCallDetail(item, onRevert = null)
+            }
+        }
+
+        // Note 不会出现在子 agent 线程里（系统提示走主线程），兜个底
+        is ClaudeCodeManager.ChatItem.Note -> Text(
+            text = item.text,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (item.isError) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        is ClaudeCodeManager.ChatItem.UserText -> Unit
+
+        // stderr 是整个进程的，不分主线程还是子 agent，永远挂在主会话流上
+        is ClaudeCodeManager.ChatItem.ProcessOutput -> Unit
     }
 }
 
@@ -442,7 +566,7 @@ internal fun ToolInputPreview(
                     Text(
                         path,
                         style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = JetbrainsMono,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         overflow = TextOverflow.Ellipsis,
                         maxLines = 2,
@@ -497,7 +621,7 @@ private fun MonoText(text: String, isError: Boolean = false) {
     SelectionContainer {
         Text(
             text = text,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = JetbrainsMono,
             style = MaterialTheme.typography.labelSmall,
             color = if (isError) MaterialTheme.colorScheme.error
             else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -508,10 +632,13 @@ private fun MonoText(text: String, isError: Boolean = false) {
 /**
  * TodoWrite 的待办列表。`activeForm` 是"正在做"的说法（"Running tests"），
  * `content` 是"要做"的说法（"Run tests"）—— 进行中的那条用 activeForm 才读得顺。
+ *
+ * 颜色说状态：做完了是竹青，正在做是湛（活着的），还没做是石墨。
  */
 @Composable
 private fun TodoList(input: JsonObject) {
     val todos = input["todos"].asJsonArrayOrNull()?.mapNotNull { it.asJsonObjectOrNull() }.orEmpty()
+    val palette = MaterialTheme.sea
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         todos.forEach { todo ->
             val status = todo["status"].asStringOrNull()
@@ -530,10 +657,10 @@ private fun TodoList(input: JsonObject) {
                         else -> "·"
                     },
                     style = MaterialTheme.typography.labelMedium,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = JetbrainsMono,
                     color = when (status) {
-                        "completed" -> MaterialTheme.colorScheme.primary
-                        "in_progress" -> MaterialTheme.colorScheme.primary
+                        "completed" -> palette.bamboo
+                        "in_progress" -> palette.sea
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                     modifier = Modifier.size(width = 14.dp, height = 18.dp),

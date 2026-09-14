@@ -2,22 +2,33 @@ package dev.min.code
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.animation.PathInterpolator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.IntOffset
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
@@ -29,9 +40,12 @@ import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.EXTRA_OPEN_CLAUDE_CODE
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.ThemeMode
 import dev.min.code.ui.about.AboutPage
+import dev.min.code.ui.components.InkToastHost
+import dev.min.code.ui.components.LoadingScreen
 import dev.min.code.ui.components.LocalToaster
-import dev.min.code.ui.components.rememberSystemToaster
+import dev.min.code.ui.components.rememberInkToaster
 import dev.min.code.ui.files.WorkspaceDetailPage
 import dev.min.code.ui.files.WorkspaceFileEditorPage
 import dev.min.code.ui.nav.LocalNavController
@@ -40,7 +54,16 @@ import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.session.ClaudeCodePage
 import dev.min.code.ui.settings.SettingsPage
 import dev.min.code.ui.terminal.WorkspaceTerminalPage
+import dev.min.code.ui.theme.FormSwitchController
+import dev.min.code.ui.theme.FormSwitchHost
+import dev.min.code.ui.theme.InkMotion
+import dev.min.code.ui.theme.LocalFormSwitch
+import dev.min.code.ui.theme.LocalTilt
+import dev.min.code.ui.theme.LocalSeaField
+import dev.min.code.ui.theme.rememberSeaField
 import dev.min.code.ui.theme.MinTheme
+import dev.min.code.ui.theme.rememberTilt
+import kotlinx.coroutines.delay
 import me.rerere.workspace.WorkspaceStorageArea
 import org.koin.android.ext.android.inject
 
@@ -50,13 +73,42 @@ class MainActivity : ComponentActivity() {
     /** 当前回退栈；onNewIntent 拿它把通知点击路由到会话页 */
     private var navStack: MutableList<NavKey>? = null
 
+    /** 设置读到之前系统 Splash 不撤：否则先按默认浅色画一帧，再翻成深色，会闪一下 */
+    @Volatile private var settingsLoaded = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splash = installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        splash.setKeepOnScreenCondition { !settingsLoaded }
+        // 标记轻微退场，避免冷启动时出现放大的深色遮挡。
+        splash.setOnExitAnimationListener { provider ->
+            val ease = PathInterpolator(0.2f, 0f, 0f, 1f)
+            provider.iconView.animate()
+                .scaleX(1.04f).scaleY(1.04f).alpha(0f)
+                .setDuration(180).setInterpolator(ease)
+                .start()
+            provider.view.animate()
+                .alpha(0f)
+                .setDuration(220).setInterpolator(ease)
+                .withEndAction { provider.remove() }
+                .start()
+        }
         setContent {
-            val settings by settingsStore.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
-            MinTheme(mode = settings.themeMode) {
-                Root()
+            val settings by settingsStore.settings.collectAsStateWithLifecycle(initialValue = null)
+            val loaded = settings != null
+            SideEffect { if (loaded) settingsLoaded = true }
+            // 调试钩子：`adb shell am start … --ez min.debug.loading true` 把「铺纸研墨」加载页定住 4 秒，
+            // 供人眼核对——正常情况下环境判定只要几十毫秒，这一屏根本来不及看。正式包忽略这个 extra
+            var hold by remember { mutableStateOf(BuildConfig.DEBUG && intent?.getBooleanExtra(EXTRA_DEBUG_LOADING, false) == true) }
+            LaunchedEffect(hold) {
+                if (hold) {
+                    delay(4_000)
+                    hold = false
+                }
+            }
+            MinTheme(mode = settings?.themeMode ?: ThemeMode.LIGHT) {
+                if (hold) LoadingScreen(detail = "debug · $EXTRA_DEBUG_LOADING") else Root()
             }
         }
     }
@@ -72,54 +124,80 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @androidx.compose.runtime.Composable
+    @Composable
     private fun Root() {
         val backStack = rememberNavBackStack(Screen.Session)
         val navigator = remember(backStack) { Navigator(backStack) }
         LaunchedEffect(backStack) { navStack = backStack }
-        val toaster = rememberSystemToaster()
+        val (toaster, toastState) = rememberInkToaster()
+        val tilt = rememberTilt()
+        val seaField = rememberSeaField()
+        val formSwitch = remember { FormSwitchController() }
         val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
 
         CompositionLocalProvider(
             LocalNavController provides navigator,
             LocalToaster provides toaster,
+            LocalTilt provides tilt,
+            LocalSeaField provides seaField,
+            LocalFormSwitch provides formSwitch,
         ) {
-            NavDisplay(
-                backStack = backStack,
-                entryDecorators = listOf(
-                    rememberSaveableStateHolderNavEntryDecorator(),
-                    rememberViewModelStoreNavEntryDecorator(),
-                ),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background),
-                onBack = { backStack.removeLastOrNull() },
-                transitionSpec = {
-                    if (backStack.size == 1) fadeIn() togetherWith fadeOut()
-                    else slideInHorizontally { it } togetherWith slideOutHorizontally { -it / 3 } + fadeOut()
-                },
-                popTransitionSpec = {
-                    slideInHorizontally { -it / 3 } + fadeIn() togetherWith slideOutHorizontally { it }
-                },
-                predictivePopTransitionSpec = {
-                    slideInHorizontally { -it / 3 } + fadeIn() togetherWith slideOutHorizontally { it }
-                },
-                entryProvider = entryProvider {
-                    entry<Screen.Session> { ClaudeCodePage() }
-                    entry<Screen.Setup> { ClaudeCodePage() }
-                    entry<Screen.Files> { WorkspaceDetailPage(workspaceId) }
-                    entry<Screen.Terminal> { WorkspaceTerminalPage(workspaceId) }
-                    entry<Screen.FileEditor> { key ->
-                        WorkspaceFileEditorPage(
-                            id = workspaceId,
-                            area = WorkspaceStorageArea.valueOf(key.area),
-                            path = key.path,
-                        )
-                    }
-                    entry<Screen.Settings> { SettingsPage() }
-                    entry<Screen.About> { AboutPage() }
-                },
-            )
+            FormSwitchHost(formSwitch) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background),
+                ) {
+                    NavDisplay(
+                        backStack = backStack,
+                        entryDecorators = listOf(
+                            rememberSaveableStateHolderNavEntryDecorator(),
+                            rememberViewModelStoreNavEntryDecorator(),
+                        ),
+                        modifier = Modifier.fillMaxSize(),
+                        onBack = { backStack.removeLastOrNull() },
+                        // 页面切换 = 落墨 / 飞白：新页从右侧 1/8 处淡入落定，旧页淡出微缩。
+                        // 不做整页横滑——那是"翻页"，而这里是同一本日志上换一张纸
+                        transitionSpec = {
+                            if (backStack.size == 1) {
+                                fadeIn(InkMotion.effect()) togetherWith fadeOut(InkMotion.effectFast())
+                            } else {
+                                (fadeIn(InkMotion.effect()) + slideInHorizontally(InkMotion.spatial<IntOffset>()) { it / 8 }) togetherWith
+                                    (fadeOut(InkMotion.effectFast()) + scaleOut(targetScale = 0.98f, animationSpec = InkMotion.effect()))
+                            }
+                        },
+                        popTransitionSpec = {
+                            (fadeIn(InkMotion.effect()) + scaleIn(initialScale = 0.98f, animationSpec = InkMotion.spatial())) togetherWith
+                                (fadeOut(InkMotion.effectFast()) + slideOutHorizontally(InkMotion.spatial<IntOffset>()) { it / 8 })
+                        },
+                        predictivePopTransitionSpec = {
+                            (fadeIn(InkMotion.effect()) + scaleIn(initialScale = 0.98f, animationSpec = InkMotion.spatial())) togetherWith
+                                (fadeOut(InkMotion.effectFast()) + slideOutHorizontally(InkMotion.spatial<IntOffset>()) { it / 8 })
+                        },
+                        entryProvider = entryProvider {
+                            entry<Screen.Session> { ClaudeCodePage() }
+                            entry<Screen.Setup> { ClaudeCodePage() }
+                            entry<Screen.Files> { WorkspaceDetailPage(workspaceId) }
+                            entry<Screen.Terminal> { WorkspaceTerminalPage(workspaceId) }
+                            entry<Screen.FileEditor> { key ->
+                                WorkspaceFileEditorPage(
+                                    id = workspaceId,
+                                    area = WorkspaceStorageArea.valueOf(key.area),
+                                    path = key.path,
+                                )
+                            }
+                            entry<Screen.Settings> { SettingsPage() }
+                            entry<Screen.About> { AboutPage() }
+                        },
+                    )
+                    InkToastHost(toastState, Modifier.align(Alignment.BottomCenter))
+                }
+            }
         }
     }
 }
+
+private const val EXTRA_DEBUG_LOADING = "min.debug.loading"
+
+@Suppress("unused")
+private val defaultSettings = AppSettings()

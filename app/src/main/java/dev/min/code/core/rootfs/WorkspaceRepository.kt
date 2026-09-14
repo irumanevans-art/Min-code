@@ -3,11 +3,13 @@ package dev.min.code.core.rootfs
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstaller
 import me.rerere.workspace.WorkspaceCommandResult
@@ -123,6 +125,64 @@ class WorkspaceRepository(
             manager.listFiles(root, path, area)
         }
 
+    /**
+     * 从 [path] 往下递归找名字里含 [query] 的文件和文件夹。
+     *
+     * 文件页原来只能一层层点进去翻：知道文件叫什么、不知道在哪一层时，除了挨个目录点开没有别的办法。
+     *
+     * 有界遍历，理由和 `ClaudeCodeManager.searchFiles` 一样：rootfs 动辄几十万个文件，
+     * 无界 walk 会让界面卡死。跳过 node_modules / .git 这类"知道里面是什么、不需要搜"的目录，
+     * 也跳过 proc / sys / dev —— 那是内核的虚拟文件系统，扫进去可能永远出不来。
+     * 扫够 [SEARCH_SCAN_LIMIT] 或攒够 [limit] 条就停，宁可少给也不能卡住。
+     *
+     * 返回的 [WorkspaceFileEntry.path] 是相对区域根的路径，和 [listFiles] 一致，
+     * 所以点击结果可以直接复用文件页原有的打开逻辑。
+     */
+    suspend fun searchFiles(
+        id: String,
+        area: WorkspaceStorageArea,
+        path: String,
+        query: String,
+        limit: Int = 200,
+    ): List<WorkspaceFileEntry> = withContext(Dispatchers.IO) {
+        manager.ensureWorkspace(root)
+        val needle = query.trim().lowercase()
+        if (needle.isEmpty()) return@withContext emptyList()
+
+        val areaRoot = when (area) {
+            WorkspaceStorageArea.FILES -> manager.filesDir(root)
+            WorkspaceStorageArea.LINUX -> manager.linuxDir(root)
+        }
+        val base = if (path.isBlank()) areaRoot else File(areaRoot, path)
+        if (!base.isDirectory) return@withContext emptyList()
+
+        val results = ArrayList<WorkspaceFileEntry>(limit.coerceAtMost(64))
+        var visited = 0
+        base.walkTopDown()
+            .onEnter { dir -> dir.name !in SEARCH_SKIP_DIRS && visited < SEARCH_SCAN_LIMIT }
+            .forEach { file ->
+                if (results.size >= limit || visited > SEARCH_SCAN_LIMIT) return@forEach
+                visited++
+                if (file == base) return@forEach
+                if (!file.name.lowercase().contains(needle)) return@forEach
+                results += WorkspaceFileEntry(
+                    path = file.relativeTo(areaRoot).invariantSeparatorsPath,
+                    name = file.name,
+                    isDirectory = file.isDirectory,
+                    sizeBytes = if (file.isDirectory) 0L else file.length(),
+                    updatedAt = file.lastModified(),
+                )
+            }
+        // 文件夹排前面，其次按名字——和文件页平时的顺序一致
+        results.sortedWith(compareByDescending<WorkspaceFileEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
+    }
+
+    suspend fun mkdir(id: String, area: WorkspaceStorageArea, path: String): WorkspaceFileEntry =
+        withContext(Dispatchers.IO) {
+            manager.ensureWorkspace(root)
+            manager.mkdir(root, path, area)
+        }
+
     suspend fun readText(id: String, path: String): String = withContext(Dispatchers.IO) {
         manager.ensureWorkspace(root)
         manager.readText(root, path)
@@ -174,6 +234,107 @@ class WorkspaceRepository(
     suspend fun deleteFile(id: String, area: WorkspaceStorageArea, path: String, recursive: Boolean): Boolean =
         withContext(Dispatchers.IO) { manager.deleteFile(root, path, recursive, area) }
 
+    suspend fun moveFile(
+        id: String,
+        area: WorkspaceStorageArea,
+        source: String,
+        target: String,
+        overwrite: Boolean = false,
+    ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
+        manager.ensureWorkspace(root)
+        manager.moveFile(root, source, target, overwrite, area)
+    }
+
+    /**
+     * 量工作区占用。files/ 和 linux/ 分开走，跳过 proc/sys/dev（就算是空目录，
+     * 一旦被 bind-mount 成宿主的 /proc 就会把整台手机扫一遍，界面永远停在「计算中」）。
+     * [onProgress] 每隔一段文件报一次，好让界面有数字而不是一句死字。
+     */
+    suspend fun measureUsage(onProgress: (WorkspaceUsage) -> Unit): WorkspaceUsage =
+        withContext(Dispatchers.IO) {
+            manager.ensureWorkspace(root)
+            var filesBytes = 0L
+            var linuxBytes = 0L
+            var scanned = 0
+            var lastEmit = 0
+            fun emit(done: Boolean) {
+                onProgress(WorkspaceUsage(filesBytes, linuxBytes, scanned, done, error = null))
+            }
+            fun onFile(area: WorkspaceStorageArea, size: Long) {
+                scanned++
+                when (area) {
+                    WorkspaceStorageArea.FILES -> filesBytes += size
+                    WorkspaceStorageArea.LINUX -> linuxBytes += size
+                }
+                if (scanned - lastEmit >= USAGE_PROGRESS_EVERY) {
+                    lastEmit = scanned
+                    emit(done = false)
+                }
+            }
+            val job = coroutineContext[Job]
+            try {
+                walkUsage(filesDir(), WorkspaceStorageArea.FILES, emptySet(), job, ::onFile)
+                emit(done = false)
+                walkUsage(linuxDir(), WorkspaceStorageArea.LINUX, LINUX_SKIP_DIRS, job, ::onFile)
+                WorkspaceUsage(filesBytes, linuxBytes, scanned, done = true, error = null)
+                    .also { onProgress(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.w(TAG, "measureUsage failed after $scanned files", e)
+                WorkspaceUsage(
+                    filesBytes = filesBytes,
+                    linuxBytes = linuxBytes,
+                    scanned = scanned,
+                    done = true,
+                    error = e.message ?: "未能算出占用空间",
+                ).also { onProgress(it) }
+            }
+        }
+
+    private fun walkUsage(
+        start: File,
+        area: WorkspaceStorageArea,
+        skipDirs: Set<String>,
+        job: Job?,
+        onFile: (WorkspaceStorageArea, Long) -> Unit,
+    ) {
+        if (!start.isDirectory) return
+        val root = start.toPath()
+        java.nio.file.Files.walkFileTree(
+            root,
+            emptySet(),
+            Int.MAX_VALUE,
+            object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                override fun preVisitDirectory(
+                    dir: java.nio.file.Path,
+                    attrs: java.nio.file.attribute.BasicFileAttributes,
+                ): java.nio.file.FileVisitResult {
+                    if (job?.isActive == false) return java.nio.file.FileVisitResult.TERMINATE
+                    val name = dir.fileName?.toString().orEmpty()
+                    if (dir != root && (name in skipDirs || name.startsWith(".l2s."))) {
+                        return java.nio.file.FileVisitResult.SKIP_SUBTREE
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE
+                }
+
+                override fun visitFile(
+                    file: java.nio.file.Path,
+                    attrs: java.nio.file.attribute.BasicFileAttributes,
+                ): java.nio.file.FileVisitResult {
+                    if (job?.isActive == false) return java.nio.file.FileVisitResult.TERMINATE
+                    if (attrs.isRegularFile && !attrs.isSymbolicLink) onFile(area, attrs.size())
+                    return java.nio.file.FileVisitResult.CONTINUE
+                }
+
+                override fun visitFileFailed(
+                    file: java.nio.file.Path,
+                    exc: java.io.IOException,
+                ): java.nio.file.FileVisitResult = java.nio.file.FileVisitResult.CONTINUE
+            },
+        )
+    }
+
     suspend fun executeCommand(
         id: String,
         command: String,
@@ -188,5 +349,35 @@ class WorkspaceRepository(
 
     private companion object {
         const val MAX_PREVIEW_BYTES = 2L * 1024 * 1024
+        const val USAGE_PROGRESS_EVERY = 2_000
+        val LINUX_SKIP_DIRS = setOf("proc", "sys", "dev", "run")
+
+        /**
+         * 搜索时不进的目录。前一半是内核的虚拟文件系统（扫进去可能出不来），
+         * 后一半是"知道里面是什么、搜它没意义"的依赖与产物目录。
+         */
+        val SEARCH_SKIP_DIRS = LINUX_SKIP_DIRS + setOf(
+            "node_modules", ".git", ".gradle", "build", "dist", ".venv", "__pycache__",
+            ".next", "target", "vendor", ".cache",
+        )
+
+        /** 单次搜索最多扫多少个条目。超了就用已有结果 */
+        const val SEARCH_SCAN_LIMIT = 40_000
     }
+}
+
+/**
+ * 工作区占用。files 和 linux 分开报，界面可以写成「文件 12 MB · Rootfs 1.8 GB」
+ * 而不是一个看不出构成的总数。
+ *
+ * [done] 为 false 时是扫描中的中间值；失败时 [error] 非空，但已扫到的数字仍保留。
+ */
+data class WorkspaceUsage(
+    val filesBytes: Long = 0,
+    val linuxBytes: Long = 0,
+    val scanned: Int = 0,
+    val done: Boolean = false,
+    val error: String? = null,
+) {
+    val totalBytes: Long get() = filesBytes + linuxBytes
 }

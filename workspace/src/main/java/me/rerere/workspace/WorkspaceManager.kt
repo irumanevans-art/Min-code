@@ -153,6 +153,12 @@ class WorkspaceManager(
         require(isFile) { "Path is not a file: $path" }
     }
 
+    fun mkdir(
+        root: String,
+        path: String,
+        area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
+    ): WorkspaceFileEntry = fileSystem.mkdir(areaDir(root, area), path)
+
     fun deleteFile(
         root: String,
         path: String,
@@ -161,8 +167,13 @@ class WorkspaceManager(
     ): Boolean =
         fileSystem.delete(areaDir(root, area), path, recursive)
 
-    fun moveFile(root: String, source: String, target: String, overwrite: Boolean = false): WorkspaceFileEntry =
-        fileSystem.move(filesDir(root), source, target, overwrite)
+    fun moveFile(
+        root: String,
+        source: String,
+        target: String,
+        overwrite: Boolean = false,
+        area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
+    ): WorkspaceFileEntry = fileSystem.move(areaDir(root, area), source, target, overwrite)
 
     fun glob(root: String, pattern: String, path: String = ""): List<WorkspaceFileEntry> =
         fileSystem.glob(filesDir(root), pattern, path)

@@ -2,6 +2,9 @@ package dev.min.code.di
 
 import dev.min.code.AppScope
 import dev.min.code.core.claudecode.ClaudeCodeConfigStore
+import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
+import dev.min.code.core.claudecode.ComposerDraftStore
+import dev.min.code.core.claudecode.ClaudeCodeCostLedger
 import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
@@ -38,8 +41,14 @@ val appModule = module {
     single { ClaudeCodeInstaller(get(), get()) }
     // Rootfs 里那几个配置文件的读写层：/mcp、/agents、/memory、/config、/permissions
     single { ClaudeCodeConfigStore(get(), get()) }
+    // 输入框草稿：按会话落盘，杀进程再进还在。必须是 single，VM 和注册表切会话都读同一份
+    single { ComposerDraftStore(get<android.content.Context>()) }
+    // 置顶 / 分类 / 人手改过的标题。CLI transcript 里没有这些
+    single { ClaudeCodeSessionMetaStore(get<android.content.Context>()) }
+    // 单日花费台账必须是 single：它要横跨所有会话累加，每个会话一份就退化成会话内计数
+    single { ClaudeCodeCostLedger(get()) }
     // 多会话：manager 是 factory，每个会话一个实例（各自一个 CLI 进程），由 registry 持有
-    factory { ClaudeCodeManager(get(), get(), get(), get()) }
+    factory { ClaudeCodeManager(get(), get(), get(), get(), get()) }
     single { ClaudeCodeSessionRegistry(factory = { get() }) }
 
     // 保活与后台通知。createdAtStart：它订阅的是注册表，注册表可能在页面之外先动起来

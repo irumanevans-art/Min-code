@@ -52,7 +52,25 @@ class ClaudeCodeControlRequestTest {
             subtypeOf(encodeClaudeCodeSetPermissionMode("r", ClaudeCodePermissionMode.PLAN)),
         )
         assertEquals("rename_session", subtypeOf(encodeClaudeCodeRenameSession("r", "标题")))
+        assertEquals(
+            "generate_session_title",
+            subtypeOf(encodeClaudeCodeGenerateSessionTitle("r", "首条用户消息")),
+        )
         assertEquals("set_max_thinking_tokens", subtypeOf(encodeClaudeCodeSetThinking("r", 1024, "summarized")))
+    }
+
+    /** 无头模式要主动调；persist 默认 true，好让 CLI 落盘 ai-title */
+    @Test
+    fun `generate_session_title carries description and persist`() {
+        val body = request(encodeClaudeCodeGenerateSessionTitle("r", "修复登录闪退", persist = true))
+            .get("request")!!.jsonObject
+        assertEquals("generate_session_title", body["subtype"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("修复登录闪退", body["description"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("true", body["persist"]?.jsonPrimitive?.contentOrNull)
+
+        val noPersist = request(encodeClaudeCodeGenerateSessionTitle("r", "x", persist = false))
+            .get("request")!!.jsonObject
+        assertEquals("false", noPersist["persist"]?.jsonPrimitive?.contentOrNull)
     }
 
     /** schema 注明：model 省略/null/"default" 都是重置为会话默认模型 */
@@ -117,5 +135,64 @@ class ClaudeCodeControlRequestTest {
         ).single() as ClaudeCodeEvent.ControlOk
         assertEquals("r10", event.requestId)
         assertTrue(event.payload.isEmpty())
+    }
+
+    // --- set_cwd -------------------------------------------------------------
+    // CLI 的 schema 是 {subtype:"set_cwd", path, trust_accepted?, trusted_directory?}。
+    // 这里曾经发的是 `cwd`，于是每次切目录都被回
+    // "set_cwd: invalid request — path must be a non-empty string"。
+
+    @Test
+    fun `set_cwd carries the target as path, not cwd`() {
+        val body = request(encodeClaudeCodeSetCwd("r", "/workspace/src"))["request"]!!.jsonObject
+        assertEquals("set_cwd", body["subtype"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("/workspace/src", body["path"]?.jsonPrimitive?.contentOrNull)
+        assertNull(body["cwd"])
+    }
+
+    @Test
+    fun `set_cwd omits the trust attestation unless it was actually granted`() {
+        val plain = request(encodeClaudeCodeSetCwd("r", "/workspace"))["request"]!!.jsonObject
+        assertNull(plain["trust_accepted"])
+        assertNull(plain["trusted_directory"])
+
+        // trust_accepted 为 true 时 CLI 要求 trusted_directory 必须逐字回传
+        val trusted = request(
+            encodeClaudeCodeSetCwd("r", "/workspace/p", trustAccepted = true, trustedDirectory = "/workspace/p")
+        )["request"]!!.jsonObject
+        assertEquals(true, trusted["trust_accepted"]?.jsonPrimitive?.contentOrNull?.toBoolean())
+        assertEquals("/workspace/p", trusted["trusted_directory"]?.jsonPrimitive?.contentOrNull)
+    }
+
+    @Test
+    fun `set_cwd result splits ok from the two failure arms`() {
+        val ok = parseClaudeCodeSetCwdResult(
+            json.parseToJsonElement(
+                """{"status":"ok","cwd":"/workspace/src","changed":true,"transcript_relocated":true}"""
+            ).jsonObject
+        )
+        assertEquals(ClaudeCodeSetCwdResult.Ok("/workspace/src", changed = true), ok)
+
+        // needs_trust 不是成功：目录没动，之前它被当成 Ok，界面显示切过去了其实没有
+        val trust = parseClaudeCodeSetCwdResult(
+            json.parseToJsonElement(
+                """{"status":"needs_trust","directory":"/workspace/p","trust_root":"/workspace"}"""
+            ).jsonObject
+        )
+        assertEquals(ClaudeCodeSetCwdResult.NeedsTrust("/workspace/p", "/workspace"), trust)
+
+        val rejected = parseClaudeCodeSetCwdResult(
+            json.parseToJsonElement(
+                """{"status":"rejected","reason":"not_found","message":"no such directory"}"""
+            ).jsonObject
+        )
+        assertEquals(ClaudeCodeSetCwdResult.Rejected("not_found", "no such directory"), rejected)
+    }
+
+    @Test
+    fun `an unrecognised set_cwd status is treated as a failure`() {
+        // 认不出来的形状不能假装成功：那正是"界面切了、CLI 没切"的来源
+        val result = parseClaudeCodeSetCwdResult(json.parseToJsonElement("""{}""").jsonObject)
+        assertTrue(result is ClaudeCodeSetCwdResult.Rejected)
     }
 }

@@ -2,6 +2,7 @@ package dev.min.code.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.ThemeMode
@@ -18,4 +19,5 @@ class SettingsVM(private val store: SettingsStore) : ViewModel() {
     fun setBaseUrl(url: String) = viewModelScope.launch { store.setBaseUrl(url) }
     fun setUseNpmMirror(enabled: Boolean) = viewModelScope.launch { store.setUseNpmMirror(enabled) }
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { store.setThemeMode(mode) }
+    fun setAppLanguage(language: AppLanguage) = viewModelScope.launch { store.setAppLanguage(language) }
 }

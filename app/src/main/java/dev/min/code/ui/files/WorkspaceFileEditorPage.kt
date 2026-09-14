@@ -1,5 +1,7 @@
 package dev.min.code.ui.files
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
@@ -7,14 +9,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -22,18 +19,22 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.min.code.ui.components.ToastType
-import kotlinx.coroutines.launch
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.ui.components.BackButton
+import dev.min.code.ui.components.InkLoading
+import dev.min.code.ui.components.InkTextArea
+import dev.min.code.ui.components.InkTextButton
+import dev.min.code.ui.components.InkTopBar
 import dev.min.code.ui.components.LocalToaster
-import dev.min.code.ui.theme.CustomColors
+import dev.min.code.ui.components.Notice
+import dev.min.code.ui.components.NoticeTone
+import dev.min.code.ui.components.ToastType
+import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
+import kotlinx.coroutines.launch
 import me.rerere.workspace.WorkspaceStorageArea
 import org.koin.compose.koinInject
 
@@ -41,6 +42,8 @@ import org.koin.compose.koinInject
  * 工作区文本文件编辑/预览页.
  *
  * FILES 区文件可编辑并保存; LINUX (rootfs) 区文件仅只读预览 (readOnly), 避免误改系统文件.
+ *
+ * 整页就是一张纸：没有输入框的边框，光标是金的，文件名在顶栏用等宽（它是机器产物，不是标题）。
  */
 @Composable
 fun WorkspaceFileEditorPage(
@@ -75,84 +78,85 @@ fun WorkspaceFileEditorPage(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = fileName,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
+            InkTopBar(
+                title = fileName,
+                titleMono = true,
                 navigationIcon = { BackButton() },
                 actions = {
                     if (editable && !loading && loadError == null) {
-                        TextButton(
+                        InkTextButton(
                             onClick = {
-                                if (saving) return@TextButton
-                                saving = true
-                                scope.launch {
-                                    runCatching {
-                                        repository.writeText(
-                                            id = id,
-                                            path = path,
-                                            text = textState.text.toString(),
-                                            overwrite = true,
-                                        )
-                                    }.onSuccess {
-                                        toaster.show("已保存", type = ToastType.Success)
-                                    }.onFailure {
-                                        toaster.show(it.message ?: "保存失败", type = ToastType.Error)
+                                if (!saving) {
+                                    saving = true
+                                    scope.launch {
+                                        runCatching {
+                                            repository.writeText(
+                                                id = id,
+                                                path = path,
+                                                text = textState.text.toString(),
+                                                overwrite = true,
+                                            )
+                                        }.onSuccess {
+                                            toaster.show("已保存", type = ToastType.Success)
+                                        }.onFailure {
+                                            toaster.show(it.message ?: "保存失败", type = ToastType.Error)
+                                        }
+                                        saving = false
                                     }
-                                    saving = false
                                 }
                             },
                             enabled = !saving,
                         ) {
-                            Text("Save")
+                            Text(if (saving) "保存中…" else "保存")
                         }
                     }
                 },
-                colors = CustomColors.topBarColors,
             )
         },
-        containerColor = CustomColors.topBarColors.containerColor,
+        containerColor = MaterialTheme.colorScheme.background,
     ) { innerPadding ->
-        when {
-            loading -> Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
+        val phase = when {
+            loading -> EditorPhase.Loading
+            loadError != null -> EditorPhase.Error
+            else -> EditorPhase.Content
+        }
+        // 读取 → 正文 / 出错：落墨进、飞白出，不是硬切
+        AnimatedContent(
+            targetState = phase,
+            transitionSpec = { InkMotion.enter togetherWith InkMotion.exit },
+            label = "editor",
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+        ) { current ->
+            when (current) {
+                EditorPhase.Loading -> InkLoading(status = "正在读取")
 
-            loadError != null -> Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(16.dp),
-            ) {
-                Text(
-                    text = loadError ?: "",
-                    color = MaterialTheme.colorScheme.error,
+                EditorPhase.Error -> Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                ) {
+                    Notice(text = loadError ?: "读取文件失败", tone = NoticeTone.Error)
+                }
+
+                EditorPhase.Content -> InkTextArea(
+                    state = textState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .imePadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    readOnly = !editable,
+                    lineLimits = TextFieldLineLimits.MultiLine(),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = JetbrainsMono,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                    ),
                 )
             }
-
-            else -> TextField(
-                state = textState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .imePadding(),
-                readOnly = !editable,
-                lineLimits = TextFieldLineLimits.MultiLine(),
-                textStyle = LocalTextStyle.current.copy(
-                    fontFamily = JetbrainsMono,
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                ),
-            )
         }
     }
 }
+
+private enum class EditorPhase { Loading, Error, Content }

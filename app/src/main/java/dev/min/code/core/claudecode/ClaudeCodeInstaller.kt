@@ -173,10 +173,19 @@ class ClaudeCodeInstaller(
         }
 
         try {
+            // 原生二进制是拷到 bin/claude.exe 再删掉平台包目录，不是硬链接。
+            // npm @latest 换了 wrapper 之后，旧拷贝可能还在（或只剩 stub / 遗留 cli.js），
+            // 不能只看「文件够大」——声明版本变了就必须重下，否则会话按新版本号跑旧 native。
+            val pkg = nativePackageName()
+            val versionBefore = readDeclaredNativeVersion(linuxDir, pkg)
             installCliPackage(workspaceId, useNpmMirror, onState)
-            // 升级后 wrapper 换了版本，二进制要跟着换；版本没变时 bin/claude.exe 上的硬链接还在，
-            // isNativeBinaryReady 为 true，这一步自然跳过
-            if (!isNativeBinaryReady(linuxDir)) {
+            val versionAfter = readDeclaredNativeVersion(linuxDir, pkg)
+            if (shouldRefreshNativeBinary(
+                    nativeExecutablePresent(linuxDir),
+                    versionBefore,
+                    versionAfter,
+                )
+            ) {
                 installNativeBinary(workspaceId, workspace.root, linuxDir, useNpmMirror, onState)
             }
             verifyCliRunnable(linuxDir)
@@ -355,7 +364,11 @@ class ClaudeCodeInstaller(
             id = workspaceId,
             command = (claudeEntry(linuxDir) ?: listOf(CLAUDE_BIN_GUEST)).joinToString(" ") + " --version",
             timeoutMillis = VERSION_TIMEOUT_MS,
-            env = nodeEnv(),
+            // 和会话启动（ClaudeCodeManager）保持一致：每次内置调用 claude 都带这两个变量
+            env = nodeEnv() + mapOf(
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1",
+                "CLAUDE_CODE_ATTRIBUTION_HEADER" to "0",
+            ),
         )
         Log.i(TAG, "claude --version: ${version.stdout.trim()} ${version.stderr.trim()}")
         return version.stdout.trim().takeIf { it.isNotBlank() }
@@ -863,6 +876,31 @@ class ClaudeCodeInstaller(
          * wrapper 自己的判断（cli-wrapper.cjs 的 detectMusl）在这个环境里也是同一个结论。
          */
         private fun nativePackageName(): String = "$CLI_PACKAGE-${nodeArch()}"
+
+        /**
+         * `bin/claude.exe` 是不是一份真正的原生二进制。不管遗留的 `cli.js`——
+         * 那只说明「还能用 JS 入口凑合跑」，不能说明平台包已经跟上 wrapper。
+         */
+        internal fun nativeExecutablePresent(linuxDir: File): Boolean {
+            val native = File(linuxDir, CLI_NATIVE_BIN)
+            return native.isFile && native.length() >= NATIVE_BIN_MIN_BYTES
+        }
+
+        /**
+         * 更新 CLI 之后要不要重下原生二进制。
+         *
+         * - 没有可执行的原生文件，且 wrapper 声明了平台包 → 下
+         * - 声明版本变了（拷贝不会跟着 npm 变）→ 下
+         * - 其余（已是同一版的完整拷贝，或仍是没有平台包的老布局）→ 不下
+         */
+        internal fun shouldRefreshNativeBinary(
+            executablePresent: Boolean,
+            declaredVersionBefore: String?,
+            declaredVersionAfter: String?,
+        ): Boolean {
+            if (!executablePresent) return declaredVersionAfter != null
+            return declaredVersionBefore != declaredVersionAfter
+        }
 
         /**
          * 候选下载地址，**官方在前**。镜像只在官方拿不到时兜底，且下到的内容一律用

@@ -1,7 +1,11 @@
 package dev.min.code.ui.richtext
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,21 +29,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.min.code.ui.theme.AtomOneDarkPalette
-import dev.min.code.ui.theme.AtomOneLightPalette
+import dev.min.code.ui.theme.InkCodeDark
+import dev.min.code.ui.theme.InkCodeLight
+import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.LocalDarkMode
-import dev.min.code.util.onClick
+import dev.min.code.ui.theme.sea
 import dev.min.code.util.writeClipboardText
 import kotlinx.coroutines.delay
 import me.rerere.highlight.CodeHighlightText
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
-import me.rerere.hugeicons.stroke.ArrowUp01
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Tick01
 
@@ -51,6 +57,9 @@ private const val COLLAPSE_LINES = 24
  *
  * 去掉了 RikkaHub 版里的 HTML/SVG 预览、Mermaid、下载——那些是聊天场景的东西，
  * 这里的代码块是工具输出（Read 的文件、Bash 的命令），要的是"看清楚、能复制"。
+ *
+ * 一张略深的纸条：hairline 描边、头部一条更深的带子。复制过了字色变深金（人刚做过的事），
+ * 展开 / 收起时整块洇开、收拢，箭头跟着转。
  */
 @Composable
 fun HighlightCodeBlock(
@@ -61,7 +70,7 @@ fun HighlightCodeBlock(
     style: TextStyle? = TextStyle(fontSize = 12.sp, lineHeight = 17.sp),
 ) {
     val dark = LocalDarkMode.current
-    val palette = if (dark) AtomOneDarkPalette else AtomOneLightPalette
+    val palette = if (dark) InkCodeDark else InkCodeLight
     val context = LocalContext.current
     val lines = remember(code) { code.lines() }
     var expanded by remember(code) { mutableStateOf(lines.size <= COLLAPSE_LINES) }
@@ -74,13 +83,20 @@ fun HighlightCodeBlock(
     }
     val shown = if (expanded) code else lines.take(COLLAPSE_LINES).joinToString("\n")
     val textStyle = style ?: TextStyle(fontSize = 12.sp, lineHeight = 17.sp)
+    val copyColor by animateColorAsState(
+        if (copied) MaterialTheme.sea.seaDeep else MaterialTheme.colorScheme.onSurfaceVariant,
+        InkMotion.effect(),
+        label = "copy",
+    )
+    val chevron by animateFloatAsState(if (expanded) 180f else 0f, InkMotion.spatial(), label = "chevron")
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .animateContentSize(InkMotion.spatial()),
     ) {
         Row(
             modifier = Modifier
@@ -99,7 +115,7 @@ fun HighlightCodeBlock(
             Row(
                 modifier = Modifier
                     .clip(MaterialTheme.shapes.small)
-                    .onClick {
+                    .clickable(role = Role.Button) {
                         context.writeClipboardText(code)
                         copied = true
                     }
@@ -111,12 +127,12 @@ fun HighlightCodeBlock(
                     imageVector = if (copied) HugeIcons.Tick01 else HugeIcons.Copy01,
                     contentDescription = "复制代码",
                     modifier = Modifier.size(13.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = copyColor,
                 )
                 Text(
                     text = if (copied) "已复制" else "复制",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = copyColor,
                 )
             }
         }
@@ -142,15 +158,17 @@ fun HighlightCodeBlock(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .onClick { expanded = !expanded }
+                    .clickable(role = Role.Button) { expanded = !expanded }
                     .padding(vertical = 6.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    imageVector = if (expanded) HugeIcons.ArrowUp01 else HugeIcons.ArrowDown01,
+                    imageVector = HugeIcons.ArrowDown01,
                     contentDescription = null,
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier
+                        .size(12.dp)
+                        .rotate(chevron),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.size(4.dp))

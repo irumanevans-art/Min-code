@@ -18,12 +18,19 @@ import com.termux.view.TerminalViewClient
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.ProotCompat
 import me.rerere.workspace.RootfsPatcher
+import me.rerere.workspace.WorkspaceManager
 import java.io.File
 
+/**
+ * @param cwd 开进哪个目录（guest 侧绝对路径，如 `/workspace/api`）。给会话开的终端用它落在
+ *   那个会话自己的工作目录里。**必须先验证存在**：proot 的 `-w` 指到一个不存在的目录时
+ *   shell 会莫名其妙地起在别处，不如当场退回 `/workspace`。
+ */
 internal fun createWorkspaceTerminalSession(
     context: Context,
     root: String,
     client: TerminalSessionClient,
+    cwd: String? = null,
 ): TerminalSession {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
@@ -34,6 +41,12 @@ internal fun createWorkspaceTerminalSession(
     val proot = File(nativeLibraryDir, "libproot_exec.so")
     val loader = File(nativeLibraryDir, "libproot_loader.so")
 
+    // guest `/workspace/x` 就是宿主 `files/x`（下面那条 bind mount），所以存在性直接在宿主侧问
+    val workDir = cwd
+        ?.takeIf { it == WorkspaceManager.ROOTFS_WORKSPACE_DIR || it.startsWith("${WorkspaceManager.ROOTFS_WORKSPACE_DIR}/") }
+        ?.takeIf { File(filesDir, it.removePrefix(WorkspaceManager.ROOTFS_WORKSPACE_DIR).trimStart('/')).isDirectory }
+        ?: WorkspaceManager.ROOTFS_WORKSPACE_DIR
+
     val args = mutableListOf(
         "--root-id",
         "--link2symlink",
@@ -41,11 +54,11 @@ internal fun createWorkspaceTerminalSession(
         "-r",
         linuxDir.absolutePath,
         "-w",
-        WORKSPACE_DIR,
+        workDir,
         "-b",
-        "${filesDir.absolutePath}:$WORKSPACE_DIR",
+        "${filesDir.absolutePath}:${WorkspaceManager.ROOTFS_WORKSPACE_DIR}",
     )
-    listOf("/dev", "/proc", "/sys").forEach { path ->
+    WorkspaceManager.KERNEL_FS_MOUNTS.forEach { path ->
         if (File(path).exists()) {
             args += "-b"
             args += path
@@ -314,7 +327,6 @@ internal class WorkspaceTerminalViewClient(
     }
 }
 
-private const val WORKSPACE_DIR = "/workspace"
 
 // 一个 URL 最多还原跨越的软换行行数(向上/向下各算), 足够覆盖任意真实 URL
 private const val URL_MAX_WRAP_ROWS = 50

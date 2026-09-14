@@ -18,3 +18,11 @@ local.properties
 /shot*.png
 /*.png
 /tmp_*
+/work
+**/__pycache__/
+*.py[cod]
+*.apk
+*.aab
+*.jks
+*.keystore
+.claude/

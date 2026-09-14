@@ -101,6 +101,24 @@ class ClaudeCodeEffortMappingTest {
         assertTrue(ReasoningLevel.MAX in levels)
     }
 
+    /**
+     * CLI 面板原话 "Effort not supported for Haiku"。中转站裸 id（claude-haiku-4-5）不在
+     * list_models 里，按 supportedEffortLevels 裁剪查不到，所以要先按家族判 ——
+     * 不然界面列一排 low…max，点了 CLI 静默忽略。
+     */
+    @Test
+    fun `haiku offers no effort ladder regardless of how it was named`() {
+        listOf("haiku", "haiku[1m]", "claude-haiku-4-5").forEach { id ->
+            assertEquals(id, listOf(ReasoningLevel.AUTO), effortLevelsFor(state(model = id)))
+            assertFalse(id, effortSupportedFor(state(model = id)))
+        }
+        // 用户选的是别名 `default`，CLI 回读实际跑的是 Haiku：以回读为准
+        val applied = state(model = null).copy(appliedModel = "claude-haiku-4-5")
+        assertEquals(listOf(ReasoningLevel.AUTO), effortLevelsFor(applied))
+        // 跟随默认且还没回读：当支持
+        assertTrue(effortSupportedFor(state()))
+    }
+
     /** 模型没报能力时不做裁剪，全给 */
     @Test
     fun `without model capability info all levels are offered`() {

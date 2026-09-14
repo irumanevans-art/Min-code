@@ -70,6 +70,14 @@ class WorkspaceFileSystem(
         return candidate
     }
 
+    fun mkdir(root: File, path: String): WorkspaceFileEntry {
+        require(path.isNotBlank() && path != ".") { "Refusing to create workspace root" }
+        val dir = resolvePath(root, path)
+        require(!dir.exists()) { "Already exists: $path" }
+        require(dir.mkdirs()) { "Failed to create directory: $path" }
+        return dir.toEntry(root)
+    }
+
     fun delete(root: File, path: String, recursive: Boolean = false): Boolean {
         require(path.isNotBlank() && path != ".") { "Refusing to delete workspace root" }
         val file = resolvePath(root, path)

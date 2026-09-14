@@ -1,29 +1,23 @@
 package dev.min.code.ui.session
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,17 +28,29 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.min.code.core.claudecode.ClaudeCodeConfigStore
+import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.claudecode.MCP_TYPE_HTTP
+import dev.min.code.core.claudecode.MCP_TYPE_SSE
+import dev.min.code.core.claudecode.MCP_TYPE_STDIO
+import dev.min.code.ui.components.InkButton
+import dev.min.code.ui.components.InkButtonTone
+import dev.min.code.ui.components.InkChip
+import dev.min.code.ui.components.InkDivider
+import dev.min.code.ui.components.InkIconButton
+import dev.min.code.ui.components.InkSheet
+import dev.min.code.ui.components.InkTextButton
+import dev.min.code.ui.components.InkTextField
+import dev.min.code.ui.components.SectionTitle
+import dev.min.code.ui.theme.InkMotion
+import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.sea
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.Delete02
-import dev.min.code.core.claudecode.ClaudeCodeConfigStore
-import dev.min.code.core.claudecode.MCP_TYPE_HTTP
-import dev.min.code.core.claudecode.MCP_TYPE_SSE
-import dev.min.code.core.claudecode.MCP_TYPE_STDIO
 
 /**
  * 交互式斜杠命令的原生面板。
@@ -58,7 +64,7 @@ import dev.min.code.core.claudecode.MCP_TYPE_STDIO
  * 所以面板上明说"下次开会话生效"，而不是让用户改完发现没反应。CLAUDE.md 是每轮读的，
  * 改完立刻生效。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun ClaudeCodeConfigSheet(
     command: LocalSlash,
@@ -66,7 +72,7 @@ internal fun ClaudeCodeConfigSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    InkSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -78,7 +84,8 @@ internal fun ClaudeCodeConfigSheet(
             when (command) {
                 LocalSlash.MCP -> McpSection(vm)
                 LocalSlash.AGENTS -> AgentsSection(vm)
-                LocalSlash.MEMORY -> MemorySection(vm)
+                // /init 是发给 CLI 的一条消息，发完就该回到会话看它干活，所以顺手关面板
+                LocalSlash.MEMORY -> MemorySection(vm, onRunInit = { vm.runInit(); onDismiss() })
                 LocalSlash.CONFIG -> ConfigSection(vm)
                 LocalSlash.HOOKS -> PermissionsSection(vm)
                 // 会话类命令走 ClaudeCodeSettingsSheet，不该走到这里
@@ -88,16 +95,62 @@ internal fun ClaudeCodeConfigSheet(
     }
 }
 
+/** 题跋 + 一行说明 */
 @Composable
 private fun SectionHeader(title: String, hint: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SectionTitle(title)
         Text(
             hint,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * 列表 ↔ 编辑器之间的切换：落墨进、飞白出。
+ *
+ * 编辑器退场那几百毫秒里 `editing` 已经是 null 了，它还得把最后一份草稿画完，
+ * 所以这里记住最后一份非空值；它是普通对象不是 state，不会引起额外重组。
+ */
+@Composable
+private fun <T : Any> rememberLastDraft(value: T?): T? {
+    val holder = remember { arrayOfNulls<Any>(1) }
+    if (value != null) holder[0] = value
+    @Suppress("UNCHECKED_CAST")
+    return value ?: (holder[0] as T?)
+}
+
+/** 列表页与编辑页之间的切换动画壳 */
+@Composable
+private fun EditorSwitch(
+    editing: Boolean,
+    editor: @Composable () -> Unit,
+    list: @Composable () -> Unit,
+) {
+    AnimatedContent(
+        targetState = editing,
+        transitionSpec = { InkMotion.enter togetherWith InkMotion.exit },
+        label = "editorSwitch",
+    ) { isEditing ->
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (isEditing) editor() else list()
+        }
+    }
+}
+
+/** 一行 删除 图标：删除是判定，朱砂色 */
+@Composable
+private fun DeleteButton(onClick: () -> Unit) {
+    InkIconButton(
+        icon = HugeIcons.Delete02,
+        contentDescription = "删除",
+        onClick = onClick,
+        tint = MaterialTheme.sea.vermilion,
+        size = 36.dp,
+        iconSize = 16.dp,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -113,73 +166,77 @@ private fun McpSection(vm: ClaudeCodeVM) {
 
     LaunchedEffect(Unit) { servers = vm.loadMcpServers() }
 
-    val draft = editing
-    if (draft != null) {
-        McpEditor(
-            server = draft,
-            onChange = { editing = it },
-            onCancel = { editing = null },
-            onSave = {
-                scope.launch {
-                    vm.saveMcpServer(draft, editingOriginalName)
-                    servers = vm.loadMcpServers()
-                    editing = null
-                }
-            },
-        )
-        return
-    }
-
-    SectionHeader("MCP 服务器", "写入 Rootfs 的 /root/.claude.json，下次开会话生效")
-    if (servers.isEmpty()) {
-        Text(
-            "还没有配置任何 MCP 服务器",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    servers.forEach { server ->
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    editingOriginalName = server.name
-                    editing = server
-                }
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(server.name, style = MaterialTheme.typography.bodyMedium)
+    val draft = rememberLastDraft(editing)
+    EditorSwitch(
+        editing = editing != null,
+        editor = {
+            val server = draft ?: return@EditorSwitch
+            McpEditor(
+                server = server,
+                onChange = { editing = it },
+                onCancel = { editing = null },
+                onSave = {
+                    scope.launch {
+                        vm.saveMcpServer(server, editingOriginalName)
+                        servers = vm.loadMcpServers()
+                        editing = null
+                    }
+                },
+            )
+        },
+        list = {
+            SectionHeader("MCP 服务器", "写入 Rootfs 的 /root/.claude.json，下次开会话生效")
+            if (servers.isEmpty()) {
                 Text(
-                    "${server.type} · ${server.summary}",
-                    style = MaterialTheme.typography.labelSmall,
+                    "还没有配置任何 MCP 服务器",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            IconButton(onClick = {
-                scope.launch {
-                    vm.deleteMcpServer(server.name)
-                    servers = vm.loadMcpServers()
+            servers.forEach { server ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            editingOriginalName = server.name
+                            editing = server
+                        }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(server.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "${server.type} · ${server.summary}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = JetbrainsMono,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    DeleteButton(
+                        onClick = {
+                            scope.launch {
+                                vm.deleteMcpServer(server.name)
+                                servers = vm.loadMcpServers()
+                            }
+                        },
+                    )
                 }
-            }) {
-                Icon(HugeIcons.Delete02, "删除", Modifier.size(16.dp))
+                InkDivider()
             }
-        }
-        HorizontalDivider()
-    }
-    OutlinedButton(
-        onClick = {
-            editingOriginalName = null
-            editing = ClaudeCodeConfigStore.McpServer(name = "")
+            InkButton(
+                onClick = {
+                    editingOriginalName = null
+                    editing = ClaudeCodeConfigStore.McpServer(name = "")
+                },
+                tone = InkButtonTone.Paper,
+                icon = HugeIcons.Add01,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("新增服务器") }
         },
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Icon(HugeIcons.Add01, null, Modifier.size(15.dp))
-        Text("新增服务器", Modifier.padding(start = 8.dp))
-    }
+    )
 }
 
 @Composable
@@ -190,65 +247,73 @@ private fun McpEditor(
     onSave: () -> Unit,
 ) {
     SectionHeader("编辑 MCP 服务器", "stdio 在 Rootfs 里起进程；http/sse 连远端地址")
-    OutlinedTextField(
+    InkTextField(
         value = server.name,
         onValueChange = { onChange(server.copy(name = it)) },
-        label = { Text("名称") },
+        label = "名称",
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(MCP_TYPE_STDIO, MCP_TYPE_HTTP, MCP_TYPE_SSE).forEach { type ->
-            FilterChip(
+            InkChip(
+                label = type,
                 selected = server.type == type,
                 onClick = { onChange(server.copy(type = type)) },
-                label = { Text(type) },
+                monospace = true,
             )
         }
     }
     if (server.type == MCP_TYPE_STDIO) {
-        OutlinedTextField(
+        InkTextField(
             value = server.command,
             onValueChange = { onChange(server.copy(command = it)) },
-            label = { Text("命令") },
-            placeholder = { Text("npx") },
+            label = "命令",
+            placeholder = "npx",
             singleLine = true,
+            monospace = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
+        InkTextField(
             // 参数按空格拆。带空格的单个参数确实表达不了，但 MCP 服务器的命令行
             // 几乎都是 `-y @scope/pkg` 这种形状；真需要引号的场景让用户去改 .claude.json
             value = server.args.joinToString(" "),
             onValueChange = { onChange(server.copy(args = it.split(' ').filter(String::isNotBlank))) },
-            label = { Text("参数（空格分隔）") },
-            placeholder = { Text("-y @modelcontextprotocol/server-filesystem /workspace") },
+            label = "参数（空格分隔）",
+            placeholder = "-y @modelcontextprotocol/server-filesystem /workspace",
+            monospace = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
+        InkTextField(
             value = server.env.entries.joinToString("\n") { "${it.key}=${it.value}" },
             onValueChange = { onChange(server.copy(env = parseKeyValueLines(it))) },
-            label = { Text("环境变量（每行 KEY=VALUE）") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
-        )
-    } else {
-        OutlinedTextField(
-            value = server.url,
-            onValueChange = { onChange(server.copy(url = it)) },
-            label = { Text("地址") },
-            placeholder = { Text("https://example.com/mcp") },
-            singleLine = true,
+            label = "环境变量（每行 KEY=VALUE）",
+            monospace = true,
+            minHeight = 80.dp,
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
+    } else {
+        InkTextField(
+            value = server.url,
+            onValueChange = { onChange(server.copy(url = it)) },
+            label = "地址",
+            placeholder = "https://example.com/mcp",
+            singleLine = true,
+            monospace = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        InkTextField(
             value = server.headers.entries.joinToString("\n") { "${it.key}=${it.value}" },
             onValueChange = { onChange(server.copy(headers = parseKeyValueLines(it))) },
-            label = { Text("请求头（每行 KEY=VALUE）") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
+            label = "请求头（每行 KEY=VALUE）",
+            monospace = true,
+            minHeight = 80.dp,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
-        Button(
+        InkTextButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
+        InkButton(
             onClick = onSave,
             enabled = server.name.isNotBlank() &&
                 (if (server.isRemote) server.url.isNotBlank() else server.command.isNotBlank()),
@@ -269,122 +334,143 @@ private fun AgentsSection(vm: ClaudeCodeVM) {
 
     LaunchedEffect(Unit) { agents = vm.listAgents() }
 
-    val draft = editing
-    if (draft != null) {
-        SectionHeader("编辑子 agent", "写入 .claude/agents/*.md，下次开会话生效")
-        OutlinedTextField(
-            value = draft.name,
-            onValueChange = { editing = draft.copy(name = it) },
-            label = { Text("名称") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = draft.description,
-            onValueChange = { editing = draft.copy(description = it) },
-            label = { Text("何时使用（description）") },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = draft.tools,
-            onValueChange = { editing = draft.copy(tools = it) },
-            label = { Text("可用工具（逗号分隔，留空=全部）") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = draft.model,
-            onValueChange = { editing = draft.copy(model = it) },
-            label = { Text("模型（留空=继承）") },
-            placeholder = { Text("sonnet / opus / haiku") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = draft.userScope,
-                onClick = { editing = draft.copy(userScope = true) },
-                label = { Text("用户级") },
-            )
-            FilterChip(
-                selected = !draft.userScope,
-                onClick = { editing = draft.copy(userScope = false) },
-                label = { Text("项目级") },
-            )
-        }
-        OutlinedTextField(
-            value = draft.body,
-            onValueChange = { editing = draft.copy(body = it) },
-            label = { Text("系统提示词") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp),
-        )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { editing = null }, modifier = Modifier.weight(1f)) { Text("取消") }
-            Button(
-                onClick = {
+    val draft = rememberLastDraft(editing)
+    EditorSwitch(
+        editing = editing != null,
+        editor = {
+            val agent = draft ?: return@EditorSwitch
+            AgentEditor(
+                draft = agent,
+                onChange = { editing = it },
+                onCancel = { editing = null },
+                onSave = {
                     scope.launch {
-                        vm.saveAgent(draft)
+                        vm.saveAgent(agent)
                         agents = vm.listAgents()
                         editing = null
                     }
                 },
-                enabled = draft.name.isNotBlank(),
-                modifier = Modifier.weight(1f),
-            ) { Text("保存") }
-        }
-        return
-    }
-
-    SectionHeader("子 agent", "用户级写进 Rootfs 的 ~/.claude/agents，项目级写进 /workspace/.claude/agents")
-    if (agents.isEmpty()) {
-        Text(
-            "还没有自定义子 agent",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-        agents.forEach { agent ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { editing = agent }
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "${agent.name}${if (agent.userScope) "" else " · 项目"}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        agent.description.ifBlank { agent.fileName },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                IconButton(onClick = {
-                    scope.launch {
-                        vm.deleteAgent(agent)
-                        agents = vm.listAgents()
+            )
+        },
+        list = {
+            SectionHeader("子 agent", "用户级写进 Rootfs 的 ~/.claude/agents，项目级写进 /workspace/.claude/agents")
+            if (agents.isEmpty()) {
+                Text(
+                    "还没有自定义子 agent",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                agents.forEach { agent ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { editing = agent }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "${agent.name}${if (agent.userScope) "" else " · 项目"}",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                agent.description.ifBlank { agent.fileName },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        DeleteButton(
+                            onClick = {
+                                scope.launch {
+                                    vm.deleteAgent(agent)
+                                    agents = vm.listAgents()
+                                }
+                            },
+                        )
                     }
-                }) {
-                    Icon(HugeIcons.Delete02, "删除", Modifier.size(16.dp))
+                    InkDivider()
                 }
             }
-            HorizontalDivider()
-        }
-    }
-    OutlinedButton(
-        onClick = {
-            editing = ClaudeCodeConfigStore.AgentDefinition(fileName = "", name = "")
+            InkButton(
+                onClick = {
+                    editing = ClaudeCodeConfigStore.AgentDefinition(fileName = "", name = "")
+                },
+                tone = InkButtonTone.Paper,
+                icon = HugeIcons.Add01,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("新增子 agent") }
         },
+    )
+}
+
+@Composable
+private fun AgentEditor(
+    draft: ClaudeCodeConfigStore.AgentDefinition,
+    onChange: (ClaudeCodeConfigStore.AgentDefinition) -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit,
+) {
+    SectionHeader("编辑子 agent", "写入 .claude/agents/*.md，下次开会话生效")
+    InkTextField(
+        value = draft.name,
+        onValueChange = { onChange(draft.copy(name = it)) },
+        label = "名称",
+        singleLine = true,
         modifier = Modifier.fillMaxWidth(),
-    ) {
-        Icon(HugeIcons.Add01, null, Modifier.size(15.dp))
-        Text("新增子 agent", Modifier.padding(start = 8.dp))
+    )
+    InkTextField(
+        value = draft.description,
+        onValueChange = { onChange(draft.copy(description = it)) },
+        label = "何时使用（description）",
+        modifier = Modifier.fillMaxWidth(),
+    )
+    InkTextField(
+        value = draft.tools,
+        onValueChange = { onChange(draft.copy(tools = it)) },
+        label = "可用工具（逗号分隔，留空=全部）",
+        singleLine = true,
+        monospace = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    InkTextField(
+        value = draft.model,
+        onValueChange = { onChange(draft.copy(model = it)) },
+        label = "模型（留空=继承）",
+        placeholder = "sonnet / opus / haiku",
+        singleLine = true,
+        monospace = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        InkChip(
+            label = "用户级",
+            selected = draft.userScope,
+            onClick = { onChange(draft.copy(userScope = true)) },
+        )
+        InkChip(
+            label = "项目级",
+            selected = !draft.userScope,
+            onClick = { onChange(draft.copy(userScope = false)) },
+        )
+    }
+    InkTextField(
+        value = draft.body,
+        onValueChange = { onChange(draft.copy(body = it)) },
+        label = "系统提示词",
+        minHeight = 160.dp,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        InkTextButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
+        InkButton(
+            onClick = onSave,
+            enabled = draft.name.isNotBlank(),
+            modifier = Modifier.weight(1f),
+        ) { Text("保存") }
     }
 }
 
@@ -393,33 +479,59 @@ private fun AgentsSection(vm: ClaudeCodeVM) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun MemorySection(vm: ClaudeCodeVM) {
+private fun MemorySection(vm: ClaudeCodeVM, onRunInit: () -> Unit) {
     val scope = rememberCoroutineScope()
     var userScope by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(false) }
+    var hasProject by remember { mutableStateOf(true) }
 
     LaunchedEffect(userScope) {
         text = vm.loadMemory(userScope)
         saved = false
     }
+    LaunchedEffect(Unit) { hasProject = vm.hasProjectMemory() }
 
     SectionHeader(
         "记忆（CLAUDE.md）",
         // 这一条和其它几个不同：CLAUDE.md 是每轮都读的，改完立刻生效
         "项目级 = /workspace/CLAUDE.md，用户级 = ~/.claude/CLAUDE.md。保存后下一轮对话即生效。",
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = !userScope, onClick = { userScope = false }, label = { Text("项目") })
-        FilterChip(selected = userScope, onClick = { userScope = true }, label = { Text("用户") })
+    // 官方对 CLAUDE.md 的定位就是"上下文"：每轮都读，所以写在这里的东西不用每条消息重复。
+    // 最佳实践（best-practices / memory 文档）浓缩成一行，比链接管用
+    Text(
+        "这就是 Claude Code 的「上下文」：每轮对话都会读。写常用命令、代码规范、测试方式、踩过的坑；" +
+            "代码里能看出来的不写。200 行以内，太长它反而不照做。",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    // 空项目最省事的起点是让 CLI 自己扫一遍（/init 是 prompt 型命令，无头模式照样能跑）。
+    // 已经有了就降成文字按钮 —— /init 对已有文件会提改进建议，而不是覆盖
+    if (!hasProject && !userScope) {
+        InkButton(onClick = onRunInit, modifier = Modifier.fillMaxWidth()) {
+            Text("让 Claude 扫描项目生成 CLAUDE.md（/init）")
+        }
+    } else if (!userScope) {
+        InkTextButton(onClick = onRunInit, modifier = Modifier.fillMaxWidth()) {
+            Text("用 /init 检查并补全这份 CLAUDE.md")
+        }
     }
-    OutlinedTextField(
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        InkChip(label = "项目", selected = !userScope, onClick = { userScope = false })
+        InkChip(label = "用户", selected = userScope, onClick = { userScope = true })
+    }
+    InkTextField(
         value = text,
         onValueChange = { text = it; saved = false },
-        modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp, max = 360.dp),
-        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+        modifier = Modifier.fillMaxWidth(),
+        // 8 行起、16 行封顶：再多就在框内滚，别把整张 sheet 撑成一条长卷
+        minLines = 8,
+        maxLines = 16,
+        minHeight = 200.dp,
+        monospace = true,
+        textStyle = MaterialTheme.typography.bodySmall,
     )
-    Button(
+    InkButton(
         onClick = {
             scope.launch {
                 vm.saveMemory(userScope, text)
@@ -439,6 +551,8 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
     val scope = rememberCoroutineScope()
     var outputStyle by remember { mutableStateOf("") }
     var statusLine by remember { mutableStateOf("") }
+    // null = 不设上限（删掉 maxEffortLevel）；非空必须是 low…max
+    var maxEffortLevel by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
 
@@ -446,37 +560,78 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
         val settings = vm.loadSettings()
         outputStyle = settings["outputStyle"].orEmpty()
         statusLine = settings["statusLine"].orEmpty()
+        maxEffortLevel = settings["maxEffortLevel"]
+            ?.takeIf { it in ClaudeCodeManager.EFFORT_LEVELS }
         loaded = true
     }
 
     SectionHeader("CLI 配置", "写入 Rootfs 的 ~/.claude/settings.json，下次开会话生效")
-    OutlinedTextField(
+    InkTextField(
         value = outputStyle,
         onValueChange = { outputStyle = it; saved = false },
-        label = { Text("输出风格 outputStyle") },
-        placeholder = { Text("default / Explanatory / Learning") },
+        label = "输出风格 outputStyle",
+        placeholder = "default / Explanatory / Learning",
         singleLine = true,
+        monospace = true,
         enabled = loaded,
         modifier = Modifier.fillMaxWidth(),
     )
-    OutlinedTextField(
+    InkTextField(
         value = statusLine,
         onValueChange = { statusLine = it; saved = false },
-        label = { Text("状态行命令 statusLine") },
-        placeholder = { Text("留空表示不启用") },
+        label = "状态行命令 statusLine",
+        placeholder = "留空表示不启用",
         singleLine = true,
+        monospace = true,
         enabled = loaded,
         modifier = Modifier.fillMaxWidth(),
     )
     Text(
-        "模型、思考强度、权限模式这三项不在这里改 —— 它们能在运行中热切，走底栏的会话设置。",
+        "思考强度上限 maxEffortLevel（CLI 2.1.267+）",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    Text(
+        "把所有会话的 effort 钳到这一档及以下（含中转 / Bedrock / Vertex）。" +
+            "单次会话里仍可选更低；改完要新开或重启会话才生效。",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    Button(
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        InkChip(
+            label = "不限",
+            selected = maxEffortLevel == null,
+            onClick = { maxEffortLevel = null; saved = false },
+            enabled = loaded,
+        )
+        ClaudeCodeManager.EFFORT_LEVELS.forEach { level ->
+            InkChip(
+                label = level,
+                selected = maxEffortLevel == level,
+                onClick = { maxEffortLevel = level; saved = false },
+                enabled = loaded,
+            )
+        }
+    }
+    Text(
+        "模型、本轮思考强度、权限模式不在这里改 —— 它们能在运行中热切，走底栏的会话设置。" +
+            "在那里选模型并勾上「存成默认」，写进来的就是这个文件的 model 键（和 CLI 的 /model 按 Enter 一样）。",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    InkButton(
         onClick = {
             scope.launch {
-                vm.saveSimpleSettings(outputStyle = outputStyle, statusLine = statusLine)
+                vm.saveSimpleSettings(
+                    outputStyle = outputStyle,
+                    statusLine = statusLine,
+                    maxEffortLevel = maxEffortLevel.orEmpty(),
+                )
                 saved = true
             }
         },
@@ -504,10 +659,10 @@ private fun PermissionsSection(vm: ClaudeCodeVM) {
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf("allow" to "允许", "ask" to "询问", "deny" to "拒绝").forEach { (key, label) ->
-            FilterChip(
+            InkChip(
+                label = label,
                 selected = bucket == key,
                 onClick = { bucket = key },
-                label = { Text(label) },
             )
         }
     }
@@ -516,31 +671,36 @@ private fun PermissionsSection(vm: ClaudeCodeVM) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     rule,
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetbrainsMono),
                     modifier = Modifier.weight(1f),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                IconButton(onClick = {
-                    val next = rules - rule
-                    rules = next
-                    scope.launch { vm.savePermissionRules(bucket, next) }
-                }) {
-                    Icon(HugeIcons.Delete02, "删除", Modifier.size(15.dp))
-                }
+                DeleteButton(
+                    onClick = {
+                        val next = rules - rule
+                        rules = next
+                        scope.launch { vm.savePermissionRules(bucket, next) }
+                    },
+                )
             }
         }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        InkTextField(
             value = draft,
             onValueChange = { draft = it },
-            label = { Text("新增规则") },
+            label = "新增规则",
             singleLine = true,
+            monospace = true,
             modifier = Modifier.weight(1f),
         )
-        Box(Modifier.padding(top = 8.dp)) {
-            Button(
+        Box {
+            InkButton(
                 onClick = {
                     val next = rules + draft.trim()
                     rules = next

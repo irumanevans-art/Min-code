@@ -31,12 +31,15 @@ class ClaudeCodeSessionPrefs(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences("claudecode.sessions", Context.MODE_PRIVATE)
 
-    /** 记下某个会话用的配置，同时更新「最近一次」——新建会话时拿它当默认值 */
-    fun save(sessionId: String, options: ClaudeCodeManager.SessionOptions) {
+    /**
+     * 记下某个会话用的配置。[alsoAsLast] 为 true 时同时更新「最近一次」——新建会话时拿它当默认值；
+     * false 对应 CLI `/model` 面板里的 `s`（仅本会话）：这一会话记住了，别的会话不跟着变。
+     */
+    fun save(sessionId: String, options: ClaudeCodeManager.SessionOptions, alsoAsLast: Boolean = true) {
         val encoded = encodeSessionOptions(options)
         prefs.edit {
             writeAll(key(sessionId), encoded)
-            writeAll(LAST_PREFIX, encoded)
+            if (alsoAsLast) writeAll(LAST_PREFIX, encoded)
         }
     }
 
@@ -100,9 +103,12 @@ internal const val KEY_EFFORT = "effort"
 internal const val KEY_ULTRACODE = "ultracode"
 internal const val KEY_SKIP_PERMISSIONS = "skipPermissions"
 internal const val KEY_CACHE_TTL = "promptCacheTtl"
+internal const val KEY_PERMISSION_MODE = "permissionMode"
+internal const val KEY_CWD = "cwd"
 
 internal val SESSION_OPTION_KEYS = listOf(
     KEY_PRESENT, KEY_MODEL, KEY_EFFORT, KEY_ULTRACODE, KEY_SKIP_PERMISSIONS, KEY_CACHE_TTL,
+    KEY_PERMISSION_MODE, KEY_CWD,
 )
 
 /**
@@ -122,6 +128,9 @@ internal fun encodeSessionOptions(options: ClaudeCodeManager.SessionOptions): Ma
         put(KEY_ULTRACODE, options.ultracode.toString())
         put(KEY_SKIP_PERMISSIONS, options.skipPermissions.toString())
         put(KEY_CACHE_TTL, options.promptCacheTtl)
+        put(KEY_PERMISSION_MODE, options.permissionMode.wire)
+        val cwd = CwdPath.normalize(options.cwd)
+        if (cwd != ClaudeCodeManager.DEFAULT_CWD) put(KEY_CWD, cwd)
     }
 
 /**
@@ -137,4 +146,7 @@ internal fun decodeSessionOptions(values: Map<String, String>): ClaudeCodeManage
         promptCacheTtl = values[KEY_CACHE_TTL]
             ?.takeIf { it in ClaudeCodeManager.PROMPT_CACHE_TTLS }
             ?: ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL,
+        permissionMode = ClaudeCodePermissionMode.fromWire(values[KEY_PERMISSION_MODE])
+            ?: ClaudeCodePermissionMode.DEFAULT,
+        cwd = CwdPath.normalize(values[KEY_CWD].orEmpty()),
     )

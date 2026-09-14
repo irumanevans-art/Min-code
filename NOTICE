@@ -18,7 +18,17 @@ Third-party code and assets
 * JetBrains markdown (https://github.com/JetBrains/markdown), Apache-2.0 (rikkahub fork)
 * HugeIcons (https://hugeicons.com) stroke set via com.github.rikkahub:hugeicons-compose
 * JetBrains Mono font, SIL Open Font License 1.1
+  - `app/src/main/res/font/jetbrains_mono.ttf`
+* LXGW WenKai GB font (https://github.com/lxgw/LxgwWenkaiGB), SIL Open Font License 1.1
+  - `app/src/main/res/font/lxgw_wenkai_gb.ttf`, unmodified Regular weight (v1.522). Derived from
+    Fontworks' Klee One.
+* Playfair Display (https://github.com/clauseggers/Playfair-Display), SIL Open Font License 1.1
+  - `app/src/main/res/font/playfair_display_italic.ttf` (Italic; in-app hero wordmark)
+* Cormorant Garamond (https://github.com/CatharsisFonts/Cormorant), SIL Open Font License 1.1
+  - `tools/fonts/CormorantGaramond-Italic.ttf` (build-time only: launcher icon glyph paths via
+    `tools/build_sea_assets.py`; not shipped inside the APK as a font resource)
 * Ubuntu base images are downloaded at runtime from cdimage.ubuntu.com (or a mirror);
   Node.js from nodejs.org; @anthropic-ai/claude-code from registry.npmjs.org.
 
-Claude Code is a product of Anthropic, PBC. This project is not affiliated with Anthropic.
+Claude Code is a product of Anthropic, PBC. This project is not affiliated with, endorsed by,
+or sponsored by Anthropic.

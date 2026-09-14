@@ -109,4 +109,31 @@ class ClaudeCodeSessionPrefsTest {
         )
         assertTrue(decoded.ultracode)
     }
+
+    @Test
+    fun `permission mode round trips`() {
+        val encoded = encodeSessionOptions(
+            ClaudeCodeManager.SessionOptions(permissionMode = ClaudeCodePermissionMode.PLAN)
+        )
+        assertEquals("plan", encoded[KEY_PERMISSION_MODE])
+        assertEquals(
+            ClaudeCodePermissionMode.PLAN,
+            decodeSessionOptions(encoded).permissionMode,
+        )
+    }
+
+    @Test
+    fun `a custom cwd survives`() {
+        val decoded = decodeSessionOptions(
+            encodeSessionOptions(opusOneM.copy(cwd = "/workspace/project"))
+        )
+        assertEquals("/workspace/project", decoded.cwd)
+    }
+
+    @Test
+    fun `the default cwd is encoded as an absent key`() {
+        val encoded = encodeSessionOptions(opusOneM.copy(cwd = ClaudeCodeManager.DEFAULT_CWD))
+        assertFalse(encoded.containsKey(KEY_CWD))
+        assertEquals(ClaudeCodeManager.DEFAULT_CWD, decodeSessionOptions(encoded).cwd)
+    }
 }

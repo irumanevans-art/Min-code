@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.getAndUpdate
@@ -12,8 +14,11 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import dev.min.code.core.claudecode.CwdPath
+import dev.min.code.core.rootfs.RootfsSources
 import dev.min.code.core.rootfs.WorkspaceEntity
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.rootfs.WorkspaceUsage
 import dev.min.code.ui.terminal.WorkspaceTerminalSessionManager
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstallStage
@@ -38,6 +43,9 @@ class WorkspaceDetailVM(
     private val _installError = MutableStateFlow<String?>(null)
     val installError = _installError.asStateFlow()
 
+    /** 正在跑的那次搜索。每次输入都取消上一次，见 [search] */
+    private var searchJob: Job? = null
+
     init {
         loadWorkspace()
         refresh()
@@ -45,21 +53,14 @@ class WorkspaceDetailVM(
     }
 
     /**
-     * 整个工作区目录的大小。rootfs 动辄几 GB、几十万个文件，walk 一遍要几秒，
-     * 放后台线程，算完再显示；期间界面写"计算中"。
+     * 量占用。rootfs 动辄几 GB、几十万个文件，必须边扫边报：
+     * 以前 `Files.walk` 一次算完，失败就永远停在「计算中」，成功也要等好几秒才出数字。
      */
-    private fun measureUsage() {
-        viewModelScope.launch(Dispatchers.IO) {
-            // Files.walk 默认不跟随符号链接：rootfs 里 /bin -> usr/bin 这类链接不会被重复计数，
-            // 也不会在自指的链接上转圈（Kotlin 的 File.walk 会）
-            val bytes = runCatching {
-                java.nio.file.Files.walk(repository.workspaceDir().toPath()).use { stream ->
-                    stream.filter { java.nio.file.Files.isRegularFile(it, java.nio.file.LinkOption.NOFOLLOW_LINKS) }
-                        .mapToLong { runCatching { java.nio.file.Files.size(it) }.getOrDefault(0L) }
-                        .sum()
-                }
-            }.getOrNull()
-            _state.update { it.copy(usageBytes = bytes) }
+    fun measureUsage() {
+        viewModelScope.launch {
+            repository.measureUsage { usage ->
+                _state.update { it.copy(usage = usage) }
+            }
         }
     }
 
@@ -70,31 +71,98 @@ class WorkspaceDetailVM(
                 path = "",
                 entries = emptyList(),
                 error = null,
+                // 换区域等于换了一棵树，旧的搜索结果没有意义
+                query = "",
+                searching = false,
+                results = emptyList(),
             )
         }
         refresh()
     }
 
+    /**
+     * 按文件名搜当前目录往下的整棵子树。空串 = 退出搜索，回到平时的目录浏览。
+     *
+     * 每次输入都取消上一次：手机上打字快，不取消的话十几个协程一起扫同一棵树，
+     * 先回来的旧结果还会盖掉新结果。
+     */
+    fun search(query: String) {
+        val trimmed = query.trim()
+        _state.update { it.copy(query = query) }
+        searchJob?.cancel()
+        if (trimmed.isEmpty()) {
+            _state.update { it.copy(searching = false, results = emptyList()) }
+            return
+        }
+        searchJob = viewModelScope.launch {
+            // 输入停顿一下再扫：逐字扫一棵大树纯属浪费
+            delay(SEARCH_DEBOUNCE_MS)
+            _state.update { it.copy(searching = true) }
+            runCatching {
+                repository.searchFiles(
+                    id = id,
+                    area = state.value.area,
+                    path = state.value.path,
+                    query = trimmed,
+                )
+            }.onSuccess { found ->
+                _state.update { it.copy(results = found, searching = false) }
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                _state.update {
+                    it.copy(results = emptyList(), searching = false, error = error.message ?: "搜索失败")
+                }
+            }
+        }
+    }
+
+    /** 退出搜索，回到目录浏览 */
+    fun clearSearch() {
+        searchJob?.cancel()
+        _state.update { it.copy(query = "", searching = false, results = emptyList()) }
+    }
+
     fun open(entry: WorkspaceFileEntry) {
         if (!entry.isDirectory) return
-        _state.update { it.copy(path = entry.path, entries = emptyList(), error = null) }
+        // 从搜索结果里点进文件夹：搜索到此结束，接着按目录浏览
+        searchJob?.cancel()
+        _state.update {
+            it.copy(
+                path = entry.path,
+                entries = emptyList(),
+                error = null,
+                query = "",
+                searching = false,
+                results = emptyList(),
+            )
+        }
         refresh()
     }
 
     fun goUp() {
         val path = state.value.path
         if (path.isBlank()) return
+        searchJob?.cancel()
         _state.update {
             it.copy(
                 path = path.substringBeforeLast('/', missingDelimiterValue = ""),
                 entries = emptyList(),
                 error = null,
+                query = "",
+                searching = false,
+                results = emptyList(),
             )
         }
         refresh()
     }
 
     fun refresh() {
+        // 搜索态下刷新的是命中列表：删掉一个搜出来的文件之后，
+        // 重列当前目录不会让它从结果里消失
+        if (state.value.inSearch) {
+            search(state.value.query)
+            return
+        }
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             runCatching {
@@ -132,6 +200,71 @@ class WorkspaceDetailVM(
                 _state.update { it.copy(error = error.message ?: "删除失败") }
             }
         }
+    }
+
+    fun mkdir(name: String) {
+        val folder = CwdPath.folderName(name) ?: run {
+            _state.update { it.copy(error = "名称不合法") }
+            return
+        }
+        val parent = state.value.path
+        val path = if (parent.isBlank()) folder else "$parent/$folder"
+        viewModelScope.launch {
+            runCatching {
+                repository.mkdir(id, state.value.area, path)
+            }.onSuccess {
+                refresh()
+            }.onFailure { error ->
+                _state.update { it.copy(error = error.message ?: "新建失败") }
+            }
+        }
+    }
+
+    fun rename(entry: WorkspaceFileEntry, newName: String) {
+        val name = CwdPath.folderName(newName) ?: run {
+            _state.update { it.copy(error = "名称不合法") }
+            return
+        }
+        val parent = entry.path.substringBeforeLast('/', missingDelimiterValue = "")
+        val target = if (parent.isBlank()) name else "$parent/$name"
+        if (target == entry.path) return
+        moveTo(entry, target)
+    }
+
+    /**
+     * 把 [entry] 移到 [destinationDir] 下面（同一区域）。
+     * 不能把文件夹移进自己里面。
+     */
+    fun moveInto(entry: WorkspaceFileEntry, destinationDir: String) {
+        val dest = destinationDir.trim().trim('/')
+        if (entry.isDirectory && (dest == entry.path || dest.startsWith("${entry.path}/"))) {
+            _state.update { it.copy(error = "不能把文件夹移进自己里面") }
+            return
+        }
+        val target = if (dest.isBlank()) entry.name else "$dest/${entry.name}"
+        if (target == entry.path) return
+        moveTo(entry, target)
+    }
+
+    private fun moveTo(entry: WorkspaceFileEntry, target: String) {
+        viewModelScope.launch {
+            runCatching {
+                repository.moveFile(
+                    id = id,
+                    area = state.value.area,
+                    source = entry.path,
+                    target = target,
+                )
+            }.onSuccess {
+                refresh()
+            }.onFailure { error ->
+                _state.update { it.copy(error = error.message ?: "移动失败") }
+            }
+        }
+    }
+
+    suspend fun listFolders(path: String): Result<List<WorkspaceFileEntry>> = runCatching {
+        repository.listFiles(id, state.value.area, path).filter { it.isDirectory }
     }
 
     fun importFile(inputStream: InputStream, fileName: String) {
@@ -198,12 +331,28 @@ class WorkspaceDetailVM(
             _installProgress.value = RootfsInstallProgress(stage = RootfsInstallStage.DOWNLOADING)
             try {
                 terminalSessionManager.closeWorkspace(workspace.root)
-                repository.installRootfs(workspace.id, url) { progress ->
-                    _installProgress.value = progress
+                val sources = RootfsSources.urlsFor(url)
+                var lastError: Throwable? = null
+                for (source in sources) {
+                    try {
+                        repository.installRootfs(workspace.id, source) { progress ->
+                            _installProgress.value = progress
+                        }
+                        lastError = null
+                        break
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (error: Throwable) {
+                        lastError = error
+                    }
                 }
-                loadWorkspace()
-                refresh()
-                measureUsage()
+                if (lastError != null) {
+                    _installError.value = lastError.message ?: "Rootfs 安装失败"
+                } else {
+                    loadWorkspace()
+                    refresh()
+                    measureUsage()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (error: Throwable) {
@@ -269,6 +418,11 @@ class WorkspaceDetailVM(
             _state.update { it.copy(workspace = workspace) }
         }
     }
+
+    private companion object {
+        /** 打字停顿多久才真的去扫盘 */
+        const val SEARCH_DEBOUNCE_MS = 220L
+    }
 }
 
 data class WorkspaceDetailState(
@@ -278,9 +432,20 @@ data class WorkspaceDetailState(
     val entries: List<WorkspaceFileEntry> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
-    /** 工作区目录总大小；null = 还在算 */
-    val usageBytes: Long? = null,
-)
+    /** 占用；null = 还没开始扫 */
+    val usage: WorkspaceUsage? = null,
+    /** 搜索词。非空 = 列表显示 [results] 而不是 [entries] */
+    val query: String = "",
+    /** 正在扫 */
+    val searching: Boolean = false,
+    /** 搜索命中；[path] 之下整棵子树，路径相对区域根 */
+    val results: List<WorkspaceFileEntry> = emptyList(),
+) {
+    val inSearch: Boolean get() = query.isNotBlank()
+
+    /** 列表该显示什么：搜索中给命中，否则给当前目录 */
+    val visibleEntries: List<WorkspaceFileEntry> get() = if (inSearch) results else entries
+}
 
 data class WorkspaceTerminalState(
     val input: String = "",

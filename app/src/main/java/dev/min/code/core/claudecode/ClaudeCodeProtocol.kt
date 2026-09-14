@@ -21,10 +21,10 @@ import kotlinx.serialization.json.put
  * 启动形态见 [ClaudeCodeManager]；CLI 从 stdin 读 user / control_response 帧，
  * 向 stdout 写事件帧。
  *
- * 下面的 schema 全部对照官方 CLI 二进制（@anthropic-ai/claude-code v2.1.246）中内嵌的
- * zod schema 校对过，关键约束标注在各处注释里。未知字段/类型一律宽容忽略以保持向后兼容，
- * 但**必填字段一个都不能少** —— CLI 对入站帧做严格校验，缺字段会被静默丢弃或报
- * "canUseTool returned a schema-invalid permission result"。
+ * 下面的 schema 对照官方 CLI 二进制（@anthropic-ai/claude-code，最近一次完整校对
+ * v2.1.270；更早注释里的 2.1.246/261/267 仍有效）中内嵌的 zod schema。未知字段/类型
+ * 一律宽容忽略以保持向后兼容，但**必填字段一个都不能少** —— CLI 对入站帧做严格校验，
+ * 缺字段会被静默丢弃或报 "canUseTool returned a schema-invalid permission result"。
  */
 sealed interface ClaudeCodeEvent {
     /** system/init：会话建立，给出 session_id / 工具集 / 模型 */
@@ -33,6 +33,18 @@ sealed interface ClaudeCodeEvent {
         val model: String?,
         val tools: List<String>,
     ) : ClaudeCodeEvent
+
+    /**
+     * CLI 给会话拟的标题。
+     *
+     * transcript 里其实是**两行**：
+     * - `{"type":"custom-title","customTitle":"…"}` —— 人手 `/rename`（或 rename_session）
+     * - `{"type":"ai-title","aiTitle":"…"}` —— Haiku 自动拟名（首轮结束后异步写入）
+     *
+     * 以前只认 custom-title，无头会话几乎永远落不到人手改名那一行，列表就一直停在
+     * 第一条用户消息上。两行都映射到这里；磁盘摘要里 **custom-title 覆盖 ai-title**。
+     */
+    data class CustomTitle(val title: String) : ClaudeCodeEvent
 
     /** assistant 消息里的文本块（整块，非增量） */
     data class AssistantText(val text: String) : ClaudeCodeEvent
@@ -55,6 +67,17 @@ sealed interface ClaudeCodeEvent {
     /** 一条 assistant 消息开始，用于清空上一轮的增量缓冲 */
     data object PartialStart : ClaudeCodeEvent
 
+    /**
+     * 这条 assistant 消息**到目前为止**的累计输出 token（SSE 的 `message_delta.usage`）。
+     *
+     * 注意是「这条消息」的累计值，不是整轮的 —— 一轮里有几次工具往返就有几条消息，
+     * 累加要在消息边界（[PartialStart]）处结转，直接相加会翻倍。
+     *
+     * 用它而不是拿字符数估算：估出来的数写在界面上和真实计费对不上，
+     * 而这一栏存在的意义正是"这一轮到底吐了多少"。代价是它随消息边界跳变而不是平滑增长。
+     */
+    data class OutputTokens(val cumulativeForMessage: Int) : ClaudeCodeEvent
+
     /** assistant 发起的工具调用 */
     data class ToolUse(
         val id: String,
@@ -67,6 +90,11 @@ sealed interface ClaudeCodeEvent {
         val toolUseId: String,
         val content: String,
         val isError: Boolean,
+        /**
+         * Bash 改文件后的 unified diff（CLI 2.1.269+，`tool_use_result.bashEditDiff`）。
+         * 只给界面看；喂给模型的仍是 [content] 那串 stdout/stderr。
+         */
+        val editDiff: String? = null,
     ) : ClaudeCodeEvent
 
     /**
@@ -122,10 +150,31 @@ sealed interface ClaudeCodeEvent {
         val totalCostUsd: Double?,
         val sessionId: String?,
         val resultText: String?,
+        /**
+         * 本轮被路径规则等拦下、没真正执行的工具（CLI `permission_denials`）。
+         * 2.1.269 起 path-scoped 的 Read/Edit/Write 也会进这里。
+         */
+        val permissionDenials: List<PermissionDenial> = emptyList(),
     ) : ClaudeCodeEvent
+
+    /** `result.permission_denials[]` 的一项（v2.1.270：`tool_name` / `tool_use_id` / `tool_input`） */
+    data class PermissionDenial(
+        val toolName: String,
+        val toolUseId: String,
+        val input: JsonObject = JsonObject(emptyMap()),
+    )
 
     /** 其他 system 提示（compact_boundary / api_error / model_fallback ...） */
     data class SystemNote(val text: String, val isError: Boolean = false) : ClaudeCodeEvent
+
+    /**
+     * 安全分类器 / 配额等把模型换掉。Note 仍会进聊天流；这条让 Manager 同步 chip 状态。
+     * [fallbackModel] 为空表示拒答且没有可退模型（只提示、不改状态）。
+     */
+    data class ModelFallback(
+        val originalModel: String?,
+        val fallbackModel: String?,
+    ) : ClaudeCodeEvent
 
     /**
      * 瞬时运行状态。**必须原地替换，不能往聊天流里追加** —— 一轮任务能刷几十条。
@@ -149,6 +198,29 @@ sealed interface ClaudeCodeEvent {
         /** 连接类错误（超时等）时为 null */
         val errorStatus: Int?,
         val message: String?,
+        /** `error.formatted`，中转站给人看的原句，里面经常带着 HTTP 502 这类字 */
+        val formatted: String? = null,
+    ) : ClaudeCodeEvent
+
+    /**
+     * 子 agent 干的一件事，[parentToolUseId] 是发起它的那次 Task 调用的 `tool_use` id。
+     *
+     * ## 为什么要单独包一层
+     *
+     * CLI 把子 agent 的消息和主线程的消息**混在同一条 stdout 上**发出来，靠帧顶层的
+     * `parent_tool_use_id` 区分（主线程是 null）。之前这里不看这个字段，后果有两个：
+     *
+     * 1. 子 agent 的思考和工具调用被平铺进主会话流，和主 agent 自己干的活混成一锅，
+     *    读的人分不出哪条是谁做的；
+     * 2. 更糟的是子 agent 的 `stream_event` 增量会写进**同一个**流式缓冲区 ——
+     *    主 agent 正在打字时子 agent 一说话，主 agent 那段正文就被冲掉了。
+     *
+     * 包一层之后，这些事件由 [ClaudeCodeManager] 挂到对应那条 Task 工具卡底下，
+     * 展开就能看子任务的完整过程；官方终端只给一个折叠的计数行，看不到里面。
+     */
+    data class Subagent(
+        val parentToolUseId: String,
+        val event: ClaudeCodeEvent,
     ) : ClaudeCodeEvent
 
     /**
@@ -233,11 +305,20 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
             else -> systemNote(subtype, obj)
         }
 
-        "assistant" -> expandAssistantMessage(obj)
+        // 顶层的 parent_tool_use_id 非空 = 这一帧是某个子 agent 干的，见 [Subagent]
+        "custom-title", "ai-title" -> titleFromFrame(obj, type)
+            ?.let { listOf(ClaudeCodeEvent.CustomTitle(it)) }
+            .orEmpty()
 
-        "user" -> expandToolResults(obj)
+        "assistant" -> expandAssistantMessage(obj).underSubagent(obj.str("parent_tool_use_id"))
 
-        "stream_event" -> expandStreamEvent(obj)
+        "user" -> expandToolResults(obj).underSubagent(obj.str("parent_tool_use_id"))
+
+        // 子 agent 的增量**直接丢掉**：流式缓冲区只有一个，把它的 token 混进去会把
+        // 主 agent 正在生成的那段正文冲掉。子 agent 的内容靠上面那条整块消息补齐，
+        // 打字机效果对一个折叠在卡片里的子任务也没有意义
+        "stream_event" ->
+            if (obj.str("parent_tool_use_id").isNullOrBlank()) expandStreamEvent(obj) else emptyList()
 
         "result" -> {
             val subtype = obj.str("subtype").orEmpty()
@@ -252,6 +333,7 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
                     totalCostUsd = obj.double("total_cost_usd"),
                     sessionId = obj.str("session_id"),
                     resultText = obj.str("result"),
+                    permissionDenials = parsePermissionDenials(obj.arr("permission_denials")),
                 )
             )
         }
@@ -310,6 +392,13 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
 }
 
 /**
+ * 给一批事件套上「这是子 agent 干的」这层信封。[parentToolUseId] 为空表示主线程，原样返回。
+ */
+private fun List<ClaudeCodeEvent>.underSubagent(parentToolUseId: String?): List<ClaudeCodeEvent> =
+    if (parentToolUseId.isNullOrBlank()) this
+    else map { ClaudeCodeEvent.Subagent(parentToolUseId, it) }
+
+/**
  * 把一条完整 assistant 消息展开为内容块事件序列（text / thinking / tool_use）。
  *
  * `message.content` 是 `string | ContentBlock[]`：老版本 CLI 和部分 transcript 行
@@ -346,9 +435,17 @@ fun expandAssistantMessage(obj: JsonObject): List<ClaudeCodeEvent> {
  *
  * `message.content` 是裸字符串时表示这是一条**真的用户文本**（键盘输入、或本地斜杠命令的
  * 回显），里面不可能有 tool_result —— 返回空列表交给调用方，别去硬转数组。
+ *
+ * 帧顶层的 `tool_use_result`（或 camelCase `toolUseResult`）是工具的完整 Output 对象，
+ * **不进模型上下文**。CLI 2.1.269+ 的 Bash 会在这里挂 `bashEditDiff`；同帧里多块
+ * tool_result 时只把 diff 挂到**第一块**上（Bash 一轮只有一个结果）。
  */
 fun expandToolResults(obj: JsonObject): List<ClaudeCodeEvent.ToolResult> {
     val content = obj.obj("message")?.get("content") as? JsonArray ?: return emptyList()
+    val editDiff = parseBashEditDiff(
+        obj.obj("tool_use_result") ?: obj.obj("toolUseResult"),
+    )
+    var attachedDiff = false
     return content.mapNotNull { block ->
         val blockObj = block as? JsonObject ?: return@mapNotNull null
         if (blockObj.str("type") != "tool_result") return@mapNotNull null
@@ -360,12 +457,98 @@ fun expandToolResults(obj: JsonObject): List<ClaudeCodeEvent.ToolResult> {
 
             else -> ""
         }
+        val diff = if (!attachedDiff && editDiff != null) {
+            attachedDiff = true
+            editDiff
+        } else {
+            null
+        }
         ClaudeCodeEvent.ToolResult(
             toolUseId = blockObj.str("tool_use_id").orEmpty(),
             content = text,
             isError = blockObj.bool("is_error") == true,
+            editDiff = diff,
         )
     }
+}
+
+/**
+ * `result.permission_denials`：`[{tool_name, tool_use_id, tool_input}]`（v2.1.270 XF schema）。
+ * 缺字段或类型不对就跳过该项，绝不让整条 result 帧解析失败。
+ */
+internal fun parsePermissionDenials(arr: JsonArray?): List<ClaudeCodeEvent.PermissionDenial> {
+    if (arr == null) return emptyList()
+    return arr.mapNotNull { element ->
+        val obj = element as? JsonObject ?: return@mapNotNull null
+        val name = obj.str("tool_name")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        ClaudeCodeEvent.PermissionDenial(
+            toolName = name,
+            toolUseId = obj.str("tool_use_id").orEmpty(),
+            input = obj.obj("tool_input") ?: JsonObject(emptyMap()),
+        )
+    }
+}
+
+/**
+ * 从 Bash 的 `tool_use_result.bashEditDiff` 拼出 unified diff 文本（给工具卡展开态用）。
+ *
+ * schema（v2.1.270）：
+ * ```
+ * bashEditDiff?: {
+ *   files: [{filePath, hunks:[{oldStart,oldLines,newStart,newLines,lines:string[]}],
+ *            created?:true, deleted?:true}],
+ *   moreFiles: number, changedFiles?: string[],
+ *   unavailable?:true, skipped?:true, shared?:true
+ * }
+ * ```
+ * `unavailable` / `skipped`、或没有任何 hunk，返回 null（界面继续只显示 stdout）。
+ */
+internal fun parseBashEditDiff(toolUseResult: JsonObject?): String? {
+    val diff = toolUseResult?.obj("bashEditDiff") ?: return null
+    if (diff.bool("unavailable") == true || diff.bool("skipped") == true) return null
+    val files = diff.arr("files") ?: return null
+    val parts = ArrayList<String>()
+    for (element in files) {
+        val file = element as? JsonObject ?: continue
+        val path = file.str("filePath")?.takeIf { it.isNotBlank() } ?: continue
+        val hunks = file.arr("hunks") ?: continue
+        val hunkText = buildString {
+            for (hunkEl in hunks) {
+                val hunk = hunkEl as? JsonObject ?: continue
+                val lines = hunk.arr("lines") ?: continue
+                if (lines.isEmpty()) continue
+                val oldStart = hunk.int("oldStart") ?: 0
+                val oldLines = hunk.int("oldLines") ?: 0
+                val newStart = hunk.int("newStart") ?: 0
+                val newLines = hunk.int("newLines") ?: 0
+                append("@@ -").append(oldStart).append(',').append(oldLines)
+                    .append(" +").append(newStart).append(',').append(newLines)
+                    .append(" @@\n")
+                for (lineEl in lines) {
+                    val line = (lineEl as? JsonPrimitive)?.contentOrNull ?: continue
+                    append(line)
+                    if (!line.endsWith('\n')) append('\n')
+                }
+            }
+        }.trimEnd()
+        if (hunkText.isBlank()) continue
+        val status = when {
+            file.bool("created") == true -> "new file mode"
+            file.bool("deleted") == true -> "deleted file mode"
+            else -> null
+        }
+        parts += buildString {
+            if (status != null) append(status).append('\n')
+            append("--- a/").append(path).append('\n')
+            append("+++ b/").append(path).append('\n')
+            append(hunkText)
+        }
+    }
+    val more = diff.int("moreFiles") ?: 0
+    if (more > 0) {
+        parts += "… 还有 $more 个文件的改动未展开"
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
 }
 
 /**
@@ -376,6 +559,15 @@ private fun expandStreamEvent(obj: JsonObject): List<ClaudeCodeEvent> {
     val event = obj.obj("event") ?: return emptyList()
     return when (event.str("type")) {
         "message_start" -> listOf(ClaudeCodeEvent.PartialStart)
+
+        // `message_delta` 带的是**这条消息到目前为止**的累计输出 token
+        // （Anthropic SSE 规范：delta 里是 stop_reason 之类的顶层变更，usage 挂在同级）。
+        // 有的版本把 usage 塞进 delta 里，两处都看一眼。
+        "message_delta" -> (event.obj("usage") ?: event.obj("delta")?.obj("usage"))
+            ?.int("output_tokens")
+            ?.let { listOf(ClaudeCodeEvent.OutputTokens(it)) }
+            .orEmpty()
+
         "content_block_delta" -> {
             val delta = event.obj("delta") ?: return emptyList()
             when (delta.str("type")) {
@@ -713,13 +905,109 @@ fun encodeClaudeCodeGetSessionCost(requestId: String): String =
 fun encodeClaudeCodeGetSettings(requestId: String): String =
     controlRequest(requestId, "get_settings")
 
-/** 切换 CLI 的工作目录 */
-fun encodeClaudeCodeSetCwd(requestId: String, cwd: String): String =
-    controlRequest(requestId, "set_cwd", buildJsonObject { put("cwd", cwd) })
+/**
+ * 切换 CLI 的工作目录（`/cd` 的无头版）。
+ *
+ * **参数名是 `path`，不是 `cwd`。** 对照 CLI 2.1.267 的 schema：
+ * `{subtype:"set_cwd", path, trust_accepted?, trusted_directory?}`。
+ * 之前这里发的是 `cwd`，CLI 侧 `path` 就是 undefined，于是每次切目录都回
+ * "set_cwd: invalid request — path must be a non-empty string"，界面上是两行红字。
+ * 应答里的 `cwd` 是**返回**字段（切完之后的规范路径），跟请求参数不是一回事。
+ *
+ * [trustAccepted] / [trustedDirectory] 用于回答 `needs_trust`：CLI 把信任弹窗
+ * 委托给宿主，同意之后必须原样回传当时给的 `directory`（见 [ClaudeCodeSetCwdResult]）。
+ */
+fun encodeClaudeCodeSetCwd(
+    requestId: String,
+    path: String,
+    trustAccepted: Boolean = false,
+    trustedDirectory: String? = null,
+): String = controlRequest(requestId, "set_cwd", buildJsonObject {
+    put("path", path)
+    // 只有真的展示过信任提示才带这两个字段；trust_accepted 为 true 时 CLI 要求
+    // trusted_directory 必须是它上一轮 needs_trust 给的那个字符串，逐字相同
+    if (trustAccepted && trustedDirectory != null) {
+        put("trust_accepted", true)
+        put("trusted_directory", trustedDirectory)
+    }
+})
+
+/**
+ * `set_cwd` 的应答。CLI 用一个 `status` 字段分三种结局，**只有 `ok` 才真的换了目录**：
+ *
+ * - `ok`：`{status:"ok", cwd, changed, transcript_relocated}`，`cwd` 是规范化后的真实路径
+ *   （realpath），要用它回填界面 —— 用户点的那个字符串可能带符号链接。
+ * - `needs_trust`：`{status:"needs_trust", directory, trust_root?}`。**目录没有切**。
+ *   CLI 把信任弹窗交给宿主：给用户看 `directory`，同意后带 `trust_accepted=true` +
+ *   `trusted_directory=directory`（逐字回传）重发一次。
+ * - `rejected`：`{status:"rejected", reason, message}`，reason ∈
+ *   not_found / not_a_directory / blocked_by_rule / busy / unsafe_path。
+ *
+ * 以前这里不解析 status，`needs_trust` 和 `rejected` 都被当成成功：界面显示切过去了，
+ * CLI 其实还在原地。
+ */
+sealed interface ClaudeCodeSetCwdResult {
+    /** [cwd] 是 CLI 规范化后的路径；[changed] 为 false 表示本来就在那儿 */
+    data class Ok(val cwd: String, val changed: Boolean) : ClaudeCodeSetCwdResult
+
+    /** 要用户先同意信任 [directory]；[trustRoot] 非空时说明同意的是整个仓库 */
+    data class NeedsTrust(val directory: String, val trustRoot: String?) : ClaudeCodeSetCwdResult
+
+    data class Rejected(val reason: String, val message: String) : ClaudeCodeSetCwdResult
+}
+
+/** 解析 [encodeClaudeCodeSetCwd] 的应答载荷；形状不认识时按拒绝处理，不要假装成功 */
+fun parseClaudeCodeSetCwdResult(payload: JsonObject): ClaudeCodeSetCwdResult =
+    when (payload.str("status")) {
+        "ok" -> ClaudeCodeSetCwdResult.Ok(
+            cwd = payload.str("cwd").orEmpty(),
+            changed = payload.bool("changed") ?: true,
+        )
+
+        "needs_trust" -> ClaudeCodeSetCwdResult.NeedsTrust(
+            directory = payload.str("directory").orEmpty(),
+            trustRoot = payload.str("trust_root")?.takeIf { it.isNotBlank() },
+        )
+
+        else -> ClaudeCodeSetCwdResult.Rejected(
+            reason = payload.str("reason").orEmpty(),
+            message = payload.str("message").orEmpty(),
+        )
+    }
+
+/** 拒绝原因的中文说法。CLI 的 message 是英文的，先给一句能看懂的 */
+fun claudeCodeSetCwdRejectionText(result: ClaudeCodeSetCwdResult.Rejected): String {
+    val reason = when (result.reason) {
+        "not_found" -> "这个目录不存在"
+        "not_a_directory" -> "这个路径不是文件夹"
+        "blocked_by_rule" -> "设置里的 Cd 规则不允许进这个目录"
+        "busy" -> "这一轮对话还在跑，等它结束再切"
+        "unsafe_path" -> "路径里有不可见字符，CLI 拒绝了"
+        else -> "切换工作目录失败"
+    }
+    return if (result.message.isBlank()) reason else "$reason（${result.message}）"
+}
 
 /** 重命名会话 */
 fun encodeClaudeCodeRenameSession(requestId: String, title: String): String =
     controlRequest(requestId, "rename_session", buildJsonObject { put("title", title) })
+
+/**
+ * 让 CLI 自己拟会话标题（Haiku 小请求）。
+ *
+ * 交互式终端会在首轮后自动跑；无头 `-p stream-json` **不会**，所以宿主要主动发。
+ * wire 名是 snake_case 的 `generate_session_title`（SDK 方法叫 generateSessionTitle）。
+ * [persist] 为 true 时 CLI 会把结果写成 transcript 的 `ai-title` 行。
+ * 成功应答形如 `{title:"…"}`。
+ */
+fun encodeClaudeCodeGenerateSessionTitle(
+    requestId: String,
+    description: String,
+    persist: Boolean = true,
+): String = controlRequest(requestId, "generate_session_title", buildJsonObject {
+    put("description", description)
+    put("persist", persist)
+})
 
 /** 思考展示强度。CLI 没有 set_effort，effort 只能靠重启带 --effort，见 ClaudeCodeManager.applyEffort */
 fun encodeClaudeCodeSetThinking(
@@ -733,33 +1021,66 @@ fun encodeClaudeCodeSetThinking(
 })
 
 /**
+ * 从标题帧取出文案。`custom-title` 看 customTitle/title/custom_title；
+ * `ai-title` 看 aiTitle/ai_title/title。
+ */
+private fun titleFromFrame(obj: JsonObject, type: String?): String? {
+    val raw = when (type) {
+        "ai-title" -> obj.str("aiTitle") ?: obj.str("ai_title") ?: obj.str("title")
+        else -> obj.str("customTitle") ?: obj.str("title") ?: obj.str("custom_title")
+    }
+    return raw?.trim()?.takeIf { it.isNotBlank() }
+}
+
+/**
  * 解析 CLI 自持久化的 transcript 行（`~/.claude/projects/<cwd>/<uuid>.jsonl`）。
  *
  * 实测这些行的 `user` / `assistant` 帧带的 `message` 字段与 stream-json 完全同构，
  * 只是多包了 `timestamp` / `uuid` / `parentUuid` / `cwd` / `gitBranch` 之类的元数据，
  * 所以内容展开直接复用 [expandAssistantMessage] / [expandToolResults]。
  *
- * 跳过：`isSidechain`（子 agent 的独立线程，混进主线程会很乱）、
- * `isMeta`、以及 `attachment` / `queue-operation` / `atis-latch` 等内部行。
+ * 跳过：`isMeta`、以及 `attachment` / `queue-operation` / `atis-latch` 等内部行。
+ *
+ * 子 agent 的 `isSidechain` 行**不再整行丢掉**：带得出 `parent_tool_use_id` 的挂回对应的
+ * Task 工具卡（[ClaudeCodeEvent.Subagent]），带不出的才跳过 —— 平铺进主线程会很乱，
+ * 但整段扔掉就等于历史会话里永远看不到子任务干了什么。
  */
 fun parseTranscriptLine(line: String): List<ClaudeCodeEvent> {
     val trimmed = line.trim()
     if (trimmed.isEmpty() || !trimmed.startsWith("{")) return emptyList()
     val obj = runCatching { protocolJson.parseToJsonElement(trimmed) }.getOrNull() as? JsonObject
         ?: return emptyList()
-    if (obj.bool("isSidechain") == true) return emptyList()
-    if (obj.bool("isMeta") == true) return emptyList()
+    val type = obj.str("type")
+    // 标题行偶尔会带 isMeta，但不能整行丢掉 —— 那是列表标题的来源
+    if (obj.bool("isMeta") == true && type != "custom-title" && type != "ai-title") {
+        return emptyList()
+    }
 
-    return when (obj.str("type")) {
-        "assistant" -> expandAssistantMessage(obj)
+    val parent = obj.str("parent_tool_use_id")?.takeIf { it.isNotBlank() }
+    // 认不出归属的 sidechain 只能扔：挂不上任何一张卡，平铺又会污染主线程
+    if (obj.bool("isSidechain") == true && parent == null) return emptyList()
+
+    return when (type) {
+        "custom-title", "ai-title" -> titleFromFrame(obj, type)
+            ?.let { listOf(ClaudeCodeEvent.CustomTitle(it)) }
+            .orEmpty()
+
+        "assistant" -> expandAssistantMessage(obj).underSubagent(parent)
 
         "user" -> {
             // 一条 user 行要么是真的用户输入，要么是回填的 tool_result，二者不会混
             val toolResults = expandToolResults(obj)
             if (toolResults.isNotEmpty()) {
-                toolResults
+                toolResults.underSubagent(parent)
+            } else if (parent == null) {
+                when (val parsed = transcriptUserPayload(obj)) {
+                    is TranscriptUser.Human -> listOf(ClaudeCodeEvent.UserMessage(parsed.text))
+                    is TranscriptUser.Compact -> listOf(ClaudeCodeEvent.SystemNote(parsed.note))
+                    null -> emptyList()
+                }
             } else {
-                transcriptUserText(obj)?.let { listOf(ClaudeCodeEvent.UserMessage(it)) }.orEmpty()
+                // 子 agent 线程里的"用户消息"是 CLI 回填的任务提示词，不是人说的话
+                emptyList()
             }
         }
 
@@ -776,8 +1097,26 @@ private val LOCAL_COMMAND_ENVELOPES = listOf(
     "<local-command-stderr>", "<system-reminder>",
 )
 
+/**
+ * 自动压缩之后 CLI 会把摘要写成一条 `type:user` 的 transcript 行，开头是
+ * "This session is being continued from a previous conversation."
+ * 它不是人说的话，回放成用户气泡就会变成截图里那一大段占位摘要。
+ */
+private val COMPACT_SUMMARY_PREFIXES = listOf(
+    "This session is being continued from a previous conversation.",
+    "This session is being continued from a previous conversation",
+)
+
+private sealed interface TranscriptUser {
+    data class Human(val text: String) : TranscriptUser
+    data class Compact(val note: String) : TranscriptUser
+}
+
 /** 从 transcript 的 user 行里取出纯文本；content 可能是字符串，也可能是内容块数组 */
-private fun transcriptUserText(obj: JsonObject): String? {
+private fun transcriptUserText(obj: JsonObject): String? =
+    (transcriptUserPayload(obj) as? TranscriptUser.Human)?.text
+
+private fun transcriptUserPayload(obj: JsonObject): TranscriptUser? {
     val content = obj.obj("message")?.get("content") ?: return null
     val text = when (content) {
         is JsonPrimitive -> content.contentOrNull.orEmpty()
@@ -789,7 +1128,23 @@ private fun transcriptUserText(obj: JsonObject): String? {
     }.trim()
     if (text.isBlank()) return null
     if (LOCAL_COMMAND_ENVELOPES.any { text.startsWith(it) }) return null
-    return text
+    if (COMPACT_SUMMARY_PREFIXES.any { text.startsWith(it) }) {
+        return TranscriptUser.Compact(compactSummaryNote(text))
+    }
+    return TranscriptUser.Human(text)
+}
+
+/** 压缩摘要太长，聊天流里只留一行说明，完整原文不进用户气泡 */
+internal fun compactSummaryNote(text: String): String {
+    val tokens = Regex("""(\d[\d,]*)\s*tokens""", RegexOption.IGNORE_CASE)
+        .find(text)
+        ?.groupValues
+        ?.getOrNull(1)
+    return if (tokens != null) {
+        "上下文已压缩（摘要约 ${tokens.replace(",", "")} tokens）"
+    } else {
+        "上下文已压缩为摘要，上一轮对话收进这条记录"
+    }
 }
 
 /**
@@ -847,16 +1202,24 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
         "task_summary" -> listOf(ClaudeCodeEvent.Status(detail = obj.str("detail")))
 
         // {attempt, max_retries, retry_delay_ms, error_status(nullable), error}
-        "api_retry" -> listOf(
-            ClaudeCodeEvent.ApiRetry(
-                attempt = obj.int("attempt"),
-                maxRetries = obj.int("max_retries"),
-                retryDelayMs = obj.int("retry_delay_ms"),
-                errorStatus = obj.int("error_status"),
-                message = obj.obj("error")?.str("message")
-                    ?: obj.str("error"),
+        // error 可能是字符串枚举，也可能是 {message, status, formatted} 对象。
+        // 只读字符串时 502 的 formatted 整句会被丢掉。
+        "api_retry" -> {
+            val errorObj = obj.obj("error")
+            listOf(
+                ClaudeCodeEvent.ApiRetry(
+                    attempt = obj.int("attempt"),
+                    maxRetries = obj.int("max_retries"),
+                    retryDelayMs = obj.int("retry_delay_ms"),
+                    errorStatus = obj.int("error_status")
+                        ?: errorObj?.int("status"),
+                    message = errorObj?.str("message") ?: obj.str("error"),
+                    formatted = errorObj?.str("formatted")
+                        ?: errorObj?.str("error")
+                        ?: obj.str("formatted"),
+                )
             )
-        )
+        }
 
         // --- 子 agent / 后台任务：维护一张任务表 ----------------------------------
 
@@ -926,22 +1289,48 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
 
         // 中转站 401 / 429 / 5xx 都从这里来。之前整条被丢，用户只看到"卡住不动"
         "api_error" -> {
-            val error = obj.obj("error")
-            val text = error?.str("formatted")
-                ?: error?.str("message")
-                ?: "API 请求失败"
-            val status = error?.int("status")?.let { "（HTTP $it）" }.orEmpty()
-            listOf(ClaudeCodeEvent.SystemNote("$text$status", isError = true))
+            val error = obj.obj("error") ?: obj
+            val status = error.int("status") ?: obj.int("status") ?: obj.int("error_status")
+            val formatted = error.str("formatted") ?: error.str("error")
+            val message = error.str("message") ?: obj.str("message")
+            val text = formatApiFailure(formatted = formatted, message = message, status = status)
+            listOf(ClaudeCodeEvent.SystemNote(text, isError = true))
         }
 
-        // 模型被静默换掉：底栏 chip 还显示旧模型，不提示的话完全无感
+        // 模型被静默换掉：除了聊天流里的 Note，还要 emit ModelFallback 让 chip 跟着走
         "model_fallback", "model_consent_fallback" -> {
             val from = obj.str("original_model")
             val to = obj.str("fallback_model")
             val why = obj.str("trigger")?.let { "（$it）" }.orEmpty()
             val text = obj.str("content")?.takeIf { it.isNotBlank() }
                 ?: "模型已回退：${from ?: "?"} → ${to ?: "?"}$why"
-            listOf(ClaudeCodeEvent.SystemNote(text, isError = true))
+            listOf(
+                ClaudeCodeEvent.SystemNote(text, isError = true),
+                ClaudeCodeEvent.ModelFallback(from, to),
+            )
+        }
+
+        // Fable 5.1 / Opus 5 的安全分类器可能拒答（API 层 stop_reason=refusal）。CLI 会按
+        // fallbackModel 换一个模型重试（model_refusal_fallback），或者没有可退的就停
+        // （model_refusal_no_fallback）。两种都必须说出来；有 fallback 时还要同步 chip。
+        // 载荷（v2.1.261）：
+        //   {content, original_model, fallback_model?, direction?, scope?, api_refusal_category?,
+        //    api_refusal_explanation?, request_id?}
+        "model_refusal_fallback", "model_refusal_no_fallback" -> {
+            val from = obj.str("original_model")
+            val to = obj.str("fallback_model")
+            val category = obj.str("api_refusal_category")?.let { "（类别 $it）" }.orEmpty()
+            val explanation = obj.str("api_refusal_explanation")?.takeIf { it.isNotBlank() }
+            val text = obj.str("content")?.takeIf { it.isNotBlank() }
+                ?: if (to != null) {
+                    "模型拒绝了这次请求$category，已改用 $to 重试（原模型 ${from ?: "?"}）"
+                } else {
+                    "模型拒绝了这次请求$category，且没有可回退的模型（${from ?: "?"}）"
+                }
+            buildList {
+                add(ClaudeCodeEvent.SystemNote(explanation?.let { "$text：$it" } ?: text, isError = true))
+                add(ClaudeCodeEvent.ModelFallback(from, to))
+            }
         }
 
         "worker_shutting_down" -> listOf(
@@ -996,6 +1385,21 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
             else listOf(ClaudeCodeEvent.SystemNote(text))
         }
     }
+}
+
+/**
+ * 把 API 失败收成一句能用来排查的话：HTTP 状态码、中转站原文、内部 message 都带上。
+ * 502 这类网关错误以前经常只剩 "API 请求失败" 或 "未知错误"。
+ */
+internal fun formatApiFailure(formatted: String?, message: String?, status: Int?): String {
+    val body = formatted?.takeIf { it.isNotBlank() }
+        ?: message?.takeIf { it.isNotBlank() }
+        ?: "API 请求失败"
+    val alreadyHasStatus = status != null && (
+        Regex("""\bHTTP\s*$status\b""", RegexOption.IGNORE_CASE).containsMatchIn(body) ||
+            Regex("""\b$status\b""").containsMatchIn(body)
+        )
+    return if (status != null && !alreadyHasStatus) "$body（HTTP $status）" else body
 }
 
 /** 取字符串字段；缺失、类型不符或 JSON null 一律返回 null */

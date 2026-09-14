@@ -14,8 +14,8 @@ android {
         applicationId = "dev.min.code"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 19
+        versionName = "1.1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -78,6 +78,7 @@ dependencies {
     implementation(project(":workspace"))
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
@@ -100,6 +101,7 @@ dependencies {
     implementation(libs.jetbrains.markdown)
     implementation(libs.huge.icons)
     implementation(libs.termux.terminal.view)
+    implementation(libs.chrisbanes.haze)
     debugImplementation(libs.androidx.ui.tooling)
 
     testImplementation(libs.junit)

@@ -5,12 +5,18 @@ import android.util.Log
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import dev.min.code.core.crash.CrashRecorder
+import dev.min.code.core.settings.AppLocale
+import dev.min.code.core.settings.SettingsStore
 import dev.min.code.di.appModule
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import org.koin.android.ext.android.getKoin
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
@@ -38,6 +44,15 @@ class MinApp : Application() {
             modules(appModule)
         }
         createNotificationChannels()
+        // 跟随设置里的语言偏好；DataStore 异步，先读一次再订阅变更
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            val store = getKoin().get<SettingsStore>()
+            AppLocale.apply(store.current().appLanguage)
+            store.settings
+                .map { it.appLanguage }
+                .distinctUntilChanged()
+                .collect { AppLocale.apply(it) }
+        }
     }
 
     private fun createNotificationChannels() {

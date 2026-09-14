@@ -1,9 +1,21 @@
 package dev.min.code.ui.setup
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,33 +26,41 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.ui.components.InkButton
+import dev.min.code.ui.components.InkCheckbox
+import dev.min.code.ui.components.InkIconButton
+import dev.min.code.ui.components.InkLineProgress
+import dev.min.code.ui.components.InkTextButton
+import dev.min.code.ui.components.InkTextField
+import dev.min.code.ui.components.LoadingScreen
+import dev.min.code.ui.components.Notice
+import dev.min.code.ui.components.NoticeTone
+import dev.min.code.ui.components.paperGrain
+import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.rememberAnimationsEnabled
+import dev.min.code.ui.theme.sea
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
@@ -50,7 +70,7 @@ import org.koin.androidx.compose.koinViewModel
  * 三步向导：连接 → Linux 环境 → Claude Code CLI。
  *
  * 三面共用一个骨架：`1 — 2 — 3` 进度 + 标题 + 一句话说明，长解释收进「详细说明」折叠区。
- * 每一步只有一个主按钮；进行中的下载/解压在按钮上方给进度条和一行状态。
+ * 每一步只有一个主按钮；进行中的下载/解压在按钮上方给墨线进度和一行状态。
  *
  * @param onReady 三步都完成时回调（宿主据此切到会话页）
  */
@@ -63,11 +83,8 @@ fun SetupPage(
     LaunchedEffect(state.ready) { if (state.ready) onReady() }
 
     when {
-        state.loading -> Column(
-            Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) { CircularProgressIndicator() }
+        // 判定"走到哪一步"要读磁盘和设置，那几百毫秒给整页的铺纸研墨，不给一个孤零零的转圈
+        state.loading -> LoadingScreen(status = "正在检查环境")
 
         state.step == SetupVM.Step.CONNECTION -> ConnectionStep(state, onSave = vm::saveConnection)
         state.step == SetupVM.Step.ROOTFS -> RootfsStep(state, onInstall = vm::installRootfs, onDismissError = vm::dismissError)
@@ -85,97 +102,145 @@ private fun SetupStep(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     var showDetail by rememberSaveable(step) { mutableStateOf(false) }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    // 表单只保留纸纹，保证输入和状态信息有稳定的对比度。
+    Box(
+        Modifier
+            .fillMaxSize(),
     ) {
         Column(
-            // 平板/横屏上不拉满：一行 600dp 的说明文字没法读
-            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                (1..3).forEach { i ->
-                    Text(
-                        text = "$i",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = JetbrainsMono,
-                        color = when {
-                            i < step -> MaterialTheme.colorScheme.primary
-                            i == step -> MaterialTheme.colorScheme.onSurface
-                            else -> MaterialTheme.colorScheme.outlineVariant
-                        },
-                    )
-                    if (i < 3) {
-                        HorizontalDivider(
-                            modifier = Modifier.size(width = 20.dp, height = 1.dp),
-                            color = if (i < step) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outlineVariant,
-                        )
+            Column(
+                // 平板/横屏上不拉满：一行 600dp 的说明文字没法读
+                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                StepIndicator(step)
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (detail != null) {
+                    InkTextButton(onClick = { showDetail = !showDetail }, contentPadding = PaddingValues(0.dp)) {
+                        Text(if (showDetail) "收起详细说明" else "详细说明")
+                    }
+                    AnimatedVisibility(visible = showDetail, enter = InkMotion.expand, exit = InkMotion.collapse) {
+                        detail()
                     }
                 }
+                content()
             }
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (detail != null) {
-                TextButton(onClick = { showDetail = !showDetail }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                    Text(if (showDetail) "收起详细说明" else "详细说明", style = MaterialTheme.typography.labelMedium)
-                }
-                if (showDetail) detail()
+        }
+    }
+}
+
+/**
+ * `1 — 2 — 3`：三粒点、两段线。走过的点填金（人已经做完的事），当前的点是墨圈、
+ * 圈心一粒湛在呼吸（这一步是活的），还没到的点只是一圈淡线。颜色变化都有过渡。
+ */
+@Composable
+private fun StepIndicator(step: Int) {
+    val palette = MaterialTheme.sea
+    val scheme = MaterialTheme.colorScheme
+    val animations = rememberAnimationsEnabled()
+    // 脉冲值只在绘制阶段读：每帧重绘那粒点，不重组整行
+    val pulse: State<Float> = if (animations) {
+        rememberInfiniteTransition(label = "step").animateFloat(
+            initialValue = 0.4f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1100, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "stepPulse",
+        )
+    } else {
+        remember { mutableFloatStateOf(1f) }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        (1..3).forEach { i ->
+            val done = i < step
+            val current = i == step
+            val fill by animateColorAsState(
+                if (done) palette.sea else Color.Transparent,
+                InkMotion.effect(),
+                label = "fill",
+            )
+            val edge by animateColorAsState(
+                when {
+                    done -> palette.sea
+                    current -> scheme.onSurface
+                    else -> scheme.outlineVariant
+                },
+                InkMotion.effect(),
+                label = "edge",
+            )
+            val azure = palette.sea
+            Canvas(Modifier.size(9.dp)) {
+                val r = 3.5.dp.toPx()
+                drawCircle(fill, radius = r, center = center)
+                drawCircle(edge, radius = r, center = center, style = Stroke(width = 1.5.dp.toPx()))
+                if (current) drawCircle(azure.copy(alpha = pulse.value), radius = 1.6.dp.toPx(), center = center)
             }
-            content()
+            if (i < 3) {
+                val line by animateColorAsState(
+                    if (i < step) palette.sea else scheme.outlineVariant,
+                    InkMotion.effect(),
+                    label = "line",
+                )
+                Box(
+                    Modifier
+                        .padding(horizontal = 6.dp)
+                        .size(width = 20.dp, height = 1.5.dp)
+                        .background(line),
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun DetailCard(text: String) {
-    Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainer) {
-        Text(
-            text,
-            modifier = Modifier.padding(12.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Notice(text = text, tone = NoticeTone.Info)
+}
+
+/** 出错提示：出现 / 消失都洇开、收起，而不是整块跳出跳没 */
+@Composable
+private fun ErrorCard(error: String?, onDismiss: () -> Unit) {
+    // 消失动画期间 error 已经是 null 了，留住最后一条文案让它能收完
+    var last by remember { mutableStateOf(error) }
+    if (error != null) last = error
+    AnimatedVisibility(visible = error != null, enter = InkMotion.expand, exit = InkMotion.collapse) {
+        Notice(
+            text = last.orEmpty(),
+            tone = NoticeTone.Error,
+            maxLines = 12,
+            action = {
+                InkTextButton(onClick = onDismiss) { Text("知道了") }
+            },
         )
     }
 }
 
 @Composable
-private fun ErrorCard(text: String, onDismiss: () -> Unit) {
-    Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.errorContainer) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                maxLines = 12,
-                overflow = TextOverflow.Ellipsis,
-            )
-            TextButton(onClick = onDismiss, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                Text("知道了", style = MaterialTheme.typography.labelSmall)
-            }
-        }
-    }
-}
-
-@Composable
 private fun Progress(state: SetupVM.State) {
-    val progress = state.progress
-    if (progress != null) {
-        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-    } else {
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        InkLineProgress(progress = state.progress, modifier = Modifier.fillMaxWidth())
+        Text(
+            state.detail.ifBlank { "正在处理…" },
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetbrainsMono,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
-    Text(state.detail.ifBlank { "正在处理…" }, style = MaterialTheme.typography.labelSmall, fontFamily = JetbrainsMono)
 }
 
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Unit) {
+internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Unit) {
     var token by rememberSaveable { mutableStateOf(state.settings.token) }
     var baseUrl by rememberSaveable { mutableStateOf(state.settings.baseUrl) }
     var visible by rememberSaveable { mutableStateOf(false) }
@@ -190,45 +255,48 @@ private fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Uni
             DetailCard(
                 "对应环境变量 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL，以环境变量注入 Rootfs 内的 " +
                     "claude 进程，只有沙箱内的 Claude Code 能读到。\n\n" +
-                    "会话固定注入：CLAUDE_CODE_PROMPT_CACHE_TTL=${ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL}" +
-                    "（走 API token 时默认只有 5 分钟，断续使用会反复错过缓存窗口）、" +
-                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1、DISABLE_AUTOUPDATER=1、IS_SANDBOX=1。"
+                    "会话默认注入 CLAUDE_CODE_PROMPT_CACHE_TTL=" +
+                    "${ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL}（走 API token 时 CLI 自己只给 5 分钟，" +
+                    "断续使用会反复错过缓存窗口），可在会话设置的「提示缓存」里改。\n\n" +
+                    "另外固定注入：CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1、DISABLE_AUTOUPDATER=1、IS_SANDBOX=1。"
             )
         },
     ) {
-        OutlinedTextField(
+        InkTextField(
             value = baseUrl,
             onValueChange = { baseUrl = it },
-            label = { Text("ANTHROPIC_BASE_URL") },
-            placeholder = { Text("https://api.anthropic.com") },
+            label = "ANTHROPIC_BASE_URL",
+            placeholder = "https://api.anthropic.com",
             singleLine = true,
+            monospace = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        if (insecure) {
-            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.errorContainer) {
-                Text(
-                    "这是明文 HTTP 地址：token 和全部对话内容都会以明文经过公网，任何中间节点都能看到。" +
-                        "能用 HTTPS 就换成 HTTPS。",
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
+        AnimatedVisibility(visible = insecure, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            Notice(
+                text = "这是明文 HTTP 地址：token 和全部对话内容都会以明文经过公网，任何中间节点都能看到。" +
+                    "能用 HTTPS 就换成 HTTPS。",
+                tone = NoticeTone.Error,
+            )
         }
-        OutlinedTextField(
+        InkTextField(
             value = token,
             onValueChange = { token = it },
-            label = { Text("ANTHROPIC_AUTH_TOKEN") },
+            label = "ANTHROPIC_AUTH_TOKEN",
             singleLine = true,
+            monospace = true,
             modifier = Modifier.fillMaxWidth(),
             visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = {
-                IconButton(onClick = { visible = !visible }) {
-                    Icon(if (visible) HugeIcons.ViewOff else HugeIcons.View, contentDescription = if (visible) "隐藏" else "显示")
-                }
+            trailing = {
+                InkIconButton(
+                    icon = if (visible) HugeIcons.ViewOff else HugeIcons.View,
+                    contentDescription = if (visible) "隐藏" else "显示",
+                    onClick = { visible = !visible },
+                    size = 32.dp,
+                    iconSize = 18.dp,
+                )
             },
         )
-        Button(
+        InkButton(
             onClick = { onSave(token.trim(), baseUrl.trim()) },
             enabled = token.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
@@ -257,35 +325,32 @@ private fun RootfsStep(state: SetupVM.State, onInstall: (String?) -> Unit, onDis
             )
         },
     ) {
-        if (state.rootfsBroken && !busy) {
-            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.errorContainer) {
-                Text(
-                    "上次安装没有完成（下载或解压中断），需要重新安装。",
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
+        AnimatedVisibility(visible = state.rootfsBroken && !busy, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            Notice(text = "上次安装没有完成（下载或解压中断），需要重新安装。", tone = NoticeTone.Error)
         }
-        if (busy) Progress(state)
-        state.error?.let { ErrorCard(it, onDismissError) }
-        if (showCustom) {
-            OutlinedTextField(
+        AnimatedVisibility(visible = busy, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            Progress(state)
+        }
+        ErrorCard(state.error, onDismissError)
+        AnimatedVisibility(visible = showCustom, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            InkTextField(
                 value = customUrl,
                 onValueChange = { customUrl = it },
-                label = { Text("自定义 rootfs 地址（tar.gz / tar.xz）") },
+                label = "自定义 rootfs 地址（tar.gz / tar.xz）",
                 modifier = Modifier.fillMaxWidth(),
                 maxLines = 3,
+                monospace = true,
                 enabled = !busy,
             )
         }
-        Button(
+        InkButton(
             onClick = { onInstall(customUrl.trim().takeIf { showCustom && it.isNotBlank() }) },
             enabled = !busy,
+            busy = busy,
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (busy) "正在安装…" else "下载并安装 Ubuntu") }
-        TextButton(onClick = { showCustom = !showCustom }, enabled = !busy) {
-            Text(if (showCustom) "用默认地址" else "用自定义地址", style = MaterialTheme.typography.labelMedium)
+        InkTextButton(onClick = { showCustom = !showCustom }, enabled = !busy) {
+            Text(if (showCustom) "用默认地址" else "用自定义地址")
         }
     }
 }
@@ -309,29 +374,31 @@ private fun CliStep(state: SetupVM.State, onInstall: (Boolean) -> Unit, onDismis
             )
         },
     ) {
-        if (state.cliIncomplete && !busy) {
-            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.errorContainer) {
-                Text(
-                    "检测到上次安装不完整：npm 包在，但约 100 MB 的原生二进制没有下完，会话一启动就会报 " +
-                        "spawnSync … ENOENT。点下面的按钮只补这一部分。",
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
+        AnimatedVisibility(visible = state.cliIncomplete && !busy, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            Notice(
+                text = "检测到上次安装不完整：npm 包在，但约 100 MB 的原生二进制没有下完，会话一启动就会报 " +
+                    "spawnSync … ENOENT。点下面的按钮只补这一部分。",
+                tone = NoticeTone.Error,
+            )
         }
-        if (busy) Progress(state)
-        state.error?.let { ErrorCard(it, onDismissError) }
+        AnimatedVisibility(visible = busy, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            Progress(state)
+        }
+        ErrorCard(state.error, onDismissError)
         // npm 源单独一个开关而不是跟着 Node 一起自动回退：Node 有官方校验和兜底，
         // claude-code 没有 —— 打开它等于同意从第三方镜像取 CLI 本体，必须是显式选择。
         Row(
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(enabled = !busy) { useNpmMirror = !useNpmMirror },
+                .clip(MaterialTheme.shapes.small)
+                .clickable(enabled = !busy) { useNpmMirror = !useNpmMirror }
+                .padding(horizontal = 4.dp, vertical = 6.dp),
         ) {
-            Checkbox(checked = useNpmMirror, onCheckedChange = { useNpmMirror = it }, enabled = !busy)
-            Column(Modifier.padding(start = 4.dp)) {
+            // 整行可点，勾选框自己不接点击，否则一次触摸翻两遍
+            InkCheckbox(checked = useNpmMirror, onCheckedChange = null, enabled = !busy)
+            Column {
                 Text("用淘宝 npm 源安装", style = MaterialTheme.typography.bodySmall)
                 Text(
                     "国内快很多。原生二进制仍按官方 registry 的校验和验证；只有几 KB 的 wrapper 来自镜像。",
@@ -340,7 +407,12 @@ private fun CliStep(state: SetupVM.State, onInstall: (Boolean) -> Unit, onDismis
                 )
             }
         }
-        Button(onClick = { onInstall(useNpmMirror) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+        InkButton(
+            onClick = { onInstall(useNpmMirror) },
+            enabled = !busy,
+            busy = busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text(
                 when {
                     busy -> "正在安装…"

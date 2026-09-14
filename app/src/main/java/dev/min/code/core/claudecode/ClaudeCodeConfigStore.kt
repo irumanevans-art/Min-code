@@ -104,6 +104,36 @@ class ClaudeCodeConfigStore(
             writeJson(file, JsonObject(draft))
         }
 
+    /**
+     * settings.json 里的 `model`：CLI `/model` 面板按 Enter 存的就是这个键
+     * （二进制里 `Jt("userSettings", {model})`），新会话、终端页里直接跑的 `claude`
+     * 都从它取默认。传 null 表示删掉这个键 —— 对应面板里选回 "Default"。
+     */
+    suspend fun saveDefaultModel(model: String?): Boolean = updateSettings { draft ->
+        val value = model?.trim()?.takeIf { it.isNotBlank() }
+        if (value == null) draft.remove(KEY_MODEL) else draft[KEY_MODEL] = JsonPrimitive(value)
+    }
+
+    suspend fun loadDefaultModel(): String? = loadSettings()?.get(KEY_MODEL).asStringOrNull()
+
+    /**
+     * `maxEffortLevel`（CLI 2.1.267+）：把所有 provider 上的 effort 钳到这一档及以下。
+     * 合法值同 `--effort` 阶梯；传 null / 空白 = 删掉该键（不设上限）。
+     * 非法字符串直接拒绝写入，避免 CLI warn-and-ignore 后界面还以为设上了。
+     */
+    suspend fun saveMaxEffortLevel(level: String?): Boolean {
+        val value = level?.trim()?.takeIf { it.isNotBlank() }
+        if (value != null && value !in ClaudeCodeManager.EFFORT_LEVELS) return false
+        return updateSettings { draft ->
+            if (value == null) draft.remove(KEY_MAX_EFFORT_LEVEL)
+            else draft[KEY_MAX_EFFORT_LEVEL] = JsonPrimitive(value)
+        }
+    }
+
+    suspend fun loadMaxEffortLevel(): String? =
+        loadSettings()?.get(KEY_MAX_EFFORT_LEVEL).asStringOrNull()
+            ?.takeIf { it in ClaudeCodeManager.EFFORT_LEVELS }
+
     /** `permissions.<bucket>` 下的规则列表（allow / deny / ask） */
     suspend fun loadPermissionRules(bucket: String): List<String> {
         val permissions = loadSettings()?.get("permissions") as? JsonObject ?: return emptyList()
@@ -303,6 +333,8 @@ class ClaudeCodeConfigStore(
 
     private companion object {
         const val TAG = "ClaudeCodeConfigStore"
+        const val KEY_MODEL = "model"
+        const val KEY_MAX_EFFORT_LEVEL = "maxEffortLevel"
         const val TYPE_STDIO = "stdio"
         const val TYPE_HTTP = "http"
         const val TYPE_SSE = "sse"

@@ -48,6 +48,21 @@ class WorkspaceTerminalSessionManager internal constructor(
         launchCreateTab(root = root, onlyIfEmpty = false)
     }
 
+    /**
+     * 给每个还没有终端的 Claude 会话开一个页签，开在那个会话自己的工作目录里。
+     *
+     * 按 [SessionTab.key] 去重：会话终端浮层每次打开都会调一次，已经有页签的会话不能再开一个 ——
+     * 那样来回开合几次就攒出一屏页签，每个都是一个真 shell 进程。
+     * 已经关掉的页签不补：关掉是用户的决定。
+     */
+    internal fun ensureSessionTabs(root: String, sessions: List<SessionTab>) {
+        if (sessions.isEmpty()) return
+        launchCreateTab(root = root, onlyIfEmpty = false, sessions = sessions)
+    }
+
+    /** 一个要开终端的 Claude 会话：注册表的 key、它的工作目录、页签上写什么 */
+    internal data class SessionTab(val key: String, val cwd: String?, val label: String)
+
     internal fun selectTab(root: String, tabId: Long) {
         updateState(root) { state ->
             if (state.tabs.none { it.id == tabId }) state else state.copy(selectedTabId = tabId)
@@ -98,13 +113,36 @@ class WorkspaceTerminalSessionManager internal constructor(
         }
     }
 
-    private fun launchCreateTab(root: String, onlyIfEmpty: Boolean) {
+    /**
+     * @param sessions 非空时按会话建页签（每个会话一个，已有的跳过）；为空时建一个普通页签。
+     *   走同一个 [creationJobs] 登记，[closeWorkspace] 才能在删 rootfs 前把它等停。
+     */
+    private fun launchCreateTab(
+        root: String,
+        onlyIfEmpty: Boolean,
+        sessions: List<SessionTab> = emptyList(),
+    ) {
         if (root in creationJobs) return
 
         lateinit var job: Job
         job = appScope.launch(start = CoroutineStart.LAZY) {
             try {
-                createTab(root = root, onlyIfEmpty = onlyIfEmpty)
+                if (sessions.isEmpty()) {
+                    createTab(root = root, onlyIfEmpty = onlyIfEmpty)
+                } else {
+                    // 已经有页签的会话不再开第二个：浮层每次打开都会调一次，
+                    // 否则来回开合几次就攒出一屏页签，每个都是一个真 shell 进程
+                    val known = currentState(root).tabs.mapNotNullTo(HashSet()) { it.sessionKey }
+                    sessions.filter { it.key !in known }.forEach { session ->
+                        createTab(
+                            root = root,
+                            onlyIfEmpty = false,
+                            sessionKey = session.key,
+                            cwd = session.cwd,
+                            label = session.label,
+                        )
+                    }
+                }
             } finally {
                 creationJobs.remove(root, job)
             }
@@ -113,7 +151,13 @@ class WorkspaceTerminalSessionManager internal constructor(
         job.start()
     }
 
-    private suspend fun createTab(root: String, onlyIfEmpty: Boolean) = withContext(Dispatchers.Main.immediate) {
+    private suspend fun createTab(
+        root: String,
+        onlyIfEmpty: Boolean,
+        sessionKey: String? = null,
+        cwd: String? = null,
+        label: String? = null,
+    ) = withContext(Dispatchers.Main.immediate) {
         val initialState = currentState(root)
         if (initialState.isCreating || (onlyIfEmpty && initialState.tabs.isNotEmpty())) {
             return@withContext
@@ -160,6 +204,7 @@ class WorkspaceTerminalSessionManager internal constructor(
                 context = appContext,
                 root = root,
                 client = client,
+                cwd = cwd,
             )
         }.onFailure { error ->
             Log.e(TAG, "Failed to create terminal for workspace $root", error)
@@ -175,6 +220,8 @@ class WorkspaceTerminalSessionManager internal constructor(
             number = tabNumber,
             session = session,
             client = client,
+            sessionKey = sessionKey,
+            label = label,
         )
         updateState(root) { state ->
             state.copy(
@@ -231,6 +278,10 @@ internal data class WorkspaceTerminalTab(
     val session: TerminalSession,
     val client: WorkspaceTerminalSessionClient,
     val finished: Boolean = false,
+    /** 这个页签是给哪个 Claude 会话开的（注册表的 key）。手动开的页签为 null */
+    val sessionKey: String? = null,
+    /** 页签上写什么。null 时写 [number] */
+    val label: String? = null,
 )
 
 internal enum class WorkspaceTerminalReadiness {

@@ -105,7 +105,7 @@ class SetupVM(
         viewModelScope.launch {
             _state.update { it.copy(busy = Step.ROOTFS, error = null, progress = null, detail = "准备下载…") }
             terminalSessionManager.closeWorkspace(workspaceId)
-            val sources = url?.takeIf { it.isNotBlank() }?.let { listOf(it) } ?: RootfsSources.candidates()
+            val sources = RootfsSources.urlsFor(url)
             var lastError: Throwable? = null
             for ((index, source) in sources.withIndex()) {
                 val label = if (sources.size == 1) "" else if (index == 0) "（官方源）" else "（镜像源）"

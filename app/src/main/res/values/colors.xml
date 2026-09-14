@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <!-- 和 Compose 主题的 Paper 一致，冷启动那一帧不闪白/闪黑 -->
-  <color name="window_background">#FFFBFAF7</color>
+  <!-- 纸：「白色取色」背景上的白。窗口底、图标底、启动页底都是它 -->
+  <color name="window_background">#FFF8FDF7</color>
+  <color name="paper">#FFF8FDF7</color>
+  <color name="ink">#FF0E1A2B</color>
+  <!-- 海的平面取样（只给系统层用；界面里的蓝是纹理） -->
+  <color name="sea">#FF3E96E3</color>
+  <color name="sea_deep">#FF1562BC</color>
 </resources>

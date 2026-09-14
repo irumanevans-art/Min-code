@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!--
+          UI 场景预览：没有启动器入口，桌面上只有 Min 一个图标。
+          只能用 adb 显式启动（见 DESIGN.md「原生效果验收」），所以 exported 必须保留。
+        -->
+        <activity
+            android:name=".debug.UiPreviewActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Min"
+            android:windowSoftInputMode="adjustResize" />
+    </application>
+</manifest>

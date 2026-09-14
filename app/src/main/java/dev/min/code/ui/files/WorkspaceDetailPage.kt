@@ -6,6 +6,7 @@ import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,33 +15,22 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,36 +39,64 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.min.code.R
+import dev.min.code.core.rootfs.WorkspaceEntity
+import dev.min.code.ui.components.BackButton
+import dev.min.code.ui.components.EmptyState
+import dev.min.code.ui.components.ImagePreviewDialog
+import dev.min.code.ui.components.InkBottomTabs
+import dev.min.code.ui.components.InkButton
+import dev.min.code.ui.components.InkButtonTone
+import dev.min.code.ui.components.InkDialog
+import dev.min.code.ui.components.InkIconButton
+import dev.min.code.ui.components.InkLineProgress
+import dev.min.code.ui.components.InkSegmented
+import dev.min.code.ui.components.InkTab
+import dev.min.code.ui.components.InkTextButton
+import dev.min.code.ui.components.InkSheet
+import dev.min.code.ui.components.InkTextField
+import dev.min.code.ui.components.InkTopBar
+import dev.min.code.ui.components.Notice
+import dev.min.code.ui.components.NoticeTone
+import dev.min.code.ui.components.PaperCard
+import dev.min.code.ui.components.RikkaConfirmDialog
+import dev.min.code.ui.components.InkMenuItem
+import dev.min.code.core.claudecode.CwdPath
+import dev.min.code.core.rootfs.WorkspaceUsage
+import dev.min.code.ui.nav.LocalNavController
+import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.theme.InkMotion
+import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.sea
+import dev.min.code.util.fileSizeToString
+import dev.min.code.util.plus
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowTurnBackward
 import me.rerere.hugeicons.stroke.Bash
+import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.ComputerTerminal01
 import me.rerere.hugeicons.stroke.Delete01
+import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.File02
 import me.rerere.hugeicons.stroke.FileImport
 import me.rerere.hugeicons.stroke.Folder01
+import me.rerere.hugeicons.stroke.FolderAdd
 import me.rerere.hugeicons.stroke.MoreVertical
+import me.rerere.hugeicons.stroke.Move01
 import me.rerere.hugeicons.stroke.Refresh01
+import me.rerere.hugeicons.stroke.Search01
 import me.rerere.hugeicons.stroke.Settings03
 import me.rerere.hugeicons.stroke.Share08
-import dev.min.code.ui.nav.Screen
-import dev.min.code.core.rootfs.WorkspaceEntity
-import androidx.compose.ui.res.stringResource
-import dev.min.code.R
-import dev.min.code.ui.components.BackButton
-import dev.min.code.ui.components.ImagePreviewDialog
-import dev.min.code.ui.components.RikkaConfirmDialog
-import dev.min.code.ui.nav.LocalNavController
-import dev.min.code.ui.theme.CustomColors
-import dev.min.code.util.fileSizeToString
-import dev.min.code.util.plus
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstallStage
 import me.rerere.workspace.WorkspaceFileEntry
@@ -87,6 +105,12 @@ import me.rerere.workspace.WorkspaceStorageArea
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
 
+/**
+ * 工作区页：「环境」和「文件」两页横向翻页。
+ *
+ * 版式是纸上的纸条：每个文件一张 [PaperCard]，目录图标是金的（这是你自己的东西），
+ * 文件是石墨；删除一律朱砂。没有卡片阴影——这一页也是同一本日志。
+ */
 @Composable
 fun WorkspaceDetailPage(id: String) {
     val navController = LocalNavController.current
@@ -98,8 +122,13 @@ fun WorkspaceDetailPage(id: String) {
     val pagerState = rememberPagerState(initialPage = 1) { 2 }
     val scope = rememberCoroutineScope()
     var deleteTarget by remember { mutableStateOf<WorkspaceFileEntry?>(null) }
+    var renameTarget by remember { mutableStateOf<WorkspaceFileEntry?>(null) }
+    var moveTarget by remember { mutableStateOf<WorkspaceFileEntry?>(null) }
+    var creatingFolder by remember { mutableStateOf(false) }
     var showInstallDialog by remember { mutableStateOf(false) }
     var previewImageUri by remember { mutableStateOf<String?>(null) }
+    // 搜索框展不展开。搜索中（query 非空）时一直留着，否则点搜索图标来回切
+    var searchBarOpen by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -124,59 +153,70 @@ fun WorkspaceDetailPage(id: String) {
         vm.exportFile(entry, outputStream)
     }
 
-    BackHandler(enabled = pagerState.currentPage == 1 && state.path.isNotBlank()) {
-        vm.goUp()
+    // 返回键：先退出搜索，再退目录。两件事都没得退时才真的离开这一页
+    BackHandler(enabled = pagerState.currentPage == 1 && (state.inSearch || state.path.isNotBlank())) {
+        if (state.inSearch) {
+            vm.clearSearch()
+            searchBarOpen = false
+        } else {
+            vm.goUp()
+        }
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "工作区",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
+            InkTopBar(
+                title = "工作区",
                 navigationIcon = { BackButton() },
                 actions = {
                     if (pagerState.currentPage == 1) {
-                        IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
-                            Icon(
-                                HugeIcons.FileImport,
-                                contentDescription = stringResource(R.string.workspace_detail_import_file),
-                            )
-                        }
+                        InkIconButton(
+                            icon = HugeIcons.Search01,
+                            contentDescription = "搜索文件",
+                            onClick = {
+                                if (state.inSearch) vm.clearSearch() else searchBarOpen = !searchBarOpen
+                            },
+                        )
+                        InkIconButton(
+                            icon = HugeIcons.FolderAdd,
+                            contentDescription = stringResource(R.string.workspace_detail_new_folder),
+                            onClick = { creatingFolder = true },
+                        )
+                        InkIconButton(
+                            icon = HugeIcons.FileImport,
+                            contentDescription = stringResource(R.string.workspace_detail_import_file),
+                            onClick = { filePicker.launch(arrayOf("*/*")) },
+                        )
                     }
-                    IconButton(onClick = { vm.refresh() }) {
-                        Icon(HugeIcons.Refresh01, contentDescription = null)
-                    }
+                    InkIconButton(
+                        icon = HugeIcons.Refresh01,
+                        contentDescription = "刷新",
+                        onClick = {
+                            vm.refresh()
+                            if (pagerState.currentPage == 0) vm.measureUsage()
+                        },
+                    )
                     if (state.workspace?.shellStatus != WorkspaceShellStatus.DISABLED.name) {
-                        IconButton(onClick = { navController.navigate(Screen.Terminal) }) {
-                            Icon(HugeIcons.ComputerTerminal01, contentDescription = null)
-                        }
+                        InkIconButton(
+                            icon = HugeIcons.ComputerTerminal01,
+                            contentDescription = stringResource(R.string.workspace_terminal_title),
+                            onClick = { navController.navigate(Screen.Terminal) },
+                        )
                     }
                 },
-                colors = CustomColors.topBarColors,
             )
         },
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = pagerState.currentPage == 0,
-                    label = { Text("环境") },
-                    icon = { Icon(HugeIcons.Settings03, contentDescription = null) },
-                    onClick = { scope.launch { pagerState.animateScrollToPage(0) } },
-                )
-                NavigationBarItem(
-                    selected = pagerState.currentPage == 1,
-                    label = { Text("文件") },
-                    icon = { Icon(HugeIcons.File02, contentDescription = null) },
-                    onClick = { scope.launch { pagerState.animateScrollToPage(1) } },
-                )
-            }
+            InkBottomTabs(
+                tabs = listOf(
+                    InkTab(HugeIcons.Settings03, "环境"),
+                    InkTab(HugeIcons.File02, "文件"),
+                ),
+                selected = pagerState.currentPage,
+                onSelect = { page -> scope.launch { pagerState.animateScrollToPage(page) } },
+            )
         },
-        containerColor = CustomColors.topBarColors.containerColor,
+        containerColor = MaterialTheme.colorScheme.background,
     ) { innerPadding ->
         HorizontalPager(
             state = pagerState,
@@ -187,7 +227,7 @@ fun WorkspaceDetailPage(id: String) {
             when (page) {
                 0 -> WorkspaceBasicPage(
                     workspace = state.workspace,
-                    usageText = state.usageBytes?.fileSizeToString() ?: "计算中…",
+                    usage = state.usage,
                     installProgress = installProgress,
                     onInstallRootfs = { showInstallDialog = true },
                 )
@@ -195,6 +235,12 @@ fun WorkspaceDetailPage(id: String) {
                 1 -> WorkspaceFilesPage(
                     state = state,
                     contentPadding = PaddingValues(),
+                    searchOpen = searchBarOpen || state.inSearch,
+                    onQueryChange = vm::search,
+                    onCloseSearch = {
+                        vm.clearSearch()
+                        searchBarOpen = false
+                    },
                     onSelectArea = vm::selectArea,
                     onGoUp = vm::goUp,
                     onOpen = { entry ->
@@ -233,6 +279,8 @@ fun WorkspaceDetailPage(id: String) {
                         }
                     },
                     onDelete = { deleteTarget = it },
+                    onRename = { renameTarget = it },
+                    onMove = { moveTarget = it },
                     onExport = { entry ->
                         exportTarget = entry
                         exportLauncher.launch(entry.name)
@@ -271,16 +319,17 @@ fun WorkspaceDetailPage(id: String) {
     }
 
     installError?.let { message ->
-        AlertDialog(
+        InkDialog(
             onDismissRequest = vm::dismissInstallError,
-            title = { Text(stringResource(R.string.workspace_detail_rootfs_install_failed)) },
-            text = { Text(message) },
+            title = stringResource(R.string.workspace_detail_rootfs_install_failed),
             confirmButton = {
-                TextButton(onClick = vm::dismissInstallError) {
+                InkTextButton(onClick = vm::dismissInstallError) {
                     Text(stringResource(R.string.common_confirm))
                 }
             },
-        )
+        ) {
+            Text(message, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 
     previewImageUri?.let { uri ->
@@ -305,12 +354,51 @@ fun WorkspaceDetailPage(id: String) {
             Text(stringResource(R.string.workspace_detail_will_delete, entry.path))
         }
     }
+
+    renameTarget?.let { entry ->
+        NameDialog(
+            title = stringResource(R.string.workspace_detail_rename_title),
+            initial = entry.name,
+            confirmText = stringResource(R.string.common_rename),
+            onDismiss = { renameTarget = null },
+            onConfirm = { name ->
+                vm.rename(entry, name)
+                renameTarget = null
+            },
+        )
+    }
+
+    if (creatingFolder) {
+        NameDialog(
+            title = stringResource(R.string.workspace_detail_new_folder),
+            initial = "",
+            confirmText = stringResource(R.string.common_create),
+            onDismiss = { creatingFolder = false },
+            onConfirm = { name ->
+                vm.mkdir(name)
+                creatingFolder = false
+            },
+        )
+    }
+
+    moveTarget?.let { entry ->
+        MoveSheet(
+            entry = entry,
+            currentPath = state.path,
+            onList = vm::listFolders,
+            onDismiss = { moveTarget = null },
+            onMove = { dest ->
+                vm.moveInto(entry, dest)
+                moveTarget = null
+            },
+        )
+    }
 }
 
 @Composable
 private fun WorkspaceBasicPage(
     workspace: WorkspaceEntity?,
-    usageText: String,
+    usage: WorkspaceUsage?,
     installProgress: RootfsInstallProgress?,
     onInstallRootfs: () -> Unit,
 ) {
@@ -329,22 +417,20 @@ private fun WorkspaceBasicPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Card(
+            PaperCard(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CustomColors.cardColorsOnSurfaceContainer,
+                padding = PaddingValues(16.dp),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Text(
                         text = "Linux 环境",
                         style = MaterialTheme.typography.titleMedium,
                     )
                     WorkspaceInfoRow("状态", workspace?.shellStatus?.toShellStatusLabel() ?: "-")
-                    WorkspaceInfoRow("占用空间", usageText)
+                    WorkspaceUsageBlock(usage)
                     Text(
                         "/workspace 是文件页里的「文件」区，Claude Code 的工作目录就是它；「Rootfs」区是整个 Ubuntu。" +
                             "Claude 用 apt / pip 装的东西都在 Rootfs 里，占用空间随之增长。",
@@ -356,15 +442,13 @@ private fun WorkspaceBasicPage(
         }
 
         item {
-            Card(
+            PaperCard(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CustomColors.cardColorsOnSurfaceContainer,
+                padding = PaddingValues(16.dp),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Text(
                         text = "重装 Linux 环境",
@@ -377,16 +461,16 @@ private fun WorkspaceBasicPage(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
 
-                    Button(
+                    // 重装是判定，不是动作：朱砂描边，按下去之前先看清上面那段话
+                    InkButton(
                         onClick = onInstallRootfs,
                         enabled = workspace != null && !installing,
+                        busy = installing,
+                        tone = InkButtonTone.Vermilion,
+                        icon = HugeIcons.Bash,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(HugeIcons.Bash, contentDescription = null)
-                        Text(
-                            text = installButtonText,
-                            modifier = Modifier.padding(start = 8.dp),
-                        )
+                        Text(installButtonText)
                     }
 
                     installProgress?.let { progress ->
@@ -395,7 +479,6 @@ private fun WorkspaceBasicPage(
                 }
             }
         }
-
     }
 }
 
@@ -421,6 +504,7 @@ private fun WorkspaceInfoRow(
             text = value,
             modifier = Modifier.weight(0.65f),
             style = MaterialTheme.typography.bodyMedium,
+            fontFamily = JetbrainsMono,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -436,14 +520,11 @@ private fun RootfsProgress(progress: RootfsInstallProgress) {
         val fraction = progress.totalBytes?.takeIf { it > 0 }?.let {
             (progress.bytesRead.toFloat() / it).coerceIn(0f, 1f)
         }
-        if (fraction != null && progress.stage == RootfsInstallStage.DOWNLOADING) {
-            LinearProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
+        // 只有下载阶段知道总量；解压阶段是一道来回扫的墨线
+        InkLineProgress(
+            progress = fraction?.takeIf { progress.stage == RootfsInstallStage.DOWNLOADING },
+            modifier = Modifier.fillMaxWidth(),
+        )
         Text(
             text = when (progress.stage) {
                 RootfsInstallStage.DOWNLOADING -> {
@@ -459,6 +540,7 @@ private fun RootfsProgress(progress: RootfsInstallProgress) {
                 RootfsInstallStage.INSTALLED -> stringResource(R.string.workspace_detail_install_complete)
             },
             style = MaterialTheme.typography.bodySmall,
+            fontFamily = JetbrainsMono,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -478,119 +560,210 @@ private fun InstallRootfsDialog(
     // 之前这个弹窗只问一个下载地址，一个字的风险提示都没有。
     val willWipe = workspace.shellStatus == WorkspaceShellStatus.READY.name
 
-    AlertDialog(
+    InkDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                stringResource(
-                    if (willWipe) R.string.workspace_detail_reinstall_rootfs
-                    else R.string.workspace_detail_install_rootfs
-                )
-            )
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = stringResource(R.string.workspace_detail_install_rootfs_desc, workspace.name),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (willWipe) {
-                    Surface(
-                        shape = MaterialTheme.shapes.small,
-                        color = MaterialTheme.colorScheme.errorContainer,
-                    ) {
-                        Text(
-                            text = stringResource(R.string.workspace_detail_rootfs_wipe_warning),
-                            modifier = Modifier.padding(12.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(stringResource(R.string.workspace_detail_download_url)) },
-                    maxLines = 5,
-                )
-            }
-        },
+        title = stringResource(
+            if (willWipe) R.string.workspace_detail_reinstall_rootfs
+            else R.string.workspace_detail_install_rootfs
+        ),
         confirmButton = {
-            TextButton(
+            InkTextButton(
                 onClick = { onConfirm(url.trim()) },
                 enabled = url.isNotBlank(),
+                // 会清空环境的那个按钮是朱砂的
+                tone = if (willWipe) InkButtonTone.Vermilion else InkButtonTone.Quiet,
             ) {
                 Text(
-                    text = stringResource(
+                    stringResource(
                         if (willWipe) R.string.workspace_detail_reinstall_rootfs
                         else R.string.common_install
-                    ),
-                    color = if (willWipe) MaterialTheme.colorScheme.error else Color.Unspecified,
+                    )
                 )
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            InkTextButton(onClick = onDismiss) {
                 Text(stringResource(R.string.common_cancel))
             }
         },
-    )
+    ) {
+        Text(
+            text = stringResource(R.string.workspace_detail_install_rootfs_desc, workspace.name),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (willWipe) {
+            Notice(
+                text = stringResource(R.string.workspace_detail_rootfs_wipe_warning),
+                tone = NoticeTone.Error,
+            )
+        }
+        InkTextField(
+            value = url,
+            onValueChange = { url = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.workspace_detail_download_url),
+            maxLines = 5,
+            monospace = true,
+        )
+    }
 }
 
 @Composable
 private fun WorkspaceFilesPage(
     state: WorkspaceDetailState,
     contentPadding: PaddingValues,
+    searchOpen: Boolean,
+    onQueryChange: (String) -> Unit,
+    onCloseSearch: () -> Unit,
     onSelectArea: (WorkspaceStorageArea) -> Unit,
     onGoUp: () -> Unit,
     onOpen: (WorkspaceFileEntry) -> Unit,
     onDelete: (WorkspaceFileEntry) -> Unit,
+    onRename: (WorkspaceFileEntry) -> Unit,
+    onMove: (WorkspaceFileEntry) -> Unit,
     onExport: (WorkspaceFileEntry) -> Unit,
     onShare: (WorkspaceFileEntry) -> Unit,
 ) {
+    val shown = state.visibleEntries
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = contentPadding + PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item {
-            WorkspaceAreaSelector(
-                selected = state.area,
-                onSelected = onSelectArea,
-            )
+        if (searchOpen) {
+            item(key = "search") {
+                WorkspaceSearchBar(
+                    query = state.query,
+                    onQueryChange = onQueryChange,
+                    onClose = onCloseSearch,
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = InkMotion.effect(),
+                        placementSpec = InkMotion.spatial<IntOffset>(),
+                        fadeOutSpec = InkMotion.effectFast(),
+                    ),
+                )
+            }
         }
 
-        item {
-            WorkspacePathBar(
-                path = state.path,
-                canGoUp = state.path.isNotBlank(),
-                onGoUp = onGoUp,
-            )
+        // 搜索时不显示区域切换和路径栏：结果本来就跨目录，那两行会误导
+        if (!state.inSearch) {
+            item(key = "area") {
+                WorkspaceAreaSelector(
+                    selected = state.area,
+                    onSelected = onSelectArea,
+                )
+            }
+
+            item(key = "path") {
+                WorkspacePathBar(
+                    path = state.path,
+                    canGoUp = state.path.isNotBlank(),
+                    onGoUp = onGoUp,
+                )
+            }
+        } else {
+            item(key = "search-scope") {
+                Text(
+                    text = when {
+                        state.searching -> "正在搜索…"
+                        shown.isEmpty() -> "没找到「${state.query}」"
+                        else -> "找到 ${shown.size} 项 · 在 ${state.path.ifBlank { "/" }} 下"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         state.error?.let { error ->
-            item {
-                ErrorCard(error)
+            item(key = "error") {
+                Notice(
+                    text = error,
+                    tone = NoticeTone.Error,
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = InkMotion.effect(),
+                        placementSpec = InkMotion.spatial<IntOffset>(),
+                        fadeOutSpec = InkMotion.effectFast(),
+                    ),
+                )
             }
         }
 
-        if (!state.loading && state.entries.isEmpty() && state.error == null) {
-            item {
-                EmptyDirectoryState()
+        if (!state.loading && !state.inSearch && shown.isEmpty() && state.error == null) {
+            item(key = "empty") {
+                EmptyDirectoryState(
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = InkMotion.effect(),
+                        placementSpec = InkMotion.spatial<IntOffset>(),
+                        fadeOutSpec = InkMotion.effectFast(),
+                    ),
+                )
             }
         }
 
-        items(state.entries, key = { "${state.area.name}:${it.path}" }) { entry ->
+        items(shown, key = { "${state.area.name}:${it.path}" }) { entry ->
             WorkspaceFileCard(
                 entry = entry,
                 onOpen = { onOpen(entry) },
                 onDelete = { onDelete(entry) },
+                onRename = { onRename(entry) },
+                onMove = { onMove(entry) },
                 onExport = { onExport(entry) },
                 onShare = { onShare(entry) },
+                // 进目录 / 删文件时条目落墨进场、飞白退场，位置变化走弹簧
+                modifier = Modifier.animateItem(
+                    fadeInSpec = InkMotion.effect(),
+                    placementSpec = InkMotion.spatial<IntOffset>(),
+                    fadeOutSpec = InkMotion.effectFast(),
+                ),
             )
         }
+    }
+}
+
+/**
+ * 文件页的搜索条：一张纸条 + 左边一枚放大镜，右边一个叉。
+ * 打开就聚焦 —— 点了搜索图标还要再点一次输入框是多余的一步。
+ */
+@Composable
+private fun WorkspaceSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        InkTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier
+                .weight(1f)
+                .focusRequester(focusRequester),
+            placeholder = "按文件名搜这个目录往下",
+            singleLine = true,
+            leading = {
+                Icon(
+                    HugeIcons.Search01,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+        )
+        InkIconButton(
+            icon = HugeIcons.Cancel01,
+            contentDescription = "退出搜索",
+            onClick = onClose,
+            size = 36.dp,
+            iconSize = 18.dp,
+        )
     }
 }
 
@@ -603,17 +776,12 @@ private fun WorkspaceAreaSelector(
         WorkspaceStorageArea.FILES to stringResource(R.string.workspace_detail_area_files),
         WorkspaceStorageArea.LINUX to stringResource(R.string.workspace_detail_area_rootfs),
     )
-    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-        areas.forEachIndexed { index, (area, label) ->
-            SegmentedButton(
-                selected = selected == area,
-                onClick = { onSelected(area) },
-                shape = SegmentedButtonDefaults.itemShape(index, areas.size),
-            ) {
-                Text(label)
-            }
-        }
-    }
+    InkSegmented(
+        options = areas.map { it.second },
+        selected = areas.indexOfFirst { it.first == selected }.coerceAtLeast(0),
+        onSelect = { onSelected(areas[it].first) },
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable
@@ -627,16 +795,20 @@ private fun WorkspacePathBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        IconButton(
-            enabled = canGoUp,
+        InkIconButton(
+            icon = HugeIcons.ArrowTurnBackward,
+            contentDescription = "上一级",
             onClick = onGoUp,
-        ) {
-            Icon(HugeIcons.ArrowTurnBackward, contentDescription = null)
-        }
+            enabled = canGoUp,
+            size = 36.dp,
+            iconSize = 18.dp,
+        )
+        // 路径是机器产物：等宽
         Text(
             text = path.ifBlank { "/" },
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = JetbrainsMono,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -649,98 +821,108 @@ private fun WorkspaceFileCard(
     entry: WorkspaceFileEntry,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onRename: () -> Unit,
+    onMove: () -> Unit,
     onExport: () -> Unit,
     onShare: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val vermilion = MaterialTheme.sea.vermilion
+    val kind = remember(entry.path, entry.isDirectory) { entry.detectFileKind() }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpen),
-        colors = CustomColors.cardColorsOnSurfaceContainer,
+    PaperCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = onOpen,
+        onLongClick = { menuExpanded = true },
+        padding = PaddingValues(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 2.dp),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = if (entry.isDirectory) HugeIcons.Folder01 else HugeIcons.File02,
+                imageVector = kind.icon(),
                 contentDescription = null,
-                modifier = Modifier.size(22.dp),
-                tint = if (entry.isDirectory) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                modifier = Modifier.size(20.dp),
+                tint = kind.tint(),
             )
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 Text(
                     text = entry.name,
-                    style = MaterialTheme.typography.titleSmallEmphasized,
+                    style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = if (entry.isDirectory) entry.path else "${entry.path} · ${entry.sizeBytes.fileSizeToString()}",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetbrainsMono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
             Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(HugeIcons.MoreVertical, contentDescription = null)
-                }
+                InkIconButton(
+                    icon = HugeIcons.MoreVertical,
+                    contentDescription = "更多操作",
+                    onClick = { menuExpanded = true },
+                    size = 36.dp,
+                    iconSize = 18.dp,
+                )
                 DropdownMenu(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
+                    shape = MaterialTheme.shapes.medium,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
+                    InkMenuItem(
+                        text = stringResource(R.string.common_rename),
+                        icon = HugeIcons.Edit02,
+                        onClick = {
+                            menuExpanded = false
+                            onRename()
+                        },
+                    )
+                    InkMenuItem(
+                        text = stringResource(R.string.common_move),
+                        icon = HugeIcons.Move01,
+                        onClick = {
+                            menuExpanded = false
+                            onMove()
+                        },
+                    )
                     if (!entry.isDirectory) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.common_export)) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = HugeIcons.FileImport,
-                                    contentDescription = null,
-                                )
-                            },
+                        InkMenuItem(
+                            text = stringResource(R.string.common_export),
+                            icon = HugeIcons.FileImport,
                             onClick = {
                                 menuExpanded = false
                                 onExport()
                             },
                         )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.common_share)) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = HugeIcons.Share08,
-                                    contentDescription = null,
-                                )
-                            },
+                        InkMenuItem(
+                            text = stringResource(R.string.common_share),
+                            icon = HugeIcons.Share08,
                             onClick = {
                                 menuExpanded = false
                                 onShare()
                             },
                         )
                     }
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = HugeIcons.Delete01,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                            )
-                        },
+                    InkMenuItem(
+                        text = stringResource(R.string.common_delete),
+                        icon = HugeIcons.Delete01,
+                        tint = vermilion,
                         onClick = {
                             menuExpanded = false
                             onDelete()
@@ -753,39 +935,203 @@ private fun WorkspaceFileCard(
 }
 
 @Composable
-private fun EmptyDirectoryState() {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Icon(
-            imageVector = HugeIcons.Folder01,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = stringResource(R.string.workspace_detail_empty_directory),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+private fun WorkspaceUsageBlock(usage: WorkspaceUsage?) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        when {
+            usage == null -> WorkspaceInfoRow("占用空间", "正在扫描…")
+            !usage.done -> {
+                WorkspaceInfoRow("占用空间", "${usage.totalBytes.fileSizeToString()} · 已扫 ${usage.scanned} 个文件")
+                InkLineProgress(progress = null, modifier = Modifier.fillMaxWidth())
+            }
+            usage.error != null -> {
+                WorkspaceInfoRow("占用空间", "${usage.totalBytes.fileSizeToString()}（未扫完）")
+                Text(
+                    usage.error,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.sea.vermilion,
+                )
+            }
+            else -> {
+                WorkspaceInfoRow("占用空间", usage.totalBytes.fileSizeToString())
+                Text(
+                    "文件 ${usage.filesBytes.fileSizeToString()} · Rootfs ${usage.linuxBytes.fileSizeToString()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetbrainsMono,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun ErrorCard(message: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CustomColors.cardColorsOnSurfaceContainer,
+private fun NameDialog(
+    title: String,
+    initial: String,
+    confirmText: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf(initial) }
+    val valid = CwdPath.folderName(name) != null
+    InkDialog(
+        onDismissRequest = onDismiss,
+        title = title,
+        confirmButton = {
+            InkTextButton(
+                onClick = { CwdPath.folderName(name)?.let(onConfirm) },
+                enabled = valid,
+            ) { Text(confirmText) }
+        },
+        dismissButton = {
+            InkTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+        },
     ) {
-        Text(
-            text = message,
-            modifier = Modifier.padding(16.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.error,
+        InkTextField(
+            value = name,
+            onValueChange = { name = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.workspace_detail_name_hint),
+            singleLine = true,
+            monospace = true,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MoveSheet(
+    entry: WorkspaceFileEntry,
+    currentPath: String,
+    onList: suspend (String) -> Result<List<WorkspaceFileEntry>>,
+    onDismiss: () -> Unit,
+    onMove: (String) -> Unit,
+) {
+    var relative by remember { mutableStateOf(currentPath) }
+    var entries by remember { mutableStateOf<List<WorkspaceFileEntry>>(emptyList()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(relative) {
+        error = null
+        onList(relative)
+            .onSuccess { listed ->
+                entries = listed.filter { it.path != entry.path && !it.path.startsWith("${entry.path}/") }
+            }
+            .onFailure { error = it.message ?: "打不开这个目录" }
+    }
+    InkSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .height(420.dp)
+                .padding(bottom = 16.dp),
+        ) {
+            Text(
+                stringResource(R.string.workspace_detail_move_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            )
+            Text(
+                "把「${entry.name}」移到下面选中的文件夹。点进一层再确认。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                InkIconButton(
+                    icon = HugeIcons.ArrowTurnBackward,
+                    contentDescription = "上一级",
+                    onClick = { relative = relative.substringBeforeLast('/', missingDelimiterValue = "") },
+                    enabled = relative.isNotBlank(),
+                    size = 36.dp,
+                    iconSize = 18.dp,
+                )
+                Text(
+                    text = relative.ifBlank { "/" },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = JetbrainsMono,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            error?.let {
+                Notice(
+                    text = it,
+                    tone = NoticeTone.Error,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
+                if (entries.isEmpty() && error == null) {
+                    item {
+                        Text(
+                            "这里没有子文件夹",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
+                        )
+                    }
+                }
+                items(entries, key = { it.path }) { folder ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { relative = folder.path }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(
+                            HugeIcons.Folder01,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.sea.seaDeep,
+                        )
+                        Text(
+                            folder.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            InkButton(
+                onClick = { onMove(relative) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Text(stringResource(R.string.workspace_detail_move_here))
+            }
+        }
+    }
+}
+
+/** 空目录：一小片淡墨，一句楷书。高度定死，别让 LazyColumn 里的空态撑到无限 */
+@Composable
+private fun EmptyDirectoryState(modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(260.dp),
+    ) {
+        EmptyState(
+            title = stringResource(R.string.workspace_detail_empty_directory),
+            intensity = 0.35f,
         )
     }
 }

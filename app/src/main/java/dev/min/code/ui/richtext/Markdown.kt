@@ -1,6 +1,7 @@
 package dev.min.code.ui.richtext
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
@@ -24,12 +24,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -37,7 +39,9 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.sea
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.intellij.markdown.MarkdownElementTypes
@@ -54,6 +58,9 @@ import org.intellij.markdown.parser.MarkdownParser
  * 从头写而不是搬 RikkaHub 的 1300 行：那份带 LaTeX、HTML、Mermaid、WebView、引用跳转，
  * 全是聊天场景的东西，每一样都拖一串依赖。Claude Code 的输出是段落、列表、代码块、
  * 偶尔一张表 —— 这些够了。解析在后台线程做，流式输出时不会卡主线程。
+ *
+ * 这里是模型讲的话：一律 sans、不装饰。链接是湛（可以走过去的地方），引用是一道石墨边，
+ * 表格是一张 hairline 的纸条，分隔线是一道飞白。
  */
 @Composable
 fun MarkdownBlock(
@@ -67,7 +74,8 @@ fun MarkdownBlock(
     val parsed by produceState(initialValue = immediate ?: MarkdownDoc.EMPTY, content) {
         if (immediate == null) value = withContext(Dispatchers.Default) { MarkdownDoc.parse(content) }
     }
-    ProvideTextStyle(style) {
+    val ink = style.copy(color = style.color.takeOrElse { MaterialTheme.colorScheme.onSurface })
+    ProvideTextStyle(ink) {
         Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             parsed.root?.children?.forEach { BlockNode(it, parsed.text) }
         }
@@ -114,9 +122,10 @@ private fun BlockNode(node: ASTNode, text: String) {
 
         GFMElementTypes.TABLE -> Table(node, text)
 
-        MarkdownTokenTypes.HORIZONTAL_RULE -> HorizontalDivider(
-            modifier = Modifier.padding(vertical = 4.dp),
-            color = MaterialTheme.colorScheme.outlineVariant,
+        // 分隔线是一道飞白，两头淡出——模型在正文里画的那条线，不该比题跋的线更硬
+        MarkdownTokenTypes.HORIZONTAL_RULE -> InkDivider(
+            modifier = Modifier.padding(vertical = 6.dp),
+            brush = true,
         )
 
         MarkdownElementTypes.HTML_BLOCK -> Text(
@@ -150,9 +159,11 @@ private fun Heading(node: ASTNode, text: String, style: TextStyle) {
     val contentNode = node.children.firstOrNull {
         it.type == MarkdownTokenTypes.ATX_CONTENT || it.type == MarkdownTokenTypes.SETEXT_CONTENT
     } ?: node
+    // 模型写的标题仍是 sans 加粗：楷书只留给人写的东西（见 Type.kt），
+    // 助手正文里冒出楷体标题会让人分不清这是谁在说话
     Text(
         text = inlineText(contentNode, text).trimStartSpaces(),
-        style = style,
+        style = style.copy(fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, fontSize = style.fontSize * 0.88f),
         modifier = Modifier.padding(top = 6.dp),
     )
 }
@@ -216,12 +227,13 @@ private fun startNumber(list: ASTNode, text: String): Int =
 @Composable
 private fun BlockQuote(node: ASTNode, text: String) {
     Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+        // 引用的边是一道石墨细线：比正文淡，比 hairline 重一点
         Box(
             Modifier
-                .width(3.dp)
+                .width(2.dp)
                 .fillMaxHeight()
-                .clip(RoundedCornerShape(2.dp))
-                .background(MaterialTheme.colorScheme.outlineVariant)
+                .clip(RoundedCornerShape(1.dp))
+                .background(MaterialTheme.colorScheme.outline)
         )
         Column(
             modifier = Modifier.padding(start = 10.dp),
@@ -243,14 +255,19 @@ private fun Table(node: ASTNode, text: String) {
     val header = node.children.firstOrNull { it.type == GFMElementTypes.HEADER }
     val rows = node.children.filter { it.type == GFMElementTypes.ROW }
     val columns = header?.cells()?.size ?: rows.firstOrNull()?.cells()?.size ?: return
+    // 表格是一张 hairline 的纸条；表头下一道界线，把它和数据行分开
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
             .padding(vertical = 2.dp),
     ) {
-        header?.let { TableRow(it.cells(), columns, text, bold = true) }
+        header?.let {
+            TableRow(it.cells(), columns, text, bold = true)
+            InkDivider(Modifier.padding(horizontal = 8.dp))
+        }
         rows.forEach { TableRow(it.cells(), columns, text, bold = false) }
     }
 }
@@ -280,7 +297,8 @@ private fun TableRow(cells: List<ASTNode>, columns: Int, text: String, bold: Boo
 @Composable
 private fun inlineText(node: ASTNode, text: String): AnnotatedString {
     val codeBg = MaterialTheme.colorScheme.surfaceContainerHigh
-    val linkColor = MaterialTheme.colorScheme.primary
+    // 链接是湛：可以走过去的地方，和"活着的"同一种颜色，不是金——金只给人写的
+    val linkColor = MaterialTheme.sea.sea
     return buildAnnotatedString {
         appendInline(node, text, codeBg, linkColor)
     }
