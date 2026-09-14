@@ -32,8 +32,13 @@ import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
 import dev.min.code.core.claudecode.asStringOrNull
 import dev.min.code.core.claudecode.CwdPath
+import dev.min.code.core.network.NetworkProbe
+import dev.min.code.core.network.NetworkSnapshot
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.service.LocalService
+import dev.min.code.core.service.LocalServiceRegistry
+import dev.min.code.core.service.LocalServiceStopReason
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.util.ImageUtils
 import me.rerere.workspace.WorkspaceFileEntry
@@ -51,6 +56,8 @@ class ClaudeCodeVM(
     private val settingsStore: SettingsStore,
     private val drafts: ComposerDraftStore,
     private val sessionMeta: ClaudeCodeSessionMetaStore,
+    private val networkProbe: NetworkProbe,
+    private val localServices: LocalServiceRegistry,
 ) : ViewModel() {
     /** 活跃会话的状态（注册表在多个会话间切换时自动跟随） */
     val session = registry.state
@@ -293,6 +300,59 @@ class ClaudeCodeVM(
 
     private val _maintenance = MutableStateFlow(MaintenanceState())
     val maintenance = _maintenance.asStateFlow()
+
+    // -----------------------------------------------------------------------
+    // 网络与本地服务
+    // -----------------------------------------------------------------------
+
+    data class RuntimeState(
+        val loading: Boolean = false,
+        val snapshot: NetworkSnapshot? = null,
+        val starting: Boolean = false,
+        val startError: String? = null,
+    )
+
+    private val _runtime = MutableStateFlow(RuntimeState())
+    val runtime = _runtime.asStateFlow()
+    val localServiceList: StateFlow<List<LocalService>> = localServices.services
+
+    fun refreshNetworkSnapshot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _runtime.update { it.copy(loading = true) }
+            val snap = runCatching { networkProbe.snapshot() }
+            _runtime.update { state ->
+                snap.fold(
+                    onSuccess = { state.copy(loading = false, snapshot = it) },
+                    onFailure = {
+                        state.copy(loading = false, startError = it.message ?: it.toString())
+                    },
+                )
+            }
+        }
+    }
+
+    fun startLocalService(label: String, command: String, cwd: String, port: Int?) {
+        viewModelScope.launch {
+            _runtime.update { it.copy(starting = true, startError = null) }
+            val result = localServices.start(label, command, cwd, port)
+            _runtime.update {
+                it.copy(
+                    starting = false,
+                    startError = result.exceptionOrNull()?.message,
+                )
+            }
+            // 启动后端口可能刚起来，再扫一次
+            refreshNetworkSnapshot()
+        }
+    }
+
+    fun stopLocalService(id: String) {
+        localServices.stop(id, LocalServiceStopReason.UserStop)
+    }
+
+    fun dismissRuntimeStartError() {
+        _runtime.update { it.copy(startError = null) }
+    }
 
     fun dismissMaintenanceError() {
         _maintenance.update { it.copy(error = null) }

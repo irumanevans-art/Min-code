@@ -21,11 +21,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
+import dev.min.code.core.network.NetworkProbe
+import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.rootfs.WorkspaceRepository
 import me.rerere.workspace.ProotShellRunner
+import me.rerere.workspace.RootfsPatchOptions
+import me.rerere.workspace.RootfsPatcher
 import me.rerere.workspace.WorkspaceStorageArea
 import me.rerere.workspace.WorkspaceShellContext
 import java.io.BufferedReader
@@ -74,6 +78,7 @@ class ClaudeCodeManager(
     private val settingsStore: SettingsStore,
     private val installer: ClaudeCodeInstaller,
     private val costLedger: ClaudeCodeCostLedger,
+    private val networkProbe: NetworkProbe = NetworkProbe(context),
     private val sessionStore: ClaudeCodeSessionStore = ClaudeCodeSessionStore(),
 ) {
     enum class SessionStatus { Idle, Starting, Running, Closed, Failed }
@@ -582,6 +587,17 @@ class ClaudeCodeManager(
             installer.ensureBypassPermissionsAccepted(linuxDir)
         }
 
+        // 设备 DNS + 运行时说明：会话路径以前只用公共 DNS，局域网域名会解析失败；
+        // CLAUDE.md 种子让 guest 里的模型别再瞎猜 172.x / hostname -I。
+        val netSnap = runCatching { networkProbe.snapshot() }.getOrNull()
+        runCatching {
+            RootfsPatcher().patch(
+                linuxDir,
+                RootfsPatchOptions(nameservers = context.activeDnsServers()),
+            )
+        }
+        installer.ensureRuntimeDocs(linuxDir, netSnap)
+
         val shellContext = WorkspaceShellContext(
             root = workspace.root,
             // 走 bash 的 eval，必须逐个 shell 转义，否则含空格的参数（如模型名）会被拆开
@@ -633,6 +649,8 @@ class ClaudeCodeManager(
                 put("DISABLE_ERROR_REPORTING", "1")
                 put("USER", "root")
                 put("SHELL", "/bin/bash")
+                // 设备真实可达地址 —— 别让模型去 shell 里猜 172.x
+                if (netSnap != null) putAll(GuestRuntimeDocs.envFrom(netSnap))
             },
         )
 

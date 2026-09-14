@@ -631,6 +631,36 @@ SessionState 暴露 `stopping` / `applyingSettings` / `liveTitle`；fallback 事
 - Related Files: ClaudeCodeManager.kt, TranscriptRail.kt, AboutPage.kt, ClaudeCodeProtocol.kt
 - Tags: busy, title, fallback, foam, changelog
 
+## [LRN-20260914-NETWORK-SERVICES] best_practice
+
+**Logged**: 2026-09-14T22:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+平板 proot 不是 Docker：guest 与 App 共 netns。模型不能靠 `hostname -I` / 自动发现的 172.x 拼手机 URL；长驻服务不能靠 Bash `&`。主机侧 NetworkProbe + 侧栏「网络与服务」+ MIN_* env + 用户级 CLAUDE.md 种子块 + LocalServiceRegistry（独立 proot，并进 FGS）。
+
+### Details
+- `/proc/net`、`ip`、`ss` 常缺或 EACCES —— 白名单探针，不要假整份 /proc/net。
+- FGS 以前只看 Claude `anyLive`；本地服务必须 `anyLive || anyServiceRunning`，「停止全部」两边一起停。
+- 用户级 `/root/.claude/CLAUDE.md` 用 `<!-- min-code:runtime-env v1 -->` fence 就地更新；不碰项目 CLAUDE.md。
+- Bash tool 后台进程仍是未跟踪孙进程 —— 文档写明，不要假装 systemd。
+
+### Suggested Action
+手机连平板上的本地服务：看侧栏「网络与服务」的 primary LAN，或 `echo $MIN_DEVICE_LAN_IP`。要保活的服务从该面板启动。
+
+### Metadata
+- Source: user_feedback
+- Related Files: NetworkProbe.kt, LocalServiceRegistry.kt, GuestRuntimeDocs.kt, ClaudeCodeRuntimeSheet.kt, ClaudeCodeForegroundService.kt
+- Tags: network, lan, local-services, proot, fgs
+
+### Resolution
+- **Resolved**: 2026-09-14T22:00:00+08:00
+- **Notes**: 1.1.6。
+
+---
+
 ## [LRN-20260914-HEADLESS-TITLE] correction
 
 **Logged**: 2026-09-14T12:00:00+08:00

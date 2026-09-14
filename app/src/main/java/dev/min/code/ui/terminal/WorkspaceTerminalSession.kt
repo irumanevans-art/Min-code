@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -15,6 +14,7 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import dev.min.code.core.network.activeDnsServers
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.ProotCompat
 import me.rerere.workspace.RootfsPatcher
@@ -108,7 +108,7 @@ internal fun prepareWorkspaceTerminalSession(context: Context, root: String) {
     File(workspaceDir, "tmp").mkdirs()
     RootfsPatcher().patch(
         linuxDir,
-        RootfsPatchOptions(nameservers = appContext.activeDnsServers())
+        RootfsPatchOptions(nameservers = appContext.activeDnsServers()),
     )
 }
 
@@ -337,12 +337,3 @@ private val URL_REGEX =
 // 终端里 URL 后面常跟标点(行尾句号、被括号包裹等), 打开前去掉这些结尾字符
 private val URL_TRAILING_TRIM = charArrayOf('.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"')
 
-private fun Context.activeDnsServers(): List<String> {
-    val connectivityManager =
-        getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return emptyList()
-    val network = connectivityManager.activeNetwork ?: return emptyList()
-    return connectivityManager.getLinkProperties(network)
-        ?.dnsServers
-        ?.mapNotNull { it.hostAddress }
-        .orEmpty()
-}
