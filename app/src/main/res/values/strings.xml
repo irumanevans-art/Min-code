@@ -50,6 +50,8 @@
   <string name="session_terminal">Terminal</string>
   <string name="session_stop">Stop session</string>
   <string name="session_drawer">Session list</string>
+  <string name="session_sidebar_toggle">Show or hide session list</string>
+  <string name="session_sidebar_resize">Drag to resize session list</string>
 
   <string name="workspace_detail_area_files">Files</string>
   <string name="workspace_detail_area_rootfs">Rootfs</string>

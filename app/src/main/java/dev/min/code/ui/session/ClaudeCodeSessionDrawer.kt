@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
@@ -101,6 +102,8 @@ import me.rerere.hugeicons.stroke.Tag01
 fun ClaudeCodeSessionDrawer(
     sessions: List<ClaudeCodeVM.SessionEntry>,
     permanent: Boolean = false,
+    /** 宽屏分栏时由外层拖动手势决定；null 则退回 300.dp */
+    paneWidth: Dp? = null,
     onNewSession: () -> Unit,
     onOpenSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
@@ -244,7 +247,7 @@ fun ClaudeCodeSessionDrawer(
     }
     if (permanent) {
         PermanentDrawerSheet(
-            modifier = Modifier.width(300.dp),
+            modifier = Modifier.width(paneWidth ?: 300.dp),
             drawerContainerColor = scheme.surfaceContainerLow,
             drawerContentColor = scheme.onSurface,
             content = { body() },

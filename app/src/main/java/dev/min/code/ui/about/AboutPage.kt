@@ -48,6 +48,66 @@ internal data class ChangelogEntry(
 )
 
 /**
+ * 版本号 `a.b.c` 的归组键。
+ * - [major] = `a`：所有 1.x.y 同属 major "1"
+ * - [minor] = `a.b`：所有 1.1.x 同属 minor "1.1"
+ * 解析不到三段时整串既当 major 也当 minor，避免丢条目。
+ */
+internal data class VersionKeys(val major: String, val minor: String)
+
+internal fun versionKeys(version: String): VersionKeys {
+    val parts = version.trim().split('.')
+    return when {
+        parts.size >= 2 && parts[0].isNotBlank() && parts[1].isNotBlank() ->
+            VersionKeys(major = parts[0], minor = "${parts[0]}.${parts[1]}")
+        else -> VersionKeys(major = version.trim(), minor = version.trim())
+    }
+}
+
+/** 同一 `a.b` 下的一组补丁版（`c` 不同） */
+internal data class ChangelogMinorGroup(
+    val minor: String,
+    val entries: List<ChangelogEntry>,
+)
+
+/** 同一 `a` 下的一组次版本 */
+internal data class ChangelogMajorGroup(
+    val major: String,
+    val minors: List<ChangelogMinorGroup>,
+)
+
+/**
+ * 把扁平的版本条目收成 a → a.b → a.b.c。
+ * 输入已是新→旧；组内顺序保持不变。
+ */
+internal fun groupChangelog(entries: List<ChangelogEntry>): List<ChangelogMajorGroup> {
+    if (entries.isEmpty()) return emptyList()
+    val majorOrder = ArrayList<String>()
+    val minorOrderByMajor = LinkedHashMap<String, ArrayList<String>>()
+    val bucket = LinkedHashMap<String, ArrayList<ChangelogEntry>>() // key = minor
+
+    for (entry in entries) {
+        val keys = versionKeys(entry.version)
+        if (keys.major !in minorOrderByMajor) {
+            majorOrder += keys.major
+            minorOrderByMajor[keys.major] = ArrayList()
+        }
+        val minors = minorOrderByMajor.getValue(keys.major)
+        if (keys.minor !in minors) minors += keys.minor
+        bucket.getOrPut(keys.minor) { ArrayList() } += entry
+    }
+
+    return majorOrder.map { major ->
+        ChangelogMajorGroup(
+            major = major,
+            minors = minorOrderByMajor.getValue(major).map { minor ->
+                ChangelogMinorGroup(minor = minor, entries = bucket.getValue(minor))
+            },
+        )
+    }
+}
+
+/**
  * 把 CHANGELOG.md 按 `##` 版本头切成条目。最新版在最前（文件本来就是倒序）。
  * 认 `## 1.0.12 — 2026-09-12` 和 `## 1.0.2` 两种头。
  */
@@ -115,8 +175,19 @@ fun AboutPage() {
     var crash by remember { mutableStateOf(CrashRecorder.read(context)) }
     val scrollState = rememberScrollState()
     val changelog = rememberChangelog(context)
-    var expanded by remember(changelog) {
-        mutableStateOf(setOf(0).takeIf { changelog.isNotEmpty() }.orEmpty())
+    val groups = remember(changelog) { groupChangelog(changelog) }
+    // a → a.b → a.b.c：默认展开最新 major、其下最新 minor、该 minor 里最新一条 patch
+    val latestMajor = groups.firstOrNull()?.major
+    val latestMinor = groups.firstOrNull()?.minors?.firstOrNull()?.minor
+    val latestPatch = groups.firstOrNull()?.minors?.firstOrNull()?.entries?.firstOrNull()?.version
+    var expandedMajors by remember(groups) {
+        mutableStateOf(setOfNotNull(latestMajor))
+    }
+    var expandedMinors by remember(groups) {
+        mutableStateOf(setOfNotNull(latestMinor))
+    }
+    var expandedPatches by remember(groups) {
+        mutableStateOf(setOfNotNull(latestPatch))
     }
 
     Scaffold(
@@ -154,50 +225,114 @@ fun AboutPage() {
                 )
 
                 SectionTitle("更新", modifier = Modifier.padding(top = 8.dp))
-                changelog.forEachIndexed { index, entry ->
-                    val open = index in expanded
-                    PaperCard(tone = PaperTone.Mid, padding = PaddingValues(0.dp)) {
-                        Column {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        expanded = if (open) expanded - index else expanded + index
+                groups.forEach { majorGroup ->
+                    val majorOpen = majorGroup.major in expandedMajors
+                    // 只有一个 major 时不必多点一层 a，直接展次版本；多个 a 才折叠
+                    val showMajorChrome = groups.size > 1
+                    val majorsVisible = !showMajorChrome || majorOpen
+                    if (showMajorChrome) {
+                        ChangelogFoldHeader(
+                            title = majorGroup.major,
+                            subtitle = majorGroup.minors.joinToString(" · ") { it.minor },
+                            open = majorOpen,
+                            onToggle = {
+                                expandedMajors =
+                                    if (majorOpen) expandedMajors - majorGroup.major
+                                    else expandedMajors + majorGroup.major
+                            },
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = majorsVisible,
+                        enter = InkMotion.expand,
+                        exit = InkMotion.collapse,
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            majorGroup.minors.forEach { minorGroup ->
+                                val minorOpen = minorGroup.minor in expandedMinors
+                                PaperCard(tone = PaperTone.Mid, padding = PaddingValues(0.dp)) {
+                                    Column {
+                                        ChangelogFoldHeader(
+                                            title = minorGroup.minor,
+                                            subtitle = minorGroup.entries.firstOrNull()?.date,
+                                            open = minorOpen,
+                                            onToggle = {
+                                                expandedMinors =
+                                                    if (minorOpen) expandedMinors - minorGroup.minor
+                                                    else expandedMinors + minorGroup.minor
+                                            },
+                                            embedded = true,
+                                        )
+                                        AnimatedVisibility(
+                                            visible = minorOpen,
+                                            enter = InkMotion.expand,
+                                            exit = InkMotion.collapse,
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.padding(bottom = 8.dp),
+                                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                            ) {
+                                                minorGroup.entries.forEach { entry ->
+                                                    val patchOpen = entry.version in expandedPatches
+                                                    Column {
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .clickable {
+                                                                    expandedPatches =
+                                                                        if (patchOpen) {
+                                                                            expandedPatches - entry.version
+                                                                        } else {
+                                                                            expandedPatches + entry.version
+                                                                        }
+                                                                }
+                                                                .padding(
+                                                                    horizontal = 12.dp,
+                                                                    vertical = 8.dp,
+                                                                ),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                        ) {
+                                                            Text(
+                                                                buildString {
+                                                                    append(entry.version)
+                                                                    entry.date?.let {
+                                                                        append(" · ")
+                                                                        append(it)
+                                                                    }
+                                                                },
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                fontFamily = JetbrainsMono,
+                                                                modifier = Modifier.weight(1f),
+                                                            )
+                                                            Text(
+                                                                if (patchOpen) "收起" else "展开",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            )
+                                                        }
+                                                        AnimatedVisibility(
+                                                            visible = patchOpen,
+                                                            enter = InkMotion.expand,
+                                                            exit = InkMotion.collapse,
+                                                        ) {
+                                                            SelectionContainer {
+                                                                Text(
+                                                                    entry.body,
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    fontFamily = JetbrainsMono,
+                                                                    modifier = Modifier.padding(
+                                                                        start = 12.dp,
+                                                                        end = 12.dp,
+                                                                        bottom = 10.dp,
+                                                                    ),
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    buildString {
-                                        append(entry.version)
-                                        entry.date?.let { append(" · "); append(it) }
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontFamily = JetbrainsMono,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Text(
-                                    if (open) "收起" else "展开",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            AnimatedVisibility(
-                                visible = open,
-                                enter = InkMotion.expand,
-                                exit = InkMotion.collapse,
-                            ) {
-                                SelectionContainer {
-                                    Text(
-                                        entry.body,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = JetbrainsMono,
-                                        modifier = Modifier.padding(
-                                            start = 12.dp,
-                                            end = 12.dp,
-                                            bottom = 12.dp,
-                                        ),
-                                    )
                                 }
                             }
                         }
@@ -221,6 +356,55 @@ fun AboutPage() {
                 })
             }
         }
+    }
+}
+
+/**
+ * 折叠行：标题左、展开/收起右。
+ * [embedded] 为 true 时不再外套 PaperCard（已经在父卡里）。
+ */
+@Composable
+private fun ChangelogFoldHeader(
+    title: String,
+    subtitle: String?,
+    open: Boolean,
+    onToggle: () -> Unit,
+    embedded: Boolean = false,
+) {
+    val row = @Composable {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = JetbrainsMono,
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = JetbrainsMono,
+                    )
+                }
+            }
+            Text(
+                if (open) "收起" else "展开",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    if (embedded) {
+        row()
+    } else {
+        PaperCard(tone = PaperTone.Low, padding = PaddingValues(0.dp)) { row() }
     }
 }
 

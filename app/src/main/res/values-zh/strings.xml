@@ -50,6 +50,8 @@
   <string name="session_terminal">终端</string>
   <string name="session_stop">停止会话</string>
   <string name="session_drawer">会话列表</string>
+  <string name="session_sidebar_toggle">展开或收起会话列表</string>
+  <string name="session_sidebar_resize">拖动调整会话列表宽度</string>
 
   <string name="workspace_detail_area_files">文件</string>
   <string name="workspace_detail_area_rootfs">Rootfs</string>

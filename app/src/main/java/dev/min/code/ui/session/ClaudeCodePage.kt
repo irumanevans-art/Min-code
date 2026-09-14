@@ -6,20 +6,25 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,7 +47,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.PermanentNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
@@ -54,6 +58,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,16 +77,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -224,18 +233,56 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         }
     }
 
-    // 平板 / 横屏：会话列表常驻左栏，不再是抽屉。840dp 是 Material 的 expanded 断点
+    // 宽屏（平板 / 横屏）：可收起、可拖宽、可拉满盖住主区的会话栏。
+    // 窄屏仍是模态抽屉。840dp 是 Material 的 expanded 断点。
     val wide = LocalConfiguration.current.screenWidthDp >= 840 && setup.ready
-    val drawer: @Composable () -> Unit = {
+    // 展开态与宽度（dp）在转屏 / 进程重建后仍保留。
+    var wideSidebarOpen by rememberSaveable { mutableStateOf(true) }
+    var wideSidebarWidthDp by rememberSaveable { mutableFloatStateOf(SIDEBAR_DEFAULT_DP) }
+    val live = setup.ready &&
+        (session.status == ClaudeCodeManager.SessionStatus.Running ||
+            session.status == ClaudeCodeManager.SessionStatus.Starting)
+
+    val openSessionList: () -> Unit = {
+        focusManager.clearFocus()
+        if (wide) {
+            wideSidebarOpen = true
+        } else {
+            scope.launch { drawerState.open() }
+        }
+    }
+    val toggleSessionList: () -> Unit = {
+        focusManager.clearFocus()
+        if (wide) {
+            wideSidebarOpen = !wideSidebarOpen
+        } else {
+            scope.launch {
+                if (drawerState.isOpen) drawerState.close() else drawerState.open()
+            }
+        }
+    }
+    // 从侧栏点进某项：窄屏关抽屉；宽屏若已拉满盖住主区则收回常规宽度，露出会话页。
+    val afterSidebarNav: () -> Unit = {
+        if (wide) {
+            if (wideSidebarWidthDp >= SIDEBAR_COVER_DP - 0.5f) {
+                wideSidebarWidthDp = SIDEBAR_DEFAULT_DP
+            }
+        } else {
+            scope.launch { drawerState.close() }
+        }
+    }
+
+    val drawer: @Composable (paneWidth: Dp?) -> Unit = { paneWidth ->
         ClaudeCodeSessionDrawer(
             permanent = wide,
+            paneWidth = paneWidth,
             sessions = sessions,
             onNewSession = {
-                scope.launch { drawerState.close() }
+                afterSidebarNav()
                 vm.newSession()
             },
             onOpenSession = { id ->
-                scope.launch { drawerState.close() }
+                afterSidebarNav()
                 vm.openSession(id)
             },
             onDeleteSession = vm::deleteSession,
@@ -244,46 +291,51 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onSetCategory = vm::setSessionCategory,
             categories = vm.sessionCategories(),
             onOpenFiles = {
-                scope.launch { drawerState.close() }
+                afterSidebarNav()
                 navController.navigate(Screen.Files())
             },
             onOpenTerminal = {
-                scope.launch { drawerState.close() }
+                afterSidebarNav()
                 navController.navigate(Screen.Terminal)
             },
             onOpenSettings = {
-                scope.launch { drawerState.close() }
+                afterSidebarNav()
                 navController.navigate(Screen.Settings)
             },
             onOpenMaintenance = {
-                scope.launch { drawerState.close() }
+                afterSidebarNav()
                 vm.loadEnvironment()
                 showMaintenance = true
             },
             // 没内容时不给这一行 —— 一个复制出来是空字符串的按钮只会让人以为坏了
             onCopyTranscript = if (session.items.isNotEmpty()) {
                 {
-                    scope.launch { drawerState.close() }
+                    afterSidebarNav()
                     context.writeClipboardText(session.items.toTranscriptText())
                 }
             } else null,
         )
     }
-    val live = setup.ready &&
-        (session.status == ClaudeCodeManager.SessionStatus.Running ||
-            session.status == ClaudeCodeManager.SessionStatus.Starting)
-    AdaptiveDrawer(wide = wide, drawerState = drawerState, gesturesEnabled = setup.ready, drawer = drawer) {
+
+    AdaptiveDrawer(
+        wide = wide,
+        wideOpen = wideSidebarOpen,
+        wideWidthDp = wideSidebarWidthDp,
+        onWideWidthDp = { wideSidebarWidthDp = it },
+        onWideOpen = { wideSidebarOpen = it },
+        drawerState = drawerState,
+        gesturesEnabled = setup.ready,
+        drawer = drawer,
+    ) {
         if (live) {
             SessionContent(
                 session = session,
                 vm = vm,
                 dailyCostUsd = dailyCostUsd,
                 chineseDescriptions = chineseDescriptions,
-                wide = wide,
-                onOpenDrawer = {
-                    focusManager.clearFocus()
-                    scope.launch { drawerState.open() }
-                },
+                // 宽屏也始终给汉堡：展开=收起，收起=展开（对齐 Kimi / DeepSeek）
+                showMenu = setup.ready,
+                onOpenDrawer = if (wide) toggleSessionList else openSessionList,
                 onOpenPlan = { showPlan = true },
             )
         } else {
@@ -295,23 +347,24 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                         subtitle = session.subtitle(),
                         active = session.busy,
                         navigationIcon = {
-                            if (wide) {
-                                Unit
-                            } else if (setup.ready) {
-                                InkIconButton(
-                                    icon = HugeIcons.Menu03,
-                                    contentDescription = stringResource(R.string.session_drawer),
-                                    onClick = {
-                                        focusManager.clearFocus()
-                                        scope.launch { drawerState.open() }
-                                    },
-                                )
-                            } else {
-                                InkIconButton(
-                                    icon = HugeIcons.Settings02,
-                                    contentDescription = stringResource(R.string.settings_title),
-                                    onClick = { navController.navigate(Screen.Settings) },
-                                )
+                            when {
+                                setup.ready -> {
+                                    InkIconButton(
+                                        icon = HugeIcons.Menu03,
+                                        contentDescription = stringResource(
+                                            if (wide) R.string.session_sidebar_toggle
+                                            else R.string.session_drawer,
+                                        ),
+                                        onClick = if (wide) toggleSessionList else openSessionList,
+                                    )
+                                }
+                                else -> {
+                                    InkIconButton(
+                                        icon = HugeIcons.Settings02,
+                                        contentDescription = stringResource(R.string.settings_title),
+                                        onClick = { navController.navigate(Screen.Settings) },
+                                    )
+                                }
                             }
                         },
                         actions = {
@@ -325,7 +378,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 },
                 containerColor = MaterialTheme.colorScheme.surface,
             ) { innerPadding ->
-                Box(modifier = Modifier.padding(innerPadding)) {
+                Box(Modifier.padding(innerPadding)) {
                     when {
                         setup.loading -> LoadingScreen(
                             status = "正在铺纸研墨",
@@ -396,26 +449,183 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
  */
 private const val TAIL_SCROLL_OFFSET = 100_000
 
-/** 宽屏常驻左栏、窄屏模态抽屉，内容一份 */
+/**
+ * 宽屏：可收起 / 拖宽 / 拉满盖住主区的分栏（参考平板上的 Kimi、DeepSeek）。
+ * 窄屏：模态抽屉。
+ *
+ * 宽度单位是 dp，存在调用方的 rememberSaveable 里；拖到 [SIDEBAR_SNAP_COLLAPSE_DP]
+ * 以下松手会收起，拖到接近全宽会吸附到 [SIDEBAR_COVER_DP]（语义上的「盖住右边」）。
+ */
+private const val SIDEBAR_DEFAULT_DP = 300f
+private const val SIDEBAR_MIN_DP = 220f
+/** 大于屏宽比例后视为「盖住」；用很大的 dp 哨兵，实际 clamp 到 maxWidth */
+private const val SIDEBAR_COVER_DP = 100_000f
+private const val SIDEBAR_SNAP_COLLAPSE_DP = 160f
+private const val SIDEBAR_HANDLE_DP = 12f
+
 @Composable
 private fun AdaptiveDrawer(
     wide: Boolean,
+    wideOpen: Boolean,
+    wideWidthDp: Float,
+    onWideWidthDp: (Float) -> Unit,
+    onWideOpen: (Boolean) -> Unit,
     drawerState: androidx.compose.material3.DrawerState,
     gesturesEnabled: Boolean,
-    drawer: @Composable () -> Unit,
+    drawer: @Composable (paneWidth: Dp?) -> Unit,
     content: @Composable () -> Unit,
 ) {
     if (wide) {
-        PermanentNavigationDrawer(drawerContent = drawer, content = content)
+        WideSidebarScaffold(
+            open = wideOpen,
+            widthDp = wideWidthDp,
+            onWidthDp = onWideWidthDp,
+            onOpen = onWideOpen,
+            drawer = drawer,
+            content = content,
+        )
     } else {
         ModalNavigationDrawer(
             drawerState = drawerState,
             gesturesEnabled = gesturesEnabled,
-            drawerContent = drawer,
+            drawerContent = { drawer(null) },
             // 抽屉后面那层是墨，不是 Material 的黑纱
             scrimColor = MaterialTheme.sea.scrim,
             content = content,
         )
+    }
+}
+
+@Composable
+private fun WideSidebarScaffold(
+    open: Boolean,
+    widthDp: Float,
+    onWidthDp: (Float) -> Unit,
+    onOpen: (Boolean) -> Unit,
+    drawer: @Composable (paneWidth: Dp?) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val scheme = MaterialTheme.colorScheme
+    val sea = MaterialTheme.sea
+    val resizeDesc = stringResource(R.string.session_sidebar_resize)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val maxW = maxWidth
+        val maxDp = maxW.value
+        // 未盖住时给主区至少留一点；盖住态允许到全宽
+        val softMax = (maxDp - 120f).coerceAtLeast(SIDEBAR_MIN_DP)
+        // 盖住态也要给分界把手留出宽度，否则 Row 会超出屏宽
+        val coverPaneDp = (maxDp - SIDEBAR_HANDLE_DP).coerceAtLeast(SIDEBAR_MIN_DP)
+        val covering = open && widthDp >= SIDEBAR_COVER_DP - 0.5f
+        val targetDp = when {
+            !open -> 0f
+            covering -> coverPaneDp
+            else -> widthDp.coerceIn(SIDEBAR_MIN_DP, softMax)
+        }
+        val animatedWidth by animateDpAsState(
+            targetValue = targetDp.dp,
+            animationSpec = InkMotion.spatial(),
+            label = "sidebar-width",
+        )
+        Row(Modifier.fillMaxSize()) {
+            if (animatedWidth > 0.dp) {
+                Box(
+                    Modifier
+                        .width(animatedWidth)
+                        .fillMaxHeight(),
+                ) {
+                    drawer(animatedWidth)
+                }
+            }
+            // 分界把手：按住横拖调宽；向左拖过阈值松手即收起；向右可拖满盖住主区
+            if (open) {
+                val handleMod = Modifier
+                    .width(SIDEBAR_HANDLE_DP.dp)
+                    .fillMaxHeight()
+                    .semantics { contentDescription = resizeDesc }
+                    .pointerInput(maxDp, softMax, coverPaneDp, widthDp) {
+                        var accumulate = widthDp
+                        var dragging = false
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                dragging = true
+                                accumulate = when {
+                                    widthDp >= SIDEBAR_COVER_DP - 0.5f -> coverPaneDp
+                                    else -> widthDp.coerceIn(SIDEBAR_MIN_DP, softMax)
+                                }
+                            },
+                            onHorizontalDrag = { _, dragAmount ->
+                                if (!dragging) return@detectHorizontalDragGestures
+                                val deltaDp = dragAmount / density.density
+                                accumulate = (accumulate + deltaDp).coerceIn(0f, coverPaneDp)
+                                onWidthDp(
+                                    when {
+                                        accumulate >= softMax -> SIDEBAR_COVER_DP
+                                        accumulate < SIDEBAR_SNAP_COLLAPSE_DP -> accumulate
+                                        else -> accumulate.coerceAtLeast(SIDEBAR_MIN_DP)
+                                    },
+                                )
+                            },
+                            onDragEnd = {
+                                dragging = false
+                                when {
+                                    accumulate < SIDEBAR_SNAP_COLLAPSE_DP -> {
+                                        onOpen(false)
+                                        onWidthDp(SIDEBAR_DEFAULT_DP)
+                                    }
+                                    accumulate >= softMax -> onWidthDp(SIDEBAR_COVER_DP)
+                                    else -> onWidthDp(accumulate.coerceIn(SIDEBAR_MIN_DP, softMax))
+                                }
+                            },
+                            onDragCancel = { dragging = false },
+                        )
+                    }
+                Box(
+                    handleMod.background(scheme.surfaceContainerLow),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // 一条淡墨竖线 + 中段稍亮，提示「这里可以拖」
+                    Canvas(Modifier.fillMaxSize()) {
+                        val cx = size.width / 2f
+                        drawLine(
+                            color = sea.ink.copy(alpha = 0.14f),
+                            start = Offset(cx, 0f),
+                            end = Offset(cx, size.height),
+                            strokeWidth = 1.dp.toPx(),
+                        )
+                        val mid = size.height / 2f
+                        drawLine(
+                            color = sea.ink.copy(alpha = 0.28f),
+                            start = Offset(cx, mid - 18.dp.toPx()),
+                            end = Offset(cx, mid + 18.dp.toPx()),
+                            strokeWidth = 2.dp.toPx(),
+                        )
+                    }
+                }
+            }
+            if (!covering) {
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    content()
+                }
+            }
+        }
+        // 全覆盖时主区被侧栏盖住，右上角留一枚菜单把宽度收回常规值
+        if (covering) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(10.dp),
+            ) {
+                PaperDisc {
+                    InkIconButton(
+                        icon = HugeIcons.Menu03,
+                        contentDescription = stringResource(R.string.session_sidebar_toggle),
+                        onClick = { onWidthDp(SIDEBAR_DEFAULT_DP) },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -489,7 +699,7 @@ private fun SessionContent(
     dailyCostUsd: Double,
     chineseDescriptions: Boolean,
     onOpenPlan: () -> Unit,
-    wide: Boolean = true,
+    showMenu: Boolean = true,
     onOpenDrawer: () -> Unit = {},
 ) {
     val listState = rememberLazyListState()
@@ -714,11 +924,11 @@ private fun SessionContent(
                     .graphicsLayer { clip = false },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (!wide) {
+                if (showMenu) {
                     PaperDisc {
                         InkIconButton(
                             icon = HugeIcons.Menu03,
-                            contentDescription = stringResource(R.string.session_drawer),
+                            contentDescription = stringResource(R.string.session_sidebar_toggle),
                             onClick = onOpenDrawer,
                         )
                     }
