@@ -586,6 +586,17 @@ class ClaudeCodeInstaller(
         }.onFailure { Log.w(TAG, "ensureBypassPermissionsAccepted failed", it) }
     }
 
+    /**
+     * 用户级 `/root/.claude/CLAUDE.md` 写入 / 更新短身份卡。
+     * 不碰项目 `/workspace/CLAUDE.md`。
+     */
+    fun ensureRuntimeDocs(linuxDir: File, snapshot: dev.min.code.core.network.NetworkSnapshot? = null) {
+        runCatching {
+            val file = File(linuxDir, "root/.claude/CLAUDE.md")
+            GuestRuntimeDocs.ensureSeeded(file, snapshot)
+        }.onFailure { Log.w(TAG, "ensureRuntimeDocs failed", it) }
+    }
+
     private fun writeProfileScript(linuxDir: File) {
         runCatching {
             val dir = File(linuxDir, "etc/profile.d").apply { mkdirs() }

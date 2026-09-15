@@ -656,3 +656,31 @@ SessionState 暴露 `stopping` / `applyingSettings` / `liveTitle`；fallback 事
 - **Resolved**: 2026-09-14T12:30:00+08:00
 - **Notes**: 1.1.3。
 
+
+## [LRN-20260915-PROCESS-TABLE-PREVIEW] correction
+
+**Logged**: 2026-09-15T12:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+长驻进程必须进**同一张**进程表（独立 proot，关对话还在）；打开本机页默认 App 内 WebView（127.0.0.1）；面板只是表（停/日志/打开），不是第二种启动仪式。1.1.6 初版把「登记启动 + 系统浏览器 + 抄 LAN」做成了错上加错，已回退重做。
+
+### Details
+- CLI Bash 是会话 proot 孙进程，宿主无独立 Process；要保活只能另起独立 proot（`killOnExit=false`）进 `LocalServiceRegistry`。
+- `proot.launch` 成功 ≠ Running；短窗口进程仍活（或端口已听）才升 Running；日志环可见。
+- 预览只拼 loopback；LAN 只进 `MIN_DEVICE_LAN_IP` 给进程。AskUserQuestion / 权限 sheet 路径不动。
+- `/proc/net` 读不了就标不可读；不假 DRM；身份卡短到几行。
+
+### Suggested Action
+发现长驻意图 → `startFromAgent`；UI 只读 `services` StateFlow；loopback URL → `LocalPreviewBus` / `LocalPreviewSheet`。
+
+### Metadata
+- Source: user_feedback
+- Related Files: LocalServiceRegistry.kt, LocalPreviewSheet.kt, GuestRuntimeDocs.kt, ClaudeCodeManager.kt, ProotShellRunner.kt
+- Tags: process-table, preview, proot, fgs, honesty
+
+### Resolution
+- **Resolved**: 2026-09-15T12:30:00+08:00
+- **Notes**: 1.1.6 重做。

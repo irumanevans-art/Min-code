@@ -77,6 +77,7 @@ import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete02
 import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.Folder01
+import me.rerere.hugeicons.stroke.Globe
 import me.rerere.hugeicons.stroke.MoreHorizontal
 import me.rerere.hugeicons.stroke.Package
 import me.rerere.hugeicons.stroke.Cancel01
@@ -113,6 +114,7 @@ fun ClaudeCodeSessionDrawer(
     categories: List<String> = emptyList(),
     onOpenFiles: () -> Unit = {},
     onOpenTerminal: () -> Unit = {},
+    onOpenRuntime: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onCopyTranscript: (() -> Unit)? = null,
@@ -239,6 +241,7 @@ fun ClaudeCodeSessionDrawer(
             onCopyTranscript?.let { ActionRow(HugeIcons.Copy01, "复制整个会话", it) }
             ActionRow(HugeIcons.Folder01, "工作区文件", onOpenFiles)
             ActionRow(HugeIcons.ComputerTerminal01, "终端", onOpenTerminal)
+            ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
             // CLI 装完之后安装向导就从 UI 上消失了，更新入口只能挂在这儿
             ActionRow(HugeIcons.Package, "环境与更新", onOpenMaintenance)
             ActionRow(HugeIcons.Settings02, "设置", onOpenSettings)

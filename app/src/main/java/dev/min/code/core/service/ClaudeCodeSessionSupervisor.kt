@@ -11,6 +11,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import dev.min.code.AppScope
@@ -46,6 +47,7 @@ class ClaudeCodeSessionSupervisor(
     private val context: Application,
     appScope: AppScope,
     private val registry: ClaudeCodeSessionRegistry,
+    private val localServices: LocalServiceRegistry,
 ) {
     private val isForeground = MutableStateFlow(false)
 
@@ -87,7 +89,8 @@ class ClaudeCodeSessionSupervisor(
             // 从外面 stopService 有一个致命的时序窗口：会话启动失败得足够快时，stopService
             // 会赶在服务 startForeground() 之前到达，系统直接杀进程
             // （ForegroundServiceDidNotStartInTimeException）。真实发生过。
-            registry.anyLive
+            // 会话 **或** 本地服务任一存活都要保活。
+            combine(registry.anyLive, localServices.anyRunning) { live, svc -> live || svc }
                 .filter { it }
                 .collect { ClaudeCodeForegroundService.start(context) }
         }

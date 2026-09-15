@@ -74,7 +74,12 @@ class ProotShellRunner(
             proot.absolutePath,
             "--root-id",
             "--link2symlink",
-            "--kill-on-exit",
+        )
+        // 长驻服务关 kill-on-exit；会话 / 一次性命令保持默认开
+        if (context.killOnExit) {
+            command += "--kill-on-exit"
+        }
+        command += listOf(
             "-r",
             context.linuxDir.absolutePath,
             "-w",

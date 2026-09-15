@@ -22,6 +22,12 @@ data class WorkspaceShellContext(
     val bindMounts: List<WorkspaceBindMount> = emptyList(),
     // 注入到 Rootfs 内的额外环境变量 (KEY=VALUE 作为独立 argv 传给 /usr/bin/env, 不经过 shell 展开)
     val env: Map<String, String> = emptyMap(),
+    /**
+     * proot `--kill-on-exit`：会话 / 一次性命令默认 true。
+     * 长驻本地服务必须 false，否则 registry 一收句柄整棵树跟着死，
+     * 「关对话进程还在」做不到。
+     */
+    val killOnExit: Boolean = true,
 )
 
 class HostShellRunner : WorkspaceShellRunner {

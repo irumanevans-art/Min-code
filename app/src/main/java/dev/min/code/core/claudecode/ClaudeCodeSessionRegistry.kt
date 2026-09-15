@@ -100,6 +100,23 @@ class ClaudeCodeSessionRegistry(
         .shareIn(scope, SharingStarted.Eagerly, replay = 0)
 
     /**
+     * 任意会话发现的本机 loopback 预览 URL。
+     * 合并所有 live manager，不只活跃会话——后台会话起的服务也要能打开。
+     */
+    val localPreviewUrls: SharedFlow<String> = _keys
+        .flatMapLatest { keys ->
+            val flows = keys.mapNotNull { key ->
+                synchronized(managers) { managers[key] }?.localPreviewUrls
+            }
+            when {
+                flows.isEmpty() -> emptyFlow()
+                flows.size == 1 -> flows.first()
+                else -> kotlinx.coroutines.flow.merge(*flows.toTypedArray())
+            }
+        }
+        .shareIn(scope, SharingStarted.Eagerly, replay = 0)
+
+    /**
      * 当前活着的会话列表，供抽屉打运行中标记。
      *
      * 必须真的去 collect 每个 manager 的 state —— 只 combine(keys, activeKey) 再读 `.value`

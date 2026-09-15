@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -15,6 +14,10 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import dev.min.code.core.network.activeDnsServers
+import dev.min.code.util.LocalPreviewBus
+import dev.min.code.util.LocalUrls
+import dev.min.code.util.openExternalUrl
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.ProotCompat
 import me.rerere.workspace.RootfsPatcher
@@ -251,10 +254,11 @@ internal class WorkspaceTerminalViewClient(
         val match = URL_REGEX.findAll(line).firstOrNull { tapIndex in it.range } ?: return false
         val url = match.value.trimEnd(*URL_TRAILING_TRIM)
         return runCatching {
-            val intent = Intent(Intent.ACTION_VIEW, url.toUri())
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
-            true
+            if (LocalUrls.isLoopbackHttp(url)) {
+                LocalPreviewBus.offer(url)
+                return@runCatching true
+            }
+            context.openExternalUrl(url)
         }.getOrElse {
             Log.w("WorkspaceTerminal", "Failed to open url: $url", it)
             false
@@ -337,12 +341,3 @@ private val URL_REGEX =
 // 终端里 URL 后面常跟标点(行尾句号、被括号包裹等), 打开前去掉这些结尾字符
 private val URL_TRAILING_TRIM = charArrayOf('.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"')
 
-private fun Context.activeDnsServers(): List<String> {
-    val connectivityManager =
-        getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return emptyList()
-    val network = connectivityManager.activeNetwork ?: return emptyList()
-    return connectivityManager.getLinkProperties(network)
-        ?.dnsServers
-        ?.mapNotNull { it.hostAddress }
-        .orEmpty()
-}

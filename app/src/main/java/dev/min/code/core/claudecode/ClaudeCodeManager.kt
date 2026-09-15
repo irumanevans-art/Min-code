@@ -21,11 +21,18 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
+import dev.min.code.core.network.NetworkProbe
+import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
+import dev.min.code.core.service.LocalServiceIntent
+import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.util.LocalUrls
 import me.rerere.workspace.ProotShellRunner
+import me.rerere.workspace.RootfsPatchOptions
+import me.rerere.workspace.RootfsPatcher
 import me.rerere.workspace.WorkspaceStorageArea
 import me.rerere.workspace.WorkspaceShellContext
 import java.io.BufferedReader
@@ -74,6 +81,8 @@ class ClaudeCodeManager(
     private val settingsStore: SettingsStore,
     private val installer: ClaudeCodeInstaller,
     private val costLedger: ClaudeCodeCostLedger,
+    private val networkProbe: NetworkProbe = NetworkProbe(context),
+    private val localServices: LocalServiceRegistry? = null,
     private val sessionStore: ClaudeCodeSessionStore = ClaudeCodeSessionStore(),
 ) {
     enum class SessionStatus { Idle, Starting, Running, Closed, Failed }
@@ -399,6 +408,13 @@ class ClaudeCodeManager(
     @Volatile
     private var sessionIo: CoroutineScope? = null
 
+    /**
+     * 本机预览 URL（loopback）。UI 收集后开 [dev.min.code.ui.preview.LocalPreviewSheet]。
+     * 不经系统浏览器。
+     */
+    private val _localPreviewUrls = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val localPreviewUrls: SharedFlow<String> = _localPreviewUrls.asSharedFlow()
+
     /** 每轮任务自增，用于给中断兜底做"还是同一轮吗"的判断 */
     @Volatile
     private var turnSeq: Int = 0
@@ -582,6 +598,16 @@ class ClaudeCodeManager(
             installer.ensureBypassPermissionsAccepted(linuxDir)
         }
 
+        // 设备 DNS + 短身份卡：会话路径以前只用公共 DNS；别让模型猜 172.x。
+        val netSnap = runCatching { networkProbe.snapshot() }.getOrNull()
+        runCatching {
+            RootfsPatcher().patch(
+                linuxDir,
+                RootfsPatchOptions(nameservers = context.activeDnsServers()),
+            )
+        }
+        installer.ensureRuntimeDocs(linuxDir, netSnap)
+
         val shellContext = WorkspaceShellContext(
             root = workspace.root,
             // 走 bash 的 eval，必须逐个 shell 转义，否则含空格的参数（如模型名）会被拆开
@@ -633,6 +659,7 @@ class ClaudeCodeManager(
                 put("DISABLE_ERROR_REPORTING", "1")
                 put("USER", "root")
                 put("SHELL", "/bin/bash")
+                if (netSnap != null) putAll(GuestRuntimeDocs.envFrom(netSnap))
             },
         )
 
@@ -958,6 +985,7 @@ class ClaudeCodeManager(
                         status = ChatItem.ToolCall.Status.Running,
                     )
                 )
+                maybeHostLongLivedBash(event)
             }
 
             is ClaudeCodeEvent.ToolResult -> {
@@ -998,6 +1026,18 @@ class ClaudeCodeManager(
                             isError = true,
                         )
                     )
+                }
+                if (!event.isError) {
+                    maybeOfferLocalPreview(event.content)
+                    // Bash 结果里若仍像长驻且尚未托管，再试一次进表
+                    if (call?.name == "Bash") {
+                        val cmd = call.input["command"].asStringOrNull().orEmpty()
+                        maybeHostCommand(
+                            command = cmd,
+                            description = call.input["description"].asStringOrNull(),
+                            flags = bashFlags(call.input),
+                        )
+                    }
                 }
             }
 
@@ -2164,6 +2204,61 @@ class ClaudeCodeManager(
         val workspace = workspaceRepository.getById(CLAUDE_CODE_WORKSPACE_ID.toString()) ?: return null
         return File(File(File(context.filesDir, "workspaces"), workspace.root), "linux")
             .also { currentLinuxDir = it }
+    }
+
+    /** Bash tool_use：长驻/后台意图 → 独立 proot 进同一张进程表。 */
+    private fun maybeHostLongLivedBash(event: ClaudeCodeEvent.ToolUse) {
+        if (event.name != "Bash") return
+        val cmd = event.input["command"].asStringOrNull().orEmpty()
+        maybeHostCommand(
+            command = cmd,
+            description = event.input["description"].asStringOrNull(),
+            flags = bashFlags(event.input),
+        )
+    }
+
+    private fun maybeHostCommand(command: String, description: String?, flags: Map<String, Any?> = emptyMap()) {
+        val registry = localServices ?: return
+        val raw = command.trim()
+        if (raw.isEmpty()) return
+        if (!LocalServiceIntent.shouldHost(raw, flags)) return
+        val cleaned = LocalServiceIntent.stripBackgroundNoise(raw)
+        val port = LocalServiceIntent.guessPort(cleaned)
+        val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
+        val label = description?.takeIf { it.isNotBlank() }
+        val sessionKey = _state.value.sessionId
+        sessionIo?.launch {
+            val result = registry.startFromAgent(
+                command = cleaned,
+                cwdGuest = cwd,
+                port = port,
+                label = label,
+                sourceSessionKey = sessionKey,
+            )
+            result.onSuccess { id ->
+                Log.i(TAG, "hosted local service $id for: ${cleaned.take(80)}")
+                // 不自动弹预览：人点「打开」或结果里的 URL 再开，避免抢焦点
+            }.onFailure { err ->
+                Log.w(TAG, "host local service failed: ${err.message}")
+                // 端口被 CLI 孙进程占着时不装 Running；身份卡已说明须走托管路径
+            }
+        }
+    }
+
+    private fun bashFlags(input: JsonObject): Map<String, Any?> {
+        val out = LinkedHashMap<String, Any?>()
+        for (key in listOf("run_in_background", "runInBackground", "is_background")) {
+            val b = input[key].asBooleanOrNull()
+            if (b != null) out[key] = b
+            else input[key].asStringOrNull()?.let { out[key] = it }
+        }
+        return out
+    }
+
+    private fun maybeOfferLocalPreview(text: String) {
+        for (u in LocalUrls.findLocalPreviewUrls(text)) {
+            _localPreviewUrls.tryEmit(u)
+        }
     }
 
     /**

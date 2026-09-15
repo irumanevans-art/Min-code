@@ -9,7 +9,7 @@ import me.rerere.workspace.WorkspaceStorageArea
  * 其余路径落在 rootfs 内部。文件页用的是相对 [WorkspaceStorageArea] 根的路径。
  * 选文件夹的 UI 走文件页那套，交给 CLI 之前必须翻成 guest 路径。
  */
-internal object CwdPath {
+object CwdPath {
     fun guest(area: WorkspaceStorageArea, relative: String): String {
         val trimmed = relative.trim().trim('/').replace('\\', '/')
         return when (area) {

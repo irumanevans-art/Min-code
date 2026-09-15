@@ -100,4 +100,31 @@
   <string name="workspace_terminal_tab">终端 %1$d</string>
   <string name="workspace_terminal_title">终端</string>
   <string name="workspace_terminal_title_with_name">%s · 终端</string>
+
+  <!-- 进程表 + 本机预览 -->
+  <string name="runtime_title">进程</string>
+  <string name="runtime_drawer">进程</string>
+  <string name="runtime_refresh">刷新</string>
+  <string name="runtime_intro">长驻服务在这张表里（与对话无关）。本机页面在软件内打开 127.0.0.1，不靠抄局域网地址。</string>
+  <string name="runtime_section_services">托管服务</string>
+  <string name="runtime_services_empty">还没有托管项。Agent 的后台/长驻 Bash 会自动进这张表。</string>
+  <string name="runtime_section_ports">监听端口</string>
+  <string name="runtime_ports_empty">没有监听（或读不到）</string>
+  <string name="runtime_ports_unreadable">本机 ROM 禁止读取 /proc/net/tcp，监听端口不可见。</string>
+  <string name="runtime_loading">读取中…</string>
+  <string name="runtime_open">打开</string>
+  <string name="runtime_log">日志</string>
+  <string name="runtime_svc_stop">停止</string>
+  <string name="runtime_status_starting">启动中</string>
+  <string name="runtime_status_running">运行中</string>
+  <string name="runtime_status_exited">已退出</string>
+  <string name="runtime_status_failed">失败</string>
+  <string name="runtime_reason_user">已停止</string>
+  <string name="runtime_reason_stop_all">全部停止</string>
+  <string name="runtime_reason_crash">崩溃</string>
+  <string name="runtime_reason_start">启动失败</string>
+  <string name="runtime_reason_port">端口占用</string>
+  <string name="preview_reload">刷新</string>
+  <string name="preview_open_external">用浏览器打开</string>
+  <string name="preview_close">关闭</string>
 </resources>

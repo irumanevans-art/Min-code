@@ -32,8 +32,13 @@ import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
 import dev.min.code.core.claudecode.asStringOrNull
 import dev.min.code.core.claudecode.CwdPath
+import dev.min.code.core.network.NetworkProbe
+import dev.min.code.core.network.NetworkSnapshot
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.service.LocalService
+import dev.min.code.core.service.LocalServiceRegistry
+import dev.min.code.core.service.LocalServiceStopReason
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.util.ImageUtils
 import me.rerere.workspace.WorkspaceFileEntry
@@ -51,6 +56,8 @@ class ClaudeCodeVM(
     private val settingsStore: SettingsStore,
     private val drafts: ComposerDraftStore,
     private val sessionMeta: ClaudeCodeSessionMetaStore,
+    private val networkProbe: NetworkProbe,
+    private val localServices: LocalServiceRegistry,
 ) : ViewModel() {
     /** 活跃会话的状态（注册表在多个会话间切换时自动跟随） */
     val session = registry.state
@@ -293,6 +300,48 @@ class ClaudeCodeVM(
 
     private val _maintenance = MutableStateFlow(MaintenanceState())
     val maintenance = _maintenance.asStateFlow()
+
+    // -----------------------------------------------------------------------
+    // 进程表 + 本机预览（同一张表；面板只停/日志/打开）
+    // -----------------------------------------------------------------------
+
+    data class RuntimeState(
+        val loading: Boolean = false,
+        val snapshot: NetworkSnapshot? = null,
+        val expandedLogId: String? = null,
+    )
+
+    private val _runtime = MutableStateFlow(RuntimeState())
+    val runtime = _runtime.asStateFlow()
+    val localServiceList: StateFlow<List<LocalService>> = localServices.services
+
+    /** 会话链发现的 loopback URL；页面收集后开 LocalPreviewSheet */
+    val localPreviewUrls = registry.localPreviewUrls
+
+    fun refreshNetworkSnapshot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _runtime.update { it.copy(loading = true) }
+            val snap = runCatching { networkProbe.snapshot() }
+            _runtime.update { state ->
+                snap.fold(
+                    onSuccess = { state.copy(loading = false, snapshot = it) },
+                    onFailure = { state.copy(loading = false) },
+                )
+            }
+        }
+    }
+
+    fun stopLocalService(id: String) {
+        localServices.stop(id, LocalServiceStopReason.UserStop)
+    }
+
+    fun logOf(id: String): String = localServices.logOf(id)
+
+    fun toggleServiceLog(id: String) {
+        _runtime.update {
+            it.copy(expandedLogId = if (it.expandedLogId == id) null else id)
+        }
+    }
 
     fun dismissMaintenanceError() {
         _maintenance.update { it.copy(error = null) }

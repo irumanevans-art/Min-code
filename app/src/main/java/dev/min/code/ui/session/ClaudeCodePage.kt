@@ -131,13 +131,18 @@ import dev.min.code.ui.components.ToastType
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.preview.LocalPreviewSheet
 import dev.min.code.ui.setup.SetupPage
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
+import dev.min.code.util.LocalPreviewBus
+import dev.min.code.util.LocalUrls
+import dev.min.code.util.openExternalUrl
 import dev.min.code.util.writeClipboardText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ComputerTerminal01
@@ -148,6 +153,8 @@ import me.rerere.hugeicons.stroke.Settings02
 import me.rerere.hugeicons.stroke.Stop
 import me.rerere.hugeicons.stroke.Tick01
 import org.koin.androidx.compose.koinViewModel
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 
 /**
  * Claude Code 页：官方 claude CLI 跑在工作区 Rootfs 里，stream-json 协议桥接为界面。
@@ -172,6 +179,8 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     val session by vm.session.collectAsStateWithLifecycle()
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val maintenance by vm.maintenance.collectAsStateWithLifecycle()
+    val runtime by vm.runtime.collectAsStateWithLifecycle()
+    val localServiceList by vm.localServiceList.collectAsStateWithLifecycle()
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val dailyCostUsd by vm.dailyCostUsd.collectAsStateWithLifecycle()
     val chineseDescriptions by vm.chineseDescriptions.collectAsStateWithLifecycle()
@@ -206,6 +215,15 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     }
     var showPlan by remember { mutableStateOf(false) }
     var showMaintenance by remember { mutableStateOf(false) }
+    var showRuntime by remember { mutableStateOf(false) }
+    var previewUrl by remember { mutableStateOf<String?>(null) }
+
+    // 会话链 / 终端 / 总线发现的 loopback → 应用内预览
+    LaunchedEffect(Unit) {
+        merge(vm.localPreviewUrls, LocalPreviewBus.urls).collect { url ->
+            previewUrl = LocalUrls.normalizeLoopback(url)
+        }
+    }
 
     // 通知权限（Android 13+ 要运行时申请）在环境就绪那一刻要一次：后台等审批、任务完成、
     // 会话中断全靠通知，没有它用户切出去就是聋的。放在向导之后而不是启动时——先让人看到
@@ -300,6 +318,11 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 afterSidebarNav()
                 navController.navigate(Screen.Terminal)
             },
+            onOpenRuntime = {
+                afterSidebarNav()
+                vm.refreshNetworkSnapshot()
+                showRuntime = true
+            },
             onOpenSettings = {
                 afterSidebarNav()
                 navController.navigate(Screen.Settings)
@@ -329,6 +352,8 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         gesturesEnabled = setup.ready,
         drawer = drawer,
     ) {
+        val previewHandler = rememberLocalPreviewUriHandler { previewUrl = it }
+        CompositionLocalProvider(LocalUriHandler provides previewHandler) {
         if (live) {
             SessionContent(
                 session = session,
@@ -399,6 +424,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 }
             }
         }
+        } // CompositionLocalProvider LocalUriHandler
     }
 
     session.pendingPermission?.let { pending ->
@@ -442,6 +468,54 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 navController.navigate(Screen.Files())
             },
         )
+    }
+
+    if (showRuntime) {
+        ClaudeCodeRuntimeSheet(
+            snapshot = runtime.snapshot,
+            loading = runtime.loading,
+            services = localServiceList,
+            expandedLogId = runtime.expandedLogId,
+            logOf = vm::logOf,
+            onDismiss = { showRuntime = false },
+            onRefresh = vm::refreshNetworkSnapshot,
+            onStopService = vm::stopLocalService,
+            onToggleLog = vm::toggleServiceLog,
+            onOpenPreview = { url ->
+                showRuntime = false
+                previewUrl = url
+            },
+        )
+    }
+
+    previewUrl?.let { url ->
+        LocalPreviewSheet(
+            url = url,
+            onDismiss = { previewUrl = null },
+        )
+    }
+}
+
+/**
+ * Markdown / 链接：loopback 走应用内预览，其它走系统浏览器。
+ * 由 [SessionContent] 或外层 CompositionLocal 注入。
+ */
+@Composable
+internal fun rememberLocalPreviewUriHandler(
+    onPreview: (String) -> Unit,
+): UriHandler {
+    val context = LocalContext.current
+    val latest = rememberUpdatedState(onPreview)
+    return remember {
+        object : UriHandler {
+            override fun openUri(uri: String) {
+                if (LocalUrls.isLoopbackHttp(uri)) {
+                    latest.value(LocalUrls.normalizeLoopback(uri))
+                } else {
+                    context.openExternalUrl(uri)
+                }
+            }
+        }
     }
 }
 
