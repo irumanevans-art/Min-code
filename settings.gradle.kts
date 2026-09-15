@@ -30,3 +30,4 @@ rootProject.name = "min-code"
 include(":app")
 include(":highlight")
 include(":workspace")
+include(":baselineprofile")

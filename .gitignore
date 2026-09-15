@@ -12,6 +12,7 @@ local.properties
 /app/build
 /workspace/build
 /highlight/build
+/baselineprofile/build
 /build-logic/build
 /build-logic/.gradle
 /emulator.log

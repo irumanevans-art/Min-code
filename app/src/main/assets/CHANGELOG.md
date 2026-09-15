@@ -2,6 +2,14 @@
 
 每次发版在最小位加 1（`1.0.x`），除非这次改动明确说要升次版本。
 
+## 1.1.7 — 2026-09-15
+
+- **预览是「位」**：会话顶栏常驻预览键（终端左侧）。有本机 loopback 才有效；关掉是藏，不是拆。Agent 填 URL 可自动展开一次；进程表「打开」= 按这个键，不再第二套 WebView。
+- **进表认后台意图**：主路径是 Bash `run_in_background`；dev-server 白名单只是薄启发式。`can_use_tool` 时后台/长驻 Bash **排他**进进程表并 deny CLI 再跑一遍，消端口双开。
+- **身份卡**：后台用 flag、缺命令 `apt-get install -y` 真装、本地页走预览位；去掉「bare & dies」交通规则。会话 / 托管 env 带 `DEBIAN_FRONTEND=noninteractive`。
+- **顺一点**：启动后台预解码海纹理 + BitmapShader 预热；会话流式时关掉列表 `animateItem`；进程日志 StateFlow 400ms 节流；代码高亮结果缓存；Baseline Profile（`profileinstaller` + `:baselineprofile` 采集）让首次交互走 AOT。
+- 建议 Rootfs CLI ≥ **2.1.271**（MCP-only `-p` resume、headless 等修在 CLI 侧；stream-json 形状无大改）。
+
 ## 1.1.6 — 2026-09-15
 
 - **一张进程表**：Agent 后台/长驻 Bash 由独立 proot 托管进 `LocalServiceRegistry`；关对话、换一轮，进程和端口还在。前台保活与「停止全部」覆盖会话 **和** 这张表。

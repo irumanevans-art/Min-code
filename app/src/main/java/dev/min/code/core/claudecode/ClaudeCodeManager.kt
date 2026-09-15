@@ -409,7 +409,7 @@ class ClaudeCodeManager(
     private var sessionIo: CoroutineScope? = null
 
     /**
-     * 本机预览 URL（loopback）。UI 收集后开 [dev.min.code.ui.preview.LocalPreviewSheet]。
+     * 本机预览 URL（loopback）。UI 收集后 **填预览位**（可自动展开一次）。
      * 不经系统浏览器。
      */
     private val _localPreviewUrls = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -461,6 +461,9 @@ class ClaudeCodeManager(
      * 用并发集合：写在 answerQuestions（UI 线程发起），读在 readLoop 的 dispatch 里。
      */
     private val skippedQuestions = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** 权限路径已排他托管的 Bash tool_use_id，避免 ToolUse 上再 start 一次 */
+    private val exclusiveHostedToolUses = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /**
      * 发一个需要应答的 control_request 并等结果。
@@ -657,6 +660,8 @@ class ClaudeCodeManager(
                 put("DISABLE_AUTOUPDATER", "1")
                 put("DISABLE_TELEMETRY", "1")
                 put("DISABLE_ERROR_REPORTING", "1")
+                // agent 真 apt install 时别卡 dpkg 交互
+                put("DEBIAN_FRONTEND", "noninteractive")
                 put("USER", "root")
                 put("SHELL", "/bin/bash")
                 if (netSnap != null) putAll(GuestRuntimeDocs.envFrom(netSnap))
@@ -985,7 +990,14 @@ class ClaudeCodeManager(
                         status = ChatItem.ToolCall.Status.Running,
                     )
                 )
-                maybeHostLongLivedBash(event)
+                // 仅 bypass：不会有 can_use_tool。Manual 必须等 PermissionRequest 排他托管，
+                // 否则 ToolUse 先到再 start = 与即将到来的 permission 路径双跑。
+                if (event.name == "Bash" &&
+                    _state.value.permissionMode == ClaudeCodePermissionMode.BYPASS &&
+                    (event.id.isBlank() || !exclusiveHostedToolUses.contains(event.id))
+                ) {
+                    maybeHostWhenNoPermissionGate(event)
+                }
             }
 
             is ClaudeCodeEvent.ToolResult -> {
@@ -1029,20 +1041,23 @@ class ClaudeCodeManager(
                 }
                 if (!event.isError) {
                     maybeOfferLocalPreview(event.content)
-                    // Bash 结果里若仍像长驻且尚未托管，再试一次进表
+                    // 结果路径：只扫预览 URL / 补 port 线索；不再二次 startFromAgent
+                    //（CLI 已跑过的命令再托管 = 端口战）。
                     if (call?.name == "Bash") {
                         val cmd = call.input["command"].asStringOrNull().orEmpty()
-                        maybeHostCommand(
-                            command = cmd,
-                            description = call.input["description"].asStringOrNull(),
-                            flags = bashFlags(call.input),
-                        )
+                        val port = LocalServiceIntent.guessPort(cmd)
+                        if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
                     }
                 }
             }
 
-            is ClaudeCodeEvent.PermissionRequest -> _state.update {
-                it.copy(pendingPermission = event)
+            is ClaudeCodeEvent.PermissionRequest -> {
+                // 后台/长驻 Bash：排他进表，deny CLI 执行，消双跑。
+                if (tryHostBashInsteadOfPermission(event)) {
+                    // 已应答，不挂 pending sheet
+                } else {
+                    _state.update { it.copy(pendingPermission = event) }
+                }
             }
 
             // 不应答的话 CLI 会一直等到超时，整个会话卡死
@@ -2206,26 +2221,91 @@ class ClaudeCodeManager(
             .also { currentLinuxDir = it }
     }
 
-    /** Bash tool_use：长驻/后台意图 → 独立 proot 进同一张进程表。 */
-    private fun maybeHostLongLivedBash(event: ClaudeCodeEvent.ToolUse) {
-        if (event.name != "Bash") return
-        val cmd = event.input["command"].asStringOrNull().orEmpty()
-        maybeHostCommand(
-            command = cmd,
-            description = event.input["description"].asStringOrNull(),
-            flags = bashFlags(event.input),
+    /**
+     * Manual 等会发 can_use_tool 的模式：后台/长驻 Bash **只**进进程表，
+     * deny CLI 原命令，避免双 proot 抢端口。
+     * @return true 表示已应答，调用方不要再挂权限 sheet
+     */
+    private fun tryHostBashInsteadOfPermission(event: ClaudeCodeEvent.PermissionRequest): Boolean {
+        if (!event.toolName.equals("Bash", ignoreCase = true)) return false
+        val raw = event.input["command"].asStringOrNull().orEmpty().trim()
+        if (raw.isEmpty()) return false
+        val flags = bashFlags(event.input)
+        if (!LocalServiceIntent.shouldHost(raw, flags)) return false
+        val registry = localServices ?: return false
+        val cleaned = LocalServiceIntent.stripBackgroundNoise(raw)
+        val port = LocalServiceIntent.guessPort(cleaned)
+        val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
+        val label = event.input["description"].asStringOrNull()?.takeIf { it.isNotBlank() }
+            ?: event.description
+        val sessionKey = _state.value.sessionId
+        // 同步 kick：权限必须立刻应答，托管在 IO 上跑
+        sessionIo?.launch {
+            val result = registry.startFromAgent(
+                command = cleaned,
+                cwdGuest = cwd,
+                port = port,
+                label = label,
+                sourceSessionKey = sessionKey,
+            )
+            result.onSuccess { id ->
+                Log.i(TAG, "exclusive host $id (permission path): ${cleaned.take(80)}")
+                if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
+            }.onFailure { err ->
+                Log.w(TAG, "exclusive host failed: ${err.message}")
+            }
+        }
+        event.toolUseId?.takeIf { it.isNotBlank() }?.let(exclusiveHostedToolUses::add)
+        val portNote = port?.let { " · preview http://127.0.0.1:$it" }.orEmpty()
+        writeLine(
+            encodeClaudeCodePermissionResponse(
+                requestId = event.requestId,
+                allow = false,
+                denyMessage = "Min hosted this as a background service in the process table" +
+                    "$portNote. Do not re-run the same server command in-session; " +
+                    "use the app preview slot / process table. Missing tools: apt-get install -y <pkg>.",
+            ),
         )
+        appendItem(
+            ChatItem.Note(
+                newId(),
+                "已托管到进程表（后台/长驻 Bash，不在会话里再跑一遍）" +
+                    (port?.let { " · :$it" } ?: "") +
+                    " · 预览位可开",
+            ),
+        )
+        // 工具卡标 Done，避免一直 Running
+        event.toolUseId?.let { toolId ->
+            _state.update { state ->
+                state.copy(
+                    items = state.items.map { item ->
+                        if (item is ChatItem.ToolCall && item.toolUseId == toolId) {
+                            item.copy(
+                                status = ChatItem.ToolCall.Status.Done,
+                                result = "hosted by Min process table$portNote",
+                            )
+                        } else item
+                    },
+                )
+            }
+        }
+        return true
     }
 
-    private fun maybeHostCommand(command: String, description: String?, flags: Map<String, Any?> = emptyMap()) {
+    /**
+     * 无 permission 闸门时（bypass / 规则已 allow）：若 shouldHost，尝试进表。
+     * startFromAgent 对同 command+cwd+port 去重；PortBusy 则只绑预览，不装第二套。
+     */
+    private fun maybeHostWhenNoPermissionGate(event: ClaudeCodeEvent.ToolUse) {
         val registry = localServices ?: return
-        val raw = command.trim()
+        val raw = event.input["command"].asStringOrNull().orEmpty().trim()
         if (raw.isEmpty()) return
+        val flags = bashFlags(event.input)
         if (!LocalServiceIntent.shouldHost(raw, flags)) return
         val cleaned = LocalServiceIntent.stripBackgroundNoise(raw)
         val port = LocalServiceIntent.guessPort(cleaned)
         val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
-        val label = description?.takeIf { it.isNotBlank() }
+        val label = event.input["description"].asStringOrNull()
         val sessionKey = _state.value.sessionId
         sessionIo?.launch {
             val result = registry.startFromAgent(
@@ -2236,11 +2316,12 @@ class ClaudeCodeManager(
                 sourceSessionKey = sessionKey,
             )
             result.onSuccess { id ->
-                Log.i(TAG, "hosted local service $id for: ${cleaned.take(80)}")
-                // 不自动弹预览：人点「打开」或结果里的 URL 再开，避免抢焦点
+                Log.i(TAG, "hosted local service $id (no-gate): ${cleaned.take(80)}")
+                if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
             }.onFailure { err ->
-                Log.w(TAG, "host local service failed: ${err.message}")
-                // 端口被 CLI 孙进程占着时不装 Running；身份卡已说明须走托管路径
+                Log.w(TAG, "host (no-gate) skipped/failed: ${err.message}")
+                // CLI 可能已占端口：至少把预览位填上
+                if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
             }
         }
     }
@@ -2256,6 +2337,10 @@ class ClaudeCodeManager(
     }
 
     private fun maybeOfferLocalPreview(text: String) {
+        if (LocalUrls.isLoopbackHttp(text)) {
+            _localPreviewUrls.tryEmit(LocalUrls.normalizeLoopback(text))
+            return
+        }
         for (u in LocalUrls.findLocalPreviewUrls(text)) {
             _localPreviewUrls.tryEmit(u)
         }

@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.baselineprofile)
 }
 
 android {
@@ -14,8 +15,8 @@ android {
         applicationId = "dev.min.code"
         minSdk = 26
         targetSdk = 37
-        versionCode = 22
-        versionName = "1.1.6"
+        versionCode = 23
+        versionName = "1.1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -41,8 +42,16 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
-            // 和正式包分开装：调试版是独立的一份数据（rootfs 好几个 GB，别互相覆盖）
+            // 和正式包分开装：调试版是独立的一份数据（rootfs 占地几个 GB，别互相覆盖）
             applicationIdSuffix = ".debug"
+        }
+        // baselineprofile 采集用的非 debuggable 变体；安装时 ART 会吃 baseline.prof
+        create("benchmark") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+            applicationIdSuffix = ".benchmark"
+            versionNameSuffix = "-benchmark"
         }
     }
     compileOptions {
@@ -102,8 +111,16 @@ dependencies {
     implementation(libs.huge.icons)
     implementation(libs.termux.terminal.view)
     implementation(libs.chrisbanes.haze)
+    implementation(libs.androidx.profileinstaller)
+    "baselineProfile"(project(":baselineprofile"))
     debugImplementation(libs.androidx.ui.tooling)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.core)
+}
+
+baselineProfile {
+    // 生成到 app/src/main，release/debug 都能吃到
+    automaticGenerationDuringBuild = false
+    saveInSrc = true
 }

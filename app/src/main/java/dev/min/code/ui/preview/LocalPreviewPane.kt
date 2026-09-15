@@ -21,6 +21,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,7 +37,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import dev.min.code.R
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkSheet
-import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
 import dev.min.code.util.LocalUrls
@@ -47,13 +47,17 @@ import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.Refresh01
 
 /**
- * 本机 loopback 预览。默认路径：App 内 WebView，不是系统浏览器。
+ * 本机 loopback **预览位**的展开面板。
+ *
+ * - 关掉 = 藏位（[onCollapse]），不是拆功能；WebView 由调用方在 url 仍绑定时可保活，
+ *   本 composable 仅在 [url] 从树里卸掉时 destroy。
+ * - 进程表「打开」与铬件预览键共用这一块，不另起第二套 WebView。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LocalPreviewSheet(
+fun LocalPreviewPane(
     url: String,
-    onDismiss: () -> Unit,
+    onCollapse: () -> Unit,
 ) {
     val context = LocalContext.current
     val normalized = remember(url) { LocalUrls.normalizeLoopback(url) }
@@ -61,8 +65,22 @@ fun LocalPreviewSheet(
     var title by remember(normalized) { mutableStateOf(normalized) }
     var webView by remember { mutableStateOf<WebView?>(null) }
 
+    // 面板被卸掉（collapse 或离开会话）时再拆引擎；同一 url 再展开可新建，
+    // 但绝不能在「只是藏」的路径上由外层把 url 清掉。
+    DisposableEffect(normalized) {
+        onDispose {
+            webView?.let { wv ->
+                runCatching {
+                    wv.stopLoading()
+                    wv.destroy()
+                }
+            }
+            webView = null
+        }
+    }
+
     InkSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = onCollapse,
         sheetState = rememberBottomSheetState(
             SheetValue.Hidden,
             setOf(SheetValue.Hidden, SheetValue.Expanded),
@@ -104,8 +122,8 @@ fun LocalPreviewSheet(
                 )
                 InkIconButton(
                     icon = HugeIcons.Cancel01,
-                    contentDescription = stringResource(R.string.preview_close),
-                    onClick = onDismiss,
+                    contentDescription = stringResource(R.string.preview_collapse),
+                    onClick = onCollapse,
                     size = 36.dp,
                     iconSize = 18.dp,
                 )
@@ -147,22 +165,26 @@ fun LocalPreviewSheet(
                             webView = this
                         }
                     },
+                    update = { view ->
+                        val current = view.url
+                        if (current == null || current != normalized) {
+                            view.loadUrl(normalized)
+                        }
+                    },
                     modifier = Modifier.fillMaxSize(),
                     onRelease = {
-                        it.stopLoading()
-                        it.destroy()
+                        // destroy 交给 DisposableEffect(normalized)，避免 collapse 重组时误拆
                         webView = null
                     },
                 )
             }
-            InkTextButton(
-                onClick = onDismiss,
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                Text(stringResource(R.string.preview_close))
-            }
         }
     }
+}
+
+/** @deprecated 用 [LocalPreviewPane]；保留别名避免外部引用炸编译 */
+@Deprecated("Use LocalPreviewPane", ReplaceWith("LocalPreviewPane(url, onCollapse)"))
+@Composable
+fun LocalPreviewSheet(url: String, onDismiss: () -> Unit) {
+    LocalPreviewPane(url = url, onCollapse = onDismiss)
 }

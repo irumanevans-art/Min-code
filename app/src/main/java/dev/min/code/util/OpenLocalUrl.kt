@@ -11,7 +11,7 @@ private const val TAG = "OpenLocalUrl"
 /**
  * 打开 URL。
  *
- * - loopback → 调用方应走应用内 [dev.min.code.ui.preview.LocalPreviewSheet]，本函数不处理。
+ * - loopback → 调用方应填应用内预览位 [dev.min.code.ui.preview.LocalPreviewPane]，本函数不处理。
  * - 其它 → 系统浏览器（次要入口）。
  */
 fun Context.openExternalUrl(url: String): Boolean {

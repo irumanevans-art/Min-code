@@ -82,6 +82,8 @@ class LocalServiceRegistry(
         var waiter: Job? = null,
         val log: StringBuilder = StringBuilder(),
         val logLock: Any = Any(),
+        /** 上次把 logTail 推进 StateFlow 的时刻；日志行很密时别每行触发重组 */
+        @Volatile var lastUiPushMs: Long = 0L,
     )
 
     private val handles = ConcurrentHashMap<String, Handle>()
@@ -211,6 +213,7 @@ class LocalServiceRegistry(
                 put("PAGER", "cat")
                 put("CI", "true")
                 put("NO_COLOR", "1")
+                put("DEBIAN_FRONTEND", "noninteractive")
                 put("USER", "root")
                 put("SHELL", "/bin/bash")
                 put("HOME", "/root")
@@ -394,8 +397,10 @@ class LocalServiceRegistry(
                         while (true) {
                             val line = reader.readLine() ?: break
                             appendLog(handle, if (prefix.isEmpty()) line else "$prefix$line")
-                            // 周期性把 tail 推到 StateFlow，面板能看见
-                            if (System.currentTimeMillis() % 3L == 0L) {
+                            // ≥400ms 才推一次 UI：vite/uvicorn 刷屏时否则整表重组把会话页拖死
+                            val now = System.currentTimeMillis()
+                            if (now - handle.lastUiPushMs >= LOG_UI_INTERVAL_MS) {
+                                handle.lastUiPushMs = now
                                 patch(id) { it.copy(logTail = logTailOf(handle)) }
                             }
                         }
@@ -444,17 +449,25 @@ class LocalServiceRegistry(
         const val READY_WINDOW_MS = 2_500L
         const val MAX_LOG_CHARS = 256 * 1024
         const val LOG_TAIL_CHARS = 8 * 1024
+        const val LOG_UI_INTERVAL_MS = 400L
     }
 }
 
 /**
- * 判断 Bash 命令是否像「长驻服务」，应进进程表而不是会话孙进程。
- * 保守名单：宁可漏，不要把 `ls` 送去托管。
+ * 判断 Bash 是否应进进程表（独立 proot），而不是会话孙进程。
+ *
+ * **主路径**：CLI 的 `run_in_background`（及同义 flag）——与桌面满血一致。
+ * **辅**：极薄 dev-server 启发式（[DEV_SERVER]）。不是规范，禁止无限加包名。
+ * `python app.py` 无 flag → 不进表。
  */
 object LocalServiceIntent {
     private val BACKGROUND_FLAG_KEYS = listOf("run_in_background", "runInBackground", "is_background")
 
-    private val LONG_LIVED = listOf(
+    /**
+     * 无 flag 时的薄补：明显的前台 dev server。宁可漏，不要把 `ls` / `python script.py` 送去托管。
+     * 主路径永远是 [isBackgroundFlag]。
+     */
+    private val DEV_SERVER = listOf(
         Regex("""python3?\s+-m\s+http\.server\b"""),
         Regex("""\buvicorn\b"""),
         Regex("""\bgunicorn\b"""),
@@ -469,10 +482,8 @@ object LocalServiceIntent {
         Regex("""\bhttp-server\b"""),
         Regex("""\bnpx\s+serve\b"""),
         Regex("""\bphp\s+-S\b"""),
-        Regex("""\bruby\s+-run\b"""),
         Regex("""\brails\s+s(erver)?\b"""),
         Regex("""\bdocker\s+compose\s+up\b"""),
-        Regex("""\bnode\s+.*\bserver\b"""),
     )
 
     private val PORT_FLAG = Regex("""(?:--port[= ]|port=)(\d{2,5})\b""", RegexOption.IGNORE_CASE)
@@ -491,8 +502,9 @@ object LocalServiceIntent {
     fun looksLongLived(command: String): Boolean {
         val c = command.trim()
         if (c.isEmpty()) return false
+        if (DEV_SERVER.any { it.containsMatchIn(c) }) return true
+        // bare & / nohup 只有带端口线索时才当启发式（仍非主路径）
         val bg = c.endsWith("&") || c.contains(" nohup ") || c.startsWith("nohup ")
-        if (LONG_LIVED.any { it.containsMatchIn(c) }) return true
         return bg && (PORT_FLAG.containsMatchIn(c) || TRAILING_PORT.containsMatchIn(c.removeSuffix("&").trim()))
     }
 

@@ -131,20 +131,19 @@ import dev.min.code.ui.components.ToastType
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
-import dev.min.code.ui.preview.LocalPreviewSheet
+import dev.min.code.ui.preview.LocalPreviewPane
 import dev.min.code.ui.setup.SetupPage
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
-import dev.min.code.util.LocalPreviewBus
 import dev.min.code.util.LocalUrls
 import dev.min.code.util.openExternalUrl
 import dev.min.code.util.writeClipboardText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Browser
 import me.rerere.hugeicons.stroke.ComputerTerminal01
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.Play
@@ -216,14 +215,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     var showPlan by remember { mutableStateOf(false) }
     var showMaintenance by remember { mutableStateOf(false) }
     var showRuntime by remember { mutableStateOf(false) }
-    var previewUrl by remember { mutableStateOf<String?>(null) }
-
-    // 会话链 / 终端 / 总线发现的 loopback → 应用内预览
-    LaunchedEffect(Unit) {
-        merge(vm.localPreviewUrls, LocalPreviewBus.urls).collect { url ->
-            previewUrl = LocalUrls.normalizeLoopback(url)
-        }
-    }
+    val previewSlot by vm.previewSlot.collectAsStateWithLifecycle()
 
     // 通知权限（Android 13+ 要运行时申请）在环境就绪那一刻要一次：后台等审批、任务完成、
     // 会话中断全靠通知，没有它用户切出去就是聋的。放在向导之后而不是启动时——先让人看到
@@ -352,7 +344,9 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         gesturesEnabled = setup.ready,
         drawer = drawer,
     ) {
-        val previewHandler = rememberLocalPreviewUriHandler { previewUrl = it }
+        val previewHandler = rememberLocalPreviewUriHandler { url ->
+            vm.bindPreview(url, expand = true, fromAgent = false)
+        }
         CompositionLocalProvider(LocalUriHandler provides previewHandler) {
         if (live) {
             SessionContent(
@@ -483,15 +477,18 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onToggleLog = vm::toggleServiceLog,
             onOpenPreview = { url ->
                 showRuntime = false
-                previewUrl = url
+                // 进程表「打开」= 按预览位键，不是第二套 WebView
+                vm.bindPreview(url, expand = true, fromAgent = false)
             },
         )
     }
 
-    previewUrl?.let { url ->
-        LocalPreviewSheet(
-            url = url,
-            onDismiss = { previewUrl = null },
+    // 预览位展开：关掉只藏，url 仍在 slot 里，铬件键可再开
+    val slotUrl = previewSlot.url
+    if (previewSlot.expanded && slotUrl != null) {
+        LocalPreviewPane(
+            url = slotUrl,
+            onCollapse = vm::collapsePreview,
         )
     }
 }
@@ -934,8 +931,18 @@ private fun SessionContent(
                     val isFirst = index == 0
                     // 有流式内容时最后一条不是尾巴，轨道要继续往下延伸
                     val isLast = index == lastIndex && !streaming && !showLiveTurn
-                    // 新条目淡入（落墨）：只做出现，不做位移，轨道上的标记才不会滑来滑去
-                    Box(Modifier.animateItem(fadeInSpec = tween(280, easing = InkMotion.Ease), placementSpec = null, fadeOutSpec = null)) {
+                    // 新条目淡入（落墨）：只做出现，不做位移。
+                    // 流式/忙时关掉 animateItem——每来一截 token 都做布局动画 = 首帧卡、越聊越顿。
+                    val itemMod = if (session.busy || streaming) {
+                        Modifier
+                    } else {
+                        Modifier.animateItem(
+                            fadeInSpec = tween(280, easing = InkMotion.Ease),
+                            placementSpec = null,
+                            fadeOutSpec = null,
+                        )
+                    }
+                    Box(itemMod) {
                         when (block) {
                             is TranscriptBlock.Single ->
                                 TranscriptItem(block.item, isFirst, isLast, vm)
@@ -1042,9 +1049,44 @@ private fun SessionContent(
                 }
                 BrandMark()
                 Spacer(Modifier.weight(1f))
+                // 预览位：始终在。有 loopback 服务才有效；关掉是藏，不是拆。
+                // 不要用 Globe（抽屉「进程」已占用）。
+                val preview by vm.previewSlot.collectAsStateWithLifecycle()
+                val previewArmed = !preview.url.isNullOrBlank()
+                Spacer(Modifier.width(6.dp))
+                PaperDisc {
+                    Box {
+                        InkIconButton(
+                            icon = HugeIcons.Browser,
+                            contentDescription = stringResource(
+                                if (previewArmed) R.string.session_preview
+                                else R.string.session_preview_empty,
+                            ),
+                            onClick = {
+                                if (!previewArmed) return@InkIconButton
+                                focusManager.clearFocus()
+                                vm.togglePreview()
+                            },
+                            enabled = previewArmed,
+                            tint = if (preview.expanded && previewArmed) {
+                                MaterialTheme.sea.seaDeep
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        if (previewArmed && !preview.expanded) {
+                            Seal(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp),
+                            )
+                        }
+                    }
+                }
                 // 终端：和会话同一个 Linux 里的一个真 bash。抽屉里那个入口留着，
                 // 但"边看 agent 跑边自己敲一条命令"是会话页上的动作，要够得着。
                 // 搜索只在会话记录抽屉里——进行页不再放放大镜。
+                Spacer(Modifier.width(6.dp))
                 PaperDisc {
                     InkIconButton(
                         icon = HugeIcons.ComputerTerminal01,

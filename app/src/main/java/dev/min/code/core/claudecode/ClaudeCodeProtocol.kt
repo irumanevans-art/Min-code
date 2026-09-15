@@ -22,8 +22,9 @@ import kotlinx.serialization.json.put
  * 向 stdout 写事件帧。
  *
  * 下面的 schema 对照官方 CLI 二进制（@anthropic-ai/claude-code，最近一次完整校对
- * v2.1.270；更早注释里的 2.1.246/261/267 仍有效）中内嵌的 zod schema。未知字段/类型
- * 一律宽容忽略以保持向后兼容，但**必填字段一个都不能少** —— CLI 对入站帧做严格校验，
+ * v2.1.271+；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
+ * 2.1.271–272 无 stream-json 形状大改（MCP-only resume、`-p` Monitor 截止等在 CLI 侧）。
+ * 未知字段/类型一律宽容忽略以保持向后兼容，但**必填字段一个都不能少** —— CLI 对入站帧做严格校验，
  * 缺字段会被静默丢弃或报 "canUseTool returned a schema-invalid permission result"。
  */
 sealed interface ClaudeCodeEvent {

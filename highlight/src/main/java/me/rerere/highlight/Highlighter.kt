@@ -29,11 +29,24 @@ val LocalCodeHighlighter = staticCompositionLocalOf { CodeHighlighter() }
 class CodeHighlighter {
     private val engine = HighlightEngine(builtinLanguages())
 
+    /** 同一段工具输出 / 文件内容反复进视野时别重跑整份 grammar。 */
+    private val cache = object : LinkedHashMap<String, List<HighlightToken>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<HighlightToken>>?): Boolean =
+            size > 48
+    }
+
     fun highlight(code: String, language: String): List<HighlightToken> {
         if (code.isEmpty()) return emptyList()
-
-        return engine.highlight(code, language)
+        val key = "$language|${code.length}|${code.hashCode()}"
+        synchronized(cache) {
+            cache[key]?.let { return it }
+        }
+        val tokens = engine.highlight(code, language)
             ?: listOf(HighlightToken.Plain(code))
+        synchronized(cache) {
+            cache[key] = tokens
+        }
+        return tokens
     }
 
     fun supports(language: String): Boolean = engine.supports(language)

@@ -21,6 +21,10 @@ appcompat = "1.8.0"
 material = "1.14.0"
 termux = "0.118.0"
 haze = "1.7.3"
+baselineprofile = "1.5.0"
+profileinstaller = "1.4.1"
+uiautomator = "2.3.0"
+benchmark-macro-junit4 = "1.5.0"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -57,9 +61,14 @@ material = { group = "com.google.android.material", name = "material", version.r
 xz = { module = "org.tukaani:xz", version = "1.12" }
 termux-terminal-view = { module = "com.termux.termux-app:terminal-view", version.ref = "termux" }
 chrisbanes-haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }
+androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
+androidx-benchmark-macro-junit4 = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "benchmark-macro-junit4" }
+androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-test = { id = "com.android.test", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 android-library = { id = "com.android.library", version.ref = "agp" }
+baselineprofile = { id = "androidx.baselineprofile", version.ref = "baselineprofile" }

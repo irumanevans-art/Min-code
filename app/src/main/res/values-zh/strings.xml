@@ -101,13 +101,13 @@
   <string name="workspace_terminal_title">终端</string>
   <string name="workspace_terminal_title_with_name">%s · 终端</string>
 
-  <!-- 进程表 + 本机预览 -->
+  <!-- 进程表 + 本机预览位 -->
   <string name="runtime_title">进程</string>
   <string name="runtime_drawer">进程</string>
   <string name="runtime_refresh">刷新</string>
-  <string name="runtime_intro">长驻服务在这张表里（与对话无关）。本机页面在软件内打开 127.0.0.1，不靠抄局域网地址。</string>
+  <string name="runtime_intro">后台服务在这张表里（与对话无关）。「打开」= 会话预览位 127.0.0.1，不是第二套浏览器，也不靠抄局域网地址。</string>
   <string name="runtime_section_services">托管服务</string>
-  <string name="runtime_services_empty">还没有托管项。Agent 的后台/长驻 Bash 会自动进这张表。</string>
+  <string name="runtime_services_empty">还没有托管项。Agent 带 run_in_background 的 Bash 会自动进这张表。</string>
   <string name="runtime_section_ports">监听端口</string>
   <string name="runtime_ports_empty">没有监听（或读不到）</string>
   <string name="runtime_ports_unreadable">本机 ROM 禁止读取 /proc/net/tcp，监听端口不可见。</string>
@@ -127,4 +127,7 @@
   <string name="preview_reload">刷新</string>
   <string name="preview_open_external">用浏览器打开</string>
   <string name="preview_close">关闭</string>
+  <string name="preview_collapse">收起预览</string>
+  <string name="session_preview">预览</string>
+  <string name="session_preview_empty">预览（暂无本机服务）</string>
 </resources>

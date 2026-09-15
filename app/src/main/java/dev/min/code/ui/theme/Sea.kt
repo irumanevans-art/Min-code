@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -57,6 +58,29 @@ import kotlin.math.sin
  */
 object SeaPlate {
     private var cached: ImageBitmap? = null
+
+    /**
+     * 后台预解码 1.7MB 海纹理。首帧点海窗时若还没好，仍会同步 decode 一次；
+     * 启动后 IO 预热能把「第一次操作卡一下」削掉大半。
+     */
+    fun preload(context: android.content.Context) {
+        if (cached != null) return
+        synchronized(this) {
+            if (cached != null) return
+            val opts = android.graphics.BitmapFactory.Options().apply {
+                inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+            }
+            val bmp = android.graphics.BitmapFactory.decodeResource(
+                context.applicationContext.resources,
+                R.drawable.sea_plate,
+                opts,
+            ) ?: return
+            cached = bmp.asImageBitmap()
+        }
+    }
+
+    /** 给 [GpuWarmup] 等非 Compose 路径读已预热的位图；未 preload 时为 null。 */
+    fun cachedOrNull(): ImageBitmap? = synchronized(this) { cached }
 
     @Composable
     fun bitmap(): ImageBitmap {

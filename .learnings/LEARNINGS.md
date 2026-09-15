@@ -1,3 +1,30 @@
+## [LRN-20260915-FIRST-TAP-JANK] correction
+
+**Logged**: 2026-09-15T12:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: performance
+
+### Summary
+很多操作「刚点一下卡、再点顺一点」：冷路径在主线程解码 1.7MB `sea_plate`、流式列表每 token `animateItem`、进程日志几乎每行推 StateFlow、高亮无缓存。
+
+### Details
+- `SeaPlate.bitmap()` 首次同步 `imageResource` → 启动 IO `SeaPlate.preload`
+- 会话 `busy/streaming` 时列表 `animateItem` 关掉
+- `LocalServiceRegistry` 日志 UI 推送 ≥400ms
+- `CodeHighlighter` LRU 缓存 highlight 结果
+- PaperDisc 的 haze 首帧仍可能略重（GPU 管线），属残余
+
+### Suggested Action
+再报卡顿时用 `adb shell dumpsys gfxinfo dev.min.code.debug` / systrace 对具体手势；不要先加预装包或砍设计。
+
+### Metadata
+- Source: user_feedback
+- Related Files: MinApp.kt, Sea.kt, ClaudeCodePage.kt, LocalServiceRegistry.kt, Highlighter.kt
+- Tags: jank, cold-start, sea-plate, animateItem
+
+---
+
 ## [LRN-20260910-LAUNCHER-ICON] correction
 
 **Logged**: 2026-09-10T23:55:00+08:00

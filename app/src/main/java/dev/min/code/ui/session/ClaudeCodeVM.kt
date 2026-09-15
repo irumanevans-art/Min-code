@@ -38,13 +38,19 @@ import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.service.LocalService
 import dev.min.code.core.service.LocalServiceRegistry
+import dev.min.code.core.service.LocalServiceStatus
 import dev.min.code.core.service.LocalServiceStopReason
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.util.ImageUtils
+import dev.min.code.util.LocalPreviewBus
+import dev.min.code.util.LocalUrls
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceStorageArea
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
 
 class ClaudeCodeVM(
     private val context: Application,
@@ -302,7 +308,7 @@ class ClaudeCodeVM(
     val maintenance = _maintenance.asStateFlow()
 
     // -----------------------------------------------------------------------
-    // 进程表 + 本机预览（同一张表；面板只停/日志/打开）
+    // 进程表 + 本机预览位（同一张表；打开 = 填位，不是第二套 WebView）
     // -----------------------------------------------------------------------
 
     data class RuntimeState(
@@ -311,12 +317,82 @@ class ClaudeCodeVM(
         val expandedLogId: String? = null,
     )
 
+    /**
+     * 会话铬件上的预览**位**：有 URL 键才有效；展开是看见面板，关掉只是藏。
+     * [autoExpandedFor] 记已经自动展开过的 normalized URL，避免连弹。
+     */
+    data class PreviewSlot(
+        val url: String? = null,
+        val expanded: Boolean = false,
+        val autoExpandedFor: String? = null,
+    )
+
     private val _runtime = MutableStateFlow(RuntimeState())
     val runtime = _runtime.asStateFlow()
     val localServiceList: StateFlow<List<LocalService>> = localServices.services
 
-    /** 会话链发现的 loopback URL；页面收集后开 LocalPreviewSheet */
-    val localPreviewUrls = registry.localPreviewUrls
+    private val _previewSlot = MutableStateFlow(PreviewSlot())
+    val previewSlot: StateFlow<PreviewSlot> = _previewSlot.asStateFlow()
+
+    init {
+        // Agent / 终端 / 总线发现的 loopback → 填位（可自动展开一次）
+        merge(registry.localPreviewUrls, LocalPreviewBus.urls)
+            .onEach { bindPreview(it, expand = true, fromAgent = true) }
+            .launchIn(viewModelScope)
+
+        // 表里 Running 且有端口 → 静默绑位（不抢展开，除非位还空）
+        localServices.services
+            .onEach { list ->
+                val live = list.firstOrNull {
+                    (it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting) &&
+                        it.port != null
+                } ?: return@onEach
+                val port = live.port ?: return@onEach
+                val current = _previewSlot.value.url
+                if (current.isNullOrBlank()) {
+                    bindPreview(LocalUrls.loopbackUrl(port), expand = true, fromAgent = true)
+                }
+            }
+            .launchIn(viewModelScope)
+    }
+
+    /**
+     * @param expand 是否展开面板（进程表「打开」、链接点按 = true）
+     * @param fromAgent true 时仅在该 URL 尚未 auto-expand 过时自动展开一次
+     */
+    fun bindPreview(url: String, expand: Boolean = true, fromAgent: Boolean = false) {
+        val normalized = LocalUrls.normalizeLoopback(url)
+        if (!LocalUrls.isLoopbackHttp(normalized)) return
+        _previewSlot.update { slot ->
+            val alreadyAuto = slot.autoExpandedFor == normalized
+            val shouldExpand = when {
+                expand && fromAgent -> !alreadyAuto || slot.expanded
+                expand -> true
+                else -> slot.expanded
+            }
+            slot.copy(
+                url = normalized,
+                expanded = shouldExpand,
+                autoExpandedFor = if (fromAgent || alreadyAuto) normalized else slot.autoExpandedFor,
+            )
+        }
+    }
+
+    fun togglePreview() {
+        _previewSlot.update { slot ->
+            if (slot.url.isNullOrBlank()) slot
+            else slot.copy(expanded = !slot.expanded)
+        }
+    }
+
+    fun collapsePreview() {
+        _previewSlot.update { it.copy(expanded = false) }
+    }
+
+    /** 清空位（服务全停、用户明确拆掉时）。平时关掉只用 [collapsePreview]。 */
+    fun clearPreview() {
+        _previewSlot.value = PreviewSlot()
+    }
 
     fun refreshNetworkSnapshot() {
         viewModelScope.launch(Dispatchers.IO) {

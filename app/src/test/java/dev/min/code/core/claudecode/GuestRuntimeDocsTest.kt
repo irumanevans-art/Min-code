@@ -37,11 +37,44 @@ class GuestRuntimeDocsTest {
         val text = file.readText()
         assertTrue(text.contains("Min"))
         assertTrue(text.contains("process table"))
+        assertTrue(text.contains("run_in_background") || text.contains("apt-get"))
     }
 
     @Test
     fun identity_card_stays_short() {
         val lines = GuestRuntimeDocs.renderBlock().lines().filter { it.isNotBlank() }
-        assertTrue("identity card too long: ${lines.size}", lines.size <= 14)
+        assertTrue("identity card too long: ${lines.size}", lines.size <= 16)
+    }
+
+    @Test
+    fun no_bare_ampersand_traffic_rule() {
+        val block = GuestRuntimeDocs.renderBlock()
+        assertFalse(block.contains("bare Bash"))
+        assertFalse(block.contains("dies with the chat"))
+        assertTrue(block.contains("run_in_background") || block.contains("Background servers"))
+        assertTrue(block.contains("apt-get"))
+        assertTrue(block.contains("preview slot"))
+    }
+
+    @Test
+    fun strips_legacy_v1_fence() {
+        val legacy = buildString {
+            appendLine("keep me")
+            appendLine("<!-- min-code:runtime-env v1 -->")
+            appendLine("old stuff bare Bash & dies")
+            appendLine("<!-- /min-code:runtime-env -->")
+            appendLine("tail")
+        }
+        val scrubbed = GuestRuntimeDocs.stripFence(
+            legacy,
+            "<!-- min-code:runtime-env v1 -->",
+            "<!-- /min-code:runtime-env -->",
+        )
+        assertFalse(scrubbed.contains("old stuff"))
+        assertTrue(scrubbed.contains("keep me"))
+        assertTrue(scrubbed.contains("tail"))
+        val next = GuestRuntimeDocs.upsertBlock(scrubbed, GuestRuntimeDocs.renderBlock())
+        assertTrue(next.contains(GuestRuntimeDocs.BLOCK_START))
+        assertEquals(1, Regex(Regex.escape(GuestRuntimeDocs.BLOCK_START)).findAll(next).count())
     }
 }

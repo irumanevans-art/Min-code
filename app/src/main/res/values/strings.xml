@@ -101,13 +101,13 @@
   <string name="workspace_terminal_title">Terminal</string>
   <string name="workspace_terminal_title_with_name">%s · Terminal</string>
 
-  <!-- Process table + local preview -->
+  <!-- Process table + local preview slot -->
   <string name="runtime_title">Processes</string>
   <string name="runtime_drawer">Processes</string>
   <string name="runtime_refresh">Refresh</string>
-  <string name="runtime_intro">Long-lived servers live in this table (independent of chat). Local pages open inside the app at 127.0.0.1 — not a copied LAN address.</string>
+  <string name="runtime_intro">Background servers live in this table (independent of chat). Open = the session preview slot at 127.0.0.1 — not a second browser, not a copied LAN address.</string>
   <string name="runtime_section_services">Managed services</string>
-  <string name="runtime_services_empty">Nothing managed yet. Background/long-lived Bash from the agent enters this table automatically.</string>
+  <string name="runtime_services_empty">Nothing managed yet. Agent Bash with run_in_background enters this table automatically.</string>
   <string name="runtime_section_ports">Listening ports</string>
   <string name="runtime_ports_empty">Nothing listening (or not visible)</string>
   <string name="runtime_ports_unreadable">This ROM blocks reading /proc/net/tcp. Listening ports are hidden.</string>
@@ -127,4 +127,7 @@
   <string name="preview_reload">Reload</string>
   <string name="preview_open_external">Open in browser</string>
   <string name="preview_close">Close</string>
+  <string name="preview_collapse">Hide preview</string>
+  <string name="session_preview">Preview</string>
+  <string name="session_preview_empty">Preview (no local server)</string>
 </resources>

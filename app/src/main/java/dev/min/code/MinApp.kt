@@ -8,6 +8,8 @@ import dev.min.code.core.crash.CrashRecorder
 import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.di.appModule
+import dev.min.code.ui.theme.GpuWarmup
+import dev.min.code.ui.theme.SeaPlate
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -52,6 +54,13 @@ class MinApp : Application() {
                 .map { it.appLanguage }
                 .distinctUntilChanged()
                 .collect { AppLocale.apply(it) }
+        }
+        // 海纹理 ~1.7MB + BitmapShader 管线：别等用户第一次点发送/海窗时在主线程冷编译
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                SeaPlate.preload(this@MinApp)
+                GpuWarmup.warm(this@MinApp)
+            }.onFailure { Log.w(TAG, "SeaPlate/GpuWarmup failed", it) }
         }
     }
 
