@@ -24,7 +24,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import dev.min.code.CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID
 import dev.min.code.R
@@ -153,7 +152,6 @@ class ClaudeCodeForegroundService : Service() {
     enum class KeepAlive { Stopped, Active, Rejected, Expired }
 
     private val registry: ClaudeCodeSessionRegistry by inject()
-    private val localServices: LocalServiceRegistry by inject()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var isForeground = false
@@ -170,10 +168,9 @@ class ClaudeCodeForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
         if (intent?.action == ACTION_STOP_ALL) {
-            // 用户在通知上点了「停止全部」：会话 + 本地服务一起停。
+            // 用户在通知上点了「停止全部」：先杀会话，服务由注册表变空后自然收尾。
             // 这里不直接 stopSelf —— shutdown 是挂起的（要给 CLI 时间落盘 transcript）。
             registry.closeAll()
-            localServices.stopAll(LocalServiceStopReason.StopAll)
             releaseLocks()
             observeRegistry()
             return START_NOT_STICKY
@@ -199,22 +196,17 @@ class ClaudeCodeForegroundService : Service() {
         if (observerStarted) return
         observerStarted = true
         serviceScope.launch {
-            combine(registry.liveSessions, localServices.services) { sessions, services ->
-                sessions to services
-            }.collectLatest { (sessions, services) ->
+            registry.liveSessions.collectLatest { sessions ->
                 val live = sessions.filter { it.isLive }
-                val runningServices = services.filter {
-                    it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting
-                }
-                if (live.isEmpty() && runningServices.isEmpty()) {
+                if (live.isEmpty()) {
                     releaseLocks()
                     delay(STOP_DEBOUNCE_MS)
                     stopForegroundAndSelf()
                     return@collectLatest
                 }
-                val busy = live.any { it.busy } || runningServices.isNotEmpty()
+                val busy = live.any { it.busy }
                 if (busy) acquireLocks() else releaseLocks()
-                updateNotification(buildNotification(live, runningServices.size))
+                updateNotification(buildNotification(live))
             }
         }
     }
@@ -257,36 +249,24 @@ class ClaudeCodeForegroundService : Service() {
     // -----------------------------------------------------------------------
 
     /** 按注册表**此刻**的样子建通知；onStartCommand 时列表多半已经有内容，别先挂一条"正在启动" */
-    private fun currentNotification(): Notification {
-        val live = registry.liveSessions.value.filter { it.isLive }
-        val svc = localServices.services.value.count {
-            it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting
-        }
-        return buildNotification(live, svc)
-    }
+    private fun currentNotification(): Notification =
+        buildNotification(registry.liveSessions.value.filter { it.isLive })
 
-    private fun buildNotification(
-        live: List<ClaudeCodeSessionRegistry.LiveSession>,
-        serviceCount: Int,
-    ): Notification {
+    private fun buildNotification(live: List<ClaudeCodeSessionRegistry.LiveSession>): Notification {
         val busy = live.any { it.busy }
         val detail = live.firstOrNull { it.pendingPermissionTool != null }
             ?.let { "等待批准：${it.pendingPermissionTool}" }
             ?: live.firstOrNull { it.busy }?.statusText
-            ?: if (serviceCount > 0) "$serviceCount 个本地服务" else null
-        val sessionPart = when {
-            live.isEmpty() && serviceCount == 0 -> "正在启动…"
-            live.isEmpty() -> null
-            busy -> "${live.size} 个会话 · 运行中"
-            else -> "${live.size} 个会话 · 空闲"
-        }
-        val servicePart = if (serviceCount > 0) "${serviceCount} 个服务" else null
-        val text = listOfNotNull(sessionPart, servicePart).joinToString(" · ")
-            .ifBlank { "后台运行中" }
         return NotificationCompat.Builder(this, CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_min)
-            .setContentTitle("Min")
-            .setContentText(text)
+            .setContentTitle("Claude Code")
+            .setContentText(
+                when {
+                    live.isEmpty() -> "正在启动…"
+                    busy -> "${live.size} 个会话 · 运行中"
+                    else -> "${live.size} 个会话 · 空闲"
+                }
+            )
             .apply { detail?.takeIf { it.isNotBlank() }?.let { setSubText(it.take(60)) } }
             .setContentIntent(openPageIntent())
             .addAction(0, "停止全部", stopAllIntent())

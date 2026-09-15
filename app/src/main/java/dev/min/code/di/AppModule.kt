@@ -8,10 +8,8 @@ import dev.min.code.core.claudecode.ClaudeCodeCostLedger
 import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
-import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.service.ClaudeCodeSessionSupervisor
-import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.ui.files.WorkspaceDetailVM
 import dev.min.code.ui.session.ClaudeCodeVM
@@ -40,17 +38,6 @@ val appModule = module {
     single { RootfsInstaller(get()) }
     single { WorkspaceRepository(get(), get()) }
 
-    single { NetworkProbe(get()) }
-    single {
-        val context: android.content.Context = get()
-        LocalServiceRegistry(
-            context = context,
-            workspaceRepository = get(),
-            networkProbe = get(),
-            proot = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
-        )
-    }
-
     single { ClaudeCodeInstaller(get(), get()) }
     // Rootfs 里那几个配置文件的读写层：/mcp、/agents、/memory、/config、/permissions
     single { ClaudeCodeConfigStore(get(), get()) }
@@ -61,17 +48,12 @@ val appModule = module {
     // 单日花费台账必须是 single：它要横跨所有会话累加，每个会话一份就退化成会话内计数
     single { ClaudeCodeCostLedger(get()) }
     // 多会话：manager 是 factory，每个会话一个实例（各自一个 CLI 进程），由 registry 持有
-    factory { ClaudeCodeManager(get(), get(), get(), get(), get(), get()) }
+    factory { ClaudeCodeManager(get(), get(), get(), get(), get()) }
     single { ClaudeCodeSessionRegistry(factory = { get() }) }
 
     // 保活与后台通知。createdAtStart：它订阅的是注册表，注册表可能在页面之外先动起来
     single(createdAtStart = true) {
-        ClaudeCodeSessionSupervisor(
-            context = get(),
-            appScope = get(),
-            registry = get(),
-            localServices = get(),
-        )
+        ClaudeCodeSessionSupervisor(context = get(), appScope = get(), registry = get())
     }
 
     single { WorkspaceTerminalSessionManager(get(), get()) }

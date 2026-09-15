@@ -11,7 +11,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import dev.min.code.core.network.NetworkSnapshot
 import dev.min.code.core.rootfs.DeviceArch
 import dev.min.code.core.rootfs.WorkspaceRepository
 import java.io.File
@@ -585,18 +584,6 @@ class ClaudeCodeInstaller(
             file.writeText(merged.toString())
             Log.i(TAG, "seeded $KEY_BYPASS_ACCEPTED in ${file.absolutePath}")
         }.onFailure { Log.w(TAG, "ensureBypassPermissionsAccepted failed", it) }
-    }
-
-    /**
-     * 用户级 `/root/.claude/CLAUDE.md` 里写入 / 更新 Min 运行时说明块
-     *（网络可达性、不要猜 IP、长驻服务登记方式、apt→pip 降级）。
-     * 不碰项目 `/workspace/CLAUDE.md`。
-     */
-    fun ensureRuntimeDocs(linuxDir: File, snapshot: NetworkSnapshot? = null) {
-        runCatching {
-            val file = File(linuxDir, "root/.claude/CLAUDE.md")
-            GuestRuntimeDocs.ensureSeeded(file, snapshot)
-        }.onFailure { Log.w(TAG, "ensureRuntimeDocs failed", it) }
     }
 
     private fun writeProfileScript(linuxDir: File) {

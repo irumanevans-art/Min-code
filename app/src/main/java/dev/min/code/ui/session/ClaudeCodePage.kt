@@ -172,8 +172,6 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     val session by vm.session.collectAsStateWithLifecycle()
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val maintenance by vm.maintenance.collectAsStateWithLifecycle()
-    val runtime by vm.runtime.collectAsStateWithLifecycle()
-    val localServiceList by vm.localServiceList.collectAsStateWithLifecycle()
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val dailyCostUsd by vm.dailyCostUsd.collectAsStateWithLifecycle()
     val chineseDescriptions by vm.chineseDescriptions.collectAsStateWithLifecycle()
@@ -208,7 +206,6 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     }
     var showPlan by remember { mutableStateOf(false) }
     var showMaintenance by remember { mutableStateOf(false) }
-    var showRuntime by remember { mutableStateOf(false) }
 
     // 通知权限（Android 13+ 要运行时申请）在环境就绪那一刻要一次：后台等审批、任务完成、
     // 会话中断全靠通知，没有它用户切出去就是聋的。放在向导之后而不是启动时——先让人看到
@@ -306,11 +303,6 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onOpenSettings = {
                 afterSidebarNav()
                 navController.navigate(Screen.Settings)
-            },
-            onOpenRuntime = {
-                afterSidebarNav()
-                vm.refreshNetworkSnapshot()
-                showRuntime = true
             },
             onOpenMaintenance = {
                 afterSidebarNav()
@@ -449,24 +441,6 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 showMaintenance = false
                 navController.navigate(Screen.Files())
             },
-        )
-    }
-
-    if (showRuntime) {
-        ClaudeCodeRuntimeSheet(
-            snapshot = runtime.snapshot,
-            loading = runtime.loading,
-            services = localServiceList,
-            starting = runtime.starting,
-            startError = runtime.startError,
-            onDismiss = {
-                showRuntime = false
-                vm.dismissRuntimeStartError()
-            },
-            onRefresh = vm::refreshNetworkSnapshot,
-            onStartService = vm::startLocalService,
-            onStopService = vm::stopLocalService,
-            onClearStartError = vm::dismissRuntimeStartError,
         )
     }
 }
