@@ -549,6 +549,8 @@ class ClaudeCodeManager(
                 )
                 runCatching { launchCli(options) }.onFailure { e ->
                     Log.e(TAG, "startSession failed", e)
+                    // 启动中打的字还攥在调度台上，shutdown 会连队列一起清掉 —— 先退回输入框
+                    refundHeldMessages("会话启动失败，消息已退回输入框")
                     shutdown()
                     _state.update {
                         it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
@@ -1273,14 +1275,18 @@ class ClaudeCodeManager(
         val trimmed = text.trim()
         if (trimmed.isEmpty() && images.isEmpty()) return
         val current = _state.value
-        // 已经关掉 / 起不来的会话没有 stdin 可写，攥着也只是个永远发不出去的幽灵
-        if (current.status != SessionStatus.Running && current.status != SessionStatus.Starting) return
         val label = when {
             trimmed.isNotEmpty() && images.isNotEmpty() -> "$trimmed\n[${images.size} 张图片]"
             images.isNotEmpty() -> "[${images.size} 张图片]"
             else -> trimmed
         }
         val pending = PendingSend(newId(), trimmed, images, label)
+        // 已经关掉 / 起不来的会话没有 stdin 可写。文本不能就这么吞掉 —— 原样退回输入框，
+        // 用户改改还能在下一个会话里发出去
+        if (current.status != SessionStatus.Running && current.status != SessionStatus.Starting) {
+            _withdrawnMessages.tryEmit(pending.toComposerDraft())
+            return
+        }
         if (current.status != SessionStatus.Running) {
             // 启动中打的字：攥着，握手把 cwd 切好之后再发（handshake 末尾 flushPendingSend）
             sendQueue.hold(pending)
@@ -1651,10 +1657,38 @@ class ClaudeCodeManager(
         _state.update { st ->
             st.copy(items = st.items.filterNot { it.id == pending.itemId })
         }
-        val images = pending.images.mapIndexed { i, img ->
+        _withdrawnMessages.tryEmit(pending.toComposerDraft())
+    }
+
+    /** 排队消息 → 输入框草稿，和「再按一次发送」会发出去的东西完全一致 */
+    private fun PendingSend.toComposerDraft(): ComposerDraft = ComposerDraft(
+        text = text,
+        images = images.mapIndexed { i, img ->
             DraftImage(name = "图片 ${i + 1}", mediaType = img.mediaType, base64 = img.base64)
+        },
+    )
+
+    /**
+     * 失败路径的兜底退还：进程起不来 / 握手失败时，把还攥在手里（held）的消息
+     * 原样退回输入框，并摘掉对话流里对应的「排队中」条目 —— 不留永远发不出去的幽灵。
+     *
+     * 只碰 held：已交棒（handedOff）的帧字节已经进了 CLI 的 stdin，可能真被模型看见过，
+     * 退回输入框会让用户重发一遍、上下文里出现两遍。
+     *
+     * **必须在 [shutdown] 之前调用**：shutdown 会 `sendQueue.clear()`，之后再捞就只剩空队列。
+     */
+    private fun refundHeldMessages(note: String) {
+        val stranded = sendQueue.drainHeld()
+        if (stranded.isEmpty()) return
+        val ids = stranded.mapTo(mutableSetOf()) { it.itemId }
+        _state.update { st ->
+            st.copy(
+                items = st.items.filterNot { it.id in ids } +
+                    ChatItem.Note(newId(), note, isError = true),
+            )
         }
-        _withdrawnMessages.tryEmit(ComposerDraft(text = pending.text, images = images))
+        // 输入框是「接在已有内容前面」（见 ClaudeCodeInputBar），倒着发才保得住原来的先后
+        stranded.asReversed().forEach { _withdrawnMessages.tryEmit(it.toComposerDraft()) }
     }
 
     fun stopSession() {
@@ -1695,7 +1729,12 @@ class ClaudeCodeManager(
      */
     private suspend fun handshake() {
         val id = newRequestId()
-        val payload = control(id, encodeClaudeCodeInitialize(id)) ?: return
+        // initialize 超时 / 出错不挡会话本身，但启动中攥着的消息不能困死在调度台上
+        // （没有它们握手失败的提示，对话流里会永远挂着一条「排队中」），原样退回输入框。
+        val payload = control(id, encodeClaudeCodeInitialize(id)) ?: run {
+            refundHeldMessages("CLI 握手超时，启动前排队的消息已退回输入框")
+            return
+        }
         applyHandshake(payload)
         applyPreferredCwd()
         // 让 CLI 真的把思考内容吐出来。Opus 5 / Fable 5 的 thinking display 默认是
@@ -2130,6 +2169,9 @@ class ClaudeCodeManager(
                 }
                 runCatching { launchCli(options) }
                     .onFailure { e ->
+                        // 换档前搬回队列的消息（上面的 carried.forEach hold）不能跟着
+                        // shutdown 一起丢光 —— 先退回输入框，用户还能在原会话里重发
+                        refundHeldMessages("切换失败，排队的消息已退回输入框")
                         shutdown()
                         _state.update {
                             it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
@@ -2306,6 +2348,8 @@ class ClaudeCodeManager(
                 )
                 replayed.forEach(::dispatch)
                 runCatching { launchCli(options) }.onFailure { e ->
+                    // 和 startSession 一样：启动中攥着的消息先退回输入框，再让 shutdown 清队列
+                    refundHeldMessages("会话启动失败，消息已退回输入框")
                     shutdown()
                     _state.update {
                         it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
