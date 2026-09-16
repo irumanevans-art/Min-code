@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -24,6 +25,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import dev.min.code.core.network.NetworkProbe
+import dev.min.code.core.crash.CrashRecorder
 import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.LocalServiceIntent
@@ -385,7 +387,14 @@ class ClaudeCodeManager(
     private val _withdrawnMessages = MutableSharedFlow<ComposerDraft>(extraBufferCapacity = 4)
     val withdrawnMessages: SharedFlow<ComposerDraft> = _withdrawnMessages.asSharedFlow()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // SupervisorJob 把子协程的未捕获异常交给默认 handler，在 Android 上就是整 App 崩掉，
+    // 所以装 CoroutineExceptionHandler：记日志 + 落盘，不往上传
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
+            Log.e(TAG, "uncaught exception in manager scope", e)
+            CrashRecorder.record(context, Thread.currentThread(), e)
+        }
+    )
     private val runner by lazy {
         ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir))
     }
@@ -689,7 +698,12 @@ class ClaudeCodeManager(
         process = proc
         writer = proc.outputStream.writer(Charsets.UTF_8)
 
-        val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val io = CoroutineScope(
+            SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
+                Log.e(TAG, "uncaught exception in session IO scope", e)
+                CrashRecorder.record(context, Thread.currentThread(), e)
+            }
+        )
         sessionIo = io
         stopping = false
         _state.update {

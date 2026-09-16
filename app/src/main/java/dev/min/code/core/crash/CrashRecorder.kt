@@ -20,20 +20,28 @@ object CrashRecorder {
         val app = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            runCatching {
-                val sw = StringWriter()
-                throwable.printStackTrace(PrintWriter(sw))
-                file(app).writeText(
-                    buildString {
-                        appendLine("Thread: ${thread.name}")
-                        appendLine("Time: ${java.util.Date()}")
-                        appendLine()
-                        append(sw.toString())
-                    }
-                )
-            }.onFailure { Log.e(TAG, "failed to record crash", it) }
+            record(app, thread, throwable)
             previous?.uncaughtException(thread, throwable)
         }
+    }
+
+    /**
+     * 非致命异常（比如被协程的 CoroutineExceptionHandler 接住、不会崩掉 App 的那种）
+     * 也落盘，格式和未捕获崩溃一致，下次启动同样能在关于页看到。
+     */
+    fun record(context: Context, thread: Thread, throwable: Throwable) {
+        runCatching {
+            val sw = StringWriter()
+            throwable.printStackTrace(PrintWriter(sw))
+            file(context.applicationContext).writeText(
+                buildString {
+                    appendLine("Thread: ${thread.name}")
+                    appendLine("Time: ${java.util.Date()}")
+                    appendLine()
+                    append(sw.toString())
+                }
+            )
+        }.onFailure { Log.e(TAG, "failed to record crash", it) }
     }
 
     fun read(context: Context): String? = runCatching {

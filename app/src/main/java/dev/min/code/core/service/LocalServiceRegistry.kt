@@ -5,10 +5,12 @@ import android.util.Log
 import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.claudecode.CwdPath
 import dev.min.code.core.claudecode.GuestRuntimeDocs
+import dev.min.code.core.crash.CrashRecorder
 import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -75,7 +77,14 @@ class LocalServiceRegistry(
         nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir),
     ),
     private val patcher: RootfsPatcher = RootfsPatcher(),
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    // 默认 scope 装 CoroutineExceptionHandler：SupervisorJob 会把未捕获异常丢给
+    // 默认 handler（Android 上直接崩 App），这里记日志 + 落盘，不往上传
+    private val scope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, err ->
+            Log.e(TAG, "uncaught exception in registry scope", err)
+            CrashRecorder.record(context, Thread.currentThread(), err)
+        }
+    ),
 ) {
     private data class Handle(
         @Volatile var process: Process?,
