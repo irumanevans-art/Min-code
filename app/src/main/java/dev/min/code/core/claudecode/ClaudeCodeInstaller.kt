@@ -52,6 +52,13 @@ class ClaudeCodeInstaller(
     private val context: Context,
     private val workspaceRepository: WorkspaceRepository,
 ) {
+    /**
+     * wrapper + native 的配对状态（[PREFS_NAME]，按工作区分键）。
+     * native 装到一半失败时 wrapper 已是新版、旧二进制还完整，文件层面看不出错配，
+     * 只能靠这个标记让 [updateCli] 自愈。
+     */
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
     sealed interface InstallState {
         data class Downloading(val progress: Float, val detail: String) : InstallState
         data class Running(val detail: String) : InstallState
@@ -180,11 +187,16 @@ class ClaudeCodeInstaller(
             val versionBefore = readDeclaredNativeVersion(linuxDir, pkg)
             installCliPackage(workspaceId, useNpmMirror, onState)
             val versionAfter = readDeclaredNativeVersion(linuxDir, pkg)
+            // 脏标记 / 配对版本不一致：上次更新 native 装到一半失败，wrapper 已是新版而
+            // 旧二进制还完整，「声明版本没变 + 文件够大」永远发现不了这种错配，必须强制重装。
+            val pairDirty = isNativePairDirty(workspaceId)
+            val pairMismatch = versionAfter != null &&
+                pairedNativeVersion(workspaceId)?.let { it != versionAfter } == true
             if (shouldRefreshNativeBinary(
                     nativeExecutablePresent(linuxDir),
                     versionBefore,
                     versionAfter,
-                )
+                ) || pairDirty || pairMismatch
             ) {
                 installNativeBinary(workspaceId, workspace.root, linuxDir, useNpmMirror, onState)
             }
@@ -193,10 +205,30 @@ class ClaudeCodeInstaller(
             writeProfileScript(linuxDir)
             onState(InstallState.Done(probeCliVersion(workspaceId, linuxDir)))
         } catch (e: Exception) {
+            // 任一步失败都可能留下「wrapper 新 / native 旧但完整」的半截状态，置脏让下次强制重装 native
+            markNativePairDirty(workspaceId)
             Log.e(TAG, "updateCli failed", e)
             onState(InstallState.Failed(e.message ?: e.toString()))
             throw e
         }
+    }
+
+    private fun isNativePairDirty(workspaceId: String): Boolean =
+        prefs.getBoolean("$KEY_NATIVE_PAIR_DIRTY.$workspaceId", false)
+
+    /** 上次 wrapper + native 配对成功时的 native 包版本；null = 从未记录（老安装） */
+    private fun pairedNativeVersion(workspaceId: String): String? =
+        prefs.getString("$KEY_NATIVE_PAIRED_VERSION.$workspaceId", null)
+
+    private fun markNativePairDirty(workspaceId: String) {
+        prefs.edit().putBoolean("$KEY_NATIVE_PAIR_DIRTY.$workspaceId", true).apply()
+    }
+
+    private fun markNativePaired(workspaceId: String, version: String) {
+        prefs.edit()
+            .putBoolean("$KEY_NATIVE_PAIR_DIRTY.$workspaceId", false)
+            .putString("$KEY_NATIVE_PAIRED_VERSION.$workspaceId", version)
+            .apply()
     }
 
     /**
@@ -269,23 +301,24 @@ class ClaudeCodeInstaller(
         }
 
         onState(InstallState.Running("获取 $pkg@$version 的校验信息…"))
-        val integrity = fetchNativeIntegrity(pkg, version)
+        try {
+            val integrity = fetchNativeIntegrity(pkg, version)
 
-        val filesDir = File(workspaceDir(root), "files").apply { mkdirs() }
-        requireFreeSpace(filesDir, NATIVE_REQUIRED_BYTES, "Claude Code 原生二进制")
-        val tarball = File(filesDir, NATIVE_ARCHIVE_NAME)
-        fetchVerified(
-            sources = nativeTarballUrls(pkg, version, mirrorFirst = useNpmMirror),
-            dest = tarball,
-            expected = integrity,
-            what = "Claude Code 原生二进制（约 100 MB）",
-            onState = onState,
-        )
+            val filesDir = File(workspaceDir(root), "files").apply { mkdirs() }
+            requireFreeSpace(filesDir, NATIVE_REQUIRED_BYTES, "Claude Code 原生二进制")
+            val tarball = File(filesDir, NATIVE_ARCHIVE_NAME)
+            fetchVerified(
+                sources = nativeTarballUrls(pkg, version, mirrorFirst = useNpmMirror),
+                dest = tarball,
+                expected = integrity,
+                what = "Claude Code 原生二进制（约 100 MB）",
+                onState = onState,
+            )
 
-        onState(InstallState.Running("安装原生二进制…"))
-        val result = workspaceRepository.executeCommand(
-            id = workspaceId,
-            command = """
+            onState(InstallState.Running("安装原生二进制…"))
+            val result = workspaceRepository.executeCommand(
+                id = workspaceId,
+                command = """
                 set -e
                 PKG="/$CLAUDE_PKG_DIR"
                 DEST="${'$'}PKG/node_modules/$pkg"
@@ -301,14 +334,21 @@ class ClaudeCodeInstaller(
                 mv -f bin/claude.exe.tmp bin/claude.exe
                 rm -rf "${'$'}DEST"
             """.trimIndent(),
-            timeoutMillis = NATIVE_TIMEOUT_MS,
-            env = nodeEnv(),
-        )
-        if (result.exitCode != 0) {
-            error("放置原生二进制失败 (exit ${result.exitCode}): ${result.stderr.ifBlank { result.stdout }.take(800)}")
-        }
-        if (!isNativeBinaryReady(linuxDir)) {
-            error("原生二进制安装后仍未就绪：$CLI_NATIVE_BIN 不存在或不是完整文件")
+                timeoutMillis = NATIVE_TIMEOUT_MS,
+                env = nodeEnv(),
+            )
+            if (result.exitCode != 0) {
+                error("放置原生二进制失败 (exit ${result.exitCode}): ${result.stderr.ifBlank { result.stdout }.take(800)}")
+            }
+            if (!isNativeBinaryReady(linuxDir)) {
+                error("原生二进制安装后仍未就绪：$CLI_NATIVE_BIN 不存在或不是完整文件")
+            }
+            // 只有走到这里 wrapper + native 才算真的配上对，落版本标记给 updateCli 判错配用
+            markNativePaired(workspaceId, version)
+        } catch (e: Exception) {
+            // 中途失败：wrapper 可能已是新版而旧二进制还完整，文件层面看不出错配，置脏逼下次重装
+            markNativePairDirty(workspaceId)
+            throw e
         }
     }
 
@@ -858,6 +898,11 @@ class ClaudeCodeInstaller(
         private const val CLAUDE_CONFIG_REL_PATH = "root/.claude.json"
         private const val OS_RELEASE_REL_PATH = "etc/os-release"
         private const val KEY_BYPASS_ACCEPTED = "bypassPermissionsModeAccepted"
+
+        // wrapper/native 配对状态（SharedPreferences，键后缀是 workspaceId）
+        private const val PREFS_NAME = "claudecode.installer"
+        private const val KEY_NATIVE_PAIR_DIRTY = "nativePairDirty"
+        private const val KEY_NATIVE_PAIRED_VERSION = "nativePairedVersion"
 
         // Rootfs 内的绝对路径（传给 CLI 用）
         private const val NODE_BIN_DIR_GUEST = "/opt/node/bin"
