@@ -1,3 +1,27 @@
+## [LRN-20260916-REVIEW-VERIFY] best_practice
+
+**Logged**: 2026-09-16T21:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: process
+
+### Summary
+外部代码审查报告的行号与结论落地前必须逐条对照当前代码核实。报告基于某个快照，行号会漂移，结论也可能误判 —— 直接照着改就是在健康代码上制造 churn。
+
+### Details
+1.1.9 这轮修复 9 项审查意见，逐条核实后发现 1 项是误报：报告称 `exportSelectedToTree` 对同一个 Sequence 遍历两遍（先 count 再 forEach）会致 skipped 翻倍。实际 VM 拿到的是 `WorkspaceRepository.archiveNodes` 的返回值，Sequence 在仓库层就已 `.toList()` 一次物化，`onSkip` 只触发一次，VM 侧 count/for 都作用在 List 上 —— 问题不存在，直接跳过不改。
+另外 3 项真实存在但行号全部漂移（如报告写 grep 在 166–192 行、实际已实现于 148–194 行），都是靠先读当前代码确认问题、再动手。
+
+### Suggested Action
+拿到外部审查报告先核实再改：用报告里的函数名 / 特征字符串在当前代码里定位，读实现确认问题真实存在；核实为误报的写进汇报说明并跳过，不要硬改。修复时优先复用同文件 / 同模块的既有做法（校验风格、退还机制、持久化机制），保持一致。
+
+### Metadata
+- Source: code_review
+- Related Files: app/src/main/java/dev/min/code/ui/files/WorkspaceDetailVM.kt, app/src/main/java/dev/min/code/core/rootfs/WorkspaceRepository.kt
+- Tags: review, verify-before-fix, false-positive
+
+---
+
 ## [LRN-20260916-QUEUE-HANDOFF] best_practice
 
 **Logged**: 2026-09-16T09:00:00+08:00

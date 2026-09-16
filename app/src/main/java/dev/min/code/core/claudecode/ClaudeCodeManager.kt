@@ -3076,7 +3076,8 @@ private fun List<ClaudeCodeManager.ChatItem>.updateLastAssistantMeta(
 // list_models 的模型 id 在 `value`（不是 id/name），get_context_usage 是 camelCase。
 //
 // 取值一律走 ClaudeCodeProtocol.kt 里那组 `as?` 安全访问器：这些代码跑在 scope.launch 里，
-// 抛出去没人接，SupervisorJob 会把异常丢给默认 handler —— 在 Android 上就是**整个 App 崩掉**。
+// 真抛出来会由 scope 的 CoroutineExceptionHandler 接住、记日志并落进崩溃记录（见 scope 定义处）——
+// App 不会因此崩掉，但那一帧的更新会被静默吞掉，所以能安全访问就别抛。
 
 /**
  * 实测形状：`{value, resolvedModel, displayName, description, supportedEffortLevels, ...}`。
