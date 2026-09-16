@@ -163,10 +163,14 @@ class WorkspaceFileSystem(
             ?.let { FileSystems.getDefault().getPathMatcher("glob:$it") }
 
         val results = mutableListOf<WorkspaceSearchMatch>()
+        val rootCanonical = root.canonicalFile
         walk(start) { paths ->
             paths
                 .filter { Files.isRegularFile(it) }
                 .filter { !it.toFile().name.startsWith(".l2s.") }
+                // 符号链接能把搜索引出工作区（比如指向 App 私有目录）：
+                // `Files.isRegularFile` 会跟随链接，所以命中前先做 canonical 包含校验，越界条目丢弃
+                .filter { it.toFile().canonicalFile.isInside(rootCanonical) }
                 .forEach { path ->
                     if (results.size >= config.maxSearchResults) return@forEach
                     if (includeMatcher != null &&
@@ -215,6 +219,12 @@ class WorkspaceFileSystem(
             "Path escapes workspace root: $path"
         }
         return target
+    }
+
+    /** canonical 包含校验：符号链接会把 [walk] 的条目引到工作区之外，越界的一律丢弃 */
+    private fun File.isInside(root: File): Boolean {
+        val rootPath = root.path
+        return path == rootPath || path.startsWith(rootPath + File.separator)
     }
 
     fun resolve(root: File, path: String): File = resolvePath(root, path)

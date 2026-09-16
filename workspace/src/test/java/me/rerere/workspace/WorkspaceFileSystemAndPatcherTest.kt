@@ -2,6 +2,7 @@ package me.rerere.workspace
 
 import com.sun.net.httpserver.HttpServer
 import org.junit.Assert.*
+import org.junit.Assume
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -38,6 +39,25 @@ class WorkspaceFileSystemAndPatcherTest {
             rejected = true
         }
         assertTrue(rejected)
+    }
+
+    @Test
+    fun grepDropsSymlinkMatchesOutsideWorkspaceRoot() {
+        val root = Files.createTempDirectory("workspace-grep").toFile()
+        val outside = Files.createTempDirectory("workspace-outside").toFile()
+        val fileSystem = WorkspaceFileSystem()
+        fileSystem.writeText(root, "inside.txt", "hello\nworkspace")
+        File(outside, "secret.txt").writeText("workspace secret")
+        try {
+            Files.createSymbolicLink(File(root, "link.txt").toPath(), File(outside, "secret.txt").toPath())
+        } catch (e: Exception) {
+            // Windows 无开发者模式时建不了符号链接，这个用例直接跳过
+            Assume.assumeNoException("cannot create symlinks on this machine", e)
+        }
+
+        val matches = fileSystem.grep(root, "workspace")
+
+        assertEquals(listOf("inside.txt"), matches.map { it.path })
     }
 
     @Test
