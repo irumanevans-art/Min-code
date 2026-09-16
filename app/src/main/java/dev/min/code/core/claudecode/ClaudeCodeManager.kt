@@ -1039,10 +1039,13 @@ class ClaudeCodeManager(
                 val call = _state.value.items
                     .filterIsInstance<ChatItem.ToolCall>()
                     .firstOrNull { it.toolUseId == event.toolUseId }
+                // 排他托管的卡已经被标成 Done（服务还在进程表里活着），CLI 随后收到的
+                // deny tool_result 不能再把它改回 Error —— 同一张卡状态会自相矛盾
+                val exclusiveHosted = event.toolUseId in exclusiveHostedToolUses
                 _state.update { state ->
                     state.copy(
                         items = state.items.map { item ->
-                            if (item is ChatItem.ToolCall && item.toolUseId == event.toolUseId) {
+                            if (item is ChatItem.ToolCall && item.toolUseId == event.toolUseId && !exclusiveHosted) {
                                 item.copy(
                                     status = if (event.isError) ChatItem.ToolCall.Status.Error else ChatItem.ToolCall.Status.Done,
                                     result = event.content.take(MAX_RESULT_CHARS),
