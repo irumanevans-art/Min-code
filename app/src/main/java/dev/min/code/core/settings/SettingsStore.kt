@@ -43,6 +43,11 @@ data class AppSettings(
      * 与 [appLanguage] 独立：UI 可以是英文，命令说明仍看中文对照。
      */
     val chineseDescriptions: Boolean = true,
+    /**
+     * 按扩展名记住的「打开方式」。空表示没记过，走文件类型的默认路由。
+     * 键是不带点的小写扩展名（`md`、`png`）。
+     */
+    val openWithDefaults: Map<String, WorkspaceOpenMode> = emptyMap(),
 ) {
     val insecureBaseUrl: Boolean get() = baseUrl.startsWith("http://", ignoreCase = true)
 
@@ -66,6 +71,7 @@ class SettingsStore(private val context: Context) {
             appLanguage = p[KEY_LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
                 ?: AppLanguage.SYSTEM,
             chineseDescriptions = p[KEY_ZH_DESCRIPTIONS] ?: true,
+            openWithDefaults = parseOpenWithDefaults(p[KEY_OPEN_WITH].orEmpty()),
         )
     }
 
@@ -93,6 +99,20 @@ class SettingsStore(private val context: Context) {
     suspend fun setChineseDescriptions(enabled: Boolean) =
         context.dataStore.edit { it[KEY_ZH_DESCRIPTIONS] = enabled }
 
+    /** [mode] 为 null 就是「以后不要再记这个扩展名」 */
+    suspend fun setOpenWithDefault(extension: String, mode: WorkspaceOpenMode?) {
+        val ext = extension.trim().removePrefix(".").lowercase()
+        if (ext.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = parseOpenWithDefaults(prefs[KEY_OPEN_WITH].orEmpty()).toMutableMap()
+            if (mode == null) current.remove(ext) else current[ext] = mode
+            val encoded = formatOpenWithDefaults(current)
+            if (encoded.isBlank()) prefs.remove(KEY_OPEN_WITH) else prefs[KEY_OPEN_WITH] = encoded
+        }
+    }
+
+    suspend fun clearOpenWithDefaults() = context.dataStore.edit { it.remove(KEY_OPEN_WITH) }
+
     private companion object {
         val KEY_TOKEN = stringPreferencesKey("token")
         val KEY_BASE_URL = stringPreferencesKey("base_url")
@@ -100,6 +120,7 @@ class SettingsStore(private val context: Context) {
         val KEY_THEME = stringPreferencesKey("theme")
         val KEY_LANGUAGE = stringPreferencesKey("app_language")
         val KEY_ZH_DESCRIPTIONS = booleanPreferencesKey("zh_descriptions")
+        val KEY_OPEN_WITH = stringPreferencesKey("open_with_defaults")
     }
 }
 

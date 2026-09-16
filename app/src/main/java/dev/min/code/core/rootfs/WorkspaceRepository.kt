@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstaller
+import me.rerere.workspace.WorkspaceArchive
 import me.rerere.workspace.WorkspaceCommandResult
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceManager
@@ -231,6 +232,140 @@ class WorkspaceRepository(
     suspend fun exportFile(id: String, area: WorkspaceStorageArea, path: String, outputStream: OutputStream) =
         withContext(Dispatchers.IO) { manager.exportFile(root, path, area, outputStream) }
 
+    /**
+     * 把 [paths] 打成一个 zip 写进 [outputStream]，条目名相对 [basePath]。
+     *
+     * 走 [runInterruptible] 而不是 [withContext]：打包是一串阻塞的读写，
+     * 取消必须能真的把线程从 `read()` 里打断出来，否则用户点了取消还要等整棵树走完。
+     */
+    suspend fun exportArchive(
+        id: String,
+        area: WorkspaceStorageArea,
+        basePath: String,
+        paths: List<String>,
+        outputStream: OutputStream,
+        onProgress: (WorkspaceArchive.Progress) -> Unit = {},
+    ): WorkspaceArchive.Result {
+        val job = coroutineContext[Job]
+        return runInterruptible(Dispatchers.IO) {
+            manager.ensureWorkspace(root)
+            manager.exportArchive(
+                root = root,
+                basePath = basePath,
+                paths = paths,
+                area = area,
+                outputStream = outputStream,
+                skipDirNames = if (area == WorkspaceStorageArea.LINUX) LINUX_SKIP_DIRS else emptySet(),
+                isActive = { job?.isActive != false && !Thread.currentThread().isInterrupted },
+                onProgress = onProgress,
+            )
+        }
+    }
+
+    /** 按确定顺序列出要导出的节点（「复制到文件夹」那条路要自己逐个写出去） */
+    suspend fun archiveNodes(
+        id: String,
+        area: WorkspaceStorageArea,
+        basePath: String,
+        paths: List<String>,
+        onSkip: (WorkspaceArchive.Skip) -> Unit = {},
+    ): List<WorkspaceArchive.ArchiveNode> = withContext(Dispatchers.IO) {
+        manager.ensureWorkspace(root)
+        manager.archiveNodes(
+            root = root,
+            basePath = basePath,
+            paths = paths,
+            area = area,
+            skipDirNames = if (area == WorkspaceStorageArea.LINUX) LINUX_SKIP_DIRS else emptySet(),
+            onSkip = onSkip,
+        ).toList()
+    }
+
+    suspend fun importArchive(
+        id: String,
+        area: WorkspaceStorageArea,
+        destinationPath: String,
+        inputStream: InputStream,
+        wrapInFolder: String?,
+        onProgress: (WorkspaceArchive.Progress) -> Unit = {},
+    ): WorkspaceArchive.Result {
+        val job = coroutineContext[Job]
+        return runInterruptible(Dispatchers.IO) {
+            manager.ensureWorkspace(root)
+            manager.importArchive(
+                root = root,
+                destinationPath = destinationPath,
+                area = area,
+                inputStream = inputStream,
+                wrapInFolder = wrapInFolder,
+                isActive = { job?.isActive != false && !Thread.currentThread().isInterrupted },
+                onProgress = onProgress,
+            )
+        }
+    }
+
+    suspend fun importStream(
+        id: String,
+        area: WorkspaceStorageArea,
+        relativePath: String,
+        inputStream: InputStream,
+    ): WorkspaceFileEntry = runInterruptible(Dispatchers.IO) {
+        manager.ensureWorkspace(root)
+        manager.importStream(root, area, relativePath, inputStream)
+    }
+
+    suspend fun ensureDirectory(id: String, area: WorkspaceStorageArea, relativePath: String) =
+        withContext(Dispatchers.IO) {
+            manager.ensureWorkspace(root)
+            manager.ensureDirectory(root, area, relativePath)
+            Unit
+        }
+
+    /** 开一个不撞名的文件夹，返回它真正用上的相对路径（可能带 ` (1)`） */
+    suspend fun reserveFolder(id: String, area: WorkspaceStorageArea, relativePath: String): String =
+        withContext(Dispatchers.IO) {
+            manager.ensureWorkspace(root)
+            val dir = manager.reserveFolder(root, area, relativePath)
+            val areaRoot = when (area) {
+                WorkspaceStorageArea.FILES -> manager.filesDir(root)
+                WorkspaceStorageArea.LINUX -> manager.linuxDir(root)
+            }
+            dir.canonicalFile.toRelativeString(areaRoot.canonicalFile)
+                .replace(File.separatorChar, '/')
+        }
+
+    /**
+     * 这一批有多大。给「这一包很大，确定要打吗」那张确认框用。
+     * 和 [measureUsage] 一样是有界的：数到 [SELECTION_SCAN_LIMIT] 就停，标 [SelectionEstimate.truncated]。
+     */
+    suspend fun estimateSelection(
+        id: String,
+        area: WorkspaceStorageArea,
+        paths: List<String>,
+    ): SelectionEstimate = withContext(Dispatchers.IO) {
+        manager.ensureWorkspace(root)
+        var files = 0
+        var bytes = 0L
+        var truncated = false
+        val nodes = manager.archiveNodes(
+            root = root,
+            basePath = "",
+            paths = paths,
+            area = area,
+            skipDirNames = if (area == WorkspaceStorageArea.LINUX) LINUX_SKIP_DIRS else emptySet(),
+        )
+        for (node in nodes) {
+            if (node.isDirectory) continue
+            files++
+            bytes += node.file.length()
+            if (files >= SELECTION_SCAN_LIMIT) {
+                truncated = true
+                break
+            }
+        }
+        SelectionEstimate(files, bytes, truncated)
+    }
+
     suspend fun deleteFile(id: String, area: WorkspaceStorageArea, path: String, recursive: Boolean): Boolean =
         withContext(Dispatchers.IO) { manager.deleteFile(root, path, recursive, area) }
 
@@ -363,6 +498,9 @@ class WorkspaceRepository(
 
         /** 单次搜索最多扫多少个条目。超了就用已有结果 */
         const val SEARCH_SCAN_LIMIT = 40_000
+
+        /** 估一批选中项有多大时最多数多少个文件。超了就报 truncated，界面照实说「至少」 */
+        const val SELECTION_SCAN_LIMIT = 20_000
     }
 }
 
@@ -372,6 +510,23 @@ class WorkspaceRepository(
  *
  * [done] 为 false 时是扫描中的中间值；失败时 [error] 非空，但已扫到的数字仍保留。
  */
+/**
+ * 一批选中项有多大。[truncated] 为 true 说明数到上限就停了，界面要写「至少 N 个 / M」。
+ */
+data class SelectionEstimate(
+    val files: Int,
+    val bytes: Long,
+    val truncated: Boolean,
+) {
+    /** 大到值得先问一句「确定吗」。批量工作只活在前台，跑一半被切走就断了 */
+    val isLarge: Boolean get() = truncated || bytes > LARGE_BYTES || files > LARGE_FILES
+
+    private companion object {
+        const val LARGE_BYTES = 512L * 1024 * 1024
+        const val LARGE_FILES = 20_000
+    }
+}
+
 data class WorkspaceUsage(
     val filesBytes: Long = 0,
     val linuxBytes: Long = 0,

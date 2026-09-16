@@ -25,8 +25,17 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import java.io.File
 
 private const val TAG = "Util"
+
+/**
+ * App 私有文件的可分享 URI。authority 以前在三四个地方各写一份字面量，
+ * 改一次 applicationId 就得全找一遍 —— 收在这里。
+ */
+fun Context.fileProviderUri(file: File): Uri =
+    FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
 
 fun Context.writeClipboardText(text: String) {
     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

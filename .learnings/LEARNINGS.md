@@ -1,3 +1,36 @@
+## [LRN-20260916-QUEUE-HANDOFF] best_practice
+
+**Logged**: 2026-09-16T09:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: session
+
+### Summary
+生成中追加的消息要**立刻写进 stdin**，插入时机交给 CLI —— 它在下一个 agent 循环边界就会插进同一轮。攥到本轮 `result` 才发，慢的就是这一段，用户能直接感到和官方终端的落差。
+
+### Details
+`tools/probe_queue.py` 对 CLI 2.1.272 实测（headless `--print --input-format stream-json`）：
+- 第一个 Write 的 `tool_result` 回来于 3.75 s，模型下一句（5.19 s）已经在回应中途写进去的那条追加消息 —— **`result` 之前**就插进去了。
+- 整轮只有**一个** `result`（`num_turns: 2`）：追加消息不会另起一轮，计时/token 不该归零。
+- CLI **不会**回吐 `{"type":"user"}` 文本帧。唯一可观测的「它被看见了」信号是 `system/status status=requesting` —— 它正好打在每次发请求之前，而输入队列就是在那一刻排空的。
+- `writeLine` 原来是 `scope.launch { writeMutex.withLock { … } }`，两次 launch 落在 `Dispatchers.IO` 不同线程上，先后没有保证；追加消息立刻出手之后，顺序必须真的有保证，改成 `Channel` 单消费者串行写。
+
+Esc 的三档语义靠副本保住：interrupt 帧带 `cancel_queued`，CLI 侧队列会被清空，所以已交棒未确认的那批要 `reclaim()` 回来原样重发。
+
+### Suggested Action
+追加消息走 `ClaudeCodeSendQueue`（held / handedOff 两格）：`send()` 直接 `handOff`，`status=requesting` 时 `confirm()`，Esc 时 `reclaim()`，`result` 时只 flush 还攥着的。要验证 CLI 的帧序就重跑 `tools/probe_queue.py`，别靠猜。
+
+### Metadata
+- Source: user_feedback
+- Related Files: app/src/main/java/dev/min/code/core/claudecode/ClaudeCodeSendQueue.kt, ClaudeCodeManager.kt, tools/probe_queue.py
+- Tags: queue, handoff, stream-json, ordering, esc
+
+### Resolution
+- **Resolved**: 2026-09-16T09:30:00+08:00
+- **Notes**: 1.1.8。
+
+---
+
 ## [LRN-20260915-FIRST-TAP-JANK] correction
 
 **Logged**: 2026-09-15T12:00:00+08:00

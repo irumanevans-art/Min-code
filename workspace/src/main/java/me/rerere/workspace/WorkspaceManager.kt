@@ -101,6 +101,113 @@ class WorkspaceManager(
     }
 
     /**
+     * 把 [paths]（相对区根）打成一个 zip 写进 [outputStream]，条目名相对 [basePath]。
+     *
+     * [exportFile] 只认单个文件（`require(file.isFile)`，那条约束还被预览读取依赖着），
+     * 文件夹与批量都走这一条。[outputStream] 由打包器负责关。
+     */
+    fun exportArchive(
+        root: String,
+        basePath: String,
+        paths: List<String>,
+        area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
+        outputStream: OutputStream,
+        skipDirNames: Set<String> = emptySet(),
+        isActive: () -> Boolean = { true },
+        onProgress: (WorkspaceArchive.Progress) -> Unit = {},
+    ): WorkspaceArchive.Result {
+        val areaRoot = areaDir(root, area)
+        val base = fileSystem.resolve(areaRoot, basePath)
+        val sources = paths.map { fileSystem.resolve(areaRoot, it) }
+            .onEach { require(it.exists()) { "Does not exist: $it" } }
+        return WorkspaceArchive.zip(
+            base = base,
+            sources = sources,
+            out = outputStream,
+            skipDirNames = skipDirNames,
+            isActive = isActive,
+            onProgress = onProgress,
+        )
+    }
+
+    /** 按确定顺序列出要导出的节点。「复制到文件夹」那条路要自己逐个建目录 / 写文件 */
+    fun archiveNodes(
+        root: String,
+        basePath: String,
+        paths: List<String>,
+        area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
+        skipDirNames: Set<String> = emptySet(),
+        onSkip: (WorkspaceArchive.Skip) -> Unit = {},
+    ): Sequence<WorkspaceArchive.ArchiveNode> {
+        val areaRoot = areaDir(root, area)
+        val base = fileSystem.resolve(areaRoot, basePath)
+        val sources = paths.map { fileSystem.resolve(areaRoot, it) }
+            .onEach { require(it.exists()) { "Does not exist: $it" } }
+        return WorkspaceArchive.walk(base, sources, skipDirNames, onSkip)
+    }
+
+    /**
+     * 把一个 zip 解到 [destinationPath] 之下。
+     * [wrapInFolder] 非空时先在下面开一个（不撞名的）同名文件夹再解 —— 免得一包散文件炸进当前目录。
+     */
+    fun importArchive(
+        root: String,
+        destinationPath: String,
+        area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
+        inputStream: InputStream,
+        wrapInFolder: String? = null,
+        isActive: () -> Boolean = { true },
+        onProgress: (WorkspaceArchive.Progress) -> Unit = {},
+    ): WorkspaceArchive.Result {
+        val areaRoot = areaDir(root, area)
+        val dest = if (wrapInFolder.isNullOrBlank()) {
+            fileSystem.ensureDir(areaRoot, destinationPath)
+        } else {
+            reserveFolder(root, area, joinPath(destinationPath, wrapInFolder))
+        }
+        return WorkspaceArchive.unzip(
+            input = inputStream,
+            destination = dest,
+            isActive = isActive,
+            onConflict = { f -> if (!f.exists()) f else nonConflicting(f) },
+            onProgress = onProgress,
+        )
+    }
+
+    /** 一条流写进一个相对路径，中间目录自动补齐。导入目录树时逐个文件走这里 */
+    fun importStream(
+        root: String,
+        area: WorkspaceStorageArea,
+        relativePath: String,
+        inputStream: InputStream,
+    ): WorkspaceFileEntry = fileSystem.importBytes(areaDir(root, area), relativePath, inputStream)
+
+    fun ensureDirectory(root: String, area: WorkspaceStorageArea, relativePath: String): File =
+        fileSystem.ensureDir(areaDir(root, area), relativePath)
+
+    /** 开一个不撞名的文件夹，返回它真正用上的名字（可能带 ` (1)`） */
+    fun reserveFolder(root: String, area: WorkspaceStorageArea, relativePath: String): File {
+        val dir = fileSystem.nonConflictingTarget(areaDir(root, area), relativePath)
+        require(dir.exists() || dir.mkdirs()) { "Failed to create directory: $relativePath" }
+        return dir
+    }
+
+    private fun nonConflicting(file: File): File {
+        val stem = file.nameWithoutExtension
+        val ext = file.extension.let { if (it.isNotEmpty()) ".$it" else "" }
+        var n = 1
+        var candidate: File
+        do {
+            candidate = File(file.parentFile, "$stem ($n)$ext")
+            n++
+        } while (candidate.exists())
+        return candidate
+    }
+
+    private fun joinPath(parent: String, child: String): String =
+        if (parent.isBlank()) child else "${parent.trimEnd('/')}/$child"
+
+    /**
      * 把 Rootfs 内的绝对路径映射到宿主机上的真实文件。
      *
      * bind mount 的 source 本身就是 Android 侧的普通目录, 因此 /skills 这类挂载路径

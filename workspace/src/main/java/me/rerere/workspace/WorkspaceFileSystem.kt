@@ -70,6 +70,25 @@ class WorkspaceFileSystem(
         return candidate
     }
 
+    /**
+     * 过转义守卫的 `mkdirs`，幂等。
+     *
+     * 和 [mkdir] 的区别就是"已经在了不算错" —— 导入一棵目录树时每层都要保证存在，
+     * 而 [mkdir] 的 `require(!dir.exists())` 是新建文件夹那个界面的重名报错所依赖的，不能动。
+     */
+    fun ensureDir(root: File, path: String): File {
+        val dir = resolvePath(root, path)
+        if (!dir.exists()) require(dir.mkdirs()) { "Failed to create directory: $path" }
+        require(dir.isDirectory) { "Path is not a directory: $path" }
+        return dir
+    }
+
+    /** 不会撞名的落点：已经有同名的就退到 `name (1).ext`。和 [importBytes] 用的是同一套规则 */
+    fun nonConflictingTarget(root: File, path: String): File {
+        val file = resolvePath(root, path)
+        return if (!file.exists()) file else resolveConflict(file)
+    }
+
     fun mkdir(root: File, path: String): WorkspaceFileEntry {
         require(path.isNotBlank() && path != ".") { "Refusing to create workspace root" }
         val dir = resolvePath(root, path)

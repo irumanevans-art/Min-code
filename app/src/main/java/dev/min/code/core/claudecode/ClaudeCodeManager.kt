@@ -7,6 +7,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -396,7 +397,21 @@ class ClaudeCodeManager(
 
     /** 串行化 start/stop，避免旧会话的 readLoop 还在写 state 时新会话已经起来 */
     private val sessionMutex = Mutex()
-    private val writeMutex = Mutex()
+
+    /**
+     * stdin 的写入队列。**入队顺序就是字节顺序**。
+     *
+     * 以前是 `scope.launch { writeMutex.withLock { … } }`：两次 launch 落在 `Dispatchers.IO`
+     * 的不同线程上，谁先摸到锁并不保证——两条紧挨着发出的消息有可能在 CLI 那边前后颠倒。
+     * 追加消息现在是立刻交棒的，顺序正是这次要保证的东西，所以改成单消费者串行写。
+     */
+    private val writeQueue = Channel<String>(Channel.UNLIMITED)
+
+    init {
+        scope.launch {
+            for (line in writeQueue) writeNow(line)
+        }
+    }
 
     @Volatile
     private var process: Process? = null
@@ -420,7 +435,7 @@ class ClaudeCodeManager(
     private var turnSeq: Int = 0
 
     /**
-     * 一条已经交给我们、但还没写进 stdin 的用户消息。
+     * 一条用户消息在离开我们视线之前的样子。
      * [label] 是对话流里那条 [ChatItem.UserText] 的文本，撤回时要按 [itemId] 把它摘掉。
      */
     private data class PendingSend(
@@ -430,8 +445,8 @@ class ClaudeCodeManager(
         val label: String,
     )
 
-    /** 生成中追加的消息在这里排队，轮到了才写出去。读写分别来自 UI 线程和 readLoop，所以上锁 */
-    private val pendingSends = ArrayDeque<PendingSend>()
+    /** 追加消息的调度台。两格的含义、以及为什么是交棒而不是攥着，见 [ClaudeCodeSendQueue] */
+    private val sendQueue = ClaudeCodeSendQueue<PendingSend>()
 
     /** 当前这一轮是哪条消息开的头。按 Esc 撤回时要把它退还给输入框 */
     @Volatile
@@ -927,17 +942,22 @@ class ClaudeCodeManager(
 
             // 状态条：原地替换。phase / detail 各自独立更新，
             // 只带 detail 的帧（task_summary）不能把 phase 抹掉，反之亦然。
-            is ClaudeCodeEvent.Status -> _state.update {
-                it.copy(
-                    statusPhase = event.phase ?: it.statusPhase,
-                    // detail 显式为 null 是"回到空闲"的信号, 必须清掉；
-                    // 但只带 phase 的帧不该动 detail —— 用 phase 是否为 null 区分这两种情况
-                    statusDetail = if (event.phase != null && event.detail == null) {
-                        it.statusDetail
-                    } else {
-                        event.detail
-                    },
-                )
+            is ClaudeCodeEvent.Status -> {
+                // `requesting` 就打在每次发请求之前，而 CLI 的输入队列正是在那一刻排空的：
+                // 此前交棒的追加消息已经进了这次请求的上下文，「排队中」可以摘了。
+                if (event.phase == STATUS_REQUESTING) confirmHandedOff()
+                _state.update {
+                    it.copy(
+                        statusPhase = event.phase ?: it.statusPhase,
+                        // detail 显式为 null 是"回到空闲"的信号, 必须清掉；
+                        // 但只带 phase 的帧不该动 detail —— 用 phase 是否为 null 区分这两种情况
+                        statusDetail = if (event.phase != null && event.detail == null) {
+                            it.statusDetail
+                        } else {
+                            event.detail
+                        },
+                    )
+                }
             }
 
             is ClaudeCodeEvent.ApiRetry -> _state.update {
@@ -1106,9 +1126,13 @@ class ClaudeCodeManager(
                     ?: _state.value.turnStartedAt?.let { finishedAt - it }
                 val outputTokens = _state.value.turnOutputTokens
                 inFlight = null
-                // 队列非空时 busy 不许落地：中间那一帧 false 会让输入坞的停止键闪一下，
-                // 下一轮紧接着又把它点亮。下面 flushPendingSend() 会重新把轮次归零。
-                val queuedNext = hasPendingSend()
+                // 还有活时 busy 不许落地：中间那一帧 false 会让输入坞的停止键闪一下，
+                // 下一轮紧接着又把它点亮。
+                //
+                // 调度台上还有已交棒未确认的，说明有一条帧写出去了却没赶上这一轮的任何一次请求
+                // （写进 stdin 的那一刻 CLI 正好在收尾）。CLI 会把它当成新的一问自己开一轮，
+                // 所以 busy 继续为真是对的；真没动静就交给下面的看门狗兜底。
+                val queuedNext = hasQueuedWork()
                 val errorNoteId = if (event.isError) newId() else null
                 val denialNoteId = if (event.permissionDenials.isNotEmpty()) newId() else null
                 val denialNote = formatPermissionDenialsNote(event.permissionDenials)
@@ -1158,8 +1182,8 @@ class ClaudeCodeManager(
                 refreshUsage()
                 // 无头模式不会自动拟名；首轮成功后主动让 CLI 写 ai-title
                 if (!event.isError) maybeGenerateSessionTitle()
-                // 排队的消息接着开跑
-                flushPendingSend()
+                // 还攥在手里的（打断之后要回来的那批）接着开跑
+                if (!flushPendingSend()) watchHandedOff(turnSeq)
             }
         }
     }
@@ -1215,10 +1239,14 @@ class ClaudeCodeManager(
      * 之前这里挡掉 busy 的消息，UI 又把发送键换成了中断键，用户想追加一句
      * 反而把任务打断了。
      *
-     * 排队由**我们自己**做，不再交给 CLI。以前 busy 时也直接把帧写进 stdin，由 CLI 内部
-     * 排队（transcript 里的 `queue-operation` 行）——那样消息一出手就再也拿不回来，
-     * 于是两件事都做不到：按 Esc 撤回一条还没轮到的消息，以及按 Esc 打断当前轮之后
-     * **立刻**开跑排队那条（官方终端里 Esc 就是这个行为）。攥在手里才谈得上调度。
+     * **排队的交棒时机交给 CLI**。busy 时这条消息立刻写进 stdin，CLI 会在下一次发请求前
+     * 把它插进当前这一轮（实测见 [ClaudeCodeSendQueue]）——所以「跑完这一小步就听见你」，
+     * 而不是等整个任务收尾。1.1.7 之前是攥到本轮 `result` 才发，那正是用户说的那段落差。
+     *
+     * 攥在手里换来的两件事并没有丢：副本留在 [sendQueue] 上，Esc 仍然能打断当前轮、
+     * 把这条从 CLI 队列里要回来再重发（见 [interrupt]）。
+     *
+     * 会话还没 Running 时不再静默丢掉，而是先攥着，握手完成后一起交棒。
      *
      * [images] 作为 image content block 随消息一起发（截图、相册照片）。
      * 有图时允许空文本 —— "看这张图" 里那句话往往就是多余的。
@@ -1227,20 +1255,30 @@ class ClaudeCodeManager(
         val trimmed = text.trim()
         if (trimmed.isEmpty() && images.isEmpty()) return
         val current = _state.value
-        if (current.status != SessionStatus.Running) return
+        // 已经关掉 / 起不来的会话没有 stdin 可写，攥着也只是个永远发不出去的幽灵
+        if (current.status != SessionStatus.Running && current.status != SessionStatus.Starting) return
         val label = when {
             trimmed.isNotEmpty() && images.isNotEmpty() -> "$trimmed\n[${images.size} 张图片]"
             images.isNotEmpty() -> "[${images.size} 张图片]"
             else -> trimmed
         }
         val pending = PendingSend(newId(), trimmed, images, label)
-        if (current.busy) {
-            // 排队：只往对话流里放一条标着「排队中」的消息，不碰正在跑的那一轮的
-            // 正文、计时和 token —— 否则界面上正在打的字突然消失，计时也从零开始。
-            synchronized(pendingSends) { pendingSends.addLast(pending) }
+        if (current.status != SessionStatus.Running) {
+            // 启动中打的字：攥着，握手把 cwd 切好之后再发（handshake 末尾 flushPendingSend）
+            sendQueue.hold(pending)
             _state.update {
                 it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, queued = true))
             }
+            return
+        }
+        if (current.busy) {
+            // 追加：只往对话流里放一条标着「排队中」的消息，不碰正在跑的那一轮的
+            // 正文、计时和 token —— 否则界面上正在打的字突然消失，计时也从零开始。
+            // 帧本身立刻出手，插入时机由 CLI 定。
+            _state.update {
+                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, queued = true))
+            }
+            handOff(pending)
         } else {
             _state.update {
                 it.copy(items = it.items + ChatItem.UserText(pending.itemId, label))
@@ -1279,18 +1317,74 @@ class ClaudeCodeManager(
         writeLine(encodeClaudeCodeUserMessage(pending.text, pending.images))
     }
 
-    /** 队列里还有没有等着的消息 */
-    private fun hasPendingSend(): Boolean = synchronized(pendingSends) { pendingSends.isNotEmpty() }
+    /** 还有没有没被模型看见的消息（攥在手里的 + 交棒了还没确认插入的） */
+    private fun hasQueuedWork(): Boolean = sendQueue.hasWork()
+
+    /** 交棒：帧写进 stdin，副本留在调度台上等 CLI 确认 */
+    private fun handOff(pending: PendingSend) {
+        sendQueue.handOff(pending) { writeLine(encodeClaudeCodeUserMessage(it.text, it.images)) }
+    }
 
     /**
-     * 一轮结束（或被打断）之后开下一轮。没有排队的就什么都不做。
+     * 把还攥在手里的消息全部交棒出去（会话刚就绪、或打断之后要回来重发）。
      *
-     * 调用点必须保证此刻 `busy` 已经是「队列非空 → 仍为 true」，否则界面会闪一下空闲态。
+     * 调用点必须保证此刻 `busy` 已经是「有活 → 仍为 true」，否则界面会闪一下空闲态。
      */
     private fun flushPendingSend(): Boolean {
-        val next = synchronized(pendingSends) { pendingSends.removeFirstOrNull() } ?: return false
-        dispatchSend(next)
+        val queued = sendQueue.drainHeld()
+        if (queued.isEmpty()) return false
+        // 第一条要把「新的一轮开始了」落到状态上（计时、token 归零）；
+        // 后面的只是追加，CLI 会把它们插进同一轮。
+        dispatchSend(queued.first())
+        queued.drop(1).forEach { handOff(it) }
         return true
+    }
+
+    /**
+     * CLI 要发请求了 —— 队列就是在这一刻被排空的，所以此前交棒的都已经进了这次请求的上下文。
+     * 把它们的「排队中」标记摘掉（Esc 不必再为它们重发）。
+     */
+    private fun confirmHandedOff() {
+        val confirmed = sendQueue.confirm()
+        if (confirmed.isEmpty()) return
+        val ids = confirmed.mapTo(mutableSetOf()) { it.itemId }
+        _state.update { state ->
+            state.copy(
+                items = state.items.map { item ->
+                    if (item is ChatItem.UserText && item.id in ids && item.queued) {
+                        item.copy(queued = false)
+                    } else {
+                        item
+                    }
+                },
+            )
+        }
+    }
+
+    /**
+     * 一轮收尾时调度台上还有已交棒未确认的：我们赌 CLI 会拿它另起一轮，于是 busy 继续挂着。
+     * 赌输了（协议漂移、进程半死）就不能让输入坞永远禁用 —— 这里是兜底。
+     *
+     * [seqAtResult] 是收尾那一刻的轮次号；期间真的开了新一轮的话它会变，兜底就不该动手。
+     */
+    private fun watchHandedOff(seqAtResult: Int) {
+        if (!hasQueuedWork()) return
+        scope.launch {
+            delay(HANDOFF_TIMEOUT_MS)
+            if (turnSeq != seqAtResult || !hasQueuedWork()) return@launch
+            Log.w(TAG, "handed-off message never started a turn, clearing busy")
+            confirmHandedOff()
+            _state.update {
+                it.copy(
+                    busy = false,
+                    items = it.items + ChatItem.Note(
+                        newId(),
+                        "追加的消息发出去了，但 CLI 一直没接手",
+                        isError = true,
+                    ),
+                )
+            }
+        }
     }
 
     /**
@@ -1479,9 +1573,14 @@ class ClaudeCodeManager(
      *    原文退还给输入框，界面回到发送前。
      * 3. **其余** → 就是打断。
      *
-     * 排队的那条是**精确**撤回的（它还没出过门）。第 2 档撤回的消息则已经写进了 CLI 的
-     * stdin：无头协议只有 interrupt，没有 rewind，所以 CLI 的上下文里很可能仍留着它。
-     * 界面与模型记忆在这一点上可能对不齐，代价是下一轮模型也许会看到被撤回的那一版。
+     * 追加的那条现在是**立刻交棒**给 CLI 的（见 [ClaudeCodeSendQueue]），但 interrupt 帧带
+     * `cancel_queued`，CLI 侧队列会连同这一轮一起被清掉 —— 所以第 1 档要把我们留的副本
+     * 要回来攥住，等这一轮收尾时原样重发。副本在 CLI 确认吃下之前一直留着
+     * （[confirmHandedOff]），因此这条路不会丢消息，也不会重复发。
+     *
+     * 第 2 档撤回的消息则已经写进了 CLI 的 stdin：无头协议只有 interrupt，没有 rewind，
+     * 所以 CLI 的上下文里很可能仍留着它。界面与模型记忆在这一点上可能对不齐，
+     * 代价是下一轮模型也许会看到被撤回的那一版。
      *
      * CLI 正常会回一个 result 帧来解除 busy；万一没回（协议版本差异、进程半死），
      * 这里有个超时兜底，否则输入框会永久禁用。
@@ -1490,11 +1589,12 @@ class ClaudeCodeManager(
         val current = _state.value
         val action = escapeAction(
             busy = current.busy,
-            hasQueued = hasPendingSend(),
+            hasQueued = hasQueuedWork(),
             turnProduced = current.turnProduced,
         )
         if (action == EscapeAction.Nothing) return
         if (action == EscapeAction.Withdraw) withdrawInFlight()
+        if (action == EscapeAction.InterruptThenQueued) sendQueue.reclaim()
 
         val seq = turnSeq
         writeLine(encodeClaudeCodeInterrupt(UUID.randomUUID().toString()))
@@ -1504,7 +1604,7 @@ class ClaudeCodeManager(
                 Log.w(TAG, "interrupt timed out, force-clearing busy")
                 turnSeq += 1
                 inFlight = null
-                val queuedNext = hasPendingSend()
+                val queuedNext = hasQueuedWork()
                 val noteId = newId()
                 _state.update {
                     it.copy(
@@ -1588,6 +1688,12 @@ class ClaudeCodeManager(
         refreshAppliedSettings()
         refreshUsage()
         suggestInitIfNoClaudeMd()
+        // 会话没起来时打的字攥在调度台上。等到这里才发，第一轮就已经在用户选的目录下
+        // （applyPreferredCwd 在上面）。先把 busy 点亮，否则 dispatchSend 前界面会闪一下空闲。
+        if (hasQueuedWork()) {
+            _state.update { it.copy(busy = true) }
+            flushPendingSend()
+        }
     }
 
     /**
@@ -1978,10 +2084,14 @@ class ClaudeCodeManager(
         _state.update { it.copy(applyingEffort = true) }
         scope.launch {
             sessionMutex.withLock {
+                // 换档是续同一个会话，排队的消息不该跟着进程一起作废（shutdown 会清空队列）。
+                // 先抄一份，新进程握手完再原样发出去。
+                val carried = sendQueue.snapshot()
                 // 必须先 shutdown 再判断能不能 resume：transcript 是 CLI **退出时**才落盘的，
                 // 关进程之前去看磁盘会看到"还没有文件"，等真去启动时文件又已经写出来了，
                 // 于是 `--session-id <已存在的 id>` 撞车。顺序反了两边都会错。
                 shutdown()
+                carried.forEach { sendQueue.hold(it) }
                 val options = if (hasTranscript(sessionId)) {
                     aligned.copy(resumeSessionId = sessionId, newSessionId = null)
                 } else {
@@ -2361,7 +2471,7 @@ class ClaudeCodeManager(
         // 排队的消息跟着这个进程一起作废：留到下一个会话去发，等于把一句话
         // 塞进一个它根本不认识的上下文里
         inFlight = null
-        synchronized(pendingSends) { pendingSends.clear() }
+        sendQueue.clear()
         // 关掉 stdin 就是 stream-json 模式约定的优雅退出信号。
         // **必须给它时间自己退** —— transcript 是 CLI 退出前才落盘的，
         // 直接 destroy() 会让这一轮的 ~/.claude/projects/<cwd>/<id>.jsonl 根本没写出来，
@@ -2387,27 +2497,29 @@ class ClaudeCodeManager(
     }
 
     private fun writeLine(line: String) {
-        scope.launch {
-            writeMutex.withLock {
-                val target = writer
-                if (target == null) {
-                    Log.w(TAG, "writeLine: no active writer")
-                    return@withLock
-                }
-                runCatching {
-                    target.write(line)
-                    target.write("\n")
-                    target.flush()
-                }.onFailure { e ->
-                    Log.e(TAG, "writeLine failed", e)
-                    _state.update {
-                        it.copy(
-                            status = SessionStatus.Failed,
-                            errorMessage = "写入会话失败: ${e.message}",
-                            busy = false,
-                        )
-                    }
-                }
+        val accepted = writeQueue.trySend(line).isSuccess
+        if (!accepted) Log.w(TAG, "writeLine: write queue closed")
+    }
+
+    /** 只在写入队列那一个消费者协程里跑，所以这里不需要再上锁 */
+    private fun writeNow(line: String) {
+        val target = writer
+        if (target == null) {
+            Log.w(TAG, "writeLine: no active writer")
+            return
+        }
+        runCatching {
+            target.write(line)
+            target.write("\n")
+            target.flush()
+        }.onFailure { e ->
+            Log.e(TAG, "writeLine failed", e)
+            _state.update {
+                it.copy(
+                    status = SessionStatus.Failed,
+                    errorMessage = "写入会话失败: ${e.message}",
+                    busy = false,
+                )
             }
         }
     }
@@ -2429,6 +2541,15 @@ class ClaudeCodeManager(
          */
         private const val GRACEFUL_EXIT_MS = 4_000L
         private const val INTERRUPT_TIMEOUT_MS = 15_000L
+
+        /** 一轮收尾后，等 CLI 拿走已交棒消息的上限（[watchHandedOff]） */
+        private const val HANDOFF_TIMEOUT_MS = 20_000L
+
+        /**
+         * `system/status` 里「要发请求了」那一档。CLI 的输入队列就在这一刻排空，
+         * 所以这是「追加的消息已经被模型看见」的唯一可观测信号（实测见 [ClaudeCodeSendQueue]）。
+         */
+        private const val STATUS_REQUESTING = "requesting"
         private const val CONTROL_TIMEOUT_MS = 8_000L
         /** 拟名要打一枪小模型，比普通 control 慢；给足余量，超时也不挡下一轮 */
         private const val TITLE_GENERATION_TIMEOUT_MS = 30_000L

@@ -34,9 +34,11 @@ import androidx.compose.foundation.layout.height
 import dev.min.code.ui.theme.seaFill
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.ui.components.InkSpinner
 import dev.min.code.ui.richtext.MarkdownBlock
@@ -255,11 +257,11 @@ internal fun UserEntry(text: String, isFirst: Boolean, isLast: Boolean, queued: 
     ) {
         val palette = MaterialTheme.sea
         val scheme = MaterialTheme.colorScheme
-        // 排队中：这条还**没有**发给 CLI，按停止键（Esc）能原样撤回。
-        // 说出来才不会以为它已经在跑了 —— 上一轮还占着，它得等。
+        // 排队中：帧已经交给 CLI 了，但要等它跑完当前这一小步才会被插进对话。
+        // 说出来才不会以为它已经在跑了 —— 上一步还占着，它得等。
         if (queued) {
             Text(
-                text = "排队中 · 按停止可撤回",
+                text = stringResource(R.string.session_queued),
                 style = MaterialTheme.typography.labelSmall,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 3.dp),
