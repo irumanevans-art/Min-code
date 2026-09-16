@@ -2391,6 +2391,31 @@ class ClaudeCodeManager(
                 if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
             }.onFailure { err ->
                 Log.w(TAG, "exclusive host failed: ${err.message}")
+                // deny 已经发给 CLI、"已托管"note 也已贴进会话流，但服务其实没起来 ——
+                // 必须把失败摆回明面上，否则用户和 CLI 都以为托管成功了
+                appendItem(
+                    ChatItem.Note(
+                        newId(),
+                        "托管到进程表失败：${err.message ?: err.toString()}",
+                        isError = true,
+                    )
+                )
+                // 工具卡之前被乐观地标成 Done，改回 Error
+                event.toolUseId?.let { toolId ->
+                    _state.update { state ->
+                        state.copy(
+                            items = state.items.map { item ->
+                                if (item is ChatItem.ToolCall && item.toolUseId == toolId) {
+                                    item.copy(
+                                        status = ChatItem.ToolCall.Status.Error,
+                                        result = "exclusive host failed: ${err.message ?: err.toString()}",
+                                        isError = true,
+                                    )
+                                } else item
+                            },
+                        )
+                    }
+                }
             }
         }
         event.toolUseId?.takeIf { it.isNotBlank() }?.let(exclusiveHostedToolUses::add)
