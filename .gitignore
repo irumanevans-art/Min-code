@@ -26,4 +26,6 @@ local.properties
 *.aab
 *.jks
 *.keystore
+keystore.properties
+/secrets/
 .claude/

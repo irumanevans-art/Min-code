@@ -1,10 +1,19 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.baselineprofile)
+}
+
+// 本地签名：仓库根目录 keystore.properties + secrets/*.jks（均已 gitignore）
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.isFile) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -36,10 +45,28 @@ android {
         }
     }
 
+    signingConfigs {
+        val storePath = keystoreProperties.getProperty("storeFile")
+        val storePass = keystoreProperties.getProperty("storePassword")
+        val alias = keystoreProperties.getProperty("keyAlias")
+        val keyPass = keystoreProperties.getProperty("keyPassword")
+        if (!storePath.isNullOrBlank() && !storePass.isNullOrBlank() &&
+            !alias.isNullOrBlank() && !keyPass.isNullOrBlank()
+        ) {
+            create("release") {
+                storeFile = rootProject.file(storePath)
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
         debug {
             // 和正式包分开装：调试版是独立的一份数据（rootfs 占地几个 GB，别互相覆盖）
@@ -52,6 +79,8 @@ android {
             isDebuggable = false
             applicationIdSuffix = ".benchmark"
             versionNameSuffix = "-benchmark"
+            // 采集用，跟 release 同一把钥匙（有的话）
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
     compileOptions {
