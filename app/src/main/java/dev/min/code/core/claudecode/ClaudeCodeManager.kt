@@ -5,6 +5,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
@@ -2308,12 +2309,22 @@ class ClaudeCodeManager(
         get() = _state.value.status == SessionStatus.Running ||
             _state.value.status == SessionStatus.Starting
 
-    /** 彻底释放：停进程并取消自己的协程作用域，注册表移除条目时调用 */
+    /**
+     * 彻底释放：停进程并取消自己的协程作用域，注册表移除条目时调用。
+     *
+     * shutdown 要给 CLI 留自行退出的窗口、必要时再升级 destroy/destroyForcibly，
+     * 中途被取消就是进程泄漏，所以整段包在 NonCancellable 里。scope 只在
+     * shutdown 跑完之后才取消（invokeOnCompletion）——放在协程体末尾的话，
+     * 末尾的 cancel 会把这个协程自己也划进取消范围。重复调用安全：第二个
+     * launch 落在已取消的 scope 上立即完成，cancel 本身幂等。
+     */
     fun dispose() {
-        scope.launch {
-            sessionMutex.withLock { shutdown() }
-            scope.cancel()
+        val job = scope.launch {
+            withContext(NonCancellable) {
+                sessionMutex.withLock { shutdown() }
+            }
         }
+        job.invokeOnCompletion { scope.cancel() }
     }
 
     suspend fun deleteSession(sessionId: String): Boolean {
