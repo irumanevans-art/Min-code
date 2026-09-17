@@ -1,3 +1,26 @@
+## [LRN-20260917-SHAREDFLOW-TRYEMIT-DROP] correction
+
+**Logged**: 2026-09-17T14:10:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: session
+
+### Summary
+`MutableSharedFlow(replay = 0, extraBufferCapacity = N)` 在**没有订阅者**时 `tryEmit` 照样返回 `true`，值直接蒸发 —— 返回值 true 只表示「没挂起」，不表示「有人收到」。拿它当一次性事件通道（撤回、退还）时，必须另外确认有订阅者，否则事件在页面未组合 / 切后台时悄悄丢。
+
+### Details
+`ClaudeCodeManager` 的 `_withdrawnMessages` 就是 replay=0 的 SharedFlow：退还路径先把对话流里的消息条目摘掉，再 `tryEmit` 草稿给输入框。输入框不在屏幕上时没有订阅者，tryEmit 返回 true 而草稿蒸发，对话流里还留着「已退回输入框」的 Note —— 用户的消息原文彻底丢失。修复是先看 `subscriptionCount.value > 0` 再 tryEmit，没人收就落盘到 `ComposerDraftStore`，下次打开会话草稿自然恢复。
+
+### Suggested Action
+凡是「发出去没人接就算丢」的一次性事件，要么用 Channel / 共享流外加订阅者计数判空，要么配一条持久化兜底通道；**不要**只检查 `tryEmit` 的布尔返回值。写这类代码时顺手想清楚「订阅者此刻一定在吗」。
+
+### Metadata
+- Source: code_review
+- Related Files: app/src/main/java/dev/min/code/core/claudecode/ClaudeCodeManager.kt, app/src/main/java/dev/min/code/core/claudecode/ComposerDraftStore.kt
+- Tags: sharedflow, tryemit, refund, drafts
+
+---
+
 ## [LRN-20260917-LOCALE-NO-APPCOMPAT] correction
 
 **Logged**: 2026-09-17T12:10:00+08:00
