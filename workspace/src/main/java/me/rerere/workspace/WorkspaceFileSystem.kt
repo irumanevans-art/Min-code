@@ -134,10 +134,14 @@ class WorkspaceFileSystem(
         val start = resolvePath(root, path)
         require(start.exists()) { "Path does not exist: $path" }
         val matcher = FileSystems.getDefault().getPathMatcher("glob:$pattern")
+        val rootCanonical = root.canonicalFile
         return walk(start) { paths ->
             paths
                 .filter { Files.isRegularFile(it) || Files.isDirectory(it) }
                 .filter { !it.toFile().name.startsWith(".l2s.") }
+                // 与 grep 同款：`Files.isRegularFile` 跟随符号链接，区外文件的大小/mtime
+                // 会混进结果；命中前先做 canonical 包含校验，越界条目丢弃
+                .filter { it.toFile().canonicalFile.isInside(rootCanonical) }
                 .filter { matcher.matches(root.toPath().relativize(it).normalizeForMatch()) }
                 .take(config.maxListEntries)
                 .map { it.toFile().toEntry(root) }

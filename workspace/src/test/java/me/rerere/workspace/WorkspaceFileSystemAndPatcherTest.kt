@@ -61,6 +61,25 @@ class WorkspaceFileSystemAndPatcherTest {
     }
 
     @Test
+    fun globDropsSymlinkEntriesOutsideWorkspaceRoot() {
+        val root = Files.createTempDirectory("workspace-glob").toFile()
+        val outside = Files.createTempDirectory("workspace-outside").toFile()
+        val fileSystem = WorkspaceFileSystem()
+        fileSystem.writeText(root, "inside.txt", "hello")
+        File(outside, "secret.txt").writeText("secret")
+        try {
+            Files.createSymbolicLink(File(root, "link.txt").toPath(), File(outside, "secret.txt").toPath())
+        } catch (e: Exception) {
+            // Windows 无开发者模式时建不了符号链接，这个用例直接跳过
+            Assume.assumeNoException("cannot create symlinks on this machine", e)
+        }
+
+        val entries = fileSystem.glob(root, "**/*.txt")
+
+        assertEquals(listOf("inside.txt"), entries.map { it.path })
+    }
+
+    @Test
     fun mkdirCreatesADirectoryInsideTheWorkspace() {
         val root = Files.createTempDirectory("workspace-mkdir").toFile()
         val fileSystem = WorkspaceFileSystem()
