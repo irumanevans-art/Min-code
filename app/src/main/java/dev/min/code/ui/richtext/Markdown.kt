@@ -71,9 +71,14 @@ fun MarkdownBlock(
     // 短文本直接在组合里解析：LazyColumn 里每条新出现的项都先空一帧再填上，滚动时会闪。
     // 只有长文本（流式输出的正文、大段工具结果）才放后台，那时慢一帧比卡主线程好。
     val immediate = remember(content) { if (content.length <= SYNC_PARSE_LIMIT) MarkdownDoc.parse(content) else null }
-    val parsed by produceState(initialValue = immediate ?: MarkdownDoc.EMPTY, content) {
+    // `immediate` 不能喂给 produceState 的 initialValue：那个值只在**第一次**组合时被读，
+    // 之后 content 再变也不会重新赋值（producer 在这一支里什么都不做）。流式输出正是
+    // "同一个 MarkdownBlock，content 每来一截就变"，于是正文会停在第一截不动。
+    // 后台解析的结果照旧从 produceState 拿：content 换了先留着上一版，不闪空白。
+    val async by produceState(MarkdownDoc.EMPTY, content) {
         if (immediate == null) value = withContext(Dispatchers.Default) { MarkdownDoc.parse(content) }
     }
+    val parsed = immediate ?: async
     val ink = style.copy(color = style.color.takeOrElse { MaterialTheme.colorScheme.onSurface })
     ProvideTextStyle(ink) {
         Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
