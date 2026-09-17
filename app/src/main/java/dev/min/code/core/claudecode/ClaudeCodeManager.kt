@@ -270,6 +270,8 @@ class ClaudeCodeManager(
         val toolCount: Int = 0,
         /** 已经在聊天流里提示过一次「会话已建立」 */
         val announcedInit: Boolean = false,
+        /** 「会话已建立」那条提示的 id。工具数事后长出来时要按它找回去改文案，见 dispatch(Init) */
+        val initNoteId: String? = null,
         /** CLI 的工作目录，可用 set_cwd 改 */
         val cwd: String = DEFAULT_CWD,
         /**
@@ -856,17 +858,29 @@ class ClaudeCodeManager(
                 val noteId = newId()
                 _state.update {
                     val changed = it.model != event.model
+                    val fresh = !it.announcedInit || changed
+                    val text = "会话已建立 · ${event.model ?: "未知模型"} · ${event.tools.size} 个工具"
+                    // 已经发出去的那条提示在 items 里的位置（没发过 / 被清过就是 -1）
+                    val at = it.initNoteId
+                        ?.let { id -> it.items.indexOfFirst { item -> item.id == id } }
+                        ?: -1
                     it.copy(
                         sessionId = event.sessionId.ifBlank { it.sessionId },
                         model = event.model,
                         toolCount = event.tools.size,
-                        items = if (it.announcedInit && !changed) {
-                            it.items
-                        } else {
-                            it.items + ChatItem.Note(
-                                id = noteId,
-                                text = "会话已建立 · ${event.model ?: "未知模型"} · ${event.tools.size} 个工具",
-                            )
+                        initNoteId = if (fresh) noteId else it.initNoteId,
+                        items = when {
+                            fresh -> it.items + ChatItem.Note(id = noteId, text = text)
+                            // CLI 2.1.274 起，首轮不再为还在连的 MCP 服务器等那两秒，被工具搜索
+                            // 延迟加载的工具要到后面某一轮才报上来。顶栏的 toolCount 每轮都刷，
+                            // 而这条提示发出去就不动了 —— 不改的话它会永远停在首轮那个偏小的数
+                            // 字上，和顶栏对不上。只在数字变大时就地改文案，id 保持原样，
+                            // 免得 LazyColumn 当成新条目又淡入一次。
+                            at >= 0 && event.tools.size > it.toolCount ->
+                                it.items.toMutableList().also { list ->
+                                    list[at] = ChatItem.Note(id = it.initNoteId!!, text = text)
+                                }
+                            else -> it.items
                         },
                         announcedInit = true,
                     )
