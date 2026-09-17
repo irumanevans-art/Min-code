@@ -173,6 +173,7 @@ private fun rememberChangelog(context: android.content.Context): List<ChangelogE
 fun AboutPage() {
     val context = LocalContext.current
     var crash by remember { mutableStateOf(CrashRecorder.read(context)) }
+    var lastError by remember { mutableStateOf(CrashRecorder.readNonFatal(context)) }
     val scrollState = rememberScrollState()
     val changelog = rememberChangelog(context)
     val groups = remember(changelog) { groupChangelog(changelog) }
@@ -354,6 +355,15 @@ fun AboutPage() {
                     CrashRecorder.clear(context)
                     crash = null
                 })
+
+                // 被协程 handler 接住的异常（App 没崩）单独一份，堆栈同样值得能看到
+                if (lastError != null) {
+                    SectionTitle("上次错误（未崩溃）", modifier = Modifier.padding(top = 8.dp))
+                    CrashReport(report = lastError, onClear = {
+                        CrashRecorder.clearNonFatal(context)
+                        lastError = null
+                    })
+                }
             }
         }
     }
