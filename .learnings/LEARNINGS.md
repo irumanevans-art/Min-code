@@ -1,3 +1,86 @@
+## [LRN-20260917-LOCALE-NO-APPCOMPAT] correction
+
+**Logged**: 2026-09-17T12:10:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: i18n
+
+### Summary
+`AppCompatDelegate.setApplicationLocales()` 在 Min 里**从来没生效过**，而且不报错。设置里点 English，格子变蓝、值也存进 DataStore，界面纹丝不动 —— 1.1.9 及更早一直如此。
+
+### Details
+- 那个方法要从 AppCompat 自己的静态 app context 里取 `LocaleManager`，那个 context 只在 `AppCompatActivity` / `AppCompatDelegate` 创建时被赋值。Min 是纯 Compose + `ComponentActivity`，全项目没有一个 AppCompat 的 Activity → 取不到 → 静默 return。**不抛异常、不打日志**，所以看代码完全看不出问题。
+- 判定证据（比读代码快得多）：`adb shell cmd locale get-app-locales dev.min.code` 返回 `[]`，说明系统侧压根没收到过；再 `set-app-locales ... --locales en` 手工写一个，界面立刻全英文 → 资源和翻译都没问题，断的只是传话那一道。
+- 和调用线程无关。原来在 `Dispatchers.IO` 上调，换主线程一样不生效。
+- 修法（`AppLocale.kt`）：33+ 直接调系统 `LocaleManager`；26..32 在 `MainActivity.attachBaseContext` 里按 `LocalePrefs`（SharedPreferences 同步镜像，因为 attachBaseContext 早于任何协程）包一层 Configuration，语言变了 `recreate()`。另加 `res/xml/locales_config.xml` + manifest `android:localeConfig`，否则「系统设置 → 应用 → Min → 语言」那个入口不出现。
+- **自己踩的坑**：第一版写了「以系统为准」的回写，把「系统没记录」当成了「用户选了跟随系统」。系统侧首次启动必然是空的，于是每次冷启动都把用户选的语言抹回跟随系统。只能认系统给出**具体语言**的情况。
+
+### Suggested Action
+凡是"设置存下来了但界面没反应"的，先用 `adb shell cmd ...` 查系统侧实际状态，再读代码。静默失效的 API 靠读代码找不出来。往这个项目加任何依赖 AppCompat 的 API 之前，先确认它在没有 AppCompatActivity 时的行为。
+
+### Metadata
+- Source: user_feedback
+- Related Files: AppLocale.kt, MainActivity.kt, MinApp.kt, AndroidManifest.xml, res/xml/locales_config.xml
+- Tags: i18n, appcompat, silent-failure, per-app-locale
+
+### Resolution
+- **Resolved**: 2026-09-17T12:10:00+08:00
+- **Notes**: 1.1.10 修复并真机验证（点 English → 系统侧变 `[en]` → 界面立刻英文，不重启）。
+
+---
+
+## [LRN-20260917-CLI-NODE-FLOOR] best_practice
+
+**Logged**: 2026-09-17T12:40:00+08:00
+**Priority**: medium
+**Status**: open
+**Area**: runtime
+
+### Summary
+Claude Code CLI 的 `engines` 已经要求 Node `>=22.0.0`，而 Min 装的是 `v22.17.0` —— 只剩一个 minor 的余量。CLI 再抬门槛，装出来的环境会直接跑不起来。
+
+### Details
+- 2.1.274 的 `package.json`：`engines.node = ">=22.0.0"`。
+- `ClaudeCodeInstaller` 的 `NODE_VERSION = "v22.17.0"`，且 `NODE_SHA256` 是**成对**写死的，改版本必须同步改校验值，对不上会直接拒装（有意为之）。
+- Min 装 CLI 用的是 `@latest`，所以 CLI 会自己往前跑，Node 不会 —— 这两者是脱钩的，容易某天突然炸。
+
+### Suggested Action
+每次对照 CLI 新版本时，顺手看一眼 `npm view @anthropic-ai/claude-code engines`。抬了就同步改 `NODE_VERSION` + `NODE_SHA256`（官方 SHASUMS256.txt）两处。
+
+### Metadata
+- Source: observation
+- Related Files: ClaudeCodeInstaller.kt
+- Tags: node, cli, version-drift
+
+---
+
+## [LRN-20260917-VIVO-USB-INSTALL] best_practice
+
+**Logged**: 2026-09-17T11:20:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+vivo / iQOO 的 ROM（真机 PA2573）默认拦 `adb install`，报 `INSTALL_FAILED_ABORTED: User rejected permissions`，光开「开发者模式」不够。
+
+### Details
+- 「超级守护」会先扫一遍 APK 再要一次人工确认；`adb install` 和 `adb shell pm install`（先 push 到 `/data/local/tmp`）都拦。
+- 真正的开关是 **开发者选项 → USB 安装**，要用户在设备上开。开了之后 `adb install -r` 一次就过。
+- **那个开关会自己关掉**：实测 12:20 装成功，12:42 再装就又是 `INSTALL_FAILED_ABORTED`，屏幕上连确认弹窗都不给（静默拒绝）。所以别假设"开一次管一天" —— 要连续装几次的话，把安装都攒到一起做完，或者每次失败就请用户再开一次。
+- 副作用：debug 变体有 `applicationIdSuffix = ".debug"`，装 debug 包不会覆盖正式包，但也拿不到正式包的 rootfs / token，验真实会话必须装 **release**（本地有签名配置，覆盖安装不丢数据）。
+- Git Bash 下 `adb shell` 的 `/data/local/tmp/...` 会被 MSYS 转成 Windows 路径，要 `export MSYS_NO_PATHCONV=1`。
+
+### Suggested Action
+要在这台真机上验证前，先确认 USB 安装已开；用 release 包覆盖安装，不要 uninstall（会连 rootfs 一起清掉，重装要几个 GB）。
+
+### Metadata
+- Source: error_resolution
+- Related Files: app/build.gradle.kts
+- Tags: adb, vivo, install, real-device
+
+---
+
 ## [LRN-20260916-REVIEW-VERIFY] best_practice
 
 **Logged**: 2026-09-16T21:00:00+08:00
