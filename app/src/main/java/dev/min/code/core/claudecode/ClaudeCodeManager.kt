@@ -1522,6 +1522,10 @@ class ClaudeCodeManager(
      * 拿到的就是修改前的内容。失败只记日志：快照是锦上添花，绝不能让它挡住工具执行。
      */
     private fun snapshotBeforeEdit(event: ClaudeCodeEvent.ToolUse) {
+        // 回放只是重画卡片（见 openSession），历史里的工具早跑完了，
+        // 再存快照只会把"现在的文件"当成"修改前"盖住真快照 —— 靠 sessionId 为 null
+        // 早退是侥幸，这里和预览扫描 / bypass 托管一样显式拦掉
+        if (replaying) return
         if (event.name !in CHECKPOINT_TOOLS) return
         val guestPath = event.input["file_path"].asStringOrNull()?.takeIf { it.isNotBlank() } ?: return
         val sessionId = _state.value.sessionId ?: return
