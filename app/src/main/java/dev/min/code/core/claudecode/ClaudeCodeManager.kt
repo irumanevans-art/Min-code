@@ -1529,9 +1529,26 @@ class ClaudeCodeManager(
         if (event.name !in CHECKPOINT_TOOLS) return
         val guestPath = event.input["file_path"].asStringOrNull()?.takeIf { it.isNotBlank() } ?: return
         val sessionId = _state.value.sessionId ?: return
+        // 快照竞态：异步协程排队期间，bypass 下的快工具可能已经改完文件，存进去的
+        // 就成了修改后的内容，撤销等于空操作。先在 dispatch 线程同步取样（existence +
+        // mtime，两次 stat，微秒级）；写快照前再比一次，变了就说明工具已动手，这份
+        // "修改前"已经拿不回来了 —— 跳过，让用户看不到撤销钮，也好过撤销个空气。
+        // launchCli 之后 currentLinuxDir 必有值；取样不到就退回原来的异步盲拍。
+        val probe = currentLinuxDir?.parentFile?.let { guestToHost(it, guestPath) }
+        val existedAtDispatch = probe?.isFile == true
+        val mtimeAtDispatch = if (existedAtDispatch) probe!!.lastModified() else null
         scope.launch(Dispatchers.IO) {
             val workspaceDir = workspaceDir() ?: return@launch
             val host = guestToHost(workspaceDir, guestPath)
+            if (probe != null) {
+                val existsNow = host?.isFile == true
+                if (existsNow != existedAtDispatch ||
+                    (existsNow && host!!.lastModified() != mtimeAtDispatch)
+                ) {
+                    Log.w(TAG, "skip stale snapshot for ${event.id}: $guestPath changed before snapshot")
+                    return@launch
+                }
+            }
             checkpointStore(workspaceDir).snapshot(sessionId, event.id, guestPath, host)
         }
     }
