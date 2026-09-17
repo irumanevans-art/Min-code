@@ -1,6 +1,9 @@
 package dev.min.code.core.claudecode
 
+import android.content.Context
 import android.util.Log
+import dev.min.code.core.crash.CrashRecorder
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -36,6 +39,7 @@ import java.util.UUID
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ClaudeCodeSessionRegistry(
+    private val context: Context,
     private val factory: () -> ClaudeCodeManager,
 ) {
     data class LiveSession(
@@ -68,7 +72,13 @@ class ClaudeCodeSessionRegistry(
                 status == ClaudeCodeManager.SessionStatus.Starting
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e ->
+            // 只跑 stateIn/shareIn，风险低，但 SupervisorJob 的未捕获异常一样会崩 App
+            Log.e(TAG, "uncaught exception in registry scope", e)
+            CrashRecorder.record(context, Thread.currentThread(), e)
+        }
+    )
 
     /** key = CLI 的 session id（新建时我们自己先生成，好在进程起来前就能登记） */
     private val managers = LinkedHashMap<String, ClaudeCodeManager>()

@@ -74,7 +74,7 @@ val appModule = module {
             drafts = get(),
         )
     }
-    single { ClaudeCodeSessionRegistry(factory = { get() }) }
+    single { ClaudeCodeSessionRegistry(get(), factory = { get() }) }
 
     // 保活与后台通知。createdAtStart：它订阅的是注册表，注册表可能在页面之外先动起来
     single(createdAtStart = true) {

@@ -396,10 +396,32 @@ class ClaudeCodeManager(
         SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
             Log.e(TAG, "uncaught exception in manager scope", e)
             CrashRecorder.record(context, Thread.currentThread(), e)
+            failSessionOnUncaught("manager", e)
         }
     )
     private val runner by lazy {
         ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir))
+    }
+
+    /**
+     * 协程未捕获异常的兜底：只落盘不改状态的话，readLoop / writeQueue 死掉之后会
+     * 永远显示 Running，发送静默无回显。置 Failed 让 UI 说实话。
+     * 只在真有活跃会话时动手 —— 类级 scope 的 handler 触发时可能根本没有会话，
+     * 给 Idle 置 Failed 等于凭空造一个失败的空会话。
+     */
+    private fun failSessionOnUncaught(where: String, e: Throwable) {
+        _state.update {
+            if (it.status == SessionStatus.Running || it.status == SessionStatus.Starting) {
+                it.copy(
+                    status = SessionStatus.Failed,
+                    busy = false,
+                    pendingPermission = null,
+                    errorMessage = "会话协程异常（$where）：${e.message ?: e.toString()}",
+                )
+            } else {
+                it
+            }
+        }
     }
 
     /** 记住每个会话的模型/effort，否则重启 App 后重开会话会悄悄掉回 CLI 默认模型 */
@@ -708,6 +730,9 @@ class ClaudeCodeManager(
             SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
                 Log.e(TAG, "uncaught exception in session IO scope", e)
                 CrashRecorder.record(context, Thread.currentThread(), e)
+                // readLoop / 写队列抛出去之后帧再也不被处理，会话会永远停在 Running、
+                // 发送静默无回显 —— 至少让状态说实话
+                failSessionOnUncaught("session-io", e)
             }
         )
         sessionIo = io

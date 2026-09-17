@@ -16,6 +16,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,6 +31,7 @@ import dev.min.code.CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID
 import dev.min.code.R
 import dev.min.code.MainActivity
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.crash.CrashRecorder
 import org.koin.android.ext.android.inject
 
 private const val TAG = "ClaudeCodeFgs"
@@ -154,7 +156,13 @@ class ClaudeCodeForegroundService : Service() {
 
     private val registry: ClaudeCodeSessionRegistry by inject()
     private val localServices: LocalServiceRegistry by inject()
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val serviceScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate + CoroutineExceptionHandler { _, e ->
+            // 没有会话状态可置，记日志 + 落盘就够了；不装的话 SupervisorJob 会把异常崩到 App
+            Log.e(TAG, "uncaught exception in FGS scope", e)
+            CrashRecorder.record(applicationContext, Thread.currentThread(), e)
+        }
+    )
 
     private var isForeground = false
     private var observerStarted = false
