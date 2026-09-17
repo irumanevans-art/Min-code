@@ -252,7 +252,11 @@ fun InkTextField(value: String, onValueChange: (String) -> Unit, modifier: Modif
     OutlinedTextField(
         value, onValueChange, modifier, enabled, readOnly = false,
         textStyle = textStyle.copy(fontFamily = if (monospace) JetbrainsMono else textStyle.fontFamily),
-        label = label?.let { { Text(it) } }, placeholder = placeholder?.let { { Text(it) } },
+        // label 锁单行：它浮在边框上，一换行第二行就压到上一格的输入框里去。
+        // 窄屏 + 放大字体下必现（320dp / 1.3× 时 ANTHROPIC_AUTH_TOKEN 断成两行）。
+        // 截断比压字好 —— 边框上那行字是提示，输入框里的内容才是要看清的东西。
+        label = label?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+        placeholder = placeholder?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
         leadingIcon = leading, trailingIcon = trailing, prefix = null, suffix = null,
         supportingText = supporting?.let { { Text(it) } }, isError = isError,
         visualTransformation = visualTransformation, keyboardOptions = keyboardOptions, keyboardActions = keyboardActions,
