@@ -88,6 +88,7 @@ class ClaudeCodeManager(
     private val networkProbe: NetworkProbe = NetworkProbe(context),
     private val localServices: LocalServiceRegistry? = null,
     private val sessionStore: ClaudeCodeSessionStore = ClaudeCodeSessionStore(),
+    private val drafts: ComposerDraftStore = ComposerDraftStore(context),
 ) {
     enum class SessionStatus { Idle, Starting, Running, Closed, Failed }
 
@@ -1299,7 +1300,7 @@ class ClaudeCodeManager(
         // 已经关掉 / 起不来的会话没有 stdin 可写。文本不能就这么吞掉 —— 原样退回输入框，
         // 用户改改还能在下一个会话里发出去
         if (current.status != SessionStatus.Running && current.status != SessionStatus.Starting) {
-            _withdrawnMessages.tryEmit(pending.toComposerDraft())
+            emitWithdrawn(pending.toComposerDraft())
             return
         }
         if (current.status != SessionStatus.Running) {
@@ -1672,7 +1673,7 @@ class ClaudeCodeManager(
         _state.update { st ->
             st.copy(items = st.items.filterNot { it.id == pending.itemId })
         }
-        _withdrawnMessages.tryEmit(pending.toComposerDraft())
+        emitWithdrawn(pending.toComposerDraft())
     }
 
     /** 排队消息 → 输入框草稿，和「再按一次发送」会发出去的东西完全一致 */
@@ -1682,6 +1683,32 @@ class ClaudeCodeManager(
             DraftImage(name = "图片 ${i + 1}", mediaType = img.mediaType, base64 = img.base64)
         },
     )
+
+    /**
+     * 把退还的草稿交给输入框；**没人收就落盘**，下次打开这个会话时草稿自然恢复。
+     *
+     * 为什么不能只看 `tryEmit` 的返回值：[withdrawnMessages] 是 replay=0 的 SharedFlow，
+     * **没有订阅者时 tryEmit 照样返回 true，值直接蒸发**（会话页未组合 / 切后台就是这样）；
+     * 订阅者太慢、积满 extraBufferCapacity 时才返回 false。而退还路径已经把对话流里的
+     * 条目摘掉了，原文再丢就是真的没了 —— 所以这两种情况都转存 [ComposerDraftStore]。
+     * 合并语义和输入框的 prepend 一致：退回来的接在已有草稿前面。
+     */
+    private fun emitWithdrawn(draft: ComposerDraft) {
+        val received = _withdrawnMessages.subscriptionCount.value > 0 &&
+            _withdrawnMessages.tryEmit(draft)
+        if (received) return
+        val sessionId = _state.value.sessionId ?: return
+        val existing = drafts.load(sessionId)
+        val mergedText = when {
+            draft.text.isBlank() -> existing.text
+            existing.text.isBlank() -> draft.text
+            else -> draft.text + "\n" + existing.text
+        }
+        drafts.save(
+            sessionId,
+            existing.copy(text = mergedText, images = draft.images + existing.images),
+        )
+    }
 
     /**
      * 失败路径的兜底退还：进程起不来 / 握手失败时，把还攥在手里（held）的消息
@@ -1703,7 +1730,7 @@ class ClaudeCodeManager(
             )
         }
         // 输入框是「接在已有内容前面」（见 ClaudeCodeInputBar），倒着发才保得住原来的先后
-        stranded.asReversed().forEach { _withdrawnMessages.tryEmit(it.toComposerDraft()) }
+        stranded.asReversed().forEach { emitWithdrawn(it.toComposerDraft()) }
     }
 
     fun stopSession() {

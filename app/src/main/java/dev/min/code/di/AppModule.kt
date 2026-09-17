@@ -70,6 +70,8 @@ val appModule = module {
             costLedger = get(),
             networkProbe = get(),
             localServices = get(),
+            // 退还兜底要落进同一份草稿盘（上面的 single），另开一份就把草稿写劈叉了
+            drafts = get(),
         )
     }
     single { ClaudeCodeSessionRegistry(factory = { get() }) }
