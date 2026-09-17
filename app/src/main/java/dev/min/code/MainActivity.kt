@@ -134,7 +134,8 @@ class MainActivity : ComponentActivity() {
                     hold = false
                 }
             }
-            MinTheme(mode = settings?.themeMode ?: ThemeMode.LIGHT) {
+            // 设置还没读出来时的兜底和默认值同一条：跟随系统，免得从没选过的人先闪一帧浅色
+            MinTheme(mode = settings?.themeMode ?: ThemeMode.SYSTEM) {
                 if (hold) LoadingScreen(detail = "debug · $EXTRA_DEBUG_LOADING") else Root()
             }
         }

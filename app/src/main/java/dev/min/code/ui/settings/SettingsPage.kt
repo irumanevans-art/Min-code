@@ -407,7 +407,7 @@ private fun BatteryRow() {
 }
 
 /**
- * 昼 / 夜 / 跟随系统。
+ * 跟随系统 / 昼 / 夜。跟随系统是默认，排第一（和语言选择器同一规矩）。
  *
  * 真正会换形态时走「换形」：一团新形态颜色的墨从这个分段控件的位置落下、涨满整屏，
  * 主题在遮盖之下切换，然后墨化开。目标形态和当前一样（比如从「浅色」切到白天的「跟随系统」）
@@ -416,9 +416,9 @@ private fun BatteryRow() {
 @Composable
 private fun ThemePicker(current: ThemeMode, onPick: (ThemeMode) -> Unit) {
     val modes = listOf(
+        ThemeMode.SYSTEM to stringResource(R.string.settings_theme_system),
         ThemeMode.LIGHT to stringResource(R.string.settings_theme_light),
         ThemeMode.DARK to stringResource(R.string.settings_theme_dark),
-        ThemeMode.SYSTEM to stringResource(R.string.settings_theme_system),
     )
     val formSwitch = LocalFormSwitch.current
     val currentDark = LocalDarkMode.current

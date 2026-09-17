@@ -35,7 +35,7 @@ private val KEY_LANGUAGE = stringPreferencesKey("app_language")
 private val KEY_ZH_DESCRIPTIONS = booleanPreferencesKey("zh_descriptions")
 private val KEY_OPEN_WITH = stringPreferencesKey("open_with_defaults")
 
-/** 主题：跟随系统 / 浅色 / 深色。浅色是默认——手机常在亮环境用 */
+/** 主题：跟随系统 / 浅色 / 深色。默认跟随系统——没选过的人交给系统日夜 */
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 /** 界面语言：跟随系统，或强制中 / 英 */
@@ -73,7 +73,8 @@ data class AppSettings(
     val activeProfileId: String = "",
     /** 装 CLI 时走淘宝 npm 源。默认关：那是供应链信任转移，必须显式打开 */
     val useNpmMirror: Boolean = false,
-    val themeMode: ThemeMode = ThemeMode.LIGHT,
+    /** 主题。默认跟随系统：只有「从未设置过」的设备落到这个值，已存的选择原样保留 */
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
     /** 界面语言。默认跟随系统 */
     val appLanguage: AppLanguage = AppLanguage.SYSTEM,
     /**
@@ -120,7 +121,7 @@ class SettingsStore(private val context: Context) {
             profiles = profiles,
             activeProfileId = p[KEY_ACTIVE_PROFILE].orEmpty(),
             useNpmMirror = p[KEY_NPM_MIRROR] ?: false,
-            themeMode = p[KEY_THEME]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.LIGHT,
+            themeMode = p[KEY_THEME]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM,
             appLanguage = p[KEY_LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
                 ?: AppLanguage.SYSTEM,
             chineseDescriptions = p[KEY_ZH_DESCRIPTIONS] ?: true,

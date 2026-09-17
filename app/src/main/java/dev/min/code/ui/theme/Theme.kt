@@ -243,7 +243,7 @@ val MinShapes = Shapes(
 
 @Composable
 fun MinTheme(
-    mode: ThemeMode = ThemeMode.LIGHT,
+    mode: ThemeMode = ThemeMode.SYSTEM,
     content: @Composable () -> Unit,
 ) {
     val dark = when (mode) {
