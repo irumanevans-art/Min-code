@@ -1738,6 +1738,9 @@ class ClaudeCodeManager(
         _state.update { it.copy(stopping = true, applyingSettings = false) }
         scope.launch {
             sessionMutex.withLock {
+                // Starting 期间按停止：shutdown 会连调度台一起清掉，攥着的消息先退回输入框，
+                // 否则对话流里留下永远「排队中」的幽灵条目。dispose() 是刻意不退的（teardown 无接收方）
+                refundHeldMessages("会话已停止，排队的消息已退回输入框")
                 shutdown()
                 _state.update {
                     if (it.status == SessionStatus.Running || it.status == SessionStatus.Starting) {
