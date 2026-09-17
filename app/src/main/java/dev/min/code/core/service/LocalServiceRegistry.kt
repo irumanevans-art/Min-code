@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.rerere.workspace.ProotShellRunner
 import me.rerere.workspace.RootfsPatchOptions
@@ -99,6 +101,13 @@ class LocalServiceRegistry(
     private val _services = MutableStateFlow<List<LocalService>>(emptyList())
     val services: StateFlow<List<LocalService>> = _services.asStateFlow()
 
+    /**
+     * 串行化「去重检查 + 启动登记」：原先是裸的 check-then-act，两个并发调用拿着同一个
+     * command+cwd+port 一起穿过检查，同一个服务被双起。启动本身（proot、网络探测）
+     * 可能耗时数秒，锁会顺带把启动串行化 —— 启动很罕见，正确性换得起。
+     */
+    private val startMutex = Mutex()
+
     val anyRunning: StateFlow<Boolean> = _services
         .map { list ->
             list.any {
@@ -121,20 +130,17 @@ class LocalServiceRegistry(
         val cmd = command.trim()
         if (cmd.isEmpty()) return Result.failure(IllegalArgumentException("command empty"))
         val normalizedCwd = CwdPath.normalize(cwdGuest)
-        val existing = _services.value.firstOrNull {
-            (it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting) &&
-                it.command == cmd &&
-                it.cwdGuest == normalizedCwd &&
-                (port == null || it.port == port)
+        // 检查与启动必须在同一把锁里，否则两个并发调用一起穿过检查、各起一份
+        return startMutex.withLock {
+            findReusable(cmd, normalizedCwd, port)?.let { return@withLock Result.success(it.id) }
+            startLocked(
+                label = label?.trim().orEmpty(),
+                command = cmd,
+                cwdGuest = normalizedCwd,
+                port = port,
+                sourceSessionKey = sourceSessionKey,
+            )
         }
-        if (existing != null) return Result.success(existing.id)
-        return start(
-            label = label?.trim().orEmpty(),
-            command = cmd,
-            cwdGuest = normalizedCwd,
-            port = port,
-            sourceSessionKey = sourceSessionKey,
-        )
     }
 
     suspend fun start(
@@ -143,9 +149,42 @@ class LocalServiceRegistry(
         cwdGuest: String = "/workspace",
         port: Int? = null,
         sourceSessionKey: String? = null,
-    ): Result<String> = withContext(Dispatchers.IO) {
+    ): Result<String> {
         val cmd = command.trim()
-        if (cmd.isEmpty()) return@withContext Result.failure(IllegalArgumentException("command empty"))
+        if (cmd.isEmpty()) return Result.failure(IllegalArgumentException("command empty"))
+        val normalizedCwd = CwdPath.normalize(cwdGuest)
+        // 独立入口也复查重复：绕过 startFromAgent 直接进来，不该把同一条命令再起一份
+        return startMutex.withLock {
+            findReusable(cmd, normalizedCwd, port)?.let { return@withLock Result.success(it.id) }
+            startLocked(
+                label = label,
+                command = cmd,
+                cwdGuest = normalizedCwd,
+                port = port,
+                sourceSessionKey = sourceSessionKey,
+            )
+        }
+    }
+
+    /** Starting/Running 中 command+cwd+port 相同的条目（端口为 null 时不比端口） */
+    private fun findReusable(cmd: String, normalizedCwd: String, port: Int?): LocalService? =
+        _services.value.firstOrNull {
+            (it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting) &&
+                it.command == cmd &&
+                it.cwdGuest == normalizedCwd &&
+                (port == null || it.port == port)
+        }
+
+    /** [startMutex] 保护下的启动主体；入参的 command/cwd 已 trim / normalize */
+    private suspend fun startLocked(
+        label: String,
+        command: String,
+        cwdGuest: String,
+        port: Int?,
+        sourceSessionKey: String?,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val cmd = command
+        val normalizedCwd = cwdGuest
         val runningCount = _services.value.count {
             it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting
         }
@@ -153,7 +192,6 @@ class LocalServiceRegistry(
             return@withContext Result.failure(IllegalStateException("at most $MAX_RUNNING local services"))
         }
 
-        val normalizedCwd = CwdPath.normalize(cwdGuest)
         val id = UUID.randomUUID().toString().take(8)
         val niceLabel = label.trim().ifBlank { defaultLabel(cmd, port) }
         val now = System.currentTimeMillis()
