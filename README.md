@@ -23,6 +23,12 @@ No root required. Phones and tablets.
 视觉与动效规范在 `DESIGN.md`（「海」：纸 / 墨 / 海）。界面上没有"蓝色"这个色值——每一块蓝都是把纸镂空成那个形状、
 盖在一张酒精墨蓝纹理上的窗；整屏共用一片海，滚动时纸在海上滑，倾斜手机时海在纸下错位。桌面图标是两色对角线的 Min（Cormorant Garamond 斜体，沙/海）。
 
+<p align="center">
+  <img src="docs/screenshots/session-dark.jpg" width="250" alt="会话页 · 深色">
+  <img src="docs/screenshots/tools-and-cost-dark.jpg" width="250" alt="工具调用与上下文用量 · 深色">
+  <img src="docs/screenshots/tablet-split-light.jpg" width="510" alt="平板横屏双栏 · 浅色">
+</p>
+
 ## 构建
 
 ```bash
