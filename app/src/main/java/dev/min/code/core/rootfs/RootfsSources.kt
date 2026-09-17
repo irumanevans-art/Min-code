@@ -5,8 +5,12 @@ package dev.min.code.core.rootfs
  * 实测可下；清华/中科大对这个路径返回 403）。
  *
  * 按 CPU 架构选包：手机/平板是 arm64，模拟器是 x86_64 —— 之前写死 arm64 在模拟器上根本装不上。
- * Rootfs 没有校验和可以写死（cdimage 的 SHA256SUMS 随 point release 变），下载完靠 tar 能不能
- * 解开 + `bin/sh` 在不在判断；它是公开发行版镜像，信任模型和 apt 本身一样。
+ *
+ * 信任模型（H1/H2 修复后）：安装时由 `RootfsInstaller` 先拉 [sumsUrl] 的 SHA256SUMS，
+ * 动态解析当前 point release 的文件名（上游发 24.04.4 后这里写死的 24.04.3 不会再 404），
+ * 下载完按清单校验 SHA-256；镜像源下载的包也用这份官方清单校验（内容逐字节相同）。
+ * 校验失败抛 `RootfsChecksumException`，调用方不得静默换源重试。
+ * [RELEASE_FILE] 现在只用于界面预填，不再需要跟着上游发版手动 bump。
  */
 object RootfsSources {
     private const val RELEASE_DIR = "ubuntu-base/releases/24.04/release"
@@ -17,6 +21,9 @@ object RootfsSources {
     fun defaultUrl(): String = "https://cdimage.ubuntu.com/$RELEASE_DIR/$RELEASE_FILE-$ARCH.tar.gz"
 
     fun mirrorUrl(): String = "https://mirrors.aliyun.com/ubuntu-cdimage/$RELEASE_DIR/$RELEASE_FILE-$ARCH.tar.gz"
+
+    /** 官方 SHA256SUMS：安装时的校验清单（信任锚），文件名与哈希都以它为准 */
+    fun sumsUrl(): String = "https://cdimage.ubuntu.com/$RELEASE_DIR/SHA256SUMS"
 
     /** 官方在前，镜像兜底 */
     fun candidates(): List<String> = listOf(defaultUrl(), mirrorUrl())

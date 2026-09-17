@@ -24,6 +24,7 @@ import dev.min.code.core.rootfs.SelectionEstimate
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.rootfs.WorkspaceUsage
 import dev.min.code.ui.terminal.WorkspaceTerminalSessionManager
+import me.rerere.workspace.RootfsChecksumException
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstallStage
 import me.rerere.workspace.WorkspaceFileEntry
@@ -752,6 +753,8 @@ class WorkspaceDetailVM(
                         throw e
                     } catch (error: Throwable) {
                         lastError = error
+                        // 校验失败（SHA-256 不符）不许静默换源重试：换源也得过同一份官方清单
+                        if (error is RootfsChecksumException) break
                     }
                 }
                 if (lastError != null) {

@@ -101,7 +101,7 @@ class WorkspaceRepository(
         _workspace.value = _workspace.value.copy(shellStatus = WorkspaceShellStatus.INSTALLING.name)
         try {
             runInterruptible(Dispatchers.IO) {
-                rootfsInstaller.install(root, url, onProgress)
+                rootfsInstaller.install(root, url, manifestUrl = RootfsSources.sumsUrl(), onProgress = onProgress)
             }
             installingMarker.delete()
             refresh()

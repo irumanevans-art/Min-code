@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.rerere.workspace.RootfsChecksumException
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.WorkspaceShellStatus
 
@@ -116,6 +117,9 @@ class SetupVM(
                     throw e
                 } catch (e: Throwable) {
                     lastError = e
+                    // 校验失败（SHA-256 不符）不许静默换源重试：换源也得过同一份官方清单，
+                    // 内容不可信时直接失败并明示，而不是把信任转移给下一个源
+                    if (e is RootfsChecksumException) break
                 }
             }
             _state.update {
