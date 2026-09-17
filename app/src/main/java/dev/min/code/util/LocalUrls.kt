@@ -55,8 +55,20 @@ object LocalUrls {
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * "listening on port 8765" / "Server started at :3000" / "running on 0.0.0.0:5173" 这类提示。
+     *
+     * 三道收紧，缺一不可 —— 一段 curl 回来的 WordPress CSS 把原来的三处宽松全踩中，
+     * 预览槽弹出 `127.0.0.1:100`（`max-width:100%` 里取出来的）：
+     * 1. 关键词整词（`\b`）。挡的是 `inbound` / `restarted`；**挡不住** `--wp-bound-block-color`
+     *    —— 连字符是非词字符，`\bbound\b` 在那里照样成立，那条要靠下面两条挡。
+     * 2. 关键词到端口之间最多 80 个非换行字符，不能跨半页 CSS 去找一个冒号。
+     * 3. 裸 `:N` 只在前面是空白或 loopback 主机时算端口（`max-width:100%`、`08:24:26` 都不算），
+     *    `port N` 形式照旧；数字后面不能再接 `%` `.` 数字或字母。
+     */
     private val PORT_HINT = Regex(
-        """(?:listening|running|serving|bound|started).*?(?:on\s+)?(?:port\s+|:)(\d{2,5})\b""",
+        """\b(?:listening|running|serving|bound|started)\b[^\n]{0,80}?""" +
+            """(?:\bport\s+(\d{2,5})|(?:(?<=\s)|127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1?\]|\*):(\d{2,5}))(?![%.\d\w])""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -69,7 +81,11 @@ object LocalUrls {
         }
         if (found.isEmpty()) {
             PORT_HINT.findAll(text).forEach { m ->
-                val port = m.groupValues.getOrNull(1)?.toIntOrNull() ?: return@forEach
+                // 两个捕获组：1 = "port N"，2 = 裸 ":N"。没命中的那个是空串
+                val port = (
+                    m.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() }
+                        ?: m.groupValues.getOrNull(2)
+                    )?.toIntOrNull() ?: return@forEach
                 if (port in 1..65535) found += loopbackUrl(port)
             }
         }
