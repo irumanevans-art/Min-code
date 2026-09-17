@@ -89,8 +89,7 @@ class SetupVM(
 
     fun saveConnection(token: String, baseUrl: String) {
         viewModelScope.launch {
-            settingsStore.setToken(token)
-            settingsStore.setBaseUrl(baseUrl.ifBlank { AppSettings.DEFAULT_BASE_URL })
+            settingsStore.setConnection(token, baseUrl.ifBlank { AppSettings.DEFAULT_BASE_URL })
             refresh()
         }
     }

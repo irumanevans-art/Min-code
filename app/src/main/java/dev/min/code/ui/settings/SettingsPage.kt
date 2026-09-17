@@ -3,6 +3,7 @@ package dev.min.code.ui.settings
 import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,12 +26,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -39,11 +42,16 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.BuildConfig
 import dev.min.code.R
+import dev.min.code.core.settings.ApiProfile
 import dev.min.code.core.settings.AppLanguage
+import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.ui.components.BackButton
+import dev.min.code.ui.components.InkButtonTone
+import dev.min.code.ui.components.InkDialog
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkIconButton
+import dev.min.code.ui.components.InkRadio
 import dev.min.code.ui.components.InkSegmented
 import dev.min.code.ui.components.InkSwitch
 import dev.min.code.ui.components.InkTextButton
@@ -58,22 +66,25 @@ import dev.min.code.ui.theme.LocalDarkMode
 import dev.min.code.ui.theme.LocalFormSwitch
 import dev.min.code.ui.theme.sea
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.PencilEdit02
+import me.rerere.hugeicons.stroke.PlusSign
 import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 import org.koin.androidx.compose.koinViewModel
 
 /**
  * App 设置。只有四样：连接、npm 源、主题、关于——没有"设置页里的设置页"。
- * token / 地址改完点「应用」才落盘：每敲一个字就写 DataStore 没必要，也让人不确定改没改。
+ *
+ * 连接是一张**可以存多条**的表：一条 = 备注名 + token + 中转地址。手上常年挂着两三个
+ * 中转站的人不该每次换站都重敲一遍 key。改动落盘在对话框里点「应用」那一下，
+ * 列表上点一下只是换当前生效的那条。
  */
 @Composable
 fun SettingsPage(vm: SettingsVM = koinViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val navController = LocalNavController.current
-    var token by rememberSaveable(settings.token) { mutableStateOf(settings.token) }
-    var baseUrl by rememberSaveable(settings.baseUrl) { mutableStateOf(settings.baseUrl) }
-    var visible by rememberSaveable { mutableStateOf(false) }
-    val dirty = token.trim() != settings.token || baseUrl.trim().trimEnd('/') != settings.baseUrl
+    // null = 对话框关着；id 为 null 的 Edit = 新增
+    var editing by remember { mutableStateOf<ProfileEdit?>(null) }
     val scrollState = rememberScrollState()
 
     Scaffold(
@@ -99,36 +110,23 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 SectionTitle(stringResource(R.string.settings_section_connection))
-                InkTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it },
-                    label = "ANTHROPIC_BASE_URL",
-                    singleLine = true,
-                    monospace = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                InkTextField(
-                    value = token,
-                    onValueChange = { token = it },
-                    label = "ANTHROPIC_AUTH_TOKEN",
-                    singleLine = true,
-                    monospace = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailing = {
-                        InkIconButton(
-                            icon = if (visible) HugeIcons.ViewOff else HugeIcons.View,
-                            contentDescription = if (visible) {
-                                stringResource(R.string.common_hide)
-                            } else {
-                                stringResource(R.string.common_show)
-                            },
-                            onClick = { visible = !visible },
-                            size = 32.dp,
-                            iconSize = 18.dp,
+                if (settings.profiles.isEmpty()) {
+                    Text(
+                        stringResource(R.string.settings_connection_empty),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    val activeId = settings.activeProfile?.id
+                    settings.profiles.forEach { profile ->
+                        ProfileRow(
+                            profile = profile,
+                            selected = profile.id == activeId,
+                            onSelect = { vm.setActiveProfile(profile.id) },
+                            onEdit = { editing = profile.toEdit() },
                         )
-                    },
-                )
+                    }
+                }
                 Text(
                     stringResource(R.string.settings_connection_hint),
                     style = MaterialTheme.typography.labelSmall,
@@ -136,12 +134,9 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                 )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     InkTextButton(
-                        onClick = {
-                            vm.setToken(token.trim())
-                            vm.setBaseUrl(baseUrl.trim())
-                        },
-                        enabled = dirty && token.isNotBlank(),
-                    ) { Text(stringResource(R.string.common_apply)) }
+                        onClick = { editing = ProfileEdit(id = null) },
+                        icon = HugeIcons.PlusSign,
+                    ) { Text(stringResource(R.string.settings_connection_add)) }
                 }
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
@@ -185,6 +180,178 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                 )
             }
         }
+    }
+
+    editing?.let { edit ->
+        ProfileDialog(
+            edit = edit,
+            // 最后一条不给删：删光了下次开会话只会撞上"未配置 token"，
+            // 想换内容在这个对话框里改就是了
+            canDelete = edit.id != null && settings.profiles.size > 1,
+            onDismiss = { editing = null },
+            onSave = { label, token, baseUrl ->
+                if (edit.id == null) vm.addProfile(label, token, baseUrl)
+                else vm.updateProfile(edit.id, label, token, baseUrl)
+                editing = null
+            },
+            onDelete = {
+                edit.id?.let { vm.deleteProfile(it) }
+                editing = null
+            },
+        )
+    }
+}
+
+/** 对话框的初值。[id] 为 null = 新增 */
+private data class ProfileEdit(
+    val id: String?,
+    val label: String = "",
+    val token: String = "",
+    val baseUrl: String = AppSettings.DEFAULT_BASE_URL,
+)
+
+private fun ApiProfile.toEdit() = ProfileEdit(id = id, label = label, token = token, baseUrl = baseUrl)
+
+/**
+ * 表里的一行。整行可点 = 切到这一条；右边那颗笔才是改内容。
+ *
+ * token 在列表上**只露头尾**：设置页是会被人从背后看到的，一整条 key 铺在那里没有道理。
+ */
+@Composable
+private fun ProfileRow(
+    profile: ApiProfile,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onSelect)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        InkRadio(selected = selected, onClick = onSelect)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    profile.displayName(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (selected) {
+                    Text(
+                        stringResource(R.string.settings_connection_active),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.sea.seaDeep,
+                    )
+                }
+            }
+            Text(
+                listOf(profile.baseUrl, profile.maskedToken()).filter { it.isNotBlank() }.joinToString("  ·  "),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = JetbrainsMono,
+                // http:// 的中转站会把 Bearer 头明文送上路，地址本身就该是个警示
+                color = if (profile.baseUrl.startsWith("http://", ignoreCase = true)) {
+                    MaterialTheme.sea.vermilion
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        InkIconButton(
+            icon = HugeIcons.PencilEdit02,
+            contentDescription = stringResource(R.string.settings_connection_edit_action),
+            onClick = onEdit,
+            size = 34.dp,
+            iconSize = 17.dp,
+        )
+    }
+}
+
+/** 新增 / 编辑一条连接。token 默认打码，右边一颗眼睛可以看明文 */
+@Composable
+private fun ProfileDialog(
+    edit: ProfileEdit,
+    canDelete: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (label: String, token: String, baseUrl: String) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var label by rememberSaveable(edit.id) { mutableStateOf(edit.label) }
+    var token by rememberSaveable(edit.id) { mutableStateOf(edit.token) }
+    var baseUrl by rememberSaveable(edit.id) { mutableStateOf(edit.baseUrl) }
+    var visible by rememberSaveable { mutableStateOf(false) }
+    InkDialog(
+        onDismissRequest = onDismiss,
+        title = stringResource(
+            if (edit.id == null) R.string.settings_connection_new else R.string.settings_connection_edit,
+        ),
+        confirmButton = {
+            InkTextButton(
+                onClick = { onSave(label, token, baseUrl) },
+                enabled = token.isNotBlank(),
+            ) { Text(stringResource(R.string.common_apply)) }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (canDelete) {
+                    InkTextButton(onClick = onDelete, tone = InkButtonTone.Vermilion) {
+                        Text(stringResource(R.string.common_delete))
+                    }
+                }
+                InkTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+            }
+        },
+    ) {
+        InkTextField(
+            value = label,
+            onValueChange = { label = it },
+            label = stringResource(R.string.settings_connection_label),
+            placeholder = stringResource(R.string.settings_connection_label_hint),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        InkTextField(
+            value = baseUrl,
+            onValueChange = { baseUrl = it },
+            label = "ANTHROPIC_BASE_URL",
+            singleLine = true,
+            monospace = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        InkTextField(
+            value = token,
+            onValueChange = { token = it },
+            label = "ANTHROPIC_AUTH_TOKEN",
+            singleLine = true,
+            monospace = true,
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+            trailing = {
+                InkIconButton(
+                    icon = if (visible) HugeIcons.ViewOff else HugeIcons.View,
+                    contentDescription = if (visible) {
+                        stringResource(R.string.common_hide)
+                    } else {
+                        stringResource(R.string.common_show)
+                    },
+                    onClick = { visible = !visible },
+                    size = 32.dp,
+                    iconSize = 18.dp,
+                )
+            },
+        )
     }
 }
 

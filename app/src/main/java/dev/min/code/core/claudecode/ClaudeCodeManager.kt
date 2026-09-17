@@ -532,7 +532,8 @@ class ClaudeCodeManager(
     /** ANTHROPIC_BASE_URL：中转站地址，用户在设置里改 */
     suspend fun getBaseUrl(): String = settingsStore.current().baseUrl.ifBlank { DEFAULT_BASE_URL }
 
-    suspend fun saveToken(token: String) = settingsStore.setToken(token)
+    /** 只换当前这条连接配置的 token，地址原样留着 */
+    suspend fun saveToken(token: String) = settingsStore.setConnection(token, settingsStore.current().baseUrl)
 
     /**
      * 启动会话。重复调用会先等旧会话彻底结束。

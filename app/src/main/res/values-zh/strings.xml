@@ -21,6 +21,14 @@
   <string name="settings_section_appearance">外观</string>
   <string name="settings_section_language">语言</string>
   <string name="settings_connection_hint">改动只对之后新开的会话生效；正在跑的会话用的还是启动时注入的值。</string>
+  <string name="settings_connection_add">新增一项</string>
+  <string name="settings_connection_empty">还没有 key，加一条才能开会话。</string>
+  <string name="settings_connection_new">新增连接</string>
+  <string name="settings_connection_edit">编辑连接</string>
+  <string name="settings_connection_label">备注名</string>
+  <string name="settings_connection_label_hint">自己认得出来就行</string>
+  <string name="settings_connection_edit_action">编辑</string>
+  <string name="settings_connection_active">使用中</string>
   <string name="settings_npm_mirror_title">用淘宝 npm 源装 / 更新 CLI</string>
   <string name="settings_npm_mirror_subtitle">原生二进制仍按官方 registry 的 sha512 校验，镜像只提供字节。</string>
   <string name="settings_battery_title">电池优化</string>

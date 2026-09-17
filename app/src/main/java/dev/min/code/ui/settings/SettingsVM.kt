@@ -15,8 +15,14 @@ class SettingsVM(private val store: SettingsStore) : ViewModel() {
     val settings: StateFlow<AppSettings> = store.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
 
-    fun setToken(token: String) = viewModelScope.launch { store.setToken(token) }
-    fun setBaseUrl(url: String) = viewModelScope.launch { store.setBaseUrl(url) }
+    fun addProfile(label: String, token: String, baseUrl: String) =
+        viewModelScope.launch { store.addProfile(label, token, baseUrl) }
+
+    fun updateProfile(id: String, label: String, token: String, baseUrl: String) =
+        viewModelScope.launch { store.updateProfile(id, label, token, baseUrl) }
+
+    fun deleteProfile(id: String) = viewModelScope.launch { store.deleteProfile(id) }
+    fun setActiveProfile(id: String) = viewModelScope.launch { store.setActiveProfile(id) }
     fun setUseNpmMirror(enabled: Boolean) = viewModelScope.launch { store.setUseNpmMirror(enabled) }
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { store.setThemeMode(mode) }
     fun setAppLanguage(language: AppLanguage) = viewModelScope.launch { store.setAppLanguage(language) }

@@ -21,6 +21,14 @@
   <string name="settings_section_appearance">Appearance</string>
   <string name="settings_section_language">Language</string>
   <string name="settings_connection_hint">Changes apply to sessions started after this. Running sessions still use the values injected at launch.</string>
+  <string name="settings_connection_add">Add a key</string>
+  <string name="settings_connection_empty">No key yet. Add one to start a session.</string>
+  <string name="settings_connection_new">New connection</string>
+  <string name="settings_connection_edit">Edit connection</string>
+  <string name="settings_connection_label">Label</string>
+  <string name="settings_connection_label_hint">Anything you can tell them apart by</string>
+  <string name="settings_connection_edit_action">Edit</string>
+  <string name="settings_connection_active">In use</string>
   <string name="settings_npm_mirror_title">Install / update CLI via Taobao npm mirror</string>
   <string name="settings_npm_mirror_subtitle">The native binary is still checked against the official registry sha512; the mirror only serves bytes.</string>
   <string name="settings_battery_title">Battery optimization</string>
