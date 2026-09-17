@@ -39,4 +39,55 @@ class LocalServiceIntentTest {
             LocalServiceIntent.stripBackgroundNoise("python3 -m http.server 8765 &"),
         )
     }
+
+    @Test
+    fun one_shot_commands_mentioning_servers_are_not_hosted() {
+        // 白名单词出现在参数位置的一次性命令：旧版 containsMatchIn 会误杀
+        assertFalse(LocalServiceIntent.shouldHost("pip install uvicorn"))
+        assertFalse(LocalServiceIntent.shouldHost("cat vite.config.ts"))
+        assertFalse(LocalServiceIntent.shouldHost("npm install -D vite"))
+        assertFalse(LocalServiceIntent.shouldHost("grep uvicorn logs.txt"))
+        assertFalse(LocalServiceIntent.shouldHost("echo 'remember to run uvicorn later'"))
+        assertFalse(LocalServiceIntent.shouldHost("python -m pip install uvicorn"))
+        assertFalse(LocalServiceIntent.shouldHost("tail -f vite.log"))
+    }
+
+    @Test
+    fun dev_servers_in_command_position_are_hosted() {
+        assertTrue(LocalServiceIntent.shouldHost("npm run dev"))
+        assertTrue(LocalServiceIntent.shouldHost("npm dev"))
+        assertTrue(LocalServiceIntent.shouldHost("npx vite"))
+        assertTrue(LocalServiceIntent.shouldHost("npx --yes vite"))
+        assertTrue(LocalServiceIntent.shouldHost("bunx vite"))
+        assertTrue(LocalServiceIntent.shouldHost("uvicorn main:app --port 8000"))
+        assertTrue(LocalServiceIntent.shouldHost("python3 -m http.server"))
+        assertTrue(LocalServiceIntent.shouldHost("vite"))
+        assertTrue(LocalServiceIntent.shouldHost("vite --host 0.0.0.0"))
+        assertTrue(LocalServiceIntent.shouldHost("pnpm dev"))
+        assertTrue(LocalServiceIntent.shouldHost("yarn dev"))
+        assertTrue(LocalServiceIntent.shouldHost("python -m uvicorn main:app"))
+        assertTrue(LocalServiceIntent.shouldHost("python manage.py runserver"))
+        assertTrue(LocalServiceIntent.shouldHost("./manage.py runserver"))
+        assertTrue(LocalServiceIntent.shouldHost("npx serve"))
+        assertTrue(LocalServiceIntent.shouldHost("next dev"))
+        assertTrue(LocalServiceIntent.shouldHost("flask run"))
+        assertTrue(LocalServiceIntent.shouldHost("php -S 0.0.0.0:8000"))
+        assertTrue(LocalServiceIntent.shouldHost("docker compose up"))
+    }
+
+    @Test
+    fun shell_wrappers_still_reach_the_real_command() {
+        assertTrue(LocalServiceIntent.shouldHost("cd /workspace && npm run dev"))
+        assertTrue(LocalServiceIntent.shouldHost("sudo uvicorn main:app --port 8000"))
+        assertTrue(LocalServiceIntent.shouldHost("PORT=5173 npx vite"))
+        assertTrue(LocalServiceIntent.shouldHost("env HOST=0.0.0.0 vite"))
+        assertTrue(LocalServiceIntent.shouldHost("nohup pnpm dev"))
+        assertTrue(LocalServiceIntent.shouldHost("yarn dev | tee dev.log"))
+        assertTrue(LocalServiceIntent.shouldHost("git pull; uvicorn main:app"))
+        // 拿不准的宁可漏：sudo 带参 flag、python 带参 flag 不猜
+        assertFalse(LocalServiceIntent.shouldHost("sudo -u node npm run dev"))
+        assertFalse(LocalServiceIntent.shouldHost("python -W ignore manage.py runserver"))
+        // 管道右段的命令位置才看：uvicorn 只是 grep 的参数
+        assertFalse(LocalServiceIntent.shouldHost("cat app.log | grep uvicorn"))
+    }
 }

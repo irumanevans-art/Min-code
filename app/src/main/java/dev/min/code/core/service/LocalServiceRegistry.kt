@@ -513,25 +513,39 @@ object LocalServiceIntent {
     /**
      * 无 flag 时的薄补：明显的前台 dev server。宁可漏，不要把 `ls` / `python script.py` 送去托管。
      * 主路径永远是 [isBackgroundFlag]。
+     *
+     * 全部带 `^` 锚：只在「命令位置」匹配，不允许在命令串任意位置出现。
+     * 调用方必须先把 shell 结构拆段、剥掉包装（见 [splitSegments] / [effectiveWords]），
+     * 再把有效命令词 join 成串喂给这些正则。直接 containsMatchIn 会把
+     * `pip install uvicorn` / `cat vite.config.ts` 这类一次性命令误托管。
      */
     private val DEV_SERVER = listOf(
-        Regex("""python3?\s+-m\s+http\.server\b"""),
-        Regex("""\buvicorn\b"""),
-        Regex("""\bgunicorn\b"""),
-        Regex("""\bflask\s+run\b"""),
-        Regex("""\bdjango-admin\s+runserver\b"""),
-        Regex("""\bmanage\.py\s+runserver\b"""),
-        Regex("""\bnext\s+dev\b"""),
-        Regex("""\bnpm\s+(run\s+)?dev\b"""),
-        Regex("""\byarn\s+dev\b"""),
-        Regex("""\bpnpm\s+dev\b"""),
-        Regex("""\bvite\b"""),
-        Regex("""\bhttp-server\b"""),
-        Regex("""\bnpx\s+serve\b"""),
-        Regex("""\bphp\s+-S\b"""),
-        Regex("""\brails\s+s(erver)?\b"""),
-        Regex("""\bdocker\s+compose\s+up\b"""),
+        Regex("""^http\.server\b"""), // python[3] -m http.server 经解释器解包后到达这里
+        Regex("""^uvicorn\b"""),
+        Regex("""^gunicorn\b"""),
+        Regex("""^flask\s+run\b"""),
+        Regex("""^django-admin\s+runserver\b"""),
+        Regex("""^manage\.py\s+runserver\b"""),
+        Regex("""^next\s+dev\b"""),
+        Regex("""^npm\s+(run\s+)?dev\b"""),
+        Regex("""^yarn\s+dev\b"""),
+        Regex("""^pnpm\s+dev\b"""),
+        Regex("""^vite\b"""),
+        Regex("""^serve\b"""), // npx serve / bunx serve 解包后到达这里
+        Regex("""^http-server\b"""),
+        Regex("""^php\s+-S\b"""),
+        Regex("""^rails\s+s(?:erver)?\b"""),
+        Regex("""^docker\s+compose\s+up\b"""),
     )
+
+    /** 段首的 `FOO=bar` 环境变量赋值前缀 */
+    private val ENV_ASSIGN = Regex("""^[A-Za-z_][A-Za-z0-9_]*=.*""")
+
+    /** python / python3 / python3.11 这类解释器名 */
+    private val PYTHON_BIN = Regex("""^python[0-9.]*$""")
+
+    /** 无参数 python flag；带参 flag（-W / -X …）不猜，直接当拿不准 → 不托管 */
+    private val PYTHON_NOARG_FLAGS = setOf("-u", "-O", "-OO", "-B", "-q", "-I", "-E", "-s", "-S", "-v")
 
     private val PORT_FLAG = Regex("""(?:--port[= ]|port=)(\d{2,5})\b""", RegexOption.IGNORE_CASE)
     private val TRAILING_PORT = Regex("""\b(\d{4,5})\s*$""")
@@ -549,10 +563,139 @@ object LocalServiceIntent {
     fun looksLongLived(command: String): Boolean {
         val c = command.trim()
         if (c.isEmpty()) return false
-        if (DEV_SERVER.any { it.containsMatchIn(c) }) return true
+        // 分词后只看「命令位置」：管道/列表拆段 → 剥 env/sudo/nohup 包装 → 解包
+        // npx/bunx/python 解释器。拿不准（奇怪 flag、引号里的内容）就当不是，宁可漏。
+        if (splitSegments(c).any { segment -> isDevServer(effectiveWords(segment)) }) return true
         // bare & / nohup 只有带端口线索时才当启发式（仍非主路径）
         val bg = c.endsWith("&") || c.contains(" nohup ") || c.startsWith("nohup ")
         return bg && (PORT_FLAG.containsMatchIn(c) || TRAILING_PORT.containsMatchIn(c.removeSuffix("&").trim()))
+    }
+
+    /** 命令位置上的有效命令词是否命中 dev-server 白名单 */
+    private fun isDevServer(words: List<String>): Boolean {
+        if (words.isEmpty()) return false
+        val line = words.joinToString(" ")
+        return DEV_SERVER.any { it.containsMatchIn(line) }
+    }
+
+    /**
+     * 按 shell 结构拆段：`|` / `||` / `&&` / `;` / `&` 各起一段，段首即命令位置。
+     * 单双引号内的分隔符不拆（`echo "a|b"` 不会误拆）。引号本身从词里剥掉。
+     * 子壳括号当空白丢掉 —— 简化处理，最坏情况是漏托管，不会误托管。
+     */
+    private fun splitSegments(command: String): List<List<String>> {
+        val segments = mutableListOf<List<String>>()
+        var current = mutableListOf<String>()
+        val sb = StringBuilder()
+        var quote: Char? = null
+        fun flushWord() {
+            if (sb.isNotEmpty()) {
+                current += sb.toString()
+                sb.clear()
+            }
+        }
+        fun flushSegment() {
+            flushWord()
+            if (current.isNotEmpty()) {
+                segments += current
+                current = mutableListOf()
+            }
+        }
+        var i = 0
+        while (i < command.length) {
+            val ch = command[i]
+            when {
+                quote != null -> if (ch == quote) quote = null else sb.append(ch)
+                ch == '\'' || ch == '"' -> quote = ch
+                ch.isWhitespace() -> flushWord()
+                ch == ';' -> flushSegment()
+                ch == '|' -> {
+                    flushSegment()
+                    if (i + 1 < command.length && command[i + 1] == '|') i++
+                }
+                ch == '&' -> {
+                    flushSegment()
+                    if (i + 1 < command.length && command[i + 1] == '&') i++
+                }
+                ch == '(' || ch == ')' -> flushWord()
+                ch == '\\' && i + 1 < command.length -> {
+                    i++
+                    sb.append(command[i])
+                }
+                else -> sb.append(ch)
+            }
+            i++
+        }
+        flushSegment()
+        return segments
+    }
+
+    private fun basename(word: String): String =
+        word.substringAfterLast('/').substringAfterLast('\\')
+
+    /**
+     * 把一个段的词归约成「有效命令 + 参数」：
+     * - 剥掉段首 env 赋值（`FOO=bar cmd`）、`sudo` / `nohup` / `env` 包装、`cd` 不在此处理
+     *   （`cd dir && cmd` 已被 [splitSegments] 拆成两段）；
+     * - 解包解释器：`npx` / `bunx` 的有效命令是它的第一个非 flag 参数；
+     *   `python[3] -m <module>` 的有效命令是模块名；`python[3] <script>` 的有效命令是脚本名
+     *   （`python manage.py runserver` → `manage.py runserver`，`python app.py` → `app.py`，不命中白名单）。
+     * 任何一步拿不准就返回空表 → 不托管。
+     */
+    private fun effectiveWords(segment: List<String>): List<String> {
+        var words = segment.dropWhile { it.matches(ENV_ASSIGN) }
+        // sudo / nohup / env 包装：循环剥（sudo env FOO=bar cmd 这种叠甲也剥）
+        while (true) {
+            val head = words.firstOrNull()?.let(::basename) ?: return emptyList()
+            when (head) {
+                "sudo" -> {
+                    words = words.drop(1)
+                    // sudo 的 flag 可能带值（-u root），不猜：见到 flag 就当拿不准
+                    if (words.firstOrNull()?.startsWith("-") == true) return emptyList()
+                    words = words.dropWhile { it.matches(ENV_ASSIGN) }
+                }
+                "nohup" -> {
+                    words = words.drop(1)
+                    words = words.dropWhile { it.matches(ENV_ASSIGN) }
+                }
+                "env" -> {
+                    words = words.drop(1)
+                    if (words.firstOrNull()?.startsWith("-") == true) return emptyList()
+                    words = words.dropWhile { it.matches(ENV_ASSIGN) }
+                }
+                else -> return unwrapInterpreter(words)
+            }
+        }
+    }
+
+    private fun unwrapInterpreter(words: List<String>): List<String> {
+        val head = words.firstOrNull()?.let(::basename) ?: return emptyList()
+        return when {
+            head == "npx" || head == "bunx" -> {
+                var rest = words.drop(1)
+                // npx 的 flag 里 -p/--package 带值要连值一起跳；其余 flag 只跳自身。
+                // 全是 flag 没见过真命令 → 拿不准 → 空表不托管
+                while (rest.isNotEmpty() && rest.first().startsWith("-")) {
+                    rest = if (rest.first() == "-p" || rest.first() == "--package") {
+                        rest.drop(2)
+                    } else {
+                        rest.drop(1)
+                    }
+                }
+                rest
+            }
+            head.matches(PYTHON_BIN) -> {
+                var rest = words.drop(1)
+                while (rest.firstOrNull() in PYTHON_NOARG_FLAGS) rest = rest.drop(1)
+                val t = rest.firstOrNull() ?: return emptyList()
+                when {
+                    t == "-m" -> rest.drop(1) // 模块名成为有效命令
+                    t.startsWith("-") -> emptyList() // 带参 flag，拿不准
+                    else -> listOf(basename(t)) + rest.drop(1)
+                }
+            }
+            else -> listOf(basename(words.first())) + words.drop(1)
+        }
     }
 
     fun shouldHost(command: String, inputFlags: Map<String, Any?> = emptyMap()): Boolean {
