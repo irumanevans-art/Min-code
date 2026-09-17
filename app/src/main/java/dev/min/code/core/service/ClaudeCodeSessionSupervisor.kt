@@ -22,6 +22,7 @@ import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.util.cancelNotification
 import dev.min.code.util.sendNotification
 import org.koin.java.KoinJavaComponent.inject
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -180,11 +181,13 @@ class ClaudeCodeSessionSupervisor(
 
     private companion object {
         /**
-         * 通知 id 由会话 key 派生。取 hashCode 后再偏移到两段互不重叠的区间，
-         * 避免和 App 里其它固定 id（1 / 2001 / 2002 / 2003）撞车。
+         * 通知 id 由会话 key 派生。偏移到两段互不重叠的区间，避免和 App 里其它固定 id
+         * （1 / 2001 / 2002 / 2003）撞车。散列用 [stableKeyInt]（SHA-256 前 4 字节，
+         * 19 位掩码后仍有 50 万空间）：原来 `hashCode() and 0xFFFF` 只有 16 位熵，
+         * 两个会话撞上下位就会把对方的通知覆盖、把权限按钮应答到错误会话上。
          */
-        fun permissionNotificationId(key: String): Int = 3_000_000 + (key.hashCode() and 0xFFFF)
-        fun doneNotificationId(key: String): Int = 4_000_000 + (key.hashCode() and 0xFFFF)
+        fun permissionNotificationId(key: String): Int = PERMISSION_NOTIFICATION_BASE + (stableKeyInt(key) and KEY_MASK_19)
+        fun doneNotificationId(key: String): Int = DONE_NOTIFICATION_BASE + (stableKeyInt(key) and KEY_MASK_19)
 
         fun openPageIntent(context: Context): PendingIntent {
             val intent = Intent(context, MainActivity::class.java).apply {
@@ -214,7 +217,7 @@ class ClaudeCodePermissionReceiver : BroadcastReceiver() {
         val allow = intent.getBooleanExtra(EXTRA_ALLOW, false)
         val registry: ClaudeCodeSessionRegistry by inject(ClaudeCodeSessionRegistry::class.java)
         registry.answerPermission(key, allow)
-        context.cancelNotification(3_000_000 + (key.hashCode() and 0xFFFF))
+        context.cancelNotification(PERMISSION_NOTIFICATION_BASE + (stableKeyInt(key) and KEY_MASK_19))
     }
 
     companion object {
@@ -231,11 +234,31 @@ class ClaudeCodePermissionReceiver : BroadcastReceiver() {
             return PendingIntent.getBroadcast(
                 context,
                 // allow / deny 必须是两个不同的 requestCode，否则 FLAG_UPDATE_CURRENT
-                // 会让后建的那个把先建的 extras 覆盖掉——两个按钮就成了同一个动作
-                (key.hashCode() and 0xFFFF) * 2 + if (allow) 1 else 0,
+                // 会让后建的那个把先建的 extras 覆盖掉——两个按钮就成了同一个动作。
+                // 散列用 stableKeyInt（32 位）：16 位熵时撞车的两个会话会共用一个
+                // PendingIntent，权限按钮应答到错误会话上
+                stableKeyInt(key) * 2 + if (allow) 1 else 0,
                 intent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         }
     }
+}
+
+private const val PERMISSION_NOTIFICATION_BASE = 3_000_000
+private const val DONE_NOTIFICATION_BASE = 4_000_000
+
+/** 两段通知 id 区间各 19 位（3M/4M 起步，互不重叠，也不撞 App 的固定小 id） */
+private const val KEY_MASK_19 = 0x7FFFF
+
+/**
+ * 会话 key → 稳定的 32 位整数（SHA-256 前 4 字节）。取代 `hashCode() and 0xFFFF` ——
+ * 16 位熵在多会话下撞车不罕见，通知互相覆盖、PendingIntent 串号是安全事故。
+ */
+private fun stableKeyInt(key: String): Int {
+    val digest = MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
+    return (digest[0].toInt() and 0xFF shl 24) or
+        (digest[1].toInt() and 0xFF shl 16) or
+        (digest[2].toInt() and 0xFF shl 8) or
+        (digest[3].toInt() and 0xFF)
 }

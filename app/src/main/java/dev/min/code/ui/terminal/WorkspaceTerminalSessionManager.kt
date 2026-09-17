@@ -122,7 +122,16 @@ class WorkspaceTerminalSessionManager internal constructor(
         onlyIfEmpty: Boolean,
         sessions: List<SessionTab> = emptyList(),
     ) {
-        if (root in creationJobs) return
+        val running = creationJobs[root]
+        if (running != null) {
+            // 创建在途时整批请求不能直接丢（这批 sessions 里可能有在途 job 不知道的会话）。
+            // 挂到它尾巴上重跑：正常结束就再试一次；被 closeWorkspace 取消则丢弃 ——
+            // rootfs 正在删除/替换，此时补建页签只会对着半棵 rootfs 起 shell。
+            running.invokeOnCompletion { cause ->
+                if (cause == null) launchCreateTab(root, onlyIfEmpty, sessions)
+            }
+            return
+        }
 
         lateinit var job: Job
         job = appScope.launch(start = CoroutineStart.LAZY) {
