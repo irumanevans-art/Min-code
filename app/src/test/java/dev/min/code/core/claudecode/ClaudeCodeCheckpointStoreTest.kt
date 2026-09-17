@@ -152,4 +152,17 @@ class ClaudeCodeCheckpointStoreTest {
         assertEquals("unnamed", "".toSafeName())
         assertEquals(120, "x".repeat(500).toSafeName().length)
     }
+
+    /**
+     * 纯点名字过了字符白名单却仍是路径跳板：`File(dir, "..")` 就是 dir 的上级。
+     * 必须换成等长下划线；带点但不止点的正常名字不受影响。
+     */
+    @Test
+    fun `dot-only ids are mapped to underscores`() {
+        assertEquals("_", ".".toSafeName())
+        assertEquals("__", "..".toSafeName())
+        assertEquals("___", "...".toSafeName())
+        assertEquals(".._a", "../a".toSafeName())
+        assertEquals("a.b", "a.b".toSafeName())
+    }
 }

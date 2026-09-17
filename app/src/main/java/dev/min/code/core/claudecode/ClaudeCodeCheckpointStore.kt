@@ -121,9 +121,12 @@ class ClaudeCodeCheckpointStore(private val baseDir: File) {
 /**
  * 会话 id / tool_use id 直接当目录名用。它们**理论上**都是 uuid 形状，但这两个值来自 CLI，
  * 不是我们生成的 —— 版本一变就可能带上斜杠或点，那时拼出来的路径会跑到目录外面去。
+ * 纯点也不能放行：`File(dir, "..")` 解析成上级目录，meta/content 会落到 checkpoints 根上，
+ * 两个 toolUseId=".." 的快照互相覆盖，撤销就还原错文件；所以全是点的结果换成等长下划线。
  */
 internal fun String.toSafeName(): String =
     replace(Regex("[^A-Za-z0-9_.-]"), "_").take(120).ifBlank { "unnamed" }
+        .let { safe -> if (safe.all { it == '.' }) "_".repeat(safe.length) else safe }
 
 /** 会触发文件快照的工具。名字取自 CLI 自带的 sdk-tools.d.ts。 */
 internal val CHECKPOINT_TOOLS = setOf("Edit", "Write", "MultiEdit", "NotebookEdit")
