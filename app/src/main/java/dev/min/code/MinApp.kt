@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import dev.min.code.core.crash.CrashRecorder
+import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.di.appModule
@@ -49,11 +50,23 @@ class MinApp : Application() {
         // 跟随设置里的语言偏好；DataStore 异步，先读一次再订阅变更
         getKoin().get<AppScope>().launch(Dispatchers.IO) {
             val store = getKoin().get<SettingsStore>()
-            AppLocale.apply(store.current().appLanguage)
+            val stored = store.current().appLanguage
+            // Android 13+ 的语言也能从「系统设置 → 应用 → Min → 语言」改，那是绕过我们的一次
+            // 用户操作，该以系统为准回写，免得设置页显示 English、界面却是中文。
+            //
+            // 但**只认系统给出具体语言的情况**。系统侧为空有两种可能，从这里分不出来：
+            // 用户真的选了「跟随系统」，或者我们压根还没写过（每次全新安装都是这样）。
+            // 把空当成用户的选择，等于每次冷启动都把人选的语言抹回跟随系统。
+            val system = AppLocale.readSystem(this@MinApp)
+            if (system != null && system != AppLanguage.SYSTEM && system != stored) {
+                store.setAppLanguage(system)
+            } else {
+                AppLocale.apply(this@MinApp, stored)
+            }
             store.settings
                 .map { it.appLanguage }
                 .distinctUntilChanged()
-                .collect { AppLocale.apply(it) }
+                .collect { AppLocale.apply(this@MinApp, it) }
         }
         // 海纹理 ~1.7MB + BitmapShader 管线：别等用户第一次点发送/海窗时在主线程冷编译
         getKoin().get<AppScope>().launch(Dispatchers.IO) {

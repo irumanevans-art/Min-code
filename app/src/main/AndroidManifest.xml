@@ -28,6 +28,7 @@
     android:label="@string/app_name"
     android:supportsRtl="true"
     android:theme="@style/Theme.Min"
+    android:localeConfig="@xml/locales_config"
     android:usesCleartextTraffic="true"
     android:enableOnBackInvokedCallback="true"
     android:extractNativeLibs="true"

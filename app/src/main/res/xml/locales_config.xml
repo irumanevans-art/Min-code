@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App 支持的语言。Android 13+ 认这张表：没有它，「系统设置 → 应用 → Min → 语言」
+  那个入口根本不出现，系统也不知道该把 per-app locale 限制在哪几种里。
+  加语言时这里和 res/values-* 要一起加。
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+  <locale android:name="en" />
+  <locale android:name="zh-CN" />
+</locale-config>

@@ -1,6 +1,8 @@
 package dev.min.code
 
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.animation.PathInterpolator
 import androidx.activity.ComponentActivity
@@ -38,7 +40,10 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.EXTRA_OPEN_CLAUDE_CODE
+import dev.min.code.core.settings.AppLanguage
+import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.AppSettings
+import dev.min.code.core.settings.LocalePrefs
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.ui.about.AboutPage
@@ -70,6 +75,18 @@ import org.koin.android.ext.android.inject
 class MainActivity : ComponentActivity() {
     private val settingsStore: SettingsStore by inject()
 
+    /**
+     * attachBaseContext 时用的语言。API 33+ 永远是 SYSTEM（那边语言归系统管，
+     * Configuration 已经是改好的），26..32 才是真值 —— 设置里换语言之后要拿它比对，
+     * 不一样就重建，否则包在 base context 里的旧 locale 会一直用到下次冷启动。
+     */
+    private var attachedLanguage: AppLanguage = AppLanguage.SYSTEM
+
+    override fun attachBaseContext(newBase: Context) {
+        attachedLanguage = LocalePrefs.read(newBase)
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
+
     /** 当前回退栈；onNewIntent 拿它把通知点击路由到会话页 */
     private var navStack: MutableList<NavKey>? = null
 
@@ -98,6 +115,16 @@ class MainActivity : ComponentActivity() {
             val settings by settingsStore.settings.collectAsStateWithLifecycle(initialValue = null)
             val loaded = settings != null
             SideEffect { if (loaded) settingsLoaded = true }
+            // API 26..32 换语言要自己重建：locale 是在 attachBaseContext 里包进 base context 的，
+            // 不重建就一直是启动那一刻的那套字。33+ 由系统重建，这里恒不成立。
+            val language = settings?.appLanguage
+            LaunchedEffect(language) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU &&
+                    language != null && language != attachedLanguage
+                ) {
+                    recreate()
+                }
+            }
             // 调试钩子：`adb shell am start … --ez min.debug.loading true` 把「铺纸研墨」加载页定住 4 秒，
             // 供人眼核对——正常情况下环境判定只要几十毫秒，这一屏根本来不及看。正式包忽略这个 extra
             var hold by remember { mutableStateOf(BuildConfig.DEBUG && intent?.getBooleanExtra(EXTRA_DEBUG_LOADING, false) == true) }
