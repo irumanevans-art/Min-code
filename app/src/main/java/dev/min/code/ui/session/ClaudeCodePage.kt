@@ -206,10 +206,19 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     // 用户把键盘划掉之后，输入框还握着焦点，光标会一直闪。键盘刚收起时清掉焦点。
+    //
+    // **必须先确认焦点还在输入框上**。键盘收起有两种来路：用户划掉（焦点没动，该清），
+    // 和焦点被别处拿走（不该清）。后者正是"长按会话流选中文字"：SelectionContainer 先
+    // requestFocus，输入框失焦 → 键盘开始收 → 几帧后这里 clearFocus，把 SelectionContainer
+    // 刚拿到的焦点一起清掉。Compose 的 SelectionManager 没有焦点就 `hasFocus=false`，
+    // 选区当场作废，于是长按要么根本选不中，要么弹出来的工具栏只剩一个「全选」没有「复制」
+    // （copy 只在 isNonEmptySelection() 时才挂上去）。切去别的页面再回来之所以"好了"，
+    // 只是 imeWasVisible 跟着重建成 false，下一次长按逃过这一刀而已。
     val imeVisible = WindowInsets.isImeVisible
     var imeWasVisible by remember { mutableStateOf(false) }
+    var composerFocused by remember { mutableStateOf(false) }
     LaunchedEffect(imeVisible) {
-        if (imeWasVisible && !imeVisible) focusManager.clearFocus()
+        if (imeWasVisible && !imeVisible && composerFocused) focusManager.clearFocus()
         imeWasVisible = imeVisible
     }
     var showPlan by remember { mutableStateOf(false) }
@@ -358,6 +367,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 showMenu = setup.ready,
                 onOpenDrawer = if (wide) toggleSessionList else openSessionList,
                 onOpenPlan = { showPlan = true },
+                onComposerFocusChange = { composerFocused = it },
             )
         } else {
             Scaffold(
@@ -804,6 +814,8 @@ private fun SessionContent(
     onOpenPlan: () -> Unit,
     showMenu: Boolean = true,
     onOpenDrawer: () -> Unit = {},
+    /** 输入框的焦点变化，一路报到页面顶层的"键盘收起就清焦点"那条效应里 */
+    onComposerFocusChange: (Boolean) -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     val streaming = session.streamingText.isNotBlank() || session.streamingThinking.isNotBlank()
@@ -1169,6 +1181,7 @@ private fun SessionContent(
                         onSearchFiles = vm::searchFiles,
                         onLoadImage = vm::loadImage,
                         onOpenLocalCommand = { configCommand = it },
+                        onComposerFocusChange = onComposerFocusChange,
                         restoredDraft = composerDraft,
                         onDraftChange = { vm.saveComposerDraft(boundId, it) },
                         onDraftSnapshot = { vm.snapshotComposerOnStop(boundId, it) },

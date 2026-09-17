@@ -57,6 +57,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -134,6 +135,11 @@ internal fun ClaudeCodeInputBar(
     onLoadImage: suspend (Uri) -> ClaudeCodeImage? = { null },
     /** 打开本地接管的交互式命令面板（/mcp、/agents…） */
     onOpenLocalCommand: (LocalSlash) -> Unit = {},
+    /**
+     * 输入框拿到 / 失去焦点。会话页要靠它区分"键盘是被划掉的"还是"焦点被会话流的
+     * SelectionContainer 拿走了"——后者不能跟着 clearFocus，否则选区当场作废。
+     */
+    onComposerFocusChange: (Boolean) -> Unit = {},
     /** 杀进程再进同一会话时要恢复的草稿。空 = 从空白开始 */
     restoredDraft: ComposerDraft = ComposerDraft.Empty,
     onDraftChange: (ComposerDraft) -> Unit = {},
@@ -496,7 +502,8 @@ internal fun ClaudeCodeInputBar(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .padding(start = 6.dp, top = 4.dp, bottom = 4.dp),
+                            .padding(start = 6.dp, top = 4.dp, bottom = 4.dp)
+                            .onFocusChanged { onComposerFocusChange(it.isFocused) },
                         // 你写的话是人的声音：楷书
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = dockText, fontFamily = MinKai),
                         cursorBrush = SolidColor(palette.seaDeep),
