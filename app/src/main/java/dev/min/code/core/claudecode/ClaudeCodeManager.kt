@@ -851,6 +851,13 @@ class ClaudeCodeManager(
         _state.update { st -> st.copy(items = appendStderrLine(st.items, rawLine, id)) }
     }
 
+    /**
+     * 正在把历史 transcript 重建成界面条目。回放阶段只画卡片，不做副作用：
+     * 历史工具输出里的 loopback URL 不再往预览位塞（否则每次重开会话都会弹一个
+     * 早就不在监听的 127.0.0.1:N），历史 Bash 也不再托管成本地服务。
+     */
+    private var replaying = false
+
     private fun dispatch(event: ClaudeCodeEvent) {
         when (event) {
             // CLI 每一轮都会重发 system/init，不能每次都往聊天流里塞一条「会话已建立」——
@@ -1045,7 +1052,8 @@ class ClaudeCodeManager(
                 )
                 // 仅 bypass：不会有 can_use_tool。Manual 必须等 PermissionRequest 排他托管，
                 // 否则 ToolUse 先到再 start = 与即将到来的 permission 路径双跑。
-                if (event.name == "Bash" &&
+                if (!replaying &&
+                    event.name == "Bash" &&
                     _state.value.permissionMode == ClaudeCodePermissionMode.BYPASS &&
                     (event.id.isBlank() || !exclusiveHostedToolUses.contains(event.id))
                 ) {
@@ -1095,7 +1103,7 @@ class ClaudeCodeManager(
                         )
                     )
                 }
-                if (!event.isError) {
+                if (!event.isError && !replaying) {
                     maybeOfferLocalPreview(event.content)
                     // 结果路径：只扫预览 URL / 补 port 线索；不再二次 startFromAgent
                     //（CLI 已跑过的命令再托管 = 端口战）。
@@ -2391,7 +2399,12 @@ class ClaudeCodeManager(
                     options = options,
                     cwd = CwdPath.normalize(options.cwd),
                 )
-                replayed.forEach(::dispatch)
+                replaying = true
+                try {
+                    replayed.forEach(::dispatch)
+                } finally {
+                    replaying = false
+                }
                 runCatching { launchCli(options) }.onFailure { e ->
                     // 和 startSession 一样：启动中攥着的消息先退回输入框，再让 shutdown 清队列
                     refundHeldMessages("会话启动失败，消息已退回输入框")
