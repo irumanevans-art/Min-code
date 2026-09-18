@@ -19,6 +19,27 @@ import java.io.File
  * 进程组杀不可用：`ProcessBuilder` 不 setsid，proot 及其 tracee 与 App 同处一个
  * 进程组，杀组等于杀 App 自己 —— 已读代码确认 proot 侧也没有 setsid 调用。
  *
+ * ## 教训一：不要再碰 `/proc/<pid>/task/<tid>/children`
+ *
+ * 这个文件由内核编译选项 `CONFIG_PROC_CHILDREN` 提供，**Android 通用内核不开它**。
+ * API 35 模拟器上 `ls /proc/1/task/1/` 的条目里根本没有 `children`。本修复的第一版
+ * 就栽在这里：读取恒返回空表 → 杀树是纯空操作（真机 logcat 里 `tree=0`），而单测因为
+ * 自己在临时目录里造了 `children` 文件，22 个用例全绿 —— 测的是一个真机上不存在的
+ * 内核接口。所以现在改成遍历 `/proc` 下的数字目录、读每个 `/proc/<pid>/stat` 的 ppid
+ * 字段，自己拼 pid→ppid 全表再反推后代（[readParentTable]）：ppid 是 `/proc` 从来就有的
+ * 东西，不依赖任何内核选项。代价是一次全表扫描，但停止服务是罕见操作，换得起。
+ *
+ * ## 教训二：宿主 proot 不能指望 `Process.destroy()` / `destroyForcibly()`
+ *
+ * Android libcore 的 `UNIXProcess`（`ProcessBuilder.start()` 实际返回的类）停在 OpenJDK 8
+ * 之前的形状：`destroy()` 走 native `destroyProcess(int pid)`，函数体就一行
+ * `kill(pid, SIGTERM)`，**没有 force 参数**；`destroyForcibly()` 它压根没有 override，
+ * 落到 `java.lang.Process` 的默认实现 `{ destroy(); return this; }` —— 也就是再发一次
+ * SIGTERM。而 proot 扛得住 SIGTERM（实测点 Stop 8 秒后宿主仍 `S (sleeping)`，
+ * `waitFor()` 一直不返回）。于是"先 TERM 等一秒再 forcibly"的升级路径在 Android 上
+ * 根本没有 KILL 那一步，宿主永远停不掉。所以 [killHost] 自己对宿主 pid 发信号，
+ * `destroy()` 只留着关三条管道、以及连 pid 都取不到时的兜底。
+ *
  * 所有 IO 均可注入：纯逻辑（解析、排序、杀树时序）在 Windows 上单测，
  * 默认实现（/proc 读取、android.os 信号）只在真机上执行。
  */
@@ -89,21 +110,32 @@ object ProcessTreeKill {
         return null
     }
 
-    /** 解析 `/proc/<pid>/task/<tid>/children`：空白分隔的子 PID，坏词容忍跳过 */
-    fun parseChildren(content: String): List<Int> =
-        content.trim().split(Regex("\\s+"))
-            .mapNotNull { it.toIntOrNull() }
-            .filter { it > 0 }
+    /**
+     * `/proc/<pid>/stat` 里 comm 之后的字段表：state、ppid、pgrp…
+     *
+     * comm 由进程自己决定，可以含空格甚至右括号（`(weird) name)`），所以必须从
+     * **最后一个** `)` 切，不能按空白硬拆前三个字段。切不出来给空表。
+     */
+    private fun statFieldsAfterComm(statContent: String): List<String> {
+        val afterComm = statContent.substringAfterLast(')', "").trim()
+        if (afterComm.isEmpty()) return emptyList()
+        return afterComm.split(Regex("\\s+"))
+    }
 
     /**
-     * 解析 `/proc/<pid>/stat` 的 state 字段（R/S/Z/…）。
-     * comm 可能含空格和括号（如 `(weird) name)`），必须取**最后一个** `)` 之后的
-     * 第一个字段；解析不出来返回 null。
+     * 解析 `/proc/<pid>/stat` 的 state 字段（R/S/Z/…）——comm 之后的第 1 个字段。
+     * 解析不出来返回 null。
      */
-    fun procStatState(statContent: String): String? {
-        val afterComm = statContent.substringAfterLast(')', "")
-        return afterComm.trim().split(Regex("\\s+")).firstOrNull()?.takeIf { it.isNotEmpty() }
-    }
+    fun procStatState(statContent: String): String? =
+        statFieldsAfterComm(statContent).firstOrNull()?.takeIf { it.isNotEmpty() }
+
+    /**
+     * 解析 `/proc/<pid>/stat` 的 ppid —— comm 之后的第 2 个字段（第 1 个是 state）。
+     * 这是整个杀树唯一的父子关系来源，理由见类注释"教训一"。
+     * 解析不出来返回 null；ppid 允许为 0（init 的父是 0），只拒绝负数和非数字。
+     */
+    fun procStatPpid(statContent: String): Int? =
+        statFieldsAfterComm(statContent).getOrNull(1)?.toIntOrNull()?.takeIf { it >= 0 }
 
     /**
      * 自底向上（叶子优先）列出 [rootPid] 的全部后代；root 本身不在结果里。
@@ -127,7 +159,8 @@ object ProcessTreeKill {
 
     /**
      * 杀 [rootPid]（宿主 proot）的整个后代树：先自底向上 SIGTERM，宽限 [termGraceMs]，
-     * 再对幸存者补 SIGKILL。**必须在 destroy 宿主 proot 之前调用**，理由见类注释。
+     * 再对幸存者补 SIGKILL。[rootPid] 自己不在此列，随后交给 [killHost]。
+     * **必须在动宿主 proot 之前调用**，理由见类注释。
      *
      * 先杀叶子再杀父：若先杀 guest 首进程（bash），proot 会随之退出并把残余 tracee
      * 就地孤儿化 —— 自底向上则每一步父进程都还在，树不会中途断掉。
@@ -171,23 +204,89 @@ object ProcessTreeKill {
         )
     }
 
+    /** [killHost] 走到的最后一步，只用于日志诊断 */
+    enum class HostOutcome {
+        /** 发信号前就已经不在了（被后代拖死 / 上一次 stop 已经收掉） */
+        AlreadyGone,
+
+        /** 吃 SIGTERM 就退了 */
+        ExitedOnTerm,
+
+        /** 扛过 SIGTERM，补 SIGKILL 后消失 —— proot 的正常形态 */
+        Killed,
+
+        /** 连 SIGKILL 之后都还在：不该发生，出现就说明 pid 认错了或权限不对 */
+        Survived,
+    }
+
     /**
-     * 从 `/proc` 聚合某进程的直接子表：fork 可能来自进程内任意线程，每个线程的
-     * children 只挂自己 fork 的孩子，必须遍历所有 task。进程退出时 task 目录随时
-     * 消失，单条读取失败不影响整体。
+     * 杀宿主 proot 本身：SIGTERM → 宽限 → SIGKILL → 复核。
+     *
+     * 为什么不交给 `Process.destroy()` / `destroyForcibly()`：见类注释"教训二"——
+     * 在 Android 上这两个方法都只发 SIGTERM，而 proot 扛得住 SIGTERM。
+     * **必须在 [killTree] 之后调用**：宿主先死的话后代会被 reparent 到 init，再也找不到。
      */
-    fun procChildrenReader(procRoot: File = File("/proc")): (Int) -> List<Int> = { pid ->
-        val out = LinkedHashSet<Int>()
-        val tasks = File(procRoot, "$pid/task").listFiles()
-        if (tasks != null) {
-            for (task in tasks) {
-                runCatching {
-                    val children = File(task, "children")
-                    if (children.isFile) out += parseChildren(children.readText())
-                }
-            }
+    fun killHost(
+        hostPid: Int,
+        isAlive: (Int) -> Boolean = procAlive(),
+        sendSignal: (pid: Int, signal: Int) -> Unit = ::platformSendSignal,
+        termGraceMs: Long = TERM_GRACE_MS,
+        sleep: (Long) -> Unit = { Thread.sleep(it) },
+    ): HostOutcome {
+        fun alive() = runCatching { isAlive(hostPid) }.getOrDefault(false)
+        if (!alive()) return HostOutcome.AlreadyGone
+        // TERM 失败（ESRCH）等同于"它自己刚没了"，不必再往下升级
+        val termed = runCatching { sendSignal(hostPid, SIGTERM) }.isSuccess
+        if (!termed) return if (alive()) HostOutcome.Survived else HostOutcome.AlreadyGone
+        runCatching { sleep(termGraceMs) }
+        if (!alive()) return HostOutcome.ExitedOnTerm
+        if (!runCatching { sendSignal(hostPid, SIGKILL) }.isSuccess) {
+            return if (alive()) HostOutcome.Survived else HostOutcome.Killed
         }
-        out.toList()
+        // SIGKILL 是异步的：内核收下之后进程还要走完退出、变僵尸、被 App 的 reaper
+        // 线程 waitpid 掉，所以复核前必须再等一个宽限，否则稳定误报 Survived。
+        runCatching { sleep(termGraceMs) }
+        return if (alive()) HostOutcome.Survived else HostOutcome.Killed
+    }
+
+    /**
+     * 扫一遍 `/proc` 的数字目录，拼出 pid→ppid 全表。
+     *
+     * 别的 uid 的进程读 stat 会 EACCES —— 直接跳过就好：App 只可能杀自己 uid 下的
+     * 后代，读不到的那些本来也不在树里。目录在扫描途中消失同理（进程正常退出）。
+     */
+    fun readParentTable(procRoot: File = File("/proc")): Map<Int, Int> {
+        val entries = procRoot.listFiles() ?: return emptyMap()
+        val table = HashMap<Int, Int>(entries.size.coerceAtMost(1024))
+        for (entry in entries) {
+            val pid = entry.name.toIntOrNull()?.takeIf { it > 0 } ?: continue
+            val stat = runCatching { File(entry, "stat").readText() }.getOrNull() ?: continue
+            val ppid = procStatPpid(stat) ?: continue
+            table[pid] = ppid
+        }
+        return table
+    }
+
+    /** 把 pid→ppid 反过来索引成 ppid→子表；子表按 pid 升序，结果可预期 */
+    fun childrenIndex(parentOf: Map<Int, Int>): Map<Int, List<Int>> {
+        val index = HashMap<Int, MutableList<Int>>()
+        for ((pid, ppid) in parentOf) {
+            if (pid == ppid) continue // 自指：快照拼接期间的脏读，别喂给 DFS
+            index.getOrPut(ppid) { ArrayList() } += pid
+        }
+        return index.mapValues { (_, kids) -> kids.sorted() }
+    }
+
+    /**
+     * 基于 `/proc` 的直接子表读取器。
+     *
+     * **一次性快照**：构造时扫全表，返回的闭包只查内存里的索引。杀树期间新 fork 出来的
+     * 进程因此不在树里 —— 可以接受：自底向上 TERM 的过程中父进程正在死，没有人再生孩子；
+     * 换成每问一次就扫一遍 `/proc`（几百个目录）反而把停止拖慢一个数量级。
+     */
+    fun procChildrenReader(procRoot: File = File("/proc")): (Int) -> List<Int> {
+        val index = childrenIndex(readParentTable(procRoot))
+        return { pid -> index[pid].orEmpty() }
     }
 
     /**

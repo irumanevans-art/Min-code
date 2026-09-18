@@ -15,40 +15,36 @@ class ProcessTreeKillTest {
     private fun tempDir(): File =
         Files.createTempDirectory("process-tree-kill").toFile().apply { deleteOnExit() }
 
-    /** 在假 /proc 下造一个进程：stat 的 state 字段 + 各线程的 children 表 */
+    /**
+     * 在假 /proc 下造一个进程：只写 `<pid>/stat`。
+     *
+     * **绝对不要在这里造 `task/<tid>/children`** —— 那个文件需要内核开
+     * `CONFIG_PROC_CHILDREN`，Android 上不存在。上一版单测正是靠自己造出来的
+     * children 文件全绿，而真机上杀树一个进程都没找到（理由见 ProcessTreeKill 类注释）。
+     * 字段顺序照真实格式：`pid (comm) state ppid pgrp session ...`
+     */
     private fun fakeProc(
         procRoot: File,
         pid: Int,
+        ppid: Int,
         state: String = "S",
         comm: String = "node",
-        childrenByTask: Map<Int, String> = emptyMap(),
     ) {
         val dir = File(procRoot, pid.toString()).apply { mkdirs() }
-        File(dir, "stat").writeText("$pid ($comm) $state 1 $pid $pid 0 -1 4194560 0 0\n")
-        childrenByTask.forEach { (tid, content) ->
-            val task = File(dir, "task/$tid").apply { mkdirs() }
-            File(task, "children").writeText(content)
-        }
+        File(dir, "stat").writeText("$pid ($comm) $state $ppid $pid $pid 0 -1 4194560 0 0\n")
     }
 
-    // ---- parseChildren ----
-
-    @Test
-    fun `parseChildren 按空白拆分并容忍坏词`() {
-        assertEquals(listOf(12, 34, 56), ProcessTreeKill.parseChildren("12 34 56"))
-        // 内核实际写出来是 "12 34 56 "，还可能跨行；多空格/制表符都算分隔
-        assertEquals(listOf(12, 34), ProcessTreeKill.parseChildren("  12\t\n 34 \n"))
-        // 坏词跳过而不是整表作废：读到一半进程退出可能截断出残字
-        assertEquals(listOf(7, 9), ProcessTreeKill.parseChildren("7 xx 9 -3 0"))
+    /** 真机上实测到的托管服务形态：宿主 proot → bash → npm → sh → node */
+    private fun fakeServiceTree(procRoot: File) {
+        fakeProc(procRoot, 3577, ppid = 1, comm = "dev.min.code") // app 自己，不该进树
+        fakeProc(procRoot, 3826, ppid = 3577, comm = "libproot_exec.so")
+        fakeProc(procRoot, 3832, ppid = 3826, comm = "bash")
+        fakeProc(procRoot, 3835, ppid = 3832, comm = "npm run dev") // comm 带空格
+        fakeProc(procRoot, 3847, ppid = 3835, comm = "sh")
+        fakeProc(procRoot, 3848, ppid = 3847, comm = "node")
     }
 
-    @Test
-    fun `parseChildren 空串给空表`() {
-        assertEquals(emptyList<Int>(), ProcessTreeKill.parseChildren(""))
-        assertEquals(emptyList<Int>(), ProcessTreeKill.parseChildren("   \n\t "))
-    }
-
-    // ---- procStatState ----
+    // ---- procStatState / procStatPpid ----
 
     @Test
     fun `procStatState 取最后一个右括号之后的字段`() {
@@ -63,6 +59,26 @@ class ProcessTreeKillTest {
         assertEquals(null, ProcessTreeKill.procStatState(""))
         assertEquals(null, ProcessTreeKill.procStatState("1234 (node"))
         assertEquals(null, ProcessTreeKill.procStatState("1234 (node)   "))
+    }
+
+    @Test
+    fun `procStatPpid 取 comm 之后的第二个字段`() {
+        // 真机采样：cat /proc/3848/stat -> "3848 (node) S 3847 398 0 0 -1 ..."
+        assertEquals(3847, ProcessTreeKill.procStatPpid("3848 (node) S 3847 398 0 0 -1 4194560"))
+        // comm 含空格：按空白硬拆会把 "run" 当 state、"dev)" 当 ppid，必须从最后一个 ')' 切
+        assertEquals(3832, ProcessTreeKill.procStatPpid("3835 (npm run dev) S 3832 398 0"))
+        // comm 含右括号：按第一个 ')' 切会读成 " name)) Z ..."，ppid 解析成 null
+        assertEquals(77, ProcessTreeKill.procStatPpid("55 ((weird) name)) Z 77 55 55"))
+        // init 的父是 0，是合法值而不是解析失败
+        assertEquals(0, ProcessTreeKill.procStatPpid("1 (init) S 0 1 1 0 -1"))
+    }
+
+    @Test
+    fun `procStatPpid 解析不出来给 null`() {
+        assertEquals(null, ProcessTreeKill.procStatPpid(""))
+        assertEquals(null, ProcessTreeKill.procStatPpid("1234 (node"))
+        assertEquals(null, ProcessTreeKill.procStatPpid("1234 (node) S")) // 截断在 state 上
+        assertEquals(null, ProcessTreeKill.procStatPpid("1234 (node) S xx"))
     }
 
     // ---- parsePidFromToString / pidOf ----
@@ -302,14 +318,129 @@ class ProcessTreeKillTest {
         assertTrue("没人收 TERM 就不该白等 400ms", slept.isEmpty())
     }
 
-    // ---- procAlive / procChildrenReader（用假 /proc 目录，不碰真 /proc）----
+    // ---- killHost ----
+
+    @Test
+    fun `killHost 扛过 TERM 的宿主要补 KILL`() {
+        // proot 的真实形态：SIGTERM 不死，SIGKILL 秒死
+        val log = SignalLog()
+        var alive = true
+        val outcome = ProcessTreeKill.killHost(
+            hostPid = 3826,
+            isAlive = { alive },
+            sendSignal = { pid, sig ->
+                log.sent += pid to sig
+                if (sig == ProcessTreeKill.SIGKILL) alive = false
+            },
+            termGraceMs = 0L,
+            sleep = {},
+        )
+        assertEquals(ProcessTreeKill.HostOutcome.Killed, outcome)
+        assertEquals(
+            listOf(3826 to ProcessTreeKill.SIGTERM, 3826 to ProcessTreeKill.SIGKILL),
+            log.sent,
+        )
+    }
+
+    @Test
+    fun `killHost 吃 TERM 就退的不补 KILL`() {
+        val log = SignalLog()
+        var alive = true
+        val outcome = ProcessTreeKill.killHost(
+            hostPid = 100,
+            isAlive = { alive },
+            sendSignal = { pid, sig ->
+                log.sent += pid to sig
+                if (sig == ProcessTreeKill.SIGTERM) alive = false
+            },
+            termGraceMs = 5L,
+            sleep = {},
+        )
+        assertEquals(ProcessTreeKill.HostOutcome.ExitedOnTerm, outcome)
+        assertTrue(log.pidsOf(ProcessTreeKill.SIGKILL).isEmpty())
+    }
+
+    @Test
+    fun `killHost 发信号前已消失就什么都不发`() {
+        val log = SignalLog()
+        val outcome = ProcessTreeKill.killHost(
+            hostPid = 100,
+            isAlive = { false },
+            sendSignal = { pid, sig -> log.sent += pid to sig },
+            termGraceMs = 0L,
+            sleep = {},
+        )
+        assertEquals(ProcessTreeKill.HostOutcome.AlreadyGone, outcome)
+        assertTrue(log.sent.isEmpty())
+    }
+
+    @Test
+    fun `killHost 复核前必须等宽限`() {
+        // SIGKILL 是异步的：内核收下之后进程还要退出 + 被 reaper 收尸。
+        // 少等这一次宽限就会稳定误报 Survived。
+        val slept = mutableListOf<Long>()
+        var alive = true
+        val outcome = ProcessTreeKill.killHost(
+            hostPid = 100,
+            isAlive = { alive },
+            sendSignal = { _, sig -> if (sig == ProcessTreeKill.SIGKILL) alive = false },
+            termGraceMs = 400L,
+            sleep = { slept += it },
+        )
+        assertEquals(ProcessTreeKill.HostOutcome.Killed, outcome)
+        assertEquals("TERM 后一次、KILL 后一次", listOf(400L, 400L), slept)
+    }
+
+    @Test
+    fun `killHost KILL 之后还活着要如实报 Survived`() {
+        val outcome = ProcessTreeKill.killHost(
+            hostPid = 100,
+            isAlive = { true }, // 死活不肯走
+            sendSignal = { _, _ -> },
+            termGraceMs = 0L,
+            sleep = {},
+        )
+        assertEquals(ProcessTreeKill.HostOutcome.Survived, outcome)
+    }
+
+    @Test
+    fun `killHost 信号抛异常时按存活状态定性`() {
+        // ESRCH：进入时还活着，发信号那一刻正好没了 → 不是失败
+        var alive = true
+        assertEquals(
+            ProcessTreeKill.HostOutcome.AlreadyGone,
+            ProcessTreeKill.killHost(
+                hostPid = 100,
+                isAlive = { alive },
+                sendSignal = { _, _ ->
+                    alive = false
+                    throw RuntimeException("ESRCH")
+                },
+                termGraceMs = 0L,
+                sleep = {},
+            ),
+        )
+        // EPERM：信号发不出去而进程还在 —— 不能报成功
+        assertEquals(
+            ProcessTreeKill.HostOutcome.Survived,
+            ProcessTreeKill.killHost(
+                hostPid = 100,
+                isAlive = { true },
+                sendSignal = { _, _ -> throw RuntimeException("EPERM") },
+                termGraceMs = 0L,
+                sleep = {},
+            ),
+        )
+    }
+
+    // ---- procAlive / readParentTable / procChildrenReader（用假 /proc 目录，不碰真 /proc）----
 
     @Test
     fun `procAlive 僵尸不算活`() {
         val proc = tempDir()
-        fakeProc(proc, 111, state = "S")
-        fakeProc(proc, 222, state = "Z") // 被杀后等 proot 回收的死壳
-        fakeProc(proc, 333, state = "X")
+        fakeProc(proc, 111, ppid = 1, state = "S")
+        fakeProc(proc, 222, ppid = 1, state = "Z") // 被杀后等 proot 回收的死壳
+        fakeProc(proc, 333, ppid = 1, state = "X")
         val alive = ProcessTreeKill.procAlive(proc)
         assertTrue(alive(111))
         assertFalse("僵尸补 KILL 没有意义，不能算幸存者", alive(222))
@@ -325,29 +456,101 @@ class ProcessTreeKillTest {
     }
 
     @Test
-    fun `procChildrenReader 聚合所有线程的 children 并去重`() {
+    fun `readParentTable 只收数字目录并解析 ppid`() {
         val proc = tempDir()
-        // fork 可能来自任意线程：只读主线程的 children 会漏掉别的线程 fork 的孩子
-        fakeProc(
-            proc,
-            500,
-            childrenByTask = mapOf(500 to "601 602 ", 507 to "603 601\n"),
+        fakeServiceTree(proc)
+        // /proc 下大量非进程条目：cpuinfo、net、self、thread-self…
+        File(proc, "cpuinfo").writeText("processor : 0\n")
+        File(proc, "self").mkdirs()
+        File(proc, "net").mkdirs()
+        val table = ProcessTreeKill.readParentTable(proc)
+        assertEquals(
+            mapOf(3577 to 1, 3826 to 3577, 3832 to 3826, 3835 to 3832, 3847 to 3835, 3848 to 3847),
+            table,
         )
-        val children = ProcessTreeKill.procChildrenReader(proc)(500)
-        assertEquals(listOf(601, 602, 603), children.sorted())
-        assertEquals(children.size, children.toSet().size)
-        // 进程不存在 / task 目录已消失 → 空表，不抛
-        assertEquals(emptyList<Int>(), ProcessTreeKill.procChildrenReader(proc)(999))
     }
 
     @Test
-    fun `descendantsBottomUp 接真实 procChildrenReader 能走通假 proc 树`() {
+    fun `readParentTable 跳过读不到 stat 的进程`() {
+        // 真机上别的 uid 的 /proc/<pid>/stat 是 Permission denied；
+        // 这里用"目录在但 stat 不在"走同一条 runCatching 分支
         val proc = tempDir()
-        fakeProc(proc, 10, childrenByTask = mapOf(10 to "20 30"))
-        fakeProc(proc, 20, childrenByTask = mapOf(20 to "40"))
-        fakeProc(proc, 30)
-        fakeProc(proc, 40)
+        fakeProc(proc, 10, ppid = 1)
+        File(proc, "11").mkdirs()
+        File(proc, "12").apply { mkdirs() }.let { File(it, "stat").writeText("garbage\n") }
+        assertEquals(mapOf(10 to 1), ProcessTreeKill.readParentTable(proc))
+    }
+
+    @Test
+    fun `readParentTable 目录不存在时给空表`() {
+        assertEquals(emptyMap<Int, Int>(), ProcessTreeKill.readParentTable(File(tempDir(), "nope")))
+    }
+
+    @Test
+    fun `childrenIndex 反向索引按 pid 升序且丢掉自指`() {
+        val index = ProcessTreeKill.childrenIndex(
+            mapOf(30 to 10, 20 to 10, 40 to 20, 10 to 10),
+        )
+        assertEquals(listOf(20, 30), index[10])
+        assertEquals(listOf(40), index[20])
+        assertEquals(null, index[40])
+    }
+
+    @Test
+    fun `procChildrenReader 从 stat 的 ppid 反推直接子表`() {
+        val proc = tempDir()
+        fakeServiceTree(proc)
+        val children = ProcessTreeKill.procChildrenReader(proc)
+        assertEquals(listOf(3832), children(3826))
+        assertEquals(listOf(3848), children(3847))
+        assertEquals(emptyList<Int>(), children(3848)) // 叶子
+        assertEquals(emptyList<Int>(), children(999999)) // 不存在的 pid 不抛
+    }
+
+    @Test
+    fun `descendantsBottomUp 接真实 procChildrenReader 能走通真机形态的树`() {
+        val proc = tempDir()
+        fakeServiceTree(proc)
+        val order = ProcessTreeKill.descendantsBottomUp(3826, ProcessTreeKill.procChildrenReader(proc))
+        // 叶子 node 在最前，bash 在最后；宿主和 app 都不在表里
+        assertEquals(listOf(3848, 3847, 3835, 3832), order)
+        assertFalse("宿主自己不能进后代表", order.contains(3826))
+        assertFalse("App 是宿主的父，不能被当成后代", order.contains(3577))
+    }
+
+    @Test
+    fun `descendantsBottomUp 接 procChildrenReader 能走多分支`() {
+        val proc = tempDir()
+        fakeProc(proc, 10, ppid = 1)
+        fakeProc(proc, 20, ppid = 10)
+        fakeProc(proc, 30, ppid = 10)
+        fakeProc(proc, 40, ppid = 20)
+        fakeProc(proc, 50, ppid = 1) // 同一层的无关进程，不能被卷进来
         val order = ProcessTreeKill.descendantsBottomUp(10, ProcessTreeKill.procChildrenReader(proc))
         assertEquals(listOf(40, 20, 30), order)
+    }
+
+    @Test
+    fun `killTree 接假 proc 能把整棵服务树按叶子优先杀干净`() {
+        // 端到端：发现层 + 存活判断都走真实的 /proc 实现，只换 procRoot 和信号器
+        val proc = tempDir()
+        fakeServiceTree(proc)
+        val log = SignalLog()
+        val result = ProcessTreeKill.killTree(
+            rootPid = 3826,
+            childrenOf = ProcessTreeKill.procChildrenReader(proc),
+            isAlive = ProcessTreeKill.procAlive(proc),
+            sendSignal = { pid, sig ->
+                log.sent += pid to sig
+                // 收 TERM 就退：删掉假 /proc 里的目录
+                if (sig == ProcessTreeKill.SIGTERM) File(proc, pid.toString()).deleteRecursively()
+            },
+            termGraceMs = 0L,
+            sleep = {},
+        )
+        assertEquals(listOf(3848, 3847, 3835, 3832), result.tree)
+        assertEquals(listOf(3848, 3847, 3835, 3832), result.terminated)
+        assertEquals(emptyList<Int>(), result.killed)
+        assertTrue("宿主必须留到 killHost 那步", File(proc, "3826").isDirectory)
     }
 }
