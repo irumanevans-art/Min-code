@@ -42,10 +42,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.ui.components.InkButton
@@ -85,7 +87,7 @@ fun SetupPage(
 
     when {
         // 判定"走到哪一步"要读磁盘和设置，那几百毫秒给整页的铺纸研墨，不给一个孤零零的转圈
-        state.loading -> LoadingScreen(status = "正在检查环境")
+        state.loading -> LoadingScreen(status = stringResource(R.string.setup_checking))
 
         state.step == SetupVM.Step.CONNECTION -> ConnectionStep(state, onSave = vm::saveConnection)
         state.step == SetupVM.Step.ROOTFS -> RootfsStep(state, onInstall = vm::installRootfs, onDismissError = vm::dismissError)
@@ -125,7 +127,7 @@ private fun SetupStep(
                 Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (detail != null) {
                     InkTextButton(onClick = { showDetail = !showDetail }, contentPadding = PaddingValues(0.dp)) {
-                        Text(if (showDetail) "收起详细说明" else "详细说明")
+                        Text(stringResource(if (showDetail) R.string.setup_detail_hide else R.string.setup_detail_show))
                     }
                     AnimatedVisibility(visible = showDetail, enter = InkMotion.expand, exit = InkMotion.collapse) {
                         detail()
@@ -219,7 +221,7 @@ private fun ErrorCard(error: String?, onDismiss: () -> Unit) {
             tone = NoticeTone.Error,
             maxLines = 12,
             action = {
-                InkTextButton(onClick = onDismiss) { Text("知道了") }
+                InkTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_got_it)) }
             },
         )
     }
@@ -230,7 +232,7 @@ private fun Progress(state: SetupVM.State) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         InkLineProgress(progress = state.progress, modifier = Modifier.fillMaxWidth())
         Text(
-            state.detail.ifBlank { "正在处理…" },
+            state.detail.ifBlank { stringResource(R.string.setup_working) },
             style = MaterialTheme.typography.labelSmall,
             fontFamily = JetbrainsMono,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -250,17 +252,14 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
 
     SetupStep(
         step = 1,
-        title = "连接",
-        summary = "Claude Code 需要一个 API token 和接口地址。直连 Anthropic 填官方地址；" +
-            "用中转站就填中转站给的地址。两项都可以之后在设置里改。",
+        title = stringResource(R.string.setup_step_connection),
+        summary = stringResource(R.string.setup_connection_summary),
         detail = {
             DetailCard(
-                "对应环境变量 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL，以环境变量注入 Rootfs 内的 " +
-                    "claude 进程，只有沙箱内的 Claude Code 能读到。\n\n" +
-                    "会话默认注入 CLAUDE_CODE_PROMPT_CACHE_TTL=" +
-                    "${ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL}（走 API token 时 CLI 自己只给 5 分钟，" +
-                    "断续使用会反复错过缓存窗口），可在会话设置的「提示缓存」里改。\n\n" +
-                    "另外固定注入：CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1、DISABLE_AUTOUPDATER=1、IS_SANDBOX=1。"
+                stringResource(
+                    R.string.setup_connection_detail,
+                    ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL,
+                )
             )
         },
     ) {
@@ -275,8 +274,7 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
         )
         AnimatedVisibility(visible = insecure, enter = InkMotion.expand, exit = InkMotion.collapse) {
             Notice(
-                text = "这是明文 HTTP 地址：token 和全部对话内容都会以明文经过公网，任何中间节点都能看到。" +
-                    "能用 HTTPS 就换成 HTTPS。",
+                text = stringResource(R.string.setup_insecure_warning),
                 // 「注意」档：这是风险提示，不是错误——填了照样能用。朱砂留给真正的判定
                 tone = NoticeTone.Warn,
             )
@@ -292,7 +290,7 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
             trailing = {
                 InkIconButton(
                     icon = if (visible) HugeIcons.ViewOff else HugeIcons.View,
-                    contentDescription = if (visible) "隐藏" else "显示",
+                    contentDescription = stringResource(if (visible) R.string.common_hide else R.string.common_show),
                     onClick = { visible = !visible },
                     size = 32.dp,
                     iconSize = 18.dp,
@@ -303,7 +301,7 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
             onClick = { onSave(token.trim(), baseUrl.trim()) },
             enabled = token.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("保存并继续") }
+        ) { Text(stringResource(R.string.setup_save_continue)) }
     }
 }
 
@@ -315,21 +313,12 @@ private fun RootfsStep(state: SetupVM.State, onInstall: (String?) -> Unit, onDis
 
     SetupStep(
         step = 2,
-        title = "Linux 环境",
-        summary = "官方 CLI 运行在 App 内置的 Ubuntu（proot）里。首次使用要下载约 30 MB 的基础镜像，" +
-            "官方源连不上会自动换镜像。",
-        detail = {
-            DetailCard(
-                "这是一个完整的 Ubuntu 24.04 用户态，Claude Code 可以自己 apt install git / python3 / " +
-                    "ripgrep 等工具。装了就一直在 —— 它是 App 数据目录里的真实文件系统，不是一次性容器，" +
-                    "重启 App、重开会话都不会丢。代价是每装一个都占空间，可以在文件页查看和清理。\n\n" +
-                    "proot 没有 root 权限，靠 ptrace 拦截系统调用来「假装」有一个根文件系统，" +
-                    "所以进程密集的任务会比真机 Linux 慢一些，但 CPU 密集的计算（numpy/BLAS）是原生速度。"
-            )
-        },
+        title = stringResource(R.string.setup_step_rootfs),
+        summary = stringResource(R.string.setup_rootfs_summary),
+        detail = { DetailCard(stringResource(R.string.setup_rootfs_detail)) },
     ) {
         AnimatedVisibility(visible = state.rootfsBroken && !busy, enter = InkMotion.expand, exit = InkMotion.collapse) {
-            Notice(text = "上次安装没有完成（下载或解压中断），需要重新安装。", tone = NoticeTone.Error)
+            Notice(text = stringResource(R.string.setup_rootfs_broken), tone = NoticeTone.Error)
         }
         AnimatedVisibility(visible = busy, enter = InkMotion.expand, exit = InkMotion.collapse) {
             Progress(state)
@@ -339,7 +328,7 @@ private fun RootfsStep(state: SetupVM.State, onInstall: (String?) -> Unit, onDis
             InkTextField(
                 value = customUrl,
                 onValueChange = { customUrl = it },
-                label = "自定义 rootfs 地址（tar.gz / tar.xz）",
+                label = stringResource(R.string.setup_rootfs_custom_label),
                 modifier = Modifier.fillMaxWidth(),
                 maxLines = 3,
                 monospace = true,
@@ -351,9 +340,9 @@ private fun RootfsStep(state: SetupVM.State, onInstall: (String?) -> Unit, onDis
             enabled = !busy,
             busy = busy,
             modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "正在安装…" else "下载并安装 Ubuntu") }
+        ) { Text(stringResource(if (busy) R.string.setup_installing else R.string.setup_rootfs_install)) }
         InkTextButton(onClick = { showCustom = !showCustom }, enabled = !busy) {
-            Text(if (showCustom) "用默认地址" else "用自定义地址")
+            Text(stringResource(if (showCustom) R.string.setup_rootfs_use_default else R.string.setup_rootfs_use_custom))
         }
     }
 }
@@ -365,22 +354,13 @@ private fun CliStep(state: SetupVM.State, onInstall: (Boolean) -> Unit, onDismis
 
     SetupStep(
         step = 3,
-        title = "Claude Code CLI",
-        summary = "在 Ubuntu 里安装 Node.js 22 与官方 @anthropic-ai/claude-code，装完约占 600 MB。" +
-            "npm 只负责几 KB 的 wrapper，200 MB 的原生二进制由 App 自己下载（断点续传、官方校验和）。",
-        detail = {
-            DetailCard(
-                "Node.js 优先从官方源下载，连不上才回退镜像；无论从哪下，都拿写死在 App 里的官方 SHA-256 " +
-                    "校验，对不上直接删档重来。原生二进制同理，校验和取自官方 npm registry。" +
-                    "下载中断可以断点续传，重点一次「安装」即可。\n\n" +
-                    "装好后 CLI 不会自动更新（沙箱里没法交互），在侧边栏「环境与更新」里手动更新。"
-            )
-        },
+        title = stringResource(R.string.setup_step_cli),
+        summary = stringResource(R.string.setup_cli_summary),
+        detail = { DetailCard(stringResource(R.string.setup_cli_detail)) },
     ) {
         AnimatedVisibility(visible = state.cliIncomplete && !busy, enter = InkMotion.expand, exit = InkMotion.collapse) {
             Notice(
-                text = "检测到上次安装不完整：npm 包在，但约 100 MB 的原生二进制没有下完，会话一启动就会报 " +
-                    "spawnSync … ENOENT。点下面的按钮只补这一部分。",
+                text = stringResource(R.string.setup_cli_incomplete),
                 tone = NoticeTone.Error,
             )
         }
@@ -402,9 +382,9 @@ private fun CliStep(state: SetupVM.State, onInstall: (Boolean) -> Unit, onDismis
             // 整行可点，勾选框自己不接点击，否则一次触摸翻两遍
             InkCheckbox(checked = useNpmMirror, onCheckedChange = null, enabled = !busy)
             Column {
-                Text("用淘宝 npm 源安装", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.setup_npm_mirror_title), style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "国内快很多。原生二进制仍按官方 registry 的校验和验证；只有几 KB 的 wrapper 来自镜像。",
+                    stringResource(R.string.setup_npm_mirror_desc),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -417,12 +397,14 @@ private fun CliStep(state: SetupVM.State, onInstall: (Boolean) -> Unit, onDismis
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                when {
-                    busy -> "正在安装…"
-                    state.cliIncomplete -> "修复安装（补齐原生二进制）"
-                    state.nodeInstalled -> "安装 Claude Code"
-                    else -> "安装 Node.js + Claude Code"
-                }
+                stringResource(
+                    when {
+                        busy -> R.string.setup_installing
+                        state.cliIncomplete -> R.string.setup_cli_repair
+                        state.nodeInstalled -> R.string.setup_cli_install
+                        else -> R.string.setup_cli_install_all
+                    }
+                )
             )
         }
         Spacer(Modifier.height(8.dp))

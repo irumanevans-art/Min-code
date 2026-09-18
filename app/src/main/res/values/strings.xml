@@ -13,6 +13,7 @@
   <string name="common_apply">Apply</string>
   <string name="common_hide">Hide</string>
   <string name="common_show">Show</string>
+  <string name="common_got_it">Got it</string>
 
   <string name="settings_title">Settings</string>
   <string name="settings_section_connection">Connection</string>
@@ -65,6 +66,51 @@
   <string name="session_sidebar_toggle">Show or hide session list</string>
   <string name="session_sidebar_resize">Drag to resize session list</string>
   <string name="session_queued">Queued · picked up after this step</string>
+  <string name="session_in_use">In use</string>
+  <string name="session_copy_transcript">Copy whole session</string>
+  <string name="session_drawer_files">Workspace files</string>
+  <string name="session_drawer_maintenance">Environment and updates</string>
+  <string name="session_row_actions">Session actions</string>
+  <string name="session_pin">Pin</string>
+  <string name="session_unpin">Unpin</string>
+  <string name="session_meta_pinned">Pinned</string>
+  <string name="session_meta_live">Running</string>
+  <string name="session_meta_messages">%1$d msgs</string>
+  <string name="session_rename_label">Title</string>
+  <string name="session_category">Category</string>
+  <string name="session_category_label">Category name</string>
+  <string name="session_category_hint">Leave it empty for none</string>
+  <string name="session_delete_title">Delete session</string>
+  <string name="session_delete_body">This stops the Claude Code process behind it and deletes the transcript. It cannot be undone.</string>
+
+  <!-- Setup wizard -->
+  <string name="setup_checking">Checking your environment</string>
+  <string name="setup_detail_show">Details</string>
+  <string name="setup_detail_hide">Hide details</string>
+  <string name="setup_working">Working…</string>
+  <string name="setup_step_connection">Connection</string>
+  <string name="setup_connection_summary">Claude Code needs an API token and an endpoint. Fill in the official address to reach Anthropic directly, or the address your relay gave you. Both can be changed later in Settings.</string>
+  <string name="setup_connection_detail">These map to ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL, injected as environment variables into the claude process inside the rootfs — only Claude Code in the sandbox can read them.\n\nSessions also get CLAUDE_CODE_PROMPT_CACHE_TTL=%1$s by default (on an API token the CLI gives itself only 5 minutes, and picking work up on and off keeps missing the cache window); you can change it under Prompt cache in session settings.\n\nAlways injected as well: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1, DISABLE_AUTOUPDATER=1, IS_SANDBOX=1.</string>
+  <string name="setup_insecure_warning">This is a plain HTTP address: your token and everything you say travel the public network in the clear, and any node along the way can read them. Switch to HTTPS if you can.</string>
+  <string name="setup_save_continue">Save and continue</string>
+  <string name="setup_step_rootfs">Linux environment</string>
+  <string name="setup_rootfs_summary">The official CLI runs in the Ubuntu (proot) bundled with the app. The first run downloads a base image of about 30 MB, and falls back to a mirror if the official source is unreachable.</string>
+  <string name="setup_rootfs_detail">This is a complete Ubuntu 24.04 userland; Claude Code can apt install git / python3 / ripgrep and the rest on its own. What it installs stays — this is a real filesystem in the app data directory, not a throwaway container, and it survives restarting the app or reopening a session. The cost is disk space per package, which you can inspect and clear on the files page.\n\nproot has no root: it uses ptrace to intercept syscalls and pretend there is a root filesystem, so process-heavy work runs somewhat slower than Linux on bare metal, while CPU-heavy computation (numpy/BLAS) runs at native speed.</string>
+  <string name="setup_rootfs_broken">The last install did not finish (the download or the extraction was cut short). It needs to be installed again.</string>
+  <string name="setup_rootfs_custom_label">Custom rootfs URL (tar.gz / tar.xz)</string>
+  <string name="setup_installing">Installing…</string>
+  <string name="setup_rootfs_install">Download and install Ubuntu</string>
+  <string name="setup_rootfs_use_default">Use the default URL</string>
+  <string name="setup_rootfs_use_custom">Use a custom URL</string>
+  <string name="setup_step_cli">Claude Code CLI</string>
+  <string name="setup_cli_summary">Installs Node.js 22 and the official @anthropic-ai/claude-code inside Ubuntu, about 600 MB when done. npm only carries a few KB of wrapper; the 200 MB native binary is downloaded by the app itself (resumable, official checksum).</string>
+  <string name="setup_cli_detail">Node.js comes from the official source first and falls back to a mirror only if that fails; wherever it comes from, it is checked against the official SHA-256 hard-coded in the app, and a mismatch deletes it and starts over. Same for the native binary, with the checksum taken from the official npm registry. An interrupted download resumes, so pressing Install once more is enough.\n\nThe CLI does not update itself afterwards (there is no way to interact inside the sandbox) — update it by hand under Environment and updates in the drawer.</string>
+  <string name="setup_cli_incomplete">The last install was left incomplete: the npm package is there, but about 100 MB of native binary never finished downloading, and a session will fail at startup with spawnSync … ENOENT. The button below fetches just that part.</string>
+  <string name="setup_npm_mirror_title">Install via the Taobao npm mirror</string>
+  <string name="setup_npm_mirror_desc">Much faster in mainland China. The native binary is still verified against the official registry checksum; only the few KB of wrapper come from the mirror.</string>
+  <string name="setup_cli_repair">Repair the install (fetch the native binary)</string>
+  <string name="setup_cli_install">Install Claude Code</string>
+  <string name="setup_cli_install_all">Install Node.js + Claude Code</string>
 
   <string name="workspace_detail_area_files">Files</string>
   <string name="workspace_detail_area_rootfs">Rootfs</string>

@@ -238,13 +238,13 @@ fun ClaudeCodeSessionDrawer(
             InkDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
             // 手机上逐段拖选很难受，而 SelectionContainer 已经占掉了长按手势，
             // 没法再给每条挂一个"复制本条"。整段导出放在这里作为兜底。
-            onCopyTranscript?.let { ActionRow(HugeIcons.Copy01, "复制整个会话", it) }
-            ActionRow(HugeIcons.Folder01, "工作区文件", onOpenFiles)
-            ActionRow(HugeIcons.ComputerTerminal01, "终端", onOpenTerminal)
+            onCopyTranscript?.let { ActionRow(HugeIcons.Copy01, stringResource(R.string.session_copy_transcript), it) }
+            ActionRow(HugeIcons.Folder01, stringResource(R.string.session_drawer_files), onOpenFiles)
+            ActionRow(HugeIcons.ComputerTerminal01, stringResource(R.string.session_terminal), onOpenTerminal)
             ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
             // CLI 装完之后安装向导就从 UI 上消失了，更新入口只能挂在这儿
-            ActionRow(HugeIcons.Package, "环境与更新", onOpenMaintenance)
-            ActionRow(HugeIcons.Settings02, "设置", onOpenSettings)
+            ActionRow(HugeIcons.Package, stringResource(R.string.session_drawer_maintenance), onOpenMaintenance)
+            ActionRow(HugeIcons.Settings02, stringResource(R.string.settings_title), onOpenSettings)
             Spacer(Modifier.height(12.dp))
         }
     }
@@ -267,16 +267,16 @@ fun ClaudeCodeSessionDrawer(
     pendingDelete?.let { target ->
         RikkaConfirmDialog(
             show = true,
-            title = "删除会话",
-            confirmText = "删除",
-            dismissText = "取消",
+            title = stringResource(R.string.session_delete_title),
+            confirmText = stringResource(R.string.common_delete),
+            dismissText = stringResource(R.string.common_cancel),
             onConfirm = {
                 onDeleteSession(target.id)
                 pendingDelete = null
             },
             onDismiss = { pendingDelete = null },
         ) {
-            Text("会停掉内部的 Claude Code 进程，并删掉这份 transcript。删了就不能恢复。")
+            Text(stringResource(R.string.session_delete_body))
         }
     }
     pendingRename?.let { target ->
@@ -338,7 +338,7 @@ private fun SessionListSearchBar(
         )
         InkIconButton(
             icon = HugeIcons.Cancel01,
-            contentDescription = "退出搜索",
+            contentDescription = stringResource(R.string.session_list_close_search),
             onClick = onClose,
             size = 32.dp,
             iconSize = 18.dp,
@@ -427,9 +427,13 @@ private fun SessionRow(
                         InUseBadge()
                     }
                 }
+                // 元信息一行是拼出来的，先把要用到的几个词取出来：buildString 里不好取资源
+                val pinnedText = stringResource(R.string.session_meta_pinned)
+                val countText = stringResource(R.string.session_meta_messages, entry.messageCount)
+                val liveText = stringResource(R.string.session_meta_live)
                 Text(
                     text = buildString {
-                        if (entry.pinned) append("置顶")
+                        if (entry.pinned) append(pinnedText)
                         if (!entry.category.isNullOrBlank() && !entry.pinned) {
                             if (isNotEmpty()) append("  ")
                             append(entry.category)
@@ -440,11 +444,11 @@ private fun SessionRow(
                         }
                         if (entry.messageCount > 0) {
                             if (isNotEmpty()) append("  ")
-                            append("${entry.messageCount} 条")
+                            append(countText)
                         }
                         if (entry.isLive) {
                             if (isNotEmpty()) append("  ")
-                            append("运行中")
+                            append(liveText)
                         }
                     },
                     style = MaterialTheme.typography.labelSmall,
@@ -456,7 +460,7 @@ private fun SessionRow(
             Box {
                 InkIconButton(
                     icon = HugeIcons.MoreHorizontal,
-                    contentDescription = "会话操作",
+                    contentDescription = stringResource(R.string.session_row_actions),
                     onClick = { menu = true },
                     tint = if (entry.isActive) palette.onSea.copy(alpha = 0.8f) else scheme.outline,
                     size = 32.dp,
@@ -469,14 +473,22 @@ private fun SessionRow(
                     containerColor = scheme.surfaceContainerLow,
                 ) {
                     InkMenuItem(
-                        if (entry.pinned) "取消置顶" else "置顶",
+                        stringResource(if (entry.pinned) R.string.session_unpin else R.string.session_pin),
                         icon = if (entry.pinned) HugeIcons.PinOff else HugeIcons.Pin,
                         onClick = { menu = false; onPin() },
                     )
-                    InkMenuItem("重命名", icon = HugeIcons.Edit02, onClick = { menu = false; onRename() })
-                    InkMenuItem("分类", icon = HugeIcons.Tag01, onClick = { menu = false; onCategorize() })
                     InkMenuItem(
-                        "删除",
+                        stringResource(R.string.common_rename),
+                        icon = HugeIcons.Edit02,
+                        onClick = { menu = false; onRename() },
+                    )
+                    InkMenuItem(
+                        stringResource(R.string.session_category),
+                        icon = HugeIcons.Tag01,
+                        onClick = { menu = false; onCategorize() },
+                    )
+                    InkMenuItem(
+                        stringResource(R.string.common_delete),
                         icon = HugeIcons.Delete02,
                         tint = palette.vermilion,
                         onClick = { menu = false; onDelete() },
@@ -507,19 +519,19 @@ private fun RenameDialog(
     var value by remember { mutableStateOf(current) }
     InkDialog(
         onDismissRequest = onDismiss,
-        title = "重命名",
+        title = stringResource(R.string.common_rename),
         confirmButton = {
             InkTextButton(
                 onClick = { onConfirm(value) },
                 enabled = value.trim().isNotBlank(),
-            ) { Text("确定") }
+            ) { Text(stringResource(R.string.common_confirm)) }
         },
-        dismissButton = { InkTextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { InkTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     ) {
         InkTextField(
             value = value,
             onValueChange = { value = it },
-            label = "标题",
+            label = stringResource(R.string.session_rename_label),
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -537,17 +549,19 @@ private fun CategoryDialog(
     var value by remember { mutableStateOf(current.orEmpty()) }
     InkDialog(
         onDismissRequest = onDismiss,
-        title = "分类",
+        title = stringResource(R.string.session_category),
         confirmButton = {
-            InkTextButton(onClick = { onConfirm(value.trim().ifBlank { null }) }) { Text("确定") }
+            InkTextButton(onClick = { onConfirm(value.trim().ifBlank { null }) }) {
+                Text(stringResource(R.string.common_confirm))
+            }
         },
-        dismissButton = { InkTextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { InkTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     ) {
         InkTextField(
             value = value,
             onValueChange = { value = it },
-            label = "分类名",
-            placeholder = "空着就是未分类",
+            label = stringResource(R.string.session_category_label),
+            placeholder = stringResource(R.string.session_category_hint),
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -572,7 +586,7 @@ private fun CategoryDialog(
 @Composable
 private fun InUseBadge() {
     Text(
-        "使用中",
+        stringResource(R.string.session_in_use),
         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, lineHeight = 13.sp),
         color = MaterialTheme.sea.onSea,
         maxLines = 1,
