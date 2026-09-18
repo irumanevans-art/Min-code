@@ -15,14 +15,17 @@ class SettingsVM(private val store: SettingsStore) : ViewModel() {
     val settings: StateFlow<AppSettings> = store.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
 
-    fun addProfile(label: String, token: String, baseUrl: String) =
-        viewModelScope.launch { store.addProfile(label, token, baseUrl) }
+    /** [insecureAck]：地址是明文 http 时，用户已经在确认框上点过「仍然使用」 */
+    fun addProfile(label: String, token: String, baseUrl: String, insecureAck: Boolean = false) =
+        viewModelScope.launch { store.addProfile(label, token, baseUrl, insecureAck) }
 
-    fun updateProfile(id: String, label: String, token: String, baseUrl: String) =
-        viewModelScope.launch { store.updateProfile(id, label, token, baseUrl) }
+    fun updateProfile(id: String, label: String, token: String, baseUrl: String, insecureAck: Boolean = false) =
+        viewModelScope.launch { store.updateProfile(id, label, token, baseUrl, insecureAck) }
 
     fun deleteProfile(id: String) = viewModelScope.launch { store.deleteProfile(id) }
-    fun setActiveProfile(id: String) = viewModelScope.launch { store.setActiveProfile(id) }
+
+    fun setActiveProfile(id: String, acknowledgeInsecure: Boolean = false) =
+        viewModelScope.launch { store.setActiveProfile(id, acknowledgeInsecure) }
     fun setUseNpmMirror(enabled: Boolean) = viewModelScope.launch { store.setUseNpmMirror(enabled) }
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { store.setThemeMode(mode) }
     fun setAppLanguage(language: AppLanguage) = viewModelScope.launch { store.setAppLanguage(language) }

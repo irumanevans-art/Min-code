@@ -47,6 +47,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkCheckbox
 import dev.min.code.ui.components.InkIconButton
@@ -244,7 +245,8 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
     var token by rememberSaveable { mutableStateOf(state.settings.token) }
     var baseUrl by rememberSaveable { mutableStateOf(state.settings.baseUrl) }
     var visible by rememberSaveable { mutableStateOf(false) }
-    val insecure = baseUrl.trim().startsWith("http://", ignoreCase = true)
+    // 本机回环（localhost / 127.x / 模拟器的 10.0.2.2）走 http 不出设备，不该报警
+    val insecure = isInsecureBaseUrl(baseUrl)
 
     SetupStep(
         step = 1,
@@ -275,7 +277,8 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
             Notice(
                 text = "这是明文 HTTP 地址：token 和全部对话内容都会以明文经过公网，任何中间节点都能看到。" +
                     "能用 HTTPS 就换成 HTTPS。",
-                tone = NoticeTone.Error,
+                // 「注意」档：这是风险提示，不是错误——填了照样能用。朱砂留给真正的判定
+                tone = NoticeTone.Warn,
             )
         }
         InkTextField(

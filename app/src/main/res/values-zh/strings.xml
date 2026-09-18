@@ -29,6 +29,10 @@
   <string name="settings_connection_label_hint">自己认得出来就行</string>
   <string name="settings_connection_edit_action">编辑</string>
   <string name="settings_connection_active">使用中</string>
+  <string name="settings_connection_insecure_warning">当前连接是明文 HTTP：key 和全部往来内容都以明文经过公网，路上任何一个节点都能看到，也能改写返回的内容。中转站有 HTTPS 就换成 HTTPS。</string>
+  <string name="settings_connection_insecure_title">明文 HTTP 地址</string>
+  <string name="settings_connection_insecure_body">%1$s 是明文 HTTP 地址。ANTHROPIC_AUTH_TOKEN 会不加密地放在 Authorization 头里发出去，路上任何人都能拿走这个 key、看到全部往来内容。\n\n不管确认与否，Min 都会照常使用这个地址——这个确认每个地址只问一次。</string>
+  <string name="settings_connection_insecure_continue">仍然使用</string>
   <string name="settings_npm_mirror_title">用淘宝 npm 源装 / 更新 CLI</string>
   <string name="settings_npm_mirror_subtitle">原生二进制仍按官方 registry 的 sha512 校验，镜像只提供字节。</string>
   <string name="settings_battery_title">电池优化</string>

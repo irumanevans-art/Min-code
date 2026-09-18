@@ -73,9 +73,94 @@ class ApiProfileTest {
     // -----------------------------------------------------------------------
 
     @Test
-    fun insecure_base_url_is_flagged() {
+    fun insecure_base_url_follows_the_active_profile() {
         assertTrue(AppSettings(listOf(profile("a", "http://1.2.3.4:8080")), "a").insecureBaseUrl)
         assertFalse(AppSettings(listOf(profile("a", "https://api.anthropic.com")), "a").insecureBaseUrl)
+        // 没配过时用的是官方 https 地址，不该报警
+        assertFalse(AppSettings().insecureBaseUrl)
+    }
+
+    @Test
+    fun plaintext_http_over_the_network_is_insecure() {
+        // 公网 IP —— 这正是「token 在公网裸奔」的那种地址
+        assertTrue(isInsecureBaseUrl("http://1.2.3.4:8080"))
+        assertTrue(isInsecureBaseUrl("http://relay.example.com/v1"))
+        // 局域网也算：同一个 Wi-Fi 下的任何人都在路上
+        assertTrue(isInsecureBaseUrl("http://192.168.1.10:3000"))
+        assertTrue(isInsecureBaseUrl("http://10.0.0.8"))
+        // 大小写、前后空格不该成为绕过判定的办法
+        assertTrue(isInsecureBaseUrl("  HTTP://1.2.3.4  "))
+        // 127 只在第一段才算回环：128.x / 1.127.x 都是普通公网地址
+        assertTrue(isInsecureBaseUrl("http://128.0.0.1"))
+        assertTrue(isInsecureBaseUrl("http://1.127.0.1"))
+        assertTrue(isInsecureBaseUrl("http://127.0.0.1.example.com"))
+        // 用户名混淆：真正的主机是 @ 后面那个
+        assertTrue(isInsecureBaseUrl("http://127.0.0.1@evil.example.com/v1"))
+    }
+
+    @Test
+    fun loopback_over_http_is_not_insecure() {
+        // 回环走 http 全程不出这台设备，报警只是噪音
+        assertTrue(listOf(
+            "http://localhost:8080",
+            "http://LocalHost/v1",
+            "http://api.localhost:1234",
+            "http://127.0.0.1:4000",
+            "http://127.1.2.3",
+            "http://[::1]:8080/v1",
+            "http://0:0:0:0:0:0:0:1",
+            // 模拟器映射到宿主机的回环别名
+            "http://10.0.2.2:3000",
+        ).none { isInsecureBaseUrl(it) })
+    }
+
+    @Test
+    fun https_and_non_http_are_never_insecure() {
+        assertFalse(isInsecureBaseUrl("https://api.anthropic.com"))
+        assertFalse(isInsecureBaseUrl("https://1.2.3.4:8443"))
+        // 没有 scheme 的串根本发不出去，别拿警告去吓人
+        assertFalse(isInsecureBaseUrl("1.2.3.4:8080"))
+        assertFalse(isInsecureBaseUrl(""))
+        assertFalse(isInsecureBaseUrl("http://"))
+    }
+
+    // -----------------------------------------------------------------------
+    // 明文风险的一次确认
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun only_an_unacknowledged_plaintext_address_asks() {
+        val fresh = ApiProfile("a", "", "sk", "http://1.2.3.4:8080")
+        assertTrue(fresh.needsInsecureConfirm)
+        assertFalse(fresh.copy(insecureAck = true).needsInsecureConfirm)
+        // https 和回环从来不问
+        assertFalse(ApiProfile("a", "", "sk", "https://api.x.com").needsInsecureConfirm)
+        assertFalse(ApiProfile("a", "", "sk", "http://127.0.0.1:8080").needsInsecureConfirm)
+    }
+
+    @Test
+    fun existing_profiles_are_never_asked_after_an_upgrade() {
+        // 升级上来的既有配置一律视为已确认：人家正在用的地址不能因为装了新版本就被拦一道
+        val stored = listOf(
+            ApiProfile("a", "", "sk-a", "http://1.2.3.4:8080"),
+            ApiProfile("b", "", "sk-b", "https://api.x.com"),
+        )
+        val migrated = ackExistingProfiles(stored)
+        assertTrue(migrated.none { it.needsInsecureConfirm })
+        // 除了这一位，其余字段一个都不许动
+        assertEquals(stored.map { it.copy(insecureAck = true) }, migrated)
+    }
+
+    @Test
+    fun acknowledgement_survives_a_round_trip() {
+        // 确认过就得记住，不然每次开设置页都要再点一遍
+        val list = listOf(ApiProfile("a", "中转", "sk-a", "http://1.2.3.4:8080", insecureAck = true))
+        assertEquals(list, decodeProfilesJson(encodeProfilesJson(list)))
+        // 旧版本存的 JSON 没有这个字段，解出来是「未确认」——由迁移统一放行，见上一条
+        assertFalse(
+            decodeProfilesJson("""[{"id":"a","token":"sk","baseUrl":"http://1.2.3.4"}]""")
+                .single().insecureAck,
+        )
     }
 
     // -----------------------------------------------------------------------

@@ -3,6 +3,7 @@ package dev.min.code.ui.settings
 import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +47,8 @@ import dev.min.code.core.settings.ApiProfile
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.ThemeMode
+import dev.min.code.core.settings.isInsecureBaseUrl
+import dev.min.code.core.settings.normalizeBaseUrl
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkDialog
@@ -57,10 +60,14 @@ import dev.min.code.ui.components.InkSwitch
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.InkTopBar
+import dev.min.code.ui.components.Notice
+import dev.min.code.ui.components.NoticeTone
+import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.components.SettingRow
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.LocalDarkMode
 import dev.min.code.ui.theme.LocalFormSwitch
@@ -85,6 +92,8 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
     val navController = LocalNavController.current
     // null = 对话框关着；id 为 null 的 Edit = 新增
     var editing by remember { mutableStateOf<ProfileEdit?>(null) }
+    // null = 没有待确认的明文地址
+    var insecureConfirm by remember { mutableStateOf<InsecureConfirm?>(null) }
     val scrollState = rememberScrollState()
 
     Scaffold(
@@ -122,10 +131,31 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                         ProfileRow(
                             profile = profile,
                             selected = profile.id == activeId,
-                            onSelect = { vm.setActiveProfile(profile.id) },
+                            onSelect = {
+                                // 切到一条没确认过的明文地址：先问一次，再切
+                                if (profile.needsInsecureConfirm) {
+                                    insecureConfirm = InsecureConfirm(profile.baseUrl) {
+                                        vm.setActiveProfile(profile.id, acknowledgeInsecure = true)
+                                    }
+                                } else {
+                                    vm.setActiveProfile(profile.id)
+                                }
+                            },
                             onEdit = { editing = profile.toEdit() },
                         )
                     }
+                }
+                // 当前生效的地址是明文 http：这条常驻，不是弹一次就算数的。
+                // 用「注意」档而不是朱砂——这是风险提示，不是错误：这个配置按下去照常工作
+                AnimatedVisibility(
+                    visible = settings.insecureBaseUrl,
+                    enter = InkMotion.enter,
+                    exit = InkMotion.exit,
+                ) {
+                    Notice(
+                        text = stringResource(R.string.settings_connection_insecure_warning),
+                        tone = NoticeTone.Warn,
+                    )
                 }
                 Text(
                     stringResource(R.string.settings_connection_hint),
@@ -190,9 +220,18 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
             canDelete = edit.id != null && settings.profiles.size > 1,
             onDismiss = { editing = null },
             onSave = { label, token, baseUrl ->
-                if (edit.id == null) vm.addProfile(label, token, baseUrl)
-                else vm.updateProfile(edit.id, label, token, baseUrl)
-                editing = null
+                val url = normalizeBaseUrl(baseUrl)
+                val insecure = isInsecureBaseUrl(url)
+                val save = {
+                    // 走到这里要么地址不是明文，要么用户已经放过行：ack 就等于「是不是明文」
+                    if (edit.id == null) vm.addProfile(label, token, baseUrl, insecureAck = insecure)
+                    else vm.updateProfile(edit.id, label, token, baseUrl, insecureAck = insecure)
+                    editing = null
+                }
+                // 同一条、地址没改、之前确认过 —— 不再问第二遍（升级上来的既有配置就落在这里）
+                val known = settings.profiles.firstOrNull { it.id == edit.id }
+                    ?.let { it.insecureAck && it.baseUrl == url } == true
+                if (insecure && !known) insecureConfirm = InsecureConfirm(url, save) else save()
             },
             onDelete = {
                 edit.id?.let { vm.deleteProfile(it) }
@@ -200,7 +239,33 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
             },
         )
     }
+
+    insecureConfirm?.let { pending ->
+        // 只劝一次，不拦：点「仍然使用」就照常存、照常发；取消也只是不改设置，
+        // 已经在用的连接不受影响。destructive = false —— 这不是删除那一档的判定
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.settings_connection_insecure_title),
+            confirmText = stringResource(R.string.settings_connection_insecure_continue),
+            dismissText = stringResource(R.string.common_cancel),
+            destructive = false,
+            onConfirm = {
+                pending.proceed()
+                insecureConfirm = null
+            },
+            onDismiss = { insecureConfirm = null },
+        ) {
+            Text(stringResource(R.string.settings_connection_insecure_body, pending.baseUrl))
+        }
+    }
 }
+
+/**
+ * 一件等着用户就明文风险点头的事：[baseUrl] 给对话框显示，[proceed] 是点「仍然使用」之后要做的。
+ *
+ * 取消就只是把这个状态清掉——**不改任何设置**，也不阻断已经在用的连接。
+ */
+private class InsecureConfirm(val baseUrl: String, val proceed: () -> Unit)
 
 /** 对话框的初值。[id] 为 null = 新增 */
 private data class ProfileEdit(
@@ -259,9 +324,11 @@ private fun ProfileRow(
                 listOf(profile.baseUrl, profile.maskedToken()).filter { it.isNotBlank() }.joinToString("  ·  "),
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = JetbrainsMono,
-                // http:// 的中转站会把 Bearer 头明文送上路，地址本身就该是个警示
-                color = if (profile.baseUrl.startsWith("http://", ignoreCase = true)) {
-                    MaterialTheme.sea.vermilion
+                // 明文 http 的中转站会把 Bearer 头裸着送上路，地址本身就该点出来。
+                // 用海深而不是朱：这是「注意」，不是判定——这条配置按下去照常工作。
+                // 本机回环（localhost / 127.x / 10.0.2.2）不算，那是自己跟自己说话
+                color = if (profile.insecure) {
+                    MaterialTheme.sea.seaDeep
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },

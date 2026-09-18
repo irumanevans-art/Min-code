@@ -32,6 +32,7 @@ import dev.min.code.core.service.LocalServiceIntent
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.util.LocalUrls
 import me.rerere.workspace.ProotShellRunner
@@ -2033,6 +2034,12 @@ class ClaudeCodeManager(
     private suspend fun fetchRelayModels(baseUrl: String, token: String): List<RelayModel> =
         withContext(Dispatchers.IO) {
             check(token.isNotBlank()) { "未配置 token" }
+            // 明文 http 时这个 token 在路上是裸的。**不阻断** —— 有人的中转站就是明文 http，
+            // 拦下来等于让 App 不能用。劝阻归界面（设置页常驻提示 + 换地址时的一次确认），
+            // 这里只留一行日志，出事时至少查得到
+            if (isInsecureBaseUrl(baseUrl)) {
+                Log.w(TAG, "base url is plaintext http: credentials are sent in the clear")
+            }
             val url = "${baseUrl.trimEnd('/')}/v1/models?limit=1000"
             // CLI 拿 ANTHROPIC_AUTH_TOKEN 发的是 Bearer；有的中转站只认 x-api-key，401 就换一种再试
             val body = try {

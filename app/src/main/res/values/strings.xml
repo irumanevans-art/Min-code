@@ -29,6 +29,10 @@
   <string name="settings_connection_label_hint">Anything you can tell them apart by</string>
   <string name="settings_connection_edit_action">Edit</string>
   <string name="settings_connection_active">In use</string>
+  <string name="settings_connection_insecure_warning">This connection is plain HTTP. Your key and everything you send travel the public network in the clear — any node along the way can read them, or alter the replies. Switch to HTTPS if the relay offers one.</string>
+  <string name="settings_connection_insecure_title">Plain HTTP address</string>
+  <string name="settings_connection_insecure_body">%1$s is plain HTTP. ANTHROPIC_AUTH_TOKEN is sent as an Authorization header with no encryption, so anyone on the path can take the key and read your traffic.\n\nMin will keep using this address either way — this confirmation is shown once per address.</string>
+  <string name="settings_connection_insecure_continue">Use anyway</string>
   <string name="settings_npm_mirror_title">Install / update CLI via Taobao npm mirror</string>
   <string name="settings_npm_mirror_subtitle">The native binary is still checked against the official registry sha512; the mirror only serves bytes.</string>
   <string name="settings_battery_title">Battery optimization</string>
