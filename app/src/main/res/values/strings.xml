@@ -14,6 +14,7 @@
   <string name="common_hide">Hide</string>
   <string name="common_show">Show</string>
   <string name="common_got_it">Got it</string>
+  <string name="common_clear">Clear</string>
 
   <string name="settings_title">Settings</string>
   <string name="settings_section_connection">Connection</string>
@@ -82,6 +83,46 @@
   <string name="session_category_hint">Leave it empty for none</string>
   <string name="session_delete_title">Delete session</string>
   <string name="session_delete_body">This stops the Claude Code process behind it and deletes the transcript. It cannot be undone.</string>
+
+  <!-- Session page: top bar, blank page, live turn, permission sheet, start panel -->
+  <string name="session_refresh_status">Refresh status</string>
+  <string name="session_loading">Laying out paper, grinding ink</string>
+  <string name="session_subtitle_tools">%1$d tools</string>
+  <string name="session_status_starting_cli">Starting Claude Code…</string>
+  <string name="session_status_closed">Session ended</string>
+  <string name="session_status_failed">Session failed</string>
+  <string name="session_blank_starting">Starting session</string>
+  <string name="session_plan_banner">Claude proposed a plan</string>
+  <string name="session_live_stopping">Ending session</string>
+  <string name="session_live_applying">Applying session settings</string>
+  <string name="session_live_applying_relaunch">Applying session settings (restarting CLI)</string>
+  <string name="session_live_starting">Starting claude</string>
+  <string name="session_live_running_tool">Running %1$s</string>
+  <string name="session_live_generating">Generating</string>
+  <string name="session_phase_waiting">Waiting</string>
+  <string name="session_phase_working">Working</string>
+  <string name="session_phase_thinking">Thinking</string>
+  <string name="session_phase_responding">Responding</string>
+  <string name="session_phase_requesting">Requesting</string>
+  <string name="session_phase_compacting">Compacting context</string>
+  <string name="session_phase_busy">Busy</string>
+  <string name="session_subagent_default">Subtask</string>
+  <string name="session_subagent_tool_uses">%1$d calls</string>
+  <string name="session_turn_took">Took %1$s</string>
+  <string name="session_turn_done">Done</string>
+  <string name="session_tool_status_running">Running</string>
+  <string name="session_tool_status_done">Done</string>
+  <string name="session_tool_status_error">Error</string>
+  <string name="session_export_user">You</string>
+  <string name="session_export_thinking">Thinking</string>
+  <string name="session_permission_blocked_path">Blocked path: %1$s</string>
+  <string name="session_permission_reason">Reason: %1$s</string>
+  <string name="session_permission_deny">Deny</string>
+  <string name="session_permission_allow_once">Allow once</string>
+  <string name="session_start_crash_notice">The last run crashed. The report is under Settings → About; you can copy it out and send it to someone.</string>
+  <string name="session_start_skip_permissions">Skip permission prompts</string>
+  <string name="session_start_skip_permissions_desc">Tools run without asking first</string>
+  <string name="session_start_action">Start session</string>
 
   <!-- Setup wizard -->
   <string name="setup_checking">Checking your environment</string>

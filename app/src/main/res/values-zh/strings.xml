@@ -14,6 +14,7 @@
   <string name="common_hide">隐藏</string>
   <string name="common_show">显示</string>
   <string name="common_got_it">知道了</string>
+  <string name="common_clear">清除</string>
 
   <string name="settings_title">设置</string>
   <string name="settings_section_connection">连接</string>
@@ -82,6 +83,46 @@
   <string name="session_category_hint">空着就是未分类</string>
   <string name="session_delete_title">删除会话</string>
   <string name="session_delete_body">会停掉内部的 Claude Code 进程，并删掉这份 transcript。删了就不能恢复。</string>
+
+  <!-- 会话页：顶栏、空会话页、正在跑的这一轮、权限确认、启动面板 -->
+  <string name="session_refresh_status">刷新状态</string>
+  <string name="session_loading">正在铺纸研墨</string>
+  <string name="session_subtitle_tools">%1$d 个工具</string>
+  <string name="session_status_starting_cli">正在启动 Claude Code…</string>
+  <string name="session_status_closed">会话已结束</string>
+  <string name="session_status_failed">会话出错</string>
+  <string name="session_blank_starting">正在启动会话</string>
+  <string name="session_plan_banner">Claude 给出了一份计划</string>
+  <string name="session_live_stopping">正在结束会话</string>
+  <string name="session_live_applying">正在应用会话设置</string>
+  <string name="session_live_applying_relaunch">正在应用会话设置（重启 CLI 并续接）</string>
+  <string name="session_live_starting">正在启动 claude</string>
+  <string name="session_live_running_tool">正在执行 %1$s</string>
+  <string name="session_live_generating">正在生成</string>
+  <string name="session_phase_waiting">等待中</string>
+  <string name="session_phase_working">工作中</string>
+  <string name="session_phase_thinking">思考中</string>
+  <string name="session_phase_responding">回复中</string>
+  <string name="session_phase_requesting">请求中</string>
+  <string name="session_phase_compacting">压缩上下文中</string>
+  <string name="session_phase_busy">处理中</string>
+  <string name="session_subagent_default">子任务</string>
+  <string name="session_subagent_tool_uses">%1$d 次调用</string>
+  <string name="session_turn_took">用时 %1$s</string>
+  <string name="session_turn_done">已完成</string>
+  <string name="session_tool_status_running">运行中</string>
+  <string name="session_tool_status_done">完成</string>
+  <string name="session_tool_status_error">出错</string>
+  <string name="session_export_user">你</string>
+  <string name="session_export_thinking">思考</string>
+  <string name="session_permission_blocked_path">越权路径：%1$s</string>
+  <string name="session_permission_reason">触发原因：%1$s</string>
+  <string name="session_permission_deny">拒绝</string>
+  <string name="session_permission_allow_once">允许一次</string>
+  <string name="session_start_crash_notice">上次运行崩溃过，报告在 设置 → 关于 里，可以复制出来发给人看。</string>
+  <string name="session_start_skip_permissions">跳过权限确认</string>
+  <string name="session_start_skip_permissions_desc">允许直接执行工具操作</string>
+  <string name="session_start_action">启动会话</string>
 
   <!-- 安装向导 -->
   <string name="setup_checking">正在检查环境</string>

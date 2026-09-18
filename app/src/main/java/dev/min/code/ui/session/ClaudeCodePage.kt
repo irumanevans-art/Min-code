@@ -293,6 +293,9 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         }
     }
 
+    // 导出用的字头在这里取好：toTranscriptText 在 onClick 里跑，那儿拿不到资源
+    val transcriptLabels = rememberTranscriptLabels()
+
     val drawer: @Composable (paneWidth: Dp?) -> Unit = { paneWidth ->
         ClaudeCodeSessionDrawer(
             permanent = wide,
@@ -337,7 +340,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onCopyTranscript = if (session.items.isNotEmpty()) {
                 {
                     afterSidebarNav()
-                    context.writeClipboardText(session.items.toTranscriptText())
+                    context.writeClipboardText(session.items.toTranscriptText(transcriptLabels))
                 }
             } else null,
         )
@@ -401,7 +404,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                         actions = {
                             InkIconButton(
                                 icon = HugeIcons.Refresh01,
-                                contentDescription = "刷新状态",
+                                contentDescription = stringResource(R.string.session_refresh_status),
                                 onClick = { vm.refresh() },
                             )
                         },
@@ -412,7 +415,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 Box(Modifier.padding(innerPadding)) {
                     when {
                         setup.loading -> LoadingScreen(
-                            status = "正在铺纸研墨",
+                            status = stringResource(R.string.session_loading),
                             detail = setup.cliVersion?.let { "claude $it" },
                         )
                         !setup.ready -> SetupPage(onReady = vm::refresh)
@@ -742,17 +745,25 @@ private fun WideSidebarScaffold(
     }
 }
 
+@Composable
 private fun ClaudeCodeManager.SessionState.subtitle(): String = when {
-    stopping -> "正在结束会话…"
-    applyingSettings || applyingEffort -> "正在应用会话设置…"
-    status == ClaudeCodeManager.SessionStatus.Running ->
-        listOfNotNull(model, toolCount.takeIf { it > 0 }?.let { "$it 个工具" })
-            .joinToString(" · ")
-            .ifBlank { "运行中" }
+    stopping -> stringResource(R.string.session_settings_busy_stopping)
+    applyingSettings || applyingEffort -> stringResource(R.string.session_settings_busy)
+    status == ClaudeCodeManager.SessionStatus.Running -> {
+        // 模型名是机器产物，原样；工具计数的量词是人话，走资源
+        val tools = if (toolCount > 0) {
+            stringResource(R.string.session_subtitle_tools, toolCount)
+        } else {
+            null
+        }
+        val running = stringResource(R.string.session_meta_live)
+        listOfNotNull(model, tools).joinToString(" · ").ifBlank { running }
+    }
 
-    status == ClaudeCodeManager.SessionStatus.Starting -> "正在启动 Claude Code…"
-    status == ClaudeCodeManager.SessionStatus.Closed -> "会话已结束"
-    status == ClaudeCodeManager.SessionStatus.Failed -> "会话出错"
+    status == ClaudeCodeManager.SessionStatus.Starting -> stringResource(R.string.session_status_starting_cli)
+    status == ClaudeCodeManager.SessionStatus.Closed -> stringResource(R.string.session_status_closed)
+    status == ClaudeCodeManager.SessionStatus.Failed -> stringResource(R.string.session_status_failed)
+    // 产品名，不翻
     else -> "Claude Code"
 }
 
@@ -766,27 +777,49 @@ private fun ClaudeCodeManager.SessionState.subtitle(): String = when {
  * 工具调用只导出摘要不导出完整结果：一次 Read 的结果动辄上千行，全塞进去会把真正想要的
  * 对话内容淹掉。要完整结果的话展开那条工具卡单独选中复制。
  */
-internal fun List<ClaudeCodeManager.ChatItem>.toTranscriptText(): String = buildString {
+internal fun List<ClaudeCodeManager.ChatItem>.toTranscriptText(labels: TranscriptLabels): String = buildString {
     this@toTranscriptText.forEach { item ->
         when (item) {
-            is ClaudeCodeManager.ChatItem.UserText -> append("## 你\n\n${item.text}\n\n")
+            is ClaudeCodeManager.ChatItem.UserText -> append("## ${labels.user}\n\n${item.text}\n\n")
+            // 说话人是产品名，不翻
             is ClaudeCodeManager.ChatItem.AssistantText -> append("## Claude\n\n${item.text}\n\n")
-            is ClaudeCodeManager.ChatItem.Thinking -> append("### 思考\n\n${item.text}\n\n")
+            is ClaudeCodeManager.ChatItem.Thinking -> append("### ${labels.thinking}\n\n${item.text}\n\n")
             is ClaudeCodeManager.ChatItem.Note -> append("> ${item.text}\n\n")
             // 进程输出导成代码块：贴到别处去查的时候，等宽和原样换行都要保住
             is ClaudeCodeManager.ChatItem.ProcessOutput ->
                 append("```\n${item.lines.joinToString("\n")}\n```\n\n")
             is ClaudeCodeManager.ChatItem.ToolCall -> {
                 val status = when (item.status) {
-                    ClaudeCodeManager.ChatItem.ToolCall.Status.Running -> "运行中"
-                    ClaudeCodeManager.ChatItem.ToolCall.Status.Done -> "完成"
-                    ClaudeCodeManager.ChatItem.ToolCall.Status.Error -> "出错"
+                    ClaudeCodeManager.ChatItem.ToolCall.Status.Running -> labels.toolRunning
+                    ClaudeCodeManager.ChatItem.ToolCall.Status.Done -> labels.toolDone
+                    ClaudeCodeManager.ChatItem.ToolCall.Status.Error -> labels.toolError
                 }
                 append("- `${item.name}` ${toolSummary(item.name, item.input)} — $status\n\n")
             }
         }
     }
 }.trim()
+
+/**
+ * 导出时用到的几个字头。[toTranscriptText] 不是 @Composable，取不到 `stringResource`，
+ * 由调用方在外面取好一次性传进来。
+ */
+internal data class TranscriptLabels(
+    val user: String,
+    val thinking: String,
+    val toolRunning: String,
+    val toolDone: String,
+    val toolError: String,
+)
+
+@Composable
+internal fun rememberTranscriptLabels(): TranscriptLabels = TranscriptLabels(
+    user = stringResource(R.string.session_export_user),
+    thinking = stringResource(R.string.session_export_thinking),
+    toolRunning = stringResource(R.string.session_tool_status_running),
+    toolDone = stringResource(R.string.session_tool_status_done),
+    toolError = stringResource(R.string.session_tool_status_error),
+)
 
 /**
  * 记住最后一个非空值。给"退场动画"用：AnimatedVisibility 在收起的那几百毫秒里还要能
@@ -1262,15 +1295,19 @@ private fun LiveTurnEntry(
         .asReversed()
         .filterIsInstance<ClaudeCodeManager.ChatItem.ToolCall>()
         .firstOrNull { it.status == ClaudeCodeManager.ChatItem.ToolCall.Status.Running }
+    // 工具名是机器产物，只有外面那句「正在执行 …」走资源
+    val runningToolLabel = runningTool?.name?.let { name ->
+        stringResource(R.string.session_live_running_tool, name)
+    }
     val label = listOfNotNull(
         when {
-            session.stopping -> "正在结束会话"
-            session.applyingSettings -> "正在应用会话设置"
-            session.applyingEffort -> "正在应用会话设置（重启 CLI 并续接）"
-            starting -> "正在启动 claude"
+            session.stopping -> stringResource(R.string.session_live_stopping)
+            session.applyingSettings -> stringResource(R.string.session_live_applying)
+            session.applyingEffort -> stringResource(R.string.session_live_applying_relaunch)
+            starting -> stringResource(R.string.session_live_starting)
             else -> statusPhaseLabel(session.statusPhase)
-                ?: runningTool?.let { "正在执行 ${it.name}" }
-                ?: "正在生成"
+                ?: runningToolLabel
+                ?: stringResource(R.string.session_live_generating)
         },
         session.statusDetail?.takeIf { it.isNotBlank() },
     ).joinToString(" · ")
@@ -1375,9 +1412,13 @@ private fun TurnReceipt(session: ClaudeCodeManager.SessionState) {
             modifier = Modifier.size(12.dp),
             tint = MaterialTheme.colorScheme.outline,
         )
+        // 时长本身是机器产物（`31s`），只有「用时」两个字走资源
+        val tookText = duration
+            ?.let { stringResource(R.string.session_turn_took, formatDuration(it)) }
+            ?: stringResource(R.string.session_turn_done)
         Text(
             text = listOfNotNull(
-                duration?.let { "用时 ${formatDuration(it)}" } ?: "已完成",
+                tookText,
                 clock,
                 session.turnOutputTokens.takeIf { it > 0 }?.let { "↓${formatTokens(it)}" },
             ).joinToString(" · "),
@@ -1409,15 +1450,20 @@ internal fun formatTokens(count: Int): String =
     if (count < 1000) count.toString()
     else String.format(java.util.Locale.US, "%.1fk", count / 1000.0)
 
-/** `status` 帧的运行阶段。idle 不显示——它等于"没在干活" */
+/**
+ * `status` 帧的运行阶段。idle 不显示——它等于"没在干活"。
+ *
+ * 只转文案，不动 CLI 那边的阶段名；认不出来的原样显示。
+ */
+@Composable
 private fun statusPhaseLabel(phase: String?): String? = when (phase) {
-    "waiting" -> "等待中"
-    "working" -> "工作中"
-    "thinking" -> "思考中"
-    "responding" -> "回复中"
-    "requesting" -> "请求中"
-    "compacting" -> "压缩上下文中"
-    "busy" -> "处理中"
+    "waiting" -> stringResource(R.string.session_phase_waiting)
+    "working" -> stringResource(R.string.session_phase_working)
+    "thinking" -> stringResource(R.string.session_phase_thinking)
+    "responding" -> stringResource(R.string.session_phase_responding)
+    "requesting" -> stringResource(R.string.session_phase_requesting)
+    "compacting" -> stringResource(R.string.session_phase_compacting)
+    "busy" -> stringResource(R.string.session_phase_busy)
     "idle", null -> null
     else -> phase
 }
@@ -1428,9 +1474,13 @@ private fun statusPhaseLabel(phase: String?): String? = when (phase) {
  */
 @Composable
 private fun SubagentLine(task: ClaudeCodeManager.TaskInfo) {
+    val toolUsesLabel = task.toolUses?.takeIf { it > 0 }?.let {
+        stringResource(R.string.session_subagent_tool_uses, it)
+    }
     val meta = listOfNotNull(
         task.lastToolName,
-        task.toolUses?.takeIf { it > 0 }?.let { "$it 次调用" },
+        toolUsesLabel,
+        // token 数是机器产物，原样
         task.totalTokens?.takeIf { it >= 1000 }?.let { "${it / 1000}k tok" },
     ).joinToString(" · ")
     val azure = MaterialTheme.sea.sea
@@ -1441,7 +1491,7 @@ private fun SubagentLine(task: ClaudeCodeManager.TaskInfo) {
     ) {
         SubagentMarker(azure)
         Text(
-            text = task.subagentType ?: "子任务",
+            text = task.subagentType ?: stringResource(R.string.session_subagent_default),
             style = MaterialTheme.typography.labelSmall,
             color = azure,
             maxLines = 1,
@@ -1504,7 +1554,7 @@ internal fun BlankPage(starting: Boolean) {
         ) {
             if (starting) {
                 Text(
-                    "正在启动会话",
+                    stringResource(R.string.session_blank_starting),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -1551,7 +1601,7 @@ private fun PlanBanner(onOpen: () -> Unit) {
     ) {
         Seal()
         Text(
-            "Claude 给出了一份计划",
+            stringResource(R.string.session_plan_banner),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.sea.seaDeep,
         )
@@ -1614,14 +1664,14 @@ private fun PermissionSheet(
             }
             pending.blockedPath?.takeIf { it.isNotBlank() }?.let {
                 Text(
-                    "越权路径：$it",
+                    stringResource(R.string.session_permission_blocked_path, it),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.sea.vermilion,
                 )
             }
             pending.decisionReason?.takeIf { it.isNotBlank() }?.let {
                 Text(
-                    "触发原因：$it",
+                    stringResource(R.string.session_permission_reason, it),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1643,11 +1693,11 @@ private fun PermissionSheet(
                     onClick = { onAnswer(false, null) },
                     modifier = Modifier.weight(1f),
                     tone = InkButtonTone.Vermilion,
-                ) { Text("拒绝") }
+                ) { Text(stringResource(R.string.session_permission_deny)) }
                 InkButton(
                     onClick = { onAnswer(true, null) },
                     modifier = Modifier.weight(1f),
-                ) { Text("允许一次") }
+                ) { Text(stringResource(R.string.session_permission_allow_once)) }
             }
             // 「始终允许」放在主按钮下方：它改的是持久规则，不该和一次性批准同等醒目
             pending.suggestions.forEach { suggestion ->
@@ -1689,7 +1739,8 @@ internal fun StartPanel(
                 modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                SectionTitle("工作区")
+                SectionTitle(stringResource(R.string.workspace_detail_workspace_info))
+                // 产品名，不翻
                 Text("Claude Code", style = MaterialTheme.typography.headlineSmall)
                 CwdPathRow(
                     cwd = cwd,
@@ -1704,11 +1755,11 @@ internal fun StartPanel(
                 var crashed by remember { mutableStateOf(dev.min.code.core.crash.CrashRecorder.read(context) != null) }
                 AnimatedVisibility(visible = crashed, enter = InkMotion.expand, exit = InkMotion.collapse) {
                     Notice(
-                        text = "上次运行崩溃过，报告在 设置 → 关于 里，可以复制出来发给人看。",
+                        text = stringResource(R.string.session_start_crash_notice),
                         tone = NoticeTone.Warn,
                         action = {
                             InkTextButton(onClick = { dev.min.code.core.crash.CrashRecorder.clear(context); crashed = false }) {
-                                Text("清除", style = MaterialTheme.typography.labelSmall)
+                                Text(stringResource(R.string.common_clear), style = MaterialTheme.typography.labelSmall)
                             }
                         },
                     )
@@ -1728,9 +1779,12 @@ internal fun StartPanel(
                     InkCheckbox(checked = skipPermissions, onCheckedChange = null)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("跳过权限确认", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "允许直接执行工具操作",
+                        stringResource(R.string.session_start_skip_permissions),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        stringResource(R.string.session_start_skip_permissions_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1749,7 +1803,7 @@ internal fun StartPanel(
                     modifier = Modifier.fillMaxWidth(),
                     icon = HugeIcons.Play,
                 ) {
-                    Text("启动会话")
+                    Text(stringResource(R.string.session_start_action))
                 }
             }
         }
