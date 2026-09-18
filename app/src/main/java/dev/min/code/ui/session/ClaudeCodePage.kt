@@ -1516,6 +1516,8 @@ internal fun BlankPage(starting: Boolean) {
             Text(
                 if (starting) "Claude Code" else "/workspace",
                 style = MaterialTheme.typography.bodySmall,
+                // 路径是机器产物，走等宽（「三种字」）；启动中那行是产品名，仍是人话
+                fontFamily = if (starting) null else JetbrainsMono,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             AnimatedVisibility(visible = starting, enter = InkMotion.expand, exit = InkMotion.collapse) {
