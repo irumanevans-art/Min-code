@@ -67,15 +67,16 @@ internal class ClaudeCodeSendQueue<T> {
      * 把已交棒、还没被确认的要回来，排到 held 的**最前面**。
      *
      * 排在最前是因为它们本来就该比任何后来攥住的消息先跑；倒着 addFirst 才保得住原次序。
+     *
+     * 两个调用点：Esc（CLI 侧队列被 `cancel_queued` 清了）和换档重启（旧进程已经死透，
+     * 还留在这一格的就是它至死没看过的）。两处都靠同一条判据 —— **没被 [confirm] 收走
+     * 就等于没被模型看见**，所以原样重发既不会丢也不会重。
      */
     fun reclaim() {
         synchronized(lock) {
             while (handedOff.isNotEmpty()) held.addFirst(handedOff.removeLast())
         }
     }
-
-    /** held 在前、handedOff 在后的一份快照。换档重启时用它把队列搬到新进程 */
-    fun snapshot(): List<T> = synchronized(lock) { held.toList() + handedOff.toList() }
 
     /** 进程没了，队列跟着作废 */
     fun clear() {

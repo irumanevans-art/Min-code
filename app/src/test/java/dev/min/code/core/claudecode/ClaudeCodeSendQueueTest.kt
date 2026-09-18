@@ -76,13 +76,46 @@ class ClaudeCodeSendQueueTest {
         assertFalse(q.hasWork())
     }
 
+    /**
+     * 换档重启搬队列走的就是这条路：旧进程死透之后 reclaim，把它至死没看过的排到最前，
+     * 连同关进程期间新攥住的一起交给新进程。次序必须是"先交棒的 → 后攥住的"。
+     */
     @Test
-    fun `snapshot is held first then handed off`() {
+    fun `relaunch carries handed off ahead of messages typed while shutting down`() {
         val q = queue()
-        q.handOff("handed") {}
-        q.hold("held")
-        assertEquals(listOf("held", "handed"), q.snapshot())
-        assertTrue("快照不该动队列本身", q.hasWork())
+        q.handOff("换档前追加的") {}
+        // 关进程要等好几秒，这期间用户还在打字（此时 status 已是 Starting，走 hold）
+        q.hold("关进程期间打的")
+        q.reclaim()
+        assertEquals(listOf("换档前追加的", "关进程期间打的"), q.drainHeld())
+    }
+
+    /** 旧进程临死前真吃下去的那条会先被 confirm 掉，reclaim 就不该再把它搬给新进程 */
+    @Test
+    fun `relaunch does not carry what the dying process already confirmed`() {
+        val q = queue()
+        q.handOff("旧进程吃下去了") {}
+        q.confirm() // shutdown 期间 readLoop 还活着，status=requesting 收掉了它
+        q.handOff("旧进程没来得及看") {}
+        q.reclaim()
+        assertEquals(
+            "已经进过旧进程上下文的不能重发，--resume 会让它在模型眼里出现两遍",
+            listOf("旧进程没来得及看"),
+            q.drainHeld(),
+        )
+    }
+
+    /**
+     * `hasWork()` 数两格、`drainHeld()` 只掏第一格 —— 调用方拿 hasWork 点亮 busy、再拿
+     * drainHeld 去开一轮时，"只剩 handedOff"会让 busy 亮着却没有任何一轮开始。
+     * 握手末尾那处（ClaudeCodeManager.handshake）就是照这个口径差做的兜底。
+     */
+    @Test
+    fun `has work counts handed off but drain held does not return it`() {
+        val q = queue()
+        q.handOff("交棒了但字节没送到") {}
+        assertTrue(q.hasWork())
+        assertEquals("光看 hasWork 就点亮 busy 会卡死", emptyList<String>(), q.drainHeld())
     }
 
     @Test

@@ -762,6 +762,13 @@ class ClaudeCodeManager(
         io.launch {
             val code = runCatching { proc.waitFor() }.getOrNull()
             Log.i(TAG, "claude exited with code $code")
+            // 只有**当前这个**进程的退出才说得上"会话结束了"。[shutdown] 一进门就把 process
+            // 置 null，所以我们主动关掉的旧进程走到这里必然 `proc !== process`。
+            // 不挡的话，换档重启会被它盖一下：那时状态已经是 Starting（见 [relaunchWith] ①），
+            // 被盖成 Closed 之后界面闪一下启动面板，这期间用户发的消息还会被 [send]
+            // 当成"会话已关"直接退回输入框。真正关会话的几条路（stopSession / startSession /
+            // openSession）本来就各自写了自己的终态，不靠这里。
+            if (proc !== process) return@launch
             // 主动停止时 destroy() 必然给出非 0 退出码，别把它报成错误
             val exitedUnexpectedly = !stopping && code != null && code != 0
             _state.update {
@@ -842,6 +849,10 @@ class ClaudeCodeManager(
      * deprecation、experimental feature 之类的常规警告，全塞进 errorMessage 的话
      * 界面上就永远挂着一条红字，看着像会话坏了。所以红字只留给启动期（Starting，
      * 那时候任何一行都可能是起不来的原因）和 [looksLikeError] 认得的行。
+     *
+     * "启动期"还要加一句 `proc === process`：换档时状态先改 Starting、旧进程随后才慢慢退
+     * （见 [relaunchWith] 的 ①②），旧进程退出时打的那几行常规噪声正好撞在 Starting 上，
+     * 会被当成新进程起不来的原因刷成红字。只有**当前这个**进程的 stderr 才说明得了启动。
      */
     private fun drainStderr(proc: Process) {
         try {
@@ -850,7 +861,7 @@ class ClaudeCodeManager(
                     val line = reader.readLine() ?: break
                     if (line.isBlank()) continue
                     Log.w(TAG, "claude stderr: $line")
-                    val starting = _state.value.status == SessionStatus.Starting
+                    val starting = _state.value.status == SessionStatus.Starting && proc === process
                     appendStderr(line)
                     if (starting || looksLikeError(line)) {
                         _state.update { it.copy(errorMessage = line.take(500)) }
@@ -1403,8 +1414,14 @@ class ClaudeCodeManager(
      * 把还攥在手里的消息全部交棒出去（会话刚就绪、或打断之后要回来重发）。
      *
      * 调用点必须保证此刻 `busy` 已经是「有活 → 仍为 true」，否则界面会闪一下空闲态。
+     *
+     * 进程正在关（[stopping]）就什么都别发：换档时 shutdown 会给旧 CLI 最多 4 秒自己退，
+     * 它很可能在那期间把本轮跑完、吐一帧 `result`，而 result 的收尾正好会调到这里
+     * （见 [dispatch]）。那时 writer 已经是 null，发出去只是把消息喂给一个死进程 ——
+     * 队列留着不动，等新进程握手完再发才不会丢。
      */
     private fun flushPendingSend(): Boolean {
+        if (stopping) return false
         val queued = sendQueue.drainHeld()
         if (queued.isEmpty()) return false
         // 第一条要把「新的一轮开始了」落到状态上（计时、token 归零）；
@@ -1847,9 +1864,13 @@ class ClaudeCodeManager(
         suggestInitIfNoClaudeMd()
         // 会话没起来时打的字攥在调度台上。等到这里才发，第一轮就已经在用户选的目录下
         // （applyPreferredCwd 在上面）。先把 busy 点亮，否则 dispatchSend 前界面会闪一下空闲。
+        //
+        // 两个口径不一样，所以点亮之后必须看返回值：hasQueuedWork 数的是 held + handedOff，
+        // flushPendingSend 只发 held。真出现"只剩 handedOff"时（上个进程死前交棒、字节却没
+        // 送到），busy 会被点亮却没有任何一轮开始，输入坞从此永远显示中断键 —— 兜底在这里。
         if (hasQueuedWork()) {
             _state.update { it.copy(busy = true) }
-            flushPendingSend()
+            if (!flushPendingSend()) _state.update { it.copy(busy = false) }
         }
     }
 
@@ -2219,7 +2240,7 @@ class ClaudeCodeManager(
      * argv 和环境变量里生效，CLI 起来之后没有任何控制请求能改它们，所以只能重启进程 ——
      * 但用 `--resume` 续同一会话 id，历史由 CLI 自己接上，用户体感等同于中途可改。
      *
-     * 两个必须注意的点：
+     * 三个必须注意的点：
      *
      * 1. **不能整块重建 SessionState**。之前这里 `_state.value = SessionState(...)` 只保留
      *    items/options，把模型目录、斜杠命令、权限模式、用量、cwd、announcedInit 全清空了 ——
@@ -2230,6 +2251,11 @@ class ClaudeCodeManager(
      *    磁盘上没有文件时 `--resume <id>` 会报 "No conversation found" 并 exit(1)，
      *    状态直接掉到 Closed/Failed，界面弹回启动面板 —— 这正是"调个 effort 就进新会话"。
      *    这种情况退回 `--session-id`（同一个 id 新建），既不丢会话标识也不会失败。
+     *
+     * 3. **搬移队列的三步顺序不能换**（见方法体里的 ①②③）。这里踩过的坑是：状态改晚了，
+     *    整个 shutdown 等待期（最坏 ~8 秒）界面还是 Running、发送键还能点，那段时间发出去的
+     *    消息写进一个已经没有 writer 的进程，静默蒸发；而队列快照抄早了，旧进程临死前真吃下去的
+     *    那条又会被重发给 `--resume` 的新进程，在模型眼里变成两遍。
      */
     private fun relaunchWith(base: SessionOptions) {
         val sessionId = _state.value.sessionId
@@ -2247,36 +2273,60 @@ class ClaudeCodeManager(
         _state.update { it.copy(applyingEffort = true) }
         scope.launch {
             sessionMutex.withLock {
-                // 换档是续同一个会话，排队的消息不该跟着进程一起作废（shutdown 会清空队列）。
-                // 先抄一份，新进程握手完再原样发出去。
-                val carried = sendQueue.snapshot()
-                // 必须先 shutdown 再判断能不能 resume：transcript 是 CLI **退出时**才落盘的，
-                // 关进程之前去看磁盘会看到"还没有文件"，等真去启动时文件又已经写出来了，
-                // 于是 `--session-id <已存在的 id>` 撞车。顺序反了两边都会错。
-                shutdown()
-                carried.forEach { sendQueue.hold(it) }
-                val options = if (hasTranscript(sessionId)) {
-                    aligned.copy(resumeSessionId = sessionId, newSessionId = null)
-                } else {
-                    aligned.copy(resumeSessionId = null, newSessionId = sessionId)
-                }
-                // 只重置和进程绑定的字段
+                // ① 先把门关上，再动进程。[send] 判断"还能不能写 stdin"只看 status ——
+                //    它不是 suspend、不走 sessionMutex、也不看私有的 stopping，而 shutdown()
+                //    最坏要等 ~8 秒（GRACEFUL_EXIT_MS + 两段 destroy 宽限）。状态改在后面的话，
+                //    这 8 秒里界面还是 Running、发送键还能点，用户敲的字会被 dispatchSend
+                //    写进一个 writer 已经置 null 的进程：字节在 writeNow 里只换来一行 warn，
+                //    对话流里却留着一条看着已经发出、模型从没见过的消息 —— 静默丢消息。
+                //    先改 Starting，这段时间到达的 send 自然走 hold 分支攥在调度台上，
+                //    由握手末尾的 flushPendingSend 交给新进程。
                 _state.update {
                     it.copy(
                         status = SessionStatus.Starting,
-                        options = options,
                         applyingEffort = true,
                         busy = false,
                         pendingPermission = null,
                         streamingText = "",
                         streamingThinking = "",
+                    )
+                }
+                // ② 换档是续同一个会话，排队的消息不该跟着进程一起作废，所以这次不清队列。
+                //    必须先 shutdown 再判断能不能 resume：transcript 是 CLI **退出时**才落盘的，
+                //    关进程之前去看磁盘会看到"还没有文件"，等真去启动时文件又已经写出来了，
+                //    于是 `--session-id <已存在的 id>` 撞车。顺序反了两边都会错。
+                shutdown(clearQueue = false)
+                // ③ 等旧进程死透了**才**决定哪些要重发，这个先后是这里最要紧的一条。
+                //    handedOff 的含义是"字节进了旧进程的 stdin，但它还没发过包含这条的请求"：
+                //    真被吃进去的话 CLI 会打一帧 status=requesting，而 readLoop 一直活到
+                //    shutdown 的最后一行（io.cancel()），那一帧必然已被 confirmHandedOff 收掉。
+                //    所以**此刻**还留在 handedOff 里的，就是旧进程至死没看过的 —— 重发给
+                //    `--resume` 的新进程不会和 transcript 里的历史撞成两遍。
+                //    反过来在 shutdown 之前抄快照就漏掉了这段确认窗口：旧进程临死前真吃下去
+                //    的那条也会被原样再发一次，模型眼里就是同一句说了两遍。
+                //    reclaim() 的 addFirst 正好把它们排在 ① 之后新攥住的消息前面，次序不乱。
+                sendQueue.reclaim()
+                val options = if (hasTranscript(sessionId)) {
+                    aligned.copy(resumeSessionId = sessionId, newSessionId = null)
+                } else {
+                    aligned.copy(resumeSessionId = null, newSessionId = sessionId)
+                }
+                // errorMessage 和流式残留留到这里才清：① 之后旧进程还会再吐一阵子，
+                // 现在清才盖得住它退出前打的最后几行
+                _state.update {
+                    it.copy(
+                        options = options,
                         errorMessage = null,
+                        streamingText = "",
+                        streamingThinking = "",
+                        busy = false,
                     )
                 }
                 runCatching { launchCli(options) }
                     .onFailure { e ->
-                        // 换档前搬回队列的消息（上面的 carried.forEach hold）不能跟着
-                        // shutdown 一起丢光 —— 先退回输入框，用户还能在原会话里重发
+                        // 起不来时调度台上攒着 ①③ 两处的消息（② 这次没清队列）——
+                        // 先退回输入框，用户还能在原会话里重发。退的都是 ③ 判定过
+                        // "旧进程没看过"的，所以退回不等于让用户白发第二遍
                         refundHeldMessages("切换失败，排队的消息已退回输入框")
                         shutdown()
                         _state.update {
@@ -2669,8 +2719,12 @@ class ClaudeCodeManager(
      *
      * 注意先把 [process] 捕获成局部变量再置 null —— 旧实现在异步块里再读 `process`，
      * 那时字段已经是 null 了，destroyForcibly() 永远不会执行。
+     *
+     * [clearQueue] 只有 [relaunchWith] 传 false：换档是**续同一个会话**，排队的消息进的还是
+     * 同一个上下文，不该跟着进程作废；而且这一路要等 shutdown 跑完、把旧进程真吃下去的那批
+     * 确认掉之后，才知道剩下哪些该重发（见那边的 ③）。其余调用点都是真的换/关会话，保持默认。
      */
-    private suspend fun shutdown() {
+    private suspend fun shutdown(clearQueue: Boolean = true) {
         stopping = true
         val proc = process
         val io = sessionIo
@@ -2679,7 +2733,7 @@ class ClaudeCodeManager(
         // 排队的消息跟着这个进程一起作废：留到下一个会话去发，等于把一句话
         // 塞进一个它根本不认识的上下文里
         inFlight = null
-        sendQueue.clear()
+        if (clearQueue) sendQueue.clear()
         // 关掉 stdin 就是 stream-json 模式约定的优雅退出信号。
         // **必须给它时间自己退** —— transcript 是 CLI 退出前才落盘的，
         // 直接 destroy() 会让这一轮的 ~/.claude/projects/<cwd>/<id>.jsonl 根本没写出来，
