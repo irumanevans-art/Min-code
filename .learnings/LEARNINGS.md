@@ -874,3 +874,65 @@ SessionState 暴露 `stopping` / `applyingSettings` / `liveTitle`；fallback 事
 ### Resolution
 - **Resolved**: 2026-09-15T12:30:00+08:00
 - **Notes**: 1.1.6 重做。
+
+
+## [LRN-20260918-ANDROID-KILL-LIMITS] discovery
+
+**Logged**: 2026-09-18T03:10:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+在 Android 上杀 proot 进程树，两条平台事实必须先知道，否则写出来的代码单测全绿、真机一个进程都杀不掉：**(1) `/proc/<pid>/task/<tid>/children` 不存在**（内核没开 `CONFIG_PROC_CHILDREN`）；**(2) `Process.destroy()` 和 `destroyForcibly()` 都只发 SIGTERM**，没有 SIGKILL 那一步。
+
+### Details
+- `ls /proc/1/task/1/` 的完整条目里没有 `children`。依赖它列后代 → 恒为空表 → `killTree` 空转。
+  可用的替代：遍历 `/proc` 数字目录读 `<pid>/stat`，comm 之后第 2 个字段就是 ppid，自己建 pid→ppid 全表再反向索引。
+  App uid 读得到自己 uid 的进程（proot 及其 tracee 都是同一个 uid），读别的 uid 得 EACCES，遍历时自然跳过。
+- AOSP libcore：`ProcessBuilder.start()` → `java.lang.ProcessImpl.start()` → `UNIXProcess`，它停在 OpenJDK 8 之前的形状，**没有 override `destroyForcibly()`**，于是落到 `Process` 的默认实现 `{ destroy(); return this; }`；而 `destroy()` 的 native 体就一行 `kill(pid, SIGTERM)`，签名 `(I)V` 里根本没有 force 参数。
+  proot 扛得住 SIGTERM，于是宿主永不死、`waitFor()` 永不返回、`runCatching` 也不抛——三条现象同时出现时就是它。
+  要真杀得自己发 SIGKILL（`android.os.Process.sendSignal`），`destroy()` 只配用来关三条管道。
+- `Process.pid()` 也不能用：不在公开 SDK 的 `api-versions.xml` 里，AGP 9 按 minSdk 过滤核心库后直接编译不过。退路是解析 `toString()` 里的 `pid=`，再反射。
+- 杀的顺序不能反：宿主一死，后代立刻 reparent 到 init（实测 ppid 变 1），从 root 再也遍历不到，只剩端口还 LISTEN 的孤儿死壳。**先自底向上杀后代，再处理宿主**；后代杀干净后宿主多半自己就退了。
+
+### Suggested Action
+碰 proot 进程生命周期前先读 `ProcessTreeKill` 的类注释（两条教训写在那里）。不要再用 `children` 文件，不要指望 `destroyForcibly` 会 SIGKILL。
+
+### Metadata
+- Source: emulator_verification
+- Related Files: ProcessTreeKill.kt, LocalServiceRegistry.kt
+- Tags: proot, process-tree, android-platform, sigkill, proc
+
+### Resolution
+- **Resolved**: 2026-09-18T03:10:00+08:00
+- **Notes**: 实测 `killTree pid=5235 tree=4 term=4 kill=0` + `killHost -> AlreadyGone`，5 个进程全消失、端口释放。修复前是 `tree=0` 且宿主存活。
+
+
+## [LRN-20260918-INJECTED-IO-GREEN] correction
+
+**Logged**: 2026-09-18T03:15:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: process
+
+### Summary
+IO 全部可注入的设计让纯逻辑可单测，**但也让单测测不到"那个 IO 接口在目标平台上是否存在"**。22 个用例全绿的杀树代码，在真机上 `tree=0`，一个进程没杀掉。绿灯只证明了逻辑自洽，没证明功能活着。
+
+### Details
+- 单测注入 fake reader，于是"读的是一个 Android 上不存在的文件"这件事被完美地绕过去了。
+- 这类代码的验收判据不能是"单测过"，必须是**目标平台上的一条可观测事实**：日志里的计数（tree/term/kill）、进程真的消失、端口真的释放。
+- 有一个通用嗅探法：如果一段代码的全部外部依赖都被注入替换了，那它的单测覆盖率越高，越说明"契约是否成立"这个问题没人验过。
+- 同一轮里 `LocalServiceRegistry.stop()` 还会**乐观地先把状态 patch 成 Exited**，UI 显示"Exited · stopped"而进程全部活着——界面状态同样不能当验收证据。
+
+### Suggested Action
+凡是依赖 `/proc`、平台 API 行为、内核特性的改动，单测之外必须补一条真机/模拟器上的可观测断言，并把那条日志或命令写进 commit 信息。UI 状态、单测绿灯都不算。
+
+### Metadata
+- Source: emulator_verification
+- Related Files: ProcessTreeKill.kt, ProcessTreeKillTest.kt, LocalServiceRegistry.kt
+- Tags: testing, verification, honesty, false-green
+
+### Resolution
+- **Resolved**: 2026-09-18T03:15:00+08:00
+- **Notes**: 返工后单测改为覆盖新机制（34 例），并以模拟器日志作为验收。
