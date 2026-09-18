@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import me.rerere.workspace.ProcessTreeKill
 import me.rerere.workspace.ProotShellRunner
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.RootfsPatcher
@@ -361,6 +362,25 @@ class LocalServiceRegistry(
         handle?.process = null
         if (proc != null) {
             scope.launch {
+                // 先杀 guest 进程树，再毁宿主 proot —— 顺序不能反：宿主一死，后代立刻
+                // reparent 到 init，从 root 出发就再也遍历不到，只剩端口还 LISTEN 的
+                // 孤儿死壳（`--kill-on-exit` 救不了，理由见 ProcessTreeKill 类注释）。
+                // killTree 是阻塞 IO（读 /proc + TERM 宽限），显式压到 IO 上；
+                // 取 pid 或杀树整体失败都不许挡住下面的 destroy。
+                runCatching {
+                    val pid = ProcessTreeKill.pidOf(proc)
+                    if (pid == null) {
+                        Log.w(TAG, "stop $id: 取不到宿主 pid，跳过杀 guest 进程树")
+                    } else {
+                        val killed = withContext(Dispatchers.IO) { ProcessTreeKill.killTree(pid) }
+                        Log.i(
+                            TAG,
+                            "stop $id killTree pid=$pid tree=${killed.tree.size} " +
+                                "term=${killed.terminated.size} kill=${killed.killed.size} " +
+                                "gone=${killed.goneBeforeSignal.size}"
+                        )
+                    }
+                }.onFailure { Log.w(TAG, "killTree $id", it) }
                 runCatching {
                     proc.destroy()
                     val exited = try {
