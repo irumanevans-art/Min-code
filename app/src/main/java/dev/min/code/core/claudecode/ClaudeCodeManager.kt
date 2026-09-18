@@ -563,6 +563,21 @@ class ClaudeCodeManager(
 
     /**
      * 启动会话。重复调用会先等旧会话彻底结束。
+     *
+     * **这里 `shutdown()` 排在状态复位前面是对的，别照 [relaunchWith] 的 ① 去"统一"它。**
+     * 两件事撑着这个结论：
+     *
+     * 1. 进来时这个 manager 必然是空的。唯一的调用方 `ClaudeCodeSessionRegistry.newSession`
+     *    是 `factory()` 现造一个再调（[openSession] 同理），所以 `process == null`、
+     *    status 还是 `Idle` —— shutdown 直接跳过那段 `proc.waitFor`，没有 relaunchWith
+     *    那个"状态还停在 Running、发送键还能点"的 ~8 秒窗口可言。
+     * 2. 就算将来真在一个活着的 manager 上调，正确做法也不是先置 Starting。这一路用户的
+     *    意图是**换一个会话**，这期间打的字属于上一个会话，本就该由 [send] 的 `emitWithdrawn`
+     *    原样退回输入框，而不是攥住搬进新会话的上下文。改成先置 Starting 只会让它走 hold，
+     *    紧接着被 shutdown 的 `sendQueue.clear()` 抹掉，留下一条永远「排队中」的幽灵。
+     *
+     * 启动**失败**那一支是另一回事：那时 status 已经是 Starting，攥着的是本会话的字，
+     * 所以要先 [refundHeldMessages] 再 shutdown。
      */
     fun startSession(options: SessionOptions = SessionOptions()) {
         scope.launch {
@@ -2481,7 +2496,12 @@ class ClaudeCodeManager(
         return sessionStore.listSessions(linuxDir)
     }
 
-    /** 打开一个历史会话：先把 transcript 重建成界面条目，再用 --resume 续上进程 */
+    /**
+     * 打开一个历史会话：先把 transcript 重建成界面条目，再用 --resume 续上进程。
+     *
+     * `shutdown()` 同样排在状态复位前面，理由和 [startSession] 一字不差（调用方给的是
+     * 现造的 manager；何况这一路打的字属于上一个会话，该退回输入框而不是搬过来）。
+     */
     fun openSession(sessionId: String) {
         scope.launch {
             val linuxDir = currentLinuxDir ?: resolveLinuxDir()
