@@ -14,21 +14,66 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.network.activeDnsServers
 import dev.min.code.util.LocalPreviewBus
 import dev.min.code.util.LocalUrls
 import dev.min.code.util.openExternalUrl
+import me.rerere.workspace.ProotShellEntry
+import me.rerere.workspace.ProotShellRunner
 import me.rerere.workspace.RootfsPatchOptions
-import me.rerere.workspace.ProotCompat
 import me.rerere.workspace.RootfsPatcher
 import me.rerere.workspace.WorkspaceManager
+import me.rerere.workspace.WorkspaceShellContext
 import java.io.File
 
 /**
+ * 终端页签那条 proot 的参数。
+ *
+ * 命令行本身由 [ProotShellRunner.buildCommand] 拼 —— 和 Claude 会话、长驻本地服务同一份来源。
+ * 这里只负责说清楚终端**故意**跟它们不一样的地方：
+ * - [ProotShellEntry.InteractiveShell]：接在 pty 上的交互 shell，没有要 eval 的命令，
+ *   也因此不吃 `CI` / `NO_COLOR` / `PAGER=cat` 那套非交互约定（用户在看，颜色和分页要留着）。
+ * - `killOnExit = true`：关掉页签就该把里面跑的东西一起带走，和长驻服务正相反。
+ * - 显式注入 Node 的 PATH：交互 shell 不是登录 shell，读不到
+ *   `/etc/profile.d/node.sh`，不给的话终端里 `claude` / `node` / `npm` 全是 command not found，
+ *   而同一个 rootfs 在别处都有。
+ *
  * @param cwd 开进哪个目录（guest 侧绝对路径，如 `/workspace/api`）。给会话开的终端用它落在
  *   那个会话自己的工作目录里。**必须先验证存在**：proot 的 `-w` 指到一个不存在的目录时
  *   shell 会莫名其妙地起在别处，不如当场退回 `/workspace`。
  */
+internal fun buildTerminalShellContext(
+    root: String,
+    filesDir: File,
+    linuxDir: File,
+    tempDir: File,
+    cwd: String? = null,
+): WorkspaceShellContext {
+    val workspaceDirGuest = WorkspaceManager.ROOTFS_WORKSPACE_DIR
+    // guest `/workspace/x` 就是宿主 `files/x`（runner 拼的那条 bind mount），所以存在性直接在宿主侧问
+    val relativeCwd = cwd
+        ?.takeIf { it == workspaceDirGuest || it.startsWith("$workspaceDirGuest/") }
+        ?.removePrefix(workspaceDirGuest)
+        ?.trim('/')
+        ?.takeIf { it.isEmpty() || File(filesDir, it).isDirectory }
+        .orEmpty()
+
+    return WorkspaceShellContext(
+        root = root,
+        command = "", // 交互 shell 不 eval 任何东西
+        cwd = relativeCwd,
+        filesDir = filesDir,
+        linuxDir = linuxDir,
+        tempDir = tempDir,
+        workingDir = filesDir,
+        timeoutMillis = 0L, // 终端由用户关，不超时
+        env = ClaudeCodeInstaller.nodeEnv(),
+        killOnExit = true,
+        entry = ProotShellEntry.InteractiveShell,
+    )
+}
+
 internal fun createWorkspaceTerminalSession(
     context: Context,
     root: String,
@@ -37,65 +82,24 @@ internal fun createWorkspaceTerminalSession(
 ): TerminalSession {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
-    val filesDir = File(workspaceDir, "files")
-    val linuxDir = File(workspaceDir, "linux")
-    val tempDir = File(workspaceDir, "tmp")
-    val nativeLibraryDir = File(appContext.applicationInfo.nativeLibraryDir)
-    val proot = File(nativeLibraryDir, "libproot_exec.so")
-    val loader = File(nativeLibraryDir, "libproot_loader.so")
-
-    // guest `/workspace/x` 就是宿主 `files/x`（下面那条 bind mount），所以存在性直接在宿主侧问
-    val workDir = cwd
-        ?.takeIf { it == WorkspaceManager.ROOTFS_WORKSPACE_DIR || it.startsWith("${WorkspaceManager.ROOTFS_WORKSPACE_DIR}/") }
-        ?.takeIf { File(filesDir, it.removePrefix(WorkspaceManager.ROOTFS_WORKSPACE_DIR).trimStart('/')).isDirectory }
-        ?: WorkspaceManager.ROOTFS_WORKSPACE_DIR
-
-    val args = mutableListOf(
-        "--root-id",
-        "--link2symlink",
-        "--kill-on-exit",
-        "-r",
-        linuxDir.absolutePath,
-        "-w",
-        workDir,
-        "-b",
-        "${filesDir.absolutePath}:${WorkspaceManager.ROOTFS_WORKSPACE_DIR}",
-    )
-    WorkspaceManager.KERNEL_FS_MOUNTS.forEach { path ->
-        if (File(path).exists()) {
-            args += "-b"
-            args += path
-        }
-    }
-    // 和 ProotShellRunner 同一套补丁：/dev/shm 替身 + 假 /proc，终端和会话看到的是同一个 Linux
-    ProotCompat.extraBinds(tempDir).forEach { (host, guest) ->
-        args += "-b"
-        args += "${host.absolutePath}:$guest"
-    }
-    args += listOf(
-        "/usr/bin/env",
-        "-i",
-        "HOME=/root",
-        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "TERM=xterm-256color",
-        "LANG=C.UTF-8",
-        "LC_ALL=C.UTF-8",
-        "USER=root",
-        "SHELL=/bin/bash",
-        "/bin/bash",
+    val runner = ProotShellRunner(File(appContext.applicationInfo.nativeLibraryDir))
+    val shellContext = buildTerminalShellContext(
+        root = root,
+        filesDir = File(workspaceDir, "files"),
+        linuxDir = File(workspaceDir, "linux"),
+        tempDir = File(workspaceDir, "tmp"),
+        cwd = cwd,
     )
 
-    val env = arrayOf(
-        "PROOT_LOADER=${loader.absolutePath}",
-        "PROOT_TMP_DIR=${tempDir.absolutePath}",
-        "TMPDIR=${tempDir.absolutePath}",
-    )
+    // TerminalSession 自己拼 argv[0]，所以第一项（proot 本身）要摘掉
+    val command = runner.buildCommand(shellContext)
+    val env = runner.hostEnvironment(shellContext).map { (key, value) -> "$key=$value" }
 
     return TerminalSession(
-        proot.absolutePath,
-        filesDir.absolutePath,
-        args.toTypedArray(),
-        env,
+        command.first(),
+        shellContext.filesDir.absolutePath,
+        command.drop(1).toTypedArray(),
+        env.toTypedArray(),
         2_000,
         client,
     ).apply {

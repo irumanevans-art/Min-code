@@ -11,10 +11,37 @@ data class WorkspaceBindMount(
     }
 }
 
+/**
+ * proot 命令行的**唯一**拼装处。
+ *
+ * 三条路径 —— Claude 会话、长驻本地服务、终端页签 —— 都必须从这里出命令行。
+ * 终端页签不走 [launch]（它要把 argv 交给 pty 去 fork），但仍然走 [buildCommand] /
+ * [hostEnvironment]：曾经它自己抄过一份，抄出来的那份少了几样东西，谁都没发现。
+ *
+ * 路径之间**合理**的差异全部用 [WorkspaceShellContext] 的字段表达
+ * （[WorkspaceShellContext.killOnExit]、[WorkspaceShellContext.entry]、
+ * [WorkspaceShellContext.env]…），不要在调用方另拼一份。
+ */
 class ProotShellRunner(
     private val nativeLibraryDir: File,
     private val patcher: RootfsPatcher = RootfsPatcher(),
 ) : WorkspaceShellRunner {
+    /** proot 可执行文件。自己 fork 进程的调用方从这里取, 别再抄一遍 so 名字。 */
+    val prootExecutable: File get() = File(nativeLibraryDir, PROOT_EXEC)
+
+    /** proot 的 loader。只通过 [hostEnvironment] 传给子进程。 */
+    val prootLoader: File get() = File(nativeLibraryDir, PROOT_LOADER)
+
+    /**
+     * 宿主侧要带给 proot 进程的环境变量。
+     * 少一条 PROOT_LOADER 就是"启动了但立刻死掉"，所以这份表也必须只有一个来源。
+     */
+    fun hostEnvironment(context: WorkspaceShellContext): Map<String, String> = mapOf(
+        "PROOT_LOADER" to prootLoader.absolutePath,
+        "PROOT_TMP_DIR" to context.tempDir.absolutePath,
+        "TMPDIR" to context.tempDir.absolutePath,
+    )
+
     override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
         checkAvailability(context)?.let { reason ->
             return WorkspaceCommandResult(exitCode = 127, stdout = "", stderr = reason)
@@ -33,11 +60,11 @@ class ProotShellRunner(
      */
     fun checkAvailability(context: WorkspaceShellContext): String? {
         if (!context.linuxDir.hasUsableRootfs()) return "Rootfs is not installed"
-        if (!File(nativeLibraryDir, PROOT_EXEC).isFile) {
-            return "proot executable not found: ${File(nativeLibraryDir, PROOT_EXEC).absolutePath}"
+        if (!prootExecutable.isFile) {
+            return "proot executable not found: ${prootExecutable.absolutePath}"
         }
-        if (!File(nativeLibraryDir, PROOT_LOADER).isFile) {
-            return "proot loader not found: ${File(nativeLibraryDir, PROOT_LOADER).absolutePath}"
+        if (!prootLoader.isFile) {
+            return "proot loader not found: ${prootLoader.absolutePath}"
         }
         return null
     }
@@ -50,28 +77,23 @@ class ProotShellRunner(
     fun launch(context: WorkspaceShellContext): Process? {
         if (checkAvailability(context) != null) return null
 
-        val proot = File(nativeLibraryDir, PROOT_EXEC)
-        val loader = File(nativeLibraryDir, PROOT_LOADER)
-
         context.tempDir.mkdirs()
         patcher.patch(context.linuxDir)
-        return ProcessBuilder(buildCommand(context, proot))
+        return ProcessBuilder(buildCommand(context))
             .directory(context.filesDir)
             .redirectErrorStream(false)
-            .apply {
-                environment()["PROOT_LOADER"] = loader.absolutePath
-                environment()["PROOT_TMP_DIR"] = context.tempDir.absolutePath
-                environment()["TMPDIR"] = context.tempDir.absolutePath
-            }
+            .apply { environment().putAll(hostEnvironment(context)) }
             .start()
     }
 
-    private fun buildCommand(
-        context: WorkspaceShellContext,
-        proot: File,
-    ): List<String> {
+    /**
+     * 拼出完整的 proot 命令行, 下标 0 是 proot 可执行文件本身。
+     *
+     * 公开是为了收口: 终端页签把 argv 交给 pty 自己 fork, 没法走 [launch], 但拼装必须同源。
+     */
+    fun buildCommand(context: WorkspaceShellContext): List<String> {
         val command = mutableListOf(
-            proot.absolutePath,
+            prootExecutable.absolutePath,
             "--root-id",
             "--link2symlink",
         )
@@ -114,15 +136,21 @@ class ProotShellRunner(
             "/usr/bin/env",
             "-i",
             "HOME=/root",
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "PATH=$DEFAULT_GUEST_PATH",
             "TERM=xterm-256color",
             "LANG=C.UTF-8",
             "LC_ALL=C.UTF-8",
-            // 非交互执行约定, 抑制各类 CLI 的交互行为 (确认提示/分页器/颜色转义)
-            "CI=true",
-            "NO_COLOR=1",
-            "PAGER=cat",
+            // proot 恒以 --root-id 跑、HOME 恒为 /root, 所以这两条在任何路径下都成立;
+            // 少了它们的话 guest 里的 `$USER` 是空的, 一批脚本 (npm/git 的 hook、oh-my-*) 会走错分支
+            "USER=root",
+            "SHELL=/bin/bash",
         )
+        if (context.entry == ProotShellEntry.LoginCommand) {
+            // 非交互执行约定, 抑制各类 CLI 的交互行为 (确认提示/分页器/颜色转义)。
+            // 终端页签是真交互 (用户在看), 给它关掉颜色、把分页器换成 cat 反而是错的,
+            // 所以这三条跟着 entry 走。
+            command += listOf("CI=true", "NO_COLOR=1", "PAGER=cat")
+        }
         // 调用方注入的额外环境变量 (如 ANTHROPIC_*), key 做白名单校验, 值作为独立 argv 不经 shell。
         // 必须排在上面那批之后: `env -i` 里同名变量后者覆盖前者, 调用方因此可以按需
         // 覆盖 CI / NO_COLOR / PAGER 这些默认值。
@@ -130,24 +158,29 @@ class ProotShellRunner(
             require(ENV_KEY_REGEX.matches(key)) { "Invalid env key: $key" }
             command += "$key=$value"
         }
-        command += listOf(
-            "/bin/bash",
-            "-l",
-            "-c",
-            // 命令通过位置参数传入, 避免任何转义; eval "$2" 对命令文本只求值一次, 等价于 bash -c "$cmd"
-            //
-            // PATH 要在这里再 export 一次: `bash -l` 是登录 shell, 会 source /etc/profile,
-            // 那里的 PATH 赋值会把 `env -i PATH=...` 传进来的值整个覆盖掉。调用方注入的
-            // PATH（如 /opt/node/bin）必须在 profile 跑完之后才生效。
-            "[ -n \"\$3\" ] && export PATH=\"\$3\"; cd -- \"\$1\" && eval \"\$2\"",
-            "rikkahub",
-            context.prootCwd(),
-            context.command,
-            context.env[ENV_PATH].orEmpty(),
-        )
+        command += when (context.entry) {
+            ProotShellEntry.LoginCommand -> listOf(
+                "/bin/bash",
+                "-l",
+                "-c",
+                // 命令通过位置参数传入, 避免任何转义; eval "$2" 对命令文本只求值一次, 等价于 bash -c "$cmd"
+                //
+                // PATH 要在这里再 export 一次: `bash -l` 是登录 shell, 会 source /etc/profile,
+                // 那里的 PATH 赋值会把 `env -i PATH=...` 传进来的值整个覆盖掉。调用方注入的
+                // PATH（如 /opt/node/bin）必须在 profile 跑完之后才生效。
+                "[ -n \"\$3\" ] && export PATH=\"\$3\"; cd -- \"\$1\" && eval \"\$2\"",
+                "rikkahub",
+                context.prootCwd(),
+                context.command,
+                context.env[ENV_PATH].orEmpty(),
+            )
+            // 交互 shell: 起在哪由上面的 `-w` 决定, 没有要 eval 的命令
+            ProotShellEntry.InteractiveShell -> listOf("/bin/bash")
+        }
         return command
     }
 
+    /** [cwd] 是相对 [WORKSPACE_DIR] 的路径, 这里换算成 guest 侧绝对路径给 `-w` */
     private fun WorkspaceShellContext.prootCwd(): String {
         val normalized = cwd.trim().trim('/')
         return if (normalized.isBlank()) {
@@ -161,6 +194,10 @@ class ProotShellRunner(
         isDirectory && File(this, "bin/sh").isFile
 
     private companion object {
+        /** Rootfs 里的默认 PATH；调用方要加目录 (如 /opt/node/bin) 用 env 注入覆盖 */
+        private const val DEFAULT_GUEST_PATH =
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
         private const val PROOT_EXEC = "libproot_exec.so"
         private const val PROOT_LOADER = "libproot_loader.so"
         private const val ENV_PATH = "PATH"

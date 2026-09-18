@@ -255,16 +255,13 @@ class LocalServiceRegistry(
             workingDir = filesDir,
             timeoutMillis = 0L,
             killOnExit = false,
+            // HOME / USER / SHELL / CI / NO_COLOR / PAGER 由 ProotShellRunner 的基础 env 统一给，
+            // 这里只放托管服务自己需要的那几样
             env = buildMap {
                 putAll(ClaudeCodeInstaller.nodeEnv())
                 if (snap != null) putAll(GuestRuntimeDocs.envFrom(snap))
-                put("PAGER", "cat")
-                put("CI", "true")
-                put("NO_COLOR", "1")
+                // 服务自己 apt install 时别卡 dpkg 交互
                 put("DEBIAN_FRONTEND", "noninteractive")
-                put("USER", "root")
-                put("SHELL", "/bin/bash")
-                put("HOME", "/root")
             },
         )
 

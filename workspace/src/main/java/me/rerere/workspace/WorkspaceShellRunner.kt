@@ -9,8 +9,28 @@ interface WorkspaceShellRunner {
     fun execute(context: WorkspaceShellContext): WorkspaceCommandResult
 }
 
+/**
+ * proot 里最后起的那个 bash 长什么样。
+ *
+ * 这是三条启动路径之间**故意**的差异, 所以做成参数而不是各拼一份命令行:
+ * 会话 / 托管服务 / 一次性命令要的是"跑完就走"的非交互 shell, 终端页签要的是
+ * 挂在 pty 上的交互 shell —— 两者对颜色、分页器、确认提示的期望正好相反。
+ */
+enum class ProotShellEntry {
+    /** `bash -l -c <script>`: 命令由位置参数传入, 不经 shell 转义 */
+    LoginCommand,
+
+    /**
+     * `bash`: 由调用方接到 pty 上, [WorkspaceShellContext.command] 不参与。
+     * 不带 `-l` —— 交互 shell 走的是 `~/.bashrc` 那条路, 所以 `/etc/profile.d` 里的 PATH
+     * 到不了这里, 需要什么路径由调用方用 [WorkspaceShellContext.env] 显式给。
+     */
+    InteractiveShell,
+}
+
 data class WorkspaceShellContext(
     val root: String,
+    /** [ProotShellEntry.InteractiveShell] 下不参与拼装, 传空串即可 */
     val command: String,
     val cwd: String,
     val filesDir: File,
@@ -28,6 +48,8 @@ data class WorkspaceShellContext(
      * 「关对话进程还在」做不到。
      */
     val killOnExit: Boolean = true,
+    /** 见 [ProotShellEntry]。默认非交互, 终端页签才换成交互 shell。 */
+    val entry: ProotShellEntry = ProotShellEntry.LoginCommand,
 )
 
 class HostShellRunner : WorkspaceShellRunner {
