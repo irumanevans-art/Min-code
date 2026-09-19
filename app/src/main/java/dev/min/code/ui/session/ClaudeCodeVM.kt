@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeConfigStore
 import dev.min.code.core.claudecode.ClaudeCodeCostLedger
 import dev.min.code.core.claudecode.ClaudeCodeImage
@@ -202,7 +203,7 @@ class ClaudeCodeVM(
                     id = it.key,
                     title = extra.title?.takeIf { t -> t.isNotBlank() }
                         ?: live
-                        ?: if (it.busy) "新会话（进行中）" else "新会话",
+                        ?: context.getString(if (it.busy) R.string.vm_new_session_busy else R.string.vm_new_session),
                     updatedAt = Long.MAX_VALUE, // 还没落盘的排最前
                     messageCount = 0,
                     isLive = true,
@@ -455,7 +456,7 @@ class ClaudeCodeVM(
                 result.fold(
                     onSuccess = { state.copy(checking = false, latestCliVersion = it) },
                     onFailure = {
-                        state.copy(checking = false, error = "查询最新版本失败：${it.message ?: it}")
+                        state.copy(checking = false, error = context.getString(R.string.vm_check_update_failed, it.message ?: it.toString()))
                     },
                 )
             }
@@ -493,8 +494,8 @@ class ClaudeCodeVM(
         if (live > 0) {
             _maintenance.update {
                 it.copy(
-                    error = "有 $live 个会话正在运行。更新会替换掉正在执行的文件，" +
-                        "请先在侧边栏关闭全部会话再试。",
+                    // 和面板上那条拦截提示是同一句话，共用一份文案
+                    error = context.getString(R.string.maint_blocked, live),
                 )
             }
             return
@@ -515,7 +516,7 @@ class ClaudeCodeVM(
                         }
 
                         is ClaudeCodeInstaller.InstallState.Done -> _maintenance.update {
-                            it.copy(lastResult = state.cliVersion?.let { v -> "现在是 $v" } ?: it.lastResult)
+                            it.copy(lastResult = state.cliVersion?.let { v -> context.getString(R.string.vm_cli_current, v) } ?: it.lastResult)
                         }
 
                         is ClaudeCodeInstaller.InstallState.Failed -> _maintenance.update {
@@ -552,7 +553,7 @@ class ClaudeCodeVM(
     fun openSession(id: String) {
         val existing = drafts.load(id)
         if (drafts.hasCarry() && !existing.isEmpty) {
-            _notice.value = "退出时输入框是空的，顺延到这个会话，但它自己已经有未发送的内容和附件。先打开一个空会话，或清掉这边的草稿。"
+            _notice.value = context.getString(R.string.vm_draft_conflict)
             return
         }
         if (registry.openSession(id) == null) {
@@ -574,8 +575,10 @@ class ClaudeCodeVM(
     fun closeSession(key: String) = registry.closeSession(key)
 
     private fun atCapacity() {
-        _notice.value = "同时最多运行 ${ClaudeCodeSessionRegistry.MAX_CONCURRENT} 个会话" +
-            "（每个会话是一个独立的 Node 进程，常驻数百 MB）。请先在会话列表里停掉一个。"
+        _notice.value = context.getString(
+            R.string.vm_max_sessions,
+            ClaudeCodeSessionRegistry.MAX_CONCURRENT,
+        )
     }
 
     fun deleteSession(id: String) {
@@ -618,7 +621,7 @@ class ClaudeCodeVM(
         }
         val existing = drafts.load(sessionId)
         if (drafts.hasCarry() && !existing.isEmpty) {
-            _notice.value = "退出时输入框是空的，顺延到这个会话，但它自己已经有未发送的内容和附件。先打开一个空会话，或清掉这边的草稿。"
+            _notice.value = context.getString(R.string.vm_draft_conflict)
             return
         }
         if (drafts.hasCarry()) drafts.consumeCarry(sessionId)
@@ -761,7 +764,7 @@ class ClaudeCodeVM(
     fun createCwdFolder(parent: String, name: String, onDone: (Result<String>) -> Unit) {
         viewModelScope.launch {
             val result = runCatching {
-                val folder = CwdPath.folderName(name) ?: error("名称不合法")
+                val folder = CwdPath.folderName(name) ?: error(context.getString(R.string.vm_invalid_name))
                 val (area, relative) = CwdPath.split(parent)
                 val child = if (relative.isBlank()) folder else "$relative/$folder"
                 workspaceRepository.mkdir(workspaceId, area, child)

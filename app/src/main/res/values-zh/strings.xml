@@ -545,4 +545,13 @@
   <string name="terminal_close_title">关闭 %1$s？</string>
   <string name="terminal_close_body">标签里正在跑的命令会被终止。</string>
   <string name="terminal_close">关闭</string>
+
+  <!-- 会话 ViewModel 抛出的提示 -->
+  <string name="vm_new_session">新会话</string>
+  <string name="vm_new_session_busy">新会话（进行中）</string>
+  <string name="vm_check_update_failed">查询最新版本失败：%1$s</string>
+  <string name="vm_cli_current">现在是 %1$s</string>
+  <string name="vm_draft_conflict">退出时输入框是空的，顺延到这个会话，但它自己已经有未发送的内容和附件。先打开一个空会话，或清掉这边的草稿。</string>
+  <string name="vm_max_sessions">同时最多运行 %1$d 个会话（每个会话是一个独立的 Node 进程，常驻数百 MB）。请先在会话列表里停掉一个。</string>
+  <string name="vm_invalid_name">名称不合法</string>
 </resources>

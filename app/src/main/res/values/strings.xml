@@ -545,4 +545,13 @@
   <string name="terminal_close_title">Close %1$s?</string>
   <string name="terminal_close_body">Whatever is running in the tab will be killed.</string>
   <string name="terminal_close">Close</string>
+
+  <!-- Notices raised by the session view model -->
+  <string name="vm_new_session">New session</string>
+  <string name="vm_new_session_busy">New session (running)</string>
+  <string name="vm_check_update_failed">Could not look up the latest version: %1$s</string>
+  <string name="vm_cli_current">Now on %1$s</string>
+  <string name="vm_draft_conflict">The composer was empty when you left, so the draft carried over to this session — but this one already has unsent text and attachments of its own. Open an empty session, or clear the draft here.</string>
+  <string name="vm_max_sessions">At most %1$d sessions run at once (each is its own Node process, holding hundreds of MB). Stop one from the session list first.</string>
+  <string name="vm_invalid_name">Invalid name</string>
 </resources>
