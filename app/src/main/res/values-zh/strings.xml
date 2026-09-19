@@ -408,4 +408,69 @@
   <string name="maint_node_reinstall">重装 Node.js 运行时</string>
   <string name="maint_reinstall_warning">重装 Linux 环境会清空整个 Rootfs：Claude Code CLI、Node.js、apt 装过的所有工具，以及 ~/.claude 下的全部会话记录都会一起消失，之后要从头装一遍。只有环境彻底坏掉时才这么做。</string>
   <string name="maint_reinstall_go">前往工作区重装 Linux 环境</string>
+
+  <!-- 会话设置面板：模型 / 权限模式 / 思考强度 / 提示缓存 / 工作目录 / 斜杠命令 -->
+  <string name="session_section_model">模型</string>
+  <string name="session_section_mode">权限模式</string>
+  <string name="session_section_effort">思考强度</string>
+  <string name="session_section_cache">提示缓存</string>
+  <string name="session_section_cwd">工作目录</string>
+  <string name="session_section_commands">斜杠命令</string>
+
+  <string name="session_mode_default_desc">每次改动前都询问</string>
+  <string name="session_mode_accept_edits_desc">自动接受文件编辑</string>
+  <string name="session_mode_plan_desc">先出计划，不直接改</string>
+  <string name="session_mode_bypass_desc">接受一切权限请求</string>
+
+  <string name="session_keepalive_active">后台保活已生效，切出去 / 息屏后会话继续跑</string>
+  <string name="session_keepalive_rejected">系统拒绝了前台服务：切到后台后会话随时可能被回收。去系统设置里给 Min 关掉「省电优化 / 后台限制」再试</string>
+  <string name="session_keepalive_expired">本机不接受常规的前台服务类型，退回的类型被系统限制为每天 6 小时，已用完。会话还在，但切到后台后随时可能被回收</string>
+  <string name="session_keepalive_none">没有正在运行的会话</string>
+
+  <string name="session_commands_count">%1$d 个</string>
+  <string name="session_desc_lang">说明语言</string>
+  <string name="session_desc_lang_zh">中文</string>
+  <string name="session_desc_lang_original">原文</string>
+  <string name="session_desc_lang_hint">%1$d 条命令里有 %2$d 条给得出中文说明，其余（插件 / 自定义 / 新版新增）保持英文原文。</string>
+  <string name="session_desc_lang_hint_off">显示 CLI 给的英文原文。</string>
+
+  <string name="session_model_save_default">同时存成新会话的默认</string>
+  <string name="session_model_save_default_on">写入 ~/.claude/settings.json 的 model，新会话和终端页的 claude 都用它（CLI 面板的 Enter）</string>
+  <string name="session_model_save_default_off">只改当前会话，其它会话不受影响（CLI 面板的 s 键）</string>
+  <string name="session_model_default">默认模型</string>
+  <string name="session_model_default_sub">由 CLI / 中转站决定</string>
+  <string name="session_model_applied"> · 当前实际：%1$s</string>
+  <string name="session_model_relay_list">中转站供应的模型（GET /v1/models）</string>
+  <string name="session_model_relay_querying">正在向中转站查询模型列表…</string>
+  <string name="session_model_relay_error">中转站没有返回模型列表（%1$s），请用别名或手动输入</string>
+  <string name="session_model_relay_empty">中转站返回了空的模型列表，请用别名或手动输入</string>
+  <string name="session_model_1m_title">选择时启用 1M 上下文</string>
+  <string name="session_model_1m_sub">给需要的模型加 [1m] 后缀（%1$s）。Fable / Opus 5 / Sonnet 5 原生就是 1M，不受影响</string>
+  <string name="session_model_1m_on">开</string>
+  <string name="session_model_1m_off">关</string>
+  <string name="session_model_native_1m">这些模型默认就是 1M 上下文，不用另外设置。</string>
+  <string name="session_model_alias_header">CLI 别名（选中后即会进入上面的列表）</string>
+  <string name="session_model_manual">手动输入</string>
+  <string name="session_model_no_catalog">CLI 没有返回可选模型目录（取决于中转站策略），请手动输入模型名。</string>
+
+  <string name="session_effort_applied">CLI 当前实际运行在：%1$s</string>
+  <string name="session_effort_ultracode_on">（ultracode 已启用）</string>
+  <string name="session_effort_unsupported">当前模型（Haiku）不支持思考强度，CLI 会忽略 --effort。换 Sonnet / Opus / Fable 才有 low…max 阶梯。</string>
+  <string name="session_effort_restart">切换档位需要重启 CLI 进程并续接当前会话（CLI 没有 set_effort），过程中不能发消息。</string>
+  <string name="session_effort_default">默认（由 CLI 决定）</string>
+  <string name="session_effort_chip_default">默认</string>
+  <string name="session_effort_ultracode_sub">xhigh + 动态工作流编排。单次推理深度等于 xhigh，比 max 低一档；但会并行调度多个子智能体，总消耗通常远高于 max。</string>
+  <string name="session_effort_low">快速直给，开销最小</string>
+  <string name="session_effort_medium">平衡：常规实现 + 基本验证</string>
+  <string name="session_effort_high">完整实现，充分测试与说明</string>
+  <string name="session_effort_xhigh">比 high 更深，略低于最高档</string>
+  <string name="session_effort_max">最强能力、最深推理。可能消耗过多 token、响应很慢，只在最难的任务上用</string>
+
+  <string name="session_cache_restart">切换需要重启 CLI 进程并续接当前会话（这是启动期环境变量），过程中不能发消息。</string>
+  <string name="session_cache_default_suffix">%1$s（默认）</string>
+  <string name="session_cache_5m">缓存写入 1.25× 计价。隔几分钟才回一句就会失效，适合问完就走</string>
+  <string name="session_cache_1h">缓存写入 2× 计价，命中三次以上才回本。适合开着会话断断续续用一下午</string>
+
+  <string name="session_expand_full">展开全文</string>
+  <string name="session_collapse">收起</string>
 </resources>

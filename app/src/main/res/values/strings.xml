@@ -408,4 +408,69 @@
   <string name="maint_node_reinstall">Reinstall the Node.js runtime</string>
   <string name="maint_reinstall_warning">Reinstalling the Linux environment wipes the whole rootfs: the Claude Code CLI, Node.js, everything installed through apt, and every session record under ~/.claude go with it, and it all has to be installed again. Only do this when the environment is truly broken.</string>
   <string name="maint_reinstall_go">Go to the workspace to reinstall Linux</string>
+
+  <!-- Session settings sheet: model / permission mode / effort / cache / cwd / commands -->
+  <string name="session_section_model">Model</string>
+  <string name="session_section_mode">Permission mode</string>
+  <string name="session_section_effort">Effort</string>
+  <string name="session_section_cache">Prompt cache</string>
+  <string name="session_section_cwd">Working directory</string>
+  <string name="session_section_commands">Slash commands</string>
+
+  <string name="session_mode_default_desc">Asks before every change</string>
+  <string name="session_mode_accept_edits_desc">Accepts file edits automatically</string>
+  <string name="session_mode_plan_desc">Plans first, changes nothing</string>
+  <string name="session_mode_bypass_desc">Accepts every permission request</string>
+
+  <string name="session_keepalive_active">Background keep-alive is on: sessions keep running after you leave or lock the screen</string>
+  <string name="session_keepalive_rejected">The system refused the foreground service, so a session can be reclaimed at any time once you leave. Turn off battery optimization / background restrictions for Min in the system settings and try again</string>
+  <string name="session_keepalive_expired">This device would not take the regular foreground service type; the fallback type is capped at 6 hours a day and that is used up. The session is still here, but it can be reclaimed once you leave</string>
+  <string name="session_keepalive_none">No session is running</string>
+
+  <string name="session_commands_count">%1$d</string>
+  <string name="session_desc_lang">Description language</string>
+  <string name="session_desc_lang_zh">中文</string>
+  <string name="session_desc_lang_original">Original</string>
+  <string name="session_desc_lang_hint">%2$d of %1$d commands have a Chinese description; the rest (plugins, custom, newly added) stay in the original English.</string>
+  <string name="session_desc_lang_hint_off">Shows the English text the CLI gives.</string>
+
+  <string name="session_model_save_default">Also save as the default for new sessions</string>
+  <string name="session_model_save_default_on">Writes the model key in ~/.claude/settings.json — new sessions and the terminal\'s claude both use it (the CLI panel\'s Enter)</string>
+  <string name="session_model_save_default_off">Changes this session only; other sessions are untouched (the CLI panel\'s s key)</string>
+  <string name="session_model_default">Default model</string>
+  <string name="session_model_default_sub">Decided by the CLI / the relay</string>
+  <string name="session_model_applied"> · currently: %1$s</string>
+  <string name="session_model_relay_list">Models the relay serves (GET /v1/models)</string>
+  <string name="session_model_relay_querying">Asking the relay for its model list…</string>
+  <string name="session_model_relay_error">The relay returned no model list (%1$s) — use an alias or type one in</string>
+  <string name="session_model_relay_empty">The relay returned an empty model list — use an alias or type one in</string>
+  <string name="session_model_1m_title">Enable the 1M context when selecting</string>
+  <string name="session_model_1m_sub">Appends [1m] to models that need it (%1$s). Fable / Opus 5 / Sonnet 5 are natively 1M and unaffected</string>
+  <string name="session_model_1m_on">on</string>
+  <string name="session_model_1m_off">off</string>
+  <string name="session_model_native_1m">These models are 1M by default; nothing to set.</string>
+  <string name="session_model_alias_header">CLI aliases (picking one adds it to the list above)</string>
+  <string name="session_model_manual">Type a model name</string>
+  <string name="session_model_no_catalog">The CLI returned no model catalog (depends on the relay\'s policy) — type the model name in.</string>
+
+  <string name="session_effort_applied">The CLI is actually running at: %1$s</string>
+  <string name="session_effort_ultracode_on"> (ultracode on)</string>
+  <string name="session_effort_unsupported">The current model (Haiku) has no effort levels; the CLI ignores --effort. Switch to Sonnet / Opus / Fable for the low…max ladder.</string>
+  <string name="session_effort_restart">Changing the level restarts the CLI and resumes this session (there is no set_effort); you cannot send messages while that happens.</string>
+  <string name="session_effort_default">Default (the CLI decides)</string>
+  <string name="session_effort_chip_default">default</string>
+  <string name="session_effort_ultracode_sub">xhigh plus dynamic workflow orchestration. A single pass reasons as deep as xhigh — one step below max — but it schedules several subagents in parallel, so the total spend is usually well above max.</string>
+  <string name="session_effort_low">Fast and direct, cheapest</string>
+  <string name="session_effort_medium">Balanced: ordinary implementation plus basic verification</string>
+  <string name="session_effort_high">Full implementation, thorough tests and explanation</string>
+  <string name="session_effort_xhigh">Deeper than high, just below the top</string>
+  <string name="session_effort_max">The strongest, deepest reasoning. Can burn a lot of tokens and answer slowly — save it for the hardest tasks</string>
+
+  <string name="session_cache_restart">Changing this restarts the CLI and resumes this session (it is a launch-time environment variable); you cannot send messages while that happens.</string>
+  <string name="session_cache_default_suffix">%1$s (default)</string>
+  <string name="session_cache_5m">Cache writes bill at 1.25×. It expires if you only reply every few minutes — fits ask-and-go.</string>
+  <string name="session_cache_1h">Cache writes bill at 2× and pay off after three hits. Fits leaving a session open through an afternoon.</string>
+
+  <string name="session_expand_full">Show all</string>
+  <string name="session_collapse">Collapse</string>
 </resources>

@@ -833,11 +833,11 @@ fun encodeClaudeCodeInterrupt(requestId: String): String = buildJsonObject {
  *
  * 只暴露 Claude Desktop 底栏那四档；auto / dontAsk 是内部档位，不放进 UI。
  */
-enum class ClaudeCodePermissionMode(val wire: String, val label: String, val desc: String) {
-    DEFAULT("default", "Manual", "每次改动前都询问"),
-    ACCEPT_EDITS("acceptEdits", "Accept edits", "自动接受文件编辑"),
-    PLAN("plan", "Plan", "先出计划，不直接改"),
-    BYPASS("bypassPermissions", "Bypass permissions", "接受一切权限请求");
+enum class ClaudeCodePermissionMode(val wire: String, val label: String) {
+    DEFAULT("default", "Manual"),
+    ACCEPT_EDITS("acceptEdits", "Accept edits"),
+    PLAN("plan", "Plan"),
+    BYPASS("bypassPermissions", "Bypass permissions");
 
     companion object {
         fun fromWire(wire: String?): ClaudeCodePermissionMode? = entries.find { it.wire == wire }

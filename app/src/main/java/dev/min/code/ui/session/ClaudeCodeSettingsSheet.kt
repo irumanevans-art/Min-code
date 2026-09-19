@@ -1,5 +1,6 @@
 package dev.min.code.ui.session
 
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -80,13 +81,28 @@ import me.rerere.hugeicons.stroke.ArrowDown01
  * "有哪几类设置"这个信息反而被淹掉。折叠起来先给六行概览（每行带当前值），
  * 点哪个展开哪个 —— 结构本身就是目录。
  */
-internal enum class SettingsSection(val label: String) {
-    MODEL("模型"),
-    MODE("权限模式"),
-    EFFORT("思考强度"),
-    CACHE("提示缓存"),
-    CWD("工作目录"),
-    COMMANDS("斜杠命令"),
+internal enum class SettingsSection(@StringRes val labelRes: Int) {
+    MODEL(R.string.session_section_model),
+    MODE(R.string.session_section_mode),
+    EFFORT(R.string.session_section_effort),
+    CACHE(R.string.session_section_cache),
+    CWD(R.string.session_section_cwd),
+    COMMANDS(R.string.session_section_commands),
+}
+
+/**
+ * 权限模式那一行的说明。
+ *
+ * 放在这里而不是 [ClaudeCodePermissionMode] 里：`label` 是官方术语（Manual /
+ * Accept edits），不该翻译也不随语言变；而这句说明是纯粹给人读的，
+ * 留在 core 的枚举里就等于永远抽不出去。
+ */
+@StringRes
+internal fun ClaudeCodePermissionMode.descRes(): Int = when (this) {
+    ClaudeCodePermissionMode.DEFAULT -> R.string.session_mode_default_desc
+    ClaudeCodePermissionMode.ACCEPT_EDITS -> R.string.session_mode_accept_edits_desc
+    ClaudeCodePermissionMode.PLAN -> R.string.session_mode_plan_desc
+    ClaudeCodePermissionMode.BYPASS -> R.string.session_mode_bypass_desc
 }
 
 /**
@@ -183,7 +199,7 @@ internal fun ClaudeCodeSettingsSheet(
                 ClaudeCodePermissionMode.entries.forEach { mode ->
                     OptionRow(
                         title = mode.label,
-                        subtitle = mode.desc,
+                        subtitle = stringResource(mode.descRes()),
                         selected = mode == session.permissionMode,
                         enabled = !settingsBusy,
                         onClick = { onSetPermissionMode(mode) },
@@ -231,7 +247,7 @@ internal fun ClaudeCodeSettingsSheet(
             if (session.slashCommands.isNotEmpty()) {
                 Section(
                     section = SettingsSection.COMMANDS,
-                    value = "${session.slashCommands.size} 个",
+                    value = stringResource(R.string.session_commands_count, session.slashCommands.size),
                     open = open,
                     onToggle = { open = it },
                 ) {
@@ -319,23 +335,21 @@ private fun SettingsBusyBanner(applyingEffort: Boolean, stopping: Boolean) {
 @Composable
 private fun KeepAliveStatus() {
     val state by ClaudeCodeForegroundService.keepAlive.collectAsStateWithLifecycle()
-    val (text, isError) = when (state) {
+    val (textRes, isError) = when (state) {
         ClaudeCodeForegroundService.KeepAlive.Active ->
-            "后台保活已生效，切出去 / 息屏后会话继续跑" to false
+            R.string.session_keepalive_active to false
 
         ClaudeCodeForegroundService.KeepAlive.Rejected ->
-            "系统拒绝了前台服务：切到后台后会话随时可能被回收。" +
-                "去系统设置里给 Min 关掉「省电优化 / 后台限制」再试" to true
+            R.string.session_keepalive_rejected to true
 
         ClaudeCodeForegroundService.KeepAlive.Expired ->
-            "本机不接受常规的前台服务类型，退回的类型被系统限制为每天 6 小时，已用完。" +
-                "会话还在，但切到后台后随时可能被回收" to true
+            R.string.session_keepalive_expired to true
 
         ClaudeCodeForegroundService.KeepAlive.Stopped ->
-            "没有正在运行的会话" to false
+            R.string.session_keepalive_none to false
     }
     Notice(
-        text = text,
+        text = stringResource(textRes),
         tone = if (isError) NoticeTone.Error else NoticeTone.Info,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
     )
@@ -360,7 +374,7 @@ private fun Section(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(section.label, style = MaterialTheme.typography.bodyMedium)
+        Text(stringResource(section.labelRes), style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.weight(1f))
         Text(
             text = value,
@@ -418,19 +432,19 @@ private fun DescriptionLanguageSwitch(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "说明语言",
+            text = stringResource(R.string.session_desc_lang),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.weight(1f))
-        InkChip(label = "中文", selected = chinese, onClick = { onChange(true) })
-        InkChip(label = "原文", selected = !chinese, onClick = { onChange(false) })
+        InkChip(label = stringResource(R.string.session_desc_lang_zh), selected = chinese, onClick = { onChange(true) })
+        InkChip(label = stringResource(R.string.session_desc_lang_original), selected = !chinese, onClick = { onChange(false) })
     }
     SubHeader(
         if (chinese) {
-            "${commands.size} 条命令里有 ${translated} 条给得出中文说明，其余（插件 / 自定义 / 新版新增）保持英文原文。"
+            stringResource(R.string.session_desc_lang_hint, commands.size, translated)
         } else {
-            "显示 CLI 给的英文原文。"
+            stringResource(R.string.session_desc_lang_hint_off)
         }
     )
 }
@@ -479,23 +493,29 @@ private fun ModelPicker(
 
     Column {
         OptionRow(
-            title = "同时存成新会话的默认",
-            subtitle = if (asDefault) {
-                "写入 ~/.claude/settings.json 的 model，新会话和终端页的 claude 都用它（CLI 面板的 Enter）"
-            } else {
-                "只改当前会话，其它会话不受影响（CLI 面板的 s 键）"
-            },
+            title = stringResource(R.string.session_model_save_default),
+            subtitle = stringResource(
+                if (asDefault) {
+                    R.string.session_model_save_default_on
+                } else {
+                    R.string.session_model_save_default_off
+                },
+            ),
             selected = asDefault,
             enabled = enabled,
             onClick = { asDefault = !asDefault },
         )
         InkDivider(Modifier.padding(vertical = 4.dp))
         OptionRow(
-            title = "默认模型",
-            subtitle = buildString {
-                append("由 CLI / 中转站决定")
-                if (current == null && appliedModel != null) append(" · 当前实际：$appliedModel")
-            },
+            title = stringResource(R.string.session_model_default),
+            subtitle = stringResource(R.string.session_model_default_sub) +
+                // 没显式选过模型时，把 CLI 回读的真实值缀上去 —— 否则用户
+                // 只看到「默认」，看不出实际在跑哪个
+                if (current == null && appliedModel != null) {
+                    stringResource(R.string.session_model_applied, appliedModel)
+                } else {
+                    ""
+                },
             selected = current == null,
             enabled = enabled,
             onClick = { pick(null) },
@@ -523,24 +543,29 @@ private fun ModelPicker(
         // 别名表，新模型在那张表里可能根本没有对应项
         SubHeader(
             when {
-                relayModels.isNotEmpty() -> "中转站供应的模型（GET /v1/models）"
-                !relayChecked -> "正在向中转站查询模型列表…"
-                relayError != null -> "中转站没有返回模型列表（$relayError），请用别名或手动输入"
-                else -> "中转站返回了空的模型列表，请用别名或手动输入"
+                relayModels.isNotEmpty() -> stringResource(R.string.session_model_relay_list)
+                !relayChecked -> stringResource(R.string.session_model_relay_querying)
+                relayError != null -> stringResource(R.string.session_model_relay_error, relayError)
+                else -> stringResource(R.string.session_model_relay_empty)
             }
         )
         if (relayModels.isNotEmpty()) {
             if (suffixMatters) {
                 OptionRow(
-                    title = "选择时启用 1M 上下文",
-                    subtitle = "给需要的模型加 [1m] 后缀（${if (longContext) "开" else "关"}）。" +
-                        "Fable / Opus 5 / Sonnet 5 原生就是 1M，不受影响",
+                    title = stringResource(R.string.session_model_1m_title),
+                    subtitle = stringResource(
+                        R.string.session_model_1m_sub,
+                        stringResource(
+                            if (longContext) R.string.session_model_1m_on
+                            else R.string.session_model_1m_off,
+                        ),
+                    ),
                     selected = longContext,
                     enabled = enabled,
                     onClick = { longContext = !longContext },
                 )
             } else {
-                SubHeader("这些模型默认就是 1M 上下文，不用另外设置。")
+                SubHeader(stringResource(R.string.session_model_native_1m))
             }
             relayModels.forEach { model ->
                 val wantsSuffix = longContext && ClaudeCodeModelCatalog.longContextSuffixMeaningful(model.id)
@@ -559,7 +584,7 @@ private fun ModelPicker(
         }
 
         (hidden + listOfNotNull(orphan)).takeIf { it.isNotEmpty() }?.let { extras ->
-            SubHeader("CLI 别名（选中后即会进入上面的列表）")
+            SubHeader(stringResource(R.string.session_model_alias_header))
             extras.forEach { model ->
                 OptionRow(
                     title = model.displayName,
@@ -573,13 +598,13 @@ private fun ModelPicker(
         InlineInput(
             value = custom,
             onValueChange = { custom = it },
-            label = "手动输入",
+            label = stringResource(R.string.session_model_manual),
             placeholder = "claude-fable-5-1 / opus[1m]",
             enabled = enabled,
             onApply = { pick(custom.trim().ifBlank { null }) },
         )
         if (models.isEmpty()) {
-            SubHeader("CLI 没有返回可选模型目录（取决于中转站策略），请手动输入模型名。")
+            SubHeader(stringResource(R.string.session_model_no_catalog))
         }
     }
 }
@@ -600,19 +625,23 @@ private fun EffortPicker(
     Column {
         session.appliedEffort?.let { applied ->
             SubHeader(
-                "CLI 当前实际运行在：$applied" +
-                    if (session.appliedUltracode) "（ultracode 已启用）" else ""
+                stringResource(R.string.session_effort_applied, applied) +
+                    if (session.appliedUltracode) {
+                        stringResource(R.string.session_effort_ultracode_on)
+                    } else {
+                        ""
+                    }
             )
         }
         if (!effortSupportedFor(session)) {
             // CLI 面板原话 "Effort not supported for Haiku"：列一排点了没反应的档位不如直说
-            SubHeader("当前模型（Haiku）不支持思考强度，CLI 会忽略 --effort。换 Sonnet / Opus / Fable 才有 low…max 阶梯。")
+            SubHeader(stringResource(R.string.session_effort_unsupported))
         }
-        SubHeader("切换档位需要重启 CLI 进程并续接当前会话（CLI 没有 set_effort），过程中不能发消息。")
+        SubHeader(stringResource(R.string.session_effort_restart))
         effortLevelsFor(session).forEach { level ->
             val effort = levelToEffort(level)
             OptionRow(
-                title = effort ?: "默认（由 CLI 决定）",
+                title = effort ?: stringResource(R.string.session_effort_default),
                 subtitle = effortHint(effort),
                 selected = !session.options.ultracode && session.currentEffort == effort,
                 monospaceTitle = effort != null,
@@ -623,8 +652,7 @@ private fun EffortPicker(
         InkDivider(Modifier.padding(vertical = 6.dp))
         OptionRow(
             title = "Ultracode",
-            subtitle = "xhigh + 动态工作流编排。单次推理深度等于 xhigh，比 max 低一档；" +
-                "但会并行调度多个子智能体，总消耗通常远高于 max。",
+            subtitle = stringResource(R.string.session_effort_ultracode_sub),
             selected = session.options.ultracode,
             enabled = enabled,
             onClick = { onApply(null, true) },
@@ -652,10 +680,10 @@ private fun PromptCacheTtlPicker(
     onPick: (String) -> Unit,
 ) {
     Column {
-        SubHeader("切换需要重启 CLI 进程并续接当前会话（这是启动期环境变量），过程中不能发消息。")
+        SubHeader(stringResource(R.string.session_cache_restart))
         ClaudeCodeManager.PROMPT_CACHE_TTLS.forEach { ttl ->
             OptionRow(
-                title = if (ttl == ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL) "$ttl（默认）" else ttl,
+                title = if (ttl == ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL) stringResource(R.string.session_cache_default_suffix, ttl) else ttl,
                 subtitle = promptCacheHint(ttl),
                 selected = ttl == current,
                 monospaceTitle = true,
@@ -666,9 +694,10 @@ private fun PromptCacheTtlPicker(
     }
 }
 
+@Composable
 internal fun promptCacheHint(ttl: String): String? = when (ttl) {
-    "5m" -> "缓存写入 1.25× 计价。隔几分钟才回一句就会失效，适合问完就走"
-    "1h" -> "缓存写入 2× 计价，命中三次以上才回本。适合开着会话断断续续用一下午"
+    "5m" -> stringResource(R.string.session_cache_5m)
+    "1h" -> stringResource(R.string.session_cache_1h)
     else -> null
 }
 
@@ -722,7 +751,7 @@ private fun InlineInput(
             onClick = onApply,
             enabled = enabled && value.isNotBlank(),
             modifier = Modifier.padding(bottom = 4.dp),
-        ) { Text("应用") }
+        ) { Text(stringResource(R.string.common_apply)) }
     }
 }
 
@@ -812,7 +841,7 @@ internal fun OptionRow(
                 )
                 if (truncated || expanded) {
                     Text(
-                        text = if (expanded) "收起" else "展开全文",
+                        text = stringResource(if (expanded) R.string.session_collapse else R.string.session_expand_full),
                         style = MaterialTheme.typography.labelSmall,
                         color = palette.seaDeep,
                         modifier = Modifier
@@ -831,12 +860,13 @@ internal fun OptionRow(
 // ---------------------------------------------------------------------------
 
 /** 档位说明，文案对齐 CLI 自己的描述 */
+@Composable
 internal fun effortHint(effort: String?): String? = when (effort) {
-    "low" -> "快速直给，开销最小"
-    "medium" -> "平衡：常规实现 + 基本验证"
-    "high" -> "完整实现，充分测试与说明"
-    "xhigh" -> "比 high 更深，略低于最高档"
-    "max" -> "最强能力、最深推理。可能消耗过多 token、响应很慢，只在最难的任务上用"
+    "low" -> stringResource(R.string.session_effort_low)
+    "medium" -> stringResource(R.string.session_effort_medium)
+    "high" -> stringResource(R.string.session_effort_high)
+    "xhigh" -> stringResource(R.string.session_effort_xhigh)
+    "max" -> stringResource(R.string.session_effort_max)
     else -> null
 }
 
@@ -885,9 +915,12 @@ internal fun effortSupportedFor(session: ClaudeCodeManager.SessionState): Boolea
 }
 
 /** 底栏摘要里的 effort 段 —— 优先用 CLI 回读的真实值 */
+@Composable
 internal fun ClaudeCodeManager.SessionState.effortChipLabel(): String {
+    // 先取出来再判断：条件里调 stringResource 可读性更差，而它本来就是常量查表
+    val fallback = stringResource(R.string.session_effort_chip_default)
     if (options.ultracode || appliedUltracode) return "ultracode"
-    return appliedEffort ?: currentEffort ?: "默认"
+    return appliedEffort ?: currentEffort ?: fallback
 }
 
 /**
@@ -897,7 +930,9 @@ internal fun ClaudeCodeManager.SessionState.effortChipLabel(): String {
  * 切换失败（CLI 拒绝 / 中转站不供应）时更是完全无感 —— 界面停在"默认"，
  * 看起来就像"点了没反应"。有 `get_settings` 回读的 applied.model 就显示它。
  */
+@Composable
 internal fun ClaudeCodeManager.SessionState.modelChipLabel(): String {
+    val fallback = stringResource(R.string.session_model_default)
     val selected = currentModel
     if (selected != null) {
         return (availableModels + ClaudeCodeManager.HIDDEN_MODEL_ALIASES)
@@ -905,5 +940,5 @@ internal fun ClaudeCodeManager.SessionState.modelChipLabel(): String {
             ?.displayName
             ?: selected
     }
-    return appliedModel ?: model ?: "默认模型"
+    return appliedModel ?: model ?: fallback
 }
