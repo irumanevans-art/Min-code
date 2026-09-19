@@ -378,6 +378,14 @@
   <string name="config_perm_deny">Deny</string>
   <string name="config_perm_add_label">New rule</string>
   <string name="config_perm_add">Add</string>
+  <!-- Destructive deletes in the config sheet confirm first: a mis-tap on the
+       vermilion icon used to drop the entry with no way back -->
+  <string name="config_delete_mcp_title">Delete MCP server?</string>
+  <string name="config_delete_mcp_body">The server %1$s will be removed. It is read when a session starts, so the removal applies next session.</string>
+  <string name="config_delete_agent_title">Delete agent?</string>
+  <string name="config_delete_agent_body">The agent definition %1$s will be removed. It is read when a session starts, so the removal applies next session.</string>
+  <string name="config_delete_perm_title">Delete permission rule?</string>
+  <string name="config_delete_perm_body">The rule %1$s will be removed and settings.json is written back immediately.</string>
 
   <!-- Environment and updates sheet -->
   <string name="maint_loading">reading…</string>

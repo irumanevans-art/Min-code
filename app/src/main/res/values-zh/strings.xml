@@ -378,6 +378,13 @@
   <string name="config_perm_deny">拒绝</string>
   <string name="config_perm_add_label">新增规则</string>
   <string name="config_perm_add">添加</string>
+  <!-- 配置面板里的删除都先确认：朱色图标一记误触就把条目删掉、无法挽回，不行 -->
+  <string name="config_delete_mcp_title">删除 MCP 服务器？</string>
+  <string name="config_delete_mcp_body">将删除服务器 %1$s。服务器是会话启动时读取的，删除在下次开会话时生效。</string>
+  <string name="config_delete_agent_title">删除 agent？</string>
+  <string name="config_delete_agent_body">将删除 agent 定义 %1$s。agent 是会话启动时读取的，删除在下次开会话时生效。</string>
+  <string name="config_delete_perm_title">删除权限规则？</string>
+  <string name="config_delete_perm_body">将删除规则 %1$s，settings.json 会立即写回。</string>
 
   <!-- 环境与更新面板 -->
   <string name="maint_loading">读取中…</string>

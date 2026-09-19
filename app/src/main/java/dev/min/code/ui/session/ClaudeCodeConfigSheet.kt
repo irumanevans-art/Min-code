@@ -45,6 +45,7 @@ import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
+import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
@@ -165,6 +166,8 @@ private fun McpSection(vm: ClaudeCodeVM) {
     var servers by remember { mutableStateOf<List<ClaudeCodeConfigStore.McpServer>>(emptyList()) }
     var editing by remember { mutableStateOf<ClaudeCodeConfigStore.McpServer?>(null) }
     var editingOriginalName by remember { mutableStateOf<String?>(null) }
+    // 删除先确认：朱色图标一记误触就把服务器从配置里删掉，无法挽回
+    var pendingDelete by remember { mutableStateOf<ClaudeCodeConfigStore.McpServer?>(null) }
 
     LaunchedEffect(Unit) { servers = vm.loadMcpServers() }
 
@@ -217,14 +220,7 @@ private fun McpSection(vm: ClaudeCodeVM) {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    DeleteButton(
-                        onClick = {
-                            scope.launch {
-                                vm.deleteMcpServer(server.name)
-                                servers = vm.loadMcpServers()
-                            }
-                        },
-                    )
+                    DeleteButton(onClick = { pendingDelete = server })
                 }
                 InkDivider()
             }
@@ -239,6 +235,25 @@ private fun McpSection(vm: ClaudeCodeVM) {
             ) { Text(stringResource(R.string.config_mcp_add)) }
         },
     )
+
+    pendingDelete?.let { target ->
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.config_delete_mcp_title),
+            confirmText = stringResource(R.string.common_delete),
+            dismissText = stringResource(R.string.common_cancel),
+            onConfirm = {
+                scope.launch {
+                    vm.deleteMcpServer(target.name)
+                    servers = vm.loadMcpServers()
+                }
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        ) {
+            Text(stringResource(R.string.config_delete_mcp_body, target.name))
+        }
+    }
 }
 
 @Composable
@@ -333,6 +348,8 @@ private fun AgentsSection(vm: ClaudeCodeVM) {
     val scope = rememberCoroutineScope()
     var agents by remember { mutableStateOf<List<ClaudeCodeConfigStore.AgentDefinition>>(emptyList()) }
     var editing by remember { mutableStateOf<ClaudeCodeConfigStore.AgentDefinition?>(null) }
+    // 删除先确认，理由同 /mcp
+    var pendingDelete by remember { mutableStateOf<ClaudeCodeConfigStore.AgentDefinition?>(null) }
 
     LaunchedEffect(Unit) { agents = vm.listAgents() }
 
@@ -390,14 +407,7 @@ private fun AgentsSection(vm: ClaudeCodeVM) {
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        DeleteButton(
-                            onClick = {
-                                scope.launch {
-                                    vm.deleteAgent(agent)
-                                    agents = vm.listAgents()
-                                }
-                            },
-                        )
+                        DeleteButton(onClick = { pendingDelete = agent })
                     }
                     InkDivider()
                 }
@@ -412,6 +422,25 @@ private fun AgentsSection(vm: ClaudeCodeVM) {
             ) { Text(stringResource(R.string.config_agent_add)) }
         },
     )
+
+    pendingDelete?.let { target ->
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.config_delete_agent_title),
+            confirmText = stringResource(R.string.common_delete),
+            dismissText = stringResource(R.string.common_cancel),
+            onConfirm = {
+                scope.launch {
+                    vm.deleteAgent(target)
+                    agents = vm.listAgents()
+                }
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        ) {
+            Text(stringResource(R.string.config_delete_agent_body, target.name))
+        }
+    }
 }
 
 @Composable
@@ -654,6 +683,8 @@ private fun PermissionsSection(vm: ClaudeCodeVM) {
     var bucket by remember { mutableStateOf("allow") }
     var rules by remember { mutableStateOf<List<String>>(emptyList()) }
     var draft by remember { mutableStateOf("") }
+    // 删除先确认：规则是立即写回 settings.json 的，误触连"下次生效"的缓冲都没有
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(bucket) { rules = vm.loadPermissionRules(bucket) }
 
@@ -685,13 +716,7 @@ private fun PermissionsSection(vm: ClaudeCodeVM) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                DeleteButton(
-                    onClick = {
-                        val next = rules - rule
-                        rules = next
-                        scope.launch { vm.savePermissionRules(bucket, next) }
-                    },
-                )
+                DeleteButton(onClick = { pendingDelete = rule })
             }
         }
     }
@@ -718,6 +743,24 @@ private fun PermissionsSection(vm: ClaudeCodeVM) {
                 },
                 enabled = draft.isNotBlank() && draft.trim() !in rules,
             ) { Text(stringResource(R.string.config_perm_add)) }
+        }
+    }
+
+    pendingDelete?.let { target ->
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.config_delete_perm_title),
+            confirmText = stringResource(R.string.common_delete),
+            dismissText = stringResource(R.string.common_cancel),
+            onConfirm = {
+                val next = rules - target
+                rules = next
+                scope.launch { vm.savePermissionRules(bucket, next) }
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        ) {
+            Text(stringResource(R.string.config_delete_perm_body, target))
         }
     }
 }
