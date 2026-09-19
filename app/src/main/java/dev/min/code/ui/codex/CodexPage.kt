@@ -93,6 +93,7 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
     var showSessions by remember { mutableStateOf(false) }
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val sessionMetas by vm.sessionMetas.collectAsStateWithLifecycle()
+    val draft by vm.draft.collectAsStateWithLifecycle()
 
     // 有历史就一直显示会话流 —— 会话停掉之后把读过的内容抹掉，
     // 等于每次停止都清一次屏
@@ -160,8 +161,10 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
                     ),
                 )
                 CodexComposer(
+                    draft = draft,
                     enabled = session.canSend,
                     busy = session.busy,
+                    onDraftChange = vm::setDraft,
                     onSend = vm::send,
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
@@ -440,15 +443,19 @@ private fun CodexStartPane(
 /**
  * 输入坞。停靠在底部、跟着键盘走 —— 以前它是滚动列的最后一项，
  * 一聚焦就被键盘顶出视野。
+ *
+ * 正文由 VM 持有并落盘（草稿）：切页、杀进程再回来都还在，
+ * threadId 换了 VM 会自己换档，这里不保管状态。
  */
 @Composable
 private fun CodexComposer(
+    draft: String,
     enabled: Boolean,
     busy: Boolean,
+    onDraftChange: (String) -> Unit,
     onSend: (String) -> Boolean,
     modifier: Modifier = Modifier,
 ) {
-    var input by remember { mutableStateOf("") }
     PaperCard(
         modifier = modifier
             .fillMaxWidth()
@@ -462,16 +469,16 @@ private fun CodexComposer(
             verticalAlignment = Alignment.Bottom,
         ) {
             InkTextField(
-                value = input,
-                onValueChange = { input = it },
+                value = draft,
+                onValueChange = onDraftChange,
                 label = stringResource(R.string.codex_composer_hint),
                 enabled = enabled,
                 maxLines = 6,
                 modifier = Modifier.weight(1f),
             )
             InkButton(
-                onClick = { if (onSend(input)) input = "" },
-                enabled = enabled && input.isNotBlank(),
+                onClick = { if (onSend(draft)) onDraftChange("") },
+                enabled = enabled && draft.isNotBlank(),
                 busy = busy,
                 compact = true,
             ) { Text(stringResource(R.string.codex_send)) }
@@ -500,6 +507,10 @@ private fun CodexApprovalSheet(
     )
     val allowsSession = approval.availableDecisions.isEmpty() ||
         CodexDecision.ACCEPT_FOR_SESSION.wire in approval.availableDecisions
+    // 按钮是按 availableDecisions 过滤的，正常情况下应答必然成功；但服务端可能在
+    // 弹出之后改变主意。静默失败会让用户以为批过了、实际上这一轮还挂着——
+    // 至少要说一声，sheet 留着让人再试
+    var rejected by remember { mutableStateOf(false) }
 
     InkSheet(
         onDismissRequest = { /* 只能按按钮，见上 */ },
@@ -514,6 +525,9 @@ private fun CodexApprovalSheet(
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (rejected) {
+                Notice(stringResource(R.string.codex_approval_failed), tone = NoticeTone.Error)
+            }
             Text(
                 stringResource(
                     when (approval.kind) {
@@ -539,20 +553,20 @@ private fun CodexApprovalSheet(
             }
 
             InkButton(
-                onClick = { onAnswer(CodexDecision.ACCEPT) },
+                onClick = { if (!onAnswer(CodexDecision.ACCEPT)) rejected = true },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.codex_approve)) }
 
             if (allowsSession) {
                 InkButton(
-                    onClick = { onAnswer(CodexDecision.ACCEPT_FOR_SESSION) },
+                    onClick = { if (!onAnswer(CodexDecision.ACCEPT_FOR_SESSION)) rejected = true },
                     tone = InkButtonTone.Paper,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.codex_approve_session)) }
             }
 
             InkButton(
-                onClick = { onAnswer(CodexDecision.DECLINE) },
+                onClick = { if (!onAnswer(CodexDecision.DECLINE)) rejected = true },
                 tone = InkButtonTone.Vermilion,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.codex_deny)) }

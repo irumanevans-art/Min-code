@@ -67,6 +67,7 @@
   <string name="codex_send">Send</string>
   <string name="codex_approve">Allow</string>
   <string name="codex_deny">Deny</string>
+  <string name="codex_approval_failed">The answer was not accepted (the available options changed). Try again.</string>
   <string name="codex_command_approval">Codex wants to run a command</string>
   <string name="codex_file_approval">Codex wants to change files</string>
   <string name="codex_connection">Connection</string>

@@ -67,6 +67,7 @@
   <string name="codex_send">发送</string>
   <string name="codex_approve">允许</string>
   <string name="codex_deny">拒绝</string>
+  <string name="codex_approval_failed">应答没有被接受（服务端给的可选项变了）。请再试一次。</string>
   <string name="codex_command_approval">Codex 请求运行命令</string>
   <string name="codex_file_approval">Codex 请求修改文件</string>
   <string name="codex_connection">连接方式</string>

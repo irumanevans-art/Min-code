@@ -81,6 +81,8 @@ val appModule = module {
     single(named("codex")) {
         ClaudeCodeSessionMetaStore(java.io.File(get<android.content.Context>().filesDir, "codex-session-meta.json"))
     }
+    // Codex 输入框草稿：纯文本一张表，按 threadId 落盘
+    single { dev.min.code.core.codex.CodexDraftStore(java.io.File(get<android.content.Context>().filesDir, "codex-drafts.json")) }
     // 单日花费台账必须是 single：它要横跨所有会话累加，每个会话一份就退化成会话内计数
     single { ClaudeCodeCostLedger(get()) }
     // 多会话：manager 是 factory，每个会话一个实例（各自一个 CLI 进程），由 registry 持有
@@ -120,6 +122,7 @@ val appModule = module {
             settingsStore = get(),
             // 上面 named("codex") 那份；不带 qualifier 会撞上 Claude 的那份
             metaStore = get(named("codex")),
+            draftStore = get(),
         )
     }
     viewModelOf(::SetupVM)

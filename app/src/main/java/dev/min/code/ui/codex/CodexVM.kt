@@ -6,6 +6,7 @@ import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
 import dev.min.code.core.claudecode.SessionMeta
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexDecision
+import dev.min.code.core.codex.CodexDraftStore
 import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.codex.CodexSessionSummary
 import dev.min.code.core.codex.deleteCodexSession
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -38,10 +40,15 @@ class CodexVM(
     private val settingsStore: SettingsStore,
     /** 会话元数据（置顶 / 改名）。与 Claude 侧同一个 store 类，threadId 当 key、各存各的文件 */
     private val metaStore: ClaudeCodeSessionMetaStore,
+    /** 输入框草稿：threadId → 正文，杀进程再进还在 */
+    private val draftStore: CodexDraftStore,
 ) : ViewModel() {
 
     val runtimeStatus: StateFlow<CodexRuntime.Status> = runtime.status
     val session: StateFlow<CodexAppServerManager.State> = manager.state
+
+    /** 当前输入框的正文。threadId 变了就换那份草稿（见 init 里的收集） */
+    val draft = MutableStateFlow("")
 
     /** 磁盘上那些旧会话，新的在前。空列表就是「还没聊过」 */
     private val _sessions = MutableStateFlow<List<CodexSessionSummary>>(emptyList())
@@ -70,6 +77,13 @@ class CodexVM(
     init {
         refresh()
         restoreLatest()
+        // 草稿跟着 threadId 走：切会话 / 删除 / 新开都从这里换档，
+        // 不在各个动作里手工清——那漏掉任何一条新路径都会串稿
+        viewModelScope.launch(Dispatchers.IO) {
+            manager.state.map { it.threadId }.distinctUntilChanged().collect { threadId ->
+                draft.value = draftStore.load(threadId)
+            }
+        }
     }
 
     fun refresh() {
@@ -143,7 +157,19 @@ class CodexVM(
 
     fun stop() = manager.stop()
 
-    fun send(text: String): Boolean = manager.sendTurn(text)
+    /** 每次输入都落盘：写的是几 KB 的 JSON，在 IO 线程上，代价远小于丢稿 */
+    fun setDraft(text: String) {
+        draft.value = text
+        viewModelScope.launch(Dispatchers.IO) {
+            manager.state.value.threadId?.let { draftStore.save(it, text) }
+        }
+    }
+
+    fun send(text: String): Boolean {
+        val ok = manager.sendTurn(text)
+        if (ok) setDraft("")
+        return ok
+    }
 
     fun answerApproval(decision: CodexDecision): Boolean = manager.answerApproval(decision)
 
