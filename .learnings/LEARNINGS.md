@@ -1041,3 +1041,28 @@ snapshotFlow 的 lambda 里只准读 State / snapshot state；review 时看到�
 - Source: code_review（子智能体发现 + 用户报告互相印证）
 - Related Files: CodexTranscript.kt
 - Tags: compose, snapshotflow, stale-closure, launchedeffect
+
+
+## [LRN-20260919-EMULATOR-TEXT-INJECT] best_practice
+
+**Logged**: 2026-09-19T21:10:00+08:00
+**Priority**: medium
+**Status**: open
+**Area**: tooling
+
+### Summary
+在这台 Windows 机器上往模拟器里注入文字，`adb shell input text` 和 `input keyevent` 都会被宿主机键盘布局把**标点全角化**（`/`→`／`、`;`→`；`、`-`→`－`、`:`→`：`，字母不受影响），Gboard 又是拼音模式、会吃掉按键进组合窗口。往输入框塞「/mcp」这类带斜杠的内容，靠打字基本走不通。
+
+### Details
+- 实测链：uitap 点输入框 → `input text "/mcp"` → 字段里是 `／`；换裸键码 KEYCODE_SLASH(76) 得 `／`、KEYCODE_SEMICOLON(74) 得 `；`。字母（preview、mcp）一直是对的。
+- `ime disable` 两个输入法也拦不住——系统不允许零输入法，重新聚焦字段时会被静默拉回。
+- 可靠的替代：**输入框草稿文件注入**。debug 包 `files/composer-drafts/state.json`（结构 `{"lastActive":<sessionId>,"carry":false,"drafts":{<sessionId>:{"text":…,"attachments":[],"images":[],"pastes":{},"pasteSeq":0}}}`），root 下改好 → `am force-stop` → 重启 → 从会话列表点进该会话，草稿自动恢复，uitap 点「发送」即可。全程只需 tap，不需要打字。
+- 另一个实测事实：**CLI 每次会话启动都会重生 `/root/.claude.json`**（machineID/firstStartTime 每次都变），往里面注入的 `mcpServers` 会在下次会话启动时被抹掉。要给 `/mcp` 面板造测试数据，注入时机必须在 CLI 死着的时候，且注入后不要重启会话；`/permissions` 的规则在 `settings.json`，CLI 启动不碰它，验收用它最稳。
+
+### Suggested Action
+模拟器 UI 验收要往输入框放内容时，直接走草稿注入 + uitap 点发送，不要尝试打字；要给配置面板造数据优先用 `settings.json`（`/permissions`），`.claude.json` 会被 CLI 重生不能依赖。`.claude.json` 每次重生 machineID 的机制值得单独查——用户手工配置会不会也因此丢，是个潜在数据丢失点。
+
+### Metadata
+- Source: emulator_verification
+- Related Files: tools/uitap.py, ComposerDraftStore.kt, ClaudeCodeConfigStore.kt
+- Tags: emulator, adb, input-text, ime, composer-draft, config-regen
