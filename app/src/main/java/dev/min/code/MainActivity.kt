@@ -52,6 +52,7 @@ import dev.min.code.ui.components.LoadingScreen
 import dev.min.code.ui.components.LocalToaster
 import dev.min.code.ui.components.rememberInkToaster
 import dev.min.code.ui.files.WorkspaceDetailPage
+import dev.min.code.ui.codex.CodexPage
 import dev.min.code.ui.files.WorkspaceFileEditorPage
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Navigator
@@ -204,6 +205,7 @@ class MainActivity : ComponentActivity() {
                         },
                         entryProvider = entryProvider {
                             entry<Screen.Session> { ClaudeCodePage() }
+                            entry<Screen.Codex> { CodexPage() }
                             entry<Screen.Setup> { ClaudeCodePage() }
                             entry<Screen.Files> { WorkspaceDetailPage(workspaceId) }
                             entry<Screen.Terminal> { WorkspaceTerminalPage(workspaceId) }

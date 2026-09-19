@@ -36,6 +36,8 @@ private val KEY_THEME = stringPreferencesKey("theme")
 private val KEY_LANGUAGE = stringPreferencesKey("app_language")
 private val KEY_ZH_DESCRIPTIONS = booleanPreferencesKey("zh_descriptions")
 private val KEY_OPEN_WITH = stringPreferencesKey("open_with_defaults")
+private val KEY_CODEX_PROFILES = stringPreferencesKey("codex_profiles")
+private val KEY_CODEX_ACTIVE = stringPreferencesKey("codex_active_profile")
 
 /** 主题：跟随系统 / 浅色 / 深色。默认跟随系统——没选过的人交给系统日夜 */
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
@@ -103,6 +105,8 @@ data class AppSettings(
      * 键是不带点的小写扩展名（`md`、`png`）。
      */
     val openWithDefaults: Map<String, WorkspaceOpenMode> = emptyMap(),
+    val codexProfiles: List<CodexProfile> = emptyList(),
+    val activeCodexProfileId: String = "",
 ) {
     /** 当前生效的那条。id 指不到（刚删掉当前项）时退回第一条，不至于整个 App 突然「没配过」 */
     val activeProfile: ApiProfile?
@@ -117,11 +121,33 @@ data class AppSettings(
 
     /** 当前生效的地址会不会把 token 明文送上网，见 [isInsecureBaseUrl] */
     val insecureBaseUrl: Boolean get() = isInsecureBaseUrl(baseUrl)
+    val activeCodexProfile: CodexProfile?
+        get() = codexProfiles.firstOrNull { it.id == activeCodexProfileId } ?: codexProfiles.firstOrNull()
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.anthropic.com"
     }
 }
+
+/** Codex only: official CLI auth, official OpenAI Responses API, or a compatible relay. */
+@Serializable
+data class CodexProfile(
+    val id: String,
+    val label: String = "",
+    val baseUrl: String = "https://api.openai.com/v1",
+    val apiKey: String = "",
+    val authMode: CodexAuthMode = CodexAuthMode.CLI,
+) {
+    val isRelay: Boolean get() = authMode == CodexAuthMode.RELAY
+    fun displayName(): String = label.ifBlank { if (isRelay) baseUrl else "OpenAI / Codex" }
+    fun maskedKey(): String = when {
+        apiKey.isBlank() -> ""
+        apiKey.length <= 10 -> "•".repeat(apiKey.length)
+        else -> apiKey.take(5) + "…" + apiKey.takeLast(4)
+    }
+}
+
+enum class CodexAuthMode { CLI, OPENAI_API_KEY, RELAY }
 
 /**
  * App 级设置。只有这几项，用 DataStore 足够，不上数据库。
@@ -143,6 +169,8 @@ class SettingsStore(private val context: Context) {
                 ?: AppLanguage.SYSTEM,
             chineseDescriptions = p[KEY_ZH_DESCRIPTIONS] ?: true,
             openWithDefaults = parseOpenWithDefaults(p[KEY_OPEN_WITH].orEmpty()),
+            codexProfiles = decodeCodexProfiles(p[KEY_CODEX_PROFILES]),
+            activeCodexProfileId = p[KEY_CODEX_ACTIVE].orEmpty(),
         )
     }
 
@@ -306,6 +334,14 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun clearOpenWithDefaults() = context.dataStore.edit { it.remove(KEY_OPEN_WITH) }
+
+    suspend fun setCodexProfile(profile: CodexProfile) = context.dataStore.edit { p ->
+        val list = decodeCodexProfiles(p[KEY_CODEX_PROFILES]).filterNot { it.id == profile.id } + profile
+        p[KEY_CODEX_PROFILES] = encodeCodexProfiles(list)
+        p[KEY_CODEX_ACTIVE] = profile.id
+    }
+
+    suspend fun setActiveCodexProfile(id: String) = context.dataStore.edit { it[KEY_CODEX_ACTIVE] = id }
 }
 
 private val profilesJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -392,6 +428,13 @@ internal fun decodeProfilesJson(json: String): List<ApiProfile> {
 
 private fun encodeProfiles(profiles: List<ApiProfile>): String =
     TokenCipher.encrypt(encodeProfilesJson(profiles))
+
+private fun encodeCodexProfiles(profiles: List<CodexProfile>): String =
+    TokenCipher.encrypt(profilesJson.encodeToString(profiles))
+
+private fun decodeCodexProfiles(raw: String?): List<CodexProfile> =
+    runCatching { profilesJson.decodeFromString<List<CodexProfile>>(TokenCipher.decrypt(raw.orEmpty())) }
+        .getOrDefault(emptyList())
 
 private fun decodeProfiles(raw: String?): List<ApiProfile> =
     decodeProfilesJson(TokenCipher.decrypt(raw.orEmpty()))

@@ -9,11 +9,14 @@ import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.network.NetworkProbe
+import dev.min.code.core.codex.CodexAppServerManager
+import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.service.ClaudeCodeSessionSupervisor
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.ui.files.WorkspaceDetailVM
+import dev.min.code.ui.codex.CodexVM
 import dev.min.code.ui.session.ClaudeCodeVM
 import dev.min.code.ui.settings.SettingsVM
 import dev.min.code.ui.setup.SetupVM
@@ -39,6 +42,20 @@ val appModule = module {
     }
     single { RootfsInstaller(get()) }
     single { WorkspaceRepository(get(), get()) }
+    single {
+        val context: android.content.Context = get()
+        CodexRuntime(
+            workspaceRepository = get(),
+            proot = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
+            settingsStore = get(),
+        )
+    }
+    // 必须是 single：Codex 的 app-server 进程归它管，跟着 ViewModel 走的话
+    // 转个屏就被 onCleared 杀掉，正跑着的一轮直接没了
+    single {
+        val runtime: CodexRuntime = get()
+        CodexAppServerManager { runtime.launchAppServer() }
+    }
 
     single { NetworkProbe(get()) }
     single {
@@ -89,6 +106,7 @@ val appModule = module {
     single { WorkspaceTerminalSessionManager(get(), get()) }
 
     viewModelOf(::ClaudeCodeVM)
+    viewModelOf(::CodexVM)
     viewModelOf(::SetupVM)
     viewModelOf(::SettingsVM)
     viewModel { WorkspaceDetailVM(id = it.get<String>(), repository = get(), terminalSessionManager = get()) }

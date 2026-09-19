@@ -377,7 +377,12 @@ internal fun ToolCallDetail(
             }
 
             "Edit", "Write", "MultiEdit" -> {
-                val diff = remember(item.name, item.input) { boundedDiffOf(item.name, item.input) }
+                // Claude 把 old_string/new_string 给我们，diff 是现算的；Codex 的 fileChange
+                // 直接给现成的 unified diff（editDiff）。有现成的就别再算一遍——
+                // 算出来的那份只会是空的，因为入参里根本没有 old_string
+                val diff = remember(item.name, item.input, item.editDiff) {
+                    item.editDiff?.takeIf { it.isNotBlank() } ?: boundedDiffOf(item.name, item.input)
+                }
                 if (diff.isNotBlank()) {
                     DiffView(diff = diff, maxLines = MAX_DETAIL_LINES, showFileHeader = false)
                 }

@@ -10,6 +10,9 @@ sealed interface Screen : NavKey {
     data object Session : Screen
 
     @Serializable
+    data object Codex : Screen
+
+    @Serializable
     data object Setup : Screen
 
     /** 工作区文件页；[area] 是 WorkspaceStorageArea.name，[path] 相对路径 */

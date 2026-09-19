@@ -183,6 +183,15 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
+                SectionTitle(stringResource(R.string.codex_title))
+                SettingRow(
+                    title = stringResource(R.string.codex_open),
+                    subtitle = stringResource(R.string.codex_open_subtitle),
+                    onClick = { navController.navigate(Screen.Codex) },
+                )
+
+                InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
+
                 SectionTitle(stringResource(R.string.settings_section_background))
                 BatteryRow()
 

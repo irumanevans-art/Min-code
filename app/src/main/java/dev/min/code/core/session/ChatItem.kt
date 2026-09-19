@@ -91,3 +91,35 @@ sealed interface ChatItem {
 
 /** 一条引擎会话的生命周期。两个引擎的取值一致，顶栏和列表按它上色。 */
 enum class SessionStatus { Idle, Starting, Running, Closed, Failed }
+
+/** 一条 [ChatItem.ProcessOutput] 最多留多少行，超出丢最旧 */
+const val PROCESS_OUTPUT_MAX_LINES = 200
+
+/** 单行截断长度。stderr 偶尔会吐出一整条几十 KB 的栈 */
+const val PROCESS_OUTPUT_LINE_CHARS = 500
+
+/**
+ * 把一行 stderr 并进条目表。连续的行合进**尾部那一条** [ChatItem.ProcessOutput]，
+ * 中间夹了别的事件就另起一条 —— 折叠行上的「N 行」对应一次真实的输出爆发，
+ * 而不是把整个会话的噪声堆成一坨。
+ *
+ * 两个引擎共用：Claude 的 `claude` 和 Codex 的 `codex app-server` 都跑在无头管道里，
+ * stderr 同样没有别的出口，攒法也该一样。
+ */
+fun appendProcessOutputLine(
+    items: List<ChatItem>,
+    rawLine: String,
+    id: String,
+): List<ChatItem> {
+    val line = rawLine.take(PROCESS_OUTPUT_LINE_CHARS)
+    val last = items.lastOrNull()
+    if (last !is ChatItem.ProcessOutput) {
+        return items + ChatItem.ProcessOutput(id, listOf(line))
+    }
+    val merged = last.lines + line
+    val overflow = (merged.size - PROCESS_OUTPUT_MAX_LINES).coerceAtLeast(0)
+    return items.dropLast(1) + last.copy(
+        lines = if (overflow > 0) merged.drop(overflow) else merged,
+        dropped = last.dropped + overflow,
+    )
+}

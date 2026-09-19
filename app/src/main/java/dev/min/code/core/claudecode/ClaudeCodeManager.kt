@@ -31,6 +31,7 @@ import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.LocalServiceIntent
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.appendProcessOutputLine
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SettingsStore
@@ -829,14 +830,14 @@ class ClaudeCodeManager(
      *
      * 连续的行合进**尾部那一条** [ChatItem.ProcessOutput]，中间夹了别的事件就另起一条 ——
      * 这样折叠行上的「N 行」对应的是一次真实的输出爆发，而不是把整个会话的噪声堆成一坨。
-     * 超过 [STDERR_MAX_LINES] 丢最旧的并记进 `dropped`：刷屏的进程不能把会话撑爆，
+     * 超过 [PROCESS_OUTPUT_MAX_LINES] 丢最旧的并记进 `dropped`：刷屏的进程不能把会话撑爆，
      * 但也不能假装什么都没丢。
      */
     private fun appendStderr(rawLine: String) {
         // id 在 update 之外生成：update 的 lambda 在 CAS 失败时会重跑，
         // 放在里面会为同一条输出连生两个 id
         val id = newId()
-        _state.update { st -> st.copy(items = appendStderrLine(st.items, rawLine, id)) }
+        _state.update { st -> st.copy(items = appendProcessOutputLine(st.items, rawLine, id)) }
     }
 
     /**
@@ -2934,35 +2935,6 @@ class ClaudeCodeManager(
             val minor = version.getOrNull(1) ?: 0
             val date = parts.firstOrNull { it.length == 8 }?.toLongOrNull() ?: 0L
             return major * 1_000_000_000_000L + minor * 10_000_000_000L + date
-        }
-
-        /** 一条 [ChatItem.ProcessOutput] 最多留多少行，超出丢最旧 */
-        internal const val STDERR_MAX_LINES = 200
-
-        /** 单行截断长度。stderr 偶尔会吐出一整条几十 KB 的栈 */
-        internal const val STDERR_LINE_CHARS = 500
-
-        /**
-         * 把一行 stderr 并进条目表。连续的行合进**尾部那一条** [ChatItem.ProcessOutput]，
-         * 中间夹了别的事件就另起一条 —— 折叠行上的「N 行」对应一次真实的输出爆发，
-         * 而不是把整个会话的噪声堆成一坨。
-         */
-        internal fun appendStderrLine(
-            items: List<ChatItem>,
-            rawLine: String,
-            id: String,
-        ): List<ChatItem> {
-            val line = rawLine.take(STDERR_LINE_CHARS)
-            val last = items.lastOrNull()
-            if (last !is ChatItem.ProcessOutput) {
-                return items + ChatItem.ProcessOutput(id, listOf(line))
-            }
-            val merged = last.lines + line
-            val overflow = (merged.size - STDERR_MAX_LINES).coerceAtLeast(0)
-            return items.dropLast(1) + last.copy(
-                lines = if (overflow > 0) merged.drop(overflow) else merged,
-                dropped = last.dropped + overflow,
-            )
         }
 
         /**
