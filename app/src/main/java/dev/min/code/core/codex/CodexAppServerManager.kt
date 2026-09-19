@@ -431,7 +431,17 @@ class CodexAppServerManager(
             is CodexEvent.ThreadStatus ->
                 _state.value = current.copy(activeFlags = event.activeFlags)
 
-            is CodexEvent.Unknown -> Log.d(TAG, "未知的 codex 方法：${event.method}")
+            is CodexEvent.Unknown -> {
+                Log.d(TAG, "未知的 codex 方法：${event.method}")
+                // 协议层（CodexEvent.Unknown）的承诺：宁可在界面上留一条灰字，
+                // 也别静默吞掉——凭空少一段可查才是最糟的
+                _state.value = current.copy(
+                    items = current.items + ChatItem.Note(
+                        nextLocalId("unknown"),
+                        "未知的 codex 方法：${event.method ?: "(无方法名)"}",
+                    ),
+                )
+            }
         }
     }
 

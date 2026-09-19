@@ -513,8 +513,9 @@ private fun CodexApprovalSheet(
         CodexDecision.ACCEPT_FOR_SESSION.wire in approval.availableDecisions
     // 按钮是按 availableDecisions 过滤的，正常情况下应答必然成功；但服务端可能在
     // 弹出之后改变主意。静默失败会让用户以为批过了、实际上这一轮还挂着——
-    // 至少要说一声，sheet 留着让人再试
-    var rejected by remember { mutableStateOf(false) }
+    // 至少要说一声，sheet 留着让人再试。remember 按 approval 记忆：
+    // 换了一条新审批时旧的红字必须清掉，那是上一个请求的事
+    var rejected by remember(approval) { mutableStateOf(false) }
 
     InkSheet(
         onDismissRequest = { /* 只能按按钮，见上 */ },
