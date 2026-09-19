@@ -513,6 +513,20 @@
   <string name="transcript_subagent_thinking">thinking · %1$d chars</string>
   <string name="transcript_more_lines">… %1$d more lines</string>
   <string name="transcript_revert">Undo this change</string>
+  <!-- Tool cards: folded-line summary, badge and diff elision. The copy travels through
+       TranscriptLabels so non-composable callers (search, export) read the same strings -->
+  <string name="tool_summary_range">lines %1$d–%2$d</string>
+  <string name="tool_summary_from_line">from line %1$d</string>
+  <string name="tool_summary_first_lines">first %1$d lines</string>
+  <string name="tool_summary_replace_all">replace all</string>
+  <string name="tool_summary_n_lines">%1$d lines</string>
+  <string name="tool_summary_n_edits">%1$d edits</string>
+  <string name="tool_summary_todo_done">%1$d/%2$d done</string>
+  <string name="tool_summary_ask_user">asks the user</string>
+  <string name="tool_summary_plan">plan mode</string>
+  <string name="tool_diff_elided_above">@@ %1$d unchanged lines above @@</string>
+  <string name="tool_diff_elided_below">@@ %1$d unchanged lines below @@</string>
+  <string name="tool_diff_truncated">… (truncated, %1$d chars total)</string>
   <string name="plan_title">Plan</string>
   <string name="plan_empty">No plan yet. Switch the permission mode to Plan and Claude will lay one out before touching anything.</string>
 

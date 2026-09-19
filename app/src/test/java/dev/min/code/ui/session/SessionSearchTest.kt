@@ -12,6 +12,8 @@ import dev.min.code.core.session.ChatItem
 
 class SessionSearchTest {
 
+    private val labels = testTranscriptLabels()
+
     @Test
     fun `empty query keeps every session`() {
         val sessions = listOf(entry("a", "整理工作区"), entry("b", "修 proot"))
@@ -60,9 +62,9 @@ class SessionSearchTest {
             ChatItem.AssistantText("a1", "README 里写了安装步骤"),
         )
         val blocks = groupTranscript(items)
-        assertTrue(findTranscriptHits(blocks, "").isEmpty())
+        assertTrue(findTranscriptHits(blocks, "", labels).isEmpty())
 
-        val hits = findTranscriptHits(blocks, "readme")
+        val hits = findTranscriptHits(blocks, "readme", labels)
         // 用户消息单独一块；思考+工具折成 Work；助手正文又一块
         assertEquals(3, hits.size)
         assertEquals("u1", hits[0].itemId)
@@ -85,13 +87,13 @@ class SessionSearchTest {
     fun `note and process output are searchable`() {
         assertTrue(
             ChatItem.Note("n1", "本轮有 2 次工具调用被权限规则拦截")
-                .searchableText()!!
+                .searchableText(labels)!!
                 .contains("权限规则"),
         )
         assertEquals(
             "line-a\nline-b",
             ChatItem.ProcessOutput("p1", listOf("line-a", "line-b"))
-                .searchableText(),
+                .searchableText(labels),
         )
         assertEquals(
             null,
@@ -101,7 +103,7 @@ class SessionSearchTest {
                 name = "",
                 input = JsonObject(emptyMap()),
                 status = ChatItem.ToolCall.Status.Running,
-            ).searchableText(),
+            ).searchableText(labels),
         )
     }
 

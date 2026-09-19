@@ -40,8 +40,13 @@ internal data class TranscriptHit(
     val preview: String,
 )
 
-/** 从一条聊天条目里抽出可被搜索的纯文本；没有正文的（空工具卡等）返回 null。 */
-internal fun ChatItem.searchableText(): String? = when (this) {
+/**
+ * 从一条聊天条目里抽出可被搜索的纯文本；没有正文的（空工具卡等）返回 null。
+ *
+ * 工具卡摘要里人读的那几个字跟界面语言走（[TranscriptLabels]），由调用方取好传入 ——
+ * 搜索索引不落盘、每次现算，语言自然等于当前界面语言。
+ */
+internal fun ChatItem.searchableText(labels: TranscriptLabels): String? = when (this) {
     is ChatItem.UserText -> text.takeIf { it.isNotBlank() }
     is ChatItem.AssistantText -> text.takeIf { it.isNotBlank() }
     is ChatItem.Thinking -> text.takeIf { it.isNotBlank() }
@@ -50,7 +55,7 @@ internal fun ChatItem.searchableText(): String? = when (this) {
         lines.joinToString("\n").takeIf { it.isNotBlank() }
     is ChatItem.ToolCall -> buildString {
         append(name)
-        val summary = toolSummary(name, input)
+        val summary = toolSummary(name, input, labels)
         if (summary.isNotBlank()) {
             append(' ')
             append(summary)
@@ -73,6 +78,7 @@ internal fun ChatItem.searchableText(): String? = when (this) {
 internal fun findTranscriptHits(
     blocks: List<TranscriptBlock>,
     query: String,
+    labels: TranscriptLabels,
 ): List<TranscriptHit> {
     val q = query.trim()
     if (q.isEmpty() || blocks.isEmpty()) return emptyList()
@@ -83,7 +89,7 @@ internal fun findTranscriptHits(
             is TranscriptBlock.Work -> block.items
         }
         items.forEach { item ->
-            val text = item.searchableText() ?: return@forEach
+            val text = item.searchableText(labels) ?: return@forEach
             val at = text.indexOf(q, ignoreCase = true)
             if (at < 0) return@forEach
             hits += TranscriptHit(

@@ -614,6 +614,7 @@ internal fun ToolEntry(
     item: ChatItem.ToolCall,
     isFirst: Boolean,
     isLast: Boolean,
+    labels: TranscriptLabels,
     onRevert: (() -> Unit)? = null,
 ) {
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
@@ -653,7 +654,7 @@ internal fun ToolEntry(
                 maxLines = 1,
             )
             Text(
-                text = toolSummary(item.name, item.input),
+                text = toolSummary(item.name, item.input, labels),
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = JetbrainsMono,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -664,7 +665,7 @@ internal fun ToolEntry(
             if (running) {
                 InkSpinner(size = 11.dp, color = azure)
             } else {
-                toolBadge(item)?.let {
+                toolBadge(item, labels)?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.labelSmall,
@@ -681,9 +682,9 @@ internal fun ToolEntry(
             exit = InkMotion.collapse,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ToolCallDetail(item, onRevert = onRevert)
+                ToolCallDetail(item, labels, onRevert = onRevert)
                 // 子 agent 干的活挂在这条 Task 底下。官方终端看不进去，这里能
-                if (item.subItems.isNotEmpty()) SubagentTranscript(item.subItems)
+                if (item.subItems.isNotEmpty()) SubagentTranscript(item.subItems, labels)
             }
         }
     }

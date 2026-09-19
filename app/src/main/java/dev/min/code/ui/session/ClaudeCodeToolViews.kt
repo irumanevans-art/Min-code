@@ -106,8 +106,14 @@ private val prettyJson = Json { prettyPrint = true }
  *
  * 上下文只保留 [DIFF_CONTEXT_LINES] 行，多余的用 `@@` 标出省略了多少行 ——
  * `@@` 是 unified diff 的标准 hunk 头，[DiffView] 已经会把它渲染成提示色。
+ * 头里的说明文字跟界面语言走（[TranscriptLabels]），`@@` 前缀本身两种语言都不能动。
  */
-internal fun buildUnifiedDiff(path: String?, old: String, new: String): String {
+internal fun buildUnifiedDiff(
+    path: String?,
+    old: String,
+    new: String,
+    labels: TranscriptLabels,
+): String {
     val oldLines = if (old.isEmpty()) emptyList() else old.lines()
     val newLines = if (new.isEmpty()) emptyList() else new.lines()
 
@@ -137,7 +143,7 @@ internal fun buildUnifiedDiff(path: String?, old: String, new: String): String {
 
         val headContext = oldLines.take(prefix)
         val hiddenHead = (headContext.size - DIFF_CONTEXT_LINES).coerceAtLeast(0)
-        if (hiddenHead > 0) appendLine("@@ 上方 $hiddenHead 行未改动 @@")
+        if (hiddenHead > 0) appendLine(labels.diffElidedAbove.format(hiddenHead))
         headContext.takeLast(DIFF_CONTEXT_LINES).forEach { appendLine(" $it") }
 
         removed.forEach { appendLine("-$it") }
@@ -146,7 +152,7 @@ internal fun buildUnifiedDiff(path: String?, old: String, new: String): String {
         val tailContext = oldLines.takeLast(suffix)
         tailContext.take(DIFF_CONTEXT_LINES).forEach { appendLine(" $it") }
         val hiddenTail = (tailContext.size - DIFF_CONTEXT_LINES).coerceAtLeast(0)
-        if (hiddenTail > 0) appendLine("@@ 下方 $hiddenTail 行未改动 @@")
+        if (hiddenTail > 0) appendLine(labels.diffElidedBelow.format(hiddenTail))
     }.trimEnd('\n')
 }
 
@@ -195,10 +201,14 @@ internal fun fileName(path: String?): String =
  * Bash 优先用 `description` —— CLI 的工具 schema 明确要求模型为每条命令写一句
  * 主动语态的说明（"Show working tree status"），比原始命令好读得多。
  *
+ * 工具名和入参是协议事实，不翻；文案里人读的那几个字（行数、处数、兜底）从
+ * [labels] 取，跟界面语言走。Codex 侧的对齐靠 [dev.min.code.core.codex.CodexChatMapping]
+ * 把它的工具改成这套名字，这里不感知引擎。
+ *
  * 段落之间用 [SEP] 而不是空格：最后那步空白归一化会把连续空格压成一个，
  * 拿空格当分隔符是留不住的。
  */
-internal fun toolSummary(name: String, input: JsonObject): String {
+internal fun toolSummary(name: String, input: JsonObject, labels: TranscriptLabels): String {
     fun str(key: String) = input[key].asStringOrNull()
     fun int(key: String) = input[key].asIntOrNull()
     val raw = when (name) {
@@ -209,9 +219,9 @@ internal fun toolSummary(name: String, input: JsonObject): String {
             val offset = int("offset")
             val limit = int("limit")
             val range = when {
-                offset != null && limit != null -> "${offset + 1}–${offset + limit} 行"
-                offset != null -> "从 ${offset + 1} 行"
-                limit != null -> "前 $limit 行"
+                offset != null && limit != null -> labels.readRange.format(offset + 1, offset + limit)
+                offset != null -> labels.readFrom.format(offset + 1)
+                limit != null -> labels.readFirst.format(limit)
                 else -> null
             }
             listOfNotNull(fileName(str("file_path")), range, str("pages")?.let { "p.$it" }).joinToString(SEP)
@@ -219,17 +229,17 @@ internal fun toolSummary(name: String, input: JsonObject): String {
 
         "Edit" -> listOfNotNull(
             fileName(str("file_path")),
-            "全部替换".takeIf { input["replace_all"].asBooleanOrNull() == true },
+            labels.replaceAll.takeIf { input["replace_all"].asBooleanOrNull() == true },
         ).joinToString(SEP)
 
         "Write" -> listOfNotNull(
             fileName(str("file_path")),
-            str("content")?.lines()?.size?.takeIf { it > 0 }?.let { "$it 行" },
+            str("content")?.lines()?.size?.takeIf { it > 0 }?.let { labels.nLines.format(it) },
         ).joinToString(SEP)
 
         "MultiEdit", "NotebookEdit" -> listOfNotNull(
             fileName(str("file_path")),
-            input["edits"].asJsonArrayOrNull()?.size?.takeIf { it > 0 }?.let { "$it 处" },
+            input["edits"].asJsonArrayOrNull()?.size?.takeIf { it > 0 }?.let { labels.nEdits.format(it) },
         ).joinToString(SEP)
 
         "Glob" -> listOfNotNull(str("pattern"), str("path")).joinToString(SEP)
@@ -240,7 +250,7 @@ internal fun toolSummary(name: String, input: JsonObject): String {
         "TodoWrite" -> {
             val todos = input["todos"].asJsonArrayOrNull().orEmpty()
             val done = todos.count { it.asJsonObjectOrNull()?.get("status").asStringOrNull() == "completed" }
-            if (todos.isEmpty()) "" else "$done/${todos.size} 已完成"
+            if (todos.isEmpty()) "" else labels.todoDone.format(done, todos.size)
         }
 
         "Task", "Agent" -> str("description") ?: str("subagent_type") ?: ""
@@ -248,8 +258,8 @@ internal fun toolSummary(name: String, input: JsonObject): String {
         // 读错字段的话每次都只显示兜底文案，等于这张卡片什么都没说
         "AskUserQuestion" -> parseAskUserQuestions(input)
             .joinToString(" / ") { it.header?.takeIf(String::isNotBlank) ?: it.question }
-            .ifBlank { "向用户提问" }
-        "ExitPlanMode", "EnterPlanMode" -> str("plan")?.lines()?.firstOrNull() ?: "计划模式"
+            .ifBlank { labels.askUser }
+        "ExitPlanMode", "EnterPlanMode" -> str("plan")?.lines()?.firstOrNull() ?: labels.planMode
         "SlashCommand" -> str("command") ?: ""
         "Skill" -> str("skill") ?: ""
 
@@ -262,35 +272,36 @@ internal fun toolSummary(name: String, input: JsonObject): String {
 private const val SEP = " · "
 
 /** 折叠态右侧那个小角标：diff 给 `+12 −3`，其它给结果行数 */
-internal fun toolBadge(item: ChatItem.ToolCall): String? = when {
+internal fun toolBadge(item: ChatItem.ToolCall, labels: TranscriptLabels): String? = when {
     // 子任务优先报步数：Task 的"结果行数"是那份最终报告的长度，
     // 而人想知道的是"它跑了多少步"——那才是决定要不要点开的信息
-    item.subItems.isNotEmpty() -> "${item.subItems.size} 步"
-    else -> toolResultBadge(item)
+    item.subItems.isNotEmpty() -> labels.nSteps.format(item.subItems.size)
+    else -> toolResultBadge(item, labels)
 }
 
-private fun toolResultBadge(item: ChatItem.ToolCall): String? = when (item.name) {
+private fun toolResultBadge(item: ChatItem.ToolCall, labels: TranscriptLabels): String? = when (item.name) {
     "Edit", "Write", "MultiEdit" -> {
         // 走 bounded 版本：这是折叠态就要算的东西，列表里每一行、每次重组都要过一遍，
         // 一个 200KB 的 Write 会在滚动时反复拼出同样大小的字符串
-        val diff = boundedDiffOf(item.name, item.input)
+        val diff = boundedDiffOf(item.name, item.input, labels)
         if (diff.isBlank()) null else parseDiffStats(diff).let { "+${it.additions} −${it.deletions}" }
     }
 
-    else -> item.result?.takeIf { it.isNotBlank() }?.lines()?.size?.let { "$it 行" }
+    else -> item.result?.takeIf { it.isNotBlank() }?.lines()?.size?.let { labels.nLines.format(it) }
 }
 
 /** 把一次编辑类调用折成一段 unified diff；非编辑类返回空串 */
-internal fun diffOf(name: String, input: JsonObject): String {
+internal fun diffOf(name: String, input: JsonObject, labels: TranscriptLabels): String {
     val path = input["file_path"].asStringOrNull()
     return when (name) {
         "Edit" -> buildUnifiedDiff(
             path,
             input["old_string"].asStringOrNull().orEmpty(),
             input["new_string"].asStringOrNull().orEmpty(),
+            labels,
         )
 
-        "Write" -> buildUnifiedDiff(path, "", input["content"].asStringOrNull().orEmpty())
+        "Write" -> buildUnifiedDiff(path, "", input["content"].asStringOrNull().orEmpty(), labels)
 
         "MultiEdit" -> input["edits"].asJsonArrayOrNull()
             ?.mapNotNull { it.asJsonObjectOrNull() }
@@ -299,6 +310,7 @@ internal fun diffOf(name: String, input: JsonObject): String {
                     null,
                     edit["old_string"].asStringOrNull().orEmpty(),
                     edit["new_string"].asStringOrNull().orEmpty(),
+                    labels,
                 )
             }
             .orEmpty()
@@ -314,21 +326,22 @@ internal fun diffOf(name: String, input: JsonObject): String {
  * 逐行拼出一个同样大小的字符串 —— 在权限面板里这发生在必须立刻响应的路径上，
  * 在聊天流里则是每次重组都来一遍。[DiffView] 只渲染前若干行，超出的部分从一开始就不该产生。
  */
-internal fun boundedDiffOf(name: String, input: JsonObject): String {
+internal fun boundedDiffOf(name: String, input: JsonObject, labels: TranscriptLabels): String {
     val clipped = JsonObject(
         input.mapValues { (key, value) ->
             val text = (value as? kotlinx.serialization.json.JsonPrimitive)
                 ?.takeIf { it.isString }?.content
             if (key in DIFF_BULK_KEYS && text != null && text.length > MAX_DIFF_SOURCE_CHARS) {
                 kotlinx.serialization.json.JsonPrimitive(
-                    text.take(MAX_DIFF_SOURCE_CHARS) + "\n…（已截断，共 ${text.length} 字符）"
+                    // 标记独占一行：take 是按字符切的，尾巴可能停在半行内容上
+                    text.take(MAX_DIFF_SOURCE_CHARS) + "\n" + labels.diffTruncated.format(text.length)
                 )
             } else {
                 value
             }
         }
     )
-    return diffOf(name, clipped)
+    return diffOf(name, clipped, labels)
 }
 
 /** 可能装着整份文件内容的入参键 */
@@ -362,6 +375,7 @@ internal fun toolIcon(name: String): ImageVector = when (name) {
 @Composable
 internal fun ToolCallDetail(
     item: ChatItem.ToolCall,
+    labels: TranscriptLabels,
     onRevert: (() -> Unit)? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -382,8 +396,8 @@ internal fun ToolCallDetail(
                 // Claude 把 old_string/new_string 给我们，diff 是现算的；Codex 的 fileChange
                 // 直接给现成的 unified diff（editDiff）。有现成的就别再算一遍——
                 // 算出来的那份只会是空的，因为入参里根本没有 old_string
-                val diff = remember(item.name, item.input, item.editDiff) {
-                    item.editDiff?.takeIf { it.isNotBlank() } ?: boundedDiffOf(item.name, item.input)
+                val diff = remember(item.name, item.input, item.editDiff, labels) {
+                    item.editDiff?.takeIf { it.isNotBlank() } ?: boundedDiffOf(item.name, item.input, labels)
                 }
                 if (diff.isNotBlank()) {
                     DiffView(diff = diff, maxLines = MAX_DETAIL_LINES, showFileHeader = false)
@@ -438,7 +452,7 @@ internal fun ToolCallDetail(
  * 而不是误以为主 agent 自己跑了这些工具。内容渲染器完全复用主流那套。
  */
 @Composable
-internal fun SubagentTranscript(items: List<ChatItem>) {
+internal fun SubagentTranscript(items: List<ChatItem>, labels: TranscriptLabels) {
     val line = MaterialTheme.colorScheme.outlineVariant
     Column(
         modifier = Modifier
@@ -459,12 +473,12 @@ internal fun SubagentTranscript(items: List<ChatItem>) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        items.forEach { item -> SubagentItem(item) }
+        items.forEach { item -> SubagentItem(item, labels) }
     }
 }
 
 @Composable
-private fun SubagentItem(item: ChatItem) {
+private fun SubagentItem(item: ChatItem, labels: TranscriptLabels) {
     when (item) {
         // 子 agent 的正文就是它的阶段性结论，值得直接读，不折叠
         is ChatItem.AssistantText ->
@@ -504,7 +518,7 @@ private fun SubagentItem(item: ChatItem) {
                         maxLines = 1,
                     )
                     Text(
-                        text = toolSummary(item.name, item.input),
+                        text = toolSummary(item.name, item.input, labels),
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = JetbrainsMono,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -515,7 +529,7 @@ private fun SubagentItem(item: ChatItem) {
                 }
                 // 撤销不往下传：子 agent 的编辑没有走 App 侧的快照路径（快照是在主线程的
                 // tool_use 帧上打的），给一个按下去只会报错的按钮比没有按钮更糟
-                if (expanded) ToolCallDetail(item, onRevert = null)
+                if (expanded) ToolCallDetail(item, labels, onRevert = null)
             }
         }
 
@@ -552,6 +566,7 @@ private fun prettyInput(input: JsonObject): String =
 internal fun ToolInputPreview(
     name: String,
     input: JsonObject,
+    labels: TranscriptLabels,
     maxLines: Int = MAX_PERMISSION_LINES,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -582,7 +597,7 @@ internal fun ToolInputPreview(
                 }
                 // remember 住：权限面板每次重组都重算一份几十 KB 的 diff 字符串，
                 // 而这个面板必须秒开秒答 —— 卡在这里等于会话卡死
-                val diff = remember(name, input) { boundedDiffOf(name, input) }
+                val diff = remember(name, input, labels) { boundedDiffOf(name, input, labels) }
                 if (diff.isNotBlank()) {
                     DiffView(diff = diff, maxLines = maxLines, showFileHeader = false)
                 } else {
@@ -591,7 +606,7 @@ internal fun ToolInputPreview(
             }
 
             "Read", "NotebookRead", "Glob", "Grep", "WebFetch", "WebSearch" ->
-                MonoText(toolSummary(name, input).ifBlank { prettyInput(input) })
+                MonoText(toolSummary(name, input, labels).ifBlank { prettyInput(input) })
 
             // 计划正文是 Markdown（标题、列表、表格、加粗）。按纯文本渲染的话，
             // 用户在审批面板里看到的是一堆 `#` `**` `|` 原始符号堆在一起 ——

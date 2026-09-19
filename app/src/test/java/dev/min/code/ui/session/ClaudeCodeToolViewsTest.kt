@@ -13,10 +13,14 @@ import org.junit.Test
  * diff 合成都要钉死。字段名取自 CLI 自带的 `sdk-tools.d.ts`
  * （`@anthropic-ai/claude-code` npm 包内），不是照直觉写的 —— 下面每个夹具都按那份
  * 声明构造，升级 CLI 时拿它复核。
+ *
+ * 摘要里的中文来自 [testTranscriptLabels]（values-zh 的现值），资源或文案改动时
+ * 两边要一起对。
  */
 class ClaudeCodeToolViewsTest {
 
     private val json = Json { ignoreUnknownKeys = true }
+    private val labels = testTranscriptLabels()
 
     private fun input(raw: String): JsonObject = json.parseToJsonElement(raw) as JsonObject
 
@@ -28,7 +32,7 @@ class ClaudeCodeToolViewsTest {
      */
     @Test
     fun `edit becomes a removal block followed by an addition block`() {
-        val diff = buildUnifiedDiff("/workspace/a/Protocol.kt", "old one\nold two", "new one\nnew two")
+        val diff = buildUnifiedDiff("/workspace/a/Protocol.kt", "old one\nold two", "new one\nnew two", labels)
         assertEquals(
             listOf(
                 "--- Protocol.kt",
@@ -45,36 +49,36 @@ class ClaudeCodeToolViewsTest {
     /** 新建文件（Write）没有旧内容，不能凭空多出一行 `-` */
     @Test
     fun `empty old string produces no removal lines`() {
-        val diff = buildUnifiedDiff("new.txt", "", "hello")
+        val diff = buildUnifiedDiff("new.txt", "", "hello", labels)
         assertEquals(listOf("--- new.txt", "+++ new.txt", "+hello"), diff.lines())
     }
 
     /** 删空一个文件同理，不能多出一行 `+` */
     @Test
     fun `empty new string produces no addition lines`() {
-        val diff = buildUnifiedDiff(null, "bye", "")
+        val diff = buildUnifiedDiff(null, "bye", "", labels)
         assertEquals(listOf("-bye"), diff.lines())
     }
 
     /** 没有路径就不写文件头，DiffView 会把 `---`/`+++` 当文件头着色 */
     @Test
     fun `missing path omits the file header`() {
-        val diff = buildUnifiedDiff(null, "a", "b")
+        val diff = buildUnifiedDiff(null, "a", "b", labels)
         assertEquals(listOf("-a", "+b"), diff.lines())
-        assertTrue(buildUnifiedDiff("   ", "a", "b").lines().none { it.startsWith("---") })
+        assertTrue(buildUnifiedDiff("   ", "a", "b", labels).lines().none { it.startsWith("---") })
     }
 
     /** 内容自带尾随换行时不能产生一行孤零零的 `+` */
     @Test
     fun `trailing newline does not leave a dangling marker line`() {
-        val diff = buildUnifiedDiff(null, "", "a\nb\n")
+        val diff = buildUnifiedDiff(null, "", "a\nb\n", labels)
         assertEquals(listOf("+a", "+b", "+"), diff.lines())
         assertTrue("末尾不该有空行", !diff.endsWith("\n"))
     }
 
     @Test
     fun `write and multiedit route through the same diff builder`() {
-        val write = diffOf("Write", input("""{"file_path":"/w/x.kt","content":"line"}"""))
+        val write = diffOf("Write", input("""{"file_path":"/w/x.kt","content":"line"}"""), labels)
         assertEquals(listOf("--- x.kt", "+++ x.kt", "+line"), write.lines())
 
         val multi = diffOf(
@@ -84,6 +88,7 @@ class ClaudeCodeToolViewsTest {
                    {"old_string":"a","new_string":"b"},
                    {"old_string":"c","new_string":"d"}]}"""
             ),
+            labels,
         )
         assertEquals(listOf("-a", "+b", "-c", "+d"), multi.lines())
     }
@@ -91,8 +96,8 @@ class ClaudeCodeToolViewsTest {
     /** 非编辑类工具不该被当成 diff —— 角标会算出莫名其妙的 +0 −0 */
     @Test
     fun `non edit tools have no diff`() {
-        assertEquals("", diffOf("Bash", input("""{"command":"ls"}""")))
-        assertEquals("", diffOf("Read", input("""{"file_path":"/w/x.kt"}""")))
+        assertEquals("", diffOf("Bash", input("""{"command":"ls"}"""), labels))
+        assertEquals("", diffOf("Read", input("""{"file_path":"/w/x.kt"}"""), labels))
     }
 
     /**
@@ -105,6 +110,7 @@ class ClaudeCodeToolViewsTest {
             null,
             "fun a() {\n    val x = 1\n    return x\n}",
             "fun a() {\n    val x = 2\n    return x\n}",
+            labels,
         )
         assertEquals(
             listOf(
@@ -121,7 +127,7 @@ class ClaudeCodeToolViewsTest {
     /** 上下文行不带 +/− 前缀，统计角标必须只数真正的改动 */
     @Test
     fun `context lines are excluded from the diff stats`() {
-        val diff = buildUnifiedDiff(null, "a\nb\nc", "a\nB\nc")
+        val diff = buildUnifiedDiff(null, "a\nb\nc", "a\nB\nc", labels)
         val stats = dev.min.code.ui.richtext.parseDiffStats(diff)
         assertEquals(1, stats.additions)
         assertEquals(1, stats.deletions)
@@ -132,7 +138,7 @@ class ClaudeCodeToolViewsTest {
     fun `long context is elided with a hunk header`() {
         val head = (1..10).joinToString("\n") { "head$it" }
         val tail = (1..10).joinToString("\n") { "tail$it" }
-        val diff = buildUnifiedDiff(null, "$head\nOLD\n$tail", "$head\nNEW\n$tail")
+        val diff = buildUnifiedDiff(null, "$head\nOLD\n$tail", "$head\nNEW\n$tail", labels)
         val lines = diff.lines()
 
         assertEquals("@@ 上方 7 行未改动 @@", lines.first())
@@ -143,14 +149,14 @@ class ClaudeCodeToolViewsTest {
     /** 整块重写没有公共前后缀，仍然是"整块删 + 整块增"，不做逐行 LCS */
     @Test
     fun `a full rewrite still renders as two blocks`() {
-        val diff = buildUnifiedDiff(null, "p\nq\nr", "x\ny\nz")
+        val diff = buildUnifiedDiff(null, "p\nq\nr", "x\ny\nz", labels)
         assertEquals(listOf("-p", "-q", "-r", "+x", "+y", "+z"), diff.lines())
     }
 
     /** 前后缀不能重叠计数：`a` 只有一行，不能既算前缀又算后缀 */
     @Test
     fun `prefix and suffix never overlap`() {
-        val diff = buildUnifiedDiff(null, "a", "a\nb")
+        val diff = buildUnifiedDiff(null, "a", "a\nb", labels)
         assertEquals(listOf(" a", "+b"), diff.lines())
     }
 
@@ -161,7 +167,7 @@ class ClaudeCodeToolViewsTest {
     @Test
     fun `bulk fields are clipped before building the diff`() {
         val huge = "x".repeat(60_000)
-        val diff = boundedDiffOf("Write", input("""{"file_path":"/w/big.txt","content":"$huge"}"""))
+        val diff = boundedDiffOf("Write", input("""{"file_path":"/w/big.txt","content":"$huge"}"""), labels)
 
         assertTrue("必须比原文短得多", diff.length < 25_000)
         assertTrue("要说明被截断了", diff.contains("已截断"))
@@ -172,7 +178,7 @@ class ClaudeCodeToolViewsTest {
     @Test
     fun `small inputs are untouched by the bound`() {
         val json = input("""{"file_path":"/w/x.kt","old_string":"a","new_string":"b"}""")
-        assertEquals(diffOf("Edit", json), boundedDiffOf("Edit", json))
+        assertEquals(diffOf("Edit", json, labels), boundedDiffOf("Edit", json, labels))
     }
 
     // endregion
@@ -219,31 +225,31 @@ class ClaudeCodeToolViewsTest {
     fun `bash prefers the description over the raw command`() {
         assertEquals(
             "Show working tree status",
-            toolSummary("Bash", input("""{"command":"git status","description":"Show working tree status"}""")),
+            toolSummary("Bash", input("""{"command":"git status","description":"Show working tree status"}"""), labels),
         )
-        assertEquals("git status", toolSummary("Bash", input("""{"command":"git status"}""")))
+        assertEquals("git status", toolSummary("Bash", input("""{"command":"git status"}"""), labels))
     }
 
     @Test
     fun `read shows the file name and line range`() {
-        assertEquals("x.kt · 101–200 行", toolSummary("Read", input("""{"file_path":"/w/x.kt","offset":100,"limit":100}""")))
-        assertEquals("x.kt · 前 50 行", toolSummary("Read", input("""{"file_path":"/w/x.kt","limit":50}""")))
-        assertEquals("x.kt", toolSummary("Read", input("""{"file_path":"/w/x.kt"}""")))
+        assertEquals("x.kt · 101–200 行", toolSummary("Read", input("""{"file_path":"/w/x.kt","offset":100,"limit":100}"""), labels))
+        assertEquals("x.kt · 前 50 行", toolSummary("Read", input("""{"file_path":"/w/x.kt","limit":50}"""), labels))
+        assertEquals("x.kt", toolSummary("Read", input("""{"file_path":"/w/x.kt"}"""), labels))
     }
 
     @Test
     fun `edit and write summaries carry the useful extra`() {
         assertEquals(
             "x.kt · 全部替换",
-            toolSummary("Edit", input("""{"file_path":"/w/x.kt","old_string":"a","new_string":"b","replace_all":true}""")),
+            toolSummary("Edit", input("""{"file_path":"/w/x.kt","old_string":"a","new_string":"b","replace_all":true}"""), labels),
         )
         assertEquals(
             "x.kt · 2 行",
-            toolSummary("Write", input("""{"file_path":"/w/x.kt","content":"a\nb"}""")),
+            toolSummary("Write", input("""{"file_path":"/w/x.kt","content":"a\nb"}"""), labels),
         )
         assertEquals(
             "x.kt · 3 处",
-            toolSummary("MultiEdit", input("""{"file_path":"/w/x.kt","edits":[{},{},{}]}""")),
+            toolSummary("MultiEdit", input("""{"file_path":"/w/x.kt","edits":[{},{},{}]}"""), labels),
         )
     }
 
@@ -259,6 +265,7 @@ class ClaudeCodeToolViewsTest {
                        {"content":"b","status":"in_progress","activeForm":"B"},
                        {"content":"c","status":"pending","activeForm":"C"}]}"""
                 ),
+                labels,
             ),
         )
     }
@@ -266,21 +273,21 @@ class ClaudeCodeToolViewsTest {
     /** 字段缺失、类型不符、未知工具都必须降级成一句话，绝不能抛 */
     @Test
     fun `summaries degrade instead of throwing`() {
-        assertEquals("", toolSummary("Bash", input("{}")))
-        assertEquals("?", toolSummary("Read", input("{}")))
-        assertEquals("", toolSummary("TodoWrite", input("""{"todos":"nope"}""")))
-        assertEquals("", toolSummary("Edit", input("""{"file_path":null}""")).substringBefore("?").trim())
-        assertTrue(toolSummary("SomeFutureTool", input("""{"a":"b"}""")).contains("a"))
-        assertEquals("", toolSummary("SomeFutureTool", input("{}")))
+        assertEquals("", toolSummary("Bash", input("{}"), labels))
+        assertEquals("?", toolSummary("Read", input("{}"), labels))
+        assertEquals("", toolSummary("TodoWrite", input("""{"todos":"nope"}"""), labels))
+        assertEquals("", toolSummary("Edit", input("""{"file_path":null}"""), labels).substringBefore("?").trim())
+        assertTrue(toolSummary("SomeFutureTool", input("""{"a":"b"}"""), labels).contains("a"))
+        assertEquals("", toolSummary("SomeFutureTool", input("{}"), labels))
     }
 
     /** 摘要要压成单行并限长，否则多行命令会把折叠态撑开 */
     @Test
     fun `summaries are single line and bounded`() {
-        val summary = toolSummary("Bash", input("""{"command":"${"x".repeat(400)}"}"""))
+        val summary = toolSummary("Bash", input("""{"command":"${"x".repeat(400)}"}"""), labels)
         assertEquals(120, summary.length)
 
-        val multiline = toolSummary("Bash", input("""{"command":"a\n\n   b\tc"}"""))
+        val multiline = toolSummary("Bash", input("""{"command":"a\n\n   b\tc"}"""), labels)
         assertEquals("a b c", multiline)
     }
 

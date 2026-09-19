@@ -800,15 +800,18 @@ internal fun List<ChatItem>.toTranscriptText(labels: TranscriptLabels): String =
                     ChatItem.ToolCall.Status.Done -> labels.toolDone
                     ChatItem.ToolCall.Status.Error -> labels.toolError
                 }
-                append("- `${item.name}` ${toolSummary(item.name, item.input)} — $status\n\n")
+                append("- `${item.name}` ${toolSummary(item.name, item.input, labels)} — $status\n\n")
             }
         }
     }
 }.trim()
 
 /**
- * 导出时用到的几个字头。[toTranscriptText] 不是 @Composable，取不到 `stringResource`，
- * 由调用方在外面取好一次性传进来。
+ * 会话流表层用到的全部字头。[toTranscriptText]、[ToolEntry]、[ToolCallDetail]、
+ * [ToolInputPreview] 和会话搜索都不是 @Composable（或不该逐条取资源），取不到
+ * `stringResource`，由调用侧在组合时取好一次性传下去。
+ *
+ * 带 `%1$d` 的是格式模板，消费方用 `String.format` 现场填数。
  */
 internal data class TranscriptLabels(
     val user: String,
@@ -816,6 +819,32 @@ internal data class TranscriptLabels(
     val toolRunning: String,
     val toolDone: String,
     val toolError: String,
+    /** Read 折叠行：「101–200 行」 */
+    val readRange: String,
+    /** Read 折叠行：「从 101 行」 */
+    val readFrom: String,
+    /** Read 折叠行：「前 50 行」 */
+    val readFirst: String,
+    /** Edit 折叠行：replace_all 时的「全部替换」 */
+    val replaceAll: String,
+    /** 行数（Write 的行数、结果行数共用）：「N 行」 */
+    val nLines: String,
+    /** MultiEdit 的编辑处数：「N 处」 */
+    val nEdits: String,
+    /** TodoWrite 的进度：「1/3 已完成」 */
+    val todoDone: String,
+    /** AskUserQuestion 摘不出去内容时的兜底 */
+    val askUser: String,
+    /** 计划模式工具没有 plan 正文时的兜底 */
+    val planMode: String,
+    /** 子任务角标：「N 步」（复用工作块的步数文案） */
+    val nSteps: String,
+    /** diff 公共前缀省略的头，`@@` 前缀是 DiffView 着色的依据，两种语言都得保留 */
+    val diffElidedAbove: String,
+    /** diff 公共后缀省略的头，同上 */
+    val diffElidedBelow: String,
+    /** diff 源字段超长截断的尾巴 */
+    val diffTruncated: String,
 )
 
 @Composable
@@ -825,6 +854,19 @@ internal fun rememberTranscriptLabels(): TranscriptLabels = TranscriptLabels(
     toolRunning = stringResource(R.string.session_tool_status_running),
     toolDone = stringResource(R.string.session_tool_status_done),
     toolError = stringResource(R.string.session_tool_status_error),
+    readRange = stringResource(R.string.tool_summary_range),
+    readFrom = stringResource(R.string.tool_summary_from_line),
+    readFirst = stringResource(R.string.tool_summary_first_lines),
+    replaceAll = stringResource(R.string.tool_summary_replace_all),
+    nLines = stringResource(R.string.tool_summary_n_lines),
+    nEdits = stringResource(R.string.tool_summary_n_edits),
+    todoDone = stringResource(R.string.tool_summary_todo_done),
+    askUser = stringResource(R.string.tool_summary_ask_user),
+    planMode = stringResource(R.string.tool_summary_plan),
+    nSteps = stringResource(R.string.transcript_work_steps),
+    diffElidedAbove = stringResource(R.string.tool_diff_elided_above),
+    diffElidedBelow = stringResource(R.string.tool_diff_elided_below),
+    diffTruncated = stringResource(R.string.tool_diff_truncated),
 )
 
 /**
@@ -858,6 +900,8 @@ private fun SessionContent(
 ) {
     val listState = rememberLazyListState()
     val streaming = session.streamingText.isNotBlank() || session.streamingThinking.isNotBlank()
+    // 工具卡的字头在组合期取好传下去：TranscriptItem 的调用方（搜索、导出）不是 Composable
+    val transcriptLabels = rememberTranscriptLabels()
     val composerDraft by vm.composerDraft.collectAsStateWithLifecycle()
     val activeKey by vm.activeSessionKey.collectAsStateWithLifecycle()
     val showLiveTurn = !streaming && (
@@ -996,7 +1040,7 @@ private fun SessionContent(
                     Box(itemMod) {
                         when (block) {
                             is TranscriptBlock.Single ->
-                                TranscriptItem(block.item, isFirst, isLast, onRevert = { vm.revertToolCall(it) })
+                                TranscriptItem(block.item, isFirst, isLast, transcriptLabels, onRevert = { vm.revertToolCall(it) })
 
                             is TranscriptBlock.Work -> {
                                 // 默认只有"最后一块 + 还在跑"才展开：那时候"它现在在干什么"
@@ -1018,6 +1062,7 @@ private fun SessionContent(
                                                 isFirst = isFirst && i == 0,
                                                 // 展开时块尾还挂着一条"收起"，轨道不能在这里断
                                                 isLast = false,
+                                                labels = transcriptLabels,
                                                 onRevert = { vm.revertToolCall(it) },
                                             )
                                         }
@@ -1260,6 +1305,7 @@ internal fun TranscriptItem(
     item: ChatItem,
     isFirst: Boolean,
     isLast: Boolean,
+    labels: TranscriptLabels,
     onRevert: ((String) -> Unit)? = null,
 ) {
     when (item) {
@@ -1278,6 +1324,7 @@ internal fun TranscriptItem(
             item = item,
             isFirst = isFirst,
             isLast = isLast,
+            labels = labels,
             // 只有编辑类工具才有快照。这里按工具名过滤而不是去问磁盘：
             // 展开一条就发一次 IO 查询，滑动列表时会打出一串无谓的读盘。
             onRevert = if (onRevert != null && item.name in CHECKPOINT_TOOLS) {
@@ -1692,7 +1739,11 @@ private fun PermissionSheet(
             // 按工具类型渲染入参：编辑类给 diff，Bash 给高亮命令，其余给美化 JSON。
             // 原来这里是 `input.toString()` 截断成一行流水账 —— 用户点「允许」时
             // 其实看不到自己批准了什么，而那正是权限确认唯一的意义。
-            ToolInputPreview(name = pending.toolName, input = pending.input)
+            ToolInputPreview(
+                name = pending.toolName,
+                input = pending.input,
+                labels = rememberTranscriptLabels(),
+            )
 
             InkDivider()
 

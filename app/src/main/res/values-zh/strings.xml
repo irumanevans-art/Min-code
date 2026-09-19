@@ -513,6 +513,20 @@
   <string name="transcript_subagent_thinking">思考 · %1$d 字</string>
   <string name="transcript_more_lines">… 还有 %1$d 行</string>
   <string name="transcript_revert">撤销此修改</string>
+  <!-- 工具卡：折叠行摘要、角标与 diff 省略。文案经 TranscriptLabels 传递，
+       非 Composable 的调用方（搜索、导出）拿到的也是同一份 -->
+  <string name="tool_summary_range">%1$d–%2$d 行</string>
+  <string name="tool_summary_from_line">从 %1$d 行</string>
+  <string name="tool_summary_first_lines">前 %1$d 行</string>
+  <string name="tool_summary_replace_all">全部替换</string>
+  <string name="tool_summary_n_lines">%1$d 行</string>
+  <string name="tool_summary_n_edits">%1$d 处</string>
+  <string name="tool_summary_todo_done">%1$d/%2$d 已完成</string>
+  <string name="tool_summary_ask_user">向用户提问</string>
+  <string name="tool_summary_plan">计划模式</string>
+  <string name="tool_diff_elided_above">@@ 上方 %1$d 行未改动 @@</string>
+  <string name="tool_diff_elided_below">@@ 下方 %1$d 行未改动 @@</string>
+  <string name="tool_diff_truncated">…（已截断，共 %1$d 字符）</string>
   <string name="plan_title">计划</string>
   <string name="plan_empty">当前没有计划。把权限模式切到 Plan，Claude 会先给出计划再动手。</string>
 

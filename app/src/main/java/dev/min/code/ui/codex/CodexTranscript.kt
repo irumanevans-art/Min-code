@@ -23,6 +23,7 @@ import dev.min.code.ui.session.ThinkingEntry
 import dev.min.code.ui.session.TranscriptBlock
 import dev.min.code.ui.session.TranscriptItem
 import dev.min.code.ui.session.groupTranscript
+import dev.min.code.ui.session.rememberTranscriptLabels
 import kotlinx.coroutines.flow.collectLatest
 
 /**
@@ -43,6 +44,8 @@ internal fun CodexTranscript(
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val blocks = remember(session.items) { groupTranscript(session.items) }
+    // 工具卡文案与 Claude 侧同一份字头包：两个引擎画同一套卡片，文案也同源
+    val labels = rememberTranscriptLabels()
     // 手动开合优先于"跑完自动收起"，提在列表外面 —— LazyColumn 会把滚出屏幕的条目
     // 连同它的 remember 一起回收，放在里面的话滑回去时开合状态就没了
     val manualExpanded = remember { mutableStateMapOf<String, Boolean>() }
@@ -74,7 +77,7 @@ internal fun CodexTranscript(
             val isLast = index == lastIndex && !streaming && error == null
             Box {
                 when (block) {
-                    is TranscriptBlock.Single -> TranscriptItem(block.item, isFirst, isLast)
+                    is TranscriptBlock.Single -> TranscriptItem(block.item, isFirst, isLast, labels)
 
                     is TranscriptBlock.Work -> {
                         // 只有"最后一块 + 还在跑"默认展开：那时候"它现在在干什么"
@@ -96,6 +99,7 @@ internal fun CodexTranscript(
                                         isFirst = isFirst && i == 0,
                                         // 展开时块尾还挂着一条"收起"，轨道不能在这里断
                                         isLast = false,
+                                        labels = labels,
                                     )
                                 }
                                 CollapseWorkFooter(

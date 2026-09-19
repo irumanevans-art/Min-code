@@ -80,6 +80,7 @@ import dev.min.code.ui.session.ClaudeCodeInputBar
 import dev.min.code.ui.session.ClaudeCodeSettingsSheet
 import dev.min.code.ui.session.StartPanel
 import dev.min.code.ui.session.ToolEntry
+import dev.min.code.ui.session.rememberTranscriptLabels
 import dev.min.code.ui.session.UserEntry
 import dev.min.code.ui.session.ThinkingEntry
 import dev.min.code.ui.session.CollapsedWorkEntry
@@ -375,7 +376,7 @@ private fun ConversationPreview(
                 item(key = "thinking") { ThinkingEntry("检查依赖和运行状态，然后核对输出。", "preview-thinking", false, false, streaming = variant == "streaming") }
                 item(key = "tools") {
                     if (expanded) Column {
-                        ToolEntry(tool, isFirst = false, isLast = false)
+                        ToolEntry(tool, isFirst = false, isLast = false, labels = rememberTranscriptLabels())
                         CollapseWorkFooter(false) { expanded = false }
                     } else CollapsedWorkEntry(listOf(tool), false, false) { expanded = true }
                 }
