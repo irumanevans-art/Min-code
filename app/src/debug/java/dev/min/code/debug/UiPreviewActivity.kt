@@ -345,6 +345,37 @@ private fun ConversationPreview(
             result = "3 files changed, 42 insertions(+), 18 deletions(-)",
         )
     }
+    // 工具卡的字头包（行数、全部替换这些）是按界面语言走的：这三张卡专门用来
+    // 在浅色/深色、中英两个语言下验收收口后的文案
+    val tools = remember {
+        listOf(
+            tool,
+            ChatItem.ToolCall(
+                id = "preview-edit", toolUseId = "preview-edit", name = "Edit",
+                input = JsonObject(
+                    mapOf(
+                        "file_path" to JsonPrimitive("/workspace/Sea.kt"),
+                        "old_string" to JsonPrimitive("val a = 1"),
+                        "new_string" to JsonPrimitive("val a = 2"),
+                        "replace_all" to JsonPrimitive(true),
+                    ),
+                ),
+                status = ChatItem.ToolCall.Status.Done,
+            ),
+            ChatItem.ToolCall(
+                id = "preview-grep", toolUseId = "preview-grep", name = "Read",
+                input = JsonObject(
+                    mapOf(
+                        "file_path" to JsonPrimitive("/workspace/README.md"),
+                        "offset" to JsonPrimitive(100),
+                        "limit" to JsonPrimitive(100),
+                    ),
+                ),
+                status = ChatItem.ToolCall.Status.Done,
+                result = (1..40).joinToString("\n") { "line $it" },
+            ),
+        )
+    }
     var expanded by remember { mutableStateOf(false) }
     LaunchedEffect(overlayChrome) {
         if (overlayChrome) list.scrollToItem(0, scrollOffset = 120)
@@ -376,9 +407,11 @@ private fun ConversationPreview(
                 item(key = "thinking") { ThinkingEntry("检查依赖和运行状态，然后核对输出。", "preview-thinking", false, false, streaming = variant == "streaming") }
                 item(key = "tools") {
                     if (expanded) Column {
-                        ToolEntry(tool, isFirst = false, isLast = false, labels = rememberTranscriptLabels())
+                        tools.forEach {
+                            ToolEntry(it, isFirst = false, isLast = false, labels = rememberTranscriptLabels())
+                        }
                         CollapseWorkFooter(false) { expanded = false }
-                    } else CollapsedWorkEntry(listOf(tool), false, false) { expanded = true }
+                    } else CollapsedWorkEntry(tools, false, false) { expanded = true }
                 }
                 item(key = "assistant") {
                     AssistantEntry(
