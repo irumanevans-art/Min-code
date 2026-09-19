@@ -31,22 +31,24 @@ class CodeHighlighter {
 
     /** 同一段工具输出 / 文件内容反复进视野时别重跑整份 grammar。 */
     private val cache = object : LinkedHashMap<String, List<HighlightToken>>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<HighlightToken>>?): Boolean =
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<HighlightToken>?>): Boolean =
             size > 48
     }
 
     fun highlight(code: String, language: String): List<HighlightToken> {
         if (code.isEmpty()) return emptyList()
         val key = "$language|${code.length}|${code.hashCode()}"
-        synchronized(cache) {
+        // 编译后的 Mode 树是**共享且扫描期可变**的（MultiRegex 的 lastIndex 每次扫描被改写），
+        // 两个线程同时高亮同一种语言会互相踩 matcher 状态、产出错误 token。
+        // 缓存单独加锁是不够的——锁的必须是「整个高亮」。代价是并发请求串行，
+        // 每段都被 4096 字符上限封顶，毫秒级，可接受；要吞吐再说每线程引擎。
+        synchronized(engine) {
             cache[key]?.let { return it }
-        }
-        val tokens = engine.highlight(code, language)
-            ?: listOf(HighlightToken.Plain(code))
-        synchronized(cache) {
+            val tokens = engine.highlight(code, language)
+                ?: listOf(HighlightToken.Plain(code))
             cache[key] = tokens
+            return tokens
         }
-        return tokens
     }
 
     fun supports(language: String): Boolean = engine.supports(language)
