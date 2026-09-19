@@ -251,6 +251,31 @@ class CodexAppServerManagerTest {
         manager.close()
     }
 
+    /**
+     * 前台服务就靠这一个布尔决定要不要保活。它多报一点，服务永不收尾、一直按着
+     * 唤醒锁耗电；少报一点，切出去接个电话回来进程就没了。
+     */
+    @Test
+    fun `isLive covers starting and running, and nothing else`() = runBlocking {
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf("""{"id":"2","result":{"threadId":"t"}}"""),
+        )
+        val manager = CodexAppServerManager { process }
+
+        assertFalse(manager.isLive.value)
+
+        manager.start()
+        // Starting 也算活着：进程已经拉起来了，这时候被回收一样是断线
+        await { manager.isLive.value }
+        await { manager.state.value.status == SessionStatus.Running }
+        assertTrue(manager.isLive.value)
+
+        manager.stop()
+        await { !manager.isLive.value }
+        manager.close()
+    }
+
     @Test
     fun `turn is refused before the thread exists`() {
         val manager = CodexAppServerManager { error("boom") }

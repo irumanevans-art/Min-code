@@ -31,6 +31,8 @@ import dev.min.code.CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID
 import dev.min.code.R
 import dev.min.code.MainActivity
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.codex.CodexAppServerManager
+import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.crash.CrashRecorder
 import org.koin.android.ext.android.inject
 
@@ -156,6 +158,12 @@ class ClaudeCodeForegroundService : Service() {
 
     private val registry: ClaudeCodeSessionRegistry by inject()
     private val localServices: LocalServiceRegistry by inject()
+
+    /**
+     * Codex 的 app-server 也是 App 的子进程，和 Claude 的 CLI 同样会被系统连锅端。
+     * 它没有多会话，所以不进注册表，直接作为第三个观察源。
+     */
+    private val codex: CodexAppServerManager by inject()
     private val serviceScope = CoroutineScope(
         SupervisorJob() + Dispatchers.Main.immediate + CoroutineExceptionHandler { _, e ->
             // 没有会话状态可置，记日志 + 落盘就够了；不装的话 SupervisorJob 会把异常崩到 App
@@ -182,6 +190,8 @@ class ClaudeCodeForegroundService : Service() {
             // 这里不直接 stopSelf —— shutdown 是挂起的（要给 CLI 时间落盘 transcript）。
             registry.closeAll()
             localServices.stopAll(LocalServiceStopReason.StopAll)
+            // 「全部」要真的是全部：漏掉 Codex 的话，通知消失了而它那棵进程树还在跑
+            codex.stop()
             releaseLocks()
             observeRegistry()
             return START_NOT_STICKY
@@ -207,22 +217,30 @@ class ClaudeCodeForegroundService : Service() {
         if (observerStarted) return
         observerStarted = true
         serviceScope.launch {
-            combine(registry.liveSessions, localServices.services) { sessions, services ->
-                sessions to services
-            }.collectLatest { (sessions, services) ->
+            combine(
+                registry.liveSessions,
+                localServices.services,
+                codex.state,
+            ) { sessions, services, codexState ->
+                Triple(sessions, services, codexState)
+            }.collectLatest { (sessions, services, codexState) ->
                 val live = sessions.filter { it.isLive }
                 val runningServices = services.filter {
                     it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting
                 }
-                if (live.isEmpty() && runningServices.isEmpty()) {
+                val codexLive = codexState.status == SessionStatus.Running ||
+                    codexState.status == SessionStatus.Starting
+                if (live.isEmpty() && runningServices.isEmpty() && !codexLive) {
                     releaseLocks()
                     delay(STOP_DEBOUNCE_MS)
                     stopForegroundAndSelf()
                     return@collectLatest
                 }
-                val busy = live.any { it.busy } || runningServices.isNotEmpty()
+                val busy = live.any { it.busy } ||
+                    runningServices.isNotEmpty() ||
+                    (codexLive && codexState.busy)
                 if (busy) acquireLocks() else releaseLocks()
-                updateNotification(buildNotification(live, runningServices.size))
+                updateNotification(buildNotification(live, runningServices.size, codexState))
             }
         }
     }
@@ -270,26 +288,37 @@ class ClaudeCodeForegroundService : Service() {
         val svc = localServices.services.value.count {
             it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting
         }
-        return buildNotification(live, svc)
+        return buildNotification(live, svc, codex.state.value)
     }
 
     private fun buildNotification(
         live: List<ClaudeCodeSessionRegistry.LiveSession>,
         serviceCount: Int,
+        codexState: CodexAppServerManager.State,
     ): Notification {
         val busy = live.any { it.busy }
+        val codexLive = codexState.status == SessionStatus.Running ||
+            codexState.status == SessionStatus.Starting
         val detail = live.firstOrNull { it.pendingPermissionTool != null }
             ?.let { "等待批准：${it.pendingPermissionTool}" }
+            // Codex 停在等审批上时同样要说出来：不说的话切出去之后它就无声地卡在那里，
+            // 用户以为在跑，其实它在等一次点击
+            ?: codexState.pendingApproval?.let { "Codex 等待批准" }
             ?: live.firstOrNull { it.busy }?.statusText
             ?: if (serviceCount > 0) "$serviceCount 个本地服务" else null
         val sessionPart = when {
-            live.isEmpty() && serviceCount == 0 -> "正在启动…"
+            live.isEmpty() && serviceCount == 0 && !codexLive -> "正在启动…"
             live.isEmpty() -> null
             busy -> "${live.size} 个会话 · 运行中"
             else -> "${live.size} 个会话 · 空闲"
         }
+        val codexPart = when {
+            !codexLive -> null
+            codexState.busy -> "Codex · 运行中"
+            else -> "Codex · 空闲"
+        }
         val servicePart = if (serviceCount > 0) "${serviceCount} 个服务" else null
-        val text = listOfNotNull(sessionPart, servicePart).joinToString(" · ")
+        val text = listOfNotNull(sessionPart, codexPart, servicePart).joinToString(" · ")
             .ifBlank { "后台运行中" }
         return NotificationCompat.Builder(this, CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_min)

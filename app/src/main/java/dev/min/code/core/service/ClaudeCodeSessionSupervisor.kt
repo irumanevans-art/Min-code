@@ -19,6 +19,7 @@ import dev.min.code.CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID
 import dev.min.code.MainActivity
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.util.cancelNotification
 import dev.min.code.util.sendNotification
 import org.koin.java.KoinJavaComponent.inject
@@ -50,6 +51,7 @@ class ClaudeCodeSessionSupervisor(
     appScope: AppScope,
     private val registry: ClaudeCodeSessionRegistry,
     private val localServices: LocalServiceRegistry,
+    private val codex: CodexAppServerManager,
 ) {
     private val isForeground = MutableStateFlow(false)
 
@@ -91,8 +93,12 @@ class ClaudeCodeSessionSupervisor(
             // 从外面 stopService 有一个致命的时序窗口：会话启动失败得足够快时，stopService
             // 会赶在服务 startForeground() 之前到达，系统直接杀进程
             // （ForegroundServiceDidNotStartInTimeException）。真实发生过。
-            // 会话 **或** 本地服务任一存活都要保活。
-            combine(registry.anyLive, localServices.anyRunning) { live, svc -> live || svc }
+            // 会话 **或** 本地服务 **或** Codex 任一存活都要保活。
+            combine(
+                registry.anyLive,
+                localServices.anyRunning,
+                codex.isLive,
+            ) { live, svc, codexLive -> live || svc || codexLive }
                 .filter { it }
                 .collect { ClaudeCodeForegroundService.start(context) }
         }

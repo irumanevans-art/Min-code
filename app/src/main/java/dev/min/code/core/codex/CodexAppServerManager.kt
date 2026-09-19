@@ -17,7 +17,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import me.rerere.workspace.ProcessTreeKill
 
@@ -98,6 +101,16 @@ class CodexAppServerManager(
     private val _state = MutableStateFlow(State())
 
     val state: StateFlow<State> = _state.asStateFlow()
+
+    /**
+     * 进程还活着（含正在启动）。前台服务按它决定要不要保活 ——
+     * app-server 是 App 的子进程，没有前台服务撑着，切出去接个电话回来它就没了。
+     *
+     * Eagerly 而不是 WhileSubscribed：这是保活的依据，不能因为一时没人订阅就塌回 false。
+     */
+    val isLive: StateFlow<Boolean> = state
+        .map { it.status == SessionStatus.Running || it.status == SessionStatus.Starting }
+        .stateIn(scope, SharingStarted.Eagerly, false)
 
     private var process: Process? = null
     private var writer: BufferedWriter? = null

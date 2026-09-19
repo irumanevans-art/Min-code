@@ -100,6 +100,7 @@ val appModule = module {
             appScope = get(),
             registry = get(),
             localServices = get(),
+            codex = get(),
         )
     }
 
