@@ -154,6 +154,8 @@ import me.rerere.hugeicons.stroke.Tick01
 import org.koin.androidx.compose.koinViewModel
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.SessionStatus
 
 /**
  * Claude Code 页：官方 claude CLI 跑在工作区 Rootfs 里，stream-json 协议桥接为界面。
@@ -243,12 +245,12 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     // 会话列表也在这里重扫：CLI 的自动拟名（ai-title）是首轮结束后**异步**写入
     // transcript 的，result 帧落地那一瞬文件里往往还没有，所以立刻扫一次、再晚几秒扫一次。
     LaunchedEffect(session.status, session.busy) {
-        if (session.status == ClaudeCodeManager.SessionStatus.Running && !session.busy) {
+        if (session.status == SessionStatus.Running && !session.busy) {
             vm.refreshUsage()
             vm.refreshPlan()
             vm.refreshSessions()
             delay(2_500)
-            if (session.status == ClaudeCodeManager.SessionStatus.Running) {
+            if (session.status == SessionStatus.Running) {
                 vm.refreshSessions()
             }
         }
@@ -261,8 +263,8 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     var wideSidebarOpen by rememberSaveable { mutableStateOf(true) }
     var wideSidebarWidthDp by rememberSaveable { mutableFloatStateOf(SIDEBAR_DEFAULT_DP) }
     val live = setup.ready &&
-        (session.status == ClaudeCodeManager.SessionStatus.Running ||
-            session.status == ClaudeCodeManager.SessionStatus.Starting)
+        (session.status == SessionStatus.Running ||
+            session.status == SessionStatus.Starting)
 
     val openSessionList: () -> Unit = {
         focusManager.clearFocus()
@@ -749,7 +751,7 @@ private fun WideSidebarScaffold(
 private fun ClaudeCodeManager.SessionState.subtitle(): String = when {
     stopping -> stringResource(R.string.session_settings_busy_stopping)
     applyingSettings || applyingEffort -> stringResource(R.string.session_settings_busy)
-    status == ClaudeCodeManager.SessionStatus.Running -> {
+    status == SessionStatus.Running -> {
         // 模型名是机器产物，原样；工具计数的量词是人话，走资源
         val tools = if (toolCount > 0) {
             stringResource(R.string.session_subtitle_tools, toolCount)
@@ -760,9 +762,9 @@ private fun ClaudeCodeManager.SessionState.subtitle(): String = when {
         listOfNotNull(model, tools).joinToString(" · ").ifBlank { running }
     }
 
-    status == ClaudeCodeManager.SessionStatus.Starting -> stringResource(R.string.session_status_starting_cli)
-    status == ClaudeCodeManager.SessionStatus.Closed -> stringResource(R.string.session_status_closed)
-    status == ClaudeCodeManager.SessionStatus.Failed -> stringResource(R.string.session_status_failed)
+    status == SessionStatus.Starting -> stringResource(R.string.session_status_starting_cli)
+    status == SessionStatus.Closed -> stringResource(R.string.session_status_closed)
+    status == SessionStatus.Failed -> stringResource(R.string.session_status_failed)
     // 产品名，不翻
     else -> "Claude Code"
 }
@@ -777,22 +779,22 @@ private fun ClaudeCodeManager.SessionState.subtitle(): String = when {
  * 工具调用只导出摘要不导出完整结果：一次 Read 的结果动辄上千行，全塞进去会把真正想要的
  * 对话内容淹掉。要完整结果的话展开那条工具卡单独选中复制。
  */
-internal fun List<ClaudeCodeManager.ChatItem>.toTranscriptText(labels: TranscriptLabels): String = buildString {
+internal fun List<ChatItem>.toTranscriptText(labels: TranscriptLabels): String = buildString {
     this@toTranscriptText.forEach { item ->
         when (item) {
-            is ClaudeCodeManager.ChatItem.UserText -> append("## ${labels.user}\n\n${item.text}\n\n")
+            is ChatItem.UserText -> append("## ${labels.user}\n\n${item.text}\n\n")
             // 说话人是产品名，不翻
-            is ClaudeCodeManager.ChatItem.AssistantText -> append("## Claude\n\n${item.text}\n\n")
-            is ClaudeCodeManager.ChatItem.Thinking -> append("### ${labels.thinking}\n\n${item.text}\n\n")
-            is ClaudeCodeManager.ChatItem.Note -> append("> ${item.text}\n\n")
+            is ChatItem.AssistantText -> append("## Claude\n\n${item.text}\n\n")
+            is ChatItem.Thinking -> append("### ${labels.thinking}\n\n${item.text}\n\n")
+            is ChatItem.Note -> append("> ${item.text}\n\n")
             // 进程输出导成代码块：贴到别处去查的时候，等宽和原样换行都要保住
-            is ClaudeCodeManager.ChatItem.ProcessOutput ->
+            is ChatItem.ProcessOutput ->
                 append("```\n${item.lines.joinToString("\n")}\n```\n\n")
-            is ClaudeCodeManager.ChatItem.ToolCall -> {
+            is ChatItem.ToolCall -> {
                 val status = when (item.status) {
-                    ClaudeCodeManager.ChatItem.ToolCall.Status.Running -> labels.toolRunning
-                    ClaudeCodeManager.ChatItem.ToolCall.Status.Done -> labels.toolDone
-                    ClaudeCodeManager.ChatItem.ToolCall.Status.Error -> labels.toolError
+                    ChatItem.ToolCall.Status.Running -> labels.toolRunning
+                    ChatItem.ToolCall.Status.Done -> labels.toolDone
+                    ChatItem.ToolCall.Status.Error -> labels.toolError
                 }
                 append("- `${item.name}` ${toolSummary(item.name, item.input)} — $status\n\n")
             }
@@ -859,7 +861,7 @@ private fun SessionContent(
             session.stopping ||
             session.applyingSettings ||
             session.applyingEffort ||
-            session.status == ClaudeCodeManager.SessionStatus.Starting ||
+            session.status == SessionStatus.Starting ||
             session.retryNotice != null ||
             session.runningTasks.isNotEmpty()
     )
@@ -959,7 +961,7 @@ private fun SessionContent(
             enter = fadeIn(InkMotion.effect()),
             exit = fadeOut(tween(600, easing = InkMotion.Ease)),
         ) {
-            BlankPage(starting = session.status == ClaudeCodeManager.SessionStatus.Starting)
+            BlankPage(starting = session.status == SessionStatus.Starting)
         }
         LazyColumn(
             state = listState,
@@ -1142,7 +1144,7 @@ private fun SessionContent(
                         },
                     )
                 }
-                if (session.status == ClaudeCodeManager.SessionStatus.Running || session.stopping) {
+                if (session.status == SessionStatus.Running || session.stopping) {
                     Spacer(Modifier.width(6.dp))
                     PaperDisc {
                         InkIconButton(
@@ -1245,24 +1247,24 @@ private fun SessionContent(
 /** 一条会话记录按类型分派到各自的渲染器。折叠块展开后走的也是这里，两边一模一样 */
 @Composable
 private fun TranscriptItem(
-    item: ClaudeCodeManager.ChatItem,
+    item: ChatItem,
     isFirst: Boolean,
     isLast: Boolean,
     vm: ClaudeCodeVM,
 ) {
     when (item) {
-        is ClaudeCodeManager.ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued)
-        is ClaudeCodeManager.ChatItem.AssistantText -> AssistantEntry(
+        is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued)
+        is ChatItem.AssistantText -> AssistantEntry(
             text = item.text,
             isFirst = isFirst,
             isLast = isLast,
             durationMs = item.durationMs,
             outputTokens = item.outputTokens,
         )
-        is ClaudeCodeManager.ChatItem.Thinking -> ThinkingEntry(item.text, item.id, isFirst, isLast)
-        is ClaudeCodeManager.ChatItem.Note -> NoteEntry(item.text, item.isError, isFirst, isLast)
-        is ClaudeCodeManager.ChatItem.ProcessOutput -> ProcessOutputEntry(item, isFirst, isLast)
-        is ClaudeCodeManager.ChatItem.ToolCall -> ToolEntry(
+        is ChatItem.Thinking -> ThinkingEntry(item.text, item.id, isFirst, isLast)
+        is ChatItem.Note -> NoteEntry(item.text, item.isError, isFirst, isLast)
+        is ChatItem.ProcessOutput -> ProcessOutputEntry(item, isFirst, isLast)
+        is ChatItem.ToolCall -> ToolEntry(
             item = item,
             isFirst = isFirst,
             isLast = isLast,
@@ -1288,13 +1290,13 @@ private fun LiveTurnEntry(
     isFirst: Boolean,
     isLast: Boolean,
 ) {
-    val starting = session.status == ClaudeCodeManager.SessionStatus.Starting
+    val starting = session.status == SessionStatus.Starting
     val tasks = session.runningTasks
     val retry = session.retryNotice
     val runningTool = session.items
         .asReversed()
-        .filterIsInstance<ClaudeCodeManager.ChatItem.ToolCall>()
-        .firstOrNull { it.status == ClaudeCodeManager.ChatItem.ToolCall.Status.Running }
+        .filterIsInstance<ChatItem.ToolCall>()
+        .firstOrNull { it.status == ChatItem.ToolCall.Status.Running }
     // 工具名是机器产物，只有外面那句「正在执行 …」走资源
     val runningToolLabel = runningTool?.name?.let { name ->
         stringResource(R.string.session_live_running_tool, name)

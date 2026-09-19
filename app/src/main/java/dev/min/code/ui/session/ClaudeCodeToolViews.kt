@@ -50,6 +50,7 @@ import me.rerere.hugeicons.stroke.GlobalSearch
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.Search01
+import dev.min.code.core.session.ChatItem
 
 /**
  * 工具调用的类型化渲染。
@@ -259,14 +260,14 @@ internal fun toolSummary(name: String, input: JsonObject): String {
 private const val SEP = " · "
 
 /** 折叠态右侧那个小角标：diff 给 `+12 −3`，其它给结果行数 */
-internal fun toolBadge(item: ClaudeCodeManager.ChatItem.ToolCall): String? = when {
+internal fun toolBadge(item: ChatItem.ToolCall): String? = when {
     // 子任务优先报步数：Task 的"结果行数"是那份最终报告的长度，
     // 而人想知道的是"它跑了多少步"——那才是决定要不要点开的信息
     item.subItems.isNotEmpty() -> "${item.subItems.size} 步"
     else -> toolResultBadge(item)
 }
 
-private fun toolResultBadge(item: ClaudeCodeManager.ChatItem.ToolCall): String? = when (item.name) {
+private fun toolResultBadge(item: ChatItem.ToolCall): String? = when (item.name) {
     "Edit", "Write", "MultiEdit" -> {
         // 走 bounded 版本：这是折叠态就要算的东西，列表里每一行、每次重组都要过一遍，
         // 一个 200KB 的 Write 会在滚动时反复拼出同样大小的字符串
@@ -358,7 +359,7 @@ internal fun toolIcon(name: String): ImageVector = when (name) {
  */
 @Composable
 internal fun ToolCallDetail(
-    item: ClaudeCodeManager.ChatItem.ToolCall,
+    item: ChatItem.ToolCall,
     onRevert: (() -> Unit)? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -384,7 +385,7 @@ internal fun ToolCallDetail(
                 if (item.isError) ToolResultText(item)
                 // 只在真的改过之后给撤销：Running 状态下文件还没变，按了只会得到一句
                 // "已还原"，而实际上什么都没发生
-                if (onRevert != null && item.status == ClaudeCodeManager.ChatItem.ToolCall.Status.Done) {
+                if (onRevert != null && item.status == ChatItem.ToolCall.Status.Done) {
                     InkTextButton(onClick = onRevert, icon = HugeIcons.ArrowTurnBackward) {
                         Text("撤销此修改", style = MaterialTheme.typography.labelSmall)
                     }
@@ -430,7 +431,7 @@ internal fun ToolCallDetail(
  * 而不是误以为主 agent 自己跑了这些工具。内容渲染器完全复用主流那套。
  */
 @Composable
-internal fun SubagentTranscript(items: List<ClaudeCodeManager.ChatItem>) {
+internal fun SubagentTranscript(items: List<ChatItem>) {
     val line = MaterialTheme.colorScheme.outlineVariant
     Column(
         modifier = Modifier
@@ -456,13 +457,13 @@ internal fun SubagentTranscript(items: List<ClaudeCodeManager.ChatItem>) {
 }
 
 @Composable
-private fun SubagentItem(item: ClaudeCodeManager.ChatItem) {
+private fun SubagentItem(item: ChatItem) {
     when (item) {
         // 子 agent 的正文就是它的阶段性结论，值得直接读，不折叠
-        is ClaudeCodeManager.ChatItem.AssistantText ->
+        is ChatItem.AssistantText ->
             MarkdownBlock(content = item.text, modifier = Modifier.fillMaxWidth())
 
-        is ClaudeCodeManager.ChatItem.Thinking -> {
+        is ChatItem.Thinking -> {
             var expanded by remember(item.id) { mutableStateOf(false) }
             Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
                 Text(
@@ -480,7 +481,7 @@ private fun SubagentItem(item: ClaudeCodeManager.ChatItem) {
             }
         }
 
-        is ClaudeCodeManager.ChatItem.ToolCall -> {
+        is ChatItem.ToolCall -> {
             var expanded by remember(item.id) { mutableStateOf(false) }
             Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
                 Row(
@@ -512,17 +513,17 @@ private fun SubagentItem(item: ClaudeCodeManager.ChatItem) {
         }
 
         // Note 不会出现在子 agent 线程里（系统提示走主线程），兜个底
-        is ClaudeCodeManager.ChatItem.Note -> Text(
+        is ChatItem.Note -> Text(
             text = item.text,
             style = MaterialTheme.typography.labelSmall,
             color = if (item.isError) MaterialTheme.colorScheme.error
             else MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        is ClaudeCodeManager.ChatItem.UserText -> Unit
+        is ChatItem.UserText -> Unit
 
         // stderr 是整个进程的，不分主线程还是子 agent，永远挂在主会话流上
-        is ClaudeCodeManager.ChatItem.ProcessOutput -> Unit
+        is ChatItem.ProcessOutput -> Unit
     }
 }
 
@@ -599,7 +600,7 @@ internal fun ToolInputPreview(
 }
 
 @Composable
-private fun ToolResultText(item: ClaudeCodeManager.ChatItem.ToolCall) {
+private fun ToolResultText(item: ChatItem.ToolCall) {
     val result = item.result?.takeIf { it.isNotBlank() } ?: return
     val lines = result.lines()
     val shown = lines.take(MAX_RESULT_LINES).joinToString("\n")

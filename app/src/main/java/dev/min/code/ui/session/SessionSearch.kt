@@ -1,6 +1,7 @@
 package dev.min.code.ui.session
 
 import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.session.ChatItem
 
 /**
  * 会话检索的纯函数。列表过滤和正文跳转都从这里出，方便单测，也避免把匹配规则
@@ -40,14 +41,14 @@ internal data class TranscriptHit(
 )
 
 /** 从一条聊天条目里抽出可被搜索的纯文本；没有正文的（空工具卡等）返回 null。 */
-internal fun ClaudeCodeManager.ChatItem.searchableText(): String? = when (this) {
-    is ClaudeCodeManager.ChatItem.UserText -> text.takeIf { it.isNotBlank() }
-    is ClaudeCodeManager.ChatItem.AssistantText -> text.takeIf { it.isNotBlank() }
-    is ClaudeCodeManager.ChatItem.Thinking -> text.takeIf { it.isNotBlank() }
-    is ClaudeCodeManager.ChatItem.Note -> text.takeIf { it.isNotBlank() }
-    is ClaudeCodeManager.ChatItem.ProcessOutput ->
+internal fun ChatItem.searchableText(): String? = when (this) {
+    is ChatItem.UserText -> text.takeIf { it.isNotBlank() }
+    is ChatItem.AssistantText -> text.takeIf { it.isNotBlank() }
+    is ChatItem.Thinking -> text.takeIf { it.isNotBlank() }
+    is ChatItem.Note -> text.takeIf { it.isNotBlank() }
+    is ChatItem.ProcessOutput ->
         lines.joinToString("\n").takeIf { it.isNotBlank() }
-    is ClaudeCodeManager.ChatItem.ToolCall -> buildString {
+    is ChatItem.ToolCall -> buildString {
         append(name)
         val summary = toolSummary(name, input)
         if (summary.isNotBlank()) {

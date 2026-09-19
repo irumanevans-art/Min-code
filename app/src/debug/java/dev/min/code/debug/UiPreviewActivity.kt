@@ -106,6 +106,8 @@ import me.rerere.hugeicons.stroke.Play
 import me.rerere.hugeicons.stroke.Refresh01
 import me.rerere.hugeicons.stroke.Settings02
 import me.rerere.hugeicons.stroke.Stop
+import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.SessionStatus
 
 /** Debug source set only. Fixture callbacks never resolve a ViewModel or start a CLI process. */
 class UiPreviewActivity : ComponentActivity() {
@@ -335,10 +337,10 @@ private fun ConversationPreview(
         }
     }
     val tool = remember {
-        ClaudeCodeManager.ChatItem.ToolCall(
+        ChatItem.ToolCall(
             id = "preview-read", toolUseId = "preview-read", name = "Bash",
             input = JsonObject(mapOf("command" to JsonPrimitive("git diff --stat"))),
-            status = if (variant == "streaming") ClaudeCodeManager.ChatItem.ToolCall.Status.Running else ClaudeCodeManager.ChatItem.ToolCall.Status.Done,
+            status = if (variant == "streaming") ChatItem.ToolCall.Status.Running else ChatItem.ToolCall.Status.Done,
             result = "3 files changed, 42 insertions(+), 18 deletions(-)",
         )
     }
@@ -472,7 +474,7 @@ private fun ConversationPreview(
  * 这种"控件凭空消失"的回归在真机上跑到才发现。
  */
 private fun fixtureSession() = ClaudeCodeManager.SessionState(
-    status = ClaudeCodeManager.SessionStatus.Running,
+    status = SessionStatus.Running,
     sessionId = "ui-preview",
     model = "claude-sonnet-5[1m]",
     options = ClaudeCodeManager.SessionOptions(model = "claude-sonnet-5[1m]", effort = "high"),

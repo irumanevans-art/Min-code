@@ -1,6 +1,6 @@
 package dev.min.code.core.claudecode
 
-import dev.min.code.core.claudecode.ClaudeCodeManager.ChatItem
+import dev.min.code.core.session.ChatItem
 import dev.min.code.core.claudecode.ClaudeCodeManager.Companion.STDERR_LINE_CHARS
 import dev.min.code.core.claudecode.ClaudeCodeManager.Companion.STDERR_MAX_LINES
 import dev.min.code.core.claudecode.ClaudeCodeManager.Companion.appendStderrLine

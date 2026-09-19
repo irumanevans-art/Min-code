@@ -4,6 +4,7 @@ import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import dev.min.code.core.session.ChatItem
 
 /**
  * 子 agent 的帧归位。
@@ -105,12 +106,12 @@ class ClaudeCodeSubagentTest {
 
     @Test
     fun `文本和思考按顺序追加`() {
-        var items = emptyList<ClaudeCodeManager.ChatItem>()
+        var items = emptyList<ChatItem>()
         items = mergeSubagentItem(items, ClaudeCodeEvent.Thinking("想想"), "a", 100)
         items = mergeSubagentItem(items, ClaudeCodeEvent.AssistantText("结论"), "b", 100)
         assertEquals(2, items.size)
-        assertTrue(items[0] is ClaudeCodeManager.ChatItem.Thinking)
-        assertTrue(items[1] is ClaudeCodeManager.ChatItem.AssistantText)
+        assertTrue(items[0] is ChatItem.Thinking)
+        assertTrue(items[1] is ChatItem.AssistantText)
     }
 
     @Test
@@ -134,8 +135,8 @@ class ClaudeCodeSubagentTest {
             "b",
             100,
         )
-        val call = items.single() as ClaudeCodeManager.ChatItem.ToolCall
-        assertEquals(ClaudeCodeManager.ChatItem.ToolCall.Status.Done, call.status)
+        val call = items.single() as ChatItem.ToolCall
+        assertEquals(ChatItem.ToolCall.Status.Done, call.status)
         assertEquals("done", call.result)
     }
 
@@ -153,8 +154,8 @@ class ClaudeCodeSubagentTest {
             "b",
             100,
         )
-        val call = items.single() as ClaudeCodeManager.ChatItem.ToolCall
-        assertEquals(ClaudeCodeManager.ChatItem.ToolCall.Status.Error, call.status)
+        val call = items.single() as ChatItem.ToolCall
+        assertEquals(ChatItem.ToolCall.Status.Error, call.status)
         assertTrue(call.isError)
     }
 
@@ -184,6 +185,6 @@ class ClaudeCodeSubagentTest {
             "b",
             5,
         )
-        assertEquals("01234", (items.single() as ClaudeCodeManager.ChatItem.ToolCall).result)
+        assertEquals("01234", (items.single() as ChatItem.ToolCall).result)
     }
 }

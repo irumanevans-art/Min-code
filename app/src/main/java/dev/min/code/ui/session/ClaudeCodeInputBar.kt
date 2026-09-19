@@ -96,6 +96,7 @@ import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Image02
 import me.rerere.hugeicons.stroke.MoreHorizontal
 import me.rerere.hugeicons.stroke.Stop
+import dev.min.code.core.session.SessionStatus
 
 /** 上下文用到这个比例就变告警色 —— CLI 到这一带会自动压缩，值得提前知道 */
 private const val CONTEXT_WARN_RATIO = 0.85f
@@ -288,7 +289,7 @@ internal fun ClaudeCodeInputBar(
         }
     }
 
-    val running = session.status == ClaudeCodeManager.SessionStatus.Running
+    val running = session.status == SessionStatus.Running
     // 输入以 "/" 开头时把斜杠命令顶上来（就地补全，比翻设置面板快）
     val slashQuery = input.takeIf { it.startsWith("/") }?.drop(1)?.substringBefore(' ')
     val matchedCommands = remember(slashQuery, session.slashCommands) {

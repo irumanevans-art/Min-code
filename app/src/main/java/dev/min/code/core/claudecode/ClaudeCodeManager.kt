@@ -30,6 +30,8 @@ import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.LocalServiceIntent
 import dev.min.code.core.service.LocalServiceRegistry
+import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.isInsecureBaseUrl
@@ -91,8 +93,6 @@ class ClaudeCodeManager(
     private val sessionStore: ClaudeCodeSessionStore = ClaudeCodeSessionStore(),
     private val drafts: ComposerDraftStore = ComposerDraftStore(context),
 ) {
-    enum class SessionStatus { Idle, Starting, Running, Closed, Failed }
-
     /** 启动选项。model/effort 为 null 时用 CLI 自己的默认值。 */
     data class SessionOptions(
         val skipPermissions: Boolean = false,
@@ -135,70 +135,6 @@ class ClaudeCodeManager(
          */
         val cwd: String = DEFAULT_CWD,
     )
-
-    sealed interface ChatItem {
-        val id: String
-
-        /**
-         * @param queued 生成中追加、还在排队等下一轮的消息。它还**没有**写进 CLI，
-         *   所以按 Esc 可以原样撤回输入框。
-         */
-        data class UserText(
-            override val id: String,
-            val text: String,
-            val queued: Boolean = false,
-        ) : ChatItem
-        data class AssistantText(
-            override val id: String,
-            val text: String,
-            /** 该条生成消息所属轮次的完成耗时与输出量。只在 result 到达后填充。 */
-            val durationMs: Long? = null,
-            val outputTokens: Int? = null,
-        ) : ChatItem
-        data class Thinking(override val id: String, val text: String) : ChatItem
-        data class Note(override val id: String, val text: String, val isError: Boolean = false) : ChatItem
-
-        /**
-         * CLI 进程写到 stderr 的原样输出，连续的行并成一条。
-         *
-         * 存在的理由是「官方终端能看到的，这里也要能看到」：`claude` 跑在真终端里时
-         * stderr 就混在滚屏里，而这边是无头管道，stderr 从来没有出口。以前只有
-         * [looksLikeError] 认得的行会被提升成红字，其余**直接丢掉** —— Node 和 proot
-         * 那些 deprecation 警告确实是噪声，但真东西偶尔就混在里面，丢掉之后连
-         * 「它到底说了什么」都无从查起。
-         *
-         * 现在全部留下，但默认折叠、不算错误：可见 ≠ 报警。红字的提升规则没变。
-         *
-         * [dropped] 是因为超出上限而被丢掉的最旧行数（刷屏时不能把会话撑爆）。
-         */
-        data class ProcessOutput(
-            override val id: String,
-            val lines: List<String>,
-            val dropped: Int = 0,
-        ) : ChatItem
-        data class ToolCall(
-            override val id: String,
-            val toolUseId: String,
-            val name: String,
-            val input: JsonObject,
-            val status: Status, // Running -> Done/Error；权限等待中也是 Running，由 pendingPermission 表达
-            val result: String? = null,
-            val isError: Boolean = false,
-            /**
-             * Bash 改文件后的 unified diff（来自 `tool_use_result.bashEditDiff`，CLI 2.1.269+）。
-             * 和 [result]（stdout）分开存，展开态可以画 DiffView 而不是塞进纯文本。
-             */
-            val editDiff: String? = null,
-            /**
-             * 这次调用如果是 Task/Agent，子 agent 干的活挂在这里（按 `parent_tool_use_id`
-             * 归位，见 [ClaudeCodeEvent.Subagent]）。展开工具卡就能看子任务的完整过程 ——
-             * 官方终端只给一个折叠的计数行和最终报告，看不到里面。
-             */
-            val subItems: List<ChatItem> = emptyList(),
-        ) : ChatItem {
-            enum class Status { Running, Done, Error }
-        }
-    }
 
     data class SessionState(
         val status: SessionStatus = SessionStatus.Idle,
@@ -3194,7 +3130,7 @@ internal fun formatPermissionDenialsNote(
 /**
  * 把子 agent 的一个事件并进它所属 Task 工具卡的子条目表。
  *
- * 子条目用的是**和主会话流同一套** [ClaudeCodeManager.ChatItem]，所以展开之后复用的也是
+ * 子条目用的是**和主会话流同一套** [ChatItem]，所以展开之后复用的也是
  * 同一批渲染器 —— 子任务里看到的 diff、命令高亮、待办列表和外面一模一样，不用为
  * "小一号的会话流"再写一套。
  *
@@ -3202,32 +3138,32 @@ internal fun formatPermissionDenialsNote(
  * 匹配不到（子 agent 在我们接上之前就跑了一半）就原样返回，绝不凭空造一条无头的结果。
  */
 internal fun mergeSubagentItem(
-    items: List<ClaudeCodeManager.ChatItem>,
+    items: List<ChatItem>,
     event: ClaudeCodeEvent,
     id: String,
     maxResultChars: Int,
-): List<ClaudeCodeManager.ChatItem> = when (event) {
+): List<ChatItem> = when (event) {
     is ClaudeCodeEvent.AssistantText ->
         if (event.text.isBlank()) items
-        else items + ClaudeCodeManager.ChatItem.AssistantText(id, event.text)
+        else items + ChatItem.AssistantText(id, event.text)
 
     is ClaudeCodeEvent.Thinking ->
         if (event.text.isBlank()) items
-        else items + ClaudeCodeManager.ChatItem.Thinking(id, event.text)
+        else items + ChatItem.Thinking(id, event.text)
 
-    is ClaudeCodeEvent.ToolUse -> items + ClaudeCodeManager.ChatItem.ToolCall(
+    is ClaudeCodeEvent.ToolUse -> items + ChatItem.ToolCall(
         id = id,
         toolUseId = event.id,
         name = event.name,
         input = event.input,
-        status = ClaudeCodeManager.ChatItem.ToolCall.Status.Running,
+        status = ChatItem.ToolCall.Status.Running,
     )
 
     is ClaudeCodeEvent.ToolResult -> items.map { item ->
-        if (item is ClaudeCodeManager.ChatItem.ToolCall && item.toolUseId == event.toolUseId) {
+        if (item is ChatItem.ToolCall && item.toolUseId == event.toolUseId) {
             item.copy(
-                status = if (event.isError) ClaudeCodeManager.ChatItem.ToolCall.Status.Error
-                else ClaudeCodeManager.ChatItem.ToolCall.Status.Done,
+                status = if (event.isError) ChatItem.ToolCall.Status.Error
+                else ChatItem.ToolCall.Status.Done,
                 result = event.content.take(maxResultChars),
                 isError = event.isError,
                 editDiff = event.editDiff?.take(MAX_EDIT_DIFF_CHARS) ?: item.editDiff,
@@ -3240,13 +3176,13 @@ internal fun mergeSubagentItem(
 }
 
 /** 把一轮完成信息挂到最后一条 assistant 消息，避免回执漂浮在输入栏。 */
-private fun List<ClaudeCodeManager.ChatItem>.updateLastAssistantMeta(
+private fun List<ChatItem>.updateLastAssistantMeta(
     durationMs: Long?,
     outputTokens: Int,
-): List<ClaudeCodeManager.ChatItem> {
-    val index = indexOfLast { it is ClaudeCodeManager.ChatItem.AssistantText }
+): List<ChatItem> {
+    val index = indexOfLast { it is ChatItem.AssistantText }
     if (index < 0) return this
-    val item = this[index] as ClaudeCodeManager.ChatItem.AssistantText
+    val item = this[index] as ChatItem.AssistantText
     if (item.durationMs != null || (item.outputTokens ?: 0) > 0) return this
     return toMutableList().also {
         it[index] = item.copy(

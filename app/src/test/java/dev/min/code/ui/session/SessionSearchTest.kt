@@ -8,6 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import dev.min.code.core.session.ChatItem
 
 class SessionSearchTest {
 
@@ -46,17 +47,17 @@ class SessionSearchTest {
     @Test
     fun `transcript hits skip empty query and report block index`() {
         val items = listOf(
-            ClaudeCodeManager.ChatItem.UserText("u1", "请看 README"),
-            ClaudeCodeManager.ChatItem.Thinking("t1", "想想文档"),
-            ClaudeCodeManager.ChatItem.ToolCall(
+            ChatItem.UserText("u1", "请看 README"),
+            ChatItem.Thinking("t1", "想想文档"),
+            ChatItem.ToolCall(
                 id = "c1",
                 toolUseId = "toolu_1",
                 name = "Read",
                 input = buildJsonObject { put("file_path", JsonPrimitive("/workspace/README.md")) },
-                status = ClaudeCodeManager.ChatItem.ToolCall.Status.Done,
+                status = ChatItem.ToolCall.Status.Done,
                 result = "Min 是口袋里的 Claude Code",
             ),
-            ClaudeCodeManager.ChatItem.AssistantText("a1", "README 里写了安装步骤"),
+            ChatItem.AssistantText("a1", "README 里写了安装步骤"),
         )
         val blocks = groupTranscript(items)
         assertTrue(findTranscriptHits(blocks, "").isEmpty())
@@ -83,23 +84,23 @@ class SessionSearchTest {
     @Test
     fun `note and process output are searchable`() {
         assertTrue(
-            ClaudeCodeManager.ChatItem.Note("n1", "本轮有 2 次工具调用被权限规则拦截")
+            ChatItem.Note("n1", "本轮有 2 次工具调用被权限规则拦截")
                 .searchableText()!!
                 .contains("权限规则"),
         )
         assertEquals(
             "line-a\nline-b",
-            ClaudeCodeManager.ChatItem.ProcessOutput("p1", listOf("line-a", "line-b"))
+            ChatItem.ProcessOutput("p1", listOf("line-a", "line-b"))
                 .searchableText(),
         )
         assertEquals(
             null,
-            ClaudeCodeManager.ChatItem.ToolCall(
+            ChatItem.ToolCall(
                 id = "c",
                 toolUseId = "t",
                 name = "",
                 input = JsonObject(emptyMap()),
-                status = ClaudeCodeManager.ChatItem.ToolCall.Status.Running,
+                status = ChatItem.ToolCall.Status.Running,
             ).searchableText(),
         )
     }

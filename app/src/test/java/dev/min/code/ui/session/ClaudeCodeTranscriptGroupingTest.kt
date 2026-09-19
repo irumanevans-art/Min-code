@@ -1,10 +1,10 @@
 package dev.min.code.ui.session
 
-import dev.min.code.core.claudecode.ClaudeCodeManager.ChatItem
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import dev.min.code.core.session.ChatItem
 
 /**
  * 会话流分组。折叠的是"跑完就不用再看"的工作过程，**绝不能把用户消息、

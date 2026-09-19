@@ -24,6 +24,7 @@ import dev.min.code.util.sendNotification
 import org.koin.java.KoinJavaComponent.inject
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import dev.min.code.core.session.SessionStatus
 
 /**
  * Claude Code 会话的「后台管家」：进程保活 + 后台通知。
@@ -62,7 +63,7 @@ class ClaudeCodeSessionSupervisor(
     private data class Seen(
         val busy: Boolean,
         val pendingTool: String?,
-        val status: ClaudeCodeManager.SessionStatus,
+        val status: SessionStatus,
     )
 
     private val seen = ConcurrentHashMap<String, Seen>()
@@ -142,8 +143,8 @@ class ClaudeCodeSessionSupervisor(
 
         // --- 会话挂了 -------------------------------------------------------
         val died = previous.status != session.status &&
-            (session.status == ClaudeCodeManager.SessionStatus.Failed ||
-                session.status == ClaudeCodeManager.SessionStatus.Closed)
+            (session.status == SessionStatus.Failed ||
+                session.status == SessionStatus.Closed)
         if (died) {
             context.cancelNotification(permissionNotificationId(session.key))
             context.sendNotification(

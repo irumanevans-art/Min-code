@@ -49,6 +49,7 @@ import dev.min.code.ui.theme.sea
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.ArrowUp01
+import dev.min.code.core.session.ChatItem
 
 /**
  * 会话流的版式骨架：一条贯穿始终的左轨道，每条记录挂一个标记符。
@@ -110,12 +111,12 @@ internal sealed interface TranscriptBlock {
     val key: String
 
     /** 单独成条：用户消息、助手正文、以及出错的系统提示 */
-    data class Single(val item: ClaudeCodeManager.ChatItem) : TranscriptBlock {
+    data class Single(val item: ChatItem) : TranscriptBlock {
         override val key: String get() = item.id
     }
 
     /** 连续的工作过程（思考 / 工具调用 / 普通系统提示），至少两条才成块 */
-    data class Work(val items: List<ClaudeCodeManager.ChatItem>) : TranscriptBlock {
+    data class Work(val items: List<ChatItem>) : TranscriptBlock {
         override val key: String get() = items.first().id
     }
 }
@@ -126,13 +127,13 @@ internal sealed interface TranscriptBlock {
  * **出错的系统提示不算**：折叠等于把报错藏起来，而报错恰恰是最需要一眼看到的东西。
  * 它单独成条，顺带把一段长工作切成两块 —— 出错前后本来就该分开读。
  */
-private fun ClaudeCodeManager.ChatItem.isWork(): Boolean = when (this) {
-    is ClaudeCodeManager.ChatItem.Thinking -> true
-    is ClaudeCodeManager.ChatItem.ToolCall -> true
-    is ClaudeCodeManager.ChatItem.Note -> !isError
+private fun ChatItem.isWork(): Boolean = when (this) {
+    is ChatItem.Thinking -> true
+    is ChatItem.ToolCall -> true
+    is ChatItem.Note -> !isError
     // 进程输出自己已经是一条折叠行了，再折进"N 步"里会被算成一步工作，
     // 而它不是模型干的活。单独成条，和出错的系统提示一样切开前后两段。
-    is ClaudeCodeManager.ChatItem.ProcessOutput -> false
+    is ChatItem.ProcessOutput -> false
     else -> false
 }
 
@@ -140,9 +141,9 @@ private fun ClaudeCodeManager.ChatItem.isWork(): Boolean = when (this) {
  * 把扁平的条目列表折成渲染单元。孤零零一条工作不成块 —— 为一条 Bash 套一层
  * "1 步，点开看"只是徒增一次点击。
  */
-internal fun groupTranscript(items: List<ClaudeCodeManager.ChatItem>): List<TranscriptBlock> {
+internal fun groupTranscript(items: List<ChatItem>): List<TranscriptBlock> {
     val blocks = ArrayList<TranscriptBlock>(items.size)
-    var run = ArrayList<ClaudeCodeManager.ChatItem>()
+    var run = ArrayList<ChatItem>()
 
     fun flush() {
         when {
@@ -171,16 +172,16 @@ internal fun groupTranscript(items: List<ClaudeCodeManager.ChatItem>): List<Tran
  * 按工具名计数而不是罗列 —— `Bash 5 · Read 3` 一眼看得出这段在干哪类活，
  * 罗列五条 Bash 只会把行挤满却什么都没说。思考并到一起计数，它没有名字可分。
  */
-internal fun workBlockSummary(items: List<ClaudeCodeManager.ChatItem>): String {
-    val thinking = items.count { it is ClaudeCodeManager.ChatItem.Thinking }
-    val tools = items.filterIsInstance<ClaudeCodeManager.ChatItem.ToolCall>()
+internal fun workBlockSummary(items: List<ChatItem>): String {
+    val thinking = items.count { it is ChatItem.Thinking }
+    val tools = items.filterIsInstance<ChatItem.ToolCall>()
     val parts = ArrayList<String>()
     if (thinking > 0) parts += "思考 $thinking"
     // 保持首次出现的顺序：读起来就是这段活的时间线，按字母排反而没有意义
     tools.groupBy { it.name }.forEach { (name, calls) ->
         parts += if (calls.size > 1) "$name ${calls.size}" else name
     }
-    val failed = tools.count { it.status == ClaudeCodeManager.ChatItem.ToolCall.Status.Error }
+    val failed = tools.count { it.status == ChatItem.ToolCall.Status.Error }
     if (failed > 0) parts += "$failed 个出错"
     return "${items.size} 步" + if (parts.isEmpty()) "" else "（${parts.joinToString(" · ")}）"
 }
@@ -429,14 +430,14 @@ internal fun ThinkingEntry(
  */
 @Composable
 internal fun CollapsedWorkEntry(
-    items: List<ClaudeCodeManager.ChatItem>,
+    items: List<ChatItem>,
     isFirst: Boolean,
     isLast: Boolean,
     onExpand: () -> Unit,
 ) {
     val failed = items.any {
-        it is ClaudeCodeManager.ChatItem.ToolCall &&
-            it.status == ClaudeCodeManager.ChatItem.ToolCall.Status.Error
+        it is ChatItem.ToolCall &&
+            it.status == ChatItem.ToolCall.Status.Error
     }
     TranscriptEntry(
         marker = if (failed) RailMarker.Cross else RailMarker.SquareOutline,
@@ -506,7 +507,7 @@ internal fun CollapseWorkFooter(isLast: Boolean, onCollapse: () -> Unit) {
  */
 @Composable
 internal fun ProcessOutputEntry(
-    item: ClaudeCodeManager.ChatItem.ProcessOutput,
+    item: ChatItem.ProcessOutput,
     isFirst: Boolean,
     isLast: Boolean,
 ) {
@@ -576,26 +577,26 @@ internal fun NoteEntry(text: String, isError: Boolean, isFirst: Boolean, isLast:
  */
 @Composable
 internal fun ToolEntry(
-    item: ClaudeCodeManager.ChatItem.ToolCall,
+    item: ChatItem.ToolCall,
     isFirst: Boolean,
     isLast: Boolean,
     onRevert: (() -> Unit)? = null,
 ) {
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
-    val running = item.status == ClaudeCodeManager.ChatItem.ToolCall.Status.Running
+    val running = item.status == ChatItem.ToolCall.Status.Running
     val azure = MaterialTheme.sea.seaDeep
     TranscriptEntry(
         marker = when (item.status) {
-            ClaudeCodeManager.ChatItem.ToolCall.Status.Running -> RailMarker.SquareFilled
-            ClaudeCodeManager.ChatItem.ToolCall.Status.Done -> RailMarker.SquareOutline
-            ClaudeCodeManager.ChatItem.ToolCall.Status.Error -> RailMarker.Cross
+            ChatItem.ToolCall.Status.Running -> RailMarker.SquareFilled
+            ChatItem.ToolCall.Status.Done -> RailMarker.SquareOutline
+            ChatItem.ToolCall.Status.Error -> RailMarker.Cross
         },
         isFirst = isFirst,
         isLast = isLast,
         active = running,
         tone = when (item.status) {
-            ClaudeCodeManager.ChatItem.ToolCall.Status.Error -> RailTone.Error
-            ClaudeCodeManager.ChatItem.ToolCall.Status.Running -> RailTone.Sea
+            ChatItem.ToolCall.Status.Error -> RailTone.Error
+            ChatItem.ToolCall.Status.Running -> RailTone.Sea
             else -> RailTone.Ink
         },
     ) {

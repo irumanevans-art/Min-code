@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import java.util.UUID
+import dev.min.code.core.session.SessionStatus
 
 /**
  * 多会话注册表：同时持有多个 [ClaudeCodeManager]，每个管着自己的一个 CLI 进程。
@@ -44,7 +45,7 @@ class ClaudeCodeSessionRegistry(
 ) {
     data class LiveSession(
         val key: String,
-        val status: ClaudeCodeManager.SessionStatus,
+        val status: SessionStatus,
         val model: String?,
         val busy: Boolean,
         val isActive: Boolean,
@@ -68,8 +69,8 @@ class ClaudeCodeSessionRegistry(
          * [pruneDead] 回收，或者它就是当前活跃项），UI 不能把它们当运行中的会话展示。
          */
         val isLive: Boolean
-            get() = status == ClaudeCodeManager.SessionStatus.Running ||
-                status == ClaudeCodeManager.SessionStatus.Starting
+            get() = status == SessionStatus.Running ||
+                status == SessionStatus.Starting
     }
 
     private val scope = CoroutineScope(
