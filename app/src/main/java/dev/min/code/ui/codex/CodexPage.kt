@@ -81,10 +81,18 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
                             Text(stringResource(R.string.codex_connection))
                         }
                     }
-                    if (session.status == SessionStatus.Running) {
-                        InkTextButton(onClick = vm::stop, tone = InkButtonTone.Vermilion) {
-                            Text(stringResource(R.string.codex_stop))
-                        }
+                    when {
+                        session.status == SessionStatus.Running ->
+                            InkTextButton(onClick = vm::stop, tone = InkButtonTone.Vermilion) {
+                                Text(stringResource(R.string.codex_stop))
+                            }
+
+                        // 停掉或失败之后历史还留在屏幕上，于是这一页不会退回启动面板 ——
+                        // 没有这个按钮就再也开不起来，只能退出页面重进
+                        inSession && session.status != SessionStatus.Starting ->
+                            InkTextButton(onClick = vm::start) {
+                                Text(stringResource(R.string.codex_restart))
+                            }
                     }
                 },
             )

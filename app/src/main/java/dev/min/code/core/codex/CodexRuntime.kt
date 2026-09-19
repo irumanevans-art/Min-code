@@ -5,7 +5,11 @@ import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.core.settings.CodexProfile
 import dev.min.code.core.settings.SettingsStore
+import android.util.Log
 import java.io.File
+import java.security.KeyStore
+import java.security.cert.X509Certificate
+import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,29 +79,39 @@ class CodexRuntime(
     suspend fun prepare() = withContext(Dispatchers.IO) {
         val profile = settingsStore.current().activeCodexProfile
         launchProfile = profile
+        ensureCaBundle(workspaceRepository.linuxDir())
         val config = File(workspaceRepository.linuxDir(), "root/.codex/config.toml")
         when (profile?.authMode) {
-            CodexAuthMode.RELAY -> {
+            // 两种带 key 的模式走同一条路：都写成一个**自定义 provider**，
+            // 区别只在 base_url。
+            //
+            // 官方 API 不能直接用内置的 `openai`：
+            // ① 写 `[model_providers.openai]` 会被判成覆盖内置项，整个配置被拒；
+            // ② 而内置 provider 压根不读 `OPENAI_API_KEY` 环境变量 —— 它只认
+            //    `~/.codex/auth.json`，所以光设环境变量的结果是请求根本不带
+            //    Authorization 头，OpenAI 回 "401 Missing bearer"。
+            // 官方给的办法是 `codex login --with-api-key` 把 key 写进 auth.json，
+            // 但那等于把密钥落到 guest 磁盘上。自定义 provider 的 `env_key` 才是
+            // 读环境变量的那条路，key 于是只活在进程环境里。
+            CodexAuthMode.RELAY, CodexAuthMode.OPENAI_API_KEY -> {
+                val base = when (profile.authMode) {
+                    CodexAuthMode.RELAY -> profile.baseUrl.trimEnd('/')
+                    else -> OPENAI_BASE_URL
+                }.replace("\\", "\\\\").replace("\"", "\\\"")
                 config.parentFile?.mkdirs()
-                val base = profile.baseUrl.trimEnd('/').replace("\\", "\\\\").replace("\"", "\\\"")
                 config.writeText(
-                    "model_provider = \"$RELAY_PROVIDER_ID\"\n\n" +
-                        "[model_providers.$RELAY_PROVIDER_ID]\n" +
-                        "name = \"Min relay\"\n" +
+                    "model_provider = \"$KEY_PROVIDER_ID\"\n\n" +
+                        "[model_providers.$KEY_PROVIDER_ID]\n" +
+                        "name = \"Min\"\n" +
                         "base_url = \"$base\"\n" +
                         "wire_api = \"responses\"\n" +
                         "env_key = \"OPENAI_API_KEY\"\n",
                 )
             }
 
-            // 官方 API 不需要任何配置：`openai` 是 Codex 的**内置 provider**，
-            // 写 `[model_providers.openai]` 会被它当成企图覆盖内置项，直接报
-            // "contains reserved built-in provider IDs: `openai`" 然后退回默认。
-            // 认证只靠环境变量里的 OPENAI_API_KEY，见 runtimeEnv。
-            //
-            // CLI 模式同样删掉：那份配置归官方登录自己管，留着上一次选的中转
-            // 会让「官方登录」偷偷走别人的地址。
-            CodexAuthMode.OPENAI_API_KEY, CodexAuthMode.CLI, null -> config.delete()
+            // 官方登录自己管那份配置。留着上一次选的中转会让「官方登录」
+            // 偷偷走别人的地址。
+            CodexAuthMode.CLI, null -> config.delete()
         }
     }
 
@@ -148,11 +162,47 @@ class CodexRuntime(
         ) { "Unable to launch Codex app-server" }
     }
 
+    /**
+     * 把 Android 的根证书导出成 rootfs 里的 CA bundle。
+     *
+     * 这个 Ubuntu rootfs 是最小集，`/etc/ssl/certs` 压根不存在。Claude Code 感觉不到，
+     * 因为 node 把根证书编进了自己的二进制；Codex 是 Rust 写的，走系统信任库，
+     * 于是每一个请求都死在 `invalid peer certificate: UnknownIssuer`，连 TLS 握手
+     * 都过不去 —— 界面上只看到一轮任务毫无动静地失败。
+     *
+     * 不走 `apt-get install ca-certificates`：那要联网、要先有可用的源，在 proot 里还慢，
+     * 而且装证书这件事本身不该依赖网络。Android 自己的信任库就在手边，导出来即可，
+     * 还能跟着系统更新走。
+     */
+    private fun ensureCaBundle(linuxDir: File) {
+        val target = File(linuxDir, CA_BUNDLE.removePrefix("/"))
+        if (target.isFile && target.length() > 0) return
+        runCatching {
+            val store = KeyStore.getInstance("AndroidCAStore").apply { load(null) }
+            // MIME 编码器按 64 列折行，正好是 PEM 的样子
+            val encoder = Base64.getMimeEncoder(64, byteArrayOf('\n'.code.toByte()))
+            val pem = buildString {
+                for (alias in store.aliases()) {
+                    val cert = store.getCertificate(alias) as? X509Certificate ?: continue
+                    append("-----BEGIN CERTIFICATE-----\n")
+                    append(encoder.encodeToString(cert.encoded))
+                    append("\n-----END CERTIFICATE-----\n")
+                }
+            }
+            if (pem.isBlank()) return
+            target.parentFile?.mkdirs()
+            target.writeText(pem)
+        }.onFailure { Log.w(TAG, "导出 CA bundle 失败，Codex 大概率连不上网", it) }
+    }
+
     private fun runtimeEnv(profile: CodexProfile? = null): Map<String, String> = buildMap {
         val base = profile?.baseUrl?.trimEnd('/')
         val key = profile?.apiKey.orEmpty()
         put("PATH", "/opt/codex/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
         put("HOME", "/root")
+        // 指到上面导出的那份；两个变量都给，OpenSSL 系和 rustls 系各认一个
+        put("SSL_CERT_FILE", CA_BUNDLE)
+        put("SSL_CERT_DIR", CA_BUNDLE.substringBeforeLast('/'))
         if (!base.isNullOrBlank() && profile.authMode != CodexAuthMode.CLI) {
             put("OPENAI_BASE_URL", base)
             put("CODEX_API_KEY", key)
@@ -161,12 +211,19 @@ class CodexRuntime(
     }
 
     companion object {
+        private const val TAG = "CodexRuntime"
+
         const val CODEX_BIN = "/opt/codex/bin/codex"
 
+        /** guest 里那份根证书，见 [ensureCaBundle] */
+        const val CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+
         /**
-         * 中转 provider 在 config.toml 里的 id。**不能叫 `openai`** —— 那是 Codex 的
-         * 内置 id，用了会被判成覆盖内置项。带前缀的自定义名才安全。
+         * 带 key 的那两种模式在 config.toml 里用的 provider id。**不能叫 `openai`** ——
+         * 那是 Codex 的内置 id，用了会被判成覆盖内置项。带前缀的自定义名才安全。
          */
-        const val RELAY_PROVIDER_ID = "min_relay"
+        const val KEY_PROVIDER_ID = "min_openai"
+
+        const val OPENAI_BASE_URL = "https://api.openai.com/v1"
     }
 }
