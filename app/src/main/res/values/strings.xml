@@ -492,4 +492,27 @@
   <string name="composer_send_queued">Queue for sending</string>
   <string name="composer_cost_both">Today %1$s · this session %2$s</string>
   <string name="composer_cost_daily">Today %1$s</string>
+
+  <!-- Transcript: folded work blocks, thinking, process output, receipts -->
+  <string name="transcript_work_steps">%1$d steps</string>
+  <string name="transcript_work_thinking">thinking %1$d</string>
+  <string name="transcript_work_failed">%1$d failed</string>
+  <string name="transcript_work_detail">%1$s (%2$s)</string>
+  <string name="transcript_work_expand">Show this stretch of work</string>
+  <string name="transcript_work_collapse">Collapse this stretch</string>
+  <string name="transcript_thinking_live">thinking</string>
+  <string name="transcript_thinking_done">thinking · %1$d chars</string>
+  <string name="transcript_thinking_expand">Show the thinking</string>
+  <string name="transcript_thinking_collapse">Hide the thinking</string>
+  <string name="transcript_output">process output · %1$d lines</string>
+  <string name="transcript_output_dropped"> (oldest %1$d dropped)</string>
+  <string name="transcript_output_expand">Show the process output</string>
+  <string name="transcript_output_collapse">Hide the process output</string>
+  <string name="transcript_receipt_duration">took %1$s</string>
+  <string name="transcript_subagent">subtask · %1$d steps</string>
+  <string name="transcript_subagent_thinking">thinking · %1$d chars</string>
+  <string name="transcript_more_lines">… %1$d more lines</string>
+  <string name="transcript_revert">Undo this change</string>
+  <string name="plan_title">Plan</string>
+  <string name="plan_empty">No plan yet. Switch the permission mode to Plan and Claude will lay one out before touching anything.</string>
 </resources>

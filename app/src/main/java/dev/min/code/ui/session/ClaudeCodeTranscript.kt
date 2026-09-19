@@ -167,23 +167,52 @@ internal fun groupTranscript(items: List<ChatItem>): List<TranscriptBlock> {
 }
 
 /**
- * 折叠态那一行写什么。
+ * 折叠态那一行数出了什么。
  *
  * 按工具名计数而不是罗列 —— `Bash 5 · Read 3` 一眼看得出这段在干哪类活，
  * 罗列五条 Bash 只会把行挤满却什么都没说。思考并到一起计数，它没有名字可分。
+ *
+ * 数数和写话分开：分支（有没有思考、有没有出错、同名工具要不要带次数）是会出错的
+ * 地方，值得留在纯 JVM 单测里；那句话本身该跟着界面语言走。
  */
-internal fun workBlockSummary(items: List<ChatItem>): String {
-    val thinking = items.count { it is ChatItem.Thinking }
+internal data class WorkBlockCounts(
+    val steps: Int,
+    val thinking: Int,
+    /** 工具名 → 次数，**保持首次出现的顺序**：读起来就是这段活的时间线 */
+    val tools: List<Pair<String, Int>>,
+    val failed: Int,
+)
+
+internal fun workBlockCounts(items: List<ChatItem>): WorkBlockCounts {
     val tools = items.filterIsInstance<ChatItem.ToolCall>()
+    return WorkBlockCounts(
+        steps = items.size,
+        thinking = items.count { it is ChatItem.Thinking },
+        tools = tools.groupBy { it.name }.map { (name, calls) -> name to calls.size },
+        failed = tools.count { it.status == ChatItem.ToolCall.Status.Error },
+    )
+}
+
+/** 折叠态那一行写什么。 */
+@Composable
+internal fun workBlockSummary(items: List<ChatItem>): String {
+    val counts = workBlockCounts(items)
     val parts = ArrayList<String>()
-    if (thinking > 0) parts += "思考 $thinking"
-    // 保持首次出现的顺序：读起来就是这段活的时间线，按字母排反而没有意义
-    tools.groupBy { it.name }.forEach { (name, calls) ->
-        parts += if (calls.size > 1) "$name ${calls.size}" else name
+    if (counts.thinking > 0) {
+        parts += stringResource(R.string.transcript_work_thinking, counts.thinking)
     }
-    val failed = tools.count { it.status == ChatItem.ToolCall.Status.Error }
-    if (failed > 0) parts += "$failed 个出错"
-    return "${items.size} 步" + if (parts.isEmpty()) "" else "（${parts.joinToString(" · ")}）"
+    counts.tools.forEach { (name, times) ->
+        parts += if (times > 1) "$name $times" else name
+    }
+    if (counts.failed > 0) {
+        parts += stringResource(R.string.transcript_work_failed, counts.failed)
+    }
+    val steps = stringResource(R.string.transcript_work_steps, counts.steps)
+    return if (parts.isEmpty()) {
+        steps
+    } else {
+        stringResource(R.string.transcript_work_detail, steps, parts.joinToString(" · "))
+    }
 }
 
 /**
@@ -339,7 +368,7 @@ internal fun AssistantEntry(
 @Composable
 private fun AssistantReceipt(durationMs: Long?, outputTokens: Int?) {
     val parts = listOfNotNull(
-        durationMs?.let { "用时 ${formatDuration(it)}" },
+        durationMs?.let { stringResource(R.string.transcript_receipt_duration, formatDuration(it)) },
         outputTokens?.takeIf { it > 0 }?.let { "↓${formatTokens(it)}" },
     )
     if (parts.isEmpty()) return
@@ -394,12 +423,13 @@ internal fun ThinkingEntry(
                 .clickable { expanded = !expanded },
         ) {
             Text(
-                text = if (streaming) "思考中" else "思考 · ${text.length} 字",
+                text = if (streaming) stringResource(R.string.transcript_thinking_live)
+                else stringResource(R.string.transcript_thinking_done, text.length),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.weight(1f))
-            Chevron(expanded = expanded, contentDescription = if (expanded) "收起思考过程" else "展开思考过程")
+            Chevron(expanded = expanded, contentDescription = stringResource(if (expanded) R.string.transcript_thinking_collapse else R.string.transcript_thinking_expand))
         }
         AnimatedVisibility(
             visible = expanded || streaming,
@@ -463,7 +493,7 @@ internal fun CollapsedWorkEntry(
             )
             Icon(
                 HugeIcons.ArrowDown01,
-                contentDescription = "展开这段工作过程",
+                contentDescription = stringResource(R.string.transcript_work_expand),
                 modifier = Modifier.size(14.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -490,7 +520,7 @@ internal fun CollapseWorkFooter(isLast: Boolean, onCollapse: () -> Unit) {
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "收起这段过程",
+                text = stringResource(R.string.transcript_work_collapse),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -522,15 +552,19 @@ internal fun ProcessOutputEntry(
                 .clickable { expanded = !expanded },
         ) {
             Text(
-                text = "进程输出 · ${item.lines.size} 行" +
-                    if (item.dropped > 0) "（已略过最早 ${item.dropped} 行）" else "",
+                text = stringResource(R.string.transcript_output, item.lines.size) +
+                    if (item.dropped > 0) {
+                        stringResource(R.string.transcript_output_dropped, item.dropped)
+                    } else {
+                        ""
+                    },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Chevron(expanded = expanded, contentDescription = if (expanded) "收起进程输出" else "展开进程输出")
+            Chevron(expanded = expanded, contentDescription = stringResource(if (expanded) R.string.transcript_output_collapse else R.string.transcript_output_expand))
         }
         AnimatedVisibility(visible = expanded, enter = InkMotion.expand, exit = InkMotion.collapse) {
             SelectionContainer {

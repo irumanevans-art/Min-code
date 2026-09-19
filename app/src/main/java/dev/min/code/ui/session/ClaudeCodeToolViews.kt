@@ -17,12 +17,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.asBooleanOrNull
 import dev.min.code.core.claudecode.asIntOrNull
@@ -392,7 +394,7 @@ internal fun ToolCallDetail(
                 // "已还原"，而实际上什么都没发生
                 if (onRevert != null && item.status == ChatItem.ToolCall.Status.Done) {
                     InkTextButton(onClick = onRevert, icon = HugeIcons.ArrowTurnBackward) {
-                        Text("撤销此修改", style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.transcript_revert), style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -453,7 +455,7 @@ internal fun SubagentTranscript(items: List<ChatItem>) {
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            text = "子任务过程 · ${items.size} 步",
+            text = stringResource(R.string.transcript_subagent, items.size),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -472,7 +474,7 @@ private fun SubagentItem(item: ChatItem) {
             var expanded by remember(item.id) { mutableStateOf(false) }
             Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
                 Text(
-                    text = "思考 · ${item.text.length} 字",
+                    text = stringResource(R.string.transcript_subagent_thinking, item.text.length),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -614,7 +616,7 @@ private fun ToolResultText(item: ChatItem.ToolCall) {
         MonoText(shown, isError = item.isError)
         if (hidden > 0) {
             Text(
-                "… 还有 $hidden 行",
+                stringResource(R.string.transcript_more_lines, hidden),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

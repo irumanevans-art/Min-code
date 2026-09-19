@@ -87,22 +87,33 @@ class ClaudeCodeTranscriptGroupingTest {
         assertEquals(a[0].key, b[0].key)
     }
 
-    // --- 折叠行的摘要 ---
+    // --- 折叠行数出了什么 ---
+    // 文案本身跟着界面语言走（workBlockSummary 是 @Composable），这里测的是计数
 
     @Test
     fun `摘要按工具名计数`() {
-        val items = listOf(thinking(), tool("Bash"), tool("Bash"), tool("Read"))
-        assertEquals("4 步（思考 1 · Bash 2 · Read）", workBlockSummary(items))
+        val counts = workBlockCounts(listOf(thinking(), tool("Bash"), tool("Bash"), tool("Read")))
+
+        assertEquals(4, counts.steps)
+        assertEquals(1, counts.thinking)
+        // 保持首次出现的顺序：这一行读起来就是那段活的时间线
+        assertEquals(listOf("Bash" to 2, "Read" to 1), counts.tools)
     }
 
     @Test
     fun `出错的步数单独点出来`() {
         val items = listOf(tool("Bash"), tool("Bash", ChatItem.ToolCall.Status.Error))
-        assertTrue(workBlockSummary(items).endsWith("1 个出错）"))
+
+        assertEquals(1, workBlockCounts(items).failed)
     }
 
     @Test
     fun `没有可计数的东西时只报步数`() {
-        assertEquals("2 步", workBlockSummary(listOf(note(), note())))
+        val counts = workBlockCounts(listOf(note(), note()))
+
+        assertEquals(2, counts.steps)
+        assertEquals(0, counts.thinking)
+        assertTrue(counts.tools.isEmpty())
+        assertEquals(0, counts.failed)
     }
 }

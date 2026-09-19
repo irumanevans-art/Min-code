@@ -492,4 +492,27 @@
   <string name="composer_send_queued">排队发送</string>
   <string name="composer_cost_both">今日 %1$s · 本次 %2$s</string>
   <string name="composer_cost_daily">今日 %1$s</string>
+
+  <!-- 会话流：折叠的工作块、思考、进程输出、回执 -->
+  <string name="transcript_work_steps">%1$d 步</string>
+  <string name="transcript_work_thinking">思考 %1$d</string>
+  <string name="transcript_work_failed">%1$d 个出错</string>
+  <string name="transcript_work_detail">%1$s（%2$s）</string>
+  <string name="transcript_work_expand">展开这段工作过程</string>
+  <string name="transcript_work_collapse">收起这段过程</string>
+  <string name="transcript_thinking_live">思考中</string>
+  <string name="transcript_thinking_done">思考 · %1$d 字</string>
+  <string name="transcript_thinking_expand">展开思考过程</string>
+  <string name="transcript_thinking_collapse">收起思考过程</string>
+  <string name="transcript_output">进程输出 · %1$d 行</string>
+  <string name="transcript_output_dropped">（已略过最早 %1$d 行）</string>
+  <string name="transcript_output_expand">展开进程输出</string>
+  <string name="transcript_output_collapse">收起进程输出</string>
+  <string name="transcript_receipt_duration">用时 %1$s</string>
+  <string name="transcript_subagent">子任务过程 · %1$d 步</string>
+  <string name="transcript_subagent_thinking">思考 · %1$d 字</string>
+  <string name="transcript_more_lines">… 还有 %1$d 行</string>
+  <string name="transcript_revert">撤销此修改</string>
+  <string name="plan_title">计划</string>
+  <string name="plan_empty">当前没有计划。把权限模式切到 Plan，Claude 会先给出计划再动手。</string>
 </resources>

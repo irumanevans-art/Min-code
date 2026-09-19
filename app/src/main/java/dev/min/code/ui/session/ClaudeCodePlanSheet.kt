@@ -12,6 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import dev.min.code.R
 import androidx.compose.ui.unit.dp
 import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.components.SectionTitle
@@ -44,10 +46,10 @@ fun ClaudeCodePlanSheet(
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 32.dp),
         ) {
-            SectionTitle("计划", modifier = Modifier.padding(vertical = 6.dp))
+            SectionTitle(stringResource(R.string.plan_title), modifier = Modifier.padding(vertical = 6.dp))
             if (plan.isNullOrBlank()) {
                 Text(
-                    "当前没有计划。把权限模式切到 Plan，Claude 会先给出计划再动手。",
+                    stringResource(R.string.plan_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
