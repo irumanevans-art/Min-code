@@ -22,6 +22,8 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import dev.min.code.R
 import androidx.compose.ui.unit.dp
 import dev.min.code.core.claudecode.ClaudeCodeEvent
 import dev.min.code.core.claudecode.ClaudeCodeQuestion
@@ -113,14 +115,14 @@ internal fun ClaudeCodeQuestionSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Seal()
-                Text("Claude 有几个问题", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.question_title), style = MaterialTheme.typography.titleMedium)
             }
 
             if (questions.isEmpty()) {
                 // 解析不出问题时不能把用户卡在一个空面板里 —— 允许直接放行，
                 // 让 CLI 拿空答案继续，至少不会把会话锁死
                 Notice(
-                    text = "读不出这次提问的内容（CLI 版本可能改了字段形状）。可以直接跳过。",
+                    text = stringResource(R.string.question_unreadable),
                     tone = NoticeTone.Error,
                 )
             }
@@ -169,12 +171,12 @@ internal fun ClaudeCodeQuestionSheet(
                     onClick = onDismiss,
                     tone = InkButtonTone.Paper,
                     modifier = Modifier.weight(1f),
-                ) { Text("跳过") }
+                ) { Text(stringResource(R.string.question_skip)) }
                 InkButton(
                     onClick = { onAnswer(questions.associate { it.question to answerOf(it) }) },
                     enabled = complete,
                     modifier = Modifier.weight(1f),
-                ) { Text("提交") }
+                ) { Text(stringResource(R.string.question_submit)) }
             }
         }
     }
@@ -201,7 +203,7 @@ private fun QuestionBlock(
         Text(question.question, style = MaterialTheme.typography.bodyMedium)
         if (question.multiSelect) {
             Text(
-                "可多选",
+                stringResource(R.string.question_multi),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -247,13 +249,13 @@ private fun QuestionBlock(
         OptionRow(
             multiSelect = question.multiSelect,
             checked = customChecked,
-            label = "其他",
+            label = stringResource(R.string.question_other),
             onClick = onToggleCustom,
         ) {
             InkTextField(
                 value = customText,
                 onValueChange = onCustomChange,
-                placeholder = "自己写一个答案",
+                placeholder = stringResource(R.string.question_other_hint),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 4.dp),

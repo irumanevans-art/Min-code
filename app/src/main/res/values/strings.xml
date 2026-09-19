@@ -515,4 +515,34 @@
   <string name="transcript_revert">Undo this change</string>
   <string name="plan_title">Plan</string>
   <string name="plan_empty">No plan yet. Switch the permission mode to Plan and Claude will lay one out before touching anything.</string>
+
+  <!-- Working directory picker -->
+  <string name="cwd_title">Choose a working directory</string>
+  <string name="cwd_hint">Walk into a folder, then pick the level you are on. Claude Code reads and writes files here.</string>
+  <string name="cwd_source_files">Files</string>
+  <string name="cwd_source_rootfs">Rootfs</string>
+  <string name="cwd_up">Up one level</string>
+  <string name="cwd_new_folder">New folder</string>
+  <string name="cwd_empty">No subfolders here</string>
+  <string name="cwd_use_current">Use this directory</string>
+  <string name="cwd_open_failed">Cannot open this directory</string>
+  <string name="cwd_create_failed">Could not create it</string>
+  <string name="cwd_new_folder_title">New folder</string>
+
+  <!-- AskUserQuestion sheet -->
+  <string name="question_title">Claude has a few questions</string>
+  <string name="question_unreadable">Cannot read this question (the CLI may have changed the field shape). Skipping is fine.</string>
+  <string name="question_skip">Skip</string>
+  <string name="question_submit">Submit</string>
+  <string name="question_multi">multiple</string>
+  <string name="question_other">Other</string>
+  <string name="question_other_hint">Write your own answer</string>
+
+  <!-- Terminal sheet -->
+  <string name="terminal_title">Terminal</string>
+  <string name="terminal_subtitle">The same Linux as the session</string>
+  <string name="terminal_new_tab">New terminal tab</string>
+  <string name="terminal_close_title">Close %1$s?</string>
+  <string name="terminal_close_body">Whatever is running in the tab will be killed.</string>
+  <string name="terminal_close">Close</string>
 </resources>

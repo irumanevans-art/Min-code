@@ -22,6 +22,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import dev.min.code.R
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -124,12 +126,12 @@ fun ClaudeCodeTerminalSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "终端",
+                    stringResource(R.string.terminal_title),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    "与会话同一个 Linux",
+                    stringResource(R.string.terminal_subtitle),
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = JetbrainsMono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -138,7 +140,7 @@ fun ClaudeCodeTerminalSheet(
                 // 新开一个标签是"人"的动作：金
                 InkIconButton(
                     icon = HugeIcons.PlusSign,
-                    contentDescription = "新建终端标签",
+                    contentDescription = stringResource(R.string.terminal_new_tab),
                     onClick = { root?.let(sessionManager::createTab) },
                     enabled = root != null && !terminalState.isCreating,
                     tint = MaterialTheme.sea.seaDeep,
@@ -180,19 +182,19 @@ private fun TerminalCloseTabDialog(
 ) {
     InkDialog(
         onDismissRequest = onDismiss,
-        title = "关闭标签 $label？",
+        title = stringResource(R.string.terminal_close_title, label),
         confirmButton = {
             // 关掉会杀进程：判定，朱砂
             InkTextButton(onClick = onConfirm, tone = InkButtonTone.Vermilion) {
-                Text("关闭")
+                Text(stringResource(R.string.terminal_close))
             }
         },
         dismissButton = {
-            InkTextButton(onClick = onDismiss) { Text("取消") }
+            InkTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         },
     ) {
         Text(
-            "标签里正在跑的命令会被终止。",
+            stringResource(R.string.terminal_close_body),
             style = MaterialTheme.typography.bodyMedium,
         )
     }

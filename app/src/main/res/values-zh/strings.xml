@@ -515,4 +515,34 @@
   <string name="transcript_revert">撤销此修改</string>
   <string name="plan_title">计划</string>
   <string name="plan_empty">当前没有计划。把权限模式切到 Plan，Claude 会先给出计划再动手。</string>
+
+  <!-- 工作目录选择 -->
+  <string name="cwd_title">选择工作目录</string>
+  <string name="cwd_hint">点进文件夹，再选当前这一层。Claude Code 会在这里读写文件。</string>
+  <string name="cwd_source_files">文件</string>
+  <string name="cwd_source_rootfs">Rootfs</string>
+  <string name="cwd_up">上一级</string>
+  <string name="cwd_new_folder">新建文件夹</string>
+  <string name="cwd_empty">这里没有子文件夹</string>
+  <string name="cwd_use_current">使用当前目录</string>
+  <string name="cwd_open_failed">打不开这个目录</string>
+  <string name="cwd_create_failed">新建失败</string>
+  <string name="cwd_new_folder_title">新建文件夹</string>
+
+  <!-- 向用户提问 -->
+  <string name="question_title">Claude 有几个问题</string>
+  <string name="question_unreadable">读不出这次提问的内容（CLI 版本可能改了字段形状）。可以直接跳过。</string>
+  <string name="question_skip">跳过</string>
+  <string name="question_submit">提交</string>
+  <string name="question_multi">可多选</string>
+  <string name="question_other">其他</string>
+  <string name="question_other_hint">自己写一个答案</string>
+
+  <!-- 终端 -->
+  <string name="terminal_title">终端</string>
+  <string name="terminal_subtitle">与会话同一个 Linux</string>
+  <string name="terminal_new_tab">新建终端标签</string>
+  <string name="terminal_close_title">关闭 %1$s？</string>
+  <string name="terminal_close_body">标签里正在跑的命令会被终止。</string>
+  <string name="terminal_close">关闭</string>
 </resources>

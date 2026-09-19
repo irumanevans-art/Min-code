@@ -23,6 +23,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import dev.min.code.R
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.min.code.core.claudecode.CwdPath
@@ -108,6 +110,9 @@ private fun CwdBrowser(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
+    // 兜底文案在这儿取好：用到它们的是回调，那里已经不在 Composable 作用域里了
+    val openFailed = stringResource(R.string.cwd_open_failed)
+    val createFailed = stringResource(R.string.cwd_create_failed)
 
     LaunchedEffect(guest) {
         loading = true
@@ -119,7 +124,7 @@ private fun CwdBrowser(
             }
             .onFailure { e ->
                 entries = emptyList()
-                error = e.message ?: "打不开这个目录"
+                error = e.message ?: openFailed
                 loading = false
             }
     }
@@ -132,17 +137,17 @@ private fun CwdBrowser(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Seal()
-                Text("选择工作目录", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.cwd_title), style = MaterialTheme.typography.titleMedium)
             }
         }
         Text(
-            "点进文件夹，再选当前这一层。Claude Code 会在这里读写文件。",
+            stringResource(R.string.cwd_hint),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
         )
         InkSegmented(
-            options = listOf("文件", "Rootfs"),
+            options = listOf(stringResource(R.string.cwd_source_files), stringResource(R.string.cwd_source_rootfs)),
             selected = if (area == WorkspaceStorageArea.FILES) 0 else 1,
             onSelect = { index ->
                 area = if (index == 0) WorkspaceStorageArea.FILES else WorkspaceStorageArea.LINUX
@@ -161,7 +166,7 @@ private fun CwdBrowser(
         ) {
             InkIconButton(
                 icon = HugeIcons.ArrowTurnBackward,
-                contentDescription = "上一级",
+                contentDescription = stringResource(R.string.cwd_up),
                 onClick = { relative = relative.substringBeforeLast('/', missingDelimiterValue = "") },
                 enabled = relative.isNotBlank(),
                 size = 36.dp,
@@ -178,7 +183,7 @@ private fun CwdBrowser(
             )
             InkIconButton(
                 icon = HugeIcons.Add01,
-                contentDescription = "新建文件夹",
+                contentDescription = stringResource(R.string.cwd_new_folder),
                 onClick = { creating = true },
                 size = 36.dp,
                 iconSize = 18.dp,
@@ -200,7 +205,7 @@ private fun CwdBrowser(
             if (!loading && entries.isEmpty() && error == null) {
                 item {
                     Text(
-                        "这里没有子文件夹",
+                        stringResource(R.string.cwd_empty),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
@@ -238,7 +243,7 @@ private fun CwdBrowser(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
         ) {
-            Text("使用当前目录")
+            Text(stringResource(R.string.cwd_use_current))
         }
     }
 
@@ -252,7 +257,7 @@ private fun CwdBrowser(
                             relative = CwdPath.split(it).second
                             creating = false
                         }
-                        .onFailure { error = it.message ?: "新建失败" }
+                        .onFailure { error = it.message ?: createFailed }
                 }
             },
         )
@@ -268,22 +273,22 @@ private fun CreateFolderDialog(
     val valid = CwdPath.folderName(name) != null
     InkDialog(
         onDismissRequest = onDismiss,
-        title = "新建文件夹",
+        title = stringResource(R.string.cwd_new_folder_title),
         confirmButton = {
             InkTextButton(
                 onClick = { CwdPath.folderName(name)?.let(onConfirm) },
                 enabled = valid,
-            ) { Text("创建") }
+            ) { Text(stringResource(R.string.common_create)) }
         },
         dismissButton = {
-            InkTextButton(onClick = onDismiss) { Text("取消") }
+            InkTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         },
     ) {
         InkTextField(
             value = name,
             onValueChange = { name = it },
             modifier = Modifier.fillMaxWidth(),
-            label = "名称",
+            label = stringResource(R.string.config_name),
             placeholder = "project",
             singleLine = true,
             monospace = true,
