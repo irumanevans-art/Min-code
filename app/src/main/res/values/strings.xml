@@ -15,6 +15,8 @@
   <string name="common_show">Show</string>
   <string name="common_got_it">Got it</string>
   <string name="common_clear">Clear</string>
+  <string name="common_save">Save</string>
+  <string name="common_saved">Saved</string>
 
   <string name="settings_title">Settings</string>
   <string name="settings_section_connection">Connection</string>
@@ -318,4 +320,60 @@
   <string name="preview_collapse">Hide preview</string>
   <string name="session_preview">Preview</string>
   <string name="session_preview_empty">Preview (no local server)</string>
+
+  <!-- Interactive slash commands: /mcp, /agents, /memory, /config, /permissions -->
+  <string name="config_unsupported">This command is handled by the session settings panel</string>
+  <string name="config_name">Name</string>
+
+  <string name="config_mcp_title">MCP servers</string>
+  <string name="config_mcp_hint">Written to /root/.claude.json in the rootfs; applies to the next session</string>
+  <string name="config_mcp_empty">No MCP servers configured yet</string>
+  <string name="config_mcp_add">Add a server</string>
+  <string name="config_mcp_edit_title">Edit MCP server</string>
+  <string name="config_mcp_edit_hint">stdio runs a process inside the rootfs; http/sse connect to a remote address</string>
+  <string name="config_mcp_command">Command</string>
+  <string name="config_mcp_args">Arguments (space-separated)</string>
+  <string name="config_mcp_env">Environment (KEY=VALUE per line)</string>
+  <string name="config_mcp_url">URL</string>
+  <string name="config_mcp_headers">Headers (KEY=VALUE per line)</string>
+
+  <string name="config_agent_title">Subagents</string>
+  <string name="config_agent_hint">User scope is written to ~/.claude/agents in the rootfs, project scope to /workspace/.claude/agents</string>
+  <string name="config_agent_empty">No custom subagents yet</string>
+  <string name="config_agent_add">Add a subagent</string>
+  <string name="config_agent_project">%1$s · project</string>
+  <string name="config_agent_edit_title">Edit subagent</string>
+  <string name="config_agent_edit_hint">Written to .claude/agents/*.md; applies to the next session</string>
+  <string name="config_agent_description">When to use it (description)</string>
+  <string name="config_agent_tools">Tools (comma-separated, empty = all)</string>
+  <string name="config_agent_model">Model (empty = inherit)</string>
+  <string name="config_agent_scope_user">User</string>
+  <string name="config_agent_scope_project">Project</string>
+  <string name="config_agent_prompt">System prompt</string>
+
+  <string name="config_memory_title">Memory (CLAUDE.md)</string>
+  <string name="config_memory_hint">Project = /workspace/CLAUDE.md, user = ~/.claude/CLAUDE.md. Saved changes apply from the next turn.</string>
+  <string name="config_memory_tip">This is what Claude Code calls context: it is read every turn. Put the commands you use, the conventions, how tests are run, the traps you have hit; leave out what the code already shows. Keep it under 200 lines — past that it stops following it.</string>
+  <string name="config_memory_init">Let Claude scan the project and write CLAUDE.md (/init)</string>
+  <string name="config_memory_init_existing">Run /init to review and fill in this CLAUDE.md</string>
+  <string name="config_memory_scope_project">Project</string>
+  <string name="config_memory_scope_user">User</string>
+
+  <string name="config_cli_title">CLI settings</string>
+  <string name="config_cli_hint">Written to ~/.claude/settings.json in the rootfs; applies to the next session</string>
+  <string name="config_cli_output_style">Output style (outputStyle)</string>
+  <string name="config_cli_status_line">Status line command (statusLine)</string>
+  <string name="config_cli_status_line_placeholder">Leave empty to disable</string>
+  <string name="config_cli_max_effort">Max effort level (maxEffortLevel, CLI 2.1.267+)</string>
+  <string name="config_cli_max_effort_hint">Clamps every session to this level or below (relays / Bedrock / Vertex included). A single session can still pick something lower; changes need a new or restarted session.</string>
+  <string name="config_cli_effort_unlimited">Unlimited</string>
+  <string name="config_cli_hot_switch_hint">Model, this turn\'s effort and the permission mode are not set here — those switch while running, from the session settings in the bottom bar. Picking a model there with “save as default” writes the model key of this very file (the same thing pressing Enter on the CLI\'s /model does).</string>
+
+  <string name="config_perm_title">Permission rules</string>
+  <string name="config_perm_hint">Written to permissions in settings.json. Rules look like Bash(git status:*), Edit(/workspace/**), WebFetch</string>
+  <string name="config_perm_allow">Allow</string>
+  <string name="config_perm_ask">Ask</string>
+  <string name="config_perm_deny">Deny</string>
+  <string name="config_perm_add_label">New rule</string>
+  <string name="config_perm_add">Add</string>
 </resources>

@@ -15,6 +15,8 @@
   <string name="common_show">显示</string>
   <string name="common_got_it">知道了</string>
   <string name="common_clear">清除</string>
+  <string name="common_save">保存</string>
+  <string name="common_saved">已保存</string>
 
   <string name="settings_title">设置</string>
   <string name="settings_section_connection">连接</string>
@@ -318,4 +320,60 @@
   <string name="preview_collapse">收起预览</string>
   <string name="session_preview">预览</string>
   <string name="session_preview_empty">预览（暂无本机服务）</string>
+
+  <!-- 交互式斜杠命令：/mcp、/agents、/memory、/config、/permissions -->
+  <string name="config_unsupported">该命令由会话设置面板处理</string>
+  <string name="config_name">名称</string>
+
+  <string name="config_mcp_title">MCP 服务器</string>
+  <string name="config_mcp_hint">写入 Rootfs 的 /root/.claude.json，下次开会话生效</string>
+  <string name="config_mcp_empty">还没有配置任何 MCP 服务器</string>
+  <string name="config_mcp_add">新增服务器</string>
+  <string name="config_mcp_edit_title">编辑 MCP 服务器</string>
+  <string name="config_mcp_edit_hint">stdio 在 Rootfs 里起进程；http/sse 连远端地址</string>
+  <string name="config_mcp_command">命令</string>
+  <string name="config_mcp_args">参数（空格分隔）</string>
+  <string name="config_mcp_env">环境变量（每行 KEY=VALUE）</string>
+  <string name="config_mcp_url">地址</string>
+  <string name="config_mcp_headers">请求头（每行 KEY=VALUE）</string>
+
+  <string name="config_agent_title">子 agent</string>
+  <string name="config_agent_hint">用户级写进 Rootfs 的 ~/.claude/agents，项目级写进 /workspace/.claude/agents</string>
+  <string name="config_agent_empty">还没有自定义子 agent</string>
+  <string name="config_agent_add">新增子 agent</string>
+  <string name="config_agent_project">%1$s · 项目</string>
+  <string name="config_agent_edit_title">编辑子 agent</string>
+  <string name="config_agent_edit_hint">写入 .claude/agents/*.md，下次开会话生效</string>
+  <string name="config_agent_description">何时使用（description）</string>
+  <string name="config_agent_tools">可用工具（逗号分隔，留空=全部）</string>
+  <string name="config_agent_model">模型（留空=继承）</string>
+  <string name="config_agent_scope_user">用户级</string>
+  <string name="config_agent_scope_project">项目级</string>
+  <string name="config_agent_prompt">系统提示词</string>
+
+  <string name="config_memory_title">记忆（CLAUDE.md）</string>
+  <string name="config_memory_hint">项目级 = /workspace/CLAUDE.md，用户级 = ~/.claude/CLAUDE.md。保存后下一轮对话即生效。</string>
+  <string name="config_memory_tip">这就是 Claude Code 的「上下文」：每轮对话都会读。写常用命令、代码规范、测试方式、踩过的坑；代码里能看出来的不写。200 行以内，太长它反而不照做。</string>
+  <string name="config_memory_init">让 Claude 扫描项目生成 CLAUDE.md（/init）</string>
+  <string name="config_memory_init_existing">用 /init 检查并补全这份 CLAUDE.md</string>
+  <string name="config_memory_scope_project">项目</string>
+  <string name="config_memory_scope_user">用户</string>
+
+  <string name="config_cli_title">CLI 配置</string>
+  <string name="config_cli_hint">写入 Rootfs 的 ~/.claude/settings.json，下次开会话生效</string>
+  <string name="config_cli_output_style">输出风格 outputStyle</string>
+  <string name="config_cli_status_line">状态行命令 statusLine</string>
+  <string name="config_cli_status_line_placeholder">留空表示不启用</string>
+  <string name="config_cli_max_effort">思考强度上限 maxEffortLevel（CLI 2.1.267+）</string>
+  <string name="config_cli_max_effort_hint">把所有会话的 effort 钳到这一档及以下（含中转 / Bedrock / Vertex）。单次会话里仍可选更低；改完要新开或重启会话才生效。</string>
+  <string name="config_cli_effort_unlimited">不限</string>
+  <string name="config_cli_hot_switch_hint">模型、本轮思考强度、权限模式不在这里改 —— 它们能在运行中热切，走底栏的会话设置。在那里选模型并勾上「存成默认」，写进来的就是这个文件的 model 键（和 CLI 的 /model 按 Enter 一样）。</string>
+
+  <string name="config_perm_title">权限规则</string>
+  <string name="config_perm_hint">写入 settings.json 的 permissions。规则形如 Bash(git status:*)、Edit(/workspace/**)、WebFetch</string>
+  <string name="config_perm_allow">允许</string>
+  <string name="config_perm_ask">询问</string>
+  <string name="config_perm_deny">拒绝</string>
+  <string name="config_perm_add_label">新增规则</string>
+  <string name="config_perm_add">添加</string>
 </resources>

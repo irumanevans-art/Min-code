@@ -30,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeConfigStore
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.MCP_TYPE_HTTP
@@ -89,7 +91,7 @@ internal fun ClaudeCodeConfigSheet(
                 LocalSlash.CONFIG -> ConfigSection(vm)
                 LocalSlash.HOOKS -> PermissionsSection(vm)
                 // 会话类命令走 ClaudeCodeSettingsSheet，不该走到这里
-                else -> Text("该命令由会话设置面板处理")
+                else -> Text(stringResource(R.string.config_unsupported))
             }
         }
     }
@@ -145,7 +147,7 @@ private fun EditorSwitch(
 private fun DeleteButton(onClick: () -> Unit) {
     InkIconButton(
         icon = HugeIcons.Delete02,
-        contentDescription = "删除",
+        contentDescription = stringResource(R.string.common_delete),
         onClick = onClick,
         tint = MaterialTheme.sea.vermilion,
         size = 36.dp,
@@ -185,10 +187,10 @@ private fun McpSection(vm: ClaudeCodeVM) {
             )
         },
         list = {
-            SectionHeader("MCP 服务器", "写入 Rootfs 的 /root/.claude.json，下次开会话生效")
+            SectionHeader(stringResource(R.string.config_mcp_title), stringResource(R.string.config_mcp_hint))
             if (servers.isEmpty()) {
                 Text(
-                    "还没有配置任何 MCP 服务器",
+                    stringResource(R.string.config_mcp_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -234,7 +236,7 @@ private fun McpSection(vm: ClaudeCodeVM) {
                 tone = InkButtonTone.Paper,
                 icon = HugeIcons.Add01,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("新增服务器") }
+            ) { Text(stringResource(R.string.config_mcp_add)) }
         },
     )
 }
@@ -246,11 +248,11 @@ private fun McpEditor(
     onCancel: () -> Unit,
     onSave: () -> Unit,
 ) {
-    SectionHeader("编辑 MCP 服务器", "stdio 在 Rootfs 里起进程；http/sse 连远端地址")
+    SectionHeader(stringResource(R.string.config_mcp_edit_title), stringResource(R.string.config_mcp_edit_hint))
     InkTextField(
         value = server.name,
         onValueChange = { onChange(server.copy(name = it)) },
-        label = "名称",
+        label = stringResource(R.string.config_name),
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -268,7 +270,7 @@ private fun McpEditor(
         InkTextField(
             value = server.command,
             onValueChange = { onChange(server.copy(command = it)) },
-            label = "命令",
+            label = stringResource(R.string.config_mcp_command),
             placeholder = "npx",
             singleLine = true,
             monospace = true,
@@ -279,7 +281,7 @@ private fun McpEditor(
             // 几乎都是 `-y @scope/pkg` 这种形状；真需要引号的场景让用户去改 .claude.json
             value = server.args.joinToString(" "),
             onValueChange = { onChange(server.copy(args = it.split(' ').filter(String::isNotBlank))) },
-            label = "参数（空格分隔）",
+            label = stringResource(R.string.config_mcp_args),
             placeholder = "-y @modelcontextprotocol/server-filesystem /workspace",
             monospace = true,
             modifier = Modifier.fillMaxWidth(),
@@ -287,7 +289,7 @@ private fun McpEditor(
         InkTextField(
             value = server.env.entries.joinToString("\n") { "${it.key}=${it.value}" },
             onValueChange = { onChange(server.copy(env = parseKeyValueLines(it))) },
-            label = "环境变量（每行 KEY=VALUE）",
+            label = stringResource(R.string.config_mcp_env),
             monospace = true,
             minHeight = 80.dp,
             modifier = Modifier.fillMaxWidth(),
@@ -296,7 +298,7 @@ private fun McpEditor(
         InkTextField(
             value = server.url,
             onValueChange = { onChange(server.copy(url = it)) },
-            label = "地址",
+            label = stringResource(R.string.config_mcp_url),
             placeholder = "https://example.com/mcp",
             singleLine = true,
             monospace = true,
@@ -305,20 +307,20 @@ private fun McpEditor(
         InkTextField(
             value = server.headers.entries.joinToString("\n") { "${it.key}=${it.value}" },
             onValueChange = { onChange(server.copy(headers = parseKeyValueLines(it))) },
-            label = "请求头（每行 KEY=VALUE）",
+            label = stringResource(R.string.config_mcp_headers),
             monospace = true,
             minHeight = 80.dp,
             modifier = Modifier.fillMaxWidth(),
         )
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        InkTextButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
+        InkTextButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.common_cancel)) }
         InkButton(
             onClick = onSave,
             enabled = server.name.isNotBlank() &&
                 (if (server.isRemote) server.url.isNotBlank() else server.command.isNotBlank()),
             modifier = Modifier.weight(1f),
-        ) { Text("保存") }
+        ) { Text(stringResource(R.string.common_save)) }
     }
 }
 
@@ -353,10 +355,10 @@ private fun AgentsSection(vm: ClaudeCodeVM) {
             )
         },
         list = {
-            SectionHeader("子 agent", "用户级写进 Rootfs 的 ~/.claude/agents，项目级写进 /workspace/.claude/agents")
+            SectionHeader(stringResource(R.string.config_agent_title), stringResource(R.string.config_agent_hint))
             if (agents.isEmpty()) {
                 Text(
-                    "还没有自定义子 agent",
+                    stringResource(R.string.config_agent_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -372,7 +374,12 @@ private fun AgentsSection(vm: ClaudeCodeVM) {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "${agent.name}${if (agent.userScope) "" else " · 项目"}",
+                                // 用户级不加后缀：那是默认的那一档，标出来只是噪声
+                                if (agent.userScope) {
+                                    agent.name
+                                } else {
+                                    stringResource(R.string.config_agent_project, agent.name)
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             Text(
@@ -402,7 +409,7 @@ private fun AgentsSection(vm: ClaudeCodeVM) {
                 tone = InkButtonTone.Paper,
                 icon = HugeIcons.Add01,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("新增子 agent") }
+            ) { Text(stringResource(R.string.config_agent_add)) }
         },
     )
 }
@@ -414,24 +421,24 @@ private fun AgentEditor(
     onCancel: () -> Unit,
     onSave: () -> Unit,
 ) {
-    SectionHeader("编辑子 agent", "写入 .claude/agents/*.md，下次开会话生效")
+    SectionHeader(stringResource(R.string.config_agent_edit_title), stringResource(R.string.config_agent_edit_hint))
     InkTextField(
         value = draft.name,
         onValueChange = { onChange(draft.copy(name = it)) },
-        label = "名称",
+        label = stringResource(R.string.config_name),
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
     InkTextField(
         value = draft.description,
         onValueChange = { onChange(draft.copy(description = it)) },
-        label = "何时使用（description）",
+        label = stringResource(R.string.config_agent_description),
         modifier = Modifier.fillMaxWidth(),
     )
     InkTextField(
         value = draft.tools,
         onValueChange = { onChange(draft.copy(tools = it)) },
-        label = "可用工具（逗号分隔，留空=全部）",
+        label = stringResource(R.string.config_agent_tools),
         singleLine = true,
         monospace = true,
         modifier = Modifier.fillMaxWidth(),
@@ -439,7 +446,7 @@ private fun AgentEditor(
     InkTextField(
         value = draft.model,
         onValueChange = { onChange(draft.copy(model = it)) },
-        label = "模型（留空=继承）",
+        label = stringResource(R.string.config_agent_model),
         placeholder = "sonnet / opus / haiku",
         singleLine = true,
         monospace = true,
@@ -447,12 +454,12 @@ private fun AgentEditor(
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         InkChip(
-            label = "用户级",
+            label = stringResource(R.string.config_agent_scope_user),
             selected = draft.userScope,
             onClick = { onChange(draft.copy(userScope = true)) },
         )
         InkChip(
-            label = "项目级",
+            label = stringResource(R.string.config_agent_scope_project),
             selected = !draft.userScope,
             onClick = { onChange(draft.copy(userScope = false)) },
         )
@@ -460,17 +467,17 @@ private fun AgentEditor(
     InkTextField(
         value = draft.body,
         onValueChange = { onChange(draft.copy(body = it)) },
-        label = "系统提示词",
+        label = stringResource(R.string.config_agent_prompt),
         minHeight = 160.dp,
         modifier = Modifier.fillMaxWidth(),
     )
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        InkTextButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
+        InkTextButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.common_cancel)) }
         InkButton(
             onClick = onSave,
             enabled = draft.name.isNotBlank(),
             modifier = Modifier.weight(1f),
-        ) { Text("保存") }
+        ) { Text(stringResource(R.string.common_save)) }
     }
 }
 
@@ -493,15 +500,14 @@ private fun MemorySection(vm: ClaudeCodeVM, onRunInit: () -> Unit) {
     LaunchedEffect(Unit) { hasProject = vm.hasProjectMemory() }
 
     SectionHeader(
-        "记忆（CLAUDE.md）",
+        stringResource(R.string.config_memory_title),
         // 这一条和其它几个不同：CLAUDE.md 是每轮都读的，改完立刻生效
-        "项目级 = /workspace/CLAUDE.md，用户级 = ~/.claude/CLAUDE.md。保存后下一轮对话即生效。",
+        stringResource(R.string.config_memory_hint),
     )
     // 官方对 CLAUDE.md 的定位就是"上下文"：每轮都读，所以写在这里的东西不用每条消息重复。
     // 最佳实践（best-practices / memory 文档）浓缩成一行，比链接管用
     Text(
-        "这就是 Claude Code 的「上下文」：每轮对话都会读。写常用命令、代码规范、测试方式、踩过的坑；" +
-            "代码里能看出来的不写。200 行以内，太长它反而不照做。",
+        stringResource(R.string.config_memory_tip),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -509,16 +515,16 @@ private fun MemorySection(vm: ClaudeCodeVM, onRunInit: () -> Unit) {
     // 已经有了就降成文字按钮 —— /init 对已有文件会提改进建议，而不是覆盖
     if (!hasProject && !userScope) {
         InkButton(onClick = onRunInit, modifier = Modifier.fillMaxWidth()) {
-            Text("让 Claude 扫描项目生成 CLAUDE.md（/init）")
+            Text(stringResource(R.string.config_memory_init))
         }
     } else if (!userScope) {
         InkTextButton(onClick = onRunInit, modifier = Modifier.fillMaxWidth()) {
-            Text("用 /init 检查并补全这份 CLAUDE.md")
+            Text(stringResource(R.string.config_memory_init_existing))
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        InkChip(label = "项目", selected = !userScope, onClick = { userScope = false })
-        InkChip(label = "用户", selected = userScope, onClick = { userScope = true })
+        InkChip(label = stringResource(R.string.config_memory_scope_project), selected = !userScope, onClick = { userScope = false })
+        InkChip(label = stringResource(R.string.config_memory_scope_user), selected = userScope, onClick = { userScope = true })
     }
     InkTextField(
         value = text,
@@ -539,7 +545,7 @@ private fun MemorySection(vm: ClaudeCodeVM, onRunInit: () -> Unit) {
             }
         },
         modifier = Modifier.fillMaxWidth(),
-    ) { Text(if (saved) "已保存" else "保存") }
+    ) { Text(stringResource(if (saved) R.string.common_saved else R.string.common_save)) }
 }
 
 // ---------------------------------------------------------------------------
@@ -565,11 +571,11 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
         loaded = true
     }
 
-    SectionHeader("CLI 配置", "写入 Rootfs 的 ~/.claude/settings.json，下次开会话生效")
+    SectionHeader(stringResource(R.string.config_cli_title), stringResource(R.string.config_cli_hint))
     InkTextField(
         value = outputStyle,
         onValueChange = { outputStyle = it; saved = false },
-        label = "输出风格 outputStyle",
+        label = stringResource(R.string.config_cli_output_style),
         placeholder = "default / Explanatory / Learning",
         singleLine = true,
         monospace = true,
@@ -579,22 +585,21 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
     InkTextField(
         value = statusLine,
         onValueChange = { statusLine = it; saved = false },
-        label = "状态行命令 statusLine",
-        placeholder = "留空表示不启用",
+        label = stringResource(R.string.config_cli_status_line),
+        placeholder = stringResource(R.string.config_cli_status_line_placeholder),
         singleLine = true,
         monospace = true,
         enabled = loaded,
         modifier = Modifier.fillMaxWidth(),
     )
     Text(
-        "思考强度上限 maxEffortLevel（CLI 2.1.267+）",
+        stringResource(R.string.config_cli_max_effort),
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.padding(top = 8.dp),
     )
     Text(
-        "把所有会话的 effort 钳到这一档及以下（含中转 / Bedrock / Vertex）。" +
-            "单次会话里仍可选更低；改完要新开或重启会话才生效。",
+        stringResource(R.string.config_cli_max_effort_hint),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -604,7 +609,7 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         InkChip(
-            label = "不限",
+            label = stringResource(R.string.config_cli_effort_unlimited),
             selected = maxEffortLevel == null,
             onClick = { maxEffortLevel = null; saved = false },
             enabled = loaded,
@@ -619,8 +624,7 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
         }
     }
     Text(
-        "模型、本轮思考强度、权限模式不在这里改 —— 它们能在运行中热切，走底栏的会话设置。" +
-            "在那里选模型并勾上「存成默认」，写进来的就是这个文件的 model 键（和 CLI 的 /model 按 Enter 一样）。",
+        stringResource(R.string.config_cli_hot_switch_hint),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -637,7 +641,7 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
         },
         enabled = loaded,
         modifier = Modifier.fillMaxWidth(),
-    ) { Text(if (saved) "已保存" else "保存") }
+    ) { Text(stringResource(if (saved) R.string.common_saved else R.string.common_save)) }
 }
 
 // ---------------------------------------------------------------------------
@@ -654,11 +658,16 @@ private fun PermissionsSection(vm: ClaudeCodeVM) {
     LaunchedEffect(bucket) { rules = vm.loadPermissionRules(bucket) }
 
     SectionHeader(
-        "权限规则",
-        "写入 settings.json 的 permissions。规则形如 Bash(git status:*)、Edit(/workspace/**)、WebFetch",
+        stringResource(R.string.config_perm_title),
+        stringResource(R.string.config_perm_hint),
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("allow" to "允许", "ask" to "询问", "deny" to "拒绝").forEach { (key, label) ->
+        // key 是写进 settings.json 的桶名，不跟着语言走；只有 label 是给人看的
+        listOf(
+            "allow" to stringResource(R.string.config_perm_allow),
+            "ask" to stringResource(R.string.config_perm_ask),
+            "deny" to stringResource(R.string.config_perm_deny),
+        ).forEach { (key, label) ->
             InkChip(
                 label = label,
                 selected = bucket == key,
@@ -694,7 +703,7 @@ private fun PermissionsSection(vm: ClaudeCodeVM) {
         InkTextField(
             value = draft,
             onValueChange = { draft = it },
-            label = "新增规则",
+            label = stringResource(R.string.config_perm_add_label),
             singleLine = true,
             monospace = true,
             modifier = Modifier.weight(1f),
@@ -708,7 +717,7 @@ private fun PermissionsSection(vm: ClaudeCodeVM) {
                     scope.launch { vm.savePermissionRules(bucket, next) }
                 },
                 enabled = draft.isNotBlank() && draft.trim() !in rules,
-            ) { Text("添加") }
+            ) { Text(stringResource(R.string.config_perm_add)) }
         }
     }
 }
