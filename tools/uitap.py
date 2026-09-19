@@ -10,7 +10,12 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-ADB = "C:/AndroidSDK/platform-tools/adb.exe"
+# 优先用 PATH 里的 adb（PATH 里没有时回退到本机的 SDK 位置），脚本换机器不再断
+import os
+import shutil
+
+ADB = shutil.which("adb") or os.path.join(
+    os.environ.get("ANDROID_SDK_ROOT", "C:/AndroidSDK"), "platform-tools", "adb.exe")
 
 
 def dump(serial: str) -> ET.Element:
