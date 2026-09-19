@@ -25,6 +25,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import dev.min.code.R
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -105,7 +107,7 @@ internal fun ComposerPlus(
     Box {
         InkIconButton(
             icon = HugeIcons.PlusSign,
-            contentDescription = "附件、用量与会话设置",
+            contentDescription = stringResource(R.string.composer_menu),
             onClick = { open = true },
             enabled = enabled,
             busy = busy,
@@ -120,7 +122,7 @@ internal fun ComposerPlus(
         ) {
             if (contextText != null || costText != null) {
                 MenuStatusRow(
-                    title = contextText ?: "用量",
+                    title = contextText ?: stringResource(R.string.composer_usage),
                     subtitle = costText,
                     titleColor = if (contextWarn) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurface,
@@ -150,15 +152,15 @@ internal fun ComposerPlus(
                 )
             }
             if (contextText != null || costText != null || modelText.isNotBlank()) InkDivider()
-            InkMenuItem("添加文件", icon = HugeIcons.Attachment01, onClick = { open = false; onPickFile() })
+            InkMenuItem(stringResource(R.string.composer_add_file), icon = HugeIcons.Attachment01, onClick = { open = false; onPickFile() })
             InkMenuItem(
-                "拍照",
+                stringResource(R.string.composer_take_photo),
                 icon = HugeIcons.Camera01,
                 tint = if (canPickImage) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
                 onClick = { if (canPickImage) { open = false; onTakePhoto() } },
             )
             InkMenuItem(
-                "添加图片",
+                stringResource(R.string.composer_add_image),
                 icon = HugeIcons.Image02,
                 tint = if (canPickImage) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
                 onClick = { if (canPickImage) { open = false; onPickImage() } },
@@ -229,7 +231,7 @@ internal fun SeaSendKey(
     modifier: Modifier = Modifier,
 ) {
     val interaction = remember { MutableInteractionSource() }
-    val description = if (queued) "排队发送" else "发送"
+    val description = stringResource(if (queued) R.string.composer_send_queued else R.string.composer_send)
     val awake by animateFloatAsState(if (enabled) 1f else 0f, InkMotion.spatial(), label = "sendAwake")
     val idle = MaterialTheme.colorScheme.outline
     Box(

@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
@@ -68,6 +69,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeImage
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
@@ -264,6 +266,8 @@ internal fun ClaudeCodeInputBar(
     }
 
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    // 回调不在 Composable 作用域里，资源要在这儿先取好
+    val photoName = stringResource(R.string.composer_photo)
     val takePicture = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture(),
     ) { ok ->
@@ -274,7 +278,7 @@ internal fun ClaudeCodeInputBar(
             importing = true
             val block = onLoadImage(uri)
             if (block != null) {
-                images = images + PendingImage(name = "拍照", block = block)
+                images = images + PendingImage(name = photoName, block = block)
             }
             importing = false
         }
@@ -513,9 +517,9 @@ internal fun ClaudeCodeInputBar(
                         interactionSource = fieldInteraction,
                         decorationBox = { inner ->
                             val hint = when {
-                                !running -> "会话未就绪"
-                                session.busy -> "追加消息"
-                                else -> "意欲何为"
+                                !running -> stringResource(R.string.composer_hint_not_ready)
+                                session.busy -> stringResource(R.string.composer_hint_queue)
+                                else -> stringResource(R.string.composer_hint)
                             }
                             // 最小高度放在这里而不是外层：字才会在胶囊里垂直居中，多行时再往上长
                             Box(Modifier.heightIn(min = 40.dp), contentAlignment = Alignment.CenterStart) {
@@ -551,7 +555,7 @@ internal fun ClaudeCodeInputBar(
                         ) {
                             InkIconButton(
                                 icon = HugeIcons.Stop,
-                                contentDescription = "中断当前任务",
+                                contentDescription = stringResource(R.string.composer_interrupt),
                                 onClick = onInterrupt,
                                 tint = palette.vermilion,
                                 size = 32.dp,
@@ -607,6 +611,7 @@ private data class ComposerUsage(
     val costText: String?,
 )
 
+@Composable
 private fun composerUsage(
     session: ClaudeCodeManager.SessionState,
     dailyCostUsd: Double,
@@ -636,15 +641,32 @@ private fun composerUsage(
  * 本次会话的花费跟在后面一段 —— 判断"这一轮值不值"时还是要看它，只是不再是主角；
  * 两个数一样时（今天只跑过这一个会话）就不重复写第二遍。
  */
-internal fun costLabel(dailyUsd: Double, sessionUsd: Double?): String? = when {
+internal fun costParts(dailyUsd: Double, sessionUsd: Double?): Pair<Double, Double?>? = when {
     dailyUsd > 0.0 && sessionUsd != null && sessionUsd < dailyUsd - 1e-6 ->
-        "今日 ${formatUsd(dailyUsd)} · 本次 ${formatUsd(sessionUsd)}"
+        dailyUsd to sessionUsd
 
-    dailyUsd > 0.0 -> "今日 ${formatUsd(dailyUsd)}"
+    dailyUsd > 0.0 -> dailyUsd to null
     // 台账还没记上（这一轮的 get_session_cost 先回来了）时退回会话值：
     // 今天既然只有这一个会话，它就是今日合计
-    sessionUsd != null -> "今日 ${formatUsd(sessionUsd)}"
+    sessionUsd != null -> sessionUsd to null
     else -> null
+}
+
+/**
+ * 上面那个判断的文案版。
+ *
+ * 拆成两半是因为「显示哪几个数」是有分支的业务逻辑（值得单测，见
+ * ClaudeCodeCostLabelTest），而「怎么写这句话」是本地化的事。混在一起的话，
+ * 要么文案抽不出去，要么单测得跑 Robolectric。
+ */
+@Composable
+internal fun costLabel(dailyUsd: Double, sessionUsd: Double?): String? {
+    val (primary, session) = costParts(dailyUsd, sessionUsd) ?: return null
+    return if (session != null) {
+        stringResource(R.string.composer_cost_both, formatUsd(primary), formatUsd(session))
+    } else {
+        stringResource(R.string.composer_cost_daily, formatUsd(primary))
+    }
 }
 
 /** 已导入工作区、待随下一条消息发出的文件 */
@@ -701,7 +723,7 @@ private fun AttachmentChip(
         )
         InkIconButton(
             icon = HugeIcons.Cancel01,
-            contentDescription = "移除",
+            contentDescription = stringResource(R.string.composer_remove),
             onClick = onRemove,
             tint = palette.seaDeep,
             size = 22.dp,
@@ -937,26 +959,45 @@ internal fun shouldCollapsePaste(text: String): Boolean =
     text.length >= PASTE_COLLAPSE_CHARS || text.count { it == '\n' } + 1 >= PASTE_COLLAPSE_LINES
 
 /**
- * 占位符长这样：`[粘贴文本 #1 · 87 行 · 3.4k 字]`。
+ * 占位符长这样：`[paste #1 · 87 lines · 3.4k chars]`。
  *
- * 带上行数和字数是为了能**核对贴对了没有** —— 只写"[粘贴文本]"的话，贴错剪贴板
+ * 带上行数和字数是为了能**核对贴对了没有** —— 只写一句"粘贴文本"的话，贴错剪贴板
  * 要等模型答非所问才发现。
+ *
+ * ## 为什么这一行**不**走 string 资源
+ *
+ * 这是整个文件里唯一一处故意保留硬编码英文的地方，理由有三条：
+ *
+ * 1. **它必须跨语言稳定。** 占位符由这里生成、由 [PASTE_PLACEHOLDER] 认回去。
+ *    文案跟着语言走的话，用户在中文界面粘贴、随后把 App 切成英文再发送，
+ *    正则就认不出这一段了 —— 发出去的是一行谁也看不懂的占位符，原文彻底丢失。
+ *    界面语言是随时可改的，而输入框里的草稿会活过这次改动。
+ * 2. **它是内部协议，不是内容。** 发送前 [expandPastes] 一定会把它换回原文，
+ *    模型永远看不到这一行；用户也只在输入框里短暂见到它。
+ * 3. **保持纯函数才留得住单测。** 取资源要 Context，而这个函数是在
+ *    `onValueChange` 里调的，不在 Composable 作用域；硬塞 Resources 进来
+ *    会把 ClaudeCodePasteTest 从纯 JVM 拖进 Robolectric，为一行占位符不值当。
+ *
+ * 真正要紧的是那几个**数字**，它们本来就不随语言变。
  */
 internal fun pastePlaceholder(id: Int, text: String): String {
     val lines = text.count { it == '\n' } + 1
     val size = if (text.length >= 1000) {
-        String.format(java.util.Locale.US, "%.1fk 字", text.length / 1000.0)
+        String.format(java.util.Locale.US, "%.1fk chars", text.length / 1000.0)
     } else {
-        "${text.length} 字"
+        "${text.length} chars"
     }
-    return "[粘贴文本 #$id · $lines 行 · $size]"
+    return "[$PASTE_TAG #$id · $lines lines · $size]"
 }
+
+/** 占位符的锚点。和界面语言无关，见 [pastePlaceholder] 的第 1 条 */
+private const val PASTE_TAG = "paste"
 
 /**
  * 占位符匹配。**只按 id 认领**，中间那段摘要允许对不上 —— 用户可能在占位符里
  * 误删了几个字，那时也该还原成原文，而不是把一行乱码发出去。
  */
-private val PASTE_PLACEHOLDER = Regex("""\[粘贴文本 #(\d+)[^\]]*]""")
+private val PASTE_PLACEHOLDER = Regex("""\[$PASTE_TAG #(\d+)[^\]]*]""")
 
 /** 发送前把占位符换回原文。被删掉的占位符自然就不还原，等于取消那次粘贴。 */
 internal fun expandPastes(input: String, pastes: Map<Int, String>): String {

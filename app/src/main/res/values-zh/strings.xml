@@ -473,4 +473,21 @@
 
   <string name="session_expand_full">展开全文</string>
   <string name="session_collapse">收起</string>
+
+  <!-- 输入坞：输入胶囊与「+」菜单 -->
+  <string name="composer_hint">意欲何为</string>
+  <string name="composer_hint_queue">追加消息</string>
+  <string name="composer_hint_not_ready">会话未就绪</string>
+  <string name="composer_interrupt">中断当前任务</string>
+  <string name="composer_remove">移除</string>
+  <string name="composer_photo">拍照</string>
+  <string name="composer_menu">附件、用量与会话设置</string>
+  <string name="composer_usage">用量</string>
+  <string name="composer_add_file">添加文件</string>
+  <string name="composer_take_photo">拍照</string>
+  <string name="composer_add_image">添加图片</string>
+  <string name="composer_send">发送</string>
+  <string name="composer_send_queued">排队发送</string>
+  <string name="composer_cost_both">今日 %1$s · 本次 %2$s</string>
+  <string name="composer_cost_daily">今日 %1$s</string>
 </resources>

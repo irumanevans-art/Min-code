@@ -473,4 +473,21 @@
 
   <string name="session_expand_full">Show all</string>
   <string name="session_collapse">Collapse</string>
+
+  <!-- Composer: the input capsule and its "+" menu -->
+  <string name="composer_hint">What are we doing</string>
+  <string name="composer_hint_queue">Queue a message</string>
+  <string name="composer_hint_not_ready">Session not ready</string>
+  <string name="composer_interrupt">Stop the current task</string>
+  <string name="composer_remove">Remove</string>
+  <string name="composer_photo">Photo</string>
+  <string name="composer_menu">Attachments, usage and session settings</string>
+  <string name="composer_usage">Usage</string>
+  <string name="composer_add_file">Add a file</string>
+  <string name="composer_take_photo">Take a photo</string>
+  <string name="composer_add_image">Add an image</string>
+  <string name="composer_send">Send</string>
+  <string name="composer_send_queued">Queue for sending</string>
+  <string name="composer_cost_both">Today %1$s · this session %2$s</string>
+  <string name="composer_cost_daily">Today %1$s</string>
 </resources>

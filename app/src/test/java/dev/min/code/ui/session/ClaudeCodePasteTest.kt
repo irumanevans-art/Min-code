@@ -27,7 +27,7 @@ class ClaudeCodePasteTest {
     fun `贴进大段文本换成占位符`() {
         val result = collapsePaste("", long, 1)!!
         assertEquals(long, result.pasted)
-        assertTrue(result.text.startsWith("[粘贴文本 #1 · 40 行 · "))
+        assertTrue(result.text.startsWith("[paste #1 · 40 lines · "))
         assertTrue(result.text.endsWith("]"))
     }
 
@@ -36,7 +36,7 @@ class ClaudeCodePasteTest {
         val typed = "看这段：\n收到了吗"
         val pasted = "看这段：\n$long\n收到了吗"
         val result = collapsePaste(typed, pasted, 2)!!
-        assertTrue(result.text.startsWith("看这段：\n[粘贴文本 #2 "))
+        assertTrue(result.text.startsWith("看这段：\n[paste #2 "))
         assertTrue(result.text.endsWith("收到了吗"))
         // 不去断言"被折叠的正好是 long"：插入内容和边界共用了那个换行符，
         // 前后缀的切分点本身就有歧义（结尾的 \n 划给谁都说得通）。真正要守住的
@@ -74,7 +74,7 @@ class ClaudeCodePasteTest {
     /** 摘要被用户误删几个字也要能认出来：只按 id 认领 */
     @Test
     fun `摘要被改过仍按 id 还原`() {
-        assertEquals(long, expandPastes("[粘贴文本 #1 · 乱七八糟]", mapOf(1 to long)))
+        assertEquals(long, expandPastes("[paste #1 · 乱七八糟]", mapOf(1 to long)))
     }
 
     /** 占位符被整段删掉 = 取消这次粘贴，正文不该偷偷跟着发出去 */
@@ -85,7 +85,7 @@ class ClaudeCodePasteTest {
 
     @Test
     fun `认不出 id 的占位符原样留着`() {
-        assertEquals("[粘贴文本 #9 · 3 行]", expandPastes("[粘贴文本 #9 · 3 行]", mapOf(1 to long)))
+        assertEquals("[paste #9 · 3 lines]", expandPastes("[paste #9 · 3 lines]", mapOf(1 to long)))
     }
 
     /** 原文里带 `$1` 这类反向引用时，替换必须是字面量 */
@@ -98,7 +98,24 @@ class ClaudeCodePasteTest {
     @Test
     fun `占位符带上行数和字数便于核对`() {
         // "x\n" × 39 再加一个 x：39 个换行 = 40 行，79 个字符
-        assertEquals("[粘贴文本 #1 · 40 行 · 79 字]", pastePlaceholder(1, "x\n".repeat(39) + "x"))
-        assertTrue(pastePlaceholder(1, "y".repeat(3400)).endsWith("· 3.4k 字]"))
+        assertEquals("[paste #1 · 40 lines · 79 chars]", pastePlaceholder(1, "x\n".repeat(39) + "x"))
+        assertTrue(pastePlaceholder(1, "y".repeat(3400)).endsWith("· 3.4k chars]"))
+    }
+
+    /**
+     * 占位符**不能**随界面语言变。
+     *
+     * 它是 [pastePlaceholder] 写、[expandPastes] 认的一套内部协议：用户在中文界面
+     * 粘贴、之后把 App 切成英文再发送，那段原文照样要还原得回来。文案一旦进了
+     * string 资源，正则就会在切换语言之后失配，发出去的是一行占位符、原文丢失。
+     */
+    @Test
+    fun `占位符不含本地化文案，切语言后仍能还原`() {
+        val placeholder = pastePlaceholder(7, long)
+
+        // 锚点是固定的 ASCII，不是任何一种语言的词
+        assertTrue(placeholder.startsWith("[paste #7 "))
+        assertTrue(placeholder.none { it.code in 0x4E00..0x9FA5 })
+        assertEquals(long, expandPastes(placeholder, mapOf(7 to long)))
     }
 }
