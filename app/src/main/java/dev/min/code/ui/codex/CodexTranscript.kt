@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import dev.min.code.core.codex.CodexAppServerManager
@@ -54,9 +55,13 @@ internal fun CodexTranscript(
     val lastIndex = blocks.lastIndex
 
     // 新内容到了就跟到底部，但**只在用户本来就在底部时** —— 正往回翻旧消息时
-    // 被硬拽到底，比不自动滚还难用
+    // 被硬拽到底，比不自动滚还难用。
+    // session 是普通参数，LaunchedEffect(listState) 的协程只捕获首次组合那份闭包，
+    // snapshotFlow 直读它永远读到旧对象、永不发射。经 rememberUpdatedState 转一手，
+    // 每次重组写进 State，snapshotFlow 才跟得上新内容。
+    val latest = rememberUpdatedState(session)
     LaunchedEffect(listState) {
-        snapshotFlow { session.items.size to session.streamingText.length }
+        snapshotFlow { latest.value.items.size to latest.value.streamingText.length }
             .collectLatest {
                 val layout = listState.layoutInfo
                 val last = layout.visibleItemsInfo.lastOrNull()?.index ?: return@collectLatest

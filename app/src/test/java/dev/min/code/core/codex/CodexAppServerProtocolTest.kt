@@ -89,7 +89,7 @@ class CodexAppServerProtocolTest {
         assertEquals("completed", completed.item.status)
     }
 
-    /** 审批是服务端发起的请求，回信要用它这一帧的 id */
+    /** 审批是服务端发起的请求，回信要用它这一帧的 id（原始形态） */
     @Test
     fun `command approval keeps the request id and available decisions`() {
         val approval = parseCodexEvent(
@@ -100,6 +100,9 @@ class CodexAppServerProtocolTest {
         ) as CodexEvent.ApprovalRequest
 
         assertEquals("42", approval.requestId)
+        // id 的原始形态必须留着：app-server 发的是整数（Rust RequestId::Integer），
+        // 应答要原样放回 —— 统一成字符串在 Rust 侧就是另一个值，回调表查不中
+        assertEquals(JsonPrimitive(42), approval.rawRequestId)
         assertEquals(CodexEvent.ApprovalRequest.Kind.Command, approval.kind)
         assertEquals("rm -rf build", approval.command)
         assertEquals("/workspace", approval.cwd)
@@ -256,11 +259,13 @@ class CodexAppServerProtocolTest {
     @Test
     fun `approval response echoes the request id and decision`() {
         val root = Json.parseToJsonElement(
-            encodeCodexApprovalResponse("42", CodexDecision.ACCEPT_FOR_SESSION),
+            encodeCodexApprovalResponse(JsonPrimitive(42), CodexDecision.ACCEPT_FOR_SESSION),
         ) as JsonObject
         val result = root["result"] as JsonObject
 
-        assertEquals("42", (root["id"] as JsonPrimitive).content)
+        // 整数 id 原样回整数。Rust 侧 RequestId 是 #[serde(untagged)] 枚举，
+        // String("42") 与 Integer(42) 的相等和哈希都不同 —— 回成字符串等于换了个 id
+        assertEquals(JsonPrimitive(42), root["id"])
         assertEquals("acceptForSession", (result["decision"] as JsonPrimitive).content)
         assertFalse(root.containsKey("method"))
     }

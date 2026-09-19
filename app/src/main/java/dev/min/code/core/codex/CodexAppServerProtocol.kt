@@ -40,8 +40,17 @@ import kotlinx.serialization.json.put
  * 两者现在是不同的事件，各自按 itemId 归位。
  */
 sealed interface CodexEvent {
-    /** 对我们发出的请求的应答。[error] 非空即失败。 */
-    data class Response(val id: String, val result: JsonElement?, val error: JsonObject? = null) : CodexEvent
+    /**
+     * 对我们发出的请求的应答。[error] 非空即失败。
+     * [rawId] 是线上的原始形态：id 在 Rust 侧是 untagged 枚举，整数和字符串是两个值，
+     * 谁要往回传就用原始的那个，统一成字符串会查不中。
+     */
+    data class Response(
+        val id: String,
+        val rawId: JsonPrimitive?,
+        val result: JsonElement?,
+        val error: JsonObject? = null,
+    ) : CodexEvent
 
     /** 一个 item 开工。[item] 的 id 就是后续各路 delta 的 `itemId`。 */
     data class ItemStarted(val item: CodexItem) : CodexEvent
@@ -78,6 +87,14 @@ sealed interface CodexEvent {
     /** 服务端发起的审批请求。**必须应答**，否则这一轮会一直停在那里等。 */
     data class ApprovalRequest(
         val requestId: String,
+        /**
+         * 请求帧里 id 的**原始 JSON 形态**。app-server 发的 id 是整数
+         * （Rust 侧 `RequestId::Integer`，`#[serde(untagged)]` 枚举），而 Kotlin 这边
+         * 曾经统一成字符串再原样回写 —— 服务端收到 `{"id":"42"}` 而不是 `{"id":42}`，
+         * `String("42")` 和 `Integer(42)` 的相等/哈希都不同，回调表查不中，只会打一行
+         * "could not find callback"，审批就永远挂住。应答时必须原样放回 [rawRequestId]。
+         */
+        val rawRequestId: JsonPrimitive,
         val kind: Kind,
         val itemId: String?,
         val threadId: String? = null,
@@ -195,12 +212,14 @@ private val codexJson = Json { ignoreUnknownKeys = true; isLenient = true }
 fun parseCodexEvent(line: String): CodexEvent? {
     val obj = runCatching { codexJson.parseToJsonElement(line.trim()) }.getOrNull() as? JsonObject
         ?: return null
-    val id = obj.idString()
+    // id 保留原始形态（整数就还是整数），字符串形态另算一份用于匹配
+    val rawId = obj["id"] as? JsonPrimitive
+    val id = rawId?.contentOrNull
     val method = obj.str("method")
 
     // 应答：有 id 且带 result/error，且没有 method（服务端发起的请求也带 id + method）
     if (method == null && id != null && (obj.containsKey("result") || obj.containsKey("error"))) {
-        return CodexEvent.Response(id, obj["result"], obj.obj("error"))
+        return CodexEvent.Response(id, rawId, obj["result"], obj.obj("error"))
     }
 
     val params = obj.obj("params") ?: JsonObject(emptyMap())
@@ -246,9 +265,9 @@ fun parseCodexEvent(line: String): CodexEvent? {
         }
 
         // 审批是服务端发起的**请求**，回的时候要用它这一帧的 id 当 response id
-        "item/commandExecution/requestApproval" -> approval(id, params, CodexEvent.ApprovalRequest.Kind.Command)
-        "item/fileChange/requestApproval" -> approval(id, params, CodexEvent.ApprovalRequest.Kind.FileChange)
-        "item/permissions/requestApproval" -> approval(id, params, CodexEvent.ApprovalRequest.Kind.Permissions)
+        "item/commandExecution/requestApproval" -> approval(rawId, params, CodexEvent.ApprovalRequest.Kind.Command)
+        "item/fileChange/requestApproval" -> approval(rawId, params, CodexEvent.ApprovalRequest.Kind.FileChange)
+        "item/permissions/requestApproval" -> approval(rawId, params, CodexEvent.ApprovalRequest.Kind.Permissions)
 
         "thread/tokenUsage/updated" -> {
             val usage = params.obj("usage") ?: params
@@ -274,11 +293,12 @@ fun parseCodexEvent(line: String): CodexEvent? {
 }
 
 private fun approval(
-    id: String?,
+    rawId: JsonPrimitive?,
     params: JsonObject,
     kind: CodexEvent.ApprovalRequest.Kind,
 ): CodexEvent.ApprovalRequest = CodexEvent.ApprovalRequest(
-    requestId = id ?: params.str("requestId").orEmpty(),
+    requestId = rawId?.contentOrNull ?: params.str("requestId").orEmpty(),
+    rawRequestId = rawId ?: JsonPrimitive(params.str("requestId").orEmpty()),
     kind = kind,
     itemId = params.str("itemId"),
     threadId = params.str("threadId"),
@@ -375,8 +395,11 @@ fun encodeCodexTurnStart(
     sandbox?.let { put("sandboxPolicy", sandboxPolicy(it, writableRoots, networkAccess)) }
 })
 
-/** 审批应答。id 必须是请求那一帧的 id，逐字回传。 */
-fun encodeCodexApprovalResponse(requestId: String, decision: CodexDecision): String =
+/**
+ * 审批应答。id 必须是请求那一帧的 id，而且是**原始 JSON 形态**逐字回传 ——
+ * 整数就回整数。回成字符串等于换了一个 id，服务端回调表查不中，审批永远挂住。
+ */
+fun encodeCodexApprovalResponse(requestId: JsonPrimitive, decision: CodexDecision): String =
     buildJsonObject {
         put("id", requestId)
         put("result", buildJsonObject { put("decision", decision.wire) })
@@ -412,6 +435,3 @@ internal fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
 internal fun JsonObject.arr(key: String): JsonArray? = this[key] as? JsonArray
 internal fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.intOrNull
 internal fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.longOrNull
-
-/** id 在线上可能是数字也可能是字符串，统一成字符串认领 */
-private fun JsonObject.idString(): String? = (this["id"] as? JsonPrimitive)?.contentOrNull

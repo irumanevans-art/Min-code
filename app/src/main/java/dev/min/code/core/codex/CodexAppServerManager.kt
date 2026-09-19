@@ -231,7 +231,9 @@ class CodexAppServerManager(
         val pending = _state.value.pendingApproval ?: return false
         val allowed = pending.availableDecisions
         if (allowed.isNotEmpty() && decision.wire !in allowed) return false
-        if (!writeLineLocked(encodeCodexApprovalResponse(pending.requestId, decision))) return false
+        // rawRequestId 是请求帧的原始 JSON 形态（整数 id 就回整数）；
+        // 回成字符串在 Rust 侧是另一个值，回调表查不中，审批永远挂住
+        if (!writeLineLocked(encodeCodexApprovalResponse(pending.rawRequestId, decision))) return false
         _state.value = _state.value.copy(pendingApproval = null)
         true
     }
@@ -395,8 +397,13 @@ class CodexAppServerManager(
                 )
             }
 
-            is CodexEvent.PlanDelta ->
+            is CodexEvent.PlanDelta -> {
+                // 计划增量同样要登记 itemId。不登记的话 plan 的 item/completed 既对不上
+                // id、type 又不是 agentMessage，气泡里的计划文字清不掉，和正式条目
+                // 重复显示到整轮结束；同一轮里再来的 agentMessage 还会带着它当前缀
+                streamingTextItemId = event.itemId ?: streamingTextItemId
                 _state.value = current.copy(streamingText = current.streamingText + event.delta)
+            }
 
             is CodexEvent.ApprovalRequest ->
                 _state.value = current.copy(pendingApproval = event)

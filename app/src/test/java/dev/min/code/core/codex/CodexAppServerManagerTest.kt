@@ -169,6 +169,56 @@ class CodexAppServerManagerTest {
         manager.close()
     }
 
+    /**
+     * 回归：app-server 发的审批 id 是整数（Rust 侧 RequestId 是 untagged 枚举，
+     * Integer(42) 与 String("42") 的相等和哈希都不同）。应答若回成字符串，
+     * 服务端回调表查不中，只打一行 could not find callback，这一轮永远停在等审批。
+     */
+    @Test
+    fun `approval answer echoes an integer request id verbatim`() = runBlocking {
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf(
+                """{"id":"2","result":{"threadId":"t"}}""",
+                """{"id":42,"method":"item/commandExecution/requestApproval","params":{"itemId":"c1","command":"git status","availableDecisions":["accept"]}}""",
+            ),
+        )
+        val manager = CodexAppServerManager { process }
+        manager.start()
+        await { manager.state.value.pendingApproval != null }
+        assertTrue(manager.answerApproval(CodexDecision.ACCEPT))
+
+        // 写回线上的必须是 "id":42，不是 "id":"42"
+        await { process.writtenLines().any { it.contains("\"id\":42") && it.contains("accept") } }
+        manager.close()
+    }
+
+    /** 计划的 completed 到达时要把流式气泡清掉，不然计划文字和正式条目重复到整轮结束 */
+    @Test
+    fun `plan deltas clear when the plan item completes`() = runBlocking {
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf(
+                """{"id":"2","result":{"threadId":"t"}}""",
+                """{"method":"item/plan/delta","params":{"itemId":"p1","delta":"先"}}""",
+                """{"method":"item/plan/delta","params":{"itemId":"p1","delta":"跑测试"}}""",
+            ),
+        )
+        val manager = CodexAppServerManager { process }
+        manager.start()
+        // 增量先进气泡；completed 晚一步发，否则一次全吐出来连中间态都观察不到
+        await { manager.state.value.streamingText == "先跑测试" }
+
+        process.queue(
+            """{"method":"item/completed","params":{"item":{"type":"plan","id":"p1","text":"先跑测试"}}}""",
+        )
+        await {
+            manager.state.value.streamingText.isEmpty() &&
+                manager.state.value.items.any { it is ChatItem.AssistantText && it.text == "先跑测试" }
+        }
+        manager.close()
+    }
+
     /** stderr 是 app-server 唯一会说"我为什么起不来"的地方，不能只排干 */
     @Test
     fun `stderr lands in the transcript`() = runBlocking {
