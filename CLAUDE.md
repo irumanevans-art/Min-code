@@ -8,7 +8,10 @@ Android app（Kotlin + Compose）。包 `dev.min.code`，三个模块：`app`、
 - 每次更新：把内容写进 `CHANGELOG.md` 和 `app/src/main/assets/CHANGELOG.md`（关于页读这份）。用户没说版本号时 `versionName` 最小位 +1、`versionCode` +1（见 `app/build.gradle.kts`）
 - 有模拟器 / 真机时用 `adb` 装包、`adb logcat -s ClaudeCodeManager ClaudeCodeInstaller ClaudeCodeFgs AndroidRuntime`、
   `adb exec-out screencap -p > x.png` 看界面；按文字点按钮用 `python tools/uitap.py <serial> tap <文字>`
-- 界面文案走 `res/values`（英文默认）+ `res/values-zh`；设置里可「跟随系统 / 中文 / English」（`AppCompatDelegate.setApplicationLocales`）。主路径已抽资源，边角硬编码可下一轮补
+- 界面文案走 `res/values`（英文默认）+ `res/values-zh`；设置里可「跟随系统 / 中文 / English」。
+  实现走系统 `LocaleManager`（API 33+）+ `MainActivity.attachBaseContext` 的 Configuration 包装（26..32），
+  见 `AppLocale.kt`——**不是** `AppCompatDelegate.setApplicationLocales`，那个在没有 AppCompatActivity
+  的纯 Compose 应用里静默无效（.learnings LRN-20260917-LOCALE-NO-APPCOMPAT）。主路径已抽资源，边角硬编码可下一轮补
 - 视觉与动效规范在 `DESIGN.md`（「海」：纸 / 墨 / 海）。新界面一律用 `ui/components/` 里的 Ink* 组件，
   语义色走 `MaterialTheme.sea.*`；**蓝色不是色值**——用 `seaInk()` / `seaFill()` 把形状镂空到「蓝色取底」纹理上（`ui/theme/Sea.kt`），
   朱只给判定。不要直接用 Material 的 Button / Checkbox / AlertDialog
