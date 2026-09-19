@@ -627,5 +627,8 @@ private fun LiveDot(color: Color) {
     }
 }
 
-private fun formatTime(millis: Long): String =
-    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
+/** 同一支 formatter 复用：SimpleDateFormat 构造不便宜，会话多时每行每次重组新建是纯浪费。
+ *  只在主线程（Compose UI）调用，无并发问题 */
+private val drawerTimeFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+
+private fun formatTime(millis: Long): String = drawerTimeFormat.format(Date(millis))

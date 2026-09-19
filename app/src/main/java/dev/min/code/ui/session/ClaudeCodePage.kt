@@ -1539,8 +1539,9 @@ private fun SubagentLine(task: ClaudeCodeManager.TaskInfo) {
     val meta = listOfNotNull(
         task.lastToolName,
         toolUsesLabel,
-        // token 数是机器产物，原样
-        task.totalTokens?.takeIf { it >= 1000 }?.let { "${it / 1000}k tok" },
+        // token 数是机器产物。和回执行同一个口径（formatTokens 有一位小数），
+        // 1500 tok 曾在这里被整数除法截成 "1k tok"
+        task.totalTokens?.takeIf { it > 0 }?.let { formatTokens(it) },
     ).joinToString(" · ")
     val azure = MaterialTheme.sea.sea
     Row(
