@@ -63,7 +63,7 @@ class CodexAppServerManager(
         val writableRoots: List<String> = listOf(DEFAULT_CWD),
         /** 关掉的话 guest 里 npm / pip 全部失败，而失败信息只会写在命令输出里 */
         val networkAccess: Boolean = true,
-        val approvalPolicy: CodexApprovalPolicy = CodexApprovalPolicy.UNLESS_TRUSTED,
+        val approvalPolicy: CodexApprovalPolicy = CodexApprovalPolicy.ON_REQUEST,
     )
 
     data class State(
@@ -482,12 +482,18 @@ class CodexAppServerManager(
         }
     }
 
+    /**
+     * 会话失败：状态**和进程一起**收掉。
+     *
+     * 以前这里只改 status。真机上的后果是：握手失败（配置非法、认证过期）之后界面显示
+     * "failed"，而 proot → bash → node → codex 四层进程一个不少地留在进程表里，
+     * 端口和内存都还占着，再点一次启动又叠一套上去。状态和事实必须一致。
+     *
+     * [killAsync] 只是往 IO 上扔一个任务，不阻塞，所以持锁调用是安全的。
+     */
     private fun failLocked(message: String) {
-        _state.value = _state.value.copy(
-            status = SessionStatus.Failed,
-            busy = false,
-            errorMessage = message,
-        )
+        val doomed = detachLocked(failed = true, message = message)
+        doomed?.let { killAsync(it) }
     }
 
     private fun writeLineLocked(line: String): Boolean = runCatching {

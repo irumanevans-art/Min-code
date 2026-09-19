@@ -204,6 +204,42 @@ class CodexAppServerManagerTest {
         manager.close()
     }
 
+    /**
+     * 回归：握手失败以前只改状态，进程原地不动。
+     *
+     * 真机上的样子是界面写着 failed，而 proot → bash → node → codex 四层一个不少地
+     * 留在进程表里，端口和内存都占着，再点一次启动又叠一套上去。状态和事实必须一致。
+     */
+    @Test
+    fun `a failed handshake destroys the process too`() = runBlocking {
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","error":{"message":"invalid configuration"}}"""),
+        )
+        val manager = CodexAppServerManager { process }
+
+        manager.start()
+        await { manager.state.value.status == SessionStatus.Failed }
+        assertEquals("invalid configuration", manager.state.value.errorMessage)
+        // 状态说失败，进程就得真的没了
+        await { process.destroyed }
+        manager.close()
+    }
+
+    /** thread/start 回错同样要收进程，不能只留一行红字 */
+    @Test
+    fun `a failed thread start destroys the process too`() = runBlocking {
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf("""{"id":"2","error":{"message":"no such cwd"}}"""),
+        )
+        val manager = CodexAppServerManager { process }
+
+        manager.start()
+        await { manager.state.value.status == SessionStatus.Failed }
+        await { process.destroyed }
+        manager.close()
+    }
+
     /** 启动失败要落到 Failed 并带上原因，而不是无声无息停在 Starting */
     @Test
     fun `a launcher that throws fails the session with a reason`() {

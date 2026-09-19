@@ -316,6 +316,10 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onRenameSession = vm::renameSession,
             onSetCategory = vm::setSessionCategory,
             categories = vm.sessionCategories(),
+            onOpenCodex = {
+                afterSidebarNav()
+                navController.navigate(Screen.Codex)
+            },
             onOpenFiles = {
                 afterSidebarNav()
                 navController.navigate(Screen.Files())
@@ -992,7 +996,7 @@ private fun SessionContent(
                     Box(itemMod) {
                         when (block) {
                             is TranscriptBlock.Single ->
-                                TranscriptItem(block.item, isFirst, isLast, vm)
+                                TranscriptItem(block.item, isFirst, isLast, onRevert = { vm.revertToolCall(it) })
 
                             is TranscriptBlock.Work -> {
                                 // 默认只有"最后一块 + 还在跑"才展开：那时候"它现在在干什么"
@@ -1014,7 +1018,7 @@ private fun SessionContent(
                                                 isFirst = isFirst && i == 0,
                                                 // 展开时块尾还挂着一条"收起"，轨道不能在这里断
                                                 isLast = false,
-                                                vm = vm,
+                                                onRevert = { vm.revertToolCall(it) },
                                             )
                                         }
                                         CollapseWorkFooter(
@@ -1244,13 +1248,19 @@ private fun SessionContent(
     }
 }
 
-/** 一条会话记录按类型分派到各自的渲染器。折叠块展开后走的也是这里，两边一模一样 */
+/**
+ * 一条会话记录按类型分派到各自的渲染器。折叠块展开后走的也是这里，两边一模一样。
+ *
+ * [onRevert] 收的是 `toolUseId`。这里不直接吃 ViewModel，是因为 Codex 的会话页
+ * 复用的就是这个分发器 —— 撤销是 Claude 侧的快照功能，Codex 传 null 即可，
+ * 而不必为此另起一套一模一样的 when。
+ */
 @Composable
-private fun TranscriptItem(
+internal fun TranscriptItem(
     item: ChatItem,
     isFirst: Boolean,
     isLast: Boolean,
-    vm: ClaudeCodeVM,
+    onRevert: ((String) -> Unit)? = null,
 ) {
     when (item) {
         is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued)
@@ -1270,8 +1280,8 @@ private fun TranscriptItem(
             isLast = isLast,
             // 只有编辑类工具才有快照。这里按工具名过滤而不是去问磁盘：
             // 展开一条就发一次 IO 查询，滑动列表时会打出一串无谓的读盘。
-            onRevert = if (item.name in CHECKPOINT_TOOLS) {
-                { vm.revertToolCall(item.toolUseId) }
+            onRevert = if (onRevert != null && item.name in CHECKPOINT_TOOLS) {
+                { onRevert(item.toolUseId) }
             } else null,
         )
     }

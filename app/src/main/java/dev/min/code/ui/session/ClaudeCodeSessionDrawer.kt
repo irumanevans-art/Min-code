@@ -72,6 +72,7 @@ import java.util.Date
 import java.util.Locale
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Bookmark02
+import me.rerere.hugeicons.stroke.AiBrain01
 import me.rerere.hugeicons.stroke.ComputerTerminal01
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete02
@@ -113,6 +114,7 @@ fun ClaudeCodeSessionDrawer(
     onSetCategory: (String, String?) -> Unit = { _, _ -> },
     categories: List<String> = emptyList(),
     onOpenFiles: () -> Unit = {},
+    onOpenCodex: () -> Unit = {},
     onOpenTerminal: () -> Unit = {},
     onOpenRuntime: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
@@ -239,6 +241,9 @@ fun ClaudeCodeSessionDrawer(
             // 手机上逐段拖选很难受，而 SelectionContainer 已经占掉了长按手势，
             // 没法再给每条挂一个"复制本条"。整段导出放在这里作为兜底。
             onCopyTranscript?.let { ActionRow(HugeIcons.Copy01, stringResource(R.string.session_copy_transcript), it) }
+            // 另一个引擎，和工作区、终端一样是"换个地方干活"，不是一条设置项 ——
+            // 埋在设置页里的话，想用 Codex 的人得先想到去翻设置
+            ActionRow(HugeIcons.AiBrain01, stringResource(R.string.codex_title), onOpenCodex)
             ActionRow(HugeIcons.Folder01, stringResource(R.string.session_drawer_files), onOpenFiles)
             ActionRow(HugeIcons.ComputerTerminal01, stringResource(R.string.session_terminal), onOpenTerminal)
             ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)

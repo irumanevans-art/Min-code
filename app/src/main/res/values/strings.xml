@@ -72,6 +72,17 @@
   <string name="codex_api_key">API key</string>
   <string name="codex_base_url">Responses base URL</string>
   <string name="codex_save_connection">Save connection</string>
+  <string name="codex_status_idle">not started</string>
+  <string name="codex_status_starting">starting</string>
+  <string name="codex_status_running">running</string>
+  <string name="codex_status_closed">stopped</string>
+  <string name="codex_status_failed">failed</string>
+  <string name="codex_composer_hint">Ask Codex</string>
+  <string name="codex_empty">Codex is running. Ask it something.</string>
+  <string name="codex_connection_open">Connection settings</string>
+  <string name="codex_approve_session">Allow for this session</string>
+  <string name="codex_approval_cwd">Working directory: %1$s</string>
+  <string name="codex_restart">Start a new session</string>
 
   <string name="session_list_title">Sessions</string>
   <string name="session_list_search">Search title or transcript</string>

@@ -80,15 +80,24 @@ class CodexRuntime(
             CodexAuthMode.RELAY -> {
                 config.parentFile?.mkdirs()
                 val base = profile.baseUrl.trimEnd('/').replace("\\", "\\\\").replace("\"", "\\\"")
-                config.writeText("model_provider = \"relay\"\n\n[model_providers.relay]\nname = \"relay\"\nbase_url = \"$base\"\nwire_api = \"responses\"\nenv_key = \"OPENAI_API_KEY\"\n")
+                config.writeText(
+                    "model_provider = \"$RELAY_PROVIDER_ID\"\n\n" +
+                        "[model_providers.$RELAY_PROVIDER_ID]\n" +
+                        "name = \"Min relay\"\n" +
+                        "base_url = \"$base\"\n" +
+                        "wire_api = \"responses\"\n" +
+                        "env_key = \"OPENAI_API_KEY\"\n",
+                )
             }
-            CodexAuthMode.OPENAI_API_KEY -> {
-                config.parentFile?.mkdirs()
-                config.writeText("model_provider = \"openai\"\n\n[model_providers.openai]\nname = \"openai\"\nbase_url = \"https://api.openai.com/v1\"\nwire_api = \"responses\"\nenv_key = \"OPENAI_API_KEY\"\n")
-            }
-            CodexAuthMode.CLI, null -> config.delete()
-            // The CLI profile owns its auth/config. Remove the generated routing file so a
-            // previous relay selection cannot silently redirect official login mode.
+
+            // 官方 API 不需要任何配置：`openai` 是 Codex 的**内置 provider**，
+            // 写 `[model_providers.openai]` 会被它当成企图覆盖内置项，直接报
+            // "contains reserved built-in provider IDs: `openai`" 然后退回默认。
+            // 认证只靠环境变量里的 OPENAI_API_KEY，见 runtimeEnv。
+            //
+            // CLI 模式同样删掉：那份配置归官方登录自己管，留着上一次选的中转
+            // 会让「官方登录」偷偷走别人的地址。
+            CodexAuthMode.OPENAI_API_KEY, CodexAuthMode.CLI, null -> config.delete()
         }
     }
 
@@ -153,5 +162,11 @@ class CodexRuntime(
 
     companion object {
         const val CODEX_BIN = "/opt/codex/bin/codex"
+
+        /**
+         * 中转 provider 在 config.toml 里的 id。**不能叫 `openai`** —— 那是 Codex 的
+         * 内置 id，用了会被判成覆盖内置项。带前缀的自定义名才安全。
+         */
+        const val RELAY_PROVIDER_ID = "min_relay"
     }
 }

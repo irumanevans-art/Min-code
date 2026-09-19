@@ -161,9 +161,24 @@ enum class CodexSandbox(val wire: String) {
     DANGER_FULL_ACCESS("dangerFullAccess"),
 }
 
-/** 什么时候需要人点头。`never` 等于全自动，风险自负。 */
+/**
+ * 什么时候需要人点头。`never` 等于全自动，风险自负。
+ *
+ * 取值是 **kebab-case**，而且是从真实 CLI 的报错里抄回来的，不是从文档：
+ * 官方文档上写的 `unlessTrusted` 会被 codex-cli 0.155.1 当场拒掉，原话是
+ * `unknown variant "unlessTrusted", expected one of "untrusted", "on-request",
+ * "granular", "never"`。文档和二进制对不上时以二进制为准。
+ */
 enum class CodexApprovalPolicy(val wire: String) {
-    UNLESS_TRUSTED("unlessTrusted"),
+    /** 只有它判定为「不可信」的命令才问 */
+    UNTRUSTED("untrusted"),
+
+    /** 模型自己觉得该问的时候问。手机上的默认：既不会一直弹，也不会闷头乱跑 */
+    ON_REQUEST("on-request"),
+
+    /** 逐项细分 */
+    GRANULAR("granular"),
+
     NEVER("never"),
 }
 
