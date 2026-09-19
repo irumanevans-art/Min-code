@@ -1,5 +1,6 @@
 package dev.min.code.ui.codex
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +66,8 @@ import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.session.RenameDialog
+import dev.min.code.ui.session.SeaSendKey
+import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
 import me.rerere.hugeicons.HugeIcons
@@ -76,6 +79,7 @@ import me.rerere.hugeicons.stroke.MoreHorizontal
 import me.rerere.hugeicons.stroke.Pin
 import me.rerere.hugeicons.stroke.PinOff
 import me.rerere.hugeicons.stroke.Settings02
+import me.rerere.hugeicons.stroke.Stop
 import org.koin.androidx.compose.koinViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -170,6 +174,7 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
                     busy = session.busy,
                     onDraftChange = vm::setDraft,
                     onSend = vm::send,
+                    onStop = vm::stop,
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             } else {
@@ -450,6 +455,9 @@ private fun CodexStartPane(
  *
  * 正文由 VM 持有并落盘（草稿）：切页、杀进程再回来都还在，
  * threadId 换了 VM 会自己换档，这里不保管状态。
+ *
+ * 发送键与停止键的摆法照抄 Claude 的胶囊（SeaSendKey + 并排停止）：
+ * 两个引擎在屏幕上要长一个样，差别只在谁在说话。
  */
 @Composable
 private fun CodexComposer(
@@ -458,6 +466,7 @@ private fun CodexComposer(
     busy: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: (String) -> Boolean,
+    onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     PaperCard(
@@ -480,12 +489,33 @@ private fun CodexComposer(
                 maxLines = 6,
                 modifier = Modifier.weight(1f),
             )
-            InkButton(
-                onClick = { if (onSend(draft)) onDraftChange("") },
-                enabled = enabled && draft.isNotBlank(),
-                busy = busy,
-                compact = true,
-            ) { Text(stringResource(R.string.codex_send)) }
+            // 停止键与发送键并排、负间距相叠——与 Claude 胶囊同一组：
+            // 它们是同一件事的两个方向。busy 时发送键睡着（Codex 不排队，
+            // 排队语义是 Claude 侧的另一个决定），停止键必须一按就到
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy((-6).dp),
+            ) {
+                AnimatedVisibility(
+                    visible = busy,
+                    enter = InkMotion.expand,
+                    exit = InkMotion.collapse,
+                ) {
+                    InkIconButton(
+                        icon = HugeIcons.Stop,
+                        contentDescription = stringResource(R.string.composer_interrupt),
+                        onClick = onStop,
+                        tint = MaterialTheme.sea.vermilion,
+                        size = 32.dp,
+                        iconSize = 16.dp,
+                    )
+                }
+                SeaSendKey(
+                    enabled = enabled && draft.isNotBlank(),
+                    queued = false,
+                    onClick = { if (onSend(draft)) onDraftChange("") },
+                )
+            }
         }
     }
 }
@@ -557,10 +587,22 @@ private fun CodexApprovalSheet(
                 )
             }
 
-            InkButton(
-                onClick = { if (!onAnswer(CodexDecision.ACCEPT)) rejected = true },
+            // 按钮排布对齐 Claude 的权限面板：拒绝是判定（朱砂）在左，允许是主动作在右，
+            // 各占一半；acceptForSession 不是二选一里的项，单独一行垫底
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(R.string.codex_approve)) }
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                InkButton(
+                    onClick = { if (!onAnswer(CodexDecision.DECLINE)) rejected = true },
+                    tone = InkButtonTone.Vermilion,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.codex_deny)) }
+                InkButton(
+                    onClick = { if (!onAnswer(CodexDecision.ACCEPT)) rejected = true },
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.codex_approve)) }
+            }
 
             if (allowsSession) {
                 InkButton(
@@ -569,12 +611,6 @@ private fun CodexApprovalSheet(
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.codex_approve_session)) }
             }
-
-            InkButton(
-                onClick = { if (!onAnswer(CodexDecision.DECLINE)) rejected = true },
-                tone = InkButtonTone.Vermilion,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(R.string.codex_deny)) }
         }
     }
 }
