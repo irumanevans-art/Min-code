@@ -995,3 +995,49 @@ IO 全部可注入的设计让纯逻辑可单测，**但也让单测测不到"�
 ### Resolution
 - **Resolved**: 2026-09-19T10:45:00+08:00
 - **Notes**: 模拟器上 401 文本一路变到 `Incorrect API key provided: sk-proj-****test`，整条链路确认打通。
+
+
+## [LRN-20260919-CODEX-REQUESTID-UNTAGGED] correction
+
+**Logged**: 2026-09-19T18:30:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: codex
+
+### Summary
+codex app-server 的请求 id 在 Rust 侧是 `#[serde(untagged)]` 枚举 `RequestId`，审批请求发来的是 `Integer(42)`。Min 把 id 统一成 String 存、应答时原样当字符串写回 `{"id":"42"}` —— untagged 枚举下 `String("42")` 与 `Integer(42)` 的相等和哈希都不同，服务端回调表查不中，只打一行 "could not find callback"，这一轮永远停在等审批。更糟的是协议单测把这个错误行为固化成了断言（收到数字 42、requestId 记成 "42"），看起来还在"保护契约"。
+
+### Details
+- 定位链：协议层 `idString()` 把 JsonPrimitive 归一化成字符串（注释写着"统一成字符串认领"）→ `ApprovalRequest.requestId: String` → `encodeCodexApprovalResponse` `put("id", requestId)` 字符串回写。三步各自看都无辜，连起来才断。
+- 修法：`CodexEvent.Response` / `ApprovalRequest` 保留原始 `JsonPrimitive`（rawId / rawRequestId），应答时把原始形态放回去，整数回整数；`requestId: String` 只留作匹配/显示。协议测试改为断言 raw 形态回传，另加一个 ScriptedProcess 管理器测试直接看线上字节（`"id":42` 而不是 `"id":"42"`）。
+- 我方自发的请求 id 用字符串没问题：服务端回显的是我们发的形态，String round-trip 是保真的；断的只有「服务端发起的请求」这一方向。
+
+### Suggested Action
+线协议里的 id / 句柄类字段，客户端**只读不重建**：要么整段 JsonPrimitive 保留、应答原样放回；「统一成一种类型」只在字段从不回流时才安全。写协议测试前先确认钉住的行为和服务端二进制一致——把错误行为固化成断言的测试是负资产；核实一个 bug 时先查有没有测试在保错。
+
+### Metadata
+- Source: user_feedback（用户在 codex 源码 outgoing_message.rs 核实）
+- Related Files: CodexAppServerProtocol.kt, CodexAppServerManager.kt, CodexAppServerProtocolTest.kt, CodexAppServerManagerTest.kt
+- Tags: codex, json-rpc, untagged-enum, id-roundtrip, test-pins-bug
+
+
+## [LRN-20260919-SNAPSHOTFLOW-STALE-PARAM] correction
+
+**Logged**: 2026-09-19T18:30:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+`LaunchedEffect(key)` 里用 `snapshotFlow` 读一个**普通参数**（非 State 的 data class），永远只读到首次组合捕获的那份闭包——协程不重启、快照读不到新值、 lambda 一次也不发射。表现是「新内容自动跟滚」从头到尾是死的，编译期毫无征兆。
+
+### Details
+CodexTranscript 写的是 `LaunchedEffect(listState) { snapshotFlow { session.items.size to session.streamingText.length } … }`：listState 稳定所以 effect 从不重启，session 是普通参数、重组换了新对象后协程里持有的还是旧的。修法是 `rememberUpdatedState(session)` 转一手，snapshotFlow 读 `latest.value`——rememberUpdatedState 的 MutableState 每次重组被写入，快照随之重算。对照组：Claude 侧 transcript 没有自动跟滚逻辑，所以这个坑一直没暴露；它只在 Codex 侧新增代码里出现。
+
+### Suggested Action
+snapshotFlow 的 lambda 里只准读 State / snapshot state；review 时看到读普通参数直接判死。给 Composable 写「响应某参数变化」的效应前，先问那个值是不是 State——不是就 rememberUpdatedState，或把参数本身放进 LaunchedEffect 的 key（参数是等价 data class 时用前者，避免整条效应重启）。
+
+### Metadata
+- Source: code_review（子智能体发现 + 用户报告互相印证）
+- Related Files: CodexTranscript.kt
+- Tags: compose, snapshotflow, stale-closure, launchedeffect
