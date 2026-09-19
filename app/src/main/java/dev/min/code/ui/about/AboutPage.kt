@@ -35,6 +35,7 @@ import dev.min.code.ui.components.InkTopBar
 import dev.min.code.ui.components.PaperCard
 import dev.min.code.ui.components.PaperTone
 import dev.min.code.ui.components.SectionTitle
+import dev.min.code.ui.richtext.MarkdownBlock
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.util.writeClipboardText
@@ -317,10 +318,12 @@ fun AboutPage() {
                                                             exit = InkMotion.collapse,
                                                         ) {
                                                             SelectionContainer {
-                                                                Text(
-                                                                    entry.body,
-                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                    fontFamily = JetbrainsMono,
+                                                                // 正文是 Markdown 写的：以前按纯文本画，`**加粗**` 的星号
+                                                                // 和 `- ` 的减号原样显示在屏幕上。这是给人读的话，
+                                                                // 不是机器产物，所以也不该是等宽——版本号那行才是。
+                                                                MarkdownBlock(
+                                                                    content = entry.body,
+                                                                    style = MaterialTheme.typography.bodySmall,
                                                                     modifier = Modifier.padding(
                                                                         start = 12.dp,
                                                                         end = 12.dp,
