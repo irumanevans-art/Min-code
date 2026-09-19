@@ -107,6 +107,12 @@ internal fun decodeSessionMetaIndex(raw: String): Map<String, SessionMeta> =
         .getOrDefault(emptyMap())
 
 data class SessionGroup(
+    /**
+     * 结构性身份，给 LazyColumn 当 key 用。**绝不能从 [header] 派生**：
+     * 用户可以建出叫「置顶」「未分类」的分类，撞上内置组头就是重复 key，
+     * 列表直接崩（IllegalArgumentException: duplicate key）。
+     */
+    val key: String,
     val header: String?,
     val items: List<String>,
 )
@@ -126,15 +132,15 @@ fun groupSessionIds(
     val restIdx = ids.indices.filter { !pinned.getOrElse(it) { false } }
     val cats = restIdx.mapNotNull { category.getOrNull(it)?.takeIf(String::isNotBlank) }.distinct()
     val groups = ArrayList<SessionGroup>()
-    if (pinIds.isNotEmpty()) groups += SessionGroup("置顶", pinIds)
+    if (pinIds.isNotEmpty()) groups += SessionGroup("pinned", "置顶", pinIds)
     for (cat in cats) {
         val inCat = restIdx.filter { category.getOrNull(it) == cat }.map { ids[it] }
-        if (inCat.isNotEmpty()) groups += SessionGroup(cat, inCat)
+        if (inCat.isNotEmpty()) groups += SessionGroup("cat:$cat", cat, inCat)
     }
     val uncat = restIdx.filter { category.getOrNull(it).isNullOrBlank() }.map { ids[it] }
     if (uncat.isNotEmpty()) {
         val header = if (groups.isEmpty()) null else "未分类"
-        groups += SessionGroup(header, uncat)
+        groups += SessionGroup("uncategorized", header, uncat)
     }
     return groups
 }

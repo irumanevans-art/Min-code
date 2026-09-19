@@ -43,4 +43,27 @@ class ClaudeCodeSessionMetaTest {
         assertNull(groups.single().header)
         assertEquals(listOf("a", "b"), groups.single().items)
     }
+
+    /**
+     * 回归：组的 LazyColumn key 曾经从显示文案派生（"h-置顶"）。用户自建一个叫
+     * 「置顶」或「未分类」的分类时，两个组的 key 撞车，列表直接崩。身份必须是
+     * 结构性的，显示文案重名无所谓。
+     */
+    @Test
+    fun `a category named like a built-in header gets its own group key`() {
+        val ids = listOf("p", "a", "b", "u")
+        val pinned = listOf(true, false, false, false)
+        val category = listOf(null, "置顶", "未分类", null)
+        val groups = groupSessionIds(ids, pinned, category)
+
+        assertEquals(
+            listOf("置顶", "置顶", "未分类", "未分类"),
+            groups.map { it.header },
+        )
+        assertEquals(
+            listOf("pinned", "cat:置顶", "cat:未分类", "uncategorized"),
+            groups.map { it.key },
+        )
+        assertEquals(groups.size, groups.map { it.key }.distinct().size)
+    }
 }

@@ -212,7 +212,9 @@ fun ClaudeCodeSessionDrawer(
                 LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
                     groups.forEach { group ->
                         if (group.header != null) {
-                            item(key = "h-${group.header}") {
+                            // key 用组的结构性身份：用户分类可以和内置组头重名，
+                            // 从显示文案派生 key 会撞成 duplicate key 崩掉列表
+                            item(key = "h-${group.key}") {
                                 Text(
                                     group.header,
                                     style = MaterialTheme.typography.labelSmall,
