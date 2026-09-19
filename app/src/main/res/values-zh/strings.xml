@@ -91,6 +91,9 @@
   <string name="codex_sessions">会话</string>
   <string name="codex_sessions_empty">还没有 Codex 会话</string>
   <string name="codex_session_untitled">（没有消息）</string>
+  <string name="codex_session_delete_title">删除 Codex 会话？</string>
+  <string name="codex_session_delete_body">将删除会话 %1$s 的记录文件，此操作无法撤销。</string>
+  <string name="codex_session_pinned">已置顶</string>
 
   <string name="session_list_title">会话</string>
   <string name="session_list_search">搜标题或正文</string>

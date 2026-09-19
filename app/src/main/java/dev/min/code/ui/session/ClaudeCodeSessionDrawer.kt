@@ -518,7 +518,7 @@ private fun SessionRow(
 }
 
 @Composable
-private fun RenameDialog(
+internal fun RenameDialog(
     current: String,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,

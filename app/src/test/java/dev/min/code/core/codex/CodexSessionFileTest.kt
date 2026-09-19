@@ -156,4 +156,44 @@ class CodexSessionFileTest {
         assertEquals("第 15 条", (items.first() as ChatItem.UserText).text)
         assertEquals("第 19 条", (items.last() as ChatItem.UserText).text)
     }
+
+    /**
+     * 列表排序：置顶的压在最前，组内仍按修改时间倒序。
+     * 置顶标记来自 App 侧元数据，与文件的修改时间无关。
+     */
+    @Test
+    fun `pinned sessions sort ahead of newer unpinned ones`() {
+        val older = summaryOf("old-thread", updatedAt = 1_000_000)
+        val newer = summaryOf("new-thread", updatedAt = 2_000_000)
+
+        val sorted = sortCodexSessions(listOf(older, newer), pinnedIds = setOf("old-thread"))
+
+        assertEquals(listOf("old-thread", "new-thread"), sorted.map { it.threadId })
+        assertEquals(
+            listOf("new-thread", "old-thread"),
+            sortCodexSessions(listOf(older, newer), emptySet()).map { it.threadId },
+        )
+    }
+
+    /** 删除就是删文件：返回 true 且文件真的不在了；再删一次是 false */
+    @Test
+    fun `deleting a session removes the rollout file`() {
+        val file = rollout(sessionMeta, userMessage("会消失"))
+
+        assertTrue(deleteCodexSession(file))
+        assertTrue(!file.exists())
+        assertTrue(!deleteCodexSession(file))
+    }
+
+    private fun summaryOf(threadId: String, updatedAt: Long): CodexSessionSummary {
+        val dir = temp.newFolder("sorted", threadId)
+        val file = File(dir, "rollout-2026-09-19T00-00-00-$threadId.jsonl").apply { writeText("") }
+        return CodexSessionSummary(
+            threadId = threadId,
+            file = file,
+            cwd = null,
+            updatedAt = updatedAt,
+            preview = null,
+        )
+    }
 }

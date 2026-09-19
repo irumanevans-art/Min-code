@@ -91,6 +91,9 @@
   <string name="codex_sessions">Sessions</string>
   <string name="codex_sessions_empty">No Codex sessions yet</string>
   <string name="codex_session_untitled">(no message)</string>
+  <string name="codex_session_delete_title">Delete Codex session?</string>
+  <string name="codex_session_delete_body">The transcript of %1$s will be deleted. This cannot be undone.</string>
+  <string name="codex_session_pinned">Pinned</string>
 
   <string name="session_list_title">Sessions</string>
   <string name="session_list_search">Search title or transcript</string>

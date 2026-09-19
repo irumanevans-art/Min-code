@@ -26,6 +26,7 @@ import me.rerere.workspace.RootfsInstaller
 import me.rerere.workspace.WorkspaceManager
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.androidx.viewmodel.dsl.viewModelOf
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import java.io.File
 
@@ -75,6 +76,11 @@ val appModule = module {
     single { ComposerDraftStore(get<android.content.Context>()) }
     // 置顶 / 分类 / 人手改过的标题。CLI transcript 里没有这些
     single { ClaudeCodeSessionMetaStore(get<android.content.Context>()) }
+    // Codex 的会话元数据与 Claude 同构（置顶 / 改名），threadId 当 key，各存各的文件。
+    // 复用同一个 store 类，用 qualifier 区分 —— 两个引擎的元数据互不掺杂
+    single(named("codex")) {
+        ClaudeCodeSessionMetaStore(java.io.File(get<android.content.Context>().filesDir, "codex-session-meta.json"))
+    }
     // 单日花费台账必须是 single：它要横跨所有会话累加，每个会话一份就退化成会话内计数
     single { ClaudeCodeCostLedger(get()) }
     // 多会话：manager 是 factory，每个会话一个实例（各自一个 CLI 进程），由 registry 持有
@@ -107,7 +113,15 @@ val appModule = module {
     single { WorkspaceTerminalSessionManager(get(), get()) }
 
     viewModelOf(::ClaudeCodeVM)
-    viewModelOf(::CodexVM)
+    viewModel {
+        CodexVM(
+            runtime = get(),
+            manager = get(),
+            settingsStore = get(),
+            // 上面 named("codex") 那份；不带 qualifier 会撞上 Claude 的那份
+            metaStore = get(named("codex")),
+        )
+    }
     viewModelOf(::SetupVM)
     viewModelOf(::SettingsVM)
     viewModel { WorkspaceDetailVM(id = it.get<String>(), repository = get(), terminalSessionManager = get()) }

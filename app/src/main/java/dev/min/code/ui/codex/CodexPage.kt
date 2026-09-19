@@ -12,11 +12,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SheetValue
@@ -35,14 +39,17 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.R
+import dev.min.code.core.claudecode.SessionMeta
 import dev.min.code.core.codex.CodexDecision
 import dev.min.code.core.codex.CodexEvent
+import dev.min.code.core.codex.CodexSessionSummary
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkIconButton
+import dev.min.code.ui.components.InkMenuItem
 import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
@@ -50,11 +57,20 @@ import dev.min.code.ui.components.InkTopBar
 import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.PaperCard
+import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.session.RenameDialog
 import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.sea
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Bookmark02
+import me.rerere.hugeicons.stroke.Delete02
+import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
+import me.rerere.hugeicons.stroke.MoreHorizontal
+import me.rerere.hugeicons.stroke.Pin
+import me.rerere.hugeicons.stroke.PinOff
 import me.rerere.hugeicons.stroke.Settings02
 import org.koin.androidx.compose.koinViewModel
 import java.text.SimpleDateFormat
@@ -76,6 +92,7 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
     var showConnection by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
     val sessions by vm.sessions.collectAsStateWithLifecycle()
+    val sessionMetas by vm.sessionMetas.collectAsStateWithLifecycle()
 
     // 有历史就一直显示会话流 —— 会话停掉之后把读过的内容抹掉，
     // 等于每次停止都清一次屏
@@ -174,10 +191,14 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
     if (showSessions) {
         CodexSessionSheet(
             sessions = sessions,
+            metas = sessionMetas,
             onPick = {
                 vm.openSession(it)
                 showSessions = false
             },
+            onPin = { summary, pinned -> vm.pinSession(summary.threadId, pinned) },
+            onRename = { summary, title -> vm.renameSession(summary.threadId, title) },
+            onDelete = { vm.deleteSession(it) },
             onDismiss = { showSessions = false },
         )
     }
@@ -192,14 +213,24 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
  * 只要 rootfs 还在，聊过的东西就都还在。
  *
  * 点一条**只是把它摆出来**，不自动接上 —— 翻看和继续跑是两件事。
+ *
+ * 行尾菜单给 置顶 / 改名 / 删除。标题和置顶来自 App 侧元数据（[metas]，
+ * Claude 抽屉同一套 store，threadId 当 key）；删除连 rollout 文件一起走 ——
+ * 历史的事实来源是文件，删了就是没了，所以先过确认框。
  */
 @Composable
 private fun CodexSessionSheet(
-    sessions: List<dev.min.code.core.codex.CodexSessionSummary>,
-    onPick: (dev.min.code.core.codex.CodexSessionSummary) -> Unit,
+    sessions: List<CodexSessionSummary>,
+    metas: Map<String, SessionMeta>,
+    onPick: (CodexSessionSummary) -> Unit,
+    onPin: (CodexSessionSummary, Boolean) -> Unit,
+    onRename: (CodexSessionSummary, String) -> Unit,
+    onDelete: (CodexSessionSummary) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val stamp = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
+    var pendingRename by remember { mutableStateOf<CodexSessionSummary?>(null) }
+    var pendingDelete by remember { mutableStateOf<CodexSessionSummary?>(null) }
     InkSheet(onDismissRequest = onDismiss) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 32.dp),
@@ -221,27 +252,113 @@ private fun CodexSessionSheet(
             // 一屏放不下就滚，但别把整个 sheet 撑满屏幕
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
                 items(sessions, key = { it.threadId }) { summary ->
+                    val meta = metas[summary.threadId]
+                    val menuOpen = remember(summary.threadId) { mutableStateOf(false) }
                     Column(
                         Modifier
                             .fillMaxWidth()
                             .clickable { onPick(summary) }
                             .padding(vertical = 10.dp),
                     ) {
-                        Text(
-                            summary.preview ?: stringResource(R.string.codex_session_untitled),
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            stamp.format(Date(summary.updatedAt)),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetbrainsMono,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Row(verticalAlignment = Alignment.Top) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    meta?.title
+                                        ?: summary.preview
+                                        ?: stringResource(R.string.codex_session_untitled),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (meta?.pinned == true) {
+                                        // 和 Claude 抽屉同一个角标：右上角一枚小书签
+                                        Icon(
+                                            HugeIcons.Bookmark02,
+                                            contentDescription =
+                                                stringResource(R.string.codex_session_pinned),
+                                            tint = MaterialTheme.sea.seaDeep.copy(alpha = 0.55f),
+                                            modifier = Modifier.size(10.dp),
+                                        )
+                                    }
+                                    Text(
+                                        stamp.format(Date(summary.updatedAt)),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = JetbrainsMono,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            Box {
+                                InkIconButton(
+                                    icon = HugeIcons.MoreHorizontal,
+                                    contentDescription = stringResource(R.string.session_row_actions),
+                                    onClick = { menuOpen.value = true },
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    size = 32.dp,
+                                    iconSize = 14.dp,
+                                )
+                                DropdownMenu(
+                                    expanded = menuOpen.value,
+                                    onDismissRequest = { menuOpen.value = false },
+                                    shape = RoundedCornerShape(12.dp),
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                                ) {
+                                    val pinned = meta?.pinned == true
+                                    InkMenuItem(
+                                        stringResource(
+                                            if (pinned) R.string.session_unpin else R.string.session_pin,
+                                        ),
+                                        icon = if (pinned) HugeIcons.PinOff else HugeIcons.Pin,
+                                        onClick = { menuOpen.value = false; onPin(summary, !pinned) },
+                                    )
+                                    InkMenuItem(
+                                        stringResource(R.string.common_rename),
+                                        icon = HugeIcons.Edit02,
+                                        onClick = { menuOpen.value = false; pendingRename = summary },
+                                    )
+                                    InkMenuItem(
+                                        stringResource(R.string.common_delete),
+                                        icon = HugeIcons.Delete02,
+                                        tint = MaterialTheme.sea.vermilion,
+                                        onClick = { menuOpen.value = false; pendingDelete = summary },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    pendingRename?.let { target ->
+        RenameDialog(
+            current = metas[target.threadId]?.title ?: target.preview.orEmpty(),
+            onConfirm = {
+                onRename(target, it)
+                pendingRename = null
+            },
+            onDismiss = { pendingRename = null },
+        )
+    }
+    pendingDelete?.let { target ->
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.codex_session_delete_title),
+            confirmText = stringResource(R.string.common_delete),
+            dismissText = stringResource(R.string.common_cancel),
+            onConfirm = {
+                onDelete(target)
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        ) {
+            // 正文里的名字要和列表上显示的一致：改过名的用改名，而不是磁盘摘要
+            val displayName = metas[target.threadId]?.title
+                ?: target.preview
+                ?: stringResource(R.string.codex_session_untitled)
+            Text(stringResource(R.string.codex_session_delete_body, displayName))
         }
     }
 }

@@ -113,6 +113,26 @@ fun summarizeCodexSession(file: File, headLines: Int = SUMMARY_HEAD_LINES): Code
 }
 
 /**
+ * 删除一条会话的 rollout 文件。
+ *
+ * 历史的事实来源是文件（见类注释），删了就是没了 —— 调用方必须先过确认框。
+ * 会话目录里的空日期文件夹留着不扫：无害，且省得算清边界。
+ */
+fun deleteCodexSession(file: File): Boolean = file.delete()
+
+/**
+ * 会话列表的展示顺序：置顶的在前，两组内部各自按修改时间倒序。
+ * [pinnedIds] 从会话元数据（App 侧存的置顶标记）来；纯函数，单测钉得住。
+ */
+fun sortCodexSessions(
+    sessions: List<CodexSessionSummary>,
+    pinnedIds: Set<String>,
+): List<CodexSessionSummary> = sessions.sortedWith(
+    compareByDescending<CodexSessionSummary> { it.threadId in pinnedIds }
+        .thenByDescending { it.updatedAt },
+)
+
+/**
  * 把一个 rollout 文件回放成聊天条目。
  *
  * [maxItems] 是保险丝：一个长会话能攒出上万条，全塞进 LazyColumn 只会让回到页面时卡住。

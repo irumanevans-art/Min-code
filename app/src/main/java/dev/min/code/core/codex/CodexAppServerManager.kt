@@ -183,6 +183,19 @@ class CodexAppServerManager(
         true
     }
 
+    /**
+     * 指定 thread 的**只读回放**还摆在屏幕上、且没有进程在跑时，把它摘掉。
+     * 会话删除用：文件已经没了，屏幕不能再摆着一份幽灵历史。
+     * 跑着的（Running/Starting）不动 —— 那份状态是实时的，删除路径会先 stop。
+     */
+    fun clearIfIdle(threadId: String): Boolean = synchronized(lock) {
+        val current = _state.value
+        if (current.threadId != threadId) return false
+        if (current.status == SessionStatus.Running || current.status == SessionStatus.Starting) return false
+        _state.value = State(status = SessionStatus.Idle)
+        true
+    }
+
     /** 发一轮。初始化没走完（还没有 threadId）之前一律返回 false。 */
     fun sendTurn(input: String): Boolean = synchronized(lock) {
         val current = _state.value

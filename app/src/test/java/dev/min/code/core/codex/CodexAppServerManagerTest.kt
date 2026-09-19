@@ -219,6 +219,32 @@ class CodexAppServerManagerTest {
         manager.close()
     }
 
+    /** clearIfIdle 只摘「已停且是对的那条 thread」的回放；跑着的和别的 thread 都不动 */
+    @Test
+    fun `clearIfIdle clears only the matching idle thread`() = runBlocking {
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf("""{"id":"2","result":{"threadId":"t"}}"""),
+        )
+        val manager = CodexAppServerManager { process }
+        manager.start()
+        await { manager.state.value.status == SessionStatus.Running }
+
+        // 别的 thread 不清
+        assertFalse(manager.clearIfIdle("other"))
+        assertEquals(SessionStatus.Running, manager.state.value.status)
+
+        // 自己的 thread 在跑也不清；停了才清
+        assertFalse(manager.clearIfIdle("t"))
+        manager.stop()
+        await { manager.state.value.status == SessionStatus.Closed }
+        assertTrue(manager.clearIfIdle("t"))
+        assertEquals(SessionStatus.Idle, manager.state.value.status)
+        assertTrue(manager.state.value.items.isEmpty())
+        assertNull(manager.state.value.threadId)
+        manager.close()
+    }
+
     /** stderr 是 app-server 唯一会说"我为什么起不来"的地方，不能只排干 */
     @Test
     fun `stderr lands in the transcript`() = runBlocking {
