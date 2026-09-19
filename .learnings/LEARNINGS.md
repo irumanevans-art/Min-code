@@ -936,3 +936,62 @@ IO 全部可注入的设计让纯逻辑可单测，**但也让单测测不到"�
 ### Resolution
 - **Resolved**: 2026-09-18T03:15:00+08:00
 - **Notes**: 返工后单测改为覆盖新机制（34 例），并以模拟器日志作为验收。
+
+
+## [LRN-20260919-DEBUG-SUFFIX-TWO-APPS] environment
+
+**Logged**: 2026-09-19T10:20:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+`debug` 变体带 `applicationIdSuffix = ".debug"`，所以设备上是**两个包两份数据**。在模拟器上验证时查了 `dev.min.code` 的数据目录、看了 `dev.min.code` 的界面，却装着 `dev.min.code.debug` 的包——于是「rootfs 是空的」「改动没进 APK」两个结论都是错的，白装了一遍 550M 的 rootfs。
+
+### Details
+- `adb install` 返回 Success、`dumpsys package dev.min.code` 的 `lastUpdateTime` 却不变，这个组合就是在说：你装的和你看的不是同一个包。
+- `run-as: package not debuggable: dev.min.code` 是同一件事的另一个说法——那是用户装的 release 包。
+- APK 里有没有自己的改动，可以直接验：`unzip -p app.apk resources.arsc | grep -ac <资源名>`，dex 用 `unzip -p app.apk classesN.dex | grep -ac <类名>`。注意 Git Bash 里**没有 `strings`**，用它得到的 0 是命令不存在，不是证据。
+- `adb push` 的目标路径会被 MSYS 当成 Windows 路径改写（`/data/local/tmp` → `C:/Program Files/Git/data/...`），要 `export MSYS_NO_PATHCONV=1`。
+
+### Suggested Action
+在模拟器上验证前先 `adb shell pm list packages | grep min.code` 看清有几个包，再用 `dev.min.code.debug/dev.min.code.MainActivity`（包名带后缀、Activity 类名不带）启动。查数据目录同理走 `.debug` 那份。
+
+### Metadata
+- Source: emulator_verification
+- Related Files: app/build.gradle.kts
+- Tags: android, adb, debug-variant, msys, verification
+
+### Resolution
+- **Resolved**: 2026-09-19T10:20:00+08:00
+- **Notes**: 认清之后 debug 包里本来就有 533M rootfs 和 CLI，用户说的「已装」一直是对的。
+
+
+## [LRN-20260919-CODEX-DOCS-VS-BINARY] correction
+
+**Logged**: 2026-09-19T10:45:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: codex
+
+### Summary
+接 Codex app-server 时，官方文档在三个地方和真实二进制（codex-cli 0.155.1）不一致，而且**每一处都不会在单测里暴露**——单测只能证明我们发出去的 JSON 长什么样，证明不了对面认不认。三处全靠把 stderr 接进会话流才看见。
+
+### Details
+- `approvalPolicy`：文档写 `unlessTrusted`，二进制回 `unknown variant "unlessTrusted", expected one of "untrusted", "on-request", "granular", "never"`。取值是 kebab-case。
+- `model_providers.openai`：`openai` 是保留的内置 provider id，写它会让**整个 config.toml 被拒**（"Built-in providers cannot be overridden"）然后静默退回默认。自定义 id 才行。
+- 内置 `openai` provider **不读 `OPENAI_API_KEY` 环境变量**，只读 `~/.codex/auth.json`，症状是 OpenAI 回 `401 Missing bearer`（请求根本没带 Authorization 头）。自定义 provider 的 `env_key` 才走环境变量。
+- 另外 rootfs 是最小集，**没有 `/etc/ssl/certs`**。node 把根证书编进了二进制所以 Claude Code 无感，Codex 是 Rust、走系统信任库，于是 `invalid peer certificate: UnknownIssuer`。Android 的 `AndroidCAStore` 导出来即可，不必 apt。
+
+### Suggested Action
+接外部 CLI 的线协议时，把它的 stderr 接进界面再动手——三个 bug 全是 stderr 直接报出来的，而它原来是被排干丢弃的。文档和二进制打架时以二进制为准，并把报错原文抄进注释，否则下一个人会照着文档改回去。
+判断链路通到哪一层，看错误怎么变：`UnknownIssuer`（TLS 没过）→ `401 Missing bearer`（TLS 过了、没带认证）→ `401 Incorrect API key`（认证送到了、key 是假的）。
+
+### Metadata
+- Source: emulator_verification
+- Related Files: CodexRuntime.kt, CodexAppServerProtocol.kt, CodexAppServerManager.kt
+- Tags: codex, app-server, docs-vs-reality, tls, stderr
+
+### Resolution
+- **Resolved**: 2026-09-19T10:45:00+08:00
+- **Notes**: 模拟器上 401 文本一路变到 `Incorrect API key provided: sk-proj-****test`，整条链路确认打通。
