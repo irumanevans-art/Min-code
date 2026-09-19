@@ -25,9 +25,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.min.code.R
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkCheckbox
@@ -110,7 +112,7 @@ internal fun ClaudeCodeMaintenanceSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Seal()
-                Text("环境与更新", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.session_drawer_maintenance), style = MaterialTheme.typography.titleMedium)
             }
 
             // --- 环境信息 ---
@@ -128,7 +130,7 @@ internal fun ClaudeCodeMaintenanceSheet(
                         label = "Claude Code",
                         value = when {
                             state.cliVersion == null -> placeholder(state.loading)
-                            state.cliIncomplete -> "${state.cliVersion}（不完整）"
+                            state.cliIncomplete -> stringResource(R.string.maint_cli_incomplete_version, state.cliVersion)
                             else -> state.cliVersion
                         },
                     )
@@ -137,16 +139,14 @@ internal fun ClaudeCodeMaintenanceSheet(
 
             if (state.cliIncomplete) {
                 Notice(
-                    text = "CLI 的 npm 包在，但原生二进制缺失（上次那个约 100 MB 的平台包没有下完），" +
-                        "会话启动会报 spawnSync … ENOENT。点下面「修复安装」补齐。",
+                    text = stringResource(R.string.maint_cli_incomplete_notice),
                     tone = NoticeTone.Error,
                 )
             }
 
             if (blocked) {
                 Notice(
-                    text = "有 $liveSessionCount 个会话正在运行。更新会替换掉正在执行的文件，" +
-                        "请先在侧边栏关闭全部会话。",
+                    text = stringResource(R.string.maint_blocked, liveSessionCount),
                     tone = NoticeTone.Error,
                 )
             }
@@ -154,8 +154,7 @@ internal fun ClaudeCodeMaintenanceSheet(
             // --- Claude Code CLI ---
             SectionTitle("Claude Code CLI", modifier = Modifier.padding(top = 4.dp))
             Text(
-                "官方 npm 包 @anthropic-ai/claude-code。安装时装的是 @latest，" +
-                    "但那之后不会自动跟进 —— 要新版本得在这里手动更新。",
+                stringResource(R.string.maint_cli_hint),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -172,7 +171,7 @@ internal fun ClaudeCodeMaintenanceSheet(
                     compact = true,
                     busy = state.checking,
                 ) {
-                    Text(if (state.checking) "查询中…" else "检查更新")
+                    Text(stringResource(if (state.checking) R.string.maint_checking else R.string.maint_check_update))
                 }
                 Text(
                     text = updateHint(state),
@@ -201,9 +200,9 @@ internal fun ClaudeCodeMaintenanceSheet(
                     enabled = actionable,
                 )
                 Column {
-                    Text("用淘宝 npm 源更新", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.maint_mirror_title), style = MaterialTheme.typography.bodySmall)
                     Text(
-                        "国内快很多。原生二进制仍按官方 registry 的 sha512 校验，只有几 KB 的 wrapper 来自镜像。",
+                        stringResource(R.string.maint_mirror_hint),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -218,10 +217,10 @@ internal fun ClaudeCodeMaintenanceSheet(
             ) {
                 Text(
                     when {
-                        state.running == ClaudeCodeVM.MaintenanceTask.UpdateCli -> "正在更新…"
-                        state.cliIncomplete -> "修复安装（补齐原生二进制）"
-                        state.updateAvailable -> "更新到 ${state.latestCliVersion}"
-                        else -> "更新 Claude Code CLI"
+                        state.running == ClaudeCodeVM.MaintenanceTask.UpdateCli -> stringResource(R.string.maint_updating)
+                        state.cliIncomplete -> stringResource(R.string.maint_repair_install)
+                        state.updateAvailable -> stringResource(R.string.maint_update_to, state.latestCliVersion.orEmpty())
+                        else -> stringResource(R.string.maint_update_cli)
                     }
                 )
             }
@@ -229,10 +228,9 @@ internal fun ClaudeCodeMaintenanceSheet(
             InkDivider()
 
             // --- Ubuntu 软件包 ---
-            SectionTitle("Ubuntu 软件包", modifier = Modifier.padding(top = 4.dp))
+            SectionTitle(stringResource(R.string.maint_apt_title), modifier = Modifier.padding(top = 4.dp))
             Text(
-                "升级 Rootfs 里已装的 apt 包（Claude Code 自己装的 git、python3、ripgrep 等）。" +
-                    "和 CLI 版本无关，可能耗时数分钟并消耗流量。",
+                stringResource(R.string.maint_apt_hint),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -244,8 +242,8 @@ internal fun ClaudeCodeMaintenanceSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    if (state.running == ClaudeCodeVM.MaintenanceTask.AptUpgrade) "正在升级…"
-                    else "更新软件包 (apt)"
+                    if (state.running == ClaudeCodeVM.MaintenanceTask.AptUpgrade) stringResource(R.string.maint_apt_upgrading)
+                    else stringResource(R.string.maint_apt_update)
                 )
             }
 
@@ -254,7 +252,7 @@ internal fun ClaudeCodeMaintenanceSheet(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     InkLineProgress(progress = state.progress, modifier = Modifier.fillMaxWidth())
                     Text(
-                        state.detail.ifBlank { "正在处理…" },
+                        state.detail.ifBlank { stringResource(R.string.maint_working) },
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = JetbrainsMono,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -273,14 +271,14 @@ internal fun ClaudeCodeMaintenanceSheet(
             // --- 修复（默认折叠：这两项都不是日常操作，摆出来只会诱导误点） ---
             val chevron by animateFloatAsState(if (repairOpen) 180f else 0f, InkMotion.spatial(), label = "repairChevron")
             SectionTitle(
-                "修复",
+                stringResource(R.string.maint_repair),
                 modifier = Modifier
                     .clickable { repairOpen = !repairOpen }
                     .padding(vertical = 10.dp),
                 trailing = {
                     Icon(
                         HugeIcons.ArrowDown01,
-                        contentDescription = if (repairOpen) "收起修复选项" else "展开修复选项",
+                        contentDescription = stringResource(if (repairOpen) R.string.maint_repair_collapse else R.string.maint_repair_expand),
                         modifier = Modifier
                             .size(14.dp)
                             .graphicsLayer { rotationZ = chevron },
@@ -292,8 +290,7 @@ internal fun ClaudeCodeMaintenanceSheet(
             AnimatedVisibility(visible = repairOpen, enter = InkMotion.expand, exit = InkMotion.collapse) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Node.js 的版本被写死在 App 里（要配一份官方 SHA-256 校验和），" +
-                            "所以这里只能重装同一个版本来修损坏的运行时，不是升级。",
+                        stringResource(R.string.maint_node_hint),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -305,15 +302,13 @@ internal fun ClaudeCodeMaintenanceSheet(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            if (state.running == ClaudeCodeVM.MaintenanceTask.ReinstallNode) "正在重装…"
-                            else "重装 Node.js 运行时"
+                            if (state.running == ClaudeCodeVM.MaintenanceTask.ReinstallNode) stringResource(R.string.maint_node_reinstalling)
+                            else stringResource(R.string.maint_node_reinstall)
                         )
                     }
 
                     Notice(
-                        text = "重装 Linux 环境会清空整个 Rootfs：Claude Code CLI、Node.js、" +
-                            "apt 装过的所有工具，以及 ~/.claude 下的全部会话记录都会一起消失，" +
-                            "之后要从头装一遍。只有环境彻底坏掉时才这么做。",
+                        text = stringResource(R.string.maint_reinstall_warning),
                         tone = NoticeTone.Error,
                     )
                     InkButton(
@@ -322,7 +317,7 @@ internal fun ClaudeCodeMaintenanceSheet(
                         tone = InkButtonTone.Vermilion,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("前往工作区重装 Linux 环境")
+                        Text(stringResource(R.string.maint_reinstall_go))
                     }
                 }
             }
@@ -331,13 +326,16 @@ internal fun ClaudeCodeMaintenanceSheet(
 }
 
 /** 版本还没读上来时不显示 "-"（会被当成"没装"），而是显式说在读 */
-private fun placeholder(loading: Boolean): String = if (loading) "读取中…" else "未安装"
+@Composable
+private fun placeholder(loading: Boolean): String =
+    stringResource(if (loading) R.string.maint_loading else R.string.maint_not_installed)
 
+@Composable
 private fun updateHint(state: ClaudeCodeVM.MaintenanceState): String = when {
     state.checking -> ""
-    state.latestCliVersion == null -> "未查询"
-    state.updateAvailable -> "可更新到 ${state.latestCliVersion}"
-    else -> "已是最新（${state.latestCliVersion}）"
+    state.latestCliVersion == null -> stringResource(R.string.maint_not_checked)
+    state.updateAvailable -> stringResource(R.string.maint_update_available, state.latestCliVersion)
+    else -> stringResource(R.string.maint_up_to_date, state.latestCliVersion)
 }
 
 @Composable

@@ -376,4 +376,36 @@
   <string name="config_perm_deny">拒绝</string>
   <string name="config_perm_add_label">新增规则</string>
   <string name="config_perm_add">添加</string>
+
+  <!-- 环境与更新面板 -->
+  <string name="maint_loading">读取中…</string>
+  <string name="maint_not_installed">未安装</string>
+  <string name="maint_cli_incomplete_version">%1$s（不完整）</string>
+  <string name="maint_cli_incomplete_notice">CLI 的 npm 包在，但原生二进制缺失（上次那个约 100 MB 的平台包没有下完），会话启动会报 spawnSync … ENOENT。点下面「修复安装」补齐。</string>
+  <string name="maint_blocked">有 %1$d 个会话正在运行。更新会替换掉正在执行的文件，请先在侧边栏关闭全部会话。</string>
+  <string name="maint_cli_hint">官方 npm 包 @anthropic-ai/claude-code。安装时装的是 @latest，但那之后不会自动跟进 —— 要新版本得在这里手动更新。</string>
+  <string name="maint_checking">查询中…</string>
+  <string name="maint_check_update">检查更新</string>
+  <string name="maint_not_checked">未查询</string>
+  <string name="maint_update_available">可更新到 %1$s</string>
+  <string name="maint_up_to_date">已是最新（%1$s）</string>
+  <string name="maint_mirror_title">用淘宝 npm 源更新</string>
+  <string name="maint_mirror_hint">国内快很多。原生二进制仍按官方 registry 的 sha512 校验，只有几 KB 的 wrapper 来自镜像。</string>
+  <string name="maint_updating">正在更新…</string>
+  <string name="maint_repair_install">修复安装（补齐原生二进制）</string>
+  <string name="maint_update_to">更新到 %1$s</string>
+  <string name="maint_update_cli">更新 Claude Code CLI</string>
+  <string name="maint_apt_title">Ubuntu 软件包</string>
+  <string name="maint_apt_hint">升级 Rootfs 里已装的 apt 包（Claude Code 自己装的 git、python3、ripgrep 等）。和 CLI 版本无关，可能耗时数分钟并消耗流量。</string>
+  <string name="maint_apt_upgrading">正在升级…</string>
+  <string name="maint_apt_update">更新软件包 (apt)</string>
+  <string name="maint_working">正在处理…</string>
+  <string name="maint_repair">修复</string>
+  <string name="maint_repair_collapse">收起修复选项</string>
+  <string name="maint_repair_expand">展开修复选项</string>
+  <string name="maint_node_hint">Node.js 的版本被写死在 App 里（要配一份官方 SHA-256 校验和），所以这里只能重装同一个版本来修损坏的运行时，不是升级。</string>
+  <string name="maint_node_reinstalling">正在重装…</string>
+  <string name="maint_node_reinstall">重装 Node.js 运行时</string>
+  <string name="maint_reinstall_warning">重装 Linux 环境会清空整个 Rootfs：Claude Code CLI、Node.js、apt 装过的所有工具，以及 ~/.claude 下的全部会话记录都会一起消失，之后要从头装一遍。只有环境彻底坏掉时才这么做。</string>
+  <string name="maint_reinstall_go">前往工作区重装 Linux 环境</string>
 </resources>

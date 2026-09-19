@@ -376,4 +376,36 @@
   <string name="config_perm_deny">Deny</string>
   <string name="config_perm_add_label">New rule</string>
   <string name="config_perm_add">Add</string>
+
+  <!-- Environment and updates sheet -->
+  <string name="maint_loading">reading…</string>
+  <string name="maint_not_installed">not installed</string>
+  <string name="maint_cli_incomplete_version">%1$s (incomplete)</string>
+  <string name="maint_cli_incomplete_notice">The CLI\'s npm package is there but the native binary is missing (the ~100 MB platform package did not finish downloading last time), so starting a session fails with spawnSync … ENOENT. Use “Repair install” below to complete it.</string>
+  <string name="maint_blocked">%1$d session(s) are running. Updating replaces files that are in use — close all sessions from the sidebar first.</string>
+  <string name="maint_cli_hint">The official npm package @anthropic-ai/claude-code. The install pulls @latest, but nothing follows it after that — new versions have to be pulled here by hand.</string>
+  <string name="maint_checking">checking…</string>
+  <string name="maint_check_update">Check for updates</string>
+  <string name="maint_not_checked">not checked</string>
+  <string name="maint_update_available">%1$s available</string>
+  <string name="maint_up_to_date">Up to date (%1$s)</string>
+  <string name="maint_mirror_title">Update via the Taobao npm mirror</string>
+  <string name="maint_mirror_hint">Much faster in mainland China. The native binary is still checked against the official registry sha512; only the few KB of wrapper come from the mirror.</string>
+  <string name="maint_updating">updating…</string>
+  <string name="maint_repair_install">Repair install (fetch the native binary)</string>
+  <string name="maint_update_to">Update to %1$s</string>
+  <string name="maint_update_cli">Update Claude Code CLI</string>
+  <string name="maint_apt_title">Ubuntu packages</string>
+  <string name="maint_apt_hint">Upgrades the apt packages already in the rootfs (git, python3, ripgrep and the rest that Claude Code installed). Unrelated to the CLI version; can take several minutes and some data.</string>
+  <string name="maint_apt_upgrading">upgrading…</string>
+  <string name="maint_apt_update">Update packages (apt)</string>
+  <string name="maint_working">working…</string>
+  <string name="maint_repair">Repair</string>
+  <string name="maint_repair_collapse">Hide repair options</string>
+  <string name="maint_repair_expand">Show repair options</string>
+  <string name="maint_node_hint">The Node.js version is pinned in the app (it ships a matching official SHA-256), so this only reinstalls the same version to fix a broken runtime — it is not an upgrade.</string>
+  <string name="maint_node_reinstalling">reinstalling…</string>
+  <string name="maint_node_reinstall">Reinstall the Node.js runtime</string>
+  <string name="maint_reinstall_warning">Reinstalling the Linux environment wipes the whole rootfs: the Claude Code CLI, Node.js, everything installed through apt, and every session record under ~/.claude go with it, and it all has to be installed again. Only do this when the environment is truly broken.</string>
+  <string name="maint_reinstall_go">Go to the workspace to reinstall Linux</string>
 </resources>
