@@ -84,6 +84,9 @@
   <string name="codex_approval_cwd">工作目录：%1$s</string>
   <string name="codex_resume">继续</string>
   <string name="codex_new_session">新会话</string>
+  <string name="codex_sessions">会话</string>
+  <string name="codex_sessions_empty">还没有 Codex 会话</string>
+  <string name="codex_session_untitled">（没有消息）</string>
 
   <string name="session_list_title">会话</string>
   <string name="session_list_search">搜标题或正文</string>

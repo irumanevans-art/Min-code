@@ -5,12 +5,15 @@ import androidx.lifecycle.viewModelScope
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexDecision
 import dev.min.code.core.codex.CodexRuntime
+import dev.min.code.core.codex.CodexSessionSummary
 import dev.min.code.core.codex.listCodexSessions
 import dev.min.code.core.codex.readCodexSessionItems
 import dev.min.code.core.settings.CodexProfile
 import dev.min.code.core.settings.SettingsStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -31,6 +34,10 @@ class CodexVM(
 
     val runtimeStatus: StateFlow<CodexRuntime.Status> = runtime.status
     val session: StateFlow<CodexAppServerManager.State> = manager.state
+
+    /** 磁盘上那些旧会话，新的在前。空列表就是「还没聊过」 */
+    private val _sessions = MutableStateFlow<List<CodexSessionSummary>>(emptyList())
+    val sessions: StateFlow<List<CodexSessionSummary>> = _sessions.asStateFlow()
 
     val profile: StateFlow<CodexProfile> = settingsStore.settings
         .map { it.activeCodexProfile ?: CodexProfile(id = DEFAULT_PROFILE_ID) }
@@ -59,12 +66,35 @@ class CodexVM(
      */
     private fun restoreLatest() {
         viewModelScope.launch(Dispatchers.IO) {
-            val latest = runCatching {
-                listCodexSessions(runtime.codexHome(), limit = 1).firstOrNull()
-            }.getOrNull() ?: return@launch
+            val all = runCatching { listCodexSessions(runtime.codexHome()) }
+                .getOrDefault(emptyList())
+            _sessions.value = all
+            val latest = all.firstOrNull() ?: return@launch
             manager.restore(
                 items = readCodexSessionItems(latest.file),
                 threadId = latest.threadId,
+            )
+        }
+    }
+
+    fun refreshSessions() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _sessions.value = runCatching { listCodexSessions(runtime.codexHome()) }
+                .getOrDefault(emptyList())
+        }
+    }
+
+    /**
+     * 翻到另一条旧会话：把它的内容摆出来，**不自动接上** ——
+     * 点开看看和继续跑是两件事，后者花钱。要接着聊再按「继续」。
+     *
+     * 只在没有会话在跑时可达（入口那边保证），所以不必考虑覆盖实时状态。
+     */
+    fun openSession(summary: CodexSessionSummary) {
+        viewModelScope.launch(Dispatchers.IO) {
+            manager.restore(
+                items = readCodexSessionItems(summary.file),
+                threadId = summary.threadId,
             )
         }
     }

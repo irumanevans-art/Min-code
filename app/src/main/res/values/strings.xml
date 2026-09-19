@@ -84,6 +84,9 @@
   <string name="codex_approval_cwd">Working directory: %1$s</string>
   <string name="codex_resume">Resume</string>
   <string name="codex_new_session">New session</string>
+  <string name="codex_sessions">Sessions</string>
+  <string name="codex_sessions_empty">No Codex sessions yet</string>
+  <string name="codex_session_untitled">(no message)</string>
 
   <string name="session_list_title">Sessions</string>
   <string name="session_list_search">Search title or transcript</string>

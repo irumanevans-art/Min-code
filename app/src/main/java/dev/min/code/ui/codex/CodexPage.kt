@@ -1,5 +1,6 @@
 package dev.min.code.ui.codex
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,10 +8,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,8 +54,12 @@ import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.theme.JetbrainsMono
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Settings02
 import org.koin.androidx.compose.koinViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Codex 的会话页。
@@ -65,6 +74,8 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
     val session by vm.session.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
     var showConnection by remember { mutableStateOf(false) }
+    var showSessions by remember { mutableStateOf(false) }
+    val sessions by vm.sessions.collectAsStateWithLifecycle()
 
     // 有历史就一直显示会话流 —— 会话停掉之后把读过的内容抹掉，
     // 等于每次停止都清一次屏
@@ -84,9 +95,18 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
                             Text(stringResource(R.string.codex_stop))
                         }
                     } else {
-                        // 连接方式只在没跑的时候给：会话起来之后改它也不生效，
-                        // 摆在那里只会让人以为改了就能用。用图标省出横向空间
+                        // 会话列表和连接方式都只在没跑的时候给：切到别的会话要覆盖
+                        // 屏幕上的内容，而那时候屏幕上的才是实时的；连接改了也要重启才生效。
+                        // 两个都用图标，省出横向空间给「继续 / 新会话」
                         if (runtime.installed) {
+                            InkIconButton(
+                                icon = HugeIcons.LeftToRightListBullet,
+                                contentDescription = stringResource(R.string.codex_sessions),
+                                onClick = {
+                                    vm.refreshSessions()
+                                    showSessions = true
+                                },
+                            )
                             InkIconButton(
                                 icon = HugeIcons.Settings02,
                                 contentDescription = stringResource(R.string.codex_connection),
@@ -151,8 +171,78 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
         )
     }
 
+    if (showSessions) {
+        CodexSessionSheet(
+            sessions = sessions,
+            onPick = {
+                vm.openSession(it)
+                showSessions = false
+            },
+            onDismiss = { showSessions = false },
+        )
+    }
+
     session.pendingApproval?.let { approval ->
         CodexApprovalSheet(approval = approval, onAnswer = vm::answerApproval)
+    }
+}
+
+/**
+ * 旧会话。读的是 Codex 自己写的那些 rollout 文件，所以 App 重装、换设备，
+ * 只要 rootfs 还在，聊过的东西就都还在。
+ *
+ * 点一条**只是把它摆出来**，不自动接上 —— 翻看和继续跑是两件事。
+ */
+@Composable
+private fun CodexSessionSheet(
+    sessions: List<dev.min.code.core.codex.CodexSessionSummary>,
+    onPick: (dev.min.code.core.codex.CodexSessionSummary) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val stamp = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
+    InkSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                stringResource(R.string.codex_sessions),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+            if (sessions.isEmpty()) {
+                Text(
+                    stringResource(R.string.codex_sessions_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                return@Column
+            }
+            // 一屏放不下就滚，但别把整个 sheet 撑满屏幕
+            LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                items(sessions, key = { it.threadId }) { summary ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(summary) }
+                            .padding(vertical = 10.dp),
+                    ) {
+                        Text(
+                            summary.preview ?: stringResource(R.string.codex_session_untitled),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            stamp.format(Date(summary.updatedAt)),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = JetbrainsMono,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
