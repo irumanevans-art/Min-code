@@ -54,8 +54,6 @@
   <string name="settings_language_en">English</string>
   <string name="settings_about">关于 Min</string>
   <string name="codex_title">Codex</string>
-  <string name="codex_open">打开 Codex</string>
-  <string name="codex_open_subtitle">作为独立引擎安装和运行 Codex</string>
   <string name="codex_install_hint">Codex 会单独安装到 Ubuntu 中，不会改动 Claude Code 及其配置。</string>
   <string name="codex_install">安装 Codex</string>
   <string name="codex_installed">Codex 已安装</string>
@@ -63,7 +61,6 @@
   <string name="codex_open_login_terminal">打开终端登录</string>
   <string name="codex_start">启动 Codex</string>
   <string name="codex_stop">停止 Codex</string>
-  <string name="codex_prompt">消息</string>
   <string name="codex_send">发送</string>
   <string name="codex_approve">允许</string>
   <string name="codex_deny">拒绝</string>
@@ -86,7 +83,6 @@
   <string name="codex_status_closed">已停止</string>
   <string name="codex_status_failed">已中断</string>
   <string name="codex_composer_hint">问问 Codex</string>
-  <string name="codex_empty">Codex 已就绪，说点什么吧。</string>
   <string name="codex_connection_open">连接设置</string>
   <string name="codex_approve_session">本次会话都允许</string>
   <string name="codex_approval_cwd">工作目录：%1$s</string>
@@ -209,10 +205,7 @@
   <string name="workspace_detail_download_url">tar.gz 下载链接</string>
   <string name="workspace_detail_downloading">正在下载 %1$s%2$s</string>
   <string name="workspace_detail_empty_directory">空目录</string>
-  <string name="workspace_detail_enable_shell">启用 Shell</string>
-  <string name="workspace_detail_enable_shell_desc">允许此工作区使用本地Rootfs运行终端环境</string>
   <string name="workspace_detail_extracting">提取 %1$d 个项目%2$s</string>
-  <string name="workspace_detail_import_file">导入文件</string>
   <string name="workspace_detail_refresh">刷新</string>
   <string name="workspace_detail_search">搜索文件</string>
   <string name="workspace_detail_search_hint">按文件名搜这个目录往下</string>
@@ -243,7 +236,6 @@
   <string name="workspace_detail_import_folder_desc">从系统文件夹整棵拷进来。空文件夹和修改时间保不住。</string>
   <string name="workspace_detail_import_zip">从 .zip 导入</string>
   <string name="workspace_detail_import_zip_desc">和「打包成 .zip」严格互逆。</string>
-  <string name="workspace_detail_import_into_folder">放进一个新文件夹</string>
   <string name="workspace_detail_export_title">导出</string>
   <string name="workspace_detail_export_archive">打包成一个 .zip</string>
   <string name="workspace_detail_export_archive_desc">连目录结构一起，空文件夹也留着。</string>
@@ -272,8 +264,6 @@
   <string name="workspace_detail_install_rootfs">安装 Rootfs</string>
   <string name="workspace_detail_install_rootfs_desc">将下载 tar.gz 并解压到 %s 的 Linux 目录。</string>
   <string name="workspace_detail_installing">安装中</string>
-  <string name="workspace_detail_loading">加载中</string>
-  <string name="workspace_detail_name">名称</string>
   <string name="workspace_detail_reinstall_rootfs">重新安装 Rootfs</string>
   <string name="workspace_detail_rootfs_install_failed">Rootfs 安装失败</string>
   <string name="workspace_detail_rootfs_wipe_warning">重装会清空整个 Linux 目录：Claude Code CLI、Node.js、所有用 apt 装过的软件包，以及 ~/.claude 下的全部会话记录都会消失，之后需要从头装一遍。</string>
@@ -281,10 +271,8 @@
   <string name="workspace_detail_shell_disabled">禁用</string>
   <string name="workspace_detail_shell_installing">安装中</string>
   <string name="workspace_detail_shell_ready">就绪</string>
-  <string name="workspace_detail_shell_status">Shell 状态</string>
   <string name="workspace_detail_tab_basic">基本</string>
   <string name="workspace_detail_tab_files">文件</string>
-  <string name="workspace_detail_title">工作区详情</string>
   <string name="workspace_detail_will_delete">将删除 %s.</string>
   <string name="workspace_detail_workspace_info">工作区</string>
   <string name="workspace_terminal_close">关闭</string>
@@ -325,7 +313,6 @@
   <string name="runtime_reason_port">端口占用</string>
   <string name="preview_reload">刷新</string>
   <string name="preview_open_external">用浏览器打开</string>
-  <string name="preview_close">关闭</string>
   <string name="preview_collapse">收起预览</string>
   <string name="session_preview">预览</string>
   <string name="session_preview_empty">预览（暂无本机服务）</string>

@@ -54,8 +54,6 @@
   <string name="settings_language_en">English</string>
   <string name="settings_about">About Min</string>
   <string name="codex_title">Codex</string>
-  <string name="codex_open">Open Codex</string>
-  <string name="codex_open_subtitle">Install and run Codex as an independent engine</string>
   <string name="codex_install_hint">Codex is installed separately inside Ubuntu. Claude Code and its configuration are not changed.</string>
   <string name="codex_install">Install Codex</string>
   <string name="codex_installed">Codex installed</string>
@@ -63,7 +61,6 @@
   <string name="codex_open_login_terminal">Open terminal to sign in</string>
   <string name="codex_start">Start Codex</string>
   <string name="codex_stop">Stop Codex</string>
-  <string name="codex_prompt">Message</string>
   <string name="codex_send">Send</string>
   <string name="codex_approve">Allow</string>
   <string name="codex_deny">Deny</string>
@@ -86,7 +83,6 @@
   <string name="codex_status_closed">stopped</string>
   <string name="codex_status_failed">failed</string>
   <string name="codex_composer_hint">Ask Codex</string>
-  <string name="codex_empty">Codex is running. Ask it something.</string>
   <string name="codex_connection_open">Connection settings</string>
   <string name="codex_approve_session">Allow for this session</string>
   <string name="codex_approval_cwd">Working directory: %1$s</string>
@@ -209,10 +205,7 @@
   <string name="workspace_detail_download_url">tar.gz download URL</string>
   <string name="workspace_detail_downloading">Downloading %1$s%2$s</string>
   <string name="workspace_detail_empty_directory">Empty folder</string>
-  <string name="workspace_detail_enable_shell">Enable shell</string>
-  <string name="workspace_detail_enable_shell_desc">Allow this workspace to run a terminal in the local rootfs</string>
   <string name="workspace_detail_extracting">Extracting %1$d items%2$s</string>
-  <string name="workspace_detail_import_file">Import file</string>
   <string name="workspace_detail_refresh">Refresh</string>
   <string name="workspace_detail_search">Search files</string>
   <string name="workspace_detail_search_hint">Search this folder and below by name</string>
@@ -243,7 +236,6 @@
   <string name="workspace_detail_import_folder_desc">Copies from a system folder. Empty folders and timestamps are not preserved.</string>
   <string name="workspace_detail_import_zip">Import from .zip</string>
   <string name="workspace_detail_import_zip_desc">The exact inverse of Export as .zip.</string>
-  <string name="workspace_detail_import_into_folder">Put into a new folder</string>
   <string name="workspace_detail_export_title">Export</string>
   <string name="workspace_detail_export_archive">Pack into one .zip</string>
   <string name="workspace_detail_export_archive_desc">Keeps the folder structure, including empty folders.</string>
@@ -272,8 +264,6 @@
   <string name="workspace_detail_install_rootfs">Install rootfs</string>
   <string name="workspace_detail_install_rootfs_desc">Downloads a tar.gz and extracts it into the Linux directory for %s.</string>
   <string name="workspace_detail_installing">Installing</string>
-  <string name="workspace_detail_loading">Loading</string>
-  <string name="workspace_detail_name">Name</string>
   <string name="workspace_detail_reinstall_rootfs">Reinstall rootfs</string>
   <string name="workspace_detail_rootfs_install_failed">Rootfs install failed</string>
   <string name="workspace_detail_rootfs_wipe_warning">Reinstalling wipes the whole Linux directory: Claude Code CLI, Node.js, every apt package, and all sessions under ~/.claude. You will need to set everything up again.</string>
@@ -281,10 +271,8 @@
   <string name="workspace_detail_shell_disabled">Disabled</string>
   <string name="workspace_detail_shell_installing">Installing</string>
   <string name="workspace_detail_shell_ready">Ready</string>
-  <string name="workspace_detail_shell_status">Shell status</string>
   <string name="workspace_detail_tab_basic">Basic</string>
   <string name="workspace_detail_tab_files">Files</string>
-  <string name="workspace_detail_title">Workspace details</string>
   <string name="workspace_detail_will_delete">Will delete %s.</string>
   <string name="workspace_detail_workspace_info">Workspace</string>
   <string name="workspace_terminal_close">Close</string>
@@ -325,7 +313,6 @@
   <string name="runtime_reason_port">port busy</string>
   <string name="preview_reload">Reload</string>
   <string name="preview_open_external">Open in browser</string>
-  <string name="preview_close">Close</string>
   <string name="preview_collapse">Hide preview</string>
   <string name="session_preview">Preview</string>
   <string name="session_preview_empty">Preview (no local server)</string>
