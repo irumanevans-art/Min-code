@@ -223,9 +223,9 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         if (imeWasVisible && !imeVisible && composerFocused) focusManager.clearFocus()
         imeWasVisible = imeVisible
     }
-    var showPlan by remember { mutableStateOf(false) }
-    var showMaintenance by remember { mutableStateOf(false) }
-    var showRuntime by remember { mutableStateOf(false) }
+    var showPlan by rememberSaveable { mutableStateOf(false) }
+    var showMaintenance by rememberSaveable { mutableStateOf(false) }
+    var showRuntime by rememberSaveable { mutableStateOf(false) }
     val previewSlot by vm.previewSlot.collectAsStateWithLifecycle()
 
     // 通知权限（Android 13+ 要运行时申请）在环境就绪那一刻要一次：后台等审批、任务完成、
@@ -926,10 +926,10 @@ private fun SessionContent(
 
     // 交互式斜杠命令（/mcp、/agents、/memory…）打开的配置面板。它们改的是 Rootfs 里的
     // 配置文件，和「会话设置」那张 sheet 是两回事，所以状态提在这里而不是输入栏内部。
-    var configCommand by remember { mutableStateOf<LocalSlash?>(null) }
+    var configCommand by rememberSaveable { mutableStateOf<LocalSlash?>(null) }
 
     // 终端浮层。和会话同一个 rootfs 里的真 bash，见 [ClaudeCodeTerminalSheet]
-    var showTerminal by remember { mutableStateOf(false) }
+    var showTerminal by rememberSaveable { mutableStateOf(false) }
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
 

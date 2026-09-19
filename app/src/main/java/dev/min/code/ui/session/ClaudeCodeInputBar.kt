@@ -50,6 +50,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.contentDescription
@@ -152,8 +153,10 @@ internal fun ClaudeCodeInputBar(
     modifier: Modifier = Modifier,
 ) {
     var input by remember { mutableStateOf(restoredDraft.text) }
-    var settingsSection by remember { mutableStateOf<SettingsSection?>(null) }
-    var settingsOpen by remember { mutableStateOf(false) }
+    // 面板开关要活得过转屏：recreate 之后 sheet 还开着，人才不会觉得点了没反应。
+    // 正文（input）不在这里 saveable——草稿盘管它，两份事实会打架
+    var settingsSection by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     // 附件独立于输入框文本。之前是把路径直接拼进输入框，于是
     // ①看不出上传了什么文件（只有一行裸路径）②把那行删掉文件其实还在工作区里。
