@@ -19,6 +19,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import dev.min.code.R
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -33,7 +35,7 @@ import dev.min.code.ui.theme.JetbrainsMono
  */
 @Composable
 fun LoadingScreen(
-    status: String = "正在准备工作区",
+    status: String = stringResource(R.string.loading_preparing),
     modifier: Modifier = Modifier,
     detail: String? = null,
     progress: Float? = null,

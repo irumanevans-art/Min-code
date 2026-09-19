@@ -28,6 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import dev.min.code.R
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
@@ -235,7 +237,7 @@ fun Modifier.seaLight(state: SeaLightState, strength: Float = 1f): Modifier {
 @Composable
 fun SeaHero(
     modifier: Modifier = Modifier,
-    tagline: String? = "口袋里的 Claude Code",
+    tagline: String? = stringResource(R.string.app_tagline),
     /** 可用的宽 / 高（dp）：字号取宽的 40% 与高的 22% 中较小的一个，矮屏、横屏都放得下 */
     widthDp: Float = LocalConfiguration.current.screenWidthDp.toFloat(),
     heightDp: Float = LocalConfiguration.current.screenHeightDp.toFloat(),

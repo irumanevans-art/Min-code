@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="app_name">Min</string>
+  <string name="app_tagline">口袋里的 Claude Code</string>
+  <string name="loading_preparing">正在准备工作区</string>
   <string name="common_cancel">取消</string>
   <string name="common_confirm">确定</string>
   <string name="common_create">创建</string>
