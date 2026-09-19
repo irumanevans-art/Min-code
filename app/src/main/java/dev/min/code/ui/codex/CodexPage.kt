@@ -37,6 +37,7 @@ import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
+import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
@@ -47,6 +48,8 @@ import dev.min.code.ui.components.PaperCard
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.theme.JetbrainsMono
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Settings02
 import org.koin.androidx.compose.koinViewModel
 
 /**
@@ -76,23 +79,31 @@ fun CodexPage(vm: CodexVM = koinViewModel()) {
                 subtitle = stringResource(session.status.labelRes()),
                 navigationIcon = { BackButton() },
                 actions = {
-                    if (runtime.installed) {
-                        InkTextButton(onClick = { showConnection = true }) {
-                            Text(stringResource(R.string.codex_connection))
+                    if (session.status == SessionStatus.Running) {
+                        InkTextButton(onClick = vm::stop, tone = InkButtonTone.Vermilion) {
+                            Text(stringResource(R.string.codex_stop))
                         }
-                    }
-                    when {
-                        session.status == SessionStatus.Running ->
-                            InkTextButton(onClick = vm::stop, tone = InkButtonTone.Vermilion) {
-                                Text(stringResource(R.string.codex_stop))
+                    } else {
+                        // 连接方式只在没跑的时候给：会话起来之后改它也不生效，
+                        // 摆在那里只会让人以为改了就能用。用图标省出横向空间
+                        if (runtime.installed) {
+                            InkIconButton(
+                                icon = HugeIcons.Settings02,
+                                contentDescription = stringResource(R.string.codex_connection),
+                                onClick = { showConnection = true },
+                            )
+                        }
+                        // 屏幕上有历史（刚停的、或是上次重进 App 读回来的）时，
+                        // 「继续」接着那条 thread 聊，「新会话」另起一条。
+                        // 没有这两个按钮，停掉之后就再也开不起来，只能退出页面重进
+                        if (inSession && session.status != SessionStatus.Starting) {
+                            InkTextButton(onClick = vm::startNew) {
+                                Text(stringResource(R.string.codex_new_session))
                             }
-
-                        // 停掉或失败之后历史还留在屏幕上，于是这一页不会退回启动面板 ——
-                        // 没有这个按钮就再也开不起来，只能退出页面重进
-                        inSession && session.status != SessionStatus.Starting ->
                             InkTextButton(onClick = vm::start) {
-                                Text(stringResource(R.string.codex_restart))
+                                Text(stringResource(R.string.codex_resume))
                             }
+                        }
                     }
                 },
             )

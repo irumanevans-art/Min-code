@@ -139,7 +139,13 @@ class CodexAppServerManager(
         outputBuffers.clear()
         streamingTextItemId = null
         streamingThinkingItemId = null
-        _state.value = State(status = SessionStatus.Starting, threadId = resumeThreadId)
+        _state.value = State(
+            status = SessionStatus.Starting,
+            threadId = resumeThreadId,
+            // 接着上一条聊时，已经摆在屏幕上的历史要留着 —— 点一下「继续」就清屏，
+            // 用户会以为历史没了。开新会话（resumeThreadId 为空）才从白纸开始
+            items = if (resumeThreadId != null) _state.value.items else emptyList(),
+        )
 
         val launched = runCatching { processLauncher.start() }.getOrElse { error ->
             failLocked(error.message ?: error::class.java.simpleName)
@@ -157,6 +163,23 @@ class CodexAppServerManager(
             failLocked("写不进 initialize 请求")
             return false
         }
+        true
+    }
+
+    /**
+     * 把磁盘上读回来的历史摆到界面上，**不碰进程**。
+     *
+     * 重进 App 时先让人看见上次聊到哪儿，再决定要不要接着跑 —— 而不是一进来就
+     * 拉起一个进程。会话正活着时不覆盖：那时屏幕上的才是实时的。
+     */
+    fun restore(items: List<ChatItem>, threadId: String?): Boolean = synchronized(lock) {
+        if (process != null || _state.value.status == SessionStatus.Running ||
+            _state.value.status == SessionStatus.Starting
+        ) {
+            return false
+        }
+        if (items.isEmpty() && threadId == null) return false
+        _state.value = _state.value.copy(items = items, threadId = threadId)
         true
     }
 

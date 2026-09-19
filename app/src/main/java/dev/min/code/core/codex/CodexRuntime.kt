@@ -117,6 +117,12 @@ class CodexRuntime(
 
     suspend fun currentProfile(): CodexProfile? = settingsStore.current().activeCodexProfile
 
+    /**
+     * Codex 在 guest 里的家目录。会话记录就落在它下面的 `sessions/`，
+     * 历史的事实来源是这些文件，见 [listCodexSessions]。
+     */
+    fun codexHome(): File = File(workspaceRepository.linuxDir(), "root/.codex")
+
     suspend fun install() = withContext(Dispatchers.IO) {
         _status.value = _status.value.copy(busy = true, detail = "Installing @openai/codex…", error = null)
         val result = workspaceRepository.executeCommand(

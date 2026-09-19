@@ -5,8 +5,11 @@ import androidx.lifecycle.viewModelScope
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexDecision
 import dev.min.code.core.codex.CodexRuntime
+import dev.min.code.core.codex.listCodexSessions
+import dev.min.code.core.codex.readCodexSessionItems
 import dev.min.code.core.settings.CodexProfile
 import dev.min.code.core.settings.SettingsStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -39,6 +42,7 @@ class CodexVM(
 
     init {
         refresh()
+        restoreLatest()
     }
 
     fun refresh() {
@@ -49,11 +53,41 @@ class CodexVM(
         viewModelScope.launch { runtime.install() }
     }
 
-    /** 先把路由配置落到 guest 的 config.toml，再起进程 —— 顺序反了会用上一次的中转地址 */
+    /**
+     * 把上一条会话摆回屏幕。**只读文件，不起进程** ——
+     * 一进页面就拉起一个 app-server 太霸道，何况用户可能只是来看看上次说了什么。
+     */
+    private fun restoreLatest() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val latest = runCatching {
+                listCodexSessions(runtime.codexHome(), limit = 1).firstOrNull()
+            }.getOrNull() ?: return@launch
+            manager.restore(
+                items = readCodexSessionItems(latest.file),
+                threadId = latest.threadId,
+            )
+        }
+    }
+
+    /**
+     * 继续上一条会话：带着 threadId 走 `thread/resume`，Codex 那边的上下文还在，
+     * 屏幕上的历史也留着。没有历史时它就是「新开一条」。
+     */
     fun start() {
         viewModelScope.launch {
             runtime.prepare()
-            manager.start(CodexAppServerManager.Options())
+            manager.start(
+                options = CodexAppServerManager.Options(),
+                resumeThreadId = manager.state.value.threadId,
+            )
+        }
+    }
+
+    /** 另起一条。清掉屏幕上的历史，也不带 threadId —— 磁盘上那条不会被动 */
+    fun startNew() {
+        viewModelScope.launch {
+            runtime.prepare()
+            manager.start(options = CodexAppServerManager.Options(), resumeThreadId = null)
         }
     }
 

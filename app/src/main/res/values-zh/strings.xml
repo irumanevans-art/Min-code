@@ -82,7 +82,8 @@
   <string name="codex_connection_open">连接设置</string>
   <string name="codex_approve_session">本次会话都允许</string>
   <string name="codex_approval_cwd">工作目录：%1$s</string>
-  <string name="codex_restart">开一条新会话</string>
+  <string name="codex_resume">继续</string>
+  <string name="codex_new_session">新会话</string>
 
   <string name="session_list_title">会话</string>
   <string name="session_list_search">搜标题或正文</string>
