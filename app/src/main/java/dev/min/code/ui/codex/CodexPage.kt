@@ -4,6 +4,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,11 +45,13 @@ import dev.min.code.core.claudecode.SessionMeta
 import dev.min.code.core.codex.CodexDecision
 import dev.min.code.core.codex.CodexEvent
 import dev.min.code.core.codex.CodexSessionSummary
+import dev.min.code.core.codex.CODEX_EFFORT_LEVELS
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
+import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkMenuItem
 import dev.min.code.ui.components.InkSheet
@@ -575,6 +579,7 @@ private fun CodexApprovalSheet(
 }
 
 /** 连接方式。从会话页挪进 sheet —— 它是设一次就不再看的东西，不该常驻在会话上方 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CodexConnectionSheet(
     profile: dev.min.code.core.settings.CodexProfile,
@@ -584,6 +589,8 @@ private fun CodexConnectionSheet(
     var apiKey by remember(profile.apiKey) { mutableStateOf(profile.apiKey) }
     var baseUrl by remember(profile.baseUrl) { mutableStateOf(profile.baseUrl) }
     var mode by remember(profile.authMode) { mutableStateOf(profile.authMode) }
+    var model by remember(profile.model) { mutableStateOf(profile.model) }
+    var effort by remember(profile.effort) { mutableStateOf(profile.effort) }
 
     InkSheet(onDismissRequest = onDismiss) {
         Column(
@@ -623,8 +630,51 @@ private fun CodexConnectionSheet(
                     )
                 }
             }
+            // 模型 / 思考强度跟着连接走：thread/start 和每一轮 turn/start 都带上。
+            // 空着 = 不传，用 Codex 自己的默认——不替用户猜模型
+            InkTextField(
+                value = model,
+                onValueChange = { model = it },
+                label = stringResource(R.string.codex_model),
+                placeholder = "gpt-5.1-codex-max",
+                singleLine = true,
+                monospace = true,
+            )
+            Text(
+                stringResource(R.string.codex_effort),
+                style = MaterialTheme.typography.labelMedium,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                InkChip(
+                    label = stringResource(R.string.codex_effort_default),
+                    selected = effort.isBlank(),
+                    onClick = { effort = "" },
+                )
+                CODEX_EFFORT_LEVELS.forEach { level ->
+                    InkChip(
+                        label = level,
+                        selected = effort == level,
+                        onClick = { effort = level },
+                        monospace = true,
+                    )
+                }
+            }
             InkButton(
-                onClick = { onSave(profile.copy(apiKey = apiKey, baseUrl = baseUrl, authMode = mode)) },
+                onClick = {
+                    onSave(
+                        profile.copy(
+                            apiKey = apiKey,
+                            baseUrl = baseUrl,
+                            authMode = mode,
+                            model = model.trim(),
+                            effort = effort.trim(),
+                        ),
+                    )
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.codex_save_connection)) }
         }

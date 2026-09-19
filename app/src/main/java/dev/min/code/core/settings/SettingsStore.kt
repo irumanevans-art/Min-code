@@ -137,6 +137,10 @@ data class CodexProfile(
     val baseUrl: String = "https://api.openai.com/v1",
     val apiKey: String = "",
     val authMode: CodexAuthMode = CodexAuthMode.CLI,
+    /** thread/start 带的模型 id。空 = Codex 自己的默认，不强推 */
+    val model: String = "",
+    /** 思考强度，合法值见 [CODEX_EFFORT_LEVELS]。空 = 跟随默认 */
+    val effort: String = "",
 ) {
     val isRelay: Boolean get() = authMode == CodexAuthMode.RELAY
     fun displayName(): String = label.ifBlank { if (isRelay) baseUrl else "OpenAI / Codex" }

@@ -77,6 +77,9 @@
   <string name="codex_api_key">API key</string>
   <string name="codex_base_url">Responses base URL</string>
   <string name="codex_save_connection">Save connection</string>
+  <string name="codex_model">Model</string>
+  <string name="codex_effort">Reasoning effort</string>
+  <string name="codex_effort_default">Default</string>
   <string name="codex_status_idle">not started</string>
   <string name="codex_status_starting">starting</string>
   <string name="codex_status_running">running</string>

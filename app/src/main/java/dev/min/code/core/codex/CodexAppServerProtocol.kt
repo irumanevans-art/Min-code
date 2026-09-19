@@ -199,6 +199,15 @@ enum class CodexApprovalPolicy(val wire: String) {
     NEVER("never"),
 }
 
+/**
+ * 思考强度阶梯，[CodexAppServerManager.Options.effort] 的合法取值。
+ *
+ * 从 0.155.1 二进制核实（grep 命中 `xhigh`/`minimal` 与 `ReasoningEffortOption`），
+ * 不是从文档抄的——文档和二进制打架时以二进制为准
+ * （.learnings LRN-20260919-CODEX-DOCS-VS-BINARY）。升级 CLI 时照同样的办法复核。
+ */
+val CODEX_EFFORT_LEVELS = listOf("minimal", "low", "medium", "high", "xhigh")
+
 private val codexJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
 /**

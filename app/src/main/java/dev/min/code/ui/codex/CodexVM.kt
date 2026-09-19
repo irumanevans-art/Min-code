@@ -141,7 +141,7 @@ class CodexVM(
         viewModelScope.launch {
             runtime.prepare()
             manager.start(
-                options = CodexAppServerManager.Options(),
+                options = threadOptions(),
                 resumeThreadId = manager.state.value.threadId,
             )
         }
@@ -151,8 +151,17 @@ class CodexVM(
     fun startNew() {
         viewModelScope.launch {
             runtime.prepare()
-            manager.start(options = CodexAppServerManager.Options(), resumeThreadId = null)
+            manager.start(options = threadOptions(), resumeThreadId = null)
         }
+    }
+
+    /** 连接配置里的模型 / 思考强度；空串 = 不传，用 Codex 自己的默认 */
+    private fun threadOptions(): CodexAppServerManager.Options {
+        val profile = profile.value
+        return CodexAppServerManager.Options(
+            model = profile.model.trim().takeIf(String::isNotBlank),
+            effort = profile.effort.trim().takeIf(String::isNotBlank),
+        )
     }
 
     fun stop() = manager.stop()

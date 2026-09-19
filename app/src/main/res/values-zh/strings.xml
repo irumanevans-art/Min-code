@@ -77,6 +77,9 @@
   <string name="codex_api_key">API key</string>
   <string name="codex_base_url">Responses 地址</string>
   <string name="codex_save_connection">保存连接</string>
+  <string name="codex_model">模型</string>
+  <string name="codex_effort">思考强度</string>
+  <string name="codex_effort_default">默认</string>
   <string name="codex_status_idle">未启动</string>
   <string name="codex_status_starting">正在启动</string>
   <string name="codex_status_running">运行中</string>
