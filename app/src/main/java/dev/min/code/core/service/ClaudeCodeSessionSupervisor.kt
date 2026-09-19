@@ -20,6 +20,8 @@ import dev.min.code.MainActivity
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.codex.CodexAppServerManager
+import dev.min.code.core.codex.CodexDecision
+import dev.min.code.core.codex.CodexEvent
 import dev.min.code.util.cancelNotification
 import dev.min.code.util.sendNotification
 import org.koin.java.KoinJavaComponent.inject
@@ -114,6 +116,12 @@ class ClaudeCodeSessionSupervisor(
                 }
             }
         }
+
+        // Codex 的同款管家：单会话（一个 app-server），边沿判定抽成了
+        // [codexSupervisorDiff] 纯函数，单测钉得住
+        appScope.launch(Dispatchers.Default) {
+            codex.state.collect { state -> diffCodex(state) }
+        }
     }
 
     private fun diff(session: ClaudeCodeSessionRegistry.LiveSession) {
@@ -186,6 +194,103 @@ class ClaudeCodeSessionSupervisor(
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Codex（单会话）。事件判定在 [codexSupervisorDiff]，这里只负责发通知
+    // -----------------------------------------------------------------------
+
+    /** Codex 单会话的上一帧观察，字段对齐 [Seen]，外加审批帧与错误消息 */
+    internal data class CodexSeen(
+        val busy: Boolean,
+        val approvalKey: String?,
+        val status: SessionStatus,
+        val errorMessage: String?,
+    )
+
+    private var codexSeen: CodexSeen? = null
+
+    private fun diffCodex(state: CodexAppServerManager.State) {
+        val previous = codexSeen
+        val approval = state.pendingApproval
+        val current = CodexSeen(
+            busy = state.busy,
+            approvalKey = approval?.requestId,
+            status = state.status,
+            errorMessage = state.errorMessage,
+        )
+        codexSeen = current
+
+        when (val event = codexSupervisorDiff(previous, current, isForeground.value)) {
+            is CodexSupervisorEvent.Approval -> approval?.let(::notifyCodexApproval)
+            CodexSupervisorEvent.ApprovalCleared ->
+                context.cancelNotification(CODEX_APPROVAL_NOTIFICATION_ID)
+            CodexSupervisorEvent.TurnDone -> context.sendNotification(
+                channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
+                notificationId = CODEX_DONE_NOTIFICATION_ID,
+            ) {
+                title = "Codex"
+                content = "任务已完成"
+                autoCancel = true
+                useDefaults = true
+                category = NotificationCompat.CATEGORY_MESSAGE
+                contentIntent = openCodexIntent(context)
+            }
+            is CodexSupervisorEvent.TurnFailed -> context.sendNotification(
+                channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
+                notificationId = CODEX_DONE_NOTIFICATION_ID,
+            ) {
+                title = "Codex 一轮失败"
+                content = event.message.take(160)
+                autoCancel = true
+                useDefaults = true
+                useBigTextStyle = true
+                category = NotificationCompat.CATEGORY_ERROR
+                contentIntent = openCodexIntent(context)
+            }
+            is CodexSupervisorEvent.Died -> {
+                context.cancelNotification(CODEX_APPROVAL_NOTIFICATION_ID)
+                context.sendNotification(
+                    channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
+                    notificationId = CODEX_DONE_NOTIFICATION_ID,
+                ) {
+                    title = "Codex 已退出"
+                    content = event.message?.take(160) ?: "进程已退出"
+                    autoCancel = true
+                    useDefaults = true
+                    useBigTextStyle = true
+                    category = NotificationCompat.CATEGORY_ERROR
+                    contentIntent = openCodexIntent(context)
+                }
+            }
+            null -> {}
+        }
+    }
+
+    private fun notifyCodexApproval(approval: CodexEvent.ApprovalRequest) {
+        context.sendNotification(
+            channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
+            notificationId = CODEX_APPROVAL_NOTIFICATION_ID,
+        ) {
+            title = "Codex 需要确认"
+            content = approval.command?.takeIf { it.isNotBlank() }
+                ?: approval.reason?.takeIf { it.isNotBlank() }
+                ?: "请求批准"
+            // ongoing：同 Claude，会话真的停在这里等它
+            ongoing = true
+            autoCancel = false
+            useDefaults = true
+            category = NotificationCompat.CATEGORY_CALL
+            contentIntent = openCodexIntent(context)
+            // 按钮跟着服务端给的可选项走：回一个它没列的决定，这一轮会一直挂着
+            val decisions = approval.availableDecisions
+            if (decisions.isEmpty() || CodexDecision.ACCEPT.wire in decisions) {
+                addAction("允许", CodexApprovalReceiver.intent(context, approval, CodexDecision.ACCEPT))
+            }
+            if (decisions.isEmpty() || CodexDecision.DECLINE.wire in decisions) {
+                addAction("拒绝", CodexApprovalReceiver.intent(context, approval, CodexDecision.DECLINE))
+            }
+        }
+    }
+
     private companion object {
         /**
          * 通知 id 由会话 key 派生。偏移到两段互不重叠的区间，避免和 App 里其它固定 id
@@ -204,6 +309,20 @@ class ClaudeCodeSessionSupervisor(
             return PendingIntent.getActivity(
                 context,
                 ClaudeCodeForegroundService.NOTIFICATION_ID,
+                intent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        }
+
+        /** Codex 通知的点击落点：清栈回根，再顶上 Codex 页 */
+        fun openCodexIntent(context: Context): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(EXTRA_OPEN_CODEX, true)
+            }
+            return PendingIntent.getActivity(
+                context,
+                CODEX_DONE_NOTIFICATION_ID,
                 intent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
@@ -255,8 +374,112 @@ class ClaudeCodePermissionReceiver : BroadcastReceiver() {
 private const val PERMISSION_NOTIFICATION_BASE = 3_000_000
 private const val DONE_NOTIFICATION_BASE = 4_000_000
 
+/** Codex 是单会话，通知 id 用固定值：审批 5_000_001，完成 / 失败共用 5_000_002 */
+const val CODEX_APPROVAL_NOTIFICATION_ID = 5_000_001
+const val CODEX_DONE_NOTIFICATION_ID = 5_000_002
+
+/** Codex 通知点进来落 Codex 页；见 MainActivity.onNewIntent */
+const val EXTRA_OPEN_CODEX = "openCodex"
+
 /** 两段通知 id 区间各 19 位（3M/4M 起步，互不重叠，也不撞 App 的固定小 id） */
 private const val KEY_MASK_19 = 0x7FFFF
+
+/** Codex 单会话在后台要人知道的四类事，判定见 [codexSupervisorDiff] */
+internal sealed interface CodexSupervisorEvent {
+    /** 服务端发起的审批请求。带可选项，通知按钮照着过滤 */
+    data object Approval : CodexSupervisorEvent
+
+    /** 审批在别处（App 内 sheet / 通知按钮 / 一轮结束）被清掉了，撤提醒 */
+    data object ApprovalCleared : CodexSupervisorEvent
+
+    /** 一轮正常跑完 */
+    data object TurnDone : CodexSupervisorEvent
+
+    /** 一轮失败：进程还活着（status 仍是 Running），errorMessage 带着原因 */
+    data class TurnFailed(val message: String) : CodexSupervisorEvent
+
+    /** app-server 进程退出（Failed = 异常退出，Closed = 用户停的，同 Claude 一并提醒） */
+    data class Died(val message: String?) : CodexSupervisorEvent
+}
+
+/**
+ * Codex 状态的边沿判定。纯函数：上一帧 + 这一帧 + 是否前台 → 至多一个事件。
+ *
+ * 前台规则与 Claude 相同：审批只在后台提醒（前台的 sheet 才是主界面），
+ * 但 ApprovalCleared 在前台也要撤（通知还挂在状态栏上）。
+ */
+internal fun codexSupervisorDiff(
+    previous: ClaudeCodeSessionSupervisor.CodexSeen?,
+    current: ClaudeCodeSessionSupervisor.CodexSeen,
+    isForeground: Boolean,
+): CodexSupervisorEvent? {
+    if (current.approvalKey != null && previous?.approvalKey == null) {
+        return if (!isForeground) CodexSupervisorEvent.Approval else null
+    }
+    if (current.approvalKey == null && previous?.approvalKey != null) {
+        return CodexSupervisorEvent.ApprovalCleared
+    }
+    if (isForeground) return null
+    if (previous == null) return null
+
+    // Codex 的 turn 失败不换状态（status 还是 Running，errorMessage 带着原因），
+    // 所以「busy 落 + 有错误」是失败，「busy 落 + 无错误」才是完成——两者互斥
+    if (previous.busy && !current.busy && current.status == SessionStatus.Running) {
+        return if (current.errorMessage.isNullOrBlank()) {
+            CodexSupervisorEvent.TurnDone
+        } else {
+            CodexSupervisorEvent.TurnFailed(current.errorMessage)
+        }
+    }
+
+    val died = previous.status != current.status &&
+        (current.status == SessionStatus.Failed || current.status == SessionStatus.Closed)
+    if (died) return CodexSupervisorEvent.Died(current.errorMessage)
+
+    return null
+}
+
+/**
+ * Codex 审批通知上「允许 / 拒绝」按钮的接收端，形状对齐
+ * [ClaudeCodePermissionReceiver]：走广播，应答只是往 app-server 的 stdin 写一行。
+ * 服务端在弹出之后改了可选项时，answerApproval 返回 false——通知留着，让人
+ * 只能回 App 里的 sheet 再答。
+ */
+class CodexApprovalReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != ACTION_ANSWER) return
+        val decision = intent.getStringExtra(EXTRA_DECISION)?.let { CodexDecision.fromWire(it) } ?: return
+        val manager: CodexAppServerManager by inject(CodexAppServerManager::class.java)
+        if (manager.answerApproval(decision)) {
+            context.cancelNotification(CODEX_APPROVAL_NOTIFICATION_ID)
+        }
+    }
+
+    companion object {
+        private const val ACTION_ANSWER = "dev.min.code.action.CODEX_ANSWER_APPROVAL"
+        private const val EXTRA_DECISION = "decision"
+
+        fun intent(
+            context: Context,
+            approval: CodexEvent.ApprovalRequest,
+            decision: CodexDecision,
+        ): PendingIntent {
+            val intent = Intent(context, CodexApprovalReceiver::class.java).apply {
+                action = ACTION_ANSWER
+                putExtra(EXTRA_DECISION, decision.wire)
+            }
+            return PendingIntent.getBroadcast(
+                context,
+                // 两个决定两个 requestCode，理由同 ClaudeCodePermissionReceiver：
+                // FLAG_UPDATE_CURRENT 下共用一个 requestCode 会让后建者覆盖先建的 extras
+                (approval.requestId.toIntOrNull() ?: stableKeyInt(approval.requestId)) * 2 +
+                    if (decision == CodexDecision.ACCEPT) 1 else 0,
+                intent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        }
+    }
+}
 
 /**
  * 会话 key → 稳定的 32 位整数（SHA-256 前 4 字节）。取代 `hashCode() and 0xFFFF` ——

@@ -40,6 +40,7 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.EXTRA_OPEN_CLAUDE_CODE
+import dev.min.code.core.service.EXTRA_OPEN_CODEX
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.AppSettings
@@ -149,6 +150,13 @@ class MainActivity : ComponentActivity() {
         if (intent.getBooleanExtra(EXTRA_OPEN_CLAUDE_CODE, false)) {
             navStack?.let { stack ->
                 while (stack.size > 1) stack.removeLastOrNull()
+            }
+        }
+        // Codex 的通知落 Codex 页：清栈后把它顶上去
+        if (intent.getBooleanExtra(EXTRA_OPEN_CODEX, false)) {
+            navStack?.let { stack ->
+                while (stack.size > 1) stack.removeLastOrNull()
+                if (stack.lastOrNull() != Screen.Codex) stack.add(Screen.Codex)
             }
         }
     }
