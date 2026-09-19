@@ -7,7 +7,8 @@ Android app（Kotlin + Compose）。包 `dev.min.code`，三个模块：`app`、
 - 改完必跑：`./gradlew :app:testDebugUnitTest`，再 `:app:assembleDebug`
 - 每次更新：把内容写进 `CHANGELOG.md` 和 `app/src/main/assets/CHANGELOG.md`（关于页读这份）。用户没说版本号时 `versionName` 最小位 +1、`versionCode` +1（见 `app/build.gradle.kts`）
 - 有模拟器 / 真机时用 `adb` 装包、`adb logcat -s ClaudeCodeManager ClaudeCodeInstaller ClaudeCodeFgs AndroidRuntime`、
-  `adb exec-out screencap -p > x.png` 看界面；按文字点按钮用 `python tools/uitap.py <serial> tap <文字>`
+  `adb exec-out screencap -p > x.png` 看界面；按文字点按钮用 `py -3 tools/uitap.py <serial> tap <文字>`
+  （这台机器没有 `python` 命令，只有 `py -3`）
 - 界面文案走 `res/values`（英文默认）+ `res/values-zh`；设置里可「跟随系统 / 中文 / English」。
   实现走系统 `LocaleManager`（API 33+）+ `MainActivity.attachBaseContext` 的 Configuration 包装（26..32），
   见 `AppLocale.kt`——**不是** `AppCompatDelegate.setApplicationLocales`，那个在没有 AppCompatActivity
