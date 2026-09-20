@@ -484,6 +484,9 @@
   <string name="composer_hint_not_ready">Session not ready</string>
   <string name="composer_interrupt">Stop the current task</string>
   <string name="composer_remove">Remove</string>
+  <!-- Removing an attachment chip deletes the file from the workspace, so it confirms first -->
+  <string name="composer_delete_attachment_title">Delete attachment?</string>
+  <string name="composer_delete_attachment_body">%1$s will be deleted from the workspace, not just removed from this message.</string>
   <string name="composer_photo">Photo</string>
   <string name="composer_menu">Attachments, usage and session settings</string>
   <string name="composer_usage">Usage</string>

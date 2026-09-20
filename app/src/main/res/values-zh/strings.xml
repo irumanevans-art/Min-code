@@ -483,6 +483,9 @@
   <string name="composer_hint_not_ready">会话未就绪</string>
   <string name="composer_interrupt">中断当前任务</string>
   <string name="composer_remove">移除</string>
+  <!-- 附件芯片的 × 会把文件从工作区删掉，不是只把它从这条消息里摘走，所以先确认 -->
+  <string name="composer_delete_attachment_title">删除附件？</string>
+  <string name="composer_delete_attachment_body">将把 %1$s 从工作区删除，不只是从这条消息里移除。</string>
   <string name="composer_photo">拍照</string>
   <string name="composer_menu">附件、用量与会话设置</string>
   <string name="composer_usage">用量</string>

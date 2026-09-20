@@ -83,6 +83,7 @@ import dev.min.code.core.claudecode.parseSessionCostUsd
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.LocalFrost
+import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.frostPane
 import dev.min.code.ui.components.InkRingProgress
 import dev.min.code.ui.theme.InkMotion
@@ -167,6 +168,8 @@ internal fun ClaudeCodeInputBar(
     var images by remember {
         mutableStateOf(restoredDraft.images.map { PendingImage(it.name, ClaudeCodeImage(it.mediaType, it.base64)) })
     }
+    // 附件芯片上的 × 会真删工作区里的文件，误触无法挽回 —— 先确认再删
+    var pendingAttachmentDelete by remember { mutableStateOf<Attachment?>(null) }
     // 折叠起来的长段粘贴：输入框里只留一个占位符，正文存在这里，发送时还原（见 collapsePaste）
     var pastes by remember { mutableStateOf(restoredDraft.pasteMap) }
     var pasteSeq by remember { mutableIntStateOf(restoredDraft.pasteSeq) }
@@ -402,12 +405,27 @@ internal fun ClaudeCodeInputBar(
                 attachments.forEach { att ->
                     AttachmentChip(
                         name = att.name,
-                        onRemove = {
-                            attachments = attachments - att
-                            onDeleteWorkspaceFile(att.path) // 真删文件，否则"取消"只是视觉上的
-                        },
+                        // 摘芯片 = 删工作区文件（否则"取消"只是视觉上的），所以先问一句
+                        onRemove = { pendingAttachmentDelete = att },
                     )
                 }
+            }
+        }
+
+        pendingAttachmentDelete?.let { target ->
+            RikkaConfirmDialog(
+                show = true,
+                title = stringResource(R.string.composer_delete_attachment_title),
+                confirmText = stringResource(R.string.common_delete),
+                dismissText = stringResource(R.string.common_cancel),
+                onConfirm = {
+                    attachments = attachments - target
+                    onDeleteWorkspaceFile(target.path)
+                    pendingAttachmentDelete = null
+                },
+                onDismiss = { pendingAttachmentDelete = null },
+            ) {
+                Text(stringResource(R.string.composer_delete_attachment_body, target.name))
             }
         }
 
