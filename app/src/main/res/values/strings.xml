@@ -101,6 +101,10 @@
   <string name="session_list_no_match">No results for “%1$s”</string>
   <string name="session_list_new">New session</string>
   <string name="session_list_close_search">Close search</string>
+  <!-- The two built-in drawer group headers. A user category may carry the same
+       name; that is fine, the group identity is structural, not the text -->
+  <string name="session_group_pinned">Pinned</string>
+  <string name="session_group_uncategorized">Uncategorized</string>
   <string name="session_list_open_search">Search sessions</string>
   <string name="session_settings_title">Session settings</string>
   <string name="session_settings_busy">Applying session settings…</string>

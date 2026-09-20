@@ -106,6 +106,17 @@ internal fun decodeSessionMetaIndex(raw: String): Map<String, SessionMeta> =
     runCatching { MetaJson.decodeFromString(SessionMetaIndex.serializer(), raw).sessions }
         .getOrDefault(emptyMap())
 
+/**
+ * 组头。两个内置组只给标识，**文案由界面层取资源** —— 这里是 core，
+ * 写死「置顶」「未分类」就等于把中文钉进了英文界面。
+ * 分类组的文案是用户自己起的名字，本来就没有翻译一说。
+ */
+sealed interface SessionGroupHeader {
+    data object Pinned : SessionGroupHeader
+    data object Uncategorized : SessionGroupHeader
+    data class Custom(val name: String) : SessionGroupHeader
+}
+
 data class SessionGroup(
     /**
      * 结构性身份，给 LazyColumn 当 key 用。**绝不能从 [header] 派生**：
@@ -113,7 +124,7 @@ data class SessionGroup(
      * 列表直接崩（IllegalArgumentException: duplicate key）。
      */
     val key: String,
-    val header: String?,
+    val header: SessionGroupHeader?,
     val items: List<String>,
 )
 
@@ -132,14 +143,16 @@ fun groupSessionIds(
     val restIdx = ids.indices.filter { !pinned.getOrElse(it) { false } }
     val cats = restIdx.mapNotNull { category.getOrNull(it)?.takeIf(String::isNotBlank) }.distinct()
     val groups = ArrayList<SessionGroup>()
-    if (pinIds.isNotEmpty()) groups += SessionGroup("pinned", "置顶", pinIds)
+    if (pinIds.isNotEmpty()) groups += SessionGroup("pinned", SessionGroupHeader.Pinned, pinIds)
     for (cat in cats) {
         val inCat = restIdx.filter { category.getOrNull(it) == cat }.map { ids[it] }
-        if (inCat.isNotEmpty()) groups += SessionGroup("cat:$cat", cat, inCat)
+        if (inCat.isNotEmpty()) {
+            groups += SessionGroup("cat:$cat", SessionGroupHeader.Custom(cat), inCat)
+        }
     }
     val uncat = restIdx.filter { category.getOrNull(it).isNullOrBlank() }.map { ids[it] }
     if (uncat.isNotEmpty()) {
-        val header = if (groups.isEmpty()) null else "未分类"
+        val header = if (groups.isEmpty()) null else SessionGroupHeader.Uncategorized
         groups += SessionGroup("uncategorized", header, uncat)
     }
     return groups

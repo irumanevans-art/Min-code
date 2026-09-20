@@ -23,7 +23,12 @@ class ClaudeCodeSessionMetaTest {
         val category = listOf(null, "工作", "玩", "工作", null)
         val groups = groupSessionIds(ids, pinned, category)
         assertEquals(
-            listOf("置顶", "工作", "玩", "未分类"),
+            listOf(
+                SessionGroupHeader.Pinned,
+                SessionGroupHeader.Custom("工作"),
+                SessionGroupHeader.Custom("玩"),
+                SessionGroupHeader.Uncategorized,
+            ),
             groups.map { it.header },
         )
         assertEquals(listOf("p"), groups[0].items)
@@ -56,8 +61,14 @@ class ClaudeCodeSessionMetaTest {
         val category = listOf(null, "置顶", "未分类", null)
         val groups = groupSessionIds(ids, pinned, category)
 
+        // 内置组头和同名分类现在连类型都不同，撞不到一起
         assertEquals(
-            listOf("置顶", "置顶", "未分类", "未分类"),
+            listOf(
+                SessionGroupHeader.Pinned,
+                SessionGroupHeader.Custom("置顶"),
+                SessionGroupHeader.Custom("未分类"),
+                SessionGroupHeader.Uncategorized,
+            ),
             groups.map { it.header },
         )
         assertEquals(

@@ -101,6 +101,9 @@
   <string name="session_list_no_match">没找到「%1$s」</string>
   <string name="session_list_new">新建会话</string>
   <string name="session_list_close_search">关闭搜索</string>
+  <!-- 抽屉里两个内置组头。用户自建分类可以同名，组身份是结构性的、不看文案 -->
+  <string name="session_group_pinned">置顶</string>
+  <string name="session_group_uncategorized">未分类</string>
   <string name="session_list_open_search">搜索会话</string>
   <string name="session_settings_title">会话设置</string>
   <string name="session_settings_busy">正在应用会话设置…</string>

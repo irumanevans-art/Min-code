@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
+import dev.min.code.core.claudecode.SessionGroupHeader
 import dev.min.code.core.claudecode.groupSessionIds
 import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.InkDialog
@@ -211,12 +212,13 @@ fun ClaudeCodeSessionDrawer(
             } else {
                 LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
                     groups.forEach { group ->
-                        if (group.header != null) {
+                        val header = group.header
+                        if (header != null) {
                             // key 用组的结构性身份：用户分类可以和内置组头重名，
                             // 从显示文案派生 key 会撞成 duplicate key 崩掉列表
                             item(key = "h-${group.key}") {
                                 Text(
-                                    group.header,
+                                    sessionGroupHeaderText(header),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontFamily = JetbrainsMono,
                                     color = scheme.onSurfaceVariant,
@@ -625,6 +627,14 @@ private fun LiveDot(color: Color) {
     androidx.compose.foundation.Canvas(Modifier.size(6.dp)) {
         drawCircle(color.copy(alpha = breath?.value ?: 1f))
     }
+}
+
+/** 内置组头取资源跟界面语言走；分类组头是用户自己起的名字，原样显示 */
+@Composable
+private fun sessionGroupHeaderText(header: SessionGroupHeader): String = when (header) {
+    SessionGroupHeader.Pinned -> stringResource(R.string.session_group_pinned)
+    SessionGroupHeader.Uncategorized -> stringResource(R.string.session_group_uncategorized)
+    is SessionGroupHeader.Custom -> header.name
 }
 
 /** 同一支 formatter 复用：SimpleDateFormat 构造不便宜，会话多时每行每次重组新建是纯浪费。
