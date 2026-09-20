@@ -212,6 +212,12 @@ private fun CodexPageContent(vm: CodexVM) {
                     onImportFile = vm::importFile,
                     onRemoveAttachment = vm::removeAttachment,
                     onSearchFiles = vm::searchFiles,
+                    onSlash = { slash ->
+                        when (slash) {
+                            CodexSlash.MODEL, CodexSlash.EFFORT -> showTurnSettings = true
+                            CodexSlash.NEW -> vm.startNew()
+                        }
+                    },
                     onOpenTurnSettings = { showTurnSettings = true },
                     onStop = vm::stop,
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -526,6 +532,7 @@ private fun CodexComposer(
     onImportFile: (String, java.io.InputStream, (Boolean) -> Unit) -> Unit,
     onRemoveAttachment: (CodexAttachment) -> Unit,
     onSearchFiles: suspend (String) -> List<String>,
+    onSlash: (CodexSlash) -> Unit,
     onOpenTurnSettings: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
@@ -590,6 +597,37 @@ private fun CodexComposer(
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
+        val slashMatches = remember(draft) { codexSlashMatches(draft) }
+        AnimatedVisibility(
+            visible = slashMatches.isNotEmpty(),
+            enter = InkMotion.expand,
+            exit = InkMotion.collapse,
+        ) {
+            Column {
+                slashMatches.forEach { slash ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onDraftChange(slash.command) }
+                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            slash.command,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetbrainsMono),
+                        )
+                        Text(
+                            stringResource(slash.labelRes()),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
         // 候选摆在输入框上方：手指在下面打字，列表从上面长出来才不会被自己的手挡住
         AnimatedVisibility(
             visible = fileMatches.isNotEmpty(),
@@ -696,7 +734,15 @@ private fun CodexComposer(
                     // 只挂了附件、一个字没写也该能发 —— 那本身就是一句「看看这个」
                     enabled = enabled && (draft.isNotBlank() || attachments.isNotEmpty()),
                     queued = busy,
-                    onClick = { if (onSend(draft)) onDraftChange("") },
+                    onClick = {
+                        // 本地命令在这里下车，不进 turn/start：协议里没有斜杠命令，
+                        // 发过去只会变成给模型的一句话，白花一轮
+                        val slash = codexSlashTarget(draft)
+                        when {
+                            slash != null -> { onSlash(slash); onDraftChange("") }
+                            onSend(draft) -> onDraftChange("")
+                        }
+                    },
                 )
             }
         }
@@ -726,6 +772,12 @@ private const val QUEUED_CHIP_CHARS = 18
 
 /** `@` 补全的抖动窗口，和 Claude 侧同一个数 */
 private const val MENTION_DEBOUNCE_MS = 180L
+
+/** 命令旁边那句说明。命令名本身不翻译，说明跟着界面语言走 */
+private fun CodexSlash.labelRes(): Int = when (this) {
+    CodexSlash.MODEL, CodexSlash.EFFORT -> R.string.codex_turn_settings
+    CodexSlash.NEW -> R.string.codex_new_session
+}
 
 /**
  * 审批。
