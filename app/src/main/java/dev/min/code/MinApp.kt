@@ -75,10 +75,13 @@ class MinApp : Application() {
             runCatching { getKoin().get<LocalServiceRegistry>().reconcile() }
                 .onFailure { Log.w(TAG, "local service reconcile failed", it) }
         }
-        // 海纹理 ~1.7MB + BitmapShader 管线：别等用户第一次点发送/海窗时在主线程冷编译
+        // 海纹理 ~1.7MB + BitmapShader 管线：别等用户第一次点发送/海窗时在主线程冷编译。
+        // 云（Codex 那边的底，~0.6MB）一并解掉：不预热的话进 Codex 页那一下要在
+        // 切换动画里同步 decode，正好卡在最显眼的地方
         getKoin().get<AppScope>().launch(Dispatchers.IO) {
             runCatching {
                 SeaPlate.preload(this@MinApp)
+                SeaPlate.preload(this@MinApp, R.drawable.cloud_plate)
                 GpuWarmup.warm(this@MinApp)
             }.onFailure { Log.w(TAG, "SeaPlate/GpuWarmup failed", it) }
         }

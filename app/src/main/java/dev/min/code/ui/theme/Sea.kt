@@ -57,41 +57,54 @@ import kotlin.math.sin
  * 少数展示性的地方可以指定看哪一块（[SeaWindow.Fixed]），例如加载页的品牌标要落在金脉上。
  */
 object SeaPlate {
-    private var cached: ImageBitmap? = null
+    /**
+     * 按资源 id 缓存。不止一张底：Claude 那边是海（`sea_plate`），
+     * Codex 那边是云（`cloud_plate`，见 [CloudPlate]）。两张都是整屏级的大位图，
+     * 解一次留着——切页面时重解会在切换动画里卡一帧。
+     */
+    private val cached = HashMap<Int, ImageBitmap>()
 
     /**
-     * 后台预解码 1.7MB 海纹理。首帧点海窗时若还没好，仍会同步 decode 一次；
+     * 后台预解码纹理（海 1.7MB / 云 0.6MB）。首帧点窗时若还没好，仍会同步 decode 一次；
      * 启动后 IO 预热能把「第一次操作卡一下」削掉大半。
      */
-    fun preload(context: android.content.Context) {
-        if (cached != null) return
+    fun preload(context: android.content.Context, res: Int = R.drawable.sea_plate) {
         synchronized(this) {
-            if (cached != null) return
+            if (cached.containsKey(res)) return
             val opts = android.graphics.BitmapFactory.Options().apply {
                 inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
             }
             val bmp = android.graphics.BitmapFactory.decodeResource(
                 context.applicationContext.resources,
-                R.drawable.sea_plate,
+                res,
                 opts,
             ) ?: return
-            cached = bmp.asImageBitmap()
+            cached[res] = bmp.asImageBitmap()
         }
     }
 
     /** 给 [GpuWarmup] 等非 Compose 路径读已预热的位图；未 preload 时为 null。 */
-    fun cachedOrNull(): ImageBitmap? = synchronized(this) { cached }
+    fun cachedOrNull(res: Int = R.drawable.sea_plate): ImageBitmap? = synchronized(this) { cached[res] }
 
     @Composable
-    fun bitmap(): ImageBitmap {
+    fun bitmap(res: Int = LocalSeaPlate.current): ImageBitmap {
         val context = LocalContext.current
-        return remember {
+        return remember(res) {
             synchronized(this) {
-                cached ?: ImageBitmap.imageResource(context.resources, R.drawable.sea_plate).also { cached = it }
+                cached.getOrPut(res) { ImageBitmap.imageResource(context.resources, res) }
             }
         }
     }
 }
+
+/**
+ * 这棵子树的底是哪一张。默认是海；Codex 那一支在根上换成云（[CloudTheme]）。
+ *
+ * 「蓝色不是色值」这条规则换了底之后原样成立——[seaInk] / [seaFill] 做的还是同一个动作，
+ * 只是镂空底下那张纹理不同。所以整套 Ink* 组件、会话流左边那条轨道、发送键里流动的窗，
+ * 全部跟着这一个值走，没有一处要单独改。
+ */
+val LocalSeaPlate = staticCompositionLocalOf { R.drawable.sea_plate }
 
 /** 这扇窗看海的哪一块 */
 sealed interface SeaWindow {
@@ -132,16 +145,20 @@ private const val FLOW_DP = 9f
 private const val FLOW_PERIOD_MS = 7_000
 
 /**
- * 在根上调用一次。纹理宽铺到屏宽的 1.3 倍、居中、起点略往上，之后不动。
+ * 在根上调用一次。纹理宽铺到屏宽的 [widthFactor] 倍、居中、起点略往上，之后不动。
+ *
+ * @param widthFactor 海是横构图（1200×1130），1.3 倍就够，剩下的靠 MIRROR 平铺补，
+ *   墨纹看不出对称。云是竖构图（940×1137）且形态连贯得多，镜像接缝一眼能认出来，
+ *   所以那边放到 2.2 倍——高度正好盖满一屏，根本不进平铺。
  */
 @Composable
-fun rememberSeaField(): SeaField {
+fun rememberSeaField(widthFactor: Float = 1.3f): SeaField {
     val field = remember { SeaField() }
     val bitmap = SeaPlate.bitmap()
     val density = LocalDensity.current
     val screenWidthPx = with(density) { androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp.toPx() }
-    LaunchedEffect(bitmap, screenWidthPx) {
-        field.scale = screenWidthPx * 1.3f / bitmap.width
+    LaunchedEffect(bitmap, screenWidthPx, widthFactor) {
+        field.scale = screenWidthPx * widthFactor / bitmap.width
         field.offsetX = -(bitmap.width * field.scale - screenWidthPx) / 2f
         field.offsetY = -bitmap.height * field.scale * 0.08f
         field.ready = true

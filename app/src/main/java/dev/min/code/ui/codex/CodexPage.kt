@@ -67,6 +67,7 @@ import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.session.RenameDialog
 import dev.min.code.ui.session.SeaSendKey
+import dev.min.code.ui.theme.CloudTheme
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
@@ -91,9 +92,19 @@ import java.util.Locale
  * 两态：会话里（[CodexTranscript] + 输入坞，和 Claude 那边同一套渲染）和
  * 会话外（安装 / 登录 / 启动）。以前是把配置表单、登录提示、审批卡、输入框
  * 全堆在一个 verticalScroll 里，输入框吊在最底下，一打字就被键盘顶掉。
+ *
+ * 整页罩在 [CloudTheme] 里：Claude 那边的取底是海，这边是云。两个引擎长得一样
+ * 是对的——同一套组件、同一套折叠规则——但**在哪个引擎里**要一眼看得出来，
+ * 而不是靠去读顶栏那行字。换底是整页的事，所以罩在最外面，
+ * 连带底下的 sheet 和对话框一起。
  */
 @Composable
 fun CodexPage(vm: CodexVM = koinViewModel()) {
+    CloudTheme { CodexPageContent(vm) }
+}
+
+@Composable
+private fun CodexPageContent(vm: CodexVM) {
     val runtime by vm.runtimeStatus.collectAsStateWithLifecycle()
     val session by vm.session.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
