@@ -24,6 +24,9 @@ class SettingsVM(private val store: SettingsStore) : ViewModel() {
 
     fun deleteProfile(id: String) = viewModelScope.launch { store.deleteProfile(id) }
 
+    /** 用户明确放弃那串打不开的密文，腾位置重填 */
+    fun discardUnreadableCredentials() = viewModelScope.launch { store.discardUnreadableCredentials() }
+
     fun setActiveProfile(id: String, acknowledgeInsecure: Boolean = false) =
         viewModelScope.launch { store.setActiveProfile(id, acknowledgeInsecure) }
     fun setUseNpmMirror(enabled: Boolean) = viewModelScope.launch { store.setUseNpmMirror(enabled) }

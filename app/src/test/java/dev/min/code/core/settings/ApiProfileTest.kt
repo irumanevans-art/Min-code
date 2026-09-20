@@ -230,4 +230,39 @@ class ApiProfileTest {
         // 空着就用官方地址，不能存一个空串进去
         assertEquals(AppSettings.DEFAULT_BASE_URL, normalizeBaseUrl("   "))
     }
+
+    // -----------------------------------------------------------------------
+    // 「密文打不开」和「没配过」是两回事
+    //
+    // 分不开的代价很实在：读成空表 → 界面显示「还没配过」→ 用户随手加一条 →
+    // 整表覆盖把原密文抹掉。密钥（改锁屏、换机恢复备份）也许还回得来，抹掉就回不来了。
+    // -----------------------------------------------------------------------
+
+    /** 解不开 = null，这才是要挡住写入的那种情况 */
+    @Test
+    fun `ciphertext that will not decrypt is unreadable`() {
+        assertTrue(isUnreadableCipher("v1:aXY=:Ym9keQ==") { null })
+    }
+
+    @Test
+    fun `ciphertext that decrypts is readable`() {
+        assertFalse(isUnreadableCipher("v1:aXY=:Ym9keQ==") { "[]" })
+    }
+
+    /** 没存过就是没存过，不能当成打不开去挡住写入 —— 那样新用户一条都加不进来 */
+    @Test
+    fun `absent or blank value is not unreadable`() {
+        assertFalse(isUnreadableCipher(null) { null })
+        assertFalse(isUnreadableCipher("") { null })
+        assertFalse(isUnreadableCipher("   ") { null })
+    }
+
+    /**
+     * 1.1.9 之前存的是明文 JSON，没有 v1: 前缀。它压根不用解密，
+     * 不该因为 decrypt 给了 null 就被当成打不开。
+     */
+    @Test
+    fun `legacy plaintext is not unreadable`() {
+        assertFalse(isUnreadableCipher("[{\"id\":\"a\"}]") { null })
+    }
 }

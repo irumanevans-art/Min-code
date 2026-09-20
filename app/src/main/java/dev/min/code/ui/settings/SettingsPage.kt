@@ -94,6 +94,8 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
     var editing by remember { mutableStateOf<ProfileEdit?>(null) }
     // null = 没有待确认的明文地址
     var insecureConfirm by remember { mutableStateOf<InsecureConfirm?>(null) }
+    // 放弃那串打不开的密文要再问一次：这一步之后就真的没得救了
+    var discardCredentials by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
 
     Scaffold(
@@ -119,7 +121,19 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 SectionTitle(stringResource(R.string.settings_section_connection))
-                if (settings.profiles.isEmpty()) {
+                // 密文打不开：这不是「没配过」，别让人以为配置丢了就急着重填。
+                // 在清掉之前所有写入都被挡着，那串密文还留在盘上。
+                if (settings.credentialsUnreadable) {
+                    Notice(
+                        text = stringResource(R.string.settings_credentials_unreadable),
+                        tone = NoticeTone.Error,
+                    )
+                    InkTextButton(
+                        onClick = { discardCredentials = true },
+                        tone = InkButtonTone.Vermilion,
+                    ) { Text(stringResource(R.string.settings_credentials_discard)) }
+                }
+                if (settings.profiles.isEmpty() && !settings.credentialsUnreadable) {
                     Text(
                         stringResource(R.string.settings_connection_empty),
                         style = MaterialTheme.typography.labelSmall,
@@ -256,6 +270,22 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
             onDismiss = { insecureConfirm = null },
         ) {
             Text(stringResource(R.string.settings_connection_insecure_body, pending.baseUrl))
+        }
+    }
+
+    if (discardCredentials) {
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.settings_credentials_discard_title),
+            confirmText = stringResource(R.string.settings_credentials_discard),
+            dismissText = stringResource(R.string.common_cancel),
+            onConfirm = {
+                vm.discardUnreadableCredentials()
+                discardCredentials = false
+            },
+            onDismiss = { discardCredentials = false },
+        ) {
+            Text(stringResource(R.string.settings_credentials_discard_body))
         }
     }
 }

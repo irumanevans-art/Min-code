@@ -107,6 +107,14 @@ data class AppSettings(
     val openWithDefaults: Map<String, WorkspaceOpenMode> = emptyMap(),
     val codexProfiles: List<CodexProfile> = emptyList(),
     val activeCodexProfileId: String = "",
+    /**
+     * 配置的密文还在，但 Keystore 解不开它（改过锁屏、换机恢复了备份之后会这样）。
+     *
+     * 这时 [profiles] / [codexProfiles] 是空的，但那**不等于「没配过」**：写入这时是被
+     * 挡住的（见 `SettingsStore.editProfiles`），界面要把话说明白，让人知道这是打不开
+     * 而不是丢了。要重来得走 `discardUnreadableCredentials()`，那是一次明确的选择。
+     */
+    val credentialsUnreadable: Boolean = false,
 ) {
     /** 当前生效的那条。id 指不到（刚删掉当前项）时退回第一条，不至于整个 App 突然「没配过」 */
     val activeProfile: ApiProfile?
@@ -175,6 +183,7 @@ class SettingsStore(private val context: Context) {
             openWithDefaults = parseOpenWithDefaults(p[KEY_OPEN_WITH].orEmpty()),
             codexProfiles = decodeCodexProfiles(p[KEY_CODEX_PROFILES]),
             activeCodexProfileId = p[KEY_CODEX_ACTIVE].orEmpty(),
+            credentialsUnreadable = credentialsUnreadable(p),
         )
     }
 
@@ -195,7 +204,9 @@ class SettingsStore(private val context: Context) {
         if (snapshot[KEY_PROFILES] != null || snapshot[KEY_TOKEN] == null) return
         context.dataStore.edit { p ->
             if (p[KEY_PROFILES] != null) return@edit
-            val legacyToken = TokenCipher.decrypt(p[KEY_TOKEN].orEmpty())
+            // 解不开的老 token 当空处理，下面的 isBlank 分支会原样留着老键不删 ——
+            // 密钥回来之后这条还能迁移，删掉就没了
+            val legacyToken = TokenCipher.decrypt(p[KEY_TOKEN].orEmpty()).orEmpty()
             val legacyBaseUrl = p[KEY_BASE_URL]?.takeIf { it.isNotBlank() } ?: AppSettings.DEFAULT_BASE_URL
             if (legacyToken.isBlank()) return@edit
             // 老版本存下来的地址属于「既有配置」，明文风险直接记成已确认
@@ -235,6 +246,10 @@ class SettingsStore(private val context: Context) {
         migrateLegacyToken()
         migrateInsecureAck()
         context.dataStore.edit { p ->
+            // 打不开的密文绝不整表覆盖：它读出来是空表，照着空表写回去就等于把原配置抹了。
+            // 密钥也许还能回来（换回原设备、恢复 Keystore），所以这里什么都不做，
+            // 等用户在设置页明确选择 discardUnreadableCredentials()。
+            if (isUnreadableCipher(p[KEY_PROFILES], TokenCipher::decrypt)) return@edit
             val (next, activeId) = block(decodeProfiles(p[KEY_PROFILES]), p[KEY_ACTIVE_PROFILE].orEmpty())
             if (next.isEmpty()) p.remove(KEY_PROFILES) else p[KEY_PROFILES] = encodeProfiles(next)
             // active 必须落在表里，否则 activeProfile 每次都要退回第一条，用户看到的「选中」会漂
@@ -340,12 +355,31 @@ class SettingsStore(private val context: Context) {
     suspend fun clearOpenWithDefaults() = context.dataStore.edit { it.remove(KEY_OPEN_WITH) }
 
     suspend fun setCodexProfile(profile: CodexProfile) = context.dataStore.edit { p ->
+        // 同 editProfiles：打不开的密文不覆盖
+        if (isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)) return@edit
         val list = decodeCodexProfiles(p[KEY_CODEX_PROFILES]).filterNot { it.id == profile.id } + profile
         p[KEY_CODEX_PROFILES] = encodeCodexProfiles(list)
         p[KEY_CODEX_ACTIVE] = profile.id
     }
 
     suspend fun setActiveCodexProfile(id: String) = context.dataStore.edit { it[KEY_CODEX_ACTIVE] = id }
+
+    /**
+     * 明确放弃那些打不开的密文，把位置腾出来重填。
+     *
+     * 只有用户在设置页上点过「清除并重新配置」才会走到这里 —— 在那之前 App 一直挡着
+     * 写入，保着那串也许还能救的密文。清掉之后 [editProfiles] 自然恢复正常。
+     */
+    suspend fun discardUnreadableCredentials() = context.dataStore.edit { p ->
+        if (isUnreadableCipher(p[KEY_PROFILES], TokenCipher::decrypt)) {
+            p.remove(KEY_PROFILES)
+            p.remove(KEY_ACTIVE_PROFILE)
+        }
+        if (isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)) {
+            p.remove(KEY_CODEX_PROFILES)
+            p.remove(KEY_CODEX_ACTIVE)
+        }
+    }
 }
 
 private val profilesJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -436,12 +470,29 @@ private fun encodeProfiles(profiles: List<ApiProfile>): String =
 private fun encodeCodexProfiles(profiles: List<CodexProfile>): String =
     TokenCipher.encrypt(profilesJson.encodeToString(profiles))
 
-private fun decodeCodexProfiles(raw: String?): List<CodexProfile> =
-    runCatching { profilesJson.decodeFromString<List<CodexProfile>>(TokenCipher.decrypt(raw.orEmpty())) }
-        .getOrDefault(emptyList())
+private fun decodeCodexProfiles(raw: String?): List<CodexProfile> {
+    val plain = TokenCipher.decrypt(raw.orEmpty()) ?: return emptyList()
+    return runCatching { profilesJson.decodeFromString<List<CodexProfile>>(plain) }.getOrDefault(emptyList())
+}
 
 private fun decodeProfiles(raw: String?): List<ApiProfile> =
-    decodeProfilesJson(TokenCipher.decrypt(raw.orEmpty()))
+    decodeProfilesJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
+
+/**
+ * 「密文还在、但打不开」。
+ *
+ * 判定抽成纯函数是为了能在单测里钉死 —— 真正的解密要走 Android Keystore，
+ * JVM 单测里没有那东西。[decrypt] 解不开时给 null。
+ */
+internal fun isUnreadableCipher(raw: String?, decrypt: (String) -> String?): Boolean =
+    !raw.isNullOrBlank() && raw.startsWith(CIPHER_PREFIX) && decrypt(raw) == null
+
+/** 密文前缀，[TokenCipher] 写出来的格式是 `v1:<iv>:<密文>` */
+internal const val CIPHER_PREFIX = "v1:"
+
+private fun credentialsUnreadable(p: Preferences): Boolean =
+    isUnreadableCipher(p[KEY_PROFILES], TokenCipher::decrypt) ||
+        isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)
 
 /**
  * 读设置流时用。迁移是在 [SettingsStore.current] 里写的，而 UI 可能先一步订阅到流 ——
@@ -453,7 +504,7 @@ private fun readProfiles(p: Preferences): List<ApiProfile> {
     val ackMigrated = p[KEY_INSECURE_ACK_MIGRATED] == true
     val stored = decodeProfiles(p[KEY_PROFILES])
     if (stored.isNotEmpty()) return if (ackMigrated) stored else ackExistingProfiles(stored)
-    val legacy = TokenCipher.decrypt(p[KEY_TOKEN].orEmpty())
+    val legacy = TokenCipher.decrypt(p[KEY_TOKEN].orEmpty()).orEmpty()
     if (legacy.isBlank()) return emptyList()
     return listOf(
         ApiProfile(
@@ -468,7 +519,7 @@ private fun readProfiles(p: Preferences): List<ApiProfile> {
 /** Keystore-backed token storage. The format is `v1:<iv>:<ciphertext>` in DataStore. */
 private object TokenCipher {
     private const val KEY_ALIAS = "min.anthropic.auth-token"
-    private const val PREFIX = "v1:"
+    private const val PREFIX = CIPHER_PREFIX
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
 
     fun isEncrypted(value: String): Boolean = value.startsWith(PREFIX)
@@ -481,7 +532,15 @@ private object TokenCipher {
         return "$PREFIX$iv:$body"
     }
 
-    fun decrypt(value: String): String {
+    /**
+     * 解不开时返回 **null**，不是空串。
+     *
+     * 这两件事必须分得开：空串是「没存过」，null 是「密文在这儿但 Keystore 打不开」。
+     * 早先一律给空串，于是密钥失效（用户改了锁屏、换机恢复了备份）之后整张配置表
+     * 读成空，界面显示「还没配过」，而用户随手新增一条就会把原密文覆盖掉 —— 那时候
+     * 才是真的找不回来了。
+     */
+    fun decrypt(value: String): String? {
         if (value.isBlank()) return ""
         if (!isEncrypted(value)) return value
         return runCatching {
@@ -494,7 +553,7 @@ private object TokenCipher {
                 GCMParameterSpec(128, Base64.decode(parts[1], Base64.DEFAULT)),
             )
             String(cipher.doFinal(Base64.decode(parts[2], Base64.DEFAULT)), StandardCharsets.UTF_8)
-        }.getOrDefault("")
+        }.getOrNull()
     }
 
     private fun key(): SecretKey {

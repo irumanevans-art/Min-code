@@ -29,6 +29,12 @@
   <string name="settings_connection_hint">改动只对之后新开的会话生效；正在跑的会话用的还是启动时注入的值。</string>
   <string name="settings_connection_add">新增一项</string>
   <string name="settings_connection_empty">还没有 key，加一条才能开会话。</string>
+  <!-- Keystore 打不开存下来的 key（改过锁屏，或把备份恢复到了另一台设备）。
+       在用户做决定之前写入是挡住的，免得把也许还能救的密文覆盖掉 -->
+  <string name="settings_credentials_unreadable">存下来的 key 解不开了。多半是改过锁屏密码，或者把备份恢复到了另一台设备。它们并没有丢——编辑先停住，免得覆盖掉。要是密钥回不来了，清掉重填一次。</string>
+  <string name="settings_credentials_discard">清除并重新配置</string>
+  <string name="settings_credentials_discard_title">清除打不开的 key？</string>
+  <string name="settings_credentials_discard_body">存下来的 key 会被彻底删掉，得重新填一次。确认密钥回不来了再做这一步。</string>
   <string name="settings_connection_new">新增连接</string>
   <string name="settings_connection_edit">编辑连接</string>
   <string name="settings_connection_label">备注名</string>

@@ -29,6 +29,13 @@
   <string name="settings_connection_hint">Changes apply to sessions started after this. Running sessions still use the values injected at launch.</string>
   <string name="settings_connection_add">Add a key</string>
   <string name="settings_connection_empty">No key yet. Add one to start a session.</string>
+  <!-- Keystore can no longer open the stored credentials (lock screen changed, or a backup
+       restored onto another device). Writing is blocked until the user decides, so the
+       ciphertext is not overwritten while it might still come back -->
+  <string name="settings_credentials_unreadable">Your saved keys cannot be decrypted. This usually follows a lock screen change or a backup restored onto another device. They are not gone — editing is paused so nothing overwrites them. If the key never comes back, clear them and enter yours again.</string>
+  <string name="settings_credentials_discard">Clear and set up again</string>
+  <string name="settings_credentials_discard_title">Clear the unreadable keys?</string>
+  <string name="settings_credentials_discard_body">The stored keys will be deleted for good and you will have to enter yours again. Only do this if the decryption key is not coming back.</string>
   <string name="settings_connection_new">New connection</string>
   <string name="settings_connection_edit">Edit connection</string>
   <string name="settings_connection_label">Label</string>
