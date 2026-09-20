@@ -91,6 +91,9 @@
   <string name="codex_status_failed">failed</string>
   <string name="codex_composer_hint">Ask Codex</string>
   <string name="codex_queued_hint">%1$d queued · tap to take one back</string>
+  <string name="codex_turn_settings">Model &amp; reasoning</string>
+  <string name="codex_turn_settings_scope">Applies to this session from the next turn. The connection profile keeps its own default for new sessions.</string>
+  <string name="codex_turn_settings_apply">Use for this session</string>
   <string name="codex_connection_open">Connection settings</string>
   <string name="codex_approve_session">Allow for this session</string>
   <string name="codex_approval_cwd">Working directory: %1$s</string>

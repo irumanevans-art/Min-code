@@ -93,6 +93,9 @@ class CodexAppServerManager(
          * 一轮失败或被打断时**留在这儿**而不是继续烧——见 [drainQueuedLocked]。
          */
         val queued: List<String> = emptyList(),
+        /** 这条会话当前用的模型 / 思考强度。null = 没指定，走 codex 自己的默认 */
+        val model: String? = null,
+        val effort: String? = null,
     ) {
         /**
          * 能不能往里打字、按发送。
@@ -156,6 +159,8 @@ class CodexAppServerManager(
             // 接着上一条聊时，已经摆在屏幕上的历史要留着 —— 点一下「继续」就清屏，
             // 用户会以为历史没了。开新会话（resumeThreadId 为空）才从白纸开始
             items = if (resumeThreadId != null) _state.value.items else emptyList(),
+            model = options.model,
+            effort = options.effort,
         )
 
         val launched = runCatching { processLauncher.start() }.getOrElse { error ->
@@ -228,6 +233,23 @@ class CodexAppServerManager(
             return true
         }
         startTurnLocked(input)
+    }
+
+    /**
+     * 换这一条会话的模型 / 思考强度，**不重启进程**。
+     *
+     * `turn/start` 每轮都从 [options] 现取 model 与 effort，所以改完下一轮就生效，
+     * 当前这一轮按它开始时的档跑完——一轮跑到一半换模型没有意义，也不是 codex 支持的事。
+     *
+     * 只动这条会话。连接配置里那一份是**新会话的默认**，不跟着变：
+     * 「这一轮让它想久一点」和「我平时用这个档」是两件事。
+     */
+    fun setModelAndEffort(model: String?, effort: String?) = synchronized(lock) {
+        options = options.copy(
+            model = model?.trim()?.takeIf(String::isNotBlank),
+            effort = effort?.trim()?.takeIf(String::isNotBlank),
+        )
+        _state.value = _state.value.copy(model = options.model, effort = options.effort)
     }
 
     /**

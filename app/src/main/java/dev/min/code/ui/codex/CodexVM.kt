@@ -165,6 +165,12 @@ class CodexVM(
         )
     }
 
+    /**
+     * 换这一条会话的模型 / 思考强度。下一轮生效，不重启进程，也不改连接配置里的默认
+     * ——「这一轮让它想久一点」和「我平时用这个档」是两件事。
+     */
+    fun setModelAndEffort(model: String?, effort: String?) = manager.setModelAndEffort(model, effort)
+
     fun stop() = manager.stop()
 
     /** 每次输入都落盘：写的是几 KB 的 JSON，在 IO 线程上，代价远小于丢稿 */

@@ -100,6 +100,11 @@ internal fun ComposerPlus(
     modelText: String = "",
     /** `权限模式 · 思考强度` */
     modeText: String = "",
+    /**
+     * 给不给附件那三项。Codex 侧还没接上传，摆三个点不动的菜单项比没有更糟 ——
+     * 菜单里每一栏都该是能用的。
+     */
+    canAttach: Boolean = true,
     onRefreshUsage: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
 ) {
@@ -151,20 +156,22 @@ internal fun ComposerPlus(
                     },
                 )
             }
-            if (contextText != null || costText != null || modelText.isNotBlank()) InkDivider()
-            InkMenuItem(stringResource(R.string.composer_add_file), icon = HugeIcons.Attachment01, onClick = { open = false; onPickFile() })
-            InkMenuItem(
-                stringResource(R.string.composer_take_photo),
-                icon = HugeIcons.Camera01,
-                tint = if (canPickImage) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
-                onClick = { if (canPickImage) { open = false; onTakePhoto() } },
-            )
-            InkMenuItem(
-                stringResource(R.string.composer_add_image),
-                icon = HugeIcons.Image02,
-                tint = if (canPickImage) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
-                onClick = { if (canPickImage) { open = false; onPickImage() } },
-            )
+            if (canAttach && (contextText != null || costText != null || modelText.isNotBlank())) InkDivider()
+            if (canAttach) {
+                InkMenuItem(stringResource(R.string.composer_add_file), icon = HugeIcons.Attachment01, onClick = { open = false; onPickFile() })
+                InkMenuItem(
+                    stringResource(R.string.composer_take_photo),
+                    icon = HugeIcons.Camera01,
+                    tint = if (canPickImage) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+                    onClick = { if (canPickImage) { open = false; onTakePhoto() } },
+                )
+                InkMenuItem(
+                    stringResource(R.string.composer_add_image),
+                    icon = HugeIcons.Image02,
+                    tint = if (canPickImage) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+                    onClick = { if (canPickImage) { open = false; onPickImage() } },
+                )
+            }
         }
     }
 }

@@ -65,6 +65,7 @@ import dev.min.code.ui.components.PaperCard
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.session.ComposerPlus
 import dev.min.code.ui.session.RenameDialog
 import dev.min.code.ui.session.SeaSendKey
 import dev.min.code.ui.theme.CloudTheme
@@ -110,6 +111,7 @@ private fun CodexPageContent(vm: CodexVM) {
     val profile by vm.profile.collectAsStateWithLifecycle()
     var showConnection by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
+    var showTurnSettings by remember { mutableStateOf(false) }
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val sessionMetas by vm.sessionMetas.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
@@ -184,9 +186,14 @@ private fun CodexPageContent(vm: CodexVM) {
                     enabled = session.canSend,
                     busy = session.busy,
                     queued = session.queued,
+                    modelText = session.model?.takeIf { it.isNotBlank() }
+                        ?: stringResource(R.string.session_model_default),
+                    modeText = session.effort?.takeIf { it.isNotBlank() }
+                        ?: stringResource(R.string.codex_effort_default),
                     onDraftChange = vm::setDraft,
                     onSend = vm::send,
                     onTakeQueued = vm::takeQueued,
+                    onOpenTurnSettings = { showTurnSettings = true },
                     onStop = vm::stop,
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
@@ -225,6 +232,18 @@ private fun CodexPageContent(vm: CodexVM) {
             onRename = { summary, title -> vm.renameSession(summary.threadId, title) },
             onDelete = { vm.deleteSession(it) },
             onDismiss = { showSessions = false },
+        )
+    }
+
+    if (showTurnSettings) {
+        CodexTurnSettingsSheet(
+            model = session.model,
+            effort = session.effort,
+            onApply = { model, effort ->
+                vm.setModelAndEffort(model, effort)
+                showTurnSettings = false
+            },
+            onDismiss = { showTurnSettings = false },
         )
     }
 
@@ -479,9 +498,12 @@ private fun CodexComposer(
     enabled: Boolean,
     busy: Boolean,
     queued: List<String>,
+    modelText: String,
+    modeText: String,
     onDraftChange: (String) -> Unit,
     onSend: (String) -> Boolean,
     onTakeQueued: (Int) -> Unit,
+    onOpenTurnSettings: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -522,6 +544,21 @@ private fun CodexComposer(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
+            // 和 Claude 同一个「+」：模型 / 思考强度收在这里。摆在会话里而不是连接配置里，
+            // 是因为「这一轮让它想久一点」和「我平时用这个档」是两件事，前者得随手够得着。
+            // 附件三项暂不给 —— Codex 侧还没接上传
+            ComposerPlus(
+                enabled = enabled,
+                busy = busy,
+                canPickImage = false,
+                canAttach = false,
+                onPickFile = {},
+                onPickImage = {},
+                onTakePhoto = {},
+                modelText = modelText,
+                modeText = modeText,
+                onOpenSettings = onOpenTurnSettings,
+            )
             InkTextField(
                 value = draft,
                 onValueChange = onDraftChange,
@@ -659,6 +696,81 @@ private fun CodexApprovalSheet(
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.codex_approve_session)) }
             }
+        }
+    }
+}
+
+/**
+ * 这一轮用哪个模型、想多久。
+ *
+ * 和 [CodexConnectionSheet] 里那两栏是同一对字段，但作用域不同：这里改的是**当前会话**，
+ * 下一轮 `turn/start` 就带上，进程不重启；连接配置里那一份是**新会话的默认**，不跟着动。
+ * 摆在输入坞的「+」里，因为「这一轮让它想久一点」是随手要够得着的事。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CodexTurnSettingsSheet(
+    model: String?,
+    effort: String?,
+    onApply: (String?, String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var draftModel by remember(model) { mutableStateOf(model.orEmpty()) }
+    var draftEffort by remember(effort) { mutableStateOf(effort.orEmpty()) }
+
+    InkSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                stringResource(R.string.codex_turn_settings),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                stringResource(R.string.codex_turn_settings_scope),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            InkTextField(
+                value = draftModel,
+                onValueChange = { draftModel = it },
+                label = stringResource(R.string.codex_model),
+                placeholder = "gpt-5.1-codex-max",
+                singleLine = true,
+                monospace = true,
+            )
+            Text(
+                stringResource(R.string.codex_effort),
+                style = MaterialTheme.typography.labelMedium,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                InkChip(
+                    label = stringResource(R.string.codex_effort_default),
+                    selected = draftEffort.isBlank(),
+                    onClick = { draftEffort = "" },
+                )
+                CODEX_EFFORT_LEVELS.forEach { level ->
+                    InkChip(
+                        label = level,
+                        selected = draftEffort == level,
+                        onClick = { draftEffort = level },
+                        monospace = true,
+                    )
+                }
+            }
+            InkButton(
+                onClick = { onApply(draftModel.trim(), draftEffort.trim()) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.codex_turn_settings_apply)) }
         }
     }
 }
