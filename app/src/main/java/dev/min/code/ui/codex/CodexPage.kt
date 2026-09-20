@@ -183,8 +183,10 @@ private fun CodexPageContent(vm: CodexVM) {
                     draft = draft,
                     enabled = session.canSend,
                     busy = session.busy,
+                    queued = session.queued,
                     onDraftChange = vm::setDraft,
                     onSend = vm::send,
+                    onTakeQueued = vm::takeQueued,
                     onStop = vm::stop,
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
@@ -470,13 +472,16 @@ private fun CodexStartPane(
  * 发送键与停止键的摆法照抄 Claude 的胶囊（SeaSendKey + 并排停止）：
  * 两个引擎在屏幕上要长一个样，差别只在谁在说话。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CodexComposer(
     draft: String,
     enabled: Boolean,
     busy: Boolean,
+    queued: List<String>,
     onDraftChange: (String) -> Unit,
     onSend: (String) -> Boolean,
+    onTakeQueued: (Int) -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -487,6 +492,31 @@ private fun CodexComposer(
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
+        // 排着的消息摆在输入框**上方**而不是混进会话流：它们还没被模型看见，
+        // 放进流里就成了「我说了话它没理我」。codex TUI 也是这么摆的。
+        AnimatedVisibility(
+            visible = queued.isNotEmpty(),
+            enter = InkMotion.expand,
+            exit = InkMotion.collapse,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Text(
+                    stringResource(R.string.codex_queued_hint, queued.size),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    queued.forEachIndexed { index, text ->
+                        InkChip(
+                            label = text.lineSequence().first().take(QUEUED_CHIP_CHARS),
+                            selected = false,
+                            onClick = { onTakeQueued(index) },
+                        )
+                    }
+                }
+            }
+        }
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -495,14 +525,18 @@ private fun CodexComposer(
             InkTextField(
                 value = draft,
                 onValueChange = onDraftChange,
-                label = stringResource(R.string.codex_composer_hint),
+                // busy 时提示语换成「追加消息」，和 Claude 那边同一句：
+                // 按下去的含义变了（排队，不是立即发），提示就得跟着变
+                label = stringResource(
+                    if (busy) R.string.composer_hint_queue else R.string.codex_composer_hint,
+                ),
                 enabled = enabled,
                 maxLines = 6,
                 modifier = Modifier.weight(1f),
             )
             // 停止键与发送键并排、负间距相叠——与 Claude 胶囊同一组：
-            // 它们是同一件事的两个方向。busy 时发送键睡着（Codex 不排队，
-            // 排队语义是 Claude 侧的另一个决定），停止键必须一按就到
+            // 它们是同一件事的两个方向。busy 时发送键不再睡着，改成排队态
+            // （codex 自己就是排队语义），停止键必须一按就到
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy((-6).dp),
@@ -523,13 +557,16 @@ private fun CodexComposer(
                 }
                 SeaSendKey(
                     enabled = enabled && draft.isNotBlank(),
-                    queued = false,
+                    queued = busy,
                     onClick = { if (onSend(draft)) onDraftChange("") },
                 )
             }
         }
     }
 }
+
+/** 排队 chip 上留几个字。一行装得下三四个，够认出是哪条 */
+private const val QUEUED_CHIP_CHARS = 18
 
 /**
  * 审批。

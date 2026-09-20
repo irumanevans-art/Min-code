@@ -181,6 +181,18 @@ class CodexVM(
         return ok
     }
 
+    /**
+     * 把排着的第 [index] 条取回输入框。
+     *
+     * 草稿里已经有东西时接在后面而不是覆盖——取回是为了改一改再发，
+     * 顺手把人正在写的半句话冲掉就成了另一种丢稿。
+     */
+    fun takeQueued(index: Int) {
+        val text = manager.takeQueued(index) ?: return
+        val current = draft.value
+        setDraft(if (current.isBlank()) text else "$current\n$text")
+    }
+
     fun answerApproval(decision: CodexDecision): Boolean = manager.answerApproval(decision)
 
     /** 置顶 / 取消置顶。只动 App 侧元数据，rollout 文件不碰 */

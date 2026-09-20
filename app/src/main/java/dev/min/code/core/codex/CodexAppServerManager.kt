@@ -88,8 +88,19 @@ class CodexAppServerManager(
         val activeFlags: List<String> = emptyList(),
         val turnStartedAt: Long? = null,
         val lastTurnDurationMs: Long? = null,
+        /**
+         * 排着的追加消息，FIFO。busy 时按发送就进这里，当前轮 completed 后逐条放出去。
+         * 一轮失败或被打断时**留在这儿**而不是继续烧——见 [drainQueuedLocked]。
+         */
+        val queued: List<String> = emptyList(),
     ) {
-        val canSend: Boolean get() = status == SessionStatus.Running && threadId != null && !busy
+        /**
+         * 能不能往里打字、按发送。
+         *
+         * **busy 不再拦**：busy 时按发送的含义是排队，不是拒绝。以前这里带 `&& !busy`，
+         * 结果是一轮跑起来整个输入框变灰，连草稿都存不住。
+         */
+        val canSend: Boolean get() = status == SessionStatus.Running && threadId != null
     }
 
     private enum class RequestKind { Initialize, Thread, Turn }
@@ -196,11 +207,46 @@ class CodexAppServerManager(
         true
     }
 
-    /** 发一轮。初始化没走完（还没有 threadId）之前一律返回 false。 */
+    /**
+     * 发一轮，或者排进队列。初始化没走完（还没有 threadId）之前一律返回 false。
+     *
+     * busy 时排队而不是拒绝，照的是 codex 自己的产品逻辑：TUI 里 Tab 就是把输入压进
+     * 一个 FIFO、当前轮跑完再逐条放出来，另有 `codex queue --thread --message` 这个
+     * 非交互入口——排队在 codex 那边是一等公民，不是 TUI 的糖。
+     *
+     * 队列只能攒在客户端：app-server 一轮只能有一个 turn，busy 时把 turn/start 写过去
+     * 不会排队，只会撞上。这点和 Claude 侧相反——那边写进 stdin 的 user 帧会被 CLI
+     * 插进当前轮，所以 [ClaudeCodeSendQueue] 有「交棒」那一格，这里没有，也不需要。
+     */
     fun sendTurn(input: String): Boolean = synchronized(lock) {
         val current = _state.value
-        val threadId = current.threadId
-        if (current.status != SessionStatus.Running || threadId == null || input.isBlank()) return false
+        if (current.status != SessionStatus.Running || current.threadId == null || input.isBlank()) {
+            return false
+        }
+        if (current.busy) {
+            _state.value = current.copy(queued = current.queued + input)
+            return true
+        }
+        startTurnLocked(input)
+    }
+
+    /**
+     * 取回排着的第 [index] 条（给界面上点一下放回输入框用）。越界返回 null。
+     *
+     * codex 自己的队列是只能看不能改的（openai/codex#28864 就是在提这件事），
+     * 这里既然队列本来就在客户端手里，顺手让它可撤。
+     */
+    fun takeQueued(index: Int): String? = synchronized(lock) {
+        val current = _state.value
+        val item = current.queued.getOrNull(index) ?: return null
+        _state.value = current.copy(queued = current.queued.filterIndexed { i, _ -> i != index })
+        item
+    }
+
+    /** 真正把一轮写出去。调用方需持锁，且已确认 Running / 有 threadId / 不 busy */
+    private fun startTurnLocked(input: String): Boolean {
+        val current = _state.value
+        val threadId = current.threadId ?: return false
 
         val id = nextRequestId()
         pendingRequests[id] = RequestKind.Turn
@@ -233,7 +279,21 @@ class CodexAppServerManager(
             failLocked("写不进 turn/start 请求")
             return false
         }
-        true
+        return true
+    }
+
+    /**
+     * 一轮跑完，放出排着的下一条。
+     *
+     * **只在 completed 之后放**。failed 的话继续放等于拿同一个错误把整个队列一条条烧掉
+     * （401 这种会一路烧到底）；interrupted 是用户自己按的停，更不该接着跑。
+     * 那两种情况队列原地留着，界面上看得见、点得动、删得掉——
+     * openai/codex#37974 抱怨的 stranded queue 正是"留着但碰不到"。
+     */
+    private fun drainQueuedLocked() {
+        val next = _state.value.queued.firstOrNull() ?: return
+        _state.value = _state.value.copy(queued = _state.value.queued.drop(1))
+        startTurnLocked(next)
     }
 
     /**
@@ -341,17 +401,23 @@ class CodexAppServerManager(
                 turnStartedAt = current.turnStartedAt ?: System.currentTimeMillis(),
             )
 
-            is CodexEvent.TurnCompleted -> _state.value = current.copy(
-                turnId = event.turnId ?: current.turnId,
-                busy = false,
-                // 一轮结束时把没来得及 completed 的增量收尾，不然它会一直挂在那儿
-                streamingText = "",
-                streamingThinking = "",
-                items = current.items.settleStreaming(current),
-                errorMessage = event.errorMessage ?: current.errorMessage,
-                lastTurnDurationMs = current.turnStartedAt?.let { System.currentTimeMillis() - it },
-                turnStartedAt = null,
-            ).also { streamingTextItemId = null; streamingThinkingItemId = null }
+            is CodexEvent.TurnCompleted -> {
+                _state.value = current.copy(
+                    turnId = event.turnId ?: current.turnId,
+                    busy = false,
+                    // 一轮结束时把没来得及 completed 的增量收尾，不然它会一直挂在那儿
+                    streamingText = "",
+                    streamingThinking = "",
+                    items = current.items.settleStreaming(current),
+                    errorMessage = event.errorMessage ?: current.errorMessage,
+                    lastTurnDurationMs = current.turnStartedAt?.let { System.currentTimeMillis() - it },
+                    turnStartedAt = null,
+                )
+                streamingTextItemId = null
+                streamingThinkingItemId = null
+                // status ∈ completed / interrupted / failed，只有干净跑完才放下一条
+                if (event.status == TURN_COMPLETED) drainQueuedLocked()
+            }
 
             is CodexEvent.ItemStarted -> {
                 if (event.item.type == USER_MESSAGE_ITEM) return@synchronized
@@ -613,5 +679,8 @@ class CodexAppServerManager(
 
         /** 服务端回显的用户消息 item，本地已经乐观插入过，见 handleEvent */
         private const val USER_MESSAGE_ITEM = "userMessage"
+
+        /** `turn/completed` 里干净跑完的那个 status，另外两个是 interrupted / failed */
+        private const val TURN_COMPLETED = "completed"
     }
 }

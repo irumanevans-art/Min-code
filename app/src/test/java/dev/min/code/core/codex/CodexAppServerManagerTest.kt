@@ -359,6 +359,128 @@ class CodexAppServerManagerTest {
         manager.close()
     }
 
+    // -----------------------------------------------------------------------
+    // 排队。codex 自己的语义（TUI 的 Tab、`codex queue --thread --message`）是
+    // busy 时把输入压进 FIFO、跑完逐条放出来。app-server 一轮只能有一个 turn，
+    // 所以队列只能攒在客户端 —— 下面钉的就是"什么时候攒、什么时候放、什么时候不放"。
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `sending while busy queues instead of starting a second turn`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        assertTrue(manager.sendTurn("第一问"))
+        await { manager.state.value.busy }
+
+        assertTrue(manager.sendTurn("排队一"))
+        assertTrue(manager.sendTurn("排队二"))
+
+        assertEquals(listOf("排队一", "排队二"), manager.state.value.queued)
+        // busy 不该把输入框锁上：打字和发送是两件事，锁上连草稿都存不住
+        assertTrue(manager.state.value.canSend)
+        assertEquals(1, turnStarts())
+        // 排着的还没被模型看见，不能先混进会话流
+        assertEquals(listOf("第一问"), userTexts(manager))
+        manager.close()
+    }
+
+    @Test
+    fun `a completed turn releases the next queued message`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("第一问")
+        await { manager.state.value.busy }
+        manager.sendTurn("排队一")
+
+        scripted.queue(turnCompleted("completed"))
+
+        await { manager.state.value.queued.isEmpty() }
+        await { turnStarts() == 2 }
+        // 这时候它才进会话流，顺序就是排队的顺序
+        assertEquals(listOf("第一问", "排队一"), userTexts(manager))
+        manager.close()
+    }
+
+    /**
+     * 401 这类错误会一路复现：继续放等于拿同一个错误把整个队列一条条烧掉。
+     * 留在队列里才是对的——界面上看得见、点得动、删得掉。
+     */
+    @Test
+    fun `a failed turn keeps the queue instead of burning it`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("第一问")
+        await { manager.state.value.busy }
+        manager.sendTurn("排队一")
+
+        scripted.queue(turnCompleted("failed"))
+
+        await { !manager.state.value.busy }
+        assertEquals(listOf("排队一"), manager.state.value.queued)
+        assertEquals(1, turnStarts())
+        manager.close()
+    }
+
+    /** 用户自己按的停，更不该接着把排着的放出去 */
+    @Test
+    fun `an interrupted turn keeps the queue too`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("第一问")
+        await { manager.state.value.busy }
+        manager.sendTurn("排队一")
+
+        scripted.queue(turnCompleted("interrupted"))
+
+        await { !manager.state.value.busy }
+        assertEquals(listOf("排队一"), manager.state.value.queued)
+        assertEquals(1, turnStarts())
+        manager.close()
+    }
+
+    @Test
+    fun `taking a queued message back removes exactly that one`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("第一问")
+        await { manager.state.value.busy }
+        manager.sendTurn("排队一")
+        manager.sendTurn("排队二")
+        manager.sendTurn("排队三")
+
+        assertEquals("排队二", manager.takeQueued(1))
+        assertEquals(listOf("排队一", "排队三"), manager.state.value.queued)
+        // 越界不能崩，也不能动队列
+        assertNull(manager.takeQueued(9))
+        assertEquals(listOf("排队一", "排队三"), manager.state.value.queued)
+        manager.close()
+    }
+
+    /**
+     * turn 起来但不收尾，停在 busy —— 好让测试往队列里塞东西。
+     * 脚本里不给 turn/completed，那一行由各测试自己在想要的时机 [ScriptedProcess.queue] 进去。
+     */
+    private val BUSY_TURN = listOf("""{"id":"3","result":{"turn":{"id":"turn-1"}}}""")
+
+    /** 一个握手走完的管理器。排队那几条测试都从这里开始 */
+    private lateinit var scripted: ScriptedProcess
+
+    private suspend fun runningManager(turnLines: List<String>): CodexAppServerManager {
+        scripted = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf("""{"id":"2","result":{"threadId":"t"}}"""),
+            "turn/start" to turnLines,
+        )
+        val manager = CodexAppServerManager { scripted }
+        manager.start()
+        await { manager.state.value.status == SessionStatus.Running }
+        return manager
+    }
+
+    private fun turnStarts(): Int =
+        scripted.writtenLines().count { it.contains(""""method":"turn/start"""") }
+
+    private fun userTexts(manager: CodexAppServerManager): List<String> =
+        manager.state.value.items.filterIsInstance<ChatItem.UserText>().map { it.text }
+
+    private fun turnCompleted(status: String): String =
+        """{"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"$status"}}}"""
+
     private suspend fun await(condition: () -> Boolean) {
         repeat(400) {
             if (condition()) return
