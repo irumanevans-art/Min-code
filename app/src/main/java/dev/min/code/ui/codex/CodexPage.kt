@@ -33,6 +33,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,6 +73,9 @@ import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.session.AttachmentChip
 import dev.min.code.ui.session.ComposerPlus
+import dev.min.code.ui.session.FileMentionList
+import dev.min.code.ui.session.mentionTokenOf
+import dev.min.code.ui.session.replaceMentionToken
 import dev.min.code.ui.session.RenameDialog
 import dev.min.code.ui.session.SeaSendKey
 import dev.min.code.ui.theme.CloudTheme
@@ -89,6 +93,7 @@ import me.rerere.hugeicons.stroke.PinOff
 import me.rerere.hugeicons.stroke.Settings02
 import me.rerere.hugeicons.stroke.Stop
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
@@ -206,6 +211,7 @@ private fun CodexPageContent(vm: CodexVM) {
                     onTakeQueued = vm::takeQueued,
                     onImportFile = vm::importFile,
                     onRemoveAttachment = vm::removeAttachment,
+                    onSearchFiles = vm::searchFiles,
                     onOpenTurnSettings = { showTurnSettings = true },
                     onStop = vm::stop,
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -519,6 +525,7 @@ private fun CodexComposer(
     onTakeQueued: (Int) -> Unit,
     onImportFile: (String, java.io.InputStream, (Boolean) -> Unit) -> Unit,
     onRemoveAttachment: (CodexAttachment) -> Unit,
+    onSearchFiles: suspend (String) -> List<String>,
     onOpenTurnSettings: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
@@ -527,6 +534,20 @@ private fun CodexComposer(
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<CodexAttachment?>(null) }
+
+    // `@` 补全。和 Claude 侧共用 mentionTokenOf / replaceMentionToken 那两个纯函数，
+    // 于是两边对「什么算一个 @ token」的判断不会各说各话
+    var fileMatches by remember { mutableStateOf(emptyList<String>()) }
+    val mentionQuery = remember(draft) { mentionTokenOf(draft) }
+    LaunchedEffect(mentionQuery, enabled) {
+        if (mentionQuery == null || !enabled) {
+            fileMatches = emptyList()
+            return@LaunchedEffect
+        }
+        // 抖一下：每敲一个字母就走一次目录遍历，手机上会明显掉帧
+        delay(MENTION_DEBOUNCE_MS)
+        fileMatches = runCatching { onSearchFiles(mentionQuery) }.getOrDefault(emptyList())
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
@@ -569,6 +590,17 @@ private fun CodexComposer(
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
+        // 候选摆在输入框上方：手指在下面打字，列表从上面长出来才不会被自己的手挡住
+        AnimatedVisibility(
+            visible = fileMatches.isNotEmpty(),
+            enter = InkMotion.expand,
+            exit = InkMotion.collapse,
+        ) {
+            FileMentionList(fileMatches) { picked ->
+                onDraftChange(replaceMentionToken(draft, picked))
+                fileMatches = emptyList()
+            }
+        }
         AnimatedVisibility(
             visible = attachments.isNotEmpty(),
             enter = InkMotion.expand,
@@ -691,6 +723,9 @@ private fun CodexComposer(
 
 /** 排队 chip 上留几个字。一行装得下三四个，够认出是哪条 */
 private const val QUEUED_CHIP_CHARS = 18
+
+/** `@` 补全的抖动窗口，和 Claude 侧同一个数 */
+private const val MENTION_DEBOUNCE_MS = 180L
 
 /**
  * 审批。

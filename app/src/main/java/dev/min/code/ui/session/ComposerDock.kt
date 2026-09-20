@@ -6,11 +6,14 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -331,5 +334,40 @@ internal fun AttachmentChip(
             size = 22.dp,
             iconSize = 13.dp,
         )
+    }
+}
+
+/**
+ * `@` 文件补全的候选列表。
+ *
+ * 只显示文件名 + 所在目录两段，不显示完整路径：`/workspace/` 前缀在每一条里都一样，
+ * 手机宽度下把真正有区分度的文件名挤没了。
+ */
+@Composable
+internal fun FileMentionList(paths: List<String>, onPick: (String) -> Unit) {
+    Column(modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+        paths.forEach { path ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPick(path) }
+                    .padding(horizontal = 16.dp, vertical = 9.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    path.substringAfterLast('/'),
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetbrainsMono),
+                    maxLines = 1,
+                )
+                Text(
+                    path.substringBeforeLast('/', ""),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
