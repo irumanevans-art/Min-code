@@ -10,6 +10,7 @@ import dev.min.code.core.codex.CodexDraftStore
 import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.codex.CodexSessionSummary
 import dev.min.code.core.codex.deleteCodexSession
+import dev.min.code.core.codex.firstRestorableCodexSession
 import dev.min.code.core.codex.listCodexSessions
 import dev.min.code.core.codex.readCodexSessionItems
 import dev.min.code.core.codex.sortCodexSessions
@@ -102,12 +103,12 @@ class CodexVM(
         viewModelScope.launch(Dispatchers.IO) {
             val all = runCatching { listCodexSessions(runtime.codexHome()) }
                 .getOrDefault(emptyList())
+            // 列表照样把失败的会话摆出来——用户得能看见它们、删掉它们；
+            // 自动恢复才挑有内容的那条，见 firstRestorableCodexSession
             _sessions.value = all
-            val latest = all.firstOrNull() ?: return@launch
-            manager.restore(
-                items = readCodexSessionItems(latest.file),
-                threadId = latest.threadId,
-            )
+            val (summary, items) = firstRestorableCodexSession(all) { readCodexSessionItems(it.file) }
+                ?: return@launch
+            manager.restore(items = items, threadId = summary.threadId)
         }
     }
 

@@ -133,6 +133,32 @@ fun sortCodexSessions(
 )
 
 /**
+ * 从最近的会话里挑第一条**真有内容**的，回放出来给「上次聊到哪」用。
+ *
+ * 不能直接拿最新那条：会话起失败也会留下 rollout 文件（CLI 把文件建出来就崩了、
+ * 或者压根没配 key），里面一条 `item_completed` 都没有。它确实是最新的，可摆出来
+ * 就是一屏空白挂着一个 threadId —— 看着像会话，按「继续」又接着上次那个失败。
+ *
+ * [scanLimit] 是保险丝：连着好几条空会话时别把整张列表的文件都读一遍。
+ * 越过它还没找到就当没有，页面留空 —— 空白页至少不骗人。
+ */
+fun firstRestorableCodexSession(
+    sessions: List<CodexSessionSummary>,
+    scanLimit: Int = RESTORE_SCAN_LIMIT,
+    itemsOf: (CodexSessionSummary) -> List<ChatItem>,
+): Pair<CodexSessionSummary, List<ChatItem>>? = sessions
+    .asSequence()
+    .take(scanLimit)
+    .mapNotNull { summary ->
+        val items = runCatching { itemsOf(summary) }.getOrDefault(emptyList())
+        if (items.isEmpty()) null else summary to items
+    }
+    .firstOrNull()
+
+/** 往下找几条空会话就放弃，见 [firstRestorableCodexSession] */
+const val RESTORE_SCAN_LIMIT = 10
+
+/**
  * 把一个 rollout 文件回放成聊天条目。
  *
  * [maxItems] 是保险丝：一个长会话能攒出上万条，全塞进 LazyColumn 只会让回到页面时卡住。

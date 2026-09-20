@@ -131,6 +131,67 @@ class CodexSessionFileTest {
         assertTrue(listCodexSessions(File(temp.root, "nope")).isEmpty())
     }
 
+    // -----------------------------------------------------------------------
+    // 「上次聊到哪」挑哪一条
+    //
+    // 起失败的会话照样留下 rollout 文件，里面一条对话都没有。它是最新的，
+    // 但摆回屏幕就是一屏空白挂着 threadId —— 看着像会话，按「继续」接着上次的失败。
+    // -----------------------------------------------------------------------
+
+    private fun summary(id: String) =
+        CodexSessionSummary(threadId = id, file = File(temp.root, "$id.jsonl"), cwd = null, updatedAt = 0, preview = null)
+
+    private fun text(s: String): List<ChatItem> = listOf(ChatItem.UserText("x", s))
+
+    @Test
+    fun `the newest session with content wins`() {
+        val sessions = listOf(summary("a"), summary("b"))
+        val picked = firstRestorableCodexSession(sessions) { text("来自 ${it.threadId}") }
+        assertEquals("a", picked?.first?.threadId)
+    }
+
+    /** 这条是整件事的理由：最新那条是空的，就该往下找 */
+    @Test
+    fun `an empty newest session is skipped for the next real one`() {
+        val sessions = listOf(summary("failed"), summary("real"))
+        val picked = firstRestorableCodexSession(sessions) {
+            if (it.threadId == "real") text("有内容") else emptyList()
+        }
+        assertEquals("real", picked?.first?.threadId)
+        assertEquals("有内容", (picked?.second?.single() as ChatItem.UserText).text)
+    }
+
+    /** 全是空的就不摆 —— 空白页至少不骗人 */
+    @Test
+    fun `all empty restores nothing`() {
+        assertNull(firstRestorableCodexSession(listOf(summary("a"), summary("b"))) { emptyList() })
+    }
+
+    @Test
+    fun `no sessions restores nothing`() {
+        assertNull(firstRestorableCodexSession(emptyList()) { text("x") })
+    }
+
+    /** 保险丝：连着一串空会话时别把整张列表的文件都读一遍 */
+    @Test
+    fun `the scan stops at the limit`() {
+        val sessions = (1..20).map { summary("s$it") }
+        var reads = 0
+        val picked = firstRestorableCodexSession(sessions, itemsOf = { reads++; emptyList() }, scanLimit = 3)
+        assertNull(picked)
+        assertEquals(3, reads)
+    }
+
+    /** 读某个文件炸了不许把整次恢复带走，跳过它继续找 */
+    @Test
+    fun `a throwing read is skipped`() {
+        val sessions = listOf(summary("bad"), summary("good"))
+        val picked = firstRestorableCodexSession(sessions) {
+            if (it.threadId == "bad") error("unreadable") else text("好的")
+        }
+        assertEquals("good", picked?.first?.threadId)
+    }
+
     /** 坏行不能把整个回放打死 —— 一个跑了半天的会话不该因为一行截断就全看不见 */
     @Test
     fun `malformed lines are skipped, the rest still replays`() {
