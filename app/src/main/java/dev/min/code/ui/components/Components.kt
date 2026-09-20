@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,6 +22,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.theme.DarkSea
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.Cancel01
@@ -68,9 +72,16 @@ fun RikkaConfirmDialog(
 @Composable
 fun ImagePreviewDialog(images: List<String>, onDismissRequest: () -> Unit) {
     val path = images.firstOrNull() ?: return
-    val bitmap = remember(path) { runCatching { BitmapFactory.decodeFile(path) }.getOrNull() }
+    // 解一张整图要几十到几百毫秒，摆在组合里就是一次主线程卡顿。挪到 IO 上，
+    // null 表示「还在解」—— 和「解不出来」分开，否则每次打开都先闪一下错误文案
+    val decoded by produceState<Result<android.graphics.Bitmap>?>(initialValue = null, path) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { BitmapFactory.decodeFile(path) ?: error("decode returned null") }
+        }
+    }
     Dialog(onDismissRequest = onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().background(DarkSea.paper)) {
+            val bitmap = decoded?.getOrNull()
             if (bitmap != null) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
@@ -78,7 +89,7 @@ fun ImagePreviewDialog(images: List<String>, onDismissRequest: () -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit,
                 )
-            } else {
+            } else if (decoded != null) {
                 Text("无法解码图片", color = DarkSea.ink, modifier = Modifier.align(Alignment.Center))
             }
             InkIconButton(

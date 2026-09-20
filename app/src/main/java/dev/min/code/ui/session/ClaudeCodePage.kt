@@ -139,9 +139,11 @@ import dev.min.code.ui.theme.sea
 import dev.min.code.util.LocalUrls
 import dev.min.code.util.openExternalUrl
 import dev.min.code.util.writeClipboardText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Browser
 import me.rerere.hugeicons.stroke.ComputerTerminal01
@@ -1816,7 +1818,13 @@ internal fun StartPanel(
                 // 上次崩溃过就在这里说一声：没有联网上报，用户不主动去「关于」里看就永远不知道。
                 // 只提示、不弹窗——启动面板本来就是"停下来看一眼"的地方
                 val context = LocalContext.current
-                var crashed by remember { mutableStateOf(dev.min.code.core.crash.CrashRecorder.read(context) != null) }
+                // 读崩溃记录要碰磁盘：挪到 IO，别卡在启动面板的组合里
+                var crashed by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    crashed = withContext(Dispatchers.IO) {
+                        dev.min.code.core.crash.CrashRecorder.read(context) != null
+                    }
+                }
                 AnimatedVisibility(visible = crashed, enter = InkMotion.expand, exit = InkMotion.collapse) {
                     Notice(
                         text = stringResource(R.string.session_start_crash_notice),

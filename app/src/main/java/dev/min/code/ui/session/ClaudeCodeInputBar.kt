@@ -90,10 +90,12 @@ import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.MinKai
 import dev.min.code.ui.theme.sea
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Attachment01
 import me.rerere.hugeicons.stroke.Cancel01
@@ -219,24 +221,33 @@ internal fun ClaudeCodeInputBar(
     ) { uris ->
         if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
         importing = true
-        var remaining = uris.size
-        uris.forEach { uri ->
-            val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                if (c.moveToFirst()) {
-                    val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (i >= 0) c.getString(i) else null
-                } else null
-            } ?: uri.lastPathSegment ?: "imported_file"
-            val stream = context.contentResolver.openInputStream(uri)
-            if (stream == null) {
-                remaining -= 1
-                if (remaining == 0) importing = false
-                return@forEach
-            }
-            onImportFile(name, stream) { path ->
-                if (path != null) attachments = attachments + Attachment(name = name, path = path)
-                remaining -= 1
-                if (remaining == 0) importing = false
+        // 取文件名和开流都要过 ContentProvider —— 文档来自云盘时这一下能卡住几百毫秒，
+        // 而这个回调本身跑在主线程上。只把两次 provider 调用挪到 IO，
+        // attachments 仍然回到主线程再动
+        scope.launch {
+            var remaining = uris.size
+            uris.forEach { uri ->
+                val (name, stream) = withContext(Dispatchers.IO) {
+                    val resolved = runCatching {
+                        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                            if (c.moveToFirst()) {
+                                val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (i >= 0) c.getString(i) else null
+                            } else null
+                        }
+                    }.getOrNull() ?: uri.lastPathSegment ?: "imported_file"
+                    resolved to runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+                }
+                if (stream == null) {
+                    remaining -= 1
+                    if (remaining == 0) importing = false
+                    return@forEach
+                }
+                onImportFile(name, stream) { path ->
+                    if (path != null) attachments = attachments + Attachment(name = name, path = path)
+                    remaining -= 1
+                    if (remaining == 0) importing = false
+                }
             }
         }
     }

@@ -17,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +40,8 @@ import dev.min.code.ui.richtext.MarkdownBlock
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.util.writeClipboardText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Copy01
 
@@ -173,8 +176,17 @@ private fun rememberChangelog(context: android.content.Context): List<ChangelogE
 @Composable
 fun AboutPage() {
     val context = LocalContext.current
-    var crash by remember { mutableStateOf(CrashRecorder.read(context)) }
-    var lastError by remember { mutableStateOf(CrashRecorder.readNonFatal(context)) }
+    // 崩溃记录是两个文件，读它们要碰磁盘 —— 不在组合期同步做，
+    // 否则一进关于页就是一次主线程 IO。没读到之前那两块就不显示
+    var crash by remember { mutableStateOf<String?>(null) }
+    var lastError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        val (fatal, nonFatal) = withContext(Dispatchers.IO) {
+            CrashRecorder.read(context) to CrashRecorder.readNonFatal(context)
+        }
+        crash = fatal
+        lastError = nonFatal
+    }
     val scrollState = rememberScrollState()
     val changelog = rememberChangelog(context)
     val groups = remember(changelog) { groupChangelog(changelog) }
