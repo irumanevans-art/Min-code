@@ -123,6 +123,7 @@ val appModule = module {
             // 上面 named("codex") 那份；不带 qualifier 会撞上 Claude 的那份
             metaStore = get(named("codex")),
             draftStore = get(),
+            workspaceRepository = get(),
         )
     }
     viewModelOf(::SetupVM)

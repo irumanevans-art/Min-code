@@ -729,41 +729,6 @@ private fun ComposerIcon(
     )
 }
 
-/** 附件是你放进来的东西：海的水洗底 */
-@Composable
-private fun AttachmentChip(
-    name: String,
-    onRemove: () -> Unit,
-    icon: ImageVector = HugeIcons.Attachment01,
-) {
-    val palette = MaterialTheme.sea
-    Row(
-        modifier = Modifier
-            .clip(MaterialTheme.shapes.small)
-            .background(palette.seaWash)
-            .padding(start = 10.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Icon(icon, null, Modifier.size(13.dp), tint = palette.seaDeep)
-        Text(
-            name,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 160.dp),
-        )
-        InkIconButton(
-            icon = HugeIcons.Cancel01,
-            contentDescription = stringResource(R.string.composer_remove),
-            onClick = onRemove,
-            tint = palette.seaDeep,
-            size = 22.dp,
-            iconSize = 13.dp,
-        )
-    }
-}
-
 /**
  * `@` 文件补全的候选列表。
  *

@@ -1,5 +1,8 @@
 package dev.min.code.ui.codex
 
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -33,9 +36,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -65,6 +70,7 @@ import dev.min.code.ui.components.PaperCard
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.session.AttachmentChip
 import dev.min.code.ui.session.ComposerPlus
 import dev.min.code.ui.session.RenameDialog
 import dev.min.code.ui.session.SeaSendKey
@@ -82,6 +88,9 @@ import me.rerere.hugeicons.stroke.Pin
 import me.rerere.hugeicons.stroke.PinOff
 import me.rerere.hugeicons.stroke.Settings02
 import me.rerere.hugeicons.stroke.Stop
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -115,6 +124,7 @@ private fun CodexPageContent(vm: CodexVM) {
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val sessionMetas by vm.sessionMetas.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
+    val attachments by vm.attachments.collectAsStateWithLifecycle()
 
     // 有历史就一直显示会话流 —— 会话停掉之后把读过的内容抹掉，
     // 等于每次停止都清一次屏
@@ -186,6 +196,7 @@ private fun CodexPageContent(vm: CodexVM) {
                     enabled = session.canSend,
                     busy = session.busy,
                     queued = session.queued,
+                    attachments = attachments,
                     modelText = session.model?.takeIf { it.isNotBlank() }
                         ?: stringResource(R.string.session_model_default),
                     modeText = session.effort?.takeIf { it.isNotBlank() }
@@ -193,6 +204,8 @@ private fun CodexPageContent(vm: CodexVM) {
                     onDraftChange = vm::setDraft,
                     onSend = vm::send,
                     onTakeQueued = vm::takeQueued,
+                    onImportFile = vm::importFile,
+                    onRemoveAttachment = vm::removeAttachment,
                     onOpenTurnSettings = { showTurnSettings = true },
                     onStop = vm::stop,
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -498,15 +511,57 @@ private fun CodexComposer(
     enabled: Boolean,
     busy: Boolean,
     queued: List<String>,
+    attachments: List<CodexAttachment>,
     modelText: String,
     modeText: String,
     onDraftChange: (String) -> Unit,
     onSend: (String) -> Boolean,
     onTakeQueued: (Int) -> Unit,
+    onImportFile: (String, java.io.InputStream, (Boolean) -> Unit) -> Unit,
+    onRemoveAttachment: (CodexAttachment) -> Unit,
     onOpenTurnSettings: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var importing by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<CodexAttachment?>(null) }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
+        importing = true
+        // 取文件名和开流都要过 ContentProvider —— 文档来自云盘时这一下能卡住几百毫秒，
+        // 而这个回调本身跑在主线程上
+        scope.launch {
+            var remaining = uris.size
+            uris.forEach { uri ->
+                val (name, stream) = withContext(Dispatchers.IO) {
+                    val resolved = runCatching {
+                        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                            if (c.moveToFirst()) {
+                                val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (i >= 0) c.getString(i) else null
+                            } else null
+                        }
+                    }.getOrNull() ?: uri.lastPathSegment ?: "imported_file"
+                    resolved to runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+                }
+                if (stream == null) {
+                    remaining -= 1
+                    if (remaining == 0) importing = false
+                    return@forEach
+                }
+                onImportFile(name, stream) {
+                    remaining -= 1
+                    if (remaining == 0) importing = false
+                }
+            }
+        }
+    }
+
     PaperCard(
         modifier = modifier
             .fillMaxWidth()
@@ -514,6 +569,20 @@ private fun CodexComposer(
             .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
+        AnimatedVisibility(
+            visible = attachments.isNotEmpty(),
+            enter = InkMotion.expand,
+            exit = InkMotion.collapse,
+        ) {
+            FlowRow(
+                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                attachments.forEach { att ->
+                    AttachmentChip(name = att.name, onRemove = { pendingDelete = att })
+                }
+            }
+        }
         // 排着的消息摆在输入框**上方**而不是混进会话流：它们还没被模型看见，
         // 放进流里就成了「我说了话它没理我」。codex TUI 也是这么摆的。
         AnimatedVisibility(
@@ -544,15 +613,14 @@ private fun CodexComposer(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            // 和 Claude 同一个「+」：模型 / 思考强度收在这里。摆在会话里而不是连接配置里，
-            // 是因为「这一轮让它想久一点」和「我平时用这个档」是两件事，前者得随手够得着。
-            // 附件三项暂不给 —— Codex 侧还没接上传
+            // 和 Claude 同一个「+」：附件、模型 / 思考强度都收在这里。
+            // 图片那两项暂不给 —— Codex 的 localImage 内容块还没接
             ComposerPlus(
-                enabled = enabled,
-                busy = busy,
+                enabled = enabled && !importing,
+                busy = importing,
                 canPickImage = false,
-                canAttach = false,
-                onPickFile = {},
+                showImageItems = false,
+                onPickFile = { filePicker.launch(arrayOf("*/*")) },
                 onPickImage = {},
                 onTakePhoto = {},
                 modelText = modelText,
@@ -593,11 +661,30 @@ private fun CodexComposer(
                     )
                 }
                 SeaSendKey(
-                    enabled = enabled && draft.isNotBlank(),
+                    // 只挂了附件、一个字没写也该能发 —— 那本身就是一句「看看这个」
+                    enabled = enabled && (draft.isNotBlank() || attachments.isNotEmpty()),
                     queued = busy,
                     onClick = { if (onSend(draft)) onDraftChange("") },
                 )
             }
+        }
+    }
+
+    // 移除附件是真删文件，问一句。留在工作区里的话 Codex 照样 ls 得到、读得到，
+    // 「我明明去掉了」和「它还是看见了」对不上才是更坏的结果
+    pendingDelete?.let { target ->
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.composer_delete_attachment_title),
+            confirmText = stringResource(R.string.common_delete),
+            dismissText = stringResource(R.string.common_cancel),
+            onConfirm = {
+                onRemoveAttachment(target)
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        ) {
+            Text(stringResource(R.string.composer_delete_attachment_body, target.name))
         }
     }
 }

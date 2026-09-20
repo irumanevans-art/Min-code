@@ -1095,3 +1095,35 @@ snapshotFlow 的 lambda 里只准读 State / snapshot state；review 时看到�
 - Source: device_testing
 - Related Files: app/src/main/java/dev/min/code/core/service/LocalServiceRegistry.kt, app/src/main/java/dev/min/code/core/service/LocalServiceStore.kt
 - Tags: proc, selinux, untrusted-app, emulator, orphan, device-verification
+
+---
+
+## [LRN-20260920-PATH-CASE-DUP] environment
+
+**Status**: resolved
+**Area**: build
+
+### Summary
+Windows 文件名大小写不敏感，用错大小写的路径去编辑一个已存在的文件会**成功**（写的是同一个物理文件），但 Kotlin 增量编译的缓存按路径字符串记账，于是同一个 top-level 声明被当成来自两个文件，报 `Conflicting declarations`——而且错误只列出一个声明，看上去毫无道理。
+
+### Details
+给 `CodexVM` 加构造参数时要改 Koin 注册，仓库里真实的文件名是 `di/AppModule.kt`，我一路按 `di/appModule.kt` 读写。Edit 成功、`git status` 也确实显示 `AppModule.kt` 被修改（文件只有一个），可 `:app:compileDebugKotlin` 报：
+
+```
+e: .../di/appModule.kt:33:5 Conflicting declarations:
+val appModule: Module
+```
+
+`grep -rn "^val appModule"` 只有一处，`find` 也只有一个文件——冲突是缓存里的两条路径记录之间发生的，不在磁盘上。
+
+排查时容易被带偏的地方：同一次编译里还有两个真实的 unresolved reference（搬函数漏了 import），修掉之后只剩这一条，才看清它和那些无关。
+
+### Suggested Action
+- 报 `Conflicting declarations` 却只列出一个声明、`grep` 也只找得到一处时，先怀疑**路径大小写**，别去怀疑代码：`git status --short` 打出来的是真实文件名，和你手里的路径对一眼。
+- 修法是清掉增量缓存：`rm -rf app/build/kotlin app/build/tmp/kotlin-classes`，不必 clean 整个工程。
+- 预防：改陌生文件前用 Glob 拿一次真实路径，别照着记忆拼大小写。仓库里 `di/AppModule.kt` 是大写开头，`ui/**` 下多数文件也是。
+
+### Metadata
+- Source: error_and_fix
+- Related Files: app/src/main/java/dev/min/code/di/AppModule.kt
+- Tags: windows, case-insensitive, kotlin-incremental, build-cache, conflicting-declarations

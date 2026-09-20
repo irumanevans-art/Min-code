@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -45,6 +46,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.PlusSign
 import me.rerere.hugeicons.stroke.Attachment01
 import me.rerere.hugeicons.stroke.Camera01
+import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Image02
 import me.rerere.hugeicons.stroke.Settings02
 import dev.min.code.ui.components.InkDivider
@@ -101,10 +103,15 @@ internal fun ComposerPlus(
     /** `权限模式 · 思考强度` */
     modeText: String = "",
     /**
-     * 给不给附件那三项。Codex 侧还没接上传，摆三个点不动的菜单项比没有更糟 ——
-     * 菜单里每一栏都该是能用的。
+     * 给不给附件那一项。
+     *
+     * 和 [canPickImage] 不是一回事：那个是「图片到上限了」，灰着提示还能等会儿再来；
+     * 这个是「这个引擎根本没接」，摆一个永远点不动的菜单项只会让人反复去点。
+     * Codex 侧的 localImage 还没接，所以那边 [showImageItems] 传 false。
      */
     canAttach: Boolean = true,
+    /** 给不给拍照 / 相册那两项，理由同 [canAttach] */
+    showImageItems: Boolean = true,
     onRefreshUsage: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
 ) {
@@ -156,9 +163,12 @@ internal fun ComposerPlus(
                     },
                 )
             }
-            if (canAttach && (contextText != null || costText != null || modelText.isNotBlank())) InkDivider()
+            val hasAttachItems = canAttach || showImageItems
+            if (hasAttachItems && (contextText != null || costText != null || modelText.isNotBlank())) InkDivider()
             if (canAttach) {
                 InkMenuItem(stringResource(R.string.composer_add_file), icon = HugeIcons.Attachment01, onClick = { open = false; onPickFile() })
+            }
+            if (showImageItems) {
                 InkMenuItem(
                     stringResource(R.string.composer_take_photo),
                     icon = HugeIcons.Camera01,
@@ -286,5 +296,40 @@ private fun Chevron(modifier: Modifier, color: Color, width: androidx.compose.ui
             lineTo(c.x + half, c.y + rise)
         }
         drawPath(path, color, style = Stroke(width.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+/** 附件是你放进来的东西：海的水洗底 */
+@Composable
+internal fun AttachmentChip(
+    name: String,
+    onRemove: () -> Unit,
+    icon: ImageVector = HugeIcons.Attachment01,
+) {
+    val palette = MaterialTheme.sea
+    Row(
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(palette.seaWash)
+            .padding(start = 10.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(icon, null, Modifier.size(13.dp), tint = palette.seaDeep)
+        Text(
+            name,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 160.dp),
+        )
+        InkIconButton(
+            icon = HugeIcons.Cancel01,
+            contentDescription = stringResource(R.string.composer_remove),
+            onClick = onRemove,
+            tint = palette.seaDeep,
+            size = 22.dp,
+            iconSize = 13.dp,
+        )
     }
 }
