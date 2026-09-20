@@ -101,6 +101,33 @@ class CodexSupervisorDiffTest {
         )
     }
 
+    /**
+     * A 还挂着就直接换成 B，中间没有 null 间隔。
+     *
+     * 不重发的话状态栏上留着 A 的正文和按钮，点下去应答的是一个没人等的请求 ——
+     * 服务端拒掉，人只能再回 App 里答一遍。通知 id 固定，重发即覆盖。
+     */
+    @Test
+    fun `an approval swapped straight for another re-raises the event`() {
+        val previous = seen(approvalKey = "42")
+        val event = codexSupervisorDiff(previous, seen(approvalKey = "43"), isForeground = false)
+        assertEquals(CodexSupervisorEvent.Approval, event)
+    }
+
+    /** 换人也照样守前台规则：前台的 sheet 才是主界面 */
+    @Test
+    fun `an approval swap in foreground stays silent`() {
+        val previous = seen(approvalKey = "42")
+        assertNull(codexSupervisorDiff(previous, seen(approvalKey = "43"), isForeground = true))
+    }
+
+    /** 同一条审批的后续帧（别的字段变了）不能再报一次，否则会反复响 */
+    @Test
+    fun `the same approval does not re-notify on later frames`() {
+        val previous = seen(approvalKey = "42")
+        assertNull(codexSupervisorDiff(previous, seen(approvalKey = "42", busy = true), isForeground = false))
+    }
+
     /** turn 失败后 errorMessage 还挂着，下一帧不能再报一次失败 */
     @Test
     fun `a failed turn does not re-notify while the error message lingers`() {

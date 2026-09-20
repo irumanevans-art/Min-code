@@ -413,7 +413,11 @@ internal fun codexSupervisorDiff(
     current: ClaudeCodeSessionSupervisor.CodexSeen,
     isForeground: Boolean,
 ): CodexSupervisorEvent? {
-    if (current.approvalKey != null && previous?.approvalKey == null) {
+    // 比的是「换了没有」，不是「有没有」：A 还挂着就直接换成 B（中间没有 null 间隔）
+    // 同样要发一次。审批通知 id 是固定的，重发即覆盖；不发的话状态栏上留着 A 的正文和
+    // 按钮，点下去应答的是一个早就没人等的请求 —— answerApproval 会拒掉它，
+    // 人只能再回 App 里的 sheet 答一遍。
+    if (current.approvalKey != null && current.approvalKey != previous?.approvalKey) {
         return if (!isForeground) CodexSupervisorEvent.Approval else null
     }
     if (current.approvalKey == null && previous?.approvalKey != null) {
