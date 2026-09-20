@@ -1066,3 +1066,32 @@ snapshotFlow 的 lambda 里只准读 State / snapshot state；review 时看到�
 - Source: emulator_verification
 - Related Files: tools/uitap.py, ComposerDraftStore.kt, ClaudeCodeConfigStore.kt
 - Tags: emulator, adb, input-text, ime, composer-draft, config-regen
+
+---
+
+## [LRN-20260920-PROC-TARGET-DOMAIN] environment
+
+**Logged**: 2026-09-20T02:20:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: core
+
+### Summary
+要在设备上验「App 去读别的进程的 `/proc/<pid>/…`」这类功能，靶子进程必须由 **App 自己 fork**。`adb shell run-as <pkg>` 起的进程虽然同 UID，SELinux domain 却是 `runas_app`，而 App 跑在 `untrusted_app` —— 跨 domain 读 `/proc/<pid>/cmdline` 直接 `Permission denied`，验证会假阴性，看着像功能坏了。
+
+### Details
+给孤儿服务对账（`LocalServiceRegistry.reconcile`）做设备验证时，先用 `run-as … nohup sleep 9999 &` 造靶子，登记表里 pid 和 cmdline 都对，App 却一条都认不回来。对比 `/proc/<pid>/attr/current` 才看出来：App 是 `u:r:untrusted_app:s0:c210,…`，run-as 靶子是 `u:r:runas_app:s0:c210,…` —— UID 相同、domain 不同，SELinux 拦掉了读取。
+
+顺带两件事别再试了：
+- **模拟器上造不出存活的 proot 孤儿**。`am force-stop` 杀整个进程组；只 `kill -9` App 主进程，ActivityManager 随后也会把进程组清掉。
+- **终端页签的 proot 即便逃过进程组清理也会自己退**：它的 stdin 是 App 的管道，App 一死就 EOF，bash 跟着退出。托管服务之所以会变孤儿，正是因为 `LocalServiceRegistry` 启动后 `process.outputStream.close()` 主动关掉了 stdin —— 这条差异就是「谁会变孤儿」的分界线。
+
+可行的替代靶子是 **App 进程自己**：同 UID、同 domain、同一条读取路径。重启后的新 pid 事先不知道，就在旧 pid 之后铺一段 pid 范围、cmdline 全填 App 自己的 cmdline，命中的那条会被认领。注意命中数不会是 1：`/proc/<tid>/cmdline` 对线程同样返回主进程的 cmdline，所以结果是「主进程 + 落在范围内的线程数」（实测 250 条铺开命中 23 条）。
+
+### Suggested Action
+设备验证依赖 `/proc` 的改动时，先 `cat /proc/<pid>/attr/current` 把靶子和 App 的 SELinux domain 对一遍，再下「功能坏了」这种结论。造不出同 domain 靶子时，用 App 自己的进程当靶子，并预期线程 tid 一起命中。
+
+### Metadata
+- Source: device_testing
+- Related Files: app/src/main/java/dev/min/code/core/service/LocalServiceRegistry.kt, app/src/main/java/dev/min/code/core/service/LocalServiceStore.kt
+- Tags: proc, selinux, untrusted-app, emulator, orphan, device-verification
