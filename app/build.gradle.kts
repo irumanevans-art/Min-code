@@ -34,6 +34,16 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            // android.util.Log 在 JVM 单测里默认抛「not mocked」。核心逻辑里到处都有
+            // Log.d/w，而它们又常常待在 runCatching 里面 —— 一抛就被就地吞掉，表现是
+            // 那条代码路径"什么也没发生"，测试挂在等待上，看不出真正原因。
+            // 返回默认值，让这些分支能进测试。
+            isReturnDefaultValues = true
+        }
+    }
+
     splits {
         abi {
             //noinspection WrongGradleMethod

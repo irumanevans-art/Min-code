@@ -140,6 +140,10 @@ class CodexAppServerManager(
     /** 正在流式生成的那条正文 / 思考的 itemId，completed 时用来判断该清哪个缓冲 */
     private var streamingTextItemId: String? = null
     private var streamingThinkingItemId: String? = null
+    /** 最后那条「未知方法」灰字，同一个方法连着来时就地累加次数，见 [appendUnknownNote] */
+    private var unknownNoteId: String? = null
+    private var unknownNoteLabel: String? = null
+    private var unknownNoteCount = 0
 
     /** 启动进程并走完 initialize → initialized → thread/start|resume。 */
     fun start(options: Options = Options(), resumeThreadId: String? = null): Boolean = synchronized(lock) {
@@ -523,12 +527,7 @@ class CodexAppServerManager(
                 Log.d(TAG, "未知的 codex 方法：${event.method}")
                 // 协议层（CodexEvent.Unknown）的承诺：宁可在界面上留一条灰字，
                 // 也别静默吞掉——凭空少一段可查才是最糟的
-                _state.value = current.copy(
-                    items = current.items + ChatItem.Note(
-                        nextLocalId("unknown"),
-                        "未知的 codex 方法：${event.method ?: "(无方法名)"}",
-                    ),
-                )
+                _state.value = current.copy(items = appendUnknownNote(current.items, event.method))
             }
         }
     }
@@ -682,6 +681,31 @@ class CodexAppServerManager(
             result = result.upsert(ChatItem.AssistantText(nextLocalId("assistant"), text))
         }
         return result
+    }
+
+    /**
+     * 未知方法的灰字，连着来的同一个方法只占一行，后面挂个次数。
+     *
+     * 不认识的方法通常不是偶发而是成片来的：codex 换一个版本、多一类 item，
+     * 同一个 method 一轮能刷几十上百条。一条一行的话正经内容全被顶出屏幕，
+     * 而这些行彼此**没有新信息** —— 留一行加「×N」既说清了发生过什么、
+     * 也说清了有多频繁，比刷屏可读得多。
+     *
+     * 只在它还是最后一条时合并。中间夹了真内容之后再来同一个方法，那是新的一次
+     * ——回头去给上面那行加数字，会让计数跑到已经读过的位置去。
+     */
+    private fun appendUnknownNote(items: List<ChatItem>, method: String?): List<ChatItem> {
+        val label = "未知的 codex 方法：${method ?: "(无方法名)"}"
+        val last = items.lastOrNull()
+        if (last is ChatItem.Note && last.id == unknownNoteId && unknownNoteLabel == label) {
+            unknownNoteCount += 1
+            return items.dropLast(1) + last.copy(text = "$label ×$unknownNoteCount")
+        }
+        val id = nextLocalId("unknown")
+        unknownNoteId = id
+        unknownNoteLabel = label
+        unknownNoteCount = 1
+        return items + ChatItem.Note(id, label)
     }
 
     /** 同 id 的整条替换，没有就追加 —— `item/completed` 靠它覆盖掉 started 那一版 */

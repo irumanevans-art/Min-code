@@ -451,6 +451,49 @@ class CodexAppServerManagerTest {
         manager.close()
     }
 
+    /** 一串同样的未知方法只占一行 —— 否则正经内容会被灰字整屏顶出去 */
+    @Test
+    fun `a burst of the same unknown method collapses into one line`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("问")
+        await { manager.state.value.busy }
+        repeat(5) { scripted.queue("""{"method":"thread/weird","params":{}}""") }
+        await { notes(manager).size == 1 && notes(manager).first().endsWith("×5") }
+
+        assertEquals(listOf("未知的 codex 方法：thread/weird ×5"), notes(manager))
+        manager.close()
+    }
+
+    /** 换一个方法、或者中间夹了真内容，都得另起一行：数字不能跑到读过的位置去 */
+    @Test
+    fun `a different method, or intervening content, starts a new line`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("问")
+        await { manager.state.value.busy }
+
+        scripted.queue("""{"method":"thread/weird","params":{}}""")
+        scripted.queue("""{"method":"thread/odd","params":{}}""")
+        await { notes(manager).size == 2 }
+
+        // 夹一条真内容，再来同一个方法
+        scripted.queue("""{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m1","text":"在"}}}""")
+        scripted.queue("""{"method":"thread/odd","params":{}}""")
+        await { notes(manager).size == 3 }
+
+        assertEquals(
+            listOf(
+                "未知的 codex 方法：thread/weird",
+                "未知的 codex 方法：thread/odd",
+                "未知的 codex 方法：thread/odd",
+            ),
+            notes(manager),
+        )
+        manager.close()
+    }
+
+    private fun notes(manager: CodexAppServerManager): List<String> =
+        manager.state.value.items.filterIsInstance<ChatItem.Note>().map { it.text }
+
     /**
      * turn 起来但不收尾，停在 busy —— 好让测试往队列里塞东西。
      * 脚本里不给 turn/completed，那一行由各测试自己在想要的时机 [ScriptedProcess.queue] 进去。
