@@ -118,6 +118,10 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.appcompat)
+    // Theme.Min 的 parent 是 Theme.Material3.DayNight.NoActionBar，来自这个（View 体系的）
+    // material 库。之前它是 :workspace 的 implementation —— 编译期不传递，但 AAR 资源会，
+    // 于是 app 靠一个 proot 模块的实现细节才编得出主题。放回真正用它的人这边
+    implementation(libs.material)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.lifecycle.runtime.compose)
