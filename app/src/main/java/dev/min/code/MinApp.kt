@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import dev.min.code.core.crash.CrashRecorder
+import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.SettingsStore
@@ -67,6 +68,12 @@ class MinApp : Application() {
                 .map { it.appLanguage }
                 .distinctUntilChanged()
                 .collect { AppLocale.apply(this@MinApp, it) }
+        }
+        // 上一条命留下的托管服务这会儿还在跑（`killOnExit=false` 就是要它活过 App），
+        // 可内存里的进程表是空的。不认回来的话，用户看到的是一张空面板加一个「端口被占」。
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            runCatching { getKoin().get<LocalServiceRegistry>().reconcile() }
+                .onFailure { Log.w(TAG, "local service reconcile failed", it) }
         }
         // 海纹理 ~1.7MB + BitmapShader 管线：别等用户第一次点发送/海窗时在主线程冷编译
         getKoin().get<AppScope>().launch(Dispatchers.IO) {

@@ -71,6 +71,8 @@ data class LocalService(
  * - 独立 proot（`killOnExit=false`），不挂在某个 Claude 会话树上 → 关对话还在。
  * - 入口是 agent/会话链的 [startFromAgent]，不是面板上的第二种启动仪式。
  * - 面板 / FGS / 通知都读 [services]；没有句柄的不标 Running。
+ * - 进程表在内存里，但服务比 App 进程活得久 → 开机走一次 [reconcile] 把上次留下的
+ *   还活着的服务认回来（登记表见 [LocalServiceStore]）。
  */
 class LocalServiceRegistry(
     private val context: Context,
@@ -80,6 +82,10 @@ class LocalServiceRegistry(
         nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir),
     ),
     private val patcher: RootfsPatcher = RootfsPatcher(),
+    /** 跨进程登记表：App 重启后认回孤儿服务的唯一线索 */
+    private val store: LocalServiceStore = LocalServiceStore(context),
+    /** 读 `/proc/<pid>/cmdline`；抽成参数是为了让对账在单测里不碰真 /proc */
+    private val cmdlineOf: (Int) -> String? = procCmdlineReader(),
     // 默认 scope 装 CoroutineExceptionHandler：SupervisorJob 会把未捕获异常丢给
     // 默认 handler（Android 上直接崩 App），这里记日志 + 落盘，不往上传
     private val scope: CoroutineScope = CoroutineScope(
@@ -90,7 +96,12 @@ class LocalServiceRegistry(
     ),
 ) {
     private data class Handle(
+        /** 重启认领来的服务只有 pid，没有 [Process] 句柄 —— 这里是 null */
         @Volatile var process: Process?,
+        /** proot 宿主 pid。停服务只需要它，[stop] 因此对认领来的服务一样管用 */
+        @Volatile var hostPid: Int? = null,
+        /** 建表那一刻的 `/proc/<pid>/cmdline`，落盘与轮询都拿它认人 */
+        @Volatile var cmdline: String? = null,
         var waiter: Job? = null,
         val log: StringBuilder = StringBuilder(),
         val logLock: Any = Any(),
@@ -108,6 +119,9 @@ class LocalServiceRegistry(
      * 可能耗时数秒，锁会顺带把启动串行化 —— 启动很罕见，正确性换得起。
      */
     private val startMutex = Mutex()
+
+    /** 串行化登记表落盘，见 [persist] */
+    private val persistMutex = Mutex()
 
     val anyRunning: StateFlow<Boolean> = _services
         .map { list ->
@@ -301,8 +315,16 @@ class LocalServiceRegistry(
         }
 
         runCatching { process.outputStream.close() }
-        val handle = Handle(process = process)
+        // pid 和 cmdline 趁现在取：proot 已经 exec 完，cmdline 到死都不会再变。
+        // 拖到 Running 再取的话，Starting 这 2.5 秒里被杀的 App 会漏登记一个孤儿。
+        val hostPid = runCatching { ProcessTreeKill.pidOf(process) }.getOrNull()
+        val handle = Handle(
+            process = process,
+            hostPid = hostPid,
+            cmdline = hostPid?.let { runCatching { cmdlineOf(it) }.getOrNull() },
+        )
         handles[id] = handle
+        persist()
 
         // 诚实：先 Starting，短窗口内进程仍活（或端口已听）才升 Running
         handle.waiter = scope.launch {
@@ -336,6 +358,8 @@ class LocalServiceRegistry(
                     )
                 }
             }
+            // 进程没了就从登记表里划掉，否则下次开机会拿一个死 pid 去认领
+            persist()
             Log.i(TAG, "service $id exited code=$code")
         }
 
@@ -356,15 +380,23 @@ class LocalServiceRegistry(
             )
         }
         val proc = handle?.process
+        // 认领来的服务只有 pid：句柄留在上一条命的进程里，这条命再也拿不到了
+        val claimedPid = handle?.hostPid
         handle?.process = null
-        if (proc != null) {
+        if (proc == null && claimedPid != null && handle != null) {
+            // 它的退出感知全靠轮询，这里先把轮询停掉，免得稍后又把状态从 Exited 翻回去
+            handle.waiter?.cancel()
+            handles.remove(id)
+        }
+        if (proc != null || claimedPid != null) {
             scope.launch {
                 // 先杀 guest 进程树，再杀宿主 proot —— 顺序不能反：宿主一死，后代立刻
                 // reparent 到 init，从 root 出发就再也遍历不到，只剩端口还 LISTEN 的
                 // 孤儿死壳（`--kill-on-exit` 救不了，理由见 ProcessTreeKill 类注释）。
                 // 两步都是阻塞 IO（扫 /proc + 信号宽限），显式压到 IO 上；
                 // 取 pid 或杀树失败都不许挡住最后的 destroy。
-                val pid = runCatching { ProcessTreeKill.pidOf(proc) }.getOrNull()
+                val pid = claimedPid
+                    ?: proc?.let { runCatching { ProcessTreeKill.pidOf(it) }.getOrNull() }
                 if (pid == null) {
                     Log.w(TAG, "stop $id: 取不到宿主 pid，只能退回 Process.destroy()")
                 } else {
@@ -385,22 +417,28 @@ class LocalServiceRegistry(
                         }
                     }.onFailure { Log.w(TAG, "killTree $id", it) }
                 }
-                runCatching {
-                    // 宿主此时多半已经死了；destroy() 留在这里是为了关掉三条管道，
-                    // 顺带当拿不到 pid 时的唯一退路。
-                    proc.destroy()
-                    if (pid == null) {
-                        // 这条升级路径在 Android 上等于再发一次 SIGTERM（destroyForcibly
-                        // 没被 override），聊胜于无 —— 换成新运行时才可能真是 SIGKILL。
-                        val exited = try {
-                            proc.waitFor(1_000, java.util.concurrent.TimeUnit.MILLISECONDS)
-                        } catch (_: InterruptedException) {
-                            false
+                // 认领来的服务没有句柄可 destroy：管道本就随上一条命的进程一起没了，
+                // 上面的 killTree + killHost 已经是全部手段。
+                if (proc != null) {
+                    runCatching {
+                        // 宿主此时多半已经死了；destroy() 留在这里是为了关掉三条管道，
+                        // 顺带当拿不到 pid 时的唯一退路。
+                        proc.destroy()
+                        if (pid == null) {
+                            // 这条升级路径在 Android 上等于再发一次 SIGTERM（destroyForcibly
+                            // 没被 override），聊胜于无 —— 换成新运行时才可能真是 SIGKILL。
+                            val exited = try {
+                                proc.waitFor(1_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            } catch (_: InterruptedException) {
+                                false
+                            }
+                            if (!exited) proc.destroyForcibly()
                         }
-                        if (!exited) proc.destroyForcibly()
-                    }
-                }.onFailure { Log.w(TAG, "stop $id", it) }
+                    }.onFailure { Log.w(TAG, "stop $id", it) }
+                }
             }
+            // 停掉的服务不该留在登记表里等着下次开机被认领
+            persist()
         }
     }
 
@@ -409,6 +447,119 @@ class LocalServiceRegistry(
             .filter { it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting }
             .map { it.id }
         ids.forEach { stop(it, reason) }
+    }
+
+    /**
+     * 开机认回上一条命留下的、还在跑的托管服务。
+     *
+     * 托管服务是 `killOnExit=false` 的独立 proot —— App 被杀 / 崩溃 / 用户划掉之后它照样跑、
+     * 端口照样 LISTEN，可内存里的进程表是空的。不认领的话它就是个谁都看不见、谁都停不掉的
+     * 孤儿，还会把同端口的下一次启动顶成 [LocalServiceStopReason.PortBusy]。
+     *
+     * 认回来的按 Running 进面板：[stop] 只要 pid 就能杀树，所以照样停得掉；同 command+cwd+port
+     * 的下一次 [startFromAgent] 会走 [findReusable] 复用它 —— 于是也不再撞自己的端口。
+     *
+     * 认不回来的（进程没了，或 pid 被复用给了别人）直接丢掉，不往面板上摆一条早就死了的记录。
+     * 日志接不回来：那三条管道随上一条命的进程一起没了，认领条目的 logTail 就是空的。
+     */
+    suspend fun reconcile() {
+        val claims = withContext(Dispatchers.IO) {
+            runCatching { localServiceClaims(store.read(), cmdlineOf) }.getOrDefault(emptyList())
+        }
+        if (claims.isEmpty()) return
+        startMutex.withLock {
+            val known = _services.value.mapTo(mutableSetOf()) { it.id }
+            val entries = claims
+                .filter { it.alive }
+                .map { it.record }
+                .filterNot { it.id in known }
+                .map { record ->
+                    val handle = Handle(
+                        process = null,
+                        hostPid = record.hostPid,
+                        cmdline = record.cmdline,
+                    )
+                    handles[record.id] = handle
+                    handle.waiter = watchClaimed(record.id, handle, record.hostPid)
+                    LocalService(
+                        id = record.id,
+                        label = record.label,
+                        command = record.command,
+                        cwdGuest = record.cwdGuest,
+                        port = record.port,
+                        status = LocalServiceStatus.Running,
+                        startedAtEpochMs = record.startedAtEpochMs,
+                        sourceSessionKey = record.sourceSessionKey,
+                    )
+                }
+            if (entries.isNotEmpty()) _services.update { it + entries }
+            Log.i(TAG, "reconcile: claimed ${entries.size} of ${claims.size} recorded")
+            // 认不回来的那些就此从登记表里消失
+            persist()
+        }
+    }
+
+    /**
+     * 认领来的服务没有 [Process] 句柄，waitFor 不了，只能轮询 `/proc` 看它什么时候没的。
+     *
+     * 比 cmdline 而不是只看 pid 在不在：服务死掉、pid 被系统复用给别人之后，
+     * 只看 pid 会一直以为它还活着。
+     *
+     * 十秒一轮 —— 托管服务是长驻的，晚十秒把面板状态翻成 Exited 不耽误任何事。
+     */
+    private fun watchClaimed(id: String, handle: Handle, pid: Int): Job = scope.launch {
+        while (true) {
+            delay(CLAIM_POLL_MS)
+            if (handles[id] !== handle) return@launch // 已经被 stop 摘掉了
+            val alive = runCatching { cmdlineOf(pid) }.getOrNull() == handle.cmdline
+            if (alive) continue
+            handles.remove(id)
+            // 退出码拿不到：没有句柄就没有 waitFor，只知道"它不在了"。
+            // 不硬塞一个 Crash —— 正常退出和崩溃在这里分不出来，标 Exited 才诚实。
+            patch(id) {
+                if (it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting) {
+                    it.copy(status = LocalServiceStatus.Exited)
+                } else {
+                    it
+                }
+            }
+            persist()
+            Log.i(TAG, "claimed service $id is gone")
+            return@launch
+        }
+    }
+
+    /**
+     * 把此刻还活着的托管服务写进跨进程登记表。
+     *
+     * 只写拿得到 pid 和 cmdline 的那些：两者缺一就认领不回来（认领要逐字比对 cmdline），
+     * 落了盘也只是下次开机要清的垃圾。
+     *
+     * 快照在调用线程同步取、写盘扔到 [scope]（IO）—— [stop] 是从界面线程调的普通函数，
+     * 不能在那里碰磁盘。两次 persist 撞在一起时靠 [persistMutex] 串行，写的又都是全量快照，
+     * 最坏结果是中间那次白写。
+     */
+    private fun persist() {
+        val records = _services.value.mapNotNull { svc ->
+            if (svc.status != LocalServiceStatus.Running && svc.status != LocalServiceStatus.Starting) {
+                return@mapNotNull null
+            }
+            val handle = handles[svc.id] ?: return@mapNotNull null
+            val pid = handle.hostPid ?: return@mapNotNull null
+            val cmdline = handle.cmdline ?: return@mapNotNull null
+            LocalServiceRecord(
+                id = svc.id,
+                label = svc.label,
+                command = svc.command,
+                cwdGuest = svc.cwdGuest,
+                port = svc.port,
+                startedAtEpochMs = svc.startedAtEpochMs,
+                sourceSessionKey = svc.sourceSessionKey,
+                hostPid = pid,
+                cmdline = cmdline,
+            )
+        }
+        scope.launch { persistMutex.withLock { store.write(records) } }
     }
 
     fun clearFinished() {
@@ -527,6 +678,9 @@ class LocalServiceRegistry(
         const val MAX_LOG_CHARS = 256 * 1024
         const val LOG_TAIL_CHARS = 8 * 1024
         const val LOG_UI_INTERVAL_MS = 400L
+
+        /** 认领来的服务多久查一次 /proc，见 [watchClaimed] */
+        const val CLAIM_POLL_MS = 10_000L
     }
 }
 
