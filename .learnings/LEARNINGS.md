@@ -1127,3 +1127,38 @@ val appModule: Module
 - Source: error_and_fix
 - Related Files: app/src/main/java/dev/min/code/di/AppModule.kt
 - Tags: windows, case-insensitive, kotlin-incremental, build-cache, conflicting-declarations
+
+## [LRN-20260920-LOG-NOT-MOCKED-SWALLOWED] error_and_fix
+
+**Status**: resolved
+**Area**: testing
+
+### Summary
+`android.util.Log` 在 JVM 单测里默认抛 `RuntimeException: Method d in android.util.Log not mocked`。当这个调用正好待在一个 `runCatching { }` 里面（Min 的 stdout / stderr 读循环全是这个形状），异常就地被吞掉，**整个读循环静静地停了**——表现不是"报错"，而是"后面什么也没发生"，测试挂在 await 上直到超时。
+
+### Details
+给 `CodexAppServerManager` 的 `CodexEvent.Unknown` 分支加去重时，新写的两条测试都在 await 超时。打印 state 发现 items 里只有 `UserText`，喂进去的 `{"method":"thread/weird"}` 一条都没落地。
+
+根因：那个分支第一句是 `Log.d(TAG, "未知的 codex 方法：…")`，而读循环是
+
+```kotlin
+runCatching {
+    BufferedReader(...).useLines { lines ->
+        lines.forEach { line -> parseCodexEvent(line)?.let(::handleEvent) }
+    }
+}.onFailure { Log.w(TAG, "codex stdout 读取结束", it) }
+```
+
+第一条未知事件一抛，`useLines` 就退出，之后 stdout 再也不读。`onFailure` 里那句 `Log.w` 自己也抛，连日志都留不下。
+
+之所以一直没被发现：已有的 20 条测试覆盖的分支（item/completed、turn/completed、审批、stderr）恰好都不调 Log。
+
+### Suggested Action
+- 新测试"什么都没发生、await 超时"而不是断言失败时，先查被测路径上有没有 `android.util.Log`。
+- 根治在构建配置，不是逐处删日志：`app/build.gradle.kts` 的 `testOptions { unitTests { isReturnDefaultValues = true } }`（本仓库之前没设）。
+- 更一般的教训：`runCatching` 包住一整个读循环，代价是循环体里**任何**异常都等于静默停止服务。真要这么写，`onFailure` 里别再放会抛的东西。
+
+### Metadata
+- Source: error_and_fix
+- Related Files: app/build.gradle.kts, app/src/main/java/dev/min/code/core/codex/CodexAppServerManager.kt
+- Tags: unit-test, android-util-log, not-mocked, runCatching, silent-failure
