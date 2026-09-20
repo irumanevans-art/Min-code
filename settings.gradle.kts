@@ -22,7 +22,9 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven("https://jitpack.io")
-        mavenLocal()
+        // 不挂 mavenLocal()：~/.m2 里的东西随手一个 `publishToMavenLocal` 就能变，
+        // 而且它排在最前面会先于 google()/mavenCentral() 命中 —— 本机能编、别人机器上
+        // 编不出来，或者更糟：两边编出来的不是同一个东西。本仓库没有任何依赖来自它
     }
 }
 
