@@ -132,3 +132,20 @@ internal fun modelDescription(value: String, original: String?, chinese: Boolean
 /** 有多少条命令能给出中文说明 —— 用来在面板上如实说明覆盖范围 */
 internal fun translatedCommandCount(names: List<String>): Int =
     names.count { it.lowercase() in SLASH_COMMAND_ZH }
+
+/**
+ * 界面是不是中文。
+ *
+ * 这张表整个的前提是「界面中文、而 CLI 的说明是英文原文」——那才谈得上要不要译。
+ * 界面切成 English 之后前提没了：一列英文标题配一段中文说明纯属捣乱，
+ * 而那个「说明语言」开关还杵在那儿，甚至还能把说明切回中文。
+ *
+ * 所以英文界面下开关不出现（[ClaudeCodeSettingsSheet] 里判这一条），
+ * 表也整个不生效——**两件事都要做**：只藏开关的话，之前存下的 true 会继续生效，
+ * 用户看见中文说明却找不到哪里能关掉。
+ *
+ * 判的是 Configuration 而不是设置里那三档：「跟随系统」时那一档本身说明不了语言。
+ */
+@androidx.compose.runtime.Composable
+internal fun isChineseUi(): Boolean =
+    androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language == "zh"

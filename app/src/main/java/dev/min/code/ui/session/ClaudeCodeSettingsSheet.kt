@@ -254,11 +254,15 @@ internal fun ClaudeCodeSettingsSheet(
                     // 不限高、不内嵌滚动：整张 sheet 本来就是一个 verticalScroll，
                     // 之前套了一层 heightIn(max) 却没有 scroll，40 个命令只看得见前两个
                     Column {
-                        DescriptionLanguageSwitch(
-                            chinese = chineseDescriptions,
-                            commands = session.slashCommands,
-                            onChange = onSetChineseDescriptions,
-                        )
+                        // 英文界面下不给这个开关：那时候 CLI 的原文和界面本来就是一种语言，
+                        // 没有「要不要译」这个问题了。见 isChineseUi
+                        if (isChineseUi()) {
+                            DescriptionLanguageSwitch(
+                                chinese = chineseDescriptions,
+                                commands = session.slashCommands,
+                                onChange = onSetChineseDescriptions,
+                            )
+                        }
                         session.slashCommands.forEach { cmd ->
                             OptionRow(
                                 title = "/${cmd.name}",

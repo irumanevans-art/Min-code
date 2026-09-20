@@ -186,7 +186,10 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     val localServiceList by vm.localServiceList.collectAsStateWithLifecycle()
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val dailyCostUsd by vm.dailyCostUsd.collectAsStateWithLifecycle()
-    val chineseDescriptions by vm.chineseDescriptions.collectAsStateWithLifecycle()
+    // 英文界面下这张表整个不生效，见 isChineseUi —— 在这里合掉，
+    // 下游每一处消费点（输入坞的命令表、会话设置里那一列）就都不必各自再判一次
+    val zhDescriptionSetting by vm.chineseDescriptions.collectAsStateWithLifecycle()
+    val chineseDescriptions = zhDescriptionSetting && isChineseUi()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val toaster = LocalToaster.current
     LaunchedEffect(notice) {
