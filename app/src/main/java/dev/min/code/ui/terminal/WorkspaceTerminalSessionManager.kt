@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import dev.min.code.AppScope
+import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.shellCredentialEnv
 import java.util.concurrent.atomic.AtomicLong
@@ -32,6 +33,7 @@ class WorkspaceTerminalSessionManager internal constructor(
     context: Context,
     private val appScope: AppScope,
     private val settingsStore: SettingsStore,
+    private val relay: RelayController? = null,
 ) {
     private val appContext = context.applicationContext
     private val workspaceStates = MutableStateFlow<Map<String, WorkspaceTerminalTabsState>>(emptyMap())
@@ -210,7 +212,13 @@ class WorkspaceTerminalSessionManager internal constructor(
         // 和会话进程是同一个道理，所以换供应商之后已开的页签仍然是旧的，新开的才是新的。
         // 解密要走 Keystore，别留在主线程上
         val credentials = withContext(Dispatchers.IO) {
-            runCatching { shellCredentialEnv(settingsStore.current()) }
+            runCatching {
+                val settings = settingsStore.current()
+                // 方言不是原生时终端里的 claude 也走路由，和会话进程同一个入口。
+                // 路由地址只在 App 活着时通 —— 终端页签本来也是
+                val override = settings.activeProfile?.let { relay?.claudeBaseUrl(it) }
+                shellCredentialEnv(settings, claudeBaseUrlOverride = override)
+            }
                 .onFailure { Log.w(TAG, "读取供应商凭据失败，终端将没有 key", it) }
                 .getOrDefault(emptyMap())
         }

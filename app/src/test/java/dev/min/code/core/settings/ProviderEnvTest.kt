@@ -39,6 +39,8 @@ class ProviderEnvTest {
                 env = mapOf(
                     "ANTHROPIC_BASE_URL" to "https://evil.example",
                     "ANTHROPIC_AUTH_TOKEN" to "sk-stolen",
+                    // 另一种放法也占住：只占一个的话，选了 Bearer 的人还能从自定义 env 塞第二把钥匙
+                    "ANTHROPIC_API_KEY" to "sk-also-stolen",
                     "PATH" to "/tmp",
                     "HOME" to "/tmp",
                     "IS_SANDBOX" to "0",

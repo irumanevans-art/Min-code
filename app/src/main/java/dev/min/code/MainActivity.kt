@@ -45,7 +45,9 @@ import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.LocalePrefs
+import dev.min.code.core.settings.ProviderLinkInbox
 import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.isProviderDeepLink
 import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.ui.about.AboutPage
@@ -150,6 +152,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        routeProviderLink(intent)
         // 通知（保活 / 审批提醒）点进来直接落到会话页；它是首页，清到栈底即可
         if (intent.getBooleanExtra(EXTRA_OPEN_CLAUDE_CODE, false)) {
             navStack?.let { stack ->
@@ -165,11 +168,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * `minc://` / `ccswitch://` 进来：链接先放进收件格，再把供应商页顶上去，由它开确认框。
+     *
+     * **这里不入库**。链接可以来自任何地方（聊天记录、网页、二维码），而它带的是一个
+     * 会被立刻拿去发请求的 key —— 必须有人看一眼再点头，见 `ProviderDeepLink.kt`。
+     */
+    private fun routeProviderLink(intent: Intent) {
+        val link = intent.data?.toString()?.takeIf { isProviderDeepLink(it) } ?: return
+        ProviderLinkInbox.offer(link)
+        navStack?.let { stack ->
+            while (stack.size > 1) stack.removeLastOrNull()
+            stack.add(Screen.Providers)
+        }
+    }
+
     @Composable
     private fun Root() {
         val backStack = rememberNavBackStack(Screen.Session)
         val navigator = remember(backStack) { Navigator(backStack) }
-        LaunchedEffect(backStack) { navStack = backStack }
+        LaunchedEffect(backStack) {
+            navStack = backStack
+            // 冷启动那一次：栈是在这里才有的，onCreate 时还没有，routeProviderLink 无处可推
+            routeProviderLink(intent)
+        }
         val (toaster, toastState) = rememberInkToaster()
         val tilt = rememberTilt()
         val formSwitch = remember { FormSwitchController() }

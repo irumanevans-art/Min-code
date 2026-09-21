@@ -185,7 +185,19 @@ fun ProviderEditSheet(
                         )
                     },
                 )
+                InkTextField(
+                    value = draft.note,
+                    onValueChange = { draft = draft.copy(note = it) },
+                    label = stringResource(R.string.providers_note),
+                    placeholder = stringResource(R.string.providers_note_hint),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 if (draft.websiteUrl.isNotBlank()) OpenWebsite(draft.websiteUrl)
+
+                ModelPicker(profile = draft, onPick = { draft = it })
+                ClaudeSwitchRows(env = draft.env, onChange = { draft = draft.copy(env = it) })
+                AdvancedSection(draft = draft, onChange = { draft = it })
 
                 EnvEditor(
                     env = draft.env,
@@ -386,6 +398,14 @@ fun CodexEditSheet(
                 placeholder = "gpt-5.1-codex-max",
                 singleLine = true,
                 monospace = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            InkTextField(
+                value = draft.note,
+                onValueChange = { draft = draft.copy(note = it) },
+                label = stringResource(R.string.providers_note),
+                placeholder = stringResource(R.string.providers_note_hint),
+                singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             if (draft.websiteUrl.isNotBlank()) OpenWebsite(draft.websiteUrl)

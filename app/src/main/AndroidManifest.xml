@@ -45,6 +45,18 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <!--
+        一条链接导进一家中转：minc://v1/import?…，同时认 cc-switch 桌面端那套
+        ccswitch://（别人分享的链接、它官网生成器产出的链接都是那个形状）。
+        链接**只打开一个确认框**，从不静默入库 —— 它带的是一个会被立刻拿去发请求的 key。
+      -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="minc" />
+        <data android:scheme="ccswitch" />
+      </intent-filter>
     </activity>
 
     <!--

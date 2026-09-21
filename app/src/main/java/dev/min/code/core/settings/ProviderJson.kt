@@ -41,8 +41,10 @@ private val prettyJson = Json { prettyPrint = true }
 internal fun profileToJsonText(profile: ApiProfile, revealToken: Boolean): String {
     val env = buildMap {
         put("ANTHROPIC_BASE_URL", profile.baseUrl)
+        // 键名跟着这条的认证方式走（见 ApiProfile.authHeader）。改这个键名就等于改认证方式，
+        // 解析那头认得出来——JSON 形态和表单是同一份事实的两个视图，能力不该少一块
         put(
-            "ANTHROPIC_AUTH_TOKEN",
+            profile.tokenEnvKey,
             when {
                 profile.token.isBlank() -> ""
                 revealToken -> profile.token
@@ -61,6 +63,11 @@ internal sealed interface ProfileJsonParse {
         /** null = 文本里仍是 [TOKEN_PLACEHOLDER]，保持原来的 token 不动 */
         val token: String?,
         val env: Map<String, String>,
+        /**
+         * 文本里 token 写在哪个键上。null = 两个键都没出现，认证方式保持原样
+         * （用户可能正在从头写，不该顺手把它改回默认）
+         */
+        val authHeader: AuthHeader? = null,
         /** 顶层被忽略的那些键。非空时界面要说出来「这 N 个键没有被保存」 */
         val ignoredKeys: List<String> = emptyList(),
     ) : ProfileJsonParse
@@ -99,11 +106,20 @@ internal fun parseProfileJson(text: String): ProfileJsonParse {
         flat[key.trim()] = primitive.content
     }
 
-    val rawToken = flat.remove("ANTHROPIC_AUTH_TOKEN").orEmpty()
+    // 两个键都认。两个都写了的话以 Bearer 那个为准并把另一个丢给 sanitizeEnv 去掉 ——
+    // 同时握着两把钥匙比用错一把更难查
+    val bearer = flat.remove("ANTHROPIC_AUTH_TOKEN")
+    val apiKey = flat.remove("ANTHROPIC_API_KEY")
+    val rawToken = (bearer ?: apiKey).orEmpty()
     return ProfileJsonParse.Ok(
         baseUrl = normalizeBaseUrl(flat.remove("ANTHROPIC_BASE_URL").orEmpty()),
         token = if (rawToken == TOKEN_PLACEHOLDER) null else rawToken.trim(),
         env = sanitizeEnv(flat),
+        authHeader = when {
+            bearer != null -> AuthHeader.AUTH_TOKEN
+            apiKey != null -> AuthHeader.API_KEY
+            else -> null
+        },
         ignoredKeys = obj.keys.filterNot { it == "env" },
     )
 }
@@ -113,6 +129,7 @@ internal fun ApiProfile.withJsonParse(parsed: ProfileJsonParse.Ok): ApiProfile =
     baseUrl = parsed.baseUrl,
     token = parsed.token ?: token,
     env = parsed.env,
+    authHeader = parsed.authHeader ?: authHeader,
     // 地址改了就该重新确认一次明文风险，和 updateProfile 里那条是同一个道理
     insecureAck = insecureAck && parsed.baseUrl == baseUrl,
 )

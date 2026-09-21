@@ -17,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,15 +38,20 @@ import dev.min.code.core.settings.ApiProfile
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.core.settings.CodexProfile
+import dev.min.code.core.settings.DeepLinkParse
 import dev.min.code.core.settings.ProviderSync
+import dev.min.code.core.settings.UnifiedProfile
+import dev.min.code.core.settings.matchesProviderQuery
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButtonTone
+import dev.min.code.ui.components.InkDialog
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkRadio
 import dev.min.code.ui.components.InkSegmented
 import dev.min.code.ui.components.InkSwitch
 import dev.min.code.ui.components.InkTextButton
+import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.InkTopBar
 import dev.min.code.ui.components.LocalToaster
 import dev.min.code.ui.components.Notice
@@ -59,6 +65,7 @@ import dev.min.code.ui.theme.sea
 import dev.min.code.ui.theme.seaFill
 import dev.min.code.util.openExternalUrl
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Exchange01
 import me.rerere.hugeicons.stroke.PencilEdit02
 import me.rerere.hugeicons.stroke.PlusSign
@@ -138,6 +145,73 @@ fun ProvidersPage(vm: ProvidersVM = koinViewModel()) {
     }
 
     if (transferSheet) ProviderTransferSheet(vm = vm, onDismiss = { transferSheet = false })
+    DeepLinkConfirm(vm)
+}
+
+/**
+ * 一条链接导进来之前的那一眼。
+ *
+ * 预览把要导的东西摊开说：叫什么、哪个地址、key 的头尾。**不显示完整 key** ——
+ * 这张确认框常常是在别人面前打开的（链接多半是刚从聊天里点进来的）。
+ */
+@Composable
+private fun DeepLinkConfirm(vm: ProvidersVM) {
+    val inbox by dev.min.code.core.settings.ProviderLinkInbox.link.collectAsStateWithLifecycle()
+    LaunchedEffect(inbox) {
+        inbox?.let {
+            vm.offerDeepLink(it)
+            dev.min.code.core.settings.ProviderLinkInbox.clear()
+        }
+    }
+    val pending by vm.pendingLink.collectAsStateWithLifecycle()
+    when (val link = pending) {
+        null -> Unit
+        is DeepLinkParse.Unsupported -> RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.providers_deeplink_title),
+            confirmText = stringResource(R.string.common_confirm),
+            dismissText = stringResource(R.string.common_cancel),
+            destructive = false,
+            onConfirm = vm::dismissDeepLink,
+            onDismiss = vm::dismissDeepLink,
+        ) {
+            Text(stringResource(R.string.providers_deeplink_unsupported, link.what))
+        }
+        else -> {
+            val title: String
+            val detail: String
+            if (link is DeepLinkParse.Claude) {
+                title = link.profile.displayName()
+                detail = listOf(link.profile.baseUrl, link.profile.maskedToken(), link.profile.note)
+                    .filter { it.isNotBlank() }.joinToString("\n")
+            } else {
+                val codex = (link as DeepLinkParse.Codex).profile
+                title = codex.displayName()
+                detail = listOf("Codex", codex.baseUrl, codex.maskedKey(), codex.note)
+                    .filter { it.isNotBlank() }.joinToString("\n")
+            }
+            RikkaConfirmDialog(
+                show = true,
+                title = stringResource(R.string.providers_deeplink_title),
+                confirmText = stringResource(R.string.providers_deeplink_import),
+                dismissText = stringResource(R.string.common_cancel),
+                destructive = false,
+                onConfirm = { vm.acceptDeepLink() },
+                onDismiss = vm::dismissDeepLink,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(stringResource(R.string.providers_deeplink_body))
+                    Text(title, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetbrainsMono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -150,22 +224,35 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
     val zh = isChineseUi()
 
     // 拖动途中用 VM 的临时顺序：每挪一格写一次盘的话，一次拖动要写十几次
-    val profiles = pending ?: settings.profiles
+    val all = pending ?: settings.profiles
     val activeId = settings.activeProfile?.id
+
+    var query by remember { mutableStateOf("") }
+    // 搜索中**不许拖**：屏幕上是过滤后的顺序，拖动写回的却是整表的索引，
+    // 松手之后条目会跳到一个谁也没指定的位置
+    val searching = query.isNotBlank()
+    val profiles = if (!searching) all else {
+        all.filter { matchesProviderQuery(query, it.displayName(), it.baseUrl, it.note, it.label) }
+    }
 
     var editing by remember { mutableStateOf<ApiProfile?>(null) }
     var presetPicker by remember { mutableStateOf(false) }
     var insecure by remember { mutableStateOf<ApiProfile?>(null) }
     var secretsConfirm by remember { mutableStateOf(false) }
     var backupSheet by remember { mutableStateOf(false) }
+    var unifiedEditing by remember { mutableStateOf<UnifiedProfile?>(null) }
+    var unifiedDeleting by remember { mutableStateOf<UnifiedProfile?>(null) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val reorder = rememberReorderState(
         listState = listState,
         scope = scope,
-        onMove = vm::dragOrder,
+        onMove = { from, to -> vm.dragOrder(from as String, to as String) },
         onSettle = vm::commitOrder,
+        // 只有真正的供应商行能换位；搜索框 / 提示 / 统一供应商区都挂着自己的 key，
+        // 按绝对下标去动它们会让拖动看上去「闪但不走」
+        isReorderable = { key -> profiles.any { it.id == key } },
     )
 
     LazyColumn(
@@ -214,15 +301,24 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
         item("head") {
             Centered {
                 SectionTitle(stringResource(R.string.providers_section_all))
+                // 一张表常年挂着十几家，翻到底找一条不如搜一下
+                InkTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = stringResource(R.string.providers_search),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                )
                 if (profiles.isEmpty()) {
                     Hint(stringResource(R.string.providers_empty))
-                } else {
+                } else if (!searching) {
                     Hint(stringResource(R.string.providers_reorder_hint))
                 }
             }
         }
 
         items(profiles, key = { it.id }) { profile ->
+            val unified = settings.unifiedProfiles.firstOrNull { it.id == profile.unifiedId }
             Centered {
                 ProviderRow(
                     title = profile.displayName(),
@@ -238,7 +334,12 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
                     probe = probes[profile.id],
                     dragging = reorder.draggingKey == profile.id,
                     dragOffset = reorder.offsetY,
-                    modifier = Modifier.reorderable(reorder, profile.id),
+                    note = profile.note,
+                    derivedFrom = unified?.let {
+                        stringResource(R.string.providers_unified_derived, it.displayName())
+                    }.orEmpty(),
+                    onDuplicate = { vm.duplicate(profile.id) },
+                    modifier = if (searching) Modifier else Modifier.reorderable(reorder, profile.id),
                     onSelect = {
                         when {
                             // 没 key 的条目：直接打开编辑，而不是切过去等着撞上「未配置」
@@ -266,6 +367,46 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
                         onClick = { editing = ApiProfile(id = "") },
                         icon = HugeIcons.PlusSign,
                     ) { Text(stringResource(R.string.providers_add_manual)) }
+                }
+                InkDivider(Modifier.padding(vertical = 10.dp), brush = true)
+            }
+        }
+
+        item("unified") {
+            Centered {
+                SectionTitle(stringResource(R.string.providers_unified_section))
+                Hint(stringResource(R.string.providers_unified_hint))
+                if (settings.unifiedProfiles.isEmpty()) {
+                    Hint(stringResource(R.string.providers_unified_empty))
+                }
+                settings.unifiedProfiles.forEach { unified ->
+                    SettingRow(
+                        title = unified.displayName(),
+                        subtitle = listOf(
+                            unified.claudeBaseUrl.takeIf { it.isNotBlank() },
+                            unified.codexBaseUrl.takeIf { it.isNotBlank() },
+                            unified.note.takeIf { it.isNotBlank() },
+                        ).filterNotNull().joinToString("  ·  "),
+                        onClick = { unifiedEditing = unified },
+                        trailing = {
+                            InkIconButton(
+                                icon = HugeIcons.PencilEdit02,
+                                contentDescription = stringResource(R.string.providers_unified_edit),
+                                onClick = { unifiedEditing = unified },
+                                size = 34.dp,
+                                iconSize = 17.dp,
+                            )
+                        },
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                ) {
+                    InkTextButton(
+                        onClick = { unifiedEditing = UnifiedProfile(id = "") },
+                        icon = HugeIcons.PlusSign,
+                    ) { Text(stringResource(R.string.providers_unified_add)) }
                 }
                 InkDivider(Modifier.padding(vertical = 10.dp), brush = true)
             }
@@ -347,6 +488,54 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
     }
 
     if (backupSheet) ProviderBackupSheet(vm = vm, onDismiss = { backupSheet = false })
+
+    unifiedEditing?.let { unified ->
+        UnifiedEditSheet(
+            profile = unified,
+            canDelete = unified.id.isNotBlank(),
+            onDismiss = { unifiedEditing = null },
+            onSave = {
+                vm.saveUnified(it)
+                unifiedEditing = null
+            },
+            onDelete = {
+                unifiedDeleting = unified
+                unifiedEditing = null
+            },
+        )
+    }
+
+    unifiedDeleting?.let { unified ->
+        val derived = settings.profiles.count { it.unifiedId == unified.id } +
+            settings.codexProfiles.count { it.unifiedId == unified.id }
+        // 「这家不用了」和「只是不想再联动了」都是合理的意图，替用户猜一个的代价是删掉他的 key，
+        // 所以两颗按钮都是明确的选择。**点外面是取消**，不是其中任何一种 ——
+        // 走 RikkaConfirmDialog 的话 onDismiss 同时接着「留着」和「点了外面」，
+        // 手一滑就删掉了一条统一供应商
+        InkDialog(
+            onDismissRequest = { unifiedDeleting = null },
+            title = stringResource(R.string.providers_unified_delete_title),
+            confirmButton = {
+                InkTextButton(
+                    tone = InkButtonTone.Vermilion,
+                    onClick = {
+                        vm.deleteUnified(unified.id, deleteDerived = true)
+                        unifiedDeleting = null
+                    },
+                ) { Text(stringResource(R.string.providers_unified_delete_all)) }
+            },
+            dismissButton = {
+                InkTextButton(
+                    onClick = {
+                        vm.deleteUnified(unified.id, deleteDerived = false)
+                        unifiedDeleting = null
+                    },
+                ) { Text(stringResource(R.string.providers_unified_delete_keep)) }
+            },
+        ) {
+            Text(stringResource(R.string.providers_unified_delete_body, derived))
+        }
+    }
 }
 
 @Composable
@@ -354,8 +543,15 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
     val pending by vm.codexPendingOrder.collectAsStateWithLifecycle()
     val presets by vm.presets.collectAsStateWithLifecycle()
     val zh = isChineseUi()
-    val profiles = pending ?: settings.codexProfiles
+    val all = pending ?: settings.codexProfiles
     val activeId = settings.activeCodexProfile?.id
+
+    var query by remember { mutableStateOf("") }
+    // 同 Claude 侧：搜索中不许拖，过滤后的索引和整表对不上
+    val searching = query.isNotBlank()
+    val profiles = if (!searching) all else {
+        all.filter { matchesProviderQuery(query, it.displayName(), it.baseUrl, it.note, it.label) }
+    }
 
     var editing by remember { mutableStateOf<CodexProfile?>(null) }
     var presetPicker by remember { mutableStateOf(false) }
@@ -365,8 +561,9 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
     val reorder = rememberReorderState(
         listState = listState,
         scope = scope,
-        onMove = vm::dragCodexOrder,
+        onMove = { from, to -> vm.dragCodexOrder(from as String, to as String) },
         onSettle = vm::commitCodexOrder,
+        isReorderable = { key -> profiles.any { it.id == key } },
     )
 
     LazyColumn(
@@ -380,11 +577,19 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
         item("head") {
             Centered {
                 SectionTitle(stringResource(R.string.providers_section_all))
+                InkTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = stringResource(R.string.providers_search),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                )
                 if (profiles.isEmpty()) Hint(stringResource(R.string.providers_empty))
-                else Hint(stringResource(R.string.providers_reorder_hint))
+                else if (!searching) Hint(stringResource(R.string.providers_reorder_hint))
             }
         }
         items(profiles, key = { it.id }) { profile ->
+            val unified = settings.unifiedProfiles.firstOrNull { it.id == profile.unifiedId }
             Centered {
                 ProviderRow(
                     title = profile.displayName(),
@@ -403,7 +608,12 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
                     probe = null,
                     dragging = reorder.draggingKey == profile.id,
                     dragOffset = reorder.offsetY,
-                    modifier = Modifier.reorderable(reorder, profile.id),
+                    note = profile.note,
+                    derivedFrom = unified?.let {
+                        stringResource(R.string.providers_unified_derived, it.displayName())
+                    }.orEmpty(),
+                    onDuplicate = { vm.duplicateCodex(profile.id) },
+                    modifier = if (searching) Modifier else Modifier.reorderable(reorder, profile.id),
                     onSelect = { vm.activateCodex(profile.id, acknowledgeInsecure = profile.insecure) },
                     onProbe = null,
                     onEdit = { editing = profile },
@@ -475,8 +685,12 @@ private fun ProviderRow(
     dragging: Boolean,
     dragOffset: Float,
     modifier: Modifier = Modifier,
+    /** 备注 + 「来自某条统一供应商」，两句都挂在地址下面 */
+    note: String = "",
+    derivedFrom: String = "",
     onSelect: () -> Unit,
     onProbe: (() -> Unit)?,
+    onDuplicate: (() -> Unit)? = null,
     onEdit: () -> Unit,
 ) {
     Row(
@@ -529,6 +743,16 @@ private fun ProviderRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            val extra = listOf(note, derivedFrom).filter { it.isNotBlank() }.joinToString("  ·  ")
+            if (extra.isNotBlank()) {
+                Text(
+                    extra,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             val probeText = probeLabel(probe)
             if (warning != null || probeText != null) {
                 Text(
@@ -540,6 +764,15 @@ private fun ProviderRow(
         }
         if (onProbe != null) {
             InkTextButton(onClick = onProbe) { Text(stringResource(R.string.providers_probe)) }
+        }
+        if (onDuplicate != null) {
+            InkIconButton(
+                icon = HugeIcons.Copy01,
+                contentDescription = stringResource(R.string.providers_duplicate),
+                onClick = onDuplicate,
+                size = 34.dp,
+                iconSize = 17.dp,
+            )
         }
         InkIconButton(
             icon = HugeIcons.PencilEdit02,

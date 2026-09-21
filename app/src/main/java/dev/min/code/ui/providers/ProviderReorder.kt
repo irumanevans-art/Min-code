@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 /**
  * 长按拖动重排一个 [androidx.compose.foundation.lazy.LazyColumn]。
  *
- * Compose 没有内置这个，所以自己写一份。四十来行，但每一条规则背后都有一个具体的岔子：
+ * Compose 没有内置这个，所以自己写一份。每一条规则背后都有一个具体的岔子：
  *
  * - **入口只能是长按。** 供应商列表里整行点击已经是「切到这一条」——最高频的动作。
  *   拿短按去开拖拽，等于让每一次切换都要先赢一场手势竞争。
@@ -31,13 +31,18 @@ import kotlinx.coroutines.launch
  * - **边缘自动滚。** 表有八十多条，不滚就只能在一屏之内排序。
  * - **落位才写盘。** 拖动途中只动内存里的顺序；每挪一格写一次 DataStore，一次拖动
  *   能写十几次，而且中途松手/取消还要回滚。
+ * - **换位按 key，不按 LazyColumn 的绝对下标。** 这张表前面常年挂着搜索框、提示、
+ *   统一供应商区之类的固定项，它们也占下标。拿绝对下标去动业务列表，要么越界直接
+ *   没反应（被拖的那行只靠偏移在闪），要么把 `draggingIndex` 指到一个固定项上，
+ *   旁边的行看起来在乱跳。
  */
 @Stable
 class ReorderState internal constructor(
     internal val listState: LazyListState,
     private val scope: CoroutineScope,
-    private val onMove: (from: Int, to: Int) -> Unit,
+    private val onMove: (fromKey: Any, toKey: Any) -> Unit,
     private val onSettle: () -> Unit,
+    private val isReorderable: (key: Any) -> Boolean,
 ) {
     /** 正在被拖的那一项的 key；null = 没人在拖 */
     var draggingKey by mutableStateOf<Any?>(null)
@@ -47,35 +52,35 @@ class ReorderState internal constructor(
     var offsetY by mutableFloatStateOf(0f)
         private set
 
-    private var draggingIndex = -1
     private var autoScroll: Job? = null
 
     internal fun start(key: Any) {
-        val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        if (!isReorderable(key)) return
+        if (itemInfo(key) == null) return
         draggingKey = key
-        draggingIndex = info.index
         offsetY = 0f
     }
 
     internal fun drag(deltaY: Float) {
-        if (draggingKey == null) return
+        val key = draggingKey ?: return
         offsetY += deltaY
-        val current = itemInfo(draggingIndex) ?: return
-        // 被拖那一项此刻的上下沿（原位 + 偏移）
+        // 始终按 key 找回自己：换位之后下标会变，按旧下标取到的可能是搜索框
+        val current = itemInfo(key) ?: return
         val top = current.offset + offsetY
         val bottom = top + current.size
 
         val target = listState.layoutInfo.visibleItemsInfo.firstOrNull { other ->
-            if (other.index == draggingIndex) return@firstOrNull false
+            if (other.key == key) return@firstOrNull false
+            // 固定项（搜索框、分区标题、按钮行）不参与换位
+            if (!isReorderable(other.key)) return@firstOrNull false
             val middle = other.offset + other.size / 2f
             // 往下拖：下沿越过邻居的中线；往上拖：上沿越过中线
-            if (other.index > draggingIndex) bottom > middle else top < middle
+            if (other.index > current.index) bottom > middle else top < middle
         }
         if (target != null) {
-            onMove(draggingIndex, target.index)
+            onMove(key, target.key)
             // 换位之后这一项换了槽，偏移要减去那一格的高度，否则它会跟着"跳"一下
             offsetY -= (target.offset - current.offset)
-            draggingIndex = target.index
         }
         ensureAutoScroll()
     }
@@ -90,20 +95,20 @@ class ReorderState internal constructor(
         autoScroll?.cancel()
         autoScroll = null
         draggingKey = null
-        draggingIndex = -1
         offsetY = 0f
         onSettle()
     }
 
-    private fun itemInfo(index: Int): LazyListItemInfo? =
-        listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+    private fun itemInfo(key: Any): LazyListItemInfo? =
+        listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
 
     /** 拖到上下边缘时自动滚。滚速按"越过边界多少"给，不是常数 */
     private fun ensureAutoScroll() {
         if (autoScroll?.isActive == true) return
         autoScroll = scope.launch {
             while (isActive && draggingKey != null) {
-                val info = itemInfo(draggingIndex)
+                val key = draggingKey ?: break
+                val info = itemInfo(key)
                 val amount = if (info == null) 0f else {
                     val top = info.offset + offsetY
                     val bottom = top + info.size
@@ -145,13 +150,21 @@ class ReorderState internal constructor(
 fun rememberReorderState(
     listState: LazyListState,
     scope: CoroutineScope,
-    onMove: (from: Int, to: Int) -> Unit,
+    onMove: (fromKey: Any, toKey: Any) -> Unit,
     onSettle: () -> Unit,
+    isReorderable: (key: Any) -> Boolean,
 ): ReorderState {
     val move by rememberUpdatedState(onMove)
     val settle by rememberUpdatedState(onSettle)
+    val reorderable by rememberUpdatedState(isReorderable)
     return remember(listState, scope) {
-        ReorderState(listState, scope, { f, t -> move(f, t) }, { settle() })
+        ReorderState(
+            listState,
+            scope,
+            { f, t -> move(f, t) },
+            { settle() },
+            { reorderable(it) },
+        )
     }
 }
 

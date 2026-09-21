@@ -2,6 +2,7 @@ package dev.min.code.core.codex
 
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.core.settings.CodexProfile
 import dev.min.code.core.settings.SettingsStore
@@ -24,6 +25,7 @@ class CodexRuntime(
     private val workspaceRepository: WorkspaceRepository,
     private val proot: ProotShellRunner,
     private val settingsStore: SettingsStore,
+    private val relay: RelayController? = null,
 ) {
     data class Status(
         val installed: Boolean = false,
@@ -82,9 +84,12 @@ class CodexRuntime(
         launchProfile = profile
         ensureCaBundle(workspaceRepository.linuxDir())
         val config = File(workspaceRepository.linuxDir(), "root/.codex/config.toml")
+        // 中转 + chat wire_api → 走机内路由，把 Responses 转成 Chat Completions。
+        // 路由给的本地地址只在 App 活着时通，界面上已经写明。
+        val override = profile?.let { relay?.codexBaseUrl(it) }
         // 渲染与「该不该有这个文件」的判断都在 CodexConfigToml 里，纯函数、可单测。
         // null = 官方登录自己管那份配置，留着上一次选的中转会让它偷偷走别人的地址
-        val toml = renderCodexConfigToml(profile)
+        val toml = renderCodexConfigToml(profile, baseUrlOverride = override)
         if (toml == null) {
             config.delete()
         } else {

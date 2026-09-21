@@ -39,6 +39,8 @@ private val KEY_ZH_DESCRIPTIONS = booleanPreferencesKey("zh_descriptions")
 private val KEY_OPEN_WITH = stringPreferencesKey("open_with_defaults")
 private val KEY_CODEX_PROFILES = stringPreferencesKey("codex_profiles")
 private val KEY_CODEX_ACTIVE = stringPreferencesKey("codex_active_profile")
+/** 统一供应商（一条同时派生 Claude 与 Codex 两侧），见 [UnifiedProfile] */
+private val KEY_UNIFIED_PROFILES = stringPreferencesKey("unified_profiles")
 private val KEY_SKIN = stringPreferencesKey("skin")
 private val KEY_MANAGE_GUEST_CONFIG = booleanPreferencesKey("manage_guest_config")
 private val KEY_GUEST_CONFIG_SECRETS = booleanPreferencesKey("guest_config_secrets")
@@ -59,6 +61,34 @@ enum class SkinStyle { SEA, CLOUD, ANTHROPIC }
 
 /** 界面语言：跟随系统，或强制中 / 英 */
 enum class AppLanguage { SYSTEM, ZH, EN }
+
+/**
+ * 一家中转说的是哪一种方言。
+ *
+ * Claude Code 只会发 Anthropic Messages。上游只提供 OpenAI 那两种协议时
+ * （DeepSeek、GLM、Kimi、千帆、SiliconFlow… 预设表里有一大半是这样），
+ * 请求要经本地路由转换一道才能用，见 `core/relay`。
+ */
+@Serializable
+enum class ApiFormat {
+    /** 原生，直连，不经本地路由 */
+    ANTHROPIC_MESSAGES,
+    OPENAI_CHAT,
+    OPENAI_RESPONSES,
+    ;
+
+    val needsRelay: Boolean get() = this != ANTHROPIC_MESSAGES
+}
+
+/** 凭据放进哪个头 —— 也就是写进哪个环境变量键，见 [ApiProfile.authHeader] */
+@Serializable
+enum class AuthHeader(val envKey: String) {
+    /** `Authorization: Bearer <token>` */
+    AUTH_TOKEN("ANTHROPIC_AUTH_TOKEN"),
+
+    /** `x-api-key: <token>` */
+    API_KEY("ANTHROPIC_API_KEY"),
+}
 
 /**
  * 一条连接配置：一个 key 连着它自己的中转地址。
@@ -98,9 +128,49 @@ data class ApiProfile(
      * 两处都能写就一定会出现「界面显示 A、进程用 B」。
      */
     val env: Map<String, String> = emptyMap(),
+    /**
+     * 给人看的备注：这个号是谁的、买的哪档、什么时候到期。显示在列表行上，并且参与搜索。
+     *
+     * 和 [label] 分开：备注名是「叫什么」，备注是「是什么」。挤进一个字段的话，
+     * 列表上那一行要么变成一句长话，要么这件事没地方写。
+     */
+    val note: String = "",
+    /**
+     * 把 [baseUrl] 当**完整上游端点**原样请求，不再往后拼 `/v1/messages`。
+     *
+     * 给路径不标准的网关用（多层前缀、厂商专属路由）。默认关：绝大多数中转就是一个前缀，
+     * 开着反而会把正常地址请求坏。只在经本地路由（[apiFormat] 非原生）时才有意义 ——
+     * 原生那条路上地址是交给 CLI 自己拼的，我们插不了手，界面上要把这句说清楚。
+     */
+    val fullUrlEndpoint: Boolean = false,
+    /**
+     * 这家说的是哪一种方言。非原生的两种由本地路由转换一道（`core/relay`）。
+     *
+     * 放在每条供应商上而不是一个全局开关：一张表里常年是几家混着的，
+     * 全局开关等于每切一次供应商都要再想起来改一次。
+     */
+    val apiFormat: ApiFormat = ApiFormat.ANTHROPIC_MESSAGES,
+    /**
+     * 凭据放进哪个头。CLI 拿 `ANTHROPIC_AUTH_TOKEN` 发的是 `Authorization: Bearer`，
+     * 拿 `ANTHROPIC_API_KEY` 发的是 `x-api-key`。
+     *
+     * 探活早就为「只认 x-api-key 的中转」准备了回退（`RelayProbe.kt:40`），
+     * 但真正发请求的那条路上一直只有前者 —— 于是会出现「测得通、用不了」。
+     */
+    val authHeader: AuthHeader = AuthHeader.AUTH_TOKEN,
+    /**
+     * 这条是某个统一供应商派生出来的（[UnifiedProfile.id]）。空 = 自己的条目。
+     *
+     * 派生条目被统一条目**单向覆盖**；用户直接改了派生条目就解绑（清空这个字段），
+     * 此后不再被覆盖 —— 改过的东西被悄悄改回去是最坏的一种意外。
+     */
+    val unifiedId: String = "",
 ) {
     /** 这条配置会把凭据明文送上路吗，见 [isInsecureBaseUrl] */
     val insecure: Boolean get() = isInsecureBaseUrl(baseUrl)
+
+    /** token 该写进哪个环境变量键，见 [authHeader] */
+    val tokenEnvKey: String get() = authHeader.envKey
 
     /** 该不该为这条配置弹一次明文风险确认：不安全、且还没确认过 */
     val needsInsecureConfirm: Boolean get() = insecure && !insecureAck
@@ -145,6 +215,8 @@ data class AppSettings(
     val openWithDefaults: Map<String, WorkspaceOpenMode> = emptyMap(),
     val codexProfiles: List<CodexProfile> = emptyList(),
     val activeCodexProfileId: String = "",
+    /** 一条同时管着两侧的中转，见 [UnifiedProfile]。它们派生出来的条目照常在上面两张表里 */
+    val unifiedProfiles: List<UnifiedProfile> = emptyList(),
     /** 界面取底风格。默认海：升级上来的人不该被换皮 */
     val skin: SkinStyle = SkinStyle.SEA,
     /**
@@ -233,6 +305,10 @@ data class CodexProfile(
     val env: Map<String, String> = emptyMap(),
     /** 同 [ApiProfile.insecureAck]。只有 [isRelay] 时才有意义——另两种模式的地址不是用户填的 */
     val insecureAck: Boolean = false,
+    /** 同 [ApiProfile.note] */
+    val note: String = "",
+    /** 同 [ApiProfile.unifiedId] */
+    val unifiedId: String = "",
 ) {
     val isRelay: Boolean get() = authMode == CodexAuthMode.RELAY
 
@@ -251,6 +327,41 @@ data class CodexProfile(
         apiKey.length <= 10 -> "•".repeat(apiKey.length)
         else -> apiKey.take(5) + "…" + apiKey.takeLast(4)
     }
+}
+
+/**
+ * 一条同时供给 Claude 与 Codex 的中转。
+ *
+ * 不少中转一家同时开着两边的端点，分别在两张表里各配一次的结果一定是：某次换 key
+ * 只换了一半，然后另一半拿着旧 key 去敲门。这里只存一份，由它**单向派生**出两张表里
+ * 的条目（[ApiProfile.unifiedId] / [CodexProfile.unifiedId]）——和 `ProviderSync` 对
+ * rootfs 文件的做法是同一个心法：事实来源只有一个，别处都是投影，只不过这次投影的
+ * 目标是我们自己的另一张表。
+ *
+ * 派生条目在列表里照常能选、能排序；直接改它就解绑（见 [ApiProfile.unifiedId]）。
+ */
+@Serializable
+data class UnifiedProfile(
+    val id: String,
+    val label: String = "",
+    val token: String = "",
+    /** Claude 侧地址。空 = 这条不派生 Claude 条目 */
+    val claudeBaseUrl: String = "",
+    /** Codex 侧地址。空 = 这条不派生 Codex 条目 */
+    val codexBaseUrl: String = "",
+    val apiFormat: ApiFormat = ApiFormat.ANTHROPIC_MESSAGES,
+    val authHeader: AuthHeader = AuthHeader.AUTH_TOKEN,
+    val wireApi: String = CODEX_WIRE_API_RESPONSES,
+    val note: String = "",
+    val websiteUrl: String = "",
+    val env: Map<String, String> = emptyMap(),
+) {
+    val syncsClaude: Boolean get() = claudeBaseUrl.isNotBlank()
+    val syncsCodex: Boolean get() = codexBaseUrl.isNotBlank()
+
+    fun displayName(): String = label.ifBlank {
+        (claudeBaseUrl.ifBlank { codexBaseUrl }).substringAfter("://").substringBefore('/')
+    }.ifBlank { "未命名" }
 }
 
 const val CODEX_WIRE_API_RESPONSES = "responses"
@@ -290,6 +401,7 @@ class SettingsStore(private val context: Context) {
             openWithDefaults = parseOpenWithDefaults(p[KEY_OPEN_WITH].orEmpty()),
             codexProfiles = decodeCodexProfiles(p[KEY_CODEX_PROFILES]),
             activeCodexProfileId = p[KEY_CODEX_ACTIVE].orEmpty(),
+            unifiedProfiles = decodeUnifiedProfiles(p[KEY_UNIFIED_PROFILES]),
             skin = p[KEY_SKIN]?.let { runCatching { SkinStyle.valueOf(it) }.getOrNull() } ?: SkinStyle.SEA,
             manageGuestConfig = p[KEY_MANAGE_GUEST_CONFIG] ?: false,
             guestConfigIncludesSecrets = p[KEY_GUEST_CONFIG_SECRETS] ?: false,
@@ -450,6 +562,121 @@ class SettingsStore(private val context: Context) {
     /** 删掉当前生效的那条时，active 交给 [editProfiles] 落到剩下的第一条 */
     suspend fun deleteProfile(id: String) = editProfiles { list, active ->
         list.filterNot { it.id == id } to active
+    }
+
+    /**
+     * 复制一条：内容照搬、名字加 `copy`、**插在原条目下面**。
+     *
+     * 追加到表尾的话用户得把它一路拖回来——复制的意图几乎总是「照着这条改一个变体」，
+     * 变体就该待在原件旁边。副本不继承 [ApiProfile.unifiedId]：它是拿来改的，
+     * 跟着统一条目走等于改完就被盖回去。
+     */
+    suspend fun duplicateProfile(id: String): String? {
+        var copied: String? = null
+        editProfiles { list, active ->
+            val index = list.indexOfFirst { it.id == id }
+            if (index < 0) return@editProfiles list to active
+            val source = list[index]
+            val copy = source.copy(
+                id = newProfileId(),
+                label = duplicateLabel(source.displayName(), list.map { it.displayName() }.toSet()),
+                unifiedId = "",
+            )
+            copied = copy.id
+            list.toMutableList().apply { add(index + 1, copy) } to active
+        }
+        return copied
+    }
+
+    suspend fun duplicateCodexProfile(id: String): String? {
+        var copied: String? = null
+        editCodexProfiles { list, active ->
+            val index = list.indexOfFirst { it.id == id }
+            if (index < 0) return@editCodexProfiles list to active
+            val source = list[index]
+            val copy = source.copy(
+                id = newProfileId(),
+                label = duplicateLabel(source.displayName(), list.map { it.displayName() }.toSet()),
+                unifiedId = "",
+            )
+            copied = copy.id
+            list.toMutableList().apply { add(index + 1, copy) } to active
+        }
+        return copied
+    }
+
+    // -----------------------------------------------------------------------
+    // 统一供应商
+    // -----------------------------------------------------------------------
+
+    /**
+     * 统一条目与它派生出的两张表**必须在同一次 edit 里落盘**。
+     *
+     * 分三次写的话，中间任何一次失败都会留下「统一条目说 A、派生条目还是 B」的状态，
+     * 而界面上看不出是哪一半没跟上。投影规则本身在 [projectUnified]。
+     */
+    private suspend fun editUnified(
+        block: (List<UnifiedProfile>, List<ApiProfile>, List<CodexProfile>) ->
+        Triple<List<UnifiedProfile>, List<ApiProfile>, List<CodexProfile>>,
+    ) {
+        migrateLegacyToken()
+        migrateInsecureAck()
+        context.dataStore.edit { p ->
+            // 三张表任何一张打不开都不写：理由同 editProfiles —— 读出来的空表不是真相
+            if (isUnreadableCipher(p[KEY_PROFILES], TokenCipher::decrypt)) return@edit
+            if (isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)) return@edit
+            if (isUnreadableCipher(p[KEY_UNIFIED_PROFILES], TokenCipher::decrypt)) return@edit
+            val (unified, claude, codex) = block(
+                decodeUnifiedProfiles(p[KEY_UNIFIED_PROFILES]),
+                decodeProfiles(p[KEY_PROFILES]),
+                decodeCodexProfiles(p[KEY_CODEX_PROFILES]),
+            )
+            val (nextClaude, nextCodex) = projectUnified(unified, claude, codex) { newProfileId() }
+
+            if (unified.isEmpty()) p.remove(KEY_UNIFIED_PROFILES)
+            else p[KEY_UNIFIED_PROFILES] = encodeUnifiedProfiles(unified)
+            if (nextClaude.isEmpty()) p.remove(KEY_PROFILES) else p[KEY_PROFILES] = encodeProfiles(nextClaude)
+            if (nextCodex.isEmpty()) p.remove(KEY_CODEX_PROFILES)
+            else p[KEY_CODEX_PROFILES] = encodeCodexProfiles(nextCodex)
+
+            val claudeActive = resolveActiveId(nextClaude, p[KEY_ACTIVE_PROFILE].orEmpty())
+            if (claudeActive.isBlank()) p.remove(KEY_ACTIVE_PROFILE) else p[KEY_ACTIVE_PROFILE] = claudeActive
+            val codexActive = resolveActiveIdBy(nextCodex, p[KEY_CODEX_ACTIVE].orEmpty()) { it.id }
+            if (codexActive.isBlank()) p.remove(KEY_CODEX_ACTIVE) else p[KEY_CODEX_ACTIVE] = codexActive
+        }
+    }
+
+    /** 新增或整条覆盖一条统一供应商。id 为空 = 新增 */
+    suspend fun saveUnifiedProfile(profile: UnifiedProfile): String {
+        val id = profile.id.ifBlank { newProfileId() }
+        val entry = profile.copy(
+            id = id,
+            claudeBaseUrl = if (profile.syncsClaude) normalizeBaseUrl(profile.claudeBaseUrl) else "",
+            codexBaseUrl = if (profile.syncsCodex) normalizeBaseUrl(profile.codexBaseUrl) else "",
+        )
+        editUnified { unified, claude, codex ->
+            val next = if (unified.any { it.id == id }) {
+                unified.map { if (it.id == id) entry else it }
+            } else {
+                unified + entry
+            }
+            Triple(next, claude, codex)
+        }
+        return id
+    }
+
+    /**
+     * 删掉一条统一供应商。
+     *
+     * [deleteDerived] 由界面问出来，不设默认值：两种都是合理的意图
+     * （「这家不用了」vs「只是不想再联动了」），替用户猜一个的代价是删掉他的 key。
+     */
+    suspend fun deleteUnifiedProfile(id: String, deleteDerived: Boolean) = editUnified { unified, claude, codex ->
+        Triple(
+            unified.filterNot { it.id == id },
+            if (deleteDerived) claude.filterNot { it.unifiedId == id } else claude,
+            if (deleteDerived) codex.filterNot { it.unifiedId == id } else codex,
+        )
     }
 
     /** [acknowledgeInsecure] = 用户刚在明文风险确认框上放行了这一条，顺手记下来，别再问第二遍 */
@@ -753,6 +980,14 @@ private fun decodeCodexProfiles(raw: String?): List<CodexProfile> {
 
 private fun decodeProfiles(raw: String?): List<ApiProfile> =
     decodeProfilesJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
+
+private fun encodeUnifiedProfiles(profiles: List<UnifiedProfile>): String =
+    TokenCipher.encrypt(profilesJson.encodeToString(profiles))
+
+private fun decodeUnifiedProfiles(raw: String?): List<UnifiedProfile> {
+    val plain = TokenCipher.decrypt(raw.orEmpty()) ?: return emptyList()
+    return runCatching { profilesJson.decodeFromString<List<UnifiedProfile>>(plain) }.getOrDefault(emptyList())
+}
 
 /**
  * 「密文还在、但打不开」。

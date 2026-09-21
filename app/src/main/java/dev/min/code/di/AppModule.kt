@@ -14,6 +14,7 @@ import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.service.ClaudeCodeSessionSupervisor
 import dev.min.code.core.service.LocalServiceRegistry
+import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.ProviderBackup
 import dev.min.code.core.settings.ProviderPresetSource
 import dev.min.code.core.settings.ProviderSync
@@ -37,6 +38,8 @@ import java.io.File
 val appModule = module {
     single { AppScope() }
     single { SettingsStore(get()) }
+    // 机内协议路由：只在当前供应商的方言不是原生时才起来，见 RelayController
+    single { RelayController(get()) }
 
     single {
         val context: android.content.Context = get()
@@ -53,6 +56,7 @@ val appModule = module {
             workspaceRepository = get(),
             proot = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
             settingsStore = get(),
+            relay = get(),
         )
     }
     // 必须是 single：Codex 的 app-server 进程归它管，跟着 ViewModel 走的话
@@ -70,6 +74,7 @@ val appModule = module {
             workspaceRepository = get(),
             networkProbe = get(),
             settingsStore = get(),
+            relay = get(),
             proot = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
         )
     }
@@ -108,6 +113,7 @@ val appModule = module {
             localServices = get(),
             // 退还兜底要落进同一份草稿盘（上面的 single），另开一份就把草稿写劈叉了
             drafts = get(),
+            relay = get(),
         )
     }
     single { ClaudeCodeSessionRegistry(get(), factory = { get() }) }
@@ -123,7 +129,7 @@ val appModule = module {
         )
     }
 
-    single { WorkspaceTerminalSessionManager(get(), get(), get()) }
+    single { WorkspaceTerminalSessionManager(get(), get(), get(), get()) }
 
     viewModelOf(::ClaudeCodeVM)
     viewModel {

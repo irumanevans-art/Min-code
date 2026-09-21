@@ -35,6 +35,7 @@ import dev.min.code.core.session.appendProcessOutputLine
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.ApiProfile
 import dev.min.code.core.settings.AppSettings
+import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.core.settings.sanitizedProfileEnv
@@ -95,6 +96,12 @@ class ClaudeCodeManager(
     private val localServices: LocalServiceRegistry? = null,
     private val sessionStore: ClaudeCodeSessionStore = ClaudeCodeSessionStore(),
     private val drafts: ComposerDraftStore = ComposerDraftStore(context),
+    /**
+     * 机内协议路由。方言不是原生 Anthropic Messages 时，[ANTHROPIC_BASE_URL] 会被
+     * 改写成 `http://127.0.0.1:…`，由它把请求转成上游听得懂的形状。null = 不路由
+     * （测试里常见），那时非原生方言会直连上游——多半 404，但这是测试自己的选择。
+     */
+    private val relay: RelayController? = null,
 ) {
     /** 启动选项。model/effort 为 null 时用 CLI 自己的默认值。 */
     data class SessionOptions(
@@ -706,8 +713,16 @@ class ClaudeCodeManager(
                 //
                 // 同一条实测也是「托管 settings.json」只能是投影、不能是事实来源的原因，
                 // 见 ProviderSync 的类注释。
-                put("ANTHROPIC_BASE_URL", profile.baseUrl.ifBlank { DEFAULT_BASE_URL })
-                put("ANTHROPIC_AUTH_TOKEN", token)
+                // 方言不是原生时改写成本地路由地址。路由只在 App 活着时通，
+                // 界面上已经把这句话说出来了（见供应商页高级区的方言说明）
+                val base = relay?.claudeBaseUrl(profile)
+                    ?: profile.baseUrl.ifBlank { DEFAULT_BASE_URL }
+                put("ANTHROPIC_BASE_URL", base.ifBlank { DEFAULT_BASE_URL })
+                // 放进哪个头由这条供应商说了算：`ANTHROPIC_AUTH_TOKEN` 发的是
+                // `Authorization: Bearer`，`ANTHROPIC_API_KEY` 发的是 `x-api-key`。
+                // 有的中转只认后者 —— 探活一直有这条回退，真正发请求的路上以前没有，
+                // 于是出现「测得通、用不了」
+                put(profile.tokenEnvKey, token)
             },
         )
 

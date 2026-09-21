@@ -645,6 +645,61 @@
   <string name="providers_json_err_not_object">顶层必须是一个对象。</string>
   <string name="providers_json_err_env">env 必须是一个对象。</string>
   <string name="providers_json_err_value">%1$s 的值必须是字符串。</string>
+  <!-- 备注 / 高级 / 快捷开关 -->
+  <string name="providers_note">备注</string>
+  <string name="providers_note_hint">谁的号、买的哪档、什么时候到期。显示在列表行上，也能搜。</string>
+  <string name="providers_search">搜索供应商</string>
+  <string name="providers_duplicate">复制</string>
+  <string name="providers_advanced">高级</string>
+  <string name="providers_api_format">接口方言</string>
+  <string name="providers_api_format_anthropic">Anthropic</string>
+  <string name="providers_api_format_chat">OpenAI Chat</string>
+  <string name="providers_api_format_responses">OpenAI Responses</string>
+  <string name="providers_api_format_hint">Claude Code 只会说 Anthropic Messages。选另外两种，请求就走机内的路由转换一道（流式和工具调用都转）。</string>
+  <string name="providers_auth_header">把 key 放进</string>
+  <string name="providers_auth_bearer">Authorization: Bearer</string>
+  <string name="providers_auth_api_key">x-api-key</string>
+  <string name="providers_auth_hint">有的中转只认 x-api-key。测得通、会话却报 401，多半就是这里。</string>
+  <string name="providers_full_url">地址就是完整端点</string>
+  <string name="providers_full_url_hint">关：地址是前缀，后面照常拼路径。开：原样请求它，给路径不标准的网关用。只在走路由时有意义。</string>
+  <string name="providers_switches">开关</string>
+  <string name="providers_switch_agent_teams">子 agent 团队（实验）</string>
+  <string name="providers_switch_tool_search">工具搜索</string>
+  <string name="providers_switch_effort_max">思考强度拉满</string>
+  <string name="providers_switch_disable_artifact">关掉 Artifact 工具</string>
+  <string name="providers_switch_disable_artifact_hint">有的网关会校验工具的 schema，就因为这一个回 400。</string>
+  <string name="providers_switches_hint">它们就是几个环境变量，在下面那张表里看得见也改得动。</string>
+  <string name="providers_fetch_models">取模型</string>
+  <string name="providers_fetch_models_running">问着…</string>
+  <string name="providers_models_title">这家都卖哪些模型</string>
+  <string name="providers_models_unauthorized">key 不对。</string>
+  <string name="providers_models_unsupported">这家没有模型列表（HTTP %1$d）。手填模型 id 照样能用。</string>
+  <string name="providers_models_failed">取不到列表：%1$s</string>
+  <string name="providers_models_target">用在</string>
+  <string name="providers_models_target_main">主模型</string>
+  <string name="providers_models_target_haiku">Haiku 那一档</string>
+  <string name="providers_models_target_sonnet">Sonnet 那一档</string>
+  <string name="providers_models_target_opus">Opus 那一档</string>
+  <!-- 统一供应商 -->
+  <string name="providers_unified_section">统一供应商</string>
+  <string name="providers_unified_hint">一条同时供给 Claude Code 与 Codex。改它就重写它派生出来的条目；直接改派生条目就解绑。</string>
+  <string name="providers_unified_add">添加统一供应商</string>
+  <string name="providers_unified_new">新建统一供应商</string>
+  <string name="providers_unified_edit">编辑统一供应商</string>
+  <string name="providers_unified_claude">Claude Code 地址</string>
+  <string name="providers_unified_codex">Codex 地址</string>
+  <string name="providers_unified_side_hint">某一侧地址留空 = 不再供给那边。它派生的那条会留下来，只是解绑。</string>
+  <string name="providers_unified_derived">来自 %1$s</string>
+  <string name="providers_unified_delete_title">删掉这条统一供应商？</string>
+  <string name="providers_unified_delete_body">它派生了 %1$d 条。可以一并删掉，也可以留着变成普通条目。</string>
+  <string name="providers_unified_delete_all">一并删掉</string>
+  <string name="providers_unified_delete_keep">留着</string>
+  <string name="providers_unified_empty">还没有。</string>
+  <!-- 深链导入 -->
+  <string name="providers_deeplink_title">导入这家供应商？</string>
+  <string name="providers_deeplink_body">这条链接带着一个地址和一个 API key。来路可信再导。</string>
+  <string name="providers_deeplink_unsupported">这条链接是 %1$s 的，Min 导不了。</string>
+  <string name="providers_deeplink_import">导入</string>
   <!-- 预设 -->
   <string name="providers_preset_title">挑一家供应商</string>
   <string name="providers_preset_search">搜索</string>

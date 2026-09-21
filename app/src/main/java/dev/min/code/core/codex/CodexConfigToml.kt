@@ -37,20 +37,30 @@ const val CODEX_OPENAI_BASE_URL = "https://api.openai.com/v1"
  * 配置，留着上一次选的中转会让「官方登录」偷偷走别人的地址。没有配置（null profile）
  * 同理。
  */
-internal fun renderCodexConfigToml(profile: CodexProfile?): String? {
+/**
+ * @param baseUrlOverride 机内路由给出的本地地址。非空时写它、并把 wire_api 固定成
+ *   `responses`——路由会把 Responses 转成上游的 Chat Completions，Codex 自己以为
+ *   在说 Responses。空 = 直连，wire_api 按配置原样写。
+ */
+internal fun renderCodexConfigToml(
+    profile: CodexProfile?,
+    baseUrlOverride: String? = null,
+): String? {
     if (profile == null || profile.authMode == CodexAuthMode.CLI) return null
-    val base = when (profile.authMode) {
+    val base = baseUrlOverride?.trim()?.trimEnd('/') ?: when (profile.authMode) {
         CodexAuthMode.RELAY -> profile.baseUrl.trim().trimEnd('/').ifBlank { CODEX_OPENAI_BASE_URL }
         // 官方 API key 直连：地址是常量，不取 profile.baseUrl ——
         // 用户在中转模式下填过的地址不该在切回官方之后还生效
         else -> CODEX_OPENAI_BASE_URL
     }
+    // 走路由时 Codex 看到的永远是 responses；真正的 chat 转换在路由里做
+    val wire = if (baseUrlOverride != null) CODEX_WIRE_API_RESPONSES else profile.effectiveWireApi
     return buildString {
         append("model_provider = \"").append(tomlEscape(CODEX_PROVIDER_ID)).append("\"\n\n")
         append("[model_providers.").append(CODEX_PROVIDER_ID).append("]\n")
         append("name = \"Min\"\n")
         append("base_url = \"").append(tomlEscape(base)).append("\"\n")
-        append("wire_api = \"").append(tomlEscape(profile.effectiveWireApi)).append("\"\n")
+        append("wire_api = \"").append(tomlEscape(wire)).append("\"\n")
         append("env_key = \"OPENAI_API_KEY\"\n")
     }
 }

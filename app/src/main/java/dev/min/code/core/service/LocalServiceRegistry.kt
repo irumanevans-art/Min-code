@@ -10,6 +10,7 @@ import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.shellCredentialEnv
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -87,6 +88,7 @@ class LocalServiceRegistry(
      * 命令没有区别，凭那里有、这里没有，只会让人以为是服务本身的问题。
      */
     private val settingsStore: SettingsStore,
+    private val relay: RelayController? = null,
     private val proot: ProotShellRunner = ProotShellRunner(
         nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir),
     ),
@@ -288,7 +290,11 @@ class LocalServiceRegistry(
                 // 当前供应商的凭据，和终端页签同一套（开关关着时是空的）。
                 // 解不开 Keystore 时当没有：服务该起还是要起，只是里面没有 key
                 putAll(
-                    runCatching { shellCredentialEnv(settingsStore.current()) }
+                    runCatching {
+                        val settings = settingsStore.current()
+                        val override = settings.activeProfile?.let { relay?.claudeBaseUrl(it) }
+                        shellCredentialEnv(settings, claudeBaseUrlOverride = override)
+                    }
                         .onFailure { Log.w(TAG, "读取供应商凭据失败，本地服务将没有 key", it) }
                         .getOrDefault(emptyMap()),
                 )

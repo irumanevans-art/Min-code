@@ -55,6 +55,12 @@ internal data class TransferClaude(
     val env: Map<String, String> = emptyMap(),
     val presetId: String = "",
     val websiteUrl: String = "",
+    val note: String = "",
+    /** [ApiFormat] 的名字。空 = 老文件，按原生算 */
+    val apiFormat: String = "",
+    /** [AuthHeader] 的名字。空 = 老文件，按 Bearer 算 */
+    val authHeader: String = "",
+    val fullUrlEndpoint: Boolean = false,
 )
 
 @Serializable
@@ -69,6 +75,7 @@ internal data class TransferCodex(
     val env: Map<String, String> = emptyMap(),
     val presetId: String = "",
     val websiteUrl: String = "",
+    val note: String = "",
 )
 
 /**
@@ -113,6 +120,12 @@ private fun ApiProfile.toTransfer(includeSecrets: Boolean) = TransferClaude(
     env = sanitizedProfileEnv(this),
     presetId = presetId,
     websiteUrl = websiteUrl,
+    note = note,
+    // 只在不是默认值时写出来（encodeDefaults = false）：一份全是原生直连的表导出来
+    // 还是跟以前一样干净，换机的人打开文件不会被两个新键问住
+    apiFormat = apiFormat.name.takeIf { apiFormat != ApiFormat.ANTHROPIC_MESSAGES }.orEmpty(),
+    authHeader = authHeader.name.takeIf { authHeader != AuthHeader.AUTH_TOKEN }.orEmpty(),
+    fullUrlEndpoint = fullUrlEndpoint,
 )
 
 private fun CodexProfile.toTransfer(includeSecrets: Boolean) = TransferCodex(
@@ -126,6 +139,7 @@ private fun CodexProfile.toTransfer(includeSecrets: Boolean) = TransferCodex(
     env = sanitizedCodexEnv(this),
     presetId = presetId,
     websiteUrl = websiteUrl,
+    note = note,
 )
 
 /** 带 key 的那份文件名要一眼看得出来烫手 */
@@ -164,6 +178,12 @@ internal fun TransferClaude.toProfile(): ApiProfile = ApiProfile(
     presetId = presetId,
     websiteUrl = websiteUrl,
     env = sanitizeEnv(env),
+    note = note,
+    // 认不得的值一律回落到默认，不把一个我们不懂的方言名留在配置里 ——
+    // 它会一路走到「这条该不该经本地路由」那个判断上
+    apiFormat = runCatching { ApiFormat.valueOf(apiFormat) }.getOrDefault(ApiFormat.ANTHROPIC_MESSAGES),
+    authHeader = runCatching { AuthHeader.valueOf(authHeader) }.getOrDefault(AuthHeader.AUTH_TOKEN),
+    fullUrlEndpoint = fullUrlEndpoint,
 )
 
 internal fun TransferCodex.toProfile(): CodexProfile = CodexProfile(
@@ -179,6 +199,7 @@ internal fun TransferCodex.toProfile(): CodexProfile = CodexProfile(
     websiteUrl = websiteUrl,
     env = sanitizeEnv(env),
     insecureAck = true,
+    note = note,
 )
 
 /**
@@ -196,7 +217,10 @@ internal fun parseClaudeSettingsImport(json: String, label: String = ""): ApiPro
         if (primitive != null && primitive.isString) flat[k] = primitive.content
     }
     val baseUrl = flat["ANTHROPIC_BASE_URL"].orEmpty()
-    val token = flat["ANTHROPIC_AUTH_TOKEN"].orEmpty()
+    // 文件里 token 可能写在两个键中的任何一个，认出来的同时也认出了这家要哪种头
+    val bearer = flat["ANTHROPIC_AUTH_TOKEN"].orEmpty()
+    val apiKey = flat["ANTHROPIC_API_KEY"].orEmpty()
+    val token = bearer.ifBlank { apiKey }
     if (baseUrl.isBlank() && token.isBlank()) return null
     return ApiProfile(
         id = "",
@@ -205,6 +229,7 @@ internal fun parseClaudeSettingsImport(json: String, label: String = ""): ApiPro
         baseUrl = normalizeBaseUrl(baseUrl),
         insecureAck = true,
         env = sanitizeEnv(flat),
+        authHeader = if (bearer.isBlank() && apiKey.isNotBlank()) AuthHeader.API_KEY else AuthHeader.AUTH_TOKEN,
     )
 }
 

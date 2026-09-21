@@ -8,6 +8,7 @@ import dev.min.code.core.claudecode.RelayProbeResult
 import dev.min.code.core.claudecode.probeRelay
 import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.codex.parseCodexConfigImport
+import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.ApiProfile
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.BACKUP_TAG_CLAUDE_SETTINGS
@@ -15,6 +16,9 @@ import dev.min.code.core.settings.backupTag
 import dev.min.code.core.settings.ClaudePreset
 import dev.min.code.core.settings.CodexPreset
 import dev.min.code.core.settings.CodexProfile
+import dev.min.code.core.settings.DeepLinkParse
+import dev.min.code.core.settings.UnifiedProfile
+import dev.min.code.core.settings.parseProviderDeepLink
 import dev.min.code.core.settings.ProviderBackup
 import dev.min.code.core.settings.ProviderPresetSource
 import dev.min.code.core.settings.ProviderPresets
@@ -57,6 +61,7 @@ class ProvidersVM(
     private val configStore: ClaudeCodeConfigStore,
     private val codexRuntime: CodexRuntime,
     private val backup: ProviderBackup,
+    private val relay: RelayController,
 ) : ViewModel() {
 
     val settings: StateFlow<AppSettings> = store.settings
@@ -116,6 +121,8 @@ class ProvidersVM(
     fun activate(id: String, acknowledgeInsecure: Boolean = false) = viewModelScope.launch {
         store.setActiveProfile(id, acknowledgeInsecure)
         _sync.value = providerSync.apply().claude
+        // 方言变了要起 / 停路由；空闲会话重起时会读到新的 base URL
+        relay.reconcile()
         _staleSessions.value = registry.reloadConnection()
     }
 
@@ -129,6 +136,7 @@ class ProvidersVM(
         // 改的是当前生效的那条 → 投影和进程都要跟上；改别的条目只是改一张表
         if (id == store.current().activeProfile?.id) {
             _sync.value = providerSync.apply().claude
+            relay.reconcile()
             _staleSessions.value = registry.reloadConnection()
         }
         _probe.value = _probe.value - id
@@ -139,13 +147,77 @@ class ProvidersVM(
         _sync.value = providerSync.apply().claude
     }
 
+    /** 复制一条。不切过去、不动投影：副本是拿来改的，还没到用它的时候 */
+    fun duplicate(id: String) = viewModelScope.launch { store.duplicateProfile(id) }
+
+    fun duplicateCodex(id: String) = viewModelScope.launch { store.duplicateCodexProfile(id) }
+
+    // -----------------------------------------------------------------------
+    // 统一供应商
+    // -----------------------------------------------------------------------
+
+    /**
+     * 存一条统一供应商。存完要投影一次 —— 它可能刚刚改掉了**当前生效**那条的地址或 key，
+     * 而那条现在正被终端和 settings.json 用着。
+     */
+    fun saveUnified(profile: UnifiedProfile) = viewModelScope.launch {
+        store.saveUnifiedProfile(profile)
+        _sync.value = providerSync.apply().claude
+        relay.reconcile()
+        codexRuntime.prepare()
+        _staleSessions.value = registry.reloadConnection()
+    }
+
+    fun deleteUnified(id: String, deleteDerived: Boolean) = viewModelScope.launch {
+        store.deleteUnifiedProfile(id, deleteDerived)
+        _sync.value = providerSync.apply().claude
+        relay.reconcile()
+        codexRuntime.prepare()
+    }
+
+    // -----------------------------------------------------------------------
+    // 深链导入
+    // -----------------------------------------------------------------------
+
+    /**
+     * 一条 `minc://` / `ccswitch://` 链接。**解析出来先摆着**，等用户在预览上点头才入库——
+     * 链接可以来自任何地方，而它带的是一个会被立刻拿去发请求的 key。
+     */
+    private val _pendingLink = MutableStateFlow<DeepLinkParse?>(null)
+    val pendingLink: StateFlow<DeepLinkParse?> = _pendingLink.asStateFlow()
+
+    fun offerDeepLink(link: String) {
+        val parsed = parseProviderDeepLink(link)
+        _pendingLink.value = parsed.takeIf { it != DeepLinkParse.NotImport }
+    }
+
+    fun dismissDeepLink() {
+        _pendingLink.value = null
+    }
+
+    /** 确认导入。走的是和文件导入同一套合并规则（去重 / 改名 / 跳过都已经算好） */
+    fun acceptDeepLink() = viewModelScope.launch {
+        when (val pending = _pendingLink.value) {
+            is DeepLinkParse.Claude -> mergeAndStore(listOf(pending.profile), emptyList())
+            is DeepLinkParse.Codex -> mergeAndStore(emptyList(), listOf(pending.profile))
+            else -> Unit
+        }
+        _pendingLink.value = null
+    }
+
     fun applyPreset(preset: ClaudePreset, token: String, zh: Boolean) =
         save(preset.toProfile(token, zh), activate = token.isNotBlank())
 
-    /** 拖动途中：只动内存 */
-    fun dragOrder(from: Int, to: Int) {
+    /**
+     * 拖动途中：只动内存。按 id 换位，不按 LazyColumn 的绝对下标——前面那些固定项
+     * （搜索框、分区标题、统一供应商区）也占下标，见 [ReorderState] 的头注释。
+     */
+    fun dragOrder(fromId: String, toId: String) {
+        if (fromId == toId) return
         val current = _pendingOrder.value ?: settings.value.profiles
-        if (from !in current.indices || to !in current.indices) return
+        val from = current.indexOfFirst { it.id == fromId }
+        val to = current.indexOfFirst { it.id == toId }
+        if (from < 0 || to < 0) return
         _pendingOrder.value = current.toMutableList().apply { add(to, removeAt(from)) }
     }
 
@@ -184,12 +256,19 @@ class ProvidersVM(
     fun activateCodex(id: String, acknowledgeInsecure: Boolean = false) = viewModelScope.launch {
         store.setActiveCodexProfile(id, acknowledgeInsecure)
         providerSync.apply()
+        relay.reconcile()
+        // Codex 的 config.toml 也要重写：路由地址 / wire_api 可能变了
+        codexRuntime.prepare()
     }
 
     fun saveCodex(profile: CodexProfile, activate: Boolean) = viewModelScope.launch {
         if (profile.id.isBlank()) store.addCodexProfile(profile, activate = activate)
         else store.updateCodexProfile(profile)
         providerSync.apply()
+        relay.reconcile()
+        if (activate || profile.id == store.current().activeCodexProfile?.id) {
+            codexRuntime.prepare()
+        }
     }
 
     fun deleteCodex(id: String) = viewModelScope.launch { store.deleteCodexProfile(id) }
@@ -197,9 +276,12 @@ class ProvidersVM(
     fun applyCodexPreset(preset: CodexPreset, apiKey: String, zh: Boolean) =
         saveCodex(preset.toProfile(apiKey, zh), activate = true)
 
-    fun dragCodexOrder(from: Int, to: Int) {
+    fun dragCodexOrder(fromId: String, toId: String) {
+        if (fromId == toId) return
         val current = _codexPendingOrder.value ?: settings.value.codexProfiles
-        if (from !in current.indices || to !in current.indices) return
+        val from = current.indexOfFirst { it.id == fromId }
+        val to = current.indexOfFirst { it.id == toId }
+        if (from < 0 || to < 0) return
         _codexPendingOrder.value = current.toMutableList().apply { add(to, removeAt(from)) }
     }
 

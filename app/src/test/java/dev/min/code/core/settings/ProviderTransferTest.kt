@@ -273,4 +273,53 @@ class ProviderTransferTest {
         assertTrue(expired.all { it in names.take(3) })
         assertTrue(expired.none { backupTag(it) == "other" })
     }
+
+    @Test
+    fun t_new_fields_round_trip() {
+        val rich = settings.copy(
+            profiles = listOf(
+                ApiProfile(
+                    id = "one",
+                    label = "Kimi",
+                    token = token,
+                    baseUrl = "https://api.moonshot.cn/anthropic",
+                    note = "公司号",
+                    apiFormat = ApiFormat.OPENAI_CHAT,
+                    authHeader = AuthHeader.API_KEY,
+                    fullUrlEndpoint = true,
+                ),
+            ),
+            codexProfiles = listOf(
+                CodexProfile(
+                    id = "cx",
+                    label = "中转",
+                    baseUrl = "https://relay.example.com/v1",
+                    apiKey = codexKey,
+                    authMode = CodexAuthMode.RELAY,
+                    note = "备用",
+                ),
+            ),
+        )
+        val text = buildTransferFile(rich, includeSecrets = true, now = "now")
+        val file = (parseTransferFile(text) as TransferParse.Ok).file
+        val back = file.claude.first().toProfile()
+        assertEquals("公司号", back.note)
+        assertEquals(ApiFormat.OPENAI_CHAT, back.apiFormat)
+        assertEquals(AuthHeader.API_KEY, back.authHeader)
+        assertTrue(back.fullUrlEndpoint)
+        assertEquals("备用", file.codex.first().toProfile().note)
+    }
+
+    @Test
+    fun u_old_files_without_new_fields_still_load() {
+        val text = """
+            {"schema":"$TRANSFER_SCHEMA",
+             "claude":[{"label":"A","baseUrl":"https://a.example.com","token":"sk-1"}]}
+        """.trimIndent()
+        val back = (parseTransferFile(text) as TransferParse.Ok).file.claude.first().toProfile()
+        assertEquals(ApiFormat.ANTHROPIC_MESSAGES, back.apiFormat)
+        assertEquals(AuthHeader.AUTH_TOKEN, back.authHeader)
+        assertFalse(back.fullUrlEndpoint)
+        assertEquals("", back.note)
+    }
 }

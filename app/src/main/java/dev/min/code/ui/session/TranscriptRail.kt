@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import dev.min.code.ui.components.loopClock
+import dev.min.code.ui.theme.LocalSkin
 import dev.min.code.ui.theme.rememberAnimationsEnabled
 import dev.min.code.ui.theme.rememberSeaPainter
 import dev.min.code.ui.theme.sea
@@ -32,14 +33,9 @@ private val MarkerY = 17.dp
 private val RailWidth = 1.5.dp
 internal const val RailSpiralSteps = 56
 internal const val RailSpiralTurns = 1.45f
-/** 一圈走完整条直线再钻进螺旋；末尾淡出，避免闪回起点 */
-private const val FoamPeriodMs = 2800
+/** 流动物走完一圈要在末尾淡出，避免闪回起点 */
 private const val FoamFadeIn = 0.07f
 private const val FoamFadeOut = 0.12f
-/** 主浪头身后跟着几粒更淡的沫，相位错开 */
-private const val FoamTrailCount = 3
-private const val FoamTrailPhaseGap = 0.045f
-private const val FoamGrainTrailDp = 5.5f
 
 internal data class TranscriptRailGeometry(
     val top: Float,
@@ -237,13 +233,16 @@ internal fun foamAlpha(t: Float, fadeIn: Float = FoamFadeIn, fadeOut: Float = Fo
 internal enum class RailTone { Sea, Ink, Error }
 
 /**
- * 会话流左侧那条轨道：一道海。每条记录画自己那一段，段与段首尾相接。
+ * 会话流左侧那条轨道。每条记录画自己那一段，段与段首尾相接。
  *
- * - 标记挂在段的上部（[MarkerY]）：点 = 你，环 = 思考，实心方 = 正在跑（带涟漪），空心方 = 已完成，
- *   叉 = 出错，短横 = 提示；
- * - [active] 的段上有一条暗流：一粒白沫沿着海往下走，到了末段就钻进螺旋，到螺心淡出再从顶上淡入；
- * - 末段（[isLast]）不是直直地断掉：线在正文下方向右卷成一个越收越细的螺旋——一道浪卷进自己，
- *   螺心一粒海。会话在生成时螺旋轻轻呼吸。
+ * 线身、收笔、活段上那点动**按风格三选一**（[RailStyle]）：海是一道连续的水、末段卷成螺旋、
+ * 一粒白沫顺流；云是一段段断开的雾、末段散成碎絮与一道飘钩、一道透光掠过；
+ * 陶是手拉的颤线、末段收口成三道旋痕与一粒泥点、一滴釉缓缓下淌。
+ * 这是全 App 唯一一处**按风格换形**的地方，理由见 [RailStyle] 的头注释。
+ *
+ * 三套共用的只有两样：这里的几何（[transcriptRailGeometry]，段怎么接、收笔留多少）
+ * 和标记（[drawRailMarker]）——标记是语义，不是风格：点 = 你，环 = 思考，
+ * 实心方 = 正在跑（带涟漪），空心方 = 已完成，叉 = 出错，短横 = 提示。
  */
 @Composable
 internal fun Modifier.transcriptRail(
@@ -256,10 +255,11 @@ internal fun Modifier.transcriptRail(
     val scheme = MaterialTheme.colorScheme
     val palette = MaterialTheme.sea
     val painter = rememberSeaPainter()
+    val style = railStyle(LocalSkin.current.style)
     val inkColor = scheme.outline
     val errorColor = scheme.error
     val paper = scheme.surface
-    val foamPhase = foamClock(active)
+    val flowPhase = flowClock(active, style.flowPeriodMs)
     val ripple = if (active && marker == RailMarker.SquareFilled) loopClock(1600) else null
     // 暗色用 seaFoam，跟 InkLineProgress / SeaSurface 一致；亮色仍是纸上的白沫
     val foam = if (palette.dark) palette.seaFoam else Color.White
@@ -277,53 +277,20 @@ internal fun Modifier.transcriptRail(
                 tailLead = 8.dp.toPx(),
                 tailInset = 10.dp.toPx(),
             )
-            val brush = painter.brush(size)
-            val w = RailWidth.toPx()
-            drawLine(brush, Offset(x, geometry.top), Offset(x, geometry.bottom), w, cap = StrokeCap.Round)
-
-            val phase = foamPhase.value
-            val breath = if (phase < 0f) 1f else 0.94f + 0.08f * sin(phase * 2f * PI.toFloat())
-            val spiral = if (isLast && geometry.tailBottom != null) {
-                railSpiralOffsets(
-                    x = x,
-                    top = geometry.bottom,
-                    height = geometry.tailBottom - geometry.bottom,
-                    r0Max = 8.5.dp.toPx(),
-                    breath = breath,
-                )
-            } else {
-                emptyList()
-            }
-            if (spiral.size >= 2) drawSpiral(spiral, brush)
-
-            // 多粒白沫沿弧长走：主浪头 + 身后几粒短痕，螺旋处收细，不画欧氏弦
-            if (phase >= 0f) {
-                val path = railFoamPolyline(x, geometry.top, geometry.bottom, spiral)
-                val trailLen = FoamGrainTrailDp.dp.toPx()
-                for (i in FoamTrailCount downTo 0) {
-                    val grainT = phase - i * FoamTrailPhaseGap
-                    if (grainT < 0f) continue
-                    val pose = sampleRailFoam(
-                        t = grainT,
+            with(style) {
+                drawRail(
+                    RailSpec(
                         x = x,
-                        lineTop = geometry.top,
-                        lineBottom = geometry.bottom,
-                        spiral = spiral,
-                        trailLen = trailLen,
-                    ) ?: continue
-                    if (pose.alpha <= 0.01f) continue
-                    val rank = i / FoamTrailCount.toFloat()
-                    val grainAlpha = pose.alpha * (1f - 0.55f * rank)
-                    drawFoamGrain(
-                        points = path,
-                        pose = pose,
-                        foam = foam,
-                        railWidth = w,
-                        alphaScale = grainAlpha,
-                        headRadius = 1.1.dp.toPx() * (1f - 0.35f * rank),
-                        drawHead = true,
-                    )
-                }
+                        top = geometry.top,
+                        bottom = geometry.bottom,
+                        tailBottom = geometry.tailBottom,
+                        brush = painter.brush(size),
+                        width = RailWidth.toPx(),
+                        flow = foam,
+                        phase = flowPhase.value,
+                        unit = 1.dp.toPx(),
+                    ),
+                )
             }
 
             val color = when (tone) {
@@ -331,65 +298,8 @@ internal fun Modifier.transcriptRail(
                 RailTone.Ink -> inkColor
                 RailTone.Sea -> Color.Unspecified
             }
-            drawRailMarker(marker, x, y, color, brush, ripple?.value, paper)
+            drawRailMarker(marker, x, y, color, brush = painter.brush(size), ripple = ripple?.value, paper = paper)
         }
-}
-
-/** 把螺旋点连成越收越细的一笔，螺心一粒海 */
-private fun DrawScope.drawSpiral(pts: List<Offset>, brush: Brush) {
-    val steps = pts.lastIndex
-    if (steps < 1) return
-    for (i in 1..steps) {
-        val s = i / steps.toFloat()
-        drawLine(
-            brush,
-            pts[i - 1],
-            pts[i],
-            RailWidth.toPx() * (1.05f - 0.7f * s),
-            cap = StrokeCap.Round,
-            alpha = 1f - 0.2f * s,
-        )
-    }
-    drawCircle(brush, 1.6.dp.toPx(), pts.last())
-}
-
-/**
- * 沿弧长画一粒白沫的短尾迹。螺旋段按路径进度收细，宽度始终压在蓝线里。
- */
-private fun DrawScope.drawFoamGrain(
-    points: List<Offset>,
-    pose: RailFoamPose,
-    foam: Color,
-    railWidth: Float,
-    alphaScale: Float,
-    headRadius: Float,
-    drawHead: Boolean,
-) {
-    if (points.size < 2 || alphaScale <= 0.01f) return
-    val slice = polylineSlice(points, pose.tailDist, pose.headDist)
-    val progress = foamPathProgress(points, pose.headDist)
-    // 越靠螺心越细：对齐 drawSpiral 的 taper，再乘 0.55 让沫不宽过蓝线
-    val localW = railWidth * (1.05f - 0.55f * progress) * 0.55f
-    if (slice.size >= 2) {
-        val span = (pose.headDist - pose.tailDist).coerceAtLeast(1e-3f)
-        var travelled = 0f
-        for (i in 1 until slice.size) {
-            val a = slice[i - 1]
-            val b = slice[i]
-            val seg = hypot(b.x - a.x, b.y - a.y)
-            if (seg < 0.25f) {
-                travelled += seg
-                continue
-            }
-            val mid = (travelled + seg * 0.5f) / span
-            val alpha = (0.15f + 0.7f * mid).coerceIn(0f, 0.85f) * alphaScale
-            drawLine(foam.copy(alpha = alpha), a, b, localW, cap = StrokeCap.Round)
-            travelled += seg
-        }
-    }
-    if (drawHead) {
-        drawCircle(foam, headRadius * (1f - 0.35f * progress), pose.head, alpha = 0.95f * alphaScale)
-    }
 }
 
 private fun DrawScope.drawRailMarker(marker: RailMarker, x: Float, y: Float, color: Color, brush: Brush, ripple: Float?, paper: Color) {
@@ -434,11 +344,11 @@ private fun DrawScope.drawRailMarker(marker: RailMarker, x: Float, y: Float, col
 }
 
 /**
- * 白沫的时钟：整条路径（直线 + 螺旋）走一圈。
- * 不活跃或系统动画关掉时停在 -1，绘制侧据此不画白沫。
+ * 流动物的时钟：整条路径（线身 + 收笔）走一圈，周期由风格给（[RailStyle.flowPeriodMs]）。
+ * 不活跃或系统动画关掉时停在 -1，三套据此一律静止 —— 但线与收笔照画完整。
  */
 @Composable
-private fun foamClock(active: Boolean): State<Float> {
+private fun flowClock(active: Boolean, periodMs: Int): State<Float> {
     if (!active || !rememberAnimationsEnabled()) return remember { mutableFloatStateOf(-1f) }
-    return loopClock(FoamPeriodMs)
+    return loopClock(periodMs)
 }

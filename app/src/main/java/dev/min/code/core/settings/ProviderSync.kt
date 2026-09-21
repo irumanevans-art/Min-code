@@ -107,6 +107,9 @@ class ProviderSync(
 val RESERVED_ENV_KEYS = setOf(
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
+    // 另一种放法（`x-api-key`）。两个键都占住：只占一个的话，选了 Bearer 的人
+    // 还能从自定义 env 里塞一个 API_KEY 进去，于是两把钥匙同时在场
+    "ANTHROPIC_API_KEY",
     "OPENAI_BASE_URL",
     "OPENAI_API_KEY",
     "CODEX_API_KEY",
@@ -142,7 +145,9 @@ internal fun managedSettingsEnv(profile: ApiProfile, includeSecrets: Boolean): M
     buildMap {
         putAll(sanitizedProfileEnv(profile))
         put("ANTHROPIC_BASE_URL", profile.baseUrl)
-        if (includeSecrets && profile.token.isNotBlank()) put("ANTHROPIC_AUTH_TOKEN", profile.token)
+        // 键名跟着这条供应商的认证方式走（见 ApiProfile.authHeader）。换一种放法时
+        // 上一个键会被规则 1 删掉 —— 它在 managedEnvKeys 里，而这次的托管区里没有它
+        if (includeSecrets && profile.token.isNotBlank()) put(profile.tokenEnvKey, profile.token)
     }
 
 /**
@@ -189,14 +194,23 @@ private const val KEY_ENV = "env"
  * 其中一个莫名其妙地不能用。但 Codex 处于 [CodexAuthMode.CLI] 时**不注入**
  * `OPENAI_API_KEY` —— 官方登录读的是它自己那份 auth.json，塞一个环境变量进去只会
  * 让「官方登录」偷偷走别人的 key。
+ *
+ * @param claudeBaseUrlOverride 机内路由给出的本地地址。非空时终端里的 `claude` 也走路由，
+ *   和会话进程看到的是同一个入口。空 = 直连配置里的地址。
+ *   **settings.json 的托管区不走这个参数**——那份文件可能被 App 外的脚本读，
+ *   写 `127.0.0.1` 进去等于把它们指向一个随时会消失的端口。
  */
-internal fun shellCredentialEnv(settings: AppSettings): Map<String, String> {
+internal fun shellCredentialEnv(
+    settings: AppSettings,
+    claudeBaseUrlOverride: String? = null,
+): Map<String, String> {
     if (!settings.injectCredentialsIntoShells) return emptyMap()
     return buildMap {
         settings.activeProfile?.let { profile ->
             putAll(sanitizedProfileEnv(profile))
-            put("ANTHROPIC_BASE_URL", profile.baseUrl)
-            if (profile.token.isNotBlank()) put("ANTHROPIC_AUTH_TOKEN", profile.token)
+            put("ANTHROPIC_BASE_URL", claudeBaseUrlOverride ?: profile.baseUrl)
+            // 键名跟着这条供应商的认证方式走，和会话进程拿到的是同一个（见 ApiProfile.authHeader）
+            if (profile.token.isNotBlank()) put(profile.tokenEnvKey, profile.token)
         }
         settings.activeCodexProfile
             ?.takeIf { it.authMode != CodexAuthMode.CLI && it.apiKey.isNotBlank() }

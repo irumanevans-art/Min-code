@@ -143,4 +143,37 @@ class ProviderJsonTest {
 
         assertEquals(mapOf("X" to "1"), ok.env)
     }
+
+    /** 键名跟着认证方式走：JSON 形态和表单是同一份事实的两个视图，能力不该少一块 */
+    @Test
+    fun auth_header_is_encoded_as_the_env_key_name() {
+        val apiKey = profile.copy(authHeader = AuthHeader.API_KEY)
+        val text = profileToJsonText(apiKey, revealToken = true)
+        assertTrue(text.contains("ANTHROPIC_API_KEY"))
+        assertFalse(text.contains("ANTHROPIC_AUTH_TOKEN"))
+
+        val ok = parseProfileJson(text) as ProfileJsonParse.Ok
+        assertEquals(AuthHeader.API_KEY, ok.authHeader)
+        assertEquals(AuthHeader.API_KEY, apiKey.withJsonParse(ok).authHeader)
+    }
+
+    @Test
+    fun reading_the_api_key_key_switches_the_header() {
+        val ok = parseProfileJson(
+            """{"env":{"ANTHROPIC_BASE_URL":"https://a.example","ANTHROPIC_API_KEY":"sk-x"}}""",
+        ) as ProfileJsonParse.Ok
+        assertEquals(AuthHeader.API_KEY, ok.authHeader)
+        assertEquals("sk-x", ok.token)
+    }
+
+    @Test
+    fun both_keys_prefer_bearer_and_drop_the_other() {
+        // 同时握着两把钥匙比用错一把更难查，所以 Bearer 那个赢，另一个丢掉
+        val ok = parseProfileJson(
+            """{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-b","ANTHROPIC_API_KEY":"sk-a"}}""",
+        ) as ProfileJsonParse.Ok
+        assertEquals(AuthHeader.AUTH_TOKEN, ok.authHeader)
+        assertEquals("sk-b", ok.token)
+        assertFalse(ok.env.containsKey("ANTHROPIC_API_KEY"))
+    }
 }

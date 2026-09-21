@@ -97,3 +97,68 @@ internal fun relayHttpGet(url: String, headers: Map<String, String>): String {
         connection.disconnect()
     }
 }
+
+/**
+ * 「这家都卖哪些模型」——供应商编辑页那颗取模型的按钮。
+ *
+ * 和探活、和会话里的模型目录走同一个端点同一套鉴权回退（本文件上面那两个函数）。
+ * 分出来是因为**失败的种类不一样**：探活只要知道通不通，这里要把「这家没实现这个端点」
+ * 和「key 不对」分开说——前者让人手填模型 id 就行，后者得回去改 key。
+ */
+sealed interface RelayModelsResult {
+    data class Ok(val ids: List<String>) : RelayModelsResult
+    data object Unauthorized : RelayModelsResult
+
+    /** 404 / 405：这家没有这个端点。手填模型 id 照样能用 */
+    data class NotSupported(val code: Int) : RelayModelsResult
+    data class Failed(val reason: String) : RelayModelsResult
+    data object NoToken : RelayModelsResult
+}
+
+suspend fun fetchRelayModelIds(baseUrl: String, token: String): RelayModelsResult =
+    withContext(Dispatchers.IO) {
+        if (token.isBlank()) return@withContext RelayModelsResult.NoToken
+        val url = "${baseUrl.trimEnd('/')}/v1/models?limit=1000"
+        try {
+            val body = try {
+                relayHttpGet(url, mapOf("Authorization" to "Bearer $token"))
+            } catch (e: RelayHttpStatusException) {
+                if (e.code == 401 || e.code == 403) relayHttpGet(url, mapOf("x-api-key" to token)) else throw e
+            }
+            val ids = parseRelayModelIds(body)
+            if (ids.isEmpty()) RelayModelsResult.Failed("empty") else RelayModelsResult.Ok(ids)
+        } catch (e: RelayHttpStatusException) {
+            when (e.code) {
+                401, 403 -> RelayModelsResult.Unauthorized
+                404, 405 -> RelayModelsResult.NotSupported(e.code)
+                else -> RelayModelsResult.Failed("HTTP ${e.code}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "model list failed for $url", e)
+            RelayModelsResult.Failed(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+/**
+ * 从 `/v1/models` 的响应里把 id 抠出来。
+ *
+ * 认三种形状：`{"data":[{"id":…}]}`（OpenAI / Anthropic）、`{"models":[…]}`（有的中转）、
+ * 以及数组里直接放字符串的。认得宽一点是有道理的：这是个只读端点，认错了最多列表是空的，
+ * 认不出来却会让一家能用的中转看上去坏了。
+ */
+internal fun parseRelayModelIds(body: String): List<String> = runCatching {
+    val json = kotlinx.serialization.json.Json.parseToJsonElement(body)
+    val obj = json as? kotlinx.serialization.json.JsonObject
+    val array = (obj?.get("data") ?: obj?.get("models") ?: json) as? kotlinx.serialization.json.JsonArray
+        ?: return@runCatching emptyList()
+    array.mapNotNull { item ->
+        when (item) {
+            is kotlinx.serialization.json.JsonPrimitive -> item.content.takeIf { it.isNotBlank() }
+            is kotlinx.serialization.json.JsonObject ->
+                (item["id"] ?: item["name"] ?: item["model"])
+                    ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                    ?.takeIf { it.isNotBlank() }
+            else -> null
+        }
+    }.distinct()
+}.getOrDefault(emptyList())
