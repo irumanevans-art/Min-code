@@ -41,7 +41,7 @@ TARGET = os.path.join(ROOT, "app/src/main/assets/provider_presets.json")
 TRACKING_KEYS = {
     "aff", "affiliate", "ref", "referral", "referrer", "invite", "inviter",
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "from", "channel", "source", "ch", "code", "promo",
+    "from", "channel", "source", "ch", "code", "promo", "ac", "rc", "ytag", "invitecode",
 }
 
 # 这些 env 键由 App 自己在起进程时注入（见 ClaudeCodeManager.launchCli），

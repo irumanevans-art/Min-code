@@ -379,7 +379,7 @@
       "name": "ç«å±± Agent Plan",
       "category": "cn_official",
       "baseUrl": "https://ark.cn-beijing.volces.com/api/plan",
-      "websiteUrl": "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2",
+      "websiteUrl": "https://www.volcengine.com/activity/agentplan",
       "env": {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "ark-code-latest",
         "ANTHROPIC_DEFAULT_OPUS_MODEL": "ark-code-latest",
@@ -483,7 +483,7 @@
       "name": "Compshare",
       "category": "aggregator",
       "baseUrl": "https://api.modelverse.cn",
-      "websiteUrl": "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+      "websiteUrl": "https://www.compshare.cn/coding-plan",
       "env": {}
     },
     {
@@ -491,7 +491,7 @@
       "name": "Compshare Coding Plan",
       "category": "aggregator",
       "baseUrl": "https://cp.compshare.cn",
-      "websiteUrl": "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+      "websiteUrl": "https://www.compshare.cn/coding-plan",
       "env": {}
     },
     {
@@ -714,7 +714,7 @@
       "name": "AICodeMirror",
       "category": "community",
       "baseUrl": "https://api.aicodemirror.ai/api/claudecode",
-      "websiteUrl": "https://www.aicodemirror.ai/register?invitecode=9915W3",
+      "websiteUrl": "https://www.aicodemirror.ai/register",
       "env": {}
     },
     {

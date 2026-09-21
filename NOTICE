@@ -36,6 +36,7 @@ Third-party code and assets
     flags (`primePartner` / `isPartner` / `partnerPromotionKey`) are discarded, and the upstream
     file order — which is paid placement — is replaced by category then display name.
     Listing a provider here is not an endorsement of it.
+* Ubuntu base images are downloaded at runtime from cdimage.ubuntu.com (or a mirror);
   Node.js from nodejs.org; @anthropic-ai/claude-code from registry.npmjs.org.
 
 Claude Code is a product of Anthropic, PBC. This project is not affiliated with, endorsed by,
