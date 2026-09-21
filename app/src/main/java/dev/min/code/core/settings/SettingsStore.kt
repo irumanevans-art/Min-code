@@ -652,7 +652,8 @@ class SettingsStore(private val context: Context) {
         val entry = profile.copy(
             id = id,
             claudeBaseUrl = if (profile.syncsClaude) normalizeBaseUrl(profile.claudeBaseUrl) else "",
-            codexBaseUrl = if (profile.syncsCodex) normalizeBaseUrl(profile.codexBaseUrl) else "",
+            // Codex 地址保留 /v1，见 normalizeCodexBaseUrl
+            codexBaseUrl = if (profile.syncsCodex) normalizeCodexBaseUrl(profile.codexBaseUrl) else "",
         )
         editUnified { unified, claude, codex ->
             val next = if (unified.any { it.id == id }) {
@@ -772,7 +773,7 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun addCodexProfile(profile: CodexProfile, activate: Boolean = true): String {
-        val entry = profile.copy(id = newProfileId())
+        val entry = profile.copy(id = newProfileId(), baseUrl = normalizeCodexBaseUrl(profile.baseUrl))
         editCodexProfiles { list, active -> (list + entry) to (if (activate) entry.id else active) }
         return entry.id
     }
@@ -784,7 +785,9 @@ class SettingsStore(private val context: Context) {
      * 挪到列表末尾。只有一条配置时谁也看不见，多配置一上来就是「改个备注名，它跳到最后一行」。
      */
     suspend fun updateCodexProfile(profile: CodexProfile) = editCodexProfiles { list, active ->
-        list.map { if (it.id == profile.id) profile else it } to active
+        list.map {
+            if (it.id != profile.id) it else profile.copy(baseUrl = normalizeCodexBaseUrl(profile.baseUrl))
+        } to active
     }
 
     suspend fun deleteCodexProfile(id: String) = editCodexProfiles { list, active ->
@@ -806,12 +809,13 @@ class SettingsStore(private val context: Context) {
      * 多配置的增删改走上面那几个。
      */
     suspend fun setCodexProfile(profile: CodexProfile) = editCodexProfiles { list, _ ->
-        val next = if (list.any { it.id == profile.id }) {
-            list.map { if (it.id == profile.id) profile else it }
+        val entry = profile.copy(baseUrl = normalizeCodexBaseUrl(profile.baseUrl))
+        val next = if (list.any { it.id == entry.id }) {
+            list.map { if (it.id == entry.id) entry else it }
         } else {
-            list + profile
+            list + entry
         }
-        next to profile.id
+        next to entry.id
     }
 
     /** [acknowledgeInsecure] 同 [setActiveProfile]：刚在明文风险框上放过行，别再问第二遍 */
@@ -840,7 +844,9 @@ class SettingsStore(private val context: Context) {
             editProfiles { list, active -> (list + entries) to active }
         }
         if (codex.isNotEmpty()) {
-            val entries = codex.map { it.copy(id = newProfileId()) }
+            val entries = codex.map {
+                it.copy(id = newProfileId(), baseUrl = normalizeCodexBaseUrl(it.baseUrl))
+            }
             editCodexProfiles { list, active -> (list + entries) to active }
         }
     }
@@ -867,8 +873,62 @@ private val profilesJson = Json { ignoreUnknownKeys = true; encodeDefaults = tru
 
 private fun newProfileId(): String = java.util.UUID.randomUUID().toString()
 
-internal fun normalizeBaseUrl(url: String): String =
-    url.trim().trimEnd('/').ifBlank { AppSettings.DEFAULT_BASE_URL }
+/**
+ * Claude 侧的 `ANTHROPIC_BASE_URL` 规整。
+ *
+ * 只做两件事：掐头去尾的空白与末尾 `/`，以及**剥掉末尾的 `/v1`**。
+ * Anthropic / Claude Code 的约定是 base 不带版本段，CLI 自己去拼 `/v1/messages`；
+ * 探活、取模型、机内路由也是往后拼 `/v1/…`。用户从 OpenAI 兼容中转抄地址时经常
+ * 带着 `/v1` 进来（`https://one.oxapi.bond/v1`），不剥就会变成 `/v1/v1/models`——
+ * 实测 404，而同一家在 cc-switch 里好好的，差的就是这一截。
+ *
+ * Codex / OpenAI 的 `base_url` **不要**走这里，见 [normalizeCodexBaseUrl]：那边的约定
+ * 正好相反，官方就是 `https://api.openai.com/v1`。
+ */
+internal fun normalizeBaseUrl(url: String): String {
+    val trimmed = url.trim().trimEnd('/')
+    val stripped = if (trimmed.endsWith("/v1", ignoreCase = true)) {
+        trimmed.dropLast(3).trimEnd('/')
+    } else {
+        trimmed
+    }
+    return stripped.ifBlank { AppSettings.DEFAULT_BASE_URL }
+}
+
+/**
+ * Codex / OpenAI 侧的 `base_url` 规整：只掐空白和末尾 `/`，**保留** `/v1`。
+ *
+ * 和 [normalizeBaseUrl] 对称——OpenAI 官方地址本身以 `/v1` 结尾，Codex 的
+ * `config.toml` 也按这个约定写；剥掉反而会让官方与多数中转对不上。
+ */
+internal fun normalizeCodexBaseUrl(url: String): String =
+    url.trim().trimEnd('/').ifBlank { "https://api.openai.com/v1" }
+
+/**
+ * 在 Claude 风格的 base 后面拼一段以 `/` 开头的路径（通常是 `/v1/models` 之类）。
+ *
+ * 入库已经走 [normalizeBaseUrl] 剥过 `/v1`，这里再剥一次是给**还没重存过的旧数据**
+ * 和「绕过入库直接拿字符串来拼」的调用点用的——同一处拼错一次，测活 / 取模型 /
+ * 会话目录三条路会一起挂，而且表现完全像「这家中转坏了」。
+ */
+internal fun joinClaudeApi(baseUrl: String, path: String): String {
+    val root = normalizeBaseUrl(baseUrl)
+    val p = if (path.startsWith("/")) path else "/$path"
+    return root + p
+}
+
+/**
+ * 在 OpenAI / Codex 风格的 base 后面拼资源路径。
+ *
+ * [resource] 是 `/v1` **之后**那一段，比如 `/chat/completions`、`/models`、`/responses`。
+ * base 已经以 `/v1` 结尾时直接拼；否则先补 `/v1` 再拼——两边的中转写法都认，
+ * 不会再拼出 `/v1/v1/chat/completions`。
+ */
+internal fun joinOpenAiApi(baseUrl: String, resource: String): String {
+    val root = normalizeCodexBaseUrl(baseUrl)
+    val r = if (resource.startsWith("/")) resource else "/$resource"
+    return if (root.endsWith("/v1", ignoreCase = true)) root + r else root + "/v1" + r
+}
 
 /**
  * 「这个地址会把凭据明文送上网吗」——整个 App 里这件事只有这一处判定。
@@ -975,18 +1035,30 @@ private fun encodeCodexProfiles(profiles: List<CodexProfile>): String =
 
 private fun decodeCodexProfiles(raw: String?): List<CodexProfile> {
     val plain = TokenCipher.decrypt(raw.orEmpty()) ?: return emptyList()
-    return runCatching { profilesJson.decodeFromString<List<CodexProfile>>(plain) }.getOrDefault(emptyList())
+    return runCatching { profilesJson.decodeFromString<List<CodexProfile>>(plain) }
+        .getOrDefault(emptyList())
+        // 读的时候也规整一遍：旧数据 / 深链 / 手改过的密文都可能带着多余的斜杠
+        .map { it.copy(baseUrl = normalizeCodexBaseUrl(it.baseUrl)) }
 }
 
 private fun decodeProfiles(raw: String?): List<ApiProfile> =
     decodeProfilesJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
+        // 读的时候剥掉末尾 /v1：升级前存进去的「OpenAI 抄来的地址」不必等用户重存一次才好用
+        .map { it.copy(baseUrl = normalizeBaseUrl(it.baseUrl)) }
 
 private fun encodeUnifiedProfiles(profiles: List<UnifiedProfile>): String =
     TokenCipher.encrypt(profilesJson.encodeToString(profiles))
 
 private fun decodeUnifiedProfiles(raw: String?): List<UnifiedProfile> {
     val plain = TokenCipher.decrypt(raw.orEmpty()) ?: return emptyList()
-    return runCatching { profilesJson.decodeFromString<List<UnifiedProfile>>(plain) }.getOrDefault(emptyList())
+    return runCatching { profilesJson.decodeFromString<List<UnifiedProfile>>(plain) }
+        .getOrDefault(emptyList())
+        .map {
+            it.copy(
+                claudeBaseUrl = if (it.claudeBaseUrl.isBlank()) "" else normalizeBaseUrl(it.claudeBaseUrl),
+                codexBaseUrl = if (it.codexBaseUrl.isBlank()) "" else normalizeCodexBaseUrl(it.codexBaseUrl),
+            )
+        }
 }
 
 /**

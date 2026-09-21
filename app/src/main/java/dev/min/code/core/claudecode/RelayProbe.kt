@@ -2,6 +2,7 @@ package dev.min.code.core.claudecode
 
 import android.util.Log
 import dev.min.code.core.settings.isInsecureBaseUrl
+import dev.min.code.core.settings.joinClaudeApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -35,7 +36,8 @@ sealed interface RelayProbeResult {
 
 suspend fun probeRelay(baseUrl: String, token: String): RelayProbeResult = withContext(Dispatchers.IO) {
     if (token.isBlank()) return@withContext RelayProbeResult.NoToken
-    val url = "${baseUrl.trimEnd('/')}/v1/models?limit=1000"
+    // joinClaudeApi 会剥掉 base 末尾的 /v1 —— 用户从 OpenAI 兼容中转抄来的地址常带着它
+    val url = joinClaudeApi(baseUrl, "/v1/models") + "?limit=1000"
     try {
         // CLI 拿 ANTHROPIC_AUTH_TOKEN 发的是 Bearer；有的中转站只认 x-api-key，401 就换一种再试
         val body = try {
@@ -118,7 +120,7 @@ sealed interface RelayModelsResult {
 suspend fun fetchRelayModelIds(baseUrl: String, token: String): RelayModelsResult =
     withContext(Dispatchers.IO) {
         if (token.isBlank()) return@withContext RelayModelsResult.NoToken
-        val url = "${baseUrl.trimEnd('/')}/v1/models?limit=1000"
+        val url = joinClaudeApi(baseUrl, "/v1/models") + "?limit=1000"
         try {
             val body = try {
                 relayHttpGet(url, mapOf("Authorization" to "Bearer $token"))

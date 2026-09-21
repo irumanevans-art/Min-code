@@ -8,6 +8,8 @@ import dev.min.code.core.settings.CODEX_WIRE_API_CHAT
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.core.settings.CodexProfile
 import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.normalizeBaseUrl
+import dev.min.code.core.settings.normalizeCodexBaseUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -44,7 +46,8 @@ class RelayController(
             LocalRelayServer.Kind.Claude -> {
                 val profile = settings.profiles.firstOrNull { it.id == profileId } ?: return@Resolver null
                 LocalRelayServer.Upstream(
-                    baseUrl = profile.baseUrl,
+                    // 再剥一次 /v1：旧数据或绕过入库的字符串不能让路由拼成 /v1/v1/…
+                    baseUrl = normalizeBaseUrl(profile.baseUrl),
                     token = profile.token,
                     toChatCompletions = profile.apiFormat.needsRelay,
                     fullUrlEndpoint = profile.fullUrlEndpoint,
@@ -57,7 +60,7 @@ class RelayController(
             LocalRelayServer.Kind.Codex -> {
                 val profile = settings.codexProfiles.firstOrNull { it.id == profileId } ?: return@Resolver null
                 LocalRelayServer.Upstream(
-                    baseUrl = profile.baseUrl,
+                    baseUrl = normalizeCodexBaseUrl(profile.baseUrl),
                     token = profile.apiKey,
                     toChatCompletions = profile.effectiveWireApi == CODEX_WIRE_API_CHAT,
                     fullUrlEndpoint = false,
@@ -76,7 +79,8 @@ class RelayController(
     suspend fun claudeBaseUrl(profile: ApiProfile): String = mutex.withLock {
         if (!profile.apiFormat.needsRelay) {
             stopIfUnusedLocked(alsoClaude = false)
-            return profile.baseUrl
+            // 直连也剥 /v1：CLI 自己会拼 /v1/messages，带着会变成 /v1/v1/messages
+            return normalizeBaseUrl(profile.baseUrl)
         }
         val s = ensureRunningLocked()
         s.claudeBaseUrl(profile.id)

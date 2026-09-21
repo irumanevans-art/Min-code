@@ -300,6 +300,62 @@ class ApiProfileTest {
         assertEquals(AppSettings.DEFAULT_BASE_URL, normalizeBaseUrl("   "))
     }
 
+    /**
+     * 用户从 OpenAI 兼容中转抄地址时经常带着 `/v1`。Claude / ANTHROPIC_BASE_URL
+     * 的约定是不带版本段——不剥就会在探活、取模型、机内路由上拼出 `/v1/v1/…`，
+     * 表现完全像「这家中转坏了」，而同一家在 cc-switch 里好好的。
+     */
+    @Test
+    fun claude_base_url_strips_trailing_v1() {
+        assertEquals("https://one.oxapi.bond", normalizeBaseUrl("https://one.oxapi.bond/v1"))
+        assertEquals("https://one.oxapi.bond", normalizeBaseUrl("https://one.oxapi.bond/v1/"))
+        assertEquals("https://one.oxapi.bond", normalizeBaseUrl("  https://one.oxapi.bond/V1  "))
+        // 中间的 /v1 是路径的一部分，不能动
+        assertEquals("https://host.example/v1/gateway", normalizeBaseUrl("https://host.example/v1/gateway"))
+        assertEquals("https://host.example/v1/gateway", normalizeBaseUrl("https://host.example/v1/gateway/v1"))
+    }
+
+    /** Codex / OpenAI 正好相反：官方地址本身以 /v1 结尾，剥掉就对不上了 */
+    @Test
+    fun codex_base_url_keeps_trailing_v1() {
+        assertEquals("https://api.openai.com/v1", normalizeCodexBaseUrl("https://api.openai.com/v1"))
+        assertEquals("https://api.openai.com/v1", normalizeCodexBaseUrl("https://api.openai.com/v1/"))
+        assertEquals("https://aierxin.cc/v1", normalizeCodexBaseUrl("  https://aierxin.cc/v1/  "))
+        assertEquals("https://api.openai.com/v1", normalizeCodexBaseUrl("   "))
+    }
+
+    @Test
+    fun join_claude_api_never_doubles_v1() {
+        assertEquals(
+            "https://one.oxapi.bond/v1/models",
+            joinClaudeApi("https://one.oxapi.bond/v1", "/v1/models"),
+        )
+        assertEquals(
+            "https://one.oxapi.bond/v1/models",
+            joinClaudeApi("https://one.oxapi.bond", "/v1/models"),
+        )
+        assertEquals(
+            "https://one.oxapi.bond/v1/chat/completions",
+            joinClaudeApi("https://one.oxapi.bond/v1/", "v1/chat/completions"),
+        )
+    }
+
+    @Test
+    fun join_openai_api_accepts_base_with_or_without_v1() {
+        assertEquals(
+            "https://aierxin.cc/v1/chat/completions",
+            joinOpenAiApi("https://aierxin.cc/v1", "/chat/completions"),
+        )
+        assertEquals(
+            "https://aierxin.cc/v1/chat/completions",
+            joinOpenAiApi("https://aierxin.cc", "/chat/completions"),
+        )
+        assertEquals(
+            "https://api.openai.com/v1/responses",
+            joinOpenAiApi("https://api.openai.com/v1/", "responses"),
+        )
+    }
+
     // -----------------------------------------------------------------------
     // 「密文打不开」和「没配过」是两回事
     //

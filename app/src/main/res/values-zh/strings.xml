@@ -635,6 +635,7 @@
   <string name="providers_json">JSON</string>
   <string name="providers_label">备注名</string>
   <string name="providers_label_hint">可不填，空着就显示地址的主机名</string>
+  <string name="providers_base_url_hint">末尾的 /v1 会自动去掉——和 cc-switch 一样。Claude Code 自己会拼 /v1/messages。</string>
   <string name="providers_env">自定义环境变量</string>
   <string name="providers_env_add">加一个变量</string>
   <string name="providers_env_key">名字</string>

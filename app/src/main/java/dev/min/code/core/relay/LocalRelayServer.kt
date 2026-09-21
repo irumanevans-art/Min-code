@@ -1,6 +1,9 @@
 package dev.min.code.core.relay
 
 import android.util.Log
+import dev.min.code.core.settings.joinClaudeApi
+import dev.min.code.core.settings.joinOpenAiApi
+import dev.min.code.core.settings.normalizeBaseUrl
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import java.io.BufferedInputStream
@@ -180,15 +183,16 @@ class LocalRelayServer(
 
         if (!upstream.toChatCompletions) {
             // 方言是原生的却走了路由？不该发生，原样转发一次兜底
-            forwardRaw(req, upstreamUrl(upstream, rest.ifBlank { "/v1/messages" }), upstream, output)
+            forwardRaw(req, upstreamUrl(upstream, rest.ifBlank { "/v1/messages" }, claudeStyle = true), upstream, output)
             return
         }
 
         val openaiReq = AnthropicToOpenAI.convertRequest(anthropic, upstream.modelOverride)
+        // Claude 的 base 约定不带 /v1；用户抄 OpenAI 地址时常带着，joinClaudeApi 会剥掉
         val target = if (upstream.fullUrlEndpoint) {
-            upstream.baseUrl.trimEnd('/')
+            normalizeBaseUrl(upstream.baseUrl)
         } else {
-            upstream.baseUrl.trimEnd('/') + "/v1/chat/completions"
+            joinClaudeApi(upstream.baseUrl, "/v1/chat/completions")
         }
         val upstreamResp = postJson(target, openaiReq.toString().toByteArray(), upstream, stream)
         if (upstreamResp == null) {
@@ -243,10 +247,11 @@ class LocalRelayServer(
                 return
             }
             val chatReq = ResponsesBridge.toChatCompletions(responses)
+            // Codex base 常常已经以 /v1 结尾；joinOpenAiApi 不会再叠一层
             val target = if (upstream.fullUrlEndpoint) {
                 upstream.baseUrl.trimEnd('/')
             } else {
-                upstream.baseUrl.trimEnd('/') + "/v1/chat/completions"
+                joinOpenAiApi(upstream.baseUrl, "/chat/completions")
             }
             val stream = responses.bool("stream") == true
             val upstreamResp = postJson(target, chatReq.toString().toByteArray(), upstream, stream)
@@ -277,12 +282,27 @@ class LocalRelayServer(
             }
             return
         }
-        forwardRaw(req, upstreamUrl(upstream, rest), upstream, output)
+        forwardRaw(req, upstreamUrl(upstream, rest, claudeStyle = false), upstream, output)
     }
 
-    private fun upstreamUrl(upstream: Upstream, rest: String): String {
-        if (upstream.fullUrlEndpoint) return upstream.baseUrl.trimEnd('/')
-        return upstream.baseUrl.trimEnd('/') + rest
+    private fun upstreamUrl(upstream: Upstream, rest: String, claudeStyle: Boolean): String {
+        if (upstream.fullUrlEndpoint) {
+            return if (claudeStyle) normalizeBaseUrl(upstream.baseUrl) else upstream.baseUrl.trimEnd('/')
+        }
+        // Claude：base 不带 /v1，rest 通常是 /v1/messages —— 用 joinClaudeApi 防双写
+        // Codex：base 常带 /v1，rest 是 /responses 或 /v1/responses；后者要先剥掉多余的 /v1
+        if (claudeStyle) {
+            return joinClaudeApi(upstream.baseUrl, rest.ifBlank { "/v1/messages" })
+        }
+        val normalizedRest = rest.trimEnd('/').ifBlank { "/responses" }
+        val resource = when {
+            normalizedRest.equals("/v1", ignoreCase = true) -> "/responses"
+            normalizedRest.length >= 3 && normalizedRest.regionMatches(0, "/v1", 0, 3, ignoreCase = true) &&
+                (normalizedRest.length == 3 || normalizedRest[3] == '/') ->
+                normalizedRest.substring(3).ifBlank { "/responses" }
+            else -> normalizedRest
+        }
+        return joinOpenAiApi(upstream.baseUrl, resource)
     }
 
     private fun forwardRaw(req: Request, url: String, upstream: Upstream, output: OutputStream) {

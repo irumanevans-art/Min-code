@@ -638,6 +638,7 @@
   <string name="providers_json">JSON</string>
   <string name="providers_label">Label</string>
   <string name="providers_label_hint">Optional. Falls back to the host name.</string>
+  <string name="providers_base_url_hint">A trailing /v1 is stripped automatically — same as cc-switch. Claude Code appends /v1/messages itself.</string>
   <string name="providers_env">Custom environment variables</string>
   <string name="providers_env_add">Add a variable</string>
   <string name="providers_env_key">NAME</string>

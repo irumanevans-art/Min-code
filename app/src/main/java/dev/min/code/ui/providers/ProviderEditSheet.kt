@@ -157,6 +157,7 @@ fun ProviderEditSheet(
                     value = draft.baseUrl,
                     onValueChange = { draft = draft.copy(baseUrl = it) },
                     label = "ANTHROPIC_BASE_URL",
+                    placeholder = stringResource(R.string.providers_base_url_hint),
                     singleLine = true,
                     monospace = true,
                     modifier = Modifier.fillMaxWidth(),

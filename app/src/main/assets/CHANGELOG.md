@@ -2,6 +2,10 @@
 
 每次发版在最小位加 1（`1.0.x`），除非这次改动明确说要升次版本。
 
+## 2.1.4 — 2026-09-21
+
+- **粘贴 `https://…/v1` 不再测活失败**：OpenAI 兼容中转的地址常带着末尾 `/v1`，以前原样存进去，探活 / 取模型 / 会话目录都会拼成 `/v1/v1/models`——实测 404，而同一家在 cc-switch 里好好的。现在 Claude 侧入库、读出、拼路径都会剥掉末尾 `/v1`（中间路径里的不动）；Codex / OpenAI 侧相反，保留 `/v1`。机内路由拼上游地址也走同一套，不会再双写。
+
 ## 2.1.3 — 2026-09-21
 
 - **只提供 `/chat/completions` 的中转终于能用了**：以前选了 DeepSeek / GLM / Kimi / 千帆 / SiliconFlow 这类，Claude Code 直接去敲一个它听不懂的方言，会话起不来。现在供应商编辑页可以标明「接口方言」——Anthropic Messages（默认，直连）、OpenAI Chat、OpenAI Responses。后两种会在机内起一个只听 `127.0.0.1` 的路由，把请求转成上游听得懂的形状（流式、工具调用、usage 都转），再把响应折回 Anthropic 的事件序列。Codex 那边选了 `wire_api = chat` 的中转同理，Responses ↔ Chat Completions 双向转。

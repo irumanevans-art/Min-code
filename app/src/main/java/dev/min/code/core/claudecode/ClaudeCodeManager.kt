@@ -38,6 +38,7 @@ import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.isInsecureBaseUrl
+import dev.min.code.core.settings.joinClaudeApi
 import dev.min.code.core.settings.sanitizedProfileEnv
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.util.LocalUrls
@@ -2065,7 +2066,8 @@ class ClaudeCodeManager(
             if (isInsecureBaseUrl(baseUrl)) {
                 Log.w(TAG, "base url is plaintext http: credentials are sent in the clear")
             }
-            val url = "${baseUrl.trimEnd('/')}/v1/models?limit=1000"
+            // 剥掉 base 末尾的 /v1，避免用户从 OpenAI 兼容中转抄来的地址拼成 /v1/v1/models
+            val url = joinClaudeApi(baseUrl, "/v1/models") + "?limit=1000"
             // CLI 拿 ANTHROPIC_AUTH_TOKEN 发的是 Bearer；有的中转站只认 x-api-key，401 就换一种再试
             // 传输层在 RelayProbe.kt，和供应商页的「测活」共用：
             // 会话里问「你卖哪些模型」和供应商页问「你还活着吗」本来就是同一个请求
