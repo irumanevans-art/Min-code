@@ -1410,7 +1410,7 @@ private fun MoveSheet(
             .onSuccess { listed ->
                 // 任何一个被移动的文件夹都不能当落点，也不能落进它自己的子目录
                 folders = listed.filter { folder ->
-                    entries.none { it.path == folder.path || folder.path.startsWith("${'$'}{it.path}/") }
+                    entries.none { it.path == folder.path || folder.path.startsWith("${it.path}/") }
                 }
             }
             .onFailure { error = it.message ?: "打不开这个目录" }
@@ -1432,9 +1432,9 @@ private fun MoveSheet(
             )
             Text(
                 if (entries.size == 1) {
-                    "把「${'$'}{entries.first().name}」移到下面选中的文件夹。点进一层再确认。"
+                    "把「${entries.first().name}」移到下面选中的文件夹。点进一层再确认。"
                 } else {
-                    "把选中的 ${'$'}{entries.size} 项移到下面选中的文件夹。点进一层再确认。"
+                    "把选中的 ${entries.size} 项移到下面选中的文件夹。点进一层再确认。"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

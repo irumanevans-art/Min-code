@@ -1162,3 +1162,33 @@ runCatching {
 - Source: error_and_fix
 - Related Files: app/build.gradle.kts, app/src/main/java/dev/min/code/core/codex/CodexAppServerManager.kt
 - Tags: unit-test, android-util-log, not-mocked, runCatching, silent-failure
+
+---
+
+## [LRN-20260921-FORMATTED-FIELD-NOT-INPUT-SOURCE] correction
+
+**Logged**: 2026-09-21T18:50:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: ui/session
+
+### Summary
+当一个输入框的**显示文本是从数据模型格式化出来的**（`joinToString`、`KEY=VALUE` 拼行），就绝不能把解析结果当下一帧的输入源 —— 每敲一个键都走一遍「解析 → 回写 → 重新格式化」，键入的中间态会被当场吃掉。MCP 编辑页的 args / env / headers 三栏就这么废掉的：args 里敲空格立刻被 `split(' ')` 拆掉（永远拼不出第二个参数），env 里敲到一半的 `KEY=` 被 `parseKeyValueLines` 解析成空 map 又回显成空串（每个键都从零开始）。整段粘贴反而"能用"，因为只有一次解析。修法是各栏留一份本地草稿：键入只改草稿，失焦那一下才解析回写。
+
+### Details
+- 判定特征很好认：**只有整段粘贴进得去、手敲一个字都留不住**。这不是输入法的问题，是受控回写在跟你抢光标下的字符串。先看 `onValueChange` 里有没有 parse / format。
+- 失焦回写的写入点（`ClaudeCodeConfigSheet.kt` 的 `DraftTextField`）：`modifier.onFocusChanged { ... }` 里做 `wasFocused && !state.isFocused` 的**跳变判断**，不能只写 `if (!it.isFocused)` —— 后者在焦点进出子树的各种事件里都会响，会把一整串敲到一半的文本提前解析掉。
+- 焦点回调里读 state 要用委托/`MutableState` 现读（`onCommit(draft)`），不要用组合期捕获的局部副本：最后一次按键与失焦可能在同一帧里。
+- **鼠标/手指点按钮不会把焦点从输入框上挪走**。Compose 的 `Modifier.clickable` 给的是 `Focusability.SystemDefined` 的 FocusableNode（触摸模式下不抢焦点，只在键盘/DPAD 导航时给焦点圈），所以"点保存"根本不是一次失焦 —— 参考本仓库既有的做法：动作前显式 `focusManager.clearFocus()`（`ClaudeCodePage.kt` 的抽屉/预览/终端按钮都是这么写的）。
+- 由此带出第二个坑：`onSave` 这类回调闭包捕获的是**当次组合**传进来的 server，`clearFocus()` 触发的失焦回写要等重组才落进它。所以保存要挂到 `LaunchedEffect(saving, server)` 上晚一帧再走；若在同一个点击回调里 `clearFocus(); onSave()`，存的还是旧那份（表现为"改了参数点保存没生效"，比原 bug 更隐蔽）。
+- M3 的 `OutlinedTextField(value, onValueChange, modifier, ...)` 把 `modifier` 交给**内层 `BasicTextField`**（不是外框容器），所以 `InkTextField` 上传进来的 `Modifier.onFocusChanged` 观察的就是真正持有焦点的那个节点，能正常收到 `isFocused` 跳变（已核对 material3 源码）。
+
+### Suggested Action
+- 写「显示值由模型格式化而来」的输入框时，默认就是草稿模式：本地 state 显示原文、失焦才解析回写，外部值变化且无焦点时用 `LaunchedEffect` 对齐草稿。
+- 失焦才回写的表单，动作按钮（保存 / 切换类型）前先 `clearFocus()`，并把"落盘"推迟一帧，确保拿到回写后的模型。
+- 解析是有损的（丢行、吃空格），回写后按落下去的那份重新显示一次，让框里看到的正好是将要保存的内容。
+
+### Metadata
+- Source: user_feedback
+- Related Files: app/src/main/java/dev/min/code/ui/session/ClaudeCodeConfigSheet.kt, app/src/main/java/dev/min/code/ui/session/ClaudeCodePage.kt
+- Tags: compose, controlled-textfield, focus, onFocusChanged, deferred-commit, mcp

@@ -28,7 +28,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import dev.min.code.R
@@ -295,21 +298,19 @@ private fun McpEditor(
             monospace = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        InkTextField(
+        DraftTextField(
             // 参数按空格拆。带空格的单个参数确实表达不了，但 MCP 服务器的命令行
             // 几乎都是 `-y @scope/pkg` 这种形状；真需要引号的场景让用户去改 .claude.json
-            value = server.args.joinToString(" "),
-            onValueChange = { onChange(server.copy(args = it.split(' ').filter(String::isNotBlank))) },
+            external = server.args.joinToString(" "),
+            onCommit = { onChange(server.copy(args = it.split(' ').filter(String::isNotBlank))) },
             label = stringResource(R.string.config_mcp_args),
             placeholder = "-y @modelcontextprotocol/server-filesystem /workspace",
-            monospace = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        InkTextField(
-            value = server.env.entries.joinToString("\n") { "${it.key}=${it.value}" },
-            onValueChange = { onChange(server.copy(env = parseKeyValueLines(it))) },
+        DraftTextField(
+            external = server.env.entries.joinToString("\n") { "${it.key}=${it.value}" },
+            onCommit = { onChange(server.copy(env = parseKeyValueLines(it))) },
             label = stringResource(R.string.config_mcp_env),
-            monospace = true,
             minHeight = 80.dp,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -323,24 +324,88 @@ private fun McpEditor(
             monospace = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        InkTextField(
-            value = server.headers.entries.joinToString("\n") { "${it.key}=${it.value}" },
-            onValueChange = { onChange(server.copy(headers = parseKeyValueLines(it))) },
+        DraftTextField(
+            external = server.headers.entries.joinToString("\n") { "${it.key}=${it.value}" },
+            onCommit = { onChange(server.copy(headers = parseKeyValueLines(it))) },
             label = stringResource(R.string.config_mcp_headers),
-            monospace = true,
             minHeight = 80.dp,
             modifier = Modifier.fillMaxWidth(),
         )
     }
+    // 触摸点击按钮不会把焦点从输入框上挪走，所以「填完参数直接点保存」时，最后一次输入还留在
+    // 上面那几份草稿里。保存前先把焦点收掉，把失焦回写逼出来；回写是往 editing 里写 state，
+    // 要等重组才落进传进来的 server，而 onSave 拿的是当次组合的那份 —— 所以真正落盘挂在下面
+    // 这个 effect 上：晚一帧，拿到回写后的 server；没有草稿要冲时它也只是多走一帧。
+    val focusManager = LocalFocusManager.current
+    var saving by remember { mutableStateOf(false) }
+    LaunchedEffect(saving, server) {
+        if (saving) {
+            saving = false
+            onSave()
+        }
+    }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         InkTextButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.common_cancel)) }
         InkButton(
-            onClick = onSave,
+            onClick = {
+                focusManager.clearFocus()
+                saving = true
+            },
             enabled = server.name.isNotBlank() &&
                 (if (server.isRemote) server.url.isNotBlank() else server.command.isNotBlank()),
             modifier = Modifier.weight(1f),
         ) { Text(stringResource(R.string.common_save)) }
     }
+}
+
+/**
+ * 先落草稿、失焦才认账的一格文本。
+ *
+ * args / env / headers 显示的文本是从数据模型格式化出来的。把这份文本直接当输入源，每敲一个键
+ * 都会转一圈「解析 → 回写 → 重新格式化」：args 里的空格当场被 split 吃掉，永远拼不出第二个参数；
+ * env 里敲到一半的 `KEY=` 解析成空 map、又回显成空串，于是每个键都从零开始 —— 看起来就是键盘
+ * 坏了、只有整段粘贴才进得去。所以这三格各留一份本地草稿：键入只动草稿，[onCommit] 只在失焦
+ * 那一下调用。
+ *
+ * [external] 只在没焦点时用来把草稿拉齐 —— 切到另一台服务器、或自己刚回写完，显示都不该停在
+ * 陈旧的那份文本上。
+ */
+@Composable
+private fun DraftTextField(
+    external: String,
+    onCommit: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    placeholder: String? = null,
+    singleLine: Boolean = false,
+    minHeight: Dp = 0.dp,
+) {
+    var draft by remember { mutableStateOf(external) }
+    var focused by remember { mutableStateOf(false) }
+
+    // 外面换了值（切了另一台服务器、自己刚回写完）而这格没在打字，就把草稿对齐。
+    // 失焦也走这里：解析是「有损」的（没有 `=` 的行、多余的空格都会被吃掉），
+    // 回写后立刻按落下去的那份重新显示，框里看到的就正好是将要保存的内容。
+    LaunchedEffect(external, focused) {
+        if (!focused) draft = external
+    }
+
+    InkTextField(
+        value = draft,
+        // 只改草稿：不解析、不回写，空格和一串敲到一半的 `KEY=` 才能留在框里
+        onValueChange = { draft = it },
+        modifier = modifier.onFocusChanged { state ->
+            val wasFocused = focused
+            focused = state.isFocused
+            // 从有焦点变成没焦点的这一下，才是唯一的解析回写点
+            if (wasFocused && !state.isFocused) onCommit(draft)
+        },
+        label = label,
+        placeholder = placeholder,
+        singleLine = singleLine,
+        monospace = true,
+        minHeight = minHeight,
+    )
 }
 
 // ---------------------------------------------------------------------------

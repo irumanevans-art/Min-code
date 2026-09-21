@@ -76,7 +76,25 @@ fun ImagePreviewDialog(images: List<String>, onDismissRequest: () -> Unit) {
     // null 表示「还在解」—— 和「解不出来」分开，否则每次打开都先闪一下错误文案
     val decoded by produceState<Result<android.graphics.Bitmap>?>(initialValue = null, path) {
         value = withContext(Dispatchers.IO) {
-            runCatching { BitmapFactory.decodeFile(path) ?: error("decode returned null") }
+            runCatching {
+                // 先只读尺寸、不解像素：现代手机照片动辄四千万像素，直接整张解就是把预览的
+                // 用途拿去赌几十上百 MB 的临时内存，低端机很容易在这里 OOM
+                val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(path, boundsOptions)
+
+                // 长边压到 2048 对全屏预览足够了；从 1 起按 2 的幂逐档试，
+                // 一档能装下就停，避免为了保险多缩一档把图看糊
+                var sampleSize = 1
+                val longestSide = maxOf(boundsOptions.outWidth, boundsOptions.outHeight)
+                while (longestSide / sampleSize > 2048) sampleSize *= 2
+
+                // 第二趟才真正解像素；采样率带进去后，内存峰值按 sampleSize² 降下来
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = false
+                    inSampleSize = sampleSize
+                }
+                BitmapFactory.decodeFile(path, decodeOptions) ?: error("decode returned null")
+            }
         }
     }
     Dialog(onDismissRequest = onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
