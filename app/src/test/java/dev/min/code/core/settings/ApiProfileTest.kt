@@ -3,6 +3,7 @@ package dev.min.code.core.settings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -217,6 +218,74 @@ class ApiProfileTest {
         val masked = ApiProfile("a", "", "sk-123456789", "").maskedToken()
         assertEquals("••••••••••••", masked)
         assertFalse(masked.contains("sk"))
+    }
+
+    // -----------------------------------------------------------------------
+    // 老 JSON 读得回来
+    //
+    // 供应商切换那一批新字段（presetId / websiteUrl / env）全部加在 ApiProfile 上。
+    // 这一组是整个改动的地基：解不回老表 = 用户升级一次配置全没了，比任何功能都严重。
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun profiles_written_before_the_provider_fields_existed_decode_with_defaults() {
+        val legacy = """[{"id":"a","label":"主力","token":"sk-a","baseUrl":"https://a.example"}]"""
+        val profile = decodeProfilesJson(legacy).single()
+
+        assertEquals("sk-a", profile.token)
+        assertEquals("", profile.presetId)
+        assertEquals("", profile.websiteUrl)
+        assertEquals(emptyMap<String, String>(), profile.env)
+    }
+
+    @Test
+    fun provider_fields_survive_a_round_trip() {
+        val list = listOf(
+            ApiProfile(
+                id = "a",
+                label = "Kimi",
+                token = "sk-a",
+                baseUrl = "https://api.moonshot.cn/anthropic",
+                presetId = "kimi",
+                websiteUrl = "https://platform.moonshot.cn",
+                env = mapOf("ANTHROPIC_SMALL_FAST_MODEL" to "kimi-k2-turbo-preview"),
+            ),
+        )
+        assertEquals(list, decodeProfilesJson(encodeProfilesJson(list)))
+    }
+
+    @Test
+    fun a_missing_token_is_a_state_not_a_crash() {
+        // 导入一份 redacted 的备份之后就是这样：地址和 env 都在，只差一个 key。
+        // 界面靠它把条目标出来，而不是让用户切过去之后撞上「未配置 token」
+        assertTrue(ApiProfile("a", "Kimi", "", "https://a.example").missingToken)
+        assertFalse(ApiProfile("a", "Kimi", "sk-a", "https://a.example").missingToken)
+    }
+
+    // -----------------------------------------------------------------------
+    // 排序
+    //
+    // 拖拽重排每动一格就写一次盘，所以「没动」必须原样返回同一张表，
+    // 否则一次拖动会变成十几次无意义的落盘。
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun moving_an_item_swaps_it_with_its_neighbour() {
+        val list = listOf(profile("a"), profile("b"), profile("c"))
+        assertEquals(listOf("b", "a", "c"), moveInList(list, -1) { it.id == "b" }.map { it.id })
+        assertEquals(listOf("a", "c", "b"), moveInList(list, +1) { it.id == "b" }.map { it.id })
+    }
+
+    @Test
+    fun moving_past_either_end_changes_nothing() {
+        val list = listOf(profile("a"), profile("b"))
+        assertSame(list, moveInList(list, -1) { it.id == "a" })
+        assertSame(list, moveInList(list, +1) { it.id == "b" })
+        // 单条、挪 0 格、找不到 —— 三种都不该产生一张新表
+        assertSame(list, moveInList(list, 0) { it.id == "a" })
+        assertSame(list, moveInList(list, +1) { it.id == "gone" })
+        val single = listOf(profile("a"))
+        assertSame(single, moveInList(single, +1) { true })
     }
 
     // -----------------------------------------------------------------------

@@ -14,10 +14,14 @@ import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.service.ClaudeCodeSessionSupervisor
 import dev.min.code.core.service.LocalServiceRegistry
+import dev.min.code.core.settings.ProviderBackup
+import dev.min.code.core.settings.ProviderPresetSource
+import dev.min.code.core.settings.ProviderSync
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.ui.files.WorkspaceDetailVM
 import dev.min.code.ui.codex.CodexVM
 import dev.min.code.ui.session.ClaudeCodeVM
+import dev.min.code.ui.providers.ProvidersVM
 import dev.min.code.ui.settings.SettingsVM
 import dev.min.code.ui.setup.SetupVM
 import dev.min.code.ui.terminal.WorkspaceTerminalSessionManager
@@ -65,6 +69,7 @@ val appModule = module {
             context = context,
             workspaceRepository = get(),
             networkProbe = get(),
+            settingsStore = get(),
             proot = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
         )
     }
@@ -72,6 +77,12 @@ val appModule = module {
     single { ClaudeCodeInstaller(get(), get()) }
     // Rootfs 里那几个配置文件的读写层：/mcp、/agents、/memory、/config、/permissions
     single { ClaudeCodeConfigStore(get(), get()) }
+    // 托管第一次动 settings.json 之前留的底。只在私有目录里，不进 SAF、不进导出文件
+    single { ProviderBackup(File(get<android.content.Context>().filesDir, "provider-backups")) }
+    // 供应商配置往 Rootfs 文件上的单向投影。事实来源始终是 DataStore，见类注释
+    single { ProviderSync(get(), get(), get()) }
+    // 预设表（assets 里那份）解析一次缓存住
+    single { ProviderPresetSource(get()) }
     // 输入框草稿：按会话落盘，杀进程再进还在。必须是 single，VM 和注册表切会话都读同一份
     single { ComposerDraftStore(get<android.content.Context>()) }
     // 置顶 / 分类 / 人手改过的标题。CLI transcript 里没有这些
@@ -112,7 +123,7 @@ val appModule = module {
         )
     }
 
-    single { WorkspaceTerminalSessionManager(get(), get()) }
+    single { WorkspaceTerminalSessionManager(get(), get(), get()) }
 
     viewModelOf(::ClaudeCodeVM)
     viewModel {
@@ -128,5 +139,6 @@ val appModule = module {
     }
     viewModelOf(::SetupVM)
     viewModelOf(::SettingsVM)
+    viewModelOf(::ProvidersVM)
     viewModel { WorkspaceDetailVM(id = it.get<String>(), repository = get(), terminalSessionManager = get()) }
 }

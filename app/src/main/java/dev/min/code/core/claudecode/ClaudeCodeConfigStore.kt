@@ -105,6 +105,27 @@ class ClaudeCodeConfigStore(
         }
 
     /**
+     * settings.json 的原文，**不解析**。只给备份用（见 `ProviderBackup`）——
+     * 留底要留的正是「我们没看懂的那份」，解析一道再写出来就已经不是原件了。
+     * 文件不在（还没装 Rootfs、CLI 还没写过）返回 null。
+     */
+    internal suspend fun readSettingsText(): String? = withContext(Dispatchers.IO) {
+        settingsFile()?.takeIf { it.isFile }?.let { runCatching { it.readText() }.getOrNull() }
+    }
+
+    /**
+     * 整份覆盖 settings.json。**只给「从备份恢复」用**，日常写入一律走 [updateSettings]。
+     *
+     * 写之前先确认它能解析成一个 JSON 对象：恢复的目标常常就是一份坏掉的文件，
+     * 但把另一份坏的盖上去毫无意义，只会让 CLI 下次起不来。
+     */
+    internal suspend fun writeSettingsText(text: String): Boolean = withContext(Dispatchers.IO) {
+        val parsed = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrNull()
+            ?: return@withContext false
+        writeJson(settingsFile() ?: return@withContext false, parsed)
+    }
+
+    /**
      * settings.json 里的 `model`：CLI `/model` 面板按 Enter 存的就是这个键
      * （二进制里 `Jt("userSettings", {model})`），新会话、终端页里直接跑的 `claude`
      * 都从它取默认。传 null 表示删掉这个键 —— 对应面板里选回 "Default"。

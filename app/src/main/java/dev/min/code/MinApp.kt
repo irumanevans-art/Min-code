@@ -6,12 +6,14 @@ import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import dev.min.code.core.crash.CrashRecorder
 import dev.min.code.core.service.LocalServiceRegistry
+import dev.min.code.core.settings.ProviderSync
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.di.appModule
 import dev.min.code.ui.theme.GpuWarmup
 import dev.min.code.ui.theme.SeaPlate
+import dev.min.code.ui.theme.Skins
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -75,14 +77,24 @@ class MinApp : Application() {
             runCatching { getKoin().get<LocalServiceRegistry>().reconcile() }
                 .onFailure { Log.w(TAG, "local service reconcile failed", it) }
         }
-        // 海纹理 ~1.7MB + BitmapShader 管线：别等用户第一次点发送/海窗时在主线程冷编译。
-        // 云（Codex 那边的底，~0.6MB）一并解掉：不预热的话进 Codex 页那一下要在
-        // 切换动画里同步 decode，正好卡在最显眼的地方
+        // 托管开着的话，把当前供应商重新投影到 Rootfs 的配置文件上 —— 那两个文件
+        // 上一次运行之后可能被 CLI 自己、或被用户手动改过。托管关着时这一步会早退，
+        // 一个字节都不写（见 ProviderSync.apply）
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            runCatching { getKoin().get<ProviderSync>().apply() }
+                .onFailure { Log.w(TAG, "provider sync failed", it) }
+        }
+        // 取底纹理 + BitmapShader 管线：别等用户第一次点发送 / 第一次开窗时在主线程冷编译。
+        //
+        // **只解当前风格那一张**。以前是无条件解海和云两张（≈10 MB 常驻），因为云是
+        // Codex 页专属、进那一页必然要用；现在三套风格都是全局的，任何时刻只有一张在用，
+        // 另外两张解出来就是白占内存。切风格时由 SeaPlate.evictExcept 放掉旧的那张。
         getKoin().get<AppScope>().launch(Dispatchers.IO) {
             runCatching {
-                SeaPlate.preload(this@MinApp)
-                SeaPlate.preload(this@MinApp, R.drawable.cloud_plate)
-                GpuWarmup.warm(this@MinApp)
+                val plate = Skins.of(getKoin().get<SettingsStore>().current().skin).plate
+                SeaPlate.preload(this@MinApp, plate)
+                SeaPlate.evictExcept(plate)
+                GpuWarmup.warm(this@MinApp, plate)
             }.onFailure { Log.w(TAG, "SeaPlate/GpuWarmup failed", it) }
         }
     }

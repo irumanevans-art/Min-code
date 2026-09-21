@@ -64,6 +64,8 @@ import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.SectionTitle
+import dev.min.code.ui.providers.ProviderQuickSheet
+import dev.min.code.ui.providers.rememberActiveProviderName
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.rememberAnimationsEnabled
@@ -78,6 +80,7 @@ import me.rerere.hugeicons.stroke.ComputerTerminal01
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete02
 import me.rerere.hugeicons.stroke.Edit02
+import me.rerere.hugeicons.stroke.Exchange01
 import me.rerere.hugeicons.stroke.Folder01
 import me.rerere.hugeicons.stroke.Globe
 import me.rerere.hugeicons.stroke.MoreHorizontal
@@ -120,9 +123,12 @@ fun ClaudeCodeSessionDrawer(
     onOpenRuntime: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenProviders: () -> Unit = {},
     onCopyTranscript: (() -> Unit)? = null,
 ) {
     var pendingDelete by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
+    var quickProvider by remember { mutableStateOf(false) }
+    val providerName = rememberActiveProviderName()
     var pendingRename by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
     var pendingCategory by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -252,6 +258,14 @@ fun ClaudeCodeSessionDrawer(
                 stringResource(R.string.codex_title),
                 onOpenCodex,
             )
+            // 换一家中转是最高频的一次性切换。埋在设置 → 供应商两层之后的话，
+            // 手上挂着好几家的人每次都要离开会话再退回来
+            ActionRow(
+                HugeIcons.Exchange01,
+                stringResource(R.string.providers_title),
+                onClick = { quickProvider = true },
+                detail = providerName,
+            )
             ActionRow(HugeIcons.Folder01, stringResource(R.string.session_drawer_files), onOpenFiles)
             ActionRow(HugeIcons.ComputerTerminal01, stringResource(R.string.session_terminal), onOpenTerminal)
             ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
@@ -274,6 +288,16 @@ fun ClaudeCodeSessionDrawer(
             drawerContentColor = scheme.onSurface,
             drawerShape = RoundedCornerShape(topEnd = 14.dp, bottomEnd = 14.dp),
             content = { body() },
+        )
+    }
+
+    if (quickProvider) {
+        ProviderQuickSheet(
+            onDismiss = { quickProvider = false },
+            onManage = {
+                quickProvider = false
+                onOpenProviders()
+            },
         )
     }
 
@@ -360,7 +384,13 @@ private fun SessionListSearchBar(
 }
 
 @Composable
-private fun ActionRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun ActionRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    /** 右端那一行小字。给「供应商 · 当前是谁」这种「进去之前就想知道」的入口用 */
+    detail: String? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -371,6 +401,17 @@ private fun ActionRow(icon: ImageVector, label: String, onClick: () -> Unit) {
     ) {
         Icon(icon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+        if (!detail.isNullOrBlank()) {
+            Text(
+                detail,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = JetbrainsMono,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+        }
     }
 }
 

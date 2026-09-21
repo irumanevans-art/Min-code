@@ -73,6 +73,7 @@ import dev.min.code.ui.components.InkTopBar
 import dev.min.code.ui.files.WorkspaceDetailVM
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.LocalSkin
 import dev.min.code.ui.theme.MinTheme
 import dev.min.code.ui.theme.pressScale
 import dev.min.code.ui.theme.sea
@@ -102,8 +103,9 @@ fun WorkspaceTerminalPage(id: String) {
         root?.let { sessionManager.ensureSession(it) }
     }
 
-    // 终端永远是夜形态：浅底上的 ANSI 配色不可读，而且终端就该长这样
-    MinTheme(mode = ThemeMode.DARK) {
+    // 终端永远是夜形态：浅底上的 ANSI 配色不可读，而且终端就该长这样。
+    // 但**风格照旧跟着全局走** —— 强制的只有昼夜这一维，不是整套配色
+    MinTheme(mode = ThemeMode.DARK, style = LocalSkin.current.style) {
         Scaffold(
             topBar = {
                 InkTopBar(

@@ -56,6 +56,10 @@
   <string name="settings_theme_light">Light</string>
   <string name="settings_theme_dark">Dark</string>
   <string name="settings_theme_system">System</string>
+  <!-- 三张取底。名字就是那张纹理本身，不叫「蓝 / 灰 / 橙」——界面上那些颜色是从图上镂出来的，不是色值 -->
+  <string name="settings_skin_sea">Sea</string>
+  <string name="settings_skin_cloud">Cloud</string>
+  <string name="settings_skin_anthropic">Anthropic</string>
   <string name="settings_language_system">System</string>
   <string name="settings_language_zh">中文</string>
   <string name="settings_language_en">English</string>
@@ -588,4 +592,107 @@
   <string name="vm_draft_conflict">The composer was empty when you left, so the draft carried over to this session — but this one already has unsent text and attachments of its own. Open an empty session, or clear the draft here.</string>
   <string name="vm_max_sessions">At most %1$d sessions run at once (each is its own Node process, holding hundreds of MB). Stop one from the session list first.</string>
   <string name="vm_invalid_name">Invalid name</string>
+
+  <!-- ===== 供应商（CC Switch） ===== -->
+  <string name="providers_title">Providers</string>
+  <string name="providers_tab_claude">Claude Code</string>
+  <string name="providers_tab_codex">Codex</string>
+  <string name="providers_section_all">All providers</string>
+  <string name="providers_active">In use</string>
+  <string name="providers_empty">No providers yet. Add one from a preset, or enter an endpoint by hand.</string>
+  <string name="providers_add_preset">From a preset</string>
+  <string name="providers_add_manual">By hand</string>
+  <string name="providers_edit">Edit provider</string>
+  <string name="providers_new">New provider</string>
+  <string name="providers_missing_token">API key needed</string>
+  <string name="providers_reorder_hint">Long-press a row to reorder.</string>
+  <string name="providers_open_website">Get a key</string>
+  <!-- 探活。只报告，不阻断：不少中转站压根没实现 /v1/models -->
+  <string name="providers_probe">Test</string>
+  <string name="providers_probe_running">Testing…</string>
+  <string name="providers_probe_ok">Reachable</string>
+  <string name="providers_probe_ok_models">Reachable · %1$d models</string>
+  <string name="providers_probe_unauthorized">Key rejected</string>
+  <string name="providers_probe_unreachable">Cannot reach: %1$s</string>
+  <string name="providers_probe_no_token">Fill in a key first</string>
+  <!-- 会话角标：env 在进程启动时固化，切换对正跑着的会话天然无效 -->
+  <string name="providers_stale_sessions">%1$d session(s) are busy and still on the previous provider.</string>
+  <string name="providers_stale_restart">Restart them</string>
+  <string name="providers_stale_dismiss">Leave them</string>
+  <string name="providers_terminal_note">Open terminal tabs keep the old provider. New tabs get the new one.</string>
+  <!-- 托管 -->
+  <string name="providers_section_guest">Rootfs config</string>
+  <string name="providers_manage_title">Write to rootfs config files</string>
+  <string name="providers_manage_subtitle">Mirrors the current provider into ~/.claude/settings.json and ~/.codex/config.toml. Sessions do not read these files (the CLI ignores their env block in headless mode) — this is for the claude you type in the terminal, your own scripts, and for looking at what is set. Only keys Min wrote are touched; yours are left alone.</string>
+  <string name="providers_secrets_title">Write the API key too</string>
+  <string name="providers_secrets_subtitle">Off: only the address and other variables are written; the key lives in process environments and never lands on the rootfs disk.</string>
+  <string name="providers_secrets_confirm_title">Write the key to disk?</string>
+  <string name="providers_secrets_confirm_body">The key will sit in plain text inside the private app directory, and will travel with Android app backups. The copy Min keeps stays encrypted either way.</string>
+  <string name="providers_shell_title">Terminal uses the current provider</string>
+  <string name="providers_shell_subtitle">Injects the key into terminal tabs and local services, so claude works there. Anything running in your shell can read it.</string>
+  <string name="providers_sync_failed">Could not sync to the rootfs config: %1$s. Sessions and the terminal are still using %2$s — only the files did not keep up.</string>
+  <string name="providers_guest_missing">Available once the runtime is installed.</string>
+  <string name="providers_codex_auth_note">Codex keys are never written to disk: its config file only points at an environment variable, so there is no equivalent switch here.</string>
+  <!-- 编辑面板 -->
+  <string name="providers_form">Form</string>
+  <string name="providers_json">JSON</string>
+  <string name="providers_label">Label</string>
+  <string name="providers_label_hint">Optional. Falls back to the host name.</string>
+  <string name="providers_env">Custom environment variables</string>
+  <string name="providers_env_add">Add a variable</string>
+  <string name="providers_env_key">NAME</string>
+  <string name="providers_env_value">value</string>
+  <string name="providers_json_hint">Only the env object is stored. Other top-level keys are ignored.</string>
+  <string name="providers_json_ignored">%1$d top-level key(s) ignored: %2$s</string>
+  <string name="providers_json_err_not_json">Not valid JSON.</string>
+  <string name="providers_json_err_not_object">The top level must be an object.</string>
+  <string name="providers_json_err_env">env must be an object.</string>
+  <string name="providers_json_err_value">%1$s must be a string.</string>
+  <!-- 预设 -->
+  <string name="providers_preset_title">Pick a provider</string>
+  <string name="providers_preset_search">Search</string>
+  <string name="providers_preset_none">No presets available.</string>
+  <string name="providers_preset_disclaimer">Listed for convenience. Being here is not an endorsement — check the provider yourself.</string>
+  <string name="providers_category_official">Official</string>
+  <string name="providers_category_cn_official">First-party (China)</string>
+  <string name="providers_category_aggregator">Aggregators</string>
+  <string name="providers_category_community">Community</string>
+  <string name="providers_category_self_host">Self-hosted</string>
+  <!-- Codex 连接 -->
+  <string name="providers_codex_wire_api">Protocol</string>
+  <string name="providers_codex_wire_hint">Pick chat when the relay only offers /chat/completions.</string>
+  <!-- 导入 / 导出 / 备份 -->
+  <string name="providers_transfer_title">Import / export</string>
+  <string name="providers_export_section">Export</string>
+  <string name="providers_export_hint">Labels, addresses and custom environment variables. API keys are left out by default.</string>
+  <string name="providers_export_secrets_title">Include API keys</string>
+  <string name="providers_export_secrets_subtitle">They land in the file as plain text.</string>
+  <string name="providers_export_secrets_confirm_title">Export keys in plain text?</string>
+  <string name="providers_export_secrets_confirm_body">The file will hold your keys in plain text. Any app that can read it — and any cloud folder it syncs into — can take them. The copy this app keeps is always encrypted; this one is not.</string>
+  <string name="providers_export_action">Export…</string>
+  <string name="providers_import_section">Import</string>
+  <string name="providers_import_hint">Entries are appended. Nothing existing is touched and the active provider stays as it is. An entry whose address and key both match is skipped.</string>
+  <string name="providers_import_file">From a file…</string>
+  <string name="providers_import_guest">From the rootfs config</string>
+  <string name="providers_import_guest_label">Rootfs config</string>
+  <string name="providers_transfer_exported">Exported.</string>
+  <string name="providers_transfer_exported_keys">Exported with plain-text keys. Keep that file somewhere safe.</string>
+  <string name="providers_transfer_imported">Added %1$d · skipped %2$d · renamed %3$d</string>
+  <string name="providers_transfer_failed_not_json">That file is not readable JSON. Nothing was imported.</string>
+  <string name="providers_transfer_failed_schema">Not a Min provider export. Nothing was imported.</string>
+  <string name="providers_transfer_failed_empty">That file has no providers in it.</string>
+  <string name="providers_transfer_failed_nothing">Nothing to import from the rootfs config.</string>
+  <string name="providers_transfer_failed_io">Could not read or write that file.</string>
+  <string name="providers_backup_title">Config backups</string>
+  <string name="providers_backup_subtitle">Taken before the first managed write to settings.json</string>
+  <string name="providers_backup_hint">Kept inside the app only. Never exported, never shared.</string>
+  <string name="providers_backup_empty">No backups yet.</string>
+  <string name="providers_backup_bytes">%1$d bytes</string>
+  <string name="providers_backup_restore">Restore</string>
+  <string name="providers_backup_restore_title">Restore this backup?</string>
+  <string name="providers_backup_restore_body">settings.json will be replaced with %1$s. Whatever is in it now is gone.</string>
+  <string name="providers_manage_action">Manage…</string>
+  <string name="providers_switch_action">Switch…</string>
+  <string name="providers_config_hint">Sessions pick this up when they start. Idle ones restart on their own.</string>
+  <string name="setup_pick_preset">Pick from presets</string>
 </resources>

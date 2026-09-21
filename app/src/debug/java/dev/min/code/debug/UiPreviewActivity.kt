@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.ui.components.BrandMark
 import dev.min.code.ui.components.InkBottomTabs
@@ -91,8 +92,6 @@ import dev.min.code.ui.theme.FormSwitchController
 import dev.min.code.ui.theme.FormSwitchHost
 import dev.min.code.ui.theme.LocalFormSwitch
 import dev.min.code.ui.theme.LocalTilt
-import dev.min.code.ui.theme.LocalSeaField
-import dev.min.code.ui.theme.rememberSeaField
 import dev.min.code.ui.theme.MinTheme
 import dev.min.code.ui.theme.rememberTilt
 import dev.min.code.ui.theme.sea
@@ -121,7 +120,12 @@ class UiPreviewActivity : ComponentActivity() {
         val chrome = intent.getBooleanExtra("min.preview.chrome", true)
         val runId = intent.getStringExtra("min.preview.run").orEmpty()
         val variant = intent.getStringExtra("min.preview.variant").orEmpty()
-        setContent { Preview(initialScene, dark, chrome, runId, variant) }
+        // 认不出的名字退回海，而不是崩 —— 这是给截图脚本用的入口，写错一个参数
+        // 不该让整个验收流程停在一个 IllegalArgumentException 上
+        val skin = intent.getStringExtra("min.preview.skin")
+            ?.let { name -> SkinStyle.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
+            ?: SkinStyle.SEA
+        setContent { Preview(initialScene, dark, skin, chrome, runId, variant) }
     }
 }
 
@@ -133,21 +137,28 @@ private enum class PreviewScene(val key: String, val label: String) {
 }
 
 @Composable
-private fun Preview(initialScene: PreviewScene, initialDark: Boolean, chrome: Boolean, runId: String, variant: String) {
+private fun Preview(
+    initialScene: PreviewScene,
+    initialDark: Boolean,
+    initialSkin: SkinStyle,
+    chrome: Boolean,
+    runId: String,
+    variant: String,
+) {
     var scene by rememberSaveable { mutableStateOf(initialScene) }
     var dark by rememberSaveable { mutableStateOf(initialDark) }
+    var skin by rememberSaveable { mutableStateOf(initialSkin) }
     var settingsOpen by rememberSaveable { mutableStateOf(initialScene == PreviewScene.Settings) }
     var session by remember { mutableStateOf(fixtureSession()) }
     var chineseDescriptions by remember { mutableStateOf(true) }
     val switch = remember { FormSwitchController() }
     val tilt = rememberTilt()
-    val seaField = rememberSeaField()
     val (toaster, toastState) = rememberInkToaster()
-    MinTheme(if (dark) ThemeMode.DARK else ThemeMode.LIGHT) {
+    // LocalSeaField 由 MinTheme 按风格提供，这里不再自己造一份
+    MinTheme(if (dark) ThemeMode.DARK else ThemeMode.LIGHT, skin) {
         CompositionLocalProvider(
             LocalFormSwitch provides switch,
             LocalTilt provides tilt,
-            LocalSeaField provides seaField,
             LocalToaster provides toaster,
         ) {
             FormSwitchHost(switch) {
@@ -168,11 +179,24 @@ private fun Preview(initialScene: PreviewScene, initialDark: Boolean, chrome: Bo
                             },
                             actions = {
                                 if (chrome) {
+                                    // 昼夜和风格两个分段。横向挤，所以各自收窄；
+                                    // 截图脚本走 extra 传参，这两个只给人眼来回比对用
                                     InkSegmented(
-                                        options = listOf("浅色", "深色"),
+                                        options = listOf("浅", "深"),
                                         selected = if (dark) 1 else 0,
-                                        onSelect = { index -> switch.switch(null, index == 1) { dark = index == 1 } },
-                                        modifier = Modifier.width(140.dp).padding(end = 8.dp),
+                                        onSelect = { index ->
+                                            switch.switch(null, index == 1, skin) { dark = index == 1 }
+                                        },
+                                        modifier = Modifier.width(96.dp).padding(end = 4.dp),
+                                    )
+                                    val skins = SkinStyle.entries
+                                    InkSegmented(
+                                        options = listOf("海", "云", "陶"),
+                                        selected = skins.indexOf(skin),
+                                        onSelect = { index ->
+                                            switch.switch(null, dark, skins[index]) { skin = skins[index] }
+                                        },
+                                        modifier = Modifier.width(132.dp).padding(end = 8.dp),
                                     )
                                 } else {
                                     InkIconButton(HugeIcons.Refresh01, "刷新状态", onClick = {})
@@ -235,11 +259,16 @@ private fun Preview(initialScene: PreviewScene, initialDark: Boolean, chrome: Bo
                 onSetCwd = { session = session.copy(cwd = it) },
                 onPickCommand = { settingsOpen = false },
             )
-            LaunchedEffect(scene, dark, runId) {
+            LaunchedEffect(scene, dark, skin, runId) {
                 // The capture script waits for this unique run marker before its animation settling delay.
+                // 风格也进 key 与 marker：换风格要换一张纹理，不重新等一次的话，
+                // 截图脚本会在旧底还没被新底顶掉的那一帧按下快门
                 withFrameNanos { }
                 withFrameNanos { }
-                Log.i("UiPreview", "READY $runId ${scene.key} ${if (dark) "dark" else "light"}")
+                Log.i(
+                    "UiPreview",
+                    "READY $runId ${scene.key} ${if (dark) "dark" else "light"} ${skin.name.lowercase()}",
+                )
             }
         }
     }

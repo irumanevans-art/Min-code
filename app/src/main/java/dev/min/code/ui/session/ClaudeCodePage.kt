@@ -342,6 +342,10 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 afterSidebarNav()
                 navController.navigate(Screen.Settings)
             },
+            onOpenProviders = {
+                afterSidebarNav()
+                navController.navigate(Screen.Providers)
+            },
             onOpenMaintenance = {
                 afterSidebarNav()
                 vm.loadEnvironment()

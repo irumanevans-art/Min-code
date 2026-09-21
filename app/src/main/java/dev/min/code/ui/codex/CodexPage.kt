@@ -54,11 +54,15 @@ import dev.min.code.core.codex.CodexEvent
 import dev.min.code.core.codex.CodexSessionSummary
 import dev.min.code.core.codex.CODEX_EFFORT_LEVELS
 import dev.min.code.core.session.SessionStatus
+import dev.min.code.core.settings.CODEX_WIRE_API_OPTIONS
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkChip
+import dev.min.code.ui.components.InkDivider
+import dev.min.code.ui.components.InkRadio
+import dev.min.code.ui.components.InkSegmented
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkMenuItem
 import dev.min.code.ui.components.InkSheet
@@ -78,7 +82,6 @@ import dev.min.code.ui.session.mentionTokenOf
 import dev.min.code.ui.session.replaceMentionToken
 import dev.min.code.ui.session.RenameDialog
 import dev.min.code.ui.session.SeaSendKey
-import dev.min.code.ui.theme.CloudTheme
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
@@ -108,14 +111,14 @@ import java.util.Locale
  * 会话外（安装 / 登录 / 启动）。以前是把配置表单、登录提示、审批卡、输入框
  * 全堆在一个 verticalScroll 里，输入框吊在最底下，一打字就被键盘顶掉。
  *
- * 整页罩在 [CloudTheme] 里：Claude 那边的取底是海，这边是云。两个引擎长得一样
- * 是对的——同一套组件、同一套折叠规则——但**在哪个引擎里**要一眼看得出来，
- * 而不是靠去读顶栏那行字。换底是整页的事，所以罩在最外面，
- * 连带底下的 sheet 和对话框一起。
+ * 这一页以前整个罩在一个 `CloudTheme` 里，好让「在哪个引擎里」一眼看得出来。
+ * 那张灰白的云现在是三套全局风格之一（`ui/theme/Skin.kt`），这一页也就跟着全局走了：
+ * 喜欢云的人在 Claude 页同样该能用它，而「两个引擎必须长得不一样」本来就不是
+ * 一条必要的规矩——顶栏那行字和侧栏的位置已经说清了你在哪儿。
  */
 @Composable
 fun CodexPage(vm: CodexVM = koinViewModel()) {
-    CloudTheme { CodexPageContent(vm) }
+    CodexPageContent(vm)
 }
 
 @Composable
@@ -123,6 +126,8 @@ private fun CodexPageContent(vm: CodexVM) {
     val runtime by vm.runtimeStatus.collectAsStateWithLifecycle()
     val session by vm.session.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
+    val codexProfiles by vm.profiles.collectAsStateWithLifecycle()
+    val navController = LocalNavController.current
     var showConnection by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
     var showTurnSettings by remember { mutableStateOf(false) }
@@ -237,9 +242,16 @@ private fun CodexPageContent(vm: CodexVM) {
     if (showConnection) {
         CodexConnectionSheet(
             profile = profile,
+            profiles = codexProfiles,
             onSave = {
                 vm.saveProfile(it)
                 showConnection = false
+            },
+            onActivate = vm::activateProfile,
+            onAdd = vm::addProfile,
+            onManage = {
+                showConnection = false
+                navController.navigate(Screen.Providers)
             },
             onDismiss = { showConnection = false },
         )
@@ -949,12 +961,23 @@ private fun CodexTurnSettingsSheet(
     }
 }
 
-/** 连接方式。从会话页挪进 sheet —— 它是设一次就不再看的东西，不该常驻在会话上方 */
+/**
+ * 连接方式。从会话页挪进 sheet —— 它是设一次就不再看的东西，不该常驻在会话上方。
+ *
+ * **列表在上、编辑在下**：存储层一直是一张表，可这一页以前只认 `id = "default"` 那一条，
+ * 于是「在两家中转之间来回切」在 Codex 这边根本做不到。上半部分是那张表（单选 + 新建），
+ * 下半部分永远编辑当前选中的那条。整表的增删改排序、预设与导入导出在供应商页，
+ * 这里只留一条「管理…」通过去。
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CodexConnectionSheet(
     profile: dev.min.code.core.settings.CodexProfile,
+    profiles: List<dev.min.code.core.settings.CodexProfile>,
     onSave: (dev.min.code.core.settings.CodexProfile) -> Unit,
+    onActivate: (String) -> Unit,
+    onAdd: () -> Unit,
+    onManage: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var apiKey by remember(profile.apiKey) { mutableStateOf(profile.apiKey) }
@@ -962,6 +985,7 @@ private fun CodexConnectionSheet(
     var mode by remember(profile.authMode) { mutableStateOf(profile.authMode) }
     var model by remember(profile.model) { mutableStateOf(profile.model) }
     var effort by remember(profile.effort) { mutableStateOf(profile.effort) }
+    var wireApi by remember(profile.wireApi) { mutableStateOf(profile.effectiveWireApi) }
 
     InkSheet(onDismissRequest = onDismiss) {
         Column(
@@ -976,6 +1000,36 @@ private fun CodexConnectionSheet(
                 stringResource(R.string.codex_connection),
                 style = MaterialTheme.typography.titleSmall,
             )
+            // 只有一条时这张表是多余的噪音 —— 那就是绝大多数人的状态
+            if (profiles.size > 1) {
+                profiles.forEach { entry ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onActivate(entry.id) }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        InkRadio(selected = entry.id == profile.id, onClick = { onActivate(entry.id) })
+                        Text(
+                            entry.displayName(),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            ) {
+                InkTextButton(onClick = onAdd) { Text(stringResource(R.string.providers_add_manual)) }
+                InkTextButton(onClick = onManage) { Text(stringResource(R.string.providers_manage_action)) }
+            }
+            InkDivider(brush = true)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -998,6 +1052,23 @@ private fun CodexConnectionSheet(
                         onValueChange = { baseUrl = it },
                         label = stringResource(R.string.codex_base_url),
                         singleLine = true,
+                    )
+                    // 以前这一档是写死的 responses。不少中转只提供 /chat/completions，
+                    // 对它们来说写死那一行等于这条配置永远连不上，而界面上完全看不出是为什么
+                    Text(
+                        stringResource(R.string.providers_codex_wire_api),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    InkSegmented(
+                        options = CODEX_WIRE_API_OPTIONS,
+                        selected = CODEX_WIRE_API_OPTIONS.indexOf(wireApi).coerceAtLeast(0),
+                        onSelect = { wireApi = CODEX_WIRE_API_OPTIONS[it] },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        stringResource(R.string.providers_codex_wire_hint),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -1043,6 +1114,7 @@ private fun CodexConnectionSheet(
                             authMode = mode,
                             model = model.trim(),
                             effort = effort.trim(),
+                            wireApi = wireApi,
                         ),
                     )
                 },

@@ -42,6 +42,11 @@ import java.io.File
  * @param cwd 开进哪个目录（guest 侧绝对路径，如 `/workspace/api`）。给会话开的终端用它落在
  *   那个会话自己的工作目录里。**必须先验证存在**：proot 的 `-w` 指到一个不存在的目录时
  *   shell 会莫名其妙地起在别处，不如当场退回 `/workspace`。
+ * @param credentials 当前供应商的环境变量（`shellCredentialEnv`）。空 = 不注入。
+ *
+ *   在这之前这里**一个凭据都没有**：同一个 App 里，会话页能用的 token，换到终端页敲
+ *   `claude` 就是「未配置」。Node 的 PATH 当初补上了、凭据却没有，于是终端里那个
+ *   `claude` 看着装好了、跑起来却连不上。
  */
 internal fun buildTerminalShellContext(
     root: String,
@@ -49,6 +54,7 @@ internal fun buildTerminalShellContext(
     linuxDir: File,
     tempDir: File,
     cwd: String? = null,
+    credentials: Map<String, String> = emptyMap(),
 ): WorkspaceShellContext {
     val workspaceDirGuest = WorkspaceManager.ROOTFS_WORKSPACE_DIR
     // guest `/workspace/x` 就是宿主 `files/x`（runner 拼的那条 bind mount），所以存在性直接在宿主侧问
@@ -68,7 +74,9 @@ internal fun buildTerminalShellContext(
         tempDir = tempDir,
         workingDir = filesDir,
         timeoutMillis = 0L, // 终端由用户关，不超时
-        env = ClaudeCodeInstaller.nodeEnv(),
+        // 凭据排在 PATH 之后：RESERVED_ENV_KEYS 已经把 PATH 挡在 credentials 之外，
+        // 这里的顺序只是让「谁是基础、谁是这次带进来的」一眼可读
+        env = ClaudeCodeInstaller.nodeEnv() + credentials,
         killOnExit = true,
         entry = ProotShellEntry.InteractiveShell,
     )
@@ -79,6 +87,7 @@ internal fun createWorkspaceTerminalSession(
     root: String,
     client: TerminalSessionClient,
     cwd: String? = null,
+    credentials: Map<String, String> = emptyMap(),
 ): TerminalSession {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
@@ -89,6 +98,7 @@ internal fun createWorkspaceTerminalSession(
         linuxDir = File(workspaceDir, "linux"),
         tempDir = File(workspaceDir, "tmp"),
         cwd = cwd,
+        credentials = credentials,
     )
 
     // TerminalSession 自己拼 argv[0]，所以第一项（proot 本身）要摘掉

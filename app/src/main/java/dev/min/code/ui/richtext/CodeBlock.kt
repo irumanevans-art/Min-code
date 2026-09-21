@@ -35,8 +35,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.min.code.ui.theme.InkCodeDark
-import dev.min.code.ui.theme.InkCodeLight
+import dev.min.code.ui.theme.LocalSkin
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.LocalDarkMode
@@ -70,7 +69,9 @@ fun HighlightCodeBlock(
     style: TextStyle? = TextStyle(fontSize = 12.sp, lineHeight = 17.sp),
 ) {
     val dark = LocalDarkMode.current
-    val palette = if (dark) InkCodeDark else InkCodeLight
+    // 高亮跟着风格走：海那套里关键字是海的深处、数字是石墨蓝，整块都是蓝的，
+    // 落在灰白的云或暖陶的纸上就成了另一套配色的残留
+    val palette = LocalSkin.current.code(dark)
     val context = LocalContext.current
     val lines = remember(code) { code.lines() }
     var expanded by remember(code) { mutableStateOf(lines.size <= COLLAPSE_LINES) }

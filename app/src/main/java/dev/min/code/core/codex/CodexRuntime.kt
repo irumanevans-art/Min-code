@@ -5,6 +5,7 @@ import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.core.settings.CodexProfile
 import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.sanitizedCodexEnv
 import android.util.Log
 import java.io.File
 import java.security.KeyStore
@@ -81,38 +82,27 @@ class CodexRuntime(
         launchProfile = profile
         ensureCaBundle(workspaceRepository.linuxDir())
         val config = File(workspaceRepository.linuxDir(), "root/.codex/config.toml")
-        when (profile?.authMode) {
-            // 两种带 key 的模式走同一条路：都写成一个**自定义 provider**，
-            // 区别只在 base_url。
-            //
-            // 官方 API 不能直接用内置的 `openai`：
-            // ① 写 `[model_providers.openai]` 会被判成覆盖内置项，整个配置被拒；
-            // ② 而内置 provider 压根不读 `OPENAI_API_KEY` 环境变量 —— 它只认
-            //    `~/.codex/auth.json`，所以光设环境变量的结果是请求根本不带
-            //    Authorization 头，OpenAI 回 "401 Missing bearer"。
-            // 官方给的办法是 `codex login --with-api-key` 把 key 写进 auth.json，
-            // 但那等于把密钥落到 guest 磁盘上。自定义 provider 的 `env_key` 才是
-            // 读环境变量的那条路，key 于是只活在进程环境里。
-            CodexAuthMode.RELAY, CodexAuthMode.OPENAI_API_KEY -> {
-                val base = when (profile.authMode) {
-                    CodexAuthMode.RELAY -> profile.baseUrl.trimEnd('/')
-                    else -> OPENAI_BASE_URL
-                }.replace("\\", "\\\\").replace("\"", "\\\"")
-                config.parentFile?.mkdirs()
-                config.writeText(
-                    "model_provider = \"$KEY_PROVIDER_ID\"\n\n" +
-                        "[model_providers.$KEY_PROVIDER_ID]\n" +
-                        "name = \"Min\"\n" +
-                        "base_url = \"$base\"\n" +
-                        "wire_api = \"responses\"\n" +
-                        "env_key = \"OPENAI_API_KEY\"\n",
-                )
-            }
-
-            // 官方登录自己管那份配置。留着上一次选的中转会让「官方登录」
-            // 偷偷走别人的地址。
-            CodexAuthMode.CLI, null -> config.delete()
+        // 渲染与「该不该有这个文件」的判断都在 CodexConfigToml 里，纯函数、可单测。
+        // null = 官方登录自己管那份配置，留着上一次选的中转会让它偷偷走别人的地址
+        val toml = renderCodexConfigToml(profile)
+        if (toml == null) {
+            config.delete()
+        } else {
+            config.parentFile?.mkdirs()
+            config.writeText(toml)
         }
+    }
+
+    /**
+     * 现成的 config.toml 原文，给「从 Rootfs 导入现有配置」用。文件不在就返回 null。
+     *
+     * 这是 `ProviderSync` 那条「从不反向读回」规矩的例外之一：一次显式的、用户点了
+     * 按钮的搬运，读完就变成普通条目，此后不再看这个文件。
+     */
+    suspend fun readConfigToml(): String? = withContext(Dispatchers.IO) {
+        File(workspaceRepository.linuxDir(), "root/.codex/config.toml")
+            .takeIf { it.isFile }
+            ?.let { runCatching { it.readText() }.getOrNull() }
     }
 
     suspend fun currentProfile(): CodexProfile? = settingsStore.current().activeCodexProfile
@@ -209,6 +199,9 @@ class CodexRuntime(
         // 指到上面导出的那份；两个变量都给，OpenSSL 系和 rustls 系各认一个
         put("SSL_CERT_FILE", CA_BUNDLE)
         put("SSL_CERT_DIR", CA_BUNDLE.substringBeforeLast('/'))
+        // 这条配置自己带的环境变量。放在专有键之前：底下那三个是事实来源自己的位置，
+        // 不许被 env 表覆盖（同 ClaudeCodeManager 那边的 RESERVED_ENV_KEYS）
+        if (profile != null) putAll(sanitizedCodexEnv(profile))
         if (!base.isNullOrBlank() && profile.authMode != CodexAuthMode.CLI) {
             put("OPENAI_BASE_URL", base)
             put("CODEX_API_KEY", key)
@@ -224,12 +217,7 @@ class CodexRuntime(
         /** guest 里那份根证书，见 [ensureCaBundle] */
         const val CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 
-        /**
-         * 带 key 的那两种模式在 config.toml 里用的 provider id。**不能叫 `openai`** ——
-         * 那是 Codex 的内置 id，用了会被判成覆盖内置项。带前缀的自定义名才安全。
-         */
-        const val KEY_PROVIDER_ID = "min_openai"
-
-        const val OPENAI_BASE_URL = "https://api.openai.com/v1"
+        /** 见 `CodexConfigToml.kt`：provider id 与官方地址都收在那儿，渲染和回读共用 */
+        const val OPENAI_BASE_URL = CODEX_OPENAI_BASE_URL
     }
 }

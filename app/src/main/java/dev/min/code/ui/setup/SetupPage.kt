@@ -55,6 +55,11 @@ import dev.min.code.ui.components.InkCheckbox
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkLineProgress
 import dev.min.code.ui.components.InkTextButton
+import dev.min.code.core.settings.ProviderPresetSource
+import dev.min.code.core.settings.ProviderPresets
+import dev.min.code.ui.providers.ProviderPresetSheet
+import dev.min.code.ui.providers.isChineseUi
+import org.koin.compose.koinInject
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.LoadingScreen
 import dev.min.code.ui.components.Notice
@@ -250,6 +255,15 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
     // 本机回环（localhost / 127.x / 模拟器的 10.0.2.2）走 http 不出设备，不该报警
     val insecure = isInsecureBaseUrl(baseUrl)
 
+    // 预设只用来**填这两个框**。向导刻意还是「一个 token 一个地址」——多配置、自定义
+    // 环境变量、托管这些是供应商页的事，堆进第一屏只会让人在装 CLI 之前就先被劝退。
+    // 代价是预设自带的 env 在这里带不过来，要的人进供应商页再补
+    val presetSource: ProviderPresetSource = koinInject()
+    var presets by remember { mutableStateOf(ProviderPresets.EMPTY) }
+    var presetPicker by remember { mutableStateOf(false) }
+    var tokenHint by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(Unit) { presets = presetSource.load() }
+
     SetupStep(
         step = 1,
         title = stringResource(R.string.setup_step_connection),
@@ -263,6 +277,12 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
             )
         },
     ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            InkTextButton(
+                onClick = { presetPicker = true },
+                enabled = !presets.isEmpty,
+            ) { Text(stringResource(R.string.setup_pick_preset)) }
+        }
         InkTextField(
             value = baseUrl,
             onValueChange = { baseUrl = it },
@@ -283,6 +303,8 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
             value = token,
             onValueChange = { token = it },
             label = "ANTHROPIC_AUTH_TOKEN",
+            // 预设给的是「这家的 key 长什么样」，是提示不是校验 —— 没有哪家的格式能拿来拦人
+            placeholder = tokenHint,
             singleLine = true,
             monospace = true,
             modifier = Modifier.fillMaxWidth(),
@@ -302,6 +324,19 @@ internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Un
             enabled = token.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) { Text(stringResource(R.string.setup_save_continue)) }
+    }
+
+    if (presetPicker) {
+        ProviderPresetSheet(
+            presets = presets,
+            zh = isChineseUi(),
+            onDismiss = { presetPicker = false },
+            onPick = { preset ->
+                presetPicker = false
+                baseUrl = preset.baseUrl
+                tokenHint = preset.tokenHint
+            },
+        )
     }
 }
 

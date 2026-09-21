@@ -54,13 +54,17 @@ import kotlin.math.sin
  * - [DrawScope.seaBrush]：自定义绘制里直接拿画笔。
  *
  * 窗口位置按元素在窗口里的真实坐标算（[onGloballyPositioned]），于是相邻两扇窗看到的是连续的海。
- * 少数展示性的地方可以指定看哪一块（[SeaWindow.Fixed]），例如加载页的品牌标要落在金脉上。
+ * 少数展示性的地方可以指定看哪一块（[SeaWindow.Fixed]）：首页那个巨大的字标要落在这张底
+ * 最好看的地方——海是金脉，云是那片破光，陶是丝络最密的一带。坐标按风格给（[Skin.heroWindow]），
+ * 写死一个的话，换了底它指到的只是随便一处。
  */
 object SeaPlate {
     /**
-     * 按资源 id 缓存。不止一张底：Claude 那边是海（`sea_plate`），
-     * Codex 那边是云（`cloud_plate`，见 [CloudPlate]）。两张都是整屏级的大位图，
-     * 解一次留着——切页面时重解会在切换动画里卡一帧。
+     * 按资源 id 缓存。三张底（海 / 云 / 陶，见 [Skins]）都是整屏级的大位图，
+     * 解一次留着——重解会在切换动画里卡一帧。
+     *
+     * 但**同一时刻只该留一张**：一张 1200×1130 的 ARGB_8888 解出来常驻约 5.4 MB，
+     * 而任何时刻只有当前风格那张在用。切风格时由 [evictExcept] 放掉旧的。
      */
     private val cached = HashMap<Int, ImageBitmap>()
 
@@ -86,6 +90,18 @@ object SeaPlate {
     /** 给 [GpuWarmup] 等非 Compose 路径读已预热的位图；未 preload 时为 null。 */
     fun cachedOrNull(res: Int = R.drawable.sea_plate): ImageBitmap? = synchronized(this) { cached[res] }
 
+    /**
+     * 放掉除 [keep] 以外的所有底。切风格之后调一次。
+     *
+     * 一张 1200×1130 的 ARGB_8888 解出来常驻约 5.4 MB。三套风格全留着就是十几 MB，
+     * 而任何时刻只有一张在用 —— 这里是「口袋里的 Claude Code」，那块内存本来就紧。
+     */
+    fun evictExcept(keep: Int) {
+        synchronized(this) {
+            cached.keys.filter { it != keep }.forEach { cached.remove(it) }
+        }
+    }
+
     @Composable
     fun bitmap(res: Int = LocalSeaPlate.current): ImageBitmap {
         val context = LocalContext.current
@@ -98,11 +114,12 @@ object SeaPlate {
 }
 
 /**
- * 这棵子树的底是哪一张。默认是海；Codex 那一支在根上换成云（[CloudTheme]）。
+ * 这棵子树的底是哪一张。由 [MinTheme] 按当前风格提供，默认是海。
  *
- * 「蓝色不是色值」这条规则换了底之后原样成立——[seaInk] / [seaFill] 做的还是同一个动作，
- * 只是镂空底下那张纹理不同。所以整套 Ink* 组件、会话流左边那条轨道、发送键里流动的窗，
- * 全部跟着这一个值走，没有一处要单独改。
+ * 「强调色不是色值」这条规则换了底之后原样成立——[seaInk] / [seaFill] / [rememberSeaPainter]
+ * 做的还是同一个动作，只是镂空底下那张纹理不同。所以整套 Ink* 组件、**会话流左边那条轨道**
+ * （连同它的螺旋与白沫）、发送键里流动的窗，全部跟着这一个值走，没有一处要单独改。
+ * 换纸不换刀。
  */
 val LocalSeaPlate = staticCompositionLocalOf { R.drawable.sea_plate }
 
@@ -145,14 +162,19 @@ private const val FLOW_DP = 9f
 private const val FLOW_PERIOD_MS = 7_000
 
 /**
+ * 海与陶都是横构图（1200×1130），1.3 倍就够，剩下的靠 MIRROR 平铺补，墨纹看不出对称。
+ * 云是竖构图且形态连贯得多，镜像接缝一眼能认出来，所以那边是 [CLOUD_WIDTH_FACTOR]。
+ */
+internal const val SEA_WIDTH_FACTOR = 1.3f
+
+/**
  * 在根上调用一次。纹理宽铺到屏宽的 [widthFactor] 倍、居中、起点略往上，之后不动。
  *
- * @param widthFactor 海是横构图（1200×1130），1.3 倍就够，剩下的靠 MIRROR 平铺补，
- *   墨纹看不出对称。云是竖构图（940×1137）且形态连贯得多，镜像接缝一眼能认出来，
- *   所以那边放到 2.2 倍——高度正好盖满一屏，根本不进平铺。
+ * @param widthFactor 见 [SEA_WIDTH_FACTOR]。按风格取（`Skin.plateWidthFactor`），
+ *   因为它是这张图的构图属性，不是一个可调的口味。
  */
 @Composable
-fun rememberSeaField(widthFactor: Float = 1.3f): SeaField {
+fun rememberSeaField(widthFactor: Float = SEA_WIDTH_FACTOR): SeaField {
     val field = remember { SeaField() }
     val bitmap = SeaPlate.bitmap()
     val density = LocalDensity.current

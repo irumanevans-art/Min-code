@@ -10,6 +10,8 @@ import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.shellCredentialEnv
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -78,6 +80,13 @@ class LocalServiceRegistry(
     private val context: Context,
     private val workspaceRepository: WorkspaceRepository,
     private val networkProbe: NetworkProbe,
+    /**
+     * 托管服务的进程环境里也要有当前供应商的凭据。
+     *
+     * 托管起来的常常就是一个自己写的脚本、一个 `npx` 起的东西 —— 它们和终端里手敲的
+     * 命令没有区别，凭那里有、这里没有，只会让人以为是服务本身的问题。
+     */
+    private val settingsStore: SettingsStore,
     private val proot: ProotShellRunner = ProotShellRunner(
         nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir),
     ),
@@ -276,6 +285,13 @@ class LocalServiceRegistry(
                 if (snap != null) putAll(GuestRuntimeDocs.envFrom(snap))
                 // 服务自己 apt install 时别卡 dpkg 交互
                 put("DEBIAN_FRONTEND", "noninteractive")
+                // 当前供应商的凭据，和终端页签同一套（开关关着时是空的）。
+                // 解不开 Keystore 时当没有：服务该起还是要起，只是里面没有 key
+                putAll(
+                    runCatching { shellCredentialEnv(settingsStore.current()) }
+                        .onFailure { Log.w(TAG, "读取供应商凭据失败，本地服务将没有 key", it) }
+                        .getOrDefault(emptyMap()),
+                )
             },
         )
 

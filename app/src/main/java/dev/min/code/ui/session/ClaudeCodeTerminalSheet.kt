@@ -40,6 +40,7 @@ import dev.min.code.ui.terminal.WorkspaceTerminalContent
 import dev.min.code.ui.terminal.WorkspaceTerminalSessionManager
 import dev.min.code.ui.terminal.WorkspaceTerminalTabsState
 import dev.min.code.ui.theme.JetbrainsMono
+import dev.min.code.ui.theme.LocalSkin
 import dev.min.code.ui.theme.MinTheme
 import dev.min.code.ui.theme.sea
 import kotlinx.coroutines.flow.flowOf
@@ -109,7 +110,7 @@ fun ClaudeCodeTerminalSheet(
 
     // 终端永远是夜形态：浅底上的 ANSI 配色不可读，而且终端就该长这样。
     // 包住整个 InkSheet 而不只是内容 —— 只包内容的话，纸色的容器会在黑底外围镶一圈白边。
-    MinTheme(mode = ThemeMode.DARK) {
+    MinTheme(mode = ThemeMode.DARK, style = LocalSkin.current.style) {
         InkSheet(
             onDismissRequest = onDismiss,
             // 终端要多少给多少，没有半展开那一档：半个终端读不了一行输出

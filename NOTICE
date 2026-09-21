@@ -27,7 +27,15 @@ Third-party code and assets
 * Cormorant Garamond (https://github.com/CatharsisFonts/Cormorant), SIL Open Font License 1.1
   - `tools/fonts/CormorantGaramond-Italic.ttf` (build-time only: launcher icon glyph paths via
     `tools/build_sea_assets.py`; not shipped inside the APK as a font resource)
-* Ubuntu base images are downloaded at runtime from cdimage.ubuntu.com (or a mirror);
+* cc-switch (https://github.com/farion1231/cc-switch), MIT
+  - `app/src/main/assets/provider_presets.json`: the provider endpoint table is derived from
+    cc-switch's `src/config/claudeProviderPresets.ts`. Data only — cc-switch is a Rust/Tauri
+    desktop app and none of its code is used here.
+  - Converted by `tools/import_ccswitch_presets.py`, which deliberately drops what is not a
+    technical fact: affiliate/UTM tracking parameters are stripped from every link, sponsor
+    flags (`primePartner` / `isPartner` / `partnerPromotionKey`) are discarded, and the upstream
+    file order — which is paid placement — is replaced by category then display name.
+    Listing a provider here is not an endorsement of it.
   Node.js from nodejs.org; @anthropic-ai/claude-code from registry.npmjs.org.
 
 Claude Code is a product of Anthropic, PBC. This project is not affiliated with, endorsed by,

@@ -4,7 +4,7 @@ Captures actual Compose screens from the debug-only UiPreviewActivity.
 .EXAMPLE
 pwsh -File tools/ui-preview.ps1 -Build -Install -Serial emulator-5554
 .EXAMPLE
-./tools/ui-preview.ps1 -Scene start,conversation,settings -Theme light,dark -Chrome
+./tools/ui-preview.ps1 -Scene start,conversation,settings -Theme light,dark -Skin sea,cloud,anthropic -Chrome
 .NOTES
 No provider credentials, Linux installation, or model sessions are required.
 Use -Chrome for interactive scene tabs and animated theme switching.
@@ -17,6 +17,9 @@ param(
     [string[]]$Scene = @('start', 'blank', 'loading', 'setup', 'controls', 'conversation', 'settings'),
     [ValidateSet('light', 'dark')]
     [string[]]$Theme = @('light', 'dark'),
+    # 三套取底。默认只跑海：三套 x 昼夜 x 七个场景 = 42 张，日常改一处 UI 不需要那么多
+    [ValidateSet('sea', 'cloud', 'anthropic')]
+    [string[]]$Skin = @('sea'),
     [string]$OutputDir,
     [string]$Adb,
     [switch]$Build,
@@ -89,6 +92,7 @@ if ($componentCheck -notmatch 'UiPreviewActivity') { throw 'Installed debug app 
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $captures = @()
+foreach ($style in $Skin) {
 foreach ($appearance in $Theme) {
     foreach ($screen in $Scene) {
         $runId = [Guid]::NewGuid().ToString('N')
@@ -96,6 +100,7 @@ foreach ($appearance in $Theme) {
             'shell', 'am', 'start', '-W', '-n', $component, '-f', '0x14000000',
             '--es', 'min.preview.scene', $screen,
             '--es', 'min.preview.theme', $appearance,
+            '--es', 'min.preview.skin', $style,
             '--es', 'min.preview.run', $runId,
             '--ez', 'min.preview.chrome', $Chrome.IsPresent.ToString().ToLowerInvariant()
         )
@@ -105,17 +110,18 @@ foreach ($appearance in $Theme) {
         $ready = $false
         do {
             $log = Invoke-Adb ($deviceArgs + @('logcat', '-d', '-t', '200', '-s', 'UiPreview:I', '*:S'))
-            $ready = $log.Contains("READY $runId $screen $appearance")
+            $ready = $log.Contains("READY $runId $screen $appearance $style")
             if (!$ready) { Start-Sleep -Milliseconds 200 }
         } while (!$ready -and [DateTime]::UtcNow -lt $deadline)
         if (!$ready) {
             $crash = Invoke-Adb ($deviceArgs + @('logcat', '-d', '-t', '100', '-s', 'AndroidRuntime:E', '*:S'))
-            throw "Preview did not render: $screen / $appearance`n$crash"
+            throw "Preview did not render: $screen / $appearance / $style`n$crash"
         }
         Start-Sleep -Milliseconds $SettleMs
         $focus = Invoke-Adb ($deviceArgs + @('shell', 'dumpsys', 'window', 'displays'))
-        if ($focus -notmatch 'mCurrentFocus=.*UiPreviewActivity') { throw "Preview lost focus before capture: $screen / $appearance" }
-        $fileName = "$screen-$appearance.png"
+        if ($focus -notmatch 'mCurrentFocus=.*UiPreviewActivity') { throw "Preview lost focus before capture: $screen / $appearance / $style" }
+        # 风格进文件名：三套并排看的时候，覆盖掉上一套的截图是最容易犯的错
+        $fileName = "$screen-$appearance-$style.png"
         $path = Join-Path $OutputDir $fileName
         $remote = "/sdcard/Download/min-ui-preview-$runId.png"
         try {
@@ -130,9 +136,10 @@ foreach ($appearance in $Theme) {
         }
         $width = [int]$bytes[16] * 16777216 + [int]$bytes[17] * 65536 + [int]$bytes[18] * 256 + [int]$bytes[19]
         $height = [int]$bytes[20] * 16777216 + [int]$bytes[21] * 65536 + [int]$bytes[22] * 256 + [int]$bytes[23]
-        $captures += [ordered]@{ scene = $screen; theme = $appearance; file = $fileName; width = $width; height = $height; bytes = $bytes.Length }
-        Write-Host "$screen / $appearance : $path ($width x $height)"
+        $captures += [ordered]@{ scene = $screen; theme = $appearance; skin = $style; file = $fileName; width = $width; height = $height; bytes = $bytes.Length }
+        Write-Host "$screen / $appearance / $style : $path ($width x $height)"
     }
+}
 }
 
 $manifest = [ordered]@{

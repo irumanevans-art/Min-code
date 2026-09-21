@@ -48,6 +48,10 @@ import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.theme.InkMotion
+import dev.min.code.ui.nav.LocalNavController
+import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.providers.ProviderQuickSheet
+import dev.min.code.ui.providers.rememberActiveProviderName
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
 import kotlinx.coroutines.launch
@@ -581,6 +585,52 @@ private fun MemorySection(vm: ClaudeCodeVM, onRunInit: () -> Unit) {
 // /config
 // ---------------------------------------------------------------------------
 
+/**
+ * 「现在连的是哪家」+ 一颗换。
+ *
+ * 会话进程的 env 是**启动时固化**的，所以这里换完和别处一样：空闲会话自动重起接上
+ * 上下文，正忙的打角标不动（见 `ProvidersVM.activate`）。这条规矩只在供应商页上写全，
+ * 这里不重复一遍——面板已经够长了。
+ */
+@Composable
+private fun ProviderSection() {
+    val navController = LocalNavController.current
+    val name = rememberActiveProviderName()
+    var quick by remember { mutableStateOf(false) }
+
+    SectionHeader(
+        stringResource(R.string.providers_title),
+        stringResource(R.string.providers_config_hint),
+    )
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            name.ifBlank { stringResource(R.string.providers_empty) },
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = JetbrainsMono,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        InkTextButton(onClick = { quick = true }) {
+            Text(stringResource(R.string.providers_switch_action))
+        }
+    }
+
+    if (quick) {
+        ProviderQuickSheet(
+            onDismiss = { quick = false },
+            onManage = {
+                quick = false
+                navController.navigate(Screen.Providers)
+            },
+        )
+    }
+}
+
 @Composable
 private fun ConfigSection(vm: ClaudeCodeVM) {
     val scope = rememberCoroutineScope()
@@ -599,6 +649,12 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
             ?.takeIf { it in ClaudeCodeManager.EFFORT_LEVELS }
         loaded = true
     }
+
+    // 供应商摆在 /config 的最前面：这一屏讲的就是 settings.json 与会话启动期的参数，
+    // 而「现在连的是哪家」是其中最要紧、也最常要改的一条。单开一个 LocalSlash 不值当 ——
+    // CLI 那边没有对应的斜杠命令，凭空造一个只会让人以为在真终端里也能敲
+    ProviderSection()
+    InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
     SectionHeader(stringResource(R.string.config_cli_title), stringResource(R.string.config_cli_hint))
     InkTextField(

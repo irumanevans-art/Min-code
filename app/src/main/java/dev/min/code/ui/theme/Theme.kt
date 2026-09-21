@@ -1,6 +1,7 @@
 package dev.min.code.ui.theme
 
 import android.app.Activity
+import android.graphics.drawable.ColorDrawable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CardColors
@@ -22,9 +23,11 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
 
 val LocalDarkMode = compositionLocalOf { false }
@@ -80,6 +83,11 @@ data class SeaPalette(
     /** 竹青：diff 的新增行 */
     val bamboo: Color,
     val dark: Boolean,
+    /**
+     * 海上的字。默认是「白色取色」那张图的纸白（带一点点青）——它和海、和云都合得来，
+     * 但陶土那套的纸是暖的 ivory，压一块冷白上去会显出一道青边。
+     */
+    val onSea: Color = Color(0xFFF8FDF7),
 ) {
     /** 海的水洗版：附件 chip、计划横幅、选中行这些不值得开一扇窗的地方 */
     val seaWash: Color get() = sea.copy(alpha = if (dark) 0.20f else 0.12f)
@@ -91,9 +99,6 @@ data class SeaPalette(
     /** 遮罩：sheet / 对话框后面那层 */
     val scrim: Color
         get() = if (dark) Color(0xFF03070D).copy(alpha = 0.56f) else Color(0xFF0E1A2B).copy(alpha = 0.36f)
-
-    /** 海上的字：永远是纸白 */
-    val onSea: Color get() = Color(0xFFF8FDF7)
 }
 
 /** 昼：白色取色的纸，蓝黑的墨 */
@@ -148,7 +153,7 @@ val LocalSea = staticCompositionLocalOf { LightSea }
 val MaterialTheme.sea: SeaPalette
     @Composable @ReadOnlyComposable get() = LocalSea.current
 
-private val LightColors: ColorScheme = with(LightSea) {
+internal val LightColors: ColorScheme = with(LightSea) {
     lightColorScheme(
         primary = seaDeep,
         onPrimary = paper,
@@ -188,7 +193,7 @@ private val LightColors: ColorScheme = with(LightSea) {
     )
 }
 
-private val DarkColors: ColorScheme = with(DarkSea) {
+internal val DarkColors: ColorScheme = with(DarkSea) {
     darkColorScheme(
         primary = sea,
         onPrimary = Color(0xFF06182C),
@@ -241,9 +246,13 @@ val MinShapes = Shapes(
     extraLarge = RoundedCornerShape(24.dp),
 )
 
+/**
+ * @param style 哪一张取底。三套的差别全在 [Skin] 里，这里一视同仁。
+ */
 @Composable
 fun MinTheme(
     mode: ThemeMode = ThemeMode.SYSTEM,
+    style: SkinStyle = SkinStyle.SEA,
     content: @Composable () -> Unit,
 ) {
     val dark = when (mode) {
@@ -251,29 +260,42 @@ fun MinTheme(
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
-    val colors = if (dark) DarkColors else LightColors
-    val palette = if (dark) DarkSea else LightSea
+    val skin = Skins.of(style)
+    val colors = skin.colors(dark)
+    val palette = skin.palette(dark)
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as? Activity)?.window ?: return@SideEffect
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !dark
             WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = !dark
+            // 窗口底跟着风格走。colors.xml 里那个 window_background 是静态资源，
+            // 换不了风格 —— 不改的话，深色下陶的纸（#1F1E1D）底下会露出海的夜蓝（#0B1524），
+            // 在页面切换和键盘收起的那几帧里看得很清楚
+            window.setBackgroundDrawable(ColorDrawable(palette.paper.toArgb()))
         }
     }
+    // 纹理要**先** provide 再 rememberSeaField：后者读 SeaPlate.bitmap()，
+    // 而 bitmap 的默认参数取的正是 LocalSeaPlate。两层 Provider 的顺序就是这个原因
     CompositionLocalProvider(
         LocalDarkMode provides dark,
+        LocalSkin provides skin,
         LocalSea provides palette,
-        // 页面根是 Box 不是 Surface，不设这个的话 Markdown / Text 默认走黑字，
-        // 深色模式正文就看不见。InkFrame 已经自己设过一份。
-        LocalContentColor provides colors.onSurface,
+        LocalSeaPlate provides skin.plate,
     ) {
-        MaterialTheme(
-            colorScheme = colors,
-            typography = MinTypography,
-            shapes = MinShapes,
-            content = content,
-        )
+        CompositionLocalProvider(
+            LocalSeaField provides rememberSeaField(skin.plateWidthFactor),
+            // 页面根是 Box 不是 Surface，不设这个的话 Markdown / Text 默认走黑字，
+            // 深色模式正文就看不见。InkFrame 已经自己设过一份。
+            LocalContentColor provides colors.onSurface,
+        ) {
+            MaterialTheme(
+                colorScheme = colors,
+                typography = MinTypography,
+                shapes = MinShapes,
+                content = content,
+            )
+        }
     }
 }
 

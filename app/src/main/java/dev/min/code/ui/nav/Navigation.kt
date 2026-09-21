@@ -28,6 +28,10 @@ sealed interface Screen : NavKey {
     @Serializable
     data object Settings : Screen
 
+    /** 供应商表。从设置页的「连接」区独立出来，那边只留一行入口 */
+    @Serializable
+    data object Providers : Screen
+
     @Serializable
     data object About : Screen
 }

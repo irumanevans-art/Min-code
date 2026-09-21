@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -38,9 +39,23 @@ private val KEY_ZH_DESCRIPTIONS = booleanPreferencesKey("zh_descriptions")
 private val KEY_OPEN_WITH = stringPreferencesKey("open_with_defaults")
 private val KEY_CODEX_PROFILES = stringPreferencesKey("codex_profiles")
 private val KEY_CODEX_ACTIVE = stringPreferencesKey("codex_active_profile")
+private val KEY_SKIN = stringPreferencesKey("skin")
+private val KEY_MANAGE_GUEST_CONFIG = booleanPreferencesKey("manage_guest_config")
+private val KEY_GUEST_CONFIG_SECRETS = booleanPreferencesKey("guest_config_secrets")
+private val KEY_INJECT_SHELL_CREDENTIALS = booleanPreferencesKey("inject_shell_credentials")
+/** 上一次由我们写进 settings.json 的那些 env 键。是记账，不是配置，见 [SettingsStore.setManagedEnvKeys] */
+private val KEY_MANAGED_ENV_KEYS = stringSetPreferencesKey("managed_env_keys")
 
 /** 主题：跟随系统 / 浅色 / 深色。默认跟随系统——没选过的人交给系统日夜 */
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
+
+/**
+ * 界面的取底风格。一套风格 = 一张纹理 + 一对调色板，见 `ui/theme/Skin.kt`。
+ *
+ * 默认是海：已经在用的人升级上来不该被换皮。[CLOUD] 以前是 Codex 页专属，
+ * 现在和另外两套一样是全局可选的。
+ */
+enum class SkinStyle { SEA, CLOUD, ANTHROPIC }
 
 /** 界面语言：跟随系统，或强制中 / 英 */
 enum class AppLanguage { SYSTEM, ZH, EN }
@@ -66,12 +81,35 @@ data class ApiProfile(
      * 人家本来就在用的地址，不能因为装了个新版本就被拦一道。
      */
     val insecureAck: Boolean = false,
+    /**
+     * 这条是从哪个预设建的（[ClaudePreset.id]）。空 = 手填或导入的。
+     *
+     * **只用于显示来源与「预设地址已变更」提示，绝不是活引用**：一旦应用预设，内容就
+     * 拷进本条，此后 App 升级换了预设表也不回头改它——用户很可能把地址改成了自己的反代，
+     * 被悄悄改回去是灾难。
+     */
+    val presetId: String = "",
+    /** 预设带来的官网，列表行上那个「去拿 key」。空 = 不显示 */
+    val websiteUrl: String = "",
+    /**
+     * 这条供应商额外要注入的环境变量（`ANTHROPIC_SMALL_FAST_MODEL`、`API_TIMEOUT_MS` 之类）。
+     *
+     * [RESERVED_ENV_KEYS] 里的键写在这里会被**忽略**而不是覆盖——它们各有专有字段，
+     * 两处都能写就一定会出现「界面显示 A、进程用 B」。
+     */
+    val env: Map<String, String> = emptyMap(),
 ) {
     /** 这条配置会把凭据明文送上路吗，见 [isInsecureBaseUrl] */
     val insecure: Boolean get() = isInsecureBaseUrl(baseUrl)
 
     /** 该不该为这条配置弹一次明文风险确认：不安全、且还没确认过 */
     val needsInsecureConfirm: Boolean get() = insecure && !insecureAck
+
+    /**
+     * 条目在、key 不在。导入一份 redacted 的备份之后就是这样：地址和自定义 env 都救回来了，
+     * 只差一个 key。界面要把它标出来，而不是让用户切过去之后才撞上「未配置 token」。
+     */
+    val missingToken: Boolean get() = token.isBlank()
 
     /** 列表里那一行的标题：有备注用备注，没有就用主机名，再不行才是「未命名」 */
     fun displayName(): String = label.ifBlank { baseUrl.substringAfter("://").substringBefore('/') }.ifBlank { "未命名" }
@@ -107,6 +145,31 @@ data class AppSettings(
     val openWithDefaults: Map<String, WorkspaceOpenMode> = emptyMap(),
     val codexProfiles: List<CodexProfile> = emptyList(),
     val activeCodexProfileId: String = "",
+    /** 界面取底风格。默认海：升级上来的人不该被换皮 */
+    val skin: SkinStyle = SkinStyle.SEA,
+    /**
+     * 把当前供应商同步进 Rootfs 里的 `.claude/settings.json` 与 `.codex/config.toml`。
+     *
+     * **默认关**：那两个文件 CLI 自己也在写，替用户托管是一个要他点头的决定。
+     * 关着不影响任何功能——会话与终端的凭据走的始终是进程环境变量，不是这两个文件。
+     */
+    val manageGuestConfig: Boolean = false,
+    /** 托管时把 token 也写进文件。默认关：写进去就等于让它躺在 Rootfs 的磁盘上 */
+    val guestConfigIncludesSecrets: Boolean = false,
+    /**
+     * 终端页签与本地服务的进程环境里注入当前供应商。
+     *
+     * **默认开**：不开的话，终端里敲 `claude` 根本没有 key——同一个 App 里会话能用的东西，
+     * 换个页签就不能用了。
+     */
+    val injectCredentialsIntoShells: Boolean = true,
+    /**
+     * 上一次由我们写进 settings.json 的那些 env 键。
+     *
+     * 记账用，不是给人看的配置：下一次同步只删 / 改这些键，用户自己或 CLI 写的一律不动。
+     * 见 `ProviderSync.applyManagedEnv`。
+     */
+    val managedEnvKeys: Set<String> = emptySet(),
     /**
      * 配置的密文还在，但 Keystore 解不开它（改过锁屏、换机恢复了备份之后会这样）。
      *
@@ -129,8 +192,15 @@ data class AppSettings(
 
     /** 当前生效的地址会不会把 token 明文送上网，见 [isInsecureBaseUrl] */
     val insecureBaseUrl: Boolean get() = isInsecureBaseUrl(baseUrl)
+
+    /**
+     * Codex 侧当前生效的那条。和 Claude 侧共用同一条「哪条生效」的规则
+     * （[resolveActiveIdBy]）——以前这里是自己写的一份 `firstOrNull ?: firstOrNull`，
+     * 单条配置时看不出差别，多配置一上来两边的兜底就会不一致。
+     */
     val activeCodexProfile: CodexProfile?
-        get() = codexProfiles.firstOrNull { it.id == activeCodexProfileId } ?: codexProfiles.firstOrNull()
+        get() = resolveActiveIdBy(codexProfiles, activeCodexProfileId) { it.id }
+            .let { id -> codexProfiles.firstOrNull { it.id == id } }
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.anthropic.com"
@@ -149,8 +219,32 @@ data class CodexProfile(
     val model: String = "",
     /** 思考强度，合法值见 [CODEX_EFFORT_LEVELS]。空 = 跟随默认 */
     val effort: String = "",
+    /**
+     * `[model_providers.*]` 的 `wire_api`。合法值见 [CODEX_WIRE_APIS]，非法值当 `responses`。
+     *
+     * 以前是写死的 `responses`，但不少中转只提供 `/chat/completions`——对它们来说
+     * 写死那一行等于这条配置永远连不上，而界面上完全看不出是为什么。
+     */
+    val wireApi: String = CODEX_WIRE_API_RESPONSES,
+    /** 同 [ApiProfile.presetId] */
+    val presetId: String = "",
+    val websiteUrl: String = "",
+    /** 同 [ApiProfile.env]：额外注入 codex 进程的环境变量 */
+    val env: Map<String, String> = emptyMap(),
+    /** 同 [ApiProfile.insecureAck]。只有 [isRelay] 时才有意义——另两种模式的地址不是用户填的 */
+    val insecureAck: Boolean = false,
 ) {
     val isRelay: Boolean get() = authMode == CodexAuthMode.RELAY
+
+    /** 这条中转会把 key 明文送上路吗。非中转模式恒为 false：地址不是用户填的 */
+    val insecure: Boolean get() = isRelay && isInsecureBaseUrl(baseUrl)
+    val needsInsecureConfirm: Boolean get() = insecure && !insecureAck
+    val missingKey: Boolean get() = authMode != CodexAuthMode.CLI && apiKey.isBlank()
+
+    /** 落进 config.toml 的那一档。非法值一律回落，不把 CLI 认不得的串写进去 */
+    val effectiveWireApi: String
+        get() = wireApi.takeIf { it in CODEX_WIRE_APIS } ?: CODEX_WIRE_API_RESPONSES
+
     fun displayName(): String = label.ifBlank { if (isRelay) baseUrl else "OpenAI / Codex" }
     fun maskedKey(): String = when {
         apiKey.isBlank() -> ""
@@ -158,6 +252,19 @@ data class CodexProfile(
         else -> apiKey.take(5) + "…" + apiKey.takeLast(4)
     }
 }
+
+const val CODEX_WIRE_API_RESPONSES = "responses"
+const val CODEX_WIRE_API_CHAT = "chat"
+
+/**
+ * `wire_api` 的两档，**按界面上该有的顺序**。`chat` 给只提供 `/chat/completions` 的中转。
+ *
+ * 分段选择器要按下标定位，而 Set 的迭代序不是界面该依赖的东西 —— 所以顺序在这里，
+ * [CODEX_WIRE_APIS] 只用来做合法性判断。
+ */
+val CODEX_WIRE_API_OPTIONS = listOf(CODEX_WIRE_API_RESPONSES, CODEX_WIRE_API_CHAT)
+
+val CODEX_WIRE_APIS = CODEX_WIRE_API_OPTIONS.toSet()
 
 enum class CodexAuthMode { CLI, OPENAI_API_KEY, RELAY }
 
@@ -183,6 +290,11 @@ class SettingsStore(private val context: Context) {
             openWithDefaults = parseOpenWithDefaults(p[KEY_OPEN_WITH].orEmpty()),
             codexProfiles = decodeCodexProfiles(p[KEY_CODEX_PROFILES]),
             activeCodexProfileId = p[KEY_CODEX_ACTIVE].orEmpty(),
+            skin = p[KEY_SKIN]?.let { runCatching { SkinStyle.valueOf(it) }.getOrNull() } ?: SkinStyle.SEA,
+            manageGuestConfig = p[KEY_MANAGE_GUEST_CONFIG] ?: false,
+            guestConfigIncludesSecrets = p[KEY_GUEST_CONFIG_SECRETS] ?: false,
+            injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
+            managedEnvKeys = p[KEY_MANAGED_ENV_KEYS].orEmpty(),
             credentialsUnreadable = credentialsUnreadable(p),
         )
     }
@@ -275,6 +387,47 @@ class SettingsStore(private val context: Context) {
         return profile.id
     }
 
+    /**
+     * 整条新增。给预设与导入用——它们要带上 [ApiProfile.env] / [ApiProfile.presetId]，
+     * 不是三个字符串能表达的。
+     *
+     * [activate] 为 false 时只入表不切过去：导入是「加东西」，不是「换配置」。
+     */
+    suspend fun addProfile(profile: ApiProfile, activate: Boolean = true): String {
+        val entry = profile.copy(id = newProfileId(), baseUrl = normalizeBaseUrl(profile.baseUrl))
+        editProfiles { list, active -> (list + entry) to (if (activate) entry.id else active) }
+        return entry.id
+    }
+
+    /**
+     * 整条覆盖，id 不变、位置不变。给编辑面板（表单与 JSON 两种形态都走它）用。
+     *
+     * 位置不变这件事是专门保的：`filterNot + 追加` 的写法会让「改个备注名」把这条挪到
+     * 列表最后一行，用户排好的顺序每编辑一次乱一次。
+     */
+    suspend fun replaceProfile(profile: ApiProfile) = editProfiles { list, active ->
+        list.map {
+            if (it.id != profile.id) it else profile.copy(baseUrl = normalizeBaseUrl(profile.baseUrl))
+        } to active
+    }
+
+    /** 在表里挪一格。[delta] 为 -1 上移 / +1 下移；越界、找不到都原样返回 */
+    suspend fun moveProfile(id: String, delta: Int) = editProfiles { list, active ->
+        moveInList(list, delta) { it.id == id } to active
+    }
+
+    /**
+     * 按给定的 id 顺序重排整张表。拖拽松手时写一次。
+     *
+     * [order] 里没提到的条目**留在末尾**而不是被删掉：界面拿到的那份快照和此刻盘上的
+     * 可能差一条（另一处刚加了一条、或者刚导入完），照 order 整表覆盖的话那一条就没了。
+     * 排序是排序，不是删除。
+     */
+    suspend fun reorderProfiles(order: List<String>) = editProfiles { list, active ->
+        val rank = order.withIndex().associate { (i, id) -> id to i }
+        list.sortedBy { rank[it.id] ?: Int.MAX_VALUE } to active
+    }
+
     suspend fun updateProfile(
         id: String,
         label: String,
@@ -333,6 +486,26 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setUseNpmMirror(enabled: Boolean) = context.dataStore.edit { it[KEY_NPM_MIRROR] = enabled }
     suspend fun setThemeMode(mode: ThemeMode) = context.dataStore.edit { it[KEY_THEME] = mode.name }
+    suspend fun setSkin(style: SkinStyle) = context.dataStore.edit { it[KEY_SKIN] = style.name }
+
+    suspend fun setManageGuestConfig(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_MANAGE_GUEST_CONFIG] = enabled }
+
+    suspend fun setGuestConfigIncludesSecrets(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_GUEST_CONFIG_SECRETS] = enabled }
+
+    suspend fun setInjectCredentialsIntoShells(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_INJECT_SHELL_CREDENTIALS] = enabled }
+
+    /**
+     * 记下这一次真正写进 settings.json 的托管键。**只给 `ProviderSync` 调。**
+     *
+     * 写文件失败时绝不能更新它：那次什么都没写进去，把账记成新的，下一次就不知道
+     * 该去删哪些旧键了。
+     */
+    internal suspend fun setManagedEnvKeys(keys: Set<String>) = context.dataStore.edit {
+        if (keys.isEmpty()) it.remove(KEY_MANAGED_ENV_KEYS) else it[KEY_MANAGED_ENV_KEYS] = keys
+    }
 
     suspend fun setAppLanguage(language: AppLanguage) =
         context.dataStore.edit { it[KEY_LANGUAGE] = language.name }
@@ -354,15 +527,96 @@ class SettingsStore(private val context: Context) {
 
     suspend fun clearOpenWithDefaults() = context.dataStore.edit { it.remove(KEY_OPEN_WITH) }
 
-    suspend fun setCodexProfile(profile: CodexProfile) = context.dataStore.edit { p ->
-        // 同 editProfiles：打不开的密文不覆盖
+    /**
+     * Codex 侧的整表覆盖写。和 [editProfiles] 是同一套规矩，一条不少：
+     * 打不开的密文绝不覆盖，active 必须落在表里。
+     *
+     * 以前 Codex 这边没有这一层，各个写入口自己拼 —— 于是 active 没人维护、
+     * 删除压根没有、编辑还会把条目挪到末尾。界面上只有一条配置时这些都看不出来。
+     */
+    private suspend fun editCodexProfiles(
+        block: (List<CodexProfile>, String) -> Pair<List<CodexProfile>, String>,
+    ) = context.dataStore.edit { p ->
         if (isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)) return@edit
-        val list = decodeCodexProfiles(p[KEY_CODEX_PROFILES]).filterNot { it.id == profile.id } + profile
-        p[KEY_CODEX_PROFILES] = encodeCodexProfiles(list)
-        p[KEY_CODEX_ACTIVE] = profile.id
+        val (next, activeId) = block(decodeCodexProfiles(p[KEY_CODEX_PROFILES]), p[KEY_CODEX_ACTIVE].orEmpty())
+        if (next.isEmpty()) p.remove(KEY_CODEX_PROFILES) else p[KEY_CODEX_PROFILES] = encodeCodexProfiles(next)
+        val resolved = resolveActiveIdBy(next, activeId) { it.id }
+        if (resolved.isBlank()) p.remove(KEY_CODEX_ACTIVE) else p[KEY_CODEX_ACTIVE] = resolved
     }
 
-    suspend fun setActiveCodexProfile(id: String) = context.dataStore.edit { it[KEY_CODEX_ACTIVE] = id }
+    suspend fun addCodexProfile(profile: CodexProfile, activate: Boolean = true): String {
+        val entry = profile.copy(id = newProfileId())
+        editCodexProfiles { list, active -> (list + entry) to (if (activate) entry.id else active) }
+        return entry.id
+    }
+
+    /**
+     * 整条覆盖，**位置不变**。
+     *
+     * 这里原来是 `filterNot { it.id == profile.id } + profile`，等于每改一次就把这条
+     * 挪到列表末尾。只有一条配置时谁也看不见，多配置一上来就是「改个备注名，它跳到最后一行」。
+     */
+    suspend fun updateCodexProfile(profile: CodexProfile) = editCodexProfiles { list, active ->
+        list.map { if (it.id == profile.id) profile else it } to active
+    }
+
+    suspend fun deleteCodexProfile(id: String) = editCodexProfiles { list, active ->
+        list.filterNot { it.id == id } to active
+    }
+
+    suspend fun moveCodexProfile(id: String, delta: Int) = editCodexProfiles { list, active ->
+        moveInList(list, delta) { it.id == id } to active
+    }
+
+    /** 同 [reorderProfiles]：没提到的留在末尾 */
+    suspend fun reorderCodexProfiles(order: List<String>) = editCodexProfiles { list, active ->
+        val rank = order.withIndex().associate { (i, id) -> id to i }
+        list.sortedBy { rank[it.id] ?: Int.MAX_VALUE } to active
+    }
+
+    /**
+     * 会话页那个「保存连接」走的口子：表里有这条就地改，没有就新增，然后切过去。
+     * 多配置的增删改走上面那几个。
+     */
+    suspend fun setCodexProfile(profile: CodexProfile) = editCodexProfiles { list, _ ->
+        val next = if (list.any { it.id == profile.id }) {
+            list.map { if (it.id == profile.id) profile else it }
+        } else {
+            list + profile
+        }
+        next to profile.id
+    }
+
+    /** [acknowledgeInsecure] 同 [setActiveProfile]：刚在明文风险框上放过行，别再问第二遍 */
+    suspend fun setActiveCodexProfile(id: String, acknowledgeInsecure: Boolean = false) =
+        editCodexProfiles { list, _ ->
+            val next = if (acknowledgeInsecure) {
+                list.map { if (it.id == id) it.copy(insecureAck = true) else it }
+            } else {
+                list
+            }
+            next to id
+        }
+
+    /**
+     * 导入：一律**追加到末尾**，绝不改动已有条目的任何字段、绝不改 active。
+     *
+     * 要跳过谁、给谁改名，在到这一层之前就已经由 `mergeClaudeImports` 决定完了；
+     * 这里只负责把决定好的那些落进表里，并现生成 id（文件里那份是别的设备的 UUID）。
+     *
+     * 唯一的例外是本来就空表的情况：那时 [editProfiles] 会把 active 落到第一条。
+     * 那不是「改了 active」，是「从没有变成有」。
+     */
+    suspend fun importProfiles(claude: List<ApiProfile>, codex: List<CodexProfile>) {
+        if (claude.isNotEmpty()) {
+            val entries = claude.map { it.copy(id = newProfileId(), baseUrl = normalizeBaseUrl(it.baseUrl)) }
+            editProfiles { list, active -> (list + entries) to active }
+        }
+        if (codex.isNotEmpty()) {
+            val entries = codex.map { it.copy(id = newProfileId()) }
+            editCodexProfiles { list, active -> (list + entries) to active }
+        }
+    }
 
     /**
      * 明确放弃那些打不开的密文，把位置腾出来重填。
@@ -453,7 +707,29 @@ internal fun ackExistingProfiles(profiles: List<ApiProfile>): List<ApiProfile> =
  * 会和真正注入会话的 token 对不上。指不到就退回第一条；表空了就是空。
  */
 internal fun resolveActiveId(profiles: List<ApiProfile>, wanted: String): String =
-    wanted.takeIf { id -> profiles.any { it.id == id } } ?: profiles.firstOrNull()?.id.orEmpty()
+    resolveActiveIdBy(profiles, wanted) { it.id }
+
+/**
+ * 上面那条规则的泛型本体。Claude 与 Codex 两侧共用同一份——以前各写各的，
+ * 结果是删掉当前项之后两边的兜底行为不一样。
+ */
+internal fun <T> resolveActiveIdBy(items: List<T>, wanted: String, id: (T) -> String): String =
+    wanted.takeIf { w -> items.any { id(it) == w } } ?: items.firstOrNull()?.let(id).orEmpty()
+
+/**
+ * 把 [match] 命中的那一项在表里挪 [delta] 格。
+ *
+ * 越界、找不到、挪 0 格都**原样返回同一张表**（不是拷贝一份新的）——调用方据此
+ * 可以放心地在每次拖动回调里调它，不会白写一遍 DataStore。
+ */
+internal fun <T> moveInList(list: List<T>, delta: Int, match: (T) -> Boolean): List<T> {
+    if (delta == 0) return list
+    val from = list.indexOfFirst(match)
+    if (from < 0) return list
+    val to = from + delta
+    if (to !in list.indices) return list
+    return list.toMutableList().apply { add(to, removeAt(from)) }
+}
 
 internal fun encodeProfilesJson(profiles: List<ApiProfile>): String =
     profilesJson.encodeToString(profiles)

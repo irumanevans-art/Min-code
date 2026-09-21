@@ -23,6 +23,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import dev.min.code.core.settings.SkinStyle
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -31,16 +32,23 @@ import kotlinx.coroutines.withTimeoutOrNull
 class FormSwitchController {
     internal var request by mutableStateOf<FormSwitchRequest?>(null)
 
-    /** [origin] 是触发控件的窗口坐标；最新的选择可以替换尚未完成的过渡。 */
-    fun switch(origin: Offset?, toDark: Boolean, apply: () -> Unit) {
+    /**
+     * [origin] 是触发控件的窗口坐标；最新的选择可以替换尚未完成的过渡。
+     *
+     * 换昼夜和换风格走**同一个动作** —— 对用户来说它们是同一件事（界面整个变了个样），
+     * 分成两种过渡只会让其中一种显得像 bug。所以这里收两个目标值，
+     * 遮盖层照着它们去取新纸色、也照着它们判断「主题真的换过来了没有」。
+     */
+    fun switch(origin: Offset?, toDark: Boolean, toStyle: SkinStyle, apply: () -> Unit) {
         request?.applyOnce()
-        request = FormSwitchRequest(origin, toDark, apply)
+        request = FormSwitchRequest(origin, toDark, toStyle, apply)
     }
 }
 
 class FormSwitchRequest internal constructor(
     val origin: Offset?,
     val toDark: Boolean,
+    val toStyle: SkinStyle,
     val apply: () -> Unit,
 ) {
     private var applied = false
@@ -71,9 +79,12 @@ fun FormSwitchHost(controller: FormSwitchController, content: @Composable () -> 
 @Composable
 private fun FormSwitchOverlay(req: FormSwitchRequest, onDone: () -> Unit) {
     val dark by rememberUpdatedState(LocalDarkMode.current)
+    val style by rememberUpdatedState(LocalSkin.current.style)
     val finish by rememberUpdatedState(onDone)
     val animations = rememberAnimationsEnabled()
-    val target = if (req.toDark) DarkSea else LightSea
+    // 遮盖层推的是**目标形态**的纸色与强调色。以前这里写死成海，
+    // 于是在云或陶的页面上切昼夜会闪出一道蓝边 —— 那道边本该是新形态的颜色
+    val target = Skins.of(req.toStyle).palette(req.toDark)
     val reveal = remember { Animatable(0f) }
     val fade = remember { Animatable(1f) }
 
@@ -92,7 +103,12 @@ private fun FormSwitchOverlay(req: FormSwitchRequest, onDone: () -> Unit) {
         }
         reveal.animateTo(1f, tween(240, easing = InkMotion.Ease))
         req.applyOnce()
-        withTimeoutOrNull(900) { snapshotFlow { dark }.first { it == req.toDark } }
+        // 等主题真的换过来再淡出。**两个维度都要等** —— 只等 dark 的话，
+        // 单换风格（昼夜没变）时这一句立刻就满足了，遮盖层会在设置落盘之前就散开，
+        // 用户看见旧颜色闪一下才变；而只等 style 同理。超时是兜底，正常走不到
+        withTimeoutOrNull(900) {
+            snapshotFlow { dark to style }.first { it == (req.toDark to req.toStyle) }
+        }
         fade.animateTo(0f, tween(180, easing = InkMotion.Ease))
         finish()
     }

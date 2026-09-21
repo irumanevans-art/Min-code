@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.PathSensitivity
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.util.Properties
 
@@ -24,8 +25,8 @@ android {
         applicationId = "dev.min.code"
         minSdk = 26
         targetSdk = 37
-        versionCode = 32
-        versionName = "2.0.1"
+        versionCode = 33
+        versionName = "2.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -41,6 +42,16 @@ android {
             // 那条代码路径"什么也没发生"，测试挂在等待上，看不出真正原因。
             // 返回默认值，让这些分支能进测试。
             isReturnDefaultValues = true
+        }
+        // ProviderPresetTest 直接读 `src/main/assets/provider_presets.json` 那份真文件
+        // （它是纯数据，编译器一个字都不检查，漏个逗号只会表现为「预设列表空了」）。
+        // 但那是一次普通的文件读取，Gradle 不知道它是测试的输入 —— 不声明的话，
+        // 改完表跑测试会直接 UP-TO-DATE，保险丝形同虚设。
+        unitTests.all {
+            it.inputs
+                .files(fileTree("src/main/assets"))
+                .withPropertyName("mainAssets")
+                .withPathSensitivity(PathSensitivity.RELATIVE)
         }
     }
 

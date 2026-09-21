@@ -33,9 +33,11 @@ import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.appendProcessOutputLine
 import dev.min.code.core.session.SessionStatus
+import dev.min.code.core.settings.ApiProfile
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.isInsecureBaseUrl
+import dev.min.code.core.settings.sanitizedProfileEnv
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.util.LocalUrls
 import me.rerere.workspace.ProotShellRunner
@@ -153,6 +155,14 @@ class ClaudeCodeManager(
          * 一个字都没吐的那几秒里，用户按 Esc 的意思是"这条我不发了"，不是"停下你手上的活"。
          */
         val turnProduced: Boolean = false,
+        /**
+         * 启动这个进程时生效的那条供应商 id。空 = 还没起过进程。
+         *
+         * env 在进程启动时就固化了，之后用户切供应商对这个会话**天然无效**。界面靠
+         * 它和当前 active 对比，把「这条会话还在用旧的」摆在明面上，而不是让人发现
+         * 账单记在了另一家头上。
+         */
+        val launchedProfileId: String = "",
         val options: SessionOptions = SessionOptions(),
         /**
          * `--include-partial-messages` 的增量缓冲。整条 assistant 消息到达时会被清空并转成
@@ -495,6 +505,15 @@ class ClaudeCodeManager(
     /** ANTHROPIC_BASE_URL：中转站地址，用户在设置里改 */
     suspend fun getBaseUrl(): String = settingsStore.current().baseUrl.ifBlank { DEFAULT_BASE_URL }
 
+    /**
+     * 当前生效的那条供应商，整条取回来。
+     *
+     * 启动时**只读这一次**：地址、token 和自定义 env 必须来自同一条配置。分成
+     * [getToken] / [getBaseUrl] 两次 `current()` 的话，中间用户正好切了一家，
+     * 起来的进程就会拿着 A 家的 key 去敲 B 家的门。
+     */
+    private suspend fun activeProfile(): ApiProfile? = settingsStore.current().activeProfile
+
     /** 只换当前这条连接配置的 token，地址原样留着 */
     suspend fun saveToken(token: String) = settingsStore.setConnection(token, settingsStore.current().baseUrl)
 
@@ -540,8 +559,14 @@ class ClaudeCodeManager(
     }
 
     private suspend fun launchCli(options: SessionOptions) {
-        val token = getToken()
-        check(token.isNotBlank()) { "未配置 ANTHROPIC_AUTH_TOKEN，请先在设置页填写 token" }
+        val profile = activeProfile()
+        check(profile != null && profile.token.isNotBlank()) {
+            "未配置 ANTHROPIC_AUTH_TOKEN，请先在设置页填写 token"
+        }
+        val token = profile.token
+        // 记下这次用的是哪一家。之后用户切了供应商，界面靠它认出「这个会话还在用旧的」——
+        // env 在进程启动时就固化了，不重启就是不会变，那件事必须摆在明面上
+        _state.update { it.copy(launchedProfileId = profile.id) }
 
         val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
         val workspace = workspaceRepository.getById(workspaceId)
@@ -631,13 +656,6 @@ class ClaudeCodeManager(
                 putAll(ClaudeCodeInstaller.nodeEnv())
                 // proot 以 --root-id 运行，不声明沙箱的话 bypassPermissions 会直接 exit(1)，见类注释 2
                 put("IS_SANDBOX", "1")
-                put("ANTHROPIC_BASE_URL", getBaseUrl())
-                // 已知取舍: env -i 会把值写进 argv, 沙箱内可从 /proc/<pid>/cmdline 读到。
-                // 试过改用 `--settings <file>` 的 env 块把 token 挪出 argv, 实测 -p 模式下
-                // CLI 会读取该文件但**不应用**其中的 env（用 ANTHROPIC_BASE_URL 对拍验证过），
-                // 所以只能走环境变量。能读到它的只有沙箱内的 Claude Code 自己 —— 它本来就持有
-                // 这个 token, 因此不构成额外的权限提升。
-                put("ANTHROPIC_AUTH_TOKEN", token)
                 // 让 CLI 自己把 Fable 列进 /model 目录，并把别名 `fable` 钉到 5.1。
                 // v2.1.261 的可见性门槛 `_se()` 里有一条 `if (ANTHROPIC_DEFAULT_FABLE_MODEL) return true`，
                 // 而别名解析 `fable:{default:"claude-fable-5-1", per_provider:{gateway:"claude-fable-5"}}`
@@ -671,6 +689,25 @@ class ClaudeCodeManager(
                 put("USER", "root")
                 put("SHELL", "/bin/bash")
                 if (netSnap != null) putAll(GuestRuntimeDocs.envFrom(netSnap))
+
+                // 这条供应商自己带的环境变量。放在**这里**而不是更前面：它可以覆盖上面
+                // 那些 App 的偏好项（比如中转站的上下文窗口并不是 1M，用户要自己改
+                // CLAUDE_CODE_MAX_CONTEXT_TOKENS），但 RESERVED_ENV_KEYS 里的一律被
+                // sanitizedProfileEnv 丢掉 —— 那几个是事实来源自己的位置
+                putAll(sanitizedProfileEnv(profile))
+
+                // 地址与 token 最后落笔，保证它们赢。
+                //
+                // 已知取舍: env -i 会把值写进 argv, 沙箱内可从 /proc/<pid>/cmdline 读到。
+                // 试过改用 `--settings <file>` 的 env 块把 token 挪出 argv, 实测 -p 模式下
+                // CLI 会读取该文件但**不应用**其中的 env（用 ANTHROPIC_BASE_URL 对拍验证过），
+                // 所以只能走环境变量。能读到它的只有沙箱内的 Claude Code 自己 —— 它本来就持有
+                // 这个 token, 因此不构成额外的权限提升。
+                //
+                // 同一条实测也是「托管 settings.json」只能是投影、不能是事实来源的原因，
+                // 见 ProviderSync 的类注释。
+                put("ANTHROPIC_BASE_URL", profile.baseUrl.ifBlank { DEFAULT_BASE_URL })
+                put("ANTHROPIC_AUTH_TOKEN", token)
             },
         )
 
@@ -2015,31 +2052,15 @@ class ClaudeCodeManager(
             }
             val url = "${baseUrl.trimEnd('/')}/v1/models?limit=1000"
             // CLI 拿 ANTHROPIC_AUTH_TOKEN 发的是 Bearer；有的中转站只认 x-api-key，401 就换一种再试
+            // 传输层在 RelayProbe.kt，和供应商页的「测活」共用：
+            // 会话里问「你卖哪些模型」和供应商页问「你还活着吗」本来就是同一个请求
             val body = try {
-                httpGet(url, mapOf("Authorization" to "Bearer $token"))
-            } catch (e: HttpStatusException) {
-                if (e.code == 401 || e.code == 403) httpGet(url, mapOf("x-api-key" to token)) else throw e
+                relayHttpGet(url, mapOf("Authorization" to "Bearer $token"))
+            } catch (e: RelayHttpStatusException) {
+                if (e.code == 401 || e.code == 403) relayHttpGet(url, mapOf("x-api-key" to token)) else throw e
             }
             parseRelayModels(body)
         }
-
-    private class HttpStatusException(val code: Int, url: String) : RuntimeException("HTTP $code for $url")
-
-    private fun httpGet(url: String, headers: Map<String, String>): String {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 20_000
-        connection.setRequestProperty("Accept", "application/json")
-        connection.setRequestProperty("anthropic-version", "2023-06-01")
-        headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
-        try {
-            val code = connection.responseCode
-            if (code !in 200..299) throw HttpStatusException(code, url)
-            return connection.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            connection.disconnect()
-        }
-    }
 
     /**
      * 热切模型。传 null 重置为会话默认模型。
@@ -2158,6 +2179,22 @@ class ClaudeCodeManager(
                 _state.update { it.copy(applyingSettings = false) }
             }
         }
+    }
+
+    /**
+     * 换了供应商之后，重起进程续同一个会话。
+     *
+     * 地址、token、自定义 env 全都在 [launchCli] 里现读，所以这里**不传任何东西** ——
+     * 传参反而会和事实来源打架（`ProviderSync` 的类注释讲了为什么只能有一个）。
+     *
+     * 还没开会话的直接返回：它下次启动自然就是新的，没有可重启的东西。
+     * 正忙的那一轮不该走到这里，由调用方（`ClaudeCodeSessionRegistry.reloadConnection`）挡着 ——
+     * [relaunchWith] 走的是「shutdown + --resume」，中途那一轮的流式输出会直接没掉，
+     * 而用户刚才只是在列表上点了一下。
+     */
+    fun reloadConnection() {
+        if (_state.value.sessionId == null) return
+        relaunchWith(_state.value.options)
     }
 
     /**

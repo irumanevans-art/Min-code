@@ -55,6 +55,10 @@
   <string name="settings_theme_light">浅色</string>
   <string name="settings_theme_dark">深色</string>
   <string name="settings_theme_system">跟随系统</string>
+  <!-- 三张取底。名字就是那张纹理本身，不叫「蓝 / 灰 / 橙」——界面上那些颜色是从图上镂出来的，不是色值 -->
+  <string name="settings_skin_sea">海</string>
+  <string name="settings_skin_cloud">云</string>
+  <string name="settings_skin_anthropic">Anthropic</string>
   <string name="settings_language_system">跟随系统</string>
   <string name="settings_language_zh">中文</string>
   <string name="settings_language_en">English</string>
@@ -585,4 +589,107 @@
   <string name="vm_draft_conflict">退出时输入框是空的，顺延到这个会话，但它自己已经有未发送的内容和附件。先打开一个空会话，或清掉这边的草稿。</string>
   <string name="vm_max_sessions">同时最多运行 %1$d 个会话（每个会话是一个独立的 Node 进程，常驻数百 MB）。请先在会话列表里停掉一个。</string>
   <string name="vm_invalid_name">名称不合法</string>
+
+  <!-- ===== 供应商（CC Switch） ===== -->
+  <string name="providers_title">供应商</string>
+  <string name="providers_tab_claude">Claude Code</string>
+  <string name="providers_tab_codex">Codex</string>
+  <string name="providers_section_all">全部供应商</string>
+  <string name="providers_active">使用中</string>
+  <string name="providers_empty">还没有供应商。从预设里挑一家，或者手填一个地址。</string>
+  <string name="providers_add_preset">从预设添加</string>
+  <string name="providers_add_manual">手动添加</string>
+  <string name="providers_edit">编辑供应商</string>
+  <string name="providers_new">新增供应商</string>
+  <string name="providers_missing_token">待填 API Key</string>
+  <string name="providers_reorder_hint">长按一行可以拖动排序。</string>
+  <string name="providers_open_website">去拿 key</string>
+  <!-- 探活。只报告，不阻断：不少中转站压根没实现 /v1/models -->
+  <string name="providers_probe">测活</string>
+  <string name="providers_probe_running">正在测…</string>
+  <string name="providers_probe_ok">通了</string>
+  <string name="providers_probe_ok_models">通了 · %1$d 个模型</string>
+  <string name="providers_probe_unauthorized">key 不被接受</string>
+  <string name="providers_probe_unreachable">连不上：%1$s</string>
+  <string name="providers_probe_no_token">先填一个 key</string>
+  <!-- 会话角标：env 在进程启动时固化，切换对正跑着的会话天然无效 -->
+  <string name="providers_stale_sessions">有 %1$d 个会话正忙，仍在用上一家。</string>
+  <string name="providers_stale_restart">重启它们</string>
+  <string name="providers_stale_dismiss">先不动</string>
+  <string name="providers_terminal_note">已经开着的终端页签仍是旧的，新开的才用新配置。</string>
+  <!-- 托管 -->
+  <string name="providers_section_guest">Rootfs 配置</string>
+  <string name="providers_manage_title">写进 Rootfs 的配置文件</string>
+  <string name="providers_manage_subtitle">把当前供应商同步进 ~/.claude/settings.json 与 ~/.codex/config.toml。会话不读这两个文件（无头模式下 CLI 不应用其中的 env），这是给终端里手敲的 claude、你自己的脚本，以及「想看看当前配置长什么样」用的。只改 Min 写过的键，你自己加的不动。</string>
+  <string name="providers_secrets_title">把 API Key 也写进去</string>
+  <string name="providers_secrets_subtitle">关着时只写地址和其它变量，key 只活在进程环境里，不落 Rootfs 磁盘。</string>
+  <string name="providers_secrets_confirm_title">把 key 写到磁盘上？</string>
+  <string name="providers_secrets_confirm_body">key 会以明文躺在 App 私有目录里，并且会跟着 Android 的应用备份离开这台设备。Min 自己存的那一份无论如何都是加密的。</string>
+  <string name="providers_shell_title">终端也用当前供应商</string>
+  <string name="providers_shell_subtitle">把 key 注入终端页签与本地服务，终端里的 claude 才能用。你 shell 里跑的任何东西都读得到它。</string>
+  <string name="providers_sync_failed">同步到 Rootfs 配置失败：%1$s。会话和终端仍在使用 %2$s，只是文件没跟上。</string>
+  <string name="providers_guest_missing">装好运行环境后可用。</string>
+  <string name="providers_codex_auth_note">Codex 的 key 从不落盘：它的配置文件里只写一个指向环境变量的名字，所以这边没有对应的开关。</string>
+  <!-- 编辑面板 -->
+  <string name="providers_form">表单</string>
+  <string name="providers_json">JSON</string>
+  <string name="providers_label">备注名</string>
+  <string name="providers_label_hint">可不填，空着就显示地址的主机名</string>
+  <string name="providers_env">自定义环境变量</string>
+  <string name="providers_env_add">加一个变量</string>
+  <string name="providers_env_key">名字</string>
+  <string name="providers_env_value">值</string>
+  <string name="providers_json_hint">只有 env 这个对象会被保存，顶层其它键会被忽略。</string>
+  <string name="providers_json_ignored">忽略了 %1$d 个顶层键：%2$s</string>
+  <string name="providers_json_err_not_json">不是合法的 JSON。</string>
+  <string name="providers_json_err_not_object">顶层必须是一个对象。</string>
+  <string name="providers_json_err_env">env 必须是一个对象。</string>
+  <string name="providers_json_err_value">%1$s 的值必须是字符串。</string>
+  <!-- 预设 -->
+  <string name="providers_preset_title">挑一家供应商</string>
+  <string name="providers_preset_search">搜索</string>
+  <string name="providers_preset_none">没有可用的预设。</string>
+  <string name="providers_preset_disclaimer">列在这里只是方便，不等于我们为它背书——自己核一下。</string>
+  <string name="providers_category_official">官方</string>
+  <string name="providers_category_cn_official">国内官方</string>
+  <string name="providers_category_aggregator">聚合中转</string>
+  <string name="providers_category_community">社区</string>
+  <string name="providers_category_self_host">自建</string>
+  <!-- Codex 连接 -->
+  <string name="providers_codex_wire_api">协议</string>
+  <string name="providers_codex_wire_hint">只提供 /chat/completions 的中转要选 chat。</string>
+  <!-- 导入 / 导出 / 备份 -->
+  <string name="providers_transfer_title">导入与导出</string>
+  <string name="providers_export_section">导出</string>
+  <string name="providers_export_hint">导出的是备注名、地址与自定义环境变量，默认不含 API Key。</string>
+  <string name="providers_export_secrets_title">包含 API Key</string>
+  <string name="providers_export_secrets_subtitle">它们会明文落进文件里。</string>
+  <string name="providers_export_secrets_confirm_title">导出明文 API Key？</string>
+  <string name="providers_export_secrets_confirm_body">文件里的 key 是明文的。任何能读到这个文件的 App、以及它同步进去的任何云盘，都能把它们拿走。App 自己存的那份一直是加密的，这一份不是。</string>
+  <string name="providers_export_action">导出…</string>
+  <string name="providers_import_section">导入</string>
+  <string name="providers_import_hint">只会追加到末尾：已有条目一个字段都不动，当前生效的那家也不变。地址和 key 都一样的跳过。</string>
+  <string name="providers_import_file">从文件…</string>
+  <string name="providers_import_guest">从 Rootfs 现有配置</string>
+  <string name="providers_import_guest_label">Rootfs 现有配置</string>
+  <string name="providers_transfer_exported">已导出。</string>
+  <string name="providers_transfer_exported_keys">已导出，文件里是明文 key，放到稳妥的地方。</string>
+  <string name="providers_transfer_imported">新增 %1$d · 跳过 %2$d · 重命名 %3$d</string>
+  <string name="providers_transfer_failed_not_json">这份文件不是能读的 JSON，什么都没导入。</string>
+  <string name="providers_transfer_failed_schema">不是 Min 导出的供应商文件，什么都没导入。</string>
+  <string name="providers_transfer_failed_empty">这份文件里一个供应商都没有。</string>
+  <string name="providers_transfer_failed_nothing">Rootfs 里没有能导入的配置。</string>
+  <string name="providers_transfer_failed_io">这个文件读不了、或者写不进去。</string>
+  <string name="providers_backup_title">配置备份</string>
+  <string name="providers_backup_subtitle">托管第一次写 settings.json 之前自动留的底</string>
+  <string name="providers_backup_hint">只存在 App 内部，不进导出文件、也不会被分享出去。</string>
+  <string name="providers_backup_empty">还没有备份。</string>
+  <string name="providers_backup_bytes">%1$d 字节</string>
+  <string name="providers_backup_restore">恢复</string>
+  <string name="providers_backup_restore_title">恢复这一份？</string>
+  <string name="providers_backup_restore_body">settings.json 会被 %1$s 整份覆盖，现在里面的内容就没了。</string>
+  <string name="providers_manage_action">管理…</string>
+  <string name="providers_switch_action">换一家…</string>
+  <string name="providers_config_hint">会话启动时读它。换完空闲的会自己重起接上上下文。</string>
+  <string name="setup_pick_preset">从预设里挑一家</string>
 </resources>

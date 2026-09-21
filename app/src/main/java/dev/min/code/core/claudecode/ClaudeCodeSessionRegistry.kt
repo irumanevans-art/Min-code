@@ -285,6 +285,33 @@ class ClaudeCodeSessionRegistry(
         dead.forEach(::closeSession)
     }
 
+    /**
+     * 换了供应商之后，让活着的会话重新按新配置起一遍。
+     *
+     * **正忙的不动。** [ClaudeCodeManager.reloadConnection] 走的是「shutdown + --resume」，
+     * 中途那一轮的流式输出会直接没掉 —— 而用户刚才只是在供应商列表上点了一下，
+     * 不该因此丢一轮。这些会话原样留着，把 key 交回去，由界面打角标 + 给一颗手动重启。
+     *
+     * 也**不做**「这一轮跑完自动重启」：延迟生效的副作用比一个看得见的角标更难解释。
+     *
+     * @param includeBusy 用户在角标上点了「重启」—— 那是一次明确的选择，这时才连正忙的一起重起
+     * @return 因为在忙而没动的会话 key
+     */
+    fun reloadConnection(includeBusy: Boolean = false): List<String> {
+        val busy = mutableListOf<String>()
+        val all = synchronized(managers) { managers.toMap() }
+        all.forEach { (key, manager) ->
+            if (!manager.isLive) return@forEach
+            if (manager.state.value.busy && !includeBusy) {
+                busy += key
+            } else {
+                manager.reloadConnection()
+            }
+        }
+        if (busy.isNotEmpty()) Log.i(TAG, "reloadConnection skipped ${busy.size} busy session(s)")
+        return busy
+    }
+
     fun liveCount(): Int = synchronized(managers) { managers.values.count { it.isLive } }
 
     fun canStartMore(): Boolean = liveCount() < MAX_CONCURRENT

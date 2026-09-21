@@ -7,27 +7,35 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 
-/** A local material, independent of the page theme and without system-bar side effects. */
+/**
+ * 一块本地的暗材质：终端、代码那类**自带暗底**的东西，不跟页面的昼夜走，
+ * 也不碰系统栏。
+ *
+ * 但它**跟着风格走** —— 用的是当前风格自己的夜色。写死成海的夜蓝的话，
+ * 一个用陶土风格的人会在暖纸上看到一块冷蓝的终端，那不是「独立材质」，
+ * 那是漏进来的另一套配色。
+ */
 @Composable
 fun InkFrame(content: @Composable () -> Unit) {
+    val night = LocalSkin.current.dark
     val scheme = MaterialTheme.colorScheme.copy(
-        primary = DarkSea.sea,
-        onPrimary = DarkSea.paper,
-        surface = DarkSea.paper2,
-        onSurface = DarkSea.ink,
-        onSurfaceVariant = DarkSea.graphite,
-        surfaceContainerLow = DarkSea.paper2,
-        surfaceContainer = DarkSea.paper3,
-        surfaceContainerHigh = DarkSea.paper4,
-        surfaceContainerHighest = DarkSea.paperBright,
-        outline = DarkSea.graphiteLight,
-        outlineVariant = DarkSea.rule,
+        primary = night.sea,
+        onPrimary = night.paper,
+        surface = night.paper2,
+        onSurface = night.ink,
+        onSurfaceVariant = night.graphite,
+        surfaceContainerLow = night.paper2,
+        surfaceContainer = night.paper3,
+        surfaceContainerHigh = night.paper4,
+        surfaceContainerHighest = night.paperBright,
+        outline = night.graphiteLight,
+        outlineVariant = night.rule,
     )
     val indication = remember { InkIndication(true) }
     CompositionLocalProvider(
-        LocalSea provides DarkSea,
+        LocalSea provides night,
         LocalDarkMode provides true,
-        LocalContentColor provides DarkSea.ink,
+        LocalContentColor provides night.ink,
         LocalIndication provides indication,
     ) {
         MaterialTheme(colorScheme = scheme, content = content)

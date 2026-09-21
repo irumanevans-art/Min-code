@@ -54,6 +54,36 @@ class TerminalShellContextTest {
     }
 
     @Test
+    fun `the terminal finally gets the credentials the session page has always had`() {
+        // 在这之前这里一个凭据都没有：同一个 App 里，会话页能用的 token，
+        // 换到终端页敲 claude 就是「未配置」。Node 的 PATH 当初补上了、凭据没有，
+        // 于是那个 claude 看着装好了、跑起来连不上
+        val (files, _) = build(null)
+        val context = buildTerminalShellContext(
+            root = "default",
+            filesDir = files,
+            linuxDir = File(workspace, "linux"),
+            tempDir = File(workspace, "tmp"),
+            credentials = mapOf(
+                "ANTHROPIC_BASE_URL" to "https://relay.example",
+                "ANTHROPIC_AUTH_TOKEN" to "sk-live",
+            ),
+        )
+        assertEquals("sk-live", context.env["ANTHROPIC_AUTH_TOKEN"])
+        assertEquals("https://relay.example", context.env["ANTHROPIC_BASE_URL"])
+        // 凭据不能把 PATH 挤掉：两者共存才谈得上「终端里的 claude 能跑」
+        assertTrue(context.env["PATH"]?.contains("/opt/node/bin") == true)
+    }
+
+    @Test
+    fun `no credentials is a normal state, not a broken one`() {
+        // 开关关着、还没配过、Keystore 解不开 —— 三种情况都落在这里。
+        // 终端照常开得起来，只是里面没有 key
+        val (_, context) = build(null)
+        assertTrue(context.env.keys.none { it.startsWith("ANTHROPIC_") })
+    }
+
+    @Test
     fun `existing session cwd is kept as a workspace relative path`() {
         val (files, _) = build(null)
         File(files, "api").mkdirs()

@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.MinDisplay
-import dev.min.code.ui.theme.SeaWindow
+import dev.min.code.ui.theme.LocalSkin
 import dev.min.code.ui.theme.rememberAnimationsEnabled
 import dev.min.code.ui.theme.sea
 import dev.min.code.ui.theme.seaInk
@@ -309,12 +309,14 @@ private fun MinWordmark(fontSize: TextUnit) {
     val w = with(density) { layout.size.width.toDp() }
     val h = with(density) { layout.size.height.toDp() }
 
-    // 整词一次画完：形状交给字体，颜色是海
+    // 整词一次画完：形状交给字体，颜色是取底。
+    // 对准哪一块由风格自己说了算（[Skin.heroWindow]）——这个坐标本来是照着海的金脉调的，
+    // 换一张底之后它指向的只是随便一处
     Canvas(
         Modifier
             .width(w)
             .height(h)
-            .seaInk(window = SeaWindow.Fixed(0.5f, 0.45f, 0.62f)),
+            .seaInk(window = LocalSkin.current.heroWindow),
     ) {
         drawText(layout, color = Color.Black)
     }

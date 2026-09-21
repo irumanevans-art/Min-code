@@ -17,6 +17,7 @@ import dev.min.code.core.codex.sortCodexSessions
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.session.SessionStatus
+import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.core.settings.CodexProfile
 import dev.min.code.core.settings.SettingsStore
 import kotlinx.coroutines.Dispatchers
@@ -322,6 +323,36 @@ class CodexVM(
     fun saveProfile(profile: CodexProfile) {
         viewModelScope.launch {
             settingsStore.setCodexProfile(profile)
+            runtime.refresh()
+        }
+    }
+
+    /**
+     * Codex 侧的全部连接配置。连接面板上那张列表读它 —— 以前这一页只认
+     * `id = "default"` 那一条，存储层明明是一张表，界面上却永远只有一行。
+     */
+    val profiles: StateFlow<List<CodexProfile>> = settingsStore.settings
+        .map { it.codexProfiles }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * 换一条。app-server 的 env 是启动时固化的，所以这里只改「下次起的是哪条」；
+     * `runtime.refresh()` 把 config.toml 重写一遍，真正生效要等下一次 start
+     * （面板上由 `codex_connection_restart_hint` 说明）。
+     */
+    fun activateProfile(id: String) {
+        viewModelScope.launch {
+            // 明文风险的确认不在这儿放行：那道门归供应商页管，这里替用户点头
+            // 会让他此后在那一页也看不到警告
+            settingsStore.setActiveCodexProfile(id)
+            runtime.refresh()
+        }
+    }
+
+    /** 新建一条空的中转配置并切过去。内容在同一个面板的下半部分接着填 */
+    fun addProfile() {
+        viewModelScope.launch {
+            settingsStore.addCodexProfile(CodexProfile(id = "", authMode = CodexAuthMode.RELAY))
             runtime.refresh()
         }
     }

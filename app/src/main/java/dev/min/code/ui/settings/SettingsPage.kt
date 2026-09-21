@@ -4,7 +4,6 @@ import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,18 +22,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -43,22 +37,16 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.BuildConfig
 import dev.min.code.R
-import dev.min.code.core.settings.ApiProfile
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
+import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
-import dev.min.code.core.settings.isInsecureBaseUrl
-import dev.min.code.core.settings.normalizeBaseUrl
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButtonTone
-import dev.min.code.ui.components.InkDialog
 import dev.min.code.ui.components.InkDivider
-import dev.min.code.ui.components.InkIconButton
-import dev.min.code.ui.components.InkRadio
 import dev.min.code.ui.components.InkSegmented
 import dev.min.code.ui.components.InkSwitch
 import dev.min.code.ui.components.InkTextButton
-import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.InkTopBar
 import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
@@ -71,29 +59,24 @@ import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.LocalDarkMode
 import dev.min.code.ui.theme.LocalFormSwitch
+import dev.min.code.ui.theme.LocalSkin
 import dev.min.code.ui.theme.sea
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.PencilEdit02
-import me.rerere.hugeicons.stroke.PlusSign
-import me.rerere.hugeicons.stroke.View
-import me.rerere.hugeicons.stroke.ViewOff
 import org.koin.androidx.compose.koinViewModel
 
 /**
- * App 设置。只有四样：连接、npm 源、主题、关于——没有"设置页里的设置页"。
+ * App 设置。只有五样：连接、npm 源、后台、外观、关于——没有"设置页里的设置页"。
  *
- * 连接是一张**可以存多条**的表：一条 = 备注名 + token + 中转地址。手上常年挂着两三个
- * 中转站的人不该每次换站都重敲一遍 key。改动落盘在对话框里点「应用」那一下，
- * 列表上点一下只是换当前生效的那条。
+ * 连接那一张能存多条的表搬去了 [dev.min.code.ui.providers.ProvidersPage]：它现在带着
+ * 预设库、托管开关和拖拽排序，塞回这里就会把设置页撑成二级菜单。这边只留一行入口，
+ * 副题回答唯一一个在设置页里值得问的问题——**现在用的是哪家**。
+ *
+ * 两样东西刻意留下：明文 http 的常驻提醒和「密文打不开」那一段。它们都不是「某一条
+ * 供应商」的事，是整份凭据存储的状态。
  */
 @Composable
 fun SettingsPage(vm: SettingsVM = koinViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val navController = LocalNavController.current
-    // null = 对话框关着；id 为 null 的 Edit = 新增
-    var editing by remember { mutableStateOf<ProfileEdit?>(null) }
-    // null = 没有待确认的明文地址
-    var insecureConfirm by remember { mutableStateOf<InsecureConfirm?>(null) }
     // 放弃那串打不开的密文要再问一次：这一步之后就真的没得救了
     var discardCredentials by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
@@ -133,32 +116,26 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                         tone = InkButtonTone.Vermilion,
                     ) { Text(stringResource(R.string.settings_credentials_discard)) }
                 }
-                if (settings.profiles.isEmpty() && !settings.credentialsUnreadable) {
-                    Text(
-                        stringResource(R.string.settings_connection_empty),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    val activeId = settings.activeProfile?.id
-                    settings.profiles.forEach { profile ->
-                        ProfileRow(
-                            profile = profile,
-                            selected = profile.id == activeId,
-                            onSelect = {
-                                // 切到一条没确认过的明文地址：先问一次，再切
-                                if (profile.needsInsecureConfirm) {
-                                    insecureConfirm = InsecureConfirm(profile.baseUrl) {
-                                        vm.setActiveProfile(profile.id, acknowledgeInsecure = true)
-                                    }
-                                } else {
-                                    vm.setActiveProfile(profile.id)
-                                }
-                            },
-                            onEdit = { editing = profile.toEdit() },
-                        )
-                    }
-                }
+                // 那张表搬进了供应商页（预设库 + 托管开关 + 拖拽排序塞不进这里，
+                // 设置页的规矩是「只有四样，没有设置页里的设置页」）。这里只留一行，
+                // 副题回答唯一一个在设置页里值得问的问题：现在用的是哪家
+                SettingRow(
+                    title = stringResource(R.string.providers_title),
+                    subtitle = settings.activeProfile?.displayName()
+                        ?: stringResource(R.string.settings_connection_empty),
+                    enabled = !settings.credentialsUnreadable,
+                    onClick = { navController.navigate(Screen.Providers) },
+                    trailing = {
+                        settings.activeProfile?.let { profile ->
+                            Text(
+                                profile.maskedToken(),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetbrainsMono,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                )
                 // 当前生效的地址是明文 http：这条常驻，不是弹一次就算数的。
                 // 用「注意」档而不是朱砂——这是风险提示，不是错误：这个配置按下去照常工作
                 AnimatedVisibility(
@@ -176,12 +153,6 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    InkTextButton(
-                        onClick = { editing = ProfileEdit(id = null) },
-                        icon = HugeIcons.PlusSign,
-                    ) { Text(stringResource(R.string.settings_connection_add)) }
-                }
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
@@ -204,6 +175,7 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
 
                 SectionTitle(stringResource(R.string.settings_section_appearance))
                 ThemePicker(current = settings.themeMode, onPick = vm::setThemeMode)
+                SkinPicker(current = settings.skin, onPick = vm::setSkin)
 
                 SectionTitle(stringResource(R.string.settings_section_language))
                 LanguagePicker(current = settings.appLanguage, onPick = vm::setAppLanguage)
@@ -226,53 +198,6 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
         }
     }
 
-    editing?.let { edit ->
-        ProfileDialog(
-            edit = edit,
-            // 最后一条不给删：删光了下次开会话只会撞上"未配置 token"，
-            // 想换内容在这个对话框里改就是了
-            canDelete = edit.id != null && settings.profiles.size > 1,
-            onDismiss = { editing = null },
-            onSave = { label, token, baseUrl ->
-                val url = normalizeBaseUrl(baseUrl)
-                val insecure = isInsecureBaseUrl(url)
-                val save = {
-                    // 走到这里要么地址不是明文，要么用户已经放过行：ack 就等于「是不是明文」
-                    if (edit.id == null) vm.addProfile(label, token, baseUrl, insecureAck = insecure)
-                    else vm.updateProfile(edit.id, label, token, baseUrl, insecureAck = insecure)
-                    editing = null
-                }
-                // 同一条、地址没改、之前确认过 —— 不再问第二遍（升级上来的既有配置就落在这里）
-                val known = settings.profiles.firstOrNull { it.id == edit.id }
-                    ?.let { it.insecureAck && it.baseUrl == url } == true
-                if (insecure && !known) insecureConfirm = InsecureConfirm(url, save) else save()
-            },
-            onDelete = {
-                edit.id?.let { vm.deleteProfile(it) }
-                editing = null
-            },
-        )
-    }
-
-    insecureConfirm?.let { pending ->
-        // 只劝一次，不拦：点「仍然使用」就照常存、照常发；取消也只是不改设置，
-        // 已经在用的连接不受影响。destructive = false —— 这不是删除那一档的判定
-        RikkaConfirmDialog(
-            show = true,
-            title = stringResource(R.string.settings_connection_insecure_title),
-            confirmText = stringResource(R.string.settings_connection_insecure_continue),
-            dismissText = stringResource(R.string.common_cancel),
-            destructive = false,
-            onConfirm = {
-                pending.proceed()
-                insecureConfirm = null
-            },
-            onDismiss = { insecureConfirm = null },
-        ) {
-            Text(stringResource(R.string.settings_connection_insecure_body, pending.baseUrl))
-        }
-    }
-
     if (discardCredentials) {
         RikkaConfirmDialog(
             show = true,
@@ -287,168 +212,6 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
         ) {
             Text(stringResource(R.string.settings_credentials_discard_body))
         }
-    }
-}
-
-/**
- * 一件等着用户就明文风险点头的事：[baseUrl] 给对话框显示，[proceed] 是点「仍然使用」之后要做的。
- *
- * 取消就只是把这个状态清掉——**不改任何设置**，也不阻断已经在用的连接。
- */
-private class InsecureConfirm(val baseUrl: String, val proceed: () -> Unit)
-
-/** 对话框的初值。[id] 为 null = 新增 */
-private data class ProfileEdit(
-    val id: String?,
-    val label: String = "",
-    val token: String = "",
-    val baseUrl: String = AppSettings.DEFAULT_BASE_URL,
-)
-
-private fun ApiProfile.toEdit() = ProfileEdit(id = id, label = label, token = token, baseUrl = baseUrl)
-
-/**
- * 表里的一行。整行可点 = 切到这一条；右边那颗笔才是改内容。
- *
- * token 在列表上**只露头尾**：设置页是会被人从背后看到的，一整条 key 铺在那里没有道理。
- */
-@Composable
-private fun ProfileRow(
-    profile: ApiProfile,
-    selected: Boolean,
-    onSelect: () -> Unit,
-    onEdit: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
-            .clickable(onClick = onSelect)
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        InkRadio(selected = selected, onClick = onSelect)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    profile.displayName(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (selected) {
-                    Text(
-                        stringResource(R.string.settings_connection_active),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.sea.seaDeep,
-                    )
-                }
-            }
-            Text(
-                listOf(profile.baseUrl, profile.maskedToken()).filter { it.isNotBlank() }.joinToString("  ·  "),
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = JetbrainsMono,
-                // 明文 http 的中转站会把 Bearer 头裸着送上路，地址本身就该点出来。
-                // 用海深而不是朱：这是「注意」，不是判定——这条配置按下去照常工作。
-                // 本机回环（localhost / 127.x / 10.0.2.2）不算，那是自己跟自己说话
-                color = if (profile.insecure) {
-                    MaterialTheme.sea.seaDeep
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        InkIconButton(
-            icon = HugeIcons.PencilEdit02,
-            contentDescription = stringResource(R.string.settings_connection_edit_action),
-            onClick = onEdit,
-            size = 34.dp,
-            iconSize = 17.dp,
-        )
-    }
-}
-
-/** 新增 / 编辑一条连接。token 默认打码，右边一颗眼睛可以看明文 */
-@Composable
-private fun ProfileDialog(
-    edit: ProfileEdit,
-    canDelete: Boolean,
-    onDismiss: () -> Unit,
-    onSave: (label: String, token: String, baseUrl: String) -> Unit,
-    onDelete: () -> Unit,
-) {
-    var label by rememberSaveable(edit.id) { mutableStateOf(edit.label) }
-    var token by rememberSaveable(edit.id) { mutableStateOf(edit.token) }
-    var baseUrl by rememberSaveable(edit.id) { mutableStateOf(edit.baseUrl) }
-    var visible by rememberSaveable { mutableStateOf(false) }
-    InkDialog(
-        onDismissRequest = onDismiss,
-        title = stringResource(
-            if (edit.id == null) R.string.settings_connection_new else R.string.settings_connection_edit,
-        ),
-        confirmButton = {
-            InkTextButton(
-                onClick = { onSave(label, token, baseUrl) },
-                enabled = token.isNotBlank(),
-            ) { Text(stringResource(R.string.common_apply)) }
-        },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (canDelete) {
-                    InkTextButton(onClick = onDelete, tone = InkButtonTone.Vermilion) {
-                        Text(stringResource(R.string.common_delete))
-                    }
-                }
-                InkTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
-            }
-        },
-    ) {
-        InkTextField(
-            value = label,
-            onValueChange = { label = it },
-            label = stringResource(R.string.settings_connection_label),
-            placeholder = stringResource(R.string.settings_connection_label_hint),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        InkTextField(
-            value = baseUrl,
-            onValueChange = { baseUrl = it },
-            label = "ANTHROPIC_BASE_URL",
-            singleLine = true,
-            monospace = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        InkTextField(
-            value = token,
-            onValueChange = { token = it },
-            label = "ANTHROPIC_AUTH_TOKEN",
-            singleLine = true,
-            monospace = true,
-            modifier = Modifier.fillMaxWidth(),
-            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-            trailing = {
-                InkIconButton(
-                    icon = if (visible) HugeIcons.ViewOff else HugeIcons.View,
-                    contentDescription = if (visible) {
-                        stringResource(R.string.common_hide)
-                    } else {
-                        stringResource(R.string.common_show)
-                    },
-                    onClick = { visible = !visible },
-                    size = 32.dp,
-                    iconSize = 18.dp,
-                )
-            },
-        )
     }
 }
 
@@ -517,24 +280,74 @@ private fun ThemePicker(current: ThemeMode, onPick: (ThemeMode) -> Unit) {
         ThemeMode.LIGHT to stringResource(R.string.settings_theme_light),
         ThemeMode.DARK to stringResource(R.string.settings_theme_dark),
     )
-    val formSwitch = LocalFormSwitch.current
-    val currentDark = LocalDarkMode.current
     val systemDark = isSystemInDarkTheme()
-    var origin by remember { mutableStateOf<Offset?>(null) }
-    InkSegmented(
+    FormSwitchingSegmented(
         options = modes.map { it.second },
         selected = modes.indexOfFirst { it.first == current }.coerceAtLeast(0),
-        onSelect = { index ->
-            val mode = modes[index].first
-            val targetDark = when (mode) {
+        targetDark = { index ->
+            when (modes[index].first) {
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
                 ThemeMode.SYSTEM -> systemDark
             }
-            if (targetDark == currentDark) {
-                onPick(mode)
+        },
+        targetStyle = { LocalSkin.current.style },
+        onSelect = { onPick(modes[it].first) },
+    )
+}
+
+/**
+ * 海 / 云 / Anthropic。
+ *
+ * 云以前是 Codex 页专属的一张皮，现在和另外两套平级。换风格和换昼夜是同一类事
+ * （界面整个变了个样），所以走同一套换形动画 —— 见 [FormSwitchingSegmented]。
+ */
+@Composable
+private fun SkinPicker(current: SkinStyle, onPick: (SkinStyle) -> Unit) {
+    val skins = listOf(
+        SkinStyle.SEA to stringResource(R.string.settings_skin_sea),
+        SkinStyle.CLOUD to stringResource(R.string.settings_skin_cloud),
+        SkinStyle.ANTHROPIC to stringResource(R.string.settings_skin_anthropic),
+    )
+    val currentDark = LocalDarkMode.current
+    FormSwitchingSegmented(
+        options = skins.map { it.second },
+        selected = skins.indexOfFirst { it.first == current }.coerceAtLeast(0),
+        targetDark = { currentDark },
+        targetStyle = { skins[it].first },
+        onSelect = { onPick(skins[it].first) },
+    )
+}
+
+/**
+ * 一个会演「换形」的分段控件：昼夜和风格共用。
+ *
+ * 目标形态和当前**完全一样**（两个维度都没变）时直接写设置，不演 —— 比如从
+ * 「浅色」切到白天的「跟随系统」，画面上什么都不会变，演一遍只是白闪一下。
+ */
+@Composable
+private fun FormSwitchingSegmented(
+    options: List<String>,
+    selected: Int,
+    targetDark: @Composable (Int) -> Boolean,
+    targetStyle: @Composable (Int) -> SkinStyle,
+    onSelect: (Int) -> Unit,
+) {
+    val formSwitch = LocalFormSwitch.current
+    val currentDark = LocalDarkMode.current
+    val currentStyle = LocalSkin.current.style
+    // @Composable 的参数不能在回调里调，先在组合阶段把三个选项的目标态算出来
+    val targets = options.indices.map { targetDark(it) to targetStyle(it) }
+    var origin by remember { mutableStateOf<Offset?>(null) }
+    InkSegmented(
+        options = options,
+        selected = selected,
+        onSelect = { index ->
+            val (dark, style) = targets[index]
+            if (dark == currentDark && style == currentStyle) {
+                onSelect(index)
             } else {
-                formSwitch.switch(origin, targetDark) { onPick(mode) }
+                formSwitch.switch(origin, dark, style) { onSelect(index) }
             }
         },
         modifier = Modifier.onGloballyPositioned { coords ->

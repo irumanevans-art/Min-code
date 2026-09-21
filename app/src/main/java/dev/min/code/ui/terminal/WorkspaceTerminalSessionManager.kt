@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import dev.min.code.AppScope
+import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.shellCredentialEnv
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -29,6 +31,7 @@ import java.util.concurrent.atomic.AtomicLong
 class WorkspaceTerminalSessionManager internal constructor(
     context: Context,
     private val appScope: AppScope,
+    private val settingsStore: SettingsStore,
 ) {
     private val appContext = context.applicationContext
     private val workspaceStates = MutableStateFlow<Map<String, WorkspaceTerminalTabsState>>(emptyMap())
@@ -203,6 +206,15 @@ class WorkspaceTerminalSessionManager internal constructor(
             return@withContext
         }
 
+        // 当前供应商的凭据。**开页签的这一刻读一次**，之后这个 shell 的环境就固化了 ——
+        // 和会话进程是同一个道理，所以换供应商之后已开的页签仍然是旧的，新开的才是新的。
+        // 解密要走 Keystore，别留在主线程上
+        val credentials = withContext(Dispatchers.IO) {
+            runCatching { shellCredentialEnv(settingsStore.current()) }
+                .onFailure { Log.w(TAG, "读取供应商凭据失败，终端将没有 key", it) }
+                .getOrDefault(emptyMap())
+        }
+
         val tabId = nextTabId.getAndIncrement()
         val tabNumber = currentState(root).nextTabNumber
         val client = WorkspaceTerminalSessionClient(appContext) {
@@ -214,6 +226,7 @@ class WorkspaceTerminalSessionManager internal constructor(
                 root = root,
                 client = client,
                 cwd = cwd,
+                credentials = credentials,
             )
         }.onFailure { error ->
             Log.e(TAG, "Failed to create terminal for workspace $root", error)

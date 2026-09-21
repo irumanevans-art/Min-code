@@ -1,26 +1,27 @@
 package dev.min.code.ui.theme
 
 import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.LocalContentColor
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
-import dev.min.code.R
+import me.rerere.highlight.HighlightTextColorPalette
 
 /**
- * # 云：Codex 那一支的取底
+ * # 云：灰白仙境
  *
- * 「海」是蓝色取底那张酒精墨，整个 Claude 侧的每一块蓝都是从它上面镂出来的。
- * Codex 换一张底：一幅灰白的云海（`tools/build_cloud_plate.py` 从「灰白仙境」压出来）。
- * 规则一字不改——界面上每一块强调色仍然是「把纸镂空成那个形状盖在纹理上」，
+ * 「海」是蓝色取底那张酒精墨，界面上每一块强调色都是从它上面镂出来的。
+ * 云换一张底：一幅灰白的云海（`tools/build_cloud_plate.py` 从「灰白仙境」压出来）。
+ * 规则一字不改——每一块强调色仍然是「把纸镂空成那个形状盖在纹理上」，
  * 只是窗外面那片东西从海变成了云。
  *
  * 所以这里没有新的组件，也没有一个 `cloudInk()`：[Modifier.seaInk] / [Modifier.seaFill]
  * 读 [LocalSeaPlate]，换掉它，整棵子树——会话流左边那条轨道、发送键里流动的窗、
- * 所有 Ink* 控件——自己就成了云。[CloudTheme] 做的全部事情就是换三个 CompositionLocal。
+ * 所有 Ink* 控件——自己就成了云。
+ *
+ * 它最初是 Codex 页专属的一张皮（`CloudTheme` 把它罩在那一页上）。现在三套取底
+ * 都是全局可选的一种风格，Codex 页跟着全局走 —— 喜欢这套灰白的人，在 Claude 页
+ * 也该能用它，而「两个引擎必须长得不一样」本来就不是一条必要的规矩。
+ * 组装在 [Skins]。
  *
  * ## 为什么不是简单地"把蓝改成灰"
  *
@@ -81,7 +82,7 @@ val DarkCloud = SeaPalette(
     dark = true,
 )
 
-private val LightCloudColors: ColorScheme = with(LightCloud) {
+internal val LightCloudColors: ColorScheme = with(LightCloud) {
     lightColorScheme(
         primary = seaDeep,
         onPrimary = paper,
@@ -121,7 +122,7 @@ private val LightCloudColors: ColorScheme = with(LightCloud) {
     )
 }
 
-private val DarkCloudColors: ColorScheme = with(DarkCloud) {
+internal val DarkCloudColors: ColorScheme = with(DarkCloud) {
     darkColorScheme(
         primary = sea,
         onPrimary = Color(0xFF14161A),
@@ -165,39 +166,47 @@ private val DarkCloudColors: ColorScheme = with(DarkCloud) {
  * 云图是竖构图，按屏宽 2.2 倍铺时高度正好盖满一屏，不进 MIRROR 平铺。
  * 海那边 1.3 倍靠平铺补，墨纹看不出对称；云的形态连贯，镜像接缝一眼就认出来。
  */
-private const val CLOUD_WIDTH_FACTOR = 2.2f
+internal const val CLOUD_WIDTH_FACTOR = 2.2f
 
 /**
- * 把这棵子树的取底换成云。
+ * 代码高亮：云的那一套。
  *
- * 四件事，一件都不多：换 palette、换 colorScheme、换纹理、换那片静止的底
- * （云的尺寸和海不同，铺法也不同，[SeaField] 必须重算一份）。
- *
- * colorScheme 非换不可——Ink* 组件读 [LocalSea]，但 Material 自己那些还活着的地方
- * （DropdownMenu 的面、TextField 的光标、进度、涟漪）读的是 colorScheme。只换前者的话，
- * 云页面上会冒出几处海的蓝，而且专挑不受控的地方冒。
- *
- * 纹理要先 provide 再 [rememberSeaField]——后者读 [SeaPlate.bitmap]，
- * 而 bitmap 的默认参数取的正是 [LocalSeaPlate]。两层 Provider 的顺序就是这个原因。
+ * 不能照搬海的——那一套里关键字是海的深处、数字是石墨蓝，整屏都是蓝的。
+ * 这里改成一套冷灰的层级：关键字最重、字符串仍是竹青、注释最淡。
+ * 语义分工一字不改，只是把色相抽掉。
  */
-@Composable
-fun CloudTheme(content: @Composable () -> Unit) {
-    val dark = LocalDarkMode.current
-    CompositionLocalProvider(
-        LocalSeaPlate provides R.drawable.cloud_plate,
-        LocalSea provides if (dark) DarkCloud else LightCloud,
-    ) {
-        val colors = if (dark) DarkCloudColors else LightCloudColors
-        CompositionLocalProvider(
-            LocalSeaField provides rememberSeaField(widthFactor = CLOUD_WIDTH_FACTOR),
-            LocalContentColor provides colors.onSurface,
-        ) {
-            MaterialTheme(
-                colorScheme = colors,
-                typography = MaterialTheme.typography,
-                shapes = MaterialTheme.shapes,
-                content = content,
-            )
-        }
-    }
-}
+internal val CloudCodeLight = HighlightTextColorPalette(
+    keyword = Color(0xFF3C4450),
+    string = Color(0xFF3F7A52),
+    number = Color(0xFF5B6675),
+    comment = Color(0xFFA0A7B1),
+    function = Color(0xFF4A5361),
+    operator = Color(0xFF6B7482),
+    punctuation = Color(0xFF6B7482),
+    className = Color(0xFF5B6675),
+    property = Color(0xFFA84A3C),
+    boolean = Color(0xFF5B6675),
+    variable = Color(0xFF1B1F26),
+    tag = Color(0xFFA84A3C),
+    attrName = Color(0xFF5B6675),
+    attrValue = Color(0xFF3F7A52),
+    fallback = Color(0xFF1B1F26),
+)
+
+internal val CloudCodeDark = HighlightTextColorPalette(
+    keyword = Color(0xFFD6DCE4),
+    string = Color(0xFF9BD1AB),
+    number = Color(0xFFB2BAC6),
+    comment = Color(0xFF6E7681),
+    function = Color(0xFFC2C9D3),
+    operator = Color(0xFF9AA3AE),
+    punctuation = Color(0xFF9AA3AE),
+    className = Color(0xFFB2BAC6),
+    property = Color(0xFFF08A7E),
+    boolean = Color(0xFFB2BAC6),
+    variable = Color(0xFFECEEF2),
+    tag = Color(0xFFF08A7E),
+    attrName = Color(0xFFB2BAC6),
+    attrValue = Color(0xFF9BD1AB),
+    fallback = Color(0xFFECEEF2),
+)

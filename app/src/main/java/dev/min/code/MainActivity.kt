@@ -46,6 +46,7 @@ import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.LocalePrefs
 import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.ui.about.AboutPage
 import dev.min.code.ui.components.InkToastHost
@@ -59,6 +60,7 @@ import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Navigator
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.session.ClaudeCodePage
+import dev.min.code.ui.providers.ProvidersPage
 import dev.min.code.ui.settings.SettingsPage
 import dev.min.code.ui.terminal.WorkspaceTerminalPage
 import dev.min.code.ui.theme.FormSwitchController
@@ -66,8 +68,6 @@ import dev.min.code.ui.theme.FormSwitchHost
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.LocalFormSwitch
 import dev.min.code.ui.theme.LocalTilt
-import dev.min.code.ui.theme.LocalSeaField
-import dev.min.code.ui.theme.rememberSeaField
 import dev.min.code.ui.theme.MinTheme
 import dev.min.code.ui.theme.rememberTilt
 import kotlinx.coroutines.delay
@@ -136,8 +136,12 @@ class MainActivity : ComponentActivity() {
                     hold = false
                 }
             }
-            // 设置还没读出来时的兜底和默认值同一条：跟随系统，免得从没选过的人先闪一帧浅色
-            MinTheme(mode = settings?.themeMode ?: ThemeMode.SYSTEM) {
+            // 设置还没读出来时的兜底和默认值同一条：跟随系统 + 海，
+            // 免得从没选过的人先闪一帧浅色、或者选了别的风格的人先闪一帧蓝
+            MinTheme(
+                mode = settings?.themeMode ?: ThemeMode.SYSTEM,
+                style = settings?.skin ?: SkinStyle.SEA,
+            ) {
                 if (hold) LoadingScreen(detail = "debug · $EXTRA_DEBUG_LOADING") else Root()
             }
         }
@@ -168,7 +172,6 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(backStack) { navStack = backStack }
         val (toaster, toastState) = rememberInkToaster()
         val tilt = rememberTilt()
-        val seaField = rememberSeaField()
         val formSwitch = remember { FormSwitchController() }
         val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
 
@@ -176,7 +179,8 @@ class MainActivity : ComponentActivity() {
             LocalNavController provides navigator,
             LocalToaster provides toaster,
             LocalTilt provides tilt,
-            LocalSeaField provides seaField,
+            // LocalSeaField 由 MinTheme 提供 —— 它要跟着风格换（纹理的构图不同，铺法也不同），
+            // 留在这里的话换风格时海还是按上一张图的倍率铺的
             LocalFormSwitch provides formSwitch,
         ) {
             FormSwitchHost(formSwitch) {
@@ -225,6 +229,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             entry<Screen.Settings> { SettingsPage() }
+                            entry<Screen.Providers> { ProvidersPage() }
                             entry<Screen.About> { AboutPage() }
                         },
                     )
