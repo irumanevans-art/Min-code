@@ -11,16 +11,16 @@ import dev.min.code.core.settings.SkinStyle
  *
  * 换风格换的是**颜色**：每一块强调色都是镂在取底上的一扇窗，换一张底就换了一整套色，
  * 消费点一行不动（见 `Sea.kt` 与 `Skin.kt`）。**这条轨道是唯一的例外**——它的形本身
- * 就是风格语义：浪会卷，云不会卷，陶坯上留下的是轮痕。三套共用一个海浪卷的话，
+ * 就是风格语义：浪会卷，云不会卷，陶 / Anthropic 的收笔是线长出来的一小段结构。三套共用一个海浪卷的话，
  * 换了底的会话流左边仍是同一片海。
  *
  * 一套轨道分三样，三样都不一样：
  *
- * | | 海 | 云 | 陶 |
+ * | | 海 | 云 | 陶 / Anthropic |
  * |---|---|---|---|
  * | 线身 | 连续平滑 | 断续的雾段，两端渐隐 | 手工颤线，笔宽不匀、带飞白 |
- * | 收笔 | 卷成螺旋，螺心一粒 | 散成碎点，向右上飘一道钩 | 收口的三道旋痕 + 一粒泥点 |
- * | 流动 | 一粒白沫顺流 | 一道透光自上而下掠过 | 一滴釉缓缓下淌，旋痕依次显影 |
+ * | 收笔 | 卷成螺旋，螺心一粒 | 散成三缕交缠下飘的雾丝 | 竖线收细落到主节点，长出杆与节点，一小段分子结构 |
+ * | 流动 | 一粒白沫顺流 | 一道透光自上而下掠过，雾丝慢慢飘 | 一滴釉淌进主节点，节点依次亮起 |
  *
  * 线身里所有"随机"都走 [railNoise]（按段序号的确定性哈希），**不用 Random**：
  * 段的划分必须在重组之间稳定，否则滚动时整条线会自己抖起来。
@@ -53,6 +53,10 @@ internal data class RailSpec(
     val phase: Float,
     /** 1.dp 折成的像素。几何都按它算，纯函数才能在单测里不碰 Compose */
     val unit: Float,
+    /**
+     * 夜纸。云的雾丝在暗色里丝心要提一线浪沫，否则镂在灰纹理上几乎看不见。
+     */
+    val dark: Boolean = false,
 )
 
 internal fun railStyle(style: SkinStyle): RailStyle = when (style) {
@@ -78,7 +82,7 @@ internal data class RailSeg(val top: Float, val bottom: Float) {
     val middle: Float get() = (top + bottom) / 2f
 }
 
-/** 二次贝塞尔采样成折线。收笔那些弯（云的钩、陶的旋痕）都是它画的 */
+/** 二次贝塞尔采样成折线。收笔那些弯（云的逸散薄雾）都是它画的 */
 internal fun quadPoints(p0: Offset, p1: Offset, p2: Offset, steps: Int): List<Offset> {
     if (steps < 1) return listOf(p0, p2)
     val out = ArrayList<Offset>(steps + 1)

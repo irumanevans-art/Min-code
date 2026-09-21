@@ -89,9 +89,13 @@ object ClaudeCodeModelCatalog {
      * 给这个模型加 `[1m]` 有没有意义。原生 1M 的加了也无害（CLI 照收），但界面上
      * 不该再拿"启用 1M 上下文"去问用户 —— 那正是"咋设置 1m 上下文"这类困惑的来源：
      * 答案是"默认就是，不用设"。
+     *
+     * 中转站自定义 id（[Family.UNKNOWN]）正是另一头：CLI 不认识就按 200k 处理，
+     * 并提示 append `[1m]` 或设 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`。后缀对它们**有**意义；
+     * 若这里也返回 false，设置页的 1M 开关会对着一列自定义 id 消失，菜单就画出 `…/200k`。
      */
     fun longContextSuffixMeaningful(model: String?): Boolean =
-        !isNativeLongContext(model) && familyOf(model) != Family.UNKNOWN
+        !isNativeLongContext(model)
 
     /** Haiku 没有 effort 阶梯（CLI: "Effort not supported for Haiku"），其余家族都有 low…max */
     fun supportsEffort(model: String?): Boolean = familyOf(model) != Family.HAIKU

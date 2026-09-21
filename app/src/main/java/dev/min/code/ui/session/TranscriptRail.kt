@@ -236,8 +236,8 @@ internal enum class RailTone { Sea, Ink, Error }
  * 会话流左侧那条轨道。每条记录画自己那一段，段与段首尾相接。
  *
  * 线身、收笔、活段上那点动**按风格三选一**（[RailStyle]）：海是一道连续的水、末段卷成螺旋、
- * 一粒白沫顺流；云是一段段断开的雾、末段散成碎絮与一道飘钩、一道透光掠过；
- * 陶是手拉的颤线、末段收口成三道旋痕与一粒泥点、一滴釉缓缓下淌。
+ * 一粒白沫顺流；云是一段段断开的雾、末段散成三缕交缠的雾丝、一道透光掠过；
+ * 陶是手拉的颤线、末段长成一小段分子结构、一滴釉缓缓下淌。
  * 这是全 App 唯一一处**按风格换形**的地方，理由见 [RailStyle] 的头注释。
  *
  * 三套共用的只有两样：这里的几何（[transcriptRailGeometry]，段怎么接、收笔留多少）
@@ -289,6 +289,7 @@ internal fun Modifier.transcriptRail(
                         flow = foam,
                         phase = flowPhase.value,
                         unit = 1.dp.toPx(),
+                        dark = palette.dark,
                     ),
                 )
             }

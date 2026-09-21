@@ -7,10 +7,11 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /**
  * 三套轨道各有各的纹路。钉的是「形」而不是像素：
- * 云的线必须是断的、收笔必须往外散；陶的线必须是颤的、收笔必须收成旋痕。
+ * 云的线必须是断的、收笔必须散成交缠的雾丝；陶的线必须是颤的、收笔必须长成一小段结构。
  * 这两条一旦回退成海的浪卷，三套风格的会话流左边又会是同一条线。
  */
 class RailStyleTest {
@@ -47,7 +48,7 @@ class RailStyleTest {
     }
 
     // ------------------------------------------------------------------
-    // 云：线是断的，收笔往外散
+    // 云：线是断的，收笔散成雾丝
     // ------------------------------------------------------------------
 
     @Test
@@ -93,39 +94,38 @@ class RailStyleTest {
     }
 
     @Test
-    fun `cloud tail scatters then hooks up and out`() {
+    fun `cloud tail dissolves into three intertwining strands`() {
         val height = 20f
-        val tail = cloudTailSegments(top = 100f, height = height)
-        assertEquals(3, tail.size)
-        tail.forEach { assertTrue(it.top >= 100f && it.bottom <= 100f + height) }
-        tail.zipWithNext().forEach { (a, b) ->
-            assertTrue("絮越往下越短", b.length < a.length)
-            assertTrue(b.top > a.bottom)
+        val top = 100f
+        val strands = cloudStrands(x = x, top = top, height = height, unit = u)
+        assertEquals(StrandCount, strands.size)
+        strands.forEach { s ->
+            assertTrue(s.points.size > 10)
+            // 起手在轴线上：是从线里散出来的，不是旁边另画的
+            assertEquals("起手该在轴线上", x, s.points.first().x, 0.3f * u)
+            assertEquals(top, s.points.first().y, 0.001f)
+            // 一路向下，到收笔区底
+            s.points.zipWithNext().forEach { (a, b) -> assertTrue(b.y > a.y) }
+            assertTrue(s.points.last().y <= top + height + 0.001f)
+            assertTrue(s.points.last().y > top + height * 0.9f)
+            s.points.forEach { assertTrue("不能越出 gutter: ${it.x}", it.x in 0f..gutter) }
+            // 中途真的在摆：不是一根直线
+            val spread = s.points.maxOf { it.x } - s.points.minOf { it.x }
+            assertTrue("丝该摆开: $spread", spread > 3f * u)
         }
-
-        val hook = cloudHookPoints(x = x, top = 100f, height = height, unit = u)
-        assertTrue(hook.size > 4)
-        // 一缕从絮里飘出去的云，起手就离开了轴线 —— 接在线尾上会读成折返（实拍两版都栽在这）
-        assertTrue("不该接在线上: ${hook.first().x}", hook.first().x > x)
-        assertTrue("也不该离得太远: ${hook.first().x}", hook.first().x < x + 2f * u)
-        // 钩的全部意思：末点在起点的右上方（散开，不是卷回来）
-        assertTrue("钩该往右: ${hook.last().x}", hook.last().x > hook.first().x + 4f)
-        assertTrue("钩该往上翘: ${hook.last().y} vs ${hook.first().y}", hook.last().y < hook.first().y)
-        // 中途先沉一点，才不是一根斜杠
-        assertTrue(hook.any { it.y > hook.first().y })
-
-        val wisps = cloudWisps(hook, u)
-        assertEquals(3, wisps.size)
-        wisps.zipWithNext().forEach { (a, b) ->
-            assertTrue("碎絮沿切线继续外推", b.x > a.x)
-        }
-        (hook + wisps).forEach {
-            assertTrue("不能越出 gutter: ${it.x}", it.x in 0f..gutter)
-        }
+        // 交缠：相邻两缕至少有一处左右互换
+        val a = strands[0].points
+        val b = strands[1].points
+        val signs = a.indices.map { i -> (a[i].x - b[i].x) > 0f }.distinct()
+        assertTrue("两缕该交缠", signs.size == 2)
+        // 越靠后越细越淡
+        assertTrue(strands[0].weight > strands[2].weight)
+        assertTrue(strands[0].tone > strands[2].tone)
+        assertEquals(strands, cloudStrands(x, top, height, u))
     }
 
     // ------------------------------------------------------------------
-    // 陶：线是颤的，收笔收成旋痕
+    // 陶 / Anthropic：线是颤的，收笔长成一小段分子结构
     // ------------------------------------------------------------------
 
     @Test
@@ -175,30 +175,42 @@ class RailStyleTest {
     }
 
     @Test
-    fun `clay tail closes into three narrowing rings and a dot`() {
+    fun `clay tail grows a small molecular structure`() {
         val height = 20f
-        val rings = clayRings(top = 100f, height = height, unit = u)
-        assertEquals(3, rings.size)
-        rings.zipWithNext().forEach { (a, b) ->
-            assertTrue("越往下越窄", b.halfWidth < a.halfWidth)
-            assertTrue("自上而下排开", b.centreY > a.centreY)
-        }
-        rings.forEach {
-            assertTrue(it.centreY in 100f..(100f + height))
-            assertTrue("旋痕不能越出 gutter", x - it.halfWidth > 0f && x + it.halfWidth < gutter)
-        }
+        val core = clayCoreCentre(x = x, top = 100f, height = height, unit = u)
+        assertTrue(core.y in 100f..(100f + height))
+        assertEquals("主节点落在线走到的那一点上", x, core.x, 0.95f * u + 0.001f)
 
-        val dot = clayDotCentre(x = x, top = 100f, height = height, unit = u)
-        assertTrue("泥点在最后一道旋痕之下", dot.y > rings.last().centreY)
-        assertTrue(dot.y <= 100f + height)
-        assertEquals("泥点落在线走到的那一点上", x, dot.x, 0.95f * u + 0.001f)
+        val m = clayMolecule(x, 100f, height, u)
+        assertEquals(5, m.nodes.size)
+        assertEquals(4, m.struts.size)
+        assertEquals(core, m.nodes.first().centre)
+        // 主节点最大，其余越外越小
+        val hubR = m.nodes[0].radius
+        m.nodes.drop(1).forEach { assertTrue("外节点该比主节点小", it.radius < hubR) }
+        // 每根杆都连着已有节点，且一定有一根二级杆（不是从主节点出发）
+        m.struts.forEach { s ->
+            assertTrue(s.from in m.nodes.indices && s.to in m.nodes.indices)
+            assertTrue(s.from != s.to)
+        }
+        assertTrue("该有一级分叉", m.struts.any { it.from != 0 })
+        // 结构有方向：左右都有节点，但整体偏右
+        assertTrue(m.nodes.any { it.centre.x < core.x - 2f * u })
+        assertTrue(m.nodes.any { it.centre.x > core.x + 6f * u })
+        m.nodes.forEach {
+            assertTrue("节点不能越出 gutter: ${it.centre.x}", it.centre.x - it.radius >= 0f && it.centre.x + it.radius <= gutter)
+            assertTrue("节点不能顶出收笔区", it.centre.y - it.radius >= 100f - 0.001f && it.centre.y + it.radius <= 100f + height + 0.001f)
+        }
+        assertEquals(m, clayMolecule(x, 100f, height, u))
     }
 
-    /** 收笔区被压矮时整组跟着缩，不会横着顶出去 */
+    /** 收笔区被压矮时结构跟着缩，不会横着顶出去 */
     @Test
-    fun `clay rings shrink with a squeezed tail`() {
-        val rings = clayRings(top = 0f, height = 6f, unit = u)
-        rings.forEach { assertTrue(it.centreY <= 6f) }
-        assertTrue(rings.first().halfWidth < clayRings(0f, 20f, u).first().halfWidth)
+    fun `clay molecule shrinks with a squeezed tail`() {
+        val short = clayMolecule(x, 0f, 6f, u)
+        val full = clayMolecule(x, 0f, 20f, u)
+        fun reach(m: ClayMolecule) = m.nodes.drop(1).maxOf { hypot(it.centre.x - m.nodes[0].centre.x, it.centre.y - m.nodes[0].centre.y) }
+        assertTrue("矮尾结构该更小: ${reach(short)} vs ${reach(full)}", reach(short) < reach(full))
+        short.nodes.forEach { assertTrue(it.centre.x in 0f..gutter) }
     }
 }

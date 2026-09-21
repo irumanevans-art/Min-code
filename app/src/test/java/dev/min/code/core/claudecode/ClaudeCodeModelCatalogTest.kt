@@ -49,11 +49,26 @@ class ClaudeCodeModelCatalogTest {
         }
     }
 
-    /** 认不出的中转站自定义 id：CLI 自己也按 200k 处理，这里保持一致；default / null 按直连的 Opus 5 算 */
+    /**
+     * 认不出的中转站自定义 id：无后缀时跟 CLI 一样按 200k；但 `[1m]` 对它们有意义
+     * （CLI 原文就提示 append [1m]），否则设置页开关消失、菜单画出 …/200k。
+     * default / null 按直连的 Opus 5 算。
+     */
     @Test
-    fun `unknown ids fall back to 200k and default follows opus 5`() {
+    fun `unknown ids fall back to 200k unless suffixed and the suffix is meaningful`() {
         assertEquals(ClaudeCodeModelCatalog.CONTEXT_200K, ClaudeCodeModelCatalog.assumedContextWindow("my-relay-model"))
-        assertFalse(ClaudeCodeModelCatalog.longContextSuffixMeaningful("my-relay-model"))
+        assertTrue(
+            "自定义 id 该能开 [1m]",
+            ClaudeCodeModelCatalog.longContextSuffixMeaningful("my-relay-model"),
+        )
+        assertEquals(
+            ClaudeCodeModelCatalog.CONTEXT_1M,
+            ClaudeCodeModelCatalog.assumedContextWindow("my-relay-model[1m]"),
+        )
+        assertEquals(
+            ClaudeCodeModelCatalog.CONTEXT_1M,
+            ClaudeCodeModelCatalog.effectiveContextLimit(200_000, "my-relay-model[1m]"),
+        )
         assertEquals(ClaudeCodeModelCatalog.CONTEXT_1M, ClaudeCodeModelCatalog.assumedContextWindow("default"))
         assertEquals(ClaudeCodeModelCatalog.CONTEXT_1M, ClaudeCodeModelCatalog.assumedContextWindow(null))
     }

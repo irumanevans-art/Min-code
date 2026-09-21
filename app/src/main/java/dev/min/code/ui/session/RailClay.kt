@@ -23,19 +23,26 @@ private const val DryCellDp = 37f
 private const val DryChance = 0.45f
 private const val DryAlpha = 0.32f
 
-/** 收笔三道旋痕的半宽（dp），越往下越窄 */
-private val RingHalfWidthsDp = floatArrayOf(8f, 5.5f, 3.2f)
-/** 第一道要贴着线尾起，中间留一截空白的话，线看上去是断了再补了三笔 */
-private val RingAtHeight = floatArrayOf(0.08f, 0.38f, 0.66f)
-private const val RingReferenceHeightDp = 20f
+/** 收笔区参考高度（dp）。矮了整组跟着缩 */
+private const val TailReferenceHeightDp = 20f
+
+/** 分子结构里的一颗节点：位置与半径 */
+internal data class ClayNode(val centre: Offset, val radius: Float)
+
+/** 一根杆：两颗节点的下标 */
+internal data class ClayStrut(val from: Int, val to: Int)
+
+/** 节点与杆一起才是结构 */
+internal data class ClayMolecule(val nodes: List<ClayNode>, val struts: List<ClayStrut>)
 
 /**
- * 陶：轮与手。
+ * 陶 / Anthropic：轮与手，收笔是线长出来的一小段结构。
  *
  * 线是手拉出来的——沿着走会轻轻颤，笔宽不匀，隔一段还有一处飞白（刻刀提了一下笔）。
- * 末段不卷也不散，是**收口**：三道同心的旋痕（拉坯时轮子留下的），中轴落一粒泥点。
- * 活着的段上是一滴釉缓缓下淌，比白沫慢、尾更长更柔，到底不进旋痕而是收进泥点；
- * 同时三道旋痕按相位依次显影，像坯还在轮上转。
+ * 末段不贴徽章（星号也好、放射芒也好，都是另一个东西挂在线下面）：竖线收细落到一颗
+ * 节点上，从节点长出几根短杆，杆头再各结一颗更小的节点，其中一根再分一级——
+ * Claude 登录页那幅画里，线就是这样长成分子结构的。杆是线的延续，粗细也接着线。
+ * 活着的段上是一滴釉缓缓下淌，淌进主节点；节点按相位依次亮起，像结构在长。
  */
 internal object ClayRail : RailStyle {
     /** 釉比白沫慢：它是淌的，不是跑的 */
@@ -48,22 +55,18 @@ internal object ClayRail : RailStyle {
 
         val tailHeight = spec.tailBottom?.minus(spec.bottom)?.coerceAtLeast(0f) ?: 0f
         val hasTail = tailHeight > 2f * u
+        var hub: Offset? = null
         if (hasTail) {
-            val dot = clayDotCentre(spec.x, spec.bottom, tailHeight, u)
-            clayRings(spec.bottom, tailHeight, u).forEachIndexed { i, ring ->
-                // 三道按 1/3 相位依次亮起来：坯在转。静止时一律画满
-                val lit = if (spec.phase < 0f) 1f else {
-                    0.5f + 0.5f * sin(2f * PI.toFloat() * (spec.phase - i / 3f))
-                }
-                drawRing(spec.x, ring, spec.brush, spec.width, u, lit)
-            }
-            drawCircle(spec.brush, 2.2f * u, dot)
+            val molecule = clayMolecule(spec.x, spec.bottom, tailHeight, u)
+            hub = molecule.nodes.first().centre
+            drawTaperToCore(spec.x, spec.bottom, hub, spec.brush, spec.width, u)
+            drawMolecule(molecule, spec.brush, spec.flow, spec.width, spec.phase)
         }
 
         if (spec.phase < 0f) return
         val glazePath = ArrayList<Offset>(shaft.size + 1)
         glazePath += shaft
-        if (hasTail) glazePath += clayDotCentre(spec.x, spec.bottom, tailHeight, u)
+        hub?.let { glazePath += it }
         drawGlaze(glazePath, spec.phase, spec.flow, spec.width, u)
     }
 }
@@ -90,42 +93,65 @@ private fun DrawScope.drawWobbleShaft(points: List<Offset>, brush: Brush, width:
     }
 }
 
-/** 一道旋痕：下凹的短弧，两端收细 */
-private fun DrawScope.drawRing(
+/** 线尾到主节点：笔宽一路收到约 60%，杆再从这个粗细接着长 */
+private fun DrawScope.drawTaperToCore(
     x: Float,
-    ring: ClayRing,
+    top: Float,
+    core: Offset,
     brush: Brush,
     width: Float,
     unit: Float,
-    lit: Float,
 ) {
-    val pts = quadPoints(
-        p0 = Offset(x - ring.halfWidth, ring.centreY),
-        p1 = Offset(x, ring.centreY + 2.2f * unit),
-        p2 = Offset(x + ring.halfWidth, ring.centreY),
-        steps = 12,
-    )
-    for (i in 1..pts.lastIndex) {
-        val t = (i - 0.5f) / pts.lastIndex
-        drawLine(
-            brush,
-            pts[i - 1],
-            pts[i],
-            width * (0.3f + 0.9f * sin(PI.toFloat() * t)),
-            cap = StrokeCap.Round,
-            alpha = (0.45f + 0.55f * lit).coerceIn(0f, 1f),
-        )
+    val pts = clayShaftPoints(x, top, core.y, unit)
+    if (pts.size < 2) return
+    val last = pts.lastIndex
+    for (i in 1..last) {
+        val s = i / last.toFloat()
+        // 最后一点落在节点心上，不然颤线尾巴会从节点边上探出来
+        val b = if (i == last) core else pts[i]
+        drawLine(brush, pts[i - 1], b, width * (1f - 0.4f * s), cap = StrokeCap.Round)
     }
 }
 
 /**
- * 一滴釉：沿整条线下淌，到底收进泥点淡出。比白沫宽、尾更长，边界软。
+ * 结构：先杆后节点，节点盖住杆头。活着时节点从主节点起依次亮，
+ * 亮 = 半径涨 15% 并叠一点釉色；静止时全亮，结构完整。
+ */
+private fun DrawScope.drawMolecule(
+    m: ClayMolecule,
+    brush: Brush,
+    flow: Color,
+    width: Float,
+    phase: Float,
+) {
+    for (s in m.struts) {
+        val a = m.nodes[s.from].centre
+        val b = m.nodes[s.to].centre
+        // 二级杆更细：越往外越像刚长出来
+        val w = width * if (s.from == 0) 0.62f else 0.5f
+        drawLine(brush, a, b, w, cap = StrokeCap.Round)
+    }
+    val n = m.nodes.size
+    m.nodes.forEachIndexed { i, node ->
+        val lit = if (phase < 0f) 1f else {
+            // 依次显影：每颗错开 1/n 相位，亮度 0.7..1
+            0.7f + 0.3f * (0.5f + 0.5f * sin(2f * PI.toFloat() * (phase - i / n.toFloat())))
+        }
+        drawCircle(brush, node.radius * (0.9f + 0.15f * lit), node.centre)
+        if (phase >= 0f && lit > 0.9f) {
+            drawCircle(flow, node.radius * 0.45f, node.centre, alpha = (lit - 0.9f) / 0.1f * 0.55f)
+        }
+    }
+}
+
+/**
+ * 一滴釉：沿整条线下淌，到底收进主节点淡出。比白沫宽、尾更长，边界软。
  */
 private fun DrawScope.drawGlaze(path: List<Offset>, phase: Float, flow: Color, width: Float, unit: Float) {
     if (path.size < 2) return
     val total = polylineLength(path)
     if (total < 1f) return
-    // 最后一段时间停在泥点上淡出，不闪回起点（和海的白沫同一条规矩）
+    // 最后一段时间停在节点上淡出，不闪回起点（和海的白沫同一条规矩）
     val travelEnd = 0.86f
     val posT = if (phase >= travelEnd) 1f else (phase / travelEnd).coerceIn(0f, 1f)
     val headDist = total * posT
@@ -211,25 +237,35 @@ internal fun clayDryStrokes(top: Float, bottom: Float, unit: Float): List<RailSe
     return out
 }
 
-/** 一道旋痕的中线高度与半宽 */
-internal data class ClayRing(val centreY: Float, val halfWidth: Float)
-
-/**
- * 收口的三道旋痕。半宽越往下越窄；收笔区被压矮时整组跟着缩，不顶出 28 dp 的 gutter。
- */
-internal fun clayRings(top: Float, height: Float, unit: Float): List<ClayRing> {
-    if (height <= 0f || unit <= 0f) return emptyList()
-    val scale = (height / (RingReferenceHeightDp * unit)).coerceIn(0.4f, 1f)
-    return RingAtHeight.indices.map { i ->
-        ClayRing(
-            centreY = top + height * RingAtHeight[i],
-            halfWidth = RingHalfWidthsDp[i] * unit * scale,
-        )
-    }
+/** 主节点：线走到收笔区上部那一点。结构从这里长出去 */
+internal fun clayCoreCentre(x: Float, top: Float, height: Float, unit: Float): Offset {
+    val y = top + height * 0.30f
+    return Offset(clayShaftX(x, y, unit), y)
 }
 
-/** 泥点：收笔最底下那一粒。落在**线走到的那一点**上，不是几何中轴——线是手拉的，点也该跟着手走 */
-internal fun clayDotCentre(x: Float, top: Float, height: Float, unit: Float): Offset {
-    val y = top + height * 0.95f
-    return Offset(clayShaftX(x, y, unit), y)
+/**
+ * 分子结构：主节点 + 三颗一级节点 + 一颗二级节点，四根杆。
+ *
+ * 一级三颗分在右上、右下、左下——左下那颗让结构不整个甩到线的右边去，
+ * 右上那颗再分一级，结构就有了方向，不是正三角。位置和半径写死（不是随机），
+ * 因为 28 dp gutter 里没有余地让它乱长；矮尾时整组按比例缩。
+ */
+internal fun clayMolecule(x: Float, top: Float, height: Float, unit: Float): ClayMolecule {
+    if (height <= 0f || unit <= 0f) return ClayMolecule(emptyList(), emptyList())
+    val s = (height / (TailReferenceHeightDp * unit)).coerceIn(0.45f, 1f)
+    val u = unit * s
+    val hub = clayCoreCentre(x, top, height, unit)
+    fun at(dx: Float, dy: Float, r: Float) = ClayNode(
+        Offset((hub.x + dx * u).coerceIn(1.6f * unit, 26.4f * unit), hub.y + dy * u),
+        r * u,
+    )
+    val nodes = listOf(
+        ClayNode(hub, 2.3f * u),
+        at(7.2f, -3.2f, 1.75f),
+        at(5.6f, 5.4f, 1.5f),
+        at(-4.6f, 6.2f, 1.4f),
+        at(12.4f, -0.4f, 1.2f),
+    )
+    val struts = listOf(ClayStrut(0, 1), ClayStrut(0, 2), ClayStrut(0, 3), ClayStrut(1, 4))
+    return ClayMolecule(nodes, struts)
 }
