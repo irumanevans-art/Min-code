@@ -1,10 +1,13 @@
 package dev.min.code
 
 import android.app.Application
+import android.provider.DocumentsContract
 import android.util.Log
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import dev.min.code.core.crash.CrashRecorder
+import dev.min.code.core.device.DeviceMcpRegistrar
+import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.settings.ProviderSync
 import dev.min.code.core.settings.AppLanguage
@@ -71,6 +74,34 @@ class MinApp : Application() {
                 .distinctUntilChanged()
                 .collect { AppLocale.apply(this@MinApp, it) }
         }
+        // 让 SettingsStore.snapshot 一直是新的。proot 起进程时要同步决定挂哪些目录，
+        // 那个 lambda 挂不起也阻塞不得（见 SettingsStore.snapshot 的注释）
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            getKoin().get<SettingsStore>().settings.collect { /* 只为让 snapshot 跟上 */ }
+        }
+        // 设备操控的 MCP server：跟着设置里的开关起停，并把地址写进 CLI 的 mcpServers。
+        // **必须在用户可能开始会话之前就位** —— CLI 是启动时读一次 MCP 配置的，
+        // 等模型想用了再起，那会儿它手里的配置已经是旧的了（见 DeviceMcpRegistrar）
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            runCatching { getKoin().get<DeviceMcpRegistrar>().follow() }
+                .onFailure { Log.w(TAG, "device mcp registrar stopped", it) }
+        }
+        // rootfs 装好 / 重装 / 删掉之后，告诉系统「文件」App 重新读一遍我们的根。
+        // 不通知的话，装完 rootfs 侧栏里那个入口要等系统自己想起来才出现
+        //（见 WorkspaceDocumentsProvider）
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            getKoin().get<WorkspaceRepository>().workspace
+                .map { it.shellStatus }
+                .distinctUntilChanged()
+                .collect {
+                    runCatching {
+                        contentResolver.notifyChange(
+                            DocumentsContract.buildRootsUri("${BuildConfig.APPLICATION_ID}.documents"),
+                            null,
+                        )
+                    }.onFailure { e -> Log.w(TAG, "notify documents roots failed", e) }
+                }
+        }
         // 上一条命留下的托管服务这会儿还在跑（`killOnExit=false` 就是要它活过 App），
         // 可内存里的进程表是空的。不认回来的话，用户看到的是一张空面板加一个「端口被占」。
         getKoin().get<AppScope>().launch(Dispatchers.IO) {
@@ -104,8 +135,8 @@ class MinApp : Application() {
         manager.createNotificationChannel(
             NotificationChannelCompat
                 .Builder(CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
-                .setName("会话保活")
-                .setDescription("会话在后台运行时的常驻通知")
+                .setName(getString(R.string.notif_keepalive_name))
+                .setDescription(getString(R.string.notif_keepalive_desc))
                 .setVibrationEnabled(false)
                 .setShowBadge(false)
                 .build()
@@ -113,8 +144,8 @@ class MinApp : Application() {
         manager.createNotificationChannel(
             NotificationChannelCompat
                 .Builder(CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_HIGH)
-                .setName("会话提醒")
-                .setDescription("等待审批、任务完成、会话中断")
+                .setName(getString(R.string.notif_alert_name))
+                .setDescription(getString(R.string.notif_alert_desc))
                 .setVibrationEnabled(true)
                 .build()
         )

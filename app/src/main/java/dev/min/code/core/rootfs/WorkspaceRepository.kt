@@ -160,7 +160,12 @@ class WorkspaceRepository(
         val results = ArrayList<WorkspaceFileEntry>(limit.coerceAtMost(64))
         var visited = 0
         base.walkTopDown()
-            .onEnter { dir -> dir.name !in SEARCH_SKIP_DIRS && visited < SEARCH_SCAN_LIMIT }
+            .onEnter { dir ->
+                // 跳过规则只作用于遍历途中遇到的子目录：起点是用户显式选的，
+                // 他进到 build/node_modules 里搜就是想搜这里，根目录必须豁免，
+                // 否则 onEnter 对根返回 false，整棵树直接为空。
+                (dir == base || dir.name !in SEARCH_SKIP_DIRS) && visited < SEARCH_SCAN_LIMIT
+            }
             .forEach { file ->
                 if (results.size >= limit || visited > SEARCH_SCAN_LIMIT) return@forEach
                 visited++
@@ -206,7 +211,7 @@ class WorkspaceRepository(
                 WorkspaceStorageArea.FILES -> manager.readText(root, path)
                 WorkspaceStorageArea.LINUX -> {
                     val size = manager.fileSize(root, path, area)
-                    require(size <= MAX_PREVIEW_BYTES) { "文件过大，无法预览（$size bytes）" }
+                    if (size > MAX_PREVIEW_BYTES) throw FileTooLargeException(size)
                     ByteArrayOutputStream().use { out ->
                         manager.exportFile(root, path, area, out)
                         out.toString(Charsets.UTF_8.name())
@@ -422,7 +427,8 @@ class WorkspaceRepository(
                     linuxBytes = linuxBytes,
                     scanned = scanned,
                     done = true,
-                    error = e.message ?: "未能算出占用空间",
+                    error = e.message,
+                    failed = true,
                 ).also { onProgress(it) }
             }
         }
@@ -532,7 +538,12 @@ data class WorkspaceUsage(
     val linuxBytes: Long = 0,
     val scanned: Int = 0,
     val done: Boolean = false,
+    /** 技术详情，给排查用；可能为 null。要判"是否出错"看 [failed] */
     val error: String? = null,
+    val failed: Boolean = false,
 ) {
     val totalBytes: Long get() = filesBytes + linuxBytes
 }
+
+/** 预览超过 [WorkspaceRepository.MAX_PREVIEW_BYTES]。带上 size，让 UI 自己组文案 */
+class FileTooLargeException(val size: Long) : IllegalArgumentException("file too large: $size bytes")

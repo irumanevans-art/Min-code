@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import dev.min.code.R
 import java.io.File
 
 private const val TAG = "Util"
@@ -43,7 +44,7 @@ fun Context.writeClipboardText(text: String) {
         clipboard.setPrimaryClip(ClipData.newPlainText("text", text))
     }.onFailure {
         Log.e(TAG, "writeClipboardText failed", it)
-        Toast.makeText(this, "复制失败", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.common_copy_failed), Toast.LENGTH_SHORT).show()
     }
 }
 

@@ -23,10 +23,12 @@ class RootfsPathResolutionTest {
         val uploadDir = tempFolder.newFolder("upload")
         return WorkspaceManager(
             baseDir = tempFolder.newFolder("workspaces"),
-            bindMounts = listOf(
-                WorkspaceBindMount(source = skillsDir, target = "/skills"),
-                WorkspaceBindMount(source = uploadDir, target = "/upload"),
-            ),
+            bindMounts = {
+                listOf(
+                    WorkspaceBindMount(source = skillsDir, target = "/skills"),
+                    WorkspaceBindMount(source = uploadDir, target = "/upload"),
+                )
+            },
         ).also { it.ensureWorkspace(root) }
     }
 
@@ -49,10 +51,12 @@ class RootfsPathResolutionTest {
         val skillsets = tempFolder.newFolder("skillsets-src")
         val manager = WorkspaceManager(
             baseDir = tempFolder.newFolder("workspaces"),
-            bindMounts = listOf(
-                WorkspaceBindMount(source = skills, target = "/skills"),
-                WorkspaceBindMount(source = skillsets, target = "/skillsets"),
-            ),
+            bindMounts = {
+                listOf(
+                    WorkspaceBindMount(source = skills, target = "/skills"),
+                    WorkspaceBindMount(source = skillsets, target = "/skillsets"),
+                )
+            },
         ).also { it.ensureWorkspace(root) }
 
         assertEquals(skills, manager.resolveRootfsPath(root, "/skills/a.md").rootDir)

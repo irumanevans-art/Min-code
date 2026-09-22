@@ -21,6 +21,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -84,9 +85,54 @@ private val ENTRY_PADDING = 7.dp
 /**
  * 标记符形状。**每个形状都编码一条真实的区分**，不是装饰：
  * 保留枚举名称以兼容调用方，画法为金切面=用户、开放结=思考、双流线=运行中、
- * 镂刻切面=已完成、朱色交叉切面=失败、双刻线=提示，无标记=助手正文。
+ * 定环=等你批准、镂刻切面=已完成、朱色交叉切面=失败、双刻线=提示，无标记=助手正文。
  */
-internal enum class RailMarker { None, Dot, Ring, SquareFilled, SquareOutline, Cross, Dash }
+internal enum class RailMarker { None, Dot, Ring, SquareFilled, SquareHeld, SquareOutline, Cross, Dash }
+
+/**
+ * 当前会话正等着谁批准（那次调用的 `toolUseId`），没有则 null。
+ *
+ * ## 为什么不做成 [ChatItem.ToolCall.Status] 的第四个取值
+ *
+ * 它**不是那条记录的属性**。同一次调用在等待前后是同一条 `tool_use`，变的是会话
+ * 此刻挂着谁的权限请求；批准之后那张卡继续跑，记录本身一个字都没改。
+ *
+ * 更硬的理由是帧序不保证：`tool_use` 与 `can_use_tool` 谁先到都有可能（见
+ * `ClaudeCodeManager` 里"ToolUse 先到再 start = 与即将到来的 permission 路径双跑"
+ * 那段）。权限请求先到时那张卡还没进列表，改状态就会漏掉；从会话级真值派生则
+ * 无论谁先到都对得上，也不必在每个 `pendingPermission = null` 的地方记得清回去。
+ *
+ * 用 CompositionLocal 而不是逐层传参：中间隔着 [TranscriptItem] 和折叠块两层、
+ * 两个引擎一共四个调用点，而四处要传的是同一件事。
+ */
+internal val LocalAwaitingToolUseId = compositionLocalOf<String?> { null }
+
+/**
+ * 从"会话挂着一个权限请求"解出"哪张卡该显示成等待"。
+ *
+ * @param pendingToolName 挂起请求的工具名。Codex 的审批请求里没有这个概念，传 null
+ * @param pendingToolUseId 请求自带的 id。Codex 那边就是 `itemId`（映射时 `toolUseId = itemId`），
+ *   一定对得上；Claude 的 `can_use_tool` 里它是**可选**的，缺了就按工具名回退到
+ *   最后一条还在跑的同名调用 —— 那就是正在被问的那次。
+ *   两个都为 null = 此刻没有挂起的请求。
+ * @return 该标成等待的 `toolUseId`；请求先于 `tool_use` 帧到达时列表里还没有那张卡，返回 null
+ *   —— 不猜，等下一帧把卡带来，重组时自然对上。
+ */
+internal fun awaitingToolUseId(
+    items: List<ChatItem>,
+    pendingToolName: String?,
+    pendingToolUseId: String?,
+): String? {
+    if (pendingToolName == null && pendingToolUseId == null) return null
+    val running = items.asSequence()
+        .filterIsInstance<ChatItem.ToolCall>()
+        .filter { it.status == ChatItem.ToolCall.Status.Running }
+    if (pendingToolUseId != null) {
+        running.firstOrNull { it.toolUseId == pendingToolUseId }?.let { return it.toolUseId }
+    }
+    if (pendingToolName == null) return null
+    return running.lastOrNull { it.name == pendingToolName }?.toolUseId
+}
 
 // ---------------------------------------------------------------------------
 // 分组：把连续的"干活"折成一块
@@ -618,16 +664,22 @@ internal fun ToolEntry(
     onRevert: (() -> Unit)? = null,
 ) {
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
-    val running = item.status == ChatItem.ToolCall.Status.Running
+    // 「在等你」要和「在跑」分开：前者不点永远不动。两者在引擎里都是 Running，
+    // 差别是会话此刻挂着谁的权限请求 —— 见 [LocalAwaitingToolUseId]
+    val awaiting = item.status == ChatItem.ToolCall.Status.Running &&
+        LocalAwaitingToolUseId.current == item.toolUseId
+    val running = item.status == ChatItem.ToolCall.Status.Running && !awaiting
     val azure = MaterialTheme.sea.seaDeep
     TranscriptEntry(
-        marker = when (item.status) {
-            ChatItem.ToolCall.Status.Running -> RailMarker.SquareFilled
-            ChatItem.ToolCall.Status.Done -> RailMarker.SquareOutline
-            ChatItem.ToolCall.Status.Error -> RailMarker.Cross
+        marker = when {
+            awaiting -> RailMarker.SquareHeld
+            item.status == ChatItem.ToolCall.Status.Running -> RailMarker.SquareFilled
+            item.status == ChatItem.ToolCall.Status.Done -> RailMarker.SquareOutline
+            else -> RailMarker.Cross
         },
         isFirst = isFirst,
         isLast = isLast,
+        // 等待时连轨道的流动一起停掉：整条线静止本身就是"卡在这里了"
         active = running,
         tone = when (item.status) {
             ChatItem.ToolCall.Status.Error -> RailTone.Error
@@ -646,7 +698,7 @@ internal fun ToolEntry(
             // 它是什么。一个 360dp 的行放不下四样东西，图标是其中信息量最低的那个，
             // 去掉它把宽度让给摘要——摘要才是"不展开也知道在干什么"的关键。
             Text(
-                text = item.name,
+                text = toolDisplayName(item.name),
                 style = MaterialTheme.typography.labelMedium,
                 fontFamily = JetbrainsMono,
                 color = if (item.isError) MaterialTheme.colorScheme.error
@@ -662,7 +714,17 @@ internal fun ToolEntry(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (running) {
+            if (awaiting) {
+                // 这一格平时是转圈或角标，等待时换成一句话。手机上人常常切出去再回来，
+                // 回来时满屏都在转，分不清哪张卡是在等自己 —— 这里必须直说
+                Text(
+                    text = labels.toolAwaiting,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetbrainsMono,
+                    color = azure,
+                    maxLines = 1,
+                )
+            } else if (running) {
                 InkSpinner(size = 11.dp, color = azure)
             } else {
                 toolBadge(item, labels)?.let {

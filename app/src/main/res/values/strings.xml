@@ -24,6 +24,15 @@
   <string name="settings_section_connection">Connection</string>
   <string name="settings_section_install">Install source</string>
   <string name="settings_section_background">Background</string>
+  <string name="settings_section_device_files">Device files</string>
+  <string name="documents_root_workspace">Workspace</string>
+  <string name="documents_root_rootfs">Ubuntu</string>
+  <string name="session_permission_device_path">On your device: %1$s</string>
+  <string name="session_permission_outside_workspace">Outside /workspace: %1$s</string>
+  <string name="settings_device_storage_title">Let the agent read and write this device</string>
+  <string name="settings_device_storage_off">Off — the agent only sees /workspace. Turning this on mounts your shared storage (photos, downloads, documents) at /sdcard, with write access; proot cannot mount it read-only.</string>
+  <string name="settings_device_storage_on">Mounted at /sdcard, writable. Android/data and Android/obb stay out of reach — the system blocks those for every app.</string>
+  <string name="settings_device_storage_need_permission">Waiting for “All files access” in system settings. Tap to open that page.</string>
   <string name="settings_section_appearance">Appearance</string>
   <string name="settings_section_language">Language</string>
   <string name="settings_connection_hint">Changes apply to sessions started after this. Running sessions still use the values injected at launch.</string>
@@ -177,6 +186,7 @@
   <string name="session_tool_status_running">Running</string>
   <string name="session_tool_status_done">Done</string>
   <string name="session_tool_status_error">Error</string>
+  <string name="session_tool_status_awaiting">needs you</string>
   <string name="session_export_user">You</string>
   <string name="session_export_thinking">Thinking</string>
   <string name="session_permission_blocked_path">Blocked path: %1$s</string>
@@ -613,6 +623,7 @@
   <string name="providers_probe_ok">Reachable</string>
   <string name="providers_probe_ok_models">Reachable · %1$d models</string>
   <string name="providers_probe_unauthorized">Key rejected</string>
+  <string name="providers_probe_no_models">Reachable · no model list (set mapping by hand)</string>
   <string name="providers_probe_unreachable">Cannot reach: %1$s</string>
   <string name="providers_probe_no_token">Fill in a key first</string>
   <!-- 会话角标：env 在进程启动时固化，切换对正跑着的会话天然无效 -->
@@ -684,6 +695,11 @@
   <string name="providers_models_target_haiku">Haiku slot</string>
   <string name="providers_models_target_sonnet">Sonnet slot</string>
   <string name="providers_models_target_opus">Opus slot</string>
+  <string name="providers_models_missing_hint">No main model mapping yet — the session may still ask for claude-* ids.</string>
+  <string name="providers_context_title">Context window</string>
+  <string name="providers_context_hint">Writes CLAUDE_CODE_MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW. Needed for third-party models that are not 200k.</string>
+  <string name="providers_context_max">Quick size</string>
+  <string name="providers_context_clear">Clear</string>
   <!-- 统一供应商 -->
   <string name="providers_unified_section">Shared providers</string>
   <string name="providers_unified_hint">One entry that feeds both Claude Code and Codex. Changing it rewrites the entries it derives; editing a derived entry directly unlinks it.</string>
@@ -751,4 +767,125 @@
   <string name="providers_switch_action">Switch…</string>
   <string name="providers_config_hint">Sessions pick this up when they start. Idle ones restart on their own.</string>
   <string name="setup_pick_preset">Pick from presets</string>
+
+  <!-- 第二轮抽资源：边角硬编码 -->
+  <string name="common_expand">Expand</string>
+  <string name="common_collapse">Collapse</string>
+  <string name="common_copy">Copy</string>
+  <string name="common_copied">Copied</string>
+  <string name="common_back">Back</string>
+  <string name="common_close">Close</string>
+  <string name="common_copy_code">Copy code</string>
+  <string name="common_more_lines">%1$d more lines</string>
+  <string name="common_image_decode_failed">Can\'t decode this image</string>
+  <string name="common_copy_failed">Couldn\'t copy</string>
+  <string name="common_cant_open">Can\'t open %1$s</string>
+
+  <string name="md_image">[Image]</string>
+  <string name="md_image_alt">[Image: %1$s]</string>
+
+  <string name="about_title">About</string>
+  <string name="about_intro">Runs the official Claude Code CLI inside Ubuntu (proot) on your phone, driven by an interface that reads like a work log.</string>
+  <string name="about_check_update">Check for app updates</string>
+  <string name="about_check_update_checking">Checking GitHub…</string>
+  <string name="about_check_update_latest">You\'re on the latest version</string>
+  <string name="about_check_update_available">Update available: %1$s</string>
+  <string name="about_check_update_failed">Could not check: %1$s</string>
+  <string name="about_check_update_no_apk">A release exists, but no matching APK for this device</string>
+  <string name="about_check_update_dialog_title">Install %1$s?</string>
+  <string name="about_check_update_download">Download &amp; install</string>
+  <string name="about_check_update_downloading">Downloading… %1$d%%</string>
+  <string name="about_check_update_download_failed">Download failed: %1$s</string>
+  <string name="about_check_update_need_permission">Allow installing unknown apps first</string>
+  <string name="about_check_update_open_permission">Open settings</string>
+  <string name="about_check_update_open_release">Open release page</string>
+  <string name="about_check_update_install_failed">Could not start the installer</string>
+  <string name="about_whats_new">What\'s new</string>
+  <string name="about_credits">Credits and license</string>
+  <string name="about_license_body">This app is released under GNU AGPL-3.0. The proot runtime, rootfs installer and terminal come from RikkaHub (AGPL-3.0); the proot binary comes from the Termux project and the terminal emulator from Termux\'s terminal-view; syntax highlighting and Markdown parsing come from RikkaHub\'s highlight module and JetBrains markdown. Claude Code is a product of Anthropic, and this app is not affiliated with Anthropic.</string>
+  <string name="about_last_crash">Last crash</string>
+  <string name="about_last_error">Last error (no crash)</string>
+  <string name="about_no_record">Nothing recorded.</string>
+  <string name="about_copy_crash">Copy crash report</string>
+
+  <string name="workspace_linux_title">Linux environment</string>
+  <string name="workspace_linux_status">Status</string>
+  <string name="workspace_linux_desc">/workspace is the Files area on the files page, and it is Claude Code\'s working directory. The Rootfs area is the whole Ubuntu system — anything Claude installs with apt or pip lives there, so it grows over time.</string>
+  <string name="workspace_linux_reinstall">Reinstall the Linux environment</string>
+  <string name="workspace_linux_reinstall_desc">This wipes the whole Ubuntu system: the Claude Code CLI, Node.js, everything installed with apt or pip, and the sessions and memory under ~/.claude. Only do this when the environment is truly broken. The Files area is not affected.</string>
+  <string name="workspace_usage_scanning">Scanning…</string>
+  <string name="workspace_usage_scanned">%1$s · %2$d files scanned</string>
+  <string name="workspace_usage_partial">%1$s (incomplete)</string>
+  <string name="workspace_usage_split">Files %1$s · Rootfs %2$s</string>
+  <string name="workspace_move_one">Move %1$s into the folder selected below. Go one level in, then confirm.</string>
+  <string name="workspace_move_many">Move the %1$d selected items into the folder selected below. Go one level in, then confirm.</string>
+
+  <string name="editor_err_read">Couldn\'t read the file</string>
+  <string name="editor_err_save">Couldn\'t save the file</string>
+  <string name="editor_saving">Saving…</string>
+  <string name="editor_loading">Reading</string>
+
+  <string name="workspace_err_search">Search failed</string>
+  <string name="workspace_err_load">Couldn\'t load the workspace files</string>
+  <string name="workspace_err_delete">Delete failed</string>
+  <string name="workspace_err_bad_name">That name isn\'t valid</string>
+  <string name="workspace_err_create">Create failed</string>
+  <string name="workspace_err_move_into_self">A folder can\'t be moved into itself</string>
+  <string name="workspace_err_move">Move failed</string>
+  <string name="workspace_err_import_file">Importing the file failed</string>
+  <string name="workspace_err_export_file">Exporting the file failed</string>
+  <string name="workspace_err_import">Import failed</string>
+  <string name="workspace_err_export">Export failed</string>
+  <string name="workspace_err_bad_zip">Can\'t open this zip</string>
+  <string name="workspace_err_generic">That didn\'t work</string>
+  <string name="workspace_err_rootfs_install">Rootfs install failed</string>
+  <string name="workspace_err_command">The command failed</string>
+  <string name="workspace_err_open_dir">Can\'t open this folder</string>
+  <string name="workspace_err_too_large">File too large to preview (%1$d bytes)</string>
+  <string name="workspace_err_usage">Couldn\'t measure the disk usage</string>
+
+  <string name="setup_preparing">Getting ready to download…</string>
+  <string name="setup_source_official">(official source)</string>
+  <string name="setup_source_mirror">(mirror)</string>
+  <string name="setup_err_rootfs">Linux environment install failed: %1$s</string>
+  <string name="setup_downloading">Downloading the Ubuntu base image%1$s %2$d MB</string>
+  <string name="setup_extracting">Extracted %1$d files</string>
+  <string name="setup_installed">Installed</string>
+
+  <string name="notif_keepalive_name">Session keep-alive</string>
+  <string name="notif_keepalive_desc">The ongoing notification shown while a session runs in the background</string>
+  <string name="notif_alert_name">Session alerts</string>
+  <string name="notif_alert_desc">Waiting for approval, task finished, session interrupted</string>
+
+  <string name="settings_section_device_control">Device control</string>
+  <string name="device_control_title">Let the agent operate this phone</string>
+  <string name="device_control_off">Off. Turning this on lets the agent read what\'s on screen and tap, type, and swipe for you — through Android\'s accessibility service.</string>
+  <!-- Shown by the system in the accessibility settings list, under the service name -->
+  <string name="device_control_service_description">Lets Min read what\'s on screen and tap, type, and swipe on your behalf. Only used while a session is running, and every action still needs your approval.</string>
+  <!-- Android 13+ greys out the accessibility toggle for sideloaded apps until restricted
+       settings are allowed. Without this text people just see a dead switch -->
+  <string name="device_control_restricted">If the switch is greyed out: go to App info → ⋮ (top right) → Allow restricted settings, confirm with your PIN, then come back. Android does this for every app installed outside the Play Store.</string>
+  <string name="device_control_stop">STOP</string>
+  <string name="device_control_active_title">The agent can control this phone</string>
+  <string name="device_control_active_body">Tap STOP to cut it off immediately.</string>
+  <string name="device_control_need_permission">Waiting for accessibility access in system settings. Tap to open that page.</string>
+  <string name="device_control_on">On. Every tap and keystroke still goes through the same approval you use for file edits.</string>
+  <string name="device_virtual_title">Virtual screen (no Shizuku app)</string>
+  <string name="device_virtual_off">Off. When on, the agent works on an invisible screen so your phone stays free. Needs Wireless debugging once after each reboot — same cost as Shizuku, without installing another app.</string>
+  <string name="device_virtual_ready">Ready (shell uid 2000). Restart the phone and you will need to start it again.</string>
+  <string name="device_virtual_starting">Starting privileged process…</string>
+  <string name="device_virtual_failed">Failed: %1$s</string>
+  <string name="device_virtual_need_adb">Open Developer options → Wireless debugging, then tap Start. Or copy the adb command and run it from a PC.</string>
+  <string name="device_virtual_start">Start via Wireless debugging</string>
+  <string name="device_virtual_copy_cmd">Copy adb command</string>
+  <string name="device_virtual_cmd_copied">Command copied. On a PC: adb shell &lt;paste&gt;</string>
+  <string name="device_virtual_session_on">Virtual screen session active (display %1$d)</string>
+  <string name="device_virtual_session_start">Start virtual screen session</string>
+  <string name="device_virtual_session_stop">Stop virtual screen session</string>
+  <string name="device_tool_tap">Tap %1$s</string>
+  <string name="device_tool_input">Type into %1$s</string>
+  <string name="device_tool_swipe">Swipe %1$s</string>
+  <string name="device_tool_open_app">Open %1$s</string>
+  <string name="device_tool_back">Press back</string>
+  <string name="device_tool_ui_tree">Read the screen</string>
 </resources>

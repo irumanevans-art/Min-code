@@ -10,12 +10,19 @@ class WorkspaceManager(
     private val baseDir: File,
     private val config: WorkspaceConfig = WorkspaceConfig(),
     private val shellRunner: WorkspaceShellRunner = HostShellRunner(),
-    private val bindMounts: List<WorkspaceBindMount> = emptyList(),
+    /**
+     * 额外挂进 rootfs 的宿主目录。
+     *
+     * 传的是 **provider 而不是现成的列表**：整机存储是设置里随时可开关的一档，
+     * 关掉之后下一次起 proot 就不该再挂；构造时定死的话，用户关了开关还得重启 App 才生效。
+     */
+    private val bindMounts: () -> List<WorkspaceBindMount> = { emptyList() },
 ) {
     private val fileSystem = WorkspaceFileSystem(config)
 
     // 按 target 长度降序, 保证 /a/b 优先于 /a 匹配
-    private val sortedBindMounts = bindMounts.sortedByDescending { it.target.trimEnd('/').length }
+    private fun sortedBindMounts(): List<WorkspaceBindMount> =
+        bindMounts().sortedByDescending { it.target.trimEnd('/').length }
 
     init {
         baseDir.mkdirs()
@@ -218,7 +225,7 @@ class WorkspaceManager(
         val trimmed = path.trim().trimEnd('/').ifBlank { "/" }
         require(trimmed.startsWith("/")) { "Rootfs path must be absolute: $path" }
 
-        sortedBindMounts.forEach { mount ->
+        sortedBindMounts().forEach { mount ->
             val target = mount.target.trimEnd('/')
             if (trimmed == target) return RootfsLocation(mount.source, "")
             if (trimmed.startsWith("$target/")) {
@@ -319,7 +326,7 @@ class WorkspaceManager(
                 workingDir = workingDir,
                 timeoutMillis = timeoutMillis,
                 stdin = stdin,
-                bindMounts = bindMounts,
+                bindMounts = bindMounts(),
                 env = env,
             )
         )

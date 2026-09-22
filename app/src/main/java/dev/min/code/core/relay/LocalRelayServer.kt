@@ -8,7 +8,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
-import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -139,7 +138,7 @@ class LocalRelayServer(
         }
     }
 
-    private fun route(req: Request, output: OutputStream) {
+    private fun route(req: HttpRequest, output: OutputStream) {
         val parts = req.path.trim('/').split('/')
         // r / {token} / {claude|codex} / {profileId} / …
         if (parts.size < 4 || parts[0] != "r" || parts[1] != token) {
@@ -168,7 +167,7 @@ class LocalRelayServer(
         }
     }
 
-    private fun proxyClaude(req: Request, rest: String, upstream: Upstream, output: OutputStream) {
+    private fun proxyClaude(req: HttpRequest, rest: String, upstream: Upstream, output: OutputStream) {
         val bodyText = req.body.toString(Charsets.UTF_8)
         val anthropic = runCatching {
             relayJson.parseToJsonElement(bodyText).jsonObject
@@ -235,7 +234,7 @@ class LocalRelayServer(
         }
     }
 
-    private fun proxyCodex(req: Request, rest: String, upstream: Upstream, output: OutputStream) {
+    private fun proxyCodex(req: HttpRequest, rest: String, upstream: Upstream, output: OutputStream) {
         // Codex 侧：如果 upstream.toChatCompletions，把 /v1/responses 转成 /v1/chat/completions
         val bodyText = req.body.toString(Charsets.UTF_8)
         if (upstream.toChatCompletions && rest.endsWith("/responses")) {
@@ -305,7 +304,7 @@ class LocalRelayServer(
         return joinOpenAiApi(upstream.baseUrl, resource)
     }
 
-    private fun forwardRaw(req: Request, url: String, upstream: Upstream, output: OutputStream) {
+    private fun forwardRaw(req: HttpRequest, url: String, upstream: Upstream, output: OutputStream) {
         val resp = postJson(url, req.body, upstream, acceptStream = true) ?: run {
             writeResponse(output, 502, "text/plain", "upstream unreachable".toByteArray())
             return
@@ -320,13 +319,6 @@ class LocalRelayServer(
     // -----------------------------------------------------------------------
     // HTTP 原语
     // -----------------------------------------------------------------------
-
-    private data class Request(
-        val method: String,
-        val path: String,
-        val headers: Map<String, String>,
-        val body: ByteArray,
-    )
 
     private class UpstreamResponse(
         val code: Int,
@@ -379,84 +371,6 @@ class LocalRelayServer(
             Log.w(TAG, "upstream POST $url failed", e)
             null
         }
-    }
-
-    private fun readRequest(input: InputStream): Request? {
-        val first = readLine(input) ?: return null
-        val parts = first.split(' ')
-        if (parts.size < 2) return null
-        val method = parts[0]
-        val path = parts[1].substringBefore('?')
-        val headers = LinkedHashMap<String, String>()
-        while (true) {
-            val line = readLine(input) ?: break
-            if (line.isEmpty()) break
-            val i = line.indexOf(':')
-            if (i > 0) headers[line.substring(0, i).trim().lowercase()] = line.substring(i + 1).trim()
-        }
-        val length = headers["content-length"]?.toIntOrNull() ?: 0
-        val body = if (length > 0) {
-            val buf = ByteArray(length)
-            var read = 0
-            while (read < length) {
-                val n = input.read(buf, read, length - read)
-                if (n < 0) break
-                read += n
-            }
-            buf
-        } else {
-            ByteArray(0)
-        }
-        return Request(method, path, headers, body)
-    }
-
-    private fun readLine(input: InputStream): String? {
-        val buf = ByteArrayOutputStream()
-        while (true) {
-            val c = input.read()
-            if (c < 0) return if (buf.size() == 0) null else buf.toString(Charsets.US_ASCII.name())
-            if (c == '\n'.code) break
-            if (c != '\r'.code) buf.write(c)
-        }
-        return buf.toString(Charsets.US_ASCII.name())
-    }
-
-    private fun writeResponse(
-        output: OutputStream,
-        code: Int,
-        contentType: String,
-        body: ByteArray,
-        stream: InputStream? = null,
-        cors: Boolean = false,
-    ) {
-        val status = when (code) {
-            200 -> "OK"
-            204 -> "No Content"
-            400 -> "Bad Request"
-            401 -> "Unauthorized"
-            404 -> "Not Found"
-            502 -> "Bad Gateway"
-            else -> "Error"
-        }
-        val head = buildString {
-            append("HTTP/1.1 $code $status\r\n")
-            append("Content-Type: $contentType\r\n")
-            if (stream == null) append("Content-Length: ${body.size}\r\n")
-            append("Connection: close\r\n")
-            if (cors) {
-                append("Access-Control-Allow-Origin: *\r\n")
-                append("Access-Control-Allow-Headers: *\r\n")
-                append("Access-Control-Allow-Methods: POST, OPTIONS\r\n")
-            }
-            append("\r\n")
-        }
-        output.write(head.toByteArray(Charsets.US_ASCII))
-        if (stream != null) {
-            stream.copyTo(output)
-        } else {
-            output.write(body)
-        }
-        output.flush()
     }
 
     private fun writeSseHeaders(output: OutputStream) {

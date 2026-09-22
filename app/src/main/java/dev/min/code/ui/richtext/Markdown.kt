@@ -1,5 +1,7 @@
 package dev.min.code.ui.richtext
 
+import dev.min.code.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -304,8 +306,10 @@ private fun inlineText(node: ASTNode, text: String): AnnotatedString {
     val codeBg = MaterialTheme.colorScheme.surfaceContainerHigh
     // 链接是湛：可以走过去的地方，和"活着的"同一种颜色，不是金——金只给人写的
     val linkColor = MaterialTheme.sea.sea
+    val imgLabel = stringResource(R.string.md_image)
+    val imgLabelAlt = stringResource(R.string.md_image_alt)
     return buildAnnotatedString {
-        appendInline(node, text, codeBg, linkColor)
+        appendInline(node, text, codeBg, linkColor, imgLabel, imgLabelAlt)
     }
 }
 
@@ -314,6 +318,8 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInline(
     text: String,
     codeBg: Color,
     linkColor: Color,
+    imgLabel: String,
+    imgLabelAlt: String,
 ) {
     when (node.type) {
         MarkdownTokenTypes.TEXT, MarkdownTokenTypes.WHITE_SPACE, MarkdownTokenTypes.COLON,
@@ -323,7 +329,7 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInline(
         MarkdownTokenTypes.EMPH, MarkdownTokenTypes.BACKTICK, MarkdownTokenTypes.HTML_TAG,
         MarkdownTokenTypes.ATX_CONTENT, MarkdownTokenTypes.SETEXT_CONTENT -> {
             if (node.children.isEmpty()) append(node.text(text))
-            else node.children.forEach { appendInline(it, text, codeBg, linkColor) }
+            else node.children.forEach { appendInline(it, text, codeBg, linkColor, imgLabel, imgLabelAlt) }
         }
 
         // 段落里的换行是软换行 = 一个空格；硬换行（行尾两个空格）才是真换行
@@ -337,15 +343,15 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInline(
         }
 
         MarkdownElementTypes.STRONG -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-            node.children.forEach { if (it.type != MarkdownTokenTypes.EMPH) appendInline(it, text, codeBg, linkColor) }
+            node.children.forEach { if (it.type != MarkdownTokenTypes.EMPH) appendInline(it, text, codeBg, linkColor, imgLabel, imgLabelAlt) }
         }
 
         MarkdownElementTypes.EMPH -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
-            node.children.forEach { if (it.type != MarkdownTokenTypes.EMPH) appendInline(it, text, codeBg, linkColor) }
+            node.children.forEach { if (it.type != MarkdownTokenTypes.EMPH) appendInline(it, text, codeBg, linkColor, imgLabel, imgLabelAlt) }
         }
 
         GFMElementTypes.STRIKETHROUGH -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
-            node.children.forEach { if (it.type != GFMTokenTypes.TILDE) appendInline(it, text, codeBg, linkColor) }
+            node.children.forEach { if (it.type != GFMTokenTypes.TILDE) appendInline(it, text, codeBg, linkColor, imgLabel, imgLabelAlt) }
         }
 
         MarkdownElementTypes.INLINE_LINK -> {
@@ -354,7 +360,7 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInline(
             if (dest != null) {
                 withLink(LinkAnnotation.Url(dest, TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)))) {
                     if (label != null) label.children.forEach { c ->
-                        if (c.type != MarkdownTokenTypes.LBRACKET && c.type != MarkdownTokenTypes.RBRACKET) appendInline(c, text, codeBg, linkColor)
+                        if (c.type != MarkdownTokenTypes.LBRACKET && c.type != MarkdownTokenTypes.RBRACKET) appendInline(c, text, codeBg, linkColor, imgLabel, imgLabelAlt)
                     } else append(dest)
                 }
             } else append(node.text(text))
@@ -371,12 +377,12 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInline(
             // 不加载图片：这里没有网络图片的场景，给出 alt/URL 就够
             val alt = node.children.firstOrNull { it.type == MarkdownElementTypes.INLINE_LINK }
                 ?.children?.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }?.text(text)?.trim('[', ']')
-            withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append("[图片${alt?.let { "：$it" }.orEmpty()}]") }
+            withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(alt?.let { imgLabelAlt.format(it) } ?: imgLabel) }
         }
 
         else -> {
             if (node.children.isEmpty()) append(node.text(text))
-            else node.children.forEach { appendInline(it, text, codeBg, linkColor) }
+            else node.children.forEach { appendInline(it, text, codeBg, linkColor, imgLabel, imgLabelAlt) }
         }
     }
 }

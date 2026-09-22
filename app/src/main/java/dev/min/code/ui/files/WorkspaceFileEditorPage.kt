@@ -1,5 +1,8 @@
 package dev.min.code.ui.files
 
+import dev.min.code.core.rootfs.FileTooLargeException
+import dev.min.code.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
@@ -61,6 +64,11 @@ fun WorkspaceFileEditorPage(
     var loading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    // 下面 LaunchedEffect / scope.launch 里取不了 stringResource，先在这儿取好
+    val readError = stringResource(R.string.editor_err_read)
+    val saveError = stringResource(R.string.editor_err_save)
+    val savedMessage = stringResource(R.string.common_saved)
+    val tooLargeTemplate = stringResource(R.string.workspace_err_too_large)
 
     LaunchedEffect(id, area, path) {
         loading = true
@@ -71,7 +79,8 @@ fun WorkspaceFileEditorPage(
             textState.setTextAndPlaceCursorAtEnd(content)
             loading = false
         }.onFailure {
-            loadError = it.message ?: "读取文件失败"
+            loadError = if (it is FileTooLargeException) tooLargeTemplate.format(it.size)
+            else it.message ?: readError
             loading = false
         }
     }
@@ -97,9 +106,9 @@ fun WorkspaceFileEditorPage(
                                                 overwrite = true,
                                             )
                                         }.onSuccess {
-                                            toaster.show("已保存", type = ToastType.Success)
+                                            toaster.show(savedMessage, type = ToastType.Success)
                                         }.onFailure {
-                                            toaster.show(it.message ?: "保存失败", type = ToastType.Error)
+                                            toaster.show(it.message ?: saveError, type = ToastType.Error)
                                         }
                                         saving = false
                                     }
@@ -107,7 +116,7 @@ fun WorkspaceFileEditorPage(
                             },
                             enabled = !saving,
                         ) {
-                            Text(if (saving) "保存中…" else "保存")
+                            Text(if (saving) stringResource(R.string.editor_saving) else stringResource(R.string.common_save))
                         }
                     }
                 },
@@ -130,14 +139,14 @@ fun WorkspaceFileEditorPage(
                 .padding(innerPadding),
         ) { current ->
             when (current) {
-                EditorPhase.Loading -> InkLoading(status = "正在读取")
+                EditorPhase.Loading -> InkLoading(status = stringResource(R.string.editor_loading))
 
                 EditorPhase.Error -> Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(16.dp),
                 ) {
-                    Notice(text = loadError ?: "读取文件失败", tone = NoticeTone.Error)
+                    Notice(text = loadError ?: readError, tone = NoticeTone.Error)
                 }
 
                 EditorPhase.Content -> InkTextArea(

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设备操控用的无障碍服务配置。
+
+  canRetrieveWindowContent + FLAG_REPORT_VIEW_IDS 是读屏必需；canPerformGestures 是滑动必需
+  （点击走 performAction，滑动只能走 dispatchGesture）。
+
+  accessibilityEventTypes 故意设成 typeWindowStateChanged 而不是 typeAllMask：
+  我们**不消费事件流**，每次操作都是现读 rootInActiveWindow。订阅全部事件等于让系统
+  把用户在任何应用里的每一次点击、每一个输入框变化都推给我们——那是我们根本不看、
+  却实打实拿到手的隐私数据。只留窗口切换，是为了将来判断「屏幕变了、索引该失效了」。
+
+  notificationTimeout=100 压一下窗口切换的抖动，别在一次转场里连报好几次。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+  android:accessibilityEventTypes="typeWindowStateChanged"
+  android:accessibilityFeedbackType="feedbackGeneric"
+  android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+  android:canPerformGestures="true"
+  android:canRetrieveWindowContent="true"
+  android:canTakeScreenshot="true"
+  android:description="@string/device_control_service_description"
+  android:notificationTimeout="100" />

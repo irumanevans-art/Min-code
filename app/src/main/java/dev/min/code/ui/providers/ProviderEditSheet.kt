@@ -197,6 +197,14 @@ fun ProviderEditSheet(
                 if (draft.websiteUrl.isNotBlank()) OpenWebsite(draft.websiteUrl)
 
                 ModelPicker(profile = draft, onPick = { draft = it })
+                if (draft.env["ANTHROPIC_MODEL"].isNullOrBlank()) {
+                    Text(
+                        stringResource(R.string.providers_models_missing_hint),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.sea.vermilion,
+                    )
+                }
+                ContextWindowSection(env = draft.env, onChange = { draft = draft.copy(env = it) })
                 ClaudeSwitchRows(env = draft.env, onChange = { draft = draft.copy(env = it) })
                 AdvancedSection(draft = draft, onChange = { draft = it })
 

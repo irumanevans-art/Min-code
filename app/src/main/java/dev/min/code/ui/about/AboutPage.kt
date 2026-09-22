@@ -25,8 +25,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.min.code.BuildConfig
+import dev.min.code.R
 import dev.min.code.core.crash.CrashRecorder
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.BrandMark
@@ -207,7 +209,7 @@ fun AboutPage() {
     Scaffold(
         topBar = {
             InkTopBar(
-                title = "关于",
+                title = stringResource(R.string.about_title),
                 navigationIcon = { BackButton() },
                 scrolled = scrollState.canScrollBackward,
             )
@@ -233,12 +235,13 @@ fun AboutPage() {
                     fontFamily = JetbrainsMono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                AppUpdateSection()
                 Text(
-                    "把官方 Claude Code CLI 装进手机上的 Ubuntu（proot）里，用一个像工作日志的界面驱动它。",
+                    stringResource(R.string.about_intro),
                     style = MaterialTheme.typography.bodyMedium,
                 )
 
-                SectionTitle("更新", modifier = Modifier.padding(top = 8.dp))
+                SectionTitle(stringResource(R.string.about_whats_new), modifier = Modifier.padding(top = 8.dp))
                 groups.forEach { majorGroup ->
                     val majorOpen = majorGroup.major in expandedMajors
                     // 只有一个 major 时不必多点一层 a，直接展次版本；多个 a 才折叠
@@ -319,7 +322,7 @@ fun AboutPage() {
                                                                 modifier = Modifier.weight(1f),
                                                             )
                                                             Text(
-                                                                if (patchOpen) "收起" else "展开",
+                                                                if (patchOpen) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
                                                                 style = MaterialTheme.typography.labelSmall,
                                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                             )
@@ -355,17 +358,14 @@ fun AboutPage() {
                     }
                 }
 
-                SectionTitle("来源与许可", modifier = Modifier.padding(top = 8.dp))
+                SectionTitle(stringResource(R.string.about_credits), modifier = Modifier.padding(top = 8.dp))
                 Text(
-                    "本 App 以 GNU AGPL-3.0 发布。proot 运行时、Rootfs 安装与终端部分源自 RikkaHub（AGPL-3.0），" +
-                        "proot 二进制来自 Termux 项目，终端模拟器来自 Termux 的 terminal-view，" +
-                        "语法高亮与 Markdown 解析分别来自 RikkaHub 的 highlight 模块与 JetBrains markdown。" +
-                        "Claude Code 是 Anthropic 的产品，本 App 与 Anthropic 无关。",
+                    stringResource(R.string.about_license_body),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                SectionTitle("上次崩溃", modifier = Modifier.padding(top = 8.dp))
+                SectionTitle(stringResource(R.string.about_last_crash), modifier = Modifier.padding(top = 8.dp))
                 CrashReport(report = crash, onClear = {
                     CrashRecorder.clear(context)
                     crash = null
@@ -373,7 +373,7 @@ fun AboutPage() {
 
                 // 被协程 handler 接住的异常（App 没崩）单独一份，堆栈同样值得能看到
                 if (lastError != null) {
-                    SectionTitle("上次错误（未崩溃）", modifier = Modifier.padding(top = 8.dp))
+                    SectionTitle(stringResource(R.string.about_last_error), modifier = Modifier.padding(top = 8.dp))
                     CrashReport(report = lastError, onClear = {
                         CrashRecorder.clearNonFatal(context)
                         lastError = null
@@ -420,7 +420,7 @@ private fun ChangelogFoldHeader(
                 }
             }
             Text(
-                if (open) "收起" else "展开",
+                if (open) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -445,7 +445,7 @@ private fun CrashReport(report: String?, onClear: () -> Unit) {
     if (report != null) last = report
     AnimatedVisibility(visible = report == null, enter = InkMotion.expand, exit = InkMotion.collapse) {
         Text(
-            "没有记录。",
+            stringResource(R.string.about_no_record),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -466,8 +466,8 @@ private fun CrashReport(report: String?, onClear: () -> Unit) {
                 onClick = { context.writeClipboardText(text) },
                 icon = HugeIcons.Copy01,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("复制崩溃报告") }
-            InkTextButton(onClick = onClear) { Text("清除") }
+            ) { Text(stringResource(R.string.about_copy_crash)) }
+            InkTextButton(onClick = onClear) { Text(stringResource(R.string.common_clear)) }
         }
     }
 }

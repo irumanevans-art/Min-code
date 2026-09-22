@@ -2,7 +2,10 @@
 """
 从 cc-switch 的预设表里提取技术事实，转成本仓库的 provider_presets.json。
 
-    py -3 tools/import_ccswitch_presets.py <claudeProviderPresets.ts> [codexProviderPresets.ts]
+    py -3 tools/import_ccswitch_presets.py <claudeProviderPresets.ts>
+
+目前只支持 Claude 预设：Codex 预设还没有解析、合并与写出逻辑，
+传第二个参数会明确报错退出，不再静默忽略。
 
 cc-switch（farion1231/cc-switch，MIT）维护着一张比我们手搓的大得多的供应商表，
 而这正是整个功能里**最容易过期**的一块 —— 中转站换域名、倒闭、新开，代码不会烂，
@@ -211,7 +214,15 @@ def parse_claude(path):
 
 
 def main():
-    if not sys.argv[1:]:
+    # 这个脚本只实现了 Claude 预设。argv[2] 曾被文档写成可选的 codex 文件，
+    # 但后面从没读过它 —— 传了也不生效，用户却以为导入成功了。
+    # 没有对应的解析 / 合并 / 写出逻辑之前，明确失败好过静默 no-op
+    if len(sys.argv) > 2:
+        raise SystemExit(
+            "错误：codex 预设导入尚未实现（脚本目前只支持 Claude 预设）。\n"
+            "请只传一个参数：py -3 tools/import_ccswitch_presets.py <claudeProviderPresets.ts>"
+        )
+    if len(sys.argv) < 2:
         raise SystemExit(__doc__)
     upstream = parse_claude(sys.argv[1])
     sponsored = sum(1 for p in upstream if p["_sponsored"])

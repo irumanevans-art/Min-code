@@ -52,6 +52,7 @@ import me.rerere.hugeicons.stroke.GlobalSearch
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Link01
 import me.rerere.hugeicons.stroke.Search01
+import dev.min.code.core.device.DEVICE_MCP_SERVER_NAME
 import dev.min.code.core.session.ChatItem
 
 /**
@@ -208,9 +209,43 @@ internal fun fileName(path: String?): String =
  * 段落之间用 [SEP] 而不是空格：最后那步空白归一化会把连续空格压成一个，
  * 拿空格当分隔符是留不住的。
  */
+/**
+ * 设备操控那六把工具的 MCP 前缀。
+ *
+ * 它们经 MCP 挂进来，CLI 报上来的名字是 `mcp__min-device__device_tap` 这种全名——
+ * 在 360dp 的一行里这个前缀就吃掉小半行，而它每一条都一样，等于没有信息。
+ */
+private const val DEVICE_TOOL_PREFIX = "mcp__" + DEVICE_MCP_SERVER_NAME + "__"
+
+/**
+ * 工具名那一列显示什么。
+ *
+ * 设备工具剥掉 MCP 前缀；其余 MCP 工具只去掉 `mcp__`、保留 `服务器__工具` ——
+ * 别家服务器的工具重名是常事（两个 server 都有 `search`），去掉服务器名就分不出来了。
+ */
+internal fun toolDisplayName(name: String): String = when {
+    name.startsWith(DEVICE_TOOL_PREFIX) -> name.removePrefix(DEVICE_TOOL_PREFIX)
+    name.startsWith("mcp__") -> name.removePrefix("mcp__")
+    else -> name
+}
+
 internal fun toolSummary(name: String, input: JsonObject, labels: TranscriptLabels): String {
     fun str(key: String) = input[key].asStringOrNull()
     fun int(key: String) = input[key].asIntOrNull()
+    // 设备工具单独一段：它们的入参是 index / direction 这种裸值，走不到下面那套
+    // 按文件名、按命令的摘要逻辑上去，落到 else 分支就只会显示一句 "index: 3"
+    if (name.startsWith(DEVICE_TOOL_PREFIX)) {
+        val target = int("index")?.let { "[$it]" }
+        return when (name.removePrefix(DEVICE_TOOL_PREFIX)) {
+            "device_ui_tree" -> labels.deviceUiTree
+            "device_back" -> labels.deviceBack
+            "device_tap" -> labels.deviceTap.format(target ?: "")
+            "device_input" -> labels.deviceInput.format(target ?: "")
+            "device_swipe" -> labels.deviceSwipe.format(str("direction") ?: "")
+            "device_open_app" -> labels.deviceOpenApp.format(str("package_name") ?: "")
+            else -> ""
+        }.trim()
+    }
     val raw = when (name) {
         "Bash" -> str("description") ?: str("command") ?: ""
         "BashOutput", "KillShell" -> str("shell_id") ?: ""

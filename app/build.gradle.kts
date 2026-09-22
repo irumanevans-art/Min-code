@@ -25,8 +25,8 @@ android {
         applicationId = "dev.min.code"
         minSdk = 26
         targetSdk = 37
-        versionCode = 40
-        versionName = "2.1.7"
+        versionCode = 46
+        versionName = "2.1.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -111,11 +111,20 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        aidl = true
     }
     packaging {
         jniLibs {
             useLegacyPackaging = true
             pickFirsts += "lib/*/libtermux.so"
+        }
+        resources {
+            pickFirsts += "META-INF/LICENSE.md"
+            pickFirsts += "META-INF/LICENSE.txt"
+            pickFirsts += "META-INF/LICENSE"
+            pickFirsts += "META-INF/NOTICE.md"
+            pickFirsts += "META-INF/NOTICE.txt"
+            pickFirsts += "META-INF/NOTICE"
         }
     }
     tasks.withType<KotlinCompile>().configureEach {
@@ -166,6 +175,13 @@ dependencies {
     implementation(libs.termux.terminal.view)
     implementation(libs.chrisbanes.haze)
     implementation(libs.androidx.profileinstaller)
+    // 本机无线调试的纯 Kotlin ADB 客户端：用来拉起 shell-uid 的 PrivilegedServer，不依赖另装 Shizuku。
+    // dadb 的 POM 把 junit 标成了普通依赖，不排除的话会打进 APK 并在 META-INF/LICENSE.md 上撞车
+    implementation(libs.dadb) {
+        exclude(group = "org.junit.jupiter")
+        exclude(group = "org.junit.platform")
+        exclude(group = "junit")
+    }
     "baselineProfile"(project(":baselineprofile"))
     debugImplementation(libs.androidx.ui.tooling)
 

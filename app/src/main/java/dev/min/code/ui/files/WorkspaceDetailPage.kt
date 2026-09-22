@@ -773,14 +773,13 @@ private fun WorkspaceBasicPage(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Text(
-                        text = "Linux 环境",
+                        text = stringResource(R.string.workspace_linux_title),
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    WorkspaceInfoRow("状态", workspace?.shellStatus?.toShellStatusLabel() ?: "-")
+                    WorkspaceInfoRow(stringResource(R.string.workspace_linux_status), workspace?.shellStatus?.toShellStatusLabel() ?: "-")
                     WorkspaceUsageBlock(usage)
                     Text(
-                        "/workspace 是文件页里的「文件」区，Claude Code 的工作目录就是它；「Rootfs」区是整个 Ubuntu。" +
-                            "Claude 用 apt / pip 装的东西都在 Rootfs 里，占用空间随之增长。",
+                        stringResource(R.string.workspace_linux_desc),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -798,12 +797,11 @@ private fun WorkspaceBasicPage(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Text(
-                        text = "重装 Linux 环境",
+                        text = stringResource(R.string.workspace_linux_reinstall),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = "会清空整个 Ubuntu：Claude Code CLI、Node.js、apt/pip 装过的一切、~/.claude 下的会话记录与记忆。" +
-                            "只有环境彻底坏掉时才这么做；「文件」区不受影响。",
+                        text = stringResource(R.string.workspace_linux_reinstall_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1332,15 +1330,21 @@ private fun WorkspaceUsageBlock(usage: WorkspaceUsage?) {
     val usageLabel = stringResource(R.string.workspace_detail_usage)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         when {
-            usage == null -> WorkspaceInfoRow(usageLabel, "正在扫描…")
+            usage == null -> WorkspaceInfoRow(usageLabel, stringResource(R.string.workspace_usage_scanning))
             !usage.done -> {
-                WorkspaceInfoRow(usageLabel, "${usage.totalBytes.fileSizeToString()} · 已扫 ${usage.scanned} 个文件")
+                WorkspaceInfoRow(
+                    usageLabel,
+                    stringResource(R.string.workspace_usage_scanned, usage.totalBytes.fileSizeToString(), usage.scanned),
+                )
                 InkLineProgress(progress = null, modifier = Modifier.fillMaxWidth())
             }
-            usage.error != null -> {
-                WorkspaceInfoRow(usageLabel, "${usage.totalBytes.fileSizeToString()}（未扫完）")
+            usage.failed -> {
+                WorkspaceInfoRow(
+                    usageLabel,
+                    stringResource(R.string.workspace_usage_partial, usage.totalBytes.fileSizeToString()),
+                )
                 Text(
-                    usage.error,
+                    usage.error ?: stringResource(R.string.workspace_err_usage),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.sea.vermilion,
                 )
@@ -1348,7 +1352,11 @@ private fun WorkspaceUsageBlock(usage: WorkspaceUsage?) {
             else -> {
                 WorkspaceInfoRow(usageLabel, usage.totalBytes.fileSizeToString())
                 Text(
-                    "文件 ${usage.filesBytes.fileSizeToString()} · Rootfs ${usage.linuxBytes.fileSizeToString()}",
+                    stringResource(
+                        R.string.workspace_usage_split,
+                        usage.filesBytes.fileSizeToString(),
+                        usage.linuxBytes.fileSizeToString(),
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = JetbrainsMono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1404,6 +1412,7 @@ private fun MoveSheet(
     var relative by remember { mutableStateOf(currentPath) }
     var folders by remember { mutableStateOf<List<WorkspaceFileEntry>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    val openDirError = stringResource(R.string.workspace_err_open_dir)
     LaunchedEffect(relative) {
         error = null
         onList(relative)
@@ -1413,7 +1422,7 @@ private fun MoveSheet(
                     entries.none { it.path == folder.path || folder.path.startsWith("${it.path}/") }
                 }
             }
-            .onFailure { error = it.message ?: "打不开这个目录" }
+            .onFailure { error = it.message ?: openDirError }
     }
     InkSheet(
         onDismissRequest = onDismiss,
@@ -1432,9 +1441,9 @@ private fun MoveSheet(
             )
             Text(
                 if (entries.size == 1) {
-                    "把「${entries.first().name}」移到下面选中的文件夹。点进一层再确认。"
+                    stringResource(R.string.workspace_move_one, entries.first().name)
                 } else {
-                    "把选中的 ${entries.size} 项移到下面选中的文件夹。点进一层再确认。"
+                    stringResource(R.string.workspace_move_many, entries.size)
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

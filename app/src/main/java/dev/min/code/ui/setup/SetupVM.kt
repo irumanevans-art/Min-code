@@ -1,5 +1,7 @@
 package dev.min.code.ui.setup
 
+import dev.min.code.R
+import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.min.code.core.claudecode.ClaudeCodeInstaller
@@ -25,6 +27,7 @@ import me.rerere.workspace.WorkspaceShellStatus
  * 重新判定"走到哪了"，不记"我以为的进度"。
  */
 class SetupVM(
+    private val context: Application,
     private val settingsStore: SettingsStore,
     private val workspaceRepository: WorkspaceRepository,
     private val installer: ClaudeCodeInstaller,
@@ -103,12 +106,12 @@ class SetupVM(
     fun installRootfs(url: String? = null) {
         if (_state.value.busy != null) return
         viewModelScope.launch {
-            _state.update { it.copy(busy = Step.ROOTFS, error = null, progress = null, detail = "准备下载…") }
+            _state.update { it.copy(busy = Step.ROOTFS, error = null, progress = null, detail = context.getString(R.string.setup_preparing)) }
             terminalSessionManager.closeWorkspace(workspaceId)
             val sources = RootfsSources.urlsFor(url)
             var lastError: Throwable? = null
             for ((index, source) in sources.withIndex()) {
-                val label = if (sources.size == 1) "" else if (index == 0) "（官方源）" else "（镜像源）"
+                val label = if (sources.size == 1) "" else if (index == 0) context.getString(R.string.setup_source_official) else context.getString(R.string.setup_source_mirror)
                 try {
                     workspaceRepository.installRootfs(workspaceId, source) { p -> onRootfsProgress(p, label) }
                     lastError = null
@@ -127,7 +130,7 @@ class SetupVM(
                     busy = null,
                     detail = "",
                     progress = null,
-                    error = lastError?.let { e -> "Linux 环境安装失败：${e.message ?: e}" },
+                    error = lastError?.let { e -> context.getString(R.string.setup_err_rootfs, e.message ?: e.toString()) },
                 )
             }
             refresh()
@@ -139,10 +142,10 @@ class SetupVM(
         val fraction = if (total != null && total > 0) (p.bytesRead.toFloat() / total).coerceIn(0f, 1f) else null
         val detail = when (p.stage) {
             me.rerere.workspace.RootfsInstallStage.DOWNLOADING ->
-                "下载 Ubuntu 基础镜像$label ${p.bytesRead / MB} MB" + (total?.let { " / ${it / MB} MB" } ?: "")
+                context.getString(R.string.setup_downloading, label, p.bytesRead / MB) + (total?.let { " / ${it / MB} MB" } ?: "")
             me.rerere.workspace.RootfsInstallStage.EXTRACTING ->
-                "解压 ${p.entriesExtracted} 个文件" + (p.currentEntry?.let { " · $it" } ?: "")
-            me.rerere.workspace.RootfsInstallStage.INSTALLED -> "安装完成"
+                context.getString(R.string.setup_extracting, p.entriesExtracted) + (p.currentEntry?.let { " · $it" } ?: "")
+            me.rerere.workspace.RootfsInstallStage.INSTALLED -> context.getString(R.string.setup_installed)
         }
         _state.update { it.copy(detail = detail, progress = fraction) }
     }

@@ -89,7 +89,18 @@
       "category": "cn_official",
       "baseUrl": "https://api.deepseek.com/anthropic",
       "websiteUrl": "https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/",
-      "tokenHint": "sk-..."
+      "tokenHint": "sk-...",
+      "env": {
+        "ANTHROPIC_MODEL": "deepseek-flash[1m]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-flash[1m]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-flash[1m]",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-flash",
+        "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-flash",
+        "CLAUDE_CODE_EFFORT_LEVEL": "max",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "786432"
+      },
+      "note": "Anthropic-compatible base has no /v1/models list; set mapping here. Re-apply preset to refresh env on old profiles.",
+      "noteZh": "Anthropic 兼容基址没有模型列表端点；映射写在这里。旧档案要重建或手补 env。"
     },
     {
       "id": "kat_coder",
@@ -112,8 +123,20 @@
       "baseUrl": "https://api.kimi.com/coding",
       "websiteUrl": "https://www.kimi.com/code/docs/third-party-tools/claude-code.html",
       "tokenHint": "sk-kimi-...",
-      "note": "Separate from the Moonshot open platform: keys are not interchangeable.",
-      "noteZh": "和上面的 Moonshot 开放平台是两套账号，key 不通用。"
+      "authHeader": "API_KEY",
+      "env": {
+        "ANTHROPIC_MODEL": "kimi-for-coding",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "kimi-for-coding",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-for-coding",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL": "kimi-for-coding",
+        "CLAUDE_CODE_SUBAGENT_MODEL": "kimi-for-coding",
+        "CLAUDE_CODE_EFFORT_LEVEL": "high",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1048576"
+      },
+      "note": "Separate from the Moonshot open platform: keys are not interchangeable. Uses x-api-key (ANTHROPIC_API_KEY).",
+      "noteZh": "和上面的 Moonshot 开放平台是两套账号，key 不通用。官方要求走 x-api-key（ANTHROPIC_API_KEY）。"
     },
     {
       "id": "kimi_for_coding_global",
@@ -163,8 +186,15 @@
       "name": "MiniMax",
       "nameZh": "MiniMax",
       "category": "cn_official",
-      "baseUrl": "https://api.minimaxi.com/anthropic",
-      "websiteUrl": "https://platform.minimaxi.com/docs/token-plan/claude-code"
+      "baseUrl": "https://api.minimax.cn/anthropic",
+      "websiteUrl": "https://platform.minimaxi.com/docs/token-plan/claude-code",
+      "env": {
+        "ANTHROPIC_MODEL": "MiniMax-M3[1m]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M3[1m]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3[1m]",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M3[1m]",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
+      }
     },
     {
       "id": "minimax_intl",
@@ -172,7 +202,14 @@
       "nameZh": "MiniMax（国际）",
       "category": "cn_official",
       "baseUrl": "https://api.minimax.io/anthropic",
-      "websiteUrl": "https://platform.minimax.io"
+      "websiteUrl": "https://platform.minimax.io",
+      "env": {
+        "ANTHROPIC_MODEL": "MiniMax-M3[1m]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M3[1m]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3[1m]",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M3[1m]",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
+      }
     },
     {
       "id": "moonshot",
@@ -346,6 +383,10 @@
       "baseUrl": "https://api.z.ai/api/anthropic",
       "websiteUrl": "https://z.ai",
       "env": {
+        "ANTHROPIC_MODEL": "glm-4.7",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-4.7",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.7",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.7",
         "API_TIMEOUT_MS": "3000000"
       }
     },
@@ -357,6 +398,10 @@
       "baseUrl": "https://open.bigmodel.cn/api/anthropic",
       "websiteUrl": "https://docs.bigmodel.cn/cn/guide/develop/claude",
       "env": {
+        "ANTHROPIC_MODEL": "glm-4.7",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-4.7",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.7",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.7",
         "API_TIMEOUT_MS": "3000000"
       }
     },

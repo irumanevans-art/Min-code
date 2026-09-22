@@ -793,6 +793,7 @@ private fun probeLabel(state: ProvidersVM.ProbeState?): String? = when (state) {
             if (r.models >= 0) stringResource(R.string.providers_probe_ok_models, r.models)
             else stringResource(R.string.providers_probe_ok)
         RelayProbeResult.Unauthorized -> stringResource(R.string.providers_probe_unauthorized)
+        RelayProbeResult.NoModelsEndpoint -> stringResource(R.string.providers_probe_no_models)
         is RelayProbeResult.Unreachable -> stringResource(R.string.providers_probe_unreachable, r.reason)
         RelayProbeResult.NoToken -> stringResource(R.string.providers_probe_no_token)
     }

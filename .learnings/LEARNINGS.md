@@ -1,3 +1,26 @@
+## [LRN-20260922-KDOC-NESTED-BLOCK-COMMENT] error
+
+**Logged**: 2026-09-22T14:20:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: build
+
+### Summary
+Kotlin 的块注释**可以嵌套**，所以 KDoc 正文里出现 `/*` 会开一个内层注释，随后第一个 `*/` 只关掉内层，整个文件从此被当成注释 —— 报错是文件末尾一行 `Syntax error: Unclosed comment`，指到的行号和真正的元凶隔着几十行。写路径通配（`/data/data/*`、`src/*/main`）时最容易撞上。
+
+### Details
+`core/rootfs/DeviceStorage.kt` 的头注释里写了「别的 App 的 `/data/data/*` 私有目录」，反引号在 Kotlin 编译器眼里不存在，`/*` 照样开注释。编译器报的是 `DeviceStorage.kt:95:1 Unclosed comment`（文件最后一行），而问题在第 30 行左右；同一轮里 `appModule.kt` 跟着报了四个 `Unresolved reference`，因为整个文件的声明都被吃进注释里了。改成「别的 App 在 `/data/data` 下的私有目录」即可。
+
+### Suggested Action
+KDoc / 块注释里要写通配路径时，把 `*` 挪开或改写措辞（`/data/data` 下的…、`src` 里各模块的…）。看到 `Unclosed comment` 指向文件末尾、同时另一个文件冒出一串莫名其妙的 `Unresolved reference` 时，先去那个文件里搜 `/*`，别顺着行号找。
+
+### Metadata
+- Source: build_error
+- Related Files: app/src/main/java/dev/min/code/core/rootfs/DeviceStorage.kt
+- Tags: kotlin, kdoc, comment, compile-error
+
+---
+
 ## [LRN-20260917-SHAREDFLOW-TRYEMIT-DROP] correction
 
 **Logged**: 2026-09-17T14:10:00+08:00

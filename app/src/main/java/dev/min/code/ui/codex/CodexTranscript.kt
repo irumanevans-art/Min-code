@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -19,10 +20,12 @@ import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.ui.session.AssistantEntry
 import dev.min.code.ui.session.CollapseWorkFooter
 import dev.min.code.ui.session.CollapsedWorkEntry
+import dev.min.code.ui.session.LocalAwaitingToolUseId
 import dev.min.code.ui.session.NoteEntry
 import dev.min.code.ui.session.ThinkingEntry
 import dev.min.code.ui.session.TranscriptBlock
 import dev.min.code.ui.session.TranscriptItem
+import dev.min.code.ui.session.awaitingToolUseId
 import dev.min.code.ui.session.groupTranscript
 import dev.min.code.ui.session.rememberTranscriptLabels
 import kotlinx.coroutines.flow.collectLatest
@@ -71,6 +74,15 @@ internal fun CodexTranscript(
             }
     }
 
+    // 挂着审批时那张卡显示成「等你批准」而不是转圈。Codex 的 itemId 就是卡的 toolUseId
+    //（见 CodexChatMapping），不需要按工具名回退
+    val awaiting = awaitingToolUseId(
+        items = session.items,
+        pendingToolName = null,
+        pendingToolUseId = session.pendingApproval?.itemId,
+    )
+
+    CompositionLocalProvider(LocalAwaitingToolUseId provides awaiting) {
     LazyColumn(
         state = listState,
         // 条目之间不能留白：一有间距，左轨道就断成一节一节
@@ -154,5 +166,6 @@ internal fun CodexTranscript(
                 )
             }
         }
+    }
     }
 }

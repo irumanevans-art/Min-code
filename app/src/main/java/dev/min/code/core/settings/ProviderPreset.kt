@@ -42,6 +42,11 @@ data class ClaudePreset(
     val websiteUrl: String = "",
     /** 输入框的 placeholder，**不是**校验规则——没有哪家的 key 格式是可以拿来拦人的 */
     val tokenHint: String = "",
+    /**
+     * 凭据放进哪个头。写 `AUTH_TOKEN` / `API_KEY`（[AuthHeader] 名）；空或认不出 → Bearer。
+     * Kimi Code 这类官方明确要求 `ANTHROPIC_API_KEY` 的站靠它，避免「测得通、用不了」。
+     */
+    val authHeader: String = "",
     /** 这家特有的环境变量，应用时整个拷进 [ApiProfile.env] */
     val env: Map<String, String> = emptyMap(),
     /** 一句要紧的话（比如「这家的 key 和另一家不通用」）。空则不显示 */
@@ -50,6 +55,9 @@ data class ClaudePreset(
 ) {
     fun displayName(zh: Boolean): String = (if (zh) nameZh.ifBlank { name } else name).ifBlank { id }
     fun displayNote(zh: Boolean): String = if (zh) noteZh.ifBlank { note } else note
+
+    val resolvedAuthHeader: AuthHeader
+        get() = runCatching { AuthHeader.valueOf(authHeader) }.getOrDefault(AuthHeader.AUTH_TOKEN)
 }
 
 @Serializable
@@ -134,6 +142,8 @@ internal fun ClaudePreset.toProfile(token: String, zh: Boolean): ApiProfile = Ap
     baseUrl = normalizeBaseUrl(baseUrl),
     presetId = id,
     websiteUrl = websiteUrl,
+    note = displayNote(zh),
+    authHeader = resolvedAuthHeader,
     env = sanitizeEnv(env),
 )
 

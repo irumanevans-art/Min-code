@@ -31,10 +31,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.min.code.R
 import dev.min.code.ui.theme.LocalSkin
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
@@ -126,12 +128,12 @@ fun HighlightCodeBlock(
             ) {
                 Icon(
                     imageVector = if (copied) HugeIcons.Tick01 else HugeIcons.Copy01,
-                    contentDescription = "复制代码",
+                    contentDescription = stringResource(R.string.common_copy_code),
                     modifier = Modifier.size(13.dp),
                     tint = copyColor,
                 )
                 Text(
-                    text = if (copied) "已复制" else "复制",
+                    text = if (copied) stringResource(R.string.common_copied) else stringResource(R.string.common_copy),
                     style = MaterialTheme.typography.labelSmall,
                     color = copyColor,
                 )
@@ -174,7 +176,7 @@ fun HighlightCodeBlock(
                 )
                 Spacer(Modifier.size(4.dp))
                 Text(
-                    text = if (expanded) "收起" else "还有 ${lines.size - COLLAPSE_LINES} 行",
+                    text = if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_more_lines, lines.size - COLLAPSE_LINES),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

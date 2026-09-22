@@ -1,5 +1,7 @@
 package dev.min.code.ui.files
 
+import dev.min.code.R
+import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -32,6 +34,7 @@ import me.rerere.workspace.WorkspaceCommandResult
 import me.rerere.workspace.WorkspaceStorageArea
 
 class WorkspaceDetailVM(
+    private val context: Application,
     private val id: String,
     private val repository: WorkspaceRepository,
     private val terminalSessionManager: WorkspaceTerminalSessionManager,
@@ -138,7 +141,7 @@ class WorkspaceDetailVM(
             }.onFailure { error ->
                 if (error is CancellationException) throw error
                 _state.update {
-                    it.copy(results = emptyList(), searching = false, error = error.message ?: "搜索失败")
+                    it.copy(results = emptyList(), searching = false, error = error.message ?: context.getString(R.string.workspace_err_search))
                 }
             }
         }
@@ -217,7 +220,7 @@ class WorkspaceDetailVM(
                     it.copy(
                         entries = emptyList(),
                         loading = false,
-                        error = error.message ?: "加载工作区文件失败",
+                        error = error.message ?: context.getString(R.string.workspace_err_load),
                     )
                 }
             }
@@ -236,14 +239,14 @@ class WorkspaceDetailVM(
             }.onSuccess {
                 refresh()
             }.onFailure { error ->
-                _state.update { it.copy(error = error.message ?: "删除失败") }
+                _state.update { it.copy(error = error.message ?: context.getString(R.string.workspace_err_delete)) }
             }
         }
     }
 
     fun mkdir(name: String) {
         val folder = CwdPath.folderName(name) ?: run {
-            _state.update { it.copy(error = "名称不合法") }
+            _state.update { it.copy(error = context.getString(R.string.workspace_err_bad_name)) }
             return
         }
         val parent = state.value.path
@@ -254,14 +257,14 @@ class WorkspaceDetailVM(
             }.onSuccess {
                 refresh()
             }.onFailure { error ->
-                _state.update { it.copy(error = error.message ?: "新建失败") }
+                _state.update { it.copy(error = error.message ?: context.getString(R.string.workspace_err_create)) }
             }
         }
     }
 
     fun rename(entry: WorkspaceFileEntry, newName: String) {
         val name = CwdPath.folderName(newName) ?: run {
-            _state.update { it.copy(error = "名称不合法") }
+            _state.update { it.copy(error = context.getString(R.string.workspace_err_bad_name)) }
             return
         }
         val parent = entry.path.substringBeforeLast('/', missingDelimiterValue = "")
@@ -277,7 +280,7 @@ class WorkspaceDetailVM(
     fun moveInto(entry: WorkspaceFileEntry, destinationDir: String) {
         val dest = destinationDir.trim().trim('/')
         if (entry.isDirectory && (dest == entry.path || dest.startsWith("${entry.path}/"))) {
-            _state.update { it.copy(error = "不能把文件夹移进自己里面") }
+            _state.update { it.copy(error = context.getString(R.string.workspace_err_move_into_self)) }
             return
         }
         val target = if (dest.isBlank()) entry.name else "$dest/${entry.name}"
@@ -297,7 +300,7 @@ class WorkspaceDetailVM(
             }.onSuccess {
                 refresh()
             }.onFailure { error ->
-                _state.update { it.copy(error = error.message ?: "移动失败") }
+                _state.update { it.copy(error = error.message ?: context.getString(R.string.workspace_err_move)) }
             }
         }
     }
@@ -319,7 +322,7 @@ class WorkspaceDetailVM(
             }.onSuccess {
                 refresh()
             }.onFailure { error ->
-                _state.update { it.copy(error = error.message ?: "导入文件失败") }
+                _state.update { it.copy(error = error.message ?: context.getString(R.string.workspace_err_import_file)) }
             }
         }
     }
@@ -334,7 +337,7 @@ class WorkspaceDetailVM(
                     outputStream = outputStream,
                 )
             }.onFailure { error ->
-                _state.update { it.copy(error = error.message ?: "导出文件失败") }
+                _state.update { it.copy(error = error.message ?: context.getString(R.string.workspace_err_export_file)) }
             }
         }
     }
@@ -358,7 +361,7 @@ class WorkspaceDetailVM(
                 }
                 file
             }.onSuccess(onReady).onFailure { error ->
-                _state.update { it.copy(error = error.message ?: "导出文件失败") }
+                _state.update { it.copy(error = error.message ?: context.getString(R.string.workspace_err_export_file)) }
             }
         }
     }
@@ -408,7 +411,7 @@ class WorkspaceDetailVM(
                 report(index, entry.name, 0L, targets.size, 0L)
                 runCatching {
                     repository.deleteFile(id, state.value.area, entry.path, recursive = entry.isDirectory)
-                }.onFailure { failures += "${entry.name}: ${it.message ?: "删除失败"}" }
+                }.onFailure { failures += "${entry.name}: ${it.message ?: context.getString(R.string.workspace_err_delete)}" }
             }
             BulkOutcome(done = targets.size, failures = failures)
         }
@@ -422,7 +425,7 @@ class WorkspaceDetailVM(
             it.isDirectory && (dest == it.path || dest.startsWith("${it.path}/"))
         }
         if (offender != null) {
-            _state.update { it.copy(error = "不能把文件夹移进自己里面") }
+            _state.update { it.copy(error = context.getString(R.string.workspace_err_move_into_self)) }
             return
         }
         runBulk(WorkspaceBulkProgress.Kind.MOVE, total = targets.size) { report ->
@@ -433,7 +436,7 @@ class WorkspaceDetailVM(
                 if (target == entry.path) return@forEachIndexed
                 runCatching {
                     repository.moveFile(id, state.value.area, entry.path, target)
-                }.onFailure { failures += "${entry.name}: ${it.message ?: "移动失败"}" }
+                }.onFailure { failures += "${entry.name}: ${it.message ?: context.getString(R.string.workspace_err_move)}" }
             }
             BulkOutcome(done = targets.size, failures = failures)
         }
@@ -526,7 +529,7 @@ class WorkspaceDetailVM(
                         inputStream = stream,
                     )
                 }.onSuccess { done++ }
-                    .onFailure { failures += "${source.name}: ${it.message ?: "导入失败"}" }
+                    .onFailure { failures += "${source.name}: ${it.message ?: context.getString(R.string.workspace_err_import)}" }
             }
             BulkOutcome(done = done, failures = failures)
         }
@@ -536,7 +539,7 @@ class WorkspaceDetailVM(
     fun importArchive(open: () -> InputStream?, wrapInFolder: String?) {
         runBulk(WorkspaceBulkProgress.Kind.IMPORT_ZIP, total = 0) { report ->
             val stream = withContext(Dispatchers.IO) { open() }
-                ?: return@runBulk BulkOutcome(done = 0, failures = listOf("打不开这个 zip"))
+                ?: return@runBulk BulkOutcome(done = 0, failures = listOf(context.getString(R.string.workspace_err_bad_zip)))
             val result = repository.importArchive(
                 id = id,
                 area = state.value.area,
@@ -587,7 +590,7 @@ class WorkspaceDetailVM(
                         done++
                         bytes += node.sizeBytes
                     }
-                    .onFailure { failures += "${node.relativePath}: ${it.message ?: "导入失败"}" }
+                    .onFailure { failures += "${node.relativePath}: ${it.message ?: context.getString(R.string.workspace_err_import)}" }
             }
             BulkOutcome(done = done, bytes = bytes, failures = failures)
         }
@@ -651,7 +654,7 @@ class WorkspaceDetailVM(
                 _bulk.value = WorkspaceBulkProgress(
                     kind = kind,
                     finished = true,
-                    failures = listOf(error.message ?: "操作失败"),
+                    failures = listOf(error.message ?: context.getString(R.string.workspace_err_generic)),
                 )
             } finally {
                 refresh()
@@ -718,7 +721,7 @@ class WorkspaceDetailVM(
                 }
                 file
             }.onSuccess(onReady).onFailure { error ->
-                _state.update { it.copy(error = error.message ?: "导出失败") }
+                _state.update { it.copy(error = error.message ?: context.getString(R.string.workspace_err_export)) }
             }
         }
     }
@@ -758,7 +761,7 @@ class WorkspaceDetailVM(
                     }
                 }
                 if (lastError != null) {
-                    _installError.value = lastError.message ?: "Rootfs 安装失败"
+                    _installError.value = lastError.message ?: context.getString(R.string.workspace_err_rootfs_install)
                 } else {
                     loadWorkspace()
                     refresh()
@@ -767,7 +770,7 @@ class WorkspaceDetailVM(
             } catch (e: CancellationException) {
                 throw e
             } catch (error: Throwable) {
-                _installError.value = error.message ?: "Rootfs 安装失败"
+                _installError.value = error.message ?: context.getString(R.string.workspace_err_rootfs_install)
             } finally {
                 _installProgress.value = null
             }
@@ -808,7 +811,7 @@ class WorkspaceDetailVM(
                 _terminalState.update {
                     it.copy(
                         running = false,
-                        history = it.history + WorkspaceTerminalEntry.Error(error.message ?: "命令执行失败"),
+                        history = it.history + WorkspaceTerminalEntry.Error(error.message ?: context.getString(R.string.workspace_err_command)),
                     )
                 }
             }

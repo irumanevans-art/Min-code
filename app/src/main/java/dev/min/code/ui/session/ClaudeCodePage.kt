@@ -158,6 +158,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.SessionStatus
+import dev.min.code.core.session.escapedPaths
+import dev.min.code.core.session.touchesDeviceStorage
 
 /**
  * Claude Code 页：官方 claude CLI 跑在工作区 Rootfs 里，stream-json 协议桥接为界面。
@@ -828,6 +830,8 @@ internal data class TranscriptLabels(
     val toolRunning: String,
     val toolDone: String,
     val toolError: String,
+    /** 折叠行右侧：这次调用卡在等人批准 */
+    val toolAwaiting: String,
     /** Read 折叠行：「101–200 行」 */
     val readRange: String,
     /** Read 折叠行：「从 101 行」 */
@@ -854,6 +858,14 @@ internal data class TranscriptLabels(
     val diffElidedBelow: String,
     /** diff 源字段超长截断的尾巴 */
     val diffTruncated: String,
+    // 设备操控那六把工具的折叠行摘要。它们经 MCP 挂进来，入参是 index / direction
+    // 这种裸值，走不到按文件名 / 按命令那套摘要上去
+    val deviceTap: String,
+    val deviceInput: String,
+    val deviceSwipe: String,
+    val deviceOpenApp: String,
+    val deviceBack: String,
+    val deviceUiTree: String,
 )
 
 @Composable
@@ -863,6 +875,7 @@ internal fun rememberTranscriptLabels(): TranscriptLabels = TranscriptLabels(
     toolRunning = stringResource(R.string.session_tool_status_running),
     toolDone = stringResource(R.string.session_tool_status_done),
     toolError = stringResource(R.string.session_tool_status_error),
+    toolAwaiting = stringResource(R.string.session_tool_status_awaiting),
     readRange = stringResource(R.string.tool_summary_range),
     readFrom = stringResource(R.string.tool_summary_from_line),
     readFirst = stringResource(R.string.tool_summary_first_lines),
@@ -876,6 +889,12 @@ internal fun rememberTranscriptLabels(): TranscriptLabels = TranscriptLabels(
     diffElidedAbove = stringResource(R.string.tool_diff_elided_above),
     diffElidedBelow = stringResource(R.string.tool_diff_elided_below),
     diffTruncated = stringResource(R.string.tool_diff_truncated),
+    deviceTap = stringResource(R.string.device_tool_tap),
+    deviceInput = stringResource(R.string.device_tool_input),
+    deviceSwipe = stringResource(R.string.device_tool_swipe),
+    deviceOpenApp = stringResource(R.string.device_tool_open_app),
+    deviceBack = stringResource(R.string.device_tool_back),
+    deviceUiTree = stringResource(R.string.device_tool_ui_tree),
 )
 
 /**
@@ -1007,8 +1026,17 @@ private fun SessionContent(
     val topHold = (topReserve / topBand).coerceIn(0.2f, 0.92f)
     val bottomHold = (bottomReserve / bottomBand).coerceIn(0.2f, 0.92f)
     val frost = rememberFrostState()
+    // 挂着权限请求时，那张卡要显示成「等你批准」而不是转圈（见 [LocalAwaitingToolUseId]）
+    val awaitingToolUseId = awaitingToolUseId(
+        items = session.items,
+        pendingToolName = session.pendingPermission?.toolName,
+        pendingToolUseId = session.pendingPermission?.toolUseId,
+    )
 
-    CompositionLocalProvider(LocalFrost provides frost) {
+    CompositionLocalProvider(
+        LocalFrost provides frost,
+        LocalAwaitingToolUseId provides awaitingToolUseId,
+    ) {
     Box(Modifier.fillMaxSize().imePadding()) {
         // 会话流铺满，顶栏 / 输入框浮在上面。铬件高度量完再垫进列表，字不会被挡住。
         val blank = blocks.isEmpty() && !streaming
@@ -1745,6 +1773,26 @@ private fun PermissionSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // 要动的东西跑到 /workspace 之外了。挂了整机存储之后这是唯一能把
+            // 「改容器里的 /etc」和「改你相册里的照片」分开说的地方
+            val escaped = remember(pending.input) { escapedPaths(pending.input) }
+            val onDevice = remember(pending.input) { touchesDeviceStorage(pending.input) }
+            if (escaped.isNotEmpty()) {
+                Text(
+                    text = if (onDevice) {
+                        stringResource(R.string.session_permission_device_path, escaped.first())
+                    } else {
+                        stringResource(R.string.session_permission_outside_workspace, escaped.first())
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetbrainsMono,
+                    color = if (onDevice) {
+                        MaterialTheme.sea.vermilion
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
 
             // 按工具类型渲染入参：编辑类给 diff，Bash 给高亮命令，其余给美化 JSON。
             // 原来这里是 `input.toString()` 截断成一行流水账 —— 用户点「允许」时
@@ -1772,15 +1820,21 @@ private fun PermissionSheet(
                     modifier = Modifier.weight(1f),
                 ) { Text(stringResource(R.string.session_permission_allow_once)) }
             }
-            // 「始终允许」放在主按钮下方：它改的是持久规则，不该和一次性批准同等醒目
-            pending.suggestions.forEach { suggestion ->
-                InkButton(
-                    onClick = { onAnswer(true, suggestion) },
-                    modifier = Modifier.fillMaxWidth(),
-                    tone = InkButtonTone.Paper,
-                    icon = HugeIcons.Tick01,
-                ) {
-                    Text(suggestion.label, style = MaterialTheme.typography.labelMedium)
+            // 「始终允许」放在主按钮下方：它改的是持久规则，不该和一次性批准同等醒目。
+            //
+            // 碰到设备上的真实文件时**一条都不给**：那条规则会把往后所有同类写入都放过去，
+            // 而这一档改坏了没有 undo（rootfs 里改砸了重装就回来，相册里的照片不会）。
+            // 每一次都值得单独看一眼——这正是把整机交出去之后仅剩的那道闸。
+            if (!onDevice) {
+                pending.suggestions.forEach { suggestion ->
+                    InkButton(
+                        onClick = { onAnswer(true, suggestion) },
+                        modifier = Modifier.fillMaxWidth(),
+                        tone = InkButtonTone.Paper,
+                        icon = HugeIcons.Tick01,
+                    ) {
+                        Text(suggestion.label, style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }

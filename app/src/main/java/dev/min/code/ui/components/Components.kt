@@ -17,9 +17,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import dev.min.code.R
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.theme.DarkSea
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +35,7 @@ fun BackButton(modifier: Modifier = Modifier) {
     val navController = LocalNavController.current
     InkIconButton(
         icon = HugeIcons.ArrowLeft01,
-        contentDescription = "返回",
+        contentDescription = stringResource(R.string.common_back),
         onClick = { navController.popBackStack() },
         modifier = modifier,
         tint = MaterialTheme.colorScheme.onSurface,
@@ -108,11 +110,11 @@ fun ImagePreviewDialog(images: List<String>, onDismissRequest: () -> Unit) {
                     contentScale = ContentScale.Fit,
                 )
             } else if (decoded != null) {
-                Text("无法解码图片", color = DarkSea.ink, modifier = Modifier.align(Alignment.Center))
+                Text(stringResource(R.string.common_image_decode_failed), color = DarkSea.ink, modifier = Modifier.align(Alignment.Center))
             }
             InkIconButton(
                 icon = HugeIcons.Cancel01,
-                contentDescription = "关闭",
+                contentDescription = stringResource(R.string.common_close),
                 onClick = onDismissRequest,
                 tint = DarkSea.ink,
                 modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp),

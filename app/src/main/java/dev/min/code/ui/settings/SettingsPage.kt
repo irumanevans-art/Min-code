@@ -1,8 +1,11 @@
 package dev.min.code.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -37,10 +40,14 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.BuildConfig
 import dev.min.code.R
+import dev.min.code.core.device.MinAccessibilityService
+import dev.min.code.core.rootfs.deviceStorageSettingsIntent
+import dev.min.code.core.rootfs.hasDeviceStorageAccess
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
+import dev.min.code.privileged.PrivilegedClient
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkDivider
@@ -173,6 +180,23 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
+                SectionTitle(stringResource(R.string.settings_section_device_files))
+                DeviceStorageRow(
+                    enabled = settings.shareDeviceStorage,
+                    onToggle = vm::setShareDeviceStorage,
+                )
+
+                InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
+
+                SectionTitle(stringResource(R.string.settings_section_device_control))
+                DeviceControlRow(
+                    enabled = settings.controlDevice,
+                    onToggle = vm::setControlDevice,
+                )
+                VirtualDisplayRow(vm = vm)
+
+                InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
+
                 SectionTitle(stringResource(R.string.settings_section_appearance))
                 ThemePicker(current = settings.themeMode, onPick = vm::setThemeMode)
                 SkinPicker(current = settings.skin, onPick = vm::setSkin)
@@ -273,6 +297,212 @@ private fun BatteryRow() {
  * 主题在遮盖之下切换，然后墨化开。目标形态和当前一样（比如从「浅色」切到白天的「跟随系统」）
  * 就直接写设置，不演。
  */
+/**
+ * 把整台设备的共享存储交给 agent。
+ *
+ * 两个条件：这里的开关 + 系统设置里的「所有文件访问权限」。开关只是意愿，
+ * 权限才是真的能不能读到，所以**开关的显示态取两者的与** —— 用户在系统里把权限收回之后，
+ * 这一行要立刻退回关闭，而不是继续显示"已开启"却什么都读不到。
+ *
+ * 权限状态每次回到前台重查（去系统设置授权完回来就是这条路径），和 [BatteryRow] 同一套。
+ */
+@Composable
+private fun DeviceStorageRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    var granted by remember { mutableStateOf(hasDeviceStorageAccess(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) granted = hasDeviceStorageAccess(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val on = enabled && granted
+    // 开的时候先落设置再去要权限：用户在系统那一页点了允许、回来就直接是开着的，
+    // 不必再回来点一次开关
+    val toggle = {
+        if (on) {
+            onToggle(false)
+        } else {
+            onToggle(true)
+            if (!granted) {
+                deviceStorageSettingsIntent(context)?.let { intent ->
+                    runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }
+            }
+        }
+    }
+
+    SettingRow(
+        title = stringResource(R.string.settings_device_storage_title),
+        // 开着的时候不重复说一遍"能读写全部文件"——那是上面那句话的意思。这里只说
+        // 两件他一定会撞上的事：挂在哪、哪块拿不到
+        subtitle = when {
+            on -> stringResource(R.string.settings_device_storage_on)
+            enabled && !granted -> stringResource(R.string.settings_device_storage_need_permission)
+            else -> stringResource(R.string.settings_device_storage_off)
+        },
+        // 开着的时候副题发朱：这是全 App 唯一一处"agent 能动 /workspace 以外的东西"，
+        // 得让它在设置页上一眼看得见
+        subtitleColor = if (on || (enabled && !granted)) {
+            MaterialTheme.sea.vermilion
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        onClick = toggle,
+        trailing = { InkSwitch(checked = on, onCheckedChange = { toggle() }) },
+    )
+}
+
+/**
+ * 让 agent 读屏幕、替人点击输入。
+ *
+ * 和 [DeviceStorageRow] 是同一套两段式（开关 = 意愿，系统权限 = 真的能不能），但这里
+ * **开关的显示态不取两者的与**：无障碍没授权时工具依然挂在 CLI 上，只是每次调用都回
+ * 一句「还没授权」（见 `DeviceMcpRegistrar.apply`）。所以开着就显示开着，差的那一步
+ * 用副题说出来，而不是把开关弹回去——弹回去的话用户会以为是自己没点上。
+ *
+ * 副题里那句「开关是灰的怎么办」不能省：Android 13+ 对侧载应用默认把无障碍开关置灰，
+ * 而 Min 正是 GitHub APK 分发，每个人都会撞上。
+ */
+@Composable
+private fun DeviceControlRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    var granted by remember { mutableStateOf(MinAccessibilityService.connected()) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) granted = MinAccessibilityService.connected()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val toggle = {
+        val next = !enabled
+        onToggle(next)
+        if (next && !granted) {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
+    }
+
+    SettingRow(
+        title = stringResource(R.string.device_control_title),
+        subtitle = when {
+            enabled && granted -> stringResource(R.string.device_control_on)
+            enabled -> stringResource(R.string.device_control_need_permission) + "\n" +
+                stringResource(R.string.device_control_restricted)
+            else -> stringResource(R.string.device_control_off)
+        },
+        subtitleColor = if (enabled) {
+            MaterialTheme.sea.vermilion
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        onClick = toggle,
+        trailing = { InkSwitch(checked = enabled, onCheckedChange = { toggle() }) },
+    )
+}
+
+/**
+ * 虚拟屏档：不另装 Shizuku，用本机壳服务建一块看不见的屏。
+ *
+ * 副题必须写清「重启后要再拉起」——否则会被当成静默后台权限。
+ * 拉起优先走无线调试扫端口；扫不到就让用户复制 adb 命令到电脑。
+ */
+@Composable
+private fun VirtualDisplayRow(vm: SettingsVM) {
+    val context = LocalContext.current
+    val privState by vm.privilegedState.collectAsStateWithLifecycle()
+    val session by vm.agentDisplayActive.collectAsStateWithLifecycle()
+
+    val subtitle = when (privState) {
+        PrivilegedClient.State.Ready -> {
+            val active = session
+            if (active != null) {
+                stringResource(R.string.device_virtual_session_on, active.displayId)
+            } else {
+                stringResource(R.string.device_virtual_ready)
+            }
+        }
+        PrivilegedClient.State.Starting -> stringResource(R.string.device_virtual_starting)
+        PrivilegedClient.State.Failed -> stringResource(
+            R.string.device_virtual_failed,
+            vm.lastPrivilegedError ?: "?",
+        )
+        PrivilegedClient.State.Disconnected -> stringResource(R.string.device_virtual_off) +
+            "\n" + stringResource(R.string.device_virtual_need_adb)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SettingRow(
+            title = stringResource(R.string.device_virtual_title),
+            subtitle = subtitle,
+            subtitleColor = when (privState) {
+                PrivilegedClient.State.Failed -> MaterialTheme.sea.vermilion
+                PrivilegedClient.State.Ready -> MaterialTheme.sea.seaDeep
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+            },
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            InkTextButton(onClick = { vm.startPrivilegedViaWireless() }) {
+                Text(stringResource(R.string.device_virtual_start))
+            }
+            InkTextButton(
+                onClick = {
+                    val cmd = vm.privilegedLaunchCommand()
+                    val cm = context.getSystemService(ClipboardManager::class.java)
+                    cm?.setPrimaryClip(ClipData.newPlainText("min-privileged", cmd))
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.device_virtual_cmd_copied),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                },
+            ) {
+                Text(stringResource(R.string.device_virtual_copy_cmd))
+            }
+        }
+        if (privState == PrivilegedClient.State.Ready) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (session == null) {
+                    InkTextButton(onClick = { vm.startAgentDisplaySession() }) {
+                        Text(stringResource(R.string.device_virtual_session_start))
+                    }
+                } else {
+                    InkTextButton(
+                        onClick = { vm.stopAgentDisplaySession() },
+                        tone = InkButtonTone.Vermilion,
+                    ) {
+                        Text(stringResource(R.string.device_virtual_session_stop))
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ThemePicker(current: ThemeMode, onPick: (ThemeMode) -> Unit) {
     val modes = listOf(

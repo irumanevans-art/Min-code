@@ -5,6 +5,7 @@ import android.content.Intent
 import android.util.Log
 import android.widget.Toast
 import androidx.core.net.toUri
+import dev.min.code.R
 
 private const val TAG = "OpenLocalUrl"
 
@@ -24,7 +25,7 @@ fun Context.openExternalUrl(url: String): Boolean {
         true
     }.getOrElse {
         Log.w(TAG, "openExternalUrl failed: $trimmed", it)
-        Toast.makeText(this, "无法打开 $trimmed", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.common_cant_open, trimmed), Toast.LENGTH_SHORT).show()
         false
     }
 }

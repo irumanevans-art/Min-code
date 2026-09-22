@@ -6,6 +6,8 @@
   <uses-feature android:name="android.hardware.camera" android:required="false" />
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <!-- 关于页自更新：从 GitHub Releases 下 APK 后交给系统安装器 -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -14,6 +16,21 @@
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
   <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+  <!--
+    整机文件：设置里「让 agent 读写这台设备」开了之后，把共享存储挂进 rootfs 的 /sdcard。
+    **默认不申请、不影响任何已有功能**——不开这一档时 agent 只看得见 /workspace。
+
+    API 30+ 是特殊权限，只能由用户去系统设置里给（`deviceStorageSettingsIntent`）；
+    30 以下退回旧的运行时读写权限，所以 WRITE_EXTERNAL_STORAGE 带 maxSdkVersion。
+    见 core/rootfs/DeviceStorage.kt。
+  -->
+  <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+    tools:ignore="ScopedStorage" />
+  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="29" />
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="29" />
 
   <!--
     usesCleartextTraffic：不少中转站只有 http://。CLI 在 proot 里走自己的网络栈不受这个限制，
@@ -83,6 +100,26 @@
       android:name=".core.service.CodexApprovalReceiver"
       android:exported="false" />
 
+    <!--
+      设备操控：让 agent 读屏幕、替人点击输入。见 core/device/MinAccessibilityService.kt。
+
+      exported 必须为 true 且带 BIND_ACCESSIBILITY_SERVICE——系统要绑定它。这个权限是
+      签名级的，只有系统绑得上，第三方应用绑不了。**用户不去系统设置里手动开，
+      这个服务一行代码都不会跑**。
+    -->
+    <service
+      android:name=".core.device.MinAccessibilityService"
+      android:exported="true"
+      android:label="@string/app_name"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/device_accessibility_service" />
+    </service>
+
     <provider
       android:name="androidx.core.content.FileProvider"
       android:authorities="${applicationId}.fileprovider"
@@ -92,5 +129,34 @@
         android:name="android.support.FILE_PROVIDER_PATHS"
         android:resource="@xml/file_paths" />
     </provider>
+
+    <!--
+      把 Rootfs 挂进系统「文件」App 与所有 SAF 选择器：/workspace 里的文件可以直接用
+      任意第三方编辑器打开，不必再导出改完导入。见 core/rootfs/WorkspaceDocumentsProvider.kt。
+
+      exported 必须为 true 才会出现在别的 App 的选择器里，而 MANAGE_DOCUMENTS 是签名级权限，
+      只有系统的 DocumentsUI 拿得到——第三方 App 只能通过用户亲手选文件拿到那一份 URI 授权。
+    -->
+    <provider
+      android:name=".core.rootfs.WorkspaceDocumentsProvider"
+      android:authorities="${applicationId}.documents"
+      android:exported="true"
+      android:grantUriPermissions="true"
+      android:permission="android.permission.MANAGE_DOCUMENTS">
+      <intent-filter>
+        <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+      </intent-filter>
+    </provider>
+
+    <!--
+      shell 进程（uid 2000）把 IPrivilegedService Binder 交回 App。
+      必须 exported：壳和 App 不是同一 uid，exported=false 会直接拒掉。
+      鉴权在 call() 里查 Binder.getCallingUid()==2000，见 PrivilegedBridgeProvider。
+    -->
+    <provider
+      android:name=".privileged.PrivilegedBridgeProvider"
+      android:authorities="${applicationId}.privileged"
+      android:exported="true"
+      android:grantUriPermissions="false" />
   </application>
 </manifest>

@@ -27,6 +27,14 @@ sealed interface RelayProbeResult {
     /** 地址在、key 不对。两种鉴权方式都试过了 */
     data object Unauthorized : RelayProbeResult
 
+    /**
+     * 地址通得上，但这家没实现 `/v1/models`（常见于 DeepSeek Anthropic 兼容基址）。
+     *
+     * **不是连不上。** 以前 404 被收进 [Unreachable]，界面就写成「连不上：HTTP 404」，
+     * 用户会以为 key/地址坏了；其实会话照常用，只是测活没法从模型列表端点确认。
+     */
+    data object NoModelsEndpoint : RelayProbeResult
+
     /** 连不上 / 超时 / 对方返回了别的错。[reason] 直接给人看 */
     data class Unreachable(val reason: String) : RelayProbeResult
 
@@ -51,15 +59,19 @@ suspend fun probeRelay(baseUrl: String, token: String): RelayProbeResult = withC
         }
         RelayProbeResult.Reachable(countModels(body))
     } catch (e: RelayHttpStatusException) {
-        if (e.code == 401 || e.code == 403) {
-            RelayProbeResult.Unauthorized
-        } else {
-            RelayProbeResult.Unreachable("HTTP ${e.code}")
-        }
+        classifyProbeHttpStatus(e.code)
     } catch (e: Exception) {
         Log.w(TAG, "probe failed for $url", e)
         RelayProbeResult.Unreachable(e.message ?: e.javaClass.simpleName)
     }
+}
+
+/** 测活遇到非 2xx 时怎么归类。抽出来是为了单测能钉死「404 ≠ 连不上」 */
+internal fun classifyProbeHttpStatus(code: Int): RelayProbeResult = when (code) {
+    401, 403 -> RelayProbeResult.Unauthorized
+    // 和 fetchRelayModelIds 对齐：没模型列表 ≠ 连不上
+    404, 405 -> RelayProbeResult.NoModelsEndpoint
+    else -> RelayProbeResult.Unreachable("HTTP $code")
 }
 
 /**

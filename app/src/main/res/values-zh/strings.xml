@@ -24,6 +24,15 @@
   <string name="settings_section_connection">连接</string>
   <string name="settings_section_install">安装源</string>
   <string name="settings_section_background">后台运行</string>
+  <string name="settings_section_device_files">设备文件</string>
+  <string name="documents_root_workspace">工作区</string>
+  <string name="documents_root_rootfs">Ubuntu 环境</string>
+  <string name="session_permission_device_path">这是你设备上的文件：%1$s</string>
+  <string name="session_permission_outside_workspace">在 /workspace 之外：%1$s</string>
+  <string name="settings_device_storage_title">让 agent 读写这台设备</string>
+  <string name="settings_device_storage_off">关着时 agent 只看得见 /workspace。开了会把共享存储（相册、下载、文档）挂到 /sdcard，可写——proot 挂不出只读。</string>
+  <string name="settings_device_storage_on">已挂到 /sdcard，可写。Android/data 与 Android/obb 仍然拿不到，那是系统对所有应用的限制。</string>
+  <string name="settings_device_storage_need_permission">还差系统设置里的「所有文件访问权限」。点这里去那一页。</string>
   <string name="settings_section_appearance">外观</string>
   <string name="settings_section_language">语言</string>
   <string name="settings_connection_hint">改动只对之后新开的会话生效；正在跑的会话用的还是启动时注入的值。</string>
@@ -175,6 +184,7 @@
   <string name="session_tool_status_running">运行中</string>
   <string name="session_tool_status_done">完成</string>
   <string name="session_tool_status_error">出错</string>
+  <string name="session_tool_status_awaiting">等你批准</string>
   <string name="session_export_user">你</string>
   <string name="session_export_thinking">思考</string>
   <string name="session_permission_blocked_path">越权路径：%1$s</string>
@@ -610,6 +620,7 @@
   <string name="providers_probe_ok">通了</string>
   <string name="providers_probe_ok_models">通了 · %1$d 个模型</string>
   <string name="providers_probe_unauthorized">key 不被接受</string>
+  <string name="providers_probe_no_models">通了 · 没有模型列表（请手填映射）</string>
   <string name="providers_probe_unreachable">连不上：%1$s</string>
   <string name="providers_probe_no_token">先填一个 key</string>
   <!-- 会话角标：env 在进程启动时固化，切换对正跑着的会话天然无效 -->
@@ -681,6 +692,11 @@
   <string name="providers_models_target_haiku">Haiku 那一档</string>
   <string name="providers_models_target_sonnet">Sonnet 那一档</string>
   <string name="providers_models_target_opus">Opus 那一档</string>
+  <string name="providers_models_missing_hint">还没设主模型映射——会话里可能仍会要 claude-* 的 id。</string>
+  <string name="providers_context_title">上下文量</string>
+  <string name="providers_context_hint">写的是 CLAUDE_CODE_MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW。第三方模型不是 200k 时就要设。</string>
+  <string name="providers_context_max">快捷大小</string>
+  <string name="providers_context_clear">清除</string>
   <!-- 统一供应商 -->
   <string name="providers_unified_section">统一供应商</string>
   <string name="providers_unified_hint">一条同时供给 Claude Code 与 Codex。改它就重写它派生出来的条目；直接改派生条目就解绑。</string>
@@ -748,4 +764,124 @@
   <string name="providers_switch_action">换一家…</string>
   <string name="providers_config_hint">会话启动时读它。换完空闲的会自己重起接上上下文。</string>
   <string name="setup_pick_preset">从预设里挑一家</string>
+
+  <!-- 第二轮抽资源：边角硬编码 -->
+  <string name="common_expand">展开</string>
+  <string name="common_collapse">收起</string>
+  <string name="common_copy">复制</string>
+  <string name="common_copied">已复制</string>
+  <string name="common_back">返回</string>
+  <string name="common_close">关闭</string>
+  <string name="common_copy_code">复制代码</string>
+  <string name="common_more_lines">还有 %1$d 行</string>
+  <string name="common_image_decode_failed">无法解码图片</string>
+  <string name="common_copy_failed">复制失败</string>
+  <string name="common_cant_open">无法打开 %1$s</string>
+
+  <string name="md_image">[图片]</string>
+  <string name="md_image_alt">[图片：%1$s]</string>
+
+  <string name="about_title">关于</string>
+  <string name="about_intro">把官方 Claude Code CLI 装进手机上的 Ubuntu（proot）里，用一个像工作日志的界面驱动它。</string>
+  <string name="about_check_update">检查 App 更新</string>
+  <string name="about_check_update_checking">正在查 GitHub…</string>
+  <string name="about_check_update_latest">已是最新版</string>
+  <string name="about_check_update_available">有新版本：%1$s</string>
+  <string name="about_check_update_failed">查不到：%1$s</string>
+  <string name="about_check_update_no_apk">有 Release，但没有匹配这台设备的 APK</string>
+  <string name="about_check_update_dialog_title">安装 %1$s？</string>
+  <string name="about_check_update_download">下载并安装</string>
+  <string name="about_check_update_downloading">正在下载… %1$d%%</string>
+  <string name="about_check_update_download_failed">下载失败：%1$s</string>
+  <string name="about_check_update_need_permission">先允许安装未知应用</string>
+  <string name="about_check_update_open_permission">去系统设置</string>
+  <string name="about_check_update_open_release">打开 Release 页</string>
+  <string name="about_check_update_install_failed">调不起安装器</string>
+  <string name="about_whats_new">更新</string>
+  <string name="about_credits">来源与许可</string>
+  <string name="about_license_body">本 App 以 GNU AGPL-3.0 发布。proot 运行时、Rootfs 安装与终端部分源自 RikkaHub（AGPL-3.0），proot 二进制来自 Termux 项目，终端模拟器来自 Termux 的 terminal-view，语法高亮与 Markdown 解析分别来自 RikkaHub 的 highlight 模块与 JetBrains markdown。Claude Code 是 Anthropic 的产品，本 App 与 Anthropic 无关。</string>
+  <string name="about_last_crash">上次崩溃</string>
+  <string name="about_last_error">上次错误（未崩溃）</string>
+  <string name="about_no_record">没有记录。</string>
+  <string name="about_copy_crash">复制崩溃报告</string>
+
+  <string name="workspace_linux_title">Linux 环境</string>
+  <string name="workspace_linux_status">状态</string>
+  <string name="workspace_linux_desc">/workspace 是文件页里的「文件」区，Claude Code 的工作目录就是它；「Rootfs」区是整个 Ubuntu。Claude 用 apt / pip 装的东西都在 Rootfs 里，占用空间随之增长。</string>
+  <string name="workspace_linux_reinstall">重装 Linux 环境</string>
+  <string name="workspace_linux_reinstall_desc">会清空整个 Ubuntu：Claude Code CLI、Node.js、apt/pip 装过的一切、~/.claude 下的会话记录与记忆。只有环境彻底坏掉时才这么做；「文件」区不受影响。</string>
+  <string name="workspace_usage_scanning">正在扫描…</string>
+  <string name="workspace_usage_scanned">%1$s · 已扫 %2$d 个文件</string>
+  <string name="workspace_usage_partial">%1$s（未扫完）</string>
+  <string name="workspace_usage_split">文件 %1$s · Rootfs %2$s</string>
+  <string name="workspace_move_one">把「%1$s」移到下面选中的文件夹。点进一层再确认。</string>
+  <string name="workspace_move_many">把选中的 %1$d 项移到下面选中的文件夹。点进一层再确认。</string>
+
+  <string name="editor_err_read">读取文件失败</string>
+  <string name="editor_err_save">保存失败</string>
+  <string name="editor_saving">保存中…</string>
+  <string name="editor_loading">正在读取</string>
+
+  <string name="workspace_err_search">搜索失败</string>
+  <string name="workspace_err_load">加载工作区文件失败</string>
+  <string name="workspace_err_delete">删除失败</string>
+  <string name="workspace_err_bad_name">名称不合法</string>
+  <string name="workspace_err_create">新建失败</string>
+  <string name="workspace_err_move_into_self">不能把文件夹移进自己里面</string>
+  <string name="workspace_err_move">移动失败</string>
+  <string name="workspace_err_import_file">导入文件失败</string>
+  <string name="workspace_err_export_file">导出文件失败</string>
+  <string name="workspace_err_import">导入失败</string>
+  <string name="workspace_err_export">导出失败</string>
+  <string name="workspace_err_bad_zip">打不开这个 zip</string>
+  <string name="workspace_err_generic">操作失败</string>
+  <string name="workspace_err_rootfs_install">Rootfs 安装失败</string>
+  <string name="workspace_err_command">命令执行失败</string>
+  <string name="workspace_err_open_dir">打不开这个目录</string>
+  <string name="workspace_err_too_large">文件过大，无法预览（%1$d bytes）</string>
+  <string name="workspace_err_usage">未能算出占用空间</string>
+
+  <string name="setup_preparing">准备下载…</string>
+  <string name="setup_source_official">（官方源）</string>
+  <string name="setup_source_mirror">（镜像源）</string>
+  <string name="setup_err_rootfs">Linux 环境安装失败：%1$s</string>
+  <string name="setup_downloading">下载 Ubuntu 基础镜像%1$s %2$d MB</string>
+  <string name="setup_extracting">解压 %1$d 个文件</string>
+  <string name="setup_installed">安装完成</string>
+
+  <string name="notif_keepalive_name">会话保活</string>
+  <string name="notif_keepalive_desc">会话在后台运行时的常驻通知</string>
+  <string name="notif_alert_name">会话提醒</string>
+  <string name="notif_alert_desc">等待审批、任务完成、会话中断</string>
+
+  <string name="settings_section_device_control">设备操控</string>
+  <string name="device_control_title">让 agent 操作这台手机</string>
+  <string name="device_control_off">关着。开了之后 agent 能读取屏幕内容，并替你点击、输入、滑动——走 Android 的无障碍服务。</string>
+  <!-- 系统在无障碍设置列表里显示的服务说明 -->
+  <string name="device_control_service_description">让 Min 能读取屏幕内容，并替你点击、输入、滑动。只在会话运行时使用，每一步操作仍然要你批准。</string>
+  <!-- Android 13+ 对侧载应用把无障碍开关置灰，不说清楚的话用户只会看到一个点不动的开关 -->
+  <string name="device_control_restricted">如果开关是灰的：去「应用信息 → 右上角 ⋮ → 允许受限设置」，用 PIN 确认后再回来。凡是不从应用商店装的应用，Android 都会这样拦一道。</string>
+  <string name="device_control_stop">停止</string>
+  <string name="device_control_active_title">agent 现在能操作这台手机</string>
+  <string name="device_control_active_body">点「停止」立刻切断。</string>
+  <string name="device_control_need_permission">还差系统设置里的无障碍权限。点这里去那一页。</string>
+  <string name="device_control_on">已开启。每一次点击和输入仍然走和改文件一样的审批。</string>
+  <string name="device_virtual_title">虚拟屏（不用装 Shizuku）</string>
+  <string name="device_virtual_off">关着。开了之后 agent 在一块你看不见的屏幕上干活，主屏留给你。每次重启手机后需要再开一次无线调试——代价和 Shizuku 一样，只是不用另装一个 App。</string>
+  <string name="device_virtual_ready">已就绪（shell uid 2000）。重启手机后需要重新拉起。</string>
+  <string name="device_virtual_starting">正在拉起特权进程…</string>
+  <string name="device_virtual_failed">失败：%1$s</string>
+  <string name="device_virtual_need_adb">请打开「开发者选项 → 无线调试」，再点「拉起」。或复制 adb 命令到电脑上执行。</string>
+  <string name="device_virtual_start">通过无线调试拉起</string>
+  <string name="device_virtual_copy_cmd">复制 adb 命令</string>
+  <string name="device_virtual_cmd_copied">已复制。在电脑上执行：adb shell &lt;粘贴&gt;</string>
+  <string name="device_virtual_session_on">虚拟屏会话进行中（display %1$d）</string>
+  <string name="device_virtual_session_start">开始虚拟屏会话</string>
+  <string name="device_virtual_session_stop">结束虚拟屏会话</string>
+  <string name="device_tool_tap">点击 %1$s</string>
+  <string name="device_tool_input">在 %1$s 里输入</string>
+  <string name="device_tool_swipe">滑动 %1$s</string>
+  <string name="device_tool_open_app">打开 %1$s</string>
+  <string name="device_tool_back">按返回键</string>
+  <string name="device_tool_ui_tree">读取屏幕</string>
 </resources>

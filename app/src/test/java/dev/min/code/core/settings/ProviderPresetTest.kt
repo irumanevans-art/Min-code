@@ -172,4 +172,38 @@ class ProviderPresetTest {
         )
         assertEquals(mapOf("OK" to "1"), preset.toProfile(token = "sk-mine", zh = false).env)
     }
+
+    @Test
+    fun deepseek_preset_ships_official_model_mapping() {
+        val deepseek = bundled.claude.single { it.id == "deepseek" }
+        assertEquals("deepseek-flash[1m]", deepseek.env["ANTHROPIC_MODEL"])
+        assertEquals("deepseek-flash[1m]", deepseek.env["ANTHROPIC_DEFAULT_OPUS_MODEL"])
+        assertEquals("deepseek-flash[1m]", deepseek.env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+        assertEquals("deepseek-flash", deepseek.env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+        assertEquals("deepseek-flash", deepseek.env["CLAUDE_CODE_SUBAGENT_MODEL"])
+        assertEquals("max", deepseek.env["CLAUDE_CODE_EFFORT_LEVEL"])
+        assertEquals("786432", deepseek.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+    }
+
+    @Test
+    fun kimi_code_preset_uses_api_key_header_and_context_window() {
+        val kimi = bundled.claude.single { it.id == "kimi_code" }
+        assertEquals(AuthHeader.API_KEY, kimi.resolvedAuthHeader)
+        assertEquals(AuthHeader.API_KEY, kimi.toProfile(token = "sk", zh = false).authHeader)
+        assertEquals("kimi-for-coding", kimi.env["ANTHROPIC_MODEL"])
+        assertEquals("1048576", kimi.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
+        assertEquals("1048576", kimi.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+    }
+
+    @Test
+    fun minimax_and_zhipu_presets_ship_documented_mappings() {
+        val cn = bundled.claude.single { it.id == "minimax_cn" }
+        assertEquals("https://api.minimax.cn/anthropic", normalizeBaseUrl(cn.baseUrl))
+        assertEquals("MiniMax-M3[1m]", cn.env["ANTHROPIC_MODEL"])
+        assertEquals("1000000", cn.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+
+        val zhipu = bundled.claude.single { it.id == "zhipu_cn" }
+        assertEquals("glm-4.7", zhipu.env["ANTHROPIC_MODEL"])
+        assertEquals("3000000", zhipu.env["API_TIMEOUT_MS"])
+    }
 }

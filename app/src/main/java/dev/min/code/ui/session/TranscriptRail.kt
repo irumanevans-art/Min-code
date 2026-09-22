@@ -242,7 +242,8 @@ internal enum class RailTone { Sea, Ink, Error }
  *
  * 三套共用的只有两样：这里的几何（[transcriptRailGeometry]，段怎么接、收笔留多少）
  * 和标记（[drawRailMarker]）——标记是语义，不是风格：点 = 你，环 = 思考，
- * 实心方 = 正在跑（带涟漪），空心方 = 已完成，叉 = 出错，短横 = 提示。
+ * 实心方 = 正在跑（带涟漪），实心方 + 定环 = 等你批准（涟漪停住），
+ * 空心方 = 已完成，叉 = 出错，短横 = 提示。
  */
 @Composable
 internal fun Modifier.transcriptRail(
@@ -327,6 +328,17 @@ private fun DrawScope.drawRailMarker(marker: RailMarker, x: Float, y: Float, col
                 else drawCircle(color.copy(alpha = a), r, Offset(x, y), style = Stroke(1.dp.toPx()))
             }
         }
+        // 等你判定：方块照旧实心（这一步确实已经开始了），但涟漪**停在半途**、不再淡出。
+        // 和正在跑共用同一个词汇，差别只在动与静 —— 一屏卡片扫过去，还在扩的是机器在忙、
+        // 定住的是它在等人。不换色：朱留给判定的**结果**（拒绝），等待本身还是海。
+        RailMarker.SquareHeld -> {
+            val tl = Offset(x - radius, y - radius)
+            val sz = Size(radius * 2, radius * 2)
+            if (seaMark) drawRect(brush, tl, sz) else drawRect(color, tl, sz)
+            val r = radius + (8.dp.toPx() - radius) * HeldRipplePhase
+            if (seaMark) drawCircle(brush, r, Offset(x, y), style = Stroke(1.dp.toPx()))
+            else drawCircle(color, r, Offset(x, y), style = Stroke(1.dp.toPx()))
+        }
         RailMarker.SquareOutline -> {
             val tl = Offset(x - radius, y - radius)
             val sz = Size(radius * 2, radius * 2)
@@ -343,6 +355,9 @@ private fun DrawScope.drawRailMarker(marker: RailMarker, x: Float, y: Float, col
         }
     }
 }
+
+/** [RailMarker.SquareHeld] 的定环停在涟漪行程的哪一处：够大到一眼看出，又没走完 */
+private const val HeldRipplePhase = 0.72f
 
 /**
  * 流动物的时钟：整条路径（线身 + 收笔）走一圈，周期由风格给（[RailStyle.flowPeriodMs]）。

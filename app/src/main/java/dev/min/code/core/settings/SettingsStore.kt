@@ -14,6 +14,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.nio.charset.StandardCharsets
@@ -45,6 +46,8 @@ private val KEY_SKIN = stringPreferencesKey("skin")
 private val KEY_MANAGE_GUEST_CONFIG = booleanPreferencesKey("manage_guest_config")
 private val KEY_GUEST_CONFIG_SECRETS = booleanPreferencesKey("guest_config_secrets")
 private val KEY_INJECT_SHELL_CREDENTIALS = booleanPreferencesKey("inject_shell_credentials")
+private val KEY_SHARE_DEVICE_STORAGE = booleanPreferencesKey("share_device_storage")
+private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
 /** 上一次由我们写进 settings.json 的那些 env 键。是记账，不是配置，见 [SettingsStore.setManagedEnvKeys] */
 private val KEY_MANAGED_ENV_KEYS = stringSetPreferencesKey("managed_env_keys")
 
@@ -236,6 +239,28 @@ data class AppSettings(
      */
     val injectCredentialsIntoShells: Boolean = true,
     /**
+     * 把整台设备的共享存储挂进 Rootfs 的 `/sdcard`，让 CLI 直接读写相册、下载、文档。
+     *
+     * **默认关，而且开了也不够**：还要用户去系统设置里给「所有文件访问权限」
+     * （[android.Manifest.permission.MANAGE_EXTERNAL_STORAGE]）。两个条件都成立才真的挂，
+     * 见 `sharedStorageBindMount`。
+     *
+     * proot 的 `-b` **没有只读选项**，挂进去就是可写的 —— 所以这一档不是「让它看看照片」，
+     * 而是把整个共享存储交给 agent 改。防线全在审批层：`/workspace` 之外的写入单独确认，
+     * 「始终允许」对 Bash 记的是具体命令而不是整个工具（见 `ClaudeCodePermissionSheet`）。
+     */
+    val shareDeviceStorage: Boolean = false,
+    /**
+     * 把六个设备操控工具挂给 CLI（读屏、点击、输入、滑动、开应用、返回）。
+     *
+     * **默认关，而且开了也还差一步**：工具本身随开关挂上去，但真要能动手，还得用户去系统
+     * 设置里给无障碍权限。差那一步时工具照样在，只是每次调用都回一句「还没授权」——
+     * 比让工具凭空消失好，见 `DeviceMcpRegistrar.apply` 的注释。
+     *
+     * 和 [shareDeviceStorage] 是两件独立的事：那个给的是文件，这个给的是屏幕和手。
+     */
+    val controlDevice: Boolean = false,
+    /**
      * 上一次由我们写进 settings.json 的那些 env 键。
      *
      * 记账用，不是给人看的配置：下一次同步只删 / 改这些键，用户自己或 CLI 写的一律不动。
@@ -388,6 +413,20 @@ enum class CodexAuthMode { CLI, OPENAI_API_KEY, RELAY }
  * 在第一次 [current] 时就地迁移成一条配置，迁完删掉老键。
  */
 class SettingsStore(private val context: Context) {
+    /**
+     * 最近一次读到的设置。
+     *
+     * 给**既不能挂起也不能阻塞**的少数调用方用：proot 起进程时要当场决定挂哪些目录
+     * （`WorkspaceManager` 的 bindMounts provider），而那个 lambda 既可能在 IO 线程、
+     * 也可能被文件页的路径解析从主线程调到，`runBlocking` 在后一种情况下就是 ANR。
+     *
+     * 由 [settings] 每次发射顺手更新，[dev.min.code.MinApp] 起一个长期收集保证它一直是新的。
+     * 还没读到过时为 null —— 调用方按"最保守的默认"处理，而不是假装读到了什么。
+     */
+    @Volatile
+    var snapshot: AppSettings? = null
+        private set
+
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
         val profiles = readProfiles(p)
         AppSettings(
@@ -406,10 +445,12 @@ class SettingsStore(private val context: Context) {
             manageGuestConfig = p[KEY_MANAGE_GUEST_CONFIG] ?: false,
             guestConfigIncludesSecrets = p[KEY_GUEST_CONFIG_SECRETS] ?: false,
             injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
+            shareDeviceStorage = p[KEY_SHARE_DEVICE_STORAGE] ?: false,
+            controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
             managedEnvKeys = p[KEY_MANAGED_ENV_KEYS].orEmpty(),
             credentialsUnreadable = credentialsUnreadable(p),
         )
-    }
+    }.onEach { snapshot = it }
 
     suspend fun current(): AppSettings {
         migrateLegacyToken()
@@ -724,6 +765,12 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setInjectCredentialsIntoShells(enabled: Boolean) =
         context.dataStore.edit { it[KEY_INJECT_SHELL_CREDENTIALS] = enabled }
+
+    suspend fun setShareDeviceStorage(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_SHARE_DEVICE_STORAGE] = enabled }
+
+    suspend fun setControlDevice(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_CONTROL_DEVICE] = enabled }
 
     /**
      * 记下这一次真正写进 settings.json 的托管键。**只给 `ProviderSync` 调。**

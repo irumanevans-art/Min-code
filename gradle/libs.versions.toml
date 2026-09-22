@@ -25,6 +25,7 @@ baselineprofile = "1.5.0"
 profileinstaller = "1.4.1"
 uiautomator = "2.3.0"
 benchmark-macro-junit4 = "1.5.0"
+dadb = "1.2.9"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -64,6 +65,7 @@ chrisbanes-haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = 
 androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
 androidx-benchmark-macro-junit4 = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "benchmark-macro-junit4" }
 androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
+dadb = { module = "dev.mobile:dadb", version.ref = "dadb" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

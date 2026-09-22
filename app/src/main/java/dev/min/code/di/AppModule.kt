@@ -8,10 +8,18 @@ import dev.min.code.core.claudecode.ClaudeCodeCostLedger
 import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.device.AgentDisplaySession
+import dev.min.code.core.device.DeviceController
+import dev.min.code.core.device.DeviceMcpRegistrar
+import dev.min.code.core.device.DeviceMcpServer
 import dev.min.code.core.network.NetworkProbe
+import dev.min.code.privileged.PrivilegedClient
+import dev.min.code.privileged.PrivilegedStarter
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.rootfs.deviceStorageBindMount
+import dev.min.code.core.rootfs.hasDeviceStorageAccess
 import dev.min.code.core.service.ClaudeCodeSessionSupervisor
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.relay.RelayController
@@ -43,9 +51,21 @@ val appModule = module {
 
     single {
         val context: android.content.Context = get()
+        val settings: SettingsStore = get()
         WorkspaceManager(
             baseDir = File(context.filesDir, "workspaces"),
             shellRunner = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
+            // 每次起 proot 现算：开关和系统权限都可能在两次会话之间被改掉。
+            // 设置还没读到过（冷启动最初的一瞬）时 snapshot 是 null，按"没开"处理 ——
+            // 少挂一次的代价是这次会话看不到 /sdcard，多挂一次的代价是权限被收回后还摆着它
+            bindMounts = {
+                listOfNotNull(
+                    deviceStorageBindMount(
+                        enabled = settings.snapshot?.shareDeviceStorage == true,
+                        granted = hasDeviceStorageAccess(context),
+                    )
+                )
+            },
         )
     }
     single { RootfsInstaller(get()) }
@@ -65,6 +85,16 @@ val appModule = module {
         val runtime: CodexRuntime = get()
         CodexAppServerManager { runtime.launchAppServer() }
     }
+
+    // 设备操控：server 必须是 single —— 它持有绑定的端口和一次性 token，
+    // 每 get 一次新建一个的话，写进 CLI 配置的地址和实际在听的那个就对不上了
+    single { PrivilegedClient(get()) }
+    single { PrivilegedStarter(get(), get()) }
+    single { AgentDisplaySession(get()) }
+    // DeviceController 要能问到虚拟屏会话是否活跃，所以放在 AgentDisplaySession 之后
+    single { DeviceController(get(), get()) }
+    single { DeviceMcpServer(get()) }
+    single { DeviceMcpRegistrar(settings = get(), configStore = get(), server = get()) }
 
     single { NetworkProbe(get()) }
     single {
@@ -146,5 +176,5 @@ val appModule = module {
     viewModelOf(::SetupVM)
     viewModelOf(::SettingsVM)
     viewModelOf(::ProvidersVM)
-    viewModel { WorkspaceDetailVM(id = it.get<String>(), repository = get(), terminalSessionManager = get()) }
+    viewModel { WorkspaceDetailVM(context = get(), id = it.get<String>(), repository = get(), terminalSessionManager = get()) }
 }

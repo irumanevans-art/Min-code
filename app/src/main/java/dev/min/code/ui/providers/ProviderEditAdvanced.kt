@@ -36,6 +36,7 @@ import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.InkSegmented
 import dev.min.code.ui.components.InkSwitch
 import dev.min.code.ui.components.InkTextButton
+import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.SettingRow
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.sea
@@ -153,6 +154,95 @@ internal fun ModelPicker(profile: ApiProfile, onPick: (ApiProfile) -> Unit) {
             }
         }
         else -> Unit
+    }
+}
+
+private const val ENV_MAX_CONTEXT = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+private const val ENV_AUTO_COMPACT = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+
+/** 上下文量快捷值：芯片文案 → 写入 env 的数字串 */
+private val CONTEXT_PRESETS = listOf(
+    "200k" to "200000",
+    "256k" to "262144",
+    "786k" to "786432",
+    "1M" to "1000000",
+)
+
+/**
+ * 上下文窗口。写的仍是 [ApiProfile.env] 里那两个键，不另开存储。
+ *
+ * CLI 对不认识的中转模型 id 默认按 200k 压缩；DeepSeek / Kimi / MiniMax 这类
+ * 要靠 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` / `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 说清楚。
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+internal fun ContextWindowSection(env: Map<String, String>, onChange: (Map<String, String>) -> Unit) {
+    var open by remember {
+        mutableStateOf(env.containsKey(ENV_MAX_CONTEXT) || env.containsKey(ENV_AUTO_COMPACT))
+    }
+    Foldable(stringResource(R.string.providers_context_title), open) { open = !open }
+    AnimatedVisibility(open, enter = InkMotion.expand, exit = InkMotion.collapse) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Hint(stringResource(R.string.providers_context_hint))
+            Text(
+                stringResource(R.string.providers_context_max),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CONTEXT_PRESETS.forEach { (label, value) ->
+                    InkChip(
+                        label = label,
+                        monospace = true,
+                        selected = env[ENV_MAX_CONTEXT] == value,
+                        onClick = {
+                            onChange(env + (ENV_MAX_CONTEXT to value) + (ENV_AUTO_COMPACT to value))
+                        },
+                    )
+                }
+                InkChip(
+                    label = stringResource(R.string.providers_context_clear),
+                    selected = false,
+                    onClick = {
+                        onChange(env - ENV_MAX_CONTEXT - ENV_AUTO_COMPACT)
+                    },
+                )
+            }
+            InkTextField(
+                value = env[ENV_MAX_CONTEXT].orEmpty(),
+                onValueChange = { text ->
+                    val trimmed = text.trim()
+                    onChange(
+                        if (trimmed.isEmpty()) env - ENV_MAX_CONTEXT
+                        else env + (ENV_MAX_CONTEXT to trimmed),
+                    )
+                },
+                label = ENV_MAX_CONTEXT,
+                placeholder = "1000000",
+                singleLine = true,
+                monospace = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            InkTextField(
+                value = env[ENV_AUTO_COMPACT].orEmpty(),
+                onValueChange = { text ->
+                    val trimmed = text.trim()
+                    onChange(
+                        if (trimmed.isEmpty()) env - ENV_AUTO_COMPACT
+                        else env + (ENV_AUTO_COMPACT to trimmed),
+                    )
+                },
+                label = ENV_AUTO_COMPACT,
+                placeholder = "786432",
+                singleLine = true,
+                monospace = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
