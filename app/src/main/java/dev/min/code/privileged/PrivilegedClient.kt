@@ -1,18 +1,13 @@
 package dev.min.code.privileged
 
 import android.content.Context
-import android.net.LocalSocket
-import android.net.LocalSocketAddress
 import android.os.IBinder
-import android.os.Parcel
 import android.util.Log
 import android.view.Display
 import dev.min.code.core.device.MinAccessibilityService
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.DataInputStream
 import java.util.concurrent.atomic.AtomicReference
 
 private const val TAG = "MinPrivClient"
@@ -20,11 +15,12 @@ private const val TAG = "MinPrivClient"
 /**
  * App 侧看到的壳服务。
  *
- * Binder 经 abstract LocalSocket 从 shell 进程取回（见 [PrivilegedServer.handOverBinder]）。
+ * Binder 由 shell 进程经 [PrivilegedBridgeProvider] 交过来
+ *（`getContentProviderExternal` 旁路，见 [PrivilegedServer]）。
  * 死亡时把无障碍目标 display 清回主屏。
  */
 class PrivilegedClient(
-    private val context: Context,
+    @Suppress("UNUSED_PARAMETER") context: Context,
 ) {
 
     enum class State {
@@ -47,6 +43,13 @@ class PrivilegedClient(
         onDisconnected()
     }
 
+    private val handoverListener: (IBinder) -> Unit = { binder -> attach(binder) }
+
+    init {
+        PrivilegedBridgeProvider.addListener(handoverListener)
+        PrivilegedBridgeProvider.currentBinder()?.let { attach(it) }
+    }
+
     fun service(): IPrivilegedService? = serviceRef.get()
 
     fun markStarting() {
@@ -60,45 +63,26 @@ class PrivilegedClient(
     }
 
     /**
-     * 连上壳进程开的 LocalServerSocket，把 Binder 读回来。
-     * 壳进程 accept 之后才会写完；这边要在拉起命令发出后轮询连接。
+     * 等 Provider 收到壳进程的交接。
+     * 壳用 getContentProviderExternal 直接 call Provider，成功后 [handoverListener] 会 attach。
      */
-    fun fetchBinderFromSocket(timeoutMs: Long = 15_000L): Boolean {
-        val name = PrivilegedServer.socketName(context.packageName)
+    fun waitUntilReady(timeoutMs: Long = 15_000L): Boolean {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
-        var last: Exception? = null
         while (System.nanoTime() < deadline) {
-            try {
-                val binder = readBinderOnce(name)
-                attach(binder)
-                return _state.value == State.Ready
-            } catch (e: Exception) {
-                last = e
-                Thread.sleep(200)
+            when (_state.value) {
+                State.Ready -> return true
+                State.Failed -> return false
+                else -> Thread.sleep(150)
+            }
+            // 壳可能在我们进入 Starting 之前就交过一次（外部 adb 先拉起）
+            PrivilegedBridgeProvider.currentBinder()?.let { binder ->
+                if (serviceRef.get() == null) attach(binder)
             }
         }
-        markFailed(last?.message ?: "等待壳进程超时（@$name）")
-        return false
-    }
-
-    private fun readBinderOnce(socketName: String): IBinder {
-        LocalSocket().use { sock ->
-            sock.connect(LocalSocketAddress(socketName))
-            val input = DataInputStream(sock.inputStream)
-            val size = input.readInt()
-            require(size in 1..1_000_000) { "bad binder parcel size=$size" }
-            val bytes = ByteArray(size)
-            input.readFully(bytes)
-            val parcel = Parcel.obtain()
-            return try {
-                parcel.unmarshall(bytes, 0, bytes.size)
-                parcel.setDataPosition(0)
-                parcel.readStrongBinder()
-                    ?: error("null binder from shell")
-            } finally {
-                parcel.recycle()
-            }
+        if (_state.value != State.Ready) {
+            markFailed("等待壳进程超时——请确认命令已执行，且 Min 在前台")
         }
+        return _state.value == State.Ready
     }
 
     private fun attach(binder: IBinder) {
@@ -122,6 +106,7 @@ class PrivilegedClient(
 
     private fun onDisconnected() {
         serviceRef.set(null)
+        PrivilegedBridgeProvider.clear()
         MinAccessibilityService.instance.get()?.setTargetDisplay(Display.DEFAULT_DISPLAY)
         if (_state.value != State.Failed) {
             _state.value = State.Disconnected

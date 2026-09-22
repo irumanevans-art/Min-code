@@ -59,19 +59,45 @@ object PrivilegedServer {
             }
         // authority = "<package>.privileged" → package 用来 createPackageContext
         val appPackage = authority.removeSuffix(".privileged")
-        val context = createShellContext()
+        val systemContext = createShellContext()
             ?: run {
                 Log.e(TAG, "failed to create shell context")
                 return
             }
-        val service = ServiceImpl(context)
-        if (!handOverBinder(context, appPackage, authority, service.asBinder())) {
+        // DisplayManager 要求 Context.getPackageName() 与 calling uid 一致。
+        // system Context 的 package 是 "android"（uid 1000），我们是 2000 →
+        // SecurityException: packageName must match the calling uid。
+        // 换成 com.android.shell 的 package Context（uid 2000 的正主）。
+        val displayContext = runCatching {
+            systemContext.createPackageContext(
+                "com.android.shell",
+                Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY,
+            )
+        }.onFailure { Log.e(TAG, "createPackageContext(com.android.shell)", it) }
+            .getOrElse { systemContext }
+        Log.i(TAG, "displayContext package=${displayContext.packageName}")
+        val service = ServiceImpl(displayContext)
+        val binder = service.asBinder()
+        if (!handOverBinder(systemContext, appPackage, authority, binder)) {
             Log.e(TAG, "handover to $authority failed")
             return
         }
-        Log.i(TAG, "binder handed to $authority; looping")
+        Log.i(TAG, "binder handed to $authority; looping (re-handover every ${REHANDOVER_MS}ms)")
+        // App 被 force-stop 后会丢掉 Binder；壳进程还活着、虚拟屏也还在。
+        // 定时再交一次，让用户重新打开 Min 时能自动接上，不必再走 adb。
+        val handler = android.os.Handler(Looper.getMainLooper())
+        val rehandover = object : Runnable {
+            override fun run() {
+                val ok = handOverBinder(systemContext, appPackage, authority, binder)
+                if (!ok) Log.w(TAG, "re-handover failed (App may be stopped)")
+                handler.postDelayed(this, REHANDOVER_MS)
+            }
+        }
+        handler.postDelayed(rehandover, REHANDOVER_MS)
         Looper.loop()
     }
+
+    private const val REHANDOVER_MS = 3_000L
 
     /**
      * 反射拿到一个能调 DisplayManager / startActivity 的 Context。
@@ -87,49 +113,133 @@ object PrivilegedServer {
     }.onFailure { Log.e(TAG, "createShellContext", it) }.getOrNull()
 
     /**
-     * 通过 abstract LocalServerSocket 把 Binder 交回 App。
+     * 通过 [IActivityManager.getContentProviderExternal] + [IContentProvider.call] 交 Binder。
      *
-     * 真机踩坑：ContentProvider.call 从 system Context 发出时 AMS 校验
-     * `package android` vs `uid 2000`，直接 SecurityException；createPackageContext
-     * 也改不了 ContentResolver 里记的 calling package。跨 uid 交 Binder 的稳妥做法是
-     * LocalSocket + Parcel.writeStrongBinder（Shizuku / 不少 app_process 服务同款）。
+     * 真机踩坑两条：
+     * 1. 普通 `ContentResolver.call`：system Context 的 package 是 `android`，uid 是 2000，
+     *    AMS 直接 `SecurityException: Given calling package android does not match…`
+     * 2. abstract LocalSocket：App 连 shell 建的套接字被 SELinux 拒掉（`Permission denied`）
      *
-     * 套接字名带 package，避免同机多个 Min 变体抢同一个抽象名。
+     * `getContentProviderExternal` 是给 shell/system 用的旁路，不走 calling-package 校验；
+     * Shizuku 也是这条路。拿到 IContentProvider 后再 call 我们的 Provider。
      */
+    @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
     private fun handOverBinder(
         @Suppress("UNUSED_PARAMETER") systemContext: Context,
-        appPackage: String,
-        @Suppress("UNUSED_PARAMETER") authority: String,
+        @Suppress("UNUSED_PARAMETER") appPackage: String,
+        authority: String,
         binder: IBinder,
     ): Boolean =
         runCatching {
-            val name = socketName(appPackage)
-            // 先清可能残留的旧监听（上次崩溃没关掉）
-            runCatching { android.net.LocalServerSocket(name).close() }
-            val server = android.net.LocalServerSocket(name)
-            Log.i(TAG, "waiting for app on @$name")
-            server.use { ss ->
-                // accept 会阻塞；App 侧 PrivilegedStarter / Client 连上来取 Binder
-                val client = ss.accept()
-                client.use { sock ->
-                    val parcel = android.os.Parcel.obtain()
-                    try {
-                        parcel.writeStrongBinder(binder)
-                        val bytes = parcel.marshall()
-                        val out = java.io.DataOutputStream(sock.outputStream)
-                        out.writeInt(bytes.size)
-                        out.write(bytes)
-                        out.flush()
-                    } finally {
-                        parcel.recycle()
-                    }
-                }
+            val extras = android.os.Bundle()
+            extras.putBinder(PrivilegedBridgeProvider.EXTRA_BINDER, binder)
+
+            val atClass = Class.forName("android.app.ActivityThread")
+            val currentActivityThread = atClass.getDeclaredMethod("currentActivityThread").invoke(null)
+            val getApplicationThread = atClass.getDeclaredMethod("getApplicationThread")
+            val caller = getApplicationThread.invoke(currentActivityThread) as IBinder
+
+            val amClass = Class.forName("android.app.IActivityManager")
+            val smClass = Class.forName("android.os.ServiceManager")
+            val amBinder = smClass.getDeclaredMethod("getService", String::class.java)
+                .invoke(null, "activity") as IBinder
+            val amStub = Class.forName("android.app.IActivityManager\$Stub")
+            val am = amStub.getDeclaredMethod("asInterface", IBinder::class.java).invoke(null, amBinder)
+
+            // ContentProviderHolder provider = am.getContentProviderExternal(auth, userId, token, tag)
+            val userId = Process.myUid() / 100000
+            val holder = runCatching {
+                amClass.getMethod(
+                    "getContentProviderExternal",
+                    String::class.java,
+                    Int::class.javaPrimitiveType,
+                    IBinder::class.java,
+                    String::class.java,
+                ).invoke(am, authority, userId, caller, "*min*")
+            }.recoverCatching {
+                // 旧签名没有 tag 参数
+                amClass.getMethod(
+                    "getContentProviderExternal",
+                    String::class.java,
+                    Int::class.javaPrimitiveType,
+                    IBinder::class.java,
+                ).invoke(am, authority, userId, caller)
+            }.getOrThrow()
+
+            val providerField = holder.javaClass.getDeclaredField("provider").apply { isAccessible = true }
+            val provider = providerField.get(holder)
+                ?: error("getContentProviderExternal returned null provider — is Min installed / provider registered?")
+
+            val providerClass = Class.forName("android.content.IContentProvider")
+            val attribution = android.content.AttributionSource.Builder(Process.myUid())
+                .setPackageName("com.android.shell")
+                .build()
+
+            // API 31+: call(AttributionSource, authority, method, arg, extras)
+            runCatching {
+                providerClass.getMethod(
+                    "call",
+                    android.content.AttributionSource::class.java,
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    android.os.Bundle::class.java,
+                ).invoke(
+                    provider,
+                    attribution,
+                    authority,
+                    PrivilegedBridgeProvider.METHOD_HANDOVER,
+                    null,
+                    extras,
+                )
+            }.recoverCatching {
+                // API 30: call(package, featureId, authority, method, arg, extras)
+                providerClass.getMethod(
+                    "call",
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    android.os.Bundle::class.java,
+                ).invoke(
+                    provider,
+                    "com.android.shell",
+                    null,
+                    authority,
+                    PrivilegedBridgeProvider.METHOD_HANDOVER,
+                    null,
+                    extras,
+                )
+            }.recoverCatching {
+                // 更旧: call(package, authority, method, arg, extras)
+                providerClass.getMethod(
+                    "call",
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    android.os.Bundle::class.java,
+                ).invoke(
+                    provider,
+                    "com.android.shell",
+                    authority,
+                    PrivilegedBridgeProvider.METHOD_HANDOVER,
+                    null,
+                    extras,
+                )
+            }.getOrThrow()
+
+            runCatching {
+                amClass.getMethod(
+                    "removeContentProviderExternal",
+                    String::class.java,
+                    IBinder::class.java,
+                ).invoke(am, authority, caller)
             }
-            Log.i(TAG, "binder sent over @$name")
+            Log.i(TAG, "binder handed via getContentProviderExternal to $authority")
             true
         }.onFailure { Log.e(TAG, "handOverBinder", it) }.getOrDefault(false)
-
-    internal fun socketName(appPackage: String): String = "min.privileged.$appPackage"
 
     private fun virtualDisplayFlags(): Int = VirtualDisplayFlags.forSdk(android.os.Build.VERSION.SDK_INT)
 
@@ -144,6 +254,8 @@ object PrivilegedServer {
         override fun getUid(): Int = Process.myUid()
 
         override fun ping(): String = "min-privileged uid=${Process.myUid()} displays=${held.size}"
+
+        override fun listAgentDisplays(): IntArray = held.keys.toIntArray()
 
         override fun createAgentDisplay(width: Int, height: Int, densityDpi: Int): Int {
             require(width >= 200 && height >= 200) { "display too small: ${width}x$height" }

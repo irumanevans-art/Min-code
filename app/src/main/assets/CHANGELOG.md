@@ -9,6 +9,23 @@
 - **供应商编辑页**：新增「上下文量」快捷芯片（200k / 256k / 786k / 1M），手填供应商也能设；缺主模型映射时给非阻断提示。旧档案不会被静默改写——预设是一次性模板，重建或手补即可。
 - MiniMax 国内基址改为文档上的 `api.minimax.cn`（原先 `api.minimaxi.com`）。
 
+## 2.1.17 — 2026-09-22
+
+- **设置页收成三组折叠**：连接与安装 / 设备 / 外观与语言，默认只展开连接，不再一长串平铺。
+- **会话抽屉底部入口分组**：引擎与供应商 / 工作区 / 系统，可折叠，默认展开引擎。
+- **虚拟屏文案去掉「不用装 Shizuku」**：标题就是「虚拟屏」，说明里只保留重启后要再开无线调试。
+- **关于页加联系作者**：QQ `1114111189`，点按复制。
+
+## 2.1.16 — 2026-09-22
+
+- **清后台后虚拟屏还能接上**：壳进程本来就不会被 `force-stop` Min 杀掉；现在壳每 3 秒重交一次 Binder，App 再打开会自动 `listAgentDisplays` 把还在的屏接回会话，不必重新 adb。重启手机后壳没了，仍要再激活一次。
+
+## 2.1.15 — 2026-09-22
+
+- **真虚拟屏在 vivo 上跑通了**：shell 壳服务用 `getContentProviderExternal` 交接 Binder（绕开 ContentResolver 的 package 校验），用 `com.android.shell` 的 Context 建 `FLAG_TRUSTED` VirtualDisplay（绕开 `packageName must match calling uid`）。Surface 接 ImageReader，主屏无浮窗。
+- **隔离实测**：Settings 跑在 displayId=3，Min 仍在 displayId=0；`overlay_display_devices` 为空。
+- LocalSocket 交接在 SELinux 下失败（Permission denied），已弃用。
+
 ## 2.1.12 — 2026-09-22
 
 - **自托管 shell 壳服务（不用另装 Shizuku）**：新增 `PrivilegedServer`，用 `app_process` 以 shell uid 跑起来，专门建 **TRUSTED VirtualDisplay**（Surface 接 ImageReader，不投物理屏）并在指定 display 上启动 Activity。设置页「虚拟屏」档可复制 adb 命令，或在打开无线调试后尝试本机拉起。

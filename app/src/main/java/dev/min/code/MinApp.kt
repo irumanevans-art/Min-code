@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import dev.min.code.core.crash.CrashRecorder
+import dev.min.code.core.device.AgentDisplaySession
 import dev.min.code.core.device.DeviceMcpRegistrar
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.service.LocalServiceRegistry
@@ -14,6 +15,7 @@ import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.di.appModule
+import dev.min.code.privileged.PrivilegedClient
 import dev.min.code.ui.theme.GpuWarmup
 import dev.min.code.ui.theme.SeaPlate
 import dev.min.code.ui.theme.Skins
@@ -22,6 +24,7 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -85,6 +88,26 @@ class MinApp : Application() {
         getKoin().get<AppScope>().launch(Dispatchers.IO) {
             runCatching { getKoin().get<DeviceMcpRegistrar>().follow() }
                 .onFailure { Log.w(TAG, "device mcp registrar stopped", it) }
+        }
+        // 虚拟屏壳进程是独立的 shell 进程：清掉 Min 后台杀不掉它。
+        // App 再打开时等壳定时重交 Binder，然后把仍在的 display 接回会话。
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            val client = getKoin().get<PrivilegedClient>()
+            val session = getKoin().get<AgentDisplaySession>()
+            // 最多等约 15s（壳每 3s 重交一次）
+            repeat(30) {
+                if (client.state.value == PrivilegedClient.State.Ready) {
+                    runCatching { session.restoreIfPossible() }
+                        .onSuccess { restored ->
+                            if (restored != null) {
+                                Log.i(TAG, "restored virtual display ${restored.displayId}")
+                            }
+                        }
+                        .onFailure { Log.w(TAG, "restore virtual display failed", it) }
+                    return@launch
+                }
+                delay(500)
+            }
         }
         // rootfs 装好 / 重装 / 删掉之后，告诉系统「文件」App 重新读一遍我们的根。
         // 不通知的话，装完 rootfs 侧栏里那个入口要等系统自己想起来才出现

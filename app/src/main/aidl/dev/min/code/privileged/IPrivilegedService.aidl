@@ -24,4 +24,10 @@ interface IPrivilegedService {
 
     /** 在指定 display 上启动应用的入口 Activity */
     void launchOnDisplay(String packageName, int displayId);
+
+    /**
+     * 当前仍由本壳进程持有的虚拟屏 id 列表。
+     * App 被清后台后再打开时，用它把会话接回去，不必重建屏。
+     */
+    int[] listAgentDisplays();
 }

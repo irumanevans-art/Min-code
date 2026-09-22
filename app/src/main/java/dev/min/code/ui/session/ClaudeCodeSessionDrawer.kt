@@ -248,30 +248,47 @@ fun ClaudeCodeSessionDrawer(
             }
 
             InkDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-            // 手机上逐段拖选很难受，而 SelectionContainer 已经占掉了长按手势，
-            // 没法再给每条挂一个"复制本条"。整段导出放在这里作为兜底。
-            onCopyTranscript?.let { ActionRow(HugeIcons.Copy01, stringResource(R.string.session_copy_transcript), it) }
-            // 另一个引擎，和工作区、终端一样是"换个地方干活"，不是一条设置项 ——
-            // 埋在设置页里的话，想用 Codex 的人得先想到去翻设置
-            ActionRow(
-                ImageVector.vectorResource(R.drawable.ic_codex_mark),
-                stringResource(R.string.codex_title),
-                onOpenCodex,
-            )
-            // 换一家中转是最高频的一次性切换。埋在设置 → 供应商两层之后的话，
-            // 手上挂着好几家的人每次都要离开会话再退回来
-            ActionRow(
-                HugeIcons.Exchange01,
-                stringResource(R.string.providers_title),
-                onClick = { quickProvider = true },
-                detail = providerName,
-            )
-            ActionRow(HugeIcons.Folder01, stringResource(R.string.session_drawer_files), onOpenFiles)
-            ActionRow(HugeIcons.ComputerTerminal01, stringResource(R.string.session_terminal), onOpenTerminal)
-            ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
-            // CLI 装完之后安装向导就从 UI 上消失了，更新入口只能挂在这儿
-            ActionRow(HugeIcons.Package, stringResource(R.string.session_drawer_maintenance), onOpenMaintenance)
-            ActionRow(HugeIcons.Settings02, stringResource(R.string.settings_title), onOpenSettings)
+            var openEngines by remember { mutableStateOf(true) }
+            var openWorkspace by remember { mutableStateOf(false) }
+            var openSystem by remember { mutableStateOf(false) }
+
+            DrawerFoldGroup(
+                title = stringResource(R.string.session_drawer_group_engines),
+                open = openEngines,
+                onToggle = { openEngines = !openEngines },
+            ) {
+                ActionRow(
+                    HugeIcons.Exchange01,
+                    stringResource(R.string.providers_title),
+                    onClick = { quickProvider = true },
+                    detail = providerName,
+                )
+                ActionRow(
+                    ImageVector.vectorResource(R.drawable.ic_codex_mark),
+                    stringResource(R.string.codex_title),
+                    onOpenCodex,
+                )
+            }
+            DrawerFoldGroup(
+                title = stringResource(R.string.session_drawer_group_workspace),
+                open = openWorkspace,
+                onToggle = { openWorkspace = !openWorkspace },
+            ) {
+                onCopyTranscript?.let {
+                    ActionRow(HugeIcons.Copy01, stringResource(R.string.session_copy_transcript), it)
+                }
+                ActionRow(HugeIcons.Folder01, stringResource(R.string.session_drawer_files), onOpenFiles)
+                ActionRow(HugeIcons.ComputerTerminal01, stringResource(R.string.session_terminal), onOpenTerminal)
+                ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
+            }
+            DrawerFoldGroup(
+                title = stringResource(R.string.session_drawer_group_system),
+                open = openSystem,
+                onToggle = { openSystem = !openSystem },
+            ) {
+                ActionRow(HugeIcons.Package, stringResource(R.string.session_drawer_maintenance), onOpenMaintenance)
+                ActionRow(HugeIcons.Settings02, stringResource(R.string.settings_title), onOpenSettings)
+            }
             Spacer(Modifier.height(12.dp))
         }
     }
@@ -342,6 +359,40 @@ fun ClaudeCodeSessionDrawer(
 /**
  * 会话列表搜索条：标题 / 分类 / id / 正文。打开就聚焦，和文件页那条同款。
  */
+
+@Composable
+private fun DrawerFoldGroup(
+    title: String,
+    open: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                if (open) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        AnimatedVisibility(visible = open, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            Column { content() }
+        }
+    }
+}
+
 @Composable
 private fun SessionListSearchBar(
     query: String,

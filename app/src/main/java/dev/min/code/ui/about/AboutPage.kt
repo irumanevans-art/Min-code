@@ -240,6 +240,24 @@ fun AboutPage() {
                     stringResource(R.string.about_intro),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                SectionTitle(stringResource(R.string.about_contact), modifier = Modifier.padding(top = 8.dp))
+                PaperCard(tone = PaperTone.Low) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                context.writeClipboardText("1114111189")
+                            }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            stringResource(R.string.about_contact_qq, "1114111189"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontFamily = JetbrainsMono,
+                        )
+                    }
+                }
 
                 SectionTitle(stringResource(R.string.about_whats_new), modifier = Modifier.padding(top = 8.dp))
                 groups.forEach { majorGroup ->

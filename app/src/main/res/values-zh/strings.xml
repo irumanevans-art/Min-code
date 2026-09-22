@@ -866,8 +866,8 @@
   <string name="device_control_active_body">点「停止」立刻切断。</string>
   <string name="device_control_need_permission">还差系统设置里的无障碍权限。点这里去那一页。</string>
   <string name="device_control_on">已开启。每一次点击和输入仍然走和改文件一样的审批。</string>
-  <string name="device_virtual_title">虚拟屏（不用装 Shizuku）</string>
-  <string name="device_virtual_off">关着。开了之后 agent 在一块你看不见的屏幕上干活，主屏留给你。每次重启手机后需要再开一次无线调试——代价和 Shizuku 一样，只是不用另装一个 App。</string>
+  <string name="device_virtual_title">虚拟屏</string>
+  <string name="device_virtual_off">关着。开了之后 agent 在一块你看不见的屏幕上干活，主屏留给你。每次重启手机后需要再开一次无线调试。</string>
   <string name="device_virtual_ready">已就绪（shell uid 2000）。重启手机后需要重新拉起。</string>
   <string name="device_virtual_starting">正在拉起特权进程…</string>
   <string name="device_virtual_failed">失败：%1$s</string>
@@ -884,4 +884,17 @@
   <string name="device_tool_open_app">打开 %1$s</string>
   <string name="device_tool_back">按返回键</string>
   <string name="device_tool_ui_tree">读取屏幕</string>
+
+  <string name="about_contact">联系作者</string>
+  <string name="about_contact_qq">QQ %1$s</string>
+  <string name="about_contact_qq_copied">已复制 QQ 号</string>
+  <string name="settings_group_device">设备</string>
+  <string name="settings_group_device_sub">存储、真屏操控、虚拟屏</string>
+  <string name="settings_group_look">外观与语言</string>
+  <string name="settings_group_look_sub">昼夜、取底、语言</string>
+  <string name="settings_group_connection">连接与安装</string>
+  <string name="settings_group_connection_sub">供应商、npm 源、电池</string>
+  <string name="session_drawer_group_workspace">工作区</string>
+  <string name="session_drawer_group_engines">引擎与供应商</string>
+  <string name="session_drawer_group_system">系统</string>
 </resources>

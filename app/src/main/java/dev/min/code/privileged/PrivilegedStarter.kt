@@ -56,8 +56,7 @@ class PrivilegedStarter(
                         // 后台拉起：app_process 会卡在 Looper，不能同步等 exit
                         dadb.shell(cmd)
                     }
-                    // 并行去 LocalSocket 取 Binder
-                    val ok = client.fetchBinderFromSocket(timeoutMs = 15_000)
+                    val ok = client.waitUntilReady(timeoutMs = 15_000)
                     if (!ok) error(client.lastError ?: "未拿到壳进程 Binder")
                 }
                 Result.success(Unit)
@@ -92,13 +91,13 @@ class PrivilegedStarter(
     }
 
     /**
-     * 用户把命令拷到电脑上跑时用：进入 Starting，并在 IO 上轮询 LocalSocket。
-     * 外部 `adb shell` 把壳拉起来后，这边会自动取到 Binder。
+     * 用户把命令拷到电脑上跑时用：进入 Starting，并在后台等 Provider 收到交接。
+     * 外部 `adb shell` 把壳拉起来后，Provider 一收到 Binder 这边就会 Ready。
      */
     fun markWaitingForExternalStart() {
         client.markStarting()
         Thread({
-            client.fetchBinderFromSocket(timeoutMs = 60_000)
+            client.waitUntilReady(timeoutMs = 60_000)
         }, "min-priv-wait").apply { isDaemon = true }.start()
     }
 

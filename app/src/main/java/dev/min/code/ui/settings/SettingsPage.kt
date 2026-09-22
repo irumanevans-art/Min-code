@@ -110,9 +110,7 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                 modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                SectionTitle(stringResource(R.string.settings_section_connection))
-                // 密文打不开：这不是「没配过」，别让人以为配置丢了就急着重填。
-                // 在清掉之前所有写入都被挡着，那串密文还留在盘上。
+                                // 密文打不开：这不是「没配过」，别让人以为配置丢了就急着重填。
                 if (settings.credentialsUnreadable) {
                     Notice(
                         text = stringResource(R.string.settings_credentials_unreadable),
@@ -123,90 +121,95 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                         tone = InkButtonTone.Vermilion,
                     ) { Text(stringResource(R.string.settings_credentials_discard)) }
                 }
-                // 那张表搬进了供应商页（预设库 + 托管开关 + 拖拽排序塞不进这里，
-                // 设置页的规矩是「只有四样，没有设置页里的设置页」）。这里只留一行，
-                // 副题回答唯一一个在设置页里值得问的问题：现在用的是哪家
-                SettingRow(
-                    title = stringResource(R.string.providers_title),
-                    subtitle = settings.activeProfile?.displayName()
-                        ?: stringResource(R.string.settings_connection_empty),
-                    enabled = !settings.credentialsUnreadable,
-                    onClick = { navController.navigate(Screen.Providers) },
-                    trailing = {
-                        settings.activeProfile?.let { profile ->
-                            Text(
-                                profile.maskedToken(),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = JetbrainsMono,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
-                )
-                // 当前生效的地址是明文 http：这条常驻，不是弹一次就算数的。
-                // 用「注意」档而不是朱砂——这是风险提示，不是错误：这个配置按下去照常工作
-                AnimatedVisibility(
-                    visible = settings.insecureBaseUrl,
-                    enter = InkMotion.enter,
-                    exit = InkMotion.exit,
+
+                var openConnection by remember { mutableStateOf(true) }
+                var openDevice by remember { mutableStateOf(false) }
+                var openLook by remember { mutableStateOf(false) }
+
+                SettingsFoldGroup(
+                    title = stringResource(R.string.settings_group_connection),
+                    subtitle = stringResource(R.string.settings_group_connection_sub),
+                    open = openConnection,
+                    onToggle = { openConnection = !openConnection },
                 ) {
-                    Notice(
-                        text = stringResource(R.string.settings_connection_insecure_warning),
-                        tone = NoticeTone.Warn,
+                    SettingRow(
+                        title = stringResource(R.string.providers_title),
+                        subtitle = settings.activeProfile?.displayName()
+                            ?: stringResource(R.string.settings_connection_empty),
+                        enabled = !settings.credentialsUnreadable,
+                        onClick = { navController.navigate(Screen.Providers) },
+                        trailing = {
+                            settings.activeProfile?.let { profile ->
+                                Text(
+                                    profile.maskedToken(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = JetbrainsMono,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
                     )
+                    AnimatedVisibility(
+                        visible = settings.insecureBaseUrl,
+                        enter = InkMotion.enter,
+                        exit = InkMotion.exit,
+                    ) {
+                        Notice(
+                            text = stringResource(R.string.settings_connection_insecure_warning),
+                            tone = NoticeTone.Warn,
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.settings_connection_hint),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    SettingRow(
+                        title = stringResource(R.string.settings_npm_mirror_title),
+                        subtitle = stringResource(R.string.settings_npm_mirror_subtitle),
+                        onClick = { vm.setUseNpmMirror(!settings.useNpmMirror) },
+                        trailing = {
+                            InkSwitch(checked = settings.useNpmMirror, onCheckedChange = { vm.setUseNpmMirror(it) })
+                        },
+                    )
+                    BatteryRow()
                 }
-                Text(
-                    stringResource(R.string.settings_connection_hint),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
-                SectionTitle(stringResource(R.string.settings_section_install))
-                SettingRow(
-                    title = stringResource(R.string.settings_npm_mirror_title),
-                    subtitle = stringResource(R.string.settings_npm_mirror_subtitle),
-                    onClick = { vm.setUseNpmMirror(!settings.useNpmMirror) },
-                    trailing = {
-                        InkSwitch(checked = settings.useNpmMirror, onCheckedChange = { vm.setUseNpmMirror(it) })
-                    },
-                )
+                SettingsFoldGroup(
+                    title = stringResource(R.string.settings_group_device),
+                    subtitle = stringResource(R.string.settings_group_device_sub),
+                    open = openDevice,
+                    onToggle = { openDevice = !openDevice },
+                ) {
+                    DeviceStorageRow(
+                        enabled = settings.shareDeviceStorage,
+                        onToggle = vm::setShareDeviceStorage,
+                    )
+                    DeviceControlRow(
+                        enabled = settings.controlDevice,
+                        onToggle = vm::setControlDevice,
+                    )
+                    VirtualDisplayRow(vm = vm)
+                }
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
-                SectionTitle(stringResource(R.string.settings_section_background))
-                BatteryRow()
+                SettingsFoldGroup(
+                    title = stringResource(R.string.settings_group_look),
+                    subtitle = stringResource(R.string.settings_group_look_sub),
+                    open = openLook,
+                    onToggle = { openLook = !openLook },
+                ) {
+                    ThemePicker(current = settings.themeMode, onPick = vm::setThemeMode)
+                    SkinPicker(current = settings.skin, onPick = vm::setSkin)
+                    LanguagePicker(current = settings.appLanguage, onPick = vm::setAppLanguage)
+                }
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
-                SectionTitle(stringResource(R.string.settings_section_device_files))
-                DeviceStorageRow(
-                    enabled = settings.shareDeviceStorage,
-                    onToggle = vm::setShareDeviceStorage,
-                )
-
-                InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
-
-                SectionTitle(stringResource(R.string.settings_section_device_control))
-                DeviceControlRow(
-                    enabled = settings.controlDevice,
-                    onToggle = vm::setControlDevice,
-                )
-                VirtualDisplayRow(vm = vm)
-
-                InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
-
-                SectionTitle(stringResource(R.string.settings_section_appearance))
-                ThemePicker(current = settings.themeMode, onPick = vm::setThemeMode)
-                SkinPicker(current = settings.skin, onPick = vm::setSkin)
-
-                SectionTitle(stringResource(R.string.settings_section_language))
-                LanguagePicker(current = settings.appLanguage, onPick = vm::setAppLanguage)
-
-                InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
-
-                SettingRow(
+SettingRow(
                     title = stringResource(R.string.settings_about),
                     onClick = { navController.navigate(Screen.About) },
                     trailing = {
@@ -499,6 +502,34 @@ private fun VirtualDisplayRow(vm: SettingsVM) {
                     }
                 }
             }
+        }
+    }
+}
+
+
+@Composable
+private fun SettingsFoldGroup(
+    title: String,
+    subtitle: String,
+    open: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SettingRow(
+            title = title,
+            subtitle = subtitle,
+            onClick = onToggle,
+            trailing = {
+                Text(
+                    if (open) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+        )
+        AnimatedVisibility(visible = open, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
         }
     }
 }

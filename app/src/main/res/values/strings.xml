@@ -870,8 +870,8 @@
   <string name="device_control_active_body">Tap STOP to cut it off immediately.</string>
   <string name="device_control_need_permission">Waiting for accessibility access in system settings. Tap to open that page.</string>
   <string name="device_control_on">On. Every tap and keystroke still goes through the same approval you use for file edits.</string>
-  <string name="device_virtual_title">Virtual screen (no Shizuku app)</string>
-  <string name="device_virtual_off">Off. When on, the agent works on an invisible screen so your phone stays free. Needs Wireless debugging once after each reboot — same cost as Shizuku, without installing another app.</string>
+  <string name="device_virtual_title">Virtual screen</string>
+  <string name="device_virtual_off">Off. When on, the agent works on an invisible screen so your phone stays free. Needs Wireless debugging once after each reboot.</string>
   <string name="device_virtual_ready">Ready (shell uid 2000). Restart the phone and you will need to start it again.</string>
   <string name="device_virtual_starting">Starting privileged process…</string>
   <string name="device_virtual_failed">Failed: %1$s</string>
@@ -888,4 +888,17 @@
   <string name="device_tool_open_app">Open %1$s</string>
   <string name="device_tool_back">Press back</string>
   <string name="device_tool_ui_tree">Read the screen</string>
+
+  <string name="about_contact">Contact</string>
+  <string name="about_contact_qq">QQ %1$s</string>
+  <string name="about_contact_qq_copied">QQ number copied</string>
+  <string name="settings_group_device">Device</string>
+  <string name="settings_group_device_sub">Storage, on-screen control, virtual screen</string>
+  <string name="settings_group_look">Look &amp; language</string>
+  <string name="settings_group_look_sub">Theme, skin, language</string>
+  <string name="settings_group_connection">Connection &amp; install</string>
+  <string name="settings_group_connection_sub">Providers, npm mirror, battery</string>
+  <string name="session_drawer_group_workspace">Workspace</string>
+  <string name="session_drawer_group_engines">Engines &amp; providers</string>
+  <string name="session_drawer_group_system">System</string>
 </resources>
