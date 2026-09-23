@@ -1215,3 +1215,50 @@ runCatching {
 - Source: user_feedback
 - Related Files: app/src/main/java/dev/min/code/ui/session/ClaudeCodeConfigSheet.kt, app/src/main/java/dev/min/code/ui/session/ClaudeCodePage.kt
 - Tags: compose, controlled-textfield, focus, onFocusChanged, deferred-commit, mcp
+
+## [LRN-20260923-DIALOG-CONTENT-NEEDS-WEIGHT] error_and_fix
+
+**Logged**: 2026-09-23T18:50:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: ui/components
+
+### Summary
+对话框里「内容 + 按钮行」放在同一个 Column、内容又带 `verticalScroll` 时，内容必须加 `Modifier.weight(1f, fill = false)`。否则 Column 按顺序量子项，滚动内容把剩余高度吃光，排在后面的按钮行被量成 0 高 —— 用户看到的是一个没有确认键的对话框。App 更新对话框就这样丢了「下载并安装」（2.1.20 的说明较长 + vivo 大字号），用户报「找不到更新键」。
+
+### Details
+- 在模拟器上复现要把字号调大：`adb -s emulator-5554 shell settings put system font_scale 1.3`，默认字号下 2.1.20 的说明刚好放得下，看不出问题。验完改回 1.0。
+- 修在 `InkDialog`（`ui/components/Surfaces.kt`）一处，所有对话框受益；`fill = false` 保证短内容仍然包裹，不会把确认框撑满屏。
+- 旧版客户端改不了：它检查到新版时读的是 Release 正文（API）或 tag 里 CHANGELOG 的那一节（API 被限流时的网页兜底），正文太长照样没有按钮。发版时 Release 正文可以写短，但兜底路径读 CHANGELOG，管不住。
+
+### Suggested Action
+- 新写对话框 / 底部表单时，「可滚动内容 + 固定动作行」一律给内容加权重，并在 1.3 倍字号下看一眼。
+- 用户报「按钮不见了」，先想布局被挤，而不是逻辑没进分支。
+
+### Metadata
+- Source: user_feedback
+- Related Files: app/src/main/java/dev/min/code/ui/components/Surfaces.kt, app/src/main/java/dev/min/code/ui/about/AppUpdateSection.kt
+- Tags: compose, column, weight, dialog, font-scale
+
+## [LRN-20260923-EMULATOR-TYPING-GBOARD] environment
+
+**Logged**: 2026-09-23T18:50:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+模拟器上往 Min 的输入框打字：`ime disable` Gboard 之后当前输入法会落到**语音输入**，`input text` 一个字都进不去；Gboard 拼音模式下 `@` 会变成全角「＠」（不触发 `@` 补全），字母会被组成拼音候选。可靠的做法是保留 Gboard，`adb shell input keyevent 204`（LANGUAGE_SWITCH）切到英文布局，再 `input text`。
+
+### Details
+- 看当前输入法：`adb shell dumpsys input_method | grep mCurMethodId`。
+- `input keyevent 77`（KEYCODE_AT）在英文布局下能打出半角 `@`；拼音模式下同样会被转成全角。
+- Codex 输入框在会话没启动时是禁用的（`session.canSend`），要先点「新会话」才能测 `@` 补全。
+
+### Suggested Action
+- 自动化打字前先 `keyevent 204` 切英文，打完不必切回（不影响手动使用）。
+
+### Metadata
+- Source: conversation
+- Related Files: tools/uitap.py
+- Tags: adb, emulator, ime, gboard
