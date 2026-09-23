@@ -516,7 +516,6 @@ private fun SessionRow(
 ) {
     val scheme = MaterialTheme.colorScheme
     val palette = MaterialTheme.sea
-    var menu by remember { mutableStateOf(false) }
     // 当前会话 = 一扇海的窗淡入
     val active by animateFloatAsState(
         targetValue = if (entry.isActive) 1f else 0f,
@@ -601,44 +600,14 @@ private fun SessionRow(
                     maxLines = 1,
                 )
             }
-            Box {
-                InkIconButton(
-                    icon = HugeIcons.MoreHorizontal,
-                    contentDescription = stringResource(R.string.session_row_actions),
-                    onClick = { menu = true },
-                    tint = if (entry.isActive) palette.onSea.copy(alpha = 0.8f) else scheme.outline,
-                    size = 32.dp,
-                    iconSize = 14.dp,
-                )
-                DropdownMenu(
-                    expanded = menu,
-                    onDismissRequest = { menu = false },
-                    shape = RoundedCornerShape(12.dp),
-                    containerColor = scheme.surfaceContainerLow,
-                ) {
-                    InkMenuItem(
-                        stringResource(if (entry.pinned) R.string.session_unpin else R.string.session_pin),
-                        icon = if (entry.pinned) HugeIcons.PinOff else HugeIcons.Pin,
-                        onClick = { menu = false; onPin() },
-                    )
-                    InkMenuItem(
-                        stringResource(R.string.common_rename),
-                        icon = HugeIcons.Edit02,
-                        onClick = { menu = false; onRename() },
-                    )
-                    InkMenuItem(
-                        stringResource(R.string.session_category),
-                        icon = HugeIcons.Tag01,
-                        onClick = { menu = false; onCategorize() },
-                    )
-                    InkMenuItem(
-                        stringResource(R.string.common_delete),
-                        icon = HugeIcons.Delete02,
-                        tint = palette.vermilion,
-                        onClick = { menu = false; onDelete() },
-                    )
-                }
-            }
+            SessionRowMenu(
+                pinned = entry.pinned,
+                onTogglePin = onPin,
+                onRename = onRename,
+                onDelete = onDelete,
+                onCategorize = onCategorize,
+                triggerTint = if (entry.isActive) palette.onSea.copy(alpha = 0.8f) else scheme.outline,
+            )
         }
         if (entry.pinned && !entry.isActive) {
             Icon(
@@ -649,6 +618,62 @@ private fun SessionRow(
                     .align(Alignment.TopEnd)
                     .padding(end = 36.dp, top = 4.dp)
                     .size(10.dp),
+            )
+        }
+    }
+}
+
+/** 会话行右侧的「⋯」菜单。Claude 抽屉和 Codex 会话表共用；删除确认、改名弹窗仍由各自调用方管 */
+@Composable
+internal fun SessionRowMenu(
+    pinned: Boolean,
+    onTogglePin: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    /** 只有 Claude 有分类；null 时不显示这一项 */
+    onCategorize: (() -> Unit)? = null,
+    triggerTint: Color = MaterialTheme.colorScheme.outline,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val palette = MaterialTheme.sea
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        InkIconButton(
+            icon = HugeIcons.MoreHorizontal,
+            contentDescription = stringResource(R.string.session_row_actions),
+            onClick = { menu = true },
+            tint = triggerTint,
+            size = 32.dp,
+            iconSize = 14.dp,
+        )
+        DropdownMenu(
+            expanded = menu,
+            onDismissRequest = { menu = false },
+            shape = RoundedCornerShape(12.dp),
+            containerColor = scheme.surfaceContainerLow,
+        ) {
+            InkMenuItem(
+                stringResource(if (pinned) R.string.session_unpin else R.string.session_pin),
+                icon = if (pinned) HugeIcons.PinOff else HugeIcons.Pin,
+                onClick = { menu = false; onTogglePin() },
+            )
+            InkMenuItem(
+                stringResource(R.string.common_rename),
+                icon = HugeIcons.Edit02,
+                onClick = { menu = false; onRename() },
+            )
+            if (onCategorize != null) {
+                InkMenuItem(
+                    stringResource(R.string.session_category),
+                    icon = HugeIcons.Tag01,
+                    onClick = { menu = false; onCategorize() },
+                )
+            }
+            InkMenuItem(
+                stringResource(R.string.common_delete),
+                icon = HugeIcons.Delete02,
+                tint = palette.vermilion,
+                onClick = { menu = false; onDelete() },
             )
         }
     }
