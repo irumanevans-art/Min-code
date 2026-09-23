@@ -26,27 +26,20 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.crash.CrashRecorder
-import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.LocalServiceIntent
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.appendProcessOutputLine
 import dev.min.code.core.session.SessionStatus
-import dev.min.code.core.settings.ApiProfile
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.isInsecureBaseUrl
-import dev.min.code.core.settings.sanitizedProfileEnv
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.util.LocalUrls
 import me.rerere.workspace.ProcessTreeKill
-import me.rerere.workspace.ProotShellRunner
-import me.rerere.workspace.RootfsPatchOptions
-import me.rerere.workspace.RootfsPatcher
 import me.rerere.workspace.WorkspaceStorageArea
-import me.rerere.workspace.WorkspaceShellContext
 import java.io.BufferedReader
 import java.io.File
 import java.io.OutputStreamWriter
@@ -90,9 +83,9 @@ class ClaudeCodeManager(
     private val context: Context,
     private val workspaceRepository: WorkspaceRepository,
     private val settingsStore: SettingsStore,
-    private val installer: ClaudeCodeInstaller,
+    installer: ClaudeCodeInstaller,
     private val costLedger: ClaudeCodeCostLedger,
-    private val networkProbe: NetworkProbe = NetworkProbe(context),
+    networkProbe: NetworkProbe = NetworkProbe(context),
     private val localServices: LocalServiceRegistry? = null,
     private val sessionStore: ClaudeCodeSessionStore = ClaudeCodeSessionStore(),
     private val drafts: ComposerDraftStore = ComposerDraftStore(context),
@@ -101,7 +94,11 @@ class ClaudeCodeManager(
      * 改写成 `http://127.0.0.1:…`，由它把请求转成上游听得懂的形状。null = 不路由
      * （测试里常见），那时非原生方言会直连上游——多半 404，但这是测试自己的选择。
      */
-    private val relay: RelayController? = null,
+    relay: RelayController? = null,
+    /** 起进程的那半段。线上就是 proot；单测换成假进程，见 [ClaudeCodeLauncher] */
+    private val launcher: ClaudeCodeLauncher = ProotClaudeCodeLauncher(
+        context, workspaceRepository, settingsStore, installer, networkProbe, relay,
+    ),
 ) {
     /** 启动选项。model/effort 为 null 时用 CLI 自己的默认值。 */
     data class SessionOptions(
@@ -354,9 +351,6 @@ class ClaudeCodeManager(
             failSessionOnUncaught("manager", e)
         }
     )
-    private val runner by lazy {
-        ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir))
-    }
 
     /**
      * 协程未捕获异常的兜底：只落盘不改状态的话，readLoop / writeQueue 死掉之后会
@@ -514,15 +508,6 @@ class ClaudeCodeManager(
     /** ANTHROPIC_BASE_URL：中转站地址，用户在设置里改 */
     suspend fun getBaseUrl(): String = settingsStore.current().baseUrl.ifBlank { DEFAULT_BASE_URL }
 
-    /**
-     * 当前生效的那条供应商，整条取回来。
-     *
-     * 启动时**只读这一次**：地址、token 和自定义 env 必须来自同一条配置。分成
-     * [getToken] / [getBaseUrl] 两次 `current()` 的话，中间用户正好切了一家，
-     * 起来的进程就会拿着 A 家的 key 去敲 B 家的门。
-     */
-    private suspend fun activeProfile(): ApiProfile? = settingsStore.current().activeProfile
-
     /** 只换当前这条连接配置的 token，地址原样留着 */
     suspend fun saveToken(token: String) = settingsStore.setConnection(token, settingsStore.current().baseUrl)
 
@@ -568,63 +553,15 @@ class ClaudeCodeManager(
     }
 
     private suspend fun launchCli(options: SessionOptions) {
-        val profile = activeProfile()
-        check(profile != null && profile.token.isNotBlank()) {
-            "未配置 ANTHROPIC_AUTH_TOKEN，请先在设置页填写 token"
-        }
-        // 记下这次用的是哪一家。之后用户切了供应商，界面靠它认出「这个会话还在用旧的」——
-        // env 在进程启动时就固化了，不重启就是不会变，那件事必须摆在明面上
-        _state.update { it.copy(launchedProfileId = profile.id) }
-
-        val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
-        val workspace = workspaceRepository.getById(workspaceId)
-            ?: error("Claude Code 工作区不存在")
-        val workspaceDir = File(File(context.filesDir, "workspaces"), workspace.root)
-        val linuxDir = File(workspaceDir, "linux")
-
-        // 包在、二进制不在（上次那个 100 MB 的平台包没下完）也算"找不到"，
-        // 但要把原因说清楚，否则用户只看到一句 ENOENT
-        val entry = installer.claudeEntry(linuxDir)
-            ?: error(installer.cliProblem(linuxDir))
-
         val sessionId = options.resumeSessionId
             ?: options.newSessionId
             ?: UUID.randomUUID().toString()
-        currentLinuxDir = linuxDir
-
-        val args = claudeLaunchArgs(entry, options, sessionId)
-
-        if (options.skipPermissions || options.permissionMode == ClaudeCodePermissionMode.BYPASS) {
-            installer.ensureBypassPermissionsAccepted(linuxDir)
-        }
-
-        // 设备 DNS + 短身份卡：会话路径以前只用公共 DNS；别让模型猜 172.x。
-        val netSnap = runCatching { networkProbe.snapshot() }.getOrNull()
-        runCatching {
-            RootfsPatcher().patch(
-                linuxDir,
-                RootfsPatchOptions(nameservers = context.activeDnsServers()),
-            )
-        }
-        installer.ensureRuntimeDocs(linuxDir, netSnap)
-
-        // 方言不是原生时改写成本地路由地址（要挂起，所以在拼 env 之前先拿好）
-        val relayBaseUrl = relay?.claudeBaseUrl(profile)
-        val shellContext = WorkspaceShellContext(
-            root = workspace.root,
-            // 走 bash 的 eval，必须逐个 shell 转义，否则含空格的参数（如模型名）会被拆开
-            command = args.joinToString(" ", transform = ::shellQuote),
-            cwd = "",
-            filesDir = File(workspaceDir, "files"),
-            linuxDir = linuxDir,
-            tempDir = File(workspaceDir, "tmp"),
-            workingDir = File(workspaceDir, "files"),
-            timeoutMillis = 0L, // 长会话不由 runner 管超时
-            env = claudeSessionEnv(options, profile, relayBaseUrl, netSnap),
-        )
-
-        val proc = runner.launch(shellContext)
-            ?: error(runner.checkAvailability(shellContext) ?: "无法启动 proot 进程")
+        val launched = launcher.launch(options, sessionId)
+        // 记下这次用的是哪一家。之后用户切了供应商，界面靠它认出「这个会话还在用旧的」——
+        // env 在进程启动时就固化了，不重启就是不会变，那件事必须摆在明面上
+        _state.update { it.copy(launchedProfileId = launched.profileId) }
+        currentLinuxDir = launched.linuxDir
+        val proc = launched.process
         process = proc
         writer = proc.outputStream.writer(Charsets.UTF_8)
 
