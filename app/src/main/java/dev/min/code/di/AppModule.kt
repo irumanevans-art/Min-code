@@ -92,7 +92,7 @@ val appModule = module {
 
     // 设备操控：server 必须是 single —— 它持有绑定的端口和一次性 token，
     // 每 get 一次新建一个的话，写进 CLI 配置的地址和实际在听的那个就对不上了
-    single { PrivilegedClient(get()) }
+    single { PrivilegedClient() }
     single { PrivilegedStarter(get(), get()) }
     single { AgentDisplaySession(get()) }
     // DeviceController 要能问到虚拟屏会话是否活跃，所以放在 AgentDisplaySession 之后

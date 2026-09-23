@@ -57,8 +57,6 @@ object PrivilegedServer {
                 Log.e(TAG, "missing provider authority argument")
                 return
             }
-        // authority = "<package>.privileged" → package 用来 createPackageContext
-        val appPackage = authority.removeSuffix(".privileged")
         val systemContext = createShellContext()
             ?: run {
                 Log.e(TAG, "failed to create shell context")
@@ -78,7 +76,7 @@ object PrivilegedServer {
         Log.i(TAG, "displayContext package=${displayContext.packageName}")
         val service = ServiceImpl(displayContext)
         val binder = service.asBinder()
-        if (!handOverBinder(systemContext, appPackage, authority, binder)) {
+        if (!handOverBinder(authority, binder)) {
             Log.e(TAG, "handover to $authority failed")
             return
         }
@@ -88,7 +86,7 @@ object PrivilegedServer {
         val handler = android.os.Handler(Looper.getMainLooper())
         val rehandover = object : Runnable {
             override fun run() {
-                val ok = handOverBinder(systemContext, appPackage, authority, binder)
+                val ok = handOverBinder(authority, binder)
                 if (!ok) Log.w(TAG, "re-handover failed (App may be stopped)")
                 handler.postDelayed(this, REHANDOVER_MS)
             }
@@ -125,8 +123,6 @@ object PrivilegedServer {
      */
     @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
     private fun handOverBinder(
-        @Suppress("UNUSED_PARAMETER") systemContext: Context,
-        @Suppress("UNUSED_PARAMETER") appPackage: String,
         authority: String,
         binder: IBinder,
     ): Boolean =

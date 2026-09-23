@@ -1,6 +1,5 @@
 package dev.min.code.privileged
 
-import android.content.Context
 import android.os.IBinder
 import android.util.Log
 import android.view.Display
@@ -19,9 +18,7 @@ private const val TAG = "MinPrivClient"
  *（`getContentProviderExternal` 旁路，见 [PrivilegedServer]）。
  * 死亡时把无障碍目标 display 清回主屏。
  */
-class PrivilegedClient(
-    @Suppress("UNUSED_PARAMETER") context: Context,
-) {
+class PrivilegedClient {
 
     enum class State {
         Disconnected,
