@@ -119,7 +119,9 @@ val appModule = module {
     // 托管第一次动 settings.json 之前留的底。只在私有目录里，不进 SAF、不进导出文件
     single { ProviderBackup(File(get<android.content.Context>().filesDir, "provider-backups")) }
     // 供应商配置往 Rootfs 文件上的单向投影。事实来源始终是 DataStore，见类注释
-    single { ProviderSync(get(), get(), get()) }
+    // 第二个参数的类型是接口 ClaudeSettingsFile：必须写明拿哪个实现，
+    // 不写的话 Koin 去找接口的定义，找不到就在启动时崩（见 WorkspaceManager 那条）
+    single { ProviderSync(get(), get<ClaudeCodeConfigStore>(), get()) }
     // 预设表（assets 里那份）解析一次缓存住
     single { ProviderPresetSource(get()) }
     // 输入框草稿：按会话落盘，杀进程再进还在。必须是 single，VM 和注册表切会话都读同一份

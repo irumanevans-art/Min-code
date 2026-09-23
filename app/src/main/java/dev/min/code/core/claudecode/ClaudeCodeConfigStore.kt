@@ -15,6 +15,7 @@ import kotlinx.serialization.json.put
 import dev.min.code.core.persist.atomicWriteText
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.settings.ClaudeSettingsFile
 import java.io.File
 
 /**
@@ -48,7 +49,7 @@ import java.io.File
 class ClaudeCodeConfigStore(
     private val context: Context,
     private val workspaceRepository: WorkspaceRepository,
-) {
+) : ClaudeSettingsFile {
     /** MCP 服务器。stdio 用 command/args/env，http|sse 用 url/headers。 */
     data class McpServer(
         val name: String,
@@ -96,7 +97,7 @@ class ClaudeCodeConfigStore(
      * [mutate] 拿到的是现有内容的可变副本；返回的 map 就是最终写入的内容。
      * 传 null 值表示删除该 key —— 「把 statusLine 清空」和「把它设成空字符串」不是一回事。
      */
-    suspend fun updateSettings(mutate: (MutableMap<String, kotlinx.serialization.json.JsonElement>) -> Unit): Boolean =
+    override suspend fun updateSettings(mutate: (MutableMap<String, kotlinx.serialization.json.JsonElement>) -> Unit): Boolean =
         withContext(Dispatchers.IO) {
             val file = settingsFile() ?: return@withContext false
             val existing = if (file.isFile) readJsonObject(file) ?: return@withContext false else JsonObject(emptyMap())
@@ -110,7 +111,7 @@ class ClaudeCodeConfigStore(
      * 留底要留的正是「我们没看懂的那份」，解析一道再写出来就已经不是原件了。
      * 文件不在（还没装 Rootfs、CLI 还没写过）返回 null。
      */
-    internal suspend fun readSettingsText(): String? = withContext(Dispatchers.IO) {
+    override suspend fun readSettingsText(): String? = withContext(Dispatchers.IO) {
         settingsFile()?.takeIf { it.isFile }?.let { runCatching { it.readText() }.getOrNull() }
     }
 

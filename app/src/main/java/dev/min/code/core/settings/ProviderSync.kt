@@ -1,6 +1,5 @@
 package dev.min.code.core.settings
 
-import dev.min.code.core.claudecode.ClaudeCodeConfigStore
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -34,7 +33,7 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 class ProviderSync(
     private val settingsStore: SettingsStore,
-    private val configStore: ClaudeCodeConfigStore,
+    private val configStore: ClaudeSettingsFile,
     private val backup: ProviderBackup,
 ) {
     /** 一次投影的结果。**失败不抛异常**，原样交给界面去呈现 */
