@@ -12,7 +12,7 @@ import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.SettingsStore
-import dev.min.code.core.settings.shellCredentialEnv
+import dev.min.code.core.settings.currentShellCredentialEnv
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -287,17 +287,8 @@ class LocalServiceRegistry(
                 if (snap != null) putAll(GuestRuntimeDocs.envFrom(snap))
                 // 服务自己 apt install 时别卡 dpkg 交互
                 put("DEBIAN_FRONTEND", "noninteractive")
-                // 当前供应商的凭据，和终端页签同一套（开关关着时是空的）。
-                // 解不开 Keystore 时当没有：服务该起还是要起，只是里面没有 key
-                putAll(
-                    runCatching {
-                        val settings = settingsStore.current()
-                        val override = settings.activeProfile?.let { relay?.claudeBaseUrl(it) }
-                        shellCredentialEnv(settings, claudeBaseUrlOverride = override)
-                    }
-                        .onFailure { Log.w(TAG, "读取供应商凭据失败，本地服务将没有 key", it) }
-                        .getOrDefault(emptyMap()),
-                )
+                // 当前供应商的凭据，和终端页签同一套（开关关着时是空的）
+                putAll(currentShellCredentialEnv(settingsStore, relay))
             },
         )
 

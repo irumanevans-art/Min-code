@@ -1,5 +1,7 @@
 package dev.min.code.core.settings
 
+import android.util.Log
+import dev.min.code.core.relay.RelayController
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -182,6 +184,22 @@ internal fun applyManagedEnv(
 }
 
 private const val KEY_ENV = "env"
+
+/**
+ * 此刻给 rootfs 里的 shell 用的供应商凭据：终端页签、托管服务、输入框里的 `!` 命令共用这一份。
+ * 方言不是原生时 `claude` 也走机内路由，和会话进程同一个入口（路由只在 App 活着时通，这几样本来也是）。
+ * 解密要走 Keystore，调用方别放在主线程上；解不开时当没有 —— 命令该跑还是跑，只是里面没有 key。
+ */
+internal suspend fun currentShellCredentialEnv(
+    settingsStore: SettingsStore,
+    relay: RelayController?,
+): Map<String, String> = runCatching {
+    val settings = settingsStore.current()
+    val override = settings.activeProfile?.let { relay?.claudeBaseUrl(it) }
+    shellCredentialEnv(settings, claudeBaseUrlOverride = override)
+}
+    .onFailure { Log.w("ProviderSync", "读取供应商凭据失败，shell 里将没有 key", it) }
+    .getOrDefault(emptyMap())
 
 /**
  * 终端页签与本地服务进程要带的供应商环境变量。
