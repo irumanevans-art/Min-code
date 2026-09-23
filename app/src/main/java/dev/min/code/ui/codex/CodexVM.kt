@@ -16,6 +16,7 @@ import dev.min.code.core.codex.readCodexSessionItems
 import dev.min.code.core.codex.sortCodexSessions
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.core.settings.CodexProfile
@@ -88,8 +89,8 @@ class CodexVM(
         // 草稿跟着 threadId 走：切会话 / 删除 / 新开都从这里换档，
         // 不在各个动作里手工清——那漏掉任何一条新路径都会串稿
         viewModelScope.launch(Dispatchers.IO) {
-            manager.state.map { it.threadId }.distinctUntilChanged().collect { threadId ->
-                draft.value = draftStore.load(threadId)
+            manager.state.map(::draftKeyOf).distinctUntilChanged().collect { key ->
+                draft.value = draftStore.load(key)
             }
         }
     }
@@ -183,12 +184,16 @@ class CodexVM(
     /** 每次输入都交给草稿库落盘：它按顺序写、快打时合并，见 [CodexDraftStore.saveLater] */
     fun setDraft(text: String) {
         draft.value = text
-        manager.state.value.threadId?.let { draftStore.saveLater(it, text) }
+        draftKeyOf(manager.state.value)?.let { draftStore.saveLater(it, text) }
     }
 
     fun send(text: String): Boolean {
+        val wasNewThread = draftKeyOf(manager.state.value) == NEW_THREAD_DRAFT_KEY
         val ok = manager.sendTurn(composeMessage(text))
         if (ok) {
+            // 发出去这一刻线程就有了记录，草稿的键随之换成 threadId；「新会话」名下那份得一并清掉，
+            // 否则下次开新会话会冒出这段已经发出去的话
+            if (wasNewThread) draftStore.saveLater(NEW_THREAD_DRAFT_KEY, "")
             setDraft("")
             // 只清列表，**不删文件** —— 它已经发给模型了，模型随时会去读
             attachments.value = emptyList()
@@ -356,6 +361,21 @@ class CodexVM(
     }
 
     companion object {
+        /**
+         * 还没发过一条的线程，草稿记在这个键下，而不是它的 threadId。
+         *
+         * Codex 要等第一轮才给线程落会话文件：新开一个会话、打了半段字、App 被杀，重开之后这个线程
+         * 根本恢复不回来，记在它 threadId 下的草稿就再也读不到了。「新会话里没发出去的字」
+         * 本来也属于「新会话」—— 重开后点「新会话」，字还在。
+         */
+        const val NEW_THREAD_DRAFT_KEY = "__new_thread__"
+
+        /** 草稿该记在哪个键下；还没起线程时是 null（只在内存里，不落盘） */
+        internal fun draftKeyOf(state: CodexAppServerManager.State): String? {
+            val threadId = state.threadId ?: return null
+            return if (state.items.none { it is ChatItem.UserText }) NEW_THREAD_DRAFT_KEY else threadId
+        }
+
         const val DEFAULT_PROFILE_ID = "default"
 
         /** `@` 候选一次给几条。手机上一屏放得下的就这些，再多只是滚动 */
