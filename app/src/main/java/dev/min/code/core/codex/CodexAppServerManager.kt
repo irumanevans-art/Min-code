@@ -458,8 +458,8 @@ class CodexAppServerManager(
                 val chat = event.item.toChatItem(nextLocalId("item"))
                 outputBuffers.remove(event.item.id)
                 // 权威最终态到了，对应的增量缓冲作废
-                val clearText = event.item.id == streamingTextItemId || event.item.type == "agentMessage"
-                val clearThinking = event.item.id == streamingThinkingItemId || event.item.type == "reasoning"
+                val clearText = event.item.id == streamingTextItemId || event.item.type == ITEM_AGENT_MESSAGE
+                val clearThinking = event.item.id == streamingThinkingItemId || event.item.type == ITEM_REASONING
                 if (clearText) streamingTextItemId = null
                 if (clearThinking) streamingThinkingItemId = null
                 _state.value = current.copy(

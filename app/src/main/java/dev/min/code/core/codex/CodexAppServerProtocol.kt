@@ -149,6 +149,10 @@ data class CodexItem(
     val isDeclined: Boolean get() = status == "declined"
 }
 
+/** 线上 [CodexItem.type] 的取值。这里是它们的事实来源，比较处一律引用常量而不是裸字符串 */
+internal const val ITEM_AGENT_MESSAGE = "agentMessage"
+internal const val ITEM_REASONING = "reasoning"
+
 /**
  * 审批决定。取值来自官方文档的 `availableDecisions`。
  *

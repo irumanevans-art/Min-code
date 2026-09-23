@@ -1093,7 +1093,7 @@ class ClaudeCodeManager(
                 // 仅 bypass：不会有 can_use_tool。Manual 必须等 PermissionRequest 排他托管，
                 // 否则 ToolUse 先到再 start = 与即将到来的 permission 路径双跑。
                 if (!replaying &&
-                    event.name == "Bash" &&
+                    event.name == TOOL_BASH &&
                     _state.value.permissionMode == ClaudeCodePermissionMode.BYPASS &&
                     (event.id.isBlank() || !exclusiveHostedToolUses.contains(event.id))
                 ) {
@@ -1147,7 +1147,7 @@ class ClaudeCodeManager(
                     maybeOfferLocalPreview(event.content)
                     // 结果路径：只扫预览 URL / 补 port 线索；不再二次 startFromAgent
                     //（CLI 已跑过的命令再托管 = 端口战）。
-                    if (call?.name == "Bash") {
+                    if (call?.name == TOOL_BASH) {
                         val cmd = call.input["command"].asStringOrNull().orEmpty()
                         val port = LocalServiceIntent.guessPort(cmd)
                         if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
@@ -2579,7 +2579,7 @@ class ClaudeCodeManager(
      * @return true 表示已应答，调用方不要再挂权限 sheet
      */
     private fun tryHostBashInsteadOfPermission(event: ClaudeCodeEvent.PermissionRequest): Boolean {
-        if (!event.toolName.equals("Bash", ignoreCase = true)) return false
+        if (!event.toolName.equals(TOOL_BASH, ignoreCase = true)) return false
         val raw = event.input["command"].asStringOrNull().orEmpty().trim()
         if (raw.isEmpty()) return false
         val flags = bashFlags(event.input)
@@ -3132,6 +3132,9 @@ internal fun guestToHostFile(workspaceDir: File, guestPath: String): File? {
 
 /** Bash editDiff 比 stdout 大得多（整份 unified diff），单独放宽一点。本文件顶层与类内共用 */
 private const val MAX_EDIT_DIFF_CHARS = 64 * 1024
+
+/** CLI 侧的 Bash 工具名；托管与本地预览的判定都靠它认命令 */
+private const val TOOL_BASH = "Bash"
 
 /**
  * 本轮被权限规则拦下的工具，收成一句给聊天流看的话。空列表返回 null。
