@@ -125,6 +125,12 @@ sealed interface CodexEvent {
     /** `thread/status/changed`，用来点亮"等待审批中"这类顶栏提示 */
     data class ThreadStatus(val status: String?, val activeFlags: List<String> = emptyList()) : CodexEvent
 
+    /**
+     * `warning`：app-server 给人看的一句提醒（配置有问题、某个功能要下线之类）。
+     * 以前落进 [Unknown]，界面上只剩「未知的 codex 方法：warning」，真正要说的话反而看不到。
+     */
+    data class Warning(val message: String) : CodexEvent
+
     /** 认不出的方法。原样留着，宁可在界面上显示一条灰字，也别静默吞掉。 */
     data class Unknown(val method: String?, val raw: JsonObject) : CodexEvent
 }
@@ -300,10 +306,24 @@ fun parseCodexEvent(line: String): CodexEvent? {
             )
         }
 
+        // 取不出一句话的时候照旧落 Unknown：那条灰字至少说明来过一条警告
+        "warning" -> warningText(params)?.let { CodexEvent.Warning(it) }
+            ?: CodexEvent.Unknown(method, obj)
+
         null -> null
         else -> CodexEvent.Unknown(method, obj)
     }
 }
+
+/**
+ * 警告里给人看的那句话。字段名按常见的几种依次试（`message` / `summary` / `details`），
+ * 都没有就取第一个非空字符串字段 —— 宁可多显示一点，也别因为字段改了名就什么都不显示。
+ */
+internal fun warningText(params: JsonObject): String? =
+    sequenceOf("message", "summary", "details").mapNotNull { params.str(it) }.firstOrNull { it.isNotBlank() }
+        ?: params.values.firstNotNullOfOrNull { value ->
+            (value as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        }
 
 private fun approval(
     rawId: JsonPrimitive?,

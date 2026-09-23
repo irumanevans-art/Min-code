@@ -405,4 +405,20 @@ class CodexAppServerProtocolTest {
         val chat = item("""{"type":"agentMessage","text":"hi"}""").toChatItem("fallback-7")
         assertEquals("fallback-7", chat.id)
     }
+
+    @Test
+    fun `a warning shows its sentence instead of an unknown-method line`() {
+        val event = parseCodexEvent("""{"method":"warning","params":{"threadId":"t","message":"config.toml: model_reasoning_effort is deprecated"}}""")
+        assertEquals(CodexEvent.Warning("config.toml: model_reasoning_effort is deprecated"), event)
+
+        // 字段改了名也别什么都不显示：退回第一个非空字符串
+        val renamed = parseCodexEvent("""{"method":"warning","params":{"text":"  ","note":"sandbox is off"}}""")
+        assertEquals(CodexEvent.Warning("sandbox is off"), renamed)
+    }
+
+    @Test
+    fun `a warning with nothing to say still leaves a trace`() {
+        val event = parseCodexEvent("""{"method":"warning","params":{"count":3}}""")
+        assertTrue(event is CodexEvent.Unknown)
+    }
 }

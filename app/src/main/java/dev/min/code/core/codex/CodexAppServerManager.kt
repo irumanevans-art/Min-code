@@ -554,6 +554,15 @@ class CodexAppServerManager(
             is CodexEvent.ThreadStatus ->
                 _state.value = current.copy(activeFlags = event.activeFlags)
 
+            is CodexEvent.Warning -> {
+                val text = "Codex 提示：${event.message}"
+                // 同一句警告每轮都会再来一遍（比如配置里的旧写法），连着的只留一条
+                val last = current.items.lastOrNull()
+                if (!(last is ChatItem.Note && last.text == text)) {
+                    _state.value = current.copy(items = current.items + ChatItem.Note(nextLocalId("warning"), text))
+                }
+            }
+
             is CodexEvent.Unknown -> {
                 Log.d(TAG, "未知的 codex 方法：${event.method}")
                 // 协议层（CodexEvent.Unknown）的承诺：宁可在界面上留一条灰字，
