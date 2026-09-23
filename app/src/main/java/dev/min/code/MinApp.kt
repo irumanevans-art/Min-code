@@ -24,10 +24,11 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.android.ext.android.getKoin
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
@@ -35,6 +36,9 @@ import org.koin.core.context.startKoin
 import org.koin.core.logger.Level
 
 private const val TAG = "MinApp"
+
+/** 冷启动时等虚拟屏壳进程重交 Binder 的上限：壳每 3s 交一次，15s 够它来好几轮 */
+private const val VIRTUAL_DISPLAY_RESTORE_WAIT_MS = 15_000L
 
 /** Claude Code 前台服务那条常驻通知；静音、低优先级，只是保活的载体 */
 const val CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID = "claude_code_live"
@@ -89,20 +93,18 @@ class MinApp : Application() {
         getKoin().get<AppScope>().launch(Dispatchers.IO) {
             val client = getKoin().get<PrivilegedClient>()
             val session = getKoin().get<AgentDisplaySession>()
-            // 最多等约 15s（壳每 3s 重交一次）
-            repeat(30) {
-                if (client.state.value == PrivilegedClient.State.Ready) {
-                    runCatching { session.restoreIfPossible() }
-                        .onSuccess { restored ->
-                            if (restored != null) {
-                                Log.i(TAG, "restored virtual display ${restored.displayId}")
-                            }
-                        }
-                        .onFailure { Log.w(TAG, "restore virtual display failed", it) }
-                    return@launch
+            // 最多等 15s（壳每 3s 重交一次）。直接等状态流变成 Ready，
+            // 不再每 500ms 看一眼：Ready 那一刻就接，中途短暂 Failed 也照样接着等
+            withTimeoutOrNull(VIRTUAL_DISPLAY_RESTORE_WAIT_MS) {
+                client.state.first { it == PrivilegedClient.State.Ready }
+            } ?: return@launch
+            runCatching { session.restoreIfPossible() }
+                .onSuccess { restored ->
+                    if (restored != null) {
+                        Log.i(TAG, "restored virtual display ${restored.displayId}")
+                    }
                 }
-                delay(500)
-            }
+                .onFailure { Log.w(TAG, "restore virtual display failed", it) }
         }
         // rootfs 装好 / 重装 / 删掉之后，告诉系统「文件」App 重新读一遍我们的根。
         // 不通知的话，装完 rootfs 侧栏里那个入口要等系统自己想起来才出现
