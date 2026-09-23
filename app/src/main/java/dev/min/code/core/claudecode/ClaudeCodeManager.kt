@@ -2024,7 +2024,11 @@ class ClaudeCodeManager(
     fun refreshModels() {
         scope.launch {
             val id = newRequestId()
-            val payload = control(id, encodeClaudeCodeListModels(id)) ?: return@launch
+            val payload = control(id, encodeClaudeCodeListModels(id))
+            if (payload == null) {
+                Log.w(TAG, "refreshModels failed: control timed out or errored")
+                return@launch
+            }
             val models = payload["models"].asJsonArrayOrNull()?.mapNotNull { it.toModelOption() }.orEmpty()
             if (models.isNotEmpty()) _state.update { it.copy(availableModels = models) }
         }
@@ -2356,6 +2360,7 @@ class ClaudeCodeManager(
         scope.launch {
             val id = newRequestId()
             val payload = control(id, encodeClaudeCodeGetPlan(id))
+            if (payload == null) Log.w(TAG, "refreshPlan failed: control timed out or errored")
             val exists = payload?.get("exists").asBooleanOrNull()
             val plan = if (exists == false) {
                 null
@@ -2378,7 +2383,9 @@ class ClaudeCodeManager(
     fun refreshUsage() {
         scope.launch {
             val ctxId = newRequestId()
-            control(ctxId, encodeClaudeCodeGetContextUsage(ctxId))?.let { payload ->
+            val usage = control(ctxId, encodeClaudeCodeGetContextUsage(ctxId))
+            if (usage == null) Log.w(TAG, "refreshUsage failed: get_context_usage control timed out or errored")
+            usage?.let { payload ->
                 val used = payload["totalTokens"].asIntOrNull()
                 val reported = (payload["maxTokens"] ?: payload["rawMaxTokens"]).asIntOrNull()
                 val state = _state.value
@@ -2395,7 +2402,9 @@ class ClaudeCodeManager(
                 }
             }
             val costId = newRequestId()
-            control(costId, encodeClaudeCodeGetSessionCost(costId))?.let { payload ->
+            val cost = control(costId, encodeClaudeCodeGetSessionCost(costId))
+            if (cost == null) Log.w(TAG, "refreshUsage failed: get_session_cost control timed out or errored")
+            cost?.let { payload ->
                 val text = payload["text"].asStringOrNull()?.takeIf { it.isNotBlank() }
                 if (text != null) {
                     _state.update { it.copy(costText = text) }
@@ -2471,7 +2480,8 @@ class ClaudeCodeManager(
         val trimmed = title.trim().ifBlank { return }
         scope.launch {
             val id = newRequestId()
-            control(id, encodeClaudeCodeRenameSession(id, trimmed))
+            val outcome = control(id, encodeClaudeCodeRenameSession(id, trimmed))
+            if (outcome == null) Log.w(TAG, "renameSession failed: control timed out or errored")
         }
     }
 
