@@ -194,3 +194,24 @@ baselineProfile {
     automaticGenerationDuringBuild = false
     saveInSrc = true
 }
+
+// 双份 CHANGELOG（根目录 + 关于页读的 assets 副本）必须逐字节一致。
+// 以前靠人工约定同步，谁忘了一次关于页就展示旧日志 —— 现在构建期拦住。
+val verifyChangelogSync by tasks.registering {
+    val rootChangelog = layout.projectDirectory.file("../CHANGELOG.md")
+    val assetChangelog = layout.projectDirectory.file("src/main/assets/CHANGELOG.md")
+    val stamp = layout.buildDirectory.file("changelog-sync/ok.stamp")
+    inputs.files(rootChangelog, assetChangelog)
+    outputs.file(stamp)
+    doLast {
+        val same = rootChangelog.asFile.readBytes().contentEquals(assetChangelog.asFile.readBytes())
+        if (!same) {
+            throw GradleException(
+                "两份 CHANGELOG 不一致：根目录 CHANGELOG.md 与 app/src/main/assets/CHANGELOG.md " +
+                    "必须同步更新（关于页读 assets 那份，见 CLAUDE.md 的工作方式一节）",
+            )
+        }
+        stamp.get().asFile.apply { parentFile.mkdirs() }.writeText("ok")
+    }
+}
+tasks.named("preBuild") { dependsOn(verifyChangelogSync) }
