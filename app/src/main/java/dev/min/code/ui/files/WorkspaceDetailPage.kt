@@ -44,8 +44,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,6 +63,7 @@ import dev.min.code.ui.components.InkCheckbox
 import dev.min.code.ui.components.InkDialog
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkLineProgress
+import dev.min.code.ui.components.InkSearchBar
 import dev.min.code.ui.components.InkSegmented
 import dev.min.code.ui.components.InkTab
 import dev.min.code.ui.components.InkTextButton
@@ -981,10 +980,13 @@ private fun WorkspaceFilesPage(
     ) {
         if (searchOpen) {
             item(key = "search") {
-                WorkspaceSearchBar(
+                InkSearchBar(
                     query = state.query,
                     onQueryChange = onQueryChange,
                     onClose = onCloseSearch,
+                    placeholder = stringResource(R.string.workspace_detail_search_hint),
+                    closeDescription = stringResource(R.string.workspace_detail_search_close),
+                    closeButtonSize = 36.dp,
                     modifier = Modifier.animateItem(
                         fadeInSpec = InkMotion.effect(),
                         placementSpec = InkMotion.spatial<IntOffset>(),
@@ -1078,51 +1080,6 @@ private fun WorkspaceFilesPage(
                 ),
             )
         }
-    }
-}
-
-/**
- * 文件页的搜索条：一张纸条 + 左边一枚放大镜，右边一个叉。
- * 打开就聚焦 —— 点了搜索图标还要再点一次输入框是多余的一步。
- */
-@Composable
-private fun WorkspaceSearchBar(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        InkTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            modifier = Modifier
-                .weight(1f)
-                .focusRequester(focusRequester),
-            placeholder = stringResource(R.string.workspace_detail_search_hint),
-            singleLine = true,
-            leading = {
-                Icon(
-                    HugeIcons.Search01,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            },
-        )
-        InkIconButton(
-            icon = HugeIcons.Cancel01,
-            contentDescription = stringResource(R.string.workspace_detail_search_close),
-            onClick = onClose,
-            size = 36.dp,
-            iconSize = 18.dp,
-        )
     }
 }
 

@@ -53,8 +53,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -71,6 +69,7 @@ import dev.min.code.ui.components.InkDialog
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkMenuItem
+import dev.min.code.ui.components.InkSearchBar
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.RikkaConfirmDialog
@@ -96,7 +95,6 @@ import me.rerere.hugeicons.stroke.Folder01
 import me.rerere.hugeicons.stroke.Globe
 import me.rerere.hugeicons.stroke.MoreHorizontal
 import me.rerere.hugeicons.stroke.Package
-import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Pin
 import me.rerere.hugeicons.stroke.PinOff
 import me.rerere.hugeicons.stroke.PlusSign
@@ -205,13 +203,15 @@ fun ClaudeCodeSessionDrawer(
             }
 
             AnimatedVisibility(visible = searchOpen || searching) {
-                SessionListSearchBar(
+                InkSearchBar(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
                     onClose = {
                         searchOpen = false
                         searchQuery = ""
                     },
+                    placeholder = stringResource(R.string.session_list_search),
+                    closeDescription = stringResource(R.string.session_list_close_search),
                     modifier = Modifier.padding(start = 16.dp, end = 12.dp, bottom = 8.dp),
                 )
             }
@@ -420,50 +420,6 @@ private fun DrawerSystemPage(
         ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
         ActionRow(HugeIcons.Package, stringResource(R.string.session_drawer_maintenance), onOpenMaintenance)
         ActionRow(HugeIcons.Settings02, stringResource(R.string.settings_title), onOpenSettings)
-    }
-}
-
-/**
- * 会话列表搜索条：标题 / 分类 / id / 正文。打开就聚焦，和文件页那条同款。
- */
-@Composable
-private fun SessionListSearchBar(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        InkTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            modifier = Modifier
-                .weight(1f)
-                .focusRequester(focusRequester),
-            placeholder = stringResource(R.string.session_list_search),
-            singleLine = true,
-            leading = {
-                Icon(
-                    HugeIcons.Search01,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            },
-        )
-        InkIconButton(
-            icon = HugeIcons.Cancel01,
-            contentDescription = stringResource(R.string.session_list_close_search),
-            onClick = onClose,
-            size = 32.dp,
-            iconSize = 18.dp,
-        )
     }
 }
 
