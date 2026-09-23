@@ -534,15 +534,6 @@ private fun ConnectionSettings(vm: SettingsVM, settings: AppSettings) {
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    SettingRow(
-        title = stringResource(R.string.settings_npm_mirror_title),
-        subtitle = stringResource(R.string.settings_npm_mirror_subtitle),
-        onClick = { vm.setUseNpmMirror(!settings.useNpmMirror) },
-        trailing = {
-            InkSwitch(checked = settings.useNpmMirror, onCheckedChange = { vm.setUseNpmMirror(it) })
-        },
-    )
-    BatteryRow()
 }
 
 @Composable
@@ -556,6 +547,7 @@ private fun DeviceSettings(vm: SettingsVM, settings: AppSettings) {
         onToggle = vm::setControlDevice,
     )
     VirtualDisplayRow(vm = vm)
+    BatteryRow()
 }
 
 @Composable

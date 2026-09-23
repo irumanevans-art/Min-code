@@ -300,18 +300,21 @@ fun ClaudeCodeSessionDrawer(
             label = "drawer-page",
         ) { inSystem ->
             if (inSystem) {
-                // 点了某一项就回第一层：窄屏抽屉本来就会关，宽屏常驻侧栏也别一直停在这一页
-                fun pick(action: () -> Unit): () -> Unit = {
-                    systemOpen = false
-                    action()
-                }
+                // 终端 / 进程 / 环境与更新 / 设置是「系统」的下一层：抽屉停在这一页不动，
+                // 关掉那张面板、从那一页返回，回到的还是这里（以前一点就关抽屉、回第一层，
+                // 返回直接落到会话上，层级断了）。只有复制整段会话是个一次性动作，做完回第一层
                 DrawerSystemPage(
                     onBack = { systemOpen = false },
-                    onCopyTranscript = onCopyTranscript?.let(::pick),
-                    onOpenTerminal = pick(onOpenTerminal),
-                    onOpenRuntime = pick(onOpenRuntime),
-                    onOpenMaintenance = pick(onOpenMaintenance),
-                    onOpenSettings = pick(onOpenSettings),
+                    onCopyTranscript = onCopyTranscript?.let { copy ->
+                        {
+                            systemOpen = false
+                            copy()
+                        }
+                    },
+                    onOpenTerminal = onOpenTerminal,
+                    onOpenRuntime = onOpenRuntime,
+                    onOpenMaintenance = onOpenMaintenance,
+                    onOpenSettings = onOpenSettings,
                 )
             } else {
                 mainPage()

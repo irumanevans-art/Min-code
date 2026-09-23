@@ -55,8 +55,6 @@
   <string name="settings_connection_insecure_title">Plain HTTP address</string>
   <string name="settings_connection_insecure_body">%1$s is plain HTTP. ANTHROPIC_AUTH_TOKEN is sent as an Authorization header with no encryption, so anyone on the path can take the key and read your traffic.\n\nMin will keep using this address either way — this confirmation is shown once per address.</string>
   <string name="settings_connection_insecure_continue">Use anyway</string>
-  <string name="settings_npm_mirror_title">Install / update CLI via Taobao npm mirror</string>
-  <string name="settings_npm_mirror_subtitle">The native binary is still checked against the official registry sha512; the mirror only serves bytes.</string>
   <string name="settings_battery_title">Battery optimization</string>
   <string name="settings_battery_ok">Off — sessions are less likely to be killed in the background</string>
   <string name="settings_battery_warn">On. Some OEM ROMs kill background processes minutes after you leave; add Min to the unrestricted list</string>
@@ -896,13 +894,13 @@
   <string name="about_contact_qq">QQ %1$s</string>
   <string name="about_contact_qq_copied">QQ number copied</string>
   <string name="settings_group_device">Device</string>
-  <string name="settings_group_device_sub">Storage, on-screen control, virtual screen</string>
+  <string name="settings_group_device_sub">Storage, on-screen control, virtual screen, battery</string>
   <string name="settings_group_look">Look &amp; language</string>
   <string name="settings_group_look_sub">Theme, skin, language</string>
   <string name="settings_theme_label">Theme</string>
   <string name="settings_skin_label">Skin</string>
   <string name="settings_language_label">Language</string>
-  <string name="settings_group_connection">Connection &amp; install</string>
-  <string name="settings_group_connection_sub">Providers, npm mirror, battery</string>
+  <string name="settings_group_connection">Connection</string>
+  <string name="settings_group_connection_sub">Providers</string>
   <string name="session_drawer_group_system">System</string>
 </resources>

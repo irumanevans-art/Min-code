@@ -38,7 +38,6 @@ class SettingsVM(
      */
     fun discardUnreadableCredentials() = viewModelScope.launch { store.discardUnreadableCredentials() }
 
-    fun setUseNpmMirror(enabled: Boolean) = viewModelScope.launch { store.setUseNpmMirror(enabled) }
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { store.setThemeMode(mode) }
     fun setSkin(style: SkinStyle) = viewModelScope.launch { store.setSkin(style) }
     fun setAppLanguage(language: AppLanguage) = viewModelScope.launch { store.setAppLanguage(language) }

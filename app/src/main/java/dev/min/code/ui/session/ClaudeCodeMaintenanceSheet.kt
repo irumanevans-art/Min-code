@@ -79,12 +79,14 @@ internal fun ClaudeCodeMaintenanceSheet(
     liveSessionCount: Int,
     onDismiss: () -> Unit,
     onCheckUpdate: () -> Unit,
-    onUpdateCli: (useNpmMirror: Boolean) -> Unit,
+    onUpdateCli: () -> Unit,
+    /** 淘宝 npm 源：存在设置里，安装向导用的也是它 */
+    useNpmMirror: Boolean,
+    onSetUseNpmMirror: (Boolean) -> Unit,
     onUpgradeApt: () -> Unit,
     onReinstallNode: () -> Unit,
     onOpenWorkspace: () -> Unit,
 ) {
-    var useNpmMirror by rememberSaveable { mutableStateOf(false) }
     var repairOpen by rememberSaveable { mutableStateOf(false) }
 
     // 有会话在跑时所有写操作都禁掉：npm/apt 会原地替换正在被执行的文件
@@ -191,7 +193,7 @@ internal fun ClaudeCodeMaintenanceSheet(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = actionable) { useNpmMirror = !useNpmMirror }
+                    .clickable(enabled = actionable) { onSetUseNpmMirror(!useNpmMirror) }
                     .padding(vertical = 6.dp),
             ) {
                 InkCheckbox(
@@ -212,7 +214,7 @@ internal fun ClaudeCodeMaintenanceSheet(
             // 只有查到新版、或装得不完整要修时才能点。以前没查过、已是最新也能点，
             // 点了就是把同一版原样重装一遍，完了版本号纹丝不动，看上去像「更新失败」
             InkButton(
-                onClick = { onUpdateCli(useNpmMirror) },
+                onClick = onUpdateCli,
                 enabled = actionable && (state.cliIncomplete || state.updateAvailable),
                 busy = state.running == ClaudeCodeVM.MaintenanceTask.UpdateCli,
                 modifier = Modifier.fillMaxWidth(),

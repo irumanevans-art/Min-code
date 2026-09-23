@@ -195,6 +195,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     }
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val maintenance by vm.maintenance.collectAsStateWithLifecycle()
+    val useNpmMirror by vm.useNpmMirror.collectAsStateWithLifecycle()
     val runtime by vm.runtime.collectAsStateWithLifecycle()
     val localServiceList by vm.localServiceList.collectAsStateWithLifecycle()
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
@@ -343,25 +344,19 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 afterSidebarNav()
                 navController.navigate(Screen.Files)
             },
-            onOpenTerminal = {
-                afterSidebarNav()
-                navController.navigate(Screen.Terminal)
-            },
+            // 「系统」里的这几项不关抽屉：面板盖在抽屉上，页面压在它上面，
+            // 关掉 / 返回时回到的都是抽屉的「系统」页（见 ClaudeCodeSessionDrawer）
+            onOpenTerminal = { navController.navigate(Screen.Terminal) },
             onOpenRuntime = {
-                afterSidebarNav()
                 vm.refreshNetworkSnapshot()
                 showRuntime = true
             },
-            onOpenSettings = {
-                afterSidebarNav()
-                navController.navigate(Screen.Settings)
-            },
+            onOpenSettings = { navController.navigate(Screen.Settings) },
             onOpenProviders = {
                 afterSidebarNav()
                 navController.navigate(Screen.Providers)
             },
             onOpenMaintenance = {
-                afterSidebarNav()
                 vm.loadEnvironment()
                 showMaintenance = true
             },
@@ -499,10 +494,14 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             },
             onCheckUpdate = vm::checkCliUpdate,
             onUpdateCli = vm::updateCli,
+            useNpmMirror = useNpmMirror,
+            onSetUseNpmMirror = vm::setUseNpmMirror,
             onUpgradeApt = vm::upgradeApt,
             onReinstallNode = vm::reinstallNode,
             onOpenWorkspace = {
                 showMaintenance = false
+                // 去的是另一处（工作区文件），不是「系统」的下一层：抽屉跟着收起
+                afterSidebarNav()
                 navController.navigate(Screen.Files)
             },
         )
@@ -521,6 +520,8 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onToggleLog = vm::toggleServiceLog,
             onOpenPreview = { url ->
                 showRuntime = false
+                // 要看的是会话页上的预览位，抽屉得让开
+                afterSidebarNav()
                 // 进程表「打开」= 按预览位键，不是第二套 WebView
                 vm.bindPreview(url, expand = true, fromAgent = false)
             },

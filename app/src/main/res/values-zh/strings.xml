@@ -54,8 +54,6 @@
   <string name="settings_connection_insecure_title">明文 HTTP 地址</string>
   <string name="settings_connection_insecure_body">%1$s 是明文 HTTP 地址。ANTHROPIC_AUTH_TOKEN 会不加密地放在 Authorization 头里发出去，路上任何人都能拿走这个 key、看到全部往来内容。\n\n不管确认与否，Min 都会照常使用这个地址——这个确认每个地址只问一次。</string>
   <string name="settings_connection_insecure_continue">仍然使用</string>
-  <string name="settings_npm_mirror_title">用淘宝 npm 源装 / 更新 CLI</string>
-  <string name="settings_npm_mirror_subtitle">原生二进制仍按官方 registry 的 sha512 校验，镜像只提供字节。</string>
   <string name="settings_battery_title">电池优化</string>
   <string name="settings_battery_ok">已关闭，会话在后台不易被系统回收</string>
   <string name="settings_battery_warn">开着。vivo / OPPO 这类 ROM 会在切出去几分钟后杀掉后台进程，建议把 Min 加入不优化列表</string>
@@ -892,13 +890,13 @@
   <string name="about_contact_qq">QQ %1$s</string>
   <string name="about_contact_qq_copied">已复制 QQ 号</string>
   <string name="settings_group_device">设备</string>
-  <string name="settings_group_device_sub">存储、真屏操控、虚拟屏</string>
+  <string name="settings_group_device_sub">存储、真屏操控、虚拟屏、电池</string>
   <string name="settings_group_look">外观与语言</string>
   <string name="settings_group_look_sub">昼夜、取底、语言</string>
   <string name="settings_theme_label">昼夜</string>
   <string name="settings_skin_label">取底</string>
   <string name="settings_language_label">语言</string>
-  <string name="settings_group_connection">连接与安装</string>
-  <string name="settings_group_connection_sub">供应商、npm 源、电池</string>
+  <string name="settings_group_connection">连接</string>
+  <string name="settings_group_connection_sub">供应商</string>
   <string name="session_drawer_group_system">系统</string>
 </resources>

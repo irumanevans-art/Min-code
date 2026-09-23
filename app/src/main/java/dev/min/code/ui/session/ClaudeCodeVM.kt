@@ -464,8 +464,20 @@ class ClaudeCodeVM(
         }
     }
 
-    fun updateCli(useNpmMirror: Boolean) = runMaintenance(MaintenanceTask.UpdateCli) { onState ->
-        installer.updateCli(workspaceId, useNpmMirror, onState)
+    /**
+     * 装 / 更新 CLI 用不用淘宝 npm 源。安装向导和「环境与更新」读写的是同一个设置 ——
+     * 以前面板上的勾选是临时的，每次打开都是关，设置页里另有一个开关却从没被更新读过。
+     */
+    val useNpmMirror: StateFlow<Boolean> = settingsStore.settings
+        .map { it.useNpmMirror }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setUseNpmMirror(enabled: Boolean) {
+        viewModelScope.launch { settingsStore.setUseNpmMirror(enabled) }
+    }
+
+    fun updateCli() = runMaintenance(MaintenanceTask.UpdateCli) { onState ->
+        installer.updateCli(workspaceId, settingsStore.current().useNpmMirror, onState)
     }
 
     fun upgradeApt() = runMaintenance(MaintenanceTask.AptUpgrade) { onState ->
