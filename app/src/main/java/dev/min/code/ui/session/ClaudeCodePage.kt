@@ -329,7 +329,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             },
             onOpenFiles = {
                 afterSidebarNav()
-                navController.navigate(Screen.Files())
+                navController.navigate(Screen.Files)
             },
             onOpenTerminal = {
                 afterSidebarNav()
@@ -489,7 +489,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onReinstallNode = vm::reinstallNode,
             onOpenWorkspace = {
                 showMaintenance = false
-                navController.navigate(Screen.Files())
+                navController.navigate(Screen.Files)
             },
         )
     }

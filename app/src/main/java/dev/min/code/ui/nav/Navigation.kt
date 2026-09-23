@@ -12,9 +12,9 @@ sealed interface Screen : NavKey {
     @Serializable
     data object Codex : Screen
 
-    /** 工作区文件页；[area] 是 WorkspaceStorageArea.name，[path] 相对路径 */
+    /** 工作区文件页 */
     @Serializable
-    data class Files(val area: String = "FILES", val path: String = "") : Screen
+    data object Files : Screen
 
     @Serializable
     data object Terminal : Screen
