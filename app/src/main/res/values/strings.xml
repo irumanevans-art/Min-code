@@ -902,7 +902,5 @@
   <string name="settings_language_label">Language</string>
   <string name="settings_group_connection">Connection &amp; install</string>
   <string name="settings_group_connection_sub">Providers, npm mirror, battery</string>
-  <string name="session_drawer_group_workspace">Workspace</string>
-  <string name="session_drawer_group_engines">Engines &amp; providers</string>
   <string name="session_drawer_group_system">System</string>
 </resources>

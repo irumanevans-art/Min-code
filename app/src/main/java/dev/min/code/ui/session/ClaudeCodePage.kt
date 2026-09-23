@@ -319,6 +319,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     val drawer: @Composable (paneWidth: Dp?) -> Unit = { paneWidth ->
         ClaudeCodeSessionDrawer(
             permanent = wide,
+            visible = if (wide) wideSidebarOpen else drawerState.isOpen,
             paneWidth = paneWidth,
             sessions = sessions,
             onNewSession = {

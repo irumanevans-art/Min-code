@@ -1,5 +1,16 @@
 package dev.min.code.ui.session
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.saveable.rememberSaveable
+import me.rerere.hugeicons.stroke.ArrowLeft01
+import me.rerere.hugeicons.stroke.ArrowRight01
+import me.rerere.hugeicons.stroke.DashboardSquare01
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
@@ -125,7 +136,13 @@ fun ClaudeCodeSessionDrawer(
     onOpenSettings: () -> Unit = {},
     onOpenProviders: () -> Unit = {},
     onCopyTranscript: (() -> Unit)? = null,
+    /** 抽屉此刻是否可见。关上时回到第一层；只有可见时才拦返回键（否则会吞掉主页面的返回） */
+    visible: Boolean = true,
 ) {
+    // 抽屉的两层：第一层是会话列表 + 常用入口，第二层是「系统」页
+    var systemOpen by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(visible) { if (!visible) systemOpen = false }
+    BackHandler(enabled = visible && systemOpen) { systemOpen = false }
     var pendingDelete by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
     var quickProvider by remember { mutableStateOf(false) }
     val providerName = rememberActiveProviderName()
@@ -146,7 +163,7 @@ fun ClaudeCodeSessionDrawer(
     val searching = searchQuery.isNotBlank()
 
     val scheme = MaterialTheme.colorScheme
-    val body: @Composable () -> Unit = {
+    val mainPage: @Composable () -> Unit = {
         Column(Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
@@ -248,34 +265,57 @@ fun ClaudeCodeSessionDrawer(
             }
 
             InkDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-            // 入口本身就是「点了进下一页 / 开一个面板」，不再收进折叠组里：
-            // 折起来的话最常用的 Codex、文件每次都要先点开一层才看得见
-            DrawerSection(title = stringResource(R.string.session_drawer_group_engines)) {
-                ActionRow(
-                    HugeIcons.Exchange01,
-                    stringResource(R.string.providers_title),
-                    onClick = { quickProvider = true },
-                    detail = providerName,
-                )
-                ActionRow(
-                    ImageVector.vectorResource(R.drawable.ic_codex_mark),
-                    stringResource(R.string.codex_title),
-                    onOpenCodex,
-                )
-            }
-            DrawerSection(title = stringResource(R.string.session_drawer_group_workspace)) {
-                onCopyTranscript?.let {
-                    ActionRow(HugeIcons.Copy01, stringResource(R.string.session_copy_transcript), it)
-                }
-                ActionRow(HugeIcons.Folder01, stringResource(R.string.session_drawer_files), onOpenFiles)
-                ActionRow(HugeIcons.ComputerTerminal01, stringResource(R.string.session_terminal), onOpenTerminal)
-                ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
-            }
-            DrawerSection(title = stringResource(R.string.session_drawer_group_system)) {
-                ActionRow(HugeIcons.Package, stringResource(R.string.session_drawer_maintenance), onOpenMaintenance)
-                ActionRow(HugeIcons.Settings02, stringResource(R.string.settings_title), onOpenSettings)
-            }
+            // 常用的三项直接放第一层，其余收进「系统」的下一页（DrawerSystemPage）。
+            // 一层里不再夹只起分组作用的小标题：要么直接可点，要么点进下一页
+            ActionRow(
+                HugeIcons.Exchange01,
+                stringResource(R.string.providers_title),
+                onClick = { quickProvider = true },
+                detail = providerName,
+            )
+            ActionRow(
+                ImageVector.vectorResource(R.drawable.ic_codex_mark),
+                stringResource(R.string.codex_title),
+                onOpenCodex,
+            )
+            ActionRow(HugeIcons.Folder01, stringResource(R.string.session_drawer_files), onOpenFiles)
+            ActionRow(
+                HugeIcons.DashboardSquare01,
+                stringResource(R.string.session_drawer_group_system),
+                onClick = { systemOpen = true },
+                nextPage = true,
+            )
             Spacer(Modifier.height(12.dp))
+        }
+    }
+    // 进下一页从右边推进来，回来从左边推回去
+    val body: @Composable () -> Unit = {
+        AnimatedContent(
+            targetState = systemOpen,
+            transitionSpec = {
+                val dir = if (targetState) 1 else -1
+                (slideInHorizontally(tween(260, easing = InkMotion.Ease)) { dir * it / 4 } + fadeIn(tween(220))) togetherWith
+                    (slideOutHorizontally(tween(260, easing = InkMotion.Ease)) { -dir * it / 4 } + fadeOut(tween(160)))
+            },
+            label = "drawer-page",
+        ) { inSystem ->
+            if (inSystem) {
+                // 点了某一项就回第一层：窄屏抽屉本来就会关，宽屏常驻侧栏也别一直停在这一页
+                fun pick(action: () -> Unit): () -> Unit = {
+                    systemOpen = false
+                    action()
+                }
+                DrawerSystemPage(
+                    onBack = { systemOpen = false },
+                    onCopyTranscript = onCopyTranscript?.let(::pick),
+                    onOpenTerminal = pick(onOpenTerminal),
+                    onOpenRuntime = pick(onOpenRuntime),
+                    onOpenMaintenance = pick(onOpenMaintenance),
+                    onOpenSettings = pick(onOpenSettings),
+                )
+            } else {
+                mainPage()
+            }
         }
     }
     if (permanent) {
@@ -347,19 +387,40 @@ fun ClaudeCodeSessionDrawer(
  */
 
 @Composable
-private fun DrawerSection(
-    title: String,
-    content: @Composable () -> Unit,
+private fun DrawerSystemPage(
+    onBack: () -> Unit,
+    onCopyTranscript: (() -> Unit)?,
+    onOpenTerminal: () -> Unit,
+    onOpenRuntime: () -> Unit,
+    onOpenMaintenance: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
-    // 只是一行小标题，不可点、不折叠
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            title,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 2.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        content()
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 12.dp, top = 14.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            InkIconButton(
+                icon = HugeIcons.ArrowLeft01,
+                contentDescription = stringResource(R.string.common_back),
+                onClick = onBack,
+                size = 32.dp,
+                iconSize = 18.dp,
+            )
+            SectionTitle(
+                text = stringResource(R.string.session_drawer_group_system),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        onCopyTranscript?.let {
+            ActionRow(HugeIcons.Copy01, stringResource(R.string.session_copy_transcript), it)
+        }
+        ActionRow(HugeIcons.ComputerTerminal01, stringResource(R.string.session_terminal), onOpenTerminal)
+        ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
+        ActionRow(HugeIcons.Package, stringResource(R.string.session_drawer_maintenance), onOpenMaintenance)
+        ActionRow(HugeIcons.Settings02, stringResource(R.string.settings_title), onOpenSettings)
     }
 }
 
@@ -411,6 +472,8 @@ private fun ActionRow(
     onClick: () -> Unit,
     /** 右端那一行小字。给「供应商 · 当前是谁」这种「进去之前就想知道」的入口用 */
     detail: String? = null,
+    /** 点了进下一页（而不是开面板 / 跳页面）的入口，行尾画一个箭头 */
+    nextPage: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -432,6 +495,10 @@ private fun ActionRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
+        }
+        if (nextPage) {
+            Spacer(Modifier.weight(1f))
+            Icon(HugeIcons.ArrowRight01, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

@@ -898,7 +898,5 @@
   <string name="settings_language_label">语言</string>
   <string name="settings_group_connection">连接与安装</string>
   <string name="settings_group_connection_sub">供应商、npm 源、电池</string>
-  <string name="session_drawer_group_workspace">工作区</string>
-  <string name="session_drawer_group_engines">引擎与供应商</string>
   <string name="session_drawer_group_system">系统</string>
 </resources>
