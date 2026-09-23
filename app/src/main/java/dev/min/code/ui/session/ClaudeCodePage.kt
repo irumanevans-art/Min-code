@@ -1516,54 +1516,6 @@ private fun TurnMeter(session: ClaudeCodeManager.SessionState) {
 }
 
 /**
- * 上一轮的回执：`完成 · 用时 31s · 14:54 · ↓1.2k`。
- *
- * 一轮跑完之后状态行整条消失，"刚才那次跑了多久、吐了多少"就再也无处可查 ——
- * 而这正是放下手机再拿起来时第一个想确认的事（它是刚跑完，还是早就停在这儿了）。
- */
-@Composable
-private fun TurnReceipt(session: ClaudeCodeManager.SessionState) {
-    val finishedAt = session.lastTurnFinishedAt ?: return
-    val duration = session.lastTurnDurationMs
-    val clock = remember(finishedAt) {
-        java.time.Instant.ofEpochMilli(finishedAt)
-            .atZone(java.time.ZoneId.systemDefault())
-            .toLocalTime()
-            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(
-            HugeIcons.Tick01,
-            contentDescription = null,
-            modifier = Modifier.size(12.dp),
-            tint = MaterialTheme.colorScheme.outline,
-        )
-        // 时长本身是机器产物（`31s`），只有「用时」两个字走资源
-        val tookText = duration
-            ?.let { stringResource(R.string.session_turn_took, formatDuration(it)) }
-            ?: stringResource(R.string.session_turn_done)
-        Text(
-            text = listOfNotNull(
-                tookText,
-                clock,
-                session.turnOutputTokens.takeIf { it > 0 }?.let { "↓${formatTokens(it)}" },
-            ).joinToString(" · "),
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = JetbrainsMono,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/**
  * 时长。秒级以内给整秒，超过一分钟给 `1m32s` —— 手机上这一栏只有几十 dp 宽，
  * 写成 `92 秒` 反而要在脑子里再换算一次。
  */
