@@ -928,8 +928,11 @@ class ClaudeCodeManager(
                 // 所以 busy 继续为真是对的；真没动静就交给下面的看门狗兜底。
                 val queuedNext = hasQueuedWork()
                 val errorNoteId = if (event.isError) newId() else null
-                val denialNoteId = if (event.permissionDenials.isNotEmpty()) newId() else null
-                val denialNote = formatPermissionDenialsNote(event.permissionDenials)
+                // 托管进进程表的那几条也是 deny 掉的，CLI 同样列进 permission_denials；
+                // 它们上面已经有托管结局的提示，再说一句「被权限规则拦截」就自相矛盾了
+                val denials = event.permissionDenials.filterNot { it.toolUseId in exclusiveHostedToolUses }
+                val denialNoteId = if (denials.isNotEmpty()) newId() else null
+                val denialNote = formatPermissionDenialsNote(denials)
                 _state.update {
                     it.copy(
                         busy = queuedNext,

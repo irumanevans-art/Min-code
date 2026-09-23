@@ -96,6 +96,25 @@ class ClaudeCodeManagerHostingTest {
     }
 
     @Test
+    fun `the hosting deny is not reported again as blocked by a permission rule`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.askToHost()
+            h.services.settle("svc1", LocalServiceStatus.Running)
+            h.awaitCondition("deny 发出") { answers(h.process).isNotEmpty() }
+            // CLI 把这条 deny 列进 permission_denials；另一条真被规则拦下的照常要说
+            h.process.emit(
+                """{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"num_turns":1,""" +
+                    """"result":"ok","session_id":"s","permission_denials":[""" +
+                    """{"tool_name":"Bash","tool_use_id":"$toolUseId","tool_input":{}},""" +
+                    """{"tool_name":"Write","tool_use_id":"toolu_other","tool_input":{}}]}""",
+            )
+            h.awaitTurnEnd()
+            val denialNotes = notes(h).filter { "被权限规则拦截" in it }
+            assertEquals(listOf("本轮有 1 次工具调用被权限规则拦截：Write"), denialNotes)
+        }
+    }
+
+    @Test
     fun `a service that dies at once hands the model its exit code and last output`() = runBlocking<Unit> {
         ManagerHarness("plain_reply").use { h ->
             h.askToHost()
