@@ -2,6 +2,7 @@ package me.rerere.workspace
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -552,5 +553,24 @@ class ProcessTreeKillTest {
         assertEquals(listOf(3848, 3847, 3835, 3832), result.terminated)
         assertEquals(emptyList<Int>(), result.killed)
         assertTrue("宿主必须留到 killHost 那步", File(proc, "3826").isDirectory)
+    }
+
+    /** 拿不到 pid 只是退回旧行为：树杀不了，但宿主照样得 destroy，不能连停都停不掉 */
+    @Test
+    fun `reap without a pid still destroys the host`() {
+        var destroyed = false
+        val process = object : Process() {
+            override fun getOutputStream() = java.io.OutputStream.nullOutputStream()
+            override fun getInputStream() = java.io.InputStream.nullInputStream()
+            override fun getErrorStream() = java.io.InputStream.nullInputStream()
+            override fun waitFor() = 0
+            override fun exitValue() = 0
+            override fun destroy() {
+                destroyed = true
+            }
+        }
+
+        assertNull(ProcessTreeKill.reap(process))
+        assertTrue(destroyed)
     }
 }

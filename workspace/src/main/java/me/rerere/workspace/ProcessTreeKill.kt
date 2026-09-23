@@ -204,6 +204,20 @@ object ProcessTreeKill {
         )
     }
 
+    /**
+     * 收掉一个 proot 宿主连同它整棵 guest 树：[killTree] → [killHost] → `destroy()`。
+     *
+     * `destroy()` 留在最后只为关掉三条管道，以及取不到 pid 时唯一的退路 —— 在 Android 上
+     * 它只是一发 SIGTERM（类注释「教训二」）。阻塞：扫 /proc 加两段信号宽限，调用方自己放到 IO 上。
+     * 返回 null 表示没拿到 pid（或杀树本身抛了），只做了 destroy()；否则给调用方记日志用。
+     */
+    fun reap(process: Process): Pair<Result, HostOutcome>? {
+        val pid = runCatching { pidOf(process) }.getOrNull()
+        val outcome = pid?.let { runCatching { killTree(it) to killHost(it) }.getOrNull() }
+        runCatching { process.destroy() }
+        return outcome
+    }
+
     /** [killHost] 走到的最后一步，只用于日志诊断 */
     enum class HostOutcome {
         /** 发信号前就已经不在了（被后代拖死 / 上一次 stop 已经收掉） */

@@ -41,6 +41,7 @@ import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.core.settings.sanitizedProfileEnv
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.util.LocalUrls
+import me.rerere.workspace.ProcessTreeKill
 import me.rerere.workspace.ProotShellRunner
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.RootfsPatcher
@@ -2278,8 +2279,8 @@ class ClaudeCodeManager(
             sessionMutex.withLock {
                 // ① 先把门关上，再动进程。[send] 判断"还能不能写 stdin"只看 status ——
                 //    它不是 suspend、不走 sessionMutex、也不看私有的 stopping，而 shutdown()
-                //    最坏要等 ~8 秒（GRACEFUL_EXIT_MS + 两段 destroy 宽限）。状态改在后面的话，
-                //    这 8 秒里界面还是 Running、发送键还能点，用户敲的字会被 dispatchSend
+                //    最坏要等好几秒（GRACEFUL_EXIT_MS + 杀进程树的宽限）。状态改在后面的话，
+                //    这几秒里界面还是 Running、发送键还能点，用户敲的字会被 dispatchSend
                 //    写进一个 writer 已经置 null 的进程：字节在 writeNow 里只换来一行 warn，
                 //    对话流里却留着一条看着已经发出、模型从没见过的消息 —— 静默丢消息。
                 //    先改 Starting，这段时间到达的 send 自然走 hold 分支攥在调度台上，
@@ -2759,12 +2760,16 @@ class ClaudeCodeManager(
             withContext(Dispatchers.IO) {
                 runCatching {
                     if (!proc.waitFor(GRACEFUL_EXIT_MS, TimeUnit.MILLISECONDS)) {
-                        // 自己不退才升级为 destroy，再不行才强杀
-                        proc.destroy()
-                        if (!proc.waitFor(SHUTDOWN_GRACE_MS, TimeUnit.MILLISECONDS)) {
-                            proc.destroyForcibly()
-                            proc.waitFor(SHUTDOWN_GRACE_MS, TimeUnit.MILLISECONDS)
+                        // 自己不退才动手。不能指望 destroy() / destroyForcibly()：在 Android 上
+                        // 两个都只是 SIGTERM，proot 扛得住；要先自底向上杀 guest 树再杀宿主
+                        // （ProcessTreeKill 类注释，和 Codex / 本地服务同一条路）
+                        val reaped = ProcessTreeKill.reap(proc)
+                        if (reaped == null) {
+                            Log.w(TAG, "shutdown: no host pid, fell back to destroy()")
+                        } else {
+                            Log.i(TAG, "shutdown: reaped tree=${reaped.first.tree.size} host=${reaped.second}")
                         }
+                        proc.waitFor(SHUTDOWN_GRACE_MS, TimeUnit.MILLISECONDS)
                     }
                 }
             }

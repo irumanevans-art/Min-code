@@ -664,13 +664,7 @@ class CodexAppServerManager(
      */
     private fun killAsync(doomed: Process) {
         scope.launch(NonCancellable) {
-            runCatching {
-                ProcessTreeKill.pidOf(doomed)?.let { pid ->
-                    ProcessTreeKill.killTree(pid)
-                    ProcessTreeKill.killHost(pid)
-                }
-            }.onFailure { Log.w(TAG, "杀 codex 进程树失败", it) }
-            runCatching { doomed.destroy() }
+            if (ProcessTreeKill.reap(doomed) == null) Log.w(TAG, "取不到 codex 宿主 pid，只能退回 destroy()")
         }
     }
 
