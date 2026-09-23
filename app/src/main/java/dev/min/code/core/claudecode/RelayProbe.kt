@@ -44,24 +44,13 @@ sealed interface RelayProbeResult {
 
 suspend fun probeRelay(baseUrl: String, token: String): RelayProbeResult = withContext(Dispatchers.IO) {
     if (token.isBlank()) return@withContext RelayProbeResult.NoToken
-    // joinClaudeApi 会剥掉 base 末尾的 /v1 —— 用户从 OpenAI 兼容中转抄来的地址常带着它
-    val url = joinClaudeApi(baseUrl, "/v1/models") + "?limit=1000"
     try {
-        // CLI 拿 ANTHROPIC_AUTH_TOKEN 发的是 Bearer；有的中转站只认 x-api-key，401 就换一种再试
-        val body = try {
-            relayHttpGet(url, mapOf("Authorization" to "Bearer $token"))
-        } catch (e: RelayHttpStatusException) {
-            if (e.code == 401 || e.code == 403) {
-                relayHttpGet(url, mapOf("x-api-key" to token))
-            } else {
-                throw e
-            }
-        }
+        val body = fetchRelayModelsPayload(baseUrl, token)
         RelayProbeResult.Reachable(countModels(body))
     } catch (e: RelayHttpStatusException) {
         classifyProbeHttpStatus(e.code)
     } catch (e: Exception) {
-        Log.w(TAG, "probe failed for $url", e)
+        Log.w(TAG, "probe failed for ${relayModelsUrl(baseUrl)}", e)
         RelayProbeResult.Unreachable(e.message ?: e.javaClass.simpleName)
     }
 }
@@ -90,6 +79,26 @@ private fun countModels(body: String): Int = runCatching {
 }.getOrDefault(-1)
 
 internal class RelayHttpStatusException(val code: Int, url: String) : RuntimeException("HTTP $code for $url")
+
+/** `/v1/models` 的完整 URL。[joinClaudeApi] 会剥掉 base 末尾的 /v1，避免拼成 /v1/v1/models */
+internal fun relayModelsUrl(baseUrl: String): String = joinClaudeApi(baseUrl, "/v1/models") + "?limit=1000"
+
+/**
+ * `GET /v1/models` 的公共取数：URL 拼接 + Bearer 优先、401/403 回退 x-api-key。
+ * 会话侧的模型目录（[ClaudeCodeManager.fetchRelayModels]）、探活 [probeRelay]、
+ * 供应商编辑页的 [fetchRelayModelIds] 三家共用 —— 鉴权策略变了只改这一处。
+ * token 为空的语义（抛 vs 返回 NoToken）与失败分类是各调用方自己的事，这里一律抛出。
+ */
+internal suspend fun fetchRelayModelsPayload(baseUrl: String, token: String): String =
+    withContext(Dispatchers.IO) {
+        val url = relayModelsUrl(baseUrl)
+        // CLI 拿 ANTHROPIC_AUTH_TOKEN 发的是 Bearer；有的中转站只认 x-api-key，401 就换一种再试
+        try {
+            relayHttpGet(url, mapOf("Authorization" to "Bearer $token"))
+        } catch (e: RelayHttpStatusException) {
+            if (e.code == 401 || e.code == 403) relayHttpGet(url, mapOf("x-api-key" to token)) else throw e
+        }
+    }
 
 /**
  * 中转站那几个只读端点共用的 GET。
@@ -132,14 +141,8 @@ sealed interface RelayModelsResult {
 suspend fun fetchRelayModelIds(baseUrl: String, token: String): RelayModelsResult =
     withContext(Dispatchers.IO) {
         if (token.isBlank()) return@withContext RelayModelsResult.NoToken
-        val url = joinClaudeApi(baseUrl, "/v1/models") + "?limit=1000"
         try {
-            val body = try {
-                relayHttpGet(url, mapOf("Authorization" to "Bearer $token"))
-            } catch (e: RelayHttpStatusException) {
-                if (e.code == 401 || e.code == 403) relayHttpGet(url, mapOf("x-api-key" to token)) else throw e
-            }
-            val ids = parseRelayModelIds(body)
+            val ids = parseRelayModelIds(fetchRelayModelsPayload(baseUrl, token))
             if (ids.isEmpty()) RelayModelsResult.Failed("empty") else RelayModelsResult.Ok(ids)
         } catch (e: RelayHttpStatusException) {
             when (e.code) {
@@ -148,7 +151,7 @@ suspend fun fetchRelayModelIds(baseUrl: String, token: String): RelayModelsResul
                 else -> RelayModelsResult.Failed("HTTP ${e.code}")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "model list failed for $url", e)
+            Log.w(TAG, "model list failed for ${relayModelsUrl(baseUrl)}", e)
             RelayModelsResult.Failed(e.message ?: e.javaClass.simpleName)
         }
     }
