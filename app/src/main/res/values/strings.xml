@@ -590,6 +590,8 @@
   <string name="terminal_title">Terminal</string>
   <string name="terminal_subtitle">The same Linux as the session</string>
   <string name="terminal_new_tab">New terminal tab</string>
+  <string name="terminal_auto_keyboard_on">Keyboard pops up when the terminal opens</string>
+  <string name="terminal_auto_keyboard_off">Keyboard stays down until you tap the terminal</string>
   <string name="terminal_close_title">Close %1$s?</string>
   <string name="terminal_close_body">Whatever is running in the tab will be killed.</string>
   <string name="terminal_close">Close</string>

@@ -3,6 +3,7 @@ package dev.min.code.ui.terminal
 import android.graphics.Typeface
 import android.graphics.Color as AndroidColor
 import android.view.MotionEvent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -80,6 +81,7 @@ import dev.min.code.ui.theme.sea
 import kotlinx.coroutines.flow.flowOf
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Cancel01
+import me.rerere.hugeicons.stroke.Keyboard
 import me.rerere.hugeicons.stroke.PlusSign
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -98,6 +100,8 @@ fun WorkspaceTerminalPage(id: String) {
         initialValue = WorkspaceTerminalTabsState(),
     )
     var pendingCloseTabId by remember(root) { mutableStateOf<Long?>(null) }
+    // 设置读回来之前是 null：先不摆终端，免得按默认值弹一次键盘
+    val autoKeyboard by sessionManager.autoShowKeyboard.collectAsStateWithLifecycle(initialValue = null)
 
     LaunchedEffect(root) {
         root?.let { sessionManager.ensureSession(it) }
@@ -113,6 +117,7 @@ fun WorkspaceTerminalPage(id: String) {
                         ?: stringResource(R.string.workspace_terminal_title),
                     navigationIcon = { BackButton() },
                     actions = {
+                        autoKeyboard?.let { TerminalKeyboardToggle(it, sessionManager::setAutoShowKeyboard) }
                         val newTabDescription = stringResource(R.string.workspace_terminal_new_tab)
                         // 新开一个标签是"人"的动作：金
                         InkIconButton(
@@ -131,17 +136,20 @@ fun WorkspaceTerminalPage(id: String) {
             },
             containerColor = MaterialTheme.colorScheme.background,
         ) { innerPadding ->
-            WorkspaceTerminalContent(
-                root = root,
-                state = terminalState,
-                contentPadding = innerPadding,
-                onSelectTab = { tabId ->
-                    root?.let { sessionManager.selectTab(it, tabId) }
-                },
-                onCloseTab = { tabId ->
-                    pendingCloseTabId = tabId
-                },
-            )
+            autoKeyboard?.let { auto ->
+                WorkspaceTerminalContent(
+                    root = root,
+                    state = terminalState,
+                    contentPadding = innerPadding,
+                    onSelectTab = { tabId ->
+                        root?.let { sessionManager.selectTab(it, tabId) }
+                    },
+                    onCloseTab = { tabId ->
+                        pendingCloseTabId = tabId
+                    },
+                    autoShowKeyboard = auto,
+                )
+            }
         }
 
         val pendingCloseTab = terminalState.tabs.firstOrNull { it.id == pendingCloseTabId }
@@ -182,6 +190,30 @@ fun WorkspaceTerminalPage(id: String) {
 private enum class TerminalPhase { Loading, Empty, Content }
 
 /**
+ * 终端顶栏上「打开时自动弹键盘」的开关。独立页和会话页的终端浮层共用。
+ * 开着是海色、关着是淡墨；图标看不出是开是关，所以每次切换都用一句 toast 说清现在是哪样。
+ */
+@Composable
+internal fun TerminalKeyboardToggle(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    val on = stringResource(R.string.terminal_auto_keyboard_on)
+    val off = stringResource(R.string.terminal_auto_keyboard_off)
+    InkIconButton(
+        icon = HugeIcons.Keyboard,
+        contentDescription = if (enabled) on else off,
+        onClick = {
+            onToggle(!enabled)
+            Toast.makeText(context, if (enabled) off else on, Toast.LENGTH_SHORT).show()
+        },
+        tint = if (enabled) {
+            MaterialTheme.sea.seaDeep
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+        },
+    )
+}
+
+/**
  * 终端本体：页签条 + 一块 [TerminalView]。独立页（[WorkspaceTerminalPage]）和会话页上那个
  * 浮层（`ClaudeCodeTerminalSheet`）共用这一份 —— 两处必须是同一个终端，
  * 不然"从哪儿点开的"会变成两种体验。
@@ -193,6 +225,8 @@ internal fun WorkspaceTerminalContent(
     contentPadding: PaddingValues,
     onSelectTab: (Long) -> Unit,
     onCloseTab: (Long) -> Unit,
+    /** 打开时自动弹键盘；关掉就等用户点终端再弹（[TerminalKeyboardToggle]） */
+    autoShowKeyboard: Boolean,
 ) {
     val phase = when {
         root != null && state.tabs.isNotEmpty() -> TerminalPhase.Content
@@ -315,6 +349,7 @@ internal fun WorkspaceTerminalContent(
                         }
                         WorkspaceTerminalTabContent(
                             tab = selectedTab,
+                            autoShowKeyboard = autoShowKeyboard,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth(),
@@ -329,6 +364,7 @@ internal fun WorkspaceTerminalContent(
 @Composable
 private fun WorkspaceTerminalTabContent(
     tab: WorkspaceTerminalTab,
+    autoShowKeyboard: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -378,8 +414,8 @@ private fun WorkspaceTerminalTabContent(
                             }
                             false
                         }
-                        post {
-                            viewClient.focusAndShowKeyboard()
+                        if (autoShowKeyboard) {
+                            post { viewClient.focusAndShowKeyboard() }
                         }
                     }
                 },

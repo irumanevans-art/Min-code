@@ -36,6 +36,7 @@ import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.files.WorkspaceDetailVM
+import dev.min.code.ui.terminal.TerminalKeyboardToggle
 import dev.min.code.ui.terminal.WorkspaceTerminalContent
 import dev.min.code.ui.terminal.WorkspaceTerminalSessionManager
 import dev.min.code.ui.terminal.WorkspaceTerminalTabsState
@@ -85,6 +86,8 @@ fun ClaudeCodeTerminalSheet(
     val terminalState by terminalStateFlow.collectAsStateWithLifecycle(
         initialValue = WorkspaceTerminalTabsState(),
     )
+    // 设置读回来之前是 null：先不摆终端，免得按默认值弹一次键盘
+    val autoKeyboard by sessionManager.autoShowKeyboard.collectAsStateWithLifecycle(initialValue = null)
     var pendingCloseTabId by remember(root) { mutableStateOf<Long?>(null) }
 
     // 在跑的会话各开一个页签。一个都没在跑（全是历史会话）时退回一个普通页签，
@@ -138,6 +141,7 @@ fun ClaudeCodeTerminalSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
+                autoKeyboard?.let { TerminalKeyboardToggle(it, sessionManager::setAutoShowKeyboard) }
                 // 新开一个标签是"人"的动作：金
                 InkIconButton(
                     icon = HugeIcons.PlusSign,
@@ -151,13 +155,16 @@ fun ClaudeCodeTerminalSheet(
             // 终端必须先有一个确定的高度，TerminalView 才算得出行列数。
             val screenHeight = LocalConfiguration.current.screenHeightDp.dp
             Box(Modifier.fillMaxWidth().height(screenHeight * TERMINAL_SHEET_HEIGHT_RATIO)) {
-                WorkspaceTerminalContent(
-                    root = root,
-                    state = terminalState,
-                    contentPadding = PaddingValues(0.dp),
-                    onSelectTab = { tabId -> root?.let { sessionManager.selectTab(it, tabId) } },
-                    onCloseTab = { tabId -> pendingCloseTabId = tabId },
-                )
+                autoKeyboard?.let { auto ->
+                    WorkspaceTerminalContent(
+                        root = root,
+                        state = terminalState,
+                        contentPadding = PaddingValues(0.dp),
+                        onSelectTab = { tabId -> root?.let { sessionManager.selectTab(it, tabId) } },
+                        onCloseTab = { tabId -> pendingCloseTabId = tabId },
+                        autoShowKeyboard = auto,
+                    )
+                }
             }
         }
     }

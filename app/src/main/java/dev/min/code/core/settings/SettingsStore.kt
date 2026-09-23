@@ -51,6 +51,7 @@ private val KEY_GUEST_CONFIG_SECRETS = booleanPreferencesKey("guest_config_secre
 private val KEY_INJECT_SHELL_CREDENTIALS = booleanPreferencesKey("inject_shell_credentials")
 private val KEY_SHARE_DEVICE_STORAGE = booleanPreferencesKey("share_device_storage")
 private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
+private val KEY_TERMINAL_AUTO_KEYBOARD = booleanPreferencesKey("terminal_auto_keyboard")
 /** 上一次由我们写进 settings.json 的那些 env 键。是记账，不是配置，见 [SettingsStore.setManagedEnvKeys] */
 private val KEY_MANAGED_ENV_KEYS = stringSetPreferencesKey("managed_env_keys")
 
@@ -264,6 +265,11 @@ data class AppSettings(
      */
     val controlDevice: Boolean = false,
     /**
+     * 打开终端时自动弹出键盘（终端顶栏上的开关）。关掉后只看输出不遮半屏；
+     * 点一下终端照样弹。默认开，和以前一样。
+     */
+    val terminalAutoKeyboard: Boolean = true,
+    /**
      * 上一次由我们写进 settings.json 的那些 env 键。
      *
      * 记账用，不是给人看的配置：下一次同步只删 / 改这些键，用户自己或 CLI 写的一律不动。
@@ -454,6 +460,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
             shareDeviceStorage = p[KEY_SHARE_DEVICE_STORAGE] ?: false,
             controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
+            terminalAutoKeyboard = p[KEY_TERMINAL_AUTO_KEYBOARD] ?: true,
             managedEnvKeys = p[KEY_MANAGED_ENV_KEYS].orEmpty(),
             credentialsUnreadable = credentialsUnreadable(p),
         )
@@ -775,6 +782,9 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setInjectCredentialsIntoShells(enabled: Boolean) =
         context.dataStore.edit { it[KEY_INJECT_SHELL_CREDENTIALS] = enabled }
+
+    suspend fun setTerminalAutoKeyboard(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_TERMINAL_AUTO_KEYBOARD] = enabled }
 
     suspend fun setShareDeviceStorage(enabled: Boolean) =
         context.dataStore.edit { it[KEY_SHARE_DEVICE_STORAGE] = enabled }

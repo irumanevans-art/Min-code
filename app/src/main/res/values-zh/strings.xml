@@ -587,6 +587,8 @@
   <string name="terminal_title">终端</string>
   <string name="terminal_subtitle">与会话同一个 Linux</string>
   <string name="terminal_new_tab">新建终端标签</string>
+  <string name="terminal_auto_keyboard_on">打开终端时自动弹出键盘</string>
+  <string name="terminal_auto_keyboard_off">打开终端时不弹键盘，点一下终端再弹</string>
   <string name="terminal_close_title">关闭 %1$s？</string>
   <string name="terminal_close_body">标签里正在跑的命令会被终止。</string>
   <string name="terminal_close">关闭</string>

@@ -40,6 +40,14 @@ class WorkspaceTerminalSessionManager internal constructor(
     private val nextTabId = AtomicLong(1)
     private val creationJobs = mutableMapOf<String, Job>()
 
+    /** 打开终端时要不要自动弹键盘（终端顶栏的开关）；点终端本身照样弹 */
+    internal val autoShowKeyboard: Flow<Boolean> =
+        settingsStore.settings.map { it.terminalAutoKeyboard }.distinctUntilChanged()
+
+    internal fun setAutoShowKeyboard(enabled: Boolean) {
+        appScope.launch { settingsStore.setTerminalAutoKeyboard(enabled) }
+    }
+
     internal fun observeWorkspace(root: String): Flow<WorkspaceTerminalTabsState> =
         workspaceStates
             .map { states -> states[root] ?: WorkspaceTerminalTabsState() }
