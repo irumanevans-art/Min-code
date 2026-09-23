@@ -1,6 +1,7 @@
 package dev.min.code.core.claudecode
 
 import dev.min.code.core.network.NetworkSnapshot
+import dev.min.code.core.persist.atomicWriteText
 import java.io.File
 
 /**
@@ -62,12 +63,7 @@ object GuestRuntimeDocs {
             val scrubbed = stripFence(existing, LEGACY_BLOCK_START, LEGACY_BLOCK_END)
             val next = upsertBlock(scrubbed, block)
             if (next == existing) return false
-            val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.writeText(next)
-            if (!tmp.renameTo(file)) {
-                file.writeText(next)
-                tmp.delete()
-            }
+            file.atomicWriteText(next)
             true
         }.getOrDefault(false)
     }

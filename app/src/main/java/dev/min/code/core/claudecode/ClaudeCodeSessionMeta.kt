@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import dev.min.code.core.persist.atomicWriteText
 import java.io.File
 
 /**
@@ -74,13 +75,7 @@ class ClaudeCodeSessionMetaStore(private val file: File) {
     }
 
     private fun write(map: Map<String, SessionMeta>) {
-        file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(encodeSessionMetaIndex(map))
-        if (!tmp.renameTo(file)) {
-            tmp.copyTo(file, overwrite = true)
-            tmp.delete()
-        }
+        file.atomicWriteText(encodeSessionMetaIndex(map))
     }
 
     private companion object {

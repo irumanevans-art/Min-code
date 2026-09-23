@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
+import dev.min.code.core.persist.atomicWriteText
 import java.io.File
 import java.util.Base64
 
@@ -140,14 +141,8 @@ class ComposerDraftStore(private val root: File) {
     }
 
     private fun writeIndex(index: DraftIndex) {
-        root.mkdirs()
         val file = File(root, STATE)
-        val tmp = File(root, "$STATE.tmp")
-        tmp.writeText(encodeDraftIndex(index))
-        if (!tmp.renameTo(file)) {
-            tmp.copyTo(file, overwrite = true)
-            tmp.delete()
-        }
+        file.atomicWriteText(encodeDraftIndex(index))
     }
 
     private fun imageDir(sessionId: String) = File(root, "img/${sessionId.toSafeName()}")

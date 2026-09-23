@@ -1,6 +1,7 @@
 package dev.min.code.core.codex
 
 import java.io.File
+import dev.min.code.core.persist.atomicWriteText
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,16 +56,10 @@ class CodexDraftStore(private val file: File) {
     }
 
     private fun write(drafts: Map<String, String>) {
-        file.parentFile?.mkdirs()
         val root = buildJsonObject {
             put("drafts", buildJsonObject { drafts.forEach { (key, text) -> put(key, text) } })
         }
-        val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(root.toString())
-        if (!tmp.renameTo(file)) {
-            tmp.copyTo(file, overwrite = true)
-            tmp.delete()
-        }
+        file.atomicWriteText(root.toString())
         _drafts.value = drafts
     }
 }

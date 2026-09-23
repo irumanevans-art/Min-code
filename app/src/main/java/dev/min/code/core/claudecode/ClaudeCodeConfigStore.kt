@@ -12,6 +12,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import dev.min.code.core.persist.atomicWriteText
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
 import java.io.File
@@ -334,13 +335,7 @@ class ClaudeCodeConfigStore(
      * 下次启动 CLI 直接起不来。
      */
     private fun writeJson(file: File, value: JsonObject): Boolean = runCatching {
-        file.parentFile?.mkdirs()
-        val temp = File(file.parentFile, "${file.name}.tmp")
-        temp.writeText(PRETTY.encodeToString(JsonObject.serializer(), value))
-        if (!temp.renameTo(file)) {
-            file.writeText(temp.readText())
-            temp.delete()
-        }
+        file.atomicWriteText(PRETTY.encodeToString(JsonObject.serializer(), value))
         true
     }.onFailure { Log.w(TAG, "writeJson failed for ${file.name}", it) }.getOrDefault(false)
 
