@@ -1517,9 +1517,26 @@ class ClaudeCodeManager(
         allow: Boolean,
         denyMessage: String? = null,
         suggestion: PermissionSuggestion? = null,
-    ) {
-        val pending = _state.value.pendingPermission ?: return
-        _state.update { it.copy(pendingPermission = null) }
+        /**
+         * 通知按钮带着它：只应答这一条。通知是按会话发的，按下去的那一刻挂着的可能已经换成了
+         * 另一条请求 —— 不核对的话，用户看着「请求使用 Read」点了允许，放行的却是一条没见过的 Bash。
+         */
+        expectedRequestId: String? = null,
+    ): Boolean {
+        // 取走和清空是一步：App 里的 sheet 和通知按钮同时应答时，只有一边拿得到，
+        // 不会对同一条请求回两次。update 的 lambda 可能重跑，taken 以最后一次为准
+        var taken: ClaudeCodeEvent.PermissionRequest? = null
+        _state.update { st ->
+            val p = st.pendingPermission
+            if (p == null || (expectedRequestId != null && p.requestId != expectedRequestId)) {
+                taken = null
+                st
+            } else {
+                taken = p
+                st.copy(pendingPermission = null)
+            }
+        }
+        val pending = taken ?: return false
         writeLine(
             encodeClaudeCodePermissionResponse(
                 requestId = pending.requestId,
@@ -1531,6 +1548,7 @@ class ClaudeCodeManager(
         if (allow && suggestion != null) {
             appendItem(ChatItem.Note(newId(), "已记住：${suggestion.label}"))
         }
+        return true
     }
 
     /**

@@ -63,13 +63,17 @@ class ClaudeCodeSessionSupervisor(
      * 主线程且要遍历 keys。普通 mutableMap 在这两者之间会抛 ConcurrentModificationException，
      * 而且是"切回 App 的瞬间偶发崩溃"这种最难复现的形态。
      */
-    private data class Seen(
+    /** 一个 Claude 会话的上一帧观察。判定在 [claudeSupervisorDiff]，这里只存 */
+    internal data class ClaudeSeen(
         val busy: Boolean,
+        val pendingId: String?,
         val pendingTool: String?,
         val status: SessionStatus,
+        val isLive: Boolean,
+        val errorMessage: String?,
     )
 
-    private val seen = ConcurrentHashMap<String, Seen>()
+    private val seen = ConcurrentHashMap<String, ClaudeSeen>()
 
     init {
         appScope.launch {
@@ -124,58 +128,52 @@ class ClaudeCodeSessionSupervisor(
     }
 
     private fun diff(session: ClaudeCodeSessionRegistry.LiveSession) {
-        val previous = seen[session.key]
-        seen[session.key] = Seen(session.busy, session.pendingPermissionTool, session.status)
-
-        // --- 等待审批 -------------------------------------------------------
-        val tool = session.pendingPermissionTool
-        if (tool != null && previous?.pendingTool == null) {
-            if (!isForeground.value) notifyPermission(session.key, tool)
-        } else if (tool == null && previous?.pendingTool != null) {
-            // 已经在别处应答了（App 内 sheet、或通知按钮），撤掉提醒
-            context.cancelNotification(permissionNotificationId(session.key))
-        }
-
-        if (isForeground.value) return
-        if (previous == null) return
-
-        // --- 一轮跑完 -------------------------------------------------------
-        if (previous.busy && !session.busy && session.isLive) {
-            context.sendNotification(
-                channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
-                notificationId = doneNotificationId(session.key),
-            ) {
-                title = "Claude Code"
-                content = "任务已完成"
-                autoCancel = true
-                useDefaults = true
-                category = NotificationCompat.CATEGORY_MESSAGE
-                contentIntent = openClaudeCodePageIntent(context)
-            }
-        }
-
-        // --- 会话挂了 -------------------------------------------------------
-        val died = previous.status != session.status &&
-            (session.status == SessionStatus.Failed ||
-                session.status == SessionStatus.Closed)
-        if (died) {
-            context.cancelNotification(permissionNotificationId(session.key))
-            context.sendNotification(
-                channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
-                notificationId = doneNotificationId(session.key),
-            ) {
-                title = "Claude Code 会话已结束"
-                content = session.errorMessage?.take(160) ?: "进程已退出"
-                autoCancel = true
-                useDefaults = true
-                useBigTextStyle = true
-                category = NotificationCompat.CATEGORY_ERROR
-                contentIntent = openClaudeCodePageIntent(context)
+        val current = ClaudeSeen(
+            busy = session.busy,
+            pendingId = session.pendingPermissionId,
+            pendingTool = session.pendingPermissionTool,
+            status = session.status,
+            isLive = session.isLive,
+            errorMessage = session.errorMessage,
+        )
+        val previous = seen.put(session.key, current)
+        for (event in claudeSupervisorDiff(previous, current, isForeground.value)) {
+            when (event) {
+                is ClaudeSupervisorEvent.Permission -> notifyPermission(session.key, event.tool, event.requestId)
+                // 已经在别处应答了（App 内 sheet、或通知按钮），撤掉提醒
+                ClaudeSupervisorEvent.PermissionCleared ->
+                    context.cancelNotification(permissionNotificationId(session.key))
+                ClaudeSupervisorEvent.TurnDone -> context.sendNotification(
+                    channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
+                    notificationId = doneNotificationId(session.key),
+                ) {
+                    title = "Claude Code"
+                    content = "任务已完成"
+                    autoCancel = true
+                    useDefaults = true
+                    category = NotificationCompat.CATEGORY_MESSAGE
+                    contentIntent = openClaudeCodePageIntent(context)
+                }
+                is ClaudeSupervisorEvent.Died -> {
+                    context.cancelNotification(permissionNotificationId(session.key))
+                    context.sendNotification(
+                        channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
+                        notificationId = doneNotificationId(session.key),
+                    ) {
+                        title = "Claude Code 会话已结束"
+                        content = event.message?.take(160) ?: "进程已退出"
+                        autoCancel = true
+                        useDefaults = true
+                        useBigTextStyle = true
+                        category = NotificationCompat.CATEGORY_ERROR
+                        contentIntent = openClaudeCodePageIntent(context)
+                    }
+                }
             }
         }
     }
 
-    private fun notifyPermission(key: String, tool: String) {
+    private fun notifyPermission(key: String, tool: String, requestId: String) {
         context.sendNotification(
             channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
             notificationId = permissionNotificationId(key),
@@ -188,8 +186,8 @@ class ClaudeCodeSessionSupervisor(
             useDefaults = true
             category = NotificationCompat.CATEGORY_CALL
             contentIntent = openClaudeCodePageIntent(context)
-            addAction("允许", ClaudeCodePermissionReceiver.intent(context, key, allow = true))
-            addAction("拒绝", ClaudeCodePermissionReceiver.intent(context, key, allow = false))
+            addAction("允许", ClaudeCodePermissionReceiver.intent(context, key, requestId, allow = true))
+            addAction("拒绝", ClaudeCodePermissionReceiver.intent(context, key, requestId, allow = false))
         }
     }
 
@@ -314,20 +312,27 @@ class ClaudeCodePermissionReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_ANSWER) return
         val key = intent.getStringExtra(EXTRA_SESSION_KEY) ?: return
         val allow = intent.getBooleanExtra(EXTRA_ALLOW, false)
+        // 升级前发出的通知没有这一项，按旧行为应答当前那条
+        val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
         val registry: ClaudeCodeSessionRegistry by inject(ClaudeCodeSessionRegistry::class.java)
-        registry.answerPermission(key, allow)
-        context.cancelNotification(PERMISSION_NOTIFICATION_BASE + (stableKeyInt(key) and KEY_MASK_19))
+        // 挂着的已经换成另一条了就什么都不做：不应答，也**不撤通知** —— 通知 id 按会话算，
+        // 这时状态栏上的已经是新那条的提醒（监督器看到 id 变了会重发），撤掉就等于把它也吞了
+        if (registry.answerPermission(key, allow, requestId)) {
+            context.cancelNotification(PERMISSION_NOTIFICATION_BASE + (stableKeyInt(key) and KEY_MASK_19))
+        }
     }
 
     companion object {
         private const val ACTION_ANSWER = "dev.min.code.action.CLAUDE_CODE_ANSWER_PERMISSION"
         private const val EXTRA_SESSION_KEY = "session_key"
         private const val EXTRA_ALLOW = "allow"
+        private const val EXTRA_REQUEST_ID = "request_id"
 
-        fun intent(context: Context, key: String, allow: Boolean): PendingIntent {
+        fun intent(context: Context, key: String, requestId: String, allow: Boolean): PendingIntent {
             val intent = Intent(context, ClaudeCodePermissionReceiver::class.java).apply {
                 action = ACTION_ANSWER
                 putExtra(EXTRA_SESSION_KEY, key)
+                putExtra(EXTRA_REQUEST_ID, requestId)
                 putExtra(EXTRA_ALLOW, allow)
             }
             return PendingIntent.getBroadcast(
@@ -373,6 +378,42 @@ internal sealed interface CodexSupervisorEvent {
 
     /** app-server 进程退出（Failed = 异常退出，Closed = 用户停的，同 Claude 一并提醒） */
     data class Died(val message: String?) : CodexSupervisorEvent
+}
+
+/** [claudeSupervisorDiff] 判出来的事。一次观察可能同时有好几件（比如审批撤了、会话也挂了） */
+internal sealed interface ClaudeSupervisorEvent {
+    /** 来了一条（或换了一条）待批请求，后台时提醒 */
+    data class Permission(val tool: String, val requestId: String) : ClaudeSupervisorEvent
+    /** 待批请求没了（已在别处应答），撤提醒 —— 前台也要撤 */
+    data object PermissionCleared : ClaudeSupervisorEvent
+    data object TurnDone : ClaudeSupervisorEvent
+    data class Died(val message: String?) : ClaudeSupervisorEvent
+}
+
+/**
+ * Claude 会话的通知边沿判定，和 [codexSupervisorDiff] 同一套前台规则，抽成纯函数好钉单测。
+ *
+ * 待批请求比的是 id「换了没有」而不是「有没有」：A 应答完、B 紧接着到，而 liveSessions 的收集
+ * 是合并的，中间那一帧 null 可能根本看不到。以前只比「有没有」，状态栏上就一直挂着
+ * 「请求使用 A」，按钮按下去应答的却是 B。
+ */
+internal fun claudeSupervisorDiff(
+    previous: ClaudeCodeSessionSupervisor.ClaudeSeen?,
+    current: ClaudeCodeSessionSupervisor.ClaudeSeen,
+    isForeground: Boolean,
+): List<ClaudeSupervisorEvent> = buildList {
+    if (current.pendingId != null && current.pendingId != previous?.pendingId) {
+        if (!isForeground) add(ClaudeSupervisorEvent.Permission(current.pendingTool.orEmpty(), current.pendingId))
+    } else if (current.pendingId == null && previous?.pendingId != null) {
+        add(ClaudeSupervisorEvent.PermissionCleared)
+    }
+    if (isForeground || previous == null) return@buildList
+
+    if (previous.busy && !current.busy && current.isLive) add(ClaudeSupervisorEvent.TurnDone)
+
+    val died = previous.status != current.status &&
+        (current.status == SessionStatus.Failed || current.status == SessionStatus.Closed)
+    if (died) add(ClaudeSupervisorEvent.Died(current.errorMessage))
 }
 
 /**

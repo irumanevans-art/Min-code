@@ -58,6 +58,8 @@ class ClaudeCodeSessionRegistry(
          * 天荒地老 —— 用户以为任务还在跑，实际上它在等一次点击。
          */
         val pendingPermissionTool: String? = null,
+        /** 那条待批请求的 id。通知按它判断「是不是换了一条」，按钮也带着它去应答 */
+        val pendingPermissionId: String? = null,
         /** 顶栏那句实时状态（detail 优先，退回 phase），进通知副标题 */
         val statusText: String? = null,
         val errorMessage: String? = null,
@@ -147,6 +149,7 @@ class ClaudeCodeSessionRegistry(
                     isActive = key == active,
                     cwd = st.cwd,
                     pendingPermissionTool = st.pendingPermission?.toolName,
+                    pendingPermissionId = st.pendingPermission?.requestId,
                     statusText = st.statusDetail ?: st.statusPhase,
                     errorMessage = st.errorMessage,
                     liveTitle = st.liveTitle,
@@ -181,9 +184,13 @@ class ClaudeCodeSessionRegistry(
     /**
      * 从通知应答权限请求。找不到会话（已退出/已回收）时静默忽略：通知可能比进程活得久。
      */
-    fun answerPermission(key: String, allow: Boolean) {
-        get(key)?.answerPermission(allow = allow, denyMessage = if (allow) null else "用户在通知里拒绝")
-    }
+    /** 从通知里应答。[requestId] 对不上当前挂着的那条就不应答，返回 false（见 ClaudeCodeManager.answerPermission） */
+    fun answerPermission(key: String, allow: Boolean, requestId: String?): Boolean =
+        get(key)?.answerPermission(
+            allow = allow,
+            denyMessage = if (allow) null else "用户在通知里拒绝",
+            expectedRequestId = requestId,
+        ) == true
 
     /** 当前活跃的 manager；没有就返回 null（UI 应先 newSession） */
     fun active(): ClaudeCodeManager? = _activeKey.value?.let { synchronized(managers) { managers[it] } }
