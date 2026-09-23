@@ -513,6 +513,7 @@ private fun ConversationPreview(
                             scope.launch { delay(50); list.animateScrollToItem(5 + messages.lastIndex) }
                         },
                         onInterrupt = {},
+                        onRunShell = { command -> messages = messages + "!$command" },
                         onSetModel = { model, _ -> onSession(session.copy(model = model, options = session.options.copy(model = model))) },
                         onSetPermissionMode = { onSession(session.copy(permissionMode = it)) },
                         onApplyEffort = { effort, ultra -> onSession(session.copy(options = session.options.copy(effort = effort, ultracode = ultra))) },

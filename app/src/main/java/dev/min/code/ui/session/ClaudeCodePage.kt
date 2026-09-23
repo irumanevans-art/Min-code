@@ -1312,6 +1312,10 @@ private fun SessionContent(
                     val boundId = activeKey
                     ClaudeCodeInputBar(
                         session = session,
+                        onRunShell = { command ->
+                            followTail = true
+                            vm.runShell(command)
+                        },
                         onSend = { text, images ->
                             followTail = true
                             vm.send(text, images)

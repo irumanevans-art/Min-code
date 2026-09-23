@@ -20,6 +20,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.contentOrNull
 import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.crash.CrashRecorder
@@ -88,7 +90,7 @@ class ClaudeCodeManager(
      * 改写成 `http://127.0.0.1:…`，由它把请求转成上游听得懂的形状。null = 不路由
      * （测试里常见），那时非原生方言会直连上游——多半 404，但这是测试自己的选择。
      */
-    relay: RelayController? = null,
+    private val relay: RelayController? = null,
     /** 起进程的那半段。线上就是 proot；单测换成假进程，见 [ClaudeCodeLauncher] */
     private val launcher: ClaudeCodeLauncher = ProotClaudeCodeLauncher(
         context, workspaceRepository, settingsStore, installer, networkProbe, relay,
@@ -441,7 +443,15 @@ class ClaudeCodeManager(
         val text: String,
         val images: List<ClaudeCodeImage>,
         val label: String,
-    )
+        /** 之前 `!` 命令攒下的输入输出，附在这条前面交给模型（见 UserShell.kt）；界面上不显示 */
+        val shellContext: String = "",
+    ) {
+        /** 真正写进 stdin 的正文 */
+        val wireText: String get() = if (shellContext.isEmpty()) text else "$shellContext\n\n$text"
+    }
+
+    /** `!` 命令跑完攒下的上下文，等下一条消息带走 */
+    private val shellContext = StringBuilder()
 
     /** 追加消息的调度台。两格的含义、以及为什么是交棒而不是攥着，见 [ClaudeCodeSendQueue] */
     private val sendQueue = ClaudeCodeSendQueue<PendingSend>()
@@ -504,6 +514,8 @@ class ClaudeCodeManager(
             sessionMutex.withLock {
                 shutdown()
                 titleGenerationAttemptedFor = null
+                // 上一个会话里 `!` 攒下的输出不能带进新会话
+                takeShellContext()
                 _state.value = SessionState(
                     status = SessionStatus.Starting,
                     options = options,
@@ -1054,13 +1066,13 @@ class ClaudeCodeManager(
             images.isNotEmpty() -> "[${images.size} 张图片]"
             else -> trimmed
         }
-        val pending = PendingSend(newId(), trimmed, images, label)
         // 已经关掉 / 起不来的会话没有 stdin 可写。文本不能就这么吞掉 —— 原样退回输入框，
         // 用户改改还能在下一个会话里发出去
         if (current.status != SessionStatus.Running && current.status != SessionStatus.Starting) {
-            emitWithdrawn(pending.toComposerDraft())
+            emitWithdrawn(PendingSend(newId(), trimmed, images, label).toComposerDraft())
             return
         }
+        val pending = PendingSend(newId(), trimmed, images, label, takeShellContext())
         if (current.status != SessionStatus.Running) {
             // 启动中打的字：攥着，握手把 cwd 切好之后再发（handshake 末尾 flushPendingSend）
             sendQueue.hold(pending)
@@ -1112,7 +1124,7 @@ class ClaudeCodeManager(
                 },
             )
         }
-        writeLine(encodeClaudeCodeUserMessage(pending.text, pending.images))
+        writeLine(encodeClaudeCodeUserMessage(pending.wireText, pending.images))
     }
 
     /** 还有没有没被模型看见的消息（攥在手里的 + 交棒了还没确认插入的） */
@@ -1120,7 +1132,7 @@ class ClaudeCodeManager(
 
     /** 交棒：帧写进 stdin，副本留在调度台上等 CLI 确认 */
     private fun handOff(pending: PendingSend) {
-        sendQueue.handOff(pending) { writeLine(encodeClaudeCodeUserMessage(it.text, it.images)) }
+        sendQueue.handOff(pending) { writeLine(encodeClaudeCodeUserMessage(it.wireText, it.images)) }
     }
 
     /**
@@ -1519,6 +1531,67 @@ class ClaudeCodeManager(
         }
         // 输入框是「接在已有内容前面」（见 ClaudeCodeInputBar），倒着发才保得住原来的先后
         stranded.asReversed().forEach { emitWithdrawn(it.toComposerDraft()) }
+        // 它们从没写出去过：带着的 `!` 输出放回去，等用户重发时再带走
+        stashShellContext(stranded.joinToString("\n") { it.shellContext }.trim())
+    }
+
+    /**
+     * 输入框里的 `!` 命令：Min 自己在 rootfs 里跑，不经模型。结果贴成一张 Bash 卡，
+     * 输入输出攒着跟下一条消息一起交给模型（见 UserShell.kt）。会话没起来也能跑。
+     */
+    fun runShell(command: String) {
+        val cardId = "min-shell-${newId()}"
+        appendItem(ChatItem.UserText(newId(), "!$command"))
+        appendItem(
+            ChatItem.ToolCall(
+                id = newId(),
+                toolUseId = cardId,
+                name = TOOL_BASH,
+                input = buildJsonObject {
+                    put("command", command)
+                    put("description", "! 本地运行，不经模型")
+                },
+                status = ChatItem.ToolCall.Status.Running,
+            ),
+        )
+        val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
+        scope.launch {
+            val run = runCatching {
+                runUserShell(
+                    workspaceRepository = workspaceRepository,
+                    workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString(),
+                    settingsStore = settingsStore,
+                    relay = relay,
+                    cwd = cwd,
+                    command = command,
+                )
+            }.getOrElse { e -> UserShellRun(command, exitCode = -1, stdout = "", stderr = e.message ?: e.toString()) }
+            stashShellContext(userShellContext(run))
+            val failed = run.exitCode != 0 || run.timedOut
+            _state.update { state ->
+                state.copy(
+                    items = state.items.mapToolCall(cardId) {
+                        it.copy(
+                            status = if (failed) ChatItem.ToolCall.Status.Error else ChatItem.ToolCall.Status.Done,
+                            result = userShellCardResult(run).take(MAX_RESULT_CHARS),
+                            isError = failed,
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    private fun stashShellContext(block: String) {
+        if (block.isBlank()) return
+        synchronized(shellContext) {
+            if (shellContext.isNotEmpty()) shellContext.append('\n')
+            shellContext.append(block)
+        }
+    }
+
+    private fun takeShellContext(): String = synchronized(shellContext) {
+        shellContext.toString().also { shellContext.setLength(0) }
     }
 
     fun stopSession() {

@@ -75,6 +75,7 @@ import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
 import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ComposerDraft
+import dev.min.code.core.claudecode.userShellCommand
 import dev.min.code.core.claudecode.DraftAttachment
 import dev.min.code.core.claudecode.DraftImage
 import dev.min.code.core.claudecode.formatUsd
@@ -116,6 +117,8 @@ internal fun ClaudeCodeInputBar(
     session: ClaudeCodeManager.SessionState,
     onSend: (String, List<ClaudeCodeImage>) -> Unit,
     onInterrupt: () -> Unit,
+    /** `!` 开头的一行：Min 自己在 rootfs 里跑，不经模型（见 UserShell.kt） */
+    onRunShell: (String) -> Unit,
     /** (模型, 是否同时存成新会话默认)。`/model <名字>` 与 CLI 一致按「存成默认」处理 */
     onSetModel: (String?, Boolean) -> Unit,
     onSetPermissionMode: (ClaudeCodePermissionMode) -> Unit,
@@ -350,6 +353,12 @@ internal fun ClaudeCodeInputBar(
 
     fun submit() {
         sendSequence += 1
+        // 终端里 Claude Code 的 bash 模式。附件和图片留着，下一条消息接着发
+        userShellCommand(input)?.let { command ->
+            onRunShell(command)
+            input = ""
+            return
+        }
         // 带参数的模型命令也必须走控制协议。直接发给无头 CLI 只会得到一条
         // "Set model..." 文本，App 自己的 options/appliedModel 仍然是旧值。
         // CLI 里 `/model <名字>` 等于面板按 Enter（"saved as your default for new sessions"），
@@ -457,6 +466,17 @@ internal fun ClaudeCodeInputBar(
                 }
                 InkDivider()
             }
+        }
+
+        // 打了 `!` 就说清这一行会怎么跑：它不发给模型，这和输入框里其余所有东西都不一样
+        val shellMode = input.trimStart().let { it.startsWith('!') || it.startsWith('！') }
+        AnimatedVisibility(visible = shellMode, enter = InkMotion.expand, exit = InkMotion.collapse) {
+            Text(
+                stringResource(R.string.composer_shell_hint, session.cwd.ifBlank { "/workspace" }),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+            )
         }
 
         val canSend = (input.isNotBlank() || attachments.isNotEmpty() || images.isNotEmpty()) && running

@@ -732,6 +732,7 @@ class ClaudeCodeVM(
     fun answerQuestions(answers: Map<String, String>) = onActive { it.answerQuestions(answers) }
 
     fun interrupt() = onActive { it.interrupt() }
+    fun runShell(command: String) = onActive { it.runShell(command) }
     fun stop() = onActive { it.stopSession() }
     /**
      * 切模型。[asDefault] 对齐 CLI `/model` 的 Enter / `s`：

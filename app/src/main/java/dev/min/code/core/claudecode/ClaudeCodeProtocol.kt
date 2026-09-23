@@ -1122,7 +1122,7 @@ private fun transcriptUserPayload(obj: JsonObject): TranscriptUser? {
         }.joinToString("\n")
 
         else -> ""
-    }.trim()
+    }.let(::stripUserShellContext).trim()
     if (text.isBlank()) return null
     if (LOCAL_COMMAND_ENVELOPES.any { text.startsWith(it) }) return null
     if (COMPACT_SUMMARY_PREFIXES.any { text.startsWith(it) }) {
