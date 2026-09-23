@@ -46,8 +46,8 @@ class PrivilegedClient(
     private val handoverListener: (IBinder) -> Unit = { binder -> attach(binder) }
 
     init {
+        // addListener 会把已经交过来的那一个当场补发给我们，不用再自己 attach 一遍
         PrivilegedBridgeProvider.addListener(handoverListener)
-        PrivilegedBridgeProvider.currentBinder()?.let { attach(it) }
     }
 
     fun service(): IPrivilegedService? = serviceRef.get()
@@ -85,7 +85,12 @@ class PrivilegedClient(
         return _state.value == State.Ready
     }
 
+    @Synchronized
     private fun attach(binder: IBinder) {
+        // 壳每 3 秒把同一个 Binder 再交一次（见 PrivilegedServer）。已经接着的就到此为止：
+        // 否则每次都多一趟问 uid 的 IPC、多挂一个死亡回调，壳一死 onDisconnected 连跑 N 遍
+        val current = serviceRef.get()?.asBinder()
+        if (current === binder) return
         runCatching {
             val svc = IPrivilegedService.Stub.asInterface(binder)
             val uid = svc.uid
@@ -93,6 +98,8 @@ class PrivilegedClient(
                 markFailed("壳进程 uid=$uid，期望 2000（shell）。请用无线调试/adb 拉起，不要用 root。")
                 return
             }
+            // 换了一个壳进程：旧的那个以后死了，不能把新接上的也一起清掉
+            current?.let { runCatching { it.unlinkToDeath(deathRecipient, 0) } }
             runCatching { binder.linkToDeath(deathRecipient, 0) }
             serviceRef.set(svc)
             lastError = null
