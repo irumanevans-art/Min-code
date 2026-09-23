@@ -57,7 +57,9 @@ val appModule = module {
         val settings: SettingsStore = get()
         WorkspaceManager(
             baseDir = File(context.filesDir, "workspaces"),
-            shellRunner = get(),
+            // 参数类型是接口 WorkspaceShellRunner，而 single 只按 ProotShellRunner 登记：
+            // 不写明类型，Koin 会去找接口的定义，找不到就在 App 启动时崩（编译期看不出来）
+            shellRunner = get<ProotShellRunner>(),
             // 每次起 proot 现算：开关和系统权限都可能在两次会话之间被改掉。
             // 设置还没读到过（冷启动最初的一瞬）时 snapshot 是 null，按"没开"处理 ——
             // 少挂一次的代价是这次会话看不到 /sdcard，多挂一次的代价是权限被收回后还摆着它
