@@ -382,10 +382,6 @@ fun ClaudeCodeSessionDrawer(
     }
 }
 
-/**
- * 会话列表搜索条：标题 / 分类 / id / 正文。打开就聚焦，和文件页那条同款。
- */
-
 @Composable
 private fun DrawerSystemPage(
     onBack: () -> Unit,
@@ -424,6 +420,9 @@ private fun DrawerSystemPage(
     }
 }
 
+/**
+ * 会话列表搜索条：标题 / 分类 / id / 正文。打开就聚焦，和文件页那条同款。
+ */
 @Composable
 private fun SessionListSearchBar(
     query: String,
