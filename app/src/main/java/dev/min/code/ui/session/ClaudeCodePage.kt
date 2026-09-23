@@ -369,6 +369,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 {
                     afterSidebarNav()
                     context.writeClipboardText(session.items.toTranscriptText(transcriptLabels))
+                    toaster.show(context.getString(R.string.common_copied), ToastType.Success)
                 }
             } else null,
         )

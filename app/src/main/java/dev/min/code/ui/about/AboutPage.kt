@@ -35,9 +35,11 @@ import dev.min.code.ui.components.BrandMark
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTopBar
+import dev.min.code.ui.components.LocalToaster
 import dev.min.code.ui.components.PaperCard
 import dev.min.code.ui.components.PaperTone
 import dev.min.code.ui.components.SectionTitle
+import dev.min.code.ui.components.ToastType
 import dev.min.code.ui.richtext.MarkdownBlock
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
@@ -181,6 +183,7 @@ private const val CONTACT_QQ = "1114111189"
 @Composable
 fun AboutPage() {
     val context = LocalContext.current
+    val toaster = LocalToaster.current
     // 崩溃记录是两个文件，读它们要碰磁盘 —— 不在组合期同步做，
     // 否则一进关于页就是一次主线程 IO。没读到之前那两块就不显示
     var crash by remember { mutableStateOf<String?>(null) }
@@ -250,6 +253,8 @@ fun AboutPage() {
                             .fillMaxWidth()
                             .clickable {
                                 context.writeClipboardText(CONTACT_QQ)
+                                // 不少 ROM（vivo 就是）复制之后系统什么都不说，点了跟没点一样
+                                toaster.show(context.getString(R.string.about_contact_qq_copied), ToastType.Success)
                             }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -460,6 +465,7 @@ private fun ChangelogFoldHeader(
  */
 @Composable
 private fun CrashReport(report: String?, onClear: () -> Unit) {
+    val toaster = LocalToaster.current
     val context = LocalContext.current
     // 收起动画期间 report 已经是 null，留住最后一份让它能收完
     var last by remember { mutableStateOf(report) }
@@ -484,7 +490,10 @@ private fun CrashReport(report: String?, onClear: () -> Unit) {
                 }
             }
             InkButton(
-                onClick = { context.writeClipboardText(text) },
+                onClick = {
+                    context.writeClipboardText(text)
+                    toaster.show(context.getString(R.string.common_copied), ToastType.Success)
+                },
                 icon = HugeIcons.Copy01,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.about_copy_crash)) }

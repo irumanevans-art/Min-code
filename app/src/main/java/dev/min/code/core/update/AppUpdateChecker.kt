@@ -26,6 +26,12 @@ object AppUpdateChecker {
     const val LATEST_RELEASE_URL =
         "https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/latest"
 
+    /** 网页版的「最新 Release」：302 到 `/releases/tag/<tag>`。不走 API，不吃那 60 次/小时的额度 */
+    private const val LATEST_RELEASE_PAGE = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases/latest"
+    private const val RELEASE_DOWNLOAD_BASE = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases/download"
+    private const val RELEASE_TAG_BASE = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases/tag"
+    private const val RAW_BASE = "https://raw.githubusercontent.com/$GITHUB_OWNER/$GITHUB_REPO"
+
     private const val TAG = "AppUpdateChecker"
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -33,6 +39,9 @@ object AppUpdateChecker {
         data object UpToDate : Result
         data class UpdateAvailable(val release: AppRelease) : Result
         data class Failed(val reason: String) : Result
+
+        /** API 限流了，网页那条路也没走通。界面给一句人话，而不是「HTTP 403」 */
+        data object RateLimited : Result
     }
 
     data class AppRelease(
@@ -55,9 +64,18 @@ object AppUpdateChecker {
     suspend fun check(currentVersionName: String, abi: String = DeviceArch.primaryAbi): Result =
         withContext(Dispatchers.IO) {
             try {
-                val body = httpGet(LATEST_RELEASE_URL)
-                val release = parseRelease(body, abi)
-                    ?: return@withContext Result.Failed("empty")
+                val release = try {
+                    parseRelease(httpGet(LATEST_RELEASE_URL), abi)
+                } catch (e: HttpStatusException) {
+                    // 未登录的 API 一个出口 IP 一小时 60 次。国内运营商大多是一大群手机共用出口，
+                    // 实测经常一上来就是 403 —— 退到网页那条路，它不算 API 额度
+                    if (e.code != 403 && e.code != 429) throw e
+                    Log.w(TAG, "api rate limited (HTTP ${e.code}), falling back to the web page")
+                    runCatching { latestFromWeb(abi) }
+                        .onFailure { Log.w(TAG, "web fallback failed", it) }
+                        .getOrNull()
+                        ?: return@withContext Result.RateLimited
+                } ?: return@withContext Result.Failed("empty")
                 if (!ClaudeCodeInstaller.isNewerVersion(currentVersionName, release.version)) {
                     Result.UpToDate
                 } else {
@@ -131,6 +149,74 @@ object AppUpdateChecker {
         )
     }
 
+    /**
+     * 不经 API 拼出最新 Release：tag 从网页的 302 里拿，APK 按发版约定的名字去探，
+     * 说明取那个 tag 下 CHANGELOG.md 里对应的一节（取不到就空着，不耽误更新）。
+     */
+    private fun latestFromWeb(abi: String): AppRelease? {
+        val tag = httpRedirectTarget(LATEST_RELEASE_PAGE)?.let(::tagFromReleaseUrl) ?: return null
+        val version = normalizeTag(tag)
+        // 存在的资源 github.com 回 302（跳到存储），不存在回 404。只看这一跳，
+        // 不跟到存储那边去 —— 那边是签过名的 GET 链接，HEAD 过去未必认
+        val apk = conventionalApkNames(version, abi).firstNotNullOfOrNull { name ->
+            val url = "$RELEASE_DOWNLOAD_BASE/$tag/$name"
+            if (httpRedirectTarget(url, method = "HEAD") != null) ApkAsset(name, url, sizeBytes = 0L) else null
+        }
+        val notes = runCatching { changelogSection(httpGet("$RAW_BASE/$tag/CHANGELOG.md"), version) }
+            .getOrNull().orEmpty()
+        return AppRelease(
+            tag = tag,
+            version = version,
+            name = "Min $version",
+            body = notes,
+            htmlUrl = "$RELEASE_TAG_BASE/$tag",
+            apk = apk,
+            apkNames = listOfNotNull(apk?.name),
+        )
+    }
+
+    /** `…/releases/tag/v2.1.17` → `v2.1.17` */
+    internal fun tagFromReleaseUrl(url: String): String? =
+        url.substringAfter("/releases/tag/", missingDelimiterValue = "")
+            .substringBefore('?').trim('/').takeIf { it.isNotBlank() }
+
+    /** 发版约定的资源名（见 CHANGELOG 2.1.13）：先本机 ABI，再 universal */
+    internal fun conventionalApkNames(version: String, abi: String): List<String> =
+        listOfNotNull(
+            abi.takeIf { it.isNotBlank() }?.let { "Min-code-$version-$it.apk" },
+            "Min-code-$version-universal.apk",
+        )
+
+    /** CHANGELOG.md 里 `## <version> …` 那一节的正文（不含标题行）；找不到是空串 */
+    internal fun changelogSection(markdown: String, version: String): String {
+        val lines = markdown.lines()
+        val start = lines.indexOfFirst { line ->
+            line.startsWith("## ") && line.removePrefix("## ").trim().let { it == version || it.startsWith("$version ") }
+        }
+        if (start < 0) return ""
+        val end = (start + 1 until lines.size).firstOrNull { lines[it].startsWith("## ") } ?: lines.size
+        return lines.subList(start + 1, end).joinToString("\n").trim()
+    }
+
+    /** 只要状态码的那种失败：调用方要分辨是不是限流 */
+    private class HttpStatusException(val code: Int) : IllegalStateException("HTTP $code")
+
+    /** 3xx 的 Location；不是跳转就是 null。不跟随跳转 */
+    private fun httpRedirectTarget(url: String, method: String = "GET"): String? {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 20_000
+        connection.instanceFollowRedirects = false
+        connection.requestMethod = method
+        connection.setRequestProperty("User-Agent", "Min-code-updater")
+        try {
+            val code = connection.responseCode
+            return if (code in 300..399) connection.getHeaderField("Location") else null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun httpGet(url: String): String {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000
@@ -141,7 +227,7 @@ object AppUpdateChecker {
         try {
             val code = connection.responseCode
             if (code !in 200..299) {
-                throw IllegalStateException("HTTP $code")
+                throw HttpStatusException(code)
             }
             return connection.inputStream.bufferedReader().use { it.readText() }
         } finally {

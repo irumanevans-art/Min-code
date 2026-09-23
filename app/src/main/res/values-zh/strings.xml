@@ -787,13 +787,14 @@
   <string name="about_check_update_checking">正在查 GitHub…</string>
   <string name="about_check_update_latest">已是最新版</string>
   <string name="about_check_update_available">有新版本：%1$s</string>
+  <string name="about_check_update_rate_limited">GitHub 限流了（同一出口 IP 一小时只能查 60 次），过一会儿再试</string>
   <string name="about_check_update_failed">查不到：%1$s</string>
   <string name="about_check_update_no_apk">有 Release，但没有匹配这台设备的 APK</string>
   <string name="about_check_update_dialog_title">安装 %1$s？</string>
   <string name="about_check_update_download">下载并安装</string>
   <string name="about_check_update_downloading">正在下载… %1$d%%</string>
   <string name="about_check_update_download_failed">下载失败：%1$s</string>
-  <string name="about_check_update_need_permission">先允许安装未知应用</string>
+  <string name="about_check_update_ready_need_permission">已下载。在系统设置里允许 Min 安装未知应用，回来会自动安装</string>
   <string name="about_check_update_open_permission">去系统设置</string>
   <string name="about_check_update_open_release">打开 Release 页</string>
   <string name="about_check_update_install_failed">调不起安装器</string>

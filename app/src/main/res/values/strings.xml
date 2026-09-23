@@ -790,13 +790,14 @@
   <string name="about_check_update_checking">Checking GitHub…</string>
   <string name="about_check_update_latest">You\'re on the latest version</string>
   <string name="about_check_update_available">Update available: %1$s</string>
+  <string name="about_check_update_rate_limited">GitHub is rate-limiting this network (60 checks an hour per shared IP). Try again later</string>
   <string name="about_check_update_failed">Could not check: %1$s</string>
   <string name="about_check_update_no_apk">A release exists, but no matching APK for this device</string>
   <string name="about_check_update_dialog_title">Install %1$s?</string>
   <string name="about_check_update_download">Download &amp; install</string>
   <string name="about_check_update_downloading">Downloading… %1$d%%</string>
   <string name="about_check_update_download_failed">Download failed: %1$s</string>
-  <string name="about_check_update_need_permission">Allow installing unknown apps first</string>
+  <string name="about_check_update_ready_need_permission">Downloaded. Allow installing unknown apps for Min, then come back — it installs on its own</string>
   <string name="about_check_update_open_permission">Open settings</string>
   <string name="about_check_update_open_release">Open release page</string>
   <string name="about_check_update_install_failed">Could not start the installer</string>

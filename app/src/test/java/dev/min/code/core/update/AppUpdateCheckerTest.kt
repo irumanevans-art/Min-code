@@ -88,4 +88,40 @@ class AppUpdateCheckerTest {
             ClaudeCodeInstaller.isNewerVersion("2.1.13", "2.1.13"),
         )
     }
+
+    @Test
+    fun `the tag comes out of the latest-release redirect`() {
+        assertEquals("v2.1.17", AppUpdateChecker.tagFromReleaseUrl("https://github.com/o/r/releases/tag/v2.1.17"))
+        assertEquals("v2.1.17", AppUpdateChecker.tagFromReleaseUrl("https://github.com/o/r/releases/tag/v2.1.17/"))
+        assertEquals(null, AppUpdateChecker.tagFromReleaseUrl("https://github.com/o/r/releases"))
+    }
+
+    @Test
+    fun `web fallback probes the device abi before universal`() {
+        assertEquals(
+            listOf("Min-code-2.1.18-arm64-v8a.apk", "Min-code-2.1.18-universal.apk"),
+            AppUpdateChecker.conventionalApkNames("2.1.18", "arm64-v8a"),
+        )
+        assertEquals(listOf("Min-code-2.1.18-universal.apk"), AppUpdateChecker.conventionalApkNames("2.1.18", ""))
+    }
+
+    @Test
+    fun `release notes are that version's changelog section only`() {
+        val md = """
+            # Changelog
+
+            ## 2.1.18 — 2026-09-23
+
+            - **一条**：说明
+            - 另一条
+
+            ## 2.1.17 — 2026-09-22
+
+            - 旧的
+        """.trimIndent()
+        assertEquals("- **一条**：说明\n- 另一条", AppUpdateChecker.changelogSection(md, "2.1.18"))
+        assertEquals("- 旧的", AppUpdateChecker.changelogSection(md, "2.1.17"))
+        // 2.1.1 不能误中 2.1.17 / 2.1.18
+        assertEquals("", AppUpdateChecker.changelogSection(md, "2.1.1"))
+    }
 }
