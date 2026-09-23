@@ -409,6 +409,10 @@ class ClaudeCodeManager(
         write = { cli.write(it) },
     )
 
+    /** 用量 / 计划各自同时只跑一条，握手完之前只攒着（见 [CoalescedRefresh] 的头注释） */
+    private val usageRefresh = CoalescedRefresh(scope) { fetchUsage() }
+    private val planRefresh = CoalescedRefresh(scope) { fetchPlan() }
+
     /**
      * 本机预览 URL（loopback）。UI 收集后 **填预览位**（可自动展开一次）。
      * 不经系统浏览器。
@@ -534,6 +538,9 @@ class ClaudeCodeManager(
         _state.update { it.copy(launchedProfileId = launched.profileId) }
         currentLinuxDir = launched.linuxDir
         val proc = launched.process
+        // 状态一变 Running 页面就会来要用量 / 计划；那时 CLI 还在握手，先攒着
+        usageRefresh.hold()
+        planRefresh.hold()
         val io = cli.attach(proc)
         _state.update {
             it.copy(
@@ -1562,6 +1569,8 @@ class ClaudeCodeManager(
         // （没有它们握手失败的提示，对话流里会永远挂着一条「排队中」），原样退回输入框。
         val payload = controls.payload(id, encodeClaudeCodeInitialize(id)) ?: run {
             refundHeldMessages("CLI 握手超时，启动前排队的消息已退回输入框")
+            usageRefresh.release()
+            planRefresh.release()
             return
         }
         applyHandshake(payload)
@@ -1572,7 +1581,9 @@ class ClaudeCodeManager(
         val thinkId = controls.newRequestId()
         controls.request(thinkId, encodeClaudeCodeSetThinking(thinkId, null, "summarized"))
         refreshAppliedSettings()
-        refreshUsage()
+        // 握手期间页面要的那些这时统一补上，各一条；用量不管有没有人要都拉一次
+        usageRefresh.release(run = true)
+        planRefresh.release()
         suggestInitIfNoClaudeMd()
         // 会话没起来时打的字攥在调度台上。等到这里才发，第一轮就已经在用户选的目录下
         // （applyPreferredCwd 在上面）。先把 busy 点亮，否则 dispatchSend 前界面会闪一下空闲。
@@ -2060,21 +2071,21 @@ class ClaudeCodeManager(
      * 读取 plan 模式的当前计划。应答形如 `{exists: false}` 或带正文的 `{exists: true, ...}`，
      * 所以先看 exists 再取正文。
      */
-    fun refreshPlan() {
-        scope.launch {
-            val id = controls.newRequestId()
-            val payload = controls.payload(id, encodeClaudeCodeGetPlan(id))
-            if (payload == null) Log.w(TAG, "refreshPlan failed: control timed out or errored")
-            val exists = payload?.get("exists").asBooleanOrNull()
-            val plan = if (exists == false) {
-                null
-            } else {
-                listOf("plan", "content", "text", "markdown")
-                    .firstNotNullOfOrNull { payload?.get(it).asStringOrNull() }
-                    ?.takeIf { it.isNotBlank() }
-            }
-            _state.update { it.copy(plan = plan) }
+    fun refreshPlan() = planRefresh.request()
+
+    private suspend fun fetchPlan() {
+        val id = controls.newRequestId()
+        val payload = controls.payload(id, encodeClaudeCodeGetPlan(id))
+        if (payload == null) Log.w(TAG, "refreshPlan failed: control timed out or errored")
+        val exists = payload?.get("exists").asBooleanOrNull()
+        val plan = if (exists == false) {
+            null
+        } else {
+            listOf("plan", "content", "text", "markdown")
+                .firstNotNullOfOrNull { payload?.get(it).asStringOrNull() }
+                ?.takeIf { it.isNotBlank() }
         }
+        _state.update { it.copy(plan = plan) }
     }
 
     /**
@@ -2084,41 +2095,48 @@ class ClaudeCodeManager(
      * - `get_context_usage` 是 **camelCase**：`{categories, totalTokens, maxTokens, percentage, ...}`
      * - `get_session_cost` 返回的是**一整段预格式化文本** `{text: "Total cost: $0.0000\n..."}`，不是数字
      */
-    fun refreshUsage() {
-        scope.launch {
-            val ctxId = controls.newRequestId()
-            val usage = controls.payload(ctxId, encodeClaudeCodeGetContextUsage(ctxId))
-            if (usage == null) Log.w(TAG, "refreshUsage failed: get_context_usage control timed out or errored")
-            usage?.let { payload ->
-                val used = payload["totalTokens"].asIntOrNull()
-                val reported = (payload["maxTokens"] ?: payload["rawMaxTokens"]).asIntOrNull()
-                val state = _state.value
-                val model = state.appliedModel
-                    ?: state.currentModel
-                    ?: state.model
-                    ?: state.options.model
-                val limit = ClaudeCodeModelCatalog.effectiveContextLimit(reported, model)
-                _state.update {
-                    it.copy(
-                        contextTokens = used ?: it.contextTokens,
-                        contextLimit = limit,
-                    )
-                }
+    fun refreshUsage() = usageRefresh.request()
+
+    private suspend fun fetchUsage() {
+        val ctxId = controls.newRequestId()
+        // 刚启动时这一条要算 token，实测 2.5～4.5 秒，机器忙时会过默认的 8 秒
+        val usage = (
+            controls.request(
+                ctxId,
+                encodeClaudeCodeGetContextUsage(ctxId),
+                timeoutMs = USAGE_TIMEOUT_MS,
+            ) as? ControlOutcome.Ok
+            )?.payload
+        if (usage == null) Log.w(TAG, "refreshUsage failed: get_context_usage control timed out or errored")
+        usage?.let { payload ->
+            val used = payload["totalTokens"].asIntOrNull()
+            val reported = (payload["maxTokens"] ?: payload["rawMaxTokens"]).asIntOrNull()
+            val state = _state.value
+            val model = state.appliedModel
+                ?: state.currentModel
+                ?: state.model
+                ?: state.options.model
+            val limit = ClaudeCodeModelCatalog.effectiveContextLimit(reported, model)
+            _state.update {
+                it.copy(
+                    contextTokens = used ?: it.contextTokens,
+                    contextLimit = limit,
+                )
             }
-            val costId = controls.newRequestId()
-            val cost = controls.payload(costId, encodeClaudeCodeGetSessionCost(costId))
-            if (cost == null) Log.w(TAG, "refreshUsage failed: get_session_cost control timed out or errored")
-            cost?.let { payload ->
-                val text = payload["text"].asStringOrNull()?.takeIf { it.isNotBlank() }
-                if (text != null) {
-                    _state.update { it.copy(costText = text) }
-                    // 会话累计值进单日台账。这是唯一一个能拿到金额的地方 ——
-                    // result 帧的 total_cost_usd 语义随 CLI 版本变过（有时是本轮、有时是累计），
-                    // 而 get_session_cost 明确就是「这个会话到现在花了多少」
-                    val sessionId = _state.value.sessionId
-                    val amount = parseSessionCostUsd(text)
-                    if (sessionId != null && amount != null) costLedger.record(sessionId, amount)
-                }
+        }
+        val costId = controls.newRequestId()
+        val cost = controls.payload(costId, encodeClaudeCodeGetSessionCost(costId))
+        if (cost == null) Log.w(TAG, "refreshUsage failed: get_session_cost control timed out or errored")
+        cost?.let { payload ->
+            val text = payload["text"].asStringOrNull()?.takeIf { it.isNotBlank() }
+            if (text != null) {
+                _state.update { it.copy(costText = text) }
+                // 会话累计值进单日台账。这是唯一一个能拿到金额的地方 ——
+                // result 帧的 total_cost_usd 语义随 CLI 版本变过（有时是本轮、有时是累计），
+                // 而 get_session_cost 明确就是「这个会话到现在花了多少」
+                val sessionId = _state.value.sessionId
+                val amount = parseSessionCostUsd(text)
+                if (sessionId != null && amount != null) costLedger.record(sessionId, amount)
             }
         }
     }
@@ -2467,6 +2485,9 @@ class ClaudeCodeManager(
 
     companion object {
         private const val TAG = "ClaudeCodeManager"
+
+        /** get_context_usage 的超时，见 fetchUsage */
+        private const val USAGE_TIMEOUT_MS = 20_000L
         private const val MAX_RESULT_CHARS = 8 * 1024
 
         /** 等托管服务出结论的上限。进程表自己的就绪窗口是 2.5 秒，这里留足余量 */

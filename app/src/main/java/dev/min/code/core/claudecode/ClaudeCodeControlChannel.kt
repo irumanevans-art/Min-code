@@ -1,5 +1,6 @@
 package dev.min.code.core.claudecode
 
+import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
@@ -37,6 +38,13 @@ internal class ClaudeCodeControlChannel(
     /** 已发出、等待 CLI 应答的请求，按 request_id 配对 */
     private val pending = ConcurrentHashMap<String, CompletableDeferred<ControlOutcome>>()
 
+    /**
+     * request_id → (subtype, 发出时刻)。超时之后应答才到时，日志里还能说出是谁、迟了多久 ——
+     * 「来晚了」和「根本没来」修法完全不同（启动时拉用量超时就是靠它查清的：是来晚了）。
+     * 超过 [LATE_WINDOW_MS] 的不再等，发下一条时顺手清掉。
+     */
+    private val sentAt = ConcurrentHashMap<String, Pair<String, Long>>()
+
     fun newRequestId(): String = UUID.randomUUID().toString()
 
     /**
@@ -54,6 +62,9 @@ internal class ClaudeCodeControlChannel(
         if (!canSend()) return ControlOutcome.Timeout
         val deferred = CompletableDeferred<ControlOutcome>()
         pending[requestId] = deferred
+        val now = System.currentTimeMillis()
+        sentAt.values.removeIf { now - it.second > LATE_WINDOW_MS }
+        sentAt[requestId] = (SUBTYPE.find(frame)?.groupValues?.get(1) ?: "?") to now
         write(frame)
         return try {
             withTimeoutOrNull(timeoutMs) { deferred.await() } ?: ControlOutcome.Timeout
@@ -68,17 +79,31 @@ internal class ClaudeCodeControlChannel(
 
     /** CLI 回了成功的 control_response。没人在等（已超时、或不是我们发的）就丢掉 */
     fun complete(requestId: String, payload: JsonObject) {
-        pending.remove(requestId)?.complete(ControlOutcome.Ok(payload))
+        val claimed = pending.remove(requestId)?.complete(ControlOutcome.Ok(payload)) == true
+        noteArrival(requestId, claimed)
+    }
+
+    private fun noteArrival(requestId: String, claimed: Boolean) {
+        val (subtype, at) = sentAt.remove(requestId) ?: return
+        if (!claimed) {
+            Log.w(TAG, "late control_response: $subtype arrived ${System.currentTimeMillis() - at}ms after sending")
+        }
     }
 
     /**
      * CLI 回了错误的 control_response。返回有没有人认领 ——
      * 认领得到就由发起方给出更贴合场景的文案，认领不到的由调用方当孤儿错误处理。
      */
-    fun fail(requestId: String, error: String): Boolean =
-        pending.remove(requestId)?.complete(ControlOutcome.Error(error)) == true
+    fun fail(requestId: String, error: String): Boolean {
+        val claimed = pending.remove(requestId)?.complete(ControlOutcome.Error(error)) == true
+        noteArrival(requestId, claimed)
+        return claimed
+    }
 
     companion object {
         const val TIMEOUT_MS = 8_000L
+        private const val TAG = "ClaudeCodeControl"
+        private const val LATE_WINDOW_MS = 120_000L
+        private val SUBTYPE = Regex("\"subtype\"\\s*:\\s*\"([a-z_]+)\"")
     }
 }
