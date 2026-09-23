@@ -610,12 +610,12 @@ class LocalServiceRegistry(
             } else {
                 true // 无端口约定：活着即 Running
             }
-            if (portUp || System.currentTimeMillis() > deadline - 200) {
+            if (portUp || System.currentTimeMillis() > deadline - READY_WINDOW_TAIL_MS) {
                 // 有端口但读不到 /proc/net：窗口末尾仍活着 → 诚实升 Running，并保留 Starting 期间的不确定性已过
                 if (port != null) {
                     val snap = runCatching { networkProbe.snapshot() }.getOrNull()
-                    if (snap?.portsReadable != true && System.currentTimeMillis() < deadline - 200) {
-                        delay(150)
+                    if (snap?.portsReadable != true && System.currentTimeMillis() < deadline - READY_WINDOW_TAIL_MS) {
+                        delay(READY_POLL_INTERVAL_MS)
                         continue
                     }
                 }
@@ -626,7 +626,7 @@ class LocalServiceRegistry(
                 }
                 return true
             }
-            delay(150)
+            delay(READY_POLL_INTERVAL_MS)
         }
         val alive = runCatching { process.isAlive }.getOrDefault(false)
         if (alive) {
@@ -641,7 +641,7 @@ class LocalServiceRegistry(
 
     private fun drainToLog(id: String, handle: Handle, process: Process) {
         fun suck(stream: java.io.InputStream, prefix: String) {
-            Thread({
+            scope.launch {
                 runCatching {
                     stream.bufferedReader().use { reader ->
                         while (true) {
@@ -657,9 +657,6 @@ class LocalServiceRegistry(
                     }
                 }
                 patch(id) { it.copy(logTail = logTailOf(handle)) }
-            }, "local-svc-log-$id").apply {
-                isDaemon = true
-                start()
             }
         }
         suck(process.inputStream, "")
@@ -697,6 +694,10 @@ class LocalServiceRegistry(
     private companion object {
         const val MAX_RUNNING = 5
         const val READY_WINDOW_MS = 2_500L
+        /** 窗口末尾的收尾余量：过了这个点仍活着就诚实升 Running，不再等端口 */
+        const val READY_WINDOW_TAIL_MS = 200L
+        /** [awaitRunning] 的轮询间隔 */
+        const val READY_POLL_INTERVAL_MS = 150L
         const val MAX_LOG_CHARS = 256 * 1024
         const val LOG_TAIL_CHARS = 8 * 1024
         const val LOG_UI_INTERVAL_MS = 400L
