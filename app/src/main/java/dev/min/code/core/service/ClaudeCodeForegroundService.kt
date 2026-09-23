@@ -29,7 +29,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import dev.min.code.CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID
 import dev.min.code.R
-import dev.min.code.MainActivity
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.session.SessionStatus
@@ -325,7 +324,7 @@ class ClaudeCodeForegroundService : Service() {
             .setContentTitle("Min")
             .setContentText(text)
             .apply { detail?.takeIf { it.isNotBlank() }?.let { setSubText(it.take(60)) } }
-            .setContentIntent(openPageIntent())
+            .setContentIntent(openClaudeCodePageIntent(this))
             .addAction(0, "停止全部", stopAllIntent())
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setOngoing(true)
@@ -381,19 +380,6 @@ class ClaudeCodeForegroundService : Service() {
         _keepAlive.value = KeepAlive.Rejected
         if (permanent) rejectedInProcess = true
         return false
-    }
-
-    private fun openPageIntent(): PendingIntent {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(EXTRA_OPEN_CLAUDE_CODE, true)
-        }
-        return PendingIntent.getActivity(
-            this,
-            NOTIFICATION_ID,
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
     }
 
     private fun stopAllIntent(): PendingIntent {

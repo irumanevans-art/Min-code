@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import dev.min.code.AppScope
 import dev.min.code.CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID
-import dev.min.code.MainActivity
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.codex.CodexAppServerManager
@@ -151,7 +150,7 @@ class ClaudeCodeSessionSupervisor(
                 autoCancel = true
                 useDefaults = true
                 category = NotificationCompat.CATEGORY_MESSAGE
-                contentIntent = openPageIntent(context)
+                contentIntent = openClaudeCodePageIntent(context)
             }
         }
 
@@ -171,7 +170,7 @@ class ClaudeCodeSessionSupervisor(
                 useDefaults = true
                 useBigTextStyle = true
                 category = NotificationCompat.CATEGORY_ERROR
-                contentIntent = openPageIntent(context)
+                contentIntent = openClaudeCodePageIntent(context)
             }
         }
     }
@@ -188,7 +187,7 @@ class ClaudeCodeSessionSupervisor(
             autoCancel = false
             useDefaults = true
             category = NotificationCompat.CATEGORY_CALL
-            contentIntent = openPageIntent(context)
+            contentIntent = openClaudeCodePageIntent(context)
             addAction("允许", ClaudeCodePermissionReceiver.intent(context, key, allow = true))
             addAction("拒绝", ClaudeCodePermissionReceiver.intent(context, key, allow = false))
         }
@@ -232,7 +231,7 @@ class ClaudeCodeSessionSupervisor(
                 autoCancel = true
                 useDefaults = true
                 category = NotificationCompat.CATEGORY_MESSAGE
-                contentIntent = openCodexIntent(context)
+                contentIntent = openCodexPageIntent(context)
             }
             is CodexSupervisorEvent.TurnFailed -> context.sendNotification(
                 channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
@@ -244,7 +243,7 @@ class ClaudeCodeSessionSupervisor(
                 useDefaults = true
                 useBigTextStyle = true
                 category = NotificationCompat.CATEGORY_ERROR
-                contentIntent = openCodexIntent(context)
+                contentIntent = openCodexPageIntent(context)
             }
             is CodexSupervisorEvent.Died -> {
                 context.cancelNotification(CODEX_APPROVAL_NOTIFICATION_ID)
@@ -258,7 +257,7 @@ class ClaudeCodeSessionSupervisor(
                     useDefaults = true
                     useBigTextStyle = true
                     category = NotificationCompat.CATEGORY_ERROR
-                    contentIntent = openCodexIntent(context)
+                    contentIntent = openCodexPageIntent(context)
                 }
             }
             null -> {}
@@ -279,7 +278,7 @@ class ClaudeCodeSessionSupervisor(
             autoCancel = false
             useDefaults = true
             category = NotificationCompat.CATEGORY_CALL
-            contentIntent = openCodexIntent(context)
+            contentIntent = openCodexPageIntent(context)
             // 按钮跟着服务端给的可选项走：回一个它没列的决定，这一轮会一直挂着
             val decisions = approval.availableDecisions
             if (decisions.isEmpty() || CodexDecision.ACCEPT.wire in decisions) {
@@ -301,32 +300,6 @@ class ClaudeCodeSessionSupervisor(
         fun permissionNotificationId(key: String): Int = PERMISSION_NOTIFICATION_BASE + (stableKeyInt(key) and KEY_MASK_19)
         fun doneNotificationId(key: String): Int = DONE_NOTIFICATION_BASE + (stableKeyInt(key) and KEY_MASK_19)
 
-        fun openPageIntent(context: Context): PendingIntent {
-            val intent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra(EXTRA_OPEN_CLAUDE_CODE, true)
-            }
-            return PendingIntent.getActivity(
-                context,
-                ClaudeCodeForegroundService.NOTIFICATION_ID,
-                intent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-        }
-
-        /** Codex 通知的点击落点：清栈回根，再顶上 Codex 页 */
-        fun openCodexIntent(context: Context): PendingIntent {
-            val intent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra(EXTRA_OPEN_CODEX, true)
-            }
-            return PendingIntent.getActivity(
-                context,
-                CODEX_DONE_NOTIFICATION_ID,
-                intent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-        }
     }
 }
 
