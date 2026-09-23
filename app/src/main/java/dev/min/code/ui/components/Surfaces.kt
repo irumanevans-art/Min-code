@@ -659,7 +659,14 @@ fun InkDialog(
                             Text(title, style = MaterialTheme.typography.titleMedium)
                         }
                     }
-                    content()
+                    // 内容带权重：Column 先量标题和按钮行，内容只拿剩下的高度。
+                    // 不加的话，一段长内容（带 verticalScroll 的更新说明）会把高度吃光，
+                    // 按钮行被挤成 0 高 —— 用户看到的是一个没有「下载并安装」的对话框
+                    Column(
+                        Modifier.weight(1f, fill = false),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        content = content,
+                    )
                     Row(
                         Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
