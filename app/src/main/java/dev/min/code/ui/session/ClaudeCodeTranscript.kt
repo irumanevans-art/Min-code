@@ -400,7 +400,7 @@ internal fun AssistantEntry(
         active = streaming,
     ) {
         if (streaming) {
-            MarkdownBlock(content = text, modifier = Modifier.fillMaxWidth())
+            MarkdownBlock(content = text, modifier = Modifier.fillMaxWidth(), streaming = true)
         } else {
             SelectionContainer {
                 MarkdownBlock(content = text, modifier = Modifier.fillMaxWidth())

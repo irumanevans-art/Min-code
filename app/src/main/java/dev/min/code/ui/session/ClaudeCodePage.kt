@@ -56,6 +56,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -68,6 +70,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
@@ -181,7 +184,15 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     val navController = LocalNavController.current
     val context = LocalContext.current
     val setup by vm.setup.collectAsStateWithLifecycle()
-    val session by vm.session.collectAsStateWithLifecycle()
+    // 流式输出时 SessionState 每个 token 换一个新对象。页面上几乎所有地方（顶栏、抽屉、输入坞、
+    // 起始面板）都不关心正在长的那段正文，所以它们读的是剥掉逐 token 字段之后的 [session]：
+    // 按值判等，流式期间一次都不变，整页不再跟着每个 token 重组。真要看正文的只有会话流里
+    // 那两个条目，它们直接读 [liveSession]（见 SessionContent）。
+    // 两者从同一个快照派生，不会出现「流式条目已经收起、定稿条目还没进列表」那一帧空白。
+    val liveSession = vm.session.collectAsStateWithLifecycle()
+    val session by remember(liveSession) {
+        derivedStateOf(structuralEqualityPolicy()) { liveSession.value.withoutStream() }
+    }
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val maintenance by vm.maintenance.collectAsStateWithLifecycle()
     val runtime by vm.runtime.collectAsStateWithLifecycle()
@@ -380,6 +391,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         if (live) {
             SessionContent(
                 session = session,
+                liveSession = liveSession,
                 vm = vm,
                 dailyCostUsd = dailyCostUsd,
                 chineseDescriptions = chineseDescriptions,
@@ -762,6 +774,11 @@ private fun WideSidebarScaffold(
     }
 }
 
+/** 去掉逐 token 在变的字段（流式正文、思考、本条消息的输出计数），见 ClaudeCodePage 顶部 */
+private fun ClaudeCodeManager.SessionState.withoutStream(): ClaudeCodeManager.SessionState =
+    if (streamingText.isEmpty() && streamingThinking.isEmpty() && outputTokensCurrent == 0) this
+    else copy(streamingText = "", streamingThinking = "", outputTokensCurrent = 0)
+
 @Composable
 private fun ClaudeCodeManager.SessionState.subtitle(): String = when {
     stopping -> stringResource(R.string.session_settings_busy_stopping)
@@ -916,7 +933,10 @@ internal class LastNonNull<T : Any>(initial: T?) {
 
 @Composable
 private fun SessionContent(
+    /** 剥掉了逐 token 字段的会话状态，见 ClaudeCodePage 顶部的说明 */
     session: ClaudeCodeManager.SessionState,
+    /** 完整状态。只在最小的作用域里读（流式条目、当前轮进度），别在函数体顶层读 */
+    liveSession: State<ClaudeCodeManager.SessionState>,
     vm: ClaudeCodeVM,
     dailyCostUsd: Double,
     chineseDescriptions: Boolean,
@@ -927,7 +947,10 @@ private fun SessionContent(
     onComposerFocusChange: (Boolean) -> Unit = {},
 ) {
     val listState = rememberLazyListState()
-    val streaming = session.streamingText.isNotBlank() || session.streamingThinking.isNotBlank()
+    // 只在「有没有流式内容」翻转时才让本函数重组，正文每长一截不算
+    val streaming by remember(liveSession) {
+        derivedStateOf { liveSession.value.let { it.streamingText.isNotBlank() || it.streamingThinking.isNotBlank() } }
+    }
     // 工具卡的字头在组合期取好传下去：TranscriptItem 的调用方（搜索、导出）不是 Composable
     val transcriptLabels = rememberTranscriptLabels()
     val composerDraft by vm.composerDraft.collectAsStateWithLifecycle()
@@ -981,11 +1004,15 @@ private fun SessionContent(
             }
         }
     }
-    LaunchedEffect(blocks.size, session.streamingText.length / 64, showLiveTurn, followTail) {
+    LaunchedEffect(blocks.size, showLiveTurn, followTail) {
         if (!followTail) return@LaunchedEffect
-        val extra = (if (streaming) 1 else 0) + (if (showLiveTurn) 1 else 0)
-        val total = blocks.size + extra
-        if (total > 0) listState.animateScrollToItem(total - 1, scrollOffset = TAIL_SCROLL_OFFSET)
+        // 正文每长 64 个字符跟一次底。放在 snapshotFlow 里读而不是当 key：
+        // 当 key 就得在函数体里读正文长度，整个 SessionContent 又会跟着每个 token 重组
+        snapshotFlow { liveSession.value.streamingText.length / 64 }.collect {
+            val extra = (if (streaming) 1 else 0) + (if (showLiveTurn) 1 else 0)
+            val total = blocks.size + extra
+            if (total > 0) listState.animateScrollToItem(total - 1, scrollOffset = TAIL_SCROLL_OFFSET)
+        }
     }
 
     // 键盘弹起时把尾巴重新顶到底。
@@ -1115,19 +1142,21 @@ private fun SessionContent(
                 }
                 if (streaming) {
                     item(key = "streaming") {
+                        // 整页只有这里和下面的当前轮进度逐 token 读完整状态
+                        val live = liveSession.value
                         Column {
-                            if (session.streamingThinking.isNotBlank()) {
+                            if (live.streamingThinking.isNotBlank()) {
                                 ThinkingEntry(
-                                    text = session.streamingThinking,
+                                    text = live.streamingThinking,
                                     id = "streaming-thinking",
                                     isFirst = blocks.isEmpty(),
-                                    isLast = session.streamingText.isBlank() && !showLiveTurn,
+                                    isLast = live.streamingText.isBlank() && !showLiveTurn,
                                     streaming = true,
                                 )
                             }
-                            if (session.streamingText.isNotBlank()) {
+                            if (live.streamingText.isNotBlank()) {
                                 AssistantEntry(
-                                    text = session.streamingText,
+                                    text = live.streamingText,
                                     isFirst = false,
                                     isLast = !showLiveTurn,
                                     streaming = true,
@@ -1139,7 +1168,7 @@ private fun SessionContent(
                 if (showLiveTurn) {
                     item(key = "live-turn") {
                         LiveTurnEntry(
-                            session = session,
+                            session = liveSession.value,
                             isFirst = blocks.isEmpty() && !streaming,
                             isLast = true,
                         )

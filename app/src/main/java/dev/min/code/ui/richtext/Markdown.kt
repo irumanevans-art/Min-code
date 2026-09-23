@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -69,10 +70,18 @@ fun MarkdownBlock(
     content: String,
     modifier: Modifier = Modifier,
     style: TextStyle = LocalTextStyle.current,
+    /** 正在流式生成：[content] 每来一截就变，解析一律放后台，见下 */
+    streaming: Boolean = false,
 ) {
     // 短文本直接在组合里解析：LazyColumn 里每条新出现的项都先空一帧再填上，滚动时会闪。
-    // 只有长文本（流式输出的正文、大段工具结果）才放后台，那时慢一帧比卡主线程好。
-    val immediate = remember(content) { if (content.length <= SYNC_PARSE_LIMIT) MarkdownDoc.parse(content) else null }
+    // 只有长文本（大段工具结果）才放后台，那时慢一帧比卡主线程好。
+    //
+    // 流式正文例外，不管多短都放后台：它每个 token 变一次，同步解析等于每个 token 都在主线程
+    // 把整段重新解析一遍，越写越慢（模拟器上一篇 3500 字的回答，收 token 的帧光重组就 4ms）。
+    // 换内容时 produceState 留着上一版，不会闪空白；只有第一截会空一帧，那时本来就几乎没字。
+    val immediate = remember(content, streaming) {
+        if (!streaming && content.length <= SYNC_PARSE_LIMIT) MarkdownDoc.parse(content) else null
+    }
     // `immediate` 不能喂给 produceState 的 initialValue：那个值只在**第一次**组合时被读，
     // 之后 content 再变也不会重新赋值（producer 在这一支里什么都不做）。流式输出正是
     // "同一个 MarkdownBlock，content 每来一截就变"，于是正文会停在第一截不动。
@@ -84,12 +93,42 @@ fun MarkdownBlock(
     val ink = style.copy(color = style.color.takeOrElse { MaterialTheme.colorScheme.onSurface })
     ProvideTextStyle(ink) {
         Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            parsed.root?.children?.forEach { BlockNode(it, parsed.text) }
+            parsed.root?.children?.forEach { BlockSlot(BlockRef(it, parsed.text)) }
         }
     }
 }
 
 private const val SYNC_PARSE_LIMIT = 4_000
+
+/**
+ * 一个顶层块，按「类型 + 起止位置 + 这一块的原文」判等。
+ *
+ * 流式时整段每来一截就重新解析，AST 节点全是新对象，直接把节点传下去的话 Compose 永远判不等，
+ * 已经写完的段落每个 token 都要重建一遍富文本。块的渲染只读自己那一段原文，所以原文没变
+ * 就可以放心跳过 —— 只剩最后那块还在长的真正重画。
+ *
+ * 唯一的例外是后文反过来改变前文的 Markdown 语法（比如文末才出现的链接引用定义）：流式期间
+ * 前面那块会晚一拍才变成链接，流式结束换成定稿条目时就对了。
+ */
+@Immutable
+private class BlockRef(val node: ASTNode, val text: String) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is BlockRef) return false
+        val start = node.startOffset
+        val end = node.endOffset
+        return node.type == other.node.type &&
+            start == other.node.startOffset &&
+            end == other.node.endOffset &&
+            text.regionMatches(start, other.text, start, end - start)
+    }
+
+    override fun hashCode(): Int = 31 * node.type.hashCode() + node.startOffset
+}
+
+/** 包一层是为了让 Compose 拿 [BlockRef] 判等跳过；[BlockNode] 本身的参数（节点 + 全文）每次都是新的 */
+@Composable
+private fun BlockSlot(ref: BlockRef) = BlockNode(ref.node, ref.text)
 
 class MarkdownDoc private constructor(val text: String, val root: ASTNode?) {
     companion object {
