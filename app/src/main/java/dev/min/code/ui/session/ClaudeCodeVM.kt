@@ -341,12 +341,13 @@ class ClaudeCodeVM(
             .onEach { bindPreview(it, expand = true, fromAgent = true) }
             .launchIn(viewModelScope)
 
-        // 表里 Running 且有端口 → 静默绑位（不抢展开，除非位还空）
+        // 表里 Running 且有端口 → 静默绑位（不抢展开，除非位还空）。
+        // 不认 Starting：一启动就死的服务（命令不存在之类）在 Starting 那一瞬间就会把预览位弹开，
+        // 留下一页「网页无法打开」。进程表的就绪窗口只有 2.5 秒，等它一下
         localServices.services
             .onEach { list ->
                 val live = list.firstOrNull {
-                    (it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting) &&
-                        it.port != null
+                    it.status == LocalServiceStatus.Running && it.port != null
                 } ?: return@onEach
                 val port = live.port ?: return@onEach
                 val current = _previewSlot.value.url
