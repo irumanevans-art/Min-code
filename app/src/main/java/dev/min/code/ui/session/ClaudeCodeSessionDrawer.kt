@@ -697,7 +697,7 @@ private fun InUseBadge() {
         color = MaterialTheme.sea.onSea,
         maxLines = 1,
         modifier = Modifier
-            .background(Color.White.copy(alpha = 0.22f), RoundedCornerShape(6.dp))
+            .background(MaterialTheme.sea.paperBright.copy(alpha = 0.22f), RoundedCornerShape(6.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
