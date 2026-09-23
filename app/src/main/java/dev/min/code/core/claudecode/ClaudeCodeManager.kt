@@ -42,6 +42,8 @@ import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.util.LocalUrls
 import me.rerere.workspace.WorkspaceStorageArea
+import dev.min.code.core.rootfs.MENTION_LIMIT
+import dev.min.code.core.rootfs.findMentionFiles
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
@@ -1194,29 +1196,12 @@ class ClaudeCodeManager(
      *
      * 返回的是 **guest 侧绝对路径**（`/workspace/src/App.kt`），可以原样插进消息里。
      */
-    suspend fun searchFiles(query: String, limit: Int = 20): List<String> =
+    suspend fun searchFiles(query: String, limit: Int = MENTION_LIMIT): List<String> =
         withContext(Dispatchers.IO) {
             val workspaceDir = workspaceDir() ?: return@withContext emptyList()
             val cwd = _state.value.cwd
             val hostRoot = guestToHost(workspaceDir, cwd) ?: return@withContext emptyList()
-            if (!hostRoot.isDirectory) return@withContext emptyList()
-
-            val needle = query.trim().lowercase()
-            val results = ArrayList<String>(limit)
-            // 有界遍历：仓库大起来 walk 整棵树会卡住输入框，而补全只需要前若干条
-            var visited = 0
-            hostRoot.walkTopDown()
-                .onEnter { dir -> dir.name !in SEARCH_SKIP_DIRS && visited < SEARCH_SCAN_LIMIT }
-                .forEach { file ->
-                    if (results.size >= limit) return@forEach
-                    visited++
-                    if (visited > SEARCH_SCAN_LIMIT || !file.isFile) return@forEach
-                    val relative = file.relativeTo(hostRoot).invariantSeparatorsPath
-                    if (needle.isEmpty() || relative.lowercase().contains(needle)) {
-                        results += "${cwd.trimEnd('/')}/$relative"
-                    }
-                }
-            results
+            findMentionFiles(hostRoot, cwd, query, limit)
         }
 
     // ---------------------------------------------------------------------
@@ -2577,18 +2562,6 @@ class ClaudeCodeManager(
 
         /** CLI 在 Rootfs 里的默认工作目录（filesDir 被 bind-mount 到这里） */
         const val DEFAULT_CWD = "/workspace"
-
-        /**
-         * `@` 补全遍历目录时跳过的目录名。这些目录动辄十万级文件，扫进去补全就卡死了，
-         * 而它们里面的文件也几乎不会是用户想 @ 的对象。
-         */
-        private val SEARCH_SKIP_DIRS = setOf(
-            "node_modules", ".git", ".gradle", "build", "dist", ".venv", "__pycache__",
-            ".next", "target", "vendor", ".cache",
-        )
-
-        /** 单次补全最多扫多少个条目。超了就用已有结果，宁可少给也不能卡住输入。 */
-        private const val SEARCH_SCAN_LIMIT = 20_000
 
         /** 检查点目录（工作区目录下）。点号开头，免得在文件浏览器里碍眼。 */
         private const val CHECKPOINT_DIR = ".min-checkpoints"

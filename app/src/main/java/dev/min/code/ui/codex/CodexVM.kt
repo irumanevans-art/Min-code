@@ -268,16 +268,8 @@ class CodexVM(
      * 走工作区仓库而不是 Codex 自己：补全只需要知道盘上有什么文件，
      * 为此跟一个可能没跑起来的 app-server 要目录，既慢又会在会话没启动时整个失灵。
      */
-    suspend fun searchFiles(query: String, limit: Int = MENTION_LIMIT): List<String> =
-        runCatching {
-            workspaceRepository.searchFiles(
-                id = workspaceId,
-                area = WorkspaceStorageArea.FILES,
-                path = "",
-                query = query,
-                limit = limit,
-            ).map { "/workspace/${it.path.trimStart('/')}" }
-        }.getOrDefault(emptyList())
+    suspend fun searchFiles(query: String): List<String> =
+        runCatching { workspaceRepository.mentionFiles(query) }.getOrDefault(emptyList())
 
     /**
      * 把排着的第 [index] 条取回输入框。
@@ -377,9 +369,6 @@ class CodexVM(
         }
 
         const val DEFAULT_PROFILE_ID = "default"
-
-        /** `@` 候选一次给几条。手机上一屏放得下的就这些，再多只是滚动 */
-        private const val MENTION_LIMIT = 20
     }
 }
 

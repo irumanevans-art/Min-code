@@ -183,6 +183,13 @@ class WorkspaceRepository(
         results.sortedWith(compareByDescending<WorkspaceFileEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
     }
 
+    /** Codex 输入框的 `@` 补全：`/workspace` 下的文件，规则见 [findMentionFiles] */
+    suspend fun mentionFiles(query: String, limit: Int = MENTION_LIMIT): List<String> =
+        withContext(Dispatchers.IO) {
+            manager.ensureWorkspace(root)
+            findMentionFiles(manager.filesDir(root), "/workspace", query, limit)
+        }
+
     suspend fun mkdir(id: String, area: WorkspaceStorageArea, path: String): WorkspaceFileEntry =
         withContext(Dispatchers.IO) {
             manager.ensureWorkspace(root)
