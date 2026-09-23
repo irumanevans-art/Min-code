@@ -300,20 +300,7 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
 
         item("head") {
             Centered {
-                SectionTitle(stringResource(R.string.providers_section_all))
-                // 一张表常年挂着十几家，翻到底找一条不如搜一下
-                InkTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = stringResource(R.string.providers_search),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                )
-                if (profiles.isEmpty()) {
-                    Hint(stringResource(R.string.providers_empty))
-                } else if (!searching) {
-                    Hint(stringResource(R.string.providers_reorder_hint))
-                }
+                ProviderListHead(query = query, onQueryChange = { query = it }, empty = profiles.isEmpty())
             }
         }
 
@@ -576,16 +563,7 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
     ) {
         item("head") {
             Centered {
-                SectionTitle(stringResource(R.string.providers_section_all))
-                InkTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = stringResource(R.string.providers_search),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                )
-                if (profiles.isEmpty()) Hint(stringResource(R.string.providers_empty))
-                else if (!searching) Hint(stringResource(R.string.providers_reorder_hint))
+                ProviderListHead(query = query, onQueryChange = { query = it }, empty = profiles.isEmpty())
             }
         }
         items(profiles, key = { it.id }) { profile ->
@@ -667,6 +645,28 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
                 editing = preset.toProfileForEdit(zh)
             },
         )
+    }
+}
+
+/**
+ * 两个 Tab 共用的表头：标题、搜索框、一句提示（空表说空，平时说能长按拖动；搜索中不提拖动，
+ * 那时候本来就拖不了）。以前两个 Tab 各抄一份，改搜索交互得记得改两处。
+ */
+@Composable
+private fun ProviderListHead(query: String, onQueryChange: (String) -> Unit, empty: Boolean) {
+    SectionTitle(stringResource(R.string.providers_section_all))
+    // 一张表常年挂着十几家，翻到底找一条不如搜一下
+    InkTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        placeholder = stringResource(R.string.providers_search),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+    )
+    if (empty) {
+        Hint(stringResource(R.string.providers_empty))
+    } else if (query.isBlank()) {
+        Hint(stringResource(R.string.providers_reorder_hint))
     }
 }
 
