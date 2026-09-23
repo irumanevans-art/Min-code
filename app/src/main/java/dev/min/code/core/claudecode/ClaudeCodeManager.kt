@@ -3,7 +3,6 @@ package dev.min.code.core.claudecode
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -45,7 +44,6 @@ import dev.min.code.util.LocalUrls
 import me.rerere.workspace.WorkspaceStorageArea
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -296,19 +294,6 @@ class ClaudeCodeManager(
     data class SlashCommand(val name: String, val description: String?)
 
     /**
-     * control_request 的三种结局。必须把「CLI 明确报错」和「压根没应答」分开 ——
-     * 之前两者都折成 null，于是 CLI 回的
-     * "Cannot set permission mode to bypassPermissions because the session was not
-     * launched with --dangerously-skip-permissions" 被显示成了"CLI 未应答"，
-     * 用户看到的是一句完全误导的话。
-     */
-    private sealed interface ControlOutcome {
-        data class Ok(val payload: JsonObject) : ControlOutcome
-        data class Error(val message: String) : ControlOutcome
-        data object Timeout : ControlOutcome
-    }
-
-    /**
      * `list_models` 返回的一项。实测形状（v2.1.246）：
      * `{value, resolvedModel, displayName, description, supportsEffort, supportedEffortLevels, ...}`
      *
@@ -416,6 +401,12 @@ class ClaudeCodeManager(
         },
     )
 
+    /** 发出去要等应答的 control_request：配对、超时。应答回来之后改什么状态仍在这里决定 */
+    private val controls = ClaudeCodeControlChannel(
+        canSend = { _state.value.status == SessionStatus.Running },
+        write = { cli.write(it) },
+    )
+
     /**
      * 本机预览 URL（loopback）。UI 收集后 **填预览位**（可自动展开一次）。
      * 不经系统浏览器。
@@ -459,12 +450,6 @@ class ClaudeCodeManager(
     @Volatile
     private var inFlight: PendingSend? = null
 
-    /**
-     * 已发出、等待 CLI 应答的 control_request，按 request_id 配对。
-     * interrupt 那类不关心返回值的可以不登记；list_models / get_plan 这类必须登记。
-     */
-    private val pendingControl = ConcurrentHashMap<String, CompletableDeferred<ControlOutcome>>()
-
     /** 当前会话的 rootfs 目录，供会话仓库读 transcript */
     @Volatile
     private var currentLinuxDir: File? = null
@@ -479,35 +464,6 @@ class ClaudeCodeManager(
 
     /** 权限路径已排他托管的 Bash tool_use_id，避免 ToolUse 上再 start 一次 */
     private val exclusiveHostedToolUses = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-
-    /**
-     * 发一个需要应答的 control_request 并等结果。
-     * 超时返回 [ControlOutcome.Timeout] —— CLI 版本差异可能不认某个 subtype，不能让 UI 卡死。
-     * [timeoutMs] 给拟名这类要打一枪小模型的请求留更长时间。
-     */
-    private suspend fun controlOutcome(
-        requestId: String,
-        frame: String,
-        timeoutMs: Long = CONTROL_TIMEOUT_MS,
-    ): ControlOutcome {
-        if (_state.value.status != SessionStatus.Running) {
-            return ControlOutcome.Timeout
-        }
-        val deferred = CompletableDeferred<ControlOutcome>()
-        pendingControl[requestId] = deferred
-        writeLine(frame)
-        return try {
-            withTimeoutOrNull(timeoutMs) { deferred.await() } ?: ControlOutcome.Timeout
-        } finally {
-            pendingControl.remove(requestId)
-        }
-    }
-
-    /** 只关心成功载荷时的便捷包装 */
-    private suspend fun control(requestId: String, frame: String): JsonObject? =
-        (controlOutcome(requestId, frame) as? ControlOutcome.Ok)?.payload
-
-    private fun newRequestId(): String = UUID.randomUUID().toString()
 
     /**
      * 本会话是否已经向 CLI 要过自动拟名。按 sessionId 记，避免多轮 Result / 排队 flush
@@ -929,9 +885,7 @@ class ClaudeCodeManager(
             is ClaudeCodeEvent.ControlError -> {
                 // 认领得到就交给发起方处理（它会给出更贴合场景的文案），
                 // 认领不到才作为孤儿错误抛到聊天流里
-                val claimed = pendingControl.remove(event.requestId)
-                    ?.complete(ControlOutcome.Error(event.error)) == true
-                if (!claimed) {
+                if (!controls.fail(event.requestId, event.error)) {
                     appendItem(ChatItem.Note(newId(), "控制请求失败: ${event.error}", isError = true))
                 }
             }
@@ -950,8 +904,7 @@ class ClaudeCodeManager(
 
             is ClaudeCodeEvent.ModelFallback -> applyModelFallback(event)
 
-            is ClaudeCodeEvent.ControlOk ->
-                pendingControl.remove(event.requestId)?.complete(ControlOutcome.Ok(event.payload))
+            is ClaudeCodeEvent.ControlOk -> controls.complete(event.requestId, event.payload)
 
             is ClaudeCodeEvent.Result -> {
                 // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
@@ -1045,9 +998,9 @@ class ClaudeCodeManager(
             ?: return
         titleGenerationAttemptedFor = sessionId
         scope.launch {
-            val id = newRequestId()
+            val id = controls.newRequestId()
             when (
-                val outcome = controlOutcome(
+                val outcome = controls.request(
                     id,
                     encodeClaudeCodeGenerateSessionTitle(id, description, persist = true),
                     timeoutMs = TITLE_GENERATION_TIMEOUT_MS,
@@ -1619,10 +1572,10 @@ class ClaudeCodeManager(
      * 应答形状 `{commands, agents, output_style, available_output_styles, models, account, pid}`。
      */
     private suspend fun handshake() {
-        val id = newRequestId()
+        val id = controls.newRequestId()
         // initialize 超时 / 出错不挡会话本身，但启动中攥着的消息不能困死在调度台上
         // （没有它们握手失败的提示，对话流里会永远挂着一条「排队中」），原样退回输入框。
-        val payload = control(id, encodeClaudeCodeInitialize(id)) ?: run {
+        val payload = controls.payload(id, encodeClaudeCodeInitialize(id)) ?: run {
             refundHeldMessages("CLI 握手超时，启动前排队的消息已退回输入框")
             return
         }
@@ -1631,8 +1584,8 @@ class ClaudeCodeManager(
         // 让 CLI 真的把思考内容吐出来。Opus 5 / Fable 5 的 thinking display 默认是
         // "omitted"，thinking 块会是空字符串 —— 界面上就只剩一堆没内容的占位，
         // 这也是之前满屏 thinking_tokens 却看不到任何真实思考的原因之一。
-        val thinkId = newRequestId()
-        controlOutcome(thinkId, encodeClaudeCodeSetThinking(thinkId, null, "summarized"))
+        val thinkId = controls.newRequestId()
+        controls.request(thinkId, encodeClaudeCodeSetThinking(thinkId, null, "summarized"))
         refreshAppliedSettings()
         refreshUsage()
         suggestInitIfNoClaudeMd()
@@ -1676,8 +1629,8 @@ class ClaudeCodeManager(
      * 那本来就是用户刚刚选中的那个文件夹。只重试一次，避免 CLI 反复要信任时打转。
      */
     private suspend fun requestSetCwd(target: String): String? {
-        val id = newRequestId()
-        return when (val outcome = controlOutcome(id, encodeClaudeCodeSetCwd(id, target))) {
+        val id = controls.newRequestId()
+        return when (val outcome = controls.request(id, encodeClaudeCodeSetCwd(id, target))) {
             is ControlOutcome.Ok -> when (val result = parseClaudeCodeSetCwdResult(outcome.payload)) {
                 is ClaudeCodeSetCwdResult.Ok -> {
                     // 用 CLI 规范化后的路径回填：用户点的字符串可能经过符号链接
@@ -1703,14 +1656,14 @@ class ClaudeCodeManager(
         target: String,
         needsTrust: ClaudeCodeSetCwdResult.NeedsTrust,
     ): String? {
-        val id = newRequestId()
+        val id = controls.newRequestId()
         val frame = encodeClaudeCodeSetCwd(
             requestId = id,
             path = target,
             trustAccepted = true,
             trustedDirectory = needsTrust.directory,
         )
-        return when (val outcome = controlOutcome(id, frame)) {
+        return when (val outcome = controls.request(id, frame)) {
             is ControlOutcome.Ok -> when (val result = parseClaudeCodeSetCwdResult(outcome.payload)) {
                 is ClaudeCodeSetCwdResult.Ok -> {
                     result.cwd.takeIf { it.isNotBlank() }?.let { canonical ->
@@ -1766,8 +1719,8 @@ class ClaudeCodeManager(
      * CLI 会往下钳位。UI 显示这里读回来的值，就不需要那种"可能不生效"的含糊提示了。
      */
     suspend fun refreshAppliedSettings() {
-        val id = newRequestId()
-        val payload = control(id, encodeClaudeCodeGetSettings(id)) ?: return
+        val id = controls.newRequestId()
+        val payload = controls.payload(id, encodeClaudeCodeGetSettings(id)) ?: return
         val applied = payload["applied"].asJsonObjectOrNull() ?: return
         _state.update {
             it.copy(
@@ -1796,8 +1749,8 @@ class ClaudeCodeManager(
     /** 拉取模型目录。远端 worker 的 provider/策略决定可选项，必须问而不是自己猜。 */
     fun refreshModels() {
         scope.launch {
-            val id = newRequestId()
-            val payload = control(id, encodeClaudeCodeListModels(id))
+            val id = controls.newRequestId()
+            val payload = controls.payload(id, encodeClaudeCodeListModels(id))
             if (payload == null) {
                 Log.w(TAG, "refreshModels failed: control timed out or errored")
                 return@launch
@@ -1865,8 +1818,8 @@ class ClaudeCodeManager(
                         ?: _state.value.model
                         ?: _state.value.options.model,
                 )
-                val id = newRequestId()
-                val outcome = controlOutcome(id, encodeClaudeCodeSetModel(id, model))
+                val id = controls.newRequestId()
+                val outcome = controls.request(id, encodeClaudeCodeSetModel(id, model))
                 if (outcome is ControlOutcome.Ok) {
                     _state.update { it.copy(options = it.options.copy(model = model)) }
                     // 热切的模型也要落盘，否则重启后重开这个会话又掉回默认模型
@@ -1896,7 +1849,7 @@ class ClaudeCodeManager(
                         ?: if (_state.value.status != SessionStatus.Running) {
                             "会话未在运行"
                         } else {
-                            "CLI 未应答（${CONTROL_TIMEOUT_MS / 1000} 秒超时）"
+                            "CLI 未应答（${ClaudeCodeControlChannel.TIMEOUT_MS / 1000} 秒超时）"
                         }
                     appendItem(ChatItem.Note(newId(), "切换模型失败：$why", isError = true))
                 }
@@ -1934,8 +1887,8 @@ class ClaudeCodeManager(
         scope.launch {
             _state.update { it.copy(applyingSettings = true) }
             try {
-                val id = newRequestId()
-                when (val outcome = controlOutcome(id, encodeClaudeCodeSetPermissionMode(id, mode))) {
+                val id = controls.newRequestId()
+                when (val outcome = controls.request(id, encodeClaudeCodeSetPermissionMode(id, mode))) {
                     is ControlOutcome.Ok -> {
                         _state.update {
                             it.copy(
@@ -2124,8 +2077,8 @@ class ClaudeCodeManager(
      */
     fun refreshPlan() {
         scope.launch {
-            val id = newRequestId()
-            val payload = control(id, encodeClaudeCodeGetPlan(id))
+            val id = controls.newRequestId()
+            val payload = controls.payload(id, encodeClaudeCodeGetPlan(id))
             if (payload == null) Log.w(TAG, "refreshPlan failed: control timed out or errored")
             val exists = payload?.get("exists").asBooleanOrNull()
             val plan = if (exists == false) {
@@ -2148,8 +2101,8 @@ class ClaudeCodeManager(
      */
     fun refreshUsage() {
         scope.launch {
-            val ctxId = newRequestId()
-            val usage = control(ctxId, encodeClaudeCodeGetContextUsage(ctxId))
+            val ctxId = controls.newRequestId()
+            val usage = controls.payload(ctxId, encodeClaudeCodeGetContextUsage(ctxId))
             if (usage == null) Log.w(TAG, "refreshUsage failed: get_context_usage control timed out or errored")
             usage?.let { payload ->
                 val used = payload["totalTokens"].asIntOrNull()
@@ -2167,8 +2120,8 @@ class ClaudeCodeManager(
                     )
                 }
             }
-            val costId = newRequestId()
-            val cost = control(costId, encodeClaudeCodeGetSessionCost(costId))
+            val costId = controls.newRequestId()
+            val cost = controls.payload(costId, encodeClaudeCodeGetSessionCost(costId))
             if (cost == null) Log.w(TAG, "refreshUsage failed: get_session_cost control timed out or errored")
             cost?.let { payload ->
                 val text = payload["text"].asStringOrNull()?.takeIf { it.isNotBlank() }
@@ -2245,8 +2198,8 @@ class ClaudeCodeManager(
     fun renameSession(title: String) {
         val trimmed = title.trim().ifBlank { return }
         scope.launch {
-            val id = newRequestId()
-            val outcome = control(id, encodeClaudeCodeRenameSession(id, trimmed))
+            val id = controls.newRequestId()
+            val outcome = controls.payload(id, encodeClaudeCodeRenameSession(id, trimmed))
             if (outcome == null) Log.w(TAG, "renameSession failed: control timed out or errored")
         }
     }
@@ -2546,7 +2499,6 @@ class ClaudeCodeManager(
          * 所以这是「追加的消息已经被模型看见」的唯一可观测信号（实测见 [ClaudeCodeSendQueue]）。
          */
         private const val STATUS_REQUESTING = "requesting"
-        private const val CONTROL_TIMEOUT_MS = 8_000L
         /** 拟名要打一枪小模型，比普通 control 慢；给足余量，超时也不挡下一轮 */
         private const val TITLE_GENERATION_TIMEOUT_MS = 30_000L
         /** 塞进 generate_session_title 的 description 上限，避免把整段长粘贴都送去拟名 */
