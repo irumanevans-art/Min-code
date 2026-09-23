@@ -148,6 +148,13 @@ internal class FakeCliProcess(
     /** 读 stdout 的一方收到 IOException，模拟流读坏了（进程仍在） */
     fun failStdout(message: String) = stdout.fail(IOException(message))
 
+    /**
+     * 退出时 stdout 不是干净的 EOF 而是抛 IOException —— 进程被杀、管道被掐断时读端就是这样。
+     * 默认 false：真 CLI 被关 stdin 后是自己正常退的。
+     */
+    @Volatile
+    var stdoutFailsOnExit = false
+
     /** 进程自己退出（不是 Min 关的） */
     fun crash(code: Int) = exit(code)
 
@@ -224,7 +231,7 @@ internal class FakeCliProcess(
     private fun exit(code: Int) {
         if (exitCode != null) return
         exitCode = code
-        stdout.close()
+        if (stdoutFailsOnExit) stdout.fail(IOException("Stream closed")) else stdout.close()
         stderr.close()
         exited.countDown()
     }

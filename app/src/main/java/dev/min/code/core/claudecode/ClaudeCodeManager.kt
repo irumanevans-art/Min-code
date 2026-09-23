@@ -9,7 +9,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,14 +37,10 @@ import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.util.LocalUrls
-import me.rerere.workspace.ProcessTreeKill
 import me.rerere.workspace.WorkspaceStorageArea
-import java.io.BufferedReader
 import java.io.File
-import java.io.OutputStreamWriter
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -382,30 +377,39 @@ class ClaudeCodeManager(
     /** 串行化 start/stop，避免旧会话的 readLoop 还在写 state 时新会话已经起来 */
     private val sessionMutex = Mutex()
 
-    /**
-     * stdin 的写入队列。**入队顺序就是字节顺序**。
-     *
-     * 以前是 `scope.launch { writeMutex.withLock { … } }`：两次 launch 落在 `Dispatchers.IO`
-     * 的不同线程上，谁先摸到锁并不保证——两条紧挨着发出的消息有可能在 CLI 那边前后颠倒。
-     * 追加消息现在是立刻交棒的，顺序正是这次要保证的东西，所以改成单消费者串行写。
-     */
-    private val writeQueue = Channel<String>(Channel.UNLIMITED)
-
-    init {
-        scope.launch {
-            for (line in writeQueue) writeNow(line)
-        }
-    }
-
-    @Volatile
-    private var process: Process? = null
-
-    @Volatile
-    private var writer: OutputStreamWriter? = null
-
-    /** 每个会话一组 IO 协程，停止时整组取消 */
-    @Volatile
-    private var sessionIo: CoroutineScope? = null
+    /** 进程的两头：读 stdout / stderr、串行写 stdin、先礼后兵地关。状态怎么变仍在这里决定 */
+    private val cli = ClaudeCodeCliPipe(
+        scope = scope,
+        onEvent = { dispatch(it) },
+        onStderr = ::onStderrLine,
+        onReadFailure = { e ->
+            _state.update {
+                it.copy(
+                    status = SessionStatus.Failed,
+                    errorMessage = "会话中断: ${e.message}",
+                    busy = false,
+                    pendingPermission = null,
+                )
+            }
+        },
+        onWriteFailure = { e ->
+            _state.update {
+                it.copy(
+                    status = SessionStatus.Failed,
+                    errorMessage = "写入会话失败: ${e.message}",
+                    busy = false,
+                )
+            }
+        },
+        onExit = ::onCliExit,
+        onUncaught = { e ->
+            Log.e(TAG, "uncaught exception in session IO scope", e)
+            CrashRecorder.record(context, Thread.currentThread(), e)
+            // readLoop / 写队列抛出去之后帧再也不被处理，会话会永远停在 Running、
+            // 发送静默无回显 —— 至少让状态说实话
+            failSessionOnUncaught("session-io", e)
+        },
+    )
 
     /**
      * 本机预览 URL（loopback）。UI 收集后 **填预览位**（可自动展开一次）。
@@ -449,13 +453,6 @@ class ClaudeCodeManager(
     /** 当前这一轮是哪条消息开的头。按 Esc 撤回时要把它退还给输入框 */
     @Volatile
     private var inFlight: PendingSend? = null
-
-    /**
-     * 正在主动停止。destroy() 会把 stdout 关掉，readLoop 随即抛 IOException ——
-     * 没有这个标志的话，用户点"停止"会被报成"会话中断"。
-     */
-    @Volatile
-    private var stopping: Boolean = false
 
     /**
      * 已发出、等待 CLI 应答的 control_request，按 request_id 配对。
@@ -574,20 +571,7 @@ class ClaudeCodeManager(
         _state.update { it.copy(launchedProfileId = launched.profileId) }
         currentLinuxDir = launched.linuxDir
         val proc = launched.process
-        process = proc
-        writer = proc.outputStream.writer(Charsets.UTF_8)
-
-        val io = CoroutineScope(
-            SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
-                Log.e(TAG, "uncaught exception in session IO scope", e)
-                CrashRecorder.record(context, Thread.currentThread(), e)
-                // readLoop / 写队列抛出去之后帧再也不被处理，会话会永远停在 Running、
-                // 发送静默无回显 —— 至少让状态说实话
-                failSessionOnUncaught("session-io", e)
-            }
-        )
-        sessionIo = io
-        stopping = false
+        val io = cli.attach(proc)
         _state.update {
             it.copy(
                 status = SessionStatus.Running,
@@ -602,97 +586,36 @@ class ClaudeCodeManager(
             )
         }
 
-        io.launch { readLoop(proc) }
-        io.launch { drainStderr(proc) }
+        cli.startReading(proc)
         // 进程真的起来了才记：记在前面的话，一个启动就失败的配置会被当成"上次用的"，
         // 下次新建会话直接继承一个跑不起来的模型
         sessionPrefs.save(sessionId, options)
         // 握手：一次拿到斜杠命令 + 模型目录。失败不影响会话本身，只是底栏少几个选项。
         io.launch { handshake() }
-        io.launch {
-            val code = runCatching { proc.waitFor() }.getOrNull()
-            Log.i(TAG, "claude exited with code $code")
-            // 只有**当前这个**进程的退出才说得上"会话结束了"。[shutdown] 一进门就把 process
-            // 置 null，所以我们主动关掉的旧进程走到这里必然 `proc !== process`。
-            // 不挡的话，换档重启会被它盖一下：那时状态已经是 Starting（见 [relaunchWith] ①），
-            // 被盖成 Closed 之后界面闪一下启动面板，这期间用户发的消息还会被 [send]
-            // 当成"会话已关"直接退回输入框。真正关会话的几条路（stopSession / startSession /
-            // openSession）本来就各自写了自己的终态，不靠这里。
-            if (proc !== process) return@launch
-            // 主动停止时 destroy() 必然给出非 0 退出码，别把它报成错误
-            val exitedUnexpectedly = !stopping && code != null && code != 0
-            _state.update {
-                if (it.status == SessionStatus.Failed) {
-                    it.copy(busy = false, pendingPermission = null)
-                } else {
-                    it.copy(
-                        status = SessionStatus.Closed,
-                        busy = false,
-                        pendingPermission = null,
-                        errorMessage = it.errorMessage
-                            ?: if (exitedUnexpectedly) "claude 进程退出 (exit $code)" else null,
-                    )
-                }
-            }
-        }
     }
 
     /**
-     * stdout 读取循环。
-     *
-     * **每一行单独 try/catch**：解析一行失败绝不能让整个循环退出。之前 try 包在 while 外面，
-     * 于是任何一个字段形状不符（CLI 版本漂移就会发生）都会抛出 IllegalArgumentException，
-     * 循环直接 break —— CLI 进程还活着、还在往 stdout 写，App 却再也不读了。表现就是
-     * "会话中断: Element class kotlinx.serialization.json.JsonLiteral is not a JsonArray"，
-     * 而且此后所有 control_request 都收不到应答（切模型/切权限模式全部超时报"CLI 未应答"）。
-     *
-     * 只有**读流本身**失败（进程死了、管道关了）才是真的会话中断。
+     * 当前进程退出了（我们主动关掉的旧进程不会走到这里，见 [ClaudeCodeCliPipe.startReading]）。
+     * [unexpected] = 不是我们关的且退出码非 0。
      */
-    private fun readLoop(proc: Process) {
-        try {
-            BufferedReader(proc.inputStream.reader(Charsets.UTF_8)).use { reader ->
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    if (line.isBlank()) continue
-                    val events = try {
-                        parseClaudeCodeEvents(line)
-                    } catch (e: Exception) {
-                        // 把原始行记下来：不然连"是哪个帧炸的"都无从查起
-                        Log.e(TAG, "failed to parse line: ${line.take(1000)}", e)
-                        continue
-                    }
-                    if (events.isEmpty()) {
-                        Log.d(TAG, "unhandled line: ${line.take(200)}")
-                    }
-                    events.forEach { event ->
-                        try {
-                            dispatch(event)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "failed to dispatch $event", e)
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (stopping) {
-                Log.d(TAG, "readLoop closed by stopSession")
-                return
-            }
-            Log.e(TAG, "readLoop error", e)
-            _state.update {
+    private fun onCliExit(code: Int?, unexpected: Boolean) {
+        _state.update {
+            if (it.status == SessionStatus.Failed) {
+                it.copy(busy = false, pendingPermission = null)
+            } else {
                 it.copy(
-                    status = SessionStatus.Failed,
-                    errorMessage = "会话中断: ${e.message}",
+                    status = SessionStatus.Closed,
                     busy = false,
                     pendingPermission = null,
+                    errorMessage = it.errorMessage
+                        ?: if (unexpected) "claude 进程退出 (exit $code)" else null,
                 )
             }
         }
     }
 
     /**
-     * stderr 按行读，实时反映启动期的报错。
-     * 用 readText() 会一路阻塞到进程退出为止，长会话里等于没有诊断信息。
+     * stderr 的一行。
      *
      * **每一行都进对话流**（[ChatItem.ProcessOutput]，默认折叠），官方终端里看得到的
      * 这里也看得到。但**不能把每一行都当错误**：Node/npm/proot 会往 stderr 打一堆
@@ -700,26 +623,14 @@ class ClaudeCodeManager(
      * 界面上就永远挂着一条红字，看着像会话坏了。所以红字只留给启动期（Starting，
      * 那时候任何一行都可能是起不来的原因）和 [looksLikeError] 认得的行。
      *
-     * "启动期"还要加一句 `proc === process`：换档时状态先改 Starting、旧进程随后才慢慢退
-     * （见 [relaunchWith] 的 ①②），旧进程退出时打的那几行常规噪声正好撞在 Starting 上，
-     * 会被当成新进程起不来的原因刷成红字。只有**当前这个**进程的 stderr 才说明得了启动。
+     * "启动期"只认**当前**进程（[current]）：换档时旧进程退出前打的常规噪声正好撞在 Starting 上，
+     * 不能当成新进程起不来的原因。
      */
-    private fun drainStderr(proc: Process) {
-        try {
-            BufferedReader(proc.errorStream.reader(Charsets.UTF_8)).use { reader ->
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    if (line.isBlank()) continue
-                    Log.w(TAG, "claude stderr: $line")
-                    val starting = _state.value.status == SessionStatus.Starting && proc === process
-                    appendStderr(line)
-                    if (starting || looksLikeError(line)) {
-                        _state.update { it.copy(errorMessage = line.take(500)) }
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            // 进程被杀时流会关闭，忽略
+    private fun onStderrLine(line: String, current: Boolean) {
+        val starting = _state.value.status == SessionStatus.Starting && current
+        appendStderr(line)
+        if (starting || looksLikeError(line)) {
+            _state.update { it.copy(errorMessage = line.take(500)) }
         }
     }
 
@@ -1253,13 +1164,13 @@ class ClaudeCodeManager(
      *
      * 调用点必须保证此刻 `busy` 已经是「有活 → 仍为 true」，否则界面会闪一下空闲态。
      *
-     * 进程正在关（[stopping]）就什么都别发：换档时 shutdown 会给旧 CLI 最多 4 秒自己退，
+     * 进程正在关（[ClaudeCodeCliPipe.stopping]）就什么都别发：换档时 shutdown 会给旧 CLI 最多 4 秒自己退，
      * 它很可能在那期间把本轮跑完、吐一帧 `result`，而 result 的收尾正好会调到这里
      * （见 [dispatch]）。那时 writer 已经是 null，发出去只是把消息喂给一个死进程 ——
      * 队列留着不动，等新进程握手完再发才不会丢。
      */
     private fun flushPendingSend(): Boolean {
-        if (stopping) return false
+        if (cli.stopping) return false
         val queued = sendQueue.drainHeld()
         if (queued.isEmpty()) return false
         // 第一条要把「新的一轮开始了」落到状态上（计时、token 归零）；
@@ -2447,7 +2358,7 @@ class ClaudeCodeManager(
             ?: event.description
         val sessionKey = _state.value.sessionId
         // 同步 kick：权限必须立刻应答，托管在 IO 上跑
-        sessionIo?.launch {
+        cli.sessionScope?.launch {
             val result = registry.startFromAgent(
                 command = cleaned,
                 cwdGuest = cwd,
@@ -2530,7 +2441,7 @@ class ClaudeCodeManager(
         val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
         val label = event.input["description"].asStringOrNull()
         val sessionKey = _state.value.sessionId
-        sessionIo?.launch {
+        cli.sessionScope?.launch {
             val result = registry.startFromAgent(
                 command = cleaned,
                 cwdGuest = cwd,
@@ -2560,87 +2471,25 @@ class ClaudeCodeManager(
     }
 
     /**
-     * 真正杀掉进程并回收 IO 协程。
+     * 真正杀掉进程并回收 IO 协程（怎么关见 [ClaudeCodeCliPipe.close]）。
      *
-     * 注意先把 [process] 捕获成局部变量再置 null —— 旧实现在异步块里再读 `process`，
-     * 那时字段已经是 null 了，destroyForcibly() 永远不会执行。
+     * 顺序照旧：先置 stopping、摘下进程（[ClaudeCodeCliPipe.detach]），再清本会话的发送队列，
+     * 最后才关 stdin、等它退。
      *
      * [clearQueue] 只有 [relaunchWith] 传 false：换档是**续同一个会话**，排队的消息进的还是
      * 同一个上下文，不该跟着进程作废；而且这一路要等 shutdown 跑完、把旧进程真吃下去的那批
      * 确认掉之后，才知道剩下哪些该重发（见那边的 ③）。其余调用点都是真的换/关会话，保持默认。
      */
     private suspend fun shutdown(clearQueue: Boolean = true) {
-        stopping = true
-        val proc = process
-        val io = sessionIo
-        process = null
-        sessionIo = null
+        val closing = cli.detach()
         // 排队的消息跟着这个进程一起作废：留到下一个会话去发，等于把一句话
         // 塞进一个它根本不认识的上下文里
         inFlight = null
         if (clearQueue) sendQueue.clear()
-        // 关掉 stdin 就是 stream-json 模式约定的优雅退出信号。
-        // **必须给它时间自己退** —— transcript 是 CLI 退出前才落盘的，
-        // 直接 destroy() 会让这一轮的 ~/.claude/projects/<cwd>/<id>.jsonl 根本没写出来，
-        // 于是"开了好几次会话，历史里却只有一条"。
-        runCatching { writer?.close() }
-        writer = null
-
-        if (proc != null) {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    if (!proc.waitFor(GRACEFUL_EXIT_MS, TimeUnit.MILLISECONDS)) {
-                        // 自己不退才动手。不能指望 destroy() / destroyForcibly()：在 Android 上
-                        // 两个都只是 SIGTERM，proot 扛得住；要先自底向上杀 guest 树再杀宿主
-                        // （ProcessTreeKill 类注释，和 Codex / 本地服务同一条路）
-                        val reaped = ProcessTreeKill.reap(proc)
-                        if (reaped == null) {
-                            Log.w(TAG, "shutdown: no host pid, fell back to destroy()")
-                        } else {
-                            Log.i(TAG, "shutdown: reaped tree=${reaped.first.tree.size} host=${reaped.second}")
-                        }
-                        proc.waitFor(SHUTDOWN_GRACE_MS, TimeUnit.MILLISECONDS)
-                    }
-                }
-            }
-        }
-        io?.cancel()
+        cli.close(closing)
     }
 
-    private fun writeLine(line: String) {
-        val accepted = writeQueue.trySend(line).isSuccess
-        if (!accepted) Log.w(TAG, "writeLine: write queue closed")
-    }
-
-    /** 只在写入队列那一个消费者协程里跑，所以这里不需要再上锁 */
-    private fun writeNow(line: String) {
-        val target = writer
-        if (target == null) {
-            Log.w(TAG, "writeLine: no active writer")
-            return
-        }
-        runCatching {
-            target.write(line)
-            target.write("\n")
-            target.flush()
-        }.onFailure { e ->
-            // shutdown 先置 stopping 再关 stdin，停止 / 换档时迟到的写必然失败；
-            // writer 已换人则说明失败的是上一个进程的管道 —— 这两种都不是「这个会话坏了」，
-            // 何况此刻的状态可能已经属于下一个会话
-            if (stopping || target !== writer) {
-                Log.d(TAG, "writeLine dropped: session is closing", e)
-                return@onFailure
-            }
-            Log.e(TAG, "writeLine failed", e)
-            _state.update {
-                it.copy(
-                    status = SessionStatus.Failed,
-                    errorMessage = "写入会话失败: ${e.message}",
-                    busy = false,
-                )
-            }
-        }
-    }
+    private fun writeLine(line: String) = cli.write(line)
 
     private fun appendItem(item: ChatItem) = _state.update { it.copy(items = it.items + item) }
 
@@ -2649,13 +2498,6 @@ class ClaudeCodeManager(
     companion object {
         private const val TAG = "ClaudeCodeManager"
         private const val MAX_RESULT_CHARS = 8 * 1024
-        private const val SHUTDOWN_GRACE_MS = 2_000L
-
-        /**
-         * 关掉 stdin 之后留给 CLI 自己退出的时间。它要在退出前把 transcript 落盘
-         * （~/.claude/projects/<cwd>/<session-id>.jsonl），强杀就会丢这一整个会话记录。
-         */
-        private const val GRACEFUL_EXIT_MS = 4_000L
         private const val INTERRUPT_TIMEOUT_MS = 15_000L
 
         /** 一轮收尾后，等 CLI 拿走已交棒消息的上限（[watchHandedOff]） */

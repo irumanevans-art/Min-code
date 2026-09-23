@@ -362,6 +362,34 @@ class ClaudeCodeManagerCharacterizationTest {
     }
 
     @Test
+    fun `stopping after an interrupted turn does not report the CLI's exit code 1`() = runBlocking<Unit> {
+        // 录制里看到的：打断过的会话，关 stdin 之后 CLI 以 1 退出
+        ManagerHarness("interrupt_midturn").use { h ->
+            h.startAndHandshake()
+            h.manager.send("count")
+            h.awaitState("开始流") { it.streamingText.isNotEmpty() }
+            h.manager.interrupt()
+            h.awaitTurnEnd()
+            h.manager.stopSession()
+            val s = h.awaitState("关闭") { it.status == SessionStatus.Closed && !it.stopping }
+            assertEquals(1, h.process.exitValueOrNull)
+            assertNull(s.errorMessage)
+        }
+    }
+
+    @Test
+    fun `stdout breaking while the session is being stopped is not reported as an interruption`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake()
+            h.process.stdoutFailsOnExit = true
+            h.manager.stopSession()
+            val s = h.awaitState("关闭") { it.status == SessionStatus.Closed && !it.stopping }
+            assertNull(s.errorMessage)
+            assertTrue(h.process.hasExited)
+        }
+    }
+
+    @Test
     fun `the CLI exiting on its own with a non-zero code closes the session with the exit code`() = runBlocking<Unit> {
         ManagerHarness("plain_reply").use { h ->
             h.startAndHandshake()
