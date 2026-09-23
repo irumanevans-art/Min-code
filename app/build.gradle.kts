@@ -85,6 +85,9 @@ android {
 
     buildTypes {
         release {
+            // R8 故意关着（proguard-rules.pro 因此是空的）：壳进程按类名经 app_process 拉起
+            // PrivilegedServer、里面还有反射，Koin / kotlinx.serialization / AIDL 也都靠名字 ——
+            // 一改名就是运行时才炸，编译期看不出来。要开得先补齐 keep 规则，再真机把主路径全过一遍
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfigs.findByName("release")?.let { signingConfig = it }
