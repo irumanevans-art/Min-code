@@ -20,8 +20,8 @@ Third-party code and assets
 * JetBrains Mono font, SIL Open Font License 1.1
   - `app/src/main/res/font/jetbrains_mono.ttf`
 * LXGW WenKai GB font (https://github.com/lxgw/LxgwWenkaiGB), SIL Open Font License 1.1
-  - `app/src/main/res/font/lxgw_wenkai_gb.ttf`, unmodified Regular weight (v1.522). Derived from
-    Fontworks' Klee One.
+  - `app/src/main/res/font/lxgw_wenkai_gb.ttf`, Regular weight (v1.522), subset to GB2312 plus
+    punctuation and common symbols by `tools/subset_wenkai.py`. Derived from Fontworks' Klee One.
 * Playfair Display (https://github.com/clauseggers/Playfair-Display), SIL Open Font License 1.1
   - `app/src/main/res/font/playfair_display_italic.ttf` (Italic; in-app hero wordmark)
 * Cormorant Garamond (https://github.com/CatharsisFonts/Cormorant), SIL Open Font License 1.1
