@@ -899,17 +899,15 @@ class ClaudeCodeManager(
                 val id = newId()
                 _state.update { state ->
                     state.copy(
-                        items = state.items.map { item ->
-                            if (item is ChatItem.ToolCall && item.toolUseId == event.parentToolUseId) {
-                                item.copy(
-                                    subItems = mergeSubagentItem(
-                                        items = item.subItems,
-                                        event = event.event,
-                                        id = id,
-                                        maxResultChars = MAX_RESULT_CHARS,
-                                    )
+                        items = state.items.mapToolCall(event.parentToolUseId) { item ->
+                            item.copy(
+                                subItems = mergeSubagentItem(
+                                    items = item.subItems,
+                                    event = event.event,
+                                    id = id,
+                                    maxResultChars = MAX_RESULT_CHARS,
                                 )
-                            } else item
+                            )
                         }
                     )
                 }
@@ -1006,20 +1004,10 @@ class ClaudeCodeManager(
                 // 排他托管的卡已经被标成 Done（服务还在进程表里活着），CLI 随后收到的
                 // deny tool_result 不能再把它改回 Error —— 同一张卡状态会自相矛盾
                 val exclusiveHosted = event.toolUseId in exclusiveHostedToolUses
-                _state.update { state ->
-                    state.copy(
-                        items = state.items.map { item ->
-                            if (item is ChatItem.ToolCall && item.toolUseId == event.toolUseId && !exclusiveHosted) {
-                                item.copy(
-                                    status = if (event.isError) ChatItem.ToolCall.Status.Error else ChatItem.ToolCall.Status.Done,
-                                    result = event.content.take(MAX_RESULT_CHARS),
-                                    isError = event.isError,
-                                    editDiff = event.editDiff?.take(MAX_EDIT_DIFF_CHARS)
-                                        ?: item.editDiff,
-                                )
-                            } else item
-                        }
-                    )
+                if (!exclusiveHosted) {
+                    _state.update { state ->
+                        state.copy(items = state.items.mapToolCall(event.toolUseId) { it.withResult(event, MAX_RESULT_CHARS) })
+                    }
                 }
                 // 提问被"空答案"跑完了：必须说清楚，否则用户只会看到模型自说自话地
                 // "没收到选择"然后继续瞎猜。判断放在 update 之外 —— update 的 lambda
@@ -2481,13 +2469,8 @@ class ClaudeCodeManager(
      */
     private fun tryHostBashInsteadOfPermission(event: ClaudeCodeEvent.PermissionRequest): Boolean {
         if (!event.toolName.equals(TOOL_BASH, ignoreCase = true)) return false
-        val raw = event.input["command"].asStringOrNull().orEmpty().trim()
-        if (raw.isEmpty()) return false
-        val flags = bashFlags(event.input)
-        if (!LocalServiceIntent.shouldHost(raw, flags)) return false
+        val (cleaned, port) = hostedBashPlan(event.input) ?: return false
         val registry = localServices ?: return false
-        val cleaned = LocalServiceIntent.stripBackgroundNoise(raw)
-        val port = LocalServiceIntent.guessPort(cleaned)
         val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
         val label = event.input["description"].asStringOrNull()?.takeIf { it.isNotBlank() }
             ?: event.description
@@ -2519,14 +2502,12 @@ class ClaudeCodeManager(
                 event.toolUseId?.let { toolId ->
                     _state.update { state ->
                         state.copy(
-                            items = state.items.map { item ->
-                                if (item is ChatItem.ToolCall && item.toolUseId == toolId) {
-                                    item.copy(
-                                        status = ChatItem.ToolCall.Status.Error,
-                                        result = "exclusive host failed: ${err.message ?: err.toString()}",
-                                        isError = true,
-                                    )
-                                } else item
+                            items = state.items.mapToolCall(toolId) {
+                                it.copy(
+                                    status = ChatItem.ToolCall.Status.Error,
+                                    result = "exclusive host failed: ${err.message ?: err.toString()}",
+                                    isError = true,
+                                )
                             },
                         )
                     }
@@ -2556,13 +2537,11 @@ class ClaudeCodeManager(
         event.toolUseId?.let { toolId ->
             _state.update { state ->
                 state.copy(
-                    items = state.items.map { item ->
-                        if (item is ChatItem.ToolCall && item.toolUseId == toolId) {
-                            item.copy(
-                                status = ChatItem.ToolCall.Status.Done,
-                                result = "hosted by Min process table$portNote",
-                            )
-                        } else item
+                    items = state.items.mapToolCall(toolId) {
+                        it.copy(
+                            status = ChatItem.ToolCall.Status.Done,
+                            result = "hosted by Min process table$portNote",
+                        )
                     },
                 )
             }
@@ -2576,12 +2555,7 @@ class ClaudeCodeManager(
      */
     private fun maybeHostWhenNoPermissionGate(event: ClaudeCodeEvent.ToolUse) {
         val registry = localServices ?: return
-        val raw = event.input["command"].asStringOrNull().orEmpty().trim()
-        if (raw.isEmpty()) return
-        val flags = bashFlags(event.input)
-        if (!LocalServiceIntent.shouldHost(raw, flags)) return
-        val cleaned = LocalServiceIntent.stripBackgroundNoise(raw)
-        val port = LocalServiceIntent.guessPort(cleaned)
+        val (cleaned, port) = hostedBashPlan(event.input) ?: return
         val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
         val label = event.input["description"].asStringOrNull()
         val sessionKey = _state.value.sessionId
@@ -2602,16 +2576,6 @@ class ClaudeCodeManager(
                 if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
             }
         }
-    }
-
-    private fun bashFlags(input: JsonObject): Map<String, Any?> {
-        val out = LinkedHashMap<String, Any?>()
-        for (key in listOf("run_in_background", "runInBackground", "is_background")) {
-            val b = input[key].asBooleanOrNull()
-            if (b != null) out[key] = b
-            else input[key].asStringOrNull()?.let { out[key] = it }
-        }
-        return out
     }
 
     private fun maybeOfferLocalPreview(text: String) {
@@ -3096,21 +3060,58 @@ internal fun mergeSubagentItem(
         status = ChatItem.ToolCall.Status.Running,
     )
 
-    is ClaudeCodeEvent.ToolResult -> items.map { item ->
-        if (item is ChatItem.ToolCall && item.toolUseId == event.toolUseId) {
-            item.copy(
-                status = if (event.isError) ChatItem.ToolCall.Status.Error
-                else ChatItem.ToolCall.Status.Done,
-                result = event.content.take(maxResultChars),
-                isError = event.isError,
-                editDiff = event.editDiff?.take(MAX_EDIT_DIFF_CHARS) ?: item.editDiff,
-            )
-        } else item
-    }
+    is ClaudeCodeEvent.ToolResult -> items.mapToolCall(event.toolUseId) { it.withResult(event, maxResultChars) }
 
     // 子 agent 线程里不会有别的东西 —— 权限请求走的是主线程的 control_request
     else -> items
 }
+
+/** 一条 Bash 交给进程表托管时用的命令（剥掉了 `&` / nohup 这类后台噪音）和猜出来的端口 */
+internal data class HostedBashPlan(val command: String, val port: Int?)
+
+/**
+ * 这条 Bash 该不该托管进进程表；该的话给出托管参数，不该就是 null。
+ * 有权限闸门（排他托管）和没有闸门（bypass 下跟着跑）两个入口共用这一段判断 ——
+ * 以前各抄一遍，改了一边的判定另一边还是旧的，同一条命令就会一边托管一边不托管。
+ */
+internal fun hostedBashPlan(input: JsonObject): HostedBashPlan? {
+    val raw = input["command"].asStringOrNull().orEmpty().trim()
+    if (raw.isEmpty()) return null
+    if (!LocalServiceIntent.shouldHost(raw, bashFlags(input))) return null
+    val cleaned = LocalServiceIntent.stripBackgroundNoise(raw)
+    return HostedBashPlan(cleaned, LocalServiceIntent.guessPort(cleaned))
+}
+
+/** 各版本 CLI 对「后台跑」的几种写法，原样交给 [LocalServiceIntent.shouldHost] 判断 */
+private fun bashFlags(input: JsonObject): Map<String, Any?> {
+    val out = LinkedHashMap<String, Any?>()
+    for (key in listOf("run_in_background", "runInBackground", "is_background")) {
+        val b = input[key].asBooleanOrNull()
+        if (b != null) out[key] = b
+        else input[key].asStringOrNull()?.let { out[key] = it }
+    }
+    return out
+}
+
+/** toolUseId 对得上的那张工具卡换成 [transform] 的结果，其余原样。主会话流和子 agent 的子条目共用 */
+internal inline fun List<ChatItem>.mapToolCall(
+    toolUseId: String?,
+    transform: (ChatItem.ToolCall) -> ChatItem.ToolCall,
+): List<ChatItem> = map { item ->
+    if (item is ChatItem.ToolCall && item.toolUseId == toolUseId) transform(item) else item
+}
+
+/**
+ * 工具跑完：状态、结果（截到 [maxResultChars]）、编辑 diff 落到卡上。
+ * 主会话流和子 agent 的子条目以前各写一遍、一字不差 —— 改一边忘一边，同一种卡就会两种样子。
+ * 这次结果不带 diff 时保留卡上原有的那份（ToolUse 阶段可能已经算过）。
+ */
+internal fun ChatItem.ToolCall.withResult(event: ClaudeCodeEvent.ToolResult, maxResultChars: Int): ChatItem.ToolCall = copy(
+    status = if (event.isError) ChatItem.ToolCall.Status.Error else ChatItem.ToolCall.Status.Done,
+    result = event.content.take(maxResultChars),
+    isError = event.isError,
+    editDiff = event.editDiff?.take(MAX_EDIT_DIFF_CHARS) ?: editDiff,
+)
 
 /** 把一轮完成信息挂到最后一条 assistant 消息，避免回执漂浮在输入栏。 */
 private fun List<ChatItem>.updateLastAssistantMeta(
