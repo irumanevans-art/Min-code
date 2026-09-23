@@ -18,7 +18,9 @@ import java.util.concurrent.atomic.AtomicReference
  * shell 进程和 App 进程之间最省事的跨 uid 通道：shell 对 `content://authority` 做
  * [call]，把 Binder 塞进 extras。Socket / 文件描述符都要额外握手；Provider 是现成的。
  *
- * exported=false：只有同应用（含 shell 用 App 的 APK 起的进程，共享签名）能 call。
+ * exported=true（见 [call] 内注释与 AndroidManifest）：壳进程 uid 2000 和 App 不是同一个
+ * uid，不 exported 就收不到交接。任何 App 都能对这个 Provider 发 [call]，鉴权靠
+ * [android.os.Binder.getCallingUid] 只收 shell 与自身。
  */
 class PrivilegedBridgeProvider : ContentProvider() {
 
