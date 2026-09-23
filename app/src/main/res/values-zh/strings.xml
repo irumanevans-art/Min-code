@@ -424,7 +424,7 @@
   <string name="maint_updating">正在更新…</string>
   <string name="maint_repair_install">修复安装（补齐原生二进制）</string>
   <string name="maint_update_to">更新到 %1$s</string>
-  <string name="maint_update_cli">更新 Claude Code CLI</string>
+  <string name="maint_update_check_first">先检查更新</string>
   <string name="maint_apt_title">Ubuntu 软件包</string>
   <string name="maint_apt_hint">升级 Rootfs 里已装的 apt 包（Claude Code 自己装的 git、python3、ripgrep 等）。和 CLI 版本无关，可能耗时数分钟并消耗流量。</string>
   <string name="maint_apt_upgrading">正在升级…</string>

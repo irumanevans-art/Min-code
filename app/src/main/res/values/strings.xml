@@ -427,7 +427,7 @@
   <string name="maint_updating">updating…</string>
   <string name="maint_repair_install">Repair install (fetch the native binary)</string>
   <string name="maint_update_to">Update to %1$s</string>
-  <string name="maint_update_cli">Update Claude Code CLI</string>
+  <string name="maint_update_check_first">Check for updates first</string>
   <string name="maint_apt_title">Ubuntu packages</string>
   <string name="maint_apt_hint">Upgrades the apt packages already in the rootfs (git, python3, ripgrep and the rest that Claude Code installed). Unrelated to the CLI version; can take several minutes and some data.</string>
   <string name="maint_apt_upgrading">upgrading…</string>

@@ -209,9 +209,11 @@ internal fun ClaudeCodeMaintenanceSheet(
                 }
             }
 
+            // 只有查到新版、或装得不完整要修时才能点。以前没查过、已是最新也能点，
+            // 点了就是把同一版原样重装一遍，完了版本号纹丝不动，看上去像「更新失败」
             InkButton(
                 onClick = { onUpdateCli(useNpmMirror) },
-                enabled = actionable,
+                enabled = actionable && (state.cliIncomplete || state.updateAvailable),
                 busy = state.running == ClaudeCodeVM.MaintenanceTask.UpdateCli,
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -220,7 +222,8 @@ internal fun ClaudeCodeMaintenanceSheet(
                         state.running == ClaudeCodeVM.MaintenanceTask.UpdateCli -> stringResource(R.string.maint_updating)
                         state.cliIncomplete -> stringResource(R.string.maint_repair_install)
                         state.updateAvailable -> stringResource(R.string.maint_update_to, state.latestCliVersion.orEmpty())
-                        else -> stringResource(R.string.maint_update_cli)
+                        state.latestCliVersion == null -> stringResource(R.string.maint_update_check_first)
+                        else -> stringResource(R.string.maint_up_to_date, state.latestCliVersion)
                     }
                 )
             }
