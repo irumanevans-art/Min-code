@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -86,6 +85,7 @@ import dev.min.code.ui.components.LocalFrost
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.frostPane
 import dev.min.code.ui.components.InkRingProgress
+import dev.min.code.ui.files.toImportSource
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.MinKai
@@ -227,16 +227,10 @@ internal fun ClaudeCodeInputBar(
         scope.launch {
             var remaining = uris.size
             uris.forEach { uri ->
+                // 和文件页的导入同一个取名 + 开流（toImportSource），
+                // 取不到显示名时 SAF 的 `primary:Download/a.txt` 也会被剥成 `a.txt`
                 val (name, stream) = withContext(Dispatchers.IO) {
-                    val resolved = runCatching {
-                        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                            if (c.moveToFirst()) {
-                                val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                if (i >= 0) c.getString(i) else null
-                            } else null
-                        }
-                    }.getOrNull() ?: uri.lastPathSegment ?: "imported_file"
-                    resolved to runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+                    uri.toImportSource(context.contentResolver).let { it.name to it.open() }
                 }
                 if (stream == null) {
                     remaining -= 1

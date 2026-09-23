@@ -1,6 +1,5 @@
 package dev.min.code.ui.codex
 
-import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -74,6 +73,7 @@ import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.PaperCard
 import dev.min.code.ui.components.RikkaConfirmDialog
+import dev.min.code.ui.files.toImportSource
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.session.AttachmentChip
@@ -581,16 +581,10 @@ private fun CodexComposer(
         scope.launch {
             var remaining = uris.size
             uris.forEach { uri ->
+                // 和文件页的导入同一个取名 + 开流（toImportSource），
+                // 取不到显示名时 SAF 的 `primary:Download/a.txt` 也会被剥成 `a.txt`
                 val (name, stream) = withContext(Dispatchers.IO) {
-                    val resolved = runCatching {
-                        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                            if (c.moveToFirst()) {
-                                val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                if (i >= 0) c.getString(i) else null
-                            } else null
-                        }
-                    }.getOrNull() ?: uri.lastPathSegment ?: "imported_file"
-                    resolved to runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+                    uri.toImportSource(context.contentResolver).let { it.name to it.open() }
                 }
                 if (stream == null) {
                     remaining -= 1
