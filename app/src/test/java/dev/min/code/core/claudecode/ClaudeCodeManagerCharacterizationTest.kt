@@ -205,20 +205,20 @@ class ClaudeCodeManagerCharacterizationTest {
     }
 
     @Test
-    fun `unknown model - the CLI explains it in a synthetic reply and Min repeats it as a failure`() = runBlocking<Unit> {
+    fun `unknown model - the CLI explains it in a synthetic reply and Min marks the turn failed once`() = runBlocking<Unit> {
         ManagerHarness("model_not_found").use { h ->
             h.startAndHandshake()
             h.manager.send("Say hi.")
             val s = h.awaitTurnEnd()
             val explanation = "There's an issue with the selected model (claude-nonexistent-9). " +
                 "It may not exist or you may not have access to it. Run --model to pick a different model."
-            // 当前行为：同一句话出现两遍（CLI 的合成回复 + 我们的「任务失败」红字）
+            // 原因只在 CLI 的合成回复里说一遍，红字不再重复那句话
             assertEquals(
                 listOf(
                     claudeMdNote, "user: Say hi.",
                     "note: 会话已建立 · claude-nonexistent-9 · 23 个工具",
                     "assistant: $explanation [781ms, null tok]",
-                    "error: 任务失败: $explanation",
+                    "error: 任务失败（原因见上）",
                 ),
                 s.items.filterNot { it is ChatItem.ProcessOutput }.map { it.summary() },
             )
@@ -241,10 +241,10 @@ class ClaudeCodeManagerCharacterizationTest {
             h.awaitState("开始流") { it.streamingText.isNotEmpty() && it.turnProduced }
             h.manager.interrupt()
             val s = h.awaitTurnEnd()
-            // 当前行为：打断之后 CLI 回的是 is_error 的 result，于是挂一条红字「任务失败」
+            // 打断之后 CLI 回的是 is_error 的 result（error_during_execution）；是用户自己按的，不标红
             assertEquals(
                 listOf(claudeMdNote, "user: count", initNote, "assistant: 1\n2\n3\n4 [2468ms, null tok]",
-                    "error: 任务失败: error_during_execution"),
+                    "note: 已中断"),
                 s.lines(),
             )
             val interrupt = h.process.written.single { it.str("type") == "control_request" &&
@@ -264,8 +264,8 @@ class ClaudeCodeManagerCharacterizationTest {
             h.manager.interrupt()
             assertEquals("Write a haiku about the sea.", withdrawn.await().text)
             val s = h.awaitTurnEnd()
-            // 用户那条被摘掉了；当前行为：随后 CLI 的 is_error result 仍然挂一条红字
-            assertEquals(listOf(claudeMdNote, initNote, "error: 任务失败: error_during_execution"), s.lines())
+            // 用户那条被摘掉了，随后那个 is_error 的 result 也不留痕迹
+            assertEquals(listOf(claudeMdNote, initNote), s.lines())
         }
     }
 

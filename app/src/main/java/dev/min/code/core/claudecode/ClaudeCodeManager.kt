@@ -421,6 +421,18 @@ class ClaudeCodeManager(
     private val turnSeq = AtomicInteger(0)
 
     /**
+     * 停止键打断的是哪一轮（打断那一刻的 [turnSeq]），以及那次是不是撤回。
+     *
+     * CLI 对打断回的是 `is_error` 的 result（`error_during_execution`，实测 2.1.280），
+     * 不认出来的话，用户自己按了停止，对话流里还要挂一条红字「任务失败」。
+     */
+    @Volatile
+    private var interruptedTurn: Int? = null
+
+    @Volatile
+    private var interruptWithdrew: Boolean = false
+
+    /**
      * 一条用户消息在离开我们视线之前的样子。
      * [label] 是对话流里那条 [ChatItem.UserText] 的文本，撤回时要按 [itemId] 把它摘掉。
      */
@@ -1027,7 +1039,10 @@ class ClaudeCodeManager(
 
             is ClaudeCodeEvent.Result -> {
                 // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
-                turnSeq.incrementAndGet()
+                val endedTurn = turnSeq.getAndIncrement()
+                val interrupted = interruptedTurn == endedTurn
+                val withdrew = interrupted && interruptWithdrew
+                interruptedTurn = null
                 val finishedAt = System.currentTimeMillis()
                 val durationMs = event.durationMs
                     ?: _state.value.turnStartedAt?.let { finishedAt - it }
@@ -1067,11 +1082,8 @@ class ClaudeCodeManager(
                         items = run {
                             var updated = it.items.updateLastAssistantMeta(durationMs, outputTokens)
                             if (event.isError) {
-                                updated = updated + ChatItem.Note(
-                                    errorNoteId!!,
-                                    "任务失败: ${event.resultText ?: event.subtype}",
-                                    isError = true,
-                                )
+                                resultErrorNote(errorNoteId!!, event, interrupted, withdrew, updated)
+                                    ?.let { note -> updated = updated + note }
                             }
                             if (denialNote != null) {
                                 updated = updated + ChatItem.Note(
@@ -1551,6 +1563,8 @@ class ClaudeCodeManager(
         if (action == EscapeAction.Nothing) return
         if (action == EscapeAction.Withdraw) withdrawInFlight()
         if (action == EscapeAction.InterruptThenQueued) sendQueue.reclaim()
+        interruptWithdrew = action == EscapeAction.Withdraw
+        interruptedTurn = turnSeq.get()
 
         val seq = turnSeq.get()
         writeLine(encodeClaudeCodeInterrupt(UUID.randomUUID().toString()))
@@ -2968,6 +2982,32 @@ private const val MAX_EDIT_DIFF_CHARS = 64 * 1024
 
 /** CLI 侧的 Bash 工具名；托管与本地预览的判定都靠它认命令 */
 private const val TOOL_BASH = "Bash"
+
+/**
+ * 出错收尾的那一轮在对话流里留什么。
+ *
+ * - 停止键打断的：撤回（那条消息已经退回输入框）什么都不留；打断留一条不标红的「已中断」
+ * - CLI 已经用一条正文把原因说了（模型不存在时是一条合成的 assistant 回复，
+ *   和 result 文字一字不差）：红字不再把同一句话重复一遍
+ * - 其余照旧：红字写 result 的原文，没有原文写 subtype
+ */
+internal fun resultErrorNote(
+    id: String,
+    event: ClaudeCodeEvent.Result,
+    interrupted: Boolean,
+    withdrew: Boolean,
+    items: List<ChatItem>,
+): ChatItem.Note? {
+    if (interrupted) return if (withdrew) null else ChatItem.Note(id, "已中断")
+    val text = event.resultText
+    val alreadySaid = !text.isNullOrBlank() &&
+        (items.lastOrNull { it is ChatItem.AssistantText } as? ChatItem.AssistantText)?.text?.trim() == text.trim()
+    return ChatItem.Note(
+        id,
+        if (alreadySaid) "任务失败（原因见上）" else "任务失败: ${text ?: event.subtype}",
+        isError = true,
+    )
+}
 
 /**
  * 本轮被权限规则拦下的工具，收成一句给聊天流看的话。空列表返回 null。
