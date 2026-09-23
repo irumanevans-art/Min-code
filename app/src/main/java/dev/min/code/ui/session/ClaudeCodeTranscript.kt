@@ -356,7 +356,9 @@ internal fun UserEntry(text: String, isFirst: Boolean, isLast: Boolean, queued: 
                     .wrapContentWidth(Alignment.Start)
                     .height(IntrinsicSize.Min)
                     .clip(shape)
-                    .background(palette.paper2),
+                    // paper2 和会话底（paper）只差一阶，夜纸下气泡和底融成一片。
+                    // 再浅一阶才看得出这是从轨道上长出来的一只气泡
+                    .background(palette.paper3),
             ) {
                 Box(Modifier.width(2.5.dp).fillMaxHeight().seaFill())
                 SelectionContainer {

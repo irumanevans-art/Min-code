@@ -151,11 +151,13 @@ fun HorizonLine(
 ) {
     val wave = waveClock(active)
     val amp = 2.2.dp
+    // 海染在笔画上，不染整块画布。seaInk 走的是 SrcIn，会把抗锯齿晕开的半透明像素
+    // 也染成海；两端的淡出遮罩只盖住笔画中心，晕边就漏成一条纹理细线。
+    val sea = MaterialTheme.sea.sea
     Canvas(
         modifier
             .fillMaxWidth()
-            .height(if (active) amp * 2 + thickness else thickness)
-            .seaInk(),
+            .height(if (active) amp * 2 + thickness else thickness),
     ) {
         val w = size.width
         val h = size.height
@@ -174,10 +176,10 @@ fun HorizonLine(
         }
         val brush = if (fade) Brush.horizontalGradient(
             0f to Color.Transparent,
-            0.12f to Color.Black,
-            0.88f to Color.Black,
+            0.12f to sea,
+            0.88f to sea,
             1f to Color.Transparent,
-        ) else Brush.horizontalGradient(listOf(Color.Black, Color.Black))
+        ) else Brush.horizontalGradient(listOf(sea, sea))
         drawPath(path, brush, style = Stroke(stroke, cap = StrokeCap.Round))
     }
 }

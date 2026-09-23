@@ -7,6 +7,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -202,34 +203,47 @@ private fun BatteryRow() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    SettingRow(
-        title = stringResource(R.string.settings_battery_title),
-        subtitle = if (ignoringBattery) {
-            stringResource(R.string.settings_battery_ok)
-        } else {
-            stringResource(R.string.settings_battery_warn)
-        },
-        subtitleColor = if (ignoringBattery) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.sea.vermilion,
-        onClick = {
-            runCatching {
-                context.startActivity(
-                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                )
+    // 不走 SettingRow：说明文字和右侧的「去设置」并排时，长句会在词中间断开
+    // （「后台进 / 程」）。改成上下：说明占满整行，动作单独一行靠右。
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
             }
-        },
-        trailing = {
-            Text(
-                if (ignoringBattery) {
-                    stringResource(R.string.settings_battery_status_ok)
-                } else {
-                    stringResource(R.string.settings_battery_status_go)
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.sea.seaDeep,
-            )
-        },
-    )
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            stringResource(R.string.settings_battery_title),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            if (ignoringBattery) {
+                stringResource(R.string.settings_battery_ok)
+            } else {
+                stringResource(R.string.settings_battery_warn)
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = if (ignoringBattery) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.sea.vermilion,
+        )
+        Text(
+            if (ignoringBattery) {
+                stringResource(R.string.settings_battery_status_ok)
+            } else {
+                stringResource(R.string.settings_battery_status_go)
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.sea.seaDeep,
+            modifier = Modifier.align(Alignment.End).padding(top = 4.dp),
+        )
+    }
 }
 
 /**

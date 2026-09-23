@@ -72,9 +72,11 @@ fun Modifier.frostVeil(
     // 切线处收到 0，正文立刻是原色。
     val edge = if (dark) 0.96f else 0.97f
     val upper = if (dark) 0.86f else 0.88f
-    val across = if (dark) 0.42f else 0.48f
     val h = hold.coerceIn(0.15f, 0.95f)
-    val scrim = fadeScrim(fromTop, h, fill, edge, upper, across)
+    // 收到 0 的位置不能放在切线（圆钮下沿 / 胶囊上沿）上：正文从状态栏下方就开始了，
+    // 和切线之间隔着整行按钮。按切线收，滚到顶时第一条的头一两行就被洗成浅影。
+    // 收到按钮行中线附近，屏沿那一端仍托住坐在圆钮之间的字。
+    val scrim = fadeScrim(fromTop, h, fill, edge, upper)
     return drawBehind { drawRect(scrim) }
     // 没有 pointerInput：Compose 命中测试会穿过这层，点到下面的会话。
     // 菜单 / 输入胶囊是叠在前面的兄弟，命中先到它们。
@@ -102,13 +104,11 @@ private fun fadeScrim(
     fill: Color,
     edge: Float,
     upper: Float,
-    across: Float,
 ): Brush {
     val stops = arrayOf(
         0f to fill.copy(alpha = edge),
-        (hold * 0.50f) to fill.copy(alpha = upper),
-        (hold * 0.88f) to fill.copy(alpha = across),
-        hold to Color.Transparent,
+        (hold * 0.30f) to fill.copy(alpha = upper),
+        (hold * 0.55f) to Color.Transparent,
         1f to Color.Transparent,
     )
     return if (fromTop) Brush.verticalGradient(colorStops = stops)
