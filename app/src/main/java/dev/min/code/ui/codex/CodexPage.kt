@@ -30,7 +30,6 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,9 +74,7 @@ import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.session.AttachmentChip
 import dev.min.code.ui.session.ComposerPlus
-import dev.min.code.ui.session.FileMentionList
-import dev.min.code.ui.session.mentionTokenOf
-import dev.min.code.ui.session.replaceMentionToken
+import dev.min.code.ui.session.FileMentionSuggestions
 import dev.min.code.ui.session.RenameDialog
 import dev.min.code.ui.session.SeaSendKey
 import dev.min.code.ui.session.SessionRowMenu
@@ -90,7 +87,6 @@ import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Settings02
 import me.rerere.hugeicons.stroke.Stop
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
@@ -520,20 +516,6 @@ private fun CodexComposer(
     var importing by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<CodexAttachment?>(null) }
 
-    // `@` 补全。和 Claude 侧共用 mentionTokenOf / replaceMentionToken 那两个纯函数，
-    // 于是两边对「什么算一个 @ token」的判断不会各说各话
-    var fileMatches by remember { mutableStateOf(emptyList<String>()) }
-    val mentionQuery = remember(draft) { mentionTokenOf(draft) }
-    LaunchedEffect(mentionQuery, enabled) {
-        if (mentionQuery == null || !enabled) {
-            fileMatches = emptyList()
-            return@LaunchedEffect
-        }
-        // 抖一下：每敲一个字母就走一次目录遍历，手机上会明显掉帧
-        delay(MENTION_DEBOUNCE_MS)
-        fileMatches = runCatching { onSearchFiles(mentionQuery) }.getOrDefault(emptyList())
-    }
-
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
@@ -601,16 +583,12 @@ private fun CodexComposer(
             }
         }
         // 候选摆在输入框上方：手指在下面打字，列表从上面长出来才不会被自己的手挡住
-        AnimatedVisibility(
-            visible = fileMatches.isNotEmpty(),
-            enter = InkMotion.expand,
-            exit = InkMotion.collapse,
-        ) {
-            FileMentionList(fileMatches) { picked ->
-                onDraftChange(replaceMentionToken(draft, picked))
-                fileMatches = emptyList()
-            }
-        }
+        FileMentionSuggestions(
+            text = draft,
+            enabled = enabled,
+            onSearchFiles = onSearchFiles,
+            onTextChange = onDraftChange,
+        )
         AnimatedVisibility(
             visible = attachments.isNotEmpty(),
             enter = InkMotion.expand,
@@ -741,9 +719,6 @@ private fun CodexComposer(
 
 /** 排队 chip 上留几个字。一行装得下三四个，够认出是哪条 */
 private const val QUEUED_CHIP_CHARS = 18
-
-/** `@` 补全的抖动窗口，和 Claude 侧同一个数 */
-private const val MENTION_DEBOUNCE_MS = 180L
 
 /** 命令旁边那句说明。命令名本身不翻译，说明跟着界面语言走 */
 private fun CodexSlash.labelRes(): Int = when (this) {

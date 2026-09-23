@@ -1,5 +1,6 @@
 package dev.min.code.ui.session
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.LocalIndication
@@ -23,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +63,7 @@ import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.pressScale
 import dev.min.code.ui.theme.sea
 import dev.min.code.ui.theme.seaInk
+import kotlinx.coroutines.delay
 
 /**
  * 输入坞：和会话流同一张纸，没有分界线——胶囊本身就是边界。
@@ -334,6 +337,50 @@ internal fun AttachmentChip(
             size = 22.dp,
             iconSize = 13.dp,
         )
+    }
+}
+
+/** `@` 补全列表出现前的防抖：每敲一个字母就走一次目录遍历，手机上会明显掉帧 */
+internal const val MENTION_DEBOUNCE_MS = 180L
+
+/**
+ * 输入框上方的 `@` 文件补全：从 [text] 里取出 `@` 后面的词，防抖后查一次，选中就把那个词换成路径。
+ * Claude 和 Codex 的输入框共用；文字放在哪（本地状态 / VM）由调用方通过 [onTextChange] 决定。
+ */
+@Composable
+internal fun FileMentionSuggestions(
+    text: String,
+    enabled: Boolean,
+    onSearchFiles: suspend (String) -> List<String>,
+    onTextChange: (String) -> Unit,
+    showDivider: Boolean = false,
+) {
+    // `@` 提及：取光标前最后一个 @ 后的连续非空白串当查询词。
+    // OutlinedTextField 只回传 String（拿不到光标位置），所以按"最后一个 @"近似；
+    // 实际输入里 @ 后面接着打字的场景，这个近似和真实光标位置是一致的。
+    val mentionQuery = remember(text) { mentionTokenOf(text) }
+    var fileMatches by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(mentionQuery, enabled) {
+        if (mentionQuery == null || !enabled) {
+            fileMatches = emptyList()
+            return@LaunchedEffect
+        }
+        delay(MENTION_DEBOUNCE_MS)
+        fileMatches = runCatching { onSearchFiles(mentionQuery) }.getOrDefault(emptyList())
+    }
+    // 候选列表收起的那几百毫秒里还要画得出内容，所以记住最后一份非空的
+    val lastFiles = remember { LastNonNull(fileMatches.takeIf { it.isNotEmpty() }) }
+    val shownFiles = lastFiles.update(fileMatches.takeIf { it.isNotEmpty() }).orEmpty()
+    AnimatedVisibility(visible = fileMatches.isNotEmpty(), enter = InkMotion.expand, exit = InkMotion.collapse) {
+        Column {
+            FileMentionList(shownFiles) { picked ->
+                onTextChange(replaceMentionToken(text, picked))
+                fileMatches = emptyList()
+            }
+            if (showDivider) {
+                InkDivider()
+            }
+        }
     }
 }
 

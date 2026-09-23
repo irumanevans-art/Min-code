@@ -315,21 +315,6 @@ internal fun ClaudeCodeInputBar(
         else session.slashCommands.filter { it.name.contains(slashQuery, ignoreCase = true) }.take(6)
     }
 
-    // `@` 提及：取光标前最后一个 @ 后的连续非空白串当查询词。
-    // OutlinedTextField 只回传 String（拿不到光标位置），所以按"最后一个 @"近似；
-    // 实际输入里 @ 后面接着打字的场景，这个近似和真实光标位置是一致的。
-    val mentionQuery = remember(input) { mentionTokenOf(input) }
-    var fileMatches by remember { mutableStateOf<List<String>>(emptyList()) }
-    LaunchedEffect(mentionQuery, running) {
-        if (mentionQuery == null || !running) {
-            fileMatches = emptyList()
-            return@LaunchedEffect
-        }
-        // 抖一下：每敲一个字母就走一次目录遍历，手机上会明显掉帧
-        delay(MENTION_DEBOUNCE_MS)
-        fileMatches = runCatching { onSearchFiles(mentionQuery) }.getOrDefault(emptyList())
-    }
-
     fun composeMessage(): String {
         val body = expandPastes(input, pastes)
         if (attachments.isEmpty()) return body
@@ -392,8 +377,6 @@ internal fun ClaudeCodeInputBar(
     // 候选列表收起的那几百毫秒里还要画得出内容，所以记住最后一份非空的
     val lastCommands = remember { LastNonNull(matchedCommands.takeIf { it.isNotEmpty() }) }
     val shownCommands = lastCommands.update(matchedCommands.takeIf { it.isNotEmpty() }).orEmpty()
-    val lastFiles = remember { LastNonNull(fileMatches.takeIf { it.isNotEmpty() }) }
-    val shownFiles = lastFiles.update(fileMatches.takeIf { it.isNotEmpty() }).orEmpty()
 
     Column(modifier = modifier.fillMaxWidth()) {
         AnimatedVisibility(
@@ -458,15 +441,13 @@ internal fun ClaudeCodeInputBar(
             }
         }
 
-        AnimatedVisibility(visible = fileMatches.isNotEmpty(), enter = InkMotion.expand, exit = InkMotion.collapse) {
-            Column {
-                FileMentionList(shownFiles) { picked ->
-                    input = replaceMentionToken(input, picked)
-                    fileMatches = emptyList()
-                }
-                InkDivider()
-            }
-        }
+        FileMentionSuggestions(
+            text = input,
+            enabled = running,
+            onSearchFiles = onSearchFiles,
+            onTextChange = { input = it },
+            showDivider = true,
+        )
 
         // 打了 `!` 就说清这一行会怎么跑：它不发给模型，这和输入框里其余所有东西都不一样
         val shellMode = input.trimStart().let { it.startsWith('!') || it.startsWith('！') }
@@ -989,9 +970,6 @@ private fun newCameraUri(context: android.content.Context): Uri {
     val file = java.io.File(dir, "shot_${System.currentTimeMillis()}.jpg")
     return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }
-
-/** `@` 补全的输入抖动，避免每敲一个字母就遍历一次目录 */
-private const val MENTION_DEBOUNCE_MS = 180L
 
 /** 草稿落盘抖动。杀进程走 [onDraftSnapshot]，不等这段。 */
 private const val DRAFT_DEBOUNCE_MS = 280L
