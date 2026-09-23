@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -133,7 +134,8 @@ private fun CodexPageContent(vm: CodexVM) {
     var showTurnSettings by remember { mutableStateOf(false) }
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val sessionMetas by vm.sessionMetas.collectAsStateWithLifecycle()
-    val draft by vm.draft.collectAsStateWithLifecycle()
+    // 只拿 State、不在这里读：每个键只让输入坞重组，会话流和顶栏不跟着动
+    val draft = vm.draft.collectAsStateWithLifecycle()
     val attachments by vm.attachments.collectAsStateWithLifecycle()
 
     // 有历史就一直显示会话流 —— 会话停掉之后把读过的内容抹掉，
@@ -202,7 +204,7 @@ private fun CodexPageContent(vm: CodexVM) {
                     ),
                 )
                 CodexComposer(
-                    draft = draft,
+                    draftState = draft,
                     enabled = session.canSend,
                     busy = session.busy,
                     queued = session.queued,
@@ -531,7 +533,7 @@ private fun CodexStartPane(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CodexComposer(
-    draft: String,
+    draftState: State<String>,
     enabled: Boolean,
     busy: Boolean,
     queued: List<String>,
@@ -549,6 +551,7 @@ private fun CodexComposer(
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val draft by draftState
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }

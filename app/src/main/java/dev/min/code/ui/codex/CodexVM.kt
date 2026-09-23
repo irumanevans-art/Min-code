@@ -180,12 +180,10 @@ class CodexVM(
 
     fun stop() = manager.stop()
 
-    /** 每次输入都落盘：写的是几 KB 的 JSON，在 IO 线程上，代价远小于丢稿 */
+    /** 每次输入都交给草稿库落盘：它按顺序写、快打时合并，见 [CodexDraftStore.saveLater] */
     fun setDraft(text: String) {
         draft.value = text
-        viewModelScope.launch(Dispatchers.IO) {
-            manager.state.value.threadId?.let { draftStore.save(it, text) }
-        }
+        manager.state.value.threadId?.let { draftStore.saveLater(it, text) }
     }
 
     fun send(text: String): Boolean {

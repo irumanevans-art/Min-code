@@ -68,4 +68,27 @@ class CodexDraftStoreTest {
 
         assertTrue(store.drafts.value.isEmpty())
     }
+
+    /** 快打时每个键都来一次：落盘的必须是最后一版，不能被更早的某一版盖掉 */
+    @Test
+    fun `rapid saveLater calls land the last text on disk`() {
+        val file = temp.root.resolve("codex-drafts.json")
+        val store = CodexDraftStore(file)
+        val final = "hello, codex"
+        for (end in 1..final.length) store.saveLater("thread-a", final.take(end))
+
+        // 写盘在后台：等到磁盘上是最后一版为止（新实例读 = 模拟进程重启）
+        val deadline = System.currentTimeMillis() + 5_000
+        while (CodexDraftStore(file).load("thread-a") != final) {
+            check(System.currentTimeMillis() < deadline) { "最后一版一直没落盘" }
+            Thread.sleep(10)
+        }
+    }
+
+    @Test
+    fun `load sees text that has not reached the disk yet`() {
+        val store = store()
+        store.saveLater("thread-a", "刚打的")
+        assertEquals("刚打的", store.load("thread-a"))
+    }
 }
