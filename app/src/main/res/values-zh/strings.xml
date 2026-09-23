@@ -475,7 +475,7 @@
   <string name="session_model_relay_error">中转站没有返回模型列表（%1$s），请用别名或手动输入</string>
   <string name="session_model_relay_empty">中转站返回了空的模型列表，请用别名或手动输入</string>
   <string name="session_model_1m_title">选择时启用 1M 上下文</string>
-  <string name="session_model_1m_sub">给需要的模型加 [1m] 后缀（%1$s）。Fable / Opus 5 / Sonnet 5 原生就是 1M，不受影响</string>
+  <string name="session_model_1m_sub">给需要的模型加 [1m] 后缀（%1$s）。Fable / Opus 5 / Opus 5.5 / Sonnet 5 原生就是 1M，不受影响</string>
   <string name="session_model_1m_on">开</string>
   <string name="session_model_1m_off">关</string>
   <string name="session_model_native_1m">这些模型默认就是 1M 上下文，不用另外设置。</string>

@@ -478,7 +478,7 @@
   <string name="session_model_relay_error">The relay returned no model list (%1$s) — use an alias or type one in</string>
   <string name="session_model_relay_empty">The relay returned an empty model list — use an alias or type one in</string>
   <string name="session_model_1m_title">Enable the 1M context when selecting</string>
-  <string name="session_model_1m_sub">Appends [1m] to models that need it (%1$s). Fable / Opus 5 / Sonnet 5 are natively 1M and unaffected</string>
+  <string name="session_model_1m_sub">Appends [1m] to models that need it (%1$s). Fable / Opus 5 / Opus 5.5 / Sonnet 5 are natively 1M and unaffected</string>
   <string name="session_model_1m_on">on</string>
   <string name="session_model_1m_off">off</string>
   <string name="session_model_native_1m">These models are 1M by default; nothing to set.</string>

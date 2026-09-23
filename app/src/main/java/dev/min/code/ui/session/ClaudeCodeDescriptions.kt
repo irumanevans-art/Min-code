@@ -77,7 +77,7 @@ private val SLASH_COMMAND_ZH = mapOf(
  * 一换默认模型字符串就变了，拿原文当键第二天就失配。
  */
 private val MODEL_DESCRIPTION_ZH = mapOf(
-    "default" to "跟随 CLI / 中转站决定的默认模型（直连 API 是 Opus 5，1M 上下文）",
+    "default" to "跟随 CLI / 中转站决定的默认模型（CLI 2.1.280 起直连 API 是 Opus 5.5，1M 上下文）",
     // 别名 `fable` 在 CLI 里按供应商解析（直连 → 5.1，gateway → 5），说明里不写死版本号
     "fable" to "Fable · 最难、最长的任务 · 每百万 token \$10 / \$50 · 1M 上下文（原生）· 思考常开",
     "fable[1m]" to "Fable · 同上；Fable 原生就是 1M，[1m] 可加可不加",
@@ -85,9 +85,11 @@ private val MODEL_DESCRIPTION_ZH = mapOf(
     "claude-fable-5" to "Fable 5 · 上一代 Fable · 每百万 token \$10 / \$50 · 1M 上下文（原生）",
     "best" to "自动选当前最强的模型（现在是 Fable）",
     "opusplan" to "计划阶段用 Opus，执行阶段用 Sonnet",
-    "opus" to "Opus 5 · 日常和复杂任务都最强 · 每百万 token \$5 / \$25",
-    "opus[1m]" to "Opus 5，1M 上下文 · 日常和复杂任务都最强 · 每百万 token \$5 / \$25",
-    "claude-opus-5" to "Opus 5 · 日常和复杂任务都最强 · 每百万 token \$5 / \$25 · 1M 上下文（原生）",
+    // 别名 `opus` 跟着 CLI 版本走：2.1.280 起是 Opus 5.5，更旧的 CLI 还是 Opus 5 —— 同 fable，不写死价格
+    "opus" to "Opus · 日常和复杂任务都最强 · CLI 2.1.280 起是 Opus 5.5，更旧的是 Opus 5 · 1M 上下文（原生）",
+    "opus[1m]" to "Opus · CLI 2.1.280 起是 Opus 5.5，更旧的是 Opus 5 · 原生就是 1M，[1m] 可加可不加",
+    "claude-opus-5-5" to "Opus 5.5 · 日常和复杂任务都最强，接近 Fable 5.1 · 每百万 token \$4 / \$20 · 1M 上下文（原生）· 思考常开",
+    "claude-opus-5" to "Opus 5 · 上一代 Opus · 每百万 token \$5 / \$25 · 1M 上下文（原生）",
     "sonnet" to "Sonnet 5 · 常规任务，性价比高 · 每百万 token \$2 / \$10",
     "sonnet[1m]" to "Sonnet 5，1M 上下文 · 适合长会话 · 每百万 token \$2 / \$10",
     "claude-sonnet-5" to "Sonnet 5 · 常规任务，性价比高 · 每百万 token \$2 / \$10 · 1M 上下文（原生）",

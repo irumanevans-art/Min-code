@@ -1876,8 +1876,10 @@ class ClaudeCodeManager(
         if (state.cwd != DEFAULT_CWD) return
         if (state.items.any { it is ChatItem.UserText }) return
         val projectDir = workspaceDir()?.let { File(it, "files") } ?: return
+        // CLI 2.1.277 起：项目里没有 CLAUDE.md 时读 AGENTS.md。有它就已经有项目上下文了，别再劝人 /init
         val hasClaudeMd = withContext(Dispatchers.IO) {
-            File(projectDir, "CLAUDE.md").isFile || File(projectDir, ".claude/CLAUDE.md").isFile
+            File(projectDir, "CLAUDE.md").isFile || File(projectDir, ".claude/CLAUDE.md").isFile ||
+                File(projectDir, "AGENTS.md").isFile
         }
         if (hasClaudeMd) return
         appendItem(
@@ -2754,7 +2756,7 @@ class ClaudeCodeManager(
             ModelOption("fable[1m]", "Fable（别名，[1m]）", "同上；Fable 原生就是 1M，加不加 [1m] 一样", hiddenAlias = true),
             ModelOption("best", "Best", "自动选当前最强的模型（现在是 Fable）", hiddenAlias = true),
             ModelOption("opusplan", "Opus Plan", "计划阶段用 Opus，执行阶段用 Sonnet", hiddenAlias = true),
-            ModelOption("opus", "Opus", "Opus 5 · 直连 API 上原生 1M", hiddenAlias = true),
+            ModelOption("opus", "Opus", "由 CLI 解析：2.1.280 起是 Opus 5.5，更旧的是 Opus 5 · 直连 API 上原生 1M", hiddenAlias = true),
             ModelOption("sonnet", "Sonnet", "Sonnet 5 · 直连 API 上原生 1M", hiddenAlias = true),
             ModelOption("haiku", "Haiku", "Haiku 4.5 · 最快 · 200k · 不支持思考强度", hiddenAlias = true),
         )

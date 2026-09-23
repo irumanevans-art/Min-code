@@ -55,7 +55,9 @@ class ClaudeCodeDescriptionsTest {
     @Test
     fun `模型说明按 id 查表`() {
         val zh = modelDescription("opus[1m]", "Opus 5 with 1M context · \$5/\$25 per Mtok", chinese = true)
-        assertEquals("Opus 5，1M 上下文 · 日常和复杂任务都最强 · 每百万 token \$5 / \$25", zh)
+        assertEquals("Opus · CLI 2.1.280 起是 Opus 5.5，更旧的是 Opus 5 · 原生就是 1M，[1m] 可加可不加", zh)
+        // 新模型的固定 id 同样按 id 命中（CLI 2.1.280 的 /model 目录里就是这个 id）
+        assertEquals(true, modelDescription("claude-opus-5-5", null, chinese = true)?.startsWith("Opus 5.5"))
     }
 
     /** 中转站给的是裸 id，用户在群里第一句就是"为啥没有 fable"——固定 id 必须有说明 */
