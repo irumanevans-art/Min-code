@@ -52,6 +52,7 @@ import java.io.OutputStreamWriter
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Claude Code 会话管理：在 Claude Code 工作区的 Rootfs 里启动真正的官方
@@ -418,9 +419,11 @@ class ClaudeCodeManager(
     private val _localPreviewUrls = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val localPreviewUrls: SharedFlow<String> = _localPreviewUrls.asSharedFlow()
 
-    /** 每轮任务自增，用于给中断兜底做"还是同一轮吗"的判断 */
-    @Volatile
-    private var turnSeq: Int = 0
+    /**
+     * 每轮任务自增，用于给中断兜底做"还是同一轮吗"的判断。
+     * 收尾（readLoop 线程）和中断兜底（scope 上的计时协程）会同时动它，所以是原子的
+     */
+    private val turnSeq = AtomicInteger(0)
 
     /**
      * 一条用户消息在离开我们视线之前的样子。
@@ -1203,7 +1206,7 @@ class ClaudeCodeManager(
 
             is ClaudeCodeEvent.Result -> {
                 // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
-                turnSeq += 1
+                turnSeq.incrementAndGet()
                 val finishedAt = System.currentTimeMillis()
                 val durationMs = event.durationMs
                     ?: _state.value.turnStartedAt?.let { finishedAt - it }
@@ -1266,7 +1269,7 @@ class ClaudeCodeManager(
                 // 无头模式不会自动拟名；首轮成功后主动让 CLI 写 ai-title
                 if (!event.isError) maybeGenerateSessionTitle()
                 // 还攥在手里的（打断之后要回来的那批）接着开跑
-                if (!flushPendingSend()) watchHandedOff(turnSeq)
+                if (!flushPendingSend()) watchHandedOff(turnSeq.get())
             }
         }
     }
@@ -1464,7 +1467,7 @@ class ClaudeCodeManager(
         if (!hasQueuedWork()) return
         scope.launch {
             delay(HANDOFF_TIMEOUT_MS)
-            if (turnSeq != seqAtResult || !hasQueuedWork()) return@launch
+            if (turnSeq.get() != seqAtResult || !hasQueuedWork()) return@launch
             Log.w(TAG, "handed-off message never started a turn, clearing busy")
             confirmHandedOff()
             _state.update {
@@ -1710,13 +1713,13 @@ class ClaudeCodeManager(
         if (action == EscapeAction.Withdraw) withdrawInFlight()
         if (action == EscapeAction.InterruptThenQueued) sendQueue.reclaim()
 
-        val seq = turnSeq
+        val seq = turnSeq.get()
         writeLine(encodeClaudeCodeInterrupt(UUID.randomUUID().toString()))
         scope.launch {
             delay(INTERRUPT_TIMEOUT_MS)
-            if (_state.value.busy && turnSeq == seq) {
+            // 比较和自增必须是一步：这期间正常收尾也可能恰好到了，两边只能有一边算数
+            if (_state.value.busy && turnSeq.compareAndSet(seq, seq + 1)) {
                 Log.w(TAG, "interrupt timed out, force-clearing busy")
-                turnSeq += 1
                 inFlight = null
                 val queuedNext = hasQueuedWork()
                 val noteId = newId()
@@ -2786,6 +2789,13 @@ class ClaudeCodeManager(
             target.write("\n")
             target.flush()
         }.onFailure { e ->
+            // shutdown 先置 stopping 再关 stdin，停止 / 换档时迟到的写必然失败；
+            // writer 已换人则说明失败的是上一个进程的管道 —— 这两种都不是「这个会话坏了」，
+            // 何况此刻的状态可能已经属于下一个会话
+            if (stopping || target !== writer) {
+                Log.d(TAG, "writeLine dropped: session is closing", e)
+                return@onFailure
+            }
             Log.e(TAG, "writeLine failed", e)
             _state.update {
                 it.copy(
