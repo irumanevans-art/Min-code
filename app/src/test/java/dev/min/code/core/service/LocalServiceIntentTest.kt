@@ -41,6 +41,26 @@ class LocalServiceIntentTest {
     }
 
     @Test
+    fun guess_port_from_listen_calls_host_ports_and_short_flags() {
+        assertEquals(
+            8798,
+            LocalServiceIntent.guessPort(
+                "node -e \"require('http').createServer((q,s)=>s.end('ok')).listen(8798)\"",
+            ),
+        )
+        assertEquals(3001, LocalServiceIntent.guessPort("node -e \"app.listen( 3001, () => {})\""))
+        assertEquals(8000, LocalServiceIntent.guessPort("php -S localhost:8000 -t public"))
+        assertEquals(8001, LocalServiceIntent.guessPort("gunicorn --bind 0.0.0.0:8001 app:app"))
+        assertEquals(5000, LocalServiceIntent.guessPort("flask run -p 5000 --debug"))
+        assertEquals(8080, LocalServiceIntent.guessPort("docker run -p 8080:80 nginx"))
+        // 明确的 --port 压过别的写法
+        assertEquals(9000, LocalServiceIntent.guessPort("uvicorn app:app --host 0.0.0.0 --port 9000"))
+        // 不是端口的 -p / 冒号数字不认
+        assertEquals(null, LocalServiceIntent.guessPort("mkdir -p src/app && echo done"))
+        assertEquals(null, LocalServiceIntent.guessPort("git log --since=12:30 -n 5"))
+    }
+
+    @Test
     fun one_shot_commands_mentioning_servers_are_not_hosted() {
         // 白名单词出现在参数位置的一次性命令：旧版 containsMatchIn 会误杀
         assertFalse(LocalServiceIntent.shouldHost("pip install uvicorn"))

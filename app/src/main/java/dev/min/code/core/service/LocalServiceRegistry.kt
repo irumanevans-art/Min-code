@@ -755,6 +755,15 @@ object LocalServiceIntent {
     private val PYTHON_NOARG_FLAGS = setOf("-u", "-O", "-OO", "-B", "-q", "-I", "-E", "-s", "-S", "-v")
 
     private val PORT_FLAG = Regex("""(?:--port[= ]|port=)(\d{2,5})\b""", RegexOption.IGNORE_CASE)
+
+    /** 内联脚本里的 `.listen(8798)` / `.listen(8798, …)`（`node -e` 起的服务） */
+    private val LISTEN_CALL = Regex("""\.listen\(\s*(\d{2,5})\b""")
+
+    /** `php -S localhost:8000`、`--bind 0.0.0.0:8000` 这类「主机:端口」 */
+    private val HOST_PORT = Regex("""(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d{2,5})\b""", RegexOption.IGNORE_CASE)
+
+    /** `flask run -p 5000`、`http-server -p 8080`、`docker run -p 8080:80`（取宿主那一侧） */
+    private val SHORT_PORT_FLAG = Regex("""(?:^|\s)-p\s+(\d{2,5})\b""")
     private val TRAILING_PORT = Regex("""\b(\d{4,5})\s*$""")
 
     fun isBackgroundFlag(input: Map<String, Any?>): Boolean {
@@ -910,10 +919,17 @@ object LocalServiceIntent {
         return looksLongLived(command)
     }
 
+    /**
+     * 从命令里猜服务端口，猜不到就没有预览位。越明确的写法越先认：
+     * `--port` / `port=` → `.listen(N)` → `主机:端口` → `-p N` → 末尾的四五位数。
+     * 同一种写法出现多次取最后一个（后面的参数覆盖前面的）。
+     */
     fun guessPort(command: String): Int? {
         val cleaned = command.trim().removeSuffix("&").trim()
-        PORT_FLAG.findAll(cleaned).lastOrNull()?.groupValues?.getOrNull(1)
-            ?.toIntOrNull()?.takeIf { it in 1..65535 }?.let { return it }
+        for (pattern in listOf(PORT_FLAG, LISTEN_CALL, HOST_PORT, SHORT_PORT_FLAG)) {
+            pattern.findAll(cleaned).lastOrNull()?.groupValues?.getOrNull(1)
+                ?.toIntOrNull()?.takeIf { it in 1..65535 }?.let { return it }
+        }
         return TRAILING_PORT.find(cleaned)
             ?.groupValues?.getOrNull(1)?.toIntOrNull()?.takeIf { it in 1..65535 }
     }
