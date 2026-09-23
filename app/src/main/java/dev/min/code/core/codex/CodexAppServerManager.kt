@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -128,6 +129,36 @@ class CodexAppServerManager(
 
     private var process: Process? = null
     private var writer: BufferedWriter? = null
+
+    /** 一行待写的帧，连同它要去的那根管道；写失败时用 [failure] 把会话收掉 */
+    private class OutLine(val target: BufferedWriter, val line: String, val failure: String)
+
+    /**
+     * stdin 的写入队列：**入队顺序就是字节顺序**，单消费者在 IO 上串行写。
+     *
+     * 以前是持着 [lock] 直接写管道。app-server 读得慢、管道写满时 write 会阻塞 ——
+     * 锁跟着一起被攥住，读循环全卡在门口，界面上点「停止」的主线程也卡在同一把锁上，就是 ANR。
+     * Claude 侧早就改成了写队列（ClaudeCodeManager.writeQueue），这里对齐。
+     *
+     * 每一行带着入队那一刻的 writer：旧进程没写完的行不会串进新进程，
+     * 已经摘下的管道写失败也不会去误伤新会话。
+     */
+    private val writeQueue = Channel<OutLine>(Channel.UNLIMITED)
+
+    init {
+        scope.launch {
+            for (out in writeQueue) {
+                val ok = runCatching {
+                    out.target.write(out.line)
+                    out.target.newLine()
+                    out.target.flush()
+                }.isSuccess
+                if (!ok) synchronized(lock) {
+                    if (writer === out.target) failLocked(out.failure)
+                }
+            }
+        }
+    }
     private var stdoutJob: Job? = null
     private var stderrJob: Job? = null
     private var waitJob: Job? = null
@@ -179,7 +210,7 @@ class CodexAppServerManager(
 
         val id = nextRequestId()
         pendingRequests[id] = RequestKind.Initialize
-        if (!writeLineLocked(encodeCodexInitialize(id))) {
+        if (!writeLineLocked(encodeCodexInitialize(id), "写不进 initialize 请求")) {
             failLocked("写不进 initialize 请求")
             return false
         }
@@ -300,7 +331,7 @@ class CodexAppServerManager(
             networkAccess = options.networkAccess,
             approvalPolicy = options.approvalPolicy,
         )
-        if (!writeLineLocked(line)) {
+        if (!writeLineLocked(line, "写不进 turn/start 请求")) {
             pendingRequests.remove(id)
             failLocked("写不进 turn/start 请求")
             return false
@@ -332,7 +363,7 @@ class CodexAppServerManager(
         if (allowed.isNotEmpty() && decision.wire !in allowed) return false
         // rawRequestId 是请求帧的原始 JSON 形态（整数 id 就回整数）；
         // 回成字符串在 Rust 侧是另一个值，回调表查不中，审批永远挂住
-        if (!writeLineLocked(encodeCodexApprovalResponse(pending.rawRequestId, decision))) return false
+        if (!writeLineLocked(encodeCodexApprovalResponse(pending.rawRequestId, decision), "写不进审批应答")) return false
         _state.value = _state.value.copy(pendingApproval = null)
         true
     }
@@ -547,7 +578,7 @@ class CodexAppServerManager(
         when (kind) {
             RequestKind.Initialize -> {
                 // 握手第二步：不发这条通知，后面每个请求都会被拒
-                writeLineLocked(encodeCodexInitialized())
+                writeLineLocked(encodeCodexInitialized(), "写不进 initialized 通知")
                 val id = nextRequestId()
                 pendingRequests[id] = RequestKind.Thread
                 val request = resumeThreadId?.let { encodeCodexThreadResume(id, it) }
@@ -561,7 +592,7 @@ class CodexAppServerManager(
                         networkAccess = options.networkAccess,
                         approvalPolicy = options.approvalPolicy,
                     )
-                if (!writeLineLocked(request)) failLocked("写不进 thread 请求")
+                if (!writeLineLocked(request, "写不进 thread 请求")) failLocked("写不进 thread 请求")
             }
 
             RequestKind.Thread -> {
@@ -599,7 +630,11 @@ class CodexAppServerManager(
         stopping = !failed
         val active = process
         process = null
-        runCatching { writer?.close() }
+        // 关管道放到锁外：写队列可能正堵在这根管道上，close 要等它自己的内部锁，
+        // 在这里同步关就又把 [lock] 攥死了。进程随后被杀，那次写会失败返回，close 也就过去了
+        writer?.let { doomedWriter ->
+            scope.launch(NonCancellable) { runCatching { doomedWriter.close() } }
+        }
         writer = null
         pendingRequests.clear()
         outputBuffers.clear()
@@ -653,12 +688,14 @@ class CodexAppServerManager(
         doomed?.let { killAsync(it) }
     }
 
-    private fun writeLineLocked(line: String): Boolean = runCatching {
+    /**
+     * 入队一行，不碰管道（真正的写在 [writeQueue] 的消费者里）。
+     * 返回 false 只表示眼下没有进程可写；写失败是异步发现的，届时按 [failure] 收掉会话。
+     */
+    private fun writeLineLocked(line: String, failure: String): Boolean {
         val output = writer ?: return false
-        output.write(line)
-        output.newLine()
-        output.flush()
-    }.isSuccess
+        return writeQueue.trySend(OutLine(output, line, failure)).isSuccess
+    }
 
     private fun nextRequestId(): String = requestIds.incrementAndGet().toString()
 

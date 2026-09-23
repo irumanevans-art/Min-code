@@ -370,6 +370,8 @@ class CodexAppServerManagerTest {
         val manager = runningManager(BUSY_TURN)
         assertTrue(manager.sendTurn("第一问"))
         await { manager.state.value.busy }
+        // 写 stdin 是异步的（见 CodexAppServerManager.writeQueue）：busy 先亮，turn/start 随后才落到管道上
+        await { turnStarts() == 1 }
 
         assertTrue(manager.sendTurn("排队一"))
         assertTrue(manager.sendTurn("排队二"))
