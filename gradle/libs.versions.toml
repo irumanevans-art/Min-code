@@ -17,7 +17,6 @@ datastore = "1.2.1"
 serialization-json = "1.11.0"
 kotlin-coroutines-core = "1.11.0"
 huge-icons = "1.4"
-appcompat = "1.8.0"
 material = "1.14.0"
 termux = "0.118.0"
 haze = "1.7.3"
@@ -57,7 +56,6 @@ koin-compose = { group = "io.insert-koin", name = "koin-androidx-compose" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization-json" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlin-coroutines-core" }
 huge-icons = { group = "com.github.rikkahub", name = "hugeicons-compose", version.ref = "huge-icons" }
-androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 xz = { module = "org.tukaani:xz", version = "1.12" }
 termux-terminal-view = { module = "com.termux.termux-app:terminal-view", version.ref = "termux" }
