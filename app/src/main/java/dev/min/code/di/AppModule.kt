@@ -45,7 +45,7 @@ import java.io.File
 
 val appModule = module {
     single { AppScope() }
-    single { SettingsStore(get()) }
+    single { SettingsStore(get(), get<AppScope>()) }
     // 机内协议路由：只在当前供应商的方言不是原生时才起来，见 RelayController
     single { RelayController(get()) }
     // 无状态（proot 补丁的互斥走 RootfsPatcher 里按 linuxDir 键的全局锁），

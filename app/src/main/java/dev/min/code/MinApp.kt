@@ -77,11 +77,6 @@ class MinApp : Application() {
                 .distinctUntilChanged()
                 .collect { AppLocale.apply(this@MinApp, it) }
         }
-        // 让 SettingsStore.snapshot 一直是新的。proot 起进程时要同步决定挂哪些目录，
-        // 那个 lambda 挂不起也阻塞不得（见 SettingsStore.snapshot 的注释）
-        getKoin().get<AppScope>().launch(Dispatchers.IO) {
-            getKoin().get<SettingsStore>().settings.collect { /* 只为让 snapshot 跟上 */ }
-        }
         // 设备操控的 MCP server：跟着设置里的开关起停，并把地址写进 CLI 的 mcpServers。
         // **必须在用户可能开始会话之前就位** —— CLI 是启动时读一次 MCP 配置的，
         // 等模型想用了再起，那会儿它手里的配置已经是旧的了（见 DeviceMcpRegistrar）

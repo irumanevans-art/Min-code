@@ -11,10 +11,13 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.nio.charset.StandardCharsets
@@ -412,7 +415,11 @@ enum class CodexAuthMode { CLI, OPENAI_API_KEY, RELAY }
  * 一个 IV。1.1.9 及更早的单 token 格式（`token` / `base_url` 两个键，token 可能还是明文）
  * 在第一次 [current] 时就地迁移成一条配置，迁完删掉老键。
  */
-class SettingsStore(private val context: Context) {
+/**
+ * [scope] 给了就在里面长期收集一次 [settings]，让 [snapshot] 一直是新的 —— 这是这个类自己的不变量，
+ * 不该靠 App 在别处记得起一个空收集。测试等不关心 snapshot 的场合可以不给。
+ */
+class SettingsStore(private val context: Context, scope: CoroutineScope? = null) {
     /**
      * 最近一次读到的设置。
      *
@@ -420,7 +427,7 @@ class SettingsStore(private val context: Context) {
      * （`WorkspaceManager` 的 bindMounts provider），而那个 lambda 既可能在 IO 线程、
      * 也可能被文件页的路径解析从主线程调到，`runBlocking` 在后一种情况下就是 ANR。
      *
-     * 由 [settings] 每次发射顺手更新，[dev.min.code.MinApp] 起一个长期收集保证它一直是新的。
+     * 由 [settings] 每次发射顺手更新，构造时传入的 scope 里那个长期收集保证它一直是新的。
      * 还没读到过时为 null —— 调用方按"最保守的默认"处理，而不是假装读到了什么。
      */
     @Volatile
@@ -451,6 +458,11 @@ class SettingsStore(private val context: Context) {
             credentialsUnreadable = credentialsUnreadable(p),
         )
     }.onEach { snapshot = it }
+
+    init {
+        // proot 起进程时要同步决定挂哪些目录，那个 lambda 挂不起也阻塞不得（见 [snapshot]）
+        scope?.launch(Dispatchers.IO) { settings.collect { /* 只为让 snapshot 跟上 */ } }
+    }
 
     suspend fun current(): AppSettings {
         migrateLegacyToken()
