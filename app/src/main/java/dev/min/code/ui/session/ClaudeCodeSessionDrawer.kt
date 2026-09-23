@@ -688,7 +688,7 @@ private fun CategoryDialog(
     }
 }
 
-/** 海上那枚「使用中」：纸白的一小块玻璃 */
+/** 海上那枚「使用中」：纸白的一小块玻璃。玻璃和字同取 onSea（六套调色板里都是近白），暗色下也是反白 */
 @Composable
 private fun InUseBadge() {
     Text(
@@ -697,7 +697,7 @@ private fun InUseBadge() {
         color = MaterialTheme.sea.onSea,
         maxLines = 1,
         modifier = Modifier
-            .background(MaterialTheme.sea.paperBright.copy(alpha = 0.22f), RoundedCornerShape(6.dp))
+            .background(MaterialTheme.sea.onSea.copy(alpha = 0.22f), RoundedCornerShape(6.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
