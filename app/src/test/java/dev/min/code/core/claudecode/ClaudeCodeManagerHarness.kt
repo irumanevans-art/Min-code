@@ -169,7 +169,11 @@ internal class FakeCliProcess(
                 val request = obj["request"]!!.jsonObject
                 val subtype = request.str("subtype")!!
                 stdout.push(controlResponse(requestId, subtype, request))
-                if (subtype == "interrupt") interrupts.put(Unit)
+                if (subtype == "interrupt") {
+                    interrupts.put(Unit)
+                    // 真 CLI 被打断时自己撤销挂着的权限请求（control_cancel_request），不等 Min 应答
+                    permissionAnswers.values.forEach { it.countDown() }
+                }
             }
 
             "control_response" -> {
@@ -401,7 +405,11 @@ internal class ManagerHarness(fixtureName: String) : AutoCloseable {
     @Volatile
     var launchGate: CompletableDeferred<Unit>? = null
 
+    /** 托管后台 Bash 用的进程表 */
+    val services = FakeServiceHost()
+
     val manager = ClaudeCodeManager(
+        localServices = services,
         context = context,
         workspaceRepository = workspaceRepository,
         settingsStore = SettingsStore(context),

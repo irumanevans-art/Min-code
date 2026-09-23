@@ -2302,89 +2302,100 @@ class ClaudeCodeManager(
     /**
      * Manual 等会发 can_use_tool 的模式：后台/长驻 Bash **只**进进程表，
      * deny CLI 原命令，避免双 proot 抢端口。
-     * @return true 表示已应答，调用方不要再挂权限 sheet
+     *
+     * deny **等服务出结论之后**才回（最长 10 秒，见 [awaitHostSettled]）：以前是立刻回「已托管」，
+     * 服务一启动就死了模型也不知道，还会让用户去开预览。现在死了就把退出码和日志尾写进 deny，
+     * 模型自己去修。等的这段时间 CLI 本来就停在这条权限请求上，不会往下跑。
+     *
+     * 等待期间会话可能已经变了，这时迟到的 deny 不能再发：
+     * - 用户按了停止：CLI 会发 control_cancel_request 撤销这条请求、自己把工具判成被拒并收尾，
+     *   不等我们应答（2.1.280 实测，夹具 interrupt_during_permission；之后补来的 deny 它静默丢掉）；
+     * - 换档 / 关会话：进程换了，写队列此刻连着的是新进程，request_id 对不上。
+     * 服务本身照样留在进程表里，对话流里照样如实告诉用户结局。
+     *
+     * @return true 表示已接手，调用方不要再挂权限 sheet
      */
     private fun tryHostBashInsteadOfPermission(event: ClaudeCodeEvent.PermissionRequest): Boolean {
         if (!event.toolName.equals(TOOL_BASH, ignoreCase = true)) return false
-        val (cleaned, port) = hostedBashPlan(event.input) ?: return false
+        val plan = hostedBashPlan(event.input) ?: return false
         val registry = localServices ?: return false
+        val io = cli.sessionScope ?: return false
         val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
         val label = event.input["description"].asStringOrNull()?.takeIf { it.isNotBlank() }
             ?: event.description
         val sessionKey = _state.value.sessionId
-        // 同步 kick：权限必须立刻应答，托管在 IO 上跑
-        cli.sessionScope?.launch {
-            val result = registry.startFromAgent(
-                command = cleaned,
-                cwdGuest = cwd,
-                port = port,
-                label = label,
-                sourceSessionKey = sessionKey,
-            )
-            result.onSuccess { id ->
-                Log.i(TAG, "exclusive host $id (permission path): ${cleaned.take(80)}")
-                // 等它撑过进程表的就绪窗口再说。一启动就死的服务（命令不存在、依赖没装）
-                // 以前照样弹预览位，用户对着「网页无法打开」猜；「已托管」的提示也一直挂着，
-                // 模型还会跟着说「服务已在后台运行」
-                val died = awaitHostSettled(registry, id)?.let(::hostedEarlyExitNote)
-                if (died == null) {
-                    if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
-                } else {
-                    appendItem(ChatItem.Note(newId(), died, isError = true))
-                    event.toolUseId?.let { markHostedCardFailed(it, "hosted service exited early") }
-                }
-            }.onFailure { err ->
-                Log.w(TAG, "exclusive host failed: ${err.message}")
-                // deny 已经发给 CLI、"已托管"note 也已贴进会话流，但服务其实没起来 ——
-                // 必须把失败摆回明面上，否则用户和 CLI 都以为托管成功了
-                appendItem(
-                    ChatItem.Note(
-                        newId(),
-                        "托管到进程表失败：${err.message ?: err.toString()}",
-                        isError = true,
-                    )
-                )
-                event.toolUseId?.let {
-                    markHostedCardFailed(it, "exclusive host failed: ${err.message ?: err.toString()}")
-                }
-            }
-        }
+        val turn = turnSeq.get()
+        // 登记要在 CLI 回 tool_result 之前：那条 deny 的结果不能把卡改掉（卡由这里按结局标）
         event.toolUseId?.takeIf { it.isNotBlank() }?.let(exclusiveHostedToolUses::add)
-        val portNote = port?.let { " · preview http://127.0.0.1:$it" }.orEmpty()
-        writeLine(
-            encodeClaudeCodePermissionResponse(
-                requestId = event.requestId,
-                allow = false,
-                denyMessage = "Min hosted this as a background service in the process table" +
-                    "$portNote. Do not re-run the same server command in-session; " +
-                    "use the app preview slot / process table. Missing tools: apt-get install -y <pkg>.",
-            ),
-        )
-        appendItem(
-            ChatItem.Note(
-                newId(),
-                "已托管到进程表（后台/长驻 Bash，不在会话里再跑一遍）" +
-                    (port?.let { " · :$it" } ?: "") +
-                    " · 预览位可开",
-            ),
-        )
-        // 工具卡标 Done，避免一直 Running
-        event.toolUseId?.let { toolId ->
-            _state.update { state ->
-                state.copy(
-                    items = state.items.mapToolCall(toolId) {
-                        it.copy(
-                            status = ChatItem.ToolCall.Status.Done,
-                            result = "hosted by Min process table$portNote",
-                        )
-                    },
+        io.launch {
+            val outcome = hostAndSettle(registry, plan, cwd, label, sessionKey)
+            Log.i(TAG, "exclusive host (permission path) -> ${outcome::class.simpleName}: ${plan.command.take(80)}")
+            val sameSession = cli.sessionScope === io && interruptedTurn != turn && turnSeq.get() == turn
+            if (sameSession) {
+                writeLine(
+                    encodeClaudeCodePermissionResponse(
+                        requestId = event.requestId,
+                        allow = false,
+                        denyMessage = hostedDenyMessage(outcome, plan.port),
+                    ),
                 )
+            } else {
+                Log.i(TAG, "hosted outcome not sent: the turn was stopped or the CLI was relaunched meanwhile")
             }
+            showHostOutcome(event.toolUseId, outcome, plan.port, toldModel = sameSession)
         }
         return true
     }
 
-    /** 权限路径上的托管卡是乐观地先标成 Done 的；托管没成（起不来 / 一启动就死）时改回 Error */
+    /** 托管的结局落到对话流和工具卡上；服务真跑起来了才弹预览位 */
+    private fun showHostOutcome(toolUseId: String?, outcome: HostOutcome, port: Int?, toldModel: Boolean) {
+        val told = if (toldModel) "。已把原因告诉模型。" else "。模型还不知道它没起来。"
+        when (outcome) {
+            HostOutcome.Up -> {
+                val portNote = port?.let { " · preview http://127.0.0.1:$it" }.orEmpty()
+                appendItem(
+                    ChatItem.Note(
+                        newId(),
+                        "已托管到进程表（后台/长驻 Bash，不在会话里再跑一遍）" +
+                            (port?.let { " · :$it" } ?: "") +
+                            " · 预览位可开",
+                    ),
+                )
+                toolUseId?.let { toolId ->
+                    _state.update { state ->
+                        state.copy(
+                            items = state.items.mapToolCall(toolId) {
+                                it.copy(
+                                    status = ChatItem.ToolCall.Status.Done,
+                                    result = "hosted by Min process table$portNote",
+                                )
+                            },
+                        )
+                    }
+                }
+                if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
+            }
+
+            is HostOutcome.Died -> {
+                hostedEarlyExitNote(outcome.service, toldModel)?.let {
+                    appendItem(ChatItem.Note(newId(), it, isError = true))
+                }
+                toolUseId?.let { markHostedCardFailed(it, "hosted service exited early") }
+            }
+
+            HostOutcome.StoppedByUser -> {
+                appendItem(ChatItem.Note(newId(), "托管的服务刚启动就被停掉了$told"))
+                toolUseId?.let { markHostedCardFailed(it, "hosted service stopped by the user") }
+            }
+
+            is HostOutcome.NotStarted -> {
+                appendItem(ChatItem.Note(newId(), "托管到进程表失败：${outcome.reason}$told", isError = true))
+                toolUseId?.let { markHostedCardFailed(it, "exclusive host failed: ${outcome.reason}") }
+            }
+        }
+    }
+
+    /** 托管没成（起不来 / 一启动就死 / 被停掉）的卡标成 Error */
     private fun markHostedCardFailed(toolUseId: String, result: String) {
         _state.update { state ->
             state.copy(

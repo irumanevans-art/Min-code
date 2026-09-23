@@ -254,6 +254,32 @@ class ClaudeCodeManagerCharacterizationTest {
     }
 
     @Test
+    fun `interrupt while a permission is pending lets the CLI cancel it and end the turn`() = runBlocking<Unit> {
+        ManagerHarness("interrupt_during_permission").use { h ->
+            h.startAndHandshake()
+            h.manager.send("Run this exact Bash command and nothing else: ls / . Then reply with one word: done.")
+            h.awaitState("权限请求") { it.pendingPermission != null }
+            h.manager.interrupt()
+            val s = h.awaitTurnEnd()
+            // CLI 先发 control_cancel_request 撤销这条请求、自己把工具判成被拒，再发 result；
+            // Min 不认那一帧，面板是跟着 result 收掉的。托管等结论期间按停止，走的也是这一路
+            assertNull(s.pendingPermission)
+            assertEquals(
+                listOf(
+                    "tool Bash [Error, error]: The user doesn't want to proceed with this tool use. " +
+                        "The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). " +
+                        "STOP what you are doing and wait for the user to tell you how to proceed.",
+                    "note: 已中断",
+                    "note: 本轮有 1 次工具调用被权限规则拦截：Bash",
+                ),
+                s.lines().takeLast(3),
+            )
+            // 权限请求本身 Min 一个字都没回
+            assertTrue(h.process.written.none { it.str("type") == "control_response" })
+        }
+    }
+
+    @Test
     fun `interrupt before any output withdraws the message back to the composer`() = runBlocking<Unit> {
         ManagerHarness("interrupt_before_output").use { h ->
             h.startAndHandshake()

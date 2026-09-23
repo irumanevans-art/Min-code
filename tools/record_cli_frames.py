@@ -53,6 +53,11 @@ SCENARIOS = {
                               interrupt_after="delta"),
     # 停止键撤回：消息刚发出、一个字都还没吐
     "interrupt_before_output": dict(prompts=["Write a haiku about the sea."], interrupt_after="sent"),
+    # 停止键打在权限请求挂着的时候（托管服务等结论期间就是这样）：can_use_tool 不应答直接 interrupt，
+    # 收尾之后再补一条迟到的 deny，看 CLI 认不认
+    "interrupt_during_permission": dict(prompts=[
+        "Run this exact Bash command and nothing else: ls / . Then reply with one word: done."
+    ], interrupt_after="permission"),
 }
 
 
@@ -190,6 +195,18 @@ def record(serial, name, spec, argv, environ):
         for prompt in spec["prompts"]:
             s.send(user_message(prompt))
             interrupt = spec.get("interrupt_after")
+            pending_permission = None
+            if interrupt == "permission":
+                while pending_permission is None:
+                    line = s.next(TURN_TIMEOUT_S)
+                    if line is None:
+                        raise RuntimeError("CLI 提前退出")
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    if obj.get("type") == "control_request" and obj.get("request", {}).get("subtype") == "can_use_tool":
+                        pending_permission = obj["request_id"]
             if interrupt == "delta":
                 s.until(lambda o: o.get("type") == "stream_event"
                         and o.get("event", {}).get("type") == "content_block_delta")
@@ -197,6 +214,10 @@ def record(serial, name, spec, argv, environ):
                 # 和 encodeClaudeCodeInterrupt 同形；应答不等，它和 result 的先后由 CLI 定
                 s.send(control("rec-interrupt-" + uuid.uuid4().hex[:6], "interrupt", cancel_queued=True))
             s.until(lambda o: o.get("type") == "result")
+            if pending_permission:
+                s.send(json.dumps({"type": "control_response", "response": {
+                    "subtype": "success", "request_id": pending_permission,
+                    "response": {"behavior": "deny", "message": "late deny after interrupt"}}}))
             # Result 收尾：refreshUsage + 首轮拟名
             s.call("get_context_usage")
             s.call("get_session_cost")
