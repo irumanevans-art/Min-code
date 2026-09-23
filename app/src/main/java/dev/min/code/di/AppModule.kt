@@ -48,13 +48,16 @@ val appModule = module {
     single { SettingsStore(get()) }
     // 机内协议路由：只在当前供应商的方言不是原生时才起来，见 RelayController
     single { RelayController(get()) }
+    // 无状态（proot 补丁的互斥走 RootfsPatcher 里按 linuxDir 键的全局锁），
+    // 会话 / 本地服务 / 终端三条路径共用一个，路径差异全部由 WorkspaceShellContext 表达
+    single { ProotShellRunner(nativeLibraryDir = File(get<android.content.Context>().applicationInfo.nativeLibraryDir)) }
 
     single {
         val context: android.content.Context = get()
         val settings: SettingsStore = get()
         WorkspaceManager(
             baseDir = File(context.filesDir, "workspaces"),
-            shellRunner = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
+            shellRunner = get(),
             // 每次起 proot 现算：开关和系统权限都可能在两次会话之间被改掉。
             // 设置还没读到过（冷启动最初的一瞬）时 snapshot 是 null，按"没开"处理 ——
             // 少挂一次的代价是这次会话看不到 /sdcard，多挂一次的代价是权限被收回后还摆着它
@@ -71,10 +74,9 @@ val appModule = module {
     single { RootfsInstaller(get()) }
     single { WorkspaceRepository(get(), get()) }
     single {
-        val context: android.content.Context = get()
         CodexRuntime(
             workspaceRepository = get(),
-            proot = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
+            proot = get(),
             settingsStore = get(),
             relay = get(),
         )
@@ -105,7 +107,7 @@ val appModule = module {
             networkProbe = get(),
             settingsStore = get(),
             relay = get(),
-            proot = ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)),
+            proot = get(),
         )
     }
 
