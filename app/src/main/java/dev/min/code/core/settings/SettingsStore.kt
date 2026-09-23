@@ -664,9 +664,7 @@ class SettingsStore(private val context: Context) {
         migrateInsecureAck()
         context.dataStore.edit { p ->
             // 三张表任何一张打不开都不写：理由同 editProfiles —— 读出来的空表不是真相
-            if (isUnreadableCipher(p[KEY_PROFILES], TokenCipher::decrypt)) return@edit
-            if (isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)) return@edit
-            if (isUnreadableCipher(p[KEY_UNIFIED_PROFILES], TokenCipher::decrypt)) return@edit
+            if (unreadableTables(p).isNotEmpty()) return@edit
             val (unified, claude, codex) = block(
                 decodeUnifiedProfiles(p[KEY_UNIFIED_PROFILES]),
                 decodeProfiles(p[KEY_PROFILES]),
@@ -905,13 +903,9 @@ class SettingsStore(private val context: Context) {
      * 写入，保着那串也许还能救的密文。清掉之后 [editProfiles] 自然恢复正常。
      */
     suspend fun discardUnreadableCredentials() = context.dataStore.edit { p ->
-        if (isUnreadableCipher(p[KEY_PROFILES], TokenCipher::decrypt)) {
-            p.remove(KEY_PROFILES)
-            p.remove(KEY_ACTIVE_PROFILE)
-        }
-        if (isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)) {
-            p.remove(KEY_CODEX_PROFILES)
-            p.remove(KEY_CODEX_ACTIVE)
+        for (table in unreadableTables(p)) {
+            p.remove(table)
+            CIPHER_TABLES[table]?.let { p.remove(it) }
         }
     }
 }
@@ -1120,9 +1114,23 @@ internal fun isUnreadableCipher(raw: String?, decrypt: (String) -> String?): Boo
 /** 密文前缀，[TokenCipher] 写出来的格式是 `v1:<iv>:<密文>` */
 internal const val CIPHER_PREFIX = "v1:"
 
-private fun credentialsUnreadable(p: Preferences): Boolean =
-    isUnreadableCipher(p[KEY_PROFILES], TokenCipher::decrypt) ||
-        isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)
+/**
+ * 三张加密表，以及各自的「当前选中」键（统一表没有自己的 active，选中记在两张派生表上）。
+ *
+ * 判「打不开」、挡写入、清除，三处都照这一张清单走。以前各列各的，统一表漏在了后两处：
+ * 三张表是同一把 Keystore 密钥，要坏一起坏 —— 用户点完「清除并重新配置」，两张旧表清了，
+ * 统一表还是打不开，[SettingsStore.editUnified] 从此静默拒写，而提示条已经不见了。
+ */
+private val CIPHER_TABLES: Map<Preferences.Key<String>, Preferences.Key<String>?> = mapOf(
+    KEY_PROFILES to KEY_ACTIVE_PROFILE,
+    KEY_CODEX_PROFILES to KEY_CODEX_ACTIVE,
+    KEY_UNIFIED_PROFILES to null,
+)
+
+private fun unreadableTables(p: Preferences): List<Preferences.Key<String>> =
+    CIPHER_TABLES.keys.filter { isUnreadableCipher(p[it], TokenCipher::decrypt) }
+
+private fun credentialsUnreadable(p: Preferences): Boolean = unreadableTables(p).isNotEmpty()
 
 /**
  * 读设置流时用。迁移是在 [SettingsStore.current] 里写的，而 UI 可能先一步订阅到流 ——
