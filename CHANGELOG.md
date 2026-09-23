@@ -2,13 +2,6 @@
 
 每次发版在最小位加 1（`1.0.x`），除非这次改动明确说要升次版本。
 
-## 2.1.13 — 2026-09-22
-
-- **关于页可以检查 App 更新了**：查 GitHub Releases（`irumanevans-art/Min-code`），有新版本就下载 APK 并交给系统安装器。和 CLI 维护面板那颗「检查更新」不是一回事。Release 资产请按 `Min-code-<version>-<abi>.apk`（或 `universal`）命名。
-- **DeepSeek「连不上」**：测活把 `/v1/models` 的 404/405 误当成连不上；DeepSeek Anthropic 兼容基址本来就没有模型列表。现在会显示「通了 · 没有模型列表」。同时 DeepSeek / MiniMax / 智谱 / Kimi Code 预设补齐官方模型映射与上下文 env；Kimi Code 按文档走 `ANTHROPIC_API_KEY`。
-- **供应商编辑页**：新增「上下文量」快捷芯片（200k / 256k / 786k / 1M），手填供应商也能设；缺主模型映射时给非阻断提示。旧档案不会被静默改写——预设是一次性模板，重建或手补即可。
-- MiniMax 国内基址改为文档上的 `api.minimax.cn`（原先 `api.minimaxi.com`）。
-
 ## 2.1.17 — 2026-09-22
 
 - **设置页收成三组折叠**：连接与安装 / 设备 / 外观与语言，默认只展开连接，不再一长串平铺。
@@ -25,6 +18,13 @@
 - **真虚拟屏在 vivo 上跑通了**：shell 壳服务用 `getContentProviderExternal` 交接 Binder（绕开 ContentResolver 的 package 校验），用 `com.android.shell` 的 Context 建 `FLAG_TRUSTED` VirtualDisplay（绕开 `packageName must match calling uid`）。Surface 接 ImageReader，主屏无浮窗。
 - **隔离实测**：Settings 跑在 displayId=3，Min 仍在 displayId=0；`overlay_display_devices` 为空。
 - LocalSocket 交接在 SELinux 下失败（Permission denied），已弃用。
+
+## 2.1.13 — 2026-09-22
+
+- **关于页可以检查 App 更新了**：查 GitHub Releases（`irumanevans-art/Min-code`），有新版本就下载 APK 并交给系统安装器。和 CLI 维护面板那颗「检查更新」不是一回事。Release 资产请按 `Min-code-<version>-<abi>.apk`（或 `universal`）命名。
+- **DeepSeek「连不上」**：测活把 `/v1/models` 的 404/405 误当成连不上；DeepSeek Anthropic 兼容基址本来就没有模型列表。现在会显示「通了 · 没有模型列表」。同时 DeepSeek / MiniMax / 智谱 / Kimi Code 预设补齐官方模型映射与上下文 env；Kimi Code 按文档走 `ANTHROPIC_API_KEY`。
+- **供应商编辑页**：新增「上下文量」快捷芯片（200k / 256k / 786k / 1M），手填供应商也能设；缺主模型映射时给非阻断提示。旧档案不会被静默改写——预设是一次性模板，重建或手补即可。
+- MiniMax 国内基址改为文档上的 `api.minimax.cn`（原先 `api.minimaxi.com`）。
 
 ## 2.1.12 — 2026-09-22
 

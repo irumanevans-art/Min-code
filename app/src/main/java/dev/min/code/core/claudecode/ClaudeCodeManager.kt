@@ -50,8 +50,6 @@ import me.rerere.workspace.WorkspaceShellContext
 import java.io.BufferedReader
 import java.io.File
 import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -2804,8 +2802,6 @@ class ClaudeCodeManager(
     companion object {
         private const val TAG = "ClaudeCodeManager"
         private const val MAX_RESULT_CHARS = 8 * 1024
-        /** Bash editDiff 比 stdout 大得多（整份 unified diff），单独放宽一点 */
-        private const val MAX_EDIT_DIFF_CHARS = 64 * 1024
         private const val SHUTDOWN_GRACE_MS = 2_000L
 
         /**
@@ -3134,7 +3130,7 @@ internal fun guestToHostFile(workspaceDir: File, guestPath: String): File? {
     return resolved
 }
 
-/** 和 [ClaudeCodeManager] companion 里的上限对齐；顶层函数读不到 private const */
+/** Bash editDiff 比 stdout 大得多（整份 unified diff），单独放宽一点。本文件顶层与类内共用 */
 private const val MAX_EDIT_DIFF_CHARS = 64 * 1024
 
 /**

@@ -25,6 +25,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -110,7 +111,8 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                 modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                                // 密文打不开：这不是「没配过」，别让人以为配置丢了就急着重填。
+                // 密文打不开：这不是「没配过」，别让人以为配置丢了就急着重填。
+                // 在清掉之前所有写入都被挡着，那串密文还留在盘上。
                 if (settings.credentialsUnreadable) {
                     Notice(
                         text = stringResource(R.string.settings_credentials_unreadable),
@@ -122,9 +124,10 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                     ) { Text(stringResource(R.string.settings_credentials_discard)) }
                 }
 
-                var openConnection by remember { mutableStateOf(true) }
-                var openDevice by remember { mutableStateOf(false) }
-                var openLook by remember { mutableStateOf(false) }
+                // 折叠状态跟旋转/进程重建走，别让用户每次转屏都重新收一遍
+                var openConnection by rememberSaveable { mutableStateOf(true) }
+                var openDevice by rememberSaveable { mutableStateOf(false) }
+                var openLook by rememberSaveable { mutableStateOf(false) }
 
                 SettingsFoldGroup(
                     title = stringResource(R.string.settings_group_connection),
@@ -209,7 +212,7 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
-SettingRow(
+                SettingRow(
                     title = stringResource(R.string.settings_about),
                     onClick = { navController.navigate(Screen.About) },
                     trailing = {

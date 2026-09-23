@@ -175,6 +175,9 @@ private fun rememberChangelog(context: android.content.Context): List<ChangelogE
     }
 }
 
+/** 联系作者的 QQ 号：展示与复制用同一个来源，改这里就行 */
+private const val CONTACT_QQ = "1114111189"
+
 @Composable
 fun AboutPage() {
     val context = LocalContext.current
@@ -246,13 +249,13 @@ fun AboutPage() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                context.writeClipboardText("1114111189")
+                                context.writeClipboardText(CONTACT_QQ)
                             }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            stringResource(R.string.about_contact_qq, "1114111189"),
+                            stringResource(R.string.about_contact_qq, CONTACT_QQ),
                             style = MaterialTheme.typography.bodyMedium,
                             fontFamily = JetbrainsMono,
                         )

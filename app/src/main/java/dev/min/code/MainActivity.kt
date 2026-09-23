@@ -43,7 +43,6 @@ import dev.min.code.core.service.EXTRA_OPEN_CLAUDE_CODE
 import dev.min.code.core.service.EXTRA_OPEN_CODEX
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppLocale
-import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.LocalePrefs
 import dev.min.code.core.settings.ProviderLinkInbox
 import dev.min.code.core.settings.SettingsStore
@@ -240,7 +239,6 @@ class MainActivity : ComponentActivity() {
                         entryProvider = entryProvider {
                             entry<Screen.Session> { ClaudeCodePage() }
                             entry<Screen.Codex> { CodexPage() }
-                            entry<Screen.Setup> { ClaudeCodePage() }
                             entry<Screen.Files> { WorkspaceDetailPage(workspaceId) }
                             entry<Screen.Terminal> { WorkspaceTerminalPage(workspaceId) }
                             entry<Screen.FileEditor> { key ->
@@ -263,6 +261,3 @@ class MainActivity : ComponentActivity() {
 }
 
 private const val EXTRA_DEBUG_LOADING = "min.debug.loading"
-
-@Suppress("unused")
-private val defaultSettings = AppSettings()

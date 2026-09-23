@@ -1113,10 +1113,6 @@ private sealed interface TranscriptUser {
     data class Compact(val note: String) : TranscriptUser
 }
 
-/** 从 transcript 的 user 行里取出纯文本；content 可能是字符串，也可能是内容块数组 */
-private fun transcriptUserText(obj: JsonObject): String? =
-    (transcriptUserPayload(obj) as? TranscriptUser.Human)?.text
-
 private fun transcriptUserPayload(obj: JsonObject): TranscriptUser? {
     val content = obj.obj("message")?.get("content") ?: return null
     val text = when (content) {

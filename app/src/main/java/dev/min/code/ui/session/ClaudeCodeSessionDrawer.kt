@@ -38,6 +38,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -248,9 +249,9 @@ fun ClaudeCodeSessionDrawer(
             }
 
             InkDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-            var openEngines by remember { mutableStateOf(true) }
-            var openWorkspace by remember { mutableStateOf(false) }
-            var openSystem by remember { mutableStateOf(false) }
+            var openEngines by rememberSaveable { mutableStateOf(true) }
+            var openWorkspace by rememberSaveable { mutableStateOf(false) }
+            var openSystem by rememberSaveable { mutableStateOf(false) }
 
             DrawerFoldGroup(
                 title = stringResource(R.string.session_drawer_group_engines),

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Android app（Kotlin + Compose）。包 `dev.min.code`，三个模块：`app`、`workspace`（proot）、`highlight`。
+Android app（Kotlin + Compose）。包 `dev.min.code`，四个模块：`app`、`workspace`（proot）、`highlight`、`baselineprofile`（启动性能档案采集，见 settings.gradle.kts）。
 
 ## 工作方式
 
