@@ -41,18 +41,18 @@ private fun statusOf(item: CodexItem): ChatItem.ToolCall.Status = when (item.sta
 fun CodexItem.toChatItem(fallbackId: String): ChatItem {
     val itemId = id.ifBlank { fallbackId }
     return when (type) {
-        "userMessage" -> ChatItem.UserText(itemId, raw.contentText())
+        ITEM_USER_MESSAGE -> ChatItem.UserText(itemId, raw.contentText())
 
-        "agentMessage" -> ChatItem.AssistantText(itemId, raw.str("text").orEmpty())
+        ITEM_AGENT_MESSAGE -> ChatItem.AssistantText(itemId, raw.str("text").orEmpty())
 
         // 计划正文当助手输出显示。Codex 的 plan 是"我打算这么干"，
         // 和 Claude 的 ExitPlanMode 一样属于要读的正文，不是状态提示
         "plan" -> ChatItem.AssistantText(itemId, raw.str("text").orEmpty())
 
-        "reasoning" -> ChatItem.Thinking(itemId, raw.reasoningText())
+        ITEM_REASONING -> ChatItem.Thinking(itemId, raw.reasoningText())
 
         // Codex 的 commandExecution == 界面上的 Bash 卡
-        "commandExecution" -> ChatItem.ToolCall(
+        ITEM_COMMAND_EXECUTION -> ChatItem.ToolCall(
             id = itemId,
             toolUseId = itemId,
             name = "Bash",
@@ -68,7 +68,7 @@ fun CodexItem.toChatItem(fallbackId: String): ChatItem {
 
         // fileChange 给的是**现成的 diff**，不像 Claude 的 Edit 要从 old/new 现算，
         // 所以走 ChatItem.editDiff 那条道（ToolCallDetail 的 Edit 分支会优先用它）
-        "fileChange" -> {
+        ITEM_FILE_CHANGE -> {
             val changes = raw.arr("changes")?.mapNotNull { it as? JsonObject }.orEmpty()
             ChatItem.ToolCall(
                 id = itemId,

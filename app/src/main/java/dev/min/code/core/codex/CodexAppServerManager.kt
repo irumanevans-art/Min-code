@@ -477,7 +477,7 @@ class CodexAppServerManager(
             }
 
             is CodexEvent.ItemStarted -> {
-                if (event.item.type == USER_MESSAGE_ITEM) return@synchronized
+                if (event.item.type == ITEM_USER_MESSAGE) return@synchronized
                 val chat = event.item.toChatItem(nextLocalId("item"))
                 _state.value = current.copy(items = current.items.upsert(chat))
             }
@@ -485,7 +485,7 @@ class CodexAppServerManager(
             is CodexEvent.ItemCompleted -> {
                 // 服务端把用户那句话也当成一个 item 回显，而 sendTurn 为了即时反馈
                 // 已经在本地记过一条了 —— 两边都收就会看到自己说的话出现两遍
-                if (event.item.type == USER_MESSAGE_ITEM) return@synchronized
+                if (event.item.type == ITEM_USER_MESSAGE) return@synchronized
                 val chat = event.item.toChatItem(nextLocalId("item"))
                 outputBuffers.remove(event.item.id)
                 // 权威最终态到了，对应的增量缓冲作废
@@ -762,9 +762,6 @@ class CodexAppServerManager(
 
         /** proot 的挂载点，和 Claude 那边同一个工作区 */
         const val DEFAULT_CWD = "/workspace"
-
-        /** 服务端回显的用户消息 item，本地已经乐观插入过，见 handleEvent */
-        private const val USER_MESSAGE_ITEM = "userMessage"
 
         /** `turn/completed` 里干净跑完的那个 status，另外两个是 interrupted / failed */
         private const val TURN_COMPLETED = "completed"

@@ -83,7 +83,7 @@ fun summarizeCodexSession(file: File, headLines: Int = SUMMARY_HEAD_LINES): Code
                             ?.takeIf { it.str("type") == ITEM_COMPLETED }
                             ?.obj("item")
                             ?: continue
-                        if (preview == null && item.normalizedType() == "userMessage") {
+                        if (preview == null && item.normalizedType() == ITEM_USER_MESSAGE) {
                             preview = (item.toCodexItem() ?: continue)
                                 .toChatItem("preview")
                                 .let { it as? ChatItem.UserText }

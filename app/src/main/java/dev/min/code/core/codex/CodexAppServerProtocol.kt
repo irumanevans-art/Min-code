@@ -156,8 +156,11 @@ data class CodexItem(
 }
 
 /** 线上 [CodexItem.type] 的取值。这里是它们的事实来源，比较处一律引用常量而不是裸字符串 */
+internal const val ITEM_USER_MESSAGE = "userMessage"
 internal const val ITEM_AGENT_MESSAGE = "agentMessage"
 internal const val ITEM_REASONING = "reasoning"
+internal const val ITEM_COMMAND_EXECUTION = "commandExecution"
+internal const val ITEM_FILE_CHANGE = "fileChange"
 
 /**
  * 审批决定。取值来自官方文档的 `availableDecisions`。
