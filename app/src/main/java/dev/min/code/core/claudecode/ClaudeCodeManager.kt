@@ -14,24 +14,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.crash.CrashRecorder
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
-import dev.min.code.core.service.LocalService
 import dev.min.code.core.service.LocalServiceIntent
-import dev.min.code.core.service.LocalServiceRegistry
-import dev.min.code.core.service.LocalServiceStatus
-import dev.min.code.core.service.LocalServiceStopReason
+import dev.min.code.core.service.AgentServiceHost
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.appendProcessOutputLine
 import dev.min.code.core.session.SessionStatus
@@ -86,7 +80,7 @@ class ClaudeCodeManager(
     installer: ClaudeCodeInstaller,
     private val costLedger: ClaudeCodeCostLedger,
     networkProbe: NetworkProbe = NetworkProbe(context),
-    private val localServices: LocalServiceRegistry? = null,
+    private val localServices: AgentServiceHost? = null,
     private val sessionStore: ClaudeCodeSessionStore = ClaudeCodeSessionStore(),
     private val drafts: ComposerDraftStore = ComposerDraftStore(context),
     /**
@@ -2402,24 +2396,6 @@ class ClaudeCodeManager(
     }
 
     /**
-     * 等托管的服务离开 Starting（进程表的就绪窗口是 2.5 秒），返回那一刻的条目；
-     * 超时仍没定论、或条目已被清掉时返回 null（当作没出事）。
-     *
-     * 定论之后再等一小会儿重读：服务的 stdout / stderr 是另外两个协程在收，死因那一行
-     * （`python3: command not found`）可能比「已退出」的状态晚一步落进日志尾。
-     */
-    private suspend fun awaitHostSettled(registry: LocalServiceRegistry, id: String): LocalService? {
-        val settled = withTimeoutOrNull(HOST_SETTLE_TIMEOUT_MS) {
-            registry.services
-                .map { list -> list.firstOrNull { it.id == id } }
-                .first { it == null || it.status != LocalServiceStatus.Starting }
-        } ?: return null
-        if (settled.status == LocalServiceStatus.Running) return settled
-        delay(HOST_LOG_SETTLE_MS)
-        return registry.services.value.firstOrNull { it.id == id } ?: settled
-    }
-
-    /**
      * 无 permission 闸门时（bypass / 规则已 allow）：若 shouldHost，尝试进表。
      * startFromAgent 对同 command+cwd+port 去重；PortBusy 则只绑预览，不装第二套。
      */
@@ -2490,11 +2466,6 @@ class ClaudeCodeManager(
         private const val USAGE_TIMEOUT_MS = 20_000L
         private const val MAX_RESULT_CHARS = 8 * 1024
 
-        /** 等托管服务出结论的上限。进程表自己的就绪窗口是 2.5 秒，这里留足余量 */
-        private const val HOST_SETTLE_TIMEOUT_MS = 10_000L
-
-        /** 服务退出之后，再给日志尾一点时间收齐最后几行 */
-        private const val HOST_LOG_SETTLE_MS = 300L
         private const val INTERRUPT_TIMEOUT_MS = 15_000L
 
         /** 一轮收尾后，等 CLI 拿走已交棒消息的上限（[watchHandedOff]） */
@@ -2887,59 +2858,6 @@ internal fun mergeSubagentItem(
 
     // 子 agent 线程里不会有别的东西 —— 权限请求走的是主线程的 control_request
     else -> items
-}
-
-/**
- * 托管的服务没撑过就绪窗口时，给对话流的那句话；还在跑（或是用户自己停的）返回 null。
- *
- * 退出码 127 / 126 是 shell 的「命令不存在」「不可执行」，直接翻成人话 —— 手机上最常见的死法
- * 就是 rootfs 里没装那个解释器。日志最后一行通常就是原因本身。模型那边收到的是「已托管」，
- * 它会以为服务在跑，所以提示里点明这一句，用户好转告它。
- */
-internal fun hostedEarlyExitNote(service: LocalService): String? {
-    if (service.status == LocalServiceStatus.Running || service.status == LocalServiceStatus.Starting) return null
-    if (service.stopReason == LocalServiceStopReason.UserStop ||
-        service.stopReason == LocalServiceStopReason.StopAll
-    ) {
-        return null
-    }
-    val code = service.exitCode
-    val hint = when (code) {
-        127 -> "，命令不存在"
-        126 -> "，没有执行权限"
-        else -> ""
-    }
-    val cause = service.logTail.lines().lastOrNull { it.isNotBlank() }?.trim()?.take(200)
-    return "托管的服务刚启动就退出了（exit ${code ?: "?"}$hint）" +
-        (cause?.let { "：$it" } ?: "") +
-        "。模型收到的是「已托管」，还以为它在跑。"
-}
-
-/** 一条 Bash 交给进程表托管时用的命令（剥掉了 `&` / nohup 这类后台噪音）和猜出来的端口 */
-internal data class HostedBashPlan(val command: String, val port: Int?)
-
-/**
- * 这条 Bash 该不该托管进进程表；该的话给出托管参数，不该就是 null。
- * 有权限闸门（排他托管）和没有闸门（bypass 下跟着跑）两个入口共用这一段判断 ——
- * 以前各抄一遍，改了一边的判定另一边还是旧的，同一条命令就会一边托管一边不托管。
- */
-internal fun hostedBashPlan(input: JsonObject): HostedBashPlan? {
-    val raw = input["command"].asStringOrNull().orEmpty().trim()
-    if (raw.isEmpty()) return null
-    if (!LocalServiceIntent.shouldHost(raw, bashFlags(input))) return null
-    val cleaned = LocalServiceIntent.stripBackgroundNoise(raw)
-    return HostedBashPlan(cleaned, LocalServiceIntent.guessPort(cleaned))
-}
-
-/** 各版本 CLI 对「后台跑」的几种写法，原样交给 [LocalServiceIntent.shouldHost] 判断 */
-private fun bashFlags(input: JsonObject): Map<String, Any?> {
-    val out = LinkedHashMap<String, Any?>()
-    for (key in listOf("run_in_background", "runInBackground", "is_background")) {
-        val b = input[key].asBooleanOrNull()
-        if (b != null) out[key] = b
-        else input[key].asStringOrNull()?.let { out[key] = it }
-    }
-    return out
 }
 
 /** toolUseId 对得上的那张工具卡换成 [transform] 的结果，其余原样。主会话流和子 agent 的子条目共用 */

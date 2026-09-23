@@ -146,7 +146,8 @@ val appModule = module {
             installer = get(),
             costLedger = get(),
             networkProbe = get(),
-            localServices = get(),
+            // 参数类型是接口，Koin 按接口找不到定义 —— 必须写明具体类
+            localServices = get<LocalServiceRegistry>(),
             // 退还兜底要落进同一份草稿盘（上面的 single），另开一份就把草稿写劈叉了
             drafts = get(),
             relay = get(),

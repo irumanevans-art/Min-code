@@ -105,7 +105,7 @@ class LocalServiceRegistry(
             CrashRecorder.record(context, Thread.currentThread(), err)
         }
     ),
-) {
+) : AgentServiceHost {
     private data class Handle(
         /** 重启认领来的服务只有 pid，没有 [Process] 句柄 —— 这里是 null */
         @Volatile var process: Process?,
@@ -122,7 +122,7 @@ class LocalServiceRegistry(
 
     private val handles = ConcurrentHashMap<String, Handle>()
     private val _services = MutableStateFlow<List<LocalService>>(emptyList())
-    val services: StateFlow<List<LocalService>> = _services.asStateFlow()
+    override val services: StateFlow<List<LocalService>> = _services.asStateFlow()
 
     /**
      * 串行化「去重检查 + 启动登记」：原先是裸的 check-then-act，两个并发调用拿着同一个
@@ -146,12 +146,12 @@ class LocalServiceRegistry(
      * Agent / 会话链调用的主入口。
      * 同 command+cwd+port 已在 Starting/Running 则复用 id，不重起。
      */
-    suspend fun startFromAgent(
+    override suspend fun startFromAgent(
         command: String,
-        cwdGuest: String = "/workspace",
-        port: Int? = null,
-        label: String? = null,
-        sourceSessionKey: String? = null,
+        cwdGuest: String,
+        port: Int?,
+        label: String?,
+        sourceSessionKey: String?,
     ): Result<String> {
         val cmd = command.trim()
         if (cmd.isEmpty()) return Result.failure(IllegalArgumentException("command empty"))
