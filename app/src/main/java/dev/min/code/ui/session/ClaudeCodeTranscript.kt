@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -727,7 +728,10 @@ internal fun ToolEntry(
             } else if (running) {
                 InkSpinner(size = 11.dp, color = azure)
             } else {
-                toolBadge(item, labels)?.let {
+                // 折叠角标列表里每行、每次重组都要用；编辑类的 diff 是大字符串，
+                // remember 住，别在滚动和流式期间反复拼
+                val badge = remember(item, labels) { toolBadge(item, labels) }
+                badge?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.labelSmall,
