@@ -63,6 +63,7 @@ import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.session.ClaudeCodePage
 import dev.min.code.ui.providers.ProvidersPage
 import dev.min.code.ui.settings.SettingsPage
+import dev.min.code.ui.settings.SettingsSectionPage
 import dev.min.code.ui.terminal.WorkspaceTerminalPage
 import dev.min.code.ui.theme.FormSwitchController
 import dev.min.code.ui.theme.FormSwitchHost
@@ -249,6 +250,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             entry<Screen.Settings> { SettingsPage() }
+                            entry<Screen.SettingsSection> { key -> SettingsSectionPage(key.section) }
                             entry<Screen.Providers> { ProvidersPage() }
                             entry<Screen.About> { AboutPage() }
                         },

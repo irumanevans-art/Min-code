@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -25,7 +27,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,10 +70,13 @@ import dev.min.code.ui.theme.LocalDarkMode
 import dev.min.code.ui.theme.LocalFormSwitch
 import dev.min.code.ui.theme.LocalSkin
 import dev.min.code.ui.theme.sea
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ArrowRight01
 import org.koin.androidx.compose.koinViewModel
 
 /**
- * App 设置。只有五样：连接、npm 源、后台、外观、关于——没有"设置页里的设置页"。
+ * App 设置的首页：三组入口（连接与安装 / 设备 / 外观与语言）加「关于」，
+ * 每组点进去是它自己的二级页（[SettingsSectionPage]），和一般设置 App 的层级一样。
  *
  * 连接那一张能存多条的表搬去了 [dev.min.code.ui.providers.ProvidersPage]：它现在带着
  * 预设库、托管开关和拖拽排序，塞回这里就会把设置页撑成二级菜单。这边只留一行入口，
@@ -124,90 +128,19 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                     ) { Text(stringResource(R.string.settings_credentials_discard)) }
                 }
 
-                // 折叠状态跟旋转/进程重建走，别让用户每次转屏都重新收一遍
-                var openConnection by rememberSaveable { mutableStateOf(true) }
-                var openDevice by rememberSaveable { mutableStateOf(false) }
-                var openLook by rememberSaveable { mutableStateOf(false) }
-
-                SettingsFoldGroup(
-                    title = stringResource(R.string.settings_group_connection),
-                    subtitle = stringResource(R.string.settings_group_connection_sub),
-                    open = openConnection,
-                    onToggle = { openConnection = !openConnection },
-                ) {
+                // 一组一页：点进去是那一组的二级页，页里平铺，不再在这一页上展开收起
+                SettingsSection.entries.forEach { section ->
                     SettingRow(
-                        title = stringResource(R.string.providers_title),
-                        subtitle = settings.activeProfile?.displayName()
-                            ?: stringResource(R.string.settings_connection_empty),
-                        enabled = !settings.credentialsUnreadable,
-                        onClick = { navController.navigate(Screen.Providers) },
-                        trailing = {
-                            settings.activeProfile?.let { profile ->
-                                Text(
-                                    profile.maskedToken(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = JetbrainsMono,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                        title = stringResource(section.title),
+                        // 连接那一行的副题回答打开设置时最想问的那一句：现在用的是哪家
+                        subtitle = if (section == SettingsSection.CONNECTION) {
+                            settings.activeProfile?.displayName() ?: stringResource(section.subtitle)
+                        } else {
+                            stringResource(section.subtitle)
                         },
+                        onClick = { navController.navigate(Screen.SettingsSection(section.name)) },
+                        trailing = { NextPageArrow() },
                     )
-                    AnimatedVisibility(
-                        visible = settings.insecureBaseUrl,
-                        enter = InkMotion.enter,
-                        exit = InkMotion.exit,
-                    ) {
-                        Notice(
-                            text = stringResource(R.string.settings_connection_insecure_warning),
-                            tone = NoticeTone.Warn,
-                        )
-                    }
-                    Text(
-                        stringResource(R.string.settings_connection_hint),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    SettingRow(
-                        title = stringResource(R.string.settings_npm_mirror_title),
-                        subtitle = stringResource(R.string.settings_npm_mirror_subtitle),
-                        onClick = { vm.setUseNpmMirror(!settings.useNpmMirror) },
-                        trailing = {
-                            InkSwitch(checked = settings.useNpmMirror, onCheckedChange = { vm.setUseNpmMirror(it) })
-                        },
-                    )
-                    BatteryRow()
-                }
-
-                InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
-
-                SettingsFoldGroup(
-                    title = stringResource(R.string.settings_group_device),
-                    subtitle = stringResource(R.string.settings_group_device_sub),
-                    open = openDevice,
-                    onToggle = { openDevice = !openDevice },
-                ) {
-                    DeviceStorageRow(
-                        enabled = settings.shareDeviceStorage,
-                        onToggle = vm::setShareDeviceStorage,
-                    )
-                    DeviceControlRow(
-                        enabled = settings.controlDevice,
-                        onToggle = vm::setControlDevice,
-                    )
-                    VirtualDisplayRow(vm = vm)
-                }
-
-                InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
-
-                SettingsFoldGroup(
-                    title = stringResource(R.string.settings_group_look),
-                    subtitle = stringResource(R.string.settings_group_look_sub),
-                    open = openLook,
-                    onToggle = { openLook = !openLook },
-                ) {
-                    ThemePicker(current = settings.themeMode, onPick = vm::setThemeMode)
-                    SkinPicker(current = settings.skin, onPick = vm::setSkin)
-                    LanguagePicker(current = settings.appLanguage, onPick = vm::setAppLanguage)
                 }
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
@@ -216,12 +149,15 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                     title = stringResource(R.string.settings_about),
                     onClick = { navController.navigate(Screen.About) },
                     trailing = {
-                        Text(
-                            BuildConfig.VERSION_NAME,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetbrainsMono,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                BuildConfig.VERSION_NAME,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetbrainsMono,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            NextPageArrow()
+                        }
                     },
                 )
             }
@@ -510,31 +446,138 @@ private fun VirtualDisplayRow(vm: SettingsVM) {
 }
 
 
+/** 设置的三组。标题 / 副题沿用原来折叠组的文案 */
+enum class SettingsSection(@androidx.annotation.StringRes val title: Int, @androidx.annotation.StringRes val subtitle: Int) {
+    CONNECTION(R.string.settings_group_connection, R.string.settings_group_connection_sub),
+    DEVICE(R.string.settings_group_device, R.string.settings_group_device_sub),
+    LOOK(R.string.settings_group_look, R.string.settings_group_look_sub),
+}
+
+/**
+ * 设置的二级页：一组一页，页里平铺。
+ *
+ * 以前三组是同一页上的折叠块，展开一组、其余几组的标题就被推到屏幕外；改成一般设置 App 的层级：
+ * 首页是入口，点进来是这一组。只有真该收着的东西（关于页的版本历史、环境面板的「修复」）才折叠。
+ */
 @Composable
-private fun SettingsFoldGroup(
-    title: String,
-    subtitle: String,
-    open: Boolean,
-    onToggle: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SettingRow(
-            title = title,
-            subtitle = subtitle,
-            onClick = onToggle,
-            trailing = {
-                Text(
-                    if (open) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            },
-        )
-        AnimatedVisibility(visible = open, enter = InkMotion.expand, exit = InkMotion.collapse) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+fun SettingsSectionPage(section: String, vm: SettingsVM = koinViewModel()) {
+    val group = SettingsSection.entries.firstOrNull { it.name == section } ?: SettingsSection.CONNECTION
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val scrollState = rememberScrollState()
+    Scaffold(
+        topBar = {
+            InkTopBar(
+                title = stringResource(group.title),
+                navigationIcon = { BackButton() },
+                scrolled = scrollState.canScrollBackward,
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(scrollState)
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Column(
+                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                when (group) {
+                    SettingsSection.CONNECTION -> ConnectionSettings(vm, settings)
+                    SettingsSection.DEVICE -> DeviceSettings(vm, settings)
+                    SettingsSection.LOOK -> LookSettings(vm, settings)
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun ConnectionSettings(vm: SettingsVM, settings: AppSettings) {
+    val navController = LocalNavController.current
+    SettingRow(
+        title = stringResource(R.string.providers_title),
+        subtitle = settings.activeProfile?.displayName()
+            ?: stringResource(R.string.settings_connection_empty),
+        enabled = !settings.credentialsUnreadable,
+        onClick = { navController.navigate(Screen.Providers) },
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                settings.activeProfile?.let { profile ->
+                    Text(
+                        profile.maskedToken(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetbrainsMono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                NextPageArrow()
+            }
+        },
+    )
+    AnimatedVisibility(
+        visible = settings.insecureBaseUrl,
+        enter = InkMotion.enter,
+        exit = InkMotion.exit,
+    ) {
+        Notice(
+            text = stringResource(R.string.settings_connection_insecure_warning),
+            tone = NoticeTone.Warn,
+        )
+    }
+    Text(
+        stringResource(R.string.settings_connection_hint),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SettingRow(
+        title = stringResource(R.string.settings_npm_mirror_title),
+        subtitle = stringResource(R.string.settings_npm_mirror_subtitle),
+        onClick = { vm.setUseNpmMirror(!settings.useNpmMirror) },
+        trailing = {
+            InkSwitch(checked = settings.useNpmMirror, onCheckedChange = { vm.setUseNpmMirror(it) })
+        },
+    )
+    BatteryRow()
+}
+
+@Composable
+private fun DeviceSettings(vm: SettingsVM, settings: AppSettings) {
+    DeviceStorageRow(
+        enabled = settings.shareDeviceStorage,
+        onToggle = vm::setShareDeviceStorage,
+    )
+    DeviceControlRow(
+        enabled = settings.controlDevice,
+        onToggle = vm::setControlDevice,
+    )
+    VirtualDisplayRow(vm = vm)
+}
+
+@Composable
+private fun LookSettings(vm: SettingsVM, settings: AppSettings) {
+    // 单独成页之后三排分段钮没有上下文了，各配一个小标题
+    SectionTitle(stringResource(R.string.settings_theme_label))
+    ThemePicker(current = settings.themeMode, onPick = vm::setThemeMode)
+    SectionTitle(stringResource(R.string.settings_skin_label))
+    SkinPicker(current = settings.skin, onPick = vm::setSkin)
+    SectionTitle(stringResource(R.string.settings_language_label))
+    LanguagePicker(current = settings.appLanguage, onPick = vm::setAppLanguage)
+}
+
+/** 行尾那个「点了会进下一页」的箭头 */
+@Composable
+internal fun NextPageArrow() {
+    Icon(
+        HugeIcons.ArrowRight01,
+        contentDescription = null,
+        modifier = Modifier.size(16.dp),
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

@@ -38,7 +38,6 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -249,15 +248,9 @@ fun ClaudeCodeSessionDrawer(
             }
 
             InkDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-            var openEngines by rememberSaveable { mutableStateOf(true) }
-            var openWorkspace by rememberSaveable { mutableStateOf(false) }
-            var openSystem by rememberSaveable { mutableStateOf(false) }
-
-            DrawerFoldGroup(
-                title = stringResource(R.string.session_drawer_group_engines),
-                open = openEngines,
-                onToggle = { openEngines = !openEngines },
-            ) {
+            // 入口本身就是「点了进下一页 / 开一个面板」，不再收进折叠组里：
+            // 折起来的话最常用的 Codex、文件每次都要先点开一层才看得见
+            DrawerSection(title = stringResource(R.string.session_drawer_group_engines)) {
                 ActionRow(
                     HugeIcons.Exchange01,
                     stringResource(R.string.providers_title),
@@ -270,11 +263,7 @@ fun ClaudeCodeSessionDrawer(
                     onOpenCodex,
                 )
             }
-            DrawerFoldGroup(
-                title = stringResource(R.string.session_drawer_group_workspace),
-                open = openWorkspace,
-                onToggle = { openWorkspace = !openWorkspace },
-            ) {
+            DrawerSection(title = stringResource(R.string.session_drawer_group_workspace)) {
                 onCopyTranscript?.let {
                     ActionRow(HugeIcons.Copy01, stringResource(R.string.session_copy_transcript), it)
                 }
@@ -282,11 +271,7 @@ fun ClaudeCodeSessionDrawer(
                 ActionRow(HugeIcons.ComputerTerminal01, stringResource(R.string.session_terminal), onOpenTerminal)
                 ActionRow(HugeIcons.Globe, stringResource(R.string.runtime_drawer), onOpenRuntime)
             }
-            DrawerFoldGroup(
-                title = stringResource(R.string.session_drawer_group_system),
-                open = openSystem,
-                onToggle = { openSystem = !openSystem },
-            ) {
+            DrawerSection(title = stringResource(R.string.session_drawer_group_system)) {
                 ActionRow(HugeIcons.Package, stringResource(R.string.session_drawer_maintenance), onOpenMaintenance)
                 ActionRow(HugeIcons.Settings02, stringResource(R.string.settings_title), onOpenSettings)
             }
@@ -362,35 +347,19 @@ fun ClaudeCodeSessionDrawer(
  */
 
 @Composable
-private fun DrawerFoldGroup(
+private fun DrawerSection(
     title: String,
-    open: Boolean,
-    onToggle: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    // 只是一行小标题，不可点、不折叠
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle)
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                title,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                if (open) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        AnimatedVisibility(visible = open, enter = InkMotion.expand, exit = InkMotion.collapse) {
-            Column { content() }
-        }
+        Text(
+            title,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 2.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        content()
     }
 }
 
