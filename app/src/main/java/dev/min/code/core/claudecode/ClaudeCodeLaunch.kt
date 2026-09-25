@@ -69,10 +69,13 @@ internal fun claudeLaunchArgs(
 /**
  * 会话进程的环境变量。[relayBaseUrl] 是本地协议路由给的地址（方言不是原生时才有），
  * 要挂起才拿得到，所以由调用方先算好传进来；[netSnap] 为空时不注入网络身份卡。
+ *
+ * [profile] 为 null = 走 Claude 订阅：供应商的自定义 env、地址、token **一个都不写**（见 `ClaudeSubscription.kt`），
+ * CLI 读它自己登录留下的凭证文件。
  */
 internal fun claudeSessionEnv(
     options: ClaudeCodeManager.SessionOptions,
-    profile: ApiProfile,
+    profile: ApiProfile?,
     relayBaseUrl: String?,
     netSnap: NetworkSnapshot?,
 ): Map<String, String> = buildMap {
@@ -117,6 +120,7 @@ internal fun claudeSessionEnv(
         // 那些 App 的偏好项（比如中转站的上下文窗口并不是 1M，用户要自己改
         // CLAUDE_CODE_MAX_CONTEXT_TOKENS），但 RESERVED_ENV_KEYS 里的一律被
         // sanitizedProfileEnv 丢掉 —— 那几个是事实来源自己的位置
+        if (profile == null) return@buildMap
         putAll(sanitizedProfileEnv(profile))
 
         // 地址与 token 最后落笔，保证它们赢。

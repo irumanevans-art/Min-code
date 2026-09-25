@@ -6,7 +6,7 @@ import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
-import dev.min.code.core.settings.ApiProfile
+import dev.min.code.core.settings.ClaudeAuthMode
 import dev.min.code.core.settings.SettingsStore
 import me.rerere.workspace.ProotShellRunner
 import me.rerere.workspace.RootfsPatchOptions
@@ -29,7 +29,10 @@ class LaunchedCli(
     val process: Process,
     /** 这个工作区的 rootfs 目录。会话仓库读 transcript、编辑快照换算路径都靠它 */
     val linuxDir: File,
-    /** 启动时生效的那条供应商，见 [ClaudeCodeManager.SessionState.launchedProfileId] */
+    /**
+     * 启动时生效的那条供应商，见 [ClaudeCodeManager.SessionState.launchedProfileId]。
+     * 走订阅时是 [SUBSCRIPTION_CONNECTION_ID]
+     */
     val profileId: String,
 )
 
@@ -46,19 +49,14 @@ class ProotClaudeCodeLauncher(
         ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir))
     }
 
-    /**
-     * 当前生效的那条供应商，整条取回来。
-     *
-     * 启动时**只读这一次**：地址、token 和自定义 env 必须来自同一条配置。分成
-     * token / baseUrl 两次 `current()` 的话，中间用户正好切了一家，
-     * 起来的进程就会拿着 A 家的 key 去敲 B 家的门。
-     */
-    private suspend fun activeProfile(): ApiProfile? = settingsStore.current().activeProfile
-
     override suspend fun launch(options: ClaudeCodeManager.SessionOptions, sessionId: String): LaunchedCli {
-        val profile = activeProfile()
-        check(profile != null && profile.token.isNotBlank()) {
-            "未配置 ANTHROPIC_AUTH_TOKEN，请先在设置页填写 token"
+        // 启动时**只读这一次**：走哪条路、地址、token 和自定义 env 必须来自同一份设置。分成
+        // 几次 `current()` 的话，中间用户正好切了一家，起来的进程就会拿着 A 家的 key 去敲 B 家的门。
+        val settings = settingsStore.current()
+        // null = 走订阅：什么都不注入，凭证是 CLI 自己的（见 ClaudeSubscription.kt）
+        val profile = settings.claudeProfile
+        check(settings.claudeAuth == ClaudeAuthMode.SUBSCRIPTION || (profile != null && profile.token.isNotBlank())) {
+            "还没连接：到供应商页添加一家，或用 Claude 订阅登录"
         }
 
         val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
@@ -89,7 +87,7 @@ class ProotClaudeCodeLauncher(
         installer.ensureRuntimeDocs(linuxDir, netSnap)
 
         // 方言不是原生时改写成本地路由地址（要挂起，所以在拼 env 之前先拿好）
-        val relayBaseUrl = relay?.claudeBaseUrl(profile)
+        val relayBaseUrl = profile?.let { relay?.claudeBaseUrl(it) }
         val shellContext = WorkspaceShellContext(
             root = workspace.root,
             // 走 bash 的 eval，必须逐个 shell 转义，否则含空格的参数（如模型名）会被拆开
@@ -105,6 +103,6 @@ class ProotClaudeCodeLauncher(
 
         val proc = runner.launch(shellContext)
             ?: error(runner.checkAvailability(shellContext) ?: "无法启动 proot 进程")
-        return LaunchedCli(proc, linuxDir, profile.id)
+        return LaunchedCli(proc, linuxDir, profile?.id ?: SUBSCRIPTION_CONNECTION_ID)
     }
 }

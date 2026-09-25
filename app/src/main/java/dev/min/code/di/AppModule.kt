@@ -8,6 +8,7 @@ import dev.min.code.core.claudecode.ClaudeCodeCostLedger
 import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.claudecode.ClaudeSubscription
 import dev.min.code.core.device.AgentDisplaySession
 import dev.min.code.core.device.DeviceController
 import dev.min.code.core.device.DeviceMcpRegistrar
@@ -157,6 +158,18 @@ val appModule = module {
         )
     }
     single { ClaudeCodeSessionRegistry(get(), factory = { get() }) }
+    // 订阅登录要 single：登录进行中的状态横跨页面，前台服务也盯着它保活
+    single {
+        ClaudeSubscription(
+            workspaceRepository = get(),
+            installer = get(),
+            settingsStore = get(),
+            providerSync = get(),
+            relay = get(),
+            registry = get(),
+            scope = get<AppScope>(),
+        )
+    }
 
     // 保活与后台通知。createdAtStart：它订阅的是注册表，注册表可能在页面之外先动起来
     single(createdAtStart = true) {
@@ -166,6 +179,7 @@ val appModule = module {
             registry = get(),
             localServices = get(),
             codex = get(),
+            subscription = get(),
         )
     }
 

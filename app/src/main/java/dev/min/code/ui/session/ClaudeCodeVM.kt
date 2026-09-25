@@ -147,14 +147,13 @@ class ClaudeCodeVM(
     val setup = _setup.asStateFlow()
 
     /**
-     * 有没有可用的连接（当前生效的供应商带着 token）。没有时启动面板给 [ConnectPrompt]。
+     * 有没有可用的连接（走订阅，或当前生效的供应商带着 token）。没有时启动面板给 [ConnectPrompt]。
      *
      * 跟着 DataStore 走，不在 [refresh] 里读一次：人从供应商页加完一家回来，提示要自己消失，
      * 不能等他去点刷新。初值 true：设置还没读到的那一下不闪「未连接」。
-     * 以后「用 Claude 订阅」接进来，判定也改在这一处。
      */
     val connected: StateFlow<Boolean> = settingsStore.settings
-        .map { it.token.isNotBlank() }
+        .map { it.claudeConnected }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     /** 磁盘上的 transcript（CLI 自己写的） */

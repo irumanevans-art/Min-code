@@ -10,6 +10,7 @@ import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.codex.parseCodexConfigImport
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.ApiProfile
+import dev.min.code.core.settings.ClaudeAuthMode
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.BACKUP_TAG_CLAUDE_SETTINGS
 import dev.min.code.core.settings.backupTag
@@ -120,6 +121,8 @@ class ProvidersVM(
      */
     fun activate(id: String, acknowledgeInsecure: Boolean = false) = viewModelScope.launch {
         store.setActiveProfile(id, acknowledgeInsecure)
+        // 在供应商页点了一家 = 要用供应商这条路。走订阅时这就是「切回 token」：订阅的登录原样留着
+        store.setClaudeAuth(ClaudeAuthMode.PROVIDER)
         _sync.value = providerSync.apply().claude
         // 方言变了要起 / 停路由；空闲会话重起时会读到新的 base URL
         relay.reconcile()
@@ -133,6 +136,8 @@ class ProvidersVM(
             store.replaceProfile(profile)
             profile.id
         }
+        // 存的时候勾了「启用」= 要用供应商这条路，和在列表上点一家同一个意思（见 [activate]）
+        if (activate) store.setClaudeAuth(ClaudeAuthMode.PROVIDER)
         // 改的是当前生效的那条 → 投影和进程都要跟上；改别的条目只是改一张表
         if (id == store.current().activeProfile?.id) {
             _sync.value = providerSync.apply().claude

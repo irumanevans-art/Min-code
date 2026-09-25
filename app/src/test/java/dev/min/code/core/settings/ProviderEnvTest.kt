@@ -238,4 +238,48 @@ class ProviderEnvTest {
         assertFalse(env.containsKey("ANTHROPIC_AUTH_TOKEN"))
         assertEquals("https://relay.example", env["ANTHROPIC_BASE_URL"])
     }
+
+    // -----------------------------------------------------------------------
+    // Claude 订阅：凭证是 CLI 自己的，Min 一个认证变量都不给
+    //
+    // 非空的 API_KEY / AUTH_TOKEN 会压过订阅登录；BASE_URL 指着中转时 CLI 会把订阅的
+    // OAuth bearer 发过去（实测）。所以是「不注入」，不是「注入空串」。
+    // -----------------------------------------------------------------------
+
+    private val claudeAuthKeys = listOf("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN")
+
+    @Test
+    fun a_subscription_shell_gets_no_claude_credentials_at_all() {
+        val env = shellCredentialEnv(
+            settingsWith(claude = profile(env = mapOf("API_TIMEOUT_MS" to "600000")))
+                .copy(claudeAuth = ClaudeAuthMode.SUBSCRIPTION),
+        )
+        claudeAuthKeys.forEach { assertFalse("$it leaked into a subscription shell", env.containsKey(it)) }
+        // 供应商自带的 env 也属于那家供应商，订阅时一样不给
+        assertFalse(env.containsKey("API_TIMEOUT_MS"))
+    }
+
+    @Test
+    fun a_subscription_keeps_the_provider_table_but_does_not_use_it() {
+        val settings = settingsWith().copy(claudeAuth = ClaudeAuthMode.SUBSCRIPTION)
+        // 两条路互不覆盖：供应商那条还在，切回来原样可用
+        assertEquals("a", settings.activeProfile?.id)
+        assertNull(settings.claudeProfile)
+        assertTrue(settings.claudeConnected)
+        assertEquals("a", settings.copy(claudeAuth = ClaudeAuthMode.PROVIDER).claudeProfile?.id)
+    }
+
+    @Test
+    fun provider_mode_without_a_token_is_not_connected() {
+        assertFalse(settingsWith(claude = profile(token = "")).claudeConnected)
+        assertFalse(settingsWith(claude = null).claudeConnected)
+        assertTrue(settingsWith(claude = null).copy(claudeAuth = ClaudeAuthMode.SUBSCRIPTION).claudeConnected)
+    }
+
+    @Test
+    fun a_subscription_token_cannot_be_smuggled_in_through_the_env_table() {
+        // 把 setup-token 印出来的东西塞进供应商的自定义 env = Min 代持订阅凭证
+        val sanitized = sanitizedProfileEnv(profile(env = mapOf("CLAUDE_CODE_OAUTH_TOKEN" to "sk-ant-oat01-x")))
+        assertFalse(sanitized.containsKey("CLAUDE_CODE_OAUTH_TOKEN"))
+    }
 }

@@ -61,8 +61,9 @@ class ProviderSync(
      */
     suspend fun apply(): Report {
         val settings = settingsStore.current()
+        // 走订阅时 claudeProfile 是 null：托管区清空，终端里的 claude 才会用它自己登录的订阅
         val managed = if (settings.manageGuestConfig) {
-            settings.activeProfile
+            settings.claudeProfile
                 ?.let { managedSettingsEnv(it, settings.guestConfigIncludesSecrets) }
                 .orEmpty()
         } else {
@@ -114,6 +115,9 @@ val RESERVED_ENV_KEYS = setOf(
     "OPENAI_BASE_URL",
     "OPENAI_API_KEY",
     "CODEX_API_KEY",
+    // 订阅的长期 token（`claude setup-token` 印出来的那种）。放进供应商配置 = Min 代持订阅凭证，
+    // 那是不允许的；订阅只走 CLI 自己的登录，见 ClaudeSubscription.kt
+    "CLAUDE_CODE_OAUTH_TOKEN",
     "PATH",
     "HOME",
     "USER",
@@ -195,7 +199,7 @@ internal suspend fun currentShellCredentialEnv(
     relay: RelayController?,
 ): Map<String, String> = runCatching {
     val settings = settingsStore.current()
-    val override = settings.activeProfile?.let { relay?.claudeBaseUrl(it) }
+    val override = settings.claudeProfile?.let { relay?.claudeBaseUrl(it) }
     shellCredentialEnv(settings, claudeBaseUrlOverride = override)
 }
     .onFailure { Log.w("ProviderSync", "读取供应商凭据失败，shell 里将没有 key", it) }
@@ -223,7 +227,8 @@ internal fun shellCredentialEnv(
 ): Map<String, String> {
     if (!settings.injectCredentialsIntoShells) return emptyMap()
     return buildMap {
-        settings.activeProfile?.let { profile ->
+        // 走订阅时是 null：Claude 这一侧一个键都不给（连 BASE_URL 也不给），终端里的 claude 用它自己的登录
+        settings.claudeProfile?.let { profile ->
             putAll(sanitizedProfileEnv(profile))
             put("ANTHROPIC_BASE_URL", claudeBaseUrlOverride ?: profile.baseUrl)
             // 键名跟着这条供应商的认证方式走，和会话进程拿到的是同一个（见 ApiProfile.authHeader）

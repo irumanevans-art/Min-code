@@ -130,4 +130,15 @@ class ClaudeCodeLaunchTest {
         assertEquals("1", map["IS_SANDBOX"])
         assertEquals("1", map["DISABLE_AUTOUPDATER"])
     }
+
+    @Test
+    fun `a subscription session gets no credentials, no base url and no provider env`() {
+        val env = claudeSessionEnv(ClaudeCodeManager.SessionOptions(), profile = null, relayBaseUrl = null, netSnap = null)
+        listOf("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN").forEach {
+            assertFalse("$it must not be injected on the subscription path", env.containsKey(it))
+        }
+        // 与认证无关的照旧：沙箱声明、PATH
+        assertEquals("1", env["IS_SANDBOX"])
+        assertTrue(env.containsKey("PATH"))
+    }
 }

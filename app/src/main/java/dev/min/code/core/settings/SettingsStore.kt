@@ -35,6 +35,7 @@ private val KEY_TOKEN = stringPreferencesKey("token")
 private val KEY_BASE_URL = stringPreferencesKey("base_url")
 private val KEY_PROFILES = stringPreferencesKey("api_profiles")
 private val KEY_ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
+private val KEY_CLAUDE_AUTH = stringPreferencesKey("claude_auth")
 /** 「明文风险这一关已经对既有配置放行过了」的一次性标记，见 [SettingsStore.migrateInsecureAck] */
 private val KEY_INSECURE_ACK_MIGRATED = booleanPreferencesKey("insecure_ack_migrated")
 private val KEY_NPM_MIRROR = booleanPreferencesKey("npm_mirror")
@@ -71,6 +72,20 @@ enum class SkinStyle { SEA, CLOUD, ANTHROPIC }
 
 /** 界面语言：跟随系统，或强制中 / 英 */
 enum class AppLanguage { SYSTEM, ZH, EN }
+
+/**
+ * Claude Code 走哪条路连上模型。
+ *
+ * - [PROVIDER]：供应商（token + 地址），事实来源是 DataStore 里的供应商表，由 Min 以环境变量注入。
+ * - [SUBSCRIPTION]：Claude 订阅。登录全程是官方 CLI 自己的事（`claude auth login`），凭证由 CLI
+ *   写进 rootfs 的 `/root/.claude/.credentials.json`、也只由它自己读。**Min 不解析、不保存、不转送**，
+ *   这一档下也不往任何进程里注入认证变量，连 `ANTHROPIC_BASE_URL` 都不给 —— 实测只要它还指着中转或机内路由，
+ *   CLI 就会把订阅的 OAuth bearer 发过去（见 `ClaudeSubscription.kt`）。
+ *
+ * 两条路互不覆盖：切到订阅不动供应商表，切回来原样还在；登出订阅也不碰供应商。
+ * 默认是供应商：升级上来的人照旧。
+ */
+enum class ClaudeAuthMode { PROVIDER, SUBSCRIPTION }
 
 /**
  * 一家中转说的是哪一种方言。
@@ -207,6 +222,8 @@ data class AppSettings(
     val profiles: List<ApiProfile> = emptyList(),
     /** 当前生效的那条的 id。指不到时退回列表第一条 */
     val activeProfileId: String = "",
+    /** Claude Code 走供应商还是订阅，见 [ClaudeAuthMode] */
+    val claudeAuth: ClaudeAuthMode = ClaudeAuthMode.PROVIDER,
     /** 装 CLI 时走淘宝 npm 源。默认关：那是供应链信任转移，必须显式打开 */
     val useNpmMirror: Boolean = false,
     /** 主题。默认跟随系统：只有「从未设置过」的设备落到这个值，已存的选择原样保留 */
@@ -305,6 +322,19 @@ data class AppSettings(
 
     /** ANTHROPIC_AUTH_TOKEN，注入 Rootfs 内的 claude 进程。空字符串 = 未配置 */
     val token: String get() = activeProfile?.token.orEmpty()
+
+    /**
+     * Claude 进程**此刻该用**的供应商：走订阅时是 null。
+     *
+     * 起会话、终端凭据、settings.json 投影、机内路由都读这个而不是 [activeProfile] ——
+     * 后者是供应商页上「选中的那条」，订阅期间它仍在（切回来原样可用），但不能拿去注入。
+     */
+    val claudeProfile: ApiProfile?
+        get() = if (claudeAuth == ClaudeAuthMode.SUBSCRIPTION) null else activeProfile
+
+    /** Claude Code 有没有一条能用的路：订阅，或当前供应商带着 token */
+    val claudeConnected: Boolean
+        get() = claudeAuth == ClaudeAuthMode.SUBSCRIPTION || token.isNotBlank()
 
     /** ANTHROPIC_BASE_URL，中转站地址 */
     val baseUrl: String
@@ -459,6 +489,8 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
         AppSettings(
             profiles = profiles,
             activeProfileId = p[KEY_ACTIVE_PROFILE].orEmpty(),
+            claudeAuth = p[KEY_CLAUDE_AUTH]?.let { runCatching { ClaudeAuthMode.valueOf(it) }.getOrNull() }
+                ?: ClaudeAuthMode.PROVIDER,
             useNpmMirror = p[KEY_NPM_MIRROR] ?: false,
             themeMode = p[KEY_THEME]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM,
             appLanguage = p[KEY_LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
@@ -763,6 +795,9 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
         }
         next to id
     }
+
+    /** 只记「走哪条路」。两条路各自的配置都不碰，见 [ClaudeAuthMode] */
+    suspend fun setClaudeAuth(mode: ClaudeAuthMode) = context.dataStore.edit { it[KEY_CLAUDE_AUTH] = mode.name }
 
     suspend fun setUseNpmMirror(enabled: Boolean) = context.dataStore.edit { it[KEY_NPM_MIRROR] = enabled }
     suspend fun setThemeMode(mode: ThemeMode) = context.dataStore.edit { it[KEY_THEME] = mode.name }

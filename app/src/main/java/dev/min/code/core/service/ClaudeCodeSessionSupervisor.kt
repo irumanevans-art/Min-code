@@ -18,6 +18,7 @@ import dev.min.code.AppScope
 import dev.min.code.CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.claudecode.ClaudeSubscription
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexDecision
 import dev.min.code.core.codex.CodexEvent
@@ -54,6 +55,7 @@ class ClaudeCodeSessionSupervisor(
     private val registry: ClaudeCodeSessionRegistry,
     private val localServices: LocalServiceRegistry,
     private val codex: CodexAppServerManager,
+    private val subscription: ClaudeSubscription,
 ) {
     private val isForeground = MutableStateFlow(false)
 
@@ -99,12 +101,14 @@ class ClaudeCodeSessionSupervisor(
             // 从外面 stopService 有一个致命的时序窗口：会话启动失败得足够快时，stopService
             // 会赶在服务 startForeground() 之前到达，系统直接杀进程
             // （ForegroundServiceDidNotStartInTimeException）。真实发生过。
-            // 会话 **或** 本地服务 **或** Codex 任一存活都要保活。
+            // 会话 **或** 本地服务 **或** Codex **或** 订阅登录，任一在进行都要保活。
+            // 登录那一项：人在浏览器里、App 在后台，proot 里等回调的 CLI 被冻住的话浏览器就卡在跳回来那一步
             combine(
                 registry.anyLive,
                 localServices.anyRunning,
                 codex.isLive,
-            ) { live, svc, codexLive -> live || svc || codexLive }
+                subscription.active,
+            ) { live, svc, codexLive, loggingIn -> live || svc || codexLive || loggingIn }
                 .filter { it }
                 .collect { ClaudeCodeForegroundService.start(context) }
         }

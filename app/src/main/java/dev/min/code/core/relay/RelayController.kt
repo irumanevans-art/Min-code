@@ -103,7 +103,7 @@ class RelayController(
     /** 当前生效的配置还要不要路由。两边都不要了就停 */
     suspend fun reconcile() = mutex.withLock {
         val settings = settingsStore.current()
-        val needClaude = settings.activeProfile?.apiFormat?.needsRelay == true
+        val needClaude = settings.claudeProfile?.apiFormat?.needsRelay == true
         val needCodex = settings.activeCodexProfile?.let {
             it.isRelay && it.effectiveWireApi == CODEX_WIRE_API_CHAT
         } == true
@@ -131,12 +131,12 @@ class RelayController(
 
     private suspend fun stopIfUnusedLocked(alsoClaude: Boolean = true, alsoCodex: Boolean = true) {
         val settings = settingsStore.current()
-        val needClaude = alsoClaude && settings.activeProfile?.apiFormat?.needsRelay == true
+        val needClaude = alsoClaude && settings.claudeProfile?.apiFormat?.needsRelay == true
         val needCodex = alsoCodex && settings.activeCodexProfile?.let {
             it.isRelay && it.effectiveWireApi == CODEX_WIRE_API_CHAT
         } == true
         // 调用方已经表明「我这边不要了」；另一边如果也不要，就停
-        val stillNeedClaude = if (alsoClaude) needClaude else settings.activeProfile?.apiFormat?.needsRelay == true
+        val stillNeedClaude = if (alsoClaude) needClaude else settings.claudeProfile?.apiFormat?.needsRelay == true
         val stillNeedCodex = if (alsoCodex) needCodex else settings.activeCodexProfile?.let {
             it.isRelay && it.effectiveWireApi == CODEX_WIRE_API_CHAT
         } == true
