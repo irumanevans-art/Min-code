@@ -226,7 +226,11 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
 
     // 拖动途中用 VM 的临时顺序：每挪一格写一次盘的话，一次拖动要写十几次
     val all = pending ?: settings.profiles
+    // 表里选中的那家（删不删得、切回来用谁）和 Claude 此刻在用的那家（画不画「使用中」）
+    // 走订阅时不是一回事，见 ClaudeConnection.kt
     val activeId = settings.activeProfile?.id
+    val inUseId = settings.claudeProviderInUseId
+    val connection = claudeConnectionOf(settings)
 
     var query by remember { mutableStateOf("") }
     // 搜索中**不许拖**：屏幕上是过滤后的顺序，拖动写回的却是整表的索引，
@@ -268,6 +272,13 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
     ) {
         item("stale") {
             Centered {
+                AnimatedVisibility(
+                    connection == ClaudeConnection.Subscription,
+                    enter = InkMotion.enter,
+                    exit = InkMotion.exit,
+                ) {
+                    Notice(text = stringResource(R.string.providers_subscription_notice), tone = NoticeTone.Info)
+                }
                 // 切完还在用旧供应商的会话。不自动重起：用户刚才只是点了一下列表，
                 // 不该因此丢掉正跑的一轮
                 AnimatedVisibility(stale.isNotEmpty(), enter = InkMotion.enter, exit = InkMotion.exit) {
@@ -293,7 +304,7 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
                         text = stringResource(
                             R.string.providers_sync_failed,
                             failed?.reason.orEmpty(),
-                            settings.activeProfile?.displayName().orEmpty(),
+                            connection.shortLabel(),
                         ),
                         tone = NoticeTone.Error,
                     )
@@ -314,7 +325,7 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
                     title = profile.displayName(),
                     subtitle = listOf(profile.baseUrl, profile.maskedToken())
                         .filter { it.isNotBlank() }.joinToString("  ·  "),
-                    selected = profile.id == activeId,
+                    selected = profile.id == inUseId,
                     insecure = profile.insecure,
                     warning = if (profile.missingToken) {
                         stringResource(R.string.providers_missing_token)

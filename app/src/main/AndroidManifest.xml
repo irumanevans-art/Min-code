@@ -48,6 +48,18 @@
     android:maxSdkVersion="29" />
 
   <!--
+    「用 Claude 订阅登录」要把授权页交给外部浏览器（ui/components/ExternalBrowser.kt）。
+    API 30+ 的包可见性下，不声明这一条就查不到有哪些浏览器，也就没法确认解析到的不是 Min 自己。
+  -->
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.VIEW" />
+      <category android:name="android.intent.category.BROWSABLE" />
+      <data android:scheme="https" />
+    </intent>
+  </queries>
+
+  <!--
     usesCleartextTraffic：不少中转站只有 http://。CLI 在 proot 里走自己的网络栈不受这个限制，
     但 App 自己查 /v1/models、npm 元数据时会被系统拦成 "Cleartext HTTP traffic not permitted"。
     向导和设置页对 http:// 地址都有明文风险提示，这里放行是和 CLI 保持一致。

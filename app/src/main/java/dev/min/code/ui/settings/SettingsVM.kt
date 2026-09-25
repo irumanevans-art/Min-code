@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.min.code.AppScope
 import dev.min.code.BuildConfig
+import dev.min.code.core.claudecode.ClaudeSubscription
 import dev.min.code.core.device.AgentDisplaySession
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
@@ -12,8 +13,10 @@ import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.privileged.PrivilegedClient
 import dev.min.code.privileged.PrivilegedStarter
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -23,6 +26,7 @@ class SettingsVM(
     private val privilegedStarter: PrivilegedStarter,
     private val agentDisplay: AgentDisplaySession,
     private val appScope: AppScope,
+    private val subscription: ClaudeSubscription,
 ) : ViewModel() {
     val settings: StateFlow<AppSettings> = store.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
@@ -43,6 +47,37 @@ class SettingsVM(
      * 那个页面自己没法把自己解开。
      */
     fun discardUnreadableCredentials() = viewModelScope.launch { store.discardUnreadableCredentials() }
+
+    private val _claudeAuthBusy = MutableStateFlow(false)
+
+    /** 正在换路 / 登出：设置页据此把那两个控件压成忙碌，免得连点两下 */
+    val claudeAuthBusy: StateFlow<Boolean> = _claudeAuthBusy.asStateFlow()
+
+    /**
+     * 换回供应商这条路（不登出，订阅的登录留着）。
+     *
+     * 走 [AppScope]：换路是「落盘 → 投影 → 路由 → 重起空闲会话」一串，半路被离开页面取消掉
+     * 会停在一个不一致的地方
+     */
+    fun useClaudeProvider() = runClaudeAuth { subscription.useProvider() }
+
+    /** 退出订阅登录：CLI 自己的 `auth logout`，然后切回供应商。供应商表不动。[onDone] 在主线程上回调 */
+    fun logoutClaudeSubscription(onDone: () -> Unit) = runClaudeAuth {
+        subscription.logout()
+        onDone()
+    }
+
+    private fun runClaudeAuth(block: suspend () -> Unit) {
+        if (_claudeAuthBusy.value) return
+        _claudeAuthBusy.value = true
+        appScope.launch {
+            try {
+                block()
+            } finally {
+                _claudeAuthBusy.value = false
+            }
+        }
+    }
 
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { store.setThemeMode(mode) }
     fun setSkin(style: SkinStyle) = viewModelScope.launch { store.setSkin(style) }

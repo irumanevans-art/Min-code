@@ -1814,6 +1814,8 @@ internal fun StartPanel(
     var skipPermissions by rememberSaveable { mutableStateOf(false) }
     var cwd by rememberSaveable { mutableStateOf(lastOptions.cwd.ifBlank { ClaudeCodeManager.DEFAULT_CWD }) }
     var pickingCwd by remember { mutableStateOf(false) }
+    // 挂在 ConnectPrompt 外面：登录成功那一刻 ConnectPrompt 就收起了，见它的注释
+    var subscriptionLogin by remember { mutableStateOf(false) }
     SeaSurface {
     HeroCanvas {
         Box(
@@ -1838,7 +1840,10 @@ internal fun StartPanel(
                 Spacer(Modifier.height(10.dp))
                 InkDivider()
                 AnimatedVisibility(visible = !connected, enter = InkMotion.expand, exit = InkMotion.collapse) {
-                    ConnectPrompt(onOpenProviders = onOpenProviders)
+                    ConnectPrompt(
+                        onOpenProviders = onOpenProviders,
+                        onSubscriptionLogin = { subscriptionLogin = true },
+                    )
                 }
                 // 上次崩溃过就在这里说一声：没有联网上报，用户不主动去「关于」里看就永远不知道。
                 // 只提示、不弹窗——启动面板本来就是"停下来看一眼"的地方
@@ -1914,5 +1919,8 @@ internal fun StartPanel(
             onList = onListCwd,
             onCreate = onCreateCwd,
         )
+    }
+    if (subscriptionLogin) {
+        ClaudeSubscriptionSheet(onDismiss = { subscriptionLogin = false })
     }
 }

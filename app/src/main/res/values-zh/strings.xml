@@ -226,7 +226,7 @@
   <string name="session_start_skip_permissions">跳过权限确认</string>
   <string name="session_start_skip_permissions_desc">允许直接执行工具操作</string>
   <string name="session_start_action">启动会话</string>
-  <string name="session_connect_notice">还没连接。启动会话前要先有一家模型供应商：新添一家，或导入现有配置。</string>
+  <string name="session_connect_notice">还没连接。先选一种连法：添加 / 导入一家模型供应商，或者用 Claude 订阅登录。</string>
   <string name="session_connect_provider">添加 / 导入供应商</string>
 
   <!-- 安装向导 -->
@@ -948,4 +948,37 @@
   <string name="settings_group_connection">连接</string>
   <string name="settings_group_connection_sub">供应商</string>
   <string name="session_drawer_group_system">系统</string>
+  <string name="session_connect_subscription">用 Claude 订阅登录</string>
+  <string name="claude_connection_subscription">Claude 订阅</string>
+  <string name="claude_login_title">用 Claude 订阅登录</string>
+  <string name="claude_login_starting">正在让 Claude Code 准备登录…</string>
+  <string name="claude_login_browser">已在浏览器打开 Claude 的登录页，登录并授权后回到这里。</string>
+  <string name="claude_login_reopen">再打开一次</string>
+  <string name="claude_login_verifying">正在确认…</string>
+  <string name="claude_login_done">已用 Claude 订阅登录</string>
+  <string name="claude_login_done_action">完成</string>
+  <string name="claude_login_retry">重试</string>
+  <string name="claude_login_failed_cli_missing">Linux 环境里还没有装好 Claude Code，先完成安装再试。</string>
+  <string name="claude_login_failed_no_url">Claude Code 没有给出登录地址。可以先更新 Claude Code 再试。</string>
+  <string name="claude_login_failed_timeout">等浏览器回来等超时了，请重试。</string>
+  <string name="claude_login_failed_not_logged_in">没有登录成功：可能在浏览器里取消了，或者这个账号没有 Claude 订阅。</string>
+  <string name="claude_login_no_browser">这台设备上没有能打开登录页的浏览器。装一个浏览器后点「再打开一次」。</string>
+  <string name="claude_login_footnote">登录由官方 Claude Code CLI 完成，凭证只保存在 Linux 环境里 CLI 自己的文件中，Min 不读取、不保存。</string>
+  <string name="claude_login_cancel_title">取消登录？</string>
+  <string name="claude_login_cancel_body">Claude Code 会停止等待浏览器，之后随时可以重新开始。</string>
+  <string name="claude_login_cancel_confirm">取消登录</string>
+  <string name="claude_login_keep_waiting">继续等待</string>
+  <string name="claude_login_quick_subtitle">由官方 CLI 登录</string>
+  <string name="settings_claude_auth_title">Claude Code 连接方式</string>
+  <string name="settings_claude_auth_provider_named">供应商 · %1$s</string>
+  <string name="settings_claude_auth_none">还没有连接</string>
+  <string name="settings_claude_auth_option_provider">供应商</string>
+  <string name="settings_claude_auth_no_provider">还没有可用的供应商，在这里选一家或添加一家。</string>
+  <string name="settings_claude_logout">退出订阅登录</string>
+  <string name="settings_claude_logout_hint">退出 = 调用 CLI 自己的登出，供应商配置不受影响。</string>
+  <string name="settings_claude_logout_title">退出 Claude 订阅登录？</string>
+  <string name="settings_claude_logout_body">这会调用 CLI 自己的登出，并把 Claude Code 切回供应商。供应商配置不受影响。</string>
+  <string name="settings_claude_logout_done">已退出订阅登录，Claude Code 切回了供应商。</string>
+  <string name="settings_provider_not_in_use">当前未使用 · %1$s</string>
+  <string name="providers_subscription_notice">Claude Code 当前用的是 Claude 订阅。点一家供应商即切回。</string>
 </resources>

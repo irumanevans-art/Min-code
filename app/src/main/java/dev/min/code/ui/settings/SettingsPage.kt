@@ -54,6 +54,7 @@ import dev.min.code.core.rootfs.deviceStorageSettingsIntent
 import dev.min.code.core.rootfs.hasDeviceStorageAccess
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
+import dev.min.code.core.settings.ClaudeAuthMode
 import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.privileged.AdbPairingReceiver
@@ -73,6 +74,8 @@ import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.components.SettingRow
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.providers.claudeConnectionOf
+import dev.min.code.ui.providers.shortLabel
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.LocalDarkMode
@@ -141,9 +144,9 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                 SettingsSection.entries.forEach { section ->
                     SettingRow(
                         title = stringResource(section.title),
-                        // 连接那一行的副题回答打开设置时最想问的那一句：现在用的是哪家
+                        // 连接那一行的副题回答打开设置时最想问的那一句：Claude 现在连的是谁
                         subtitle = if (section == SettingsSection.CONNECTION) {
-                            settings.activeProfile?.displayName() ?: stringResource(section.subtitle)
+                            claudeConnectionOf(settings).shortLabel().ifEmpty { stringResource(section.subtitle) }
                         } else {
                             stringResource(section.subtitle)
                         },
@@ -660,10 +663,18 @@ fun SettingsSectionPage(section: String, vm: SettingsVM = koinViewModel()) {
 @Composable
 private fun ConnectionSettings(vm: SettingsVM, settings: AppSettings) {
     val navController = LocalNavController.current
+    val onSubscription = settings.claudeAuth == ClaudeAuthMode.SUBSCRIPTION
+    ClaudeAuthSettings(vm, settings)
+    InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
+    val providerName = settings.activeProfile?.displayName()
     SettingRow(
         title = stringResource(R.string.providers_title),
-        subtitle = settings.activeProfile?.displayName()
-            ?: stringResource(R.string.settings_connection_empty),
+        // 走订阅时表里选中的那家并没在用：副题要让人一眼看出来，免得以为 key 还在往外发
+        subtitle = when {
+            providerName == null -> stringResource(R.string.settings_connection_empty)
+            onSubscription -> stringResource(R.string.settings_provider_not_in_use, providerName)
+            else -> providerName
+        },
         enabled = !settings.credentialsUnreadable,
         onClick = { navController.navigate(Screen.Providers) },
         trailing = {
@@ -681,7 +692,8 @@ private fun ConnectionSettings(vm: SettingsVM, settings: AppSettings) {
         },
     )
     AnimatedVisibility(
-        visible = settings.insecureBaseUrl,
+        // 「当前连接是明文」只在 Claude 真走这家时成立
+        visible = settings.insecureBaseUrl && !onSubscription,
         enter = InkMotion.enter,
         exit = InkMotion.exit,
     ) {

@@ -228,7 +228,7 @@
   <string name="session_start_skip_permissions">Skip permission prompts</string>
   <string name="session_start_skip_permissions_desc">Tools run without asking first</string>
   <string name="session_start_action">Start session</string>
-  <string name="session_connect_notice">Not connected yet. A session needs a model provider first: add one, or import an existing config.</string>
+  <string name="session_connect_notice">Not connected yet. Pick how Claude Code connects: add or import a model provider, or sign in with your Claude subscription.</string>
   <string name="session_connect_provider">Add or import a provider</string>
 
   <!-- Setup wizard -->
@@ -952,4 +952,37 @@
   <string name="settings_group_connection">Connection</string>
   <string name="settings_group_connection_sub">Providers</string>
   <string name="session_drawer_group_system">System</string>
+  <string name="session_connect_subscription">Sign in with Claude subscription</string>
+  <string name="claude_connection_subscription">Claude subscription</string>
+  <string name="claude_login_title">Sign in with Claude subscription</string>
+  <string name="claude_login_starting">Getting Claude Code ready to sign in…</string>
+  <string name="claude_login_browser">Claude\'s sign-in page is open in your browser. Sign in and authorize, then come back here.</string>
+  <string name="claude_login_reopen">Open again</string>
+  <string name="claude_login_verifying">Confirming…</string>
+  <string name="claude_login_done">Signed in with your Claude subscription</string>
+  <string name="claude_login_done_action">Done</string>
+  <string name="claude_login_retry">Retry</string>
+  <string name="claude_login_failed_cli_missing">Claude Code isn\'t installed in the Linux environment yet. Finish setup, then try again.</string>
+  <string name="claude_login_failed_no_url">Claude Code didn\'t hand over a sign-in address. Update Claude Code and try again.</string>
+  <string name="claude_login_failed_timeout">Timed out waiting for the browser. Try again.</string>
+  <string name="claude_login_failed_not_logged_in">Sign-in didn\'t complete. It may have been cancelled in the browser, or this account has no Claude subscription.</string>
+  <string name="claude_login_no_browser">No browser on this device can open the sign-in page. Install one, then tap Open again.</string>
+  <string name="claude_login_footnote">Sign-in is done by the official Claude Code CLI. Credentials are kept only in the CLI\'s own file inside the Linux environment; Min neither reads nor stores them.</string>
+  <string name="claude_login_cancel_title">Cancel sign-in?</string>
+  <string name="claude_login_cancel_body">Claude Code will stop waiting for the browser. You can start again any time.</string>
+  <string name="claude_login_cancel_confirm">Cancel sign-in</string>
+  <string name="claude_login_keep_waiting">Keep waiting</string>
+  <string name="claude_login_quick_subtitle">Signed in through the official CLI</string>
+  <string name="settings_claude_auth_title">Claude Code connection</string>
+  <string name="settings_claude_auth_provider_named">Provider · %1$s</string>
+  <string name="settings_claude_auth_none">Not connected yet</string>
+  <string name="settings_claude_auth_option_provider">Provider</string>
+  <string name="settings_claude_auth_no_provider">No usable provider yet. Pick or add one here.</string>
+  <string name="settings_claude_logout">Sign out of subscription</string>
+  <string name="settings_claude_logout_hint">Signing out runs the CLI\'s own logout. Provider settings are not affected.</string>
+  <string name="settings_claude_logout_title">Sign out of the Claude subscription?</string>
+  <string name="settings_claude_logout_body">This runs the CLI\'s own logout and switches Claude Code back to the provider. Provider settings are not affected.</string>
+  <string name="settings_claude_logout_done">Signed out. Claude Code is back on the provider.</string>
+  <string name="settings_provider_not_in_use">Not in use now · %1$s</string>
+  <string name="providers_subscription_notice">Claude Code is using your Claude subscription right now. Tap a provider to switch back.</string>
 </resources>

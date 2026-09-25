@@ -54,7 +54,7 @@ import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.providers.ProviderQuickSheet
-import dev.min.code.ui.providers.rememberActiveProviderName
+import dev.min.code.ui.providers.rememberClaudeConnectionLabel
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
 import kotlinx.coroutines.launch
@@ -660,7 +660,7 @@ private fun MemorySection(vm: ClaudeCodeVM, onRunInit: () -> Unit) {
 @Composable
 private fun ProviderSection() {
     val navController = LocalNavController.current
-    val name = rememberActiveProviderName()
+    val name = rememberClaudeConnectionLabel()
     var quick by remember { mutableStateOf(false) }
 
     SectionHeader(

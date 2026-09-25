@@ -12,7 +12,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -21,17 +23,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.R
-import dev.min.code.core.settings.SettingsStore
+import dev.min.code.core.settings.ClaudeAuthMode
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkRadio
 import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.SectionTitle
+import dev.min.code.ui.session.ClaudeSubscriptionSheet
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
-import kotlinx.coroutines.flow.map
 import org.koin.androidx.compose.koinViewModel
-import org.koin.compose.koinInject
 
 /**
  * 换一家，就地。
@@ -42,6 +43,11 @@ import org.koin.compose.koinInject
  *
  * 缺 key 的条目在这里**不能切过去**：切了也是撞上「未配置 token」，不如直接把人送去
  * 能填 key 的地方。这和列表页 `ProviderRow` 的规矩是同一条。
+ *
+ * 表头是「Claude 订阅」那一行：它和供应商是同一个问题（Claude 现在用哪条路）的另一个答案，
+ * 所以同在这一组单选里，选中态跟 `claudeAuth` 走。点它就地换成登录面板
+ * （[dev.min.code.ui.session.ClaudeSubscriptionSheet]）——不是叠在这张上面：两张 sheet 叠着，
+ * 关掉上面那张时底下这张的选中态还是旧的。点供应商照旧，`activate` 会顺手切回供应商这条路。
  */
 @Composable
 fun ProviderQuickSheet(
@@ -50,7 +56,14 @@ fun ProviderQuickSheet(
     vm: ProvidersVM = koinViewModel(),
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val activeId = settings.activeProfile?.id
+    val activeId = settings.claudeProviderInUseId
+    val onSubscription = settings.claudeAuth == ClaudeAuthMode.SUBSCRIPTION
+    var subscriptionLogin by remember { mutableStateOf(false) }
+
+    if (subscriptionLogin) {
+        ClaudeSubscriptionSheet(onDismiss = onDismiss)
+        return
+    }
 
     InkSheet(onDismissRequest = onDismiss) {
         Column(
@@ -58,6 +71,16 @@ fun ProviderQuickSheet(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             SectionTitle(stringResource(R.string.providers_title))
+
+            QuickRow(
+                title = stringResource(R.string.claude_connection_subscription),
+                subtitle = stringResource(R.string.claude_login_quick_subtitle),
+                warning = null,
+                selected = onSubscription,
+                monoSubtitle = false,
+                // 已经在用就只是关掉：再走一遍 startLogin 要在 proot 里跑一次 auth status，白等几秒
+                onClick = { if (onSubscription) onDismiss() else subscriptionLogin = true },
+            )
 
             if (settings.profiles.isEmpty()) {
                 Text(
@@ -116,6 +139,8 @@ private fun QuickRow(
     warning: String?,
     selected: Boolean,
     onClick: () -> Unit,
+    /** 副题是地址时用等宽；是一句话时不用 */
+    monoSubtitle: Boolean = true,
 ) {
     Row(
         Modifier
@@ -137,7 +162,7 @@ private fun QuickRow(
             Text(
                 warning ?: subtitle,
                 style = MaterialTheme.typography.labelSmall,
-                fontFamily = if (warning == null) JetbrainsMono else null,
+                fontFamily = if (warning == null && monoSubtitle) JetbrainsMono else null,
                 color = if (warning != null) {
                     MaterialTheme.sea.vermilion
                 } else {
@@ -148,18 +173,4 @@ private fun QuickRow(
             )
         }
     }
-}
-
-/**
- * 当前生效的那家叫什么，给抽屉那一行当副题。
- *
- * 直接订 [SettingsStore]，不经 ViewModel：这里要的只是一个名字，为一行字拉起
- * 一整个 VM（它还要加载预设表、连会话注册表）不值当。
- */
-@Composable
-fun rememberActiveProviderName(): String {
-    val store: SettingsStore = koinInject()
-    val flow = remember(store) { store.settings.map { it.activeProfile?.displayName().orEmpty() } }
-    val name by flow.collectAsStateWithLifecycle(initialValue = "")
-    return name
 }

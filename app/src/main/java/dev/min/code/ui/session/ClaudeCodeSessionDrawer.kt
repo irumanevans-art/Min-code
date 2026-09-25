@@ -77,7 +77,7 @@ import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.providers.ProviderQuickSheet
-import dev.min.code.ui.providers.rememberActiveProviderName
+import dev.min.code.ui.providers.rememberClaudeConnectionLabel
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.rememberAnimationsEnabled
@@ -151,7 +151,7 @@ fun ClaudeCodeSessionDrawer(
     BackHandler(enabled = visible && systemOpen) { systemOpen = false }
     var pendingDelete by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
     var quickProvider by remember { mutableStateOf(false) }
-    val providerName = rememberActiveProviderName()
+    val providerName = rememberClaudeConnectionLabel()
     var pendingRename by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
     var pendingCategory by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
     var searchOpen by remember { mutableStateOf(false) }
