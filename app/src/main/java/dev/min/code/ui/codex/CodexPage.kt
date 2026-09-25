@@ -716,7 +716,7 @@ private fun CodexConnectionSheet(
                     )
                 }
             }
-            // 模型 / 思考强度跟着连接走：thread/start 和每一轮 turn/start 都带上。
+            // 模型跟着连接走：thread/start 和每一轮 turn/start 都带上；思考强度只有 turn/start 收。
             // 空着 = 不传，用 Codex 自己的默认——不替用户猜模型
             InkTextField(
                 value = model,
