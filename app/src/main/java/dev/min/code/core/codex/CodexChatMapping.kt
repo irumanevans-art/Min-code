@@ -1,6 +1,7 @@
 package dev.min.code.core.codex
 
 import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.withClippedResult
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -39,7 +40,13 @@ private fun statusOf(item: CodexItem): ChatItem.ToolCall.Status = when (item.sta
  * 否则整条会因为 id 为空而在 LazyColumn 的 key 上撞车）。
  */
 fun CodexItem.toChatItem(fallbackId: String): ChatItem {
-    val itemId = id.ifBlank { fallbackId }
+    val chat = mapItem(id.ifBlank { fallbackId })
+    // 结果的上限在这一处统一收：completed 带回来的 aggregatedOutput 和回放读到的历史
+    // 都可能是整份刷屏输出，规则和流式增量、和 Claude 侧是同一条
+    return if (chat is ChatItem.ToolCall) chat.withClippedResult(chat.result) else chat
+}
+
+private fun CodexItem.mapItem(itemId: String): ChatItem {
     return when (type) {
         ITEM_USER_MESSAGE -> ChatItem.UserText(itemId, raw.contentText())
 

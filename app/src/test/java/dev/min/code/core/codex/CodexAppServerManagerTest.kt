@@ -1,6 +1,7 @@
 package dev.min.code.core.codex
 
 import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.MAX_TOOL_RESULT_CHARS
 import dev.min.code.core.session.SessionStatus
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -144,6 +145,75 @@ class CodexAppServerManagerTest {
         assertEquals("", manager.state.value.streamingText)
         manager.close()
     }
+
+    /**
+     * 命令输出以前没有上限：每段增量都把整份输出复制一遍拼进卡片。
+     * 现在和 Claude 侧同一条规则 —— 留开头 8K、记总长，到顶后卡片不再长、只有计数在涨。
+     */
+    @Test
+    fun `streamed command output is capped and marked as truncated`() = runBlocking {
+        val cap = MAX_TOOL_RESULT_CHARS
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf(
+                """{"id":"2","result":{"threadId":"t"}}""",
+                """{"method":"item/started","params":{"item":{"type":"commandExecution","id":"c1","command":"yes"}}}""",
+                outputDelta("c1", "a".repeat(cap - 2)),
+                // 跨过上限的那一段：只收前两个字符
+                outputDelta("c1", "bbbb"),
+            ),
+        )
+        val manager = CodexAppServerManager { process }
+        manager.start()
+        await { tool(manager)?.resultTotalChars == cap + 2L }
+        assertEquals("a".repeat(cap - 2) + "bb", tool(manager)?.result)
+
+        // 上限之后再来的增量：结果不变，总数继续涨
+        process.queue(outputDelta("c1", "c".repeat(100)))
+        await { tool(manager)?.resultTotalChars == cap + 102L }
+        assertEquals(cap, tool(manager)?.result?.length)
+        assertTrue(tool(manager)?.result?.endsWith("bb") == true)
+        manager.close()
+    }
+
+    /** completed 是权威最终态：它带的 aggregatedOutput 盖掉增量，而且同样按规则截 */
+    @Test
+    fun `completed output replaces the streamed one under the same cap`() = runBlocking {
+        val cap = MAX_TOOL_RESULT_CHARS
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf(
+                """{"id":"2","result":{"threadId":"t"}}""",
+                """{"method":"item/started","params":{"item":{"type":"commandExecution","id":"c1","command":"yes"}}}""",
+                outputDelta("c1", "streamed"),
+            ),
+        )
+        val manager = CodexAppServerManager { process }
+        manager.start()
+        await { tool(manager)?.result == "streamed" }
+
+        val full = "z".repeat(cap + 500)
+        process.queue(
+            """{"method":"item/completed","params":{"item":{"type":"commandExecution","id":"c1","command":"yes","status":"completed","exitCode":0,"aggregatedOutput":"$full"}}}""",
+        )
+        await { tool(manager)?.status == ChatItem.ToolCall.Status.Done }
+        assertEquals("z".repeat(cap), tool(manager)?.result)
+        assertEquals(cap + 500L, tool(manager)?.resultTotalChars)
+
+        // 小的 completed 输出原样留下，不带截断标记
+        process.queue(
+            """{"method":"item/completed","params":{"item":{"type":"commandExecution","id":"c1","command":"yes","status":"completed","exitCode":0,"aggregatedOutput":"ok\n"}}}""",
+        )
+        await { tool(manager)?.result == "ok\n" }
+        assertNull(tool(manager)?.resultTotalChars)
+        manager.close()
+    }
+
+    private fun tool(manager: CodexAppServerManager): ChatItem.ToolCall? =
+        manager.state.value.items.filterIsInstance<ChatItem.ToolCall>().singleOrNull()
+
+    private fun outputDelta(itemId: String, delta: String): String =
+        """{"method":"item/commandExecution/outputDelta","params":{"itemId":"$itemId","delta":"$delta"}}"""
 
     @Test
     fun `approval respects the decisions the server offered`() = runBlocking {

@@ -674,6 +674,15 @@ private fun ToolResultText(item: ChatItem.ToolCall) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        // 上面那行说的是「折叠了几行」，这行说的是「数据本身只留了开头」——两回事。
+        // 命令还在跑时总数跟着涨，卡片不长了也看得出它没卡住
+        item.resultTotalChars?.let { total ->
+            Text(
+                stringResource(R.string.tool_diff_truncated, total),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

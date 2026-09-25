@@ -29,7 +29,9 @@ import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.LocalServiceIntent
 import dev.min.code.core.service.AgentServiceHost
 import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.MAX_TOOL_RESULT_CHARS
 import dev.min.code.core.session.appendProcessOutputLine
+import dev.min.code.core.session.withClippedResult
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.relay.RelayController
@@ -1577,9 +1579,8 @@ class ClaudeCodeManager(
                     items = state.items.mapToolCall(cardId) {
                         it.copy(
                             status = if (failed) ChatItem.ToolCall.Status.Error else ChatItem.ToolCall.Status.Done,
-                            result = userShellCardResult(run).take(MAX_RESULT_CHARS),
                             isError = failed,
-                        )
+                        ).withClippedResult(userShellCardResult(run))
                     },
                 )
             }
@@ -2563,7 +2564,8 @@ class ClaudeCodeManager(
 
         /** get_context_usage 的超时，见 fetchUsage */
         private const val USAGE_TIMEOUT_MS = 20_000L
-        private const val MAX_RESULT_CHARS = 8 * 1024
+        /** 工具结果上限，和 Codex 共用一条规则（[withClippedResult]） */
+        private const val MAX_RESULT_CHARS = MAX_TOOL_RESULT_CHARS
 
         private const val INTERRUPT_TIMEOUT_MS = 15_000L
 
@@ -2968,16 +2970,15 @@ internal inline fun List<ChatItem>.mapToolCall(
 }
 
 /**
- * 工具跑完：状态、结果（截到 [maxResultChars]）、编辑 diff 落到卡上。
+ * 工具跑完：状态、结果（按 [withClippedResult] 截到 [maxResultChars]）、编辑 diff 落到卡上。
  * 主会话流和子 agent 的子条目以前各写一遍、一字不差 —— 改一边忘一边，同一种卡就会两种样子。
  * 这次结果不带 diff 时保留卡上原有的那份（ToolUse 阶段可能已经算过）。
  */
 internal fun ChatItem.ToolCall.withResult(event: ClaudeCodeEvent.ToolResult, maxResultChars: Int): ChatItem.ToolCall = copy(
     status = if (event.isError) ChatItem.ToolCall.Status.Error else ChatItem.ToolCall.Status.Done,
-    result = event.content.take(maxResultChars),
     isError = event.isError,
     editDiff = event.editDiff?.take(MAX_EDIT_DIFF_CHARS) ?: editDiff,
-)
+).withClippedResult(event.content, maxResultChars)
 
 /** 把一轮完成信息挂到最后一条 assistant 消息，避免回执漂浮在输入栏。 */
 private fun List<ChatItem>.updateLastAssistantMeta(

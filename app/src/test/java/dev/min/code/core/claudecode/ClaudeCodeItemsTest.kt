@@ -40,6 +40,8 @@ class ClaudeCodeItemsTest {
         val ok = card.withResult(ClaudeCodeEvent.ToolResult("a", "x".repeat(50), isError = false), maxResultChars = 10)
         assertEquals(ChatItem.ToolCall.Status.Done, ok.status)
         assertEquals(10, ok.result?.length)
+        // 截了要记下原文多长，界面据此标「已截断」
+        assertEquals(50L, ok.resultTotalChars)
         assertEquals("--- earlier", ok.editDiff)
 
         val failed = card.withResult(
@@ -49,6 +51,7 @@ class ClaudeCodeItemsTest {
         assertEquals(ChatItem.ToolCall.Status.Error, failed.status)
         assertTrue(failed.isError)
         assertEquals("+++ new", failed.editDiff)
+        assertNull(failed.resultTotalChars)
     }
 
     private fun bash(command: String, background: Boolean? = null) = buildJsonObject {

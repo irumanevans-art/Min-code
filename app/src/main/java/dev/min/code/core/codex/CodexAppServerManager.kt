@@ -2,6 +2,7 @@ package dev.min.code.core.codex
 
 import android.util.Log
 import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.ClippedOutput
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.session.appendProcessOutputLine
 import java.io.BufferedReader
@@ -166,8 +167,8 @@ class CodexAppServerManager(
     private var stopping = false
     private var options = Options()
     private var resumeThreadId: String? = null
-    /** 命令输出按 itemId 攒，delta 到达时刷进对应那张工具卡 */
-    private val outputBuffers = mutableMapOf<String, StringBuilder>()
+    /** 命令输出按 itemId 攒（有上限，见 [ClippedOutput]），delta 到达时刷进对应那张工具卡 */
+    private val outputBuffers = mutableMapOf<String, ClippedOutput>()
     /** 正在流式生成的那条正文 / 思考的 itemId，completed 时用来判断该清哪个缓冲 */
     private var streamingTextItemId: String? = null
     private var streamingThinkingItemId: String? = null
@@ -521,11 +522,12 @@ class CodexAppServerManager(
             // 命令输出**不进正文**，按 itemId 刷进那张 Bash 卡
             is CodexEvent.CommandOutputDelta -> {
                 val itemId = event.itemId ?: return@synchronized
-                val buffer = outputBuffers.getOrPut(itemId) { StringBuilder() }.append(event.delta)
+                val buffer = outputBuffers.getOrPut(itemId) { ClippedOutput() }
+                buffer.append(event.delta)
                 _state.value = current.copy(
                     items = current.items.map { item ->
                         if (item.id == itemId && item is ChatItem.ToolCall) {
-                            item.copy(result = buffer.toString())
+                            buffer.applyTo(item)
                         } else {
                             item
                         }

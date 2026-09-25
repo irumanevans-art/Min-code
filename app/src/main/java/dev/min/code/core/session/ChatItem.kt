@@ -73,6 +73,11 @@ sealed interface ChatItem {
         /** Running -> Done/Error；权限等待中也是 Running，由各引擎的 pendingPermission 表达 */
         val status: Status,
         val result: String? = null,
+        /**
+         * [result] 被截过时原文的总字符数，null = [result] 就是全文。
+         * 界面靠它标「已截断」，规则见 [withClippedResult]。
+         */
+        val resultTotalChars: Long? = null,
         val isError: Boolean = false,
         /**
          * 改文件后的 unified diff。和 [result]（stdout）分开存，
