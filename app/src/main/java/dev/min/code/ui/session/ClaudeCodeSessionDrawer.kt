@@ -93,8 +93,8 @@ import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete02
 import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.Exchange01
-import me.rerere.hugeicons.stroke.FileExport
-import me.rerere.hugeicons.stroke.FileImport
+import me.rerere.hugeicons.stroke.FileDownload
+import me.rerere.hugeicons.stroke.FileUpload
 import me.rerere.hugeicons.stroke.Folder01
 import me.rerere.hugeicons.stroke.Globe
 import me.rerere.hugeicons.stroke.MoreHorizontal
@@ -214,10 +214,12 @@ fun ClaudeCodeSessionDrawer(
                                 iconSize = 18.dp,
                             )
                             // 和「新建」并排：导入也是往这张表里添一条会话。低频，所以只是个图标，
-                            // 不单开一行、不进「系统」页（那一页放的是环境，不是会话）
+                            // 不单开一行、不进「系统」页（那一页放的是环境，不是会话）。
+                            // 导入 = 文件带下箭头、导出（行菜单）= 上箭头：FileImport / FileExport
+                            // 那一对是横向双箭头，18 dp 下分不出方向
                             onImportSession?.let { import ->
                                 InkIconButton(
-                                    icon = HugeIcons.FileImport,
+                                    icon = HugeIcons.FileDownload,
                                     contentDescription = stringResource(R.string.session_import),
                                     onClick = import,
                                     size = 32.dp,
@@ -668,7 +670,7 @@ internal fun SessionRowMenu(
             if (onExport != null) {
                 InkMenuItem(
                     stringResource(R.string.session_export),
-                    icon = HugeIcons.FileExport,
+                    icon = HugeIcons.FileUpload,
                     onClick = { menu = false; onExport() },
                 )
             }
