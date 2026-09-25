@@ -15,7 +15,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -565,12 +564,6 @@ internal fun rememberLocalPreviewUriHandler(
 }
 
 /**
- * 自动跟随时把最后一项的底部顶到视口下沿。animateScrollToItem 的语义是把目标项对齐到
- * 视口**顶部**，直接用会导致"滚到最后一条却停在屏幕上方"，看着像弹回去了。
- */
-private const val TAIL_SCROLL_OFFSET = 100_000
-
-/**
  * 宽屏：可收起 / 拖宽 / 拉满盖住主区的分栏（参考平板上的 Kimi、DeepSeek）。
  * 窄屏：模态抽屉。
  *
@@ -990,34 +983,17 @@ private fun SessionContent(
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
 
-    // 只有当用户本来就贴在底部时才自动跟随。之前无条件滚动，一往回翻就被拽走。
-    //
-    // **只在用户自己拖过之后才重新判定。** isScrollInProgress 对程序滚动（下面那段键盘补偿的
-    // scrollBy、自动跟随的 animateScrollToItem）同样会跳一下，而键盘动画期间视口每帧在缩，
-    // 补偿刚停那一瞬 canScrollForward 多半是 true —— 于是跟随被自己关掉，发出去的新消息
-    // 就卡在折叠线下面看不见。
-    var followTail by remember { mutableStateOf(true) }
-    var userDragged by remember { mutableStateOf(false) }
-    LaunchedEffect(listState) {
-        listState.interactionSource.interactions.collect { if (it is DragInteraction.Start) userDragged = true }
-    }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
-            // 手停下来（含惯性滑完）那一刻看还能不能往下滚：不能 = 在底部 = 继续跟随
-            if (!scrolling && userDragged) {
-                followTail = !listState.canScrollForward
-                userDragged = false
-            }
-        }
-    }
-    LaunchedEffect(blocks.size, showLiveTurn, followTail) {
-        if (!followTail) return@LaunchedEffect
-        // 正文每长 64 个字符跟一次底。放在 snapshotFlow 里读而不是当 key：
+    // 贴底跟随：在底就跟，往上翻了就不动，规则和时序见 [TranscriptFollow]。
+    // 换会话时重置成跟随，新打开的会话照旧从底部读起
+    val follow = rememberTranscriptFollow(listState)
+    LaunchedEffect(activeKey) { follow.reset() }
+    LaunchedEffect(blocks.size, showLiveTurn, follow.following, activeKey) {
+        if (!follow.following) return@LaunchedEffect
+        // 正文长度放在 snapshotFlow 里读而不是当 key：
         // 当 key 就得在函数体里读正文长度，整个 SessionContent 又会跟着每个 token 重组
-        snapshotFlow { liveSession.value.streamingText.length / 64 }.collect {
+        snapshotFlow { liveSession.value.streamingText.length / FOLLOW_TEXT_STEP }.collect {
             val extra = (if (streaming) 1 else 0) + (if (showLiveTurn) 1 else 0)
-            val total = blocks.size + extra
-            if (total > 0) listState.animateScrollToItem(total - 1, scrollOffset = TAIL_SCROLL_OFFSET)
+            listState.animateToTail(blocks.size + extra)
         }
     }
 
@@ -1043,7 +1019,7 @@ private fun SessionContent(
             .collect { height ->
                 val shrunk = previous - height
                 previous = height
-                if (followTail && shrunk > 0) listState.scrollBy(shrunk.toFloat())
+                if (follow.following && shrunk > 0) listState.scrollBy(shrunk.toFloat())
             }
     }
 
@@ -1315,14 +1291,9 @@ private fun SessionContent(
                     val boundId = activeKey
                     ClaudeCodeInputBar(
                         session = session,
-                        onRunShell = { command ->
-                            followTail = true
-                            vm.runShell(command)
-                        },
-                        onSend = { text, images ->
-                            followTail = true
-                            vm.send(text, images)
-                        },
+                        // 发送不主动滚到底：在底时新消息按贴底跟随自然跟上，在上面翻着就保持原位
+                        onRunShell = { command -> vm.runShell(command) },
+                        onSend = { text, images -> vm.send(text, images) },
                         onInterrupt = vm::interrupt,
                         onSetModel = vm::setModel,
                         onSetPermissionMode = vm::setPermissionMode,

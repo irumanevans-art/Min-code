@@ -25,8 +25,11 @@ import dev.min.code.ui.session.NoteEntry
 import dev.min.code.ui.session.ThinkingEntry
 import dev.min.code.ui.session.TranscriptBlock
 import dev.min.code.ui.session.TranscriptItem
+import dev.min.code.ui.session.FOLLOW_TEXT_STEP
+import dev.min.code.ui.session.animateToTail
 import dev.min.code.ui.session.awaitingToolUseId
 import dev.min.code.ui.session.groupTranscript
+import dev.min.code.ui.session.rememberTranscriptFollow
 import dev.min.code.ui.session.rememberTranscriptLabels
 import kotlinx.coroutines.flow.collectLatest
 
@@ -57,21 +60,23 @@ internal fun CodexTranscript(
     val error = session.errorMessage?.takeIf { it.isNotBlank() }
     val lastIndex = blocks.lastIndex
 
-    // 新内容到了就跟到底部，但**只在用户本来就在底部时** —— 正往回翻旧消息时
-    // 被硬拽到底，比不自动滚还难用。
-    // session 是普通参数，LaunchedEffect(listState) 的协程只捕获首次组合那份闭包，
+    // 贴底跟随和 Claude 侧同一份规则：在底就跟，往上翻了就不动，见 [TranscriptFollow]。
+    // session 是普通参数，LaunchedEffect 的协程只捕获首次组合那份闭包，
     // snapshotFlow 直读它永远读到旧对象、永不发射。经 rememberUpdatedState 转一手，
     // 每次重组写进 State，snapshotFlow 才跟得上新内容。
     val latest = rememberUpdatedState(session)
-    LaunchedEffect(listState) {
-        snapshotFlow { latest.value.items.size to latest.value.streamingText.length }
-            .collectLatest {
-                val layout = listState.layoutInfo
-                val last = layout.visibleItemsInfo.lastOrNull()?.index ?: return@collectLatest
-                if (last >= layout.totalItemsCount - 2) {
-                    listState.animateScrollToItem((layout.totalItemsCount - 1).coerceAtLeast(0))
-                }
-            }
+    val follow = rememberTranscriptFollow(listState)
+    LaunchedEffect(listState, follow.following) {
+        if (!follow.following) return@LaunchedEffect
+        // 总项数也当触发：打开会话时历史是在首帧测量之后才进 layoutInfo 的，
+        // 不看它的话第一次发射时列表还没量过，回放的历史就停在顶部
+        snapshotFlow {
+            Triple(
+                latest.value.items.size,
+                latest.value.streamingText.length / FOLLOW_TEXT_STEP,
+                listState.layoutInfo.totalItemsCount,
+            )
+        }.collectLatest { (_, _, total) -> listState.animateToTail(total) }
     }
 
     // 挂着审批时那张卡显示成「等你批准」而不是转圈。Codex 的 itemId 就是卡的 toolUseId
