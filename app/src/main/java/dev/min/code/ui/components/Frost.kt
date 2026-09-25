@@ -3,6 +3,7 @@ package dev.min.code.ui.components
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
@@ -81,6 +82,23 @@ fun Modifier.frostVeil(
     // 没有 pointerInput：Compose 命中测试会穿过这层，点到下面的会话。
     // 菜单 / 输入胶囊是叠在前面的兄弟，命中先到它们。
 }
+
+/**
+ * 铬件背后那整条纸色：按量出来的铬件高度 [chrome] 定节点高度（多出 [FrostFade] 伸进会话）
+ * 和铬件占比 hold，再铺 [frostVeil]。Claude 页顶 / 底、Codex 页底都走这一处。
+ *
+ * hold 夹在 [BAND_HOLD_MIN]..[BAND_HOLD_MAX]：铬件还没量出来（0）或量得特别高时，
+ * 渐隐段也不至于缩没或占满整条带。
+ */
+@Composable
+fun Modifier.frostBand(fromTop: Boolean, chrome: Dp): Modifier {
+    val band = chrome + FrostFade
+    val hold = (chrome / band).coerceIn(BAND_HOLD_MIN, BAND_HOLD_MAX)
+    return height(band).frostVeil(fromTop = fromTop, hold = hold)
+}
+
+private const val BAND_HOLD_MIN = 0.2f
+private const val BAND_HOLD_MAX = 0.92f
 
 /**
  * 均匀的一扇雾：顶栏圆钮、输入胶囊。ChatGPT 那两粒白圆是这个。
