@@ -124,6 +124,74 @@ class RailStyleTest {
         assertEquals(strands, cloudStrands(x, top, height, u))
     }
 
+    /**
+     * 云的线身会摆，但三处必须在轴线上：标记处（标记挂在线上）、记录底边（下一条从轴线接上）、
+     * 以及摆幅永远在 gutter 里。
+     */
+    @Test
+    fun `cloud shaft meanders but meets the axis at the marker and the bottom`() {
+        val marker = 17f
+        val bottom = 400f
+        assertEquals(0f, cloudDrift(0f, marker, bottom, u), 0f)
+        assertEquals(0f, cloudDrift(marker, marker, bottom, u), 0f)
+        assertEquals(0f, cloudDrift(bottom, marker, bottom, u), 0f)
+        // 贴着两头也只偏一点点：摆幅是渐起渐收的，不是一出标记就跳开
+        assertTrue(abs(cloudDrift(marker + 1f, marker, bottom, u)) < 0.1f * u)
+        assertTrue(abs(cloudDrift(bottom - 1f, marker, bottom, u)) < 0.1f * u)
+
+        val samples = (0..400).map { cloudDrift(it.toFloat(), marker, bottom, u) }
+        samples.forEach { assertTrue("摆出 gutter 了: $it", abs(it) < 3f * u && x + it in 0f..gutter) }
+        assertTrue("线该是摆的，不是直的", samples.max() - samples.min() > 2.5f * u)
+        samples.zipWithNext().forEach { (a, b) -> assertTrue("摆动不该有折角", abs(b - a) < 0.5f * u) }
+    }
+
+    /**
+     * 流式生成时记录每帧都在长。已经画出来的那一截线必须一动不动，只有底边附近在收 ——
+     * 按总高度排波的话，每来一行字整条线都会重排、扭起来。
+     */
+    @Test
+    fun `cloud drift above the growing edge does not move while the entry grows`() {
+        val marker = 17f
+        for (y in 0..300) {
+            val before = cloudDrift(y.toFloat(), marker, bottom = 320f, unit = u)
+            val after = cloudDrift(y.toFloat(), marker, bottom = 900f, unit = u)
+            assertEquals("y=$y 处的线在记录变高时动了", before, after, 1e-4f)
+        }
+    }
+
+    /**
+     * 雾丝朝一个方向旋：时钟往前走，正弦的过零点只会顺着丝往下移；走满一圈回到原样。
+     * 以前是 sin(phase) 的来回摆，过零点会上下来回跑。
+     */
+    @Test
+    fun `cloud strands spin one way and loop seamlessly`() {
+        val height = 20f
+        val top = 100f
+        fun crossingNear(spin: Float, near: Float): Float {
+            val pts = cloudStrands(x, top, height, u, spin)[0].points
+            // 去掉骨架（轴线 + 向右的缓漂）只看摆：摆的过零点不受包络影响
+            val swing = pts.mapIndexed { i, p ->
+                val t = i / (pts.size - 1f)
+                p.x - x - 4.5f * u * t * t
+            }
+            val crossings = (1 until swing.size - 1)
+                .filter { swing[it] == 0f || (swing[it] > 0f) != (swing[it + 1] > 0f) }
+                .map { it / (swing.size - 1f) }
+            return crossings.minBy { abs(it - near) }
+        }
+        var previous = crossingNear(0f, near = 0.6f)
+        for (step in 1..4) {
+            val now = crossingNear(step * 0.03f, near = previous)
+            assertTrue("过零点该往下走: $previous -> $now", now > previous)
+            previous = now
+        }
+        val start = cloudStrands(x, top, height, u, spin = 0f)
+        val lap = cloudStrands(x, top, height, u, spin = 1f)
+        start.zip(lap).forEach { (a, b) ->
+            a.points.zip(b.points).forEach { (p, q) -> assertEquals("一圈后该回到原样", p.x, q.x, 1e-3f) }
+        }
+    }
+
     // ------------------------------------------------------------------
     // 陶 / Anthropic：线是颤的，收笔长成一小段分子结构
     // ------------------------------------------------------------------

@@ -290,6 +290,7 @@ internal fun Modifier.transcriptRail(
                         flow = foam,
                         phase = flowPhase.value,
                         unit = 1.dp.toPx(),
+                        markerY = y,
                         dark = palette.dark,
                     ),
                 )

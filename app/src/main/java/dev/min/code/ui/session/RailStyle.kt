@@ -54,6 +54,11 @@ internal data class RailSpec(
     /** 1.dp 折成的像素。几何都按它算，纯函数才能在单测里不碰 Compose */
     val unit: Float,
     /**
+     * 标记的圆心高度（局部坐标）。线在这里必须正好过轴线 —— 云的线身会摆，
+     * 摆幅从这里才起，不然标记会挂在线外面。
+     */
+    val markerY: Float = 0f,
+    /**
      * 夜纸。云的雾丝在暗色里丝心要提一线浪沫，否则镂在灰纹理上几乎看不见。
      */
     val dark: Boolean = false,
