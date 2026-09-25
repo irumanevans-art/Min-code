@@ -29,7 +29,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,7 +39,7 @@ import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
 import dev.min.code.util.LocalUrls
-import dev.min.code.util.openExternalUrl
+import dev.min.code.ui.components.rememberExternalBrowserOpener
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Link01
@@ -59,7 +58,7 @@ fun LocalPreviewPane(
     url: String,
     onCollapse: () -> Unit,
 ) {
-    val context = LocalContext.current
+    val openExternal = rememberExternalBrowserOpener()
     val normalized = remember(url) { LocalUrls.normalizeLoopback(url) }
     val screenH = LocalConfiguration.current.screenHeightDp.dp
     var title by remember(normalized) { mutableStateOf(normalized) }
@@ -116,7 +115,7 @@ fun LocalPreviewPane(
                 InkIconButton(
                     icon = HugeIcons.Link01,
                     contentDescription = stringResource(R.string.preview_open_external),
-                    onClick = { context.openExternalUrl(normalized) },
+                    onClick = { openExternal(normalized) },
                     size = 36.dp,
                     iconSize = 18.dp,
                 )
@@ -156,7 +155,7 @@ fun LocalPreviewPane(
                                     return if (LocalUrls.isLoopbackHttp(u)) {
                                         false
                                     } else {
-                                        context.openExternalUrl(u)
+                                        openExternal(u)
                                         true
                                     }
                                 }

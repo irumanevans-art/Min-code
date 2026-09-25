@@ -26,6 +26,8 @@ class RootfsPatcher {
             ensureLocale(etcDir, options.locale)
             ensureGroupNames(etcDir, options.groupIds.ifEmpty { currentSupplementaryGroupIds() })
             ensureTempDirs(linuxDir)
+            // BROWSER 指向的脚本和 xdg-open 替身（见 GuestBrowserBridge）。每次起进程前补一遍：rootfs 可能刚重装过
+            GuestBrowserBridge.install(linuxDir)
         }
     }
 

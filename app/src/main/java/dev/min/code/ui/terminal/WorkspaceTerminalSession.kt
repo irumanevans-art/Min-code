@@ -18,7 +18,7 @@ import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.network.activeDnsServers
 import dev.min.code.util.LocalPreviewBus
 import dev.min.code.util.LocalUrls
-import dev.min.code.util.openExternalUrl
+import dev.min.code.ui.components.openInExternalBrowser
 import me.rerere.workspace.ProotShellEntry
 import me.rerere.workspace.ProotShellRunner
 import me.rerere.workspace.RootfsPatchOptions
@@ -272,7 +272,7 @@ internal class WorkspaceTerminalViewClient(
                 LocalPreviewBus.offer(url)
                 return@runCatching true
             }
-            context.openExternalUrl(url)
+            context.openInExternalBrowser(url)
         }.getOrElse {
             Log.w("WorkspaceTerminal", "Failed to open url: $url", it)
             false

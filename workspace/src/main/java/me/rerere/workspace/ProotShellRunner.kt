@@ -144,6 +144,10 @@ class ProotShellRunner(
             // 少了它们的话 guest 里的 `$USER` 是空的, 一批脚本 (npm/git 的 hook、oh-my-*) 会走错分支
             "USER=root",
             "SHELL=/bin/bash",
+            // rootfs 里谁要开网页都交给 Min（见 GuestBrowserBridge）。放在基础环境而不是各调用方：
+            // 会话、终端、托管服务、`!` 命令、Codex 全从这里出命令行，漏一处就是一种命令开不了浏览器。
+            // 调用方的 env 排在后面，要换成自己的 BROWSER（订阅登录那条路）照样能覆盖
+            "${GuestBrowserBridge.ENV_KEY}=${GuestBrowserBridge.SCRIPT_GUEST}",
         )
         if (context.entry == ProotShellEntry.LoginCommand) {
             // 非交互执行约定, 抑制各类 CLI 的交互行为 (确认提示/分页器/颜色转义)。

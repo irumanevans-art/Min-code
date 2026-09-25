@@ -139,7 +139,7 @@ import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
 import dev.min.code.util.LocalUrls
-import dev.min.code.util.openExternalUrl
+import dev.min.code.ui.components.rememberExternalBrowserOpener
 import dev.min.code.util.writeClipboardText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -385,7 +385,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         drawer = drawer,
     ) {
         val previewHandler = rememberLocalPreviewUriHandler { url ->
-            vm.bindPreview(url, expand = true, fromAgent = false)
+            vm.openPreview(url)
         }
         CompositionLocalProvider(LocalUriHandler provides previewHandler) {
         if (live) {
@@ -528,7 +528,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 // 要看的是会话页上的预览位，抽屉得让开
                 afterSidebarNav()
                 // 进程表「打开」= 按预览位键，不是第二套 WebView
-                vm.bindPreview(url, expand = true, fromAgent = false)
+                vm.openPreview(url)
             },
         )
     }
@@ -544,14 +544,14 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
 }
 
 /**
- * Markdown / 链接：loopback 走应用内预览，其它走系统浏览器。
+ * Markdown / 链接：loopback 走应用内预览，其它走外部浏览器（Custom Tab）。
  * 由 [SessionContent] 或外层 CompositionLocal 注入。
  */
 @Composable
 internal fun rememberLocalPreviewUriHandler(
     onPreview: (String) -> Unit,
 ): UriHandler {
-    val context = LocalContext.current
+    val openExternal = rememberUpdatedState(rememberExternalBrowserOpener())
     val latest = rememberUpdatedState(onPreview)
     return remember {
         object : UriHandler {
@@ -559,7 +559,7 @@ internal fun rememberLocalPreviewUriHandler(
                 if (LocalUrls.isLoopbackHttp(uri)) {
                     latest.value(LocalUrls.normalizeLoopback(uri))
                 } else {
-                    context.openExternalUrl(uri)
+                    openExternal.value(uri)
                 }
             }
         }

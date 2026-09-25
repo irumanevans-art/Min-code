@@ -55,7 +55,6 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 
 class ClaudeCodeVM(
@@ -336,16 +335,6 @@ class ClaudeCodeVM(
         val expandedLogId: String? = null,
     )
 
-    /**
-     * 会话铬件上的预览**位**：有 URL 键才有效；展开是看见面板，关掉只是藏。
-     * [autoExpandedFor] 记已经自动展开过的 normalized URL，避免连弹。
-     */
-    data class PreviewSlot(
-        val url: String? = null,
-        val expanded: Boolean = false,
-        val autoExpandedFor: String? = null,
-    )
-
     private val _runtime = MutableStateFlow(RuntimeState())
     val runtime = _runtime.asStateFlow()
     val localServiceList: StateFlow<List<LocalService>> = localServices.services
@@ -354,59 +343,38 @@ class ClaudeCodeVM(
     val previewSlot: StateFlow<PreviewSlot> = _previewSlot.asStateFlow()
 
     init {
-        // Agent / 终端 / 总线发现的 loopback → 填位（可自动展开一次）
-        merge(registry.localPreviewUrls, LocalPreviewBus.urls)
-            .onEach { bindPreview(it, expand = true, fromAgent = true) }
+        // 展开规则见 PreviewSlot：agent 输出里认出来的只填位，人点的（终端链接、那张卡片）才展开
+        registry.localPreviewUrls
+            .onEach { url -> _previewSlot.update { it.discovered(url) } }
+            .launchIn(viewModelScope)
+        LocalPreviewBus.urls
+            .onEach(::openPreview)
             .launchIn(viewModelScope)
 
-        // 表里 Running 且有端口 → 静默绑位（不抢展开，除非位还空）。
-        // 不认 Starting：一启动就死的服务（命令不存在之类）在 Starting 那一瞬间就会把预览位弹开，
-        // 留下一页「网页无法打开」。进程表的就绪窗口只有 2.5 秒，等它一下
+        // 表里 Running 且有端口 → 静默填位（位还空时）。
+        // 不认 Starting：一启动就死的服务（命令不存在之类）在 Starting 那一瞬间就会把位填上，
+        // 点开是一页「网页无法打开」。进程表的就绪窗口只有 2.5 秒，等它一下
         localServices.services
             .onEach { list ->
-                val live = list.firstOrNull {
+                val port = list.firstOrNull {
                     it.status == LocalServiceStatus.Running && it.port != null
-                } ?: return@onEach
-                val port = live.port ?: return@onEach
-                val current = _previewSlot.value.url
-                if (current.isNullOrBlank()) {
-                    bindPreview(LocalUrls.loopbackUrl(port), expand = true, fromAgent = true)
-                }
+                }?.port ?: return@onEach
+                _previewSlot.update { it.discovered(LocalUrls.loopbackUrl(port), onlyIfEmpty = true) }
             }
             .launchIn(viewModelScope)
     }
 
-    /**
-     * @param expand 是否展开面板（进程表「打开」、链接点按 = true）
-     * @param fromAgent true 时仅在该 URL 尚未 auto-expand 过时自动展开一次
-     */
-    fun bindPreview(url: String, expand: Boolean = true, fromAgent: Boolean = false) {
-        val normalized = LocalUrls.normalizeLoopback(url)
-        if (!LocalUrls.isLoopbackHttp(normalized)) return
-        _previewSlot.update { slot ->
-            val alreadyAuto = slot.autoExpandedFor == normalized
-            val shouldExpand = when {
-                expand && fromAgent -> !alreadyAuto || slot.expanded
-                expand -> true
-                else -> slot.expanded
-            }
-            slot.copy(
-                url = normalized,
-                expanded = shouldExpand,
-                autoExpandedFor = if (fromAgent || alreadyAuto) normalized else slot.autoExpandedFor,
-            )
-        }
+    /** 人点的「看这个本机页面」：进程表的「打开」、会话里点的本机链接。填位并展开 */
+    fun openPreview(url: String) {
+        _previewSlot.update { it.opened(url) }
     }
 
     fun togglePreview() {
-        _previewSlot.update { slot ->
-            if (slot.url.isNullOrBlank()) slot
-            else slot.copy(expanded = !slot.expanded)
-        }
+        _previewSlot.update { it.toggled() }
     }
 
     fun collapsePreview() {
-        _previewSlot.update { it.copy(expanded = false) }
+        _previewSlot.update { it.collapsed() }
     }
 
     /** 清空位（服务全停、用户明确拆掉时）。平时关掉只用 [collapsePreview]。 */

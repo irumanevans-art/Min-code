@@ -27,7 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,10 +52,10 @@ import dev.min.code.ui.components.InkSwitch
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.InkTopBar
-import dev.min.code.ui.components.LocalToaster
 import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.RikkaConfirmDialog
+import dev.min.code.ui.components.rememberExternalBrowserOpener
 import dev.min.code.ui.components.SwipeToDelete
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.components.SettingRow
@@ -64,7 +63,6 @@ import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
 import dev.min.code.ui.theme.seaFill
-import dev.min.code.util.openExternalUrl
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Exchange01
@@ -923,13 +921,9 @@ internal fun isChineseUi(): Boolean =
 
 @Composable
 internal fun OpenWebsite(url: String) {
-    val context = LocalContext.current
-    val toaster = LocalToaster.current
+    val openExternal = rememberExternalBrowserOpener()
     InkTextButton(
-        onClick = {
-            runCatching { context.openExternalUrl(url) }
-                .onFailure { toaster.show(url) }
-        },
+        onClick = { openExternal(url) },
         tone = InkButtonTone.Quiet,
     ) { Text(stringResource(R.string.providers_open_website)) }
 }

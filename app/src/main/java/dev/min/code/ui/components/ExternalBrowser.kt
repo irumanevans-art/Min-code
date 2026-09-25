@@ -7,10 +7,19 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
+import dev.min.code.R
 
 /*
- * 把一个网页交给**外部**浏览器，优先以 Custom Tab 打开。给「用 Claude 订阅登录」的授权页用。
+ * 把一个网页交给**外部**浏览器，优先以 Custom Tab 打开。全 App 只有这一个出口：订阅登录的授权页、
+ * rootfs 里有程序要开的网页（见 core/browser/）、会话 / 终端里点的外网链接、预览槽里跳出本机的导航。
+ * 以前还有一份裸 ACTION_VIEW 的 `openExternalUrl`，两份并存时终端里点链接会跳出 Min 的任务栈、
+ * 也不排除 Min 自己，合并成了这一份。
+ *
+ * Custom Tab 对普通链接也是更好的去处：叠在 Min 上面，返回键回到原处。
  *
  * **为什么不用预览槽**：预览槽（以及会话页的 LocalUriHandler，它会把链接路由进预览槽）是 Min 进程里的
  * WebView。在那里登录，claude.ai 的登录态 cookie 和回跳时带的授权 code 都会落在 Min 手里——
@@ -88,5 +97,22 @@ fun Context.openInExternalBrowser(url: String): Boolean {
     } catch (e: ActivityNotFoundException) {
         Log.w(TAG, "no activity for the external browser intent", e)
         false
+    }
+}
+
+/**
+ * 界面里「点一下交给外部浏览器」用这个：打不开时（这台设备上没有浏览器）给一条 toast，
+ * 各个调用点不用再各写一遍失败提示。
+ */
+@Composable
+fun rememberExternalBrowserOpener(): (String) -> Unit {
+    val context = LocalContext.current
+    val toaster = LocalToaster.current
+    return remember(context, toaster) {
+        { url ->
+            if (!context.openInExternalBrowser(url)) {
+                toaster.show(context.getString(R.string.common_cant_open, url), ToastType.Error)
+            }
+        }
     }
 }

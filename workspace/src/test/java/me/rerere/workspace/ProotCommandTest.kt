@@ -109,6 +109,24 @@ class ProotCommandTest {
     }
 
     @Test
+    fun `every path hands web pages to Min through BROWSER`() {
+        // 放在基础环境里，是为了新加一条启动路径时不用记得再加一遍
+        listOf(sessionCommand(), serviceCommand(), terminalCommand()).forEach { command ->
+            assertTrue("BROWSER=${GuestBrowserBridge.SCRIPT_GUEST}" in command)
+        }
+    }
+
+    @Test
+    fun `a caller can still bring its own BROWSER`() {
+        // 订阅登录那条路的 BROWSER 只写 URL 文件、不弹卡片，必须压得过基础环境里的这一条
+        val command = runner().buildCommand(context(env = mapOf("BROWSER" to "/root/.min/claude-login-browser")))
+        val base = command.indexOf("BROWSER=${GuestBrowserBridge.SCRIPT_GUEST}")
+        val caller = command.indexOf("BROWSER=/root/.min/claude-login-browser")
+        assertTrue(base >= 0)
+        assertTrue("调用方的 BROWSER 必须排在基础那条之后", caller > base)
+    }
+
+    @Test
     fun `cwd is resolved against the workspace mount point`() {
         val command = runner().buildCommand(context(cwd = "api/server"))
         val workDir = command[command.indexOf("-w") + 1]

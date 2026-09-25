@@ -1,6 +1,7 @@
 package dev.min.code.di
 
 import dev.min.code.AppScope
+import dev.min.code.core.browser.GuestOpenInbox
 import dev.min.code.core.claudecode.ClaudeCodeConfigStore
 import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
 import dev.min.code.core.claudecode.ComposerDraftStore
@@ -184,6 +185,10 @@ val appModule = module {
     }
 
     single { WorkspaceTerminalSessionManager(get(), get(), get(), get()) }
+
+    // rootfs 里有程序要开网页时弹的那张卡的收件箱。createdAtStart：请求可能在任何页面上来，
+    // 盯投递目录的人不能等某个页面先打开（见 GuestOpenInbox）
+    single(createdAtStart = true) { GuestOpenInbox(get(), get<AppScope>()) }
 
     viewModelOf(::ClaudeCodeVM)
     viewModel {
