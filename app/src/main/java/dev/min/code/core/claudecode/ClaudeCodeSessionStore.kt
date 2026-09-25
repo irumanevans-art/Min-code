@@ -92,19 +92,31 @@ class ClaudeCodeSessionStore {
     suspend fun deleteSession(linuxDir: File, sessionId: String): Boolean =
         withContext(Dispatchers.IO) {
             val file = findSessionFile(linuxDir, sessionId) ?: return@withContext false
-            val dir = file.parentFile
-            var ok = file.delete()
-            dir?.listFiles()?.forEach { sibling ->
-                if (sibling.name == sessionId || sibling.name.startsWith("$sessionId.")) {
-                    ok = sibling.deleteRecursively() || ok
-                }
-            }
-            ok
+            val dir = file.parentFile ?: return@withContext file.delete()
+            deleteSessionTraces(dir, sessionId, keep = null)
         }
 
-    private fun findSessionFile(linuxDir: File, sessionId: String): File? {
+    /**
+     * 删掉 [dir] 里属于 [sessionId] 的一切：`<id>.jsonl`、`<id>.jsonl.<hash>` 备份、`<id>/` 子 agent 目录。
+     * [keep] 是例外（导入覆盖时刚 rename 进来的新 transcript）。任何一项删掉了就返回 true。
+     */
+    internal fun deleteSessionTraces(dir: File, sessionId: String, keep: File?): Boolean {
+        var ok = false
+        dir.listFiles()?.forEach { sibling ->
+            if (sibling == keep) return@forEach
+            if (sibling.name == sessionId || sibling.name.startsWith("$sessionId.")) {
+                ok = sibling.deleteRecursively() || ok
+            }
+        }
+        return ok
+    }
+
+    /** `<linuxDir>/root/.claude/projects`，CLI 所有项目目录的父目录 */
+    internal fun projectsDir(linuxDir: File): File = File(linuxDir, PROJECTS_REL_PATH)
+
+    internal fun findSessionFile(linuxDir: File, sessionId: String): File? {
         // 会话 id 直接作为文件名，这里仍然按目录遍历找，避免依赖 cwd 的转义规则
-        val projects = File(linuxDir, PROJECTS_REL_PATH)
+        val projects = projectsDir(linuxDir)
         if (!projects.isDirectory) return null
         if (sessionId.isBlank() || sessionId.contains('/') || sessionId.contains('\\')) return null
         return projects.walkTopDown()
