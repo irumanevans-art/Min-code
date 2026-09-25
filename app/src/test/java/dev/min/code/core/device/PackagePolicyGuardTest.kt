@@ -75,4 +75,22 @@ class PackagePolicyGuardTest {
         assertTrue(decision is PackagePolicyGuard.Decision.Denied)
         assertTrue((decision as PackagePolicyGuard.Decision.Denied).reason.isNotBlank())
     }
+
+    /** 人明确勾过的应用，闸门放行——这就是设置页「放行名单」的全部意义 */
+    @Test
+    fun `放行名单优先于拦截名单`() {
+        assertTrue(denied("com.tencent.mm"))
+        assertTrue(allowedWith("com.tencent.mm", setOf("com.tencent.mm")))
+        assertTrue(allowedWith("COM.TENCENT.MM", setOf("com.tencent.mm")))
+        // 没勾上的支付应用照拦
+        assertTrue(
+            PackagePolicyGuard.allowsWrite(
+                "com.eg.android.alipaygphone",
+                setOf("com.tencent.mm"),
+            ) is PackagePolicyGuard.Decision.Denied,
+        )
+    }
+
+    private fun allowedWith(pkg: String?, allow: Set<String>) =
+        PackagePolicyGuard.allowsWrite(pkg, allow) is PackagePolicyGuard.Decision.Allowed
 }

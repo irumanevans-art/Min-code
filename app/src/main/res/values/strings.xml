@@ -874,6 +874,13 @@
   <string name="device_control_active_body">Tap STOP to cut it off immediately.</string>
   <string name="device_control_need_permission">Waiting for accessibility access in system settings. Tap to open that page.</string>
   <string name="device_control_on">On. Every tap and keystroke still goes through the same approval you use for file edits.</string>
+  <string name="device_control_allowlist_title">Allowlist</string>
+  <string name="device_control_allowlist_hint">Payments, banks and SMS are blocked by default. Apps you check here the agent may operate — every action still needs your approval.</string>
+  <string name="device_control_allowlist_add">Add a package name</string>
+  <string name="device_control_allowlist_add_action">Add</string>
+  <string name="device_control_a11y_reenable_title">Turn accessibility back on</string>
+  <string name="device_control_a11y_reenable_body">The app was just updated. Android turns accessibility off on every overlay install, so “Let the agent operate this phone” needs to be switched on again.</string>
+  <string name="device_control_a11y_reenable_go">Open settings</string>
   <string name="device_virtual_title">Virtual screen</string>
   <string name="device_virtual_off">Off. When on, the agent works on an invisible screen so your phone stays free. Needs Wireless debugging once after each reboot.</string>
   <string name="device_virtual_ready">Ready (shell uid 2000). Restart the phone and you will need to start it again.</string>

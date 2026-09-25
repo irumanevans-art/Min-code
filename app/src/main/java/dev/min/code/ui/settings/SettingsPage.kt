@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.BuildConfig
 import dev.min.code.R
 import dev.min.code.core.device.MinAccessibilityService
+import dev.min.code.core.device.PackagePolicyGuard
 import dev.min.code.core.rootfs.deviceStorageSettingsIntent
 import dev.min.code.core.rootfs.hasDeviceStorageAccess
 import dev.min.code.core.settings.AppLanguage
@@ -57,6 +58,7 @@ import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkSegmented
 import dev.min.code.ui.components.InkSwitch
 import dev.min.code.ui.components.InkTextButton
+import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.InkTopBar
 import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
@@ -368,6 +370,73 @@ private fun DeviceControlRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
 }
 
 /**
+ * 设备写操作放行名单。默认拦住支付/银行/短信；人勾上的应用，agent 可以代为操作。
+ * 只在「让 agent 操作这台手机」开着时出现。
+ */
+@Composable
+private fun DeviceAllowlist(
+    selected: Set<String>,
+    onChange: (Set<String>) -> Unit,
+) {
+    var custom by remember { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            stringResource(R.string.device_control_allowlist_title),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            stringResource(R.string.device_control_allowlist_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        PackagePolicyGuard.SUGGESTED_ALLOWLIST.forEach { (pkg, label) ->
+            val on = selected.any { it.equals(pkg, ignoreCase = true) }
+            SettingRow(
+                title = label,
+                subtitle = pkg,
+                onClick = {
+                    onChange(if (on) selected.filterNot { it.equals(pkg, ignoreCase = true) }.toSet() else selected + pkg)
+                },
+                trailing = { InkSwitch(checked = on, onCheckedChange = { checked ->
+                    onChange(if (checked) selected + pkg else selected.filterNot { it.equals(pkg, ignoreCase = true) }.toSet())
+                }) },
+            )
+        }
+        val extras = selected.filter { pkg ->
+            PackagePolicyGuard.SUGGESTED_ALLOWLIST.none { it.first.equals(pkg, ignoreCase = true) }
+        }
+        extras.forEach { pkg ->
+            SettingRow(
+                title = pkg,
+                onClick = { onChange(selected - pkg) },
+                trailing = { InkSwitch(checked = true, onCheckedChange = { onChange(selected - pkg) }) },
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            InkTextField(
+                value = custom,
+                onValueChange = { custom = it.trim() },
+                modifier = Modifier.weight(1f),
+                label = stringResource(R.string.device_control_allowlist_add),
+                singleLine = true,
+            )
+            InkTextButton(
+                enabled = custom.contains('.') && selected.none { it.equals(custom, ignoreCase = true) },
+                onClick = {
+                    onChange(selected + custom)
+                    custom = ""
+                },
+            ) { Text(stringResource(R.string.device_control_allowlist_add_action)) }
+        }
+    }
+}
+
+/**
  * 虚拟屏档：不另装 Shizuku，用本机壳服务建一块看不见的屏。
  *
  * 副题必须写清「重启后要再拉起」——否则会被当成静默后台权限。
@@ -560,6 +629,9 @@ private fun DeviceSettings(vm: SettingsVM, settings: AppSettings) {
         enabled = settings.controlDevice,
         onToggle = vm::setControlDevice,
     )
+    if (settings.controlDevice) {
+        DeviceAllowlist(settings.deviceWriteAllowlist, vm::setDeviceWriteAllowlist)
+    }
     VirtualDisplayRow(vm = vm)
     BatteryRow()
 }

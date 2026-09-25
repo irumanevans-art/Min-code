@@ -8,6 +8,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -51,6 +52,8 @@ private val KEY_GUEST_CONFIG_SECRETS = booleanPreferencesKey("guest_config_secre
 private val KEY_INJECT_SHELL_CREDENTIALS = booleanPreferencesKey("inject_shell_credentials")
 private val KEY_SHARE_DEVICE_STORAGE = booleanPreferencesKey("share_device_storage")
 private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
+private val KEY_DEVICE_WRITE_ALLOWLIST = stringSetPreferencesKey("device_write_allowlist")
+private val KEY_A11Y_PROMPT_VERSION = intPreferencesKey("a11y_prompt_version")
 private val KEY_TERMINAL_AUTO_KEYBOARD = booleanPreferencesKey("terminal_auto_keyboard")
 /** 上一次由我们写进 settings.json 的那些 env 键。是记账，不是配置，见 [SettingsStore.setManagedEnvKeys] */
 private val KEY_MANAGED_ENV_KEYS = stringSetPreferencesKey("managed_env_keys")
@@ -265,6 +268,17 @@ data class AppSettings(
      */
     val controlDevice: Boolean = false,
     /**
+     * 设备写操作放行名单：包名精确匹配。在 [dev.min.code.core.device.PackagePolicyGuard]
+     * 拦下之前先看这里——人明确勾过的应用，agent 可以代为操作。默认空：行为与以前一样。
+     */
+    val deviceWriteAllowlist: Set<String> = emptySet(),
+    /**
+     * 上次弹过「更新后请重开无障碍」的 versionCode。0 = 还没弹过。
+     * 系统在覆盖安装时会解绑无障碍服务，人必须再去开一次；记下这个数，只在版本变了且
+     * 意愿仍开着、服务却没连上时弹一次。
+     */
+    val a11yPromptVersion: Int = 0,
+    /**
      * 打开终端时自动弹出键盘（终端顶栏上的开关）。关掉后只看输出不遮半屏；
      * 点一下终端照样弹。默认开，和以前一样。
      */
@@ -460,6 +474,8 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
             shareDeviceStorage = p[KEY_SHARE_DEVICE_STORAGE] ?: false,
             controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
+            deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
+            a11yPromptVersion = p[KEY_A11Y_PROMPT_VERSION] ?: 0,
             terminalAutoKeyboard = p[KEY_TERMINAL_AUTO_KEYBOARD] ?: true,
             managedEnvKeys = p[KEY_MANAGED_ENV_KEYS].orEmpty(),
             credentialsUnreadable = credentialsUnreadable(p),
@@ -791,6 +807,15 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setControlDevice(enabled: Boolean) =
         context.dataStore.edit { it[KEY_CONTROL_DEVICE] = enabled }
+
+    suspend fun setDeviceWriteAllowlist(packages: Set<String>) =
+        context.dataStore.edit {
+            if (packages.isEmpty()) it.remove(KEY_DEVICE_WRITE_ALLOWLIST)
+            else it[KEY_DEVICE_WRITE_ALLOWLIST] = packages
+        }
+
+    suspend fun setA11yPromptVersion(versionCode: Int) =
+        context.dataStore.edit { it[KEY_A11Y_PROMPT_VERSION] = versionCode }
 
     /**
      * 记下这一次真正写进 settings.json 的托管键。**只给 `ProviderSync` 调。**

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.util.DisplayMetrics
 import android.view.accessibility.AccessibilityNodeInfo
+import dev.min.code.core.settings.SettingsStore
 
 /**
  * 六个设备工具的实现。MCP server 只管收发帧，真正干活的在这里。
@@ -33,6 +34,7 @@ class DeviceController(
      * [openApp] 走真屏；活跃时改走 shell 侧的 launchOnDisplay。
      */
     private val agentDisplay: AgentDisplaySession? = null,
+    private val settings: SettingsStore? = null,
 ) {
 
     /**
@@ -52,8 +54,14 @@ class DeviceController(
             ?: return Result.failure(NOT_CONNECTED)
         val root = service.rootNode()
             ?: return Result.failure(
-                "读不到当前窗口的内容。可能正停在锁屏或某个系统界面上——这种屏幕不对无障碍服务开放。" +
-                    "如果不是锁屏，试试 device_screenshot 直接看一眼。"
+                if (service.targetDisplay() != android.view.Display.DEFAULT_DISPLAY) {
+                    "虚拟屏（display ${service.targetDisplay()}）上没有可读窗口。" +
+                        "启动可能没落到这块屏，或系统没把副屏窗口交给无障碍。" +
+                        "先用 device_screenshot 看这块屏实际有什么，不要去点主屏上的 Min。"
+                } else {
+                    "读不到当前窗口的内容。可能正停在锁屏或某个系统界面上——这种屏幕不对无障碍服务开放。" +
+                        "如果不是锁屏，试试 device_screenshot 直接看一眼。"
+                }
             )
         val tree = serializeUiTree(root)
         val rendered = tree.render()
@@ -214,7 +222,7 @@ class DeviceController(
      * 而那恰恰是离开那个界面的唯一办法。
      */
     fun openApp(packageName: String): Result {
-        PackagePolicyGuard.allowsWrite(packageName).let {
+        PackagePolicyGuard.allowsWrite(packageName, writeAllowlist()).let {
             if (it is PackagePolicyGuard.Decision.Denied) {
                 return Result.failure("不能打开 $packageName：${it.reason}")
             }
@@ -314,10 +322,13 @@ class DeviceController(
         return null
     }
 
+    private fun writeAllowlist(): Set<String> =
+        settings?.snapshot?.deviceWriteAllowlist.orEmpty()
+
     /** 写操作前的那道闸。允许时返回 null */
     private fun guardWrite(): Result? {
         val foreground = MinAccessibilityService.instance.get()?.rootNode()?.packageName?.toString()
-        return when (val decision = PackagePolicyGuard.allowsWrite(foreground)) {
+        return when (val decision = PackagePolicyGuard.allowsWrite(foreground, writeAllowlist())) {
             is PackagePolicyGuard.Decision.Allowed -> null
             is PackagePolicyGuard.Decision.Denied -> Result.failure(
                 "这一步被拦下了：${decision.reason}。请你自己来做这一步，做完告诉我继续。"

@@ -31,11 +31,14 @@ object PackagePolicyGuard {
      *
      * @param packageName 当前前台应用的包名。取不到时传 null —— 按 fail-closed 拒绝
      */
-    fun allowsWrite(packageName: String?): Decision {
+    fun allowsWrite(packageName: String?, allowlist: Set<String> = emptySet()): Decision {
         if (packageName.isNullOrBlank()) {
             return Decision.Denied("认不出当前前台是哪个应用，按最保守处理")
         }
         val lower = packageName.lowercase()
+        if (allowlist.any { it.equals(packageName, ignoreCase = true) }) {
+            return Decision.Allowed
+        }
         BLOCKED_EXACT[lower]?.let { return Decision.Denied(it) }
         BLOCKED_PREFIXES.forEach { (prefix, reason) ->
             if (lower.startsWith(prefix)) return Decision.Denied(reason)
@@ -47,6 +50,18 @@ object PackagePolicyGuard {
         data object Allowed : Decision
         data class Denied(val reason: String) : Decision
     }
+
+    /**
+     * 设置页「放行名单」里预置的几项。默认仍拦；人勾上之后 [allowsWrite] 放行。
+     * 银行那种前缀匹配不预置——包名因地区而异，用自定义输入加。
+     */
+    val SUGGESTED_ALLOWLIST: List<Pair<String, String>> = listOf(
+        "com.tencent.mm" to "微信",
+        "com.eg.android.alipaygphone" to "支付宝",
+        "com.unionpay" to "云闪付",
+        "com.android.mms" to "短信",
+        "com.google.android.apps.messaging" to "信息",
+    )
 
     /**
      * 整包名精确匹配。

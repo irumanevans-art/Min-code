@@ -113,15 +113,25 @@ class MinAccessibilityService : AccessibilityService() {
      * 那个 API **跟焦点走**。虚拟屏场景下你碰一下主屏，焦点就回主屏，下一次读屏
      * 读到的是你正在刷的内容而不是 agent 那块屏——模型会据此在你的界面上乱点。
      *
-     * API 30+ 用 [getWindowsOnAllDisplays] 按 displayId 精确取；取不到（屏上没窗、
-     * 或 API 不够）再退回 [rootInActiveWindow]，单屏行为与改之前一致。
+     * API 30+ 用 [getWindowsOnAllDisplays] 按 displayId 精确取。
+     * 目标是虚拟屏时**绝不**退回 [rootInActiveWindow]：那个 API 跟焦点走，
+     * 用户碰一下主屏就会读到 Min 自己，模型接着在用户脸上点。
+     * 单屏（目标就是 DEFAULT）才允许退回。
      *
      * 拿到之后强制 [AccessibilityNodeInfo.refresh] 一次：即便缓存已经关了
      * （见 [onServiceConnected]），根节点本身仍可能是上一次事件时的快照。
      */
     fun rootNode(): AccessibilityNodeInfo? = runCatching {
-        val preferred = rootOnDisplay(targetDisplayId.get())
-        (preferred ?: rootInActiveWindow)?.also { runCatching { it.refresh() } }
+        val target = targetDisplayId.get()
+        val preferred = rootOnDisplay(target)
+        if (preferred != null) {
+            return@runCatching preferred.also { runCatching { it.refresh() } }
+        }
+        if (target != Display.DEFAULT_DISPLAY) {
+            Log.w(TAG, "no app window on display $target; available=${windowDisplayIds()}")
+            return@runCatching null
+        }
+        rootInActiveWindow?.also { runCatching { it.refresh() } }
     }.getOrNull()
 
     /**
@@ -140,6 +150,12 @@ class MinAccessibilityService : AccessibilityService() {
             .sortedByDescending { it.layer }
             .mapNotNull { runCatching { it.root }.getOrNull() }
             .firstOrNull()
+    }
+
+    private fun windowDisplayIds(): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return "api<30"
+        val byDisplay = runCatching { windowsOnAllDisplays }.getOrNull() ?: return "none"
+        return (0 until byDisplay.size()).joinToString(",") { i -> byDisplay.keyAt(i).toString() }
     }
 
     /**

@@ -96,7 +96,7 @@ val appModule = module {
     single { PrivilegedStarter(get(), get()) }
     single { AgentDisplaySession(get()) }
     // DeviceController 要能问到虚拟屏会话是否活跃，所以放在 AgentDisplaySession 之后
-    single { DeviceController(get(), get()) }
+    single { DeviceController(get(), get(), get()) }
     single { DeviceMcpServer(get()) }
     single { DeviceMcpRegistrar(settings = get(), configStore = get(), server = get()) }
 

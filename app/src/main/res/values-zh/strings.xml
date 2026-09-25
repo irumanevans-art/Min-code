@@ -870,6 +870,13 @@
   <string name="device_control_active_body">点「停止」立刻切断。</string>
   <string name="device_control_need_permission">还差系统设置里的无障碍权限。点这里去那一页。</string>
   <string name="device_control_on">已开启。每一次点击和输入仍然走和改文件一样的审批。</string>
+  <string name="device_control_allowlist_title">放行名单</string>
+  <string name="device_control_allowlist_hint">默认拦住支付、银行和短信。勾上的应用，agent 可以代为操作——每一步仍要你批准。</string>
+  <string name="device_control_allowlist_add">添加包名</string>
+  <string name="device_control_allowlist_add_action">添加</string>
+  <string name="device_control_a11y_reenable_title">请重新打开无障碍</string>
+  <string name="device_control_a11y_reenable_body">刚更新过 App。Android 会在覆盖安装时关掉无障碍服务，需要再开一次，「让 agent 操作这台手机」才能继续用。</string>
+  <string name="device_control_a11y_reenable_go">去开启</string>
   <string name="device_virtual_title">虚拟屏</string>
   <string name="device_virtual_off">关着。开了之后 agent 在一块你看不见的屏幕上干活，主屏留给你。每次重启手机后需要再开一次无线调试。</string>
   <string name="device_virtual_ready">已就绪（shell uid 2000）。重启手机后需要重新拉起。</string>

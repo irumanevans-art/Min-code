@@ -2,6 +2,7 @@ package dev.min.code.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.min.code.BuildConfig
 import dev.min.code.core.device.AgentDisplaySession
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
@@ -42,7 +43,14 @@ class SettingsVM(
     fun setSkin(style: SkinStyle) = viewModelScope.launch { store.setSkin(style) }
     fun setAppLanguage(language: AppLanguage) = viewModelScope.launch { store.setAppLanguage(language) }
     fun setShareDeviceStorage(enabled: Boolean) = viewModelScope.launch { store.setShareDeviceStorage(enabled) }
-    fun setControlDevice(enabled: Boolean) = viewModelScope.launch { store.setControlDevice(enabled) }
+    fun setControlDevice(enabled: Boolean) = viewModelScope.launch {
+        store.setControlDevice(enabled)
+        // 记成「这一版已经引导过」：开开关时设置页会自己跳无障碍，别再弹一次更新提示
+        if (enabled) store.setA11yPromptVersion(BuildConfig.VERSION_CODE)
+    }
+
+    fun setDeviceWriteAllowlist(packages: Set<String>) =
+        viewModelScope.launch { store.setDeviceWriteAllowlist(packages) }
 
     /** 复制给电脑 `adb shell` 用的拉起命令；同时进入 Waiting 态 */
     fun privilegedLaunchCommand(): String {

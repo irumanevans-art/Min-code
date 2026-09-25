@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.animation.PathInterpolator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -38,6 +40,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
+import dev.min.code.core.device.MinAccessibilityService
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.EXTRA_OPEN_CLAUDE_CODE
 import dev.min.code.core.service.EXTRA_OPEN_CODEX
@@ -53,6 +56,7 @@ import dev.min.code.ui.about.AboutPage
 import dev.min.code.ui.components.InkToastHost
 import dev.min.code.ui.components.LoadingScreen
 import dev.min.code.ui.components.LocalToaster
+import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.rememberInkToaster
 import dev.min.code.ui.files.WorkspaceDetailPage
 import dev.min.code.ui.codex.CodexPage
@@ -73,8 +77,11 @@ import dev.min.code.ui.theme.LocalTilt
 import dev.min.code.ui.theme.MinTheme
 import dev.min.code.ui.theme.rememberTilt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import me.rerere.workspace.WorkspaceStorageArea
 import org.koin.android.ext.android.inject
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.res.stringResource
 
 class MainActivity : ComponentActivity() {
     private val settingsStore: SettingsStore by inject()
@@ -256,8 +263,48 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                     InkToastHost(toastState, Modifier.align(Alignment.BottomCenter))
+                    AccessibilityReenablePrompt()
                 }
             }
+        }
+    }
+
+    /**
+     * 覆盖安装会解绑无障碍。意愿仍开着、服务却没连上、这一版还没弹过 → 启动时弹一次，
+     * 点「去开启」跳系统无障碍页。点取消也记成这一版已提示，避免每次冷启动都烦。
+     */
+    @Composable
+    private fun AccessibilityReenablePrompt() {
+        val settings by settingsStore.settings.collectAsStateWithLifecycle(initialValue = null)
+        val current = settings ?: return
+        val should = current.controlDevice &&
+            !MinAccessibilityService.connected() &&
+            current.a11yPromptVersion != BuildConfig.VERSION_CODE
+        var show by remember(should) { mutableStateOf(should) }
+        if (!show) return
+        val scope = rememberCoroutineScope()
+        fun dismiss() {
+            show = false
+            scope.launch { settingsStore.setA11yPromptVersion(BuildConfig.VERSION_CODE) }
+        }
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.device_control_a11y_reenable_title),
+            confirmText = stringResource(R.string.device_control_a11y_reenable_go),
+            dismissText = stringResource(R.string.common_cancel),
+            destructive = false,
+            onConfirm = {
+                runCatching {
+                    startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+                dismiss()
+            },
+            onDismiss = { dismiss() },
+        ) {
+            Text(stringResource(R.string.device_control_a11y_reenable_body))
         }
     }
 }
