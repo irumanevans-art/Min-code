@@ -366,11 +366,12 @@ class ClaudeCodeManager(
     private val sessionMutex = Mutex()
 
     /** 进程的两头：读 stdout / stderr、串行写 stdin、先礼后兵地关。状态怎么变仍在这里决定 */
-    private val cli = ClaudeCodeCliPipe(
+    private val cli: ClaudeCodeCliPipe = ClaudeCodeCliPipe(
         scope = scope,
         onEvent = { dispatch(it) },
         onStderr = ::onStderrLine,
         onReadFailure = { e ->
+            controls.failAll("读取 CLI 输出失败")
             _state.update {
                 it.copy(
                     status = SessionStatus.Failed,
@@ -381,6 +382,7 @@ class ClaudeCodeManager(
             }
         },
         onWriteFailure = { e ->
+            controls.failAll("写入会话失败")
             _state.update {
                 it.copy(
                     status = SessionStatus.Failed,
@@ -400,7 +402,7 @@ class ClaudeCodeManager(
     )
 
     /** 发出去要等应答的 control_request：配对、超时。应答回来之后改什么状态仍在这里决定 */
-    private val controls = ClaudeCodeControlChannel(
+    private val controls: ClaudeCodeControlChannel = ClaudeCodeControlChannel(
         canSend = { _state.value.status == SessionStatus.Running },
         write = { cli.write(it) },
     )
@@ -575,6 +577,8 @@ class ClaudeCodeManager(
      * [unexpected] = 不是我们关的且退出码非 0。
      */
     private fun onCliExit(code: Int?, unexpected: Boolean) {
+        // 放在改状态之前：发起方醒来时看到的就是已关闭的会话，文案不会再落到「未应答」那一支
+        controls.failAll("claude 进程已退出")
         _state.update {
             if (it.status == SessionStatus.Failed) {
                 it.copy(busy = false, pendingPermission = null)
@@ -1637,11 +1641,16 @@ class ClaudeCodeManager(
         val id = controls.newRequestId()
         // initialize 超时 / 出错不挡会话本身，但启动中攥着的消息不能困死在调度台上
         // （没有它们握手失败的提示，对话流里会永远挂着一条「排队中」），原样退回输入框。
-        val payload = controls.payload(id, encodeClaudeCodeInitialize(id)) ?: run {
-            refundHeldMessages("CLI 握手超时，启动前排队的消息已退回输入框")
-            usageRefresh.release()
-            planRefresh.release()
-            return
+        val payload = when (val outcome = controls.request(id, encodeClaudeCodeInitialize(id))) {
+            is ControlOutcome.Ok -> outcome.payload
+            else -> {
+                // 进程死在握手中途时是 Error（见 ClaudeCodeControlChannel.failAll），别说成「超时」
+                val why = (outcome as? ControlOutcome.Error)?.let { "CLI 握手失败（${it.message}）" } ?: "CLI 握手超时"
+                refundHeldMessages("$why，启动前排队的消息已退回输入框")
+                usageRefresh.release()
+                planRefresh.release()
+                return
+            }
         }
         applyHandshake(payload)
         applyPreferredCwd()

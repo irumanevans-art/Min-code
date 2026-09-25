@@ -117,6 +117,8 @@ internal class FakeCliProcess(
     private val fixture: CliFixture,
     /** 测试自己塞的控制应答，优先于录制（没录过的 subtype、想造错误时用） */
     private val overrides: Map<String, (JsonObject) -> JsonObject> = emptyMap(),
+    /** 收下但永远不回的控制请求 subtype —— 用来卡在「请求已发出、应答还没来」 */
+    private val unanswered: Set<String> = emptySet(),
 ) : Process() {
     private val stdout = LineSource()
     private val stderr = LineSource()
@@ -168,6 +170,7 @@ internal class FakeCliProcess(
                 val requestId = obj.str("request_id")!!
                 val request = obj["request"]!!.jsonObject
                 val subtype = request.str("subtype")!!
+                if (subtype in unanswered) return
                 stdout.push(controlResponse(requestId, subtype, request))
                 if (subtype == "interrupt") {
                     interrupts.put(Unit)

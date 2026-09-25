@@ -3,6 +3,7 @@ package dev.min.code.core.claudecode
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
@@ -72,6 +73,38 @@ class ClaudeCodeControlChannelTest {
         assertEquals(ControlOutcome.Timeout, ch.request("r1", "frame-1", timeoutMs = 60_000))
         assertTrue(written.isEmpty())
         assertFalse(ch.fail("r1", "nope"))
+    }
+
+    @Test
+    fun `failAll ends every waiting request with the reason, long before its timeout`() = runBlocking {
+        val ch = channel()
+        val a = async(start = CoroutineStart.UNDISPATCHED) { ch.request("r1", "frame-1", timeoutMs = 60_000) }
+        val b = async(start = CoroutineStart.UNDISPATCHED) { ch.request("r2", "frame-2", timeoutMs = 60_000) }
+        ch.failAll("gone")
+        assertEquals(ControlOutcome.Error("gone"), withTimeout(1_000) { a.await() })
+        assertEquals(ControlOutcome.Error("gone"), withTimeout(1_000) { b.await() })
+        // 死进程临终前吐出来的应答没人认领，也不抛
+        assertFalse(ch.fail("r1", "too late"))
+        ch.complete("r2", payload)
+    }
+
+    @Test
+    fun `a request sent after failAll is paired as usual`() = runBlocking {
+        val ch = channel()
+        ch.failAll("gone")
+        val outcome = async(start = CoroutineStart.UNDISPATCHED) { ch.request("r3", "frame-3") }
+        ch.complete("r3", payload)
+        assertEquals(ControlOutcome.Ok(payload), outcome.await())
+    }
+
+    @Test
+    fun `a caller cancelled while waiting leaves nothing pending behind`() = runBlocking {
+        val ch = channel()
+        val job = async(start = CoroutineStart.UNDISPATCHED) { ch.request("r1", "frame-1", timeoutMs = 60_000) }
+        job.cancel()
+        job.join()
+        // 表里还留着的话，这条迟到的错误会被当成有人认领
+        assertFalse(ch.fail("r1", "late"))
     }
 
     @Test

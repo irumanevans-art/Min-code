@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -514,6 +515,50 @@ class ClaudeCodeManagerCharacterizationTest {
             val s = h.awaitState("报错") { st -> st.items.any { it is ChatItem.Note && it.isError } && !st.applyingSettings }
             assertEquals("error: 切换到 Bypass permissions 失败：$refusal", s.lines().last())
             assertEquals(ClaudeCodePermissionMode.DEFAULT, s.permissionMode)
+        }
+    }
+
+    /*
+     * 进程死了，还在等应答的控制请求不能干等满超时（默认 8 秒，用量 20、拟名 30）：
+     * 那段时间「应用中」一直转着，最后还报成「CLI 未应答」，而真实原因是进程没了。
+     * 下面两条的 3 秒上限比 [ClaudeCodeControlChannel.TIMEOUT_MS] 短得多，等满超时就过不了。
+     */
+
+    @Test
+    fun `a control request still waiting when the CLI dies fails at once instead of timing out`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.nextProcess = { FakeCliProcess(h.fixture, unanswered = setOf("set_permission_mode")) }
+            h.startAndHandshake()
+            h.manager.setPermissionMode(ClaudeCodePermissionMode.ACCEPT_EDITS)
+            h.awaitCondition("请求已发出") { "set_permission_mode" in h.process.subtypes() }
+            h.process.crash(1)
+            val s = h.awaitState("立刻失败", timeoutMs = 3_000) { st ->
+                !st.applyingSettings && st.items.any { it is ChatItem.Note && it.isError }
+            }
+            assertEquals("error: 切换到 Accept edits 失败：claude 进程已退出", s.lines().last())
+            assertEquals(ClaudeCodePermissionMode.DEFAULT, s.permissionMode)
+        }
+    }
+
+    @Test
+    fun `the CLI dying mid-handshake hands held messages back at once and says why`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.nextProcess = { FakeCliProcess(h.fixture, unanswered = setOf("initialize")) }
+            val gate = CompletableDeferred<Unit>()
+            h.launchGate = gate
+            val withdrawn = async(start = CoroutineStart.UNDISPATCHED) { h.manager.withdrawnMessages.first() }
+            h.manager.startSession()
+            h.awaitState("Starting") { it.status == SessionStatus.Starting }
+            h.manager.send("hello early")
+            gate.complete(Unit)
+            h.awaitCondition("握手已发出") { h.launches.isNotEmpty() && "initialize" in h.process.subtypes() }
+            h.process.crash(1)
+            val s = h.awaitState("退回", timeoutMs = 3_000) { st -> st.items.none { it is ChatItem.UserText } }
+            assertEquals(
+                listOf("error: CLI 握手失败（claude 进程已退出），启动前排队的消息已退回输入框"),
+                s.lines(),
+            )
+            assertEquals("hello early", withTimeout(3_000) { withdrawn.await() }.text)
         }
     }
 

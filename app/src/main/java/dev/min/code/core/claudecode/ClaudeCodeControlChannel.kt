@@ -8,7 +8,8 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * control_request 的三种结局。必须把「CLI 明确报错」和「压根没应答」分开 ——
+ * control_request 的三种结局。[Error] 是 CLI 明确报错，或进程已经没了（见 [ClaudeCodeControlChannel.failAll]）。
+ * 必须把「有原因的失败」和「压根没应答」分开 ——
  * 之前两者都折成 null，于是 CLI 回的
  * "Cannot set permission mode to bypassPermissions because the session was not
  * launched with --dangerously-skip-permissions" 被显示成了"CLI 未应答"，
@@ -98,6 +99,25 @@ internal class ClaudeCodeControlChannel(
         val claimed = pending.remove(requestId)?.complete(ControlOutcome.Error(error)) == true
         noteArrival(requestId, claimed)
         return claimed
+    }
+
+    /**
+     * 进程没了：还在等的请求一律以 [reason] 立刻失败，不再干等超时。
+     *
+     * 超时是给「CLI 活着但不认这个 subtype」兜底的，不是给「CLI 已经死了」用的 ——
+     * 后者不会再有任何应答，等满 8 秒（用量 20、拟名 30）只会让「应用中」空转，
+     * 最后还报成「CLI 未应答」，把真实原因藏起来。
+     *
+     * 只由 Manager 在**当前**进程意外结束时调（退出、读流坏了、写不进去）；
+     * 主动 stop / 换档不调 —— 那几条路自己管会话状态，旧请求照旧由超时兜底，
+     * 免得旧进程的握手协程抢先失败、把换档时攥着给新进程的消息退回输入框。
+     */
+    fun failAll(reason: String) {
+        for (requestId in pending.keys.toList()) {
+            pending.remove(requestId)?.complete(ControlOutcome.Error(reason))
+            // 失败的原因已经交给发起方了，临终前才到的应答不必再记成「来晚了」
+            sentAt.remove(requestId)
+        }
     }
 
     companion object {
