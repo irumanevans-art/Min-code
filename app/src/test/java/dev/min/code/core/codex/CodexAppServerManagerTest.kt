@@ -422,6 +422,85 @@ class CodexAppServerManagerTest {
         manager.close()
     }
 
+    // -----------------------------------------------------------------------
+    // 握手上限。app-server 卡死但不退出时，以前会永远停在 Starting，
+    // 而 isLive 把 Starting 算活 —— 前台服务一直开着耗电。
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `a handshake that never answers times out and takes the process with it`() = runBlocking {
+        val silent = ScriptedProcess()
+        val manager = CodexAppServerManager(handshakeTimeoutMs = 300) { silent }
+
+        assertTrue(manager.start())
+        assertEquals(SessionStatus.Starting, manager.state.value.status)
+        await { manager.state.value.status == SessionStatus.Failed }
+        assertTrue(manager.state.value.errorMessage.orEmpty().contains("未就绪"))
+        await { silent.destroyed }
+        await { !manager.isLive.value }
+        manager.close()
+    }
+
+    @Test
+    fun `a handshake that completed is left alone when the deadline passes`() = runBlocking {
+        val process = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/start" to listOf("""{"id":"2","result":{"threadId":"t"}}"""),
+        )
+        val manager = CodexAppServerManager(handshakeTimeoutMs = 300) { process }
+        manager.start()
+        await { manager.state.value.status == SessionStatus.Running }
+
+        delay(600)
+        assertEquals(SessionStatus.Running, manager.state.value.status)
+        assertFalse(process.destroyed)
+        manager.close()
+    }
+
+    /** 半路停掉：到点时不能把 Closed 改写成 Failed，也不该冒出一条超时红字 */
+    @Test
+    fun `stopping during the handshake leaves the deadline nothing to do`() = runBlocking {
+        val manager = CodexAppServerManager(handshakeTimeoutMs = 300) { ScriptedProcess() }
+        manager.start()
+        manager.stop()
+        assertEquals(SessionStatus.Closed, manager.state.value.status)
+
+        delay(600)
+        assertEquals(SessionStatus.Closed, manager.state.value.status)
+        assertNull(manager.state.value.errorMessage)
+        manager.close()
+    }
+
+    /**
+     * 进程换了一个：旧进程自己死掉（没经过 stop，它的计时没人取消），用户随即重开。
+     * 旧进程的时限到点时，新进程还在它自己的时限之内 —— 不能被误杀。
+     */
+    @Test
+    fun `the deadline of a dead process never touches the one started after it`() = runBlocking {
+        val first = ScriptedProcess()
+        val second = ScriptedProcess()
+        val launches = ArrayDeque(listOf(first, second))
+        val manager = CodexAppServerManager(handshakeTimeoutMs = 1_000) { launches.removeFirst() }
+
+        val firstStartedAt = System.currentTimeMillis()
+        manager.start()
+        first.destroy()
+        await { manager.state.value.status == SessionStatus.Failed }
+
+        // 新进程晚 500ms 起：旧的时限在 1000ms 到点，新的要到 1500ms 之后
+        delay(500 - (System.currentTimeMillis() - firstStartedAt))
+        assertTrue(manager.start())
+        delay(1_250 - (System.currentTimeMillis() - firstStartedAt))
+        assertEquals(SessionStatus.Starting, manager.state.value.status)
+        assertFalse(second.destroyed)
+
+        // 新进程自己的时限照样生效
+        await { manager.state.value.status == SessionStatus.Failed }
+        assertTrue(manager.state.value.errorMessage.orEmpty().contains("未就绪"))
+        await { second.destroyed }
+        manager.close()
+    }
+
     @Test
     fun `turn is refused before the thread exists`() {
         val manager = CodexAppServerManager { error("boom") }

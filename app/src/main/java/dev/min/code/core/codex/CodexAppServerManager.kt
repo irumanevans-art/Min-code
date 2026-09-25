@@ -16,6 +16,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +53,8 @@ fun interface CodexProcessLauncher {
  * 一轮跑到一半的活直接没了。现在它是 DI 里的单例，页面只是它的观察者。
  */
 class CodexAppServerManager(
+    /** 从拉起进程到 thread 就绪的上限，见 [HANDSHAKE_TIMEOUT_MS]。测试里调短；放在前面好让启动器照旧写成尾随 lambda */
+    private val handshakeTimeoutMs: Long = HANDSHAKE_TIMEOUT_MS,
     private val processLauncher: CodexProcessLauncher,
 ) : AutoCloseable {
 
@@ -163,6 +166,7 @@ class CodexAppServerManager(
     private var stdoutJob: Job? = null
     private var stderrJob: Job? = null
     private var waitJob: Job? = null
+    private var handshakeJob: Job? = null
     /** 用户主动停的，用来区分"关掉了"和"死掉了" */
     private var stopping = false
     private var options = Options()
@@ -208,6 +212,7 @@ class CodexAppServerManager(
         stdoutJob = readStdout(launched)
         stderrJob = readStderr(launched)
         waitJob = watchExit(launched)
+        handshakeJob = watchHandshake(launched)
 
         val id = nextRequestId()
         pendingRequests[id] = RequestKind.Initialize
@@ -438,6 +443,24 @@ class CodexAppServerManager(
         }
     }
 
+    /**
+     * 握手的上限：到点还停在 Starting，就当它起不来，进程连状态一起收掉。
+     *
+     * 没有这个的时候，app-server 卡死但不退出（watchExit 等不到退出码）会永远停在 Starting，
+     * 而 [isLive] 把 Starting 算活 —— 前台服务就一直开着、按着唤醒锁耗电。
+     *
+     * 醒来时只认**当初那个进程**：用户中途停掉再重开，[process] 已经换了一个，
+     * 新进程有它自己的表，这里不能去杀它。正常握手完成后 status 已是 Running，同样什么都不做。
+     */
+    private fun watchHandshake(activeProcess: Process): Job = scope.launch {
+        delay(handshakeTimeoutMs)
+        synchronized(lock) {
+            if (process !== activeProcess || _state.value.status != SessionStatus.Starting) return@synchronized
+            Log.w(TAG, "codex app-server 握手超时（${handshakeTimeoutMs}ms），结束进程")
+            failLocked("codex app-server 启动 ${handshakeTimeoutMs / 1000} 秒仍未就绪，已结束进程；原因若有会写在上方的进程输出里")
+        }
+    }
+
     // -----------------------------------------------------------------------
     // 事件
     // -----------------------------------------------------------------------
@@ -652,9 +675,11 @@ class CodexAppServerManager(
         stdoutJob?.cancel()
         stderrJob?.cancel()
         waitJob?.cancel()
+        handshakeJob?.cancel()
         stdoutJob = null
         stderrJob = null
         waitJob = null
+        handshakeJob = null
         _state.value = _state.value.copy(
             status = if (failed) SessionStatus.Failed else SessionStatus.Closed,
             busy = false,
@@ -764,6 +789,18 @@ class CodexAppServerManager(
 
         /** proot 的挂载点，和 Claude 那边同一个工作区 */
         const val DEFAULT_CWD = "/workspace"
+
+        /**
+         * 从拉起进程到 thread/start|resume 应答的上限。这一段是整个 Starting：
+         * proot → npm 装的 node 启动壳 → codex 原生二进制 → 读配置与认证 → 起 thread（resume 还要读回 rollout）。
+         *
+         * 60 秒的来历：codex 的握手没在真机上单独测过，参照的是同量级的已知数 ——
+         * 安装器给一次裸的 proot + node `--version` 冷启动留的就是 60 秒（ClaudeCodeInstaller.VERSION_TIMEOUT_MS）；
+         * Claude 侧启动后第一条 get_context_usage 实测 2.5～4.5 秒、机器一忙就过 8 秒（ClaudeCodeManager.fetchUsage 旁注），
+         * 所以 control 请求那套 8 秒（ClaudeCodeControlChannel.TIMEOUT_MS）对冷启动太紧。
+         * 两头代价不对称：判早了是把一次慢但正常的启动杀掉，判晚了只是多开一分钟前台服务 —— 取宽的一头。
+         */
+        const val HANDSHAKE_TIMEOUT_MS = 60_000L
 
         /** `turn/completed` 里干净跑完的那个 status，另外两个是 interrupted / failed */
         private const val TURN_COMPLETED = "completed"
