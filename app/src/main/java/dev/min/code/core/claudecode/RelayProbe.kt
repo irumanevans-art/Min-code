@@ -3,6 +3,8 @@ package dev.min.code.core.claudecode
 import android.util.Log
 import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.core.settings.joinClaudeApi
+import dev.min.code.core.settings.joinOpenAiApi
+import dev.min.code.core.settings.normalizeBaseUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -84,20 +86,53 @@ internal class RelayHttpStatusException(val code: Int, url: String) : RuntimeExc
 internal fun relayModelsUrl(baseUrl: String): String = joinClaudeApi(baseUrl, "/v1/models") + "?limit=1000"
 
 /**
+ * Anthropic 兼容基址没有 `/v1/models` 时，试 OpenAI 那条。
+ *
+ * DeepSeek 官方：会话走 `https://api.deepseek.com/anthropic`，模型列表在
+ * `https://api.deepseek.com/v1/models`。harness / 官方文档取列表都走后者。
+ * 基址以 `/anthropic` 或 `/claude` 结尾才剥，别的中转不瞎猜。
+ */
+internal fun openaiModelsFallbackUrl(anthropicBase: String): String? {
+    val root = normalizeBaseUrl(anthropicBase)
+    val stripped = when {
+        root.endsWith("/anthropic", ignoreCase = true) ->
+            root.dropLast("/anthropic".length).trimEnd('/')
+        root.endsWith("/claude", ignoreCase = true) ->
+            root.dropLast("/claude".length).trimEnd('/')
+        else -> return null
+    }
+    if (stripped.isBlank()) return null
+    return joinOpenAiApi(stripped, "/models")
+}
+
+/**
  * `GET /v1/models` 的公共取数：URL 拼接 + Bearer 优先、401/403 回退 x-api-key。
+ * Anthropic 基址 404/405 时，若能推出 OpenAI 列表地址再试一次（DeepSeek 同款）。
  * 会话侧的模型目录（[ClaudeCodeManager.fetchRelayModels]）、探活 [probeRelay]、
  * 供应商编辑页的 [fetchRelayModelIds] 三家共用 —— 鉴权策略变了只改这一处。
  * token 为空的语义（抛 vs 返回 NoToken）与失败分类是各调用方自己的事，这里一律抛出。
  */
 internal suspend fun fetchRelayModelsPayload(baseUrl: String, token: String): String =
     withContext(Dispatchers.IO) {
-        val url = relayModelsUrl(baseUrl)
-        // CLI 拿 ANTHROPIC_AUTH_TOKEN 发的是 Bearer；有的中转站只认 x-api-key，401 就换一种再试
         try {
-            relayHttpGet(url, mapOf("Authorization" to "Bearer $token"))
+            getModels(relayModelsUrl(baseUrl), token)
         } catch (e: RelayHttpStatusException) {
-            if (e.code == 401 || e.code == 403) relayHttpGet(url, mapOf("x-api-key" to token)) else throw e
+            val fallback = openaiModelsFallbackUrl(baseUrl)
+            if (fallback != null && (e.code == 404 || e.code == 405)) {
+                Log.i(TAG, "anthropic /v1/models HTTP ${e.code}, trying $fallback")
+                getModels(fallback, token)
+            } else {
+                throw e
+            }
         }
+    }
+
+/** Bearer 优先，401/403 再换 x-api-key。CLI 拿 ANTHROPIC_AUTH_TOKEN 发的是 Bearer。 */
+private fun getModels(url: String, token: String): String =
+    try {
+        relayHttpGet(url, mapOf("Authorization" to "Bearer $token"))
+    } catch (e: RelayHttpStatusException) {
+        if (e.code == 401 || e.code == 403) relayHttpGet(url, mapOf("x-api-key" to token)) else throw e
     }
 
 /**

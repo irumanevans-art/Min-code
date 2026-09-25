@@ -122,6 +122,30 @@ internal fun ModelPicker(profile: ApiProfile, onPick: (ApiProfile) -> Unit) {
             )
         }
     }
+    Hint(stringResource(R.string.providers_models_map_hint))
+
+    // 四档映射随时能手填：DeepSeek 这类 Anthropic 兼容基址本来就没有列表，
+    // 不能等「取模型」成功才画出输入框。
+    ModelSlot.entries.forEach { target ->
+        val current = profile.env[target.key].orEmpty()
+        InkTextField(
+            value = current,
+            onValueChange = { text ->
+                val trimmed = text.trim()
+                onPick(
+                    profile.copy(
+                        env = if (trimmed.isEmpty()) profile.env - target.key
+                        else profile.env + (target.key to trimmed),
+                    ),
+                )
+            },
+            label = stringResource(target.label),
+            placeholder = target.key,
+            singleLine = true,
+            monospace = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 
     when (val current = state) {
         is ModelsState.Failed -> Hint(current.text, error = true)

@@ -695,6 +695,7 @@
   <string name="providers_models_target_sonnet">Sonnet 那一档</string>
   <string name="providers_models_target_opus">Opus 那一档</string>
   <string name="providers_models_missing_hint">还没设主模型映射——会话里可能仍会要 claude-* 的 id。</string>
+  <string name="providers_models_map_hint">下面四档随时能手填。取模型是快捷方式：Anthropic 兼容基址没有列表时，会去同一家的 OpenAI /v1/models 再问一次（DeepSeek 就是这样）。</string>
   <string name="providers_context_title">上下文量</string>
   <string name="providers_context_hint">写的是 CLAUDE_CODE_MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW。第三方模型不是 200k 时就要设。</string>
   <string name="providers_context_max">快捷大小</string>

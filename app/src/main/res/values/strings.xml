@@ -698,6 +698,7 @@
   <string name="providers_models_target_sonnet">Sonnet slot</string>
   <string name="providers_models_target_opus">Opus slot</string>
   <string name="providers_models_missing_hint">No main model mapping yet — the session may still ask for claude-* ids.</string>
+  <string name="providers_models_map_hint">The four slots below can always be typed by hand. Fetching the list is a shortcut: if the Anthropic-compatible base has no list, we ask the same host’s OpenAI /v1/models (DeepSeek does this).</string>
   <string name="providers_context_title">Context window</string>
   <string name="providers_context_hint">Writes CLAUDE_CODE_MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW. Needed for third-party models that are not 200k.</string>
   <string name="providers_context_max">Quick size</string>

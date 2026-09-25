@@ -20,4 +20,30 @@ class RelayProbeUrlTest {
         assertEquals(withoutV1, withV1)
         assertTrue(withV1.endsWith("/v1/models?limit=1000"))
     }
+
+    @Test
+    fun deepseek_anthropic_base_falls_back_to_openai_models() {
+        assertEquals(
+            "https://api.deepseek.com/v1/models",
+            openaiModelsFallbackUrl("https://api.deepseek.com/anthropic"),
+        )
+        assertEquals(
+            "https://api.deepseek.com/v1/models",
+            openaiModelsFallbackUrl("https://api.deepseek.com/anthropic/"),
+        )
+    }
+
+    @Test
+    fun claude_suffix_also_falls_back() {
+        assertEquals(
+            "https://example.com/v1/models",
+            openaiModelsFallbackUrl("https://example.com/claude"),
+        )
+    }
+
+    @Test
+    fun ordinary_anthropic_base_has_no_openai_fallback() {
+        assertEquals(null, openaiModelsFallbackUrl("https://api.anthropic.com"))
+        assertEquals(null, openaiModelsFallbackUrl("https://dashscope.aliyuncs.com/apps/anthropic-coding"))
+    }
 }
