@@ -1,8 +1,5 @@
 package dev.min.code.ui.codex
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,9 +10,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -30,65 +27,60 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.State
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.R
 import dev.min.code.core.claudecode.SessionMeta
+import dev.min.code.core.codex.CODEX_EFFORT_LEVELS
 import dev.min.code.core.codex.CodexDecision
 import dev.min.code.core.codex.CodexEvent
 import dev.min.code.core.codex.CodexSessionSummary
-import dev.min.code.core.codex.CODEX_EFFORT_LEVELS
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.CODEX_WIRE_API_OPTIONS
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.ui.components.BackButton
+import dev.min.code.ui.components.FrostFade
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.InkDivider
+import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkRadio
 import dev.min.code.ui.components.InkSegmented
-import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.InkTopBar
+import dev.min.code.ui.components.LocalFrost
 import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
-import dev.min.code.ui.components.PaperCard
 import dev.min.code.ui.components.RikkaConfirmDialog
-import dev.min.code.ui.files.toImportSource
+import dev.min.code.ui.components.frostSource
+import dev.min.code.ui.components.frostVeil
+import dev.min.code.ui.components.rememberFrostState
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
-import dev.min.code.ui.session.AttachmentChip
-import dev.min.code.ui.session.ComposerPlus
-import dev.min.code.ui.session.FileMentionSuggestions
 import dev.min.code.ui.session.RenameDialog
-import dev.min.code.ui.session.SeaSendKey
 import dev.min.code.ui.session.SessionRowMenu
-import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Bookmark02
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Settings02
-import me.rerere.hugeicons.stroke.Stop
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -180,45 +172,68 @@ private fun CodexPageContent(vm: CodexVM) {
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            if (inSession) {
-                CodexTranscript(
-                    session = session,
-                    contentPadding = PaddingValues(
-                        start = 12.dp,
-                        end = 12.dp,
-                        top = 8.dp,
-                        // 给底部的输入坞留出位置，否则最后一条永远压在它下面
-                        bottom = 96.dp,
-                    ),
-                )
-                CodexComposer(
-                    draftState = draft,
-                    enabled = session.canSend,
-                    busy = session.busy,
-                    queued = session.queued,
-                    attachments = attachments,
-                    modelText = session.model?.takeIf { it.isNotBlank() }
-                        ?: stringResource(R.string.session_model_default),
-                    modeText = session.effort?.takeIf { it.isNotBlank() }
-                        ?: stringResource(R.string.codex_effort_default),
-                    onDraftChange = vm::setDraft,
-                    onSend = vm::send,
-                    onTakeQueued = vm::takeQueued,
-                    onImportFile = vm::importFile,
-                    onRemoveAttachment = vm::removeAttachment,
-                    onSearchFiles = vm::searchFiles,
-                    onSlash = { slash ->
-                        when (slash) {
-                            CodexSlash.MODEL, CodexSlash.EFFORT -> showTurnSettings = true
-                            CodexSlash.NEW -> vm.startNew()
-                        }
-                    },
-                    onOpenTurnSettings = { showTurnSettings = true },
-                    onStop = vm::stop,
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                )
-            } else {
+        if (inSession) {
+            // 和 Claude 页同一种摆法：会话流铺到屏幕底，输入胶囊浮在上面，背后一条纸色渐隐。
+            // 底部不吃 Scaffold 的导航栏留白——胶囊自己会让出系统导航那一截（见 ComposerCapsule），
+            // 两边都垫就是双份
+            val density = LocalDensity.current
+            var dockPx by remember { mutableIntStateOf(with(density) { DOCK_ESTIMATE.roundToPx() }) }
+            val dockReserve = with(density) { dockPx.toDp() }
+            val veilBand = dockReserve + FrostFade
+            val frost = rememberFrostState()
+            CompositionLocalProvider(LocalFrost provides frost) {
+                Box(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).imePadding()) {
+                    Box(Modifier.fillMaxSize().frostSource(frost)) {
+                        CodexTranscript(
+                            session = session,
+                            contentPadding = PaddingValues(
+                                start = 12.dp,
+                                end = 12.dp,
+                                top = 8.dp,
+                                // 量出来的输入坞高度：挂了附件、排了消息时坞会长高，最后一条不能被它压住
+                                bottom = dockReserve,
+                            ),
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(veilBand)
+                            .frostVeil(fromTop = false, hold = (dockReserve / veilBand).coerceIn(0.2f, 0.92f)),
+                    )
+                    CodexComposer(
+                        draftState = draft,
+                        enabled = session.canSend,
+                        busy = session.busy,
+                        queued = session.queued,
+                        attachments = attachments,
+                        modelText = session.model?.takeIf { it.isNotBlank() }
+                            ?: stringResource(R.string.session_model_default),
+                        modeText = session.effort?.takeIf { it.isNotBlank() }
+                            ?: stringResource(R.string.codex_effort_default),
+                        onDraftChange = vm::setDraft,
+                        onSend = vm::send,
+                        onTakeQueued = vm::takeQueued,
+                        onImportFile = vm::importFile,
+                        onRemoveAttachment = vm::removeAttachment,
+                        onSearchFiles = vm::searchFiles,
+                        onSlash = { slash ->
+                            when (slash) {
+                                CodexSlash.MODEL, CodexSlash.EFFORT -> showTurnSettings = true
+                                CodexSlash.NEW -> vm.startNew()
+                            }
+                        },
+                        onOpenTurnSettings = { showTurnSettings = true },
+                        onStop = vm::stop,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { dockPx = it.height },
+                    )
+                }
+            }
+        } else {
+            Box(Modifier.fillMaxSize().padding(padding)) {
                 CodexStartPane(
                     runtime = runtime,
                     session = session,
@@ -477,253 +492,6 @@ private fun CodexStartPane(
             ) { Text(stringResource(R.string.codex_start)) }
         }
     }
-}
-
-/**
- * 输入坞。停靠在底部、跟着键盘走 —— 以前它是滚动列的最后一项，
- * 一聚焦就被键盘顶出视野。
- *
- * 正文由 VM 持有并落盘（草稿）：切页、杀进程再回来都还在，
- * threadId 换了 VM 会自己换档，这里不保管状态。
- *
- * 发送键与停止键的摆法照抄 Claude 的胶囊（SeaSendKey + 并排停止）：
- * 两个引擎在屏幕上要长一个样，差别只在谁在说话。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CodexComposer(
-    draftState: State<String>,
-    enabled: Boolean,
-    busy: Boolean,
-    queued: List<String>,
-    attachments: List<CodexAttachment>,
-    modelText: String,
-    modeText: String,
-    onDraftChange: (String) -> Unit,
-    onSend: (String) -> Boolean,
-    onTakeQueued: (Int) -> Unit,
-    onImportFile: (String, java.io.InputStream, (Boolean) -> Unit) -> Unit,
-    onRemoveAttachment: (CodexAttachment) -> Unit,
-    onSearchFiles: suspend (String) -> List<String>,
-    onSlash: (CodexSlash) -> Unit,
-    onOpenTurnSettings: () -> Unit,
-    onStop: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val draft by draftState
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var importing by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<CodexAttachment?>(null) }
-
-    val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris ->
-        if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
-        importing = true
-        // 取文件名和开流都要过 ContentProvider —— 文档来自云盘时这一下能卡住几百毫秒，
-        // 而这个回调本身跑在主线程上
-        scope.launch {
-            var remaining = uris.size
-            uris.forEach { uri ->
-                // 和文件页的导入同一个取名 + 开流（toImportSource），
-                // 取不到显示名时 SAF 的 `primary:Download/a.txt` 也会被剥成 `a.txt`
-                val (name, stream) = withContext(Dispatchers.IO) {
-                    uri.toImportSource(context.contentResolver).let { it.name to it.open() }
-                }
-                if (stream == null) {
-                    remaining -= 1
-                    if (remaining == 0) importing = false
-                    return@forEach
-                }
-                onImportFile(name, stream) {
-                    remaining -= 1
-                    if (remaining == 0) importing = false
-                }
-            }
-        }
-    }
-
-    PaperCard(
-        modifier = modifier
-            .fillMaxWidth()
-            .imePadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        val slashMatches = remember(draft) { codexSlashMatches(draft) }
-        AnimatedVisibility(
-            visible = slashMatches.isNotEmpty(),
-            enter = InkMotion.expand,
-            exit = InkMotion.collapse,
-        ) {
-            Column {
-                slashMatches.forEach { slash ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { onDraftChange(slash.command) }
-                            .padding(horizontal = 16.dp, vertical = 9.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            slash.command,
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetbrainsMono),
-                        )
-                        Text(
-                            stringResource(slash.labelRes()),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-        }
-        // 候选摆在输入框上方：手指在下面打字，列表从上面长出来才不会被自己的手挡住
-        FileMentionSuggestions(
-            text = draft,
-            enabled = enabled,
-            onSearchFiles = onSearchFiles,
-            onTextChange = onDraftChange,
-        )
-        AnimatedVisibility(
-            visible = attachments.isNotEmpty(),
-            enter = InkMotion.expand,
-            exit = InkMotion.collapse,
-        ) {
-            FlowRow(
-                Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                attachments.forEach { att ->
-                    AttachmentChip(name = att.name, onRemove = { pendingDelete = att })
-                }
-            }
-        }
-        // 排着的消息摆在输入框**上方**而不是混进会话流：它们还没被模型看见，
-        // 放进流里就成了「我说了话它没理我」。codex TUI 也是这么摆的。
-        AnimatedVisibility(
-            visible = queued.isNotEmpty(),
-            enter = InkMotion.expand,
-            exit = InkMotion.collapse,
-        ) {
-            Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                Text(
-                    stringResource(R.string.codex_queued_hint, queued.size),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    queued.forEachIndexed { index, text ->
-                        InkChip(
-                            label = text.lineSequence().first().take(QUEUED_CHIP_CHARS),
-                            selected = false,
-                            onClick = { onTakeQueued(index) },
-                        )
-                    }
-                }
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            // 和 Claude 同一个「+」：附件、模型 / 思考强度都收在这里。
-            // 图片那两项暂不给 —— Codex 的 localImage 内容块还没接
-            ComposerPlus(
-                enabled = enabled && !importing,
-                busy = importing,
-                canPickImage = false,
-                showImageItems = false,
-                onPickFile = { filePicker.launch(arrayOf("*/*")) },
-                onPickImage = {},
-                onTakePhoto = {},
-                modelText = modelText,
-                modeText = modeText,
-                onOpenSettings = onOpenTurnSettings,
-            )
-            InkTextField(
-                value = draft,
-                onValueChange = onDraftChange,
-                // busy 时提示语换成「追加消息」，和 Claude 那边同一句：
-                // 按下去的含义变了（排队，不是立即发），提示就得跟着变
-                label = stringResource(
-                    if (busy) R.string.composer_hint_queue else R.string.codex_composer_hint,
-                ),
-                enabled = enabled,
-                maxLines = 6,
-                modifier = Modifier.weight(1f),
-            )
-            // 停止键与发送键并排、负间距相叠——与 Claude 胶囊同一组：
-            // 它们是同一件事的两个方向。busy 时发送键不再睡着，改成排队态
-            // （codex 自己就是排队语义），停止键必须一按就到
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy((-6).dp),
-            ) {
-                AnimatedVisibility(
-                    visible = busy,
-                    enter = InkMotion.expand,
-                    exit = InkMotion.collapse,
-                ) {
-                    InkIconButton(
-                        icon = HugeIcons.Stop,
-                        contentDescription = stringResource(R.string.composer_interrupt),
-                        onClick = onStop,
-                        tint = MaterialTheme.sea.vermilion,
-                        size = 32.dp,
-                        iconSize = 16.dp,
-                    )
-                }
-                SeaSendKey(
-                    // 只挂了附件、一个字没写也该能发 —— 那本身就是一句「看看这个」
-                    enabled = enabled && (draft.isNotBlank() || attachments.isNotEmpty()),
-                    queued = busy,
-                    onClick = {
-                        // 本地命令在这里下车，不进 turn/start：协议里没有斜杠命令，
-                        // 发过去只会变成给模型的一句话，白花一轮
-                        val slash = codexSlashTarget(draft)
-                        when {
-                            slash != null -> { onSlash(slash); onDraftChange("") }
-                            onSend(draft) -> onDraftChange("")
-                        }
-                    },
-                )
-            }
-        }
-    }
-
-    // 移除附件是真删文件，问一句。留在工作区里的话 Codex 照样 ls 得到、读得到，
-    // 「我明明去掉了」和「它还是看见了」对不上才是更坏的结果
-    pendingDelete?.let { target ->
-        RikkaConfirmDialog(
-            show = true,
-            title = stringResource(R.string.composer_delete_attachment_title),
-            confirmText = stringResource(R.string.common_delete),
-            dismissText = stringResource(R.string.common_cancel),
-            onConfirm = {
-                onRemoveAttachment(target)
-                pendingDelete = null
-            },
-            onDismiss = { pendingDelete = null },
-        ) {
-            Text(stringResource(R.string.composer_delete_attachment_body, target.name))
-        }
-    }
-}
-
-/** 排队 chip 上留几个字。一行装得下三四个，够认出是哪条 */
-private const val QUEUED_CHIP_CHARS = 18
-
-/** 命令旁边那句说明。命令名本身不翻译，说明跟着界面语言走 */
-private fun CodexSlash.labelRes(): Int = when (this) {
-    CodexSlash.MODEL, CodexSlash.EFFORT -> R.string.codex_turn_settings
-    CodexSlash.NEW -> R.string.codex_new_session
 }
 
 /**
@@ -1082,6 +850,9 @@ private fun SessionStatus.labelRes(): Int = when (this) {
     SessionStatus.Closed -> R.string.codex_status_closed
     SessionStatus.Failed -> R.string.codex_status_failed
 }
+
+/** 输入坞量出高度之前先按这个垫会话流：一只空胶囊加导航让位大约这么高 */
+private val DOCK_ESTIMATE = 96.dp
 
 /** 官方登录命令，给用户照着在终端里敲 */
 private const val LOGIN_COMMAND = "/opt/codex/bin/codex login --device-auth"

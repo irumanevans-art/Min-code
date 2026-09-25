@@ -11,33 +11,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,29 +23,16 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeImage
@@ -82,15 +47,9 @@ import dev.min.code.core.claudecode.formatUsd
 import dev.min.code.core.claudecode.parseSessionCostUsd
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkIconButton
-import dev.min.code.ui.components.LocalFrost
 import dev.min.code.ui.components.RikkaConfirmDialog
-import dev.min.code.ui.components.frostPane
-import dev.min.code.ui.components.InkRingProgress
 import dev.min.code.ui.files.toImportSource
 import dev.min.code.ui.theme.InkMotion
-import dev.min.code.ui.theme.JetbrainsMono
-import dev.min.code.ui.theme.MinKai
-import dev.min.code.ui.theme.sea
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -98,11 +57,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.Attachment01
-import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Image02
-import me.rerere.hugeicons.stroke.MoreHorizontal
-import me.rerere.hugeicons.stroke.Stop
 import dev.min.code.core.session.SessionStatus
 
 /** 上下文用到这个比例就变告警色 —— CLI 到这一带会自动压缩，值得提前知道 */
@@ -111,7 +66,10 @@ private const val CONTEXT_WARN_RATIO = 0.85f
 /** 没有撤回来源时的空事件流。写成常量而不是默认表达式，免得每次重组都换一个实例 */
 private val NoWithdrawals: Flow<ComposerDraft> = emptyFlow()
 
-/** 输入坞：浅一阶的纸，上缘一道海的水平线；文字与工具分两层，右下角一个朝上的「>」。 */
+/**
+ * Claude 会话页的输入坞：草稿、附件、斜杠命令、粘贴折叠与 `!` 本地执行都在这里。
+ * 胶囊本身长什么样在 [ComposerCapsule]，和 Codex 那边共用一只。
+ */
 @Composable
 internal fun ClaudeCodeInputBar(
     session: ClaudeCodeManager.SessionState,
@@ -181,9 +139,6 @@ internal fun ClaudeCodeInputBar(
     var sendSequence by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val palette = MaterialTheme.sea
-    val dockText = MaterialTheme.colorScheme.onSurface
-    val dockSecondary = MaterialTheme.colorScheme.onSurfaceVariant
     fun currentDraft(): ComposerDraft = ComposerDraft(
         text = input,
         attachments = attachments.map { DraftAttachment(it.name, it.path) },
@@ -379,33 +334,20 @@ internal fun ClaudeCodeInputBar(
     val shownCommands = lastCommands.update(matchedCommands.takeIf { it.isNotEmpty() }).orEmpty()
 
     Column(modifier = modifier.fillMaxWidth()) {
-        AnimatedVisibility(
-            visible = attachments.isNotEmpty() || images.isNotEmpty(),
-            enter = InkMotion.expand,
-            exit = InkMotion.collapse,
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(start = 12.dp, end = 12.dp, top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                images.forEach { img ->
-                    AttachmentChip(
-                        name = img.name,
-                        icon = HugeIcons.Image02,
-                        onRemove = { images = images - img },
-                    )
-                }
-                attachments.forEach { att ->
-                    AttachmentChip(
-                        name = att.name,
-                        // 摘芯片 = 删工作区文件（否则"取消"只是视觉上的），所以先问一句
-                        onRemove = { pendingAttachmentDelete = att },
-                    )
-                }
+        ComposerChipStrip(visible = attachments.isNotEmpty() || images.isNotEmpty()) {
+            images.forEach { img ->
+                AttachmentChip(
+                    name = img.name,
+                    icon = HugeIcons.Image02,
+                    onRemove = { images = images - img },
+                )
+            }
+            attachments.forEach { att ->
+                AttachmentChip(
+                    name = att.name,
+                    // 摘芯片 = 删工作区文件（否则"取消"只是视觉上的），所以先问一句
+                    onRemove = { pendingAttachmentDelete = att },
+                )
             }
         }
 
@@ -462,147 +404,57 @@ internal fun ClaudeCodeInputBar(
 
         val canSend = (input.isNotBlank() || attachments.isNotEmpty() || images.isNotEmpty()) && running
         val usage = composerUsage(session, dailyCostUsd)
-        val fieldInteraction = remember { MutableInteractionSource() }
-        val focused by fieldInteraction.collectIsFocusedAsState()
-        ComposerDock(busy = session.busy, modifier = Modifier.fillMaxWidth()) {
-            // 输入框是一只胶囊：最亮的纸、一圈 hairline，聚焦时边变成海的深处；发送键住在胶囊右端
-            val fieldShape = RoundedCornerShape(24.dp)
-            val fieldBorder by animateColorAsState(
-                if (focused && running) palette.seaDeep else MaterialTheme.colorScheme.outlineVariant,
-                InkMotion.effect(),
-                label = "fieldBorder",
-            )
-            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                val frost = LocalFrost.current
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(fieldShape)
-                        .then(
-                            if (frost != null) {
-                                Modifier.frostPane(frost)
-                            } else {
-                                Modifier.background(MaterialTheme.colorScheme.surfaceContainerLowest)
-                            },
-                        )
-                        .border(1.dp, fieldBorder, fieldShape)
-                        .padding(start = 3.dp, end = 3.dp, top = 2.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    ComposerPlus(
-                        enabled = running && !importing,
-                        busy = importing,
-                        canPickImage = images.size < maxImages,
-                        onPickFile = { filePicker.launch(arrayOf("*/*")) },
-                        onPickImage = {
-                            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        },
-                        onTakePhoto = {
-                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                                PackageManager.PERMISSION_GRANTED
-                            ) {
-                                val uri = newCameraUri(context)
-                                cameraUri = uri
-                                takePicture.launch(uri)
-                            } else {
-                                cameraPermission.launch(Manifest.permission.CAMERA)
-                            }
-                        },
-                        contextRatio = usage.ratio,
-                        contextText = usage.contextText,
-                        contextWarn = usage.warn,
-                        costText = usage.costText,
-                        modelText = session.modelChipLabel(),
-                        modeText = "${session.permissionMode.label} · ${session.effortChipLabel()}",
-                        onRefreshUsage = onRefreshUsage,
-                        onOpenSettings = { openSettings(null) },
-                    )
-                    BasicTextField(
-                        value = input,
-                        onValueChange = { next ->
-                            // 一次性涌进来的大段文本 = 粘贴。原样留在框里的话，5 行的输入框
-                            // 会变成一条几百行的滚动条，既看不到自己在写什么，也没法确认贴对了没有
-                            val collapsed = collapsePaste(input, next, pasteSeq + 1)
-                            if (collapsed == null) {
-                                input = next
-                            } else {
-                                pasteSeq += 1
-                                pastes = pastes + (pasteSeq to collapsed.pasted)
-                                input = collapsed.text
-                            }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 6.dp, top = 4.dp, bottom = 4.dp)
-                            .onFocusChanged { onComposerFocusChange(it.isFocused) },
-                        // 你写的话是人的声音：楷书
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = dockText, fontFamily = MinKai),
-                        cursorBrush = SolidColor(palette.seaDeep),
-                        maxLines = 5,
-                        enabled = running,
-                        interactionSource = fieldInteraction,
-                        decorationBox = { inner ->
-                            val hint = when {
-                                !running -> stringResource(R.string.composer_hint_not_ready)
-                                session.busy -> stringResource(R.string.composer_hint_queue)
-                                else -> stringResource(R.string.composer_hint)
-                            }
-                            // 最小高度放在这里而不是外层：字才会在胶囊里垂直居中，多行时再往上长
-                            Box(Modifier.heightIn(min = 40.dp), contentAlignment = Alignment.CenterStart) {
-                                if (input.isEmpty() && hint.isNotEmpty()) {
-                                    Text(
-                                        hint,
-                                        style = MaterialTheme.typography.bodyLarge.copy(fontFamily = MinKai),
-                                        color = dockSecondary,
-                                    )
-                                }
-                                inner()
-                            }
-                        },
-                    )
-                    // 停止键（= Esc）跟发送键并排住在胶囊里。它没有跟着状态行收进「+」——
-                    // 埋进下拉菜单就要两次点击，而"停下"这件事必须一按就到。
-                    // 和发送分开而不是把发送变成停止：生成中照样可以追加消息，
-                    // 换成同一个键的话，想补一句反而把任务打断了。
-                    //
-                    // 这两个键自成一组（外层那 4 dp 只隔开输入区和这一组）：它们是同一件事的
-                    // 两个方向，贴在一起读起来才是一对，而不是两个零件。
-                    // 间距取负：两个键的盒子都比各自的图形大出一圈（32/16 与 44/15），
-                    // 留 0 也还有二十多 dp 的空白横在中间。让盒子叠 6 dp，图形之间才真的挨上；
-                    // 停止键仍有 26 dp 的触控面，比它 16 dp 的图形还宽。
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy((-6).dp),
-                    ) {
-                        AnimatedVisibility(
-                            visible = session.busy,
-                            enter = InkMotion.expand,
-                            exit = InkMotion.collapse,
-                        ) {
-                            InkIconButton(
-                                icon = HugeIcons.Stop,
-                                contentDescription = stringResource(R.string.composer_interrupt),
-                                onClick = onInterrupt,
-                                tint = palette.vermilion,
-                                size = 32.dp,
-                                iconSize = 16.dp,
-                            )
-                        }
-                        SeaSendKey(
-                            enabled = canSend,
-                            queued = session.busy,
-                            onClick = { submit() },
-                        )
-                    }
+        ComposerCapsule(
+            value = input,
+            onValueChange = { next ->
+                // 一次性涌进来的大段文本 = 粘贴。原样留在框里的话，5 行的输入框
+                // 会变成一条几百行的滚动条，既看不到自己在写什么，也没法确认贴对了没有
+                val collapsed = collapsePaste(input, next, pasteSeq + 1)
+                if (collapsed == null) {
+                    input = next
+                } else {
+                    pasteSeq += 1
+                    pastes = pastes + (pasteSeq to collapsed.pasted)
+                    input = collapsed.text
                 }
-            }
-            // 胶囊以下不再有任何一行。状态行（模型摘要 · 上下文 · 花费）整条收进了「+」——
-            // 它是常驻的参考信息，却占着手机上最金贵的一条横向空间，还逼着三样东西互相挤。
-            // 留下的这一截只让出系统导航的位置。
-            val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-            Spacer(Modifier.height((navBottom / 2).coerceAtLeast(8.dp)))
-        }
+            },
+            enabled = running,
+            busy = session.busy,
+            canSend = canSend,
+            onSend = { submit() },
+            onInterrupt = onInterrupt,
+            onFocusChange = onComposerFocusChange,
+            plus = {
+                ComposerPlus(
+                    enabled = running && !importing,
+                    busy = importing,
+                    canPickImage = images.size < maxImages,
+                    onPickFile = { filePicker.launch(arrayOf("*/*")) },
+                    onPickImage = {
+                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onTakePhoto = {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            val uri = newCameraUri(context)
+                            cameraUri = uri
+                            takePicture.launch(uri)
+                        } else {
+                            cameraPermission.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    contextRatio = usage.ratio,
+                    contextText = usage.contextText,
+                    contextWarn = usage.warn,
+                    costText = usage.costText,
+                    modelText = session.modelChipLabel(),
+                    modeText = "${session.permissionMode.label} · ${session.effortChipLabel()}",
+                    onRefreshUsage = onRefreshUsage,
+                    onOpenSettings = { openSettings(null) },
+                )
+            },
+        )
     }
 
     if (settingsOpen) {
@@ -702,28 +554,6 @@ private data class Attachment(val name: String, val path: String)
 /** 待随下一条消息发出的图片。不落盘 —— 截图这种一次性图片没有留在工作区的理由。 */
 private data class PendingImage(val name: String, val block: ClaudeCodeImage)
 
-/** 工具独占一行，保留完整触控面积。 */
-@Composable
-private fun ComposerIcon(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-    busy: Boolean = false,
-    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-) {
-    InkIconButton(
-        icon = icon,
-        contentDescription = label,
-        onClick = onClick,
-        enabled = enabled,
-        busy = busy,
-        tint = tint,
-        size = 48.dp,
-        iconSize = 21.dp,
-    )
-}
-
 @Composable
 private fun SlashCommandList(
     commands: List<ClaudeCodeManager.SlashCommand>,
@@ -731,28 +561,7 @@ private fun SlashCommandList(
 ) {
     Column(modifier = Modifier.heightIn(max = 200.dp)) {
         commands.forEach { cmd ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onPick(cmd) }
-                    .padding(horizontal = 16.dp, vertical = 9.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "/${cmd.name}",
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetbrainsMono),
-                )
-                cmd.description?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
+            SlashSuggestionRow(command = "/${cmd.name}", description = cmd.description, onClick = { onPick(cmd) })
         }
     }
 }

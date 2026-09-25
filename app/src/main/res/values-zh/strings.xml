@@ -99,7 +99,6 @@
   <string name="codex_status_running">运行中</string>
   <string name="codex_status_closed">已停止</string>
   <string name="codex_status_failed">已中断</string>
-  <string name="codex_composer_hint">问问 Codex</string>
   <string name="codex_queued_hint">排着 %1$d 条 · 点一下取回</string>
   <string name="codex_turn_settings">模型与思考</string>
   <string name="codex_turn_settings_scope">从下一轮起对这条会话生效。连接配置里那一份仍是新会话的默认。</string>
