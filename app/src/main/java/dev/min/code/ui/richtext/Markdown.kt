@@ -135,10 +135,15 @@ class MarkdownDoc private constructor(val text: String, val root: ASTNode?) {
         val EMPTY = MarkdownDoc("", null)
         private val parser = MarkdownParser(GFMFlavourDescriptor())
 
+        /**
+         * 公式先保护再解析（[protectMath]）。放在这里是因为 parse 本身就是流式时跑在后台的那一步，
+         * 预处理跟着它走，主线程不多花一次。[text] 存的是改写后的原文：AST 的偏移是对着它算的。
+         */
         fun parse(text: String): MarkdownDoc {
             if (text.isBlank()) return EMPTY
-            val tree = runCatching { parser.buildMarkdownTreeFromString(text) }.getOrNull()
-            return MarkdownDoc(text, tree)
+            val source = protectMath(text)
+            val tree = runCatching { parser.buildMarkdownTreeFromString(source) }.getOrNull()
+            return MarkdownDoc(source, tree)
         }
     }
 }
@@ -216,20 +221,26 @@ private fun Heading(node: ASTNode, text: String, style: TextStyle) {
 
 @Composable
 private fun CodeFence(node: ASTNode, text: String) {
-    val lang = node.children.firstOrNull { it.type == MarkdownTokenTypes.FENCE_LANG }?.text(text)?.trim().orEmpty()
-    // 正文 = 所有 CODE_FENCE_CONTENT 段落，中间的 EOL 原样保留
-    val code = buildString {
-        var started = false
-        node.children.forEach { child ->
-            when (child.type) {
-                MarkdownTokenTypes.CODE_FENCE_CONTENT -> { append(child.text(text)); started = true }
-                MarkdownTokenTypes.EOL -> if (started) append('\n')
-                else -> Unit
-            }
-        }
-    }.trimEnd('\n')
-    HighlightCodeBlock(code = code, language = lang)
+    val lang = fenceLanguage(node, text)
+    val code = fenceCode(node, text)
+    if (lang.equals(MATH_FENCE_LANG, ignoreCase = true)) MathBlock(source = code)
+    else HighlightCodeBlock(code = code, language = lang)
 }
+
+internal fun fenceLanguage(node: ASTNode, text: String): String =
+    node.children.firstOrNull { it.type == MarkdownTokenTypes.FENCE_LANG }?.text(text)?.trim().orEmpty()
+
+/** 正文 = 所有 CODE_FENCE_CONTENT 段落，中间的 EOL 原样保留 */
+internal fun fenceCode(node: ASTNode, text: String): String = buildString {
+    var started = false
+    node.children.forEach { child ->
+        when (child.type) {
+            MarkdownTokenTypes.CODE_FENCE_CONTENT -> { append(child.text(text)); started = true }
+            MarkdownTokenTypes.EOL -> if (started) append('\n')
+            else -> Unit
+        }
+    }
+}.trimEnd('\n')
 
 private fun indentedCode(node: ASTNode, text: String): String =
     node.text(text).lines().joinToString("\n") { it.removePrefix("    ").removePrefix("\t") }.trimEnd()
@@ -377,8 +388,14 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInline(
 
         MarkdownElementTypes.CODE_SPAN -> {
             val raw = node.text(text)
-            val inner = raw.trim('`').trim()
-            withStyle(SpanStyle(fontFamily = JetbrainsMono, background = codeBg, fontSize = 13.sp)) { append(inner) }
+            val math = inlineMathSource(raw)
+            if (math != null) {
+                // 行内公式（protectMath 包出来的）：等宽、不垫底色——和正文分得开，又不像一段代码
+                withStyle(SpanStyle(fontFamily = JetbrainsMono, fontSize = 13.sp)) { append(math) }
+            } else {
+                val inner = raw.trim('`').trim()
+                withStyle(SpanStyle(fontFamily = JetbrainsMono, background = codeBg, fontSize = 13.sp)) { append(inner) }
+            }
         }
 
         MarkdownElementTypes.STRONG -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {

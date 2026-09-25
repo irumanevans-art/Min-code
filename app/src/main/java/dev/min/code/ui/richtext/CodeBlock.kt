@@ -78,23 +78,10 @@ fun HighlightCodeBlock(
     // 高亮跟着风格走：海那套里关键字是海的深处、数字是石墨蓝，整块都是蓝的，
     // 落在灰白的云或暖陶的纸上就成了另一套配色的残留
     val palette = LocalSkin.current.code(dark)
-    val context = LocalContext.current
     val lines = remember(code) { code.lines() }
     var expanded by remember(code) { mutableStateOf(lines.size <= COLLAPSE_LINES) }
-    var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1500)
-            copied = false
-        }
-    }
     val shown = if (expanded) code else lines.take(COLLAPSE_LINES).joinToString("\n")
     val textStyle = style ?: TextStyle(fontSize = 12.sp, lineHeight = 17.sp)
-    val copyColor by animateColorAsState(
-        if (copied) MaterialTheme.sea.seaDeep else MaterialTheme.colorScheme.onSurfaceVariant,
-        InkMotion.effect(),
-        label = "copy",
-    )
     val chevron by animateFloatAsState(if (expanded) 180f else 0f, InkMotion.spatial(), label = "chevron")
 
     Column(
@@ -119,29 +106,7 @@ fun HighlightCodeBlock(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.weight(1f))
-            Row(
-                modifier = Modifier
-                    .clip(MaterialTheme.shapes.small)
-                    .clickable(role = Role.Button) {
-                        context.writeClipboardText(code)
-                        copied = true
-                    }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(
-                    imageVector = if (copied) HugeIcons.Tick01 else HugeIcons.Copy01,
-                    contentDescription = stringResource(R.string.common_copy_code),
-                    modifier = Modifier.size(13.dp),
-                    tint = copyColor,
-                )
-                Text(
-                    text = if (copied) stringResource(R.string.common_copied) else stringResource(R.string.common_copy),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = copyColor,
-                )
-            }
+            CopyAction(text = code, description = stringResource(R.string.common_copy_code))
         }
         val bodyScroll = if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState())
         Box(
@@ -187,6 +152,52 @@ fun HighlightCodeBlock(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+/**
+ * 复制键：代码块头上和公式块旁边共用一份。复制过了字色变海的深处，1.5 s 后回来。
+ * [showLabel] 为 false 时只留图标——公式块没有头，一个字「复制」会挤着公式。
+ */
+@Composable
+internal fun CopyAction(text: String, description: String, showLabel: Boolean = true) {
+    val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1500)
+            copied = false
+        }
+    }
+    val copyColor by animateColorAsState(
+        if (copied) MaterialTheme.sea.seaDeep else MaterialTheme.colorScheme.onSurfaceVariant,
+        InkMotion.effect(),
+        label = "copy",
+    )
+    Row(
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .clickable(role = Role.Button) {
+                context.writeClipboardText(text)
+                copied = true
+            }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = if (copied) HugeIcons.Tick01 else HugeIcons.Copy01,
+            contentDescription = description,
+            modifier = Modifier.size(13.dp),
+            tint = copyColor,
+        )
+        if (showLabel) {
+            Text(
+                text = if (copied) stringResource(R.string.common_copied) else stringResource(R.string.common_copy),
+                style = MaterialTheme.typography.labelSmall,
+                color = copyColor,
+            )
         }
     }
 }

@@ -786,6 +786,7 @@
 
   <string name="md_image">[Image]</string>
   <string name="md_image_alt">[Image: %1$s]</string>
+  <string name="md_copy_math">Copy formula</string>
 
   <string name="about_title">About</string>
   <string name="about_intro">Runs the official Claude Code CLI inside Ubuntu (proot) on your phone, driven by an interface that reads like a work log.</string>

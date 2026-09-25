@@ -783,6 +783,7 @@
 
   <string name="md_image">[图片]</string>
   <string name="md_image_alt">[图片：%1$s]</string>
+  <string name="md_copy_math">复制公式</string>
 
   <string name="about_title">关于</string>
   <string name="about_intro">把官方 Claude Code CLI 装进手机上的 Ubuntu（proot）里，用一个像工作日志的界面驱动它。</string>
