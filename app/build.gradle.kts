@@ -180,6 +180,8 @@ dependencies {
     // 本机无线调试拉起 shell-uid 的 PrivilegedServer，不依赖另装 Shizuku。
     // ADB 协议/TLS/配对代码移植进 io.github.muntashirakon.adb（源自 libadb-android，Apache-2.0，去掉了 Conscrypt）。
     // bcpkix 供配对加密与自签证书；spake2-android 带 BoringSSL 的 libspake2.so，必须和 adbd 同实现才能配上。
+    // 那几个 Java 文件里的文档注释一律写成 /* */ 而不是 /** */：当前 lint 解析 Java 文档注释时
+    // 抛 NoSuchMethodError（JavaDocParser.parseDataItem），release 的 lintVital 会直接崩。
     implementation(libs.bouncycastle.bcpkix)
     implementation(libs.spake2)
     "baselineProfile"(project(":baselineprofile"))

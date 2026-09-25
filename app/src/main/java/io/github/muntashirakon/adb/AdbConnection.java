@@ -28,14 +28,14 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.security.auth.DestroyFailedException;
 
-/**
+/*
  * This class represents an ADB connection.
  */
 // Copyright 2013 Cameron Gutman
 public class AdbConnection implements Closeable {
     public static final String TAG = AdbConnection.class.getSimpleName();
 
-    /**
+    /*
      * The underlying socket that this class uses to communicate with the target device.
      */
     @NonNull
@@ -48,72 +48,72 @@ public class AdbConnection implements Closeable {
 
     private final int mApi;
 
-    /**
+    /*
      * The last allocated local stream ID. The ID chosen for the next stream will be this value + 1.
      */
     private int mLastLocalId;
 
-    /**
+    /*
      * The input stream that this class uses to read from the socket.
      */
     @GuardedBy("lock")
     @NonNull
     private final InputStream mPlainInputStream;
 
-    /**
+    /*
      * The output stream that this class uses to read from the socket.
      */
     @GuardedBy("lock")
     @NonNull
     private final OutputStream mPlainOutputStream;
 
-    /**
+    /*
      * The input stream that this class uses to read from the TLS socket.
      */
     @GuardedBy("lock")
     @Nullable
     private volatile InputStream mTlsInputStream;
 
-    /**
+    /*
      * The output stream that this class uses to read from the TLS socket.
      */
     @GuardedBy("lock")
     @Nullable
     private volatile OutputStream mTlsOutputStream;
 
-    /**
+    /*
      * The backend thread that handles responding to ADB packets.
      */
     @NonNull
     private final Thread mConnectionThread;
 
-    /**
+    /*
      * Specifies whether a CNXN has been attempted.
      */
     private volatile boolean mConnectAttempted;
 
-    /**
+    /*
      * Whether the connection thread should give up if the first authentication attempt fails.
      */
     private volatile boolean mAbortOnUnauthorised;
 
-    /**
+    /*
      * Whether the first authentication attempt failed and {@link #mAbortOnUnauthorised} was {@code true}.
      */
     private volatile boolean mAuthorisationFailed;
 
-    /**
+    /*
      * Specifies whether a CNXN packet has been received from the peer.
      */
     private volatile boolean mConnectionEstablished;
 
-    /**
+    /*
      * Exceptions that occur in {@link #createConnectionThread()}.
      */
     @Nullable
     private volatile Exception mConnectionException;
 
-    /**
+    /*
      * Specifies the maximum amount data that can be sent to the remote peer.
      * This is only valid after connect() returns successfully.
      */
@@ -127,12 +127,12 @@ public class AdbConnection implements Closeable {
     @NonNull
     private volatile String mDeviceName = "Unknown Device";
 
-    /**
+    /*
      * Specifies whether this connection has already sent a signed token.
      */
     private volatile boolean mSentSignature;
 
-    /**
+    /*
      * A hash map of our opened streams indexed by local ID.
      */
     @NonNull
@@ -144,7 +144,7 @@ public class AdbConnection implements Closeable {
     @NonNull
     private final Object mLock = new Object();
 
-    /**
+    /*
      * Creates a AdbConnection object associated with the socket and crypto object specified.
      *
      * @return A new AdbConnection object.
@@ -158,7 +158,7 @@ public class AdbConnection implements Closeable {
         return create(host, port, privateKey, certificate, Build.VERSION_CODES.BASE);
     }
 
-    /**
+    /*
      * Creates a AdbConnection object associated with the socket and crypto object specified.
      *
      * @return A new AdbConnection object.
@@ -173,7 +173,7 @@ public class AdbConnection implements Closeable {
                 api);
     }
 
-    /**
+    /*
      * Creates a AdbConnection object associated with the socket and crypto object specified.
      *
      * @return A new AdbConnection object.
@@ -185,7 +185,7 @@ public class AdbConnection implements Closeable {
         return new AdbConnection(host, port, keyPair, api);
     }
 
-    /**
+    /*
      * Internal constructor to initialize some internal state
      */
     @WorkerThread
@@ -225,7 +225,7 @@ public class AdbConnection implements Closeable {
         return mIsTls ? Objects.requireNonNull(mTlsOutputStream) : mPlainOutputStream;
     }
 
-    /**
+    /*
      * Creates a new connection thread.
      *
      * @return A new connection thread.
@@ -358,7 +358,7 @@ public class AdbConnection implements Closeable {
         });
     }
 
-    /**
+    /*
      * Set a name for the device. Default is “Unknown Device”.
      *
      * @param deviceName Name of the device, could be the app label, hostname or user@hostname.
@@ -367,7 +367,7 @@ public class AdbConnection implements Closeable {
         this.mDeviceName = Objects.requireNonNull(deviceName);
     }
 
-    /**
+    /*
      * Get the version of the ADB protocol supported by the ADB daemon. The result may depend on the API version
      * specified and whether the connection has been established. In API 29 (Android 9) or later, the daemon returns
      * {@link AdbProtocol#A_VERSION_SKIP_CHECKSUM} regardless of the protocol used to create the connection. So, if
@@ -381,7 +381,7 @@ public class AdbConnection implements Closeable {
         return mProtocolVersion;
     }
 
-    /**
+    /*
      * Get the max data size supported by the ADB daemon. A connection have to be attempted before calling this method
      * and shall be blocked if the connection is in progress.
      *
@@ -400,7 +400,7 @@ public class AdbConnection implements Closeable {
         return mMaxData;
     }
 
-    /**
+    /*
      * Whether a connection has been established. A connection has been established if a CONNECT request has been
      * received from the ADB daemon.
      */
@@ -408,14 +408,14 @@ public class AdbConnection implements Closeable {
         return mConnectionEstablished;
     }
 
-    /**
+    /*
      * Whether the underlying socket is connected to an ADB daemon and is not in a closed state.
      */
     public boolean isConnected() {
         return !mSocket.isClosed() && mSocket.isConnected();
     }
 
-    /**
+    /*
      * Same as {@link #connect(long, TimeUnit, boolean)} without throwing anything if the first authentication attempt
      * fails.
      *
@@ -428,7 +428,7 @@ public class AdbConnection implements Closeable {
         return connect(Long.MAX_VALUE, TimeUnit.MILLISECONDS, false);
     }
 
-    /**
+    /*
      * Connects to the remote device. This routine will block until the connection completes or the timeout elapses.
      *
      * @param timeout             the time to wait for the lock
@@ -461,7 +461,7 @@ public class AdbConnection implements Closeable {
         return waitForConnection(timeout, Objects.requireNonNull(unit));
     }
 
-    /**
+    /*
      * Opens an {@link AdbStream} object corresponding to the specified destination.
      * This routine will block until the connection completes.
      *
@@ -482,7 +482,7 @@ public class AdbConnection implements Closeable {
         return open(LocalServices.getDestination(service, args));
     }
 
-    /**
+    /*
      * Opens an AdbStream object corresponding to the specified destination.
      * This routine will block until the connection completes.
      *
@@ -558,7 +558,7 @@ public class AdbConnection implements Closeable {
         return true;
     }
 
-    /**
+    /*
      * This function terminates all I/O on streams associated with this ADB connection
      */
     private void cleanupStreams() {
@@ -572,7 +572,7 @@ public class AdbConnection implements Closeable {
         mOpenedStreams.clear();
     }
 
-    /**
+    /*
      * This routine closes the Adb connection and underlying socket
      *
      * @throws IOException if the socket fails to close
@@ -627,7 +627,7 @@ public class AdbConnection implements Closeable {
             mPort = port;
         }
 
-        /**
+        /*
          * Set host address. Default is 127.0.0.1
          */
         public Builder setHost(String host) {
@@ -635,7 +635,7 @@ public class AdbConnection implements Closeable {
             return this;
         }
 
-        /**
+        /*
          * Set port number. Default is 5555.
          */
         public Builder setPort(int port) {
@@ -643,7 +643,7 @@ public class AdbConnection implements Closeable {
             return this;
         }
 
-        /**
+        /*
          * Set a name for the device. Default is “Unknown Device”.
          *
          * @param deviceName Name of the device, could be the app label, hostname or user@hostname.
@@ -653,7 +653,7 @@ public class AdbConnection implements Closeable {
             return this;
         }
 
-        /**
+        /*
          * Set Android API (i.e. SDK) version for this connection. If the ADB daemon and the client are located in the
          * same device, the value should be {@link Build.VERSION#SDK_INT} in order to improve performance as well as
          * security.
@@ -665,7 +665,7 @@ public class AdbConnection implements Closeable {
             return this;
         }
 
-        /**
+        /*
          * Set generated/stored private key.
          */
         public Builder setPrivateKey(PrivateKey privateKey) {
@@ -673,7 +673,7 @@ public class AdbConnection implements Closeable {
             return this;
         }
 
-        /**
+        /*
          * Set public key wrapped around a certificate
          */
         public Builder setCertificate(Certificate certificate) {
@@ -686,7 +686,7 @@ public class AdbConnection implements Closeable {
             return this;
         }
 
-        /**
+        /*
          * Creates a new {@link AdbConnection} associated with the socket and crypto object specified.
          *
          * @throws IOException If there was an error while establishing a socket connection
@@ -705,7 +705,7 @@ public class AdbConnection implements Closeable {
             return adbConnection;
         }
 
-        /**
+        /*
          * Same as {@link #connect(long, TimeUnit, boolean)} without throwing anything if the first authentication
          * attempt fails.
          *
@@ -722,7 +722,7 @@ public class AdbConnection implements Closeable {
             return adbConnection;
         }
 
-        /**
+        /*
          * Connects to the remote device. This routine will block until the connection completes or the timeout elapses.
          *
          * @param timeout             the time to wait for the lock

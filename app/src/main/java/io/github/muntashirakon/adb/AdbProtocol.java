@@ -17,60 +17,60 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
-/**
+/*
  * This class provides useful functions and fields for ADB protocol details.
  */
 // Copyright 2013 Cameron Gutman
 final class AdbProtocol {
-    /**
+    /*
      * The length of the ADB message header
      */
     public static final int ADB_HEADER_LENGTH = 24;
 
-    /**
+    /*
      * SYNC(online, sequence, "")
      *
      * @deprecated Obsolete, no longer used. Never used on the client side.
      */
     public static final int A_SYNC = 0x434e5953;
 
-    /**
+    /*
      * CNXN is the connect message. No messages (except AUTH) are valid before this message is received.
      */
     public static final int A_CNXN = 0x4e584e43;
 
-    /**
+    /*
      * The payload sent with the CONNECT message.
      */
     public static final byte[] SYSTEM_IDENTITY_STRING_HOST = StringCompat.getBytes("host::\0", "UTF-8");
 
-    /**
+    /*
      * AUTH is the authentication message. It is part of the RSA public key authentication added in Android 4.2.2
      * ({@link Build.VERSION_CODES#JELLY_BEAN_MR1}).
      */
     public static final int A_AUTH = 0x48545541;
 
-    /**
+    /*
      * OPEN is the open stream message. It is sent to open a new stream on the target device.
      */
     public static final int A_OPEN = 0x4e45504f;
 
-    /**
+    /*
      * OKAY is a success message. It is sent when a write is processed successfully.
      */
     public static final int A_OKAY = 0x59414b4f;
 
-    /**
+    /*
      * CLSE is the close stream message. It is sent to close an existing stream on the target device.
      */
     public static final int A_CLSE = 0x45534c43;
 
-    /**
+    /*
      * WRTE is the write stream message. It is sent with a payload that is the data to write to the stream.
      */
     public static final int A_WRTE = 0x45545257;
 
-    /**
+    /*
      * STLS is the Stream-based TLS1.3 authentication method, added in Android 9 ({@link Build.VERSION_CODES#P}).
      */
     public static final int A_STLS = 0x534c5453;
@@ -80,50 +80,50 @@ final class AdbProtocol {
     private @interface Command {
     }
 
-    /**
+    /*
      * Original payload size
      */
     public static final int MAX_PAYLOAD_V1 = 4 * 1024;
-    /**
+    /*
      * Supported payload size since Android 7 (N)
      */
     public static final int MAX_PAYLOAD_V2 = 256 * 1024;
-    /**
+    /*
      * Supported payload size since Android 9 (P)
      */
     public static final int MAX_PAYLOAD_V3 = 1024 * 1024;
-    /**
+    /*
      * Maximum supported payload size is set to the original to support all APIs
      */
     public static final int MAX_PAYLOAD = MAX_PAYLOAD_V1;
 
-    /**
+    /*
      * The original version of the ADB protocol
      */
     public static final int A_VERSION_MIN = 0x01000000;
-    /**
+    /*
      * The new version of the ADB protocol introduced in Android 9 (P) with the introduction of TLS
      */
     public static final int A_VERSION_SKIP_CHECKSUM = 0x01000001;
     public static final int A_VERSION = A_VERSION_MIN;
 
-    /**
+    /*
      * The current version of the Stream-based TLS
      */
     public static final int A_STLS_VERSION_MIN = 0x01000000;
     public static final int A_STLS_VERSION = A_STLS_VERSION_MIN;
 
-    /**
+    /*
      * This authentication type represents a SHA1 hash to sign.
      */
     public static final int ADB_AUTH_TOKEN = 1;
 
-    /**
+    /*
      * This authentication type represents the signed SHA1 hash.
      */
     public static final int ADB_AUTH_SIGNATURE = 2;
 
-    /**
+    /*
      * This authentication type represents an RSA public key.
      */
     public static final int ADB_AUTH_RSAPUBLICKEY = 3;
@@ -150,7 +150,7 @@ final class AdbProtocol {
         return A_VERSION_MIN;
     }
 
-    /**
+    /*
      * This function performs a checksum on the ADB payload data.
      *
      * @param data The data
@@ -160,7 +160,7 @@ final class AdbProtocol {
         return getPayloadChecksum(data, 0, data.length);
     }
 
-    /**
+    /*
      * This function performs a checksum on the ADB payload data.
      *
      * @param data   The data
@@ -176,7 +176,7 @@ final class AdbProtocol {
         return checksum;
     }
 
-    /**
+    /*
      * This function generates an ADB message given the fields.
      *
      * @param command Command identifier constant
@@ -190,7 +190,7 @@ final class AdbProtocol {
         return generateMessage(command, arg0, arg1, data, 0, data == null ? 0 : data.length);
     }
 
-    /**
+    /*
      * This function generates an ADB message given the fields.
      *
      * @param command Command identifier constant
@@ -242,7 +242,7 @@ final class AdbProtocol {
         return message.array();
     }
 
-    /**
+    /*
      * Generates a CONNECT message for a given API.
      * <p>
      * CONNECT(version, maxdata, "system-identity-string")
@@ -255,7 +255,7 @@ final class AdbProtocol {
         return generateMessage(A_CNXN, getProtocolVersion(api), getMaxData(api), SYSTEM_IDENTITY_STRING_HOST);
     }
 
-    /**
+    /*
      * Generates an AUTH message with the specified type and payload.
      * <p>
      * AUTH(type, 0, "data")
@@ -269,7 +269,7 @@ final class AdbProtocol {
         return generateMessage(A_AUTH, type, 0, data);
     }
 
-    /**
+    /*
      * Generates an STLS message with default parameters.
      * <p>
      * STLS(version, 0, "")
@@ -281,7 +281,7 @@ final class AdbProtocol {
         return generateMessage(A_STLS, A_STLS_VERSION, 0, null);
     }
 
-    /**
+    /*
      * Generates an OPEN stream message with the specified local ID and destination.
      * <p>
      * OPEN(local-id, 0, "destination")
@@ -298,7 +298,7 @@ final class AdbProtocol {
         return generateMessage(A_OPEN, localId, 0, bbuf.array());
     }
 
-    /**
+    /*
      * Generates a WRITE stream message with the specified IDs and payload.
      * <p>
      * WRITE(local-id, remote-id, "data")
@@ -315,7 +315,7 @@ final class AdbProtocol {
         return generateMessage(A_WRTE, localId, remoteId, data, offset, length);
     }
 
-    /**
+    /*
      * Generates a CLOSE stream message with the specified IDs.
      * <p>
      * CLOSE(local-id, remote-id, "")
@@ -329,7 +329,7 @@ final class AdbProtocol {
         return generateMessage(A_CLSE, localId, remoteId, null);
     }
 
-    /**
+    /*
      * Generates an OKAY/READY message with the specified IDs.
      * <p>
      * READY(local-id, remote-id, "")
@@ -343,41 +343,41 @@ final class AdbProtocol {
         return generateMessage(A_OKAY, localId, remoteId, null);
     }
 
-    /**
+    /*
      * This class provides an abstraction for the ADB message format.
      */
     static final class Message {
-        /**
+        /*
          * The command field of the message
          */
         @Command
         public final int command;
-        /**
+        /*
          * The arg0 field of the message
          */
         public final int arg0;
-        /**
+        /*
          * The arg1 field of the message
          */
         public final int arg1;
-        /**
+        /*
          * The payload length field of the message
          */
         public final int dataLength;
-        /**
+        /*
          * The checksum field of the message
          */
         public final int dataCheck;
-        /**
+        /*
          * The magic field of the message
          */
         public final int magic;
-        /**
+        /*
          * The payload of the message
          */
         public byte[] payload;
 
-        /**
+        /*
          * Read and parse an ADB message from the supplied input stream.
          * <p>
          * <b>Note:</b> If data is corrupted, the connection has to be closed immediately to avoid inconsistencies.

@@ -2,7 +2,7 @@
 
 package io.github.muntashirakon.adb;
 
-/**
+/*
  * Thrown when the ADB daemon rejects our initial authentication attempt, which typically means that the peer has not
  * previously saved our public key.
  */

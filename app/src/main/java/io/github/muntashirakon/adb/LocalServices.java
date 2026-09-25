@@ -12,7 +12,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.Objects;
 
 
-/**
+/*
  * Local services extracted from the <a href="https://cs.android.com/android/platform/superproject/+/master:packages/modules/adb/client/commandline.cpp">ADB client</a>
  * for easy access.
  */
@@ -20,7 +20,7 @@ public class LocalServices {
     static final int SERVICE_FIRST = 1;
 
     public static final int SHELL = 1;
-    /**
+    /*
      * Remount the device's filesystem in read-write mode, instead of read-only. This is usually necessary before
      * performing an {@link #SYNC} request. This request may not succeed on certain builds which do not allow that.
      * <p>
@@ -34,7 +34,7 @@ public class LocalServices {
     public static final int LOCAL_UNIX_SOCKET_RESERVED = 6;
     public static final int LOCAL_UNIX_SOCKET_ABSTRACT = 7;
     public static final int LOCAL_UNIX_SOCKET_FILE_SYSTEM = 8;
-    /**
+    /*
      * Receive snapshots of the framebuffer. It requires sufficient privileges (or the connection is closed immediately)
      * but works as follows:
      * <p>
@@ -50,11 +50,11 @@ public class LocalServices {
      * daemon to send {@code size} bytes of framebuffer data.
      */
     public static final int FRAMEBUFFER = 9;
-    /**
+    /*
      * Connects to the JDWP thread running in the VM of process PID (specified as an argument).
      */
     public static final int CONNECT_JDWP = 10;
-    /**
+    /*
      * Receive the list of JDWP PIDs periodically. The format of the returned data is the following (in order):
      * <ol>
      * <li> {@code hex4}: The length of all content as a 4-char hexadecimal string i.e. {@code %04zx}.
@@ -69,7 +69,7 @@ public class LocalServices {
      */
     public static final int TRACK_JDWP = 11;
     public static final int SYNC = 12;
-    /**
+    /*
      * Reverse socket connections from the device running ADB daemon to this client. This should not be used if both
      * the ADB daemon and the client are in the same device.
      * <p>
@@ -93,7 +93,7 @@ public class LocalServices {
      * </ul>
      */
     public static final int REVERSE = 13;
-    /**
+    /*
      * Backup some or all packages installed in the device. For this to work, {@code allowBackup=true} must be present
      * in the application section of the AndroidManifest.xml of the app.
      * <p>
@@ -106,7 +106,7 @@ public class LocalServices {
      * Output is a stream which is in zlib format with 24 bytes at the front (if unencrypted).
      */
     public static final int BACKUP = 14;
-    /**
+    /*
      * Restore a backup. Input is a stream which is in zlib format with 24 bytes at the front (if unencrypted).
      */
     public static final int RESTORE = 15;

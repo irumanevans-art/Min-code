@@ -36,25 +36,25 @@ public abstract class AbsAdbConnectionManager implements Closeable {
     private TimeUnit mTimeoutUnit = TimeUnit.MILLISECONDS;
     private boolean mThrowOnUnauthorised = false;
 
-    /**
+    /*
      * Return generated/stored private key.
      */
     @NonNull
     protected abstract PrivateKey getPrivateKey();
 
-    /**
+    /*
      * Return public key wrapped around a certificate.
      */
     @NonNull
     protected abstract Certificate getCertificate();
 
-    /**
+    /*
      * Return a name for the device. This can be the app label, hostname or user@hostname.
      */
     @NonNull
     protected abstract String getDeviceName();
 
-    /**
+    /*
      * Set host address for this connection. On the same device, this should be {@code 127.0.0.1}.
      */
     @CallSuper
@@ -62,7 +62,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         mHostAddress = Objects.requireNonNull(hostAddress);
     }
 
-    /**
+    /*
      * Get host address for this connection. Default value is {@code 127.0.0.1}.
      */
     @NonNull
@@ -70,7 +70,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         return mHostAddress;
     }
 
-    /**
+    /*
      * Set Android API (i.e. SDK) version for this connection. If the daemon and the client are located in the same
      * directory, the value should be {@link Build.VERSION#SDK_INT} in order to improve performance as well as security.
      *
@@ -80,14 +80,14 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         this.mApi = api;
     }
 
-    /**
+    /*
      * Get Android API (i.e. SDK) version for this connection. Default value is {@link Build.VERSION_CODES#BASE}.
      */
     public int getApi() {
         return mApi;
     }
 
-    /**
+    /*
      * Set time to wait for the connection to be made.
      *
      * @param timeout Timeout value
@@ -99,7 +99,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         mTimeoutUnit = unit;
     }
 
-    /**
+    /*
      * Get time to wait for the connection to be made. If not set using {@link #setTimeout(long, TimeUnit)}, the default
      * timeout is {@link Long#MAX_VALUE} milliseconds.
      *
@@ -109,7 +109,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         return mTimeoutUnit.toMillis(mTimeout);
     }
 
-    /**
+    /*
      * Get the unit for the timeout. If not set using {@link #setTimeout(long, TimeUnit)}, the default timeout unit is
      * {@link TimeUnit#MILLISECONDS}.
      */
@@ -118,7 +118,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         return mTimeoutUnit;
     }
 
-    /**
+    /*
      * Set whether to throw {@link AdbAuthenticationFailedException} if the daemon rejects the first authentication
      * attempt.
      *
@@ -130,7 +130,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         mThrowOnUnauthorised = throwOnUnauthorised;
     }
 
-    /**
+    /*
      * Get whether to throw {@link AdbAuthenticationFailedException} if the daemon rejects the first authentication
      * attempt.
      *
@@ -141,7 +141,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         return mThrowOnUnauthorised;
     }
 
-    /**
+    /*
      * Get the {@link AdbConnection} backed by this object.
      *
      * @return Underlying {@link AdbConnection}, or {@code null} if the connection hasn't been made yet.
@@ -154,7 +154,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         }
     }
 
-    /**
+    /*
      * Check if it is connected to an ADB daemon.
      *
      * @return {@code true} if connected, {@code false} otherwise.
@@ -165,7 +165,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         }
     }
 
-    /**
+    /*
      * Attempt to connect to ADB given a port number. Host address is set via {@link #setHostAddress(String)}.
      *
      * @param port Port number
@@ -193,7 +193,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         }
     }
 
-    /**
+    /*
      * Attempt to connect to ADB via a host address and a port number.
      *
      * @param host Host address to use instead of taking it from the {@link #getHostAddress()}
@@ -225,7 +225,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         }
     }
 
-    /**
+    /*
      * Disconnect the underlying {@link AdbConnection}.
      *
      * @throws IOException If the underlying socket fails to close
@@ -239,7 +239,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         }
     }
 
-    /**
+    /*
      * Opens an {@link AdbStream} object corresponding to the specified destination.
      * This routine will block until the connection completes.
      *
@@ -264,7 +264,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         }
     }
 
-    /**
+    /*
      * Opens an {@link AdbStream} object corresponding to the specified destination.
      * This routine will block until the connection completes.
      *
@@ -290,7 +290,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         }
     }
 
-    /**
+    /*
      * Pair with an ADB daemon given port number and pairing code.
      *
      * @param port        Port number
@@ -304,7 +304,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         return pair(mHostAddress, port, pairingCode);
     }
 
-    /**
+    /*
      * Pair with an ADB daemon given host address, port number and pairing code.
      *
      * @param host        Host address to use instead of taking it from the {@link #getHostAddress()}
@@ -327,7 +327,7 @@ public abstract class AbsAdbConnectionManager implements Closeable {
         }
     }
 
-    /**
+    /*
      * Close the underlying {@link AdbConnection} and destroy the private key.
      *
      * @throws IOException If socket fails to close.

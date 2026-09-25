@@ -24,22 +24,22 @@ import java.util.Objects;
 import javax.crypto.Cipher;
 
 final class AndroidPubkey {
-    /**
+    /*
      * Size of an RSA modulus such as an encrypted block or a signature.
      */
     public static final int ANDROID_PUBKEY_MODULUS_SIZE = 2048 / 8;
 
-    /**
+    /*
      * Size of an encoded RSA key.
      */
     public static final int ANDROID_PUBKEY_ENCODED_SIZE = 3 * 4 + 2 * ANDROID_PUBKEY_MODULUS_SIZE;
 
-    /**
+    /*
      * Size of the RSA modulus in words.
      */
     public static final int ANDROID_PUBKEY_MODULUS_SIZE_WORDS = ANDROID_PUBKEY_MODULUS_SIZE / 4;
 
-    /**
+    /*
      * The RSA signature padding as an int array.
      */
     private static final int[] SIGNATURE_PADDING_AS_INT = new int[]{
@@ -64,7 +64,7 @@ final class AndroidPubkey {
             0x04, 0x14
     };
 
-    /**
+    /*
      * The RSA signature padding as a byte array
      */
     private static final byte[] RSA_SHA_PKCS1_SIGNATURE_PADDING;
@@ -76,7 +76,7 @@ final class AndroidPubkey {
             RSA_SHA_PKCS1_SIGNATURE_PADDING[i] = (byte) SIGNATURE_PADDING_AS_INT[i];
     }
 
-    /**
+    /*
      * Signs the ADB SHA1 payload with the private key of this object.
      *
      * @param privateKey Private key to sign with
@@ -94,7 +94,7 @@ final class AndroidPubkey {
         return c.doFinal(payload);
     }
 
-    /**
+    /*
      * Converts a standard RSAPublicKey object to the special ADB format. Available since 4.2.2.
      *
      * @param publicKey RSAPublicKey object to convert
@@ -128,7 +128,7 @@ final class AndroidPubkey {
     //     uint32_t exponent;                               // RSA modulus: 3 or 65537
     // } RSAPublicKey;
 
-    /**
+    /*
      * Allocates a new {@link RSAPublicKey} object, decodes a public RSA key stored in Android's custom binary format,
      * and sets the key parameters. The resulting key can be used with the standard Java cryptography API to perform
      * public operations.
@@ -168,7 +168,7 @@ final class AndroidPubkey {
         return (RSAPublicKey) keyFactory.generatePublic(publicKeySpec);
     }
 
-    /**
+    /*
      * Encodes the given key in the Android RSA public key binary format.
      *
      * @return Public RSA key in Android's custom binary format. The size of the key should be at least

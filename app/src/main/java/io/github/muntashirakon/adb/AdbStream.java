@@ -9,53 +9,53 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
+/*
  * This class abstracts the underlying ADB streams
  */
 // Copyright 2013 Cameron Gutman
 public class AdbStream implements Closeable {
 
-    /**
+    /*
      * The AdbConnection object that the stream communicates over
      */
     private final AdbConnection mAdbConnection;
 
-    /**
+    /*
      * The local ID of the stream
      */
     private final int mLocalId;
 
-    /**
+    /*
      * The remote ID of the stream
      */
     private volatile int mRemoteId;
 
-    /**
+    /*
      * Indicates whether WRTE is currently allowed
      */
     private final AtomicBoolean mWriteReady;
 
-    /**
+    /*
      * A queue of data from the target's WRTE packets
      */
     private final Queue<byte[]> mReadQueue;
 
-    /**
+    /*
      * Store data received from the first WRTE packet in order to support buffering.
      */
     private final ByteBuffer mReadBuffer;
 
-    /**
+    /*
      * Indicates whether the connection is closed already
      */
     private volatile boolean mIsClosed;
 
-    /**
+    /*
      * Whether the remote peer has closed but we still have unread data in the queue
      */
     private volatile boolean mPendingClose;
 
-    /**
+    /*
      * Creates a new AdbStream object on the specified AdbConnection
      * with the given local ID.
      *
@@ -80,7 +80,7 @@ public class AdbStream implements Closeable {
         return new AdbOutputStream(this);
     }
 
-    /**
+    /*
      * Called by the connection thread to indicate newly received data.
      *
      * @param payload Data inside the WRTE message
@@ -92,7 +92,7 @@ public class AdbStream implements Closeable {
         }
     }
 
-    /**
+    /*
      * Called by the connection thread to send an OKAY packet, allowing the
      * other side to continue transmission.
      *
@@ -103,7 +103,7 @@ public class AdbStream implements Closeable {
         mAdbConnection.sendPacket(AdbProtocol.generateReady(mLocalId, mRemoteId));
     }
 
-    /**
+    /*
      * Called by the connection thread to update the remote ID for this stream
      *
      * @param remoteId New remote ID
@@ -112,14 +112,14 @@ public class AdbStream implements Closeable {
         this.mRemoteId = remoteId;
     }
 
-    /**
+    /*
      * Called by the connection thread to indicate the stream is okay to send data.
      */
     void readyForWrite() {
         mWriteReady.set(true);
     }
 
-    /**
+    /*
      * Called by the connection thread to notify that the stream was closed by the peer.
      */
     void notifyClose(boolean closedByPeer) {
@@ -140,7 +140,7 @@ public class AdbStream implements Closeable {
         }
     }
 
-    /**
+    /*
      * Read bytes from the ADB daemon.
      *
      * @return the next byte of data, or {@code -1} if the end of the stream is reached.
@@ -196,7 +196,7 @@ public class AdbStream implements Closeable {
         return count;
     }
 
-    /**
+    /*
      * Sends a WRTE packet with a given byte array payload. It does not flush the stream.
      *
      * @param bytes Payload in the form of a byte array
@@ -251,7 +251,7 @@ public class AdbStream implements Closeable {
         mAdbConnection.flushPacket();
     }
 
-    /**
+    /*
      * Closes the stream. This sends a close message to the peer.
      *
      * @throws IOException If the stream fails while sending the close message.
@@ -270,7 +270,7 @@ public class AdbStream implements Closeable {
         mAdbConnection.sendPacket(AdbProtocol.generateClose(mLocalId, mRemoteId));
     }
 
-    /**
+    /*
      * Returns whether the stream is closed or not
      *
      * @return True if the stream is close, false if not
@@ -279,7 +279,7 @@ public class AdbStream implements Closeable {
         return mIsClosed;
     }
 
-    /**
+    /*
      * Returns an estimate of available data.
      *
      * @return an estimate of the number of bytes that can be read from this stream without blocking.
