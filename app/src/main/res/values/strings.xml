@@ -211,17 +211,14 @@
   <string name="session_start_skip_permissions">Skip permission prompts</string>
   <string name="session_start_skip_permissions_desc">Tools run without asking first</string>
   <string name="session_start_action">Start session</string>
+  <string name="session_connect_notice">Not connected yet. A session needs a model provider first: add one, or import an existing config.</string>
+  <string name="session_connect_provider">Add or import a provider</string>
 
   <!-- Setup wizard -->
   <string name="setup_checking">Checking your environment</string>
   <string name="setup_detail_show">Details</string>
   <string name="setup_detail_hide">Hide details</string>
   <string name="setup_working">Working…</string>
-  <string name="setup_step_connection">Connection</string>
-  <string name="setup_connection_summary">Claude Code needs an API token and an endpoint. Fill in the official address to reach Anthropic directly, or the address your relay gave you. Both can be changed later in Settings.</string>
-  <string name="setup_connection_detail">These map to ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL, injected as environment variables into the claude process inside the rootfs — only Claude Code in the sandbox can read them.\n\nSessions also get CLAUDE_CODE_PROMPT_CACHE_TTL=%1$s by default (on an API token the CLI gives itself only 5 minutes, and picking work up on and off keeps missing the cache window); you can change it under Prompt cache in session settings.\n\nAlways injected as well: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1, DISABLE_AUTOUPDATER=1, IS_SANDBOX=1.</string>
-  <string name="setup_insecure_warning">This is a plain HTTP address: your token and everything you say travel the public network in the clear, and any node along the way can read them. Switch to HTTPS if you can.</string>
-  <string name="setup_save_continue">Save and continue</string>
   <string name="setup_step_rootfs">Linux environment</string>
   <string name="setup_rootfs_summary">The official CLI runs in the Ubuntu (proot) bundled with the app. The first run downloads a base image of about 30 MB, and falls back to a mirror if the official source is unreachable.</string>
   <string name="setup_rootfs_detail">This is a complete Ubuntu 24.04 userland; Claude Code can apt install git / python3 / ripgrep and the rest on its own. What it installs stays — this is a real filesystem in the app data directory, not a throwaway container, and it survives restarting the app or reopening a session. The cost is disk space per package, which you can inspect and clear on the files page.\n\nproot has no root: it uses ptrace to intercept syscalls and pretend there is a root filesystem, so process-heavy work runs somewhat slower than Linux on bare metal, while CPU-heavy computation (numpy/BLAS) runs at native speed.</string>
@@ -785,7 +782,6 @@
   <string name="providers_manage_action">Manage…</string>
   <string name="providers_switch_action">Switch…</string>
   <string name="providers_config_hint">Sessions pick this up when they start. Idle ones restart on their own.</string>
-  <string name="setup_pick_preset">Pick from presets</string>
 
   <!-- 第二轮抽资源：边角硬编码 -->
   <string name="common_expand">Expand</string>

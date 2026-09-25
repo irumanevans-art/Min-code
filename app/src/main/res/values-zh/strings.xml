@@ -209,17 +209,14 @@
   <string name="session_start_skip_permissions">跳过权限确认</string>
   <string name="session_start_skip_permissions_desc">允许直接执行工具操作</string>
   <string name="session_start_action">启动会话</string>
+  <string name="session_connect_notice">还没连接。启动会话前要先有一家模型供应商：新添一家，或导入现有配置。</string>
+  <string name="session_connect_provider">添加 / 导入供应商</string>
 
   <!-- 安装向导 -->
   <string name="setup_checking">正在检查环境</string>
   <string name="setup_detail_show">详细说明</string>
   <string name="setup_detail_hide">收起详细说明</string>
   <string name="setup_working">正在处理…</string>
-  <string name="setup_step_connection">连接</string>
-  <string name="setup_connection_summary">Claude Code 需要一个 API token 和接口地址。直连 Anthropic 填官方地址；用中转站就填中转站给的地址。两项都可以之后在设置里改。</string>
-  <string name="setup_connection_detail">对应环境变量 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL，以环境变量注入 Rootfs 内的 claude 进程，只有沙箱内的 Claude Code 能读到。\n\n会话默认注入 CLAUDE_CODE_PROMPT_CACHE_TTL=%1$s（走 API token 时 CLI 自己只给 5 分钟，断续使用会反复错过缓存窗口），可在会话设置的「提示缓存」里改。\n\n另外固定注入：CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1、DISABLE_AUTOUPDATER=1、IS_SANDBOX=1。</string>
-  <string name="setup_insecure_warning">这是明文 HTTP 地址：token 和全部对话内容都会以明文经过公网，任何中间节点都能看到。能用 HTTPS 就换成 HTTPS。</string>
-  <string name="setup_save_continue">保存并继续</string>
   <string name="setup_step_rootfs">Linux 环境</string>
   <string name="setup_rootfs_summary">官方 CLI 运行在 App 内置的 Ubuntu（proot）里。首次使用要下载约 30 MB 的基础镜像，官方源连不上会自动换镜像。</string>
   <string name="setup_rootfs_detail">这是一个完整的 Ubuntu 24.04 用户态，Claude Code 可以自己 apt install git / python3 / ripgrep 等工具。装了就一直在 —— 它是 App 数据目录里的真实文件系统，不是一次性容器，重启 App、重开会话都不会丢。代价是每装一个都占空间，可以在文件页查看和清理。\n\nproot 没有 root 权限，靠 ptrace 拦截系统调用来「假装」有一个根文件系统，所以进程密集的任务会比真机 Linux 慢一些，但 CPU 密集的计算（numpy/BLAS）是原生速度。</string>
@@ -782,7 +779,6 @@
   <string name="providers_manage_action">管理…</string>
   <string name="providers_switch_action">换一家…</string>
   <string name="providers_config_hint">会话启动时读它。换完空闲的会自己重起接上上下文。</string>
-  <string name="setup_pick_preset">从预设里挑一家</string>
 
   <!-- 第二轮抽资源：边角硬编码 -->
   <string name="common_expand">展开</string>

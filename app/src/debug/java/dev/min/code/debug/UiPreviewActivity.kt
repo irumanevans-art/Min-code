@@ -86,7 +86,7 @@ import dev.min.code.ui.session.UserEntry
 import dev.min.code.ui.session.ThinkingEntry
 import dev.min.code.ui.session.CollapsedWorkEntry
 import dev.min.code.ui.session.CollapseWorkFooter
-import dev.min.code.ui.setup.ConnectionStep
+import dev.min.code.ui.setup.RootfsStep
 import dev.min.code.ui.setup.SetupVM
 import dev.min.code.ui.theme.FormSwitchController
 import dev.min.code.ui.theme.FormSwitchHost
@@ -229,7 +229,7 @@ private fun Preview(
                             )
                             PreviewScene.Blank -> BlankPage(starting = false)
                             PreviewScene.Loading -> LoadingScreen(detail = "正在读取工作区", progress = 0.64f)
-                            PreviewScene.Setup -> ConnectionStep(SetupVM.State(loading = false), onSave = { _, _ -> scene = PreviewScene.Start })
+                            PreviewScene.Setup -> RootfsStep(SetupVM.State(loading = false), onInstall = { scene = PreviewScene.Start }, onDismissError = {})
                             PreviewScene.Controls -> ControlsPreview()
                             PreviewScene.Sessions -> SessionsPreview()
                             PreviewScene.Conversation, PreviewScene.Settings -> ConversationPreview(

@@ -204,6 +204,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     val zhDescriptionSetting by vm.chineseDescriptions.collectAsStateWithLifecycle()
     val chineseDescriptions = zhDescriptionSetting && isChineseUi()
     val notice by vm.notice.collectAsStateWithLifecycle()
+    val connected by vm.connected.collectAsStateWithLifecycle()
     val toaster = LocalToaster.current
     LaunchedEffect(notice) {
         val text = notice ?: return@LaunchedEffect
@@ -454,6 +455,8 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                             lastOptions = vm.lastOptions(),
                             onListCwd = vm::listCwdFolders,
                             onCreateCwd = vm::createCwdFolder,
+                            connected = connected,
+                            onOpenProviders = { navController.navigate(Screen.Providers) },
                         )
                     }
                 }
@@ -1804,6 +1807,9 @@ internal fun StartPanel(
     lastOptions: ClaudeCodeManager.SessionOptions = session.options,
     onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
     onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
+    /** false = 还没有可用的供应商，见 [ClaudeCodeVM.connected] */
+    connected: Boolean = true,
+    onOpenProviders: () -> Unit = {},
 ) {
     var skipPermissions by rememberSaveable { mutableStateOf(false) }
     var cwd by rememberSaveable { mutableStateOf(lastOptions.cwd.ifBlank { ClaudeCodeManager.DEFAULT_CWD }) }
@@ -1831,6 +1837,9 @@ internal fun StartPanel(
                 )
                 Spacer(Modifier.height(10.dp))
                 InkDivider()
+                AnimatedVisibility(visible = !connected, enter = InkMotion.expand, exit = InkMotion.collapse) {
+                    ConnectPrompt(onOpenProviders = onOpenProviders)
+                }
                 // 上次崩溃过就在这里说一声：没有联网上报，用户不主动去「关于」里看就永远不知道。
                 // 只提示、不弹窗——启动面板本来就是"停下来看一眼"的地方
                 val context = LocalContext.current

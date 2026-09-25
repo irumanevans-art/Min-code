@@ -10,8 +10,9 @@ No root required. Phones and tablets.
 
 ## 它做了什么
 
-- 三步向导：填 token / 中转地址 → 下载 Ubuntu 24.04 基础镜像（约 30 MB，官方源连不上自动换镜像）→
-  装 Node.js 22 + `@anthropic-ai/claude-code`（原生二进制由 App 自己断点续传下载并按官方 sha512 校验）
+- 两步向导，只装环境：下载 Ubuntu 24.04 基础镜像（约 30 MB，官方源连不上自动换镜像）→
+  装 Node.js 22 + `@anthropic-ai/claude-code`（原生二进制由 App 自己断点续传下载并按官方 sha512 校验）；
+  供应商（token / 中转地址）装完之后在供应商页添加或导入，没连接时启动面板会指过去
 - 会话：多会话、流式输出、工具调用折叠卡、权限确认 / AskUserQuestion / 计划模式、checkpoint 撤销、
   模型 / 权限模式 / effort / cwd 热切、斜杠命令、`@` 文件、图片
 - 后台：前台服务保活（对 OEM ROM 拒绝的情况有降级），等待审批 / 完成 / 中断的通知，通知上直接允许 / 拒绝

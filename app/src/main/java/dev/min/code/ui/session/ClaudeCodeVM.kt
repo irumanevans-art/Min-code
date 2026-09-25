@@ -122,12 +122,13 @@ class ClaudeCodeVM(
 
     /**
      * 环境是否就绪。装/修的过程在 SetupVM 里，这里只判断"能不能开会话"；
-     * 三样缺一样，页面就把向导嵌进来。
+     * rootfs 和 CLI 缺一样，页面就把向导嵌进来。
+     *
+     * 连接（供应商 token）**不算**在里面：向导只管装环境，没连接时照样进启动面板，
+     * 由 [connected] 驱动那里的 [ConnectPrompt] 指路。
      */
     data class SetupState(
         val loading: Boolean = true,
-        val tokenFilled: Boolean = false,
-        val baseUrl: String = ClaudeCodeManager.DEFAULT_BASE_URL,
         val rootfsReady: Boolean = false,
         val nodeInstalled: Boolean = false,
         val claudeInstalled: Boolean = false,
@@ -137,11 +138,22 @@ class ClaudeCodeVM(
         val cliVersion: String? = null,
         val installError: String? = null,
     ) {
-        val ready: Boolean get() = tokenFilled && rootfsReady && claudeInstalled
+        val ready: Boolean get() = rootfsReady && claudeInstalled
     }
 
     private val _setup = MutableStateFlow(SetupState())
     val setup = _setup.asStateFlow()
+
+    /**
+     * 有没有可用的连接（当前生效的供应商带着 token）。没有时启动面板给 [ConnectPrompt]。
+     *
+     * 跟着 DataStore 走，不在 [refresh] 里读一次：人从供应商页加完一家回来，提示要自己消失，
+     * 不能等他去点刷新。初值 true：设置还没读到的那一下不闪「未连接」。
+     * 以后「用 Claude 订阅」接进来，判定也改在这一处。
+     */
+    val connected: StateFlow<Boolean> = settingsStore.settings
+        .map { it.token.isNotBlank() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     /** 磁盘上的 transcript（CLI 自己写的） */
     private val _diskSessions = MutableStateFlow<List<ClaudeCodeSessionStore.SessionSummary>>(emptyList())
@@ -237,15 +249,10 @@ class ClaudeCodeVM(
     fun refresh() {
         viewModelScope.launch {
             runCatching {
-                val probe = registry.active() ?: registry.configProbe()
-                val token = probe.getToken()
-                val baseUrl = probe.getBaseUrl()
                 val status = installer.status(workspaceId)
                 _setup.update {
                     it.copy(
                         loading = false,
-                        tokenFilled = token.isNotBlank(),
-                        baseUrl = baseUrl,
                         rootfsReady = status.rootfsReady || (status.nodeInstalled && status.claudeInstalled),
                         nodeInstalled = status.nodeInstalled,
                         claudeInstalled = status.claudeInstalled,
@@ -278,13 +285,6 @@ class ClaudeCodeVM(
         val listed = runCatching { (registry.active() ?: registry.configProbe()).listSessions() }
             .getOrDefault(emptyList())
         if (generation == sessionScanGeneration) _diskSessions.value = listed
-    }
-
-    fun saveToken(token: String) {
-        viewModelScope.launch {
-            runCatching { (registry.active() ?: registry.configProbe()).saveToken(token) }
-            refresh()
-        }
     }
 
     // -----------------------------------------------------------------------

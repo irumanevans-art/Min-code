@@ -21,9 +21,13 @@ import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.WorkspaceShellStatus
 
 /**
- * 安装向导的状态机：连接（token + 中转地址）→ Linux 环境 → Claude Code CLI。
+ * 安装向导的状态机：Linux 环境 → Claude Code CLI。
  *
- * 三步都是幂等的，向导可以在任一步被打断后重新进入：每次 [refresh] 都从磁盘和设置
+ * 向导只管「装环境」。连哪家（供应商 token / 订阅）不在这里问：以前第一步就要 token，
+ * 还没看到 App 长什么样就先被一个 API key 拦下；现在装完即进会话页，没连接时由
+ * 启动面板的 [dev.min.code.ui.session.ConnectPrompt] 指去供应商页。
+ *
+ * 两步都是幂等的，向导可以在任一步被打断后重新进入：每次 [refresh] 都从磁盘和设置
  * 重新判定"走到哪了"，不记"我以为的进度"。
  */
 class SetupVM(
@@ -34,7 +38,7 @@ class SetupVM(
     private val terminalSessionManager: WorkspaceTerminalSessionManager,
 ) : ViewModel() {
 
-    enum class Step { CONNECTION, ROOTFS, CLI, DONE }
+    enum class Step { ROOTFS, CLI, DONE }
 
     data class State(
         val loading: Boolean = true,
@@ -54,7 +58,6 @@ class SetupVM(
     ) {
         val step: Step
             get() = when {
-                settings.token.isBlank() -> Step.CONNECTION
                 !rootfsReady -> Step.ROOTFS
                 !cliInstalled -> Step.CLI
                 else -> Step.DONE
@@ -88,13 +91,6 @@ class SetupVM(
                     cliVersion = cli?.cliVersion,
                 )
             }
-        }
-    }
-
-    fun saveConnection(token: String, baseUrl: String) {
-        viewModelScope.launch {
-            settingsStore.setConnection(token, baseUrl.ifBlank { AppSettings.DEFAULT_BASE_URL })
-            refresh()
         }
     }
 

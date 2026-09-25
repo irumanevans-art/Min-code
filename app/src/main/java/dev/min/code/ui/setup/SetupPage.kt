@@ -43,23 +43,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.R
-import dev.min.code.core.claudecode.ClaudeCodeManager
-import dev.min.code.core.settings.isInsecureBaseUrl
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkCheckbox
-import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.InkLineProgress
 import dev.min.code.ui.components.InkTextButton
-import dev.min.code.core.settings.ProviderPresetSource
-import dev.min.code.core.settings.ProviderPresets
-import dev.min.code.ui.providers.ProviderPresetSheet
-import dev.min.code.ui.providers.isChineseUi
-import org.koin.compose.koinInject
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.LoadingScreen
 import dev.min.code.ui.components.Notice
@@ -69,18 +59,16 @@ import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.rememberAnimationsEnabled
 import dev.min.code.ui.theme.sea
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.View
-import me.rerere.hugeicons.stroke.ViewOff
 import org.koin.androidx.compose.koinViewModel
 
 /**
- * 三步向导：连接 → Linux 环境 → Claude Code CLI。
+ * 两步向导：Linux 环境 → Claude Code CLI。只装环境，不问连接——供应商 / 订阅在会话页
+ * 启动面板上按需指路（见 [SetupVM] 头注释）。
  *
- * 三面共用一个骨架：`1 — 2 — 3` 进度 + 标题 + 一句话说明，长解释收进「详细说明」折叠区。
+ * 两面共用一个骨架：`1 — 2` 进度 + 标题 + 一句话说明，长解释收进「详细说明」折叠区。
  * 每一步只有一个主按钮；进行中的下载/解压在按钮上方给墨线进度和一行状态。
  *
- * @param onReady 三步都完成时回调（宿主据此切到会话页）
+ * @param onReady 两步都完成时回调（宿主据此切到会话页）
  */
 @Composable
 fun SetupPage(
@@ -94,7 +82,6 @@ fun SetupPage(
         // 判定"走到哪一步"要读磁盘和设置，那几百毫秒给整页的铺纸研墨，不给一个孤零零的转圈
         state.loading -> LoadingScreen(status = stringResource(R.string.setup_checking))
 
-        state.step == SetupVM.Step.CONNECTION -> ConnectionStep(state, onSave = vm::saveConnection)
         state.step == SetupVM.Step.ROOTFS -> RootfsStep(state, onInstall = vm::installRootfs, onDismissError = vm::dismissError)
         state.step == SetupVM.Step.CLI -> CliStep(state, onInstall = vm::installCli, onDismissError = vm::dismissError)
         else -> Unit
@@ -145,7 +132,7 @@ private fun SetupStep(
 }
 
 /**
- * `1 — 2 — 3`：三粒点、两段线。走过的点填金（人已经做完的事），当前的点是墨圈、
+ * `1 — 2`：[SETUP_STEPS] 粒点、点间一段线。走过的点填金（人已经做完的事），当前的点是墨圈、
  * 圈心一粒湛在呼吸（这一步是活的），还没到的点只是一圈淡线。颜色变化都有过渡。
  */
 @Composable
@@ -168,7 +155,7 @@ private fun StepIndicator(step: Int) {
         remember { mutableFloatStateOf(1f) }
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        (1..3).forEach { i ->
+        (1..SETUP_STEPS).forEach { i ->
             val done = i < step
             val current = i == step
             val fill by animateColorAsState(
@@ -192,7 +179,7 @@ private fun StepIndicator(step: Int) {
                 drawCircle(edge, radius = r, center = center, style = Stroke(width = 1.5.dp.toPx()))
                 if (current) drawCircle(azure.copy(alpha = pulse.value), radius = 1.6.dp.toPx(), center = center)
             }
-            if (i < 3) {
+            if (i < SETUP_STEPS) {
                 val line by animateColorAsState(
                     if (i < step) palette.sea else scheme.outlineVariant,
                     InkMotion.effect(),
@@ -247,107 +234,15 @@ private fun Progress(state: SetupVM.State) {
 
 // ---------------------------------------------------------------------------
 
+/** internal：debug 的 UiPreviewActivity 拿它当向导的预览面 */
 @Composable
-internal fun ConnectionStep(state: SetupVM.State, onSave: (String, String) -> Unit) {
-    var token by rememberSaveable { mutableStateOf(state.settings.token) }
-    var baseUrl by rememberSaveable { mutableStateOf(state.settings.baseUrl) }
-    var visible by rememberSaveable { mutableStateOf(false) }
-    // 本机回环（localhost / 127.x / 模拟器的 10.0.2.2）走 http 不出设备，不该报警
-    val insecure = isInsecureBaseUrl(baseUrl)
-
-    // 预设只用来**填这两个框**。向导刻意还是「一个 token 一个地址」——多配置、自定义
-    // 环境变量、托管这些是供应商页的事，堆进第一屏只会让人在装 CLI 之前就先被劝退。
-    // 代价是预设自带的 env 在这里带不过来，要的人进供应商页再补
-    val presetSource: ProviderPresetSource = koinInject()
-    var presets by remember { mutableStateOf(ProviderPresets.EMPTY) }
-    var presetPicker by remember { mutableStateOf(false) }
-    var tokenHint by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(Unit) { presets = presetSource.load() }
-
-    SetupStep(
-        step = 1,
-        title = stringResource(R.string.setup_step_connection),
-        summary = stringResource(R.string.setup_connection_summary),
-        detail = {
-            DetailCard(
-                stringResource(
-                    R.string.setup_connection_detail,
-                    ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL,
-                )
-            )
-        },
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            InkTextButton(
-                onClick = { presetPicker = true },
-                enabled = !presets.isEmpty,
-            ) { Text(stringResource(R.string.setup_pick_preset)) }
-        }
-        InkTextField(
-            value = baseUrl,
-            onValueChange = { baseUrl = it },
-            label = "ANTHROPIC_BASE_URL",
-            placeholder = "https://api.anthropic.com",
-            singleLine = true,
-            monospace = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        AnimatedVisibility(visible = insecure, enter = InkMotion.expand, exit = InkMotion.collapse) {
-            Notice(
-                text = stringResource(R.string.setup_insecure_warning),
-                // 「注意」档：这是风险提示，不是错误——填了照样能用。朱砂留给真正的判定
-                tone = NoticeTone.Warn,
-            )
-        }
-        InkTextField(
-            value = token,
-            onValueChange = { token = it },
-            label = "ANTHROPIC_AUTH_TOKEN",
-            // 预设给的是「这家的 key 长什么样」，是提示不是校验 —— 没有哪家的格式能拿来拦人
-            placeholder = tokenHint,
-            singleLine = true,
-            monospace = true,
-            modifier = Modifier.fillMaxWidth(),
-            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-            trailing = {
-                InkIconButton(
-                    icon = if (visible) HugeIcons.ViewOff else HugeIcons.View,
-                    contentDescription = stringResource(if (visible) R.string.common_hide else R.string.common_show),
-                    onClick = { visible = !visible },
-                    size = 32.dp,
-                    iconSize = 18.dp,
-                )
-            },
-        )
-        InkButton(
-            onClick = { onSave(token.trim(), baseUrl.trim()) },
-            enabled = token.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(stringResource(R.string.setup_save_continue)) }
-    }
-
-    if (presetPicker) {
-        ProviderPresetSheet(
-            presets = presets,
-            zh = isChineseUi(),
-            onDismiss = { presetPicker = false },
-            onPick = { preset ->
-                presetPicker = false
-                baseUrl = preset.baseUrl
-                tokenHint = preset.tokenHint
-            },
-        )
-    }
-}
-
-@Composable
-private fun RootfsStep(state: SetupVM.State, onInstall: (String?) -> Unit, onDismissError: () -> Unit) {
+internal fun RootfsStep(state: SetupVM.State, onInstall: (String?) -> Unit, onDismissError: () -> Unit) {
     var customUrl by rememberSaveable { mutableStateOf("") }
     var showCustom by rememberSaveable { mutableStateOf(false) }
     val busy = state.busy == SetupVM.Step.ROOTFS
 
     SetupStep(
-        step = 2,
+        step = 1,
         title = stringResource(R.string.setup_step_rootfs),
         summary = stringResource(R.string.setup_rootfs_summary),
         detail = { DetailCard(stringResource(R.string.setup_rootfs_detail)) },
@@ -388,7 +283,7 @@ private fun CliStep(state: SetupVM.State, onInstall: (Boolean) -> Unit, onDismis
     val busy = state.busy == SetupVM.Step.CLI
 
     SetupStep(
-        step = 3,
+        step = 2,
         title = stringResource(R.string.setup_step_cli),
         summary = stringResource(R.string.setup_cli_summary),
         detail = { DetailCard(stringResource(R.string.setup_cli_detail)) },
@@ -445,3 +340,6 @@ private fun CliStep(state: SetupVM.State, onInstall: (Boolean) -> Unit, onDismis
         Spacer(Modifier.height(8.dp))
     }
 }
+
+/** 向导的步数：Linux 环境、Claude Code CLI */
+private const val SETUP_STEPS = 2
