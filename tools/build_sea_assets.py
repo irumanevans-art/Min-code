@@ -3,6 +3,7 @@
 「海」主题素材：纹理取样 + 两色对角线字标图标。
 
     python tools/build_sea_assets.py [素材目录] [--debug]
+    python tools/build_sea_assets.py --icon-only      只重出桌面图标（不读素材目录）
 
 素材目录里要有：
     白色取色.jpg   底色白从它的背景取（中值 #F8FDF7）
@@ -11,14 +12,18 @@
 图标不再读手绘「软件图标.png」。构图仍是左上海、右下沙，分界是画布对角线
 （右上到左下）。字是 Cormorant Garamond 斜体 Bold：M 偏右上（高）、in 偏左下（低），
 i 的点坐在分界线上做成太极，太极的阴阳交界与分界线连成一条。海上是沙，沙上是海。
-填充只有两种颜色：平色海 #2B7FD6 与沙 #EFE2C9（抗锯齿会在沿上出过渡像素）。
+启动页与界面内的 SeaMark 填平色海 #2B7FD6 与沙 #EFE2C9；**桌面图标**另用一对颜色：
+原来海的地方是纯黑 #000000、沙的地方是纯白 #FFFFFF（LAUNCHER_DARK / LAUNCHER_LIGHT），
+构图与分界完全相同。两种情况都只有两种填充（抗锯齿会在沿上出过渡像素）。
 
-产物：
+产物（--icon-only 只写标 * 的三类）：
     app/src/main/res/drawable-nodpi/sea_plate.png            蓝色取底裁掉底部水印后的整张纹理
-    app/src/main/res/mipmap-*/ic_launcher_foreground.png     自适应图标前景（108dp）
-    app/src/main/res/mipmap-*/ic_launcher.png / _round.png   旧式图标（48dp）
+  * app/src/main/res/mipmap-*/ic_launcher_foreground.png     自适应图标前景（108dp，黑白）
+  * app/src/main/res/mipmap-*/ic_launcher.png / _round.png   旧式图标（48dp，黑白）
     app/src/main/res/drawable-nodpi/ic_launcher_monochrome.png  主题图标用的单色层
     app/src/main/java/dev/min/code/ui/theme/SeaMarkPaths.kt  对角线与字标轮廓
+    app/src/main/res/drawable/splash_mark.xml                启动页（海 + 沙）
+    app/src/main/res/drawable-*/ic_stat_min.png              通知小图标（白色剪影）
     work/sea/*.png                                           --debug 时的中间图
 """
 import json
@@ -31,6 +36,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 DEBUG = "--debug" in sys.argv
+# 只重出桌面图标：素材目录不在手边时也能改图标颜色，而不会顺手把纹理、轮廓、启动页一起重写
+ICON_ONLY = "--icon-only" in sys.argv
 SRC = ARGS[0] if ARGS else os.path.expanduser("~/Desktop/详情")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RES = os.path.join(ROOT, "app/src/main/res")
@@ -42,9 +49,13 @@ os.makedirs(WORK, exist_ok=True)
 
 DENSITIES = {"mdpi": 1, "hdpi": 1.5, "xhdpi": 2, "xxhdpi": 3, "xxxhdpi": 4}
 
-# 图标只用这两种填充。海是 LightSea.seaFlat，沙是原来岸上的干沙。
+# 启动页 / 界面内 SeaMark 只用这两种填充。海是 LightSea.seaFlat，沙是原来岸上的干沙。
 SEA_FLAT = (0x2B, 0x7F, 0xD6)
 SAND = (0xEF, 0xE2, 0xC9)
+# 桌面图标单独一对：海的位置纯黑、沙的位置纯白（用户要的黑白桌面图标）。
+# 只影响 mipmap-* 的三种 PNG；启动页、通知图标、SeaMarkPaths 驱动的界面绘制仍是海 + 沙。
+LAUNCHER_DARK = (0x00, 0x00, 0x00)
+LAUNCHER_LIGHT = (0xFF, 0xFF, 0xFF)
 
 MASTER = 1728  # 108dp × 16
 DP = MASTER / 108.0
@@ -322,12 +333,13 @@ def path_data_unit(polys, scale, ox=0.0, oy=0.0):
     return " ".join(parts)
 
 
-def compose_icon(letters, taiji, size):
+def compose_icon(letters, taiji, size, sea_rgb, sand_rgb):
+    """[sea_rgb] 填左上那一半（及沙上的字），[sand_rgb] 填右下那一半（及海上的字）。"""
     in_sea = sea_mask(size)
     let = letters * (1.0 - taiji["disc"].astype(np.float32))
     sea_amt = in_sea * (1.0 - let) + (1.0 - in_sea) * let
-    sea = np.array(SEA_FLAT, np.float32) / 255
-    sand = np.array(SAND, np.float32) / 255
+    sea = np.array(sea_rgb, np.float32) / 255
+    sand = np.array(sand_rgb, np.float32) / 255
     rgb = sea * sea_amt[..., None] + sand * (1.0 - sea_amt)[..., None]
     yf = taiji["yang"].astype(np.float32)
     nf = taiji["yin"].astype(np.float32)
@@ -340,9 +352,9 @@ def compose_icon(letters, taiji, size):
     return np.clip(rgb * 255, 0, 255).astype(np.uint8)
 
 
-def build_icon():
+def build_icon(icon_only=False):
     letters, taiji = render_min_mask(MASTER)
-    rgb = compose_icon(letters, taiji, MASTER)
+    rgb = compose_icon(letters, taiji, MASTER, LAUNCHER_DARK, LAUNCHER_LIGHT)
     fg = np.dstack([rgb, np.full(rgb.shape[:2], 255, np.uint8)])
     dbg("icon_master.png", rgb)
     dbg("icon_letters.png", letters)
@@ -361,6 +373,9 @@ def build_icon():
             out = im.copy()
             out.putalpha(m)
             out.save(os.path.join(d, fname))
+
+    if icon_only:
+        return None
 
     in_sea = sea_mask(MASTER) > 0.5
     let = letters > 0.5
@@ -505,6 +520,10 @@ def write_splash_and_stat(paths):
 
 
 def main():
+    if ICON_ONLY:
+        print("launcher dark", hexs(LAUNCHER_DARK), "light", hexs(LAUNCHER_LIGHT), "(icon only)")
+        build_icon(icon_only=True)
+        return
     tex = load_texture()
     Image.fromarray(tex).save(os.path.join(NODPI, "sea_plate.png"), optimize=True)
     paper = paper_white()
@@ -512,7 +531,8 @@ def main():
     print("paper", hexs(paper))
     for k, v in sw.items():
         print(k, hexs(v))
-    print("icon sea", hexs(SEA_FLAT), "sand", hexs(SAND))
+    print("mark sea", hexs(SEA_FLAT), "sand", hexs(SAND))
+    print("launcher dark", hexs(LAUNCHER_DARK), "light", hexs(LAUNCHER_LIGHT))
     paths = build_icon()
     write_paths(paths)
     write_splash_and_stat(paths)
@@ -520,7 +540,8 @@ def main():
           "points", sum(len(p) for p in paths["letters"]))
     with open(os.path.join(WORK, "swatches.json"), "w") as f:
         json.dump({"paper": hexs(paper), **{k: hexs(v) for k, v in sw.items()},
-                   "iconSea": hexs(SEA_FLAT), "iconSand": hexs(SAND)}, f, indent=2)
+                   "markSea": hexs(SEA_FLAT), "markSand": hexs(SAND),
+                   "launcherDark": hexs(LAUNCHER_DARK), "launcherLight": hexs(LAUNCHER_LIGHT)}, f, indent=2)
 
 
 if __name__ == "__main__":

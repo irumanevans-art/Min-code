@@ -82,12 +82,14 @@ Min 的界面只由三种物质构成：**纸**、**墨**、**海**。参考素�
 
 ## 品牌标与图标
 
-- 桌面图标由 `python tools/build_sea_assets.py <素材目录>` 生成：**只有两种颜色**（平色海 #2B7FD6 与沙 #EFE2C9），
-  分界是画布对角线（右上到左下，左上海、右下沙）；字是 Cormorant Garamond 斜体 Bold，
-  M 偏右上、in 偏左下，i 的点落在对角线上做成太极。海上是沙、沙上是海。
-  不再用手绘的「软件图标.png」。前景 `mipmap-*/ic_launcher_foreground.png`，背景纸白，
+- 桌面图标由 `python tools/build_sea_assets.py <素材目录>` 生成（只改图标颜色时用 `--icon-only`，不需要素材目录）：
+  **只有两种颜色：纯黑 #000000 与纯白 #FFFFFF**，分界是画布对角线（右上到左下，左上黑、右下白）；
+  字是 Cormorant Garamond 斜体 Bold，M 偏右上、in 偏左下，i 的点落在对角线上做成太极。黑上是白、白上是黑。
+  这对颜色只给桌面图标（脚本里的 `LAUNCHER_DARK` / `LAUNCHER_LIGHT`）；启动页与 App 内的 `SeaMark`
+  仍是同一构图的平色海 #2B7FD6 + 沙 #EFE2C9（`SEA_FLAT` / `SAND`）。
+  不再用手绘的「软件图标.png」。前景 `mipmap-*/ic_launcher_foreground.png`，背景 `ic_launcher_background` 纯白，
   `ic_launcher_monochrome.png` 是剪影；`splash_mark.xml` 是启动页的平面版；`ic_stat_min.png` 是通知栏的白色剪影。
-- App 内的品牌标分两种：桌面图标与启动页是两色方砖上的 `SeaMark`（轮廓 `SeaMarkPaths.kt`，脚本生成，勿手改）；
+- App 内的品牌标分两种：启动页是两色（海 + 沙）方砖上的 `SeaMark`，桌面图标是它的黑白版（轮廓 `SeaMarkPaths.kt`，脚本生成，勿手改）；
   **顶栏与关于页**用 `HandMin`：桌面「新」里手写照片抠出的笔画（`res/drawable-nodpi/min_hand.png`），字直接落在纸上、笔画是海（`seaInk`），右下一线海的深处当笔影，不加圆角底、不加沙滩。
   顶栏那一笔会压在滚动的正文上，底下垫一圈实晕把它托出来：浅色是白，**深色是夜纸 #0B1524**（白晕叠在深蓝纸上会像一圈灯）。
 - **首页 / 加载页**（`ui/components/SeaLight.kt` 的 `SeaHero`）是对 moonshot.ai 首页的整体转译：纸上只有一个巨大的 Min 字标
@@ -96,7 +98,7 @@ Min 的界面只由三种物质构成：**纸**、**墨**、**海**。参考素�
   氛围：光在纸上晕开一团海色柔光、光里一张游动的水光网，字被撕开处拖出残影，四周二十几粒光屑慢慢上浮；进场时字从水里浮起、光渐亮。一束光在字里的海面上巡游（手指按住时跟手）：
   光的一圈像透镜把字往里拉、放大，圈边一弯随时间转的新月（落在纸上是海色、落在字上是浪沫白），水面细波把字沿水平撕成一道道、
   红蓝在光边错开，圈外只剩轻微涌动。松手后光沿落墨曲线滑回巡游路线，不瞬移。
-  AGSL `RuntimeShader`，Android 13+；更低版本字静止。桌面图标是两色对角线字标；顶栏仍是手写 Min。
+  AGSL `RuntimeShader`，Android 13+；更低版本字静止。桌面图标是黑白对角线字标；顶栏仍是手写 Min。
 - **点按涟漪只在启动那一屏**（`SeaSurface` 包住 `StartPanel` 的 `HeroCanvas`）。会话、设置、文件页都没有。
   一小圈细波从指尖扩出去（半径大约 56 dp、两圈、约 1 s），不是铺满整屏的靶心。只旁观按下、不抢事件。
   `[time]` 必须在组合阶段读；时钟只在有涟漪时走，空转会把 origin 钉死。

@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  桌面图标 = 两色对角线：左上海 #2B7FD6、右下沙 #EFE2C9；Cormorant 斜体 Min，
-  M 在上、in 在下，i 的点是对角线上的太极。位图由 tools/build_sea_assets.py 生成。
+  桌面图标 = 两色对角线：左上纯黑 #000000、右下纯白 #FFFFFF；Cormorant 斜体 Min，
+  M 在上、in 在下，i 的点是对角线上的太极。位图由 tools/build_sea_assets.py 生成
+  （LAUNCHER_DARK / LAUNCHER_LIGHT；启动页 splash_mark 仍是海 + 沙）。
 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-  <background android:drawable="@color/paper"/>
+  <background android:drawable="@color/ic_launcher_background"/>
   <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
   <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>
 </adaptive-icon>
