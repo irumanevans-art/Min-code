@@ -987,15 +987,8 @@ private fun SessionContent(
     // 换会话时重置成跟随，新打开的会话照旧从底部读起
     val follow = rememberTranscriptFollow(listState)
     LaunchedEffect(activeKey) { follow.reset() }
-    LaunchedEffect(blocks.size, showLiveTurn, follow.following, activeKey) {
-        if (!follow.following) return@LaunchedEffect
-        // 正文长度放在 snapshotFlow 里读而不是当 key：
-        // 当 key 就得在函数体里读正文长度，整个 SessionContent 又会跟着每个 token 重组
-        snapshotFlow { liveSession.value.streamingText.length / FOLLOW_TEXT_STEP }.collect {
-            val extra = (if (streaming) 1 else 0) + (if (showLiveTurn) 1 else 0)
-            listState.animateToTail(blocks.size + extra)
-        }
-    }
+    // 盯的是列表布局而不是正文长度：不必在这里读逐 token 变的状态，SessionContent 也就不跟着重组
+    FollowTailEffect(listState, follow)
 
     // 键盘弹起时把尾巴重新顶到底。
     //

@@ -1,6 +1,9 @@
 package dev.min.code.ui.session
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -266,6 +269,10 @@ internal fun workBlockSummary(items: List<ChatItem>): String {
  * 一条记录 = 左侧轨道段 + 标记 + 右侧内容。
  *
  * @param active 这条正在进行中。局部青色流光限制在轨道内，不覆盖正文。
+ *   同时正文区的高度改成**渐长**（[GrowSpec]）：流式正文一口气到几行时不是整块冒出来，
+ *   而是被慢慢揭开。轨道画在外层 Row 上、量的是渐长后的高度，所以左边的线和末段收笔
+ *   跟着正文一起滑下去，不会先跳到新位置等字追上来。收笔那 38 dp 留白在渐长区外面，
+ *   不参与动画、也不会被裁掉。
  */
 @Composable
 internal fun TranscriptEntry(
@@ -289,12 +296,23 @@ internal fun TranscriptEntry(
                 .padding(
                     top = ENTRY_PADDING,
                     bottom = ENTRY_PADDING + if (isLast) TranscriptRailTail else 0.dp,
-                ),
+                )
+                .then(if (active) Modifier.animateContentSize(GrowSpec) else Modifier),
             verticalArrangement = Arrangement.spacedBy(4.dp),
             content = content,
         )
     }
 }
+
+/**
+ * 进行中的条目长高用的弹簧。临界阻尼：不能回弹，正文底边往回缩一下看着就是抖。
+ * 刚度取中低档（约 300 ms 走完一行）：比流式 token 的间隔慢一点，连着来的几截会被
+ * 抹成一次连续的长高；再慢，正文就会明显落在光标后面。
+ */
+private val GrowSpec = spring<androidx.compose.ui.unit.IntSize>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMediumLow,
+)
 
 /** 展开 / 收起的箭头：一个 ArrowDown 转 180°，而不是换图标 */
 @Composable

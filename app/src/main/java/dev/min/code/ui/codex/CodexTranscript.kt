@@ -10,11 +10,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.ui.session.AssistantEntry
@@ -25,13 +22,11 @@ import dev.min.code.ui.session.NoteEntry
 import dev.min.code.ui.session.ThinkingEntry
 import dev.min.code.ui.session.TranscriptBlock
 import dev.min.code.ui.session.TranscriptItem
-import dev.min.code.ui.session.FOLLOW_TEXT_STEP
-import dev.min.code.ui.session.animateToTail
+import dev.min.code.ui.session.FollowTailEffect
 import dev.min.code.ui.session.awaitingToolUseId
 import dev.min.code.ui.session.groupTranscript
 import dev.min.code.ui.session.rememberTranscriptFollow
 import dev.min.code.ui.session.rememberTranscriptLabels
-import kotlinx.coroutines.flow.collectLatest
 
 /**
  * Codex 的会话流。
@@ -60,24 +55,10 @@ internal fun CodexTranscript(
     val error = session.errorMessage?.takeIf { it.isNotBlank() }
     val lastIndex = blocks.lastIndex
 
-    // 贴底跟随和 Claude 侧同一份规则：在底就跟，往上翻了就不动，见 [TranscriptFollow]。
-    // session 是普通参数，LaunchedEffect 的协程只捕获首次组合那份闭包，
-    // snapshotFlow 直读它永远读到旧对象、永不发射。经 rememberUpdatedState 转一手，
-    // 每次重组写进 State，snapshotFlow 才跟得上新内容。
-    val latest = rememberUpdatedState(session)
+    // 贴底跟随和 Claude 侧同一份规则与缓动：在底就跟，往上翻了就不动，见 [TranscriptFollow]。
+    // 盯的是列表布局，打开会话时回放的历史进了 layoutInfo 自然就跟到底
     val follow = rememberTranscriptFollow(listState)
-    LaunchedEffect(listState, follow.following) {
-        if (!follow.following) return@LaunchedEffect
-        // 总项数也当触发：打开会话时历史是在首帧测量之后才进 layoutInfo 的，
-        // 不看它的话第一次发射时列表还没量过，回放的历史就停在顶部
-        snapshotFlow {
-            Triple(
-                latest.value.items.size,
-                latest.value.streamingText.length / FOLLOW_TEXT_STEP,
-                listState.layoutInfo.totalItemsCount,
-            )
-        }.collectLatest { (_, _, total) -> listState.animateToTail(total) }
-    }
+    FollowTailEffect(listState, follow)
 
     // 挂着审批时那张卡显示成「等你批准」而不是转圈。Codex 的 itemId 就是卡的 toolUseId
     //（见 CodexChatMapping），不需要按工具名回退
