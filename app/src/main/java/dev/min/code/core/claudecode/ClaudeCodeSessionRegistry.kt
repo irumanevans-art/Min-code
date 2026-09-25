@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import java.util.UUID
+import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.SessionStatus
 
 /**
@@ -65,6 +66,8 @@ class ClaudeCodeSessionRegistry(
         val errorMessage: String? = null,
         /** CLI 实时拟的标题；抽屉合并时人手改名优先于它 */
         val liveTitle: String? = null,
+        /** 最后一条助手回复的原文。完成通知的正文取自它；会话还没有任何回复时为 null */
+        val lastAssistantText: String? = null,
     ) {
         /**
          * 进程真的还活着。注册表里可能留着状态为 Closed/Failed 的条目（刚崩、还没被
@@ -153,6 +156,7 @@ class ClaudeCodeSessionRegistry(
                     statusText = st.statusDetail ?: st.statusPhase,
                     errorMessage = st.errorMessage,
                     liveTitle = st.liveTitle,
+                    lastAssistantText = st.items.filterIsInstance<ChatItem.AssistantText>().lastOrNull()?.text,
                 )
             }
         }

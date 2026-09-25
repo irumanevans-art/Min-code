@@ -26,6 +26,7 @@ import dev.min.code.util.sendNotification
 import org.koin.java.KoinJavaComponent.inject
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.SessionStatus
 
 /**
@@ -148,7 +149,7 @@ class ClaudeCodeSessionSupervisor(
                     notificationId = doneNotificationId(session.key),
                 ) {
                     title = "Claude Code"
-                    content = "任务已完成"
+                    content = notificationBody(session.lastAssistantText)
                     autoCancel = true
                     useDefaults = true
                     category = NotificationCompat.CATEGORY_MESSAGE
@@ -225,7 +226,9 @@ class ClaudeCodeSessionSupervisor(
                 notificationId = CODEX_DONE_NOTIFICATION_ID,
             ) {
                 title = "Codex"
-                content = "任务已完成"
+                content = notificationBody(
+                    state.items.filterIsInstance<ChatItem.AssistantText>().lastOrNull()?.text,
+                )
                 autoCancel = true
                 useDefaults = true
                 category = NotificationCompat.CATEGORY_MESSAGE
@@ -362,6 +365,12 @@ const val EXTRA_OPEN_CODEX = "openCodex"
 /** 两段通知 id 区间各 19 位（3M/4M 起步，互不重叠，也不撞 App 的固定小 id） */
 private const val KEY_MASK_19 = 0x7FFFF
 
+/** [notificationBody] 的压行：连续空白（含换行）压成一个空格 */
+private val WHITESPACE_RUN = Regex("\\s+")
+
+/** 完成通知正文的最大长度，按 String 数（中文一字算一） */
+private const val TURN_DONE_BODY_MAX_CHARS = 40
+
 /** Codex 单会话在后台要人知道的四类事，判定见 [codexSupervisorDiff] */
 internal sealed interface CodexSupervisorEvent {
     /** 服务端发起的审批请求。带可选项，通知按钮照着过滤 */
@@ -388,6 +397,18 @@ internal sealed interface ClaudeSupervisorEvent {
     data object PermissionCleared : ClaudeSupervisorEvent
     data object TurnDone : ClaudeSupervisorEvent
     data class Died(val message: String?) : ClaudeSupervisorEvent
+}
+
+/**
+ * 「一轮完成」通知的正文：这一轮最后一条助手回复，压成单行再截到 40 字。
+ *
+ * 换行变空格、连续空白压成一个、trim 之后按 `String.length` 截断（中文一字算一），
+ * 截断处不加省略号。没有可用的文本（null / 全是空白 —— 比如整轮只有工具调用或报错）
+ * 就退回默认文案，**不发空正文**。纯函数，规则单测钉在 NotificationBodyTest。
+ */
+internal fun notificationBody(lastAssistantText: String?): String {
+    val line = lastAssistantText?.replace(WHITESPACE_RUN, " ")?.trim().orEmpty()
+    return line.take(TURN_DONE_BODY_MAX_CHARS).ifEmpty { "任务已完成" }
 }
 
 /**
