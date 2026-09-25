@@ -316,6 +316,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
 
     // 导出用的字头在这里取好：toTranscriptText 在 onClick 里跑，那儿拿不到资源
     val transcriptLabels = rememberTranscriptLabels()
+    val sessionTransfer = rememberSessionTransfer(vm, sessions)
 
     val drawer: @Composable (paneWidth: Dp?) -> Unit = { paneWidth ->
         ClaudeCodeSessionDrawer(
@@ -336,6 +337,8 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onRenameSession = vm::renameSession,
             onSetCategory = vm::setSessionCategory,
             categories = vm.sessionCategories(),
+            onExportSession = sessionTransfer.export,
+            onImportSession = sessionTransfer.import,
             onOpenCodex = {
                 afterSidebarNav()
                 navController.navigate(Screen.Codex)

@@ -91,6 +91,8 @@ import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete02
 import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.Exchange01
+import me.rerere.hugeicons.stroke.FileExport
+import me.rerere.hugeicons.stroke.FileImport
 import me.rerere.hugeicons.stroke.Folder01
 import me.rerere.hugeicons.stroke.Globe
 import me.rerere.hugeicons.stroke.MoreHorizontal
@@ -126,6 +128,10 @@ fun ClaudeCodeSessionDrawer(
     onRenameSession: (String, String) -> Unit = { _, _ -> },
     onSetCategory: (String, String?) -> Unit = { _, _ -> },
     categories: List<String> = emptyList(),
+    /** 行菜单里的「导出」；null 时不给这一项 */
+    onExportSession: ((ClaudeCodeVM.SessionEntry) -> Unit)? = null,
+    /** 题跋上的「导入」；null 时不给这个按钮 */
+    onImportSession: (() -> Unit)? = null,
     onOpenFiles: () -> Unit = {},
     onOpenCodex: () -> Unit = {},
     onOpenTerminal: () -> Unit = {},
@@ -190,6 +196,17 @@ fun ClaudeCodeSessionDrawer(
                                 size = 32.dp,
                                 iconSize = 18.dp,
                             )
+                            // 和「新建」并排：导入也是往这张表里添一条会话。低频，所以只是个图标，
+                            // 不单开一行、不进「系统」页（那一页放的是环境，不是会话）
+                            onImportSession?.let { import ->
+                                InkIconButton(
+                                    icon = HugeIcons.FileImport,
+                                    contentDescription = stringResource(R.string.session_import),
+                                    onClick = import,
+                                    size = 32.dp,
+                                    iconSize = 18.dp,
+                                )
+                            }
                             InkIconButton(
                                 icon = HugeIcons.PlusSign,
                                 contentDescription = stringResource(R.string.session_list_new),
@@ -258,6 +275,8 @@ fun ClaudeCodeSessionDrawer(
                                 onRename = { pendingRename = s },
                                 onCategorize = { pendingCategory = s },
                                 onDelete = { pendingDelete = s },
+                                // 还没落盘的会话没有文件可导出
+                                onExport = onExportSession?.takeIf { s.onDisk }?.let { export -> { export(s) } },
                             )
                         }
                     }
@@ -469,6 +488,7 @@ private fun SessionRow(
     onRename: () -> Unit,
     onCategorize: () -> Unit,
     onDelete: () -> Unit,
+    onExport: (() -> Unit)?,
 ) {
     val scheme = MaterialTheme.colorScheme
     val palette = MaterialTheme.sea
@@ -562,6 +582,7 @@ private fun SessionRow(
                 onRename = onRename,
                 onDelete = onDelete,
                 onCategorize = onCategorize,
+                onExport = onExport,
                 triggerTint = if (entry.isActive) palette.onSea.copy(alpha = 0.8f) else scheme.outline,
             )
         }
@@ -588,6 +609,8 @@ internal fun SessionRowMenu(
     onDelete: () -> Unit,
     /** 只有 Claude 有分类；null 时不显示这一项 */
     onCategorize: (() -> Unit)? = null,
+    /** 只有 Claude 会话能导出（Codex 的会话文件是另一套）；null 时不显示这一项 */
+    onExport: (() -> Unit)? = null,
     triggerTint: Color = MaterialTheme.colorScheme.outline,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -623,6 +646,13 @@ internal fun SessionRowMenu(
                     stringResource(R.string.session_category),
                     icon = HugeIcons.Tag01,
                     onClick = { menu = false; onCategorize() },
+                )
+            }
+            if (onExport != null) {
+                InkMenuItem(
+                    stringResource(R.string.session_export),
+                    icon = HugeIcons.FileExport,
+                    onClick = { menu = false; onExport() },
                 )
             }
             InkMenuItem(

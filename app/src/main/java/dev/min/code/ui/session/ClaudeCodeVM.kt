@@ -28,6 +28,8 @@ import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.claudecode.ClaudeCodeSessionStore
+import dev.min.code.core.claudecode.ClaudeCodeSessionTransfer
+import dev.min.code.core.claudecode.SessionImportReject
 import dev.min.code.core.claudecode.SessionMeta
 import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
@@ -49,6 +51,7 @@ import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceStorageArea
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.OutputStream
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
@@ -158,6 +161,8 @@ class ClaudeCodeVM(
         val titled: Boolean = false,
         /** 抽屉搜索用的正文片段（磁盘扫描时顺手攒的） */
         val bodyText: String = "",
+        /** CLI 已经把 transcript 落过盘。刚开、还没跑完一轮的会话没有文件，也就没有可导出的东西 */
+        val onDisk: Boolean = true,
     )
 
     /**
@@ -211,6 +216,7 @@ class ClaudeCodeVM(
                     pinned = extra.pinned,
                     category = extra.category,
                     titled = extra.title != null || live != null,
+                    onDisk = false,
                 )
             }
             (orphanLive + fromDisk).sortedWith(
@@ -648,6 +654,96 @@ class ClaudeCodeVM(
         sessionMeta.update(id) { it.copy(title = trimmed) }
         if (registry.activeKey.value == id) onActive { it.renameSession(trimmed) }
     }
+
+    // --- 会话导出 / 导入（搬 CLI 的 transcript JSONL，规则见 ClaudeCodeSessionTransfer） ---
+
+    sealed interface SessionImportOutcome {
+        data class Imported(val sessionId: String, val cwd: String) : SessionImportOutcome
+        data class Rejected(val reason: SessionImportReject, val line: Int) : SessionImportOutcome
+        /** 同 id 的会话进程还活着：CLI 正往那份文件里追加，这时换掉它两边都会坏 */
+        data object Running : SessionImportOutcome
+        data object Failed : SessionImportOutcome
+    }
+
+    private val sessionTransfer = ClaudeCodeSessionTransfer()
+
+    /** 撞上已有同 id 会话、等用户选覆盖还是取消的那一份。非空时界面弹确认 */
+    private var stagedImport: ClaudeCodeSessionTransfer.Staged.Ready? = null
+    /** 暂存那一份改写进去的工作目录；确认覆盖时报给用户的得是它，而不是此刻的 lastOptions */
+    private var stagedCwd: String = ClaudeCodeManager.DEFAULT_CWD
+    private val _pendingImportId = MutableStateFlow<String?>(null)
+    val pendingImportId: StateFlow<String?> = _pendingImportId.asStateFlow()
+
+    private suspend fun transcriptLinuxDir() =
+        (registry.active() ?: registry.configProbe()).transcriptLinuxDir()
+
+    fun exportSession(id: String, open: () -> OutputStream?, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val linuxDir = transcriptLinuxDir()
+            onDone(linuxDir != null && sessionTransfer.export(linuxDir, id, open))
+        }
+    }
+
+    /**
+     * 导入到「当前工作目录」——和新建会话用的是同一个（[lastOptions]），也就是导入的会话
+     * 第一次打开、没有自己的偏好时 `--resume` 之后 `set_cwd` 过去的那个目录。
+     */
+    fun importSession(open: () -> InputStream?, onDone: (SessionImportOutcome) -> Unit) {
+        viewModelScope.launch {
+            stagedImport?.let { sessionTransfer.discard(it) }
+            stagedImport = null
+            _pendingImportId.value = null
+            val linuxDir = transcriptLinuxDir() ?: return@launch onDone(SessionImportOutcome.Failed)
+            val cwd = CwdPath.normalize(lastOptions().cwd)
+            when (val staged = sessionTransfer.stage(linuxDir, cwd, open)) {
+                ClaudeCodeSessionTransfer.Staged.Failed -> onDone(SessionImportOutcome.Failed)
+                is ClaudeCodeSessionTransfer.Staged.Rejected ->
+                    onDone(SessionImportOutcome.Rejected(staged.reason, staged.line))
+                is ClaudeCodeSessionTransfer.Staged.Ready -> when {
+                    isLiveSession(staged.sessionId) -> {
+                        sessionTransfer.discard(staged)
+                        onDone(SessionImportOutcome.Running)
+                    }
+                    staged.existing != null -> {
+                        stagedImport = staged
+                        stagedCwd = cwd
+                        _pendingImportId.value = staged.sessionId
+                    }
+                    else -> commitImport(staged, cwd, onDone)
+                }
+            }
+        }
+    }
+
+    /** 冲突确认的两个出口。[overwrite] = false 时丢掉暂存，旧会话原封不动 */
+    fun resolveImport(overwrite: Boolean, onDone: (SessionImportOutcome) -> Unit) {
+        val staged = stagedImport ?: return
+        stagedImport = null
+        _pendingImportId.value = null
+        viewModelScope.launch {
+            when {
+                !overwrite -> sessionTransfer.discard(staged)
+                // 对话框开着的这段时间里用户可能已经把它打开了
+                isLiveSession(staged.sessionId) -> {
+                    sessionTransfer.discard(staged)
+                    onDone(SessionImportOutcome.Running)
+                }
+                else -> commitImport(staged, stagedCwd, onDone)
+            }
+        }
+    }
+
+    private suspend fun commitImport(
+        staged: ClaudeCodeSessionTransfer.Staged.Ready,
+        cwd: String,
+        onDone: (SessionImportOutcome) -> Unit,
+    ) {
+        if (!sessionTransfer.commit(staged)) return onDone(SessionImportOutcome.Failed)
+        refreshSessions()
+        onDone(SessionImportOutcome.Imported(staged.sessionId, cwd))
+    }
+
+    private fun isLiveSession(id: String) = registry.get(id)?.isLive == true
 
     /**
      * 把手机上的文件导入沙箱，返回 Claude Code 能直接用的路径。

@@ -154,6 +154,23 @@
   <string name="session_category_hint">Leave it empty for none</string>
   <string name="session_delete_title">Delete session</string>
   <string name="session_delete_body">This stops the Claude Code process behind it and deletes the transcript. It cannot be undone.</string>
+  <!-- Session export / import: moves the CLI's own transcript JSONL between devices -->
+  <string name="session_export">Export</string>
+  <string name="session_import">Import session</string>
+  <string name="session_export_done">Session exported</string>
+  <string name="session_export_failed">Couldn’t export: the transcript is missing or the destination can’t be written</string>
+  <string name="session_import_done">Imported session %1$s into %2$s</string>
+  <string name="session_import_failed">Couldn’t read the file or write it into the workspace</string>
+  <string name="session_import_running">That session is running. Close it first, then import again.</string>
+  <string name="session_import_empty">The file is empty; there is no session in it</string>
+  <string name="session_import_too_large">The file is larger than %1$d MB, too big to open on a phone</string>
+  <string name="session_import_bad_line">Line %1$d is not a JSON object; this isn’t a Claude Code transcript</string>
+  <string name="session_import_no_id">No sessionId anywhere in the file; this isn’t a Claude Code transcript</string>
+  <string name="session_import_mixed_id">Line %1$d carries a different sessionId; the file mixes several sessions</string>
+  <string name="session_import_bad_id">Line %1$d has an invalid sessionId (expected a UUID)</string>
+  <string name="session_import_conflict_title">Overwrite existing session?</string>
+  <string name="session_import_conflict_body">“%1$s” already has this sessionId. Overwriting replaces its transcript with the imported one; the old one can’t be restored.</string>
+  <string name="session_import_overwrite">Overwrite</string>
 
   <!-- Session page: top bar, blank page, live turn, permission sheet, start panel -->
   <string name="session_refresh_status">Refresh status</string>

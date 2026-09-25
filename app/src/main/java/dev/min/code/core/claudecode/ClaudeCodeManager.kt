@@ -2296,6 +2296,9 @@ class ClaudeCodeManager(
         return sessionStore.listSessions(linuxDir)
     }
 
+    /** transcript 所在 rootfs 的 linux/ 目录。会话导出 / 导入（[ClaudeCodeSessionTransfer]）用；环境没装好时 null */
+    suspend fun transcriptLinuxDir(): File? = currentLinuxDir ?: resolveLinuxDir()
+
     /**
      * 打开一个历史会话：先把 transcript 重建成界面条目，再用 --resume 续上进程。
      *

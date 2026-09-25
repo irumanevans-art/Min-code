@@ -152,6 +152,23 @@
   <string name="session_category_hint">空着就是未分类</string>
   <string name="session_delete_title">删除会话</string>
   <string name="session_delete_body">会停掉内部的 Claude Code 进程，并删掉这份 transcript。删了就不能恢复。</string>
+  <!-- 会话导出 / 导入：在设备之间搬 CLI 自己写的 transcript JSONL -->
+  <string name="session_export">导出</string>
+  <string name="session_import">导入会话</string>
+  <string name="session_export_done">会话已导出</string>
+  <string name="session_export_failed">导出失败：找不到会话记录，或目标位置写不进去</string>
+  <string name="session_import_done">已导入会话 %1$s，工作目录 %2$s</string>
+  <string name="session_import_failed">读取文件或写入工作区失败</string>
+  <string name="session_import_running">这个会话正在运行，先关掉它再导入</string>
+  <string name="session_import_empty">文件是空的，里面没有会话</string>
+  <string name="session_import_too_large">文件超过 %1$d MB，在手机上打不开，不导入</string>
+  <string name="session_import_bad_line">第 %1$d 行不是 JSON 对象，这不是 Claude Code 会话文件</string>
+  <string name="session_import_no_id">文件里没有 sessionId，这不是 Claude Code 会话文件</string>
+  <string name="session_import_mixed_id">第 %1$d 行的 sessionId 和前面不同：文件里混了多个会话，不导入</string>
+  <string name="session_import_bad_id">第 %1$d 行的 sessionId 无效（应当是 UUID）</string>
+  <string name="session_import_conflict_title">覆盖已有会话？</string>
+  <string name="session_import_conflict_body">「%1$s」用的是同一个 sessionId。覆盖会用导入的内容替换它的记录，旧记录不能恢复。</string>
+  <string name="session_import_overwrite">覆盖</string>
 
   <!-- 会话页：顶栏、空会话页、正在跑的这一轮、权限确认、启动面板 -->
   <string name="session_refresh_status">刷新状态</string>
