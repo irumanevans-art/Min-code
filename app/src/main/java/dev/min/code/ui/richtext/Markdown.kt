@@ -37,9 +37,13 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.ui.components.InkDivider
@@ -247,20 +251,27 @@ private fun indentedCode(node: ASTNode, text: String): String =
 
 @Composable
 private fun ListBlock(node: ASTNode, text: String, ordered: Boolean) {
-    var index = startNumber(node, text)
+    val numbering = if (ordered) OrderedListNumbering.of(node, text) else null
+    // 序号用等宽数字（tnum）：同位数的序号一样宽，右对齐时点号上下对齐，量最后一个就量到了最宽的
+    val markerStyle = LocalTextStyle.current.copy(fontFeatureSettings = "tnum")
+    val markerWidth = if (numbering == null) BULLET_COLUMN else orderedColumnWidth(numbering.widestMarker, markerStyle)
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        node.children.filter { it.type == MarkdownElementTypes.LIST_ITEM }.forEach { item ->
+        node.children.filter { it.type == MarkdownElementTypes.LIST_ITEM }.forEachIndexed { position, item ->
             val checkbox = item.children.firstOrNull { it.type == GFMTokenTypes.CHECK_BOX }?.text(text)?.trim()
             val marker = when {
                 checkbox != null -> if (checkbox.contains('x', ignoreCase = true)) "☑" else "☐"
-                ordered -> "${index++}."
+                numbering != null -> numbering.marker(position)
                 else -> "•"
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     text = marker,
-                    modifier = Modifier.width(if (ordered) 22.dp else 14.dp),
+                    modifier = Modifier.width(markerWidth),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = markerStyle,
+                    textAlign = if (numbering != null) TextAlign.End else TextAlign.Start,
+                    softWrap = false,
+                    maxLines = 1,
                 )
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     item.children.forEach { child ->
@@ -276,10 +287,23 @@ private fun ListBlock(node: ASTNode, text: String, ordered: Boolean) {
     }
 }
 
-private fun startNumber(list: ASTNode, text: String): Int =
-    list.children.firstOrNull { it.type == MarkdownElementTypes.LIST_ITEM }
-        ?.children?.firstOrNull { it.type == MarkdownTokenTypes.LIST_NUMBER }
-        ?.text(text)?.trim()?.trimEnd('.', ')')?.toIntOrNull() ?: 1
+/**
+ * 有序列表的序号列宽：按当前字体实测最宽的序号，不按位数估 dp。
+ * 原来写死 22.dp，「100.」放不下被折成「10 / 0.」；按位数给 dp 也一样会在字号或系统字体缩放变大时再撑破，
+ * 实测跟着 [style] 和 density 走，才是一劳永逸。下限仍是 22.dp，一两位数的列表缩进和以前一样。
+ */
+@Composable
+private fun orderedColumnWidth(widest: String, style: TextStyle): Dp {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(widest, style, density) {
+        val px = measurer.measure(widest, style, softWrap = false, maxLines = 1).size.width
+        with(density) { px.toDp() }.coerceAtLeast(ORDERED_COLUMN_MIN)
+    }
+}
+
+private val BULLET_COLUMN = 14.dp
+private val ORDERED_COLUMN_MIN = 22.dp
 
 @Composable
 private fun BlockQuote(node: ASTNode, text: String) {
