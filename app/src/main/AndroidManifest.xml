@@ -16,6 +16,21 @@
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
   <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+  <!--
+    仅本地热点：纯流量冷启动时点亮 WiFi 射频，不连任何网、也不开个人热点。
+    Android 13+ 走「附近的设备」，声明 neverForLocation，不要位置。
+  -->
+  <uses-permission
+    android:name="android.permission.NEARBY_WIFI_DEVICES"
+    android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="33" />
+  <!--
+    壳进程（uid 2000）第一次拉起时 pm grant 给自己。之后 App 就能写
+    adb_wifi_enabled，纯流量冷启动不必再进开发者选项。卸载会收回。
+  -->
+  <uses-permission
+    android:name="android.permission.WRITE_SECURE_SETTINGS"
+    tools:ignore="ProtectedPermissions" />
 
   <!--
     整机文件：设置里「让 agent 读写这台设备」开了之后，把共享存储挂进 rootfs 的 /sdcard。
@@ -98,6 +113,11 @@
     <!-- Codex 审批通知的同款接收端 -->
     <receiver
       android:name=".core.service.CodexApprovalReceiver"
+      android:exported="false" />
+
+    <!-- 无线调试配对：通知栏行内输入配对码（单机自配对时对话框不能失焦，见 AdbPairingReceiver） -->
+    <receiver
+      android:name=".privileged.AdbPairingReceiver"
       android:exported="false" />
 
     <!--

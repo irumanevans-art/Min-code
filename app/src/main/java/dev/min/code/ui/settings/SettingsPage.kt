@@ -1,11 +1,14 @@
 package dev.min.code.ui.settings
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -23,6 +26,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +56,7 @@ import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
+import dev.min.code.privileged.AdbPairingReceiver
 import dev.min.code.privileged.PrivilegedClient
 import dev.min.code.ui.components.BackButton
 import dev.min.code.ui.components.InkButtonTone
@@ -447,6 +453,17 @@ private fun VirtualDisplayRow(vm: SettingsVM) {
     val context = LocalContext.current
     val privState by vm.privilegedState.collectAsStateWithLifecycle()
     val session by vm.agentDisplayActive.collectAsStateWithLifecycle()
+    // 纯流量冷启动要仅本地热点，Android 13+ 先要「附近的设备」
+    val nearbyLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { vm.startPrivilegedViaWireless() }
+    fun startWireless() {
+        if (vm.needsNearbyWifiPermission()) {
+            nearbyLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
+        } else {
+            vm.startPrivilegedViaWireless()
+        }
+    }
 
     val subtitle = when (privState) {
         PrivilegedClient.State.Ready -> {
@@ -484,11 +501,72 @@ private fun VirtualDisplayRow(vm: SettingsVM) {
                 }
             },
         )
+        // 配对区：首次使用先配对（一次性）。已就绪就不再显示。
+        if (privState != PrivilegedClient.State.Ready) {
+            var pairPort by remember { mutableStateOf("") }
+            var pairCode by remember { mutableStateOf("") }
+            Text(
+                text = stringResource(R.string.device_virtual_pair_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                InkTextField(
+                    value = pairPort,
+                    // 端口最大 65535 就是 5 位；限死，免得来回补输堆成十几位、溢出 Int 把按钮卡灰
+                    onValueChange = { pairPort = it.filter(Char::isDigit).take(5) },
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(R.string.device_virtual_pair_port),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                InkTextField(
+                    value = pairCode,
+                    onValueChange = { pairCode = it.filter(Char::isDigit).take(6) },
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(R.string.device_virtual_pair_code),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                InkTextButton(
+                    enabled = privState != PrivilegedClient.State.Starting &&
+                        (pairPort.toIntOrNull() ?: 0) in 1024..65535 && pairCode.length == 6,
+                    onClick = { vm.pairAndStartViaWireless(pairCode, pairPort.toInt()) },
+                ) {
+                    Text(stringResource(R.string.device_virtual_pair))
+                }
+                // 单机自配对推荐这条：发通知，去无线调试对话框里下拉通知栏打码，对话框不失焦
+                InkTextButton(
+                    onClick = {
+                        val posted = AdbPairingReceiver.post(context)
+                        Toast.makeText(
+                            context,
+                            if (posted) {
+                                "已发通知：去无线调试对话框，下拉通知栏在回复框里打配对码"
+                            } else {
+                                "请先在系统里允许 min-code 发通知"
+                            },
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    },
+                ) {
+                    Text(stringResource(R.string.device_virtual_pair_notif))
+                }
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            InkTextButton(onClick = { vm.startPrivilegedViaWireless() }) {
+            InkTextButton(onClick = { startWireless() }) {
                 Text(stringResource(R.string.device_virtual_start))
             }
             InkTextButton(

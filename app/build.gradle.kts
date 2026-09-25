@@ -177,13 +177,11 @@ dependencies {
     implementation(libs.termux.terminal.view)
     implementation(libs.chrisbanes.haze)
     implementation(libs.androidx.profileinstaller)
-    // 本机无线调试的纯 Kotlin ADB 客户端：用来拉起 shell-uid 的 PrivilegedServer，不依赖另装 Shizuku。
-    // dadb 的 POM 把 junit 标成了普通依赖，不排除的话会打进 APK 并在 META-INF/LICENSE.md 上撞车
-    implementation(libs.dadb) {
-        exclude(group = "org.junit.jupiter")
-        exclude(group = "org.junit.platform")
-        exclude(group = "junit")
-    }
+    // 本机无线调试拉起 shell-uid 的 PrivilegedServer，不依赖另装 Shizuku。
+    // ADB 协议/TLS/配对代码移植进 io.github.muntashirakon.adb（源自 libadb-android，Apache-2.0，去掉了 Conscrypt）。
+    // bcpkix 供配对加密与自签证书；spake2-android 带 BoringSSL 的 libspake2.so，必须和 adbd 同实现才能配上。
+    implementation(libs.bouncycastle.bcpkix)
+    implementation(libs.spake2)
     "baselineProfile"(project(":baselineprofile"))
     debugImplementation(libs.androidx.ui.tooling)
 

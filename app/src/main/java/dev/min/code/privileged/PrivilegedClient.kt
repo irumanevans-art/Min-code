@@ -35,9 +35,14 @@ class PrivilegedClient {
         private set
 
     private val serviceRef = AtomicReference<IPrivilegedService?>(null)
+    /** 壳被拔 USB 整组 SIGKILL 之后，Starter 用这个重拉并重建屏 */
+    @Volatile
+    var onDied: (() -> Unit)? = null
+
     private val deathRecipient = IBinder.DeathRecipient {
         Log.w(TAG, "privileged binder died")
         onDisconnected()
+        onDied?.invoke()
     }
 
     private val handoverListener: (IBinder) -> Unit = { binder -> attach(binder) }

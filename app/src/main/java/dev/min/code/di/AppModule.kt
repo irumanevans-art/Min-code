@@ -13,6 +13,7 @@ import dev.min.code.core.device.DeviceController
 import dev.min.code.core.device.DeviceMcpRegistrar
 import dev.min.code.core.device.DeviceMcpServer
 import dev.min.code.core.network.NetworkProbe
+import dev.min.code.privileged.MinAdbManager
 import dev.min.code.privileged.PrivilegedClient
 import dev.min.code.privileged.PrivilegedStarter
 import dev.min.code.core.codex.CodexAppServerManager
@@ -93,8 +94,10 @@ val appModule = module {
     // 设备操控：server 必须是 single —— 它持有绑定的端口和一次性 token，
     // 每 get 一次新建一个的话，写进 CLI 配置的地址和实际在听的那个就对不上了
     single { PrivilegedClient() }
-    single { PrivilegedStarter(get(), get()) }
+    // ADB 密钥/证书是设备身份，必须 single 且持久化：配对一次后连接复用同一副密钥
+    single { MinAdbManager(get()) }
     single { AgentDisplaySession(get()) }
+    single { PrivilegedStarter(get(), get(), get(), get(), get()) }
     // DeviceController 要能问到虚拟屏会话是否活跃，所以放在 AgentDisplaySession 之后
     single { DeviceController(get(), get(), get()) }
     single { DeviceMcpServer(get()) }

@@ -29,3 +29,7 @@ local.properties
 keystore.properties
 /secrets/
 .claude/
+
+# 本机签名用的 JWT 与签名，不入库
+jwt_signing.txt
+jwt_signing.txt.sig

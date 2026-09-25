@@ -32,12 +32,25 @@ class AgentDisplaySession(
 
     val isActive: Boolean get() = _active.value != null
 
+    /**
+     * 用户要这块屏一直在。壳被拔 USB 杀掉之后 [_active] 会空，但这个还是 true，
+     * 自动重拉会按这个再建一块。点「结束会话」才清掉。
+     */
+    @Volatile
+    var keepAlive: Boolean = false
+        private set
+
     fun start(
         width: Int = 1080,
         height: Int = 1920,
         densityDpi: Int = 320,
     ): Active {
-        stop()
+        val old = _active.value
+        if (old != null) {
+            runCatching { privileged.destroyAgentDisplay(old.displayId) }
+            _active.value = null
+        }
+        keepAlive = true
         val id = privileged.createAgentDisplay(width, height, densityDpi)
         bindLocal(id, width, height, densityDpi)
         return _active.value!!
@@ -56,6 +69,7 @@ class AgentDisplaySession(
         val svc = privileged.service() ?: return null
         val ids = runCatching { svc.listAgentDisplays() }.getOrNull() ?: return null
         val id = ids.maxOrNull() ?: return null
+        keepAlive = true
         bindLocal(id, width, height, densityDpi)
         Log.i(TAG, "restored displayId=$id (shell still held it)")
         return _active.value
@@ -74,11 +88,24 @@ class AgentDisplaySession(
         privileged.launchOnDisplay(packageName, a.displayId)
     }
 
+    /** 用户点结束会话时，Starter 用这个关仅本地热点 */
+    @Volatile
+    var onUserStopped: (() -> Unit)? = null
+
     fun stop() {
-        val a = _active.value ?: return
-        runCatching { privileged.destroyAgentDisplay(a.displayId) }
+        keepAlive = false
+        val a = _active.value
+        if (a != null) {
+            runCatching { privileged.destroyAgentDisplay(a.displayId) }
+            forgetRemote()
+            Log.i(TAG, "stopped displayId=${a.displayId}")
+        }
+        onUserStopped?.invoke()
+    }
+
+    /** 壳死了、屏已经没了：清本地状态，但 [keepAlive] 仍要自动重拉 */
+    fun forgetRemote() {
         MinAccessibilityService.instance.get()?.setTargetDisplay(Display.DEFAULT_DISPLAY)
         _active.value = null
-        Log.i(TAG, "stopped displayId=${a.displayId}")
     }
 }

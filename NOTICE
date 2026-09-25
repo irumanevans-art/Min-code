@@ -36,6 +36,13 @@ Third-party code and assets
     flags (`primePartner` / `isPartner` / `partnerPromotionKey`) are discarded, and the upstream
     file order — which is paid placement — is replaced by category then display name.
     Listing a provider here is not an endorsement of it.
+* libadb-android (https://github.com/MuntashirAkon/libadb-android), GPL-3.0-or-later OR Apache-2.0;
+  some files also carry BSD-3-Clause code (see each file's SPDX header)
+  - `app/src/main/java/io/github/muntashirakon/adb/`: ADB protocol, TLS and wireless-debugging pairing,
+    ported with the Conscrypt dependency removed. Used to start the shell-uid PrivilegedServer.
+* spake2-java / spake2-android (https://github.com/MuntashirAkon/spake2-java), GPL-3.0-or-later /
+  LGPL-3.0, as a Maven dependency; spake2-android ships BoringSSL's SPAKE2 as a native library
+* Bouncy Castle (https://www.bouncycastle.org), Bouncy Castle Licence (MIT-style), as a Maven dependency
 * Ubuntu base images are downloaded at runtime from cdimage.ubuntu.com (or a mirror);
   Node.js from nodejs.org; @anthropic-ai/claude-code from registry.npmjs.org.
 

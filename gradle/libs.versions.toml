@@ -24,7 +24,8 @@ baselineprofile = "1.5.0"
 profileinstaller = "1.4.1"
 uiautomator = "2.3.0"
 benchmark-macro-junit4 = "1.5.0"
-dadb = "1.2.9"
+bouncycastle = "1.81"
+spake2 = "2.2.1"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -63,7 +64,11 @@ chrisbanes-haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = 
 androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
 androidx-benchmark-macro-junit4 = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "benchmark-macro-junit4" }
 androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
-dadb = { module = "dev.mobile:dadb", version.ref = "dadb" }
+# 自托管 ADB 客户端的依赖：bcpkix 带 bcprov/bcutil，供配对的 SHA256/AES-GCM/HKDF 与自签证书构建。
+# SPAKE2 必须用 spake2-android（BoringSSL JNI）：纯 Java 版能完成消息交换，但共享密钥和 adbd 对不上，
+# 配对会在「交换 PeerInfo」时 GCM 解密失败。ADB 协议/TLS/配对代码见 io.github.muntashirakon.adb（移植自 libadb-android，Apache-2.0）
+bouncycastle-bcpkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
+spake2 = { module = "com.github.MuntashirAkon.spake2-java:spake2-android", version.ref = "spake2" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

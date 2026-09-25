@@ -2,6 +2,7 @@ package dev.min.code.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.min.code.AppScope
 import dev.min.code.BuildConfig
 import dev.min.code.core.device.AgentDisplaySession
 import dev.min.code.core.settings.AppLanguage
@@ -21,6 +22,7 @@ class SettingsVM(
     private val privilegedClient: PrivilegedClient,
     private val privilegedStarter: PrivilegedStarter,
     private val agentDisplay: AgentDisplaySession,
+    private val appScope: AppScope,
 ) : ViewModel() {
     val settings: StateFlow<AppSettings> = store.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
@@ -29,6 +31,9 @@ class SettingsVM(
     val agentDisplayActive: StateFlow<AgentDisplaySession.Active?> = agentDisplay.active
 
     val lastPrivilegedError: String? get() = privilegedClient.lastError
+
+    /** 纯流量冷启动需要「附近的设备」才能开仅本地热点 */
+    fun needsNearbyWifiPermission(): Boolean = privilegedStarter.needsNearbyWifiPermission()
 
     /**
      * 用户明确放弃那串打不开的密文，腾位置重填。
@@ -59,19 +64,22 @@ class SettingsVM(
     }
 
     /**
-     * 尝试发现本机无线调试端口并拉起。失败时 [privilegedState] 进 Failed，
-     * 设置页读 [lastPrivilegedError]。
+     * 用配对码把这台设备交给 adbd 授权（一次性）。成功后顺势拉起壳进程。
+     * 失败时 [privilegedState] 进 Failed，设置页读 [lastPrivilegedError]。
      */
-    fun startPrivilegedViaWireless() = viewModelScope.launch {
-        privilegedClient.markStarting()
-        val port = privilegedStarter.discoverConnectPort()
-        if (port == null) {
-            privilegedClient.markFailed(
-                "没扫到本机无线调试端口。请打开「开发者选项 → 无线调试」后重试，或复制 adb 命令到电脑执行。"
-            )
-            return@launch
-        }
-        privilegedStarter.startViaLocalAdb(port)
+    fun pairAndStartViaWireless(code: String, port: Int) = appScope.launch {
+        privilegedStarter.pairAndStart(code, port)
+    }
+
+    /**
+     * 已配过对时直接扫端口并拉起。失败（含未配对）时 [privilegedState] 进 Failed，
+     * 设置页读 [lastPrivilegedError]。
+     *
+     * 走 [AppScope] 而不是 viewModelScope：切网、离开设置页都会拆掉 ViewModel，
+     * 那会把正在扫端口 / 等壳进程的 job 取消掉，红字变成毫无意义的 "Job was cancelled"。
+     */
+    fun startPrivilegedViaWireless() = appScope.launch {
+        privilegedStarter.startViaLocalAdb()
     }
 
     fun startAgentDisplaySession() = viewModelScope.launch {
