@@ -27,6 +27,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
@@ -93,9 +94,15 @@ fun SwipeToDelete(
             }
         }
 
-        // 底：朱砂一层，右缘摆删除图标和字，行向左滑开时露出来
+        // 底：朱砂一层，右缘摆删除图标和字，行向左滑开时露出来。
+        // 只在行真的离开原位时才画：行本体的背景在抗锯齿圆角、半透明的按压态上盖不严，
+        // 停在原位时朱砂会从缝里透出来（2.1.24 上非当前行整行发红就是这个）。
+        // 在绘制阶段读 offset，拖动时不触发重组
         Row(
-            modifier = Modifier.matchParentSize().background(MaterialTheme.sea.vermilion),
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = if (state.offset < 0f) 1f else 0f }
+                .background(MaterialTheme.sea.vermilion),
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -122,6 +129,8 @@ fun SwipeToDelete(
                     val x = state.offset
                     IntOffset(if (x.isNaN()) 0 else x.roundToInt().coerceAtMost(0), 0)
                 }
+                // 行本体自带页面底色：滑开时盖住朱砂，字不会叠在红底上
+                .background(MaterialTheme.colorScheme.background)
                 .anchoredDraggable(state, Orientation.Horizontal, enabled = enabled),
         ) {
             content()
