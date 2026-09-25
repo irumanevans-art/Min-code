@@ -37,4 +37,11 @@ class ClaudeSubscriptionTest {
             "",
         ).forEach { assertFalse("should refuse: $it", isClaudeAuthorizeUrl(it)) }
     }
+
+    @Test
+    fun `logout only counts as done on exit code zero`() {
+        assertTrue(cliLogoutSucceeded(0))
+        // 1 = CLI 报错；-1 = 超时被强杀；null = rootfs 里没有能跑的 CLI
+        listOf(1, 127, -1, null).forEach { assertFalse("exit $it", cliLogoutSucceeded(it)) }
+    }
 }

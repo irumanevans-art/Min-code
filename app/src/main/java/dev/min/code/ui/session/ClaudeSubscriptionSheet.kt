@@ -40,6 +40,7 @@ import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.Seal
 import dev.min.code.ui.components.openInExternalBrowser
+import dev.min.code.ui.providers.StaleSessionsNotice
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.seaInk
 import kotlinx.coroutines.delay
@@ -60,6 +61,10 @@ import org.koin.compose.koinInject
  * 关面板的规矩：还在进行中（等 URL / 等浏览器 / 在确认）就先问一句再 [ClaudeSubscription.cancelLogin]
  * ——人多半是切回来看一眼，误滑一下就把等着回调的 CLI 杀了很冤；已经结束的直接
  * [ClaudeSubscription.acknowledge]，下次进来是干净的。
+ *
+ * 登录成功后有正忙的会话没切过去（[ClaudeSubscription.staleSessions]）时，Done 这一步挂上供应商页
+ * 同一条「重启它们」提示，并且**不自己关**——自己关的话，从会话里的快速切换进来的人就看不到这句了。
+ * 用户处理掉（重启或先不动）之后再照常停一下自己关。
  */
 @Composable
 fun ClaudeSubscriptionSheet(
@@ -68,6 +73,7 @@ fun ClaudeSubscriptionSheet(
 ) {
     val state by subscription.login.collectAsStateWithLifecycle()
     val inProgress by subscription.active.collectAsStateWithLifecycle()
+    val stale by subscription.staleSessions.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var askCancel by remember { mutableStateOf(false) }
     var noBrowser by remember { mutableStateOf(false) }
@@ -99,11 +105,17 @@ fun ClaudeSubscriptionSheet(
                 noBrowser = !context.openInExternalBrowser(s.url)
             }
             ClaudeLoginState.Starting, ClaudeLoginState.Verifying -> started = true
-            ClaudeLoginState.Done -> {
-                delay(DONE_LINGER_MS)
-                finish()
-            }
-            is ClaudeLoginState.Failed -> Unit
+            // 自己关不关另看下面那一个：它还要看有没有没切过去的会话
+            ClaudeLoginState.Done, is ClaudeLoginState.Failed -> Unit
+        }
+    }
+
+    // 不能并进上面那个 LaunchedEffect 的 key：那边 Browser 一步会自动开浏览器，key 一变就会再开一次
+    val autoClose = state == ClaudeLoginState.Done && stale.isEmpty()
+    LaunchedEffect(autoClose) {
+        if (autoClose) {
+            delay(DONE_LINGER_MS)
+            finish()
         }
     }
 
@@ -170,6 +182,11 @@ fun ClaudeSubscriptionSheet(
                                 Icon(HugeIcons.Tick01, null, Modifier.size(18.dp).seaInk())
                                 Text(stringResource(R.string.claude_login_done), style = MaterialTheme.typography.bodyMedium)
                             }
+                            StaleSessionsNotice(
+                                count = stale.size,
+                                onRestart = subscription::restartStaleSessions,
+                                onDismiss = subscription::dismissStaleSessions,
+                            )
                             Actions {
                                 InkButton(onClick = ::finish) { Text(stringResource(R.string.claude_login_done_action)) }
                             }

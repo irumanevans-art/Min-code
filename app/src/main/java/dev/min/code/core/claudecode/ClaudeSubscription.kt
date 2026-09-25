@@ -99,6 +99,12 @@ internal fun isClaudeAuthorizeUrl(raw: String): Boolean {
     return uri.path.orEmpty().contains("/oauth/authorize")
 }
 
+/**
+ * `claude auth logout` 算不算成了。[exitCode] 为 null = rootfs 里没有能跑的 CLI。
+ * 只有 0 算：超时被强杀记成 -1（见 [ClaudeSubscription] 的 EXIT_TIMEOUT），也是没成。
+ */
+internal fun cliLogoutSucceeded(exitCode: Int?): Boolean = exitCode == 0
+
 /** 实测 2.1.280 给的是 claude.com/cai/oauth/authorize；另几家是 Anthropic 用过 / 文档里出现过的授权域 */
 private val CLAUDE_AUTH_HOSTS = setOf("claude.com", "claude.ai", "platform.claude.com", "console.anthropic.com")
 
@@ -126,6 +132,18 @@ class ClaudeSubscription(
         .stateIn(scope, SharingStarted.Eagerly, false)
 
     private var job: Job? = null
+
+    private val _staleSessions = MutableStateFlow<List<String>>(emptyList())
+
+    /**
+     * 最近一次换路（登录成功 / 切回供应商 / 登出）之后，因为正忙没重起、仍在用旧连接的会话 key。
+     * 空闲的已经自动重起了，见 [ClaudeCodeSessionRegistry.reloadConnection]。
+     *
+     * 做成流而不是 [useProvider] 的返回值：登录成功那次换路发生在 [scope] 里，
+     * 登录面板那时可能已经关了；设置页和登录面板读的是同一份，谁先处理掉，另一处也跟着收起。
+     * 界面照供应商页那样打提示 + 给一颗手动重启（`ui/providers/StaleSessionsNotice.kt`）。
+     */
+    val staleSessions: StateFlow<List<String>> = _staleSessions.asStateFlow()
 
     /**
      * 开始登录。已经登录过（凭证文件还在、没过期）就不开浏览器，直接换到订阅这条路。
@@ -212,19 +230,32 @@ class ClaudeSubscription(
     /**
      * 退出订阅登录：调 CLI 自己的 `auth logout`（凭证文件由它删），然后换回供应商这条路。
      * 供应商表一个字不动。
+     *
+     * @return CLI 的登出成没成：只看退出码（输出照旧进 /dev/null）。CLI 不在也算没成 ——
+     *   凭证文件是它写的，它不在就没人能按它的规矩删。
+     *
+     * **登出没成也照样切回供应商。** 用户点「退出」表达的是「别再用订阅了」，这一半不靠 CLI 也做得到：
+     * 切回之后 Min 起的会话注入供应商的 key，非空的 key 压过订阅登录（见文件头）；表里没有能用的供应商时
+     * 会话根本起不来、要先连一家。反过来「登出没成就留在订阅上」等于把人扣在他明确不想要的那条路上，
+     * 而他能做的只是再点一次、再失败一次。
+     * 代价是凭证文件可能还在 rootfs 里：下次选订阅会不开浏览器直接登入，用户自己在终端里跑的 `claude`
+     * （没注入 key 时）也可能照旧用它。这些由界面如实告诉他，不由这里替他决定。
      */
-    suspend fun logout() = withContext(Dispatchers.IO) {
+    suspend fun logout(): Boolean = withContext(Dispatchers.IO) {
         val entry = installer.claudeEntry(workspaceRepository.linuxDir())
-        if (entry != null) {
-            val claude = entry.joinToString(" ") { ClaudeCodeManager.shellQuote(it) }
+        val exitCode = entry?.let {
+            val claude = it.joinToString(" ") { part -> ClaudeCodeManager.shellQuote(part) }
             workspaceRepository.executeCommand(
                 id = workspaceId,
                 command = "$UNSET_AUTH; $claude auth logout >/dev/null 2>&1",
                 timeoutMillis = STATUS_TIMEOUT_MS,
                 env = cleanEnv(),
-            )
+            ).exitCode
         }
+        val cliSignedOut = cliLogoutSucceeded(exitCode)
+        if (!cliSignedOut) Log.w(TAG, "claude auth logout did not succeed (cli missing or non-zero exit)")
         useProvider()
+        cliSignedOut
     }
 
     /**
@@ -239,7 +270,17 @@ class ClaudeSubscription(
         settingsStore.setClaudeAuth(mode)
         providerSync.apply()
         relay.reconcile()
-        registry.reloadConnection()
+        _staleSessions.value = registry.reloadConnection()
+    }
+
+    /** 用户在提示上点了「重启」：连正忙的一起重起（那一轮会断，这是他明确选的） */
+    fun restartStaleSessions() {
+        registry.reloadConnection(includeBusy = true)
+        _staleSessions.value = emptyList()
+    }
+
+    fun dismissStaleSessions() {
+        _staleSessions.value = emptyList()
     }
 
     private suspend fun authStatusOk(claude: String): Boolean = workspaceRepository.executeCommand(

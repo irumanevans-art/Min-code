@@ -979,6 +979,7 @@
   <string name="settings_claude_logout_title">退出 Claude 订阅登录？</string>
   <string name="settings_claude_logout_body">这会调用 CLI 自己的登出，并把 Claude Code 切回供应商。供应商配置不受影响。</string>
   <string name="settings_claude_logout_done">已退出订阅登录，Claude Code 切回了供应商。</string>
+  <string name="settings_claude_logout_failed">CLI 的登出没有成功（CLI 不在，或它报了错）。Claude Code 仍已切回供应商，但订阅凭证可能还留在 Linux 环境里：下次选「Claude 订阅」可能会直接登入。</string>
   <string name="settings_provider_not_in_use">当前未使用 · %1$s</string>
   <string name="providers_subscription_notice">Claude Code 当前用的是 Claude 订阅。点一家供应商即切回。</string>
 </resources>

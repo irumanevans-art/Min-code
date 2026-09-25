@@ -20,12 +20,16 @@ import dev.min.code.core.settings.ClaudeAuthMode
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkSegmented
+import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.LocalToaster
+import dev.min.code.ui.components.Notice
+import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.components.ToastType
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
+import dev.min.code.ui.providers.StaleSessionsNotice
 import dev.min.code.ui.providers.claudeConnectionOf
 import dev.min.code.ui.providers.longLabel
 import dev.min.code.ui.session.ClaudeSubscriptionSheet
@@ -60,7 +64,10 @@ internal fun claudeAuthPick(target: ClaudeAuthMode, settings: AppSettings): Clau
  * 点「Claude 订阅」只是打开登录面板，登录成功它才滑过去；中途取消或失败就留在原地，
  * 不会显示成一个其实没生效的选择。
  *
- * 「退出订阅登录」是登出，不删任何配置，所以用纸色次按钮，不用朱。
+ * 「退出订阅登录」是登出，不删任何配置，所以用纸色次按钮，不用朱。CLI 的登出没成时照样已切回供应商
+ * （理由见 `ClaudeSubscription.logout`），这里常驻一条朱色提示把「凭证可能还在」说清楚。
+ *
+ * 换路（含登录成功）之后正忙的会话没切过去时，挂供应商页同一条「重启它们」提示。
  */
 @Composable
 internal fun ClaudeAuthSettings(vm: SettingsVM, settings: AppSettings) {
@@ -68,6 +75,8 @@ internal fun ClaudeAuthSettings(vm: SettingsVM, settings: AppSettings) {
     val toaster = LocalToaster.current
     val context = LocalContext.current
     val busy by vm.claudeAuthBusy.collectAsStateWithLifecycle()
+    val stale by vm.claudeStaleSessions.collectAsStateWithLifecycle()
+    val logoutFailed by vm.claudeLogoutFailed.collectAsStateWithLifecycle()
     var login by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
     val onSubscription = settings.claudeAuth == ClaudeAuthMode.SUBSCRIPTION
@@ -90,10 +99,31 @@ internal fun ClaudeAuthSettings(vm: SettingsVM, settings: AppSettings) {
                     toaster.show(context.getString(R.string.settings_claude_auth_no_provider))
                     navController.navigate(Screen.Providers)
                 }
-                ClaudeAuthPick.LOGIN -> login = true
+                ClaudeAuthPick.LOGIN -> {
+                    // 又选了订阅：「下次选订阅可能直接登入」那句话已经应验或作废
+                    vm.dismissClaudeLogoutFailed()
+                    login = true
+                }
             }
         },
     )
+    StaleSessionsNotice(
+        count = stale.size,
+        onRestart = vm::restartClaudeStaleSessions,
+        onDismiss = vm::dismissClaudeStaleSessions,
+    )
+    AnimatedVisibility(visible = logoutFailed, enter = InkMotion.enter, exit = InkMotion.exit) {
+        // 登出没成是一次判定，用朱
+        Notice(
+            text = stringResource(R.string.settings_claude_logout_failed),
+            tone = NoticeTone.Error,
+            action = {
+                InkTextButton(onClick = vm::dismissClaudeLogoutFailed) {
+                    Text(stringResource(R.string.common_got_it))
+                }
+            },
+        )
+    }
     AnimatedVisibility(visible = onSubscription, enter = InkMotion.expand, exit = InkMotion.collapse) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             InkButton(
@@ -120,7 +150,8 @@ internal fun ClaudeAuthSettings(vm: SettingsVM, settings: AppSettings) {
         onConfirm = {
             confirmLogout = false
             val done = context.getString(R.string.settings_claude_logout_done)
-            vm.logoutClaudeSubscription { toaster.show(done, ToastType.Success) }
+            // 只有 CLI 真登出了才说「已退出」；没成的话由上面那条常驻提示如实说
+            vm.logoutClaudeSubscription(onSignedOut = { toaster.show(done, ToastType.Success) })
         },
         onDismiss = { confirmLogout = false },
     ) {

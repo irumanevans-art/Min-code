@@ -983,6 +983,7 @@
   <string name="settings_claude_logout_title">Sign out of the Claude subscription?</string>
   <string name="settings_claude_logout_body">This runs the CLI\'s own logout and switches Claude Code back to the provider. Provider settings are not affected.</string>
   <string name="settings_claude_logout_done">Signed out. Claude Code is back on the provider.</string>
+  <string name="settings_claude_logout_failed">The CLI\'s sign-out didn\'t succeed (the CLI is missing or exited with an error). Claude Code has still switched back to the provider, but the subscription credentials may still be in the Linux environment: choosing Claude subscription again may sign you straight in.</string>
   <string name="settings_provider_not_in_use">Not in use now · %1$s</string>
   <string name="providers_subscription_notice">Claude Code is using your Claude subscription right now. Tap a provider to switch back.</string>
 </resources>

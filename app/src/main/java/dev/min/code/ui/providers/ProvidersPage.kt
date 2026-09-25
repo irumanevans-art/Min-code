@@ -279,24 +279,12 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
                 ) {
                     Notice(text = stringResource(R.string.providers_subscription_notice), tone = NoticeTone.Info)
                 }
-                // 切完还在用旧供应商的会话。不自动重起：用户刚才只是点了一下列表，
-                // 不该因此丢掉正跑的一轮
-                AnimatedVisibility(stale.isNotEmpty(), enter = InkMotion.enter, exit = InkMotion.exit) {
-                    Notice(
-                        text = stringResource(R.string.providers_stale_sessions, stale.size),
-                        tone = NoticeTone.Warn,
-                        action = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                InkTextButton(onClick = vm::restartStaleSessions) {
-                                    Text(stringResource(R.string.providers_stale_restart))
-                                }
-                                InkTextButton(onClick = vm::dismissStaleSessions) {
-                                    Text(stringResource(R.string.providers_stale_dismiss))
-                                }
-                            }
-                        },
-                    )
-                }
+                // 切完还在用旧供应商的会话（和订阅那几处共用这一条提示）
+                StaleSessionsNotice(
+                    count = stale.size,
+                    onRestart = vm::restartStaleSessions,
+                    onDismiss = vm::dismissStaleSessions,
+                )
                 val failed = sync as? ProviderSync.Outcome.Failed
                 AnimatedVisibility(failed != null, enter = InkMotion.enter, exit = InkMotion.exit) {
                     Notice(

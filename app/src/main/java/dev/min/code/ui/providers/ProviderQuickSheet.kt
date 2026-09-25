@@ -48,6 +48,7 @@ import org.koin.androidx.compose.koinViewModel
  * 所以同在这一组单选里，选中态跟 `claudeAuth` 走。点它就地换成登录面板
  * （[dev.min.code.ui.session.ClaudeSubscriptionSheet]）——不是叠在这张上面：两张 sheet 叠着，
  * 关掉上面那张时底下这张的选中态还是旧的。点供应商照旧，`activate` 会顺手切回供应商这条路。
+ * 登录成功后正忙的会话没切过去时，「重启它们」的提示由登录面板自己在成功那一步给，这里不用管。
  */
 @Composable
 fun ProviderQuickSheet(

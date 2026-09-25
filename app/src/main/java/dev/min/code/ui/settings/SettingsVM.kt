@@ -61,15 +61,39 @@ class SettingsVM(
      */
     fun useClaudeProvider() = runClaudeAuth { subscription.useProvider() }
 
-    /** 退出订阅登录：CLI 自己的 `auth logout`，然后切回供应商。供应商表不动。[onDone] 在主线程上回调 */
-    fun logoutClaudeSubscription(onDone: () -> Unit) = runClaudeAuth {
-        subscription.logout()
-        onDone()
+    private val _claudeLogoutFailed = MutableStateFlow(false)
+
+    /**
+     * 上一次「退出订阅登录」里 CLI 的登出没成（CLI 不在或退出码非 0）。那时仍已切回供应商，
+     * 但凭证可能还在 rootfs 里 —— 设置页据此常驻一条提示，直到用户点掉或再换一次路。
+     * 不用 toast：这句话要读完，而且说的是一件还没了结的事。
+     */
+    val claudeLogoutFailed: StateFlow<Boolean> = _claudeLogoutFailed.asStateFlow()
+
+    /** 换路之后正忙、仍在用旧连接的会话。和登录面板读的是同一份，见 [ClaudeSubscription.staleSessions] */
+    val claudeStaleSessions: StateFlow<List<String>> = subscription.staleSessions
+
+    fun restartClaudeStaleSessions() = subscription.restartStaleSessions()
+
+    fun dismissClaudeStaleSessions() = subscription.dismissStaleSessions()
+
+    fun dismissClaudeLogoutFailed() {
+        _claudeLogoutFailed.value = false
+    }
+
+    /**
+     * 退出订阅登录：CLI 自己的 `auth logout`，然后切回供应商（登出没成也切，理由见 [ClaudeSubscription.logout]）。
+     * 供应商表不动。CLI 登出成功时 [onSignedOut] 在主线程上回调；没成时改由 [claudeLogoutFailed] 常驻说明
+     */
+    fun logoutClaudeSubscription(onSignedOut: () -> Unit) = runClaudeAuth {
+        if (subscription.logout()) onSignedOut() else _claudeLogoutFailed.value = true
     }
 
     private fun runClaudeAuth(block: suspend () -> Unit) {
         if (_claudeAuthBusy.value) return
         _claudeAuthBusy.value = true
+        // 又换了一次路：上一次登出失败的那句话已经不是眼下的状况了
+        _claudeLogoutFailed.value = false
         appScope.launch {
             try {
                 block()
