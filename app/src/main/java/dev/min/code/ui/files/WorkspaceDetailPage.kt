@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -153,6 +154,8 @@ fun WorkspaceDetailPage(id: String) {
     var creatingFolder by remember { mutableStateOf(false) }
     var showInstallDialog by remember { mutableStateOf(false) }
     var previewImageUri by remember { mutableStateOf<String?>(null) }
+    // 弹窗里打开的文本文件（area + path），null = 没开
+    var sheetFile by remember { mutableStateOf<OpenInSheetFile?>(null) }
     var showImportSheet by remember { mutableStateOf(false) }
     var showExportSheet by remember { mutableStateOf(false) }
     var confirmBulkDelete by remember { mutableStateOf(false) }
@@ -233,8 +236,9 @@ fun WorkspaceDetailPage(id: String) {
      */
     fun openEntry(entry: WorkspaceFileEntry, mode: WorkspaceOpenMode) {
         when (mode) {
+            // 文本文件在弹窗里开：底下的文件列表还在，不再整页跳走
             WorkspaceOpenMode.EDITOR ->
-                navController.navigate(Screen.FileEditor(state.area.name, entry.path))
+                sheetFile = OpenInSheetFile(state.area, entry.path)
 
             WorkspaceOpenMode.IMAGE -> vm.exportToCacheFile(entry, context.cacheDir) { file ->
                 // 传绝对路径 (而非 content:// URI): Coil 可直接加载,
@@ -614,6 +618,41 @@ fun WorkspaceDetailPage(id: String) {
                 openEntry(entry, mode)
             },
         )
+    }
+
+    sheetFile?.let { file ->
+        // 每个文件一套状态：换文件打开就是一张新纸，不背上一份的正文
+        val editorState = remember(file) { EditorState() }
+        val editable = file.area == WorkspaceStorageArea.FILES
+        EditorLoadEffect(id, file.area, file.path, editorState)
+        InkSheet(
+            onDismissRequest = { sheetFile = null },
+            modifier = Modifier.fillMaxHeight(0.92f),
+        ) {
+            // 头部一行：文件名（等宽，和页面顶栏同款）+ 保存按钮（条件与页面一致）
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    file.path.substringAfterLast('/').ifBlank { file.path },
+                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = JetbrainsMono),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                EditorSaveButton(id = id, path = file.path, state = editorState, editable = editable)
+            }
+            WorkspaceFileEditor(
+                state = editorState,
+                editable = editable,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 
     if (showImportSheet) {
@@ -1513,3 +1552,9 @@ internal fun String.toShellStatusLabel(): String = when (this) {
 }
 
 private val DEFAULT_ROOTFS_URL: String get() = dev.min.code.core.rootfs.RootfsSources.defaultUrl()
+
+/** 弹窗里打开的文本文件。area 决定只读与否，path 是文件在区内的绝对路径 */
+private data class OpenInSheetFile(
+    val area: WorkspaceStorageArea,
+    val path: String,
+)
