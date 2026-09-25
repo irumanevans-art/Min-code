@@ -236,12 +236,45 @@ class CodexAppServerProtocolTest {
     @Test
     fun `read only sandbox has no writable roots`() {
         val root = Json.parseToJsonElement(
-            encodeCodexThreadStart("1", cwd = "/workspace", sandbox = CodexSandbox.READ_ONLY),
+            encodeCodexTurnStart("1", "t", "hi", sandbox = CodexSandbox.READ_ONLY),
         ) as JsonObject
         val policy = (root["params"] as JsonObject)["sandboxPolicy"] as JsonObject
 
         assertEquals("readOnly", (policy["type"] as JsonPrimitive).content)
         assertFalse(policy.containsKey("writableRoots"))
+    }
+
+    /**
+     * thread/start 的形状照 rust-v0.157.0 `ThreadStartParams`：沙箱是 `sandbox` 裸字符串（kebab-case），
+     * 没有 `sandboxPolicy`、没有 `effort`。写错的字段 serde 会静默丢掉，所以要把整份 params 钉死。
+     */
+    @Test
+    fun `thread start sends sandbox mode as a kebab-case string and no effort`() {
+        val root = Json.parseToJsonElement(
+            encodeCodexThreadStart(
+                requestId = "1",
+                cwd = "/workspace",
+                model = "gpt-5.6-terra",
+                sandbox = CodexSandbox.WORKSPACE_WRITE,
+                approvalPolicy = CodexApprovalPolicy.ON_REQUEST,
+            ),
+        ) as JsonObject
+
+        assertEquals("thread/start", (root["method"] as JsonPrimitive).content)
+        assertEquals(
+            Json.parseToJsonElement(
+                """{"cwd":"/workspace","model":"gpt-5.6-terra","approvalPolicy":"on-request","sandbox":"workspace-write"}""",
+            ),
+            root["params"],
+        )
+    }
+
+    @Test
+    fun `sandbox mode wire values are kebab-case`() {
+        assertEquals(
+            listOf("read-only", "workspace-write", "danger-full-access"),
+            CodexSandbox.entries.map { it.modeWire },
+        )
     }
 
     /** cwd / summary 是 turn/start 的逐轮覆盖（官方：this turn and subsequent turns） */
@@ -264,12 +297,12 @@ class CodexAppServerProtocolTest {
     @Test
     fun `blank optional fields are omitted entirely`() {
         val params = (Json.parseToJsonElement(
-            encodeCodexThreadStart("1", cwd = "", model = "  ", effort = null),
+            encodeCodexThreadStart("1", cwd = "", model = "  "),
         ) as JsonObject)["params"] as JsonObject
 
         assertFalse(params.containsKey("cwd"))
         assertFalse(params.containsKey("model"))
-        assertFalse(params.containsKey("effort"))
+        assertFalse(params.containsKey("sandbox"))
     }
 
     @Test

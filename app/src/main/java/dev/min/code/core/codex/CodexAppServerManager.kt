@@ -634,10 +634,7 @@ class CodexAppServerManager(
                         requestId = id,
                         cwd = options.cwd,
                         model = options.model,
-                        effort = options.effort,
                         sandbox = options.sandbox,
-                        writableRoots = options.writableRoots,
-                        networkAccess = options.networkAccess,
                         approvalPolicy = options.approvalPolicy,
                     )
                 if (!writeLineLocked(request, "写不进 thread 请求")) failLocked("写不进 thread 请求")

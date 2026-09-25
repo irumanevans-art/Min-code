@@ -105,10 +105,9 @@ import dev.min.code.core.claudecode.ClaudeCodeEvent
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.PermissionSuggestion
 import dev.min.code.ui.components.BrandMark
-import dev.min.code.ui.components.FrostFade
 import dev.min.code.ui.components.LocalFrost
 import dev.min.code.ui.components.frostSource
-import dev.min.code.ui.components.frostVeil
+import dev.min.code.ui.components.frostBand
 import dev.min.code.ui.components.rememberFrostState
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.HeroCanvas
@@ -1021,15 +1020,11 @@ private fun SessionContent(
 
     val density = LocalDensity.current
     // 量按钮行 / 输入坞（含系统栏）。列表留白只垫铬件，内容才能滚进纸色里。
-    // 纸色比铬件多出 [FrostFade]，切线处收到 0，才没有硬边。
+    // 纸色比铬件多出一截（见 [frostBand]），切线处收到 0，才没有硬边。
     var topChromePx by remember { mutableIntStateOf(with(density) { 72.dp.roundToPx() }) }
     var bottomChromePx by remember { mutableIntStateOf(with(density) { 96.dp.roundToPx() }) }
     val topReserve = with(density) { topChromePx.toDp() }
     val bottomReserve = with(density) { bottomChromePx.toDp() }
-    val topBand = topReserve + FrostFade
-    val bottomBand = bottomReserve + FrostFade
-    val topHold = (topReserve / topBand).coerceIn(0.2f, 0.92f)
-    val bottomHold = (bottomReserve / bottomBand).coerceIn(0.2f, 0.92f)
     val frost = rememberFrostState()
     // 挂着权限请求时，那张卡要显示成「等你批准」而不是转圈（见 [LocalAwaitingToolUseId]）
     val awaitingToolUseId = awaitingToolUseId(
@@ -1159,8 +1154,7 @@ private fun SessionContent(
             Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .height(topBand)
-                .frostVeil(fromTop = true, hold = topHold),
+                .frostBand(fromTop = true, chrome = topReserve),
         )
         Column(
             Modifier
@@ -1257,8 +1251,7 @@ private fun SessionContent(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(bottomBand)
-                .frostVeil(fromTop = false, hold = bottomHold),
+                .frostBand(fromTop = false, chrome = bottomReserve),
         )
         Column(
             Modifier

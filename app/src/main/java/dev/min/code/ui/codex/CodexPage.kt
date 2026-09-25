@@ -52,7 +52,6 @@ import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.CODEX_WIRE_API_OPTIONS
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.ui.components.BackButton
-import dev.min.code.ui.components.FrostFade
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkChip
@@ -69,7 +68,7 @@ import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.frostSource
-import dev.min.code.ui.components.frostVeil
+import dev.min.code.ui.components.frostBand
 import dev.min.code.ui.components.rememberFrostState
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
@@ -181,7 +180,6 @@ private fun CodexPageContent(vm: CodexVM) {
             val density = LocalDensity.current
             var dockPx by remember { mutableIntStateOf(with(density) { DOCK_ESTIMATE.roundToPx() }) }
             val dockReserve = with(density) { dockPx.toDp() }
-            val veilBand = dockReserve + FrostFade
             val frost = rememberFrostState()
             CompositionLocalProvider(LocalFrost provides frost) {
                 Box(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).imePadding()) {
@@ -201,8 +199,7 @@ private fun CodexPageContent(vm: CodexVM) {
                         Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(veilBand)
-                            .frostVeil(fromTop = false, hold = (dockReserve / veilBand).coerceIn(0.2f, 0.92f)),
+                            .frostBand(fromTop = false, chrome = dockReserve),
                     )
                     CodexComposer(
                         draftState = draft,
@@ -716,7 +713,7 @@ private fun CodexConnectionSheet(
                     )
                 }
             }
-            // 模型 / 思考强度跟着连接走：thread/start 和每一轮 turn/start 都带上。
+            // 模型跟着连接走：thread/start 和每一轮 turn/start 都带上；思考强度只有 turn/start 收。
             // 空着 = 不传，用 Codex 自己的默认——不替用户猜模型
             InkTextField(
                 value = model,

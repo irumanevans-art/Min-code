@@ -180,15 +180,18 @@ enum class CodexDecision(val wire: String) {
 }
 
 /**
- * 沙箱档位。线格式是个带 `type` 判别的对象，不是裸字符串。
+ * 沙箱档位。同一档在协议里有两种写法，别混用：
+ * - [wire]：turn/start 的 `sandboxPolicy.type`（`SandboxPolicy`，camelCase 判别的对象）
+ * - [modeWire]：thread/start 的 `sandbox`（`SandboxMode`，kebab-case 裸字符串，
+ *   rust-v0.157.0 `v2/shared.rs` 的 `#[serde(rename_all = "kebab-case")]`）
  *
  * [WORKSPACE_WRITE] 是手机上唯一说得通的默认：只读的话 Codex 连文件都改不了，
  * 全放开则等于把 rootfs 交出去。
  */
-enum class CodexSandbox(val wire: String) {
-    READ_ONLY("readOnly"),
-    WORKSPACE_WRITE("workspaceWrite"),
-    DANGER_FULL_ACCESS("dangerFullAccess"),
+enum class CodexSandbox(val wire: String, val modeWire: String) {
+    READ_ONLY("readOnly", "read-only"),
+    WORKSPACE_WRITE("workspaceWrite", "workspace-write"),
+    DANGER_FULL_ACCESS("dangerFullAccess", "danger-full-access"),
 }
 
 /**
@@ -381,30 +384,27 @@ fun encodeCodexInitialized(): String =
 /**
  * 开一条新线程。
  *
- * [cwd] 之外这些都可省；省了就用 Codex 自己的默认值。给了 [model] / [effort] 的话，
- * 它们会成为这条线程后续每一轮的默认值（官方文档：thread 级覆盖会持久化）。
+ * [cwd] 之外这些都可省；省了就用 Codex 自己的默认值。
  *
- * 对照 rust-v0.157.0 的 `ThreadStartParams`：它**没有** `effort`，沙箱字段叫 `sandbox`、
- * 取值是 kebab-case 裸字符串（`workspace-write`），不收这里写的 `sandboxPolicy` 对象。
- * 这两处都会被 serde 静默忽略（该结构没开 deny_unknown_fields）——实际生效靠每一轮
- * turn/start 都带上 effort 与 sandboxPolicy（见 [encodeCodexTurnStart]），线程开出来到第一轮之间
- * 什么也不执行，所以目前没有可见后果。要改成正确字段请单独一刀，并在真机上核对。
+ * 字段照 rust-v0.157.0 的 `ThreadStartParams`（`codex-rs/app-server-protocol/src/protocol/v2/thread.rs`）：
+ * - 沙箱字段叫 `sandbox`，取值是 kebab-case 裸字符串（[CodexSandbox.modeWire]），**不是** turn/start 的
+ *   `sandboxPolicy` 对象。它只有档位，没有可写根和联网开关——那两样由每轮 turn/start 的
+ *   `sandboxPolicy` 带（见 [encodeCodexTurnStart]），线程开出来到第一轮之间什么也不执行。
+ * - 它**没有** `effort`：思考强度只在 turn/start 上有，所以这里不收也不发。
+ * 该结构没开 deny_unknown_fields，写错的字段名会被 serde 静默丢掉而不是报错——以前的
+ * `sandboxPolicy` / `effort` 就是这样一直没生效的，改字段前先去源码核对。
  */
 fun encodeCodexThreadStart(
     requestId: String,
     cwd: String? = null,
     model: String? = null,
-    effort: String? = null,
     sandbox: CodexSandbox? = null,
-    writableRoots: List<String> = emptyList(),
-    networkAccess: Boolean = true,
     approvalPolicy: CodexApprovalPolicy? = null,
 ): String = rpcRequest(requestId, "thread/start", buildJsonObject {
     cwd?.takeIf { it.isNotBlank() }?.let { put("cwd", it) }
     model?.takeIf { it.isNotBlank() }?.let { put("model", it) }
-    effort?.takeIf { it.isNotBlank() }?.let { put("effort", it) }
     approvalPolicy?.let { put("approvalPolicy", it.wire) }
-    sandbox?.let { put("sandboxPolicy", sandboxPolicy(it, writableRoots, networkAccess)) }
+    sandbox?.let { put("sandbox", it.modeWire) }
 })
 
 fun encodeCodexThreadResume(requestId: String, threadId: String): String =
