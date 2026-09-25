@@ -262,11 +262,22 @@ class ClaudeCodeVM(
 
     /** 历史会话直接读 CLI 自己写的 transcript，不依赖 App 侧持久化 */
     fun refreshSessions() {
-        viewModelScope.launch {
-            runCatching { (registry.active() ?: registry.configProbe()).listSessions() }
-                .onSuccess { _diskSessions.value = it }
-                .onFailure { _diskSessions.value = emptyList() }
-        }
+        viewModelScope.launch { reloadSessions() }
+    }
+
+    /** 每次重扫领一个号；扫完时号已经不是最新的，说明后面还有一次更晚开始的扫描，结果让给它 */
+    private var sessionScanGeneration = 0
+
+    /**
+     * 重扫磁盘并等它落进 [_diskSessions]。扫一遍要把每份 transcript 读一遍，几份大会话时是秒级的，
+     * 两次扫描可能交错：先开始、后结束的那次（比如回合结束触发的）不能拿旧列表盖掉
+     * 刚导入之后那次的结果。
+     */
+    private suspend fun reloadSessions() {
+        val generation = ++sessionScanGeneration
+        val listed = runCatching { (registry.active() ?: registry.configProbe()).listSessions() }
+            .getOrDefault(emptyList())
+        if (generation == sessionScanGeneration) _diskSessions.value = listed
     }
 
     fun saveToken(token: String) {
@@ -739,7 +750,8 @@ class ClaudeCodeVM(
         onDone: (SessionImportOutcome) -> Unit,
     ) {
         if (!sessionTransfer.commit(staged)) return onDone(SessionImportOutcome.Failed)
-        refreshSessions()
+        // 等列表真的换上新的再报成功：提示出来时抽屉里就该已经有这一行了
+        reloadSessions()
         onDone(SessionImportOutcome.Imported(staged.sessionId, cwd))
     }
 

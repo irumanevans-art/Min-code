@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
@@ -62,6 +63,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
+import dev.min.code.core.claudecode.SessionGroup
 import dev.min.code.core.claudecode.SessionGroupHeader
 import dev.min.code.core.claudecode.groupSessionIds
 import dev.min.code.ui.components.InkChip
@@ -166,6 +168,21 @@ fun ClaudeCodeSessionDrawer(
     val byId = remember(filtered) { filtered.associateBy { it.id } }
     val searching = searchQuery.isNotBlank()
 
+    // LazyColumn 按 key 锚住「原来的第一行」：新行（刚导入的、刚落盘的）插到最上面时，
+    // 视口跟着旧的第一行往下挪一格，新行落在视口上方——看起来就是「列表没刷新」。
+    // 人本来就停在顶上时，把视口拉回顶上；翻到下面去了就不动，不抢他的位置
+    val listState = rememberLazyListState()
+    val topKey = sessionListTopKey(groups)
+    var shownTopKey by remember { mutableStateOf(topKey) }
+    LaunchedEffect(topKey) {
+        val previous = shownTopKey
+        shownTopKey = topKey
+        val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+        if (shouldRevealNewTop(previous, topKey, first?.key, listState.firstVisibleItemScrollOffset)) {
+            listState.scrollToItem(0)
+        }
+    }
+
     val scheme = MaterialTheme.colorScheme
     val mainPage: @Composable () -> Unit = {
         Column(Modifier.fillMaxSize()) {
@@ -250,13 +267,13 @@ fun ClaudeCodeSessionDrawer(
                     )
                 }
             } else {
-                LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+                LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState) {
                     groups.forEach { group ->
                         val header = group.header
                         if (header != null) {
                             // key 用组的结构性身份：用户分类可以和内置组头重名，
                             // 从显示文案派生 key 会撞成 duplicate key 崩掉列表
-                            item(key = "h-${group.key}") {
+                            item(key = sessionGroupHeaderKey(group)) {
                                 Text(
                                     sessionGroupHeaderText(header),
                                     style = MaterialTheme.typography.labelSmall,
@@ -774,6 +791,27 @@ private fun LiveDot(color: Color) {
         drawCircle(color.copy(alpha = breath?.value ?: 1f))
     }
 }
+
+private fun sessionGroupHeaderKey(group: SessionGroup): String = "h-${group.key}"
+
+/** 抽屉列表最上面那一行的 key（组头或会话 id）；与 LazyColumn 里的 key 同一套 */
+internal fun sessionListTopKey(groups: List<SessionGroup>): Any? {
+    val first = groups.firstOrNull() ?: return null
+    return if (first.header != null) sessionGroupHeaderKey(first) else first.items.firstOrNull()
+}
+
+/**
+ * 顶行换了之后要不要把视口拉回顶上：视口里第一行正是原来的顶行、而且没有往下滚半行，
+ * 说明人原本就停在最上面，新顶行是被 LazyColumn 的 key 锚点挤到视口外面去的。
+ */
+internal fun shouldRevealNewTop(
+    previousTopKey: Any?,
+    currentTopKey: Any?,
+    firstVisibleKey: Any?,
+    firstVisibleOffset: Int,
+): Boolean =
+    previousTopKey != null && currentTopKey != null && previousTopKey != currentTopKey &&
+        firstVisibleKey == previousTopKey && firstVisibleOffset == 0
 
 /** 内置组头取资源跟界面语言走；分类组头是用户自己起的名字，原样显示 */
 @Composable
