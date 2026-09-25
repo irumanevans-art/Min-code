@@ -764,28 +764,6 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
         next to id
     }
 
-    /**
-     * 安装向导那一步用：没有配置就新建一条，有就改当前这条。
-     * 向导只认「一个 token 一个地址」，多配置是设置页的事。
-     */
-    suspend fun setConnection(token: String, baseUrl: String) = editProfiles { list, active ->
-        val current = list.firstOrNull { it.id == active } ?: list.firstOrNull()
-        if (current == null) {
-            val profile = ApiProfile(id = newProfileId(), token = token.trim(), baseUrl = normalizeBaseUrl(baseUrl))
-            listOf(profile) to profile.id
-        } else {
-            list.map {
-                if (it.id != current.id) it
-                else it.copy(
-                    token = token.trim(),
-                    baseUrl = normalizeBaseUrl(baseUrl),
-                    // 地址没变就别把确认过的状态抹掉；换了地址就得重新确认一次
-                    insecureAck = it.insecureAck && normalizeBaseUrl(baseUrl) == it.baseUrl,
-                )
-            } to current.id
-        }
-    }
-
     suspend fun setUseNpmMirror(enabled: Boolean) = context.dataStore.edit { it[KEY_NPM_MIRROR] = enabled }
     suspend fun setThemeMode(mode: ThemeMode) = context.dataStore.edit { it[KEY_THEME] = mode.name }
     suspend fun setSkin(style: SkinStyle) = context.dataStore.edit { it[KEY_SKIN] = style.name }
