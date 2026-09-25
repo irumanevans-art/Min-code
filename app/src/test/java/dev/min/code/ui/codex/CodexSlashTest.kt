@@ -16,6 +16,20 @@ class CodexSlashTest {
         assertEquals(CodexSlash.MODEL, codexSlashTarget("/model"))
         assertEquals(CodexSlash.EFFORT, codexSlashTarget("/effort"))
         assertEquals(CodexSlash.NEW, codexSlashTarget("/new"))
+        assertEquals(CodexSlash.PERMISSIONS, codexSlashTarget("/permissions"))
+        assertEquals(CodexSlash.APPROVALS, codexSlashTarget("/approvals"))
+        assertEquals(CodexSlash.CD, codexSlashTarget("/cd"))
+    }
+
+    /** 每条打开设置的命令都落到它说的那一栏；/new 不是设置 */
+    @Test
+    fun `settings commands open their own section`() {
+        assertEquals(CodexSettingsSection.MODEL, CodexSlash.MODEL.toSection())
+        assertEquals(CodexSettingsSection.EFFORT, CodexSlash.EFFORT.toSection())
+        assertEquals(CodexSettingsSection.PERMISSIONS, CodexSlash.PERMISSIONS.toSection())
+        assertEquals(CodexSettingsSection.PERMISSIONS, CodexSlash.APPROVALS.toSection())
+        assertEquals(CodexSettingsSection.CWD, CodexSlash.CD.toSection())
+        assertNull(CodexSlash.NEW.toSection())
     }
 
     @Test

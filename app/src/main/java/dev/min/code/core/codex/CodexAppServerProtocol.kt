@@ -383,6 +383,12 @@ fun encodeCodexInitialized(): String =
  *
  * [cwd] 之外这些都可省；省了就用 Codex 自己的默认值。给了 [model] / [effort] 的话，
  * 它们会成为这条线程后续每一轮的默认值（官方文档：thread 级覆盖会持久化）。
+ *
+ * 对照 rust-v0.157.0 的 `ThreadStartParams`：它**没有** `effort`，沙箱字段叫 `sandbox`、
+ * 取值是 kebab-case 裸字符串（`workspace-write`），不收这里写的 `sandboxPolicy` 对象。
+ * 这两处都会被 serde 静默忽略（该结构没开 deny_unknown_fields）——实际生效靠每一轮
+ * turn/start 都带上 effort 与 sandboxPolicy（见 [encodeCodexTurnStart]），线程开出来到第一轮之间
+ * 什么也不执行，所以目前没有可见后果。要改成正确字段请单独一刀，并在真机上核对。
  */
 fun encodeCodexThreadStart(
     requestId: String,
@@ -409,13 +415,21 @@ fun encodeCodexThreadResume(requestId: String, threadId: String): String =
  *
  * [input] 是内容块数组而不是裸字符串 —— 将来贴图要走 `{type:"localImage", path}`，
  * 现在只发文本也照这个形状写，省得到时候改线格式。
+ *
+ * [cwd] / [model] / [effort] / [summary] / [approvalPolicy] / [sandbox] 在官方 `TurnStartParams`
+ * 里都是「this turn and subsequent turns」的覆盖（`codex-rs/app-server-protocol/src/protocol/v2/turn.rs`，
+ * rust-v0.157.0 核对），所以会话设置每轮照当前值带上即可，不必另发请求。
+ * 注意 turn/start 收的是 `sandboxPolicy`（带 type 的对象），thread/start 收的却是 `sandbox`
+ * （kebab-case 的裸字符串）——两者不是一个字段。
  */
 fun encodeCodexTurnStart(
     requestId: String,
     threadId: String,
     text: String,
+    cwd: String? = null,
     model: String? = null,
     effort: String? = null,
+    summary: String? = null,
     sandbox: CodexSandbox? = null,
     writableRoots: List<String> = emptyList(),
     networkAccess: Boolean = true,
@@ -425,8 +439,10 @@ fun encodeCodexTurnStart(
     put("input", buildJsonArray {
         add(buildJsonObject { put("type", "text"); put("text", text) })
     })
+    cwd?.takeIf { it.isNotBlank() }?.let { put("cwd", it) }
     model?.takeIf { it.isNotBlank() }?.let { put("model", it) }
     effort?.takeIf { it.isNotBlank() }?.let { put("effort", it) }
+    summary?.takeIf { it.isNotBlank() }?.let { put("summary", it) }
     approvalPolicy?.let { put("approvalPolicy", it.wire) }
     sandbox?.let { put("sandboxPolicy", sandboxPolicy(it, writableRoots, networkAccess)) }
 })

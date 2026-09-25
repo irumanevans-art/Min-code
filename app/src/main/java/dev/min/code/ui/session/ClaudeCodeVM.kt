@@ -39,6 +39,8 @@ import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.network.NetworkSnapshot
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.rootfs.createCwdFolder
+import dev.min.code.core.rootfs.listCwdFolders
 import dev.min.code.core.service.LocalService
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.service.LocalServiceStatus
@@ -876,23 +878,18 @@ class ClaudeCodeVM(
      * 失败（目录不存在、越界）走 Result，面板显示原因而不是崩。
      */
     suspend fun listCwdFolders(guest: String): Result<List<WorkspaceFileEntry>> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val (area, relative) = CwdPath.split(guest)
-                workspaceRepository.listFiles(workspaceId, area, relative)
-            }
-        }
+        workspaceRepository.listCwdFolders(workspaceId, guest)
 
     fun createCwdFolder(parent: String, name: String, onDone: (Result<String>) -> Unit) {
         viewModelScope.launch {
-            val result = runCatching {
-                val folder = CwdPath.folderName(name) ?: error(context.getString(R.string.vm_invalid_name))
-                val (area, relative) = CwdPath.split(parent)
-                val child = if (relative.isBlank()) folder else "$relative/$folder"
-                workspaceRepository.mkdir(workspaceId, area, child)
-                CwdPath.guest(area, child)
-            }
-            onDone(result)
+            onDone(
+                workspaceRepository.createCwdFolder(
+                    workspaceId,
+                    parent,
+                    name,
+                    invalidName = context.getString(R.string.vm_invalid_name),
+                ),
+            )
         }
     }
 

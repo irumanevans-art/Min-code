@@ -1,30 +1,14 @@
 package dev.min.code.ui.session
 
 import androidx.annotation.StringRes
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,35 +16,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
 import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ReasoningLevel
-import dev.min.code.core.service.ClaudeCodeForegroundService
 import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.InkDivider
-import dev.min.code.ui.components.InkSheet
-import dev.min.code.ui.components.InkSpinner
-import dev.min.code.ui.components.InkTextButton
-import dev.min.code.ui.components.InkTextField
-import dev.min.code.ui.components.Notice
-import dev.min.code.ui.components.NoticeTone
-import dev.min.code.ui.components.Seal
-import dev.min.code.ui.theme.InkMotion
-import dev.min.code.ui.theme.JetbrainsMono
-import dev.min.code.ui.theme.sea
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.ArrowDown01
 
 /**
  * 会话设置：模型 / 权限模式 / 思考强度 / 提示缓存 / 工作目录 / 斜杠命令。
@@ -120,7 +84,6 @@ internal fun LocalSlash.toSection(): SettingsSection? = when (this) {
     LocalSlash.CONFIG, LocalSlash.HOOKS -> null
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ClaudeCodeSettingsSheet(
     session: ClaudeCodeManager.SessionState,
@@ -140,226 +103,135 @@ internal fun ClaudeCodeSettingsSheet(
 ) {
     // 展开的分区。null = 全部折叠，只看五行概览
     var open by remember { mutableStateOf(initialSection) }
-    InkSheet(
-        onDismissRequest = onDismiss,
-        // 设置面板一开就该给足高度：半展开状态下手风琴一展开就顶到底，
-        // 又会退化成"下半截够不着"的老毛病。把 PartiallyExpanded 从允许状态里去掉
-        // 就是旧 API 的 skipPartiallyExpanded=true。
-        sheetState = rememberBottomSheetState(
-            SheetValue.Hidden,
-            setOf(SheetValue.Hidden, SheetValue.Expanded),
-        ),
+    val settingsBusy = session.applyingSettings || session.applyingEffort || session.stopping
+    // 转圈 + 文案跟对话流 LiveTurnEntry 同一句话，状态连续
+    val busyLabel = when {
+        session.stopping -> stringResource(R.string.session_settings_busy_stopping)
+        session.applyingEffort -> stringResource(R.string.session_settings_busy_relaunch)
+        else -> stringResource(R.string.session_settings_busy)
+    }
+    SessionSettingsFrame(
+        title = stringResource(R.string.session_settings_title),
+        busy = settingsBusy,
+        busyLabel = busyLabel,
+        onDismiss = onDismiss,
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 32.dp),
+        Section(
+            section = SettingsSection.MODEL,
+            value = session.modelChipLabel(),
+            open = open,
+            onToggle = { open = it },
         ) {
-            SheetTitle(stringResource(R.string.session_settings_title))
-            val settingsBusy = session.applyingSettings || session.applyingEffort || session.stopping
-            // 选项变灰不够：sheet 开着时用户盯着一排死控件，以为没点上。
-            // 转圈 + 文案跟对话流 LiveTurnEntry 同一句话，状态连续。
-            AnimatedVisibility(
-                visible = settingsBusy,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically(),
-            ) {
-                SettingsBusyBanner(
-                    applyingEffort = session.applyingEffort,
-                    stopping = session.stopping,
-                )
-            }
+            ModelPicker(
+                models = session.availableModels,
+                relayModels = session.relayModels,
+                relayChecked = session.relayModelsChecked,
+                relayError = session.relayModelsError,
+                current = session.currentModel,
+                appliedModel = session.appliedModel,
+                chineseDescriptions = chineseDescriptions,
+                enabled = !settingsBusy,
+                onPick = onSetModel,
+            )
+        }
 
-            Section(
-                section = SettingsSection.MODEL,
-                value = session.modelChipLabel(),
-                open = open,
-                onToggle = { open = it },
-            ) {
-                ModelPicker(
-                    models = session.availableModels,
-                    relayModels = session.relayModels,
-                    relayChecked = session.relayModelsChecked,
-                    relayError = session.relayModelsError,
-                    current = session.currentModel,
-                    appliedModel = session.appliedModel,
-                    chineseDescriptions = chineseDescriptions,
+        Section(
+            section = SettingsSection.MODE,
+            value = session.permissionMode.label,
+            open = open,
+            onToggle = { open = it },
+        ) {
+            ClaudeCodePermissionMode.entries.forEach { mode ->
+                OptionRow(
+                    title = mode.label,
+                    subtitle = stringResource(mode.descRes()),
+                    selected = mode == session.permissionMode,
                     enabled = !settingsBusy,
-                    onPick = onSetModel,
+                    onClick = { onSetPermissionMode(mode) },
                 )
             }
+        }
 
+        Section(
+            section = SettingsSection.EFFORT,
+            value = session.effortChipLabel(),
+            open = open,
+            onToggle = { open = it },
+        ) {
+            EffortPicker(session = session, enabled = !settingsBusy, onApply = onApplyEffort)
+        }
+
+        Section(
+            section = SettingsSection.CACHE,
+            value = session.options.promptCacheTtl,
+            open = open,
+            onToggle = { open = it },
+        ) {
+            PromptCacheTtlPicker(
+                current = session.options.promptCacheTtl,
+                enabled = !settingsBusy,
+                onPick = onSetPromptCacheTtl,
+            )
+        }
+
+        Section(
+            section = SettingsSection.CWD,
+            value = session.cwd,
+            open = open,
+            onToggle = { open = it },
+        ) {
+            CwdPicker(
+                current = session.cwd,
+                enabled = !settingsBusy,
+                onPick = onSetCwd,
+                onList = onListCwd,
+                onCreate = onCreateCwd,
+            )
+        }
+
+        if (session.slashCommands.isNotEmpty()) {
             Section(
-                section = SettingsSection.MODE,
-                value = session.permissionMode.label,
+                section = SettingsSection.COMMANDS,
+                value = stringResource(R.string.session_commands_count, session.slashCommands.size),
                 open = open,
                 onToggle = { open = it },
             ) {
-                ClaudeCodePermissionMode.entries.forEach { mode ->
-                    OptionRow(
-                        title = mode.label,
-                        subtitle = stringResource(mode.descRes()),
-                        selected = mode == session.permissionMode,
-                        enabled = !settingsBusy,
-                        onClick = { onSetPermissionMode(mode) },
-                    )
-                }
-            }
-
-            Section(
-                section = SettingsSection.EFFORT,
-                value = session.effortChipLabel(),
-                open = open,
-                onToggle = { open = it },
-            ) {
-                EffortPicker(session = session, enabled = !settingsBusy, onApply = onApplyEffort)
-            }
-
-            Section(
-                section = SettingsSection.CACHE,
-                value = session.options.promptCacheTtl,
-                open = open,
-                onToggle = { open = it },
-            ) {
-                PromptCacheTtlPicker(
-                    current = session.options.promptCacheTtl,
-                    enabled = !settingsBusy,
-                    onPick = onSetPromptCacheTtl,
-                )
-            }
-
-            Section(
-                section = SettingsSection.CWD,
-                value = session.cwd,
-                open = open,
-                onToggle = { open = it },
-            ) {
-                CwdPicker(
-                    current = session.cwd,
-                    enabled = !settingsBusy,
-                    onPick = onSetCwd,
-                    onList = onListCwd,
-                    onCreate = onCreateCwd,
-                )
-            }
-
-            if (session.slashCommands.isNotEmpty()) {
-                Section(
-                    section = SettingsSection.COMMANDS,
-                    value = stringResource(R.string.session_commands_count, session.slashCommands.size),
-                    open = open,
-                    onToggle = { open = it },
-                ) {
-                    // 不限高、不内嵌滚动：整张 sheet 本来就是一个 verticalScroll，
-                    // 之前套了一层 heightIn(max) 却没有 scroll，40 个命令只看得见前两个
-                    Column {
-                        // 英文界面下不给这个开关：那时候 CLI 的原文和界面本来就是一种语言，
-                        // 没有「要不要译」这个问题了。见 isChineseUi
-                        if (isChineseUi()) {
-                            DescriptionLanguageSwitch(
-                                chinese = chineseDescriptions,
-                                commands = session.slashCommands,
-                                onChange = onSetChineseDescriptions,
-                            )
-                        }
-                        session.slashCommands.forEach { cmd ->
-                            OptionRow(
-                                title = "/${cmd.name}",
-                                // 技能描述动辄一段话（dataviz 那条有 500 字），默认只留两行，
-                                // 列表才像目录而不是文档；截断的那条给一个「展开全文」，
-                                // 之前是省略号加省略号，想看全没有任何地方可看
-                                subtitle = slashCommandDescription(
-                                    cmd.name,
-                                    cmd.description,
-                                    chineseDescriptions,
-                                ),
-                                subtitleMaxLines = 2,
-                                selected = false,
-                                monospaceTitle = true,
-                                onClick = { onPickCommand(cmd.name) },
-                            )
-                        }
+                // 不限高、不内嵌滚动：整张 sheet 本来就是一个 verticalScroll，
+                // 之前套了一层 heightIn(max) 却没有 scroll，40 个命令只看得见前两个
+                Column {
+                    // 英文界面下不给这个开关：那时候 CLI 的原文和界面本来就是一种语言，
+                    // 没有「要不要译」这个问题了。见 isChineseUi
+                    if (isChineseUi()) {
+                        DescriptionLanguageSwitch(
+                            chinese = chineseDescriptions,
+                            commands = session.slashCommands,
+                            onChange = onSetChineseDescriptions,
+                        )
+                    }
+                    session.slashCommands.forEach { cmd ->
+                        OptionRow(
+                            title = "/${cmd.name}",
+                            // 技能描述动辄一段话（dataviz 那条有 500 字），默认只留两行，
+                            // 列表才像目录而不是文档；截断的那条给一个「展开全文」，
+                            // 之前是省略号加省略号，想看全没有任何地方可看
+                            subtitle = slashCommandDescription(
+                                cmd.name,
+                                cmd.description,
+                                chineseDescriptions,
+                            ),
+                            subtitleMaxLines = 2,
+                            selected = false,
+                            monospaceTitle = true,
+                            onClick = { onPickCommand(cmd.name) },
+                        )
                     }
                 }
             }
-
-            KeepAliveStatus()
         }
     }
 }
 
-/** sheet 的标题：一方印 + 楷书 */
-@Composable
-private fun SheetTitle(text: String) {
-    Row(
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Seal()
-        Text(text, style = MaterialTheme.typography.titleMedium)
-    }
-}
-
-@Composable
-private fun SettingsBusyBanner(applyingEffort: Boolean, stopping: Boolean) {
-    val label = when {
-        stopping -> stringResource(R.string.session_settings_busy_stopping)
-        applyingEffort -> stringResource(R.string.session_settings_busy_relaunch)
-        else -> stringResource(R.string.session_settings_busy)
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .padding(bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        InkSpinner(size = 14.dp, color = MaterialTheme.sea.sea)
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.sea.sea,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-/**
- * 后台保活是否真的生效。
- *
- * 放在设置面板最底下、不占一个分区 —— 平时不需要看，但它失效时的现象
- * （切出去回来任务断了、一串连接中断）和网络问题长得一模一样，
- * 没有这一行就只能靠猜。ColorOS / realme UI 这类 ROM 会在系统侧直接拒发 FGS 类型权限。
- */
-@Composable
-private fun KeepAliveStatus() {
-    val state by ClaudeCodeForegroundService.keepAlive.collectAsStateWithLifecycle()
-    val (textRes, isError) = when (state) {
-        ClaudeCodeForegroundService.KeepAlive.Active ->
-            R.string.session_keepalive_active to false
-
-        ClaudeCodeForegroundService.KeepAlive.Rejected ->
-            R.string.session_keepalive_rejected to true
-
-        ClaudeCodeForegroundService.KeepAlive.Expired ->
-            R.string.session_keepalive_expired to true
-
-        ClaudeCodeForegroundService.KeepAlive.Stopped ->
-            R.string.session_keepalive_none to false
-    }
-    Notice(
-        text = stringResource(textRes),
-        tone = if (isError) NoticeTone.Error else NoticeTone.Info,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-    )
-}
-
-/** 一个可折叠分区：标题行常驻并显示当前值，点开才展开内容；箭头随之翻转 */
+/** 分区外观见 [AccordionSection]；这里只把枚举上的标题资源接过去 */
 @Composable
 private fun Section(
     section: SettingsSection,
@@ -367,42 +239,7 @@ private fun Section(
     open: SettingsSection?,
     onToggle: (SettingsSection?) -> Unit,
     content: @Composable () -> Unit,
-) {
-    val expanded = open == section
-    val rotation by animateFloatAsState(if (expanded) 180f else 0f, InkMotion.spatial(), label = "chevron")
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onToggle(if (expanded) null else section) }
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(stringResource(section.labelRes), style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = JetbrainsMono,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        Icon(
-            HugeIcons.ArrowDown01,
-            contentDescription = null,
-            modifier = Modifier
-                .size(14.dp)
-                .graphicsLayer { rotationZ = rotation },
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    AnimatedVisibility(visible = expanded, enter = InkMotion.expand, exit = InkMotion.collapse) {
-        Column { content() }
-    }
-    InkDivider()
-}
+) = AccordionSection(section, stringResource(section.labelRes), value, open, onToggle, content)
 
 /**
  * 模型选择。
@@ -444,7 +281,7 @@ private fun DescriptionLanguageSwitch(
         InkChip(label = stringResource(R.string.session_desc_lang_zh), selected = chinese, onClick = { onChange(true) })
         InkChip(label = stringResource(R.string.session_desc_lang_original), selected = !chinese, onClick = { onChange(false) })
     }
-    SubHeader(
+    SettingsSubHeader(
         if (chinese) {
             stringResource(R.string.session_desc_lang_hint, commands.size, translated)
         } else {
@@ -545,7 +382,7 @@ private fun ModelPicker(
 
         // 中转站真实供应的模型：这才是"能选到什么"的事实来源。CLI 的目录只是它自己的
         // 别名表，新模型在那张表里可能根本没有对应项
-        SubHeader(
+        SettingsSubHeader(
             when {
                 relayModels.isNotEmpty() -> stringResource(R.string.session_model_relay_list)
                 !relayChecked -> stringResource(R.string.session_model_relay_querying)
@@ -569,7 +406,7 @@ private fun ModelPicker(
                     onClick = { longContext = !longContext },
                 )
             } else {
-                SubHeader(stringResource(R.string.session_model_native_1m))
+                SettingsSubHeader(stringResource(R.string.session_model_native_1m))
             }
             relayModels.forEach { model ->
                 val wantsSuffix = longContext && ClaudeCodeModelCatalog.longContextSuffixMeaningful(model.id)
@@ -588,7 +425,7 @@ private fun ModelPicker(
         }
 
         (hidden + listOfNotNull(orphan)).takeIf { it.isNotEmpty() }?.let { extras ->
-            SubHeader(stringResource(R.string.session_model_alias_header))
+            SettingsSubHeader(stringResource(R.string.session_model_alias_header))
             extras.forEach { model ->
                 OptionRow(
                     title = model.displayName,
@@ -599,7 +436,7 @@ private fun ModelPicker(
                 )
             }
         }
-        InlineInput(
+        SettingsInlineInput(
             value = custom,
             onValueChange = { custom = it },
             label = stringResource(R.string.session_model_manual),
@@ -608,7 +445,7 @@ private fun ModelPicker(
             onApply = { pick(custom.trim().ifBlank { null }) },
         )
         if (models.isEmpty()) {
-            SubHeader(stringResource(R.string.session_model_no_catalog))
+            SettingsSubHeader(stringResource(R.string.session_model_no_catalog))
         }
     }
 }
@@ -628,7 +465,7 @@ private fun EffortPicker(
 ) {
     Column {
         session.appliedEffort?.let { applied ->
-            SubHeader(
+            SettingsSubHeader(
                 stringResource(R.string.session_effort_applied, applied) +
                     if (session.appliedUltracode) {
                         stringResource(R.string.session_effort_ultracode_on)
@@ -639,9 +476,9 @@ private fun EffortPicker(
         }
         if (!effortSupportedFor(session)) {
             // CLI 面板原话 "Effort not supported for Haiku"：列一排点了没反应的档位不如直说
-            SubHeader(stringResource(R.string.session_effort_unsupported))
+            SettingsSubHeader(stringResource(R.string.session_effort_unsupported))
         }
-        SubHeader(stringResource(R.string.session_effort_restart))
+        SettingsSubHeader(stringResource(R.string.session_effort_restart))
         effortLevelsFor(session).forEach { level ->
             val effort = levelToEffort(level)
             OptionRow(
@@ -684,7 +521,7 @@ private fun PromptCacheTtlPicker(
     onPick: (String) -> Unit,
 ) {
     Column {
-        SubHeader(stringResource(R.string.session_cache_restart))
+        SettingsSubHeader(stringResource(R.string.session_cache_restart))
         ClaudeCodeManager.PROMPT_CACHE_TTLS.forEach { ttl ->
             OptionRow(
                 title = if (ttl == ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL) stringResource(R.string.session_cache_default_suffix, ttl) else ttl,
@@ -722,141 +559,6 @@ private fun CwdPicker(
         onCreate = onCreate,
         asSheet = false,
     )
-}
-
-/** 一张输入纸条 + 右侧的「应用」。输入的是模型名 / 路径，等宽 */
-@Composable
-private fun InlineInput(
-    value: String,
-    onValueChange: (String) -> Unit,
-    label: String,
-    placeholder: String,
-    enabled: Boolean = true,
-    onApply: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        InkTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.weight(1f),
-            label = label,
-            placeholder = placeholder,
-            singleLine = true,
-            monospace = true,
-            enabled = enabled,
-        )
-        InkTextButton(
-            onClick = onApply,
-            enabled = enabled && value.isNotBlank(),
-            modifier = Modifier.padding(bottom = 4.dp),
-        ) { Text(stringResource(R.string.common_apply)) }
-    }
-}
-
-@Composable
-private fun SubHeader(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-    )
-}
-
-/**
- * 一个可选项。选中的那一行是金的水洗底 + 左边一道金边：这是"你选的"。
- *
- * 说明超出 [subtitleMaxLines] 时给一个「展开全文」——之前是直接截成省略号，
- * 而技能那类说明动辄 500 字（dataviz 那条整段都是触发条件），**省略号后面的内容
- * 在整个 App 里没有任何地方能看到**，等于白写。截断本身是对的：列表要像目录；
- * 缺的只是一个出口。
- */
-@Composable
-internal fun OptionRow(
-    title: String,
-    subtitle: String?,
-    selected: Boolean,
-    onClick: () -> Unit,
-    monospaceTitle: Boolean = false,
-    subtitleMaxLines: Int = Int.MAX_VALUE,
-    enabled: Boolean = true,
-) {
-    // 按 subtitle 取 key：切换中英文时说明整段换掉，展开状态和"有没有截断"都要重算
-    var expanded by remember(subtitle) { mutableStateOf(false) }
-    var truncated by remember(subtitle) { mutableStateOf(false) }
-    val palette = MaterialTheme.sea
-    val background by animateColorAsState(
-        if (selected) palette.seaWash else Color.Transparent,
-        InkMotion.effect(),
-        label = "optionBackground",
-    )
-    val edge by animateFloatAsState(if (selected) 1f else 0f, InkMotion.spatial(), label = "optionEdge")
-    val gold = palette.sea
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .background(background)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
-            .drawBehind {
-                // 金边从中间长出来，不是整条突然出现
-                if (edge > 0f) {
-                    val x = 1.dp.toPx()
-                    val half = (size.height / 2f - size.height * 0.22f) * edge
-                    val cy = size.height / 2f
-                    drawLine(
-                        color = gold,
-                        start = Offset(x, cy - half),
-                        end = Offset(x, cy + half),
-                        strokeWidth = 2.dp.toPx(),
-                        cap = StrokeCap.Round,
-                    )
-                }
-            }
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = if (monospaceTitle) JetbrainsMono else null,
-            )
-            subtitle?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (expanded) Int.MAX_VALUE else subtitleMaxLines,
-                    overflow = TextOverflow.Ellipsis,
-                    // 只在折叠态记录溢出，且只在值真的变了时写 —— 在 onTextLayout 里
-                    // 无条件赋值会让"测量→写状态→重组→再测量"转成死循环
-                    onTextLayout = { result ->
-                        if (!expanded && result.hasVisualOverflow != truncated) {
-                            truncated = result.hasVisualOverflow
-                        }
-                    },
-                )
-                if (truncated || expanded) {
-                    Text(
-                        text = stringResource(if (expanded) R.string.session_collapse else R.string.session_expand_full),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = palette.seaDeep,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            // 自己吃掉点击，否则点"展开全文"会被外层当成选中这一项
-                            .clickable { expanded = !expanded },
-                    )
-                }
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

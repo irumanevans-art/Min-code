@@ -12,6 +12,8 @@ import java.io.PipedOutputStream
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -640,6 +642,112 @@ class CodexAppServerManagerTest {
             notes(manager),
         )
         manager.close()
+    }
+
+    // -----------------------------------------------------------------------
+    // 会话设置（CodexSettingsSheet）：每轮 turn/start 照当前值带上
+    // -----------------------------------------------------------------------
+
+    /** 默认档钉死：on-request + workspaceWrite + 联网，和接入以来一样。改它就是改所有人的权限 */
+    @Test
+    fun `a turn carries the default permission level unless changed`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("问")
+        await { turnStarts() == 1 }
+
+        val turn = lastTurnStart(scripted)
+        assertEquals("on-request", turn.str("approvalPolicy"))
+        val policy = turn.obj("sandboxPolicy")!!
+        assertEquals("workspaceWrite", policy.str("type"))
+        assertEquals("true", policy.str("networkAccess"))
+        assertEquals("/workspace", turn.str("cwd"))
+        assertFalse(turn.containsKey("summary"))
+        assertEquals(CodexPermissionPreset.DEFAULT, manager.state.value.options.permissionPreset)
+        manager.close()
+    }
+
+    @Test
+    fun `changed session settings reach the next turn`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.updateSessionOptions {
+            it.withPermission(CodexPermissionPreset.READ_ONLY).copy(summary = "detailed", cwd = "/workspace/app")
+        }
+        manager.sendTurn("问")
+        await { turnStarts() == 1 }
+
+        val turn = lastTurnStart(scripted)
+        assertEquals("on-request", turn.str("approvalPolicy"))
+        assertEquals("readOnly", turn.obj("sandboxPolicy")!!.str("type"))
+        assertEquals("detailed", turn.str("summary"))
+        assertEquals("/workspace/app", turn.str("cwd"))
+        manager.close()
+    }
+
+    /**
+     * 回归钉：面板里调成「只读」的会话停一下再「继续」，不能悄悄回到「自动」。
+     * 另起一条新会话则照连接配置的默认来——那是另一条会话，不该继承。
+     */
+    @Test
+    fun `resuming the same thread keeps its settings, a new thread starts from defaults`() = runBlocking {
+        val processes = ArrayDeque(
+            listOf(
+                ScriptedProcess(
+                    "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+                    "thread/start" to listOf("""{"id":"2","result":{"threadId":"t"}}"""),
+                ),
+                ScriptedProcess(
+                    "\"method\":\"initialize\"" to listOf("""{"id":"3","result":{}}"""),
+                    "thread/resume" to listOf("""{"id":"4","result":{"cwd":"/workspace"}}"""),
+                ),
+                ScriptedProcess(
+                    "\"method\":\"initialize\"" to listOf("""{"id":"5","result":{}}"""),
+                    "thread/start" to listOf("""{"id":"6","result":{"threadId":"t2"}}"""),
+                ),
+            ),
+        )
+        val manager = CodexAppServerManager { processes.removeFirst() }
+
+        assertTrue(manager.start())
+        await { manager.state.value.status == SessionStatus.Running }
+        manager.updateSessionOptions { it.withPermission(CodexPermissionPreset.READ_ONLY).copy(cwd = "/workspace/app") }
+        manager.stop()
+
+        assertTrue(manager.start(resumeThreadId = "t"))
+        await { manager.state.value.status == SessionStatus.Running }
+        assertEquals(CodexPermissionPreset.READ_ONLY, manager.state.value.options.permissionPreset)
+        // 线程报回来的 cwd 不能盖掉面板里改过的那个
+        assertEquals("/workspace/app", manager.state.value.options.cwd)
+        manager.stop()
+
+        assertTrue(manager.start(resumeThreadId = null))
+        await { manager.state.value.status == SessionStatus.Running }
+        assertEquals(CodexPermissionPreset.DEFAULT, manager.state.value.options.permissionPreset)
+        assertEquals("/workspace", manager.state.value.options.cwd)
+        manager.close()
+    }
+
+    /** 接着聊一条在终端里别处开的会话：之后每轮带的 cwd 是它自己的，而不是把它挪回 /workspace */
+    @Test
+    fun `later turns carry the cwd the thread reported`() = runBlocking {
+        scripted = ScriptedProcess(
+            "\"method\":\"initialize\"" to listOf("""{"id":"1","result":{}}"""),
+            "thread/resume" to listOf("""{"id":"2","result":{"thread":{"id":"old"},"cwd":"/root/proj"}}"""),
+            "turn/start" to BUSY_TURN,
+        )
+        val manager = CodexAppServerManager { scripted }
+        assertTrue(manager.start(resumeThreadId = "old"))
+        await { manager.state.value.status == SessionStatus.Running }
+        assertEquals("/root/proj", manager.state.value.options.cwd)
+
+        manager.sendTurn("问")
+        await { turnStarts() == 1 }
+        assertEquals("/root/proj", lastTurnStart(scripted).str("cwd"))
+        manager.close()
+    }
+
+    private fun lastTurnStart(process: ScriptedProcess): JsonObject {
+        val line = process.writtenLines().last { it.contains(""""method":"turn/start"""") }
+        return (Json.parseToJsonElement(line) as JsonObject)["params"] as JsonObject
     }
 
     private fun notes(manager: CodexAppServerManager): List<String> =

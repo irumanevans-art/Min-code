@@ -112,7 +112,9 @@ private fun CodexPageContent(vm: CodexVM) {
     val navController = LocalNavController.current
     var showConnection by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
-    var showTurnSettings by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    // 斜杠命令打开时直接展开对应那一栏；从「+」里打开时全部折叠
+    var settingsSection by remember { mutableStateOf<CodexSettingsSection?>(null) }
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val sessionMetas by vm.sessionMetas.collectAsStateWithLifecycle()
     // 只拿 State、不在这里读：每个键只让输入坞重组，会话流和顶栏不跟着动
@@ -208,10 +210,11 @@ private fun CodexPageContent(vm: CodexVM) {
                         busy = session.busy,
                         queued = session.queued,
                         attachments = attachments,
-                        modelText = session.model?.takeIf { it.isNotBlank() }
+                        modelText = session.options.model
                             ?: stringResource(R.string.session_model_default),
-                        modeText = session.effort?.takeIf { it.isNotBlank() }
-                            ?: stringResource(R.string.codex_effort_default),
+                        // 和 Claude 那边同一个写法：权限 · 强度
+                        modeText = session.options.permissionLabel() + " · " +
+                            (session.options.effort ?: stringResource(R.string.codex_effort_default)),
                         onDraftChange = vm::setDraft,
                         onSend = vm::send,
                         onTakeQueued = vm::takeQueued,
@@ -220,11 +223,17 @@ private fun CodexPageContent(vm: CodexVM) {
                         onSearchFiles = vm::searchFiles,
                         onSlash = { slash ->
                             when (slash) {
-                                CodexSlash.MODEL, CodexSlash.EFFORT -> showTurnSettings = true
                                 CodexSlash.NEW -> vm.startNew()
+                                else -> {
+                                    settingsSection = slash.toSection()
+                                    showSettings = true
+                                }
                             }
                         },
-                        onOpenTurnSettings = { showTurnSettings = true },
+                        onOpenSettings = {
+                            settingsSection = null
+                            showSettings = true
+                        },
                         onStop = vm::stop,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -278,15 +287,22 @@ private fun CodexPageContent(vm: CodexVM) {
         )
     }
 
-    if (showTurnSettings) {
-        CodexTurnSettingsSheet(
-            model = session.model,
-            effort = session.effort,
-            onApply = { model, effort ->
-                vm.setModelAndEffort(model, effort)
-                showTurnSettings = false
-            },
-            onDismiss = { showTurnSettings = false },
+    if (showSettings) {
+        // 取好了再进回调：新建文件夹的回调已经不在 Composable 作用域里
+        val invalidName = stringResource(R.string.vm_invalid_name)
+        CodexSettingsSheet(
+            options = session.options,
+            turnRunning = session.busy,
+            profileModel = profile.model.trim().takeIf(String::isNotBlank),
+            initialSection = settingsSection,
+            onDismiss = { showSettings = false },
+            onSetModel = vm::setModel,
+            onSetPermission = vm::setPermission,
+            onSetEffort = vm::setEffort,
+            onSetSummary = vm::setSummary,
+            onSetCwd = vm::setCwd,
+            onListCwd = vm::listCwdFolders,
+            onCreateCwd = { parent, name, onDone -> vm.createCwdFolder(parent, name, invalidName, onDone) },
         )
     }
 
@@ -585,81 +601,6 @@ private fun CodexApprovalSheet(
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.codex_approve_session)) }
             }
-        }
-    }
-}
-
-/**
- * 这一轮用哪个模型、想多久。
- *
- * 和 [CodexConnectionSheet] 里那两栏是同一对字段，但作用域不同：这里改的是**当前会话**，
- * 下一轮 `turn/start` 就带上，进程不重启；连接配置里那一份是**新会话的默认**，不跟着动。
- * 摆在输入坞的「+」里，因为「这一轮让它想久一点」是随手要够得着的事。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CodexTurnSettingsSheet(
-    model: String?,
-    effort: String?,
-    onApply: (String?, String?) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var draftModel by remember(model) { mutableStateOf(model.orEmpty()) }
-    var draftEffort by remember(effort) { mutableStateOf(effort.orEmpty()) }
-
-    InkSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                stringResource(R.string.codex_turn_settings),
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Text(
-                stringResource(R.string.codex_turn_settings_scope),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            InkTextField(
-                value = draftModel,
-                onValueChange = { draftModel = it },
-                label = stringResource(R.string.codex_model),
-                placeholder = "gpt-5.1-codex-max",
-                singleLine = true,
-                monospace = true,
-            )
-            Text(
-                stringResource(R.string.codex_effort),
-                style = MaterialTheme.typography.labelMedium,
-            )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                InkChip(
-                    label = stringResource(R.string.codex_effort_default),
-                    selected = draftEffort.isBlank(),
-                    onClick = { draftEffort = "" },
-                )
-                CODEX_EFFORT_LEVELS.forEach { level ->
-                    InkChip(
-                        label = level,
-                        selected = draftEffort == level,
-                        onClick = { draftEffort = level },
-                        monospace = true,
-                    )
-                }
-            }
-            InkButton(
-                onClick = { onApply(draftModel.trim(), draftEffort.trim()) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(R.string.codex_turn_settings_apply)) }
         }
     }
 }

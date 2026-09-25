@@ -244,6 +244,22 @@ class CodexAppServerProtocolTest {
         assertFalse(policy.containsKey("writableRoots"))
     }
 
+    /** cwd / summary 是 turn/start 的逐轮覆盖（官方：this turn and subsequent turns） */
+    @Test
+    fun `turn start carries cwd and summary, and omits them when blank`() {
+        val params = (Json.parseToJsonElement(
+            encodeCodexTurnStart("1", "t", "hi", cwd = "/workspace/app", summary = "detailed"),
+        ) as JsonObject)["params"] as JsonObject
+        assertEquals("/workspace/app", (params["cwd"] as JsonPrimitive).content)
+        assertEquals("detailed", (params["summary"] as JsonPrimitive).content)
+
+        val bare = (Json.parseToJsonElement(
+            encodeCodexTurnStart("1", "t", "hi", cwd = " ", summary = ""),
+        ) as JsonObject)["params"] as JsonObject
+        assertFalse(bare.containsKey("cwd"))
+        assertFalse(bare.containsKey("summary"))
+    }
+
     /** 空 cwd/model 不能拼进去：Codex 对空串的校验比缺字段严 */
     @Test
     fun `blank optional fields are omitted entirely`() {

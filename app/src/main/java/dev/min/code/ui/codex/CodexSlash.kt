@@ -3,7 +3,7 @@ package dev.min.code.ui.codex
 /**
  * Codex 侧的本地斜杠命令。
  *
- * ## 为什么只有三条
+ * ## 为什么只有这几条
  *
  * app-server 协议里**没有斜杠命令这回事**：`turn/start` 收的是一段文本，
  * 打进去的 `/model` 会原样变成给模型的话（然后它多半会回你一句「我不能改模型」）。
@@ -16,9 +16,16 @@ package dev.min.code.ui.codex
  * 那一下不拦住就是白花一轮的钱。
  */
 internal enum class CodexSlash(val command: String) {
-    /** 打开「模型与思考」——和 [EFFORT] 同一个面板，两个词都有人用 */
+    /** 以下四条都是打开会话设置、直接展开对应那一栏（见 `CodexSettingsSheet.kt` 的 toSection） */
     MODEL("/model"),
     EFFORT("/effort"),
+
+    /** codex TUI 现在叫 `/permissions`，老版本叫 `/approvals`，两个名字都有人打 */
+    PERMISSIONS("/permissions"),
+    APPROVALS("/approvals"),
+
+    /** TUI 的 `/cd` 带参数；这里不带参数，只是打开工作目录那一栏 */
+    CD("/cd"),
 
     /** 另起一条会话 */
     NEW("/new"),

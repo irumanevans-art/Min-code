@@ -63,6 +63,8 @@ class CodexAppServerManager(
         val cwd: String = DEFAULT_CWD,
         val model: String? = null,
         val effort: String? = null,
+        /** 思考摘要（[CODEX_REASONING_SUMMARIES] 之一）。null = 不传，走 Codex 自己的默认 */
+        val summary: String? = null,
         /**
          * 只读的话 Codex 连文件都改不了，全放开等于把 rootfs 交出去 ——
          * 工作区可写是唯一说得通的默认。
@@ -98,9 +100,11 @@ class CodexAppServerManager(
          * 一轮失败或被打断时**留在这儿**而不是继续烧——见 [drainQueuedLocked]。
          */
         val queued: List<String> = emptyList(),
-        /** 这条会话当前用的模型 / 思考强度。null = 没指定，走 codex 自己的默认 */
-        val model: String? = null,
-        val effort: String? = null,
+        /**
+         * 这条会话此刻的设置（模型 / 强度 / 摘要 / 权限 / 工作目录），下一轮 turn/start 照它写。
+         * model 等为 null = 没指定，走 codex 自己的默认。
+         */
+        val options: Options = Options(),
     ) {
         /**
          * 能不能往里打字、按发送。
@@ -171,6 +175,14 @@ class CodexAppServerManager(
     private var stopping = false
     private var options = Options()
     private var resumeThreadId: String? = null
+
+    /**
+     * 在会话设置里动过的是哪条线程。「继续」的正是这条时，面板里的设置跟着走
+     * （[withSessionSettingsOf]）；没动过就照连接配置重来，和以前一样。
+     * 只在内存里（manager 是单例，页面退出、转屏都还在）：App 进程被杀之后再「继续」，
+     * 回到的是连接配置的默认（权限档「自动」）。要跨进程记住得另做持久化，目前没有做。
+     */
+    private var customizedThreadId: String? = null
     /** 命令输出按 itemId 攒（有上限，见 [ClippedOutput]），delta 到达时刷进对应那张工具卡 */
     private val outputBuffers = mutableMapOf<String, ClippedOutput>()
     /** 正在流式生成的那条正文 / 思考的 itemId，completed 时用来判断该清哪个缓冲 */
@@ -188,7 +200,9 @@ class CodexAppServerManager(
             return false
         }
         stopping = false
-        this.options = options
+        val carry = resumeThreadId != null && resumeThreadId == customizedThreadId
+        this.options = if (carry) options.withSessionSettingsOf(this.options) else options
+        if (!carry) customizedThreadId = null
         this.resumeThreadId = resumeThreadId
         outputBuffers.clear()
         streamingTextItemId = null
@@ -199,8 +213,7 @@ class CodexAppServerManager(
             // 接着上一条聊时，已经摆在屏幕上的历史要留着 —— 点一下「继续」就清屏，
             // 用户会以为历史没了。开新会话（resumeThreadId 为空）才从白纸开始
             items = if (resumeThreadId != null) _state.value.items else emptyList(),
-            model = options.model,
-            effort = options.effort,
+            options = this.options,
         )
 
         val launched = runCatching { processLauncher.start() }.getOrElse { error ->
@@ -277,20 +290,19 @@ class CodexAppServerManager(
     }
 
     /**
-     * 换这一条会话的模型 / 思考强度，**不重启进程**。
+     * 改这一条会话的设置（模型 / 强度 / 摘要 / 权限 / 工作目录），**不重启进程**。
      *
-     * `turn/start` 每轮都从 [options] 现取 model 与 effort，所以改完下一轮就生效，
-     * 当前这一轮按它开始时的档跑完——一轮跑到一半换模型没有意义，也不是 codex 支持的事。
+     * `turn/start` 每轮都从 [options] 现取这些值，所以改完下一轮就生效，
+     * 当前这一轮按它开始时的设置跑完——一轮跑到一半换模型没有意义，也不是 codex 支持的事
+     * （官方另有实验性的 `turn/settings/update`，这里不用）。
      *
      * 只动这条会话。连接配置里那一份是**新会话的默认**，不跟着变：
      * 「这一轮让它想久一点」和「我平时用这个档」是两件事。
      */
-    fun setModelAndEffort(model: String?, effort: String?) = synchronized(lock) {
-        options = options.copy(
-            model = model?.trim()?.takeIf(String::isNotBlank),
-            effort = effort?.trim()?.takeIf(String::isNotBlank),
-        )
-        _state.value = _state.value.copy(model = options.model, effort = options.effort)
+    fun updateSessionOptions(transform: (Options) -> Options) = synchronized(lock) {
+        options = transform(options)
+        customizedThreadId = _state.value.threadId
+        _state.value = _state.value.copy(options = options)
     }
 
     /**
@@ -330,8 +342,10 @@ class CodexAppServerManager(
             requestId = id,
             threadId = threadId,
             text = input,
+            cwd = options.cwd,
             model = options.model,
             effort = options.effort,
+            summary = options.summary,
             sandbox = options.sandbox,
             writableRoots = options.writableRoots,
             networkAccess = options.networkAccess,
@@ -630,16 +644,25 @@ class CodexAppServerManager(
             }
 
             RequestKind.Thread -> {
-                val threadId = (response.result as? kotlinx.serialization.json.JsonObject)?.let { result ->
-                    result.str("threadId") ?: result.obj("thread")?.str("id") ?: result.str("id")
+                val result = response.result as? kotlinx.serialization.json.JsonObject
+                val threadId = result?.let {
+                    it.str("threadId") ?: it.obj("thread")?.str("id") ?: it.str("id")
                 } ?: resumeThreadId
                 if (threadId == null) {
                     failLocked("thread 应答里没有 id")
                 } else {
+                    // 线程自己报的工作目录才是真的（Thread{Start,Resume}Response.cwd）：接着聊一条在终端里
+                    // 开的会话时它不是 /workspace，而之后每轮 turn/start 都会带上 cwd——拿默认值去带就等于
+                    // 把人家挪了窝。面板里改过、「继续」时带过来的那份以面板为准
+                    val reportedCwd = result?.str("cwd")?.takeIf { it.isNotBlank() }
+                    if (reportedCwd != null && customizedThreadId != threadId) {
+                        options = options.copy(cwd = reportedCwd)
+                    }
                     _state.value = _state.value.copy(
                         status = SessionStatus.Running,
                         threadId = threadId,
                         errorMessage = null,
+                        options = options,
                     )
                 }
             }

@@ -64,7 +64,7 @@ internal fun CodexComposer(
     onRemoveAttachment: (CodexAttachment) -> Unit,
     onSearchFiles: suspend (String) -> List<String>,
     onSlash: (CodexSlash) -> Unit,
-    onOpenTurnSettings: () -> Unit,
+    onOpenSettings: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -182,7 +182,7 @@ internal fun CodexComposer(
             // （和顶栏「停止」同一个动作）。接上之后换成只掐这一轮，和 Claude 的 Esc 对齐
             onInterrupt = onStop,
             plus = {
-                // 和 Claude 同一个「+」：附件、模型 / 思考强度都收在这里。
+                // 和 Claude 同一个「+」：附件、会话设置（模型 · 权限 · 强度…）都收在这里。
                 // 图片那两项暂不给 —— Codex 的 localImage 内容块还没接。
                 // 用量那一栏也不给：thread/tokenUsage 报的是累计用量，不是此刻上下文占了多少，
                 // 画成一圈会比真实的满；Codex 也不回报花费。没有的数就不画
@@ -196,7 +196,7 @@ internal fun CodexComposer(
                     onTakePhoto = {},
                     modelText = modelText,
                     modeText = modeText,
-                    onOpenSettings = onOpenTurnSettings,
+                    onOpenSettings = onOpenSettings,
                 )
             },
         )
@@ -224,8 +224,5 @@ internal fun CodexComposer(
 /** 排队 chip 上留几个字。一行装得下三四个，够认出是哪条 */
 private const val QUEUED_CHIP_CHARS = 18
 
-/** 命令旁边那句说明。命令名本身不翻译，说明跟着界面语言走 */
-private fun CodexSlash.labelRes(): Int = when (this) {
-    CodexSlash.MODEL, CodexSlash.EFFORT -> R.string.codex_turn_settings
-    CodexSlash.NEW -> R.string.codex_new_session
-}
+/** 命令旁边那句说明：打开会话设置的写它展开的那一栏。命令名本身不翻译，说明跟着界面语言走 */
+private fun CodexSlash.labelRes(): Int = toSection()?.labelRes ?: R.string.codex_new_session

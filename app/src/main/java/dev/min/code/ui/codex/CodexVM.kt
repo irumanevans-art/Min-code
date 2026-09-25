@@ -3,19 +3,25 @@ package dev.min.code.ui.codex
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
+import dev.min.code.core.claudecode.CwdPath
 import dev.min.code.core.claudecode.SessionMeta
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexDecision
 import dev.min.code.core.codex.CodexDraftStore
+import dev.min.code.core.codex.CodexPermissionPreset
 import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.codex.CodexSessionSummary
 import dev.min.code.core.codex.deleteCodexSession
 import dev.min.code.core.codex.firstRestorableCodexSession
+import dev.min.code.core.codex.orUnset
+import dev.min.code.core.codex.withPermission
 import dev.min.code.core.codex.listCodexSessions
 import dev.min.code.core.codex.readCodexSessionItems
 import dev.min.code.core.codex.sortCodexSessions
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.rootfs.createCwdFolder
+import dev.min.code.core.rootfs.listCwdFolders
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.CodexAuthMode
@@ -31,6 +37,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceStorageArea
 import java.io.InputStream
 
@@ -173,11 +180,29 @@ class CodexVM(
         )
     }
 
-    /**
-     * 换这一条会话的模型 / 思考强度。下一轮生效，不重启进程，也不改连接配置里的默认
-     * ——「这一轮让它想久一点」和「我平时用这个档」是两件事。
-     */
-    fun setModelAndEffort(model: String?, effort: String?) = manager.setModelAndEffort(model, effort)
+    // 会话设置（CodexSettingsSheet）。都只改这一条会话、下一轮生效，不重启进程，也不改连接配置里的默认
+    // ——「这一轮让它想久一点」和「我平时用这个档」是两件事。语义见 CodexAppServerManager.updateSessionOptions
+
+    fun setModel(model: String?) = manager.updateSessionOptions { it.copy(model = model.orUnset()) }
+
+    fun setEffort(effort: String?) = manager.updateSessionOptions { it.copy(effort = effort.orUnset()) }
+
+    fun setSummary(summary: String?) = manager.updateSessionOptions { it.copy(summary = summary.orUnset()) }
+
+    fun setPermission(preset: CodexPermissionPreset) = manager.updateSessionOptions { it.withPermission(preset) }
+
+    fun setCwd(path: String) = manager.updateSessionOptions { it.copy(cwd = CwdPath.normalize(path)) }
+
+    /** 选工作目录面板列目录用，和 Claude 那边同一份实现 */
+    suspend fun listCwdFolders(guest: String): Result<List<WorkspaceFileEntry>> =
+        workspaceRepository.listCwdFolders(workspaceId, guest)
+
+    /** [invalidName] 由界面取好传进来：这个 VM 不拿 Context */
+    fun createCwdFolder(parent: String, name: String, invalidName: String, onDone: (Result<String>) -> Unit) {
+        viewModelScope.launch {
+            onDone(workspaceRepository.createCwdFolder(workspaceId, parent, name, invalidName))
+        }
+    }
 
     fun stop() = manager.stop()
 
