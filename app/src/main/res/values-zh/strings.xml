@@ -614,6 +614,7 @@
   <string name="providers_new">新增供应商</string>
   <string name="providers_missing_token">待填 API Key</string>
   <string name="providers_reorder_hint">长按一行可以拖动排序。</string>
+  <string name="providers_swipe_delete_title">删除这条供应商？</string>
   <string name="providers_open_website">去拿 key</string>
   <!-- 探活。只报告，不阻断：不少中转站压根没实现 /v1/models -->
   <string name="providers_probe">测活</string>

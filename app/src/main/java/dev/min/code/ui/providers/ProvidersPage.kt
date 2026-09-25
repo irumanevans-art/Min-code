@@ -57,6 +57,7 @@ import dev.min.code.ui.components.LocalToaster
 import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.RikkaConfirmDialog
+import dev.min.code.ui.components.SwipeToDelete
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.components.SettingRow
 import dev.min.code.ui.theme.InkMotion
@@ -242,6 +243,8 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
     var backupSheet by remember { mutableStateOf(false) }
     var unifiedEditing by remember { mutableStateOf<UnifiedProfile?>(null) }
     var unifiedDeleting by remember { mutableStateOf<UnifiedProfile?>(null) }
+    // 左滑松手过了线的那一条，等确认
+    var swipeDeleting by remember { mutableStateOf<ApiProfile?>(null) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -337,6 +340,9 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
                     },
                     onProbe = { vm.probe(profile) },
                     onEdit = { editing = profile },
+                    // 正在用的那条和仅剩的一条不可滑，其余左滑请删
+                    deletable = profile.id != activeId && settings.profiles.size > 1,
+                    onDelete = { swipeDeleting = profile },
                 )
             }
         }
@@ -426,6 +432,20 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
                 editing = null
             },
         )
+    }
+
+    swipeDeleting?.let { profile ->
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.providers_swipe_delete_title),
+            confirmText = stringResource(R.string.common_delete),
+            dismissText = stringResource(R.string.common_cancel),
+            onConfirm = {
+                vm.delete(profile.id)
+                swipeDeleting = null
+            },
+            onDismiss = { swipeDeleting = null },
+        ) {}
     }
 
     if (presetPicker) {
@@ -542,6 +562,8 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
 
     var editing by remember { mutableStateOf<CodexProfile?>(null) }
     var presetPicker by remember { mutableStateOf(false) }
+    // 左滑松手过了线的那一条，等确认
+    var swipeDeleting by remember { mutableStateOf<CodexProfile?>(null) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -595,6 +617,9 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
                     onSelect = { vm.activateCodex(profile.id, acknowledgeInsecure = profile.insecure) },
                     onProbe = null,
                     onEdit = { editing = profile },
+                    // 正在用的那条和仅剩的一条不可滑，其余左滑请删
+                    deletable = profile.id != activeId && settings.codexProfiles.size > 1,
+                    onDelete = { swipeDeleting = profile },
                 )
             }
         }
@@ -632,6 +657,20 @@ private fun CodexTab(vm: ProvidersVM, settings: AppSettings) {
                 editing = null
             },
         )
+    }
+
+    swipeDeleting?.let { profile ->
+        RikkaConfirmDialog(
+            show = true,
+            title = stringResource(R.string.providers_swipe_delete_title),
+            confirmText = stringResource(R.string.common_delete),
+            dismissText = stringResource(R.string.common_cancel),
+            onConfirm = {
+                vm.deleteCodex(profile.id)
+                swipeDeleting = null
+            },
+            onDismiss = { swipeDeleting = null },
+        ) {}
     }
 
     if (presetPicker) {
@@ -692,95 +731,107 @@ private fun ProviderRow(
     onProbe: (() -> Unit)?,
     onDuplicate: (() -> Unit)? = null,
     onEdit: () -> Unit,
+    /** 左滑可删；正在用的那条和仅剩的一条传 false */
+    deletable: Boolean = false,
+    /** 过了删除线松手时回调，弹确认框；null = 不包手势层 */
+    onDelete: (() -> Unit)? = null,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            // 拿起来的那一行浮起：抬一档、微微放大，其余行由 LazyColumn 让位
-            .graphicsLayer {
-                if (dragging) {
-                    translationY = dragOffset
-                    scaleX = 1.02f
-                    scaleY = 1.02f
-                    shadowElevation = 0f
+    val row: @Composable () -> Unit = {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                // 拿起来的那一行浮起：抬一档、微微放大，其余行由 LazyColumn 让位
+                .graphicsLayer {
+                    if (dragging) {
+                        translationY = dragOffset
+                        scaleX = 1.02f
+                        scaleY = 1.02f
+                        shadowElevation = 0f
+                    }
                 }
-            }
-            .clip(MaterialTheme.shapes.small)
-            .then(if (dragging) Modifier.seaFill(MaterialTheme.shapes.small, alpha = 0.12f) else Modifier)
-            .clickable(onClick = onSelect)
-            .padding(vertical = 6.dp, horizontal = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        InkRadio(selected = selected, onClick = onSelect)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
+                .clip(MaterialTheme.shapes.small)
+                .then(if (dragging) Modifier.seaFill(MaterialTheme.shapes.small, alpha = 0.12f) else Modifier)
+                .clickable(onClick = onSelect)
+                .padding(vertical = 6.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            InkRadio(selected = selected, onClick = onSelect)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (selected) {
+                        Text(
+                            stringResource(R.string.providers_active),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.sea.seaDeep,
+                        )
+                    }
+                }
                 Text(
-                    title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = JetbrainsMono,
+                    // 明文 http 用海深而不是朱：这是「注意」不是判定 —— 这条配置按下去照常工作
+                    color = if (insecure) MaterialTheme.sea.seaDeep else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
                 )
-                if (selected) {
+                val extra = listOf(note, derivedFrom).filter { it.isNotBlank() }.joinToString("  ·  ")
+                if (extra.isNotBlank()) {
                     Text(
-                        stringResource(R.string.providers_active),
+                        extra,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.sea.seaDeep,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                val probeText = probeLabel(probe)
+                if (warning != null || probeText != null) {
+                    Text(
+                        warning ?: probeText.orEmpty(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (warning != null) MaterialTheme.sea.vermilion else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = JetbrainsMono,
-                // 明文 http 用海深而不是朱：这是「注意」不是判定 —— 这条配置按下去照常工作
-                color = if (insecure) MaterialTheme.sea.seaDeep else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val extra = listOf(note, derivedFrom).filter { it.isNotBlank() }.joinToString("  ·  ")
-            if (extra.isNotBlank()) {
-                Text(
-                    extra,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+            if (onProbe != null) {
+                InkTextButton(onClick = onProbe) { Text(stringResource(R.string.providers_probe)) }
+            }
+            if (onDuplicate != null) {
+                InkIconButton(
+                    icon = HugeIcons.Copy01,
+                    contentDescription = stringResource(R.string.providers_duplicate),
+                    onClick = onDuplicate,
+                    size = 34.dp,
+                    iconSize = 17.dp,
                 )
             }
-            val probeText = probeLabel(probe)
-            if (warning != null || probeText != null) {
-                Text(
-                    warning ?: probeText.orEmpty(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (warning != null) MaterialTheme.sea.vermilion else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (onProbe != null) {
-            InkTextButton(onClick = onProbe) { Text(stringResource(R.string.providers_probe)) }
-        }
-        if (onDuplicate != null) {
             InkIconButton(
-                icon = HugeIcons.Copy01,
-                contentDescription = stringResource(R.string.providers_duplicate),
-                onClick = onDuplicate,
+                icon = HugeIcons.PencilEdit02,
+                contentDescription = stringResource(R.string.providers_edit),
+                onClick = onEdit,
                 size = 34.dp,
                 iconSize = 17.dp,
             )
         }
-        InkIconButton(
-            icon = HugeIcons.PencilEdit02,
-            contentDescription = stringResource(R.string.providers_edit),
-            onClick = onEdit,
-            size = 34.dp,
-            iconSize = 17.dp,
-        )
+    }
+    // 长按拖动进行中不抢手势：手势层的 enabled 交出去
+    if (deletable && onDelete != null) {
+        SwipeToDelete(enabled = !dragging, onDelete = onDelete) { row() }
+    } else {
+        row()
     }
 }
 

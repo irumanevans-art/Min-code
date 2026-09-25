@@ -617,6 +617,7 @@
   <string name="providers_new">New provider</string>
   <string name="providers_missing_token">API key needed</string>
   <string name="providers_reorder_hint">Long-press a row to reorder.</string>
+  <string name="providers_swipe_delete_title">Delete this provider?</string>
   <string name="providers_open_website">Get a key</string>
   <!-- 探活。只报告，不阻断：不少中转站压根没实现 /v1/models -->
   <string name="providers_probe">Test</string>
