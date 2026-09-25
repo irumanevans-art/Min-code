@@ -56,6 +56,9 @@ private const val COLLAPSE_LINES = 24
  * 代码块：语言标签 + 复制，正文横向滚动不折行（代码折行比横滚更难读），
  * 超过 [COLLAPSE_LINES] 行先收起。名字沿用 RikkaHub 的 HighlightCodeBlock，调用处不改。
  *
+ * [wrap] 给散文：Read 读到的 txt / md / log 也走这里，按源码行宽排的话手机上每行只剩十几个字
+ * 还要横滑。一般只有数学式子才超出手机宽度，这类内容折行才读得下去。
+ *
  * 去掉了 RikkaHub 版里的 HTML/SVG 预览、Mermaid、下载——那些是聊天场景的东西，
  * 这里的代码块是工具输出（Read 的文件、Bash 的命令），要的是"看清楚、能复制"。
  *
@@ -69,6 +72,7 @@ fun HighlightCodeBlock(
     modifier: Modifier = Modifier,
     completeCodeBlock: Boolean = true,
     style: TextStyle? = TextStyle(fontSize = 12.sp, lineHeight = 17.sp),
+    wrap: Boolean = false,
 ) {
     val dark = LocalDarkMode.current
     // 高亮跟着风格走：海那套里关键字是海的深处、数字是石墨蓝，整块都是蓝的，
@@ -139,10 +143,11 @@ fun HighlightCodeBlock(
                 )
             }
         }
+        val bodyScroll = if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState())
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
+                .then(bodyScroll)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
             SelectionContainer {
@@ -153,7 +158,8 @@ fun HighlightCodeBlock(
                     fontSize = textStyle.fontSize,
                     lineHeight = textStyle.lineHeight,
                     fontFamily = JetbrainsMono,
-                    softWrap = false,
+                    // 代码折行比横滚更难读；散文（wrap）才用默认折行
+                    softWrap = if (wrap) true else false,
                 )
             }
         }
