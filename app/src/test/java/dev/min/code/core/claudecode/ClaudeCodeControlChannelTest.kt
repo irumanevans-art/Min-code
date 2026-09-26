@@ -54,6 +54,14 @@ class ClaudeCodeControlChannelTest {
     }
 
     @Test
+    fun `an error keeps the CLI's error code`() = runBlocking {
+        val ch = channel()
+        val outcome = async(start = CoroutineStart.UNDISPATCHED) { ch.request("r1", "frame-1") }
+        assertTrue(ch.fail("r1", "nope", "bypass_not_launched"))
+        assertEquals(ControlOutcome.Error("nope", "bypass_not_launched"), outcome.await())
+    }
+
+    @Test
     fun `an error nobody is waiting for is reported as unclaimed`() {
         assertFalse(channel().fail("stranger", "nope"))
     }

@@ -143,8 +143,14 @@ sealed interface ClaudeCodeEvent {
      */
     data class ControlCancel(val requestId: String) : ClaudeCodeEvent
 
-    /** CLI 对我们发出的 control_request（如 interrupt）的失败应答 */
-    data class ControlError(val requestId: String, val error: String) : ClaudeCodeEvent
+    /**
+     * CLI 对我们发出的 control_request（如 interrupt）的失败应答。
+     *
+     * [code] 是 2.1.283 起的 `error_code`：CLI 按它**分支时的状态**打上的机器码，
+     * "never parsed from `error`"，比认英文原句可靠。老版本 CLI 不带，为 null。
+     * 取值和怎么给用户解释见 [ControlErrorCode]。
+     */
+    data class ControlError(val requestId: String, val error: String, val code: String? = null) : ClaudeCodeEvent
 
     /**
      * CLI 对我们发出的 control_request 的成功应答。
@@ -389,7 +395,11 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
             val requestId = response.str("request_id").orEmpty()
             when (response.str("subtype")) {
                 "error" -> listOf(
-                    ClaudeCodeEvent.ControlError(requestId, response.str("error").orEmpty())
+                    ClaudeCodeEvent.ControlError(
+                        requestId = requestId,
+                        error = response.str("error").orEmpty(),
+                        code = response.str("error_code")?.takeIf { it.isNotBlank() },
+                    )
                 )
 
                 // 载荷形状随 subtype 变，非对象（true / null / 字符串）也要能认领，

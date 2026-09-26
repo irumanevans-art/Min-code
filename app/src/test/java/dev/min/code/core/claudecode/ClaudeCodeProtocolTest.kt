@@ -228,6 +228,14 @@ class ClaudeCodeProtocolTest {
             """{"type":"control_response","response":{"subtype":"error","request_id":"req_7","error":"boom"}}"""
         ).single() as ClaudeCodeEvent.ControlError
         assertEquals("boom", event.error)
+        assertNull(event.code)
+
+        // 2.1.283：错误应答多了 error_code（"@internal Why the request was refused … never parsed from `error`"）
+        val coded = parseClaudeCodeEvents(
+            """{"type":"control_response","response":{"subtype":"error","request_id":"req_8",""" +
+                """"error":"Opus with 1M context is not available for your account.","error_code":"unavailable_for_account"}}"""
+        ).single() as ClaudeCodeEvent.ControlError
+        assertEquals("unavailable_for_account", coded.code)
 
         // success 现在会认领成 ControlOk，交给发起方按 request_id 取回结果
         // （list_models / get_plan 这类需要读返回值）

@@ -919,8 +919,10 @@ class ClaudeCodeManager(
             is ClaudeCodeEvent.ControlError -> {
                 // 认领得到就交给发起方处理（它会给出更贴合场景的文案），
                 // 认领不到才作为孤儿错误抛到聊天流里
-                if (!controls.fail(event.requestId, event.error)) {
-                    appendItem(ChatItem.Note(newId(), "控制请求失败: ${event.error}", isError = true))
+                if (!controls.fail(event.requestId, event.error, event.code)) {
+                    appendItem(
+                        ChatItem.Note(newId(), "控制请求失败: ${describeControlError(event.error, event.code)}", isError = true)
+                    )
                 }
             }
 
@@ -1977,7 +1979,7 @@ class ClaudeCodeManager(
                         refreshUsage()
                     }
                 } else {
-                    val why = (outcome as? ControlOutcome.Error)?.message
+                    val why = (outcome as? ControlOutcome.Error)?.let { describeControlError(it.message, it.code) }
                         ?: if (_state.value.status != SessionStatus.Running) {
                             "会话未在运行"
                         } else {
@@ -2036,9 +2038,13 @@ class ClaudeCodeManager(
                         }
                     }
 
-                    // 把 CLI 的原话透出来，别再糊成"未应答"
+                    // 把 CLI 的原话透出来，别再糊成"未应答"；认得 error_code 的先说人话
                     is ControlOutcome.Error -> appendItem(
-                        ChatItem.Note(newId(), "切换到 ${mode.label} 失败：${outcome.message}", isError = true)
+                        ChatItem.Note(
+                            newId(),
+                            "切换到 ${mode.label} 失败：${describeControlError(outcome.message, outcome.code)}",
+                            isError = true,
+                        )
                     )
 
                     ControlOutcome.Timeout -> appendItem(

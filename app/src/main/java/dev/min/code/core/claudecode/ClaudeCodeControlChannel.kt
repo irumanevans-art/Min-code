@@ -17,7 +17,9 @@ import java.util.concurrent.ConcurrentHashMap
  */
 internal sealed interface ControlOutcome {
     data class Ok(val payload: JsonObject) : ControlOutcome
-    data class Error(val message: String) : ControlOutcome
+
+    /** [code] 是 CLI 的 `error_code`（2.1.283+），进程没了等本地原因为 null，见 [ControlErrorCode] */
+    data class Error(val message: String, val code: String? = null) : ControlOutcome
     data object Timeout : ControlOutcome
 }
 
@@ -95,8 +97,8 @@ internal class ClaudeCodeControlChannel(
      * CLI 回了错误的 control_response。返回有没有人认领 ——
      * 认领得到就由发起方给出更贴合场景的文案，认领不到的由调用方当孤儿错误处理。
      */
-    fun fail(requestId: String, error: String): Boolean {
-        val claimed = pending.remove(requestId)?.complete(ControlOutcome.Error(error)) == true
+    fun fail(requestId: String, error: String, code: String? = null): Boolean {
+        val claimed = pending.remove(requestId)?.complete(ControlOutcome.Error(error, code)) == true
         noteArrival(requestId, claimed)
         return claimed
     }
