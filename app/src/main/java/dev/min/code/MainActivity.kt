@@ -77,6 +77,7 @@ import dev.min.code.ui.theme.LocalFormSwitch
 import dev.min.code.ui.theme.LocalTilt
 import dev.min.code.ui.theme.MinTheme
 import dev.min.code.ui.theme.rememberTilt
+import dev.min.code.util.LocalPreviewBus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.workspace.WorkspaceStorageArea
@@ -199,6 +200,12 @@ class MainActivity : ComponentActivity() {
             navStack = backStack
             // 冷启动那一次：栈是在这里才有的，onCreate 时还没有，routeProviderLink 无处可推
             routeProviderLink(intent)
+        }
+        // 人点了要看本机页面（rootfs 开网页那张卡、终端里的本机链接）：预览槽只长在会话页，
+        // 把栈退回会话页。栈底总是会话页，它的 VM 一直活着，同一条总线上的 url 由它填位展开；
+        // 抽屉和「系统」下一层的面板由会话页见到展开后自己收（见 ClaudeCodePage）
+        LaunchedEffect(navigator) {
+            LocalPreviewBus.urls.collect { navigator.clearAndNavigate(Screen.Session) }
         }
         val (toaster, toastState) = rememberInkToaster()
         val tilt = rememberTilt()
