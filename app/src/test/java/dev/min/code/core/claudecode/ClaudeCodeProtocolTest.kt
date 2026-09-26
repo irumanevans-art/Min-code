@@ -879,6 +879,24 @@ class ClaudeCodeProtocolTest {
         assertEquals(true, e.backgrounded)
     }
 
+    /** 2.1.283：task_type 分出后台 shell 和子 agent，tool_use_id 对回发起它的工具卡 */
+    @Test
+    fun `task started carries its type and the tool call that launched it`() {
+        val e = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"task_started","task_id":"b1","task_type":"local_bash",
+               "tool_use_id":"toolu_9","description":"npm run dev","is_backgrounded":true}"""
+        ).single() as ClaudeCodeEvent.TaskEvent
+        assertEquals("local_bash", e.taskType)
+        assertEquals("toolu_9", e.toolUseId)
+        val done = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed",
+               "tool_use_id":"toolu_9","output_file":"/tmp/claude-0/x/s/tasks/b1.output","summary":"ok",
+               "skip_transcript":true}"""
+        ).single() as ClaudeCodeEvent.TaskEvent
+        assertEquals("/tmp/claude-0/x/s/tasks/b1.output", done.outputFile)
+        assertEquals("toolu_9", done.toolUseId)
+    }
+
     @Test
     fun `task progress carries usage and last tool`() {
         val e = parseClaudeCodeEvents(

@@ -277,6 +277,14 @@ class ClaudeCodeManager(
         val description: String = "",
         /** Task 工具的子 agent 类型，如 general-purpose / Explore */
         val subagentType: String? = null,
+        /** `local_bash` = 后台 shell，`local_agent` = 子 agent，见 [isShell] / [isAgent] */
+        val taskType: String? = null,
+        /** 发起它的工具调用 id，对应聊天流里的那张 Bash / Agent 卡 */
+        val toolUseId: String? = null,
+        /** CLI 写输出的文件（rootfs 内路径）；task_notification 才给，运行中的要从工具结果里取 */
+        val outputFile: String? = null,
+        /** Min 第一次见到它的时刻：CLI 不给开始时间，运行时长由此自己算 */
+        val startedAt: Long = 0L,
         /** pending / running / completed / failed / killed / paused */
         val status: String = "running",
         val backgrounded: Boolean = false,
@@ -289,6 +297,8 @@ class ClaudeCodeManager(
     ) {
         val isRunning: Boolean get() = status == "running" || status == "pending"
         val isError: Boolean get() = status == "failed" || status == "killed"
+        val isShell: Boolean get() = taskType == "local_bash"
+        val isAgent: Boolean get() = taskType == "local_agent" || (taskType == null && subagentType != null)
     }
 
     data class SlashCommand(val name: String, val description: String?)
@@ -786,9 +796,12 @@ class ClaudeCodeManager(
 
             is ClaudeCodeEvent.TaskEvent -> _state.update { state ->
                 val existing = state.tasks.firstOrNull { t -> t.id == event.taskId }
-                val merged = (existing ?: TaskInfo(id = event.taskId)).copy(
+                val merged = (existing ?: TaskInfo(id = event.taskId, startedAt = System.currentTimeMillis())).copy(
                     description = event.description ?: existing?.description ?: "",
                     subagentType = event.subagentType ?: existing?.subagentType,
+                    taskType = event.taskType ?: existing?.taskType,
+                    toolUseId = event.toolUseId ?: existing?.toolUseId,
+                    outputFile = event.outputFile ?: existing?.outputFile,
                     status = event.status ?: existing?.status ?: "running",
                     backgrounded = event.backgrounded ?: existing?.backgrounded ?: false,
                     totalTokens = event.totalTokens ?: existing?.totalTokens,
@@ -967,8 +980,10 @@ class ClaudeCodeManager(
                         statusPhase = null,
                         statusDetail = null,
                         retryNotice = null,
-                        // 成功收尾的子任务不再占位；失败/被杀的留着，否则用户永远看不到它出过错
-                        tasks = it.tasks.filter { t -> t.isError },
+                        // 成功收尾的子任务不再占位；失败/被杀的留着，否则用户永远看不到它出过错。
+                        // 转到后台还在跑的（run_in_background 的 shell、后台子 agent）要跨轮活着——
+                        // 它们本来就是为了在这一轮结束后继续跑
+                        tasks = it.tasks.filter { t -> t.isError || (t.isRunning && t.backgrounded) },
                         items = run {
                             var updated = it.items.updateLastAssistantMeta(durationMs, outputTokens)
                             if (event.isError) {

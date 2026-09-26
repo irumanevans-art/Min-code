@@ -234,6 +234,12 @@ sealed interface ClaudeCodeEvent {
         val status: String? = null,
         val description: String? = null,
         val subagentType: String? = null,
+        /** `local_bash`（后台 shell）/ `local_agent`（子 agent）/ 其它；只有 task_started 带 */
+        val taskType: String? = null,
+        /** 发起它的那次 Bash / Agent 工具调用，用来和聊天流里的工具卡对上 */
+        val toolUseId: String? = null,
+        /** CLI 把任务输出写到的文件（rootfs 内路径），task_notification 带 */
+        val outputFile: String? = null,
         val backgrounded: Boolean? = null,
         val totalTokens: Int? = null,
         val toolUses: Int? = null,
@@ -1220,7 +1226,7 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
 
         // --- 子 agent / 后台任务：维护一张任务表 ----------------------------------
 
-        // {task_id, description, subagent_type?, is_backgrounded?, tool_use_id?}
+        // {task_id, task_type: local_bash|local_agent|…, description, subagent_type?, is_backgrounded?, tool_use_id?}
         "task_started" -> obj.str("task_id")?.let { id ->
             listOf(
                 ClaudeCodeEvent.TaskEvent(
@@ -1228,6 +1234,8 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
                     status = "running",
                     description = obj.str("description"),
                     subagentType = obj.str("subagent_type"),
+                    taskType = obj.str("task_type"),
+                    toolUseId = obj.str("tool_use_id"),
                     backgrounded = obj.bool("is_backgrounded"),
                 )
             )
@@ -1348,6 +1356,8 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
                     taskId = it,
                     status = rawStatus,
                     summary = summary,
+                    toolUseId = obj.str("tool_use_id"),
+                    outputFile = obj.str("output_file"),
                     totalTokens = usage?.int("total_tokens"),
                     toolUses = usage?.int("tool_uses"),
                     durationMs = usage?.long("duration_ms"),
