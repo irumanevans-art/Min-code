@@ -42,14 +42,16 @@ class ClaudeCodeSessionStore {
         // 之前按固定两层扫，换过工作目录之后就只剩一个目录能被看到。
         projects.walkTopDown()
             .maxDepth(MAX_SCAN_DEPTH)
-            .filter { it.isFile && it.name.endsWith(".jsonl") }
+            // `<id>/subagents/agent-*.jsonl` 是子 agent 的记录，不是会话；不绕开的话每派一个子 agent
+            // 抽屉里就多出一条「会话」
+            .filter { it.isFile && it.name.endsWith(".jsonl") && it.parentFile?.name != SUBAGENTS_DIR }
             .mapNotNull { file -> runCatching { summarize(file) }.getOrNull() }
             .sortedByDescending { it.updatedAt }
             .toList()
     }
 
     /**
-     * 把一个会话的 transcript 重建成事件序列。
+     * 把一个会话的 transcript 重建成事件序列，子 agent 的记录（`<id>/subagents/`）也挂回各自的 Agent 卡。
      * 调用方（[ClaudeCodeManager]）把它喂给和实时流同一个 dispatch，保证渲染完全一致。
      *
      * **逐行容错**：之前整个文件包在一个 runCatching 里，任意一行解析失败
@@ -58,9 +60,12 @@ class ClaudeCodeSessionStore {
     suspend fun loadTranscript(linuxDir: File, sessionId: String): List<ClaudeCodeEvent> =
         withContext(Dispatchers.IO) {
             val file = findSessionFile(linuxDir, sessionId) ?: return@withContext emptyList()
-            runCatching {
+            // agentId → 发起它的 Agent 调用，顺着主 transcript 这一遍收齐，给子 agent 的记录认亲
+            val links = HashMap<String, String>()
+            val main = runCatching {
                 file.useLines { lines ->
                     lines.flatMap { line ->
+                        subagentLinkOf(line)?.let { (toolUseId, agentId) -> links[agentId] = toolUseId }
                         runCatching { parseTranscriptLine(line) }
                             .onFailure { Log.w(TAG, "skip bad transcript line: ${line.take(200)}", it) }
                             .getOrDefault(emptyList())
@@ -70,6 +75,8 @@ class ClaudeCodeSessionStore {
                 Log.w(TAG, "loadTranscript failed for $sessionId", it)
                 emptyList()
             }
+            // 子 agent 的记录排在最后：挂回卡上靠的是 toolUseId，卡得先在
+            main + loadSubagentEvents(file, links)
         }
 
     /**

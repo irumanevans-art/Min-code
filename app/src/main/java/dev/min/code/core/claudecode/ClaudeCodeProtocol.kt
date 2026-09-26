@@ -1080,7 +1080,7 @@ private fun titleFromFrame(obj: JsonObject, type: String?): String? {
  * Task 工具卡（[ClaudeCodeEvent.Subagent]），带不出的才跳过 —— 平铺进主线程会很乱，
  * 但整段扔掉就等于历史会话里永远看不到子任务干了什么。
  */
-fun parseTranscriptLine(line: String): List<ClaudeCodeEvent> {
+fun parseTranscriptLine(line: String, sidechainParent: String? = null): List<ClaudeCodeEvent> {
     val trimmed = line.trim()
     if (trimmed.isEmpty() || !trimmed.startsWith("{")) return emptyList()
     val obj = runCatching { protocolJson.parseToJsonElement(trimmed) }.getOrNull() as? JsonObject
@@ -1091,7 +1091,10 @@ fun parseTranscriptLine(line: String): List<ClaudeCodeEvent> {
         return emptyList()
     }
 
+    // 子 agent 自己那份记录（`<id>/subagents/agent-<agentId>.jsonl`）的行上**没有** parent_tool_use_id，
+    // 归属由调用方从主 transcript 里查好传进来，见 SubagentTranscripts.kt
     val parent = obj.str("parent_tool_use_id")?.takeIf { it.isNotBlank() }
+        ?: sidechainParent?.takeIf { obj.bool("isSidechain") == true }
     // 认不出归属的 sidechain 只能扔：挂不上任何一张卡，平铺又会污染主线程
     if (obj.bool("isSidechain") == true && parent == null) return emptyList()
 
