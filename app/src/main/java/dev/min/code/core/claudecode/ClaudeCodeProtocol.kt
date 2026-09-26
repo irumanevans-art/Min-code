@@ -135,6 +135,17 @@ sealed interface ClaudeCodeEvent {
     ) : ClaudeCodeEvent
 
     /**
+     * control_request/hook_callback：我们在 initialize 里登记的 SDK hook 触发了。
+     * 应答载荷就是 hook 输出（`{}` = 不表态）；子 agent 收件箱怎么答见 SubagentInbox.kt。
+     * [toolUseId] 对工具类 hook 是那次工具调用自己的 id，对 SubagentStop 是随机值，不能拿来关联。
+     */
+    data class HookCallback(
+        val requestId: String,
+        val callbackId: String?,
+        val input: JsonObject,
+    ) : ClaudeCodeEvent
+
+    /**
      * `control_cancel_request`：CLI 撤回了**它自己发出的**一个 control_request（can_use_tool 等）。
      *
      * 形状（v2.1.283 schema）只有 `{type:"control_cancel_request", request_id}`，**不带原因**，
@@ -384,6 +395,14 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
                                     ?.let { PermissionSuggestion(it, update) }
                             }
                             .orEmpty(),
+                    )
+                )
+
+                "hook_callback" -> listOf(
+                    ClaudeCodeEvent.HookCallback(
+                        requestId = requestId,
+                        callbackId = request.str("callback_id"),
+                        input = request.obj("input") ?: JsonObject(emptyMap()),
                     )
                 )
 
@@ -898,9 +917,30 @@ private fun controlRequest(
 /**
  * 握手。应答里一次给齐 `{commands, agents, output_style, available_output_styles, models, account, pid}`,
  * 斜杠命令列表和模型目录都从这里来。
+ *
+ * [options] 是请求体里的开关（hooks、forwardSubagentText…），由 Manager 决定带哪些。
+ * 这些字段放 initialize 而不是 argv：老版本 CLI 不认的 argv 选项会 `error: unknown option` 直接退出，
+ * initialize 的 schema 不是 strict 的，不认的字段只会被剥掉。
  */
-fun encodeClaudeCodeInitialize(requestId: String): String =
-    controlRequest(requestId, "initialize")
+fun encodeClaudeCodeInitialize(requestId: String, options: JsonObject = JsonObject(emptyMap())): String =
+    controlRequest(requestId, "initialize", options)
+
+/** 应答 CLI 发来的 control_request（hook_callback 等），[payload] 原样放进 `response.response` */
+fun encodeClaudeCodeControlSuccess(requestId: String, payload: JsonObject): String = buildJsonObject {
+    put("type", "control_response")
+    put("response", buildJsonObject {
+        put("subtype", "success")
+        put("request_id", requestId)
+        put("response", payload)
+    })
+}.toString()
+
+/**
+ * 停掉一个任务（后台 shell / 子 agent，前台的也行）。应答是空对象；任务找不到或已经结束也算成功。
+ * 被停的子 agent 会把已有的部分结果作为 tool_result 交回主线程，主线程接着跑。
+ */
+fun encodeClaudeCodeStopTask(requestId: String, taskId: String): String =
+    controlRequest(requestId, "stop_task", buildJsonObject { put("task_id", taskId) })
 
 /** 切模型。`model` 传 null / "default" 会重置为会话默认模型。 */
 fun encodeClaudeCodeSetModel(requestId: String, model: String?): String =
@@ -1373,6 +1413,10 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
                 add(ClaudeCodeEvent.ModelFallback(from, to))
             }
         }
+
+        // {uuid, session_id}：子 agent 被一并停掉（CLI 2.1.283 只在终端的「停掉全部 agent」里发，
+        // 无头下少见；来了就留一句，免得子 agent 的卡无声无息地停在那里）
+        "agents_killed" -> listOf(ClaudeCodeEvent.SystemNote("子 agent 已全部停止"))
 
         "worker_shutting_down" -> listOf(
             ClaudeCodeEvent.SystemNote(

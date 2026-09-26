@@ -459,9 +459,18 @@ class ClaudeCodeManager(
         val label: String,
         /** 之前 `!` 命令攒下的输入输出，附在这条前面交给模型（见 UserShell.kt）；界面上不显示 */
         val shellContext: String = "",
+        /** 这句是请主会话转交给某个已停的子 agent 的（见 [sendToSubagent]）；null = 说给主会话 */
+        val relay: SubagentThread? = null,
     ) {
         /** 真正写进 stdin 的正文 */
-        val wireText: String get() = if (shellContext.isEmpty()) text else "$shellContext\n\n$text"
+        val wireText: String get() {
+            val body = relay?.agentId?.let { relayToSubagentPrompt(it, relay.agentType, text) } ?: text
+            return if (shellContext.isEmpty()) body else "$shellContext\n\n$body"
+        }
+
+        /** 气泡上那行小字：转交给谁 */
+        val handoff: ChatItem.Handoff?
+            get() = relay?.let { ChatItem.Handoff(it.agentType, ChatItem.HandoffState.Relayed) }
     }
 
     /** `!` 命令跑完攒下的上下文，等下一条消息带走 */
@@ -491,6 +500,13 @@ class ClaudeCodeManager(
 
     /** CLI 已撤回（control_cancel_request）、不能再应答的请求，见 [answerCli] */
     private val withdrawnCliRequests = WithdrawnCliRequests()
+
+    /** 用户直接说给子 agent、还没递进去的话，见 SubagentInbox.kt */
+    private val subagentInbox = SubagentInbox()
+
+    /** 这个进程的 initialize 成功了、hook 登记上了。没登记上时收件箱永远等不到回调，只能转交 */
+    @Volatile
+    private var subagentHooksArmed = false
 
     /**
      * 本会话是否已经向 CLI 要过自动拟名。按 sessionId 记，避免多轮 Result / 排队 flush
@@ -591,6 +607,7 @@ class ClaudeCodeManager(
     private fun onCliExit(code: Int?, unexpected: Boolean) {
         // 放在改状态之前：发起方醒来时看到的就是已关闭的会话，文案不会再落到「未应答」那一支
         controls.failAll("claude 进程已退出")
+        abandonSubagentMail(subagentInbox.drain())
         _state.update {
             if (it.status == SessionStatus.Failed) {
                 it.copy(busy = false, pendingPermission = null)
@@ -798,7 +815,8 @@ class ClaudeCodeManager(
                 it.copy(retryNotice = "请求失败$attempt：${retryReason(event)}$delay")
             }
 
-            is ClaudeCodeEvent.TaskEvent -> _state.update { state ->
+            is ClaudeCodeEvent.TaskEvent -> {
+                _state.update { state ->
                 val existing = state.tasks.firstOrNull { t -> t.id == event.taskId }
                 val merged = (existing ?: TaskInfo(id = event.taskId, startedAt = System.currentTimeMillis())).copy(
                     description = event.description ?: existing?.description ?: "",
@@ -822,6 +840,12 @@ class ClaudeCodeManager(
                         state.tasks.map { t -> if (t.id == merged.id) merged else t }
                     }
                 )
+                }
+                // 子 agent 结束了，收件箱里还有它的信：正常收尾前 SubagentStop 已经递过了，
+                // 走到这里的是被停掉 / 出错的，这些话它再也收不到
+                if (event.status != null && event.status != "running" && event.status != "pending") {
+                    abandonSubagentMail(subagentInbox.takeAll(event.taskId))
+                }
             }
 
             is ClaudeCodeEvent.ToolUse -> {
@@ -944,6 +968,8 @@ class ClaudeCodeManager(
             is ClaudeCodeEvent.ControlOk -> controls.complete(event.requestId, event.payload)
 
             is ClaudeCodeEvent.ControlCancel -> onCliWithdrew(event.requestId)
+
+            is ClaudeCodeEvent.HookCallback -> answerSubagentHook(event)
 
             is ClaudeCodeEvent.Result -> {
                 // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
@@ -1083,7 +1109,9 @@ class ClaudeCodeManager(
      * [images] 作为 image content block 随消息一起发（截图、相册照片）。
      * 有图时允许空文本 —— "看这张图" 里那句话往往就是多余的。
      */
-    fun send(text: String, images: List<ClaudeCodeImage> = emptyList()) {
+    fun send(text: String, images: List<ClaudeCodeImage> = emptyList()) = send(text, images, relay = null)
+
+    private fun send(text: String, images: List<ClaudeCodeImage>, relay: SubagentThread?) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() && images.isEmpty()) return
         val current = _state.value
@@ -1098,12 +1126,12 @@ class ClaudeCodeManager(
             emitWithdrawn(PendingSend(newId(), trimmed, images, label).toComposerDraft())
             return
         }
-        val pending = PendingSend(newId(), trimmed, images, label, takeShellContext())
+        val pending = PendingSend(newId(), trimmed, images, label, takeShellContext(), relay)
         if (current.status != SessionStatus.Running) {
             // 启动中打的字：攥着，握手把 cwd 切好之后再发（handshake 末尾 flushPendingSend）
             sendQueue.hold(pending)
             _state.update {
-                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, queued = true))
+                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, queued = true, handoff = pending.handoff))
             }
             return
         }
@@ -1112,15 +1140,94 @@ class ClaudeCodeManager(
             // 正文、计时和 token —— 否则界面上正在打的字突然消失，计时也从零开始。
             // 帧本身立刻出手，插入时机由 CLI 定。
             _state.update {
-                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, queued = true))
+                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, queued = true, handoff = pending.handoff))
             }
             handOff(pending)
         } else {
             _state.update {
-                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label))
+                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, handoff = pending.handoff))
             }
             dispatchSend(pending)
         }
+    }
+
+    /**
+     * 用户在子 agent 视图里打的字。
+     *
+     * - 它还在跑、hook 登记上了：进收件箱，等它下一次调工具（或要收尾）时借 hook 回调递进去
+     *   （见 SubagentInbox.kt）。气泡挂在它自己的对话里，先标「等它下一步时送达」，递出去再改「已送达」。
+     * - 它已经停了（或 hook 没登记上）：请主会话用 SendMessage 转交，走普通发送那条路；
+     *   SendMessage 会把停了的子 agent 续起来。气泡在主会话里，标「经主会话转交」。
+     *
+     * 拿不到 agentId 的（很老的历史会话）两条路都走不通，留一句说明。
+     */
+    fun sendToSubagent(toolUseId: String, text: String, dropImages: Int = 0) {
+        val trimmed = text.trim()
+        if (dropImages > 0) {
+            // 两条路都只能带文字：hook 的 additionalContext / reason 是字符串，SendMessage 的 message 也是
+            appendItem(ChatItem.Note(newId(), "子 agent 收不到图片，这次只送文字（$dropImages 张图片没发）", isError = true))
+        }
+        if (trimmed.isEmpty()) return
+        val current = _state.value
+        val thread = subagentThreads(current.items, current.tasks).firstOrNull { it.toolUseId == toolUseId } ?: return
+        val agentId = thread.agentId
+        if (agentId == null) {
+            appendItem(ChatItem.Note(newId(), "找不到这个子 agent 的 id，没法把话转给它", isError = true))
+            return
+        }
+        if (thread.running && subagentHooksArmed && current.status == SessionStatus.Running) {
+            val itemId = newId()
+            subagentInbox.post(SubagentLetter(itemId, agentId, trimmed))
+            val bubble = ChatItem.UserText(
+                itemId,
+                trimmed,
+                handoff = ChatItem.Handoff(thread.agentType, ChatItem.HandoffState.Waiting),
+            )
+            _state.update { st ->
+                st.copy(items = st.items.mapToolCallDeep(toolUseId) { it.copy(subItems = it.subItems + bubble) })
+            }
+            return
+        }
+        send(trimmed, emptyList(), relay = thread)
+    }
+
+    /** 子 agent 视图里的停止键：只停这一个（stop_task），主会话照常。停下后它的部分结果交回主线程 */
+    fun stopSubagent(toolUseId: String) {
+        val current = _state.value
+        val agentId = subagentThreads(current.items, current.tasks)
+            .firstOrNull { it.toolUseId == toolUseId }?.agentId ?: return
+        scope.launch {
+            val id = controls.newRequestId()
+            val outcome = controls.request(id, encodeClaudeCodeStopTask(id, agentId))
+            if (outcome !is ControlOutcome.Ok) {
+                val why = (outcome as? ControlOutcome.Error)?.message ?: "CLI 未应答"
+                appendItem(ChatItem.Note(newId(), "停止子 agent 失败：$why", isError = true))
+            }
+        }
+    }
+
+    /**
+     * hook 回调：看收件箱里有没有这个子 agent 的信，有就借这次回调递进去。**必须应答**——
+     * CLI 在等（超时 10 s，见 SubagentInbox.kt），主线程的工具调用也会过这里（回 `{}`）。
+     * CLI 已经撤回这次回调的话信没递出去，放回收件箱等下一次。
+     */
+    private fun answerSubagentHook(event: ClaudeCodeEvent.HookCallback) {
+        val answer = subagentInbox.answer(event.callbackId, parseSubagentHookInput(event.input))
+        val sent = answerCli(event.requestId, encodeClaudeCodeControlSuccess(event.requestId, answer.output))
+        if (answer.delivered.isEmpty()) return
+        if (!sent) {
+            answer.delivered.forEach(subagentInbox::post)
+            return
+        }
+        val ids = answer.delivered.mapTo(HashSet()) { it.itemId }
+        _state.update { st -> st.copy(items = st.items.withHandoffState(ids, ChatItem.HandoffState.Delivered)) }
+    }
+
+    /** 这些信送不到了（子 agent 停了、进程没了）：气泡改成「没送到」，不静默丢 */
+    private fun abandonSubagentMail(letters: List<SubagentLetter>) {
+        if (letters.isEmpty()) return
+        val ids = letters.mapTo(HashSet()) { it.itemId }
+        _state.update { st -> st.copy(items = st.items.withHandoffState(ids, ChatItem.HandoffState.Undelivered)) }
     }
 
     /**
@@ -1701,8 +1808,9 @@ class ClaudeCodeManager(
         val id = controls.newRequestId()
         // initialize 超时 / 出错不挡会话本身，但启动中攥着的消息不能困死在调度台上
         // （没有它们握手失败的提示，对话流里会永远挂着一条「排队中」），原样退回输入框。
-        val payload = when (val outcome = controls.request(id, encodeClaudeCodeInitialize(id))) {
-            is ControlOutcome.Ok -> outcome.payload
+        subagentHooksArmed = false
+        val payload = when (val outcome = controls.request(id, encodeClaudeCodeInitialize(id, subagentInitializeOptions()))) {
+            is ControlOutcome.Ok -> outcome.payload.also { subagentHooksArmed = true }
             else -> {
                 // 进程死在握手中途时是 Error（见 ClaudeCodeControlChannel.failAll），别说成「超时」
                 val why = (outcome as? ControlOutcome.Error)?.let { "CLI 握手失败（${it.message}）" } ?: "CLI 握手超时"
@@ -2614,6 +2722,9 @@ class ClaudeCodeManager(
         // 塞进一个它根本不认识的上下文里
         inFlight = null
         if (clearQueue) sendQueue.clear()
+        // 子 agent 跟着进程一起没了（续会话也不会把它们接回来），没递出去的话要说一声
+        subagentHooksArmed = false
+        abandonSubagentMail(subagentInbox.drain())
         cli.close(closing)
     }
 

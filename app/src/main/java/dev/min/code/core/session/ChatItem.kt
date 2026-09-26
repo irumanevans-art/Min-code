@@ -32,7 +32,33 @@ sealed interface ChatItem {
         override val id: String,
         val text: String,
         val queued: Boolean = false,
+        /** 这句话是说给某个子 agent 的：说给谁、送到没有。null = 普通的一句（说给主会话） */
+        val handoff: Handoff? = null,
     ) : ChatItem
+
+    /**
+     * 用户对子 agent 说的话怎么送过去的。
+     *
+     * 要标出来，是因为这不是直连：无头协议里没有「往子 agent 的对话里塞一句」的入口，
+     * Min 只能等它下一次调工具（或要收尾）时借 hook 回调把话递进去，
+     * 它已经停了的话只能请主会话用 SendMessage 转交。气泡上不说清，
+     * 用户会以为它立刻就听见了。
+     */
+    data class Handoff(val agentType: String, val state: HandoffState)
+
+    enum class HandoffState {
+        /** 在 Min 的收件箱里，等子 agent 下一次调工具 / 要收尾时递进去 */
+        Waiting,
+
+        /** 已经借 hook 回调递进了子 agent 的下一次请求 */
+        Delivered,
+
+        /** 子 agent 已经停了：交给主会话，请它用 SendMessage 转交（会把子 agent 续起来） */
+        Relayed,
+
+        /** 没送到：子 agent 在下一次调工具前就结束了，或会话停了 */
+        Undelivered,
+    }
 
     data class AssistantText(
         override val id: String,

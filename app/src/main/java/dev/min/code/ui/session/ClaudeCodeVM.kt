@@ -809,6 +809,12 @@ class ClaudeCodeVM(
     fun answerQuestions(answers: Map<String, String>) = onActive { it.answerQuestions(answers) }
 
     fun interrupt() = onActive { it.interrupt() }
+
+    /** 子 agent 视图里发的话。图片递不进子 agent（hook 只能带文字），见 [ClaudeCodeManager.sendToSubagent] */
+    fun sendToSubagent(toolUseId: String, text: String, images: List<ClaudeCodeImage> = emptyList()) =
+        onActive { it.sendToSubagent(toolUseId, text, dropImages = images.size) }
+
+    fun stopSubagent(toolUseId: String) = onActive { it.stopSubagent(toolUseId) }
     fun runShell(command: String) = onActive { it.runShell(command) }
     fun stop() = onActive { it.stopSession() }
     /**
