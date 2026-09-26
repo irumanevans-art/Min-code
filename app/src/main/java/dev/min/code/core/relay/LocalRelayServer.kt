@@ -177,6 +177,15 @@ class LocalRelayServer(
                 OpenAIToAnthropic.convertError(400, "invalid json").toString().toByteArray())
             return
         }
+        // count_tokens 没有 chat 等价物：转发出去上游回的是一次 completion，形状对不上。
+        // 本地粗估，至少让 CLI 拿到一个数字而不是一次错形的响应
+        if (rest.endsWith("/count_tokens")) {
+            val count = AnthropicToOpenAI.estimateTokens(anthropic)
+            writeResponse(output, 200, "application/json",
+                """{"input_tokens":$count}""".toByteArray())
+            return
+        }
+
         val stream = anthropic.bool("stream") == true
         val model = anthropic.str("model") ?: upstream.modelOverride.orEmpty()
 

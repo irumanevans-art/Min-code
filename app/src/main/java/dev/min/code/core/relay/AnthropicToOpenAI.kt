@@ -27,6 +27,36 @@ import kotlinx.serialization.json.put
  */
 internal object AnthropicToOpenAI {
 
+    /**
+     * `/v1/messages/count_tokens` 的本地估算。
+     *
+     * chat 中转没有这个端点：原样转发出去，上游回的是一次 chat completion，形状对不上，
+     * CLI 拿去当 token 数会错。按字符粗估（ASCII 约 4 字一个、CJK 约一字一个），
+     * 只给上下文占用一个量级，不追求和上游计费一致。
+     */
+    fun estimateTokens(anthropic: JsonObject): Int {
+        val text = buildString {
+            append(anthropic["system"]?.let { systemText(it) }.orEmpty())
+            anthropic.arr("messages")?.forEach { msg ->
+                val m = msg as? JsonObject ?: return@forEach
+                when (val content = m["content"]) {
+                    is JsonPrimitive -> append(content.content)
+                    is JsonArray -> content.forEach { block ->
+                        val b = block as? JsonObject ?: return@forEach
+                        append(b.str("text").orEmpty())
+                        append(b.str("name").orEmpty())
+                        b["input"]?.let { append(it.toString()) }
+                    }
+                    else -> Unit
+                }
+            }
+            anthropic.arr("tools")?.forEach { append(it.toString()) }
+        }
+        if (text.isEmpty()) return 0
+        val cjk = text.count { it.code > 0x2E80 }
+        return (cjk + (text.length - cjk) / 4).coerceAtLeast(1)
+    }
+
     fun convertRequest(anthropic: JsonObject, modelOverride: String? = null): JsonObject {
         val messages = buildJsonArray {
             // system 可以是字符串，也可以是 content block 数组 —— 两种都收到 messages 开头
@@ -210,16 +240,18 @@ internal object AnthropicToOpenAI {
             "none" -> JsonPrimitive("none")
             else -> choice
         }
-        is JsonObject -> {
+        is JsonObject -> when (choice.str("type")) {
             // Anthropic: {"type":"tool","name":"…"} → OpenAI: {"type":"function","function":{"name":"…"}}
-            if (choice.str("type") == "tool") {
-                buildJsonObject {
-                    put("type", "function")
-                    put("function", buildJsonObject { put("name", choice.str("name") ?: "") })
-                }
-            } else {
-                choice
+            "tool" -> buildJsonObject {
+                put("type", "function")
+                put("function", buildJsonObject { put("name", choice.str("name") ?: "") })
             }
+            // any = 必须调用其中一个工具。OpenAI 没有 any，对应的是 required；
+            // 原样透传会被严格的上游直接 400
+            "any" -> JsonPrimitive("required")
+            "auto" -> JsonPrimitive("auto")
+            "none" -> JsonPrimitive("none")
+            else -> choice
         }
         else -> choice
     }

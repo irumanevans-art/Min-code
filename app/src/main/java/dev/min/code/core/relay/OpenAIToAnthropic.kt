@@ -226,20 +226,8 @@ internal object OpenAIToAnthropic {
                 })
                 textBlockOpen = false
             }
-            openToolIndex?.let { events += closeTool(it) }
-            toolMeta.keys.filter { it != openToolIndex }.forEach { idx ->
-                // 已经 close 过的不会在 openToolIndex；这里兜底
-                if (toolBlockIndex.containsKey(idx)) {
-                    // no-op if already closed via openToolIndex path; closeTool is idempotent enough
-                }
-            }
-            // 把所有还没 close 的 tool block 收掉
-            toolBlockIndex.keys.toList().forEach { idx ->
-                if (idx != openToolIndex) {
-                    // already handled or never opened delta-only; still need stop
-                }
-            }
-            // 简化：所有 tool block 都发一次 stop（重复的 CLI 一般容忍；漏掉会让工具参数悬空）
+            // 每个工具块只发一次 stop。以前 openToolIndex 那个先 closeTool 一遍、下面的
+            // 循环再发一遍，CLI 会看到重复的 content_block_stop
             val closed = HashSet<Int>()
             openToolIndex?.let {
                 events += closeTool(it)

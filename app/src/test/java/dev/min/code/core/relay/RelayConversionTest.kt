@@ -258,6 +258,67 @@ class RelayConversionTest {
     }
 
     @Test
+    fun tool_choice_object_maps_to_openai_strings() {
+        // Anthropic 的 tool_choice 恒为对象。any 原样透传会被严格上游 400，必须映射成 required
+        fun choice(type: String) = AnthropicToOpenAI.convertRequest(buildJsonObject {
+            put("model", "m")
+            put("messages", buildJsonArray {})
+            put("tool_choice", buildJsonObject { put("type", type) })
+        }).str("tool_choice")
+
+        assertEquals("required", choice("any"))
+        assertEquals("auto", choice("auto"))
+        assertEquals("none", choice("none"))
+    }
+
+    @Test
+    fun stream_closes_each_tool_block_exactly_once() {
+        val converter = OpenAIToAnthropic.StreamConverter("m")
+        val events = ArrayList<String>()
+        events += converter.onChunk(buildJsonObject {
+            put("choices", buildJsonArray {
+                add(buildJsonObject {
+                    put("delta", buildJsonObject {
+                        put("tool_calls", buildJsonArray {
+                            add(buildJsonObject {
+                                put("index", 0)
+                                put("id", "call_1")
+                                put("function", buildJsonObject {
+                                    put("name", "Bash")
+                                    put("arguments", """{"cmd":"ls"}""")
+                                })
+                            })
+                        })
+                    })
+                    put("finish_reason", "tool_calls")
+                })
+            })
+        })
+        events += converter.finish()
+
+        val stops = events.joinToString("").split("event: content_block_stop").size - 1
+        assertEquals(1, stops)
+    }
+
+    @Test
+    fun count_tokens_is_estimated_locally() {
+        val empty = AnthropicToOpenAI.estimateTokens(buildJsonObject {
+            put("messages", buildJsonArray {})
+        })
+        assertEquals(0, empty)
+
+        val some = AnthropicToOpenAI.estimateTokens(buildJsonObject {
+            put("messages", buildJsonArray {
+                add(buildJsonObject {
+                    put("role", "user")
+                    put("content", "hello world")
+                })
+            })
+        })
+        assertTrue(some > 0)
+    }
+
+    @Test
     fun model_override_wins() {
         val chat = AnthropicToOpenAI.convertRequest(anthropicRequest, modelOverride = "glm-5")
         assertEquals("glm-5", chat.str("model"))
