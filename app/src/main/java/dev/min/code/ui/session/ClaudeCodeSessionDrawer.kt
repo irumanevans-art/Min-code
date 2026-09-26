@@ -772,10 +772,10 @@ private fun InUseBadge() {
 
 /**
  * 活着的点：缓慢呼吸。动画值只在绘制阶段读，不引起重组；
- * 系统动画关掉时是一粒静止的点。
+ * 系统动画关掉时是一粒静止的点。抽屉里活着的会话和会话底栏的「N shell」共用这一粒。
  */
 @Composable
-private fun LiveDot(color: Color) {
+internal fun LiveDot(color: Color) {
     val breath: State<Float>? = if (rememberAnimationsEnabled()) {
         rememberInfiniteTransition(label = "live").animateFloat(
             initialValue = 0.45f,

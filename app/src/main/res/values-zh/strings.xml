@@ -366,6 +366,30 @@
   <string name="runtime_reason_crash">崩溃</string>
   <string name="runtime_reason_start">启动失败</string>
   <string name="runtime_reason_port">端口占用</string>
+  <!-- 会话底栏的「1 shell」与它的面板（SessionTaskStrip / BackgroundShellSheet） -->
+  <plurals name="shell_count">
+    <item quantity="other">%d 个 shell</item>
+  </plurals>
+  <string name="shell_sheet_title">后台 shell</string>
+  <string name="shell_details_title">Shell 详情</string>
+  <string name="shell_status">状态</string>
+  <string name="shell_runtime">运行时长</string>
+  <string name="shell_command">命令</string>
+  <string name="shell_output">输出</string>
+  <string name="shell_source">跑在</string>
+  <string name="shell_source_cli">Claude Code</string>
+  <string name="shell_source_hosted">Min 进程表</string>
+  <string name="shell_source_both">Claude Code + Min 进程表</string>
+  <string name="shell_no_output">还没有输出</string>
+  <string name="shell_output_clipped">只显示最后 %1$d 行</string>
+  <string name="shell_state_running">运行中</string>
+  <string name="shell_state_completed">已完成</string>
+  <string name="shell_state_failed">失败</string>
+  <string name="shell_state_stopped">已停止</string>
+  <string name="shell_exit_code">exit %1$d</string>
+  <string name="shell_monitor">监视</string>
+  <string name="shell_stop">停止</string>
+  <string name="shell_back">回到列表</string>
   <string name="preview_reload">刷新</string>
   <string name="preview_open_external">用浏览器打开</string>
   <string name="preview_collapse">收起预览</string>

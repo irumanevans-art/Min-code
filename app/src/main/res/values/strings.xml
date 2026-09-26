@@ -368,6 +368,31 @@
   <string name="runtime_reason_crash">crashed</string>
   <string name="runtime_reason_start">start failed</string>
   <string name="runtime_reason_port">port busy</string>
+  <!-- 会话底栏的「1 shell」与它的面板（SessionTaskStrip / BackgroundShellSheet） -->
+  <plurals name="shell_count">
+    <item quantity="one">%d shell</item>
+    <item quantity="other">%d shells</item>
+  </plurals>
+  <string name="shell_sheet_title">Background shells</string>
+  <string name="shell_details_title">Shell details</string>
+  <string name="shell_status">Status</string>
+  <string name="shell_runtime">Runtime</string>
+  <string name="shell_command">Command</string>
+  <string name="shell_output">Output</string>
+  <string name="shell_source">Runs in</string>
+  <string name="shell_source_cli">Claude Code</string>
+  <string name="shell_source_hosted">Min process table</string>
+  <string name="shell_source_both">Claude Code + Min process table</string>
+  <string name="shell_no_output">No output available</string>
+  <string name="shell_output_clipped">Showing the last %1$d lines</string>
+  <string name="shell_state_running">Running</string>
+  <string name="shell_state_completed">Completed</string>
+  <string name="shell_state_failed">Failed</string>
+  <string name="shell_state_stopped">Stopped</string>
+  <string name="shell_exit_code">exit %1$d</string>
+  <string name="shell_monitor">monitor</string>
+  <string name="shell_stop">Stop</string>
+  <string name="shell_back">Back to the list</string>
   <string name="preview_reload">Reload</string>
   <string name="preview_open_external">Open in browser</string>
   <string name="preview_collapse">Hide preview</string>
