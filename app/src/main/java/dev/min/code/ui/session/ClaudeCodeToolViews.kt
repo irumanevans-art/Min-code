@@ -450,12 +450,9 @@ internal fun ToolCallDetail(
 
             "Read", "NotebookRead" -> {
                 item.result?.takeIf { it.isNotBlank() }?.let {
-                    val language = languageOf(item.input["file_path"].asStringOrNull())
                     HighlightCodeBlock(
                         code = it.lines().take(MAX_DETAIL_LINES).joinToString("\n"),
-                        language = language,
-                        // txt / md / log 按源码行宽排的话，手机上每行只剩十几个字还要横滑
-                        wrap = language == "text" || language == "markdown",
+                        language = languageOf(item.input["file_path"].asStringOrNull()),
                     )
                 }
             }

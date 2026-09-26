@@ -204,21 +204,6 @@ class ClaudeCodeToolViewsTest {
         assertEquals("text", languageOf("archive.tar.zst"))
     }
 
-    /**
-     * 散文类扩展名必须稳定落在 text / markdown 上：Read 的渲染靠这个判断折行还是横滑，
-     * txt 按源码行宽排的话手机上每行只剩十几个字。
-     */
-    @Test
-    fun `prose extensions are text or markdown so the reader wraps them`() {
-        assertEquals("text", languageOf("/workspace/notes.txt"))
-        assertEquals("text", languageOf("build.log"))
-        assertEquals("text", languageOf("data/export.CSV"))
-        assertEquals("markdown", languageOf("docs/guide.md"))
-        assertEquals("markdown", languageOf("CHANGELOG.markdown"))
-        assertEquals("text", languageOf("LICENSE"))
-        assertEquals("text", languageOf("a/b/noext"))
-    }
-
     @Test
     fun `file name strips the directory prefix`() {
         // 手机上显示不下绝对路径，而且 /workspace/ 前缀在每一条里都是重复的
