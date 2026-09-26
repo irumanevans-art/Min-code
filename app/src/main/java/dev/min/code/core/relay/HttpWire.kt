@@ -1,6 +1,7 @@
 package dev.min.code.core.relay
 
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -47,17 +48,18 @@ internal const val MAX_HTTP_LINE_BYTES = 8 * 1024
 /**
  * 读一个完整请求。
  *
- * @return 连请求行都读不出来（连接被对端直接关掉）、或超出上限，都返回 null
+ * @return 请求行读不出来（对端直接断开）、或 Content-Length 超上限时返回 null；
+ *   头行超上限抛 [IOException]，由调用方连接级的 catch 收口（日志 + 断连）
  */
 internal fun readRequest(input: InputStream): HttpRequest? {
-    val first = readHttpLine(input) ?: return null
+    val first = readHttpLine(input, MAX_HTTP_LINE_BYTES) ?: return null
     val parts = first.split(' ')
     if (parts.size < 2) return null
     val method = parts[0]
     val path = parts[1].substringBefore('?')
     val headers = LinkedHashMap<String, String>()
     while (true) {
-        val line = readHttpLine(input) ?: break
+        val line = readHttpLine(input, MAX_HTTP_LINE_BYTES) ?: break
         if (line.isEmpty()) break
         val i = line.indexOf(':')
         if (i > 0) headers[line.substring(0, i).trim().lowercase()] = line.substring(i + 1).trim()
@@ -79,16 +81,20 @@ internal fun readRequest(input: InputStream): HttpRequest? {
     return HttpRequest(method, path, headers, body)
 }
 
-/** 读一行，吃掉 CRLF。头部按 RFC 是 ASCII，body 另按 Content-Length 读，不走这里 */
-internal fun readHttpLine(input: InputStream): String? {
+/**
+ * 读一行，吃掉 CRLF。头部按 RFC 是 ASCII，body 另按 Content-Length 读，不走这里。
+ * [maxBytes] 限制单行字节数，超过即抛 [IOException]——不能返回 null：那会被当成
+ * 「连接结束」，请求会带着截断的头部继续解析。SSE 读取（readSse）不经过这里，
+ * 大体积的事件行不受影响。
+ */
+internal fun readHttpLine(input: InputStream, maxBytes: Int = Int.MAX_VALUE): String? {
     val buf = ByteArrayOutputStream()
     while (true) {
         val c = input.read()
         if (c < 0) return if (buf.size() == 0) null else buf.toString(Charsets.US_ASCII.name())
         if (c == '\n'.code) break
         if (c != '\r'.code) buf.write(c)
-        // 不断行地灌字节同样能撑爆内存：单行超限直接当坏请求断掉
-        if (buf.size() > MAX_HTTP_LINE_BYTES) return null
+        if (buf.size() > maxBytes) throw IOException("http line exceeds $maxBytes bytes")
     }
     return buf.toString(Charsets.US_ASCII.name())
 }
