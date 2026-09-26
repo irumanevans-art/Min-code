@@ -2,6 +2,12 @@ package dev.min.code.core.claudecode
 
 import dev.min.code.core.session.SessionStatus
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -62,6 +68,43 @@ class ClaudeCodeManagerTasksTest {
             h.process.emit("""{"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"u","session_id":"s"}""")
             val s = h.awaitState("对账") { s -> s.tasks.none { it.isRunning } }
             assertTrue(s.tasks.single().endedAt != null)
+        }
+    }
+
+    @Test
+    fun `stopping a task sends stop_task and marks it stopped without waiting for a notification`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startWithShell()
+            assertNull(h.manager.stopTask("b1"))
+            val frame = h.process.written.last { (it["type"] as? JsonPrimitive)?.content == "control_request" }
+            val request = frame["request"]!!.jsonObject
+            assertEquals("stop_task", (request["subtype"] as JsonPrimitive).content)
+            assertEquals("b1", (request["task_id"] as JsonPrimitive).content)
+            val task = h.manager.state.value.tasks.single()
+            assertEquals("killed", task.status)
+        }
+    }
+
+    /** 已经结束 / 不存在的任务 CLI 回 error：原话交给界面，表不动 */
+    @Test
+    fun `a refused stop is reported in the CLI's words`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.nextProcess = {
+                FakeCliProcess(
+                    h.fixture,
+                    overrides = mapOf(
+                        "stop_task" to { _ ->
+                            buildJsonObject {
+                                put("subtype", "error")
+                                put("error", "Task b1 is not running")
+                            }
+                        },
+                    ),
+                )
+            }
+            h.startWithShell()
+            assertEquals("停止失败：Task b1 is not running", h.manager.stopTask("b1"))
+            assertEquals("running", h.manager.state.value.tasks.single().status)
         }
     }
 }

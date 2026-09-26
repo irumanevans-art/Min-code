@@ -71,3 +71,12 @@ internal fun List<TaskInfo>.reconciledWith(
     return updated + added
 }
 
+/**
+ * 用户在 Min 里停掉了一个任务，CLI 已应答成功。
+ *
+ * 不等 task_notification：协议没保证 stop 之后一定再发一帧，等它的话界面可能一直说「在跑」。
+ * 通知若随后到了，照常盖掉这里的状态。
+ */
+internal fun List<TaskInfo>.withTaskStopped(taskId: String, now: Long): List<TaskInfo> = map {
+    if (it.id == taskId && it.isRunning) it.copy(status = "killed", endedAt = now) else it
+}

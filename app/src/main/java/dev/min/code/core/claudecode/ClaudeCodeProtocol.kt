@@ -922,6 +922,14 @@ fun encodeClaudeCodeGetSettings(requestId: String): String =
     controlRequest(requestId, "get_settings")
 
 /**
+ * 停掉一个后台任务（shell / 子 agent / Monitor）。成功应答是空 payload；
+ * 任务不存在或已经结束时 CLI 回 error（`stop_task: …` / not_running / not_found）。
+ * 没有列任务、读输出的控制请求：列表靠 task_* 帧与 background_tasks_changed，输出直接读文件。
+ */
+fun encodeClaudeCodeStopTask(requestId: String, taskId: String): String =
+    controlRequest(requestId, "stop_task", buildJsonObject { put("task_id", taskId) })
+
+/**
  * 切换 CLI 的工作目录（`/cd` 的无头版）。
  *
  * **参数名是 `path`，不是 `cwd`。** 对照 CLI 2.1.267 的 schema：

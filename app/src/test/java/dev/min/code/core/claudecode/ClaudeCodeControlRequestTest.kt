@@ -23,6 +23,16 @@ class ClaudeCodeControlRequestTest {
     private fun subtypeOf(frame: String) =
         request(frame)["request"]!!.jsonObject["subtype"]?.jsonPrimitive?.contentOrNull
 
+    /** 2.1.280 的 schema：`{subtype:"stop_task", task_id}`，没有别的字段 */
+    @Test
+    fun `stop task names the task`() {
+        val frame = encodeClaudeCodeStopTask("r9", "b1")
+        assertEquals("stop_task", subtypeOf(frame))
+        val body = request(frame)["request"]!!.jsonObject
+        assertEquals("b1", body["task_id"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(setOf("subtype", "task_id"), body.keys)
+    }
+
     @Test
     fun `every control request carries type and request_id`() {
         val frames = listOf(

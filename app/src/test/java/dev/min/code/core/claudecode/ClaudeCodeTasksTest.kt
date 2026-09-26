@@ -110,4 +110,14 @@ class ClaudeCodeTasksTest {
     }
 
     // endregion
+
+    @Test
+    fun `a stopped task is marked killed at once, finished ones are left as they are`() {
+        val tasks = listOf(bg("b1"), bg("b2", running = false)).let {
+            it.withTaskStopped("b1", now = 4_000).withTaskStopped("b2", now = 4_000)
+        }
+        assertEquals("killed", tasks[0].status)
+        assertEquals(4_000L, tasks[0].endedAt)
+        assertEquals("completed", tasks[1].status)
+    }
 }

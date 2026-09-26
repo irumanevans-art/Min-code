@@ -1696,6 +1696,24 @@ class ClaudeCodeManager(
     }
 
     /**
+     * 停掉 CLI 的一个后台任务（`stop_task`）。成功返回 null，失败返回给用户看的那句话。
+     * 成功后就地判成已停（[withTaskStopped]），不等不一定会来的 task_notification。
+     */
+    suspend fun stopTask(taskId: String): String? {
+        val id = controls.newRequestId()
+        return when (val outcome = controls.request(id, encodeClaudeCodeStopTask(id, taskId))) {
+            is ControlOutcome.Ok -> {
+                val now = System.currentTimeMillis()
+                _state.update { it.copy(tasks = it.tasks.withTaskStopped(taskId, now)) }
+                null
+            }
+
+            is ControlOutcome.Error -> "停止失败：${outcome.message}"
+            ControlOutcome.Timeout -> "停止超时"
+        }
+    }
+
+    /**
      * 发一次 `set_cwd` 并处理三种应答。成功返回 null，失败返回给用户看的那句话。
      *
      * 沙箱里的 `/workspace` 是我们自己挂的目录、用户在选择器里亲手点的，
