@@ -1754,7 +1754,7 @@ class ClaudeCodeManager(
                 null
             }
 
-            is ControlOutcome.Error -> "停止失败：${outcome.message}"
+            is ControlOutcome.Error -> "停止失败：${describeControlError(outcome.message, outcome.code)}"
             ControlOutcome.Timeout -> "停止超时"
         }
     }
