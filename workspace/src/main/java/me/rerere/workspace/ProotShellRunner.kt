@@ -51,7 +51,10 @@ class ProotShellRunner(
             stdout = "",
             stderr = "Failed to start proot process",
         )
-        return process.readResult(context.timeoutMillis, context.stdin)
+        // proot 扛得住 SIGTERM（ProcessTreeKill「教训二」），超时/取消的收尾必须走 reap：
+        // 自底向上清掉 guest 树，再给宿主真 SIGKILL。宿主 shell 那条路保留默认的
+        // destroyForcibly —— readResult 是共享的，reap 对它是误伤
+        return process.readResult(context.timeoutMillis, context.stdin) { ProcessTreeKill.reap(it) }
     }
 
     /**

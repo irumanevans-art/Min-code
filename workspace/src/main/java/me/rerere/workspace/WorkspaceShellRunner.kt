@@ -68,7 +68,20 @@ class HostShellRunner : WorkspaceShellRunner {
 // 单个流保留的最大字符数, 防止命令疯狂输出导致 OOM 或撑爆 LLM 上下文
 const val MAX_OUTPUT_CHARS = 128 * 1024
 
-fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): WorkspaceCommandResult {
+/**
+ * 等命令跑完并收流。超时还没结束、或等待线程被打断时的**杀法**由 [killOnTimeout] 决定：
+ *
+ * - 宿主 shell（[HostShellRunner]）走默认的 [Process.destroyForcibly] 就够 —— 它真能杀掉 sh。
+ * - proot 扛得住 SIGTERM（[ProcessTreeKill] 类注释「教训二」：Android 的 destroyForcibly
+ *   没有 force 语义），必须由 [ProotShellRunner] 传 [ProcessTreeKill.reap]，把真实的
+ *   SIGKILL 送进整棵 guest 树和宿主。这里不能写死成 reap：它是 proot 专用的
+ *   （要扫 /proc、会自底向上清后代），对宿主 shell 是误伤。
+ */
+fun Process.readResult(
+    timeoutMillis: Long,
+    stdin: ByteArray? = null,
+    killOnTimeout: (Process) -> Unit = { it.destroyForcibly() },
+): WorkspaceCommandResult {
     val stdout = StreamCollector(inputStream)
     val stderr = StreamCollector(errorStream)
     val stdinWriter = stdin?.let { bytes -> StreamWriter(outputStream, bytes) }
@@ -84,7 +97,7 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
     try {
         val finished = waitFor(timeoutMillis, TimeUnit.MILLISECONDS)
         if (!finished) {
-            destroyForcibly()
+            killOnTimeout(this)
         }
         stdinWriter?.join(1_000)
         stdout.join(1_000)
@@ -98,7 +111,7 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
         )
     } catch (e: InterruptedException) {
         // 调用方线程被中断（如协程取消时的 runInterruptible），杀掉进程避免命令继续执行
-        destroyForcibly()
+        killOnTimeout(this)
         // 进程被杀后 stdout/stderr 会关闭, 这里 join 回收两个采集线程, 避免每次取消泄漏一对线程
         stdinWriter?.join(1_000)
         stdout.join(1_000)
