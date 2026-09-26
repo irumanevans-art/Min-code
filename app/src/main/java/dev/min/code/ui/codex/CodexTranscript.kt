@@ -19,8 +19,6 @@ import dev.min.code.ui.session.TranscriptBlockEntry
 import dev.min.code.ui.session.LocalAwaitingToolUseId
 import dev.min.code.ui.session.NoteEntry
 import dev.min.code.ui.session.ThinkingEntry
-import dev.min.code.ui.session.TranscriptBlock
-import dev.min.code.ui.session.TranscriptItem
 import dev.min.code.ui.session.FollowTailEffect
 import dev.min.code.ui.session.awaitingToolUseId
 import dev.min.code.ui.session.groupTranscript
