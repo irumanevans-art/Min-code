@@ -221,6 +221,27 @@ class ClaudeCodeToolViewsTest {
      * Bash 优先用 `description` —— CLI 的工具 schema 明确要求模型为每条命令写一句
      * 主动语态的说明（"Show working tree status"），比原始命令好读得多。
      */
+    /** 2.1.277：TaskStop 取代 KillShell（后者和 KillBash 成了别名），入参 task_id；旧的 shell_id 仍认 */
+    @Test
+    fun `task stop and its aliases show the task id`() {
+        assertEquals("b1", toolSummary("TaskStop", input("""{"task_id":"b1"}"""), labels))
+        assertEquals("b2", toolSummary("KillShell", input("""{"shell_id":"b2"}"""), labels))
+        assertEquals("b3", toolSummary("KillBash", input("""{"task_id":"b3"}"""), labels))
+        assertEquals("b4", toolSummary("TaskOutput", input("""{"task_id":"b4","block":true}"""), labels))
+        assertEquals(toolIcon("Bash"), toolIcon("TaskStop"))
+    }
+
+    /** Monitor 的入参和 Bash 同形：一句 description + 一条 command */
+    @Test
+    fun `monitor reads like a bash command`() {
+        assertEquals(
+            "Watch the dev server log",
+            toolSummary("Monitor", input("""{"command":"tail -f log","description":"Watch the dev server log","persistent":true}"""), labels),
+        )
+        assertEquals("tail -f log", toolSummary("Monitor", input("""{"command":"tail -f log"}"""), labels))
+        assertEquals(toolIcon("Bash"), toolIcon("Monitor"))
+    }
+
     @Test
     fun `bash prefers the description over the raw command`() {
         assertEquals(
