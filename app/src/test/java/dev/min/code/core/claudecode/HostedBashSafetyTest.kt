@@ -79,4 +79,52 @@ class HostedBashSafetyTest {
             "chmod +x run.sh && ./run.sh",
         ).forEach { assertFalse(it, looksDestructive(it)) }
     }
+
+    /** 钉住收紧后的 git push 规则：+refspec 强推变体必须命中 */
+    @Test
+    fun `force-push refspec variants are caught`() {
+        listOf(
+            "git push origin +main",
+            "git push origin +local:remote/track",
+            "git push --force origin main",
+            // --force 前缀连带命中 -with-lease 变体（规则按前缀匹配，未放行该变体）
+            "git push --force-with-lease origin main",
+        ).forEach { assertTrue(it, looksDestructive(it)) }
+        assertFalse("plain push", looksDestructive("git push origin main"))
+    }
+
+    /** 钉住 mv→/dev/null 规则的引号容忍与射程边界 */
+    @Test
+    fun `mv into dev null survives quoting, other paths do not match`() {
+        listOf(
+            "mv data /dev/null",
+            "mv data \"/dev/null\"",
+            "mv data '/dev/null'",
+            "mv data /dev/null.bak",
+        ).forEach { assertTrue(it, looksDestructive(it)) }
+        listOf(
+            // 普通重定向不在 mv 规则射程内（重定向规则只拦块设备）——已知边界，如实钉住
+            "echo x > /dev/null",
+            // mv 规则只认 /dev/null
+            "mv data /dev/sda",
+            "cp /dev/zero /dev/null",
+        ).forEach { assertFalse(it, looksDestructive(it)) }
+    }
+
+    /** 钉住递归改权限规则：mode 在前或在后都要命中（参数后置是最常见的真实写法） */
+    @Test
+    fun `recursive chmod chown are caught with flag before or after the mode`() {
+        listOf(
+            "chmod 000 -R /workspace/data",
+            "chmod -R 000 /workspace/data",
+            "chmod --recursive 000 /opt",
+            "chown deploy:deploy -R /srv/app",
+            "chgrp staff -R /srv/shared",
+        ).forEach { assertTrue(it, looksDestructive(it)) }
+        listOf(
+            "chmod 755 deploy.sh",
+            "chmod +x run.sh && ./run.sh",
+            "chown me file.txt",
+        ).forEach { assertFalse(it, looksDestructive(it)) }
+    }
 }
