@@ -2,6 +2,8 @@ package dev.min.code.core.settings
 
 import android.util.Log
 import dev.min.code.core.relay.RelayController
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -56,10 +58,15 @@ class ProviderSync(
     /**
      * 把当前事实来源投影到 Rootfs 文件上。**幂等**，可以随便重复调。
      *
+     * 整个「读账本 → 改文件 → 写账本」序列拿 [ledgerLock]：三次操作各自原子没用，
+     * 两次并发 apply 交错的结果就是文件里留着上一家的键而账本记的是这一家的——
+     * 下一次同步照错账删键。文件本身的 RMW 由 ClaudeCodeConfigStore 自己的 fileLock
+     * 串行化（所有 App 内写方共用）；CLI 自己写这个文件的那条竞态是已知取舍，不在此列。
+     *
      * Codex 那一侧由 `CodexRuntime.prepare()` 负责（它还要同时导根证书、刷 launchProfile），
      * 这里只管 Claude 的 settings.json。
      */
-    suspend fun apply(): Report {
+    suspend fun apply(): Report = ledgerLock.withLock {
         val settings = settingsStore.current()
         // 走订阅时 claudeProfile 是 null：托管区清空，终端里的 claude 才会用它自己登录的订阅
         val managed = if (settings.manageGuestConfig) {
@@ -67,11 +74,11 @@ class ProviderSync(
                 ?.let { managedSettingsEnv(it, settings.guestConfigIncludesSecrets) }
                 .orEmpty()
         } else {
-            // 托管关着 = 目标状态是「一个托管键都没有」。下面的规则 1 会把上次写的全删掉 ——
+            // 托管关着 = 目标状态是「一个托管键都没有」。下面的规则 1 会把上次写进去的全删掉 ——
             // 不清的话，文件里会一直留着上一家的 token，而界面上托管已经显示「关」
             emptyMap()
         }
-        if (managed.isEmpty() && settings.managedEnvKeys.isEmpty()) return Report(Outcome.Skipped)
+        if (managed.isEmpty() && settings.managedEnvKeys.isEmpty()) return@withLock Report(Outcome.Skipped)
 
         // 托管第一次要动这个文件之前留一份底：managedEnvKeys 还是空的就表示我们一次都没写过，
         // 此刻文件里的东西全是用户自己或 CLI 写的。见 ProviderBackup 的三条边界
@@ -88,15 +95,22 @@ class ProviderSync(
         }
         if (!ok) {
             // 什么都没写进去，那就**不能**更新记账 —— 记成新的，下一次就不知道该删哪些旧键了
-            return Report(Outcome.Failed(FAILED_UNREADABLE))
+            return@withLock Report(Outcome.Failed(FAILED_UNREADABLE))
         }
         settingsStore.setManagedEnvKeys(written)
-        return Report(if (written.isEmpty()) Outcome.Cleared else Outcome.Written)
+        Report(if (written.isEmpty()) Outcome.Cleared else Outcome.Written)
     }
 
     companion object {
         /** 文案键由界面翻译；这里只给一个稳定的标识 */
         const val FAILED_UNREADABLE = "settings_unreadable"
+
+        /**
+         * 串行化「文件 + 记账」的**配对**写。除了 [apply] 之外还有一处动账本：
+         * 备份恢复（ProvidersVM.restoreBackup）先整份覆盖文件、清账、再重投影 ——
+         * 那三步也必须拿同一把锁，否则夹在中间的一次 apply 会把账配到恢复前的文件上。
+         */
+        internal val ledgerLock = Mutex()
     }
 }
 

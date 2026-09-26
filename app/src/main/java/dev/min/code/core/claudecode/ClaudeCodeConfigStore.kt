@@ -3,6 +3,8 @@ package dev.min.code.core.claudecode
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -98,12 +100,14 @@ class ClaudeCodeConfigStore(
      * 传 null 值表示删除该 key —— 「把 statusLine 清空」和「把它设成空字符串」不是一回事。
      */
     override suspend fun updateSettings(mutate: (MutableMap<String, kotlinx.serialization.json.JsonElement>) -> Unit): Boolean =
-        withContext(Dispatchers.IO) {
-            val file = settingsFile() ?: return@withContext false
-            val existing = if (file.isFile) readJsonObject(file) ?: return@withContext false else JsonObject(emptyMap())
-            val draft = LinkedHashMap(existing)
-            mutate(draft)
-            writeJson(file, JsonObject(draft))
+        fileLock.withLock {
+            withContext(Dispatchers.IO) {
+                val file = settingsFile() ?: return@withContext false
+                val existing = if (file.isFile) readJsonObject(file) ?: return@withContext false else JsonObject(emptyMap())
+                val draft = LinkedHashMap(existing)
+                mutate(draft)
+                writeJson(file, JsonObject(draft))
+            }
         }
 
     /**
@@ -121,10 +125,12 @@ class ClaudeCodeConfigStore(
      * 写之前先确认它能解析成一个 JSON 对象：恢复的目标常常就是一份坏掉的文件，
      * 但把另一份坏的盖上去毫无意义，只会让 CLI 下次起不来。
      */
-    internal suspend fun writeSettingsText(text: String): Boolean = withContext(Dispatchers.IO) {
-        val parsed = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrNull()
-            ?: return@withContext false
-        writeJson(settingsFile() ?: return@withContext false, parsed)
+    internal suspend fun writeSettingsText(text: String): Boolean = fileLock.withLock {
+        withContext(Dispatchers.IO) {
+            val parsed = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrNull()
+                ?: return@withContext false
+            writeJson(settingsFile() ?: return@withContext false, parsed)
+        }
     }
 
     /**
@@ -356,6 +362,16 @@ class ClaudeCodeConfigStore(
         const val TYPE_HTTP = "http"
         const val TYPE_SSE = "sse"
         val PRETTY = Json { prettyPrint = true }
+
+        /**
+         * settings.json 的 App 内写串行闸。这个文件同时被 CLI 自己写（那条竞态是已知取舍），
+         * 但 **App 自己的几个写方**必须互相排队：托管投影（ProviderSync）、/config 的 model、
+         * /permissions、备份恢复的整份覆盖 —— 全都是「读→改→写」，交错就是丢更新。
+         * 放 companion 而不是实例上：这层保证不依赖 Koin 的 single 作用域。
+         * 记账（managedEnvKeys）与文件的**配对**由更外层的 ProviderSync.ledgerLock 管，
+         * 这里只保证「同一时刻只有一个人在改这份文件」。
+         */
+        val fileLock = Mutex()
     }
 }
 

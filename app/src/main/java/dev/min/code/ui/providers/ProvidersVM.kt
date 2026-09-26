@@ -21,6 +21,7 @@ import dev.min.code.core.settings.DeepLinkParse
 import dev.min.code.core.settings.UnifiedProfile
 import dev.min.code.core.settings.parseProviderDeepLink
 import dev.min.code.core.settings.ProviderBackup
+import kotlinx.coroutines.sync.withLock
 import dev.min.code.core.settings.ProviderPresetSource
 import dev.min.code.core.settings.ProviderPresets
 import dev.min.code.core.settings.ProviderSync
@@ -423,18 +424,23 @@ class ProvidersVM(
     /**
      * 把某一份底写回 settings.json。写完立刻重新投影一次——不然文件是旧的、
      * `managedEnvKeys` 是新的，下一次同步会照着一张错的账去删键。
+     *
+     * 「覆盖文件 → 清账 → 重投影」三步整体拿 ProviderSync.ledgerLock：夹在中间的
+     * 一次 apply 会把账配到恢复前的文件上，下一次同步照错账删键。
      */
     fun restoreBackup(snapshot: ProviderBackup.Snapshot) = viewModelScope.launch {
-        val text = backup.read(snapshot.file)
-        val ok = text != null &&
-            backupTag(snapshot.name) == BACKUP_TAG_CLAUDE_SETTINGS &&
-            configStore.writeSettingsText(text)
-        if (!ok) {
-            _transfer.value = TransferState.Failed(Failure.IO)
-            return@launch
+        ProviderSync.ledgerLock.withLock {
+            val text = backup.read(snapshot.file)
+            val ok = text != null &&
+                backupTag(snapshot.name) == BACKUP_TAG_CLAUDE_SETTINGS &&
+                configStore.writeSettingsText(text)
+            if (!ok) {
+                _transfer.value = TransferState.Failed(Failure.IO)
+                return@withLock
+            }
+            // 恢复回来的文件里没有我们的托管键了，账要跟着清空，再按当前供应商重写一遍
+            store.setManagedEnvKeys(emptySet())
+            _sync.value = providerSync.apply().claude
         }
-        // 恢复回来的文件里没有我们的托管键了，账要跟着清空，再按当前供应商重写一遍
-        store.setManagedEnvKeys(emptySet())
-        _sync.value = providerSync.apply().claude
     }
 }
