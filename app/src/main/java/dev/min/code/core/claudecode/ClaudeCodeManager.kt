@@ -588,6 +588,7 @@ class ClaudeCodeManager(
     private fun onCliExit(code: Int?, unexpected: Boolean) {
         // 放在改状态之前：发起方醒来时看到的就是已关闭的会话，文案不会再落到「未应答」那一支
         controls.failAll("claude 进程已退出")
+        dropTasksOfDeadProcess()
         _state.update {
             if (it.status == SessionStatus.Failed) {
                 it.copy(busy = false, pendingPermission = null)
@@ -2542,6 +2543,17 @@ class ClaudeCodeManager(
         inFlight = null
         if (clearQueue) sendQueue.clear()
         cli.close(closing)
+        // 放在 close 之后：读循环到这里才停，关的过程中 CLI 临终吐的 task_notification 不会再把条目加回来
+        dropTasksOfDeadProcess()
+    }
+
+    /**
+     * 进程没了，它的后台 shell / 子 agent 也跟着没了（CLI 退出时自己收掉，proot 的
+     * --kill-on-exit 兜底）。任务表不清的话底栏会一直挂着一个再也停不掉的「1 shell」。
+     * 换档续会话也一样：新进程不认识旧进程的 task_id。
+     */
+    private fun dropTasksOfDeadProcess() {
+        _state.update { if (it.tasks.isEmpty()) it else it.copy(tasks = emptyList()) }
     }
 
     private fun writeLine(line: String) = cli.write(line)
