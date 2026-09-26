@@ -263,7 +263,8 @@ class ClaudeCodeManagerCharacterizationTest {
             h.manager.interrupt()
             val s = h.awaitTurnEnd()
             // CLI 先发 control_cancel_request 撤销这条请求、自己把工具判成被拒，再发 result；
-            // Min 不认那一帧，面板是跟着 result 收掉的。托管等结论期间按停止，走的也是这一路
+            // 面板在撤回帧到时就收掉了。是用户自己按的停止，不补「CLI 撤回了……」那句（「已中断」已经说了）。
+            // 托管等结论期间按停止，走的也是这一路
             assertNull(s.pendingPermission)
             assertEquals(
                 listOf(

@@ -206,6 +206,22 @@ class ClaudeCodeProtocolTest {
         assertEquals("request_user_dialog", event.subtype)
     }
 
+    /**
+     * v2.1.283：`{type:"control_cancel_request", request_id}` —— "Tells the other side that the sender
+     * no longer needs the answer to one of its own in-flight control_requests"，没有原因字段、不要应答。
+     * （bridge 转发时多一个 session_id，忽略即可）
+     */
+    @Test
+    fun `control cancel request surfaces the withdrawn request id`() {
+        val event = parseClaudeCodeEvents(
+            """{"type":"control_cancel_request","request_id":"8c3ac378","session_id":"s"}"""
+        ).single() as ClaudeCodeEvent.ControlCancel
+        assertEquals("8c3ac378", event.requestId)
+        // 没有 request_id 的认不出撤的是谁，丢掉
+        assertTrue(parseClaudeCodeEvents("""{"type":"control_cancel_request"}""").isEmpty())
+        assertTrue(parseClaudeCodeEvents("""{"type":"control_cancel_request","request_id":""}""").isEmpty())
+    }
+
     @Test
     fun `control response error surfaces`() {
         val event = parseClaudeCodeEvents(

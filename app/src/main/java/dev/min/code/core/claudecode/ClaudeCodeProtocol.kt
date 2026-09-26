@@ -132,6 +132,17 @@ sealed interface ClaudeCodeEvent {
         val subtype: String,
     ) : ClaudeCodeEvent
 
+    /**
+     * `control_cancel_request`：CLI 撤回了**它自己发出的**一个 control_request（can_use_tool 等）。
+     *
+     * 形状（v2.1.283 schema）只有 `{type:"control_cancel_request", request_id}`，**不带原因**，
+     * 也不需要应答。CLI 发出它之后就不再等那条请求，之后到的应答一律忽略。
+     * 无头 stdio 下 CLI 会在这几种时候发（js 里 StructuredIO.sendRequest 的 abort 分支、
+     * injectControlResponse）：这一轮被中止（含 Min 自己按的停止）、PermissionRequest 钩子先做了决定、
+     * 别的客户端（Remote Control）先答了、request_user_dialog 到了期限。
+     */
+    data class ControlCancel(val requestId: String) : ClaudeCodeEvent
+
     /** CLI 对我们发出的 control_request（如 interrupt）的失败应答 */
     data class ControlError(val requestId: String, val error: String) : ClaudeCodeEvent
 
@@ -393,6 +404,11 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
                 else -> emptyList()
             }
         }
+
+        "control_cancel_request" -> obj.str("request_id")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { listOf(ClaudeCodeEvent.ControlCancel(it)) }
+            .orEmpty()
 
         else -> emptyList()
     }
