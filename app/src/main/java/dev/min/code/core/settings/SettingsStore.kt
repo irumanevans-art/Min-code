@@ -99,6 +99,12 @@ enum class ApiFormat {
     /** 原生，直连，不经本地路由 */
     ANTHROPIC_MESSAGES,
     OPENAI_CHAT,
+
+    /**
+     * ⚠️ 未实现，待移除。UI 方言选择器会列出它，但路由层只会把请求转成
+     * `/v1/chat/completions`（与 [OPENAI_CHAT] 行为完全相同）——对只认 Responses
+     * 端点的上游必然 404。移除它需要同时改 UI 选择器与相关分支，留给判断会话。
+     */
     OPENAI_RESPONSES,
     ;
 
