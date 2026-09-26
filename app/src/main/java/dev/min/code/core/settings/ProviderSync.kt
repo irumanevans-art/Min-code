@@ -106,6 +106,12 @@ class ProviderSync(
         const val FAILED_UNREADABLE = "settings_unreadable"
 
         /**
+         * 供应商设置没保存成功（DataStore 写盘 / Keystore 加密失败）。与
+         * [FAILED_UNREADABLE] 同约定：稳定标识，界面翻译成 providers_save_failed。
+         */
+        const val FAILED_SAVE = "providers_save_failed"
+
+        /**
          * 串行化「文件 + 记账」的**配对**写。除了 [apply] 之外还有一处动账本：
          * 备份恢复（ProvidersVM.restoreBackup）先整份覆盖文件、清账、再重投影 ——
          * 那三步也必须拿同一把锁，否则夹在中间的一次 apply 会把账配到恢复前的文件上。

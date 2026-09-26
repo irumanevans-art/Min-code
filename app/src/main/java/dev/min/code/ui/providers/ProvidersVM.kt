@@ -1,5 +1,6 @@
 package dev.min.code.ui.providers
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.min.code.core.claudecode.ClaudeCodeConfigStore
@@ -111,6 +112,23 @@ class ProvidersVM(
         viewModelScope.launch { _presets.value = presetSource.load() }
     }
 
+    /**
+     * 所有「写设置」的统一出口。viewModelScope 没有 CoroutineExceptionHandler，而
+     * Keystore 解不开（TokenCipher）与 DataStore 写盘（IOException）都会抛——一次
+     * 瞬时故障就以未捕获异常的形式崩掉整个 App。这里兜住：记日志 + 走 [_sync] 的
+     * 常驻 Failed 通道告知用户（文案见 providers_save_failed），成功路径零改动。
+     */
+    private fun launchingWrite(block: suspend () -> Unit) = viewModelScope.launch {
+        runCatching { block() }.onFailure { e ->
+            Log.w(TAG, "provider write failed", e)
+            _sync.value = ProviderSync.Outcome.Failed(ProviderSync.FAILED_SAVE)
+        }
+    }
+
+    private companion object {
+        const val TAG = "ProvidersVM"
+    }
+
     // -----------------------------------------------------------------------
     // Claude 侧
     // -----------------------------------------------------------------------
@@ -120,7 +138,7 @@ class ProvidersVM(
      *
      * 反过来的话，重起来的进程读到的还是旧 active —— 它在 `launchCli` 里是现读的。
      */
-    fun activate(id: String, acknowledgeInsecure: Boolean = false) = viewModelScope.launch {
+    fun activate(id: String, acknowledgeInsecure: Boolean = false) = launchingWrite {
         store.setActiveProfile(id, acknowledgeInsecure)
         // 在供应商页点了一家 = 要用供应商这条路。走订阅时这就是「切回 token」：订阅的登录原样留着
         store.setClaudeAuth(ClaudeAuthMode.PROVIDER)
@@ -130,7 +148,7 @@ class ProvidersVM(
         _staleSessions.value = registry.reloadConnection()
     }
 
-    fun save(profile: ApiProfile, activate: Boolean) = viewModelScope.launch {
+    fun save(profile: ApiProfile, activate: Boolean) = launchingWrite {
         val id = if (profile.id.isBlank()) {
             store.addProfile(profile, activate = activate)
         } else {
@@ -148,15 +166,15 @@ class ProvidersVM(
         _probe.value = _probe.value - id
     }
 
-    fun delete(id: String) = viewModelScope.launch {
+    fun delete(id: String) = launchingWrite {
         store.deleteProfile(id)
         _sync.value = providerSync.apply().claude
     }
 
     /** 复制一条。不切过去、不动投影：副本是拿来改的，还没到用它的时候 */
-    fun duplicate(id: String) = viewModelScope.launch { store.duplicateProfile(id) }
+    fun duplicate(id: String) = launchingWrite { store.duplicateProfile(id) }
 
-    fun duplicateCodex(id: String) = viewModelScope.launch { store.duplicateCodexProfile(id) }
+    fun duplicateCodex(id: String) = launchingWrite { store.duplicateCodexProfile(id) }
 
     // -----------------------------------------------------------------------
     // 统一供应商
@@ -166,7 +184,7 @@ class ProvidersVM(
      * 存一条统一供应商。存完要投影一次 —— 它可能刚刚改掉了**当前生效**那条的地址或 key，
      * 而那条现在正被终端和 settings.json 用着。
      */
-    fun saveUnified(profile: UnifiedProfile) = viewModelScope.launch {
+    fun saveUnified(profile: UnifiedProfile) = launchingWrite {
         store.saveUnifiedProfile(profile)
         _sync.value = providerSync.apply().claude
         relay.reconcile()
@@ -174,7 +192,7 @@ class ProvidersVM(
         _staleSessions.value = registry.reloadConnection()
     }
 
-    fun deleteUnified(id: String, deleteDerived: Boolean) = viewModelScope.launch {
+    fun deleteUnified(id: String, deleteDerived: Boolean) = launchingWrite {
         store.deleteUnifiedProfile(id, deleteDerived)
         _sync.value = providerSync.apply().claude
         relay.reconcile()
@@ -202,7 +220,7 @@ class ProvidersVM(
     }
 
     /** 确认导入。走的是和文件导入同一套合并规则（去重 / 改名 / 跳过都已经算好） */
-    fun acceptDeepLink() = viewModelScope.launch {
+    fun acceptDeepLink() = launchingWrite {
         when (val pending = _pendingLink.value) {
             is DeepLinkParse.Claude -> mergeAndStore(listOf(pending.profile), emptyList())
             is DeepLinkParse.Codex -> mergeAndStore(emptyList(), listOf(pending.profile))
@@ -230,7 +248,7 @@ class ProvidersVM(
     /** 松手：落盘，然后放掉临时顺序 */
     fun commitOrder() {
         val order = _pendingOrder.value ?: return
-        viewModelScope.launch {
+        launchingWrite {
             store.reorderProfiles(order.map { it.id })
             _pendingOrder.value = null
         }
@@ -259,7 +277,7 @@ class ProvidersVM(
     // Codex 侧
     // -----------------------------------------------------------------------
 
-    fun activateCodex(id: String, acknowledgeInsecure: Boolean = false) = viewModelScope.launch {
+    fun activateCodex(id: String, acknowledgeInsecure: Boolean = false) = launchingWrite {
         store.setActiveCodexProfile(id, acknowledgeInsecure)
         providerSync.apply()
         relay.reconcile()
@@ -267,7 +285,7 @@ class ProvidersVM(
         codexRuntime.prepare()
     }
 
-    fun saveCodex(profile: CodexProfile, activate: Boolean) = viewModelScope.launch {
+    fun saveCodex(profile: CodexProfile, activate: Boolean) = launchingWrite {
         if (profile.id.isBlank()) store.addCodexProfile(profile, activate = activate)
         else store.updateCodexProfile(profile)
         providerSync.apply()
@@ -277,7 +295,7 @@ class ProvidersVM(
         }
     }
 
-    fun deleteCodex(id: String) = viewModelScope.launch { store.deleteCodexProfile(id) }
+    fun deleteCodex(id: String) = launchingWrite { store.deleteCodexProfile(id) }
 
     fun applyCodexPreset(preset: CodexPreset, apiKey: String, zh: Boolean) =
         saveCodex(preset.toProfile(apiKey, zh), activate = true)
@@ -293,7 +311,7 @@ class ProvidersVM(
 
     fun commitCodexOrder() {
         val order = _codexPendingOrder.value ?: return
-        viewModelScope.launch {
+        launchingWrite {
             store.reorderCodexProfiles(order.map { it.id })
             _codexPendingOrder.value = null
         }
@@ -303,19 +321,19 @@ class ProvidersVM(
     // 托管
     // -----------------------------------------------------------------------
 
-    fun setManageGuestConfig(enabled: Boolean) = viewModelScope.launch {
+    fun setManageGuestConfig(enabled: Boolean) = launchingWrite {
         store.setManageGuestConfig(enabled)
         // 关掉的那一刻必须立刻清：不清的话文件里会一直留着上一家的 token，
         // 而界面上托管已经显示「关」——这是整套里最坏的一种不一致
         _sync.value = providerSync.apply().claude
     }
 
-    fun setGuestConfigIncludesSecrets(enabled: Boolean) = viewModelScope.launch {
+    fun setGuestConfigIncludesSecrets(enabled: Boolean) = launchingWrite {
         store.setGuestConfigIncludesSecrets(enabled)
         _sync.value = providerSync.apply().claude
     }
 
-    fun setInjectCredentialsIntoShells(enabled: Boolean) = viewModelScope.launch {
+    fun setInjectCredentialsIntoShells(enabled: Boolean) = launchingWrite {
         store.setInjectCredentialsIntoShells(enabled)
     }
 
@@ -428,7 +446,7 @@ class ProvidersVM(
      * 「覆盖文件 → 清账 → 重投影」三步整体拿 ProviderSync.ledgerLock：夹在中间的
      * 一次 apply 会把账配到恢复前的文件上，下一次同步照错账删键。
      */
-    fun restoreBackup(snapshot: ProviderBackup.Snapshot) = viewModelScope.launch {
+    fun restoreBackup(snapshot: ProviderBackup.Snapshot) = launchingWrite {
         ProviderSync.ledgerLock.withLock {
             val text = backup.read(snapshot.file)
             val ok = text != null &&

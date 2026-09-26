@@ -697,6 +697,7 @@
   <string name="providers_shell_title">Terminal uses the current provider</string>
   <string name="providers_shell_subtitle">Injects the key into terminal tabs and local services, so claude works there. Anything running in your shell can read it.</string>
   <string name="providers_sync_failed">Could not sync to the rootfs config: %1$s. Sessions and the terminal are still using %2$s — only the files did not keep up.</string>
+  <string name="providers_save_failed">Couldn\'t save provider settings</string>
   <string name="providers_guest_missing">Available once the runtime is installed.</string>
   <string name="providers_codex_auth_note">Codex keys are never written to disk: its config file only points at an environment variable, so there is no equivalent switch here.</string>
   <!-- 编辑面板 -->

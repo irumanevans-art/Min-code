@@ -289,7 +289,12 @@ private fun ClaudeTab(vm: ProvidersVM, settings: AppSettings) {
                         // 先说「不影响用」再说「哪里没跟上」——用户最想知道的是前者
                         text = stringResource(
                             R.string.providers_sync_failed,
-                            failed?.reason.orEmpty(),
+                            // reason 是稳定标识（见 ProviderSync.FAILED_*），界面负责翻译
+                            if (failed?.reason == ProviderSync.FAILED_SAVE) {
+                                stringResource(R.string.providers_save_failed)
+                            } else {
+                                failed?.reason.orEmpty()
+                            },
                             connection.shortLabel(),
                         ),
                         tone = NoticeTone.Error,

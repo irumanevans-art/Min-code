@@ -693,6 +693,7 @@
   <string name="providers_shell_title">终端也用当前供应商</string>
   <string name="providers_shell_subtitle">把 key 注入终端页签与本地服务，终端里的 claude 才能用。你 shell 里跑的任何东西都读得到它。</string>
   <string name="providers_sync_failed">同步到 Rootfs 配置失败：%1$s。会话和终端仍在使用 %2$s，只是文件没跟上。</string>
+  <string name="providers_save_failed">供应商设置保存失败</string>
   <string name="providers_guest_missing">装好运行环境后可用。</string>
   <string name="providers_codex_auth_note">Codex 的 key 从不落盘：它的配置文件里只写一个指向环境变量的名字，所以这边没有对应的开关。</string>
   <!-- 编辑面板 -->
