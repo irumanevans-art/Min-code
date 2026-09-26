@@ -42,6 +42,7 @@ import dev.min.code.R
 import dev.min.code.core.claudecode.BackgroundShell
 import dev.min.code.core.claudecode.OUTPUT_TAIL_LINES
 import dev.min.code.core.claudecode.OutputTail
+import dev.min.code.ui.components.LiveDot
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkDivider

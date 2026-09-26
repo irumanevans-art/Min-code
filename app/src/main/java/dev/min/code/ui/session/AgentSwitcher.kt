@@ -1,12 +1,12 @@
 package dev.min.code.ui.session
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -57,45 +57,39 @@ import me.rerere.hugeicons.stroke.ArrowRight01
 internal val LocalOpenSubagent = compositionLocalOf<((String) -> Unit)?> { null }
 
 /**
- * 输入框上方那一条：`main` + 每个子 agent 一只 chip。[threads] 为空时整条收起、不占高度。
+ * 任务条 leading 槽里的内容：`main` + 每个子 agent 一只 chip，横向可滚。
+ *
+ * 不自己占一行 —— 整条的出现和收起归 [SessionTaskStrip]（`showAgents` 由调用方按
+ * [threads] 是否为空给）。chip 进出时这一段跟着伸缩，不跳。
  *
  * @param selected 正在看的子 agent（toolUseId），null = main
  */
 @Composable
-internal fun AgentSwitcher(
+internal fun RowScope.AgentSwitcher(
     threads: List<SubagentThread>,
     selected: String?,
     onSelect: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    AnimatedVisibility(
-        visible = threads.isNotEmpty(),
-        enter = InkMotion.expand,
-        exit = InkMotion.collapse,
-        modifier = modifier,
+    val label = stringResource(R.string.agent_switcher_label)
+    Row(
+        modifier = modifier
+            .weight(1f)
+            .semantics { contentDescription = label }
+            .horizontalScroll(rememberScrollState())
+            // chip 进出时跟着伸缩，不跳
+            .animateContentSize(InkMotion.spatial()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        val label = stringResource(R.string.agent_switcher_label)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { contentDescription = label }
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp)
-                .padding(bottom = 6.dp)
-                // chip 进出时整条跟着伸缩，不跳
-                .animateContentSize(InkMotion.spatial()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            InkChip(
-                label = stringResource(R.string.agent_switcher_main),
-                selected = selected == null,
-                onClick = { onSelect(null) },
-                monospace = true,
-            )
-            threads.forEach { thread ->
-                AgentChip(thread, selected = thread.toolUseId == selected, onClick = { onSelect(thread.toolUseId) })
-            }
+        InkChip(
+            label = stringResource(R.string.agent_switcher_main),
+            selected = selected == null,
+            onClick = { onSelect(null) },
+            monospace = true,
+        )
+        threads.forEach { thread ->
+            AgentChip(thread, selected = thread.toolUseId == selected, onClick = { onSelect(thread.toolUseId) })
         }
     }
 }

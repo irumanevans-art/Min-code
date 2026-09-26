@@ -1295,18 +1295,22 @@ private fun SessionContent(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
                     )
                 }
+                // 切换条挂在任务条的 leading 槽里，和「N shell」同一行；没有子 agent 时槽是空的
+                val switcherThreads = switcherThreads(agentThreads, selectedAgent)
                 SessionTaskStrip(
                     shellCount = shells.count { it.isRunning },
+                    showAgents = switcherThreads.isNotEmpty(),
                     onOpenShells = {
                         focusManager.clearFocus()
                         showShells = true
                     },
-                )
-                // 有子 agent 时才出现（S 的任务条合进来后挂到它的 leading 槽）
-                AgentSwitcher(
-                    threads = switcherThreads(agentThreads, selectedAgent),
-                    selected = selectedAgent,
-                    onSelect = { selectedAgent = it },
+                    agents = {
+                        AgentSwitcher(
+                            threads = switcherThreads,
+                            selected = selectedAgent,
+                            onSelect = { selectedAgent = it },
+                        )
+                    },
                 )
                 key(activeKey ?: "idle") {
                     val boundId = activeKey
