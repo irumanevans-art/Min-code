@@ -9,6 +9,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -104,6 +106,8 @@ import dev.min.code.core.claudecode.CHECKPOINT_TOOLS
 import dev.min.code.core.claudecode.ClaudeCodeEvent
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.PermissionSuggestion
+import dev.min.code.core.claudecode.subagentThreads
+import dev.min.code.core.claudecode.switcherThreads
 import dev.min.code.ui.components.BrandMark
 import dev.min.code.ui.components.LocalFrost
 import dev.min.code.ui.components.frostSource
@@ -984,6 +988,12 @@ private fun SessionContent(
     // 状态放在条目里的话，往回滑一趟展开的块就自己合上了
     val manualExpanded = remember { mutableStateMapOf<String, Boolean>() }
 
+    // 正在看哪个子 agent（发起它的 Agent 调用的 toolUseId），null = main。按会话记：换会话回到 main。
+    // 切换条和子 agent 视图的数据都从聊天流 + 任务表现推（SubagentThreads.kt），不另存
+    var selectedAgent by rememberSaveable(activeKey) { mutableStateOf<String?>(null) }
+    val agentThreads = remember(session.items, session.tasks) { subagentThreads(session.items, session.tasks) }
+    val viewedAgent = agentThreads.firstOrNull { it.toolUseId == selectedAgent }
+
     // 交互式斜杠命令（/mcp、/agents、/memory…）打开的配置面板。它们改的是 Rootfs 里的
     // 配置文件，和「会话设置」那张 sheet 是两回事，所以状态提在这里而不是输入栏内部。
     var configCommand by rememberSaveable { mutableStateOf<LocalSlash?>(null) }
@@ -1044,6 +1054,7 @@ private fun SessionContent(
     CompositionLocalProvider(
         LocalFrost provides frost,
         LocalAwaitingToolUseId provides awaitingToolUseId,
+        LocalOpenSubagent provides { toolUseId: String -> selectedAgent = toolUseId },
     ) {
     Box(Modifier.fillMaxSize().imePadding()) {
         // 会话流铺满，顶栏 / 输入框浮在上面。铬件高度量完再垫进列表，字不会被挡住。
@@ -1128,6 +1139,24 @@ private fun SessionContent(
                         )
                     }
                 }
+        }
+        // 子 agent 视图：一张纸盖在主会话流上。主列表一直在底下、状态不动，所以选回 main 时
+        // 滚动位置原样还在；在两个子 agent 之间切换是淡入淡出
+        AnimatedContent(
+            targetState = viewedAgent?.toolUseId,
+            transitionSpec = { fadeIn(InkMotion.effect()) togetherWith fadeOut(InkMotion.effect()) },
+            label = "subagentView",
+        ) { shownId ->
+            val shown = agentThreads.firstOrNull { it.toolUseId == shownId }
+            if (shown != null) {
+                SubagentConversation(
+                    thread = shown,
+                    labels = transcriptLabels,
+                    pendingPermission = session.pendingPermission,
+                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topReserve, bottom = bottomReserve),
+                    modifier = Modifier.background(MaterialTheme.sea.paper),
+                )
+            }
         }
         }
 
@@ -1226,6 +1255,11 @@ private fun SessionContent(
                     }
                 }
             }
+            val lastViewed = remember { LastNonNull(viewedAgent) }
+            val headerThread = lastViewed.update(viewedAgent)
+            AnimatedVisibility(visible = viewedAgent != null, enter = InkMotion.expand, exit = InkMotion.collapse) {
+                headerThread?.let { SubagentViewHeader(it, onBack = { selectedAgent = null }) }
+            }
         }
 
         Box(
@@ -1257,14 +1291,29 @@ private fun SessionContent(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
                     )
                 }
+                // 有子 agent 时才出现（S 的任务条合进来后挂到它的 leading 槽）
+                AgentSwitcher(
+                    threads = switcherThreads(agentThreads, selectedAgent),
+                    selected = selectedAgent,
+                    onSelect = { selectedAgent = it },
+                )
                 key(activeKey ?: "idle") {
                     val boundId = activeKey
                     ClaudeCodeInputBar(
                         session = session,
                         // 发送不主动滚到底：在底时新消息按贴底跟随自然跟上，在上面翻着就保持原位
                         onRunShell = { command -> vm.runShell(command) },
-                        onSend = { text, images -> vm.send(text, images) },
-                        onInterrupt = vm::interrupt,
+                        // 子 agent 视图里：话说给它（收件箱 / 经主会话转交），停止键只停它
+                        onSend = { text, images ->
+                            val target = viewedAgent
+                            if (target != null) vm.sendToSubagent(target.toolUseId, text, images) else vm.send(text, images)
+                        },
+                        onInterrupt = {
+                            val target = viewedAgent
+                            if (target != null) vm.stopSubagent(target.toolUseId) else vm.interrupt()
+                        },
+                        hintOverride = viewedAgent?.let { stringResource(R.string.agent_composer_hint, it.agentType) },
+                        busyOverride = viewedAgent?.running,
                         onSetModel = vm::setModel,
                         onSetPermissionMode = vm::setPermissionMode,
                         onApplyEffort = { effort, ultracode -> vm.applyEffort(effort, ultracode) },
@@ -1326,7 +1375,7 @@ internal fun TranscriptItem(
     onRevert: ((String) -> Unit)? = null,
 ) {
     when (item) {
-        is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued)
+        is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued, item.handoff)
         is ChatItem.AssistantText -> AssistantEntry(
             text = item.text,
             isFirst = isFirst,

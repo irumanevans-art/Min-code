@@ -70,6 +70,8 @@ internal fun ComposerCapsule(
     plus: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     onFocusChange: (Boolean) -> Unit = {},
+    /** 调用方指定的占位字（子 agent 视图）；会话还没就绪时仍说「未就绪」 */
+    hint: String? = null,
 ) {
     val palette = MaterialTheme.sea
     val fieldInteraction = remember { MutableInteractionSource() }
@@ -118,7 +120,7 @@ internal fun ComposerCapsule(
                     enabled = enabled,
                     interactionSource = fieldInteraction,
                     decorationBox = { inner ->
-                        val hint = composerHint(enabled = enabled, busy = busy)
+                        val hint = hint?.takeIf { enabled } ?: composerHint(enabled = enabled, busy = busy)
                         // 最小高度放在这里而不是外层：字才会在胶囊里垂直居中，多行时再往上长
                         Box(Modifier.heightIn(min = 40.dp), contentAlignment = Alignment.CenterStart) {
                             if (value.isEmpty() && hint.isNotEmpty()) {

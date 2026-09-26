@@ -1,31 +1,23 @@
 package dev.min.code.ui.session
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.min.code.R
-import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.asBooleanOrNull
 import dev.min.code.core.claudecode.asIntOrNull
 import dev.min.code.core.claudecode.asJsonArrayOrNull
@@ -469,117 +461,6 @@ internal fun ToolCallDetail(
                 ToolResultText(item)
             }
         }
-    }
-}
-
-/**
- * 子任务的完整过程。
- *
- * 官方终端里子 agent 是一条**看不进去**的 sidechain：跑的时候只给一行计数，跑完只给
- * 最终报告，中间那几十步想复盘就只能去翻 `~/.claude/projects` 底下的 jsonl。数据其实
- * 一直在流里（帧上带着 `parent_tool_use_id`），缺的只是一个容器 —— 手机上折叠卡片天然就是。
- *
- * 注：上面那个路径**不能写成 glob**。Kotlin 的块注释是可以嵌套的，KDoc 里出现
- * `斜杠星星` 会开一个内层注释，然后这段 KDoc 的结束符只关掉内层，外层一路吞到文件末尾 ——
- * 表现是"这个文件后半截的函数全部 Unresolved reference"。
- *
- * 版式上刻意**比主流窄一号、加一条左边线**：让人一眼分清"这是子任务干的"，
- * 而不是误以为主 agent 自己跑了这些工具。内容渲染器完全复用主流那套。
- */
-@Composable
-internal fun SubagentTranscript(items: List<ChatItem>, labels: TranscriptLabels) {
-    val line = MaterialTheme.colorScheme.outlineVariant
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .drawBehind {
-                drawLine(
-                    color = line,
-                    start = Offset(0f, 0f),
-                    end = Offset(0f, size.height),
-                    strokeWidth = 1.5.dp.toPx(),
-                )
-            }
-            .padding(start = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(
-            text = stringResource(R.string.transcript_subagent, items.size),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        items.forEach { item -> SubagentItem(item, labels) }
-    }
-}
-
-@Composable
-private fun SubagentItem(item: ChatItem, labels: TranscriptLabels) {
-    when (item) {
-        // 子 agent 的正文就是它的阶段性结论，值得直接读，不折叠
-        is ChatItem.AssistantText ->
-            MarkdownBlock(content = item.text, modifier = Modifier.fillMaxWidth())
-
-        is ChatItem.Thinking -> {
-            var expanded by remember(item.id) { mutableStateOf(false) }
-            Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
-                Text(
-                    text = stringResource(R.string.transcript_subagent_thinking, item.text.length),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (expanded) {
-                    Text(
-                        text = item.text,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-
-        is ChatItem.ToolCall -> {
-            var expanded by remember(item.id) { mutableStateOf(false) }
-            Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = item.name,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = JetbrainsMono,
-                        color = if (item.isError) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = toolSummary(item.name, item.input, labels),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = JetbrainsMono,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                // 撤销不往下传：子 agent 的编辑没有走 App 侧的快照路径（快照是在主线程的
-                // tool_use 帧上打的），给一个按下去只会报错的按钮比没有按钮更糟
-                if (expanded) ToolCallDetail(item, labels, onRevert = null)
-            }
-        }
-
-        // Note 不会出现在子 agent 线程里（系统提示走主线程），兜个底
-        is ChatItem.Note -> Text(
-            text = item.text,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (item.isError) MaterialTheme.colorScheme.error
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        is ChatItem.UserText -> Unit
-
-        // stderr 是整个进程的，不分主线程还是子 agent，永远挂在主会话流上
-        is ChatItem.ProcessOutput -> Unit
     }
 }
 

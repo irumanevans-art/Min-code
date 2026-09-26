@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.claudecode.SUBAGENT_TOOLS
 import dev.min.code.ui.components.InkSpinner
 import dev.min.code.ui.richtext.MarkdownBlock
 import dev.min.code.ui.theme.InkMotion
@@ -343,7 +344,13 @@ private fun Chevron(expanded: Boolean, contentDescription: String?) {
  * 其余三角是大圆角——气泡是从轨道上那粒海里长出来的。
  */
 @Composable
-internal fun UserEntry(text: String, isFirst: Boolean, isLast: Boolean, queued: Boolean = false) {
+internal fun UserEntry(
+    text: String,
+    isFirst: Boolean,
+    isLast: Boolean,
+    queued: Boolean = false,
+    handoff: ChatItem.Handoff? = null,
+) {
     TranscriptEntry(
         marker = RailMarker.Dot,
         isFirst = isFirst,
@@ -362,6 +369,8 @@ internal fun UserEntry(text: String, isFirst: Boolean, isLast: Boolean, queued: 
                 modifier = Modifier.padding(bottom = 3.dp),
             )
         }
+        // 说给子 agent 的话不是直连：等它下一步才递进去，或经主会话转交。说清楚，免得以为它当场就听见了
+        handoff?.let { HandoffLabel(it) }
         // 贴轨道那一角 4 dp：气泡是从那粒海里长出来的。其余 14 dp。
         // Column 给子项的是横向撑满的约束。外层 Box 把 min 松开，
         // wrapContentWidth 让 Row 按字宽收，widthIn 封顶并允许长句换行。
@@ -824,8 +833,12 @@ internal fun ToolEntry(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ToolCallDetail(item, labels, onRevert = onRevert)
-                // 子 agent 干的活挂在这条 Task 底下。官方终端看不进去，这里能
-                if (item.subItems.isNotEmpty()) SubagentTranscript(item.subItems, labels)
+                // 子 agent 干的活挂在这张卡底下，但不在卡里铺开：点进去是它自己的一整条对话，
+                // 和主会话同一套条目渲染（见 SubagentConversation.kt）。以前这里是一份窄一号的
+                // 专用渲染，和主流各长各的
+                if (item.name in SUBAGENT_TOOLS) {
+                    LocalOpenSubagent.current?.let { open -> OpenSubagentRow(item, onOpen = { open(item.toolUseId) }) }
+                }
             }
         }
     }

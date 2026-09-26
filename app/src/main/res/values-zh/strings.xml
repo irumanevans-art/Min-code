@@ -568,8 +568,6 @@
   <string name="transcript_output_expand">展开进程输出</string>
   <string name="transcript_output_collapse">收起进程输出</string>
   <string name="transcript_receipt_duration">用时 %1$s</string>
-  <string name="transcript_subagent">子任务过程 · %1$d 步</string>
-  <string name="transcript_subagent_thinking">思考 · %1$d 字</string>
   <string name="transcript_more_lines">… 还有 %1$d 行</string>
   <string name="transcript_revert">撤销此修改</string>
   <!-- 工具卡：折叠行摘要、角标与 diff 省略。文案经 TranscriptLabels 传递，
@@ -987,4 +985,23 @@
   <string name="guest_open_open">打开</string>
   <string name="guest_open_dismiss">忽略</string>
   <string name="guest_open_no_browser">这台设备上没有能打开它的浏览器</string>
+  <!-- 子 agent 切换条与子 agent 视图 -->
+  <string name="agent_switcher_main">main</string>
+  <string name="agent_switcher_label">在主会话和子 agent 之间切换</string>
+  <string name="agent_phase_running">运行中</string>
+  <string name="agent_phase_done">已完成</string>
+  <string name="agent_phase_failed">出错</string>
+  <string name="agent_phase_stopped">已停止</string>
+  <string name="agent_view_back">main</string>
+  <string name="agent_view_back_label">回到主会话</string>
+  <string name="agent_composer_hint">发给 @%1$s…</string>
+  <string name="agent_open_conversation">查看子 agent 对话 · %1$d 步</string>
+  <string name="agent_open_conversation_empty">查看子 agent 对话</string>
+  <string name="agent_prompt_label">主会话交代的任务</string>
+  <string name="agent_view_empty">它还没有转发出任何内容</string>
+  <string name="agent_live_working">工作中</string>
+  <string name="handoff_waiting">发给 %1$s · 等它下一步时送达</string>
+  <string name="handoff_delivered">已送达 %1$s</string>
+  <string name="handoff_relayed">经主会话转交给 %1$s</string>
+  <string name="handoff_undelivered">没送到 · %1$s 在下一步之前就结束了</string>
 </resources>

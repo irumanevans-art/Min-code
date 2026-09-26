@@ -571,8 +571,6 @@
   <string name="transcript_output_expand">Show the process output</string>
   <string name="transcript_output_collapse">Hide the process output</string>
   <string name="transcript_receipt_duration">took %1$s</string>
-  <string name="transcript_subagent">subtask · %1$d steps</string>
-  <string name="transcript_subagent_thinking">thinking · %1$d chars</string>
   <string name="transcript_more_lines">… %1$d more lines</string>
   <string name="transcript_revert">Undo this change</string>
   <!-- Tool cards: folded-line summary, badge and diff elision. The copy travels through
@@ -991,4 +989,23 @@
   <string name="guest_open_open">Open</string>
   <string name="guest_open_dismiss">Ignore</string>
   <string name="guest_open_no_browser">No browser on this device can open it</string>
+  <!-- 子 agent 切换条与子 agent 视图 -->
+  <string name="agent_switcher_main">main</string>
+  <string name="agent_switcher_label">Switch between the main session and subagents</string>
+  <string name="agent_phase_running">running</string>
+  <string name="agent_phase_done">done</string>
+  <string name="agent_phase_failed">failed</string>
+  <string name="agent_phase_stopped">stopped</string>
+  <string name="agent_view_back">main</string>
+  <string name="agent_view_back_label">Back to the main session</string>
+  <string name="agent_composer_hint">Message @%1$s…</string>
+  <string name="agent_open_conversation">Open this subagent\'s conversation · %1$d steps</string>
+  <string name="agent_open_conversation_empty">Open this subagent\'s conversation</string>
+  <string name="agent_prompt_label">Task from the main agent</string>
+  <string name="agent_view_empty">Nothing forwarded from it yet</string>
+  <string name="agent_live_working">working</string>
+  <string name="handoff_waiting">to %1$s · delivered at its next step</string>
+  <string name="handoff_delivered">delivered to %1$s</string>
+  <string name="handoff_relayed">relayed to %1$s through the main session</string>
+  <string name="handoff_undelivered">not delivered · %1$s ended before its next step</string>
 </resources>

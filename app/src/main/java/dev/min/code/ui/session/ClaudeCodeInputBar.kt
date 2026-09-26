@@ -114,6 +114,10 @@ internal fun ClaudeCodeInputBar(
     onDraftSnapshot: (ComposerDraft) -> Unit = {},
     /** 按 Esc 撤回的消息，原样退回输入框。一次性事件流，不是状态 */
     withdrawnMessages: Flow<ComposerDraft> = NoWithdrawals,
+    /** 占位字换一句（子 agent 视图：「发给 @general-purpose…」）。null = 照常 */
+    hintOverride: String? = null,
+    /** 停止键跟谁的「在跑」走（子 agent 视图：那个子 agent 在跑才出停止键）。null = 跟会话这一轮 */
+    busyOverride: Boolean? = null,
     modifier: Modifier = Modifier,
 ) {
     var input by remember { mutableStateOf(restoredDraft.text) }
@@ -419,7 +423,8 @@ internal fun ClaudeCodeInputBar(
                 }
             },
             enabled = running,
-            busy = session.busy,
+            busy = busyOverride ?: session.busy,
+            hint = hintOverride,
             canSend = canSend,
             onSend = { submit() },
             onInterrupt = onInterrupt,
