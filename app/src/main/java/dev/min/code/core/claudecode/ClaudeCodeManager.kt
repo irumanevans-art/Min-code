@@ -491,6 +491,9 @@ class ClaudeCodeManager(
     /** 权限路径已排他托管的 Bash tool_use_id，避免 ToolUse 上再 start 一次 */
     private val exclusiveHostedToolUses = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /** CLI 已撤回（control_cancel_request）、不能再应答的请求，见 [answerCli] */
+    private val withdrawnCliRequests = WithdrawnCliRequests()
+
     /**
      * 本会话是否已经向 CLI 要过自动拟名。按 sessionId 记，避免多轮 Result / 排队 flush
      * 连发；换会话（含 resume 到另一个 id）会自然换 key。
@@ -903,8 +906,10 @@ class ClaudeCodeManager(
             is ClaudeCodeEvent.ControlError -> {
                 // 认领得到就交给发起方处理（它会给出更贴合场景的文案），
                 // 认领不到才作为孤儿错误抛到聊天流里
-                if (!controls.fail(event.requestId, event.error)) {
-                    appendItem(ChatItem.Note(newId(), "控制请求失败: ${event.error}", isError = true))
+                if (!controls.fail(event.requestId, event.error, event.code)) {
+                    appendItem(
+                        ChatItem.Note(newId(), "控制请求失败: ${describeControlError(event.error, event.code)}", isError = true)
+                    )
                 }
             }
 
@@ -923,6 +928,8 @@ class ClaudeCodeManager(
             is ClaudeCodeEvent.ModelFallback -> applyModelFallback(event)
 
             is ClaudeCodeEvent.ControlOk -> controls.complete(event.requestId, event.payload)
+
+            is ClaudeCodeEvent.ControlCancel -> onCliWithdrew(event.requestId)
 
             is ClaudeCodeEvent.Result -> {
                 // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
@@ -1361,14 +1368,16 @@ class ClaudeCodeManager(
             }
         }
         val pending = taken ?: return false
-        writeLine(
+        val answered = answerCli(
+            pending.requestId,
             encodeClaudeCodePermissionResponse(
                 requestId = pending.requestId,
                 allow = allow,
                 denyMessage = denyMessage,
                 updatedPermissions = listOfNotNull(suggestion?.raw),
-            )
+            ),
         )
+        if (!answered) return false
         if (allow && suggestion != null) {
             appendItem(ChatItem.Note(newId(), "已记住：${suggestion.label}"))
         }
@@ -1388,16 +1397,17 @@ class ClaudeCodeManager(
         val pending = _state.value.pendingPermission ?: return
         _state.update { it.copy(pendingPermission = null) }
         // 空答案 = 用户按了「跳过」。记下来，好让 tool_result 到达时别再报一次
-        // "选择没传回去" —— 那是他自己的决定，不是故障。
+        // "选择没传回去" —— 那是他自己的决定，不是故障。要在写应答之前记：结果可能紧跟着就到
         if (answers.isEmpty()) pending.toolUseId?.let(skippedQuestions::add)
-        writeLine(
+        val answered = answerCli(
+            pending.requestId,
             encodeClaudeCodePermissionResponse(
                 requestId = pending.requestId,
                 allow = true,
                 updatedInput = buildAskUserQuestionAnswer(pending.input, answers),
-            )
+            ),
         )
-        if (answers.isNotEmpty()) {
+        if (answered && answers.isNotEmpty()) {
             appendItem(
                 ChatItem.Note(
                     newId(),
@@ -1405,6 +1415,42 @@ class ClaudeCodeManager(
                 )
             )
         }
+    }
+
+    /**
+     * 应答一条 CLI 发来的 control_request。CLI 已经撤回的（[onCliWithdrew]）不再写，返回 false。
+     * 权限卡、提问卡、托管 Bash 的延迟 deny 都走这里，别绕过去直接 writeLine。
+     */
+    private fun answerCli(requestId: String, frame: String): Boolean {
+        if (requestId in withdrawnCliRequests) {
+            Log.i(TAG, "answer to withdrawn control_request $requestId not sent")
+            return false
+        }
+        writeLine(frame)
+        return true
+    }
+
+    /**
+     * CLI 发来 `control_cancel_request`：它不再等这条请求的应答了。
+     * 挂着的卡就是这条的话撤掉（通知跟着 pendingPermission 一起消失），留一句说明；
+     * 之后对它的应答一律不写（[answerCli]）。不是卡上那条（托管 Bash 正在等结论、或早答过了）只记下来。
+     */
+    private fun onCliWithdrew(requestId: String) {
+        withdrawnCliRequests.add(requestId)
+        var withdrawn: ClaudeCodeEvent.PermissionRequest? = null
+        _state.update { st ->
+            val p = st.pendingPermission
+            if (p?.requestId == requestId) {
+                withdrawn = p
+                st.copy(pendingPermission = null)
+            } else {
+                withdrawn = null
+                st
+            }
+        }
+        val card = withdrawn ?: return
+        cliWithdrawalNote(card, byOurInterrupt = interruptedTurn == turnSeq.get())
+            ?.let { appendItem(ChatItem.Note(newId(), it)) }
     }
 
     /**
@@ -1938,7 +1984,7 @@ class ClaudeCodeManager(
                         refreshUsage()
                     }
                 } else {
-                    val why = (outcome as? ControlOutcome.Error)?.message
+                    val why = (outcome as? ControlOutcome.Error)?.let { describeControlError(it.message, it.code) }
                         ?: if (_state.value.status != SessionStatus.Running) {
                             "会话未在运行"
                         } else {
@@ -1997,9 +2043,13 @@ class ClaudeCodeManager(
                         }
                     }
 
-                    // 把 CLI 的原话透出来，别再糊成"未应答"
+                    // 把 CLI 的原话透出来，别再糊成"未应答"；认得 error_code 的先说人话
                     is ControlOutcome.Error -> appendItem(
-                        ChatItem.Note(newId(), "切换到 ${mode.label} 失败：${outcome.message}", isError = true)
+                        ChatItem.Note(
+                            newId(),
+                            "切换到 ${mode.label} 失败：${describeControlError(outcome.message, outcome.code)}",
+                            isError = true,
+                        )
                     )
 
                     ControlOutcome.Timeout -> appendItem(
@@ -2416,6 +2466,7 @@ class ClaudeCodeManager(
      * 等待期间会话可能已经变了，这时迟到的 deny 不能再发：
      * - 用户按了停止：CLI 会发 control_cancel_request 撤销这条请求、自己把工具判成被拒并收尾，
      *   不等我们应答（2.1.280 实测，夹具 interrupt_during_permission；之后补来的 deny 它静默丢掉）；
+     * - 没按停止、CLI 也撤回了这条请求（钩子先做了决定等，见 [onCliWithdrew]）：由 [answerCli] 挡掉；
      * - 换档 / 关会话：进程换了，写队列此刻连着的是新进程，request_id 对不上。
      * 服务本身照样留在进程表里，对话流里照样如实告诉用户结局。
      *
@@ -2437,18 +2488,18 @@ class ClaudeCodeManager(
             val outcome = hostAndSettle(registry, plan, cwd, label, sessionKey)
             Log.i(TAG, "exclusive host (permission path) -> ${outcome::class.simpleName}: ${plan.command.take(80)}")
             val sameSession = cli.sessionScope === io && interruptedTurn != turn && turnSeq.get() == turn
-            if (sameSession) {
-                writeLine(
-                    encodeClaudeCodePermissionResponse(
-                        requestId = event.requestId,
-                        allow = false,
-                        denyMessage = hostedDenyMessage(outcome, plan.port),
-                    ),
-                )
-            } else {
-                Log.i(TAG, "hosted outcome not sent: the turn was stopped or the CLI was relaunched meanwhile")
+            val told = sameSession && answerCli(
+                event.requestId,
+                encodeClaudeCodePermissionResponse(
+                    requestId = event.requestId,
+                    allow = false,
+                    denyMessage = hostedDenyMessage(outcome, plan.port),
+                ),
+            )
+            if (!told) {
+                Log.i(TAG, "hosted outcome not sent: the turn was stopped, the CLI withdrew the request, or it was relaunched")
             }
-            showHostOutcome(event.toolUseId, outcome, plan.port, toldModel = sameSession)
+            showHostOutcome(event.toolUseId, outcome, plan.port, toldModel = told)
         }
         return true
     }

@@ -31,6 +31,41 @@ class ClaudeCodeCostLedgerTest {
         assertEquals(0.0, costDelta(0.42, 0.10), 1e-9)
     }
 
+    /**
+     * 一个会话的一串读数按 [ClaudeCodeCostLedger.record] 的规则记下来：差值为正才加、才抬水位。
+     * 返回记到今天头上的总额。
+     */
+    private fun ledger(vararg readings: Double): Double {
+        var mark: Double? = null
+        var total = 0.0
+        for (r in readings) {
+            val d = costDelta(mark, r)
+            if (d > 0.0) {
+                total += d
+                mark = r
+            }
+        }
+        return total
+    }
+
+    /** CLI 2.1.277+：续会话从 transcript 的 cost-state 接着上次的累计，读数不归零 */
+    @Test
+    fun `续会话读数接着上次累计时只记新花的`() {
+        // 0.30 退出 → 续会话先读到 0.30（没新花），再涨到 0.45
+        assertEquals(0.45, ledger(0.10, 0.30, 0.30, 0.45), 1e-9)
+        // 换档重启（同样是 --resume）连续两次也一样
+        assertEquals(0.60, ledger(0.30, 0.30, 0.50, 0.50, 0.60), 1e-9)
+    }
+
+    /** 2.1.277 之前的 CLI，或进程被杀没写 cost-state：读数倒退，少记但不倒扣 */
+    @Test
+    fun `续会话读数倒退时不倒扣且越过水位后接着记`() {
+        // 退回 0（老 CLI）：0.10 → 0.25 这段低于水位不记，越过 0.30 之后只记超出的
+        assertEquals(0.40, ledger(0.30, 0.0, 0.10, 0.25, 0.40), 1e-9)
+        // 退回上一次存的 0.20（被杀）：同理
+        assertEquals(0.35, ledger(0.30, 0.20, 0.28, 0.35), 1e-9)
+    }
+
     @Test
     fun `非法读数一律记零`() {
         assertEquals(0.0, costDelta(null, Double.NaN), 1e-9)
