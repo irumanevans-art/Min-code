@@ -986,4 +986,9 @@
   <string name="settings_claude_logout_failed">The CLI\'s sign-out didn\'t succeed (the CLI is missing or exited with an error). Claude Code has still switched back to the provider, but the subscription credentials may still be in the Linux environment: choosing Claude subscription again may sign you straight in.</string>
   <string name="settings_provider_not_in_use">Not in use now · %1$s</string>
   <string name="providers_subscription_notice">Claude Code is using your Claude subscription right now. Tap a provider to switch back.</string>
+  <string name="guest_open_title">%1$s in the Linux environment wants to open %2$s</string>
+  <string name="guest_open_title_unknown">Something in the Linux environment wants to open %1$s</string>
+  <string name="guest_open_open">Open</string>
+  <string name="guest_open_dismiss">Ignore</string>
+  <string name="guest_open_no_browser">No browser on this device can open it</string>
 </resources>

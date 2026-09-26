@@ -42,7 +42,9 @@ internal fun parseGuestOpenRequest(text: String, ageMs: Long, id: Long): GuestOp
     if (scheme != "http" && scheme != "https") return null
     if (uri.rawUserInfo != null) return null
     val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
-    return GuestOpenRequest(id = id, url = url, host = host.lowercase(), source = guestOpenSource(lines.getOrNull(1)))
+    // scheme 规范成小写：intent 的 scheme 匹配区分大小写，`HTTPS://…` 交出去可能没有一个浏览器接
+    val normalized = scheme + url.substring(uri.scheme.length)
+    return GuestOpenRequest(id = id, url = normalized, host = host.lowercase(), source = guestOpenSource(lines.getOrNull(1)))
 }
 
 /**

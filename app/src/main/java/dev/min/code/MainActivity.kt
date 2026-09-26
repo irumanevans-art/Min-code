@@ -53,6 +53,7 @@ import dev.min.code.core.settings.isProviderDeepLink
 import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.ui.about.AboutPage
+import dev.min.code.ui.components.GuestOpenPrompt
 import dev.min.code.ui.components.InkToastHost
 import dev.min.code.ui.components.LoadingScreen
 import dev.min.code.ui.components.LocalToaster
@@ -262,6 +263,7 @@ class MainActivity : ComponentActivity() {
                             entry<Screen.About> { AboutPage() }
                         },
                     )
+                    GuestOpenPrompt()
                     InkToastHost(toastState, Modifier.align(Alignment.BottomCenter))
                     AccessibilityReenablePrompt()
                 }
