@@ -3,16 +3,9 @@ package dev.min.code.core.relay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 
 /**
  * 协议转换层共用的 JSON 工具。
@@ -52,24 +45,4 @@ internal fun JsonObject.long(key: String): Long? =
 internal fun JsonObject.int(key: String): Int? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
 
-internal fun JsonElement?.asObjectOrNull(): JsonObject? = this as? JsonObject
-internal fun JsonElement?.asArrayOrNull(): JsonArray? = this as? JsonArray
 internal fun JsonElement?.asStringOrNull(): String? = (this as? JsonPrimitive)?.contentOrNull
-
-internal fun jsonObjectOf(vararg pairs: Pair<String, JsonElement?>): JsonObject = buildJsonObject {
-    pairs.forEach { (k, v) -> if (v != null && v !is JsonNull) put(k, v) }
-}
-
-internal fun jsonArrayOf(vararg elements: JsonElement): JsonArray = buildJsonArray {
-    elements.forEach { add(it) }
-}
-
-internal fun stringPrim(value: String): JsonPrimitive = JsonPrimitive(value)
-internal fun numberPrim(value: Number): JsonPrimitive = JsonPrimitive(value)
-internal fun boolPrim(value: Boolean): JsonPrimitive = JsonPrimitive(value)
-
-/** 把任意 JsonElement 尽量折成可读的字符串，错误透传时用 */
-internal fun JsonElement.stringifyLoose(): String = when (this) {
-    is JsonPrimitive -> content
-    else -> toString()
-}

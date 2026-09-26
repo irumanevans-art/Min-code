@@ -291,7 +291,7 @@ internal object OpenAIToAnthropic {
         "stop" -> "end_turn"
         "length" -> "max_tokens"
         "tool_calls" -> "tool_use"
-        "content_filter" -> "end_turn"
+        "content_filter" -> "refusal"
         null -> if (hasTools) "tool_use" else "end_turn"
         else -> "end_turn"
     }

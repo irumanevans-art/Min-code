@@ -140,7 +140,6 @@ internal fun ClaudeCodeInputBar(
     // 折叠起来的长段粘贴：输入框里只留一个占位符，正文存在这里，发送时还原（见 collapsePaste）
     var pastes by remember { mutableStateOf(restoredDraft.pasteMap) }
     var pasteSeq by remember { mutableIntStateOf(restoredDraft.pasteSeq) }
-    var sendSequence by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     fun currentDraft(): ComposerDraft = ComposerDraft(
@@ -296,7 +295,6 @@ internal fun ClaudeCodeInputBar(
     }
 
     fun submit() {
-        sendSequence += 1
         // 终端里 Claude Code 的 bash 模式。附件和图片留着，下一条消息接着发
         userShellCommand(input)?.let { command ->
             onRunShell(command)

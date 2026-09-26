@@ -827,6 +827,8 @@
   <string name="common_back">返回</string>
   <string name="common_close">关闭</string>
   <string name="common_copy_code">复制代码</string>
+  <string name="common_wrap">限宽</string>
+  <string name="common_unwrap">解限</string>
   <string name="common_more_lines">还有 %1$d 行</string>
   <string name="common_image_decode_failed">无法解码图片</string>
   <string name="common_copy_failed">复制失败</string>
@@ -947,6 +949,8 @@
   <string name="adb_pair_notif_text">打开无线调试的「使用配对码配对设备」，把里面的端口和六位码回复到这里（如 37755 482913）。保持那个对话框开着。</string>
   <string name="adb_pair_notif_reply">端口 空格 配对码</string>
   <string name="adb_pair_notif_bad">没认出端口和六位码。请按「端口 空格 六位码」再回一次。</string>
+  <string name="adb_pair_notif_posted">已发通知：去无线调试对话框，下拉通知栏在回复框里打配对码</string>
+  <string name="adb_pair_notif_need_permission">请先在系统设置里允许 min-code 发通知</string>
   <string name="device_virtual_session_on">虚拟屏会话进行中（display %1$d）</string>
   <string name="device_virtual_session_start">开始虚拟屏会话</string>
   <string name="device_virtual_session_stop">结束虚拟屏会话</string>

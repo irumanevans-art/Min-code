@@ -205,7 +205,14 @@ class LocalRelayServer(
             return
         }
         if (!stream) {
-            val chat = relayJson.parseToJsonElement(upstreamResp.body.toString(Charsets.UTF_8)).jsonObject
+            // 中转网关可能回 HTML 插页/空体：解析不了就回 502，别让异常冒成连接重置
+            val chat = runCatching {
+                relayJson.parseToJsonElement(upstreamResp.body.toString(Charsets.UTF_8)).jsonObject
+            }.getOrElse {
+                writeResponse(output, 502, "application/json",
+                    OpenAIToAnthropic.convertError(502, "upstream returned non-JSON").toString().toByteArray())
+                return
+            }
             val converted = OpenAIToAnthropic.convertResponse(chat, model)
             writeResponse(output, 200, "application/json", converted.toString().toByteArray())
             return
@@ -264,7 +271,15 @@ class LocalRelayServer(
                 return
             }
             if (!stream) {
-                val chat = relayJson.parseToJsonElement(upstreamResp.body.toString(Charsets.UTF_8)).jsonObject
+                // 同 proxyClaude：上游回非 JSON 时给 502，别让异常冒成连接重置
+                val chat = runCatching {
+                    relayJson.parseToJsonElement(upstreamResp.body.toString(Charsets.UTF_8)).jsonObject
+                }.getOrElse {
+                    writeResponse(output, 502, "application/json",
+                        """{"error":"upstream returned non-JSON"}""".toByteArray())
+                    upstreamResp.close()
+                    return
+                }
                 val converted = ResponsesBridge.fromChatCompletions(chat)
                 writeResponse(output, 200, "application/json", converted.toString().toByteArray())
                 upstreamResp.close()

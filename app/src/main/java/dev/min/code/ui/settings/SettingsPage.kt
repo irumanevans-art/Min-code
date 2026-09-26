@@ -552,11 +552,8 @@ private fun VirtualDisplayRow(vm: SettingsVM) {
                         val posted = AdbPairingReceiver.post(context)
                         Toast.makeText(
                             context,
-                            if (posted) {
-                                "已发通知：去无线调试对话框，下拉通知栏在回复框里打配对码"
-                            } else {
-                                "请先在系统里允许 min-code 发通知"
-                            },
+                            if (posted) context.getString(R.string.adb_pair_notif_posted)
+                            else context.getString(R.string.adb_pair_notif_need_permission),
                             Toast.LENGTH_LONG,
                         ).show()
                     },

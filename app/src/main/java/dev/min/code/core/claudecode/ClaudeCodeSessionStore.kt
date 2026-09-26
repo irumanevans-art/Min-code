@@ -43,8 +43,14 @@ class ClaudeCodeSessionStore {
         projects.walkTopDown()
             .maxDepth(MAX_SCAN_DEPTH)
             // `<id>/subagents/agent-*.jsonl` 是子 agent 的记录，不是会话；不绕开的话每派一个子 agent
-            // 抽屉里就多出一条「会话」
-            .filter { it.isFile && it.name.endsWith(".jsonl") && it.parentFile?.name != SUBAGENTS_DIR }
+            // 抽屉里就多出一条「会话」。按路径段判，别只看 parentFile 一层 ——
+            // workflows/<runId>/agent-*.jsonl 那种深层现在是靠扫描深度碰巧挡住的
+            .filter { file ->
+                file.isFile && file.name.endsWith(".jsonl") &&
+                    generateSequence(file.parentFile) { it.parentFile }
+                        .filterNotNull()
+                        .none { it.name == SUBAGENTS_DIR }
+            }
             .mapNotNull { file -> runCatching { summarize(file) }.getOrNull() }
             .sortedByDescending { it.updatedAt }
             .toList()

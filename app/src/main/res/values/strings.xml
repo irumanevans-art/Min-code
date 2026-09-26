@@ -831,6 +831,8 @@
   <string name="common_back">Back</string>
   <string name="common_close">Close</string>
   <string name="common_copy_code">Copy code</string>
+  <string name="common_wrap">Wrap</string>
+  <string name="common_unwrap">Unwrap</string>
   <string name="common_more_lines">%1$d more lines</string>
   <string name="common_image_decode_failed">Can\'t decode this image</string>
   <string name="common_copy_failed">Couldn\'t copy</string>
@@ -952,6 +954,8 @@
   <string name="adb_pair_notif_text">Open “Pair device with pairing code” in Wireless debugging, then reply here with its port and 6-digit code (e.g. 37755 482913). Keep that dialog open.</string>
   <string name="adb_pair_notif_reply">port &lt;space&gt; code</string>
   <string name="adb_pair_notif_bad">Couldn\'t read a port and a 6-digit code. Reply as “port &lt;space&gt; code”.</string>
+  <string name="adb_pair_notif_posted">Notification posted: open Wireless debugging and reply to that notification with the pairing code</string>
+  <string name="adb_pair_notif_need_permission">Allow min-code to post notifications in system settings first</string>
   <string name="device_virtual_session_on">Virtual screen session active (display %1$d)</string>
   <string name="device_virtual_session_start">Start virtual screen session</string>
   <string name="device_virtual_session_stop">Stop virtual screen session</string>

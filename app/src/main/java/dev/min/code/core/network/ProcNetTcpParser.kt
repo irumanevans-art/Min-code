@@ -47,15 +47,9 @@ object ProcNetTcpParser {
             val parts = line.split(WHITESPACE)
             // sl local rem st ... inode — 至少 10 列；sl 可能是 "0:" 或 "0"
             if (parts.size < 10) continue
-            val localIdx = when {
-                parts[0].endsWith(':') && parts[0].length <= 4 -> 1
-                parts[0].contains(':') && parts[0].count { it == ':' } == 1 &&
-                    parts[0].substringBefore(':').length <= 4 -> 0 // 极少见的 "0:addr:port" 粘连
-                else -> 1
-            }.let { idx ->
-                // 标准布局：parts[1] = local_address
-                if (parts.getOrNull(1)?.contains(':') == true) 1 else idx
-            }
+            // 标准布局：parts[1] = local_address。旧版这里留过 "0:addr:port" 粘连兜底，
+            // 但 rem 段恒含 ':'，那个分支永远走不到 —— 只剩误导，删了
+            val localIdx = 1
             val localField = parts.getOrNull(localIdx) ?: continue
             if (!localField.contains(':')) continue
             val stateField = parts.getOrNull(localIdx + 2) ?: continue

@@ -104,15 +104,3 @@ fun HeroCanvas(
     }
 }
 
-/** 兼容旧调用的逐字显现：现在直接显示 */
-@Composable
-fun InscriptionText(
-    text: String,
-    style: TextStyle,
-    color: Color,
-    modifier: Modifier = Modifier,
-    delayPerChar: Long = 110,
-    startDelay: Long = 140,
-) {
-    Text(text, style = style, color = color, modifier = modifier)
-}

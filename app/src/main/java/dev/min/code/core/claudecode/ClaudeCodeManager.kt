@@ -277,7 +277,7 @@ class ClaudeCodeManager(
         val description: String = "",
         /** Task 工具的子 agent 类型，如 general-purpose / Explore */
         val subagentType: String? = null,
-        /** `local_bash` = 后台 shell，`local_agent` = 子 agent，见 [isShell] / [isAgent] */
+        /** `local_bash` = 后台 shell，`local_agent` = 子 agent，见 [isShell] */
         val taskType: String? = null,
         /** 发起它的工具调用 id，对应聊天流里的那张 Bash / Agent 卡 */
         val toolUseId: String? = null,
@@ -300,7 +300,6 @@ class ClaudeCodeManager(
         val isRunning: Boolean get() = status == "running" || status == "pending"
         val isError: Boolean get() = status == "failed" || status == "killed"
         val isShell: Boolean get() = taskType == "local_bash"
-        val isAgent: Boolean get() = taskType == "local_agent" || (taskType == null && subagentType != null)
     }
 
     data class SlashCommand(val name: String, val description: String?)
@@ -668,6 +667,7 @@ class ClaudeCodeManager(
      * 历史工具输出里的 loopback URL 不再往预览位塞（否则每次重开会话都会弹一个
      * 早就不在监听的 127.0.0.1:N），历史 Bash 也不再托管成本地服务。
      */
+    @Volatile
     private var replaying = false
 
     private fun dispatch(event: ClaudeCodeEvent) {
@@ -1187,7 +1187,11 @@ class ClaudeCodeManager(
             val id = controls.newRequestId()
             val outcome = controls.request(id, encodeClaudeCodeStopTask(id, agentId))
             if (outcome !is ControlOutcome.Ok) {
-                val why = (outcome as? ControlOutcome.Error)?.message ?: "CLI 未应答"
+                // 与 stopTask 同一口径：Error 走人话解释（describeControlError），Timeout 单独说
+                val why = when (outcome) {
+                    is ControlOutcome.Error -> describeControlError(outcome.message, outcome.code)
+                    else -> "CLI 未应答（${ClaudeCodeControlChannel.TIMEOUT_MS / 1000} 秒超时）"
+                }
                 appendItem(ChatItem.Note(newId(), "停止子 agent 失败：$why", isError = true))
             }
         }
@@ -1593,9 +1597,10 @@ class ClaudeCodeManager(
         if (action == EscapeAction.Withdraw) withdrawInFlight()
         if (action == EscapeAction.InterruptThenQueued) sendQueue.reclaim()
         interruptWithdrew = action == EscapeAction.Withdraw
-        interruptedTurn = turnSeq.get()
 
+        // 一次读完：两次 get 之间若 result 恰好落地，interruptedTurn 会标到下一轮头上
         val seq = turnSeq.get()
+        interruptedTurn = seq
         writeLine(encodeClaudeCodeInterrupt(UUID.randomUUID().toString()))
         scope.launch {
             delay(INTERRUPT_TIMEOUT_MS)
@@ -2518,12 +2523,6 @@ class ClaudeCodeManager(
                 }
             }
         }
-    }
-
-    /** 新建会话，沿用当前的模型 / effort / 权限模式偏好 */
-    fun newSession(sessionId: String? = null) {
-        val options = _state.value.options.copy(resumeSessionId = null, newSessionId = sessionId)
-        startSession(options)
     }
 
     /** 这个 manager 是否还占着一个活着的 CLI 进程 */

@@ -463,9 +463,5 @@ object PrivilegedServer {
             }
         }
 
-        /** 壳进程死掉时尽量把 VD 清掉，避免残留幽灵屏 */
-        protected fun finalize() {
-            held.keys.toList().forEach { destroyAgentDisplay(it) }
-        }
     }
 }

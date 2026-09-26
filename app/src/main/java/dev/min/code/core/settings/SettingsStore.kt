@@ -1254,6 +1254,7 @@ private object TokenCipher {
         }.getOrNull()
     }
 
+    @Synchronized
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }

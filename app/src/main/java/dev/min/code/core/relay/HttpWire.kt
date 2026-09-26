@@ -38,10 +38,16 @@ internal data class HttpRequest(
     override fun hashCode(): Int = System.identityHashCode(this)
 }
 
+/** 单个请求体的上限。正常请求（整段对话的 JSON）离它还有一个量级；挡的是共享回环上别的 App 发个大 Content-Length 把堆打爆 */
+internal const val MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024
+
+/** 单行（请求行/头行）的上限，防的是不断行灌字节的慢攻击 */
+internal const val MAX_HTTP_LINE_BYTES = 8 * 1024
+
 /**
  * 读一个完整请求。
  *
- * @return 连请求行都读不出来（连接被对端直接关掉）时返回 null
+ * @return 连请求行都读不出来（连接被对端直接关掉）、或超出上限，都返回 null
  */
 internal fun readRequest(input: InputStream): HttpRequest? {
     val first = readHttpLine(input) ?: return null
@@ -57,6 +63,7 @@ internal fun readRequest(input: InputStream): HttpRequest? {
         if (i > 0) headers[line.substring(0, i).trim().lowercase()] = line.substring(i + 1).trim()
     }
     val length = headers["content-length"]?.toIntOrNull() ?: 0
+    if (length > MAX_REQUEST_BODY_BYTES) return null
     val body = if (length > 0) {
         val buf = ByteArray(length)
         var read = 0
@@ -80,6 +87,8 @@ internal fun readHttpLine(input: InputStream): String? {
         if (c < 0) return if (buf.size() == 0) null else buf.toString(Charsets.US_ASCII.name())
         if (c == '\n'.code) break
         if (c != '\r'.code) buf.write(c)
+        // 不断行地灌字节同样能撑爆内存：单行超限直接当坏请求断掉
+        if (buf.size() > MAX_HTTP_LINE_BYTES) return null
     }
     return buf.toString(Charsets.US_ASCII.name())
 }

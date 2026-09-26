@@ -407,7 +407,7 @@
     },
     {
       "id": "ai_token_plan",
-      "name": "åé®AIå¹³å° Token Plan",
+      "name": "千问AI平台 Token Plan",
       "category": "cn_official",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
       "websiteUrl": "https://platform.qianwenai.com/home/api-keys",
@@ -421,7 +421,7 @@
     },
     {
       "id": "agent_plan",
-      "name": "ç«å±± Agent Plan",
+      "name": "火山 Agent Plan",
       "category": "cn_official",
       "baseUrl": "https://ark.cn-beijing.volces.com/api/plan",
       "websiteUrl": "https://www.volcengine.com/activity/agentplan",

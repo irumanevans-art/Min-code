@@ -41,11 +41,11 @@ fun GuestOpenPrompt() {
 
     InkDialog(
         onDismissRequest = inbox::resolve,
-        title = stringResource(
-            if (request.source != null) R.string.guest_open_title else R.string.guest_open_title_unknown,
-            request.source ?: request.host,
-            request.host,
-        ),
+        title = if (request.source != null) {
+            stringResource(R.string.guest_open_title, request.source, request.host)
+        } else {
+            stringResource(R.string.guest_open_title_unknown, request.host)
+        },
         confirmButton = {
             InkTextButton(
                 onClick = {

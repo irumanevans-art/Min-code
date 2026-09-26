@@ -309,6 +309,3 @@ fun SettingRow(title: String, modifier: Modifier = Modifier, subtitle: String? =
         trailing?.invoke()
     }
 }
-
-@Suppress("unused")
-private fun Offset.none() = Unit

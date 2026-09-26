@@ -33,3 +33,9 @@ keystore.properties
 # 本机签名用的 JWT 与签名，不入库
 jwt_signing.txt
 jwt_signing.txt.sig
+
+# 审查/交接文档与本机脚本产物，不入库（要归档就挪进 work/）
+/GLM_*.md
+/HANDOFF_*.md
+/CODE_REVIEW_*.md
+/rel_223.json

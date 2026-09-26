@@ -186,16 +186,21 @@ internal fun readShellOutput(
     sessionId: String?,
     hostedLog: (String) -> String,
 ): OutputTail? {
-    shell.outputFile?.let { guestToHostFile(workspaceDir, it) }?.let(::readOutputTail)?.let { return it }
+    val sid = sessionId
     val taskId = shell.cliTaskId
-    if (taskId != null && sessionId != null) {
-        guestToHostFile(workspaceDir, ROOTFS_TMP)
-            ?.let { findTaskOutputFile(it, sessionId, taskId) }
-            ?.let(::readOutputTail)
-            ?.let { return it }
-    }
-    shell.hostedServiceId?.let(hostedLog)?.takeIf { it.isNotEmpty() }?.let { return shapeOutput(it) }
-    return null
+    // 读的时候文件可能恰好被截断/轮换（readOutputTail 里 length 与 readFully 之间有窗口）：
+    // 读不到就当「还没有输出」，别让输出轮询协程带着 IOException 把整页组合崩掉
+    return runCatching {
+        shell.outputFile?.let { guestToHostFile(workspaceDir, it) }?.let(::readOutputTail)
+            ?: if (taskId != null && sid != null) {
+                guestToHostFile(workspaceDir, ROOTFS_TMP)
+                    ?.let { findTaskOutputFile(it, sid, taskId) }
+                    ?.let(::readOutputTail)
+            } else {
+                null
+            }
+            ?: shell.hostedServiceId?.let(hostedLog)?.takeIf { it.isNotEmpty() }?.let(::shapeOutput)
+    }.getOrNull()
 }
 
 /** CLI 的临时目录在 rootfs 里的位置：proot 不给它设 TMPDIR，os.tmpdir() 就是它 */

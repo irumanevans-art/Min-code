@@ -150,6 +150,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
     // -----------------------------------------------------------------------
 
     override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String {
+        requireDisplayName(displayName)
         val parent = resolve(parentDocumentId)
         val (rootId, relative) = split(parentDocumentId)
         // 重名不覆盖：系统文件 App 传进来的名字是用户敲的，撞上了要另起一个，
@@ -172,12 +173,19 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
     }
 
     override fun deleteDocument(documentId: String) {
+        if (split(documentId).second.isEmpty()) {
+            throw UnsupportedOperationException("cannot delete the root")
+        }
         val file = resolve(documentId)
         val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
         if (!deleted) throw FileNotFoundException("failed to delete $documentId")
     }
 
     override fun renameDocument(documentId: String, displayName: String): String {
+        if (split(documentId).second.isEmpty()) {
+            throw UnsupportedOperationException("cannot rename the root")
+        }
+        requireDisplayName(displayName)
         val file = resolve(documentId)
         val target = File(file.parentFile, displayName)
         if (target.exists()) throw FileNotFoundException("$displayName already exists")
@@ -213,9 +221,24 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
 
     private fun joinId(rootId: String, relative: String) = "$rootId:$relative"
 
+    /**
+     * displayName 是外部 App 传进来的任意字符串：含 '/' 时 `File(parent, name)` 拼出的
+     * 路径会越出授权根（以 '/' 开头甚至直接替换成绝对路径），名为 "." / ".." 指到上层
+     * —— 读取侧有 [resolveWithinRoot] 围栏，写入侧这半边必须同样收紧。
+     */
+    private fun requireDisplayName(name: String) {
+        if (name.isEmpty() || name == "." || name == ".." || name.contains('/') || name.contains('\u0000')) {
+            throw FileNotFoundException("bad display name")
+        }
+    }
+
     private fun MatrixCursor.addFile(documentId: String, file: File) {
         val (rootId, relative) = split(documentId)
-        var flags = Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME
+        // 根文档不给删/改名：deleteDocument 对根是 deleteRecursively 整个工作区/rootfs，
+        // renameDocument 对根会把 base 目录整体搬走。系统文件 App 正常浏览碰不到根，
+        // 但直接调 ContentResolver 的客户端可以 —— flag 只是第一道闸，delete/rename 里还有硬闸
+        var flags = if (relative.isEmpty()) 0 else
+            Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME
         if (file.isDirectory) {
             flags = flags or Document.FLAG_DIR_SUPPORTS_CREATE
         } else {

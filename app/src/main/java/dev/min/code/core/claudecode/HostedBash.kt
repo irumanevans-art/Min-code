@@ -63,12 +63,12 @@ private val DESTRUCTIVE = listOf(
     Regex("""(?<![\w.-])git\s+checkout\b[^;&|]*\s(--|\.)(\s|$)"""),
     Regex("""(?<![\w.-])git\s+stash\s+(drop|clear)\b"""),
     Regex("""(?<![\w.-])git\s+branch\b[^;&|]*\s-D\b"""),
-    Regex("""(?<![\w.-])git\s+push\b[^;&|]*(--force|\s-f\b)"""),
+    Regex("""(?<![\w.-])git\s+push\b[^;&|]*(--force|\s-f\b|\s\+)"""),
     // 直接写块设备、递归改权限、往 /dev/null 里 mv
     Regex("""(?<![\w.-])dd\b[^;&|]*\bof="""),
     Regex(""">\s*/dev/(sd|hd|vd|nvme|mmcblk|block)"""),
-    Regex("""(?<![\w.-])(chmod|chown|chgrp)\s+(-\w*R|--recursive)"""),
-    Regex("""(?<![\w.-])mv\b[^;&|]*\s/dev/null\b"""),
+    Regex("""(?<![\w.-])(chmod|chown|chgrp)\b[^;&|]*\s(-\w*R|--recursive)\b"""),
+    Regex("""(?<![\w.-])mv\b[^;&|]*["']?/dev/null["']?\b"""),
 )
 
 /** 各版本 CLI 对「后台跑」的几种写法，原样交给 [LocalServiceIntent.shouldHost] 判断 */
@@ -154,7 +154,7 @@ internal fun hostedDenyMessage(outcome: HostOutcome, port: Int?): String = when 
         val portNote = port?.let { " · preview http://127.0.0.1:$it" }.orEmpty()
         "Min hosted this as a background service in the process table$portNote. " +
             "Do not re-run the same server command in-session; " +
-            "use the app preview slot / process table. Missing tools: apt-get install -y <pkg>."
+            "use the app preview slot / process table."
     }
 
     is HostOutcome.Died -> {

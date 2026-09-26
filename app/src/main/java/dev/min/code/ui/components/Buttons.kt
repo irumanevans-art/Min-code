@@ -165,6 +165,3 @@ fun InkIconButton(
 fun RowScope.ButtonLabel(text: String) {
     Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
 }
-
-@Suppress("unused")
-private val Dp.half: Dp get() = this / 2

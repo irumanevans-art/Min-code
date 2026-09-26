@@ -1,6 +1,7 @@
 package dev.min.code.core.claudecode
 
 import android.content.Context
+import android.util.Log
 import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.relay.RelayController
@@ -83,7 +84,7 @@ class ProotClaudeCodeLauncher(
                 linuxDir,
                 RootfsPatchOptions(nameservers = context.activeDnsServers()),
             )
-        }
+        }.onFailure { Log.w("ClaudeCodeLauncher", "rootfs patch (dns) failed", it) }
         installer.ensureRuntimeDocs(linuxDir, netSnap)
 
         // 方言不是原生时改写成本地路由地址（要挂起，所以在拼 env 之前先拿好）

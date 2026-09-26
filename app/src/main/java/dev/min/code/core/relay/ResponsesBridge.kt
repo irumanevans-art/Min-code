@@ -33,11 +33,6 @@ internal object ResponsesBridge {
                     else -> Unit
                 }
             }
-            // instructions ≈ system
-            responses.str("instructions")?.takeIf { it.isNotBlank() }?.let { sys ->
-                // system 要在最前：先攒着再重排太吵，这里直接插到 0 不方便（JsonArray 不可变），
-                // 所以在外面拼
-            }
         }
         val withSystem = responses.str("instructions")?.takeIf { it.isNotBlank() }?.let { sys ->
             buildJsonArray {

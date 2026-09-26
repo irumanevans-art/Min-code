@@ -341,13 +341,11 @@ class LocalServiceRegistry(
 
         // 诚实：先 Starting，短窗口内进程仍活（或端口已听）才升 Running
         handle.waiter = scope.launch {
-            val drainJob = launch { drainToLog(id, handle, process) }
-            val alive = awaitRunning(id, process, port)
-            if (!alive) {
-                // waitFor 会在下面处理
-            }
+            // drain 协程挂在 scope 上、靠管道 EOF 收口（进程死透后流自然关闭）。
+            // 它 cancel 不到，也别去 cancel —— 收尾前掐断会把日志尾巴丢掉
+            launch { drainToLog(id, handle, process) }
+            awaitRunning(id, process, port)
             val code = runCatching { process.waitFor() }.getOrElse { -1 }
-            drainJob.cancel()
             handles.remove(id)
             val current = _services.value.find { it.id == id }
             if (current?.stopReason == LocalServiceStopReason.UserStop ||

@@ -546,9 +546,6 @@ class PrivilegedStarter(
         }
     }
 
-    private fun shellQuote(s: String): String =
-        "'" + s.replace("'", "'\\''") + "'"
-
     companion object {
         /** API 30 以下没有无线调试配对 API，只能 USB adb 或真屏档；应用内 TLS 配对需要 31+ */
         fun supportsInAppStart(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S

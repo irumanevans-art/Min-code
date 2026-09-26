@@ -17,7 +17,20 @@ const val MAX_TOOL_RESULT_CHARS = 8 * 1024
  * 命令还在跑，卡片却不再长，像是卡住了。
  */
 fun ChatItem.ToolCall.withClippedResult(text: String?, max: Int = MAX_TOOL_RESULT_CHARS): ChatItem.ToolCall =
-    copy(result = text?.take(max), resultTotalChars = text?.length?.toLong()?.takeIf { it > max })
+    copy(
+        result = text?.let { src ->
+            val clipped = src.take(max)
+            // 截断别落在 UTF-16 代理对中间：末尾落单的高代理退一位，emoji 不显示成替换符
+            if (src.length > max) clipped.dropDanglingHighSurrogate() else clipped
+        },
+        resultTotalChars = text?.length?.toLong()?.takeIf { it > max },
+    )
+
+/** 末尾若是落单的高代理（被截断在 emoji/生僻字中间），退掉它 */
+private fun String.dropDanglingHighSurrogate(): String {
+    if (isEmpty() || !Character.isHighSurrogate(this[length - 1])) return this
+    return substring(0, length - 1)
+}
 
 /**
  * 流式命令输出的累积器，和 [withClippedResult] 同一条规则（留头、记总长）。
@@ -35,7 +48,10 @@ class ClippedOutput(private val max: Int = MAX_TOOL_RESULT_CHARS) {
         totalChars += delta.length
         val room = max - head.length
         if (room <= 0 || delta.isEmpty()) return
-        head.append(delta, 0, minOf(room, delta.length))
+        val end = minOf(room, delta.length)
+        // 同 [withClippedResult]：不把代理对从中间攒进去
+        val piece = if (end == delta.length) delta else delta.substring(0, end).dropDanglingHighSurrogate()
+        head.append(piece)
         snapshot = head.toString()
     }
 
