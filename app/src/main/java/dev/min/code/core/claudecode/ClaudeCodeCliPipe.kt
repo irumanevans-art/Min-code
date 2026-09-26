@@ -29,8 +29,11 @@ import java.util.concurrent.TimeUnit
 class ClaudeCodeCliPipe(
     /** Manager 的作用域：写队列的消费者跑在这上面，活得和 Manager 一样久 */
     scope: CoroutineScope,
-    /** stdout 解析出来的每个事件。抛出的异常就地记日志，不让读循环停下 */
-    private val onEvent: (ClaudeCodeEvent) -> Unit,
+    /**
+     * stdout 解析出来的每个事件，带上吐出它的那个进程。抛出的异常就地记日志，不让读循环停下。
+     * 进程身份要传出去：换档时旧进程的读循环还活着，它的回调不能被答进新进程的 stdin。
+     */
+    private val onEvent: (ClaudeCodeEvent, Process) -> Unit,
     /** stderr 的一行；[current] = 发出它的就是当前这个进程（换档时旧进程的遗言不算） */
     private val onStderr: (line: String, current: Boolean) -> Unit,
     /** 读 stdout 本身失败了（不是主动停止造成的） */
@@ -57,8 +60,10 @@ class ClaudeCodeCliPipe(
         }
     }
 
+    /** 当前这个进程。换档时旧进程的读循环还活着，调用方靠它判断事件是不是来自当前进程 */
     @Volatile
-    private var process: Process? = null
+    var process: Process? = null
+        private set
 
     @Volatile
     private var writer: OutputStreamWriter? = null
@@ -140,7 +145,7 @@ class ClaudeCodeCliPipe(
                     }
                     events.forEach { event ->
                         try {
-                            onEvent(event)
+                            onEvent(event, proc)
                         } catch (e: Exception) {
                             Log.e(TAG, "failed to dispatch $event", e)
                         }

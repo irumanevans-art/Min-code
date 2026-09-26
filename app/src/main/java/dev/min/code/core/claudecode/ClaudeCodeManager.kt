@@ -381,7 +381,7 @@ class ClaudeCodeManager(
     /** 进程的两头：读 stdout / stderr、串行写 stdin、先礼后兵地关。状态怎么变仍在这里决定 */
     private val cli: ClaudeCodeCliPipe = ClaudeCodeCliPipe(
         scope = scope,
-        onEvent = { dispatch(it) },
+        onEvent = { event, fromProcess -> dispatch(event, fromProcess) },
         onStderr = ::onStderrLine,
         onReadFailure = { e ->
             controls.failAll("读取 CLI 输出失败")
@@ -670,7 +670,7 @@ class ClaudeCodeManager(
     @Volatile
     private var replaying = false
 
-    private fun dispatch(event: ClaudeCodeEvent) {
+    private fun dispatch(event: ClaudeCodeEvent, fromProcess: Process) {
         when (event) {
             // CLI 每一轮都会重发 system/init，不能每次都往聊天流里塞一条「会话已建立」——
             // 模型和工具数放到顶栏副标题即可，这里只在第一次或模型变了时提示
@@ -956,7 +956,7 @@ class ClaudeCodeManager(
 
             is ClaudeCodeEvent.ControlCancel -> onCliWithdrew(event.requestId)
 
-            is ClaudeCodeEvent.HookCallback -> answerSubagentHook(event)
+            is ClaudeCodeEvent.HookCallback -> answerSubagentHook(event, fromProcess)
 
             is ClaudeCodeEvent.Result -> {
                 // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
@@ -1165,10 +1165,17 @@ class ClaudeCodeManager(
         if (thread.running && subagentHooksArmed && current.status == SessionStatus.Running) {
             val itemId = newId()
             subagentInbox.post(SubagentLetter(itemId, agentId, trimmed))
+            // 判 running 用的是上面那份旧快照。post 与那次判断之间，读循环可能已经处理了
+            // 它的收尾并 takeAll —— 那时箱子里还没有这封信，于是它永远等不到下一次投递。
+            // 投完再核对一次：已经不在箱子里，就说明那次收尾错过了它
+            val raced = !subagentInbox.holds(setOf(itemId))
             val bubble = ChatItem.UserText(
                 itemId,
                 trimmed,
-                handoff = ChatItem.Handoff(thread.agentType, ChatItem.HandoffState.Waiting),
+                handoff = ChatItem.Handoff(
+                    thread.agentType,
+                    if (raced) ChatItem.HandoffState.Undelivered else ChatItem.HandoffState.Waiting,
+                ),
             )
             _state.update { st ->
                 st.copy(items = st.items.mapToolCallDeep(toolUseId) { it.copy(subItems = it.subItems + bubble) })
@@ -1202,7 +1209,13 @@ class ClaudeCodeManager(
      * CLI 在等（超时 10 s，见 SubagentInbox.kt），主线程的工具调用也会过这里（回 `{}`）。
      * CLI 已经撤回这次回调的话信没递出去，放回收件箱等下一次。
      */
-    private fun answerSubagentHook(event: ClaudeCodeEvent.HookCallback) {
+    private fun answerSubagentHook(event: ClaudeCodeEvent.HookCallback, fromProcess: Process) {
+        // 换档窗口里旧进程的读循环还活着：它的回调不能答进**新**进程的 stdin
+        // （request_id 对不上，气泡还会被误标「已送达」）。照托管 deny 那条的进程身份检查
+        if (cli.process != fromProcess) {
+            Log.i(TAG, "hook callback from a replaced process ignored")
+            return
+        }
         val answer = subagentInbox.answer(event.callbackId, parseSubagentHookInput(event.input))
         val sent = answerCli(event.requestId, encodeClaudeCodeControlSuccess(event.requestId, answer.output))
         if (answer.delivered.isEmpty()) return
@@ -1661,17 +1674,7 @@ class ClaudeCodeManager(
         val received = _withdrawnMessages.subscriptionCount.value > 0 &&
             _withdrawnMessages.tryEmit(draft)
         if (received) return
-        val sessionId = _state.value.sessionId ?: return
-        val existing = drafts.load(sessionId)
-        val mergedText = when {
-            draft.text.isBlank() -> existing.text
-            existing.text.isBlank() -> draft.text
-            else -> draft.text + "\n" + existing.text
-        }
-        drafts.save(
-            sessionId,
-            existing.copy(text = mergedText, images = draft.images + existing.images),
-        )
+        persistDraft(draft)
     }
 
     /**
@@ -1683,6 +1686,33 @@ class ClaudeCodeManager(
      *
      * **必须在 [shutdown] 之前调用**：shutdown 会 `sendQueue.clear()`，之后再捞就只剩空队列。
      */
+    /**
+     * teardown 清队列之前，把还没被模型看见的消息落进草稿盘。
+     *
+     * [dispose]（通知「停止全部」、关会话）和 [onCliExit]（进程崩溃）都不走 [refundHeldMessages]：
+     * 前者没有输入框可退，后者连 held 都捞不着。直接 [ClaudeCodeSendQueue.clear] 的话，
+     * 这些话连 [emitWithdrawn] 的磁盘兜底都不经过，重开这个会话就没了。
+     * 这里只落盘、不发 [withdrawnMessages]：teardown 时没有订阅者，发了也是蒸发。
+     */
+    private fun persistStrandedQueue() {
+        val stranded = sendQueue.drain()
+        if (stranded.isEmpty()) return
+        stranded.asReversed().forEach { persistDraft(it.toComposerDraft()) }
+        stashShellContext(stranded.joinToString("\n") { it.shellContext }.trim())
+    }
+
+    /** 把一份草稿按 [emitWithdrawn] 的合并规则写进草稿盘，不经过订阅者那一路 */
+    private fun persistDraft(draft: ComposerDraft) {
+        val sessionId = _state.value.sessionId ?: return
+        val existing = drafts.load(sessionId)
+        val mergedText = when {
+            draft.text.isBlank() -> existing.text
+            existing.text.isBlank() -> draft.text
+            else -> draft.text + "\n" + existing.text
+        }
+        drafts.save(sessionId, existing.copy(text = mergedText, images = draft.images + existing.images))
+    }
+
     private fun refundHeldMessages(note: String) {
         val stranded = sendQueue.drainHeld()
         if (stranded.isEmpty()) return
@@ -2509,7 +2539,8 @@ class ClaudeCodeManager(
                 )
                 replaying = true
                 try {
-                    replayed.forEach(::dispatch)
+                    // 回放来自磁盘，没有吐出它的进程；hook 回调不会出现在 transcript 里
+                    replayed.forEach { dispatch(it, fromProcess = NullProcess) }
                 } finally {
                     replaying = false
                 }
@@ -2725,7 +2756,7 @@ class ClaudeCodeManager(
         // 排队的消息跟着这个进程一起作废：留到下一个会话去发，等于把一句话
         // 塞进一个它根本不认识的上下文里
         inFlight = null
-        if (clearQueue) sendQueue.clear()
+        if (clearQueue) persistStrandedQueue()
         // 子 agent 跟着进程一起没了（续会话也不会把它们接回来），没递出去的话要说一声
         subagentHooksArmed = false
         abandonSubagentMail(subagentInbox.drain())
@@ -2751,6 +2782,19 @@ class ClaudeCodeManager(
 
     companion object {
         private const val TAG = "ClaudeCodeManager"
+
+        /**
+         * 回放 transcript 时没有吐出事件的进程。hook 回调不进 transcript，
+         * 所以这个占位永远不会被拿去和当前进程比较；它也不该真的去起一个系统进程。
+         */
+        private val NullProcess: Process = object : Process() {
+            override fun getOutputStream(): java.io.OutputStream = java.io.OutputStream.nullOutputStream()
+            override fun getInputStream(): java.io.InputStream = java.io.InputStream.nullInputStream()
+            override fun getErrorStream(): java.io.InputStream = java.io.InputStream.nullInputStream()
+            override fun waitFor(): Int = 0
+            override fun exitValue(): Int = 0
+            override fun destroy() = Unit
+        }
 
         /** get_context_usage 的超时，见 fetchUsage */
         private const val USAGE_TIMEOUT_MS = 20_000L

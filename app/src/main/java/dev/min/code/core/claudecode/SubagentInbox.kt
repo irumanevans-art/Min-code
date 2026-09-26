@@ -103,6 +103,17 @@ internal class SubagentInbox {
     @Synchronized
     fun takeAll(agentId: String): List<SubagentLetter> = letters.remove(agentId).orEmpty()
 
+    /**
+     * 这批信是不是还在箱子里。
+     *
+     * [sendToSubagent] 用一份旧快照判断「还在跑」再 [post]，而读循环可能正好在这两步之间
+     * 处理了它的收尾、把那一格 [takeAll] 走。post 之后再问一次：已经不在的，就是那次收尾
+     * 没看见的，调用方负责改判没送到，而不是让它悬到进程退出。
+     */
+    @Synchronized
+    fun holds(itemIds: Set<String>): Boolean =
+        letters.values.flatten().any { it.itemId in itemIds }
+
     /** 会话停了 / 进程退出：所有没递出去的 */
     @Synchronized
     fun drain(): List<SubagentLetter> = letters.values.flatten().also { letters.clear() }

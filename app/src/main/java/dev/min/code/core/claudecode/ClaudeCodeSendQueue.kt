@@ -78,6 +78,19 @@ internal class ClaudeCodeSendQueue<T> {
         }
     }
 
+    /**
+     * 取出全部并清空：held 在前、handedOff 在后，各自保序。
+     *
+     * 给 teardown 用。[clear] 是直接丢掉，而进程被停掉时这两格里的话用户都打过、
+     * 模型都还没看见，该交给落盘兜底而不是蒸发。
+     */
+    fun drain(): List<T> = synchronized(lock) {
+        val all = held.toList() + handedOff.toList()
+        held.clear()
+        handedOff.clear()
+        all
+    }
+
     /** 进程没了，队列跟着作废 */
     fun clear() {
         synchronized(lock) {
