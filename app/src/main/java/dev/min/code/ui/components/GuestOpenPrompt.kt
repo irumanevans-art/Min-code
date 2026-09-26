@@ -19,8 +19,6 @@ import dev.min.code.core.browser.GuestOpenInbox
 import dev.min.code.core.browser.GuestOpenTarget
 import dev.min.code.core.browser.guestOpenDisplayUrl
 import dev.min.code.core.browser.guestOpenTarget
-import dev.min.code.ui.nav.LocalNavController
-import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.util.LocalPreviewBus
 import org.koin.compose.koinInject
@@ -30,7 +28,7 @@ import org.koin.compose.koinInject
  * 请求可能从会话页（agent 跑的）、终端页（人敲的）或任何别的页面上来，卡片得在哪都看得见。
  *
  * **点一下才打开，从不自动打开** —— 发起者可能是 agent，它一句命令就能在用户手机上打开任意网页。
- * 点「打开」时本机地址进预览槽（预览槽只长在会话页，所以顺手把会话页翻到前面），
+ * 点「打开」时本机地址进预览槽（经 [LocalPreviewBus]：翻回会话页、收掉抽屉和面板再展开），
  * 外网走外部浏览器的 Custom Tab（见 [openInExternalBrowser] 的头注释：登录页绝不能进预览槽的 WebView）。
  */
 @Composable
@@ -40,7 +38,6 @@ fun GuestOpenPrompt() {
     val request = queue.showing ?: return
     val context = LocalContext.current
     val toaster = LocalToaster.current
-    val navigator = LocalNavController.current
 
     InkDialog(
         onDismissRequest = inbox::resolve,
@@ -55,11 +52,9 @@ fun GuestOpenPrompt() {
                     // 先收卡再开：外部浏览器是另一个 Activity，卡片留着等回来没有意义
                     inbox.resolve()
                     when (val target = guestOpenTarget(request.url)) {
-                        is GuestOpenTarget.Preview -> {
-                            // 预览槽只长在会话页；人可能正在独立的终端页上
-                            navigator.clearAndNavigate(Screen.Session)
-                            LocalPreviewBus.offer(target.url)
-                        }
+                        // 翻回会话页、收抽屉由总线另一头负责（MainActivity 根部、ClaudeCodePage），
+                        // 和终端里点本机链接走的是同一条路
+                        is GuestOpenTarget.Preview -> LocalPreviewBus.offer(target.url)
                         is GuestOpenTarget.External -> {
                             if (!context.openInExternalBrowser(target.url)) {
                                 toaster.show(context.getString(R.string.guest_open_no_browser), ToastType.Error)

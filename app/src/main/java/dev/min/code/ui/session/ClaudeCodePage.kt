@@ -522,14 +522,22 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onRefresh = vm::refreshNetworkSnapshot,
             onStopService = vm::stopLocalService,
             onToggleLog = vm::toggleServiceLog,
-            onOpenPreview = { url ->
-                showRuntime = false
-                // 要看的是会话页上的预览位，抽屉得让开
-                afterSidebarNav()
-                // 进程表「打开」= 按预览位键，不是第二套 WebView
-                vm.openPreview(url)
-            },
+            // 进程表「打开」= 按预览位键，不是第二套 WebView；这张表和抽屉由下面的让位统一收掉
+            onOpenPreview = vm::openPreview,
         )
+    }
+
+    // 预览位一展开，会话页上盖着的东西一律让开：「系统」下一层的面板收掉、抽屉关上。
+    // 预览是会话页的东西 —— 人点「打开」（进程表、rootfs 开网页那张卡、终端里的本机链接）是要看它，
+    // 关掉预览该落在会话页上，而不是露出一个停在「系统」页的抽屉（抽屉一关，「系统」页也跟着回第一层）。
+    // 挂在展开这个状态上而不是各个入口：展开只可能是人点的（见 PreviewSlot），
+    // 从终端页翻回来时会话页是重新组合的，状态在、入口的回调早没了。权限 / 提问面板不动，那是在等人答
+    LaunchedEffect(previewSlot.expanded) {
+        if (!previewSlot.expanded) return@LaunchedEffect
+        showRuntime = false
+        showMaintenance = false
+        showPlan = false
+        afterSidebarNav()
     }
 
     // 预览位展开：关掉只藏，url 仍在 slot 里，铬件键可再开
