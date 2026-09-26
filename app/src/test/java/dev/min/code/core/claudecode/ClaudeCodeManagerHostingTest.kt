@@ -179,4 +179,55 @@ class ClaudeCodeManagerHostingTest {
             assertTrue(answers(h.process).isEmpty())
         }
     }
+
+    /** 要删东西的命令不替用户跑：照常挂权限卡，批不批由人定，批了由 CLI 自己跑 */
+    @Test
+    fun `a destructive background command is left to the permission sheet`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake()
+            h.process.holdTurns = true
+            h.manager.send("clean and start")
+            h.awaitState("busy") { it.busy }
+            h.process.emit(canUseTool("""rm -rf "$(pwd)"/dist && npm run dev &"""))
+            val s = h.awaitState("权限卡") { it.pendingPermission != null }
+            assertEquals(toolUseId, s.pendingPermission?.toolUseId)
+            assertTrue(h.services.started.isEmpty())
+        }
+    }
+
+    /**
+     * bypass 下 tool_use 一到就托管，那时 CLI 的权限请求（2.1.281 起危险删除在 bypass 下也要批）还没来。
+     * 要删东西的不能在这里被 Min 先跑掉；普通的照旧托管。
+     */
+    @Test
+    fun `in bypass a destructive command is not hosted ahead of the CLI's own check`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake(ClaudeCodeManager.SessionOptions(skipPermissions = true))
+            h.process.holdTurns = true
+            h.manager.send("go")
+            h.awaitState("busy") { it.busy }
+            fun toolUse(id: String, command: String) = buildJsonObject {
+                put("type", "assistant")
+                put("message", buildJsonObject {
+                    put("content", kotlinx.serialization.json.buildJsonArray {
+                        add(buildJsonObject {
+                            put("type", "tool_use")
+                            put("id", id)
+                            put("name", "Bash")
+                            put("input", buildJsonObject {
+                                put("command", command)
+                                put("run_in_background", true)
+                            })
+                        })
+                    })
+                })
+            }.toString()
+            h.process.emit(toolUse("toolu_rm", """rm -rf "$(pwd)"/dist && npm run dev &"""))
+            h.process.emit(toolUse("toolu_ok", "npm run dev &"))
+            h.awaitCondition("普通的那条托管了") { h.services.started.isNotEmpty() }
+            // 托管是异步起的：给先到的那条留足时间，免得它其实被托管了只是还没登记
+            delay(300)
+            assertEquals(listOf("npm run dev"), h.services.started.toList())
+        }
+    }
 }

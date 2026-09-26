@@ -27,10 +27,49 @@ internal data class HostedBashPlan(val command: String, val port: Int?)
 internal fun hostedBashPlan(input: JsonObject): HostedBashPlan? {
     val raw = input["command"].asStringOrNull().orEmpty().trim()
     if (raw.isEmpty()) return null
+    if (looksDestructive(raw)) return null
     if (!LocalServiceIntent.shouldHost(raw, bashFlags(input))) return null
     val cleaned = LocalServiceIntent.stripBackgroundNoise(raw)
     return HostedBashPlan(cleaned, LocalServiceIntent.guessPort(cleaned))
 }
+
+/**
+ * 这条命令里有没有删东西 / 毁东西的动作（`rm`、`find -delete`、`git clean`、`dd of=` ……）。
+ * 有就不托管，交回 CLI 自己的流程。
+ *
+ * 为什么：托管 = Min 自己把命令跑掉。CLI 2.1.281 起，就算在 bypass / auto 下，`rm -rf "$(pwd)"`
+ * 这类危险删除也要先发 can_use_tool 等人批准；而 bypass 下 Min 在 tool_use 帧一到就托管
+ * （[hostedBashPlan] 的无闸门那一路），那时 CLI 的权限请求还没来 ——
+ * `rm -rf dist && npm run dev &` 会在用户点批准之前就被 Min 跑掉，等于替 CLI 绕过了它的安全检查。
+ * 要审批的模式下同理：托管那一路会吞掉权限卡，用户根本看不到这条要删东西。
+ *
+ * 只看字面、宁可错杀：`echo rm` 也算。错杀的代价只是这条命令不进进程表、由 CLI 自己跑
+ * （少一个预览位），漏放的代价是没经批准就删了用户的文件。
+ */
+internal fun looksDestructive(command: String): Boolean = DESTRUCTIVE.any { it.containsMatchIn(command) }
+
+/**
+ * [looksDestructive] 认的动作。`(?<![\w.-])` 让 `/bin/rm`、`$(rm …)`、`sudo rm` 都算，
+ * 又不把 `confirm`、`npm-rm` 这种词中间的 rm 当成命令。
+ */
+private val DESTRUCTIVE = listOf(
+    // 删、抹、格式化、截断
+    Regex("""(?<![\w.-])(rm|rmdir|unlink|shred|wipefs|mkfs(\.\w+)?|fdisk|sfdisk|parted|truncate)(?![\w-])"""),
+    // find 顺手删 / 顺手执行
+    Regex("""(?<![\w.-])find\b[^;&|]*\s-(delete|exec|execdir|ok|okdir)\b"""),
+    // git 丢工作区 / 改写历史
+    Regex("""(?<![\w.-])git\s+(clean|restore|rm)\b"""),
+    Regex("""(?<![\w.-])git\s+reset\b[^;&|]*--hard"""),
+    Regex("""(?<![\w.-])git\s+checkout\b[^;&|]*\s(--|\.)(\s|$)"""),
+    Regex("""(?<![\w.-])git\s+stash\s+(drop|clear)\b"""),
+    Regex("""(?<![\w.-])git\s+branch\b[^;&|]*\s-D\b"""),
+    Regex("""(?<![\w.-])git\s+push\b[^;&|]*(--force|\s-f\b)"""),
+    // 直接写块设备、递归改权限、往 /dev/null 里 mv
+    Regex("""(?<![\w.-])dd\b[^;&|]*\bof="""),
+    Regex(""">\s*/dev/(sd|hd|vd|nvme|mmcblk|block)"""),
+    Regex("""(?<![\w.-])(chmod|chown|chgrp)\s+(-\w*R|--recursive)"""),
+    Regex("""(?<![\w.-])mv\b[^;&|]*\s/dev/null\b"""),
+)
 
 /** 各版本 CLI 对「后台跑」的几种写法，原样交给 [LocalServiceIntent.shouldHost] 判断 */
 private fun bashFlags(input: JsonObject): Map<String, Any?> {
