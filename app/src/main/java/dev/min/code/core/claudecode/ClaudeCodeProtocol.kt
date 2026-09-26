@@ -1216,6 +1216,11 @@ private val NOISE_SYSTEM_SUBTYPES = setOf(
     "hook_response", "mcp_status", "memory_recall", "memory_saved", "message_rated",
     "code_change_published", "file_suggestions", "apply_flag_settings", "away_summary",
     "feedback_draft_queued",
+    // 2.1.273–283 新增 / 对照过的四个，schema 里都是 @internal 且没有给人看的字段：
+    // per_turn_effort_changed 只报「不再逐轮发 effort」（缓存前缀的事）；session_metadata 是云端
+    // artifacts 列表；peer_message_hold 是跨会话消息（Remote Control / socket）的扣留状态；
+    // turn_preempted 只发给 initialize 里声明了 rapidFollowupPreempt 的宿主，Min 没声明
+    "per_turn_effort_changed", "session_metadata", "peer_message_hold", "turn_preempted",
 )
 
 private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent> {

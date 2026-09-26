@@ -630,6 +630,18 @@ class ClaudeCodeProtocolTest {
 
     // region system 帧：用户可见的那几条不能再被丢掉
 
+    /** 2.1.283 新出现的内部帧，形状取自 schema；没有展示价值，不进聊天流也不进状态条 */
+    @Test
+    fun `internal system frames added up to 2_1_283 stay out of the chat`() {
+        listOf(
+            """{"type":"system","subtype":"per_turn_effort_changed","per_turn_effort_active":false,"uuid":"u","session_id":"s"}""",
+            """{"type":"system","subtype":"session_metadata","metadata":{"artifacts":null},"uuid":"u","session_id":"s"}""",
+            """{"type":"system","subtype":"peer_message_hold","state":"held","lane":"socket","from":"x","uuid":"u","session_id":"s"}""",
+            """{"type":"system","subtype":"turn_preempted","reason":"rapid_followup","preempted_by_uuid":"a",""" +
+                """"preempted_message_uuids":[],"uuid":"u","session_id":"s"}""",
+        ).forEach { line -> assertTrue(line, parseClaudeCodeEvents(line).isEmpty()) }
+    }
+
     /**
      * 这些帧的人类可读文案**不在 `text`/`message` 里**，字段名各不相同。
      * 旧实现只看 text/message，于是中转站报错、模型被换掉、斜杠命令输出全都无声无息。
