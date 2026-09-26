@@ -15,8 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.ui.session.AssistantEntry
-import dev.min.code.ui.session.CollapseWorkFooter
-import dev.min.code.ui.session.CollapsedWorkEntry
+import dev.min.code.ui.session.TranscriptBlockEntry
 import dev.min.code.ui.session.LocalAwaitingToolUseId
 import dev.min.code.ui.session.NoteEntry
 import dev.min.code.ui.session.ThinkingEntry
@@ -79,40 +78,14 @@ internal fun CodexTranscript(
             val isFirst = index == 0
             val isLast = index == lastIndex && !streaming && error == null
             Box {
-                when (block) {
-                    is TranscriptBlock.Single -> TranscriptItem(block.item, isFirst, isLast, labels)
-
-                    is TranscriptBlock.Work -> {
-                        // 只有"最后一块 + 还在跑"默认展开：那时候"它现在在干什么"
-                        // 正是唯一重要的事
-                        val live = session.busy && index == lastIndex
-                        val expanded = manualExpanded[block.key] ?: live
-                        if (!expanded) {
-                            CollapsedWorkEntry(
-                                items = block.items,
-                                isFirst = isFirst,
-                                isLast = isLast,
-                                onExpand = { manualExpanded[block.key] = true },
-                            )
-                        } else {
-                            Column {
-                                block.items.forEachIndexed { i, item ->
-                                    TranscriptItem(
-                                        item = item,
-                                        isFirst = isFirst && i == 0,
-                                        // 展开时块尾还挂着一条"收起"，轨道不能在这里断
-                                        isLast = false,
-                                        labels = labels,
-                                    )
-                                }
-                                CollapseWorkFooter(
-                                    isLast = isLast,
-                                    onCollapse = { manualExpanded[block.key] = false },
-                                )
-                            }
-                        }
-                    }
-                }
+                TranscriptBlockEntry(
+                    block = block,
+                    isFirst = isFirst,
+                    isLast = isLast,
+                    live = session.busy && index == lastIndex,
+                    manualExpanded = manualExpanded,
+                    labels = labels,
+                )
             }
         }
 

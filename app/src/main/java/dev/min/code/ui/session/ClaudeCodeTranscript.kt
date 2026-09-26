@@ -568,6 +568,61 @@ internal fun CollapsedWorkEntry(
     }
 }
 
+/**
+ * 会话流的一个渲染单元：单条直接画，一段工作过程按开合画成折叠行或「逐条 + 收起」。
+ *
+ * Claude 主会话、Codex 会话、子 agent 视图三处列表都走这里——开合规则
+ * （手动开合优先，没动过就跟 [live]）只写这一份。
+ *
+ * @param live 这一块正在长（最后一块且还在跑）：没手动开合过时默认展开，
+ *   那时候"它现在在干什么"正是唯一重要的事；跑完就收起来
+ * @param manualExpanded 用户手动开合过的块（key = 块内第一条的 id），由列表外面持有：
+ *   LazyColumn 会把滚出屏幕的条目连同它的 remember 一起回收
+ */
+@Composable
+internal fun TranscriptBlockEntry(
+    block: TranscriptBlock,
+    isFirst: Boolean,
+    isLast: Boolean,
+    live: Boolean,
+    manualExpanded: MutableMap<String, Boolean>,
+    labels: TranscriptLabels,
+    onRevert: ((String) -> Unit)? = null,
+) {
+    when (block) {
+        is TranscriptBlock.Single -> TranscriptItem(block.item, isFirst, isLast, labels, onRevert = onRevert)
+
+        is TranscriptBlock.Work -> {
+            val expanded = manualExpanded[block.key] ?: live
+            if (!expanded) {
+                CollapsedWorkEntry(
+                    items = block.items,
+                    isFirst = isFirst,
+                    isLast = isLast,
+                    onExpand = { manualExpanded[block.key] = true },
+                )
+            } else {
+                Column {
+                    block.items.forEachIndexed { i, item ->
+                        TranscriptItem(
+                            item = item,
+                            isFirst = isFirst && i == 0,
+                            // 展开时块尾还挂着一条"收起"，轨道不能在这里断
+                            isLast = false,
+                            labels = labels,
+                            onRevert = onRevert,
+                        )
+                    }
+                    CollapseWorkFooter(
+                        isLast = isLast,
+                        onCollapse = { manualExpanded[block.key] = false },
+                    )
+                }
+            }
+        }
+    }
+}
+
 /** 展开后挂在末尾的收起按钮。没有它就只能滑到头去找那条折叠行 */
 @Composable
 internal fun CollapseWorkFooter(isLast: Boolean, onCollapse: () -> Unit) {

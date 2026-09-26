@@ -1083,42 +1083,15 @@ private fun SessionContent(
                         )
                     }
                     Box(itemMod) {
-                        when (block) {
-                            is TranscriptBlock.Single ->
-                                TranscriptItem(block.item, isFirst, isLast, transcriptLabels, onRevert = { vm.revertToolCall(it) })
-
-                            is TranscriptBlock.Work -> {
-                                // 默认只有"最后一块 + 还在跑"才展开：那时候"它现在在干什么"
-                                // 正是唯一重要的事。跑完就收起来，手动开合优先于默认
-                                val live = session.busy && index == lastIndex
-                                val expanded = manualExpanded[block.key] ?: live
-                                if (!expanded) {
-                                    CollapsedWorkEntry(
-                                        items = block.items,
-                                        isFirst = isFirst,
-                                        isLast = isLast,
-                                        onExpand = { manualExpanded[block.key] = true },
-                                    )
-                                } else {
-                                    Column {
-                                        block.items.forEachIndexed { i, item ->
-                                            TranscriptItem(
-                                                item = item,
-                                                isFirst = isFirst && i == 0,
-                                                // 展开时块尾还挂着一条"收起"，轨道不能在这里断
-                                                isLast = false,
-                                                labels = transcriptLabels,
-                                                onRevert = { vm.revertToolCall(it) },
-                                            )
-                                        }
-                                        CollapseWorkFooter(
-                                            isLast = isLast,
-                                            onCollapse = { manualExpanded[block.key] = false },
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        TranscriptBlockEntry(
+                            block = block,
+                            isFirst = isFirst,
+                            isLast = isLast,
+                            live = session.busy && index == lastIndex,
+                            manualExpanded = manualExpanded,
+                            labels = transcriptLabels,
+                            onRevert = { vm.revertToolCall(it) },
+                        )
                     }
                 }
                 if (streaming) {
