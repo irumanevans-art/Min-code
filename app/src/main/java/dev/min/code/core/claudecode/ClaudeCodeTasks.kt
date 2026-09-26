@@ -30,6 +30,44 @@ internal fun List<TaskInfo>.withTaskEvent(event: ClaudeCodeEvent.TaskEvent, now:
         lastToolName = event.lastToolName ?: existing?.lastToolName,
         summary = event.summary ?: existing?.summary,
         error = event.error ?: existing?.error,
-    )
+    ).let { it.copy(endedAt = if (it.isRunning) null else existing?.endedAt ?: now) }
     return if (existing == null) this + merged else map { if (it.id == merged.id) merged else it }
 }
+
+/**
+ * 拿 `background_tasks_changed` 的整表对账。
+ *
+ * - 表里在跑、标着后台、却不在 [live] 里的：CLI 说它已经不活了，就地判成结束。
+ *   真正的结局（completed / failed / killed）若随 task_notification 到，那一帧会盖掉这里的猜测；
+ *   没到（协议不保证每种结束都有通知）也不会留下一个永远在跑的幽灵。
+ * - [live] 里有、表里没有的：补一条在跑的后台任务。task_started 迟到或丢了也能数对。
+ * - 两边都有的：只补上「在后台」这个事实，状态不回滚 —— 通知说结束了就是结束了，
+ *   不能被一张先于它发出的整表拉回「在跑」。
+ * - 前台任务（backgrounded = false）不归这张表管，原样不动。
+ */
+internal fun List<TaskInfo>.reconciledWith(
+    live: List<ClaudeCodeEvent.BackgroundTasksChanged.LiveTask>,
+    now: Long,
+): List<TaskInfo> {
+    val liveIds = live.mapTo(HashSet()) { it.taskId }
+    val known = mapTo(HashSet()) { it.id }
+    val updated = map { task ->
+        when {
+            task.id in liveIds -> if (task.backgrounded) task else task.copy(backgrounded = true)
+            task.isRunning && task.backgrounded -> task.copy(status = "completed", endedAt = now)
+            else -> task
+        }
+    }
+    val added = live.filter { it.taskId !in known }.map {
+        TaskInfo(
+            id = it.taskId,
+            description = it.description.orEmpty(),
+            taskType = it.taskType,
+            startedAt = now,
+            status = "running",
+            backgrounded = true,
+        )
+    }
+    return updated + added
+}
+

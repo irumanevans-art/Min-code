@@ -897,6 +897,24 @@ class ClaudeCodeProtocolTest {
         assertEquals("toolu_9", done.toolUseId)
     }
 
+    /** 整表替换语义：空表也要发出来（= 一个都不活了），不能当成噪声丢掉 */
+    @Test
+    fun `background tasks changed lists every live task, including none`() {
+        val e = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"background_tasks_changed","tasks":[
+               {"task_id":"b1","task_type":"local_bash","description":"npm run dev"},
+               {"task_id":"a1","task_type":"local_agent","description":"survey","ambient":true}],
+               "uuid":"u","session_id":"s"}"""
+        ).single() as ClaudeCodeEvent.BackgroundTasksChanged
+        assertEquals(listOf("b1", "a1"), e.tasks.map { it.taskId })
+        assertEquals("local_bash", e.tasks[0].taskType)
+        assertEquals("npm run dev", e.tasks[0].description)
+        val empty = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"u","session_id":"s"}"""
+        ).single() as ClaudeCodeEvent.BackgroundTasksChanged
+        assertEquals(emptyList<ClaudeCodeEvent.BackgroundTasksChanged.LiveTask>(), empty.tasks)
+    }
+
     @Test
     fun `task progress carries usage and last tool`() {
         val e = parseClaudeCodeEvents(

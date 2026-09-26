@@ -285,6 +285,8 @@ class ClaudeCodeManager(
         val outputFile: String? = null,
         /** Min 第一次见到它的时刻：CLI 不给开始时间，运行时长由此自己算 */
         val startedAt: Long = 0L,
+        /** Min 看到它不再运行的时刻；还在跑是 null。结束后的运行时长定格在这里 */
+        val endedAt: Long? = null,
         /** pending / running / completed / failed / killed / paused */
         val status: String = "running",
         val backgrounded: Boolean = false,
@@ -798,6 +800,11 @@ class ClaudeCodeManager(
             is ClaudeCodeEvent.TaskEvent -> {
                 val now = System.currentTimeMillis()
                 _state.update { it.copy(tasks = it.tasks.withTaskEvent(event, now)) }
+            }
+
+            is ClaudeCodeEvent.BackgroundTasksChanged -> {
+                val now = System.currentTimeMillis()
+                _state.update { it.copy(tasks = it.tasks.reconciledWith(event.tasks, now)) }
             }
 
             is ClaudeCodeEvent.ToolUse -> {

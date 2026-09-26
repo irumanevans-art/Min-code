@@ -53,4 +53,15 @@ class ClaudeCodeManagerTasksTest {
             assertTrue(s.tasks.isEmpty())
         }
     }
+
+    /** 整表里没有它了 = CLI 说它不活了；没等到 task_notification 也不能留着在跑 */
+    @Test
+    fun `an empty live set ends a background shell`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startWithShell()
+            h.process.emit("""{"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"u","session_id":"s"}""")
+            val s = h.awaitState("对账") { s -> s.tasks.none { it.isRunning } }
+            assertTrue(s.tasks.single().endedAt != null)
+        }
+    }
 }
