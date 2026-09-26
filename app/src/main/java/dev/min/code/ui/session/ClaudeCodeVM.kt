@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -19,7 +21,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import dev.min.code.R
+import dev.min.code.core.claudecode.BackgroundShell
 import dev.min.code.core.claudecode.ClaudeCodeConfigStore
+import dev.min.code.core.claudecode.OutputTail
+import dev.min.code.core.claudecode.backgroundShells
+import dev.min.code.core.claudecode.readShellOutput
 import dev.min.code.core.claudecode.ClaudeCodeCostLedger
 import dev.min.code.core.claudecode.ClaudeCodeImage
 import dev.min.code.core.claudecode.ClaudeCodeInstaller
@@ -397,6 +403,32 @@ class ClaudeCodeVM(
 
     fun stopLocalService(id: String) {
         localServices.stop(id, LocalServiceStopReason.UserStop)
+    }
+
+    /**
+     * 本会话的后台 shell（CLI 的 + 进程表里本会话托管的），底栏「N shell」和它的面板读这一份。
+     * 为什么两处合一、bypass 下的孪生怎么认，见 [backgroundShells]。
+     */
+    internal val backgroundShells: StateFlow<List<BackgroundShell>> = combine(session, localServices.services) { s, services ->
+        backgroundShells(s.tasks, s.items, services, s.sessionId)
+    }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 读一次某个后台 shell 的输出尾巴（面板在跑时轮询它） */
+    internal suspend fun readShellOutput(shell: BackgroundShell): OutputTail? = withContext(Dispatchers.IO) {
+        readShellOutput(shell, workspaceRepository.workspaceDir(), session.value.sessionId, localServices::logOf)
+    }
+
+    /**
+     * 停掉一个后台 shell，各走各的路：CLI 的发 stop_task，托管的（含 bypass 下的孪生）停进程表。
+     * 失败返回给用户看的那句话。
+     */
+    internal suspend fun stopBackgroundShell(shell: BackgroundShell): String? {
+        shell.hostedServiceId?.let { localServices.stop(it, LocalServiceStopReason.UserStop) }
+        val taskId = shell.cliTaskId ?: return null
+        return registry.active()?.stopTask(taskId)
     }
 
     fun logOf(id: String): String = localServices.logOf(id)

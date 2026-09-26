@@ -975,7 +975,8 @@ private fun SessionContent(
             session.applyingEffort ||
             session.status == SessionStatus.Starting ||
             session.retryNotice != null ||
-            session.runningTasks.isNotEmpty()
+            // 后台 shell 不算「这一轮在跑」：它们跨轮活着，归底栏的「N shell」管
+            session.runningTasks.any { !it.isShell }
     )
 
     // 连续的思考/工具活动折成块，跑完自动收起（见 [TranscriptBlock]）。
@@ -1000,6 +1001,9 @@ private fun SessionContent(
 
     // 终端浮层。和会话同一个 rootfs 里的真 bash，见 [ClaudeCodeTerminalSheet]
     var showTerminal by rememberSaveable { mutableStateOf(false) }
+    // 底栏「N shell」点开的面板。按会话记：换了会话不该还开着上一个会话的 shell
+    var showShells by rememberSaveable(activeKey) { mutableStateOf(false) }
+    val shells by vm.backgroundShells.collectAsStateWithLifecycle()
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
 
@@ -1291,6 +1295,13 @@ private fun SessionContent(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
                     )
                 }
+                SessionTaskStrip(
+                    shellCount = shells.count { it.isRunning },
+                    onOpenShells = {
+                        focusManager.clearFocus()
+                        showShells = true
+                    },
+                )
                 // 有子 agent 时才出现（S 的任务条合进来后挂到它的 leading 槽）
                 AgentSwitcher(
                     threads = switcherThreads(agentThreads, selectedAgent),
@@ -1348,6 +1359,15 @@ private fun SessionContent(
             command = command,
             vm = vm,
             onDismiss = { configCommand = null },
+        )
+    }
+
+    if (showShells) {
+        BackgroundShellSheet(
+            shells = shells,
+            onDismiss = { showShells = false },
+            readOutput = vm::readShellOutput,
+            onStop = vm::stopBackgroundShell,
         )
     }
 
@@ -1414,7 +1434,7 @@ private fun LiveTurnEntry(
     isLast: Boolean,
 ) {
     val starting = session.status == SessionStatus.Starting
-    val tasks = session.runningTasks
+    val tasks = session.runningTasks.filterNot { it.isShell }
     val retry = session.retryNotice
     val runningTool = session.items
         .asReversed()

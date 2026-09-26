@@ -506,6 +506,8 @@ fun InkTopBar(
 
 /**
  * 小 chip：纸底、hairline、海色的字。给顶栏 / 抽屉里的次级切换用。
+ *
+ * [leading] 换掉图标位：要放会动的记号（会话底栏「1 shell」前那粒呼吸的点）时用它。
  */
 @Composable
 fun PanelChip(
@@ -513,6 +515,7 @@ fun PanelChip(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    leading: (@Composable () -> Unit)? = null,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val scheme = MaterialTheme.colorScheme
@@ -533,7 +536,11 @@ fun PanelChip(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (icon != null) Icon(icon, null, Modifier.size(14.dp).seaInk(), tint = Color.Black)
+        if (leading != null) {
+            leading()
+        } else if (icon != null) {
+            Icon(icon, null, Modifier.size(14.dp).seaInk(), tint = Color.Black)
+        }
         Text(
             label,
             style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, lineHeight = 14.sp),

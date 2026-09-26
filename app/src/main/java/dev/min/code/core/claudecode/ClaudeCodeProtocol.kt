@@ -278,6 +278,15 @@ sealed interface ClaudeCodeEvent {
         val summary: String? = null,
         val error: String? = null,
     ) : ClaudeCodeEvent
+
+    /**
+     * `background_tasks_changed`：此刻**所有**还活着的后台任务。CLI 原话是 REPLACE 语义
+     * （"swap your set for this payload"），成员一变（起、完、被杀、前台转后台）就整表发一次。
+     * 拿它和 [TaskEvent] 攒出来的表对账：漏掉的 task_notification 不会留下幽灵。
+     */
+    data class BackgroundTasksChanged(val tasks: List<LiveTask>) : ClaudeCodeEvent {
+        data class LiveTask(val taskId: String, val taskType: String?, val description: String?)
+    }
 }
 
 /**
@@ -936,8 +945,10 @@ fun encodeClaudeCodeControlSuccess(requestId: String, payload: JsonObject): Stri
 }.toString()
 
 /**
- * 停掉一个任务（后台 shell / 子 agent，前台的也行）。应答是空对象；任务找不到或已经结束也算成功。
+ * 停掉一个任务（后台 shell / 子 agent / Monitor，前台的也行）。成功应答是空 payload；
+ * 任务不存在或已经结束时 CLI 回 error（`stop_task: …` / not_running / not_found）。
  * 被停的子 agent 会把已有的部分结果作为 tool_result 交回主线程，主线程接着跑。
+ * 没有列任务、读输出的控制请求：列表靠 task_* 帧与 background_tasks_changed，输出直接读文件。
  */
 fun encodeClaudeCodeStopTask(requestId: String, taskId: String): String =
     controlRequest(requestId, "stop_task", buildJsonObject { put("task_id", taskId) })
@@ -1255,7 +1266,7 @@ internal fun compactSummaryNote(text: String): String {
 private val NOISE_SYSTEM_SUBTYPES = setOf(
     "thinking_tokens", "turn_duration", "post_turn_summary", "thinking",
     "control_request_progress",
-    "background_tasks", "background_tasks_changed",
+    "background_tasks",
     "commands_changed", "file_snapshot", "files_persisted", "seed_read_state",
     "session_state_changed", "vcs_state_changed", "hook_started", "hook_progress",
     "hook_response", "mcp_status", "memory_recall", "memory_saved", "message_rated",
@@ -1330,6 +1341,23 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
                     durationMs = usage?.long("duration_ms"),
                     lastToolName = obj.str("last_tool_name"),
                     summary = obj.str("summary"),
+                )
+            )
+        }.orEmpty()
+
+        // {tasks:[{task_id, task_type, description, ambient?}]}：整表替换（2.1.280 的二进制里已有）
+        "background_tasks_changed" -> obj.arr("tasks")?.let { list ->
+            listOf(
+                ClaudeCodeEvent.BackgroundTasksChanged(
+                    list.mapNotNull { item ->
+                        val task = item as? JsonObject ?: return@mapNotNull null
+                        val id = task.str("task_id") ?: return@mapNotNull null
+                        ClaudeCodeEvent.BackgroundTasksChanged.LiveTask(
+                            taskId = id,
+                            taskType = task.str("task_type"),
+                            description = task.str("description"),
+                        )
+                    }
                 )
             )
         }.orEmpty()

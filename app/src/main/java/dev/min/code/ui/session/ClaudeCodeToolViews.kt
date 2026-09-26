@@ -239,8 +239,13 @@ internal fun toolSummary(name: String, input: JsonObject, labels: TranscriptLabe
         }.trim()
     }
     val raw = when (name) {
-        "Bash" -> str("description") ?: str("command") ?: ""
-        "BashOutput", "KillShell" -> str("shell_id") ?: ""
+        // Monitor（2.1.277+）是一条一直盯着的命令，入参和 Bash 同形：description + command
+        "Bash", "Monitor" -> str("description") ?: str("command") ?: ""
+        "BashOutput" -> str("shell_id") ?: str("bash_id") ?: ""
+        // 2.1.277 起停止工具叫 TaskStop（KillShell / KillBash 是它的别名），入参 task_id，旧的 shell_id 仍收
+        "TaskStop", "KillShell", "KillBash" -> str("task_id") ?: str("shell_id") ?: ""
+        // 2.1.277 已移除；旧会话回放里还会出现
+        "TaskOutput" -> str("task_id") ?: ""
 
         "Read", "NotebookRead" -> {
             val offset = int("offset")
@@ -378,7 +383,7 @@ private val DIFF_BULK_KEYS = setOf("old_string", "new_string", "content", "new_s
 private const val MAX_DIFF_SOURCE_CHARS = 20_000
 
 internal fun toolIcon(name: String): ImageVector = when (name) {
-    "Bash", "BashOutput", "KillShell" -> HugeIcons.ComputerTerminal01
+    "Bash", "BashOutput", "KillShell", "KillBash", "TaskStop", "TaskOutput", "Monitor" -> HugeIcons.ComputerTerminal01
     "Read", "NotebookRead" -> HugeIcons.FileView
     "Edit", "MultiEdit", "Write", "NotebookEdit" -> HugeIcons.FileEdit
     "Glob", "Grep" -> HugeIcons.Search01
@@ -407,7 +412,7 @@ internal fun ToolCallDetail(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when (item.name) {
-            "Bash" -> {
+            "Bash", "Monitor" -> {
                 item.input["command"].asStringOrNull()?.let {
                     HighlightCodeBlock(code = it, language = "bash")
                 }
@@ -487,7 +492,7 @@ internal fun ToolInputPreview(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         when (name) {
-            "Bash", "BashOutput", "KillShell" -> {
+            "Bash", "Monitor", "BashOutput", "KillShell" -> {
                 input["command"].asStringOrNull()?.let {
                     HighlightCodeBlock(code = it, language = "bash")
                 }

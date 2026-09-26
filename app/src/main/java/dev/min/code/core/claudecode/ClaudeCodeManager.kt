@@ -285,6 +285,8 @@ class ClaudeCodeManager(
         val outputFile: String? = null,
         /** Min 第一次见到它的时刻：CLI 不给开始时间，运行时长由此自己算 */
         val startedAt: Long = 0L,
+        /** Min 看到它不再运行的时刻；还在跑是 null。结束后的运行时长定格在这里 */
+        val endedAt: Long? = null,
         /** pending / running / completed / failed / killed / paused */
         val status: String = "running",
         val backgrounded: Boolean = false,
@@ -607,7 +609,10 @@ class ClaudeCodeManager(
     private fun onCliExit(code: Int?, unexpected: Boolean) {
         // 放在改状态之前：发起方醒来时看到的就是已关闭的会话，文案不会再落到「未应答」那一支
         controls.failAll("claude 进程已退出")
+        // 进程没了，没递出去的话再也等不到 hook 回调；任务表也清掉（closeCli 里同样两步，
+        // 但不是所有退出都走 closeCli —— 崩溃、被系统杀掉只走到这里）
         abandonSubagentMail(subagentInbox.drain())
+        dropTasksOfDeadProcess()
         _state.update {
             if (it.status == SessionStatus.Failed) {
                 it.copy(busy = false, pendingPermission = null)
@@ -816,36 +821,18 @@ class ClaudeCodeManager(
             }
 
             is ClaudeCodeEvent.TaskEvent -> {
-                _state.update { state ->
-                val existing = state.tasks.firstOrNull { t -> t.id == event.taskId }
-                val merged = (existing ?: TaskInfo(id = event.taskId, startedAt = System.currentTimeMillis())).copy(
-                    description = event.description ?: existing?.description ?: "",
-                    subagentType = event.subagentType ?: existing?.subagentType,
-                    taskType = event.taskType ?: existing?.taskType,
-                    toolUseId = event.toolUseId ?: existing?.toolUseId,
-                    outputFile = event.outputFile ?: existing?.outputFile,
-                    status = event.status ?: existing?.status ?: "running",
-                    backgrounded = event.backgrounded ?: existing?.backgrounded ?: false,
-                    totalTokens = event.totalTokens ?: existing?.totalTokens,
-                    toolUses = event.toolUses ?: existing?.toolUses,
-                    durationMs = event.durationMs ?: existing?.durationMs,
-                    lastToolName = event.lastToolName ?: existing?.lastToolName,
-                    summary = event.summary ?: existing?.summary,
-                    error = event.error ?: existing?.error,
-                )
-                state.copy(
-                    tasks = if (existing == null) {
-                        state.tasks + merged
-                    } else {
-                        state.tasks.map { t -> if (t.id == merged.id) merged else t }
-                    }
-                )
-                }
+                val now = System.currentTimeMillis()
+                _state.update { it.copy(tasks = it.tasks.withTaskEvent(event, now)) }
                 // 子 agent 结束了，收件箱里还有它的信：正常收尾前 SubagentStop 已经递过了，
                 // 走到这里的是被停掉 / 出错的，这些话它再也收不到
                 if (event.status != null && event.status != "running" && event.status != "pending") {
                     abandonSubagentMail(subagentInbox.takeAll(event.taskId))
                 }
+            }
+
+            is ClaudeCodeEvent.BackgroundTasksChanged -> {
+                val now = System.currentTimeMillis()
+                _state.update { it.copy(tasks = it.tasks.reconciledWith(event.tasks, now)) }
             }
 
             is ClaudeCodeEvent.ToolUse -> {
@@ -1864,6 +1851,24 @@ class ClaudeCodeManager(
     }
 
     /**
+     * 停掉 CLI 的一个后台任务（`stop_task`）。成功返回 null，失败返回给用户看的那句话。
+     * 成功后就地判成已停（[withTaskStopped]），不等不一定会来的 task_notification。
+     */
+    suspend fun stopTask(taskId: String): String? {
+        val id = controls.newRequestId()
+        return when (val outcome = controls.request(id, encodeClaudeCodeStopTask(id, taskId))) {
+            is ControlOutcome.Ok -> {
+                val now = System.currentTimeMillis()
+                _state.update { it.copy(tasks = it.tasks.withTaskStopped(taskId, now)) }
+                null
+            }
+
+            is ControlOutcome.Error -> "停止失败：${describeControlError(outcome.message, outcome.code)}"
+            ControlOutcome.Timeout -> "停止超时"
+        }
+    }
+
+    /**
      * 发一次 `set_cwd` 并处理三种应答。成功返回 null，失败返回给用户看的那句话。
      *
      * 沙箱里的 `/workspace` 是我们自己挂的目录、用户在选择器里亲手点的，
@@ -2726,6 +2731,17 @@ class ClaudeCodeManager(
         subagentHooksArmed = false
         abandonSubagentMail(subagentInbox.drain())
         cli.close(closing)
+        // 放在 close 之后：读循环到这里才停，关的过程中 CLI 临终吐的 task_notification 不会再把条目加回来
+        dropTasksOfDeadProcess()
+    }
+
+    /**
+     * 进程没了，它的后台 shell / 子 agent 也跟着没了（CLI 退出时自己收掉，proot 的
+     * --kill-on-exit 兜底）。任务表不清的话底栏会一直挂着一个再也停不掉的「1 shell」。
+     * 换档续会话也一样：新进程不认识旧进程的 task_id。
+     */
+    private fun dropTasksOfDeadProcess() {
+        _state.update { if (it.tasks.isEmpty()) it else it.copy(tasks = emptyList()) }
     }
 
     private fun writeLine(line: String) = cli.write(line)
