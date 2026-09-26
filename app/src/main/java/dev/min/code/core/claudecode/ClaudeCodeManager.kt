@@ -794,30 +794,9 @@ class ClaudeCodeManager(
                 it.copy(retryNotice = "请求失败$attempt：${retryReason(event)}$delay")
             }
 
-            is ClaudeCodeEvent.TaskEvent -> _state.update { state ->
-                val existing = state.tasks.firstOrNull { t -> t.id == event.taskId }
-                val merged = (existing ?: TaskInfo(id = event.taskId, startedAt = System.currentTimeMillis())).copy(
-                    description = event.description ?: existing?.description ?: "",
-                    subagentType = event.subagentType ?: existing?.subagentType,
-                    taskType = event.taskType ?: existing?.taskType,
-                    toolUseId = event.toolUseId ?: existing?.toolUseId,
-                    outputFile = event.outputFile ?: existing?.outputFile,
-                    status = event.status ?: existing?.status ?: "running",
-                    backgrounded = event.backgrounded ?: existing?.backgrounded ?: false,
-                    totalTokens = event.totalTokens ?: existing?.totalTokens,
-                    toolUses = event.toolUses ?: existing?.toolUses,
-                    durationMs = event.durationMs ?: existing?.durationMs,
-                    lastToolName = event.lastToolName ?: existing?.lastToolName,
-                    summary = event.summary ?: existing?.summary,
-                    error = event.error ?: existing?.error,
-                )
-                state.copy(
-                    tasks = if (existing == null) {
-                        state.tasks + merged
-                    } else {
-                        state.tasks.map { t -> if (t.id == merged.id) merged else t }
-                    }
-                )
+            is ClaudeCodeEvent.TaskEvent -> {
+                val now = System.currentTimeMillis()
+                _state.update { it.copy(tasks = it.tasks.withTaskEvent(event, now)) }
             }
 
             is ClaudeCodeEvent.ToolUse -> {
