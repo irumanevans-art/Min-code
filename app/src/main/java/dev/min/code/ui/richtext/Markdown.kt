@@ -228,7 +228,26 @@ private fun CodeFence(node: ASTNode, text: String) {
     val lang = fenceLanguage(node, text)
     val code = fenceCode(node, text)
     if (lang.equals(MATH_FENCE_LANG, ignoreCase = true)) MathBlock(source = code)
-    else HighlightCodeBlock(code = code, language = lang)
+    else HighlightCodeBlock(code = code, language = lang, wrap = wrapsAsProse(lang))
+}
+
+/** 标了这些语言的围栏块装的是散文，见 [wrapsAsProse] */
+private val PROSE_FENCE_LANGS = setOf("text", "txt", "plaintext", "plain", "markdown", "md")
+
+/**
+ * 模型回答里的围栏块要不要折行：只有明确标了散文类语言（```text、```md 等）的才折。
+ *
+ * 模型爱把整篇作文、翻译、邮件草稿包进 ```text 方便人复制，一段就是一整行，
+ * 不折行的话手机上读一段要左右滑好几屏。
+ * - 没标语言的块照旧横滑：常是目录树、ASCII 表格、对齐的日志，折了就错位
+ * - 真代码（kotlin、bash……）照旧横滑：代码折行比横滚更难读
+ * - 公式块（math 围栏，见 [protectMath]）根本不走这里，照旧横滑
+ *
+ * 只看信息串的第一个词（```text title="x" 这种带属性的写法），大小写不敏感。
+ */
+internal fun wrapsAsProse(language: String?): Boolean {
+    val tag = language?.trim()?.substringBefore(' ')?.lowercase() ?: return false
+    return tag in PROSE_FENCE_LANGS
 }
 
 internal fun fenceLanguage(node: ASTNode, text: String): String =

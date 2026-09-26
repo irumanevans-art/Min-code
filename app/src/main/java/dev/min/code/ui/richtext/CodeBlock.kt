@@ -56,8 +56,8 @@ private const val COLLAPSE_LINES = 24
  * 代码块：语言标签 + 复制，正文横向滚动不折行（代码折行比横滚更难读），
  * 超过 [COLLAPSE_LINES] 行先收起。名字沿用 RikkaHub 的 HighlightCodeBlock，调用处不改。
  *
- * [wrap] 给散文：Read 读到的 txt / md / log 也走这里，按源码行宽排的话手机上每行只剩十几个字
- * 还要横滑。一般只有数学式子才超出手机宽度，这类内容折行才读得下去。
+ * [wrap] 给散文：模型回答里 ```text / ```md 包着的作文、译文，一段就是一整行，横滑读不下去。
+ * 由 Markdown 的围栏按语言标签决定（[wrapsAsProse]）；工具输出（Read、Bash）一律不折。
  *
  * 去掉了 RikkaHub 版里的 HTML/SVG 预览、Mermaid、下载——那些是聊天场景的东西，
  * 这里的代码块是工具输出（Read 的文件、Bash 的命令），要的是"看清楚、能复制"。
@@ -78,6 +78,9 @@ fun HighlightCodeBlock(
     // 高亮跟着风格走：海那套里关键字是海的深处、数字是石墨蓝，整块都是蓝的，
     // 落在灰白的云或暖陶的纸上就成了另一套配色的残留
     val palette = LocalSkin.current.code(dark)
+    // 收起按源码行算，折行（wrap）时也一样：一段散文折成屏上七八行仍算一行，
+    // 所以散文块要 24 段以上才收起。按视觉行收得拿到文字排版结果（CodeHighlightText 没暴露
+    // onTextLayout），「还有 N 行」的 N 也会随屏宽变，不值得；散文本来就是要往下读完的
     val lines = remember(code) { code.lines() }
     var expanded by remember(code) { mutableStateOf(lines.size <= COLLAPSE_LINES) }
     val shown = if (expanded) code else lines.take(COLLAPSE_LINES).joinToString("\n")
@@ -123,8 +126,8 @@ fun HighlightCodeBlock(
                     fontSize = textStyle.fontSize,
                     lineHeight = textStyle.lineHeight,
                     fontFamily = JetbrainsMono,
-                    // 代码折行比横滚更难读；散文（wrap）才用默认折行
-                    softWrap = if (wrap) true else false,
+                    // 代码折行比横滚更难读；散文（wrap）才折
+                    softWrap = wrap,
                 )
             }
         }
