@@ -751,7 +751,8 @@ class ClaudeCodeManager(
                 val id = newId()
                 _state.update { state ->
                     state.copy(
-                        items = state.items.mapToolCall(event.parentToolUseId) { item ->
+                        // 深层找：嵌套的子 agent 挂在上一层子 agent 的卡里
+                        items = state.items.mapToolCallDeep(event.parentToolUseId) { item ->
                             item.copy(
                                 subItems = mergeSubagentItem(
                                     items = item.subItems,
