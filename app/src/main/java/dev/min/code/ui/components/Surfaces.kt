@@ -103,6 +103,30 @@ fun Seal(modifier: Modifier = Modifier, size: Dp = 6.dp, color: Color = Color.Un
 }
 
 /**
+ * 活着的点：缓慢呼吸（抽屉里活着的会话、切换条上在跑的子 agent）。动画值只在绘制阶段读，不引起重组；
+ * 系统动画关掉时是一粒静止的点。
+ */
+@Composable
+fun LiveDot(color: Color, modifier: Modifier = Modifier, size: Dp = 6.dp) {
+    val breath: State<Float>? = if (rememberAnimationsEnabled()) {
+        rememberInfiniteTransition(label = "live").animateFloat(
+            initialValue = 0.45f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1200, easing = InkMotion.Ease),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "breath",
+        )
+    } else {
+        null
+    }
+    Canvas(modifier.size(size)) {
+        drawCircle(color.copy(alpha = breath?.value ?: 1f))
+    }
+}
+
+/**
  * 题跋：小标题 + 一道 hairline 到行尾。所有分区标题都是它。
  */
 @Composable

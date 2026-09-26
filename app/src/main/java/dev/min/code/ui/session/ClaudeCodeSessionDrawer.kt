@@ -13,11 +13,7 @@ import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.hugeicons.stroke.DashboardSquare01
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -46,7 +42,6 @@ import androidx.compose.material3.PermanentDrawerSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +62,7 @@ import dev.min.code.core.claudecode.SessionGroup
 import dev.min.code.core.claudecode.SessionGroupHeader
 import dev.min.code.core.claudecode.groupSessionIds
 import dev.min.code.ui.components.InkChip
+import dev.min.code.ui.components.LiveDot
 import dev.min.code.ui.components.InkDialog
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkIconButton
@@ -80,7 +76,6 @@ import dev.min.code.ui.providers.ProviderQuickSheet
 import dev.min.code.ui.providers.rememberClaudeConnectionLabel
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
-import dev.min.code.ui.theme.rememberAnimationsEnabled
 import dev.min.code.ui.theme.sea
 import dev.min.code.ui.theme.seaFill
 import java.text.SimpleDateFormat
@@ -768,30 +763,6 @@ private fun InUseBadge() {
             .background(MaterialTheme.sea.onSea.copy(alpha = 0.22f), RoundedCornerShape(6.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
-}
-
-/**
- * 活着的点：缓慢呼吸。动画值只在绘制阶段读，不引起重组；
- * 系统动画关掉时是一粒静止的点。
- */
-@Composable
-private fun LiveDot(color: Color) {
-    val breath: State<Float>? = if (rememberAnimationsEnabled()) {
-        rememberInfiniteTransition(label = "live").animateFloat(
-            initialValue = 0.45f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1200, easing = InkMotion.Ease),
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "breath",
-        )
-    } else {
-        null
-    }
-    androidx.compose.foundation.Canvas(Modifier.size(6.dp)) {
-        drawCircle(color.copy(alpha = breath?.value ?: 1f))
-    }
 }
 
 private fun sessionGroupHeaderKey(group: SessionGroup): String = "h-${group.key}"

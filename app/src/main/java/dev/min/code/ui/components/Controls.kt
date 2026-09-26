@@ -43,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -217,6 +218,18 @@ fun InkSegmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, 
 /** chip：选中是海底纸白字；未选是纸底 hairline */
 @Composable
 fun InkChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, leadingIcon: ImageVector? = null, monospace: Boolean = false) {
+    InkChip(selected = selected, onClick = onClick, modifier = modifier, enabled = enabled) { fg ->
+        if (leadingIcon != null) Icon(leadingIcon, null, Modifier.size(15.dp), tint = fg)
+        Text(label, style = MaterialTheme.typography.labelMedium, fontFamily = if (monospace) JetbrainsMono else null, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/**
+ * 同一只 chip，内容自己排（子 agent 切换条：一粒活点 + 类型 + 它在干什么）。
+ * [content] 拿到的是当前该用的前景色：选中时是海上的纸白，未选是墨。
+ */
+@Composable
+fun InkChip(selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.(fg: Color) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val on by animateFloatAsState(if (selected) 1f else 0f, InkMotion.effect(), label = "chip")
@@ -238,8 +251,7 @@ fun InkChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Mod
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (leadingIcon != null) Icon(leadingIcon, null, Modifier.size(15.dp), tint = fg)
-            Text(label, style = MaterialTheme.typography.labelMedium, fontFamily = if (monospace) JetbrainsMono else null, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            content(fg)
         }
     }
 }
