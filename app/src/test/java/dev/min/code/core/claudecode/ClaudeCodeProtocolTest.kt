@@ -206,12 +206,36 @@ class ClaudeCodeProtocolTest {
         assertEquals("request_user_dialog", event.subtype)
     }
 
+    /**
+     * v2.1.283：`{type:"control_cancel_request", request_id}` —— "Tells the other side that the sender
+     * no longer needs the answer to one of its own in-flight control_requests"，没有原因字段、不要应答。
+     * （bridge 转发时多一个 session_id，忽略即可）
+     */
+    @Test
+    fun `control cancel request surfaces the withdrawn request id`() {
+        val event = parseClaudeCodeEvents(
+            """{"type":"control_cancel_request","request_id":"8c3ac378","session_id":"s"}"""
+        ).single() as ClaudeCodeEvent.ControlCancel
+        assertEquals("8c3ac378", event.requestId)
+        // 没有 request_id 的认不出撤的是谁，丢掉
+        assertTrue(parseClaudeCodeEvents("""{"type":"control_cancel_request"}""").isEmpty())
+        assertTrue(parseClaudeCodeEvents("""{"type":"control_cancel_request","request_id":""}""").isEmpty())
+    }
+
     @Test
     fun `control response error surfaces`() {
         val event = parseClaudeCodeEvents(
             """{"type":"control_response","response":{"subtype":"error","request_id":"req_7","error":"boom"}}"""
         ).single() as ClaudeCodeEvent.ControlError
         assertEquals("boom", event.error)
+        assertNull(event.code)
+
+        // 2.1.283：错误应答多了 error_code（"@internal Why the request was refused … never parsed from `error`"）
+        val coded = parseClaudeCodeEvents(
+            """{"type":"control_response","response":{"subtype":"error","request_id":"req_8",""" +
+                """"error":"Opus with 1M context is not available for your account.","error_code":"unavailable_for_account"}}"""
+        ).single() as ClaudeCodeEvent.ControlError
+        assertEquals("unavailable_for_account", coded.code)
 
         // success 现在会认领成 ControlOk，交给发起方按 request_id 取回结果
         // （list_models / get_plan 这类需要读返回值）
@@ -605,6 +629,18 @@ class ClaudeCodeProtocolTest {
     // endregion
 
     // region system 帧：用户可见的那几条不能再被丢掉
+
+    /** 2.1.283 新出现的内部帧，形状取自 schema；没有展示价值，不进聊天流也不进状态条 */
+    @Test
+    fun `internal system frames added up to 2_1_283 stay out of the chat`() {
+        listOf(
+            """{"type":"system","subtype":"per_turn_effort_changed","per_turn_effort_active":false,"uuid":"u","session_id":"s"}""",
+            """{"type":"system","subtype":"session_metadata","metadata":{"artifacts":null},"uuid":"u","session_id":"s"}""",
+            """{"type":"system","subtype":"peer_message_hold","state":"held","lane":"socket","from":"x","uuid":"u","session_id":"s"}""",
+            """{"type":"system","subtype":"turn_preempted","reason":"rapid_followup","preempted_by_uuid":"a",""" +
+                """"preempted_message_uuids":[],"uuid":"u","session_id":"s"}""",
+        ).forEach { line -> assertTrue(line, parseClaudeCodeEvents(line).isEmpty()) }
+    }
 
     /**
      * 这些帧的人类可读文案**不在 `text`/`message` 里**，字段名各不相同。

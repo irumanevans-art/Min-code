@@ -22,8 +22,10 @@ import kotlinx.serialization.json.put
  * 向 stdout 写事件帧。
  *
  * 下面的 schema 对照官方 CLI 二进制（@anthropic-ai/claude-code，最近一次完整校对
- * v2.1.271+；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
- * 2.1.271–272 无 stream-json 形状大改（MCP-only resume、`-p` Monitor 截止等在 CLI 侧）。
+ * v2.1.283；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
+ * 2.1.273–283 对照结论：Min 发的 control_request 子类型、启动参数和 env 都没改名或移除；
+ * 新增的要跟的只有错误应答的 `error_code` 和一直没接的 `control_cancel_request`（见 [ClaudeCodeEvent.ControlCancel]），
+ * 新 system 子类型全是内部帧（见 NOISE_SYSTEM_SUBTYPES）。
  * 未知字段/类型一律宽容忽略以保持向后兼容，但**必填字段一个都不能少** —— CLI 对入站帧做严格校验，
  * 缺字段会被静默丢弃或报 "canUseTool returned a schema-invalid permission result"。
  */
@@ -132,8 +134,25 @@ sealed interface ClaudeCodeEvent {
         val subtype: String,
     ) : ClaudeCodeEvent
 
-    /** CLI 对我们发出的 control_request（如 interrupt）的失败应答 */
-    data class ControlError(val requestId: String, val error: String) : ClaudeCodeEvent
+    /**
+     * `control_cancel_request`：CLI 撤回了**它自己发出的**一个 control_request（can_use_tool 等）。
+     *
+     * 形状（v2.1.283 schema）只有 `{type:"control_cancel_request", request_id}`，**不带原因**，
+     * 也不需要应答。CLI 发出它之后就不再等那条请求，之后到的应答一律忽略。
+     * 无头 stdio 下 CLI 会在这几种时候发（js 里 StructuredIO.sendRequest 的 abort 分支、
+     * injectControlResponse）：这一轮被中止（含 Min 自己按的停止）、PermissionRequest 钩子先做了决定、
+     * 别的客户端（Remote Control）先答了、request_user_dialog 到了期限。
+     */
+    data class ControlCancel(val requestId: String) : ClaudeCodeEvent
+
+    /**
+     * CLI 对我们发出的 control_request（如 interrupt）的失败应答。
+     *
+     * [code] 是 2.1.283 起的 `error_code`：CLI 按它**分支时的状态**打上的机器码，
+     * "never parsed from `error`"，比认英文原句可靠。老版本 CLI 不带，为 null。
+     * 取值和怎么给用户解释见 [ControlErrorCode]。
+     */
+    data class ControlError(val requestId: String, val error: String, val code: String? = null) : ClaudeCodeEvent
 
     /**
      * CLI 对我们发出的 control_request 的成功应答。
@@ -378,7 +397,11 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
             val requestId = response.str("request_id").orEmpty()
             when (response.str("subtype")) {
                 "error" -> listOf(
-                    ClaudeCodeEvent.ControlError(requestId, response.str("error").orEmpty())
+                    ClaudeCodeEvent.ControlError(
+                        requestId = requestId,
+                        error = response.str("error").orEmpty(),
+                        code = response.str("error_code")?.takeIf { it.isNotBlank() },
+                    )
                 )
 
                 // 载荷形状随 subtype 变，非对象（true / null / 字符串）也要能认领，
@@ -393,6 +416,11 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
                 else -> emptyList()
             }
         }
+
+        "control_cancel_request" -> obj.str("request_id")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { listOf(ClaudeCodeEvent.ControlCancel(it)) }
+            .orEmpty()
 
         else -> emptyList()
     }
@@ -1190,6 +1218,11 @@ private val NOISE_SYSTEM_SUBTYPES = setOf(
     "hook_response", "mcp_status", "memory_recall", "memory_saved", "message_rated",
     "code_change_published", "file_suggestions", "apply_flag_settings", "away_summary",
     "feedback_draft_queued",
+    // 2.1.273–283 新增 / 对照过的四个，schema 里都是 @internal 且没有给人看的字段：
+    // per_turn_effort_changed 只报「不再逐轮发 effort」（缓存前缀的事）；session_metadata 是云端
+    // artifacts 列表；peer_message_hold 是跨会话消息（Remote Control / socket）的扣留状态；
+    // turn_preempted 只发给 initialize 里声明了 rapidFollowupPreempt 的宿主，Min 没声明
+    "per_turn_effort_changed", "session_metadata", "peer_message_hold", "turn_preempted",
 )
 
 private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent> {

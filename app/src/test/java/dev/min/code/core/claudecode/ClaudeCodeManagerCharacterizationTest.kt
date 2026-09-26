@@ -263,7 +263,8 @@ class ClaudeCodeManagerCharacterizationTest {
             h.manager.interrupt()
             val s = h.awaitTurnEnd()
             // CLI 先发 control_cancel_request 撤销这条请求、自己把工具判成被拒，再发 result；
-            // Min 不认那一帧，面板是跟着 result 收掉的。托管等结论期间按停止，走的也是这一路
+            // 面板在撤回帧到时就收掉了。是用户自己按的停止，不补「CLI 撤回了……」那句（「已中断」已经说了）。
+            // 托管等结论期间按停止，走的也是这一路
             assertNull(s.pendingPermission)
             assertEquals(
                 listOf(
@@ -497,24 +498,37 @@ class ClaudeCodeManagerCharacterizationTest {
         }
     }
 
+    /**
+     * 认得的 error_code（2.1.283+）先说人话，CLI 原句括在后面；认不得的只显示原句。
+     * 2.1.283 以前的 CLI 没有 code，同一句 bypass 拒绝靠原句认出来（兜底，见 [ControlErrorCode]）。
+     */
     @Test
     fun `a control error is shown with the CLI's own words`() = runBlocking<Unit> {
-        ManagerHarness("plain_reply").use { h ->
-            val refusal = "Cannot set permission mode to bypassPermissions because the session was not " +
-                "launched with --dangerously-skip-permissions"
-            h.nextProcess = {
-                FakeCliProcess(h.fixture, overrides = mapOf("set_permission_mode" to { _ ->
-                    buildJsonObject {
-                        put("subtype", "error")
-                        put("error", refusal)
-                    }
-                }))
+        val refusal = "Cannot set permission mode to bypassPermissions because the session was not " +
+            "launched with --dangerously-skip-permissions"
+        val hint = "这个会话的 CLI 启动时没开放「跳过权限确认」，中途切不过去。重开这个会话后再切"
+        for ((code, error, expected) in listOf(
+            Triple("bypass_not_launched", refusal, "$hint（$refusal）"),
+            Triple(null, refusal, "$hint（$refusal）"),
+            Triple("bypass_disabled", "Cannot set permission mode to bypassPermissions because it is disabled " +
+                "by settings or configuration", null),
+        )) {
+            ManagerHarness("plain_reply").use { h ->
+                h.nextProcess = {
+                    FakeCliProcess(h.fixture, overrides = mapOf("set_permission_mode" to { _ ->
+                        buildJsonObject {
+                            put("subtype", "error")
+                            put("error", error)
+                            code?.let { put("error_code", it) }
+                        }
+                    }))
+                }
+                h.startAndHandshake()
+                h.manager.setPermissionMode(ClaudeCodePermissionMode.BYPASS)
+                val s = h.awaitState("报错") { st -> st.items.any { it is ChatItem.Note && it.isError } && !st.applyingSettings }
+                assertEquals("error: 切换到 Bypass permissions 失败：${expected ?: error}", s.lines().last())
+                assertEquals(ClaudeCodePermissionMode.DEFAULT, s.permissionMode)
             }
-            h.startAndHandshake()
-            h.manager.setPermissionMode(ClaudeCodePermissionMode.BYPASS)
-            val s = h.awaitState("报错") { st -> st.items.any { it is ChatItem.Note && it.isError } && !st.applyingSettings }
-            assertEquals("error: 切换到 Bypass permissions 失败：$refusal", s.lines().last())
-            assertEquals(ClaudeCodePermissionMode.DEFAULT, s.permissionMode)
         }
     }
 

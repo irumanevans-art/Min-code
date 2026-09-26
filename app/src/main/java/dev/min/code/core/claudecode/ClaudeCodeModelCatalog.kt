@@ -9,10 +9,10 @@ package dev.min.code.core.claudecode
  * 裸 id（`claude-fable-5-1`），两边都不告诉我们"这个模型窗口多大、能不能调 effort"。
  * 界面上却处处要用到这些：底栏的上下文条要知道分母是 200k 还是 1M，思考强度面板要知道
  * Haiku 根本没有 effort（CLI 原话 "Effort not supported for Haiku"），模型列表要知道
- * Fable 5.1 / Opus 5 / Sonnet 5 是**原生 1M**、不用加 `[1m]`。
+ * Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5 是**原生 1M**、不用加 `[1m]`。
  *
  * 数据来源：CLI 二进制内置的模型表（`context:{window, native_1m, supports_1m_suffix}`；
- * 最近一次对照 v2.1.270）与官方 model-config 文档。**CLI 回报的值永远优先**
+ * 最近一次对照 v2.1.283）与官方 model-config 文档。**CLI 回报的值永远优先**
  * （`get_context_usage.maxTokens`、`list_models[].supportedEffortLevels`），这里只在它没说的时候兜底。
  */
 object ClaudeCodeModelCatalog {
@@ -68,10 +68,10 @@ object ClaudeCodeModelCatalog {
     /**
      * 原生 1M 上下文：不加 `[1m]` 也是 1M（CLI 表里 `native_1m:true` 的那些）。
      *
-     * - Fable 5 / 5.1、Opus 5、Sonnet 5 是；Opus 4.7 / 4.8 也是
+     * - Fable 5 / 5.1、Opus 5 / 5.5、Sonnet 5 是；Opus 4.7 / 4.8 也是
      * - Haiku 4.5 是 200k；Opus 4.6 以前、Sonnet 4.6 以前要靠 `[1m]`
-     * - 裸别名 `opus` / `sonnet` 在直连 API 上分别解析成 Opus 5 / Sonnet 5，按原生 1M 算；
-     *   `haiku` 按 200k 算
+     * - 裸别名 `opus` / `sonnet` 在直连 API 上分别解析成 Opus 5.5 / Sonnet 5（2.1.280 起 Opus 5.5
+     *   成为默认 Opus，之前是 Opus 5；走 gateway 时 `opus` 是 Opus 4.7），都按原生 1M 算；`haiku` 按 200k 算
      */
     fun isNativeLongContext(model: String?): Boolean {
         val id = stripLongContext(model.orEmpty()).lowercase()
@@ -105,7 +105,7 @@ object ClaudeCodeModelCatalog {
      *
      * 认不出的模型（中转站的自定义 id）CLI 自己也按 200k 处理（它会提示
      * "append [1m] to the model name for 1M" 或设 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`），
-     * 这里保持一致。`null` / `default` 在直连 API 上是 Opus 5（1M）。
+     * 这里保持一致。`null` / `default` 在直连 API 上一般是默认 Opus（2.1.280 起 Opus 5.5，1M）。
      */
     fun assumedContextWindow(model: String?): Int {
         if (hasLongContextSuffix(model)) return CONTEXT_1M
@@ -138,7 +138,7 @@ object ClaudeCodeModelCatalog {
 
     /**
      * 两个模型标识指的是不是同一个模型。用来把「用户选的 value」和「CLI 回报的 applied.model」
-     * 对上：`fable` ↔ `claude-fable-5-1`、`opus[1m]` ↔ `claude-opus-5`。
+     * 对上：`fable` ↔ `claude-fable-5-1`、`opus[1m]` ↔ `claude-opus-5-5`。
      * 只做家族级比对，版本号交给 CLI 的 `resolvedModel`。
      */
     fun sameModel(a: String?, b: String?): Boolean {
