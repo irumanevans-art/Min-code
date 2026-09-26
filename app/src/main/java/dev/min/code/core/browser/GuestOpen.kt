@@ -57,8 +57,11 @@ internal fun guestOpenSource(raw: String?): String? {
         ?.let { n -> SOURCE_SUFFIXES.firstOrNull { n.endsWith(it) }?.let { n.removeSuffix(it) } ?: n }
         ?.take(MAX_SOURCE_CHARS)
         .orEmpty()
-    // `-S` 这类是解释器的开关，不是程序名
-    return name.takeIf { it.isNotEmpty() && !it.startsWith("-") && !it.startsWith(".") }
+    // `-S` 这类是解释器的开关，不是程序名；`.so` 是 proot 的加载器（脚本往上找越过了 rootfs），不是发起者
+    return name.takeIf {
+        it.isNotEmpty() && !it.startsWith("-") && !it.startsWith(".") &&
+            !it.endsWith(".so") && !it.startsWith("libproot")
+    }
 }
 
 /** 卡片上显示的 URL：太长就截断（打开时用的仍是原值） */

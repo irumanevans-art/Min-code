@@ -55,6 +55,8 @@ object GuestBrowserBridge {
      *   Min 那端还会再校验一次（这个脚本在 agent 能改的地方，不能只信它）
      * - 往上找发起者：`$PPID` 常常只是个 shell（agent 的 Bash 工具、`sh -c`），往上最多走 4 层，
      *   跳过 shell 和我们自己的几个别名；node / python 看第二个参数（`node …/npm-cli.js`）。
+ *   碰到宿主那一侧（`/data/…` 下的 proot 加载器 `libproot_exec.so`）就停：再往上已经出了 rootfs，
+ *   是 Min 自己，不是发起者（实测终端里直接敲 xdg-open 时，bash 往上一层就是它）
      *   读 `/proc` 用 shell 内建的 read，每层只起一个 `tr`——proot 里每起一个进程都要几十毫秒，
      *   而 gh 这类调用方会等 BROWSER 返回
      * - 先写临时文件再 `mv`：见类注释的投递协议
@@ -78,6 +80,7 @@ object GuestBrowserBridge {
         |n=0
         |while [ "${'$'}n" -lt 4 ] && [ -r "/proc/${'$'}pid/cmdline" ]; do
         |  set -- ${'$'}(tr '\0' ' ' < "/proc/${'$'}pid/cmdline" 2>/dev/null)
+        |  case "${'$'}1" in /data/*|*/libproot*) break ;; esac
         |  name=${'$'}{1##*/}
         |  case "${'$'}name" in
         |    node|python|python3|python3.*) [ -n "${'$'}2" ] && name=${'$'}{2##*/} ;;
