@@ -9,6 +9,7 @@ import dev.min.code.core.crash.CrashRecorder
 import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
+import dev.min.code.core.rootfs.currentBindMounts
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.SettingsStore
@@ -97,6 +98,12 @@ class LocalServiceRegistry(
     private val store: LocalServiceStore = LocalServiceStore(context),
     /** 读 `/proc/<pid>/cmdline`；抽成参数是为了让对账在单测里不碰真 /proc */
     private val cmdlineOf: (Int) -> String? = procCmdlineReader(),
+    /**
+     * 托管服务的 proot 要挂什么。默认和会话、终端同一份（共享存储那一档），
+     * 否则模型用 Bash 工具起的服务看不到 `/sdcard`，而 `!` 命令看得到。
+     */
+    private val bindMounts: () -> List<me.rerere.workspace.WorkspaceBindMount> =
+        { currentBindMounts(context, settingsStore) },
     // 默认 scope 装 CoroutineExceptionHandler：SupervisorJob 会把未捕获异常丢给
     // 默认 handler（Android 上直接崩 App），这里记日志 + 落盘，不往上传
     private val scope: CoroutineScope = CoroutineScope(
@@ -290,6 +297,7 @@ class LocalServiceRegistry(
                 // 当前供应商的凭据，和终端页签同一套（开关关着时是空的）
                 putAll(currentShellCredentialEnv(settingsStore, relay))
             },
+            bindMounts = bindMounts(),
         )
 
         val entry = LocalService(

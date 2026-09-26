@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import dev.min.code.AppScope
 import dev.min.code.core.relay.RelayController
+import dev.min.code.core.rootfs.currentBindMounts
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.currentShellCredentialEnv
 import java.util.concurrent.atomic.AtomicLong
@@ -232,6 +233,8 @@ class WorkspaceTerminalSessionManager internal constructor(
                 client = client,
                 cwd = cwd,
                 credentials = credentials,
+                // 开页签这一刻现算：开关和系统权限都可能刚被改过
+                bindMounts = currentBindMounts(appContext, settingsStore),
             )
         }.onFailure { error ->
             Log.e(TAG, "Failed to create terminal for workspace $root", error)

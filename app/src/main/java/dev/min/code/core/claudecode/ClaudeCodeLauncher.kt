@@ -7,6 +7,7 @@ import dev.min.code.core.network.activeDnsServers
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.rootfs.currentBindMounts
 import dev.min.code.core.settings.ClaudeAuthMode
 import dev.min.code.core.settings.SettingsStore
 import me.rerere.workspace.ProotShellRunner
@@ -45,6 +46,12 @@ class ProotClaudeCodeLauncher(
     private val installer: ClaudeCodeInstaller,
     private val networkProbe: NetworkProbe,
     private val relay: RelayController?,
+    /**
+     * 这次起的 proot 要挂什么。默认现算共享存储那一档（开关 + 系统权限，见 [currentBindMounts]），
+     * 不传就是会话本体看不到 `/sdcard`，而 `!` 命令看得到。
+     */
+    private val bindMounts: () -> List<me.rerere.workspace.WorkspaceBindMount> =
+        { currentBindMounts(context, settingsStore) },
 ) : ClaudeCodeLauncher {
     private val runner by lazy {
         ProotShellRunner(nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir))
@@ -100,6 +107,8 @@ class ProotClaudeCodeLauncher(
             workingDir = File(workspaceDir, "files"),
             timeoutMillis = 0L, // 长会话不由 runner 管超时
             env = claudeSessionEnv(options, profile, relayBaseUrl, netSnap),
+            // 和 ! 命令同一份挂载。现算而不是启动时快照：开关和权限随时会变
+            bindMounts = bindMounts(),
         )
 
         val proc = runner.launch(shellContext)

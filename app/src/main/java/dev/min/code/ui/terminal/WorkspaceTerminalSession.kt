@@ -20,6 +20,7 @@ import dev.min.code.util.LocalPreviewBus
 import dev.min.code.util.LocalUrls
 import dev.min.code.ui.components.openInExternalBrowser
 import me.rerere.workspace.ProotShellEntry
+import me.rerere.workspace.WorkspaceBindMount
 import me.rerere.workspace.ProotShellRunner
 import me.rerere.workspace.RootfsPatchOptions
 import me.rerere.workspace.RootfsPatcher
@@ -43,6 +44,8 @@ import java.io.File
  *   那个会话自己的工作目录里。**必须先验证存在**：proot 的 `-w` 指到一个不存在的目录时
  *   shell 会莫名其妙地起在别处，不如当场退回 `/workspace`。
  * @param credentials 当前供应商的环境变量（`shellCredentialEnv`）。空 = 不注入。
+ * @param bindMounts 这次起的 proot 要挂什么。不传就是终端里看不到 `/sdcard`，而同一个
+ *   rootfs 里 `!` 命令看得到。调用方现算（开关和权限会变），这里只负责挂上去。
  *
  *   在这之前这里**一个凭据都没有**：同一个 App 里，会话页能用的 token，换到终端页敲
  *   `claude` 就是「未配置」。Node 的 PATH 当初补上了、凭据却没有，于是终端里那个
@@ -55,6 +58,7 @@ internal fun buildTerminalShellContext(
     tempDir: File,
     cwd: String? = null,
     credentials: Map<String, String> = emptyMap(),
+    bindMounts: List<WorkspaceBindMount> = emptyList(),
 ): WorkspaceShellContext {
     val workspaceDirGuest = WorkspaceManager.ROOTFS_WORKSPACE_DIR
     // guest `/workspace/x` 就是宿主 `files/x`（runner 拼的那条 bind mount），所以存在性直接在宿主侧问
@@ -79,6 +83,7 @@ internal fun buildTerminalShellContext(
         env = ClaudeCodeInstaller.nodeEnv() + credentials,
         killOnExit = true,
         entry = ProotShellEntry.InteractiveShell,
+        bindMounts = bindMounts,
     )
 }
 
@@ -88,6 +93,7 @@ internal fun createWorkspaceTerminalSession(
     client: TerminalSessionClient,
     cwd: String? = null,
     credentials: Map<String, String> = emptyMap(),
+    bindMounts: List<WorkspaceBindMount> = emptyList(),
 ): TerminalSession {
     val appContext = context.applicationContext
     val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
@@ -99,6 +105,7 @@ internal fun createWorkspaceTerminalSession(
         tempDir = File(workspaceDir, "tmp"),
         cwd = cwd,
         credentials = credentials,
+        bindMounts = bindMounts,
     )
 
     // TerminalSession 自己拼 argv[0]，所以第一项（proot 本身）要摘掉

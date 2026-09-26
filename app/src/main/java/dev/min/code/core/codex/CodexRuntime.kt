@@ -26,6 +26,11 @@ class CodexRuntime(
     private val proot: ProotShellRunner,
     private val settingsStore: SettingsStore,
     private val relay: RelayController? = null,
+    /**
+     * app-server 的 proot 要挂什么。默认现算共享存储那一档；不传就是 Codex 看不到 `/sdcard`，
+     * 而同一个 rootfs 里 `!` 命令看得到。
+     */
+    private val bindMounts: () -> List<me.rerere.workspace.WorkspaceBindMount> = { emptyList() },
 ) {
     data class Status(
         val installed: Boolean = false,
@@ -158,6 +163,7 @@ class CodexRuntime(
                     workingDir = workspaceRepository.filesDir(),
                     timeoutMillis = Long.MAX_VALUE,
                     env = env,
+                    bindMounts = bindMounts(),
                 ),
             ),
         ) { "Unable to launch Codex app-server" }

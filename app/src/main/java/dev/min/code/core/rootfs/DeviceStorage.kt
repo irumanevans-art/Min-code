@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import dev.min.code.core.settings.SettingsStore
 import me.rerere.workspace.WorkspaceBindMount
 import java.io.File
 
@@ -83,6 +84,24 @@ fun deviceStorageSettingsIntent(context: Context): Intent? {
  * 第 2 条每次都要现查而不是记在 DataStore 里：用户随时可能去系统设置里收回，
  * 那之后我们不该再把 `/sdcard` 摆在 rootfs 里当作它还能用。
  */
+/**
+ * 这一次起 proot 实际要挂进去的全部 bind mount。
+ *
+ * 四条直构 [WorkspaceShellContext] 的路径（会话本体、托管 Bash、终端页签、Codex app-server）
+ * 都该用它，而不是自己留空——留空就是开关开了、`!` 命令看得到 `/sdcard`、模型用 Bash
+ * 工具却看不到。每次现算，不把结果快照进启动时就算死的值：开关和系统权限都可能在两次
+ * 启动之间被改掉（见 [deviceStorageBindMount] 的三条条件）。
+ *
+ * 现在只有共享存储这一项；以后再加挂载，加在这里，四条路径一起跟上。
+ */
+fun currentBindMounts(context: Context, settings: SettingsStore): List<WorkspaceBindMount> =
+    listOfNotNull(
+        deviceStorageBindMount(
+            enabled = settings.snapshot?.shareDeviceStorage == true,
+            granted = hasDeviceStorageAccess(context),
+        )
+    )
+
 fun deviceStorageBindMount(
     enabled: Boolean,
     granted: Boolean,

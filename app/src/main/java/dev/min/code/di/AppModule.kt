@@ -21,8 +21,7 @@ import dev.min.code.privileged.PrivilegedStarter
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.rootfs.WorkspaceRepository
-import dev.min.code.core.rootfs.deviceStorageBindMount
-import dev.min.code.core.rootfs.hasDeviceStorageAccess
+import dev.min.code.core.rootfs.currentBindMounts
 import dev.min.code.core.service.ClaudeCodeSessionSupervisor
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.relay.RelayController
@@ -63,27 +62,24 @@ val appModule = module {
             // 参数类型是接口 WorkspaceShellRunner，而 single 只按 ProotShellRunner 登记：
             // 不写明类型，Koin 会去找接口的定义，找不到就在 App 启动时崩（编译期看不出来）
             shellRunner = get<ProotShellRunner>(),
-            // 每次起 proot 现算：开关和系统权限都可能在两次会话之间被改掉。
+            // 每次起 proot 现算，和四条直构路径共用 currentBindMounts，别在这里再写一份。
             // 设置还没读到过（冷启动最初的一瞬）时 snapshot 是 null，按"没开"处理 ——
             // 少挂一次的代价是这次会话看不到 /sdcard，多挂一次的代价是权限被收回后还摆着它
-            bindMounts = {
-                listOfNotNull(
-                    deviceStorageBindMount(
-                        enabled = settings.snapshot?.shareDeviceStorage == true,
-                        granted = hasDeviceStorageAccess(context),
-                    )
-                )
-            },
+            bindMounts = { currentBindMounts(context, settings) },
         )
     }
     single { RootfsInstaller(get()) }
     single { WorkspaceRepository(get(), get()) }
     single {
+        val context: android.content.Context = get()
+        val settings: SettingsStore = get()
         CodexRuntime(
             workspaceRepository = get(),
             proot = get(),
-            settingsStore = get(),
+            settingsStore = settings,
             relay = get(),
+            // 和会话、终端同一份现算，别在这里再写一份
+            bindMounts = { currentBindMounts(context, settings) },
         )
     }
     // 必须是 single：Codex 的 app-server 进程归它管，跟着 ViewModel 走的话
