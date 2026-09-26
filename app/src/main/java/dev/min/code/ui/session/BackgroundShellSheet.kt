@@ -345,7 +345,10 @@ private fun stateLabel(shell: BackgroundShell): String {
         BackgroundShell.State.Failed -> stringResource(R.string.shell_state_failed)
         BackgroundShell.State.Stopped -> stringResource(R.string.shell_state_stopped)
     }
-    val exit = shell.exitCode?.takeIf { !shell.isRunning }?.let { stringResource(R.string.shell_exit_code, it) }
+    // 被停掉的不写退出码：那是信号杀出来的数（进程表里常记成 0），不是它自己的结局
+    val exit = shell.exitCode
+        ?.takeIf { shell.state == BackgroundShell.State.Completed || shell.state == BackgroundShell.State.Failed }
+        ?.let { stringResource(R.string.shell_exit_code, it) }
     return listOfNotNull(base, exit).joinToString(" · ")
 }
 

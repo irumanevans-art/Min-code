@@ -58,19 +58,22 @@ internal fun backgroundShells(
     services: List<LocalService>,
     sessionId: String?,
 ): List<BackgroundShell> {
-    val own = if (sessionId == null) emptyList() else services.filter { it.sourceSessionKey == sessionId }
+    // 新的在前：已结束的 CLI 任务配对时认最近那一次托管，不去配一个早先同命令的
+    val own = if (sessionId == null) {
+        emptyList()
+    } else {
+        services.filter { it.sourceSessionKey == sessionId }.sortedByDescending { it.startedAtEpochMs }
+    }
     val twinsTaken = HashSet<String>()
     val cli = tasks.filter { it.isShell }.map { task ->
         val call = task.toolUseId?.let { items.findToolCall(it) }
         val command = call?.input?.get("command").asStringOrNull()?.takeIf { it.isNotBlank() } ?: task.description
-        // 孪生只认两边都还在跑的：一边停了，另一边就该作为独立的一行露出来，不能被藏住
-        val twin = if (task.isRunning) {
-            val hostedCommand = hostedCommandOf(command)
-            own.firstOrNull { it.id !in twinsTaken && it.isLive && it.command == hostedCommand }
-                ?.also { twinsTaken += it.id }
-        } else {
-            null
-        }
+        // 孪生只认「同在跑」或「同已结束」的：一边停了另一边还在跑，那一边必须作为独立的一行露出来，
+        // 不能被藏在一个已停止的条目后面。都结束了（从面板里一起停掉的）仍合成一行，列表里不出两条一样的
+        val hostedCommand = hostedCommandOf(command)
+        val twin = own.firstOrNull {
+            it.id !in twinsTaken && it.isLive == task.isRunning && it.command == hostedCommand
+        }?.also { twinsTaken += it.id }
         BackgroundShell(
             key = "cli:${task.id}",
             cliTaskId = task.id,

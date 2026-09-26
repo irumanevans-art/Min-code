@@ -149,9 +149,22 @@ class BackgroundShellsTest {
         assertEquals("h1", s.hostedServiceId)
     }
 
+    /** 从面板里一起停掉之后仍是一行，列表里不出两条一样的命令 */
+    @Test
+    fun `twins that both ended stay one shell`() {
+        val shells = backgroundShells(
+            tasks = listOf(shell("b1", status = "killed")),
+            items = listOf(bashCard("b1", "npm run dev")),
+            services = listOf(service("h1", "npm run dev", LocalServiceStatus.Exited, stopReason = LocalServiceStopReason.UserStop)),
+            sessionId = "s1",
+        )
+        assertEquals("h1", shells.single().hostedServiceId)
+        assertEquals(BackgroundShell.State.Stopped, shells.single().state)
+    }
+
     /** 一边已经停了：另一边还在跑，必须作为独立的一行露出来 */
     @Test
-    fun `twins are only paired while both run`() {
+    fun `twins are not paired when only one of them runs`() {
         val shells = backgroundShells(
             tasks = listOf(shell("b1", status = "killed")),
             items = listOf(bashCard("b1", "npm run dev")),
