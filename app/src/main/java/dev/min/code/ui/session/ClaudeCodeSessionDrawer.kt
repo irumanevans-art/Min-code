@@ -99,6 +99,7 @@ import me.rerere.hugeicons.stroke.PinOff
 import me.rerere.hugeicons.stroke.PlusSign
 import me.rerere.hugeicons.stroke.Search01
 import me.rerere.hugeicons.stroke.Settings02
+import me.rerere.hugeicons.stroke.Stop
 import me.rerere.hugeicons.stroke.Tag01
 
 /**
@@ -127,6 +128,8 @@ fun ClaudeCodeSessionDrawer(
     categories: List<String> = emptyList(),
     /** 行菜单里的「导出」；null 时不给这一项 */
     onExportSession: ((ClaudeCodeVM.SessionEntry) -> Unit)? = null,
+    /** 行菜单里的「结束会话」（只对进程还活着的行给）；null 时不给这一项 */
+    onEndSession: ((String) -> Unit)? = null,
     /** 题跋上的「导入」；null 时不给这个按钮 */
     onImportSession: (() -> Unit)? = null,
     onOpenFiles: () -> Unit = {},
@@ -291,6 +294,7 @@ fun ClaudeCodeSessionDrawer(
                                 onDelete = { pendingDelete = s },
                                 // 还没落盘的会话没有文件可导出
                                 onExport = onExportSession?.takeIf { s.onDisk }?.let { export -> { export(s) } },
+                                onEnd = onEndSession?.takeIf { s.isLive }?.let { end -> { end(s.id) } },
                             )
                         }
                     }
@@ -503,6 +507,7 @@ private fun SessionRow(
     onCategorize: () -> Unit,
     onDelete: () -> Unit,
     onExport: (() -> Unit)?,
+    onEnd: (() -> Unit)?,
 ) {
     val scheme = MaterialTheme.colorScheme
     val palette = MaterialTheme.sea
@@ -597,6 +602,7 @@ private fun SessionRow(
                 onDelete = onDelete,
                 onCategorize = onCategorize,
                 onExport = onExport,
+                onEnd = onEnd,
                 triggerTint = if (entry.isActive) palette.onSea.copy(alpha = 0.8f) else scheme.outline,
             )
         }
@@ -625,6 +631,8 @@ internal fun SessionRowMenu(
     onCategorize: (() -> Unit)? = null,
     /** 只有 Claude 会话能导出（Codex 的会话文件是另一套）；null 时不显示这一项 */
     onExport: (() -> Unit)? = null,
+    /** 进程还活着的 Claude 会话才有；null 时不显示这一项 */
+    onEnd: (() -> Unit)? = null,
     triggerTint: Color = MaterialTheme.colorScheme.outline,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -667,6 +675,13 @@ internal fun SessionRowMenu(
                     stringResource(R.string.session_export),
                     icon = HugeIcons.FileUpload,
                     onClick = { menu = false; onExport() },
+                )
+            }
+            if (onEnd != null) {
+                InkMenuItem(
+                    stringResource(R.string.session_end),
+                    icon = HugeIcons.Stop,
+                    onClick = { menu = false; onEnd() },
                 )
             }
             InkMenuItem(

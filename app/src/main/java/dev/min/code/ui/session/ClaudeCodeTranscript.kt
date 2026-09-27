@@ -1,10 +1,13 @@
 package dev.min.code.ui.session
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +28,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.key
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.layout.layout
+import dev.min.code.ui.theme.rememberAnimationsEnabled
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +41,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.runtime.mutableIntStateOf
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
@@ -285,10 +305,21 @@ internal fun TranscriptEntry(
     active: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // 收笔留白随"是不是最后一条"收放。生成中尾项一直在换（流式思考落定、工具卡接上来），
+    // 直接加减 38 dp 就是整段内容往上一跳再被下一条顶回去。第一次组合时直接取目标值，
+    // 打开会话、滚回来重建都不会播放
+    val tail by animateDpAsState(
+        targetValue = if (isLast) TranscriptRailTail else 0.dp,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "railTail",
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .transcriptRail(marker, isFirst, isLast, tone, active),
+            .transcriptRail(marker, isFirst, isLast, tone, active, tailReserve = tail),
     ) {
         Spacer(Modifier.width(TranscriptRailGutter))
         Column(
@@ -296,7 +327,7 @@ internal fun TranscriptEntry(
                 .weight(1f)
                 .padding(
                     top = ENTRY_PADDING,
-                    bottom = ENTRY_PADDING + if (isLast) TranscriptRailTail else 0.dp,
+                    bottom = ENTRY_PADDING + tail,
                 )
                 .then(if (active) Modifier.animateContentSize(GrowSpec) else Modifier),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -304,6 +335,83 @@ internal fun TranscriptEntry(
         )
     }
 }
+
+/**
+ * 生成中新落进会话流的条目，第一次出现时**长出来**而不是整块冒出来。
+ *
+ * 忙的时候列表的 `animateItem` 是关着的（每来一截 token 都做布局动画会越聊越顿），
+ * 于是工具卡、提示这种整条到达的东西一出现就是一整行，下面的「正在执行」跟着被推下去 ——
+ * 这就是"下一步是工具调用时还是一顿"的那一下。这里只管**第一次出现**：
+ * 记下见过的 id，打开历史、滚出屏幕再滚回来重建的条目都不会再长一次。
+ *
+ * 只有这一轮在跑、且在会话流尾部的才算新来的：翻回去看老条目时它们本来就在那里。
+ */
+internal class FreshEntries {
+    private val seen = HashSet<String>()
+
+    /** 这一轮在跑。由会话流每次组合时写入 */
+    var armed = false
+
+    /** 会话流最后几条的 id */
+    var tail: Set<String> = emptySet()
+
+    /** 这个 id 是不是第一次出现、而且该长出来。调一次就记下，之后永远是 false */
+    fun claim(id: String): Boolean = seen.add(id) && armed && id in tail
+}
+
+/** 会话流尾部多少条算"新来的" */
+internal const val FRESH_TAIL = 4
+
+internal val LocalFreshEntries = compositionLocalOf<FreshEntries?> { null }
+
+/**
+ * 整条到达的条目长出来；流式正文和思考不长 —— 它们在尾部的流式区里已经长过一遍，
+ * 落成正式条目时高度原样接上，再从零长一次就是同一段内容出现两次。
+ */
+@Composable
+internal fun FreshItem(item: ChatItem, content: @Composable () -> Unit) {
+    val fresh = LocalFreshEntries.current
+    val grow = remember(item.id) {
+        fresh != null && item !is ChatItem.AssistantText && item !is ChatItem.Thinking && fresh.claim(item.id)
+    }
+    GrowIn(grow, content)
+}
+
+/**
+ * 从零高度长到实际高度，同时淡入。长的是**这个条目自己占的高度**，所以下面的东西
+ * 是被慢慢推开的；列表的贴底跟随盯着布局，也就跟着一帧一帧滑下去。
+ *
+ * [enabled] 只在第一次组合时看。系统关了动画就直接画。
+ */
+@Composable
+internal fun GrowIn(enabled: Boolean, content: @Composable () -> Unit) {
+    val animate = remember { enabled } && rememberAnimationsEnabled()
+    if (!animate) {
+        content()
+        return
+    }
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(progress) { progress.animateTo(1f, GrowInSpec) }
+    Box(
+        Modifier
+            // clip：内容按全高摆放，露出来的只有已经长出来的那一截
+            .graphicsLayer {
+                clip = true
+                alpha = (progress.value * 1.6f).coerceAtMost(1f)
+            }
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                val height = (placeable.height * progress.value).roundToInt()
+                layout(placeable.width, height) { placeable.place(0, 0) }
+            },
+    ) { content() }
+}
+
+/** 和正文长高同一档：一行大约 300 ms，不回弹 */
+private val GrowInSpec = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMediumLow,
+)
 
 /**
  * 进行中的条目长高用的弹簧。临界阻尼：不能回弹，正文底边往回缩一下看着就是抖。
@@ -420,6 +528,7 @@ internal fun AssistantEntry(
     streaming: Boolean = false,
     durationMs: Long? = null,
     outputTokens: Int? = null,
+    finishedAt: Long? = null,
 ) {
     if (text.isBlank()) return
     TranscriptEntry(
@@ -434,18 +543,19 @@ internal fun AssistantEntry(
             SelectionContainer {
                 MarkdownBlock(content = text, modifier = Modifier.fillMaxWidth())
             }
-            if (durationMs != null || outputTokens != null) {
-                AssistantReceipt(durationMs = durationMs, outputTokens = outputTokens)
+            if (durationMs != null || outputTokens != null || finishedAt != null) {
+                AssistantReceipt(durationMs = durationMs, outputTokens = outputTokens, finishedAt = finishedAt)
             }
         }
     }
 }
 
 @Composable
-private fun AssistantReceipt(durationMs: Long?, outputTokens: Int?) {
+private fun AssistantReceipt(durationMs: Long?, outputTokens: Int?, finishedAt: Long?) {
     val parts = listOfNotNull(
         durationMs?.let { stringResource(R.string.transcript_receipt_duration, formatDuration(it)) },
         outputTokens?.takeIf { it > 0 }?.let { "↓${formatTokens(it)}" },
+        finishedAt?.let { formatReceiptClock(it) },
     )
     if (parts.isEmpty()) return
     Row(
@@ -462,15 +572,12 @@ private fun AssistantReceipt(durationMs: Long?, outputTokens: Int?) {
     }
 }
 
-/** 折叠态最多显示几行；生成中显示尾部，文字就在这几行里向上流动 */
-private const val THINKING_PREVIEW_LINES = 3
-private const val THINKING_PREVIEW_CHARS = 240
-
 /**
  * 思考。**默认折叠** —— 一轮思考动辄上千字，整段铺开会把工具调用和回答全挤出屏幕。
  *
- * 生成中显示**尾部** 3 行而不是头部：新 token 到达时文字在固定高度里向上滚，
- * 既看得出它在动，又不占地方。跑完只剩一行标题。生成中的环是湛色、脉冲。
+ * 折叠时一行就够：标题（思考中 / 思考 · N 字）后面跟着**最新一行**思考，
+ * 超出宽度的部分从左边淡出、新字从右边长出来。点开才是全文。
+ * 生成中的环是湛色、脉冲。
  */
 @Composable
 internal fun ThinkingEntry(
@@ -498,32 +605,128 @@ internal fun ThinkingEntry(
                 .fillMaxWidth()
                 .clickable { expanded = !expanded },
         ) {
-            Text(
-                text = if (streaming) stringResource(R.string.transcript_thinking_live)
+            // 思考落定时标题从「思考中」换成「思考 · N 字」：交叉淡出，不是一帧换字
+            Crossfade(
+                targetState = if (streaming) stringResource(R.string.transcript_thinking_live)
                 else stringResource(R.string.transcript_thinking_done, text.length),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.weight(1f))
+                animationSpec = InkMotion.effect(),
+                label = "thinkingLabel",
+            ) { label ->
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            // 折叠时最新一行跟在标题后面，和标题共用这一行的高度：
+            // 思考从"生成中"落到"已完成"时行高不变，不会先冒出三行再缩回去
+            if (!expanded) {
+                ThinkingTail(
+                    text = text,
+                    streaming = streaming,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
             Chevron(expanded = expanded, contentDescription = stringResource(if (expanded) R.string.transcript_thinking_collapse else R.string.transcript_thinking_expand))
         }
         AnimatedVisibility(
-            visible = expanded || streaming,
+            visible = expanded,
             enter = InkMotion.expand,
             exit = InkMotion.collapse,
         ) {
+            // 生成中的那段不给选中：理由同 [AssistantEntry]，文字每来一个 token 就重排一次
             val body = @Composable {
                 Text(
-                    text = if (expanded) text else text.takeLast(THINKING_PREVIEW_CHARS).trimStart(),
+                    text = text,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (expanded) Int.MAX_VALUE else THINKING_PREVIEW_LINES,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            // 生成中的那段不给选中：理由同 [AssistantEntry]，文字每来一个 token 就重排一次
             if (streaming) body() else SelectionContainer { body() }
         }
+    }
+}
+
+/**
+ * 折叠态那一行淡字：思考的**最新一行**，单行，超出宽度就往左走。
+ *
+ * 不用 `maxLines = 1` 硬裁 —— 那样新字一到，整行瞬间换成另一段，正是"一顿"的来源。
+ * 这里量出文字比视口宽出多少，多出来的部分用弹簧推出去，左缘加一道淡出，
+ * 所以看起来是旧字慢慢让位、新字从右边长出来。和正文区的长高是同一个弹簧
+ * （[GrowSpec]）：连着来的几截 token 会被抹成一次连续的移动。
+ *
+ * 滚动只在 [streaming] 时跑。跑完的思考停在最新一行上，不再动。
+ */
+@Composable
+private fun ThinkingTail(
+    text: String,
+    streaming: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val line = remember(text) { text.lineSequence().lastOrNull { it.isNotBlank() }?.trim().orEmpty() }
+    if (line.isEmpty()) return
+    val style = MaterialTheme.typography.bodySmall
+    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    val measurer = rememberTextMeasurer()
+    var viewport by remember { mutableIntStateOf(0) }
+    val textPx = remember(line, style) {
+        measurer.measure(line, style = style, softWrap = false, maxLines = 1).size.width
+    }
+    // 目标是把最新的字露在右缘。生成中才追；停了就定格在最新一行，
+    // 免得打开历史会话时那一行还在滑
+    val overflow = (textPx - viewport).coerceAtLeast(0)
+    // 停了就直接给定格值，不播放弹簧 —— 打开历史会话不该看到那一行还在滑
+    val offset by animateFloatAsState(
+        targetValue = overflow.toFloat(),
+        animationSpec = if (streaming) spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ) else snap(),
+        label = "thinkingTail",
+    )
+    val fading = overflow > 0 && viewport > 0
+    val fadePx = with(LocalDensity.current) { 16.dp.toPx() }
+    Box(
+        modifier
+            .height(with(LocalDensity.current) { style.lineHeight.toDp() })
+            .onSizeChanged { viewport = it.width }
+            .graphicsLayer {
+                if (!fading) return@graphicsLayer
+                compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+            }
+            .drawWithContent {
+                drawContent()
+                if (!fading) return@drawWithContent
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        0f to Color.Transparent,
+                        (fadePx / size.width).coerceIn(0.05f, 0.5f) to Color.Black,
+                        1f to Color.Black,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+            .clipToBounds(),
+    ) {
+        Text(
+            text = line,
+            style = style,
+            color = color,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Clip,
+            modifier = Modifier
+                // 按整行的宽度排，不许被视口宽度截住 —— 截住了，平移就只是把截剩的那一截挪走
+                .layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints.copy(maxWidth = Constraints.Infinity))
+                    layout(constraints.maxWidth, placeable.height) {
+                        placeable.place(-offset.roundToInt(), 0)
+                    }
+                },
+        )
     }
 }
 
@@ -599,7 +802,9 @@ internal fun TranscriptBlockEntry(
     onRevert: ((String) -> Unit)? = null,
 ) {
     when (block) {
-        is TranscriptBlock.Single -> TranscriptItem(block.item, isFirst, isLast, labels, onRevert = onRevert)
+        is TranscriptBlock.Single -> FreshItem(block.item) {
+            TranscriptItem(block.item, isFirst, isLast, labels, onRevert = onRevert)
+        }
 
         is TranscriptBlock.Work -> {
             val expanded = manualExpanded[block.key] ?: live
@@ -613,19 +818,27 @@ internal fun TranscriptBlockEntry(
             } else {
                 Column {
                     block.items.forEachIndexed { i, item ->
-                        TranscriptItem(
-                            item = item,
-                            isFirst = isFirst && i == 0,
-                            // 展开时块尾还挂着一条"收起"，轨道不能在这里断
-                            isLast = false,
-                            labels = labels,
-                            onRevert = onRevert,
+                        // key：块里插进一条新的，前面几条的状态（长出来过没有）不能串位
+                        key(item.id) {
+                            FreshItem(item) {
+                                TranscriptItem(
+                                    item = item,
+                                    isFirst = isFirst && i == 0,
+                                    // 展开时块尾还挂着一条"收起"，轨道不能在这里断
+                                    isLast = false,
+                                    labels = labels,
+                                    onRevert = onRevert,
+                                )
+                            }
+                        }
+                    }
+                    // 块在生成中第二条到达时才成形，这一行跟着冒出来 —— 让它长出来
+                    GrowIn(enabled = live) {
+                        CollapseWorkFooter(
+                            isLast = isLast,
+                            onCollapse = { manualExpanded[block.key] = false },
                         )
                     }
-                    CollapseWorkFooter(
-                        isLast = isLast,
-                        onCollapse = { manualExpanded[block.key] = false },
-                    )
                 }
             }
         }

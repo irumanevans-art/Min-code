@@ -341,6 +341,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             onSetCategory = vm::setSessionCategory,
             categories = vm.sessionCategories(),
             onExportSession = sessionTransfer.export,
+            onEndSession = vm::endSession,
             onImportSession = sessionTransfer.import,
             onOpenCodex = {
                 afterSidebarNav()
@@ -983,6 +984,13 @@ private fun SessionContent(
     // 分组是纯计算，但会话长起来之后每帧重算不划算，按条目数和最后一条的身份缓存
     val blocks = remember(session.items) { groupTranscript(session.items) }
     val lastIndex = blocks.lastIndex
+    // 生成中新落进来的工具卡、提示长出来而不是整块冒出来（见 [FreshEntries]）。
+    // 换会话时整个换一份：另一条会话里的 id 一条都不该算见过
+    val freshEntries = remember(activeKey) { FreshEntries() }
+    freshEntries.armed = session.busy
+    freshEntries.tail = remember(session.items) {
+        session.items.takeLast(FRESH_TAIL).mapTo(HashSet()) { it.id }
+    }
 
     // 用户手动开合过的块（key = 块内第一条的 id）。null = 没动过，跟默认走。
     // 提在这里而不是各块内部：LazyColumn 会把滚出屏幕的条目连同它的 remember 一起回收，
@@ -1058,6 +1066,7 @@ private fun SessionContent(
     CompositionLocalProvider(
         LocalFrost provides frost,
         LocalAwaitingToolUseId provides awaitingToolUseId,
+        LocalFreshEntries provides freshEntries,
         LocalOpenSubagent provides { toolUseId: String -> selectedAgent = toolUseId },
     ) {
     Box(Modifier.fillMaxSize().imePadding()) {
@@ -1136,11 +1145,15 @@ private fun SessionContent(
                 }
                 if (showLiveTurn) {
                     item(key = "live-turn") {
-                        LiveTurnEntry(
-                            session = liveSession.value,
-                            isFirst = blocks.isEmpty() && !streaming,
-                            isLast = true,
-                        )
+                        // 流式内容一落成正式条目，这一行就接着出现在尾部 —— 长出来，
+                        // 别把"思考完了"那一刻变成整行往下一跳
+                        GrowIn(enabled = true) {
+                            LiveTurnEntry(
+                                session = liveSession.value,
+                                isFirst = blocks.isEmpty() && !streaming,
+                                isLast = true,
+                            )
+                        }
                     }
                 }
         }
@@ -1406,6 +1419,7 @@ internal fun TranscriptItem(
             isLast = isLast,
             durationMs = item.durationMs,
             outputTokens = item.outputTokens,
+            finishedAt = item.finishedAt,
         )
         is ChatItem.Thinking -> ThinkingEntry(item.text, item.id, isFirst, isLast)
         is ChatItem.Note -> NoteEntry(item.text, item.isError, isFirst, isLast)

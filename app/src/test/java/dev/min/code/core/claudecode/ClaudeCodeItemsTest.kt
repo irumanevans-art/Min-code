@@ -77,4 +77,21 @@ class ClaudeCodeItemsTest {
         assertEquals("python app.py", hostedBashPlan(bash("python app.py", background = true))?.command)
         assertNull(hostedBashPlan(bash("python app.py", background = false)))
     }
+
+    @Test
+    fun `keepTurnEndStamps leaves one clock per turn on its last reply`() {
+        val items = listOf(
+            ChatItem.UserText("u1", "第一问"),
+            ChatItem.AssistantText("a1", "先看看", finishedAt = 1L),
+            call("t1"),
+            ChatItem.AssistantText("a2", "看完了", finishedAt = 2L),
+            ChatItem.UserText("u2", "第二问"),
+            ChatItem.AssistantText("a3", "答", finishedAt = 3L),
+            ChatItem.Note("n", "旁白"),
+        )
+        val stamps = items.keepTurnEndStamps()
+            .filterIsInstance<ChatItem.AssistantText>()
+            .associate { it.id to it.finishedAt }
+        assertEquals(mapOf("a1" to null, "a2" to 2L, "a3" to 3L), stamps)
+    }
 }

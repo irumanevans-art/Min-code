@@ -17,6 +17,9 @@ import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.ui.session.AssistantEntry
 import dev.min.code.ui.session.TranscriptBlockEntry
 import dev.min.code.ui.session.LocalAwaitingToolUseId
+import dev.min.code.ui.session.FRESH_TAIL
+import dev.min.code.ui.session.FreshEntries
+import dev.min.code.ui.session.LocalFreshEntries
 import dev.min.code.ui.session.NoteEntry
 import dev.min.code.ui.session.ThinkingEntry
 import dev.min.code.ui.session.FollowTailEffect
@@ -65,7 +68,17 @@ internal fun CodexTranscript(
         pendingToolUseId = session.pendingApproval?.itemId,
     )
 
-    CompositionLocalProvider(LocalAwaitingToolUseId provides awaiting) {
+    // 生成中新落进来的条目长出来，和 Claude 侧同一套（见 [FreshEntries]）
+    val freshEntries = remember { FreshEntries() }
+    freshEntries.armed = session.busy
+    freshEntries.tail = remember(session.items) {
+        session.items.takeLast(FRESH_TAIL).mapTo(HashSet()) { it.id }
+    }
+
+    CompositionLocalProvider(
+        LocalAwaitingToolUseId provides awaiting,
+        LocalFreshEntries provides freshEntries,
+    ) {
     LazyColumn(
         state = listState,
         // 条目之间不能留白：一有间距，左轨道就断成一节一节

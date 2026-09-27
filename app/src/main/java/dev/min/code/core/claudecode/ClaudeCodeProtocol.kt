@@ -14,6 +14,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import java.time.Instant
 
 /**
  * Claude Code 官方 CLI 的 headless stream-json 协议（NDJSON over stdin/stdout）。
@@ -49,8 +50,11 @@ sealed interface ClaudeCodeEvent {
      */
     data class CustomTitle(val title: String) : ClaudeCodeEvent
 
-    /** assistant 消息里的文本块（整块，非增量） */
-    data class AssistantText(val text: String) : ClaudeCodeEvent
+    /**
+     * assistant 消息里的文本块（整块，非增量）。
+     * [at] 只有历史 transcript 才有（行上的 `timestamp`）；实时流不带，完成时刻由 result 那一刻定。
+     */
+    data class AssistantText(val text: String, val at: Long? = null) : ClaudeCodeEvent
 
     /**
      * 用户消息。实时流里不会出现（除非开 `--replay-user-messages`），
@@ -66,6 +70,26 @@ sealed interface ClaudeCodeEvent {
      * 因此消费方必须把增量渲染进"临时缓冲"，等 [AssistantText] 到达时丢弃缓冲，避免文本翻倍。
      */
     data class PartialText(val text: String, val thinking: Boolean) : ClaudeCodeEvent
+
+    /**
+     * 一个工具调用块**开始**了（`content_block_start` 的 `tool_use`）。
+     *
+     * 这一帧里工具名和 id 是完整的，入参还是空对象 —— 入参要到后面的
+     * [ToolInputDelta] 才一个片段一个片段地到。整条 assistant 消息随后仍会带上
+     * 完整的 [ToolUse]，消费方按 [id] 把那一条当成补齐而不是再插一张卡。
+     *
+     * 提前知道"下一步是工具调用"，卡片才能在入参还在飞的时候就出现，
+     * 而不是等整条消息到齐后整张冒出来。
+     */
+    data class ToolBlockStart(val id: String, val name: String) : ClaudeCodeEvent
+
+    /**
+     * 工具入参的一个 JSON 片段（`input_json_delta.partial_json`）。
+     *
+     * 片段按到达顺序拼接才是合法 JSON，单个片段什么都不是。消费方攒着，
+     * 能解出完整字段就刷新卡片摘要，解不出就保持上一份。
+     */
+    data class ToolInputDelta(val partialJson: String) : ClaudeCodeEvent
 
     /** 一条 assistant 消息开始，用于清空上一轮的增量缓冲 */
     data object PartialStart : ClaudeCodeEvent
@@ -616,8 +640,75 @@ internal fun parseBashEditDiff(toolUseResult: JsonObject?): String? {
 
 /**
  * `--include-partial-messages` 下的 stream_event 帧：`event` 字段是原始的 Anthropic SSE 事件。
- * 只取文本/思考增量用于打字机效果，工具入参增量交给整块 assistant 消息处理。
+ *
+ * 文本和思考增量给打字机效果；工具调用在 `content_block_start` 就带了完整的名字和 id，
+ * 入参随后以 `input_json_delta` 一个片段一个片段地到 —— 这两样都要提前交出去，
+ * 否则卡片得等整条 assistant 消息到齐才整张冒出来。整条消息仍会带完整的 tool_use，
+ * 消费方按 id 补齐，这里的提前量不会变成第二张卡。
  */
+
+/**
+ * 把按顺序拼接的工具入参片段补成能解析的 JSON 对象。
+ *
+ * 片段是模型逐 token 吐出来的，绝大多数时候停在半截：字符串没闭合、对象没关、
+ * 最后一个键还没有值。补全的目的不是还原全文，是让**已经写完的字段**能被读出来 ——
+ * 卡片摘要靠它们（`command`、`file_path`、`pattern`）提前显示，不用等整条消息到齐。
+ *
+ * 补不出来返回 null，调用方保持上一份能解析的结果，摘要不会回退成空。
+ *
+ * 规则：
+ * - 丢掉末尾那个没有完整值的键（`"file_path": "a.kt", "con` 里的 `"con`）
+ * - 把没闭合的字符串补上引号
+ * - 按开闭配对把数组和对象关严
+ */
+internal fun completePartialJsonObject(partial: String): JsonObject? {
+    val trimmed = partial.dropLastWhile { it.isWhitespace() }
+    if (!trimmed.startsWith("{")) return null
+    // 字符串内部的括号和逗号不算结构。转义只需要知道"下一个字符被吃掉"，
+    // 不需要解开它 —— 这里只在数结构，不在读内容
+    val stack = ArrayDeque<Char>()
+    var inString = false
+    var escape = false
+    // 最近一次出现在字符串外的逗号，它后面还没有任何值字符
+    var danglingComma = false
+    for (ch in trimmed) {
+        if (inString) {
+            if (escape) { escape = false; continue }
+            if (ch == '\\') { escape = true; continue }
+            if (ch == '"') inString = false
+            continue
+        }
+        when (ch) {
+            '"' -> { inString = true; danglingComma = false }
+            '{', '[' -> { stack.addLast(ch); danglingComma = false }
+            '}' -> if (stack.lastOrNull() == '{') stack.removeLast() else return null
+            ']' -> if (stack.lastOrNull() == '[') stack.removeLast() else return null
+            ',' -> danglingComma = true
+            else -> if (!ch.isWhitespace()) danglingComma = false
+        }
+    }
+    if (stack.isEmpty() && !inString) {
+        return runCatching { protocolJson.parseToJsonElement(trimmed) as? JsonObject }.getOrNull()
+    }
+    // 末尾悬着一个没有值的键（`"command":"ls","des`）：它连冒号都没写完，
+    // 补引号只会得到 `"des"}`，照样解析不了。连同它前面那个逗号一起丢掉。
+    // 判断标准是这个没闭合的字符串**前面**是不是冒号：是冒号，它是一个值，补上引号；
+    // 不是，它是一个键名，整段丢掉。键名里的转义引号不在考虑之内 —— 模型不会把
+    // 键名写一半还带转义。
+    val droppedKey = inString && stack.lastOrNull() == '{' &&
+        trimmed.dropLastWhile { it != '"' }.dropLast(1).trimEnd().lastOrNull() != ':'
+    val cut = if (danglingComma || droppedKey) {
+        trimmed.dropLastWhile { it.isWhitespace() }.dropLastWhile { it != ',' }.dropLast(1)
+    } else {
+        trimmed
+    }
+    val closers = buildString {
+        if (inString && !droppedKey) append('"')
+        for (open in stack.reversed()) append(if (open == '{') '}' else ']')
+    }
+        return runCatching { protocolJson.parseToJsonElement(cut + closers) as? JsonObject }.getOrNull()
+}
+
 private fun expandStreamEvent(obj: JsonObject): List<ClaudeCodeEvent> {
     val event = obj.obj("event") ?: return emptyList()
     return when (event.str("type")) {
@@ -631,6 +722,19 @@ private fun expandStreamEvent(obj: JsonObject): List<ClaudeCodeEvent> {
             ?.let { listOf(ClaudeCodeEvent.OutputTokens(it)) }
             .orEmpty()
 
+        // content_block_start 里工具名和 id 是完整的（真机录制：input 还是空对象）。
+        // 文本 / 思考块的 start 不产生事件 —— 它们的第一个 delta 自己会把缓冲带出来
+        "content_block_start" -> {
+            val block = event.obj("content_block") ?: return emptyList()
+            if (block.str("type") != "tool_use") return emptyList()
+            listOf(
+                ClaudeCodeEvent.ToolBlockStart(
+                    id = block.str("id").orEmpty(),
+                    name = block.str("name").orEmpty(),
+                )
+            )
+        }
+
         "content_block_delta" -> {
             val delta = event.obj("delta") ?: return emptyList()
             when (delta.str("type")) {
@@ -642,6 +746,12 @@ private fun expandStreamEvent(obj: JsonObject): List<ClaudeCodeEvent> {
                 "thinking_delta" -> delta.str("thinking")
                     ?.takeIf { it.isNotEmpty() }
                     ?.let { listOf(ClaudeCodeEvent.PartialText(it, thinking = true)) }
+                    .orEmpty()
+
+                // 片段按顺序拼接才是 JSON；空片段跳过，免得消费方白拼一次
+                "input_json_delta" -> delta.str("partial_json")
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let { listOf(ClaudeCodeEvent.ToolInputDelta(it)) }
                     .orEmpty()
 
                 else -> emptyList()
@@ -1154,7 +1264,12 @@ fun parseTranscriptLine(line: String, sidechainParent: String? = null): List<Cla
             ?.let { listOf(ClaudeCodeEvent.CustomTitle(it)) }
             .orEmpty()
 
-        "assistant" -> expandAssistantMessage(obj).underSubagent(parent)
+        "assistant" -> {
+            val at = obj.str("timestamp")?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
+            expandAssistantMessage(obj)
+                .map { if (at != null && it is ClaudeCodeEvent.AssistantText) it.copy(at = at) else it }
+                .underSubagent(parent)
+        }
 
         "user" -> {
             // 一条 user 行要么是真的用户输入，要么是回填的 tool_result，二者不会混

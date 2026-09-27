@@ -670,6 +670,40 @@ class ClaudeCodeManager(
     @Volatile
     private var replaying = false
 
+    /**
+     * 正在流式到达的那条工具入参，片段按顺序拼接。
+     *
+     * 协议里一条消息的内容块是按顺序流的（一个块 stop 之后下一个才 start），
+     * 所以会话级一份就够，不用按 tool_use id 分桶。整块 [ClaudeCodeEvent.ToolUse]
+     * 到达、或下一条消息开始时清空。
+     */
+    private var streamingToolInput: String? = null
+
+    /** [streamingToolInput] 正在拼的是哪张卡的入参，按 tool_use id 对 */
+    private var streamingToolUseId: String? = null
+
+    /**
+     * 靠增量帧提前插进去、还没等到整块 tool_use 的卡（按 tool_use id）。
+     *
+     * 入参还在流的时候被打断，整块 tool_use 就永远不会来 —— CLI 根本没跑这个工具，
+     * 也不会有 tool_result，卡会一直转圈。下一条消息开始、或这一轮收尾时还没被确认的，
+     * 一律撤掉。
+     */
+    private val unconfirmedToolCards = HashSet<String>()
+
+    /** 撤掉没等到整块 tool_use 的提前卡，见 [unconfirmedToolCards] */
+    private fun dropUnconfirmedToolCards() {
+        if (unconfirmedToolCards.isEmpty()) return
+        val ids = unconfirmedToolCards.toSet()
+        unconfirmedToolCards.clear()
+        _state.update { state ->
+            state.copy(items = state.items.filterNot { item ->
+                item is ChatItem.ToolCall && item.toolUseId in ids &&
+                    item.status == ChatItem.ToolCall.Status.Running
+            })
+        }
+    }
+
     private fun dispatch(event: ClaudeCodeEvent, fromProcess: Process) {
         when (event) {
             // CLI 每一轮都会重发 system/init，不能每次都往聊天流里塞一条「会话已建立」——
@@ -716,7 +750,7 @@ class ClaudeCodeManager(
                         retryNotice = null,
                         turnProduced = true,
                         items = if (event.text.isBlank()) it.items
-                        else it.items + ChatItem.AssistantText(id, event.text),
+                        else it.items + ChatItem.AssistantText(id, event.text, finishedAt = event.at),
                     )
                 }
             }
@@ -737,8 +771,13 @@ class ClaudeCodeManager(
             // message_start = 有一次请求真的接通并开始流了。这是「重试成功了」唯一可靠的
             // 信号 —— CLI 只在失败时发 api_retry，成功时什么都不说，所以之前那句
             // "请求失败（3/10）…" 会一直挂到整轮结束（甚至下一轮），看着像还在报错
-            ClaudeCodeEvent.PartialStart -> _state.update {
-                it.copy(
+            ClaudeCodeEvent.PartialStart -> {
+                // 新的一条消息开始了，上一条的工具入参拼接不能带过来；
+                // 上一条里没等到整块 tool_use 的卡也不会再等到了
+                streamingToolInput = null
+                streamingToolUseId = null
+                dropUnconfirmedToolCards()
+                _state.update { it.copy(
                     streamingText = "",
                     streamingThinking = "",
                     retryNotice = null,
@@ -747,7 +786,7 @@ class ClaudeCodeManager(
                     // 消息边界：把上一条的累计值结转，否则下一条的累计值会把它算第二遍
                     outputTokensSettled = it.outputTokensSettled + it.outputTokensCurrent,
                     outputTokensCurrent = 0,
-                )
+                ) }
             }
 
             is ClaudeCodeEvent.OutputTokens -> _state.update {
@@ -835,6 +874,59 @@ class ClaudeCodeManager(
                 _state.update { it.copy(tasks = it.tasks.reconciledWith(event.tasks, now)) }
             }
 
+            // 工具块刚开始：名字和 id 已经完整，入参还是空的。先把卡插进去，
+            // 等入参一个片段一个片段地到（见 ToolInputDelta），而不是等整条
+            // assistant 消息到齐后整张卡一下子冒出来。
+            //
+            // 回放没有增量帧，历史里的卡一律走下面的 ToolUse，这里不会双插。
+            is ClaudeCodeEvent.ToolBlockStart -> if (!replaying) {
+                streamingToolInput = null
+                // 记下这份入参属于谁：后面的片段只允许写进这张卡，
+                // 不能按"最后一张正在跑的"去猜 —— 并行的工具调用会猜错
+                streamingToolUseId = event.id
+                if (event.id.isNotBlank()) unconfirmedToolCards += event.id
+                val cardId = newId()
+                _state.update {
+                    val base = if (it.retryNotice == null && it.turnProduced) it
+                    else it.copy(retryNotice = null, turnProduced = true)
+                    // 同一条消息里整块 tool_use 先到（中转站不回增量帧时）：卡已经在了，
+                    // 这一帧只是迟到的回声，不能再插一张
+                    if (event.id.isNotBlank() && base.items.anyToolCall(event.id)) base
+                    else base.copy(
+                        items = base.items + ChatItem.ToolCall(
+                            id = cardId,
+                            toolUseId = event.id,
+                            name = event.name,
+                            input = kotlinx.serialization.json.JsonObject(emptyMap()),
+                            status = ChatItem.ToolCall.Status.Running,
+                        )
+                    )
+                }
+            }
+
+            // 入参片段按到达顺序拼接。能解出完整字段就刷新卡片摘要，解不出就保持
+            // 上一份 —— 摘要只会往前长，不会闪回成空。拼接是会话级的一份：协议里
+            // 同一条消息的内容块按顺序流，不会两个工具交错着吐入参。
+            is ClaudeCodeEvent.ToolInputDelta -> if (!replaying) {
+                val accumulated = (streamingToolInput ?: "") + event.partialJson
+                streamingToolInput = accumulated
+                val parsed = completePartialJsonObject(accumulated)
+                if (parsed != null) {
+                    val target = streamingToolUseId
+                    _state.update { state ->
+                        val at = state.items.indexOfLast { item ->
+                            item is ChatItem.ToolCall && item.toolUseId == target &&
+                                item.status == ChatItem.ToolCall.Status.Running
+                        }
+                        val card = state.items.getOrNull(at) as? ChatItem.ToolCall ?: return@update state
+                        if (parsed == card.input) state
+                        else state.copy(items = state.items.toMutableList().also { list ->
+                            list[at] = card.copy(input = parsed)
+                        })
+                    }
+                }
+            }
+
             is ClaudeCodeEvent.ToolUse -> {
                 // 只出工具调用、一个字都不说的那一轮不会有 AssistantText，
                 // 但工具调用同样证明请求已经接通了
@@ -842,17 +934,36 @@ class ClaudeCodeManager(
                     if (it.retryNotice == null && it.turnProduced) it
                     else it.copy(retryNotice = null, turnProduced = true)
                 }
-                // 快照要在工具跑之前拿；tool_use 帧就是那个时刻（tool_result 才是跑完）
+                // 快照要在工具跑之前拿；tool_use 帧就是那个时刻（tool_result 才是跑完）。
+                // 入参到这里才是完整的，所以快照不能提前到 ToolBlockStart
                 snapshotBeforeEdit(event)
-                appendItem(
-                    ChatItem.ToolCall(
-                        id = newId(),
-                        toolUseId = event.id,
-                        name = event.name,
-                        input = event.input,
-                        status = ChatItem.ToolCall.Status.Running,
+                streamingToolInput = null
+                streamingToolUseId = null
+                unconfirmedToolCards -= event.id
+                // 增量帧已经把这张卡插进去了：这里只补齐入参，再插一张就是同一条调用出现两次。
+                // 对不上（回放、或中转站不回增量帧）才新插
+                val filled = _state.value.items.indexOfLast { item ->
+                    item is ChatItem.ToolCall && item.toolUseId == event.id &&
+                        item.status == ChatItem.ToolCall.Status.Running
+                }
+                if (filled >= 0) {
+                    _state.update { state ->
+                        val card = state.items.getOrNull(filled) as? ChatItem.ToolCall ?: return@update state
+                        state.copy(items = state.items.toMutableList().also { list ->
+                            list[filled] = card.copy(name = event.name, input = event.input)
+                        })
+                    }
+                } else {
+                    appendItem(
+                        ChatItem.ToolCall(
+                            id = newId(),
+                            toolUseId = event.id,
+                            name = event.name,
+                            input = event.input,
+                            status = ChatItem.ToolCall.Status.Running,
+                        )
                     )
-                )
+                }
                 // 仅 bypass：不会有 can_use_tool。Manual 必须等 PermissionRequest 排他托管，
                 // 否则 ToolUse 先到再 start = 与即将到来的 permission 路径双跑。
                 if (!replaying &&
@@ -961,6 +1072,10 @@ class ClaudeCodeManager(
             is ClaudeCodeEvent.Result -> {
                 // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
                 val endedTurn = turnSeq.getAndIncrement()
+                // 入参流到一半被打断的那张卡：CLI 没跑它，也不会再有结果
+                streamingToolInput = null
+                streamingToolUseId = null
+                dropUnconfirmedToolCards()
                 val interrupted = interruptedTurn == endedTurn
                 val withdrew = interrupted && interruptWithdrew
                 interruptedTurn = null
@@ -1006,7 +1121,7 @@ class ClaudeCodeManager(
                         // 它们本来就是为了在这一轮结束后继续跑
                         tasks = it.tasks.filter { t -> t.isError || (t.isRunning && t.backgrounded) },
                         items = run {
-                            var updated = it.items.updateLastAssistantMeta(durationMs, outputTokens)
+                            var updated = it.items.updateLastAssistantMeta(durationMs, outputTokens, finishedAt)
                             if (event.isError) {
                                 resultErrorNote(errorNoteId!!, event, interrupted, withdrew, updated)
                                     ?.let { note -> updated = updated + note }
@@ -2327,6 +2442,9 @@ class ClaudeCodeManager(
                 }
                 // errorMessage 和流式残留留到这里才清：① 之后旧进程还会再吐一阵子，
                 // 现在清才盖得住它退出前打的最后几行
+                streamingToolInput = null
+                streamingToolUseId = null
+                dropUnconfirmedToolCards()
                 _state.update {
                     it.copy(
                         options = options,
@@ -2541,6 +2659,7 @@ class ClaudeCodeManager(
                 try {
                     // 回放来自磁盘，没有吐出它的进程；hook 回调不会出现在 transcript 里
                     replayed.forEach { dispatch(it, fromProcess = NullProcess) }
+                    _state.update { it.copy(items = it.items.keepTurnEndStamps()) }
                 } finally {
                     replaying = false
                 }
@@ -3195,6 +3314,11 @@ internal fun mergeSubagentItem(
     else -> items
 }
 
+/** 列表里（含嵌在工具卡下的子 agent 条目）有没有这个 tool_use id 的卡 */
+internal fun List<ChatItem>.anyToolCall(toolUseId: String): Boolean = any { item ->
+    item is ChatItem.ToolCall && (item.toolUseId == toolUseId || item.subItems.anyToolCall(toolUseId))
+}
+
 /** toolUseId 对得上的那张工具卡换成 [transform] 的结果，其余原样。主会话流和子 agent 的子条目共用 */
 internal inline fun List<ChatItem>.mapToolCall(
     toolUseId: String?,
@@ -3218,16 +3342,42 @@ internal fun ChatItem.ToolCall.withResult(event: ClaudeCodeEvent.ToolResult, max
 private fun List<ChatItem>.updateLastAssistantMeta(
     durationMs: Long?,
     outputTokens: Int,
+    finishedAt: Long,
 ): List<ChatItem> {
     val index = indexOfLast { it is ChatItem.AssistantText }
     if (index < 0) return this
     val item = this[index] as ChatItem.AssistantText
-    if (item.durationMs != null || (item.outputTokens ?: 0) > 0) return this
+    // 已经带回执的是更早一轮的（这一轮没出文字），别把它改成这一轮的
+    if (item.durationMs != null || (item.outputTokens ?: 0) > 0 || item.finishedAt != null) return this
     return toMutableList().also {
         it[index] = item.copy(
             durationMs = durationMs,
             outputTokens = outputTokens.takeIf { count -> count > 0 },
+            finishedAt = finishedAt,
         )
+    }
+}
+
+/**
+ * 历史回放时每条 assistant 文本都带着自己的 `timestamp`，但回执只该出现在一轮的末尾
+ * （和实时流一致）：两条用户消息之间只留最后一条的时刻，其余清掉。
+ */
+internal fun List<ChatItem>.keepTurnEndStamps(): List<ChatItem> {
+    val keep = HashSet<Int>()
+    var lastAssistant = -1
+    forEachIndexed { i, item ->
+        when (item) {
+            is ChatItem.UserText -> {
+                if (lastAssistant >= 0) keep += lastAssistant
+                lastAssistant = -1
+            }
+            is ChatItem.AssistantText -> lastAssistant = i
+            else -> Unit
+        }
+    }
+    if (lastAssistant >= 0) keep += lastAssistant
+    return mapIndexed { i, item ->
+        if (item is ChatItem.AssistantText && item.finishedAt != null && i !in keep) item.copy(finishedAt = null) else item
     }
 }
 

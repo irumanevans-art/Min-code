@@ -302,8 +302,8 @@ data class AppSettings(
      */
     val a11yPromptVersion: Int = 0,
     /**
-     * 打开终端时自动弹出键盘（终端顶栏上的开关）。关掉后只看输出不遮半屏；
-     * 点一下终端照样弹。默认开，和以前一样。
+     * 终端唤起软键盘（终端顶栏上的开关）。关掉后打开终端、点终端都不弹，只看输出不遮半屏。
+     * 默认开，和以前一样。
      */
     val terminalAutoKeyboard: Boolean = true,
     /**

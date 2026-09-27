@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.min.code.ui.components.loopClock
 import dev.min.code.ui.theme.LocalSkin
@@ -252,6 +253,8 @@ internal fun Modifier.transcriptRail(
     isLast: Boolean,
     tone: RailTone,
     active: Boolean,
+    /** 收笔那段留白此刻有多高。留白在收放时（见 [TranscriptEntry]），螺旋要跟着它走 */
+    tailReserve: Dp = TranscriptRailTail,
 ): Modifier {
     val scheme = MaterialTheme.colorScheme
     val palette = MaterialTheme.sea
@@ -274,7 +277,7 @@ internal fun Modifier.transcriptRail(
                 markerY = y,
                 isFirst = isFirst,
                 isLast = isLast,
-                tailReserve = TranscriptRailTail.toPx(),
+                tailReserve = tailReserve.toPx(),
                 tailLead = 8.dp.toPx(),
                 tailInset = 10.dp.toPx(),
             )

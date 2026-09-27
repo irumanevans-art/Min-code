@@ -125,6 +125,23 @@ class RailStyleTest {
     }
 
     /**
+     * 雾丝是顺着轴线滑出去的，不是在衔接处折一个角。
+     * 包络起点导数为零：刚离开线的那一截摆幅涨得很慢，之后才散开。
+     */
+    @Test
+    fun `cloud strands leave the shaft gently`() {
+        assertEquals("起手摆幅为零", 0f, strandEnvelope(0f), 1e-6f)
+        assertEquals("末端散尽", 0f, strandEnvelope(1f), 1e-6f)
+        val early = strandEnvelope(0.05f)
+        val later = strandEnvelope(0.2f)
+        assertTrue("前 5% 几乎还贴着线: $early", early < 0.1f)
+        assertTrue("到 20% 才明显散开: $later", later > 4f * early)
+        // 峰值归一：交缠的幅度不因换包络而缩水
+        val peak = (0..100).maxOf { strandEnvelope(it / 100f) }
+        assertEquals(1f, peak, 0.01f)
+    }
+
+    /**
      * 云的线身会摆，但三处必须在轴线上：标记处（标记挂在线上）、记录底边（下一条从轴线接上）、
      * 以及摆幅永远在 gutter 里。
      */

@@ -190,7 +190,8 @@ fun WorkspaceTerminalPage(id: String) {
 private enum class TerminalPhase { Loading, Empty, Content }
 
 /**
- * 终端顶栏上「打开时自动弹键盘」的开关。独立页和会话页的终端浮层共用。
+ * 终端顶栏上的键盘开关。独立页和会话页的终端浮层共用。
+ * 关掉后终端不再唤起软键盘 —— 打开不弹，点终端也不弹，只看输出不遮半屏。
  * 开着是海色、关着是淡墨；图标看不出是开是关，所以每次切换都用一句 toast 说清现在是哪样。
  */
 @Composable
@@ -225,7 +226,7 @@ internal fun WorkspaceTerminalContent(
     contentPadding: PaddingValues,
     onSelectTab: (Long) -> Unit,
     onCloseTab: (Long) -> Unit,
-    /** 打开时自动弹键盘；关掉就等用户点终端再弹（[TerminalKeyboardToggle]） */
+    /** 终端能不能唤起软键盘；关掉后打开、点击都不弹（[TerminalKeyboardToggle]） */
     autoShowKeyboard: Boolean,
 ) {
     val phase = when {
@@ -379,6 +380,15 @@ private fun WorkspaceTerminalTabContent(
     }
     viewClient.controlDown = controlDown
     viewClient.altDown = altDown
+    viewClient.keyboardEnabled = autoShowKeyboard
+
+    // 顶栏开关切换时立刻生效：关掉就把正立着的键盘收掉，打开就弹出来。首帧交给 factory
+    var lastKeyboardEnabled by remember(tab.id) { mutableStateOf(autoShowKeyboard) }
+    LaunchedEffect(autoShowKeyboard) {
+        if (autoShowKeyboard == lastKeyboardEnabled) return@LaunchedEffect
+        lastKeyboardEnabled = autoShowKeyboard
+        if (autoShowKeyboard) viewClient.focusAndShowKeyboard() else viewClient.hideKeyboard()
+    }
 
     DisposableEffect(tab.id, viewClient) {
         onDispose {

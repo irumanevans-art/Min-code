@@ -350,13 +350,63 @@ class ClaudeCodeProtocolTest {
         ).single() as ClaudeCodeEvent.PartialText
         assertTrue(thinking.thinking)
 
-        // 工具入参增量交给整块 assistant 消息处理，这里不产生事件
+        // 工具调用的第一帧就带了完整的名字和 id，入参还是空的
+        val start = parseClaudeCodeEvents(
+            """{"type":"stream_event","event":{"type":"content_block_start","index":1,
+               "content_block":{"type":"tool_use","id":"toolu_01","name":"Bash","input":{}}}}"""
+        ).single() as ClaudeCodeEvent.ToolBlockStart
+        assertEquals("toolu_01", start.id)
+        assertEquals("Bash", start.name)
+
+        // 文本 / 思考块的 start 不产生事件：它们的第一个 delta 自己会把内容带出来
+        assertTrue(
+            parseClaudeCodeEvents(
+                """{"type":"stream_event","event":{"type":"content_block_start","index":0,
+                   "content_block":{"type":"thinking","thinking":""}}}"""
+            ).isEmpty()
+        )
+
+        // 入参一个片段一个片段地到，原样交出去，拼接是消费方的事
+        val delta = parseClaudeCodeEvents(
+            """{"type":"stream_event","event":{"type":"content_block_delta",
+               "delta":{"type":"input_json_delta","partial_json":"{\"command\":"}}}"""
+        ).single() as ClaudeCodeEvent.ToolInputDelta
+        assertEquals("{\"command\":", delta.partialJson)
+
+        // 空片段没有信息量，跳过
         assertTrue(
             parseClaudeCodeEvents(
                 """{"type":"stream_event","event":{"type":"content_block_delta",
-                   "delta":{"type":"input_json_delta","partial_json":"{"}}}"""
+                   "delta":{"type":"input_json_delta","partial_json":""}}}"""
             ).isEmpty()
         )
+    }
+
+    /** 工具入参流到一半时，已经写完的字段要能读出来 */
+    @Test
+    fun `partial tool input completes to the fields already written`() {
+        // 一个键写完了，下一个键才写了个开头：丢掉那个半截键
+        val cut = completePartialJsonObject("""{"command":"ls","des""")
+        assertEquals("ls", cut?.get("command")?.jsonPrimitive?.contentOrNull)
+        assertNull(cut?.get("des"))
+
+        // 字符串没闭合：补上引号就能读
+        val open = completePartialJsonObject("""{"file_path":"/tmp/a""")
+        assertEquals("/tmp/a", open?.get("file_path")?.jsonPrimitive?.contentOrNull)
+
+        // 已经是完整对象：原样返回，一个字段都不丢
+        val whole = completePartialJsonObject("""{"command":"ls","timeout":30}""")
+        assertEquals("ls", whole?.get("command")?.jsonPrimitive?.contentOrNull)
+        assertEquals(30, whole?.get("timeout")?.jsonPrimitive?.content?.toInt())
+
+        // 数组没关：照样补上
+        val arr = completePartialJsonObject("""{"todos":[{"id":"1","status":"completed"}""")
+        assertEquals(1, arr?.get("todos")?.jsonArray?.size)
+
+        // 什么都还没写完：解不出就返回 null，调用方保持上一份
+        assertNull(completePartialJsonObject("""{"command":"""))
+        assertNull(completePartialJsonObject("not json"))
+        assertNull(completePartialJsonObject(""))
     }
 
     /** 宽容降级：空行 / 非 JSON / 未知类型都不能让会话崩掉 */
@@ -1117,4 +1167,21 @@ class ClaudeCodeProtocolTest {
     }
 
     // endregion
+
+    @Test
+    fun `transcript assistant text carries the line timestamp`() {
+        val events = parseTranscriptLine(
+            """{"type":"assistant","timestamp":"2026-09-27T05:12:30.000Z","message":{"content":[{"type":"text","text":"好了"},{"type":"thinking","thinking":"嗯"}]}}"""
+        )
+        assertEquals(ClaudeCodeEvent.AssistantText("好了", at = 1790485950000L), events[0])
+        assertEquals(ClaudeCodeEvent.Thinking("嗯"), events[1])
+    }
+
+    @Test
+    fun `transcript assistant without a usable timestamp has no stamp`() {
+        val events = parseTranscriptLine(
+            """{"type":"assistant","timestamp":"昨天","message":{"content":"好了"}}"""
+        )
+        assertEquals(listOf(ClaudeCodeEvent.AssistantText("好了")), events)
+    }
 }

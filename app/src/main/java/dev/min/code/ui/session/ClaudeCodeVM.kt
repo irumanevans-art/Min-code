@@ -605,6 +605,15 @@ class ClaudeCodeVM(
     /** 停掉某个会话的进程并从注册表移除 */
     fun closeSession(key: String) = registry.closeSession(key)
 
+    /**
+     * 抽屉行菜单里的「结束会话」：只停进程，transcript 留着，之后点开照样 --resume 续上。
+     * 正看着的那个走顶栏停止键同一条路（留在页面上显示「会话已结束」，攥着的消息退回输入框）；
+     * 后台的直接从注册表摘掉 —— 不摘的话活跃项以外的死壳要等下一次 pruneDead 才走
+     */
+    fun endSession(id: String) {
+        if (registry.activeKey.value == id) stop() else registry.closeSession(id)
+    }
+
     private fun atCapacity() {
         _notice.value = context.getString(
             R.string.vm_max_sessions,

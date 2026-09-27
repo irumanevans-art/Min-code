@@ -212,11 +212,17 @@ private fun DrawScope.drawStrand(
     }
 }
 
-/** 线身摆动：两道波叠起来（长的定走向，短的添一点碎），dp */
+/**
+ * 线身摆动：一道长波定走向，一道更长更浅的波只为让它不那么规则，dp。
+ *
+ * 碎波不能太短。17 dp 一周期的波，斜率是长波的近一倍，叠上去整条线读着是陡的——
+ * 用户要的是雾被气流带着走，不是一条急折的线。碎波拉到比长波还长、振幅压到
+ * 看不出单独的起伏，线就只剩缓的那一道。
+ */
 private const val DriftAmpDp = 1.9f
 private const val DriftWaveDp = 46f
-private const val DriftRippleAmpDp = 0.55f
-private const val DriftRippleWaveDp = 17f
+private const val DriftRippleAmpDp = 0.3f
+private const val DriftRippleWaveDp = 71f
 /** 摆幅从标记处起、到底边前收，各用这么长（dp）渐变 */
 private const val DriftEaseDp = 14f
 
@@ -240,6 +246,21 @@ internal fun cloudDrift(y: Float, markerY: Float, bottom: Float, unit: Float): F
         DriftRippleAmpDp * sin(twoPi * d / (DriftRippleWaveDp * unit) + 1.3f)
     return wave * unit * envelope
 }
+
+/**
+ * 雾丝摆幅沿丝长的包络，峰值归一到 1。
+ *
+ * 前 42% 用 smoothstep 缓起——起点导数为零，丝是贴着轴线滑出去的，
+ * 不是一离开线就折开（sin 的 0.8 次方在起点斜率最大，衔接处看着是个尖角）。
+ * 后面按 (1−t)^1.5 慢慢收回，末端仍散尽。
+ */
+internal fun strandEnvelope(t: Float): Float {
+    val rise = (t / 0.42f).coerceIn(0f, 1f).let { smooth(it) }
+    return rise * (1f - t).coerceAtLeast(0f).pow(1.5f) / StrandEnvelopePeak
+}
+
+/** [strandEnvelope] 的峰值，用来把包络归一。rise 与 fall 的乘积最大值落在 t≈0.336 */
+private const val StrandEnvelopePeak = 0.4849f
 
 /** 0..1 的 smoothstep，两头导数为零：摆幅起收没有折角 */
 private fun smooth(t: Float): Float {
@@ -273,6 +294,9 @@ internal fun cloudSegments(top: Float, bottom: Float, unit: Float): List<RailSeg
  * 摆幅两头收零——起手都在轴线上（是从线里散出来的），末端又收拢散尽。中途摆幅不同、
  * 相位错开，丝与丝自然交缠。矮尾时按比例缩；横向硬夹进 gutter。
  *
+ * 摆幅的包络（[strandEnvelope]）起手处导数为零：雾丝是顺着轴线滑出去的，
+ * 不是在衔接处折一个角再散开。
+ *
  * [spin] 是 0→1 的循环时钟，活着时三缕一起**往下旋**：相位随它单调地减一整圈，
  * 波峰只会顺着丝往下走，看着是一股绳朝一个方向拧，而不是来回晃（以前是 sin(phase) 的来回摆，
  * 用户嫌它「来回转」）。一圈正好 2π，时钟从 1 跳回 0 时形状完全一样，接缝看不出来。
@@ -297,8 +321,7 @@ internal fun cloudStrands(
         val pts = ArrayList<Offset>(StrandSamples + 1)
         for (i in 0..StrandSamples) {
             val t = i / StrandSamples.toFloat()
-            // sin(π) 是 -1e-7 这种负零，直接 pow 会得 NaN，先夹到 0
-            val envelope = sin(PI.toFloat() * min(1f, t * 1.15f)).coerceAtLeast(0f).pow(0.8f)
+            val envelope = strandEnvelope(t)
             val amp = 5.5f * unit * s * ampK * envelope
             val drift = 4.5f * unit * s * t * t
             val px = x + drift + amp * sin(twoPi * 0.85f * t + phase - twoPi * spin)

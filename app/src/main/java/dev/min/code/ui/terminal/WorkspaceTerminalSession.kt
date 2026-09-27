@@ -223,6 +223,8 @@ internal class WorkspaceTerminalViewClient(
     var terminalView: TerminalView? = null
     var controlDown: Boolean = false
     var altDown: Boolean = false
+    /** 终端顶栏的键盘开关。关着时终端一律不唤起软键盘：打开不弹，点终端也不弹 */
+    var keyboardEnabled: Boolean = true
 
     override fun onScale(scale: Float): Float = scale.coerceIn(0.8f, 1.25f)
 
@@ -291,8 +293,19 @@ internal class WorkspaceTerminalViewClient(
         val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         view.post {
             view.requestFocus()
-            inputMethodManager.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+            // 开关关着时焦点照拿（外接键盘还能打字），软键盘不弹；万一系统随焦点带出来了也压回去
+            if (keyboardEnabled) {
+                inputMethodManager.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+            } else {
+                inputMethodManager.hideSoftInputFromWindow(view.windowToken, 0)
+            }
         }
+    }
+
+    fun hideKeyboard() {
+        val view = terminalView ?: return
+        val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        inputMethodManager.hideSoftInputFromWindow(view.windowToken, 0)
     }
 
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false

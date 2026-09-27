@@ -48,16 +48,20 @@ import me.rerere.highlight.CodeHighlightText
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.Copy01
+import me.rerere.hugeicons.stroke.ExpandParagraph
 import me.rerere.hugeicons.stroke.Tick01
+import me.rerere.hugeicons.stroke.TextWrap
 
 private const val COLLAPSE_LINES = 24
 
 /**
- * 代码块：语言标签 + 复制，正文横向滚动不折行（代码折行比横滚更难读），
- * 超过 [COLLAPSE_LINES] 行先收起。名字沿用 RikkaHub 的 HighlightCodeBlock，调用处不改。
+ * 代码块：语言标签 + 限宽键 + 复制，正文默认横滑不折行（代码折行比横滚更难读），
+ * 头上的限宽键随时切（[WidthToggle]），超过 [COLLAPSE_LINES] 行先收起。
+ * 名字沿用 RikkaHub 的 HighlightCodeBlock，调用处不改。
  *
- * [wrap] 给散文：模型回答里 ```text / ```md 包着的作文、译文，一段就是一整行，横滑读不下去。
- * 由 Markdown 的围栏按语言标签决定（[wrapsAsProse]）；工具输出（Read、Bash）一律不折。
+ * [wrap] 只是**默认值**：模型回答里 ```text / ```md 包着的作文、译文默认折行
+ * （由 Markdown 的围栏按语言标签决定，[wrapsAsProse]）；工具输出（Read、Bash）默认不折。
+ * 实际折不折，键上说了算。
  *
  * 去掉了 RikkaHub 版里的 HTML/SVG 预览、Mermaid、下载——那些是聊天场景的东西，
  * 这里的代码块是工具输出（Read 的文件、Bash 的命令），要的是"看清楚、能复制"。
@@ -83,6 +87,10 @@ fun HighlightCodeBlock(
     // onTextLayout），「还有 N 行」的 N 也会随屏宽变，不值得；散文本来就是要往下读完的
     val lines = remember(code) { code.lines() }
     var expanded by remember(code) { mutableStateOf(lines.size <= COLLAPSE_LINES) }
+    // 折不折先听 [wrap] 的，这枚键给人兜底：裸围栏装着散文想折、对齐的目录树想横滚，都手动切。
+    // 覆盖不随 code 重置（remember 不带 key）：流式追加时别把你切好的状态抖回去
+    var wrapOverride by remember { mutableStateOf<Boolean?>(null) }
+    val wrapped = wrapOverride ?: wrap
     val shown = if (expanded) code else lines.take(COLLAPSE_LINES).joinToString("\n")
     val textStyle = style ?: TextStyle(fontSize = 12.sp, lineHeight = 17.sp)
     val chevron by animateFloatAsState(if (expanded) 180f else 0f, InkMotion.spatial(), label = "chevron")
@@ -109,9 +117,10 @@ fun HighlightCodeBlock(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.weight(1f))
+            WidthToggle(wrapped = wrapped, onToggle = { wrapOverride = !wrapped })
             CopyAction(text = code, description = stringResource(R.string.common_copy_code))
         }
-        val bodyScroll = if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState())
+        val bodyScroll = if (wrapped) Modifier else Modifier.horizontalScroll(rememberScrollState())
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -126,8 +135,8 @@ fun HighlightCodeBlock(
                     fontSize = textStyle.fontSize,
                     lineHeight = textStyle.lineHeight,
                     fontFamily = JetbrainsMono,
-                    // 代码折行比横滚更难读；散文（wrap）才折
-                    softWrap = wrap,
+                    // 默认代码不折、散文（wrap 参数）才折；限宽键随时切
+                    softWrap = wrapped,
                 )
             }
         }
@@ -202,5 +211,36 @@ internal fun CopyAction(text: String, description: String, showLabel: Boolean = 
                 color = copyColor,
             )
         }
+    }
+}
+
+/**
+ * 限宽 / 解限键，复制键左边。键面写的是**点下去会怎样**：没限宽时写「限宽」（折着读），
+ * 限了写「解限」（横滑看原样）。图标跟着动作走——TextWrap 折行，ExpandParagraph 放开。
+ *
+ * 只管当场覆盖，不记忆：下次见到同类块还是按语言标签的老规矩来。数学块没有这枚键——
+ * 公式折行后上下标错位（见 [MathBlock]），横滑是它唯一读法。
+ */
+@Composable
+private fun WidthToggle(wrapped: Boolean, onToggle: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .clickable(role = Role.Button, onClick = onToggle)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = if (wrapped) HugeIcons.ExpandParagraph else HugeIcons.TextWrap,
+            contentDescription = null,
+            modifier = Modifier.size(13.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = stringResource(if (wrapped) R.string.common_unwrap else R.string.common_wrap),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

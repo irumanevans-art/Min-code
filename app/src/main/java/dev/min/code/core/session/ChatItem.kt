@@ -66,6 +66,12 @@ sealed interface ChatItem {
         /** 该条生成消息所属轮次的完成耗时与输出量。只在一轮结束后填充。 */
         val durationMs: Long? = null,
         val outputTokens: Int? = null,
+        /**
+         * 这一轮完成的时刻（epoch 毫秒），回执末尾像终端那样标一个钟点。
+         * 实时流取 result 到达那一刻；历史会话取 transcript 里这条消息的 `timestamp`，
+         * 且只留每轮最后一条（见 [keepTurnEndStamps]）。
+         */
+        val finishedAt: Long? = null,
     ) : ChatItem
 
     data class Thinking(override val id: String, val text: String) : ChatItem
