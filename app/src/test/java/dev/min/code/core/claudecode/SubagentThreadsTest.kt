@@ -123,6 +123,16 @@ class SubagentThreadsTest {
     }
 
     @Test
+    fun `切换条上同类型的补序号，独一个的不补`() {
+        val threads = subagentThreads(
+            listOf(agentCard("toolu_A", type = "general-purpose"), agentCard("toolu_B"), agentCard("toolu_C", type = "general-purpose")),
+            emptyList(),
+        )
+        assertEquals(listOf("general-purpose 1", "Explore", "general-purpose 2"), switcherLabels(threads))
+        assertTrue(switcherLabels(emptyList()).isEmpty())
+    }
+
+    @Test
     fun `深层找卡改到嵌套那一层，找不到原样返回同一个列表`() {
         val inner = agentCard("toolu_B")
         val items = listOf<ChatItem>(agentCard("toolu_A", subItems = listOf(inner)))

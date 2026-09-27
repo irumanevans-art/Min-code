@@ -43,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import dev.min.code.core.claudecode.ClaudeCodeManager
@@ -80,6 +81,9 @@ import dev.min.code.ui.session.BlankPage
 import dev.min.code.ui.session.ClaudeCodeInputBar
 import dev.min.code.ui.session.ClaudeCodeSettingsSheet
 import dev.min.code.ui.session.StartPanel
+import dev.min.code.ui.session.AgentSwitcher
+import dev.min.code.ui.session.SessionTaskStrip
+import dev.min.code.core.claudecode.SubagentThread
 import dev.min.code.ui.session.ToolEntry
 import dev.min.code.ui.session.rememberTranscriptLabels
 import dev.min.code.ui.session.UserEntry
@@ -493,19 +497,32 @@ private fun ConversationPreview(
                     }
                 }
             }
+            // 和会话页一样按底部铬件量出来的高度垫雾：页签条出现时雾跟着长高，字不压在正文上
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            var chromeDp by remember { mutableStateOf(96f) }
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(96.dp + FrostFade)
-                    .frostVeil(fromTop = false, hold = 96f / (96f + 8f)),
+                    .height(chromeDp.dp + FrostFade)
+                    .frostVeil(fromTop = false, hold = chromeDp / (chromeDp + FrostFade.value)),
             )
             Column(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .onSizeChanged { chromeDp = with(density) { it.height.toDp().value } },
             ) {
                 Column(Modifier.fillMaxWidth()) {
+                    // variant=agents1 / agents：输入框上方的子 agent 页签（一个 / 挤满一行）
+                    val agents = remember(variant) { previewAgents(variant) }
+                    var selectedAgent by remember(variant) { mutableStateOf<String?>(null) }
+                    SessionTaskStrip(
+                        shellCount = if (agents.isEmpty()) 0 else 1,
+                        onOpenShells = {},
+                        showAgents = agents.isNotEmpty(),
+                        agents = { AgentSwitcher(agents, selectedAgent, onSelect = { selectedAgent = it }) },
+                    )
                     ClaudeCodeInputBar(
                         session = session.copy(busy = variant == "streaming"),
                         onSend = { text, _ ->
@@ -548,3 +565,23 @@ private fun fixtureSession() = ClaudeCodeManager.SessionState(
     costText = "Total cost: \$0.6500",
     relayModelsChecked = true,
 )
+
+/** 子 agent 页签的假数据：agents1 = 只有一个在跑；agents = 四个，两个同类型、一个跑完、一个出错，一行放不下 */
+private fun previewAgents(variant: String): List<SubagentThread> {
+    fun agent(id: String, type: String, description: String, phase: SubagentThread.Phase, activity: String? = null) =
+        SubagentThread(
+            toolUseId = id, agentId = "a$id", agentType = type, description = description, prompt = description,
+            phase = phase, activity = activity, items = emptyList(), tracked = true,
+        )
+    val explore = agent("t1", "Explore", "审查 Min 项目源码", SubagentThread.Phase.Running, "Grep AgentSwitcher")
+    return when (variant) {
+        "agents1" -> listOf(explore)
+        "agents" -> listOf(
+            explore,
+            agent("t2", "general-purpose", "核对 CHANGELOG 与发版记录", SubagentThread.Phase.Running, "Read CHANGELOG.md"),
+            agent("t3", "general-purpose", "跑单测并整理失败用例", SubagentThread.Phase.Done),
+            agent("t4", "Plan", "拆 ClaudeCodeManager 的下一刀", SubagentThread.Phase.Failed),
+        )
+        else -> emptyList()
+    }
+}

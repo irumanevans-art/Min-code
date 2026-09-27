@@ -129,3 +129,17 @@ internal fun List<ChatItem>.mapToolCallDeep(
     // 没找到就原样返回同一个列表，调用方靠引用相等判断「这一层没有」
     return if (hit) mapped else this
 }
+
+/**
+ * 切换条上每个子 agent 叫什么：就是它的类型。同一类型不止一个时按发起顺序补序号
+ * （三个 general-purpose 并排也认得出谁是谁，又不用把「在干什么」挤进这一行——那句在视图顶上）。
+ * 序号只在 [threads] 这一批里数：条上看得见几个就数几个。
+ */
+fun switcherLabels(threads: List<SubagentThread>): List<String> {
+    val total = threads.groupingBy { it.agentType }.eachCount()
+    val seen = HashMap<String, Int>()
+    return threads.map { thread ->
+        val type = thread.agentType
+        if (total.getValue(type) < 2) type else "$type ${seen.merge(type, 1, Int::plus)}"
+    }
+}

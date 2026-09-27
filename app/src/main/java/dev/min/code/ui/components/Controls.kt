@@ -225,7 +225,7 @@ fun InkChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Mod
 }
 
 /**
- * 同一只 chip，内容自己排（子 agent 切换条：一粒活点 + 类型 + 它在干什么）。
+ * 同一只 chip，内容自己排。
  * [content] 拿到的是当前该用的前景色：选中时是海上的纸白，未选是墨。
  */
 @Composable

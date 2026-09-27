@@ -1022,6 +1022,9 @@
   <!-- 子 agent 切换条与子 agent 视图 -->
   <string name="agent_switcher_main">main</string>
   <string name="agent_switcher_label">Switch between the main session and subagents</string>
+  <string name="agent_switcher_all">All %1$d</string>
+  <string name="agent_list_title">Subagents · %1$d</string>
+  <string name="agent_list_main_detail">Main session</string>
   <string name="agent_phase_running">running</string>
   <string name="agent_phase_done">done</string>
   <string name="agent_phase_failed">failed</string>

@@ -1017,6 +1017,9 @@
   <!-- 子 agent 切换条与子 agent 视图 -->
   <string name="agent_switcher_main">main</string>
   <string name="agent_switcher_label">在主会话和子 agent 之间切换</string>
+  <string name="agent_switcher_all">全部 %1$d</string>
+  <string name="agent_list_title">子 agent · %1$d</string>
+  <string name="agent_list_main_detail">主会话</string>
   <string name="agent_phase_running">运行中</string>
   <string name="agent_phase_done">已完成</string>
   <string name="agent_phase_failed">出错</string>
