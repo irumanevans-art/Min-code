@@ -39,3 +39,6 @@ jwt_signing.txt.sig
 /HANDOFF_*.md
 /CODE_REVIEW_*.md
 /rel_223.json
+
+# 帧普查探针产物（原始 ndjson 不入库，报告归档时另存）
+/tools/out/

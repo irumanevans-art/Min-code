@@ -223,6 +223,8 @@ class ClaudeCodeManager(
         val announcedInit: Boolean = false,
         /** 「会话已建立」那条提示的 id。工具数事后长出来时要按它找回去改文案，见 dispatch(Init) */
         val initNoteId: String? = null,
+        /** 已经在聊天流里提示过的 MCP 服务器「name:status」。init 每轮重发，靠它去重 */
+        val announcedMcp: Set<String> = emptySet(),
         /** CLI 的工作目录，可用 set_cwd 改 */
         val cwd: String = DEFAULT_CWD,
         /**
@@ -448,6 +450,13 @@ class ClaudeCodeManager(
 
     @Volatile
     private var interruptWithdrew: Boolean = false
+
+    /** 用户点「拒绝」停下的那一轮（turnSeq），它收尾时不算失败，见 [answerPermission] */
+    @Volatile
+    private var deniedTurn: Int? = null
+
+    /** 本轮用户亲手拒掉的 tool_use id。result 的 permission_denials 也会列它们，但那不是规则拦的 */
+    private val userDeniedToolUses = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /**
      * 一条用户消息在离开我们视线之前的样子。
@@ -710,34 +719,72 @@ class ClaudeCodeManager(
             // 模型和工具数放到顶栏副标题即可，这里只在第一次或模型变了时提示
             is ClaudeCodeEvent.Init -> {
                 val noteId = newId()
-                _state.update {
-                    val changed = it.model != event.model
-                    val fresh = !it.announcedInit || changed
+                val startedAt = System.currentTimeMillis()
+                _state.update { state ->
+                    val changed = state.model != event.model
+                    val fresh = !state.announcedInit || changed
                     val text = "会话已建立 · ${event.model ?: "未知模型"} · ${event.tools.size} 个工具"
                     // 已经发出去的那条提示在 items 里的位置（没发过 / 被清过就是 -1）
-                    val at = it.initNoteId
-                        ?.let { id -> it.items.indexOfFirst { item -> item.id == id } }
+                    val at = state.initNoteId
+                        ?.let { id -> state.items.indexOfFirst { item -> item.id == id } }
                         ?: -1
-                    it.copy(
-                        sessionId = event.sessionId.ifBlank { it.sessionId },
+                    // MCP 服务器连不上 / 需要授权时在聊天流里说一声。CLI 不发 mcp_status 帧，
+                    // 失败状态只随 system/init 来（CLI 2.1.283 实测，见 tools/probe_frames.py 的
+                    // bad_mcp 场景），而 init 每轮都重发 —— 同一台服务器的同一个状态只提示一次，
+                    // 之后变回 connected 也不补提示。集合跟随 SessionState 整体重建清空
+                    // （startSession / openSession 换会话）；relaunchWith 续的是同一个 CLI 会话，
+                    // 和 announcedInit 一样不清。
+                    val mcpNotes = event.mcpServers.mapNotNull { server ->
+                        val mcpText = when (server.status) {
+                            "failed" -> "MCP 服务器 ${server.name} 连不上，它的工具这次用不了"
+                            "needs-auth" -> "MCP 服务器 ${server.name} 需要登录授权"
+                            else -> return@mapNotNull null
+                        }
+                        val key = "${server.name}:${server.status}"
+                        if (key in state.announcedMcp) null
+                        else key to ChatItem.Note(id = newId(), text = mcpText)
+                    }
+                    val baseItems = when {
+                        fresh -> state.items + ChatItem.Note(id = noteId, text = text)
+                        // CLI 2.1.274 起，首轮不再为还在连的 MCP 服务器等那两秒，被工具搜索
+                        // 延迟加载的工具要到后面某一轮才报上来。顶栏的 toolCount 每轮都刷，
+                        // 而这条提示发出去就不动了 —— 不改的话它会永远停在首轮那个偏小的数
+                        // 字上，和顶栏对不上。只在数字变大时就地改文案，id 保持原样，
+                        // 免得 LazyColumn 当成新条目又淡入一次。
+                        at >= 0 && event.tools.size > state.toolCount ->
+                            state.items.toMutableList().also { list ->
+                                list[at] = ChatItem.Note(id = state.initNoteId!!, text = text)
+                            }
+                        else -> state.items
+                    }
+                    state.copy(
+                        sessionId = event.sessionId.ifBlank { state.sessionId },
                         model = event.model,
                         toolCount = event.tools.size,
-                        initNoteId = if (fresh) noteId else it.initNoteId,
-                        items = when {
-                            fresh -> it.items + ChatItem.Note(id = noteId, text = text)
-                            // CLI 2.1.274 起，首轮不再为还在连的 MCP 服务器等那两秒，被工具搜索
-                            // 延迟加载的工具要到后面某一轮才报上来。顶栏的 toolCount 每轮都刷，
-                            // 而这条提示发出去就不动了 —— 不改的话它会永远停在首轮那个偏小的数
-                            // 字上，和顶栏对不上。只在数字变大时就地改文案，id 保持原样，
-                            // 免得 LazyColumn 当成新条目又淡入一次。
-                            at >= 0 && event.tools.size > it.toolCount ->
-                                it.items.toMutableList().also { list ->
-                                    list[at] = ChatItem.Note(id = it.initNoteId!!, text = text)
-                                }
-                            else -> it.items
-                        },
+                        initNoteId = if (fresh) noteId else state.initNoteId,
+                        announcedMcp = state.announcedMcp + mcpNotes.map { (key, _) -> key },
+                        items = baseItems + mcpNotes.map { (_, note) -> note },
                         announcedInit = true,
-                    )
+                    ).let { s ->
+                        // 这边没有在跑的消息、init 却来了 = CLI **自己**开了一轮：后台子 agent
+                        // 做完后它会拿 task_notification 当新的一问接着跑（CLI 2.1.283 实测，
+                        // 夹具 background_agents_followup）。busy 只在 dispatchSend 里点亮，
+                        // 不补的话这一轮照样在流，却没有「工作中」、停止键也是灭的。
+                        // turnProduced 直接为真：这一轮不是哪条消息开的，停止只能是打断、没有可撤回的
+                        if (s.busy || inFlight != null || fromProcess !== cli.process) s
+                        else s.copy(
+                            busy = true,
+                            turnProduced = true,
+                            streamingText = "",
+                            streamingThinking = "",
+                            retryNotice = null,
+                            turnStartedAt = startedAt,
+                            outputTokensSettled = 0,
+                            outputTokensCurrent = 0,
+                            lastTurnDurationMs = null,
+                            lastTurnFinishedAt = null,
+                        )
+                    }
                 }
             }
 
@@ -1091,10 +1138,18 @@ class ClaudeCodeManager(
                 // （写进 stdin 的那一刻 CLI 正好在收尾）。CLI 会把它当成新的一问自己开一轮，
                 // 所以 busy 继续为真是对的；真没动静就交给下面的看门狗兜底。
                 val queuedNext = hasQueuedWork()
-                val errorNoteId = if (event.isError) newId() else null
+                // 用户拒绝带着 interrupt 停下的一轮，CLI 报 error_during_execution —— 那是用户要的结果，不是失败。
+                // 工具卡上已经是被拒的样子，busy 落下、输入框亮起就是「等你」
+                val deniedStop = deniedTurn == endedTurn
+                deniedTurn = null
+                val errorNoteId = if (event.isError && !deniedStop) newId() else null
                 // 托管进进程表的那几条也是 deny 掉的，CLI 同样列进 permission_denials；
-                // 它们上面已经有托管结局的提示，再说一句「被权限规则拦截」就自相矛盾了
-                val denials = event.permissionDenials.filterNot { it.toolUseId in exclusiveHostedToolUses }
+                // 它们上面已经有托管结局的提示，再说一句「被权限规则拦截」就自相矛盾了。
+                // 用户亲手拒的同理：那是人拒的，不是规则
+                val denials = event.permissionDenials.filterNot {
+                    it.toolUseId in exclusiveHostedToolUses || it.toolUseId in userDeniedToolUses
+                }
+                userDeniedToolUses.clear()
                 val denialNoteId = if (denials.isNotEmpty()) newId() else null
                 val denialNote = formatPermissionDenialsNote(denials)
                 _state.update {
@@ -1122,8 +1177,8 @@ class ClaudeCodeManager(
                         tasks = it.tasks.filter { t -> t.isError || (t.isRunning && t.backgrounded) },
                         items = run {
                             var updated = it.items.updateLastAssistantMeta(durationMs, outputTokens, finishedAt)
-                            if (event.isError) {
-                                resultErrorNote(errorNoteId!!, event, interrupted, withdrew, updated)
+                            if (errorNoteId != null) {
+                                resultErrorNote(errorNoteId, event, interrupted, withdrew, updated)
                                     ?.let { note -> updated = updated + note }
                             }
                             if (denialNote != null) {
@@ -1608,6 +1663,12 @@ class ClaudeCodeManager(
             }
         }
         val pending = taken ?: return false
+        // 用户点的「拒绝」不带话 —— 和桌面端的 No 一样，要的是「停下来等我」。
+        // 不带 interrupt 的话 CLI 只回一句 User denied，模型会换条路再试一遍
+        // （Bash 被拒就改用 Write，CLI 2.1.283 实测），手机上就是又弹一次授权。
+        // 带话的拒绝（托管结局）是在给模型解释，让它接着干
+        val stop = !allow && denyMessage == null
+        val seq = turnSeq.get()
         val answered = answerCli(
             pending.requestId,
             encodeClaudeCodePermissionResponse(
@@ -1615,9 +1676,12 @@ class ClaudeCodeManager(
                 allow = allow,
                 denyMessage = denyMessage,
                 updatedPermissions = listOfNotNull(suggestion?.raw),
+                interrupt = stop,
             ),
         )
         if (!answered) return false
+        if (!allow) pending.toolUseId?.takeIf { it.isNotBlank() }?.let(userDeniedToolUses::add)
+        if (stop) deniedTurn = seq
         if (allow && suggestion != null) {
             appendItem(ChatItem.Note(newId(), "已记住：${suggestion.label}"))
         }

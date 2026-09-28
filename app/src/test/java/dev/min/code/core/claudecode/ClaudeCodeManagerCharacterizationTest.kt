@@ -168,6 +168,36 @@ class ClaudeCodeManagerCharacterizationTest {
         }
     }
 
+    /**
+     * 点「拒绝」= 停下来等人（桌面端的 No）：应答带 interrupt，CLI 以 error_during_execution 收尾
+     * （bash_denied_interrupt 的后半段是真 CLI 2.1.283 录的）。这一轮不能报成「任务失败」，
+     * permission_denials 里那条也不能说成「被权限规则拦截」—— 是人拒的。
+     */
+    @Test
+    fun `denying a permission stops the turn quietly instead of letting the model retry`() = runBlocking<Unit> {
+        ManagerHarness("bash_denied_interrupt").use { h ->
+            h.startAndHandshake()
+            h.manager.send("run it")
+            val request = h.awaitState("权限请求") { it.pendingPermission != null }.pendingPermission!!
+
+            assertTrue(h.manager.answerPermission(allow = false))
+            val s = h.awaitTurnEnd()
+            assertFalse(s.busy)
+            val answer = h.process.written.single { it.str("type") == "control_response" }["response"]!!.jsonObject
+            assertEquals(request.requestId, answer.str("request_id"))
+            assertEquals(
+                buildJsonObject {
+                    put("behavior", "deny")
+                    put("message", "User denied")
+                    put("interrupt", true)
+                },
+                answer["response"],
+            )
+            val notes = s.items.filterIsInstance<ChatItem.Note>().map { it.text }
+            assertTrue(notes.toString(), notes.none { "任务失败" in it || "权限规则" in it })
+        }
+    }
+
     @Test
     fun `answering a different request id than the pending one is refused`() = runBlocking<Unit> {
         ManagerHarness("bash_with_permission").use { h ->
@@ -205,9 +235,109 @@ class ClaudeCodeManagerCharacterizationTest {
         }
     }
 
+    /**
+     * parallel_subagents.ndjson（真机 2.1.283，tools/probe_frames.py 录制）钉下来的行为：
+     * 主回合的 result 落了以后，两个后台 agent 相继完成，CLI **自己**又开了两轮 ——
+     * 每轮以 result 收尾，中间没有任何用户消息。这不同于「交棒的消息被 CLI 当成新的一问」，
+     * 是 CLI 纯自发发起的；对用户来说它们就是正在进行的对话，busy 必须亮着，
+     * 否则输入坞显示成空闲、停止键也点不到。
+     *
+     * 夹具用 `# turn` / `# pause` 观察点停在关键位置（机制见 ClaudeCodeManagerHarness），
+     * 测试逐点放行，把「第一条 result 之后」每个位置的 busy 采下来再统一断言期望行为。
+     */
     @Test
-    fun `unknown model - the CLI explains it in a synthetic reply and Min marks the turn failed once`() = runBlocking<Unit> {
-        ManagerHarness("model_not_found").use { h ->
+    fun `CLI-initiated turns after background agents complete light busy up and land their text`() = runBlocking<Unit> {
+        ManagerHarness("background_agents_followup").use { h ->
+            // 探针只录到 initialize / set_max_thinking_tokens 的应答；get_settings / get_session_cost
+            // 给最小应答，凑齐 startAndHandshake 的等待条件（applied.model / cost 文本）
+            h.nextProcess = {
+                FakeCliProcess(
+                    h.fixture,
+                    overrides = mapOf(
+                        // override 顶掉的是整个 response 信封层：subtype 要自己带，
+                        // 载荷放内层 response（ControlOk 读的就是 response.response）
+                        "get_settings" to { _ ->
+                            buildJsonObject {
+                                put("subtype", "success")
+                                put("response", buildJsonObject {
+                                    put("applied", buildJsonObject {
+                                        put("model", "claude-haiku-4-5-20251001")
+                                        put("effort", "low")
+                                        put("ultracode", false)
+                                    })
+                                })
+                            }
+                        },
+                        "get_session_cost" to { _ ->
+                            buildJsonObject {
+                                put("subtype", "success")
+                                put("response", buildJsonObject { put("text", "Total cost: $0.06") })
+                            }
+                        },
+                    ),
+                )
+            }
+            h.startAndHandshake()
+            h.manager.send(
+                "In ONE assistant message, make TWO parallel Agent tool calls (the subagent launcher, " +
+                    "formerly called Task) with subagent_type 'general-purpose': the first subagent reads " +
+                    "only file1.txt and summarizes it in one sentence; the second reads only file2.txt and " +
+                    "summarizes it in one sentence. Wait for both, then reply DONE.",
+            )
+            val firstEnd = h.awaitTurnEnd()
+            val firstFinishedAt = firstEnd.lastTurnFinishedAt
+
+            // # pause t2：result #1 之后、自开轮第一帧之前
+            val afterResult1 = h.manager.state.value.busy
+            h.process.releasePause("t2")
+            h.awaitState("自开轮 init+status") { it.statusPhase != null }
+            val afterInit2 = h.manager.state.value.busy
+            h.process.releasePause("t2init")
+            // 自开轮的正文已进 items、result #2 还压在 # pause mid2 后面 —— 流式输出期间
+            h.awaitState("第二条正文") { st ->
+                st.items.any { it is ChatItem.AssistantText && "First agent completed" in it.text }
+            }
+            val duringTurn2 = h.manager.state.value.busy
+
+            h.process.releasePause("mid2")
+            // 自开轮的 init 会把 lastTurnFinishedAt 清成 null，只看「变了」会在 result 之前就放行
+            val secondFinishedAt = h.awaitState("result #2") {
+                !it.busy && it.lastTurnFinishedAt != null && it.lastTurnFinishedAt != firstFinishedAt
+            }.lastTurnFinishedAt
+            val afterResult2 = h.manager.state.value.busy
+
+            h.process.releasePause("t3")
+            h.awaitState("自开轮 2 init+status") { it.statusPhase != null }
+            val afterInit3 = h.manager.state.value.busy
+            h.process.releasePause("t3init")
+            h.awaitState("第三条正文") { st ->
+                st.items.any { it is ChatItem.AssistantText && "Both agents completed" in it.text }
+            }
+            val duringTurn3 = h.manager.state.value.busy
+
+            h.process.releasePause("mid3")
+            val s = h.awaitState("result #3") {
+                !it.busy && it.lastTurnFinishedAt != null && it.lastTurnFinishedAt != secondFinishedAt
+            }
+
+            // —— 失败信息里带全部采样点 ——
+            val busyTrace = "afterResult1=$afterResult1 afterInit2=$afterInit2 duringTurn2=$duringTurn2 " +
+                "afterResult2=$afterResult2 afterInit3=$afterInit3 duringTurn3=$duringTurn3"
+            // a. CLI 自开的回合流式输出期间 busy 必须亮着
+            assertTrue("CLI 自开回合流式输出期间 busy 应为 true（$busyTrace）", duringTurn2 && duringTurn3)
+            // init 一到就亮（CLI 开轮的标志），两轮之间照常落下
+            assertTrue("自开轮 init 之后 busy 应为 true（$busyTrace）", afterInit2 && afterInit3)
+            assertFalse("两轮之间 busy 应为 false（$busyTrace）", afterResult1 || afterResult2)
+            // b. 最后一条 result 之后 busy 落下
+            assertFalse("最后一条 result 之后 busy 应为 false（$busyTrace）", s.busy)
+            // c. 两个后续回合的助手正文都进了 items
+            assertTrue(s.items.any { it is ChatItem.AssistantText && "First agent completed" in it.text })
+            assertTrue(s.items.any { it is ChatItem.AssistantText && "Both agents completed" in it.text })
+        }
+    }
+
+    @Test
+    fun `unknown model - the CLI explains it in a synthetic reply and Min marks the turn failed once`() = runBlocking<Unit> {        ManagerHarness("model_not_found").use { h ->
             h.startAndHandshake()
             h.manager.send("Say hi.")
             val s = h.awaitTurnEnd()

@@ -36,7 +36,15 @@ sealed interface ClaudeCodeEvent {
         val sessionId: String,
         val model: String?,
         val tools: List<String>,
+        /** init 每轮重发，MCP 服务器的连接状态随帧带上：connected / failed / needs-auth / pending */
+        val mcpServers: List<McpServerStatus> = emptyList(),
     ) : ClaudeCodeEvent
+
+    /**
+     * system/init 的 mcp_servers 里的一项。CLI 2.1.283 实测：MCP 启动失败**不发** mcp_status 帧，
+     * 失败（status:"failed"）的唯一信号就是这里的条目 —— 见 tools/probe_frames.py 的 bad_mcp 场景。
+     */
+    data class McpServerStatus(val name: String, val status: String)
 
     /**
      * CLI 给会话拟的标题。
@@ -369,6 +377,13 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
                     tools = obj.arr("tools")
                         ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
                         .orEmpty(),
+                    // 缺 name 或 status 的条目直接跳过，绝不让整帧解析失败
+                    mcpServers = obj.arr("mcp_servers").orEmpty().mapNotNull { entry ->
+                        val server = entry as? JsonObject ?: return@mapNotNull null
+                        val name = server.str("name")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        val status = server.str("status")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        ClaudeCodeEvent.McpServerStatus(name, status)
+                    },
                 )
             )
 
@@ -386,7 +401,9 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
 
         // 子 agent 的增量**直接丢掉**：流式缓冲区只有一个，把它的 token 混进去会把
         // 主 agent 正在生成的那段正文冲掉。子 agent 的内容靠上面那条整块消息补齐，
-        // 打字机效果对一个折叠在卡片里的子任务也没有意义
+        // 打字机效果对一个折叠在卡片里的子任务也没有意义。
+        // （CLI 2.1.283 实测本来就不给子 agent 发 stream_event，见 tools/probe_frames.py；
+        // 这里留作防御。）
         "stream_event" ->
             if (obj.str("parent_tool_use_id").isNullOrBlank()) expandStreamEvent(obj) else emptyList()
 
@@ -839,6 +856,8 @@ fun encodeClaudeCodePermissionResponse(
     denyMessage: String? = null,
     updatedPermissions: List<JsonObject> = emptyList(),
     updatedInput: JsonObject? = null,
+    /** 只对 deny 有意义：CLI 让模型停下等人，而不是换个办法接着试，见 [ClaudeCodeManager.answerPermission] */
+    interrupt: Boolean = false,
 ): String = buildJsonObject {
     put("type", "control_response")
     put("response", buildJsonObject {
@@ -855,6 +874,7 @@ fun encodeClaudeCodePermissionResponse(
             } else {
                 put("behavior", "deny")
                 put("message", denyMessage?.takeIf { it.isNotBlank() } ?: "User denied")
+                if (interrupt) put("interrupt", true)
             }
         })
     })

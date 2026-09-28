@@ -43,6 +43,12 @@ internal class CliFixture(
     val turns: List<List<Step>>,
     /** 关掉 stdin 之后 CLI 的退出码 */
     val exitCode: Int,
+    /**
+     * 没有用户消息、由 CLI 自己接上的轮次下标（夹具里的 `# turn` 行，见
+     * background_agents_followup.txt：主回合 result 之后后台 agent 完成时 CLI 自己开轮）。
+     * [FakeCliProcess] 播完上一轮后会自动接着播这些轮。
+     */
+    val autoTurnIndexes: Set<Int> = emptySet(),
 ) {
     sealed interface Step {
         data class Stdout(val line: String) : Step
@@ -51,6 +57,13 @@ internal class CliFixture(
         data class AwaitPermission(val requestId: String) : Step
         /** 录制时这里发了 interrupt，等 Min 也发一个 */
         data object AwaitInterrupt : Step
+
+        /**
+         * 轮次中间的观察点（夹具里的 `# pause <label>` 行）：回放停在这里，等测试
+         * [FakeCliProcess.releasePause] 放行 —— 不停的话一轮的行一口气吐完，
+         * 「result 之后 / 流式输出期间」这类中间状态就观察不到了。
+         */
+        data class Pause(val label: String) : Step
     }
 
     companion object {
@@ -60,10 +73,22 @@ internal class CliFixture(
             val subtypeOf = HashMap<String, String>()
             val responses = LinkedHashMap<String, MutableList<JsonObject>>()
             val turns = mutableListOf<MutableList<Step>>()
+            val autoTurnIndexes = mutableSetOf<Int>()
             var turn: MutableList<Step>? = null
             var exitCode = 0
             for (raw in text.lines()) {
                 if (raw.startsWith("# exit ")) exitCode = raw.removePrefix("# exit ").trim().toInt()
+                // CLI 自开的轮：上一轮 result 之后没有用户消息，CLI 自己接上
+                if (raw.startsWith("# turn")) {
+                    turn = mutableListOf<Step>().also(turns::add)
+                    autoTurnIndexes += turns.lastIndex
+                    continue
+                }
+                // 轮次中间的观察点：停住等测试放行
+                if (raw.startsWith("# pause ")) {
+                    turn?.add(Step.Pause(raw.removePrefix("# pause ").trim()))
+                    continue
+                }
                 if (raw.length < 2 || raw[1] != ' ') continue
                 val body = raw.substring(2)
                 when (raw[0]) {
@@ -100,7 +125,7 @@ internal class CliFixture(
                     '!' -> turn?.add(Step.Stderr(body))
                 }
             }
-            return CliFixture(responses, turns, exitCode)
+            return CliFixture(responses, turns, exitCode, autoTurnIndexes)
         }
     }
 }
@@ -127,9 +152,12 @@ internal class FakeCliProcess(
 
     @Volatile
     private var exitCode: Int? = null
-    private val turns = ArrayDeque(fixture.turns)
+    private val turns = ArrayDeque<Pair<Int, List<CliFixture.Step>>>().apply {
+        fixture.turns.forEachIndexed { index, steps -> addLast(index to steps) }
+    }
     private val used = ConcurrentHashMap<String, Int>()
     private val permissionAnswers = ConcurrentHashMap<String, CountDownLatch>()
+    private val pauseGates = ConcurrentHashMap<String, CountDownLatch>()
     private val interrupts = LinkedBlockingQueue<Unit>()
 
     /** Min 写进 stdin 的每一行 */
@@ -141,6 +169,14 @@ internal class FakeCliProcess(
     private val turnGate = LinkedBlockingQueue<Unit>()
 
     fun releaseTurn() = turnGate.put(Unit)
+
+    /**
+     * 放行夹具 `# pause <label>` 观察点上停住的回放。先于回放到达放行也行：
+     * latch 会预先放开，回放到那一步时直接通过。
+     */
+    fun releasePause(label: String) {
+        pauseGates.getOrPut(label) { CountDownLatch(1) }.countDown()
+    }
 
     /** 从此 stdin 写入都抛 IOException，模拟管道断掉 */
     fun breakStdin() {
@@ -185,8 +221,8 @@ internal class FakeCliProcess(
             }
 
             "user" -> {
-                val steps = synchronized(turns) { turns.removeFirstOrNull() } ?: return
-                Thread({ play(steps) }, "fake-cli-turn").apply { isDaemon = true }.start()
+                val next = synchronized(turns) { turns.removeFirstOrNull() } ?: return
+                Thread({ playTurn(next) }, "fake-cli-turn").apply { isDaemon = true }.start()
             }
         }
     }
@@ -210,6 +246,22 @@ internal class FakeCliProcess(
         ).toString()
     }
 
+    /**
+     * 播一轮，接着把 CLI 自开的轮（[CliFixture.autoTurnIndexes]）链着播完：
+     * 真 CLI 在主回合 result 之后不需要用户消息就自己开新一轮（后台 agent 完成时就是这样），
+     * 所以没有「等下一条 user」的时机可蹭，只能在上轮回放线程的末尾顺序接上。
+     * 轮与轮之间靠 `# pause` 观察点停下来，测试才看得到中间状态。
+     */
+    private fun playTurn(turn: Pair<Int, List<CliFixture.Step>>) {
+        play(turn.second)
+        while (true) {
+            val next = synchronized(turns) { turns.firstOrNull() } ?: return
+            if (next.first !in fixture.autoTurnIndexes) return
+            synchronized(turns) { turns.removeFirst() }
+            play(next.second)
+        }
+    }
+
     private fun play(steps: List<CliFixture.Step>) {
         if (holdTurns) turnGate.poll(WAIT_S, TimeUnit.SECONDS)
         for (step in steps) {
@@ -224,6 +276,9 @@ internal class FakeCliProcess(
                 }
 
                 is CliFixture.Step.Stderr -> stderr.push(step.line)
+                is CliFixture.Step.Pause ->
+                    pauseGates.getOrPut(step.label) { CountDownLatch(1) }
+                        .await(WAIT_S, TimeUnit.SECONDS)
                 is CliFixture.Step.AwaitPermission ->
                     permissionAnswers.getOrPut(step.requestId) { CountDownLatch(1) }.await(WAIT_S, TimeUnit.SECONDS)
 

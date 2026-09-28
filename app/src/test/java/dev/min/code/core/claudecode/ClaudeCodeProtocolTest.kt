@@ -147,6 +147,42 @@ class ClaudeCodeProtocolTest {
     }
 
     @Test
+    fun `init parses mcp server statuses from the recorded bad_mcp frame`() {
+        // tools/out/probe_frames/bad_mcp.ndjson 里那条 system/init，原样粘进来。
+        // CLI 2.1.283 实测：--mcp-config 指向不存在的命令时**不发** mcp_status 帧，
+        // 启动失败只在这帧的 mcp_servers 里说（status:"failed"）
+        val events = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"init","cwd":"C:\\Users\\11141\\AppData\\Local\\Temp\\probe_frames_bad_mcp_zg98dqww","session_id":"3b35baee-2018-475d-856b-8e3f89239d28","tools":["Task","AskUserQuestion","Bash","CronCreate","CronDelete","CronList","Edit","EnterPlanMode","EnterWorktree","ExitPlanMode","ExitWorktree","Glob","Grep","ListAgents","NotebookEdit","Read","ReportFindings","ScheduleWakeup","SendMessage","Skill","TaskCreate","TaskGet","TaskList","TaskStop","TaskUpdate","WebFetch","WebSearch","Workflow","Write"],"mcp_servers":[{"name":"broken","status":"failed","source":"dynamic"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","slash_commands":["deep-research","dataviz","update-config","verify","debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","claude-api","workflow-authoring","run","run-skill-generator","agents","auto-mode-setup","autocompact","clear","color","compact","config","output-style","context","effort","fast","focus","heapdump","init","mcp","model","__remote-workflow","workflow-launch-exec","reload-plugins","reload-skills","rename","security-review","usage","insights","recap","goal","list-agents","team-onboarding"],"terminal_slash_commands":["doctor","color","focus","reload-plugins"],"apiKeySource":"none","claude_code_version":"2.1.283","output_style":"default","agents":["claude","Explore","general-purpose","Plan","statusline-setup"],"skills":["deep-research","dataviz","update-config","verify","debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","claude-api","workflow-authoring","run","run-skill-generator"],"plugins":[{"name":"agents-md","path":"builtin","source":"agents-md@builtin"}],"capabilities":["interrupt_receipt_v1","interrupt_cancel_queued_v1","msg_lifecycle_v1","mcp_read_resource_v1","mcp_tool_ui_meta_v1"],"analytics_disabled":true,"product_feedback_disabled":true,"uuid":"466a2f23-7bcc-477c-bb0e-7c2627eda14b","memory_paths":{"auto":"C:\\Users\\11141\\.claude\\projects\\C--Users-11141-AppData-Local-Temp-probe-frames-bad-mcp-zg98dqww\\memory\\"},"messaging_socket_path":"\\\\.\\pipe\\LOCAL\\cc-msg-6f641f87b0d86a544031156bf795d507","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","per_turn_effort_active":false,"view_mode":"default","powershell_path":"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"}"""
+        )
+        val init = events.single() as ClaudeCodeEvent.Init
+        assertEquals(listOf(ClaudeCodeEvent.McpServerStatus("broken", "failed")), init.mcpServers)
+    }
+
+    @Test
+    fun `init without mcp_servers parses to an empty list`() {
+        val events = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-5","tools":["Bash","Read"]}"""
+        )
+        assertTrue((events.single() as ClaudeCodeEvent.Init).mcpServers.isEmpty())
+
+        // 缺 name / status 的条目直接跳过，不挡其余条目
+        val partial = parseClaudeCodeEvents(
+            """{"type":"system","subtype":"init","session_id":"s",
+               "mcp_servers":[{"name":"broken","status":"failed"},
+                              {"name":"no-status"},
+                              {"status":"connected"},
+                              {"name":"ok","status":"connected"}]}"""
+        ).single() as ClaudeCodeEvent.Init
+        assertEquals(
+            listOf(
+                ClaudeCodeEvent.McpServerStatus("broken", "failed"),
+                ClaudeCodeEvent.McpServerStatus("ok", "connected"),
+            ),
+            partial.mcpServers,
+        )
+    }
+
+    @Test
     fun `assistant message expands into per-block events`() {
         val events = parseClaudeCodeEvents(
             """{"type":"assistant","message":{"content":[
