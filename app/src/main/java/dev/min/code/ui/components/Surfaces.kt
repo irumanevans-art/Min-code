@@ -504,8 +504,25 @@ fun InkTopBar(
     }
 }
 
+/** 任务条小胶囊的高：比正文行矮一截，压在输入框上方不显重 */
+val PanelChipHeight = 22.dp
+val PanelChipShape = RoundedCornerShape(percent = 50)
+
 /**
- * 小 chip：纸底、hairline、海色的字。给顶栏 / 抽屉里的次级切换用。
+ * 小胶囊的底和边：半透的纸底，一道云一样淡的 hairline —— 看得出边界，又不像框。
+ * 「N shell」和子 agent 切换条共用，两只并排时是一家。
+ */
+@Composable
+fun Modifier.panelChipSurface(): Modifier {
+    val scheme = MaterialTheme.colorScheme
+    return this
+        .clip(PanelChipShape)
+        .background(scheme.surfaceContainer.copy(alpha = 0.72f))
+        .border(0.5.dp, scheme.outlineVariant.copy(alpha = 0.38f), PanelChipShape)
+}
+
+/**
+ * 小 chip：纸底、云淡的边、海色的字。给顶栏 / 抽屉里的次级切换用。
  *
  * [leading] 换掉图标位：要放会动的记号（会话底栏「1 shell」前那粒呼吸的点）时用它。
  */
@@ -518,32 +535,29 @@ fun PanelChip(
     leading: (@Composable () -> Unit)? = null,
 ) {
     val interaction = remember { MutableInteractionSource() }
-    val scheme = MaterialTheme.colorScheme
     Row(
         modifier
             .pressScale(interaction, 0.96f)
-            .height(28.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(scheme.surfaceContainer)
-            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(6.dp))
+            .height(PanelChipHeight)
+            .panelChipSurface()
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
                 role = androidx.compose.ui.semantics.Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         if (leading != null) {
             leading()
         } else if (icon != null) {
-            Icon(icon, null, Modifier.size(14.dp).seaInk(), tint = Color.Black)
+            Icon(icon, null, Modifier.size(12.dp).seaInk(), tint = Color.Black)
         }
         Text(
             label,
-            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, lineHeight = 14.sp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 13.sp),
             color = MaterialTheme.sea.seaDeep,
             maxLines = 1,
         )

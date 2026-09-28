@@ -11,7 +11,6 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -74,6 +73,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.min.code.R
 import dev.min.code.core.claudecode.SubagentThread
 import dev.min.code.core.claudecode.switcherLabels
@@ -81,7 +81,9 @@ import dev.min.code.core.session.ChatItem
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkSheet
 import dev.min.code.ui.components.LiveDot
+import dev.min.code.ui.components.PanelChipHeight
 import dev.min.code.ui.components.Seal
+import dev.min.code.ui.components.panelChipSurface
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.pressScale
@@ -137,7 +139,6 @@ internal fun RowScope.AgentSwitcher(
     var showList by rememberSaveable { mutableStateOf(false) }
     // 「全部 N」出现只会让页签更挤，不会反过来让它消失，所以不会来回闪
     val crowded by remember(threads.size) { derivedStateOf { threads.size >= LIST_AT || scroll.maxValue > 0 } }
-    val scheme = MaterialTheme.colorScheme
     Row(modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
         // 整组页签收在一只和右边「N shell」同款的纸底小胶囊里：往上翻时正文从这一行后面滑过
         // （底部的纸色是渐变，到胶囊上沿已经很淡），没有底的字会和正文糊在一起
@@ -145,9 +146,7 @@ internal fun RowScope.AgentSwitcher(
             Modifier
                 .weight(1f, fill = false)
                 .height(TAB_HEIGHT)
-                .clip(CAPSULE_SHAPE)
-                .background(scheme.surfaceContainer)
-                .border(1.dp, scheme.outlineVariant, CAPSULE_SHAPE)
+                .panelChipSurface()
                 .semantics { contentDescription = label },
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -301,12 +300,12 @@ private fun AgentTab(
             .padding(horizontal = TAB_PADDING)
             .alpha(dim),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (thread != null) AgentMark(thread, onSea = false, size = TAB_DOT)
         Text(
             label,
-            style = MaterialTheme.typography.labelMedium,
+            style = TAB_TEXT,
             fontFamily = JetbrainsMono,
             color = fg,
             maxLines = 1,
@@ -325,8 +324,8 @@ private fun AllAgentsButton(count: Int, onClick: () -> Unit) {
         Box(
             Modifier
                 .padding(horizontal = 2.dp)
-                .size(width = 1.dp, height = 12.dp)
-                .background(scheme.outlineVariant),
+                .size(width = 0.5.dp, height = 10.dp)
+                .background(scheme.outlineVariant.copy(alpha = 0.5f)),
         )
         Row(
             Modifier
@@ -341,12 +340,12 @@ private fun AllAgentsButton(count: Int, onClick: () -> Unit) {
                 )
                 .padding(horizontal = TAB_PADDING),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            Icon(HugeIcons.Menu03, contentDescription = null, modifier = Modifier.size(13.dp), tint = scheme.onSurfaceVariant)
+            Icon(HugeIcons.Menu03, contentDescription = null, modifier = Modifier.size(11.dp), tint = scheme.onSurfaceVariant)
             Text(
                 stringResource(R.string.agent_switcher_all, count),
-                style = MaterialTheme.typography.labelMedium,
+                style = TAB_TEXT,
                 color = scheme.onSurfaceVariant,
                 maxLines = 1,
             )
@@ -617,15 +616,13 @@ private const val LIST_AT = 3
 /** 页签字宽上限：「general-purpose 2」放得下，更长的自定义 agent 名截断，不把一行吃掉 */
 private val LABEL_MAX_WIDTH = 132.dp
 
-/** 页签高：和右边「N shell」那只标记（PanelChip，28dp）齐平 */
-private val TAB_HEIGHT = 28.dp
+/** 页签高：和右边「N shell」那只标记（PanelChip）齐平 */
+private val TAB_HEIGHT = PanelChipHeight
 private val TAB_PADDING = 8.dp
-
-/** 胶囊的角：和 PanelChip（「N shell」）一样 */
-private val CAPSULE_SHAPE = RoundedCornerShape(6.dp)
-private val TAB_DOT = 5.dp
-private val LINE_HEIGHT = 2.dp
-private val LINE_BOTTOM = 3.dp
+private val TAB_TEXT @Composable get() = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 13.sp)
+private val TAB_DOT = 4.dp
+private val LINE_HEIGHT = 1.5.dp
+private val LINE_BOTTOM = 2.dp
 private val FADE_WIDTH = 20.dp
 
 /** main 在页签位置表里的键（子 agent 用的是 toolUseId，不会撞上） */
