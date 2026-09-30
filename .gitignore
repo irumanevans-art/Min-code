@@ -13,6 +13,7 @@ local.properties
 /workspace/build
 /highlight/build
 /baselineprofile/build
+/agent/*/build
 /build-logic/build
 /build-logic/.gradle
 /emulator.log
