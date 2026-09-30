@@ -1,0 +1,122 @@
+[
+  {
+    "ref": { "providerId": "anthropic", "modelId": "claude-fable-5-1" },
+    "family": "claude",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "effortPatches": {
+      "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
+      "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
+      "high": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "high" } },
+      "xhigh": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "xhigh" } },
+      "max": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "max" } }
+    },
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "anthropic", "modelId": "claude-opus-5-5" },
+    "family": "claude",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "effortPatches": {
+      "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
+      "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
+      "high": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "high" } },
+      "xhigh": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "xhigh" } },
+      "max": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "max" } }
+    },
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "anthropic", "modelId": "claude-sonnet-5" },
+    "family": "claude",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "effortPatches": {
+      "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
+      "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
+      "high": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "high" } },
+      "xhigh": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "xhigh" } },
+      "max": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "max" } }
+    },
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "anthropic", "modelId": "claude-haiku-4-5-20251001" },
+    "family": "claude",
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "supportsImages": true,
+    "effortPatches": {
+      "off": { "thinking": { "type": "disabled" } },
+      "high": { "thinking": { "type": "enabled" } }
+    },
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "zhipu", "modelId": "glm-5.3" },
+    "family": "glm",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "zhipu", "modelId": "glm-5.2" },
+    "family": "glm",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "qwen", "modelId": "qwen3.8-max" },
+    "family": "qwen",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "minimax", "modelId": "MiniMax-M3.1-Flash-Preview" },
+    "family": "minimax",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "effortPatches": {
+      "low": { "output_config": { "effort": "low" } },
+      "medium": { "output_config": { "effort": "medium" } },
+      "high": { "output_config": { "effort": "high" } },
+      "xhigh": { "output_config": { "effort": "xhigh" } },
+      "max": { "output_config": { "effort": "max" } }
+    },
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "minimax", "modelId": "MiniMax-M3" },
+    "family": "minimax",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "effortPatches": {
+      "off": { "thinking": { "type": "disabled" } },
+      "high": { "thinking": { "type": "adaptive" } }
+    },
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "minimax", "modelId": "MiniMax-M2.7" },
+    "family": "minimax",
+    "contextWindow": 204800,
+    "maxOutputTokens": 65536,
+    "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "minimax", "modelId": "MiniMax-M2.7-highspeed" },
+    "family": "minimax",
+    "contextWindow": 204800,
+    "maxOutputTokens": 65536,
+    "reasoningEcho": "always"
+  }
+]

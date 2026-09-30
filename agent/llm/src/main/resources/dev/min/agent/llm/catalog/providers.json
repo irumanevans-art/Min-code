@@ -1,0 +1,44 @@
+[
+  {
+    "id": "anthropic",
+    "baseUrl": "https://api.anthropic.com",
+    "wire": "anthropic_messages",
+    "auth": "bearer"
+  },
+  {
+    "id": "deepseek",
+    "baseUrl": "https://api.deepseek.com/anthropic",
+    "wire": "anthropic_messages",
+    "auth": "x_api_key",
+    "quirks": {
+      "anthropic": {
+        "cacheControl": false,
+        "redactedThinking": false
+      }
+    }
+  },
+  {
+    "id": "zhipu",
+    "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+    "wire": "anthropic_messages",
+    "auth": "x_api_key",
+    "quirks": {
+      "overflowPatterns": ["prompt too long"]
+    }
+  },
+  {
+    "id": "qwen",
+    "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
+    "wire": "anthropic_messages",
+    "auth": "bearer",
+    "quirks": {
+      "overflowPatterns": ["range of input length should be"]
+    }
+  },
+  {
+    "id": "minimax",
+    "baseUrl": "https://api.minimax.io/anthropic",
+    "wire": "anthropic_messages",
+    "auth": "bearer"
+  }
+]
