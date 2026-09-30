@@ -163,11 +163,17 @@ class TestToolContext(
     override val search: FakeSearch = FakeSearch(),
     override val exec: FakeExec = FakeExec(),
     override val cwd: GuestPath = GuestPath("/work"),
+    /** 会话目录默认真实存在；想测「cwd 不存在」时传 false */
+    createCwd: Boolean = true,
 ) : ToolContext {
     override val sessionId = SessionId("s1")
     override val callId = CallId("c1")
     override val artifacts = FakeArtifacts()
     val seen = mutableMapOf<GuestPath, FileStamp>()
+
+    init {
+        if (createCwd) fs.mkdir(cwd.value)
+    }
 
     override fun lastSeen(path: GuestPath): FileStamp? = seen[path]
 
