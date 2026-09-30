@@ -10,6 +10,7 @@ import dev.min.agent.llm.Wire
 import dev.min.agent.llm.anthropic.AnthropicMessagesClient
 import dev.min.agent.llm.catalog.Catalog
 import dev.min.agent.llm.openai.OpenAIChatClient
+import dev.min.agent.llm.openai.OpenAIResponsesClient
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.EventRecord
@@ -75,6 +76,7 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
         val client = when (provider.wire) {
             Wire.AnthropicMessages -> AnthropicMessagesClient(provider, transport, secrets)
             Wire.OpenAIChat -> OpenAIChatClient(provider, transport, secrets)
+            Wire.OpenAIResponses -> OpenAIResponsesClient(provider, transport, secrets)
             else -> throw UsageException("CLI 尚不支持协议 ${provider.wire}")
         }
         return KernelDeps(

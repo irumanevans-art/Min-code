@@ -18,12 +18,12 @@ internal data class ModelSelection(val provider: ProviderDescriptor, val profile
 internal fun resolveModel(args: CliArgs, catalog: Catalog): ModelSelection {
     val bundled = catalog.provider(args.provider)
     val wire = args.wire ?: bundled?.wire ?: Wire.AnthropicMessages
-    if (wire != Wire.AnthropicMessages && wire != Wire.OpenAIChat) throw UsageException("CLI 尚不支持协议 $wire")
+    if (wire !in setOf(Wire.AnthropicMessages, Wire.OpenAIChat, Wire.OpenAIResponses)) throw UsageException("CLI 尚不支持协议 $wire")
     val provider = ProviderDescriptor(
         id = args.provider,
         baseUrl = args.baseUrl ?: bundled?.baseUrl ?: throw UsageException("供应商 ${args.provider} 没有默认地址，请用 --base-url 指定"),
         wire = wire,
-        auth = args.auth ?: bundled?.auth ?: if (wire == Wire.OpenAIChat) AuthScheme.Bearer else AuthScheme.XApiKey,
+        auth = args.auth ?: bundled?.auth ?: if (wire == Wire.AnthropicMessages) AuthScheme.XApiKey else AuthScheme.Bearer,
         extraHeaders = bundled?.extraHeaders ?: emptyMap(),
         // 切换线协议时不能把另一种协议的供应商假设带过去。
         quirks = if (bundled?.wire == wire) bundled.quirks else ProviderQuirks(),

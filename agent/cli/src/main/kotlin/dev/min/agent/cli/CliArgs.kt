@@ -35,7 +35,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --provider <id>        模型目录里的供应商 id，默认 anthropic
   --model <id>           模型 id（必填）
   --base-url <url>       覆盖供应商地址（协议路径之前那一段）
-  --wire <协议>         anthropic / openai_chat；自定义供应商可现场指定
+  --wire <协议>         anthropic / openai_chat / openai_responses；自定义供应商可现场指定
   --auth x-api-key|bearer  凭证放哪个头，默认按供应商
   --api-key-env <名字>   从哪个环境变量读凭证，默认按供应商（如 ANTHROPIC_API_KEY）
   --context <n>          覆盖目录上下文窗口；自定义模型默认 200000
@@ -104,7 +104,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages
                 "openai_chat" -> Wire.OpenAIChat
-                else -> throw UsageException("--wire 只能是 anthropic 或 openai_chat")
+                "openai_responses" -> Wire.OpenAIResponses
+                else -> throw UsageException("--wire 只能是 anthropic、openai_chat 或 openai_responses")
             }
         },
     )

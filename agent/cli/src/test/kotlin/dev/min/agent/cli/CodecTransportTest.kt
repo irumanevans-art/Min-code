@@ -10,6 +10,7 @@ import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.llm.Wire
 import dev.min.agent.llm.anthropic.AnthropicMessagesClient
 import dev.min.agent.llm.openai.OpenAIChatClient
+import dev.min.agent.llm.openai.OpenAIResponsesClient
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.spi.ModelFailureKind
 import dev.min.agent.spi.ModelFamily
@@ -40,6 +41,7 @@ class CodecTransportTest {
             val client = when (wire) {
                 Wire.AnthropicMessages -> AnthropicMessagesClient(provider, transport, secrets)
                 Wire.OpenAIChat -> OpenAIChatClient(provider, transport, secrets)
+                Wire.OpenAIResponses -> OpenAIResponsesClient(provider, transport, secrets)
                 else -> error("unused")
             }
             val profile = ModelProfile(ModelRef("test", "model"), family = ModelFamily.Other, contextWindow = 10000, maxOutputTokens = 1000)
@@ -56,4 +58,5 @@ class CodecTransportTest {
 
     @Test fun `Anthropic classifies a real 200 error page as Other with its body`() = nonSse(Wire.AnthropicMessages)
     @Test fun `OpenAI Chat classifies a real 200 error page as Other with its body`() = nonSse(Wire.OpenAIChat)
+    @Test fun `OpenAI Responses classifies a real 200 error page as Other with its body`() = nonSse(Wire.OpenAIResponses)
 }

@@ -41,6 +41,36 @@ class OpenAIChatRequestTest {
     private val reasoning = OpenAiChatQuirks(reasoningField = "reasoning_content")
     private fun messages(body: String) = (json(body) as JsonObject)["messages"] as JsonArray
 
+    @Test fun `DeepSeek and Kimi differ across two tool rounds and a new user turn`() {
+        val catalog = dev.min.agent.llm.catalog.Catalog.bundled()
+        val deepseek = requireNotNull(catalog.model(ModelRef("deepseek-openai", "deepseek-v4-pro")))
+        val kimi = profile(ReasoningEcho.AlwaysIncludingEmpty).copy(ref = ModelRef("moonshot-openai", "kimi-k3"))
+        for (p in listOf(deepseek, kimi)) {
+            val q = requireNotNull(catalog.provider(p.ref.providerId))
+            val turns = listOf(
+                userText("read twice"),
+                ModelMessage(Role.Assistant, listOf(ThinkingPart("first", p.ref), call)),
+                ModelMessage(Role.User, listOf(ToolResultPart(call.callId, listOf(TextPart("a"))))),
+                ModelMessage(Role.Assistant, listOf(ThinkingPart("second", p.ref), call.copy(callId = CallId("second")))),
+                ModelMessage(Role.User, listOf(ToolResultPart(CallId("second"), listOf(TextPart("b"))))),
+            )
+            val loop = messages(sentBody(request(profile = p, messages = turns), q))
+            assertEquals(JsonPrimitive("first"), (loop[1] as JsonObject)["reasoning_content"])
+            assertEquals(JsonPrimitive("second"), (loop[3] as JsonObject)["reasoning_content"])
+            val next = messages(sentBody(request(profile = p, messages = turns + userText("new turn") + ModelMessage(Role.Assistant, listOf(TextPart("ok")))), q))
+            if (p.ref.providerId == "deepseek-openai") {
+                assertFalse((next[1] as JsonObject).containsKey("reasoning_content"))
+                assertFalse((next[3] as JsonObject).containsKey("reasoning_content"))
+                assertFalse((next[6] as JsonObject).containsKey("reasoning_content"))
+            } else {
+                assertEquals(JsonPrimitive("first"), (next[1] as JsonObject)["reasoning_content"])
+                assertEquals(JsonPrimitive("second"), (next[3] as JsonObject)["reasoning_content"])
+                assertEquals(JsonPrimitive(""), (next[6] as JsonObject)["reasoning_content"])
+                assertEquals(JsonPrimitive("Read"), (next[2] as JsonObject)["name"])
+            }
+        }
+    }
+
     @Test
     fun `plain text request uses official defaults`() {
         assertJson("""{"model":"test-model","messages":[{"role":"user","content":"你好"}],"stream":true,

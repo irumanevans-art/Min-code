@@ -53,6 +53,18 @@ class ModelSelectionTest {
         assertThrows(UsageException::class.java) { resolveModel(args("--provider", "missing", "--model", "m"), Catalog(emptyList(), emptyList())) }
     }
 
+    @Test fun `explicit Responses selects bearer and the requested model without substitution`() {
+        val selected = resolveModel(args("--provider", "lunora", "--model", "gpt-5.6-luna", "--base-url", "https://api.uselunora.com/v1", "--wire", "openai_responses", "--api-key-env", "LUNORA_API_KEY"), Catalog(emptyList(), emptyList()))
+        assertEquals(Wire.OpenAIResponses, selected.wire)
+        assertEquals(AuthScheme.Bearer, selected.provider.auth)
+        assertEquals("gpt-5.6-luna", selected.profile.wireModelId)
+        assertEquals("LUNORA_API_KEY", selected.keyEnv)
+        val bundled = resolveModel(args("--provider", "lunora", "--model", "gpt-5.6-luna"), Catalog.bundled())
+        assertEquals(Wire.OpenAIResponses, bundled.wire)
+        assertEquals("https://api.uselunora.com/v1", bundled.provider.baseUrl)
+        assertEquals("LUNORA_API_KEY", bundled.keyEnv)
+    }
+
     @Test fun `real catalog Chat entries retain reasoning while template URLs require configuration`() {
         val catalog = Catalog.bundled()
         val selected = resolveModel(args("--provider", "deepseek-openai", "--model", "deepseek-flash", "--api-key-env", "DEEPSEEK_API_KEY"), catalog)

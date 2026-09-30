@@ -54,6 +54,12 @@
     "auth": "bearer"
   },
   {
+    "id": "lunora",
+    "baseUrl": "https://api.uselunora.com/v1",
+    "wire": "openai_responses",
+    "auth": "bearer"
+  },
+  {
     "id": "deepseek-openai",
     "baseUrl": "https://api.deepseek.com",
     "wire": "openai_chat",

@@ -1,5 +1,7 @@
 # 目录数据出处（SOURCES）
 
+2026-09-30 G5 增补：lunora provider 的 https://api.uselunora.com/v1、Responses、Bearer 来自用户配置及真实 POST /v1/responses 的 200 SSE。GET /v1/models 与实际推理确认 gpt-5.6-luna；该中转没有提供精确窗口与输出硬上限，未伪造 ModelProfile 必填值，CLI 可现场描述。详见 openai/RESPONSES_NOTES.md 与外部 CODEX_REPORT_2026-09-30_integrate.md。
+
 每个值都转录自 `D:\kimi\workspace\research\inventory\providers\` 的逐家事实表（下称
 `inventory/<家>.md §<节>`）或 `agent/llm/src/main/kotlin/dev/min/agent/llm/anthropic/NOTES.md`
 的「各家兼容端点的 AnthropicQuirks 建议」（下称 NOTES.md）。「拿不准」的值逐条列在文末。
