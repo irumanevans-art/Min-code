@@ -130,7 +130,7 @@
   {
     "ref": { "providerId": "deepseek", "modelId": "deepseek-flash" },
     "family": "deepseek",
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "maxOutputTokens": 393216,
     "supportsImages": true,
     "reasoningEcho": "within_tool_loop"
@@ -138,40 +138,40 @@
   {
     "ref": { "providerId": "deepseek", "modelId": "deepseek-v4-pro" },
     "family": "deepseek",
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "maxOutputTokens": 393216,
     "reasoningEcho": "within_tool_loop"
   },
   {
     "ref": { "providerId": "deepseek-openai", "modelId": "deepseek-flash" },
     "family": "deepseek",
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "maxOutputTokens": 393216,
     "supportsImages": true,
     "effortPatches": {
       "off": { "thinking": { "type": "disabled" } },
-      "low": { "thinking": { "type": "enabled", "reasoning_effort": "low" } },
-      "medium": { "thinking": { "type": "enabled", "reasoning_effort": "high" } },
-      "high": { "thinking": { "type": "enabled", "reasoning_effort": "high" } },
-      "xhigh": { "thinking": { "type": "enabled", "reasoning_effort": "high" } },
-      "max": { "thinking": { "type": "enabled", "reasoning_effort": "max" } }
+      "low": { "thinking": { "type": "enabled" }, "reasoning_effort": "low" },
+      "medium": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" },
+      "high": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" },
+      "xhigh": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" },
+      "max": { "thinking": { "type": "enabled" }, "reasoning_effort": "max" }
     },
-    "reasoningEcho": "within_tool_loop"
+    "reasoningEcho": "always"
   },
   {
     "ref": { "providerId": "deepseek-openai", "modelId": "deepseek-v4-pro" },
     "family": "deepseek",
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "maxOutputTokens": 393216,
     "effortPatches": {
       "off": { "thinking": { "type": "disabled" } },
-      "low": { "thinking": { "type": "enabled", "reasoning_effort": "low" } },
-      "medium": { "thinking": { "type": "enabled", "reasoning_effort": "high" } },
-      "high": { "thinking": { "type": "enabled", "reasoning_effort": "high" } },
-      "xhigh": { "thinking": { "type": "enabled", "reasoning_effort": "high" } },
-      "max": { "thinking": { "type": "enabled", "reasoning_effort": "max" } }
+      "low": { "thinking": { "type": "enabled" }, "reasoning_effort": "low" },
+      "medium": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" },
+      "high": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" },
+      "xhigh": { "thinking": { "type": "enabled" }, "reasoning_effort": "high" },
+      "max": { "thinking": { "type": "enabled" }, "reasoning_effort": "max" }
     },
-    "reasoningEcho": "within_tool_loop"
+    "reasoningEcho": "always"
   },
   {
     "ref": { "providerId": "zhipu-openai", "modelId": "glm-5.3" },
@@ -183,7 +183,7 @@
       "high": { "reasoning_effort": "high" },
       "max": { "reasoning_effort": "max" }
     },
-    "reasoningEcho": "within_tool_loop"
+    "reasoningEcho": "always"
   },
   {
     "ref": { "providerId": "zhipu-openai", "modelId": "glm-5.2" },
@@ -194,7 +194,7 @@
       "off": { "thinking": { "type": "disabled" } },
       "high": { "thinking": { "type": "enabled" } }
     },
-    "reasoningEcho": "within_tool_loop"
+    "reasoningEcho": "always"
   },
   {
     "ref": { "providerId": "qwen-openai", "modelId": "qwen3.8-max" },

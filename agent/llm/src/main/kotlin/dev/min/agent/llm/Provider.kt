@@ -150,7 +150,7 @@ enum class ReasoningEcho {
     /** 一律不回传（端点会忽略或报错） */
     @SerialName("never") Never,
 
-    /** 只在工具调用循环内回传（DeepSeek：工具循环里不回传会 400，普通多轮回传了也被忽略） */
+    /** 只在当前工具调用循环内回传；需要保留跨用户回合推理的端点应选 Always。 */
     @SerialName("within_tool_loop") WithinToolLoop,
 
     /** 一律回传，空串也要带上（Kimi） */

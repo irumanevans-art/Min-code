@@ -70,11 +70,11 @@
 | MiniMax-M2.7 | effortPatches | 留空 | minimax.md §3（M2.x thinking 不可禁用、参数 "accepted but ignored"——没有可控档位） |
 | MiniMax-M2.7 | reasoningEcho | always | minimax.md §3（M2 README：历史 content 必须原样回传） |
 | MiniMax-M2.7-highspeed | 同 M2.7 | — | minimax.md §2（同模型高速版，参数「同上」） |
-| deepseek-flash | contextWindow / maxOutputTokens | 1000000 / 393216 | deepseek.md §2（最大输出 384K=393216）+ api-docs.deepseek.com/quick_start/pricing（2026-09-30 重抓：CONTEXT LENGTH「1M」、MAX OUTPUT「MAXIMUM: 384K」，上一批「文档未写」的上下文窗口官方页面已补） |
+| deepseek-flash | contextWindow / maxOutputTokens | 1048576 / 393216 | 下文 G5 GET /models 精确值，替代旧 pricing 1M 十进制换算 |
 | deepseek-flash | supportsImages | true | deepseek.md §2（「仅 deepseek-flash 支持 Vision」）+ 同上 pricing 页（Vision ✓） |
 | deepseek-flash | effortPatches | 留空 | deepseek.md §3 与 §10 各写了一种 Anthropic 形状（`{"reasoning":{"effort":…}}` vs「`output_config` 仅 effort 支持」），两处形状不一致、无从取舍（任务单规则：没写就留空；见汇报「拿不准」） |
 | deepseek-flash | reasoningEcho | within_tool_loop | deepseek.md §3（工具循环「must be fully passed back…otherwise a 400 error」；普通多轮「passed…will be ignored」） |
-| deepseek-v4-pro | contextWindow / maxOutputTokens | 1000000 / 393216 | deepseek.md §2（「同上参数结构」）+ 同上 pricing 页（两列共用 CONTEXT LENGTH / MAX OUTPUT 行） |
+| deepseek-v4-pro | contextWindow / maxOutputTokens | 1048576 / 393216 | 下文 G5 GET /models 精确值 |
 | deepseek-v4-pro | supportsImages / effortPatches / reasoningEcho | false / 留空 / within_tool_loop | deepseek.md §2（Vision：v4-pro Not supported）+ 同 deepseek-flash 各行 |
 
 **未收录的模型**：
@@ -110,9 +110,9 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
 
 | 模型（OpenAI Chat 条目） | 字段 | 值 | 出处 |
 |---|---|---|---|
-| deepseek-openai 的 deepseek-flash / deepseek-v4-pro | contextWindow / maxOutputTokens / supportsImages | 同 Anthropic 条目（1000000 / 393216；flash 支持图） | deepseek.md §2 + 2026-09-30 pricing 页（同 §T1 deepseek 行）；两协议同一批模型 |
-| deepseek-openai 两模型 | effortPatches | off=`{"thinking":{"type":"disabled"}}`；low=`{"thinking":{"type":"enabled","reasoning_effort":"low"}}`；medium/high/xhigh=…`"reasoning_effort":"high"`；max=…`"reasoning_effort":"max"` | deepseek.md §3（「`thinking: {"type": "enabled"\|"disabled"}`（默认 enabled）；effort：`thinking.reasoning_effort`，取值 none, low, high, max（默认 high；minimal→low; medium/xhigh→high）」） |
-| deepseek-openai 两模型 | reasoningEcho | within_tool_loop | deepseek.md §3（工具循环 400 / 普通多轮忽略）；openai/NOTES.md DeepSeek 行同值 |
+| deepseek-openai 的 deepseek-flash / deepseek-v4-pro | contextWindow / maxOutputTokens / supportsImages | 1048576 / 393216；Flash 有图、Pro 无图 | 下文 G5 鉴权 GET /models 元数据；两协议模型上限相同 |
+| deepseek-openai 两模型 | effortPatches | off=`{"thinking":{"type":"disabled"}}`；开启档 `thinking.type=enabled` + 顶层 reasoning_effort：low / high / max；medium/xhigh→high | 下文 G5 原厂复核；覆盖 inventory 的嵌套记法 |
+| deepseek-openai 两模型 | reasoningEcho | always | 下文 G5 原厂复核：带 tools 时跨回合也保留历史推理，无 tools 时被忽略 |
 | zhipu-openai 的 glm-5.3 | 全部字段 | 1000000 / 128000 / 无图；low/high/max=`{"reasoning_effort":"…"}`；within_tool_loop | zhipu.md §12.2（1M；128K；「low、high、max 三档思考强度，默认 max」「始终开启」）+ §12.3（「推荐搭配 reasoning_effort 为 low 起步」）；交错思考必须随工具结果回传（§3/§12.3）→ within_tool_loop |
 | zhipu-openai 的 glm-5.2 | 全部字段 | 1000000 / 128000 / 无图；off=`{"thinking":{"type":"disabled"}}`、high=`{"thinking":{"type":"enabled"}}`；within_tool_loop | zhipu.md §12.2（1M）+ §2（128K）+ §3（`thinking.type` enabled/disabled，5.2 默认开、非强制）；openai/NOTES.md GLM 行 |
 | qwen-openai 的 qwen3.8-max | 全部字段 | 1000000 / 131072 / 有图；off=`{"enable_thinking":false}`、low=`{"enable_thinking":true}`；within_tool_loop | qwen.md §2（数值、模态）+ §3（「`enable_thinking`…混合思考模型可开/关」「非 OpenAI 标准参数」；`thinking_budget` 只有 token 数没有档位 → 不写）；reasoningEcho 按 openai/NOTES.md Qwen 行保守取 WithinToolLoop（preserve_thinking 各型号默认「以参数说明为准」未写） |
@@ -144,17 +144,24 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
 5. MiniMax-M3 的开启档取 `high` 键、形状 `{"thinking":{"type":"adaptive"}}`。
 6. deepseek 的 auth 取 `x_api_key`：§10 明写「x-api-key 完全支持」且 /anthropic 用法走 `ANTHROPIC_API_KEY`；
    §1 的「Authorization: Bearer」是全站通用描述——两说并存，取端点专属的那条。
-7. deepseek 的 contextWindow = 1000000：官方 pricing 页只写「1M」未给精确数（对比 moonshot 的 1M 明写 1,048,576），
-   沿用本文件第 1 条的 10^6 折算约定（2026-09-30 重抓页面原文「CONTEXT LENGTH | 1M」）。
+7. deepseek 的旧 contextWindow=1000000 换算已由下文 G5 GET /models 的精确 1048576 替代。
+
 8. qwen3.8-max 的 high/max 档补丁发 `output_config.effort: "xhigh"`：官方写「max、high 映射为 xhigh」——
    直接发映射目标值（文档列出的合法取值只有 low/medium/xhigh），不发会被映射的原文。
 9. moonshot 未收录模型：kimi-k3 在 Claude Code 配置里写作 `kimi-k3[1m]`（1M 窗口变体），Messages API 的 OpenAPI
    schema 则只列 `kimi-k3`；补录模型时应核对两种写法在 /anthropic 端点上的窗口差别再定 wireModelId。
-10. deepseek-openai 的 effort 补丁写成嵌套 `{"thinking":{"type":…,"reasoning_effort":…}}`：inventory §3 记法
-    「effort：`thinking.reasoning_effort`」按路径理解为 reasoning_effort 在 thinking 对象内；若实为顶层独立参数需实测纠正。
+10. deepseek-openai 的旧嵌套 effort 记法已由 G5 官方文档与实测纠正，最终值见下节。
 11. zhipu-openai 的 glm-5.3 档位参数名 `reasoning_effort`：出处只有 §12.3 转述（「推荐搭配 reasoning_effort 为
     low 起步」），文档未给参数形状；medium/xhigh 两档无记载 → 不写（回退取最近低档）。
 12. qwen-openai 的 baseUrl 是文档原样的模板 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`
     （qwen.md §1，北京地域）：实际接入须把 `{WorkspaceId}` 换成业务空间 ID，装配层使用前须校验/替换。
 13. doubao-openai 的 streamUsage=always：官方正文未写 stream_options，openai/NOTES.md 豆包行注明
     「先省略未确认的 include_usage，待实测」——按其建议取 always，联调时若发现末块无 usage 需回头改。
+
+## G5 · DeepSeek 原厂复核（2026-09-30，覆盖以上旧 inventory 值）
+
+- 主力模型选用户指定的 **DeepSeek V4.1 Flash**，准确 ID `deepseek-flash`。GET /models 的 name 及[官方更新日志](https://api-docs.deepseek.com/updates/)一致；未调用 Pro。旧发布新闻曾说 Pro 将路由 Flash，更新日志与 pricing 已改为继续提供 Pro；不能按旧新闻移除 Pro 条目。
+- 两个模型、两种协议的 contextWindow 改为 **1048576**；maxOutputTokens=393216。依据鉴权 GET /models 的 `context_window` / `max_output_tokens`，不再把 pricing 的 1M 粗略换算成 1000000。公开字段定义见 [Lists Models](https://api-docs.deepseek.com/api/list-models/)。脱敏元数据在外部 g5-evidence/deepseek-models.json。
+- Chat 两模型 effort 补丁：off=`{"thinking":{"type":"disabled"}}`；其余 `thinking={"type":"enabled"}`，**顶层** `reasoning_effort` 为 low / high / max，medium/xhigh 映到 high。[官方 Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/) 与 [Chat API](https://api-docs.deepseek.com/api/create-chat-completion/) 均给顶层字段。本次嵌套非法值返回 200，顶层非法值返回 422 invalid_request_error，顶层 low 返回 200；嵌套字段被忽略，不能据 200 认定档位生效。错误原文与用量保存在 deepseek-effort-probe.json。
+- Chat 两模型 reasoningEcho 改为 **always**：最新官方 Thinking Mode 明确带 tools 时保留所有历史轮次推理，包括上轮最终答复；无 tools 时回传会被忽略，因此 Always 在两种请求里均可使用。CLI 总带工具，旧 WithinToolLoop 丢跨轮历史与该规则不符。旧配置三轮未报 400，记录服务端宽容行为，不能用“没报错”替代文档要求。Kimi AlwaysIncludingEmpty 仍需补空字符串；DeepSeek 不给无推理消息虚构空字段。
+- 上述是 Chat 实测；Anthropic 的推理投影与 effort 仍沿用待核实的旧值，不用 Chat 结果冒充跨协议验收。

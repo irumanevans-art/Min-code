@@ -70,8 +70,8 @@ class ModelSelectionTest {
         val selected = resolveModel(args("--provider", "deepseek-openai", "--model", "deepseek-flash", "--api-key-env", "DEEPSEEK_API_KEY"), catalog)
         assertEquals(Wire.OpenAIChat, selected.wire)
         assertEquals("reasoning_content", selected.provider.quirks.openAiChat.reasoningField)
-        assertEquals(ReasoningEcho.WithinToolLoop, selected.profile.reasoningEcho)
-        assertEquals(1000000, selected.profile.contextWindow)
+        assertEquals(ReasoningEcho.Always, selected.profile.reasoningEcho)
+        assertEquals(1048576, selected.profile.contextWindow)
         assertEquals("DEEPSEEK_API_KEY", selected.keyEnv)
         assertThrows(UsageException::class.java) { resolveModel(args("--provider", "qwen-openai", "--model", "qwen3.8-max"), catalog) }
         val configured = resolveModel(args("--provider", "qwen-openai", "--model", "qwen3.8-max", "--base-url", "https://space.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"), catalog)

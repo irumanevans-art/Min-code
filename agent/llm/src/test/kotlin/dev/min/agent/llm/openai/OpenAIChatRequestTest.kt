@@ -43,7 +43,7 @@ class OpenAIChatRequestTest {
 
     @Test fun `DeepSeek and Kimi differ across two tool rounds and a new user turn`() {
         val catalog = dev.min.agent.llm.catalog.Catalog.bundled()
-        val deepseek = requireNotNull(catalog.model(ModelRef("deepseek-openai", "deepseek-v4-pro")))
+        val deepseek = requireNotNull(catalog.model(ModelRef("deepseek-openai", "deepseek-flash")))
         val kimi = profile(ReasoningEcho.AlwaysIncludingEmpty).copy(ref = ModelRef("moonshot-openai", "kimi-k3"))
         for (p in listOf(deepseek, kimi)) {
             val q = requireNotNull(catalog.provider(p.ref.providerId))
@@ -59,8 +59,9 @@ class OpenAIChatRequestTest {
             assertEquals(JsonPrimitive("second"), (loop[3] as JsonObject)["reasoning_content"])
             val next = messages(sentBody(request(profile = p, messages = turns + userText("new turn") + ModelMessage(Role.Assistant, listOf(TextPart("ok")))), q))
             if (p.ref.providerId == "deepseek-openai") {
-                assertFalse((next[1] as JsonObject).containsKey("reasoning_content"))
-                assertFalse((next[3] as JsonObject).containsKey("reasoning_content"))
+                // 最新 DeepSeek 工具请求也要带旧回合推理；与 Kimi 的区别是无需给无推理消息补空串。
+                assertEquals(JsonPrimitive("first"), (next[1] as JsonObject)["reasoning_content"])
+                assertEquals(JsonPrimitive("second"), (next[3] as JsonObject)["reasoning_content"])
                 assertFalse((next[6] as JsonObject).containsKey("reasoning_content"))
             } else {
                 assertEquals(JsonPrimitive("first"), (next[1] as JsonObject)["reasoning_content"])
@@ -68,6 +69,23 @@ class OpenAIChatRequestTest {
                 assertEquals(JsonPrimitive(""), (next[6] as JsonObject)["reasoning_content"])
                 assertEquals(JsonPrimitive("Read"), (next[2] as JsonObject)["name"])
             }
+        }
+    }
+
+    @Test fun `bundled DeepSeek efforts are top level in actual Chat requests`() {
+        val catalog = dev.min.agent.llm.catalog.Catalog.bundled()
+        val provider = requireNotNull(catalog.provider("deepseek-openai"))
+        for (id in listOf("deepseek-flash", "deepseek-v4-pro")) {
+            val model = requireNotNull(catalog.model(ModelRef(provider.id, id)))
+            assertEquals(1048576, model.contextWindow)
+            for ((effort, expected) in listOf(Effort.Low to "low", Effort.High to "high", Effort.Max to "max")) {
+                val body = json(sentBody(request(profile = model, effort = effort), provider)) as JsonObject
+                assertEquals(JsonPrimitive(expected), body["reasoning_effort"])
+                assertEquals(obj("""{"type":"enabled"}"""), body["thinking"])
+            }
+            val off = json(sentBody(request(profile = model, effort = Effort.Off), provider)) as JsonObject
+            assertEquals(obj("""{"type":"disabled"}"""), off["thinking"])
+            assertFalse(off.containsKey("reasoning_effort"))
         }
     }
 
