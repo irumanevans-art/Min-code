@@ -40,5 +40,11 @@
     "baseUrl": "https://api.minimax.io/anthropic",
     "wire": "anthropic_messages",
     "auth": "bearer"
+  },
+  {
+    "id": "moonshot",
+    "baseUrl": "https://api.moonshot.cn/anthropic",
+    "wire": "anthropic_messages",
+    "auth": "bearer"
   }
 ]

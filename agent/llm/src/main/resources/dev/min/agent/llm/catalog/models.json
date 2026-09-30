@@ -76,6 +76,14 @@
     "contextWindow": 1000000,
     "maxOutputTokens": 131072,
     "supportsImages": true,
+    "effortPatches": {
+      "off": { "thinking": { "type": "disabled" } },
+      "low": { "output_config": { "effort": "low" } },
+      "medium": { "output_config": { "effort": "medium" } },
+      "high": { "output_config": { "effort": "xhigh" } },
+      "xhigh": { "output_config": { "effort": "xhigh" } },
+      "max": { "output_config": { "effort": "xhigh" } }
+    },
     "reasoningEcho": "always"
   },
   {
@@ -118,5 +126,20 @@
     "contextWindow": 204800,
     "maxOutputTokens": 65536,
     "reasoningEcho": "always"
+  },
+  {
+    "ref": { "providerId": "deepseek", "modelId": "deepseek-flash" },
+    "family": "deepseek",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 393216,
+    "supportsImages": true,
+    "reasoningEcho": "within_tool_loop"
+  },
+  {
+    "ref": { "providerId": "deepseek", "modelId": "deepseek-v4-pro" },
+    "family": "deepseek",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 393216,
+    "reasoningEcho": "within_tool_loop"
   }
 ]

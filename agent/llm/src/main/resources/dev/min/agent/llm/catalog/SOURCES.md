@@ -24,10 +24,11 @@
 | minimax | baseUrl | `https://api.minimax.io/anthropic` | minimax.md §1（端点 `POST /anthropic/v1/messages`） |
 | minimax | auth | `bearer` | minimax.md §1（`Authorization: Bearer <MINIMAX_API_KEY>`） |
 | minimax | quirks | 默认值 | NOTES.md「MiniMax：默认值」（被忽略的 `top_k`/`stop_sequences` 本实现不发） |
+| moonshot | baseUrl | `https://api.moonshot.cn/anthropic` | platform.kimi.com「在 Claude Code 中使用 Kimi」（2026-09-30 抓取，`ANTHROPIC_BASE_URL` 原样）+ Messages API 页（端点 `POST /anthropic/v1/messages`）；moonshot.md §1 上一批「文档未写」，本批补录 |
+| moonshot | auth | `bearer` | 同上两页（curl 示例 `Authorization: Bearer YOUR_MOONSHOT_API_KEY`；OpenAPI `security: bearerAuth`） |
+| moonshot | quirks | 默认值 | Messages API 页：thinking 块「含 `signature`…回传时需原样保留」（= thinkingSignature 默认 true）；其余字段无文档化差异 |
 
-**未收录的供应商**：`moonshot` —— Anthropic 兼容端点的 URL 与鉴权在 inventory 里均为「文档未写」
-（moonshot.md §1「claude-code-kimi 专页端点细节本批未抓」、§10），baseUrl 必填、无法只转录，整家跳过。
-`zhipu-intl` 未建：国际站 Anthropic 兼容端点地址 zhipu.md §10 明写「本批国际站页面未写（待补）」，与国内站不同址无从谈起。
+**未收录的供应商**：`zhipu-intl` 未建：国际站 Anthropic 兼容端点地址 zhipu.md §10 明写「本批国际站页面未写（待补）」，与国内站不同址无从谈起。
 
 ## models.json
 
@@ -52,7 +53,7 @@
 | glm-5.2 | effortPatches / reasoningEcho | 留空 / always | 同 glm-5.3 |
 | qwen3.8-max | contextWindow / maxOutputTokens | 1000000 / 131072 | qwen.md §2（1,000,000 / 131,072） |
 | qwen3.8-max | supportsImages | true | qwen.md §2（输入模态 Image, Text, Video） |
-| qwen3.8-max | effortPatches | 留空 | qwen.md §3 的 `enable_thinking`/`thinking_budget` 是 OpenAI 兼容侧 extra_body 参数，Anthropic 端点（§10）未写思考控制（任务单规则） |
+| qwen3.8-max | effortPatches | off=`{"thinking":{"type":"disabled"}}`；low/medium=`{"output_config":{"effort":"low"/"medium"}}`；high/xhigh/max=`{"output_config":{"effort":"xhigh"}}` | 百炼 Anthropic 兼容 API 页（help.aliyun.com/zh/model-studio/anthropic-api-messages，2026-09-30 抓取）：`thinking.type` enabled/disabled；`output_config.effort` qwen3.8-max 可选 low/medium/xhigh（默认 xhigh），「max、high 映射为 xhigh」——high/max 档直接发映射目标 xhigh；moonshot 之外第二批 Anthropic 端点明写思考参数的厂家 |
 | qwen3.8-max | reasoningEcho | always | 默认（qwen.md §10 无不支持回传的记载） |
 | MiniMax-M3.1-Flash-Preview | contextWindow / maxOutputTokens | 1000000 / 131072 | minimax.md §2（1,000,000；max_completion_tokens 推荐 131,072） |
 | MiniMax-M3.1-Flash-Preview | supportsImages | true | minimax.md §2（text, image, video）、§10（M3.1 支持 image） |
@@ -67,14 +68,26 @@
 | MiniMax-M2.7 | effortPatches | 留空 | minimax.md §3（M2.x thinking 不可禁用、参数 "accepted but ignored"——没有可控档位） |
 | MiniMax-M2.7 | reasoningEcho | always | minimax.md §3（M2 README：历史 content 必须原样回传） |
 | MiniMax-M2.7-highspeed | 同 M2.7 | — | minimax.md §2（同模型高速版，参数「同上」） |
+| deepseek-flash | contextWindow / maxOutputTokens | 1000000 / 393216 | deepseek.md §2（最大输出 384K=393216）+ api-docs.deepseek.com/quick_start/pricing（2026-09-30 重抓：CONTEXT LENGTH「1M」、MAX OUTPUT「MAXIMUM: 384K」，上一批「文档未写」的上下文窗口官方页面已补） |
+| deepseek-flash | supportsImages | true | deepseek.md §2（「仅 deepseek-flash 支持 Vision」）+ 同上 pricing 页（Vision ✓） |
+| deepseek-flash | effortPatches | 留空 | deepseek.md §3 与 §10 各写了一种 Anthropic 形状（`{"reasoning":{"effort":…}}` vs「`output_config` 仅 effort 支持」），两处形状不一致、无从取舍（任务单规则：没写就留空；见汇报「拿不准」） |
+| deepseek-flash | reasoningEcho | within_tool_loop | deepseek.md §3（工具循环「must be fully passed back…otherwise a 400 error」；普通多轮「passed…will be ignored」） |
+| deepseek-v4-pro | contextWindow / maxOutputTokens | 1000000 / 393216 | deepseek.md §2（「同上参数结构」）+ 同上 pricing 页（两列共用 CONTEXT LENGTH / MAX OUTPUT 行） |
+| deepseek-v4-pro | supportsImages / effortPatches / reasoningEcho | false / 留空 / within_tool_loop | deepseek.md §2（Vision：v4-pro Not supported）+ 同 deepseek-flash 各行 |
 
 **未收录的模型**：
-- `deepseek-flash` / `deepseek-v4-pro` —— 上下文窗口 deepseek.md §2 明写「文档未写」，字段必填、无法只转录；
-  供应商仍收录（端点、鉴权、怪癖齐全），模型留空待补。
+- moonshot 的 kimi-k3 / kimi-k2.7-code（及高速版）/ kimi-k2.6 —— Anthropic 端点（claude-code-kimi + Messages API 页）与模型页只给上下文
+  （kimi-k3 1,048,576 / 其余 262,144，moonshot.md §2），**最大输出全站无文档**（Messages API 的 `max_tokens` 只写 minimum 1；
+  思考指南只给「`max_tokens>=16000`」下限建议）；maxOutputTokens 必填无默认、无法只转录，供应商已收录、模型待补。
+  端点思考参数已取到，供后续补模型时直接用：kimi-k3 `output_config.effort` = low/high/max（默认 max，Messages API 页 OpenAPI schema）；
+  kimi-k2.7-code 思考强制开启不可关（「400 invalid thinking: only type=enabled is allowed」）。
 - zhipu 的 GLM-5.3-Flash / GLM-5.3-FlashX / GLM-5.1 / GLM-5 / GLM-5-Turbo 等 —— 精确 wire id
   （大小写）文档未写；§12.1 只逐字给出 `glm-5.3` / `glm-5.2` 两个，只收这两个。
 - qwen 的 qwen3.7-max / qwen3.7-plus / qwen3.8-flash 等全套 —— 上下文与输出上限 qwen.md §2 均「文档未写」。
 - qwen 站内代销的第三方模型（deepseek-v4-pro、kimi-k3、glm-5.3…）—— 属百炼代销，不是 qwen 协议 id，未收。
+- OpenAI 本家（gpt-6-astra 等 13 个）与 doubao（doubao-seed-2.1-pro 等）—— 见 providers.json 的 openai / doubao-openai
+  供应商注记：上下文/输出上限均无文档数字（openai-chat.md §2「spec 与 pricing 页均未给每模型上下文数值」；
+  doubao.md §R2a.2 上下文只能由计费分档推断），模型待补。
 
 ## 拿不准的值（按约定处理，见汇报）
 
@@ -90,3 +103,9 @@
 5. MiniMax-M3 的开启档取 `high` 键、形状 `{"thinking":{"type":"adaptive"}}`。
 6. deepseek 的 auth 取 `x_api_key`：§10 明写「x-api-key 完全支持」且 /anthropic 用法走 `ANTHROPIC_API_KEY`；
    §1 的「Authorization: Bearer」是全站通用描述——两说并存，取端点专属的那条。
+7. deepseek 的 contextWindow = 1000000：官方 pricing 页只写「1M」未给精确数（对比 moonshot 的 1M 明写 1,048,576），
+   沿用本文件第 1 条的 10^6 折算约定（2026-09-30 重抓页面原文「CONTEXT LENGTH | 1M」）。
+8. qwen3.8-max 的 high/max 档补丁发 `output_config.effort: "xhigh"`：官方写「max、high 映射为 xhigh」——
+   直接发映射目标值（文档列出的合法取值只有 low/medium/xhigh），不发会被映射的原文。
+9. moonshot 未收录模型：kimi-k3 在 Claude Code 配置里写作 `kimi-k3[1m]`（1M 窗口变体），Messages API 的 OpenAPI
+   schema 则只列 `kimi-k3`；补录模型时应核对两种写法在 /anthropic 端点上的窗口差别再定 wireModelId。
