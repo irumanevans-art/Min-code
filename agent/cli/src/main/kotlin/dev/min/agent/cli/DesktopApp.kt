@@ -6,17 +6,14 @@ import dev.min.agent.kernel.HostPorts
 import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
 import dev.min.agent.kernel.SessionRuntime
-import dev.min.agent.llm.AuthScheme
-import dev.min.agent.llm.ModelProfile
-import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.llm.Wire
 import dev.min.agent.llm.anthropic.AnthropicMessagesClient
-import dev.min.agent.protocol.ModelRef
+import dev.min.agent.llm.catalog.Catalog
+import dev.min.agent.llm.openai.OpenAIChatClient
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.LogHeader
-import dev.min.agent.spi.ModelFamily
 import dev.min.agent.spi.Secret
 import dev.min.agent.spi.Secrets
 import dev.min.agent.spi.SessionCreated
@@ -36,29 +33,17 @@ import java.util.UUID
 
 /**
  * 桌面宿主的组合根：把内核与各个端口实现装在一起（docs/agent/02-总体架构.md §2：构造注入，一处组装）。
- * 模型参数暂时来自命令行；随包的模型目录落地后改成从目录取。
+ * 模型能力来自随包目录，命令行可以覆盖或描述目录外的模型。
  */
 internal class DesktopApp(private val args: CliArgs, private val scope: CoroutineScope) {
     private val home: Path = Path.of(System.getProperty("user.home"), ".min-agent")
     private val paths = DesktopPaths(workspace = args.cwd, scratchRoot = home.resolve("root"))
     private val store = FileSessionStore(home.resolve("sessions"), { System.currentTimeMillis() })
 
-    private val defaults = PROVIDERS[args.provider]
-    private val provider = ProviderDescriptor(
-        id = args.provider,
-        baseUrl = args.baseUrl ?: defaults?.baseUrl
-            ?: throw UsageException("供应商 ${args.provider} 没有默认地址，请用 --base-url 指定"),
-        wire = Wire.AnthropicMessages,
-        auth = args.auth ?: defaults?.auth ?: AuthScheme.XApiKey,
-    )
-    private val keyEnv = args.apiKeyEnv ?: defaults?.keyEnv ?: "${args.provider.uppercase()}_API_KEY"
-
-    private val profile = ModelProfile(
-        ref = ModelRef(args.provider, args.model),
-        family = defaults?.family ?: ModelFamily.Other,
-        contextWindow = args.contextWindow,
-        maxOutputTokens = args.maxOutput,
-    )
+    private val selection = resolveModel(args, Catalog.bundled())
+    private val provider = selection.provider
+    private val profile = selection.profile
+    private val keyEnv = selection.keyEnv
 
     /** 凭证只从环境变量读、只进请求头；这里不打印、不落盘 */
     private val secrets = Secrets { providerId ->
@@ -81,7 +66,12 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
                 return paths.guestOfHost(file).value
             }
         }
-        val client = AnthropicMessagesClient(provider, UrlConnectionTransport(), secrets)
+        val transport = UrlConnectionTransport()
+        val client = when (provider.wire) {
+            Wire.AnthropicMessages -> AnthropicMessagesClient(provider, transport, secrets)
+            Wire.OpenAIChat -> OpenAIChatClient(provider, transport, secrets)
+            else -> throw UsageException("CLI 尚不支持协议 ${provider.wire}")
+        }
         return KernelDeps(
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
@@ -122,18 +112,4 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
         return if (os.startsWith("Windows")) "$os (commands run in Git Bash; drives are /c, /d, …)" else os
     }
 
-    private data class ProviderDefaults(val baseUrl: String, val auth: AuthScheme, val keyEnv: String, val family: ModelFamily)
-
-    private companion object {
-        /**
-         * 各家 Anthropic 协议端点的默认值，出处 D:\kimi\workspace\research\inventory\providers\（anthropic / deepseek / zhipu 第 1 节）。
-         * Kimi 的 Anthropic 端点地址 inventory 里没有，不写默认值（用 --base-url 指定）。
-         */
-        val PROVIDERS = mapOf(
-            // 官方现以 Authorization: Bearer 为主，x-api-key 仍支持
-            "anthropic" to ProviderDefaults("https://api.anthropic.com", AuthScheme.XApiKey, "ANTHROPIC_API_KEY", ModelFamily.Claude),
-            "deepseek" to ProviderDefaults("https://api.deepseek.com/anthropic", AuthScheme.XApiKey, "DEEPSEEK_API_KEY", ModelFamily.DeepSeek),
-            "zhipu" to ProviderDefaults("https://open.bigmodel.cn/api/anthropic", AuthScheme.XApiKey, "ZHIPU_API_KEY", ModelFamily.Glm),
-        )
-    }
 }

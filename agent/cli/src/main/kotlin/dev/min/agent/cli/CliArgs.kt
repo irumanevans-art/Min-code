@@ -1,6 +1,7 @@
 package dev.min.agent.cli
 
 import dev.min.agent.llm.AuthScheme
+import dev.min.agent.llm.Wire
 import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.PermissionMode
 import java.nio.file.Path
@@ -15,14 +16,15 @@ data class CliArgs(
     val baseUrl: String?,
     val auth: AuthScheme?,
     val apiKeyEnv: String?,
-    val contextWindow: Int,
-    val maxOutput: Int,
+    val contextWindow: Int?,
+    val maxOutput: Int?,
     val effort: Effort?,
     val mode: PermissionMode,
     val approve: ApprovalAnswer,
     val cwd: Path,
     val json: Boolean,
     val resume: String?,
+    val wire: Wire? = null,
 )
 
 class UsageException(message: String) : Exception(message)
@@ -30,13 +32,14 @@ class UsageException(message: String) : Exception(message)
 const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示>]
 
   -p <提示>              非交互：跑完这一句就退出；不给则进入交互模式
-  --provider <id>        anthropic（默认）、deepseek、zhipu、moonshot，或任意 id 配合 --base-url
+  --provider <id>        模型目录里的供应商 id，默认 anthropic
   --model <id>           模型 id（必填）
-  --base-url <url>       覆盖供应商地址（到 /v1/messages 之前那一段）
+  --base-url <url>       覆盖供应商地址（协议路径之前那一段）
+  --wire <协议>         anthropic / openai_chat；自定义供应商可现场指定
   --auth x-api-key|bearer  凭证放哪个头，默认按供应商
   --api-key-env <名字>   从哪个环境变量读凭证，默认按供应商（如 ANTHROPIC_API_KEY）
-  --context <n>          上下文窗口，默认 200000
-  --max-output <n>       输出上限，默认 8192
+  --context <n>          覆盖目录上下文窗口；自定义模型默认 200000
+  --max-output <n>       覆盖目录输出上限；自定义模型默认 8192
   --effort <档位>        off / minimal / low / medium / high / xhigh / max
   --mode <模式>          default（默认）/ acceptEdits / plan / bypassPermissions / dontAsk
   --approve ask|yes|no   审批怎么答：交互模式默认 ask，非交互默认 no
@@ -63,8 +66,9 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         }
         i++
     }
-    fun int(name: String, default: Int) =
-        values[name]?.let { it.toIntOrNull() ?: throw UsageException("$name 必须是整数，收到 $it") } ?: default
+    fun int(name: String) = values[name]?.let { value ->
+        value.toIntOrNull()?.takeIf { it > 0 } ?: throw UsageException("$name 必须是正整数")
+    }
 
     val prompt = values["-p"]
     return CliArgs(
@@ -80,8 +84,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
             }
         },
         apiKeyEnv = values["--api-key-env"],
-        contextWindow = int("--context", 200_000),
-        maxOutput = int("--max-output", 8_192),
+        contextWindow = int("--context"),
+        maxOutput = int("--max-output"),
         effort = values["--effort"]?.let { v ->
             Effort.entries.firstOrNull { it.name.equals(v, ignoreCase = true) } ?: throw UsageException("不认识的 --effort：$v")
         },
@@ -96,5 +100,12 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         cwd = values["--cwd"]?.let { Path.of(it) } ?: cwdDefault,
         json = "--json" in flags,
         resume = values["--resume"],
+        wire = values["--wire"]?.let {
+            when (it) {
+                "anthropic" -> Wire.AnthropicMessages
+                "openai_chat" -> Wire.OpenAIChat
+                else -> throw UsageException("--wire 只能是 anthropic 或 openai_chat")
+            }
+        },
     )
 }
