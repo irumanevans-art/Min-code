@@ -83,6 +83,12 @@ data class OpenAiChatQuirks(
     val reasoningField: String? = null,
     /** 工具结果里带图片时：内联在 tool 消息里，还是拆成紧随其后的一条 user 消息 */
     val toolResultImages: ToolResultImages = ToolResultImages.SeparateUserMessage,
+    /** DeepSeek / GLM 等兼容端点未声明 OpenAI 路由键，保守配置可省略；默认遵循 OpenAI */
+    val promptCacheKey: Boolean = true,
+    /** Kimi 工具调用指南要求 tool 消息还带 name；OpenAI 官方不要求（inventory/providers/moonshot.md §4） */
+    val toolResultName: Boolean = false,
+    /** 豆包优先回传加密思考原文，需按字段保存为 opaque；官方没有此字段（inventory/providers/doubao.md §R2a.3） */
+    val encryptedReasoningField: String? = null,
 )
 
 @Serializable
