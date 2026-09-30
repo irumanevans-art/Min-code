@@ -6,6 +6,10 @@ plugins {
 dependencies {
     implementation(project(":agent:kernel"))
     implementation(project(":agent:host"))
+    // 组合根要直接拿到各模块的实现：工具、编解码器、存储
+    implementation(project(":agent:tools"))
+    implementation(project(":agent:llm"))
+    implementation(project(":agent:store"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }
