@@ -1,0 +1,99 @@
+package dev.min.agent.spi
+
+import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
+
+/**
+ * rootfs 里（guest 视角）的绝对路径。内核与工具只说 guest 路径；
+ * 映射到宿主真实路径是宿主实现（Android 的 PathMapper）的事，内核不知道宿主路径长什么样。
+ */
+@Serializable
+@JvmInline
+value class GuestPath(val value: String) {
+    init {
+        require(value.startsWith("/")) { "guest path must be absolute: $value" }
+    }
+
+    override fun toString(): String = value
+}
+
+enum class FileKind { File, Directory, Symlink, Other }
+
+data class FileStat(val kind: FileKind, val size: Long, val modifiedMs: Long)
+
+data class DirEntry(val name: String, val kind: FileKind)
+
+/**
+ * 文件系统端口。Android 宿主在 App 进程里直接读写 rootfs（不经 proot：实测 proot 内读小文件慢 50 倍），
+ * 桌面宿主直接读写本地目录。越界（映射到 rootfs 与 bind mount 之外）一律抛异常，由宿主实现保证。
+ */
+interface WorkspaceFs {
+    suspend fun stat(path: GuestPath): FileStat?
+
+    /** 读 [offset] 起最多 [limit] 字节 */
+    suspend fun read(path: GuestPath, offset: Long = 0, limit: Int = Int.MAX_VALUE): ByteArray
+
+    /** 先写临时文件再改名，保住原文件的权限位；写一半被杀不会留下半个文件 */
+    suspend fun writeAtomic(path: GuestPath, bytes: ByteArray)
+
+    suspend fun list(dir: GuestPath): List<DirEntry>
+
+    fun scopeOf(path: GuestPath): PathScope
+}
+
+data class GrepQuery(
+    val pattern: String,
+    val root: GuestPath,
+    val include: String? = null,
+    val ignoreCase: Boolean = false,
+    val literal: Boolean = false,
+    val maxHits: Int = 500,
+)
+
+data class GrepHit(val path: GuestPath, val line: Int, val text: String)
+
+data class GlobQuery(val pattern: String, val root: GuestPath, val maxResults: Int = 1_000)
+
+/** 搜索端口。Android 宿主用随 APK 带的 ripgrep 在宿主路径上跑，结果映射回 guest 路径 */
+interface Search {
+    fun grep(query: GrepQuery): Flow<GrepHit>
+    fun glob(query: GlobQuery): Flow<GuestPath>
+}
+
+data class ShellCommand(
+    val script: String,
+    val cwd: GuestPath,
+    val env: Map<String, String> = emptyMap(),
+)
+
+data class ExecOptions(
+    val timeoutMs: Long,
+    /** 前台最多等这么久，还没结束就转后台、返回句柄（Codex 的 10 s 做法）；null = 一直等到超时 */
+    val foregroundBudgetMs: Long? = null,
+    val maxOutputChars: Int = ToolTraits.DEFAULT_RESULT_BUDGET_CHARS,
+)
+
+/** 后台进程的句柄。落进 ToolEffectPending，进程被杀后凭它重新挂上 */
+@Serializable
+data class ExecHandle(val id: String, val pid: Int? = null, val logPath: GuestPath? = null)
+
+sealed interface ExecResult {
+    /** [output] 是 stdout 与 stderr 按到达顺序合并、超长时保留头尾各一半的结果 */
+    data class Exited(val exitCode: Int, val output: String, val truncated: Boolean, val durationMs: Long) : ExecResult
+    data class TimedOut(val output: String, val truncated: Boolean) : ExecResult
+    data class Backgrounded(val handle: ExecHandle, val outputSoFar: String) : ExecResult
+}
+
+/**
+ * 进程端口。Android 宿主进 proot；kill 必须按进程组回收——
+ * 基线实测 SIGKILL 掉 proot 后 tracee 全部存活（research/baseline）。
+ */
+interface Exec {
+    suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult
+    suspend fun kill(handle: ExecHandle)
+}
+
+/** 大输出、截图等会话附件。返回会话 artifacts 目录下的相对路径 */
+interface ArtifactSink {
+    suspend fun put(name: String, bytes: ByteArray): String
+}
