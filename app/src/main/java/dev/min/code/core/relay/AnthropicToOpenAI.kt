@@ -156,10 +156,13 @@ internal object AnthropicToOpenAI {
                     flushAssistantOrUser(out, role, textAndImages, toolCalls)
                     textAndImages.clear()
                     toolCalls.clear()
+                    val text = toolResultContent(obj)
                     out += buildJsonObject {
                         put("role", "tool")
                         put("tool_call_id", obj.str("tool_use_id") ?: "")
-                        put("content", toolResultContent(obj))
+                        // OpenAI 的 role=tool 消息没有错误字段，原来 is_error 直接丢掉、模型分不清失败与正常
+                        // 结果；现在失败时在最前面加一行 Error:（模型最熟悉的写法）
+                        put("content", if (obj.bool("is_error") == true) "Error:\n$text" else text)
                     }
                 }
             }

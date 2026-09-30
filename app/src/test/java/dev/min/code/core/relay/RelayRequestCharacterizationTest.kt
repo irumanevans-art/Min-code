@@ -186,8 +186,9 @@ class RelayRequestCharacterizationTest {
     }
 
     @Test
-    fun tool_result_is_error_flag_is_ignored() {
-        // 现状：is_error 被忽略，tool 消息里没有任何错误标记。见 GLM 汇报
+    fun tool_result_is_error_gets_an_error_prefix() {
+        // OpenAI 的 role=tool 消息没有错误字段：is_error 时在 content 最前面加一行 Error:，
+        // 让模型看得出这是失败结果；is_error 为假或缺省时 content 原样
         val chat = AnthropicToOpenAI.convertRequest(buildJsonObject {
             put("model", "m")
             put("messages", buildJsonArray {
@@ -206,7 +207,7 @@ class RelayRequestCharacterizationTest {
         })
         val tool = chat.arr("messages")!!.first().jsonObject
         assertEquals("tool", tool.str("role"))
-        assertEquals("boom", tool.str("content"))
+        assertEquals("Error:\nboom", tool.str("content"))
         assertEquals(listOf("role", "tool_call_id", "content"), tool.keys.toList())
     }
 
