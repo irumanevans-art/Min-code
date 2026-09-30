@@ -61,6 +61,11 @@ data class AnthropicQuirks(
     val cacheControl: Boolean = true,
     /** 端点会不会校验 / 回传 thinking 的 signature；不支持时回传的 thinking 块去掉 signature 字段 */
     val thinkingSignature: Boolean = true,
+    /**
+     * 端点认不认 redacted_thinking 块；不认的（DeepSeek /anthropic 页明写不支持）回传时整块丢掉，免得 400。
+     * 出处：inventory/providers/deepseek.md §10
+     */
+    val redactedThinking: Boolean = true,
 )
 
 @Serializable
