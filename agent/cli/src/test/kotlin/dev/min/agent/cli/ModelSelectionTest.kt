@@ -4,6 +4,7 @@ import dev.min.agent.llm.AuthScheme
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.llm.Wire
+import dev.min.agent.llm.ReasoningEcho
 import dev.min.agent.llm.catalog.Catalog
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.spi.ModelFamily
@@ -50,5 +51,19 @@ class ModelSelectionTest {
         assertThrows(UsageException::class.java) { args("--model", "m", "--wire", "gemini") }
         assertThrows(UsageException::class.java) { args("--model", "m", "--context", "0") }
         assertThrows(UsageException::class.java) { resolveModel(args("--provider", "missing", "--model", "m"), Catalog(emptyList(), emptyList())) }
+    }
+
+    @Test fun `real catalog Chat entries retain reasoning while template URLs require configuration`() {
+        val catalog = Catalog.bundled()
+        val selected = resolveModel(args("--provider", "deepseek-openai", "--model", "deepseek-flash", "--api-key-env", "DEEPSEEK_API_KEY"), catalog)
+        assertEquals(Wire.OpenAIChat, selected.wire)
+        assertEquals("reasoning_content", selected.provider.quirks.openAiChat.reasoningField)
+        assertEquals(ReasoningEcho.WithinToolLoop, selected.profile.reasoningEcho)
+        assertEquals(1000000, selected.profile.contextWindow)
+        assertEquals("DEEPSEEK_API_KEY", selected.keyEnv)
+        assertThrows(UsageException::class.java) { resolveModel(args("--provider", "qwen-openai", "--model", "qwen3.8-max"), catalog) }
+        val configured = resolveModel(args("--provider", "qwen-openai", "--model", "qwen3.8-max", "--base-url", "https://space.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"), catalog)
+        assertEquals("https://space.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", configured.provider.baseUrl)
+        assertEquals(catalog.model(ModelRef("qwen-openai", "qwen3.8-max")), configured.profile)
     }
 }
