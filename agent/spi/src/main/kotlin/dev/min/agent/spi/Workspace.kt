@@ -33,7 +33,7 @@ interface WorkspaceFs {
     /** 读 [offset] 起最多 [limit] 字节 */
     suspend fun read(path: GuestPath, offset: Long = 0, limit: Int = Int.MAX_VALUE): ByteArray
 
-    /** 先写临时文件再改名，保住原文件的权限位；写一半被杀不会留下半个文件 */
+    /** 先写临时文件再改名，保住原文件的权限位；写一半被杀不会留下半个文件。父目录不存在就建 */
     suspend fun writeAtomic(path: GuestPath, bytes: ByteArray)
 
     suspend fun list(dir: GuestPath): List<DirEntry>
