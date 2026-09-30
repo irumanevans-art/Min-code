@@ -68,10 +68,11 @@ object ClaudeCodeModelCatalog {
     /**
      * 原生 1M 上下文：不加 `[1m]` 也是 1M（CLI 表里 `native_1m:true` 的那些）。
      *
-     * - Fable 5 / 5.1、Opus 5 / 5.5、Sonnet 5 是；Opus 4.7 / 4.8 也是
+     * - Fable 5 / 5.1、Opus 5 / 5.5、Sonnet 5 / 5.5 是；Opus 4.7 / 4.8 也是
      * - Haiku 4.5 是 200k；Opus 4.6 以前、Sonnet 4.6 以前要靠 `[1m]`
-     * - 裸别名 `opus` / `sonnet` 在直连 API 上分别解析成 Opus 5.5 / Sonnet 5（2.1.280 起 Opus 5.5
-     *   成为默认 Opus，之前是 Opus 5；走 gateway 时 `opus` 是 Opus 4.7），都按原生 1M 算；`haiku` 按 200k 算
+     * - 裸别名 `opus` / `sonnet` 在直连 API 上分别解析成 Opus 5.5 / Sonnet 5.5（2.1.280 起默认 Opus 是 5.5、
+     *   2.1.284 起默认 Sonnet 是 5.5，之前都是 5；走 gateway 时是 Opus 4.7 / Sonnet 4.6），都按原生 1M 算；
+     *   `haiku` 按 200k 算
      */
     fun isNativeLongContext(model: String?): Boolean {
         val id = stripLongContext(model.orEmpty()).lowercase()

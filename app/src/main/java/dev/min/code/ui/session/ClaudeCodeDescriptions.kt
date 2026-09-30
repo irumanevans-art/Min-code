@@ -90,9 +90,12 @@ private val MODEL_DESCRIPTION_ZH = mapOf(
     "opus[1m]" to "Opus · CLI 2.1.280 起是 Opus 5.5，更旧的是 Opus 5 · 原生就是 1M，[1m] 可加可不加",
     "claude-opus-5-5" to "Opus 5.5 · 日常和复杂任务都最强，接近 Fable 5.1 · 每百万 token \$4 / \$20 · 1M 上下文（原生）· 思考常开",
     "claude-opus-5" to "Opus 5 · 上一代 Opus · 每百万 token \$5 / \$25 · 1M 上下文（原生）",
-    "sonnet" to "Sonnet 5 · 常规任务，性价比高 · 每百万 token \$2 / \$10",
-    "sonnet[1m]" to "Sonnet 5，1M 上下文 · 适合长会话 · 每百万 token \$2 / \$10",
-    "claude-sonnet-5" to "Sonnet 5 · 常规任务，性价比高 · 每百万 token \$2 / \$10 · 1M 上下文（原生）",
+    // 别名 `sonnet` 同理：2.1.284 起直连是 Sonnet 5.5，更旧的 CLI 是 Sonnet 5（两代同价）
+    "sonnet" to "Sonnet · 常规任务，性价比高 · CLI 2.1.284 起是 Sonnet 5.5，更旧的是 Sonnet 5 · 每百万 token \$2 / \$10",
+    "sonnet[1m]" to "Sonnet · CLI 2.1.284 起是 Sonnet 5.5，更旧的是 Sonnet 5 · 原生就是 1M，[1m] 可加可不加 · 每百万 token \$2 / \$10",
+    // 必须有这一条：没有的话前缀回退会让 `claude-sonnet-5-5` 命中下面 Sonnet 5 那条
+    "claude-sonnet-5-5" to "Sonnet 5.5 · 常规任务，性价比高 · 每百万 token \$2 / \$10 · 1M 上下文（原生）",
+    "claude-sonnet-5" to "Sonnet 5 · 上一代 Sonnet · 每百万 token \$2 / \$10 · 1M 上下文（原生）",
     "haiku" to "Haiku 4.5 · 最快，适合简单问答 · 每百万 token \$1 / \$5 · 200k 上下文 · 不支持思考强度",
     "haiku[1m]" to "Haiku 4.5，1M 上下文 · 最快，适合简单问答 · 每百万 token \$1 / \$5 · 不支持思考强度",
     "claude-haiku-4-5" to "Haiku 4.5 · 最快，适合简单问答 · 每百万 token \$1 / \$5 · 200k 上下文 · 不支持思考强度",
