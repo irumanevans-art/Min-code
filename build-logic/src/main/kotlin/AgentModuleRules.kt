@@ -19,6 +19,7 @@ object AgentModuleRules {
     private const val CONTEXT = ":agent:context"
     private const val TOOLS = ":agent:tools"
     private const val EXT = ":agent:ext"
+    private const val HOST = ":agent:host"
     private const val KERNEL = ":agent:kernel"
     private const val TESTKIT = ":agent:testkit"
     private const val CLI = ":agent:cli"
@@ -34,9 +35,11 @@ object AgentModuleRules {
         CONTEXT to setOf(PROTOCOL, SPI, LLM),
         TOOLS to setOf(PROTOCOL, SPI, POLICY),
         EXT to setOf(PROTOCOL, SPI),
+        // 宿主侧端口的纯 JVM 实现（rootfs 文件系统等），桌面 CLI 与 Android 宿主共用；内核不依赖它
+        HOST to setOf(PROTOCOL, SPI),
         KERNEL to BELOW_KERNEL,
         TESTKIT to BELOW_KERNEL + KERNEL,
-        CLI to BELOW_KERNEL + KERNEL + TESTKIT,
+        CLI to BELOW_KERNEL + KERNEL + TESTKIT + HOST,
     )
 
     private val FORBIDDEN_GROUP_PREFIXES = listOf("com.android", "com.google.android", "androidx", "dev.min.code")

@@ -57,6 +57,8 @@ koin-compose = { group = "io.insert-koin", name = "koin-androidx-compose" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization-json" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlin-coroutines-core" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlin-coroutines-core" }
+# 内存里的 Unix 文件系统，只给测试用：Windows 开发机不开开发者模式建不了符号链接，路径映射的测试又离不开符号链接
+jimfs = { module = "com.google.jimfs:jimfs", version = "1.3.2" }
 huge-icons = { group = "com.github.rikkahub", name = "hugeicons-compose", version.ref = "huge-icons" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 xz = { module = "org.tukaani:xz", version = "1.12" }
