@@ -18,5 +18,9 @@ gradlePlugin {
             id = "min.android.library.compose"
             implementationClass = "AndroidLibraryComposeConventionPlugin"
         }
+        register("agentJvm") {
+            id = "min.agent.jvm"
+            implementationClass = "AgentJvmConventionPlugin"
+        }
     }
 }
