@@ -47,6 +47,7 @@ data class GrepQuery(
     val include: String? = null,
     val ignoreCase: Boolean = false,
     val literal: Boolean = false,
+    /** 只限制实际命中（isContext=false）的条数；附带上下文不占配额，输出行预算由工具单独处理 */
     val maxHits: Int = 500,
     /** 命中行前后各带几行上下文（ripgrep 的 -C） */
     val contextLines: Int = 0,

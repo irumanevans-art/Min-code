@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -125,7 +126,11 @@ class FakeSearch : Search {
 
     override fun grep(query: GrepQuery): Flow<GrepHit> {
         grepQueries += query
-        return hits.asFlow().take(query.maxHits)
+        var matches = 0
+        return hits.asFlow().takeWhile { hit ->
+            if (!hit.isContext) matches++
+            matches <= query.maxHits
+        }
     }
 
     override fun glob(query: GlobQuery): Flow<GuestPath> {

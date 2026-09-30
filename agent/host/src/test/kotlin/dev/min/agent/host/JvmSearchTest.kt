@@ -183,6 +183,14 @@ class JvmSearchTest {
     }
 
     @Test
+    fun `跨文件剩余配额不带出被裁掉的命中的上下文`() {
+        write("a.txt", "hit\n")
+        write("b.txt", "before\nhit\nafter\ngap\nbefore2\nhit\nafter2\n")
+        assertEquals(listOf("/a.txt:1:h:hit", "/b.txt:1:c:before", "/b.txt:2:h:hit", "/b.txt:3:c:after"),
+            grep("hit") { it.maxHits = 2; it.context = 1 }.map { it.brief() })
+    }
+
+    @Test
     fun `搜索根是符号链接时先按 guest 规则解析`() {
         write("a.txt", "foo\n")
         Files.createSymbolicLink(files.resolve("alias"), proj)

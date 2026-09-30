@@ -205,6 +205,21 @@ class GrepToolTest {
     // ---- 失败与权限 ----
 
     @Test
+    fun `前置上下文超过显示上限仍确认命中，避免误报没有匹配`() = runTest {
+        hits(hit("/w/a", 1, "before1", true), hit("/w/a", 2, "before2", true),
+            hit("/w/a", 3, "before3", true), hit("/w/a", 4, "match"), hit("/w/a", 5, "after", true))
+        assertEquals("/w/a-1-before1\n/w/a-2-before2\n（只显示前 2 行，用 head_limit 调大或缩小搜索范围）",
+            GrepTool.call(ctx, "pattern" to "match", "output_mode" to "content", "-C" to 3, "head_limit" to 2).text)
+        assertEquals(3, ctx.search.grepQueries.single().maxHits)
+    }
+
+    @Test
+    fun `count 的命中配额不被上下文占用`() = runTest {
+        ctx.search.hits = (1..GrepTool.SCAN_LIMIT).map { hit("/w/a", it, "context", true) } + hit("/w/a", 20001, "match")
+        assertEquals("/w/a:1", GrepTool.call(ctx, "pattern" to "match", "output_mode" to "count").text)
+    }
+
+    @Test
     fun `搜索根不存在是错误`() = runTest {
         val r = GrepTool.call(ctx, "pattern" to "x", "path" to "/nope")
         assertTrue(r.isError)

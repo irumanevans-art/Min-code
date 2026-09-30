@@ -18,6 +18,8 @@ import dev.min.agent.spi.ToolTraits
 import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.json.JsonObject
 
@@ -124,18 +126,30 @@ object GrepTool : Tool<GrepInput> {
 
         val content = input.mode == GrepMode.Content
         val limit = input.headLimit
-        // content 模式端口里每条（含上下文行）就是一行输出，多要 1 条用来判断「是否还有更多」
+        // maxHits 只数命中；模型的输出预算另按行数处理，两种配额不能混用。
         val query = GrepQuery(
             pattern = input.pattern,
             root = root,
             include = input.glob,
             ignoreCase = input.ignoreCase,
-            maxHits = if (content) limit + 1 else SCAN_LIMIT,
+            maxHits = if (content) (limit.toLong() + 1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else SCAN_LIMIT,
             contextLines = if (content) input.context else 0,
             multiline = input.multiline,
         )
-        val hits = ctx.search.grep(query).take(query.maxHits).toList()
-        if (hits.none { !it.isContext }) return ToolResult(listOf(TextPart("没有匹配")))
+        var matched = false
+        val hits = if (content) {
+            val rows = ArrayList<GrepHit>()
+            ctx.search.grep(query).takeWhile { hit ->
+                if (rows.size.toLong() < limit.toLong() + 1) rows += hit
+                if (!hit.isContext) matched = true
+                // 前置上下文可能比 head_limit 还长：继续找到命中才停，避免误报「没有匹配」，但不再攒正文。
+                rows.size.toLong() <= limit || !matched
+            }.collect { }
+            rows
+        } else {
+            ctx.search.grep(query).filter { !it.isContext }.take(query.maxHits).toList().also { matched = it.isNotEmpty() }
+        }
+        if (!matched) return ToolResult(listOf(TextPart("没有匹配")))
 
         return when (input.mode) {
             GrepMode.Content -> renderContent(hits, input)
