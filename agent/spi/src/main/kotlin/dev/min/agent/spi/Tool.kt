@@ -81,7 +81,17 @@ data class ToolResult(
     val artifact: String? = null,
     /** 全文字符数；null = [content] 就是全文 */
     val fullChars: Long? = null,
+    /**
+     * 这次调用读过或写过的文件，以及它们当时的状态。不发给模型；内核据此回答「这个文件上次看到时是什么样」
+     * （[ToolContext.lastSeen]），编辑类工具靠它做「先读后写、读后没被外部改过」的检查——
+     * 这条检查因此也是从日志推出来的，进程重启后照样有效。
+     */
+    val touched: List<FileStamp> = emptyList(),
 )
+
+/** 某一刻看到的文件状态 */
+@Serializable
+data class FileStamp(val path: GuestPath, val size: Long, val modifiedMs: Long)
 
 /** 工具执行时能用的东西。只有端口，没有会话状态的写权限 */
 interface ToolContext {
@@ -92,6 +102,9 @@ interface ToolContext {
     val search: Search
     val exec: Exec
     val artifacts: ArtifactSink
+
+    /** 本会话里最近一次（读或写）看到 [path] 时它的状态；没看过为 null。由内核从日志里的 [ToolResult.touched] 推出 */
+    fun lastSeen(path: GuestPath): FileStamp?
 }
 
 /** 模型族：决定工具描述、编辑形态、提示词的调法（docs/agent/04-子系统设计.md §4.2） */

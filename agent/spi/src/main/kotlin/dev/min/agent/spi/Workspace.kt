@@ -48,9 +48,14 @@ data class GrepQuery(
     val ignoreCase: Boolean = false,
     val literal: Boolean = false,
     val maxHits: Int = 500,
+    /** 命中行前后各带几行上下文（ripgrep 的 -C） */
+    val contextLines: Int = 0,
+    /** 允许跨行匹配（ripgrep 的 -U --multiline-dotall） */
+    val multiline: Boolean = false,
 )
 
-data class GrepHit(val path: GuestPath, val line: Int, val text: String)
+/** [isContext] 为真表示这是命中行旁边的上下文行，不是命中本身 */
+data class GrepHit(val path: GuestPath, val line: Int, val text: String, val isContext: Boolean = false)
 
 data class GlobQuery(val pattern: String, val root: GuestPath, val maxResults: Int = 1_000)
 

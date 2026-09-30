@@ -11,6 +11,7 @@ import dev.min.agent.spi.ApprovalRequested
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.Exec
+import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.ResumePolicy
@@ -172,6 +173,7 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         override val search: Search = deps.host.search
         override val exec: Exec = deps.host.exec
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
+        override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
     }
 
     companion object {
@@ -186,6 +188,10 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
 }
 
 internal fun SessionState.phaseOf(callId: CallId): CallPhase? = turn?.calls?.get(callId)?.phase
+
+/** 日志里最近一次看到 [path] 的状态（工具结果按落盘顺序，后来的覆盖先前的） */
+internal fun SessionState.lastSeen(path: GuestPath): FileStamp? =
+    toolResults.values.asSequence().flatMap { it.touched.asSequence() }.lastOrNull { it.path == path }
 
 /**
  * 工具结果的上下文预算：超过上限就把全文存成会话附件，只给模型头尾各一半的预览和附件路径

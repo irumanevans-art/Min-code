@@ -11,6 +11,7 @@ import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.ToolResultPart
 import dev.min.agent.spi.ApprovalChoice
 import dev.min.agent.spi.Delivery
+import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.LogHeader
@@ -20,8 +21,10 @@ import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.Role
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
+import dev.min.agent.spi.ToolContext
 import dev.min.agent.spi.ToolEffectPending
 import dev.min.agent.spi.ToolOutcome
+import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.TurnEnded
@@ -36,6 +39,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -261,6 +265,31 @@ class SessionRuntimeTest {
 
         assertEquals(2, events().count { it is TurnStarted })
         assertEquals(text("第二件"), model.requests[2].messages.last().parts)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `what a tool saw of a file is visible to later tools through the log`() = run {
+        val path = GuestPath("/workspace/a.kt")
+        val stamp = FileStamp(path, size = 12, modifiedMs = 99)
+        val reader = FakeTool("Read", READ_ONLY) { ToolResult(text("内容"), touched = listOf(stamp)) }
+        var seenByWriter: FileStamp? = null
+        val writer = object : Tool<JsonObject> by FakeTool("Write", WRITES, { ToolResult(text("ok")) }) {
+            override fun run(input: JsonObject, ctx: ToolContext) = flow {
+                seenByWriter = ctx.lastSeen(path)
+                emit(ToolProgress.Done(ToolResult(text("写好了"))))
+            }
+        }
+        val model = ScriptedModel(
+            reply(call("c1", "Read"), stop = StopReason.ToolUse),
+            reply(call("c2", "Write"), stop = StopReason.ToolUse),
+            reply(TextPart("好了")),
+        )
+        val rt = newSession(model, listOf(reader, writer), mode = PermissionMode.BypassPermissions)
+        rt.send(msg(), text("先读再改"))
+        rt.awaitIdle()
+
+        assertEquals(stamp, seenByWriter)
         assertLogIsTruth(rt)
     }
 
