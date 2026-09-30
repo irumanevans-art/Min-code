@@ -1,7 +1,7 @@
 # :agent:host
 
-宿主侧端口的纯 JVM 实现，桌面 CLI 与 Android 宿主共用。目前只有 `RootfsFileSystem`：在宿主侧直接读写 rootfs，
-按 guest 的根解析符号链接、认 bind mount、越界拒绝（docs/agent/04-子系统设计.md §4.3「路径映射」）。
+宿主侧端口的纯 JVM 实现，桌面 CLI 与 Android 宿主共用。`RootfsFileSystem`：在宿主侧直接读写 rootfs，
+按 guest 的根解析符号链接、认 bind mount、越界拒绝（docs/agent/04-子系统设计.md §4.3「路径映射」）。`JvmSearch`：`Search` 端口的纯 JVM 实现。
 
 - 允许依赖：protocol, spi
 - 设计：docs/agent/04-子系统设计.md §4.3；docs/agent/02-总体架构.md §2
@@ -20,3 +20,8 @@
 - 目录项的 fsync 没做：新建文件在断电时可能丢目录项，进程被杀不受影响。
 - 读写都按路径逐次解析符号链接；并发改动 rootfs 里的链接时存在检查与使用之间的时间窗，这是宿主侧的「防误操作」而不是对抗恶意代码的边界
   （恶意代码的边界见 docs/agent/04-子系统设计.md §4.4.1 的隔离层）。
+- `JvmSearch`（`Search` 的纯 JVM 实现，Android 拿不到随 APK 的 ripgrep 时兜底，桌面 CLI 直接用）与 ripgrep 的差异：
+  不读 `.gitignore` / `.ignore`，只硬编码跳过 `.git` 与 `node_modules`；隐藏文件照搜；不跟随符号链接（有意，见类注释）；
+  按 UTF-8 解码（非法字节变替换符），不认其他编码；整文件读进内存，超过 64 MB 的文件跳过；先遍历排序再搜，
+  大目录树上首条结果出得比 ripgrep 慢；正则是 Java 语法（与 Rust regex 大体一致，环视与反向引用 Java 支持而 ripgrep 默认不支持）。
+- `JvmSearch` 的 `maxHits` 只数命中不数上下文行（端口注释与 GrepTool 对「一条」的理解在有上下文时略有出入，见汇报）。

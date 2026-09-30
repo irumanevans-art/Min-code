@@ -5,6 +5,9 @@ plugins {
 
 dependencies {
     implementation(project(":agent:kernel"))
+    implementation(project(":agent:host"))
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 application {
