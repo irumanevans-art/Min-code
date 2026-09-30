@@ -238,7 +238,7 @@ class RelayStreamCharacterizationTest {
                 "content_block_start", "content_block_delta", "content_block_stop",
                 "content_block_start", "content_block_delta",
                 "content_block_delta",
-                "content_block_stop", "content_block_stop",
+                "content_block_stop",
                 "message_delta", "message_stop",
             ),
             names(events),
@@ -252,10 +252,8 @@ class RelayStreamCharacterizationTest {
         assertEquals("B", events[4].second.obj("content_block")?.str("name"))
         assertEquals(1, events[5].second.int("index"))
         assertEquals(0, events[6].second.int("index")) // 工具 0 的后续参数接着流
-        // 现状：finish 里先收工具 1（openToolIndex），随后循环把中途已收过的工具 0 又收一遍 ——
-        // 重复的 content_block_stop（closed 集合漏记中途 closeTool 过的块）。见 GLM 汇报
-        assertEquals(1, events[7].second.int("index"))
-        assertEquals(0, events[8].second.int("index")) // 工具 0 的重复 stop
+        // 中途收过的块在 finish 里不能再收一次
+        assertEquals(1, events[7].second.int("index")) // finish 收工具 1，且只收这一次
         assertEquals("tool_use", messageDeltaOf(events).obj("delta")?.str("stop_reason"))
     }
 
@@ -388,9 +386,9 @@ class RelayStreamCharacterizationTest {
     }
 
     @Test
-    fun tool_closed_midstream_gets_a_second_stop_in_finish() {
-        // 现状：源码注释声称「每个工具块只发一次 stop」，但 closed 集合漏记中途 closeTool 收掉的块 ——
-        // 工具 0 在工具 1 开块时收到第一次 stop，finish 的循环又给它发第二次。见 GLM 汇报
+    fun tool_closed_midstream_is_not_closed_again_in_finish() {
+        // 两个工具先后到达：工具 0 在工具 1 开块时收到 stop，finish 只收还开着的工具 1 ——
+        // 每个块恰好一次 stop
         val conv = OpenAIToAnthropic.StreamConverter("m")
         val events = parse(
             conv.onChunk(toolChunk(listOf(toolCall(0, id = "call_1", name = "A", args = "{"))))
@@ -398,9 +396,8 @@ class RelayStreamCharacterizationTest {
                 + conv.finish()
         )
         val stops = events.filter { it.first == "content_block_stop" }
-        assertEquals(3, stops.size)
+        assertEquals(2, stops.size)
         assertEquals(0, stops[0].second.int("index"))
         assertEquals(1, stops[1].second.int("index"))
-        assertEquals(0, stops[2].second.int("index"))
     }
 }
