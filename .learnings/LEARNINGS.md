@@ -1396,3 +1396,25 @@ deepseek-flash 对应 DeepSeek-V4.1-Flash，原厂 GET /models 给窗口 1048576
 - Related Files: agent/cli/scripts/evaluate.py, agent/tools/src/main/kotlin/dev/min/agent/tools/BashTool.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/BashRequestSnapshotTest.kt
 - Tags: evaluation, exit-status, mutation, event-order, regrade
 - Recurrence-Count: 1
+
+## [LRN-20260930-LIVE-PROFILE-EFFORT] best_practice
+
+**Logged**: 2026-09-30
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+未知模型的 CLI effort 参数不会凭空生成 thinking；真网比较必须核对实际请求配置，并保留默认轮失败样本。
+
+### Details
+Sonnet 5.5 在中转模型列表可用但随包 profile 未收录，默认 effortPatches 为空。默认工具循环没有 thinking，Min 评测 19/20，语法题 echo 掩盖退出码。外部 classpath 实验 profile 使用 adaptive/high 后真实签名回传通过，完整 20/20 与 CC 20/20；没有把实验窗口 / 输出上限作为供应商事实。Ctrl+C 的恢复 harness 首轮 Runner 未加载覆盖，thinking 参数消失但 system/tools 前缀仍相同；报告明确此局限。Exec 当前只保存 .log，不能通过查找 JSON 元数据认定没有遗留子进程；从持久工具结果取 PID，再核对命令与子树后回收。
+
+### Suggested Action
+先检查请求里实际 thinking / effort，而非只看 CLI 参数或模型名。恢复时保持 harness 配置；记录前缀验证范围与配置差异；PID 回收以本次会话持久证据和实时命令核对。
+
+### Metadata
+- Source: conversation
+- Related Files: docs/agent/08-进度与待办.md, agent/cli/src/main/kotlin/dev/min/agent/cli/ModelSelection.kt
+- Tags: live-model, effort, profile, resume, process-cleanup
+- Recurrence-Count: 1

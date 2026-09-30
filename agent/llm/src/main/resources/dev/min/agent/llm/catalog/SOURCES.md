@@ -165,3 +165,10 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
 - Chat 两模型 effort 补丁：off=`{"thinking":{"type":"disabled"}}`；其余 `thinking={"type":"enabled"}`，**顶层** `reasoning_effort` 为 low / high / max，medium/xhigh 映到 high。[官方 Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/) 与 [Chat API](https://api-docs.deepseek.com/api/create-chat-completion/) 均给顶层字段。本次嵌套非法值返回 200，顶层非法值返回 422 invalid_request_error，顶层 low 返回 200；嵌套字段被忽略，不能据 200 认定档位生效。错误原文与用量保存在 deepseek-effort-probe.json。
 - Chat 两模型 reasoningEcho 改为 **always**：最新官方 Thinking Mode 明确带 tools 时保留所有历史轮次推理，包括上轮最终答复；无 tools 时回传会被忽略，因此 Always 在两种请求里均可使用。CLI 总带工具，旧 WithinToolLoop 丢跨轮历史与该规则不符。旧配置三轮未报 400，记录服务端宽容行为，不能用“没报错”替代文档要求。Kimi AlwaysIncludingEmpty 仍需补空字符串；DeepSeek 不给无推理消息虚构空字段。
 - 上述是 Chat 实测；Anthropic 的推理投影与 effort 仍沿用待核实的旧值，不用 Chat 结果冒充跨协议验收。
+
+
+## G5 后补：Lunora Anthropic / Sonnet 5.5（2026-09-30）
+
+来源：用户给定端点与型号限制；鉴权 GET https://api.uselunora.com/v1/models（外部 lunora-anthropic-models.json）；实际 POST /v1/messages 的请求 / SSE（sonnet55-thinking、sonnet55-high-cache、evaluation-sonnet55-high、cc-sonnet55-full）。精确 ID claude-sonnet-5-5，Bearer 认证，200 text/event-stream；接受 thinking.type=adaptive、output_config.effort=high，返回 thinking_delta / signature_delta，跨工具与用户回合原样回传签名均成功。未检出需要供应商特殊怪癖的差异。此是中转实测，不宣称原厂模型路由或未知参数上限。
+
+GET /models 的 created_at 固定日期与 display_name 不提供上下文 / 最大输出证据；未据此创建新的随包 ModelProfile。外部 classpath profile 只使用 context=200000、maxOutputTokens=4096 作为实验限制。默认未知 profile 没有 effortPatches，CLI --effort high 不等于已开启思考；验证依据是实际请求快照。Min / CC adaptive/high 均 20/20，实际输出未截断；max_tokens=4096 / 128000 与不同 TTL、system/tools 的成本不能直接公平比较。恢复测试的 system/tools 指纹稳定，不包括完整 effort 配置复现。详见进度 §8 与外部报告。

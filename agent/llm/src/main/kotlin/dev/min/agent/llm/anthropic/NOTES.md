@@ -71,3 +71,10 @@
 
 未列出的怪癖（例如各家对 `signature` 的态度）inventory 没有写明，`thinkingSignature` 保持默认 true；
 遇到端点拒收或不回签名再逐家调整，并在此处补记出处。
+
+
+## G5 后补：Lunora Anthropic / Sonnet 5.5（2026-09-30）
+
+来源：用户给定端点与型号限制；鉴权 GET https://api.uselunora.com/v1/models（外部 lunora-anthropic-models.json）；实际 POST /v1/messages 的请求 / SSE（sonnet55-thinking、sonnet55-high-cache、evaluation-sonnet55-high、cc-sonnet55-full）。精确 ID claude-sonnet-5-5，Bearer 认证，200 text/event-stream；接受 thinking.type=adaptive、output_config.effort=high，返回 thinking_delta / signature_delta，跨工具与用户回合原样回传签名均成功。未检出需要供应商特殊怪癖的差异。此是中转实测，不宣称原厂模型路由或未知参数上限。
+
+GET /models 的 created_at 固定日期与 display_name 不提供上下文 / 最大输出证据；未据此创建新的随包 ModelProfile。外部 classpath profile 只使用 context=200000、maxOutputTokens=4096 作为实验限制。默认未知 profile 没有 effortPatches，CLI --effort high 不等于已开启思考；验证依据是实际请求快照。Min / CC adaptive/high 均 20/20，实际输出未截断；max_tokens=4096 / 128000 与不同 TTL、system/tools 的成本不能直接公平比较。恢复测试的 system/tools 指纹稳定，不包括完整 effort 配置复现。详见进度 §8 与外部报告。

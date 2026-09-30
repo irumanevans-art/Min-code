@@ -31,7 +31,7 @@ Responses 发送 prompt_cache_key；longTtl 暂不映射。短历史命中未增
 先运行 `:agent:cli:installDist`。`scripts/live_smoke.py` 覆盖批准 / 拒绝、推理工具循环和三回合缓存；`scripts/evaluate.py` 定义 20 个读 / 改 / 测任务，并按文件字节、持久化工具结果与审批记录评分。两者共用只绑 127.0.0.1 的录制代理，校验随机本机 token / Origin，转发的模型 ID 必须等于 --model；不打印 / 存储请求头，真实凭证只从环境进入代理内存与上游 HTTPS 头，CLI 子进程只拿本机 token，证据目录强制在仓库外。
 示例（启动前在同一条命令中从外部 secret 文件读入对应环境变量）：
 `py -3 agent/cli/scripts/evaluate.py --cli-home agent/cli/build/install/cli --evidence <外部新目录> --provider lunora --model gpt-5.6-luna --base-url https://api.uselunora.com/v1 --key-env LUNORA_API_KEY`
-三种 wire 都可录制并运行评测；用 --wire openai_chat 可测 DeepSeek Flash，--context 1048576 是原厂模型列表的精确窗口；未知窗口模型的默认 200000 与 --max-output 4096 只是测试限制。评分不代表已完成 Claude / DeepSeek 的全部正式对照；本次 DeepSeek Min 20/20、完整 CC 19/20，Claude 仍缺凭证。评测 runner 是桌面 Python 脚本，不能声称已有 testkit 的生产 Kotlin API。
+三种 wire 都可录制并运行评测；用 --wire openai_chat 可测 DeepSeek Flash，--context 1048576 是原厂模型列表的精确窗口；未知窗口模型的默认 200000 与 --max-output 4096 只是测试限制。评分不代表已完成 Claude / DeepSeek 的全部正式对照；DeepSeek Min 20/20、完整 CC 19/20；后补 lunora 标称 Sonnet 5.5 的 adaptive/high Min 与 CC 均 20/20，默认未开 thinking 的 Min 原轮 19/20 也保留。评测 runner 是桌面 Python 脚本，不能声称已有 testkit 的生产 Kotlin API。
 `py -3 agent/cli/scripts/evaluate.py --regrade <已有证据目录>` 无需凭证、不联网，以原事件日志和原文件离线重评。
 构建修复题只计题目指定的检查命令，核对 Edit 前失败、Edit 后成功以及测试文件未改；无关 ls / echo 的结果不能代替检查结果。模型用管道或 echo 掩盖初始失败会拒绝通过。录制代理也记录本机连接失败，避免把实际重试漏出请求计数；SDK 路由校验只比 URL 的路径部分，兼容 Anthropic 的 beta 查询参数。
 
@@ -42,3 +42,5 @@ Responses 发送 prompt_cache_key；longTtl 暂不映射。短历史命中未增
 - 后台进程随 CLI 进程的退出而失去追踪（没有跨进程恢复；重启后拿旧句柄 `kill` 是空操作，日志文件仍在）。
 - 每条命令独立起 shell，`cd` 与 `export` 不跨调用保留（M2 做持久 shell 状态）。
 - 输出按 UTF-8 解码；进程结束后最多再等 2 秒读完管道，若后台子孙仍攥着管道，最后一小段输出可能晚于返回才写进日志。
+
+Sonnet 5.5 原生 Anthropic 实测使用 `--provider lunora --wire anthropic --base-url https://api.uselunora.com --model claude-sonnet-5-5 --api-key-env LUNORA_ANTHROPIC_API_KEY`。新型号没有随包 profile，单传 --effort high 不会添加 thinking；专门的高思考验证使用仓库外 classpath 模型配置覆盖，不代表新增生产模型目录事实。详细配置与样本边界见 docs/agent/08-进度与待办.md §8。
