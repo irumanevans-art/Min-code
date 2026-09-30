@@ -14,9 +14,9 @@ class CatalogTest {
     fun `bundled catalog loads and is internally consistent`() {
         val catalog = Catalog.bundled()
 
-        // T2 填完数据后打开：两个列表都非空
-        // assertTrue("providers.json 不应为空", catalog.providers.isNotEmpty())
-        // assertTrue("models.json 不应为空", catalog.models.isNotEmpty())
+        // 两个列表都非空（T1 空目录期间这条先关着，数据落地后打开）
+        assertTrue("providers.json 不应为空", catalog.providers.isNotEmpty())
+        assertTrue("models.json 不应为空", catalog.models.isNotEmpty())
 
         // id / ref 唯一
         assertEquals(
