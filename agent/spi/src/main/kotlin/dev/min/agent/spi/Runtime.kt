@@ -47,14 +47,14 @@ class HttpResponse(val status: Int, val headers: List<Pair<String, String>>, val
 
 data class SseEvent(val event: String?, val data: String, val id: String? = null)
 
-/** 非 2xx。body 原样带上：各家的错误形状（含上下文溢出）靠它识别 */
+/** 非 2xx 或流式请求收到非 SSE 响应。body 带响应正文预览，供编解码器分类（200 非 SSE → Other） */
 class HttpStatusException(val status: Int, val headers: List<Pair<String, String>>, val body: String) :
     RuntimeException("HTTP $status")
 
 interface HttpTransport {
     suspend fun send(request: HttpRequest): HttpResponse
 
-    /** 流式（SSE）。非 2xx 抛 [HttpStatusException]；首字节前的网络错误原样抛出，由编解码器决定重试 */
+    /** 流式（SSE）。非 2xx 或非 SSE 响应抛带正文的 [HttpStatusException]；网络错误原样抛给编解码器 */
     fun stream(request: HttpRequest): Flow<SseEvent>
 }
 

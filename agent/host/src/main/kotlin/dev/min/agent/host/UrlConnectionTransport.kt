@@ -68,6 +68,12 @@ class UrlConnectionTransport(
                 try {
                     val status = connection.responseCode
                     if (status !in 200..299) throw HttpStatusException(status, headersOf(connection), readError(connection))
+                    // 错误页里的行不是 SSE 字段，会被解析器全部忽略；必须在传输边界保住正文，让两种协议同样归 Other。
+                    val mediaType = connection.contentType?.substringBefore(';')?.trim()
+                    if (!mediaType.equals("text/event-stream", ignoreCase = true)) {
+                        val preview = connection.inputStream.use(::readPreview)
+                        throw HttpStatusException(status, headersOf(connection), preview)
+                    }
                     connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                         SseReader(reader).forEach { emit(it) }
                     }
@@ -107,6 +113,18 @@ class UrlConnectionTransport(
 
     private fun readError(connection: HttpURLConnection): String =
         connection.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+
+    private fun readPreview(input: InputStream): String {
+        // UTF-8 每字符最多四字节；先限制读入量，不能为展示 500 字而吞下整页错误正文。
+        val bytes = ByteArray(500 * 4)
+        var count = 0
+        while (count < bytes.size) {
+            val read = input.read(bytes, count, bytes.size - count)
+            if (read < 0) break
+            count += read
+        }
+        return String(bytes, 0, count, Charsets.UTF_8).take(500)
+    }
 }
 
 /**

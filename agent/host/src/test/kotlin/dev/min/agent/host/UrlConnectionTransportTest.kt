@@ -47,7 +47,7 @@ class UrlConnectionTransportTest {
         server.createContext("/sse") { ex ->
             seenKey = ex.requestHeaders.getFirst("x-api-key")
             seenBody = ex.requestBody.readBytes().decodeToString()
-            ex.responseHeaders.add("content-type", "text/event-stream")
+            ex.responseHeaders.add("content-type", "Text/Event-Stream; charset=utf-8")
             ex.sendResponseHeaders(200, 0)
             ex.responseBody.use {
                 it.write("event: a\ndata: {\"n\":1}\n\n: comment\ndata: line1\ndata: line2\nid: 7\n\ndata: [DONE]\n\n".toByteArray())
@@ -82,6 +82,7 @@ class UrlConnectionTransportTest {
     fun `cancelling a stalled stream disconnects promptly instead of waiting for the server`() = runBlocking {
         val clientGone = CountDownLatch(1)
         server.createContext("/slow") { ex ->
+            ex.responseHeaders.add("content-type", "text/event-stream")
             ex.sendResponseHeaders(200, 0)
             val out = ex.responseBody
             try {
@@ -111,6 +112,7 @@ class UrlConnectionTransportTest {
     fun `a silent server trips the stall timeout as an IOException`() {
         val stalling = UrlConnectionTransport(maxStallMs = 300)
         server.createContext("/stall") { ex ->
+            ex.responseHeaders.add("content-type", "text/event-stream")
             ex.sendResponseHeaders(200, 0)
             Thread.sleep(2_000)
             ex.close()
@@ -126,6 +128,24 @@ class UrlConnectionTransportTest {
             ex.responseBody.use { it.write(body) }
         }
         assertEquals("hello", transport.send(post("/plain")).body.decodeToString())
+    }
+
+    @Test
+    fun `200 HTML JSON and missing content type preserve a bounded preview instead of becoming an empty stream`() {
+        for ((index, type) in listOf("text/html", "application/json", null).withIndex()) {
+            val body = "relay error " + "x".repeat(4000)
+            server.createContext("/not-sse-$index") { ex ->
+                type?.let { ex.responseHeaders.add("content-type", it) }
+                ex.sendResponseHeaders(200, body.length.toLong())
+                ex.responseBody.use { it.write(body.toByteArray()) }
+            }
+            val error = assertThrows(HttpStatusException::class.java) {
+                runBlocking { transport.stream(post("/not-sse-$index")).toList() }
+            }
+            assertEquals(200, error.status)
+            assertEquals(body.take(500), error.body)
+            assertTrue("sk-secret" !in error.body && "sk-secret" !in error.message.orEmpty())
+        }
     }
 
     @Test
