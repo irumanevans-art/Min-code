@@ -1285,6 +1285,8 @@ Min Agent 本次枚举 9 场景的 107 个追加端点、2261 个尾记录字节
 - Tags: recovery, mutation, append-boundary, utf8, coroutine
 - Recurrence-Count: 1
 
+
+
 ## [LRN-20260930-TRANSPORT-CONTRACT] best_practice
 
 **Logged**: 2026-09-30T18:00:00+08:00
@@ -1305,4 +1307,92 @@ HttpTransport.stream 只暴露 SSE 事件。真实宿主未拒绝 HTML 时，cod
 - Source: error
 - Related Files: agent/host/src/main/kotlin/dev/min/agent/host/UrlConnectionTransport.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/CodecTransportTest.kt, agent/tools/src/test/kotlin/dev/min/agent/tools/ToolFakes.kt
 - Tags: transport, fake-contract, loopback, windows-path
+- Recurrence-Count: 1
+
+## [LRN-20260930-CLI-RESUME-RESULT] error_and_fix
+
+**Logged**: 2026-09-30
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+恢复后的命令不能用会话累计 outputTokens 判断本轮成功；结果与单轮用量须从本次命令之后的持久 TurnEnded 计算。
+
+### Details
+旧 CLI 会让已完成历史的输出 token 掩盖当前失败，也会拒绝供应商报告零用量的正常回合。改为读取本次 seq 之后的事件；顶层累计字段保留，新增 turn_usage 与 prefix_fingerprints。把判断变回累计 outputTokens>0，CliResultTest 的 2 个方法变红；还原后十二模块 393 测试通过。真实三回合 resume 与 OS Ctrl+C 重开均完成。
+
+### Suggested Action
+端到端报告区分会话累计、命令回合合计和单请求用量；审批拒绝不等于回合失败。先检查持久 outcome，不依据旧计数或模型自称完成。
+
+### Metadata
+- Source: conversation
+- Related Files: agent/cli/src/main/kotlin/dev/min/agent/cli/CliResult.kt, agent/cli/src/main/kotlin/dev/min/agent/cli/Main.kt
+- Tags: resume, usage, mutation, durable-outcome
+- Recurrence-Count: 1
+
+## [LRN-20260930-CACHE-LIVE-GRADING] best_practice
+
+**Logged**: 2026-09-30
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+缓存小样本未涨先比实际前缀，再补长历史；真模型评分必须核对文件和持久工具结果，能离线重评就不用重跑付费模型。
+
+### Details
+Luna 短历史命中 11264/11264/5632，但 fingerprint 和传输前缀不变；256 行历史得到 5632/21504/31744，客户端及中转 instructions 的 hash 都稳定。高思考回传原始 reasoning/phase/call item 逐对象相等。20 题评分器一度把实际“退出码 0”误写为 exit=0，导致 3 个假阴性；按原日志/原文件修正重评为 20/20。临时改坏 calc.py 与 test_calc.py 都被评分器拒绝。
+
+### Suggested Action
+生产录制不记请求头、只接受明确指定的模型，并强制证据目录在仓库外。保存原始证据以便重评；评分不能改模型产物、放宽条件或只相信最终自然语言。临时变异的备份/还原使用 read_bytes/write_bytes，避免 Windows 文本 IO 顺便改换行。
+
+### Metadata
+- Source: error
+- Related Files: agent/cli/scripts/live_smoke.py, agent/cli/scripts/evaluate.py, agent/llm/src/main/kotlin/dev/min/agent/llm/openai/RESPONSES_NOTES.md
+- Tags: cache, proxy, grading, replay, windows-newline
+- Recurrence-Count: 1
+
+## [LRN-20260930-DEEPSEEK-MODEL-FACTS] correction
+
+**Logged**: 2026-09-30
+**Priority**: high
+**Status**: resolved
+**Area**: config
+
+### Summary
+用户纠正主力模型为 V4.1 Flash；按原厂模型列表与现行协议页核实，不能拿旧目录的 Pro / inventory 路径记法当作最终事实。
+
+### Details
+deepseek-flash 对应 DeepSeek-V4.1-Flash，原厂 GET /models 给窗口 1048576。reasoning_effort 是顶层字段，嵌套非法值 200 被忽略、顶层非法值 422；带 tools 的 Chat 请求要求回传所有历史推理，包括前一个用户回合。修 Chat 两模型为 Always，并保留 Kimi 的空串差异；旧 WithinToolLoop 虽未报 400，也不代替文档约束。官方旧新闻与新 pricing 对 Pro 是否退役存在冲突，采用新更新日志与鉴权列表，不自行移除 Pro。
+
+### Suggested Action
+指定型号先核对精确 API ID；不确定字段用最小差异探针与实际请求快照确认，服务端接受未知字段不等于它生效。验证内层工具循环与跨用户回合两种历史。
+
+### Metadata
+- Source: user_feedback
+- Related Files: agent/llm/src/main/resources/dev/min/agent/llm/catalog/SOURCES.md, agent/llm/src/test/kotlin/dev/min/agent/llm/openai/OpenAIChatRequestTest.kt
+- Tags: model-catalog, ignored-field, reasoning-echo, primary-source
+- Recurrence-Count: 1
+
+## [LRN-20260930-GRADER-WORKFLOW] best_practice
+
+**Logged**: 2026-09-30
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+红→改→绿评分应跟踪指定检查命令及其事件位置；不要把先前的目录探查当作第一次测试。
+
+### Details
+模型给测试命令接 head/tail 或 echo 会掩盖非零退出，Bash 增加固定指导后 DeepSeek 的同题评测从 17/20 到 20/20，Luna 复测 20/20。评分器把第一个任意 Bash 的 ls 成功误作初始测试，修为匹配指定检查并核对 Edit 前后时序，以原日志离线重评；CC 同样复核为 19/20。删掉命令筛选时，5 项工作流回归有 3 项变红；旧掩盖退出码的 3 题仍失败。
+
+### Suggested Action
+模型任务质量、工具运行语义和评分器错误分别用持久证据定位。评分器修正不改模型产物；指令改动必须跑原评测集，并说明前缀缓存一次失效与固定 token 成本。
+
+### Metadata
+- Source: error
+- Related Files: agent/cli/scripts/evaluate.py, agent/tools/src/main/kotlin/dev/min/agent/tools/BashTool.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/BashRequestSnapshotTest.kt
+- Tags: evaluation, exit-status, mutation, event-order, regrade
 - Recurrence-Count: 1
