@@ -2,15 +2,11 @@ package dev.min.agent.cli
 
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.TextPart
-import dev.min.agent.spi.TurnEnded
-import dev.min.agent.spi.TurnOutcome
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import java.nio.file.Path
 import java.util.UUID
 import kotlin.system.exitProcess
@@ -56,22 +52,15 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
 
     val prompt = args.prompt
     if (prompt != null) {
+        val fromSeq = runtime.state.value.lastSeq + 1
         say(prompt)
         val state = runtime.state.value
-        val completed = state.turn == null && state.usage.outputTokens > 0
+        val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq), state.usage)
+        result.failure?.let { System.err.println(it) }
         if (args.json) {
-            println(
-                buildJsonObject {
-                    put("session", runtime.sessionId.value)
-                    put("completed", completed)
-                    put("input_tokens", state.usage.inputTokens)
-                    put("output_tokens", state.usage.outputTokens)
-                    put("cache_read_tokens", state.usage.cacheReadTokens)
-                    put("cache_write_tokens", state.usage.cacheWriteTokens)
-                },
-            )
+            println(result.json())
         }
-        return if (completed) 0 else 1
+        return if (result.completed) 0 else 1
     }
 
     System.err.println("输入要说的话，回车发送；输入 /exit 退出。")

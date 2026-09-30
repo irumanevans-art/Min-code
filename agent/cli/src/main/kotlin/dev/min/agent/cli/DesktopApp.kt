@@ -12,6 +12,7 @@ import dev.min.agent.llm.catalog.Catalog
 import dev.min.agent.llm.openai.OpenAIChatClient
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ArtifactSink
+import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.Secret
@@ -26,6 +27,7 @@ import dev.min.agent.tools.GrepTool
 import dev.min.agent.tools.ReadTool
 import dev.min.agent.tools.WriteTool
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.toList
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.ZoneId
@@ -53,6 +55,9 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
     fun checkKey() {
         if (System.getenv(keyEnv).isNullOrBlank()) throw UsageException("没有凭证：请设置环境变量 $keyEnv")
     }
+
+    suspend fun records(sessionId: SessionId, fromSeq: Long): List<EventRecord> =
+        requireNotNull(store.open(sessionId)).read(fromSeq).toList()
 
     private fun deps(sessionId: SessionId): KernelDeps {
         val sessionDir = home.resolve("sessions").resolve(sessionId.value)
