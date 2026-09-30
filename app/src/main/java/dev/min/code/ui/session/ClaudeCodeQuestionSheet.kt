@@ -66,6 +66,7 @@ import dev.min.code.ui.theme.sea
 @Composable
 internal fun ClaudeCodeQuestionSheet(
     pending: ClaudeCodeEvent.PermissionRequest,
+    origin: PermissionOrigin,
     onAnswer: (Map<String, String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -117,6 +118,7 @@ internal fun ClaudeCodeQuestionSheet(
                 Seal()
                 Text(stringResource(R.string.question_title), style = MaterialTheme.typography.titleMedium)
             }
+            PermissionOriginLines(origin, denyHint = false)
 
             if (questions.isEmpty()) {
                 // 解析不出问题时不能把用户卡在一个空面板里 —— 允许直接放行，

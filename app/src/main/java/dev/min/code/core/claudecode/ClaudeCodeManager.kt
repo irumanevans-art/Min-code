@@ -144,7 +144,8 @@ class ClaudeCodeManager(
     data class SessionState(
         val status: SessionStatus = SessionStatus.Idle,
         val items: List<ChatItem> = emptyList(),
-        val pendingPermission: ClaudeCodeEvent.PermissionRequest? = null,
+        /** 待应答的权限请求；队头就是界面上挂着的那张卡，见 ClaudeCodePermissionQueue.kt */
+        val permissionQueue: List<ClaudeCodeEvent.PermissionRequest> = emptyList(),
         val sessionId: String? = null,
         val model: String? = null,
         val errorMessage: String? = null,
@@ -263,6 +264,9 @@ class ClaudeCodeManager(
         val currentModel: String? get() = options.model
         val currentEffort: String? get() = options.effort
 
+        /** 界面上挂着的那张权限卡（队头）；其余的排在 [permissionQueue] 里等它答完 */
+        val pendingPermission: ClaudeCodeEvent.PermissionRequest? get() = permissionQueue.firstOrNull()
+
         /** 还在跑的子任务 */
         val runningTasks: List<TaskInfo> get() = tasks.filter { it.isRunning }
 
@@ -362,7 +366,7 @@ class ClaudeCodeManager(
                 it.copy(
                     status = SessionStatus.Failed,
                     busy = false,
-                    pendingPermission = null,
+                    permissionQueue = emptyList(),
                     errorMessage = "会话协程异常（$where）：${e.message ?: e.toString()}",
                 )
             } else {
@@ -392,7 +396,7 @@ class ClaudeCodeManager(
                     status = SessionStatus.Failed,
                     errorMessage = "会话中断: ${e.message}",
                     busy = false,
-                    pendingPermission = null,
+                    permissionQueue = emptyList(),
                 )
             }
         },
@@ -623,12 +627,12 @@ class ClaudeCodeManager(
         dropTasksOfDeadProcess()
         _state.update {
             if (it.status == SessionStatus.Failed) {
-                it.copy(busy = false, pendingPermission = null)
+                it.copy(busy = false, permissionQueue = emptyList())
             } else {
                 it.copy(
                     status = SessionStatus.Closed,
                     busy = false,
-                    pendingPermission = null,
+                    permissionQueue = emptyList(),
                     errorMessage = it.errorMessage
                         ?: if (unexpected) "claude 进程退出 (exit $code)" else null,
                 )
@@ -908,7 +912,10 @@ class ClaudeCodeManager(
 
             is ClaudeCodeEvent.TaskEvent -> {
                 val now = System.currentTimeMillis()
-                _state.update { it.copy(tasks = it.tasks.withTaskEvent(event, now)) }
+                _state.update {
+                    val tasks = it.tasks.withTaskEvent(event, now)
+                    it.copy(tasks = tasks, permissionQueue = it.permissionQueue.prunedFor(tasks))
+                }
                 // 子 agent 结束了，收件箱里还有它的信：正常收尾前 SubagentStop 已经递过了，
                 // 走到这里的是被停掉 / 出错的，这些话它再也收不到
                 if (event.status != null && event.status != "running" && event.status != "pending") {
@@ -918,7 +925,10 @@ class ClaudeCodeManager(
 
             is ClaudeCodeEvent.BackgroundTasksChanged -> {
                 val now = System.currentTimeMillis()
-                _state.update { it.copy(tasks = it.tasks.reconciledWith(event.tasks, now)) }
+                _state.update {
+                    val tasks = it.tasks.reconciledWith(event.tasks, now)
+                    it.copy(tasks = tasks, permissionQueue = it.permissionQueue.prunedFor(tasks))
+                }
             }
 
             // 工具块刚开始：名字和 id 已经完整，入参还是空的。先把卡插进去，
@@ -1071,7 +1081,7 @@ class ClaudeCodeManager(
                 if (tryHostBashInsteadOfPermission(event)) {
                     // 已应答，不挂 pending sheet
                 } else {
-                    _state.update { it.copy(pendingPermission = event) }
+                    _state.update { it.copy(permissionQueue = it.permissionQueue.enqueued(event)) }
                 }
             }
 
@@ -1163,7 +1173,8 @@ class ClaudeCodeManager(
                         // 收尾时把最后一条消息的 token 结转，那一轮的总数才是完整的
                         outputTokensSettled = it.outputTokensSettled + it.outputTokensCurrent,
                         outputTokensCurrent = 0,
-                        pendingPermission = null,
+                        // 在跑的后台子 agent 的请求跨轮活着（CLI 2.1.285 起才有），主线程的不会再有人收
+                        permissionQueue = it.permissionQueue.survivingTurnEnd(it.tasks),
                         streamingText = "",
                         streamingThinking = "",
                         sessionId = event.sessionId ?: it.sessionId,
@@ -1174,7 +1185,7 @@ class ClaudeCodeManager(
                         // 成功收尾的子任务不再占位；失败/被杀的留着，否则用户永远看不到它出过错。
                         // 转到后台还在跑的（run_in_background 的 shell、后台子 agent）要跨轮活着——
                         // 它们本来就是为了在这一轮结束后继续跑
-                        tasks = it.tasks.filter { t -> t.isError || (t.isRunning && t.backgrounded) },
+                        tasks = it.tasks.keptAcrossTurns(),
                         items = run {
                             var updated = it.items.updateLastAssistantMeta(durationMs, outputTokens, finishedAt)
                             if (errorNoteId != null) {
@@ -1653,14 +1664,13 @@ class ClaudeCodeManager(
         // 不会对同一条请求回两次。update 的 lambda 可能重跑，taken 以最后一次为准
         var taken: ClaudeCodeEvent.PermissionRequest? = null
         _state.update { st ->
-            val p = st.pendingPermission
-            if (p == null || (expectedRequestId != null && p.requestId != expectedRequestId)) {
-                taken = null
-                st
+            val p = if (expectedRequestId != null) {
+                st.permissionQueue.firstOrNull { it.requestId == expectedRequestId }
             } else {
-                taken = p
-                st.copy(pendingPermission = null)
+                st.pendingPermission
             }
+            taken = p
+            if (p == null) st else st.copy(permissionQueue = st.permissionQueue.without(p.requestId))
         }
         val pending = taken ?: return false
         // 用户点的「拒绝」不带话 —— 和桌面端的 No 一样，要的是「停下来等我」。
@@ -1681,7 +1691,9 @@ class ClaudeCodeManager(
         )
         if (!answered) return false
         if (!allow) pending.toolUseId?.takeIf { it.isNotBlank() }?.let(userDeniedToolUses::add)
-        if (stop) deniedTurn = seq
+        // 后台子 agent 的请求被拒：interrupt 只停那一个子 agent，主线程这一轮照常收尾（2.1.285 实测），
+        // 不能把主线程的下一个 result 当成「用户拒绝停下」
+        if (stop && pending.backgroundAgentIn(_state.value.tasks) == null) deniedTurn = seq
         if (allow && suggestion != null) {
             appendItem(ChatItem.Note(newId(), "已记住：${suggestion.label}"))
         }
@@ -1699,7 +1711,7 @@ class ClaudeCodeManager(
      */
     fun answerQuestions(answers: Map<String, String>) {
         val pending = _state.value.pendingPermission ?: return
-        _state.update { it.copy(pendingPermission = null) }
+        _state.update { it.copy(permissionQueue = it.permissionQueue.without(pending.requestId)) }
         // 空答案 = 用户按了「跳过」。记下来，好让 tool_result 到达时别再报一次
         // "选择没传回去" —— 那是他自己的决定，不是故障。要在写应答之前记：结果可能紧跟着就到
         if (answers.isEmpty()) pending.toolUseId?.let(skippedQuestions::add)
@@ -1736,21 +1748,16 @@ class ClaudeCodeManager(
 
     /**
      * CLI 发来 `control_cancel_request`：它不再等这条请求的应答了。
-     * 挂着的卡就是这条的话撤掉（通知跟着 pendingPermission 一起消失），留一句说明；
-     * 之后对它的应答一律不写（[answerCli]）。不是卡上那条（托管 Bash 正在等结论、或早答过了）只记下来。
+     * 队里有这条就撤掉（挂着的若正是它，通知跟着换成下一张或消失），留一句说明；
+     * 之后对它的应答一律不写（[answerCli]）。不在队里的（托管 Bash 正在等结论、或早答过了）只记下来。
      */
     private fun onCliWithdrew(requestId: String) {
         withdrawnCliRequests.add(requestId)
         var withdrawn: ClaudeCodeEvent.PermissionRequest? = null
         _state.update { st ->
-            val p = st.pendingPermission
-            if (p?.requestId == requestId) {
-                withdrawn = p
-                st.copy(pendingPermission = null)
-            } else {
-                withdrawn = null
-                st
-            }
+            val p = st.permissionQueue.firstOrNull { it.requestId == requestId }
+            withdrawn = p
+            if (p == null) st else st.copy(permissionQueue = st.permissionQueue.without(requestId))
         }
         val card = withdrawn ?: return
         cliWithdrawalNote(card, byOurInterrupt = interruptedTurn == turnSeq.get())
@@ -1806,7 +1813,7 @@ class ClaudeCodeManager(
                     it.copy(
                         busy = queuedNext,
                         turnProduced = false,
-                        pendingPermission = null,
+                        permissionQueue = emptyList(),
                         items = it.items + ChatItem.Note(noteId, "中断超时，已强制解除等待状态", isError = true),
                     )
                 }
@@ -1980,14 +1987,14 @@ class ClaudeCodeManager(
                         it.copy(
                             status = SessionStatus.Closed,
                             busy = false,
-                            pendingPermission = null,
+                            permissionQueue = emptyList(),
                             stopping = false,
                             applyingSettings = false,
                         )
                     } else {
                         it.copy(
                             busy = false,
-                            pendingPermission = null,
+                            permissionQueue = emptyList(),
                             stopping = false,
                             applyingSettings = false,
                         )
@@ -2073,7 +2080,10 @@ class ClaudeCodeManager(
         return when (val outcome = controls.request(id, encodeClaudeCodeStopTask(id, taskId))) {
             is ControlOutcome.Ok -> {
                 val now = System.currentTimeMillis()
-                _state.update { it.copy(tasks = it.tasks.withTaskStopped(taskId, now)) }
+                _state.update {
+                    val tasks = it.tasks.withTaskStopped(taskId, now)
+                    it.copy(tasks = tasks, permissionQueue = it.permissionQueue.prunedFor(tasks))
+                }
                 null
             }
 
@@ -2479,7 +2489,7 @@ class ClaudeCodeManager(
                         status = SessionStatus.Starting,
                         applyingEffort = true,
                         busy = false,
-                        pendingPermission = null,
+                        permissionQueue = emptyList(),
                         streamingText = "",
                         streamingThinking = "",
                     )

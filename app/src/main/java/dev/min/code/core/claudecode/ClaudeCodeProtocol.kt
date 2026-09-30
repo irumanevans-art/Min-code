@@ -27,6 +27,9 @@ import java.time.Instant
  * 2.1.273–283 对照结论：Min 发的 control_request 子类型、启动参数和 env 都没改名或移除；
  * 新增的要跟的只有错误应答的 `error_code` 和一直没接的 `control_cancel_request`（见 [ClaudeCodeEvent.ControlCancel]），
  * 新 system 子类型全是内部帧（见 NOISE_SYSTEM_SUBTYPES）。
+ * 2.1.284–285 对照结论：can_use_tool 的字段一个没变，Min 发的子类型、参数也没动；行为上变的是
+ * 后台子 agent 的权限请求改走 stdio（之前自动拒），可能在主线程 result 之后还挂着、也可能几条同时挂着，
+ * 见 ClaudeCodePermissionQueue.kt。
  * 未知字段/类型一律宽容忽略以保持向后兼容，但**必填字段一个都不能少** —— CLI 对入站帧做严格校验，
  * 缺字段会被静默丢弃或报 "canUseTool returned a schema-invalid permission result"。
  */
@@ -155,6 +158,12 @@ sealed interface ClaudeCodeEvent {
          * `updatedPermissions` 里，CLI 自己去写规则，之后同类调用不再询问。
          */
         val suggestions: List<PermissionSuggestion> = emptyList(),
+        /**
+         * 发起请求的子 agent（= 它那条 task_started 的 task_id）；主线程发的是 null。
+         * 前台子 agent 也带。CLI 2.1.285 起后台子 agent 的请求也走 stdio（之前直接自动拒），
+         * 那些请求可以比本轮 result 晚到、也可以在 result 之后还挂着，见 [survivingTurnEnd]。
+         */
+        val agentId: String? = null,
     ) : ClaudeCodeEvent
 
     /**
@@ -445,6 +454,7 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
                                     ?.let { PermissionSuggestion(it, update) }
                             }
                             .orEmpty(),
+                        agentId = request.str("agent_id"),
                     )
                 )
 

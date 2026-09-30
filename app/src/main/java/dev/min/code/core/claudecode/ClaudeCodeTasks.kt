@@ -34,6 +34,10 @@ internal fun List<TaskInfo>.withTaskEvent(event: ClaudeCodeEvent.TaskEvent, now:
     return if (existing == null) this + merged else map { if (it.id == merged.id) merged else it }
 }
 
+/** 主线程一轮收尾时任务表里留下的：出过错的（不留用户就看不到），和转到后台还在跑的 */
+internal fun List<TaskInfo>.keptAcrossTurns(): List<TaskInfo> =
+    filter { it.isError || (it.isRunning && it.backgrounded) }
+
 /**
  * 拿 `background_tasks_changed` 的整表对账。
  *

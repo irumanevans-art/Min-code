@@ -221,6 +221,10 @@
   <string name="session_export_thinking">思考</string>
   <string name="session_permission_blocked_path">越权路径：%1$s</string>
   <string name="session_permission_reason">触发原因：%1$s</string>
+  <string name="session_permission_from_agent">子 agent「%1$s」要的</string>
+  <string name="session_permission_from_bg_agent">后台子 agent「%1$s」要的</string>
+  <string name="session_permission_queued">后面还有 %1$d 条等你批准</string>
+  <string name="session_permission_bg_deny_hint">拒绝只停下这一个子 agent，这边的对话不受影响</string>
   <string name="session_permission_deny">拒绝</string>
   <string name="session_permission_allow_once">允许一次</string>
   <string name="session_start_crash_notice">上次运行崩溃过，报告在 设置 → 关于 里，可以复制出来发给人看。</string>

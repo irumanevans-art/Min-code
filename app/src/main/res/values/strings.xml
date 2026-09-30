@@ -223,6 +223,10 @@
   <string name="session_export_thinking">Thinking</string>
   <string name="session_permission_blocked_path">Blocked path: %1$s</string>
   <string name="session_permission_reason">Reason: %1$s</string>
+  <string name="session_permission_from_agent">From subagent “%1$s”</string>
+  <string name="session_permission_from_bg_agent">From background subagent “%1$s”</string>
+  <string name="session_permission_queued">%1$d more waiting after this one</string>
+  <string name="session_permission_bg_deny_hint">Deny stops only that subagent; this conversation carries on</string>
   <string name="session_permission_deny">Deny</string>
   <string name="session_permission_allow_once">Allow once</string>
   <string name="session_start_crash_notice">The last run crashed. The report is under Settings → About; you can copy it out and send it to someone.</string>

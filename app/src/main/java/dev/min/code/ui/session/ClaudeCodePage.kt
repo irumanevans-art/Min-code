@@ -470,11 +470,13 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     }
 
     session.pendingPermission?.let { pending ->
+        val origin = permissionOriginOf(pending, session.tasks, session.permissionQueue.size)
         // AskUserQuestion 走的是同一个 can_use_tool 帧，但要的是「在选项里挑」而不是
         // 「允许/拒绝」，答案还得经 updatedInput 回传 —— 两种面板不能混用
         if (pending.toolName == ASK_USER_QUESTION_TOOL) {
             ClaudeCodeQuestionSheet(
                 pending = pending,
+                origin = origin,
                 onAnswer = { answers -> vm.answerQuestions(answers) },
                 // 跳过 = 允许工具带着空答案跑完。不能回 deny：那会被模型当成
                 // "用户拒绝了这次提问"，它多半会停下来问为什么，而不是继续干活
@@ -483,6 +485,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         } else {
             PermissionSheet(
                 pending = pending,
+                origin = origin,
                 onAnswer = { allow, suggestion -> vm.answerPermission(allow, suggestion = suggestion) },
             )
         }
@@ -1741,6 +1744,7 @@ private fun PlanBanner(onOpen: () -> Unit) {
 @Composable
 private fun PermissionSheet(
     pending: ClaudeCodeEvent.PermissionRequest,
+    origin: PermissionOrigin,
     onAnswer: (allow: Boolean, suggestion: PermissionSuggestion?) -> Unit,
 ) {
     // **不允许滑动关掉**。这个 sheet 是在会话流上方弹出来的，而用户很可能正在往回滑看历史 ——
@@ -1775,6 +1779,7 @@ private fun PermissionSheet(
                     fontFamily = JetbrainsMono,
                 )
             }
+            PermissionOriginLines(origin, denyHint = true)
             pending.description?.takeIf { it.isNotBlank() }?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium)
             }
