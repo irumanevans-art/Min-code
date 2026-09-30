@@ -18,6 +18,7 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.ResumePolicy
+import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnTrigger
 import kotlinx.serialization.json.JsonObject
@@ -28,10 +29,14 @@ import kotlinx.serialization.json.JsonObject
  */
 data class SessionState(
     val header: LogHeader,
+    /** 会话开始时的设置。系统提示里的环境信息由它和 [header] 推出，保证同一段日志组出同一个前缀 */
+    val created: SessionCreated,
     val lastSeq: Long,
     val settings: SessionSettings,
     /** 收到了、还没提升成正式消息、也没被撤回的输入，按到达顺序 */
     val inbox: List<PendingInput>,
+    /** 会话里收到过的全部输入 id：同一个 id 重发（通知栏重复点击、断网重连）只收一次 */
+    val seenInputs: Set<ClientMsgId>,
     /** 模型看得到的对话（工具结果单独放在 [toolResults]，投影时按调用顺序插回） */
     val history: List<HistoryEntry>,
     val toolResults: Map<CallId, ToolResult>,

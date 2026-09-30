@@ -35,9 +35,11 @@ fun fold(header: LogHeader, records: List<EventRecord>): SessionState {
     check(first is SessionCreated) { "日志第一条事件必须是 SessionCreated，实际是 $first" }
     val initial = SessionState(
         header = header,
+        created = first,
         lastSeq = 0,
         settings = SessionSettings(first.cwd, first.model, first.mode, first.effort),
         inbox = emptyList(),
+        seenInputs = emptySet(),
         history = emptyList(),
         toolResults = emptyMap(),
         turn = null,
@@ -62,8 +64,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
             ),
         )
         is InputReceived -> {
-            check(inbox.none { it.clientMsgId == e.clientMsgId }) { "重复的输入 ${e.clientMsgId}" }
-            copy(inbox = inbox + PendingInput(e.clientMsgId, e.parts, e.delivery))
+            check(e.clientMsgId !in seenInputs) { "重复的输入 ${e.clientMsgId}" }
+            copy(inbox = inbox + PendingInput(e.clientMsgId, e.parts, e.delivery), seenInputs = seenInputs + e.clientMsgId)
         }
         is InputPromoted -> {
             val input = inbox.firstOrNull { it.clientMsgId == e.clientMsgId }

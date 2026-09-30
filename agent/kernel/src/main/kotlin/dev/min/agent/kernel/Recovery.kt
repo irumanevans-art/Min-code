@@ -24,7 +24,14 @@ import dev.min.agent.spi.TurnOutcome
  *
  * 半截回答（已落盘的 AssistantSegment）只给界面看，不进模型历史：它可能停在一个没说完的工具调用中间。
  */
-fun planRecovery(state: SessionState): List<SessionEvent> {
+fun planRecovery(state: SessionState): List<SessionEvent> =
+    closeTurn(state, TurnOutcome.Interrupted(InterruptedBy.ProcessDeath))
+
+/**
+ * 把当前回合合法地收尾：进程被杀后的恢复（[planRecovery]）、用户按「中断」、请求失败放弃，共用这一份逻辑，只是结局不同。
+ * 没有进行中的回合时返回空列表。
+ */
+fun closeTurn(state: SessionState, outcome: TurnOutcome): List<SessionEvent> {
     val turn = state.turn ?: return emptyList()
     val outcomes = turn.calls.values
         .filter { it.phase !is CallPhase.Done }
@@ -43,7 +50,7 @@ fun planRecovery(state: SessionState): List<SessionEvent> {
         }
     return outcomes + unplanned + TurnEnded(
         turnId = turn.turnId,
-        outcome = TurnOutcome.Interrupted(InterruptedBy.ProcessDeath),
+        outcome = outcome,
         usage = turn.usage,
         // 进程死了多久不可知（纯函数也不该去读时钟），记 0；界面用事件时间戳算「中断于何时」
         durationMs = 0,
