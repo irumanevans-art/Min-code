@@ -242,7 +242,9 @@ internal object OpenAIToAnthropic {
             events += event("message_delta", buildJsonObject {
                 put("type", "message_delta")
                 put("delta", buildJsonObject {
-                    put("stop_reason", stopReason ?: "end_turn")
+                    // 收到过 finish_reason 就按它映射（stopReason 已定）；断流时按流里出现过的内容补：
+                    // 有工具调用就是 tool_use（模型在等工具结果），不能装作自然结束
+                    put("stop_reason", stopReason ?: if (toolMeta.isNotEmpty()) "tool_use" else "end_turn")
                     put("stop_sequence", JsonNull)
                 })
                 put("usage", buildJsonObject {

@@ -216,8 +216,8 @@ class RelayStreamCharacterizationTest {
         assertEquals("la\"}", events[5].second.obj("delta")?.str("partial_json"))
         assertEquals(0, events[6].second.int("index"))
         assertEquals(1, events[7].second.int("index"))
-        // 全程没有 finish_reason：即使有工具调用，stop_reason 也落到默认 end_turn。见 GLM 汇报
-        assertEquals("end_turn", messageDeltaOf(events).obj("delta")?.str("stop_reason"))
+        // 全程没有 finish_reason：流里出现过工具调用，就该按工具回合收尾
+        assertEquals("tool_use", messageDeltaOf(events).obj("delta")?.str("stop_reason"))
         assertEquals(0, messageDeltaOf(events).obj("usage")?.int("output_tokens"))
     }
 
@@ -299,13 +299,13 @@ class RelayStreamCharacterizationTest {
         val noFinish = OpenAIToAnthropic.StreamConverter("m")
         assertEquals("end_turn", messageDeltaOf(parse(noFinish.onChunk(emptyDeltaChunk()) + noFinish.finish()))
             .obj("delta")?.str("stop_reason"))
-        // 没有 finish_reason 但有工具：也是 end_turn（mapStopReason 只在 finish 到达时才调用）。见 GLM 汇报
+        // 没有 finish_reason 但流里出现过工具调用：tool_use（模型在等工具结果，不能装作自然结束）
         val noFinishWithTools = OpenAIToAnthropic.StreamConverter("m")
         val events = parse(
             noFinishWithTools.onChunk(toolChunk(listOf(toolCall(0, id = "call_1", name = "A"))))
                 + noFinishWithTools.finish()
         )
-        assertEquals("end_turn", messageDeltaOf(events).obj("delta")?.str("stop_reason"))
+        assertEquals("tool_use", messageDeltaOf(events).obj("delta")?.str("stop_reason"))
     }
 
     @Test
