@@ -133,6 +133,7 @@ internal object AnthropicToOpenAI {
         val out = ArrayList<JsonObject>()
         val textAndImages = ArrayList<JsonElement>()
         val toolCalls = ArrayList<JsonElement>()
+        val toolResultImages = ArrayList<JsonElement>()
 
         blocks.forEach { block ->
             val obj = block as? JsonObject ?: return@forEach
@@ -164,10 +165,27 @@ internal object AnthropicToOpenAI {
                         // 结果；现在失败时在最前面加一行 Error:（模型最熟悉的写法）
                         put("content", if (obj.bool("is_error") == true) "Error:\n$text" else text)
                     }
+                    // tool_result 里的图片原来被整个丢掉；role=tool 不收图，收起来在工具消息之后补发
+                    (obj["content"] as? JsonArray)?.forEach { inner ->
+                        val b = inner as? JsonObject ?: return@forEach
+                        if (b.str("type") == "image") toolResultImages += convertImage(b)
+                    }
                 }
             }
         }
         flushAssistantOrUser(out, role, textAndImages, toolCalls)
+        if (toolResultImages.isNotEmpty()) {
+            out += buildJsonObject {
+                put("role", "user")
+                put("content", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "text")
+                        put("text", "Images returned by the tool calls above:")
+                    })
+                    toolResultImages.forEach { add(it) }
+                })
+            }
+        }
         return out
     }
 

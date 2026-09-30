@@ -212,11 +212,29 @@ class RelayRequestCharacterizationTest {
     }
 
     @Test
-    fun tool_result_image_block_content_is_lost() {
-        // 现状：tool_result 内的图片块被整个丢掉，只剩 text 块的文本。见 GLM 汇报
+    fun tool_result_images_are_forwarded_as_a_follow_up_user_message() {
+        // OpenAI 的 role=tool 消息普遍不收图片：文本照旧放 tool 消息，图片在同一批工具消息之后
+        // 补一条 role=user 消息带给模型；多个 tool_result 都带图时合并进同一条
         val chat = AnthropicToOpenAI.convertRequest(buildJsonObject {
             put("model", "m")
             put("messages", buildJsonArray {
+                add(buildJsonObject {
+                    put("role", "assistant")
+                    put("content", buildJsonArray {
+                        add(buildJsonObject {
+                            put("type", "tool_use")
+                            put("id", "toolu_1")
+                            put("name", "Read")
+                            put("input", buildJsonObject { })
+                        })
+                        add(buildJsonObject {
+                            put("type", "tool_use")
+                            put("id", "toolu_2")
+                            put("name", "Screenshot")
+                            put("input", buildJsonObject { })
+                        })
+                    })
+                })
                 add(buildJsonObject {
                     put("role", "user")
                     put("content", buildJsonArray {
@@ -232,14 +250,57 @@ class RelayRequestCharacterizationTest {
                                         put("data", "QUJD")
                                     })
                                 })
-                                add(buildJsonObject { put("type", "text"); put("text", "caption") })
+                                add(buildJsonObject { put("type", "text"); put("text", "caption one") })
+                            })
+                        })
+                        add(buildJsonObject {
+                            put("type", "tool_result")
+                            put("tool_use_id", "toolu_2")
+                            put("content", buildJsonArray {
+                                add(buildJsonObject {
+                                    put("type", "image")
+                                    put("source", buildJsonObject {
+                                        put("type", "base64")
+                                        put("media_type", "image/jpeg")
+                                        put("data", "RkVG")
+                                    })
+                                })
+                                add(buildJsonObject { put("type", "text"); put("text", "caption two") })
                             })
                         })
                     })
                 })
             })
         })
-        assertEquals("caption", chat.arr("messages")!!.first().jsonObject.str("content"))
+        val messages = chat.arr("messages")!!
+        assertEquals(4, messages.size)
+        val tool1 = messages[1].jsonObject
+        assertEquals("tool", tool1.str("role"))
+        assertEquals("toolu_1", tool1.str("tool_call_id"))
+        assertEquals("caption one", tool1.str("content"))
+        val tool2 = messages[2].jsonObject
+        assertEquals("toolu_2", tool2.str("tool_call_id"))
+        assertEquals("caption two", tool2.str("content"))
+        // 图片合并成一条 user 消息，跟在工具消息后面：开头一段说明文本，依次是各图
+        val followUp = messages[3].jsonObject
+        assertEquals("user", followUp.str("role"))
+        assertEquals(
+            buildJsonArray {
+                add(buildJsonObject {
+                    put("type", "text")
+                    put("text", "Images returned by the tool calls above:")
+                })
+                add(buildJsonObject {
+                    put("type", "image_url")
+                    put("image_url", buildJsonObject { put("url", "data:image/png;base64,QUJD") })
+                })
+                add(buildJsonObject {
+                    put("type", "image_url")
+                    put("image_url", buildJsonObject { put("url", "data:image/jpeg;base64,RkVG") })
+                })
+            },
+            followUp["content"],
+        )
     }
 
     @Test
