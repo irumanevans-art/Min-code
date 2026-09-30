@@ -6,6 +6,10 @@ import kotlinx.serialization.Serializable
 /**
  * 一次模型请求的用量。只信供应商回报的数；估算值不进这里（估算只用于发请求前画上下文条）。
  * 缓存读写单列，是因为国产供应商和 Anthropic 都按命中单独计价，花费和命中率都从这两项算。
+ *
+ * **口径（各编解码器必须一致）**：[inputTokens] 只算**没有命中缓存、也不是写入缓存**的那部分输入（Anthropic 的 input_tokens 口径）。
+ * OpenAI 系的 prompt_tokens 含缓存命中，要减去 cached_tokens 再填；DeepSeek 的 prompt_cache_miss_tokens 直接就是它。
+ * 总输入 = inputTokens + cacheReadTokens + cacheWriteTokens。
  */
 @Serializable
 data class Usage(
