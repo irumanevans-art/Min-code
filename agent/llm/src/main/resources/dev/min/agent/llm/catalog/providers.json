@@ -46,5 +46,96 @@
     "baseUrl": "https://api.moonshot.cn/anthropic",
     "wire": "anthropic_messages",
     "auth": "bearer"
+  },
+  {
+    "id": "openai",
+    "baseUrl": "https://api.openai.com/v1",
+    "wire": "openai_chat",
+    "auth": "bearer"
+  },
+  {
+    "id": "deepseek-openai",
+    "baseUrl": "https://api.deepseek.com",
+    "wire": "openai_chat",
+    "auth": "bearer",
+    "quirks": {
+      "openAiChat": {
+        "maxTokensField": "max_tokens",
+        "reasoningField": "reasoning_content",
+        "promptCacheKey": false,
+        "parallelToolCalls": false
+      }
+    }
+  },
+  {
+    "id": "zhipu-openai",
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "wire": "openai_chat",
+    "auth": "bearer",
+    "quirks": {
+      "openAiChat": {
+        "maxTokensField": "max_tokens",
+        "reasoningField": "reasoning_content",
+        "streamUsage": "always",
+        "promptCacheKey": false,
+        "parallelToolCalls": false
+      }
+    }
+  },
+  {
+    "id": "moonshot-openai",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "wire": "openai_chat",
+    "auth": "bearer",
+    "quirks": {
+      "openAiChat": {
+        "maxTokensField": "max_tokens",
+        "reasoningField": "reasoning_content",
+        "promptCacheKey": false,
+        "parallelToolCalls": false,
+        "toolResultName": true
+      }
+    }
+  },
+  {
+    "id": "qwen-openai",
+    "baseUrl": "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "wire": "openai_chat",
+    "auth": "bearer",
+    "quirks": {
+      "openAiChat": {
+        "maxTokensField": "max_tokens",
+        "reasoningField": "reasoning_content",
+        "promptCacheKey": false
+      }
+    }
+  },
+  {
+    "id": "minimax-openai",
+    "baseUrl": "https://api.minimax.io/v1",
+    "wire": "openai_chat",
+    "auth": "bearer",
+    "quirks": {
+      "openAiChat": {
+        "reasoningField": "reasoning_content",
+        "promptCacheKey": false,
+        "parallelToolCalls": false
+      }
+    }
+  },
+  {
+    "id": "doubao-openai",
+    "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+    "wire": "openai_chat",
+    "auth": "bearer",
+    "quirks": {
+      "openAiChat": {
+        "maxTokensField": "max_tokens",
+        "reasoningField": "reasoning_content",
+        "encryptedReasoningField": "encrypted_content",
+        "streamUsage": "always",
+        "promptCacheKey": false
+      }
+    }
   }
 ]

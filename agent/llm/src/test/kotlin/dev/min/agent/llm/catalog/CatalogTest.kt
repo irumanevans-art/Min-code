@@ -1,5 +1,6 @@
 package dev.min.agent.llm.catalog
 
+import dev.min.agent.llm.Wire
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,6 +38,17 @@ class CatalogTest {
                 "模型 ${model.ref} 的 providerId 不在供应商目录里",
                 model.ref.providerId in providerIds,
             )
+        }
+
+        // OpenAI Chat 协议的供应商（本家 openai 与各家 -openai 后缀）必须用 openai_chat 线协议
+        for (provider in catalog.providers) {
+            if (provider.id == "openai" || provider.id.endsWith("-openai")) {
+                assertEquals(
+                    "供应商 ${provider.id} 应为 openai_chat 线协议",
+                    Wire.OpenAIChat,
+                    provider.wire,
+                )
+            }
         }
 
         // baseUrl 形如 https://host[/path]，不带到别的斜杠结尾（编解码器自己拼 /v1/messages）
