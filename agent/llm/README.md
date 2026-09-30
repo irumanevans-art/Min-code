@@ -6,10 +6,10 @@
 - 设计：docs/agent/04-子系统设计.md §4.2（供应商层）；docs/agent/03-核心契约.md §4（模型访问）
 
 ## 模型看到什么
-M0：尚未实现。
+Anthropic Messages / OpenAI Chat 的规范消息投影与线格式；目录含供应商、模型及 effort / reasoning 规则。
 ## token 代价
-M0：尚未实现。
+用量统一为未缓存输入 + cacheRead + cacheWrite 与输出；客户端不做成本记账或重试。
 ## 缓存影响
-M0：尚未实现。
+Anthropic 缓存断点与可选 1h；Chat prompt_cache_key，longTtl 不自动映射。
 ## 已知限制
-M0：尚未实现。
+Responses / Gemini 仅枚举；供应商资料和真网验收有空缺，见 docs/agent/08-进度与待办.md 和两种协议 NOTES.md。

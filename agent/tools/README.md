@@ -6,7 +6,7 @@
 - 设计：docs/agent/04-子系统设计.md §4.3（工具与执行）；docs/agent/03-核心契约.md §5（工具）
 - 规格：docs/agent/detail/内置工具规范.md
 
-已实现：Read、Write、Glob、Grep、Bash（Edit 由别处实现）。共用零件在 `ToolSupport.kt`；
+已实现：Read、Write、Edit、Glob、Grep、Bash。共用零件在 `ToolSupport.kt`；
 测试用的假端口（内存文件系统、脚本化搜索与进程、可预置 lastSeen 的上下文）在 `src/test/.../ToolFakes.kt`，Edit 的测试可直接复用。
 
 ## 模型看到什么
@@ -17,6 +17,7 @@
 | --- | --- | --- |
 | Read | `file_path`（绝对）、`offset`（从 1 起）、`limit`（默认 2000） | `cat -n` 风格：行号右对齐 6 位 + 制表符 + 内容；单行超 2000 字符截断；没读完时末尾一行说明总行数与已显示范围。图片返回一句说明 + base64 图；空文件一句话；二进制、目录、不存在、offset 越界都是带处理建议的错误 |
 | Write | `file_path`（绝对）、`content` | 一句「已写入 路径（N 行）」。覆盖已有文件必须先 Read 且读后未被改，否则错误并告诉它「先 Read / 重新 Read」 |
+| Edit | `file_path`、`old_string`、`new_string`、`replace_all` | 先读后写；逐级唯一匹配，replace_all 仅精确匹配；返回附近最多 40 行带行号内容，保留 CRLF / BOM，不生成 unified diff |
 | Glob | `pattern`、`path`（可选） | 绝对路径逐行，修改时间从新到旧，最多 100 条，超出注明；无结果一句「没有匹配的文件」 |
 | Grep | `pattern`、`path`、`glob`、`output_mode`、`-i`、`-n`、`-C`、`multiline`、`head_limit`（默认 250） | files_with_matches：路径列表；count：`路径:命中数`；content：`路径:行号:内容`，上下文行用 `-`，不相邻的组之间 `--`。超 head_limit 注明；命中行超 500 字符截断；无命中「没有匹配」 |
 | Bash | `command`、`timeout`（毫秒，默认 120000，上限 600000，超了按上限算）、`description`、`run_in_background` | 输出 + 末尾「退出码 N」（非 0 为错误）；超时为错误并附已有输出；转后台给出 id / pid / 日志路径，让模型用 Read 看日志 |
@@ -25,7 +26,7 @@
 
 ## token 代价
 
-- 工具说明 + schema 五个合计约 1.5k token 量级（中文说明，未精确计量），每个请求都带，属于稳定前缀。
+- 六个工具的说明 + schema 每次请求都带，属于稳定前缀；合计 token 未精确计量，不能沿用旧五工具估计。
 - Read 每行多约 8 个字符的行号前缀（6 位对齐 + 制表符），换来 Edit 与「第几行」的可引用性；默认最多 2000 行，是最大的单次输入来源。
 - Grep 默认 files_with_matches，最省；content 模式每行带完整路径（同一文件的多条命中会重复路径），命中行截到 500 字符，输出最多 250 条。
 - Glob 最多 100 条绝对路径。

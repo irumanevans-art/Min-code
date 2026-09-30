@@ -1262,3 +1262,47 @@ runCatching {
 - Source: conversation
 - Related Files: tools/uitap.py
 - Tags: adb, emulator, ime, gboard
+
+## [LRN-20260930-RECOVERY-BOUNDARIES] best_practice
+
+**Logged**: 2026-09-30T18:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+模拟进程死亡应先永久阻断存储写入，再取消协程；直接取消会执行清理，验证的其实是用户中断。追加边界与真实 UTF-8 尾记录的每字节撕裂可以确定性覆盖日志空档。
+
+### Details
+Min Agent 本次枚举 9 场景的 107 个追加端点、2261 个尾记录字节端点。恢复使用真实 FileSessionStore 与新运行时，校验成功 send 的 ID 和内容、合法历史、幂等、折叠相等、新回合、实际 system/tools 前缀和不重放副作用。临时去掉补结果与 truncate，各有一个 JUnit 方法变红；还原后连续三遍绿。
+
+### Suggested Action
+恢复测试不要只看 turn=null 或 fingerprint 自洽：比死亡前实际请求、复开后的日志字节与 seq；加多字节文本；把副作用计数保留在运行时外。测试循环子例与 JUnit 方法数分开报告。
+
+### Metadata
+- Source: conversation
+- Related Files: agent/kernel/src/test/kotlin/dev/min/agent/kernel/ChaosRecoveryTest.kt
+- Tags: recovery, mutation, append-boundary, utf8, coroutine
+- Recurrence-Count: 1
+
+## [LRN-20260930-TRANSPORT-CONTRACT] best_practice
+
+**Logged**: 2026-09-30T18:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Fake 的输出不能证明真实传输契约；HTTP 200 错误页必须从响应头和正文路径测到 codec，搜索 fake 的配额也必须与宿主一致。
+
+### Details
+HttpTransport.stream 只暴露 SSE 事件。真实宿主未拒绝 HTML 时，codec 单元测试即使能分类手工注入的 HttpStatusException，也无法取得实际错误页正文。新增 loopback HTTP → UrlConnectionTransport → 两种 codec 后，关闭 Content-Type 检查让 3 个测试变红。Grep 的 fake 原先把上下文也计入 maxHits，修为只数命中并测跨文件剩余配额，避免同一误解在测试与工具里相互遮掩。
+
+### Suggested Action
+端口行为变更同时更新 spi 注释、真实宿主、fake 与端到端契约测试。Windows 进程测试需要 Git Bash 在 JVM 启动时的 PATH；用 --no-daemon 启动新 JVM，避免沿用未含 bash 的旧进程环境。
+
+### Metadata
+- Source: error
+- Related Files: agent/host/src/main/kotlin/dev/min/agent/host/UrlConnectionTransport.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/CodecTransportTest.kt, agent/tools/src/test/kotlin/dev/min/agent/tools/ToolFakes.kt
+- Tags: transport, fake-contract, loopback, windows-path
+- Recurrence-Count: 1

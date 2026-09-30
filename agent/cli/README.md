@@ -10,6 +10,7 @@
 目录模型保留能力、effort 补丁与怪癖；`--base-url --wire anthropic|openai_chat --context --max-output` 可覆盖或现场描述模型。
 旧的目录外模型仍可使用（窗口默认 200000、输出默认 8192）；目录未声明凭证环境变量字段，
 当前用 `--api-key-env` 或 `<PROVIDER>_API_KEY`，凭证仅在内存中读到并进入 HTTP 头。
+协议别名如 `deepseek-openai` 用 `--api-key-env DEEPSEEK_API_KEY` 显式绑定已有变量；qwen-openai 的目录地址是业务空间模板，须用 `--base-url` 指定实际地址，未替换占位符会在联网前报错。
 `LocalExec` 经 Bash 工具间接可见：
 - 命令在本机 `bash -lc <script>` 里跑，工作目录是会话 cwd；stdout 与 stderr 合并，stdin 已关闭（读 stdin 的命令拿到 EOF）。
 - 输出超过上限时保留头尾各一半，中间一行说明省略了多少字符。
