@@ -12,7 +12,11 @@ import dev.min.agent.protocol.RequestId
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.Usage
+import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.Delivery
+import dev.min.agent.spi.InputOrigin
+import dev.min.agent.spi.SubagentOrigin
+import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.ExecHandle
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.LoadedMemoryFile
@@ -52,6 +56,34 @@ data class SessionState(
     val memory: List<LoadedMemoryFile> = emptyList(),
     /** 展示用事件同样由日志折叠；不进入 modelMessages，避免 UI 说明改变模型历史。 */
     val presentation: List<SessionPresentation> = emptyList(),
+    /** 子会话的来历；根会话为 null（docs/agent/detail/子agent设计.md §2.2） */
+    val origin: SubagentOrigin? = null,
+    /** 本会话委派出去的子 agent，按委派顺序 */
+    val children: Map<SessionId, ChildSummary> = emptyMap(),
+    /** 最近结束的那个回合。子 agent 的报告取它的结局 */
+    val lastTurn: EndedTurn? = null,
+)
+
+/** 父会话视角的一个子 agent：委派时的样子 + 哪些回合的报告已经交付 */
+data class ChildSummary(
+    val child: SessionId,
+    val callId: CallId,
+    val agentType: String,
+    val fork: Boolean,
+    val background: Boolean,
+    val description: String,
+    val name: String?,
+    /** 已交付给本会话的报告对应子会话的哪些回合（经收件箱，或前台调用的工具结果） */
+    val reportedTurns: Set<TurnId> = emptySet(),
+)
+
+data class EndedTurn(
+    val turnId: TurnId,
+    val trigger: TurnTrigger,
+    val outcome: TurnOutcome,
+    val usage: Usage,
+    val durationMs: Long,
+    val toolCalls: Int,
 )
 
 data class SessionPresentation(
@@ -69,12 +101,22 @@ data class SessionSettings(
     val effort: Effort?,
 )
 
-data class PendingInput(val clientMsgId: ClientMsgId, val parts: List<Part>, val delivery: Delivery)
+data class PendingInput(
+    val clientMsgId: ClientMsgId,
+    val parts: List<Part>,
+    val delivery: Delivery,
+    val origin: InputOrigin = InputOrigin.User,
+)
 
 sealed interface HistoryEntry {
     val messageId: MessageId
 
-    data class User(override val messageId: MessageId, val parts: List<Part>) : HistoryEntry
+    data class User(
+        override val messageId: MessageId,
+        val parts: List<Part>,
+        /** 界面据此区分用户气泡与子 agent 报告；不影响模型看到的内容 */
+        val origin: InputOrigin = InputOrigin.User,
+    ) : HistoryEntry
 
     data class Assistant(override val messageId: MessageId, val parts: List<Part>) : HistoryEntry {
         val toolCalls: List<ToolCallPart> get() = parts.filterIsInstance<ToolCallPart>()

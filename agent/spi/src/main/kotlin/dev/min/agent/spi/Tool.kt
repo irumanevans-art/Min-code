@@ -105,6 +105,9 @@ interface ToolContext {
 
     /** 本会话里最近一次（读或写）看到 [path] 时它的状态；没看过为 null。由内核从日志里的 [ToolResult.touched] 推出 */
     fun lastSeen(path: GuestPath): FileStamp?
+
+    /** 委派子 agent。有默认值：不涉及子 agent 的工具与测试替身不用管它 */
+    val agents: AgentPort get() = AgentPort.Unavailable
 }
 
 /** 模型族：决定工具描述、编辑形态、提示词的调法（docs/agent/04-子系统设计.md §4.2） */

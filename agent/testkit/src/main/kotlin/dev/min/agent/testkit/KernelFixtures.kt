@@ -1,6 +1,7 @@
 package dev.min.agent.testkit
 
 import dev.min.agent.kernel.HostPorts
+import dev.min.agent.llm.ModelClient
 import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
 import dev.min.agent.kernel.RetryPolicy
@@ -37,7 +38,7 @@ private object Unused : WorkspaceFs, Search, Exec {
     override suspend fun kill(handle: ExecHandle) = error("unused")
 }
 
-fun testDeps(model: ScriptedModel, tools: List<Tool<*>>, artifacts: FakeArtifacts = FakeArtifacts()): KernelDeps {
+fun testDeps(model: ModelClient, tools: List<Tool<*>>, artifacts: FakeArtifacts = FakeArtifacts()): KernelDeps {
     val time = AtomicLong(1_000)
     val counter = AtomicLong(0)
     return KernelDeps(

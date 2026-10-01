@@ -30,7 +30,8 @@ object SystemPrompt {
         @Suppress("UNUSED_PARAMETER") profile: ModelProfile,
         env: Environment,
         memory: List<LoadedMemoryFile> = emptyList(),
-    ): List<String> = listOfNotNull(RULES, environmentBlock(env), memoryBlock(memory))
+        agentInstructions: String? = null,
+    ): List<String> = listOfNotNull(RULES, environmentBlock(env), memoryBlock(memory), agentInstructions?.let(::agentBlock))
 
     private val RULES = """
         You are Min Agent, a coding agent running inside the Min app on the user's Android phone.
@@ -76,6 +77,18 @@ object SystemPrompt {
         MemorySource.Rule -> "rule"
         MemorySource.Import -> "imported by a memory file"
     }
+
+    /**
+     * 新开的子 agent 的角色说明（内置类型的说明或 `.claude/agents/` 下定义文件的正文），放最后：
+     * 前面几段与主会话逐字相同。分身没有这一段——它的系统提示必须与父会话完全一样。
+     */
+    private fun agentBlock(instructions: String): String = SUBAGENT_INTRO + "\n\n" + instructions.trim()
+
+    private val SUBAGENT_INTRO = """
+        You are a subagent: another agent delegated the task in the first user message to you and is not watching your work.
+        Do the task with your tools. Your final reply is handed back to that agent verbatim as your report, so make it
+        complete and self-contained: what you found or changed, where (file paths), and anything left unresolved.
+    """.trimIndent()
 
     private val MEMORY_INTRO = """
         Project instructions:

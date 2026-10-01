@@ -1,6 +1,13 @@
 package dev.min.agent.kernel
 
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.SessionId
+import dev.min.agent.spi.AgentInputKind
+import dev.min.agent.spi.ForkSeeded
+import dev.min.agent.spi.InputOrigin
+import dev.min.agent.spi.Role
+import dev.min.agent.spi.SubagentOrigin
+import dev.min.agent.spi.SubagentSpawned
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.ApprovalChoice
@@ -68,14 +75,18 @@ fun SessionState.apply(record: EventRecord): SessionState {
         )
         is InputReceived -> {
             check(e.clientMsgId !in seenInputs) { "重复的输入 ${e.clientMsgId}" }
-            copy(inbox = inbox + PendingInput(e.clientMsgId, e.parts, e.delivery), seenInputs = seenInputs + e.clientMsgId)
+            copy(
+                inbox = inbox + PendingInput(e.clientMsgId, e.parts, e.delivery, e.origin),
+                seenInputs = seenInputs + e.clientMsgId,
+                children = reported(e.origin),
+            )
         }
         is InputPromoted -> {
             val input = inbox.firstOrNull { it.clientMsgId == e.clientMsgId }
                 ?: error("提升了不在收件箱里的输入 ${e.clientMsgId}")
             copy(
                 inbox = inbox - input,
-                history = history + HistoryEntry.User(e.messageId, input.parts),
+                history = history + HistoryEntry.User(e.messageId, input.parts, input.origin),
             )
         }
         is InputWithdrawn -> copy(inbox = inbox.filterNot { it.clientMsgId == e.clientMsgId })
@@ -130,13 +141,47 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is TurnEnded -> {
             val t = checkNotNull(turn) { "没有进行中的回合却收到了结束 ${e.turnId}" }
             check(t.turnId == e.turnId) { "结束的是 ${e.turnId}，当前回合是 ${t.turnId}" }
-            copy(turn = null, usage = usage + t.usage, presentation = presentation + SessionPresentation(
-                record, history.lastOrNull()?.messageId, t.openRequest?.messageId, t.openRequest?.segments.orEmpty(),
-            ))
+            copy(
+                turn = null,
+                usage = usage + t.usage,
+                presentation = presentation + SessionPresentation(
+                    record, history.lastOrNull()?.messageId, t.openRequest?.messageId, t.openRequest?.segments.orEmpty(),
+                ),
+                lastTurn = EndedTurn(e.turnId, t.trigger, e.outcome, t.usage, e.durationMs, t.calls.size),
+            )
+        }
+        is SubagentSpawned -> {
+            check(e.child !in children) { "重复委派子会话 ${e.child}" }
+            copy(children = children + (e.child to ChildSummary(e.child, e.callId, e.agentType, e.fork, e.background, e.description, e.name)))
+        }
+        is SubagentOrigin -> {
+            check(lastSeq == 1L) { "SubagentOrigin 必须紧跟在 SessionCreated 之后" }
+            copy(origin = e)
+        }
+        is ForkSeeded -> {
+            check(origin?.fork == true) { "只有分身会话才能继承对话" }
+            check(history.isEmpty() && turn == null) { "继承的对话必须在任何回合之前写入" }
+            copy(
+                history = e.messages.map { m ->
+                    when (m.role) {
+                        Role.User -> HistoryEntry.User(m.messageId, m.parts)
+                        Role.Assistant -> HistoryEntry.Assistant(m.messageId, m.parts)
+                    }
+                },
+                toolResults = e.results.associate { it.callId to it.result },
+            )
         }
         is Note -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
     }
     return next.copy(lastSeq = record.seq)
+}
+
+/** 子 agent 的报告进了收件箱：记下它对应的子回合已交付，补发与去重据此跳过 */
+private fun SessionState.reported(origin: InputOrigin): Map<SessionId, ChildSummary> {
+    if (origin !is InputOrigin.Agent || origin.kind != AgentInputKind.Report) return children
+    val turn = origin.childTurn ?: return children
+    val child = children[origin.session] ?: return children
+    return children + (child.child to child.copy(reportedTurns = child.reportedTurns + turn))
 }
 
 private fun SessionState.updateTurn(turnId: TurnId, change: (TurnState) -> TurnState): SessionState {

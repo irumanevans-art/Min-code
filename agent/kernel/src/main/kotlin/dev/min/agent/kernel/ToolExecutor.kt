@@ -7,6 +7,7 @@ import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
+import dev.min.agent.spi.AgentPort
 import dev.min.agent.spi.ApprovalRequested
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.Durability
@@ -42,7 +43,7 @@ import kotlin.coroutines.cancellation.CancellationException
  */
 internal class ToolExecutor(private val rt: SessionRuntime) {
     private val deps = rt.deps
-    private val registry: Map<String, Tool<*>> = deps.tools.associateBy { it.name }
+    private val registry: Map<String, Tool<*>> = availableTools(rt.state.value, deps).associateBy { it.name }
     private val parallelism = Semaphore(deps.maxParallelTools)
 
     private sealed interface Prepared {
@@ -112,7 +113,7 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         return if (batch.size > 1) batch else emptyList()
     }
 
-    private fun askFor(p: Prepared.Ready): PermissionAsk = p.tool.permissionAsk(p.input, context(p.call.callId))
+    private fun askFor(p: Prepared.Ready): PermissionAsk = p.tool.permissionAsk(p.input, context(null, p.call.callId))
 
     private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict =
         PolicyEngine.evaluate(ask, p.tool.traits.readOnly, rt.state.value.settings.mode)
@@ -144,7 +145,7 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         rt.commit(listOf(ToolEffectPending(turnId, callId)), Durability.Sync)
         val raw = try {
             var result: ToolResult? = null
-            p.tool.run(p.input, context(callId)).collect { progress ->
+            p.tool.run(p.input, context(turnId, callId)).collect { progress ->
                 when (progress) {
                     is ToolProgress.Status -> rt.emitLive(LiveUpdate.ToolStatus(callId, progress.text))
                     is ToolProgress.Output -> rt.emitLive(LiveUpdate.ToolOutput(callId, progress.text))
@@ -165,7 +166,8 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         rt.commit(listOf(ToolOutcome(turnId, callId, result)), Durability.Sync)
     }
 
-    private fun context(callId: CallId): ToolContext = object : ToolContext {
+    /** [turnId] 为 null 只在算权限声明时：那时不该委派任何东西，端口给不可用的 */
+    private fun context(turnId: TurnId?, callId: CallId): ToolContext = object : ToolContext {
         override val sessionId = rt.sessionId
         override val callId = callId
         override val cwd: GuestPath = rt.state.value.settings.cwd
@@ -174,6 +176,7 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         override val exec: Exec = deps.host.exec
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
+        override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
     }
 
     companion object {
