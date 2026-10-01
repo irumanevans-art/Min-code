@@ -15,6 +15,7 @@ import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.ExecHandle
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.ResumePolicy
@@ -44,6 +45,11 @@ data class SessionState(
     val turn: TurnState?,
     /** 已结束回合累计的用量 */
     val usage: Usage,
+    /**
+     * 会话创建时冻结的记忆文件（最后一条 MemoryLoaded）。进系统提示的稳定前缀，会话内不变。
+     * 有默认值：没有记忆文件的会话日志里根本没有那条事件
+     */
+    val memory: List<LoadedMemoryFile> = emptyList(),
 )
 
 data class SessionSettings(

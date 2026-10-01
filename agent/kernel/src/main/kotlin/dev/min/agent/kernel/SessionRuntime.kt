@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.context.MemoryLoader
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.Effort
@@ -16,6 +17,7 @@ import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.InputReceived
 import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
+import dev.min.agent.spi.MemoryLoaded
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.SessionLog
@@ -88,6 +90,17 @@ class SessionRuntime private constructor(
                 records
             }
         }
+    }
+
+    /**
+     * 会话创建时读一次记忆文件，快照写进日志（[MemoryLoaded]）；之后系统提示只从这份快照拼，会话内冻结。
+     * 什么都没读到、也没有要告诉人的说明时不写事件。
+     */
+    private suspend fun loadMemory() {
+        val home = deps.memoryHome ?: return
+        val memory = MemoryLoader.load(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
+        if (memory.files.isEmpty() && memory.notes.isEmpty()) return
+        commit(listOf(MemoryLoaded(memory.files, memory.notes)), Durability.Sync)
     }
 
     internal fun emitLive(update: LiveUpdate) {
@@ -174,12 +187,17 @@ class SessionRuntime private constructor(
         ): SessionRuntime {
             val log = store.create(header)
             val records = log.append(listOf(created), Durability.Sync)
-            return SessionRuntime(log, fold(header, records), deps, scope)
+            val runtime = SessionRuntime(log, fold(header, records), deps, scope)
+            runtime.loadMemory()
+            return runtime
         }
 
         /**
          * 打开已有会话：折叠日志，若上次死在回合中途就补上收尾事件（[planRecovery]）。**不自动继续**——
          * 进程被杀往往意味着用户不在场，由界面上的「继续」决定（docs/agent/02-总体架构.md §5）。
+         *
+         * 记忆文件**不重读**：沿用创建时写进日志的快照。重读的话，磁盘上的 CLAUDE.md 一改，重启后系统提示就变了，
+         * 提示缓存整段失效，请求也不再能只凭日志重建（docs/agent/07-工程规范.md 第 6、8 条）。
          */
         suspend fun open(store: SessionStore, id: SessionId, deps: KernelDeps, scope: CoroutineScope): SessionRuntime? {
             val log = store.open(id) ?: return null
