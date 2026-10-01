@@ -3,6 +3,7 @@ package dev.min.agent.llm.openai
 import dev.min.agent.llm.*
 import dev.min.agent.protocol.*
 import dev.min.agent.spi.*
+import dev.min.agent.testkit.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking

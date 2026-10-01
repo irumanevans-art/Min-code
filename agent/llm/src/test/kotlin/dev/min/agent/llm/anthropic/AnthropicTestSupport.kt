@@ -2,8 +2,9 @@ package dev.min.agent.llm.anthropic
 
 import dev.min.agent.llm.AnthropicQuirks
 import dev.min.agent.llm.AuthScheme
-import dev.min.agent.llm.FakeHttpTransport
-import dev.min.agent.llm.FakeSecrets
+import dev.min.agent.testkit.FakeHttpTransport
+import dev.min.agent.testkit.FakeSecrets
+import dev.min.agent.testkit.parseSse
 import dev.min.agent.llm.ModelException
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.llm.ModelRequest
@@ -68,7 +69,7 @@ internal fun request(
 
 /** 一次最小的成功流，供只关心请求体的测试用 */
 internal val okStream = FakeHttpTransport.Reply.Sse(
-    dev.min.agent.llm.parseSse(
+    parseSse(
         """
         event: message_start
         data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":1,"output_tokens":1}}}

@@ -1,6 +1,6 @@
 package dev.min.agent.llm.openai
 
-import dev.min.agent.llm.FakeHttpTransport
+import dev.min.agent.testkit.FakeHttpTransport
 import dev.min.agent.llm.ModelStreamEvent
 import dev.min.agent.llm.OpenAiChatQuirks
 import dev.min.agent.llm.StreamUsage

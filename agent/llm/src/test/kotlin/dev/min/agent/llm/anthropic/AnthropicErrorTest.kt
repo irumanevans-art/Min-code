@@ -1,8 +1,8 @@
 package dev.min.agent.llm.anthropic
 
-import dev.min.agent.llm.FakeHttpTransport
-import dev.min.agent.llm.FakeHttpTransport.Reply
-import dev.min.agent.llm.FakeSecrets
+import dev.min.agent.testkit.FakeHttpTransport
+import dev.min.agent.testkit.FakeHttpTransport.Reply
+import dev.min.agent.testkit.FakeSecrets
 import dev.min.agent.llm.ModelException
 import dev.min.agent.spi.ModelFailureKind
 import dev.min.agent.spi.Secret
