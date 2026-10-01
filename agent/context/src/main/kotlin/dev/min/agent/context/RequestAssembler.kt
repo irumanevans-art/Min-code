@@ -5,13 +5,15 @@ import dev.min.agent.llm.ModelProfile
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ToolSpec
 import dev.min.agent.protocol.Effort
+import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.ModelMessage
 
 /**
  * 把「模型该看到的东西」组成一次规范请求。输入全部来自日志投影与会话开始时定下的环境，
  * 所以同一段日志组出的请求逐字节相同——恢复后重发、测试里比对快照都靠这一点。
  *
- * M1 只做最小的一版；记忆文件、skills 列表、世界状态增量、压缩在 M3 加进来（docs/agent/04-子系统设计.md §4.5–4.6）。
+ * 记忆文件（[memory]）是会话创建时写进日志的快照，不在这里读磁盘。
+ * skills 列表、世界状态增量、压缩在 M3 加进来（docs/agent/04-子系统设计.md §4.5–4.6）。
  */
 object RequestAssembler {
     fun assemble(
@@ -21,9 +23,10 @@ object RequestAssembler {
         tools: List<ToolSpec>,
         effort: Effort?,
         cacheKey: String,
+        memory: List<LoadedMemoryFile> = emptyList(),
     ): ModelRequest = ModelRequest(
         profile = profile,
-        system = SystemPrompt.build(profile, environment),
+        system = SystemPrompt.build(profile, environment, memory),
         messages = messages,
         tools = tools,
         effort = effort,
