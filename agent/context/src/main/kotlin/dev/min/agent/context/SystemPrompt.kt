@@ -1,6 +1,8 @@
 package dev.min.agent.context
 
 import dev.min.agent.llm.ModelProfile
+import dev.min.agent.spi.LoadedMemoryFile
+import dev.min.agent.spi.MemorySource
 
 /**
  * 会话开始时就定下、整个会话内逐字不变的环境事实。会话中途变了的（换目录、换模式）不改这里，
@@ -15,15 +17,20 @@ data class Environment(
 )
 
 /**
- * 系统提示。分两段是为了缓存：第一段对所有会话都一样（身份与规矩），第二段对一个会话不变（环境）。
+ * 系统提示。分段是为了缓存：第一段对所有会话都一样（身份与规矩），第二段对一个会话不变（环境），
+ * 第三段是会话创建时冻结的记忆文件（项目说明），只在有记忆文件时出现，同样会话内不变。
+ * 记忆放最后：有没有记忆、记忆是什么，前两段都逐字不变。
  *
  * 写得短是有意的：规矩越多，模型越容易在不相干的地方照搬；能靠工具描述讲清楚的不写在这里
  * （Cursor 删掉约 2/3 的系统提示质量没降；pi 的系统提示不到 1000 token）。
  * 改这里必须更新请求快照测试，并在提交说明里写 token 代价与缓存影响（docs/agent/07-工程规范.md 第 9 条）。
  */
 object SystemPrompt {
-    fun build(@Suppress("UNUSED_PARAMETER") profile: ModelProfile, env: Environment): List<String> =
-        listOf(RULES, environmentBlock(env))
+    fun build(
+        @Suppress("UNUSED_PARAMETER") profile: ModelProfile,
+        env: Environment,
+        memory: List<LoadedMemoryFile> = emptyList(),
+    ): List<String> = listOfNotNull(RULES, environmentBlock(env), memoryBlock(memory))
 
     private val RULES = """
         You are Min Agent, a coding agent running inside the Min app on the user's Android phone.
@@ -45,5 +52,35 @@ object SystemPrompt {
         - Platform: ${env.platform}
         - Working directory: ${env.cwd}
         - Session date: ${env.date}
+    """.trimIndent()
+
+    /**
+     * 每个文件一小节，标明路径与来源。小节格式照 Claude Code 的「Contents of <路径> (<说明>):」——
+     * 用户现成的 CLAUDE.md 是在 CC 里对着这种呈现调出来的。加载时记下的说明（notes）只给人看，不在这里。
+     */
+    private fun memoryBlock(memory: List<LoadedMemoryFile>): String? {
+        if (memory.isEmpty()) return null
+        return buildString {
+            append(MEMORY_INTRO)
+            for (file in memory) {
+                append("\n\nContents of ${file.path} (${describe(file.source)}):\n\n")
+                append(file.content.trimEnd().trimStart('\n'))
+            }
+        }
+    }
+
+    private fun describe(source: MemorySource): String = when (source) {
+        MemorySource.User -> "user's instructions for all projects"
+        MemorySource.Project -> "project instructions, checked into the codebase"
+        MemorySource.Local -> "user's private instructions for this project, not checked in"
+        MemorySource.Rule -> "rule"
+        MemorySource.Import -> "imported by a memory file"
+    }
+
+    private val MEMORY_INTRO = """
+        Project instructions:
+        The user and the project's maintainers wrote these in memory files (CLAUDE.md, AGENTS.md, .claude/rules).
+        Follow them; they take precedence over the general guidance above. Files go from the broadest scope to the most
+        specific, so when two disagree, follow the later one.
     """.trimIndent()
 }

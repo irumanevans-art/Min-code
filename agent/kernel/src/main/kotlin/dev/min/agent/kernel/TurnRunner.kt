@@ -163,7 +163,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         return done
     }
 
-    /** 请求完全由日志投影与会话开始时定下的环境组成：同一段日志组出同一个请求 */
+    /** 请求完全由日志投影与会话开始时定下的环境、记忆快照组成：同一段日志组出同一个请求 */
     private fun assemble(state: SessionState, profile: ModelProfile): ModelRequest {
         val date = LocalDate.ofInstant(Instant.ofEpochMilli(state.header.createdAtMs), deps.zone).toString()
         val environment = Environment(deps.platform, state.created.cwd.value, date)
@@ -176,6 +176,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             tools = specs,
             effort = state.settings.effort,
             cacheKey = state.header.sessionId.value,
+            memory = state.memory,
         )
     }
 

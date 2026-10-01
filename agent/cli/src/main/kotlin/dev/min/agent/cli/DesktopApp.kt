@@ -95,6 +95,8 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
             ),
             platform = platformDescription(),
             zone = ZoneId.systemDefault(),
+            // 与 CC 读同一份 ~/.claude/CLAUDE.md：桌面上和 Claude Code 对照评测时两边看到的用户说明一致
+            memoryHome = paths.guestOfHost(Path.of(System.getProperty("user.home"))),
         )
     }
 

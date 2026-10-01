@@ -13,6 +13,7 @@ import dev.min.agent.spi.InputPromoted
 import dev.min.agent.spi.InputReceived
 import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
+import dev.min.agent.spi.MemoryLoaded
 import dev.min.agent.spi.ModelRequestFailed
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.Note
@@ -55,6 +56,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(lastSeq == 0L) { "SessionCreated 只能是第一条事件" }
             this
         }
+        // 取最后一条：以后显式刷新记忆时再追加一条，整份替换前一份快照
+        is MemoryLoaded -> copy(memory = e.files)
         is SettingsChanged -> copy(
             settings = settings.copy(
                 cwd = e.cwd ?: settings.cwd,
