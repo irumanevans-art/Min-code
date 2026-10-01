@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
 import dev.min.code.core.claudecode.SubagentThread
+import dev.min.code.core.claudecode.subagentTypeName
 import dev.min.code.core.claudecode.switcherLabels
 import dev.min.code.core.session.ChatItem
 import dev.min.code.ui.components.InkDivider
@@ -134,7 +135,8 @@ internal fun RowScope.AgentSwitcher(
     modifier: Modifier = Modifier,
 ) {
     val label = stringResource(R.string.agent_switcher_label)
-    val labels = remember(threads) { switcherLabels(threads) }
+    val forkName = stringResource(R.string.agent_type_fork)
+    val labels = remember(threads, forkName) { switcherLabels(threads) { subagentTypeName(it, forkName) } }
     val scroll = rememberScrollState()
     var showList by rememberSaveable { mutableStateOf(false) }
     // 「全部 N」出现只会让页签更挤，不会反过来让它消失，所以不会来回闪
@@ -505,6 +507,9 @@ private fun AgentMark(thread: SubagentThread, onSea: Boolean, size: Dp = 6.dp) {
 }
 
 @Composable
+internal fun subagentTypeLabel(type: String): String = subagentTypeName(type, stringResource(R.string.agent_type_fork))
+
+@Composable
 internal fun subagentPhaseLabel(phase: SubagentThread.Phase): String = stringResource(
     when (phase) {
         SubagentThread.Phase.Running -> R.string.agent_phase_running
@@ -547,7 +552,7 @@ internal fun SubagentViewHeader(thread: SubagentThread, onBack: () -> Unit, modi
         }
         AgentMark(thread, onSea = false)
         Text(
-            listOf(thread.agentType, thread.description, subagentPhaseLabel(thread.phase))
+            listOf(subagentTypeLabel(thread.agentType), thread.description, subagentPhaseLabel(thread.phase))
                 .filter { it.isNotBlank() }
                 .joinToString(" · "),
             style = MaterialTheme.typography.labelMedium,
@@ -584,11 +589,12 @@ internal fun OpenSubagentRow(card: ChatItem.ToolCall, onOpen: () -> Unit) {
 /** 用户气泡上方那一行小字：这句是说给哪个子 agent 的、怎么送、送到没有 */
 @Composable
 internal fun HandoffLabel(handoff: ChatItem.Handoff) {
+    val agent = subagentTypeLabel(handoff.agentType)
     val text = when (handoff.state) {
-        ChatItem.HandoffState.Waiting -> stringResource(R.string.handoff_waiting, handoff.agentType)
-        ChatItem.HandoffState.Delivered -> stringResource(R.string.handoff_delivered, handoff.agentType)
-        ChatItem.HandoffState.Relayed -> stringResource(R.string.handoff_relayed, handoff.agentType)
-        ChatItem.HandoffState.Undelivered -> stringResource(R.string.handoff_undelivered, handoff.agentType)
+        ChatItem.HandoffState.Waiting -> stringResource(R.string.handoff_waiting, agent)
+        ChatItem.HandoffState.Delivered -> stringResource(R.string.handoff_delivered, agent)
+        ChatItem.HandoffState.Relayed -> stringResource(R.string.handoff_relayed, agent)
+        ChatItem.HandoffState.Undelivered -> stringResource(R.string.handoff_undelivered, agent)
     }
     val color = when (handoff.state) {
         ChatItem.HandoffState.Undelivered -> MaterialTheme.colorScheme.error

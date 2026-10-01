@@ -107,6 +107,7 @@ import dev.min.code.core.claudecode.ClaudeCodeEvent
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.PermissionSuggestion
 import dev.min.code.core.claudecode.subagentThreads
+import dev.min.code.core.claudecode.subagentTypeName
 import dev.min.code.core.claudecode.switcherThreads
 import dev.min.code.ui.components.BrandMark
 import dev.min.code.ui.components.LocalFrost
@@ -470,7 +471,8 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     }
 
     session.pendingPermission?.let { pending ->
-        val origin = permissionOriginOf(pending, session.tasks, session.permissionQueue.size)
+        val forkName = stringResource(R.string.agent_type_fork)
+        val origin = permissionOriginOf(pending, session.tasks, session.permissionQueue.size) { subagentTypeName(it, forkName) }
         // AskUserQuestion 走的是同一个 can_use_tool 帧，但要的是「在选项里挑」而不是
         // 「允许/拒绝」，答案还得经 updatedInput 回传 —— 两种面板不能混用
         if (pending.toolName == ASK_USER_QUESTION_TOOL) {
@@ -1343,7 +1345,7 @@ private fun SessionContent(
                             val target = viewedAgent
                             if (target != null) vm.stopSubagent(target.toolUseId) else vm.interrupt()
                         },
-                        hintOverride = viewedAgent?.let { stringResource(R.string.agent_composer_hint, it.agentType) },
+                        hintOverride = viewedAgent?.let { stringResource(R.string.agent_composer_hint, subagentTypeLabel(it.agentType)) },
                         busyOverride = viewedAgent?.running,
                         onSetModel = vm::setModel,
                         onSetPermissionMode = vm::setPermissionMode,
@@ -1610,7 +1612,7 @@ private fun SubagentLine(task: ClaudeCodeManager.TaskInfo) {
     ) {
         SubagentMarker(azure)
         Text(
-            text = task.subagentType ?: stringResource(R.string.session_subagent_default),
+            text = task.subagentType?.let { subagentTypeLabel(it) } ?: stringResource(R.string.session_subagent_default),
             style = MaterialTheme.typography.labelSmall,
             color = azure,
             maxLines = 1,

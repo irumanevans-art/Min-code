@@ -223,6 +223,8 @@
   <string name="session_permission_reason">触发原因：%1$s</string>
   <string name="session_permission_from_agent">子 agent「%1$s」要的</string>
   <string name="session_permission_from_bg_agent">后台子 agent「%1$s」要的</string>
+  <string name="session_permission_from_fork">分身「%1$s」要的</string>
+  <string name="session_permission_from_bg_fork">后台分身「%1$s」要的</string>
   <string name="session_permission_queued">后面还有 %1$d 条等你批准</string>
   <string name="session_permission_bg_deny_hint">拒绝只停下这一个子 agent，这边的对话不受影响</string>
   <string name="session_permission_deny">拒绝</string>
@@ -1025,6 +1027,7 @@
   <string name="agent_switcher_all">全部 %1$d</string>
   <string name="agent_list_title">子 agent · %1$d</string>
   <string name="agent_list_main_detail">主会话</string>
+  <string name="agent_type_fork">分身</string>
   <string name="agent_phase_running">运行中</string>
   <string name="agent_phase_done">已完成</string>
   <string name="agent_phase_failed">出错</string>

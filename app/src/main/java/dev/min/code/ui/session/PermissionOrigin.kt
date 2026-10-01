@@ -7,6 +7,7 @@ import androidx.compose.ui.res.stringResource
 import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeEvent
 import dev.min.code.core.claudecode.ClaudeCodeManager.TaskInfo
+import dev.min.code.core.claudecode.FORK_SUBAGENT_TYPE
 
 /**
  * 权限卡 / 提问卡顶上那一行：这张卡是谁要的、后面还排着几张。
@@ -18,6 +19,8 @@ internal data class PermissionOrigin(
     /** 子 agent 的说明（task_started 的 description）；主线程发的是 null */
     val agent: String?,
     val background: Boolean,
+    /** 是分叉子 agent（fork）：卡上说「分身」，不说「子 agent」 */
+    val fork: Boolean = false,
     /** 队头之后还排着几张 */
     val queuedAfter: Int,
 )
@@ -26,14 +29,17 @@ internal fun permissionOriginOf(
     pending: ClaudeCodeEvent.PermissionRequest,
     tasks: List<TaskInfo>,
     queueSize: Int,
+    /** 描述为空时退回类型名，类型名给人看的说法由调用方换（fork → 分身） */
+    typeName: (String) -> String = { it },
 ): PermissionOrigin {
     val task = pending.agentId?.let { id -> tasks.firstOrNull { it.id == id } }
     val agent = pending.agentId?.let { id ->
-        task?.description?.takeIf { it.isNotBlank() } ?: task?.subagentType ?: id.take(8)
+        task?.description?.takeIf { it.isNotBlank() } ?: task?.subagentType?.let(typeName) ?: id.take(8)
     }
     return PermissionOrigin(
         agent = agent,
         background = task?.backgrounded == true,
+        fork = task?.subagentType == FORK_SUBAGENT_TYPE,
         queuedAfter = (queueSize - 1).coerceAtLeast(0),
     )
 }
@@ -44,7 +50,12 @@ internal fun PermissionOriginLines(origin: PermissionOrigin, denyHint: Boolean) 
     origin.agent?.let { agent ->
         Text(
             stringResource(
-                if (origin.background) R.string.session_permission_from_bg_agent else R.string.session_permission_from_agent,
+                when {
+                    origin.fork && origin.background -> R.string.session_permission_from_bg_fork
+                    origin.fork -> R.string.session_permission_from_fork
+                    origin.background -> R.string.session_permission_from_bg_agent
+                    else -> R.string.session_permission_from_agent
+                },
                 agent,
             ),
             style = MaterialTheme.typography.labelSmall,

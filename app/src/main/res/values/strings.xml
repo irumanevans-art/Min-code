@@ -225,6 +225,8 @@
   <string name="session_permission_reason">Reason: %1$s</string>
   <string name="session_permission_from_agent">From subagent “%1$s”</string>
   <string name="session_permission_from_bg_agent">From background subagent “%1$s”</string>
+  <string name="session_permission_from_fork">From fork “%1$s”</string>
+  <string name="session_permission_from_bg_fork">From background fork “%1$s”</string>
   <string name="session_permission_queued">%1$d more waiting after this one</string>
   <string name="session_permission_bg_deny_hint">Deny stops only that subagent; this conversation carries on</string>
   <string name="session_permission_deny">Deny</string>
@@ -1030,6 +1032,7 @@
   <string name="agent_switcher_all">All %1$d</string>
   <string name="agent_list_title">Subagents · %1$d</string>
   <string name="agent_list_main_detail">Main session</string>
+  <string name="agent_type_fork">Fork</string>
   <string name="agent_phase_running">running</string>
   <string name="agent_phase_done">done</string>
   <string name="agent_phase_failed">failed</string>
