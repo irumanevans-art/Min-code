@@ -42,7 +42,8 @@ class FileSessionStore(private val root: Path, private val clock: Clock) : Sessi
     override suspend fun list(): List<LogHeader> = withContext(Dispatchers.IO) {
         if (!Files.isDirectory(root)) return@withContext emptyList()
         Files.list(root).use { dirs ->
-            dirs.toList()
+            // app 的最低 API 26 支持 Java 8 Stream，不支持 JDK 16 的 Stream.toList。
+            dirs.collect(java.util.stream.Collectors.toList())
                 .map { it.resolve(EVENTS_FILE) }
                 .filter { Files.isRegularFile(it) }
                 .mapNotNull { file -> LogLines.firstCompleteLine(file)?.let { LogLines.decodeHeader(it, file) } }

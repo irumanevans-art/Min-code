@@ -1418,3 +1418,25 @@ Sonnet 5.5 在中转模型列表可用但随包 profile 未收录，默认 effor
 - Related Files: docs/agent/08-进度与待办.md, agent/cli/src/main/kotlin/dev/min/agent/cli/ModelSelection.kt
 - Tags: live-model, effort, profile, resume, process-cleanup
 - Recurrence-Count: 1
+## [LRN-20261001-ANDROID-STREAM-API] knowledge_gap
+
+**Logged**: 2026-10-01
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+纯 JVM 模块进入 Android APK 时，编译和 D8 成功不代表使用的全部 JDK API 在最低 Android API 上存在。
+
+### Details
+M2-A 扫描发现 host 的目录列举和 store 的会话列举使用 JDK 16 Stream.toList。App minSdk=26 的 Java 8 Stream 只有 collect；改为 Collectors.toList。ProcessHandle 只在 CLI，Android 组合根不依赖 CLI。新 ProotExec 同样避免 Process.pid、OutputStream.nullOutputStream 等桌面 API。
+
+### Suggested Action
+共享 JVM 宿主代码优先使用 Android 最低 API 支持的 Java API；检查未走到的列举路径，不能只以 APK 冷启动成功作为兼容性证据。
+
+### Metadata
+- Source: conversation
+- Related Files: agent/host/src/main/kotlin/dev/min/agent/host/RootfsFileSystem.kt, agent/store/src/main/kotlin/dev/min/agent/store/FileSessionStore.kt
+- Tags: android, jdk, stream, minSdk
+- Recurrence-Count: 1
+

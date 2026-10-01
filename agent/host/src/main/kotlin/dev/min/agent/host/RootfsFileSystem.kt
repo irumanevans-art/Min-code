@@ -149,7 +149,8 @@ class RootfsFileSystem(
 
     override suspend fun list(dir: GuestPath): List<DirEntry> = withContext(Dispatchers.IO) {
         Files.list(hostPath(dir)).use { entries ->
-            entries.toList()
+            // Stream.toList 是 JDK 16 API；Android API 26 上只有 Java 8 的 collect。
+            entries.collect(java.util.stream.Collectors.toList())
                 .map { DirEntry(it.fileName.toString(), kindOf(Files.readAttributes(it, BasicFileAttributes::class.java, NOFOLLOW_LINKS))) }
                 .sortedBy { it.name }
         }
