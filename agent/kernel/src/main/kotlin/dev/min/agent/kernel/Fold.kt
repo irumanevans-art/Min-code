@@ -127,9 +127,11 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is TurnEnded -> {
             val t = checkNotNull(turn) { "没有进行中的回合却收到了结束 ${e.turnId}" }
             check(t.turnId == e.turnId) { "结束的是 ${e.turnId}，当前回合是 ${t.turnId}" }
-            copy(turn = null, usage = usage + t.usage)
+            copy(turn = null, usage = usage + t.usage, presentation = presentation + SessionPresentation(
+                record, history.lastOrNull()?.messageId, t.openRequest?.messageId, t.openRequest?.segments.orEmpty(),
+            ))
         }
-        is Note -> this
+        is Note -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
     }
     return next.copy(lastSeq = record.seq)
 }

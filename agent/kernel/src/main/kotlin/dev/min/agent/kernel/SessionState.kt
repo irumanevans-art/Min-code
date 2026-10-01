@@ -44,6 +44,16 @@ data class SessionState(
     val turn: TurnState?,
     /** 已结束回合累计的用量 */
     val usage: Usage,
+    /** 展示用事件同样由日志折叠；不进入 modelMessages，避免 UI 说明改变模型历史。 */
+    val presentation: List<SessionPresentation> = emptyList(),
+)
+
+data class SessionPresentation(
+    val record: dev.min.agent.spi.EventRecord,
+    val afterMessageId: MessageId?,
+    /** 回合被关闭前的已持久片段，不能随 openRequest 一起丢掉。 */
+    val partialMessageId: MessageId? = null,
+    val partialParts: List<Part> = emptyList(),
 )
 
 data class SessionSettings(
