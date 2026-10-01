@@ -51,6 +51,13 @@ data class ProviderQuirks(
      * 例如某些 /anthropic 兼容端点用自己的错误文案。
      */
     val overflowPatterns: List<String> = emptyList(),
+    val gemini: GeminiQuirks = GeminiQuirks(),
+)
+
+@Serializable
+data class GeminiQuirks(
+    /** Google 原生 API 用 x-goog-api-key；兼容代理若沿用 Anthropic 的 x-api-key 可在此明确配置。 */
+    val apiKeyHeader: String = "x-goog-api-key",
 )
 
 @Serializable
