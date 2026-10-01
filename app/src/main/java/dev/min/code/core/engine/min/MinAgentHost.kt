@@ -85,7 +85,7 @@ class MinAgentHost(
         val deps = KernelDeps(
             clock = { System.currentTimeMillis() }, ids = IdGenerator { "${it}_${UUID.randomUUID()}" },
             models = { ref -> check(ref == selection.model.ref); ResolvedModel(selection.model, client) },
-            tools = listOf(ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool),
+            tools = listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool),
             host = HostPorts(fs, JvmSearch(fs), ProotExec(base, AndroidProotProcessHost(runner)), { artifacts }),
             platform = "Ubuntu 24.04 (proot on Android)", zone = ZoneId.systemDefault(),
         )
