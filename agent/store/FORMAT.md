@@ -43,5 +43,7 @@
 
 ## 变更记录
 
+- v1（2026-10-01）：ToolResult 新增可选 `effects`（默认空），`report_delivered` 包含 child / childTurn；随 ToolOutcome 原子保存并折叠为已交付报告。旧日志缺少字段仍可读，格式版本不变。
+
 - v1（2026-09-30）：首版。事件集见 `agent/spi/src/main/kotlin/dev/min/agent/spi/SessionEvent.kt`。
 - v1（2026-10-01）：新增事件 `memory_loaded`（`MemoryEvents.kt`，会话创建时的记忆文件快照），格式版本不变；含它的日志旧版本打不开，见「格式纪律」。

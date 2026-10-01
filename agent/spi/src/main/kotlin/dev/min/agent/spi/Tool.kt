@@ -3,6 +3,7 @@ package dev.min.agent.spi
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.Part
 import dev.min.agent.protocol.SessionId
+import dev.min.agent.protocol.TurnId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -87,7 +88,17 @@ data class ToolResult(
      * 这条检查因此也是从日志推出来的，进程重启后照样有效。
      */
     val touched: List<FileStamp> = emptyList(),
+    /** 与工具结果在同一次日志提交中落盘的会话效果；不发给模型。默认空兼容旧日志。 */
+    val effects: List<SessionEffect> = emptyList(),
 )
+
+@Serializable
+sealed interface SessionEffect {
+    /** 前台子报告已作为工具结果交付，恢复时不应再放入父收件箱。 */
+    @Serializable
+    @SerialName("report_delivered")
+    data class ReportDelivered(val child: SessionId, val childTurn: TurnId) : SessionEffect
+}
 
 /** 某一刻看到的文件状态 */
 @Serializable

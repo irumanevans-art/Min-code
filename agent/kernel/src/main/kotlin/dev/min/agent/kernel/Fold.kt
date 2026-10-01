@@ -6,6 +6,7 @@ import dev.min.agent.spi.AgentInputKind
 import dev.min.agent.spi.ForkSeeded
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.Role
+import dev.min.agent.spi.SessionEffect
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.SubagentSpawned
 import dev.min.agent.protocol.TurnId
@@ -137,7 +138,18 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is ToolOutcome -> updateCall(e.turnId, e.callId) { phase ->
             check(phase !is CallPhase.Done) { "${e.callId} 已经有结果了" }
             CallPhase.Done(e.result)
-        }.copy(toolResults = toolResults + (e.callId to e.result))
+        }.copy(
+            toolResults = toolResults + (e.callId to e.result),
+            children = e.result.effects.fold(children) { current, effect ->
+                when (effect) {
+                    is SessionEffect.ReportDelivered -> {
+                        val child = current[effect.child]
+                        if (child == null) current else current +
+                            (child.child to child.copy(reportedTurns = child.reportedTurns + effect.childTurn))
+                    }
+                }
+            },
+        )
         is TurnEnded -> {
             val t = checkNotNull(turn) { "没有进行中的回合却收到了结束 ${e.turnId}" }
             check(t.turnId == e.turnId) { "结束的是 ${e.turnId}，当前回合是 ${t.turnId}" }

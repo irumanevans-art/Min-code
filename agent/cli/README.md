@@ -2,6 +2,10 @@
 
 桌面宿主（02-总体架构.md §2）。`DesktopApp` 装配内核、目录模型、三种协议客户端与宿主端口；`LocalExec` 实现桌面 `Exec`。
 
+新建和 `--resume` 都经 `SessionHub`，工具表含 Agent / SendMessage / TaskStop。桌面上限为嵌套 3 层、同时 8 个子模型请求；
+Hub 自动监听子回合、交付报告，ToolExecutor 按会话/回合/调用注入端口，无需组合根另起 watcher。
+附件按子会话 id 写入各自目录；Hub 共用 Exec 的日志位于 `~/.min-agent/exec-logs/`，随机句柄 id 避免互相覆盖。
+
 - 允许依赖：kernel 及以下 + testkit（另依赖 host：桌面用 `JvmSearch` 与 `RootfsFileSystem`）
 - 设计：docs/agent/04-子系统设计.md §4.10（可观测、测试与评测）；docs/agent/06-路线图.md M1（`agent:cli` 交互 + 非交互）
 
@@ -36,6 +40,8 @@ Responses 发送 prompt_cache_key；longTtl 暂不映射。短历史命中未增
 构建修复题只计题目指定的检查命令，核对 Edit 前失败、Edit 后成功以及测试文件未改；无关 ls / echo 的结果不能代替检查结果。模型用管道或 echo 掩盖初始失败会拒绝通过。录制代理也记录本机连接失败，避免把实际重试漏出请求计数；SDK 路由校验只比 URL 的路径部分，兼容 Anthropic 的 beta 查询参数。
 
 ## 已知限制
+- 子 agent 随 CLI 的 scope 运行，`-p` 根回合结束或退出 CLI 时后台子回合也会结束运行；下次 `--resume` 由 Hub 恢复并补发报告，不自动续跑。
+- 子 agent 的审批聚合、类型清单读取自 `.claude/agents/` 和界面树留给 S4；目前 CLI 使用内核自带 general-purpose / Explore / Plan。
 - 只给桌面用；Android 走 proot，另有实现。桌面默认 shell 是 `bash -lc`，Windows 需要 Git Bash 之类在 PATH 里（原生 cmd/PowerShell 不支持）。
 - `hostDirOf` 由宿主提供：Linux/macOS/WSL 上是恒等映射；日志目录以 `guestLogDir` 挂进 `RootfsFileSystem` 后模型才能 Read。
 - 杀进程树靠 `ProcessHandle.descendants()`：在杀之前的快照里的进程都会被杀；`setsid` 等主动脱离父子关系的进程（或杀的瞬间新 fork 出的进程）杀不到，不是按进程组回收。

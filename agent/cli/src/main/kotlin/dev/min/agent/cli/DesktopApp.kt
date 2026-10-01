@@ -1,11 +1,16 @@
 package dev.min.agent.cli
 
+import dev.min.agent.host.AgentTool
 import dev.min.agent.host.JvmSearch
+import dev.min.agent.host.SendMessageTool
+import dev.min.agent.host.TaskStopTool
 import dev.min.agent.host.UrlConnectionTransport
 import dev.min.agent.kernel.HostPorts
+import dev.min.agent.kernel.HubLimits
 import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
 import dev.min.agent.kernel.SessionRuntime
+import dev.min.agent.kernel.SessionHub
 import dev.min.agent.llm.Wire
 import dev.min.agent.llm.anthropic.AnthropicMessagesClient
 import dev.min.agent.llm.catalog.Catalog
@@ -15,12 +20,9 @@ import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.IdGenerator
-import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.Secret
 import dev.min.agent.spi.Secrets
-import dev.min.agent.spi.SessionCreated
 import dev.min.agent.store.FileSessionStore
-import dev.min.agent.store.LOG_FORMAT_VERSION
 import dev.min.agent.tools.BashTool
 import dev.min.agent.tools.EditTool
 import dev.min.agent.tools.GlobTool
@@ -39,8 +41,11 @@ import java.util.UUID
  * 桌面宿主的组合根：把内核与各个端口实现装在一起（docs/agent/02-总体架构.md §2：构造注入，一处组装）。
  * 模型能力来自随包目录，命令行可以覆盖或描述目录外的模型。
  */
-internal class DesktopApp(private val args: CliArgs, private val scope: CoroutineScope) {
-    private val home: Path = Path.of(System.getProperty("user.home"), ".min-agent")
+internal class DesktopApp(
+    private val args: CliArgs,
+    private val scope: CoroutineScope,
+    private val home: Path = Path.of(System.getProperty("user.home"), ".min-agent"),
+) {
     private val paths = DesktopPaths(workspace = args.cwd, scratchRoot = home.resolve("root"))
     private val store = FileSessionStore(home.resolve("sessions"), { System.currentTimeMillis() })
 
@@ -48,6 +53,7 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
     private val provider = selection.provider
     private val profile = selection.profile
     private val keyEnv = selection.keyEnv
+    private val hub by lazy { SessionHub(store, deps(), scope, HUB_LIMITS) }
 
     /** 凭证只从环境变量读、只进请求头；这里不打印、不落盘 */
     private val secrets = Secrets { providerId ->
@@ -61,18 +67,9 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
     suspend fun records(sessionId: SessionId, fromSeq: Long): List<EventRecord> =
         requireNotNull(store.open(sessionId)).read(fromSeq).toList()
 
-    private fun deps(sessionId: SessionId): KernelDeps {
-        val sessionDir = home.resolve("sessions").resolve(sessionId.value)
-        val logDir = Files.createDirectories(sessionDir.resolve("exec-logs"))
-        val artifactsDir = sessionDir.resolve("artifacts")
-        val artifacts = object : ArtifactSink {
-            override suspend fun put(name: String, bytes: ByteArray): String {
-                val file = artifactsDir.resolve(name)
-                Files.createDirectories(file.parent)
-                Files.write(file, bytes)
-                return paths.guestOfHost(file).value
-            }
-        }
+    private fun deps(): KernelDeps {
+        // Exec 端口为整个 Hub 共用，句柄的随机 id 保证日志互不覆盖。
+        val logDir = Files.createDirectories(home.resolve("exec-logs"))
         val transport = UrlConnectionTransport()
         val client = when (provider.wire) {
             Wire.AnthropicMessages -> AnthropicMessagesClient(provider, transport, secrets)
@@ -87,12 +84,22 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
                 check(ref == profile.ref) { "桌面 CLI 目前只配置了 ${profile.ref}，会话要的是 $ref" }
                 ResolvedModel(profile, client)
             },
-            tools = listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool),
+            tools = listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool, AgentTool, SendMessageTool, TaskStopTool),
             host = HostPorts(
                 fs = paths.fs,
                 search = JvmSearch(paths.fs),
                 exec = LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir)),
-                artifacts = { artifacts },
+                artifacts = { sessionId ->
+                    val artifactsDir = home.resolve("sessions").resolve(sessionId.value).resolve("artifacts")
+                    object : ArtifactSink {
+                        override suspend fun put(name: String, bytes: ByteArray): String {
+                            val file = artifactsDir.resolve(name)
+                            Files.createDirectories(file.parent)
+                            Files.write(file, bytes)
+                            return paths.guestOfHost(file).value
+                        }
+                    }
+                },
             ),
             platform = platformDescription(),
             zone = ZoneId.systemDefault(),
@@ -104,17 +111,11 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
     suspend fun openSession(): SessionRuntime {
         args.resume?.let { id ->
             val sessionId = SessionId(id)
-            return SessionRuntime.open(store, sessionId, deps(sessionId), scope)
+            return hub.open(sessionId)
                 ?: throw UsageException("找不到会话 $id")
         }
-        val sessionId = SessionId("s" + UUID.randomUUID().toString().replace("-", "").take(24))
-        return SessionRuntime.create(
-            store,
-            LogHeader(LOG_FORMAT_VERSION, sessionId, createdAtMs = System.currentTimeMillis()),
-            SessionCreated(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort),
-            deps(sessionId),
-            scope,
-        )
+        // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
+        return hub.create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
     }
 
     private fun platformDescription(): String {
@@ -122,4 +123,7 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
         return if (os.startsWith("Windows")) "$os (commands run in Git Bash; drives are /c, /d, …)" else os
     }
 
+    private companion object {
+        val HUB_LIMITS = HubLimits(maxDepth = 3, maxConcurrentChildRequests = 8)
+    }
 }

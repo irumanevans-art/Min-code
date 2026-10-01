@@ -1462,3 +1462,28 @@ M2-A 的真实文件分别是 approved 加 LF、once 加 LF，但 adb shell 输�
 - Tags: adb, crlf, subprocess, shell-quoting
 - Recurrence-Count: 1
 
+
+## [LRN-20261001-S2-REPORT-COMMIT] best_practice
+
+**Logged**: 2026-10-01T17:50:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+前台子 agent 报告与已交付标记必须随同一条 ToolOutcome 持久化；仅返回报告文本会导致 Hub 恢复时重复补发。
+
+### Details
+S2 接入 DesktopApp 后，用真实日志、新 Hub 和本地 SSE 模型验证 --resume，发现 S1 的前台报告没有推进 reportedTurns。按子agent设计 §2.1 补齐 ToolResult.effects / SessionEffect.ReportDelivered，并在 Fold 中应用，同一次日志提交既保存模型可见报告也保存交付标记。默认空 effects 保持旧日志可读。临时去掉工具附带的 effects，CLI 测试在“前台结果与交付标记一起落盘”断言明确失败（expected 1, actual 0）；恢复后模块检查全绿。
+
+### Suggested Action
+检查跨会话报告的恰好一次语义时，同时测前台工具结果、持久交付标记与新 Hub 复开后的收件箱；不只测同进程收到报告。组合根按实际端口接线；SessionHub 已自动 watch，ToolExecutor 已按回合/调用注入 AgentPort。host 测试只直接依赖 testkit，存储通过 SPI 替身实现，避免违反模块依赖规则。
+
+### Metadata
+- Source: error
+- Related Files: agent/spi/src/main/kotlin/dev/min/agent/spi/Tool.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt, agent/host/src/main/kotlin/dev/min/agent/host/SubagentTools.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/DesktopSubagentTest.kt
+- Tags: subagent, recovery, atomic-commit, module-dependencies
+- Pattern-Key: subagents.foreground_report_delivery
+- Recurrence-Count: 1
+
+---
