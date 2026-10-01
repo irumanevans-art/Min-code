@@ -1,9 +1,9 @@
 package dev.min.agent.llm.anthropic
 
-import dev.min.agent.llm.FakeHttpTransport
-import dev.min.agent.llm.FakeHttpTransport.Reply
+import dev.min.agent.testkit.FakeHttpTransport
+import dev.min.agent.testkit.FakeHttpTransport.Reply
 import dev.min.agent.llm.ModelStreamEvent
-import dev.min.agent.llm.parseSse
+import dev.min.agent.testkit.parseSse
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.RedactedThinkingPart
 import dev.min.agent.protocol.StopReason

@@ -3,7 +3,7 @@ package dev.min.agent.llm.openai
 import dev.min.agent.llm.AuthScheme
 import dev.min.agent.llm.CacheHints
 import dev.min.agent.llm.EmptyContent
-import dev.min.agent.llm.FakeHttpTransport
+import dev.min.agent.testkit.FakeHttpTransport
 import dev.min.agent.llm.OpenAiChatQuirks
 import dev.min.agent.llm.ReasoningEcho
 import dev.min.agent.llm.StreamUsage

@@ -1,4 +1,4 @@
-package dev.min.agent.tools
+package dev.min.agent.testkit
 
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ImagePart
@@ -17,7 +17,9 @@ import dev.min.agent.spi.GlobQuery
 import dev.min.agent.spi.GrepHit
 import dev.min.agent.spi.GrepQuery
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HarnessProfile
 import dev.min.agent.spi.PathScope
+import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.Search
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.Tool
@@ -25,9 +27,11 @@ import dev.min.agent.spi.ToolContext
 import dev.min.agent.spi.ToolInput
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
+import dev.min.agent.spi.ToolTraits
 import dev.min.agent.spi.WorkspaceFs
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.takeWhile
@@ -224,3 +228,19 @@ fun <I : Any> Tool<I>.parsed(vararg pairs: Pair<String, Any?>): I {
 val ToolResult.text: String get() = content.filterIsInstance<TextPart>().joinToString("\n") { it.text }
 
 val ToolResult.images: List<ImagePart> get() = content.filterIsInstance<ImagePart>()
+
+/** 只记录调用、按给定函数出结果的工具。权限请求不带路径与命令 */
+class FakeTool(
+    override val name: String,
+    override val traits: ToolTraits,
+    private val body: suspend (JsonObject) -> ToolResult,
+) : Tool<JsonObject> {
+    override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+    override fun description(profile: HarnessProfile) = "测试工具 $name"
+    override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
+    override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "测试工具 $name")
+    override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow { emit(ToolProgress.Done(body(input))) }
+}
+
+val READ_ONLY = ToolTraits(readOnly = true, concurrencySafe = true)
+val WRITES = ToolTraits()

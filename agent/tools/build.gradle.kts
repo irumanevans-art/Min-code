@@ -6,6 +6,7 @@ plugins {
 dependencies {
     api(project(":agent:spi"))
     implementation(project(":agent:policy"))
+    testImplementation(project(":agent:testkit"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

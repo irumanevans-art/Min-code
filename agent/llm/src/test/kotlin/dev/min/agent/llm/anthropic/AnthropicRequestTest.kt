@@ -3,7 +3,7 @@ package dev.min.agent.llm.anthropic
 import dev.min.agent.llm.AnthropicQuirks
 import dev.min.agent.llm.AuthScheme
 import dev.min.agent.llm.CacheHints
-import dev.min.agent.llm.FakeHttpTransport
+import dev.min.agent.testkit.FakeHttpTransport
 import dev.min.agent.llm.ReasoningEcho
 import dev.min.agent.llm.ToolChoice
 import dev.min.agent.llm.ToolSpec

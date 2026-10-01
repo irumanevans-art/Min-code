@@ -2,8 +2,8 @@ package dev.min.agent.llm.openai
 
 import dev.min.agent.llm.AuthScheme
 import dev.min.agent.llm.CacheHints
-import dev.min.agent.llm.FakeHttpTransport
-import dev.min.agent.llm.FakeSecrets
+import dev.min.agent.testkit.FakeHttpTransport
+import dev.min.agent.testkit.FakeSecrets
 import dev.min.agent.llm.ModelException
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.llm.ModelRequest
@@ -15,7 +15,7 @@ import dev.min.agent.llm.ReasoningEcho
 import dev.min.agent.llm.ToolChoice
 import dev.min.agent.llm.ToolSpec
 import dev.min.agent.llm.Wire
-import dev.min.agent.llm.parseSse
+import dev.min.agent.testkit.parseSse
 import dev.min.agent.protocol.AgentJson
 import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.ModelRef
