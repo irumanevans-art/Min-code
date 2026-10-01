@@ -147,6 +147,11 @@ android {
 dependencies {
     implementation(project(":highlight"))
     implementation(project(":workspace"))
+    implementation(project(":agent:kernel"))
+    implementation(project(":agent:host"))
+    implementation(project(":agent:llm"))
+    implementation(project(":agent:store"))
+    implementation(project(":agent:tools"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
