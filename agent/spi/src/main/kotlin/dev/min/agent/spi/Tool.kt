@@ -51,6 +51,11 @@ data class ToolTraits(
     val deferred: Boolean = false,
     /** 给模型的结果超过这么多字符就落文件，只给预览 + 路径 */
     val resultBudgetChars: Int = DEFAULT_RESULT_BUDGET_CHARS,
+    /**
+     * 每次都要人批准，在权限引擎**之前**判定：任何模式（含 bypass）与规则都不能替人放行。
+     * 给「人批准本身就是这一步的意义」的工具用（ExitPlanMode：人看过计划才能动手）。
+     */
+    val alwaysAsk: Boolean = false,
 ) {
     companion object {
         /**
@@ -88,6 +93,11 @@ data class ToolResult(
      * 这条检查因此也是从日志推出来的，进程重启后照样有效。
      */
     val touched: List<FileStamp> = emptyList(),
+    /**
+     * 这次调用对会话本身的影响（如进出计划模式）。不发给模型；工具不直接改会话状态，
+     * 由内核在写 ToolOutcome 的同一次提交里落成对应的设置事件。
+     */
+    val effects: List<SessionEffect> = emptyList(),
 )
 
 /** 某一刻看到的文件状态 */
@@ -109,6 +119,9 @@ interface ToolContext {
 
     /** 会话当前的权限模式（只读）。与人交互的工具据此判断：dontAsk 下不提问，计划模式工具看自己是否在计划模式里 */
     val mode: PermissionMode
+
+    /** 最近一次切进计划模式之前的模式；从没进过为 null。ExitPlanMode 获批后回到这里 */
+    val modeBeforePlan: PermissionMode?
 
     /**
      * 向用户提问并等答复。提问先落盘（[QuestionAsked]），答复由界面经运行时命令写进日志（[QuestionAnswered]）；

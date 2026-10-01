@@ -63,6 +63,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 model = e.model ?: settings.model,
                 mode = e.mode ?: settings.mode,
                 effort = e.effort ?: settings.effort,
+                modeBeforePlan = settings.modeBeforePlanAfter(e.mode),
             ),
         )
         is InputReceived -> {

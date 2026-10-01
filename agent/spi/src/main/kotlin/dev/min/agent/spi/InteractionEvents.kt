@@ -1,13 +1,14 @@
 package dev.min.agent.spi
 
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.QuestionId
 import dev.min.agent.protocol.TurnId
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /*
- * 与人交互的持久请求：向用户提问（AskUserQuestion）。
+ * 与人交互的持久请求：向用户提问（AskUserQuestion）；以及工具结果对会话的副作用（计划模式的进出）。
  *
  * 提问与审批是同一套思路（docs/agent/03-核心契约.md §7）：不是挂在内存里的回调，而是一条落盘的请求 + 一条落盘的答复。
  * 工具在 [ToolContext.ask] 里等的是日志折叠出的状态，界面（或通知栏）用运行时命令把答复写进日志——
@@ -87,3 +88,15 @@ data class QuestionAnswered(
     val answers: List<QuestionAnswer> = emptyList(),
     val declined: Boolean = false,
 ) : SessionEvent
+
+/**
+ * 工具结果对会话本身的影响（[ToolResult.effects]）。工具不直接改会话状态，只在结果里声明；
+ * 内核在写 ToolOutcome 的同一次提交里把它落成对应的设置事件——所以「结果说切了模式」与「模式真的切了」不会分家。
+ */
+@Serializable
+sealed interface SessionEffect {
+    /** 切换权限模式（计划模式的进出）。内核落成 [SettingsChanged] */
+    @Serializable
+    @SerialName("mode_change")
+    data class ModeChange(val mode: PermissionMode) : SessionEffect
+}

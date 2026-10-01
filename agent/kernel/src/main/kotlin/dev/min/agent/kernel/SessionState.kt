@@ -54,6 +54,11 @@ data class SessionSettings(
     val model: ModelRef,
     val mode: PermissionMode,
     val effort: Effort?,
+    /**
+     * 最近一次切进计划模式之前的模式（折叠时在模式变成 Plan 的那一刻记下）；从没进过为 null。
+     * 离开计划模式不清空：它只在下次进入时被覆盖，ExitPlanMode 也只在计划模式里才用它。
+     */
+    val modeBeforePlan: PermissionMode? = null,
 )
 
 data class PendingInput(val clientMsgId: ClientMsgId, val parts: List<Part>, val delivery: Delivery)

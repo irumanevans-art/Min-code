@@ -190,6 +190,7 @@ class TestToolContext(
     }
 
     override var mode: PermissionMode = PermissionMode.Default
+    override var modeBeforePlan: PermissionMode? = null
 
     /** 收到的提问，按顺序 */
     val asked = mutableListOf<List<UserQuestion>>()

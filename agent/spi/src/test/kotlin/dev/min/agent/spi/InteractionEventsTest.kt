@@ -2,7 +2,9 @@ package dev.min.agent.spi
 
 import dev.min.agent.protocol.AgentJson
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.QuestionId
+import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.TurnId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -39,6 +41,22 @@ class InteractionEventsTest {
         assertEventWire(
             QuestionAnswered(QuestionId("q1"), declined = true),
             """{"type":"question_answered","questionId":"q1","declined":true}""",
+        )
+    }
+
+    @Test
+    fun `tool result effects are written only when present`() {
+        assertEventWire(
+            ToolOutcome(TurnId("t1"), CallId("c1"), ToolResult(listOf(TextPart("好")))),
+            """{"type":"tool_outcome","turnId":"t1","callId":"c1","result":{"content":[{"type":"text","text":"好"}]}}""",
+        )
+        assertEventWire(
+            ToolOutcome(
+                TurnId("t1"), CallId("c1"),
+                ToolResult(listOf(TextPart("好")), effects = listOf(SessionEffect.ModeChange(PermissionMode.Plan))),
+            ),
+            """{"type":"tool_outcome","turnId":"t1","callId":"c1","result":{"content":[{"type":"text","text":"好"}],
+                "effects":[{"type":"mode_change","mode":"plan"}]}}""",
         )
     }
 
