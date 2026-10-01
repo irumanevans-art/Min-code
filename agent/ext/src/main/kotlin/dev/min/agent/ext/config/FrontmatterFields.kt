@@ -21,6 +21,15 @@ internal class FrontmatterFields(
         else -> bad(key, "期望一个字符串", v)
     }
 
+    /**
+     * `argument-hint` 这类给人看的提示。文档示例是 `[issue-number]`，而 YAML 里不带引号的 `[x]` 是列表：
+     * 列表就按作者原本的写法还原成 `[a, b]`，不当成类型错误丢掉。
+     */
+    fun hint(key: String): String? = when (val v = fields[key]) {
+        is FmValue.Seq -> if (v.items.all { it is FmValue.Scalar }) v.items.joinToString(", ", "[", "]") { (it as FmValue.Scalar).text } else bad(key, "期望字符串", v)
+        else -> string(key)
+    }
+
     /** 布尔：true/false 之外，skills 文档还接受 yes/no/on/off/1/0，大小写不限 */
     fun bool(key: String): Boolean? = when (val v = fields[key]) {
         null, FmValue.Null -> null

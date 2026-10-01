@@ -36,7 +36,11 @@ internal class InMemoryFs(private val workspace: String = "/workspace") : Worksp
         broken += path
     }
 
-    private fun resolve(path: String) = links[path] ?: path
+    /** 路径本身或它的某个祖先是链接，就换成目标再接上剩下的部分（目录链接下面的文件也要能读到） */
+    private fun resolve(path: String): String {
+        val link = links.keys.filter { path == it || path.startsWith("$it/") }.maxByOrNull { it.length } ?: return path
+        return links.getValue(link) + path.removePrefix(link)
+    }
 
     private fun isDir(path: String) = path == "/" || (files.keys + links.keys).any { it.startsWith("$path/") }
 

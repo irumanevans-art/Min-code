@@ -260,6 +260,18 @@ class FrontmatterTest {
     }
 
     @Test
+    fun `an argument hint written as an unquoted bracket is restored from the YAML list`() {
+        val notes = mutableListOf<String>()
+        val fm = parse("a: [issue-number]", "b: [x, y]", "c: \"[filename] [format]\"", "d: <id>")
+        val f = FrontmatterFields(fm.fields, "f.md", notes)
+        assertEquals("[issue-number]", f.hint("a"))
+        assertEquals("[x, y]", f.hint("b"))
+        assertEquals("[filename] [format]", f.hint("c"))
+        assertEquals("<id>", f.hint("d"))
+        assertTrue(notes.isEmpty())
+    }
+
+    @Test
     fun `toJson infers booleans and numbers only for unquoted scalars`() {
         val fm = parse("a: true", "b: 5", "c: 1.5", "d: \"true\"", "e: |", "  7")
         assertEquals("""{"a":true,"b":5,"c":1.5,"d":"true","e":"7\n"}""", FmValue.Mapping(fm.fields).toJson().toString())
