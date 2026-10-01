@@ -6,7 +6,7 @@
 - 设计：docs/agent/04-子系统设计.md §4.3（工具与执行）；docs/agent/03-核心契约.md §5（工具）
 - 规格：docs/agent/detail/内置工具规范.md
 
-已实现：Read、Write、Edit、Glob、Grep、Bash、AskUserQuestion。共用零件在 `ToolSupport.kt`；
+已实现：Read、Write、Edit、Glob、Grep、Bash、AskUserQuestion、EnterPlanMode、ExitPlanMode。共用零件在 `ToolSupport.kt`；
 测试用的假端口（内存文件系统、脚本化搜索与进程、可预置 lastSeen 的上下文）在 `src/test/.../ToolFakes.kt`，Edit 的测试可直接复用。
 
 ## 模型看到什么
@@ -21,6 +21,8 @@
 | Glob | `pattern`、`path`（可选） | 绝对路径逐行，修改时间从新到旧，最多 100 条，超出注明；无结果一句「没有匹配的文件」 |
 | Grep | `pattern`、`path`、`glob`、`output_mode`、`-i`、`-n`、`-C`、`multiline`、`head_limit`（默认 250） | files_with_matches：路径列表；count：`路径:命中数`；content：`路径:行号:内容`，上下文行用 `-`，不相邻的组之间 `--`。超 head_limit 注明；命中行超 500 字符截断；无命中「没有匹配」 |
 | AskUserQuestion | `questions`：1–4 题，每题 `question`、`header`、2–4 个 `options`（`label` + `description`）、`multiSelect` | 「用户回答了你的问题：」+ 每题一行「问题 → 选择」，用户自填的「其他」标明出处；拒答与 dontAsk 模式各一句说明（不是错误）。不走审批，答复经持久事件送达 |
+| EnterPlanMode | 无 | 一句「已进入计划模式：只能读与提问……用 ExitPlanMode 提交计划」，结果声明切到 plan（内核落盘）；已在计划模式时只提醒、不再切换 |
+| ExitPlanMode | `plan`（Markdown） | 总是要人批准（含 bypass），审批卡片摘要即计划正文。获批：「计划已获批准，已退出计划模式（回到 X 模式）」，结果声明回到进入前的模式（没有记录则 default）；不在计划模式时获批不动模式。被拒：内核给出用户的说明，仍在计划模式 |
 | Bash | `command`、`timeout`（毫秒，默认 120000，上限 600000，超了按上限算）、`description`、`run_in_background` | 输出 + 末尾「退出码 N」（非 0 为错误）；超时为错误并附已有输出；转后台给出 id / pid / 日志路径，让模型用 Read 看日志 |
 
 所有路径入参必须是绝对路径；相对路径在 parse 阶段被拒绝，错误信息写给模型看。
@@ -34,6 +36,7 @@
 - Bash 输出由端口在 30000 字符处保留头尾；内核再按结果预算落文件。
 - G5 给 Bash 说明增加保留检查命令退出码的指导；增加固定文本，不产生运行时变量，供应商精确 token 增量未单独计量。DeepSeek 原 17/20 → 20/20、同模型 CC 19/20；Luna 复测 20/20，题目和文件标准未改变。
 - AskUserQuestion 的说明 248 字符 + 嵌套 schema 690 字符（Bash 为 348 + 356），属稳定前缀；结果是题数行的短文本。
+- EnterPlanMode 说明 164 字符 + schema 47 字符；ExitPlanMode 说明 171 + schema 139。计划正文是模型自己的输出 token，审批卡片原样展示。
 - Write 的 content 是模型自己的输出 token，整文件重写很贵，说明里要求局部修改用 Edit。
 
 ## 缓存影响
@@ -50,4 +53,5 @@
 - Glob：向端口最多要 1000 条再排序，匹配更多时排序不完整（会注明）；模式语义（是否支持 `**`、大小写）完全由宿主实现决定。
 - Grep：正则在 parse 阶段用 Java 正则预检，ripgrep（Rust regex）语法与之有差异（如 Java 独有的回溯引用与 Rust 独有的部分 Unicode 类），预检通过不保证宿主一定接受，反之亦然；端口只有逐条命中的形状，files / count 模式最多聚合 20000 条命中；文件列表按端口给的顺序，不按修改时间排；`-C` 只在 content 模式生效。
 - AskUserQuestion：header 超 12 个字符不拒绝（界面自己截）、缺省时用问题开头顶上；不支持 Claude Code 的选项预览（preview）与自由回复（response）；等待没有超时，用户不在场就一直挂着，直到作答、拒答或中断。
+- 计划模式：Bash 在现有权限引擎里不是只读工具，计划模式下整条拒绝（Claude Code 允许只读命令），要等命令分析落地；被拒时给模型的是内核通用的「用户拒绝了这次调用」+ 用户说明，没有计划专用的措辞。
 - Bash：M1 每条命令都从会话目录起跑，`cd` / `export` 不跨调用保留；输出是 stdout 与 stderr 合并，分不开；命令分析（tree-sitter）未做，权限只能拿原始命令串判断；后台进程的取消与回收由内核凭句柄做。
