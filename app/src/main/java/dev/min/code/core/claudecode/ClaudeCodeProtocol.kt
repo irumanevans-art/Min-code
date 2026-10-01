@@ -506,6 +506,21 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
 }
 
 /**
+ * 丢掉子 agent 记录里**继承来的**「发起它自己的那次调用」：fork 子 agent 的 transcript 开头是父会话的尾巴 ——
+ * 带着它自己的 Agent 调用（同一个 tool_use id）和那次调用的 tool_result（"Fork started — processing in background"）。
+ * 这不是它干的活，挂回 Agent 卡就成了卡里一张和自己同 id 的 Agent 卡（切换条上多出一个不存在的线程）。
+ *
+ * 普通子 agent 的记录里不会出现发起自己的那个 id，所以对它们无害。
+ * （CLI 2.1.286 + CLAUDE_CODE_FORK_SUBAGENT=1 实录，meta.json 里 `isFork:true`。）
+ */
+private fun List<ClaudeCodeEvent>.withoutInheritedLaunch(parentToolUseId: String?): List<ClaudeCodeEvent> =
+    if (parentToolUseId.isNullOrBlank()) this
+    else filterNot {
+        (it is ClaudeCodeEvent.ToolUse && it.id == parentToolUseId) ||
+            (it is ClaudeCodeEvent.ToolResult && it.toolUseId == parentToolUseId)
+    }
+
+/**
  * 给一批事件套上「这是子 agent 干的」这层信封。[parentToolUseId] 为空表示主线程，原样返回。
  */
 private fun List<ClaudeCodeEvent>.underSubagent(parentToolUseId: String?): List<ClaudeCodeEvent> =
@@ -1298,6 +1313,7 @@ fun parseTranscriptLine(line: String, sidechainParent: String? = null): List<Cla
             val at = obj.str("timestamp")?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
             expandAssistantMessage(obj)
                 .map { if (at != null && it is ClaudeCodeEvent.AssistantText) it.copy(at = at) else it }
+                .withoutInheritedLaunch(parent)
                 .underSubagent(parent)
         }
 
@@ -1305,7 +1321,7 @@ fun parseTranscriptLine(line: String, sidechainParent: String? = null): List<Cla
             // 一条 user 行要么是真的用户输入，要么是回填的 tool_result，二者不会混
             val toolResults = expandToolResults(obj)
             if (toolResults.isNotEmpty()) {
-                toolResults.underSubagent(parent)
+                toolResults.withoutInheritedLaunch(parent).underSubagent(parent)
             } else if (parent == null) {
                 when (val parsed = transcriptUserPayload(obj)) {
                     is TranscriptUser.Human -> listOf(ClaudeCodeEvent.UserMessage(parsed.text))
