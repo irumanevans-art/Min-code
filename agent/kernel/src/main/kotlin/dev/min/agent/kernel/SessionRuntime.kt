@@ -14,6 +14,7 @@ import dev.min.agent.spi.DecidedBy
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InputReceived
 import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
@@ -37,6 +38,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -52,7 +54,13 @@ class SessionRuntime private constructor(
     initial: SessionState,
     internal val deps: KernelDeps,
     private val scope: CoroutineScope,
+    /** 管着它的 Hub；没有时（单会话嵌入、旧测试）工具拿到的子 agent 端口是不可用的 */
+    internal val hub: SessionHub? = null,
 ) {
+    /** 子会话的模型请求要过 Hub 的并发闸（手机上同时流式的子 agent 有上限）；根会话为 null，不受限 */
+    @Volatile
+    internal var requestGate: Semaphore? = null
+
     private val commitLock = Mutex()
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -150,6 +158,28 @@ class SessionRuntime private constructor(
         startTurnIfIdle(TurnTrigger.Resume)
     }
 
+    /**
+     * 收一条非用户来源的输入（子 agent 的报告 / 消息、父会话的委派 / 消息）。同一个 [clientMsgId] 只收一次（返回 false）。
+     * [startTurn] 非空且会话空闲时，以它为触发开回合；为空时只放进收件箱，等用户或下一回合处理。
+     */
+    internal suspend fun receive(
+        clientMsgId: ClientMsgId,
+        parts: List<Part>,
+        delivery: Delivery,
+        origin: InputOrigin,
+        startTurn: TurnTrigger?,
+    ): Boolean {
+        commitIf(listOf(InputReceived(clientMsgId, parts, delivery, origin)), Durability.Sync) { clientMsgId !in it.seenInputs }
+            ?: return false
+        startTurn?.let(::startTurnIfIdle)
+        return true
+    }
+
+    /** 分身的第一个回合：没有新输入，任务就在继承来的那次 Agent 调用的结果里 */
+    internal fun startDelegated() {
+        startTurnIfIdle(TurnTrigger.Delegated)
+    }
+
     /** 等到没有进行中的回合（测试与桌面 CLI 用） */
     suspend fun awaitIdle() {
         synchronized(turnLock) { turnJob }?.join()
@@ -165,7 +195,7 @@ class SessionRuntime private constructor(
             if (turnJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
-            if (trigger == TurnTrigger.User && s.inbox.isEmpty()) return
+            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification) && s.inbox.isEmpty()) return
             turnJob = scope.launch {
                 val runner = TurnRunner(this@SessionRuntime)
                 var next: TurnTrigger? = trigger
@@ -178,17 +208,25 @@ class SessionRuntime private constructor(
     }
 
     companion object {
+        /**
+         * 新建会话。[initial] 是紧跟 SessionCreated 一起写入的事件（子会话的来历、分身继承的对话与记忆），
+         * 与 SessionCreated 同一次追加：子会话日志要么完整建好，要么不存在。
+         * [loadMemory] 为 false 时不读记忆文件（分身已经在 [initial] 里带了父会话那份）。
+         */
         suspend fun create(
             store: SessionStore,
             header: LogHeader,
             created: SessionCreated,
             deps: KernelDeps,
             scope: CoroutineScope,
+            initial: List<SessionEvent> = emptyList(),
+            loadMemory: Boolean = true,
+            hub: SessionHub? = null,
         ): SessionRuntime {
             val log = store.create(header)
-            val records = log.append(listOf(created), Durability.Sync)
-            val runtime = SessionRuntime(log, fold(header, records), deps, scope)
-            runtime.loadMemory()
+            val records = log.append(listOf(created) + initial, Durability.Sync)
+            val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
+            if (loadMemory) runtime.loadMemory()
             return runtime
         }
 
@@ -199,10 +237,16 @@ class SessionRuntime private constructor(
          * 记忆文件**不重读**：沿用创建时写进日志的快照。重读的话，磁盘上的 CLAUDE.md 一改，重启后系统提示就变了，
          * 提示缓存整段失效，请求也不再能只凭日志重建（docs/agent/07-工程规范.md 第 6、8 条）。
          */
-        suspend fun open(store: SessionStore, id: SessionId, deps: KernelDeps, scope: CoroutineScope): SessionRuntime? {
+        suspend fun open(
+            store: SessionStore,
+            id: SessionId,
+            deps: KernelDeps,
+            scope: CoroutineScope,
+            hub: SessionHub? = null,
+        ): SessionRuntime? {
             val log = store.open(id) ?: return null
             val state = fold(log.header, log.read().toList())
-            val runtime = SessionRuntime(log, state, deps, scope)
+            val runtime = SessionRuntime(log, state, deps, scope, hub)
             runtime.commit(planRecovery(state), Durability.Sync)
             return runtime
         }

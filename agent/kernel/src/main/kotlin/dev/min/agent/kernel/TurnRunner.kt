@@ -27,6 +27,9 @@ import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnStarted
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.InterruptedBy
+import dev.min.agent.spi.PromptBasis
+import dev.min.agent.spi.Tool
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.delay
 import java.security.MessageDigest
 import java.time.Instant
@@ -58,6 +61,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         } catch (e: TurnAbort) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败")), Durability.Sync)
             false
+        } catch (e: TurnLimitReached) {
+            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit)), Durability.Sync)
+            false
         } catch (e: Exception) {
             // 意外（内核 bug、日志写不进去……）：尽量把回合收尾，别让会话卡在「进行中」；
             // 收尾本身也失败时（多半是日志坏了），留给下次打开会话时的恢复去补
@@ -71,7 +77,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     }
 
     private suspend fun loop(turnId: TurnId) {
-        repeat(MAX_REQUESTS_PER_TURN) {
+        // 子 agent 定义里的 maxTurns：到了就停，报告标「未完成，可续」（与 Claude Code 的 partial 一致）
+        val agentLimit = rt.state.value.origin?.maxTurns
+        repeat(agentLimit ?: MAX_REQUESTS_PER_TURN) {
             val completed = requestWithRetry(turnId)
             val calls = completed.message.parts.filterIsInstance<ToolCallPart>()
             when {
@@ -85,6 +93,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             // 工具批结束 = 安全点：插话在这里送达（docs/agent/04-子系统设计.md §4.1）
             promote(setOf(Delivery.Steer))
         }
+        if (agentLimit != null) throw TurnLimitReached()
         throw TurnAbort("单个回合的模型请求达到 $MAX_REQUESTS_PER_TURN 次上限，已停止。检查是不是陷入了循环。")
     }
 
@@ -115,7 +124,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 Durability.Sync,
             )
             try {
-                return stream(turnId, requestId, model, request)
+                val gate = rt.requestGate
+                return if (gate == null) stream(turnId, requestId, model, request) else gate.withPermit { stream(turnId, requestId, model, request) }
             } catch (e: ModelException) {
                 val willRetry = e.retryable && attempt < deps.retry.maxAttempts
                 rt.commit(
@@ -163,20 +173,24 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         return done
     }
 
-    /** 请求完全由日志投影与会话开始时定下的环境、记忆快照组成：同一段日志组出同一个请求 */
+    /**
+     * 请求完全由日志投影与会话开始时定下的环境、记忆快照组成：同一段日志组出同一个请求。
+     * 分身的环境事实与缓存键取自 [SessionState.origin]（父会话的），前缀因此与父会话逐字节相同（子agent设计 §3）。
+     */
     private fun assemble(state: SessionState, profile: ModelProfile): ModelRequest {
-        val date = LocalDate.ofInstant(Instant.ofEpochMilli(state.header.createdAtMs), deps.zone).toString()
-        val environment = Environment(deps.platform, state.created.cwd.value, date)
+        val origin = state.origin
+        val environment = promptBasisOf(state, deps).let { Environment(it.platform, it.cwd, it.date) }
         val harness = HarnessProfile(profile.family, profile.editStyle)
-        val specs = deps.tools.map { ToolSpec(it.name, it.description(harness), it.inputSchema) }
+        val specs = availableTools(state, deps).map { ToolSpec(it.name, it.description(harness), it.inputSchema) }
         return RequestAssembler.assemble(
             profile = profile,
             environment = environment,
             messages = state.modelMessages(),
             tools = specs,
             effort = state.settings.effort,
-            cacheKey = state.header.sessionId.value,
+            cacheKey = origin?.cacheKey ?: state.header.sessionId.value,
             memory = state.memory,
+            agentInstructions = origin?.instructions,
         )
     }
 
@@ -211,6 +225,23 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
 /** 回合放弃（不可重试的模型错误、达到上限）。带给人看的原因 */
 internal class TurnAbort(message: String) : Exception(message)
+
+/** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
+internal class TurnLimitReached : Exception()
+
+/** 组系统提示用的环境事实：子会话带着的（分身 = 父会话的）优先，否则由本会话的创建时间与 cwd 推出 */
+internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
+    state.origin?.promptBasis ?: PromptBasis(
+        platform = deps.platform,
+        cwd = state.created.cwd.value,
+        date = LocalDate.ofInstant(Instant.ofEpochMilli(state.header.createdAtMs), deps.zone).toString(),
+    )
+
+/** 本会话能用的工具，保持 [KernelDeps.tools] 的固定顺序。新开的子 agent 按定义取子集；分身与根会话是全部 */
+internal fun availableTools(state: SessionState, deps: KernelDeps): List<Tool<*>> {
+    val allowed = state.origin?.tools ?: return deps.tools
+    return deps.tools.filter { it.name in allowed }
+}
 
 /**
  * 稳定前缀（system + 工具表）的指纹。记进 ModelRequestStarted：界面据此解释缓存为什么没命中，

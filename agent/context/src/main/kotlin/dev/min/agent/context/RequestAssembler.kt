@@ -24,9 +24,10 @@ object RequestAssembler {
         effort: Effort?,
         cacheKey: String,
         memory: List<LoadedMemoryFile> = emptyList(),
+        agentInstructions: String? = null,
     ): ModelRequest = ModelRequest(
         profile = profile,
-        system = SystemPrompt.build(profile, environment, memory),
+        system = SystemPrompt.build(profile, environment, memory, agentInstructions),
         messages = messages,
         tools = tools,
         effort = effort,

@@ -1,0 +1,173 @@
+package dev.min.agent.kernel
+
+import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.Effort
+import dev.min.agent.protocol.PermissionMode
+import dev.min.agent.protocol.SessionId
+import dev.min.agent.protocol.TextPart
+import dev.min.agent.spi.ForkSeeded
+import dev.min.agent.spi.InterruptedBy
+import dev.min.agent.spi.Role
+import dev.min.agent.spi.SeedMessage
+import dev.min.agent.spi.SeedResult
+import dev.min.agent.spi.ToolResult
+import dev.min.agent.spi.TurnOutcome
+
+/**
+ * 一类子 agent 的定义。内置三类在 [BuiltinAgents]；`.claude/agents/` 下的自定义由组合根从 `:agent:ext` 的 AgentDef 转过来。
+ * 字段语义照 Claude Code 的 frontmatter（docs/agent/detail/子agent设计.md §4）。
+ */
+data class AgentDefinition(
+    val name: String,
+    val description: String,
+    /** 角色说明，拼在子 agent 系统提示末尾 */
+    val instructions: String,
+    /** 能用的工具；null = 子 agent 可用的全部 */
+    val tools: List<String>? = null,
+    /** 先于 [tools] 应用的排除名单 */
+    val disallowedTools: List<String> = emptyList(),
+    /** null 或 `inherit` = 父会话的模型 */
+    val model: String? = null,
+    /** null = 继承父会话的模式 */
+    val permissionMode: PermissionMode? = null,
+    val maxTurns: Int? = null,
+    val effort: Effort? = null,
+    /** 不加载 CLAUDE.md 一类的记忆文件（Explore / Plan、定义里的 omitClaudeMd） */
+    val omitMemory: Boolean = false,
+    /** 定义要求总在后台跑 */
+    val alwaysBackground: Boolean = false,
+    /**
+     * 只读的内置类型（Explore / Plan）：模式固定为 dontAsk、工具里没有写类工具。
+     * 比 Claude Code 严一点：父会话是 bypass 也不放开——它们按定义就不该改东西。
+     */
+    val readOnly: Boolean = false,
+)
+
+object BuiltinAgents {
+    const val GENERAL_PURPOSE = "general-purpose"
+
+    private val READ_ONLY_TOOLS = listOf("Read", "Grep", "Glob", "Bash")
+
+    val all: List<AgentDefinition> = listOf(
+        AgentDefinition(
+            name = GENERAL_PURPOSE,
+            description = "通用：多步骤的复杂任务、需要改文件或跑命令的独立工作。",
+            instructions = "Work through the task end to end. Use any tool you need.",
+        ),
+        AgentDefinition(
+            name = "Explore",
+            description = "只读探索：在代码库里找文件、找定义、回答「X 在哪 / 怎么实现的」。说明要多彻底（quick / medium / very thorough）。",
+            instructions = """
+                You explore codebases read-only. Search broadly first (Glob, Grep), then read only the parts that matter.
+                Never modify anything. Report concrete findings with file paths and line numbers; say what you could not find.
+            """.trimIndent(),
+            tools = READ_ONLY_TOOLS,
+            permissionMode = PermissionMode.DontAsk,
+            omitMemory = true,
+            readOnly = true,
+        ),
+        AgentDefinition(
+            name = "Plan",
+            description = "只读调研并给出实施计划：读相关代码、权衡做法，返回分步计划与关键文件。",
+            instructions = """
+                You research read-only and produce an implementation plan. Read the relevant code, weigh the options,
+                and return a step-by-step plan that names the files to change and the risks. Never modify anything.
+            """.trimIndent(),
+            tools = READ_ONLY_TOOLS,
+            permissionMode = PermissionMode.DontAsk,
+            omitMemory = true,
+            readOnly = true,
+        ),
+    )
+}
+
+/** 分身被委派时，那次 Agent 调用的结果：分身就是从这里开始干活的 */
+internal fun forkDirective(prompt: String): String = """
+    You are a fork of the conversation above: a copy of the agent that made this Agent call, now running on your own in the
+    background. The original agent continues separately and will receive your final reply as your report.
+    Do the task below directly with your tools. Do not delegate it again (the Agent tool will refuse). Make your final reply a
+    complete, self-contained report.
+
+    Task:
+""".trimIndent() + "\n" + prompt
+
+internal const val SIBLING_CALL_RESULT = "This call is handled by the original agent; its result is not visible to you."
+
+/**
+ * 分身继承的对话：父会话到 [callId] 所在那条助手消息为止（含），以及这些消息里每个调用的结果。
+ * 更早的调用用父会话的真实结果；那条消息里的调用用合成结果（设计 §3.1）。消息与结果逐字节照抄，前缀才能与父会话相同。
+ */
+internal fun forkSeed(parent: SessionState, callId: CallId, prompt: String): ForkSeeded {
+    val at = parent.history.indexOfLast { it is HistoryEntry.Assistant && it.toolCalls.any { c -> c.callId == callId } }
+    check(at >= 0) { "父会话里找不到发起委派的调用 $callId" }
+    val inherited = parent.history.subList(0, at + 1)
+    val messages = inherited.map { entry ->
+        when (entry) {
+            is HistoryEntry.User -> SeedMessage(entry.messageId, Role.User, entry.parts)
+            is HistoryEntry.Assistant -> SeedMessage(entry.messageId, Role.Assistant, entry.parts)
+        }
+    }
+    val delegating = inherited.last() as HistoryEntry.Assistant
+    val results = inherited.filterIsInstance<HistoryEntry.Assistant>().flatMap { entry ->
+        entry.toolCalls.map { call ->
+            val result = when {
+                entry !== delegating -> parent.toolResults[call.callId] ?: error("调用 ${call.callId} 还没有结果，不能分身")
+                call.callId == callId -> ToolResult(listOf(TextPart(forkDirective(prompt))))
+                else -> ToolResult(listOf(TextPart(SIBLING_CALL_RESULT)))
+            }
+            SeedResult(call.callId, result)
+        }
+    }
+    return ForkSeeded(messages, results)
+}
+
+/**
+ * 交给父会话的报告（设计 §6）。正文里出现的报告标签一律转义：子 agent（或它读到的网页、文件）不能伪造一段「报告之外的话」。
+ */
+internal object Reports {
+    private const val TAG = "subagent-report"
+
+    fun render(child: SessionId, summary: ChildSummary?, agentType: String, fork: Boolean, ended: EndedTurn, state: SessionState): String {
+        val body = finalText(state).ifBlank { "（子 agent 没有给出文字报告）" }
+        val status = statusOf(ended.outcome)
+        val tokens = ended.usage.let { it.inputTokens + it.outputTokens + it.cacheReadTokens + it.cacheWriteTokens }
+        val name = summary?.name?.let { " name=\"${attr(it)}\"" }.orEmpty()
+        return buildString {
+            append("<$TAG id=\"${child.value}\" type=\"${attr(agentType)}\"$name fork=\"$fork\" status=\"$status\"")
+            append(" tools=\"${ended.toolCalls}\" tokens=\"$tokens\" duration-ms=\"${ended.durationMs}\">\n")
+            append(escape(body.trim()))
+            note(ended.outcome)?.let { append("\n\n").append(it) }
+            append("\n</$TAG>")
+        }
+    }
+
+    fun isError(outcome: TurnOutcome): Boolean = outcome !is TurnOutcome.Completed
+
+    /** 子回合的结论：最后一条助手消息的正文 */
+    private fun finalText(state: SessionState): String =
+        state.history.lastOrNull { it is HistoryEntry.Assistant }
+            ?.let { (it as HistoryEntry.Assistant).parts.filterIsInstance<TextPart>().joinToString("") { p -> p.text } }
+            .orEmpty()
+
+    private fun statusOf(outcome: TurnOutcome): String = when (outcome) {
+        TurnOutcome.Completed -> "completed"
+        is TurnOutcome.Failed -> "failed"
+        is TurnOutcome.Interrupted -> when (outcome.by) {
+            InterruptedBy.User -> "interrupted"
+            InterruptedBy.ProcessDeath -> "interrupted-by-restart"
+            InterruptedBy.Limit -> "turn-limit"
+        }
+    }
+
+    private fun note(outcome: TurnOutcome): String? = when (outcome) {
+        TurnOutcome.Completed -> null
+        is TurnOutcome.Failed -> "[子 agent 失败：${escape(outcome.message)}]"
+        is TurnOutcome.Interrupted -> "[子 agent 没有做完。需要的话用 SendMessage 让它继续。]"
+    }
+
+    private fun attr(text: String) = text.replace("\"", "'").replace("<", "‹").replace(">", "›")
+
+    /** 只转义本系统的标签，其余原样：报告里的代码、HTML 不该被改写 */
+    fun escape(text: String): String =
+        text.replace("<$TAG", "&lt;$TAG").replace("</$TAG", "&lt;/$TAG")
+}
