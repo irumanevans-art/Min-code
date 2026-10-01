@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.context.MemoryLimits
 import dev.min.agent.llm.ModelClient
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.protocol.ModelRef
@@ -7,6 +8,7 @@ import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.Clock
 import dev.min.agent.spi.Exec
+import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.Search
 import dev.min.agent.spi.Tool
@@ -43,6 +45,12 @@ class KernelDeps(
     val retry: RetryPolicy = RetryPolicy(),
     /** 一批并发安全的工具最多同时跑几个 */
     val maxParallelTools: Int = 8,
+    /**
+     * 用户主目录（guest 路径；Android 上是 `/root`）：找 `~/.claude/CLAUDE.md`、`~/.claude/rules/`，解析 `@~/…` 导入。
+     * null = 不加载记忆文件（内核测试、不需要记忆的嵌入场景）；真实宿主都应该给
+     */
+    val memoryHome: GuestPath? = null,
+    val memoryLimits: MemoryLimits = MemoryLimits(),
 )
 
 /**
