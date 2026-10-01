@@ -224,6 +224,20 @@ class FrontmatterTest {
     }
 
     @Test
+    fun `every boolean spelling from the skills doc is understood in any letter case`() {
+        val notes = mutableListOf<String>()
+        val words = listOf("true", "yes", "on", "1", "false", "no", "off", "0")
+        val fm = parse(*words.flatMapIndexed { i, w -> listOf("k$i: $w", "u$i: ${w.uppercase()}") }.toTypedArray())
+        val f = FrontmatterFields(fm.fields, "f.md", notes)
+        words.forEachIndexed { i, w ->
+            val expected = w in setOf("true", "yes", "on", "1")
+            assertEquals(w, expected, f.bool("k$i"))
+            assertEquals(w.uppercase(), expected, f.bool("u$i"))
+        }
+        assertTrue(notes.isEmpty())
+    }
+
+    @Test
     fun `typed accessors coerce booleans the way the skills doc lists and report wrong types`() {
         val notes = mutableListOf<String>()
         val fm = parse(

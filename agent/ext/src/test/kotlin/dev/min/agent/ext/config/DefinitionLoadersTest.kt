@@ -51,6 +51,12 @@ class DefinitionLoadersTest {
     }
 
     @Test
+    fun `the description fallback skips blank lines made of spaces`() {
+        fs.file("/workspace/.claude/skills/s/SKILL.md", "   \n\t\nReal first line\nnext")
+        assertEquals("Real first line", load().skills.single().description)
+    }
+
+    @Test
     fun `a skill without frontmatter loads with defaults`() {
         fs.file("/workspace/.claude/skills/plain/SKILL.md", "Just instructions.\nMore.")
         val skill = load().skills.single()
