@@ -25,6 +25,7 @@ import dev.min.agent.tools.BashTool
 import dev.min.agent.tools.EditTool
 import dev.min.agent.tools.GlobTool
 import dev.min.agent.tools.GrepTool
+import dev.min.agent.tools.NotebookEditTool
 import dev.min.agent.tools.ReadTool
 import dev.min.agent.tools.WriteTool
 import kotlinx.coroutines.CoroutineScope
@@ -86,7 +87,7 @@ internal class DesktopApp(private val args: CliArgs, private val scope: Coroutin
                 check(ref == profile.ref) { "桌面 CLI 目前只配置了 ${profile.ref}，会话要的是 $ref" }
                 ResolvedModel(profile, client)
             },
-            tools = listOf(ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool),
+            tools = listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool),
             host = HostPorts(
                 fs = paths.fs,
                 search = JvmSearch(paths.fs),

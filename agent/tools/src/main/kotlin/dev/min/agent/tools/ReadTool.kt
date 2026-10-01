@@ -46,8 +46,8 @@ object ReadTool : Tool<ReadInput> {
     override val inputSchema: JsonObject = schemaObject(
         listOf("file_path"),
         "file_path" to prop("string", "要读的文件的绝对路径（以 / 开头）"),
-        "offset" to prop("integer", "起始行号，从 1 开始；默认 1。只在文件很大、需要分段读时才给"),
-        "limit" to prop("integer", "最多读多少行；默认 $DEFAULT_LIMIT"),
+        "offset" to prop("integer", "起始行号（notebook 为起始单元序号），从 1 开始；默认 1。只在文件很大、需要分段读时才给"),
+        "limit" to prop("integer", "最多读多少行（notebook 为单元数）；默认 $DEFAULT_LIMIT"),
     )
 
     override val traits = ToolTraits(readOnly = true, concurrencySafe = true, resumePolicy = ResumePolicy.Replay)
@@ -56,6 +56,7 @@ object ReadTool : Tool<ReadInput> {
         "读取一个文件。file_path 必须是绝对路径（相对路径以当前目录为基准自行拼成绝对路径）。" +
             "默认从第 1 行读最多 $DEFAULT_LIMIT 行，每行前带行号；更长的文件用 offset / limit 分段读。" +
             "单行超过 $MAX_LINE_CHARS 字符会被截断。可以读图片（png / jpg / gif / webp）；不能读二进制文件。" +
+            "也可以读 Jupyter notebook（.ipynb）：按单元给出 id、类型、源码与输出（输出已截断，图片尽量内嵌），此时 offset / limit 按单元计。" +
             "修改已有文件之前必须先用本工具读过它。读目录请改用 Glob 或 Bash 的 ls。"
 
     override fun parse(raw: JsonObject): ToolInput<ReadInput> = parseArgs {
@@ -96,6 +97,9 @@ object ReadTool : Tool<ReadInput> {
                 touched = listOf(stamp),
             )
         }
+
+        // notebook 是 JSON，不能按行读：整本解析后按单元渲染（offset / limit 此时按单元计）
+        if (path.isNotebook()) return readNotebook(input, ctx, stamp)
 
         val bytes = ctx.fs.read(path, 0, MAX_TEXT_BYTES)
         if (bytes.take(BINARY_SNIFF_BYTES).any { it == 0.toByte() }) {
