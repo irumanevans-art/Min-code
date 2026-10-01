@@ -4,6 +4,7 @@ import dev.min.agent.policy.PolicyEngine
 import dev.min.agent.policy.Verdict
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
@@ -14,6 +15,7 @@ import dev.min.agent.spi.Exec
 import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.PermissionAsk
+import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.Search
 import dev.min.agent.spi.Tool
@@ -24,6 +26,7 @@ import dev.min.agent.spi.ToolOutcome
 import dev.min.agent.spi.ToolPlanned
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
+import dev.min.agent.spi.UserQuestion
 import dev.min.agent.spi.WorkspaceFs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -174,6 +177,8 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         override val exec: Exec = deps.host.exec
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
+        override val mode: PermissionMode get() = rt.state.value.settings.mode
+        override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
     }
 
     companion object {

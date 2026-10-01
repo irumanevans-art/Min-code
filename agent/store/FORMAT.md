@@ -44,3 +44,4 @@
 ## 变更记录
 
 - v1（2026-09-30）：首版。事件集见 `agent/spi/src/main/kotlin/dev/min/agent/spi/SessionEvent.kt`。
+- v1 增量（2026-10-01）：新增事件 `question_asked`、`question_answered`（向用户提问与答复，定义在 `spi/InteractionEvents.kt`）；含这两种事件的日志旧版本打不开。

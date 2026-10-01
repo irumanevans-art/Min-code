@@ -6,6 +6,7 @@ import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.protocol.Part
 import dev.min.agent.protocol.PermissionMode
+import dev.min.agent.protocol.QuestionId
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ApprovalChoice
 import dev.min.agent.spi.ApprovalResolved
@@ -16,12 +17,15 @@ import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.InputReceived
 import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
+import dev.min.agent.spi.QuestionAnswer
+import dev.min.agent.spi.QuestionAnswered
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.SessionLog
 import dev.min.agent.spi.SessionStore
 import dev.min.agent.spi.SettingsChanged
 import dev.min.agent.spi.TurnTrigger
+import dev.min.agent.spi.answerProblem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -120,6 +124,21 @@ class SessionRuntime private constructor(
             s.turn?.calls?.values?.any { (it.phase as? CallPhase.AwaitingApproval)?.approvalId == approvalId } == true
         } != null
     }
+
+    /**
+     * 回答一次提问。[answers] 与问题一一对应（[answerProblem] 的规则）；对不上抛 [IllegalArgumentException]——
+     * 那是界面的 bug，不是用户的选择，什么都不写。那次提问已经不在等了（另一端先答了、回合已结束）返回 false。
+     */
+    suspend fun answerQuestion(questionId: QuestionId, answers: List<QuestionAnswer>): Boolean {
+        // 问题落盘后不再变，在锁外取来校验即可；「还在等」才必须与写入同在一把锁里判定
+        val asked = _state.value.turn?.questions?.get(questionId) ?: return false
+        answerProblem(asked.questions, answers)?.let { throw IllegalArgumentException("答案不合法：$it") }
+        return commitIf(listOf(QuestionAnswered(questionId, answers)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
+    }
+
+    /** 用户关掉提问、不回答：模型会收到「用户没有回答」，按现有信息继续。不在等了返回 false */
+    suspend fun declineQuestion(questionId: QuestionId): Boolean =
+        commitIf(listOf(QuestionAnswered(questionId, declined = true)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
 
     /** 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西 */
     suspend fun changeSettings(model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null) {

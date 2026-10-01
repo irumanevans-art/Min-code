@@ -16,6 +16,8 @@ import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.ModelRequestFailed
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.Note
+import dev.min.agent.spi.QuestionAnswered
+import dev.min.agent.spi.QuestionAsked
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SettingsChanged
 import dev.min.agent.spi.ToolEffectPending
@@ -129,6 +131,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(t.turnId == e.turnId) { "结束的是 ${e.turnId}，当前回合是 ${t.turnId}" }
             copy(turn = null, usage = usage + t.usage)
         }
+        is QuestionAsked -> withQuestionAsked(e)
+        is QuestionAnswered -> withQuestionAnswered(e)
         is Note -> this
     }
     return next.copy(lastSeq = record.seq)

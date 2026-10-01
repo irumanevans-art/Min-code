@@ -2,6 +2,7 @@ package dev.min.agent.spi
 
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.Part
+import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.SessionId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.SerialName
@@ -105,6 +106,15 @@ interface ToolContext {
 
     /** 本会话里最近一次（读或写）看到 [path] 时它的状态；没看过为 null。由内核从日志里的 [ToolResult.touched] 推出 */
     fun lastSeen(path: GuestPath): FileStamp?
+
+    /** 会话当前的权限模式（只读）。与人交互的工具据此判断：dontAsk 下不提问，计划模式工具看自己是否在计划模式里 */
+    val mode: PermissionMode
+
+    /**
+     * 向用户提问并等答复。提问先落盘（[QuestionAsked]），答复由界面经运行时命令写进日志（[QuestionAnswered]）；
+     * 这里等的是日志折叠出的状态，不是内存回调。可能等很久（用户不在场）；回合被中断时随之取消。
+     */
+    suspend fun ask(questions: List<UserQuestion>): QuestionOutcome
 }
 
 /** 模型族：决定工具描述、编辑形态、提示词的调法（docs/agent/04-子系统设计.md §4.2） */
