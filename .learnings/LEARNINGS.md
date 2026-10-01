@@ -1440,3 +1440,25 @@ M2-A 扫描发现 host 的目录列举和 store 的会话列举使用 JDK 16 Str
 - Tags: android, jdk, stream, minSdk
 - Recurrence-Count: 1
 
+## [LRN-20261001-ADB-RAW-AND-QUOTING] best_practice
+
+**Logged**: 2026-10-01
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+ADB 文件字节验收使用 exec-out；Python subprocess 的 argv 列表不等于远端 shell 已保留带空格参数。
+
+### Details
+M2-A 的真实文件分别是 approved 加 LF、once 加 LF，但 adb shell 输出转成 CRLF，让外部验收出现假阴性。改 exec-out 后字节断言通过。am broadcast 的英文长 prompt 未做远端引用时只收到首词，后续 --es model 也未生效；补单引号与内嵌引号转义后，指定 Sonnet 5.5 的 Read / Write / Bash 真网闭环完成。
+
+### Suggested Action
+远端 shell 参数单独引用，文件内容与二进制只通过 exec-out 核对。变异与验收的红灯先区分产品失败、传输转换和 harness 参数错误，保留证据后按原语义复测。
+
+### Metadata
+- Source: error
+- Related Files: app/src/debug/java/dev/min/code/debug/MinAgentDebugReceiver.kt
+- Tags: adb, crlf, subprocess, shell-quoting
+- Recurrence-Count: 1
+
