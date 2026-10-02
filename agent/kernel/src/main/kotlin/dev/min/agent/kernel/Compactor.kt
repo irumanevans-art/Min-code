@@ -183,6 +183,11 @@ internal class Compactor(
                 files.take(MAX_FILES).forEach { (path, tool) -> append("\n- ").append(path).append("（").append(tool).append("）") }
                 if (files.size > MAX_FILES) append("\n- ……另有 ${files.size - MAX_FILES} 个")
             }
+            // 任务清单在状态里不会丢，但压缩掉的对话里可能是模型唯一看到它的地方：重挂一份当前状态（04 §4.5「压缩后重挂」）
+            if (state.tasks.isNotEmpty()) {
+                append("\n\n任务清单（当前状态，用 TaskList / TaskGet 查看详情）：")
+                state.tasks.forEach { t -> append("\n- #").append(t.id).append(" [").append(t.status.name).append("] ").append(t.subject) }
+            }
         }
     }
 

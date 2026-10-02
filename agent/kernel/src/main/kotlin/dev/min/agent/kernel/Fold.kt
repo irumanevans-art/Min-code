@@ -36,6 +36,9 @@ import dev.min.agent.spi.QuestionAnswered
 import dev.min.agent.spi.QuestionAsked
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SettingsChanged
+import dev.min.agent.spi.TaskCreated
+import dev.min.agent.spi.TaskDeleted
+import dev.min.agent.spi.TaskUpdated
 import dev.min.agent.spi.ToolEffectPending
 import dev.min.agent.spi.ToolOutcome
 import dev.min.agent.spi.ToolPlanned
@@ -195,6 +198,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
                     }
                     // 模式变更由内核紧跟着写成 SettingsChanged，在那条事件上折叠
                     is SessionEffect.ModeChange -> current
+                    // 任务清单的修改同理：由内核紧跟着写成 TaskCreated 等事件，在那些事件上折叠
+                    is SessionEffect.TaskCreate, is SessionEffect.TaskUpdate, is SessionEffect.TaskDelete -> current
                 }
             },
         )
@@ -233,6 +238,10 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is QuestionAsked -> withQuestionAsked(e, record.atMs)
         is QuestionAnswered -> withQuestionAnswered(e)
+        is TaskCreated, is TaskUpdated, is TaskDeleted -> {
+            taskProblem(e)?.let { error("任务事件不合法：$it") }
+            applyTaskEvent(e)
+        }
         is Note -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
     }
     val stamped = next.turn?.let { next.copy(turn = it.copy(lastEventAtMs = record.atMs)) } ?: next

@@ -22,6 +22,7 @@ import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.Search
+import dev.min.agent.spi.TaskBoard
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
 import dev.min.agent.spi.ToolEffectPending
@@ -201,8 +202,8 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
     }
 
     private suspend fun outcome(turnId: TurnId, callId: CallId, result: ToolResult) {
-        // 结果声明的副作用（如切模式）与结果同一次提交：不会出现「结果说切了、模式没切」
-        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(), Durability.Sync)
+        // 结果声明的副作用（如切模式、改任务清单）与结果同一次提交：不会出现「结果说切了、模式没切」
+        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(rt.state.value), Durability.Sync)
     }
 
     /** [turnId] 为 null 只在算权限声明时：那时不该委派任何东西，端口给不可用的 */
@@ -218,6 +219,7 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
+        override val tasks: TaskBoard get() = rt.state.value.taskBoard()
         override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
     }
 

@@ -27,6 +27,7 @@ import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.SessionCreated
+import dev.min.agent.spi.TaskRecord
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.UserQuestion
@@ -83,6 +84,13 @@ data class SessionState(
     val compactionFailures: Int = 0,
     /** 开始了还没有结局的压缩（进程死在中途时恢复用） */
     val openCompaction: String? = null,
+    /**
+     * 本会话的任务清单，按创建顺序（TaskCreate / TaskUpdate 工具维护，由 TaskCreated / TaskUpdated / TaskDeleted 折叠）。
+     * 只属于本会话：子 agent 各有自己的一份，不与父会话共享。有默认值：没用过任务工具的会话日志里没有这些事件
+     */
+    val tasks: List<TaskRecord> = emptyList(),
+    /** 已分配过的最大任务编号。删除任务不回退它，编号因此不会被复用 */
+    val taskSeq: Int = 0,
 )
 
 data class CompactionView(val summary: String, val through: MessageId, val transcriptPath: String?)

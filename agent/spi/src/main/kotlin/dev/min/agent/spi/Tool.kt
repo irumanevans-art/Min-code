@@ -121,6 +121,12 @@ interface ToolContext {
     /** 委派子 agent。有默认值：不涉及子 agent 的工具与测试替身不用管它 */
     val agents: AgentPort get() = AgentPort.Unavailable
 
+    /**
+     * 本会话任务清单的只读视图（任务工具用）。有默认值（空清单）：与任务无关的工具和测试替身不用管它。
+     * 清单是**本会话自己的**：子 agent 的会话看到的是它自己那份，不是父会话的。
+     */
+    val tasks: TaskBoard get() = TaskBoard()
+
     /** 会话当前的权限模式（只读）。与人交互的工具据此判断：dontAsk 下不提问，计划模式工具看自己是否在计划模式里 */
     val mode: PermissionMode
 

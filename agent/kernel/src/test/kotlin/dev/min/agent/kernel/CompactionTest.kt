@@ -221,6 +221,25 @@ class CompactionTest {
     }
 
     @Test
+    fun `the summary carries the current task list`() = run {
+        val model = RoutingModel { req ->
+            when {
+                req.isSummary() -> answer(TextPart("## 目标\n做两件事。"))
+                req.last().startsWith("A") -> answer(
+                    ToolCallPart(CallId("t1"), "TaskCreate", args("subject" to "迁移数据库", "description" to "把表搬到新库")),
+                    stop = StopReason.ToolUse,
+                )
+                else -> answer(TextPart("好"))
+            }
+        }
+        val rt = session(model, listOf(dev.min.agent.tools.TaskCreateTool))
+        rt.say("A".repeat(34_000))
+        rt.say("B".repeat(34_000))
+        val summary = events(rt).filterIsInstance<ContextCompacted>().single().summary
+        assertTrue(summary, summary.contains("- #1 [Pending] 迁移数据库"))
+    }
+
+    @Test
     fun `the summary lists files changed by write tools from the log, not from memory`() = run {
         val write = FakeTool("Write", WRITES) { input ->
             val path = (input["path"] as kotlinx.serialization.json.JsonPrimitive).content
