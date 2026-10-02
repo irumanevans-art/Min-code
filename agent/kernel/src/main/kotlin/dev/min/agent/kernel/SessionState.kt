@@ -16,6 +16,7 @@ import dev.min.agent.protocol.Usage
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.InputOrigin
+import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.ExecHandle
@@ -65,6 +66,10 @@ data class SessionState(
     val children: Map<SessionId, ChildSummary> = emptyMap(),
     /** 最近结束的那个回合。子 agent 的报告取它的结局 */
     val lastTurn: EndedTurn? = null,
+    /** 会话创建时冻结的权限规则（最后一条 PermissionRulesLoaded） */
+    val rules: List<RuleEntry> = emptyList(),
+    /** 本会话里人选「总是允许」攒下的规则，按答复顺序；来源记为 session */
+    val sessionRules: List<RuleEntry> = emptyList(),
 )
 
 /** 父会话视角的一个子 agent：委派时的样子 + 哪些回合的报告已经交付 */

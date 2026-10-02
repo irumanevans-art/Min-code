@@ -3,6 +3,8 @@ package dev.min.agent.policy
 import dev.min.agent.spi.AccessKind
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.PathAccess
+import dev.min.agent.spi.RuleEntry
+import dev.min.agent.spi.RuleKindData
 
 enum class RuleKind { Allow, Ask, Deny }
 
@@ -23,6 +25,16 @@ data class PermissionRule(
     companion object {
         /** 工具名允许 `mcp__服务器__*` 这种尾部通配 */
         private val SHAPE = Regex("""^([A-Za-z0-9_\-]+(?:__\*)?)(?:\((.*)\))?$""")
+
+        /** 日志里的规则原文（[RuleEntry]）→ 规则。认不出的写法返回 null */
+        fun from(entry: RuleEntry): PermissionRule? = parse(
+            when (entry.kind) {
+                RuleKindData.Allow -> RuleKind.Allow
+                RuleKindData.Ask -> RuleKind.Ask
+                RuleKindData.Deny -> RuleKind.Deny
+            },
+            entry.text, entry.source, entry.baseDir,
+        )
 
         /** 认不出的写法返回 null（调用方记一条说明，不要猜） */
         fun parse(kind: RuleKind, text: String, source: String, baseDir: GuestPath? = null): PermissionRule? {
@@ -89,6 +101,13 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
             want.startsWith("*.") -> host.endsWith(want.removePrefix("*"))
             else -> host == want
         }
+    }
+
+    /** 按名字限定的规则：`Agent(Explore)` 对 Agent 调用的 specifiers 匹配；`*` 是通配 */
+    fun matchesSpecifier(rule: PermissionRule, tool: String, specifier: String): Boolean {
+        if (rule.tool != tool) return false
+        val spec = rule.specifier ?: return false
+        return Regex(globToRegex(spec, anyChars = true)).matches(specifier)
     }
 
     fun isNegation(rule: PermissionRule): Boolean = rule.specifier?.startsWith("!") == true

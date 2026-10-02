@@ -122,7 +122,8 @@ object PolicyEngine {
                     // 看不透的命令也拿原文对一遍拒绝规则：宁可多拦
                     (rule.tool == "Bash" && facts.untrustedRaw.any { raw -> rawMatches(rule, raw) }) ||
                     facts.paths.any { p -> m.matchesPath(rule, p) && !exempted(p, rule, rules, m) } ||
-                    facts.domains.any { m.matchesDomain(rule, it) }
+                    facts.domains.any { m.matchesDomain(rule, it) } ||
+                    facts.specifiers.any { m.matchesSpecifier(rule, facts.tool, it) }
                 )
         }
 
@@ -145,7 +146,7 @@ object PolicyEngine {
     private fun covering(facts: Facts, rules: List<PermissionRule>, m: RuleMatcher): PermissionRule? {
         rules.firstOrNull { m.matchesTool(it, facts.tool) }?.let { return it }
         if (facts.untrusted || facts.unresolvedWrites.isNotEmpty()) return null
-        if (facts.commands.isEmpty() && facts.paths.isEmpty() && facts.domains.isEmpty()) return null
+        if (facts.commands.isEmpty() && facts.paths.isEmpty() && facts.domains.isEmpty() && facts.specifiers.isEmpty()) return null
         var decisive: PermissionRule? = null
         for (cmd in facts.commands) {
             val rule = rules.firstOrNull { m.matchesCommand(it, cmd) }
@@ -161,6 +162,10 @@ object PolicyEngine {
         }
         for (domain in facts.domains) {
             val rule = rules.firstOrNull { m.matchesDomain(it, domain) } ?: return null
+            decisive = decisive ?: rule
+        }
+        for (specifier in facts.specifiers) {
+            val rule = rules.firstOrNull { m.matchesSpecifier(it, facts.tool, specifier) } ?: return null
             decisive = decisive ?: rule
         }
         return decisive
@@ -213,6 +218,7 @@ object PolicyEngine {
         val unresolvedWrites: List<String>,
         val paths: List<PathAccess>,
         val domains: List<String>,
+        val specifiers: List<String>,
     ) {
         val untrusted: Boolean get() = untrustedRaw.isNotEmpty()
 
@@ -250,6 +256,7 @@ object PolicyEngine {
                     unresolvedWrites = unresolved,
                     paths = ask.paths.map { it.copy(path = GuestPath(normalize(it.path.value))) } + redirectWrites,
                     domains = ask.domains,
+                    specifiers = ask.specifiers,
                 )
             }
 

@@ -324,6 +324,19 @@ class SubagentToolsTest {
         }
     }
 
+    @Test fun `custom agent types are listed in the description within a budget`() {
+        val profile = HarnessProfile(ModelFamily.Claude, EditStyle.StrReplace)
+        assertFalse(AgentTool.description(profile).contains("这个项目还定义了"))
+        val many = (1..35).map { AgentType("t$it", if (it == 1) "很长".repeat(200) else "说明 $it\n第二行") }
+        val text = AgentToolOf(many).description(profile)
+        assertTrue(text.contains("- t1："))
+        assertTrue("单条说明截断", text.contains("…"))
+        assertTrue("换行压成空格", text.contains("说明 2 第二行"))
+        assertTrue(text.contains("- t30："))
+        assertFalse("最多列 30 种", text.contains("- t31："))
+        assertTrue(text.contains("另有 5 种未列出"))
+    }
+
     @Test fun `descriptions explain roles fork and background semantics across profiles`() {
         for (family in ModelFamily.entries) {
             val profile = HarnessProfile(family, EditStyle.StrReplace)

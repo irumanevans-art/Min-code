@@ -1,5 +1,7 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.policy.PermissionRule
+import dev.min.agent.policy.PolicyContext
 import dev.min.agent.policy.PolicyEngine
 import dev.min.agent.policy.Verdict
 import dev.min.agent.protocol.ApprovalId
@@ -18,6 +20,7 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
+import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.Search
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
@@ -121,7 +124,31 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
     // alwaysAsk 先于权限引擎：模式（含 bypass）与规则都不能替人批准这类调用
     private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict =
         if (p.tool.traits.alwaysAsk) Verdict.Ask
-        else PolicyEngine.evaluate(ask, p.tool.traits.readOnly, rt.state.value.settings.mode)
+        else PolicyEngine.evaluate(ask, p.tool.traits.readOnly, policyContext())
+
+    private var parsedFromRules: List<RuleEntry>? = null
+    private var parsedFromSession: List<RuleEntry>? = null
+    private var parsedRules: List<PermissionRule> = emptyList()
+
+    /**
+     * 判定用的上下文：日志里的规则快照 + 本会话「总是允许」的规则、当前模式与 cwd、宿主按**解析后**路径给的分级。
+     * 规则列表只在快照或会话规则变了时重新解析：折叠只在变化时换掉这两个列表，所以比引用就够；解析不了的规则跳过（读取时已记过说明）。
+     */
+    private fun policyContext(): PolicyContext {
+        val s = rt.state.value
+        if (s.rules !== parsedFromRules || s.sessionRules !== parsedFromSession) {
+            parsedRules = (s.rules + s.sessionRules).mapNotNull(PermissionRule::from)
+            parsedFromRules = s.rules
+            parsedFromSession = s.sessionRules
+        }
+        return PolicyContext(
+            mode = s.settings.mode,
+            rules = parsedRules,
+            cwd = s.settings.cwd,
+            home = deps.memoryHome ?: DEFAULT_HOME,
+            scopeOf = deps.host.fs::scopeOf,
+        )
+    }
 
     private suspend fun runOne(turnId: TurnId, p: Prepared) {
         val ready = when (p) {
@@ -134,7 +161,13 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
             is Verdict.Allow -> execute(turnId, ready)
             Verdict.Ask -> {
                 val approvalId = ApprovalId(deps.ids.next("ap"))
-                rt.commit(listOf(ApprovalRequested(turnId, approvalId, ready.call.callId, ask)), Durability.Sync)
+                // 「总是允许」的建议与踩底线的原因随审批一起落盘：界面据此给按钮、给解释，重启后照样有
+                val context = policyContext()
+                val suggested = if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
+                rt.commit(
+                    listOf(ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context))),
+                    Durability.Sync,
+                )
                 // 等的是日志里的答复，不是回调：界面（或通知栏）写入 ApprovalResolved 后状态一变就往下走
                 val resolved = rt.state.first { s -> s.phaseOf(ready.call.callId) !is CallPhase.AwaitingApproval }
                 when (val phase = resolved.phaseOf(ready.call.callId)) {
@@ -189,6 +222,9 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
     }
 
     companion object {
+        /** 宿主没给主目录时（内核测试）规则里 `~/` 相对的目录 */
+        private val DEFAULT_HOME = GuestPath("/root")
+
         const val TRUNCATED_MESSAGE =
             "没有执行：你的回复撞上了输出长度上限，这次工具调用的参数可能不完整。请缩小改动范围或分几次调用后重试。"
 

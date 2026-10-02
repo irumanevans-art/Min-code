@@ -1,6 +1,8 @@
 package dev.min.agent.kernel
 
 import dev.min.agent.context.MemoryLoader
+import dev.min.agent.ext.config.RuleSpecKind
+import dev.min.agent.ext.config.SettingsLoader
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.Effort
@@ -17,6 +19,9 @@ import dev.min.agent.spi.Durability
 import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InputReceived
+import dev.min.agent.spi.PermissionRulesLoaded
+import dev.min.agent.spi.RuleEntry
+import dev.min.agent.spi.RuleKindData
 import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.MemoryLoaded
@@ -108,6 +113,27 @@ class SessionRuntime private constructor(
      * 会话创建时读一次记忆文件，快照写进日志（[MemoryLoaded]）；之后系统提示只从这份快照拼，会话内冻结。
      * 什么都没读到、也没有要告诉人的说明时不写事件。
      */
+    /**
+     * 会话创建时读一次 settings 各层的权限规则，快照写进日志（[PermissionRulesLoaded]），会话内冻结（与记忆同理）。
+     * 没有主目录（[KernelDeps.memoryHome] 为 null：内核测试、嵌入场景）就不读；什么都没读到、也没有说明时不写事件。
+     */
+    private suspend fun loadPermissionRules() {
+        val home = deps.memoryHome ?: return
+        val snapshot = SettingsLoader.load(deps.host.fs, state.value.created.cwd, home)
+        val rules = snapshot.merged.ruleSpecs().map { spec ->
+            RuleEntry(
+                kind = when (spec.kind) {
+                    RuleSpecKind.Allow -> RuleKindData.Allow
+                    RuleSpecKind.Ask -> RuleKindData.Ask
+                    RuleSpecKind.Deny -> RuleKindData.Deny
+                },
+                text = spec.text, source = spec.source, baseDir = spec.baseDir,
+            )
+        }
+        if (rules.isEmpty() && snapshot.notes.isEmpty()) return
+        commit(listOf(PermissionRulesLoaded(rules, snapshot.notes)), Durability.Sync)
+    }
+
     private suspend fun loadMemory() {
         val home = deps.memoryHome ?: return
         val memory = MemoryLoader.load(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
@@ -240,12 +266,14 @@ class SessionRuntime private constructor(
             scope: CoroutineScope,
             initial: List<SessionEvent> = emptyList(),
             loadMemory: Boolean = true,
+            loadSettings: Boolean = true,
             hub: SessionHub? = null,
         ): SessionRuntime {
             val log = store.create(header)
             val records = log.append(listOf(created) + initial, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
             if (loadMemory) runtime.loadMemory()
+            if (loadSettings) runtime.loadPermissionRules()
             return runtime
         }
 

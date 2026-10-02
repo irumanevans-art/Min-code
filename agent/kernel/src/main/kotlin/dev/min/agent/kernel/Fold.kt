@@ -7,6 +7,9 @@ import dev.min.agent.spi.ForkSeeded
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.Role
 import dev.min.agent.spi.SessionEffect
+import dev.min.agent.spi.PermissionRulesLoaded
+import dev.min.agent.spi.RuleEntry
+import dev.min.agent.spi.RuleKindData
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.SubagentSpawned
 import dev.min.agent.protocol.TurnId
@@ -130,8 +133,13 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 is ApprovalChoice.Deny -> CallPhase.Denied(choice.note)
                 ApprovalChoice.Once, is ApprovalChoice.Always -> CallPhase.Approved
             }
-            updateCall(t.turnId, call.callId) { resolved }
+            val always = (e.choice as? ApprovalChoice.Always)?.rule
+            updateCall(t.turnId, call.callId) { resolved }.let { s ->
+                if (always == null) s
+                else s.copy(sessionRules = s.sessionRules + RuleEntry(RuleKindData.Allow, always, SESSION_RULE_SOURCE, s.settings.cwd))
+            }
         }
+        is PermissionRulesLoaded -> copy(rules = e.rules)
         is ToolEffectPending -> updateCall(e.turnId, e.callId) { phase ->
             check(phase == CallPhase.Planned || phase == CallPhase.Approved) {
                 "${e.callId} 处于 $phase，不能开始副作用"
@@ -194,6 +202,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
     }
     return next.copy(lastSeq = record.seq)
 }
+
+/** 「总是允许」攒下的规则的来源名（审计时显示「是本会话里你允许的」） */
+const val SESSION_RULE_SOURCE = "session"
 
 /** 子 agent 的报告进了收件箱：记下它对应的子回合已交付，补发与去重据此跳过 */
 private fun SessionState.reported(origin: InputOrigin): Map<SessionId, ChildSummary> {

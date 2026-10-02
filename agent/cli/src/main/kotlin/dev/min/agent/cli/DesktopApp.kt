@@ -8,6 +8,10 @@ import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
 import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.kernel.SessionHub
+import dev.min.agent.tools.AgentType
+import dev.min.agent.tools.AgentToolOf
+import dev.min.agent.kernel.AgentCatalog
+import dev.min.agent.ext.config.ClaudeConfigLoader
 import dev.min.agent.llm.Wire
 import dev.min.agent.llm.anthropic.AnthropicMessagesClient
 import dev.min.agent.llm.catalog.Catalog
@@ -21,7 +25,6 @@ import dev.min.agent.spi.Secret
 import dev.min.agent.spi.Secrets
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.spi.Tool
-import dev.min.agent.tools.AgentTool
 import dev.min.agent.tools.AskUserQuestionTool
 import dev.min.agent.tools.BashTool
 import dev.min.agent.tools.EditTool
@@ -45,11 +48,13 @@ import java.util.UUID
  * 桌面宿主的工具表。顺序就是发给模型的顺序，属于稳定前缀：只往末尾追加，不重排、不删除
  * （docs/agent/07-工程规范.md 第 10 条），否则所有会话的缓存前缀一起失效。
  */
-internal val DESKTOP_TOOLS: List<Tool<*>> = listOf(
+internal fun desktopTools(customAgents: List<AgentType> = emptyList()): List<Tool<*>> = listOf(
     ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
-    AgentTool, SendMessageTool, TaskStopTool,
+    AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
 )
+
+internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 
 /**
  * 桌面宿主的组合根：把内核与各个端口实现装在一起（docs/agent/02-总体架构.md §2：构造注入，一处组装）。
@@ -59,6 +64,8 @@ internal class DesktopApp(
     private val args: CliArgs,
     private val scope: CoroutineScope,
     private val home: Path = Path.of(System.getProperty("user.home"), ".min-agent"),
+    /** 找 `~/.claude/`（settings、CLAUDE.md、agents）的主目录。测试传临时目录，免得读到开发机上的真实配置 */
+    private val claudeHome: Path = Path.of(System.getProperty("user.home")),
 ) {
     private val paths = DesktopPaths(workspace = args.cwd, scratchRoot = home.resolve("root"))
     private val store = FileSessionStore(home.resolve("sessions"), { System.currentTimeMillis() })
@@ -67,7 +74,20 @@ internal class DesktopApp(
     private val provider = selection.provider
     private val profile = selection.profile
     private val keyEnv = selection.keyEnv
-    private val hub by lazy { SessionHub(store, deps(), scope, HUB_LIMITS) }
+    private var hubInstance: SessionHub? = null
+
+    /**
+     * 第一次要用时才建：先按 cwd 读一遍 Claude Code 配置，把 `.claude/agents/` 的自定义子 agent 交给 Hub、列进 Agent 工具的说明。
+     * 一个 CLI 进程只服务一个项目目录，所以读一次就够；权限规则与记忆由内核在每个会话创建时各自快照。
+     */
+    private suspend fun hub(): SessionHub = hubInstance ?: run {
+        val config = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome)
+        val catalog = AgentCatalog.of(config.agents)
+        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) })
+        SessionHub(store, deps(tools), scope, HUB_LIMITS, catalog.definitions).also { hubInstance = it }
+    }
+
+    private val userHome get() = paths.guestOfHost(claudeHome)
 
     /** 凭证只从环境变量读、只进请求头；这里不打印、不落盘 */
     private val secrets = Secrets { providerId ->
@@ -81,7 +101,7 @@ internal class DesktopApp(
     suspend fun records(sessionId: SessionId, fromSeq: Long): List<EventRecord> =
         requireNotNull(store.open(sessionId)).read(fromSeq).toList()
 
-    private fun deps(): KernelDeps {
+    private fun deps(tools: List<Tool<*>>): KernelDeps {
         // Exec 端口为整个 Hub 共用，句柄的随机 id 保证日志互不覆盖。
         val logDir = Files.createDirectories(home.resolve("exec-logs"))
         val transport = UrlConnectionTransport()
@@ -98,7 +118,7 @@ internal class DesktopApp(
                 check(ref == profile.ref) { "桌面 CLI 目前只配置了 ${profile.ref}，会话要的是 $ref" }
                 ResolvedModel(profile, client)
             },
-            tools = DESKTOP_TOOLS,
+            tools = tools,
             host = HostPorts(
                 fs = paths.fs,
                 search = JvmSearch(paths.fs),
@@ -118,18 +138,18 @@ internal class DesktopApp(
             platform = platformDescription(),
             zone = ZoneId.systemDefault(),
             // 与 CC 读同一份 ~/.claude/CLAUDE.md：桌面上和 Claude Code 对照评测时两边看到的用户说明一致
-            memoryHome = paths.guestOfHost(Path.of(System.getProperty("user.home"))),
+            memoryHome = userHome,
         )
     }
 
     suspend fun openSession(): SessionRuntime {
         args.resume?.let { id ->
             val sessionId = SessionId(id)
-            return hub.open(sessionId)
+            return hub().open(sessionId)
                 ?: throw UsageException("找不到会话 $id")
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
-        return hub.create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
+        return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
     }
 
     private fun platformDescription(): String {

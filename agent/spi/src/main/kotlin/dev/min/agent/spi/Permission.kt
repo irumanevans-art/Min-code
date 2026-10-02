@@ -52,6 +52,11 @@ data class PermissionAsk(
     val paths: List<PathAccess> = emptyList(),
     val commands: List<CommandAccess> = emptyList(),
     val domains: List<String> = emptyList(),
+    /**
+     * 按名字限定的规则对着它匹配：`Agent(Explore)` 的 `Explore`、以后 `Skill(名字)` 的名字。
+     * 只有用名字（而不是路径 / 命令 / 域名）区分调用的工具才填
+     */
+    val specifiers: List<String> = emptyList(),
 )
 
 /** 人（或规则、hook……）对一次审批给的答复 */

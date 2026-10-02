@@ -79,7 +79,7 @@ class DesktopSubagentTest {
             val home = tmp.newFolder("home").toPath()
             val cwd = tmp.newFolder("work").toPath()
             val firstScope = scope()
-            val app = DesktopApp(args(server, cwd), firstScope, home)
+            val app = DesktopApp(args(server, cwd), firstScope, home, claudeHome = home.resolve("claude-home"))
             val parent = app.openSession()
             parent.send(ClientMsgId("first"), listOf(TextPart("CLI_FOREGROUND")))
             val done = parent.state.first { it.turn == null && it.lastTurn != null }
@@ -96,7 +96,7 @@ class DesktopSubagentTest {
             assertTrue(toolNames.containsAll(listOf("Agent", "SendMessage", "TaskStop")))
             firstScope.cancel()
 
-            val resumedApp = DesktopApp(args(server, cwd, parent.sessionId.value), scope(), home)
+            val resumedApp = DesktopApp(args(server, cwd, parent.sessionId.value), scope(), home, claudeHome = home.resolve("claude-home"))
             val resumed = resumedApp.openSession()
             assertEquals(parent.sessionId, resumed.sessionId)
             assertEquals(childId, resumed.state.value.children.keys.single())
@@ -125,7 +125,7 @@ class DesktopSubagentTest {
         }.use { server ->
             val home = tmp.newFolder("home").toPath()
             val cwd = tmp.newFolder("work").toPath()
-            val app = DesktopApp(args(server, cwd), scope(), home)
+            val app = DesktopApp(args(server, cwd), scope(), home, claudeHome = home.resolve("claude-home"))
             val parent = app.openSession()
             parent.send(ClientMsgId("background"), listOf(TextPart("CLI_BACKGROUND")))
             val done = parent.state.first { it.turn == null && it.reports().isNotEmpty() }
