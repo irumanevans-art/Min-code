@@ -213,11 +213,11 @@ class FrontmatterTest {
     }
 
     @Test
-    fun `a block scalar indentation indicator is not guessed`() {
+    fun `a block scalar indentation indicator fixes the content indent`() {
         val fm = parse("a: |2", "    text", "name: kept")
-        assertNull(fm.fields["a"])
+        assertEquals("  text\n", fm.scalar("a"))
         assertEquals("kept", fm.scalar("name"))
-        assertTrue(fm.notes.single().contains("缩进指示符"))
+        assertTrue(fm.notes.isEmpty())
     }
 
     @Test

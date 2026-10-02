@@ -52,7 +52,8 @@ commands 只进斜杠菜单；settings 里的 permissions 交给 policy，env / 
   CC 对仓库根文件属主的检查端口做不到，没做；managed 层 `/x` 规则的锚点（取 managed 文件目录）、managed 下的 `.claude/skills|agents`
   位置、commands 在 user 与 project 之间的优先级，文档都没写，是照类比做的选择；frontmatter 里 YAML 不合法时整个 frontmatter 被丢（照 skills 文档的说法），
   真实的 CC 可能更宽容（例如对未加引号的 `: ` 自动加引号重试），没有对着 CC 二进制验证。
-- **解析边界**：settings 按严格 JSON 读（不接受注释与尾逗号）；frontmatter 不支持锚点 / 别名 / 标签与块标量的缩进指示符；
+- **解析边界**：settings 按严格 JSON 读（不接受注释与尾逗号）；frontmatter 不支持锚点 / 别名 / 标签，重复键与未加引号的 `: `
+  按坏 YAML 整体丢弃（与 js-yaml 等主流解析器一致）；
   单个定义文件上限 1 MiB；符号链接目录在 commands / agents 的递归里不跟随（skills 的目录链接跟随一层）。
 - **只校验形状不校验语义**：规则文本不解析（交给 policy，解析失败由调用方记 note）；hooks 的事件名与结构、`model` / `effort` 的取值不校验。
 - 读一次、不监视文件变化。
