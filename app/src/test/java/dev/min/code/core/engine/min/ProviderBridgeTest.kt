@@ -51,14 +51,35 @@ class ProviderBridgeTest {
         assertNotNull(selectProvider(profile.copy(apiFormat = ApiFormat.OPENAI_RESPONSES), "model", catalog).notice)
         assertThrows(IllegalArgumentException::class.java) { selectProvider(profile, " ", catalog) }
     }
-    @Test fun subscriptionNeverProvidesEvenExistingApiProfile() {
+    @Test fun subscriptionModeDoesNotHideApiProfiles() {
+        // 设计 10.2 拍板 3：会话绑定自己的档，订阅凭证本来就不在 ApiProfile 里，所以订阅模式不影响 Min 用 API 档
         val settings = AppSettings(profiles = listOf(profile), activeProfileId = profile.id, claudeAuth = ClaudeAuthMode.SUBSCRIPTION)
-        val e = assertThrows(IllegalStateException::class.java) { availableAgentProfile(settings) }
-        assertTrue(e.message!!.contains("官方 CLI"))
+        assertEquals(listOf(profile), usableAgentProfiles(settings))
+        assertEquals(profile, defaultAgentProfile(settings, null, null))
     }
-    @Test fun activeProfileAndMissingProfile() {
-        assertEquals(profile, availableAgentProfile(AppSettings(profiles = listOf(profile), activeProfileId = "missing")))
-        assertThrows(IllegalStateException::class.java) { availableAgentProfile(AppSettings()) }
+    @Test fun profilesWithoutKeyAreNotUsable() {
+        val noKey = profile.copy(id = "empty", token = "")
+        assertEquals(listOf(profile), usableAgentProfiles(AppSettings(profiles = listOf(noKey, profile))))
+        assertNull(defaultAgentProfile(AppSettings(profiles = listOf(noKey)), "empty", "empty"))
+    }
+    @Test fun defaultProfilePrefersRequestedThenLastUsedThenActive() {
+        val a = profile.copy(id = "a"); val b = profile.copy(id = "b"); val c = profile.copy(id = "c")
+        val s = AppSettings(profiles = listOf(a, b, c), activeProfileId = "c")
+        assertEquals(b, defaultAgentProfile(s, "b", "a"))
+        assertEquals(a, defaultAgentProfile(s, null, "a"))
+        assertEquals(c, defaultAgentProfile(s, null, null))
+        assertEquals(c, defaultAgentProfile(s, "gone", "gone2"))
+        assertNull(defaultAgentProfile(AppSettings(), null, null))
+    }
+    @Test fun secretsAreFetchedPerProfileAndFollowEdits() = kotlinx.coroutines.runBlocking {
+        var current: AppSettings? = AppSettings(profiles = listOf(profile))
+        val secrets = agentSecrets { current }
+        assertEquals("not-for-descriptor", secrets.apiKey("user")!!.reveal())
+        assertNull(secrets.apiKey("other"))
+        current = AppSettings(profiles = listOf(profile.copy(token = "rotated")))
+        assertEquals("rotated", secrets.apiKey("user")!!.reveal())
+        current = null
+        assertNull(secrets.apiKey("user"))
     }
     @Test fun bundledCatalogLoadsInAppUnitTests() { assertTrue(Catalog.bundled().models.isNotEmpty()) }
 }
