@@ -7,6 +7,7 @@ import dev.min.agent.spi.TaskDeleted
 import dev.min.agent.spi.TaskPatch
 import dev.min.agent.spi.TaskRecord
 import dev.min.agent.spi.TaskUpdated
+import dev.min.agent.spi.dependencyProblem
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 
@@ -34,37 +35,10 @@ internal fun SessionState.taskProblem(e: SessionEvent): String? = when (e) {
     is TaskCreated ->
         if (e.taskId != nextTaskId()) "任务编号 ${e.taskId} 不是下一个编号 ${nextTaskId()}" else null
     is TaskUpdated -> {
-        if (tasks.none { it.id == e.taskId }) "没有任务 ${e.taskId}" else dependencyProblem(e.taskId, e.patch)
+        if (tasks.none { it.id == e.taskId }) "没有任务 #${e.taskId}" else taskBoard().dependencyProblem(e.taskId, e.patch)
     }
-    is TaskDeleted -> if (tasks.none { it.id == e.taskId }) "没有任务 ${e.taskId}" else null
+    is TaskDeleted -> if (tasks.none { it.id == e.taskId }) "没有任务 #${e.taskId}" else null
     else -> null
-}
-
-private fun SessionState.dependencyProblem(id: String, patch: TaskPatch): String? {
-    // 一边加一边在工作副本上判环：同一次补丁里先后加的两条边合起来成环也要拦住
-    var graph = tasks.associate { it.id to it.blocks }
-    fun add(from: String, to: String): String? {
-        if (from !in graph) return "没有任务 $from"
-        if (to !in graph) return "没有任务 $to"
-        if (reaches(graph, to, from)) return "任务 $from 与 $to 之间会形成循环依赖"
-        graph = graph + (from to (graph.getValue(from) + to).distinct())
-        return null
-    }
-    patch.addBlocks.forEach { b -> add(id, b)?.let { return it } }
-    patch.addBlockedBy.forEach { a -> add(a, id)?.let { return it } }
-    return null
-}
-
-/** 沿「阻塞」边能否从 [from] 走到 [to]（含 from == to） */
-private fun reaches(graph: Map<String, List<String>>, from: String, to: String): Boolean {
-    val seen = mutableSetOf<String>()
-    val stack = ArrayDeque(listOf(from))
-    while (stack.isNotEmpty()) {
-        val at = stack.removeLast()
-        if (at == to) return true
-        if (seen.add(at)) stack.addAll(graph[at].orEmpty())
-    }
-    return false
 }
 
 /** 把一条任务事件折进状态；别的事件原样返回。合法性由调用方（[taskProblem]）先判 */

@@ -97,3 +97,37 @@ data class TaskUpdated(val taskId: String, val patch: TaskPatch) : SessionEvent
 @Serializable
 @SerialName("task_deleted")
 data class TaskDeleted(val taskId: String) : SessionEvent
+
+/**
+ * 给任务 [id] 加上 [patch] 里的依赖会不会出问题：目标任务不存在、指向自己、或形成循环（A 等 B、B 又等 A，
+ * 两个任务就永远都做不了）。没问题返回 null。工具在回答模型之前用它校验，内核在落事件之前再用它把关——
+ * 两边是同一份判断，所以工具说「可以」的，内核不会再拒。
+ * 一边加一边在工作副本上判环：同一次补丁里先后加的两条边合起来成环也要拦住。
+ */
+fun TaskBoard.dependencyProblem(id: String, patch: TaskPatch): String? {
+    var graph = tasks.associate { it.id to it.blocks }
+    fun add(from: String, to: String): String? {
+        if (from !in graph) return "没有任务 #$from"
+        if (to !in graph) return "没有任务 #$to"
+        if (reaches(graph, to, from)) {
+            return if (from == to) "任务 #$from 不能依赖它自己" else "任务 #$from 与 #$to 之间会形成循环依赖（#$to 已经直接或间接在等 #$from）"
+        }
+        graph = graph + (from to (graph.getValue(from) + to).distinct())
+        return null
+    }
+    patch.addBlocks.forEach { b -> add(id, b)?.let { return it } }
+    patch.addBlockedBy.forEach { a -> add(a, id)?.let { return it } }
+    return null
+}
+
+/** 沿「阻塞」边能否从 [from] 走到 [to]（含 from == to） */
+private fun reaches(graph: Map<String, List<String>>, from: String, to: String): Boolean {
+    val seen = mutableSetOf<String>()
+    val stack = ArrayDeque(listOf(from))
+    while (stack.isNotEmpty()) {
+        val at = stack.removeLast()
+        if (at == to) return true
+        if (seen.add(at)) stack.addAll(graph[at].orEmpty())
+    }
+    return false
+}
