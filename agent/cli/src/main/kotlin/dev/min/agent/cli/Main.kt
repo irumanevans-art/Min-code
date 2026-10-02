@@ -63,14 +63,29 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
         return if (result.completed) 0 else 1
     }
 
-    System.err.println("输入要说的话，回车发送；输入 /exit 退出。")
+    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/exit 退出。")
     while (true) {
         print("\n> ")
         val line = stdin.readLine() ?: return 0
-        when (line.trim()) {
-            "" -> continue
-            "/exit" -> return 0
+        val trimmed = line.trim()
+        when {
+            trimmed.isEmpty() -> continue
+            trimmed == "/exit" -> return 0
+            trimmed == "/compact" || trimmed.startsWith("/compact ") -> {
+                if (runtime.compact(trimmed.removePrefix("/compact").trim())) {
+                    runtime.awaitIdle()
+                    System.err.println(compactionNote(runtime.state.value))
+                }
+            }
             else -> say(line)
         }
     }
+}
+
+/** /compact 之后给人看的一句话：压缩成了没有、原文在哪 */
+internal fun compactionNote(state: dev.min.agent.kernel.SessionState): String {
+    val ended = state.lastTurn
+    if (ended?.trigger != dev.min.agent.spi.TurnTrigger.Compact) return "没有压缩（有回合在跑）"
+    val failure = (ended.outcome as? dev.min.agent.spi.TurnOutcome.Failed)?.message
+    return failure ?: "已压缩较早的对话；原文在 ${state.compaction?.transcriptPath ?: "会话附件"}"
 }

@@ -7,7 +7,11 @@ import dev.min.agent.spi.ForkSeeded
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.Role
 import dev.min.agent.spi.SessionEffect
+import dev.min.agent.spi.CompactionFailed
+import dev.min.agent.spi.CompactionStarted
+import dev.min.agent.spi.ContextCompacted
 import dev.min.agent.spi.PermissionRulesLoaded
+import dev.min.agent.spi.ToolOutputsMasked
 import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.RuleKindData
 import dev.min.agent.spi.SubagentOrigin
@@ -145,6 +149,32 @@ fun SessionState.apply(record: EventRecord): SessionState {
             }
         }
         is PermissionRulesLoaded -> copy(rules = e.rules)
+        is ToolOutputsMasked -> updateTurn(e.turnId) { it }.copy(
+            masked = masked + e.outputs.associate { it.callId to it.path },
+            lastRequestUsage = null,
+        )
+        is CompactionStarted -> updateTurn(e.turnId) { it }.let { s ->
+            check(s.openCompaction == null) { "上一次压缩 ${s.openCompaction} 还没结束就开始了 ${e.compactionId}" }
+            s.copy(openCompaction = e.compactionId)
+        }
+        is ContextCompacted -> {
+            check(openCompaction == e.compactionId) { "结束的压缩 ${e.compactionId} 与进行中的 $openCompaction 对不上" }
+            check(history.any { it.messageId == e.through }) { "压缩的边界 ${e.through} 不在历史里" }
+            updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
+                compaction = CompactionView(e.summary, e.through, e.transcriptPath),
+                openCompaction = null,
+                compactionFailures = 0,
+                lastRequestUsage = null,
+                presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
+            )
+        }
+        is CompactionFailed -> {
+            check(openCompaction == e.compactionId) { "失败的压缩 ${e.compactionId} 与进行中的 $openCompaction 对不上" }
+            updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
+                openCompaction = null,
+                compactionFailures = compactionFailures + 1,
+            )
+        }
         is ToolEffectPending -> updateCall(e.turnId, e.callId) { phase ->
             check(phase == CallPhase.Planned || phase == CallPhase.Approved) {
                 "${e.callId} 处于 $phase，不能开始副作用"

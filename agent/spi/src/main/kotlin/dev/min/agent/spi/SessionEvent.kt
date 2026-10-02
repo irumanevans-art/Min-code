@@ -110,6 +110,9 @@ enum class TurnTrigger {
 
     /** 子会话的第一个回合：父会话刚委派过来（分身没有新输入，靠这个开局） */
     @SerialName("delegated") Delegated,
+
+    /** 用户手动压缩（`/compact [焦点]`）：这一回合只做压缩，不调模型回答 */
+    @SerialName("compact") Compact,
 }
 
 @Serializable

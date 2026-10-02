@@ -1,6 +1,7 @@
 package dev.min.agent.kernel
 
 import dev.min.agent.protocol.TextPart
+import dev.min.agent.spi.CompactionFailed
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.SessionEvent
@@ -48,7 +49,9 @@ fun closeTurn(state: SessionState, outcome: TurnOutcome): List<SessionEvent> {
                 ToolOutcome(turn.turnId, call.callId, notStartedResult()),
             )
         }
-    return outcomes + unplanned + TurnEnded(
+    // 压缩做到一半（进程被杀、用户中断）：补一条失败，模型视图不变，下次请求前按阈值重新判断
+    val compaction = listOfNotNull(state.openCompaction?.let { CompactionFailed(turn.turnId, it, "压缩在完成前被中断") })
+    return outcomes + unplanned + compaction + TurnEnded(
         turnId = turn.turnId,
         outcome = outcome,
         usage = turn.usage,

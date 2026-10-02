@@ -14,6 +14,7 @@ import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.AssistantMessageCompleted
+import dev.min.agent.spi.CompactionTrigger
 import dev.min.agent.spi.AssistantSegment
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
@@ -43,6 +44,7 @@ import kotlin.coroutines.cancellation.CancellationException
 internal class TurnRunner(private val rt: SessionRuntime) {
     private val deps = rt.deps
     private val tools = ToolExecutor(rt)
+    private val compactor = Compactor(rt, ::assemble)
 
     /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
     suspend fun run(trigger: TurnTrigger): Boolean {
@@ -50,8 +52,12 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val startedAt = deps.clock.nowMs()
         rt.commit(listOf(TurnStarted(turnId, trigger)), Durability.Sync)
         return try {
-            promote(setOf(Delivery.Queue, Delivery.Steer))
-            loop(turnId)
+            if (trigger == TurnTrigger.Compact) {
+                compactOnly(turnId)
+            } else {
+                promote(setOf(Delivery.Queue, Delivery.Steer))
+                loop(turnId)
+            }
             val usage = rt.state.value.turn?.usage ?: Usage()
             rt.commit(listOf(TurnEnded(turnId, TurnOutcome.Completed, usage, deps.clock.nowMs() - startedAt)), Durability.Sync)
             true
@@ -73,6 +79,14 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 e.addSuppressed(inner)
             }
             false
+        }
+    }
+
+    /** 用户手动压缩的回合：只做摘要，不让模型回答；收件箱里的输入留给下一回合 */
+    private suspend fun compactOnly(turnId: TurnId) {
+        val model = deps.models.resolve(rt.state.value.settings.model)
+        if (!compactor.force(turnId, model, CompactionTrigger.Manual, rt.takeCompactInstructions())) {
+            throw TurnAbort("压缩没有成功：" + (rt.state.value.let { s -> if (CompactionPlanner.summarizeBoundary(s) == null) "还没有可以压缩的对话" else "详见压缩记录" }))
         }
     }
 
@@ -115,6 +129,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     private suspend fun requestWithRetry(turnId: TurnId): ModelStreamEvent.Completed {
         val requestId = RequestId(deps.ids.next("req"))
         var attempt = 1
+        // 发请求前按阈值遮蔽 / 摘要（docs/agent/detail/压缩设计.md §2）；撞墙时再压缩一次，只重试一次
+        compactor.beforeRequest(turnId, deps.models.resolve(rt.state.value.settings.model))
+        var overflowCompacted = false
         while (true) {
             val state = rt.state.value
             val model = deps.models.resolve(state.settings.model)
@@ -127,13 +144,22 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 val gate = rt.requestGate
                 return if (gate == null) stream(turnId, requestId, model, request) else gate.withPermit { stream(turnId, requestId, model, request) }
             } catch (e: ModelException) {
-                val willRetry = e.retryable && attempt < deps.retry.maxAttempts
+                val overflowRetry = e.kind == ModelFailureKind.ContextOverflow && !overflowCompacted
+                val willRetry = overflowRetry || e.retryable && attempt < deps.retry.maxAttempts
                 rt.commit(
                     listOf(
                         ModelRequestFailed(turnId, requestId, attempt, e.kind, e.message ?: e.kind.name, e.httpStatus, willRetry),
                     ),
                     Durability.Sync,
                 )
+                if (overflowRetry) {
+                    overflowCompacted = true
+                    if (!compactor.force(turnId, model, CompactionTrigger.Overflow, null)) {
+                        throw TurnAbort("上下文超长，压缩也没能腾出空间。可以开一个新会话，或换上下文更大的模型。", e.kind)
+                    }
+                    attempt++
+                    continue
+                }
                 if (!willRetry) throw TurnAbort("模型请求失败（${e.kind}）：${e.message}", e.kind)
                 delay(deps.retry.delayMs(attempt, e.retryAfterMs))
                 attempt++

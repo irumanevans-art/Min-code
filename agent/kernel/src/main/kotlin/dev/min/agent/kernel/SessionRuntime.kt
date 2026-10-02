@@ -220,6 +220,24 @@ class SessionRuntime private constructor(
         return true
     }
 
+    @Volatile
+    private var compactInstructions: String? = null
+
+    /**
+     * 手动压缩（界面的 `/compact [焦点]`）：空闲时开一个只做压缩的回合，返回 true；已有回合在跑返回 false。
+     * 焦点只在内存里交给那个回合，回合开始时随 CompactionStarted 落盘
+     */
+    fun compact(instructions: String? = null): Boolean {
+        synchronized(turnLock) {
+            if (turnJob?.isActive == true || _state.value.turn != null) return false
+            compactInstructions = instructions?.takeIf { it.isNotBlank() }
+        }
+        startTurnIfIdle(TurnTrigger.Compact)
+        return true
+    }
+
+    internal fun takeCompactInstructions(): String? = compactInstructions.also { compactInstructions = null }
+
     /**
      * 空闲时把收件箱里的输入开成一回合（界面的「打断后跑排队那条」，崩溃恢复后补交、由用户确认后处理的报告）。
      * 收件箱空、或已有回合在跑时什么都不做

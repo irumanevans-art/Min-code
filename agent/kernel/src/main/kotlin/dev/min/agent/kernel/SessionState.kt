@@ -70,9 +70,22 @@ data class SessionState(
     val rules: List<RuleEntry> = emptyList(),
     /** 本会话里人选「总是允许」攒下的规则，按答复顺序；来源记为 session */
     val sessionRules: List<RuleEntry> = emptyList(),
-    /** 最近一次完成的模型请求的用量：界面据它算「上下文用了多少」（输入 + 缓存读写 ÷ 窗口）；还没请求过为 null */
+    /**
+     * 最近一次完成的模型请求的用量：界面据它算「上下文用了多少」（输入 + 缓存读写 ÷ 窗口）；还没请求过为 null。
+     * 压缩改写了模型视图之后清空——那次的用量已经不代表下一次请求的大小
+     */
     val lastRequestUsage: Usage? = null,
+    /** 模型视图里被遮蔽的工具结果 → 原文所在的会话附件（docs/agent/detail/压缩设计.md §1） */
+    val masked: Map<CallId, String?> = emptyMap(),
+    /** 最后一次摘要：模型视图里到 [CompactionView.through] 为止的对话换成它 */
+    val compaction: CompactionView? = null,
+    /** 连续失败的自动压缩次数，到 3 次熔断（成功一次清零） */
+    val compactionFailures: Int = 0,
+    /** 开始了还没有结局的压缩（进程死在中途时恢复用） */
+    val openCompaction: String? = null,
 )
+
+data class CompactionView(val summary: String, val through: MessageId, val transcriptPath: String?)
 
 /** 父会话视角的一个子 agent：委派时的样子 + 哪些回合的报告已经交付 */
 data class ChildSummary(
