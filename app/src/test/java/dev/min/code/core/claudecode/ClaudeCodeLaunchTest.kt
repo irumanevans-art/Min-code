@@ -132,6 +132,13 @@ class ClaudeCodeLaunchTest {
     }
 
     @Test
+    fun `fork subagents are on like in the interactive CLI, and a provider env can turn them off`() {
+        assertEquals("1", env()["CLAUDE_CODE_FORK_SUBAGENT"])
+        assertEquals("1", claudeSessionEnv(ClaudeCodeManager.SessionOptions(), profile = null, relayBaseUrl = null, netSnap = null)["CLAUDE_CODE_FORK_SUBAGENT"])
+        assertEquals("0", env(profile.copy(env = mapOf("CLAUDE_CODE_FORK_SUBAGENT" to "0")))["CLAUDE_CODE_FORK_SUBAGENT"])
+    }
+
+    @Test
     fun `a subscription session gets no credentials, no base url and no provider env`() {
         val env = claudeSessionEnv(ClaudeCodeManager.SessionOptions(), profile = null, relayBaseUrl = null, netSnap = null)
         listOf("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN").forEach {
