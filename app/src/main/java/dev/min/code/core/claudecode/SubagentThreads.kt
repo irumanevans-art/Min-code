@@ -16,6 +16,21 @@ internal val SUBAGENT_TOOLS = setOf("Agent", "Task")
 /** 没写 subagent_type 时 CLI 用的就是它 */
 internal const val DEFAULT_SUBAGENT_TYPE = "general-purpose"
 
+/**
+ * 「分叉」子 agent 的类型名（Agent 工具的 `subagent_type: "fork"`，2.1.285 起的内置类型，
+ * 由 `CLAUDE_CODE_FORK_SUBAGENT` / 实验开关打开）：继承父会话的完整上下文，**一律后台跑**
+ * （task_started 带 `is_backgrounded:true`），模型固定沿用父会话的。
+ *
+ * 帧上和别的后台子 agent 没有两样，只是类型叫 fork —— 这个词原样给用户看不友好，
+ * 显示处一律过 [subagentTypeName]；数据里（任务表、线程、气泡的 handoff）仍存原值，
+ * 递给模型的话（relayToSubagentPrompt）也用原值。
+ */
+const val FORK_SUBAGENT_TYPE = "fork"
+
+/** 类型名给人看的样子：fork 换成 [forkName]（调用方按语言传），其余类型（general-purpose / Explore…）原样 */
+fun subagentTypeName(type: String, forkName: String): String =
+    if (type == FORK_SUBAGENT_TYPE) forkName else type
+
 data class SubagentThread(
     /** 发起它的 Agent 调用；切换条和视图都按它认人（历史会话里没有任务表，只有这个一直在） */
     val toolUseId: String,
@@ -131,15 +146,17 @@ internal fun List<ChatItem>.mapToolCallDeep(
 }
 
 /**
- * 切换条上每个子 agent 叫什么：就是它的类型。同一类型不止一个时按发起顺序补序号
+ * 切换条上每个子 agent 叫什么：就是它的类型（[typeName] 换成给人看的说法，默认原样）。
+ * 同一类型不止一个时按发起顺序补序号
  * （三个 general-purpose 并排也认得出谁是谁，又不用把「在干什么」挤进这一行——那句在视图顶上）。
- * 序号只在 [threads] 这一批里数：条上看得见几个就数几个。
+ * 序号只在 [threads] 这一批里数：条上看得见几个就数几个。数序号认原始类型，不认换过名的显示字。
  */
-fun switcherLabels(threads: List<SubagentThread>): List<String> {
+fun switcherLabels(threads: List<SubagentThread>, typeName: (String) -> String = { it }): List<String> {
     val total = threads.groupingBy { it.agentType }.eachCount()
     val seen = HashMap<String, Int>()
     return threads.map { thread ->
         val type = thread.agentType
-        if (total.getValue(type) < 2) type else "$type ${seen.merge(type, 1, Int::plus)}"
+        val name = typeName(type)
+        if (total.getValue(type) < 2) name else "$name ${seen.merge(type, 1, Int::plus)}"
     }
 }

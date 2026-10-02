@@ -92,6 +92,53 @@ class SubagentTranscriptsTest {
         assertEquals(listOf("toolu_A"), sub.map { it.parentToolUseId })
     }
 
+    /**
+     * fork 子 agent 的记录（CLI 2.1.286 + CLAUDE_CODE_FORK_SUBAGENT=1 实录的形状）：开头不是任务提示词，
+     * 而是继承来的父会话尾巴 —— 一行 `fork-context-ref`、**发起它自己的那次 Agent 调用**
+     * （同一个 tool_use id）、以及那次调用的 tool_result（"Fork started — processing in background"）
+     * 和 `<fork-boilerplate>` 指令。这几行不是它干的活；挂回 Agent 卡的话，卡里会多出一张
+     * 和自己同 id 的 Agent 卡，切换条上冒出一个不存在的第二个线程。
+     */
+    @Test
+    fun `fork 的记录里继承来的自己那次调用和它的结果不挂回卡上`() = runBlocking {
+        val forkUse =
+            """{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_A","name":"Agent","input":{"description":"fork probe","prompt":"touch it","subagent_type":"fork"}}]}}"""
+        val forkResult =
+            """{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"toolu_A","type":"tool_result","content":[{"type":"text","text":"Async agent launched"}]}]},"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a875040e6250a7661","description":"fork probe","prompt":"touch it"}}"""
+        val linux = linuxDir(
+            subagentLines = listOf(
+                """{"type":"fork-context-ref","agentId":"a875040e6250a7661","parentSessionId":"$session","contextLength":10}""",
+                sideLine("assistant", """[{"type":"tool_use","id":"toolu_A","name":"Agent","input":{"description":"fork probe","prompt":"touch it","subagent_type":"fork"}}]"""),
+                sideLine(
+                    "user",
+                    """[{"type":"tool_result","tool_use_id":"toolu_A","content":[{"type":"text","text":"Fork started — processing in background"}]},{"type":"text","text":"<fork-boilerplate>
+You are a worker fork.
+</fork-boilerplate>
+
+Your directive: touch it"}]""",
+                ),
+                sideLine("assistant", """[{"type":"tool_use","id":"toolu_S","name":"Bash","input":{"command":"touch it"}}]"""),
+                sideLine("user", """[{"type":"tool_result","tool_use_id":"toolu_S","content":"ok"}]"""),
+                sideLine("assistant", """[{"type":"text","text":"FORK_DONE"}]"""),
+            ),
+            mainLines = listOf(forkUse, forkResult),
+        )
+        val events = ClaudeCodeSessionStore().loadTranscript(linux, session)
+        val sub = events.filterIsInstance<ClaudeCodeEvent.Subagent>()
+        assertEquals(
+            "只剩它自己干的三件事：Bash 调用、结果、最后一句话",
+            listOf("ToolUse:toolu_S", "ToolResult:toolu_S", "AssistantText"),
+            sub.map {
+                when (val e = it.event) {
+                    is ClaudeCodeEvent.ToolUse -> "ToolUse:${e.id}"
+                    is ClaudeCodeEvent.ToolResult -> "ToolResult:${e.toolUseId}"
+                    else -> e::class.simpleName
+                }
+            },
+        )
+        assertEquals(setOf("toolu_A"), sub.map { it.parentToolUseId }.toSet())
+    }
+
     @Test
     fun `哪里都认不出归属的整份跳过`() = runBlocking {
         val linux = linuxDir(

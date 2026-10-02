@@ -23,13 +23,24 @@ import java.time.Instant
  * 向 stdout 写事件帧。
  *
  * 下面的 schema 对照官方 CLI 二进制（@anthropic-ai/claude-code，最近一次完整校对
- * v2.1.283；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
+ * v2.1.286；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
  * 2.1.273–283 对照结论：Min 发的 control_request 子类型、启动参数和 env 都没改名或移除；
  * 新增的要跟的只有错误应答的 `error_code` 和一直没接的 `control_cancel_request`（见 [ClaudeCodeEvent.ControlCancel]），
  * 新 system 子类型全是内部帧（见 NOISE_SYSTEM_SUBTYPES）。
  * 2.1.284–285 对照结论：can_use_tool 的字段一个没变，Min 发的子类型、参数也没动；行为上变的是
  * 后台子 agent 的权限请求改走 stdio（之前自动拒），可能在主线程 result 之后还挂着、也可能几条同时挂着，
  * 见 ClaudeCodePermissionQueue.kt。
+ * 2.1.285–286 对照结论（npm 包 sdk-tools.d.ts 逐字相同；原生二进制抽 zod 段落差分 + 真 CLI 探针）：
+ * task_started / task_progress / task_updated / task_notification 四个 schema、can_use_tool 请求与应答、
+ * control_request 各子类型、system 各 subtype、--permission-mode 取值一个都没变；286 新增的字段全是 @internal 遥测
+ * （result 的 first_request_input_tokens、initialize 的 sdkMcpServerManifestsOrigin 等），不用接。
+ * 「后台任务等批准时显示已完成」的修复是 CLI 内部的状态文本分类器，帧上没有对应变化 ——
+ * 子 agent 在等批准 = 有一条 agent_id 非空、没答的 can_use_tool（见 ClaudeCodePermissionQueue.kt）。
+ * fork 子 agent（Agent 的 `subagent_type:"fork"`，-p 下要 CLAUDE_CODE_FORK_SUBAGENT=1 才开，Min 不设，用户可在供应商自定义 env 里加）
+ * 帧上与别的后台子 agent 一样：task_started{subagent_type:"fork", is_backgrounded:true, spawn_depth, prompt}、
+ * Agent 结果 async_launched、子帧顶层多带 subagent_type / task_description、can_use_tool 带 agent_id（= task_id），
+ * 且**主线程 result 之后**才来。有两处要小心：task_progress 的 description 是进度而不是任务说明（见 [ClaudeCodeEvent.TaskEvent.progress]）；
+ * fork 的 subagents/agent-*.jsonl 开头是继承来的父会话尾巴（fork-context-ref + 发起它自己的 Agent 调用和结果），回放要丢掉（SubagentTranscripts.kt）。
  * 未知字段/类型一律宽容忽略以保持向后兼容，但**必填字段一个都不能少** —— CLI 对入站帧做严格校验，
  * 缺字段会被静默丢弃或报 "canUseTool returned a schema-invalid permission result"。
  */
@@ -237,7 +248,15 @@ sealed interface ClaudeCodeEvent {
     )
 
     /** 其他 system 提示（compact_boundary / api_error / model_fallback ...） */
-    data class SystemNote(val text: String, val isError: Boolean = false) : ClaudeCodeEvent
+    data class SystemNote(
+        val text: String,
+        val isError: Boolean = false,
+        /**
+         * 这条提示说的是哪个任务（task_notification 的 task_id）。Manager 凭它去任务表查描述，
+         * 把「子任务完成」改成「子任务「描述」完成」—— 并行派出几个 agent 时，光说「子任务完成」分不出是哪一个。
+         */
+        val taskId: String? = null,
+    ) : ClaudeCodeEvent
 
     /**
      * 安全分类器 / 配额等把模型换掉。Note 仍会进聊天流；这条让 Manager 同步 chip 状态。
@@ -304,6 +323,12 @@ sealed interface ClaudeCodeEvent {
         /** running / completed / failed / killed / paused / pending；null 表示这一帧不改状态 */
         val status: String? = null,
         val description: String? = null,
+        /**
+         * task_progress 的 `description`：它此刻在干什么（"Running Create fork_marker.txt"），
+         * **不是**任务本身的说明 —— 并进 [description] 的话，任务的名字会被一句进度顶掉
+         * （权限卡、完成通知里点名都会点错）。
+         */
+        val progress: String? = null,
         val subagentType: String? = null,
         /** `local_bash`（后台 shell）/ `local_agent`（子 agent）/ 其它；只有 task_started 带 */
         val taskType: String? = null,
@@ -504,6 +529,21 @@ fun parseClaudeCodeEvents(line: String): List<ClaudeCodeEvent> {
         else -> emptyList()
     }
 }
+
+/**
+ * 丢掉子 agent 记录里**继承来的**「发起它自己的那次调用」：fork 子 agent 的 transcript 开头是父会话的尾巴 ——
+ * 带着它自己的 Agent 调用（同一个 tool_use id）和那次调用的 tool_result（"Fork started — processing in background"）。
+ * 这不是它干的活，挂回 Agent 卡就成了卡里一张和自己同 id 的 Agent 卡（切换条上多出一个不存在的线程）。
+ *
+ * 普通子 agent 的记录里不会出现发起自己的那个 id，所以对它们无害。
+ * （CLI 2.1.286 + CLAUDE_CODE_FORK_SUBAGENT=1 实录，meta.json 里 `isFork:true`。）
+ */
+private fun List<ClaudeCodeEvent>.withoutInheritedLaunch(parentToolUseId: String?): List<ClaudeCodeEvent> =
+    if (parentToolUseId.isNullOrBlank()) this
+    else filterNot {
+        (it is ClaudeCodeEvent.ToolUse && it.id == parentToolUseId) ||
+            (it is ClaudeCodeEvent.ToolResult && it.toolUseId == parentToolUseId)
+    }
 
 /**
  * 给一批事件套上「这是子 agent 干的」这层信封。[parentToolUseId] 为空表示主线程，原样返回。
@@ -1298,6 +1338,7 @@ fun parseTranscriptLine(line: String, sidechainParent: String? = null): List<Cla
             val at = obj.str("timestamp")?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
             expandAssistantMessage(obj)
                 .map { if (at != null && it is ClaudeCodeEvent.AssistantText) it.copy(at = at) else it }
+                .withoutInheritedLaunch(parent)
                 .underSubagent(parent)
         }
 
@@ -1305,7 +1346,7 @@ fun parseTranscriptLine(line: String, sidechainParent: String? = null): List<Cla
             // 一条 user 行要么是真的用户输入，要么是回填的 tool_result，二者不会混
             val toolResults = expandToolResults(obj)
             if (toolResults.isNotEmpty()) {
-                toolResults.underSubagent(parent)
+                toolResults.withoutInheritedLaunch(parent).underSubagent(parent)
             } else if (parent == null) {
                 when (val parsed = transcriptUserPayload(obj)) {
                     is TranscriptUser.Human -> listOf(ClaudeCodeEvent.UserMessage(parsed.text))
@@ -1479,7 +1520,7 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
             listOf(
                 ClaudeCodeEvent.TaskEvent(
                     taskId = id,
-                    description = obj.str("description"),
+                    progress = obj.str("description"),
                     subagentType = obj.str("subagent_type"),
                     totalTokens = usage?.int("total_tokens"),
                     toolUses = usage?.int("tool_uses"),
@@ -1626,7 +1667,7 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
             val tail = summary?.takeIf { it.isNotBlank() }?.let("："::plus).orEmpty()
             listOfNotNull(
                 taskEvent,
-                ClaudeCodeEvent.SystemNote("子任务$label$tail", isError = rawStatus == "failed"),
+                ClaudeCodeEvent.SystemNote("子任务$label$tail", isError = rawStatus == "failed", taskId = id),
             )
         }
 

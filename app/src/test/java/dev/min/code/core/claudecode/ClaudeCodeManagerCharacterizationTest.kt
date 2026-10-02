@@ -228,7 +228,7 @@ class ClaudeCodeManagerCharacterizationTest {
             assertEquals(ChatItem.ToolCall.Status.Done, agent.status)
             assertTrue(agent.result!!.contains("The report follows:\n  4\n"))
             assertTrue(agent.subItems.isEmpty())
-            assertEquals("note: 子任务完成：4", lines[4])
+            assertEquals("note: 子任务「Return number 4」完成：4", lines[4])
             assertEquals("assistant: The subagent returned \"4\". [6192ms, 153 tok]", lines[5])
             // 成功收尾的子任务不占位
             assertTrue(s.tasks.isEmpty())

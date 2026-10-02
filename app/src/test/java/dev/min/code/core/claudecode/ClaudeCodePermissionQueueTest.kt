@@ -72,6 +72,28 @@ class ClaudeCodePermissionQueueTest {
     }
 
     @Test
+    fun `a fork's request is marked as a fork and falls back to the readable type name`() {
+        val tasks = listOf(
+            task("t-fork", background = true).copy(description = "audit auth", subagentType = "fork"),
+            task("t-bare", background = true).copy(description = "", subagentType = "fork"),
+        )
+        val named = permissionOriginOf(request("a", agentId = "t-fork"), tasks, queueSize = 1) { if (it == "fork") "分身" else it }
+        assertEquals("audit auth", named.agent)
+        assertTrue(named.fork)
+        assertTrue(named.background)
+        // 没有描述时退回类型名，且是换过名的那个
+        val bare = permissionOriginOf(request("b", agentId = "t-bare"), tasks, queueSize = 1) { if (it == "fork") "分身" else it }
+        assertEquals("分身", bare.agent)
+        // 普通子 agent 不算 fork
+        val plain = permissionOriginOf(
+            request("c", agentId = "t-plain"),
+            listOf(task("t-plain", background = true).copy(subagentType = "general-purpose")),
+            queueSize = 1,
+        )
+        assertEquals(false, plain.fork)
+    }
+
+    @Test
     fun `agent_id is read off can_use_tool`() {
         val event = parseClaudeCodeEvents(canUseTool("r1", agentId = "a8c6")).single()
         assertEquals("a8c6", (event as ClaudeCodeEvent.PermissionRequest).agentId)
