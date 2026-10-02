@@ -52,3 +52,6 @@
 - v1 增量（2026-10-02）：新增事件 `permission_rules_loaded`（会话创建时的权限规则快照，`spi/PolicyEvents.kt`）；
   `approval_requested` 新增可选字段 `suggestedRule`、`floorReason`；`PermissionAsk` 新增可选字段 `specifiers`。含新事件的日志旧版本打不开。
 - v1 增量（2026-10-01）：`ToolResult` 新增可选字段 `effects`（工具结果对会话的副作用，`mode_change` 由内核在同一次追加里紧跟写对应的 `settings_changed`；`report_delivered` 只在折叠时记账；空时不落盘）。
+- v1 增量（2026-10-02）：新增事件 `skills_loaded`（会话创建时的 skill / command 清单快照，`spi/SkillEvents.kt`）：
+  `entries`（每项 `name`、`description`、`path`，可选 `kind`（默认 skill，另有 `command`）、`whenToUse`、`source`、`argumentHint`、`arguments`、`disableModelInvocation`、`userInvocable`；**不含正文**）、
+  可选 `listingBudgetFraction` / `listingMaxDescChars`（当时 settings 的清单预算，没设不落盘）、可选 `notes`。含新事件的日志旧版本打不开。

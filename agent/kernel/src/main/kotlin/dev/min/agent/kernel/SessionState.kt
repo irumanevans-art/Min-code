@@ -27,6 +27,7 @@ import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.SessionCreated
+import dev.min.agent.spi.SkillsLoaded
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.UserQuestion
@@ -58,6 +59,11 @@ data class SessionState(
      * 有默认值：没有记忆文件的会话日志里根本没有那条事件
      */
     val memory: List<LoadedMemoryFile> = emptyList(),
+    /**
+     * 会话创建时冻结的 skill 清单（最后一条 SkillsLoaded，连同当时的清单预算设置）。系统提示里的清单只由它拼，会话内不变。
+     * 没有 skill 的会话日志里没有那条事件，此时为 null
+     */
+    val skills: SkillsLoaded? = null,
     /** 展示用事件同样由日志折叠；不进入 modelMessages，避免 UI 说明改变模型历史。 */
     val presentation: List<SessionPresentation> = emptyList(),
     /** 子会话的来历；根会话为 null（docs/agent/detail/子agent设计.md §2.2） */

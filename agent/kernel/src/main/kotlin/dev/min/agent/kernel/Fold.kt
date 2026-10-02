@@ -32,6 +32,7 @@ import dev.min.agent.spi.QuestionAnswered
 import dev.min.agent.spi.QuestionAsked
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SettingsChanged
+import dev.min.agent.spi.SkillsLoaded
 import dev.min.agent.spi.ToolEffectPending
 import dev.min.agent.spi.ToolOutcome
 import dev.min.agent.spi.ToolPlanned
@@ -72,6 +73,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         // 取最后一条：以后显式刷新记忆时再追加一条，整份替换前一份快照
         is MemoryLoaded -> copy(memory = e.files)
+        // 同记忆：取最后一条，以后显式刷新时整份替换
+        is SkillsLoaded -> copy(skills = e)
         is SettingsChanged -> copy(
             settings = settings.copy(
                 cwd = e.cwd ?: settings.cwd,
