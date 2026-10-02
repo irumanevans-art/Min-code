@@ -249,3 +249,6 @@ fun ModelRequest.allText(): String = messages.joinToString("\n") { m ->
         }
     }
 }
+
+suspend fun TestKernel.newRoot(model: ModelRef = T_MODEL, mode: PermissionMode = PermissionMode.Default) =
+    hub.create(GuestPath("/workspace"), model, mode)
