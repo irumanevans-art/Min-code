@@ -71,6 +71,9 @@ class MemoryMarkdownTest {
 
         assertEquals(listOf("src/**", "*.md"), MemoryMarkdown.splitFrontmatter("---\npaths: src/**, *.md\n---\nx").paths)
         assertEquals(listOf("a/**", "b/**"), MemoryMarkdown.splitFrontmatter("---\npaths: [\"a/**\", 'b/**']\n---\nx").paths)
+        // 花括号里的逗号是同一个 glob 的一部分，不拆
+        assertEquals(listOf("src/**/*.{ts,tsx}", "docs/**"), MemoryMarkdown.splitFrontmatter("---\npaths: src/**/*.{ts,tsx}, docs/**\n---\nx").paths)
+        assertEquals(listOf("src/**/*.{ts,tsx}"), MemoryMarkdown.splitFrontmatter("---\npaths: [src/**/*.{ts,tsx}]\n---\nx").paths)
         // 与键同缩进的列表也是合法 YAML
         assertEquals(listOf("x/**"), MemoryMarkdown.splitFrontmatter("---\npaths:\n- x/**\n---\n").paths)
     }

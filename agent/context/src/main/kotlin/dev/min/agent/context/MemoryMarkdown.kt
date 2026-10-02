@@ -53,13 +53,34 @@ internal object MemoryMarkdown {
         if (at < 0) return emptyList()
         val inline = PATHS_KEY.matchEntire(yaml[at])!!.groupValues[1].trim()
         val raw = if (inline.isNotEmpty()) {
-            inline.removePrefix("[").removeSuffix("]").split(',')
+            splitOutsideBraces(if (inline.startsWith("[") && inline.endsWith("]")) inline.substring(1, inline.length - 1) else inline)
         } else {
             yaml.drop(at + 1)
                 .takeWhile { it.isBlank() || LIST_ITEM.matches(it) }
                 .mapNotNull { LIST_ITEM.matchEntire(it)?.groupValues?.get(1) }
         }
         return raw.map { it.trim().trim('"', '\'') }.filter { it.isNotEmpty() }
+    }
+
+    /** 按逗号拆，花括号里的逗号不算：带花括号后缀的扩展名写法是一个 glob，不是两个 */
+    private fun splitOutsideBraces(text: String): List<String> {
+        val parts = mutableListOf<String>()
+        val current = StringBuilder()
+        var depth = 0
+        for (c in text) {
+            when {
+                c == '{' -> depth++
+                c == '}' && depth > 0 -> depth--
+                c == ',' && depth == 0 -> {
+                    parts += current.toString()
+                    current.clear()
+                    continue
+                }
+            }
+            current.append(c)
+        }
+        parts += current.toString()
+        return parts
     }
 
     private fun isImportPath(path: String): Boolean = when {
