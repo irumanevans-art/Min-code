@@ -51,6 +51,21 @@ class FileSessionStore(private val root: Path, private val clock: Clock) : Sessi
         }
     }
 
+    /**
+     * 删掉整个会话目录（日志、附件——宿主把附件放在同一目录下）。先删日志文件：删到一半被杀时，
+     * 剩下的目录里没有日志，[list] 与 [open] 都当它不存在，不会冒出一个半残的会话。
+     */
+    override suspend fun delete(id: SessionId): Boolean = withContext(Dispatchers.IO) {
+        val file = eventsFile(id)
+        val dir = file.parent
+        if (!Files.exists(dir)) return@withContext false
+        Files.deleteIfExists(file)
+        Files.walk(dir).use { paths ->
+            paths.collect(java.util.stream.Collectors.toList()).sortedDescending().forEach { Files.deleteIfExists(it) }
+        }
+        true
+    }
+
     private fun eventsFile(id: SessionId): Path {
         // id 会变成目录名：只收安全字符，杜绝 `../` 之类把会话写到根目录外面
         require(SAFE_ID.matches(id.value)) { "非法会话 id：${id.value}" }

@@ -48,6 +48,7 @@
 - v1 增量（2026-10-01）：新增事件 `question_asked`、`question_answered`（向用户提问与答复，定义在 `spi/InteractionEvents.kt`）；含这两种事件的日志旧版本打不开。
 - v1 增量（2026-10-01）：新增事件 `subagent_spawned`、`subagent_origin`、`fork_seeded`（子 agent 与分身，定义在 `spi/SubagentEvents.kt`）；
   `input_received` 新增可选字段 `origin`（默认用户输入，不落盘）；`turn_started.trigger` 新增取值 `notification`、`delegated`。含这些的日志旧版本打不开。
+- v1 增量（2026-10-02）：`turn_ended.outcome` 的 `failed` 新增可选字段 `kind`（失败种类）；`turn_ended` 新增可选字段 `lastActivityAtMs`（回合最后一条事件的时间，进程被杀的回合靠它知道「中断于何时」）。旧日志缺字段照常读。
 - v1 增量（2026-10-02）：新增事件 `permission_rules_loaded`（会话创建时的权限规则快照，`spi/PolicyEvents.kt`）；
   `approval_requested` 新增可选字段 `suggestedRule`、`floorReason`；`PermissionAsk` 新增可选字段 `specifiers`。含新事件的日志旧版本打不开。
 - v1 增量（2026-10-01）：`ToolResult` 新增可选字段 `effects`（工具结果对会话的副作用，`mode_change` 由内核在同一次追加里紧跟写对应的 `settings_changed`；`report_delivered` 只在折叠时记账；空时不落盘）。

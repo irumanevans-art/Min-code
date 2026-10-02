@@ -33,7 +33,7 @@ internal suspend fun SessionRuntime.askUser(callId: CallId, questions: List<User
 internal fun SessionState.isAwaitingAnswer(questionId: QuestionId): Boolean =
     turn?.pendingQuestions?.any { it.questionId == questionId } == true
 
-internal fun SessionState.withQuestionAsked(e: QuestionAsked): SessionState {
+internal fun SessionState.withQuestionAsked(e: QuestionAsked, atMs: Long): SessionState {
     val t = checkNotNull(turn) { "没有进行中的回合却收到提问 ${e.questionId}" }
     check(t.turnId == e.turnId) { "提问属于 ${e.turnId}，当前回合是 ${t.turnId}" }
     val call = t.calls[e.callId] ?: error("回合 ${e.turnId} 里没有调用 ${e.callId}")
@@ -41,7 +41,7 @@ internal fun SessionState.withQuestionAsked(e: QuestionAsked): SessionState {
     check(call.phase is CallPhase.EffectPending) { "只有执行中的调用才能提问，${e.callId} 处于 ${call.phase}" }
     check(e.questionId !in t.questions) { "重复的提问 ${e.questionId}" }
     check(e.questions.isNotEmpty()) { "提问 ${e.questionId} 一道题都没有" }
-    val asked = AskedQuestion(e.questionId, e.callId, e.questions, outcome = null)
+    val asked = AskedQuestion(e.questionId, e.callId, e.questions, outcome = null, askedAtMs = atMs)
     return copy(turn = t.copy(questions = t.questions + (e.questionId to asked)))
 }
 

@@ -81,4 +81,10 @@ interface SessionStore {
     suspend fun create(header: LogHeader): SessionLog
     suspend fun open(id: SessionId): SessionLog?
     suspend fun list(): List<LogHeader>
+
+    /**
+     * 删掉一个会话的全部落盘内容（日志与同目录下的附件）。不存在返回 false。
+     * 默认不支持（返回 false）：只读的、测试用的存储不用实现；真正的存储（FileSessionStore）覆盖它
+     */
+    suspend fun delete(id: SessionId): Boolean = false
 }

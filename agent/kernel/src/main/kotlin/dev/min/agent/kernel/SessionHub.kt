@@ -30,7 +30,15 @@ import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.store.LOG_FORMAT_VERSION
+import dev.min.agent.protocol.ApprovalId
+import dev.min.agent.protocol.QuestionId
+import dev.min.agent.spi.PermissionAsk
+import dev.min.agent.spi.UserQuestion
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -42,6 +50,35 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
+
+/**
+ * 一条在等人的交互（审批或提问），带着它在子 agent 树里的位置：界面写「来自 Explore 的审批」、通知点开直达，都靠这几个字段。
+ * 答复写回 [session] 那个运行时（[SessionRuntime.answerApproval] / [SessionRuntime.answerQuestion]）
+ */
+data class HubPending(
+    val session: SessionId,
+    /** 这棵子 agent 树的根会话；根会话自己的交互 = [session] */
+    val root: SessionId,
+    /** 直接上级；根会话为 null */
+    val parent: SessionId?,
+    /** 子会话的类型（general-purpose / Explore / fork …）；根会话为 null */
+    val agentType: String?,
+    val atMs: Long,
+    val what: What,
+) {
+    sealed interface What {
+        data class Approval(
+            val approvalId: ApprovalId,
+            val callId: CallId,
+            val tool: String,
+            val ask: PermissionAsk,
+            val suggestedRule: String?,
+            val floorReason: String?,
+        ) : What
+
+        data class Question(val questionId: QuestionId, val callId: CallId, val questions: List<UserQuestion>) : What
+    }
+}
 
 /** 子 agent 的上限（手机默认；设计 §5） */
 data class HubLimits(
@@ -78,13 +115,79 @@ class SessionHub(
     /** 已经在盯着回合结局的子会话（每个只盯一次） */
     private val watched: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
 
-    /** 新建根会话 */
-    suspend fun create(cwd: GuestPath, model: ModelRef, mode: PermissionMode, effort: Effort? = null): SessionRuntime {
+    /** 盯着子会话回合结局的协程（每个子会话一个）；卸下会话时一并取消 */
+    private val watchJobs = ConcurrentHashMap<SessionId, Job>()
+
+    /** 每个在线会话一个：把它的状态汇总进 [online] / [running] / [pending] */
+    private val observers = ConcurrentHashMap<SessionId, Job>()
+    private val summaryLock = Any()
+    private val runningIds = HashSet<SessionId>()
+    private val pendingBySession = HashMap<SessionId, List<HubPending>>()
+
+    private val _online = MutableStateFlow<Set<SessionId>>(emptySet())
+    private val _running = MutableStateFlow<Set<SessionId>>(emptySet())
+    private val _pending = MutableStateFlow<List<HubPending>>(emptyList())
+
+    /** 在线（运行时驻留在内存里）的会话 */
+    val online: StateFlow<Set<SessionId>> = _online.asStateFlow()
+
+    /** 有回合在跑的会话。前台服务据此保活：非空就别让系统把进程收掉 */
+    val running: StateFlow<Set<SessionId>> = _running.asStateFlow()
+
+    /**
+     * 所有在线会话里在等人的审批与提问，按发起时间排。子 agent 的也在这里（设计 §7「审批上浮」）：
+     * 界面在根会话里内联显示、通知栏按它发通知，答复经 [get] 拿到对应会话的运行时写回去
+     */
+    val pending: StateFlow<List<HubPending>> = _pending.asStateFlow()
+
+    /** 新建根会话。[initial] 与 SessionCreated 一起写入（宿主的说明 Note 等），会话日志要么完整建好、要么不存在 */
+    suspend fun create(
+        cwd: GuestPath,
+        model: ModelRef,
+        mode: PermissionMode,
+        effort: Effort? = null,
+        initial: List<SessionEvent> = emptyList(),
+    ): SessionRuntime {
         val id = SessionId(deps.ids.next("s"))
         val header = LogHeader(LOG_FORMAT_VERSION, id, deps.clock.nowMs())
-        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort), deps, scope, hub = this)
-        runtimes[id] = runtime
+        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort), deps, scope, initial, hub = this)
+        register(runtime)
         return runtime
+    }
+
+    /**
+     * 卸下一个会话及它在线的整棵子树（运行时离开内存，日志不动，之后 [open] 能原样重开）。
+     * 子树里有回合在跑就拒绝（返回 false）：卸下会丢掉正在跑的协程，得先停下或等它跑完
+     */
+    suspend fun close(id: SessionId): Boolean {
+        val tree = subtreeOnline(id)
+        if (tree.isEmpty()) return false
+        if (tree.any { runtimes[it]?.state?.value?.turn != null }) return false
+        tree.forEach(::unload)
+        return true
+    }
+
+    /**
+     * 删除一个会话及它的全部后代（日志与附件）。先中断整棵树里在跑的回合并等它们收尾，再从叶子往根逐个删：
+     * 删到一半被杀时，留下的是完整的上半棵树，而不是一个找不到父会话的孤儿。返回根会话是否删掉了
+     */
+    suspend fun delete(root: SessionId): Boolean {
+        val headers = store.list()
+        val childrenOf = headers.filter { it.parent != null }.groupBy({ it.parent!! }, { it.sessionId })
+        val order = mutableListOf<SessionId>()
+        fun collect(id: SessionId) {
+            childrenOf[id].orEmpty().forEach(::collect)
+            order += id
+        }
+        collect(root)
+        for (id in order) runtimes[id]?.let { rt -> rt.interrupt(); rt.awaitIdle() }
+        for (id in order) unload(id)
+        var deletedRoot = false
+        for (id in order) {
+            val deleted = store.delete(id)
+            if (id == root) deletedRoot = deleted
+        }
+        return deletedRoot
     }
 
     /**
@@ -97,7 +200,7 @@ class SessionHub(
             runtimes[id]?.let { return@withLock it }
             val opened = SessionRuntime.open(store, id, deps, scope, hub = this) ?: return@withLock null
             if (opened.state.value.origin != null) opened.requestGate = childGate
-            runtimes[id] = opened
+            register(opened)
             opened
         } ?: return null
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
@@ -172,7 +275,7 @@ class SessionHub(
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, hub = this,
         )
         child.requestGate = childGate
-        runtimes[childId] = child
+        register(child)
         parent.commit(
             listOf(SubagentSpawned(turnId, callId, childId, type, fork, background, request.description, request.name)),
             Durability.Sync,
@@ -244,13 +347,71 @@ class SessionHub(
 
     // ---- 报告 ----
 
+    // ---- 在线集合与汇总 ----
+
+    private fun register(runtime: SessionRuntime) {
+        val id = runtime.sessionId
+        runtimes[id] = runtime
+        synchronized(summaryLock) { _online.value = _online.value + id }
+        observers[id] = scope.launch {
+            runtime.state.collect { s ->
+                synchronized(summaryLock) {
+                    if (s.turn != null) runningIds += id else runningIds -= id
+                    pendingBySession[id] = pendingOf(id, s)
+                    _running.value = runningIds.toSet()
+                    _pending.value = pendingBySession.values.flatten().sortedBy { it.atMs }
+                }
+            }
+        }
+    }
+
+    private fun unload(id: SessionId) {
+        observers.remove(id)?.cancel()
+        watchJobs.remove(id)?.cancel()
+        watched -= id
+        runtimes.remove(id)
+        synchronized(summaryLock) {
+            runningIds -= id
+            pendingBySession -= id
+            _online.value = _online.value - id
+            _running.value = runningIds.toSet()
+            _pending.value = pendingBySession.values.flatten().sortedBy { it.atMs }
+        }
+    }
+
+    /** [id] 与它在线的后代（按 SubagentOrigin.parent 往下找） */
+    private fun subtreeOnline(id: SessionId): List<SessionId> {
+        if (!runtimes.containsKey(id)) return emptyList()
+        val result = mutableListOf(id)
+        var i = 0
+        while (i < result.size) {
+            val parent = result[i++]
+            runtimes.values.filter { it.state.value.origin?.parent == parent }.forEach { result += it.sessionId }
+        }
+        return result
+    }
+
+    private fun pendingOf(id: SessionId, s: SessionState): List<HubPending> {
+        val t = s.turn ?: return emptyList()
+        val origin = s.origin
+        fun item(atMs: Long, what: HubPending.What) =
+            HubPending(id, origin?.root ?: id, origin?.parent, origin?.agentType, atMs, what)
+        val approvals = t.calls.values.mapNotNull { call ->
+            (call.phase as? CallPhase.AwaitingApproval)?.let { a ->
+                item(a.requestedAtMs, HubPending.What.Approval(a.approvalId, call.callId, call.tool, a.ask, a.suggestedRule, a.floorReason))
+            }
+        }
+        val questions = t.pendingQuestions.map { q -> item(q.askedAtMs, HubPending.What.Question(q.questionId, q.callId, q.questions)) }
+        return approvals + questions
+    }
+
     /**
      * 每个子会话只盯一次：它的每个回合结束都要把报告交给父会话。
      * [reconcile] 为真（打开已有会话时）：第一次看到的结局是上次进程留下的，补交但不自动开回合。
      */
     private fun watch(child: SessionRuntime, reconcile: Boolean) {
         if (!watched.add(child.sessionId)) return
-        scope.launch {
+        watchJobs[child.sessionId] = scope.launch {
             var first = reconcile
             child.state.map { it.lastTurn }.distinctUntilChanged().collect { ended ->
                 if (ended != null && child.sessionId !in awaitedInForeground) {

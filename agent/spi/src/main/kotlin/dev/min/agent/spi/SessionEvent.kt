@@ -251,7 +251,8 @@ data class ToolOutcome(
 @Serializable
 sealed interface TurnOutcome {
     @Serializable @SerialName("completed") data object Completed : TurnOutcome
-    @Serializable @SerialName("failed") data class Failed(val message: String) : TurnOutcome
+    /** [kind]：最后那次请求失败的种类（界面据此说「先检查供应商」「上下文已满」）；内核自身的错误为 null */
+    @Serializable @SerialName("failed") data class Failed(val message: String, val kind: ModelFailureKind? = null) : TurnOutcome
     @Serializable @SerialName("interrupted") data class Interrupted(val by: InterruptedBy) : TurnOutcome
 }
 
@@ -273,6 +274,11 @@ data class TurnEnded(
     val outcome: TurnOutcome,
     val usage: Usage,
     val durationMs: Long,
+    /**
+     * 回合里最后一条事件的时间。进程被杀后补的收尾事件本身发生在重开时，「中断于何时」要看这个；
+     * 旧日志没有它（null），界面退回用事件自己的时间
+     */
+    val lastActivityAtMs: Long? = null,
 ) : SessionEvent
 
 // ---- 给人看的 ----

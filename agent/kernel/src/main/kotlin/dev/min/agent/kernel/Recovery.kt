@@ -52,8 +52,9 @@ fun closeTurn(state: SessionState, outcome: TurnOutcome): List<SessionEvent> {
         turnId = turn.turnId,
         outcome = outcome,
         usage = turn.usage,
-        // 进程死了多久不可知（纯函数也不该去读时钟），记 0；界面用事件时间戳算「中断于何时」
+        // 进程死了多久不可知（纯函数也不该去读时钟），记 0；「中断于何时」看 lastActivityAtMs
         durationMs = 0,
+        lastActivityAtMs = turn.lastEventAtMs,
     )
 }
 

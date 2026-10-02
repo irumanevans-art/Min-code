@@ -59,7 +59,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.User)), Durability.Sync)
             throw e
         } catch (e: TurnAbort) {
-            rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败")), Durability.Sync)
+            rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind)), Durability.Sync)
             false
         } catch (e: TurnLimitReached) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit)), Durability.Sync)
@@ -134,7 +134,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     ),
                     Durability.Sync,
                 )
-                if (!willRetry) throw TurnAbort("模型请求失败（${e.kind}）：${e.message}")
+                if (!willRetry) throw TurnAbort("模型请求失败（${e.kind}）：${e.message}", e.kind)
                 delay(deps.retry.delayMs(attempt, e.retryAfterMs))
                 attempt++
             }
@@ -154,12 +154,12 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             when (event) {
                 is ModelStreamEvent.Started -> Unit
                 is ModelStreamEvent.TextDelta -> {
-                    rt.emitLive(LiveUpdate.Text(turnId, event.text))
+                    rt.emitLive(LiveUpdate.Text(turnId, requestId, event.text))
                     segments.add(event.text)
                 }
-                is ModelStreamEvent.ThinkingDelta -> rt.emitLive(LiveUpdate.Thinking(turnId, event.text))
-                is ModelStreamEvent.ToolCallStarted -> rt.emitLive(LiveUpdate.ToolCallStarted(turnId, event.index, event.name))
-                is ModelStreamEvent.ToolInputDelta -> rt.emitLive(LiveUpdate.ToolInput(turnId, event.index, event.partialJson))
+                is ModelStreamEvent.ThinkingDelta -> rt.emitLive(LiveUpdate.Thinking(turnId, requestId, event.text))
+                is ModelStreamEvent.ToolCallStarted -> rt.emitLive(LiveUpdate.ToolCallStarted(turnId, requestId, event.index, event.name))
+                is ModelStreamEvent.ToolInputDelta -> rt.emitLive(LiveUpdate.ToolInput(turnId, requestId, event.index, event.partialJson))
                 is ModelStreamEvent.Completed -> completed = event
             }
         }
@@ -224,7 +224,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 }
 
 /** 回合放弃（不可重试的模型错误、达到上限）。带给人看的原因 */
-internal class TurnAbort(message: String) : Exception(message)
+internal class TurnAbort(message: String, val kind: ModelFailureKind? = null) : Exception(message)
 
 /** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
 internal class TurnLimitReached : Exception()
