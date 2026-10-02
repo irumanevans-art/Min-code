@@ -1,0 +1,12 @@
+{
+  "model": "opus",
+  "permissions": {
+    "deny": [
+      "Bash(sudo *)",
+      "WebFetch(domain:internal-git.corp)"
+    ]
+  },
+  "env": {
+    "CORP_PROXY": "http://proxy.corp:3128"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "model": "user-model",
+  "permissions": {
+    "deny": [
+      "Read(.env)"
+    ]
+  }
+}

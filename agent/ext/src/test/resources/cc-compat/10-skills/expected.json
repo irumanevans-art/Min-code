@@ -1,0 +1,42 @@
+{
+  "comment": "skills：allowed-tools、disable-model-invocation、user-invocable、paths、context: fork、布尔各种写法 yes/off/on/0（CC skills 文档 §7.2：布尔可 yes/no/on/off/1/0）、用户级与项目级同名时用户胜（§7.3：~/.claude/skills/ > .claude/skills/）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "skills": [
+    {
+      "name": "commit",
+      "source": "project",
+      "description": "Creates a well-formed commit from staged changes",
+      "allowedTools": ["Bash(git add *)", "Bash(git commit *)"],
+      "disableModelInvocation": true,
+      "userInvocable": false
+    },
+    {
+      "name": "deploy",
+      "source": "project",
+      "description": "Deploys the web app to staging or production",
+      "whenToUse": "When the user asks to ship, deploy or roll out",
+      "allowedTools": ["Bash(npm run build)", "Bash(npm run deploy)"],
+      "disableModelInvocation": false,
+      "userInvocable": true,
+      "context": "fork",
+      "agent": "general-purpose",
+      "background": false,
+      "paths": ["apps/web/**", "packages/ui/**"],
+      "model": "sonnet"
+    },
+    {
+      "name": "lint",
+      "source": "user",
+      "description": "User-level lint and fix skill",
+      "disableModelInvocation": true,
+      "userInvocable": false
+    }
+  ],
+  "settings": {
+    "activeHookSources": []
+  },
+  "commands": [],
+  "agents": [],
+  "notes": ["lint", "覆盖"]
+}

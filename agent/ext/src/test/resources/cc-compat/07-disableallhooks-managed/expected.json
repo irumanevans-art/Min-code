@@ -1,0 +1,14 @@
+{
+  "comment": "disableAllHooks 写在 managed 层：managed 自己关则全部层都关（CC hooks 文档：「disableAllHooks: true 全关」，managed 层说了算）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "disableAllHooks": true,
+    "activeHookSources": [],
+    "hooks": {}
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": []
+}

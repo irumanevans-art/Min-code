@@ -1,0 +1,24 @@
+{
+  "comment": "cwd 在 git 仓库的子目录里：仓库根的 settings.local.json 也被读进来且同键冲突时仓库根胜（CC settings 文档「Where Claude Code keeps the local file」），但两层里的 /x 路径规则都锚在 cwd（「anchors at the session's primary working directory instead」）。cwd = /home/dev/work/acme/apps/web，仓库根 = /home/dev/work/acme。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme/apps/web",
+  "gitRoot": "/home/dev/work/acme",
+  "settings": {
+    "model": "root-local",
+    "permissions": {
+      "allow": ["Edit(apps/web/**)", "Bash(npm run build)", "Bash(make *)"],
+      "deny": ["Read(.env)"]
+    },
+    "rules": [
+      { "kind": "Allow", "text": "Bash(make *)", "source": "local", "baseDir": "/home/dev/work/acme/apps/web" },
+      { "kind": "Allow", "text": "Bash(npm run build)", "source": "local", "baseDir": "/home/dev/work/acme/apps/web" },
+      { "kind": "Allow", "text": "Edit(apps/web/**)", "source": "project", "baseDir": "/home/dev/work/acme/apps/web" },
+      { "kind": "Deny", "text": "Read(.env)", "source": "user", "baseDir": "/home/dev/.claude" }
+    ],
+    "activeHookSources": []
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": []
+}

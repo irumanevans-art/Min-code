@@ -1,0 +1,8 @@
+{
+  "model": "root-local",
+  "permissions": {
+    "allow": [
+      "Bash(make *)"
+    ]
+  }
+}

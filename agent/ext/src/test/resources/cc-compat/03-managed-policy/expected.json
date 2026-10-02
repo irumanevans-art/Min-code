@@ -1,0 +1,26 @@
+{
+  "comment": "managed 层 + managed-settings.d 碎片合并 + allowManagedPermissionRulesOnly（CC 文档：managed 是唯一规则源；managed 碎片单值后者覆盖、列表合并去重、嵌套对象逐键合并）。锚点取 managed 文件所在目录。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "model": "opus",
+    "env": {
+      "CORP_PROXY": "http://corp:3128",
+      "USER_KEY": "u"
+    },
+    "allowManagedPermissionRulesOnly": true,
+    "permissions": {
+      "deny": ["WebFetch(domain:internal.corp)", "Bash(sudo *)"]
+    },
+    "rules": [
+      { "kind": "Allow", "text": "Read", "source": "managed", "baseDir": "/etc/claude-code" },
+      { "kind": "Deny", "text": "WebFetch(domain:internal.corp)", "source": "managed", "baseDir": "/etc/claude-code" },
+      { "kind": "Deny", "text": "Bash(sudo *)", "source": "managed", "baseDir": "/etc/claude-code" }
+    ],
+    "activeHookSources": []
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": ["allowManagedPermissionRulesOnly", "2 条权限规则"]
+}

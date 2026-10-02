@@ -1,0 +1,45 @@
+{
+  "comment": "frontmatter 更多真实写法：与 key 同缩进的 `- item` 列表、`>-` 折叠去尾换行、`>` 折叠里更深缩进的行保持字面、BOM + CRLF（Windows 用户）、没有 description 时取正文第一个非空行（保留 Markdown 的 #）、frontmatter 里的整行与行尾注释、agent 的 flow 风格 `tools: [a, b]`。全部是 YAML 标准行为，CC 用的真 YAML 解析器也应读出同样结果。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "skills": [
+    {
+      "name": "comments",
+      "description": "Ignores comment lines",
+      "allowedTools": ["Read", "Grep"]
+    },
+    {
+      "name": "crlf-bom",
+      "description": "Written on Windows with a BOM and CRLF",
+      "userInvocable": false
+    },
+    {
+      "name": "folded-chomp",
+      "description": "Folded with strip chomp joins lines.",
+      "whenToUse": "First line\n  indented stays\nLast line\n"
+    },
+    {
+      "name": "heading-fallback",
+      "description": "# Release notes helper"
+    },
+    {
+      "name": "same-indent",
+      "allowedTools": ["Read", "Grep", "Bash(git diff *)"]
+    }
+  ],
+  "agents": [
+    {
+      "name": "flowy",
+      "description": "Agent with flow-style tools and memory",
+      "tools": ["Read", "Grep", "Bash(npm test)"],
+      "memory": "project",
+      "color": "cyan",
+      "omitClaudeMd": true
+    }
+  ],
+  "settings": {
+    "activeHookSources": []
+  },
+  "commands": [],
+  "notes": []
+}

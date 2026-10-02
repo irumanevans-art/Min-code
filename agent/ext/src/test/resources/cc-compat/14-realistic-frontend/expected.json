@@ -1,0 +1,212 @@
+{
+  "comment": "「真实感」大样本：像一个真实前端项目的 .claude/——managed 锁模型、四层 settings、30 条权限规则、三层 hooks、4 个 agents（含子目录与同名覆盖）、4 个 skills（含 fork / paths / disable-model-invocation）、3 个 commands（含子目录与被 skill 压掉的一个）、CLAUDE.md（读取器不读，只放着）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "defaultMode": "acceptEdits",
+    "model": "opus",
+    "outputStyle": "Explanatory",
+    "env": {
+      "EDITOR": "vim",
+      "LANG": "en_US.UTF-8",
+      "NODE_ENV": "development",
+      "VITE_API_BASE": "http://localhost:5173/api",
+      "CORP_PROXY": "http://proxy.corp:3128"
+    },
+    "permissions": {
+      "additionalDirectories": ["../design-tokens"]
+    },
+    "rules": [
+      { "kind": "Deny", "text": "Bash(sudo *)", "source": "managed", "baseDir": "/etc/claude-code" },
+      { "kind": "Deny", "text": "WebFetch(domain:internal-git.corp)", "source": "managed", "baseDir": "/etc/claude-code" },
+      { "kind": "Allow", "text": "Bash(npm run test -- -w)", "source": "local", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Edit(.claude/**)", "source": "local", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Bash(npm run *)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Bash(npm ci)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Bash(npm install *)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Bash(npx prettier --check *)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Bash(node scripts/*)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Edit(src/**)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Edit(tests/**)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Edit(storybook/**)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Write(src/**)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Read", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "WebFetch(domain:developer.mozilla.org)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "WebFetch(domain:react.dev)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Ask", "text": "Bash(npm publish *)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Ask", "text": "Bash(git push *)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Deny", "text": "Bash(rm -rf *)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Deny", "text": "Bash(git push --force *)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Deny", "text": "Read(secrets/**)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Bash(git status)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Bash(git diff *)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Bash(git log *)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Bash(git show *)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Read", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Grep", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Glob", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Deny", "text": "Read(~/.ssh/**)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Deny", "text": "Read(.env*)", "source": "user", "baseDir": "/home/dev/.claude" }
+    ],
+    "activeHookSources": ["user", "project"],
+    "hooks": {
+      "user": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "$HOME/.claude/hooks/welcome.sh"
+              }
+            ]
+          }
+        ],
+        "Notification": [
+          {
+            "matcher": "idle_prompt",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "notify-send 'Claude needs you'"
+              }
+            ]
+          }
+        ]
+      },
+      "project": {
+        "PreToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "./scripts/guard-bash.sh",
+                "timeout": 20
+              }
+            ]
+          },
+          {
+            "matcher": "Edit|Write",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "./scripts/format-on-edit.sh",
+                "if": "Edit(src/**)"
+              }
+            ]
+          }
+        ],
+        "PostToolUse": [
+          {
+            "matcher": "Edit|Write",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "./scripts/typecheck-quick.sh"
+              }
+            ]
+          }
+        ],
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "./scripts/notify-done.sh",
+                "args": ["--quiet"]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "skills": [
+    {
+      "name": "a11y-audit",
+      "source": "project",
+      "description": "Runs the accessibility audit on changed pages",
+      "disableModelInvocation": true,
+      "paths": ["src/pages/**", "src/components/**"],
+      "model": "haiku"
+    },
+    {
+      "name": "component",
+      "source": "project",
+      "description": "Scaffolds a new UI component with tests and stories",
+      "whenToUse": "When the user asks for a new component",
+      "allowedTools": ["Edit(src/components/**)", "Write(src/components/**)", "Bash(npm run test -- *)"],
+      "argumentHint": "<ComponentName>",
+      "model": "sonnet"
+    },
+    {
+      "name": "pr-review",
+      "source": "user",
+      "description": "User-level PR review pass with the personal checklist",
+      "allowedTools": ["Bash(gh pr view *)", "Bash(gh pr diff *)"]
+    },
+    {
+      "name": "release",
+      "source": "project",
+      "description": "Cuts a release branch, bumps versions and opens the PR",
+      "context": "fork",
+      "agent": "general-purpose",
+      "background": true,
+      "model": "opus"
+    }
+  ],
+  "commands": [
+    {
+      "name": "fix",
+      "source": "user",
+      "description": "User-level quick fix command"
+    },
+    {
+      "name": "qa:coverage",
+      "source": "project",
+      "description": "Runs tests and summarizes coverage gaps",
+      "argumentHint": "[suite]"
+    },
+    {
+      "name": "storybook",
+      "source": "project",
+      "description": "Starts Storybook for the workspace",
+      "allowedTools": ["Bash(npm run storybook)"]
+    }
+  ],
+  "agents": [
+    {
+      "name": "budget-audit",
+      "source": "project",
+      "description": "Audits bundle size against the performance budget",
+      "tools": ["Read", "Grep", "Bash(npm run build)"],
+      "model": "haiku",
+      "isolation": "worktree",
+      "maxTurns": 8
+    },
+    {
+      "name": "code-reviewer",
+      "source": "project",
+      "description": "Reviews PR-sized diffs for bugs, a11y and perf regressions",
+      "tools": ["Read", "Grep", "Bash(git diff *)"],
+      "model": "inherit",
+      "permissionMode": "acceptEdits",
+      "maxTurns": 12
+    },
+    {
+      "name": "design-police",
+      "source": "project",
+      "description": "Checks components against the design token list",
+      "tools": null,
+      "disallowedTools": ["Write", "Edit", "Bash"],
+      "model": "haiku"
+    },
+    {
+      "name": "researcher",
+      "source": "project",
+      "description": "Repo-aware researcher with the internal wiki index",
+      "model": "opus"
+    }
+  ],
+  "notes": ["被同名的 skill 覆盖", "researcher", "覆盖"]
+}

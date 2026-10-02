@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": "Bash(ls *)",
+    "deny": [
+      "Read(.env)",
+      42,
+      "Bash(rm -rf /tmp/x)"
+    ]
+  },
+  "env": {
+    "OK_FLAG": "1",
+    "BAD_NUM": 7,
+    "SKIP_NULL": null
+  },
+  "model": true
+}

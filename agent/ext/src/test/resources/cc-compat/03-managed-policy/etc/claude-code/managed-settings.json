@@ -1,0 +1,15 @@
+{
+  "allowManagedPermissionRulesOnly": true,
+  "permissions": {
+    "allow": [
+      "Read"
+    ],
+    "deny": [
+      "WebFetch(domain:internal.corp)"
+    ]
+  },
+  "env": {
+    "CORP_PROXY": "http://corp:3128"
+  },
+  "model": "opus"
+}

@@ -1,0 +1,33 @@
+{
+  "comment": "用户级 + 项目级 + settings.local.json 三层叠加（CC settings 文档 §3：列表合并、标量高层覆盖低层、env 逐键合并）。规则按高层优先排：local、project、user。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "defaultMode": null,
+    "model": "haiku",
+    "env": {
+      "HTTP_PROXY": "http://proxy:8080",
+      "LANG": "en_US.UTF-8",
+      "PROJECT": "acme-local"
+    },
+    "permissions": {
+      "allow": ["Bash(git diff *)", "Bash(git log *)", "Bash(npm test *)", "Edit(src/**)", "Bash(npm test -- -g unit)"],
+      "ask": ["WebFetch(domain:api.example.com)"],
+      "deny": ["Read(.env)"]
+    },
+    "rules": [
+      { "kind": "Allow", "text": "Bash(npm test -- -g unit)", "source": "local", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Bash(npm test *)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Edit(src/**)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Ask", "text": "WebFetch(domain:api.example.com)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Allow", "text": "Bash(git diff *)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Bash(git log *)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Deny", "text": "Read(.env)", "source": "user", "baseDir": "/home/dev/.claude" }
+    ],
+    "activeHookSources": []
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": []
+}

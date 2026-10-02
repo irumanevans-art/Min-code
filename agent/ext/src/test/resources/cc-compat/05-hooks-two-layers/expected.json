@@ -1,0 +1,73 @@
+{
+  "comment": "hooks 分布在 user 与 project 两层，多事件、多 matcher、if 字段、exec 形式 args（CC hooks 文档：hooks 在各层之间叠加而不是覆盖，配置原样保留）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "activeHookSources": ["user", "project"],
+    "hooks": {
+      "user": {
+        "PreToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "$HOME/.claude/hooks/protect-main.sh",
+                "timeout": 30,
+                "if": "Bash(git push *)"
+              }
+            ]
+          }
+        ],
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "notify-send done"
+              }
+            ]
+          }
+        ]
+      },
+      "project": {
+        "PreToolUse": [
+          {
+            "matcher": "Edit|Write",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "./scripts/lint-changed.sh"
+              }
+            ]
+          },
+          {
+            "matcher": "",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "echo",
+                "args": ["-n", "quiet"]
+              }
+            ]
+          }
+        ],
+        "PostToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "./scripts/after-bash.sh"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": []
+}

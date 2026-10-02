@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/log-start.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "CORP_LOG": "1"
+  }
+}

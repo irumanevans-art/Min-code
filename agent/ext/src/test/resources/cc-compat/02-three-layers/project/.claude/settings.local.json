@@ -1,0 +1,11 @@
+{
+  "model": "haiku",
+  "env": {
+    "PROJECT": "acme-local"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm test -- -g unit)"
+    ]
+  }
+}
