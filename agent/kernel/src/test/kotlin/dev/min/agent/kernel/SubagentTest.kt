@@ -252,6 +252,34 @@ class SubagentTest {
 
     // ---- 新开的子 agent ----
 
+    /**
+     * 前台委派的报告只作为工具结果交一次：等待方拿到结局后马上退出「前台正在等」，盯结局的协程可能晚一步才处理同一个结局，
+     * 曾经因此把报告又往收件箱交了一次（大约每七次跑一次）。竞态测不准，所以连跑多遍
+     */
+    @Test
+    fun `a foreground report is never also delivered to the inbox`() = run {
+        repeat(25) { round ->
+            val model = RoutingModel { req ->
+                when {
+                    req.last() == "查" -> reply(TextPart("查完了"))
+                    req.messages.size == 1 -> reply(
+                        agentCall("c1", "subagent_type" to "Explore", "prompt" to "查", "run_in_background" to false),
+                        stop = StopReason.ToolUse,
+                    )
+                    else -> reply(TextPart("好"))
+                }
+            }
+            val h = hub(model, listOf(agentTool), s = FileSessionStore(tmp.newFolder().toPath(), { 0L }))
+            val parent = parentOf(h)
+            parent.send(msg(), text("开始"))
+            val done = parent.state.first { it.turn == null && it.lastTurn != null }
+            // 给晚到的交付一点时间：真有重复交付，它会在这期间落进收件箱
+            kotlinx.coroutines.delay(20)
+            assertTrue("第 $round 轮：前台报告又进了收件箱", parent.state.value.reports().isEmpty())
+            assertFalse(done.toolResults.getValue(CallId("c1")).isError)
+        }
+    }
+
     @Test
     fun `a fresh Explore agent gets its own prompt, a read-only tool subset and a typed cache key`() = run {
         val read = FakeTool("Read", READ_ONLY) { ToolResult(text("内容")) }

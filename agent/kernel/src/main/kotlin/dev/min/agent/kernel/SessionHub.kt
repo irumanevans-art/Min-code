@@ -112,6 +112,13 @@ class SessionHub(
     /** 正被前台委派等着的子会话：它们这一回合的报告交给等待的工具，不进收件箱 */
     private val awaitedInForeground: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
 
+    /**
+     * 已经作为前台工具结果交出去的子回合。等待方一拿到结局就会把子会话移出 [awaitedInForeground]，
+     * 而盯结局的协程可能稍后才处理到同一个结局——没有这份记录，它会把报告再往收件箱里交一次。
+     * 只防本进程内的这个空档；跨重启由工具结果里的 ReportDelivered 在折叠时记账
+     */
+    private val consumedInForeground: MutableSet<Pair<SessionId, TurnId>> = ConcurrentHashMap.newKeySet()
+
     /** 已经在盯着回合结局的子会话（每个只盯一次） */
     private val watched: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
 
@@ -301,6 +308,7 @@ class SessionHub(
             val summary = parent.state.value.children[child.sessionId]
             val origin = child.state.value.origin!!
             val report = Reports.render(child.sessionId, summary, origin.agentType, origin.fork, ended, child.state.value)
+            consumedInForeground += child.sessionId to ended.turnId
             return DelegateResult.Finished(child.sessionId, ended.turnId, report, Reports.isError(ended.outcome))
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
@@ -414,7 +422,7 @@ class SessionHub(
         watchJobs[child.sessionId] = scope.launch {
             var first = reconcile
             child.state.map { it.lastTurn }.distinctUntilChanged().collect { ended ->
-                if (ended != null && child.sessionId !in awaitedInForeground) {
+                if (ended != null && child.sessionId !in awaitedInForeground && (child.sessionId to ended.turnId) !in consumedInForeground) {
                     try {
                         deliver(child, ended, autoStart = !first)
                     } catch (e: CancellationException) {
