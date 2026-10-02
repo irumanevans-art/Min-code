@@ -24,6 +24,22 @@ class HookInterpretTest {
         assertNotNull(broken.nonBlockingError)
     }
 
+    @Test fun `多行各自合法 JSON 且无输出字段按纯文本处理`() {
+        // CC §Exit code 0：两行及以上、每行各自是合法 JSON、没有一行设置字段 → 整体按纯文本
+        val plain = interpreted(HookEvent.UserPromptSubmit, "{\"a\":1}\n[2]\n{\"b\":3}\n")
+        assertNull(plain.nonBlockingError)
+        assertEquals(listOf("{\"a\":1}\n[2]\n{\"b\":3}\n"), plain.additionalContext.map { it.text })
+        // PreToolUse 上同款输出只进调试日志，不是错误也不入上下文
+        val debugOnly = interpreted(HookEvent.PreToolUse, "{\"a\":1}\n{\"b\":3}")
+        assertNull(debugOnly.nonBlockingError); assertTrue(debugOnly.additionalContext.isEmpty())
+        // 任何一行设置了输出字段，整体判为解析失败
+        val fieldLine = interpreted(HookEvent.UserPromptSubmit, "{\"a\":1}\n{\"decision\":\"block\"}")
+        assertNotNull(fieldLine.nonBlockingError); assertTrue(fieldLine.additionalContext.isEmpty())
+        // 有一行不是合法 JSON（整体也不是一个对象）时按解析失败处理
+        val brokenLine = interpreted(HookEvent.UserPromptSubmit, "{\"a\":1}\n{broken}")
+        assertNotNull(brokenLine.nonBlockingError)
+    }
+
     @Test fun `exit 二的阻断能力逐事件覆盖`() {
         val blocks = setOf(HookEvent.UserPromptSubmit, HookEvent.UserPromptExpansion, HookEvent.PreToolUse,
             HookEvent.PostToolUse, HookEvent.PostToolUseFailure, HookEvent.PostToolBatch, HookEvent.SubagentStop,

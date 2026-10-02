@@ -23,13 +23,17 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
     val jsonCandidate = text.startsWith('{') && text.endsWith('}')
     var parsed: ParsedOutput? = null
     var error: String? = null
+    // CC：两行及以上、每行各自是合法 JSON 且没有一行带输出字段时，整体按纯文本处理，不算解析失败。
+    var reclassifiedPlain = false
     if (jsonCandidate) {
         try {
             parsed = parseOutput(event, text)
         } catch (e: IllegalArgumentException) {
-            error = "${label(run)} hook error：JSON 解析或校验失败（${e.message?.lineSequence()?.firstOrNull()}）"
+            if (multilineJsonPlainText(text)) reclassifiedPlain = true
+            else error = "${label(run)} hook error：JSON 解析或校验失败（${e.message?.lineSequence()?.firstOrNull()}）"
         } catch (e: IllegalStateException) {
-            error = "${label(run)} hook error：JSON 校验失败（${e.message?.lineSequence()?.firstOrNull()}）"
+            if (multilineJsonPlainText(text)) reclassifiedPlain = true
+            else error = "${label(run)} hook error：JSON 校验失败（${e.message?.lineSequence()?.firstOrNull()}）"
         }
     }
     var verdict = if (parsed != null) base.copy(
@@ -45,7 +49,7 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
         val reason = parsed?.reason?.takeIf { parsed.decision == HookDecision.Block || parsed.decision == HookDecision.Deny }
             ?: run.stderr
         verdict = verdict.copy(decision = HookDecision.Block, reason = HookText(reason))
-    } else if (parsed == null && !jsonCandidate) {
+    } else if (parsed == null && (!jsonCandidate || reclassifiedPlain)) {
         if (run.exitCode == 0 && event in TEXT_CONTEXT_EVENTS && text.isNotEmpty()) {
             val context = HookText(run.stdout)
             verdict = verdict.copy(additionalContext = listOf(context), attachmentRequests =
@@ -169,6 +173,24 @@ private fun validateFields(raw: JsonObject, strings: Set<String>, booleans: Set<
     booleans.forEach { key ->
         val v = raw[key]
         require(v == null || v == JsonNull || v == JsonPrimitive(true) || v == JsonPrimitive(false)) { "$key 必须是布尔值" }
+    }
+}
+
+/** CC 认识的顶层输出字段；任何一行带其中一个字段，整体就判为解析失败而不是纯文本。 */
+private val OUTPUT_FIELD_KEYS = setOf("continue", "stopReason", "suppressOutput", "systemMessage",
+    "terminalSequence", "decision", "reason", "hookSpecificOutput")
+
+/** CC：两行及以上、每行各自是合法 JSON 且没有一行是设置字段的输出对象时，整段 stdout 按纯文本处理。 */
+private fun multilineJsonPlainText(text: String): Boolean {
+    val lines = text.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+    if (lines.size < 2) return false
+    return lines.all { line ->
+        val element = try {
+            HookJson.parseToJsonElement(line)
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        element !is JsonObject || element.keys.none { it in OUTPUT_FIELD_KEYS }
     }
 }
 
