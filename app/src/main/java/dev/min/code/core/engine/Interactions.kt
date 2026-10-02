@@ -1,0 +1,206 @@
+package dev.min.code.core.engine
+
+import dev.min.code.core.session.PathScope
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+
+/**
+ * 会话停下来等人的三种事：审批、提问、计划审批。合成一个类型，界面只有一处分发（`InteractionSheet`），
+ * 三张卡片仍是原来的组件。
+ *
+ * 三个引擎怎么填：
+ *
+ * | 引擎 | Approval 的选项 | Question | PlanReview |
+ * |---|---|---|---|
+ * | Claude Code | 允许；每条 `PermissionSuggestion` 一个「始终允许」；拒绝并停止；拒绝并说明 | `AskUserQuestion` | `ExitPlanMode` |
+ * | Codex | 按 `availableDecisions` 映射 | 无 | 无 |
+ * | Min Agent | 允许；拒绝；拒绝并停止 | `AskedQuestion` | `ExitPlanMode` 的审批 |
+ */
+sealed interface PendingInteraction {
+    /**
+     * 会话内唯一，答复时原样带回（[SessionCommand.Answer.interactionId]）。CC：requestId；Codex：JSON-RPC id；
+     * Min：`"<sessionId>/<approvalId>"`（[InteractionIds]），子会话上浮的交互也不会撞号。
+     */
+    val id: String
+    val origin: InteractionOrigin
+    val toolUseId: String?
+
+    data class Approval(
+        override val id: String,
+        override val origin: InteractionOrigin,
+        override val toolUseId: String?,
+        val toolName: String,
+        val input: JsonObject,
+        /** 卡片标题 */
+        val summary: String,
+        /** 这次调用要碰的路径与档位（Workspace / Rootfs / Device），Device 用朱标：它改的是手机上的真实文件 */
+        val paths: List<PathView>,
+        val commands: List<String>,
+        val domains: List<String>,
+        val reason: String?,
+        val blockedPath: String?,
+        val options: List<ApprovalOption>,
+    ) : PendingInteraction {
+        /** 通知上能放的按钮：只放 [ApprovalOption.notificationSafe] 的（允许、拒绝），其余必须回 App 里看 */
+        val notificationOptions: List<ApprovalOption> get() = options.filter { it.notificationSafe }
+    }
+
+    data class Question(
+        override val id: String,
+        override val origin: InteractionOrigin,
+        override val toolUseId: String?,
+        /** CC 与内核同形：question、header、options(label, description)、multiSelect */
+        val questions: List<QuestionView>,
+    ) : PendingInteraction
+
+    data class PlanReview(
+        override val id: String,
+        override val origin: InteractionOrigin,
+        override val toolUseId: String?,
+        /** Markdown 全文 */
+        val plan: String,
+        val options: List<ApprovalOption>,
+    ) : PendingInteraction
+
+    val kind: InteractionKind
+        get() = when (this) {
+            is Approval -> InteractionKind.Approval
+            is Question -> InteractionKind.Question
+            is PlanReview -> InteractionKind.PlanReview
+        }
+
+    /** 同一张卡换一个来源（适配器先造卡再统一盖上来源与排队深度，见 [withQueueDepth]） */
+    fun withOrigin(origin: InteractionOrigin): PendingInteraction = when (this) {
+        is Approval -> copy(origin = origin)
+        is Question -> copy(origin = origin)
+        is PlanReview -> copy(origin = origin)
+    }
+}
+
+enum class InteractionKind { Approval, Question, PlanReview }
+
+/**
+ * 给队列里每张卡盖上「后面还有几张」：队头 = 总数 − 1，队尾 = 0。
+ * 顶行文案「Explore · 查找入口（后台）请求 · 后面还有 2 张」读的就是它。三个适配器共用这一份。
+ */
+fun List<PendingInteraction>.withQueueDepth(): List<PendingInteraction> =
+    mapIndexed { index, card -> card.withOrigin(card.origin.copy(queuedAfter = size - 1 - index)) }
+
+/**
+ * 交互从哪来。[path] 为空 = 主会话；非空 = 从根到发起者的子 agent 路径。
+ * @param queuedAfter 队列里排在它后面的卡数，见 [withQueueDepth]
+ */
+data class InteractionOrigin(val path: List<AgentLabel> = emptyList(), val queuedAfter: Int = 0) {
+    val isMain: Boolean get() = path.isEmpty()
+
+    /** 发起者本人（路径末端）；主会话为 null */
+    val agent: AgentLabel? get() = path.lastOrNull()
+
+    companion object {
+        val Main = InteractionOrigin()
+    }
+}
+
+/** 一个子 agent 的名牌：通知标题写「Explore（后台）请求批准：Bash」用的就是它 */
+data class AgentLabel(
+    val threadId: String,
+    val agentType: String,
+    val name: String?,
+    val description: String,
+    val background: Boolean,
+)
+
+data class PathView(val path: String, val scope: PathScope)
+
+data class QuestionView(
+    val question: String,
+    val header: String?,
+    val options: List<QuestionOptionView>,
+    val multiSelect: Boolean,
+)
+
+data class QuestionOptionView(val label: String, val description: String?)
+
+/**
+ * 审批卡 / 计划审批卡上的一个按钮。
+ *
+ * @param acceptsNote 点它时可以附一句说明（CC 的「拒绝并说明」：说明递给模型，本轮继续）
+ * @param notificationSafe 可以放进通知按钮：点一下不需要读更多内容就能安心做出的选择（允许 / 拒绝）。
+ *   「始终允许」「拒绝并停止」不放：前者要看清规则，后者会打断整轮
+ */
+data class ApprovalOption(
+    val id: String,
+    val label: String,
+    val kind: Kind,
+    val acceptsNote: Boolean,
+    val notificationSafe: Boolean,
+) {
+    enum class Kind {
+        Allow,
+
+        /** 始终允许（CC 的 PermissionSuggestion、Codex 的本会话允许）；Min 等 K14 的设置层写入落地后再开 */
+        AllowAlways,
+
+        /** 拒绝，本轮继续（通知上的「拒绝」就是它，带说明） */
+        Deny,
+
+        /** 拒绝并停止：不带说明，打断本轮（界面里的「拒绝」现行为） */
+        DenyAndStop,
+    }
+
+    companion object {
+        /** 三个引擎共用的稳定 id，通知按钮的 PendingIntent 里存的就是它们 */
+        const val ALLOW = "allow"
+        const val DENY = "deny"
+        const val DENY_AND_STOP = "deny-stop"
+
+        /** 「始终允许」的 id 前缀，后面接引擎自己的建议序号 / 规则标识：`always:0` */
+        const val ALWAYS_PREFIX = "always:"
+    }
+}
+
+@Serializable
+sealed interface InteractionAnswer {
+    /** 选一个按钮。[note] 只在 [ApprovalOption.acceptsNote] 为真时有意义 */
+    @Serializable @SerialName("choose")
+    data class Choose(val optionId: String, val note: String? = null) : InteractionAnswer
+
+    /** 提问卡的答案，每题一项，顺序与 [PendingInteraction.Question.questions] 一致 */
+    @Serializable @SerialName("answer")
+    data class Answer(val answers: List<QuestionAnswerInput>) : InteractionAnswer
+
+    /** 关掉提问卡，不回答 */
+    @Serializable @SerialName("decline")
+    data object Decline : InteractionAnswer
+}
+
+/** 一题的答案：选中的选项 label（多选可以有几个）加「其它」里手填的话 */
+@Serializable
+data class QuestionAnswerInput(val question: String, val selected: List<String>, val other: String? = null) {
+    /**
+     * CC 的约定（`ClaudeCodeManager` 里 AskUserQuestion 的回填）：Map<问题原文, 选中的 label 用「, 」连接>，
+     * 手填的话排在最后。Min 内核的 `answerQuestion` 要自己的形状，由 Min 适配器转，别共用这个。
+     */
+    val joined: String get() = (selected + listOfNotNull(other?.takeIf { it.isNotBlank() })).joinToString(", ")
+}
+
+/**
+ * Min 的 interaction id 是 `"<sessionId>/<approvalId>"`：根会话的待处理交互里混着子会话上浮的，
+ * 答复时按前缀路由回子运行时。拆合都放这里，不让适配器各自拼字符串。
+ */
+object InteractionIds {
+    private const val SEP = '/'
+
+    fun scoped(sessionId: String, localId: String): String {
+        require(SEP !in sessionId) { "sessionId must not contain '$SEP': $sessionId" }
+        return "$sessionId$SEP$localId"
+    }
+
+    /** 拆回 (sessionId, localId)；不是 scoped 形状（没有分隔符）返回 null。localId 里可以再含分隔符 */
+    fun split(id: String): Pair<String, String>? {
+        val at = id.indexOf(SEP)
+        if (at <= 0 || at == id.length - 1) return null
+        return id.substring(0, at) to id.substring(at + 1)
+    }
+}
