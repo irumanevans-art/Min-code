@@ -11,6 +11,7 @@ import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.RequestId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
+import dev.min.agent.tools.SkillTool
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.AssistantMessageCompleted
@@ -190,6 +191,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             effort = state.settings.effort,
             cacheKey = origin?.cacheKey ?: state.header.sessionId.value,
             memory = state.memory,
+            // 子 agent 的工具表里没有 Skill 就不列清单：列了模型也调不了，白占 token
+            skills = state.skills?.takeIf { _ -> specs.any { it.name == SkillTool.name } },
             agentInstructions = origin?.instructions,
         )
     }
