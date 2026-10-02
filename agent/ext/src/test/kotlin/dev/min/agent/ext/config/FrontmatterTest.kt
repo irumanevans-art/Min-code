@@ -192,9 +192,10 @@ class FrontmatterTest {
     }
 
     @Test
-    fun `duplicate key keeps the last and says so`() {
-        val fm = parse("a: 1", "a: 2")
-        assertEquals("2", fm.scalar("a"))
+    fun `duplicate keys invalidate the whole frontmatter`() {
+        val fm = parse("name: would-be-kept", "a: 1", "a: 2")
+        assertTrue(fm.present)
+        assertTrue(fm.fields.isEmpty())
         assertEquals(1, fm.notes.size)
         assertTrue(fm.notes.single().contains("重复"))
     }

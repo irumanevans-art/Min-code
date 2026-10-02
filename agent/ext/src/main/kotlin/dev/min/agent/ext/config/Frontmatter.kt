@@ -134,7 +134,8 @@ private class Yaml(private val lines: MutableList<String>, private val label: St
                 skipChildren(indent)
                 continue
             }
-            if (key in out) notes += "$label：字段 `$key` 重复（${at(keyAt)}），取后一个"
+            // 重复键：主流 YAML 解析器（js-yaml 3/4、yaml 包）都当解析失败，CC 会整个丢掉 frontmatter
+            if (key in out) throw YamlError("${at(keyAt)}的字段 `$key` 重复：YAML 的映射键必须唯一")
             out[key] = value
         }
         return out
