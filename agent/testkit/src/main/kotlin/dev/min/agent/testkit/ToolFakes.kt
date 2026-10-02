@@ -23,6 +23,7 @@ import dev.min.agent.spi.PathScope
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.Search
+import dev.min.agent.spi.TaskBoard
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
@@ -195,6 +196,9 @@ class TestToolContext(
 
     override var mode: PermissionMode = PermissionMode.Default
     override var modeBeforePlan: PermissionMode? = null
+
+    /** 任务清单视图：想测任务工具就预置一份 */
+    override var tasks: TaskBoard = TaskBoard()
 
     /** 收到的提问，按顺序 */
     val asked = mutableListOf<List<UserQuestion>>()
