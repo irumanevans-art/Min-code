@@ -108,6 +108,27 @@ class FrontmatterTest {
     }
 
     @Test
+    fun `a flow collection or scalar on the line after the key is that key's value`() {
+        val fm = parse(
+            "tools:",
+            "  [Read, Grep]",
+            "limits:",
+            "  {max: 3, tag: x}",
+            "description:",
+            "  plain on the next line",
+            "when_to_use:",
+            """  "quoted on the next line"""",
+            "name: x",
+        )
+        assertEquals(listOf("Read", "Grep"), fm.strings("tools"))
+        assertEquals(Json.parseToJsonElement("""{"max":3,"tag":"x"}"""), fm.fields.getValue("limits").toJson())
+        assertEquals("plain on the next line", fm.scalar("description"))
+        assertEquals("quoted on the next line", fm.scalar("when_to_use"))
+        assertEquals("x", fm.scalar("name"))
+        assertTrue(fm.notes.isEmpty())
+    }
+
+    @Test
     fun `nested mappings and lists of mappings keep their shape for hooks`() {
         val fm = parse(
             "hooks:",

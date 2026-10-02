@@ -182,7 +182,14 @@ private class Yaml(private val lines: MutableList<String>, private val label: St
         val line = lines[i]
         val ind = indentOf(line)
         return when {
-            ind > parentIndent -> if (isSeqItem(line, ind)) parseSeq(ind) else FmValue.Mapping(parseMapping(ind))
+            ind > parentIndent -> when {
+                isSeqItem(line, ind) -> parseSeq(ind)
+                splitKey(line.substring(ind)) != null -> FmValue.Mapping(parseMapping(ind))
+                else -> { // 换行后的流式集合或标量也是上一个键的值（YAML 块上下文允许，真解析器都接受）
+                    i++ // 这一行还没有像 parseMapping 那样被消费掉，先吃掉再解析
+                    parseValue(line.substring(ind), ind, sameIndentSeq = false)
+                }
+            }
             ind == parentIndent && sameIndentSeq && isSeqItem(line, ind) -> parseSeq(ind)
             else -> FmValue.Null
         }
