@@ -52,3 +52,6 @@
 - v1 增量（2026-10-02）：新增事件 `permission_rules_loaded`（会话创建时的权限规则快照，`spi/PolicyEvents.kt`）；
   `approval_requested` 新增可选字段 `suggestedRule`、`floorReason`；`PermissionAsk` 新增可选字段 `specifiers`。含新事件的日志旧版本打不开。
 - v1 增量（2026-10-01）：`ToolResult` 新增可选字段 `effects`（工具结果对会话的副作用，`mode_change` 由内核在同一次追加里紧跟写对应的 `settings_changed`；`report_delivered` 只在折叠时记账；空时不落盘）。
+- v1 增量（2026-10-02）：新增事件 `task_created`、`task_updated`、`task_deleted`（任务清单，`spi/TaskEvents.kt`）：任务编号由内核分配（会话内从 "1" 递增、删除后不复用），
+  `task_updated` 的 `patch` 里每个字段「没给 = 不改」，`metadata` 按键合并、值为 null 的键表示删除；清单只属于单个会话（子 agent 各有自己的）。
+  `ToolResult.effects` 新增变体 `task_create`、`task_update`、`task_delete`：内核在写 `tool_outcome` 的同一次追加里紧跟写对应的任务事件，折叠只认事件、不认效果。含新事件的日志旧版本打不开。

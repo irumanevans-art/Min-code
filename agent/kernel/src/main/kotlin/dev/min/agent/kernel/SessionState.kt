@@ -27,6 +27,7 @@ import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.SessionCreated
+import dev.min.agent.spi.TaskRecord
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.UserQuestion
@@ -72,6 +73,13 @@ data class SessionState(
     val sessionRules: List<RuleEntry> = emptyList(),
     /** 最近一次完成的模型请求的用量：界面据它算「上下文用了多少」（输入 + 缓存读写 ÷ 窗口）；还没请求过为 null */
     val lastRequestUsage: Usage? = null,
+    /**
+     * 本会话的任务清单，按创建顺序（TaskCreate / TaskUpdate 工具维护，由 TaskCreated / TaskUpdated / TaskDeleted 折叠）。
+     * 只属于本会话：子 agent 各有自己的一份，不与父会话共享。有默认值：没用过任务工具的会话日志里没有这些事件
+     */
+    val tasks: List<TaskRecord> = emptyList(),
+    /** 已分配过的最大任务编号。删除任务不回退它，编号因此不会被复用 */
+    val taskSeq: Int = 0,
 )
 
 /** 父会话视角的一个子 agent：委派时的样子 + 哪些回合的报告已经交付 */

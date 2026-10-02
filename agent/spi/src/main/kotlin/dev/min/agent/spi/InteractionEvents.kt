@@ -7,6 +7,7 @@ import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.SessionId
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /*
  * 与人交互的持久请求：向用户提问（AskUserQuestion）；以及工具结果对会话的副作用（计划模式的进出）。
@@ -91,7 +92,7 @@ data class QuestionAnswered(
 ) : SessionEvent
 
 /**
- * 工具结果对会话本身的影响（[ToolResult.effects]）。工具不直接改会话状态，只在结果里声明；
+ * 工具结果对会话本身的影响（[ToolResult.effects]）：切模式、交付子 agent 报告、任务清单的增删改。工具不直接改会话状态，只在结果里声明；
  * 内核在写 ToolOutcome 的同一次提交里把它落成对应的设置事件——所以「结果说切了模式」与「模式真的切了」不会分家。
  */
 @Serializable
@@ -108,4 +109,27 @@ sealed interface SessionEffect {
     @Serializable
     @SerialName("report_delivered")
     data class ReportDelivered(val child: SessionId, val childTurn: TurnId) : SessionEffect
+
+    /**
+     * 新建一条任务（TaskCreate）。编号由内核分配，所以这里没有 id；内核落成 [TaskCreated]。
+     * 工具在结果文字里用 [TaskBoard.nextId] 预告编号。
+     */
+    @Serializable
+    @SerialName("task_create")
+    data class TaskCreate(
+        val subject: String,
+        val description: String,
+        val activeForm: String? = null,
+        val metadata: JsonObject = JsonObject(emptyMap()),
+    ) : SessionEffect
+
+    /** 修改一条任务（TaskUpdate）。内核落成 [TaskUpdated] */
+    @Serializable
+    @SerialName("task_update")
+    data class TaskUpdate(val taskId: String, val patch: TaskPatch) : SessionEffect
+
+    /** 删除一条任务（TaskUpdate 的 status = deleted）。内核落成 [TaskDeleted] */
+    @Serializable
+    @SerialName("task_delete")
+    data class TaskDelete(val taskId: String) : SessionEffect
 }
