@@ -1,0 +1,1 @@
+{"type":"search","web":{"results":[{"title":"Kotlin","url":"https://example.com/kotlin","description":"Kotlin & JVM","extra_snippets":["ignored"]},{"title":"Docs","url":"https://docs.example.com/page","description":"Reference"},{"title":"Wrong","url":"https://badexample.com/page","description":"Other"},{"title":"Unsafe","url":"file:///etc/passwd","description":"ignored"}]}}
