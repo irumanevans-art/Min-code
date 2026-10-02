@@ -37,6 +37,7 @@ import dev.min.agent.spi.ToolOutcome
 import dev.min.agent.spi.ToolPlanned
 import dev.min.agent.spi.TurnEnded
 import dev.min.agent.spi.TurnStarted
+import dev.min.agent.spi.TurnTrigger
 
 /**
  * 日志 → 状态。纯函数：同一段日志永远折叠出同一个状态，这是恢复测试和确定性回归的基础。
@@ -99,7 +100,11 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is InputWithdrawn -> copy(inbox = inbox.filterNot { it.clientMsgId == e.clientMsgId })
         is TurnStarted -> {
             check(turn == null) { "上一回合 ${turn?.turnId} 还没结束就开始了 ${e.turnId}" }
-            copy(turn = TurnState(e.turnId, e.trigger, record.atMs, openRequest = null, calls = emptyMap(), usage = Usage()))
+            val started = copy(turn = TurnState(e.turnId, e.trigger, record.atMs, openRequest = null, calls = emptyMap(), usage = Usage()))
+            // 续跑、被子 agent 报告唤醒的回合在转录里留一道分隔（「接着做」「子 agent 完成，继续处理」）；用户发起的回合由用户消息本身标示
+            if (e.trigger == TurnTrigger.Resume || e.trigger == TurnTrigger.Notification) {
+                started.copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
+            } else started
         }
         is ModelRequestStarted -> updateTurn(e.turnId) {
             it.copy(openRequest = OpenRequest(e.requestId, e.attempt, messageId = null, segments = emptyList()))
@@ -112,7 +117,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is AssistantMessageCompleted -> updateTurn(e.turnId) { t ->
             check(t.openRequest?.requestId == e.requestId) { "完成的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
             t.copy(openRequest = null, usage = t.usage + e.usage)
-        }.copy(history = history + HistoryEntry.Assistant(e.messageId, e.parts))
+        }.copy(history = history + HistoryEntry.Assistant(e.messageId, e.parts), lastRequestUsage = e.usage)
         is ModelRequestFailed -> updateTurn(e.turnId) { t ->
             check(t.openRequest?.requestId == e.requestId) { "失败的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
             t.copy(openRequest = null)
@@ -123,7 +128,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is ApprovalRequested -> updateCall(e.turnId, e.callId) { phase ->
             check(phase == CallPhase.Planned) { "只有刚规划的调用才能请求审批，${e.callId} 处于 $phase" }
-            CallPhase.AwaitingApproval(e.approvalId, e.ask)
+            CallPhase.AwaitingApproval(e.approvalId, e.ask, record.atMs, e.suggestedRule, e.floorReason)
         }
         is ApprovalResolved -> {
             val t = checkNotNull(turn) { "没有进行中的回合却收到审批结果 ${e.approvalId}" }
@@ -172,7 +177,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 presentation = presentation + SessionPresentation(
                     record, history.lastOrNull()?.messageId, t.openRequest?.messageId, t.openRequest?.segments.orEmpty(),
                 ),
-                lastTurn = EndedTurn(e.turnId, t.trigger, e.outcome, t.usage, e.durationMs, t.calls.size),
+                lastTurn = EndedTurn(e.turnId, t.trigger, e.outcome, t.usage, e.durationMs, t.calls.size, e.lastActivityAtMs ?: record.atMs),
             )
         }
         is SubagentSpawned -> {
@@ -196,11 +201,12 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 toolResults = e.results.associate { it.callId to it.result },
             )
         }
-        is QuestionAsked -> withQuestionAsked(e)
+        is QuestionAsked -> withQuestionAsked(e, record.atMs)
         is QuestionAnswered -> withQuestionAnswered(e)
         is Note -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
     }
-    return next.copy(lastSeq = record.seq)
+    val stamped = next.turn?.let { next.copy(turn = it.copy(lastEventAtMs = record.atMs)) } ?: next
+    return stamped.copy(lastSeq = record.seq)
 }
 
 /** 「总是允许」攒下的规则的来源名（审计时显示「是本会话里你允许的」） */

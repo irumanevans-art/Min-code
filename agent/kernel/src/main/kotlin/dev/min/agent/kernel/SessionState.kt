@@ -70,6 +70,8 @@ data class SessionState(
     val rules: List<RuleEntry> = emptyList(),
     /** 本会话里人选「总是允许」攒下的规则，按答复顺序；来源记为 session */
     val sessionRules: List<RuleEntry> = emptyList(),
+    /** 最近一次完成的模型请求的用量：界面据它算「上下文用了多少」（输入 + 缓存读写 ÷ 窗口）；还没请求过为 null */
+    val lastRequestUsage: Usage? = null,
 )
 
 /** 父会话视角的一个子 agent：委派时的样子 + 哪些回合的报告已经交付 */
@@ -92,6 +94,8 @@ data class EndedTurn(
     val usage: Usage,
     val durationMs: Long,
     val toolCalls: Int,
+    /** 回合里最后一次有动静的时间：进程被杀的回合是被杀前最后一条事件，其余就是结束那一刻 */
+    val lastActivityAtMs: Long = 0,
 )
 
 data class SessionPresentation(
@@ -147,6 +151,8 @@ data class TurnState(
     val usage: Usage,
     /** 本回合向用户提的问题，含已答的：答复留在这里，等着的工具从状态里取；回合结束随回合一起清掉 */
     val questions: Map<QuestionId, AskedQuestion> = emptyMap(),
+    /** 本回合最后一条事件的时间（折叠时随每条事件更新）。进程被杀时这就是「中断于何时」 */
+    val lastEventAtMs: Long = startedAtMs,
 ) {
     /**
      * 还在等用户回答的提问，界面据此弹提问卡片（进程重启后同样从日志重建）。
@@ -162,6 +168,7 @@ data class AskedQuestion(
     val callId: CallId,
     val questions: List<UserQuestion>,
     val outcome: QuestionOutcome?,
+    val askedAtMs: Long = 0,
 )
 
 data class OpenRequest(
@@ -184,7 +191,14 @@ sealed interface CallPhase {
     /** 已规划，权限管线还没给结论 */
     data object Planned : CallPhase
 
-    data class AwaitingApproval(val approvalId: ApprovalId, val ask: PermissionAsk) : CallPhase
+    data class AwaitingApproval(
+        val approvalId: ApprovalId,
+        val ask: PermissionAsk,
+        val requestedAtMs: Long = 0,
+        /** 「总是允许」的建议规则与踩底线的原因，原样来自 ApprovalRequested，卡片据此给按钮与解释 */
+        val suggestedRule: String? = null,
+        val floorReason: String? = null,
+    ) : CallPhase
 
     /** 放行了（规则、hook、模式或人），副作用还没开始 */
     data object Approved : CallPhase

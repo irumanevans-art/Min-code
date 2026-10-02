@@ -220,6 +220,14 @@ class SessionRuntime private constructor(
         return true
     }
 
+    /**
+     * 空闲时把收件箱里的输入开成一回合（界面的「打断后跑排队那条」，崩溃恢复后补交、由用户确认后处理的报告）。
+     * 收件箱空、或已有回合在跑时什么都不做
+     */
+    fun runInbox() {
+        startTurnIfIdle(TurnTrigger.User)
+    }
+
     /** 分身的第一个回合：没有新输入，任务就在继承来的那次 Agent 调用的结果里 */
     internal fun startDelegated() {
         startTurnIfIdle(TurnTrigger.Delegated)
