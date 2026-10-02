@@ -1,0 +1,37 @@
+<html>
+<head><title>十分钟上手 Min 内核</title></head>
+<body>
+<article>
+  <h1>十分钟上手 Min 内核</h1>
+  <p>本教程带你从零搭一个最小可用的 agent：装好依赖，写 20 行代码，跑通第一个回合。</p>
+  <h2>准备工作</h2>
+  <ol>
+    <li>安装 JDK 21 与 Android Studio
+      <ul>
+        <li>Windows 建议用 scoop 安装</li>
+        <li>macOS 用 brew：`brew install --cask temurin`</li>
+      </ul>
+    </li>
+    <li>拉取仓库 <code>git clone https://example.com/min.git</code></li>
+    <li>跑一遍现有测试确认环境没问题
+      <pre><code class="language-bash">./gradlew :agent:kernel:check</code></pre>
+    </li>
+  </ol>
+  <h2>写第一个回合</h2>
+  <p>创建 <code>Main.kt</code>，内容如下：</p>
+  <pre><code class="language-kotlin">fun main() = runBlocking {
+    val kernel = Kernel(testDeps(ScriptedModel(reply(TextPart("你好"))), emptyList()))
+    kernel.submit("打个招呼")
+    kernel.drain()
+}</code></pre>
+  <p>
+    这段代码做了三件事：<strong>装配</strong>、<em>提交输入</em>、排空输出。
+    关于装配的更多选项见 <a href="/docs/deps.html">依赖说明</a>。
+  </p>
+  <h2>常见问题</h2>
+  <blockquote><p>跑不起来？先确认 <code>JAVA_HOME</code> 指向 JDK 21，再删掉 <code>.gradle</code> 重试。</p></blockquote>
+  <hr>
+  <p>下一篇：<a href="/tutorials/tools.html">给 agent 装上工具</a>。</p>
+</article>
+</body>
+</html>
