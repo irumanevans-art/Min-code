@@ -23,8 +23,12 @@ import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.Secret
 import dev.min.agent.spi.Secrets
 import dev.min.agent.store.FileSessionStore
+import dev.min.agent.spi.Tool
+import dev.min.agent.tools.AskUserQuestionTool
 import dev.min.agent.tools.BashTool
 import dev.min.agent.tools.EditTool
+import dev.min.agent.tools.EnterPlanModeTool
+import dev.min.agent.tools.ExitPlanModeTool
 import dev.min.agent.tools.GlobTool
 import dev.min.agent.tools.GrepTool
 import dev.min.agent.tools.NotebookEditTool
@@ -36,6 +40,16 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.ZoneId
 import java.util.UUID
+
+/**
+ * 桌面宿主的工具表。顺序就是发给模型的顺序，属于稳定前缀：只往末尾追加，不重排、不删除
+ * （docs/agent/07-工程规范.md 第 10 条），否则所有会话的缓存前缀一起失效。
+ */
+internal val DESKTOP_TOOLS: List<Tool<*>> = listOf(
+    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
+    AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
+    AgentTool, SendMessageTool, TaskStopTool,
+)
 
 /**
  * 桌面宿主的组合根：把内核与各个端口实现装在一起（docs/agent/02-总体架构.md §2：构造注入，一处组装）。
@@ -84,7 +98,7 @@ internal class DesktopApp(
                 check(ref == profile.ref) { "桌面 CLI 目前只配置了 ${profile.ref}，会话要的是 $ref" }
                 ResolvedModel(profile, client)
             },
-            tools = listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool, AgentTool, SendMessageTool, TaskStopTool),
+            tools = DESKTOP_TOOLS,
             host = HostPorts(
                 fs = paths.fs,
                 search = JvmSearch(paths.fs),

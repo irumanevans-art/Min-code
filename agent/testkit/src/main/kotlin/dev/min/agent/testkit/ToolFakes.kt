@@ -2,6 +2,7 @@ package dev.min.agent.testkit
 
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ImagePart
+import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.ArtifactSink
@@ -20,6 +21,7 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HarnessProfile
 import dev.min.agent.spi.PathScope
 import dev.min.agent.spi.PermissionAsk
+import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.Search
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.Tool
@@ -28,6 +30,7 @@ import dev.min.agent.spi.ToolInput
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.ToolTraits
+import dev.min.agent.spi.UserQuestion
 import dev.min.agent.spi.WorkspaceFs
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
@@ -188,6 +191,20 @@ class TestToolContext(
 
     fun see(path: String) {
         seen[GuestPath(path)] = fs.stamp(path)
+    }
+
+    override var mode: PermissionMode = PermissionMode.Default
+    override var modeBeforePlan: PermissionMode? = null
+
+    /** 收到的提问，按顺序 */
+    val asked = mutableListOf<List<UserQuestion>>()
+
+    /** 用户怎么答。默认没人答：不该提问的工具提了问就是测试失败 */
+    var answer: (List<UserQuestion>) -> QuestionOutcome = { fail("这个测试不该向用户提问：$it"); error("unreachable") }
+
+    override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome {
+        asked += questions
+        return answer(questions)
     }
 }
 

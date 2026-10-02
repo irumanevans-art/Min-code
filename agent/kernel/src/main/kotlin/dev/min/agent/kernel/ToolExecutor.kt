@@ -4,6 +4,7 @@ import dev.min.agent.policy.PolicyEngine
 import dev.min.agent.policy.Verdict
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
@@ -15,6 +16,7 @@ import dev.min.agent.spi.Exec
 import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.PermissionAsk
+import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.Search
 import dev.min.agent.spi.Tool
@@ -25,6 +27,7 @@ import dev.min.agent.spi.ToolOutcome
 import dev.min.agent.spi.ToolPlanned
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
+import dev.min.agent.spi.UserQuestion
 import dev.min.agent.spi.WorkspaceFs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -115,8 +118,10 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
 
     private fun askFor(p: Prepared.Ready): PermissionAsk = p.tool.permissionAsk(p.input, context(null, p.call.callId))
 
+    // alwaysAsk 先于权限引擎：模式（含 bypass）与规则都不能替人批准这类调用
     private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict =
-        PolicyEngine.evaluate(ask, p.tool.traits.readOnly, rt.state.value.settings.mode)
+        if (p.tool.traits.alwaysAsk) Verdict.Ask
+        else PolicyEngine.evaluate(ask, p.tool.traits.readOnly, rt.state.value.settings.mode)
 
     private suspend fun runOne(turnId: TurnId, p: Prepared) {
         val ready = when (p) {
@@ -163,7 +168,8 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
     }
 
     private suspend fun outcome(turnId: TurnId, callId: CallId, result: ToolResult) {
-        rt.commit(listOf(ToolOutcome(turnId, callId, result)), Durability.Sync)
+        // 结果声明的副作用（如切模式）与结果同一次提交：不会出现「结果说切了、模式没切」
+        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(), Durability.Sync)
     }
 
     /** [turnId] 为 null 只在算权限声明时：那时不该委派任何东西，端口给不可用的 */
@@ -177,6 +183,9 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
+        override val mode: PermissionMode get() = rt.state.value.settings.mode
+        override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
+        override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
     }
 
     companion object {

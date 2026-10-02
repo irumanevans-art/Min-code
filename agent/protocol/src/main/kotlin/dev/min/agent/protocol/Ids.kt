@@ -38,3 +38,8 @@ value class RequestId(val value: String)
 @Serializable
 @JvmInline
 value class ClientMsgId(val value: String)
+
+/** 一次向用户的提问（AskUserQuestion 的一组问题共用一个）。和审批一样是持久请求：进程重启后照它把提问卡片重新挂到界面上 */
+@Serializable
+@JvmInline
+value class QuestionId(val value: String)

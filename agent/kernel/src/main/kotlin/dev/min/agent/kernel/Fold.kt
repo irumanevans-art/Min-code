@@ -25,6 +25,8 @@ import dev.min.agent.spi.MemoryLoaded
 import dev.min.agent.spi.ModelRequestFailed
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.Note
+import dev.min.agent.spi.QuestionAnswered
+import dev.min.agent.spi.QuestionAsked
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SettingsChanged
 import dev.min.agent.spi.ToolEffectPending
@@ -72,6 +74,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 model = e.model ?: settings.model,
                 mode = e.mode ?: settings.mode,
                 effort = e.effort ?: settings.effort,
+                modeBeforePlan = settings.modeBeforePlanAfter(e.mode),
             ),
         )
         is InputReceived -> {
@@ -147,6 +150,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
                         if (child == null) current else current +
                             (child.child to child.copy(reportedTurns = child.reportedTurns + effect.childTurn))
                     }
+                    // 模式变更由内核紧跟着写成 SettingsChanged，在那条事件上折叠
+                    is SessionEffect.ModeChange -> current
                 }
             },
         )
@@ -183,6 +188,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 toolResults = e.results.associate { it.callId to it.result },
             )
         }
+        is QuestionAsked -> withQuestionAsked(e)
+        is QuestionAnswered -> withQuestionAnswered(e)
         is Note -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
     }
     return next.copy(lastSeq = record.seq)
