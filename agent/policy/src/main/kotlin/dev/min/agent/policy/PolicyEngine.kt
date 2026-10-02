@@ -97,6 +97,18 @@ object PolicyEngine {
     }
 
     /**
+     * hooks 的 `if` 字段：一条权限规则写法的条件，对这次调用成不成立（docs/agent/detail/hooks设计.md §4）。
+     * 与 Claude Code 一致：Bash 逐个子命令判断，任何一个子命令命中就算；**看不透的命令一律算成立**——
+     * 判断不了就跑 hook，hook 是门禁时宁可多跑一次。写法认不出时不成立（调用方记一条说明）。
+     */
+    fun matchesCondition(rule: String, ask: PermissionAsk, context: PolicyContext): Boolean {
+        val parsed = PermissionRule.parse(RuleKind.Allow, rule, "hook-if") ?: return false
+        val facts = Facts.of(ask, context)
+        if (parsed.tool == "Bash" && parsed.tool == facts.tool && facts.untrusted) return true
+        return firstHit(facts, listOf(parsed), RuleMatcher(context.cwd, context.home)) != null
+    }
+
+    /**
      * 踩了安全底线的原因（界面据此解释「为什么连 bypass 也要问你」），没踩为 null。
      */
     fun floorReason(ask: PermissionAsk, context: PolicyContext): String? = floorReason(Facts.of(ask, context))

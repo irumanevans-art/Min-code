@@ -20,6 +20,7 @@ import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.MemoryLoaded
+import dev.min.agent.spi.HooksLoaded
 import dev.min.agent.spi.PermissionRulesLoaded
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
@@ -326,7 +327,11 @@ class SessionHub(
     /** 子 agent 守父会话的规矩：父会话的规则快照，连同父会话里「总是允许」攒下的规则（来源仍记 session） */
     private fun inheritedRules(parent: SessionState): List<SessionEvent> {
         val rules = parent.rules + parent.sessionRules
-        return if (rules.isEmpty()) emptyList() else listOf(PermissionRulesLoaded(rules))
+        // hooks 同理：父会话的门禁（PreToolUse 拦危险命令之类）在子 agent 里照样生效
+        return listOfNotNull(
+            if (rules.isEmpty()) null else PermissionRulesLoaded(rules),
+            if (parent.hooks.isEmpty()) null else HooksLoaded(parent.hooks),
+        )
     }
 
     private fun toolsFor(definition: AgentDefinition, depth: Int): List<String>? {

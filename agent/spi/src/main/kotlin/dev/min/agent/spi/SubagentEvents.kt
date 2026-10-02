@@ -116,6 +116,11 @@ sealed interface InputOrigin {
     @Serializable
     @SerialName("parent")
     data class Parent(val session: SessionId) : InputOrigin
+
+    /** hook 送来的话（Stop hook 拦下了「结束」，把理由交给模型让它接着做） */
+    @Serializable
+    @SerialName("hook")
+    data class Hook(val event: String) : InputOrigin
 }
 
 @Serializable

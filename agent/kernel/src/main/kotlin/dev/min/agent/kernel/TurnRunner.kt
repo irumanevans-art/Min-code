@@ -14,7 +14,20 @@ import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.AssistantMessageCompleted
+import dev.min.agent.ext.hooks.HookEvent
+import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.StopInput
+import dev.min.agent.ext.hooks.SubagentStopInput
+import dev.min.agent.ext.hooks.UserPromptSubmitInput
+import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.spi.CompactionTrigger
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
+import dev.min.agent.spi.InputBlocked
+import dev.min.agent.spi.InputOrigin
+import dev.min.agent.spi.Note
+import dev.min.agent.spi.NoteLevel
+import kotlinx.serialization.json.jsonObject
 import dev.min.agent.spi.AssistantSegment
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
@@ -43,7 +56,14 @@ import kotlin.coroutines.cancellation.CancellationException
  */
 internal class TurnRunner(private val rt: SessionRuntime) {
     private val deps = rt.deps
-    private val tools = ToolExecutor(rt)
+    private val hooks = HookDriver(rt)
+    private val tools = ToolExecutor(rt, hooks)
+
+    /** UserPromptSubmit 已经过过的输入 → 它带来的上下文（提升后挂到那条消息上）。每条输入只过一次 hook */
+    private val screened = mutableMapOf<ClientMsgId, List<String>>()
+
+    /** 本回合被 UserPromptSubmit 拦下的输入条数 */
+    private var blockedInputs = 0
     private val compactor = Compactor(rt, ::assemble)
 
     /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
@@ -55,8 +75,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             if (trigger == TurnTrigger.Compact) {
                 compactOnly(turnId)
             } else {
-                promote(setOf(Delivery.Queue, Delivery.Steer))
-                loop(turnId)
+                // 开回合的输入全被 UserPromptSubmit 拦下：什么都不发给模型，回合空着结束
+                if (promote(setOf(Delivery.Queue, Delivery.Steer)) > 0 || blockedInputs == 0) loop(turnId)
             }
             val usage = rt.state.value.turn?.usage ?: Usage()
             rt.commit(listOf(TurnEnded(turnId, TurnOutcome.Completed, usage, deps.clock.nowMs() - startedAt)), Durability.Sync)
@@ -66,6 +86,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             throw e
         } catch (e: TurnAbort) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind)), Durability.Sync)
+            false
+        } catch (e: HookStop) {
+            // 某个 hook 说 continue: false：结束这一轮，理由给人看（hooks设计 §5）
+            val note = listOf(Note(NoteLevel.Info, "hook 停止了这一轮" + (e.reason?.let { "：$it" } ?: "")))
+            rt.commit(note + closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Hook)), Durability.Sync)
             false
         } catch (e: TurnLimitReached) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit)), Durability.Sync)
@@ -98,8 +123,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             val calls = completed.message.parts.filterIsInstance<ToolCallPart>()
             when {
                 calls.isEmpty() -> {
-                    // 模型说完了；生成期间有人插话就接着回应，否则回合结束
-                    if (promote(setOf(Delivery.Steer)) == 0) return
+                    // 模型说完了；生成期间有人插话就接着回应；Stop hook 拦下「结束」也接着做；否则回合结束
+                    if (promote(setOf(Delivery.Steer)) == 0 && !stopHookContinues(turnId, completed)) return
                 }
                 completed.truncated -> tools.rejectTruncated(turnId, calls)
                 else -> tools.executeAll(turnId, calls)
@@ -119,11 +144,78 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         while (true) {
             val pending = rt.state.value.inbox.filter { it.delivery in deliveries }
             if (pending.isEmpty()) return 0
+            // UserPromptSubmit：拦下的输入不提升（收件箱变了，重算一遍）
+            if (screen(pending)) continue
             val ids = pending.map { it.clientMsgId }.toSet()
             val events = pending.map { InputPromoted(it.clientMsgId, MessageId(deps.ids.next("msg"))) }
             val committed = rt.commitIf(events, Durability.Sync) { s -> s.inbox.map { it.clientMsgId }.containsAll(ids) }
-            if (committed != null) return pending.size
+            if (committed != null) {
+                val contexts = events.flatMap { promoted ->
+                    screened[promoted.clientMsgId].orEmpty().map { HookContextAdded(HookContextTarget.Message(promoted.messageId), HookEvent.UserPromptSubmit.name, it) }
+                }
+                if (contexts.isNotEmpty()) rt.commit(contexts, Durability.Sync)
+                return pending.size
+            }
         }
+    }
+
+    /**
+     * 让人发的输入过 UserPromptSubmit hooks（hooks设计 §7）：拦下的落 [InputBlocked]（不进历史，界面退回输入框并显示理由），
+     * 加的上下文记下来，提升后挂到那条消息上。返回 true = 有输入被拦下
+     */
+    private suspend fun screen(pending: List<PendingInput>): Boolean {
+        var blocked = false
+        for (input in pending) {
+            if (input.origin != InputOrigin.User || input.clientMsgId in screened) continue
+            val prompt = input.parts.filterIsInstance<TextPart>().joinToString("\n") { it.text }
+            val specific = HookJson.encodeToJsonElement(UserPromptSubmitInput.serializer(), UserPromptSubmitInput(prompt = prompt)).jsonObject
+            val outcome = hooks.run(HookEvent.UserPromptSubmit, null, specific, rt.state.value.turn?.turnId)
+            screened[input.clientMsgId] = outcome?.contexts.orEmpty()
+            if (outcome == null) continue
+            if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
+            if (outcome.decision == HookOutcome.Decision.Block) {
+                val reason = outcome.reason ?: "被 UserPromptSubmit hook 拦下"
+                rt.commitIf(listOf(InputBlocked(input.clientMsgId, reason)), Durability.Sync) { s -> s.inbox.any { it.clientMsgId == input.clientMsgId } }
+                screened[input.clientMsgId] = emptyList()
+                blocked = true
+                blockedInputs++
+            }
+        }
+        return blocked
+    }
+
+    /**
+     * 模型要结束时跑 Stop（子会话是 SubagentStop）。拦下就把理由作为一条输入交给模型、回合继续；
+     * 同一回合最多拦 [MAX_STOP_BLOCKS] 次，之后放行——两个互相较劲的 hook 不能把模型困死在回合里
+     */
+    private suspend fun stopHookContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
+        val state = rt.state.value
+        val blocks = state.turn?.stopHookBlocks ?: 0
+        val text = completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val origin = state.origin
+        val (event, specific) = if (origin == null) {
+            HookEvent.Stop to HookJson.encodeToJsonElement(StopInput.serializer(), StopInput(stopHookActive = blocks > 0, lastAssistantMessage = text)).jsonObject
+        } else {
+            HookEvent.SubagentStop to HookJson.encodeToJsonElement(
+                SubagentStopInput.serializer(),
+                SubagentStopInput(stopHookActive = blocks > 0, lastAssistantMessage = text),
+            ).jsonObject
+        }
+        val outcome = hooks.run(event, origin?.agentType, specific, turnId) ?: return false
+        if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
+        if (outcome.decision != HookOutcome.Decision.Block) return false
+        if (blocks >= MAX_STOP_BLOCKS) {
+            rt.commit(listOf(Note(NoteLevel.Warning, "$event hook 本回合已经拦了 $MAX_STOP_BLOCKS 次「结束」，这次放行")), Durability.Batched)
+            return false
+        }
+        rt.receive(
+            ClientMsgId("hook-stop:${turnId.value}:${blocks + 1}"),
+            listOf(TextPart(outcome.reason ?: "$event hook 要求继续，还没做完")),
+            Delivery.Steer,
+            InputOrigin.Hook(event.name),
+            startTurn = null,
+        )
+        return promote(setOf(Delivery.Steer)) > 0
     }
 
     private suspend fun requestWithRetry(turnId: TurnId): ModelStreamEvent.Completed {
@@ -240,6 +332,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     }
 
     companion object {
+        /** Stop hook 一个回合里最多拦几次「结束」 */
+        const val MAX_STOP_BLOCKS = 5
+
         /** 防止模型陷入「调工具 → 看结果 → 再调」的死循环把钱烧光；循环检测（M3）落地后这只是最后一道闸 */
         const val MAX_REQUESTS_PER_TURN = 200
 

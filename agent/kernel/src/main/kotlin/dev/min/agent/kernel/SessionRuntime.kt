@@ -2,7 +2,17 @@ package dev.min.agent.kernel
 
 import dev.min.agent.context.MemoryLoader
 import dev.min.agent.ext.config.RuleSpecKind
+import dev.min.agent.ext.config.ConfigSource
 import dev.min.agent.ext.config.SettingsLoader
+import dev.min.agent.ext.config.SettingsSnapshot
+import dev.min.agent.ext.hooks.HookEvent
+import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.SessionStartInput
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
+import dev.min.agent.spi.HookSourceData
+import dev.min.agent.spi.HooksLoaded
+import kotlinx.serialization.json.jsonObject
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.Effort
@@ -117,9 +127,38 @@ class SessionRuntime private constructor(
      * 会话创建时读一次 settings 各层的权限规则，快照写进日志（[PermissionRulesLoaded]），会话内冻结（与记忆同理）。
      * 没有主目录（[KernelDeps.memoryHome] 为 null：内核测试、嵌入场景）就不读；什么都没读到、也没有说明时不写事件。
      */
-    private suspend fun loadPermissionRules() {
+    /**
+     * 会话创建时读一次 settings：权限规则与 hooks 各写一份快照（都在会话内冻结）。
+     * 项目层（project / local）的 hooks 只在工作区被信任时才进快照：它们会在手机上执行任意命令（hooks设计 §1）。
+     */
+    private suspend fun loadSettings() {
         val home = deps.memoryHome ?: return
         val snapshot = SettingsLoader.load(deps.host.fs, state.value.created.cwd, home)
+        loadPermissionRules(snapshot)
+        val active = snapshot.merged.activeHooks()
+        val trusted = deps.trustProjectHooks(state.value.created.cwd)
+        val (kept, untrusted) = active.partition { trusted || it.source == ConfigSource.User || it.source == ConfigSource.Managed }
+        val notes = untrusted.map { s ->
+            "${s.source.label} 层带了 ${s.hooks.size} 个事件的 hooks，这个工作区还没被信任，未启用"
+        }
+        if (kept.isNotEmpty() || notes.isNotEmpty()) {
+            commit(listOf(HooksLoaded(kept.map { HookSourceData(it.source.label, it.hooks) }, notes)), Durability.Sync)
+        }
+    }
+
+    /** SessionStart（source = startup）：加的上下文挂到第一条人发的消息上 */
+    private suspend fun runSessionStart() {
+        val driver = HookDriver(this)
+        val specific = HookJson.encodeToJsonElement(
+            SessionStartInput.serializer(),
+            SessionStartInput(source = "startup", model = state.value.settings.model.modelId),
+        ).jsonObject
+        val outcome = driver.run(HookEvent.SessionStart, "startup", specific) ?: return
+        val events = outcome.contexts.map { HookContextAdded(HookContextTarget.NextUserMessage, HookEvent.SessionStart.name, it) }
+        if (events.isNotEmpty()) commit(events, Durability.Sync)
+    }
+
+    private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
         val rules = snapshot.merged.ruleSpecs().map { spec ->
             RuleEntry(
                 kind = when (spec.kind) {
@@ -299,7 +338,8 @@ class SessionRuntime private constructor(
             val records = log.append(listOf(created) + initial, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
             if (loadMemory) runtime.loadMemory()
-            if (loadSettings) runtime.loadPermissionRules()
+            if (loadSettings) runtime.loadSettings()
+            if (runtime.state.value.origin == null) runtime.runSessionStart()
             return runtime
         }
 

@@ -1,6 +1,6 @@
 # Hooks 设计
 
-> 状态：设计，2026-10-02。上位文档：`04-子系统设计.md` §4.7。
+> 状态：H1、H2 已实现（2026-10-03），H3 起待做。上位文档：`04-子系统设计.md` §4.7。
 > 语义来源：Claude Code 公开文档 `hooks.md`（2026-10-02 取）与 `research/inventory/claude-code/02-hooks-settings-env-cli.md`
 > §1、§2、R1a；JSON 形状已转录在 `agent/ext/src/main/kotlin/dev/min/agent/ext/hooks/`（hooks-shapes）。
 > 2026-10-01 的 HookRunner（分支 `agent/hook-runner`）作废：它在宿主 JVM 里直接起进程，不走 proot，且建立在不存在的规格上。
@@ -123,6 +123,10 @@ Ask 时：PermissionRequest hooks → 能替人答；不答才发审批卡
 | H2 | 内核：事件（`HooksLoaded`、`HooksRan`、`HookContext`、`InputBlocked`、`ToolInputRewritten`）、§7 的接入点、PreToolUse 合流、Stop 防死循环、信任与快照、`DecidedBy.Hook` | O |
 | H3 | `type: http`（宿主 HTTP，`allowedHttpHookUrls` / `httpHookAllowedEnvVars`）、`async` / `asyncRewake`、skill / subagent frontmatter hooks、PreCompact / PostCompact（随压缩） | GLM 5.3 / GPT |
 | H4 | `prompt` / `agent` 类型（小模型评估）、`mcp_tool`（随 MCP）、其余事件 | 后续 |
+
+**H2 落地情况（2026-10-03，分支 `agent/hooks-h2`）**：已接 SessionStart（仅 startup、仅根会话）、UserPromptSubmit、PreToolUse（含合流与改写）、PostToolUse / PostToolUseFailure、Stop / SubagentStop（5 次上限）、`continue: false`（回合以 `interrupted(hook)` 结束，理由进 Note）；快照随子 agent 继承；项目层只在宿主判定信任时启用（桌面 CLI 用 `--trust`，App 侧待 M2-B 接工作区信任）。
+实现时补的取舍：hook 输出的文字去首尾空白（脚本 echo 带出的换行不进上下文）；开回合的输入全被 UserPromptSubmit 拦下时回合空着结束、不请求模型；有 PreToolUse hook 的只读调用不进并行批（hook 结论要与判定合流）。
+还没接、留到 H3：SessionStart(resume)、PermissionRequest、SubagentStart、Notification、SessionEnd、PreCompact / PostCompact。
 
 ## 9. 已知限制（先写下来）
 

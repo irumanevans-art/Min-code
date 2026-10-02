@@ -12,6 +12,7 @@ dependencies {
     implementation(project(":agent:store"))
     implementation(project(":agent:context"))
     implementation(project(":agent:ext"))
+    testImplementation(project(":agent:testkit"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

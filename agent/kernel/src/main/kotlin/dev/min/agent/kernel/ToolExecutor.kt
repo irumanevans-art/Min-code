@@ -1,5 +1,10 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.ext.hooks.HookEvent
+import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.PostToolUseFailureInput
+import dev.min.agent.ext.hooks.PostToolUseInput
+import dev.min.agent.ext.hooks.PreToolUseInput
 import dev.min.agent.policy.PermissionRule
 import dev.min.agent.policy.PolicyContext
 import dev.min.agent.policy.PolicyEngine
@@ -12,6 +17,13 @@ import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.spi.AgentPort
 import dev.min.agent.spi.ApprovalRequested
+import dev.min.agent.spi.DecidedBy
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
+import dev.min.agent.spi.ToolInputRewritten
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.Exec
@@ -48,7 +60,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * 的调用并行跑（有上限），其余一个一个来。权限在**真正执行前**才判定：前一个调用等审批时用户切了模式，
  * 后面的调用按新模式走。每个调用副作用之前必落 ToolEffectPending，结束必落 ToolOutcome（docs/agent/02-总体架构.md §4）。
  */
-internal class ToolExecutor(private val rt: SessionRuntime) {
+internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: HookDriver = HookDriver(rt)) {
     private val deps = rt.deps
     private val registry: Map<String, Tool<*>> = availableTools(rt.state.value, deps).associateBy { it.name }
     private val parallelism = Semaphore(deps.maxParallelTools)
@@ -59,7 +71,8 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         /** 没有这个工具，或入参不合法：不执行，直接回一个错误结果让模型改 */
         data class Rejected(override val call: ToolCallPart, val messageToModel: String) : Prepared
 
-        data class Ready(override val call: ToolCallPart, val tool: Tool<Any>, val input: Any) : Prepared
+        /** [raw] 是执行用的原始入参：一般就是模型给的，PreToolUse hook 改写过时是改写后的 */
+        data class Ready(override val call: ToolCallPart, val tool: Tool<Any>, val input: Any, val raw: JsonObject = call.input) : Prepared
     }
 
     /** 输出被截断的消息：参数可能不完整，一个都不执行（pi 的做法） */
@@ -114,6 +127,8 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         val batch = mutableListOf<Prepared.Ready>()
         for (p in prepared.drop(start)) {
             if (p !is Prepared.Ready || !p.tool.traits.readOnly || !p.tool.traits.concurrencySafe) break
+            // 有 PreToolUse hook 的调用走单个流程：hook 的结论要与权限判定合流（hooks设计 §7）
+            if (hooks.has(HookEvent.PreToolUse, p.call.name)) break
             if (verdictFor(p) !is Verdict.Allow) break
             batch += p
         }
@@ -152,12 +167,16 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
     }
 
     private suspend fun runOne(turnId: TurnId, p: Prepared) {
-        val ready = when (p) {
+        val planned = when (p) {
             is Prepared.Rejected -> return outcome(turnId, p.call.callId, errorResult(p.messageToModel))
             is Prepared.Ready -> p
         }
+        val (ready, hook) = when (val pre = preToolUse(turnId, planned)) {
+            is PreToolUse.Blocked -> return outcome(turnId, planned.call.callId, errorResult(pre.messageToModel))
+            is PreToolUse.Proceed -> pre.ready to pre.decision
+        }
         val ask = askFor(ready)
-        when (val verdict = verdictFor(ready, ask)) {
+        when (val verdict = merge(ready, ask, hook)) {
             is Verdict.Deny -> outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
             is Verdict.Allow -> execute(turnId, ready)
             Verdict.Ask -> {
@@ -179,8 +198,88 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         }
     }
 
+    private sealed interface PreToolUse {
+        data class Proceed(val ready: Prepared.Ready, val decision: HookOutcome.Decision) : PreToolUse
+        data class Blocked(val messageToModel: String) : PreToolUse
+    }
+
+    /**
+     * PreToolUse hooks（hooks设计 §7）：拦下 → 不执行，理由给模型；改写入参 → 重新解析、落 [ToolInputRewritten]，之后的判定与执行都用新入参；
+     * `continue: false` → 结束回合。没有匹配的 hook 时原样放行，结论为中性
+     */
+    private suspend fun preToolUse(turnId: TurnId, ready: Prepared.Ready): PreToolUse {
+        val specific = HookJson.encodeToJsonElement(
+            PreToolUseInput.serializer(),
+            PreToolUseInput(toolName = ready.call.name, toolInput = ready.raw, toolUseId = ready.call.callId.value),
+        ).jsonObject
+        val outcome = hooks.run(HookEvent.PreToolUse, ready.call.name, specific, turnId, ready.call.callId) { rule ->
+            PolicyEngine.matchesCondition(rule, askFor(ready), policyContext())
+        } ?: return PreToolUse.Proceed(ready, HookOutcome.Decision.Neutral)
+        if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
+        if (outcome.decision == HookOutcome.Decision.Block) {
+            return PreToolUse.Blocked("这次调用被 PreToolUse hook 拦下了。" + (outcome.reason?.let { "理由：$it" } ?: "不要原样重试。"))
+        }
+        val updated = outcome.updatedInput ?: return PreToolUse.Proceed(ready, outcome.decision)
+        return when (val parsed = ready.tool.parse(updated)) {
+            is ToolInput.Invalid -> PreToolUse.Blocked("PreToolUse hook 改写后的参数不合法：${parsed.messageForModel}")
+            is ToolInput.Valid -> {
+                rt.commit(listOf(ToolInputRewritten(turnId, ready.call.callId, updated)), Durability.Sync)
+                PreToolUse.Proceed(ready.copy(input = parsed.value, raw = updated), outcome.decision)
+            }
+        }
+    }
+
+    /**
+     * hook 的结论与权限引擎合流（hooks设计 §7）：alwaysAsk 与安全底线问人、拒绝规则与模式的拒绝照旧——hook 的 allow 都越不过；
+     * 其余情况 hook 说 ask 就问人、说 allow 就跳过审批（与 Claude Code 一致）
+     */
+    private fun merge(ready: Prepared.Ready, ask: PermissionAsk, hook: HookOutcome.Decision): Verdict {
+        val verdict = verdictFor(ready, ask)
+        if (hook == HookOutcome.Decision.Neutral || ready.tool.traits.alwaysAsk || verdict is Verdict.Deny) return verdict
+        if (verdict == Verdict.Ask && PolicyEngine.floorReason(ask, policyContext()) != null) return verdict
+        return when (hook) {
+            HookOutcome.Decision.Ask -> Verdict.Ask
+            HookOutcome.Decision.Allow -> Verdict.Allow(DecidedBy.Hook(HookEvent.PreToolUse.name))
+            else -> verdict
+        }
+    }
+
+    /** PostToolUse / PostToolUseFailure：拦截理由与加的上下文挂在这次调用的结果后面，模型下一轮看得到 */
+    private suspend fun postToolUse(turnId: TurnId, p: Prepared.Ready, result: ToolResult, durationMs: Long) {
+        val failed = result.isError
+        val event = if (failed) HookEvent.PostToolUseFailure else HookEvent.PostToolUse
+        if (!hooks.has(event, p.call.name)) return
+        val text = result.content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val specific = if (failed) {
+            HookJson.encodeToJsonElement(
+                PostToolUseFailureInput.serializer(),
+                PostToolUseFailureInput(toolName = p.call.name, toolInput = p.raw, error = text, durationMs = durationMs),
+            ).jsonObject
+        } else {
+            // CC 的 PostToolUse 也带 tool_name / tool_use_id（转录的形状类里漏了这两个键，这里补上）
+            JsonObject(
+                HookJson.encodeToJsonElement(
+                    PostToolUseInput.serializer(),
+                    PostToolUseInput(toolInput = p.raw, toolResponse = JsonPrimitive(text), durationMs = durationMs),
+                ).jsonObject + mapOf("tool_name" to JsonPrimitive(p.call.name), "tool_use_id" to JsonPrimitive(p.call.callId.value)),
+            )
+        }
+        val outcome = hooks.run(event, p.call.name, specific, turnId, p.call.callId) { rule ->
+            PolicyEngine.matchesCondition(rule, askFor(p), policyContext())
+        } ?: return
+        if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
+        val anchor = rt.state.value.history.lastOrNull { e -> e is HistoryEntry.Assistant && e.toolCalls.any { it.callId == p.call.callId } }
+            ?.messageId ?: return
+        val texts = listOfNotNull(outcome.reason.takeIf { outcome.decision == HookOutcome.Decision.Block }?.let { "$event hook 的反馈：$it" }) +
+            outcome.contexts
+        if (texts.isNotEmpty()) {
+            rt.commit(texts.map { HookContextAdded(HookContextTarget.ToolResults(anchor), event.name, it) }, Durability.Sync)
+        }
+    }
+
     private suspend fun execute(turnId: TurnId, p: Prepared.Ready) {
         val callId = p.call.callId
+        val started = deps.clock.nowMs()
         rt.commit(listOf(ToolEffectPending(turnId, callId)), Durability.Sync)
         val raw = try {
             var result: ToolResult? = null
@@ -199,6 +298,7 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         }
         val budgeted = ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId)
         outcome(turnId, callId, budgeted)
+        postToolUse(turnId, p, budgeted, deps.clock.nowMs() - started)
     }
 
     private suspend fun outcome(turnId: TurnId, callId: CallId, result: ToolResult) {

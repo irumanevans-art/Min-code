@@ -10,7 +10,13 @@ import dev.min.agent.spi.SessionEffect
 import dev.min.agent.spi.CompactionFailed
 import dev.min.agent.spi.CompactionStarted
 import dev.min.agent.spi.ContextCompacted
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
+import dev.min.agent.spi.HooksLoaded
+import dev.min.agent.spi.HooksRan
+import dev.min.agent.spi.InputBlocked
 import dev.min.agent.spi.PermissionRulesLoaded
+import dev.min.agent.spi.ToolInputRewritten
 import dev.min.agent.spi.ToolOutputsMasked
 import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.RuleKindData
@@ -90,10 +96,13 @@ fun SessionState.apply(record: EventRecord): SessionState {
         )
         is InputReceived -> {
             check(e.clientMsgId !in seenInputs) { "重复的输入 ${e.clientMsgId}" }
+            // 只有 Stop / SubagentStop hook 会送来 hook 来源的输入：每条算一次「拦下结束」
+            val stopHook = e.origin is InputOrigin.Hook
             copy(
                 inbox = inbox + PendingInput(e.clientMsgId, e.parts, e.delivery, e.origin),
                 seenInputs = seenInputs + e.clientMsgId,
                 children = reported(e.origin),
+                turn = if (stopHook && turn != null) turn.copy(stopHookBlocks = turn.stopHookBlocks + 1) else turn,
             )
         }
         is InputPromoted -> {
@@ -102,6 +111,11 @@ fun SessionState.apply(record: EventRecord): SessionState {
             copy(
                 inbox = inbox - input,
                 history = history + HistoryEntry.User(e.messageId, input.parts, input.origin),
+                // 人发的消息把等着挂靠的 hook 上下文（SessionStart 的）带上
+                hookContexts = if (input.origin == InputOrigin.User && pendingHookContexts.isNotEmpty()) {
+                    hookContexts + (e.messageId to hookContexts[e.messageId].orEmpty() + pendingHookContexts)
+                } else hookContexts,
+                pendingHookContexts = if (input.origin == InputOrigin.User) emptyList() else pendingHookContexts,
             )
         }
         is InputWithdrawn -> copy(inbox = inbox.filterNot { it.clientMsgId == e.clientMsgId })
@@ -152,6 +166,33 @@ fun SessionState.apply(record: EventRecord): SessionState {
             }
         }
         is PermissionRulesLoaded -> copy(rules = e.rules)
+        is HooksLoaded -> copy(hooks = e.sources)
+        is HooksRan -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
+        is HookContextAdded -> when (val target = e.target) {
+            HookContextTarget.NextUserMessage -> copy(pendingHookContexts = pendingHookContexts + e.text)
+            is HookContextTarget.Message -> {
+                check(history.any { it.messageId == target.messageId && it is HistoryEntry.User }) { "hook 上下文挂靠的用户消息 ${target.messageId} 不存在" }
+                copy(hookContexts = hookContexts + (target.messageId to hookContexts[target.messageId].orEmpty() + e.text))
+            }
+            is HookContextTarget.ToolResults -> {
+                check(history.any { it.messageId == target.assistantMessageId && it is HistoryEntry.Assistant }) {
+                    "hook 上下文挂靠的助手消息 ${target.assistantMessageId} 不存在"
+                }
+                copy(hookContexts = hookContexts + (target.assistantMessageId to hookContexts[target.assistantMessageId].orEmpty() + e.text))
+            }
+        }
+        is ToolInputRewritten -> updateTurn(e.turnId) { t ->
+            val call = t.calls[e.callId] ?: error("回合 ${e.turnId} 里没有调用 ${e.callId}")
+            check(call.phase == CallPhase.Planned) { "只有还没判定的调用才能改写入参，${e.callId} 处于 ${call.phase}" }
+            t.copy(calls = t.calls + (e.callId to call.copy(input = e.input)))
+        }
+        is InputBlocked -> {
+            check(inbox.any { it.clientMsgId == e.clientMsgId }) { "拦下的输入 ${e.clientMsgId} 不在收件箱里" }
+            copy(
+                inbox = inbox.filterNot { it.clientMsgId == e.clientMsgId },
+                presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
+            )
+        }
         is ToolOutputsMasked -> updateTurn(e.turnId) { it }.copy(
             masked = masked + e.outputs.associate { it.callId to it.path },
             lastRequestUsage = null,

@@ -268,6 +268,9 @@ enum class InterruptedBy {
 
     /** maxTurns / 预算 / 循环检测等上限 */
     @SerialName("limit") Limit,
+
+    /** 某个 hook 输出了 `continue: false`（理由在 Note 里） */
+    @SerialName("hook") Hook,
 }
 
 @Serializable
