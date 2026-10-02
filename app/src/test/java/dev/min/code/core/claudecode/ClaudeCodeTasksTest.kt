@@ -120,4 +120,45 @@ class ClaudeCodeTasksTest {
         assertEquals(4_000L, tasks[0].endedAt)
         assertEquals("completed", tasks[1].status)
     }
+
+    /**
+     * task_progress 的 description 是进度（"Running Create fork_marker.txt"），不是任务的说明。
+     * CLI 2.1.286 实录：task_started 说 "fork probe"，随后每条 task_progress 都换一句。
+     */
+    @Test
+    fun `task_progress text is the progress, not the task's description`() {
+        val progressFrame = """{"type":"system","subtype":"task_progress","task_id":"t1","description":"Running Create marker","subagent_type":"fork","usage":{"total_tokens":5,"tool_uses":1,"duration_ms":9},"last_tool_name":"Bash"}"""
+        val progress = parseClaudeCodeEvents(progressFrame).single() as TaskEvent
+        assertEquals("Running Create marker", progress.progress)
+        assertNull(progress.description)
+
+        val t = emptyList<TaskInfo>()
+            .withTaskEvent(TaskEvent(taskId = "t1", status = "running", taskType = "local_agent", description = "fork probe", subagentType = "fork"), now = 1)
+            .withTaskEvent(progress, now = 2)
+            .single()
+        assertEquals("fork probe", t.description)
+        assertEquals("Running Create marker", t.progress)
+    }
+
+    private fun note(text: String, taskId: String?) = ClaudeCodeEvent.SystemNote(text, taskId = taskId)
+
+    @Test
+    fun `a finished agent's note names the agent, a fork is called a fork, shells are left alone`() {
+        val tasks = listOf(
+            TaskInfo(id = "a1", taskType = "local_agent", description = "audit  auth\nflow", subagentType = "general-purpose"),
+            TaskInfo(id = "f1", taskType = "local_agent", description = "fork probe", subagentType = "fork"),
+            TaskInfo(id = "b1", taskType = "local_bash", description = "tick"),
+            TaskInfo(id = "n1", taskType = "local_agent", description = "  "),
+            TaskInfo(id = "long", taskType = "local_agent", description = "x".repeat(60)),
+        )
+        assertEquals("子任务「audit auth flow」完成：ok", tasks.nameTaskNote(note("子任务完成：ok", "a1")))
+        assertEquals("分身「fork probe」失败：boom", tasks.nameTaskNote(note("子任务失败：boom", "f1")))
+        assertEquals("子任务完成", tasks.nameTaskNote(note("子任务完成", "b1")))
+        assertEquals("子任务完成", tasks.nameTaskNote(note("子任务完成", "n1")))
+        assertEquals("子任务完成", tasks.nameTaskNote(note("子任务完成", "unknown")))
+        assertEquals("子任务完成", tasks.nameTaskNote(note("子任务完成", null)))
+        assertEquals("子任务「" + "x".repeat(40) + "…」完成", tasks.nameTaskNote(note("子任务完成", "long")))
+        // 不是任务终局提示的话（没有「子任务」前缀）不动
+        assertEquals("别的提示", tasks.nameTaskNote(note("别的提示", "a1")))
+    }
 }

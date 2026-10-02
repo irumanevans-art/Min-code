@@ -281,6 +281,8 @@ class ClaudeCodeManager(
     data class TaskInfo(
         val id: String,
         val description: String = "",
+        /** 最近一条 task_progress 的 description：它此刻在干什么。任务的说明始终是 [description] */
+        val progress: String? = null,
         /** Task 工具的子 agent 类型，如 general-purpose / Explore */
         val subagentType: String? = null,
         /** `local_bash` = 后台 shell，`local_agent` = 子 agent，见 [isShell] */
@@ -879,7 +881,7 @@ class ClaudeCodeManager(
             }
 
             is ClaudeCodeEvent.SystemNote ->
-                appendItem(ChatItem.Note(newId(), event.text, isError = event.isError))
+                appendItem(ChatItem.Note(newId(), _state.value.tasks.nameTaskNote(event), isError = event.isError))
 
             // 状态条：原地替换。phase / detail 各自独立更新，
             // 只带 detail 的帧（task_summary）不能把 phase 抹掉，反之亦然。

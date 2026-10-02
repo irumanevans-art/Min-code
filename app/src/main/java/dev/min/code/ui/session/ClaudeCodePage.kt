@@ -1618,7 +1618,7 @@ private fun SubagentLine(task: ClaudeCodeManager.TaskInfo) {
             maxLines = 1,
         )
         Text(
-            text = task.summary?.takeIf { it.isNotBlank() } ?: task.description,
+            text = task.summary?.takeIf { it.isNotBlank() } ?: task.progress?.takeIf { it.isNotBlank() } ?: task.description,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),

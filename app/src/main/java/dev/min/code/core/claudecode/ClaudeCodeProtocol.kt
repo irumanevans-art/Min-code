@@ -237,7 +237,15 @@ sealed interface ClaudeCodeEvent {
     )
 
     /** 其他 system 提示（compact_boundary / api_error / model_fallback ...） */
-    data class SystemNote(val text: String, val isError: Boolean = false) : ClaudeCodeEvent
+    data class SystemNote(
+        val text: String,
+        val isError: Boolean = false,
+        /**
+         * 这条提示说的是哪个任务（task_notification 的 task_id）。Manager 凭它去任务表查描述，
+         * 把「子任务完成」改成「子任务「描述」完成」—— 并行派出几个 agent 时，光说「子任务完成」分不出是哪一个。
+         */
+        val taskId: String? = null,
+    ) : ClaudeCodeEvent
 
     /**
      * 安全分类器 / 配额等把模型换掉。Note 仍会进聊天流；这条让 Manager 同步 chip 状态。
@@ -304,6 +312,12 @@ sealed interface ClaudeCodeEvent {
         /** running / completed / failed / killed / paused / pending；null 表示这一帧不改状态 */
         val status: String? = null,
         val description: String? = null,
+        /**
+         * task_progress 的 `description`：它此刻在干什么（"Running Create fork_marker.txt"），
+         * **不是**任务本身的说明 —— 并进 [description] 的话，任务的名字会被一句进度顶掉
+         * （权限卡、完成通知里点名都会点错）。
+         */
+        val progress: String? = null,
         val subagentType: String? = null,
         /** `local_bash`（后台 shell）/ `local_agent`（子 agent）/ 其它；只有 task_started 带 */
         val taskType: String? = null,
@@ -1495,7 +1509,7 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
             listOf(
                 ClaudeCodeEvent.TaskEvent(
                     taskId = id,
-                    description = obj.str("description"),
+                    progress = obj.str("description"),
                     subagentType = obj.str("subagent_type"),
                     totalTokens = usage?.int("total_tokens"),
                     toolUses = usage?.int("tool_uses"),
@@ -1642,7 +1656,7 @@ private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent>
             val tail = summary?.takeIf { it.isNotBlank() }?.let("："::plus).orEmpty()
             listOfNotNull(
                 taskEvent,
-                ClaudeCodeEvent.SystemNote("子任务$label$tail", isError = rawStatus == "failed"),
+                ClaudeCodeEvent.SystemNote("子任务$label$tail", isError = rawStatus == "failed", taskId = id),
             )
         }
 
