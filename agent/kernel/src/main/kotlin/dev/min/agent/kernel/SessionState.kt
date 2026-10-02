@@ -16,6 +16,7 @@ import dev.min.agent.protocol.Usage
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.InputOrigin
+import dev.min.agent.spi.HookSourceData
 import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.TurnOutcome
@@ -91,6 +92,12 @@ data class SessionState(
     val tasks: List<TaskRecord> = emptyList(),
     /** 已分配过的最大任务编号。删除任务不回退它，编号因此不会被复用 */
     val taskSeq: Int = 0,
+    /** 会话创建时冻结的 hooks（最后一条 HooksLoaded；docs/agent/detail/hooks设计.md §1） */
+    val hooks: List<HookSourceData> = emptyList(),
+    /** hook 加的上下文，按挂靠的消息（用户消息，或带工具调用的助手消息——挂在它的工具结果后面）；模型视图里渲染成 system-reminder */
+    val hookContexts: Map<MessageId, List<String>> = emptyMap(),
+    /** 还没有消息可挂的 hook 上下文（SessionStart），挂到下一条人发的消息上 */
+    val pendingHookContexts: List<String> = emptyList(),
 )
 
 data class CompactionView(val summary: String, val through: MessageId, val transcriptPath: String?)
@@ -174,6 +181,8 @@ data class TurnState(
     val questions: Map<QuestionId, AskedQuestion> = emptyMap(),
     /** 本回合最后一条事件的时间（折叠时随每条事件更新）。进程被杀时这就是「中断于何时」 */
     val lastEventAtMs: Long = startedAtMs,
+    /** Stop hook 本回合已经拦下「结束」几次：到上限就放行，免得两个 hook 把模型困死在回合里 */
+    val stopHookBlocks: Int = 0,
 ) {
     /**
      * 还在等用户回答的提问，界面据此弹提问卡片（进程重启后同样从日志重建）。

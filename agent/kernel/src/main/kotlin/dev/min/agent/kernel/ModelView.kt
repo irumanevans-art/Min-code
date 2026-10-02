@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolResultPart
 import dev.min.agent.spi.ModelMessage
@@ -21,7 +22,7 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
     } ?: 0
     history.drop(start).forEach { entry ->
         when (entry) {
-            is HistoryEntry.User -> add(ModelMessage(Role.User, entry.parts))
+            is HistoryEntry.User -> add(ModelMessage(Role.User, entry.parts + reminders(entry.messageId)))
             is HistoryEntry.Assistant -> {
                 add(ModelMessage(Role.Assistant, entry.parts))
                 val calls = entry.toolCalls
@@ -37,7 +38,7 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
                                 } else {
                                     ToolResultPart(call.callId, result.content, result.isError)
                                 }
-                            },
+                            } + reminders(entry.messageId),
                         ),
                     )
                 }
@@ -45,6 +46,13 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
         }
     }
 }
+
+/**
+ * hook 加的上下文：与 Claude Code 一样包成 system-reminder，挂在消息末尾（工具结果之后——工具结果块必须排在前面）。
+ * 来自日志的 HookContextAdded，所以请求照样能只凭日志重建
+ */
+private fun SessionState.reminders(messageId: MessageId): List<TextPart> =
+    hookContexts[messageId].orEmpty().map { TextPart("<system-reminder>\n$it\n</system-reminder>") }
 
 /** 被遮蔽的工具结果在模型视图里的样子：说清楚省掉了什么、原文在哪 */
 internal fun maskedStub(tool: String, path: String?): String =

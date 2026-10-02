@@ -25,6 +25,8 @@ data class CliArgs(
     val json: Boolean,
     val resume: String?,
     val wire: Wire? = null,
+    /** 信任当前项目：项目层（.claude/settings.json / settings.local.json）里的 hooks 才会执行（hooks设计 §1） */
+    val trust: Boolean = false,
 )
 
 class UsageException(message: String) : Exception(message)
@@ -46,6 +48,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --cwd <目录>           工作目录，默认当前目录
   --json                 非交互时最后输出一行 JSON 结果（评测用）
   --resume <会话 id>     接着一个已有会话
+  --trust                信任当前项目：执行项目 .claude/ 设置里的 hooks（默认只执行用户级与托管的）
 """
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -55,7 +58,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     while (i < argv.size) {
         val arg = argv[i]
         when (arg) {
-            "--json" -> flags += arg
+            "--json", "--trust" -> flags += arg
             "-h", "--help" -> throw UsageException(USAGE)
             else -> {
                 if (!arg.startsWith("-")) throw UsageException("不认识的参数：$arg\n\n$USAGE")
@@ -99,6 +102,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         } ?: if (prompt == null) ApprovalAnswer.Ask else ApprovalAnswer.No,
         cwd = values["--cwd"]?.let { Path.of(it) } ?: cwdDefault,
         json = "--json" in flags,
+        trust = "--trust" in flags,
         resume = values["--resume"],
         wire = values["--wire"]?.let {
             when (it) {

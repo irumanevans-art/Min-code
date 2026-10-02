@@ -50,6 +50,13 @@ class KernelDeps(
      * null = 不加载记忆文件（内核测试、不需要记忆的嵌入场景）；真实宿主都应该给
      */
     val memoryHome: GuestPath? = null,
+    /**
+     * guest 路径在 hook 脚本所在 shell 里的写法（docs/agent/detail/hooks设计.md §2）：Android 的 proot 里就是原样；
+     * 桌面 CLI 在本机 shell 里跑，要按 DesktopPaths 映射成本机路径
+     */
+    val hookShellPath: (GuestPath) -> String = { it.value },
+    /** 这个工作区里项目层（project / local）的 hooks 能不能跑：工作区信任由宿主记（App 的设置、CLI 的参数），默认不信任 */
+    val trustProjectHooks: (GuestPath) -> Boolean = { false },
     val memoryLimits: MemoryLimits = MemoryLimits(),
 )
 

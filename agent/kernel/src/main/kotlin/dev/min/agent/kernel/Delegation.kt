@@ -156,6 +156,7 @@ internal object Reports {
             InterruptedBy.User -> "interrupted"
             InterruptedBy.ProcessDeath -> "interrupted-by-restart"
             InterruptedBy.Limit -> "turn-limit"
+            InterruptedBy.Hook -> "stopped-by-hook"
         }
     }
 
