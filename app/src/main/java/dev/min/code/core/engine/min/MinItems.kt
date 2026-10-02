@@ -1,0 +1,278 @@
+package dev.min.code.core.engine.min
+
+import dev.min.agent.kernel.CallPhase
+import dev.min.agent.kernel.ChildSummary
+import dev.min.agent.kernel.EndedTurn
+import dev.min.agent.kernel.HistoryEntry
+import dev.min.agent.kernel.SessionPresentation
+import dev.min.agent.kernel.SessionState
+import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.MessageId
+import dev.min.agent.protocol.Part
+import dev.min.agent.protocol.RedactedThinkingPart
+import dev.min.agent.protocol.SessionId
+import dev.min.agent.protocol.TextPart
+import dev.min.agent.protocol.ThinkingPart
+import dev.min.agent.protocol.ToolCallPart
+import dev.min.agent.spi.AgentInputKind
+import dev.min.agent.spi.InputOrigin
+import dev.min.agent.spi.InterruptedBy
+import dev.min.agent.spi.ModelFailureKind
+import dev.min.agent.spi.Note
+import dev.min.agent.spi.NoteLevel
+import dev.min.agent.spi.TurnEnded
+import dev.min.agent.spi.TurnOutcome
+import dev.min.agent.spi.TurnStarted
+import dev.min.agent.spi.TurnTrigger
+import dev.min.code.core.engine.FailureKind
+import dev.min.code.core.engine.InterruptCause
+import dev.min.code.core.engine.TurnEnd
+import dev.min.code.core.engine.TurnTriggerView
+import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.withClippedResult
+
+/*
+ * 内核 SessionState -> ChatItem 列表（设计 5.2 的 1-5 条）。M2-A 的 `projectMinAgent` 是同一件事的旧版，
+ * 它把生成中的那一块拼进 items、文案写死中文、不认识子 agent；B3 起适配器走这里。旧函数的文件不在 B3 许可改动的名单里，
+ * 所以留着没动（现在只剩它自己的单测在用，B6 清理）。
+ *
+ * ## 为什么用 Note 承载几样东西
+ *
+ * 设计 3.11 要给 ChatItem 加 `UserText.continuation`、`Note.marker`、`AgentReport` 三处，但 `core/session/ChatItem.kt`
+ * 不在 B3 许可名单里。这里先用现有的 [ChatItem.Note] 承载：中断 / 失败说明、续跑分隔、子 agent 唤醒分隔、子 agent 报告卡。
+ * 三种承载只写在 [markerNote] / [dividerNote] / [reportNote] 三个函数里，B7 / B10 加了变体后只改它们。
+ */
+
+/** 子 agent 报告标签里的信息（`Reports.render` 的逆）。tools / tokens / duration 缺失或畸形时为 null */
+data class MinReport(
+    val sessionId: String,
+    val agentType: String,
+    val name: String?,
+    val status: String,
+    val fork: Boolean,
+    val tools: Int?,
+    val tokens: Long?,
+    val durationMs: Long?,
+    val body: String,
+) {
+    /** 报告是不是「没做完 / 出错」：卡片按失败色画 */
+    val isError: Boolean get() = status != "completed"
+}
+
+private const val REPORT_TAG = "subagent-report"
+private val REPORT_SHAPE = Regex("^<$REPORT_TAG\\s+([^>]*)>\\n(.*)\\n</$REPORT_TAG>\\s*$", RegexOption.DOT_MATCHES_ALL)
+private val ATTRIBUTE = Regex("([\\w-]+)=\"([^\"]*)\"")
+
+/**
+ * 解析内核交给父会话的报告（`Reports.render`）。不是这个形状返回 null，由调用方退回成普通文字。
+ * 正文里的标签是被转义过的（子 agent 不能伪造「报告之外的话」），这里反转义。
+ */
+fun parseMinReport(text: String): MinReport? {
+    val match = REPORT_SHAPE.matchEntire(text.trim()) ?: return null
+    val attrs = ATTRIBUTE.findAll(match.groupValues[1]).associate { it.groupValues[1] to it.groupValues[2] }
+    val type = attrs["type"] ?: return null
+    val body = match.groupValues[2].replace("&lt;/$REPORT_TAG", "</$REPORT_TAG").replace("&lt;$REPORT_TAG", "<$REPORT_TAG")
+    return MinReport(
+        sessionId = attrs["id"].orEmpty(), agentType = type, name = attrs["name"],
+        status = attrs["status"] ?: "completed", fork = attrs["fork"] == "true",
+        tools = attrs["tools"]?.toIntOrNull(), tokens = attrs["tokens"]?.toLongOrNull(),
+        durationMs = attrs["duration-ms"]?.toLongOrNull(), body = body,
+    )
+}
+
+// ---- 内核类型 -> 通用类型 ----
+
+fun failureKindOf(kind: ModelFailureKind?): FailureKind? = when (kind) {
+    null -> null
+    ModelFailureKind.Network -> FailureKind.Network
+    ModelFailureKind.RateLimited -> FailureKind.RateLimited
+    ModelFailureKind.Overloaded -> FailureKind.Overloaded
+    ModelFailureKind.ContextOverflow -> FailureKind.ContextOverflow
+    ModelFailureKind.Auth -> FailureKind.Auth
+    ModelFailureKind.BadRequest -> FailureKind.BadRequest
+    ModelFailureKind.Server -> FailureKind.Server
+    ModelFailureKind.Other -> FailureKind.Other
+}
+
+fun turnEndOf(outcome: TurnOutcome): TurnEnd = when (outcome) {
+    TurnOutcome.Completed -> TurnEnd.Completed
+    is TurnOutcome.Failed -> TurnEnd.Failed(failureKindOf(outcome.kind), outcome.message)
+    is TurnOutcome.Interrupted -> TurnEnd.Interrupted(
+        when (outcome.by) {
+            InterruptedBy.User -> InterruptCause.User
+            InterruptedBy.ProcessDeath -> InterruptCause.ProcessDeath
+            InterruptedBy.Limit -> InterruptCause.Limit
+        },
+    )
+}
+
+fun triggerViewOf(trigger: TurnTrigger): TurnTriggerView = when (trigger) {
+    TurnTrigger.User -> TurnTriggerView.User
+    TurnTrigger.Resume -> TurnTriggerView.Resume
+    TurnTrigger.Notification -> TurnTriggerView.Notification
+    TurnTrigger.Delegated -> TurnTriggerView.Delegated
+}
+
+fun EndedTurn.end(): TurnEnd = turnEndOf(outcome)
+
+// ---- 承载（B7 / B10 加了 ChatItem 变体后只改这三处）----
+
+private fun markerNote(id: String, text: String, isError: Boolean): ChatItem = ChatItem.Note(id, text, isError)
+private fun dividerNote(id: String, text: String): ChatItem = ChatItem.Note(id, "— $text —")
+private fun reportNote(id: String, text: String, isError: Boolean): ChatItem = ChatItem.Note(id, text, isError)
+
+/**
+ * 投影一个会话的转录。
+ *
+ * @param subItems 某次 Agent 调用派生的子 agent 的转录（按调用 id），挂在那张工具卡的 `subItems` 上，
+ *   展开工具卡就能看子任务的过程（CC 同款）。没有就空
+ * @param childOf 报告里的子 agent id -> 它在本会话里的委派摘要，补上报告里没有的描述
+ */
+fun projectMinItems(
+    state: SessionState,
+    text: MinAgentText,
+    subItems: (CallId) -> List<ChatItem>? = { null },
+    childOf: (SessionId) -> ChildSummary? = { state.children[it] },
+): List<ChatItem> = ItemsBuilder(state, text, subItems, childOf).build()
+
+private class ItemsBuilder(
+    private val state: SessionState,
+    private val text: MinAgentText,
+    private val subItems: (CallId) -> List<ChatItem>?,
+    private val childOf: (SessionId) -> ChildSummary?,
+) {
+    private val items = mutableListOf<ChatItem>()
+
+    /** 上一个回合结束时 items 的长度：回执戳只往它之后的最后一条助手文字上盖 */
+    private var stampFloor = 0
+
+    fun build(): List<ChatItem> {
+        notices(null)
+        state.history.forEach { entry ->
+            when (entry) {
+                is HistoryEntry.User -> user(entry)
+                is HistoryEntry.Assistant -> parts(entry.messageId.value, entry.parts)
+            }
+            notices(entry.messageId)
+        }
+        // 还没提升的输入：用户的排队气泡（Esc 可原样撤回）。子 agent / 父会话送来的不画，提升后会以报告卡出现。
+        // id 直接用 clientMsgId：WithdrawQueued(clientId) 带的就是 UserText.id，不用再剥前缀
+        state.inbox.filter { it.origin == InputOrigin.User }.forEach { input ->
+            items += ChatItem.UserText(input.clientMsgId.value, plain(input.parts), queued = true)
+        }
+        return items
+    }
+
+    private fun plain(parts: List<Part>): String =
+        parts.joinToString("\n") { if (it is TextPart) it.text else text.attachment() }
+
+    private fun user(entry: HistoryEntry.User) {
+        val id = entry.messageId.value
+        when (val origin = entry.origin) {
+            // 子会话视角的 Parent：委派来的任务原文，直接当一条用户气泡（它就是「上级对我说的话」）
+            InputOrigin.User, is InputOrigin.Parent -> items += ChatItem.UserText(id, plain(entry.parts))
+            is InputOrigin.Agent -> {
+                val raw = plain(entry.parts)
+                val child = childOf(origin.session)
+                when (origin.kind) {
+                    AgentInputKind.Report -> {
+                        val report = parseMinReport(raw)
+                        items += if (report == null) ChatItem.UserText(id, raw)
+                        else reportNote(id, text.report(report, child?.description), report.isError)
+                    }
+                    AgentInputKind.Message -> items +=
+                        ChatItem.Note(id, text.agentMessage(child?.agentType ?: "agent", child?.name) + "\n" + raw)
+                }
+            }
+        }
+    }
+
+    private fun parts(messageId: String, content: List<Part>) {
+        content.forEachIndexed { index, part ->
+            val id = "$messageId:$index"
+            when (part) {
+                is TextPart -> if (part.text.isNotEmpty()) items += ChatItem.AssistantText(id, part.text)
+                is ThinkingPart -> items += ChatItem.Thinking(id, part.text)
+                is RedactedThinkingPart -> items += ChatItem.Thinking(id, text.redactedThinking())
+                is ToolCallPart -> items += toolCard(id, part)
+                else -> Unit
+            }
+        }
+    }
+
+    private fun toolCard(id: String, part: ToolCallPart): ChatItem.ToolCall {
+        val phase = state.turn?.calls?.get(part.callId)?.phase
+        val result = state.toolResults[part.callId] ?: (phase as? CallPhase.Done)?.result
+        val denied = phase is CallPhase.Denied
+        val error = result?.isError == true || denied
+        val status = when {
+            error -> ChatItem.ToolCall.Status.Error
+            result != null -> ChatItem.ToolCall.Status.Done
+            // 等审批也是 Running：「在等人」由交互队列表达，不由卡片状态表达
+            else -> ChatItem.ToolCall.Status.Running
+        }
+        val body = result?.content?.filterIsInstance<TextPart>()?.joinToString("\n") { it.text }
+            ?: (phase as? CallPhase.Denied)?.note
+        val card = ChatItem.ToolCall(id, part.callId.value, part.name, part.input, status, isError = error).withClippedResult(body)
+        // 内核给的预览已被截过：全文长度以它为准（取两者较大，避免预览把总长冲小）
+        return card.copy(
+            resultTotalChars = maxOf(card.resultTotalChars ?: 0, result?.fullChars ?: 0).takeIf { it > 0 },
+            subItems = subItems(part.callId).orEmpty(),
+        )
+    }
+
+    private fun notices(after: MessageId?) {
+        state.presentation.filter { it.afterMessageId == after }.forEach(::notice)
+    }
+
+    private fun notice(entry: SessionPresentation) {
+        val seq = entry.record.seq
+        val atMs = entry.record.atMs
+        // 回合被中断前已落盘的半截回答：留在中断说明之前（它不进模型历史，只给人看）
+        if (entry.partialParts.isNotEmpty()) parts(entry.partialMessageId?.value ?: "notice:$seq:partial", entry.partialParts)
+        when (val event = entry.record.event) {
+            is Note -> items += ChatItem.Note("notice:$seq", event.text, event.level == NoteLevel.Error)
+            is TurnStarted -> when (event.trigger) {
+                TurnTrigger.Resume -> items += dividerNote("resume:$seq", text.continued(atMs))
+                TurnTrigger.Notification -> items += dividerNote("wake:$seq", text.subagentWoke())
+                else -> Unit
+            }
+            is TurnEnded -> turnEnded(seq, atMs, event)
+            else -> Unit
+        }
+    }
+
+    private fun turnEnded(seq: Long, atMs: Long, event: TurnEnded) {
+        when (val outcome = event.outcome) {
+            TurnOutcome.Completed -> stampLastAnswer(event, atMs)
+            is TurnOutcome.Failed -> items += markerNote(
+                "notice:$seq",
+                // 第一行是本地化的说明，其余是内核给的原文（详情，可展开）
+                text.failed(failureKindOf(outcome.kind), atMs) + "\n" + outcome.message,
+                isError = true,
+            )
+            is TurnOutcome.Interrupted -> items += markerNote(
+                "notice:$seq",
+                when (outcome.by) {
+                    InterruptedBy.User -> text.stopped(atMs)
+                    // 进程被杀的回合，「中断于何时」是被杀前最后一条事件，不是重开会话的这一刻
+                    InterruptedBy.ProcessDeath -> text.processDeath(event.lastActivityAtMs ?: atMs)
+                    InterruptedBy.Limit -> text.limit()
+                },
+                isError = false,
+            )
+        }
+        stampFloor = items.size
+    }
+
+    /** 回合正常结束：把耗时 / 输出量 / 钟点盖在这一轮最后一条回答上（每轮只盖一条，与 CC 的回执一致） */
+    private fun stampLastAnswer(event: TurnEnded, atMs: Long) {
+        val at = items.indexOfLast { it is ChatItem.AssistantText }
+        if (at < stampFloor) return
+        val answer = items[at] as ChatItem.AssistantText
+        items[at] = answer.copy(
+            durationMs = event.durationMs.takeIf { it > 0 }, outputTokens = event.usage.outputTokens.toInt(), finishedAt = atMs,
+        )
+        stampFloor = items.size
+    }
+}

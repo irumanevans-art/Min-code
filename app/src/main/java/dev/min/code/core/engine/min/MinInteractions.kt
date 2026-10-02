@@ -1,0 +1,158 @@
+package dev.min.code.core.engine.min
+
+import dev.min.agent.kernel.HubPending
+import dev.min.agent.kernel.SessionState
+import dev.min.agent.protocol.ApprovalId
+import dev.min.agent.protocol.QuestionId
+import dev.min.agent.protocol.SessionId
+import dev.min.agent.spi.ApprovalChoice
+import dev.min.agent.spi.QuestionAnswer
+import dev.min.code.core.engine.AgentThread
+import dev.min.code.core.engine.ApprovalOption
+import dev.min.code.core.engine.CommandResult
+import dev.min.code.core.engine.InteractionAnswer
+import dev.min.code.core.engine.InteractionIds
+import dev.min.code.core.engine.InteractionOrigin
+import dev.min.code.core.engine.PathView
+import dev.min.code.core.engine.PendingInteraction
+import dev.min.code.core.engine.QuestionOptionView
+import dev.min.code.core.engine.QuestionView
+import dev.min.code.core.engine.originOf
+import dev.min.code.core.engine.withQueueDepth
+import dev.min.code.core.session.PathScope
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import dev.min.agent.spi.PathScope as KernelPathScope
+
+/** 计划审批的工具名：`ExitPlanModeTool` 的约定——审批的 summary 就是计划正文 */
+const val EXIT_PLAN_MODE = "ExitPlanMode"
+private const val AGENT_TOOL = "Agent"
+
+/**
+ * 整棵子 agent 树里等人的审批与提问 -> 通用交互队列（设计 5.5–5.7）。
+ *
+ * 数据来自 `hub.pending`（K11，Hub 知道所有在线运行时），调用方先按根会话过滤好再传进来。
+ * 每张卡的 id 是 `"<sessionId>/<approvalId 或 questionId>"`（[InteractionIds]）：子会话上浮的交互不会和根会话的撞号，
+ * 答复时 [MinInteractionRouter] 按前缀路由回对应的运行时。来源（`origin.path`）由子 agent 线程链算出，
+ * 「Explore · 查找入口（后台）请求 · 后面还有 2 张」读的就是它；队列按发起时间排，队头先答。
+ *
+ * @param nodes 树里各会话的状态：审批卡要从调用里取入参（`HubPending` 只带 ask，不带 input）
+ */
+fun minInteractions(
+    pending: List<HubPending>,
+    root: SessionId,
+    nodes: Map<SessionId, SessionState>,
+    threads: List<AgentThread>,
+    text: MinAgentText,
+): List<PendingInteraction> = pending.sortedBy { it.atMs }.map { item ->
+    val threadId = if (item.session == root) null else threads.firstOrNull { it.childRef?.id == item.session.value }?.threadId
+    val origin = originOf(threads, threadId)
+    val id: String
+    val card = when (val what = item.what) {
+        is HubPending.What.Approval -> {
+            id = InteractionIds.scoped(item.session.value, what.approvalId.value)
+            val input = nodes[item.session]?.turn?.calls?.get(what.callId)?.input ?: JsonObject(emptyMap())
+            if (what.tool == EXIT_PLAN_MODE) planReview(id, origin, what, text) else approval(id, origin, what, input, text)
+        }
+        is HubPending.What.Question -> {
+            id = InteractionIds.scoped(item.session.value, what.questionId.value)
+            PendingInteraction.Question(
+                id = id, origin = origin, toolUseId = what.callId.value,
+                questions = what.questions.map { q ->
+                    QuestionView(q.question, q.header, q.options.map { QuestionOptionView(it.label, it.description) }, q.multiSelect)
+                },
+            )
+        }
+    }
+    card
+}.withQueueDepth()
+
+private fun approval(
+    id: String, origin: InteractionOrigin, what: HubPending.What.Approval, input: JsonObject, text: MinAgentText,
+): PendingInteraction.Approval {
+    val ask = what.ask
+    // 委派的卡片正文写「委派 Explore · 查找入口」；prompt 在 input 里，界面默认折叠
+    val summary = if (what.tool == AGENT_TOOL) {
+        text.delegation(ask.specifiers.firstOrNull() ?: "general-purpose", (input["description"] as? JsonPrimitive)?.content.orEmpty())
+    } else ask.summary
+    return PendingInteraction.Approval(
+        id = id, origin = origin, toolUseId = what.callId.value, toolName = what.tool, input = input, summary = summary,
+        paths = ask.paths.map { PathView(it.path.value, scopeOf(it.scope)) },
+        commands = ask.commands.map { it.raw },
+        domains = ask.domains,
+        // 踩了安全底线的原因：解释「为什么连跳过权限也要问你」
+        reason = what.floorReason,
+        blockedPath = null,
+        // 「总是允许」等 B7 的审批卡把规则写进用户选的那一层 settings 再开（能力位 approvalAlways 仍为假）
+        options = listOf(
+            ApprovalOption(ApprovalOption.ALLOW, text.optionAllow(), ApprovalOption.Kind.Allow, acceptsNote = false, notificationSafe = true),
+            ApprovalOption(ApprovalOption.DENY, text.optionDeny(), ApprovalOption.Kind.Deny, acceptsNote = true, notificationSafe = true),
+            ApprovalOption(ApprovalOption.DENY_AND_STOP, text.optionDenyAndStop(), ApprovalOption.Kind.DenyAndStop, acceptsNote = false, notificationSafe = false),
+        ),
+    )
+}
+
+private fun planReview(id: String, origin: InteractionOrigin, what: HubPending.What.Approval, text: MinAgentText) =
+    PendingInteraction.PlanReview(
+        id = id, origin = origin, toolUseId = what.callId.value, plan = what.ask.summary,
+        // 批准 = 放行，退出计划模式由内核的 SessionEffect.ModeChange 落成设置变更；打回 = 拒绝并附意见，会话留在计划模式
+        options = listOf(
+            ApprovalOption(ApprovalOption.ALLOW, text.optionApprovePlan(), ApprovalOption.Kind.Allow, acceptsNote = false, notificationSafe = false),
+            ApprovalOption(ApprovalOption.DENY, text.optionRevisePlan(), ApprovalOption.Kind.Deny, acceptsNote = true, notificationSafe = false),
+        ),
+    )
+
+private fun scopeOf(scope: KernelPathScope): PathScope = when (scope) {
+    KernelPathScope.Workspace -> PathScope.Workspace
+    KernelPathScope.Rootfs -> PathScope.Rootfs
+    KernelPathScope.Device -> PathScope.Device
+}
+
+/**
+ * 答复一张交互卡：按 id 前缀找到会话、写回对应运行时。返回 false 的情况统一成 [CommandResult.Stale]：
+ * 另一端（通知、另一个界面）先答了，或回合已经结束——内核的 `commitIf` 保证只落一次。
+ *
+ * [session] 按会话 id 取运行时（Hub 的 `get`），拿不到（已卸下）也是 Stale。
+ * [interrupt] 给「拒绝并停止」用：拒绝落盘之后再中断（停哪几层由调用方定，见 MinCommandHandler）（与 CC 现行的界面「拒绝」一致）。
+ */
+class MinInteractionRouter(
+    private val session: (SessionId) -> MinAnswerTarget?,
+    private val interrupt: suspend (SessionId) -> Unit,
+) {
+    suspend fun answer(interactionId: String, answer: InteractionAnswer): CommandResult {
+        val (sessionId, localId) = InteractionIds.split(interactionId) ?: return CommandResult.Rejected("交互 id 不合法：$interactionId")
+        val target = session(SessionId(sessionId)) ?: return CommandResult.Stale("会话已不在线")
+        val applied = when (answer) {
+            is InteractionAnswer.Choose -> when (answer.optionId) {
+                ApprovalOption.ALLOW -> target.approve(ApprovalId(localId), ApprovalChoice.Once)
+                ApprovalOption.DENY -> target.approve(ApprovalId(localId), ApprovalChoice.Deny(answer.note?.takeIf { it.isNotBlank() }))
+                ApprovalOption.DENY_AND_STOP -> target.approve(ApprovalId(localId), ApprovalChoice.Deny()).also { if (it) interrupt(SessionId(sessionId)) }
+                else -> return CommandResult.Rejected("没有这个选项：${answer.optionId}")
+            }
+            is InteractionAnswer.Answer -> try {
+                target.answer(QuestionId(localId), answer.answers.map { QuestionAnswer(it.selected, it.other) })
+            } catch (e: IllegalArgumentException) {
+                // 答案对不上问题是界面的 bug，不是用户的选择：什么都没写，原样告诉调用方
+                return CommandResult.Rejected(e.message ?: "答案不合法")
+            }
+            InteractionAnswer.Decline -> target.decline(QuestionId(localId))
+        }
+        return if (applied) CommandResult.Accepted else CommandResult.Stale("已在别处处理")
+    }
+}
+
+/**
+ * 运行时里答复相关的那四个方法。`SessionRuntime` 是 final 类，直接拿它做单测要起整套内核，
+ * 所以路由只依赖这个窄接口，组合根用 [asAnswerTarget] 把运行时包一层。
+ */
+interface MinAnswerTarget {
+    suspend fun approve(id: ApprovalId, choice: ApprovalChoice): Boolean
+    suspend fun answer(id: QuestionId, answers: List<QuestionAnswer>): Boolean
+    suspend fun decline(id: QuestionId): Boolean
+}
+
+fun dev.min.agent.kernel.SessionRuntime.asAnswerTarget(): MinAnswerTarget = object : MinAnswerTarget {
+    override suspend fun approve(id: ApprovalId, choice: ApprovalChoice) = answerApproval(id, choice)
+    override suspend fun answer(id: QuestionId, answers: List<QuestionAnswer>) = answerQuestion(id, answers)
+    override suspend fun decline(id: QuestionId) = declineQuestion(id)
+}
