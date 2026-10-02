@@ -195,6 +195,14 @@ class TestToolContext(
 
     override var mode: PermissionMode = PermissionMode.Default
     override var modeBeforePlan: PermissionMode? = null
+    override var web: dev.min.agent.spi.WebPort = dev.min.agent.spi.WebPort.Unavailable
+    override var webSearch: dev.min.agent.spi.WebSearchPort = dev.min.agent.spi.WebSearchPort.Unavailable
+    val extractions = mutableListOf<Pair<String, String>>()
+    var extraction: suspend (String, String) -> ToolResult = { _, _ -> ToolResult(listOf(TextPart("提取端口未配置")), isError = true) }
+    override suspend fun extract(content: String, prompt: String): ToolResult {
+        extractions += content to prompt
+        return extraction(content, prompt)
+    }
 
     /** 收到的提问，按顺序 */
     val asked = mutableListOf<List<UserQuestion>>()
