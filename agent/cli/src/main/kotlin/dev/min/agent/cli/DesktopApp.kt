@@ -11,7 +11,9 @@ import dev.min.agent.kernel.SessionHub
 import dev.min.agent.tools.AgentType
 import dev.min.agent.tools.AgentToolOf
 import dev.min.agent.kernel.AgentCatalog
+import dev.min.agent.ext.config.ClaudeConfig
 import dev.min.agent.ext.config.ClaudeConfigLoader
+import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.llm.Wire
 import dev.min.agent.llm.anthropic.AnthropicMessagesClient
 import dev.min.agent.llm.catalog.Catalog
@@ -35,6 +37,7 @@ import dev.min.agent.tools.GrepTool
 import dev.min.agent.tools.NotebookEditTool
 import dev.min.agent.tools.ReadTool
 import dev.min.agent.tools.SendMessageTool
+import dev.min.agent.tools.SkillTool
 import dev.min.agent.tools.TaskStopTool
 import dev.min.agent.tools.WriteTool
 import kotlinx.coroutines.CoroutineScope
@@ -51,7 +54,7 @@ import java.util.UUID
 internal fun desktopTools(customAgents: List<AgentType> = emptyList()): List<Tool<*>> = listOf(
     ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
-    AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
+    AgentToolOf(customAgents), SendMessageTool, TaskStopTool, SkillTool,
 )
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
@@ -81,11 +84,23 @@ internal class DesktopApp(
      * 一个 CLI 进程只服务一个项目目录，所以读一次就够；权限规则与记忆由内核在每个会话创建时各自快照。
      */
     private suspend fun hub(): SessionHub = hubInstance ?: run {
-        val config = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome)
+        val config = config()
         val catalog = AgentCatalog.of(config.agents)
         val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) })
         SessionHub(store, deps(tools), scope, HUB_LIMITS, catalog.definitions).also { hubInstance = it }
     }
+
+    private var configInstance: ClaudeConfig? = null
+
+    /** 启动时读一遍的 Claude Code 配置：Hub 用它的子 agent，斜杠命令用它的 skills 与 commands（同一份，进程内不重读） */
+    suspend fun config(): ClaudeConfig = configInstance ?: ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome).also { configInstance = it }
+
+    /** 斜杠命令展开用的会话事实（CLAUDE_SESSION_ID 等变量）；cwd 取模型看到的 guest 路径 */
+    fun skillVars(runtime: SessionRuntime) = SkillVars(
+        sessionId = runtime.sessionId.value,
+        projectDir = paths.guestOfHost(args.cwd).value,
+        effort = runtime.state.value.settings.effort?.name?.lowercase(),
+    )
 
     private val userHome get() = paths.guestOfHost(claudeHome)
 
