@@ -48,7 +48,10 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
     if (run.exitCode == 2 && event in EXIT_TWO_BLOCKS) {
         val reason = parsed?.reason?.takeIf { parsed.decision == HookDecision.Block || parsed.decision == HookDecision.Deny }
             ?: run.stderr
-        verdict = verdict.copy(decision = HookDecision.Block, reason = HookText(reason))
+        // CC：exit 2 的阻断不能被 JSON 推翻；stdout 解析/校验失败只进调试日志，不再同时报非阻断错误。
+        verdict = verdict.copy(decision = HookDecision.Block, reason = HookText(reason),
+            nonBlockingError = null,
+            notes = verdict.notes + listOfNotNull(error?.let { "$it（exit 2 仍阻断，已记调试日志）" }))
     } else if (parsed == null && (!jsonCandidate || reclassifiedPlain)) {
         if (run.exitCode == 0 && event in TEXT_CONTEXT_EVENTS && text.isNotEmpty()) {
             val context = HookText(run.stdout)

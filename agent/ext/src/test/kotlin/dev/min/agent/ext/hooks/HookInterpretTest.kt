@@ -21,7 +21,9 @@ class HookInterpretTest {
             """"permissionDecision":"allow","permissionDecisionReason":"allow reason""""), 2).reason?.text)
         val broken = interpreted(e, "{broken}", 2)
         assertEquals(HookDecision.Block, broken.decision); assertEquals("stderr", broken.reason?.text)
-        assertNotNull(broken.nonBlockingError)
+        // CC：exit 2 + 校验失败仍阻断，失败只进调试日志（notes），不报非阻断错误
+        assertNull(broken.nonBlockingError)
+        assertTrue(broken.notes.any { it.contains("解析或校验失败") })
     }
 
     @Test fun `多行各自合法 JSON 且无输出字段按纯文本处理`() {
