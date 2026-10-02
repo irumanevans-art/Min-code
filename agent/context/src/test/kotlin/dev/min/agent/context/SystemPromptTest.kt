@@ -6,7 +6,11 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.MemorySource
 import dev.min.agent.spi.ModelFamily
+import dev.min.agent.spi.SkillEntry
+import dev.min.agent.spi.SkillKind
+import dev.min.agent.spi.SkillsLoaded
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -66,6 +70,62 @@ class SystemPromptTest {
             """.trimIndent(),
             withMemory[2],
         )
+    }
+
+    private val skills = SkillsLoaded(
+        entries = listOf(
+            SkillEntry("deploy", "Ship the app", GuestPath("/workspace/.claude/skills/deploy/SKILL.md"), whenToUse = "when asked to release"),
+            SkillEntry("notes", "Take notes", GuestPath("/workspace/.claude/commands/notes.md"), kind = SkillKind.Command),
+            SkillEntry("only-user", "hidden from the model", GuestPath("/workspace/.claude/skills/only-user/SKILL.md"), disableModelInvocation = true),
+        ),
+        notes = listOf("只给人看"),
+    )
+
+    @Test
+    fun `skills are a block after memory and leave the earlier blocks unchanged`() {
+        val withSkills = SystemPrompt.build(profile, env, memory, skills = skills)
+        assertEquals(4, withSkills.size)
+        assertEquals(SystemPrompt.build(profile, env, memory), withSkills.take(3))
+        assertEquals(SystemPrompt.build(profile, env), SystemPrompt.build(profile, env, skills = skills).take(2))
+        assertEquals(
+            """
+            The following skills are available for use with the Skill tool:
+
+            - deploy: Ship the app - when asked to release
+            - notes: Take notes
+            """.trimIndent(),
+            withSkills[3],
+        )
+    }
+
+    @Test
+    fun `the subagent role block stays last and a snapshot with nothing listable adds no block`() {
+        val sub = SystemPrompt.build(profile, env, memory, agentInstructions = "Explore.", skills = skills)
+        assertEquals(5, sub.size)
+        assertEquals(SystemPrompt.build(profile, env, memory, skills = skills), sub.take(4))
+        assertTrue(sub.last().endsWith("Explore."))
+        val hiddenOnly = skills.copy(entries = skills.entries.filter { it.disableModelInvocation })
+        assertEquals(SystemPrompt.build(profile, env), SystemPrompt.build(profile, env, skills = hiddenOnly))
+        assertEquals(SystemPrompt.build(profile, env), SystemPrompt.build(profile, env, skills = null))
+    }
+
+    @Test
+    fun `the listing budget follows the model window and the frozen settings`() {
+        val many = SkillsLoaded(entries = (1..30).map { SkillEntry("skill-$it", "d".repeat(200), GuestPath("/s/$it/SKILL.md")) })
+        val small = ModelProfile(ref = ModelRef("test", "m"), family = ModelFamily.Other, contextWindow = 20_000, maxOutputTokens = 4_000)
+        val tight = SystemPrompt.build(small, env, skills = many)[2]
+        val roomy = SystemPrompt.build(profile, env, skills = many)[2]
+        assertTrue(tight.length < roomy.length)
+        // 名字一个不少
+        assertEquals(30, tight.lines().count { it.startsWith("- skill-") })
+        val raised = SystemPrompt.build(small, env, skills = many.copy(listingBudgetFraction = 0.1))[2]
+        assertTrue(raised.length > tight.length)
+    }
+
+    @Test
+    fun `the assembler passes skills into the system prompt`() {
+        val request = RequestAssembler.assemble(profile, env, emptyList(), emptyList(), effort = null, cacheKey = "s1", skills = skills)
+        assertEquals(SystemPrompt.build(profile, env, skills = skills), request.system)
     }
 
     @Test

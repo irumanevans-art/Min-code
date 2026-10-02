@@ -16,6 +16,7 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.spi.AgentPort
+import dev.min.agent.spi.SkillPort
 import dev.min.agent.spi.ApprovalRequested
 import dev.min.agent.spi.DecidedBy
 import dev.min.agent.spi.HookContextAdded
@@ -317,6 +318,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
+        override val skills: SkillPort = KernelSkillPort(rt, deps.host.fs)
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override val tasks: TaskBoard get() = rt.state.value.taskBoard()

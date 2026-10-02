@@ -22,6 +22,9 @@ Responses 使用无服务端状态的完整历史及同模型原始 output item�
 - 前台跑不完（Bash 工具给 10 秒）转后台，模型拿到句柄 id、pid 与日志路径，用 Read 看日志；日志从命令启动起就完整写入，不因转后台丢内容。
 - 超时后整棵进程树被杀，模型拿到超时前的输出。
 
+交互与 `-p` 输入支持 `/名字 参数`：行首的 `/名字` 若是 `.claude/skills`、`.claude/commands` 里的 skill / command，就展开成它的正文（参数照 Claude Code 替换）再发给模型，模型看到的就是展开后的内容；
+不是命令（含路径 `/etc/hosts`）的原样发；未知命令与 `user-invocable: false` 的只在终端提示、不发（`-p` 时退出码 2）。工具表末尾追加了 Skill，系统提示会列出可调用的 skill。
+
 ## token 代价
 `LocalExec` 本身不产生 token；进入上下文的只有 Bash 工具结果里的输出，被 `maxOutputChars`（由工具的结果预算传入）封顶。
 完整输出在日志文件里，模型只在需要时才用 Read 读，读多少付多少。
@@ -40,6 +43,7 @@ Responses 发送 prompt_cache_key；longTtl 暂不映射。短历史命中未增
 构建修复题只计题目指定的检查命令，核对 Edit 前失败、Edit 后成功以及测试文件未改；无关 ls / echo 的结果不能代替检查结果。模型用管道或 echo 掩盖初始失败会拒绝通过。录制代理也记录本机连接失败，避免把实际重试漏出请求计数；SDK 路由校验只比 URL 的路径部分，兼容 Anthropic 的 beta 查询参数。
 
 ## 已知限制
+- 斜杠命令只认启动时读到的 skills / commands（与会话的清单快照同一时刻），没有补全菜单；嵌套目录 skill 的 `apps/web:deploy` 形式不支持。
 - 子 agent 随 CLI 的 scope 运行，`-p` 根回合结束或退出 CLI 时后台子回合也会结束运行；下次 `--resume` 由 Hub 恢复并补发报告，不自动续跑。
 - 子 agent 的审批聚合、类型清单读取自 `.claude/agents/` 和界面树留给 S4；目前 CLI 使用内核自带 general-purpose / Explore / Plan。
 - 只给桌面用；Android 走 proot，另有实现。桌面默认 shell 是 `bash -lc`，Windows 需要 Git Bash 之类在 PATH 里（原生 cmd/PowerShell 不支持）。

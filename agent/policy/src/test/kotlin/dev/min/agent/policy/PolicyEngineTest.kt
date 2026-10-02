@@ -324,4 +324,22 @@ class PolicyEngineTest {
             assertTrue("$suggestion 应放行 ${ask.commands}${ask.paths}${ask.domains}", v(ask, c) is Verdict.Allow)
         }
     }
+
+    // ---- Skill(名字) 规则：调用的 specifier 只有 skill 名 ----
+
+    private fun skillAsk(name: String) = PermissionAsk("Skill", "加载 skill $name", specifiers = listOf(name))
+
+    @Test
+    fun `Skill rules match by name and a trailing space star also matches the bare name`() {
+        val deny = ctx(PermissionMode.Default, RuleKind.Deny to "Skill(deploy *)")
+        assertTrue(v(skillAsk("deploy"), deny, readOnly = true) is Verdict.Deny)
+        assertTrue(v(skillAsk("deploy-staging"), deny, readOnly = true) is Verdict.Allow)
+
+        val exact = ctx(PermissionMode.Default, RuleKind.Deny to "Skill(deploy)")
+        assertTrue(v(skillAsk("deploy"), exact, readOnly = true) is Verdict.Deny)
+        assertTrue(v(skillAsk("deployer"), exact, readOnly = true) is Verdict.Allow)
+
+        val prefix = ctx(PermissionMode.Default, RuleKind.Ask to "Skill(review-*)")
+        assertEquals(Verdict.Ask, v(skillAsk("review-pr"), prefix, readOnly = true))
+    }
 }

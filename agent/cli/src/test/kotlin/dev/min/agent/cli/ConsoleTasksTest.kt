@@ -36,10 +36,10 @@ class ConsoleTasksTest {
     }
 
     @Test
-    fun `the task tools sit at the end of the desktop tool table`() {
+    fun `the task tools sit right after TaskStop in the desktop tool table`() {
         val names = DESKTOP_TOOLS.map { it.name }
-        assertEquals(listOf("TaskCreate", "TaskGet", "TaskList", "TaskUpdate"), names.takeLast(4))
-        assertEquals("TaskStop", names[names.size - 5])
+        val at = names.indexOf("TaskStop")
+        assertEquals(listOf("TaskCreate", "TaskGet", "TaskList", "TaskUpdate"), names.subList(at + 1, at + 5))
         assertEquals(names.size, names.toSet().size)
     }
 }

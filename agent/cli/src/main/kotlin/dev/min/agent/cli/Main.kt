@@ -44,16 +44,26 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
     System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
 
-    suspend fun say(text: String) {
+    // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
+    suspend fun say(input: String): Boolean {
+        val config = app.config()
+        val text = when (val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime))) {
+            is InputAction.Send -> action.text
+            is InputAction.Notice -> {
+                System.err.println(action.message)
+                return false
+            }
+        }
         runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(text)))
         runtime.awaitIdle()
         println()
+        return true
     }
 
     val prompt = args.prompt
     if (prompt != null) {
         val fromSeq = runtime.state.value.lastSeq + 1
-        say(prompt)
+        if (!say(prompt)) return 2
         val state = runtime.state.value
         val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq), state.usage)
         result.failure?.let { System.err.println(it) }
@@ -63,7 +73,7 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
         return if (result.completed) 0 else 1
     }
 
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/exit 退出。")
+    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
         val line = stdin.readLine() ?: return 0

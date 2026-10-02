@@ -180,6 +180,16 @@ class SessionRuntime private constructor(
         commit(listOf(MemoryLoaded(memory.files, memory.notes)), Durability.Sync)
     }
 
+    /**
+     * 会话创建时读一次 skills / commands 清单，快照写进日志（[dev.min.agent.spi.SkillsLoaded]），会话内冻结（与记忆同理）。
+     * 没有主目录就不读；什么都没读到、也没有说明时不写事件。
+     */
+    private suspend fun loadSkills() {
+        val home = deps.memoryHome ?: return
+        val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home) ?: return
+        commit(listOf(snapshot), Durability.Sync)
+    }
+
     internal fun emitLive(update: LiveUpdate) {
         _live.tryEmit(update)
     }
@@ -332,6 +342,7 @@ class SessionRuntime private constructor(
             initial: List<SessionEvent> = emptyList(),
             loadMemory: Boolean = true,
             loadSettings: Boolean = true,
+            loadSkills: Boolean = true,
             hub: SessionHub? = null,
         ): SessionRuntime {
             val log = store.create(header)
@@ -339,6 +350,8 @@ class SessionRuntime private constructor(
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
             if (loadMemory) runtime.loadMemory()
             if (loadSettings) runtime.loadSettings()
+            // 子会话的清单由 initial 带来（继承父会话那份），不再读磁盘
+            if (loadSkills) runtime.loadSkills()
             if (runtime.state.value.origin == null) runtime.runSessionStart()
             return runtime
         }

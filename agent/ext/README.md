@@ -8,7 +8,7 @@ CC 兼容配置发现与加载、hooks 执行编排、skills/agents/commands/plu
 ## 现状
 
 已实现的只有「读 + 解析 + 合并」（包 `dev.min.agent.ext.config`）：用户把现成的 `~/.claude/` 与项目 `.claude/` 原样放进 rootfs，
-读出和 Claude Code 一样的结果。hooks 执行、skill 调用、MCP 连接、插件、output styles 都还没有。
+读出和 Claude Code 一样的结果。skill 调用与斜杠展开见下（`skills` 包）；hooks 执行、MCP 连接、插件、output styles 还没有。
 
 入口：`ClaudeConfigLoader.load(fs, cwd, home, managedPath)` → `ClaudeConfig(settings, skills, commands, agents, notes)`；
 只要 settings 用 `SettingsLoader.load(...)`。全部经 `WorkspaceFs` 端口读文件，只读，不抛异常——
@@ -24,21 +24,28 @@ CC 兼容配置发现与加载、hooks 执行编排、skills/agents/commands/plu
 
 ## 模型看到什么
 
-这一单：什么都看不到。产物还没有接进请求装配，`notes` 也只给人看、不进模型上下文。
+配置读取本身不进模型上下文（`notes` 只给人看）。Skills 运行时（包 `dev.min.agent.ext.skills`，第一期）让 skills / commands 被用上：
 
-以后接线时的约定（尚未实现，此处只是设计意图）：skills 只把「名字 + 描述」常驻进上下文，调用时全文作为一条消息留驻；
-`disable-model-invocation: true` 的 skill 连描述都不进；子 agent 的描述进 Agent 工具的说明；
-commands 只进斜杠菜单；settings 里的 permissions 交给 policy，env / model / outputStyle 进会话配置。
+- `SkillArguments`：参数替换。`$ARGUMENTS`、`$ARGUMENTS[N]`、`$N`、`$名字`（frontmatter `arguments`），shell 风格引号；越界下标原样留着；
+  没有占位符收到参数时末尾追加 `ARGUMENTS: 原文`；`\$1` 转义；参数值不递归展开。边角取自 Claude Code 2.1.286 二进制（单趟扫描替代它的哨兵字符，结果一致）。
+- `SkillPrompt.render`：skill 前加 `Base directory for this skill: <目录>`，参数替换之后再代入 `${CLAUDE_SKILL_DIR}`、`${CLAUDE_PROJECT_DIR}`、
+  `${CLAUDE_SESSION_ID}`、`${CLAUDE_EFFORT}`；command 没有目录头。模型调 Skill 工具与用户敲 `/名字` 共用它。
+- `SlashCommands.expand`：`/名字 参数` → 要发给模型的内容，或 NotACommand（含 `/etc/hosts` 这类路径）/ Unknown / NotInvocable。
+  skill 与 command 同名 skill 赢；`user-invocable: false` 不能斜杠调；`disable-model-invocation` 只挡模型。
+  叠放 `/a /b 参数`：最多再叠 5 个，遇到未知词、不可调的或 fork 的 skill 就停，其后的文字是参数。
+- `SkillFiles.readBody`：读定义文件此刻的正文（清单快照里没有正文）。
+
+清单进系统提示、Skill 工具与快照见 :agent:context / :agent:tools / :agent:kernel。
 
 ## token 代价
 
-这一单：0。以后：每个可被模型调用的 skill 常驻「名字 + description + when_to_use」，合计在清单里截断于 1,536 字符（CC 的上限，装配时截，
-这里保留原文）；子 agent 的 description 同理；commands 与被禁止模型调用的 skill 不占常驻 token。
+本模块自己不产生 token。每个可被模型调用的 skill 在系统提示里常驻一行（名字 + description + when_to_use，合计截断于 1,536 字符，
+整份清单受窗口 1% 的预算约束，见 :agent:context）；commands 同样列出；被禁止模型调用的 skill 不占常驻 token；正文只在被调用时进上下文。
 
 ## 缓存影响
 
-这一单：无（没有进入请求）。以后：配置在会话创建时读一次、冻结（与记忆文件同一套做法），会话中改了 `.claude/` 下的文件不改写稳定前缀，
-要让模型知道就在末尾追加一段；settings 变化不重排工具表。
+配置在会话创建时读一次、冻结成 `skills_loaded` 快照（与记忆同一套做法），会话中改了 `.claude/` 下的文件不改写稳定前缀，重新打开会话也不重读；
+子 agent 继承父会话的快照。正文不进快照，调用时才读（所以 Skill 工具返回的是调用那一刻磁盘上的正文，清单本身仍是冻结的）。
 
 ## 已知限制
 
@@ -57,3 +64,7 @@ commands 只进斜杠菜单；settings 里的 permissions 交给 policy，env / 
   单个定义文件上限 1 MiB；符号链接目录在 commands / agents 的递归里不跟随（skills 的目录链接跟随一层）。
 - **只校验形状不校验语义**：规则文本不解析（交给 policy，解析失败由调用方记 note）；hooks 的事件名与结构、`model` / `effort` 的取值不校验。
 - 读一次、不监视文件变化。
+- **Skills 第一期没做**：`allowed-tools` / `disallowed-tools` 的临时预批准与移除、`context: fork`（当作内联展开）、`model` / `effort` 覆盖、`hooks`、
+  `paths` 条件激活、嵌套目录 `<子目录>/.claude/skills` 的惰性加载、插件 skills、`skillOverrides` 设置、`` !`命令` `` 的动态上下文注入（标记原样留给模型）、
+  `disableSkillShellExecution`、auto-compact 后重挂已调用的 skill、清单按「调用次数」排序（会话里没有统计，按清单顺序）。
+- 斜杠叠放时多个展开结果拼成一条消息（空行隔开），Claude Code 是几条消息；没写参数时 `$ARGUMENTS` 展开成空串（文档没写这一点，按「没有参数 = 空」推）。

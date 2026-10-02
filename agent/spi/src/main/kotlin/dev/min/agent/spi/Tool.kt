@@ -127,6 +127,9 @@ interface ToolContext {
      */
     val tasks: TaskBoard get() = TaskBoard()
 
+    /** 调用 skill（Skill 工具用）。有默认值：其余工具与测试替身不用管它 */
+    val skills: SkillPort get() = SkillPort.Unavailable
+
     /** 会话当前的权限模式（只读）。与人交互的工具据此判断：dontAsk 下不提问，计划模式工具看自己是否在计划模式里 */
     val mode: PermissionMode
 

@@ -279,8 +279,8 @@ class SessionHub(
         val background = request.background || definition?.alwaysBackground == true
 
         val child = SessionRuntime.create(
-            store, header, created, deps, scope, initial + inheritedRules(ps),
-            loadMemory = definition != null && !definition.omitMemory, loadSettings = false, hub = this,
+            store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps),
+            loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
         )
         child.requestGate = childGate
         register(child)
@@ -333,6 +333,12 @@ class SessionHub(
             if (parent.hooks.isEmpty()) null else HooksLoaded(parent.hooks),
         )
     }
+
+    /**
+     * 子 agent 继承父会话冻结的 skill 清单，不自己再读磁盘：分身的系统提示必须与父会话逐字相同；新开的子 agent
+     * 也不该因为磁盘上 skill 中途变了而与父会话看到不同的清单（Skill 工具按各自日志里的清单找 skill）。
+     */
+    private fun inheritedSkills(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.skills)
 
     private fun toolsFor(definition: AgentDefinition, depth: Int): List<String>? {
         val names = deps.tools.map { it.name }

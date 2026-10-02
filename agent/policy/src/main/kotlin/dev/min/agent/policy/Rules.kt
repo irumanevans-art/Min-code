@@ -103,10 +103,15 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
         }
     }
 
-    /** 按名字限定的规则：`Agent(Explore)` 对 Agent 调用的 specifiers 匹配；`*` 是通配 */
+    /**
+     * 按名字限定的规则：`Agent(Explore)` 对 Agent 调用的 specifiers 匹配；`*` 是通配。
+     * 尾部 ` *` 同时匹配「前缀本身」：`Skill(deploy *)`（文档：prefix match with any arguments）也要拦住不带参数的 `deploy`——
+     * 调用的 specifier 只有 skill 名、不含参数，不这样写这条规则永远匹配不上
+     */
     fun matchesSpecifier(rule: PermissionRule, tool: String, specifier: String): Boolean {
         if (rule.tool != tool) return false
         val spec = rule.specifier ?: return false
+        if (spec.endsWith(" *") && specifier == spec.removeSuffix(" *")) return true
         return Regex(globToRegex(spec, anyChars = true)).matches(specifier)
     }
 
