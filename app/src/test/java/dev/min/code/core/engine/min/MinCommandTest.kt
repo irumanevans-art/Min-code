@@ -250,17 +250,18 @@ class MinCommandTest {
         assertEquals(CommandResult.Rejected("provider-removed"), runBlocking { r.session.submit(again) })
     }
 
-    @Test fun effortAndModeApplyImmediatelyAndBadValuesAreRejected() {
+    @Test fun effortAndModeApplyImmediatelyNullEffortClearsAndBadValuesAreRejected() {
         val r = rig(ScriptedModel())
         runBlocking {
             assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.SetEffort(cmd(), "high")))
             assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.SetMode(cmd(), "plan")))
-            assertTrue(r.session.submit(SessionCommand.SetEffort(cmd(), null)) is CommandResult.Rejected)
+            assertEquals(Effort.High, r.root.state.value.settings.effort)
+            assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.SetEffort(cmd(), null)))
             assertTrue(r.session.submit(SessionCommand.SetEffort(cmd(), "turbo")) is CommandResult.Rejected)
             assertTrue(r.session.submit(SessionCommand.SetMode(cmd(), "auto")) is CommandResult.Rejected)
             assertTrue(r.session.submit(SessionCommand.SetMode(cmd(), "yolo")) is CommandResult.Rejected)
         }
-        assertEquals(Effort.High, r.root.state.value.settings.effort)
+        assertEquals("null = 回到不控制", null, r.root.state.value.settings.effort)
         assertEquals(PermissionMode.Plan, r.root.state.value.settings.mode)
     }
 

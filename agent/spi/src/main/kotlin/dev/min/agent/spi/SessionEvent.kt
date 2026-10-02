@@ -64,6 +64,8 @@ data class SettingsChanged(
     val mode: PermissionMode? = null,
     val effort: Effort? = null,
     val cwd: GuestPath? = null,
+    /** 思考档位清回「不控制」（[effort] 的 null 表示不改，清掉要单独说） */
+    val clearEffort: Boolean = false,
 ) : SessionEvent
 
 // ---- 输入：先进收件箱，到安全点才成为正式消息 ----

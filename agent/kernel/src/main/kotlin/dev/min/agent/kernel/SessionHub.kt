@@ -120,6 +120,12 @@ class SessionHub(
      */
     private val consumedInForeground: MutableSet<Pair<SessionId, TurnId>> = ConcurrentHashMap.newKeySet()
 
+    /**
+     * 被人整棵停下的子回合（[stopTree]、[shutdown]、[delete]）：它们的报告照常交付，但不唤醒父会话开新回合——
+     * 用户刚说了停，不该因为子 agent 交来报告又自己动起来。按 (子会话, 回合) 记，盯结局的协程什么时候处理到都认得出
+     */
+    private val quietReports: MutableSet<Pair<SessionId, TurnId>> = ConcurrentHashMap.newKeySet()
+
     /** 已经在盯着回合结局的子会话（每个只盯一次） */
     private val watched: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
 
@@ -179,6 +185,26 @@ class SessionHub(
      * 删除一个会话及它的全部后代（日志与附件）。先中断整棵树里在跑的回合并等它们收尾，再从叶子往根逐个删：
      * 删到一半被杀时，留下的是完整的上半棵树，而不是一个找不到父会话的孤儿。返回根会话是否删掉了
      */
+    /**
+     * 停下一棵子树里所有在跑的回合（界面的 ■「全部停止」）。子 agent 被打断后的报告照常交给父会话，但不唤醒它；
+     * 返回时整棵树都空闲了。不在内存里的会话不用停
+     */
+    suspend fun stopTree(id: SessionId) {
+        val tree = subtreeOnline(id).mapNotNull { runtimes[it] }
+        // 先记下要静音的回合再打断：结局一出现，盯结局的协程就可能去交付
+        tree.forEach { rt -> rt.state.value.turn?.let { quietReports += rt.sessionId to it.turnId } }
+        tree.forEach { it.interrupt() }
+        tree.forEach { it.awaitIdle() }
+        // 打断时回合还没写 TurnStarted 的（刚委派、刚唤醒），结局的回合号到这里才知道
+        tree.forEach { rt -> rt.state.value.lastTurn?.let { quietReports += rt.sessionId to it.turnId } }
+    }
+
+    /** 关掉一棵子树：先 [stopTree]，再卸下（日志不动，之后 [open] 能重开）。界面「关闭会话」用它，[close] 只关空闲的 */
+    suspend fun shutdown(id: SessionId): Boolean {
+        stopTree(id)
+        return close(id)
+    }
+
     suspend fun delete(root: SessionId): Boolean {
         val headers = store.list()
         val childrenOf = headers.filter { it.parent != null }.groupBy({ it.parent!! }, { it.sessionId })
@@ -188,6 +214,7 @@ class SessionHub(
             order += id
         }
         collect(root)
+        if (runtimes.containsKey(root)) stopTree(root)
         for (id in order) runtimes[id]?.let { rt -> rt.interrupt(); rt.awaitIdle() }
         for (id in order) unload(id)
         var deletedRoot = false
@@ -467,7 +494,9 @@ class SessionHub(
             listOf(TextPart(report)),
             Delivery.Steer,
             InputOrigin.Agent(child.sessionId, AgentInputKind.Report, ended.turnId),
-            startTurn = if (autoStart && parentHealthy && !restarted) TurnTrigger.Notification else null,
+            startTurn = if (autoStart && parentHealthy && !restarted && !quietReports.remove(child.sessionId to ended.turnId)) {
+                TurnTrigger.Notification
+            } else null,
         )
     }
 
