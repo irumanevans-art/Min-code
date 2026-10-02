@@ -8,6 +8,7 @@ import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.ApprovalChoice
 import dev.min.agent.spi.QuestionAnswer
+import dev.min.agent.spi.TaskRecord
 import dev.min.agent.spi.UserQuestion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -31,6 +32,9 @@ internal class ConsoleUi(
     private val answered = mutableSetOf<String>()
     private val questionsSeen = mutableSetOf<String>()
 
+    /** 上一次看到的任务清单；null = 还没看过（第一次只记下基线，不把已有的清单当成新变化打印） */
+    private var tasksSeen: List<TaskRecord>? = null
+
     fun attach(scope: CoroutineScope): Job = scope.launch {
         launch {
             runtime.live.collect { update ->
@@ -42,6 +46,8 @@ internal class ConsoleUi(
             }
         }
         runtime.state.collect { state ->
+            tasksSeen?.let { before -> taskProgressLines(before, state.tasks).forEach(out::println) }
+            tasksSeen = state.tasks
             val calls = state.turn?.calls?.values.orEmpty()
             calls.forEach { call ->
                 if (announced.add(call.callId)) out.println("\n▸ ${call.tool} ${summarize(call.input.toString())}")

@@ -35,7 +35,11 @@ import dev.min.agent.tools.GrepTool
 import dev.min.agent.tools.NotebookEditTool
 import dev.min.agent.tools.ReadTool
 import dev.min.agent.tools.SendMessageTool
+import dev.min.agent.tools.TaskCreateTool
+import dev.min.agent.tools.TaskGetTool
+import dev.min.agent.tools.TaskListTool
 import dev.min.agent.tools.TaskStopTool
+import dev.min.agent.tools.TaskUpdateTool
 import dev.min.agent.tools.WriteTool
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.toList
@@ -52,6 +56,7 @@ internal fun desktopTools(customAgents: List<AgentType> = emptyList()): List<Too
     ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
+    TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
 )
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
