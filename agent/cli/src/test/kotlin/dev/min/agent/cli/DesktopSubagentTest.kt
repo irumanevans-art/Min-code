@@ -132,7 +132,8 @@ class DesktopSubagentTest {
             val childId = done.children.keys.single()
             val result = done.toolResults.getValue(CallId("delegate"))
             assertFalse(result.isError)
-            assertEquals("已启动 ${childId.value}", result.content.filterIsInstance<TextPart>().single().text)
+            val receipt = result.content.filterIsInstance<TextPart>().single().text
+            assertTrue(receipt, receipt.startsWith("已在后台启动") && childId.value in receipt)
             assertTrue(done.children.getValue(childId).background)
             val reports = done.reports().filterIsInstance<TextPart>()
             assertEquals(1, reports.size)

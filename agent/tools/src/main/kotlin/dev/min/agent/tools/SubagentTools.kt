@@ -1,4 +1,4 @@
-package dev.min.agent.host
+package dev.min.agent.tools
 
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.DelegateRequest
@@ -20,10 +20,18 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 
-/** 子 agent 工具只转发端口；持久化、报告、续聊与恢复由 SessionHub 负责。 */
+/*
+ * 子 agent 工具只转发端口；持久化、报告、续聊与恢复由内核的 SessionHub 负责（docs/agent/detail/子agent设计.md §8）。
+ *
+ * 三个工具都标只读、可并发（设计 §7）：它们不碰工作区——委派出去的子 agent 的每个工具调用各自过子会话的权限判定。
+ * 标成会写的话，默认模式下每次委派都要弹审批、计划模式下直接被拒，Explore / Plan 这类只读委派就用不了了。
+ * 同一条消息里的几次委派因此并行跑（多个前台子 agent 同时干活，与 Claude Code 一致）。
+ */
+private val SUBAGENT_TRAITS = ToolTraits(readOnly = true, concurrencySafe = true)
+
 object AgentTool : Tool<JsonObject> {
     override val name = "Agent"
-    override val traits = ToolTraits(readOnly = false, concurrencySafe = false)
+    override val traits = SUBAGENT_TRAITS
     override val inputSchema = subagentSchema(
         listOf("description", "prompt"),
         "description" to subagentProperty("string", "用 3–5 个词概括子任务，给用户看"),
@@ -78,16 +86,23 @@ object AgentTool : Tool<JsonObject> {
                 listOf(TextPart(delegated.report)), isError = delegated.isError,
                 effects = listOf(SessionEffect.ReportDelivered(delegated.child, delegated.childTurn)),
             )
-            is DelegateResult.Started -> ToolResult(listOf(TextPart("已启动 ${delegated.child.value}")))
+            is DelegateResult.Started -> ToolResult(listOf(TextPart(started(delegated))))
             is DelegateResult.Rejected -> ToolResult(listOf(TextPart(delegated.messageForModel)), isError = true)
         }
         emit(ToolProgress.Done(result))
     }
 }
 
+/** 后台委派的回执：模型最容易犯的错是接着往下写、假装已经知道结果，所以明说「等报告」 */
+private fun started(r: DelegateResult.Started): String {
+    val who = r.name?.let { "「$it」（${r.child.value}）" } ?: r.child.value
+    val kind = if (r.fork) "分身" else "子 agent"
+    return "已在后台启动$kind $who。它完成时你会收到报告；在那之前不要假设它的结果，可以先做不依赖它的事。"
+}
+
 object SendMessageTool : Tool<JsonObject> {
     override val name = "SendMessage"
-    override val traits = ToolTraits(readOnly = false, concurrencySafe = true)
+    override val traits = SUBAGENT_TRAITS
     override val inputSchema = subagentSchema(
         listOf("to", "message"),
         "to" to subagentProperty("string", "子 agent 的 id 或名字；子 agent 用 main 向父会话发消息"),
@@ -111,7 +126,7 @@ object SendMessageTool : Tool<JsonObject> {
 
 object TaskStopTool : Tool<JsonObject> {
     override val name = "TaskStop"
-    override val traits = ToolTraits(readOnly = false, concurrencySafe = true)
+    override val traits = SUBAGENT_TRAITS
     override val inputSchema = subagentSchema(
         listOf("task_id"),
         "task_id" to subagentProperty("string", "要中断的子 agent id 或名字"),

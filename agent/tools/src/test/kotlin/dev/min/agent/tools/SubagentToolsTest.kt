@@ -1,10 +1,12 @@
-package dev.min.agent.host
+package dev.min.agent.tools
 
 import dev.min.agent.kernel.HistoryEntry
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.kernel.SessionState
 import dev.min.agent.llm.ModelRequest
+import dev.min.agent.policy.PolicyEngine
+import dev.min.agent.policy.Verdict
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.PermissionMode
@@ -61,6 +63,8 @@ import org.junit.Test
 import java.util.concurrent.ConcurrentHashMap
 
 class SubagentToolsTest {
+    private val CHILD_ID = Regex("""s_\d+""")
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val store = MemoryStore()
     private val tools = listOf(AgentTool, SendMessageTool, TaskStopTool)
@@ -132,7 +136,9 @@ class SubagentToolsTest {
         val done = p.state.first { it.turn == null && it.lastTurn != null }
         childStarted.await()
         val childId = done.children.keys.single()
-        assertEquals("已启动 ${childId.value}", done.toolResults.getValue(CallId("agent1")).text)
+        val receipt = done.toolResults.getValue(CallId("agent1")).text
+        assertTrue(receipt, receipt.startsWith("已在后台启动子 agent 「helper」（${childId.value}）"))
+        assertTrue("回执要明说等报告", receipt.contains("不要假设它的结果"))
         assertFalse(done.toolResults.getValue(CallId("agent1")).isError)
         assertEquals("helper", done.children.getValue(childId).name)
         assertTrue(done.children.getValue(childId).background)
@@ -184,10 +190,10 @@ class SubagentToolsTest {
             when (val last = req.lastText()) {
                 "开始停止" -> reply(delegate("慢任务"), stop = StopReason.ToolUse)
                 "慢任务" -> { _ -> flow { childStarted.complete(Unit); awaitCancellation() } }
-                else -> if (last.startsWith("已启动 ")) {
+                else -> if (last.startsWith("已在后台启动")) {
                     { request -> flow {
                         childStarted.await()
-                        emitAll(reply(call("stop1", "TaskStop", "task_id" to last.removePrefix("已启动 ")), stop = StopReason.ToolUse)(request))
+                        emitAll(reply(call("stop1", "TaskStop", "task_id" to CHILD_ID.find(last)!!.value), stop = StopReason.ToolUse)(request))
                     } }
                 } else reply(TextPart("已停止"))
             }
@@ -293,22 +299,29 @@ class SubagentToolsTest {
         assertTrue(TaskStopTool.call(ctx, "task_id" to "child").isError)
     }
 
-    @Test fun `permission summaries and traits describe state changes`() {
+    @Test fun `permission summaries and traits keep delegation free of approvals`() {
         val ctx = TestToolContext()
         assertEquals("委派子任务：探索代码", AgentTool.permissionAsk(AgentTool.parsed("description" to "探索代码", "prompt" to "找定义"), ctx).summary)
         assertEquals("向 helper 发消息", SendMessageTool.permissionAsk(SendMessageTool.parsed("to" to "helper", "message" to "继续"), ctx).summary)
         assertEquals("停止任务 child", TaskStopTool.permissionAsk(TaskStopTool.parsed("task_id" to "child"), ctx).summary)
         for (tool in tools) {
-            assertFalse(tool.traits.readOnly)
+            // 不碰工作区：默认模式与计划模式都直接放行，不弹审批（设计 §7）
+            assertTrue(tool.traits.readOnly)
+            assertTrue(tool.traits.concurrencySafe)
+            for (mode in listOf(PermissionMode.Default, PermissionMode.Plan, PermissionMode.DontAsk)) {
+                val ask = tool.permissionAsk(when (tool) {
+                    AgentTool -> args("description" to "任务", "prompt" to "指令")
+                    SendMessageTool -> args("to" to "helper", "message" to "继续")
+                    else -> args("task_id" to "helper")
+                }, ctx)
+                assertTrue("${tool.name} @ $mode", PolicyEngine.evaluate(ask, tool.traits.readOnly, mode) is Verdict.Allow)
+            }
             assertEquals(tool.name, tool.permissionAsk(when (tool) {
                 AgentTool -> args("description" to "任务", "prompt" to "指令")
                 SendMessageTool -> args("to" to "helper", "message" to "继续")
                 else -> args("task_id" to "helper")
             }, ctx).tool)
         }
-        assertFalse(AgentTool.traits.concurrencySafe)
-        assertTrue(SendMessageTool.traits.concurrencySafe)
-        assertTrue(TaskStopTool.traits.concurrencySafe)
     }
 
     @Test fun `descriptions explain roles fork and background semantics across profiles`() {

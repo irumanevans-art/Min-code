@@ -6,7 +6,7 @@
 - 设计：docs/agent/04-子系统设计.md §4.3（工具与执行）；docs/agent/03-核心契约.md §5（工具）
 - 规格：docs/agent/detail/内置工具规范.md
 
-已实现：Read、Write、Edit、NotebookEdit、Glob、Grep、Bash、AskUserQuestion、EnterPlanMode、ExitPlanMode。共用零件在 `ToolSupport.kt`；
+已实现：Read、Write、Edit、NotebookEdit、Glob、Grep、Bash、AskUserQuestion、EnterPlanMode、ExitPlanMode、Agent、SendMessage、TaskStop。共用零件在 `ToolSupport.kt`；
 测试用的假端口（内存文件系统、脚本化搜索与进程、可预置 lastSeen 的上下文）在 `src/test/.../ToolFakes.kt`，Edit 的测试可直接复用。
 
 ## 模型看到什么
@@ -24,6 +24,9 @@
 | AskUserQuestion | `questions`：1–4 题，每题 `question`、`header`、2–4 个 `options`（`label` + `description`）、`multiSelect` | 「用户回答了你的问题：」+ 每题一行「问题 → 选择」，用户自填的「其他」标明出处；拒答与 dontAsk 模式各一句说明（不是错误）。不走审批，答复经持久事件送达 |
 | EnterPlanMode | 无 | 一句「已进入计划模式：只能读与提问……用 ExitPlanMode 提交计划」，结果声明切到 plan（内核落盘）；已在计划模式时只提醒、不再切换 |
 | ExitPlanMode | `plan`（Markdown） | 总是要人批准（含 bypass），审批卡片摘要即计划正文。获批：「计划已获批准，已退出计划模式（回到 X 模式）」，结果声明回到进入前的模式（没有记录则 default）；不在计划模式时获批不动模式。被拒：内核给出用户的说明，仍在计划模式 |
+| Agent | `description`、`prompt` 必填；`subagent_type`（默认 general-purpose；Explore / Plan 只读；`fork` = 分身）、`model`、`run_in_background`（默认 true）、`name` | 后台：「已在后台启动……完成时你会收到报告，在那之前不要假设它的结果」；前台：`<subagent-report …>` 报告全文（结果带 ReportDelivered，内核据此不在恢复时重复补发）；被拒（类型不存在、超深度 / 数量上限、分身再委派）是写给模型的错误 |
+| SendMessage | `to`（子 agent 的 id 或名字；子 agent 里 `main` 指父会话）、`message` | 一句送达说明：对方在跑就在当前工具批后看到，空闲就开回合、做完再交报告 |
+| TaskStop | `task_id`（子 agent 的 id 或名字） | 一句说明：已让它停下，标为没做完的报告照常交回 |
 | Bash | `command`、`timeout`（毫秒，默认 120000，上限 600000，超了按上限算）、`description`、`run_in_background` | 输出 + 末尾「退出码 N」（非 0 为错误）；超时为错误并附已有输出；转后台给出 id / pid / 日志路径，让模型用 Read 看日志 |
 
 所有路径入参必须是绝对路径；相对路径在 parse 阶段被拒绝，错误信息写给模型看。
@@ -42,6 +45,7 @@
 - NotebookEdit 的说明约 317 字符、schema 约 601 字符，粗估合计 550–650 token（中文按每字 1–1.5 token 估，未用供应商 tokenizer 精确计量）；Read 说明因 notebook 多了约 70 字符（几十 token）。这部分是稳定前缀，每次请求都带。
 - 读 notebook 的 token 成本主要在输出：单个输出块最多 8000 字符（头尾各半）、单行最多 2000 字符、最多内嵌 8 张图；图片按供应商的图片计价，一次 Read 的最坏情形是 8 张图 + 每个单元 8000 字符，仍由内核的结果预算（默认 30000 字符）再兜一次，超出部分落文件只给预览。
 - NotebookEdit 只回显改动后的那个单元，不回显整本。
+- Agent / SendMessage / TaskStop 的说明与 schema 是稳定前缀；Agent 按 HarnessProfile 给详细（Claude / GPT）或带例子的简短版本。子 agent 的报告进父会话的历史，长度受结果预算约束。分身的第一个请求与父会话共享整段前缀，几乎全部按缓存价计（子agent设计 §3）。
 
 ## 缓存影响
 
@@ -50,6 +54,7 @@
 - 说明里不写当前目录（parse 拿不到 ctx），因此不会因为换目录破坏缓存；代价是模型要从别处（系统提示）得知 cwd。
 - NotebookEdit 的说明同样是常量；新增这个工具、以及 Read 说明里多的那句 notebook 说明，会使一次旧缓存前缀失效，之后稳定。新单元 id 是随机的，只出现在工具结果里（历史的一部分），不进前缀。
 - 工具结果是历史的一部分，一旦产生不再改写，不影响已缓存的前缀。
+- 子 agent 三个工具：只读、可并发——不碰工作区，委派出去的子 agent 的每个调用各自过子会话的权限判定；默认模式不弹审批，计划模式里也能委派 Explore / Plan。
 
 ## 已知限制
 
