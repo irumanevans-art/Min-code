@@ -1,0 +1,181 @@
+package dev.min.agent.ext.hooks
+
+import dev.min.agent.ext.config.ConfigSource
+import dev.min.agent.ext.config.HookSource
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
+
+data class HookHandler(
+    val event: HookEvent,
+    val matcher: String?,
+    val type: String,
+    val command: String?,
+    val args: List<String>?,
+    val timeout: Int?,
+    val condition: String?,
+    val source: ConfigSource,
+    val raw: JsonObject,
+) {
+    val executable: Boolean get() = type == "command" && raw["async"] != JsonPrimitive(true) &&
+        raw["asyncRewake"] != JsonPrimitive(true)
+
+    internal fun identity(): List<Any?> = listOf(type, command, args, condition, timeout)
+}
+
+data class HookMatch(val handlers: List<HookHandler>, val notes: List<String>)
+
+/** 保留不同事件和 matcher 的绑定，避免去重把另一触发时机悄悄删掉。 */
+class HookSet private constructor(val handlers: List<HookHandler>, val notes: List<String>) {
+    fun matching(event: HookEvent, target: String?): List<HookHandler> = matchingDetailed(event, target).handlers
+
+    /** 调用方闭包携带工具入参；这里不认识权限引擎，也不猜测 if 规则。 */
+    fun matchingDetailed(
+        event: HookEvent,
+        target: String?,
+        ifMatches: ((rule: String) -> Boolean)? = null,
+    ): HookMatch {
+        val matchNotes = mutableListOf<String>()
+        val selected = handlers.filter { handler ->
+            if (handler.event != event || !matchesHookTarget(event, handler.matcher, target)) return@filter false
+            val where = "${handler.source.label} $event ${handler.command ?: handler.type}"
+            when {
+                !handler.executable -> {
+                    matchNotes += "$where：本期不执行此 hook 类型或异步 hook"
+                    false
+                }
+                handler.condition != null && event in IF_EVENTS -> {
+                    if (ifMatches == null) {
+                        matchNotes += "$where：未注入 if 判定，跳过处理器"
+                        false
+                    } else ifMatches(handler.condition)
+                }
+                else -> true
+            }
+        }
+        // 同一命令可绑定多个 matcher；本次命中多个绑定时仍只执行一次。
+        val unique = linkedMapOf<List<Any?>, HookHandler>()
+        selected.forEach { h ->
+            val old = unique[h.identity()]
+            if (old == null || priority(h.source) > priority(old.source)) unique[h.identity()] = h
+        }
+        return HookMatch(unique.values.toList(), matchNotes)
+    }
+
+    companion object {
+        fun parse(sources: List<HookSource>): HookSet {
+            val notes = mutableListOf<String>()
+            val unique = linkedMapOf<List<Any?>, HookHandler>()
+            sources.forEach { layer ->
+                layer.hooks.forEach eventLoop@{ (name, value) ->
+                    val event = HookEvent.entries.firstOrNull { it.name == name }
+                    if (event == null) {
+                        notes += "${layer.source.label} $name：未知事件，跳过"
+                        return@eventLoop
+                    }
+                    val groups = value as? JsonArray
+                    if (groups == null) {
+                        notes += "${layer.source.label} $name：事件配置必须是数组，跳过"
+                        return@eventLoop
+                    }
+                    groups.forEachIndexed groupLoop@{ gi, groupValue ->
+                        val where = "${layer.source.label} $name 第 ${gi + 1} 组"
+                        val group = groupValue as? JsonObject
+                        val hooks = group?.get("hooks") as? JsonArray
+                        val matcher = group?.get("matcher")
+                        if (hooks == null || (matcher != null && stringOf(matcher) == null)) {
+                            notes += "$where：hooks 必须是数组且 matcher 必须是字符串，跳过"
+                            return@groupLoop
+                        }
+                        val matcherText = matcher?.let(::stringOf)
+                        if (event in MATCHER_EVENTS && !validMatcher(event, matcherText)) {
+                            notes += "$where：matcher 正则无效，跳过"
+                            return@groupLoop
+                        }
+                        hooks.forEachIndexed { hi, hook ->
+                            try {
+                                val raw = hook as? JsonObject ?: error("处理器必须是对象")
+                                fun text(key: String): String? = if (key !in raw) null else
+                                    stringOf(raw[key]) ?: error("$key 必须是字符串")
+                                val type = text("type") ?: error("缺少 type")
+                                require(type in setOf("command", "http", "prompt", "agent", "mcp_tool")) { "未知 type: $type" }
+                                val command = text("command")
+                                val args = raw["args"]?.let { a ->
+                                    (a as? JsonArray ?: error("args 必须是字符串数组")).map {
+                                        stringOf(it) ?: error("args 必须是字符串数组")
+                                    }.also { require(it.isNotEmpty() || !command.isNullOrBlank()) { "args 不能为空" } }
+                                }
+                                val timeout = raw["timeout"]?.let {
+                                    val p = it as? JsonPrimitive
+                                    val seconds = p?.takeUnless { v -> v.isString }?.intOrNull
+                                    require(seconds != null && seconds > 0) { "timeout 必须是正整数秒" }
+                                    seconds
+                                }
+                                val condition = text("if")
+                                if (type == "command") {
+                                    require(!command.isNullOrBlank() || args != null) { "command 或 args 至少需要一项" }
+                                    require(command == null || command.isNotBlank()) { "command 不能为空字符串" }
+                                    require(args == null || command != null || args.first().isNotBlank()) { "args 可执行文件名不能为空" }
+                                }
+                                listOf("async", "asyncRewake").forEach { key ->
+                                    require(key !in raw || raw[key] == JsonPrimitive(true) || raw[key] == JsonPrimitive(false)) {
+                                        "$key 必须是布尔值"
+                                    }
+                                }
+                                val h = HookHandler(event, matcherText, type, command, args, timeout, condition, layer.source, raw)
+                                val key = listOf(event, matcherText) + h.identity()
+                                val old = unique[key]
+                                if (old == null || priority(h.source) > priority(old.source)) unique[key] = h
+                            } catch (e: IllegalArgumentException) {
+                                notes += "$where 第 ${hi + 1} 项：${e.message}，跳过"
+                            } catch (e: IllegalStateException) {
+                                notes += "$where 第 ${hi + 1} 项：${e.message}，跳过"
+                            }
+                        }
+                    }
+                }
+            }
+            return HookSet(unique.values.toList(), notes.toList())
+        }
+    }
+}
+
+private fun stringOf(value: kotlinx.serialization.json.JsonElement?): String? =
+    (value as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+private fun priority(source: ConfigSource): Int = when (source) {
+    ConfigSource.User -> 0
+    ConfigSource.Project -> 1
+    ConfigSource.Local -> 2
+    ConfigSource.Managed -> 3
+}
+
+internal val IF_EVENTS = setOf(HookEvent.PreToolUse, HookEvent.PostToolUse, HookEvent.PostToolUseFailure,
+    HookEvent.PermissionRequest, HookEvent.PermissionDenied)
+
+internal val MATCHER_EVENTS = setOf(
+    HookEvent.SessionStart, HookEvent.Setup, HookEvent.InstructionsLoaded, HookEvent.UserPromptExpansion,
+    HookEvent.PreToolUse, HookEvent.PermissionRequest, HookEvent.PermissionDenied, HookEvent.PostToolUse,
+    HookEvent.PostToolUseFailure, HookEvent.Notification, HookEvent.SubagentStart, HookEvent.SubagentStop,
+    HookEvent.StopFailure, HookEvent.ConfigChange, HookEvent.DirectoryAdded, HookEvent.FileChanged,
+    HookEvent.PreCompact, HookEvent.PostCompact, HookEvent.PreModelSwitch, HookEvent.PostModelSwitch,
+    HookEvent.Elicitation, HookEvent.ElicitationResult, HookEvent.SessionEnd,
+)
+
+private fun exactMatcher(event: HookEvent, matcher: String): Boolean =
+    Regex(if (event == HookEvent.FileChanged || event == HookEvent.StopFailure) "[A-Za-z0-9_|]+" else
+        "[A-Za-z0-9_ ,|\\-]+").matches(matcher)
+
+private fun validMatcher(event: HookEvent, matcher: String?): Boolean = try {
+    if (!matcher.isNullOrEmpty() && matcher != "*" && !exactMatcher(event, matcher)) Regex(matcher)
+    true
+} catch (_: IllegalArgumentException) { false }
+
+internal fun matchesHookTarget(event: HookEvent, matcher: String?, target: String?): Boolean {
+    if (event !in MATCHER_EVENTS || matcher.isNullOrEmpty() || matcher == "*") return true
+    if (target == null && event == HookEvent.PreModelSwitch) return true
+    val text = target.orEmpty()
+    return if (exactMatcher(event, matcher)) matcher.split('|', ',').any { it.trim() == text }
+    else try { Regex(matcher).containsMatchIn(text) } catch (_: IllegalArgumentException) { false }
+}
