@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Ask",
+  "reasons": ["This command runs outside the sandbox"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PreToolUse decision control：permissionDecision \"ask\" 让用户确认，reason 给用户看。"
+}

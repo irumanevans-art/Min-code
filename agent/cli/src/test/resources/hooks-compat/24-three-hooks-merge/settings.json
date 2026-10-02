@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/deny-db.sh\"" },
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/ask-sudo.sh\"" },
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/allow-git.sh\"" }
+        ]
+      }
+    ]
+  }
+}

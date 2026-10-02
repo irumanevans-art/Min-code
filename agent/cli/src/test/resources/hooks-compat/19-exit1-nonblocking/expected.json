@@ -1,0 +1,18 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 1,
+  "nonBlockingErrorsContain": ["hook error", "coverage is 61%"],
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Other exit codes + Warning：非 2 退出码 + 非 JSON 输出 = 非阻断错误（<hook name> hook error + stderr 首行），动作继续。"
+}

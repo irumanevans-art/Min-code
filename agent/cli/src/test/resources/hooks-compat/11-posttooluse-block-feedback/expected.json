@@ -1,0 +1,17 @@
+{
+  "event": "PostToolUse",
+  "target": "Write",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": ["ESLint still failing: src/api.ts:12 no-unused-vars (run npm run lint --fix)"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Decision control：PostToolUse 顶层 decision:\"block\"+reason 加在工具结果旁（工具已跑，副作用不撤销）。"
+}

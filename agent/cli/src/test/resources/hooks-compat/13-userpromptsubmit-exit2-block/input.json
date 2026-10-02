@@ -1,0 +1,7 @@
+{
+  "session_id": "s-13",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "please deploy to prod with these db migrations"
+}

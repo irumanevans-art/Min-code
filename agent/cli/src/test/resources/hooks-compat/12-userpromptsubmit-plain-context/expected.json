@@ -1,0 +1,17 @@
+{
+  "event": "UserPromptSubmit",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["Environment note: current branch is feat/cc-switch, deploy target is staging (not production)."],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 0：UserPromptSubmit 的纯文本 stdout 加入 Claude 上下文；省略 matcher 匹配全部。"
+}

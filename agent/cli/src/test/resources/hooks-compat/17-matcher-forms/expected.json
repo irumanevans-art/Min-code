@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "target": "mcp__memory__create_entities",
+  "handlerCount": 2,
+  "decision": "Allow",
+  "reasons": ["memory server tools are logged and allowed", "catch-all allows everything else"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Matcher patterns：\"mcp__memory__.*\" 为不锚定正则匹配该 server 全部工具；\"Edit|Write\"/\"Edit, Write\" 为精确名单（未命中）；\"*\" 匹配全部。"
+}

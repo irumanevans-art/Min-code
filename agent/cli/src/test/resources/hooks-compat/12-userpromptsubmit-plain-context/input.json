@@ -1,0 +1,8 @@
+{
+  "session_id": "s-12",
+  "transcript_path": "/home/user/.claude/projects/p/12.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "help me cut a release"
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "s-06",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": { "command": "rm build.log" },
+  "tool_use_id": "toolu_06"
+}

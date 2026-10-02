@@ -1,0 +1,10 @@
+{
+  "session_id": "s-11",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": { "file_path": "/home/user/repo/src/api.ts", "content": "export const a = 1;\n" },
+  "tool_response": { "filePath": "/home/user/repo/src/api.ts" },
+  "duration_ms": 8
+}

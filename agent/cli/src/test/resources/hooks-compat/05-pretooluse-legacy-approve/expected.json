@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Allow",
+  "reasons": ["git status is read-only and pre-approved"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PreToolUse decision control Note：顶层 decision \"approve\"/\"block\" 已弃用，分别映射 allow/deny。"
+}

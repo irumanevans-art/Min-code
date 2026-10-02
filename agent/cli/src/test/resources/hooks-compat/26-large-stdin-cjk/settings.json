@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/带 空格 的目录/检查 '引号'.sh\"" }
+        ]
+      }
+    ]
+  }
+}

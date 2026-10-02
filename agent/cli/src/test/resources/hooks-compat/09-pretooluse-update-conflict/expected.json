@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 2,
+  "decision": "Deny",
+  "reasons": ["两个 hook 改写冲突：多个处理器给出了不同的 updatedInput，已拒绝这次调用。"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "CC 文档未规定多个 updatedInput 的取舍；按设计 §6：给出不同改写即拒绝本次调用并告知模型。待确认。"
+}

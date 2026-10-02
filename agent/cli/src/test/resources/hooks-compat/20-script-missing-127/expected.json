@@ -1,0 +1,18 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 1,
+  "nonBlockingErrorsContain": ["没跑起来"],
+  "timedOut": false,
+  "failedToStart": true,
+  "notesContain": ["没跑起来"],
+  "basis": "hooks.md §Other exit codes 末段：脚本路径写错时 shell 退 127，落进同一个非阻断错误桶并提示门禁静默失效风险；CC 的通知文本含解释器消息，Min 用固定提示 + Note（见汇报差异）。"
+}

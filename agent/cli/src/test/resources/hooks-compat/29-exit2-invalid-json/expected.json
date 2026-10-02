@@ -1,0 +1,21 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "gate: command matched the repo deny list\n"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [
+    "解析"
+  ],
+  "basis": "hooks.md §Exit code 2 第二段：exit 2 + JSON 校验失败仍阻断，理由用 stderr，校验失败记调试日志（不给转写错误通知）。"
+}

@@ -1,0 +1,17 @@
+{
+  "event": "Stop",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": ["CI is still red (3 failing tests); keep fixing before stopping"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Stop decision control：decision:\"block\"+reason 阻止停止、继续对话。"
+}

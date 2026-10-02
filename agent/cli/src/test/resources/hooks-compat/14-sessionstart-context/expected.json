@@ -1,0 +1,17 @@
+{
+  "event": "SessionStart",
+  "target": "startup",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["项目约定：提交信息用中文；改完跑 ./gradlew check；文档放 docs/ 下，注释用中文。"],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §SessionStart：additionalContext 注入对话开头；matcher 匹配 source（startup）。"
+}

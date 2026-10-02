@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 3,
+  "decision": "Deny",
+  "reasons": ["Database writes are not allowed", "sudo needs human approval", "git commands are fine"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PreToolUse decision control：多 hook 优先级 deny > defer > ask > allow；设计 §6：deny 任一即胜，理由全部保留。"
+}

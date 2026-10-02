@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Ask",
+  "reasons": ["PreToolUse hook 超时，需要人工确认。"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": true,
+  "failedToStart": false,
+  "notesContain": ["超时"],
+  "basis": "CC hooks.md §Timeouts：PreToolUse 命令型超时不阻断（正常权限流程）；设计 §5 比 CC 严：PreToolUse 超时 = 要人确认（门禁不能静默失效）。本样本断言 Min 的设计选择。"
+}
