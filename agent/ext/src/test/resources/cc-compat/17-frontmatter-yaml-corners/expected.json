@@ -1,0 +1,30 @@
+{
+  "comment": "frontmatter 的 YAML 边角（期望值先用 js-yaml 3/4 与 yaml 2 三个真解析器逐一验证过，CC 用真 YAML 解析器应读出同样结果）：换行后的流式集合 / 标量是上一个键的值；重复键在主流 YAML 解析器里都是错误（CC 走「解析失败 → 无字段加载」）；块标量缩进指示符 |2 把内容缩进定在父缩进 + 2。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "skills": [
+    {
+      "name": "dup-keys",
+      "description": "Body still loads with no fields set."
+    },
+    {
+      "name": "flow-value",
+      "allowedTools": ["Read", "Grep"]
+    },
+    {
+      "name": "indent-indicator",
+      "whenToUse": "  keeps two leading spaces\n"
+    },
+    {
+      "name": "next-line-scalar",
+      "description": "Plain value written on the next line",
+      "whenToUse": "Quoted value on the next line"
+    }
+  ],
+  "settings": {
+    "activeHookSources": []
+  },
+  "commands": [],
+  "agents": [],
+  "notes": ["不是合法 YAML"]
+}
