@@ -20,6 +20,13 @@ import dev.min.agent.spi.Durability
 import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HarnessProfile
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
+import dev.min.agent.spi.TaskCreated
+import dev.min.agent.spi.TaskDeleted
+import dev.min.agent.spi.TaskPatch
+import dev.min.agent.spi.TaskStatus
+import dev.min.agent.spi.TaskUpdated
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InterruptedBy
@@ -224,6 +231,55 @@ class SubagentTest {
         assertEquals(parent.sessionId, store.open(child.sessionId)!!.header.parent)
         assertTrue(child.state.value.origin!!.fork)
         assertLogIsTruth(parent)
+        assertLogIsTruth(child)
+    }
+
+    @Test
+    fun `a fork keeps the parent's hook reminders in its prefix and starts from a copy of the task list`() = run {
+        val probe = PortTool("Probe") { _, _ -> ToolResult(text("探到了")) }
+        val model = RoutingModel { req ->
+            val last = req.last()
+            when {
+                "You are a fork" in last -> reply(TextPart("分身报告"))
+                last.startsWith("先探一下") -> reply(ToolCallPart(CallId("p1"), "Probe", args()), stop = StopReason.ToolUse)
+                last == "分身去查" -> reply(
+                    agentCall("c1", "subagent_type" to "fork", "prompt" to "查任务 3", "description" to "查"),
+                    stop = StopReason.ToolUse,
+                )
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool, probe))
+        val parent = parentOf(h)
+        parent.commit(listOf(HookContextAdded(HookContextTarget.NextUserMessage, "SessionStart", "这个仓库用 pnpm")), Durability.Sync)
+        parent.send(msg(), text("先探一下"))
+        val first = parent.state.first { it.turn == null && it.lastTurn != null }
+        val probing = first.history.filterIsInstance<HistoryEntry.Assistant>().first { it.toolCalls.isNotEmpty() }
+        parent.commit(
+            listOf(
+                HookContextAdded(HookContextTarget.ToolResults(probing.messageId), "PostToolUse", "探针结果已缓存"),
+                TaskCreated("1", "读代码", "看懂模块"),
+                TaskCreated("2", "删掉的", "不要了"),
+                TaskCreated("3", "修 bug", "修登录", activeForm = "正在修登录"),
+                TaskDeleted("2"),
+                TaskUpdated("3", TaskPatch(status = TaskStatus.InProgress, owner = "main", addBlockedBy = listOf("1"))),
+            ),
+            Durability.Sync,
+        )
+        val before = parent.state.value
+        parent.send(msg(), text("分身去查"))
+        val child = parent.childRuntime(h)
+        child.state.first { it.lastTurn != null && it.turn == null }
+
+        val parentSecond = model.requests.first { it.last().startsWith("已启动") }
+        val fork = model.requests.single { "You are a fork" in it.last() }
+        assertTrue(parentSecond.messages.first().parts.any { (it as? TextPart)?.text?.contains("这个仓库用 pnpm") == true })
+        assertEquals("带着 hook 提醒的对话前缀逐条相同", parentSecond.messages.dropLast(1), fork.messages.dropLast(1))
+
+        val copy = child.state.value
+        assertEquals("任务清单是父会话的副本：编号、状态、负责人、依赖都一样", before.tasks, copy.tasks)
+        assertEquals("删过的编号不复用", before.taskSeq, copy.taskSeq)
+        assertEquals(before.tasks, parent.state.value.tasks)
         assertLogIsTruth(child)
     }
 

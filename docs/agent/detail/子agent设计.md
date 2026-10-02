@@ -87,6 +87,8 @@
 | 工具表 | `deps.tools`（固定排序） | 同一个 `KernelDeps`，**一个都不删**——禁止再委派靠权限（§7），不靠删工具 |
 | 模型、思考档位 | `settings.model` / `settings.effort` | 复制；Agent 调用里的 `model` 参数对分身无效（与 CC 一致） |
 | 缓存键 | `header.sessionId` | `SubagentOrigin.cacheKey` = 父会话的缓存键（一路继承到根）；OpenAI 系的 `prompt_cache_key` 因此落到同一个缓存分片 |
+| hook 加的上下文 | `HookContextAdded`（挂在消息上的 system-reminder） | 继承范围内的逐条复制（来源记 `inherited`）；发起委派那条助手消息的工具结果上下文除外（那些结果在分身里换成了指令） |
+| 任务清单 | `task_*` 事件 | 不属于前缀，但继承的对话里有任务编号：用任务事件重放出一份**副本**（编号、状态、负责人、依赖都相同，删过的编号先建后删），之后各改各的、不回写父会话 |
 
 ### 3.3 不变量（测试钉住）
 
