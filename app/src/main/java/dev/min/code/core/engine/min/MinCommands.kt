@@ -80,11 +80,11 @@ class MinCommandHandler(
         is SessionCommand.WithdrawQueued -> withdraw(command)
         is SessionCommand.Answer -> router.answer(command.interactionId, command.answer)
         is SessionCommand.SetModel -> setModel(command)
-        is SessionCommand.SetEffort -> {
-            val effort = command.effortId?.let(::effortOfId)
-            // 内核的 changeSettings 里 null = 不改，没有「清掉强度」；设置面板的档位里也没有「默认」一项
-            if (effort == null) CommandResult.Rejected("没有这个思考强度：${command.effortId}")
-            else { root.changeSettings(effort = effort); CommandResult.Accepted }
+        is SessionCommand.SetEffort -> when (val id = command.effortId) {
+            // null = 回到「不控制」（模型自己的默认）
+            null -> { root.changeSettings(clearEffort = true); CommandResult.Accepted }
+            else -> effortOfId(id)?.let { root.changeSettings(effort = it); CommandResult.Accepted }
+                ?: CommandResult.Rejected("没有这个思考强度：$id")
         }
         is SessionCommand.SetMode -> {
             val mode = modeOfId(command.modeId)

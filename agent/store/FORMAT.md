@@ -62,3 +62,4 @@
   可选 `listingBudgetFraction` / `listingMaxDescChars`（当时 settings 的清单预算，没设不落盘）、可选 `notes`。含新事件的日志旧版本打不开。
 - v1 增量（2026-10-03）：新增事件 `hooks_loaded`（会话创建时冻结的 hooks 快照，未被信任的项目层只留说明）、`hooks_ran`（一批 hook 的执行记录与合并结论）、`hook_context_added`（hook 加的上下文，按挂靠目标：下一条人发的消息 / 某条用户消息 / 某条助手消息的工具结果之后）、`tool_input_rewritten`（PreToolUse 改写的入参，只对还没判定的调用）、`input_blocked`（UserPromptSubmit 拦下的输入，移出收件箱、不进历史），定义在 `spi/HookEvents.kt`；
   `turn_ended.outcome` 的 `interrupted.by` 新增取值 `hook`；`input_received.origin` 新增变体 `hook`（Stop / SubagentStop hook 要求继续时送来的输入）。含这些的日志旧版本打不开。
+- v1 增量（2026-10-03）：`settings_changed` 新增可选字段 `clearEffort`（把思考档位清回「不控制」；默认 false 不落盘）。旧日志照常读。

@@ -236,10 +236,14 @@ class SessionRuntime private constructor(
     suspend fun declineQuestion(questionId: QuestionId): Boolean =
         commitIf(listOf(QuestionAnswered(questionId, declined = true)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
 
-    /** 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西 */
-    suspend fun changeSettings(model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null) {
-        if (model == null && mode == null && effort == null) return
-        commit(listOf(SettingsChanged(model = model, mode = mode, effort = effort)), Durability.Sync)
+    /**
+     * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
+     * 参数为 null 表示不改；要把思考档位清回「不控制」用 [clearEffort]（与 [effort] 同给时以 [effort] 为准）
+     */
+    suspend fun changeSettings(model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null, clearEffort: Boolean = false) {
+        val clear = clearEffort && effort == null && state.value.settings.effort != null
+        if (model == null && mode == null && effort == null && !clear) return
+        commit(listOf(SettingsChanged(model = model, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)
     }
 
     /** 中断当前回合：回合 Job 取消，收尾（每个悬空调用补结果）在回合自己的 finally 里写 */

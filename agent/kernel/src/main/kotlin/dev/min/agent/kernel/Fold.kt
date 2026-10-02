@@ -93,7 +93,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 cwd = e.cwd ?: settings.cwd,
                 model = e.model ?: settings.model,
                 mode = e.mode ?: settings.mode,
-                effort = e.effort ?: settings.effort,
+                effort = e.effort ?: if (e.clearEffort) null else settings.effort,
                 modeBeforePlan = settings.modeBeforePlanAfter(e.mode),
             ),
         )

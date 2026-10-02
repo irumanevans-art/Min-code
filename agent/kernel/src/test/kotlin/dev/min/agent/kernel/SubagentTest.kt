@@ -449,6 +449,60 @@ class SubagentTest {
     }
 
     @Test
+    fun `stopping the whole tree delivers the child's report without waking the idle parent`() = run {
+        val model = RoutingModel { req ->
+            val last = req.last()
+            when {
+                last == "慢活" -> hang
+                req.messages.size == 1 -> reply(agentCall("c1", "prompt" to "慢活", "name" to "slow"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool))
+        val parent = parentOf(h)
+        parent.send(msg(), text("开始"))
+        val child = parent.childRuntime(h)
+        parent.state.first { it.turn == null && it.lastTurn?.outcome == TurnOutcome.Completed }
+        child.state.first { it.turn != null }
+
+        h.stopTree(parent.sessionId)
+        assertEquals(TurnOutcome.Interrupted(InterruptedBy.User), child.state.value.lastTurn!!.outcome)
+        val withReport = parent.state.first { it.reports().isNotEmpty() }
+        assertTrue((withReport.reports().single().parts.single() as TextPart).text.contains("status=\"interrupted\""))
+        kotlinx.coroutines.delay(300)
+        assertNull("报告不唤醒父会话", parent.state.value.turn)
+        assertEquals(1, events(parent.sessionId).count { it is TurnStarted })
+        assertEquals("报告留在收件箱，下次开口时一并交给模型", 1, parent.state.value.inbox.size)
+    }
+
+    @Test
+    fun `shutdown stops and unloads the tree, and reopening keeps the report exactly once`() = run {
+        val model = RoutingModel { req ->
+            val last = req.last()
+            when {
+                last == "慢活" -> hang
+                req.messages.size == 1 -> reply(agentCall("c1", "prompt" to "慢活", "name" to "slow"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool))
+        val parent = parentOf(h)
+        parent.send(msg(), text("开始"))
+        val child = parent.childRuntime(h)
+        child.state.first { it.turn != null }
+        parent.state.first { it.turn == null && it.lastTurn != null }
+
+        assertTrue(h.shutdown(parent.sessionId))
+        assertTrue(h.online.value.isEmpty())
+        val reopened = h.open(parent.sessionId)!!
+        reopened.state.first { it.reports().isNotEmpty() }
+        kotlinx.coroutines.delay(300)
+        assertEquals(1, reopened.state.value.reports().size)
+        assertNull(reopened.state.value.turn)
+        assertEquals(1, events(parent.sessionId).count { it is TurnStarted })
+    }
+
+    @Test
     fun `interrupting the parent also stops a foreground child, and the report waits in the inbox`() = run {
         val model = RoutingModel { req ->
             when {

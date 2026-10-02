@@ -274,13 +274,9 @@ class MinAgentEngine(
             CloseReason.Deleted -> drop(id)
             CloseReason.UserEnded, CloseReason.StopAll -> {
                 session.setStopping(true)
-                // 中断整棵树再卸下。结束父会话时后台子 agent 也要停；子 agent 被中断会向父会话交一份「未做完」的报告，
-                // 父会话若空闲且上一回合正常，内核会据此自动开一回合——所以卸不下就再停一轮（最多三轮）
-                for (round in 1..CLOSE_ROUNDS) {
-                    session.treeIds().forEach { sid -> hub.get(sid)?.interrupt() }
-                    session.treeIds().forEach { sid -> hub.get(sid)?.awaitIdle() }
-                    if (hub.close(id)) break
-                }
+                // 整棵树停下再卸下（后台子 agent 也停）。子 agent 被打断交来的「未做完」报告只进父会话的收件箱、
+                // 不唤醒它开新回合（hub.shutdown 的约定），下次打开时随下一句话一起交给模型
+                hub.shutdown(id)
                 drop(id)
             }
         }
@@ -334,8 +330,5 @@ class MinAgentEngine(
     private companion object {
         const val TAG = "MinAgentEngine"
         const val MAX_RESIDENT = 8
-
-        /** 结束会话时「中断 -> 等收尾 -> 卸下」最多做几轮（见 closeSession 里的注释） */
-        const val CLOSE_ROUNDS = 3
     }
 }

@@ -149,6 +149,19 @@ class SessionEffectsTest {
     }
 
     @Test
+    fun `effort can be cleared back to uncontrolled, and clearing nothing writes nothing`() = run {
+        val rt = newSession(ScriptedModel(), emptyList(), PermissionMode.Default)
+        rt.changeSettings(effort = dev.min.agent.protocol.Effort.High)
+        rt.changeSettings(clearEffort = true)
+        assertNull(rt.state.value.settings.effort)
+        val written = batches.flatten().filterIsInstance<SettingsChanged>()
+        rt.changeSettings(clearEffort = true)
+        assertEquals("已经是不控制时不再写事件", written.size, batches.flatten().filterIsInstance<SettingsChanged>().size)
+        val log = store.open(id)!!
+        assertEquals(fold(log.header, log.read().toList()), rt.state.value)
+    }
+
+    @Test
     fun `the mode before plan is remembered only when entering plan`() {
         val header = LogHeader(LOG_FORMAT_VERSION, id, createdAtMs = 0)
         fun settingsAfter(created: PermissionMode, vararg events: SessionEvent): SessionSettings {
