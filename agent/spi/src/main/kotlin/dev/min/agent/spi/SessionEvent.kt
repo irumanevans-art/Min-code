@@ -215,6 +215,10 @@ data class ApprovalRequested(
     val approvalId: ApprovalId,
     val callId: CallId,
     val ask: PermissionAsk,
+    /** 「总是允许」时建议写下的规则（尽量窄）；null = 不该给「总是允许」（踩了底线、复合命令……） */
+    val suggestedRule: String? = null,
+    /** 踩了安全底线的原因：界面据此解释「为什么连 bypass 也要问你」；没踩为 null */
+    val floorReason: String? = null,
 ) : SessionEvent
 
 @Serializable

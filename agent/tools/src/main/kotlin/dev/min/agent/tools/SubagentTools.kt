@@ -29,7 +29,19 @@ import kotlinx.serialization.json.booleanOrNull
  */
 private val SUBAGENT_TRAITS = ToolTraits(readOnly = true, concurrencySafe = true)
 
-object AgentTool : Tool<JsonObject> {
+/** 一种可委派的子 agent 类型（给模型看的名字与一句说明） */
+data class AgentType(val name: String, val description: String)
+
+/** 只有内置类型的 Agent 工具（单测、没有自定义子 agent 的宿主） */
+val AgentTool: Tool<JsonObject> = AgentToolOf(emptyList())
+
+/**
+ * Agent 工具。[customTypes] 是 `.claude/agents/` 里的自定义类型，列进说明里——模型不知道有哪些类型就不会用。
+ * 由组合根在启动时按配置建一次：工具说明在进程内不变，属于稳定前缀（改了 `.claude/agents/` 要重启才生效，与记忆同理）。
+ */
+class AgentToolOf(customTypes: List<AgentType>) : Tool<JsonObject> {
+    private val customSection: String = customTypesSection(customTypes)
+
     override val name = "Agent"
     override val traits = SUBAGENT_TRAITS
     override val inputSchema = subagentSchema(
@@ -52,7 +64,7 @@ object AgentTool : Tool<JsonObject> {
                 "需要已有上下文的长构建、大范围排查或并行试方案时用 fork；需要专门角色或更便宜的模型时新开。" +
                 "新开子 agent 看不到父会话历史，prompt 必须给齐任务背景、目标与约束；description 用 3–5 个词概括。"
             else -> common + "例如查找函数定义：subagent_type=Explore，prompt 写清函数名和搜索范围。新开时 prompt 要给齐背景。"
-        }
+        } + customSection
     }
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
@@ -69,8 +81,12 @@ object AgentTool : Tool<JsonObject> {
         }
     }
 
-    override fun permissionAsk(input: JsonObject, ctx: ToolContext) =
-        PermissionAsk(name, "委派子任务：${input.subagentString("description")}")
+    // 类型进 specifiers：用户写 `Agent(Explore)` 的 deny / allow 规则才对得上（与 Claude Code 一致）
+    override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(
+        name,
+        "委派子任务：${input.subagentString("description")}",
+        specifiers = listOf(input.subagentString("subagent_type") ?: "general-purpose"),
+    )
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
         val request = DelegateRequest(
@@ -144,6 +160,26 @@ object TaskStopTool : Tool<JsonObject> {
         emit(ToolProgress.Done(ctx.agents.stop(input.subagentString("task_id")!!)))
     }
 }
+
+/**
+ * 自定义类型的清单。每条说明截到 [MAX_TYPE_DESCRIPTION] 字、总共最多 [MAX_CUSTOM_TYPES] 种：
+ * 这段每次请求都带，用户的 agents 目录再大也不能把工具说明撑爆（CC 在说明合计超 15,000 token 时也会警告）。
+ */
+private fun customTypesSection(types: List<AgentType>): String {
+    if (types.isEmpty()) return ""
+    val shown = types.take(MAX_CUSTOM_TYPES)
+    return buildString {
+        append("\n\n这个项目还定义了这些子 agent 类型（subagent_type 写名字）：")
+        for (t in shown) {
+            val d = t.description.replace('\n', ' ').trim()
+            append("\n- ").append(t.name).append("：").append(if (d.length > MAX_TYPE_DESCRIPTION) d.take(MAX_TYPE_DESCRIPTION) + "…" else d)
+        }
+        if (types.size > shown.size) append("\n（另有 ${types.size - shown.size} 种未列出，写名字一样能用）")
+    }
+}
+
+private const val MAX_CUSTOM_TYPES = 30
+private const val MAX_TYPE_DESCRIPTION = 200
 
 private fun subagentSchema(required: List<String>, vararg properties: Pair<String, JsonObject>) = JsonObject(
     mapOf(

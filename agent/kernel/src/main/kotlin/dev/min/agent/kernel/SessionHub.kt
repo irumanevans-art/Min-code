@@ -20,6 +20,7 @@ import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.MemoryLoaded
+import dev.min.agent.spi.PermissionRulesLoaded
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.SessionStore
@@ -167,7 +168,8 @@ class SessionHub(
         val background = request.background || definition?.alwaysBackground == true
 
         val child = SessionRuntime.create(
-            store, header, created, deps, scope, initial, loadMemory = definition != null && !definition.omitMemory, hub = this,
+            store, header, created, deps, scope, initial + inheritedRules(ps),
+            loadMemory = definition != null && !definition.omitMemory, loadSettings = false, hub = this,
         )
         child.requestGate = childGate
         runtimes[childId] = child
@@ -208,6 +210,12 @@ class SessionHub(
         } finally {
             awaitedInForeground -= child.sessionId
         }
+    }
+
+    /** 子 agent 守父会话的规矩：父会话的规则快照，连同父会话里「总是允许」攒下的规则（来源仍记 session） */
+    private fun inheritedRules(parent: SessionState): List<SessionEvent> {
+        val rules = parent.rules + parent.sessionRules
+        return if (rules.isEmpty()) emptyList() else listOf(PermissionRulesLoaded(rules))
     }
 
     private fun toolsFor(definition: AgentDefinition, depth: Int): List<String>? {
