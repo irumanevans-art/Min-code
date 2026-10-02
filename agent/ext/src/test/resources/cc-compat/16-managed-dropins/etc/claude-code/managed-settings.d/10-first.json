@@ -1,0 +1,4 @@
+{
+  "env": { "LANG": "C.UTF-8" },
+  "permissions": { "deny": ["Bash(sudo *)"] }
+}

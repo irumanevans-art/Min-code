@@ -1,0 +1,17 @@
+{
+  "comment": "项目层与 local 层写 defaultMode: bypassPermissions / auto（CC settings 文档：这两个值「don't take effect from project or local settings」）——被忽略并记 note，user 层的 acceptEdits 生效。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "defaultMode": "acceptEdits",
+    "activeHookSources": []
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": [
+    "defaultMode=bypassPermissions",
+    "defaultMode=auto",
+    "不认 project / local 设置"
+  ]
+}

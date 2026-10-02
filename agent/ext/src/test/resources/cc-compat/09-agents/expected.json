@@ -1,0 +1,44 @@
+{
+  "comment": "子 agent：完整 frontmatter（tools 逗号串、tools YAML 列表、disallowedTools、model、permissionMode、maxTurns、background、isolation）、子目录递归扫描（CC sub-agents 文档 §3.2「目录递归扫描」）、用户级与项目级同名时项目胜（§3.2：.claude/agents/ > ~/.claude/agents/）、缺 description 的文件跳过（§3.1 必填）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "agents": [
+    {
+      "name": "code-reviewer",
+      "source": "project",
+      "description": "Reviews changed code for bugs, style and missing tests",
+      "tools": ["Read", "Grep", "Bash(git diff *)"],
+      "model": "sonnet",
+      "permissionMode": "acceptEdits",
+      "maxTurns": 15
+    },
+    {
+      "name": "frontend-designer",
+      "source": "project",
+      "description": "Checks UI components for design-system compliance",
+      "tools": ["Read", "Grep", "WebFetch"],
+      "disallowedTools": ["Write", "Edit"],
+      "model": "haiku",
+      "background": false,
+      "isolation": "worktree"
+    },
+    {
+      "name": "researcher",
+      "source": "project",
+      "description": "Project-level researcher tuned to this repo",
+      "model": "opus",
+      "tools": null
+    }
+  ],
+  "settings": {
+    "activeHookSources": []
+  },
+  "skills": [],
+  "commands": [],
+  "notes": [
+    "researcher",
+    "覆盖",
+    "no-description.md",
+    "description"
+  ]
+}

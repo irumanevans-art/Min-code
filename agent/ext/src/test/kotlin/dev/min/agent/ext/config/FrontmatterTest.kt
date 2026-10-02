@@ -108,6 +108,27 @@ class FrontmatterTest {
     }
 
     @Test
+    fun `a flow collection or scalar on the line after the key is that key's value`() {
+        val fm = parse(
+            "tools:",
+            "  [Read, Grep]",
+            "limits:",
+            "  {max: 3, tag: x}",
+            "description:",
+            "  plain on the next line",
+            "when_to_use:",
+            """  "quoted on the next line"""",
+            "name: x",
+        )
+        assertEquals(listOf("Read", "Grep"), fm.strings("tools"))
+        assertEquals(Json.parseToJsonElement("""{"max":3,"tag":"x"}"""), fm.fields.getValue("limits").toJson())
+        assertEquals("plain on the next line", fm.scalar("description"))
+        assertEquals("quoted on the next line", fm.scalar("when_to_use"))
+        assertEquals("x", fm.scalar("name"))
+        assertTrue(fm.notes.isEmpty())
+    }
+
+    @Test
     fun `nested mappings and lists of mappings keep their shape for hooks`() {
         val fm = parse(
             "hooks:",
@@ -171,9 +192,10 @@ class FrontmatterTest {
     }
 
     @Test
-    fun `duplicate key keeps the last and says so`() {
-        val fm = parse("a: 1", "a: 2")
-        assertEquals("2", fm.scalar("a"))
+    fun `duplicate keys invalidate the whole frontmatter`() {
+        val fm = parse("name: would-be-kept", "a: 1", "a: 2")
+        assertTrue(fm.present)
+        assertTrue(fm.fields.isEmpty())
         assertEquals(1, fm.notes.size)
         assertTrue(fm.notes.single().contains("重复"))
     }
@@ -191,11 +213,11 @@ class FrontmatterTest {
     }
 
     @Test
-    fun `a block scalar indentation indicator is not guessed`() {
+    fun `a block scalar indentation indicator fixes the content indent`() {
         val fm = parse("a: |2", "    text", "name: kept")
-        assertNull(fm.fields["a"])
+        assertEquals("  text\n", fm.scalar("a"))
         assertEquals("kept", fm.scalar("name"))
-        assertTrue(fm.notes.single().contains("缩进指示符"))
+        assertTrue(fm.notes.isEmpty())
     }
 
     @Test

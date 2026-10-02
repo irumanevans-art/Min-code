@@ -1,0 +1,32 @@
+{
+  "comment": "只有用户级 settings.json：permissions.allow/deny/ask + defaultMode + env + model。规则锚在 ~/.claude（CC 权限文档：user 层的 /x 路径规则锚在 ~/.claude）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "defaultMode": "acceptEdits",
+    "model": "sonnet",
+    "env": {
+      "NODE_ENV": "development",
+      "CI": "false"
+    },
+    "permissions": {
+      "allow": ["Bash(npm run *)", "Bash(git status)", "Read"],
+      "ask": ["Bash(git push *)"],
+      "deny": ["Read(.env)", "Bash(curl *)"]
+    },
+    "rules": [
+      { "kind": "Allow", "text": "Bash(npm run *)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Bash(git status)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Allow", "text": "Read", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Ask", "text": "Bash(git push *)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Deny", "text": "Read(.env)", "source": "user", "baseDir": "/home/dev/.claude" },
+      { "kind": "Deny", "text": "Bash(curl *)", "source": "user", "baseDir": "/home/dev/.claude" }
+    ],
+    "activeHookSources": [],
+    "disableAllHooks": false
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": []
+}

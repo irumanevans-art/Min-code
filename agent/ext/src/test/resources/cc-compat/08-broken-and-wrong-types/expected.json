@@ -1,0 +1,33 @@
+{
+  "comment": "坏 JSON 的 settings.local.json（整文件跳过 + note，其他层照常）与类型错的字段（permissions.allow 写成字符串、deny 里混进数字、env 里数字值、model 布尔）——逐键跳过并记 note（CC 行为：skip the broken file / 键按类型跳过）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "layerSources": ["user", "project"],
+    "model": "sonnet",
+    "env": {
+      "OK_FLAG": "1"
+    },
+    "permissions": {
+      "allow": [],
+      "deny": ["Read(.env)", "Bash(rm -rf /tmp/x)"]
+    },
+    "rules": [
+      { "kind": "Deny", "text": "Read(.env)", "source": "project", "baseDir": "/home/dev/work/acme" },
+      { "kind": "Deny", "text": "Bash(rm -rf /tmp/x)", "source": "project", "baseDir": "/home/dev/work/acme" }
+    ],
+    "activeHookSources": []
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": [
+    "不是合法 JSON",
+    "settings.local.json",
+    "permissions.allow",
+    "期望字符串数组",
+    "permissions.deny[1]",
+    "env.BAD_NUM",
+    "model"
+  ]
+}

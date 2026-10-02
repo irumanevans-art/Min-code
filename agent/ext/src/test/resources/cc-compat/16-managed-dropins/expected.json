@@ -1,0 +1,20 @@
+{
+  "comment": "managed 主文件是空文件（CC managed 文档：「An empty managed settings file counts as {}」）+ managed-settings.d 按字母序叠加（单值后者覆盖、env 逐键合并、列表合并）+ 隐藏文件与非 .json 忽略 + env 跨层按优先级覆盖（managed 的 LANG 赢过 user）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "layerSources": ["user", "project", "managed"],
+    "model": "opus",
+    "env": {
+      "LANG": "en_US.UTF-8"
+    },
+    "rules": [
+      { "kind": "Deny", "text": "Bash(sudo *)", "source": "managed", "baseDir": "/etc/claude-code" }
+    ],
+    "activeHookSources": []
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": []
+}

@@ -1,0 +1,81 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npm ci)",
+      "Bash(npm install *)",
+      "Bash(npx prettier --check *)",
+      "Bash(node scripts/*)",
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(storybook/**)",
+      "Write(src/**)",
+      "Read",
+      "WebFetch(domain:developer.mozilla.org)",
+      "WebFetch(domain:react.dev)"
+    ],
+    "ask": [
+      "Bash(npm publish *)",
+      "Bash(git push *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Read(secrets/**)"
+    ],
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": [
+      "../design-tokens"
+    ]
+  },
+  "env": {
+    "NODE_ENV": "development",
+    "VITE_API_BASE": "http://localhost:5173/api"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/guard-bash.sh",
+            "timeout": 20
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/format-on-edit.sh",
+            "if": "Edit(src/**)"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/typecheck-quick.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/notify-done.sh",
+            "args": ["--quiet"]
+          }
+        ]
+      }
+    ]
+  }
+}

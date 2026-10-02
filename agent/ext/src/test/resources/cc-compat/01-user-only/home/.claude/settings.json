@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(git status)",
+      "Read"
+    ],
+    "ask": [
+      "Bash(git push *)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Bash(curl *)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "env": {
+    "NODE_ENV": "development",
+    "CI": "false"
+  },
+  "model": "sonnet"
+}

@@ -1,0 +1,42 @@
+{
+  "comment": "frontmatter 的刁钻写法：带引号的值（含冒号与井号）、多行 | 与 > 块、值里有 URL 冒号、未加引号的冒号（整个 frontmatter 按坏 YAML 丢、技能仍加载，CC skills 文档：「If the YAML between the markers doesn't parse, the skill still loads with no fields set」）、没有 frontmatter 的文件、空 frontmatter。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "skills": [
+    {
+      "name": "bad-colon",
+      "description": "Still loads with defaults."
+    },
+    {
+      "name": "blocks",
+      "description": "Literal block keeps\nits line breaks.",
+      "whenToUse": "Folded block joins its lines with spaces.\n"
+    },
+    {
+      "name": "empty-fm",
+      "description": "Body after empty frontmatter."
+    },
+    {
+      "name": "plain",
+      "description": "Just instructions, no frontmatter at all."
+    },
+    {
+      "name": "quoted-name",
+      "description": "Keeps a colon: and a # hash in single quotes",
+      "whenToUse": "Handles \"escapes\" plus a # hash",
+      "argumentHint": "[owner, repo]"
+    },
+    {
+      "name": "url-colon",
+      "description": "Points tools at https://staging.example.com and friends",
+      "license": "MIT: sublicensible",
+      "compatibility": "needs git and node>=18"
+    }
+  ],
+  "settings": {
+    "activeHookSources": []
+  },
+  "commands": [],
+  "agents": [],
+  "notes": ["不是合法 YAML", "bad-colon"]
+}

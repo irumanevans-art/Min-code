@@ -1,0 +1,4 @@
+{
+  "model": "sonnet",
+  "env": { "LANG": "C" }
+}

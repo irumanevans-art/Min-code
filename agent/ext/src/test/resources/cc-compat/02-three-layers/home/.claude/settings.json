@@ -1,0 +1,16 @@
+{
+  "model": "sonnet",
+  "env": {
+    "HTTP_PROXY": "http://proxy:8080",
+    "LANG": "C"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git diff *)",
+      "Bash(git log *)"
+    ],
+    "deny": [
+      "Read(.env)"
+    ]
+  }
+}

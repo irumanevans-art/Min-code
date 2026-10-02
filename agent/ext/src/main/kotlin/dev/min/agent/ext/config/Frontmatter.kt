@@ -58,9 +58,10 @@ data class Frontmatter(
  *
  * 认：`key: value`、单双引号串（双引号含 `\n` `\"` `\uXXXX` 等转义）、`key: [a, b]` / `{a: b}`（可嵌套、可跨行）、
  * `- item` 列表（缩进的、与 key 同缩进的都行）、嵌套映射与「列表里的映射」（hooks 的写法）、
- * `|` `>` 块标量（含 `-` `+` 收尾符）、折行续写的普通标量与引号串、整行与行尾 `#` 注释。
+ * 换行后缩进的流式集合与标量值、`|` `>` 块标量（含 `-` `+` 收尾符与缩进指示符 `|2`）、
+ * 折行续写的普通标量与引号串、整行与行尾 `#` 注释。
  *
- * 不认、不猜：锚点 `&` / 别名 `*` / 标签 `!`、块标量的缩进指示符（`|2`）——这些键整个跳过并记一条说明，别的键照常读。
+ * 不认、不猜：锚点 `&` / 别名 `*` / 标签 `!`——这些键整个跳过并记一条说明，别的键照常读。
  * 真正的 YAML 错误（缩进不一致、普通值里有未加引号的 `: `、引号没闭合、缩进里有制表符）——
  * 整个 frontmatter 当作没有字段，与 CC 一致；`description: a: b` 这种常见笔误就是这样被 CC 丢掉的，Min 也丢并说明原因。
  *
@@ -134,7 +135,8 @@ private class Yaml(private val lines: MutableList<String>, private val label: St
                 skipChildren(indent)
                 continue
             }
-            if (key in out) notes += "$label：字段 `$key` 重复（${at(keyAt)}），取后一个"
+            // 重复键：主流 YAML 解析器（js-yaml 3/4、yaml 包）都当解析失败，CC 会整个丢掉 frontmatter
+            if (key in out) throw YamlError("${at(keyAt)}的字段 `$key` 重复：YAML 的映射键必须唯一")
             out[key] = value
         }
         return out
@@ -182,7 +184,14 @@ private class Yaml(private val lines: MutableList<String>, private val label: St
         val line = lines[i]
         val ind = indentOf(line)
         return when {
-            ind > parentIndent -> if (isSeqItem(line, ind)) parseSeq(ind) else FmValue.Mapping(parseMapping(ind))
+            ind > parentIndent -> when {
+                isSeqItem(line, ind) -> parseSeq(ind)
+                splitKey(line.substring(ind)) != null -> FmValue.Mapping(parseMapping(ind))
+                else -> { // 换行后的流式集合或标量也是上一个键的值（YAML 块上下文允许，真解析器都接受）
+                    i++ // 这一行还没有像 parseMapping 那样被消费掉，先吃掉再解析
+                    parseValue(line.substring(ind), ind, sameIndentSeq = false)
+                }
+            }
             ind == parentIndent && sameIndentSeq && isSeqItem(line, ind) -> parseSeq(ind)
             else -> FmValue.Null
         }
@@ -294,11 +303,12 @@ private class Yaml(private val lines: MutableList<String>, private val label: St
     private fun parseBlockScalar(header: String, parentIndent: Int): FmValue {
         val h = BLOCK_HEADER.matchEntire(cutComment(header, quoteAware = false).trim())
             ?: throw YamlError("${at(i - 1)}的块标量头 `${header.take(10)}` 写法不对")
-        if (h.groupValues[3].isNotEmpty()) throw Unsupported("块标量的缩进指示符（`${h.value}`）暂不支持")
+        // `|2` 的缩进指示符：内容缩进 = 父缩进 + 指示数，不再从首行探测
+        val explicitIndent = h.groupValues[3].toIntOrNull()?.let { parentIndent + it }
         val chomp = h.groupValues[2].ifEmpty { h.groupValues[4] }
         val folded = h.groupValues[1] == ">"
 
-        var blockIndent = -1
+        var blockIndent = explicitIndent ?: -1
         val content = mutableListOf<String>()
         while (i < lines.size) {
             val l = lines[i]

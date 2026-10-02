@@ -1,0 +1,8 @@
+{
+  "model": "web-project",
+  "permissions": {
+    "allow": [
+      "Edit(apps/web/**)"
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+---
+---
+Body after empty frontmatter.

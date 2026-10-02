@@ -1,0 +1,30 @@
+{
+  "comment": "disableAllHooks 写在项目层（CC hooks 文档：「Only managed settings can disable managed hooks」——非 managed 层关不掉 managed 的 hooks，只能把其余层关掉）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "settings": {
+    "disableAllHooks": true,
+    "env": {
+      "CORP_LOG": "1"
+    },
+    "activeHookSources": ["managed"],
+    "hooks": {
+      "managed": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "/usr/local/bin/log-start.sh"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "skills": [],
+  "commands": [],
+  "agents": [],
+  "notes": []
+}

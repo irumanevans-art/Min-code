@@ -1,0 +1,36 @@
+{
+  "comment": "commands：子目录命名 frontend/component.md → frontend:component（CC skills/commands 文档的 dir:file 命名表）、与同名 skill 的优先级（skill 赢）、user 与 project 同名 command（沿用 skills 的 user > project）。",
+  "home": "/home/dev",
+  "cwd": "/home/dev/work/acme",
+  "skills": [
+    {
+      "name": "deploy",
+      "source": "project",
+      "description": "Deploy skill that beats the same-name command"
+    }
+  ],
+  "commands": [
+    {
+      "name": "fix",
+      "source": "user",
+      "description": "User-level fix command"
+    },
+    {
+      "name": "frontend:component",
+      "source": "project",
+      "description": "Scaffolds a new React component",
+      "argumentHint": "<ComponentName>",
+      "allowedTools": ["Edit(src/components/**)"]
+    },
+    {
+      "name": "frontend:ui:button",
+      "source": "project",
+      "description": "Create a button component with variants."
+    }
+  ],
+  "settings": {
+    "activeHookSources": []
+  },
+  "agents": [],
+  "notes": ["deploy", "被同名的 skill 覆盖", "fix", "覆盖"]
+}

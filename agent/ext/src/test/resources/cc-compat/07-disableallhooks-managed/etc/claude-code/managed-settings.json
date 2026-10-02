@@ -1,0 +1,15 @@
+{
+  "disableAllHooks": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/log-start.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
