@@ -35,6 +35,11 @@ import dev.min.agent.tools.GrepTool
 import dev.min.agent.tools.NotebookEditTool
 import dev.min.agent.tools.ReadTool
 import dev.min.agent.tools.SendMessageTool
+import dev.min.agent.tools.SkillTool
+import dev.min.agent.tools.TaskCreateTool
+import dev.min.agent.tools.TaskGetTool
+import dev.min.agent.tools.TaskListTool
+import dev.min.agent.tools.TaskUpdateTool
 import dev.min.agent.tools.TaskStopTool
 import dev.min.agent.tools.WriteTool
 import kotlinx.coroutines.flow.Flow
@@ -104,14 +109,16 @@ internal class MinExec(
 }
 
 /**
- * 工具表（设计 5.1）：M2-A 的七个文件 / 命令工具，加子 agent 三件套（在 `:agent:tools`，不在 host 模块——设计原文写错了位置）
- * 和三个交互工具。顺序固定：工具说明是稳定前缀的一部分，换序会让提示缓存整段失效。
+ * 工具表（设计 5.1）：M2-A 的七个文件 / 命令工具，加子 agent 三件套（在 `:agent:tools`，不在 host 模块——设计原文写错了位置）、
+ * 三个交互工具，再是任务清单四件与 Skill。顺序固定、新工具只往末尾加：工具说明是稳定前缀的一部分，换序会让提示缓存整段失效。
  * 自定义子 agent 类型（`.claude/agents/`）这一步还没接：App 没有 `:agent:ext` 依赖，Agent 工具只列内置三类。
  */
 fun minTools(): List<Tool<*>> = listOf(
     ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
     AgentToolOf(emptyList()), SendMessageTool, TaskStopTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
+    TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
+    SkillTool,
 )
 
 object MinKernelDeps {

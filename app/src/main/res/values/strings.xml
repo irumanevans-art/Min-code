@@ -1056,6 +1056,8 @@
   <string name="min_agent_process_death">Interrupted at %1$s · the app was ended by the system</string>
   <string name="min_agent_process_death_untimed">Interrupted · the app was ended by the system</string>
   <string name="min_agent_limit">Reached the per-turn request limit</string>
+  <string name="min_agent_hook_stopped">Stopped by a hook</string>
+  <string name="min_agent_hook_feedback">%1$s hook asked the model to keep going</string>
   <string name="min_agent_continued">Continued</string>
   <string name="min_agent_woke">A subagent finished, continuing</string>
   <string name="min_agent_report_completed">done</string>

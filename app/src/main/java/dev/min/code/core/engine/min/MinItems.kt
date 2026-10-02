@@ -102,6 +102,7 @@ fun turnEndOf(outcome: TurnOutcome): TurnEnd = when (outcome) {
             InterruptedBy.User -> InterruptCause.User
             InterruptedBy.ProcessDeath -> InterruptCause.ProcessDeath
             InterruptedBy.Limit -> InterruptCause.Limit
+            InterruptedBy.Hook -> InterruptCause.Hook
         },
     )
 }
@@ -111,6 +112,7 @@ fun triggerViewOf(trigger: TurnTrigger): TurnTriggerView = when (trigger) {
     TurnTrigger.Resume -> TurnTriggerView.Resume
     TurnTrigger.Notification -> TurnTriggerView.Notification
     TurnTrigger.Delegated -> TurnTriggerView.Delegated
+    TurnTrigger.Compact -> TurnTriggerView.Compact
 }
 
 fun EndedTurn.end(): TurnEnd = turnEndOf(outcome)
@@ -184,6 +186,8 @@ private class ItemsBuilder(
                         ChatItem.Note(id, text.agentMessage(child?.agentType ?: "agent", child?.name) + "\n" + raw)
                 }
             }
+            // Stop hook 拦下「结束」时交给模型的理由：不是人说的话，作为说明显示
+            is InputOrigin.Hook -> items += ChatItem.Note(id, text.hookFeedback(origin.event) + "\n" + plain(entry.parts))
         }
     }
 
@@ -258,6 +262,7 @@ private class ItemsBuilder(
                     // 进程被杀的回合，「中断于何时」是被杀前最后一条事件，不是重开会话的这一刻
                     InterruptedBy.ProcessDeath -> text.processDeath(event.lastActivityAtMs ?: atMs)
                     InterruptedBy.Limit -> text.limit()
+                    InterruptedBy.Hook -> text.hookStopped(atMs)
                 },
                 isError = false,
             )

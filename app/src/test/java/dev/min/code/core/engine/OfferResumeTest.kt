@@ -38,6 +38,7 @@ class OfferResumeTest {
         assertEquals(ResumeReason.ProcessDeath(700L), offer(end = TurnEnd.Interrupted(InterruptCause.ProcessDeath))?.reason)
         assertEquals(ResumeReason.EngineExited, offer(end = TurnEnd.Interrupted(InterruptCause.EngineExited))?.reason)
         assertEquals(ResumeReason.Limit, offer(end = TurnEnd.Interrupted(InterruptCause.Limit))?.reason)
+        assertEquals(ResumeReason.HookStopped, offer(end = TurnEnd.Interrupted(InterruptCause.Hook))?.reason)
     }
 
     @Test

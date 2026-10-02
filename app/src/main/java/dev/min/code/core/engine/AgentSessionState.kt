@@ -94,6 +94,9 @@ enum class TurnTriggerView {
 
     /** 被委派的子 agent 自己的第一个回合 */
     Delegated,
+
+    /** 用户手动压缩上下文（`/compact`）：这一回合只做摘要，状态行写「正在压缩」 */
+    Compact,
 }
 
 /** 正在退避重试。CC 的 `system/api_retry` 只有一句文字，Min 有次数，所以两个都可空 */
@@ -124,6 +127,9 @@ enum class InterruptCause {
 
     /** 单回合请求数 / 预算等上限 */
     Limit,
+
+    /** 用户配置的 hook 叫停了这一轮（`continue: false`，Min：理由在转录的说明里）。与 [Limit] 同理：给 ▶，后台时发通知 */
+    Hook,
 
     /** 一个字还没出时被撤回，消息已经退回输入框。不出 ▶、不发通知 */
     Withdrawn,

@@ -32,6 +32,9 @@ sealed interface ResumeReason {
 
     data object Limit : ResumeReason
 
+    /** hook 叫停了这一轮 */
+    data object HookStopped : ResumeReason
+
     /** CC 的 CLI / Codex 的 app-server 自己退了 */
     data object EngineExited : ResumeReason
 }
@@ -135,6 +138,7 @@ private fun reasonOf(end: TurnEnd?, since: Long?): ResumeReason? = when (end) {
         InterruptCause.ProcessDeath -> ResumeReason.ProcessDeath(since)
         InterruptCause.EngineExited -> ResumeReason.EngineExited
         InterruptCause.Limit -> ResumeReason.Limit
+        InterruptCause.Hook -> ResumeReason.HookStopped
         InterruptCause.Withdrawn -> null
     }
 }

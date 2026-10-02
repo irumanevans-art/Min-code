@@ -87,6 +87,8 @@ class FakeText : MinAgentText {
     override fun failed(kind: FailureKind?, atMs: Long?) = "failed:$kind@$atMs"
     override fun processDeath(atMs: Long?) = "death@$atMs"
     override fun limit() = "limit"
+    override fun hookStopped(atMs: Long?) = "hook-stopped"
+    override fun hookFeedback(event: String) = "hook-feedback:$event"
     override fun continued(atMs: Long?) = "continued@$atMs"
     override fun subagentWoke() = "woke"
     override fun report(report: MinReport, description: String?) =

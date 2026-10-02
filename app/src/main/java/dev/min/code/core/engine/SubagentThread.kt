@@ -107,7 +107,7 @@ fun threadPhaseOfTurn(running: Boolean, lastEnd: TurnEnd?): AgentThread.Phase = 
     lastEnd is TurnEnd.Failed -> AgentThread.Phase.Failed
     lastEnd is TurnEnd.Interrupted -> when (lastEnd.cause) {
         InterruptCause.ProcessDeath, InterruptCause.EngineExited -> AgentThread.Phase.Interrupted
-        InterruptCause.User, InterruptCause.Limit, InterruptCause.Withdrawn -> AgentThread.Phase.Stopped
+        InterruptCause.User, InterruptCause.Limit, InterruptCause.Hook, InterruptCause.Withdrawn -> AgentThread.Phase.Stopped
     }
     else -> AgentThread.Phase.Done
 }

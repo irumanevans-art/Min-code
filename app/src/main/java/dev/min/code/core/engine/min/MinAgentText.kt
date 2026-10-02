@@ -21,6 +21,8 @@ interface MinAgentText {
     fun failed(kind: FailureKind?, atMs: Long?): String
     fun processDeath(atMs: Long?): String
     fun limit(): String
+    fun hookStopped(atMs: Long?): String
+    fun hookFeedback(event: String): String
 
     /** 续跑分隔线的正文，不含两侧的破折号 */
     fun continued(atMs: Long?): String
@@ -72,6 +74,8 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
         if (atMs == null) s(R.string.min_agent_process_death_untimed) else s(R.string.min_agent_process_death, dateClock(atMs))
 
     override fun limit() = s(R.string.min_agent_limit)
+    override fun hookStopped(atMs: Long?) = timed(s(R.string.min_agent_hook_stopped), atMs)
+    override fun hookFeedback(event: String) = s(R.string.min_agent_hook_feedback, event)
     override fun continued(atMs: Long?) = timed(s(R.string.min_agent_continued), atMs)
     override fun subagentWoke() = s(R.string.min_agent_woke)
 

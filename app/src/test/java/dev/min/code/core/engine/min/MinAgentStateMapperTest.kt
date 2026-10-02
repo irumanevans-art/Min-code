@@ -200,6 +200,20 @@ class MinAgentStateMapperTest {
         assertEquals("limit", (map(s).items.single() as ChatItem.Note).text)
     }
 
+    @Test fun aHookStopIsANoteAndOffersResumeLikeALimit() {
+        val s = foldOf(*ended(TurnOutcome.Interrupted(InterruptedBy.Hook)).toTypedArray())
+        assertEquals("hook-stopped", (map(s).items.single() as ChatItem.Note).text)
+        assertEquals(TurnEnd.Interrupted(InterruptCause.Hook), turnEndOf(TurnOutcome.Interrupted(InterruptedBy.Hook)))
+    }
+
+    @Test fun stopHookFeedbackIsANoteNotAUserBubble() {
+        val s = foldOf(
+            InputReceived(ClientMsgId("h"), listOf(TextPart("测试还没跑")), Delivery.Steer, InputOrigin.Hook("Stop")),
+            InputPromoted(ClientMsgId("h"), MessageId("m_h")),
+        )
+        assertEquals("hook-feedback:Stop\n测试还没跑", (map(s).items.single() as ChatItem.Note).text)
+    }
+
     @Test fun resumeAndWakeTurnsLeaveADivider() {
         val s = foldOf(
             TurnStarted(tid, TurnTrigger.Resume), TurnEnded(tid, TurnOutcome.Completed, Usage(), 0),
