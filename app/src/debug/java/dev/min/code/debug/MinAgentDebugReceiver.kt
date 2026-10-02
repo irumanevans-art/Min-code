@@ -4,75 +4,126 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import dev.min.agent.kernel.CallPhase
-import dev.min.agent.protocol.ClientMsgId
-import dev.min.agent.protocol.TextPart
-import dev.min.agent.spi.ApprovalChoice
-import dev.min.agent.spi.TurnEnded
 import dev.min.code.AppScope
-import dev.min.code.core.engine.min.MinAgentHost
-import dev.min.code.core.engine.min.projectMinAgent
+import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
+import dev.min.code.core.claudecode.ComposerDraftStore
+import dev.min.code.core.engine.ApprovalOption
+import dev.min.code.core.engine.CommandResult
+import dev.min.code.core.engine.DeleteResult
+import dev.min.code.core.engine.InteractionAnswer
+import dev.min.code.core.engine.PendingInteraction
+import dev.min.code.core.engine.SendTarget
+import dev.min.code.core.engine.SessionCommand
+import dev.min.code.core.engine.StartOptions
+import dev.min.code.core.engine.UserInput
+import dev.min.code.core.engine.min.MinAgentEngine
+import dev.min.code.core.engine.min.MinAgentSession
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.settings.SettingsStore
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import me.rerere.workspace.ProotShellRunner
 import org.koin.core.context.GlobalContext
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** release 源集不含此类。长回合不占 Broadcast 的 10 秒预算；验收先打开 App 保持其前台生命周期。 */
+/**
+ * release 源集不含此类。长回合不占 Broadcast 的 10 秒预算；验收先打开 App 保持其前台生命周期。
+ *
+ * 驱动的是 B3 的 [MinAgentEngine]（与以后界面走同一条路：create / open / submit 命令），不再自己拼 Hub。
+ *
+ * 用法（`adb shell am broadcast -a dev.min.code.debug.AGENT_RUN -n dev.min.code.debug/.debug.MinAgentDebugReceiver --es ...`）：
+ * - `prompt` 要发的话（`resume=yes` 时可省）；`approve` yes / no（默认 no）；`model`、`profile`（档 id）、`session`（打开已有会话）
+ * - `stop-after-ms N`：发出后 N 毫秒发一条 Interrupt 命令（验收「中途停止」）
+ * - `resume yes`：打开后按 ▶（Resume 命令，带当前 offerId），不发新话
+ * - `op list`：列出会话目录（含「中断」标记）；`op delete`（配 `session`）：经目录删除整个会话
+ */
 class MinAgentDebugReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION) return
-        val prompt = intent.getStringExtra("prompt") ?: return
+        val op = intent.getStringExtra("op")
+        val prompt = intent.getStringExtra("prompt")
+        val resume = intent.getStringExtra("resume") == "yes"
+        if (op == null && prompt == null && !resume) { Log.e(TAG, "需要 prompt、resume=yes 或 op"); return }
         val approve = intent.getStringExtra("approve") ?: "no"
         if (approve != "yes" && approve != "no") { Log.e(TAG, "approve 必须是 yes 或 no"); return }
+        val stopAfterMs = intent.getStringExtra("stop-after-ms")?.toLongOrNull()
         val pending = goAsync()
         val finished = AtomicBoolean()
         fun finish() { if (finished.compareAndSet(false, true)) pending.finish() }
         DebugDriver.scope.launch {
             var sessionId: String? = null
-            var collector: Job? = null
             var ownsRun = false
             try {
-                val koin = GlobalContext.get()
-                val model = intent.getStringExtra("model")
-                    ?: koin.get<SettingsStore>().current().claudeProfile?.env?.get("ANTHROPIC_MODEL")
-                    ?: "claude-sonnet-5"
-                val host = DebugDriver.host(context.applicationContext)
-                val runtime = host.open(model, intent.getStringExtra("session"))
-                sessionId = runtime.sessionId.value
+                val engine = DebugDriver.engine(context.applicationContext)
+                if (op == "list") {
+                    engine.catalog.list().forEach { Log.i(TAG, "LIST ${it.ref.id} interrupted=${it.interrupted} messages=${it.messageCount} title=${it.title}") }
+                    Log.i(TAG, "LIST_DONE"); return@launch
+                }
+                if (op == "delete") {
+                    val id = checkNotNull(intent.getStringExtra("session")) { "delete 需要 session" }
+                    Log.i(TAG, "DELETE $id ${engine.catalog.delete(id).let { if (it is DeleteResult.Failed) "Failed(${it.message})" else it.toString() }}")
+                    return@launch
+                }
+                val existing = intent.getStringExtra("session")
+                val session = (if (existing != null) engine.open(existing)
+                else engine.create(StartOptions(
+                    cwd = "/workspace", profileId = intent.getStringExtra("profile"), modelId = intent.getStringExtra("model"),
+                ))).getOrThrow() as MinAgentSession
+                sessionId = session.rootId.value
                 check(DebugDriver.active.add(sessionId)) { "该会话正在运行" }
                 ownsRun = true
-                Log.i(TAG, "SESSION $sessionId seq=${runtime.state.value.lastSeq} model=${runtime.state.value.settings.model.modelId}")
-                val restored = projectMinAgent(runtime.state.value)
-                restored.items.filterIsInstance<ChatItem.Note>().forEach { Log.i(TAG, "RESTORED ${it.text}") }
-                val fromSeq = runtime.state.value.lastSeq + 1
+                val before = session.state.value
+                Log.i(TAG, "SESSION $sessionId model=${before.settings.model?.id} resume=${before.resume?.reason}")
+                before.items.filterIsInstance<ChatItem.Note>().forEach { Log.i(TAG, "RESTORED ${it.text.replace("\n", "\\n")}") }
+
                 val observed = mutableSetOf<String>()
-                collector = launch {
-                    runtime.state.collect { state ->
-                        val view = projectMinAgent(state)
-                        view.pendingApprovals.forEach { approval ->
-                            if (observed.add("approval:${approval.id.value}")) {
-                                Log.i(TAG, "APPROVAL ${approval.ask.tool} ${approval.ask.summary} decision=$approve")
-                                runtime.answerApproval(approval.id, if (approve == "yes") ApprovalChoice.Once else ApprovalChoice.Deny("adb 调试验收拒绝"))
+                val collector = launch {
+                    session.state.collect { state ->
+                        state.interactions.forEach { card ->
+                            if (!observed.add("interaction:${card.id}")) return@forEach
+                            val origin = card.origin.path.joinToString("/") { it.agentType }.ifEmpty { "main" }
+                            when (card) {
+                                is PendingInteraction.Approval -> {
+                                    Log.i(TAG, "APPROVAL ${card.toolName} ${card.summary} origin=$origin decision=$approve")
+                                    val option = if (approve == "yes") ApprovalOption.ALLOW else ApprovalOption.DENY
+                                    val note = if (approve == "yes") null else "adb 调试验收拒绝"
+                                    Log.i(TAG, "ANSWER ${session.submit(SessionCommand.Answer(UUID.randomUUID().toString(), card.id, InteractionAnswer.Choose(option, note)))}")
+                                }
+                                is PendingInteraction.Question -> Log.i(TAG, "QUESTION ${card.questions.first().question} origin=$origin")
+                                is PendingInteraction.PlanReview -> Log.i(TAG, "PLAN_REVIEW origin=$origin")
                             }
                         }
-                        state.turn?.calls?.values?.filter { it.phase is CallPhase.EffectPending }?.forEach {
-                            if (observed.add("effect:${it.callId.value}")) Log.i(TAG, "EFFECT_PENDING ${it.tool} call=${it.callId.value}")
+                        state.threads.forEach { t ->
+                            if (observed.add("thread:${t.threadId}:${t.phase}")) Log.i(TAG, "THREAD ${t.agentType} phase=${t.phase} items=${t.items.size} depth=${t.depth}")
                         }
                     }
                 }
-                runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(prompt)))
-                // 用户输入已 fsync 且回合已交给 AppScope，此后无需让 Broadcast 挂着等待网络与 Bash。
+                val first = before.lastTurn?.turnId
+                if (resume) {
+                    val offer = withTimeoutOrNull(5_000) { session.state.first { it.resume != null }.resume }
+                    Log.i(TAG, "RESUME_OFFER ${offer?.offerId} reason=${offer?.reason} pending=${offer?.pendingInputs} mode=${offer?.mode}")
+                    if (offer != null) Log.i(TAG, "RESUME ${session.submit(SessionCommand.Resume(UUID.randomUUID().toString(), offer.offerId))}")
+                }
+                if (prompt != null) {
+                    val sent = session.submit(SessionCommand.Send(UUID.randomUUID().toString(), UserInput(prompt), SendTarget.Main))
+                    Log.i(TAG, "SEND $sent")
+                    if (sent !is CommandResult.Accepted) return@launch
+                }
+                // 用户输入已 fsync 且回合已交给引擎，此后无需让 Broadcast 挂着等待网络与 Bash。
                 finish()
-                runtime.awaitIdle()
+                if (stopAfterMs != null) launch {
+                    delay(stopAfterMs)
+                    val turn = session.state.value.turn?.turnId
+                    Log.i(TAG, "STOP ${session.submit(SessionCommand.Interrupt(UUID.randomUUID().toString(), turn))} turn=$turn")
+                }
+                session.runtime.awaitIdle()
                 collector.cancelAndJoin()
-                val view = projectMinAgent(runtime.state.value)
-                view.items.forEach { item ->
+                val state = session.state.first { it.turn == null }
+                state.items.forEach { item ->
                     val summary = when (item) {
                         is ChatItem.UserText -> "UserText queued=${item.queued} ${item.text}"
                         is ChatItem.AssistantText -> "AssistantText ${item.text}"
@@ -83,16 +134,12 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
                     }
                     Log.i(TAG, "ITEM ${summary.replace("\n", "\\n").take(700)}")
                 }
-                host.records(runtime.sessionId, fromSeq).forEach { record ->
-                    (record.event as? TurnEnded)?.let {
-                        Log.i(TAG, "TURN_ENDED $sessionId seq=${record.seq} outcome=${it.outcome} usage=${it.usage} durationMs=${it.durationMs}")
-                    }
-                }
-                Log.i(TAG, "DONE $sessionId status=${view.status} usage=${runtime.state.value.usage}")
+                state.lastTurn?.takeIf { it.turnId != first }?.let { Log.i(TAG, "TURN_ENDED $sessionId end=${it.end} durationMs=${it.durationMs}") }
+                Log.i(TAG, "RESUME_NOW ${state.resume?.let { "offer=${it.offerId} reason=${it.reason} pending=${it.pendingInputs}" }}")
+                Log.i(TAG, "DONE $sessionId status=${state.status} usage=${state.usage}")
             } catch (e: Exception) {
                 Log.e(TAG, "RUN_FAILED ${e.javaClass.simpleName}: ${e.message}")
             } finally {
-                collector?.cancel()
                 if (ownsRun) sessionId?.let { DebugDriver.active.remove(it) }
                 finish()
             }
@@ -108,8 +155,14 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
 private object DebugDriver {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val active = ConcurrentHashMap.newKeySet<String>()
-    private var instance: MinAgentHost? = null
-    @Synchronized fun host(context: Context): MinAgentHost = instance ?: GlobalContext.get().let { koin ->
-        MinAgentHost(context, koin.get<SettingsStore>(), koin.get<WorkspaceRepository>(), koin.get<ProotShellRunner>(), koin.get<AppScope>())
+    private var instance: MinAgentEngine? = null
+
+    /** 单例：Hub 一个进程一个。DI 还没接引擎（B5），这里自己建；元数据文件用与 `named("min")` 约定相同的文件名 */
+    @Synchronized fun engine(context: Context): MinAgentEngine = instance ?: GlobalContext.get().let { koin ->
+        MinAgentEngine(
+            context = context, settings = koin.get<SettingsStore>(), workspace = koin.get<WorkspaceRepository>(),
+            runner = koin.get<ProotShellRunner>(), appScope = koin.get<AppScope>(), drafts = koin.get<ComposerDraftStore>(),
+            meta = ClaudeCodeSessionMetaStore(File(context.filesDir, "agent-session-meta.json")),
+        )
     }.also { instance = it }
 }

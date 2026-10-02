@@ -1,0 +1,136 @@
+package dev.min.code.core.engine.min
+
+import dev.min.agent.host.JvmSearch
+import dev.min.agent.host.RootfsFileSystem
+import dev.min.agent.kernel.HostPorts
+import dev.min.agent.kernel.KernelDeps
+import dev.min.agent.kernel.ModelResolver
+import dev.min.agent.protocol.SessionId
+import dev.min.agent.spi.ArtifactSink
+import dev.min.agent.spi.Clock
+import dev.min.agent.spi.DirEntry
+import dev.min.agent.spi.Exec
+import dev.min.agent.spi.ExecHandle
+import dev.min.agent.spi.ExecOptions
+import dev.min.agent.spi.ExecResult
+import dev.min.agent.spi.FileStat
+import dev.min.agent.spi.GlobQuery
+import dev.min.agent.spi.GrepHit
+import dev.min.agent.spi.GrepQuery
+import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.IdGenerator
+import dev.min.agent.spi.PathScope
+import dev.min.agent.spi.Search
+import dev.min.agent.spi.ShellCommand
+import dev.min.agent.spi.Tool
+import dev.min.agent.spi.WorkspaceFs
+import dev.min.agent.tools.AgentToolOf
+import dev.min.agent.tools.AskUserQuestionTool
+import dev.min.agent.tools.BashTool
+import dev.min.agent.tools.EditTool
+import dev.min.agent.tools.EnterPlanModeTool
+import dev.min.agent.tools.ExitPlanModeTool
+import dev.min.agent.tools.GlobTool
+import dev.min.agent.tools.GrepTool
+import dev.min.agent.tools.NotebookEditTool
+import dev.min.agent.tools.ReadTool
+import dev.min.agent.tools.SendMessageTool
+import dev.min.agent.tools.TaskStopTool
+import dev.min.agent.tools.WriteTool
+import kotlinx.coroutines.flow.Flow
+import java.time.ZoneId
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * 一「代」宿主端口：文件系统、搜索、proot 进程共用同一次挂载快照（M2-A「同源挂载」原则：
+ * 否则设备存储开关一变，Read 看到的和 Bash 里 `cat` 看到的就是两个世界）。
+ * 开关变了换一代，[MinHostPorts] 保证每次调用只用一代、新一代只在空闲时接上（设计 10.2 拍板 5）。
+ */
+class MinHostGeneration(val fs: RootfsFileSystem, val search: JvmSearch, val exec: Exec, val mountKey: String)
+
+/**
+ * 三个端口都是「每次调用现取当前一代」的转发：内核的 [KernelDeps] 一个进程只建一次，
+ * 而挂载快照会因设置变化而换代，所以不能把某一代的实例直接塞进去。
+ */
+class MinHostPorts(private val current: () -> MinHostGeneration, tasks: MinBackgroundTasks, clock: Clock) {
+    val fs: WorkspaceFs = object : WorkspaceFs {
+        override suspend fun stat(path: GuestPath): FileStat? = current().fs.stat(path)
+        override suspend fun read(path: GuestPath, offset: Long, limit: Int): ByteArray = current().fs.read(path, offset, limit)
+        override suspend fun writeAtomic(path: GuestPath, bytes: ByteArray) = current().fs.writeAtomic(path, bytes)
+        override suspend fun list(dir: GuestPath): List<DirEntry> = current().fs.list(dir)
+        override fun scopeOf(path: GuestPath): PathScope = current().fs.scopeOf(path)
+    }
+    val search: Search = object : Search {
+        override fun grep(query: GrepQuery): Flow<GrepHit> = current().search.grep(query)
+        override fun glob(query: GlobQuery): Flow<GuestPath> = current().search.glob(query)
+    }
+    val exec: Exec = MinExec(current, tasks, clock)
+    fun artifacts(session: SessionId): ArtifactSink = object : ArtifactSink {
+        override suspend fun put(name: String, bytes: ByteArray): String {
+            require(name.matches(Regex("[A-Za-z0-9._-]+")) && name != "." && name != "..")
+            val path = GuestPath("/root/.min/artifacts/${session.value}/$name")
+            current().fs.writeAtomic(path, bytes)
+            return path.value
+        }
+    }
+}
+
+/**
+ * 转发到当前一代的 proot 进程，并登记转入后台的命令。杀进程要回到**起它的那一代**：
+ * 换代后旧一代的 [dev.min.code.core.engine.min.ProotExec] 还握着那个进程，新一代里没有它，按 id 找不到就杀不掉。
+ */
+internal class MinExec(
+    private val current: () -> MinHostGeneration,
+    private val tasks: MinBackgroundTasks,
+    @Suppress("unused") private val clock: Clock,
+) : Exec {
+    private val owner = ConcurrentHashMap<String, Exec>()
+
+    override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult {
+        val exec = current().exec
+        val result = exec.run(command, options)
+        if (result is ExecResult.Backgrounded) {
+            owner[result.handle.id] = exec
+            tasks.started(result.handle, command.script)
+        }
+        return result
+    }
+
+    override suspend fun kill(handle: ExecHandle) {
+        (owner[handle.id] ?: current().exec).kill(handle)
+        tasks.stopped(handle.id)
+    }
+}
+
+/**
+ * 工具表（设计 5.1）：M2-A 的七个文件 / 命令工具，加子 agent 三件套（在 `:agent:tools`，不在 host 模块——设计原文写错了位置）
+ * 和三个交互工具。顺序固定：工具说明是稳定前缀的一部分，换序会让提示缓存整段失效。
+ * 自定义子 agent 类型（`.claude/agents/`）这一步还没接：App 没有 `:agent:ext` 依赖，Agent 工具只列内置三类。
+ */
+fun minTools(): List<Tool<*>> = listOf(
+    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
+    AgentToolOf(emptyList()), SendMessageTool, TaskStopTool,
+    AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
+)
+
+object MinKernelDeps {
+    /** 平台描述写进系统提示，也是前缀的一部分 */
+    const val PLATFORM = "Ubuntu 24.04 (proot on Android)"
+
+    /** 用户主目录：记忆文件（`~/.claude/CLAUDE.md`）、settings 规则从这里读 */
+    val MEMORY_HOME = GuestPath("/root")
+
+    fun build(
+        models: ModelResolver,
+        ports: MinHostPorts,
+        clock: Clock = Clock { System.currentTimeMillis() },
+        ids: IdGenerator = IdGenerator { "${it}_${UUID.randomUUID().toString().replace("-", "")}" },
+        zone: ZoneId = ZoneId.systemDefault(),
+        tools: List<Tool<*>> = minTools(),
+    ): KernelDeps = KernelDeps(
+        clock = clock, ids = ids, models = models, tools = tools,
+        host = HostPorts(ports.fs, ports.search, ports.exec) { ports.artifacts(it) },
+        platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
+    )
+}
