@@ -6,6 +6,14 @@ import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.ForkSeeded
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
+import dev.min.agent.spi.SessionEvent
+import dev.min.agent.spi.TaskCreated
+import dev.min.agent.spi.TaskDeleted
+import dev.min.agent.spi.TaskPatch
+import dev.min.agent.spi.TaskStatus
+import dev.min.agent.spi.TaskUpdated
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.Role
 import dev.min.agent.spi.SeedMessage
@@ -120,6 +128,46 @@ internal fun forkSeed(parent: SessionState, callId: CallId, prompt: String): For
     }
     return ForkSeeded(messages, results)
 }
+
+/**
+ * 分身除了对话文字，还要接着父会话里**模型已经看得见**的两样状态，紧跟 [forkSeed] 写入：
+ * - hook 加的上下文（挂在继承来的消息上的 system-reminder）：没有它们，分身的请求前缀就与父会话不再逐字相同；
+ *   发起委派的那条助手消息除外——它的工具结果在分身里换成了指令，挂在后面的上下文属于父会话那边的兄弟调用。
+ * - 任务清单：继承的对话里有 TaskCreate 的结果，分身拿着同样的编号去 TaskUpdate 就该找得到。给的是**副本**：
+ *   用已有的任务事件重放出同样的编号、状态与依赖（删过的编号先建后删，之后不会复用），分身改的只是自己那份。
+ */
+internal fun forkInheritance(parent: SessionState, callId: CallId): List<SessionEvent> {
+    val at = parent.history.indexOfLast { it is HistoryEntry.Assistant && it.toolCalls.any { c -> c.callId == callId } }
+    val inherited = parent.history.subList(0, at + 1)
+    val contexts = inherited.flatMap { entry ->
+        val texts = parent.hookContexts[entry.messageId].orEmpty()
+        when {
+            texts.isEmpty() -> emptyList()
+            entry is HistoryEntry.User -> texts.map { HookContextAdded(HookContextTarget.Message(entry.messageId), FORK_INHERITED, it) }
+            entry === inherited.last() -> emptyList()
+            else -> texts.map { HookContextAdded(HookContextTarget.ToolResults(entry.messageId), FORK_INHERITED, it) }
+        }
+    }
+    val live = parent.tasks.associateBy { it.id }
+    val ids = (1..parent.taskSeq).map { it.toString() }
+    val created = ids.map { id ->
+        val t = live[id]
+        if (t == null) TaskCreated(id, "（已删除）", "") else TaskCreated(id, t.subject, t.description, t.activeForm, t.metadata)
+    }
+    val deleted = ids.filter { it !in live }.map { TaskDeleted(it) }
+    val updated = parent.tasks.mapNotNull { t ->
+        val patch = TaskPatch(
+            status = t.status.takeIf { it != TaskStatus.Pending },
+            owner = t.owner,
+            addBlocks = t.blocks,
+        )
+        if (patch.isEmpty) null else TaskUpdated(t.id, patch)
+    }
+    return contexts + created + deleted + updated
+}
+
+/** 分身继承来的 hook 上下文在日志里记的「来源事件」 */
+private const val FORK_INHERITED = "inherited"
 
 /**
  * 交给父会话的报告（设计 §6）。正文里出现的报告标签一律转义：子 agent（或它读到的网页、文件）不能伪造一段「报告之外的话」。

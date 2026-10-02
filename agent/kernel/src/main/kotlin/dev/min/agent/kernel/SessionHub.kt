@@ -259,6 +259,7 @@ class SessionHub(
                 depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
             )
             initial += forkSeed(ps, callId, request.prompt)
+            initial += forkInheritance(ps, callId)
             if (ps.memory.isNotEmpty()) initial += MemoryLoaded(ps.memory)
         } else {
             val model = resolveModel(request.model ?: definition.model, ps.settings.model)

@@ -11,8 +11,9 @@ import kotlinx.serialization.json.JsonObject
  * `SessionState.tasks`。工具不直接改它，只在 [ToolResult.effects] 里声明（[SessionEffect.TaskCreate] 等），
  * 内核在写 ToolOutcome 的同一次提交里把效果落成下面这几条事件——与计划模式切模式同一条路（docs/agent/02-总体架构.md §1）。
  *
- * 清单属于**单个会话**：子 agent（含分身）是各自的会话，各有各的清单，既不继承也不回写父会话的——
- * 分身继承的是父对话的文字，清单的事件不在继承之列。
+ * 清单属于**单个会话**：子 agent 是各自的会话，各有各的清单，不回写父会话的。
+ * 分身例外的只是起点：它继承的对话里有父会话的任务编号，所以创建时拿到父清单的一份副本（用这几种事件重放出来，
+ * 见 kernel 的 forkInheritance），之后各改各的。
  *
  * 格式纪律同 SessionEvent.kt：变体与字段只加不改不删，默认值发布后不能改。
  */
