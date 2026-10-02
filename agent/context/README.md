@@ -8,6 +8,10 @@
 ## 模型看到什么
 SystemPrompt 与 RequestAssembler 装配 profile、环境、日志历史和工具。系统提示分段：身份与规矩（所有会话相同）、
 环境（会话开始时定下）、项目说明（记忆文件，只在有记忆时出现）。
+第四段是 skill 清单（会话创建时冻结的 `SkillsLoaded` 快照，只在有可列的 skill 且工具表里有 Skill 时出现），排在记忆之后、子 agent 角色说明之前：
+`The following skills are available for use with the Skill tool:` 加每个 skill 一行 `- 名字: 说明`（说明 = description + ` - ` + when_to_use）。
+预算与截断（`SkillListing`）照 Claude Code：单条说明含 when_to_use 截断于 `skillListingMaxDescChars`（默认 1536，截断处 `…`）；整份清单 ≤ 窗口 × 4 字符/token × `skillListingBudgetFraction`（默认 0.01）；
+放不下时名字永远保留、说明按清单顺序补到预算用完（补不下的跳过，后面更短的仍可补）；`disable-model-invocation` 的不列。说明里的换行压成空格。
 
 项目说明来自会话创建时写进日志的 `MemoryLoaded` 快照（`MemoryLoader` 只经 `WorkspaceFs` 读文件），顺序宽 → 窄、全部拼接：
 `~/.claude/CLAUDE.md` → `~/.claude/rules/` → 从 `/` 到 cwd 每层的 `CLAUDE.md`、`.claude/CLAUDE.md`、`AGENTS.md`、
@@ -20,12 +24,16 @@ system / tools 每次请求都带。规矩一段约 1 000 字符。项目说明�
 （约 20 token），加正文；正文上限单文件 20 000 字符、合计 50 000 字符，预算用完后的文件只留一行「未加载」说明。
 token 数按英文约 4 字符/token 估算、未用分词器实测；**中文大约 1 字 1 token 上下，同样字符数的中文记忆要贵 3–4 倍**。
 尚无 token 估算与压缩流水线。
+skill 清单：无 skill 时为 0；有 skill 时引言约 16 token，每行约 25–40 token（英文说明按 4 字符/token 估，中文说明更贵），10 个常见 skill 约 300–400 token，
+上限由预算封顶（200k 窗口 8000 字符 ≈ 2000 token；窗口小的模型成比例变小）。未用分词器实测。
 
 ## 缓存影响
 固定环境、模型与 schema 保证同配置前缀稳定；cacheKey 来自会话，longTtl=true。记忆属于稳定前缀：会话内冻结，
 `SessionRuntime.open` 不重读磁盘，重启后系统提示逐字不变、前缀指纹不变（`MemorySessionTest`）。
 记忆段排在最后，有没有记忆不改前两段一个字节。会话中途改了 CLAUDE.md 对本会话不生效，新会话才读到；
-以后的显式刷新会追加一条 `MemoryLoaded`，前缀在那一次失效一次。改提示措辞要同步 `SystemPromptTest` 的快照。
+以后的显式刷新会追加一条 `MemoryLoaded`，前缀在那一次失效一次。
+skill 清单同理（`SkillsLoaded` 快照）：排在记忆之后，所以没有 skill 的会话前缀与之前逐字相同，有 skill 的会话里清单段只在它自己及其后失效；
+预算取决于模型窗口，会话中途换成窗口不同的模型会改变清单段（换模型本来就让缓存失效）。改提示措辞要同步 `SystemPromptTest` 的快照。
 
 ## 已知限制
 - 按需加载没做：cwd 之下子目录的 CLAUDE.md、带 `paths:` 的规则（后者跳过并记一条说明）。
@@ -37,4 +45,5 @@ token 数按英文约 4 字符/token 估算、未用分词器实测；**中文�
 - 端口不暴露链接解析后的路径：`CLAUDE.md -> AGENTS.md` 这类链接靠「内容相同就不再收」去重；`~/.claude` 范围按字面路径判定；
   规则目录里指向目录的符号链接不跟（认不出成环）。
 - 上限按字符不按 token；合计超限时被截掉的是排在最后、也就是最具体的文件。
+- skill 清单：不按调用次数排序（会话里没有统计）；没有对着 Claude Code 的真实请求逐字节比对清单措辞（格式 `- 名字: 说明` 取自其二进制）。
 - 世界状态增量、压缩（含压缩后重挂记忆）、缓存规划和循环检测尚未实现；配置版本 / 前缀未完整持久化。

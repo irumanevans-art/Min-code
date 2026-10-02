@@ -6,7 +6,7 @@
 - 设计：docs/agent/04-子系统设计.md §4.3（工具与执行）；docs/agent/03-核心契约.md §5（工具）
 - 规格：docs/agent/detail/内置工具规范.md
 
-已实现：Read、Write、Edit、NotebookEdit、Glob、Grep、Bash、AskUserQuestion、EnterPlanMode、ExitPlanMode、Agent、SendMessage、TaskStop。共用零件在 `ToolSupport.kt`；
+已实现：Read、Write、Edit、NotebookEdit、Glob、Grep、Bash、AskUserQuestion、EnterPlanMode、ExitPlanMode、Agent、SendMessage、TaskStop、Skill。共用零件在 `ToolSupport.kt`；
 测试用的假端口（内存文件系统、脚本化搜索与进程、可预置 lastSeen 的上下文）在 `src/test/.../ToolFakes.kt`，Edit 的测试可直接复用。
 
 ## 模型看到什么
@@ -27,6 +27,7 @@
 | Agent | `description`、`prompt` 必填；`subagent_type`（默认 general-purpose；Explore / Plan 只读；`fork` = 分身）、`model`、`run_in_background`（默认 true）、`name` | 后台：「已在后台启动……完成时你会收到报告，在那之前不要假设它的结果」；前台：`<subagent-report …>` 报告全文（结果带 ReportDelivered，内核据此不在恢复时重复补发）；被拒（类型不存在、超深度 / 数量上限、分身再委派）是写给模型的错误 |
 | SendMessage | `to`（子 agent 的 id 或名字；子 agent 里 `main` 指父会话）、`message` | 一句送达说明：对方在跑就在当前工具批后看到，空闲就开回合、做完再交报告 |
 | TaskStop | `task_id`（子 agent 的 id 或名字） | 一句说明：已让它停下，标为没做完的报告照常交回 |
+| Skill | `skill`（必填，清单里的名字，开头的 `/` 会被去掉）、`args`（可选原文） | 渲染好的 skill 正文：skill 前有 `Base directory for this skill: 目录`，参数已替换（没给 args 时占位符原样保留）；找不到（列出可用名字）、`disable-model-invocation`（说明只能由用户 `/名字` 触发、别另起炉灶复现步骤）、文件读不了都是错误；超过结果预算的长正文落成附件只给预览 |
 | Bash | `command`、`timeout`（毫秒，默认 120000，上限 600000，超了按上限算）、`description`、`run_in_background` | 输出 + 末尾「退出码 N」（非 0 为错误）；超时为错误并附已有输出；转后台给出 id / pid / 日志路径，让模型用 Read 看日志 |
 
 所有路径入参必须是绝对路径；相对路径在 parse 阶段被拒绝，错误信息写给模型看。
@@ -67,3 +68,4 @@
 - AskUserQuestion：header 超 12 个字符不拒绝（界面自己截）、缺省时用问题开头顶上；不支持 Claude Code 的选项预览（preview）与自由回复（response）；等待没有超时，用户不在场就一直挂着，直到作答、拒答或中断。
 - 计划模式：Bash 在现有权限引擎里不是只读工具，计划模式下整条拒绝（Claude Code 允许只读命令），要等命令分析落地；被拒时给模型的是内核通用的「用户拒绝了这次调用」+ 用户说明，没有计划专用的措辞。
 - Bash：M1 每条命令都从会话目录起跑，`cd` / `export` 不跨调用保留；输出是 stdout 与 stderr 合并，分不开；命令分析（tree-sitter）未做，权限只能拿原始命令串判断；后台进程的取消与回收由内核凭句柄做。
+- Skill：只读、可并发，**默认不弹审批**（Claude Code 默认要，因为 `allowed-tools` 能预批准工具；第一期没做那个，正文只是文字，它让模型做的事仍各自过权限）。用户的 `Skill(名字)` / `Skill(名字 *)` 允许、询问、拒绝规则照常生效（权限声明带 skill 名；policy 里尾部 ` *` 的 specifier 规则也匹配不带参数的裸名字）。说明约 190 字符 + schema 118 字符，粗估 250–350 token，属稳定前缀；加在工具表末尾，旧会话前缀不受影响。
