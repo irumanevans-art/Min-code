@@ -3,6 +3,7 @@ package dev.min.agent.context
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.MemorySource
+import dev.min.agent.spi.SkillsLoaded
 
 /**
  * 会话开始时就定下、整个会话内逐字不变的环境事实。会话中途变了的（换目录、换模式）不改这里，
@@ -19,7 +20,9 @@ data class Environment(
 /**
  * 系统提示。分段是为了缓存：第一段对所有会话都一样（身份与规矩），第二段对一个会话不变（环境），
  * 第三段是会话创建时冻结的记忆文件（项目说明），只在有记忆文件时出现，同样会话内不变。
- * 记忆放最后：有没有记忆、记忆是什么，前两段都逐字不变。
+ * 记忆放在环境之后：有没有记忆、记忆是什么，前两段都逐字不变。
+ * 第四段是会话创建时冻结的 skill 清单，只在有可列的 skill 时出现，排在记忆之后——skill 的增减不动前三段。
+ * 最后才是子 agent 的角色说明（只有新开的子 agent 有）。
  *
  * 写得短是有意的：规矩越多，模型越容易在不相干的地方照搬；能靠工具描述讲清楚的不写在这里
  * （Cursor 删掉约 2/3 的系统提示质量没降；pi 的系统提示不到 1000 token）。
@@ -27,11 +30,23 @@ data class Environment(
  */
 object SystemPrompt {
     fun build(
-        @Suppress("UNUSED_PARAMETER") profile: ModelProfile,
+        profile: ModelProfile,
         env: Environment,
         memory: List<LoadedMemoryFile> = emptyList(),
         agentInstructions: String? = null,
-    ): List<String> = listOfNotNull(RULES, environmentBlock(env), memoryBlock(memory), agentInstructions?.let(::agentBlock))
+        skills: SkillsLoaded? = null,
+    ): List<String> = listOfNotNull(
+        RULES, environmentBlock(env), memoryBlock(memory), skillsBlock(skills, profile), agentInstructions?.let(::agentBlock),
+    )
+
+    /**
+     * 可调用的 skill 清单（会话创建时冻结的快照，预算按模型窗口算）。放在记忆之后、子 agent 角色说明之前：
+     * 前三段不受有没有 skill 影响，逐字不变；子 agent 与父会话共用同一份快照，角色说明仍是最后一段。
+     * 没有可列的 skill 时整段不出现。
+     */
+    private fun skillsBlock(skills: SkillsLoaded?, profile: ModelProfile): String? = skills?.let {
+        SkillListing.block(it.entries, profile.contextWindow, it.listingBudgetFraction, it.listingMaxDescChars)
+    }
 
     private val RULES = """
         You are Min Agent, a coding agent running inside the Min app on the user's Android phone.
