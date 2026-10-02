@@ -1,0 +1,164 @@
+# fixture: interrupt_during_permission
+== stage: asking ==
+status: Running
+sessionId: "17c4d80e-7996-4813-af4d-55fb13ee0325"
+title: null
+cwd: "/workspace"
+model: "claude-sonnet-5"
+errorMessage: null
+stopping: false
+launchedProfileId: "profile-under-test"
+toolCount: 23
+plan: null
+busy: true
+turnProduced: true
+statusPhase: "requesting"
+statusDetail: null
+retryNotice: null
+turnStartedAt: <ts>
+outputTokensSettled: 0
+outputTokensCurrent: 0
+turnOutputTokens: 0
+streamingText: ""
+streamingThinking: ""
+lastTurnDurationMs: null
+lastTurnFinishedAt: null
+permissionMode: DEFAULT
+options.model: null
+options.effort: null
+options.ultracode: false
+options.skipPermissions: false
+options.promptCacheTtl: "1h"
+options.permissionMode: DEFAULT
+options.cwd: "/workspace"
+options.newSessionId: null
+options.resumeSessionId: null
+appliedModel: "claude-sonnet-5"
+appliedEffort: "medium"
+appliedUltracode: false
+applyingSettings: false
+applyingEffort: false
+effortSupported: true
+availableModels.size: 6
+availableModels[0]: value="default" displayName="Default (recommended)" resolvedModel="claude-opus-5-5[1m]" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Use the default model (currently Opus 5.5 (1M context)) · $4/$20 per Mtok"
+availableModels[1]: value="opus[1m]" displayName="Opus (1M context)" resolvedModel="claude-opus-5-5[1m]" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Opus 5.5 with 1M context · Best for everyday, complex tasks · $4/$20 per Mtok"
+availableModels[2]: value="sonnet" displayName="Sonnet" resolvedModel="claude-sonnet-5" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Sonnet 5 · Efficient for routine tasks · $2/$10 per Mtok"
+availableModels[3]: value="sonnet[1m]" displayName="Sonnet 5 (1M context)" resolvedModel="claude-sonnet-5[1m]" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Sonnet 5 for long sessions · $2/$10 per Mtok"
+availableModels[4]: value="fable" displayName="Fable 5.1" resolvedModel="claude-fable-5-1" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Custom Fable model"
+availableModels[5]: value="haiku" displayName="Haiku" resolvedModel="claude-haiku-4-5-20251001" hiddenAlias=false efforts=[] description="Haiku 4.5 · Fastest for quick answers · $1/$5 per Mtok"
+relayModelsChecked: false
+relayModelsError: null
+relayModels.size: 0
+slashCommands.size: 42
+slashCommands.names: deep-research,dataviz,update-config,verify,debug,code-review,simplify,batch,fewer-permission-prompts,doctor,loop,claude-api,workflow-authoring,run,run-skill-generator,agents,auto-mode-setup,autocompact,clear,color,compact,config,output-style,context,effort,fast,heapdump,init,mcp,model,__remote-workflow,workflow-launch-exec,reload-plugins,reload-skills,rename,security-review,usage,insights,recap,goal,list-agents,team-onboarding
+contextTokens: 36172
+contextLimit: 1000000
+costText: "Total cost:            $0.0000\nTotal duration (API):  0s\nTotal duration (wall): 2s\nTotal code changes:    0 lines added, 0 lines removed\nUsage:                 0 input, 0 output, 0 cache read, 0 cache write"
+permissionQueue.size: 1
+permissionQueue[0]: requestId="8c3ac378-f2df-4c3a-a19a-2467a8b76e72" toolName="Bash" toolUseId="toolu_013niiB4rsVShPThxqdNYFTz" agentId=null
+permissionQueue[0].description: "List root directory contents"
+permissionQueue[0].decisionReason: null
+permissionQueue[0].blockedPath: "/"
+permissionQueue[0].input: "{\"command\":\"ls /\",\"description\":\"List root directory contents\"}"
+permissionQueue[0].suggestions: []
+pending.origin: agent=null background=false fork=false queuedAfter=0
+pending.escapedPaths: []
+pending.touchesDeviceStorage: false
+tasks.size: 0
+runningTasks.size: 0
+items.size: 5
+items[0]: Note isError=false
+items[0].text: "/workspace 里还没有 CLAUDE.md。它是 Claude Code 每轮都会读的项目上下文：发送 /init 让它扫描目录生成一份，或在 /memory 里手写（命令、规范、坑，200 行以内）。"
+items[1]: UserText queued=false handoff=null
+items[1].text: "Run this exact Bash command and nothing else: ls / . Then reply with one word: done."
+items[2]: Note isError=false
+items[2].text: "会话已建立 · claude-sonnet-5 · 23 个工具"
+items[3]: Thinking
+items[3].text: "This is just a simple request to run \"ls /\" - low risk, no signs of prompt injection, so I'll go ahead and execute it.\n\n"
+items[4]: ToolCall name="Bash" toolUseId="toolu_013niiB4rsVShPThxqdNYFTz" status=Running isError=false
+items[4].input: "{\"command\":\"ls /\",\"description\":\"List root directory contents\"}"
+items[4].result: null
+items[4].resultTotalChars: null
+items[4].editDiff: null
+processOutput.size: 0
+threads.size: 0
+
+== stage: interrupted ==
+status: Running
+sessionId: "17c4d80e-7996-4813-af4d-55fb13ee0325"
+title: null
+cwd: "/workspace"
+model: "claude-sonnet-5"
+errorMessage: null
+stopping: false
+launchedProfileId: "profile-under-test"
+toolCount: 23
+plan: null
+busy: false
+turnProduced: false
+statusPhase: null
+statusDetail: null
+retryNotice: null
+turnStartedAt: <ts>
+outputTokensSettled: 158
+outputTokensCurrent: 0
+turnOutputTokens: 158
+streamingText: ""
+streamingThinking: ""
+lastTurnDurationMs: 5354
+lastTurnFinishedAt: <ts>
+permissionMode: DEFAULT
+options.model: null
+options.effort: null
+options.ultracode: false
+options.skipPermissions: false
+options.promptCacheTtl: "1h"
+options.permissionMode: DEFAULT
+options.cwd: "/workspace"
+options.newSessionId: null
+options.resumeSessionId: null
+appliedModel: "claude-sonnet-5"
+appliedEffort: "medium"
+appliedUltracode: false
+applyingSettings: false
+applyingEffort: false
+effortSupported: true
+availableModels.size: 6
+availableModels[0]: value="default" displayName="Default (recommended)" resolvedModel="claude-opus-5-5[1m]" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Use the default model (currently Opus 5.5 (1M context)) · $4/$20 per Mtok"
+availableModels[1]: value="opus[1m]" displayName="Opus (1M context)" resolvedModel="claude-opus-5-5[1m]" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Opus 5.5 with 1M context · Best for everyday, complex tasks · $4/$20 per Mtok"
+availableModels[2]: value="sonnet" displayName="Sonnet" resolvedModel="claude-sonnet-5" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Sonnet 5 · Efficient for routine tasks · $2/$10 per Mtok"
+availableModels[3]: value="sonnet[1m]" displayName="Sonnet 5 (1M context)" resolvedModel="claude-sonnet-5[1m]" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Sonnet 5 for long sessions · $2/$10 per Mtok"
+availableModels[4]: value="fable" displayName="Fable 5.1" resolvedModel="claude-fable-5-1" hiddenAlias=false efforts=[low, medium, high, xhigh, max] description="Custom Fable model"
+availableModels[5]: value="haiku" displayName="Haiku" resolvedModel="claude-haiku-4-5-20251001" hiddenAlias=false efforts=[] description="Haiku 4.5 · Fastest for quick answers · $1/$5 per Mtok"
+relayModelsChecked: false
+relayModelsError: null
+relayModels.size: 0
+slashCommands.size: 42
+slashCommands.names: deep-research,dataviz,update-config,verify,debug,code-review,simplify,batch,fewer-permission-prompts,doctor,loop,claude-api,workflow-authoring,run,run-skill-generator,agents,auto-mode-setup,autocompact,clear,color,compact,config,output-style,context,effort,fast,heapdump,init,mcp,model,__remote-workflow,workflow-launch-exec,reload-plugins,reload-skills,rename,security-review,usage,insights,recap,goal,list-agents,team-onboarding
+contextTokens: 39009
+contextLimit: 1000000
+costText: "Total cost:            $0.0230\nTotal duration (API):  5s\nTotal duration (wall): 8s\nTotal code changes:    0 lines added, 0 lines removed\nUsage by model:\n     claude-sonnet-5:  2 input, 158 output, 35.4k cache read, 3.6k cache write ($0.0230)\nPrompt cache (main):   1 request · 91% of input tokens from cache · no misses · warm (1h TTL, last activity 5s ago)"
+permissionQueue.size: 0
+tasks.size: 0
+runningTasks.size: 0
+items.size: 7
+items[0]: Note isError=false
+items[0].text: "/workspace 里还没有 CLAUDE.md。它是 Claude Code 每轮都会读的项目上下文：发送 /init 让它扫描目录生成一份，或在 /memory 里手写（命令、规范、坑，200 行以内）。"
+items[1]: UserText queued=false handoff=null
+items[1].text: "Run this exact Bash command and nothing else: ls / . Then reply with one word: done."
+items[2]: Note isError=false
+items[2].text: "会话已建立 · claude-sonnet-5 · 23 个工具"
+items[3]: Thinking
+items[3].text: "This is just a simple request to run \"ls /\" - low risk, no signs of prompt injection, so I'll go ahead and execute it.\n\n"
+items[4]: ToolCall name="Bash" toolUseId="toolu_013niiB4rsVShPThxqdNYFTz" status=Error isError=true
+items[4].input: "{\"command\":\"ls /\",\"description\":\"List root directory contents\"}"
+items[4].result: "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+items[4].resultTotalChars: null
+items[4].editDiff: null
+items[5]: Note isError=false
+items[5].text: "已中断"
+items[6]: Note isError=false
+items[6].text: "本轮有 1 次工具调用被权限规则拦截：Bash"
+processOutput.size: 0
+threads.size: 0
+
