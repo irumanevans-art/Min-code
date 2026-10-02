@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.context.MemoryRender
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.MessageId
@@ -89,7 +90,10 @@ internal object CompactionPlanner {
         val results = (state.history.getOrNull(lastAssistant) as? HistoryEntry.Assistant)?.toolCalls.orEmpty()
             .sumOf { call -> state.toolResults[call.callId]?.content?.sumOf(Tokens::of) ?: 0L }
         val added = tail.sumOf { e -> 4 + (if (e is HistoryEntry.User) e.parts else (e as HistoryEntry.Assistant).parts).sumOf(Tokens::of) }
-        return base + results + added
+        // 工具批之后按需加载的记忆也是上次请求之后才进视图的
+        val attached = (state.history.getOrNull(lastAssistant) as? HistoryEntry.Assistant)?.let { state.memoryAttachments[it.messageId] }
+            .orEmpty().sumOf { Tokens.of(MemoryRender.reminder(it)) }
+        return base + results + attached + added
     }
 
     /**

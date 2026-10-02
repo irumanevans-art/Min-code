@@ -1,6 +1,7 @@
 package dev.min.agent.spi
 
 import dev.min.agent.protocol.AgentJson
+import dev.min.agent.protocol.MessageId
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -33,6 +34,62 @@ class MemoryEventsWireTest {
                 {"path":"/workspace/.claude/rules/a.md","source":"rule","content":"r"},
                 {"path":"/workspace/AGENTS.md","source":"import","content":"i"}],
               "notes":["跳过"]}""",
+        )
+    }
+
+    @Test
+    fun `on-demand and auto sources keep their wire names`() {
+        assertEventWire(
+            MemoryLoaded(
+                files = listOf(
+                    LoadedMemoryFile(GuestPath("/workspace/src/CLAUDE.md"), MemorySource.Nested, "n"),
+                    LoadedMemoryFile(GuestPath("/workspace/.claude/rules/ts.md"), MemorySource.PathRule, "t"),
+                    LoadedMemoryFile(GuestPath("/root/.claude/projects/-workspace/memory/MEMORY.md"), MemorySource.Auto, "- a"),
+                ),
+            ),
+            """{"type":"memory_loaded","files":[
+                {"path":"/workspace/src/CLAUDE.md","source":"nested","content":"n"},
+                {"path":"/workspace/.claude/rules/ts.md","source":"path_rule","content":"t"},
+                {"path":"/root/.claude/projects/-workspace/memory/MEMORY.md","source":"auto","content":"- a"}]}""",
+        )
+    }
+
+    @Test
+    fun `memory loaded carries the auto memory state and omits it when off`() {
+        assertEventWire(
+            MemoryLoaded(
+                files = emptyList(),
+                autoMemory = AutoMemoryInfo(GuestPath("/root/.claude/projects/-workspace/memory"), totalLines = 412, loadedLines = 200),
+            ),
+            """{"type":"memory_loaded","files":[],
+              "autoMemory":{"directory":"/root/.claude/projects/-workspace/memory","totalLines":412,"loadedLines":200}}""",
+        )
+        // 索引还不存在：两个行数都是默认值，不落盘
+        assertEventWire(
+            MemoryLoaded(files = emptyList(), autoMemory = AutoMemoryInfo(GuestPath("/m"))),
+            """{"type":"memory_loaded","files":[],"autoMemory":{"directory":"/m"}}""",
+        )
+    }
+
+    @Test
+    fun `memory attached keeps its wire shape`() {
+        assertEventWire(
+            MemoryAttached(
+                assistantMessageId = MessageId("msg_7"),
+                files = listOf(
+                    LoadedMemoryFile(GuestPath("/workspace/src/api/CLAUDE.md"), MemorySource.Nested, "api rules"),
+                    LoadedMemoryFile(GuestPath("/workspace/.claude/rules/ts.md"), MemorySource.PathRule, "ts rules"),
+                ),
+                notes = listOf("太长"),
+            ),
+            """{"type":"memory_attached","assistantMessageId":"msg_7","files":[
+                {"path":"/workspace/src/api/CLAUDE.md","source":"nested","content":"api rules"},
+                {"path":"/workspace/.claude/rules/ts.md","source":"path_rule","content":"ts rules"}],
+              "notes":["太长"]}""",
+        )
+        assertEventWire(
+            MemoryAttached(MessageId("msg_8"), emptyList()),
+            """{"type":"memory_attached","assistantMessageId":"msg_8","files":[]}""",
         )
     }
 

@@ -2,7 +2,6 @@ package dev.min.agent.context
 
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.spi.LoadedMemoryFile
-import dev.min.agent.spi.MemorySource
 import dev.min.agent.spi.SkillsLoaded
 
 /**
@@ -78,19 +77,8 @@ object SystemPrompt {
         if (memory.isEmpty()) return null
         return buildString {
             append(MEMORY_INTRO)
-            for (file in memory) {
-                append("\n\nContents of ${file.path} (${describe(file.source)}):\n\n")
-                append(file.content.trimEnd().trimStart('\n'))
-            }
+            for (file in memory) append("\n\n").append(MemoryRender.section(file))
         }
-    }
-
-    private fun describe(source: MemorySource): String = when (source) {
-        MemorySource.User -> "user's instructions for all projects"
-        MemorySource.Project -> "project instructions, checked into the codebase"
-        MemorySource.Local -> "user's private instructions for this project, not checked in"
-        MemorySource.Rule -> "rule"
-        MemorySource.Import -> "imported by a memory file"
     }
 
     /**

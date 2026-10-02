@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.context.MemoryRender
 import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolResultPart
@@ -38,7 +39,7 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
                                 } else {
                                     ToolResultPart(call.callId, result.content, result.isError)
                                 }
-                            } + reminders(entry.messageId),
+                            } + reminders(entry.messageId) + memoryReminders(entry.messageId),
                         ),
                     )
                 }
@@ -53,6 +54,13 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
  */
 private fun SessionState.reminders(messageId: MessageId): List<TextPart> =
     hookContexts[messageId].orEmpty().map { TextPart("<system-reminder>\n$it\n</system-reminder>") }
+
+/**
+ * 按需加载的记忆（MemoryAttached）：每个文件一段 system-reminder，排在 hook 上下文之后（先 hook 后记忆，顺序固定）。
+ * 同样只来自日志，所以请求照样能只凭日志重建
+ */
+private fun SessionState.memoryReminders(messageId: MessageId): List<TextPart> =
+    memoryAttachments[messageId].orEmpty().map { TextPart(MemoryRender.reminder(it)) }
 
 /** 被遮蔽的工具结果在模型视图里的样子：说清楚省掉了什么、原文在哪 */
 internal fun maskedStub(tool: String, path: String?): String =

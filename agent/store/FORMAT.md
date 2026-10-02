@@ -62,3 +62,7 @@
   可选 `listingBudgetFraction` / `listingMaxDescChars`（当时 settings 的清单预算，没设不落盘）、可选 `notes`。含新事件的日志旧版本打不开。
 - v1 增量（2026-10-03）：新增事件 `hooks_loaded`（会话创建时冻结的 hooks 快照，未被信任的项目层只留说明）、`hooks_ran`（一批 hook 的执行记录与合并结论）、`hook_context_added`（hook 加的上下文，按挂靠目标：下一条人发的消息 / 某条用户消息 / 某条助手消息的工具结果之后）、`tool_input_rewritten`（PreToolUse 改写的入参，只对还没判定的调用）、`input_blocked`（UserPromptSubmit 拦下的输入，移出收件箱、不进历史），定义在 `spi/HookEvents.kt`；
   `turn_ended.outcome` 的 `interrupted.by` 新增取值 `hook`；`input_received.origin` 新增变体 `hook`（Stop / SubagentStop hook 要求继续时送来的输入）。含这些的日志旧版本打不开。
+- v1 增量（2026-10-03）：新增事件 `memory_attached`（工具调用碰到文件后按需加载的记忆：子目录的 `CLAUDE.md` 一类、带 `paths:` 的规则；`assistantMessageId` 是发起那批调用的助手消息，
+  `files` 的 `content` 是进模型的原样文本，可选 `notes` 只给人看），定义在 `spi/MemoryEvents.kt`；模型视图里渲染在那条消息的工具结果之后（hook 上下文之后）。
+  `memory_loaded.files[].source` 新增取值 `nested`、`path_rule`、`auto`（自动记忆索引 `MEMORY.md`）；`memory_loaded` 新增可选字段 `autoMemory`（`directory`、可选 `totalLines` / `loadedLines`，自动记忆开着时才有）。
+  含这些的日志旧版本打不开（旧版读到未知的 `source` 取值同样失败）。

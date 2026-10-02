@@ -22,6 +22,7 @@ import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.ExecHandle
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.AutoMemoryInfo
 import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.PermissionAsk
@@ -104,6 +105,18 @@ data class SessionState(
     val hookContexts: Map<MessageId, List<String>> = emptyMap(),
     /** 还没有消息可挂的 hook 上下文（SessionStart），挂到下一条人发的消息上 */
     val pendingHookContexts: List<String> = emptyList(),
+    /** 会话创建时冻结的自动记忆状态（最后一条 MemoryLoaded 带的）；null = 没开。系统提示里自动记忆那一段只由它与 [memory] 拼 */
+    val autoMemory: AutoMemoryInfo? = null,
+    /**
+     * 按需加载的记忆（MemoryAttached），按挂靠的助手消息：模型视图里渲染在那条消息的工具结果之后（hook 上下文之后）。
+     * 去重靠 [memoryPathsInContext]，不靠它
+     */
+    val memoryAttachments: Map<MessageId, List<LoadedMemoryFile>> = emptyMap(),
+    /**
+     * 此刻已在模型上下文里的记忆文件路径 = 创建时快照里的 + 还留在模型视图里的按需加载的；同一路径不再按需加载第二次。
+     * 压缩把挂了它们的消息摘要掉之后，那些路径从集合里移出（内容已不在视图里），再碰到就重新加载（设计 §1.2）
+     */
+    val memoryPathsInContext: Set<GuestPath> = emptySet(),
 )
 
 data class CompactionView(val summary: String, val through: MessageId, val transcriptPath: String?)
