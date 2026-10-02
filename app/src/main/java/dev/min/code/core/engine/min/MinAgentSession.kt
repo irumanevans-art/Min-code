@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -129,12 +130,15 @@ class MinAgentSession(
      */
     private fun treeFlow(rt: SessionRuntime): Flow<Map<SessionId, SessionState>> =
         combine(rt.state.map { it.children.keys }.distinctUntilChanged(), host.hub.online) { kids, _ -> kids }
-            .distinctUntilChanged()
+            // 不再 distinctUntilChanged：在线集合变了而子集合没变（hub.open 在根之后才补开子会话）也要重新订阅
             .flatMapLatest { kids ->
                 val kidRuntimes = kids.mapNotNull { host.hub.get(it) }
-                if (kidRuntimes.isEmpty()) rt.state.map { mapOf(rt.sessionId to it) }
-                else combine(rt.state, combine(kidRuntimes.map { treeFlow(it) }) { it.toList() }) { self, subs ->
-                    buildMap { put(rt.sessionId, self); subs.forEach { putAll(it) } }
+                // 只放行与本次 [kids] 一致的根状态帧：新委派的那一刻，根状态已经带着新子会话、而外层还没切到新的订阅，
+                // 这一帧里查不到子节点，线程表上会闪一下「已停止」的占位
+                val self = rt.state.filter { it.children.keys == kids }
+                if (kidRuntimes.isEmpty()) self.map { mapOf(rt.sessionId to it) }
+                else combine(self, combine(kidRuntimes.map { treeFlow(it) }) { it.toList() }) { me, subs ->
+                    buildMap { put(rt.sessionId, me); subs.forEach { putAll(it) } }
                 }
             }
 

@@ -331,6 +331,9 @@ class MinCommandTest {
 
     @Test fun backgroundDelegationShowsAThreadTheReportWakesTheParentAndYouCanTalkToTheChild() {
         val r = rig(delegatingModel(), listOf(AgentToolOf(emptyList())))
+        // 新委派那一帧不能闪出「已停止」的占位线程：根状态带着新子会话、子节点还没订上的那一帧要被滤掉
+        val phases = java.util.Collections.synchronizedList(mutableListOf<AgentThread.Phase>())
+        r.k.scope.launch(Dispatchers.Unconfined) { r.session.state.collect { st -> st.threads.forEach { phases += it.phase } } }
         r.send("go")
         // 子 agent 完成 -> 报告进父会话 -> 父会话自动开回合（Notification）看到报告
         val s = awaitValue(20_000) {
@@ -338,6 +341,7 @@ class MinCommandTest {
                 st.turn == null && st.items.any { (it as? dev.min.code.core.session.ChatItem.AssistantText)?.text == "parent saw the report" }
             }
         }
+        assertFalse("占位线程闪过：$phases", AgentThread.Phase.Stopped in phases)
         val thread = s.threads.single()
         assertEquals("Explore", thread.agentType); assertEquals("finder", thread.name); assertEquals(AgentThread.Phase.Done, thread.phase)
         assertTrue(thread.items.any { (it as? dev.min.code.core.session.ChatItem.AssistantText)?.text == "child done" })
