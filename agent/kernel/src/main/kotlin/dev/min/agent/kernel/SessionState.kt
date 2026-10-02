@@ -83,6 +83,7 @@ data class SessionState(
     val compactionFailures: Int = 0,
     /** 开始了还没有结局的压缩（进程死在中途时恢复用） */
     val openCompaction: String? = null,
+    val webSearches: Int = 0,
 )
 
 data class CompactionView(val summary: String, val through: MessageId, val transcriptPath: String?)

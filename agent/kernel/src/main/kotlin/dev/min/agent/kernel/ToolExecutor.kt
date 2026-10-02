@@ -216,6 +216,13 @@ internal class ToolExecutor(private val rt: SessionRuntime) {
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
+        override val web = if (turnId == null) dev.min.agent.spi.WebPort.Unavailable else deps.host.web
+        override val webSearch = if (turnId == null) dev.min.agent.spi.WebSearchPort.Unavailable else
+            dev.min.agent.spi.WebSearchPort { query, allowed, blocked, limit ->
+                searchWeb(rt, callId, query, allowed, blocked, limit)
+            }
+        override suspend fun extract(content: String, prompt: String): ToolResult =
+            if (turnId == null) errorResult("提取端口不可用。") else extractWeb(rt, turnId, callId, content, prompt)
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
