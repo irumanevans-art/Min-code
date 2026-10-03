@@ -213,6 +213,9 @@ internal object OpenAIToAnthropic {
 
         private val toolBlockIndex = HashMap<Int, Int>()
 
+        /** 发过 stop 的块号。中途收的与 finish 收的共用，保证每个块恰好一次 content_block_stop */
+        private val closedBlocks = HashSet<Int>()
+
         fun finish(): List<String> {
             val events = ArrayList<String>()
             if (!started) {
@@ -226,15 +229,11 @@ internal object OpenAIToAnthropic {
                 })
                 textBlockOpen = false
             }
-            // 每个工具块只发一次 stop。以前 openToolIndex 那个先 closeTool 一遍、下面的
-            // 循环再发一遍，CLI 会看到重复的 content_block_stop
-            val closed = HashSet<Int>()
-            openToolIndex?.let {
-                events += closeTool(it)
-                closed += it
-            }
-            toolBlockIndex.forEach { (idx, blockIndex) ->
-                if (idx in closed) return@forEach
+            // 原来 closed 只在 finish 里现建、还按工具序号记，中途 closeTool 收掉的块不在里面，
+            // 下面的循环会给它再发一次 stop，CLI 收到重复的 content_block_stop
+            openToolIndex?.let { events += closeTool(it) }
+            toolBlockIndex.forEach { (_, blockIndex) ->
+                if (!closedBlocks.add(blockIndex)) return@forEach
                 events += event("content_block_stop", buildJsonObject {
                     put("type", "content_block_stop")
                     put("index", blockIndex)
@@ -243,7 +242,9 @@ internal object OpenAIToAnthropic {
             events += event("message_delta", buildJsonObject {
                 put("type", "message_delta")
                 put("delta", buildJsonObject {
-                    put("stop_reason", stopReason ?: "end_turn")
+                    // 收到过 finish_reason 就按它映射（stopReason 已定）；断流时按流里出现过的内容补：
+                    // 有工具调用就是 tool_use（模型在等工具结果），不能装作自然结束
+                    put("stop_reason", stopReason ?: if (toolMeta.isNotEmpty()) "tool_use" else "end_turn")
                     put("stop_sequence", JsonNull)
                 })
                 put("usage", buildJsonObject {
@@ -259,6 +260,8 @@ internal object OpenAIToAnthropic {
         private fun closeTool(idx: Int): List<String> {
             val blockIndex = toolBlockIndex[idx] ?: return emptyList()
             openToolIndex = null
+            // 已收过的块不再发 stop；closedBlocks 由这一处统一记账，finish 的循环据此跳过
+            if (!closedBlocks.add(blockIndex)) return emptyList()
             return listOf(event("content_block_stop", buildJsonObject {
                 put("type", "content_block_stop")
                 put("index", blockIndex)
