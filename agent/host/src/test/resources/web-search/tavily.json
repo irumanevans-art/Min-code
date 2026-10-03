@@ -1,0 +1,1 @@
+{"query":"kotlin","answer":null,"results":[{"title":"Kotlin","url":"https://example.com/kotlin","content":"Kotlin & JVM","score":0.9,"raw_content":null},{"title":"Docs","url":"https://docs.example.com/page","content":"Reference","score":0.8},{"title":"Wrong","url":"https://badexample.com/page","content":"Other"}],"response_time":0.4}

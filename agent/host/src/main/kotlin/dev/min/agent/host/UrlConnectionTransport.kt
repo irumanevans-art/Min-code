@@ -32,7 +32,7 @@ import java.net.URL
  *   手机网络切换时常出现半死的连接：不断也不来数据。按静默判断断流，交给内核当作可重试的网络错误处理。
  *
  * ## 取消
- * 读流是阻塞调用，协程取消打断不了它。流式读取时另起一个看门的子协程：一旦取消就断开连接，阻塞的读随即抛错退出——
+ * 读流是阻塞调用，协程取消打断不了它。读取时另起一个看门的子协程：一旦取消就断开连接，阻塞的读随即抛错退出——
  * 否则用户按了中断，连接还挂着，照样在消耗流量和 token。
  *
  * 请求头里有凭证：这里不记任何日志，异常信息里只有状态码与响应体（[HttpRequest.toString] 本身也不含头）。
@@ -45,10 +45,23 @@ class UrlConnectionTransport(
     override suspend fun send(request: HttpRequest): HttpResponse = withContext(Dispatchers.IO) {
         val connection = open(request, readTimeoutMs = request.timeoutMs)
         try {
-            val status = connection.responseCode
-            val headers = headersOf(connection)
-            if (status !in 200..299) throw HttpStatusException(status, headers, readError(connection))
-            HttpResponse(status, headers, connection.inputStream.use(InputStream::readBytes))
+            coroutineScope {
+                // WebFetch 的总截止时间必须能打断阻塞读，不能只依赖每次读的静默超时。
+                val watchdog = launch {
+                    try { awaitCancellation() } finally { connection.disconnect() }
+                }
+                try {
+                    val status = connection.responseCode
+                    val headers = headersOf(connection)
+                    if (status !in 200..299) throw HttpStatusException(status, headers, readError(connection))
+                    HttpResponse(status, headers, connection.inputStream.use(InputStream::readBytes))
+                } catch (e: IOException) {
+                    currentCoroutineContext().ensureActive()
+                    throw e
+                } finally {
+                    watchdog.cancel()
+                }
+            }
         } finally {
             connection.disconnect()
         }
@@ -93,7 +106,7 @@ class UrlConnectionTransport(
     private fun open(request: HttpRequest, readTimeoutMs: Long): HttpURLConnection {
         val connection = URL(request.url).openConnection() as HttpURLConnection
         connection.requestMethod = request.method
-        connection.connectTimeout = connectTimeoutMs
+        connection.connectTimeout = minOf(connectTimeoutMs.toLong(), readTimeoutMs).coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
         connection.readTimeout = readTimeoutMs.coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
         connection.instanceFollowRedirects = false // 重定向到别的主机会把凭证头带过去；供应商地址本不该重定向
         request.headers.forEach { (name, value) -> connection.addRequestProperty(name, value) }

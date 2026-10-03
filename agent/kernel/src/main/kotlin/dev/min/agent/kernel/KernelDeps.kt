@@ -29,7 +29,13 @@ class HostPorts(
     val search: Search,
     val exec: Exec,
     val artifacts: (SessionId) -> ArtifactSink,
-)
+    val web: dev.min.agent.spi.WebPort = dev.min.agent.spi.WebPort.Unavailable,
+    val searchBackend: dev.min.agent.spi.SearchBackend? = null,
+) {
+    // 保留既有 HostPorts(fs, search, exec) { artifacts } 的组合根与测试写法。
+    constructor(fs: WorkspaceFs, search: Search, exec: Exec, artifacts: (SessionId) -> ArtifactSink) :
+        this(fs, search, exec, artifacts, dev.min.agent.spi.WebPort.Unavailable, null)
+}
 
 /** 内核的全部外部依赖，由宿主在组合根里一次性给齐（docs/agent/02-总体架构.md §2：构造注入，不做运行时发现） */
 class KernelDeps(
@@ -58,7 +64,11 @@ class KernelDeps(
     /** 这个工作区里项目层（project / local）的 hooks 能不能跑：工作区信任由宿主记（App 的设置、CLI 的参数），默认不信任 */
     val trustProjectHooks: (GuestPath) -> Boolean = { false },
     val memoryLimits: MemoryLimits = MemoryLimits(),
-)
+    val fastModel: ModelRef? = null,
+    val maxWebSearches: Int = 200,
+) {
+    init { require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" } }
+}
 
 /**
  * 模型请求失败后的退避。只有供应商说可以重试的错误（网络、限流、过载、5xx）才重试；

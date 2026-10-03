@@ -104,6 +104,7 @@ data class SessionState(
     val hookContexts: Map<MessageId, List<String>> = emptyMap(),
     /** 还没有消息可挂的 hook 上下文（SessionStart），挂到下一条人发的消息上 */
     val pendingHookContexts: List<String> = emptyList(),
+    val webSearches: Int = 0,
 )
 
 data class CompactionView(val summary: String, val through: MessageId, val transcriptPath: String?)

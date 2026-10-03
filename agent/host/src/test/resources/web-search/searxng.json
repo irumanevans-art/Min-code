@@ -1,0 +1,1 @@
+{"query":"kotlin","number_of_results":3,"results":[{"title":"Kotlin","url":"https://example.com/kotlin","content":"Kotlin & JVM","engine":"brave","score":1},{"title":"Docs","url":"https://docs.example.com/page","content":"Reference","engine":"google"},{"title":"Wrong","url":"https://badexample.com/page","content":"Other"}],"unresponsive_engines":[]}

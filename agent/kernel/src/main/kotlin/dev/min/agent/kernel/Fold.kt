@@ -287,6 +287,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
             applyTaskEvent(e)
         }
         is Note -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
+        is dev.min.agent.spi.WebSearchUsed -> copy(webSearches = webSearches + 1)
+        is dev.min.agent.spi.WebExtractionCompleted -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }
     }
     val stamped = next.turn?.let { next.copy(turn = it.copy(lastEventAtMs = record.atMs)) } ?: next
     return stamped.copy(lastSeq = record.seq)

@@ -44,6 +44,9 @@ import dev.min.agent.tools.SkillTool
 import dev.min.agent.tools.TaskStopTool
 import dev.min.agent.tools.TaskUpdateTool
 import dev.min.agent.tools.WriteTool
+import dev.min.agent.tools.WebFetchTool
+import dev.min.agent.tools.WebSearchTool
+import dev.min.agent.host.CachedWebPort
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.toList
 import java.nio.file.Files
@@ -55,13 +58,14 @@ import java.util.UUID
  * 桌面宿主的工具表。顺序就是发给模型的顺序，属于稳定前缀：只往末尾追加，不重排、不删除
  * （docs/agent/07-工程规范.md 第 10 条），否则所有会话的缓存前缀一起失效。
  */
-internal fun desktopTools(customAgents: List<AgentType> = emptyList()): List<Tool<*>> = listOf(
+internal fun desktopTools(customAgents: List<AgentType> = emptyList(), searchConfigured: Boolean = false): List<Tool<*>> = listOf(
     ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
     SkillTool,
-)
+    WebFetchTool,
+) + if (searchConfigured) listOf(WebSearchTool) else emptyList()
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 
@@ -83,6 +87,10 @@ internal class DesktopApp(
     private val provider = selection.provider
     private val profile = selection.profile
     private val keyEnv = selection.keyEnv
+    private val fastSelection = args.fastModel?.let {
+        resolveModel(args.copy(model = it, contextWindow = null, maxOutput = null), Catalog.bundled())
+    }
+    private val searchBackend = desktopSearchBackend(args)
     private var hubInstance: SessionHub? = null
 
     /**
@@ -92,7 +100,7 @@ internal class DesktopApp(
     private suspend fun hub(): SessionHub = hubInstance ?: run {
         val config = config()
         val catalog = AgentCatalog.of(config.agents)
-        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) })
+        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null)
         SessionHub(store, deps(tools), scope, HUB_LIMITS, catalog.definitions).also { hubInstance = it }
     }
 
@@ -136,14 +144,18 @@ internal class DesktopApp(
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
             models = { ref ->
-                check(ref == profile.ref) { "桌面 CLI 目前只配置了 ${profile.ref}，会话要的是 $ref" }
-                ResolvedModel(profile, client)
+                val selected = if (ref == profile.ref) profile else fastSelection?.profile?.takeIf { it.ref == ref }
+                checkNotNull(selected) { "桌面 CLI 没有配置会话需要的模型 $ref" }
+                ResolvedModel(selected, client)
             },
             tools = tools,
             host = HostPorts(
                 fs = paths.fs,
                 search = JvmSearch(paths.fs),
                 exec = LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir)),
+                // agent/web-html 合入后，改此行注入 HtmlToMarkdown.convert 的适配器。
+                web = CachedWebPort(TemporaryPageConverter, cacheTtlMs = args.webCacheTtlMs, deadlineMs = args.webDeadlineMs),
+                searchBackend = searchBackend,
                 artifacts = { sessionId ->
                     val artifactsDir = home.resolve("sessions").resolve(sessionId.value).resolve("artifacts")
                     object : ArtifactSink {
@@ -163,6 +175,8 @@ internal class DesktopApp(
             // hook 脚本在本机 shell 里跑：guest 路径换成本机 shell 认得的写法（与 LocalExec 的映射一致）
             hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
             trustProjectHooks = { args.trust },
+            fastModel = fastSelection?.profile?.ref,
+            maxWebSearches = args.maxWebSearches,
         )
     }
 

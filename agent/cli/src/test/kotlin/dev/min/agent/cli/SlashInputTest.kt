@@ -53,13 +53,13 @@ class SlashInputTest {
     }
 
     @Test
-    fun `the Skill tool is last in the desktop tool table so earlier tools keep their prefix`() {
+    fun `the Skill tool follows tasks and web tools append after the stable prefix`() {
         val names = desktopTools().map { it.name }
-        assertEquals("Skill", names.last())
+        assertEquals(listOf("Skill", "WebFetch"), names.takeLast(2))
         assertEquals(
             listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop",
                 "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"),
-            names.dropLast(1),
+            names.dropLast(2),
         )
     }
 }

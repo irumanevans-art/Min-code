@@ -129,6 +129,10 @@ interface ToolContext {
 
     /** 调用 skill（Skill 工具用）。有默认值：其余工具与测试替身不用管它 */
     val skills: SkillPort get() = SkillPort.Unavailable
+    val web: WebPort get() = WebPort.Unavailable
+    val webSearch: WebSearchPort get() = WebSearchPort.Unavailable
+    suspend fun extract(content: String, prompt: String): ToolResult =
+        ToolResult(listOf(dev.min.agent.protocol.TextPart("这个环境不能提取网页内容。")), isError = true)
 
     /** 会话当前的权限模式（只读）。与人交互的工具据此判断：dontAsk 下不提问，计划模式工具看自己是否在计划模式里 */
     val mode: PermissionMode

@@ -110,6 +110,14 @@ class SessionHub(
     private val openLock = Mutex()
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
 
+    internal suspend fun reserveWebSearch(caller: SessionRuntime, callId: CallId): Boolean {
+        val rootId = caller.state.value.origin?.root ?: caller.sessionId
+        val root = open(rootId) ?: kotlin.error("找不到搜索所属的根会话。")
+        return root.commitIf(listOf(dev.min.agent.spi.WebSearchUsed(caller.sessionId, callId)), Durability.Sync) {
+            it.webSearches < deps.maxWebSearches
+        } != null
+    }
+
     /** 正被前台委派等着的子会话：它们这一回合的报告交给等待的工具，不进收件箱 */
     private val awaitedInForeground: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
 

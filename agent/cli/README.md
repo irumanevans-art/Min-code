@@ -6,6 +6,17 @@
 Hub 自动监听子回合、交付报告，ToolExecutor 按会话/回合/调用注入端口，无需组合根另起 watcher。
 附件按子会话 id 写入各自目录；Hub 共用 Exec 的日志位于 `~/.min-agent/exec-logs/`，随机句柄 id 避免互相覆盖。
 
+WebFetch 追加在工具表末尾。网页完整 Markdown 存到会话 `artifacts/web/`，提取前最多取 100000 字符；
+`--fast-model <id>` 可指定同供应商的提取模型，默认使用会话模型，提取用量计入本回合。
+`--web-cache-ttl-ms` 默认 900000、`--web-deadline-ms` 默认 300000，二者均接受 0（禁用缓存 / 取消截止）。
+桌面暂用 `TemporaryPageConverter` 去标签、解基本实体；`agent/web-html` 合入后替换组合根的一行转换器适配。
+
+WebSearch 只有搜索后端配置完整时才追加：`--search-backend brave|tavily|searxng` 或 `MIN_AGENT_SEARCH_BACKEND`。
+Brave 凭证仅从 `BRAVE_SEARCH_API_KEY`、Tavily 凭证仅从 `TAVILY_API_KEY` 环境变量读取，分别进入订阅头 / Bearer 头；
+SearXNG 用 `--search-url` 或 `MIN_AGENT_SEARXNG_URL` 指定基础地址，并须启用实例的 JSON 搜索格式。
+没有配置或缺少所需凭证时不注册 WebSearch。配置在进程内冻结，改变配置后启动新进程。
+根会话与全部子 agent 共用默认 200 次上限，`--max-web-searches` 可调整；失败请求同样计数，预占次数写入根会话日志，恢复后保留。
+
 - 允许依赖：kernel 及以下 + testkit（另依赖 host：桌面用 `JvmSearch` 与 `RootfsFileSystem`）
 - 设计：docs/agent/04-子系统设计.md §4.10（可观测、测试与评测）；docs/agent/06-路线图.md M1（`agent:cli` 交互 + 非交互）
 
