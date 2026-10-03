@@ -30,6 +30,7 @@ import dev.min.code.core.service.LocalServiceIntent
 import dev.min.code.core.service.AgentServiceHost
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.MAX_TOOL_RESULT_CHARS
+import dev.min.code.core.session.editTargetPath
 import dev.min.code.core.session.appendProcessOutputLine
 import dev.min.code.core.session.withClippedResult
 import dev.min.code.core.session.SessionStatus
@@ -1554,7 +1555,7 @@ class ClaudeCodeManager(
     suspend fun revertToolCall(toolUseId: String): Boolean = revertFile(
         name = _state.value.items.filterIsInstance<ChatItem.ToolCall>()
             .firstOrNull { it.toolUseId == toolUseId }
-            ?.input?.get("file_path").asStringOrNull()
+            ?.input?.let(::editTargetPath)
             ?.substringAfterLast('/')
             ?: "文件",
         toolUseIds = listOf(toolUseId),
@@ -1621,7 +1622,7 @@ class ClaudeCodeManager(
         // 早退是侥幸，这里和预览扫描 / bypass 托管一样显式拦掉
         if (replaying) return
         if (event.name !in CHECKPOINT_TOOLS) return
-        val guestPath = event.input["file_path"].asStringOrNull()?.takeIf { it.isNotBlank() } ?: return
+        val guestPath = editTargetPath(event.input) ?: return
         val sessionId = _state.value.sessionId ?: return
         // 快照竞态：异步协程排队期间，bypass 下的快工具可能已经改完文件，存进去的
         // 就成了修改后的内容，撤销等于空操作。先在 dispatch 线程同步取样（existence +

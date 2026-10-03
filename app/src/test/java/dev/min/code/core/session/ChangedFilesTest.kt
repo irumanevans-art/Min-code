@@ -273,6 +273,15 @@ class ChangedFilesTest {
     }
 
     @Test
+    fun `a NotebookEdit is found through notebook_path`() {
+        val files = changedFiles(listOf(call("item-1", "NotebookEdit", mapOf("notebook_path" to "/w/n.ipynb"))), canUndo = undoAll)
+        assertEquals(listOf("/w/n.ipynb"), files.map { it.path })
+        assertTrue(files.single().changes.single().undoable)
+        assertEquals("/w/n.ipynb", editTargetPath(JsonObject(mapOf("notebook_path" to JsonPrimitive("/w/n.ipynb")))))
+        assertNull(editTargetPath(JsonObject(mapOf("file_path" to JsonPrimitive("  ")))))
+    }
+
+    @Test
     fun `the same file edited twice is one entry with both changes in session order`() {
         val files = changedFiles(listOf(edit("c1", "/w/a.kt"), edit("c2", "/w/b.kt"), edit("c3", "/w/a.kt")))
         assertEquals(listOf("/w/a.kt", "/w/b.kt"), files.map { it.path })

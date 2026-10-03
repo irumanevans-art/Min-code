@@ -1,6 +1,7 @@
 package dev.min.code.core.session
 
 import dev.min.code.core.claudecode.asStringOrNull
+import kotlinx.serialization.json.JsonObject
 
 /**
  * 本会话改过哪些文件。
@@ -175,7 +176,14 @@ val CHANGE_TOOLS = setOf("Edit", "Write", "MultiEdit", "NotebookEdit")
 
 /** 编辑类工具的入参里有明确的文件路径；其余工具为 null */
 private fun declaredPath(call: ChatItem.ToolCall): String? =
-    if (call.name in CHANGE_TOOLS) call.input["file_path"].asStringOrNull()?.takeIf { it.isNotBlank() } else null
+    if (call.name in CHANGE_TOOLS) editTargetPath(call.input) else null
+
+/**
+ * 编辑类工具入参里的目标文件。NotebookEdit 的键是 `notebook_path` 不是 `file_path`（SDK 文档
+ * `NotebookEditInput`）：只认 `file_path` 的话它既进不了面板，`snapshotBeforeEdit` 也不会给它存快照。
+ */
+fun editTargetPath(input: JsonObject): String? =
+    (input["file_path"].asStringOrNull() ?: input["notebook_path"].asStringOrNull())?.takeIf { it.isNotBlank() }
 
 /** 开头的 `/` 不同算同一个路径：Codex 的 diff 头是 `a/` + 路径，路径本身可能已经是绝对的 */
 private fun samePath(a: String, b: String): Boolean = a == b || a.trimStart('/') == b.trimStart('/')
