@@ -1,0 +1,9 @@
+{
+  "routes": [
+    {
+      "path": "/deny",
+      "status": 200,
+      "body": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"线上策略禁止 rm -rf\"}}"
+    }
+  ]
+}

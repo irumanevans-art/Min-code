@@ -204,8 +204,11 @@ private fun largeStrings(value: JsonElement, path: List<String> = emptyList()): 
         listOf(HookAttachmentRequest(path, HookText(value.content))) else emptyList()
 }
 
-private fun label(run: HandlerRun): String = (run.handler.command ?: run.handler.args?.firstOrNull() ?: run.handler.type)
-    .lineSequence().first().take(200)
+private fun label(run: HandlerRun): String =
+    // http 处理器没有 command，用 url 当名字，报错才知道是哪个服务
+    (run.handler.takeIf { it.type == "http" }?.url
+        ?: run.handler.command ?: run.handler.args?.firstOrNull() ?: run.handler.type)
+        .lineSequence().first().take(200)
 
 private val TEXT_CONTEXT_EVENTS = setOf(HookEvent.UserPromptSubmit, HookEvent.UserPromptExpansion,
     HookEvent.SessionStart, HookEvent.PostModelSwitch)

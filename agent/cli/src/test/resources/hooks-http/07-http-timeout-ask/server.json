@@ -1,0 +1,10 @@
+{
+  "routes": [
+    {
+      "path": "/slow",
+      "status": 200,
+      "body": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}",
+      "delayMs": 5000
+    }
+  ]
+}

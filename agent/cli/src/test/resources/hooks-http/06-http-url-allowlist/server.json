@@ -1,0 +1,14 @@
+{
+  "routes": [
+    {
+      "path": "/allowlisted",
+      "status": 200,
+      "body": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}"
+    },
+    {
+      "path": "/not-listed",
+      "status": 200,
+      "body": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"不该被请求到\"}}"
+    }
+  ]
+}

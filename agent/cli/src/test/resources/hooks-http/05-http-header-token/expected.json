@@ -1,0 +1,12 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "env": {
+    "DEPLOY_TOKEN": "s3cr3t-deploy-token"
+  },
+  "decision": "Deny",
+  "shouldContinue": true,
+  "reasons": ["令牌校验通过，策略禁止该命令"],
+  "nonBlockingErrorCount": 0,
+  "handlerCount": 1
+}

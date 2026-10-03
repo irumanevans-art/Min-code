@@ -128,8 +128,11 @@ Ask 时：PermissionRequest hooks → 能替人答；不答才发审批卡
 实现时补的取舍：hook 输出的文字去首尾空白（脚本 echo 带出的换行不进上下文）；开回合的输入全被 UserPromptSubmit 拦下时回合空着结束、不请求模型；有 PreToolUse hook 的只读调用不进并行批（hook 结论要与判定合流）。
 还没接、留到 H3：SessionStart(resume)、PermissionRequest、SubagentStart、Notification、SessionEnd、PreCompact / PostCompact。
 
+**H3 `type:http` 数据面落地情况（2026-10-03，分支 `agent/m0`）**：ext 解析 http 专属字段（url 必填、headers 值须字符串、allowedEnvVars）、`matchingHttp` 与 command 匹配并行（`matchingDetailed` 行为未动，内核仍是只跑 command）、`HookHttpRunner` 经新 spi 端口 `HttpHookClient` 发 POST（宿主实现 `JvmHttpHookClient`，HttpURLConnection），HTTP 事实按 CC「HTTP response handling」翻译成 HandlerRun 后复用 interpret / combine；`allowedHttpHookUrls` / `httpHookAllowedEnvVars` 由调用方合成 `HttpHookPolicy`（跨层合并）传入：URL 闸整串匹配，环境变量闸与处理器 allowedEnvVars 取交集。内核接线（HookDriver 分流、事件默认超时、宿主端口装配）未动，留给 H3 内核侧。
+
 ## 9. 已知限制（先写下来）
 
 - matcher 的正则用 Java 实现，与 CC 的 JavaScript 正则在少数语法上不同（如 `\p{...}` 写法、命名组语法 `(?<n>)` 两边都支持）。
 - 合批脚本依赖 rootfs 里有 `timeout`（coreutils）；没有时退化为由 `Exec` 的整批超时兜底（逐个处理器的超时不再精确）。
 - SessionEnd：Android 上进程常常被直接杀掉，没有「会话结束」的时机；只在用户显式关闭 / 删除会话时触发。
+- `type:http` 的 URL 闸按整串相等匹配：CC 文档只写「URL matches the merged allowlist」，没写前缀还是模式；整串最保守，粒度待上游确认。http 不跟随重定向（凭证头不落第二跳）；响应体没有字节上限，靠解读侧的 1 万字附件规则兜底；`async: true` 的 http 未实现（连 matchingHttp 一起记 note 跳过）。

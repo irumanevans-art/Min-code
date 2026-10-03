@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:0/guarded",
+            "timeout": 10,
+            "headers": {
+              "Authorization": "Bearer $DEPLOY_TOKEN",
+              "X-Request-Source": "min-hooks"
+            },
+            "allowedEnvVars": ["DEPLOY_TOKEN"]
+          }
+        ]
+      }
+    ]
+  }
+}

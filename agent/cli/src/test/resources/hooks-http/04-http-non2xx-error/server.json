@@ -1,0 +1,9 @@
+{
+  "routes": [
+    {
+      "path": "/gate",
+      "status": 503,
+      "body": "audit service overloaded"
+    }
+  ]
+}

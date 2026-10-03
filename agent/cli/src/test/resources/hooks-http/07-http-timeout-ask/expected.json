@@ -1,0 +1,11 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "decision": "Ask",
+  "shouldContinue": true,
+  "reasons": ["PreToolUse hook 超时，需要人工确认。"],
+  "timedOut": true,
+  "nonBlockingErrorCount": 0,
+  "handlerCount": 1,
+  "notesContain": ["/slow hook 超时，输出已丢弃"]
+}

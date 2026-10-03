@@ -1,0 +1,9 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "decision": "Deny",
+  "shouldContinue": true,
+  "reasons": ["线上策略禁止 rm -rf"],
+  "nonBlockingErrorCount": 0,
+  "handlerCount": 1
+}

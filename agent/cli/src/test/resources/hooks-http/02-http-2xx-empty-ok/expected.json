@@ -1,0 +1,9 @@
+{
+  "event": "PostToolUse",
+  "target": "Edit",
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "additionalContext": [],
+  "nonBlockingErrorCount": 0,
+  "handlerCount": 1
+}

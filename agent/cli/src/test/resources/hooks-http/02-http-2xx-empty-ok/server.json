@@ -1,0 +1,9 @@
+{
+  "routes": [
+    {
+      "path": "/ack",
+      "status": 200,
+      "body": ""
+    }
+  ]
+}

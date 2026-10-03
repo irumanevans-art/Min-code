@@ -1,0 +1,14 @@
+{
+  "routes": [
+    {
+      "path": "/guarded",
+      "status": 200,
+      "body": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"令牌校验通过，策略禁止该命令\"}}",
+      "requireHeader": {
+        "Authorization": "Bearer s3cr3t-deploy-token"
+      },
+      "mismatchStatus": 403,
+      "mismatchBody": "unauthorized"
+    }
+  ]
+}

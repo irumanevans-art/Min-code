@@ -1,0 +1,8 @@
+{
+  "session_id": "http-03",
+  "transcript_path": "/tmp/http03.jsonl",
+  "cwd": "/srv/deploy",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "今晚把新版本发上去"
+}

@@ -1,0 +1,9 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "decision": "Allow",
+  "shouldContinue": true,
+  "nonBlockingErrorCount": 0,
+  "handlerCount": 2,
+  "skippedContains": ["/not-listed：不在 allowedHttpHookUrls，未执行"]
+}

@@ -45,7 +45,7 @@ class HookSetTest {
         val set = HookSet.parse(listOf(source("""{"PreToolUse":[{"hooks":[
           {"type":"command","command":"a"},{"type":"command","command":"a","args":["b"]},
           {"type":"command","command":"a","if":"Bash(*)"},{"type":"command","command":"a","timeout":10},
-          {"type":"http","command":"a"}]}]}""")))
+          {"type":"http","command":"a","url":"http://x/"}]}]}""")))
         assertEquals(5, set.handlers.size)
     }
 

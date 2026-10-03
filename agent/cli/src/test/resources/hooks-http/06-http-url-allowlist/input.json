@@ -1,0 +1,11 @@
+{
+  "session_id": "http-06",
+  "transcript_path": "/tmp/http06.jsonl",
+  "cwd": "/srv/deploy",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "terraform apply"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:0/notify",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

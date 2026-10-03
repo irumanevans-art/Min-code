@@ -1,0 +1,9 @@
+{
+  "event": "UserPromptSubmit",
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "additionalContext": [],
+  "nonBlockingErrorCount": 1,
+  "nonBlockingErrorsContain": ["/notify hook error：响应体不是 JSON 对象"],
+  "handlerCount": 1
+}

@@ -1,0 +1,15 @@
+{
+  "session_id": "http-02",
+  "transcript_path": "/tmp/http02.jsonl",
+  "cwd": "/w/app",
+  "permission_mode": "acceptEdits",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/w/app/src/main.kt"
+  },
+  "tool_response": {
+    "filePath": "/w/app/src/main.kt",
+    "structuredPatch": "ok"
+  }
+}

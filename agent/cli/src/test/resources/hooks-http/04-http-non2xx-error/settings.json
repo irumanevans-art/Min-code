@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:0/gate",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

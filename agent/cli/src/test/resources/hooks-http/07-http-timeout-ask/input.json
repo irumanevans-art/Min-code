@@ -1,0 +1,11 @@
+{
+  "session_id": "http-07",
+  "transcript_path": "/tmp/http07.jsonl",
+  "cwd": "/srv/deploy",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ansible-playbook site.yaml"
+  }
+}

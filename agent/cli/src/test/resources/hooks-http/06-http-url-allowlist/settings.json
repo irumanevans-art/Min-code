@@ -1,0 +1,25 @@
+{
+  "allowedHttpHookUrls": [
+    "https://hooks.internal.example/audit",
+    "http://127.0.0.1:0/allowlisted"
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:0/not-listed",
+            "timeout": 10
+          },
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:0/allowlisted",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

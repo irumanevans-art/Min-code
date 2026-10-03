@@ -17,11 +17,18 @@ data class HookHandler(
     val condition: String?,
     val source: ConfigSource,
     val raw: JsonObject,
+    /** type:http 专属：POST 地址；其余类型为 null */
+    val url: String? = null,
+    /** type:http 专属：值里可带 $VAR 插值的附加头；值必须是字符串 */
+    val headers: JsonObject? = null,
+    /** type:http 专属：允许插值进头里的环境变量名 */
+    val allowedEnvVars: List<String>? = null,
 ) {
     val executable: Boolean get() = type == "command" && raw["async"] != JsonPrimitive(true) &&
         raw["asyncRewake"] != JsonPrimitive(true)
 
-    internal fun identity(): List<Any?> = listOf(type, command, args, condition, timeout)
+    internal fun identity(): List<Any?> = listOf(type, command, args, condition, timeout) +
+        if (type == "http") listOf(url, headers, allowedEnvVars) else emptyList()
 }
 
 data class HookMatch(val handlers: List<HookHandler>, val notes: List<String>)
@@ -54,13 +61,48 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
                 else -> true
             }
         }
-        // 同一命令可绑定多个 matcher；本次命中多个绑定时仍只执行一次。
+        return HookMatch(dedupByIdentity(selected), matchNotes)
+    }
+
+    /**
+     * 同一套绑定、`if` 与去重，只挑 `type:http` 的处理器（设计 §8 H3）。与 [matchingDetailed] 分开：
+     * 现有内核按 `executable` 只跑 command，这里换路子不会改变它的行为。异步 http 本期不执行。
+     */
+    fun matchingHttp(
+        event: HookEvent,
+        target: String?,
+        ifMatches: ((rule: String) -> Boolean)? = null,
+    ): HookMatch {
+        val matchNotes = mutableListOf<String>()
+        val selected = handlers.filter { handler ->
+            if (handler.event != event || !matchesHookTarget(event, handler.matcher, target)) return@filter false
+            val where = "${handler.source.label} $event ${handler.url ?: handler.type}"
+            when {
+                handler.type != "http" -> false
+                rawAsync(handler) -> {
+                    matchNotes += "$where：http 的 async 形态本期不执行"
+                    false
+                }
+                handler.condition != null && event in IF_EVENTS -> {
+                    if (ifMatches == null) {
+                        matchNotes += "$where：未注入 if 判定，跳过处理器"
+                        false
+                    } else ifMatches(handler.condition)
+                }
+                else -> true
+            }
+        }
+        return HookMatch(dedupByIdentity(selected), matchNotes)
+    }
+
+    /** 同一命令可绑定多个 matcher；本次命中多个绑定时仍只执行一次。 */
+    private fun dedupByIdentity(selected: List<HookHandler>): List<HookHandler> {
         val unique = linkedMapOf<List<Any?>, HookHandler>()
         selected.forEach { h ->
             val old = unique[h.identity()]
             if (old == null || priority(h.source) > priority(old.source)) unique[h.identity()] = h
         }
-        return HookMatch(unique.values.toList(), matchNotes)
+        return unique.values.toList()
     }
 
     companion object {
@@ -115,15 +157,34 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
                                 val condition = text("if")
                                 if (type == "command") {
                                     require(!command.isNullOrBlank() || args != null) { "command 或 args 至少需要一项" }
-                                    require(command == null || command.isNotBlank()) { "command 不能为空字符串" }
+                                    require(command == null || command.isNotBlank()) { "command 不能是空字符串" }
                                     require(args == null || command != null || args.first().isNotBlank()) { "args 可执行文件名不能为空" }
+                                }
+                                var url: String? = null
+                                var headers: JsonObject? = null
+                                var allowedEnvVars: List<String>? = null
+                                if (type == "http") {
+                                    url = text("url")?.takeUnless { it.isBlank() } ?: error("http 处理器缺少 url")
+                                    headers = raw["headers"]?.let { h ->
+                                        (h as? JsonObject ?: error("headers 必须是对象")).also { obj ->
+                                            obj.forEach { (k, v) ->
+                                                require(stringOf(v) != null) { "headers.$k 的值必须是字符串" }
+                                            }
+                                        }
+                                    }
+                                    allowedEnvVars = raw["allowedEnvVars"]?.let { a ->
+                                        (a as? JsonArray ?: error("allowedEnvVars 必须是字符串数组")).map {
+                                            stringOf(it) ?: error("allowedEnvVars 必须是字符串数组")
+                                        }
+                                    }
                                 }
                                 listOf("async", "asyncRewake").forEach { key ->
                                     require(key !in raw || raw[key] == JsonPrimitive(true) || raw[key] == JsonPrimitive(false)) {
                                         "$key 必须是布尔值"
                                     }
                                 }
-                                val h = HookHandler(event, matcherText, type, command, args, timeout, condition, layer.source, raw)
+                                val h = HookHandler(event, matcherText, type, command, args, timeout, condition,
+                                    layer.source, raw, url, headers, allowedEnvVars)
                                 val key = listOf(event, matcherText) + h.identity()
                                 val old = unique[key]
                                 if (old == null || priority(h.source) > priority(old.source)) unique[key] = h
@@ -143,6 +204,10 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
 
 private fun stringOf(value: kotlinx.serialization.json.JsonElement?): String? =
     (value as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+/** async / asyncRewake 只对 command hook 有文档语义；http 挂了异步标记时同样不执行 */
+private fun rawAsync(handler: HookHandler): Boolean =
+    handler.raw["async"] == JsonPrimitive(true) || handler.raw["asyncRewake"] == JsonPrimitive(true)
 
 private fun priority(source: ConfigSource): Int = when (source) {
     ConfigSource.User -> 0

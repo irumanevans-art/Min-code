@@ -1,0 +1,9 @@
+{
+  "event": "PreToolUse",
+  "target": "WebFetch",
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "nonBlockingErrorCount": 1,
+  "nonBlockingErrorsContain": ["/gate hook error：HTTP 503：audit service overloaded"],
+  "handlerCount": 1
+}
