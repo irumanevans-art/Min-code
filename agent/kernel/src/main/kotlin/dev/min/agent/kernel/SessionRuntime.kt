@@ -86,16 +86,13 @@ class SessionRuntime private constructor(
     internal var requestGate: Semaphore? = null
 
     /**
-     * 是否按需加载记忆。不加载记忆文件的子 agent（Explore / Plan、omitClaudeMd）也不按需加载；
-     * 由 [create] 在会话开始前定下，之后不变
+     * 按需加载记忆的发现器（缓存只在内存里，丢了只是多读几次盘）。没有主目录、或这是个不吃记忆的子 agent
+     * （来历里的 [dev.min.agent.spi.SubagentOrigin.omitMemory]：Explore / Plan、omitClaudeMd）时为 null。
+     * 由折叠出的来历推出，所以创建与重新打开一致
      */
-    @Volatile
-    internal var onDemandMemory: Boolean = true
-
-    /** 按需加载记忆的发现器（缓存只在内存里，丢了只是多读几次盘）。没有主目录或不按需加载时为 null */
     internal val memoryDiscovery: MemoryDiscovery? by lazy {
         val home = deps.memoryHome
-        if (home == null || !onDemandMemory) null else MemoryDiscovery(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
+        if (home == null || state.value.origin?.omitMemory == true) null else MemoryDiscovery(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
     }
 
     private val commitLock = Mutex()
@@ -388,13 +385,11 @@ class SessionRuntime private constructor(
             loadMemory: Boolean = true,
             loadSettings: Boolean = true,
             loadSkills: Boolean = true,
-            onDemandMemory: Boolean = true,
             hub: SessionHub? = null,
         ): SessionRuntime {
             val log = store.create(header)
             val records = log.append(listOf(created) + initial, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
-            runtime.onDemandMemory = onDemandMemory
             val home = deps.memoryHome
             if (home != null) {
                 // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照

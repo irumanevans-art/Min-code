@@ -70,6 +70,11 @@ data class SubagentOrigin(
     val instructions: String? = null,
     /** 回合里模型请求次数上限（定义的 maxTurns）；null = 内核默认 */
     val maxTurns: Int? = null,
+    /**
+     * 不吃记忆：创建时不加载记忆文件、也不按需加载（Explore / Plan、定义里写了 omitClaudeMd 的子 agent）。
+     * 记在来历里是为了重新打开会话后仍然成立——它是创建时定下的事实，不能靠内存里的开关。分身与默认值为 false
+     */
+    val omitMemory: Boolean = false,
 ) : SessionEvent
 
 /** 分身继承的一条对话消息：与父会话里那条逐字节相同（含消息 id） */

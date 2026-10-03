@@ -353,15 +353,15 @@ class SessionHub(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
                 tools = toolsFor(definition, depth), instructions = definition.instructions, maxTurns = definition.maxTurns,
+                omitMemory = definition.omitMemory,
             )
         }
         val background = request.background || definition?.alwaysBackground == true
 
         val child = SessionRuntime.create(
             store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps),
+            // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载（来历里的 omitMemory 管着，重开后同样）；分身照常——它接着父会话的活干
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
-            // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载；分身照常——它接着父会话的活干
-            onDemandMemory = definition == null || !definition.omitMemory,
         )
         child.requestGate = childGate
         register(child)

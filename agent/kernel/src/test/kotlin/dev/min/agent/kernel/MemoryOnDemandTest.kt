@@ -425,6 +425,39 @@ class MemoryOnDemandTest {
         assertLogIsTruth(child)
     }
 
+    @Test
+    fun `an Explore agent does not load memory on demand, not even after the session is reopened`() = run {
+        fs.put("/workspace/src/api/CLAUDE.md", "Use the typed client.")
+        fs.put("/workspace/src/api/x.ts", "x")
+        val model = OnDemandRoutingModel { req ->
+            val last = req.lastText()
+            when {
+                last == "探一下" || last == "再探一下" -> reply(readCall("e${req.messages.size}", "/workspace/src/api/x.ts"), stop = StopReason.ToolUse)
+                "<subagent-report" in last -> reply(TextPart("收到"))
+                last == "开始" -> reply(agentCall("c1", "subagent_type" to "Explore", "prompt" to "探一下", "description" to "探"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val hub = SessionHub(store, deps(model, listOf(ReadTool, agentTool)), scope)
+        val parent = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+        parent.send(msg(), listOf(TextPart("开始")))
+        val childId = parent.state.first { it.children.isNotEmpty() }.children.keys.single()
+        val child = hub.get(childId)!!
+        child.state.first { it.lastTurn != null && it.turn == null }
+        assertTrue("子 agent 读到了子树里的文件", child.state.value.toolResults.isNotEmpty())
+        assertEquals(true, child.state.value.origin?.omitMemory)
+        assertTrue(store.open(childId)!!.read().toList().none { it.event is MemoryAttached })
+        parent.awaitIdle()
+
+        // 重新打开：不吃记忆是创建时定下的事实，不能因为内存里的开关丢了就变
+        assertTrue(hub.close(childId))
+        val reopened = hub.open(childId)!!
+        reopened.send(msg(), listOf(TextPart("再探一下")))
+        reopened.awaitIdle()
+        assertEquals(2, reopened.state.value.toolResults.size)
+        assertTrue("重开后也不按需加载", store.open(childId)!!.read().toList().none { it.event is MemoryAttached })
+    }
+
     /** 会话创建时的说明：带 paths 的规则在启动时跳过并说明（上面没用到的辅助放这，免得悬空） */
     private fun ModelRequest.lastText(): String = messages.last().parts.joinToString("\n") { p ->
         when (p) {
