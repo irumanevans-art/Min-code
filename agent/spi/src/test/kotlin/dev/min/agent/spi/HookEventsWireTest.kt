@@ -5,7 +5,7 @@ import dev.min.agent.protocol.MessageId
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** hook_context_added 的线形状。期望 JSON 按源码里的 SerialName 手写，谁改了判别值立刻红 */
+/** hook_context_added 与 fork_seeded 压缩种子的线形状。期望 JSON 按源码里的 SerialName 手写，谁改了判别值立刻红 */
 class HookEventsWireTest {
 
     private fun assertEventWire(event: SessionEvent, expectedJson: String) {
@@ -43,6 +43,29 @@ class HookEventsWireTest {
             HookContextAdded(HookContextTarget.NextUserMessage, "SessionStart", "这个仓库用 pnpm"),
             """{"type":"hook_context_added","target":{"type":"next_user_message"},
                 "event":"SessionStart","text":"这个仓库用 pnpm"}""",
+        )
+    }
+
+    @Test
+    fun `a fork seed carries the inherited compaction view`() {
+        assertEventWire(
+            ForkSeeded(
+                messages = listOf(SeedMessage(MessageId("u2"), Role.User, listOf())),
+                results = listOf(SeedResult(dev.min.agent.protocol.CallId("c2"), ToolResult(listOf()))),
+                compaction = SeedCompaction(
+                    compactionId = "cmp_01J",
+                    summary = "[较早的对话已压缩……]",
+                    through = MessageId("a1"),
+                    transcriptPath = "/artifacts/cmp_01J.md",
+                    contexts = listOf("压缩后请重读任务清单"),
+                ),
+            ),
+            """{"type":"fork_seeded",
+                "messages":[{"messageId":"u2","role":"User","parts":[]}],
+                "results":[{"callId":"c2","result":{"content":[]}}],
+                "compaction":{"compactionId":"cmp_01J","summary":"[较早的对话已压缩……]",
+                "through":"a1","transcriptPath":"/artifacts/cmp_01J.md",
+                "contexts":["压缩后请重读任务清单"]}}""",
         )
     }
 

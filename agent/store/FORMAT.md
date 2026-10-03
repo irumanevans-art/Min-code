@@ -68,4 +68,4 @@
   `memory_loaded.files[].source` 新增取值 `nested`、`path_rule`、`auto`（自动记忆索引 `MEMORY.md`）；`memory_loaded` 新增可选字段 `autoMemory`（`directory`、可选 `totalLines` / `loadedLines`，自动记忆开着时才有）。
   含这些的日志旧版本打不开（旧版读到未知的 `source` 取值同样失败）。
 - v1 增量（2026-10-04）：`hooks_loaded.sources[]` 新增可选字段 `allowedHttpHookUrls`、`httpHookAllowedEnvVars`（该层设置的 http hook 两道闸，随快照冻结、执行时按层叠加合并；没定义不落盘）；`tool_outcome.result` 新增可选字段 `fileEdits`（编辑类工具改了哪些文件：`path`、可选 `diff`（带 `--- <路径>` / `+++ <路径>` 头的 unified diff）、`created`、`deleted`、`truncated`；空时不落盘），给界面的「改动过的文件」面板。旧日志照常读。
-- v1 增量（2026-10-04）：`hook_context_added.target` 新增变体 `compaction`（`compactionId`：挂在某次摘要压缩的摘要消息末尾，SessionStart source = compact 的上下文；下一次 `context_compacted` 落盘时旧摘要连同挂在它上面的上下文一并作废）。含新变体的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-04）：`hook_context_added.target` 新增变体 `compaction`（`compactionId`：挂在某次摘要压缩的摘要消息末尾，SessionStart source = compact 的上下文；下一次 `context_compacted` 落盘时旧摘要连同挂在它上面的上下文一并作废）；`fork_seeded` 新增可选字段 `compaction`（`SeedCompaction`：`compactionId`、`summary`、`through`、可选 `transcriptPath`、`contexts`——分身继承父会话的压缩视图与摘要末尾的 hook 上下文，`messages` 相应只从摘要边界开始）。含新变体的日志旧版本打不开；旧日志照常读。

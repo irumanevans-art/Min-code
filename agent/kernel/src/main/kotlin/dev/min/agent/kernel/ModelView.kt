@@ -22,7 +22,8 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
         // 下一次压缩把旧摘要连同它一起取代（折叠在 ContextCompacted 上清空 compactionContexts）
         val reminders = compactionContexts[c.compactionId].orEmpty().map { TextPart("<system-reminder>\n$it\n</system-reminder>") }
         add(ModelMessage(Role.User, listOf(TextPart(c.summary)) + reminders))
-        history.indexOfFirst { it.messageId == c.through } + 1
+        // 分身继承的摘要：边界消息在父会话的历史里，分身历史本来就只从边界之后开始，全部保留
+        history.indexOfFirst { it.messageId == c.through }.takeIf { it >= 0 }?.plus(1) ?: 0
     } ?: 0
     history.drop(start).forEach { entry ->
         when (entry) {

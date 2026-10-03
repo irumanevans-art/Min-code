@@ -80,9 +80,25 @@ data class SeedMessage(val messageId: MessageId, val role: Role, val parts: List
 data class SeedResult(val callId: CallId, val result: ToolResult)
 
 /**
+ * 分身继承的压缩视图（父会话压缩过时才有）：字段与父会话最后一次 [ContextCompacted] 相同，
+ * 另带挂在摘要末尾的 hook 上下文（SessionStart source = compact）。折叠时分身的模型视图从这份摘要开始，
+ * 与父会话的下一个请求逐字相同——没有它，分身会回放出被摘要掉的原始对话，前缀反而对不上。
+ */
+@Serializable
+data class SeedCompaction(
+    val compactionId: String,
+    val summary: String,
+    val through: MessageId,
+    val transcriptPath: String? = null,
+    /** 挂在这份摘要末尾的 hook 上下文，按父会话里的顺序 */
+    val contexts: List<String> = emptyList(),
+)
+
+/**
  * 分身继承的对话：父会话到委派点为止的全部消息（最后一条是带 fork 调用的那条助手消息），
  * 以及这些消息里每个工具调用的结果——更早的用父会话的真实结果，委派那条消息里的调用用合成结果
  * （fork 调用 → 分身指令；同一条消息里的其他调用 → 「由主会话执行，你看不到结果」）。
+ * 父会话压缩过时 [compaction] 带上压缩视图，messages 只从摘要边界开始（边界前的原始对话不进分身日志）。
  *
  * 复制而不是引用父日志：子日志要能单独折叠，父日志丢了坏了也不连累它（设计 §2.2）。
  */
@@ -91,6 +107,7 @@ data class SeedResult(val callId: CallId, val result: ToolResult)
 data class ForkSeeded(
     val messages: List<SeedMessage>,
     val results: List<SeedResult>,
+    val compaction: SeedCompaction? = null,
 ) : SessionEvent
 
 // ---- 输入的来历 ----
