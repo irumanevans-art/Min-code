@@ -47,6 +47,51 @@ class WriteToolTest {
     }
 
     @Test
+    fun `新建文件的改动上报带全是加号行的 diff`() = runTest {
+        val r = WriteTool.call(ctx, "file_path" to "/work/new.txt", "content" to "a\nb\n")
+        val edit = r.fileEdits.single()
+        assertEquals(GuestPath("/work/new.txt"), edit.path)
+        assertTrue(edit.created)
+        assertFalse(edit.deleted)
+        assertEquals("--- /work/new.txt\n+++ /work/new.txt\n+a\n+b", edit.diff)
+        assertEquals(0, edit.truncated)
+    }
+
+    @Test
+    fun `新建一个大文件也逐行上报，不退化成只报行数`() = runTest {
+        val content = (1..1500).joinToString("\n") { "line$it" } + "\n"
+        val edit = WriteTool.call(ctx, "file_path" to "/work/big.txt", "content" to content).fileEdits.single()
+        assertEquals(1500, edit.diff!!.lines().count { it.startsWith("+line") })
+        assertFalse(edit.diff!!.contains("末尾的换行变了"))
+    }
+
+    @Test
+    fun `超大的 diff 被截断：FileEdit 记下省略的字符数，末尾说明还有多少行没列`() = runTest {
+        val content = (1..40_000).joinToString("\n") { "line-number-$it" } + "\n"
+        val edit = WriteTool.call(ctx, "file_path" to "/work/huge.txt", "content" to content).fileEdits.single()
+        assertTrue("省略的字符数 > 0", edit.truncated > 0)
+        val last = edit.diff!!.lines().last()
+        assertTrue(last, Regex("""@@ 还有 \d+ 行改动未列出（共 \+40000 −0） @@""").matches(last))
+    }
+
+    @Test
+    fun `新建空文件没有 diff 但仍标为新建`() = runTest {
+        val edit = WriteTool.call(ctx, "file_path" to "/work/empty.txt", "content" to "").fileEdits.single()
+        assertTrue(edit.created)
+        assertEquals(null, edit.diff)
+    }
+
+    @Test
+    fun `把已有文件写成空内容不算删除`() = runTest {
+        fs.put("/work/a.txt", "x\n")
+        ctx.see("/work/a.txt")
+        val edit = WriteTool.call(ctx, "file_path" to "/work/a.txt", "content" to "").fileEdits.single()
+        assertFalse(edit.created)
+        assertFalse("清空不是删除", edit.deleted)
+        assertEquals("--- /work/a.txt\n+++ /work/a.txt\n-x", edit.diff)
+    }
+
+    @Test
     fun `行数：无末尾换行多算最后一行，空内容 0 行`() = runTest {
         assertEquals("已写入 /work/a（2 行）", WriteTool.call(ctx, "file_path" to "/work/a", "content" to "a\nb").text)
         assertEquals("已写入 /work/b（0 行）", WriteTool.call(ctx, "file_path" to "/work/b", "content" to "").text)

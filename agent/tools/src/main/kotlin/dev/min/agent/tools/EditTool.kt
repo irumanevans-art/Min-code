@@ -84,7 +84,8 @@ object EditTool : Tool<EditInput> {
             if (file.text.isNotEmpty()) {
                 return failResult("old_string 为空只能用来新建文件或填写空文件，而 $path 已有内容。请给出要替换的原文。")
             }
-            return write(ctx, path, file, input.newString, 1, null, created = true)
+            // 文件原本就在（只是空的）：给人的话仍说「已写入」，但这不是新建，撤销时不能把文件删掉
+            return write(ctx, path, file, input.newString, 1, null, created = true, newFile = false)
         }
 
         if (input.replaceAll) {
@@ -126,6 +127,8 @@ object EditTool : Tool<EditInput> {
         focusLine: Int,
         note: String?,
         created: Boolean,
+        /** 报给界面的 [dev.min.agent.spi.FileEdit.created]：只有文件原本不存在才算新建 */
+        newFile: Boolean = created,
     ): ToolResult {
         ctx.fs.writeAtomic(path, original.copy(text = updatedText).encode())
         val after = checkNotNull(ctx.fs.stat(path)) { "写入后 stat 不到 $path" }
@@ -139,7 +142,7 @@ object EditTool : Tool<EditInput> {
             text,
             listOf(FileStamp(path, after.size, after.modifiedMs)),
             // 改动过的文件报给界面（「改动过的文件」面板）：改之前与之后都在手里，不必再读盘
-            listOf(fileEdit(path, original.text, updatedText, created = created)),
+            listOf(fileEdit(path, original.text, updatedText, created = newFile)),
         )
     }
 

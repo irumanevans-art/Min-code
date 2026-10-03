@@ -103,13 +103,14 @@ internal fun okResult(
 /**
  * 编辑类工具改完一个文件之后的 [FileEdit]：diff 用改前的文本与改后的文本现算，
  * 拼上 `--- a/…` / `+++ b/…` 文件头（路径用 guest 路径原样），与 Claude Code 的 `bashEditDiff` 同形。
+ * [deleted] 只由真正删文件的路径设：把文件改成空内容不是删除（Min 的编辑工具不会删文件）。
  */
-internal fun fileEdit(path: GuestPath, before: String, after: String, created: Boolean = false): FileEdit {
-    val body = TextDiff.unified(before, after)
+internal fun fileEdit(path: GuestPath, before: String, after: String, created: Boolean = false, deleted: Boolean = false): FileEdit {
+    val result = TextDiff.diff(before, after)
     // 路径原样写（guest 路径本来就是绝对的）：套上 `a/` 会变成 `a//workspace/…`，
     // 界面的 diffPaths 认得出，但显示出来是坏的
-    val diff = body?.let { "--- ${path.value}\n+++ ${path.value}\n$it" }
-    return FileEdit(path = path, diff = diff, created = created, deleted = after.isEmpty() && before.isNotEmpty())
+    val diff = result?.let { "--- ${path.value}\n+++ ${path.value}\n${it.text}" }
+    return FileEdit(path = path, diff = diff, created = created, deleted = deleted, truncated = result?.omittedChars ?: 0)
 }
 
 internal fun failResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)
