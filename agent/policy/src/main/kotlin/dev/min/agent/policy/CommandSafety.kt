@@ -163,11 +163,27 @@ object CommandSafety {
     fun isProtectedPath(path: String): Boolean {
         val p = path.trimEnd('/')
         val name = p.substringAfterLast('/')
-        // 自动记忆与计划文件只影响模型读到的内容，不改权限、hooks 或要执行的东西
-        if (AGENT_NOTES.containsMatchIn("$p/")) return false
-        return "/.git/" in "$p/" || "/.claude/" in "$p/" ||
-            name in setOf(".mcp.json", ".bashrc", ".bash_profile", ".bash_login", ".profile", ".zshrc", ".zprofile", ".zshenv", ".gitconfig")
+        val whole = "$p/"
+        if (name !in PROTECTED_NAMES && isAgentNote(whole)) return false
+        return "/.git/" in whole || "/.claude/" in whole || name in PROTECTED_NAMES
     }
 
-    private val AGENT_NOTES = Regex("""/\.claude/(projects/[^/]+/memory|plans)/.""")
+    /**
+     * 自动记忆目录与计划文件目录**之下**的路径只影响模型读到的内容，不改权限、hooks 或要执行的东西，所以豁免。
+     * 豁免只给「干净」的路径：目录之前、之后剩下的那段里只要还有 `/.git/`、`/.claude/` 片段就不豁免
+     * （`…/.claude/plans/x/.git/hooks/pre-commit` 仍是版本库钩子）；文件名在保护名单里的由调用方先排除。
+     * 目录本身（后面没有任何东西）也不豁免。[whole] 是结尾补了 `/` 的路径
+     */
+    private fun isAgentNote(whole: String): Boolean {
+        val m = AGENT_NOTES.find(whole) ?: return false
+        val before = whole.substring(0, m.range.first + 1)
+        val rest = whole.substring(m.range.last + 1)
+        if (rest.isEmpty()) return false
+        return listOf("/.git/", "/.claude/").none { it in before || it in "/$rest" }
+    }
+
+    private val PROTECTED_NAMES =
+        setOf(".mcp.json", ".bashrc", ".bash_profile", ".bash_login", ".profile", ".zshrc", ".zprofile", ".zshenv", ".gitconfig")
+
+    private val AGENT_NOTES = Regex("""/\.claude/(?:projects/[^/]+/memory|plans)/""")
 }
