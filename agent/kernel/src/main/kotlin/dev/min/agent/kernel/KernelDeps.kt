@@ -78,6 +78,11 @@ class KernelDeps(
      * 内核测试给固定的表，不随跑测试的机器变。现在只读 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`
      */
     val env: (String) -> String? = { null },
+    /**
+     * 宿主有意对 [env] 藏起来的变量名（桌面 CLI 自己读模型 key 的那个变量）。[env] 对它们返回 null；
+     * 这里单列出来，是为了在 http hook 的 allowedEnvVars 点名它时告诉人「为什么插成了空串」
+     */
+    val hiddenEnv: Set<String> = emptySet(),
 ) {
     init { require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" } }
 }

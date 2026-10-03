@@ -167,18 +167,22 @@ class HttpHookSessionTest {
         idFor: (String) -> String = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
         mode: PermissionMode = PermissionMode.BypassPermissions,
         initial: List<SessionEvent> = emptyList(),
+        hiddenEnv: Set<String> = emptySet(),
+        exec: FakeExec = FakeExec(),
+        envFn: ((String) -> String?)? = null,
     ): SessionRuntime {
         val deps = KernelDeps(
             clock = { 1_000 },
             ids = { prefix -> idFor(prefix) },
             models = { ResolvedModel(TEST_PROFILE, model) },
             tools = tools,
-            host = HostPorts(fs, FakeSearch(), FakeExec(), { FakeArtifacts() }, httpHooks = http),
+            host = HostPorts(fs, FakeSearch(), exec, { FakeArtifacts() }, httpHooks = http),
             platform = "test",
             zone = ZoneOffset.UTC,
             memoryHome = memoryHome,
             trustProjectHooks = { trustProject },
-            env = { env[it] },
+            env = envFn ?: { if (it in hiddenEnv) null else env[it] },
+            hiddenEnv = hiddenEnv,
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
         return SessionRuntime.create(
@@ -422,8 +426,19 @@ class HttpHookSessionTest {
         assertTrue("结论中性，调用照常执行", rt.state.value.toolResults.getValue(CallId("c1")).let { !it.isError })
         val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertEquals("neutral", ran.decision)
-        assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("http hook 批执行失败") })
+        assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("HTTP 请求失败") })
         assertTrue("异常信息里的令牌不进日志", ran.problems.none { it.contains("SECRET") })
+    } }
+
+    @Test
+    fun `an exception that escapes the http runner itself is contained by the driver`() = runBlocking { withTimeout(20_000) {
+        // 环境变量读取口抛异常：发生在执行器之外（组请求头用的环境表），只有 HookDriver 的兜底管得到
+        val hooks = HooksLoaded(listOf(HookSourceData("user", httpHook("https://hooks.example/x", allowedEnvVars = listOf("BOOM")))))
+        val rt = session(lsModel(), hooks, FakeHttp { HttpHookResult.Responded(200, "{}") }, envFn = { error("env down") })
+        rt.say("跑一下")
+        assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
+        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("http hook 批执行失败") })
     } }
 
     @Test
@@ -457,6 +472,71 @@ class HttpHookSessionTest {
         rt.say("跑一下")
         val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("已截断") && it.contains("https://hooks.example/x") })
+    } }
+
+    @Test
+    fun `urls in the problems lose their userinfo and query string`() = runBlocking { withTimeout(20_000) {
+        val http = FakeHttp { HttpHookResult.Failed("refused") }
+        val hooks = HooksLoaded(listOf(HookSourceData("user", httpHook("https://user:PW@hooks.example/x?token=SECRET"))),
+            httpPolicy = HttpPolicyData(allowedUrls = listOf("https://other.example/*")))
+        val rt = session(lsModel(), hooks, http)
+        rt.say("跑一下")
+        // 被闸门拦下的那条说明也不带令牌
+        val events = store.open(rt.sessionId)!!.read().toList().map { it.event }
+        val text = events.filterIsInstance<HooksRan>().flatMap { it.problems } + events.filterIsInstance<dev.min.agent.spi.Note>().map { it.text }
+        assertTrue(text.joinToString(), text.any { it.contains("https://hooks.example/x") })
+        assertTrue(text.joinToString(), text.none { it.contains("SECRET") || it.contains("PW") })
+
+        val open = FakeHttp { HttpHookResult.Failed("refused") }
+        val rt2 = session(lsModel(), HooksLoaded(listOf(HookSourceData("user", httpHook("https://user:PW@hooks.example/x?token=SECRET")))), open)
+        rt2.say("跑一下")
+        val events2 = store.open(rt2.sessionId)!!.read().toList().map { it.event }
+        val text2 = events2.filterIsInstance<HooksRan>().flatMap { it.problems } + events2.filterIsInstance<dev.min.agent.spi.Note>().map { it.text }
+        assertTrue("失败说明里署名的 URL 也一样", text2.any { it.contains("https://hooks.example/x") } && text2.none { it.contains("SECRET") || it.contains("PW") })
+
+        // 超时说明（HookDriver 自己署名的那条）也一样
+        val slow = FakeHttp { HttpHookResult.TimedOut }
+        // PreToolUse 超时会升成 ask（要人确认），这里只看说明，换成超时中性的 PostToolUse
+        val rt3 = session(lsModel(), HooksLoaded(listOf(HookSourceData("user", httpHook("https://user:PW@hooks.example/x?token=SECRET", event = "PostToolUse")))), slow)
+        rt3.say("跑一下")
+        val ran3 = store.open(rt3.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        assertTrue(ran3.problems.joinToString(), ran3.problems.any { it.contains("超时") && it.contains("https://hooks.example/x") })
+        assertTrue(ran3.problems.joinToString(), ran3.problems.none { it.contains("SECRET") || it.contains("PW") })
+    } }
+
+    @Test
+    fun `an allowedEnvVars entry naming a hidden variable interpolates to empty and says why`() = runBlocking { withTimeout(20_000) {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val headers = JsonObject(mapOf("Authorization" to JsonPrimitive("Bearer \$KEY")))
+        val hooks = HooksLoaded(listOf(HookSourceData("user", httpHook("https://hooks.example/x", allowedEnvVars = listOf("KEY"), headers = headers))))
+        val rt = session(lsModel(), hooks, http, env = mapOf("KEY" to "sk-model-key"), hiddenEnv = setOf("KEY"))
+        rt.say("跑一下")
+        assertEquals("Bearer ", http.sent.single().headers["Authorization"])
+        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("KEY") && it.contains("空串") })
+    } }
+
+    @Test
+    fun `the command batch and the http batch run concurrently`() = runBlocking { withTimeout(30_000) {
+        val httpSeen = java.util.concurrent.CountDownLatch(1)
+        var execSawHttp = false
+        val exec = FakeExec { command, _ ->
+            // 批脚本本身（不是清理命令）一直等到 http 请求发出：串行的话 http 永远排在它后面，这里会等到超时
+            if (command.script.contains("batch.sh")) execSawHttp = httpSeen.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            dev.min.agent.spi.ExecResult.Exited(0, "", false, 1)
+        }
+        val http = FakeHttp { httpSeen.countDown(); HttpHookResult.Responded(200, "{}") }
+        val both = JsonObject(
+            mapOf("PreToolUse" to kotlinx.serialization.json.JsonArray(listOf(
+                JsonObject(mapOf("matcher" to JsonPrimitive("Bash"), "hooks" to kotlinx.serialization.json.JsonArray(listOf(
+                    JsonObject(mapOf("type" to JsonPrimitive("http"), "url" to JsonPrimitive("https://hooks.example/x"))),
+                    JsonObject(mapOf("type" to JsonPrimitive("command"), "command" to JsonPrimitive("true"))),
+                )))),
+            ))),
+        )
+        val rt = session(lsModel(), HooksLoaded(listOf(HookSourceData("user", both))), http, exec = exec)
+        rt.say("跑一下")
+        assertTrue("http 请求发出时，command 批还在跑", execSawHttp)
     } }
 
     @Test

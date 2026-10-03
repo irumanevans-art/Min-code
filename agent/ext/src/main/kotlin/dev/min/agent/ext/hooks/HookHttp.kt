@@ -82,7 +82,7 @@ class HookHttpRunner(private val client: HttpHookClient) {
         val attempted = handlers.filter { handler ->
             val url = handler.url.orEmpty()
             if (!policy.allowsUrl(url)) {
-                skipped += "$url：不在 allowedHttpHookUrls，未执行"
+                skipped += "${redactUrl(url)}：不在 allowedHttpHookUrls，未执行"
                 false
             } else true
         }

@@ -27,6 +27,8 @@ import dev.min.agent.spi.HooksRan
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.catchingNonCancellation
 import dev.min.agent.spi.NoteLevel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -100,38 +102,46 @@ internal class HookDriver(private val rt: SessionRuntime) {
         val started = deps.clock.nowMs()
         // 两个执行器的异常（协程取消除外）都不许冒出去：hook 的执行问题只是一条非阻断说明、结论中性，
         // 否则一个写错的 URL 就能把回合打成 Failed，在 SessionStart 上还会让会话建不起来
-        val executionFailures = mutableListOf<String>()
-        val runs = if (match.handlers.isEmpty()) {
-            emptyList()
-        } else {
-            catchingNonCancellation {
-                runner.run(match.handlers, stdin, env, state.settings.cwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) }
-            }.getOrElse { e ->
-                executionFailures += "command hook 批执行失败：${describe(e)}"
-                emptyList()
-            }
-        }
-        // type:http 的执行器另走一条（POST 由宿主代发），结论与非阻断说明与 command 一起合并
-        val http = if (httpMatch.handlers.isEmpty()) {
-            HttpHookBatch(emptyList(), emptyList())
-        } else {
-            catchingNonCancellation {
-                httpRunner.run(httpMatch.handlers, stdin, httpEnv(httpMatch.handlers), httpPolicy()) { h ->
-                    (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT)
+        val executionFailures = java.util.concurrent.CopyOnWriteArrayList<String>()
+        // command 与 http 两批并发跑（CC：同一事件匹配上的 hook 并行），各自的超时不串行叠加
+        val (runs, http) = coroutineScope {
+            val commandBatch = async {
+                if (match.handlers.isEmpty()) {
+                    emptyList()
+                } else {
+                    catchingNonCancellation {
+                        runner.run(match.handlers, stdin, env, state.settings.cwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) }
+                    }.getOrElse { e ->
+                        executionFailures += "command hook 批执行失败：${describe(e)}"
+                        emptyList()
+                    }
                 }
-            }.getOrElse { e ->
-                // 只写异常类型：http 的异常信息可能带着 URL（查询串里常有令牌）
-                executionFailures += "http hook 批执行失败：${e.javaClass.simpleName}"
-                HttpHookBatch(emptyList(), emptyList())
             }
+            // type:http 的执行器另走一条（POST 由宿主代发），结论与非阻断说明与 command 一起合并
+            val httpBatch = async {
+                if (httpMatch.handlers.isEmpty()) {
+                    HttpHookBatch(emptyList(), emptyList())
+                } else {
+                    catchingNonCancellation {
+                        httpRunner.run(httpMatch.handlers, stdin, httpEnv(httpMatch.handlers), httpPolicy()) { h ->
+                            (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT)
+                        }
+                    }.getOrElse { e ->
+                        // 只写异常类型：http 的异常信息可能带着 URL（查询串里常有令牌）
+                        executionFailures += "http hook 批执行失败：${e.javaClass.simpleName}"
+                        HttpHookBatch(emptyList(), emptyList())
+                    }
+                }
+            }
+            commandBatch.await() to httpBatch.await()
         }
         val allRuns = runs + http.runs
         val combined = combine(event, allRuns.map { interpret(event, it) })
         val outcome = toOutcome(event, combined)
         val problems = combined.nonBlockingErrors +
-            allRuns.filter { it.failedToStart }.map { "「${it.handler.command ?: it.handler.url ?: it.handler.type}」没能运行（路径写错时门禁会悄悄失效）" } +
-            allRuns.filter { it.timedOut }.map { "「${it.handler.command ?: it.handler.url ?: it.handler.type}」超时" } +
-            http.skipped + http.notes + executionFailures
+            allRuns.filter { it.failedToStart }.map { "「${label(it.handler)}」没能运行（路径写错时门禁会悄悄失效）" } +
+            allRuns.filter { it.timedOut }.map { "「${label(it.handler)}」超时" } +
+            http.skipped + http.notes + hiddenEnvNotes(httpMatch.handlers) + executionFailures
         val events = buildList {
             add(HooksRan(event.name, match.handlers.size + httpMatch.handlers.size, outcome.label, deps.clock.nowMs() - started, turnId, callId, problems))
             if (problems.isNotEmpty()) add(Note(NoteLevel.Warning, "$event hook：" + problems.joinToString("；")))
@@ -187,6 +197,18 @@ internal class HookDriver(private val rt: SessionRuntime) {
             httpPolicy().allowedEnvVars.orEmpty()
         return names.distinct().mapNotNull { name -> deps.env(name)?.let { name to it } }.toMap()
     }
+
+    /** 说明里怎么称呼一个处理器：http 用 URL，但去掉 userinfo 与查询串（令牌常放在那里） */
+    private fun label(h: dev.min.agent.ext.hooks.HookHandler): String =
+        h.command ?: h.url?.let(HookHttpRunner::redactUrl) ?: h.type
+
+    /** http 处理器的 allowedEnvVars 点名了宿主藏起来的变量（如 CLI 自己读的模型 key）：它们会被插成空串，告诉人 */
+    private fun hiddenEnvNotes(handlers: List<dev.min.agent.ext.hooks.HookHandler>): List<String> =
+        handlers.flatMap { h ->
+            h.allowedEnvVars.orEmpty().filter { it in deps.hiddenEnv }.map { name ->
+                "「${label(h)}」的 allowedEnvVars 点名了 $name：这个变量由 Min 管理，不会插值进 hook 请求，已按空串处理"
+            }
+        }
 
     /** 异常的一句话说明 */
     private fun describe(e: Throwable): String = e.message?.lineSequence()?.firstOrNull()?.take(200) ?: e.javaClass.simpleName

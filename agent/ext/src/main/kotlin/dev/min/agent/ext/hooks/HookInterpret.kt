@@ -206,7 +206,8 @@ private fun largeStrings(value: JsonElement, path: List<String> = emptyList()): 
 
 private fun label(run: HandlerRun): String =
     // http 处理器没有 command，用 url 当名字，报错才知道是哪个服务
-    (run.handler.takeIf { it.type == "http" }?.url
+    // （URL 去掉 userinfo 与查询串再写：令牌常放在那里，而说明会进日志）
+    (run.handler.takeIf { it.type == "http" }?.url?.let(HookHttpRunner::redactUrl)
         ?: run.handler.command ?: run.handler.args?.firstOrNull() ?: run.handler.type)
         .lineSequence().first().take(200)
 
