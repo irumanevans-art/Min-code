@@ -196,6 +196,16 @@
   <string name="session_status_failed">会话出错</string>
   <string name="session_blank_starting">正在启动会话</string>
   <string name="session_plan_banner">Claude 给出了一份计划</string>
+  <!-- 底部「改动过的文件」浮层（ChangedFilesLayer） -->
+  <string name="changed_files_title">%1$d 个文件已改动</string>
+  <string name="changed_files_times">%1$d 次</string>
+  <string name="changed_files_undone">已撤销</string>
+  <string name="changed_files_back">返回列表</string>
+  <string name="changed_files_jump">跳到改动它的那一轮</string>
+  <string name="changed_files_no_diff">这次改动没有留下 diff。</string>
+  <string name="changed_files_cannot_undo">这次改动没有快照，撤不了（Bash 改的文件与引擎侧的改动都不存快照）。</string>
+  <string name="changed_files_undo_file">撤销 %1$s 的全部改动</string>
+  <string name="changed_files_diff_separator">@@ 第 %1$d 次改动 @@</string>
   <string name="session_live_stopping">正在结束会话</string>
   <string name="session_live_applying">正在应用会话设置</string>
   <string name="session_live_applying_relaunch">正在应用会话设置（重启 CLI 并续接）</string>

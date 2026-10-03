@@ -910,6 +910,9 @@ class ClaudeCodeVM(
     /** 撤销一次编辑类工具造成的文件改动（只还原文件，对话历史不变） */
     fun revertToolCall(toolUseId: String) = onActive { it.revertToolCall(toolUseId) }
 
+    /** 把一个文件在本会话里的全部改动整批撤回去（从最后一次往前还原；同样只动文件） */
+    fun revertFile(name: String, toolUseIds: List<String>) = onActive { it.revertFile(name, toolUseIds) }
+
     // 不在 onCleared 里杀会话：ClaudeCodeManager 是 Koin single，
     // 会话本就该比页面活得久（切到别的页面、转屏都会重建 VM）。
     // 结束会话由用户在标题栏显式点「停止」。
