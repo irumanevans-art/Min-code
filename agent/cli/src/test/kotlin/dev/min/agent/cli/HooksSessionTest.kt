@@ -136,7 +136,7 @@ class HooksSessionTest {
 
     private fun bashCall(id: String, command: String) = ToolCallPart(CallId(id), "Bash", args("command" to command))
 
-    private suspend fun session(model: ModelClient, mode: PermissionMode = PermissionMode.Default, trust: Boolean = false): Pair<SessionRuntime, FileSessionStore> {
+    private suspend fun session(model: ModelClient, mode: PermissionMode = PermissionMode.Default, trust: Boolean = false, env: Map<String, String> = emptyMap()): Pair<SessionRuntime, FileSessionStore> {
         val store = FileSessionStore(root.resolve("sessions"), { System.currentTimeMillis() })
         val logDir = Files.createDirectories(root.resolve("logs"))
         val deps = KernelDeps(
@@ -150,6 +150,7 @@ class HooksSessionTest {
             memoryHome = paths.guestOfHost(home),
             hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
             trustProjectHooks = { trust },
+            env = { env[it] },
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
         return SessionHub(store, deps, scope).create(paths.guestOfHost(work), TEST_MODEL, mode) to store
@@ -261,12 +262,12 @@ class HooksSessionTest {
     // ---- Stop / continue ----
 
     @Test
-    fun `a Stop hook can send the model back to work, but only five times in a turn`() = run {
+    fun `a Stop hook can send the model back to work, but only eight times in a turn`() = run {
         settings(hook("Stop", script("never-done", """cat > /dev/null; printf '%s' '{"decision":"block","reason":"测试还没跑"}'""")))
         val model = RoutingModel { reply(TextPart("做完了")) }
         val (rt, store) = session(model)
         val done = rt.say("修 bug")
-        assertEquals("最初一次 + 被拦 5 次", 6, model.requests.size)
+        assertEquals("最初一次 + 被拦 8 次", 9, model.requests.size)
         assertTrue(model.requests[1].lastText().contains("测试还没跑"))
         assertEquals(TurnOutcome.Completed, done.lastTurn!!.outcome)
         assertTrue(store.events(rt).any { it is dev.min.agent.spi.Note && it.text.contains("这次放行") })
@@ -330,5 +331,49 @@ class HooksSessionTest {
         assertTrue(second.inbox.isEmpty())
         assertEquals("两条输入各有自己的 InputBlocked", 2, store.events(rt).filterIsInstance<InputBlocked>().size)
         assertTrue("模型一次都没被请求", model.requests.isEmpty())
+    }
+
+    private fun alwaysBlockStop() = settings(hook("Stop", script("never-done", """cat > /dev/null; printf '%s' '{"decision":"block","reason":"再检查"}'""")))
+
+    @Test
+    fun `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP overrides the cap, non-positive or garbage values are ignored`() = run {
+        alwaysBlockStop()
+        val capped = RoutingModel { reply(TextPart("做完了")) }
+        val (rt, _) = session(capped, env = mapOf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP" to "2"))
+        rt.say("修 bug")
+        assertEquals("最初一次 + 被拦 2 次", 3, capped.requests.size)
+
+        for (bad in listOf("0", "-3", "abc", "")) {
+            val model = RoutingModel { reply(TextPart("做完了")) }
+            val (rt2, _) = session(model, env = mapOf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP" to bad))
+            rt2.say("修 bug")
+            assertEquals("值「$bad」忽略，用默认的 8", 9, model.requests.size)
+        }
+    }
+
+    @Test
+    fun `a Stop hook that only adds context keeps the conversation going once, as hook feedback`() = run {
+        val ctx = """{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"跑一下测试再结束"}}"""
+        // stop_hook_active 为真时（已经继续过一次）不再给上下文
+        settings(hook("Stop", script("stop-ctx", """if grep -q '"stop_hook_active":true'; then exit 0; fi; printf '%s' '$ctx'""")))
+        val model = RoutingModel { reply(TextPart("做完了")) }
+        val (rt, _) = session(model)
+        val done = rt.say("修 bug")
+        assertEquals(TurnOutcome.Completed, done.lastTurn!!.outcome)
+        assertEquals("最初一次 + 因上下文继续 1 次", 2, model.requests.size)
+        assertTrue(model.requests[1].lastText().contains("跑一下测试再结束"))
+        val fed = done.history.filterIsInstance<HistoryEntry.User>().last()
+        assertEquals("来源是 Stop hook，界面标成 hook feedback 而不是错误", dev.min.agent.spi.InputOrigin.Hook("Stop"), fed.origin)
+    }
+
+    @Test
+    fun `context-only continuation counts against the same cap`() = run {
+        val ctx = """{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"再看看"}}"""
+        settings(hook("Stop", script("stop-ctx", "cat > /dev/null; printf '%s' '$ctx'")))
+        val model = RoutingModel { reply(TextPart("做完了")) }
+        val (rt, store) = session(model, env = mapOf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP" to "3"))
+        rt.say("修 bug")
+        assertEquals(4, model.requests.size)
+        assertTrue(store.events(rt).any { it is dev.min.agent.spi.Note && it.text.contains("这次放行") })
     }
 }

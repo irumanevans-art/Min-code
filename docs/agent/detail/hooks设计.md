@@ -96,7 +96,7 @@ CC 文档没写冲突怎么合；Min 的规则（取更安全的一侧，确定�
 | PreToolUse | 权限判定之前 | 见下；改写的入参 → `ToolInputRewritten(callId, 新入参, 来源)`，之后的权限判定与执行都用新入参 |
 | PermissionRequest | 判定结果是 Ask、发审批卡之前 | allow / deny → 视同人的答复，`ApprovalResolved(by = Hook(名字))` |
 | PostToolUse / PostToolUseFailure | ToolOutcome 之后 | `decision: block` / 上下文 → `HookContext`（贴在该工具结果旁） |
-| Stop / SubagentStop | 模型不再调工具、回合要结束时 | block → 把理由作为用户侧提示追加，回合继续；`stop_hook_active` 置真；**同一回合连续被拦 5 次就放行**并给 Note（防死循环） |
+| Stop / SubagentStop | 模型不再调工具、回合要结束时 | block → 把理由作为用户侧提示追加，回合继续；没 block、只给 `hookSpecificOutput.additionalContext` 时同样继续（上下文作为 hook 来源的输入交给模型，界面标成「Stop hook feedback」而不是错误）；`stop_hook_active` 置真；**同一回合内累计让模型继续 8 次（被拦与只给上下文合计，回合结束清零）就放行**并给 Note（防死循环）。上限与 CC 一致，可由 `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`（经 `KernelDeps.env`，非正整数忽略）覆盖 |
 | SubagentStart | SessionHub 委派之后 | 上下文 → 子会话的 `HookContext` |
 | Notification | 宿主发系统通知时（审批、提问、完成） | 只执行，不改变内核状态 |
 
@@ -127,7 +127,7 @@ Ask 时：PermissionRequest hooks → 能替人答；不答才发审批卡
 | H3 | `type: http`（宿主 HTTP，`allowedHttpHookUrls` / `httpHookAllowedEnvVars`）、`async` / `asyncRewake`、skill / subagent frontmatter hooks、PreCompact / PostCompact（随压缩） | GLM 5.3 / GPT |
 | H4 | `prompt` / `agent` 类型（小模型评估）、`mcp_tool`（随 MCP）、其余事件 | 后续 |
 
-**H2 落地情况（2026-10-03，分支 `agent/hooks-h2`）**：已接 SessionStart（仅 startup、仅根会话）、UserPromptSubmit、PreToolUse（含合流与改写）、PostToolUse / PostToolUseFailure、Stop / SubagentStop（5 次上限）、`continue: false`（回合以 `interrupted(hook)` 结束，理由进 Note）；快照随子 agent 继承；项目层只在宿主判定信任时启用（桌面 CLI 用 `--trust`，App 侧待 M2-B 接工作区信任）。
+**H2 落地情况（2026-10-03，分支 `agent/hooks-h2`）**：已接 SessionStart（仅 startup、仅根会话）、UserPromptSubmit、PreToolUse（含合流与改写）、PostToolUse / PostToolUseFailure、Stop / SubagentStop（初版 5 次上限，后改为 8 次并可由环境变量覆盖，见 §7）、`continue: false`（回合以 `interrupted(hook)` 结束，理由进 Note）；快照随子 agent 继承；项目层只在宿主判定信任时启用（桌面 CLI 用 `--trust`，App 侧待 M2-B 接工作区信任）。
 实现时补的取舍：hook 输出的文字去首尾空白（脚本 echo 带出的换行不进上下文）；开回合的输入全被 UserPromptSubmit 拦下时回合空着结束、不请求模型；有 PreToolUse hook 的只读调用不进并行批（hook 结论要与判定合流）。
 还没接、留到 H3：SessionStart(resume)、PermissionRequest、SubagentStart、Notification、SessionEnd、PreCompact / PostCompact。
 

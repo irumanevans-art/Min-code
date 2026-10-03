@@ -194,7 +194,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
     /**
      * 模型要结束时跑 Stop（子会话是 SubagentStop）。拦下就把理由作为一条输入交给模型、回合继续；
-     * 同一回合最多拦 [MAX_STOP_BLOCKS] 次，之后放行——两个互相较劲的 hook 不能把模型困死在回合里
+     * 没有拦、只给了 `additionalContext` 时同样继续（CC：对话继续，界面标成 Stop hook feedback 而不是错误），
+     * 上下文作为同一种 hook 来源的输入交给模型。两种都受 `stop_hook_active` 与同一个上限保护：
+     * 同一回合里被拦（含只给上下文）的次数到 [stopBlockCap] 就放行——两个互相较劲的 hook 不能把模型困死在回合里
      */
     private suspend fun stopHookContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
         val state = rt.state.value
@@ -211,20 +213,26 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         }
         val outcome = hooks.run(event, origin?.agentType, specific, turnId) ?: return false
         if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
-        if (outcome.decision != HookOutcome.Decision.Block) return false
-        if (blocks >= MAX_STOP_BLOCKS) {
-            rt.commit(listOf(Note(NoteLevel.Warning, "$event hook 本回合已经拦了 $MAX_STOP_BLOCKS 次「结束」，这次放行")), Durability.Batched)
+        val blocking = outcome.decision == HookOutcome.Decision.Block
+        if (!blocking && outcome.contexts.isEmpty()) return false
+        val cap = stopBlockCap()
+        if (blocks >= cap) {
+            rt.commit(listOf(Note(NoteLevel.Warning, "$event hook 本回合已经让模型继续了 $cap 次，这次放行")), Durability.Batched)
             return false
         }
+        val feedback = if (blocking) outcome.reason ?: "$event hook 要求继续，还没做完" else outcome.contexts.joinToString("\n")
         rt.receive(
             ClientMsgId("hook-stop:${turnId.value}:${blocks + 1}"),
-            listOf(TextPart(outcome.reason ?: "$event hook 要求继续，还没做完")),
+            listOf(TextPart(feedback)),
             Delivery.Steer,
             InputOrigin.Hook(event.name),
             startTurn = null,
         )
         return promote(setOf(Delivery.Steer)) > 0
     }
+
+    /** 一回合里 Stop hook 最多能让模型继续几次：默认 [DEFAULT_STOP_BLOCK_CAP]，环境变量 [STOP_CAP_ENV]（正整数）可改，别的值忽略 */
+    private fun stopBlockCap(): Int = deps.env(STOP_CAP_ENV)?.trim()?.toIntOrNull()?.takeIf { it > 0 } ?: DEFAULT_STOP_BLOCK_CAP
 
     private suspend fun requestWithRetry(turnId: TurnId): ModelStreamEvent.Completed {
         val requestId = RequestId(deps.ids.next("req"))
@@ -343,8 +351,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     }
 
     companion object {
-        /** Stop hook 一个回合里最多拦几次「结束」 */
-        const val MAX_STOP_BLOCKS = 5
+        /** Stop hook 一个回合里最多让模型继续几次（CC 的默认值也是 8） */
+        const val DEFAULT_STOP_BLOCK_CAP = 8
+
+        /** 覆盖上限的环境变量名，与 CC 相同 */
+        const val STOP_CAP_ENV = "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP"
 
         /** 防止模型陷入「调工具 → 看结果 → 再调」的死循环把钱烧光；循环检测（M3）落地后这只是最后一道闸 */
         const val MAX_REQUESTS_PER_TURN = 200
