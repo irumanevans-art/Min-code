@@ -58,6 +58,11 @@ class KernelDeps(
     /** 这个工作区里项目层（project / local）的 hooks 能不能跑：工作区信任由宿主记（App 的设置、CLI 的参数），默认不信任 */
     val trustProjectHooks: (GuestPath) -> Boolean = { false },
     val memoryLimits: MemoryLimits = MemoryLimits(),
+    /**
+     * 环境变量的读取口。内核不直接读进程环境：宿主决定给它什么（桌面 CLI 给 `System.getenv`），
+     * 内核测试给固定的表，不随跑测试的机器变。现在只读 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`
+     */
+    val env: (String) -> String? = { null },
 )
 
 /**

@@ -163,6 +163,7 @@ internal class DesktopApp(
             // hook 脚本在本机 shell 里跑：guest 路径换成本机 shell 认得的写法（与 LocalExec 的映射一致）
             hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
             trustProjectHooks = { args.trust },
+            env = { name -> System.getenv(name) },
         )
     }
 

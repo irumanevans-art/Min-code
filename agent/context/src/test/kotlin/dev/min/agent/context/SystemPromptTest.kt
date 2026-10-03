@@ -2,6 +2,7 @@ package dev.min.agent.context
 
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.llm.ModelProfile
+import dev.min.agent.spi.AutoMemoryInfo
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.MemorySource
@@ -132,5 +133,78 @@ class SystemPromptTest {
     fun `the assembler passes memory into the system prompt`() {
         val request = RequestAssembler.assemble(profile, env, emptyList(), emptyList(), effort = null, cacheKey = "s1", memory = memory)
         assertEquals(SystemPrompt.build(profile, env, memory), request.system)
+    }
+
+    // ---- 自动记忆段（设计 §2.3）----
+
+    private val memoryDir = "/root/.claude/projects/-workspace/memory"
+    private val autoInfo = AutoMemoryInfo(GuestPath(memoryDir), totalLines = 4, loadedLines = 4)
+    private val autoIndex = listOf(LoadedMemoryFile(GuestPath("$memoryDir/MEMORY.md"), MemorySource.Auto, "user.md: likes concise answers"))
+
+    /** 段的逐字快照：改措辞、行宽或用量行的格式，这里立刻红（并提醒把 token 代价写进提交说明） */
+    private val expectedAutoMemory = """
+        Auto memory:
+        Your notes for this project live in $memoryDir. MEMORY.md there is the index: one line per note file naming the file
+        and what it covers; read a note with Read before relying on or changing it. Notes come in four kinds — user (who the
+        user is and how they like things done), feedback (corrections and stated preferences), project (facts, decisions and
+        goals that outlive this conversation), reference (pointers to useful material elsewhere). Do not record what the code
+        or git history already shows, what the project instructions above already cover, or what only matters to this
+        conversation. Before writing a new note, check the index for an existing file on the topic and update it instead of
+        starting a parallel one.
+        The index was read when the session started and is frozen in this session: writing to the memory directory does not
+        change what you see here; the refreshed index appears in the next one.
+
+        Contents of $memoryDir/MEMORY.md (your auto memory index):
+
+        user.md: likes concise answers
+
+        MEMORY.md: 4/200 lines. Past 200 lines the rest is not loaded; consolidate the index before adding more entries.
+    """.trimIndent()
+
+    @Test
+    fun `auto memory is a block after the project instructions and before skills`() {
+        val withAuto = SystemPrompt.build(profile, env, memory + autoIndex, autoMemory = autoInfo)
+        assertEquals(4, withAuto.size)
+        // 项目说明段不含自动记忆的索引：它不是「项目要求」
+        assertTrue("user.md" !in withAuto[2])
+        assertEquals(expectedAutoMemory, withAuto[3])
+        // skill 清单仍在其后，前面的段逐字不变
+        val withSkillsToo = SystemPrompt.build(profile, env, memory + autoIndex, skills = skills, autoMemory = autoInfo)
+        assertEquals(withAuto, withSkillsToo.dropLast(1))
+    }
+
+    @Test
+    fun `auto memory shows a consolidation hint once the index is longer than what is loaded`() {
+        val truncated = autoInfo.copy(totalLines = 205, loadedLines = 200)
+        val block = SystemPrompt.build(profile, env, autoIndex, autoMemory = truncated)[2]
+        assertEquals(
+            "MEMORY.md: 200/200 lines. The index has 205 lines and only the first 200 are loaded — consolidate it before adding more entries.",
+            block.lines().last(),
+        )
+    }
+
+    @Test
+    fun `an empty index still announces the directory with zero usage`() {
+        val block = SystemPrompt.build(profile, env, emptyList(), autoMemory = AutoMemoryInfo(GuestPath(memoryDir)))[2]
+        assertTrue(block, block.startsWith("Auto memory:\nYour notes for this project live in $memoryDir."))
+        assertTrue(block, block.endsWith("MEMORY.md: 0/200 lines. Past 200 lines the rest is not loaded; consolidate the index before adding more entries."))
+        // 没有索引就没有 Contents 小节
+        assertTrue("Contents of" !in block)
+    }
+
+    @Test
+    fun `with auto memory off there is no block and the index is not in the project instructions`() {
+        assertEquals(SystemPrompt.build(profile, env, memory), SystemPrompt.build(profile, env, memory + autoIndex))
+        // source = Auto 的快照条目只有 autoMemory 也开着时才进提示
+        assertEquals(2, SystemPrompt.build(profile, env, autoIndex).size)
+    }
+
+    @Test
+    fun `the assembler passes auto memory into the system prompt`() {
+        val request = RequestAssembler.assemble(
+            profile, env, emptyList(), emptyList(), effort = null, cacheKey = "s1",
+            memory = autoIndex, autoMemory = autoInfo,
+        )
+        assertEquals(SystemPrompt.build(profile, env, autoIndex, autoMemory = autoInfo), request.system)
     }
 }

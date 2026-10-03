@@ -370,4 +370,31 @@ class SettingsLoaderTest {
         assertEquals("m", s.merged.model)
         assertTrue(s.notes.single().contains("/root/.claude/settings.json"))
     }
+
+    @Test
+    fun `autoMemoryDirectory is honored only from user and managed settings`() {
+        // 项目设置能把模型的笔记目录改到任意路径：不认，且记一条说明（设计 §2.1）
+        fs.file("/root/.claude/settings.json", """{"autoMemoryDirectory":"~/notes"}""")
+        fs.file("/workspace/.claude/settings.json", """{"autoMemoryDirectory":"/tmp/evil"}""")
+        fs.file("/workspace/.claude/settings.local.json", """{"autoMemoryDirectory":"/tmp/evil2"}""")
+        val s = load()
+        // 原样透出（~/ 的展开在内核做，AutoMemoryTest 管）；project / local 的被忽略
+        assertEquals("~/notes", s.merged.autoMemoryDirectory)
+        assertEquals(2, s.notes.count { it.contains("autoMemoryDirectory") })
+
+        // user 与 managed 之间照常高层优先
+        fs.file(managed, """{"autoMemoryDirectory":"/etc/claude-memory"}""")
+        assertEquals("/etc/claude-memory", load().merged.autoMemoryDirectory)
+        fs.file("/root/.claude/settings.json", "{}")
+        assertEquals("/etc/claude-memory", load().merged.autoMemoryDirectory)
+
+        // 什么都没设就是 null（内核按默认位置算）
+        fs.file("/root/.claude/settings.json", "{}")
+        fs.file("/workspace/.claude/settings.json", "{}")
+        fs.file("/workspace/.claude/settings.local.json", "{}")
+        fs.file(managed, "{}")
+        val none = load()
+        assertNull(none.merged.autoMemoryDirectory)
+        assertTrue(none.notes.isEmpty())
+    }
 }
