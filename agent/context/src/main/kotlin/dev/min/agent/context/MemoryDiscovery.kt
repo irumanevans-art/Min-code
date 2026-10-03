@@ -35,6 +35,12 @@ class MemoryDiscovery(
     private val home = normalize(home.value)
     private var startupRefs: List<PathRuleRef>? = null
 
+    /**
+     * 已经报过问题的路径（读不了、不是文本、导入越界……）。只在内存里：同一个坏路径一个会话只读一次、只说一次，
+     * 免得每碰一个文件就重读重记；会话重开后重新来过，多报一次而已
+     */
+    private val knownProblems = mutableSetOf<String>()
+
     /** [touched] 是这批工具调用碰到的文件（调用方已排除目录与失败的调用）；返回要新注入的文件，顺序：子目录记忆（宽 → 窄），然后路径规则 */
     suspend fun attach(touched: List<GuestPath>, inContext: Set<GuestPath>): MemorySnapshot {
         val files = touched.map { normalize(it.value) }.distinct().filter { it.startsWith(prefixOfCwd()) }
@@ -45,6 +51,7 @@ class MemoryDiscovery(
             wholeFilesOnly = true,
             pathRuleRefs = mutableListOf(),
             directReads = files.toSet(),
+            knownProblems = knownProblems,
         )
         val dirs = linkedSetOf<String>()
         for (file in files) dirs += dirsBelowCwd(parentOf(file))
@@ -56,6 +63,7 @@ class MemoryDiscovery(
             reportInvalidGlobs(ref)?.let { globNotes += it }
             if (files.any { file -> matches(ref, file) }) loading.pathRule(ref.path)
         }
+        knownProblems += loading.problems
         return MemorySnapshot(loading.files.toList(), loading.notes.toList() + globNotes, loading.covered.map(::GuestPath))
     }
 

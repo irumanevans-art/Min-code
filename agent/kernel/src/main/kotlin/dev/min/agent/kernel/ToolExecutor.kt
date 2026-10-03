@@ -154,7 +154,9 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             ?.messageId ?: return
         val found = discovery.attach(files, state.memoryPathsInContext)
         if (found.files.isNotEmpty() || found.notes.isNotEmpty() || found.covered.isNotEmpty()) {
-            rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes, found.covered)), Durability.Sync)
+            // 没有进模型的东西（只有说明、或只有 covered）不影响请求内容，Batched 就够了：不为每批都 fsync
+            val durability = if (found.files.isNotEmpty()) Durability.Sync else Durability.Batched
+            rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes, found.covered)), durability)
         }
     }
 

@@ -220,6 +220,49 @@ class MemoryOnDemandTest {
         assertLogIsTruth(rt)
     }
 
+    /** 记下每次追加的事件与持久度 */
+    private class DurabilitySpyStore(private val delegate: dev.min.agent.spi.SessionStore) : dev.min.agent.spi.SessionStore by delegate {
+        val appended = CopyOnWriteArrayList<Pair<SessionEvent, dev.min.agent.spi.Durability>>()
+
+        override suspend fun create(header: LogHeader): dev.min.agent.spi.SessionLog = spy(delegate.create(header))
+
+        private fun spy(log: dev.min.agent.spi.SessionLog) = object : dev.min.agent.spi.SessionLog by log {
+            override suspend fun append(events: List<SessionEvent>, durability: dev.min.agent.spi.Durability) =
+                log.append(events, durability).also { events.forEach { e -> appended += e to durability } }
+        }
+    }
+
+    @Test
+    fun `a bad memory file is reported once per session, and a notes-only event is not fsynced`() = run {
+        fs.put("/workspace/bad/CLAUDE.md", "a\u0000b")
+        fs.put("/workspace/bad/a.ts", "a")
+        fs.put("/workspace/bad/b.ts", "b")
+        fs.put("/workspace/good/CLAUDE.md", "Good rules")
+        fs.put("/workspace/good/c.ts", "c")
+        val spy = DurabilitySpyStore(store)
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/bad/a.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/bad/b.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c3", "/workspace/good/c.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = SessionRuntime.create(
+            spy, header, SessionCreated(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default),
+            deps(model, listOf(ReadTool)), scope,
+        )
+        rt.send(msg(), listOf(TextPart("读三个文件")))
+        rt.awaitIdle()
+
+        val attached = spy.appended.filter { it.first is MemoryAttached }
+        assertEquals("坏文件只在第一批报一次；第二批什么都没有", 2, attached.size)
+        val notesOnly = attached[0].first as MemoryAttached
+        assertTrue(notesOnly.files.isEmpty() && notesOnly.notes.any { it.contains("不是文本文件") })
+        assertEquals("只有说明的事件不 fsync", dev.min.agent.spi.Durability.Batched, attached[0].second)
+        assertEquals(listOf("/workspace/good/CLAUDE.md"), (attached[1].first as MemoryAttached).files.map { it.path.value })
+        assertEquals("进了模型的内容照旧 fsync", dev.min.agent.spi.Durability.Sync, attached[1].second)
+        assertLogIsTruth(rt)
+    }
+
     @Test
     fun `a read in a subtree attaches nested memory after the tool results`() = run {
         fs.put("/workspace/src/api/CLAUDE.md", "Use the typed client.")

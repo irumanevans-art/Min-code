@@ -105,6 +105,40 @@ class MemoryDiscoveryTest {
     }
 
     @Test
+    fun `a memory file that is not text is reported once and never read again`() {
+        fs.bytes("/workspace/s/CLAUDE.md", byteArrayOf('a'.code.toByte(), 0, 'b'.code.toByte()))
+        val d = discovery()
+
+        val first = d.attach("/workspace/s/a.ts")
+        assertEquals(emptyList<String>(), first.order())
+        assertEquals(1, first.notes.count { it.contains("不是文本文件") })
+        val readsAfterFirst = fs.reads.count { it == "/workspace/s/CLAUDE.md" }
+        assertEquals(1, readsAfterFirst)
+
+        // 同一个会话里再碰这个目录的别的文件：不再读、不再说
+        val second = d.attach("/workspace/s/b.ts")
+        assertEquals(emptyList<String>(), second.notes)
+        assertEquals(readsAfterFirst, fs.reads.count { it == "/workspace/s/CLAUDE.md" })
+    }
+
+    @Test
+    fun `a memory file that cannot be read is reported once`() {
+        fs.fail("/workspace/s/CLAUDE.md")
+        val d = discovery()
+        val first = d.attach("/workspace/s/a.ts")
+        assertEquals(1, first.notes.count { it.contains("读取 /workspace/s/CLAUDE.md 失败") })
+        assertEquals(emptyList<String>(), d.attach("/workspace/s/b.ts").notes)
+    }
+
+    @Test
+    fun `a bad import is reported once even if another memory file points at it`() {
+        fs.file("/workspace/s/CLAUDE.md", "see @/etc/passwd and @../outside/x.md")
+        fs.file("/workspace/s/AGENTS.md", "also @/etc/passwd")
+        val first = discovery().attach("/workspace/s/a.ts")
+        assertEquals("同一个越界的导入目标只说一次", 1, first.notes.count { it.contains("/etc/passwd") })
+    }
+
+    @Test
     fun `a file directly in cwd loads no nested memory`() {
         fs.file("/workspace/CLAUDE.md", "根")
         fs.file("/workspace/main.kt", "code")
