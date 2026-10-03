@@ -24,7 +24,9 @@ class DesktopWebTest {
     }
 
     @Test fun `parse optional fast model cap cache and deadline`() {
-        val args = args("--fast-model", "small", "--max-web-searches", "3", "--web-cache-ttl-ms", "0", "--web-deadline-ms", "1200")
+        val args = args("--trust", "--base-url", "https://example.com/v1", "--fast-model", "small", "--max-web-searches", "3", "--web-cache-ttl-ms", "0", "--web-deadline-ms", "1200")
+        assertTrue(args.trust)
+        assertEquals("https://example.com/v1", args.baseUrl)
         assertEquals("small", args.fastModel)
         assertEquals(3, args.maxWebSearches)
         assertEquals(0, args.webCacheTtlMs.toInt())
@@ -34,7 +36,4 @@ class DesktopWebTest {
         assertThrows(UsageException::class.java) { args("--web-deadline-ms", "-1") }
     }
 
-    @Test fun `temporary converter decodes basic named and numeric entities`() {
-        assertEquals(PageContent(null, "Hello & 中 😀"), TemporaryPageConverter.convert("<p>Hello &amp; &#20013; &#x1f600;</p>", null))
-    }
 }

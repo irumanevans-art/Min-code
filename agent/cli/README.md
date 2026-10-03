@@ -6,10 +6,11 @@
 Hub 自动监听子回合、交付报告，ToolExecutor 按会话/回合/调用注入端口，无需组合根另起 watcher。
 附件按子会话 id 写入各自目录；Hub 共用 Exec 的日志位于 `~/.min-agent/exec-logs/`，随机句柄 id 避免互相覆盖。
 
-WebFetch 追加在工具表末尾。网页完整 Markdown 存到会话 `artifacts/web/`，提取前最多取 100000 字符；
+WebFetch 追加在 Skill 之后，WebSearch 配置完整时再追加在 WebFetch 之后。网页完整 Markdown 存到会话 `artifacts/web/`，提取前最多取 100000 字符；
 `--fast-model <id>` 可指定同供应商的提取模型，默认使用会话模型，提取用量计入本回合。
 `--web-cache-ttl-ms` 默认 900000、`--web-deadline-ms` 默认 300000，二者均接受 0（禁用缓存 / 取消截止）。
-桌面暂用 `TemporaryPageConverter` 去标签、解基本实体；`agent/web-html` 合入后替换组合根的一行转换器适配。
+桌面组合根将 `tools.web.HtmlToMarkdown` 适配为 SPI `PageConverter` 后注入 `CachedWebPort`；host 不依赖 tools。
+转换保留标题、正文 Markdown 与相对链接解析，优先 main / article 正文，过滤脚本等非正文内容。
 
 WebSearch 只有搜索后端配置完整时才追加：`--search-backend brave|tavily|searxng` 或 `MIN_AGENT_SEARCH_BACKEND`。
 Brave 凭证仅从 `BRAVE_SEARCH_API_KEY`、Tavily 凭证仅从 `TAVILY_API_KEY` 环境变量读取，分别进入订阅头 / Bearer 头；
@@ -34,7 +35,7 @@ Responses 使用无服务端状态的完整历史及同模型原始 output item�
 - 超时后整棵进程树被杀，模型拿到超时前的输出。
 
 交互与 `-p` 输入支持 `/名字 参数`：行首的 `/名字` 若是 `.claude/skills`、`.claude/commands` 里的 skill / command，就展开成它的正文（参数照 Claude Code 替换）再发给模型，模型看到的就是展开后的内容；
-不是命令（含路径 `/etc/hosts`）的原样发；未知命令与 `user-invocable: false` 的只在终端提示、不发（`-p` 时退出码 2）。工具表末尾追加了 Skill，系统提示会列出可调用的 skill。
+不是命令（含路径 `/etc/hosts`）的原样发；未知命令与 `user-invocable: false` 的只在终端提示、不发（`-p` 时退出码 2）。Skill 位于任务工具之后、web 工具之前，系统提示会列出可调用的 skill。
 
 ## token 代价
 `LocalExec` 本身不产生 token；进入上下文的只有 Bash 工具结果里的输出，被 `maxOutputChars`（由工具的结果预算传入）封顶。

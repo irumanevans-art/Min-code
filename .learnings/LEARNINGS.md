@@ -1487,3 +1487,31 @@ S2 接入 DesktopApp 后，用真实日志、新 Hub 和本地 SSE 模型验证 
 - Recurrence-Count: 1
 
 ---
+
+
+## [LRN-20261003-WEB-MERGE-QUOTA] best_practice
+
+**Logged**: 2026-10-03T12:19:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Integration checks must cover durable root search quotas together with quiet tree-stop reports, and must run without another Gradle writer in the same checkout.
+
+### Details
+Web search commits its reservation to the root session before calling the backend. Cancelling a child during that backend call must cancel the backend, retain the root quota across shutdown/reopen, and deliver the interrupted report without starting a parent notification turn. The integration regression covers these interactions and verifies that the child does not keep its own quota. A separate task also merged hooks fixtures into agent/m0 while the first check was running, then started CLI checks in the same checkout: processTestResources had already seen no resources and concurrent test-report writers caused EOFException. Preserve the foreign commit, wait for that build to exit, and run one serial verification on the resulting tree.
+
+### Suggested Action
+Snapshot both HEAD and git status around shared-worktree integration. Keep unrelated edits and commits, inspect active same-checkout Gradle wrappers when output/report corruption appears, and serialize build invocations. For accounting plus cancellation, assert persisted events and the absence of notification turns after the watcher has processed the report.
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/test/kotlin/dev/min/agent/kernel/WebServicesTest.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionHub.kt, agent/cli/src/main/kotlin/dev/min/agent/cli/DesktopApp.kt
+- Tags: merge, shared-checkout, gradle, quota, cancellation, quiet-reports
+- See Also: ERR-20260905-001
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-03T12:22:38+08:00
+- **Notes**: One final serial invocation passed all 12 agent checks (1199 tests), app:testDebugUnitTest (1706 passed, one existing skipped test), and app:assembleDebug. The temporary converter was removed and the replacement was verified through real HTTP transport.

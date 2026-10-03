@@ -171,6 +171,53 @@ class WebServicesTest {
         assertEquals(1, other.state.value.webSearches)
     }
 
+    @Test fun `tree stop cancels child search keeps root quota and does not wake parent after report or reopen`() = run {
+        val entered = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val count = AtomicInteger()
+        val model = ModelClient { request -> flow {
+            val last = request.messages.last().parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+            val step = when {
+                last == "slow search" -> reply(ToolCallPart(CallId("search"), "WebSearch", args("query" to "x")), stop = StopReason.ToolUse)
+                request.messages.size == 1 -> reply(ToolCallPart(CallId("delegate"), "Agent",
+                    args("description" to "search", "prompt" to "slow search", "run_in_background" to true)), stop = StopReason.ToolUse)
+                else -> reply(TextPart("waiting"))
+            }
+            emitAll(step(request))
+        } }
+        val deps = deps(model, backend = SearchBackend { _, _, _, _ ->
+            count.incrementAndGet()
+            entered.complete(Unit)
+            try { awaitCancellation() } finally { cancelled.complete(Unit) }
+        }, cap = 1, tools = listOf(dev.min.agent.tools.AgentTool, WebSearchTool))
+        val hub = SessionHub(store, deps, scope)
+        val root = hub.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        root.send(ClientMsgId("start"), listOf(TextPart("delegate search")))
+        entered.await()
+        root.state.first { it.turn == null && it.lastTurn != null }
+        val child = hub.get(root.state.value.children.keys.single())!!
+        hub.stopTree(root.sessionId)
+        cancelled.await()
+        assertEquals(TurnOutcome.Interrupted(InterruptedBy.User), child.state.value.lastTurn!!.outcome)
+        val reported = root.state.first { it.inbox.any { input -> input.origin is InputOrigin.Agent } }
+        // Report receipt and notification startup are separate operations; let the watcher finish both.
+        delay(300)
+        assertNull(reported.turn)
+        assertNull(root.state.value.turn)
+        assertEquals(1, reported.webSearches)
+        assertEquals(0, child.state.value.webSearches)
+        assertEquals(1, store.open(root.sessionId)!!.read().toList().count { it.event is TurnStarted })
+        assertEquals(1, store.open(root.sessionId)!!.read().toList().count { it.event is WebSearchUsed })
+
+        assertTrue(hub.shutdown(root.sessionId))
+        val reopened = SessionHub(store, deps, scope).open(root.sessionId)!!
+        assertEquals(1, reopened.state.value.webSearches)
+        assertEquals(1, reopened.state.value.inbox.size)
+        assertNull(reopened.state.value.turn)
+        assertEquals(SearchResponse.LimitReached, searchWeb(reopened, CallId("after-stop"), "x", emptyList(), emptyList(), 10))
+        assertEquals(1, count.get())
+    }
+
     @Test fun `search tool uses injected backend and caps calls without error`() = run {
         fun call(id: String) = ToolCallPart(CallId(id), "WebSearch", args("query" to "kotlin"))
         val model = ScriptedModel(reply(call("a"), call("b"), stop = StopReason.ToolUse), reply(TextPart("done")))
