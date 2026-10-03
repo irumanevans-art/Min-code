@@ -5,6 +5,7 @@ import dev.min.agent.llm.ModelProfile
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ToolSpec
 import dev.min.agent.protocol.Effort
+import dev.min.agent.spi.AutoMemoryInfo
 import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.ModelMessage
 import dev.min.agent.spi.SkillsLoaded
@@ -27,9 +28,10 @@ object RequestAssembler {
         memory: List<LoadedMemoryFile> = emptyList(),
         agentInstructions: String? = null,
         skills: SkillsLoaded? = null,
+        autoMemory: AutoMemoryInfo? = null,
     ): ModelRequest = ModelRequest(
         profile = profile,
-        system = SystemPrompt.build(profile, environment, memory, agentInstructions, skills),
+        system = SystemPrompt.build(profile, environment, memory, agentInstructions, skills, autoMemory),
         messages = messages,
         tools = tools,
         effort = effort,

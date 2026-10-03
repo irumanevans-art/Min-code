@@ -185,6 +185,7 @@ internal class DesktopApp(
             trustProjectHooks = { args.trust },
             fastModel = fastSelection?.profile?.ref,
             maxWebSearches = args.maxWebSearches,
+            env = { name -> System.getenv(name) },
         )
     }
 

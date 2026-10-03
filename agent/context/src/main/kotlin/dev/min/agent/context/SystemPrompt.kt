@@ -1,6 +1,7 @@
 package dev.min.agent.context
 
 import dev.min.agent.llm.ModelProfile
+import dev.min.agent.spi.AutoMemoryInfo
 import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.MemorySource
 import dev.min.agent.spi.SkillsLoaded
@@ -21,7 +22,8 @@ data class Environment(
  * 系统提示。分段是为了缓存：第一段对所有会话都一样（身份与规矩），第二段对一个会话不变（环境），
  * 第三段是会话创建时冻结的记忆文件（项目说明），只在有记忆文件时出现，同样会话内不变。
  * 记忆放在环境之后：有没有记忆、记忆是什么，前两段都逐字不变。
- * 第四段是会话创建时冻结的 skill 清单，只在有可列的 skill 时出现，排在记忆之后——skill 的增减不动前三段。
+ * 自动记忆段紧跟其后（也是创建时冻结的）：自动记忆开没开不动前三段，索引进了第三段的会话也没有这一段。
+ * 第四段是会话创建时冻结的 skill 清单，只在有可列的 skill 时出现，排在记忆之后——skill 的增减不动前面的段。
  * 最后才是子 agent 的角色说明（只有新开的子 agent 有）。
  *
  * 写得短是有意的：规矩越多，模型越容易在不相干的地方照搬；能靠工具描述讲清楚的不写在这里
@@ -35,8 +37,10 @@ object SystemPrompt {
         memory: List<LoadedMemoryFile> = emptyList(),
         agentInstructions: String? = null,
         skills: SkillsLoaded? = null,
+        autoMemory: AutoMemoryInfo? = null,
     ): List<String> = listOfNotNull(
-        RULES, environmentBlock(env), memoryBlock(memory), skillsBlock(skills, profile), agentInstructions?.let(::agentBlock),
+        RULES, environmentBlock(env), memoryBlock(memory), autoMemoryBlock(memory, autoMemory),
+        skillsBlock(skills, profile), agentInstructions?.let(::agentBlock),
     )
 
     /**
@@ -75,23 +79,50 @@ object SystemPrompt {
      * 用户现成的 CLAUDE.md 是在 CC 里对着这种呈现调出来的。加载时记下的说明（notes）只给人看，不在这里。
      */
     private fun memoryBlock(memory: List<LoadedMemoryFile>): String? {
-        if (memory.isEmpty()) return null
+        val files = memory.filter { it.source != MemorySource.Auto }
+        if (files.isEmpty()) return null
         return buildString {
             append(MEMORY_INTRO)
-            for (file in memory) {
-                append("\n\nContents of ${file.path} (${describe(file.source)}):\n\n")
-                append(file.content.trimEnd().trimStart('\n'))
-            }
+            for (file in files) append("\n\n").append(MemoryRender.section(file))
         }
     }
 
-    private fun describe(source: MemorySource): String = when (source) {
-        MemorySource.User -> "user's instructions for all projects"
-        MemorySource.Project -> "project instructions, checked into the codebase"
-        MemorySource.Local -> "user's private instructions for this project, not checked in"
-        MemorySource.Rule -> "rule"
-        MemorySource.Import -> "imported by a memory file"
+    /**
+     * 自动记忆（docs/agent/detail/记忆按需加载与自动记忆设计.md §2.3）：排在记忆段之后，有 [info]（= 开着）就整段出现，
+     * 索引为空也出现——模型得知道它能把笔记写到哪里。整段与快照一起冻结，写入不改本会话的提示（缓存不破）。
+     */
+    private fun autoMemoryBlock(memory: List<LoadedMemoryFile>, info: AutoMemoryInfo?): String? {
+        info ?: return null
+        return buildString {
+            append(autoMemoryIntro(info))
+            memory.lastOrNull { it.source == MemorySource.Auto }?.let { append("\n\n").append(MemoryRender.section(it)) }
+            append("\n\n").append(autoMemoryFooter(info))
+        }
     }
+
+    /** 用量行照设计给 `MEMORY.md: 已加载/上限 lines`：模型据此决定要不要合并整理 */
+    private fun autoMemoryFooter(info: AutoMemoryInfo): String {
+        val usage = "MEMORY.md: ${info.loadedLines}/${AutoMemory.MAX_INDEX_LINES} lines."
+        return when {
+            info.totalLines > info.loadedLines ->
+                "$usage The index has ${info.totalLines} lines and only the first ${AutoMemory.MAX_INDEX_LINES} are loaded — consolidate it before adding more entries."
+            else ->
+                "$usage Past ${AutoMemory.MAX_INDEX_LINES} lines the rest is not loaded; consolidate the index before adding more entries."
+        }
+    }
+
+    private fun autoMemoryIntro(info: AutoMemoryInfo): String = """
+        Auto memory:
+        Your notes for this project live in ${info.directory}. MEMORY.md there is the index: one line per note file naming the file
+        and what it covers; read a note with Read before relying on or changing it. Notes come in four kinds — user (who the
+        user is and how they like things done), feedback (corrections and stated preferences), project (facts, decisions and
+        goals that outlive this conversation), reference (pointers to useful material elsewhere). Do not record what the code
+        or git history already shows, what the project instructions above already cover, or what only matters to this
+        conversation. Before writing a new note, check the index for an existing file on the topic and update it instead of
+        starting a parallel one.
+        The index was read when the session started and is frozen in this session: writing to the memory directory does not
+        change what you see here; the refreshed index appears in the next one.
+    """.trimIndent()
 
     /**
      * 新开的子 agent 的角色说明（内置类型的说明或 `.claude/agents/` 下定义文件的正文），放最后：

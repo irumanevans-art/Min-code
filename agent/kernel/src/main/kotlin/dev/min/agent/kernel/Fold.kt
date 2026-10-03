@@ -34,6 +34,7 @@ import dev.min.agent.spi.InputPromoted
 import dev.min.agent.spi.InputReceived
 import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
+import dev.min.agent.spi.MemoryAttached
 import dev.min.agent.spi.MemoryLoaded
 import dev.min.agent.spi.ModelRequestFailed
 import dev.min.agent.spi.ModelRequestStarted
@@ -85,7 +86,21 @@ fun SessionState.apply(record: EventRecord): SessionState {
             this
         }
         // 取最后一条：以后显式刷新记忆时再追加一条，整份替换前一份快照
-        is MemoryLoaded -> copy(memory = e.files)
+        // 快照里的路径换成新快照的；按需加载过的路径原样保留
+        is MemoryLoaded -> copy(
+            memory = e.files,
+            autoMemory = e.autoMemory,
+            memoryPathsInContext = memoryPathsInContext - memory.map { it.path }.toSet() + e.files.map { it.path },
+        )
+        is MemoryAttached -> {
+            check(history.any { it.messageId == e.assistantMessageId && it is HistoryEntry.Assistant }) {
+                "按需记忆挂靠的助手消息 ${e.assistantMessageId} 不存在"
+            }
+            copy(
+                memoryAttachments = memoryAttachments + (e.assistantMessageId to memoryAttachments[e.assistantMessageId].orEmpty() + e.files),
+                memoryPathsInContext = memoryPathsInContext + e.files.map { it.path },
+            )
+        }
         // 同记忆：取最后一条，以后显式刷新时整份替换
         is SkillsLoaded -> copy(skills = e)
         is SettingsChanged -> copy(
@@ -206,8 +221,12 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is ContextCompacted -> {
             check(openCompaction == e.compactionId) { "结束的压缩 ${e.compactionId} 与进行中的 $openCompaction 对不上" }
-            check(history.any { it.messageId == e.through }) { "压缩的边界 ${e.through} 不在历史里" }
+            val boundary = history.indexOfFirst { it.messageId == e.through }
+            check(boundary >= 0) { "压缩的边界 ${e.through} 不在历史里" }
+            // 边界及之前的消息被摘要取代，挂在它们上面的按需记忆已不在视图里：只留快照里的与边界之后消息上的
+            val stillAttached = history.drop(boundary + 1).flatMap { memoryAttachments[it.messageId].orEmpty() }.map { it.path }
             updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
+                memoryPathsInContext = memory.map { it.path }.toSet() + stillAttached,
                 compaction = CompactionView(e.summary, e.through, e.transcriptPath),
                 openCompaction = null,
                 compactionFailures = 0,

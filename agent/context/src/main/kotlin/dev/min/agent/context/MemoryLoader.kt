@@ -31,7 +31,7 @@ data class MemorySnapshot(val files: List<LoadedMemoryFile>, val notes: List<Str
  *    最后是 `CLAUDE.local.md`——CC 原文「Within each directory, CLAUDE.local.md is appended after CLAUDE.md」，
  *    个人说明是那一层最后读到的；规则「with the same priority as .claude/CLAUDE.md」，所以跟在同层项目文件后面。
  *
- * 规则：`.md` 递归收，按名字排序；带 `paths:` 的按需加载（读到匹配文件时才注入），本版跳过并记一条说明。
+ * 规则：`.md` 递归收，按名字排序；带 `paths:` 的按需加载（读到匹配文件时才注入，见 [MemoryDiscovery]），会话创建时跳过并记一条说明。
  * 规则的 frontmatter 不进上下文（CC 同样去掉）。
  *
  * `@` 导入（解析见 [MemoryMarkdown.imports]）：相对**包含它的文件**解析，`~/` 指用户主目录，最多 [MAX_IMPORT_HOPS] 跳；
@@ -58,13 +58,31 @@ object MemoryLoader {
     internal const val NOT_LOADED =
         "[Not loaded: memory files are limited to %d characters in total. Read the file if you need it.]"
 
-    private class Loading(private val fs: WorkspaceFs, private val home: String, private val limits: MemoryLimits) {
+    internal const val ATTACH_NOT_LOADED =
+        "[Not loaded: this file is too long to attach here together with the other memory files. Read the file if you need it.]"
+
+    /** 带 `paths:` 的规则：路径与它的 glob 列表（内容用到时再读） */
+    internal data class PathRuleRef(val path: String, val globs: List<String>)
+
+    internal class Loading(
+        private val fs: WorkspaceFs,
+        private val home: String,
+        private val limits: MemoryLimits,
+        /** 已经在模型上下文里的路径（按需加载时给）：当作处理过，不再读，导入指向它们也不再重复 */
+        alreadyIn: Collection<String> = emptyList(),
+        /** 按需加载：整份放不下的文件不截断，只留一行说明 */
+        private val wholeFilesOnly: Boolean = false,
+        /** 非 null = 遇到带 paths 的规则时登记下来（读到匹配的文件时再加载），而不是跳过 */
+        val pathRuleRefs: MutableList<PathRuleRef>? = null,
+        /** 只登记带 paths 的规则，别的什么都不收（找启动时就存在的路径规则用） */
+        private val refsOnly: Boolean = false,
+    ) {
         private val homeClaude = join(home, ".claude")
-        private val files = mutableListOf<LoadedMemoryFile>()
-        private val notes = mutableListOf<String>()
+        val files = mutableListOf<LoadedMemoryFile>()
+        val notes = mutableListOf<String>()
 
         /** 处理过（或正在处理）的路径：去重，也让导入成环时停下 */
-        private val seen = mutableSetOf<String>()
+        private val seen = alreadyIn.toMutableSet()
 
         /** 已收文件的正文 → 路径：同内容（多半是符号链接）不重复进上下文 */
         private val bodies = mutableMapOf<String, String>()
@@ -83,8 +101,32 @@ object MemoryLoader {
             return MemorySnapshot(files.toList(), notes.toList())
         }
 
-        /** [importer] 非空 = 这是一次导入：文件不存在时要告诉人（拼错了路径），顶层候选不存在是常态，不吭声 */
-        private suspend fun add(path: String, source: MemorySource, hops: Int = 0, importer: String? = null) {
+        /** 按需加载：cwd 之下一个子目录这一层的记忆，顺序与启动时每一层相同；其中的规则（没有 paths 的）来源记为 nested */
+        suspend fun nestedLayer(dir: String) {
+            add(join(dir, "CLAUDE.md"), MemorySource.Nested)
+            add(join(dir, ".claude/CLAUDE.md"), MemorySource.Nested)
+            add(join(dir, "AGENTS.md"), MemorySource.Nested)
+            addRules(join(dir, ".claude/rules"), MemorySource.Nested)
+            add(join(dir, "CLAUDE.local.md"), MemorySource.Nested)
+        }
+
+        /** 按需加载：一条已经匹配上的路径规则 */
+        suspend fun pathRule(path: String) = add(path, MemorySource.PathRule, rule = true)
+
+        /** 登记 [dir]（一个 `rules` 目录）下带 paths 的规则，不收内容；要先用 [refsOnly] 建出这个实例 */
+        suspend fun collectRuleRefs(dir: String) = addRules(dir, MemorySource.Rule)
+
+        /**
+         * [importer] 非空 = 这是一次导入：文件不存在时要告诉人（拼错了路径），顶层候选不存在是常态，不吭声。
+         * [rule] 为真时按规则处理（去 frontmatter、认 paths）
+         */
+        private suspend fun add(
+            path: String,
+            source: MemorySource,
+            hops: Int = 0,
+            importer: String? = null,
+            rule: Boolean = source == MemorySource.Rule,
+        ) {
             if (!seen.add(path)) return
             val stat = attempt(path) { fs.stat(GuestPath(path)) }
             if (stat?.kind != FileKind.File) {
@@ -96,12 +138,19 @@ object MemoryLoader {
                 notes += "跳过 $path：看起来不是文本文件"
                 return
             }
-            if (source == MemorySource.Rule) {
+            if (rule) {
                 val frontmatter = MemoryMarkdown.splitFrontmatter(text)
-                if (frontmatter.paths.isNotEmpty()) {
-                    notes += "跳过规则 $path：带 paths: 的规则要在读到匹配文件时才加载，Min 尚未支持"
+                if (frontmatter.paths.isNotEmpty() && source != MemorySource.PathRule) {
+                    if (pathRuleRefs == null) {
+                        notes += "跳过规则 $path：带 paths: 的规则要在读到匹配文件时才加载，会话创建时不读"
+                    } else {
+                        // 登记下来；路径从已处理集合里拿掉，匹配上之后才能再按路径规则加载它
+                        pathRuleRefs += PathRuleRef(path, frontmatter.paths)
+                        seen.remove(path)
+                    }
                     return
                 }
+                if (refsOnly) return
                 text = frontmatter.body
             }
             if (text.isBlank()) return
@@ -148,7 +197,7 @@ object MemoryLoader {
          * 递归收 `.md` 规则，按名字排序（目录里的顺序由端口决定，不排序前缀就可能变）。
          * 符号链接指向的文件照收（指向哪里与导入同一套范围规则）；指向目录的不跟——端口里认不出链接成环。
          */
-        private suspend fun addRules(dir: String) {
+        private suspend fun addRules(dir: String, source: MemorySource = MemorySource.Rule) {
             if (attempt(dir) { fs.stat(GuestPath(dir)) }?.kind != FileKind.Directory) return
             val entries = attempt(dir) { fs.list(GuestPath(dir)) } ?: return
             for (entry in entries.sortedBy { it.name }) {
@@ -157,10 +206,10 @@ object MemoryLoader {
                 val kind = if (linked) attempt(path) { fs.stat(GuestPath(path)) }?.kind else entry.kind
                 when {
                     kind == FileKind.Directory && linked -> notes += "跳过 $path：规则目录里的符号链接目录暂不跟随"
-                    kind == FileKind.Directory -> addRules(path)
+                    kind == FileKind.Directory -> addRules(path, source)
                     kind != FileKind.File || !entry.name.endsWith(".md") -> Unit
                     linked && !importable(path) -> notes += "跳过规则 $path：链接到工作区或 ~/.claude 之外"
-                    else -> add(path, MemorySource.Rule)
+                    else -> add(path, source, rule = true)
                 }
             }
         }
@@ -169,6 +218,12 @@ object MemoryLoader {
         private fun append(path: String, source: MemorySource, body: String, fileTruncated: Boolean) {
             val remaining = limits.totalChars - used
             val content = when {
+                // 按需加载：放不下的整份不收，也不占预算——模型要的话自己 Read
+                wholeFilesOnly && body.length > remaining -> {
+                    notes += "按需加载的记忆合计超过 ${limits.totalChars} 字符，$path 未加载"
+                    files += LoadedMemoryFile(GuestPath(path), source, ATTACH_NOT_LOADED)
+                    return
+                }
                 remaining <= 0 -> {
                     notes += "记忆文件合计超过 ${limits.totalChars} 字符，$path 未加载"
                     NOT_LOADED.format(limits.totalChars)
@@ -220,15 +275,15 @@ object MemoryLoader {
         return "/" + parts.joinToString("/")
     }
 
-    private fun join(dir: String, name: String): String = normalize("$dir/$name")
+    internal fun join(dir: String, name: String): String = normalize("$dir/$name")
 
-    private fun parentOf(path: String): String = normalize(path.substringBeforeLast('/', "/").ifEmpty { "/" })
+    internal fun parentOf(path: String): String = normalize(path.substringBeforeLast('/', "/").ifEmpty { "/" })
 
     /** `/`、`/a`、`/a/b`……直到 [path] 本身，宽 → 窄 */
-    private fun ancestors(path: String): List<String> {
+    internal fun ancestors(path: String): List<String> {
         val parts = path.split('/').filter { it.isNotEmpty() }
         return listOf("/") + parts.indices.map { i -> "/" + parts.subList(0, i + 1).joinToString("/") }
     }
 
-    private fun isUnder(path: String, base: String): Boolean = path == base || path.startsWith("$base/")
+    internal fun isUnder(path: String, base: String): Boolean = path == base || path.startsWith("$base/")
 }

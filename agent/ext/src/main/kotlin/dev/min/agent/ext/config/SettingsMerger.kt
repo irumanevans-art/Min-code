@@ -16,6 +16,13 @@ internal object SettingsMerger {
         val managed = layers.lastOrNull { it.source == ConfigSource.Managed }
         val managedRulesOnly = managed?.allowManagedPermissionRulesOnly == true
 
+        // autoMemoryDirectory 只认 user 与 managed：项目设置能把模型的笔记引到任意目录（设计 §2.1），按敏感键处理
+        for (layer in layers) {
+            if (layer.autoMemoryDirectory != null && layer.source !in setOf(ConfigSource.User, ConfigSource.Managed)) {
+                notes += "忽略 ${layer.path} 的 autoMemoryDirectory：这个键只认 user 与 managed 设置（项目设置会把自动记忆引到任意目录）"
+            }
+        }
+
         fun <T : Any> pick(select: (SettingsLayer) -> T?): T? = layers.asReversed().firstNotNullOfOrNull(select)
 
         val defaultModes = layers.mapNotNull { layer ->
@@ -66,7 +73,9 @@ internal object SettingsMerger {
             language = pick { it.language },
             alwaysThinkingEnabled = pick { it.alwaysThinkingEnabled },
             autoMemoryEnabled = pick { it.autoMemoryEnabled },
-            autoMemoryDirectory = pick { it.autoMemoryDirectory },
+            autoMemoryDirectory = layers.asReversed()
+                .firstOrNull { it.autoMemoryDirectory != null && it.source in setOf(ConfigSource.User, ConfigSource.Managed) }
+                ?.autoMemoryDirectory,
             claudeMdExcludes = layers.flatMap { it.claudeMdExcludes }.distinct(),
             cleanupPeriodDays = pick { it.cleanupPeriodDays },
             disableAllHooks = pick { it.disableAllHooks } == true,

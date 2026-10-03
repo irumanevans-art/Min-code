@@ -8,6 +8,7 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.ForkSeeded
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
+import dev.min.agent.spi.MemoryAttached
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.TaskCreated
 import dev.min.agent.spi.TaskDeleted
@@ -130,9 +131,11 @@ internal fun forkSeed(parent: SessionState, callId: CallId, prompt: String): For
 }
 
 /**
- * 分身除了对话文字，还要接着父会话里**模型已经看得见**的两样状态，紧跟 [forkSeed] 写入：
+ * 分身除了对话文字，还要接着父会话里**模型已经看得见**的几样状态，紧跟 [forkSeed] 写入：
  * - hook 加的上下文（挂在继承来的消息上的 system-reminder）：没有它们，分身的请求前缀就与父会话不再逐字相同；
  *   发起委派的那条助手消息除外——它的工具结果在分身里换成了指令，挂在后面的上下文属于父会话那边的兄弟调用。
+ * - 按需加载的记忆（MemoryAttached）：与 hook 上下文同理，渲染在继承来的助手消息的工具结果之后，缺了前缀就对不上；同样不含发起委派的那条消息。
+ *   分身的「已加载记忆路径」由折叠从这些事件里重新算出。
  * - 任务清单：继承的对话里有 TaskCreate 的结果，分身拿着同样的编号去 TaskUpdate 就该找得到。给的是**副本**：
  *   用已有的任务事件重放出同样的编号、状态与依赖（删过的编号先建后删，之后不会复用），分身改的只是自己那份。
  */
@@ -147,6 +150,11 @@ internal fun forkInheritance(parent: SessionState, callId: CallId): List<Session
             entry === inherited.last() -> emptyList()
             else -> texts.map { HookContextAdded(HookContextTarget.ToolResults(entry.messageId), FORK_INHERITED, it) }
         }
+    }
+    // 按需加载的记忆同理（它们渲染在对应助手消息的工具结果之后）；发起委派的那条消息上的除外。
+    // 分身的「已在上下文里的记忆路径」随这些事件在折叠里重新算出，不另外传
+    val attached = inherited.dropLast(1).mapNotNull { entry ->
+        parent.memoryAttachments[entry.messageId]?.takeIf { it.isNotEmpty() }?.let { MemoryAttached(entry.messageId, it) }
     }
     val live = parent.tasks.associateBy { it.id }
     val ids = (1..parent.taskSeq).map { it.toString() }
@@ -163,7 +171,7 @@ internal fun forkInheritance(parent: SessionState, callId: CallId): List<Session
         )
         if (patch.isEmpty) null else TaskUpdated(t.id, patch)
     }
-    return contexts + created + deleted + updated
+    return contexts + attached + created + deleted + updated
 }
 
 /** 分身继承来的 hook 上下文在日志里记的「来源事件」 */

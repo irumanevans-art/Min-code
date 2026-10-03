@@ -1,5 +1,7 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.context.AutoMemory
+import dev.min.agent.context.MemoryDiscovery
 import dev.min.agent.context.MemoryLoader
 import dev.min.agent.ext.config.RuleSpecKind
 import dev.min.agent.ext.config.ConfigSource
@@ -34,6 +36,9 @@ import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.RuleKindData
 import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
+import dev.min.agent.spi.AutoMemoryInfo
+import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.LoadedMemoryFile
 import dev.min.agent.spi.MemoryLoaded
 import dev.min.agent.spi.QuestionAnswer
 import dev.min.agent.spi.QuestionAnswered
@@ -80,6 +85,19 @@ class SessionRuntime private constructor(
     @Volatile
     internal var requestGate: Semaphore? = null
 
+    /**
+     * 是否按需加载记忆。不加载记忆文件的子 agent（Explore / Plan、omitClaudeMd）也不按需加载；
+     * 由 [create] 在会话开始前定下，之后不变
+     */
+    @Volatile
+    internal var onDemandMemory: Boolean = true
+
+    /** 按需加载记忆的发现器（缓存只在内存里，丢了只是多读几次盘）。没有主目录或不按需加载时为 null */
+    internal val memoryDiscovery: MemoryDiscovery? by lazy {
+        val home = deps.memoryHome
+        if (home == null || !onDemandMemory) null else MemoryDiscovery(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
+    }
+
     private val commitLock = Mutex()
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -120,20 +138,47 @@ class SessionRuntime private constructor(
     }
 
     /**
-     * 会话创建时读一次记忆文件，快照写进日志（[MemoryLoaded]）；之后系统提示只从这份快照拼，会话内冻结。
-     * 什么都没读到、也没有要告诉人的说明时不写事件。
+     * 会话创建时读一次记忆文件与自动记忆索引，快照写进日志（[MemoryLoaded]）；之后系统提示只从这份快照拼，会话内冻结。
+     * 什么都没读到、自动记忆也没开时不写事件。
      */
+    private suspend fun loadMemory(settings: SettingsSnapshot?) {
+        val home = deps.memoryHome ?: return
+        val memory = MemoryLoader.load(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
+        val (autoFiles, autoInfo, autoNotes) = autoMemory(settings, home)
+        if (memory.files.isEmpty() && memory.notes.isEmpty() && autoFiles.isEmpty() && autoInfo == null) return
+        commit(listOf(MemoryLoaded(memory.files + autoFiles, memory.notes + autoNotes, autoInfo)), Durability.Sync)
+    }
+
     /**
-     * 会话创建时读一次 settings 各层的权限规则，快照写进日志（[PermissionRulesLoaded]），会话内冻结（与记忆同理）。
-     * 没有主目录（[KernelDeps.memoryHome] 为 null：内核测试、嵌入场景）就不读；什么都没读到、也没有说明时不写事件。
+     * 自动记忆（设计 §2）：开关 = settings 各层的 `autoMemoryEnabled`（默认开），`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
+     * 经 [KernelDeps.env] 强制关；目录 = settings 的 `autoMemoryDirectory`（合并时已只认 user / managed 层），
+     * 否则按项目键算的默认位置。开着就返回目录与用量（索引还不存在也是 0/0——提示段要告诉模型能写到哪里）。
      */
+    private suspend fun autoMemory(settings: SettingsSnapshot?, home: GuestPath): Triple<List<LoadedMemoryFile>, AutoMemoryInfo?, List<String>> {
+        val merged = settings?.merged ?: return Triple(emptyList(), null, emptyList())
+        val enabled = merged.autoMemoryEnabled ?: true
+        if (!enabled || deps.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY") == "1") return Triple(emptyList(), null, emptyList())
+        val override = merged.autoMemoryDirectory
+        val directory = when {
+            override == null -> AutoMemory.directory(deps.host.fs, state.value.created.cwd, home)
+            else -> AutoMemory.directoryOverride(home, override)
+        }
+        if (override != null && directory == null) {
+            // 合并层只认 user / managed，但值仍可能是乱的（相对路径）：按默认位置，给人记一条
+            val fallback = AutoMemory.directory(deps.host.fs, state.value.created.cwd, home)
+            val index = AutoMemory.loadIndex(deps.host.fs, fallback)
+            val note = "settings 的 autoMemoryDirectory=$override 不是绝对路径也不是 ~/ 开头，按默认位置 $fallback 处理"
+            return Triple(listOfNotNull(index.file), index.info, listOf(note))
+        }
+        val index = AutoMemory.loadIndex(deps.host.fs, requireNotNull(directory))
+        return Triple(listOfNotNull(index.file), index.info, emptyList())
+    }
+
     /**
      * 会话创建时读一次 settings：权限规则与 hooks 各写一份快照（都在会话内冻结）。
      * 项目层（project / local）的 hooks 只在工作区被信任时才进快照：它们会在手机上执行任意命令（hooks设计 §1）。
      */
-    private suspend fun loadSettings() {
-        val home = deps.memoryHome ?: return
-        val snapshot = SettingsLoader.load(deps.host.fs, state.value.created.cwd, home)
+    private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         loadPermissionRules(snapshot)
         val active = snapshot.merged.activeHooks()
         val trusted = deps.trustProjectHooks(state.value.created.cwd)
@@ -171,13 +216,6 @@ class SessionRuntime private constructor(
         }
         if (rules.isEmpty() && snapshot.notes.isEmpty()) return
         commit(listOf(PermissionRulesLoaded(rules, snapshot.notes)), Durability.Sync)
-    }
-
-    private suspend fun loadMemory() {
-        val home = deps.memoryHome ?: return
-        val memory = MemoryLoader.load(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
-        if (memory.files.isEmpty() && memory.notes.isEmpty()) return
-        commit(listOf(MemoryLoaded(memory.files, memory.notes)), Durability.Sync)
     }
 
     /**
@@ -347,13 +385,20 @@ class SessionRuntime private constructor(
             loadMemory: Boolean = true,
             loadSettings: Boolean = true,
             loadSkills: Boolean = true,
+            onDemandMemory: Boolean = true,
             hub: SessionHub? = null,
         ): SessionRuntime {
             val log = store.create(header)
             val records = log.append(listOf(created) + initial, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
-            if (loadMemory) runtime.loadMemory()
-            if (loadSettings) runtime.loadSettings()
+            runtime.onDemandMemory = onDemandMemory
+            val home = deps.memoryHome
+            if (home != null) {
+                // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照
+                val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home) else null
+                if (loadMemory) runtime.loadMemory(settings)
+                if (loadSettings) runtime.loadSettings(requireNotNull(settings))
+            }
             // 子会话的清单由 initial 带来（继承父会话那份），不再读磁盘
             if (loadSkills) runtime.loadSkills()
             if (runtime.state.value.origin == null) runtime.runSessionStart()

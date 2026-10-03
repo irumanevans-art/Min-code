@@ -111,8 +111,8 @@ class MemoryLoaderTest {
         assertEquals("a body", memory.content("/workspace/.claude/rules/a.md"))
         assertEquals(
             listOf(
-                "跳过规则 /workspace/.claude/rules/inline.md：带 paths: 的规则要在读到匹配文件时才加载，Min 尚未支持",
-                "跳过规则 /workspace/.claude/rules/scoped.md：带 paths: 的规则要在读到匹配文件时才加载，Min 尚未支持",
+                "跳过规则 /workspace/.claude/rules/inline.md：带 paths: 的规则要在读到匹配文件时才加载，会话创建时不读",
+                "跳过规则 /workspace/.claude/rules/scoped.md：带 paths: 的规则要在读到匹配文件时才加载，会话创建时不读",
             ),
             memory.notes,
         )

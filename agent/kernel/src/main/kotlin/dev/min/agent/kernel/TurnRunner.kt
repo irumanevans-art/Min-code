@@ -312,6 +312,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             // 子 agent 的工具表里没有 Skill 就不列清单：列了模型也调不了，白占 token
             skills = state.skills?.takeIf { _ -> specs.any { it.name == SkillTool.name } },
             agentInstructions = origin?.instructions,
+            autoMemory = state.autoMemory,
         )
     }
 

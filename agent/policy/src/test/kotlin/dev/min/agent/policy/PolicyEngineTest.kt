@@ -131,6 +131,22 @@ class PolicyEngineTest {
         assertEquals(Verdict.Ask, v(write("/usr/lib/x", PathScope.Rootfs), ctx(PermissionMode.AcceptEdits)))
     }
 
+    @Test
+    fun `acceptEdits treats the auto memory directory like the workspace`() {
+        // 自动记忆目录是 agent 自己的笔记（记忆按需加载设计 §2.4）：acceptEdits 放行、plan 只读、别处照旧
+        val dir = GuestPath("/root/.claude/projects/-workspace/memory")
+        val c = ctx(PermissionMode.AcceptEdits).copy(autoMemoryDir = dir)
+        assertTrue(v(write("$dir/feedback.md", PathScope.Rootfs), c) is Verdict.Allow)
+        assertTrue(v(write("$dir/MEMORY.md", PathScope.Rootfs), c) is Verdict.Allow)
+        // 目录之外照旧问；上下文没给目录（自动记忆没开）也不放开
+        assertEquals(Verdict.Ask, v(write("/root/other.md", PathScope.Rootfs), c))
+        assertEquals(Verdict.Ask, v(write("$dir/feedback.md", PathScope.Rootfs), ctx(PermissionMode.AcceptEdits)))
+        // Bash 写进记忆目录仍是命令，不在「只改文件」的范围里
+        assertEquals(Verdict.Ask, v(bash("echo x > $dir/feedback.md"), c))
+        // plan 模式照常只读
+        assertTrue(v(write("$dir/feedback.md", PathScope.Rootfs), c.copy(mode = PermissionMode.Plan)) is Verdict.Deny)
+    }
+
     // ---- 安全底线 ----
 
     @Test

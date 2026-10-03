@@ -1,5 +1,6 @@
 package dev.min.agent.spi
 
+import dev.min.agent.protocol.MessageId
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -25,6 +26,15 @@ enum class MemorySource {
 
     /** 被别的记忆文件用 `@路径` 导入的文件 */
     @SerialName("import") Import,
+
+    /** cwd 之下子目录里的 `CLAUDE.md` 一类（含其下没有 `paths:` 的规则）：模型读到那个子树里的文件时才加载，随 [MemoryAttached] 进日志 */
+    @SerialName("nested") Nested,
+
+    /** 带 `paths:` 的规则：模型读到匹配的文件时才注入，随 [MemoryAttached] 进日志 */
+    @SerialName("path_rule") PathRule,
+
+    /** 自动记忆的索引 `MEMORY.md`（模型自己写的笔记）：进系统提示里自动记忆那一段，不当「项目说明」 */
+    @SerialName("auto") Auto,
 }
 
 /**
@@ -48,6 +58,34 @@ data class LoadedMemoryFile(
 @Serializable
 @SerialName("memory_loaded")
 data class MemoryLoaded(
+    val files: List<LoadedMemoryFile>,
+    val notes: List<String> = emptyList(),
+    /** 自动记忆开着时的目录与索引用量；null = 没开（系统提示里就没有自动记忆那一段） */
+    val autoMemory: AutoMemoryInfo? = null,
+) : SessionEvent
+
+/**
+ * 自动记忆（docs/agent/detail/记忆按需加载与自动记忆设计.md §2）在会话创建时的状态，随 [MemoryLoaded] 冻结。
+ * 索引正文在 [MemoryLoaded.files] 里（来源 [MemorySource.Auto]，已按行数与字节数截断）；这里只记提示要用的两样：
+ * 记忆目录，以及索引有多少行、加载进来多少行（模型据此知道该不该整理）。索引不存在时两个行数都是 0。
+ */
+@Serializable
+data class AutoMemoryInfo(
+    val directory: GuestPath,
+    val totalLines: Int = 0,
+    val loadedLines: Int = 0,
+)
+
+/**
+ * 工具调用碰到文件之后按需加载的记忆（子目录的 CLAUDE.md、带 `paths:` 的规则），同一批调用合成一条。
+ * 挂在**发起这批调用的助手消息**上，模型视图里渲染在那批工具结果之后（hook 上下文之后）。
+ * [files] 的 content 是进模型的原样文本，与会话创建时的快照同一套加工（规则去 frontmatter、超长截断带说明）；
+ * [notes] 只给人看。
+ */
+@Serializable
+@SerialName("memory_attached")
+data class MemoryAttached(
+    val assistantMessageId: MessageId,
     val files: List<LoadedMemoryFile>,
     val notes: List<String> = emptyList(),
 ) : SessionEvent

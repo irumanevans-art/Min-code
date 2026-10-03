@@ -106,6 +106,8 @@ class SkillSessionTest {
             zone = base.zone,
             retry = base.retry,
             memoryHome = home,
+            // 本测试只管记忆文件与 skill 清单：把默认开启的自动记忆关掉（它有自己的 AutoMemorySessionTest）
+            env = { name -> if (name == "CLAUDE_CODE_DISABLE_AUTO_MEMORY") "1" else null },
         )
     }
 

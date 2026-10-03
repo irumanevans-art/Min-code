@@ -295,7 +295,7 @@ class SessionHub(
             )
             initial += forkSeed(ps, callId, request.prompt)
             initial += forkInheritance(ps, callId)
-            if (ps.memory.isNotEmpty()) initial += MemoryLoaded(ps.memory)
+            if (ps.memory.isNotEmpty() || ps.autoMemory != null) initial += MemoryLoaded(ps.memory, autoMemory = ps.autoMemory)
         } else {
             val model = resolveModel(request.model ?: definition.model, ps.settings.model)
                 ?: return DelegateResult.Rejected("不认识模型「${request.model ?: definition.model}」。不写 model 就用当前模型。")
@@ -317,6 +317,8 @@ class SessionHub(
         val child = SessionRuntime.create(
             store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps),
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
+            // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载；分身照常——它接着父会话的活干
+            onDemandMemory = definition == null || !definition.omitMemory,
         )
         child.requestGate = childGate
         register(child)
