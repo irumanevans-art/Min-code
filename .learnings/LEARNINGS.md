@@ -1515,3 +1515,32 @@ Snapshot both HEAD and git status around shared-worktree integration. Keep unrel
 ### Resolution
 - **Resolved**: 2026-10-03T12:22:38+08:00
 - **Notes**: One final serial invocation passed all 12 agent checks (1199 tests), app:testDebugUnitTest (1706 passed, one existing skipped test), and app:assembleDebug. The temporary converter was removed and the replacement was verified through real HTTP transport.
+
+## [LRN-20261004-B5-BRIDGE] best_practice
+
+**Logged**: 2026-10-04T02:45:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+分步接入统一注册表时，适配器必须观察旧页面创建的会话，并保留终态边沿；内核回合结束的 Idle 也要参与通知判定。
+
+### Details
+B4 的 ClaudeCodeEngine 原先只报告经自己的 create/open 包装过的会话，并过滤 Closed/Failed。B5 时页面仍经旧 ClaudeCodeSessionRegistry 创建会话，直接接 DI 会漏掉保活、审批和退出通知。改为观察旧注册表的摘要并经映射器投影，终态保留但 keepAlive=false。状态与 keepAlive 必须来自同一帧，不能混用聚合流的旧摘要与 manager 的新状态。通知应答包装现有进程时不能切活跃会话，点击通知直达时才同步旧活跃项。Min 没有常驻 CLI，完成后是 Idle，新版 supervisorDiff 需要识别这一结束边沿。debug 的 applicationId 含 .debug，而接收器类名只有一层 .debug，adb 广播须用完整类名；相对组件名误拼后可能仍返回 result=0，必须再核对实际日志。
+
+### Suggested Action
+分步迁移先测旧入口创建、新入口观察、退出终态，以及两个注册表的活跃项是否按预期同步。DI 接线后调试驱动必须使用同一单例，不能另建不可见的引擎。
+
+### Metadata
+- Source: conversation
+- Related Files: app/src/main/java/dev/min/code/core/engine/claude/ClaudeCodeEngine.kt, app/src/main/java/dev/min/code/core/engine/SupervisorDiff.kt, app/src/debug/java/dev/min/code/debug/MinAgentDebugReceiver.kt
+- Tags: registry, migration, foreground-service, lifecycle
+- Pattern-Key: engine.registry_legacy_bridge
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-04T02:45:00+08:00
+- **Notes**: 新增桥接与 Min 生命周期测试，原 B0 断言保持不变；完整单测和构建通过，并在 emulator-5554 验证通知应答。
+
+---

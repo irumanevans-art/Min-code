@@ -4,6 +4,45 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import dev.min.code.MainActivity
+import android.net.Uri
+import dev.min.code.R
+import dev.min.code.core.engine.EngineKind
+import dev.min.code.core.engine.SessionRef
+
+const val EXTRA_SESSION_ENGINE = "session_engine"
+const val EXTRA_SESSION_ID = "session_id"
+
+/** data 也参与 PendingIntent 身份，不能只靠 requestCode 散列或 extras，避免串到另一个会话。 */
+internal fun openSessionIntent(context: Context, ref: SessionRef): PendingIntent =
+    pageIntent(context, stableKeyInt(ref.storageKey)) {
+        data = Uri.Builder().scheme("min-session").authority(ref.engine.name).appendPath(ref.id).build()
+        putExtra(EXTRA_SESSION_ENGINE, ref.engine.name)
+        putExtra(EXTRA_SESSION_ID, ref.id)
+    }
+
+internal fun Intent.sessionRef(): SessionRef? {
+    val engine = getStringExtra(EXTRA_SESSION_ENGINE)?.let { value -> EngineKind.entries.firstOrNull { it.name == value } } ?: return null
+    val id = getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() } ?: return null
+    return SessionRef(engine, id)
+}
+
+internal fun interactionNotificationId(ref: SessionRef): Int = when (ref.engine) {
+    EngineKind.ClaudeCode -> 3_000_000 + (stableKeyInt(ref.id) and 0x7FFFF)
+    EngineKind.Codex -> CODEX_APPROVAL_NOTIFICATION_ID
+    EngineKind.MinAgent -> 7_000_000 + (stableKeyInt(ref.storageKey) and 0x7FFFF)
+}
+
+internal fun sessionDoneNotificationId(ref: SessionRef): Int = when (ref.engine) {
+    EngineKind.ClaudeCode -> 4_000_000 + (stableKeyInt(ref.id) and 0x7FFFF)
+    EngineKind.Codex -> CODEX_DONE_NOTIFICATION_ID
+    EngineKind.MinAgent -> 8_000_000 + (stableKeyInt(ref.storageKey) and 0x7FFFF)
+}
+
+internal fun Context.engineName(kind: EngineKind): String = getString(when (kind) {
+    EngineKind.ClaudeCode -> R.string.session_engine_claude
+    EngineKind.Codex -> R.string.session_engine_codex
+    EngineKind.MinAgent -> R.string.session_engine_min
+})
 
 /*
  * 通知的点击落点。

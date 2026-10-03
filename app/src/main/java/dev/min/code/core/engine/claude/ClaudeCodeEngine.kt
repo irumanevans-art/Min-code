@@ -25,14 +25,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 
 /**
  * Claude Code 引擎（设计 §4.1）：包住现有的 [ClaudeCodeSessionRegistry]（多会话、并发上限 3、pruneDead），
- * 把它持有的每个 [ClaudeCodeManager] 套成 [ClaudeCodeSession]。**B4 不接线**：没有人构造它，注册表和 manager
- * 一行没改；B9 把 `ClaudeCodeSessionRegistry` 的逻辑拆进来时再决定要不要保留这层包装。
+ * 把它持有的每个 [ClaudeCodeManager] 套成 [ClaudeCodeSession]。注册表和 manager 的行为保留；
+ * B5 接线后也观察旧页面创建的会话，B9 再把旧注册表的逻辑拆进来。
  *
  * @param availability 环境是否就绪（CLI 装好、已连接）。由组合根算好传进来：这个类不认识 installer / settings
  * @param currentProfile 当前激活的供应商档 id 与「id -> 名字」表，映射出「会话还在用旧档」的角标
@@ -70,13 +68,16 @@ class ClaudeCodeEngine internal constructor(
      * 在线会话（进程活着）的摘要，供 Supervisor / 前台服务 / 抽屉用。CC 的 [LiveSessionSummary.keepAlive] 就是
      * 「进程还活着」；崩了的壳（Closed / Failed）不算在线，与 `ClaudeCodeSessionRegistry.LiveSession.isLive` 同口径。
      */
-    override val live: StateFlow<List<LiveSessionSummary>> = sessions.flatMapLatest { map ->
-        val flows = map.values.map { session -> session.state }
-        if (flows.isEmpty()) {
-            flowOf(emptyList())
-        } else {
-            combine(flows) { states ->
-                states.filter { it.status.isLiveStatus() }.map { it.toLiveSummary(keepAlive = true) }
+    // B5–B8 页面仍经旧注册表建会话；在线来源必须跟着它，不能只看新接口交出去的包装。
+    // 保留 Closed / Failed 那一帧供监督器判退出，只把 keepAlive 置假。
+    override val live: StateFlow<List<LiveSessionSummary>> = combine(registry.liveSessions, context) { live, external ->
+        live.mapNotNull { summary ->
+            registry.get(summary.key)?.let { manager ->
+                // 状态与保活必须来自同一帧：旧聚合流可能还在 Idle，而 manager 已经 Running。
+                val state = ClaudeStateMapper.map(claudeRef(summary.key), manager.state.value, external)
+                state.takeUnless { it.status == SessionStatus.Idle }?.toLiveSummary(
+                    keepAlive = state.status == SessionStatus.Running || state.status == SessionStatus.Starting,
+                )
             }
         }
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -101,6 +102,10 @@ class ClaudeCodeEngine internal constructor(
     }
 
     override suspend fun open(id: String): Result<AgentSession> = runCatching {
+        // 通知按钮只包装已有进程，不切活跃项、不重启；点击直达时由 MainActivity 同步旧活跃项。
+        registry.get(id)?.takeIf { it.isLive }?.let { manager ->
+            return@runCatching sessions.value[id]?.takeIf { it.manager === manager } ?: attach(id, manager)
+        }
         val existing = sessions.value[id]
         if (existing != null && existing.manager.isLive) return@runCatching existing
         val manager = registry.openSession(id) ?: throw AtCapacityException(capabilities.maxConcurrent)
@@ -122,7 +127,6 @@ class ClaudeCodeEngine internal constructor(
         sessions.value = emptyMap()
     }
 
-    private fun SessionStatus.isLiveStatus() = this == SessionStatus.Running || this == SessionStatus.Starting
 }
 
 /** 达到并发上限。通用注册表在调用前已经判过上限，这里是兜底（两处各算各的，不会互相冲突） */

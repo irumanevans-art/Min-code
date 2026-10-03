@@ -29,7 +29,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import dev.min.code.CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID
 import dev.min.code.R
-import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.engine.AgentSessionRegistry
+import dev.min.code.core.engine.CloseReason
+import dev.min.code.core.engine.LiveSessionSummary
 import dev.min.code.core.claudecode.ClaudeSubscription
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.session.SessionStatus
@@ -39,7 +41,7 @@ import org.koin.android.ext.android.inject
 private const val TAG = "ClaudeCodeFgs"
 
 /**
- * 让 Claude Code 的 CLI 进程在 App 退到后台 / 息屏后继续活着。
+ * 让会话树及其网络连接在 App 退到后台 / 息屏后继续活着，组件名留给旧 PendingIntent。
  *
  * ## 为什么必须有它
  *
@@ -62,7 +64,7 @@ private const val TAG = "ClaudeCodeFgs"
  *
  * ## 生命周期：拉起在外面，停止在里面
  *
- * [SessionSupervisor] 观察 [ClaudeCodeSessionRegistry.anyLive]，第一个会话起来时
+ * [SessionSupervisor] 观察 [AgentSessionRegistry.anyKeepAlive]，第一个会话起来时
  * 调 [start]。**停止不由外面 stopService，而是服务自己观察注册表，最后一个会话结束后收尾。**
  *
  * 这不是风格问题，是一次真实的崩溃：`startForegroundService()` 的契约是「服务随后必须成功
@@ -156,7 +158,7 @@ class ClaudeCodeForegroundService : Service() {
      */
     enum class KeepAlive { Stopped, Active, Rejected, Expired }
 
-    private val registry: ClaudeCodeSessionRegistry by inject()
+    private val registry: AgentSessionRegistry by inject()
     private val localServices: LocalServiceRegistry by inject()
 
     /**
@@ -191,10 +193,9 @@ class ClaudeCodeForegroundService : Service() {
         if (intent?.action == ACTION_STOP_ALL) {
             // 用户在通知上点了「停止全部」：会话 + 本地服务一起停。
             // 这里不直接 stopSelf —— shutdown 是挂起的（要给 CLI 时间落盘 transcript）。
-            registry.closeAll()
+            serviceScope.launch { registry.closeAll(CloseReason.StopAll) }
             localServices.stopAll(LocalServiceStopReason.StopAll)
-            // 「全部」要真的是全部：漏掉 Codex 的话，通知消失了而它那棵进程树还在跑
-            codex.stop()
+            // Codex 虽还走旧观察路径，关闭已由注册表里的 CodexEngine 一并执行。
             subscription.cancelLogin()
             releaseLocks()
             observeRegistry()
@@ -222,14 +223,14 @@ class ClaudeCodeForegroundService : Service() {
         observerStarted = true
         serviceScope.launch {
             combine(
-                registry.liveSessions,
+                registry.live,
                 localServices.services,
                 codex.state,
                 subscription.active,
             ) { sessions, services, codexState, loggingIn ->
                 Observed(sessions, services, codexState, loggingIn)
             }.collectLatest { (sessions, services, codexState, loggingIn) ->
-                val live = sessions.filter { it.isLive }
+                val live = sessions.filter { it.keepAlive }
                 val runningServices = services.filter {
                     it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting
                 }
@@ -238,6 +239,7 @@ class ClaudeCodeForegroundService : Service() {
                 if (live.isEmpty() && runningServices.isEmpty() && !codexLive && !loggingIn) {
                     releaseLocks()
                     delay(STOP_DEBOUNCE_MS)
+                    Log.i(TAG, "idle debounce elapsed (${STOP_DEBOUNCE_MS}ms), releasing foreground service")
                     stopForegroundAndSelf()
                     return@collectLatest
                 }
@@ -289,7 +291,7 @@ class ClaudeCodeForegroundService : Service() {
 
     /** 按注册表**此刻**的样子建通知；onStartCommand 时列表多半已经有内容，别先挂一条"正在启动" */
     private fun currentNotification(): Notification {
-        val live = registry.liveSessions.value.filter { it.isLive }
+        val live = registry.live.value.filter { it.keepAlive }
         val svc = localServices.services.value.count {
             it.status == LocalServiceStatus.Running || it.status == LocalServiceStatus.Starting
         }
@@ -298,14 +300,14 @@ class ClaudeCodeForegroundService : Service() {
 
     /** 服务盯着的四样东西。解构用 */
     private data class Observed(
-        val sessions: List<ClaudeCodeSessionRegistry.LiveSession>,
+        val sessions: List<LiveSessionSummary>,
         val services: List<LocalService>,
         val codexState: CodexAppServerManager.State,
         val loggingIn: Boolean,
     )
 
     private fun buildNotification(
-        live: List<ClaudeCodeSessionRegistry.LiveSession>,
+        live: List<LiveSessionSummary>,
         serviceCount: Int,
         codexState: CodexAppServerManager.State,
         loggingIn: Boolean,
@@ -313,35 +315,43 @@ class ClaudeCodeForegroundService : Service() {
         val busy = live.any { it.busy }
         val codexLive = codexState.status == SessionStatus.Running ||
             codexState.status == SessionStatus.Starting
-        val detail = live.firstOrNull { it.pendingPermissionTool != null }
-            ?.let { "等待批准：${it.pendingPermissionTool}" }
+        val detail = live.firstOrNull { it.headInteraction != null }
+            ?.let { getString(R.string.session_notification_waiting, it.headInteraction?.toolName
+                ?: getString(R.string.session_notification_interaction)) }
             // Codex 停在等审批上时同样要说出来：不说的话切出去之后它就无声地卡在那里，
             // 用户以为在跑，其实它在等一次点击
-            ?: codexState.pendingApproval?.let { "Codex 等待批准" }
+            ?: codexState.pendingApproval?.let { getString(R.string.session_notification_codex_waiting) }
             ?: live.firstOrNull { it.busy }?.statusText
-            ?: if (serviceCount > 0) "$serviceCount 个本地服务" else null
+            ?: if (serviceCount > 0) getString(R.string.session_notification_local_services, serviceCount) else null
         val sessionPart = when {
-            live.isEmpty() && serviceCount == 0 && !codexLive && !loggingIn -> "正在启动…"
+            live.isEmpty() && serviceCount == 0 && !codexLive && !loggingIn -> getString(R.string.session_notification_starting)
             live.isEmpty() -> null
-            busy -> "${live.size} 个会话 · 运行中"
-            else -> "${live.size} 个会话 · 空闲"
+            busy -> getString(R.string.session_notification_running, live.size)
+            else -> getString(R.string.session_notification_idle, live.size)
         }
         val codexPart = when {
             !codexLive -> null
-            codexState.busy -> "Codex · 运行中"
-            else -> "Codex · 空闲"
+            codexState.busy -> getString(R.string.session_notification_codex_running)
+            else -> getString(R.string.session_notification_codex_idle)
         }
-        val servicePart = if (serviceCount > 0) "${serviceCount} 个服务" else null
-        val loginPart = if (loggingIn) "正在登录 Claude 订阅" else null
-        val text = listOfNotNull(sessionPart, codexPart, servicePart, loginPart).joinToString(" · ")
-            .ifBlank { "后台运行中" }
+        val servicePart = if (serviceCount > 0) getString(R.string.session_notification_services, serviceCount) else null
+        val loginPart = if (loggingIn) getString(R.string.session_notification_login) else null
+        // 单引擎时保留旧文案；多引擎同跑时才补各引擎数量，避免把总数误当成 CC 数量。
+        val counts = live.groupingBy { it.ref.engine }.eachCount()
+        val enginePart = if (counts.size > 1) counts.entries.joinToString(" · ") { (kind, count) ->
+            getString(R.string.session_notification_engine_count, engineName(kind), count)
+        } else null
+        val text = listOfNotNull(sessionPart, enginePart, codexPart, servicePart, loginPart).joinToString(" · ")
+            .ifBlank { getString(R.string.session_notification_background_running) }
         return NotificationCompat.Builder(this, CLAUDE_CODE_LIVE_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_min)
             .setContentTitle("Min")
             .setContentText(text)
             .apply { detail?.takeIf { it.isNotBlank() }?.let { setSubText(it.take(60)) } }
-            .setContentIntent(openClaudeCodePageIntent(this))
-            .addAction(0, "停止全部", stopAllIntent())
+            .setContentIntent(live.firstOrNull { it.headInteraction != null }?.ref?.let { openSessionIntent(this, it) }
+                ?: live.firstOrNull()?.ref?.let { openSessionIntent(this, it) }
+                ?: if (codexLive) openCodexPageIntent(this) else openClaudeCodePageIntent(this))
+            .addAction(0, getString(R.string.session_notification_stop_all), stopAllIntent())
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -385,6 +395,7 @@ class ClaudeCodeForegroundService : Service() {
                 }
                 isForeground = true
                 _keepAlive.value = KeepAlive.Active
+                Log.i(TAG, "foreground keepAlive active (type=$type)")
                 rejectedInProcess = false
                 return true
             } catch (e: Exception) {

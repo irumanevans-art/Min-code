@@ -122,7 +122,12 @@
       android:name=".core.service.ClaudeCodePermissionReceiver"
       android:exported="false" />
 
-    <!-- Codex 审批通知的同款接收端 -->
+    <!-- 通用会话通知的应答、继续与停止命令 -->
+    <receiver
+      android:name=".core.service.SessionActionReceiver"
+      android:exported="false" />
+
+    <!-- Codex 在 B9 前保留旧审批路径 -->
     <receiver
       android:name=".core.service.CodexApprovalReceiver"
       android:exported="false" />

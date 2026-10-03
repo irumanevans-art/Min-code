@@ -34,6 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import dev.min.code.core.engine.AgentSessionRegistry
+import dev.min.code.core.engine.EngineKind
+import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.service.sessionRef
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
@@ -79,6 +84,10 @@ import dev.min.code.ui.theme.MinTheme
 import dev.min.code.ui.theme.rememberTilt
 import dev.min.code.util.LocalPreviewBus
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
+import dev.min.code.core.engine.EngineAvailability
+import android.util.Log
 import kotlinx.coroutines.launch
 import me.rerere.workspace.WorkspaceStorageArea
 import org.koin.android.ext.android.inject
@@ -162,6 +171,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         routeProviderLink(intent)
+        routeSessionNotification(intent)
         // 通知（保活 / 审批提醒）点进来直接落到会话页；它是首页，清到栈底即可
         if (intent.getBooleanExtra(EXTRA_OPEN_CLAUDE_CODE, false)) {
             navStack?.let { stack ->
@@ -173,6 +183,26 @@ class MainActivity : ComponentActivity() {
             navStack?.let { stack ->
                 while (stack.size > 1) stack.removeLastOrNull()
                 if (stack.lastOrNull() != Screen.Codex) stack.add(Screen.Codex)
+            }
+        }
+    }
+
+    /** B5 直达：先打开通用会话；CC 页面在 B6 前仍读旧注册表，同步它的活跃项。 */
+    private fun routeSessionNotification(intent: Intent) {
+        val ref = intent.sessionRef() ?: return
+        navStack?.let { stack ->
+            while (stack.size > 1) stack.removeLastOrNull()
+            if (ref.engine == EngineKind.Codex) stack.add(Screen.Codex)
+            lifecycleScope.launch {
+                val registry: AgentSessionRegistry by inject()
+                // 冷启动时 DI 的状态流尚在读取磁盘；等就绪再打开，不能把默认 NeedsInstall 当最终结论。
+                withTimeoutOrNull(5_000) { registry.engine(ref.engine).availability.first { it == EngineAvailability.Ready } }
+                val result = registry.open(ref)
+                Log.i("SessionNotification", "open $ref result=$result")
+                if (ref.engine == EngineKind.ClaudeCode) {
+                    val legacy: ClaudeCodeSessionRegistry by inject()
+                    legacy.switchTo(ref.id)
+                }
             }
         }
     }
@@ -200,6 +230,12 @@ class MainActivity : ComponentActivity() {
             navStack = backStack
             // 冷启动那一次：栈是在这里才有的，onCreate 时还没有，routeProviderLink 无处可推
             routeProviderLink(intent)
+            routeSessionNotification(intent)
+            // 旧通知也支持冷启动路由，直到 B9 保留这两个 extra。
+            if (intent.getBooleanExtra(EXTRA_OPEN_CODEX, false) && backStack.lastOrNull() != Screen.Codex) {
+                while (backStack.size > 1) backStack.removeLastOrNull()
+                backStack.add(Screen.Codex)
+            }
         }
         // 人点了要看本机页面（rootfs 开网页那张卡、终端里的本机链接）：预览槽只长在会话页，
         // 把栈退回会话页。栈底总是会话页，它的 VM 一直活着，同一条总线上的 url 由它填位展开；
