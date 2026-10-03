@@ -77,6 +77,8 @@ import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.components.SettingRow
 import dev.min.code.ui.components.rememberInkToaster
 import dev.min.code.ui.session.AssistantEntry
+import dev.min.code.ui.session.ChangedFilesLayer
+import dev.min.code.ui.session.rememberChangedFilesLabels
 import dev.min.code.ui.session.BlankPage
 import dev.min.code.ui.session.ClaudeCodeInputBar
 import dev.min.code.ui.session.ClaudeCodeSettingsSheet
@@ -103,6 +105,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ComputerTerminal01
+import me.rerere.hugeicons.stroke.FileEdit
 import me.rerere.hugeicons.stroke.Folder01
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.Package
@@ -112,6 +115,7 @@ import me.rerere.hugeicons.stroke.Settings02
 import me.rerere.hugeicons.stroke.Stop
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.SessionStatus
+import dev.min.code.core.session.changedFiles
 
 /** Debug source set only. Fixture callbacks never resolve a ViewModel or start a CLI process. */
 class UiPreviewActivity : ComponentActivity() {
@@ -137,7 +141,7 @@ private enum class PreviewScene(val key: String, val label: String) {
     Start("start", "启动"), Blank("blank", "空白"), Loading("loading", "加载"),
     Setup("setup", "向导"), Controls("controls", "控件"),
     Conversation("conversation", "会话"), Settings("settings", "设置"),
-    Sessions("sessions", "会话列表"),
+    Sessions("sessions", "会话列表"), Files("files", "文件浮层"),
 }
 
 @Composable
@@ -236,6 +240,7 @@ private fun Preview(
                             PreviewScene.Setup -> RootfsStep(SetupVM.State(loading = false), onInstall = { scene = PreviewScene.Start }, onDismissError = {})
                             PreviewScene.Controls -> ControlsPreview()
                             PreviewScene.Sessions -> SessionsPreview()
+                            PreviewScene.Files -> ChangedFilesPreview()
                             PreviewScene.Conversation, PreviewScene.Settings -> ConversationPreview(
                                 session = session,
                                 onSession = { session = it },
@@ -287,6 +292,7 @@ private fun sceneIcon(scene: PreviewScene) = when (scene) {
     PreviewScene.Conversation -> HugeIcons.ComputerTerminal01
     PreviewScene.Settings -> HugeIcons.Settings02
     PreviewScene.Sessions -> HugeIcons.Folder01
+    PreviewScene.Files -> HugeIcons.FileEdit
 }
 
 /** 会话抽屉（右栏面板）：当前会话是蓝底 + 金框 + 「使用中」，活着的带湛点。数据全在内存。 */
@@ -554,6 +560,52 @@ private fun ConversationPreview(
  * 用量先量、吃满，停止键被量成 0 宽）。预览页要是只给一组宽松的值，
  * 这种"控件凭空消失"的回归在真机上跑到才发现。
  */
+/**
+ * 底部「改动过的文件」浮层的验收场景：一份能同时走到两条路径的假数据 ——
+ * 编辑类工具（有快照、可撤销）与 Bash 的 diff 头（没快照、只能看），加上同一个文件改两次。
+ */
+@Composable
+private fun ChangedFilesPreview() {
+    val labels = rememberChangedFilesLabels()
+    val files = remember {
+        changedFiles(
+            listOf(
+                ChatItem.ToolCall(
+                    id = "p-write", toolUseId = "p-write", name = "Write", status = ChatItem.ToolCall.Status.Done,
+                    input = JsonObject(mapOf("file_path" to JsonPrimitive("/workspace/docs/guide.md"))),
+                    editDiff = "new file mode\n--- a/docs/guide.md\n+++ b/docs/guide.md\n+# 指南\n+第一段\n+第二段",
+                ),
+                ChatItem.ToolCall(
+                    id = "p-edit1", toolUseId = "p-edit1", name = "Edit", status = ChatItem.ToolCall.Status.Done,
+                    input = JsonObject(mapOf("file_path" to JsonPrimitive("/workspace/src/Sea.kt"))),
+                    editDiff = "--- a/src/Sea.kt\n+++ b/src/Sea.kt\n-val a = 1\n+val a = 2\n 上下文行",
+                ),
+                ChatItem.ToolCall(
+                    id = "p-edit2", toolUseId = "p-edit2", name = "Edit", status = ChatItem.ToolCall.Status.Done,
+                    input = JsonObject(mapOf("file_path" to JsonPrimitive("/workspace/src/Sea.kt"))),
+                    editDiff = "--- a/src/Sea.kt\n+++ b/src/Sea.kt\n-val b = 3\n+val b = 4",
+                ),
+                ChatItem.ToolCall(
+                    id = "p-bash", toolUseId = "p-bash", name = "Bash", status = ChatItem.ToolCall.Status.Done,
+                    input = JsonObject(mapOf("command" to JsonPrimitive("rm -f build/old.o"))),
+                    editDiff = "deleted file mode\n--- a/build/old.o\n+++ b/build/old.o",
+                ),
+            ),
+        )
+    }
+    var undone by remember { mutableStateOf(emptySet<String>()) }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        ChangedFilesLayer(
+            files = files,
+            undoneIds = undone,
+            labels = labels,
+            onJumpTo = {},
+            onUndo = { ids -> undone = undone + ids },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
 private fun fixtureSession() = ClaudeCodeManager.SessionState(
     status = SessionStatus.Running,
     sessionId = "ui-preview",

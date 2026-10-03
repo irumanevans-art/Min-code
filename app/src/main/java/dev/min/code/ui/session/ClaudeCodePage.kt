@@ -163,6 +163,7 @@ import org.koin.androidx.compose.koinViewModel
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import dev.min.code.core.session.ChatItem
+import dev.min.code.core.session.changedFiles
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.session.escapedPaths
 import dev.min.code.core.session.touchesDeviceStorage
@@ -966,6 +967,8 @@ private fun SessionContent(
     onComposerFocusChange: (Boolean) -> Unit = {},
 ) {
     val listState = rememberLazyListState()
+    // 「跳到改动的那一轮」要滚列表，滚完就不跟底了（见 [onJumpTo]）
+    val scope = rememberCoroutineScope()
     // 只在「有没有流式内容」翻转时才让本函数重组，正文每长一截不算
     val streaming by remember(liveSession) {
         derivedStateOf { liveSession.value.let { it.streamingText.isNotBlank() || it.streamingThinking.isNotBlank() } }
@@ -996,6 +999,13 @@ private fun SessionContent(
     freshEntries.tail = remember(session.items) {
         session.items.takeLast(FRESH_TAIL).mapTo(HashSet()) { it.id }
     }
+
+    // 本会话改过的文件（底部浮层用）。纯函数，只读 items；会话长起来之后按 items 缓存
+    val changed = remember(session.items) { changedFiles(session.items) }
+    val changedLabels = rememberChangedFilesLabels()
+    // 撤销过的条目：撤销只动文件、不动对话历史，所以这件事只在本页面会话内记得 —— 重开会话就忘了，
+    // 那时文件本来也已经被改回去了（快照可以重复 restore，状态是幂等的）
+    var undoneIds by remember(activeKey) { mutableStateOf(emptySet<String>()) }
 
     // 用户手动开合过的块（key = 块内第一条的 id）。null = 没动过，跟默认走。
     // 提在这里而不是各块内部：LazyColumn 会把滚出屏幕的条目连同它的 remember 一起回收，
@@ -1297,6 +1307,30 @@ private fun SessionContent(
                 .onSizeChanged { bottomChromePx = it.height },
         ) {
             Column(Modifier.fillMaxWidth()) {
+                // 改动过的文件：收起态是一条细条，点开成可拖的浮层（不挡会话流）
+                ChangedFilesLayer(
+                    files = changed,
+                    undoneIds = undoneIds,
+                    labels = changedLabels,
+                    onJumpTo = { itemId ->
+                        val index = blocks.indexOfFirst { block ->
+                            when (block) {
+                                is TranscriptBlock.Single -> block.item.id == itemId
+                                is TranscriptBlock.Work -> block.items.any { it.id == itemId }
+                            }
+                        }
+                        if (index >= 0) {
+                            follow.detach()
+                            scope.launch { listState.animateScrollToItem(index) }
+                        }
+                    },
+                    onUndo = { ids: List<String> ->
+                        val file = changed.firstOrNull { f -> f.changes.any { it.toolUseId in ids } }
+                        undoneIds = undoneIds + ids
+                        vm.revertFile(file?.name ?: "文件", ids)
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
                 val hasPlan = !session.plan.isNullOrBlank()
                 AnimatedVisibility(visible = hasPlan, enter = InkMotion.rise, exit = InkMotion.sink) {
                     PlanBanner(onOpenPlan)
