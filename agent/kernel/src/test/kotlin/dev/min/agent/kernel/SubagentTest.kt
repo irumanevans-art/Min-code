@@ -284,6 +284,28 @@ class SubagentTest {
     }
 
     @Test
+    fun `a child inherits the parent's hooks together with the merged http policy`() = run {
+        val model = RoutingModel { req ->
+            when {
+                req.last() == "查一下" -> reply(TextPart("查完了"))
+                req.messages.size == 1 -> reply(agentCall("c1", "prompt" to "查一下", "run_in_background" to false), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool))
+        val hooks = dev.min.agent.spi.HooksLoaded(
+            listOf(dev.min.agent.spi.HookSourceData("user", JsonObject(emptyMap()))),
+            httpPolicy = dev.min.agent.spi.HttpPolicyData(allowedUrls = emptyList(), allowedEnvVars = listOf("A")),
+        )
+        val parent = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default, initial = listOf(hooks))
+        parent.send(msg(), text("开始"))
+        val done = parent.state.first { it.turn == null && it.lastTurn != null }
+        val child = h.get(done.children.keys.single())!!
+        assertEquals(hooks.sources, child.state.value.hooks)
+        assertEquals("空数组的闸也要带给子 agent", hooks.httpPolicy, child.state.value.hooksHttpPolicy)
+    }
+
+    @Test
     fun `a fork may not delegate again`() = run {
         val model = RoutingModel { req ->
             val last = req.last()

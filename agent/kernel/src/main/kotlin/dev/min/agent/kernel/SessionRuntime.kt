@@ -4,7 +4,6 @@ import dev.min.agent.context.AutoMemory
 import dev.min.agent.context.MemoryDiscovery
 import dev.min.agent.context.MemoryLoader
 import dev.min.agent.ext.config.RuleSpecKind
-import dev.min.agent.ext.config.ConfigSource
 import dev.min.agent.ext.config.SettingsLoader
 import dev.min.agent.ext.config.SettingsSnapshot
 import dev.min.agent.ext.hooks.HookEvent
@@ -13,6 +12,7 @@ import dev.min.agent.ext.hooks.SessionStartInput
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.HookSourceData
+import dev.min.agent.spi.HttpPolicyData
 import dev.min.agent.spi.HooksLoaded
 import kotlinx.serialization.json.jsonObject
 import dev.min.agent.protocol.ApprovalId
@@ -180,21 +180,15 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         loadPermissionRules(snapshot)
-        val active = snapshot.merged.activeHooks()
-        val trusted = deps.trustProjectHooks(state.value.created.cwd)
-        val (kept, untrusted) = active.partition { trusted || it.source == ConfigSource.User || it.source == ConfigSource.Managed }
-        val notes = untrusted.map { s ->
-            "${s.source.label} 层带了 ${s.hooks.size} 个事件的 hooks，这个工作区还没被信任，未启用"
-        }
-        if (kept.isNotEmpty() || notes.isNotEmpty()) {
+        // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
+        val hooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
+        val policy = hooks.httpPolicy.takeIf { it.allowedUrls != null || it.allowedEnvVars != null }
+            ?.let { HttpPolicyData(it.allowedUrls, it.allowedEnvVars) }
+        // 只有闸、没有任何 hook 也没有说明时没有东西可冻结（闸只管 http hook）
+        if (hooks.sources.isNotEmpty() || hooks.notes.isNotEmpty()) {
             // http 的两道闸随快照一起冻结：设置只在会话创建时读得到，之后 hook 执行时再看就晚了
             commit(
-                listOf(
-                    HooksLoaded(
-                        kept.map { HookSourceData(it.source.label, it.hooks, it.allowedHttpHookUrls, it.httpHookAllowedEnvVars) },
-                        notes,
-                    ),
-                ),
+                listOf(HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy)),
                 Durability.Sync,
             )
         }

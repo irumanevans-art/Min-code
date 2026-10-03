@@ -368,7 +368,7 @@ class SessionHub(
         // hooks 同理：父会话的门禁（PreToolUse 拦危险命令之类）在子 agent 里照样生效
         return listOfNotNull(
             if (rules.isEmpty()) null else PermissionRulesLoaded(rules),
-            if (parent.hooks.isEmpty()) null else HooksLoaded(parent.hooks),
+            if (parent.hooks.isEmpty()) null else HooksLoaded(parent.hooks, httpPolicy = parent.hooksHttpPolicy),
         )
     }
 

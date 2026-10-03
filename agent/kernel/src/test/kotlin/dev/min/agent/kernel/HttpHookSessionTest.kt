@@ -19,6 +19,7 @@ import dev.min.agent.spi.HttpHookClient
 import dev.min.agent.spi.HttpHookRequest
 import dev.min.agent.spi.HttpHookResult
 import dev.min.agent.spi.HooksRan
+import dev.min.agent.spi.HttpPolicyData
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.SessionEvent
@@ -155,15 +156,20 @@ class HttpHookSessionTest {
         http: FakeHttp,
         env: Map<String, String> = emptyMap(),
         tools: List<Tool<*>> = listOf(bash),
+        fs: FakeFs = FakeFs(),
+        memoryHome: GuestPath? = null,
+        trustProject: Boolean = false,
     ): SessionRuntime {
         val deps = KernelDeps(
             clock = { 1_000 },
             ids = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
             models = { ResolvedModel(TEST_PROFILE, model) },
             tools = tools,
-            host = HostPorts(FakeFs(), FakeSearch(), FakeExec(), { FakeArtifacts() }, httpHooks = http),
+            host = HostPorts(fs, FakeSearch(), FakeExec(), { FakeArtifacts() }, httpHooks = http),
             platform = "test",
             zone = ZoneOffset.UTC,
+            memoryHome = memoryHome,
+            trustProjectHooks = { trustProject },
             env = { env[it] },
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
@@ -205,7 +211,8 @@ class HttpHookSessionTest {
     fun `a url outside allowedHttpHookUrls is skipped and never sent`() = runBlocking {
         val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
         val hooks = HooksLoaded(
-            listOf(HookSourceData("user", httpHook("https://hooks.example/x"), allowedHttpHookUrls = listOf("https://other.example/y"))),
+            listOf(HookSourceData("user", httpHook("https://hooks.example/x"))),
+            httpPolicy = HttpPolicyData(allowedUrls = listOf("https://other.example/y")),
         )
         val model = RoutingModel { req ->
             if (req.messages.size == 1) reply(ToolCallPart(CallId("c1"), "Bash", args("command" to "ls")), stop = StopReason.ToolUse)
@@ -280,6 +287,98 @@ class HttpHookSessionTest {
         assertEquals("两个调用都过了门禁", 2, http.sent.size)
         val results = rt.state.value.toolResults
         assertTrue("门禁说不许就都没执行", listOf("p1", "p2").all { results.getValue(CallId(it)).isError })
+    }
+
+    private fun lsModel() = RoutingModel { req ->
+        if (req.messages.size == 1) reply(ToolCallPart(CallId("c1"), "Bash", args("command" to "ls")), stop = StopReason.ToolUse)
+        else reply(TextPart("好"))
+    }
+
+    @Test
+    fun `an empty allowedUrls policy blocks every http hook`() = runBlocking {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val hooks = HooksLoaded(
+            listOf(HookSourceData("user", httpHook("https://hooks.example/x"))),
+            httpPolicy = HttpPolicyData(allowedUrls = emptyList()),
+        )
+        val rt = session(lsModel(), hooks, http)
+        rt.say("跑一下")
+        assertTrue("allowedHttpHookUrls: [] = 拦掉所有 http hook", http.sent.isEmpty())
+    }
+
+    @Test
+    fun `a url pattern with a wildcard lets matching http hooks through`() = runBlocking {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val hooks = HooksLoaded(
+            listOf(HookSourceData("user", httpHook("https://Hooks.Example.com/pre/tool"))),
+            httpPolicy = HttpPolicyData(allowedUrls = listOf("https://hooks.example.com/*")),
+        )
+        val rt = session(lsModel(), hooks, http)
+        rt.say("跑一下")
+        assertEquals(1, http.sent.size)
+    }
+
+    @Test
+    fun `an empty allowedEnvVars policy interpolates nothing`() = runBlocking {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val headers = JsonObject(mapOf("Authorization" to JsonPrimitive("Bearer \$TOKEN")))
+        val hooks = HooksLoaded(
+            listOf(HookSourceData("user", httpHook("https://hooks.example/x", allowedEnvVars = listOf("TOKEN"), headers = headers))),
+            httpPolicy = HttpPolicyData(allowedEnvVars = emptyList()),
+        )
+        val rt = session(lsModel(), hooks, http, env = mapOf("TOKEN" to "t0k"))
+        rt.say("跑一下")
+        assertEquals("Bearer ", http.sent.single().headers["Authorization"])
+    }
+
+    @Test
+    fun `old logs that carried the gates on each source still decode (unknown keys ignored)`() {
+        val old = """{"type":"hooks_loaded","sources":[{"source":"user","hooks":{},"allowedHttpHookUrls":["https://a/*"]}],"notes":["x"]}"""
+        val e = dev.min.agent.protocol.AgentJson.decodeFromString(SessionEvent.serializer(), old) as HooksLoaded
+        assertEquals(listOf("x"), e.notes)
+        assertNull(e.httpPolicy)
+    }
+
+    private val userHttpHook = """"hooks":${httpHook("https://hooks.example/x")}"""
+
+    private suspend fun loadedFrom(fs: FakeFs, trust: Boolean): HooksLoaded? {
+        val rt = session(RoutingModel { reply(TextPart("好")) }, null, FakeHttp { HttpHookResult.Responded(200, "{}") },
+            fs = fs, memoryHome = GuestPath("/root"), trustProject = trust)
+        return store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksLoaded>().lastOrNull()
+    }
+
+    @Test
+    fun `an untrusted project layer cannot switch off the user's hooks`() = runBlocking {
+        val fs = FakeFs()
+        fs.put("/root/.claude/settings.json", "{$userHttpHook}")
+        fs.put("/workspace/.claude/settings.json", """{"disableAllHooks":true}""")
+        fs.put("/workspace/.claude/settings.local.json", """{"disableAllHooks":true}""")
+        val loaded = loadedFrom(fs, trust = false)!!
+        assertEquals(listOf("user"), loaded.sources.map { it.source })
+        assertEquals(2, loaded.notes.size)
+        assertTrue(loaded.notes.joinToString(), loaded.notes.all { it.contains("disableAllHooks") && it.contains("还没被信任") })
+    }
+
+    @Test
+    fun `a trusted project layer's disableAllHooks does switch them off`() = runBlocking {
+        val fs = FakeFs()
+        fs.put("/root/.claude/settings.json", "{$userHttpHook}")
+        fs.put("/workspace/.claude/settings.json", """{"disableAllHooks":true}""")
+        assertNull(loadedFrom(fs, trust = true))
+    }
+
+    @Test
+    fun `a managed gate without hooks and untrusted project gates end up in the frozen policy`() = runBlocking {
+        val fs = FakeFs()
+        fs.put("/root/.claude/settings.json", "{$userHttpHook}")
+        fs.put("/etc/claude-code/managed-settings.json", """{"allowedHttpHookUrls":["https://corp.example/*"]}""")
+        fs.put("/workspace/.claude/settings.json", """{"allowedHttpHookUrls":["https://hooks.example/*"]}""")
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val rt = session(lsModel(), null, http, fs = fs, memoryHome = GuestPath("/root"), trustProject = false)
+        val loaded = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksLoaded>().single()
+        assertEquals(listOf("https://corp.example/*"), loaded.httpPolicy!!.allowedUrls)
+        rt.say("跑一下")
+        assertTrue("managed 的闸挡住了用户的 http hook，项目层的闸没被信任所以放不了行", http.sent.isEmpty())
     }
 
     @Test

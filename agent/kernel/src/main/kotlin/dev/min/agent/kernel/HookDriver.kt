@@ -64,12 +64,11 @@ internal class HookDriver(private val rt: SessionRuntime) {
     private val httpRunner = HookHttpRunner(deps.host.httpHooks)
 
     /**
-     * 各层的 http hook 闸合并（settings 的列表语义是叠加）。设置只在会话创建时读过一次，
-     * 所以清单随 [dev.min.agent.spi.HooksLoaded] 的快照一起冻结，这里只做合并
+     * http hook 的两道闸。设置只在会话创建时读过一次，合并后的结果随 [dev.min.agent.spi.HooksLoaded] 的快照冻结，
+     * 这里只是取出来；没有这个字段（旧日志、没配过闸）= 不设限
      */
-    private fun httpPolicy(): HttpHookPolicy = HttpHookPolicy.merge(
-        rt.state.value.hooks.map { HttpHookPolicy(it.allowedHttpHookUrls, it.httpHookAllowedEnvVars) },
-    )
+    private fun httpPolicy(): HttpHookPolicy =
+        rt.state.value.hooksHttpPolicy?.let { HttpHookPolicy(it.allowedUrls, it.allowedEnvVars) } ?: HttpHookPolicy(null, null)
 
     /**
      * 跑 [event] 的 hooks。[specific] 是事件专属的输入字段（已序列化成 JSON 对象）；[ifMatches] 判定处理器的 `if` 条件。

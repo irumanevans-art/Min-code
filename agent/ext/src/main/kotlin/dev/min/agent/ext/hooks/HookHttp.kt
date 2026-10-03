@@ -11,17 +11,39 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * settings 里的两道 http hook 闸（CC settings-reference：allowedHttpHookUrls / httpHookAllowedEnvVars）：
- * 「在任意一层定义过，HTTP hook 的 URL 就必须命中合并后的允许清单」「定义过就只插值清单上的环境变量」。
- * null 表示所有层都没定义——不设这道闸。URL 匹配按整串相等处理；CC 文档没写粒度（前缀/模式），这是
- * 最保守的读法，设计文档 §9 记了这个空白。
+ * 「在任意一层定义过，HTTP hook 的 URL 就必须命中合并后的允许清单；空数组拦掉所有 http hook」「定义过就只插值清单上的环境变量」。
+ * null 表示所有生效层都没定义——不设这道闸；**空列表是定义过**，意思是一个都不放。
+ *
+ * URL 模式按 CC 的写法：`*` 是通配（匹配任意字符，含斜杠，所以主机名后面接斜杠再接通配符就管住整个站，
+ * `http://localhost:` 后面接通配符管住任意端口），其余字符照字面；协议与主机名大小写不敏感，主机名末尾的 `.`（FQDN 写法）
+ * 与没有它等价，路径与查询区分大小写。
  */
 data class HttpHookPolicy(val allowedUrls: List<String>?, val allowedEnvVars: List<String>?) {
-    fun allowsUrl(url: String): Boolean = allowedUrls == null || url in allowedUrls
+    fun allowsUrl(url: String): Boolean = allowedUrls == null || allowedUrls.any { urlMatches(it, url) }
 
     /** 环境变量闸：没定义就不限制；定义了就只放行清单上的名字 */
     fun allowsEnvVar(name: String): Boolean = allowedEnvVars == null || name in allowedEnvVars
 
     companion object {
+        /** 模式 [pattern] 是否整串匹配 [url]（规则见类注释） */
+        fun urlMatches(pattern: String, url: String): Boolean {
+            val regex = pattern.let(::canonical).split('*').joinToString(".*") { Regex.escape(it) }
+            return Regex(regex, RegexOption.DOT_MATCHES_ALL).matches(canonical(url))
+        }
+
+        /** 协议与主机名转小写、去掉主机名末尾的点；`*` 原样保留（模式的主机部分也可能带通配） */
+        private fun canonical(raw: String): String {
+            val schemeEnd = raw.indexOf("://")
+            if (schemeEnd < 0) return raw
+            val authorityStart = schemeEnd + 3
+            val authorityEnd = raw.indexOfAny(charArrayOf('/', '?', '#'), authorityStart).let { if (it < 0) raw.length else it }
+            val authority = raw.substring(authorityStart, authorityEnd)
+            // 主机在端口之前；IPv6 方括号里的冒号不是端口分隔
+            val hostEnd = authority.lastIndexOf(':').takeIf { it > authority.lastIndexOf(']') } ?: authority.length
+            val host = authority.substring(0, hostEnd).lowercase().removeSuffix(".")
+            return raw.substring(0, schemeEnd).lowercase() + "://" + host + authority.substring(hostEnd) + raw.substring(authorityEnd)
+        }
+
         /** 各层清单合并（settings 的列表语义是叠加，同 permissions.allow）；全部未定义才保持未定义 */
         fun merge(layers: List<HttpHookPolicy>): HttpHookPolicy {
             fun merged(pick: (HttpHookPolicy) -> List<String>?) =

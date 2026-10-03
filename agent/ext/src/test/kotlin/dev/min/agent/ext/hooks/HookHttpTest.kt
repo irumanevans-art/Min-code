@@ -87,6 +87,21 @@ class HookHttpTest {
         assertNull(HttpHookPolicy.merge(listOf(HttpHookPolicy(null, null), HttpHookPolicy(null, null))).allowedUrls)
     }
 
+    @Test fun `URL 模式里星号是通配 主机名大小写不敏感 空清单一个都不放`() {
+        val policy = HttpHookPolicy(listOf("https://hooks.example.com/*", "http://localhost:*"), null)
+        assertTrue(policy.allowsUrl("https://hooks.example.com/pre-tool?x=1"))
+        assertTrue(policy.allowsUrl("https://HOOKS.Example.COM/a/b"))
+        assertTrue("FQDN 末尾的点与没有等价", policy.allowsUrl("https://hooks.example.com./a"))
+        assertTrue(policy.allowsUrl("http://localhost:8080/x"))
+        assertFalse("协议不同", policy.allowsUrl("http://hooks.example.com/a"))
+        assertFalse("别的主机", policy.allowsUrl("https://hooks.example.com.evil.net/a"))
+        assertFalse("userinfo 骗主机", policy.allowsUrl("https://hooks.example.com@evil.net/a"))
+        assertFalse(policy.allowsUrl("https://evil.net/https://hooks.example.com/a"))
+        assertFalse("路径区分大小写的那一半仍然精确", HttpHookPolicy(listOf("https://a.example/Hook"), null).allowsUrl("https://a.example/hook"))
+        assertFalse(HttpHookPolicy(emptyList(), null).allowsUrl("https://hooks.example.com/a"))
+        assertFalse(HttpHookPolicy(null, emptyList()).allowsEnvVar("TOKEN"))
+    }
+
     @Test fun `头值插值只认两道闸都放行的变量`() {
         val gate = HttpHookPolicy(null, listOf("MY_TOKEN"))
         val headers = objectOf("""{"Authorization":"Bearer ${'$'}MY_TOKEN","X-Trial":"t-${'$'}{TRIAL}","X-Plain":"v"}""")

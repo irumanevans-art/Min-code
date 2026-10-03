@@ -18,13 +18,17 @@ import kotlinx.serialization.json.JsonObject
 data class HookSourceData(
     val source: String,
     val hooks: JsonObject,
-    /**
-     * 这一层的 `allowedHttpHookUrls`：定义过的话，`type:http` 的 URL 必须命中合并后的清单（设计 §8 H3）。
-     * 各层清单叠加，所以按层随快照冻结，由内核合并——设置只在会话创建时读一次，之后读不到。
-     */
-    val allowedHttpHookUrls: List<String>? = null,
-    /** 这一层的 `httpHookAllowedEnvVars`：定义过就只放行清单上的环境变量插值进请求头 */
-    val httpHookAllowedEnvVars: List<String>? = null,
+)
+
+/**
+ * 各生效层合并后的 `type:http` 两道闸（设计 §8 H3）。设置只在会话创建时读一次，所以随快照冻结。
+ * 列表是各层并集；**空数组是有意义的值**：[allowedUrls] 为空 = 拦掉所有 http hook，[allowedEnvVars] 为空 = 一个变量都不许插值。
+ * null = 所有生效层都没定义这道闸（不设限）。
+ */
+@Serializable
+data class HttpPolicyData(
+    val allowedUrls: List<String>? = null,
+    val allowedEnvVars: List<String>? = null,
 )
 
 /**
@@ -36,6 +40,8 @@ data class HookSourceData(
 data class HooksLoaded(
     val sources: List<HookSourceData>,
     val notes: List<String> = emptyList(),
+    /** 合并后的 http 两道闸；与哪一层写没写 hooks 无关（managed 层只下发闸、不写 hooks 也算）。没有任何一道闸时不落盘 */
+    val httpPolicy: HttpPolicyData? = null,
 ) : SessionEvent
 
 /** 一批 hook 跑完的记录：界面「hook 拦了这次调用」、调试慢 hook 都靠它。不影响模型视图 */

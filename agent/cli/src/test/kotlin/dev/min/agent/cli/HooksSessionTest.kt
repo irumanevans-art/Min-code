@@ -299,4 +299,21 @@ class HooksSessionTest {
         trusted.say("看看")
         assertTrue("信任后项目 hook 拦下了", ran.isEmpty())
     }
+
+    private fun rawSettings(json: String, project: Boolean = false) {
+        val dir = Files.createDirectories((if (project) work else home).resolve(".claude"))
+        Files.writeString(dir.resolve("settings.json"), json)
+    }
+
+    @Test
+    fun `an untrusted project's disableAllHooks cannot silence the user's gate`() = run {
+        settings(hook("PreToolUse", script("user-block", """cat > /dev/null; echo "用户门禁" >&2; exit 2"""), "Bash"))
+        rawSettings("""{"disableAllHooks": true}""", project = true)
+        val model = RoutingModel { req -> if (req.messages.size == 1) reply(bashCall("c1", "ls"), stop = StopReason.ToolUse) else reply(TextPart("好")) }
+        val (rt, store) = session(model, PermissionMode.BypassPermissions)
+        val done = rt.say("看看")
+        assertTrue("用户的门禁照样拦", ran.isEmpty())
+        assertTrue((done.toolResults.getValue(CallId("c1")).content.single() as TextPart).text.contains("用户门禁"))
+        assertTrue(store.events(rt).filterIsInstance<HooksLoaded>().single().notes.single().contains("disableAllHooks"))
+    }
 }

@@ -1,5 +1,6 @@
 package dev.min.agent.ext.config
 
+import dev.min.agent.ext.hooks.HttpHookPolicy
 import dev.min.agent.spi.GuestPath
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -66,9 +67,12 @@ data class SettingsLayer(
     val allowManagedPermissionRulesOnly: Boolean? = null,
     /** hooks 原样保留：执行是以后的事，且 hooks 在各层之间是叠加而不是覆盖 */
     val hooks: JsonObject? = null,
-    /** http hook 的 URL 白名单：定义过的话（任意一层），http hook 的 URL 必须命中合并后的清单 */
+    /**
+     * http hook 的 URL 白名单：定义过的话（任意一层，与这层写没写 hooks 无关），http hook 的 URL 必须命中合并后的清单。
+     * null = 这层没定义；**空数组是定义过**（拦掉所有 http hook），不是「没定义」
+     */
     val allowedHttpHookUrls: List<String>? = null,
-    /** http hook 头插值的环境变量白名单：定义过就只放行清单上的名字 */
+    /** http hook 头插值的环境变量白名单：定义过就只放行清单上的名字；空数组 = 一个变量都不许插值 */
     val httpHookAllowedEnvVars: List<String>? = null,
     val enabledPlugins: Map<String, Boolean> = emptyMap(),
 )
@@ -77,10 +81,16 @@ data class SettingsLayer(
 data class HookSource(
     val source: ConfigSource,
     val hooks: JsonObject,
-    /** 这一层的 http hook URL 闸；null = 这层没定义（各层叠加，由执行方合并） */
-    val allowedHttpHookUrls: List<String>? = null,
-    /** 这一层的 http hook 环境变量闸；同上 */
-    val httpHookAllowedEnvVars: List<String>? = null,
+)
+
+/**
+ * 一次会话该冻结的 hooks 快照（[MergedSettings.hookSnapshot]）：[sources] 是生效的 hooks 来源，
+ * [httpPolicy] 是各生效层合并后的 http 两道闸（与哪一层写没写 hooks 无关），[notes] 说明哪些层因没被信任而整层不生效。
+ */
+data class HookSnapshot(
+    val sources: List<HookSource>,
+    val httpPolicy: HttpHookPolicy,
+    val notes: List<String>,
 )
 
 /**
@@ -120,17 +130,47 @@ class MergedSettings internal constructor(
     /** 顶层键的原始 JSON：取最高层里设置了它的那一层的值；没人设置返回 null */
     fun raw(key: String): JsonElement? = layers.lastOrNull { key in it.raw }?.raw?.get(key)
 
+    /** 现在应当运行的 hooks 来源（所有层都算受信任）；会话该用的是 [hookSnapshot] */
+    fun activeHooks(): List<HookSource> = hookSnapshot(trustProject = true).sources
+
     /**
-     * 现在应当运行的 hooks 来源。`allowManagedHooksOnly` 只留 managed；`disableAllHooks`：
-     * managed 层自己关则全关，其余层关则只剩 managed 的（文档：「Only managed settings can disable managed hooks」）。
+     * 一次算出会话该冻结的 hooks 快照。**先按信任筛层，再算一切 hooks 相关的键**：
+     * user / managed 恒生效；project / local 只在 [trustProject] 时生效，没被信任时这两层 hooks 相关的一切键
+     * （`hooks`、`disableAllHooks`、`allowedHttpHookUrls`、`httpHookAllowedEnvVars`）都不算，各记一条说明——
+     * 否则仓库里一份 `{"disableAllHooks": true}` 就能静默关掉用户自己的门禁。
+     *
+     * 在生效的层里：`allowManagedHooksOnly` 只留 managed；`disableAllHooks`：managed 层自己关则全关，
+     * 其余层关则只剩 managed 的（文档：「Only managed settings can disable managed hooks」）。
+     * http 两道闸从所有生效层合并，列表是并集，空数组是有意义的值（见 [HttpHookPolicy]）。
      */
-    fun activeHooks(): List<HookSource> {
-        val managedOff = layers.lastOrNull { it.source == ConfigSource.Managed && it.disableAllHooks != null }?.disableAllHooks == true
-        return when {
-            managedOff -> emptyList()
-            allowManagedHooksOnly || disableAllHooks -> hooks.filter { it.source == ConfigSource.Managed }
-            else -> hooks
+    fun hookSnapshot(trustProject: Boolean): HookSnapshot {
+        val notes = mutableListOf<String>()
+        val effective = layers.filter { layer ->
+            val trusted = trustProject || layer.source == ConfigSource.User || layer.source == ConfigSource.Managed
+            if (!trusted) {
+                val parts = buildList {
+                    layer.hooks?.let { add("带了 ${it.size} 个事件的 hooks") }
+                    if (layer.disableAllHooks != null) add("设了 disableAllHooks")
+                    if (layer.allowedHttpHookUrls != null) add("设了 allowedHttpHookUrls")
+                    if (layer.httpHookAllowedEnvVars != null) add("设了 httpHookAllowedEnvVars")
+                }
+                if (parts.isNotEmpty()) notes += "${layer.source.label} 层${parts.joinToString("、")}，这个工作区还没被信任，未启用"
+            }
+            trusted
         }
+        val managed = effective.lastOrNull { it.source == ConfigSource.Managed }
+        val managedOff = managed?.disableAllHooks == true
+        val disableAll = effective.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true
+        val managedOnly = managed?.allowManagedHooksOnly == true
+        val sources = effective.mapNotNull { layer -> layer.hooks?.let { HookSource(layer.source, it) } }.let { all ->
+            when {
+                managedOff -> emptyList()
+                managedOnly || disableAll -> all.filter { it.source == ConfigSource.Managed }
+                else -> all
+            }
+        }
+        val policy = HttpHookPolicy.merge(effective.map { HttpHookPolicy(it.allowedHttpHookUrls, it.httpHookAllowedEnvVars) })
+        return HookSnapshot(sources, policy, notes)
     }
 }
 
