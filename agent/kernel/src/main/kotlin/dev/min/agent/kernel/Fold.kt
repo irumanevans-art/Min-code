@@ -98,7 +98,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
             }
             copy(
                 memoryAttachments = memoryAttachments + (e.assistantMessageId to memoryAttachments[e.assistantMessageId].orEmpty() + e.files),
-                memoryPathsInContext = memoryPathsInContext + e.files.map { it.path },
+                memoryCovered = if (e.covered.isEmpty()) memoryCovered else
+                    memoryCovered + (e.assistantMessageId to memoryCovered[e.assistantMessageId].orEmpty() + e.covered),
+                memoryPathsInContext = memoryPathsInContext + e.files.map { it.path } + e.covered,
             )
         }
         // 同记忆：取最后一条，以后显式刷新时整份替换
@@ -224,7 +226,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
             val boundary = history.indexOfFirst { it.messageId == e.through }
             check(boundary >= 0) { "压缩的边界 ${e.through} 不在历史里" }
             // 边界及之前的消息被摘要取代，挂在它们上面的按需记忆已不在视图里：只留快照里的与边界之后消息上的
-            val stillAttached = history.drop(boundary + 1).flatMap { memoryAttachments[it.messageId].orEmpty() }.map { it.path }
+            val stillAttached = history.drop(boundary + 1).flatMap { entry ->
+                memoryAttachments[entry.messageId].orEmpty().map { it.path } + memoryCovered[entry.messageId].orEmpty()
+            }
             updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
                 memoryPathsInContext = memory.map { it.path }.toSet() + stillAttached,
                 compaction = CompactionView(e.summary, e.through, e.transcriptPath),

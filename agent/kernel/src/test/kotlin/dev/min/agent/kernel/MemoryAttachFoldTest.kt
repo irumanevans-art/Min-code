@@ -96,6 +96,39 @@ class MemoryAttachFoldTest {
     }
 
     @Test
+    fun `covered paths join the set, go with their message on compaction, and are inherited by forks`() {
+        val a = nested("/workspace/src/CLAUDE.md")
+        val dup = GuestPath("/workspace/src/AGENTS.md")
+        val read = GuestPath("/workspace/src/api/CLAUDE.md")
+        val s = foldOf(
+            *conversation("a1", "a2", "a3").toTypedArray(),
+            MemoryAttached(MessageId("a1"), listOf(a), covered = listOf(dup)),
+            MemoryAttached(MessageId("a2"), emptyList(), covered = listOf(read)),
+        )
+        assertEquals(setOf(a.path, dup, read), s.memoryPathsInContext)
+        assertEquals(mapOf(MessageId("a1") to listOf(dup), MessageId("a2") to listOf(read)), s.memoryCovered)
+
+        // 压缩把 a1 摘要掉：a1 上的附件和 covered 一起移出；a2 上的 covered 还在
+        val compacted = foldOf(
+            *conversation("a1", "a2", "a3").toTypedArray(),
+            MemoryAttached(MessageId("a1"), listOf(a), covered = listOf(dup)),
+            MemoryAttached(MessageId("a2"), emptyList(), covered = listOf(read)),
+            *compact(through = "a1", id = "k1").toTypedArray(),
+        )
+        assertEquals(setOf(read), compacted.memoryPathsInContext)
+
+        // 分身继承范围内（到委派那条 a3 为止，不含 a3 自己）的 covered 原样复制
+        val inherited = forkInheritance(s, CallId("call-a3")).filterIsInstance<MemoryAttached>()
+        assertEquals(
+            listOf(
+                MemoryAttached(MessageId("a1"), listOf(a), covered = listOf(dup)),
+                MemoryAttached(MessageId("a2"), emptyList(), covered = listOf(read)),
+            ),
+            inherited,
+        )
+    }
+
+    @Test
     fun `an attachment must hang on an existing assistant message`() {
         try {
             foldOf(*conversation("a1").toTypedArray(), MemoryAttached(MessageId("nope"), listOf(nested("/workspace/src/CLAUDE.md"))))

@@ -19,8 +19,11 @@ data class MemoryLimits(
     val totalChars: Int = 50_000,
 )
 
-/** 一次加载的结果：[files] 按进上下文的顺序排好；[notes] 只给人看（跳过了什么、为什么），不进模型上下文 */
-data class MemorySnapshot(val files: List<LoadedMemoryFile>, val notes: List<String>)
+/**
+ * 一次加载的结果：[files] 按进上下文的顺序排好；[notes] 只给人看（跳过了什么、为什么），不进模型上下文。
+ * [covered]（按需加载才有）：没有注入、但内容已经在上下文里的路径——与同批已收文件内容相同的，以及模型刚直接读过的记忆文件本身
+ */
+data class MemorySnapshot(val files: List<LoadedMemoryFile>, val notes: List<String>, val covered: List<GuestPath> = emptyList())
 
 /**
  * 发现并读取记忆文件（docs/agent/04-子系统设计.md §4.6）。纯逻辑，只经 [WorkspaceFs] 端口读文件。
@@ -76,10 +79,15 @@ object MemoryLoader {
         val pathRuleRefs: MutableList<PathRuleRef>? = null,
         /** 只登记带 paths 的规则，别的什么都不收（找启动时就存在的路径规则用） */
         private val refsOnly: Boolean = false,
+        /** 按需加载：模型这批直接读过的文件。它们的内容已在工具结果里，其中是记忆文件的不再作为记忆注入，只记进 [covered] */
+        private val directReads: Set<String> = emptySet(),
     ) {
         private val homeClaude = join(home, ".claude")
         val files = mutableListOf<LoadedMemoryFile>()
         val notes = mutableListOf<String>()
+
+        /** 没有注入、但内容已经在上下文里的路径（见 [MemorySnapshot.covered]） */
+        val covered = mutableListOf<String>()
 
         /** 处理过（或正在处理）的路径：去重，也让导入成环时停下 */
         private val seen = alreadyIn.toMutableSet()
@@ -163,9 +171,17 @@ object MemoryLoader {
             if (used < limits.totalChars) {
                 for (raw in MemoryMarkdown.imports(text)) importFrom(path, raw, hops)
             }
+            if (path in directReads) {
+                // 模型刚读过这个文件本身：内容已经在工具结果里，再注入一遍是重复。它的内容也算「已收」，同内容的兄弟文件随之跳过
+                bodies.putIfAbsent(text, path)
+                covered += path
+                return
+            }
             val same = bodies[text]
             if (same != null) {
                 notes += "跳过 $path：内容与 $same 相同"
+                // 跳过不等于没收：内容已经在上下文里，记下这个路径，下一批不能把它当新文件再注入
+                covered += path
                 return
             }
             bodies[text] = path

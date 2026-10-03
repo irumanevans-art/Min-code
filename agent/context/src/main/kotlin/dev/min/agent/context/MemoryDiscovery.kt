@@ -44,6 +44,7 @@ class MemoryDiscovery(
             alreadyIn = inContext.map { it.value },
             wholeFilesOnly = true,
             pathRuleRefs = mutableListOf(),
+            directReads = files.toSet(),
         )
         val dirs = linkedSetOf<String>()
         for (file in files) dirs += dirsBelowCwd(parentOf(file))
@@ -55,7 +56,7 @@ class MemoryDiscovery(
             reportInvalidGlobs(ref)?.let { globNotes += it }
             if (files.any { file -> matches(ref, file) }) loading.pathRule(ref.path)
         }
-        return MemorySnapshot(loading.files.toList(), loading.notes.toList() + globNotes)
+        return MemorySnapshot(loading.files.toList(), loading.notes.toList() + globNotes, loading.covered.map(::GuestPath))
     }
 
     /** cwd 的下一层到 [dir]（含），宽 → 窄；[dir] 不在 cwd 之下返回空 */

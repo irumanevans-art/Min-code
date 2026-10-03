@@ -117,6 +117,11 @@ data class SessionState(
      */
     val memoryAttachments: Map<MessageId, List<LoadedMemoryFile>> = emptyMap(),
     /**
+     * 按需加载时「内容已在上下文里、所以没再注入」的路径（[dev.min.agent.spi.MemoryAttached.covered]），同样按挂靠的助手消息记：
+     * 压缩把那条消息摘要掉时它们和 [memoryAttachments] 一起移出 [memoryPathsInContext]
+     */
+    val memoryCovered: Map<MessageId, List<GuestPath>> = emptyMap(),
+    /**
      * 此刻已在模型上下文里的记忆文件路径 = 创建时快照里的 + 还留在模型视图里的按需加载的；同一路径不再按需加载第二次。
      * 压缩把挂了它们的消息摘要掉之后，那些路径从集合里移出（内容已不在视图里），再碰到就重新加载（设计 §1.2）
      */

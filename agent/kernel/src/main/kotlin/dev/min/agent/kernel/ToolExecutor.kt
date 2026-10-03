@@ -153,8 +153,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val anchor = state.history.lastOrNull { e -> e is HistoryEntry.Assistant && e.toolCalls.any { it.callId == calls.first().callId } }
             ?.messageId ?: return
         val found = discovery.attach(files, state.memoryPathsInContext)
-        if (found.files.isNotEmpty() || found.notes.isNotEmpty()) {
-            rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes)), Durability.Sync)
+        if (found.files.isNotEmpty() || found.notes.isNotEmpty() || found.covered.isNotEmpty()) {
+            rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes, found.covered)), Durability.Sync)
         }
     }
 

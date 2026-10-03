@@ -76,6 +76,35 @@ class MemoryDiscoveryTest {
     }
 
     @Test
+    fun `a layer file with the same content as another is skipped but counted as covered`() {
+        fs.file("/workspace/s/CLAUDE.md", "Same text")
+        fs.file("/workspace/s/AGENTS.md", "Same text")
+        fs.file("/workspace/s/a.ts", "a")
+        val result = discovery().attach("/workspace/s/a.ts")
+        assertEquals(listOf("/workspace/s/CLAUDE.md $Nested"), result.order())
+        assertEquals(listOf(GuestPath("/workspace/s/AGENTS.md")), result.covered)
+    }
+
+    @Test
+    fun `reading a memory file itself does not inject it again, and its same-content sibling is covered too`() {
+        fs.file("/workspace/s/CLAUDE.md", "Same text")
+        fs.file("/workspace/s/AGENTS.md", "Same text")
+        fs.file("/workspace/s/CLAUDE.local.md", "Mine")
+        val result = discovery().attach("/workspace/s/CLAUDE.md")
+        assertEquals("读过的那份不再注入，不同内容的兄弟照常", listOf("/workspace/s/CLAUDE.local.md $Nested"), result.order())
+        assertEquals(listOf(GuestPath("/workspace/s/CLAUDE.md"), GuestPath("/workspace/s/AGENTS.md")), result.covered)
+    }
+
+    @Test
+    fun `the imports of a memory file the model read directly are still loaded`() {
+        fs.file("/workspace/s/CLAUDE.md", "See @docs.md")
+        fs.file("/workspace/s/docs.md", "Docs text")
+        val result = discovery().attach("/workspace/s/CLAUDE.md")
+        assertEquals(listOf("/workspace/s/docs.md ${dev.min.agent.spi.MemorySource.Import}"), result.order())
+        assertEquals(listOf(GuestPath("/workspace/s/CLAUDE.md")), result.covered)
+    }
+
+    @Test
     fun `a file directly in cwd loads no nested memory`() {
         fs.file("/workspace/CLAUDE.md", "根")
         fs.file("/workspace/main.kt", "code")

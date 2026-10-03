@@ -174,6 +174,53 @@ class MemoryOnDemandTest {
     }
 
     @Test
+    fun `a same-content sibling is not injected on a later batch just because it was skipped before`() = run {
+        fs.put("/workspace/s/CLAUDE.md", "Same text")
+        fs.put("/workspace/s/AGENTS.md", "Same text")
+        fs.put("/workspace/s/a.ts", "a")
+        fs.put("/workspace/s/b.ts", "b")
+        fs.put("/workspace/s/c.ts", "c")
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/s/a.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/s/b.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c3", "/workspace/s/c.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = session(model)
+        rt.send(msg(), listOf(TextPart("读三个文件")))
+        rt.awaitIdle()
+
+        val attached = events().filterIsInstance<MemoryAttached>()
+        assertEquals("只有第一批注入，之后每批都不再有", 1, attached.size)
+        assertEquals(listOf("/workspace/s/CLAUDE.md"), attached.single().files.map { it.path.value })
+        assertEquals(listOf("/workspace/s/AGENTS.md"), attached.single().covered.map { it.value })
+        assertTrue(rt.state.value.memoryPathsInContext.any { it.value == "/workspace/s/AGENTS.md" })
+        assertEquals(1, "Contents of /workspace/s/".toRegex().findAll(model.requests.last().plainText()).count())
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `reading a memory file itself does not inject its content a second time`() = run {
+        fs.put("/workspace/s/CLAUDE.md", "Same text")
+        fs.put("/workspace/s/x.ts", "x")
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/s/CLAUDE.md"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/s/x.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = session(model)
+        rt.send(msg(), listOf(TextPart("读 CLAUDE.md 再读 x.ts")))
+        rt.awaitIdle()
+
+        val attached = events().filterIsInstance<MemoryAttached>()
+        assertEquals("读 CLAUDE.md 本身那批只记 covered，之后读 x.ts 也不再注入它", 1, attached.size)
+        assertTrue(attached.single().files.isEmpty())
+        assertEquals(listOf("/workspace/s/CLAUDE.md"), attached.single().covered.map { it.value })
+        assertTrue("请求里没有 Contents of（内容只在工具结果里）", "Contents of /workspace/s/CLAUDE.md" !in model.requests.last().plainText())
+        assertLogIsTruth(rt)
+    }
+
+    @Test
     fun `a read in a subtree attaches nested memory after the tool results`() = run {
         fs.put("/workspace/src/api/CLAUDE.md", "Use the typed client.")
         fs.put("/workspace/src/api/x.ts", "export const x = 1")
