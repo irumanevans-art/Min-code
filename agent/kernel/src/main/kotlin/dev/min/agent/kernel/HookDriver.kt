@@ -131,7 +131,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         val problems = combined.nonBlockingErrors +
             allRuns.filter { it.failedToStart }.map { "「${it.handler.command ?: it.handler.url ?: it.handler.type}」没能运行（路径写错时门禁会悄悄失效）" } +
             allRuns.filter { it.timedOut }.map { "「${it.handler.command ?: it.handler.url ?: it.handler.type}」超时" } +
-            http.skipped + executionFailures
+            http.skipped + http.notes + executionFailures
         val events = buildList {
             add(HooksRan(event.name, match.handlers.size + httpMatch.handlers.size, outcome.label, deps.clock.nowMs() - started, turnId, callId, problems))
             if (problems.isNotEmpty()) add(Note(NoteLevel.Warning, "$event hook：" + problems.joinToString("；")))

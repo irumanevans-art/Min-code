@@ -138,4 +138,4 @@ Ask 时：PermissionRequest hooks → 能替人答；不答才发审批卡
 - matcher 的正则用 Java 实现，与 CC 的 JavaScript 正则在少数语法上不同（如 `\p{...}` 写法、命名组语法 `(?<n>)` 两边都支持）。
 - 合批脚本依赖 rootfs 里有 `timeout`（coreutils）；没有时退化为由 `Exec` 的整批超时兜底（逐个处理器的超时不再精确）。
 - SessionEnd：Android 上进程常常被直接杀掉，没有「会话结束」的时机；只在用户显式关闭 / 删除会话时触发。
-- `type:http` 的 URL 闸按 CC settings-reference 的模式写法匹配：`*` 通配（含斜杠），协议与主机名大小写不敏感，主机名末尾的点等价于没有；路径与查询区分大小写。http 不跟随重定向（凭证头不落第二跳）；响应体没有字节上限，靠解读侧的 1 万字附件规则兜底；`async: true` 的 http 未实现（连 matchingHttp 一起记 note 跳过）。
+- `type:http` 的 URL 闸按 CC settings-reference 的模式写法匹配：`*` 通配（含斜杠），协议与主机名大小写不敏感，主机名末尾的点等价于没有；路径与查询区分大小写。http 不跟随重定向（凭证头不落第二跳）；每次请求有总预算（`HookHttpRunner` 对每次 `send` 套 `withTimeout`，到点归 `TimedOut`，端口自己的连接 / 读超时管不住慢速滴灌）；响应体最多读 1 MiB（`JvmHttpHookClient`），超出截断并在 `HooksRan.problems` 里说明；`async: true` 的 http 未实现（连 matchingHttp 一起记 note 跳过）。

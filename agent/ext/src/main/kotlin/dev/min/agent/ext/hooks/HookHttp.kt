@@ -3,9 +3,11 @@ package dev.min.agent.ext.hooks
 import dev.min.agent.spi.HttpHookClient
 import dev.min.agent.spi.HttpHookRequest
 import dev.min.agent.spi.HttpHookResult
+import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -53,8 +55,11 @@ data class HttpHookPolicy(val allowedUrls: List<String>?, val allowedEnvVars: Li
     }
 }
 
-/** 一批 http hook 的执行产出：真正发过请求的运行结果 + 被闸门拦下没跑的处理器说明 */
-data class HttpHookBatch(val runs: List<HandlerRun>, val skipped: List<String>)
+/**
+ * 一批 http hook 的执行产出：真正发过请求的运行结果 + 被闸门拦下没跑的处理器说明 + 其它给人看的说明
+ * （响应体被截断之类，不影响结论）
+ */
+data class HttpHookBatch(val runs: List<HandlerRun>, val skipped: List<String>, val notes: List<String> = emptyList())
 
 /**
  * `type:http` 的执行器：把事件 JSON 原文 POST 出去，再把 HTTP 事实翻译成 [HandlerRun]，之后的解读与
@@ -81,15 +86,23 @@ class HookHttpRunner(private val client: HttpHookClient) {
                 false
             } else true
         }
+        val notes = java.util.concurrent.CopyOnWriteArrayList<String>()
         val runs = attempted.map { handler ->
             async {
                 val headers = interpolateHeaders(handler.headers, handler.allowedEnvVars, policy, env)
                 val request = HttpHookRequest(handler.url.orEmpty(), headers, stdin.toString(),
                     timeoutFor(handler).coerceAtLeast(1) * 1000L)
-                toRun(handler, client.send(request))
+                // 总预算由这里兜底：端口自己的连接 / 读超时管不住「一滴一滴往外挤」的慢响应；
+                // 一个处理器的异常（协程取消除外）也只算它自己失败，不拖垮同批的别的处理器
+                val result = catchingNonCancellation { withTimeoutOrNull(request.timeoutMs) { client.send(request) } ?: HttpHookResult.TimedOut }
+                    .getOrElse { e -> HttpHookResult.Failed(e.javaClass.simpleName) }
+                if (result is HttpHookResult.Responded && result.truncated) {
+                    notes += "${redactUrl(request.url)}：响应体超过上限，已截断（被截断的 JSON 多半解析不了）"
+                }
+                toRun(handler, result)
             }
         }.awaitAll()
-        HttpHookBatch(runs, skipped.toList())
+        HttpHookBatch(runs, skipped.toList(), notes.toList())
     }
 
     /** CC「HTTP response handling」的事实归档：状态、连接、超时翻译成 command 世界的退出码与通道 */
@@ -116,6 +129,17 @@ class HookHttpRunner(private val client: HttpHookClient) {
     }
 
     companion object {
+        /** URL 写进说明 / 日志前去掉 userinfo、查询串与片段：令牌常放在那里 */
+        fun redactUrl(url: String): String {
+            val schemeEnd = url.indexOf("://")
+            val authorityStart = if (schemeEnd < 0) 0 else schemeEnd + 3
+            val cut = url.indexOfAny(charArrayOf('?', '#'), authorityStart).let { if (it < 0) url.length else it }
+            val head = url.substring(0, cut)
+            val authorityEnd = head.indexOf('/', authorityStart).let { if (it < 0) head.length else it }
+            val at = head.lastIndexOf('@', authorityEnd - 1)
+            return if (at >= authorityStart) head.substring(0, authorityStart) + head.substring(at + 1) else head
+        }
+
         private val ENV_REF = Regex("""\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)""")
 
         /**

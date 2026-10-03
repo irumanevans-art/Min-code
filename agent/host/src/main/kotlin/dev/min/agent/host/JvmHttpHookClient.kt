@@ -25,7 +25,11 @@ import java.net.URL
  * [HttpHookResult.Failed]。不跟随重定向：重定向到别的主机会把头里的凭证带过去（同模型请求的取舍）。
  * 头里可能有凭证：异常信息与结果只含状态码与说明文字。
  */
-class JvmHttpHookClient(private val connectTimeoutMs: Int = 10_000) : HttpHookClient {
+class JvmHttpHookClient(
+    private val connectTimeoutMs: Int = 10_000,
+    /** 响应体最多读这么多字节，多的丢掉并报告 truncated：一个失控的服务不能把手机内存读满 */
+    private val maxBodyBytes: Int = 1 shl 20,
+) : HttpHookClient {
 
     /**
      * 协程取消以外的一切异常都归 [HttpHookResult.Failed]：URL 写错、不是 http(s)、头值含换行这类配置问题
@@ -69,10 +73,12 @@ class JvmHttpHookClient(private val connectTimeoutMs: Int = 10_000) : HttpHookCl
                 try {
                     connection.outputStream.use { it.write(body) }
                     val status = connection.responseCode
-                    val text = (if (status in 200..299) connection.inputStream else connection.errorStream)
-                        ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+                    // 多读一个字节，才分得清「刚好等于上限」和「超出」
+                    val bytes = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                        ?.use { it.readNBytes(maxBodyBytes + 1) } ?: ByteArray(0)
                     watchdog.cancel()
-                    HttpHookResult.Responded(status, text)
+                    val truncated = bytes.size > maxBodyBytes
+                    HttpHookResult.Responded(status, bytes.copyOf(minOf(bytes.size, maxBodyBytes)).toString(Charsets.UTF_8), truncated)
                 } catch (e: SocketTimeoutException) {
                     watchdog.cancel()
                     HttpHookResult.TimedOut

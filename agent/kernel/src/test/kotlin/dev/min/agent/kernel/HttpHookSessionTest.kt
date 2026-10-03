@@ -450,6 +450,16 @@ class HttpHookSessionTest {
     } }
 
     @Test
+    fun `a truncated http response body is reported in the problems`() = runBlocking { withTimeout(20_000) {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{", truncated = true) }
+        val hooks = HooksLoaded(listOf(HookSourceData("user", httpHook("https://hooks.example/x"))))
+        val rt = session(lsModel(), hooks, http)
+        rt.say("跑一下")
+        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("已截断") && it.contains("https://hooks.example/x") })
+    } }
+
+    @Test
     fun `no http handler means the port is never called`() = runBlocking {
         val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
         val model = RoutingModel { reply(TextPart("好")) }

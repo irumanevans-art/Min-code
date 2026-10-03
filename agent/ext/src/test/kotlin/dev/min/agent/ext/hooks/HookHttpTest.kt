@@ -192,6 +192,42 @@ class HookHttpTest {
         assertEquals(listOf("http://a/dead hook error：HTTP 请求失败：refused"), combined.nonBlockingErrors)
     }
 
+    @Test fun `执行器对每次 send 套总预算 卡住的请求归超时 一个处理器抛异常不拖垮同批的别的处理器`() = runBlocking { kotlinx.coroutines.withTimeout(20_000) {
+        val client = HttpHookClient { request ->
+            when (request.url) {
+                "http://a/stuck" -> { kotlinx.coroutines.delay(Long.MAX_VALUE); HttpHookResult.Responded(200, "") }
+                "http://a/throws" -> error("boom")
+                else -> HttpHookResult.Responded(200, "")
+            }
+        }
+        val started = System.nanoTime()
+        val batch = HookHttpRunner(client).run(
+            listOf(httpHandler(url = "http://a/stuck"), httpHandler(url = "http://a/throws"), httpHandler(url = "http://a/fine")),
+            objectOf("{}"), emptyMap(), HttpHookPolicy(null, null)) { 1 }
+        assertTrue("总预算 1 秒到点就放弃", (System.nanoTime() - started) / 1_000_000 < 5_000)
+        val byUrl = batch.runs.associateBy { it.handler.url }
+        assertTrue(byUrl.getValue("http://a/stuck").timedOut)
+        assertEquals(1, byUrl.getValue("http://a/throws").exitCode)
+        assertFalse("异常信息不进说明", byUrl.getValue("http://a/throws").stderr.contains("boom"))
+        assertEquals(0, byUrl.getValue("http://a/fine").exitCode)
+    } }
+
+    @Test fun `响应体被截断时记一条去掉查询串的说明`() = runBlocking {
+        val client = HttpHookClient { HttpHookResult.Responded(200, "{", truncated = true) }
+        val batch = HookHttpRunner(client).run(listOf(httpHandler(url = "http://u:p@a/hook?token=SECRET")),
+            objectOf("{}"), emptyMap(), HttpHookPolicy(null, null)) { 30 }
+        val note = batch.notes.single()
+        assertTrue(note, note.contains("已截断") && note.contains("http://a/hook") && !note.contains("SECRET") && !note.contains("u:p"))
+    }
+
+    @Test fun `redactUrl 去掉 userinfo 查询串与片段`() {
+        assertEquals("https://h.example/p/q", HookHttpRunner.redactUrl("https://user:pw@h.example/p/q?token=1#frag"))
+        assertEquals("https://h.example:8443/x", HookHttpRunner.redactUrl("https://h.example:8443/x?a=b"))
+        assertEquals("https://h.example", HookHttpRunner.redactUrl("https://tok@h.example?x=1"))
+        assertEquals("https://h.example/a@b", HookHttpRunner.redactUrl("https://h.example/a@b"))
+        assertEquals("not a url", HookHttpRunner.redactUrl("not a url"))
+    }
+
     private fun fake(): HttpHookClient = HttpHookClient { HttpHookResult.Responded(200, "") }
 
     private fun httpHandler(event: HookEvent = HookEvent.PreToolUse, url: String = "http://a/hook"): HookHandler =

@@ -65,6 +65,47 @@ class JvmHttpHookClientTest {
     }
 
     @Test
+    fun `a response body over the cap is cut and flagged, one exactly at the cap is not`() {
+        fun body(path: String, size: Int) = server.createContext(path) { ex ->
+            val bytes = ByteArray(size) { 'a'.code.toByte() }
+            ex.sendResponseHeaders(200, size.toLong())
+            ex.responseBody.use { it.write(bytes) }
+        }
+        body("/big", 3_000)
+        body("/exact", 1_000)
+        val small = JvmHttpHookClient(maxBodyBytes = 1_000)
+        fun get(path: String) = runBlocking { withTimeout(30_000) { small.send(HttpHookRequest("$base$path", emptyMap(), "{}", 5_000)) } } as HttpHookResult.Responded
+        val big = get("/big")
+        assertEquals(1_000, big.body.length)
+        assertTrue(big.truncated)
+        val exact = get("/exact")
+        assertEquals(1_000, exact.body.length)
+        assertTrue(!exact.truncated)
+    }
+
+    @Test
+    fun `an endless response is not read past the cap`() {
+        val sent = java.util.concurrent.atomic.AtomicLong(0)
+        server.createContext("/endless") { ex ->
+            ex.sendResponseHeaders(200, 0)
+            val chunk = ByteArray(64 * 1024) { 'a'.code.toByte() }
+            try {
+                ex.responseBody.use { out ->
+                    while (sent.get() < 256L * 1024 * 1024) { out.write(chunk); sent.addAndGet(chunk.size.toLong()) }
+                }
+            } catch (_: java.io.IOException) {
+                // 客户端读够了就断开：写端报错是预期的
+            }
+        }
+        val small = JvmHttpHookClient(maxBodyBytes = 1_000)
+        val result = runBlocking { withTimeout(30_000) { small.send(HttpHookRequest("$base/endless", emptyMap(), "{}", 20_000)) } } as HttpHookResult.Responded
+        assertTrue(result.truncated)
+        assertEquals(1_000, result.body.length)
+        Thread.sleep(200)
+        assertTrue("客户端不该把整条流读完（服务端已写 ${sent.get()} 字节）", sent.get() < 16L * 1024 * 1024)
+    }
+
+    @Test
     fun `a slow server is TimedOut`() {
         server.createContext("/slow") { ex ->
             Thread.sleep(1_500)
