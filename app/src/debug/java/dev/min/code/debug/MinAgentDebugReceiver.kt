@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * 驱动的是 B3 的 [MinAgentEngine]（与以后界面走同一条路：create / open / submit 命令），不再自己拼 Hub。
  *
- * 用法（`adb shell am broadcast -a dev.min.code.debug.AGENT_RUN -n dev.min.code.debug/.debug.MinAgentDebugReceiver --es ...`）：
+ * 用法（`adb shell am broadcast -a dev.min.code.debug.AGENT_RUN -n dev.min.code.debug/.MinAgentDebugReceiver --es ...`）：
  * - `prompt` 要发的话（`resume=yes` 时可省）；`approve` yes / no（默认 no）；`model`、`profile`（档 id）、`session`（打开已有会话）
  * - `stop-after-ms N`：发出后 N 毫秒发一条 Interrupt 命令（验收「中途停止」）
  * - `resume yes`：打开后按 ▶（Resume 命令，带当前 offerId），不发新话
