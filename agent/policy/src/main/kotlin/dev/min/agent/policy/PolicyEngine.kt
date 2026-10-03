@@ -21,7 +21,8 @@ sealed interface Verdict {
 
 /**
  * 判定所需的上下文。[scopeOf] 由宿主给（宿主侧文件系统按**解析后**的路径分级，工作区里指向 /sdcard 的链接也算设备）；
- * [rules] 是各层设置与本会话「总是允许」合起来的规则，顺序无关（求值按拒绝 → 询问 → 允许）。
+ * [rules] 是各层设置与本会话「总是允许」合起来的规则，顺序无关（求值按拒绝 → 询问 → 允许）；
+ * [autoMemoryDir] 是本项目的自动记忆目录（设计 §2.4），acceptEdits 下对它的写入与工作区同等放行。
  */
 data class PolicyContext(
     val mode: PermissionMode,
@@ -29,6 +30,7 @@ data class PolicyContext(
     val cwd: GuestPath = GuestPath("/workspace"),
     val home: GuestPath = GuestPath("/root"),
     val scopeOf: (GuestPath) -> PathScope = ::defaultScope,
+    val autoMemoryDir: GuestPath? = null,
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -218,7 +220,10 @@ object PolicyEngine {
         "pip", "pip3", "uv", "apt", "apt-get", "make", "mvn", "dotnet", "flutter",
     )
 
-    /** 这次调用实际碰到的东西：工具、拆开后的简单命令、全部路径（含命令重定向写的文件）、域名 */
+    /**
+     * 这次调用实际碰到的东西：工具、拆开后的简单命令、全部路径（含命令重定向写的文件）、域名。
+     * [memoryDir] 是归一化后的自动记忆目录（没有为 null）。
+     */
     private class Facts(
         val tool: String,
         val commands: List<SimpleCommand>,
@@ -231,6 +236,7 @@ object PolicyEngine {
         val paths: List<PathAccess>,
         val domains: List<String>,
         val specifiers: List<String>,
+        val memoryDir: String?,
     ) {
         val untrusted: Boolean get() = untrustedRaw.isNotEmpty()
 
@@ -239,9 +245,20 @@ object PolicyEngine {
             get() = rawCommands.isNotEmpty() && !untrusted && redirectWrites.isEmpty() && unresolvedWrites.isEmpty() &&
                 commands.all { CommandSafety.isReadOnly(it) }
 
-        /** 只改工作区里的文件、不跑命令、不联网：acceptEdits 下直接放行的那一类 */
+        /** 只改工作区里的文件（自动记忆目录算工作区：那是 agent 自己的笔记，设计 §2.4）、不跑命令、不联网：acceptEdits 下直接放行的那一类 */
         val isWorkspaceEditOnly: Boolean
-            get() = rawCommands.isEmpty() && domains.isEmpty() && paths.isNotEmpty() && paths.all { it.scope == PathScope.Workspace }
+            get() = rawCommands.isEmpty() && domains.isEmpty() && paths.isNotEmpty() && paths.all {
+                it.scope == PathScope.Workspace || it in memoryDirWrites
+            }
+
+        /** 这次调用里写到自动记忆目录的路径（目录本身与它之下） */
+        private val memoryDirWrites: List<PathAccess>
+            get() {
+                val dir = memoryDir ?: return emptyList()
+                return paths.filter { p ->
+                    p.kind == AccessKind.Write && (p.path.value == dir || p.path.value.startsWith("$dir/"))
+                }
+            }
 
         companion object {
             fun of(ask: PermissionAsk, context: PolicyContext): Facts {
@@ -269,6 +286,7 @@ object PolicyEngine {
                     paths = ask.paths.map { it.copy(path = GuestPath(normalize(it.path.value))) } + redirectWrites,
                     domains = ask.domains,
                     specifiers = ask.specifiers,
+                    memoryDir = context.autoMemoryDir?.let { normalize(it.value) },
                 )
             }
 

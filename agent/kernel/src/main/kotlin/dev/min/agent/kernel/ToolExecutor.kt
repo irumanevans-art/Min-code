@@ -27,6 +27,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.FileKind
+import dev.min.agent.spi.MemoryAttached
+import dev.min.agent.spi.catchingNonCancellation
 import dev.min.agent.spi.Exec
 import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
@@ -65,6 +68,9 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     private val deps = rt.deps
     private val registry: Map<String, Tool<*>> = availableTools(rt.state.value, deps).associateBy { it.name }
     private val parallelism = Semaphore(deps.maxParallelTools)
+
+    /** 成功的调用碰到的路径（执行时记下，用最终入参算的）：这批调用做完后据此按需加载记忆 */
+    private val touched = java.util.concurrent.ConcurrentHashMap<CallId, List<GuestPath>>()
 
     private sealed interface Prepared {
         val call: ToolCallPart
@@ -110,6 +116,30 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
                 runOne(turnId, prepared[i])
                 i++
             }
+        }
+        attachMemory(calls)
+    }
+
+    /**
+     * 按需加载记忆（设计 §1）：这批调用里成功的、碰到了 cwd 之内**文件**的，找出该注入的子目录记忆与路径规则，
+     * 同一批合成一条 [MemoryAttached] 挂在发起它们的助手消息上。放在整批做完之后：hook 上下文在各调用执行时已经落盘，
+     * 渲染顺序先 hook 后记忆（见 ModelView）；同批里后面才读到的文件也算，一批只有一条事件。
+     */
+    private suspend fun attachMemory(calls: List<ToolCallPart>) {
+        val discovery = rt.memoryDiscovery ?: return
+        val candidates = calls.flatMap { touched[it.callId].orEmpty() }.distinct()
+        if (candidates.isEmpty()) return
+        // 目录不算：Glob / Grep 的搜索根、Read 一个目录（本来也会失败）
+        val files = candidates.filter { path ->
+            catchingNonCancellation { deps.host.fs.stat(path)?.kind == FileKind.File }.getOrDefault(false)
+        }
+        if (files.isEmpty()) return
+        val state = rt.state.value
+        val anchor = state.history.lastOrNull { e -> e is HistoryEntry.Assistant && e.toolCalls.any { it.callId == calls.first().callId } }
+            ?.messageId ?: return
+        val found = discovery.attach(files, state.memoryPathsInContext)
+        if (found.files.isNotEmpty() || found.notes.isNotEmpty()) {
+            rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes)), Durability.Sync)
         }
     }
 
@@ -164,6 +194,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             cwd = s.settings.cwd,
             home = deps.memoryHome ?: DEFAULT_HOME,
             scopeOf = deps.host.fs::scopeOf,
+            // 自动记忆目录：acceptEdits 下对它的写入与工作区同等放行（设计 §2.4）
+            autoMemoryDir = s.autoMemory?.directory,
         )
     }
 
@@ -299,6 +331,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         }
         val budgeted = ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId)
         outcome(turnId, callId, budgeted)
+        // 只有成功的调用算「碰到了文件」；读或写都算，目录（Glob / Grep 的搜索根）在 [attachMemory] 里滤掉
+        if (!budgeted.isError) touched[callId] = askFor(p).paths.map { it.path }
         postToolUse(turnId, p, budgeted, deps.clock.nowMs() - started)
     }
 

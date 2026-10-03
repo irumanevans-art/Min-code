@@ -282,6 +282,8 @@ class SessionHub(
         val child = SessionRuntime.create(
             store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps),
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
+            // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载；分身照常——它接着父会话的活干
+            onDemandMemory = definition == null || !definition.omitMemory,
         )
         child.requestGate = childGate
         register(child)
