@@ -32,6 +32,7 @@ import dev.min.agent.spi.ToolInput
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.ToolTraits
+import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.store.LOG_FORMAT_VERSION
@@ -122,10 +123,11 @@ class HttpHookSessionTest {
         allowedEnvVars: List<String>? = null,
         headers: JsonObject = JsonObject(emptyMap()),
         matcher: String = "Bash",
+        event: String = "PreToolUse",
     ) =
         JsonObject(
             mapOf(
-                "PreToolUse" to kotlinx.serialization.json.JsonArray(
+                event to kotlinx.serialization.json.JsonArray(
                     listOf(
                         JsonObject(
                             buildMap {
@@ -162,12 +164,13 @@ class HttpHookSessionTest {
         fs: FakeFs = FakeFs(),
         memoryHome: GuestPath? = null,
         trustProject: Boolean = false,
+        idFor: (String) -> String = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
         mode: PermissionMode = PermissionMode.BypassPermissions,
         initial: List<SessionEvent> = emptyList(),
     ): SessionRuntime {
         val deps = KernelDeps(
             clock = { 1_000 },
-            ids = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
+            ids = { prefix -> idFor(prefix) },
             models = { ResolvedModel(TEST_PROFILE, model) },
             tools = tools,
             host = HostPorts(fs, FakeSearch(), FakeExec(), { FakeArtifacts() }, httpHooks = http),
@@ -409,6 +412,42 @@ class HttpHookSessionTest {
         assertEquals(1, http.sent.size)
         assertTrue(rt.state.value.toolResults.getValue(CallId("c1")).let { !it.isError })
     }
+
+    @Test
+    fun `an http client that throws is a note, not a failed turn`() = runBlocking { withTimeout(20_000) {
+        val http = FakeHttp { error("boom https://hooks.example/x?token=SECRET") }
+        val rt = session(lsModel(), envlessHook(), http)
+        val done = rt.say("跑一下")
+        assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
+        assertTrue("结论中性，调用照常执行", rt.state.value.toolResults.getValue(CallId("c1")).let { !it.isError })
+        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        assertEquals("neutral", ran.decision)
+        assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("http hook 批执行失败") })
+        assertTrue("异常信息里的令牌不进日志", ran.problems.none { it.contains("SECRET") })
+    } }
+
+    @Test
+    fun `a throwing http hook on SessionStart does not stop the session from being created`() = runBlocking { withTimeout(20_000) {
+        val http = FakeHttp { throw java.io.IOException("down") }
+        val hooks = HooksLoaded(listOf(HookSourceData("user", httpHook("https://hooks.example/x", matcher = "startup", event = "SessionStart"))))
+        val rt = session(RoutingModel { reply(TextPart("好")) }, hooks, http)
+        rt.say("你好")
+        assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
+    } }
+
+    @Test
+    fun `a command executor that throws is also contained`() = runBlocking { withTimeout(20_000) {
+        val commandHook = HooksLoaded(listOf(HookSourceData("user", kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"true"}]}]}""",
+        ) as JsonObject)))
+        // 批 id 带点：批执行器的前置检查会抛 IllegalArgumentException（在它自己的 try 之外）
+        val rt = session(lsModel(), commandHook, FakeHttp { HttpHookResult.Responded(200, "{}") },
+            idFor = { prefix -> if (prefix == "hooks") "hooks.bad" else "${prefix}_${ids.incrementAndGet()}" })
+        rt.say("跑一下")
+        assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
+        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("command hook 批执行失败") })
+    } }
 
     @Test
     fun `no http handler means the port is never called`() = runBlocking {
