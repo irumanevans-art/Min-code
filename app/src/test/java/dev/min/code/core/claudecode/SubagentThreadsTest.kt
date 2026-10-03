@@ -133,6 +133,24 @@ class SubagentThreadsTest {
     }
 
     @Test
+    fun `fork 在切换条上换成可读的名字，序号仍按原始类型数`() {
+        val threads = subagentThreads(
+            listOf(
+                agentCard("toolu_A", type = FORK_SUBAGENT_TYPE),
+                agentCard("toolu_B", type = "general-purpose"),
+                agentCard("toolu_C", type = FORK_SUBAGENT_TYPE),
+            ),
+            emptyList(),
+        )
+        val labels = switcherLabels(threads) { subagentTypeName(it, "分身") }
+        assertEquals(listOf("分身 1", "general-purpose", "分身 2"), labels)
+        // 不传换名函数时原样（线程里存的始终是原值，递给模型的话也用原值）
+        assertEquals(listOf("fork 1", "general-purpose", "fork 2"), switcherLabels(threads))
+        assertEquals(FORK_SUBAGENT_TYPE, threads[0].agentType)
+        assertEquals("Explore", subagentTypeName("Explore", "分身"))
+    }
+
+    @Test
     fun `深层找卡改到嵌套那一层，找不到原样返回同一个列表`() {
         val inner = agentCard("toolu_B")
         val items = listOf<ChatItem>(agentCard("toolu_A", subItems = listOf(inner)))

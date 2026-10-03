@@ -18,6 +18,7 @@ internal fun List<TaskInfo>.withTaskEvent(event: ClaudeCodeEvent.TaskEvent, now:
     val existing = firstOrNull { it.id == event.taskId }
     val merged = (existing ?: TaskInfo(id = event.taskId, startedAt = now)).copy(
         description = event.description ?: existing?.description ?: "",
+        progress = event.progress ?: existing?.progress,
         subagentType = event.subagentType ?: existing?.subagentType,
         taskType = event.taskType ?: existing?.taskType,
         toolUseId = event.toolUseId ?: existing?.toolUseId,
@@ -84,3 +85,22 @@ internal fun List<TaskInfo>.reconciledWith(
 internal fun List<TaskInfo>.withTaskStopped(taskId: String, now: Long): List<TaskInfo> = map {
     if (it.id == taskId && it.isRunning) it.copy(status = "killed", endedAt = now) else it
 }
+
+/**
+ * 子任务终局提示（「子任务完成：…」）带上是哪个任务。
+ *
+ * 只改子 agent：有描述的写成「子任务「描述」完成：…」，fork 写成「分身「描述」完成：…」。
+ * 后台 shell、查不到任务、没有描述的原样 —— 那几种本来就没有更好的称呼。
+ * 描述折成单行并截断，免得一条提示撑成一段。
+ */
+internal fun List<TaskInfo>.nameTaskNote(note: ClaudeCodeEvent.SystemNote): String {
+    val id = note.taskId ?: return note.text
+    val task = firstOrNull { it.id == id } ?: return note.text
+    if (task.isShell || !note.text.startsWith(TASK_NOTE_PREFIX)) return note.text
+    val description = task.description.replace(Regex("""\s+"""), " ").trim().takeIf { it.isNotEmpty() } ?: return note.text
+    val shown = if (description.length > 40) description.take(40) + "…" else description
+    val kind = if (task.subagentType == FORK_SUBAGENT_TYPE) "分身" else TASK_NOTE_PREFIX
+    return kind + "「" + shown + "」" + note.text.removePrefix(TASK_NOTE_PREFIX)
+}
+
+private const val TASK_NOTE_PREFIX = "子任务"
