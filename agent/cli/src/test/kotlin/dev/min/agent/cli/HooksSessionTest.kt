@@ -316,4 +316,19 @@ class HooksSessionTest {
         assertTrue((done.toolResults.getValue(CallId("c1")).content.single() as TextPart).text.contains("用户门禁"))
         assertTrue(store.events(rt).filterIsInstance<HooksLoaded>().single().notes.single().contains("disableAllHooks"))
     }
+
+    @Test
+    fun `UserPromptSubmit continue false blocks the input instead of leaving it in the inbox`() = run {
+        settings(hook("UserPromptSubmit", script("halt", """cat > /dev/null; printf '%s' '{"continue":false,"stopReason":"先别问"}'""")))
+        val model = RoutingModel { reply(TextPart("好")) }
+        val (rt, store) = session(model)
+        val first = rt.say("你好")
+        assertEquals(TurnOutcome.Interrupted(InterruptedBy.Hook), first.lastTurn!!.outcome)
+        assertTrue("输入不能留在收件箱里", first.inbox.isEmpty())
+        assertEquals("先别问", store.events(rt).filterIsInstance<InputBlocked>().single().reason)
+        val second = rt.say("第二句")
+        assertTrue(second.inbox.isEmpty())
+        assertEquals("两条输入各有自己的 InputBlocked", 2, store.events(rt).filterIsInstance<InputBlocked>().size)
+        assertTrue("模型一次都没被请求", model.requests.isEmpty())
+    }
 }

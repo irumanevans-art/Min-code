@@ -173,7 +173,14 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             val outcome = hooks.run(HookEvent.UserPromptSubmit, null, specific, rt.state.value.turn?.turnId)
             screened[input.clientMsgId] = outcome?.contexts.orEmpty()
             if (outcome == null) continue
-            if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
+            if (outcome.decision == HookOutcome.Decision.Stop) {
+                // 与 Block 同一条路：输入先移出收件箱（InputBlocked），再结束回合。否则它卡在收件箱里，
+                // 下一次开回合又被同一个 hook 拦下，新输入永远排在它后面
+                val reason = outcome.stopReason ?: "被 UserPromptSubmit hook 叫停了这一轮"
+                rt.commitIf(listOf(InputBlocked(input.clientMsgId, reason)), Durability.Sync) { s -> s.inbox.any { it.clientMsgId == input.clientMsgId } }
+                screened[input.clientMsgId] = emptyList()
+                throw HookStop(outcome.stopReason)
+            }
             if (outcome.decision == HookOutcome.Decision.Block) {
                 val reason = outcome.reason ?: "被 UserPromptSubmit hook 拦下"
                 rt.commitIf(listOf(InputBlocked(input.clientMsgId, reason)), Durability.Sync) { s -> s.inbox.any { it.clientMsgId == input.clientMsgId } }
