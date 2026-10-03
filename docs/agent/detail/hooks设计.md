@@ -130,6 +130,8 @@ Ask 时：PermissionRequest hooks → 能替人答；不答才发审批卡
 
 **H3 `type:http` 数据面落地情况（2026-10-03，分支 `agent/m0`）**：ext 解析 http 专属字段（url 必填、headers 值须字符串、allowedEnvVars）、`matchingHttp` 与 command 匹配并行（`matchingDetailed` 行为未动，内核仍是只跑 command）、`HookHttpRunner` 经新 spi 端口 `HttpHookClient` 发 POST（宿主实现 `JvmHttpHookClient`，HttpURLConnection），HTTP 事实按 CC「HTTP response handling」翻译成 HandlerRun 后复用 interpret / combine；`allowedHttpHookUrls` / `httpHookAllowedEnvVars` 由调用方合成 `HttpHookPolicy`（跨层合并）传入：URL 闸整串匹配，环境变量闸与处理器 allowedEnvVars 取交集。内核接线（2026-10-04）已接：`HostPorts.httpHooks`（桌面 CLI 与 App 都装 `JvmHttpHookClient`）、HookDriver 与 command 同批跑 http 处理器并一起合并、超时沿用事件默认值、两道闸按层随 `hooks_loaded` 冻结；头插值的环境变量只取两道闸列出的名字，经 `KernelDeps.env` 查（内核不直接读进程环境）。`has()` 同时认 http——并行批不经过 PreToolUse，漏算会让只配了 http 门禁的只读调用绕过门禁（有用例钉住）。
 
+**H3 PreCompact / PostCompact / SessionStart(compact) 落地情况（2026-10-04，分支 `agent/hooks-compact`）**：只有摘要压缩（写 `context_compacted` 的那种）触发，遮蔽不触发。PreCompact 在 `Compactor.summarize` 开头跑（拦下就连 `compaction_started` 都不写、不计熔断）：matcher 与输入 trigger 取 manual / auto（overflow 也按 auto 报，manual 才带 custom_instructions），只认 Block 结论——systemMessage 与 continue 按 CC 丢弃；三种触发路径的收尾不同：手动 `/compact` 被拦回合照常 Completed、理由进 Note；请求前的自动压缩被拦这次跳过、请求照发，一回合只写一条 Note；撞墙后的压缩重试被拦让原来的「上下文超长」错误照常结束回合、Note 注明。PostCompact 在 `context_compacted` 落盘后跑（输入带 trigger 与 compact_summary，无决策控制）。SessionStart(source = compact) 紧随其后**只对根会话**跑，加的上下文挂新目标 `hook_context_added.target = compaction(compactionId)`，模型视图里渲染在摘要消息末尾（system-reminder，同现有 reminders）；再压缩时旧摘要连同它挂的上下文一起被新摘要取代（折叠在 `context_compacted` 上清空）。分身继承：`fork_seeded` 新增可选 `compaction` 种子（摘要 + 挂靠上下文），继承从摘要边界起切，分身首请求前缀与父会话逐字一致。
+
 ## 9. 已知限制（先写下来）
 
 - matcher 的正则用 Java 实现，与 CC 的 JavaScript 正则在少数语法上不同（如 `\p{...}` 写法、命名组语法 `(?<n>)` 两边都支持）。
