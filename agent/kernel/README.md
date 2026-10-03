@@ -20,3 +20,7 @@
 - 系统提示的清单段只从快照拼，且只在会话的工具表里有 Skill 时出现。`KernelSkillPort` 按快照找 skill：不在快照里（会话开始后才新增）、
   `disable-model-invocation`（拒绝并说明，叫模型别用别的办法复现步骤）、文件读不了都是写给模型的错误；正文调用时读、此刻渲染，结果走现有的工具结果预算。
 - 已知限制：正文是调用那一刻磁盘上的（只有清单冻结）；`allowed-tools` 预批准、`context: fork`、`model` / `effort` 覆盖、`hooks` 没做；Skill 工具默认不弹审批（见 :agent:tools）。
+
+## 长寿进程配额（`QuotaProcessPort`）
+- `HostPorts.processes` 恒套一层配额：一个宿主一份，所有会话与子 agent 共用，上限 `MAX_LONG_LIVED_PROCESSES = 8`（**暂定**，真机测过 phantom 进程上限后再调）。
+  超额时 spawn 抛带说明的 `ProcessSpawnException`（列出占名额的服务器），不排队；名额从起进程前预留到进程退出。

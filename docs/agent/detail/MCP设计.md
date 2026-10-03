@@ -29,28 +29,34 @@
 
 ## 2. 长寿进程端口（spi）
 
+> MCP0 已实现（2026-10-04）。下面是落地后的形状；与最初草案不同的地方在各条里标了「实现时改」。
+
 ```
 interface ProcessPort {
-    /** 起一个长寿进程：stdin 可写，stdout / stderr 是逐块的字节流；exit 完成即进程结束 */
+    /** 起一个长寿进程。起不来（配额满、命令不存在、环境不可用）抛 ProcessSpawnException，消息可直接给用户看 */
     suspend fun spawn(spec: ProcessSpec): LiveProcess
+    object Unavailable : ProcessPort            // HostPorts 的默认值：spawn 报「这个环境没有配置长寿进程端口」
 }
-data class ProcessSpec(val argv: List<String>, val cwd: GuestPath, val env: Map<String, String>, val label: String)
+data class ProcessSpec(val argv: List<String>, val cwd: GuestPath, val env: Map<String, String> = emptyMap(), val label: String)
 interface LiveProcess {
-    val stdout: Flow<ByteArray>
-    val stderr: Flow<ByteArray>
-    suspend fun write(bytes: ByteArray)
+    val stdout: Flow<ByteArray>      // 各自只能收集一次；从进程起来的第一个字节开始缓存，晚收集不丢；进程结束后流正常结束
+    val stderr: Flow<ByteArray>      // 缓冲满了丢最旧的块（只是日志，不反压进程）；stdout 有界，不收集会塞满管道，和真管道一样
+    suspend fun write(bytes: ByteArray)   // stdin 已关或进程已死抛 IOException
     suspend fun closeStdin()
     val exit: Deferred<Int>
-    /** 关停：关 stdin → 等 2 秒 → 进程组 SIGTERM → 2 秒 → SIGKILL（规范的 stdio 关停顺序 + Codex 的时限） */
+    /** 关停：关 stdin → 等 2 秒 → 整棵后代树 SIGTERM → 2 秒 → SIGKILL（规范的 stdio 关停顺序 + Codex 的时限）。可重复调用，调用方被取消时收尾照样做完 */
     suspend fun shutdown()
 }
 ```
 
-- 桌面（`:agent:host` / CLI）：`ProcessBuilder`，Windows 走 Git Bash 的同一套路径映射。
-- Android：进 proot，与 `ProotExec` 共用挂载快照（「同源挂载」原则）；按进程组回收（基线：SIGKILL 掉 proot 后 tracee 存活）。
-- **环境变量**：白名单继承（HOME、PATH、LANG、LC_ALL、TERM、TMPDIR、TZ、USER、SHELL）+ 配置里的 `env`（展开 `${VAR}` / `${VAR:-默认}`）+ `CLAUDE_PROJECT_DIR`。**模型 key 与 Min 管理的任何凭证永远不进子进程环境**（Codex 的白名单做法，比 CC 默认继承全部更严；CC 自己也有 `CLAUDE_CODE_MCP_ALLOWLIST_ENV` 这一档）。
-- 配额：MCP 进程计入内核的进程配额（`02-总体架构.md` §进程预算），超额时新服务器不启动并给说明。
-- stderr：逐行留在服务器的日志里（界面「MCP 服务器」面板可看），不当错误。
+- **取消**（实现时加）：spawn 中途被取消，不留进程；返回之后进程的存活**不超过调用 spawn 的协程的 Job**——该 Job 以取消或失败结束，整棵进程树被硬回收（直接 SIGKILL，不走礼貌顺序）；正常结束不管，由持有者 `shutdown()`。McpManager 因此应在自己长期存活的作用域里 spawn，而不是在一个会先结束的临时协程里。
+- **实现的分工**（实现时改）：平台无关的包装（泵线程、有界缓冲、关停升级、取消回收、环境变量白名单）在 `:agent:host`（`JvmLiveProcess` / `ProcessEnv`），桌面与 Android 共用，两边只提供「怎么起进程」与「怎么回收树」。
+  - 桌面：`LocalProcessPort` 放 `:agent:cli`（路径映射 `DesktopPaths` 与 Git Bash 的约定都在那里，`:agent:host` 看不到）。用 `LocalExec` 同一个 shell 与 cwd 映射。**argv 不放进命令行**：Windows 上 JDK 不转义内嵌的双引号、Git Bash 再拆一遍，带空格 / 引号 / 反斜杠的参数会碎；改为写一个临时启动脚本（POSIX 单引号转义），命令行里只剩脚本路径。回收按 `ProcessHandle.descendants()`；**Windows 上 Git Bash（msys）的 fork + exec 会让孙进程在 Windows 眼里没有父进程，`descendants()` 看不到**（实测漏 `sleep`），所以再用 msys 自己的进程表（`ps -W`）补全，启动脚本把根进程的 msys pid 写进文件作为种子。
+  - Android：`ProotProcessPort` 在 `app/core/engine/min/`。与 `ProotExec` 同一份挂载快照（`MinHostGeneration.processes`）；换代后已起的进程留在起它的那一代（`LiveProcess` 自己握着进程与回收手段，关停不经过「当前一代」）。argv 作为 `exec 'a' 'b'` 交给 guest 的 bash。回收是 /proc 扫描后**自底向上**：先后代、最后才是 proot 宿主进程（基线：SIGKILL 掉 proot 后 tracee 存活；`ProcessBuilder` 不 setsid，杀进程组等于杀 App 自己，所以「进程组」在 Android 上实际是 /proc 里的后代树）。
+- **环境变量**：白名单继承（HOME、PATH、LANG、LC_ALL、TERM、TMPDIR、TZ、USER、SHELL；Windows 另加 SYSTEMROOT、APPDATA、TEMP 等一批，没有它们 node / Git Bash 起不稳）+ `spec.env`（`${VAR}` 展开与 `CLAUDE_PROJECT_DIR` 由调用方 McpManager 在构造 `spec.env` 时做，端口不替它加）。**模型 key 与 Min 管理的任何凭证永远不进子进程环境**：宿主在构造端口时给一份「凭证变量名」，无论来自继承还是 `spec.env` 一律剔除，大小写不敏感（桌面：会话模型与快速模型的 key 变量名 + 两个搜索后端的 key）。Android 上 proot 本来就是 `env -i`，基础上下文里的 env 一概不继承，key 在 Keystore 里从不进环境，名单现为空。Android 的 `env -i` 还会固定加 `CI=true NO_COLOR=1 PAGER=cat BROWSER=…`，不继承 TMPDIR / TZ。
+- **配额**：`HostPorts.processes` 恒套一层 `QuotaProcessPort`（内核里，一个宿主一份，所有会话与子 agent 共用），上限 `MAX_LONG_LIVED_PROCESSES = 8`——**暂定，真机测过 phantom 进程上限后再调**（全系统 32，给会话 shell 与后台任务留余量）。超额时 spawn 抛 `ProcessSpawnException`，说明里列出正在占名额的服务器；不排队。名额从预留（起进程前）占到进程退出。
+- stderr：端口给的是字节；「逐行留在服务器的日志里（界面「MCP 服务器」面板可看），不当错误」是 McpManager 的事（按行切、留尾部若干行）。
+- 已知限制：回收靠关停时（或取消时）取的树快照。进程自己已经退出、而它留下的孤儿在退出前没被快照到的，找不回来（Windows 的 msys 靠 PGID 能找回一部分；Linux / Android 上孤儿被 reparent 到 init）。服务器应当在 stdin 关闭时自己带走自己的孩子，规范也这么要求。
 
 ## 3. 配置、作用域与信任
 
@@ -145,7 +151,7 @@ interface LiveProcess {
 
 | 期 | 内容 | 谁 |
 |---|---|---|
-| MCP0 | 长寿进程端口（spi + 桌面实现 + proot 实现，进程组回收、配额）与集成测试 | GPT（Android 侧要真机或模拟器验证） |
+| MCP0 | 长寿进程端口（spi + 桌面实现 + proot 实现，进程组回收、配额）与集成测试 | GPT（Android 侧要真机或模拟器验证）；**已完成**（桌面真进程集成测试、模拟器 `op proc-probe` 验收通过；配额 8 暂定，待真机） |
 | MCP1 | `:agent:mcp`：JSON-RPC、2025-11-25 握手、stdio 与 Streamable HTTP（含会话 id、SSE 续传）、tools/list 分页、tools/call、取消、进度、ping、list_changed；配置读取与信任 / 批准（§3）；McpManager（§4）；工具适配器、命名、快照、全量模式（§5.1–5.3 全量部分）、权限与结果（§6–7）；用官方参考服务器录真帧做回放测试 | O 写骨架与接口 → GPT 实现 → O 复核 |
 | MCP2 | resources / prompts（§8）、按需模式与 ToolSearch（§5.3）、elicitation / roots（§9） | GLM 5.3 / Sonnet |
 | MCP3 | OAuth（§10，待拍板） | 待定 |

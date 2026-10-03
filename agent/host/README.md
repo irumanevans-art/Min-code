@@ -25,3 +25,11 @@
   按 UTF-8 解码（非法字节变替换符），不认其他编码；整文件读进内存，超过 64 MB 的文件跳过；先遍历排序再搜，
   大目录树上首条结果出得比 ripgrep 慢；正则是 Java 语法（与 Rust regex 大体一致，环视与反向引用 Java 支持而 ripgrep 默认不支持）。
 - `GrepQuery.maxHits` 只数实际命中、不数上下文；`JvmSearch` 按剩余命中配额逐文件扫描，工具另按 `head_limit` 裁显示行。
+
+## 长寿进程（`JvmLiveProcess` / `ProcessEnv` / `spawnLive`）
+- `ProcessPort` 的平台无关部分，桌面（`:agent:cli` 的 `LocalProcessPort`）与 Android（app 的 `ProotProcessPort`）共用：
+  泵线程读管道进有界缓冲（stdout 反压、stderr 丢最旧）、关停「关 stdin → 2 秒 → 后代树 SIGTERM → 2 秒 → SIGKILL」、
+  调用 spawn 的协程被取消即硬回收整棵树、`ProcessEnv` 白名单继承并剔除凭证变量名。两边只提供「怎么起进程」与「怎么回收树」（`ProcessReaper`）。
+- 设计与取舍见 docs/agent/detail/MCP设计.md §2。
+- 已知限制：回收靠取消 / 关停时取的树快照，进程自己先退出而留下的孤儿找不回来；`HandleProcessReaper` 只认 Java 看得见的父子关系，
+  Windows 上 Git Bash 的孙进程要靠 CLI 传入的 msys 发现函数补全。
