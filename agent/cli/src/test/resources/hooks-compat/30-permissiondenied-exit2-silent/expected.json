@@ -1,0 +1,8 @@
+{
+  "event": "PermissionDenied",
+  "target": "Bash",
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "nonBlockingErrorCount": 0,
+  "handlerCount": 1
+}

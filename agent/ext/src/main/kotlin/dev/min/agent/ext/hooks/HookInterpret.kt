@@ -209,8 +209,10 @@ private fun label(run: HandlerRun): String = (run.handler.command ?: run.handler
 
 private val TEXT_CONTEXT_EVENTS = setOf(HookEvent.UserPromptSubmit, HookEvent.UserPromptExpansion,
     HookEvent.SessionStart, HookEvent.PostModelSwitch)
+
+/** CC 逐事件表：这些事件 exit 2 的退出码与 stderr 整个忽略，不报普通 hook error */
 private val EXIT_TWO_IGNORED = setOf(HookEvent.PermissionRequest, HookEvent.StopFailure, HookEvent.Notification,
-    HookEvent.Setup, HookEvent.InstructionsLoaded)
+    HookEvent.Setup, HookEvent.InstructionsLoaded, HookEvent.PermissionDenied)
 private val TOP_LEVEL_BLOCKS = setOf(HookEvent.UserPromptSubmit, HookEvent.UserPromptExpansion,
     HookEvent.PostToolUse, HookEvent.PostToolUseFailure, HookEvent.PostToolBatch, HookEvent.Stop,
     HookEvent.SubagentStop, HookEvent.TaskCreated, HookEvent.ConfigChange, HookEvent.PreCompact, HookEvent.PreModelSwitch)

@@ -54,12 +54,16 @@ class HookInterpretTest {
         }
     }
 
-    @Test fun `五种忽略 exit 二的事件不把 stderr 报为普通错误`() {
+    @Test fun `六种忽略 exit 二的事件不把 stderr 报为普通错误`() {
+        // PermissionDenied 的 CC 原文：Exit code and stderr are ignored because the denial already occurred
         listOf(HookEvent.PermissionRequest, HookEvent.StopFailure, HookEvent.Notification,
-            HookEvent.Setup, HookEvent.InstructionsLoaded).forEach { event ->
+            HookEvent.Setup, HookEvent.InstructionsLoaded, HookEvent.PermissionDenied).forEach { event ->
             val v = interpreted(event, "text", 2)
             assertEquals(HookDecision.Neutral, v.decision); assertNull(v.reason); assertNull(v.nonBlockingError)
         }
+        // 忽略的只是 exit 2：PermissionDenied 上其他非零退出码仍是非阻断错误，合法 JSON 也照常生效
+        assertNotNull(interpreted(HookEvent.PermissionDenied, "text", 1).nonBlockingError)
+        assertNull(interpreted(HookEvent.PermissionDenied, "{}", 1).nonBlockingError)
     }
 
     @Test fun `PermissionRequest 只能由 behavior 决定且 deny interrupt 停止`() {

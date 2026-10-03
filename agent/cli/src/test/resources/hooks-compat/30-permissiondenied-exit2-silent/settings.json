@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PermissionDenied": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/deny-note.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

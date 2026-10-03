@@ -1,0 +1,12 @@
+{
+  "session_id": "9f1c-denysess",
+  "transcript_path": "/tmp/deny.jsonl",
+  "cwd": "/srv/deploy",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionDenied",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rm -rf /srv/cache",
+    "description": "清理缓存目录"
+  }
+}
