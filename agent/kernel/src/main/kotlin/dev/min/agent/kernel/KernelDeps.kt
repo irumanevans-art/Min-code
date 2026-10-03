@@ -38,7 +38,14 @@ class HostPorts(
     val httpHooks: dev.min.agent.spi.HttpHookClient = dev.min.agent.spi.HttpHookClient {
         dev.min.agent.spi.HttpHookResult.Failed("这个环境没有配置 http hook 的发送端口。")
     },
+    /**
+     * 长寿进程（MCP stdio 服务器，MCP设计 §2）。默认不可用：spawn 抛明确的错误，不影响不用它的宿主与测试。
+     * 传进来的端口会被套上 [QuotaProcessPort]，对外的 [processes] 恒带配额。
+     */
+    processes: dev.min.agent.spi.ProcessPort = dev.min.agent.spi.ProcessPort.Unavailable,
 ) {
+    val processes: dev.min.agent.spi.ProcessPort = QuotaProcessPort(processes)
+
     // 保留既有 HostPorts(fs, search, exec) { artifacts } 的组合根与测试写法。
     constructor(fs: WorkspaceFs, search: Search, exec: Exec, artifacts: (SessionId) -> ArtifactSink) :
         this(fs, search, exec, artifacts, dev.min.agent.spi.WebPort.Unavailable, null)
