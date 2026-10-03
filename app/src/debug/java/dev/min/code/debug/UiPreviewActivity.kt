@@ -78,6 +78,7 @@ import dev.min.code.ui.components.SettingRow
 import dev.min.code.ui.components.rememberInkToaster
 import dev.min.code.ui.session.AssistantEntry
 import dev.min.code.ui.session.ChangedFilesLayer
+import dev.min.code.ui.session.boundedDiffOf
 import dev.min.code.ui.session.rememberChangedFilesLabels
 import dev.min.code.ui.session.BlankPage
 import dev.min.code.ui.session.ClaudeCodeInputBar
@@ -561,36 +562,57 @@ private fun ConversationPreview(
  * 这种"控件凭空消失"的回归在真机上跑到才发现。
  */
 /**
- * 底部「改动过的文件」浮层的验收场景：一份能同时走到两条路径的假数据 ——
- * 编辑类工具（有快照、可撤销）与 Bash 的 diff 头（没快照、只能看），加上同一个文件改两次。
+ * 底部「改动过的文件」浮层的验收场景，数据取真实会话的形状（2.1.31 的预览用了 id == toolUseId、
+ * Edit 自带 editDiff 的假数据，恰好掩盖了撤销状态对不上、Edit 卡没有 diff 这两个真问题）：
+ * - 卡 id（`item-N`）≠ toolUseId（`toolu_…`），已撤销集合里存的是 toolUseId；
+ * - Write 新建 / Edit 的 editDiff 是 `tool_use_result.structuredPatch` 拼出来的（头带 `a/` `b/`）；
+ * - 有一条老会话回放式的 Edit：editDiff 为空，靠入参现算兜底；
+ * - Bash 删文件（diff 头那条路，没快照）；
+ * - 子 agent 里的编辑：挂在 Agent 卡的 subItems 下，只能看、能跳到 Agent 卡，不能撤。
  */
 @Composable
 private fun ChangedFilesPreview() {
     val labels = rememberChangedFilesLabels()
-    val files = remember {
-        changedFiles(
-            listOf(
-                ChatItem.ToolCall(
-                    id = "p-write", toolUseId = "p-write", name = "Write", status = ChatItem.ToolCall.Status.Done,
-                    input = JsonObject(mapOf("file_path" to JsonPrimitive("/workspace/docs/guide.md"))),
-                    editDiff = "new file mode\n--- a/docs/guide.md\n+++ b/docs/guide.md\n+# 指南\n+第一段\n+第二段",
-                ),
-                ChatItem.ToolCall(
-                    id = "p-edit1", toolUseId = "p-edit1", name = "Edit", status = ChatItem.ToolCall.Status.Done,
-                    input = JsonObject(mapOf("file_path" to JsonPrimitive("/workspace/src/Sea.kt"))),
-                    editDiff = "--- a/src/Sea.kt\n+++ b/src/Sea.kt\n-val a = 1\n+val a = 2\n 上下文行",
-                ),
-                ChatItem.ToolCall(
-                    id = "p-edit2", toolUseId = "p-edit2", name = "Edit", status = ChatItem.ToolCall.Status.Done,
-                    input = JsonObject(mapOf("file_path" to JsonPrimitive("/workspace/src/Sea.kt"))),
-                    editDiff = "--- a/src/Sea.kt\n+++ b/src/Sea.kt\n-val b = 3\n+val b = 4",
-                ),
-                ChatItem.ToolCall(
-                    id = "p-bash", toolUseId = "p-bash", name = "Bash", status = ChatItem.ToolCall.Status.Done,
-                    input = JsonObject(mapOf("command" to JsonPrimitive("rm -f build/old.o"))),
-                    editDiff = "deleted file mode\n--- a/build/old.o\n+++ b/build/old.o",
+    val transcriptLabels = rememberTranscriptLabels()
+    fun call(id: String, toolUseId: String, name: String, input: Map<String, String>, diff: String? = null, sub: List<ChatItem> = emptyList()) =
+        ChatItem.ToolCall(
+            id = id, toolUseId = toolUseId, name = name, status = ChatItem.ToolCall.Status.Done,
+            input = JsonObject(input.mapValues { JsonPrimitive(it.value) }), editDiff = diff, subItems = sub,
+        )
+    val items = remember {
+        listOf(
+            call(
+                "item-1", "toolu_01Write", "Write", mapOf("file_path" to "/workspace/docs/guide.md"),
+                "new file mode\n--- a//workspace/docs/guide.md\n+++ b//workspace/docs/guide.md\n@@ -0,0 +1,3 @@\n+# 指南\n+第一段\n+第二段",
+            ),
+            call(
+                "item-2", "toolu_02Edit", "Edit", mapOf("file_path" to "/workspace/src/Sea.kt"),
+                "--- a//workspace/src/Sea.kt\n+++ b//workspace/src/Sea.kt\n@@ -1,3 +1,3 @@\n context\n-val a = 1\n+val a = 2\n tail",
+            ),
+            // 老会话回放：没有 tool_use_result，editDiff 为空，面板按入参现算
+            call(
+                "item-3", "toolu_03Edit", "Edit",
+                mapOf("file_path" to "/workspace/src/Sea.kt", "old_string" to "val b = 3", "new_string" to "val b = 4"),
+            ),
+            call("item-4", "toolu_04Bash", "Bash", mapOf("command" to "rm -f build/old.o"), "deleted file mode\n--- a/build/old.o\n+++ b/build/old.o"),
+            call(
+                "item-5", "toolu_05Agent", "Agent", mapOf("description" to "补测试"),
+                sub = listOf(
+                    call(
+                        "item-6", "toolu_06Edit", "Edit", mapOf("file_path" to "/workspace/src/SeaTest.kt"),
+                        "--- a//workspace/src/SeaTest.kt\n+++ b//workspace/src/SeaTest.kt\n@@ -4,2 +4,3 @@\n fun t() {\n+    check(true)\n }",
+                    ),
                 ),
             ),
+        )
+    }
+    // 只有顶层的 Edit / Write 存过快照；子 agent 里的没有
+    val snapshotted = setOf("toolu_01Write", "toolu_02Edit", "toolu_03Edit")
+    val files = remember(transcriptLabels) {
+        changedFiles(
+            items,
+            canUndo = { it.toolUseId in snapshotted },
+            fallbackDiff = { boundedDiffOf(it.name, it.input, transcriptLabels) },
         )
     }
     var undone by remember { mutableStateOf(emptySet<String>()) }

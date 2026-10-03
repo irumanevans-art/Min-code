@@ -238,6 +238,17 @@ internal fun groupTranscript(items: List<ChatItem>): List<TranscriptBlock> {
 }
 
 /**
+ * 顶层条目 [itemId] 在哪个块里（列表的第几项），没有返回 -1。
+ * 「改动过的文件」浮层的跳转两个引擎共用：子 agent 的改动给的是发起它的那张 Agent 卡的 id，它在顶层。
+ */
+internal fun blockIndexOf(blocks: List<TranscriptBlock>, itemId: String): Int = blocks.indexOfFirst { block ->
+    when (block) {
+        is TranscriptBlock.Single -> block.item.id == itemId
+        is TranscriptBlock.Work -> block.items.any { it.id == itemId }
+    }
+}
+
+/**
  * 折叠态那一行数出了什么。
  *
  * 按工具名计数而不是罗列 —— `Bash 5 · Read 3` 一眼看得出这段在干哪类活，
@@ -800,10 +811,11 @@ internal fun TranscriptBlockEntry(
     manualExpanded: MutableMap<String, Boolean>,
     labels: TranscriptLabels,
     onRevert: ((String) -> Unit)? = null,
+    canRevert: (String) -> Boolean = { true },
 ) {
     when (block) {
         is TranscriptBlock.Single -> FreshItem(block.item) {
-            TranscriptItem(block.item, isFirst, isLast, labels, onRevert = onRevert)
+            TranscriptItem(block.item, isFirst, isLast, labels, onRevert = onRevert, canRevert = canRevert)
         }
 
         is TranscriptBlock.Work -> {
@@ -828,6 +840,7 @@ internal fun TranscriptBlockEntry(
                                     isLast = false,
                                     labels = labels,
                                     onRevert = onRevert,
+                                    canRevert = canRevert,
                                 )
                             }
                         }

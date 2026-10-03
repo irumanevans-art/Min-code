@@ -1551,33 +1551,15 @@ class ClaudeCodeManager(
      * 可以驱动它；把只能还原文件的操作说成"回到这一步"会让用户误以为模型也忘了这件事。
      * 所以还原之后往聊天流里补一条说明，让模型和用户都知道文件被改回去了。
      */
-    fun revertToolCall(toolUseId: String) {
-        val sessionId = _state.value.sessionId ?: return
-        scope.launch {
-            val workspaceDir = workspaceDir()
-            if (workspaceDir == null) {
-                appendItem(ChatItem.Note(newId(), "撤销失败：找不到工作区", isError = true))
-                return@launch
-            }
-            val store = checkpointStore(workspaceDir)
-            val ok = withContext(Dispatchers.IO) {
-                store.restore(sessionId, toolUseId) { guestPath -> guestToHost(workspaceDir, guestPath) }
-            }
-            val name = _state.value.items
-                .filterIsInstance<ChatItem.ToolCall>()
-                .firstOrNull { it.toolUseId == toolUseId }
-                ?.input?.get("file_path").asStringOrNull()
-                ?.substringAfterLast('/')
-                ?: "文件"
-            appendItem(
-                if (ok) {
-                    ChatItem.Note(newId(), "已把 $name 还原到这次修改之前（仅文件，对话历史不变）")
-                } else {
-                    ChatItem.Note(newId(), "撤销失败：找不到 $name 的快照", isError = true)
-                }
-            )
-        }
-    }
+    suspend fun revertToolCall(toolUseId: String): Boolean = revertFile(
+        name = _state.value.items.filterIsInstance<ChatItem.ToolCall>()
+            .firstOrNull { it.toolUseId == toolUseId }
+            ?.input?.get("file_path").asStringOrNull()
+            ?.substringAfterLast('/')
+            ?: "文件",
+        toolUseIds = listOf(toolUseId),
+        whole = false,
+    ).isNotEmpty()
 
     /**
      * 把一个文件在这个会话里的改动**整批**撤回去：按 [toolUseIds] 从最后一次往前逐个还原，
@@ -1585,36 +1567,46 @@ class ClaudeCodeManager(
      *
      * 语义与单条撤销一致 —— **只还原文件，不动对话**；所以同样往聊天流里补一条说明，
      * 让模型和用户都知道文件被改回去了。快照缺失的调用会被跳过，还原条数如实回报。
+     *
+     * @return **真的还原成功**的 toolUseId。界面只把这些标成「已撤销」，失败的不标
+     *   —— 先标后还原的话，失败时面板会说撤销了而文件其实没动。
      */
-    fun revertFile(name: String, toolUseIds: List<String>) {
-        if (toolUseIds.isEmpty()) return
-        val sessionId = _state.value.sessionId ?: return
-        scope.launch {
-            val workspaceDir = workspaceDir()
-            if (workspaceDir == null) {
-                appendItem(ChatItem.Note(newId(), "撤销失败：找不到工作区", isError = true))
-                return@launch
-            }
-            val store = checkpointStore(workspaceDir)
-            val restored = withContext(Dispatchers.IO) {
-                store.restoreAll(sessionId, toolUseIds) { guestPath -> guestToHost(workspaceDir, guestPath) }
-            }
-            val suffix = if (restored < toolUseIds.size) "（其中 ${toolUseIds.size - restored} 次没有快照，未还原）" else ""
-            appendItem(
-                if (restored > 0) {
-                    ChatItem.Note(newId(), "已把 $name 还原到这个会话开始前（$restored 次改动，仅文件，对话历史不变）$suffix")
-                } else {
-                    ChatItem.Note(newId(), "撤销失败：找不到 $name 的快照", isError = true)
-                },
-            )
+    suspend fun revertFile(name: String, toolUseIds: List<String>, whole: Boolean = true): Set<String> {
+        if (toolUseIds.isEmpty()) return emptySet()
+        val sessionId = _state.value.sessionId ?: return emptySet()
+        val workspaceDir = workspaceDir()
+        if (workspaceDir == null) {
+            appendItem(ChatItem.Note(newId(), "撤销失败：找不到工作区", isError = true))
+            return emptySet()
         }
+        val store = checkpointStore(workspaceDir)
+        val restored = withContext(Dispatchers.IO) {
+            store.restoreEach(sessionId, toolUseIds) { guestPath -> guestToHost(workspaceDir, guestPath) }
+        }
+        val missing = toolUseIds.size - restored.size
+        appendItem(
+            when {
+                restored.isEmpty() -> ChatItem.Note(newId(), "撤销失败：找不到 $name 的快照", isError = true)
+                !whole -> ChatItem.Note(newId(), "已把 $name 还原到这次修改之前（仅文件，对话历史不变）")
+                else -> {
+                    val suffix = if (missing > 0) "（其中 $missing 次没有快照，未还原）" else ""
+                    ChatItem.Note(newId(), "已把 $name 还原到这个会话开始前（${restored.size} 次改动，仅文件，对话历史不变）$suffix")
+                }
+            },
+        )
+        return restored
     }
 
-    /** 这次工具调用有没有可用的快照（决定 UI 上要不要显示撤销按钮） */
-    suspend fun hasCheckpoint(toolUseId: String): Boolean = withContext(Dispatchers.IO) {
-        val sessionId = _state.value.sessionId ?: return@withContext false
-        val workspaceDir = workspaceDir() ?: return@withContext false
-        checkpointStore(workspaceDir).hasSnapshot(sessionId, toolUseId)
+    /**
+     * [toolUseIds] 里哪些存过快照 —— 「改动过的文件」面板靠它决定哪些改动给撤销按钮。
+     * 子 agent 里的编辑不走 [snapshotBeforeEdit]（它的 tool_use 被包成 `ClaudeCodeEvent.Subagent`），
+     * 永远不会在结果里，面板如实说撤不了。
+     */
+    suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> = withContext(Dispatchers.IO) {
+        val sessionId = _state.value.sessionId ?: return@withContext emptySet()
+        val workspaceDir = workspaceDir() ?: return@withContext emptySet()
+        val store = checkpointStore(workspaceDir)
+        toolUseIds.filterTo(LinkedHashSet()) { store.hasSnapshot(sessionId, it) }
     }
 
     /**

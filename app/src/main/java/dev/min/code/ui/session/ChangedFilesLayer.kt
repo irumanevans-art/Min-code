@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import dev.min.code.R
 import dev.min.code.core.session.ChangedFile
 import dev.min.code.core.session.combineDiffs
+import dev.min.code.core.session.totals
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.richtext.DiffView
 import dev.min.code.ui.theme.InkMotion
@@ -78,10 +79,12 @@ import kotlin.math.abs
 @Composable
 internal fun ChangedFilesLayer(
     files: List<ChangedFile>,
+    /** 已撤销的 toolUseId（不是卡 id：见 [dev.min.code.core.session.FileChange.itemId]） */
     undoneIds: Set<String>,
     labels: ChangedFilesLabels,
     onJumpTo: (String) -> Unit,
-    onUndo: (List<String>) -> Unit,
+    /** null = 这个引擎没有撤销（Codex）：详情页只说撤不了 */
+    onUndo: ((List<String>) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     AnimatedVisibility(
@@ -100,7 +103,7 @@ private fun ChangedFilesPanel(
     undoneIds: Set<String>,
     labels: ChangedFilesLabels,
     onJumpTo: (String) -> Unit,
-    onUndo: (List<String>) -> Unit,
+    onUndo: ((List<String>) -> Unit)?,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var openPath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -224,7 +227,7 @@ private fun FileList(
     LazyColumn(Modifier.fillMaxWidth()) {
         items(files, key = { it.path }) { file ->
             val (added, removed) = file.totals(undoneIds)
-            val undone = file.changes.all { it.itemId in undoneIds }
+            val undone = file.isUndone(undoneIds)
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -281,9 +284,9 @@ private fun FileDetail(
     labels: ChangedFilesLabels,
     onBack: () -> Unit,
     onJumpTo: (String) -> Unit,
-    onUndo: (List<String>) -> Unit,
+    onUndo: ((List<String>) -> Unit)?,
 ) {
-    val live = file.changes.filterNot { it.itemId in undoneIds }
+    val live = file.live(undoneIds)
     val diff = remember(file, undoneIds) {
         combineDiffs(live.mapNotNull { it.diff }) { index -> labels.diffSeparator.format(index + 1) }
     }
@@ -304,8 +307,8 @@ private fun FileDetail(
             )
             InkTextButton(onClick = onBack, icon = HugeIcons.ArrowLeft01) { Text(labels.back) }
         }
-        // 跳到改动的那一轮：改过多次时给最近一次——要看的是「刚才改了什么」
-        live.lastOrNull()?.let { latest ->
+        // 跳到改动的那一轮：改过多次时给最近一次——要看的是「刚才改了什么」。全撤销了也还能跳过去看
+        (live.lastOrNull() ?: file.changes.lastOrNull())?.let { latest ->
             Text(
                 text = labels.jumpToChange,
                 style = MaterialTheme.typography.labelSmall,
@@ -313,7 +316,14 @@ private fun FileDetail(
                 modifier = Modifier.clickable { onJumpTo(latest.itemId) }.padding(vertical = 4.dp),
             )
         }
-        if (diff.isBlank()) {
+        if (live.isEmpty()) {
+            Text(
+                text = labels.undone,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+        } else if (diff.isBlank()) {
             Text(
                 text = labels.noDiff,
                 style = MaterialTheme.typography.labelSmall,
@@ -326,19 +336,22 @@ private fun FileDetail(
             }
         }
         HorizontalDivider(color = MaterialTheme.sea.rule)
-        val undoIds = live.mapNotNull { it.toolUseId }
-        if (undoIds.isNotEmpty()) {
-            // 从最后一次往前逐个还原（store 的 restoreAll 自己会再逆序一次，这里按会话顺序给）
-            InkTextButton(onClick = { onUndo(undoIds) }, icon = HugeIcons.ArrowTurnBackward) {
-                Text(labels.undoFile.format(file.name))
+        // 按会话顺序给（旧 → 新）：store 的 restoreAll 自己会从最后一次往前还原
+        val undoIds = file.pendingUndoIds(undoneIds)
+        // 都撤销过了：上面已经写了「已撤销」，这里既不给按钮，也不能说「撤不了」
+        if (live.isNotEmpty()) {
+            if (onUndo != null && undoIds.isNotEmpty()) {
+                InkTextButton(onClick = { onUndo(undoIds) }, icon = HugeIcons.ArrowTurnBackward) {
+                    Text(labels.undoFile.format(file.name))
+                }
+            } else {
+                Text(
+                    text = labels.cannotUndo,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
             }
-        } else {
-            Text(
-                text = labels.cannotUndo,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 6.dp),
-            )
         }
     }
 }
@@ -398,12 +411,6 @@ private fun ChevronRotating(expanded: Boolean) {
         tint = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
-
-private fun List<ChangedFile>.totals(undoneIds: Set<String>): Pair<Int, Int> =
-    fold(0 to 0) { (a, r), file ->
-        val (fa, fr) = file.totals(undoneIds)
-        (a + fa) to (r + fr)
-    }
 
 /** 收起态的高度：只剩一行把手 */
 internal val COLLAPSED_HEIGHT_DP: Dp = 34.dp

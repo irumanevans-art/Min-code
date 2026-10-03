@@ -164,6 +164,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.changedFiles
+import dev.min.code.core.session.undoCandidates
 import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.session.escapedPaths
 import dev.min.code.core.session.touchesDeviceStorage
@@ -1001,10 +1002,23 @@ private fun SessionContent(
     }
 
     // 本会话改过的文件（底部浮层用）。纯函数，只读 items；会话长起来之后按 items 缓存
-    val changed = remember(session.items) { changedFiles(session.items) }
+    // 能撤销 = 编辑类工具且存过快照：批量问一次磁盘，结果出来之前谁都不给撤销钮。
+    // 子 agent 里的编辑不走快照（见 [undoCandidates]），所以面板上它们只能看、能跳转，不能撤
+    val candidateIds = remember(session.items) { undoCandidates(session.items) }
+    var snapshotted by remember(activeKey) { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(candidateIds) { snapshotted = vm.checkpointed(candidateIds) }
+    val changed = remember(session.items, snapshotted, transcriptLabels) {
+        changedFiles(
+            session.items,
+            canUndo = { it.toolUseId in snapshotted },
+            // 老会话回放里没有 tool_use_result，Edit / Write 卡的 editDiff 是空的：按入参现算
+            fallbackDiff = { boundedDiffOf(it.name, it.input, transcriptLabels) },
+        )
+    }
     val changedLabels = rememberChangedFilesLabels()
-    // 撤销过的条目：撤销只动文件、不动对话历史，所以这件事只在本页面会话内记得 —— 重开会话就忘了，
-    // 那时文件本来也已经被改回去了（快照可以重复 restore，状态是幂等的）
+    // 撤销过的 toolUseId（面板和工具卡共用同一种 id）：撤销只动文件、不动对话历史，所以这件事只在本页面会话内记得
+    // —— 重开会话就忘了，那时文件本来也已经被改回去了（快照可以重复 restore，状态是幂等的）。
+    // **还原成功之后才记**，失败的不记
     var undoneIds by remember(activeKey) { mutableStateOf(emptySet<String>()) }
 
     // 用户手动开合过的块（key = 块内第一条的 id）。null = 没动过，跟默认走。
@@ -1129,7 +1143,8 @@ private fun SessionContent(
                             live = session.busy && index == lastIndex,
                             manualExpanded = manualExpanded,
                             labels = transcriptLabels,
-                            onRevert = { vm.revertToolCall(it) },
+                            onRevert = { id -> vm.revertToolCall(id) { undoneIds = undoneIds + id } },
+                            canRevert = { it in snapshotted },
                         )
                     }
                 }
@@ -1313,21 +1328,17 @@ private fun SessionContent(
                     undoneIds = undoneIds,
                     labels = changedLabels,
                     onJumpTo = { itemId ->
-                        val index = blocks.indexOfFirst { block ->
-                            when (block) {
-                                is TranscriptBlock.Single -> block.item.id == itemId
-                                is TranscriptBlock.Work -> block.items.any { it.id == itemId }
-                            }
-                        }
+                        val index = blockIndexOf(blocks, itemId)
                         if (index >= 0) {
+                            // 子 agent 视图是盖在主列表上的一张纸：不退出的话滚了也看不见
+                            selectedAgent = null
                             follow.detach()
                             scope.launch { listState.animateScrollToItem(index) }
                         }
                     },
                     onUndo = { ids: List<String> ->
                         val file = changed.firstOrNull { f -> f.changes.any { it.toolUseId in ids } }
-                        undoneIds = undoneIds + ids
-                        vm.revertFile(file?.name ?: "文件", ids)
+                        vm.revertFile(file?.name ?: "文件", ids) { restored -> undoneIds = undoneIds + restored }
                     },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
@@ -1441,6 +1452,7 @@ private fun SessionContent(
  * [onRevert] 收的是 `toolUseId`。这里不直接吃 ViewModel，是因为 Codex 的会话页
  * 复用的就是这个分发器 —— 撤销是 Claude 侧的快照功能，Codex 传 null 即可，
  * 而不必为此另起一套一模一样的 when。
+ * [canRevert] 问这个 toolUseId 有没有快照：没有就不给按钮（子 agent 里的编辑、没存上快照的，按了只会报「找不到快照」）。
  */
 @Composable
 internal fun TranscriptItem(
@@ -1449,6 +1461,7 @@ internal fun TranscriptItem(
     isLast: Boolean,
     labels: TranscriptLabels,
     onRevert: ((String) -> Unit)? = null,
+    canRevert: (String) -> Boolean = { true },
 ) {
     when (item) {
         is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued, item.handoff)
@@ -1468,9 +1481,9 @@ internal fun TranscriptItem(
             isFirst = isFirst,
             isLast = isLast,
             labels = labels,
-            // 只有编辑类工具才有快照。这里按工具名过滤而不是去问磁盘：
-            // 展开一条就发一次 IO 查询，滑动列表时会打出一串无谓的读盘。
-            onRevert = if (onRevert != null && item.name in CHECKPOINT_TOOLS) {
+            // 只有编辑类工具才有快照。工具名在这里过滤；磁盘上到底有没有，由页面一次批量查好（canRevert），
+            // 不在每条展开时各发一次 IO 查询，滑动列表时会打出一串无谓的读盘。
+            onRevert = if (onRevert != null && item.name in CHECKPOINT_TOOLS && canRevert(item.toolUseId)) {
                 { onRevert(item.toolUseId) }
             } else null,
         )
