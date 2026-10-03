@@ -5,7 +5,9 @@ import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ModelStreamEvent
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.PostCompactInput
 import dev.min.agent.ext.hooks.PreCompactInput
+import dev.min.agent.ext.hooks.SessionStartInput
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.MessageId
@@ -19,6 +21,8 @@ import dev.min.agent.spi.CompactionStarted
 import dev.min.agent.spi.CompactionTrigger
 import dev.min.agent.spi.ContextCompacted
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.MaskedOutput
 import dev.min.agent.spi.ModelMessage
 import dev.min.agent.spi.Note
@@ -156,7 +160,39 @@ internal class Compactor(
             listOf(ContextCompacted(turnId, compactionId, trigger, summary, through, transcriptPath, estimate, usage)),
             Durability.Sync,
         )
+        postCompact(turnId, trigger, summary)
+        sessionStartCompact(turnId, compactionId)
         return CompactResult.Done
+    }
+
+    /**
+     * PostCompact：压缩完成后只执行（CC：无决策控制，systemMessage 与 continue 被丢弃）；
+     * 非阻断错误与超时由 [HookDriver.run] 照现有方式记 Note。compact_summary 给的是进模型的原样摘要
+     */
+    private suspend fun postCompact(turnId: TurnId, trigger: CompactionTrigger, summary: String) {
+        val kind = if (trigger == CompactionTrigger.Manual) "manual" else "auto"
+        val specific = HookJson.encodeToJsonElement(
+            PostCompactInput.serializer(),
+            PostCompactInput(trigger = kind, compactSummary = summary),
+        ).jsonObject
+        hooks.run(HookEvent.PostCompact, kind, specific, turnId)
+    }
+
+    /**
+     * SessionStart(source = compact)：压缩完成后（PostCompact 之后）只对根会话跑（与 startup 一致）；
+     * 加的上下文挂在这次压缩的摘要消息末尾，立刻进模型视图
+     */
+    private suspend fun sessionStartCompact(turnId: TurnId, compactionId: String) {
+        if (rt.state.value.origin != null) return
+        val specific = HookJson.encodeToJsonElement(
+            SessionStartInput.serializer(),
+            SessionStartInput(source = "compact", model = rt.state.value.settings.model.modelId),
+        ).jsonObject
+        val outcome = hooks.run(HookEvent.SessionStart, "compact", specific, turnId) ?: return
+        val events = outcome.contexts.map {
+            HookContextAdded(HookContextTarget.Compaction(compactionId), HookEvent.SessionStart.name, it)
+        }
+        if (events.isNotEmpty()) rt.commit(events, Durability.Sync)
     }
 
     /**

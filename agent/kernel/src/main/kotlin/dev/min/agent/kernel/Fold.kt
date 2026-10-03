@@ -198,6 +198,15 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 }
                 copy(hookContexts = hookContexts + (target.assistantMessageId to hookContexts[target.assistantMessageId].orEmpty() + e.text))
             }
+            is HookContextTarget.Compaction -> {
+                check(compaction?.compactionId == target.compactionId) {
+                    "hook 上下文挂靠的压缩 ${target.compactionId} 不是当前摘要（${compaction?.compactionId}）"
+                }
+                copy(
+                    compactionContexts = compactionContexts +
+                        (target.compactionId to compactionContexts[target.compactionId].orEmpty() + e.text),
+                )
+            }
         }
         is ToolInputRewritten -> updateTurn(e.turnId) { t ->
             val call = t.calls[e.callId] ?: error("回合 ${e.turnId} 里没有调用 ${e.callId}")
@@ -227,7 +236,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
             val stillAttached = history.drop(boundary + 1).flatMap { memoryAttachments[it.messageId].orEmpty() }.map { it.path }
             updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
                 memoryPathsInContext = memory.map { it.path }.toSet() + stillAttached,
-                compaction = CompactionView(e.summary, e.through, e.transcriptPath),
+                compaction = CompactionView(e.compactionId, e.summary, e.through, e.transcriptPath),
+                // 旧摘要连同挂在它末尾的 SessionStart(compact) 上下文一起被新摘要取代
+                compactionContexts = emptyMap(),
                 openCompaction = null,
                 compactionFailures = 0,
                 lastRequestUsage = null,

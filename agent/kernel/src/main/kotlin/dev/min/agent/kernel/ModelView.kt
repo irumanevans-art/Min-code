@@ -18,7 +18,10 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
     // 压缩（docs/agent/detail/压缩设计.md §1）：最后一次摘要取代它边界之前的全部对话，被遮蔽的工具结果换成一行占位。
     // 两者都只改这里的投影，history 与 toolResults 一字不动
     val start = compaction?.let { c ->
-        add(ModelMessage(Role.User, listOf(TextPart(c.summary))))
+        // SessionStart(source = compact) 加的上下文挂在摘要消息末尾：压缩一发生就立刻进模型视图，
+        // 下一次压缩把旧摘要连同它一起取代（折叠在 ContextCompacted 上清空 compactionContexts）
+        val reminders = compactionContexts[c.compactionId].orEmpty().map { TextPart("<system-reminder>\n$it\n</system-reminder>") }
+        add(ModelMessage(Role.User, listOf(TextPart(c.summary)) + reminders))
         history.indexOfFirst { it.messageId == c.through } + 1
     } ?: 0
     history.drop(start).forEach { entry ->

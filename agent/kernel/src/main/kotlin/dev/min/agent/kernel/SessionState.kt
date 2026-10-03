@@ -88,6 +88,8 @@ data class SessionState(
     val masked: Map<CallId, String?> = emptyMap(),
     /** 最后一次摘要：模型视图里到 [CompactionView.through] 为止的对话换成它 */
     val compaction: CompactionView? = null,
+    /** 挂在某次摘要消息末尾的 hook 上下文（SessionStart source = compact），按压缩 id；再压缩时旧的一并作废 */
+    val compactionContexts: Map<String, List<String>> = emptyMap(),
     /** 连续失败的自动压缩次数，到 3 次熔断（成功一次清零） */
     val compactionFailures: Int = 0,
     /** 开始了还没有结局的压缩（进程死在中途时恢复用） */
@@ -120,7 +122,13 @@ data class SessionState(
     val memoryPathsInContext: Set<GuestPath> = emptySet(),
 )
 
-data class CompactionView(val summary: String, val through: MessageId, val transcriptPath: String?)
+data class CompactionView(
+    /** 对应 ContextCompacted.compactionId：SessionStart(compact) 的上下文挂靠键 */
+    val compactionId: String,
+    val summary: String,
+    val through: MessageId,
+    val transcriptPath: String?,
+)
 
 /** 父会话视角的一个子 agent：委派时的样子 + 哪些回合的报告已经交付 */
 data class ChildSummary(
