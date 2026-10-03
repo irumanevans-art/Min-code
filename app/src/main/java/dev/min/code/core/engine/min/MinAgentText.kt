@@ -58,6 +58,20 @@ interface MinAgentText {
     fun sessionNotFound(): String
 }
 
+/**
+ * 子 agent 报告里 `status` 属性（内核 `Reports.statusOf` 写的）对应的文案资源；认不出的返回 null，调用方退回原串。
+ * 拆成函数是为了能在 JVM 上断言「内核会产出的每个状态都有文案」，不用读资源。
+ */
+internal fun reportStatusRes(status: String): Int? = when (status) {
+    "completed" -> R.string.min_agent_report_completed
+    "failed" -> R.string.min_agent_report_failed
+    "interrupted" -> R.string.min_agent_report_interrupted
+    "interrupted-by-restart" -> R.string.min_agent_report_restart
+    "turn-limit" -> R.string.min_agent_report_limit
+    "stopped-by-hook" -> R.string.min_agent_report_hook_stopped
+    else -> null
+}
+
 /** 读 `res/values*` 的实现。时间用系统短格式，跟着界面语言走 */
 class ResMinAgentText(private val context: Context) : MinAgentText {
     private fun s(id: Int, vararg args: Any): String = context.getString(id, *args)
@@ -80,14 +94,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun subagentWoke() = s(R.string.min_agent_woke)
 
     override fun report(report: MinReport, description: String?): String {
-        val status = when (report.status) {
-            "completed" -> R.string.min_agent_report_completed
-            "failed" -> R.string.min_agent_report_failed
-            "interrupted" -> R.string.min_agent_report_interrupted
-            "interrupted-by-restart" -> R.string.min_agent_report_restart
-            "turn-limit" -> R.string.min_agent_report_limit
-            else -> null
-        }?.let { s(it) } ?: report.status
+        val status = reportStatusRes(report.status)?.let { s(it) } ?: report.status
         val parts = listOfNotNull(
             report.name?.let { "${report.agentType} · $it" } ?: report.agentType,
             description?.takeIf { it.isNotBlank() },

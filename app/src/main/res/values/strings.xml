@@ -1065,6 +1065,7 @@
   <string name="min_agent_report_interrupted">stopped</string>
   <string name="min_agent_report_restart">interrupted by a restart</string>
   <string name="min_agent_report_limit">hit its turn limit</string>
+  <string name="min_agent_report_hook_stopped">stopped by a hook</string>
   <string name="min_agent_report_calls">%1$d tool calls</string>
   <string name="min_agent_report_tokens">%1$s tokens</string>
   <string name="min_agent_message_from">Message from %1$s</string>
