@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head><title>模型价格与配额</title></head>
+<body>
+<main>
+  <h1>模型价格与配额</h1>
+  <p>价格单位为 元 / 百万 token，北京时间 2026-09-01 生效。</p>
+  <h2>标准价目</h2>
+  <table border="1">
+    <tr><th>模型</th><th>输入</th><th>输出</th><th>备注</th></tr>
+    <tr><td>glm-5.3</td><td>6.00</td><td>30.00</td><td>支持 1M 上下文</td></tr>
+    <tr><td>glm-5.3-flash</td><td>0.60</td><td>3.00</td><td>命中缓存的输入按 1/5 计</td></tr>
+    <tr><td>kimi-k3</td><td>4.00</td><td>16.00</td><td>权重名含 | 竖线的要转义</td></tr>
+  </table>
+  <h2>套餐对比（跨行列的复杂表格）</h2>
+  <table>
+    <tr><th rowspan="2">套餐</th><th colspan="2">配额</th><th rowspan="2">价格</th></tr>
+    <tr><th>请求数</th><th>token</th></tr>
+    <tr><td>个人版</td><td>1,000</td><td>2M</td><td>¥49/月</td></tr>
+    <tr><td>团队版</td><td>不限</td><td>50M</td><td>¥999/月</td></tr>
+  </table>
+  <h2>缺格子的表</h2>
+  <table>
+    <tr><th>区域</th><th>延迟</th></tr>
+    <tr><td>cn-beijing</td><td>80ms</td></tr>
+    <tr><td>cn-shanghai</td></tr>
+  </table>
+</main>
+</body>
+</html>
