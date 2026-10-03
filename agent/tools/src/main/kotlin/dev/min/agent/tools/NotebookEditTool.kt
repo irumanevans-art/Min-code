@@ -152,7 +152,11 @@ object NotebookEditTool : Tool<NotebookEditInput> {
                 append("\n注意：这个 notebook 里有单元没有 id，它们的 cell-<序号> 会随位置变化，再指定之前先 Read。")
             }
         }
-        return okResult(full.trimEnd(), listOf(FileStamp(path, written.size, written.modifiedMs)))
+        return okResult(
+            full.trimEnd(),
+            listOf(FileStamp(path, written.size, written.modifiedMs)),
+            listOf(fileEdit(path, text, change.text)),
+        )
     }
 
     /** 一次改动的结果：新全文、预期的单元列表（供写前校验）、给模型的话；[error] 非空表示拒绝 */

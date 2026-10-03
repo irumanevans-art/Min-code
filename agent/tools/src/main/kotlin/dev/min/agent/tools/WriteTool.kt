@@ -2,6 +2,8 @@ package dev.min.agent.tools
 
 import dev.min.agent.spi.AccessKind
 import dev.min.agent.spi.FileKind
+import dev.min.agent.spi.FileEdit
+import dev.min.agent.spi.catchingNonCancellation
 import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HarnessProfile
@@ -68,13 +70,29 @@ object WriteTool : Tool<WriteInput> {
                 return failResult("$path 在你读过之后被改过，先重新 Read。")
             }
         }
+        // 覆盖之前的原文：算 diff 用。读失败（或文件很大）就不给 diff，不影响写入本身
+        val before = existing?.let { readBefore(ctx, path, it.size) }
         ctx.fs.writeAtomic(path, input.content.encodeToByteArray())
         val after = checkNotNull(ctx.fs.stat(path)) { "写入后 stat 不到 $path" }
         return okResult(
             "已写入 $path（${countLines(input.content)} 行）",
             listOf(FileStamp(path, after.size, after.modifiedMs)),
+            before?.let { listOf(fileEdit(path, it, input.content, created = existing == null)) }
+                ?: listOf(FileEdit(path, created = existing == null)),
         )
     }
+
+    /**
+     * 覆盖前的原文（只在已有文件上调用）。超过 [MAX_DIFF_BYTES] 的文件直接放弃算 diff：
+     * 界面上一次也只看前几十行，为它把整个文件读进内存不划算。读失败按「读不到」处理。
+     */
+    private suspend fun readBefore(ctx: ToolContext, path: GuestPath, size: Long): String? {
+        if (size > MAX_DIFF_BYTES) return null
+        return catchingNonCancellation { ctx.fs.read(path, 0, size.toInt()).decodeToString() }.getOrNull()
+    }
+
+    /** diff 的原文上限：比这个大的文件只报「改过了」，不逐行展示 */
+    private const val MAX_DIFF_BYTES = 2L * 1024 * 1024
 
     /** 与 Read 的数法一致：末尾换行不算多一行；空内容是 0 行 */
     private fun countLines(content: String): Int {

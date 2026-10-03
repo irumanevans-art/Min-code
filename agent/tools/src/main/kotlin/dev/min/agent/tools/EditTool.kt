@@ -135,7 +135,12 @@ object EditTool : Tool<EditInput> {
             append("\n改动附近的内容：\n")
             append(snippet(updatedText, focusLine))
         }
-        return okResult(text, listOf(FileStamp(path, after.size, after.modifiedMs)))
+        return okResult(
+            text,
+            listOf(FileStamp(path, after.size, after.modifiedMs)),
+            // 改动过的文件报给界面（「改动过的文件」面板）：改之前与之后都在手里，不必再读盘
+            listOf(fileEdit(path, original.text, updatedText, created = created)),
+        )
     }
 
     /** 改动附近的内容，cat -n 风格（与 Read 一致），前后各带几行，最多 [SNIPPET_MAX_LINES] 行 */

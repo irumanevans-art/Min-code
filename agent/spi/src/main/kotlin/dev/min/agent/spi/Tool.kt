@@ -95,10 +95,36 @@ data class ToolResult(
      */
     val touched: List<FileStamp> = emptyList(),
     /**
+     * 这次调用改了哪些文件、改成什么样。不发给模型；界面的「改动过的文件」面板据此列文件与看 diff，
+     * 与 Claude Code 的 `bashEditDiff` / Codex 的 fileChange 是同一样东西（`core/session/ChangedFiles.kt` 两边通吃）。
+     * 落盘时随 [ToolOutcome] 一起进日志，所以面板只凭日志就能重建。
+     */
+    val fileEdits: List<FileEdit> = emptyList(),
+    /**
      * 这次调用对会话本身的影响（如进出计划模式）。不发给模型；工具不直接改会话状态，
      * 由内核在写 ToolOutcome 的同一次提交里落成对应的设置事件。
      */
     val effects: List<SessionEffect> = emptyList(),
+)
+
+/**
+ * 一次文件改动。由编辑类工具在执行成功之后自己填：那时它手里既有改之前的原文、也有新内容，
+ * 算 diff 不必再读一次盘。
+ *
+ * [diff] 是不带 `---` / `+++` 文件头的 hunk 正文（头由界面按路径拼，见 `ChangedFiles.diffPaths`）；
+ * 超长时截断，[truncated] 记着砍掉了多少字符。
+ */
+@Serializable
+data class FileEdit(
+    val path: GuestPath,
+    /** unified diff 的 hunk 正文（含 `@@` 头），没有改动时为 null */
+    val diff: String? = null,
+    /** 这次是新建（撤销动作是删掉它） */
+    val created: Boolean = false,
+    /** 这次把文件删了 */
+    val deleted: Boolean = false,
+    /** [diff] 被截断时砍掉的字符数；0 = 完整 */
+    val truncated: Int = 0,
 )
 
 /** 某一刻看到的文件状态 */

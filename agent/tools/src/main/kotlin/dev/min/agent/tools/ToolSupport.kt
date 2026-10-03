@@ -1,6 +1,7 @@
 package dev.min.agent.tools
 
 import dev.min.agent.protocol.TextPart
+import dev.min.agent.spi.FileEdit
 import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ToolInput
@@ -93,8 +94,21 @@ internal fun prop(type: String, description: String, enum: List<String>? = null)
 
 // ---- 结果 ----
 
-internal fun okResult(text: String, touched: List<FileStamp> = emptyList()) =
-    ToolResult(listOf(TextPart(text)), touched = touched)
+internal fun okResult(
+    text: String,
+    touched: List<FileStamp> = emptyList(),
+    fileEdits: List<FileEdit> = emptyList(),
+) = ToolResult(listOf(TextPart(text)), touched = touched, fileEdits = fileEdits)
+
+/**
+ * 编辑类工具改完一个文件之后的 [FileEdit]：diff 用改前的文本与改后的文本现算，
+ * 拼上 `--- a/…` / `+++ b/…` 文件头（路径用 guest 路径原样），与 Claude Code 的 `bashEditDiff` 同形。
+ */
+internal fun fileEdit(path: GuestPath, before: String, after: String, created: Boolean = false): FileEdit {
+    val body = TextDiff.unified(before, after)
+    val diff = body?.let { "--- a/${path.value}\n+++ b/${path.value}\n$it" }
+    return FileEdit(path = path, diff = diff, created = created, deleted = after.isEmpty() && before.isNotEmpty())
+}
 
 internal fun failResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)
 
