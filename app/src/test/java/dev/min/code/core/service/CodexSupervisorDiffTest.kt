@@ -11,7 +11,7 @@ import org.junit.Test
  */
 class CodexSupervisorDiffTest {
 
-    private val idle = ClaudeCodeSessionSupervisor.CodexSeen(
+    private val idle = SessionSupervisor.CodexSeen(
         busy = false, approvalKey = null, status = SessionStatus.Idle, errorMessage = null,
     )
 
@@ -20,7 +20,7 @@ class CodexSupervisorDiffTest {
         approvalKey: String? = null,
         status: SessionStatus = SessionStatus.Running,
         errorMessage: String? = null,
-    ) = ClaudeCodeSessionSupervisor.CodexSeen(busy, approvalKey, status, errorMessage)
+    ) = SessionSupervisor.CodexSeen(busy, approvalKey, status, errorMessage)
 
     @Test
     fun `first observation never notifies`() {

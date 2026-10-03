@@ -62,7 +62,7 @@ private const val TAG = "ClaudeCodeFgs"
  *
  * ## 生命周期：拉起在外面，停止在里面
  *
- * [ClaudeCodeSessionSupervisor] 观察 [ClaudeCodeSessionRegistry.anyLive]，第一个会话起来时
+ * [SessionSupervisor] 观察 [ClaudeCodeSessionRegistry.anyLive]，第一个会话起来时
  * 调 [start]。**停止不由外面 stopService，而是服务自己观察注册表，最后一个会话结束后收尾。**
  *
  * 这不是风格问题，是一次真实的崩溃：`startForegroundService()` 的契约是「服务随后必须成功

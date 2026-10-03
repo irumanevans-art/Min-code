@@ -22,7 +22,7 @@ import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.rootfs.currentBindMounts
-import dev.min.code.core.service.ClaudeCodeSessionSupervisor
+import dev.min.code.core.service.SessionSupervisor
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.ProviderBackup
@@ -170,7 +170,7 @@ val appModule = module {
 
     // 保活与后台通知。createdAtStart：它订阅的是注册表，注册表可能在页面之外先动起来
     single(createdAtStart = true) {
-        ClaudeCodeSessionSupervisor(
+        SessionSupervisor(
             context = get(),
             appScope = get(),
             registry = get(),

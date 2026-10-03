@@ -49,7 +49,7 @@ import dev.min.code.core.session.SessionStatus
  *
  * 通知 id 按会话 key 派生，多会话各发各的、互不覆盖。
  */
-class ClaudeCodeSessionSupervisor(
+class SessionSupervisor(
     private val context: Application,
     appScope: AppScope,
     private val registry: ClaudeCodeSessionRegistry,
@@ -423,8 +423,8 @@ internal fun notificationBody(lastAssistantText: String?): String {
  * 「请求使用 A」，按钮按下去应答的却是 B。
  */
 internal fun claudeSupervisorDiff(
-    previous: ClaudeCodeSessionSupervisor.ClaudeSeen?,
-    current: ClaudeCodeSessionSupervisor.ClaudeSeen,
+    previous: SessionSupervisor.ClaudeSeen?,
+    current: SessionSupervisor.ClaudeSeen,
     isForeground: Boolean,
 ): List<ClaudeSupervisorEvent> = buildList {
     if (current.pendingId != null && current.pendingId != previous?.pendingId) {
@@ -448,8 +448,8 @@ internal fun claudeSupervisorDiff(
  * 但 ApprovalCleared 在前台也要撤（通知还挂在状态栏上）。
  */
 internal fun codexSupervisorDiff(
-    previous: ClaudeCodeSessionSupervisor.CodexSeen?,
-    current: ClaudeCodeSessionSupervisor.CodexSeen,
+    previous: SessionSupervisor.CodexSeen?,
+    current: SessionSupervisor.CodexSeen,
     isForeground: Boolean,
 ): CodexSupervisorEvent? {
     // 比的是「换了没有」，不是「有没有」：A 还挂着就直接换成 B（中间没有 null 间隔）

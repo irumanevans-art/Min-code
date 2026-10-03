@@ -1,7 +1,7 @@
 package dev.min.code.core.engine
 
-import dev.min.code.core.service.ClaudeCodeSessionSupervisor.ClaudeSeen
-import dev.min.code.core.service.ClaudeCodeSessionSupervisor.CodexSeen
+import dev.min.code.core.service.SessionSupervisor.ClaudeSeen
+import dev.min.code.core.service.SessionSupervisor.CodexSeen
 import dev.min.code.core.service.ClaudeSupervisorEvent
 import dev.min.code.core.service.CodexSupervisorEvent
 import dev.min.code.core.service.claudeSupervisorDiff
