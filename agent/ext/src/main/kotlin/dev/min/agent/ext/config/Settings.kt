@@ -66,11 +66,22 @@ data class SettingsLayer(
     val allowManagedPermissionRulesOnly: Boolean? = null,
     /** hooks 原样保留：执行是以后的事，且 hooks 在各层之间是叠加而不是覆盖 */
     val hooks: JsonObject? = null,
+    /** http hook 的 URL 白名单：定义过的话（任意一层），http hook 的 URL 必须命中合并后的清单 */
+    val allowedHttpHookUrls: List<String>? = null,
+    /** http hook 头插值的环境变量白名单：定义过就只放行清单上的名字 */
+    val httpHookAllowedEnvVars: List<String>? = null,
     val enabledPlugins: Map<String, Boolean> = emptyMap(),
 )
 
 /** 某一层带来的 hooks 配置。执行方要按层判断（managed 的 hooks 只有 managed 层能关） */
-data class HookSource(val source: ConfigSource, val hooks: JsonObject)
+data class HookSource(
+    val source: ConfigSource,
+    val hooks: JsonObject,
+    /** 这一层的 http hook URL 闸；null = 这层没定义（各层叠加，由执行方合并） */
+    val allowedHttpHookUrls: List<String>? = null,
+    /** 这一层的 http hook 环境变量闸；同上 */
+    val httpHookAllowedEnvVars: List<String>? = null,
+)
 
 /**
  * 各层合并后的结果（[layers] 低 → 高，后者覆盖前者）。合并规则照 CC settings 文档：

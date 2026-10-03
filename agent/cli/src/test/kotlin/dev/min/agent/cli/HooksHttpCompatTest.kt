@@ -175,8 +175,9 @@ class HooksHttpCompatTest {
     private fun hookSource(layer: String, hooks: JsonObject): Any {
         val source = Class.forName("dev.min.agent.ext.config.ConfigSource")
             .enumConstants.single { it.toString() == layer }
+        // 按参数个数挑：带默认值的字段让 Kotlin 多生成一个合成构造器；后两个是 http 闸，这里不设
         return Class.forName("dev.min.agent.ext.config.HookSource")
-            .constructors.single().newInstance(source, hooks)
+            .constructors.single { it.parameterCount == 4 }.newInstance(source, hooks, null, null)
     }
 
     private fun parseHookSet(sources: List<Any>): Any {

@@ -94,7 +94,8 @@ class HookBatchIntegrationTest {
         val config = JsonObject(mapOf("PreToolUse" to kotlinx.serialization.json.JsonArray(listOf(
             JsonObject(mapOf("hooks" to kotlinx.serialization.json.JsonArray(hooks)))))))
         val configSource = Class.forName("dev.min.agent.ext.config.ConfigSource").enumConstants.first { it.toString() == "User" }
-        val source = Class.forName("dev.min.agent.ext.config.HookSource").constructors.single().newInstance(configSource, config)
+        val source = Class.forName("dev.min.agent.ext.config.HookSource")
+            .constructors.single { it.parameterCount == 4 }.newInstance(configSource, config, null, null)
         val setClass = Class.forName("dev.min.agent.ext.hooks.HookSet")
         val companion = setClass.getField("Companion").get(null)
         val set = companion.javaClass.getMethod("parse", List::class.java).invoke(companion, listOf(source))

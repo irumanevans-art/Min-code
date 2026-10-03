@@ -1,5 +1,6 @@
 package dev.min.code.core.engine.min
 
+import dev.min.agent.host.JvmHttpHookClient
 import dev.min.agent.host.JvmSearch
 import dev.min.agent.host.RootfsFileSystem
 import dev.min.agent.kernel.HostPorts
@@ -137,7 +138,7 @@ object MinKernelDeps {
         tools: List<Tool<*>> = minTools(),
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
-        host = HostPorts(ports.fs, ports.search, ports.exec) { ports.artifacts(it) },
+        host = HostPorts(ports.fs, ports.search, ports.exec, { ports.artifacts(it) }, httpHooks = JvmHttpHookClient()),
         platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
     )
 }

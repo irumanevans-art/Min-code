@@ -187,6 +187,9 @@ internal object SettingsReader {
             allowManagedHooksOnly = f.bool("allowManagedHooksOnly"),
             allowManagedPermissionRulesOnly = f.bool("allowManagedPermissionRulesOnly"),
             hooks = f.obj("hooks"),
+            // http hook 的两道闸（设计 §8 H3）：定义过就按清单限制
+            allowedHttpHookUrls = f.stringList("allowedHttpHookUrls").takeIf { it.isNotEmpty() },
+            httpHookAllowedEnvVars = f.stringList("httpHookAllowedEnvVars").takeIf { it.isNotEmpty() },
             enabledPlugins = f.boolMap("enabledPlugins"),
         )
     }

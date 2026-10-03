@@ -15,7 +15,17 @@ import kotlinx.serialization.json.JsonObject
 
 /** 一层设置带来的 hooks 原文（解析由 `:agent:ext` 的 HookSet 做；日志存原文，引擎改了解析也不用迁移） */
 @Serializable
-data class HookSourceData(val source: String, val hooks: JsonObject)
+data class HookSourceData(
+    val source: String,
+    val hooks: JsonObject,
+    /**
+     * 这一层的 `allowedHttpHookUrls`：定义过的话，`type:http` 的 URL 必须命中合并后的清单（设计 §8 H3）。
+     * 各层清单叠加，所以按层随快照冻结，由内核合并——设置只在会话创建时读一次，之后读不到。
+     */
+    val allowedHttpHookUrls: List<String>? = null,
+    /** 这一层的 `httpHookAllowedEnvVars`：定义过就只放行清单上的环境变量插值进请求头 */
+    val httpHookAllowedEnvVars: List<String>? = null,
+)
 
 /**
  * 会话创建时生效的 hooks 快照，会话内冻结（磁盘上改了要显式重载，再追加一条本事件）。

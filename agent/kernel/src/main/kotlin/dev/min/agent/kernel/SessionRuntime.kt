@@ -187,7 +187,16 @@ class SessionRuntime private constructor(
             "${s.source.label} 层带了 ${s.hooks.size} 个事件的 hooks，这个工作区还没被信任，未启用"
         }
         if (kept.isNotEmpty() || notes.isNotEmpty()) {
-            commit(listOf(HooksLoaded(kept.map { HookSourceData(it.source.label, it.hooks) }, notes)), Durability.Sync)
+            // http 的两道闸随快照一起冻结：设置只在会话创建时读得到，之后 hook 执行时再看就晚了
+            commit(
+                listOf(
+                    HooksLoaded(
+                        kept.map { HookSourceData(it.source.label, it.hooks, it.allowedHttpHookUrls, it.httpHookAllowedEnvVars) },
+                        notes,
+                    ),
+                ),
+                Durability.Sync,
+            )
         }
     }
 

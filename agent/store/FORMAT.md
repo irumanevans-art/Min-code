@@ -67,3 +67,4 @@
   `files` 的 `content` 是进模型的原样文本，可选 `notes` 只给人看），定义在 `spi/MemoryEvents.kt`；模型视图里渲染在那条消息的工具结果之后（hook 上下文之后）。
   `memory_loaded.files[].source` 新增取值 `nested`、`path_rule`、`auto`（自动记忆索引 `MEMORY.md`）；`memory_loaded` 新增可选字段 `autoMemory`（`directory`、可选 `totalLines` / `loadedLines`，自动记忆开着时才有）。
   含这些的日志旧版本打不开（旧版读到未知的 `source` 取值同样失败）。
+- v1 增量（2026-10-04）：`hooks_loaded.sources[]` 新增可选字段 `allowedHttpHookUrls`、`httpHookAllowedEnvVars`（该层设置的 http hook 两道闸，随快照冻结、执行时按层叠加合并；没定义不落盘）；`tool_outcome.result` 新增可选字段 `fileEdits`（编辑类工具改了哪些文件：`path`、可选 `diff`（带 `--- <路径>` / `+++ <路径>` 头的 unified diff）、`created`、`deleted`、`truncated`；空时不落盘），给界面的「改动过的文件」面板。旧日志照常读。

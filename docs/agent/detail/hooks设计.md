@@ -128,7 +128,7 @@ Ask 时：PermissionRequest hooks → 能替人答；不答才发审批卡
 实现时补的取舍：hook 输出的文字去首尾空白（脚本 echo 带出的换行不进上下文）；开回合的输入全被 UserPromptSubmit 拦下时回合空着结束、不请求模型；有 PreToolUse hook 的只读调用不进并行批（hook 结论要与判定合流）。
 还没接、留到 H3：SessionStart(resume)、PermissionRequest、SubagentStart、Notification、SessionEnd、PreCompact / PostCompact。
 
-**H3 `type:http` 数据面落地情况（2026-10-03，分支 `agent/m0`）**：ext 解析 http 专属字段（url 必填、headers 值须字符串、allowedEnvVars）、`matchingHttp` 与 command 匹配并行（`matchingDetailed` 行为未动，内核仍是只跑 command）、`HookHttpRunner` 经新 spi 端口 `HttpHookClient` 发 POST（宿主实现 `JvmHttpHookClient`，HttpURLConnection），HTTP 事实按 CC「HTTP response handling」翻译成 HandlerRun 后复用 interpret / combine；`allowedHttpHookUrls` / `httpHookAllowedEnvVars` 由调用方合成 `HttpHookPolicy`（跨层合并）传入：URL 闸整串匹配，环境变量闸与处理器 allowedEnvVars 取交集。内核接线（HookDriver 分流、事件默认超时、宿主端口装配）未动，留给 H3 内核侧。
+**H3 `type:http` 数据面落地情况（2026-10-03，分支 `agent/m0`）**：ext 解析 http 专属字段（url 必填、headers 值须字符串、allowedEnvVars）、`matchingHttp` 与 command 匹配并行（`matchingDetailed` 行为未动，内核仍是只跑 command）、`HookHttpRunner` 经新 spi 端口 `HttpHookClient` 发 POST（宿主实现 `JvmHttpHookClient`，HttpURLConnection），HTTP 事实按 CC「HTTP response handling」翻译成 HandlerRun 后复用 interpret / combine；`allowedHttpHookUrls` / `httpHookAllowedEnvVars` 由调用方合成 `HttpHookPolicy`（跨层合并）传入：URL 闸整串匹配，环境变量闸与处理器 allowedEnvVars 取交集。内核接线（2026-10-04）已接：`HostPorts.httpHooks`（桌面 CLI 与 App 都装 `JvmHttpHookClient`）、HookDriver 与 command 同批跑 http 处理器并一起合并、超时沿用事件默认值、两道闸按层随 `hooks_loaded` 冻结；头插值的环境变量只取两道闸列出的名字，经 `KernelDeps.env` 查（内核不直接读进程环境）。`has()` 同时认 http——并行批不经过 PreToolUse，漏算会让只配了 http 门禁的只读调用绕过门禁（有用例钉住）。
 
 ## 9. 已知限制（先写下来）
 

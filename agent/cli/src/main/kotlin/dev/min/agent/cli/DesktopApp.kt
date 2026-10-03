@@ -1,5 +1,6 @@
 package dev.min.agent.cli
 
+import dev.min.agent.host.JvmHttpHookClient
 import dev.min.agent.host.JvmSearch
 import dev.min.agent.host.UrlConnectionTransport
 import dev.min.agent.kernel.HostPorts
@@ -164,6 +165,7 @@ internal class DesktopApp(
                 exec = LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir)),
                 web = CachedWebPort(DESKTOP_PAGE_CONVERTER, cacheTtlMs = args.webCacheTtlMs, deadlineMs = args.webDeadlineMs),
                 searchBackend = searchBackend,
+                httpHooks = JvmHttpHookClient(),
                 artifacts = { sessionId ->
                     val artifactsDir = home.resolve("sessions").resolve(sessionId.value).resolve("artifacts")
                     object : ArtifactSink {

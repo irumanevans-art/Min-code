@@ -31,6 +31,13 @@ class HostPorts(
     val artifacts: (SessionId) -> ArtifactSink,
     val web: dev.min.agent.spi.WebPort = dev.min.agent.spi.WebPort.Unavailable,
     val searchBackend: dev.min.agent.spi.SearchBackend? = null,
+    /**
+     * `type:http` 的 hook 由宿主代发 POST（设计 §8 H3）。默认不可用：没有它时 http hook 会报「这个环境发不了请求」，
+     * 不影响 command hook。
+     */
+    val httpHooks: dev.min.agent.spi.HttpHookClient = dev.min.agent.spi.HttpHookClient {
+        dev.min.agent.spi.HttpHookResult.Failed("这个环境没有配置 http hook 的发送端口。")
+    },
 ) {
     // 保留既有 HostPorts(fs, search, exec) { artifacts } 的组合根与测试写法。
     constructor(fs: WorkspaceFs, search: Search, exec: Exec, artifacts: (SessionId) -> ArtifactSink) :

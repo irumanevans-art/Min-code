@@ -81,7 +81,11 @@ internal object SettingsMerger {
             disableAllHooks = pick { it.disableAllHooks } == true,
             allowManagedHooksOnly = managed?.allowManagedHooksOnly == true,
             allowManagedPermissionRulesOnly = managedRulesOnly,
-            hooks = layers.mapNotNull { layer -> layer.hooks?.let { HookSource(layer.source, it) } },
+            hooks = layers.mapNotNull { layer ->
+                layer.hooks?.let {
+                    HookSource(layer.source, it, layer.allowedHttpHookUrls, layer.httpHookAllowedEnvVars)
+                }
+            },
             enabledPlugins = layers.fold(emptyMap()) { acc, layer -> acc + layer.enabledPlugins },
             rules = rules.distinct(),
         )
