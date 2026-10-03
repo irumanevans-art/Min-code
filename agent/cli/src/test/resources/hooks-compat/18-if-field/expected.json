@@ -1,0 +1,18 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "ifRules": { "Bash(git *)": true, "Bash(npm *)": false },
+  "handlerCount": 1,
+  "decision": "Allow",
+  "reasons": ["git subcommands are pre-approved in this repo"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Matcher patterns：if 用权限规则语法对工具名+参数判定（\"Bash(git *)\" 匹配 git 子命令）；Min 中 if 判定由调用方注入，本样本按 CC 规则在 expected 里给出判定结果。"
+}

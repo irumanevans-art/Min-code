@@ -1,0 +1,17 @@
+{
+  "event": "PostToolUse",
+  "target": "Edit",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 0：无输出的 exit 0 无结论；matcher \"Edit|Write\" 为精确名单。"
+}

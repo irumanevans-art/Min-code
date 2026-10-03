@@ -1,0 +1,10 @@
+{
+  "session_id": "s-17",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__memory__create_entities",
+  "tool_input": { "entities": [{ "name": "Min" }] },
+  "tool_use_id": "toolu_17",
+  "mcp_server": { "name": "memory", "source": "user" }
+}

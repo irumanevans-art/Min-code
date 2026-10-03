@@ -1,0 +1,19 @@
+{
+  "event": "UserPromptSubmit",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "Deploying to production needs a release ticket; ask the release manager first\n"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 2 behavior per event：UserPromptSubmit exit 2 拦下提示词，消息取 stderr。"
+}

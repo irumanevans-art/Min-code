@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"exact list Edit|Write allowed\"}}'" }
+        ]
+      },
+      {
+        "matcher": "mcp__memory__.*",
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/mcp-allow.sh\"" }
+        ]
+      },
+      {
+        "matcher": "Edit, Write",
+        "hooks": [
+          { "type": "command", "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"comma list Edit, Write allowed\"}}'" }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/catch-all-allow.sh\"" }
+        ]
+      }
+    ]
+  }
+}

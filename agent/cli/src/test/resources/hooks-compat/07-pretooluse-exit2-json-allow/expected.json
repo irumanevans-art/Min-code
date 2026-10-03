@@ -1,0 +1,19 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "policy gate: this command is on the repo deny list\n"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 2：\"even a JSON permissionDecision of \\\"allow\\\" can't override it\"；JSON 未做阻断决定时消息取 stderr。"
+}

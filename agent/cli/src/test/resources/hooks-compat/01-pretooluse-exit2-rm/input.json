@@ -1,0 +1,10 @@
+{
+  "session_id": "s-01",
+  "transcript_path": "/home/user/.claude/projects/p/01.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": { "command": "rm -rf /tmp/everything", "description": "clean up" },
+  "tool_use_id": "toolu_01"
+}

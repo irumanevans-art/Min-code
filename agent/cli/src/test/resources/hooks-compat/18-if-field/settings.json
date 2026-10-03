@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/git-ok.sh\"", "if": "Bash(git *)" },
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/npm-guard.sh\"", "if": "Bash(npm *)" }
+        ]
+      }
+    ]
+  }
+}

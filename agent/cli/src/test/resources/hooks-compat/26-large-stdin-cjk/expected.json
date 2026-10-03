@@ -1,0 +1,19 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [
+    "大 stdin 送达成功（超过 200KB），含中文与引号的脚本路径也正常"
+  ],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Common input fields：stdin 原样送达脚本；脚本路径含中文/空格/引号须照常执行（合批脚本的 POSIX 引用）。"
+}

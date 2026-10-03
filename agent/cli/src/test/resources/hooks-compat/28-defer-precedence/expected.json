@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 2,
+  "decision": "Ask",
+  "reasons": ["needs human review"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "CC 文档优先级为 deny > defer > ask > allow；defer 仅在 -p 模式生效（交互式忽略）。Min 尚无 defer/-p 续跑机制，把 defer 映射为中性，与 ask 合并后取 ask。本样本按当前行为断言。待确认。"
+}

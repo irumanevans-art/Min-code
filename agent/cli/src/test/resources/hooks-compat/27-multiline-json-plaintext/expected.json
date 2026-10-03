@@ -1,0 +1,17 @@
+{
+  "event": "UserPromptSubmit",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["{\"tool\":\"grep\",\"hits\":3}\n{\"tool\":\"rg\",\"hits\":5}\n"],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 0 首条：以 { 开头以 } 结尾时按 JSON 解析，但「两行及以上、每行各自是合法 JSON 且没有一行是设置字段的 JSON 输出对象」时整体按纯文本处理（UserPromptSubmit 纯文本入上下文）。"
+}

@@ -1,0 +1,19 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "Blocked: rm -rf is not allowed in this repo\n"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 2 + §Exit code 2 behavior per event：PreToolUse exit 2 阻断工具调用；JSON 未给出阻断决定时阻断消息取 stderr。阻断本身不产生 hook error 通知。"
+}

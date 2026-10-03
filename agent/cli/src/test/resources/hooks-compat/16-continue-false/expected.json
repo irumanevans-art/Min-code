@@ -1,0 +1,17 @@
+{
+  "event": "PostToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": false,
+  "stopReasons": ["Build failed, fix errors before continuing"],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §JSON output：continue:false 时 Claude 完全停止，优先于事件级 decision；stopReason 留在对话里。"
+}

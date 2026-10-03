@@ -1,0 +1,10 @@
+{
+  "session_id": "s-10",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": { "file_path": "/home/user/repo/src/main.ts", "old_string": "a", "new_string": "b" },
+  "tool_response": { "filePath": "/home/user/repo/src/main.ts" },
+  "duration_ms": 42
+}
