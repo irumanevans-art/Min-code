@@ -1,0 +1,33 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/chain/04.md",
+        "source": "import",
+        "basis": "CC §1.2「maximum depth of four hops」：CLAUDE.md→01→02→03→04 是四层导入，都在限内；深度优先展开，最深的先收"
+      },
+      {
+        "path": "/workspace/chain/03.md",
+        "source": "import",
+        "basis": "Min MemoryMarkdown/MemoryLoader：被导入文件排在导入者之前，逐层回收"
+      },
+      {
+        "path": "/workspace/chain/02.md",
+        "source": "import",
+        "basis": "同上"
+      },
+      {
+        "path": "/workspace/chain/01.md",
+        "source": "import",
+        "basis": "同上"
+      },
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级 CLAUDE.md 本体在导入之后"
+      }
+    ],
+    "notesContain": ["/workspace/chain/05.md", "导入最多 4 层"]
+  },
+  "steps": []
+}

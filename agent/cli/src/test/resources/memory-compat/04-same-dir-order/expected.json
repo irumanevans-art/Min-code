@@ -1,0 +1,45 @@
+{
+  "startup": {
+    "files": []
+  },
+  "steps": [
+    {
+      "files": [
+        {
+          "path": "/workspace/src/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1：子目录层按启动时同样的顺序 → CLAUDE.md 先"
+        },
+        {
+          "path": "/workspace/src/.claude/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1 同上；CC 未规定 CLAUDE.md 与 .claude/CLAUDE.md 并存顺序，Min 定为 CLAUDE.md 在前"
+        },
+        {
+          "path": "/workspace/src/AGENTS.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1：AGENTS.md 在 .claude/CLAUDE.md 后（同启动顺序）"
+        },
+        {
+          "path": "/workspace/src/.claude/rules/r1.md",
+          "source": "nested",
+          "basis": "CC §1.4：无 paths 的规则同 .claude/CLAUDE.md 优先级 → 排在项目文件后；按名字排序 r1 先"
+        },
+        {
+          "path": "/workspace/src/.claude/rules/r2.md",
+          "source": "nested",
+          "basis": "Min MemoryLoader 文档：规则目录按名字排序"
+        },
+        {
+          "path": "/workspace/src/CLAUDE.local.md",
+          "source": "nested",
+          "basis": "CC §1.1：「CLAUDE.local.md is appended after CLAUDE.md」→ 同层最后"
+        }
+      ]
+    },
+    {
+      "files": [],
+      "basis": "Min 设计 §1.2：同层记忆已在上下文，再碰同目录文件不重复"
+    }
+  ]
+}

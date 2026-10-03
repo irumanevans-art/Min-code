@@ -1,0 +1,1 @@
+const other = 1

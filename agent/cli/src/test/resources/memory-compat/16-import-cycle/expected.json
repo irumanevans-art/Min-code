@@ -1,0 +1,23 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/cyc/b.md",
+        "source": "import",
+        "basis": "CC §1.2：导入递归但有上限；Min MemoryLoader 文档「导入成环也靠它停下」——b 里再导 a 时 a 已处理过，静默停；b 在 a 之前收（被导入者先）"
+      },
+      {
+        "path": "/workspace/cyc/a.md",
+        "source": "import",
+        "basis": "CC §1.2「Claude reads the imported file first, then the rest」"
+      },
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级 CLAUDE.md 本体在导入之后"
+      }
+    ],
+    "notesContain": []
+  },
+  "steps": []
+}

@@ -1,0 +1,8 @@
+{
+  "cwd": "/workspace",
+  "steps": [
+    { "touch": ["src/other.md"] },
+    { "touch": ["secret.txt"] },
+    { "touch": ["src/secret-key.md"] }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "cwd": "/workspace",
+  "steps": [
+    { "touch": ["docs/a.md", "docs/sub/b.md"] },
+    { "touch": ["docs/c.md"] },
+    { "touch": ["src/x.ts", "src/y.ts"] }
+  ]
+}

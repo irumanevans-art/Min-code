@@ -1,0 +1,18 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/docs/real.md",
+        "source": "import",
+        "basis": "CC §1.2：「Import parsing skips Markdown code spans and fenced code blocks」——只有裸露的 @ 导入生效"
+      },
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级 CLAUDE.md 本体在导入之后"
+      }
+    ],
+    "notesContain": []
+  },
+  "steps": []
+}

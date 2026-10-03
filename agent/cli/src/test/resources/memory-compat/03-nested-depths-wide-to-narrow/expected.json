@@ -1,0 +1,39 @@
+{
+  "startup": {
+    "files": []
+  },
+  "steps": [
+    {
+      "files": [
+        {
+          "path": "/workspace/a/CLAUDE.md",
+          "source": "nested",
+          "basis": "CC §1.1「子目录文件按需加载」；Min 设计 §1.1：从 cwd 下一层到文件所在目录逐层收，宽→窄，a 先于 a/b"
+        },
+        {
+          "path": "/workspace/a/b/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1：每层顺序与启动时相同（CLAUDE.md → .claude/CLAUDE.md → AGENTS.md → 规则 → CLAUDE.local.md），本层只有 CLAUDE.md"
+        },
+        {
+          "path": "/workspace/a/b/c/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1：到碰到文件的那层（含）为止"
+        }
+      ]
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/a/b/d/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.2：已在上下文的 a、a/b 两层不重复加载，只有新的一层 a/b/d"
+        }
+      ]
+    },
+    {
+      "files": [],
+      "basis": "Min 设计 §1.2：同一路径一个会话只注入一次，再碰同一文件不重复"
+    }
+  ]
+}

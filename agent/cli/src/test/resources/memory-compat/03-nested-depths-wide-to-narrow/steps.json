@@ -1,0 +1,8 @@
+{
+  "cwd": "/workspace",
+  "steps": [
+    { "touch": ["a/b/c/f.txt"] },
+    { "touch": ["a/b/d/g.txt"] },
+    { "touch": ["a/b/c/f.txt"] }
+  ]
+}

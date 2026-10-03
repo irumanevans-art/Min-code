@@ -1,0 +1,20 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/.claude/rules/a/inner.md",
+        "source": "rule",
+        "basis": "CC §1.4：.claude/rules 递归发现；Min MemoryLoader 文档：按名字排序（目录 a 在 m.txt、z.md 之前）"
+      },
+      {
+        "path": "/workspace/.claude/rules/z.md",
+        "source": "rule",
+        "basis": "CC §1.4：「paths 是唯一读取的 frontmatter 字段」其余忽略；规则正文去掉 frontmatter（contentNotContains 钉住 description 不进上下文，Min MemoryLoader 文档「CC 同样去掉」）",
+        "contentContains": ["Z rule body."],
+        "contentNotContains": ["description:"]
+      }
+    ],
+    "notesContain": []
+  },
+  "steps": []
+}

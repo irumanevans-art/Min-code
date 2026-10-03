@@ -1,0 +1,18 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/dup1.md",
+        "source": "import",
+        "basis": "CC §1.2：导入无数量上限，dup1 正常载入"
+      },
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级 CLAUDE.md 本体在导入之后"
+      }
+    ],
+    "notesContain": ["/workspace/dup2.md", "内容与"]
+  },
+  "steps": []
+}

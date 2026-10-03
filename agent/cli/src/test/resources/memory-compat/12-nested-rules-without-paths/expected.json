@@ -1,0 +1,27 @@
+{
+  "startup": {
+    "files": []
+  },
+  "steps": [
+    {
+      "files": [
+        {
+          "path": "/workspace/src/.claude/rules/a.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1：子目录 .claude/rules 下没有 paths 的规则随子目录记忆一起按需加载；递归收、按名字排序（MemoryLoader 文档）"
+        },
+        {
+          "path": "/workspace/src/.claude/rules/b.md",
+          "source": "nested",
+          "basis": "同上，按名字 a < b 排序"
+        },
+        {
+          "path": "/workspace/src/.claude/rules/sub/c.md",
+          "source": "nested",
+          "basis": "Min MemoryLoader 文档：规则目录递归收（子目录 sub 在 a.md、b.md、note.txt 之后按名字排到）"
+        }
+      ],
+      "notesContain": []
+    }
+  ]
+}

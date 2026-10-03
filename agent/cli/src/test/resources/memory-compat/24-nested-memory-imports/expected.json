@@ -1,0 +1,21 @@
+{
+  "startup": {
+    "files": []
+  },
+  "steps": [
+    {
+      "files": [
+        {
+          "path": "/workspace/src/local-doc.md",
+          "source": "import",
+          "basis": "Min 设计 §1.1：「其中的 @ 导入照启动时的规则展开」——相对包含文件 /workspace/src/CLAUDE.md 解析，被导入者先"
+        },
+        {
+          "path": "/workspace/src/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1：子目录记忆本体在导入之后"
+        }
+      ]
+    }
+  ]
+}

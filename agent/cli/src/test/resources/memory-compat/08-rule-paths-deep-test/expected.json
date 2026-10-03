@@ -1,0 +1,25 @@
+{
+  "startup": {
+    "files": [],
+    "notesContain": ["带 paths"]
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "CC §1.4 例子「src/api/**/*.ts」：plain.ts 后缀不是 .test.ts，不匹配"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/.claude/rules/deep.md",
+          "source": "path_rule",
+          "basis": "CC §1.4：「** 加 / 匹配零层或多层目录」（PathGlob 文档）→ src/x.test.ts 匹配 src/**/*.test.ts 的零层分支"
+        }
+      ]
+    },
+    {
+      "files": [],
+      "basis": "Min 设计 §1.2：同一份路径规则只注入一次；src/deep/y.test.ts 的多层分支被去重挡住"
+    }
+  ]
+}

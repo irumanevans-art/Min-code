@@ -1,0 +1,18 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/AGENTS.md",
+        "source": "import",
+        "basis": "Min MemoryLoader 文档去重：「CLAUDE.md 里写 @AGENTS.md 时，同层的 AGENTS.md 不会再读一遍」——路径已处理，层扫描跳过且无说明；来源记先到者（import）"
+      },
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级 CLAUDE.md 本体在导入之后"
+      }
+    ],
+    "notesContain": []
+  },
+  "steps": []
+}

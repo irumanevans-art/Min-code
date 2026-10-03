@@ -1,0 +1,52 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/home/user/.claude/CLAUDE.md",
+        "source": "user",
+        "basis": "CC 03-extensions.md §1.1 表：用户级 ~/.claude/CLAUDE.md「全项目生效」，作用域表排最前；Min MemoryLoader 文档「用户级先于项目规则」"
+      },
+      {
+        "path": "/home/user/.claude/rules/a-user.md",
+        "source": "rule",
+        "basis": "CC §1.4：~/.claude/rules 递归发现、无 paths frontmatter 的规则启动时加载；用户级先于项目级（Min MemoryLoader 顺序 1）"
+      },
+      {
+        "path": "/home/user/.claude/rules/z-user.md",
+        "source": "rule",
+        "basis": "Min MemoryLoader 文档：规则目录递归收、按名字排序（a-user 在 z-user 前）"
+      },
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级 ./CLAUDE.md；「加载顺序为根目录向下至工作目录」每层先读 CLAUDE.md"
+      },
+      {
+        "path": "/workspace/.claude/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级「./CLAUDE.md 或 ./.claude/CLAUDE.md」，并存都载；CC 未规定两者并存时的先后，Min 定为 CLAUDE.md → .claude/CLAUDE.md → AGENTS.md"
+      },
+      {
+        "path": "/workspace/AGENTS.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级「（或 ./AGENTS.md）」，与 CLAUDE.md 并载、互不覆盖；Min 顺序 AGENTS.md 在 .claude/CLAUDE.md 后"
+      },
+      {
+        "path": "/workspace/.claude/rules/m-rule.md",
+        "source": "rule",
+        "basis": "CC §1.4：无 paths 的规则「同 .claude/CLAUDE.md 优先级」→ Min 排在同层项目文件之后、CLAUDE.local.md 之前"
+      },
+      {
+        "path": "/workspace/CLAUDE.local.md",
+        "source": "local",
+        "basis": "CC §1.1：本地级 ./CLAUDE.local.md，「CLAUDE.local.md is appended after CLAUDE.md」→ Min 放在同层最后"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "cwd 本层与祖先层启动时已加载；碰 cwd 直属文件不产生新层（Min 设计 §1.1：从 cwd 的下一层起找）"
+    }
+  ]
+}

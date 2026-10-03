@@ -1,0 +1,21 @@
+{
+  "startup": {
+    "files": [],
+    "notesContain": []
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "Min 设计 §1.1：子目录 .claude/rules 的路径规则相对「规则所属项目根」（.claude 的上一级 /workspace/src）匹配；api/*.ts 的 * 不跨 / → src/api/other/x.ts 不匹配（PathGlob 文档引 CC 例子「某目录下单层的 *.tsx」）"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/src/.claude/rules/api.md",
+          "source": "path_rule",
+          "basis": "Min 设计 §1.1：「加上刚加载的子目录 .claude/rules/ 里的」路径规则，glob 相对子目录项目根 /workspace/src → api/client.ts 匹配"
+        }
+      ]
+    }
+  ]
+}
