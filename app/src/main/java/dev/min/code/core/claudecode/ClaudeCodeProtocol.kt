@@ -591,12 +591,13 @@ fun expandAssistantMessage(obj: JsonObject): List<ClaudeCodeEvent> {
  * 回显），里面不可能有 tool_result —— 返回空列表交给调用方，别去硬转数组。
  *
  * 帧顶层的 `tool_use_result`（或 camelCase `toolUseResult`）是工具的完整 Output 对象，
- * **不进模型上下文**。CLI 2.1.269+ 的 Bash 会在这里挂 `bashEditDiff`；同帧里多块
- * tool_result 时只把 diff 挂到**第一块**上（Bash 一轮只有一个结果）。
+ * **不进模型上下文**。CLI 2.1.269+ 的 Bash 会在这里挂 `bashEditDiff`；Edit / Write 的
+ * `structuredPatch` 也在这里（见 [parseFileEditDiff]）；同帧里多块 tool_result 时只把 diff
+ * 挂到**第一块**上（这几个工具一轮都只有一个结果）。
  */
 fun expandToolResults(obj: JsonObject): List<ClaudeCodeEvent.ToolResult> {
     val content = obj.obj("message")?.get("content") as? JsonArray ?: return emptyList()
-    val editDiff = parseBashEditDiff(
+    val editDiff = parseToolEditDiff(
         obj.obj("tool_use_result") ?: obj.obj("toolUseResult"),
     )
     var attachedDiff = false
@@ -665,44 +666,92 @@ internal fun parseBashEditDiff(toolUseResult: JsonObject?): String? {
     for (element in files) {
         val file = element as? JsonObject ?: continue
         val path = file.str("filePath")?.takeIf { it.isNotBlank() } ?: continue
-        val hunks = file.arr("hunks") ?: continue
-        val hunkText = buildString {
-            for (hunkEl in hunks) {
-                val hunk = hunkEl as? JsonObject ?: continue
-                val lines = hunk.arr("lines") ?: continue
-                if (lines.isEmpty()) continue
-                val oldStart = hunk.int("oldStart") ?: 0
-                val oldLines = hunk.int("oldLines") ?: 0
-                val newStart = hunk.int("newStart") ?: 0
-                val newLines = hunk.int("newLines") ?: 0
-                append("@@ -").append(oldStart).append(',').append(oldLines)
-                    .append(" +").append(newStart).append(',').append(newLines)
-                    .append(" @@\n")
-                for (lineEl in lines) {
-                    val line = (lineEl as? JsonPrimitive)?.contentOrNull ?: continue
-                    append(line)
-                    if (!line.endsWith('\n')) append('\n')
-                }
-            }
-        }.trimEnd()
+        val hunkText = hunksToText(file.arr("hunks"))
         if (hunkText.isBlank()) continue
         val status = when {
-            file.bool("created") == true -> "new file mode"
-            file.bool("deleted") == true -> "deleted file mode"
+            file.bool("created") == true -> DIFF_NEW_FILE
+            file.bool("deleted") == true -> DIFF_DELETED_FILE
             else -> null
         }
-        parts += buildString {
-            if (status != null) append(status).append('\n')
-            append("--- a/").append(path).append('\n')
-            append("+++ b/").append(path).append('\n')
-            append(hunkText)
-        }
+        parts += fileDiffBlock(path, hunkText, status)
     }
     val more = diff.int("moreFiles") ?: 0
     if (more > 0) {
         parts += "… 还有 $more 个文件的改动未展开"
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
+}
+
+/**
+ * Edit / Write（以及形状相同的 MultiEdit）的 `tool_use_result` 拼成 unified diff。
+ *
+ * 2.1.285 真帧里的键（夹具 `edit_write_files`）：
+ * ```
+ * Edit : {filePath, oldString, newString, originalFile, structuredPatch:[{oldStart,oldLines,newStart,newLines,lines}],
+ *         userModified, replaceAll}
+ * Write: {type:"create"|"update", filePath, content, structuredPatch, originalFile, userModified}
+ * ```
+ * 不按工具名认，只认「有 `filePath` 和 `structuredPatch`」：Read 的结果是 `{type:"text", file:{...}}`，对不上，
+ * 工具名也不在这一层的 [ClaudeCodeEvent.ToolResult] 里。
+ *
+ * `structuredPatch` 为空有三种来路，各自处理：
+ * - Write 新建（`type:"create"`）：文档和真帧都是空的，diff 要用 `content` 拼成全是 `+` 的一段，并标 `new file mode`；
+ * - Write 覆盖 / Edit，但原文件超过约 10 MB、diff 超时、或内容没变：没有 hunk 可拼，返回 null，
+ *   交给调用方按入参现算（`changedFiles` 的兜底）。
+ */
+internal fun parseFileEditDiff(toolUseResult: JsonObject?): String? {
+    val result = toolUseResult ?: return null
+    val path = result.str("filePath")?.takeIf { it.isNotBlank() } ?: return null
+    val patch = result.arr("structuredPatch") ?: return null
+    val hunkText = hunksToText(patch)
+    if (hunkText.isNotBlank()) return fileDiffBlock(path, hunkText, status = null)
+    if (result.str("type") != "create") return null
+    // 空文件也是一次「新建」：只留文件头，面板里才有这一行、图标才是「新建」
+    val lines = result.str("content").orEmpty().removeSuffix("\n").takeIf { it.isNotEmpty() }?.split('\n').orEmpty()
+    val body = if (lines.isEmpty()) "" else buildString {
+        append("@@ -0,0 +1,").append(lines.size).append(" @@\n")
+        lines.forEach { append('+').append(it).append('\n') }
+    }.trimEnd('\n')
+    return fileDiffBlock(path, body, DIFF_NEW_FILE)
+}
+
+/** 一帧里这次工具调用的 diff：Bash 的 `bashEditDiff` 优先，其次 Edit / Write 的 `structuredPatch` */
+internal fun parseToolEditDiff(toolUseResult: JsonObject?): String? =
+    parseBashEditDiff(toolUseResult) ?: parseFileEditDiff(toolUseResult)
+
+private const val DIFF_NEW_FILE = "new file mode"
+private const val DIFF_DELETED_FILE = "deleted file mode"
+
+/**
+ * `[{oldStart,oldLines,newStart,newLines,lines}]`（bashEditDiff 的 hunks 与 Edit / Write 的 structuredPatch
+ * 是同一种形状）拼成 `@@ -a,b +c,d @@` + 行。没有任何带行的 hunk 返回空串。
+ */
+private fun hunksToText(hunks: JsonArray?): String = buildString {
+    for (hunkEl in hunks.orEmpty()) {
+        val hunk = hunkEl as? JsonObject ?: continue
+        val lines = hunk.arr("lines") ?: continue
+        if (lines.isEmpty()) continue
+        val oldStart = hunk.int("oldStart") ?: 0
+        val oldLines = hunk.int("oldLines") ?: 0
+        val newStart = hunk.int("newStart") ?: 0
+        val newLines = hunk.int("newLines") ?: 0
+        append("@@ -").append(oldStart).append(',').append(oldLines)
+            .append(" +").append(newStart).append(',').append(newLines)
+            .append(" @@\n")
+        for (lineEl in lines) {
+            val line = (lineEl as? JsonPrimitive)?.contentOrNull ?: continue
+            append(line)
+            if (!line.endsWith('\n')) append('\n')
+        }
+    }
+}.trimEnd()
+
+/** 一个文件的 diff 块：可选的 `new file mode` / `deleted file mode`，文件头（`a/` `b/` 前缀），再接 hunk */
+private fun fileDiffBlock(path: String, hunkText: String, status: String?): String = buildString {
+    if (status != null) append(status).append('\n')
+    append("--- a/").append(path).append('\n')
+    append("+++ b/").append(path)
+    if (hunkText.isNotEmpty()) append('\n').append(hunkText)
 }
 
 /**
