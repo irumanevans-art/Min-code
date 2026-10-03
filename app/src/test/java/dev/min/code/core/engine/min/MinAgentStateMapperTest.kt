@@ -17,6 +17,12 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.Usage
+import dev.min.agent.spi.FileEdit
+import dev.min.agent.spi.ResumePolicy
+import dev.min.agent.spi.ToolEffectPending
+import dev.min.agent.spi.ToolPlanned
+import dev.min.agent.spi.ToolOutcome
+import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.AccessKind
 import dev.min.agent.spi.AgentInputKind
 import dev.min.agent.spi.ApprovalRequested
@@ -36,11 +42,9 @@ import dev.min.agent.spi.PathAccess
 import dev.min.agent.spi.PathScope
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.QuestionOption
-import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.SubagentSpawned
-import dev.min.agent.spi.ToolPlanned
 import dev.min.agent.spi.TurnEnded
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnStarted
@@ -222,6 +226,49 @@ class MinAgentStateMapperTest {
             t0 = 100,
         )
         assertEquals(listOf("— continued@110 —", "— woke —"), map(s).items.map { (it as ChatItem.Note).text })
+    }
+
+    @Test fun editsReportedByTheKernelBecomeTheDiffTheFilesPanelReads() {
+        val call = ToolCallPart(CallId("c1"), "Edit", empty)
+        val body = "--- /workspace/src/Sea.kt\n+++ /workspace/src/Sea.kt\n-val a = 1\n+val a = 2"
+        val s = foldOf(
+            *user("u", "改一下").toTypedArray(), TurnStarted(tid, TurnTrigger.User),
+            *reply("改", "a1", RequestId("r1"), call).toTypedArray(),
+            ToolPlanned(tid, CallId("c1"), "Edit", empty, ResumePolicy.Unknown), ToolEffectPending(tid, CallId("c1")),
+            ToolOutcome(
+                tid, CallId("c1"),
+                ToolResult(
+                    listOf(TextPart("已修改")),
+                    fileEdits = listOf(
+                        FileEdit(GuestPath("/workspace/src/Sea.kt"), diff = body),
+                        FileEdit(GuestPath("/workspace/new.md"), created = true, diff = "--- /workspace/new.md\n+++ /workspace/new.md\n+hello"),
+                    ),
+                ),
+            ),
+            TurnEnded(tid, TurnOutcome.Completed, Usage(), 0),
+        )
+        val card = map(s).items.filterIsInstance<ChatItem.ToolCall>().single()
+        val diff = card.editDiff!!
+        assertEquals("两个改动按顺序接起来，空行隔开", 2, diff.split("\n\n").size)
+        assertTrue(diff, diff.contains("--- /workspace/src/Sea.kt"))
+        assertTrue("新建的补上 new file mode，面板据此给图标", diff.contains("new file mode"))
+        // 界面侧的 ChangedFiles 按 +++ 头认文件；这里只钉住两边约定的形状
+        assertEquals(
+            listOf("/workspace/src/Sea.kt", "/workspace/new.md"),
+            diff.lineSequence().filter { it.startsWith("+++ ") }.map { it.removePrefix("+++ ") }.toList(),
+        )
+    }
+
+    @Test fun aToolResultWithoutFileEditsLeavesTheDiffAlone() {
+        val call = ToolCallPart(CallId("c1"), "Read", empty)
+        val s = foldOf(
+            *user("u", "读一下").toTypedArray(), TurnStarted(tid, TurnTrigger.User),
+            *reply("读", "a1", RequestId("r1"), call).toTypedArray(),
+            ToolPlanned(tid, CallId("c1"), "Read", empty, ResumePolicy.Replay), ToolEffectPending(tid, CallId("c1")),
+            ToolOutcome(tid, CallId("c1"), ToolResult(listOf(TextPart("内容")))),
+            TurnEnded(tid, TurnOutcome.Completed, Usage(), 0),
+        )
+        assertNull(map(s).items.filterIsInstance<ChatItem.ToolCall>().single().editDiff)
     }
 
     @Test fun completedTurnStampsOnlyTheLastAnswerOfThatTurn() {

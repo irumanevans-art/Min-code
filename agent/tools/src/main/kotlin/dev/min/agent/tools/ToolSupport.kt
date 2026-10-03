@@ -106,7 +106,9 @@ internal fun okResult(
  */
 internal fun fileEdit(path: GuestPath, before: String, after: String, created: Boolean = false): FileEdit {
     val body = TextDiff.unified(before, after)
-    val diff = body?.let { "--- a/${path.value}\n+++ b/${path.value}\n$it" }
+    // 路径原样写（guest 路径本来就是绝对的）：套上 `a/` 会变成 `a//workspace/…`，
+    // 界面的 diffPaths 认得出，但显示出来是坏的
+    val diff = body?.let { "--- ${path.value}\n+++ ${path.value}\n$it" }
     return FileEdit(path = path, diff = diff, created = created, deleted = after.isEmpty() && before.isNotEmpty())
 }
 

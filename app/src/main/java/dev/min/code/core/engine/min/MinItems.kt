@@ -23,6 +23,7 @@ import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.TurnEnded
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnStarted
+import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnTrigger
 import dev.min.code.core.engine.FailureKind
 import dev.min.code.core.engine.InterruptCause
@@ -221,8 +222,31 @@ private class ItemsBuilder(
         // 内核给的预览已被截过：全文长度以它为准（取两者较大，避免预览把总长冲小）
         return card.copy(
             resultTotalChars = maxOf(card.resultTotalChars ?: 0, result?.fullChars ?: 0).takeIf { it > 0 },
+            // 内核报的改动折成 Claude / Codex 那边同形的 unified diff，交给底部的「改动过的文件」面板
+            editDiff = editDiffOf(result),
             subItems = subItems(part.callId).orEmpty(),
         )
+    }
+
+    /**
+     * 编辑类工具改过的文件 → 与 Claude 的 `bashEditDiff` / Codex 的 fileChange 同形的 unified diff 文本。
+     * 一次调用改多个文件时按顺序接起来（空行隔开），面板的 `diffPaths` 靠 `+++ b/…` 头认出每个文件。
+     * 新建 / 删除补上 `new file mode` / `deleted file mode`，面板据此给图标、撤销时知道该删还是该还原。
+     */
+    private fun editDiffOf(result: ToolResult?): String? {
+        val edits = result?.fileEdits.orEmpty().filter { it.diff != null || it.created || it.deleted }
+        if (edits.isEmpty()) return null
+        return edits.joinToString("\n\n") { edit ->
+            val header = when {
+                edit.created -> "new file mode"
+                edit.deleted -> "deleted file mode"
+                else -> null
+            }
+            // 没有 diff 正文（内容太大的整文件覆盖）时只留文件头，面板仍能列出这个文件
+            val path = edit.path.value
+            val body = edit.diff ?: "--- $path\n+++ $path"
+            if (header == null) body else "$header\n$body"
+        }
     }
 
     private fun notices(after: MessageId?) {
