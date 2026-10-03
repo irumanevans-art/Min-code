@@ -50,10 +50,12 @@ class MemoryDiscovery(
         for (dir in dirs) loading.nestedLayer(dir)
 
         val candidates = (startupRuleRefs() + loading.pathRuleRefs.orEmpty()).distinctBy { it.path }
+        val globNotes = mutableListOf<String>()
         for (ref in candidates) {
+            reportInvalidGlobs(ref)?.let { globNotes += it }
             if (files.any { file -> matches(ref, file) }) loading.pathRule(ref.path)
         }
-        return MemorySnapshot(loading.files.toList(), loading.notes.toList())
+        return MemorySnapshot(loading.files.toList(), loading.notes.toList() + globNotes)
     }
 
     /** cwd 的下一层到 [dir]（含），宽 → 窄；[dir] 不在 cwd 之下返回空 */
@@ -74,6 +76,16 @@ class MemoryDiscovery(
         collector.collectRuleRefs(join(join(home, ".claude"), "rules"))
         for (dir in MemoryLoader.ancestors(cwd)) collector.collectRuleRefs(join(dir, ".claude/rules"))
         collector.pathRuleRefs.orEmpty().distinctBy { it.path }.also { startupRefs = it }
+    }
+
+    /** 已经为它记过「paths 里有无效写法」说明的规则：同一条规则一个会话只说一次 */
+    private val reportedBadGlobs = mutableSetOf<String>()
+
+    /** 规则的 paths 里写不对的条目（它们不匹配任何文件，其余条目照常）；第一次见到时返回一条说明，之后返回 null */
+    private fun reportInvalidGlobs(ref: PathRuleRef): String? {
+        val bad = ref.globs.mapNotNull { glob -> (PathGlob.compile(glob) as? PathGlob.Compiled.Invalid)?.let { glob to it.reason } }
+        if (bad.isEmpty() || !reportedBadGlobs.add(ref.path)) return null
+        return "规则 ${ref.path} 的 paths 里有无效的写法，这些条目不会匹配任何文件：" + bad.joinToString("；") { (glob, why) -> "「$glob」（$why）" }
     }
 
     private fun matches(ref: PathRuleRef, file: String): Boolean {

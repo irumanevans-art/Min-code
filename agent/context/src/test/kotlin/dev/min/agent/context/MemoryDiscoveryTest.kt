@@ -48,6 +48,34 @@ class MemoryDiscoveryTest {
     }
 
     @Test
+    fun `a rule with an invalid glob matches nothing for that entry, is noted once, and its other entries still work`() {
+        fs.file(
+            "/workspace/.claude/rules/mixed.md",
+            "---\npaths:\n  - \"app/[id]/page.tsx\"\n  - \"[z-a].ts\"\n  - \"src/**/*.ts\"\n---\nMixed rule.",
+        )
+        fs.file("/workspace/src/a.ts", "a")
+        val d = discovery()
+
+        val first = d.attach("/workspace/src/a.ts")
+        assertEquals("好的那条照常命中", listOf("/workspace/.claude/rules/mixed.md $PathRule"), first.order())
+        assertEquals(1, first.notes.count { it.contains("mixed.md") && it.contains("无效") })
+        assertTrue(first.notes.joinToString(), first.notes.any { it.contains("app/[id]/page.tsx") && it.contains("[z-a].ts") })
+
+        // 同一条规则一个会话只说一次
+        val second = d.attach("/workspace/src/b.ts", inContext = setOf("/workspace/.claude/rules/mixed.md"))
+        assertTrue(second.notes.joinToString(), second.notes.none { it.contains("无效") })
+    }
+
+    @Test
+    fun `a rule whose only glob is invalid never matches and never throws`() {
+        fs.file("/workspace/.claude/rules/bad.md", "---\npaths:\n  - \"app/**/[[...slug]]/page.tsx\"\n---\nBad.")
+        fs.file("/workspace/app/docs/[[...slug]]/page.tsx", "x")
+        val result = discovery().attach("/workspace/app/docs/[[...slug]]/page.tsx")
+        assertEquals(emptyList<String>(), result.order())
+        assertEquals(1, result.notes.count { it.contains("无效") })
+    }
+
+    @Test
     fun `a file directly in cwd loads no nested memory`() {
         fs.file("/workspace/CLAUDE.md", "根")
         fs.file("/workspace/main.kt", "code")

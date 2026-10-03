@@ -28,6 +28,7 @@ import dev.min.agent.spi.PathAccess
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
+import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
@@ -72,6 +73,9 @@ class MemoryOnDemandTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val store by lazy { FileSessionStore(tmp.root.toPath(), { 0L }) }
     private val fs = FakeFs()
+
+    /** 换掉会话用的文件系统（默认就是 [fs]）：想让某个操作出意外时用 */
+    private var fsOverride: dev.min.agent.spi.WorkspaceFs? = null
     private val header = LogHeader(LOG_FORMAT_VERSION, SessionId("s1"), createdAtMs = 0)
     private var counter = 0
 
@@ -85,7 +89,7 @@ class MemoryOnDemandTest {
     private fun deps(model: ModelClient, tools: List<Tool<*>>) = testDeps(model, tools).let { base ->
         KernelDeps(
             clock = base.clock, ids = base.ids, models = base.models, tools = tools,
-            host = HostPorts(fs, base.host.search, base.host.exec, base.host.artifacts),
+            host = HostPorts(fsOverride ?: fs, base.host.search, base.host.exec, base.host.artifacts),
             platform = base.platform, zone = base.zone, retry = base.retry,
             memoryHome = GuestPath("/root"),
         )
@@ -119,6 +123,55 @@ class MemoryOnDemandTest {
 
     /** 会话创建时的说明：带 paths 的规则在启动时跳过并说明 */
     private suspend fun startupNote() = events().filterIsInstance<MemoryLoaded>().single().notes
+
+    @Test
+    fun `a rule with an invalid glob does not fail the turn, and is noted once across reads`() = run {
+        fs.put("/workspace/.claude/rules/bad.md", "---\npaths:\n  - \"app/**/[[...slug]]/page.tsx\"\n  - \"[z-a].ts\"\n---\nBad rule.")
+        fs.put("/workspace/a.ts", "a")
+        fs.put("/workspace/b.ts", "b")
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/a.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/b.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = session(model)
+        rt.send(msg(), listOf(TextPart("读两个文件")))
+        rt.awaitIdle()
+
+        assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn?.outcome)
+        val notes = events().filterIsInstance<MemoryAttached>().flatMap { it.notes }.filter { it.contains("无效") }
+        assertEquals("同一条规则一个会话只说一次", 1, notes.size)
+        assertTrue(events().filterIsInstance<MemoryAttached>().all { it.files.isEmpty() })
+        assertLogIsTruth(rt)
+    }
+
+    /** list 返回的集合一遍历就炸：模拟按需加载里「读盘之外」的意外（attempt 只管 stat / list / read 这几次调用本身） */
+    private class ExplodingListFs(private val inner: FakeFs, private val dir: String) : dev.min.agent.spi.WorkspaceFs by inner {
+        override suspend fun list(dir: GuestPath): List<dev.min.agent.spi.DirEntry> =
+            if (dir.value == this.dir) object : AbstractList<dev.min.agent.spi.DirEntry>() {
+                override val size: Int get() = throw IllegalStateException("目录列表炸了")
+                override fun get(index: Int): dev.min.agent.spi.DirEntry = throw IllegalStateException("目录列表炸了")
+            } else inner.list(dir)
+    }
+
+    @Test
+    fun `an unexpected failure inside on-demand loading is only a note, never a failed turn`() = run {
+        fs.mkdir("/workspace/a/.claude/rules")
+        fs.put("/workspace/a/x.ts", "x")
+        fsOverride = ExplodingListFs(fs, "/workspace/a/.claude/rules")
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/a/x.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/a/x.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = session(model)
+        rt.send(msg(), listOf(TextPart("读两次")))
+        rt.awaitIdle()
+
+        assertEquals("回合照常完成", TurnOutcome.Completed, rt.state.value.lastTurn?.outcome)
+        assertTrue(events().filterIsInstance<dev.min.agent.spi.Note>().any { it.text.contains("按需加载记忆失败") })
+        assertLogIsTruth(rt)
+    }
 
     @Test
     fun `a read in a subtree attaches nested memory after the tool results`() = run {

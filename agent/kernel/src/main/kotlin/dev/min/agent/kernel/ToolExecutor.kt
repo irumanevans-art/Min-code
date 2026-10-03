@@ -29,6 +29,8 @@ import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.FileKind
 import dev.min.agent.spi.MemoryAttached
+import dev.min.agent.spi.Note
+import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.catchingNonCancellation
 import dev.min.agent.spi.Exec
 import dev.min.agent.spi.FileStamp
@@ -126,6 +128,19 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
      * 渲染顺序先 hook 后记忆（见 ModelView）；同批里后面才读到的文件也算，一批只有一条事件。
      */
     private suspend fun attachMemory(calls: List<ToolCallPart>) {
+        // 按需加载是锦上添花：里面任何地方出了意外（坏的规则、读盘出错……）都只记一条说明，绝不能让回合失败——
+        // 否则一条写坏的规则会让这个项目里之后每一次读文件都把回合打成 Failed
+        catchingNonCancellation { attachMemoryUnguarded(calls) }.onFailure { e ->
+            catchingNonCancellation {
+                rt.commit(
+                    listOf(Note(NoteLevel.Warning, "按需加载记忆失败，已跳过这一批：${e.message?.lineSequence()?.firstOrNull() ?: e::class.simpleName}")),
+                    Durability.Batched,
+                )
+            }
+        }
+    }
+
+    private suspend fun attachMemoryUnguarded(calls: List<ToolCallPart>) {
         val discovery = rt.memoryDiscovery ?: return
         val candidates = calls.flatMap { touched[it.callId].orEmpty() }.distinct()
         if (candidates.isEmpty()) return
