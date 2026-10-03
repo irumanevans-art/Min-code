@@ -65,7 +65,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
     /** 本回合被 UserPromptSubmit 拦下的输入条数 */
     private var blockedInputs = 0
-    private val compactor = Compactor(rt, ::assemble)
+    private val compactor = Compactor(rt, ::assemble, hooks)
 
     /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
     suspend fun run(trigger: TurnTrigger): Boolean {
@@ -111,8 +111,14 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     /** 用户手动压缩的回合：只做摘要，不让模型回答；收件箱里的输入留给下一回合 */
     private suspend fun compactOnly(turnId: TurnId) {
         val model = deps.models.resolve(rt.state.value.settings.model)
-        if (!compactor.force(turnId, model, CompactionTrigger.Manual, rt.takeCompactInstructions())) {
-            throw TurnAbort("压缩没有成功：" + (rt.state.value.let { s -> if (CompactionPlanner.summarizeBoundary(s) == null) "还没有可以压缩的对话" else "详见压缩记录" }))
+        when (val result = compactor.force(turnId, model, CompactionTrigger.Manual, rt.takeCompactInstructions())) {
+            // 被拦不算失败：回合照常完成，免得界面给出「继续」；理由进 Note（CC：manual 的 stderr 给用户看）
+            is CompactResult.Blocked -> rt.commit(
+                listOf(Note(NoteLevel.Info, "压缩被 PreCompact hook 拦下：" + (result.reason ?: "未给出理由"))),
+                Durability.Batched,
+            )
+            is CompactResult.Failed -> throw TurnAbort("压缩没有成功：" + result.reason)
+            CompactResult.Done -> Unit
         }
     }
 
@@ -247,8 +253,18 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 )
                 if (overflowRetry) {
                     overflowCompacted = true
-                    if (!compactor.force(turnId, model, CompactionTrigger.Overflow, null)) {
-                        throw TurnAbort("上下文超长，压缩也没能腾出空间。可以开一个新会话，或换上下文更大的模型。", e.kind)
+                    when (val result = compactor.force(turnId, model, CompactionTrigger.Overflow, null)) {
+                        // 被拦也救不了这次请求：原来那个「上下文超长」错误照常结束回合，Note 说明是被 hook 拦的
+                        is CompactResult.Blocked -> {
+                            rt.commit(
+                                listOf(Note(NoteLevel.Info, "压缩被 PreCompact hook 拦下：" + (result.reason ?: "未给出理由"))),
+                                Durability.Batched,
+                            )
+                            throw TurnAbort("上下文超长，压缩也没能腾出空间。可以开一个新会话，或换上下文更大的模型。", e.kind)
+                        }
+                        is CompactResult.Failed ->
+                            throw TurnAbort("上下文超长，压缩也没能腾出空间。可以开一个新会话，或换上下文更大的模型。", e.kind)
+                        CompactResult.Done -> Unit
                     }
                     attempt++
                     continue
