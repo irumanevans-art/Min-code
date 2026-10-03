@@ -263,13 +263,16 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     /**
-     * hook 的结论与权限引擎合流（hooks设计 §7）：alwaysAsk 与安全底线问人、拒绝规则与模式的拒绝照旧——hook 的 allow 都越不过；
+     * hook 的结论与权限引擎合流（hooks设计 §7）：alwaysAsk 与安全底线问人、拒绝规则与模式的拒绝照旧、命中 ask 规则一律问人——
+     * hook 的 allow 都越不过（CC：「Deny and ask rules are still evaluated regardless of what the hook returns」）；
      * 其余情况 hook 说 ask 就问人、说 allow 就跳过审批（与 Claude Code 一致）
      */
     private fun merge(ready: Prepared.Ready, ask: PermissionAsk, hook: HookOutcome.Decision): Verdict {
         val verdict = verdictFor(ready, ask)
         if (hook == HookOutcome.Decision.Neutral || ready.tool.traits.alwaysAsk || verdict is Verdict.Deny) return verdict
-        if (verdict == Verdict.Ask && PolicyEngine.floorReason(ask, policyContext()) != null) return verdict
+        val context = policyContext()
+        if (verdict == Verdict.Ask && PolicyEngine.floorReason(ask, context) != null) return verdict
+        if (PolicyEngine.askRuleHit(ask, context) != null) return Verdict.Ask
         return when (hook) {
             HookOutcome.Decision.Ask -> Verdict.Ask
             HookOutcome.Decision.Allow -> Verdict.Allow(DecidedBy.Hook(HookEvent.PreToolUse.name))

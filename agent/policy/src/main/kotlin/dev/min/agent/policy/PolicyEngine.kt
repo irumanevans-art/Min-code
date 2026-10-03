@@ -111,6 +111,14 @@ object PolicyEngine {
     }
 
     /**
+     * 这次调用命中了哪条 `ask` 规则，没命中为 null。内核合并 hook 的结论时用它：CC 文档
+     * 「Deny and ask rules are still evaluated regardless of what the hook returns」，所以 hook 的 allow 越不过 ask 规则。
+     * 只回答「ask 规则命中没有」，不管底线与 deny 规则（那两样由 [evaluate] 先行处理）。
+     */
+    fun askRuleHit(ask: PermissionAsk, context: PolicyContext): PermissionRule? =
+        firstHit(Facts.of(ask, context), context.rules.filter { it.kind == RuleKind.Ask }, RuleMatcher(context.cwd, context.home))
+
+    /**
      * 踩了安全底线的原因（界面据此解释「为什么连 bypass 也要问你」），没踩为 null。
      */
     fun floorReason(ask: PermissionAsk, context: PolicyContext): String? = floorReason(Facts.of(ask, context))

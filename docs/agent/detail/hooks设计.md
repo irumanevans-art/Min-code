@@ -12,7 +12,7 @@
 - 跑在 proot 里（与 Bash 同一个环境），**不继承 App 进程的环境变量**（凭证永远不进 hook）。
 - 项目里带来的 hooks 要过**工作区信任**才生效；会话开始时**冻结快照**，中途改动要人确认才重载。
 - hook 的结论**进日志**：模型看到的一切（hook 加的上下文、拦截理由）都能从日志重建；hook 拦了什么、花了多久，界面看得到。
-- hook **不能越过安全底线和拒绝规则**放行（CC 的 hook allow 可以跳过提示，Min 保留这一点，但底线与 deny 规则仍然生效）。
+- hook **不能越过安全底线、拒绝规则和 ask 规则**放行（CC 的 hook allow 可以跳过提示，Min 保留这一点，但底线、deny 与 ask 规则仍然生效）。
 
 ## 1. 配置与快照
 
@@ -109,6 +109,7 @@ PreToolUse hooks：deny / exit 2           → 拒绝，理由给模型
 PolicyEngine（安全底线 → deny 规则 → ask 规则 → allow 规则 → 模式）
   底线 Ask                                 → 问人（hook allow 不能越过）
   deny 规则                                → 拒绝（hook allow 不能越过）
+  ask 规则命中                             → 问人（hook allow 不能越过；CC：「Deny and ask rules are still evaluated regardless of what the hook returns」）
   hook 说 ask                              → 问人
   hook 说 allow                            → 放行（跳过提示，与 CC 一致）
   其余                                     → 按策略结论

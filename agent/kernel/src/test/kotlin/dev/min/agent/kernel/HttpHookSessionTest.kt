@@ -22,6 +22,9 @@ import dev.min.agent.spi.HooksRan
 import dev.min.agent.spi.HttpPolicyData
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.PermissionAsk
+import dev.min.agent.spi.PermissionRulesLoaded
+import dev.min.agent.spi.RuleEntry
+import dev.min.agent.spi.RuleKindData
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
@@ -159,6 +162,8 @@ class HttpHookSessionTest {
         fs: FakeFs = FakeFs(),
         memoryHome: GuestPath? = null,
         trustProject: Boolean = false,
+        mode: PermissionMode = PermissionMode.BypassPermissions,
+        initial: List<SessionEvent> = emptyList(),
     ): SessionRuntime {
         val deps = KernelDeps(
             clock = { 1_000 },
@@ -176,10 +181,10 @@ class HttpHookSessionTest {
         return SessionRuntime.create(
             store,
             LogHeader(LOG_FORMAT_VERSION, dev.min.agent.protocol.SessionId("s_hook_${ids.incrementAndGet()}"), 0),
-            SessionCreated(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions),
+            SessionCreated(GuestPath("/workspace"), TEST_MODEL, mode),
             deps,
             scope,
-            initial = listOfNotNull(hooks),
+            initial = listOfNotNull(hooks) + initial,
         )
     }
 
@@ -379,6 +384,30 @@ class HttpHookSessionTest {
         assertEquals(listOf("https://corp.example/*"), loaded.httpPolicy!!.allowedUrls)
         rt.say("跑一下")
         assertTrue("managed 的闸挡住了用户的 http hook，项目层的闸没被信任所以放不了行", http.sent.isEmpty())
+    }
+
+    private val allowAll = """{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}"""
+
+    private fun askRule(text: String) = PermissionRulesLoaded(listOf(RuleEntry(RuleKindData.Ask, text, "user")))
+
+    @Test
+    fun `a hook allow cannot override an ask rule, the call still goes to the user`() = runBlocking { withTimeout(20_000) {
+        val http = FakeHttp { HttpHookResult.Responded(200, allowAll) }
+        val rt = session(lsModel(), envlessHook(), http, mode = PermissionMode.Default, initial = listOf(askRule("Bash(ls *)")))
+        rt.send(ClientMsgId("u-ask"), listOf(TextPart("看看")))
+        val asking = rt.state.first { it.turn?.calls?.get(CallId("c1"))?.phase is CallPhase.AwaitingApproval }
+        assertEquals("hook 确实回了 allow", 1, http.sent.size)
+        assertTrue(asking.turn!!.calls.getValue(CallId("c1")).phase is CallPhase.AwaitingApproval)
+        assertNull("没人批准之前不能执行", asking.toolResults[CallId("c1")])
+    } }
+
+    @Test
+    fun `a hook allow still skips the prompt when no ask rule is in the way`() = runBlocking {
+        val http = FakeHttp { HttpHookResult.Responded(200, allowAll) }
+        val rt = session(lsModel(), envlessHook(), http, mode = PermissionMode.Default, initial = listOf(askRule("Bash(git push *)")))
+        rt.say("看看")
+        assertEquals(1, http.sent.size)
+        assertTrue(rt.state.value.toolResults.getValue(CallId("c1")).let { !it.isError })
     }
 
     @Test
