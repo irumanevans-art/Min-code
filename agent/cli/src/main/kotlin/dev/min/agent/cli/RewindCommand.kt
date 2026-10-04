@@ -80,7 +80,9 @@ private fun describe(preview: RewindPreview, out: PrintStream) {
     preview.checkpoint?.reason?.let { out.println("这个检查点没有整树快照（$it），命令改的文件撤不回。") }
     if (preview.unrestorable.isNotEmpty()) out.println("没有原文备份、撤不回：${preview.unrestorable.joinToString("、") { it.value }}")
     if (preview.external.isNotEmpty()) out.println("最近一轮之后被编辑工具以外改过（命令或你自己）：${preview.external.joinToString("、") { it.value }}")
-    if (preview.runningChildren.isNotEmpty()) out.println("回退对话会停掉 ${preview.runningChildren.size} 个还在跑的子 agent。")
+    if (preview.runningAfterPoint.isNotEmpty()) out.println("回退对话会停掉这一点之后委派、还在跑的 ${preview.runningAfterPoint.size} 个子 agent。")
+    val forCode = preview.childrenStoppedBy(RewindScope.Code)
+    if (preview.canRestoreCode && forCode.isNotEmpty()) out.println("恢复代码会停掉所有还在跑的 ${forCode.size} 个子 agent（它们可能正在改文件）。")
 }
 
 private const val PREVIEW_CHARS = 60
