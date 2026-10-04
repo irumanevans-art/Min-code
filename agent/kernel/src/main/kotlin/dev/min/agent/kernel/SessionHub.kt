@@ -564,7 +564,8 @@ class SessionHub(
         val origin = child.state.value.origin ?: return
         val parent = open(origin.parent) ?: return
         val summary = parent.state.value.children[child.sessionId] ?: return
-        if (ended.turnId in summary.reportedTurns) return
+        // 委派它的调用已被回退掉：报告不送（送了折叠也不收，这里省一次写）
+        if (summary.rewound || ended.turnId in summary.reportedTurns) return
         val report = Reports.render(child.sessionId, summary, origin.agentType, origin.fork, ended, child.state.value)
         val parentLast = parent.state.value.lastTurn?.outcome
         val parentHealthy = parentLast == null || parentLast == TurnOutcome.Completed
@@ -613,11 +614,13 @@ class SessionHub(
         return ok("已让它停下；它的报告（标为未做完）会照常交给你。")
     }
 
+    /** 被回退掉的子 agent 不算：对模型来说它们从没被委派过 */
     private fun findChild(state: SessionState, target: String): ChildSummary? =
-        state.children[SessionId(target)] ?: state.children.values.lastOrNull { it.name == target }
+        state.children[SessionId(target)]?.takeUnless { it.rewound } ?: state.children.values.lastOrNull { it.name == target && !it.rewound }
 
     private fun unknownChild(state: SessionState, target: String): String {
-        val known = state.children.values.joinToString("、") { c -> c.name?.let { "$it（${c.child.value}）" } ?: c.child.value }
+        val known = state.children.values.filterNot { it.rewound }
+            .joinToString("、") { c -> c.name?.let { "$it（${c.child.value}）" } ?: c.child.value }
         return "没有叫「$target」的子 agent。" + if (known.isEmpty()) "你还没有委派过子 agent。" else "你委派过的：$known。"
     }
 

@@ -29,6 +29,15 @@ class FakeSnapshots(private val fs: FakeFs) : WorkspaceSnapshots {
     var beforeSnapshot: suspend () -> Unit = {}
     var unavailable: String? = null
 
+    /** 每次 restore 动手之前调用：测试用它卡住恢复（验证恢复不会被打断在半路） */
+    var beforeRestore: suspend () -> Unit = {}
+
+    /** 为真时 [store] 直接抛异常：宿主的仓库坏了 */
+    var storeFails = false
+
+    /** 接下来这么多次 preserve 返回 null：存内容失败 */
+    var preserveFailures = 0
+
     /** 每次快照的根，按顺序 */
     val snapshots = mutableListOf<GuestPath>()
 
@@ -40,7 +49,10 @@ class FakeSnapshots(private val fs: FakeFs) : WorkspaceSnapshots {
 
     fun content(id: ContentId): String? = contents[id.value]?.decodeToString()
 
-    override fun store(root: GuestPath): SnapshotStore = Store(root.value.trimEnd('/'))
+    override fun store(root: GuestPath): SnapshotStore {
+        check(!storeFails) { "快照仓库坏了" }
+        return Store(root.value.trimEnd('/'))
+    }
 
     private fun hash(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
@@ -63,7 +75,13 @@ class FakeSnapshots(private val fs: FakeFs) : WorkspaceSnapshots {
             return SnapshotResult.Taken(ManifestId(id), SnapshotStats(entries.size, entries.values.sumOf { contents.getValue(it).size.toLong() }))
         }
 
-        override suspend fun preserve(content: ByteArray): ContentId = ContentId(hash(content).also { contents[it] = content.copyOf() })
+        override suspend fun preserve(content: ByteArray): ContentId? {
+            if (preserveFailures > 0) {
+                preserveFailures--
+                return null
+            }
+            return ContentId(hash(content).also { contents[it] = content.copyOf() })
+        }
 
         override suspend fun read(id: ContentId): ByteArray? = contents[id.value]?.copyOf()
 
@@ -83,6 +101,7 @@ class FakeSnapshots(private val fs: FakeFs) : WorkspaceSnapshots {
         }
 
         override suspend fun restore(target: ManifestId?, extra: List<FileRestore>): RestoreResult {
+            beforeRestore()
             restores += target to extra
             val restored = mutableListOf<GuestPath>()
             val deleted = mutableListOf<GuestPath>()

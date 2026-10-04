@@ -52,7 +52,6 @@ import dev.min.agent.spi.SettingsChanged
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.answerProblem
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -152,7 +151,9 @@ class SessionRuntime private constructor(
         if (port === dev.min.agent.spi.WorkspaceSnapshots.Unavailable) return null
         if (isTruthyEnv(deps.env(DISABLE_CHECKPOINTS_ENV))) return null
         val enabled = checkpointsBySettings ?: readCheckpointSetting().also { checkpointsBySettings = it }
-        return if (enabled) port.store(state.value.created.cwd) else null
+        if (!enabled) return null
+        // 宿主的仓库出了问题不能拖垮回合或编辑工具：拿不到就当没有仓库
+        return dev.min.agent.spi.catchingNonCancellation { port.store(state.value.created.cwd) }.getOrNull()
     }
 
     private suspend fun readCheckpointSetting(): Boolean {
@@ -421,15 +422,26 @@ class SessionRuntime private constructor(
         whileIdle { checkpointer.restoreCalls(calls) } ?: RewindOutcome.Refused(BUSY)
 
     /**
-     * 在「空闲」的名义下做一件事：占住回合的位置，期间不会开回合（输入照常进收件箱）。已有回合在跑返回 null
+     * 在会话空闲时做一件维护的事（回退、恢复代码）：期间不开回合，输入照常进收件箱，做完了收件箱里有东西就开回合。
+     * 用单独的 Job，不占回合的位置：[interrupt] 停的是回合，不能把做到一半的恢复停在半路（那会留下改了一半的工作区）。
+     * 已有回合或别的维护在跑返回 null
      */
     private suspend fun <T> whileIdle(block: suspend () -> T): T? {
         val job = synchronized(turnLock) {
-            if (turnJob?.isActive == true || _state.value.turn != null) return null
-            scope.async(start = CoroutineStart.LAZY) { block() }.also { turnJob = it }
+            if (turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return null
+            // 在锁里就启动：启动之前它的 isActive 是假的，startTurnIfIdle 会从这个空档里溜进去
+            scope.async { block() }.also { maintenanceJob = it }
         }
-        return job.await()
+        return try {
+            job.await()
+        } finally {
+            synchronized(turnLock) { if (maintenanceJob === job) maintenanceJob = null }
+            startTurnIfIdle(TurnTrigger.User)
+        }
     }
+
+    /** 正在做的维护（回退、恢复代码）；与回合互斥 */
+    private var maintenanceJob: Job? = null
 
     /** 等到没有进行中的回合（测试与桌面 CLI 用） */
     suspend fun awaitIdle() {
@@ -443,7 +455,7 @@ class SessionRuntime private constructor(
      */
     private fun startTurnIfIdle(trigger: TurnTrigger) {
         synchronized(turnLock) {
-            if (turnJob?.isActive == true) return
+            if (turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
             if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification) && s.inbox.isEmpty()) return
