@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "alpha",
+      "scope": "project",
+      "transport": "http",
+      "gate": "disabled",
+      "url": "https://alpha.example.com/mcp",
+      "basis": "cc-settings-reference.md:4955：拒绝胜过批准；:4943-4945 + cc-mcp.md:266：disabledMcpjsonServers 写在 user settings 也生效 → disabled"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

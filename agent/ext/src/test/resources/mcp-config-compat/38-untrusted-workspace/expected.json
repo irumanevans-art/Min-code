@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "alpha",
+      "scope": "project",
+      "transport": "http",
+      "gate": "untrusted",
+      "url": "https://alpha.example.com/mcp",
+      "basis": "Min MCP设计.md:67（设计 §3）：未信任时项目服务器 gate=untrusted，即使 user 层 settings.json 批准过（CC 在 cc-mcp.md:260 会放行——Min 有意更严）"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

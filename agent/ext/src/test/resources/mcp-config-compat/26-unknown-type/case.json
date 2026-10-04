@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:83-87,147-158：type 的合法取值只有 stdio/http/sse/ws（sdk 仅宿主可注册）；:87：CC 对不认的条目跳过并报告（sdk 条目同类）"
+}

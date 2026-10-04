@@ -1,0 +1,13 @@
+{
+  "servers": [
+    {
+      "name": "tool",
+      "scope": "project",
+      "transport": "stdio",
+      "gate": "denied",
+      "basis": "cc-managed-mcp.md:316：allowlist 里有 serverCommand 条目后，stdio 只认命令匹配——名字 tool 虽有 serverName 条目也不再放行；:320：npx -y other-server 与 npx -y approved-server 逐项不等 → denied"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

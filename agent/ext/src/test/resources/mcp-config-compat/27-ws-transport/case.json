@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "Min MCP设计.md:165：ws 传输首期不做；cc-mcp.md:147-158：CC 的 .mcp.json 支持 type ws（同样的 url/headers 字段）"
+}

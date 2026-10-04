@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "corp": {
+      "type": "http",
+      "url": "https://corp.example.com/mcp"
+    }
+  }
+}

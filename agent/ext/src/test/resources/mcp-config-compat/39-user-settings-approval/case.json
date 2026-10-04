@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-settings-reference.md:4979：enabledMcpjsonServers 任何 settings 文件皆可写；cc-mcp.md:260：user ~/.claude/settings.json 的批准有效"
+}

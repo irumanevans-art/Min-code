@@ -1,0 +1,6 @@
+{
+  "allowedMcpServers": [
+    { "serverName": "tool" },
+    { "serverCommand": ["npx", "-y", "approved-server"] }
+  ]
+}

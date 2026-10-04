@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "name": "corp",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://corp.example.com/mcp",
+      "basis": "cc-managed-mcp.md:162-164：managed settings 里的 managedMcpServers 提供，scope=managed；:207：不需要 allowlist 条目"
+    },
+    {
+      "name": "usr",
+      "scope": "user",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://usr.example.com/mcp",
+      "basis": "cc-managed-mcp.md:162：不独占，用户自己的服务器保留；cc-mcp.md:600：user 作用域存 ~/.claude.json 顶层"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

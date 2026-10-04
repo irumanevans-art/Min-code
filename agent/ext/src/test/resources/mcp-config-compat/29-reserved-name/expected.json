@@ -1,0 +1,5 @@
+{
+  "servers": [],
+  "absent": ["workspace"],
+  "notesContain": ["workspace"]
+}

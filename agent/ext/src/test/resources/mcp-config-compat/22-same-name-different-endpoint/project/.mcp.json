@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "metrics": {
+      "type": "http",
+      "url": "https://project-metrics.example.com/mcp"
+    }
+  }
+}

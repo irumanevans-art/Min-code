@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:609-613：同名按名判重（:617）、local 最优先；:291：同名多作用域端点不同时 CC 给警告（OAuth 按端点分开存）"
+}

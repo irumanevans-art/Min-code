@@ -1,0 +1,17 @@
+{
+  "servers": [
+    {
+      "name": "tool",
+      "scope": "project",
+      "transport": "stdio",
+      "gate": "enabled",
+      "command": "npx",
+      "env": {
+        "ANTHROPIC_API_KEY": "sk-test-value"
+      },
+      "basis": "cc-mcp.md:666（名单只管远程 url/headers）+ :640（env 可展开）：stdio env 里的 ANTHROPIC_API_KEY 正常展开成环境里的值"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

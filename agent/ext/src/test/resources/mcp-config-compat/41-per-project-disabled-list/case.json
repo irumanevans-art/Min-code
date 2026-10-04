@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:313-315：/mcp 里的开关按项目记在 ~/.claude.json 的 disabledMcpServers，名单里的用户配置服务器不再连接"
+}

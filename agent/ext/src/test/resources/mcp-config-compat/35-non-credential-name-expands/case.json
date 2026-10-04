@@ -1,0 +1,7 @@
+{
+  "trustProject": true,
+  "env": {
+    "API_KEY": "plain-value"
+  },
+  "basis": "cc-mcp.md:676：不在凭证名单里的名字（如 API_KEY）按原样展开"
+}

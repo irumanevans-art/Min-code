@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:188-194：managedMcpServers 条目只许 type http/sse、https:// URL、无 command/args/env/headersHelper、无 ${VAR}；:188：不合格的条目丢弃并记 notice，其余照载"
+}

@@ -1,0 +1,15 @@
+{
+  "servers": [
+    {
+      "name": "deploy",
+      "scope": "local",
+      "transport": "stdio",
+      "gate": "enabled",
+      "command": "/usr/local/bin/deploy",
+      "env": {},
+      "basis": "cc-mcp.md:609-613：整条取 local 的定义——project 条目里的 env 不合并进来，env 写成 {} 钉住「不按字段合并」"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

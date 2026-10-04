@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "Min MCP设计.md:71：名字只许 [A-Za-z0-9_-]；cc-mcp.md:195：服务器名只能是字母、数字、连字符、下划线"
+}

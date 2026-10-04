@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:132-140：managed-mcp.json 空服务器表 = 关掉 MCP，用户此前配置的服务器停止加载；:45-54：文件存在即独占"
+}

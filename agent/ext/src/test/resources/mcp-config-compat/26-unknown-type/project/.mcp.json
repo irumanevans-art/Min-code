@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "weird": {
+      "type": "grpc",
+      "url": "https://api.example.com/mcp"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:85：Claude Code 把没有 type 的条目当 stdio 服务器读"
+}

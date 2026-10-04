@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:632：${VAR:-default} 在 VAR 未设时用默认值；:639：args 是可展开位置"
+}

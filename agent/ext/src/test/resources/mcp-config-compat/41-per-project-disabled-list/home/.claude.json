@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "notes": {
+      "type": "http",
+      "url": "https://notes.example.com/mcp"
+    }
+  },
+  "projects": {
+    "/workspace": {
+      "disabledMcpServers": ["notes"]
+    }
+  }
+}

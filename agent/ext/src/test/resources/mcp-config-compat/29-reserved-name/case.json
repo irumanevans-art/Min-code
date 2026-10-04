@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:292：保留名（workspace、claude-in-chrome、computer-use 等）在加载时跳过并警告；Min MCP设计.md:71：保留名照 CC"
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tool": {
+      "command": "npx",
+      "args": ["-y", "other-server"]
+    }
+  }
+}

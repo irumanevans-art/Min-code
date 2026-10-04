@@ -1,0 +1,5 @@
+{
+  "trustProject": false,
+  "env": {},
+  "basis": "cc-mcp.md:535：local 服务器存在 ~/.claude.json 的项目条目下，是用户自己的配置、不在仓库里；审批与信任只针对项目 .mcp.json（cc-mcp.md:254-266）；Min MCP设计.md:67：两道关只管项目 .mcp.json"
+}

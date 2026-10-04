@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:420：per-server timeout 低于 1000 被忽略，回落 MCP_TOOL_TIMEOUT（默认约 28 小时）；服务器本身照常加载"
+}

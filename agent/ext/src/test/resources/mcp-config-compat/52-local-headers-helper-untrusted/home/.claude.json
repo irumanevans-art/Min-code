@@ -1,0 +1,16 @@
+{
+  "projects": {
+    "/workspace": {
+      "mcpServers": {
+        "relay": {
+          "type": "http",
+          "url": "https://relay.example.com/mcp",
+          "headers": {
+            "Authorization": "Bearer test-token"
+          },
+          "headersHelper": "echo '{\"Authorization\": \"Bearer helper-token\"}'"
+        }
+      }
+    }
+  }
+}

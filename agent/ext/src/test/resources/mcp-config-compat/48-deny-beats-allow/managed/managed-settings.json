@@ -1,0 +1,8 @@
+{
+  "allowedMcpServers": [
+    { "serverName": "corp" }
+  ],
+  "deniedMcpServers": [
+    { "serverName": "corp" }
+  ]
+}

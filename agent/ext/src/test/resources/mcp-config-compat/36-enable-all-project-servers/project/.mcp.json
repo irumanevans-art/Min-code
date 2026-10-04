@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "beta": {
+      "type": "http",
+      "url": "https://beta.example.com/mcp"
+    },
+    "alpha": {
+      "type": "http",
+      "url": "https://alpha.example.com/mcp"
+    }
+  }
+}

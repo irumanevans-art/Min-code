@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "/workspace": {
+      "mcpServers": {
+        "deploy": {
+          "type": "stdio",
+          "command": "/usr/local/bin/deploy"
+        }
+      }
+    }
+  }
+}

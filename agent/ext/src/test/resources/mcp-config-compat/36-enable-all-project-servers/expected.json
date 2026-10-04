@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "name": "alpha",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://alpha.example.com/mcp",
+      "basis": "cc-settings-reference.md:4963：enableAllProjectMcpServers=true 批准全部 → enabled"
+    },
+    {
+      "name": "beta",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://beta.example.com/mcp",
+      "basis": "cc-settings-reference.md:4963：enableAllProjectMcpServers=true 批准全部项目服务器 → enabled；.mcp.json 里键的书写顺序（beta 在前）不影响结果，expected 按名字排序"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

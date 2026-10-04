@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "usr": {
+      "type": "http",
+      "url": "https://usr.example.com/mcp"
+    }
+  }
+}

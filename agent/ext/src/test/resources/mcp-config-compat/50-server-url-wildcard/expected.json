@@ -1,0 +1,21 @@
+{
+  "servers": [
+    {
+      "name": "nope",
+      "scope": "project",
+      "transport": "http",
+      "gate": "denied",
+      "basis": "cc-managed-mcp.md:328：api.other.com 不是 example.com 的子域，通配不匹配 → denied"
+    },
+    {
+      "name": "ok",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://api.example.com/mcp",
+      "basis": "cc-managed-mcp.md:328：api.example.com 是 example.com 的子域，https://*.example.com/* 匹配 → enabled"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "metrics",
+      "scope": "local",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://local-metrics.example.com/mcp",
+      "basis": "cc-mcp.md:609-613+617：三个作用域按名字判重，local 的整条定义胜出，端点是 local 的 URL"
+    }
+  ],
+  "absent": [],
+  "notesContain": ["metrics"]
+}

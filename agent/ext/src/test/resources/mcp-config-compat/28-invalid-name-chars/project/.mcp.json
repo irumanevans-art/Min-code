@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "my server": {
+      "type": "http",
+      "url": "https://a.example.com/mcp"
+    },
+    "a.b": {
+      "type": "http",
+      "url": "https://b.example.com/mcp"
+    }
+  }
+}

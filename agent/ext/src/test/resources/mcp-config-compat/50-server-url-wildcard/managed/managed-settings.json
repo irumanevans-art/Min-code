@@ -1,0 +1,5 @@
+{
+  "allowedMcpServers": [
+    { "serverUrl": "https://*.example.com/*" }
+  ]
+}

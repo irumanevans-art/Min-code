@@ -1,0 +1,5 @@
+{
+  "trustProject": false,
+  "env": {},
+  "basis": "Min MCP设计.md:67：项目 .mcp.json 的服务器在工作区未信任时一律不启动（gate=untrusted），不管有没有被批准——Min 比 CC 严格的一处；CC 原文（cc-mcp.md:258-262）在此情形仍认 user settings 的批准"
+}

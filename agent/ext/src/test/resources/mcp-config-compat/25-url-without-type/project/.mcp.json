@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "broken": {
+      "url": "https://api.example.com/mcp"
+    }
+  }
+}

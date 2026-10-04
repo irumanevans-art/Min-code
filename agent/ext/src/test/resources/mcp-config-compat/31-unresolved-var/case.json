@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:662,293：变量没设也没有默认值时配置照常加载、保留字面 ${VAR}，并在 list//mcp 输出里给点名变量的警告"
+}

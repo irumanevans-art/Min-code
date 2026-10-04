@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "search",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://search.example.com/mcp",
+      "basis": "cc-mcp.md:83：streamable-http 归一为 http（transport 写 http 钉住别名折叠）；cc-settings-reference.md:4963 → enabled"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

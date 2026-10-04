@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "events": {
+      "type": "ws",
+      "url": "wss://mcp.example.com/socket"
+    }
+  }
+}

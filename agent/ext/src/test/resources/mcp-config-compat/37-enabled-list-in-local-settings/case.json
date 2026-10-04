@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-settings-reference.md:4975-4981：enabledMcpjsonServers 只批准名单里的服务器；cc-mcp.md:264：受信任的目录里，settings.local.json 的批准生效"
+}

@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "scratch",
+      "scope": "local",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://scratch.example.com/mcp",
+      "basis": "cc-mcp.md:254-266 的审批/信任机制只覆盖项目 .mcp.json；local 是用户自己写入 ~/.claude.json 的配置（:535），未信任也 enabled"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}
