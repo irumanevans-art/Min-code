@@ -36,7 +36,9 @@ class HtmlToMarkdownSampleTest {
     fun `messy old school page`() = check("messy", "http://www.laowang.com/notes/index.html")
 
     @Test
-    fun `two megabyte page converts in under two seconds`() {
+    fun `conversion time grows linearly up to two megabytes`() {
+        // 防的是平方级退化（逐字符拼接、反复回溯之类），不是测机器快慢：全量构建时十几个模块并行跑测试，
+        // 绝对时限会被负载顶破。所以比 0.5 MB 与 2 MB 的耗时之比：线性约 4 倍，平方级约 16 倍。
         // 不带 main/article/body：正文优先只认第一个，整页重复会让其余内容全被丢弃
         val chunk = """
             <h2>负载样本</h2>
@@ -47,12 +49,20 @@ class HtmlToMarkdownSampleTest {
             <table><tr><th>k</th><th>v</th></tr><tr><td>a|b</td><td>1</td></tr></table>
             <pre><code class="language-kotlin">val x = 1 // 代码保持原样 *a* [b]</code></pre>
         """.trimIndent()
-        val html = buildString { while (length < 2_000_000) append(chunk) }
-        assertTrue(html.length >= 2_000_000)
-        val start = System.nanoTime()
-        val page = HtmlToMarkdown.convert(html, "https://bench.example.com/")
-        val elapsedMs = (System.nanoTime() - start) / 1_000_000
-        assertTrue("输出要实质存在（实际 ${page.markdown.length} 字符）", page.markdown.length > 500_000)
-        assertTrue("转换耗时 ${elapsedMs}ms，超过 2000ms", elapsedMs < 2_000)
+        fun page(size: Int) = buildString { while (length < size) append(chunk) }
+        val small = page(500_000)
+        val big = page(2_000_000)
+        fun bestMs(html: String, runs: Int): Long = (1..runs).minOf {
+            val start = System.nanoTime()
+            HtmlToMarkdown.convert(html, "https://bench.example.com/")
+            (System.nanoTime() - start) / 1_000_000
+        }
+        HtmlToMarkdown.convert(small, "https://bench.example.com/") // 先热一遍 JIT
+        val smallMs = bestMs(small, 3).coerceAtLeast(1)
+        val bigMs = bestMs(big, 2)
+        val output = HtmlToMarkdown.convert(big, "https://bench.example.com/").markdown
+        assertTrue("输出要实质存在（实际 ${output.length} 字符）", output.length > 500_000)
+        assertTrue("2 MB 耗时 ${bigMs}ms，0.5 MB 耗时 ${smallMs}ms：涨幅远超线性", bigMs < smallMs * 10 + 200)
+        assertTrue("2 MB 耗时 ${bigMs}ms，超过 10 秒", bigMs < 10_000)
     }
 }

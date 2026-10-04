@@ -302,8 +302,9 @@ class ClaudeCodeSessionRegistryTest {
 
             rh.registry.answerPermission(key, true, pending.requestId)
             h.awaitTurnEnd()
-            eventually("待批请求从聚合流里消失") {
-                rh.registry.liveSessions.value.single().pendingPermissionId == null
+            // 聚合流里「待批请求清空」与「助手文本到达」是先后两次推送：两件事一起等，不在中间那一帧上断言
+            eventually("待批请求从聚合流里消失、回复文本到达") {
+                rh.registry.liveSessions.value.single().let { it.pendingPermissionId == null && it.lastAssistantText == "done" }
             }
             val done = rh.registry.liveSessions.value.single()
             assertEquals("done", done.lastAssistantText)
