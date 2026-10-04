@@ -1,5 +1,4 @@
 {
-  "pendingFix": "CC 文档（research/inventory/claude-code/03-extensions.md §1.4）：『[ 会使模式匹配不到（需 \\[ 转义）』。按 CC：未转义的 [ 起头的模式不匹配任何文件（步骤1 期望空），转义的 src/\\[x].md 匹配字面文件 src/[x].md（步骤2 期望加载本规则）。Min 的 PathGlob 把未转义的 [abc] 当字符集（其头注释写明该语义，含 !/^ 取反），并把 \\[ 里的反斜杠当字面字符——所以实际是 src/a.ts 被注入（步骤1）、src/[x].md 反而不注入（步骤2）。期望按 CC 原文写；是有意 diverge 还是照 CC 修，待实现者复核。",
   "startup": {
     "files": [],
     "notesContain": ["带 paths"]
