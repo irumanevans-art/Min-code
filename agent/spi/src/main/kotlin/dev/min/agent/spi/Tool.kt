@@ -57,6 +57,11 @@ data class ToolTraits(
      * 给「人批准本身就是这一步的意义」的工具用（ExitPlanMode：人看过计划才能动手）。
      */
     val alwaysAsk: Boolean = false,
+    /**
+     * 这个调用会派别的会话干活（委派子 agent、给它发消息）：调用本身不写文件，派出去的却可能写。
+     * 检查点的工具闸据此让它与写工具一样等快照拍完（检查点与rewind设计 §1），[readOnly] 管不到这一层
+     */
+    val delegates: Boolean = false,
 ) {
     companion object {
         /**
@@ -125,6 +130,10 @@ data class FileEdit(
     val deleted: Boolean = false,
     /** [diff] 被截断时砍掉的字符数；0 = 完整 */
     val truncated: Int = 0,
+    /** 改之前的内容在快照仓库里的 id（编辑记录，检查点设计 §2.2）；原来不存在、或宿主没有仓库时为 null */
+    val before: ContentId? = null,
+    /** 改之后的内容 id；删除、或宿主没有仓库时为 null */
+    val after: ContentId? = null,
 )
 
 /** 某一刻看到的文件状态 */
@@ -159,6 +168,12 @@ interface ToolContext {
     val webSearch: WebSearchPort get() = WebSearchPort.Unavailable
     suspend fun extract(content: String, prompt: String): ToolResult =
         ToolResult(listOf(dev.min.agent.protocol.TextPart("这个环境不能提取网页内容。")), isError = true)
+
+    /**
+     * 编辑记录（检查点设计 §2.2）：把一份内容存进本会话工作区的快照仓库，返回内容 id。
+     * 编辑类工具在写盘之前存改前原文、写完存改后内容。有默认值（不存，返回 null）：其余工具与测试替身不用管它
+     */
+    suspend fun preserve(content: ByteArray): ContentId? = null
 
     /** 会话当前的权限模式（只读）。与人交互的工具据此判断：dontAsk 下不提问，计划模式工具看自己是否在计划模式里 */
     val mode: PermissionMode
