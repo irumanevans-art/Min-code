@@ -111,7 +111,8 @@ object NotebookEditTool : Tool<NotebookEditInput> {
             return failResult("$path 在你读过之后被改过，先重新 Read 再改。")
         }
 
-        val raw = ctx.fs.read(path, 0, stat.size.toInt()).decodeToString()
+        val originalBytes = ctx.fs.read(path, 0, stat.size.toInt())
+        val raw = originalBytes.decodeToString()
         val bom = raw.startsWith(BOM)
         val text = raw.removePrefix(BOM)
         val nb = when (val parsed = parseNotebook(path, text)) {
@@ -140,7 +141,7 @@ object NotebookEditTool : Tool<NotebookEditInput> {
             return failResult("改动后的 notebook 校验不通过，为免写坏文件没有修改。")
         }
 
-        ctx.fs.writeAtomic(path, (if (bom) BOM + change.text else change.text).encodeToByteArray())
+        val stored = preserveWrite(ctx, path, originalBytes, (if (bom) BOM + change.text else change.text).encodeToByteArray())
         val written = checkNotNull(ctx.fs.stat(path)) { "写入后 stat 不到 $path" }
         val echo = PartsBuilder()
         change.shown?.let { renderCell(echo, it, change.shownIndex, imagesLeft = null) }
@@ -155,7 +156,7 @@ object NotebookEditTool : Tool<NotebookEditInput> {
         return okResult(
             full.trimEnd(),
             listOf(FileStamp(path, written.size, written.modifiedMs)),
-            listOf(fileEdit(path, text, change.text)),
+            listOf(fileEdit(path, text, change.text, stored = stored)),
         )
     }
 

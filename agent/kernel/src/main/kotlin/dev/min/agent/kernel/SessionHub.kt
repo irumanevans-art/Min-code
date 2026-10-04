@@ -270,10 +270,24 @@ class SessionHub(
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {
+            forgetSnapshots(id)
             val deleted = store.delete(id)
             if (id == root) deletedRoot = deleted
         }
         return deletedRoot
+    }
+
+    /**
+     * 会话删了，它在工作区快照仓库里的回收根一并去掉（检查点与rewind设计 §3.5）。工作区按日志第一条事件的 cwd 找；
+     * 读不到日志、宿主没有仓库时什么都不做，失败只影响回收
+     */
+    private suspend fun forgetSnapshots(id: SessionId) {
+        val port = deps.host.snapshots
+        if (port === dev.min.agent.spi.WorkspaceSnapshots.Unavailable) return
+        dev.min.agent.spi.catchingNonCancellation {
+            val created = store.open(id)?.read()?.first()?.event as? dev.min.agent.spi.SessionCreated ?: return
+            port.store(created.cwd).forget(id)
+        }
     }
 
     /**

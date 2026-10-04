@@ -128,6 +128,16 @@ data class SessionState(
      * 压缩把挂了它们的消息摘要掉之后，那些路径从集合里移出（内容已不在视图里），再碰到就重新加载（设计 §1.2）
      */
     val memoryPathsInContext: Set<GuestPath> = emptySet(),
+    /** 本会话的检查点，按建立顺序（检查点与rewind设计 §1）。回退对话不删它们，回退列表只列消息还在的（[liveCheckpoints]） */
+    val checkpoints: List<CheckpointRecord> = emptyList(),
+    /** 带内容 id 的编辑记录，按落盘顺序；回退对话不删（改动确实发生过，恢复代码时要用） */
+    val editLog: List<EditRecord> = emptyList(),
+    /** 回退对话能回到的点，按消息顺序；回退到某点时它与它之后的点一起去掉 */
+    val rewindPoints: List<RewindPoint> = emptyList(),
+    /** 被回退掉的对话，只给界面折叠显示 */
+    val rewound: List<RewoundSegment> = emptyList(),
+    /** 做过的恢复代码，按顺序（「撤销这次回滚」从这里找回滚前快照） */
+    val restores: List<dev.min.agent.spi.FilesRestored> = emptyList(),
 )
 
 data class CompactionView(
@@ -219,6 +229,8 @@ data class TurnState(
     val lastEventAtMs: Long = startedAtMs,
     /** Stop hook 本回合已经拦下「结束」几次：到上限就放行，免得两个 hook 把模型困死在回合里 */
     val stopHookBlocks: Int = 0,
+    /** 本回合已经提升过人发的消息：只有第一条记回退点 */
+    val userPromoted: Boolean = false,
 ) {
     /**
      * 还在等用户回答的提问，界面据此弹提问卡片（进程重启后同样从日志重建）。

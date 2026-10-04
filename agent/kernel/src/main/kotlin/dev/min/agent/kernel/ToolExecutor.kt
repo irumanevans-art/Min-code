@@ -71,6 +71,13 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     private val registry: Map<String, Tool<*>> = availableTools(rt.state.value, deps).associateBy { it.name }
     private val parallelism = Semaphore(deps.maxParallelTools)
 
+    /**
+     * 检查点的工具闸（检查点与rewind设计 §1）：本回合的快照还在拍时，写工具与委派类工具等它拍完再动手；只读工具不等。
+     * 由 [TurnRunner] 在回合开头设上
+     */
+    @Volatile
+    var gate: kotlinx.coroutines.Deferred<Unit>? = null
+
     /** 成功的调用碰到的路径（执行时记下，用最终入参算的）：这批调用做完后据此按需加载记忆 */
     private val touched = java.util.concurrent.ConcurrentHashMap<CallId, List<GuestPath>>()
 
@@ -332,6 +339,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
 
     private suspend fun execute(turnId: TurnId, p: Prepared.Ready) {
         val callId = p.call.callId
+        if (!p.tool.traits.readOnly || p.tool.traits.delegates) gate?.await()
         val started = deps.clock.nowMs()
         rt.commit(listOf(ToolEffectPending(turnId, callId)), Durability.Sync)
         val raw = try {
@@ -384,6 +392,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override val tasks: TaskBoard get() = rt.state.value.taskBoard()
         override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
+        override suspend fun preserve(content: ByteArray): dev.min.agent.spi.ContentId? = if (turnId == null) null else rt.preserve(content)
     }
 
     companion object {

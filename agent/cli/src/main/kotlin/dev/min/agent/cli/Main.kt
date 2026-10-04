@@ -73,7 +73,7 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
         return if (result.completed) 0 else 1
     }
 
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
         val line = stdin.readLine() ?: return 0
@@ -87,6 +87,8 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
                     System.err.println(compactionNote(runtime.state.value))
                 }
             }
+            trimmed in REWIND_COMMANDS -> rewindCommand(runtime, stdin)
+            trimmed.startsWith("/rewind-undo ") -> rewindUndoCommand(runtime, trimmed.removePrefix("/rewind-undo ").trim())
             else -> say(line)
         }
     }

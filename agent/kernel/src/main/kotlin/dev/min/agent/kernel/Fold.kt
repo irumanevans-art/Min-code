@@ -7,7 +7,10 @@ import dev.min.agent.spi.ForkSeeded
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.Role
 import dev.min.agent.spi.SessionEffect
+import dev.min.agent.spi.CheckpointTaken
 import dev.min.agent.spi.CompactionFailed
+import dev.min.agent.spi.ConversationRewound
+import dev.min.agent.spi.FilesRestored
 import dev.min.agent.spi.CompactionStarted
 import dev.min.agent.spi.ContextCompacted
 import dev.min.agent.spi.HookContextAdded
@@ -128,7 +131,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is InputPromoted -> {
             val input = inbox.firstOrNull { it.clientMsgId == e.clientMsgId }
                 ?: error("提升了不在收件箱里的输入 ${e.clientMsgId}")
-            copy(
+            // 回退点记的是这条消息落盘之前的对话状态，所以先记点、再提升
+            withRewindPoint(e.messageId, fromUser = input.origin == InputOrigin.User, seq = record.seq).copy(
                 inbox = inbox - input,
                 history = history + HistoryEntry.User(e.messageId, input.parts, input.origin),
                 // 人发的消息把等着挂靠的 hook 上下文（SessionStart 的）带上
@@ -265,7 +269,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is ToolOutcome -> updateCall(e.turnId, e.callId) { phase ->
             check(phase !is CallPhase.Done) { "${e.callId} 已经有结果了" }
             CallPhase.Done(e.result)
-        }.copy(
+        }.withEdits(record.seq, e.callId, e.result).copy(
             toolResults = toolResults + (e.callId to e.result),
             children = e.result.effects.fold(children) { current, effect ->
                 when (effect) {
@@ -326,6 +330,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is Note -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is dev.min.agent.spi.WebSearchUsed -> copy(webSearches = webSearches + 1)
         is dev.min.agent.spi.WebExtractionCompleted -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }
+        is CheckpointTaken -> withCheckpoint(record, e)
+        is FilesRestored -> withRestore(record, e)
+        is ConversationRewound -> withRewind(record, e)
     }
     val stamped = next.turn?.let { next.copy(turn = it.copy(lastEventAtMs = record.atMs)) } ?: next
     return stamped.copy(lastSeq = record.seq)

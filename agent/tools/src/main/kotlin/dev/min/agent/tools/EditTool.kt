@@ -67,7 +67,7 @@ object EditTool : Tool<EditInput> {
         val stat = ctx.fs.stat(path)
         if (stat == null) {
             if (input.oldString.isNotEmpty()) return failResult("$path 不存在。要新建文件时 old_string 留空，或改用 Write。")
-            return write(ctx, path, TextFile(bom = false, crlf = false, text = ""), input.newString, 1, null, created = true)
+            return write(ctx, path, null, TextFile(bom = false, crlf = false, text = ""), input.newString, 1, null, created = true)
         }
         if (stat.kind == FileKind.Directory) return failResult("$path 是目录，不能编辑。")
         if (stat.size > MAX_EDIT_BYTES) return failResult("$path 有 ${stat.size} 字节，超过 Edit 能处理的 $MAX_EDIT_BYTES 字节上限。")
@@ -85,7 +85,7 @@ object EditTool : Tool<EditInput> {
                 return failResult("old_string 为空只能用来新建文件或填写空文件，而 $path 已有内容。请给出要替换的原文。")
             }
             // 文件原本就在（只是空的）：给人的话仍说「已写入」，但这不是新建，撤销时不能把文件删掉
-            return write(ctx, path, file, input.newString, 1, null, created = true, newFile = false)
+            return write(ctx, path, bytes, file, input.newString, 1, null, created = true, newFile = false)
         }
 
         if (input.replaceAll) {
@@ -95,7 +95,7 @@ object EditTool : Tool<EditInput> {
             }
             val updated = file.text.replace(input.oldString, input.newString)
             val note = "已替换 ${starts.size} 处。"
-            return write(ctx, path, file, updated, EditMatch.lineOf(file.text, starts.first()), note, created = false)
+            return write(ctx, path, bytes, file, updated, EditMatch.lineOf(file.text, starts.first()), note, created = false)
         }
 
         return when (val located = EditMatch.locate(file.text, input.oldString, input.newString)) {
@@ -105,7 +105,7 @@ object EditTool : Tool<EditInput> {
                 val note = located.strategy.differenceForModel?.let {
                     "注意：old_string 与文件并不逐字相同（$it），按放宽后的规则匹配到第 $startLine 行起的内容并替换了。"
                 }
-                write(ctx, path, file, updated, startLine, note, created = false)
+                write(ctx, path, bytes, file, updated, startLine, note, created = false)
             }
             is Located.Ambiguous -> failResult(
                 "old_string 在文件里出现了 ${located.lines.size} 处（第 ${located.lines.joinToString("、")} 行）。" +
@@ -122,6 +122,8 @@ object EditTool : Tool<EditInput> {
     private suspend fun write(
         ctx: ToolContext,
         path: GuestPath,
+        /** 改之前的原始字节（编辑记录要原样，不能用解码再编码的文本）；文件原来不存在时为 null */
+        originalBytes: ByteArray?,
         original: TextFile,
         updatedText: String,
         focusLine: Int,
@@ -130,7 +132,7 @@ object EditTool : Tool<EditInput> {
         /** 报给界面的 [dev.min.agent.spi.FileEdit.created]：只有文件原本不存在才算新建 */
         newFile: Boolean = created,
     ): ToolResult {
-        ctx.fs.writeAtomic(path, original.copy(text = updatedText).encode())
+        val stored = preserveWrite(ctx, path, originalBytes, original.copy(text = updatedText).encode())
         val after = checkNotNull(ctx.fs.stat(path)) { "写入后 stat 不到 $path" }
         val text = buildString {
             append(if (created) "已写入 $path。" else "已修改 $path。")
@@ -142,7 +144,7 @@ object EditTool : Tool<EditInput> {
             text,
             listOf(FileStamp(path, after.size, after.modifiedMs)),
             // 改动过的文件报给界面（「改动过的文件」面板）：改之前与之后都在手里，不必再读盘
-            listOf(fileEdit(path, original.text, updatedText, created = newFile)),
+            listOf(fileEdit(path, original.text, updatedText, created = newFile, stored = stored)),
         )
     }
 

@@ -29,6 +29,9 @@ import kotlinx.serialization.json.booleanOrNull
  */
 private val SUBAGENT_TRAITS = ToolTraits(readOnly = true, concurrencySafe = true)
 
+/** Agent 与 SendMessage 会让子 agent 干活：检查点的工具闸要等它们（[ToolTraits.delegates]） */
+private val DELEGATING_TRAITS = SUBAGENT_TRAITS.copy(delegates = true)
+
 /** 一种可委派的子 agent 类型（给模型看的名字与一句说明） */
 data class AgentType(val name: String, val description: String)
 
@@ -43,7 +46,7 @@ class AgentToolOf(customTypes: List<AgentType>) : Tool<JsonObject> {
     private val customSection: String = customTypesSection(customTypes)
 
     override val name = "Agent"
-    override val traits = SUBAGENT_TRAITS
+    override val traits = DELEGATING_TRAITS
     override val inputSchema = subagentSchema(
         listOf("description", "prompt"),
         "description" to subagentProperty("string", "用 3–5 个词概括子任务，给用户看"),
@@ -118,7 +121,7 @@ private fun started(r: DelegateResult.Started): String {
 
 object SendMessageTool : Tool<JsonObject> {
     override val name = "SendMessage"
-    override val traits = SUBAGENT_TRAITS
+    override val traits = DELEGATING_TRAITS
     override val inputSchema = subagentSchema(
         listOf("to", "message"),
         "to" to subagentProperty("string", "子 agent 的 id 或名字；子 agent 用 main 向父会话发消息"),

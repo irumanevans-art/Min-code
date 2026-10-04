@@ -70,29 +70,36 @@ object WriteTool : Tool<WriteInput> {
                 return failResult("$path 在你读过之后被改过，先重新 Read。")
             }
         }
-        // 覆盖之前的原文：算 diff 用。新建文件的原文就是空串（diff 全是 + 行）；
-        // 读失败（或文件很大）就不给 diff，不影响写入本身
-        val before = if (existing == null) "" else readBefore(ctx, path, existing.size)
-        ctx.fs.writeAtomic(path, input.content.encodeToByteArray())
+        // 覆盖之前的原文：存编辑记录（检查点能撤回）与算 diff 用。新建文件的原文就是空串（diff 全是 + 行）；
+        // 读失败（或文件太大）就不存、不给 diff，不影响写入本身
+        val raw = if (existing == null) null else readBefore(ctx, path, existing.size)
+        val before = if (existing == null) "" else raw?.takeIf { it.size <= MAX_DIFF_BYTES }?.decodeToString()
+        val stored = preserveWrite(ctx, path, raw, input.content.encodeToByteArray())
         val after = checkNotNull(ctx.fs.stat(path)) { "写入后 stat 不到 $path" }
         return okResult(
             "已写入 $path（${countLines(input.content)} 行）",
             listOf(FileStamp(path, after.size, after.modifiedMs)),
-            listOf(before?.let { fileEdit(path, it, input.content, created = existing == null) } ?: FileEdit(path, created = existing == null)),
+            listOf(
+                before?.let { fileEdit(path, it, input.content, created = existing == null, stored = stored) }
+                    ?: FileEdit(path, created = existing == null, before = stored.before, after = stored.after),
+            ),
         )
     }
 
     /**
-     * 覆盖前的原文（只在已有文件上调用）。超过 [MAX_DIFF_BYTES] 的文件直接放弃算 diff：
-     * 界面上一次也只看前几十行，为它把整个文件读进内存不划算。读失败按「读不到」处理。
+     * 覆盖前的原始字节（只在已有文件上调用）。超过 [MAX_PRESERVE_BYTES] 的不读：编辑记录存不下这么大的，
+     * 检查点的整树快照对大文件同样不存内容，撤销时如实报「原文太大没有备份」。读失败按「读不到」处理。
      */
-    private suspend fun readBefore(ctx: ToolContext, path: GuestPath, size: Long): String? {
-        if (size > MAX_DIFF_BYTES) return null
-        return catchingNonCancellation { ctx.fs.read(path, 0, size.toInt()).decodeToString() }.getOrNull()
+    private suspend fun readBefore(ctx: ToolContext, path: GuestPath, size: Long): ByteArray? {
+        if (size > MAX_PRESERVE_BYTES) return null
+        return catchingNonCancellation { ctx.fs.read(path, 0, size.toInt()) }.getOrNull()
     }
 
     /** diff 的原文上限：比这个大的文件只报「改过了」，不逐行展示 */
-    private const val MAX_DIFF_BYTES = 2L * 1024 * 1024
+    private const val MAX_DIFF_BYTES = 2 * 1024 * 1024
+
+    /** 编辑记录的原文上限 */
+    private const val MAX_PRESERVE_BYTES = 16L * 1024 * 1024
 
     /** 与 Read 的数法一致：末尾换行不算多一行；空内容是 0 行 */
     private fun countLines(content: String): Int {

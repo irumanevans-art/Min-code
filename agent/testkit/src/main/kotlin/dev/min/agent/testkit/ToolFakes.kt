@@ -82,6 +82,16 @@ class FakeFs : WorkspaceFs {
 
     fun text(path: String): String? = files[path]?.bytes?.decodeToString()
 
+    /** 删掉一个文件（宿主端口里没有删除，回滚的替身要用） */
+    fun delete(path: String) {
+        files.remove(path)
+    }
+
+    /** 现有的全部文件路径 */
+    fun paths(): Set<String> = files.keys.toSet()
+
+    fun bytes(path: String): ByteArray? = files[path]?.bytes
+
     fun stamp(path: String): FileStamp {
         val e = files.getValue(path)
         return FileStamp(GuestPath(path), e.bytes.size.toLong(), e.mtime)
