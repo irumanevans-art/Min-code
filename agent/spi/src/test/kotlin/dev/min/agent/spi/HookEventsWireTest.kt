@@ -76,4 +76,16 @@ class HookEventsWireTest {
             """{"type":"fork_seeded","messages":[],"results":[]}""",
         )
     }
+
+    @Test
+    fun `a fork seed carries masked outputs including missing attachment paths`() {
+        assertEventWire(
+            ForkSeeded(emptyList(), emptyList(), masked = listOf(
+                MaskedOutput(dev.min.agent.protocol.CallId("c1"), "/parent/output.txt"),
+                MaskedOutput(dev.min.agent.protocol.CallId("c2"), null),
+            )),
+            """{"type":"fork_seeded","messages":[],"results":[],"masked":[
+                {"callId":"c1","path":"/parent/output.txt"},{"callId":"c2"}]}""",
+        )
+    }
 }

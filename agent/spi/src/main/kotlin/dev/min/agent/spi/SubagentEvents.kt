@@ -113,6 +113,8 @@ data class ForkSeeded(
     val messages: List<SeedMessage>,
     val results: List<SeedResult>,
     val compaction: SeedCompaction? = null,
+    /** 种子写入时子回合尚未开始，不能用需要 turnId 的 ToolOutputsMasked；只带继承范围内的遮蔽 */
+    val masked: List<MaskedOutput> = emptyList(),
 ) : SessionEvent
 
 // ---- 输入的来历 ----
