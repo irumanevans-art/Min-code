@@ -43,6 +43,8 @@ class HostPorts(
      * 传进来的端口会被套上 [QuotaProcessPort]，对外的 [processes] 恒带配额。
      */
     processes: dev.min.agent.spi.ProcessPort = dev.min.agent.spi.ProcessPort.Unavailable,
+    /** 检查点的快照仓库（检查点与rewind设计 §6）。默认不可用：不建检查点，rewind 只能回退对话 */
+    val snapshots: dev.min.agent.spi.WorkspaceSnapshots = dev.min.agent.spi.WorkspaceSnapshots.Unavailable,
 ) {
     val processes: dev.min.agent.spi.ProcessPort = QuotaProcessPort(processes)
 
@@ -90,6 +92,8 @@ class KernelDeps(
      * 这里单列出来，是为了在 http hook 的 allowedEnvVars 点名它时告诉人「为什么插成了空串」
      */
     val hiddenEnv: Set<String> = emptySet(),
+    /** 检查点整树快照的预算（检查点与rewind设计 §3.4）；Android 宿主给自己的一份 */
+    val checkpointBudget: dev.min.agent.spi.SnapshotBudget = dev.min.agent.spi.SnapshotBudget.DESKTOP,
 ) {
     init { require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" } }
 }

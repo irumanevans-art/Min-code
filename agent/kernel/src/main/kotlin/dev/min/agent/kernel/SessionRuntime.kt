@@ -16,8 +16,10 @@ import dev.min.agent.spi.HttpPolicyData
 import dev.min.agent.spi.HooksLoaded
 import kotlinx.serialization.json.jsonObject
 import dev.min.agent.protocol.ApprovalId
+import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.Effort
+import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.protocol.Part
 import dev.min.agent.protocol.PermissionMode
@@ -50,8 +52,10 @@ import dev.min.agent.spi.SettingsChanged
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.answerProblem
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,6 +69,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * 一个会话的运行时。会话状态只有一条修改路径：[commit]——先落盘，再折叠进 [state]。
@@ -106,6 +111,38 @@ class SessionRuntime private constructor(
 
     private val turnLock = Any()
     private var turnJob: Job? = null
+
+    /** 检查点与回退（检查点与rewind设计） */
+    internal val checkpointer = Checkpointer(this)
+
+    /** settings 里的 `fileCheckpointingEnabled`（缺省为开）；创建时随那份 settings 一起读，重新打开的会话第一次要用时再读 */
+    @Volatile
+    private var checkpointsBySettings: Boolean? = null
+
+    /**
+     * 本会话工作区（创建时的 cwd）的快照仓库。宿主没给仓库、`CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING` 为真、
+     * 或 settings 的 `fileCheckpointingEnabled` 为 false 时为 null（与 CC 同：两个开关有一个关就关）
+     */
+    internal suspend fun snapshotStore(): dev.min.agent.spi.SnapshotStore? {
+        val port = deps.host.snapshots
+        if (port === dev.min.agent.spi.WorkspaceSnapshots.Unavailable) return null
+        if (isTruthyEnv(deps.env(DISABLE_CHECKPOINTS_ENV))) return null
+        val enabled = checkpointsBySettings ?: readCheckpointSetting().also { checkpointsBySettings = it }
+        return if (enabled) port.store(state.value.created.cwd) else null
+    }
+
+    private suspend fun readCheckpointSetting(): Boolean {
+        val home = deps.memoryHome ?: return true
+        val snapshot = dev.min.agent.spi.catchingNonCancellation { SettingsLoader.load(deps.host.fs, state.value.created.cwd, home) }
+            .getOrNull() ?: return true
+        return checkpointsEnabledIn(snapshot)
+    }
+
+    /** 编辑记录：存一份内容进快照仓库（[dev.min.agent.spi.ToolContext.preserve]）。存不了返回 null，不影响写入 */
+    internal suspend fun preserve(content: ByteArray): dev.min.agent.spi.ContentId? {
+        val store = snapshotStore() ?: return null
+        return dev.min.agent.spi.catchingNonCancellation { store.preserve(content) }.getOrNull()
+    }
 
     /**
      * 追加事件并折叠进状态。整个过程不可取消：落盘成功而状态没更新，内存就和日志对不上了。
@@ -342,6 +379,34 @@ class SessionRuntime private constructor(
         startTurnIfIdle(TurnTrigger.Delegated)
     }
 
+    // ---- 检查点与回退（检查点与rewind设计 §4） ----
+
+    /** 回退到 [messageId] 之前会发生什么；它不是开启回合的消息（或已被回退掉）时为 null。只读，可在任何时候调用 */
+    suspend fun previewRewind(messageId: MessageId): RewindPreview? = checkpointer.preview(messageId)
+
+    /** 回退到 [messageId] 之前。会话必须空闲；期间到达的输入照常进收件箱，回退完不自动开回合 */
+    suspend fun rewind(messageId: MessageId, scope: RewindScope): RewindOutcome =
+        whileIdle { checkpointer.rewind(messageId, scope) } ?: RewindOutcome.Refused(BUSY)
+
+    /** 撤销一次恢复代码（回到它之前拍的快照） */
+    suspend fun undoRestore(restoreId: String): RewindOutcome =
+        whileIdle { checkpointer.undoRestore(restoreId) } ?: RewindOutcome.Refused(BUSY)
+
+    /** 按编辑记录撤销几次调用（「改动的文件」面板） */
+    suspend fun restoreCalls(calls: List<CallId>): RewindOutcome =
+        whileIdle { checkpointer.restoreCalls(calls) } ?: RewindOutcome.Refused(BUSY)
+
+    /**
+     * 在「空闲」的名义下做一件事：占住回合的位置，期间不会开回合（输入照常进收件箱）。已有回合在跑返回 null
+     */
+    private suspend fun <T> whileIdle(block: suspend () -> T): T? {
+        val job = synchronized(turnLock) {
+            if (turnJob?.isActive == true || _state.value.turn != null) return null
+            scope.async(start = CoroutineStart.LAZY) { block() }.also { turnJob = it }
+        }
+        return job.await()
+    }
+
     /** 等到没有进行中的回合（测试与桌面 CLI 用） */
     suspend fun awaitIdle() {
         synchronized(turnLock) { turnJob }?.join()
@@ -394,6 +459,7 @@ class SessionRuntime private constructor(
             if (home != null) {
                 // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照
                 val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home) else null
+                runtime.checkpointsBySettings = settings?.let(::checkpointsEnabledIn)
                 if (loadMemory) runtime.loadMemory(settings)
                 if (loadSettings) runtime.loadSettings(requireNotNull(settings))
             }
@@ -425,6 +491,15 @@ class SessionRuntime private constructor(
         }
     }
 }
+
+/** CC 的单会话关检查点开关 */
+internal const val DISABLE_CHECKPOINTS_ENV = "CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING"
+
+private const val BUSY = "会话正在进行中，等这一轮结束再回退。"
+
+/** settings 的 `fileCheckpointingEnabled`：只有明确写 false 才关（缺省为开，与 CC 同） */
+internal fun checkpointsEnabledIn(snapshot: SettingsSnapshot): Boolean =
+    (snapshot.merged.raw("fileCheckpointingEnabled") as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull != false
 
 /** 环境变量按「真」读：`1` / `true` / `yes`，不分大小写、忽略首尾空白（CC 的环境开关都是这个口径）；没设或别的值为假 */
 internal fun isTruthyEnv(value: String?): Boolean = value?.trim()?.lowercase() in setOf("1", "true", "yes")

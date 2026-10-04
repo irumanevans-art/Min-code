@@ -44,6 +44,9 @@ import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.PromptBasis
 import dev.min.agent.spi.Tool
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.delay
 import java.security.MessageDigest
@@ -77,7 +80,19 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 compactOnly(turnId)
             } else {
                 // 开回合的输入全被 UserPromptSubmit 拦下：什么都不发给模型，回合空着结束
-                if (promote(setOf(Delivery.Queue, Delivery.Steer)) > 0 || blockedInputs == 0) loop(turnId)
+                if (promote(setOf(Delivery.Queue, Delivery.Steer)) > 0 || blockedInputs == 0) coroutineScope {
+                    // 检查点与第一个模型请求并行拍；写工具在工具闸上等它（检查点与rewind设计 §1）。
+                    // 回合正常结束前等它落盘：检查点属于这个回合
+                    val checkpoint = rt.checkpointer.begin(this, turnId)
+                    tools.gate = checkpoint
+                    try {
+                        loop(turnId)
+                        checkpoint?.await()
+                    } finally {
+                        // 本回合编辑记录里的内容登记进回收的根：会话就此结束的话，最后一轮的改动也得撤得回
+                        withContext(NonCancellable) { rt.checkpointer.retainAfterTurn() }
+                    }
+                }
             }
             val usage = rt.state.value.turn?.usage ?: Usage()
             rt.commit(listOf(TurnEnded(turnId, TurnOutcome.Completed, usage, deps.clock.nowMs() - startedAt)), Durability.Sync)

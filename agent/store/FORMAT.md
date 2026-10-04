@@ -71,3 +71,8 @@
 - v1 增量（2026-10-04）：`memory_attached` 新增可选字段 `covered`（路径列表：这批里没有再注入、但内容已在模型上下文里的记忆路径——因内容与同批另一个文件相同而跳过的，或模型刚直接 Read 过它本身的；折叠并进「已在上下文里的记忆路径」，随挂靠的助手消息一起被压缩移出；空时不落盘）。旧日志照常读。
 - v1 增量（2026-10-04）：`subagent_origin` 新增可选字段 `omitMemory`（这个子 agent 创建时就不吃记忆：不加载记忆文件、也不按需加载；Explore / Plan 与定义里写了 omitClaudeMd 的子 agent 为 true，分身与旧日志为 false，默认值不落盘）。重新打开会话后按它决定要不要按需加载，不再靠内存里的开关。旧日志照常读。
 - v1 增量（2026-10-04）：`hook_context_added.target` 新增变体 `compaction`（`compactionId`：挂在某次摘要压缩的摘要消息末尾，SessionStart source = compact 的上下文；下一次 `context_compacted` 落盘时旧摘要连同挂在它上面的上下文一并作废）；`fork_seeded` 新增可选字段 `compaction`（`SeedCompaction`：`compactionId`、`summary`、`through`、可选 `transcriptPath`、`contexts`——分身继承父会话的压缩视图与摘要末尾的 hook 上下文，`messages` 相应只从摘要边界开始）。含新变体的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-05）：新增事件 `checkpoint_taken`、`files_restored`、`conversation_rewound`（检查点与 rewind，`spi/CheckpointEvents.kt`，设计 `docs/agent/detail/检查点与rewind设计.md`）。
+  `checkpoint_taken`：开启回合的那条用户消息（`messageId`）的检查点，`manifest` 为工作区整树快照的清单 id（拍不成时缺省，`reason` 说明），`stats` 可选；本回合第一个写工具或委派类工具执行之前落盘。
+  `files_restored`：一次恢复代码（回到 `checkpointId`、按编辑记录撤销 `calls`、或撤销 `undoOf` 那次恢复），`preRestore` 是恢复前拍的快照（拍不成时缺省）、`restored` / `deleted` / `skipped`（带原因）；折叠时在下一条人发的消息前给模型一段说明。
+  `conversation_rewound`：对话回到 `toMessageId` 那条用户消息落盘之前——对话范围的状态（历史、工具结果、hook 上下文、按需记忆、遮蔽与压缩视图、任务清单，见内核 `ConversationScope`）换回，会话范围的（设置、会话规则、各种冻结快照、用量、任务编号、检查点与编辑记录）保持；被回退的消息不删，折叠进界面用的「已回退」段。
+  `tool_outcome.result.fileEdits[]` 新增可选字段 `before`、`after`（内容 id：原文的 SHA-256；内容在宿主的快照仓库里——Android 在 App 私有目录、桌面在 `~/.min-agent/`——日志里只有 id）。含新事件的日志旧版本打不开；旧日志照常读。

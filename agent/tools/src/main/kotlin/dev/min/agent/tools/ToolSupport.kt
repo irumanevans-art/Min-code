@@ -1,6 +1,8 @@
 package dev.min.agent.tools
 
 import dev.min.agent.protocol.TextPart
+import dev.min.agent.spi.ContentId
+import dev.min.agent.spi.ToolContext
 import dev.min.agent.spi.FileEdit
 import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
@@ -105,12 +107,40 @@ internal fun okResult(
  * 拼上 `--- a/…` / `+++ b/…` 文件头（路径用 guest 路径原样），与 Claude Code 的 `bashEditDiff` 同形。
  * [deleted] 只由真正删文件的路径设：把文件改成空内容不是删除（Min 的编辑工具不会删文件）。
  */
-internal fun fileEdit(path: GuestPath, before: String, after: String, created: Boolean = false, deleted: Boolean = false): FileEdit {
+internal fun fileEdit(
+    path: GuestPath,
+    before: String,
+    after: String,
+    created: Boolean = false,
+    deleted: Boolean = false,
+    /** 编辑记录的内容 id（检查点设计 §2.2），由 [preserveWrite] 得到 */
+    stored: StoredContents = StoredContents.NONE,
+): FileEdit {
     val result = TextDiff.diff(before, after)
     // 路径原样写（guest 路径本来就是绝对的）：套上 `a/` 会变成 `a//workspace/…`，
     // 界面的 diffPaths 认得出，但显示出来是坏的
     val diff = result?.let { "--- ${path.value}\n+++ ${path.value}\n${it.text}" }
-    return FileEdit(path = path, diff = diff, created = created, deleted = deleted, truncated = result?.omittedChars ?: 0)
+    return FileEdit(
+        path = path, diff = diff, created = created, deleted = deleted, truncated = result?.omittedChars ?: 0,
+        before = stored.before, after = stored.after,
+    )
+}
+
+/** 一次写盘前后两份内容在快照仓库里的 id；宿主没有仓库时都是 null */
+internal data class StoredContents(val before: ContentId?, val after: ContentId?) {
+    companion object {
+        val NONE = StoredContents(null, null)
+    }
+}
+
+/**
+ * 编辑记录（检查点设计 §2.2）：写盘**之前**把原文存进快照仓库（[original] 为 null = 文件原来不存在），写完再存新内容。
+ * 先存后写：写到一半进程被杀，原文已经在仓库里。仓库不可用时照常写，只是撤销不了
+ */
+internal suspend fun preserveWrite(ctx: ToolContext, path: GuestPath, original: ByteArray?, updated: ByteArray): StoredContents {
+    val before = original?.let { ctx.preserve(it) }
+    ctx.fs.writeAtomic(path, updated)
+    return StoredContents(before, ctx.preserve(updated))
 }
 
 internal fun failResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)
