@@ -171,6 +171,10 @@ internal class DesktopApp(
                 fs = paths.fs,
                 search = JvmSearch(paths.fs),
                 exec = LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir)),
+                processes = LocalProcessPort(
+                    paths::hostOf, home.resolve("proc-launch"),
+                    secretEnvNames = desktopSecretEnvNames(keyEnv, fastSelection?.keyEnv),
+                ),
                 web = CachedWebPort(DESKTOP_PAGE_CONVERTER, cacheTtlMs = args.webCacheTtlMs, deadlineMs = args.webDeadlineMs),
                 searchBackend = searchBackend,
                 httpHooks = JvmHttpHookClient(),

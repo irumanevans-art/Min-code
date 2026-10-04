@@ -20,7 +20,10 @@ import dev.min.agent.spi.GrepHit
 import dev.min.agent.spi.GrepQuery
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.IdGenerator
+import dev.min.agent.spi.LiveProcess
 import dev.min.agent.spi.PathScope
+import dev.min.agent.spi.ProcessPort
+import dev.min.agent.spi.ProcessSpec
 import dev.min.agent.spi.Search
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.Tool
@@ -53,7 +56,14 @@ import java.util.concurrent.ConcurrentHashMap
  * 否则设备存储开关一变，Read 看到的和 Bash 里 `cat` 看到的就是两个世界）。
  * 开关变了换一代，[MinHostPorts] 保证每次调用只用一代、新一代只在空闲时接上（设计 10.2 拍板 5）。
  */
-class MinHostGeneration(val fs: RootfsFileSystem, val search: JvmSearch, val exec: Exec, val mountKey: String)
+class MinHostGeneration(
+    val fs: RootfsFileSystem,
+    val search: JvmSearch,
+    val exec: Exec,
+    val mountKey: String,
+    /** 长寿进程（MCP stdio 服务器）：与 [exec] 同一份挂载快照。默认不可用，测试替身不用管 */
+    val processes: ProcessPort = ProcessPort.Unavailable,
+)
 
 /**
  * 三个端口都是「每次调用现取当前一代」的转发：内核的 [KernelDeps] 一个进程只建一次，
@@ -72,6 +82,14 @@ class MinHostPorts(private val current: () -> MinHostGeneration, tasks: MinBackg
         override fun glob(query: GlobQuery): Flow<GuestPath> = current().search.glob(query)
     }
     val exec: Exec = MinExec(current, tasks, clock)
+
+    /**
+     * 每次 spawn 取当前一代；返回的 [dev.min.agent.spi.LiveProcess] 自己握着进程与回收手段，换代后留在起它的那一代，
+     * 关停不再经过这里（所以不需要像 [MinExec] 那样登记属主）。
+     */
+    val processes: ProcessPort = object : ProcessPort {
+        override suspend fun spawn(spec: ProcessSpec): LiveProcess = current().processes.spawn(spec)
+    }
     fun artifacts(session: SessionId): ArtifactSink = object : ArtifactSink {
         override suspend fun put(name: String, bytes: ByteArray): String {
             require(name.matches(Regex("[A-Za-z0-9._-]+")) && name != "." && name != "..")
@@ -138,7 +156,7 @@ object MinKernelDeps {
         tools: List<Tool<*>> = minTools(),
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
-        host = HostPorts(ports.fs, ports.search, ports.exec, { ports.artifacts(it) }, httpHooks = JvmHttpHookClient()),
+        host = HostPorts(ports.fs, ports.search, ports.exec, { ports.artifacts(it) }, httpHooks = JvmHttpHookClient(), processes = ports.processes),
         platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
     )
 }

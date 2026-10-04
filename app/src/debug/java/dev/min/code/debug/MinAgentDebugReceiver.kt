@@ -40,6 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - `stop-after-ms N`：发出后 N 毫秒发一条 Interrupt 命令（验收「中途停止」）
  * - `resume yes`：打开后按 ▶（Resume 命令，带当前 offerId），不发新话
  * - `op list`：列出会话目录（含「中断」标记）；`op delete`（配 `session`）：经目录删除整个会话
+ * - `op proc-probe`：长寿进程端口的设备验收探针，日志里看 `PROBE` 开头的行与最后的 `PROBE_DONE`
  */
 class MinAgentDebugReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -62,6 +63,10 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
                 if (op == "list") {
                     engine.catalog.list().forEach { Log.i(TAG, "LIST ${it.ref.id} interrupted=${it.interrupted} messages=${it.messageCount} title=${it.title}") }
                     Log.i(TAG, "LIST_DONE"); return@launch
+                }
+                if (op == "proc-probe") {
+                    // MCP0 验收：proot 里的长寿进程往返、环境、回收、取消、配额（见 ProcessProbe）
+                    ProcessProbe.run(engine.processes); return@launch
                 }
                 if (op == "delete") {
                     val id = checkNotNull(intent.getStringExtra("session")) { "delete 需要 session" }

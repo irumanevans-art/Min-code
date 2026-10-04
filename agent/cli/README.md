@@ -66,3 +66,10 @@ Responses 发送 prompt_cache_key；longTtl 暂不映射。短历史命中未增
 - 输出按 UTF-8 解码；进程结束后最多再等 2 秒读完管道，若后台子孙仍攥着管道，最后一小段输出可能晚于返回才写进日志。
 
 Sonnet 5.5 原生 Anthropic 实测使用 `--provider lunora --wire anthropic --base-url https://api.uselunora.com --model claude-sonnet-5-5 --api-key-env LUNORA_ANTHROPIC_API_KEY`。新型号没有随包 profile，单传 --effort high 不会添加 thinking；专门的高思考验证使用仓库外 classpath 模型配置覆盖，不代表新增生产模型目录事实。详细配置与样本边界见 docs/agent/08-进度与待办.md §8。
+
+## 长寿进程（`LocalProcessPort`）
+- MCP stdio 服务器用的长寿进程：与 `LocalExec` 同一个 shell（Windows 上 Git Bash）和路径映射。argv 经临时启动脚本传，不进命令行
+  （Windows 上 JDK 不转义内嵌双引号、Git Bash 再拆一遍，带空格 / 引号的参数会碎——`LocalExec` 的 `bash -lc <script>` 同样受此影响，见已知限制）。
+- 环境变量白名单继承；模型 key（`--api-key-env`）、快速模型 key、搜索后端 key 永远不进子进程（`desktopSecretEnvNames`）。
+- Windows 回收：`ProcessHandle.descendants()` 看不到 Git Bash fork 出来的孙进程，用 `ps -W` 补全（`MsysProcesses`），每次回收要多起几次 bash（约 0.2 秒一次）。
+- 已知限制：`LocalExec` 在 Windows 上，脚本里含空格的双引号串（如 `grep "a b" f`）会被 JDK 的命令行拼装拆碎；`LocalProcessPort` 已绕开，`LocalExec` 未改。

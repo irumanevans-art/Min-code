@@ -114,9 +114,14 @@ class MinAgentEngine(
     @Volatile private var generation: MinHostGeneration = buildGeneration()
     private val ports = MinHostPorts({ generation }, tasks, dev.min.agent.spi.Clock { System.currentTimeMillis() })
 
+    private val kernelDeps = MinKernelDeps.build(resolver, ports)
+
+    /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
+    internal val processes: dev.min.agent.spi.ProcessPort get() = kernelDeps.host.processes
+
     override val hub = SessionHub(
         store = store,
-        deps = MinKernelDeps.build(resolver, ports),
+        deps = kernelDeps,
         scope = scope,
         limits = HubLimits(maxDepth = 3, maxRunningChildren = 10, maxConcurrentChildRequests = 3),
     )
@@ -187,6 +192,7 @@ class MinAgentEngine(
         return MinHostGeneration(
             fs = fs, search = dev.min.agent.host.JvmSearch(fs), exec = ProotExec(base, AndroidProotProcessHost(runner)),
             mountKey = mounts.joinToString(";") { "${it.source}->${it.target}" },
+            processes = ProotProcessPort(base, AndroidProotLiveHost(runner)),
         )
     }
 
