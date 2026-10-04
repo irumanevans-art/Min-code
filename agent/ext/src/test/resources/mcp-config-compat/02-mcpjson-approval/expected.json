@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "scope": "project",
+      "transport": "stdio",
+      "gate": "needs-approval",
+      "reasonContains": "还没被批准",
+      "basis": "cc-settings-reference.json:4975-4991：enabledMcpjsonServers 没列它，默认要问"
+    },
+    {
+      "name": "github",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "basis": "cc-settings-reference.json:4975-4988：settings.local.json 的 enabledMcpjsonServers 批准了 github"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

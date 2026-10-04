@@ -1,0 +1,42 @@
+{
+  "servers": [
+    {
+      "name": "personal",
+      "scope": "user",
+      "transport": "stdio",
+      "gate": "enabled",
+      "command": "srv",
+      "basis": "cc-managed-mcp.md:162-164：managedMcpServers 不独占，用户自己的服务器照常加载"
+    },
+    {
+      "name": "records",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://records.example.com/mcp",
+      "headers": {
+        "X-Records-Key": "issued-for-all-users"
+      },
+      "basis": "cc-managed-mcp.md:164-184：条目形状同 .mcp.json 的远程服务器，可带 headers"
+    },
+    {
+      "name": "search",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://search.example.com/mcp",
+      "shadowed": ["local"],
+      "basis": "cc-managed-mcp.md:202-205：同名时组织提供的定义优先于 local / project / user 的定义"
+    },
+    {
+      "name": "streamable",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://s.example/mcp",
+      "basis": "cc-managed-mcp.md:190：streamable-http 是 http 的别名，一样接受"
+    }
+  ],
+  "absent": ["bad-local", "bad-http", "bad-var"],
+  "notesContain": ["type 必须是 http 或 sse", "https:// 开头", "${VAR}"]
+}

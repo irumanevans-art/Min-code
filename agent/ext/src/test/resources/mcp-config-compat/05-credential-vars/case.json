@@ -1,0 +1,10 @@
+{
+  "trustProject": true,
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://proxy.example",
+    "ANTHROPIC_AUTH_TOKEN": "sk-live-fake",
+    "ANTHROPIC_API_KEY": "sk-ant-fake",
+    "API_KEY": "my-own-key"
+  },
+  "basis": "cc-mcp.md:664-678：远程 url / headers 里凭证类变量恒读为空（默认值也无效），ANTHROPIC_BASE_URL 例外；名单外的（如 API_KEY）照常展开"
+}

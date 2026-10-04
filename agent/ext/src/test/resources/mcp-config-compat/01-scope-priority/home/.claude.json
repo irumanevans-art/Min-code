@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "shared": {
+      "type": "http",
+      "url": "https://user.example/mcp"
+    },
+    "personal": {
+      "command": "npx",
+      "args": ["-y", "personal-server"]
+    }
+  },
+  "projects": {
+    "/workspace": {
+      "mcpServers": {
+        "shared": {
+          "type": "http",
+          "url": "https://local.example/mcp"
+        }
+      }
+    },
+    "/other/project": {
+      "mcpServers": {
+        "stranger": {
+          "command": "srv"
+        }
+      }
+    }
+  }
+}

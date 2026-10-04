@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "db": {
+      "command": "${PG_BIN:-/usr/bin}/pg-mcp",
+      "args": ["--dsn", "${DSN}"],
+      "env": {
+        "PGPASSWORD": "${PG_PASSWORD}"
+      }
+    },
+    "api": {
+      "type": "http",
+      "url": "${API_BASE:-https://api.example.com}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${API_TOKEN}"
+      }
+    },
+    "partial": {
+      "type": "http",
+      "url": "https://p.example/${TENANT}/mcp"
+    }
+  }
+}

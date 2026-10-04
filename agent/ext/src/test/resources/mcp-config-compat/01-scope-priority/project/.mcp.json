@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "shared": {
+      "type": "http",
+      "url": "https://project.example/mcp"
+    }
+  }
+}

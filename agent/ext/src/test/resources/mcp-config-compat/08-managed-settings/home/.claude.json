@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "personal": {
+      "command": "srv"
+    }
+  },
+  "projects": {
+    "/workspace": {
+      "mcpServers": {
+        "search": {
+          "type": "http",
+          "url": "https://my-own-search.example/mcp"
+        }
+      }
+    }
+  }
+}

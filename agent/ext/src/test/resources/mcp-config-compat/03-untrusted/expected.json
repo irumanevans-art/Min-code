@@ -1,0 +1,33 @@
+{
+  "servers": [
+    {
+      "name": "hub",
+      "scope": "user",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://hub.example/mcp",
+      "basis": "cc-mcp.md:598-605：user 作用域与项目信任无关"
+    },
+    {
+      "name": "local-helper",
+      "scope": "local",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://lh.example/mcp",
+      "headersHelper": null,
+      "basis": "cc-mcp.md:1034-1036：local 作用域的 headersHelper 只在工作区信任后执行，未信任时只用静态 headers"
+    },
+    {
+      "name": "team",
+      "scope": "project",
+      "transport": "http",
+      "gate": "untrusted",
+      "url": "https://team.example/mcp",
+      "headersHelper": null,
+      "reasonContains": "信任",
+      "basis": "MCP设计.md §3（比 CC 严）+ cc-mcp.md:256（克隆的仓库不能自己批准自己：入库的 enableAllProjectMcpServers 被忽略）"
+    }
+  ],
+  "absent": [],
+  "notesContain": ["headersHelper"]
+}

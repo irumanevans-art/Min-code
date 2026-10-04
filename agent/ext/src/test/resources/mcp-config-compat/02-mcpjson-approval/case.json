@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:588 与 cc-settings-reference.md:4941-4991：项目 .mcp.json 的服务器要批准；enabledMcpjsonServers 写在 settings.local.json 里算批准，没批准的问人"
+}

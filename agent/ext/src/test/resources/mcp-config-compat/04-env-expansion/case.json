@@ -1,0 +1,9 @@
+{
+  "trustProject": true,
+  "env": {
+    "PG_PASSWORD": "pg-fake-secret",
+    "DSN": "postgres://db.local/app",
+    "API_TOKEN": "tok-789"
+  },
+  "basis": "cc-mcp.md:625-662：${VAR} 与 ${VAR:-default} 在 command / args / env / url / headers 展开；未设且无默认的保留字面并警告"
+}

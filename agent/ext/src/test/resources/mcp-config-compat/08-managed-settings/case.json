@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:160-254（managedMcpServers 不独占；条目限制：type 只许 http / sse、https URL、无 command / args / env / headersHelper、无 ${VAR}；优先级在 local / project / user 之上）"
+}

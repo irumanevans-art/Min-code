@@ -1,0 +1,8 @@
+{
+  "managedMcpServers": {
+    "wiki": {
+      "type": "http",
+      "url": "https://wiki.example/mcp"
+    }
+  }
+}
