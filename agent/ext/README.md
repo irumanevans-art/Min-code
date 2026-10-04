@@ -3,12 +3,13 @@
 CC 兼容配置发现与加载、hooks 执行编排、skills/agents/commands/plugins、MCP 客户端（02-总体架构.md §2）。
 
 - 允许依赖：protocol, spi
-- 设计：docs/agent/04-子系统设计.md §4.7（扩展：Claude Code 生态兼容）
+- 设计：docs/agent/04-子系统设计.md §4.7（扩展：Claude Code 生态兼容）、docs/agent/detail/MCP设计.md §3（MCP 配置）
 
 ## 现状
 
 已实现的只有「读 + 解析 + 合并」（包 `dev.min.agent.ext.config`）：用户把现成的 `~/.claude/` 与项目 `.claude/` 原样放进 rootfs，
-读出和 Claude Code 一样的结果。skill 调用与斜杠展开见下（`skills` 包）；hooks 执行、MCP 连接、插件、output styles 还没有。
+读出和 Claude Code 一样的结果。skill 调用与斜杠展开见下（`skills` 包）；hooks 执行（`hooks` 包，含 type:http）、
+MCP **配置**读取（`mcp` 包，MCP1b：`McpConfigLoader` / `McpApprovals`，连接是 MCP1a / MCP1c 的事）已做；插件、output styles 还没有。
 
 入口：`ClaudeConfigLoader.load(fs, cwd, home, managedPath)` → `ClaudeConfig(settings, skills, commands, agents, notes)`；
 只要 settings 用 `SettingsLoader.load(...)`。全部经 `WorkspaceFs` 端口读文件，只读，不抛异常——
@@ -49,9 +50,10 @@ CC 兼容配置发现与加载、hooks 执行编排、skills/agents/commands/plu
 
 ## 已知限制
 
-- **不读的来源**：`claude --settings`、`~/.claude.json`、MDM / 注册表 / 服务端下发的 managed 设置（只读 managed 文件与 `managed-settings.d`，
+- **不读的来源**（settings 而言）：`claude --settings`、MDM / 注册表 / 服务端下发的 managed 设置（只读 managed 文件与 `managed-settings.d`，
   不实现 `managedSourcesBehavior`）、`CLAUDE_CONFIG_DIR`（家目录由调用方传入）、`--agents`、插件目录、`--add-dir`、
-  嵌套的 `<子目录>/.claude/skills`（CC 在读到那里的文件时才惰性加载）、output-styles、`.mcp.json`。
+  嵌套的 `<子目录>/.claude/skills`（CC 在读到那里的文件时才惰性加载）、output-styles。
+  `~/.claude.json` 与 `.mcp.json` 的 **MCP 部分**由 `mcp` 包读（MCP设计 §3），settings 部分仍不读。
 - **信任**：这里不做 workspace trust。项目层的 hooks、`allowed-tools`、`env` 在信任之前就已被读出——**执行方必须先过信任再用**
   （CC 有过克隆仓库里的 hooks 在信任前运行的漏洞，见调研报告）。managed 文件存在却读不了 / 不是 JSON 时 CC 拒绝启动，这里只置
   `SettingsSnapshot.managedPolicyBroken`，由宿主决定。

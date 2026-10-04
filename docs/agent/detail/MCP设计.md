@@ -70,6 +70,14 @@ interface LiveProcess {
 
 快照：会话创建时读一次，连同解析结果写进日志（§11），会话内冻结；与权限规则、hooks、skills 同一做法。
 
+> **落地情况**（2026-10-05，MCP1b，分支 agent/mcp-config）：本节已实现为 `:agent:ext` 的 `dev.min.agent.ext.mcp.McpConfigLoader`
+> （读 managed-mcp.json / managedMcpServers / `~/.claude.json` 的 local 与 user 作用域 / 项目 `.mcp.json`，产出带闸门结论
+> `enabled | needs-approval | untrusted | disabled | denied` 的服务器表，环境变量展开与凭证置空、allow / deny 管控、
+> 批准键按信任筛层都在内；spec 的 toString 与 notes 不带任何值）；批准写回在 `McpApprovals`（settings.local.json 的
+> `enabledMcpjsonServers` / `disabledMcpjsonServers`，与 CC 互通）。比 CC 严的两处：未信任的项目服务器**一律** untrusted
+> （不采纳任何来源的批准键去放行）；managed-mcp.json 存在但读不了 / 不是合法 JSON 时**失败即关**（一台都不加载）。
+> 兼容样本集 01–08 在 `agent/ext/src/test/resources/mcp-config-compat/`（20 号以后由 Flash 的样本合入后同一测试跑）。
+
 ## 4. 连接管理
 
 - 一个 `McpManager` 挂在 `SessionHub` 上，按（服务器身份，项目根）共享连接：同一项目的多个会话（含子 agent）共用一个 stdio 进程；引用计数归零后等 2 分钟再关（来回切会话不反复起进程）。
