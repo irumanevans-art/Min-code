@@ -1,0 +1,21 @@
+{
+  "startup": {
+    "files": [],
+    "notesContain": ["带 paths"]
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "PathGlob 文档（引 CC）：「不含 / 的模式不会因此匹配任意深度（与 gitignore 不同，照 CC 文档：*.md 是根目录的 markdown）」→ sub/b.md 不匹配"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/.claude/rules/md.md",
+          "source": "path_rule",
+          "basis": "CC §1.4 例子「只匹配根下 md 的 *.md」→ a.md 相对项目根 /workspace 匹配（Min 设计 §1.1）"
+        }
+      ]
+    }
+  ]
+}

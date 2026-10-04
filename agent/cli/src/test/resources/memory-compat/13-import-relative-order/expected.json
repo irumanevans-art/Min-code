@@ -1,0 +1,17 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/docs/glossary.md",
+        "source": "import",
+        "basis": "CC §1.2：「Claude reads the imported file first, then the rest」→ 被导入文件排在导入者之前；相对路径相对包含文件（/workspace/CLAUDE.md）解析，不是 cwd 再拼一次"
+      },
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级 CLAUDE.md 本体在导入之后"
+      }
+    ]
+  },
+  "steps": []
+}

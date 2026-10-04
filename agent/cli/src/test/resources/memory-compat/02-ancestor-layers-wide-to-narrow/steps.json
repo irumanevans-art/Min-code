@@ -1,0 +1,6 @@
+{
+  "cwd": "/workspace/src/api",
+  "steps": [
+    { "touch": ["handler.ts"] }
+  ]
+}

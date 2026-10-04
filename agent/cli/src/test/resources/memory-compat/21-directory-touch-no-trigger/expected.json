@@ -1,0 +1,20 @@
+{
+  "startup": {
+    "files": []
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "Min 设计 §1.1：「目录（Glob / Grep 的搜索根）不算，只算文件」——驱动按内核的约定先 stat，目录不进 attach"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/src/sub/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1：同一样本里作对照，碰到目录里的文件才触发"
+        }
+      ]
+    }
+  ]
+}

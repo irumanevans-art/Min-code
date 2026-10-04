@@ -1,0 +1,25 @@
+{
+  "startup": {
+    "files": [],
+    "notesContain": ["带 paths"]
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "CC §1.4：路径限定规则按读取的文件匹配；src/other.md 与 **/secret* 不匹配"
+    },
+    {
+      "files": [
+        {
+          "path": "/home/user/.claude/rules/secure.md",
+          "source": "path_rule",
+          "basis": "Min 设计 §1.1：路径规则含用户级；MemoryDiscovery 文档「用户级规则的项目根取 cwd：主目录通常不在工作区之内，按字面取主目录就永远匹配不上」→ **/secret* 相对 /workspace 匹配 secret.txt"
+        }
+      ]
+    },
+    {
+      "files": [],
+      "basis": "Min 设计 §1.2：同一份规则只注入一次；src/secret-key.md 也匹配 **/secret* 但已被去重"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "startup": {
+    "files": []
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "Min 设计 §1.1：「工具调用成功（isError = false）之后」才看碰到的路径——失败的调用不触发（fail: true 表示这批调用失败）"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/src/CLAUDE.md",
+          "source": "nested",
+          "basis": "同一样本里作对照：同一文件的成功的调用触发加载"
+        }
+      ]
+    }
+  ]
+}

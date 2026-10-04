@@ -1,0 +1,27 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：「加载顺序为根目录向下至工作目录」「祖先目录也被搜索（在 foo/bar/ 运行会加载 foo/CLAUDE.md）」→ 最宽的祖先最先"
+      },
+      {
+        "path": "/workspace/src/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1 同上，宽→窄的第二层"
+      },
+      {
+        "path": "/workspace/src/api/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：工作目录本身那一层也属于启动快照（ancestors 含 cwd）"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "Min 设计 §1.1：子目录记忆从 cwd 的下一层起找，cwd 本层的 CLAUDE.md 启动时已载，碰 cwd 直属文件无新记忆"
+    }
+  ]
+}

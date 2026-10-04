@@ -1,0 +1,25 @@
+{
+  "startup": {
+    "files": [],
+    "notesContain": ["带 paths"]
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "CC §1.4 花括号取其一（PathGlob 文档引 CC 例子 *.{ts,tsx}）→ c.js 两个分支都不匹配"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/.claude/rules/ui.md",
+          "source": "path_rule",
+          "basis": "CC §1.4：花括号展开是 glob 的一部分；paths 写成行内数组 paths: [\"…\"] 也是 CC 认的 YAML 写法（Min MemoryMarkdown 文档：paths: a, b、paths: [a, b] 与 - a 列表都认）"
+        }
+      ]
+    },
+    {
+      "files": [],
+      "basis": "Min 设计 §1.2：同一份路径规则一个会话只注入一次"
+    }
+  ]
+}

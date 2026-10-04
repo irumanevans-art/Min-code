@@ -1,0 +1,6 @@
+{
+  "cwd": "/workspace",
+  "steps": [
+    { "touch": ["src/x.ts"] }
+  ]
+}

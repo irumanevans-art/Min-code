@@ -1,0 +1,8 @@
+{
+  "cwd": "/workspace",
+  "steps": [
+    { "touch": ["README.md"] },
+    { "touch": ["src/a.ts"] },
+    { "touch": ["src/deep/b.ts"] }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "startup": {
+    "files": [],
+    "notesContain": ["带 paths"]
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "CC §1.4：路径限定规则「when Claude reads files matching the pattern」——README.md 不匹配 **/*.ts"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/.claude/rules/ts.md",
+          "source": "path_rule",
+          "basis": "CC §1.4：paths 为 YAML frontmatter，glob 例子「src/api/**/*.ts」→ ** 跨目录；src/a.ts 相对项目根 /workspace 匹配（Min 设计 §1.1）。contentNotContains 钉住 frontmatter 不进上下文（CC 同样去掉，Min MemoryLoader 文档）",
+          "contentContains": ["TS rules body."],
+          "contentNotContains": ["paths:"]
+        }
+      ]
+    },
+    {
+      "files": [],
+      "basis": "Min 设计 §1.2：路径规则一个会话只注入一次，深层文件再命中也不重复"
+    }
+  ]
+}

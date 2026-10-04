@@ -1,0 +1,28 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/home/user/.claude/extra.md",
+        "source": "import",
+        "basis": "Min MemoryLoader 文档：~/ 开头的导入指用户主目录；~/.claude 下的文件可导入。CC §1.2「Claude reads the imported file first」→ extra.md 在用户 CLAUDE.md 之前"
+      },
+      {
+        "path": "/home/user/.claude/CLAUDE.md",
+        "source": "user",
+        "basis": "CC §1.1：用户级最先"
+      },
+      {
+        "path": "/workspace/docs/ok.md",
+        "source": "import",
+        "basis": "CC §1.2：相对包含文件解析；工作区内的文件可导入"
+      },
+      {
+        "path": "/workspace/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：项目级 CLAUDE.md 本体在其导入之后"
+      }
+    ],
+    "notesContain": ["/other/secret.md", "/escape.md", "只导入工作区"]
+  },
+  "steps": []
+}

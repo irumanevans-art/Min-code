@@ -1,0 +1,30 @@
+{
+  "startup": {
+    "files": [],
+    "notesContain": ["带 paths"]
+  },
+  "steps": [
+    {
+      "files": [
+        {
+          "path": "/workspace/.claude/rules/docs.md",
+          "source": "path_rule",
+          "basis": "Min 设计 §1.2：同一步里两个文件（docs/a.md、docs/sub/b.md 都匹配 docs/**）命中同一份记忆只加载一次"
+        }
+      ]
+    },
+    {
+      "files": [],
+      "basis": "Min 设计 §1.2：路径规则已注入，第三个命中文件不再重复"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/src/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.2：同一步两个文件在同一个目录，该层只扫一次，CLAUDE.md 只加载一次"
+        }
+      ]
+    }
+  ]
+}

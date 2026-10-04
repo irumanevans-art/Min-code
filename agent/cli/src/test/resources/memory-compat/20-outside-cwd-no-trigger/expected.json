@@ -1,0 +1,30 @@
+{
+  "startup": {
+    "files": [
+      {
+        "path": "/workspace/src/CLAUDE.md",
+        "source": "project",
+        "basis": "CC §1.1：工作目录层启动即载；docs/ 不是 cwd 的祖先，其 CLAUDE.md 不进启动快照"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "files": [],
+      "basis": "Min 设计 §1.1：「只看 cwd 之内的路径：cwd 之外的子目录记忆 CC 也不加载」——/workspace/docs/x.ts 是真实存在的文件，但全路径不在 cwd 之内"
+    },
+    {
+      "files": [],
+      "basis": "同上：../docs/x.ts 解析后与上一步同一路径，仍 cwd 之外"
+    },
+    {
+      "files": [
+        {
+          "path": "/workspace/src/inner/CLAUDE.md",
+          "source": "nested",
+          "basis": "Min 设计 §1.1：cwd 之内的子树照常按需加载，同一样本里作对照"
+        }
+      ]
+    }
+  ]
+}
