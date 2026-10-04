@@ -284,6 +284,28 @@ class SubagentTest {
     }
 
     @Test
+    fun `a child inherits the parent's hooks together with the merged http policy`() = run {
+        val model = RoutingModel { req ->
+            when {
+                req.last() == "查一下" -> reply(TextPart("查完了"))
+                req.messages.size == 1 -> reply(agentCall("c1", "prompt" to "查一下", "run_in_background" to false), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool))
+        val hooks = dev.min.agent.spi.HooksLoaded(
+            listOf(dev.min.agent.spi.HookSourceData("user", JsonObject(emptyMap()))),
+            httpPolicy = dev.min.agent.spi.HttpPolicyData(allowedUrls = emptyList(), allowedEnvVars = listOf("A")),
+        )
+        val parent = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default, initial = listOf(hooks))
+        parent.send(msg(), text("开始"))
+        val done = parent.state.first { it.turn == null && it.lastTurn != null }
+        val child = h.get(done.children.keys.single())!!
+        assertEquals(hooks.sources, child.state.value.hooks)
+        assertEquals("空数组的闸也要带给子 agent", hooks.httpPolicy, child.state.value.hooksHttpPolicy)
+    }
+
+    @Test
     fun `a fork may not delegate again`() = run {
         val model = RoutingModel { req ->
             val last = req.last()
@@ -473,6 +495,135 @@ class SubagentTest {
         assertNull("报告不唤醒父会话", parent.state.value.turn)
         assertEquals(1, events(parent.sessionId).count { it is TurnStarted })
         assertEquals("报告留在收件箱，下次开口时一并交给模型", 1, parent.state.value.inbox.size)
+    }
+
+    @Test
+    fun `a report that lands while the tree is being stopped does not wake the parent`() = run {
+        val model = RoutingModel { req ->
+            val last = req.last()
+            when {
+                last == "快活" -> reply(TextPart("做完1"))
+                last == "再做一件" -> reply(TextPart("做完2"))
+                "<subagent-report" in last -> reply(TextPart("收到报告"))
+                req.messages.size == 1 -> reply(agentCall("c1", "prompt" to "快活", "name" to "quick"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool))
+        val parent = parentOf(h)
+        parent.send(msg(), text("开始"))
+        val child = parent.childRuntime(h)
+        // 第一份报告到了，父会话被它唤醒、也已经收尾
+        parent.state.first { it.turn == null && it.history.any { e -> e is HistoryEntry.User && e.origin is InputOrigin.Agent } }
+        child.state.first { it.turn == null && it.lastTurn != null }
+
+        // 盯结局的协程抢在 stopTree 登记静音结局之前交付：这里模拟「打断时回合还没写 TurnStarted」的子回合
+        h.stopTreeProbe = { round ->
+            if (round == -1) {
+                child.receive(msg(), text("再做一件"), dev.min.agent.spi.Delivery.Queue, InputOrigin.Parent(parent.sessionId), TurnTrigger.User)
+                parent.state.first { it.reports().size >= 2 }
+            }
+        }
+        val turnsBefore = events(parent.sessionId).count { it is TurnStarted }
+        h.stopTree(parent.sessionId)
+        kotlinx.coroutines.delay(300)
+        assertNull("报告不唤醒父会话", parent.state.value.turn)
+        assertEquals(turnsBefore, events(parent.sessionId).count { it is TurnStarted })
+        assertEquals("报告照常交付", 2, parent.state.value.reports().size)
+
+        // 停完之后恢复常态：之后的新报告照常唤醒父会话（会话不能一直留在 stopping 里）
+        h.stopTreeProbe = null
+        child.receive(msg(), text("快活"), dev.min.agent.spi.Delivery.Queue, InputOrigin.Parent(parent.sessionId), TurnTrigger.User)
+        parent.state.first { it.reports().size >= 3 && it.turn == null && it.lastTurn != null }
+        kotlinx.coroutines.delay(300)
+        assertEquals("新报告唤醒了父会话", turnsBefore + 1, events(parent.sessionId).count { it is TurnStarted })
+    }
+
+    @Test
+    fun `stopTree keeps collecting, so a child that appears while it is interrupting is stopped too`() = run {
+        val model = RoutingModel { req ->
+            when {
+                req.last() == "慢活" || req.last() == "迟到的慢活" -> hang
+                req.messages.size == 1 -> reply(agentCall("c1", "prompt" to "慢活", "name" to "slow"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool))
+        val parent = parentOf(h)
+        parent.send(msg(), text("开始"))
+        val child = parent.childRuntime(h)
+        child.state.first { it.turn != null }
+        parent.state.first { it.turn == null && it.lastTurn != null }
+
+        var late: SessionRuntime? = null
+        h.stopTreeProbe = { round ->
+            if (round == 0 && late == null) {
+                // 第一轮打断的瞬间，又冒出一个子会话
+                val started = h.portFor(parent, dev.min.agent.protocol.TurnId("t-late"), CallId("c-late"))
+                    .delegate(DelegateRequest("迟到的", "迟到的慢活", background = true, name = "late")) as DelegateResult.Started
+                late = h.get(started.child)!!.also { r -> r.state.first { it.turn != null } }
+            }
+        }
+        h.stopTree(parent.sessionId)
+        assertNull("后冒出来的子会话也被停了", late!!.state.value.turn)
+        assertNull(child.state.value.turn)
+        h.running.first { it.isEmpty() } // 汇总是观察者协程异步更新的，等它跟上
+    }
+
+    @Test
+    fun `shutdown retries when a new turn sneaks in between stopping and closing`() = run {
+        val model = RoutingModel { req -> if (req.last() == "慢活") hang else reply(TextPart("好")) }
+        val h = hub(model, emptyList())
+        val parent = parentOf(h)
+        var sneaked = false
+        h.stopTreeProbe = { round ->
+            if (round == -1 && !sneaked) {
+                sneaked = true
+                parent.send(msg(), text("慢活"))
+                parent.state.first { it.turn != null }
+            }
+        }
+        assertTrue("第二轮停掉了偷偷起来的回合", h.shutdown(parent.sessionId))
+        assertTrue(h.online.value.isEmpty())
+    }
+
+    @Test
+    fun `shutdown reports false when the tree keeps coming back after three rounds`() = run {
+        val model = RoutingModel { req -> if (req.last() == "慢活") hang else reply(TextPart("好")) }
+        val h = hub(model, emptyList())
+        val parent = parentOf(h)
+        var rounds = 0
+        h.stopTreeProbe = { round ->
+            if (round == -1) {
+                rounds++
+                parent.send(msg(), text("慢活"))
+                parent.state.first { it.turn != null }
+            }
+        }
+        assertFalse(h.shutdown(parent.sessionId))
+        assertEquals("最多三轮", 3, rounds)
+        assertTrue("没卸掉，仍在线", parent.sessionId in h.online.value)
+        h.stopTreeProbe = null
+        h.stopTree(parent.sessionId)
+    }
+
+    @Test
+    fun `unloading a session clears its quiet-report entries`() = run {
+        val model = RoutingModel { req ->
+            when {
+                req.last() == "慢活" -> hang
+                req.messages.size == 1 -> reply(agentCall("c1", "prompt" to "慢活", "name" to "slow"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool))
+        val parent = parentOf(h)
+        parent.send(msg(), text("开始"))
+        val child = parent.childRuntime(h)
+        child.state.first { it.turn != null }
+        parent.state.first { it.turn == null && it.lastTurn != null }
+        assertTrue(h.shutdown(parent.sessionId))
+        assertEquals(0, h.quietReportCount())
     }
 
     @Test

@@ -48,6 +48,97 @@ class MemoryDiscoveryTest {
     }
 
     @Test
+    fun `a rule with an invalid glob matches nothing for that entry, is noted once, and its other entries still work`() {
+        fs.file(
+            "/workspace/.claude/rules/mixed.md",
+            "---\npaths:\n  - \"app/[id]/page.tsx\"\n  - \"[z-a].ts\"\n  - \"src/**/*.ts\"\n---\nMixed rule.",
+        )
+        fs.file("/workspace/src/a.ts", "a")
+        val d = discovery()
+
+        val first = d.attach("/workspace/src/a.ts")
+        assertEquals("好的那条照常命中", listOf("/workspace/.claude/rules/mixed.md $PathRule"), first.order())
+        assertEquals(1, first.notes.count { it.contains("mixed.md") && it.contains("无效") })
+        assertTrue(first.notes.joinToString(), first.notes.any { it.contains("app/[id]/page.tsx") && it.contains("[z-a].ts") })
+
+        // 同一条规则一个会话只说一次
+        val second = d.attach("/workspace/src/b.ts", inContext = setOf("/workspace/.claude/rules/mixed.md"))
+        assertTrue(second.notes.joinToString(), second.notes.none { it.contains("无效") })
+    }
+
+    @Test
+    fun `a rule whose only glob is invalid never matches and never throws`() {
+        fs.file("/workspace/.claude/rules/bad.md", "---\npaths:\n  - \"app/**/[[...slug]]/page.tsx\"\n---\nBad.")
+        fs.file("/workspace/app/docs/[[...slug]]/page.tsx", "x")
+        val result = discovery().attach("/workspace/app/docs/[[...slug]]/page.tsx")
+        assertEquals(emptyList<String>(), result.order())
+        assertEquals(1, result.notes.count { it.contains("无效") })
+    }
+
+    @Test
+    fun `a layer file with the same content as another is skipped but counted as covered`() {
+        fs.file("/workspace/s/CLAUDE.md", "Same text")
+        fs.file("/workspace/s/AGENTS.md", "Same text")
+        fs.file("/workspace/s/a.ts", "a")
+        val result = discovery().attach("/workspace/s/a.ts")
+        assertEquals(listOf("/workspace/s/CLAUDE.md $Nested"), result.order())
+        assertEquals(listOf(GuestPath("/workspace/s/AGENTS.md")), result.covered)
+    }
+
+    @Test
+    fun `reading a memory file itself does not inject it again, and its same-content sibling is covered too`() {
+        fs.file("/workspace/s/CLAUDE.md", "Same text")
+        fs.file("/workspace/s/AGENTS.md", "Same text")
+        fs.file("/workspace/s/CLAUDE.local.md", "Mine")
+        val result = discovery().attach("/workspace/s/CLAUDE.md")
+        assertEquals("读过的那份不再注入，不同内容的兄弟照常", listOf("/workspace/s/CLAUDE.local.md $Nested"), result.order())
+        assertEquals(listOf(GuestPath("/workspace/s/CLAUDE.md"), GuestPath("/workspace/s/AGENTS.md")), result.covered)
+    }
+
+    @Test
+    fun `the imports of a memory file the model read directly are still loaded`() {
+        fs.file("/workspace/s/CLAUDE.md", "See @docs.md")
+        fs.file("/workspace/s/docs.md", "Docs text")
+        val result = discovery().attach("/workspace/s/CLAUDE.md")
+        assertEquals(listOf("/workspace/s/docs.md ${dev.min.agent.spi.MemorySource.Import}"), result.order())
+        assertEquals(listOf(GuestPath("/workspace/s/CLAUDE.md")), result.covered)
+    }
+
+    @Test
+    fun `a memory file that is not text is reported once and never read again`() {
+        fs.bytes("/workspace/s/CLAUDE.md", byteArrayOf('a'.code.toByte(), 0, 'b'.code.toByte()))
+        val d = discovery()
+
+        val first = d.attach("/workspace/s/a.ts")
+        assertEquals(emptyList<String>(), first.order())
+        assertEquals(1, first.notes.count { it.contains("不是文本文件") })
+        val readsAfterFirst = fs.reads.count { it == "/workspace/s/CLAUDE.md" }
+        assertEquals(1, readsAfterFirst)
+
+        // 同一个会话里再碰这个目录的别的文件：不再读、不再说
+        val second = d.attach("/workspace/s/b.ts")
+        assertEquals(emptyList<String>(), second.notes)
+        assertEquals(readsAfterFirst, fs.reads.count { it == "/workspace/s/CLAUDE.md" })
+    }
+
+    @Test
+    fun `a memory file that cannot be read is reported once`() {
+        fs.fail("/workspace/s/CLAUDE.md")
+        val d = discovery()
+        val first = d.attach("/workspace/s/a.ts")
+        assertEquals(1, first.notes.count { it.contains("读取 /workspace/s/CLAUDE.md 失败") })
+        assertEquals(emptyList<String>(), d.attach("/workspace/s/b.ts").notes)
+    }
+
+    @Test
+    fun `a bad import is reported once even if another memory file points at it`() {
+        fs.file("/workspace/s/CLAUDE.md", "see @/etc/passwd and @../outside/x.md")
+        fs.file("/workspace/s/AGENTS.md", "also @/etc/passwd")
+        val first = discovery().attach("/workspace/s/a.ts")
+        assertEquals("同一个越界的导入目标只说一次", 1, first.notes.count { it.contains("/etc/passwd") })
+    }
+
+    @Test
     fun `a file directly in cwd loads no nested memory`() {
         fs.file("/workspace/CLAUDE.md", "根")
         fs.file("/workspace/main.kt", "code")

@@ -47,8 +47,11 @@ internal class JsonFields(
     }
 
     /** 字符串数组；其中不是字符串（或是空串）的项单独跳过并记 note，其余项照收 */
-    fun stringList(key: String): List<String> = when (val v = obj[key]) {
-        null, JsonNull -> emptyList()
+    fun stringList(key: String): List<String> = stringListOrNull(key).orEmpty()
+
+    /** 同 [stringList]，但区分「没写」（null）与「写了空数组」（空列表）：安全闸要靠后者表达「全拦」 */
+    fun stringListOrNull(key: String): List<String>? = when (val v = obj[key]) {
+        null, JsonNull -> null
         is JsonArray -> v.mapIndexedNotNull { index, item ->
             val text = (item as? JsonPrimitive)?.takeIf { it.isString }?.content
             when {
@@ -187,9 +190,9 @@ internal object SettingsReader {
             allowManagedHooksOnly = f.bool("allowManagedHooksOnly"),
             allowManagedPermissionRulesOnly = f.bool("allowManagedPermissionRulesOnly"),
             hooks = f.obj("hooks"),
-            // http hook 的两道闸（设计 §8 H3）：定义过就按清单限制
-            allowedHttpHookUrls = f.stringList("allowedHttpHookUrls").takeIf { it.isNotEmpty() },
-            httpHookAllowedEnvVars = f.stringList("httpHookAllowedEnvVars").takeIf { it.isNotEmpty() },
+            // http hook 的两道闸（设计 §8 H3）：定义过就按清单限制；空数组也是定义过（拦掉全部），不能折成「没定义」
+            allowedHttpHookUrls = f.stringListOrNull("allowedHttpHookUrls"),
+            httpHookAllowedEnvVars = f.stringListOrNull("httpHookAllowedEnvVars"),
             enabledPlugins = f.boolMap("enabledPlugins"),
         )
     }

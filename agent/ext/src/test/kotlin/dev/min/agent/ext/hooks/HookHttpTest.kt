@@ -87,6 +87,21 @@ class HookHttpTest {
         assertNull(HttpHookPolicy.merge(listOf(HttpHookPolicy(null, null), HttpHookPolicy(null, null))).allowedUrls)
     }
 
+    @Test fun `URL 模式里星号是通配 主机名大小写不敏感 空清单一个都不放`() {
+        val policy = HttpHookPolicy(listOf("https://hooks.example.com/*", "http://localhost:*"), null)
+        assertTrue(policy.allowsUrl("https://hooks.example.com/pre-tool?x=1"))
+        assertTrue(policy.allowsUrl("https://HOOKS.Example.COM/a/b"))
+        assertTrue("FQDN 末尾的点与没有等价", policy.allowsUrl("https://hooks.example.com./a"))
+        assertTrue(policy.allowsUrl("http://localhost:8080/x"))
+        assertFalse("协议不同", policy.allowsUrl("http://hooks.example.com/a"))
+        assertFalse("别的主机", policy.allowsUrl("https://hooks.example.com.evil.net/a"))
+        assertFalse("userinfo 骗主机", policy.allowsUrl("https://hooks.example.com@evil.net/a"))
+        assertFalse(policy.allowsUrl("https://evil.net/https://hooks.example.com/a"))
+        assertFalse("路径区分大小写的那一半仍然精确", HttpHookPolicy(listOf("https://a.example/Hook"), null).allowsUrl("https://a.example/hook"))
+        assertFalse(HttpHookPolicy(emptyList(), null).allowsUrl("https://hooks.example.com/a"))
+        assertFalse(HttpHookPolicy(null, emptyList()).allowsEnvVar("TOKEN"))
+    }
+
     @Test fun `头值插值只认两道闸都放行的变量`() {
         val gate = HttpHookPolicy(null, listOf("MY_TOKEN"))
         val headers = objectOf("""{"Authorization":"Bearer ${'$'}MY_TOKEN","X-Trial":"t-${'$'}{TRIAL}","X-Plain":"v"}""")
@@ -175,6 +190,42 @@ class HookHttpTest {
         val combined = combine(HookEvent.PreToolUse, batch.runs.map { interpret(HookEvent.PreToolUse, it) })
         assertEquals(HookDecision.Allow, combined.decision)
         assertEquals(listOf("http://a/dead hook error：HTTP 请求失败：refused"), combined.nonBlockingErrors)
+    }
+
+    @Test fun `执行器对每次 send 套总预算 卡住的请求归超时 一个处理器抛异常不拖垮同批的别的处理器`() = runBlocking { kotlinx.coroutines.withTimeout(20_000) {
+        val client = HttpHookClient { request ->
+            when (request.url) {
+                "http://a/stuck" -> { kotlinx.coroutines.delay(Long.MAX_VALUE); HttpHookResult.Responded(200, "") }
+                "http://a/throws" -> error("boom")
+                else -> HttpHookResult.Responded(200, "")
+            }
+        }
+        val started = System.nanoTime()
+        val batch = HookHttpRunner(client).run(
+            listOf(httpHandler(url = "http://a/stuck"), httpHandler(url = "http://a/throws"), httpHandler(url = "http://a/fine")),
+            objectOf("{}"), emptyMap(), HttpHookPolicy(null, null)) { 1 }
+        assertTrue("总预算 1 秒到点就放弃", (System.nanoTime() - started) / 1_000_000 < 5_000)
+        val byUrl = batch.runs.associateBy { it.handler.url }
+        assertTrue(byUrl.getValue("http://a/stuck").timedOut)
+        assertEquals(1, byUrl.getValue("http://a/throws").exitCode)
+        assertFalse("异常信息不进说明", byUrl.getValue("http://a/throws").stderr.contains("boom"))
+        assertEquals(0, byUrl.getValue("http://a/fine").exitCode)
+    } }
+
+    @Test fun `响应体被截断时记一条去掉查询串的说明`() = runBlocking {
+        val client = HttpHookClient { HttpHookResult.Responded(200, "{", truncated = true) }
+        val batch = HookHttpRunner(client).run(listOf(httpHandler(url = "http://u:p@a/hook?token=SECRET")),
+            objectOf("{}"), emptyMap(), HttpHookPolicy(null, null)) { 30 }
+        val note = batch.notes.single()
+        assertTrue(note, note.contains("已截断") && note.contains("http://a/hook") && !note.contains("SECRET") && !note.contains("u:p"))
+    }
+
+    @Test fun `redactUrl 去掉 userinfo 查询串与片段`() {
+        assertEquals("https://h.example/p/q", HookHttpRunner.redactUrl("https://user:pw@h.example/p/q?token=1#frag"))
+        assertEquals("https://h.example:8443/x", HookHttpRunner.redactUrl("https://h.example:8443/x?a=b"))
+        assertEquals("https://h.example", HookHttpRunner.redactUrl("https://tok@h.example?x=1"))
+        assertEquals("https://h.example/a@b", HookHttpRunner.redactUrl("https://h.example/a@b"))
+        assertEquals("not a url", HookHttpRunner.redactUrl("not a url"))
     }
 
     private fun fake(): HttpHookClient = HttpHookClient { HttpHookResult.Responded(200, "") }

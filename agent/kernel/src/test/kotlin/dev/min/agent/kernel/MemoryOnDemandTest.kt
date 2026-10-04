@@ -28,6 +28,7 @@ import dev.min.agent.spi.PathAccess
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
+import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
@@ -72,6 +73,9 @@ class MemoryOnDemandTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val store by lazy { FileSessionStore(tmp.root.toPath(), { 0L }) }
     private val fs = FakeFs()
+
+    /** 换掉会话用的文件系统（默认就是 [fs]）：想让某个操作出意外时用 */
+    private var fsOverride: dev.min.agent.spi.WorkspaceFs? = null
     private val header = LogHeader(LOG_FORMAT_VERSION, SessionId("s1"), createdAtMs = 0)
     private var counter = 0
 
@@ -85,7 +89,7 @@ class MemoryOnDemandTest {
     private fun deps(model: ModelClient, tools: List<Tool<*>>) = testDeps(model, tools).let { base ->
         KernelDeps(
             clock = base.clock, ids = base.ids, models = base.models, tools = tools,
-            host = HostPorts(fs, base.host.search, base.host.exec, base.host.artifacts),
+            host = HostPorts(fsOverride ?: fs, base.host.search, base.host.exec, base.host.artifacts),
             platform = base.platform, zone = base.zone, retry = base.retry,
             memoryHome = GuestPath("/root"),
         )
@@ -119,6 +123,145 @@ class MemoryOnDemandTest {
 
     /** 会话创建时的说明：带 paths 的规则在启动时跳过并说明 */
     private suspend fun startupNote() = events().filterIsInstance<MemoryLoaded>().single().notes
+
+    @Test
+    fun `a rule with an invalid glob does not fail the turn, and is noted once across reads`() = run {
+        fs.put("/workspace/.claude/rules/bad.md", "---\npaths:\n  - \"app/**/[[...slug]]/page.tsx\"\n  - \"[z-a].ts\"\n---\nBad rule.")
+        fs.put("/workspace/a.ts", "a")
+        fs.put("/workspace/b.ts", "b")
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/a.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/b.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = session(model)
+        rt.send(msg(), listOf(TextPart("读两个文件")))
+        rt.awaitIdle()
+
+        assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn?.outcome)
+        val notes = events().filterIsInstance<MemoryAttached>().flatMap { it.notes }.filter { it.contains("无效") }
+        assertEquals("同一条规则一个会话只说一次", 1, notes.size)
+        assertTrue(events().filterIsInstance<MemoryAttached>().all { it.files.isEmpty() })
+        assertLogIsTruth(rt)
+    }
+
+    /** list 返回的集合一遍历就炸：模拟按需加载里「读盘之外」的意外（attempt 只管 stat / list / read 这几次调用本身） */
+    private class ExplodingListFs(private val inner: FakeFs, private val dir: String) : dev.min.agent.spi.WorkspaceFs by inner {
+        override suspend fun list(dir: GuestPath): List<dev.min.agent.spi.DirEntry> =
+            if (dir.value == this.dir) object : AbstractList<dev.min.agent.spi.DirEntry>() {
+                override val size: Int get() = throw IllegalStateException("目录列表炸了")
+                override fun get(index: Int): dev.min.agent.spi.DirEntry = throw IllegalStateException("目录列表炸了")
+            } else inner.list(dir)
+    }
+
+    @Test
+    fun `an unexpected failure inside on-demand loading is only a note, never a failed turn`() = run {
+        fs.mkdir("/workspace/a/.claude/rules")
+        fs.put("/workspace/a/x.ts", "x")
+        fsOverride = ExplodingListFs(fs, "/workspace/a/.claude/rules")
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/a/x.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/a/x.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = session(model)
+        rt.send(msg(), listOf(TextPart("读两次")))
+        rt.awaitIdle()
+
+        assertEquals("回合照常完成", TurnOutcome.Completed, rt.state.value.lastTurn?.outcome)
+        assertTrue(events().filterIsInstance<dev.min.agent.spi.Note>().any { it.text.contains("按需加载记忆失败") })
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a same-content sibling is not injected on a later batch just because it was skipped before`() = run {
+        fs.put("/workspace/s/CLAUDE.md", "Same text")
+        fs.put("/workspace/s/AGENTS.md", "Same text")
+        fs.put("/workspace/s/a.ts", "a")
+        fs.put("/workspace/s/b.ts", "b")
+        fs.put("/workspace/s/c.ts", "c")
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/s/a.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/s/b.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c3", "/workspace/s/c.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = session(model)
+        rt.send(msg(), listOf(TextPart("读三个文件")))
+        rt.awaitIdle()
+
+        val attached = events().filterIsInstance<MemoryAttached>()
+        assertEquals("只有第一批注入，之后每批都不再有", 1, attached.size)
+        assertEquals(listOf("/workspace/s/CLAUDE.md"), attached.single().files.map { it.path.value })
+        assertEquals(listOf("/workspace/s/AGENTS.md"), attached.single().covered.map { it.value })
+        assertTrue(rt.state.value.memoryPathsInContext.any { it.value == "/workspace/s/AGENTS.md" })
+        assertEquals(1, "Contents of /workspace/s/".toRegex().findAll(model.requests.last().plainText()).count())
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `reading a memory file itself does not inject its content a second time`() = run {
+        fs.put("/workspace/s/CLAUDE.md", "Same text")
+        fs.put("/workspace/s/x.ts", "x")
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/s/CLAUDE.md"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/s/x.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = session(model)
+        rt.send(msg(), listOf(TextPart("读 CLAUDE.md 再读 x.ts")))
+        rt.awaitIdle()
+
+        val attached = events().filterIsInstance<MemoryAttached>()
+        assertEquals("读 CLAUDE.md 本身那批只记 covered，之后读 x.ts 也不再注入它", 1, attached.size)
+        assertTrue(attached.single().files.isEmpty())
+        assertEquals(listOf("/workspace/s/CLAUDE.md"), attached.single().covered.map { it.value })
+        assertTrue("请求里没有 Contents of（内容只在工具结果里）", "Contents of /workspace/s/CLAUDE.md" !in model.requests.last().plainText())
+        assertLogIsTruth(rt)
+    }
+
+    /** 记下每次追加的事件与持久度 */
+    private class DurabilitySpyStore(private val delegate: dev.min.agent.spi.SessionStore) : dev.min.agent.spi.SessionStore by delegate {
+        val appended = CopyOnWriteArrayList<Pair<SessionEvent, dev.min.agent.spi.Durability>>()
+
+        override suspend fun create(header: LogHeader): dev.min.agent.spi.SessionLog = spy(delegate.create(header))
+
+        private fun spy(log: dev.min.agent.spi.SessionLog) = object : dev.min.agent.spi.SessionLog by log {
+            override suspend fun append(events: List<SessionEvent>, durability: dev.min.agent.spi.Durability) =
+                log.append(events, durability).also { events.forEach { e -> appended += e to durability } }
+        }
+    }
+
+    @Test
+    fun `a bad memory file is reported once per session, and a notes-only event is not fsynced`() = run {
+        fs.put("/workspace/bad/CLAUDE.md", "a\u0000b")
+        fs.put("/workspace/bad/a.ts", "a")
+        fs.put("/workspace/bad/b.ts", "b")
+        fs.put("/workspace/good/CLAUDE.md", "Good rules")
+        fs.put("/workspace/good/c.ts", "c")
+        val spy = DurabilitySpyStore(store)
+        val model = ScriptedModel(
+            reply(readCall("c1", "/workspace/bad/a.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c2", "/workspace/bad/b.ts"), stop = StopReason.ToolUse),
+            reply(readCall("c3", "/workspace/good/c.ts"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+        )
+        val rt = SessionRuntime.create(
+            spy, header, SessionCreated(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default),
+            deps(model, listOf(ReadTool)), scope,
+        )
+        rt.send(msg(), listOf(TextPart("读三个文件")))
+        rt.awaitIdle()
+
+        val attached = spy.appended.filter { it.first is MemoryAttached }
+        assertEquals("坏文件只在第一批报一次；第二批什么都没有", 2, attached.size)
+        val notesOnly = attached[0].first as MemoryAttached
+        assertTrue(notesOnly.files.isEmpty() && notesOnly.notes.any { it.contains("不是文本文件") })
+        assertEquals("只有说明的事件不 fsync", dev.min.agent.spi.Durability.Batched, attached[0].second)
+        assertEquals(listOf("/workspace/good/CLAUDE.md"), (attached[1].first as MemoryAttached).files.map { it.path.value })
+        assertEquals("进了模型的内容照旧 fsync", dev.min.agent.spi.Durability.Sync, attached[1].second)
+        assertLogIsTruth(rt)
+    }
 
     @Test
     fun `a read in a subtree attaches nested memory after the tool results`() = run {
@@ -323,6 +466,39 @@ class MemoryOnDemandTest {
         assertEquals(setOf(GuestPath("/workspace/src/api/CLAUDE.md")), child.state.value.memoryPathsInContext)
         assertLogIsTruth(parent)
         assertLogIsTruth(child)
+    }
+
+    @Test
+    fun `an Explore agent does not load memory on demand, not even after the session is reopened`() = run {
+        fs.put("/workspace/src/api/CLAUDE.md", "Use the typed client.")
+        fs.put("/workspace/src/api/x.ts", "x")
+        val model = OnDemandRoutingModel { req ->
+            val last = req.lastText()
+            when {
+                last == "探一下" || last == "再探一下" -> reply(readCall("e${req.messages.size}", "/workspace/src/api/x.ts"), stop = StopReason.ToolUse)
+                "<subagent-report" in last -> reply(TextPart("收到"))
+                last == "开始" -> reply(agentCall("c1", "subagent_type" to "Explore", "prompt" to "探一下", "description" to "探"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val hub = SessionHub(store, deps(model, listOf(ReadTool, agentTool)), scope)
+        val parent = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+        parent.send(msg(), listOf(TextPart("开始")))
+        val childId = parent.state.first { it.children.isNotEmpty() }.children.keys.single()
+        val child = hub.get(childId)!!
+        child.state.first { it.lastTurn != null && it.turn == null }
+        assertTrue("子 agent 读到了子树里的文件", child.state.value.toolResults.isNotEmpty())
+        assertEquals(true, child.state.value.origin?.omitMemory)
+        assertTrue(store.open(childId)!!.read().toList().none { it.event is MemoryAttached })
+        parent.awaitIdle()
+
+        // 重新打开：不吃记忆是创建时定下的事实，不能因为内存里的开关丢了就变
+        assertTrue(hub.close(childId))
+        val reopened = hub.open(childId)!!
+        reopened.send(msg(), listOf(TextPart("再探一下")))
+        reopened.awaitIdle()
+        assertEquals(2, reopened.state.value.toolResults.size)
+        assertTrue("重开后也不按需加载", store.open(childId)!!.read().toList().none { it.event is MemoryAttached })
     }
 
     /** 会话创建时的说明：带 paths 的规则在启动时跳过并说明（上面没用到的辅助放这，免得悬空） */

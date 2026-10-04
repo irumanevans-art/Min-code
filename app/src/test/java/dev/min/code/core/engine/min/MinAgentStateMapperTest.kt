@@ -138,6 +138,19 @@ class MinAgentStateMapperTest {
         assertFalse(card.isError)
     }
 
+    @Test fun reportStoppedByAHookKeepsItsStatusAndIsDrawnAsError() {
+        val child = SessionId("s_child")
+        val s = foldOf(
+            SubagentSpawned(tid, CallId("c1"), child, "Explore", false, true, "d", null),
+            InputReceived(ClientMsgId("r"), listOf(TextPart(report("Explore", "stopped-by-hook", "cut short"))), Delivery.Steer,
+                InputOrigin.Agent(child, AgentInputKind.Report)),
+            InputPromoted(ClientMsgId("r"), MessageId("m_r")),
+        )
+        val card = map(s).items.single() as ChatItem.Note
+        assertTrue(card.isError)
+        assertEquals("report:Explore:null:stopped-by-hook:d:tools=3\ncut short", card.text)
+    }
+
     @Test fun failedReportIsDrawnAsError() {
         val child = SessionId("s_child")
         val s = foldOf(

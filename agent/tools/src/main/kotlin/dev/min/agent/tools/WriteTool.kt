@@ -70,15 +70,15 @@ object WriteTool : Tool<WriteInput> {
                 return failResult("$path 在你读过之后被改过，先重新 Read。")
             }
         }
-        // 覆盖之前的原文：算 diff 用。读失败（或文件很大）就不给 diff，不影响写入本身
-        val before = existing?.let { readBefore(ctx, path, it.size) }
+        // 覆盖之前的原文：算 diff 用。新建文件的原文就是空串（diff 全是 + 行）；
+        // 读失败（或文件很大）就不给 diff，不影响写入本身
+        val before = if (existing == null) "" else readBefore(ctx, path, existing.size)
         ctx.fs.writeAtomic(path, input.content.encodeToByteArray())
         val after = checkNotNull(ctx.fs.stat(path)) { "写入后 stat 不到 $path" }
         return okResult(
             "已写入 $path（${countLines(input.content)} 行）",
             listOf(FileStamp(path, after.size, after.modifiedMs)),
-            before?.let { listOf(fileEdit(path, it, input.content, created = existing == null)) }
-                ?: listOf(FileEdit(path, created = existing == null)),
+            listOf(before?.let { fileEdit(path, it, input.content, created = existing == null) } ?: FileEdit(path, created = existing == null)),
         )
     }
 

@@ -105,7 +105,8 @@ object SystemPrompt {
         val usage = "MEMORY.md: ${info.loadedLines}/${AutoMemory.MAX_INDEX_LINES} lines."
         return when {
             info.totalLines > info.loadedLines ->
-                "$usage The index has ${info.totalLines} lines and only the first ${AutoMemory.MAX_INDEX_LINES} are loaded — consolidate it before adding more entries."
+                // 按实际加载的行数说：超过 25 KB 时在不足 200 行处就截断了
+                "$usage The index has ${info.totalLines} lines and only the first ${info.loadedLines} are loaded — consolidate it before adding more entries."
             else ->
                 "$usage Past ${AutoMemory.MAX_INDEX_LINES} lines the rest is not loaded; consolidate the index before adding more entries."
         }

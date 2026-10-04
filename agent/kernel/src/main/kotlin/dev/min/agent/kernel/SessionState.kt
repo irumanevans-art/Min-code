@@ -17,6 +17,7 @@ import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.HookSourceData
+import dev.min.agent.spi.HttpPolicyData
 import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.TurnOutcome
@@ -101,6 +102,8 @@ data class SessionState(
     val taskSeq: Int = 0,
     /** 会话创建时冻结的 hooks（最后一条 HooksLoaded；docs/agent/detail/hooks设计.md §1） */
     val hooks: List<HookSourceData> = emptyList(),
+    /** 同一条 HooksLoaded 带的 http 两道闸（各生效层合并后的）；null = 没有任何一道闸 */
+    val hooksHttpPolicy: HttpPolicyData? = null,
     /** hook 加的上下文，按挂靠的消息（用户消息，或带工具调用的助手消息——挂在它的工具结果后面）；模型视图里渲染成 system-reminder */
     val hookContexts: Map<MessageId, List<String>> = emptyMap(),
     /** 还没有消息可挂的 hook 上下文（SessionStart），挂到下一条人发的消息上 */
@@ -113,6 +116,11 @@ data class SessionState(
      * 去重靠 [memoryPathsInContext]，不靠它
      */
     val memoryAttachments: Map<MessageId, List<LoadedMemoryFile>> = emptyMap(),
+    /**
+     * 按需加载时「内容已在上下文里、所以没再注入」的路径（[dev.min.agent.spi.MemoryAttached.covered]），同样按挂靠的助手消息记：
+     * 压缩把那条消息摘要掉时它们和 [memoryAttachments] 一起移出 [memoryPathsInContext]
+     */
+    val memoryCovered: Map<MessageId, List<GuestPath>> = emptyMap(),
     /**
      * 此刻已在模型上下文里的记忆文件路径 = 创建时快照里的 + 还留在模型视图里的按需加载的；同一路径不再按需加载第二次。
      * 压缩把挂了它们的消息摘要掉之后，那些路径从集合里移出（内容已不在视图里），再碰到就重新加载（设计 §1.2）

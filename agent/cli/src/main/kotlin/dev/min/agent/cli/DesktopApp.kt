@@ -59,6 +59,13 @@ import java.time.ZoneId
 import java.util.UUID
 
 /**
+ * 交给内核的环境变量读取口（[dev.min.agent.kernel.KernelDeps.env]）：读进程环境，但 [hidden]（CLI 自己读模型 key 的变量）一律返回 null。
+ * [read] 默认读真实进程环境，测试可替换。
+ */
+internal fun hookEnvReader(hidden: Set<String>, read: (String) -> String? = System::getenv): (String) -> String? =
+    { name -> if (name in hidden) null else read(name) }
+
+/**
  * 桌面宿主的工具表。顺序就是发给模型的顺序，属于稳定前缀：只往末尾追加，不重排、不删除
  * （docs/agent/07-工程规范.md 第 10 条），否则所有会话的缓存前缀一起失效。
  */
@@ -100,6 +107,7 @@ internal class DesktopApp(
     private val fastSelection = args.fastModel?.let {
         resolveModel(args.copy(model = it, contextWindow = null, maxOutput = null), Catalog.bundled())
     }
+    private val hiddenEnv: Set<String> = setOfNotNull(keyEnv, fastSelection?.keyEnv)
     private val searchBackend = desktopSearchBackend(args)
     private var hubInstance: SessionHub? = null
 
@@ -187,7 +195,9 @@ internal class DesktopApp(
             trustProjectHooks = { args.trust },
             fastModel = fastSelection?.profile?.ref,
             maxWebSearches = args.maxWebSearches,
-            env = { name -> System.getenv(name) },
+            // CLI 自己读模型 key 的变量不交给内核：http hook 的 allowedEnvVars 点名它也只能插成空串（凭证不进 hook 请求）
+            env = hookEnvReader(hiddenEnv),
+            hiddenEnv = hiddenEnv,
         )
     }
 

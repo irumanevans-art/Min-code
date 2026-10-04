@@ -29,6 +29,8 @@ import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.FileKind
 import dev.min.agent.spi.MemoryAttached
+import dev.min.agent.spi.Note
+import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.catchingNonCancellation
 import dev.min.agent.spi.Exec
 import dev.min.agent.spi.FileStamp
@@ -126,6 +128,19 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
      * 渲染顺序先 hook 后记忆（见 ModelView）；同批里后面才读到的文件也算，一批只有一条事件。
      */
     private suspend fun attachMemory(calls: List<ToolCallPart>) {
+        // 按需加载是锦上添花：里面任何地方出了意外（坏的规则、读盘出错……）都只记一条说明，绝不能让回合失败——
+        // 否则一条写坏的规则会让这个项目里之后每一次读文件都把回合打成 Failed
+        catchingNonCancellation { attachMemoryUnguarded(calls) }.onFailure { e ->
+            catchingNonCancellation {
+                rt.commit(
+                    listOf(Note(NoteLevel.Warning, "按需加载记忆失败，已跳过这一批：${e.message?.lineSequence()?.firstOrNull() ?: e::class.simpleName}")),
+                    Durability.Batched,
+                )
+            }
+        }
+    }
+
+    private suspend fun attachMemoryUnguarded(calls: List<ToolCallPart>) {
         val discovery = rt.memoryDiscovery ?: return
         val candidates = calls.flatMap { touched[it.callId].orEmpty() }.distinct()
         if (candidates.isEmpty()) return
@@ -138,8 +153,10 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val anchor = state.history.lastOrNull { e -> e is HistoryEntry.Assistant && e.toolCalls.any { it.callId == calls.first().callId } }
             ?.messageId ?: return
         val found = discovery.attach(files, state.memoryPathsInContext)
-        if (found.files.isNotEmpty() || found.notes.isNotEmpty()) {
-            rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes)), Durability.Sync)
+        if (found.files.isNotEmpty() || found.notes.isNotEmpty() || found.covered.isNotEmpty()) {
+            // 没有进模型的东西（只有说明、或只有 covered）不影响请求内容，Batched 就够了：不为每批都 fsync
+            val durability = if (found.files.isNotEmpty()) Durability.Sync else Durability.Batched
+            rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes, found.covered)), durability)
         }
     }
 
@@ -263,13 +280,16 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     /**
-     * hook 的结论与权限引擎合流（hooks设计 §7）：alwaysAsk 与安全底线问人、拒绝规则与模式的拒绝照旧——hook 的 allow 都越不过；
+     * hook 的结论与权限引擎合流（hooks设计 §7）：alwaysAsk 与安全底线问人、拒绝规则与模式的拒绝照旧、命中 ask 规则一律问人——
+     * hook 的 allow 都越不过（CC：「Deny and ask rules are still evaluated regardless of what the hook returns」）；
      * 其余情况 hook 说 ask 就问人、说 allow 就跳过审批（与 Claude Code 一致）
      */
     private fun merge(ready: Prepared.Ready, ask: PermissionAsk, hook: HookOutcome.Decision): Verdict {
         val verdict = verdictFor(ready, ask)
         if (hook == HookOutcome.Decision.Neutral || ready.tool.traits.alwaysAsk || verdict is Verdict.Deny) return verdict
-        if (verdict == Verdict.Ask && PolicyEngine.floorReason(ask, policyContext()) != null) return verdict
+        val context = policyContext()
+        if (verdict == Verdict.Ask && PolicyEngine.floorReason(ask, context) != null) return verdict
+        if (PolicyEngine.askRuleHit(ask, context) != null) return Verdict.Ask
         return when (hook) {
             HookOutcome.Decision.Ask -> Verdict.Ask
             HookOutcome.Decision.Allow -> Verdict.Allow(DecidedBy.Hook(HookEvent.PreToolUse.name))

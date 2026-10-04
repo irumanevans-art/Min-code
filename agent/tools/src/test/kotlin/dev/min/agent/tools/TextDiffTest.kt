@@ -56,12 +56,42 @@ class TextDiffTest {
     }
 
     @Test
-    fun `a huge rewrite is summarised instead of line by line`() {
+    fun `a big rewrite is still listed line by line, with real add and remove counts`() {
         val before = (1..2000).joinToString("\n") { "old$it" }
         val after = (1..2000).joinToString("\n") { "new$it" }
-        val diff = TextDiff.unified(before, after)!!
-        assertTrue(diff, diff.contains("整段被替换：2000 行 → 2000 行"))
-        assertTrue("不能逐行铺开", diff.lines().size < 5)
+        val result = TextDiff.diff(before, after)!!
+        assertEquals(0, result.omittedChars)
+        val lines = result.text.lines()
+        assertEquals(2000, lines.count { it.startsWith("-") })
+        assertEquals(2000, lines.count { it.startsWith("+") })
+        assertTrue("不能退化成只报行数", lines.none { it.contains("不逐行展示") })
+    }
+
+    @Test
+    fun `a new big file does not claim the trailing newline changed`() {
+        val diff = TextDiff.unified("", (1..1000).joinToString("\n") { "line$it" } + "\n")!!
+        assertEquals(1000, diff.lines().count { it.startsWith("+") })
+        assertTrue(diff.take(200), !diff.contains("末尾的换行变了"))
+    }
+
+    @Test
+    fun `a diff over the hard cap stops listing lines and says how many changes were left out`() {
+        val before = (1..30_000).joinToString("\n") { "old-line-number-$it" }
+        val after = (1..30_000).joinToString("\n") { "new-line-number-$it" }
+        val result = TextDiff.diff(before, after)!!
+        val lines = result.text.lines()
+        val marker = lines.last()
+        assertTrue(marker, Regex("""@@ 还有 (\d+) 行改动未列出（共 \+30000 −30000） @@""").matches(marker))
+        val left = Regex("""还有 (\d+) 行""").find(marker)!!.groupValues[1].toInt()
+        val listed = lines.dropLast(1).count { it.startsWith("-") || it.startsWith("+") }
+        assertEquals("列出的 + 省略的 = 全部改动行", 60_000, listed + left)
+        assertTrue("正文不超过上限", result.text.length - marker.length - 1 <= TextDiff.MAX_DIFF_CHARS)
+        assertTrue(result.omittedChars > 0)
+    }
+
+    @Test
+    fun `a diff under the cap reports no omission`() {
+        assertEquals(0, TextDiff.diff("a\n", "b\n")!!.omittedChars)
     }
 
     @Test
@@ -73,8 +103,13 @@ class TextDiffTest {
     }
 
     @Test
-    fun `CRLF is normalized so a line ending change alone is not a diff`() {
-        assertNull(TextDiff.unified("a\nb\n", "a\r\nb\r\n"))
+    fun `a change that only differs in line endings or BOM is a one-line note, never null`() {
+        val note = "@@ 只有换行符或 BOM 变了 @@"
+        assertEquals(note, TextDiff.unified("a\nb\n", "a\r\nb\r\n"))
+        assertEquals(note, TextDiff.unified("a\r\nb\r\n", "a\nb\n"))
+        assertEquals(note, TextDiff.unified("\uFEFFa\n", "a\n"))
+        assertEquals(note, TextDiff.unified("a\n", "\uFEFFa\n"))
+        assertNull("原文一模一样才是 null", TextDiff.unified("a\r\n", "a\r\n"))
     }
 
     @Test

@@ -248,6 +248,15 @@ class PolicyEngineTest {
     }
 
     @Test
+    fun `askRuleHit names the ask rule a call hits, and only ask rules`() {
+        val c = ctx(PermissionMode.Default, RuleKind.Allow to "Bash(git *)", RuleKind.Ask to "Bash(git commit *)", RuleKind.Deny to "Bash(rm *)")
+        assertEquals("Bash(git commit *)", PolicyEngine.askRuleHit(bash("git commit -m x"), c)?.raw)
+        assertNull("allow 规则不算", PolicyEngine.askRuleHit(bash("git add ."), c))
+        assertNull("deny 规则不算", PolicyEngine.askRuleHit(bash("rm a"), c))
+        assertNull(PolicyEngine.askRuleHit(bash("git commit -m x"), ctx()))
+    }
+
+    @Test
     fun `allow rules must cover every segment`() {
         val c = ctx(PermissionMode.Default, RuleKind.Allow to "Bash(npm test *)")
         assertEquals(Verdict.Allow(DecidedBy.Rule("Bash(npm test *)", "user")), v(bash("npm test --watch=false"), c))

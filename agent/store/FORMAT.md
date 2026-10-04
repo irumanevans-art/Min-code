@@ -67,4 +67,6 @@
   `files` 的 `content` 是进模型的原样文本，可选 `notes` 只给人看），定义在 `spi/MemoryEvents.kt`；模型视图里渲染在那条消息的工具结果之后（hook 上下文之后）。
   `memory_loaded.files[].source` 新增取值 `nested`、`path_rule`、`auto`（自动记忆索引 `MEMORY.md`）；`memory_loaded` 新增可选字段 `autoMemory`（`directory`、可选 `totalLines` / `loadedLines`，自动记忆开着时才有）。
   含这些的日志旧版本打不开（旧版读到未知的 `source` 取值同样失败）。
-- v1 增量（2026-10-04）：`hooks_loaded.sources[]` 新增可选字段 `allowedHttpHookUrls`、`httpHookAllowedEnvVars`（该层设置的 http hook 两道闸，随快照冻结、执行时按层叠加合并；没定义不落盘）；`tool_outcome.result` 新增可选字段 `fileEdits`（编辑类工具改了哪些文件：`path`、可选 `diff`（带 `--- <路径>` / `+++ <路径>` 头的 unified diff）、`created`、`deleted`、`truncated`；空时不落盘），给界面的「改动过的文件」面板。旧日志照常读。
+- v1 增量（2026-10-04）：`hooks_loaded` 新增可选字段 `httpPolicy`（`allowedUrls`、`allowedEnvVars`：各生效层合并后的 http hook 两道闸，随快照冻结；某道闸所有生效层都没定义时该键不落盘，**空数组是有意义的值**——`allowedUrls: []` = 拦掉所有 http hook，`allowedEnvVars: []` = 一个变量都不许插值——照常落盘；与哪一层写没写 hooks 无关；开发期曾把这两个字段挂在 `sources[]` 上，没发布，读到旧开发日志里的这两个键直接忽略）；`tool_outcome.result` 新增可选字段 `fileEdits`（编辑类工具改了哪些文件：`path`、可选 `diff`（带 `--- <路径>` / `+++ <路径>` 头的 unified diff）、`created`、`deleted`、`truncated`；空时不落盘），给界面的「改动过的文件」面板。旧日志照常读。
+- v1 增量（2026-10-04）：`memory_attached` 新增可选字段 `covered`（路径列表：这批里没有再注入、但内容已在模型上下文里的记忆路径——因内容与同批另一个文件相同而跳过的，或模型刚直接 Read 过它本身的；折叠并进「已在上下文里的记忆路径」，随挂靠的助手消息一起被压缩移出；空时不落盘）。旧日志照常读。
+- v1 增量（2026-10-04）：`subagent_origin` 新增可选字段 `omitMemory`（这个子 agent 创建时就不吃记忆：不加载记忆文件、也不按需加载；Explore / Plan 与定义里写了 omitClaudeMd 的子 agent 为 true，分身与旧日志为 false，默认值不落盘）。重新打开会话后按它决定要不要按需加载，不再靠内存里的开关。旧日志照常读。

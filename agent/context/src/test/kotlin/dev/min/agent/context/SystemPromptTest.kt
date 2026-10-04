@@ -184,6 +184,17 @@ class SystemPromptTest {
     }
 
     @Test
+    fun `a byte-truncated index reports the lines actually loaded, not the line cap`() {
+        // 25 KB 先到：只加载了 150 行，文案不能说「前 200 行」
+        val truncated = autoInfo.copy(totalLines = 180, loadedLines = 150)
+        val block = SystemPrompt.build(profile, env, autoIndex, autoMemory = truncated)[2]
+        assertEquals(
+            "MEMORY.md: 150/200 lines. The index has 180 lines and only the first 150 are loaded — consolidate it before adding more entries.",
+            block.lines().last(),
+        )
+    }
+
+    @Test
     fun `an empty index still announces the directory with zero usage`() {
         val block = SystemPrompt.build(profile, env, emptyList(), autoMemory = AutoMemoryInfo(GuestPath(memoryDir)))[2]
         assertTrue(block, block.startsWith("Auto memory:\nYour notes for this project live in $memoryDir."))

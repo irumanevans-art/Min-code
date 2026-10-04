@@ -276,7 +276,8 @@ class MinAgentEngine(
                 session.setStopping(true)
                 // 整棵树停下再卸下（后台子 agent 也停）。子 agent 被打断交来的「未做完」报告只进父会话的收件箱、
                 // 不唤醒它开新回合（hub.shutdown 的约定），下次打开时随下一句话一起交给模型
-                hub.shutdown(id)
+                // hub.shutdown 内部已重试几轮；仍卸不下（树里还有回合在跑）返回 false：行为照旧放掉订阅，但留一条警告，别静默
+                if (!hub.shutdown(id)) Log.w(TAG, "closeSession($reason): 会话树 ${id.value} 没能卸下，仍有回合在跑；订阅已放掉，运行时留在 hub 里")
                 drop(id)
             }
         }

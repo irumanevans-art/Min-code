@@ -19,8 +19,11 @@ data class MemoryLimits(
     val totalChars: Int = 50_000,
 )
 
-/** 一次加载的结果：[files] 按进上下文的顺序排好；[notes] 只给人看（跳过了什么、为什么），不进模型上下文 */
-data class MemorySnapshot(val files: List<LoadedMemoryFile>, val notes: List<String>)
+/**
+ * 一次加载的结果：[files] 按进上下文的顺序排好；[notes] 只给人看（跳过了什么、为什么），不进模型上下文。
+ * [covered]（按需加载才有）：没有注入、但内容已经在上下文里的路径——与同批已收文件内容相同的，以及模型刚直接读过的记忆文件本身
+ */
+data class MemorySnapshot(val files: List<LoadedMemoryFile>, val notes: List<String>, val covered: List<GuestPath> = emptyList())
 
 /**
  * 发现并读取记忆文件（docs/agent/04-子系统设计.md §4.6）。纯逻辑，只经 [WorkspaceFs] 端口读文件。
@@ -76,10 +79,25 @@ object MemoryLoader {
         val pathRuleRefs: MutableList<PathRuleRef>? = null,
         /** 只登记带 paths 的规则，别的什么都不收（找启动时就存在的路径规则用） */
         private val refsOnly: Boolean = false,
+        /** 按需加载：模型这批直接读过的文件。它们的内容已在工具结果里，其中是记忆文件的不再作为记忆注入，只记进 [covered] */
+        private val directReads: Set<String> = emptySet(),
+        /** 按需加载：之前的批次里已经报过问题（读不了、不是文本、导入越界……）的路径。不再读、不再报：同一个坏路径一个会话说一次 */
+        knownProblems: Set<String> = emptySet(),
     ) {
         private val homeClaude = join(home, ".claude")
         val files = mutableListOf<LoadedMemoryFile>()
         val notes = mutableListOf<String>()
+
+        /** 没有注入、但内容已经在上下文里的路径（见 [MemorySnapshot.covered]） */
+        val covered = mutableListOf<String>()
+
+        /** 报过问题的路径（含 [knownProblems]）：调用方带去下一批，当作负缓存 */
+        val problems = knownProblems.toMutableSet()
+
+        /** 记一条与 [path] 有关的问题说明；这个路径已经报过就不重复 */
+        private fun problem(path: String, note: String) {
+            if (problems.add(path)) notes += note
+        }
 
         /** 处理过（或正在处理）的路径：去重，也让导入成环时停下 */
         private val seen = alreadyIn.toMutableSet()
@@ -127,15 +145,15 @@ object MemoryLoader {
             importer: String? = null,
             rule: Boolean = source == MemorySource.Rule,
         ) {
-            if (!seen.add(path)) return
+            if (path in problems || !seen.add(path)) return
             val stat = attempt(path) { fs.stat(GuestPath(path)) }
             if (stat?.kind != FileKind.File) {
-                if (importer != null) notes += "导入的文件不存在或不是普通文件：$path（来自 $importer）"
+                if (importer != null) problem(path, "导入的文件不存在或不是普通文件：$path（来自 $importer）")
                 return
             }
             var text = read(path) ?: return
             if ('\u0000' in text) {
-                notes += "跳过 $path：看起来不是文本文件"
+                problem(path, "跳过 $path：看起来不是文本文件")
                 return
             }
             if (rule) {
@@ -163,9 +181,17 @@ object MemoryLoader {
             if (used < limits.totalChars) {
                 for (raw in MemoryMarkdown.imports(text)) importFrom(path, raw, hops)
             }
+            if (path in directReads) {
+                // 模型刚读过这个文件本身：内容已经在工具结果里，再注入一遍是重复。它的内容也算「已收」，同内容的兄弟文件随之跳过
+                bodies.putIfAbsent(text, path)
+                covered += path
+                return
+            }
             val same = bodies[text]
             if (same != null) {
                 notes += "跳过 $path：内容与 $same 相同"
+                // 跳过不等于没收：内容已经在上下文里，记下这个路径，下一批不能把它当新文件再注入
+                covered += path
                 return
             }
             bodies[text] = path
@@ -180,10 +206,10 @@ object MemoryLoader {
                     else -> join(parentOf(importer), raw)
                 },
             )
-            if (target in seen) return // 已经收过，或成环
+            if (target in seen || target in problems) return // 已经收过，或成环，或报过问题
             when {
-                hops + 1 > MAX_IMPORT_HOPS -> notes += "跳过导入 $target（来自 $importer）：导入最多 $MAX_IMPORT_HOPS 层"
-                !importable(target) -> notes += "跳过导入 $target（来自 $importer）：只导入工作区或 ~/.claude 下的文件"
+                hops + 1 > MAX_IMPORT_HOPS -> problem(target, "跳过导入 $target（来自 $importer）：导入最多 $MAX_IMPORT_HOPS 层")
+                !importable(target) -> problem(target, "跳过导入 $target（来自 $importer）：只导入工作区或 ~/.claude 下的文件")
                 else -> add(target, MemorySource.Import, hops + 1, importer)
             }
         }
@@ -198,6 +224,7 @@ object MemoryLoader {
          * 符号链接指向的文件照收（指向哪里与导入同一套范围规则）；指向目录的不跟——端口里认不出链接成环。
          */
         private suspend fun addRules(dir: String, source: MemorySource = MemorySource.Rule) {
+            if (dir in problems) return
             if (attempt(dir) { fs.stat(GuestPath(dir)) }?.kind != FileKind.Directory) return
             val entries = attempt(dir) { fs.list(GuestPath(dir)) } ?: return
             for (entry in entries.sortedBy { it.name }) {
@@ -205,10 +232,10 @@ object MemoryLoader {
                 val linked = entry.kind == FileKind.Symlink
                 val kind = if (linked) attempt(path) { fs.stat(GuestPath(path)) }?.kind else entry.kind
                 when {
-                    kind == FileKind.Directory && linked -> notes += "跳过 $path：规则目录里的符号链接目录暂不跟随"
+                    kind == FileKind.Directory && linked -> problem(path, "跳过 $path：规则目录里的符号链接目录暂不跟随")
                     kind == FileKind.Directory -> addRules(path, source)
                     kind != FileKind.File || !entry.name.endsWith(".md") -> Unit
-                    linked && !importable(path) -> notes += "跳过规则 $path：链接到工作区或 ~/.claude 之外"
+                    linked && !importable(path) -> problem(path, "跳过规则 $path：链接到工作区或 ~/.claude 之外")
                     else -> add(path, source, rule = true)
                 }
             }
@@ -249,7 +276,7 @@ object MemoryLoader {
         /** 读不了的（权限、链接成环、宿主越界）记一条说明跳过，不让一个坏文件拖垮会话创建 */
         private inline fun <T> attempt(path: String, block: () -> T): T? =
             catchingNonCancellation(block).getOrElse { e ->
-                notes += "读取 $path 失败：${e.message ?: e::class.simpleName}"
+                problem(path, "读取 $path 失败：${e.message ?: e::class.simpleName}")
                 null
             }
     }

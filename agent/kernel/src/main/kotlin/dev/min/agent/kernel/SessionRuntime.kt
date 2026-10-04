@@ -4,7 +4,6 @@ import dev.min.agent.context.AutoMemory
 import dev.min.agent.context.MemoryDiscovery
 import dev.min.agent.context.MemoryLoader
 import dev.min.agent.ext.config.RuleSpecKind
-import dev.min.agent.ext.config.ConfigSource
 import dev.min.agent.ext.config.SettingsLoader
 import dev.min.agent.ext.config.SettingsSnapshot
 import dev.min.agent.ext.hooks.HookEvent
@@ -13,6 +12,7 @@ import dev.min.agent.ext.hooks.SessionStartInput
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.HookSourceData
+import dev.min.agent.spi.HttpPolicyData
 import dev.min.agent.spi.HooksLoaded
 import kotlinx.serialization.json.jsonObject
 import dev.min.agent.protocol.ApprovalId
@@ -86,16 +86,13 @@ class SessionRuntime private constructor(
     internal var requestGate: Semaphore? = null
 
     /**
-     * 是否按需加载记忆。不加载记忆文件的子 agent（Explore / Plan、omitClaudeMd）也不按需加载；
-     * 由 [create] 在会话开始前定下，之后不变
+     * 按需加载记忆的发现器（缓存只在内存里，丢了只是多读几次盘）。没有主目录、或这是个不吃记忆的子 agent
+     * （来历里的 [dev.min.agent.spi.SubagentOrigin.omitMemory]：Explore / Plan、omitClaudeMd）时为 null。
+     * 由折叠出的来历推出，所以创建与重新打开一致
      */
-    @Volatile
-    internal var onDemandMemory: Boolean = true
-
-    /** 按需加载记忆的发现器（缓存只在内存里，丢了只是多读几次盘）。没有主目录或不按需加载时为 null */
     internal val memoryDiscovery: MemoryDiscovery? by lazy {
         val home = deps.memoryHome
-        if (home == null || !onDemandMemory) null else MemoryDiscovery(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
+        if (home == null || state.value.origin?.omitMemory == true) null else MemoryDiscovery(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
     }
 
     private val commitLock = Mutex()
@@ -157,7 +154,7 @@ class SessionRuntime private constructor(
     private suspend fun autoMemory(settings: SettingsSnapshot?, home: GuestPath): Triple<List<LoadedMemoryFile>, AutoMemoryInfo?, List<String>> {
         val merged = settings?.merged ?: return Triple(emptyList(), null, emptyList())
         val enabled = merged.autoMemoryEnabled ?: true
-        if (!enabled || deps.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY") == "1") return Triple(emptyList(), null, emptyList())
+        if (!enabled || isTruthyEnv(deps.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY"))) return Triple(emptyList(), null, emptyList())
         val override = merged.autoMemoryDirectory
         val directory = when {
             override == null -> AutoMemory.directory(deps.host.fs, state.value.created.cwd, home)
@@ -180,21 +177,15 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         loadPermissionRules(snapshot)
-        val active = snapshot.merged.activeHooks()
-        val trusted = deps.trustProjectHooks(state.value.created.cwd)
-        val (kept, untrusted) = active.partition { trusted || it.source == ConfigSource.User || it.source == ConfigSource.Managed }
-        val notes = untrusted.map { s ->
-            "${s.source.label} 层带了 ${s.hooks.size} 个事件的 hooks，这个工作区还没被信任，未启用"
-        }
-        if (kept.isNotEmpty() || notes.isNotEmpty()) {
+        // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
+        val hooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
+        val policy = hooks.httpPolicy.takeIf { it.allowedUrls != null || it.allowedEnvVars != null }
+            ?.let { HttpPolicyData(it.allowedUrls, it.allowedEnvVars) }
+        // 只有闸、没有任何 hook 也没有说明时没有东西可冻结（闸只管 http hook）
+        if (hooks.sources.isNotEmpty() || hooks.notes.isNotEmpty()) {
             // http 的两道闸随快照一起冻结：设置只在会话创建时读得到，之后 hook 执行时再看就晚了
             commit(
-                listOf(
-                    HooksLoaded(
-                        kept.map { HookSourceData(it.source.label, it.hooks, it.allowedHttpHookUrls, it.httpHookAllowedEnvVars) },
-                        notes,
-                    ),
-                ),
+                listOf(HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy)),
                 Durability.Sync,
             )
         }
@@ -394,13 +385,11 @@ class SessionRuntime private constructor(
             loadMemory: Boolean = true,
             loadSettings: Boolean = true,
             loadSkills: Boolean = true,
-            onDemandMemory: Boolean = true,
             hub: SessionHub? = null,
         ): SessionRuntime {
             val log = store.create(header)
             val records = log.append(listOf(created) + initial, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
-            runtime.onDemandMemory = onDemandMemory
             val home = deps.memoryHome
             if (home != null) {
                 // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照
@@ -436,3 +425,6 @@ class SessionRuntime private constructor(
         }
     }
 }
+
+/** 环境变量按「真」读：`1` / `true` / `yes`，不分大小写、忽略首尾空白（CC 的环境开关都是这个口径）；没设或别的值为假 */
+internal fun isTruthyEnv(value: String?): Boolean = value?.trim()?.lowercase() in setOf("1", "true", "yes")

@@ -154,7 +154,9 @@ internal fun forkInheritance(parent: SessionState, callId: CallId): List<Session
     // 按需加载的记忆同理（它们渲染在对应助手消息的工具结果之后）；发起委派的那条消息上的除外。
     // 分身的「已在上下文里的记忆路径」随这些事件在折叠里重新算出，不另外传
     val attached = inherited.dropLast(1).mapNotNull { entry ->
-        parent.memoryAttachments[entry.messageId]?.takeIf { it.isNotEmpty() }?.let { MemoryAttached(entry.messageId, it) }
+        val files = parent.memoryAttachments[entry.messageId].orEmpty()
+        val covered = parent.memoryCovered[entry.messageId].orEmpty()
+        if (files.isEmpty() && covered.isEmpty()) null else MemoryAttached(entry.messageId, files, covered = covered)
     }
     val live = parent.tasks.associateBy { it.id }
     val ids = (1..parent.taskSeq).map { it.toString() }

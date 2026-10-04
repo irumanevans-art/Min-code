@@ -140,6 +140,33 @@ class EditToolTest {
     }
 
     @Test
+    fun `新建文件标 created，空 old_string 填充已存在的空文件不算新建`() = runTest {
+        val created = edit("", "hello\n")
+        assertTrue(created.fileEdits.single().created)
+        assertEquals("--- $path\n+++ $path\n+hello", created.fileEdits.single().diff)
+
+        // 文件早就在，只是空的：给人的话照旧说「已写入」，但撤销时不能把文件删掉
+        fs.put("/work/empty.kt", "")
+        ctx.see("/work/empty.kt")
+        val filled = EditTool.call(ctx, "file_path" to "/work/empty.kt", "old_string" to "", "new_string" to "x\n")
+        assertFalse(filled.isError)
+        assertTrue(filled.text, filled.text.startsWith("已写入 /work/empty.kt。"))
+        assertFalse("文件原本就存在", filled.fileEdits.single().created)
+        assertEquals("--- /work/empty.kt\n+++ /work/empty.kt\n+x", filled.fileEdits.single().diff)
+    }
+
+    @Test
+    fun `把内容全部替换成空串不算删除文件`() = runTest {
+        seed("only\n")
+        val r = edit("only\n", "")
+        assertFalse(r.isError)
+        val edit = r.fileEdits.single()
+        assertFalse(edit.created)
+        assertFalse("编辑工具不会删文件", edit.deleted)
+        assertEquals("--- $path\n+++ $path\n-only", edit.diff)
+    }
+
+    @Test
     fun `old_string 为空但文件已有内容时拒绝`() = runTest {
         seed("content\n")
         val r = edit("", "other")

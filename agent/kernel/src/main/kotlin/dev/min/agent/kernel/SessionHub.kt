@@ -134,6 +134,16 @@ class SessionHub(
      */
     private val quietReports: MutableSet<Pair<SessionId, TurnId>> = ConcurrentHashMap.newKeySet()
 
+    /**
+     * [stopTree] 正在停的会话。盯结局的协程常常先于 stopTree 一步拿到被打断的结局并 [deliver]；
+     * 那时回合号还没记进 [quietReports]，所以 [deliver] 看到子会话在这里就一律不唤醒父会话。
+     * stopTree 收尾时先把结局记进 [quietReports]、再把会话移出这里，中间不留空档
+     */
+    private val stopping: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
+
+    /** 测试用：登记着的静音结局条数（卸下会话时该会话的条目要清掉） */
+    internal fun quietReportCount(): Int = quietReports.size
+
     /** 已经在盯着回合结局的子会话（每个只盯一次） */
     private val watched: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
 
@@ -190,29 +200,62 @@ class SessionHub(
     }
 
     /**
+     * 测试缝：[stopTree] 每停完一轮调用一次（参数是轮号，从 0 起），收集完所有轮、还没登记静音结局时再以 -1 调用一次。
+     * 用来在「打断瞬间冒出新子会话」「盯结局的协程抢先交付」这类空档里放进一件事；生产代码不设
+     */
+    @Volatile
+    internal var stopTreeProbe: (suspend (round: Int) -> Unit)? = null
+
+    /**
+     * 停下一棵子树里所有在跑的回合（界面的 ■「全部停止」）。子 agent 被打断后的报告照常交给父会话，但不唤醒它；
+     * 返回时整棵树都空闲了。不在内存里的会话不用停。
+     *
+     * 子树要反复收集（最多 [STOP_ROUNDS] 轮）：打断的瞬间，正在跑的回合可能刚委派出新的子会话，第一轮的快照里没有它。
+     * 整个过程中树里的会话都在 [stopping] 里：盯结局的协程抢在这里之前交付时不唤醒父会话（见 [deliver]）。
+     */
+    suspend fun stopTree(id: SessionId) {
+        val seen = LinkedHashSet<SessionId>()
+        try {
+            for (round in 0 until STOP_ROUNDS) {
+                val fresh = subtreeOnline(id).filter { seen.add(it) }
+                if (fresh.isEmpty()) break
+                stopping += fresh
+                val tree = seen.mapNotNull { runtimes[it] }
+                // 先记下要静音的回合再打断：结局一出现，盯结局的协程就可能去交付
+                tree.forEach { rt -> rt.state.value.turn?.let { quietReports += rt.sessionId to it.turnId } }
+                tree.forEach { it.interrupt() }
+                tree.forEach { it.awaitIdle() }
+                stopTreeProbe?.invoke(round)
+            }
+            stopTreeProbe?.invoke(-1)
+        } finally {
+            withContext(NonCancellable) {
+                // 打断时回合还没写 TurnStarted 的（刚委派、刚唤醒），结局的回合号到这里才知道。
+                // 只给有 origin 的子会话记：根会话没有盯结局的协程。先记、再移出 stopping，不留空档
+                seen.mapNotNull { runtimes[it] }.filter { it.state.value.origin != null }.forEach { rt ->
+                    rt.state.value.lastTurn?.let { quietReports += rt.sessionId to it.turnId }
+                }
+                stopping -= seen
+            }
+        }
+    }
+
+    /**
+     * 关掉一棵子树：先 [stopTree]，再卸下（日志不动，之后 [open] 能重开）。界面「关闭会话」用它，[close] 只关空闲的。
+     * 停树与卸下之间可能又起了新回合（刚被唤醒的父会话、刚委派的子会话），所以最多重试 [STOP_ROUNDS] 轮；仍卸不下返回 false
+     */
+    suspend fun shutdown(id: SessionId): Boolean {
+        repeat(STOP_ROUNDS) {
+            stopTree(id)
+            if (close(id)) return true
+        }
+        return false
+    }
+
+    /**
      * 删除一个会话及它的全部后代（日志与附件）。先中断整棵树里在跑的回合并等它们收尾，再从叶子往根逐个删：
      * 删到一半被杀时，留下的是完整的上半棵树，而不是一个找不到父会话的孤儿。返回根会话是否删掉了
      */
-    /**
-     * 停下一棵子树里所有在跑的回合（界面的 ■「全部停止」）。子 agent 被打断后的报告照常交给父会话，但不唤醒它；
-     * 返回时整棵树都空闲了。不在内存里的会话不用停
-     */
-    suspend fun stopTree(id: SessionId) {
-        val tree = subtreeOnline(id).mapNotNull { runtimes[it] }
-        // 先记下要静音的回合再打断：结局一出现，盯结局的协程就可能去交付
-        tree.forEach { rt -> rt.state.value.turn?.let { quietReports += rt.sessionId to it.turnId } }
-        tree.forEach { it.interrupt() }
-        tree.forEach { it.awaitIdle() }
-        // 打断时回合还没写 TurnStarted 的（刚委派、刚唤醒），结局的回合号到这里才知道
-        tree.forEach { rt -> rt.state.value.lastTurn?.let { quietReports += rt.sessionId to it.turnId } }
-    }
-
-    /** 关掉一棵子树：先 [stopTree]，再卸下（日志不动，之后 [open] 能重开）。界面「关闭会话」用它，[close] 只关空闲的 */
-    suspend fun shutdown(id: SessionId): Boolean {
-        stopTree(id)
-        return close(id)
-    }
-
     suspend fun delete(root: SessionId): Boolean {
         val headers = store.list()
         val childrenOf = headers.filter { it.parent != null }.groupBy({ it.parent!! }, { it.sessionId })
@@ -310,15 +353,15 @@ class SessionHub(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
                 tools = toolsFor(definition, depth), instructions = definition.instructions, maxTurns = definition.maxTurns,
+                omitMemory = definition.omitMemory,
             )
         }
         val background = request.background || definition?.alwaysBackground == true
 
         val child = SessionRuntime.create(
             store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps),
+            // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载（来历里的 omitMemory 管着，重开后同样）；分身照常——它接着父会话的活干
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
-            // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载；分身照常——它接着父会话的活干
-            onDemandMemory = definition == null || !definition.omitMemory,
         )
         child.requestGate = childGate
         register(child)
@@ -368,7 +411,7 @@ class SessionHub(
         // hooks 同理：父会话的门禁（PreToolUse 拦危险命令之类）在子 agent 里照样生效
         return listOfNotNull(
             if (rules.isEmpty()) null else PermissionRulesLoaded(rules),
-            if (parent.hooks.isEmpty()) null else HooksLoaded(parent.hooks),
+            if (parent.hooks.isEmpty()) null else HooksLoaded(parent.hooks, httpPolicy = parent.hooksHttpPolicy),
         )
     }
 
@@ -426,6 +469,7 @@ class SessionHub(
         observers.remove(id)?.cancel()
         watchJobs.remove(id)?.cancel()
         watched -= id
+        quietReports.removeIf { it.first == id }
         runtimes.remove(id)
         synchronized(summaryLock) {
             runningIds -= id
@@ -491,6 +535,8 @@ class SessionHub(
      * 报告只进收件箱，等人决定（02 §5）。
      */
     private suspend fun deliver(child: SessionRuntime, ended: EndedTurn, autoStart: Boolean) {
+        // 先取（并消耗）静音记录，再做别的判断：放在 && 链里会被前面的条件短路掉，留下永远不被清的条目
+        val quiet = quietReports.remove(child.sessionId to ended.turnId)
         val origin = child.state.value.origin ?: return
         val parent = open(origin.parent) ?: return
         val summary = parent.state.value.children[child.sessionId] ?: return
@@ -504,7 +550,7 @@ class SessionHub(
             listOf(TextPart(report)),
             Delivery.Steer,
             InputOrigin.Agent(child.sessionId, AgentInputKind.Report, ended.turnId),
-            startTurn = if (autoStart && parentHealthy && !restarted && !quietReports.remove(child.sessionId to ended.turnId)) {
+            startTurn = if (autoStart && parentHealthy && !restarted && !quiet && child.sessionId !in stopping) {
                 TurnTrigger.Notification
             } else null,
         )
@@ -556,5 +602,8 @@ class SessionHub(
 
     private companion object {
         const val AGENT_TOOL = "Agent"
+
+        /** [stopTree] 收集子树、[shutdown] 重试「停树 + 卸下」的最多轮数 */
+        const val STOP_ROUNDS = 3
     }
 }

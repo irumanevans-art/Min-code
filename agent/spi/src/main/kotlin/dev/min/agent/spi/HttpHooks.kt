@@ -16,8 +16,11 @@ data class HttpHookRequest(
 )
 
 sealed interface HttpHookResult {
-    /** 收到响应：任何状态码都算，2xx 与否由引擎判断 */
-    data class Responded(val status: Int, val body: String) : HttpHookResult
+    /**
+     * 收到响应：任何状态码都算，2xx 与否由引擎判断。响应体有上限（实现自定，Min 的宿主实现是 1 MiB），
+     * 超出的部分丢掉并置 [truncated]——被截断的 JSON 多半解析不了，调用方要把这件事告诉人
+     */
+    data class Responded(val status: Int, val body: String, val truncated: Boolean = false) : HttpHookResult
 
     /** 连不上、DNS、TLS 等失败。error 是给人看的一句说明，不含请求头 */
     data class Failed(val error: String) : HttpHookResult

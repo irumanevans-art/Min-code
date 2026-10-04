@@ -81,6 +81,11 @@ data class AutoMemoryInfo(
  * 挂在**发起这批调用的助手消息**上，模型视图里渲染在那批工具结果之后（hook 上下文之后）。
  * [files] 的 content 是进模型的原样文本，与会话创建时的快照同一套加工（规则去 frontmatter、超长截断带说明）；
  * [notes] 只给人看。
+ *
+ * [covered]：这批里**没有**再注入、但内容已经在模型上下文里的记忆路径——因内容与同批另一个文件相同而跳过的
+ * （`CLAUDE.md` 与 `AGENTS.md` 内容一样），或模型刚直接 Read 过它本身（内容已在工具结果里）。折叠把它们并进
+ * 「已在上下文里的记忆路径」，之后不会因为它们没被注入过而在下一批又当新文件注入一遍；它们跟着挂靠的助手消息，
+ * 那条消息被压缩摘要掉时一起移出。默认空，不落盘。
  */
 @Serializable
 @SerialName("memory_attached")
@@ -88,4 +93,5 @@ data class MemoryAttached(
     val assistantMessageId: MessageId,
     val files: List<LoadedMemoryFile>,
     val notes: List<String> = emptyList(),
+    val covered: List<GuestPath> = emptyList(),
 ) : SessionEvent

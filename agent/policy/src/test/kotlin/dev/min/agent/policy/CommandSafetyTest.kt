@@ -105,6 +105,26 @@ class CommandSafetyTest {
     }
 
     @Test
+    fun `the memory and plan exemption does not cover repository metadata or agent config hidden below it`() {
+        listOf(
+            "/p/.claude/plans/x/.git/hooks/pre-commit",
+            "/p/.claude/projects/k/memory/.git/config",
+            "/p/.claude/projects/k/memory/.claude/settings.json",
+            "/p/.claude/plans/.claude/skills/x/SKILL.md",
+            "/repo/.git/modules/m/.claude/plans/y.md",
+            "/p/.claude/.claude/plans/y.md",
+            "/p/.claude/plans/.bashrc",
+            "/p/.claude/projects/k/memory/.mcp.json",
+            "/p/.claude/plans", "/p/.claude/projects/k/memory",
+            "/p/.claude/projects/k/other/x.md",
+        ).forEach { assertTrue("应受保护：$it", CommandSafety.isProtectedPath(it)) }
+        listOf(
+            "/p/.claude/plans/x.md", "/p/.claude/plans/sub/dir/y.md",
+            "/root/.claude/projects/-workspace/memory/topics/a.md", "/root/.claude/projects/-workspace/memory/MEMORY.md",
+        ).forEach { assertFalse("不应受保护：$it", CommandSafety.isProtectedPath(it)) }
+    }
+
+    @Test
     fun `danger reasons explain themselves`() {
         assertEquals("递归删除关键路径 /", danger("rm -rf /"))
     }
