@@ -10,7 +10,7 @@
 - **新增一个「长寿进程」端口**：现在的 `Exec` 只有「跑完才返回」，stdio 服务器需要一个能一直读写 stdin / stdout 的进程。桌面用 `ProcessBuilder`，Android 进 proot，按进程组回收。
 - **工具表按会话冻结**：会话创建时连上的服务器、它们的工具 schema 写进日志快照，会话内不变，提示缓存不断。工具多到超过窗口 10% 时改走 ToolSearch 按需加载（§5）。后连上的、`list_changed` 带来的变化**在下一回合开始时**生效（一次缓存失效，给人一条说明）。
 - **默认问人**：MCP 工具一律当「有副作用」处理，Default 模式下要审批；规则写法与 CC 相同（`mcp__server`、`mcp__server__*`、`mcp__server__tool`）。服务器自称只读（`readOnlyHint`）只用来决定能不能并行，不用来免审批（规范：注解不可信）。
-- **待你拍板**：远程（HTTP）服务器的 OAuth。见 §10。拍板前先只支持「请求头带令牌」与无鉴权的远程服务器，加上全部 stdio 服务器。
+- **远程服务器的 OAuth 做**（2026-10-04 拍板，§10）：令牌存 Android Keystore，放在 MCP3；之前先支持「请求头带令牌」与无鉴权的远程服务器，加上全部 stdio 服务器。
 
 ## 1. 协议层：自己写，不用 SDK
 
@@ -129,16 +129,14 @@ interface LiveProcess {
 - **roots**：回应会话 cwd（以后加上 additional dirs），集合变化发 `list_changed`。
 - **sampling**：不声明（CC 文档也没有）。
 
-## 10. OAuth（待拍板）
+## 10. OAuth（已拍板：做）
 
 远程服务器回 401 时需要 OAuth 2.1：发现（RFC 9728 → RFC 8414）、注册（预置 → CIMD → 动态注册）、PKCE S256、`resource` 参数、`iss` 校验、令牌刷新。在 Android 上的做法会是：Custom Tab 打开授权页，回调走 App 内一个只监听 127.0.0.1 的临时端口，令牌存 Android Keystore（与模型 key 同等对待：不进 rootfs、日志、事件）。
 
-**这意味着 Min 自己保存第三方服务的 OAuth 令牌。** 与「Min 不碰 Claude 订阅凭证」是两件事，但同样是凭证，所以先问：
+**这意味着 Min 自己保存第三方服务的 OAuth 令牌。** 与「Min 不碰 Claude 订阅凭证」是两件事（后者仍然不碰）。
 
-- A：做（MCP3 分期），令牌存 Keystore，界面上能逐个服务器「退出登录」；
-- B：不做，只支持请求头带令牌（用户自己在配置里写 `Authorization`）与无鉴权的远程服务器。
-
-拍板前按 B 推进，OAuth 留空位。
+2026-10-04 拍板：**做**（MCP3），令牌存 Keystore，界面上能逐个服务器「退出登录」。桌面 CLI 的令牌存放另议（不进仓库、不进日志，至少用系统凭证库）。
+MCP1 / MCP2 期间远程服务器只支持请求头带令牌（用户自己在配置里写 `Authorization`，或 `headersHelper`）与无鉴权；回 401 时状态标 `needs-auth`，说明「OAuth 登录还没做」。
 
 ## 11. 事件与格式
 
@@ -152,9 +150,11 @@ interface LiveProcess {
 | 期 | 内容 | 谁 |
 |---|---|---|
 | MCP0 | 长寿进程端口（spi + 桌面实现 + proot 实现，进程组回收、配额）与集成测试 | GPT（Android 侧要真机或模拟器验证）；**已完成**（桌面真进程集成测试、模拟器 `op proc-probe` 验收通过；配额 8 暂定，待真机） |
-| MCP1 | `:agent:mcp`：JSON-RPC、2025-11-25 握手、stdio 与 Streamable HTTP（含会话 id、SSE 续传）、tools/list 分页、tools/call、取消、进度、ping、list_changed；配置读取与信任 / 批准（§3）；McpManager（§4）；工具适配器、命名、快照、全量模式（§5.1–5.3 全量部分）、权限与结果（§6–7）；用官方参考服务器录真帧做回放测试 | O 写骨架与接口 → GPT 实现 → O 复核 |
+| MCP1a | 协议层 `:agent:mcp`：JSON-RPC、2025-11-25 握手（按「代」分开）、stdio / Streamable HTTP / 旧 SSE 三种传输（含会话 id、SSE 续传）、tools/list 分页、tools/call、取消、进度、ping、list_changed；`HttpTransport` 加原样响应的流式接口；官方参考服务器录真帧做回放测试 | GPT（2026-10-05 派出） |
+| MCP1b | 配置读取与信任 / 批准（§3）：`:agent:ext` 的 `McpConfigLoader`，产出带闸门结论的服务器表；批准写回 `settings.local.json`；兼容样本集（格式两单共用） | GLM 5.3 写加载器、Flash 写样本（2026-10-05 派出） |
+| MCP1c | McpManager（§4）、工具适配器、命名、快照与事件、全量模式（§5.1–5.3 全量部分）、权限与结果（§6–7）、内核与两个宿主接线 | O（等 1a / 1b 合入） |
 | MCP2 | resources / prompts（§8）、按需模式与 ToolSearch（§5.3）、elicitation / roots（§9） | GLM 5.3 / Sonnet |
-| MCP3 | OAuth（§10，待拍板） | 待定 |
+| MCP3 | OAuth（§10，已拍板做） | 待定 |
 | MCP4 | 2026-07-28 现代协议（discover、MRTR、`subscriptions/listen`、新的请求头）与两代自动探测 | GPT |
 | — | 界面：服务器面板（状态、工具数、stderr、重连、开关）、批准卡片、elicitation 卡片 | 随 M2-B B7 |
 
