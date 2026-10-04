@@ -154,7 +154,7 @@ class SessionRuntime private constructor(
     private suspend fun autoMemory(settings: SettingsSnapshot?, home: GuestPath): Triple<List<LoadedMemoryFile>, AutoMemoryInfo?, List<String>> {
         val merged = settings?.merged ?: return Triple(emptyList(), null, emptyList())
         val enabled = merged.autoMemoryEnabled ?: true
-        if (!enabled || deps.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY") == "1") return Triple(emptyList(), null, emptyList())
+        if (!enabled || isTruthyEnv(deps.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY"))) return Triple(emptyList(), null, emptyList())
         val override = merged.autoMemoryDirectory
         val directory = when {
             override == null -> AutoMemory.directory(deps.host.fs, state.value.created.cwd, home)
@@ -425,3 +425,6 @@ class SessionRuntime private constructor(
         }
     }
 }
+
+/** 环境变量按「真」读：`1` / `true` / `yes`，不分大小写、忽略首尾空白（CC 的环境开关都是这个口径）；没设或别的值为假 */
+internal fun isTruthyEnv(value: String?): Boolean = value?.trim()?.lowercase() in setOf("1", "true", "yes")

@@ -150,6 +150,12 @@ class AutoMemorySessionTest {
     }
 
     @Test
+    fun `the off switch reads the usual truthy spellings`() {
+        listOf("1", "true", "TRUE", " yes ").forEach { assertTrue(it, isTruthyEnv(it)) }
+        listOf(null, "", "0", "false", "no", "2").forEach { assertFalse(it.toString(), isTruthyEnv(it)) }
+    }
+
+    @Test
     fun `the environment variable forces it off`() = run {
         fs.put("$memoryDir/MEMORY.md", "user.md: x\n")
         scripted = ScriptedModel(reply(TextPart("好")))
