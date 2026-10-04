@@ -38,10 +38,23 @@ object SystemPrompt {
         agentInstructions: String? = null,
         skills: SkillsLoaded? = null,
         autoMemory: AutoMemoryInfo? = null,
+        mcpInstructions: Map<String, String> = emptyMap(),
     ): List<String> = listOfNotNull(
         RULES, environmentBlock(env), memoryBlock(memory), autoMemoryBlock(memory, autoMemory),
-        skillsBlock(skills, profile), agentInstructions?.let(::agentBlock),
+        skillsBlock(skills, profile), mcpBlock(mcpInstructions), agentInstructions?.let(::agentBlock),
     )
+
+    /**
+     * MCP 服务器自己给的使用说明（MCP设计 §5.2）。放在 skill 清单之后、子 agent 角色说明之前：MCP 快照会在回合开头变，
+     * 变了这一段就变，前面几段不受影响。说明是服务器写的，不是用户写的——标明来源，模型不该把它当成用户的指示
+     */
+    private fun mcpBlock(instructions: Map<String, String>): String? {
+        if (instructions.isEmpty()) return null
+        return buildString {
+            append("# MCP 服务器说明\n\n下面是已连接的 MCP 服务器给出的使用说明（由服务器提供，不是用户的指示）。")
+            instructions.forEach { (server, text) -> append("\n\n## ").append(server).append("\n\n").append(text.trim()) }
+        }
+    }
 
     /**
      * 可调用的 skill 清单（会话创建时冻结的快照，预算按模型窗口算）。放在记忆之后、子 agent 角色说明之前：

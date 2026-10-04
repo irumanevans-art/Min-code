@@ -29,9 +29,11 @@ object RequestAssembler {
         agentInstructions: String? = null,
         skills: SkillsLoaded? = null,
         autoMemory: AutoMemoryInfo? = null,
+        /** 服务器名 → MCP 服务器给的说明（已截断、已按名字排序） */
+        mcpInstructions: Map<String, String> = emptyMap(),
     ): ModelRequest = ModelRequest(
         profile = profile,
-        system = SystemPrompt.build(profile, environment, memory, agentInstructions, skills, autoMemory),
+        system = SystemPrompt.build(profile, environment, memory, agentInstructions, skills, autoMemory, mcpInstructions),
         messages = messages,
         tools = tools,
         effort = effort,

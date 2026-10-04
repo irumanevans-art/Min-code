@@ -68,7 +68,11 @@ import kotlin.coroutines.cancellation.CancellationException
  */
 internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: HookDriver = HookDriver(rt)) {
     private val deps = rt.deps
-    private val registry: Map<String, Tool<*>> = availableTools(rt.state.value, deps).associateBy { it.name }
+    /** 现在能用的工具。MCP 快照会在回合开头变（[SessionRuntime.applyStagedMcp]），所以每批调用前重算一次 */
+    @Volatile
+    private var registry: Map<String, Tool<*>> = currentTools()
+
+    private fun currentTools(): Map<String, Tool<*>> = availableTools(rt.state.value, deps, rt.mcpCaller).associateBy { it.name }
     private val parallelism = Semaphore(deps.maxParallelTools)
 
     /**
@@ -105,6 +109,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     suspend fun executeAll(turnId: TurnId, calls: List<ToolCallPart>) {
+        registry = currentTools()
         val prepared = calls.map(::prepare)
         rt.commit(
             prepared.map { p ->

@@ -138,6 +138,10 @@ data class SessionState(
     val rewound: List<RewoundSegment> = emptyList(),
     /** 做过的恢复代码，按顺序（「撤销这次回滚」从这里找回滚前快照） */
     val restores: List<dev.min.agent.spi.FilesRestored> = emptyList(),
+    /** 最后一份 MCP 服务器清单（MCP设计 §11）；没接 MCP 的会话为 null */
+    val mcpServers: dev.min.agent.spi.McpServersLoaded? = null,
+    /** 最后一份生效的 MCP 工具快照：工具表 = 内置工具 + 它（经 [visibleMcpTools] 过滤） */
+    val mcpTools: dev.min.agent.spi.McpToolsSnapshot? = null,
 )
 
 data class CompactionView(
