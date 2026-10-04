@@ -1,0 +1,2 @@
+# 样本里的 .claude/ 是被测数据（记忆与规则文件），仓库根的 .gitignore 为忽略工作树目录而排除了 .claude/
+!.claude/
