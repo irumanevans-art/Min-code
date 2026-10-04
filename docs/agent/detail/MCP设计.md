@@ -152,7 +152,7 @@ MCP1 / MCP2 期间远程服务器只支持请求头带令牌（用户自己在�
 | MCP0 | 长寿进程端口（spi + 桌面实现 + proot 实现，进程组回收、配额）与集成测试 | GPT（Android 侧要真机或模拟器验证）；**已完成**（桌面真进程集成测试、模拟器 `op proc-probe` 验收通过；配额 8 暂定，待真机） |
 | MCP1a | 协议层 `:agent:mcp`：JSON-RPC、2025-11-25 握手（按「代」分开）、stdio / Streamable HTTP / 旧 SSE 三种传输（含会话 id、SSE 续传）、tools/list 分页、tools/call、取消、进度、ping、list_changed；`HttpTransport` 加原样响应的流式接口；官方参考服务器录真帧做回放测试 | GPT（2026-10-05 派出） |
 | MCP1b | 配置读取与信任 / 批准（§3）：`:agent:ext` 的 `McpConfigLoader`，产出带闸门结论的服务器表；批准写回 `settings.local.json`；兼容样本集（格式两单共用） | GLM 5.3 写加载器、Flash 写样本（2026-10-05 派出） |
-| MCP1c | McpManager（§4）、工具适配器、命名、快照与事件、全量模式（§5.1–5.3 全量部分）、权限与结果（§6–7）、内核与两个宿主接线 | O（等 1a / 1b 合入） |
+| MCP1c | McpManager（§4）、工具适配器、命名、快照与事件、全量模式（§5.1–5.3 全量部分）、权限与结果（§6–7）、内核与两个宿主接线 | O。**底子已合入（2026-10-05）**：`mcp_servers_loaded` / `mcp_tools_snapshot` 事件与折叠、工具表 = 内置 + 快照（MCP 在后）、系统提示的「MCP 服务器说明」段、变化排到回合开头生效、命名（64 字符 + 哈希）与 schema 整形、工具适配器（默认问人、只读提示只管并行、`requiresUserInteraction` 恒问）、整工具 deny 从工具表去掉、子 agent 按定义里的 `mcp__` 写法筛、分身与子 agent 继承快照；调用经内核内部的 `McpCaller`。**剩下**（等 1a / 1b）：McpManager（连接、首个快照等 5 秒、stdio 重启一次、引用计数）、配置 → 快照的管线、结果转换（§7）、超时与取消、list_changed 接到排队、两个宿主接线 |
 | MCP2 | resources / prompts（§8）、按需模式与 ToolSearch（§5.3）、elicitation / roots（§9） | GLM 5.3 / Sonnet |
 | MCP3 | OAuth（§10，已拍板做） | 待定 |
 | MCP4 | 2026-07-28 现代协议（discover、MRTR、`subscriptions/listen`、新的请求头）与两代自动探测 | GPT |

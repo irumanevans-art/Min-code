@@ -137,9 +137,14 @@ class ChaosRecoveryTest {
                 }
                 runtime.awaitIdle()
             }
+            // 驱动用 onJoin 等：注入的死亡会让驱动以 IOException 结束，与 died 几乎同时就绪；
+            // onAwait 被选中时会把这个预期之中的异常原样抛出，满负载下偶发失败。别的异常照样要暴露
             select<Unit> {
                 boundary.died.onAwait { }
-                driver.onAwait { }
+                driver.onJoin { }
+            }
+            if (driver.isCompleted && !driver.isCancelled) {
+                driver.getCompletionExceptionOrNull()?.let { if (it !is IOException) throw it }
             }
             // 正常完成的端点也算一次；其余端点必须确实触发死亡。
             val wasDead = boundary.dead
