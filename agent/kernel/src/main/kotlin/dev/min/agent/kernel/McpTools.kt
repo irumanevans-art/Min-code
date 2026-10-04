@@ -1,0 +1,225 @@
+package dev.min.agent.kernel
+
+import dev.min.agent.policy.PermissionRule
+import dev.min.agent.policy.PolicyContext
+import dev.min.agent.policy.PolicyEngine
+import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.SessionId
+import dev.min.agent.protocol.TextPart
+import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HarnessProfile
+import dev.min.agent.spi.McpToolEntry
+import dev.min.agent.spi.PermissionAsk
+import dev.min.agent.spi.ResumePolicy
+import dev.min.agent.spi.Tool
+import dev.min.agent.spi.ToolContext
+import dev.min.agent.spi.ToolInput
+import dev.min.agent.spi.ToolProgress
+import dev.min.agent.spi.ToolResult
+import dev.min.agent.spi.ToolTraits
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import java.security.MessageDigest
+
+/*
+ * MCP 工具在内核里的样子（docs/agent/detail/MCP设计.md §5、§6）：一个 MCP 工具就是一个普通 Tool（适配器），
+ * 走现有的审批、hooks、结果预算与日志。协议、连接、配置在 :agent:mcp / :agent:ext，经 [McpCaller] 接进来。
+ */
+
+/** 一次 MCP 工具调用要的东西。[progress] 收服务器的进度说明（界面的工具卡上显示） */
+internal data class McpCallRequest(
+    val server: String,
+    val tool: String,
+    val arguments: JsonObject,
+    val sessionId: SessionId,
+    val callId: CallId,
+    val progress: (String) -> Unit,
+)
+
+/**
+ * MCP 工具的调用口：McpManager 实现（按服务器找连接、超时与取消、结果转换）。
+ * 调用方协程被取消时实现要发 `notifications/cancelled` 并让取消照常传出去；其余失败一律变成错误结果，不抛异常
+ */
+internal fun interface McpCaller {
+    suspend fun call(request: McpCallRequest): ToolResult
+
+    companion object {
+        val Unavailable = McpCaller { r ->
+            ToolResult(listOf(TextPart("MCP 服务器 ${r.server} 现在不可用（这个环境没有接上 MCP）。")), isError = true)
+        }
+    }
+}
+
+/** MCP 工具的结果预算：CC 默认 25,000 token，按每 token 约 3.2 个字符折算 */
+internal const val MCP_RESULT_BUDGET_CHARS = 80_000
+
+/** `_meta["anthropic/maxResultSizeChars"]` 的上限（CC 同） */
+internal const val MCP_MAX_RESULT_CHARS = 500_000
+
+/**
+ * 一个 MCP 工具的适配器（设计 §6）：traits 的 `readOnly` 恒为假（默认问人），`concurrencySafe` 取服务器自称的只读
+ * （只影响能不能并行），进程被杀后不重放（结果未知）。`requiresUserInteraction` 的工具任何模式都问人。
+ * 入参原样转给服务器：schema 校验是服务器的事，内核只在快照时排除 schema 不合法的工具。
+ */
+internal class McpToolAdapter(private val entry: McpToolEntry, private val caller: McpCaller) : Tool<JsonObject> {
+    override val name: String = entry.name
+    override val inputSchema: JsonObject = entry.inputSchema
+    override val traits = ToolTraits(
+        readOnly = false,
+        concurrencySafe = entry.readOnlyHint,
+        resumePolicy = ResumePolicy.Unknown,
+        resultBudgetChars = entry.maxResultChars?.coerceIn(1, MCP_MAX_RESULT_CHARS) ?: MCP_RESULT_BUDGET_CHARS,
+        alwaysAsk = entry.requiresUserInteraction,
+    )
+
+    override fun description(profile: HarnessProfile): String = entry.description
+
+    override fun parse(raw: JsonObject): ToolInput<JsonObject> = ToolInput.Valid(raw)
+
+    override fun permissionAsk(input: JsonObject, ctx: ToolContext): PermissionAsk =
+        PermissionAsk(name, "调用 MCP 服务器 ${entry.server} 的工具 ${entry.tool}")
+
+    override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = channelFlow {
+        val result = caller.call(
+            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId) { text -> trySend(ToolProgress.Status(text)) },
+        )
+        send(ToolProgress.Done(result))
+    }
+}
+
+/** 全名分配（设计 §5.1） */
+internal object McpNames {
+    /** OpenAI 系函数名上限 64，取各家最严 */
+    const val MAX_LENGTH = 64
+
+    private val ILLEGAL = Regex("[^A-Za-z0-9_-]")
+
+    fun sanitize(part: String): String = ILLEGAL.replace(part, "_")
+
+    /**
+     * 每个 (服务器, 工具) 原名 → 全名 `mcp__服务器__工具`。按原名排序后依次分配：先到的用干净的名字，
+     * 超长或清洗后撞名的截断并追加原名的 8 位哈希（Codex 的做法：确定性，同一组工具永远得到同一组名字）
+     */
+    fun assign(pairs: Collection<Pair<String, String>>): Map<Pair<String, String>, String> {
+        val result = LinkedHashMap<Pair<String, String>, String>()
+        val used = HashSet<String>()
+        for (pair in pairs.distinct().sortedWith(compareBy({ it.first }, { it.second }))) {
+            val base = "mcp__${sanitize(pair.first)}__${sanitize(pair.second)}"
+            var name = if (base.length <= MAX_LENGTH) base else hashed(base, pair)
+            if (name in used) name = hashed(base, pair)
+            var n = 2
+            val stem = name
+            while (name in used) name = stem.take(MAX_LENGTH - 3) + "_" + n++
+            used += name
+            result[pair] = name
+        }
+        return result
+    }
+
+    private fun hashed(base: String, pair: Pair<String, String>): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest("${pair.first}\u0000${pair.second}".toByteArray(Charsets.UTF_8))
+        val hash = digest.take(4).joinToString("") { "%02x".format(it) }
+        return base.take(MAX_LENGTH - hash.length - 1) + "_" + hash
+    }
+}
+
+/** 快照时对服务器给的工具定义做的整形（设计 §5.2，与 CC 同） */
+internal object McpShaping {
+    /** 工具说明与服务器说明的截断长度（CC 同，`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` 的默认值） */
+    const val MAX_DESCRIPTION = 2048
+
+    private val PROPERTY_NAME = Regex("^[A-Za-z0-9_.-]{1,64}$")
+
+    fun truncate(text: String, max: Int = MAX_DESCRIPTION): String = if (text.length <= max) text else text.take(max) + "…"
+
+    sealed interface Shaped {
+        /** [descriptionPrefix] 是压平根级组合时要加在工具说明前面的一句话 */
+        data class Ok(val schema: JsonObject, val descriptionPrefix: String?) : Shaped
+
+        data class Excluded(val reason: String) : Shaped
+    }
+
+    /**
+     * 根级 `anyOf` / `oneOf` / `allOf` 压平成一个 object：allOf 合并属性并保留各分支的 required；
+     * anyOf / oneOf 合并属性，各分支的 required 只写进说明、不强制（强制了会把合法的组合拒掉）。
+     * 顶层属性名必须是 1–64 个 `[A-Za-z0-9_.-]`，否则排除这个工具（各家 API 对属性名都有这条限制）。
+     * 完整的 JSON Schema 元模式校验没做：坏 schema 由供应商的 400 兜底（那时会给出是哪个工具）
+     */
+    fun shape(raw: JsonObject): Shaped {
+        val type = (raw["type"] as? JsonPrimitive)?.content
+        if (type != null && type != "object") return Shaped.Excluded("inputSchema 的根类型是 $type，不是 object")
+        var prefix: String? = null
+        val flattened = when {
+            raw["allOf"] is JsonArray -> flatten(raw, "allOf", requiredEnforced = true)
+            raw["anyOf"] is JsonArray -> flatten(raw, "anyOf", requiredEnforced = false).also { prefix = it.second }
+            raw["oneOf"] is JsonArray -> flatten(raw, "oneOf", requiredEnforced = false).also { prefix = it.second }
+            else -> raw to null
+        }.first
+        val withType = if (flattened["type"] == null) JsonObject(flattened + ("type" to JsonPrimitive("object"))) else flattened
+        val properties = withType["properties"] as? JsonObject
+        properties?.keys?.firstOrNull { !PROPERTY_NAME.matches(it) }?.let { bad ->
+            return Shaped.Excluded("参数名「$bad」不合规（只能是 1–64 个字母、数字或 _ . -）")
+        }
+        return Shaped.Ok(withType, prefix)
+    }
+
+    private fun flatten(raw: JsonObject, key: String, requiredEnforced: Boolean): Pair<JsonObject, String?> {
+        val branches = (raw[key] as JsonArray).mapNotNull { it as? JsonObject }
+        val properties = LinkedHashMap<String, JsonElement>()
+        (raw["properties"] as? JsonObject)?.forEach { (k, v) -> properties[k] = v }
+        branches.forEach { b -> (b["properties"] as? JsonObject)?.forEach { (k, v) -> properties.putIfAbsent(k, v) } }
+        val baseRequired = requiredOf(raw)
+        val branchRequired = branches.map(::requiredOf)
+        val required = if (requiredEnforced) (baseRequired + branchRequired.flatten()).distinct() else baseRequired
+        val out = LinkedHashMap<String, JsonElement>(raw)
+        out.remove(key)
+        out["type"] = JsonPrimitive("object")
+        out["properties"] = JsonObject(properties)
+        if (required.isEmpty()) out.remove("required") else out["required"] = JsonArray(required.map(::JsonPrimitive))
+        val note = if (requiredEnforced) null else {
+            val combos = branchRequired.filter { it.isNotEmpty() }.joinToString("；") { it.joinToString("、") }
+            if (combos.isEmpty()) null else "参数有几种组合，每次按其中一种给全：$combos。"
+        }
+        return JsonObject(out) to note
+    }
+
+    private fun requiredOf(o: JsonObject): List<String> =
+        (o["required"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty()
+}
+
+/** 子 agent 定义里的 MCP 写法对着全名匹配：`mcp__*` 全部，`mcp__服务器` 与 `mcp__服务器__*` 整个服务器，否则精确 */
+internal fun matchesMcpPattern(pattern: String, toolName: String): Boolean {
+    if (pattern == "mcp__*") return toolName.startsWith("mcp__")
+    val prefix = pattern.removeSuffix("__*")
+    return toolName == prefix || toolName.startsWith("${prefix}__")
+}
+
+/**
+ * 这个会话的模型看得到的 MCP 工具：最后一份快照里的，去掉子 agent 定义不给的、整工具 deny 规则禁掉的（设计 §6）。
+ * 纯函数（只看状态与依赖）：同一段日志组出同一张工具表
+ */
+internal fun SessionState.visibleMcpTools(deps: KernelDeps): List<McpToolEntry> {
+    val all = mcpTools?.tools.orEmpty()
+    if (all.isEmpty()) return emptyList()
+    val o = origin
+    val policy = PolicyContext(
+        mode = settings.mode,
+        rules = (rules + sessionRules).mapNotNull(PermissionRule::from),
+        cwd = settings.cwd,
+        home = deps.memoryHome ?: GuestPath("/root"),
+    )
+    return all.filter { t ->
+        val byAgent = o == null || (o.mcpDenied.none { matchesMcpPattern(it, t.name) } && (o.mcpTools?.any { matchesMcpPattern(it, t.name) } ?: true))
+        byAgent && !PolicyEngine.deniesWholeTool(t.name, policy)
+    }
+}
+
+/** 系统提示里「MCP 服务器说明」那一段的原料：只列模型看得到工具的服务器，按服务器名排序 */
+internal fun SessionState.mcpInstructionsFor(visible: List<McpToolEntry>): Map<String, String> {
+    val servers = visible.map { it.server }.toSet()
+    return mcpTools?.instructions.orEmpty().filterKeys { it in servers }.toSortedMap()
+}

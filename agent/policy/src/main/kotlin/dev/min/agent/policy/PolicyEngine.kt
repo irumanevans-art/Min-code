@@ -99,6 +99,15 @@ object PolicyEngine {
     }
 
     /**
+     * 没带括号的 deny 规则整个禁掉了 [tool]（`mcp__github`、`mcp__github__*`、`mcp__*`……）：这样的工具不进工具表，
+     * 模型根本看不到它（与 CC 一致：「deny 的裸名 / 通配会把工具从模型上下文移除」）。现在只用于 MCP 工具
+     */
+    fun deniesWholeTool(tool: String, context: PolicyContext): Boolean {
+        val matcher = RuleMatcher(context.cwd, context.home)
+        return context.rules.any { it.kind == RuleKind.Deny && it.specifier == null && matcher.matchesTool(it, tool) }
+    }
+
+    /**
      * hooks 的 `if` 字段：一条权限规则写法的条件，对这次调用成不成立（docs/agent/detail/hooks设计.md §4）。
      * 与 Claude Code 一致：Bash 逐个子命令判断，任何一个子命令命中就算；**看不透的命令一律算成立**——
      * 判断不了就跑 hook，hook 是门禁时宁可多跑一次。写法认不出时不成立（调用方记一条说明）。

@@ -76,3 +76,5 @@
   `files_restored`：一次恢复代码（回到 `checkpointId`、按编辑记录撤销 `calls`、或撤销 `undoOf` 那次恢复），`preRestore` 是恢复前拍的快照（拍不成时缺省）、`restored` / `deleted` / `skipped`（带原因）；折叠时在下一条人发的消息前给模型一段说明。
   `conversation_rewound`：对话回到 `toMessageId` 那条用户消息落盘之前——对话范围的状态（历史、工具结果、hook 上下文、按需记忆、遮蔽与压缩视图、任务清单，见内核 `ConversationScope`）换回，会话范围的（设置、会话规则、各种冻结快照、用量、任务编号、检查点与编辑记录）保持；被回退的消息不删，折叠进界面用的「已回退」段。
   `tool_outcome.result.fileEdits[]` 新增可选字段 `before`、`after`（内容 id：原文的 SHA-256；内容在宿主的快照仓库里——Android 在 App 私有目录、桌面在 `~/.min-agent/`——日志里只有 id）。含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-05）：新增事件 `mcp_servers_loaded`（MCP 服务器清单：每台 `name`、`scope`、`transport`、`state`，可选 `reason`、`toolCount`；可选 `notes`；**不含**请求头、环境变量的值）、`mcp_tools_snapshot`（生效的 MCP 工具：`tools[]` 每项 `name`（给模型的全名）、`server` / `tool`（原名，路由用）、`description`、`inputSchema`（整形后），可选 `readOnlyHint`、`requiresUserInteraction`、`maxResultChars`；可选 `instructions`（服务器名 → 说明）、`note`），定义在 `spi/McpEvents.kt`（MCP设计 §11）。两者都是整份替换；会话内的变化只在回合开始时写（回合开头那条 `turn_started` 之后）。工具表 = 内置工具 + 最后一份 `mcp_tools_snapshot`（再按子 agent 定义与整工具 deny 规则筛）。
+  `subagent_origin` 新增可选字段 `mcpTools`（子 agent 定义里 `mcp__…` 的允许写法；缺省 = 不限）、`mcpDenied`（禁止写法；空时不落盘）。含新事件的日志旧版本打不开；旧日志照常读。

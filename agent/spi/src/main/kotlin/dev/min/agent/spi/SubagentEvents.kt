@@ -75,6 +75,13 @@ data class SubagentOrigin(
      * 记在来历里是为了重新打开会话后仍然成立——它是创建时定下的事实，不能靠内存里的开关。分身与默认值为 false
      */
     val omitMemory: Boolean = false,
+    /**
+     * 能用哪些 MCP 工具：定义的 `tools` 里 `mcp__服务器` / `mcp__服务器__*` / `mcp__服务器__工具` 这类写法（MCP设计 §6）。
+     * null = 不限（定义没写 `tools`）；空列表 = 一个都不给（写了 `tools` 但没列 MCP 工具）。MCP 工具运行时才知道有哪些，所以存写法不存名字
+     */
+    val mcpTools: List<String>? = null,
+    /** 定义的 `disallowedTools` 里的 MCP 写法（含 `mcp__*`），先于 [mcpTools] 应用 */
+    val mcpDenied: List<String> = emptyList(),
 ) : SessionEvent
 
 /** 分身继承的一条对话消息：与父会话里那条逐字节相同（含消息 id） */

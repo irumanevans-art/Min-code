@@ -368,16 +368,20 @@ class SessionHub(
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
                 tools = toolsFor(definition, depth), instructions = definition.instructions, maxTurns = definition.maxTurns,
                 omitMemory = definition.omitMemory,
+                // 定义里 mcp__ 开头的写法单独存：MCP 工具运行时才知道有哪些（写了 tools 却没列 MCP 工具 = 一个都不给）
+                mcpTools = definition.tools?.filter { it.startsWith(MCP_PREFIX) },
+                mcpDenied = definition.disallowedTools.filter { it.startsWith(MCP_PREFIX) },
             )
         }
         val background = request.background || definition?.alwaysBackground == true
 
         val child = SessionRuntime.create(
-            store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps),
+            store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps) + inheritedMcp(ps),
             // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载（来历里的 omitMemory 管着，重开后同样）；分身照常——它接着父会话的活干
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
         )
         child.requestGate = childGate
+        child.mcpCaller = parent.mcpCaller
         register(child)
         parent.commit(
             listOf(SubagentSpawned(turnId, callId, childId, type, fork, background, request.description, request.name)),
@@ -434,6 +438,12 @@ class SessionHub(
      * 也不该因为磁盘上 skill 中途变了而与父会话看到不同的清单（Skill 工具按各自日志里的清单找 skill）。
      */
     private fun inheritedSkills(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.skills)
+
+    /**
+     * MCP 同理：子 agent 用父会话那份快照（分身的工具表与系统提示必须与父会话逐字相同；新开的子 agent 按来历里的写法再筛）。
+     * 连接是共用的（McpManager 按服务器与项目共享），所以不需要子会话自己再连
+     */
+    private fun inheritedMcp(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.mcpServers, parent.mcpTools)
 
     private fun toolsFor(definition: AgentDefinition, depth: Int): List<String>? {
         val names = deps.tools.map { it.name }
@@ -619,6 +629,7 @@ class SessionHub(
 
     private companion object {
         const val AGENT_TOOL = "Agent"
+        private const val MCP_PREFIX = "mcp__"
 
         /** [stopTree] 收集子树、[shutdown] 重试「停树 + 卸下」的最多轮数 */
         const val STOP_ROUNDS = 3

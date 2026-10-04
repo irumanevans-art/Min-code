@@ -337,6 +337,12 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is CheckpointTaken -> withCheckpoint(record, e)
         is FilesRestored -> withRestore(record, e)
         is ConversationRewound -> withRewind(record, e)
+        // MCP 快照整份替换；变化说明给界面看（模型从工具表与系统提示里看到变化）
+        is dev.min.agent.spi.McpServersLoaded -> copy(mcpServers = e)
+        is dev.min.agent.spi.McpToolsSnapshot -> copy(
+            mcpTools = e,
+            presentation = if (e.note == null) presentation else presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
+        )
     }
     val stamped = next.turn?.let { next.copy(turn = it.copy(lastEventAtMs = record.atMs)) } ?: next
     return stamped.copy(lastSeq = record.seq)

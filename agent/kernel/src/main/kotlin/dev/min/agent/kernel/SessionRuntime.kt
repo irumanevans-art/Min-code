@@ -111,6 +111,30 @@ class SessionRuntime private constructor(
     private val turnLock = Any()
     private var turnJob: Job? = null
 
+    /** MCP 工具的调用口（MCP设计 §6）：McpManager 接上之前是不可用的；子会话由 Hub 设成父会话那个 */
+    @Volatile
+    internal var mcpCaller: McpCaller = McpCaller.Unavailable
+
+    /** 排着、等下一回合开头生效的 MCP 变化（后连上的服务器、list_changed）。只在内存里：没生效的变化不进日志 */
+    @Volatile
+    private var stagedMcp: List<SessionEvent>? = null
+
+    /** 会话创建时的首份 MCP 快照：直接写（还没有回合，不必等） */
+    internal suspend fun loadMcp(servers: dev.min.agent.spi.McpServersLoaded, tools: dev.min.agent.spi.McpToolsSnapshot) {
+        commit(listOf(servers, tools), Durability.Sync)
+    }
+
+    /** MCP 的变化排到下一回合开头（设计 §5.3）；后排的整份替换先排的 */
+    internal fun stageMcp(servers: dev.min.agent.spi.McpServersLoaded?, tools: dev.min.agent.spi.McpToolsSnapshot) {
+        stagedMcp = listOfNotNull(servers, tools)
+    }
+
+    internal suspend fun applyStagedMcp() {
+        val events = stagedMcp ?: return
+        stagedMcp = null
+        commit(events, Durability.Sync)
+    }
+
     /** 检查点与回退（检查点与rewind设计） */
     internal val checkpointer = Checkpointer(this)
 
