@@ -9,6 +9,7 @@ import dev.min.agent.spi.ForkSeeded
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.MemoryAttached
+import dev.min.agent.spi.SeedCompaction
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.TaskCreated
 import dev.min.agent.spi.TaskDeleted
@@ -105,11 +106,13 @@ internal const val SIBLING_CALL_RESULT = "This call is handled by the original a
 /**
  * 分身继承的对话：父会话到 [callId] 所在那条助手消息为止（含），以及这些消息里每个调用的结果。
  * 更早的调用用父会话的真实结果；那条消息里的调用用合成结果（设计 §3.1）。消息与结果逐字节照抄，前缀才能与父会话相同。
+ * 父会话压缩过时：继承从摘要边界开始，压缩视图（摘要 + 挂在它末尾的 SessionStart(compact) 上下文）放进
+ * [ForkSeeded.compaction]——分身回放被摘要掉的原始对话反而会让前缀与父会话对不上。
  */
 internal fun forkSeed(parent: SessionState, callId: CallId, prompt: String): ForkSeeded {
     val at = parent.history.indexOfLast { it is HistoryEntry.Assistant && it.toolCalls.any { c -> c.callId == callId } }
     check(at >= 0) { "父会话里找不到发起委派的调用 $callId" }
-    val inherited = parent.history.subList(0, at + 1)
+    val inherited = parent.history.subList(parent.forkBoundary(at), at + 1)
     val messages = inherited.map { entry ->
         when (entry) {
             is HistoryEntry.User -> SeedMessage(entry.messageId, Role.User, entry.parts)
@@ -127,13 +130,25 @@ internal fun forkSeed(parent: SessionState, callId: CallId, prompt: String): For
             SeedResult(call.callId, result)
         }
     }
-    return ForkSeeded(messages, results)
+    val view = parent.compaction
+    val seed = view?.let { c ->
+        SeedCompaction(c.compactionId, c.summary, c.through, c.transcriptPath, parent.compactionContexts[c.compactionId].orEmpty())
+    }
+    return ForkSeeded(messages, results, seed)
 }
+
+/** 分身继承的起点：父会话压缩过就是摘要边界（含）之后，否则从头。挂在被摘要掉消息上的东西一并出局 */
+internal fun SessionState.forkBoundary(at: Int): Int = compaction
+    ?.let { c -> history.indexOfFirst { it.messageId == c.through } }
+    ?.takeIf { it >= 0 }?.plus(1)
+    ?: 0
 
 /**
  * 分身除了对话文字，还要接着父会话里**模型已经看得见**的几样状态，紧跟 [forkSeed] 写入：
  * - hook 加的上下文（挂在继承来的消息上的 system-reminder）：没有它们，分身的请求前缀就与父会话不再逐字相同；
  *   发起委派的那条助手消息除外——它的工具结果在分身里换成了指令，挂在后面的上下文属于父会话那边的兄弟调用。
+ *   父会话压缩过时只继承摘要边界之后的：被摘要掉的消息不在分身日志里，挂在上面的上下文也已不在父会话视图里；
+ *   摘要末尾的 SessionStart(compact) 上下文不在这里复制——它随 [ForkSeeded.compaction] 的种子进分身。
  * - 按需加载的记忆（MemoryAttached）：与 hook 上下文同理，渲染在继承来的助手消息的工具结果之后，缺了前缀就对不上；同样不含发起委派的那条消息。
  *   分身的「已加载记忆路径」由折叠从这些事件里重新算出。
  * - 任务清单：继承的对话里有 TaskCreate 的结果，分身拿着同样的编号去 TaskUpdate 就该找得到。给的是**副本**：
@@ -141,7 +156,9 @@ internal fun forkSeed(parent: SessionState, callId: CallId, prompt: String): For
  */
 internal fun forkInheritance(parent: SessionState, callId: CallId): List<SessionEvent> {
     val at = parent.history.indexOfLast { it is HistoryEntry.Assistant && it.toolCalls.any { c -> c.callId == callId } }
-    val inherited = parent.history.subList(0, at + 1)
+    // 与 forkSeed 同一条切线：被摘要掉的原始消息不进分身日志，挂在它们上的 hook 上下文与按需记忆同样不继承
+    // （它们已经不在父会话的模型视图里）；Compaction 目标上的上下文不走这里，随 ForkSeeded 的压缩种子进分身
+    val inherited = parent.history.subList(parent.forkBoundary(at), at + 1)
     val contexts = inherited.flatMap { entry ->
         val texts = parent.hookContexts[entry.messageId].orEmpty()
         when {

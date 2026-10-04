@@ -76,6 +76,11 @@ sealed interface HookContextTarget {
     @Serializable
     @SerialName("tool_results")
     data class ToolResults(val assistantMessageId: MessageId) : HookContextTarget
+
+    /** 挂在一次摘要压缩的摘要消息末尾（SessionStart source = compact：压缩完成后立刻进模型视图） */
+    @Serializable
+    @SerialName("compaction")
+    data class Compaction(val compactionId: String) : HookContextTarget
 }
 
 /** hook 给模型的上下文（additionalContext、UserPromptSubmit 的纯文本输出、PostToolUse 的拦截理由）。模型视图里渲染成一段 system-reminder */
