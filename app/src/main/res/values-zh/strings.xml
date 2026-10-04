@@ -1105,4 +1105,37 @@
   <string name="min_agent_no_provider">请先连接一个带 API key 的供应商</string>
   <string name="min_agent_need_model">请为这个供应商选一个模型</string>
   <string name="min_agent_session_not_found">这个会话已经不存在了</string>
+    <!-- 会话后台通知：三引擎共用，中文文案保持旧通知的用语。 -->
+    <string name="session_engine_claude">Claude Code</string>
+    <string name="session_engine_codex">Codex</string>
+    <string name="session_engine_min">Min Agent</string>
+    <string name="session_notification_done">任务已完成</string>
+    <string name="session_notification_confirm">%1$s 需要确认</string>
+    <string name="session_notification_tool">请求使用工具：%1$s</string>
+    <string name="session_notification_ended">%1$s 会话已结束</string>
+    <string name="session_notification_exited">进程已退出</string>
+    <string name="session_notification_incomplete">%1$s 任务未完成</string>
+    <string name="session_notification_question">请打开会话回答提问</string>
+    <string name="session_notification_plan">请打开会话审阅计划</string>
+    <string name="session_notification_agent_approval">%1$s%2$s请求批准：%3$s</string>
+    <string name="session_notification_background">（后台）</string>
+    <string name="session_notification_allow">允许</string>
+    <string name="session_notification_deny">拒绝</string>
+    <string name="session_notification_deny_note">用户在通知里拒绝</string>
+    <string name="session_notification_resume">继续</string>
+    <string name="session_notification_stale">已在别处处理</string>
+    <string name="session_notification_waiting">等待批准：%1$s</string>
+    <string name="session_notification_interaction">交互</string>
+    <string name="session_notification_codex_waiting">Codex 等待批准</string>
+    <string name="session_notification_local_services">%1$d 个本地服务</string>
+    <string name="session_notification_starting">正在启动…</string>
+    <string name="session_notification_running">%1$d 个会话 · 运行中</string>
+    <string name="session_notification_idle">%1$d 个会话 · 空闲</string>
+    <string name="session_notification_codex_running">Codex · 运行中</string>
+    <string name="session_notification_codex_idle">Codex · 空闲</string>
+    <string name="session_notification_services">%1$d 个服务</string>
+    <string name="session_notification_login">正在登录 Claude 订阅</string>
+    <string name="session_notification_background_running">后台运行中</string>
+    <string name="session_notification_stop_all">停止全部</string>
+    <string name="session_notification_engine_count">%1$s × %2$d</string>
 </resources>

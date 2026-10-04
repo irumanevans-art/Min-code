@@ -1110,4 +1110,37 @@
   <string name="min_agent_no_provider">Connect a provider with an API key first</string>
   <string name="min_agent_need_model">Pick a model for this provider</string>
   <string name="min_agent_session_not_found">That session no longer exists</string>
+    <!-- 会话后台通知：三引擎共用，中文文案保持旧通知的用语。 -->
+    <string name="session_engine_claude">Claude Code</string>
+    <string name="session_engine_codex">Codex</string>
+    <string name="session_engine_min">Min Agent</string>
+    <string name="session_notification_done">Task completed</string>
+    <string name="session_notification_confirm">%1$s needs confirmation</string>
+    <string name="session_notification_tool">Requested tool: %1$s</string>
+    <string name="session_notification_ended">%1$s session ended</string>
+    <string name="session_notification_exited">Process exited</string>
+    <string name="session_notification_incomplete">%1$s task incomplete</string>
+    <string name="session_notification_question">Open the session to answer a question</string>
+    <string name="session_notification_plan">Open the session to review the plan</string>
+    <string name="session_notification_agent_approval">%1$s%2$s requests approval: %3$s</string>
+    <string name="session_notification_background"> (background)</string>
+    <string name="session_notification_allow">Allow</string>
+    <string name="session_notification_deny">Deny</string>
+    <string name="session_notification_deny_note">用户在通知里拒绝</string>
+    <string name="session_notification_resume">Continue</string>
+    <string name="session_notification_stale">Already handled elsewhere</string>
+    <string name="session_notification_waiting">Awaiting approval: %1$s</string>
+    <string name="session_notification_interaction">interaction</string>
+    <string name="session_notification_codex_waiting">Codex awaiting approval</string>
+    <string name="session_notification_local_services">%1$d local services</string>
+    <string name="session_notification_starting">Starting…</string>
+    <string name="session_notification_running">%1$d sessions · running</string>
+    <string name="session_notification_idle">%1$d sessions · idle</string>
+    <string name="session_notification_codex_running">Codex · running</string>
+    <string name="session_notification_codex_idle">Codex · idle</string>
+    <string name="session_notification_services">%1$d services</string>
+    <string name="session_notification_login">Signing in to Claude subscription</string>
+    <string name="session_notification_background_running">Running in background</string>
+    <string name="session_notification_stop_all">Stop all</string>
+    <string name="session_notification_engine_count">%1$s × %2$d</string>
 </resources>

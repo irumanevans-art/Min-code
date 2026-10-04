@@ -63,7 +63,11 @@ fun supervisorDiff(
 
     if (isForeground || previous == null) return@buildList
 
-    if (previous.busy && !current.busy && current.status == SessionStatus.Running) {
+    // Min 没有常驻 CLI：回合结束后的状态是 Idle，仍要报告完成 / 未完成。
+    // CC / Codex 的旧进程边沿原样保留；Starting 仍只是重启。
+    val turnSettled = current.status == SessionStatus.Running ||
+        (current.ref.engine == EngineKind.MinAgent && current.status == SessionStatus.Idle)
+    if (previous.busy && !current.busy && turnSettled) {
         when (val end = current.lastTurnEnd) {
             // null = 适配器不知道结局：当作正常完成（旧 Claude 的行为）
             null, TurnEnd.Completed -> add(SupervisorEvent.TurnDone)

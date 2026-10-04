@@ -60,6 +60,8 @@ class CodexEngine internal constructor(
     private val defaultOptions: () -> CodexAppServerManager.Options = { CodexAppServerManager.Options() },
     private val searchFiles: suspend (String, Int) -> List<String> = { _, _ -> emptyList() },
     private val handshakeWaitMs: Long = CodexAppServerManager.HANDSHAKE_TIMEOUT_MS + 5_000,
+    /** B5–B8 保留旧监督路径，B9 并页后才向统一注册表报告，避免重复通知与计数。 */
+    private val publishLive: Boolean = true,
 ) : AgentEngine {
     override val kind: EngineKind = EngineKind.Codex
     override val capabilities: EngineCapabilities = EngineCapabilities.Codex
@@ -74,7 +76,7 @@ class CodexEngine internal constructor(
      * （app-server 是 App 的子进程，没有前台服务撑着切出去接个电话就没了）。只读回放（Idle）不在线。
      */
     override val live: StateFlow<List<LiveSessionSummary>> = current.flatMapLatest { session ->
-        if (session == null) {
+        if (!publishLive || session == null) {
             flowOf(emptyList())
         } else {
             session.state.map { s ->

@@ -18,11 +18,11 @@ class ClaudeSupervisorDiffTest {
         status: SessionStatus = SessionStatus.Running,
         isLive: Boolean = true,
         errorMessage: String? = null,
-    ) = ClaudeCodeSessionSupervisor.ClaudeSeen(busy, pendingId, pendingTool, status, isLive, errorMessage)
+    ) = SessionSupervisor.ClaudeSeen(busy, pendingId, pendingTool, status, isLive, errorMessage)
 
     private fun diff(
-        previous: ClaudeCodeSessionSupervisor.ClaudeSeen?,
-        current: ClaudeCodeSessionSupervisor.ClaudeSeen,
+        previous: SessionSupervisor.ClaudeSeen?,
+        current: SessionSupervisor.ClaudeSeen,
         foreground: Boolean = false,
     ) = claudeSupervisorDiff(previous, current, foreground)
 

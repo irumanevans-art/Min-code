@@ -36,11 +36,11 @@ class SupervisorParityTest {
         status: SessionStatus = SessionStatus.Running,
         isLive: Boolean = true,
         errorMessage: String? = null,
-    ) = ClaudeCodeSessionSupervisor.ClaudeSeen(busy, pendingId, pendingTool, status, isLive, errorMessage)
+    ) = SessionSupervisor.ClaudeSeen(busy, pendingId, pendingTool, status, isLive, errorMessage)
 
     private fun claudeDiff(
-        previous: ClaudeCodeSessionSupervisor.ClaudeSeen?,
-        current: ClaudeCodeSessionSupervisor.ClaudeSeen,
+        previous: SessionSupervisor.ClaudeSeen?,
+        current: SessionSupervisor.ClaudeSeen,
         foreground: Boolean = false,
     ) = claudeSupervisorDiff(previous, current, foreground)
 
@@ -228,11 +228,11 @@ class SupervisorParityTest {
         approvalKey: String? = null,
         status: SessionStatus = SessionStatus.Running,
         errorMessage: String? = null,
-    ) = ClaudeCodeSessionSupervisor.CodexSeen(busy, approvalKey, status, errorMessage)
+    ) = SessionSupervisor.CodexSeen(busy, approvalKey, status, errorMessage)
 
     private fun codexDiff(
-        previous: ClaudeCodeSessionSupervisor.CodexSeen?,
-        current: ClaudeCodeSessionSupervisor.CodexSeen,
+        previous: SessionSupervisor.CodexSeen?,
+        current: SessionSupervisor.CodexSeen,
         foreground: Boolean = false,
     ) = codexSupervisorDiff(previous, current, foreground)
 

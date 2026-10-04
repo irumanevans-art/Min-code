@@ -1,6 +1,23 @@
 package dev.min.code.di
 
 import dev.min.code.AppScope
+import dev.min.code.BuildConfig
+import dev.min.code.core.engine.AgentEngine
+import dev.min.code.core.engine.AgentSessionRegistry
+import dev.min.code.core.engine.EngineAvailability
+import dev.min.code.core.engine.claude.ClaudeCodeEngine
+import dev.min.code.core.engine.codex.CodexEngine
+import dev.min.code.core.engine.min.MinAgentEngine
+import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import me.rerere.workspace.WorkspaceShellStatus
+import org.koin.dsl.bind
 import dev.min.code.core.browser.GuestOpenInbox
 import dev.min.code.core.claudecode.ClaudeCodeConfigStore
 import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
@@ -22,7 +39,7 @@ import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexRuntime
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.rootfs.currentBindMounts
-import dev.min.code.core.service.ClaudeCodeSessionSupervisor
+import dev.min.code.core.service.SessionSupervisor
 import dev.min.code.core.service.LocalServiceRegistry
 import dev.min.code.core.relay.RelayController
 import dev.min.code.core.settings.ProviderBackup
@@ -155,6 +172,50 @@ val appModule = module {
         )
     }
     single { ClaudeCodeSessionRegistry(get(), factory = { get() }) }
+    single(named("min")) {
+        ClaudeCodeSessionMetaStore(File(get<android.content.Context>().filesDir, "agent-session-meta.json"))
+    }
+    single {
+        val scope: AppScope = get()
+        val settings: SettingsStore = get()
+        val workspace: WorkspaceRepository = get()
+        val installer: ClaudeCodeInstaller = get()
+        val availability = combine(workspace.workspace, settings.settings) { _, s ->
+            when {
+                !installer.status(CLAUDE_CODE_WORKSPACE_ID.toString()).ready -> EngineAvailability.NeedsInstall
+                !s.claudeConnected -> EngineAvailability.NeedsProvider
+                else -> EngineAvailability.Ready
+            }
+        }.flowOn(Dispatchers.IO).stateIn(scope, SharingStarted.Eagerly, EngineAvailability.NeedsInstall)
+        ClaudeCodeEngine(
+            registry = get(), scope = scope, availability = availability, metaStore = get(), drafts = get(),
+            configStore = get(), services = get<LocalServiceRegistry>().services,
+            currentProfile = settings.settings.map { s -> s.activeProfile?.id to s.profiles.associate { it.id to it.label } }
+                .stateIn(scope, SharingStarted.Eagerly, null to emptyMap()),
+            stopHostedService = { get<LocalServiceRegistry>().stop(it) },
+        )
+    } bind AgentEngine::class
+    single {
+        val runtime: CodexRuntime = get()
+        val workspace: WorkspaceRepository = get()
+        val scope: AppScope = get()
+        CodexEngine(
+            manager = get(), scope = scope,
+            availability = workspace.workspace.map { ws ->
+                if (ws.shellStatus == WorkspaceShellStatus.READY.name) EngineAvailability.Ready else EngineAvailability.NeedsInstall
+            }.stateIn(scope, SharingStarted.Eagerly, EngineAvailability.NeedsInstall),
+            prepare = { runtime.prepare() }, codexHome = runtime::codexHome,
+            metaStore = get(named("codex")), drafts = get(), publishLive = false,
+        )
+    } bind AgentEngine::class
+    single {
+        MinAgentEngine(
+            context = get(), settings = get(), workspace = get(), runner = get<ProotShellRunner>(),
+            appScope = get<AppScope>(), drafts = get(), meta = get(named("min")),
+            enabled = MutableStateFlow(BuildConfig.DEBUG),
+        )
+    } bind AgentEngine::class
+    single { AgentSessionRegistry(getAll<AgentEngine>(), get<AppScope>()) }
     // 订阅登录要 single：登录进行中的状态横跨页面，前台服务也盯着它保活
     single {
         ClaudeSubscription(
@@ -170,7 +231,7 @@ val appModule = module {
 
     // 保活与后台通知。createdAtStart：它订阅的是注册表，注册表可能在页面之外先动起来
     single(createdAtStart = true) {
-        ClaudeCodeSessionSupervisor(
+        SessionSupervisor(
             context = get(),
             appScope = get(),
             registry = get(),
