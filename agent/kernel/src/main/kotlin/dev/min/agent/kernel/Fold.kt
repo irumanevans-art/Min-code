@@ -117,7 +117,11 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 modeBeforePlan = settings.modeBeforePlanAfter(e.mode),
             ),
         )
-        is InputReceived -> {
+        is InputReceived -> if (fromRewoundChild(e.origin)) {
+            // 已回退掉的子 agent 送来的报告：记下见过（重发只收一次），但不进收件箱（检查点与rewind设计 §4.4）
+            check(e.clientMsgId !in seenInputs) { "重复的输入 ${e.clientMsgId}" }
+            copy(seenInputs = seenInputs + e.clientMsgId)
+        } else {
             check(e.clientMsgId !in seenInputs) { "重复的输入 ${e.clientMsgId}" }
             // 只有 Stop / SubagentStop hook 会送来 hook 来源的输入：每条算一次「拦下结束」
             val stopHook = e.origin is InputOrigin.Hook
@@ -161,7 +165,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is AssistantMessageCompleted -> updateTurn(e.turnId) { t ->
             check(t.openRequest?.requestId == e.requestId) { "完成的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
-            t.copy(openRequest = null, usage = t.usage + e.usage)
+            t.copy(openRequest = null, usage = t.usage + e.usage, modelReplied = true)
         }.copy(history = history + HistoryEntry.Assistant(e.messageId, e.parts), lastRequestUsage = e.usage)
         is ModelRequestFailed -> updateTurn(e.turnId) { t ->
             check(t.openRequest?.requestId == e.requestId) { "失败的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
@@ -340,6 +344,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
 
 /** 「总是允许」攒下的规则的来源名（审计时显示「是本会话里你允许的」） */
 const val SESSION_RULE_SOURCE = "session"
+
+private fun SessionState.fromRewoundChild(origin: InputOrigin): Boolean =
+    origin is InputOrigin.Agent && children[origin.session]?.rewound == true
 
 /** 子 agent 的报告进了收件箱：记下它对应的子回合已交付，补发与去重据此跳过 */
 private fun SessionState.reported(origin: InputOrigin): Map<SessionId, ChildSummary> {

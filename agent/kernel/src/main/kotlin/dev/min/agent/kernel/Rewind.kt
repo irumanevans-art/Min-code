@@ -5,7 +5,6 @@ import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.Part
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TurnId
-import dev.min.agent.spi.AgentInputKind
 import dev.min.agent.spi.CheckpointTaken
 import dev.min.agent.spi.ContentId
 import dev.min.agent.spi.ConversationRewound
@@ -13,8 +12,8 @@ import dev.min.agent.spi.Durability
 import dev.min.agent.spi.FileRestore
 import dev.min.agent.spi.FilesRestored
 import dev.min.agent.spi.GuestPath
-import dev.min.agent.spi.InputOrigin
-import dev.min.agent.spi.InputWithdrawn
+import dev.min.agent.spi.Note
+import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.ManifestId
 import dev.min.agent.spi.PathChange
 import dev.min.agent.spi.RestoreResult
@@ -23,8 +22,13 @@ import dev.min.agent.spi.SnapshotStore
 import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.cancellation.CancellationException
 
 /** 回退的范围（检查点与rewind设计 §4） */
 enum class RewindScope { Code, Conversation, Both }
@@ -44,10 +48,18 @@ data class RewindPreview(
     val unrestorable: List<GuestPath>,
     /** 最近一次检查点之后被编辑工具以外改动过的文件（命令或人改的），确认框单独列出（设计 §4.3） */
     val external: List<GuestPath>,
-    /** 回退对话会停掉的子 agent：这一点之后委派、现在还在跑的 */
-    val runningChildren: List<SessionId>,
+    /** 这一点之后委派、现在还在跑的子 agent：回退对话会停掉它们 */
+    val runningAfterPoint: List<SessionId>,
+    /** 更早委派、现在还在跑的子 agent：恢复代码会停掉它们（它们可能正在写文件，会把刚恢复的又改回去） */
+    val runningBefore: List<SessionId>,
 ) {
     val canRestoreCode: Boolean get() = changes.any { !it.symlink } || editRestores.isNotEmpty()
+
+    /** 选了 [scope] 会停掉哪些子 agent */
+    fun childrenStoppedBy(scope: RewindScope): List<SessionId> = when (scope) {
+        RewindScope.Conversation -> runningAfterPoint
+        RewindScope.Code, RewindScope.Both -> runningBefore + runningAfterPoint
+    }
 }
 
 sealed interface RewindOutcome {
@@ -79,24 +91,46 @@ internal class Checkpointer(private val rt: SessionRuntime) {
     private suspend fun take(checkpointId: String, turnId: TurnId, messageId: MessageId) {
         val store = rt.snapshotStore() ?: return
         val budget = deps.checkpointBudget
-        // 预算由宿主掐；这里再兜一层，宿主实现有 bug 时也不至于把回合卡死
-        val result = withTimeoutOrNull(budget.firstTimeoutMs + KERNEL_GRACE_MS) {
-            catchingNonCancellation { store.snapshot(budget) }
-                .getOrElse { SnapshotResult.Unavailable("拍快照出错：${it.message ?: it::class.simpleName}") }
-        } ?: SnapshotResult.Unavailable("拍快照超过了时限")
         val root = rt.state.value.created.cwd
+        val result = try {
+            // 预算由宿主掐；这里再兜一层，宿主实现有 bug 时也不至于把回合卡死
+            withTimeoutOrNull(budget.firstTimeoutMs + KERNEL_GRACE_MS) {
+                catchingNonCancellation { store.snapshot(budget) }
+                    .getOrElse { SnapshotResult.Unavailable("拍快照出错：${it.message ?: it::class.simpleName}") }
+            } ?: SnapshotResult.Unavailable("拍快照超过了时限")
+        } catch (e: CancellationException) {
+            // 回合被停掉时快照也停了：照样落一条（拍成没拍成都要有记录），回合收尾之前写完
+            withContext(NonCancellable) {
+                record(store, CheckpointTaken(checkpointId, turnId, messageId, root, reason = "回合被停下时快照还没拍完"))
+            }
+            throw e
+        }
         val event = when (result) {
             is SnapshotResult.Taken -> CheckpointTaken(checkpointId, turnId, messageId, root, result.manifest, stats = result.stats)
             is SnapshotResult.Unavailable -> CheckpointTaken(checkpointId, turnId, messageId, root, reason = result.reason)
         }
-        rt.commit(listOf(event), Durability.Sync)
+        record(store, event)
+    }
+
+    /** 落检查点；拍不成的原因与上一次不同时给人一条说明（每轮都拍不成的大目录只说一次，设计 §3.4） */
+    private suspend fun record(store: SnapshotStore, event: CheckpointTaken) {
+        val reason = event.reason
+        val previous = rt.state.value.checkpoints.lastOrNull()?.event?.reason
+        val note = if (reason != null && reason != previous) Note(NoteLevel.Info, "这一轮没有整树快照（$reason），回退时只能撤回编辑工具改的文件。") else null
+        rt.commit(listOfNotNull(event, note), Durability.Sync)
         retain(store)
     }
 
-    /** 把本会话现在要保留的快照与内容告诉仓库（回收的根，设计 §3.5）。失败只影响回收，不影响会话 */
-    suspend fun retain(store: SnapshotStore) {
+    private val retainLock = Mutex()
+
+    /**
+     * 把本会话现在要保留的快照与内容告诉仓库（回收的根，设计 §3.5）。失败只影响回收，不影响会话。
+     * 串行、且在锁里取状态：根是整份替换的，后写的必须是更新的那份（快照协程与回合收尾会同时来）
+     */
+    suspend fun retain(store: SnapshotStore) = retainLock.withLock {
         val (manifests, contents) = rt.state.value.snapshotRoots()
         catchingNonCancellation { store.retain(rt.sessionId, manifests, contents) }
+        Unit
     }
 
     /** 回合结束（含被打断、失败）时登记一次回收的根；没有检查点也没有编辑记录的会话不打扰仓库 */
@@ -113,6 +147,7 @@ internal class Checkpointer(private val rt: SessionRuntime) {
         val store = rt.snapshotStore()
         val changes = checkpoint?.manifest?.let { m -> store?.let { diffOrEmpty(it, m) } }.orEmpty()
         val plan = s.editRestores(point.seq)
+        val after = childrenAfter(s, point).toSet()
         return RewindPreview(
             messageId = messageId,
             prompt = s.promptOf(messageId),
@@ -121,15 +156,20 @@ internal class Checkpointer(private val rt: SessionRuntime) {
             editRestores = plan.restores,
             unrestorable = plan.unrestorable,
             external = store?.let { externalChanges(s, it) }.orEmpty(),
-            runningChildren = childrenAfter(s, point).filter { rt.hub?.get(it)?.state?.value?.turn != null },
+            runningAfterPoint = after.filter(::running),
+            runningBefore = s.children.keys.filter { it !in after && running(it) },
         )
     }
+
+    private fun running(child: SessionId): Boolean = rt.hub?.get(child)?.state?.value?.turn != null
 
     suspend fun rewind(messageId: MessageId, scope: RewindScope): RewindOutcome {
         val s = rt.state.value
         val point = s.rewindPoints.firstOrNull { it.messageId == messageId }
             ?: return RewindOutcome.Refused("这条消息不能回退：它不是开启一轮的消息，或者已经被回退掉了。")
         val prompt = s.promptOf(messageId)
+        // 先停子 agent，再动文件：后台子 agent 还在写的话，会把刚恢复的内容又改回去
+        stopChildren(point, scope)
         var restored: FilesRestored? = null
         if (scope != RewindScope.Conversation) {
             val checkpoint = s.checkpoints.firstOrNull { it.event.messageId == messageId }?.event
@@ -142,9 +182,9 @@ internal class Checkpointer(private val rt: SessionRuntime) {
         }
         var rewound: ConversationRewound? = null
         if (scope != RewindScope.Code) {
-            stopChildrenAfter(point)
-            rewound = ConversationRewound(deps.ids.next("rewind"), messageId)
-            rt.commit(listOf(rewound), Durability.Sync)
+            val event = ConversationRewound(deps.ids.next("rewind"), messageId)
+            rt.commitIf(listOf(event), Durability.Sync) { it.turn == null } ?: return RewindOutcome.Refused(BUSY_NOW)
+            rewound = event
         }
         return RewindOutcome.Done(restored, rewound, prompt)
     }
@@ -210,12 +250,17 @@ internal class Checkpointer(private val rt: SessionRuntime) {
             else -> null
         }
         if (pre == null && requirePre) return Restore.Failed("拍不了回滚前的快照，为免丢掉现在的改动，没有恢复。")
-        val result = catchingNonCancellation { store.restore(target, extra) }
-            .getOrElse { return Restore.Failed("恢复出错：${it.message ?: it::class.simpleName}") }
-        val restored = event(pre, result)
-        rt.commit(listOf(restored), Durability.Sync)
-        retain(store)
-        return Restore.Done(restored)
+        // 一旦开始写文件就做完并落盘：停在半路会留下改了一半、日志里又没有记录的工作区
+        return withContext(NonCancellable) {
+            val result = catchingNonCancellation { store.restore(target, extra) }
+                .getOrElse { return@withContext Restore.Failed("恢复出错：${it.message ?: it::class.simpleName}") }
+            val restored = event(pre, result)
+            // 维护任务与回合互斥，这里不会有回合；条件只是兜底，不成立说明内核有 bug，文件已动、照实报
+            rt.commitIf(listOf(restored), Durability.Sync) { it.turn == null }
+                ?: return@withContext Restore.Failed("恢复已经做了，但会话此刻有回合在跑，没能记进日志。")
+            retain(store)
+            Restore.Done(restored)
+        }
     }
 
     private fun restoredEvent(
@@ -236,44 +281,48 @@ internal class Checkpointer(private val rt: SessionRuntime) {
     )
 
     /**
-     * 回退对话前停掉这一点之后委派的子 agent：它们的报告会落进一段已经不存在的对话。停下来时报告照常进收件箱（不唤醒），
-     * 这里把这些报告撤回，免得下一回合把它们当成新消息交给模型（设计 §4.4）
+     * 回退前停子 agent（设计 §4.4）：回退对话停这一点之后委派的；恢复代码停所有在跑的（它们可能正在写文件）。
+     * 被回退掉的子 agent 停下时的报告不用在这里撤：折叠把它们标成已回退，之后再来的报告不进收件箱，
+     * 已经在收件箱里的随回退一起清掉——与报告什么时候送到无关，没有时序上的空档
      */
-    private suspend fun stopChildrenAfter(point: RewindPoint) {
+    private suspend fun stopChildren(point: RewindPoint, scope: RewindScope) {
         val hub = rt.hub ?: return
-        val children = childrenAfter(rt.state.value, point).toSet()
-        if (children.isEmpty()) return
-        children.forEach { if (hub.get(it) != null) hub.stopTree(it) }
-        val stale = rt.state.value.inbox.filter { input ->
-            val origin = input.origin
-            origin is InputOrigin.Agent && origin.session in children && origin.kind == AgentInputKind.Report
+        val s = rt.state.value
+        val after = childrenAfter(s, point).toSet()
+        val targets = when (scope) {
+            RewindScope.Conversation -> after
+            RewindScope.Code, RewindScope.Both -> s.children.keys
         }
-        for (input in stale) {
-            rt.commitIf(listOf(InputWithdrawn(input.clientMsgId)), Durability.Sync) { s -> s.inbox.any { it.clientMsgId == input.clientMsgId } }
-        }
+        targets.forEach { if (hub.get(it)?.state?.value?.turn != null) hub.stopTree(it) }
     }
 
     private suspend fun diffOrEmpty(store: SnapshotStore, from: ManifestId): List<PathChange> =
         catchingNonCancellation { store.diff(from, null) }.getOrElse { emptyList() }
 
-    /** 最近一次有整树快照的检查点之后，不是编辑工具改的文件 */
+    /**
+     * 最近一次有整树快照的检查点之后，不是编辑工具改的文件（设计 §4.3）：没有编辑记录的，或者现在的内容
+     * 不等于最后一次编辑写下的内容的（编辑工具改过、之后又被命令或人改过）
+     */
     private suspend fun externalChanges(s: SessionState, store: SnapshotStore): List<GuestPath> {
         val latest = s.liveCheckpoints.lastOrNull { it.event.manifest != null } ?: return emptyList()
-        val edited = s.editLog.filter { it.seq > latest.seq }.map { it.edit.path }.toSet()
-        return diffOrEmpty(store, latest.event.manifest!!).filter { !it.symlink && it.path !in edited }.map { it.path }
+        val lastWrite = s.editLog.filter { it.seq > latest.seq }.associate { it.edit.path to it.edit.after }
+        return diffOrEmpty(store, latest.event.manifest!!).filter { change ->
+            !change.symlink && (change.path !in lastWrite || lastWrite[change.path] != change.after)
+        }.map { it.path }
     }
 
     companion object {
         /** 内核兜底的时限比宿主的预算多给这么多 */
         const val KERNEL_GRACE_MS = 5_000L
         const val NO_STORE = "这个会话没有检查点仓库（宿主没有配置，或检查点被设置关掉了），只能回退对话。"
+        const val BUSY_NOW = "会话此刻有回合在跑，没有回退。"
     }
 }
 
 /** 编辑记录能恢复的文件与撤不回的路径 */
 internal data class EditRestorePlan(val restores: List<FileRestore>, val unrestorable: List<GuestPath>)
 
-/** seq 在 [sinceSeq] 之后的编辑记录：每个文件回到其中最早那次之前 */
+/** seq 在 [sinceSeq] 之后的编辑记录：每个文件回到其中最早那次之前（最早那次没存成原文的，整个文件撤不回） */
 internal fun SessionState.editRestores(sinceSeq: Long): EditRestorePlan = editRestorePlan(editLog.filter { it.seq > sinceSeq })
 
 internal fun editRestorePlan(edits: List<EditRecord>): EditRestorePlan {

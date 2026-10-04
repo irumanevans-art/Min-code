@@ -159,6 +159,8 @@ data class ChildSummary(
     val name: String?,
     /** 已交付给本会话的报告对应子会话的哪些回合（经收件箱，或前台调用的工具结果） */
     val reportedTurns: Set<TurnId> = emptySet(),
+    /** 委派它的那次调用已经被回退掉了：它的报告不再进收件箱，续聊找不到它（检查点与rewind设计 §4.4） */
+    val rewound: Boolean = false,
 )
 
 data class EndedTurn(
@@ -231,6 +233,8 @@ data class TurnState(
     val stopHookBlocks: Int = 0,
     /** 本回合已经提升过人发的消息：只有第一条记回退点 */
     val userPromoted: Boolean = false,
+    /** 本回合模型已经回过话：之后提升的人发的消息是插话，不记回退点 */
+    val modelReplied: Boolean = false,
 ) {
     /**
      * 还在等用户回答的提问，界面据此弹提问卡片（进程重启后同样从日志重建）。
