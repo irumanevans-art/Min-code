@@ -9,7 +9,8 @@ CC 兼容配置发现与加载、hooks 执行编排、skills/agents/commands/plu
 
 已实现的只有「读 + 解析 + 合并」（包 `dev.min.agent.ext.config`）：用户把现成的 `~/.claude/` 与项目 `.claude/` 原样放进 rootfs，
 读出和 Claude Code 一样的结果。skill 调用与斜杠展开见下（`skills` 包）；hooks 执行（`hooks` 包，含 type:http）、
-MCP **配置**读取（`mcp` 包，MCP1b：`McpConfigLoader` / `McpApprovals`，连接是 MCP1a / MCP1c 的事）已做；插件、output styles 还没有。
+MCP **配置**读取（`mcp` 包，MCP1b：`McpConfigLoader` / `McpApprovals`，连接是 MCP1a / MCP1c 的事）与
+output styles 的读取（`styles` 包：`OutputStyleFiles`，含三个内置样式）已做；插件还没有。
 
 入口：`ClaudeConfigLoader.load(fs, cwd, home, managedPath)` → `ClaudeConfig(settings, skills, commands, agents, notes)`；
 只要 settings 用 `SettingsLoader.load(...)`。全部经 `WorkspaceFs` 端口读文件，只读，不抛异常——

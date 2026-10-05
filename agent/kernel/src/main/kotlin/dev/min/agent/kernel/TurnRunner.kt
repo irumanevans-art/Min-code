@@ -363,6 +363,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             agentInstructions = origin?.instructions,
             autoMemory = state.autoMemory,
             mcpInstructions = state.mcpInstructionsFor(state.visibleMcpTools(deps)),
+            // 样式段只有根会话与分身有快照（普通子 agent 不用样式）；快照随日志冻结，前缀不受磁盘变化影响
+            outputStyle = state.outputStyle,
         )
     }
 

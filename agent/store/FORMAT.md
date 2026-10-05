@@ -85,3 +85,5 @@
   助手消息的工具结果后面，沿用 `tool_results` 变体）。SessionStart(resume)、PermissionRequest、SessionEnd、Notification 四个事件不新增日志事件：
   复用 `hooks_ran`；PermissionRequest 的替人答复复用 `approval_requested` + `approval_resolved`（`decidedBy = hook`，同一次提交写入，折叠成已决议）。
   含新变体的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-05）：新增事件 `output_style_loaded`（会话创建时冻结的 output style：`name`、`body`、`keepCodingInstructions`、可选 `description` / `notes`，`spi/OutputStyleEvents.kt`）。
+  没设 `outputStyle`、设的是 Default、或找不到（回 Default 并给 Note）时不写；子 agent 里只有分身带（普通子 agent 不用样式，分身继承父会话快照）。含新事件的日志旧版本打不开；旧日志照常读。

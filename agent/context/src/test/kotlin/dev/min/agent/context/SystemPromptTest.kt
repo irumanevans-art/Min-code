@@ -218,4 +218,35 @@ class SystemPromptTest {
         )
         assertEquals(SystemPrompt.build(profile, env, autoIndex, autoMemory = autoInfo), request.system)
     }
+
+    // ---- output style ----
+
+    @Test
+    fun `a style without keep takes over tone and engineering habits but keeps the operating rules`() {
+        val style = dev.min.agent.spi.OutputStyleLoaded(name = "Explanatory", body = "Explain as you go.")
+        val prompt = SystemPrompt.build(profile, env, outputStyle = style)
+        assertEquals("样式段固定在第二段（身份之后、环境之前）", 3, prompt.size)
+        assertEquals("# Output style: Explanatory\n\nExplain as you go.", prompt[1])
+        assertEquals("后面几段不受影响", SystemPrompt.build(profile, env).drop(1), prompt.drop(2))
+        val first = prompt[0]
+        assertTrue(first.startsWith("You are Min Agent"))
+        // 样式接管的：语气、软件工程做法、收尾汇报
+        listOf("Be concise", "Read a file before you edit it", "say what changed").forEach {
+            assertTrue("「$it」让位给样式", it !in first)
+        }
+        // 照留的：语言与 agent 的操作规矩（工具用得对不对，与说话风格无关）
+        listOf(
+            "Reply in the user's language.", "Use the dedicated file tools", "proot", "Use Bash for builds",
+            "check the current state before", "do not retry it unchanged", "Do not guess at facts",
+        ).forEach { assertTrue("「$it」不能随样式丢掉", it in first) }
+    }
+
+    @Test
+    fun `a style with keep keeps the coding rules byte for byte`() {
+        val style = dev.min.agent.spi.OutputStyleLoaded(name = "Terse", body = "少说。", keepCodingInstructions = true)
+        val prompt = SystemPrompt.build(profile, env, outputStyle = style)
+        assertEquals(3, prompt.size)
+        assertEquals("keep 时第一段与无样式时逐字相同", SystemPrompt.build(profile, env)[0], prompt[0])
+        assertEquals("# Output style: Terse\n\n少说。", prompt[1])
+    }
 }

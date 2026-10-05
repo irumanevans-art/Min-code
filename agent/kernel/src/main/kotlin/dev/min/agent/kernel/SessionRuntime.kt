@@ -10,11 +10,15 @@ import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
 import dev.min.agent.ext.hooks.NotificationInput
 import dev.min.agent.ext.hooks.SessionStartInput
+import dev.min.agent.ext.styles.OutputStyleFiles
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.HookSourceData
 import dev.min.agent.spi.HttpPolicyData
 import dev.min.agent.spi.HooksLoaded
+import dev.min.agent.spi.Note
+import dev.min.agent.spi.NoteLevel
+import dev.min.agent.spi.OutputStyleLoaded
 import kotlinx.serialization.json.jsonObject
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.CallId
@@ -280,6 +284,44 @@ class SessionRuntime private constructor(
         val outcome = driver.run(HookEvent.SessionStart, source, specific) ?: return
         val events = outcome.contexts.map { HookContextAdded(HookContextTarget.NextUserMessage, HookEvent.SessionStart.name, it) }
         if (events.isNotEmpty()) commit(events, Durability.Sync)
+    }
+
+    /**
+     * 会话创建时按 `outputStyle` 设置读一次样式文件，快照写进日志（[OutputStyleLoaded]），
+     * 会话内冻结（系统提示只由快照拼；改设置只对新会话生效）。没设、Default、找不到（回 Default 并给 Note）
+     * 都不写事件——三种情况下系统提示与没有样式时逐字相同
+     */
+    private suspend fun loadOutputStyle(snapshot: SettingsSnapshot) {
+        val wanted = snapshot.merged.outputStyle ?: return
+        val home = deps.memoryHome ?: return
+        val disk = dev.min.agent.spi.catchingNonCancellation {
+            OutputStyleFiles.load(deps.host.fs, state.value.created.cwd, home)
+        }.getOrElse {
+            // 读目录的意外不该让会话建不起来：按找不到处理，给一条说明
+            commit(
+                listOf(Note(NoteLevel.Warning, "读 output styles 失败（${it.message?.lineSequence()?.firstOrNull() ?: it::class.simpleName}），本会话按 Default。")),
+                Durability.Batched,
+            )
+            return
+        }
+        val def = OutputStyleFiles.resolve(disk.styles, wanted)
+        when {
+            def == null -> commit(
+                listOf(Note(NoteLevel.Warning, "settings 里的 outputStyle \"$wanted\" 找不到（用户 / 项目 / managed 目录与内置样式里都没有），本会话按 Default。名字大小写敏感。")),
+                Durability.Batched,
+            )
+            // Default 不改系统提示：不写事件，系统提示与没设样式时逐字相同
+            def.body.isBlank() && !def.keepCodingInstructions -> Unit
+            else -> commit(
+                listOf(
+                    OutputStyleLoaded(
+                        name = def.name, body = def.body, keepCodingInstructions = def.keepCodingInstructions,
+                        description = def.description, notes = disk.notes,
+                    ),
+                ),
+                Durability.Sync,
+            )
+        }
     }
 
     private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
@@ -560,7 +602,10 @@ class SessionRuntime private constructor(
                 val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home) else null
                 runtime.checkpointsBySettings = settings?.let(::checkpointsEnabledIn)
                 if (loadMemory) runtime.loadMemory(settings)
-                if (loadSettings) runtime.loadSettings(requireNotNull(settings))
+                if (loadSettings) {
+                    runtime.loadSettings(requireNotNull(settings))
+                    runtime.loadOutputStyle(requireNotNull(settings))
+                }
             }
             // 子会话的清单由 initial 带来（继承父会话那份），不再读磁盘
             if (loadSkills) runtime.loadSkills()
