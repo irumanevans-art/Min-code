@@ -37,6 +37,8 @@ internal data class McpCallRequest(
     val arguments: JsonObject,
     val sessionId: SessionId,
     val callId: CallId,
+    /** 结果里的图片原图、音频、二进制资源落到这里（会话附件） */
+    val artifacts: dev.min.agent.spi.ArtifactSink,
     val progress: (String) -> Unit,
 )
 
@@ -85,7 +87,7 @@ internal class McpToolAdapter(private val entry: McpToolEntry, private val calle
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = channelFlow {
         val result = caller.call(
-            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId) { text -> trySend(ToolProgress.Status(text)) },
+            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts) { text -> trySend(ToolProgress.Status(text)) },
         )
         send(ToolProgress.Done(result))
     }
