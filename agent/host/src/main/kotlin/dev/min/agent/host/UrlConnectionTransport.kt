@@ -4,9 +4,11 @@ import dev.min.agent.spi.HttpRequest
 import dev.min.agent.spi.HttpResponse
 import dev.min.agent.spi.HttpStatusException
 import dev.min.agent.spi.HttpTransport
+import dev.min.agent.spi.HttpStreamingResponse
 import dev.min.agent.spi.SseEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -15,11 +17,15 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resumeWithException
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 模型请求与 WebFetch 共用的 HTTP 传输。用 HttpURLConnection：Android 与桌面 JVM 都有（Android 上底层就是 OkHttp），
@@ -41,6 +47,74 @@ class UrlConnectionTransport(
     private val connectTimeoutMs: Int = 30_000,
     private val maxStallMs: Long = 180_000,
 ) : HttpTransport {
+
+    override suspend fun open(request: HttpRequest): HttpStreamingResponse = suspendCancellableCoroutine { continuation ->
+        val connectionRef = java.util.concurrent.atomic.AtomicReference<HttpURLConnection?>()
+        val io = CoroutineScope(Dispatchers.IO)
+        // JDK 在等响应头时持有内部锁，disconnect 可能等同一把锁；不能让调用方的取消等待这个阻塞线程。
+        continuation.invokeOnCancellation { io.launch { connectionRef.get()?.disconnect() } }
+        io.launch {
+            var connection: HttpURLConnection? = null
+            var handedOff = false
+            try {
+                connection = open(request, minOf(request.timeoutMs, maxStallMs), writeBody = false)
+                connectionRef.set(connection)
+                if (!continuation.isActive) return@launch
+                // 固定长度上传会令 JDK 把 401 交给认证重试并丢掉 errorStream；原样端口要保留该正文。
+                writeBody(connection, request.body, streaming = false)
+                val status = connection.responseCode
+                val response = rawResponse(connection, status, headersOf(connection))
+                handedOff = true
+                continuation.resume(response) { _, rejected, _ -> rejected.close() }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                continuation.cancel(e)
+                throw e
+            } catch (e: Exception) {
+                if (continuation.isActive) continuation.resumeWithException(IOException("原样 HTTP 连接或响应头读取失败。"))
+            } finally { if (!handedOff) connection?.disconnect() }
+        }
+    }
+
+    private fun rawResponse(connection: HttpURLConnection, status: Int, headers: List<Pair<String, String>>): HttpStreamingResponse {
+        val collected = AtomicBoolean()
+        val closed = AtomicBoolean()
+        val io = CoroutineScope(Dispatchers.IO)
+        fun release() {
+            // JDK 的流 close 会等待正在读的锁；取消发起断开，但不能让收集者等这个阻塞清理线程。
+            if (closed.compareAndSet(false, true)) io.launch { connection.disconnect() }
+        }
+        val body = flow {
+            check(collected.compareAndSet(false, true)) { "原样 HTTP 正文只能收集一次。" }
+            check(!closed.get()) { "原样 HTTP 响应已关闭。" }
+            val chunks = Channel<ByteArray>(1)
+            val reader = io.launch {
+                try {
+                    val input = if (status >= 400) connection.errorStream else connection.inputStream
+                    input?.use {
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val n = it.read(buffer)
+                            if (n < 0) break
+                            chunks.send(buffer.copyOf(n))
+                        }
+                    }
+                    chunks.close()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    chunks.cancel(e)
+                    throw e
+                } catch (e: IOException) {
+                    currentCoroutineContext().ensureActive()
+                    chunks.close(IOException("原样 HTTP 正文读取失败。"))
+                } catch (e: Exception) {
+                    chunks.close(IOException("原样 HTTP 正文读取失败。"))
+                } finally { release() }
+            }
+            try { for (chunk in chunks) emit(chunk) }
+            finally { reader.cancel(); chunks.cancel(); release() }
+        }
+        return HttpStreamingResponse(status, headers, body, ::release)
+    }
 
     override suspend fun send(request: HttpRequest): HttpResponse = withContext(Dispatchers.IO) {
         val connection = open(request, readTimeoutMs = request.timeoutMs)
@@ -103,20 +177,23 @@ class UrlConnectionTransport(
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun open(request: HttpRequest, readTimeoutMs: Long): HttpURLConnection {
+    private fun open(request: HttpRequest, readTimeoutMs: Long, writeBody: Boolean = true): HttpURLConnection {
         val connection = URL(request.url).openConnection() as HttpURLConnection
         connection.requestMethod = request.method
         connection.connectTimeout = minOf(connectTimeoutMs.toLong(), readTimeoutMs).coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
         connection.readTimeout = readTimeoutMs.coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
         connection.instanceFollowRedirects = false // 重定向到别的主机会把凭证头带过去；供应商地址本不该重定向
         request.headers.forEach { (name, value) -> connection.addRequestProperty(name, value) }
-        val body = request.body
+        if (writeBody) writeBody(connection, request.body)
+        return connection
+    }
+
+    private fun writeBody(connection: HttpURLConnection, body: ByteArray?, streaming: Boolean = true) {
         if (body != null) {
             connection.doOutput = true
-            connection.setFixedLengthStreamingMode(body.size)
+            if (streaming) connection.setFixedLengthStreamingMode(body.size)
             connection.outputStream.use { it.write(body) }
         }
-        return connection
     }
 
     private fun headersOf(connection: HttpURLConnection): List<Pair<String, String>> =

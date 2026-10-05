@@ -154,4 +154,77 @@ class UrlConnectionTransportTest {
         SseReader(BufferedReader(StringReader("event:x\ndata:1\n\nretry: 10\ndata: tail"))).forEach { events += it }
         assertEquals(listOf(SseEvent("x", "1"), SseEvent(null, "tail")), events)
     }
+
+    @Test
+    fun `raw response preserves status headers and unparsed bytes for json sse and errors`() = runBlocking {
+        for ((i, pair) in listOf(200 to "application/json", 200 to "text/event-stream", 401 to "text/plain").withIndex()) {
+            val body = "原样\n正文\u0000".toByteArray()
+            server.createContext("/raw-$i") { ex ->
+                ex.responseHeaders.add("content-type", pair.second)
+                ex.responseHeaders.add("Mcp-Session-Id", "session-$i")
+                ex.sendResponseHeaders(pair.first, body.size.toLong())
+                ex.responseBody.use { it.write(body) }
+            }
+            transport.open(post("/raw-$i")).use { response ->
+                assertEquals(pair.first, response.status)
+                assertEquals("session-$i", response.headers.first { it.first.equals("mcp-session-id", true) }.second)
+                assertTrue(body.contentEquals(response.body.toList().fold(byteArrayOf()) { a, b -> a + b }))
+                assertThrows(IllegalStateException::class.java) { runBlocking { response.body.toList() } }
+            }
+        }
+    }
+
+    @Test
+    fun `raw response does not follow redirects or expose request url secrets`() = runBlocking {
+        var redirected = false
+        server.createContext("/redirect-target") { ex -> redirected = true; ex.sendResponseHeaders(204, -1); ex.close() }
+        server.createContext("/raw-redirect") { ex ->
+            ex.responseHeaders.add("location", "$base/redirect-target")
+            ex.sendResponseHeaders(302, -1); ex.close()
+        }
+        val request = HttpRequest("GET", base.replace("//", "//user:pass@") + "/raw-redirect?token=secret", emptyList(), timeoutMs = 1_000)
+        assertTrue("pass" !in request.toString() && "secret" !in request.toString())
+        transport.open(request).use { assertEquals(302, it.status); it.body.toList() }
+        assertTrue(!redirected)
+    }
+
+    @Test
+    fun `raw body cancellation disconnects and close works without collecting body`() = runBlocking {
+        val clientGone = CountDownLatch(1)
+        server.createContext("/raw-slow") { ex ->
+            ex.sendResponseHeaders(200, 0)
+            try {
+                repeat(200) { ex.responseBody.write(ByteArray(8192)); ex.responseBody.flush(); Thread.sleep(20) }
+            } catch (_: IOException) { clientGone.countDown() } finally { ex.close() }
+        }
+        transport.open(post("/raw-slow")).use { response -> response.body.first() }
+        assertTrue(clientGone.await(5, TimeUnit.SECONDS))
+        transport.open(post("/raw-slow")).close()
+    }
+
+    @Test
+    fun `raw response uses stall timeout and cancellation while waiting for headers`() = runBlocking {
+        server.createContext("/raw-header-stall") { ex -> Thread.sleep(2_000); ex.close() }
+        assertThrows(IOException::class.java) { runBlocking { UrlConnectionTransport(maxStallMs = 100).open(post("/raw-header-stall")) } }
+        val requestStarted = CompletableDeferred<Unit>()
+        server.createContext("/raw-cancel-headers") { ex -> requestStarted.complete(Unit); Thread.sleep(2_000); ex.close() }
+        val job = launch(Dispatchers.Default) { transport.open(post("/raw-cancel-headers")) }
+        withTimeout(2_000) { requestStarted.await() }; job.cancel()
+        withTimeout(1_000) { job.join() }; assertTrue(job.isCancelled)
+    }
+
+    @Test
+    fun `raw collection cancellation interrupts a completely silent body`() = runBlocking {
+        val first = CompletableDeferred<Unit>()
+        server.createContext("/raw-silent-body") { ex ->
+            ex.sendResponseHeaders(200, 0)
+            ex.responseBody.write("first".toByteArray()); ex.responseBody.flush()
+            Thread.sleep(3_000); ex.close()
+        }
+        val job = launch(Dispatchers.Default) {
+            transport.open(post("/raw-silent-body")).use { response -> response.body.collect { first.complete(Unit) } }
+        }
+        withTimeout(2_000) { first.await() }; kotlinx.coroutines.delay(100); job.cancel()
+        withTimeout(1_000) { job.join() }; assertTrue(job.isCancelled)
+    }
 }
