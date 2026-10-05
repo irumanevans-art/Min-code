@@ -134,6 +134,14 @@ internal class DesktopApp(
         effort = runtime.state.value.settings.effort?.name?.lowercase(),
     )
 
+    /** /output-style 用：磁盘上的样式（managed + 用户 + 项目链，近者胜），与内核会话创建时同一套读法 */
+    suspend fun outputStyles() = dev.min.agent.ext.styles.OutputStyleFiles.available(
+        paths.fs, paths.guestOfHost(args.cwd), userHome,
+    )
+
+    /** /output-style 写回的位置：项目 `.claude/settings.local.json`（CC 同一个键，互通） */
+    fun settingsLocalFile(): java.nio.file.Path = args.cwd.resolve(".claude").resolve("settings.local.json")
+
     private val userHome get() = paths.guestOfHost(claudeHome)
 
     /** 凭证只从环境变量读、只进请求头；这里不打印、不落盘 */

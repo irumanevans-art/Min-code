@@ -87,6 +87,8 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
                     System.err.println(compactionNote(runtime.state.value))
                 }
             }
+            trimmed == "/output-style" || trimmed.startsWith("/output-style ") ->
+                outputStyleCommand(app, runtime, trimmed.removePrefix("/output-style").trim())
             trimmed in REWIND_COMMANDS -> rewindCommand(runtime, stdin)
             trimmed.startsWith("/rewind-undo ") -> rewindUndoCommand(runtime, trimmed.removePrefix("/rewind-undo ").trim())
             else -> say(line)
