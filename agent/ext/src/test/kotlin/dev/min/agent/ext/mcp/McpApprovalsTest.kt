@@ -84,6 +84,23 @@ class McpApprovalsTest {
     }
 
     @Test
+    fun `the later decision wins - approving takes the name off the reject list and back`() = runBlocking {
+        val fs = WritableFs()
+        val root = GuestPath("/workspace")
+        McpApprovals.reject(fs, root, "github")
+        McpApprovals.approve(fs, root, "github")
+        writtenJson(fs).let { obj ->
+            assertEquals(listOf("github"), obj.getValue("enabledMcpjsonServers").jsonArray.map { it.jsonPrimitive.content })
+            assertTrue("先拒后批：拒绝名单里不能还留着它", obj.getValue("disabledMcpjsonServers").jsonArray.isEmpty())
+        }
+        McpApprovals.reject(fs, root, "github")
+        writtenJson(fs).let { obj ->
+            assertTrue(obj.getValue("enabledMcpjsonServers").jsonArray.isEmpty())
+            assertEquals(listOf("github"), obj.getValue("disabledMcpjsonServers").jsonArray.map { it.jsonPrimitive.content })
+        }
+    }
+
+    @Test
     fun `a file that is not a valid json object fails and is left untouched`() = runBlocking {
         val fs = WritableFs()
         val original = "this is { not json".toByteArray(Charsets.UTF_8)
