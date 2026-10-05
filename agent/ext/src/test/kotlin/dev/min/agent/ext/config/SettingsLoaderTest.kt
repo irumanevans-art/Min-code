@@ -23,6 +23,14 @@ class SettingsLoaderTest {
 
     private fun SettingsSnapshot.rules() = merged.ruleSpecs().map { "${it.source} ${it.kind} ${it.text} @${it.baseDir}" }
 
+    @Test fun `r38 unanchored MCP allow globs are skipped with an explanation`() {
+        fs.file("/workspace/.claude/settings.json", """{"permissions":{"allow":["mcp__*","mcp__git*__get_*","mcp__github__get_*"],"ask":["mcp__*"],"deny":["mcp__*"]}}""")
+        val s = load()
+        assertEquals(listOf("mcp__github__get_*"), s.merged.ruleSpecs().filter { it.kind == RuleSpecKind.Allow }.map { it.text })
+        assertEquals(2, s.notes.count { "通配服务器段" in it })
+        assertEquals(2, s.merged.ruleSpecs().count { it.text == "mcp__*" })
+    }
+
     @Test
     fun `no files at all is not an error and leaves no notes`() {
         val s = load()

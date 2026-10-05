@@ -113,7 +113,7 @@ object PolicyEngine {
      * 判断不了就跑 hook，hook 是门禁时宁可多跑一次。写法认不出时不成立（调用方记一条说明）。
      */
     fun matchesCondition(rule: String, ask: PermissionAsk, context: PolicyContext): Boolean {
-        val parsed = PermissionRule.parse(RuleKind.Allow, rule, "hook-if") ?: return false
+        val parsed = PermissionRule.parse(RuleKind.Ask, rule, "hook-if") ?: return false
         val facts = Facts.of(ask, context)
         if (parsed.tool == "Bash" && parsed.tool == facts.tool && facts.untrusted) return true
         return firstHit(facts, listOf(parsed), RuleMatcher(context.cwd, context.home)) != null
@@ -152,15 +152,15 @@ object PolicyEngine {
                     facts.commands.any { m.matchesCommand(rule, it) } ||
                     // 看不透的命令也拿原文对一遍拒绝规则：宁可多拦
                     (rule.tool == "Bash" && facts.untrustedRaw.any { raw -> rawMatches(rule, raw) }) ||
-                    facts.paths.any { p -> m.matchesPath(rule, p) && !exempted(p, rule, rules, m) } ||
+                    facts.paths.any { p -> m.matchesPath(rule, p, facts.tool) && !exempted(p, rule, rules, m, facts.tool) } ||
                     facts.domains.any { m.matchesDomain(rule, it) } ||
                     facts.specifiers.any { m.matchesSpecifier(rule, facts.tool, it) }
                 )
         }
 
     /** `!` 规则：同一来源里的否定规则把路径从更早的拒绝 / 询问里豁免出来（CC 的 `Read(!sample.env)`） */
-    private fun exempted(path: PathAccess, rule: PermissionRule, rules: List<PermissionRule>, m: RuleMatcher): Boolean =
-        rules.any { it.source == rule.source && m.isNegation(it) && m.matchesPath(it, path) }
+    private fun exempted(path: PathAccess, rule: PermissionRule, rules: List<PermissionRule>, m: RuleMatcher, tool: String): Boolean =
+        rules.any { it.source == rule.source && m.isNegation(it) && m.matchesPath(it, path, tool) }
 
     /** 看不透的命令：规则里通配符之前的那段字面量，在原文里作为独立的词出现就算命中 */
     private fun rawMatches(rule: PermissionRule, raw: String): Boolean {
