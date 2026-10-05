@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/notify-with-verdict.sh\"" }
+        ]
+      }
+    ]
+  }
+}

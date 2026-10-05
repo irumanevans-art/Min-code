@@ -1,0 +1,17 @@
+{
+  "event": "PermissionRequest",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Deny",
+  "reasons": ["Deploys to prod run only from the release pipeline"],
+  "shouldContinue": false,
+  "stopReasons": ["Deploys to prod run only from the release pipeline"],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PermissionRequest decision control：behavior:\"deny\" 拒绝（:1922），message 告诉 Claude 为什么被拒（:1925），interrupt:true 停下 Claude（:1926）。"
+}

@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SubagentStart": [
+      {
+        "matcher": "Explore",
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/explore-brief.sh\"" }
+        ]
+      }
+    ]
+  }
+}

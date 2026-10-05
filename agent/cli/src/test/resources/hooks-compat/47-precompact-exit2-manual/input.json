@@ -1,0 +1,8 @@
+{
+  "session_id": "s-47",
+  "transcript_path": "/home/user/.claude/projects/p/47.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "PreCompact",
+  "trigger": "manual",
+  "custom_instructions": null
+}

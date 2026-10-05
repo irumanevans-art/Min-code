@@ -1,0 +1,17 @@
+{
+  "event": "PermissionRequest",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 2 behavior per event：PermissionRequest 的 exit 2 不被采纳，权限流程照常（:855）；§PermissionRequest decision control：exit 2 且无 decision 对象时流程不变、stderr 被丢弃，拦或放只能靠 decision 对象（:1928）。"
+}

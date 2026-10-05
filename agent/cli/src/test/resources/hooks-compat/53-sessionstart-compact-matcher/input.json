@@ -1,0 +1,7 @@
+{
+  "session_id": "s-53",
+  "transcript_path": "/home/user/.claude/projects/p/53.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "SessionStart",
+  "source": "compact"
+}

@@ -1,0 +1,17 @@
+{
+  "event": "SessionStart",
+  "target": "resume",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["resume context: last session ended mid-refactor in src/auth/."],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §SessionStart：matcher resume 对应 --resume/--continue//resume（:1107）；source 取值 resume（:1128）；resume 且转录里有回复时还带四个恢复成本字段（:1135-1142）；additionalContext 注入对话开头（:1163-1167）。"
+}

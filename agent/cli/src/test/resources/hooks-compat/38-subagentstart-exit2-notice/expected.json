@@ -1,0 +1,18 @@
+{
+  "event": "SubagentStart",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 1,
+  "nonBlockingErrorsContain": ["issue tracker"],
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 2 behavior per event：SubagentStart 的 exit 2 只把 stderr 给用户看（:870）；CC 把它渲染成与非阻断错误同款的 <hook name> hook error 通知，Claude 看不到、子 agent 照常启动（:888）。"
+}

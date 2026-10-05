@@ -1,0 +1,8 @@
+{
+  "session_id": "s-49",
+  "transcript_path": "/home/user/.claude/projects/p/49.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "PostCompact",
+  "trigger": "manual",
+  "compact_summary": "Summary of the compacted conversation..."
+}

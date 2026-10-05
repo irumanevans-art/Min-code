@@ -1,0 +1,17 @@
+{
+  "event": "PostCompact",
+  "target": "manual",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PostCompact：无决策控制，影响不了压缩结果，只能做后续事务（:3103）；§Decision control：PostCompact 在 None 行（:1032）。"
+}

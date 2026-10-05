@@ -1,0 +1,17 @@
+{
+  "event": "PostCompact",
+  "target": "manual",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PostCompact：用于对压缩后的新状态做反应，例如记录摘要或更新外部状态（:3079）；compact_summary 是压缩生成的会话摘要（:3090）；纯文本 stdout 只进调试日志（:782），加上下文的事件清单里没有 PostCompact（:991-995）。"
+}

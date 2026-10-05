@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/failure-hint.sh\"" }
+        ]
+      }
+    ]
+  }
+}

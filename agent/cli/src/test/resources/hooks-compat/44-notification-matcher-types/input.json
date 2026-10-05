@@ -1,0 +1,9 @@
+{
+  "session_id": "s-44",
+  "transcript_path": "/home/user/.claude/projects/p/44.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "Notification",
+  "message": "Claude needs your permission",
+  "title": "Permission needed",
+  "notification_type": "permission_prompt"
+}

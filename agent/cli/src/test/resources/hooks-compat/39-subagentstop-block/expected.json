@@ -1,0 +1,17 @@
+{
+  "event": "SubagentStop",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": ["Two TODOs remain in src/api.ts; finish them before stopping"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §SubagentStop：与 Stop 相同的决策格式，decision:\"block\"+reason 让子 agent 继续跑、reason 作为它的下一条指令（:2411）；§Stop decision control：block 阻止停止、block 时 reason 必填（:2601-2602）。"
+}

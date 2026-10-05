@@ -1,0 +1,13 @@
+{
+  "session_id": "s-35",
+  "transcript_path": "/home/user/.claude/projects/p/35.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": { "command": "npm run dev", "description": "Start dev server" },
+  "tool_use_id": "toolu_35",
+  "error": "Exit code 1\nError: listen EADDRINUSE: address already in use :::3000",
+  "is_interrupt": false,
+  "duration_ms": 812
+}

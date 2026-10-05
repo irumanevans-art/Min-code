@@ -1,0 +1,17 @@
+{
+  "event": "UserPromptSubmit",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": ["prompts mentioning customer PII must go through the review queue instead"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §UserPromptSubmit decision control：decision:\"block\" 在 prompt 到达 Claude 前拦下（:1355、:1359）；reason 展示给用户、不加进上下文（:1360，示例 :1367-1378）。"
+}

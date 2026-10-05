@@ -1,0 +1,8 @@
+{
+  "session_id": "s-54",
+  "transcript_path": "/home/user/.claude/projects/p/54.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "export the customer table with phone numbers"
+}

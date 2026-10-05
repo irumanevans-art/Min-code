@@ -1,0 +1,17 @@
+{
+  "event": "SubagentStop",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["Summarize the findings as a numbered list with file:line references before handing back."],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §SubagentStop：接受 hookSpecificOutput.additionalContext 作为保持子 agent 运行的非错误反馈（:2411）；§Stop decision control：与 decision:block 不同，转录里标为 hook feedback 而非 hook error（:2603）。"
+}

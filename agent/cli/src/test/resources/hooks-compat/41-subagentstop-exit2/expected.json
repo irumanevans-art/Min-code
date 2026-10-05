@@ -1,0 +1,17 @@
+{
+  "event": "SubagentStop",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": ["subagent must rerun the failing benchmark first"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 2 behavior per event：SubagentStop 的 exit 2 阻止子 agent 停止（:859）；§Stop decision control：exit 2 与 reason 同路，Claude 收到 stderr 作为继续的理由（:2605）。"
+}

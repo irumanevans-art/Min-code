@@ -1,0 +1,18 @@
+{
+  "event": "SessionEnd",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "pendingFix": "CC 原文说 SessionEnd 丢弃它的 JSON 输出字段（:3343「Claude Code discards their JSON output fields, such as systemMessage」；:1032 该事件在决策控制 None 行），reason 与 systemMessage 都不该出现在结论里；引擎实测保留 reasons=[reason] 与 systemMessages=[systemMessage]（decision 本身正确为 Neutral）。期望按原文写，差异待复核。",
+  "basis": "hooks.md §SessionEnd：无决策控制，Claude Code 丢弃它的 JSON 输出字段（含 systemMessage）（:3343）；§Decision control：SessionEnd 在 None 行（:1032），decision:\"block\" 在这里没有效果。"
+}

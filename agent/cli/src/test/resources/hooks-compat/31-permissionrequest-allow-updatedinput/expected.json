@@ -1,0 +1,17 @@
+{
+  "event": "PermissionRequest",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Allow",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": { "command": "npm run lint --fix" },
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PermissionRequest decision control：behavior:\"allow\" 代表用户授予许可（:1922），updatedInput 整体替换工具入参（:1923，示例 :1930-1942）。"
+}

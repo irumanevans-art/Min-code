@@ -1,0 +1,9 @@
+{
+  "session_id": "s-33",
+  "transcript_path": "/home/user/.claude/projects/p/33.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Bash",
+  "tool_input": { "command": "rm -rf node_modules" }
+}

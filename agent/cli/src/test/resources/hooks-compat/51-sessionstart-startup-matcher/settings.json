@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup", "hooks": [{ "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/on-startup.sh\"" }] },
+      { "matcher": "resume", "hooks": [{ "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/on-resume.sh\"" }] },
+      { "matcher": "compact", "hooks": [{ "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/on-compact.sh\"" }] }
+    ]
+  }
+}

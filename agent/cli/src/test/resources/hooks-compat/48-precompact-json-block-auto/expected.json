@@ -1,0 +1,17 @@
+{
+  "event": "PreCompact",
+  "target": "auto",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": ["auto-compact skipped: schema migration in progress, compacting now would lose the plan"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PreCompact：也可以用 JSON \"decision\": \"block\" 拦下压缩（:3056）；matcher auto 对应到达自动压缩窗口的自动压缩（:3054）。"
+}

@@ -1,0 +1,14 @@
+{
+  "session_id": "s-40",
+  "transcript_path": "/home/user/.claude/projects/p/40.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "agent-40",
+  "agent_type": "Explore",
+  "agent_transcript_path": "/home/user/.claude/projects/p/40/subagents/agent-40.jsonl",
+  "last_assistant_message": "Checked 4 candidate fixes; two look viable.",
+  "background_tasks": [],
+  "session_crons": []
+}

@@ -1,0 +1,17 @@
+{
+  "event": "PostToolUseFailure",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["express is missing from dependencies; run npm install express and rerun the tests"],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PostToolUseFailure decision control：additionalContext 加进 Claude 的上下文、与错误并列（:2132，示例 :2134-2141）；§Add context for Claude：位于工具结果旁（:993）。"
+}
