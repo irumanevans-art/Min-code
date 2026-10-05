@@ -3,6 +3,8 @@ package dev.min.code.core.engine.min
 import android.content.Context
 import android.util.Log
 import dev.min.agent.host.UrlConnectionTransport
+import dev.min.agent.host.CasWorkspaceSnapshots
+import dev.min.agent.spi.catchingNonCancellation
 import dev.min.agent.kernel.HubLimits
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.kernel.SessionState
@@ -114,7 +116,8 @@ class MinAgentEngine(
     @Volatile private var generation: MinHostGeneration = buildGeneration()
     private val ports = MinHostPorts({ generation }, tasks, dev.min.agent.spi.Clock { System.currentTimeMillis() })
 
-    private val kernelDeps = MinKernelDeps.build(resolver, ports)
+    internal val snapshots = CasWorkspaceSnapshots(File(context.filesDir, "agent").toPath(), { generation.fs }, MinKernelDeps.MEMORY_HOME)
+    private val kernelDeps = MinKernelDeps.build(resolver, ports, snapshots = snapshots)
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
     internal val processes: dev.min.agent.spi.ProcessPort get() = kernelDeps.host.processes
@@ -170,7 +173,7 @@ class MinAgentEngine(
         scope.launch {
             combine(settings.settings, hub.running) { _, running -> running }.collect { if (it.isEmpty()) refreshGeneration() }
         }
-        scope.launch { runCatching { recoverInterrupted() }.onFailure { Log.w(TAG, "startup recovery failed", it) } }
+        scope.launch { catchingNonCancellation { recoverInterrupted() }.onFailure { Log.w(TAG, "startup recovery failed", it) } }
     }
 
     /** 启动扫描：让上次死在回合中途的会话合法收尾（见 [MinStartupRecovery]）。引擎建好时自动跑一次，也可手动触发 */
@@ -296,6 +299,10 @@ class MinAgentEngine(
             sessions.value[id].also { sessions.value = sessions.value - id }
         }
         session?.release()
+        scope.launch(Dispatchers.IO) {
+            catchingNonCancellation { snapshots.gc(cleanupPeriodDays = 30) }
+                .onFailure { Log.w(TAG, "检查点仓库清理失败，下次关闭会话时重试。") }
+        }
     }
 
     private suspend fun release(id: SessionId) = drop(id)
@@ -320,11 +327,11 @@ class MinAgentEngine(
 
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = withContext(Dispatchers.IO) {
         val logRef = tasks.find(taskId)?.handle?.logPath ?: return@withContext null
-        runCatching { clippedLog(generation.fs.hostPath(logRef).toFile(), maxChars).first }.getOrNull()
+        catchingNonCancellation { clippedLog(generation.fs.hostPath(logRef).toFile(), maxChars).first }.getOrNull()
     }
 
     override suspend fun searchFiles(cwd: String, query: String, limit: Int): List<String> = withContext(Dispatchers.IO) {
-        runCatching { findMentionFiles(generation.fs.hostPath(GuestPath(cwd)).toFile(), cwd, query, limit) }.getOrDefault(emptyList())
+        catchingNonCancellation { findMentionFiles(generation.fs.hostPath(GuestPath(cwd)).toFile(), cwd, query, limit) }.getOrDefault(emptyList())
     }
 
     override fun saveWithdrawnDraft(ref: SessionRef, input: UserInput) {

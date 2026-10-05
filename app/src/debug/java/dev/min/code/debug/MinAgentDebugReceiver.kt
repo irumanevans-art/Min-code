@@ -60,6 +60,12 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
             var ownsRun = false
             try {
                 val engine = DebugDriver.engine(context.applicationContext)
+                if (op == "snapshot-probe") {
+                    // 拍第一张可能超过 Broadcast 的 10 秒；交给现有 debug 长寿 scope。
+                    finish()
+                    SnapshotProbe.run(engine.snapshots, intent.getStringExtra("root") ?: "/workspace")
+                    return@launch
+                }
                 if (op == "list") {
                     engine.catalog.list().forEach { Log.i(TAG, "LIST ${it.ref.id} interrupted=${it.interrupted} messages=${it.messageCount} title=${it.title}") }
                     Log.i(TAG, "LIST_DONE"); return@launch
