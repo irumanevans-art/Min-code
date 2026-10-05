@@ -203,14 +203,29 @@ class UrlConnectionTransportTest {
     }
 
     @Test
-    fun `raw response uses stall timeout and cancellation while waiting for headers`() = runBlocking {
+    fun `raw response uses request timeout and cancellation while waiting for headers`() = runBlocking {
         server.createContext("/raw-header-stall") { ex -> Thread.sleep(2_000); ex.close() }
-        assertThrows(IOException::class.java) { runBlocking { UrlConnectionTransport(maxStallMs = 100).open(post("/raw-header-stall")) } }
+        assertThrows(IOException::class.java) { runBlocking { UrlConnectionTransport(maxStallMs = 10_000).open(HttpRequest("POST", "$base/raw-header-stall", emptyList(), timeoutMs = 100)) } }
         val requestStarted = CompletableDeferred<Unit>()
         server.createContext("/raw-cancel-headers") { ex -> requestStarted.complete(Unit); Thread.sleep(2_000); ex.close() }
         val job = launch(Dispatchers.Default) { transport.open(post("/raw-cancel-headers")) }
         withTimeout(2_000) { requestStarted.await() }; job.cancel()
         withTimeout(1_000) { job.join() }; assertTrue(job.isCancelled)
+    }
+
+    @Test
+    fun `raw request timeout is independent of model stall timeout for headers and body`() = runBlocking {
+        server.createContext("/raw-long") { ex ->
+            Thread.sleep(200)
+            ex.sendResponseHeaders(200, 0)
+            ex.responseBody.write("first".toByteArray()); ex.responseBody.flush()
+            Thread.sleep(200)
+            ex.responseBody.write("second".toByteArray()); ex.close()
+        }
+        val request = HttpRequest("GET", "$base/raw-long", emptyList(), timeoutMs = 2_000)
+        UrlConnectionTransport(maxStallMs = 50).open(request).use { response ->
+            assertEquals("firstsecond", response.body.toList().fold(byteArrayOf()) { a, b -> a + b }.decodeToString())
+        }
     }
 
     @Test
@@ -227,4 +242,33 @@ class UrlConnectionTransportTest {
         withTimeout(2_000) { first.await() }; kotlinx.coroutines.delay(100); job.cancel()
         withTimeout(1_000) { job.join() }; assertTrue(job.isCancelled)
     }
+    @Test fun `r17_silent_stream_cancellation_completes_promptly`() = runBlocking {
+        val first = CompletableDeferred<Unit>()
+        server.createContext("/silent-model") { ex ->
+            ex.responseHeaders.add("content-type", "text/event-stream")
+            ex.sendResponseHeaders(200, 0)
+            ex.responseBody.write("data: first\n\n".toByteArray()); ex.responseBody.flush()
+            Thread.sleep(3_000); ex.close()
+        }
+        val job = launch(Dispatchers.Default) {
+            transport.stream(post("/silent-model")).collect { first.complete(Unit) }
+        }
+        withTimeout(2_000) { first.await() }
+        kotlinx.coroutines.delay(100)
+        job.cancel()
+        withTimeout(500) { job.join() }
+        assertTrue(job.isCancelled)
+    }
+
+    @Test fun `r17_repeat_original_stalled_stream_cancellation_twenty_times`() {
+        val failures = mutableListOf<String>()
+        repeat(20) { index ->
+            val fixture = UrlConnectionTransportTest()
+            try { fixture.`cancelling a stalled stream disconnects promptly instead of waiting for the server`() }
+            catch (error: Throwable) { failures += "attempt $index: " + error.javaClass.simpleName }
+            finally { fixture.stop() }
+        }
+        assertTrue(failures.joinToString(), failures.isEmpty())
+    }
+
 }
