@@ -25,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
  * - **输出总是同时写进 [logDir] 下以句柄 id 命名的日志文件**：命令转后台后模型还要靠 Read 看它，
  *   所以前台阶段就写，转后台后继续写，不必事后补。[guestLogDir] 是这个目录在 guest 里的路径（桌面 CLI 会把它挂进 RootfsFileSystem）。
  * - stdout 与 stderr 合并成一条流，顺序即到达顺序；stdin 立刻关掉，读 stdin 的命令拿到 EOF 而不是永远挂着。
- * - 杀进程一律杀整棵树（先杀子孙再杀自己）：`bash -c "sleep 999 &"` 之类杀掉 bash 后子孙会成孤儿继续跑。
+ * - 杀进程先取整棵树的快照；Windows 再用 msys 进程表补全并反复回收，否则杀掉 bash 后孙进程会成孤儿继续跑。
  */
 class LocalExec(
     private val hostDirOf: (GuestPath) -> Path,
@@ -35,7 +35,7 @@ class LocalExec(
 ) : Exec {
 
     /** 还在跑的进程；进程结束（无论前台后台）由等待线程摘除 */
-    private val running = ConcurrentHashMap<String, Process>()
+    private val running = ConcurrentHashMap<String, Pair<Process, LocalExecLaunch>>()
 
     override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult = withContext(Dispatchers.IO) {
         val startedAt = System.nanoTime()
@@ -43,14 +43,33 @@ class LocalExec(
         Files.createDirectories(logDir)
         val logFile = logDir.resolve("$id.log")
 
-        val builder = ProcessBuilder(shell + command.script)
-            .directory(hostDirOf(command.cwd).toFile())
-            .redirectErrorStream(true)
-        builder.environment().putAll(command.env)
-        val process = builder.start()
-        process.outputStream.close()
-        running[id] = process
-        val proc = Running(id, process, logFile, options.maxOutputChars) { running.remove(id) }
+        val launch = LocalExecLaunch(shell, logDir, id)
+        val process = try {
+            val builder = ProcessBuilder(launch.argv(command.script))
+                .directory(hostDirOf(command.cwd).toFile())
+                .redirectErrorStream(true)
+            builder.environment().putAll(command.env)
+            builder.start()
+        } catch (e: Throwable) {
+            launch.cleanup()
+            throw e
+        }
+        val proc = try {
+            process.outputStream.close()
+            running[id] = process to launch
+            Running(id, process, logFile, options.maxOutputChars) {
+                try {
+                    launch.cleanup()
+                } finally {
+                    running.remove(id)
+                }
+            }
+        } catch (e: Throwable) {
+            launch.killTree(process)
+            launch.cleanup()
+            running.remove(id)
+            throw e
+        }
 
         try {
             val budget = minOf(options.foregroundBudgetMs ?: options.timeoutMs, options.timeoutMs)
@@ -67,36 +86,29 @@ class LocalExec(
                     ExecResult.Backgrounded(handle, proc.snapshot().first)
                 }
                 else -> {
-                    killTree(process)
-                    proc.awaitDrained()
+                    launch.killTree(process)
+                    proc.awaitFinished()
                     val (output, truncated) = proc.snapshot()
                     ExecResult.TimedOut(output, truncated)
                 }
             }
         } catch (e: CancellationException) {
             // 外层取消了：不能把进程留在后台跑
-            killTree(process)
+            launch.killTree(process)
+            proc.awaitFinished()
             throw e
         }
     }
 
     override suspend fun kill(handle: ExecHandle) {
-        val process = running[handle.id] ?: return
-        withContext(Dispatchers.IO) { killTree(process) }
+        val (process, launch) = running[handle.id] ?: return
+        withContext(Dispatchers.IO) { launch.killTree(process) }
     }
 
     private fun pidOf(process: Process): Int? = try {
         process.pid().toInt()
     } catch (_: UnsupportedOperationException) {
         null
-    }
-
-    /** 先取子孙快照再杀：父进程一死子孙就改挂到 init 下，再查就找不到了 */
-    private fun killTree(process: Process) {
-        val handle = process.toHandle()
-        val descendants = handle.descendants().toList()
-        descendants.forEach { it.destroyForcibly() }
-        handle.destroyForcibly()
     }
 
     /**
@@ -113,6 +125,7 @@ class LocalExec(
         val exit = CompletableDeferred<Int>()
         private val collector = OutputCollector(maxChars)
         private val pump: Thread
+        private val waiter: Thread
 
         init {
             val log = Files.newOutputStream(logFile)
@@ -135,7 +148,7 @@ class LocalExec(
                     }
                 }
             }, "local-exec-pump-$id").apply { isDaemon = true; start() }
-            Thread({
+            waiter = Thread({
                 val code = try {
                     process.waitFor()
                 } catch (_: InterruptedException) {
@@ -143,13 +156,16 @@ class LocalExec(
                 }
                 // 后台子孙可能还攥着管道写端，EOF 迟迟不来：最多等 2 秒把已到的输出读完
                 pump.join(DRAIN_MS)
-                onDone()
-                exit.complete(code)
+                try {
+                    onDone()
+                } finally {
+                    exit.complete(code)
+                }
             }, "local-exec-wait-$id").apply { isDaemon = true; start() }
         }
 
-        fun awaitDrained() {
-            pump.join(DRAIN_MS)
+        fun awaitFinished() {
+            waiter.join(DRAIN_MS * 2)
         }
 
         fun snapshot(): Pair<String, Boolean> = collector.snapshot()

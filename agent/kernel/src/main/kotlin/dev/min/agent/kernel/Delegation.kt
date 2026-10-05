@@ -9,6 +9,7 @@ import dev.min.agent.spi.ForkSeeded
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.MemoryAttached
+import dev.min.agent.spi.MaskedOutput
 import dev.min.agent.spi.SeedCompaction
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.TaskCreated
@@ -134,7 +135,11 @@ internal fun forkSeed(parent: SessionState, callId: CallId, prompt: String): For
     val seed = view?.let { c ->
         SeedCompaction(c.compactionId, c.summary, c.through, c.transcriptPath, parent.compactionContexts[c.compactionId].orEmpty())
     }
-    return ForkSeeded(messages, results, seed)
+    // 委派消息里的调用在分身里都是合成结果，不能用父会话的遮蔽盖掉；摘要边界之前的调用也不继承。
+    val masked = inherited.dropLast(1).filterIsInstance<HistoryEntry.Assistant>().flatMap { entry ->
+        entry.toolCalls.filter { it.callId in parent.masked }.map { MaskedOutput(it.callId, parent.masked[it.callId]) }
+    }
+    return ForkSeeded(messages, results, seed, masked)
 }
 
 /** 分身继承的起点：父会话压缩过就是摘要边界（含）之后，否则从头。挂在被摘要掉消息上的东西一并出局 */

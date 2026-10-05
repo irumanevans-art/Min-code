@@ -320,6 +320,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
                     }
                 },
                 toolResults = e.results.associate { it.callId to it.result },
+                masked = e.masked.associate { it.callId to it.path },
                 // 父会话压缩过：分身的视图同样从摘要开始（含挂在摘要末尾的 hook 上下文）
                 compaction = e.compaction?.let { CompactionView(it.compactionId, it.summary, it.through, it.transcriptPath) },
                 compactionContexts = e.compaction?.let { mapOf(it.compactionId to it.contexts) }.orEmpty(),

@@ -87,14 +87,6 @@ class LocalProcessPort(
         return record + "exec " + argv.joinToString(" ") { posixQuote(it) } + "\n"
     }
 
-    /** `C:\Users\x\a.pid` → `/c/Users/x/a.pid`（Git Bash 的盘符写法，与 [DesktopPaths] 一致） */
-    private fun bashPath(path: Path): String {
-        val s = path.toAbsolutePath().toString().replace('\\', '/')
-        return if (s.length > 2 && s[1] == ':') "/" + s[0].lowercaseChar() + s.substring(2) else s
-    }
-
-    private fun posixQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
-
     private companion object {
         const val STALE_MS = 7L * 24 * 3600 * 1000
     }

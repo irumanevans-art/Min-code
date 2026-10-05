@@ -58,9 +58,9 @@ Responses 发送 prompt_cache_key；longTtl 暂不映射。短历史命中未增
 - 斜杠命令只认启动时读到的 skills / commands（与会话的清单快照同一时刻），没有补全菜单；嵌套目录 skill 的 `apps/web:deploy` 形式不支持。
 - 子 agent 随 CLI 的 scope 运行，`-p` 根回合结束或退出 CLI 时后台子回合也会结束运行；下次 `--resume` 由 Hub 恢复并补发报告，不自动续跑。
 - 子 agent 的审批聚合、类型清单读取自 `.claude/agents/` 和界面树留给 S4；目前 CLI 使用内核自带 general-purpose / Explore / Plan。
-- 只给桌面用；Android 走 proot，另有实现。桌面默认 shell 是 `bash -lc`，Windows 需要 Git Bash 之类在 PATH 里（原生 cmd/PowerShell 不支持）。
+- 只给桌面用；Android 走 proot，另有实现。默认 login bash；Windows 把命令正文写进 UTF-8 临时脚本，由 `bash -l <文件>` 执行，避免命令行二次拆引号，退出后删除脚本；其余桌面平台仍用 `bash -lc`。Windows 需要 Git Bash 在 PATH 里（原生 cmd/PowerShell 不支持）。
 - `hostDirOf` 由宿主提供：Linux/macOS/WSL 上是恒等映射；日志目录以 `guestLogDir` 挂进 `RootfsFileSystem` 后模型才能 Read。
-- 杀进程树靠 `ProcessHandle.descendants()`：在杀之前的快照里的进程都会被杀；`setsid` 等主动脱离父子关系的进程（或杀的瞬间新 fork 出的进程）杀不到，不是按进程组回收。
+- 杀进程树靠 `ProcessHandle.descendants()`；Windows 另用 `MsysProcesses` 的 msys 进程表补全并反复回收，覆盖 JDK 看不见的孙进程。主动脱离父子关系与进程组的进程不保证回收；其余平台仍只取杀之前的 JDK 快照。
 - 后台进程随 CLI 进程的退出而失去追踪（没有跨进程恢复；重启后拿旧句柄 `kill` 是空操作，日志文件仍在）。
 - 每条命令独立起 shell，`cd` 与 `export` 不跨调用保留（M2 做持久 shell 状态）。
 - 输出按 UTF-8 解码；进程结束后最多再等 2 秒读完管道，若后台子孙仍攥着管道，最后一小段输出可能晚于返回才写进日志。
@@ -69,7 +69,6 @@ Sonnet 5.5 原生 Anthropic 实测使用 `--provider lunora --wire anthropic --b
 
 ## 长寿进程（`LocalProcessPort`）
 - MCP stdio 服务器用的长寿进程：与 `LocalExec` 同一个 shell（Windows 上 Git Bash）和路径映射。argv 经临时启动脚本传，不进命令行
-  （Windows 上 JDK 不转义内嵌双引号、Git Bash 再拆一遍，带空格 / 引号的参数会碎——`LocalExec` 的 `bash -lc <script>` 同样受此影响，见已知限制）。
+  （Windows 上 JDK 不转义内嵌双引号、Git Bash 再拆一遍，带空格 / 引号的参数会碎；`LocalExec` 在 Windows 上也使用临时脚本）。
 - 环境变量白名单继承；模型 key（`--api-key-env`）、快速模型 key、搜索后端 key 永远不进子进程（`desktopSecretEnvNames`）。
 - Windows 回收：`ProcessHandle.descendants()` 看不到 Git Bash fork 出来的孙进程，用 `ps -W` 补全（`MsysProcesses`），每次回收要多起几次 bash（约 0.2 秒一次）。
-- 已知限制：`LocalExec` 在 Windows 上，脚本里含空格的双引号串（如 `grep "a b" f`）会被 JDK 的命令行拼装拆碎；`LocalProcessPort` 已绕开，`LocalExec` 未改。
