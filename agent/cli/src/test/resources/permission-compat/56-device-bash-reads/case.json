@@ -1,0 +1,86 @@
+{
+  "mode": "default",
+  "basis": "2026-10-06 任务单 Device 读取审批也涵盖可识别的 Bash 文件操作数，不能靠只读命令绕过手机文件授权。",
+  "calls": [
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cat /sdcard/Documents/private.txt"
+      },
+      "expected": "ask",
+      "basis": "cat 的静态文件操作数是 Device 读取。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "head -n 10 /storage/emulated/0/Documents/private.txt"
+      },
+      "expected": "ask",
+      "basis": "head 的目标是 Device 读取；数字行数不是路径。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cd /sdcard && ls"
+      },
+      "expected": "ask",
+      "basis": "跟踪 cd 后，ls 的隐式当前目录属于 Device。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "grep -n photo /sdcard/a"
+      },
+      "expected": "ask",
+      "basis": "静态 Device 操作数、可能匹配 Device 的根通配或未确定的读取目标，均不能使用只读基线免批。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "rg --ignore-file .ignore photo /sdcard/a"
+      },
+      "expected": "ask",
+      "basis": "静态 Device 操作数、可能匹配 Device 的根通配或未确定的读取目标，均不能使用只读基线免批。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "jq --arg name value . /sdcard/a.json"
+      },
+      "expected": "ask",
+      "basis": "静态 Device 操作数、可能匹配 Device 的根通配或未确定的读取目标，均不能使用只读基线免批。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "find -L /sdcard -name \"*.txt\""
+      },
+      "expected": "ask",
+      "basis": "静态 Device 操作数、可能匹配 Device 的根通配或未确定的读取目标，均不能使用只读基线免批。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -l /sdcard/*.txt"
+      },
+      "expected": "ask",
+      "basis": "静态 Device 操作数、可能匹配 Device 的根通配或未确定的读取目标，均不能使用只读基线免批。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cat /s*/a"
+      },
+      "expected": "ask",
+      "basis": "静态 Device 操作数、可能匹配 Device 的根通配或未确定的读取目标，均不能使用只读基线免批。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cat $FILE"
+      },
+      "expected": "ask",
+      "basis": "静态 Device 操作数、可能匹配 Device 的根通配或未确定的读取目标，均不能使用只读基线免批。"
+    }
+  ]
+}

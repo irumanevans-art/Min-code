@@ -31,6 +31,7 @@ data class PolicyContext(
     val home: GuestPath = GuestPath("/root"),
     val scopeOf: (GuestPath) -> PathScope = ::defaultScope,
     val autoMemoryDir: GuestPath? = null,
+    val additionalDirectories: List<GuestPath> = emptyList(),
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -52,7 +53,7 @@ fun defaultScope(path: GuestPath): PathScope {
  * 2. **拒绝规则**：任一命中即拒（跨层级拒绝优先，与 CC 一致）。
  * 3. **询问规则**：任一命中即问。
  * 4. **允许规则**：这次调用碰到的每一样东西（每条简单命令、每个路径、每个域名）都被允许规则或只读命令覆盖，才放行。
- * 5. **模式**：bypass 放行；计划模式只读；dontAsk 只放行只读；acceptEdits 放行工作区内的编辑；默认只放行只读。
+ * 5. **模式**：bypass 放行；计划模式非只读询问；dontAsk 拒绝需批的调用；acceptEdits 放行工作区内的编辑和文件命令；默认只放行只读。
  *    Bash 由命令分析决定是否只读：`ls`、`git status` 这类在默认模式下免批（与 CC 一致）。
  */
 object PolicyEngine {
@@ -80,7 +81,7 @@ object PolicyEngine {
             return Verdict.Allow(DecidedBy.Rule(rule.raw, rule.source))
         }
 
-        val effectivelyReadOnly = readOnly || facts.isReadOnlyCommand
+        val effectivelyReadOnly = (readOnly || facts.isReadOnlyCommand) && !facts.requiresReadApproval
         val byMode = DecidedBy.Mode(context.mode)
         return when (context.mode) {
             PermissionMode.BypassPermissions -> Verdict.Allow(byMode)
@@ -91,7 +92,7 @@ object PolicyEngine {
                 if (effectivelyReadOnly) Verdict.Allow(byMode)
                 else Verdict.Deny(byMode, "当前模式不询问用户，这个操作没有被预先允许。")
             PermissionMode.AcceptEdits ->
-                if (effectivelyReadOnly || facts.isWorkspaceEditOnly) Verdict.Allow(byMode) else Verdict.Ask
+                if (effectivelyReadOnly || facts.isWorkspaceEditOnly || facts.isWorkspaceFileCommand) Verdict.Allow(byMode) else Verdict.Ask
             // auto 模式的审查模型在 M5 落地，在那之前按 default 处理
             PermissionMode.Default, PermissionMode.Auto ->
                 if (effectivelyReadOnly) Verdict.Allow(byMode) else Verdict.Ask
@@ -113,6 +114,7 @@ object PolicyEngine {
      * 判断不了就跑 hook，hook 是门禁时宁可多跑一次。写法认不出时不成立（调用方记一条说明）。
      */
     fun matchesCondition(rule: String, ask: PermissionAsk, context: PolicyContext): Boolean {
+        // hook 条件不授予权限，不能套用 allow 对 MCP 服务器通配的限制。
         val parsed = PermissionRule.parse(RuleKind.Ask, rule, "hook-if") ?: return false
         val facts = Facts.of(ask, context)
         if (parsed.tool == "Bash" && parsed.tool == facts.tool && facts.untrusted) return true
@@ -175,20 +177,29 @@ object PolicyEngine {
      * 整工具规则（如 `WebFetch`、`mcp__github`）直接覆盖。返回起决定作用的那条规则。
      */
     private fun covering(facts: Facts, rules: List<PermissionRule>, m: RuleMatcher): PermissionRule? {
-        rules.firstOrNull { m.matchesTool(it, facts.tool) }?.let { return it }
         if (facts.untrusted || facts.unresolvedWrites.isNotEmpty()) return null
+        val whole = rules.firstOrNull { m.matchesTool(it, facts.tool) }
+        if (whole != null && !facts.hasOutsideReadRedirect) return whole
         if (facts.commands.isEmpty() && facts.paths.isEmpty() && facts.domains.isEmpty() && facts.specifiers.isEmpty()) return null
-        var decisive: PermissionRule? = null
+        var decisive: PermissionRule? = whole
+        val allowedCommands = mutableSetOf<SimpleCommand>()
         for (cmd in facts.commands) {
             val rule = rules.firstOrNull { m.matchesCommand(it, cmd) }
-            if (rule == null && !CommandSafety.isReadOnly(cmd)) return null
+            if (rule == null && whole == null && !facts.commandIsReadOnly(cmd)) return null
             decisive = decisive ?: rule
+            if (rule != null || whole != null) allowedCommands += cmd
         }
         for (path in facts.paths) {
-            val rule = rules.firstOrNull { !m.isNegation(it) && m.matchesPath(it, path) }
+            val rule = rules.firstOrNull { !m.isNegation(it) && m.matchesPath(it, path, facts.tool) }
             // 命令的重定向写进工作区：规则已允许这条命令，就不再单独要求 Edit 规则
-            val okByCommand = path in facts.redirectWrites && path.scope == PathScope.Workspace && decisive != null
-            if (rule == null && !okByCommand) return null
+            val owners = facts.filePathOwners.filter { it.first == path }.map { it.second }
+            val approvedOwners = owners.isNotEmpty() && owners.all { it in allowedCommands }
+            val okByCommand = path in facts.redirectWrites && path.scope == PathScope.Workspace && approvedOwners
+            val okRead = path.kind == AccessKind.Read && path.scope != PathScope.Device &&
+                (path !in facts.redirectReads || path.scope == PathScope.Workspace)
+            // 命令批准只覆盖自己的操作数，不能让前面的 npm allow 替后面的 cat 手机文件作批准。
+            val okFileCommand = path !in facts.redirectReads && path !in facts.redirectWrites && approvedOwners
+            if (rule == null && !okByCommand && !okRead && !okFileCommand) return null
             decisive = decisive ?: rule
         }
         for (domain in facts.domains) {
@@ -248,6 +259,11 @@ object PolicyEngine {
         /** 分析器看不透的那几条命令的原文 */
         val untrustedRaw: List<String>,
         val redirectWrites: List<PathAccess>,
+        val redirectReads: List<PathAccess>,
+        val filePaths: List<PathAccess>,
+        val filePathOwners: List<Pair<PathAccess, SimpleCommand>>,
+        val fileCommandsCovered: Boolean,
+        val gitAfterCd: Set<SimpleCommand>,
         /** 前面 cd 到了静态不知道的地方之后的相对重定向目标：写到哪里不知道 */
         val unresolvedWrites: List<String>,
         val paths: List<PathAccess>,
@@ -257,10 +273,20 @@ object PolicyEngine {
     ) {
         val untrusted: Boolean get() = untrustedRaw.isNotEmpty()
 
+        val hasOutsideReadRedirect: Boolean get() = redirectReads.any { it.scope != PathScope.Workspace }
+        val requiresReadApproval: Boolean get() = hasOutsideReadRedirect || unresolvedWrites.isNotEmpty() ||
+            paths.any { it.kind == AccessKind.Read && it.scope == PathScope.Device }
+
+        fun commandIsReadOnly(cmd: SimpleCommand): Boolean = cmd !in gitAfterCd && CommandSafety.isReadOnly(cmd)
+
         /** Bash 调用且每条简单命令都只读、不往文件里写 */
         val isReadOnlyCommand: Boolean
             get() = rawCommands.isNotEmpty() && !untrusted && redirectWrites.isEmpty() && unresolvedWrites.isEmpty() &&
-                commands.all { CommandSafety.isReadOnly(it) }
+                commands.all(::commandIsReadOnly)
+
+        val isWorkspaceFileCommand: Boolean
+            get() = !untrusted && !requiresReadApproval && unresolvedWrites.isEmpty() && fileCommandsCovered &&
+                filePaths.isNotEmpty() && domains.isEmpty() && paths.filter { it.kind == AccessKind.Write }.all { it.scope == PathScope.Workspace }
 
         /** 只改工作区里的文件（自动记忆目录算工作区：那是 agent 自己的笔记，设计 §2.4）、不跑命令、不联网：acceptEdits 下直接放行的那一类 */
         val isWorkspaceEditOnly: Boolean
@@ -282,16 +308,49 @@ object PolicyEngine {
                 val analyses = ask.commands.map { ShellAnalyzer.analyze(it.raw) }
                 val commands = analyses.filterIsInstance<ShellAnalysis.Parsed>().flatMap { it.commands }
                 val redirectWrites = mutableListOf<PathAccess>()
+                val redirectReads = mutableListOf<PathAccess>()
+                val filePaths = mutableListOf<PathAccess>()
+                val filePathOwners = mutableListOf<Pair<PathAccess, SimpleCommand>>()
+                val gitAfterCd = mutableSetOf<SimpleCommand>()
+                var changedDirectory = false
+                var fileCommandsCovered = true
                 val unresolved = mutableListOf<String>()
                 // 按顺序跟踪 cd：`cd /sdcard && echo x > a` 写的是 /sdcard/a。管道里的 cd 其实不生效，这里一律当生效（宁可多问）
                 var cwd: String? = context.cwd.value
                 for (cmd in commands) {
-                    for (r in cmd.redirects.filter { it.writesFile }) {
+                    if (changedDirectory && cmd.program == "git") gitAfterCd += cmd
+                    for (r in cmd.redirects.filter { it.writesFile || it.readsFile }) {
                         val path = resolve(r.target, cwd, context)
                         if (path == null) unresolved += r.target
-                        else redirectWrites += PathAccess(path, AccessKind.Write, context.scopeOf(path))
+                        else {
+                            if (r.writesFile) {
+                                val access = PathAccess(path, AccessKind.Write, scope(path, context))
+                                redirectWrites += access
+                                filePathOwners += access to cmd
+                            }
+                            if (r.readsFile) redirectReads += PathAccess(path, AccessKind.Read, scope(path, context))
+                        }
                     }
-                    if (cmd.program in setOf("cd", "pushd", "popd")) cwd = nextCwd(cmd, cwd, context)
+                    val operands = fileCommandPaths(cmd)
+                    val beforeOperands = filePaths.size
+                    if (operands == null && !CommandSafety.isReadOnly(cmd)) fileCommandsCovered = false
+                    for (operand in operands.orEmpty()) {
+                        val path = resolve(operand.target, cwd, context)
+                        if (path == null) unresolved += operand.target
+                        else filePaths += PathAccess(path, operand.kind, scope(path, context))
+                    }
+                    val reads = readCommandPaths(cmd)
+                    if (reads == null) unresolved += "读文件命令含未展开的目标"
+                    for (operand in reads.orEmpty()) {
+                        val path = resolve(operand.target, cwd, context)
+                        if (path == null) unresolved += operand.target
+                        else filePaths += PathAccess(path, AccessKind.Read, scope(path, context, operand.glob))
+                    }
+                    filePaths.drop(beforeOperands).forEach { filePathOwners += it to cmd }
+                    if (cmd.program in setOf("cd", "pushd", "popd")) {
+                        changedDirectory = true
+                        cwd = nextCwd(cmd, cwd, context)
+                    }
                 }
                 return Facts(
                     tool = ask.tool,
@@ -299,12 +358,39 @@ object PolicyEngine {
                     rawCommands = ask.commands.map { it.raw },
                     untrustedRaw = ask.commands.zip(analyses).filter { it.second is ShellAnalysis.Untrusted }.map { it.first.raw },
                     redirectWrites = redirectWrites,
+                    redirectReads = redirectReads,
+                    filePaths = filePaths,
+                    filePathOwners = filePathOwners,
+                    fileCommandsCovered = fileCommandsCovered && gitAfterCd.isEmpty(),
+                    gitAfterCd = gitAfterCd,
                     unresolvedWrites = unresolved,
-                    paths = ask.paths.map { it.copy(path = GuestPath(normalize(it.path.value))) } + redirectWrites,
+                    paths = ask.paths.map {
+                        val path = GuestPath(normalize(it.path.value))
+                        it.copy(path = path, scope = if (it.scope == PathScope.Device) it.scope else scope(path, context))
+                    } + redirectWrites + redirectReads + filePaths,
                     domains = ask.domains,
                     specifiers = ask.specifiers,
                     memoryDir = context.autoMemoryDir?.let { normalize(it.value) },
                 )
+            }
+
+            private fun scope(path: GuestPath, context: PolicyContext, glob: Boolean = false): PathScope {
+                val first = path.value.removePrefix("/").substringBefore('/')
+                if (glob && first.any { it in "*?[" } && listOf("sdcard", "storage").any { it.startsWith(first.takeWhile { c -> c !in "*?[" }) }) {
+                    return PathScope.Device
+                }
+                // 宿主 scopeOf 接受实际路径，不接受 shell 模式（Windows Path 连 * 都不能解析）。
+                val scoped = if (path.value.any { it in "*?[" }) {
+                    val prefix = path.value.takeWhile { it !in "*?[" }.substringBeforeLast('/', "/").ifEmpty { "/" }
+                    GuestPath(prefix)
+                } else path
+                val original = context.scopeOf(scoped)
+                // additionalDirectories 不得覆盖手机文件底线；宿主解析后给的 Device 分级优先。
+                if (original == PathScope.Device) return original
+                return if (context.additionalDirectories.any {
+                    val dir = normalize(it.value).trimEnd('/')
+                    scoped.value == dir || scoped.value.startsWith("$dir/")
+                }) PathScope.Workspace else original
             }
 
             /** cd 之后的目录；静态不知道（`cd -`、`popd`、含变量）为 null */
@@ -330,15 +416,7 @@ object PolicyEngine {
 
             /** 去掉 `.`、`..` 与重复的斜杠；`..` 到根为止（与内核一致） */
             fun normalize(path: String): String {
-                val parts = ArrayDeque<String>()
-                for (part in path.split('/')) {
-                    when (part) {
-                        "", "." -> Unit
-                        ".." -> parts.removeLastOrNull()
-                        else -> parts.addLast(part)
-                    }
-                }
-                return parts.joinToString("/", prefix = "/")
+                return normalizePolicyPath(path)
             }
         }
     }

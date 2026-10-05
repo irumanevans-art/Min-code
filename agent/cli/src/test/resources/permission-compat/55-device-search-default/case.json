@@ -1,0 +1,24 @@
+{
+  "mode": "default",
+  "basis": "Device 搜索同样会读用户照片与文档，不能因只读工具 traits 免批。",
+  "calls": [
+    {
+      "tool": "Grep",
+      "input": {
+        "pattern": "private",
+        "path": "/storage/emulated/0/Documents"
+      },
+      "expected": "ask",
+      "basis": "2026-10-06 任务单 Device 读取审批，涵盖搜索目录。"
+    },
+    {
+      "tool": "Glob",
+      "input": {
+        "pattern": "*.jpg",
+        "path": "/sdcard/DCIM"
+      },
+      "expected": "ask",
+      "basis": "同上；列举 Device 文件也属于读取。"
+    }
+  ]
+}

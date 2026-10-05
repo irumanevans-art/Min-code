@@ -1,0 +1,22 @@
+{
+  "mode": "dontAsk",
+  "basis": "2026-10-06 任务单新增决定：Device（/sdcard、/storage）读取在 default/acceptEdits/plan 下 ask；bypass 放行；dontAsk 未被 allow 覆盖则 deny。",
+  "calls": [
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "/sdcard/DCIM/photo.jpg"
+      },
+      "expected": "deny",
+      "basis": "2026-10-06 任务单新增决定：Device（/sdcard、/storage）读取在 default/acceptEdits/plan 下 ask；bypass 放行；dontAsk 未被 allow 覆盖则 deny。"
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "/storage/emulated/0/Documents/private.txt"
+      },
+      "expected": "deny",
+      "basis": "2026-10-06 任务单新增决定：Device（/sdcard、/storage）读取在 default/acceptEdits/plan 下 ask；bypass 放行；dontAsk 未被 allow 覆盖则 deny。"
+    }
+  ]
+}

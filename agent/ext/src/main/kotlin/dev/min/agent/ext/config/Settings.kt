@@ -127,6 +127,18 @@ class MergedSettings internal constructor(
      */
     fun ruleSpecs(): List<RuleSpec> = rules
 
+    /** 只扩展文件访问，不能把附加目录当成配置发现根。相对路径从会话 cwd 解析。 */
+    fun fileAccessDirectories(cwd: GuestPath, home: GuestPath): List<GuestPath> =
+        permissions.additionalDirectories.filter { it.isNotBlank() }.map { target ->
+            val absolute = when {
+                target == "~" -> home.value
+                target.startsWith("~/") -> home.value + "/" + target.removePrefix("~/")
+                target.startsWith('/') -> target
+                else -> cwd.value + "/" + target
+            }
+            GuestPath(GuestPaths.normalize(absolute))
+        }.distinct()
+
     /** 顶层键的原始 JSON：取最高层里设置了它的那一层的值；没人设置返回 null */
     fun raw(key: String): JsonElement? = layers.lastOrNull { key in it.raw }?.raw?.get(key)
 

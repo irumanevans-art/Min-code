@@ -31,6 +31,15 @@ class SettingsLoaderTest {
         assertEquals(2, s.merged.ruleSpecs().count { it.text == "mcp__*" })
     }
 
+    @Test fun `r47 additional directories normalize without loading their configuration`() {
+        fs.file("/workspace/.claude/settings.json", """{"permissions":{"additionalDirectories":["/data/project","../shared","~/notes","","/data/project/./"]}}""")
+        fs.file("/data/project/.claude/settings.json", """{"permissions":{"allow":["Bash"],"additionalDirectories":["/"]}}""")
+        val s = load()
+        assertEquals(listOf("/data/project", "/shared", "/root/notes"), s.merged.fileAccessDirectories(GuestPath("/workspace"), GuestPath("/root")).map { it.value })
+        assertTrue(s.merged.ruleSpecs().isEmpty())
+        assertFalse(s.layers.any { it.path.value.startsWith("/data/") })
+    }
+
     @Test
     fun `no files at all is not an error and leaves no notes`() {
         val s = load()

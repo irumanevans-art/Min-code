@@ -70,6 +70,17 @@ class PermissionAlignmentTest {
         assertTrue(PolicyEngine.matchesCondition("mcp__*", ask, context()))
     }
 
+    @Test fun `r23 input redirects check read rules directories and fd duplication`() {
+        assertEquals(Verdict.Ask, eval(bash("cat < /etc/passwd")))
+        assertTrue(eval(bash("cat < input.txt")) is Verdict.Allow)
+        assertTrue(eval(bash("cat < secrets/key"), context(rules = arrayOf("Read(secrets/**)"))) is Verdict.Deny)
+        assertTrue(eval(bash("cat <&0")) is Verdict.Allow)
+        assertEquals(Verdict.Ask, eval(bash("cat < /etc/passwd"), context(kind = RuleKind.Allow, rules = arrayOf("Bash(cat *)"))))
+        assertTrue(eval(bash("cat < /etc/passwd"), context(kind = RuleKind.Allow, rules = arrayOf("Read(//etc/passwd)"))) is Verdict.Allow)
+        assertEquals(Verdict.Ask, eval(bash("cd - && cat < relative.txt")))
+        assertTrue(eval(bash("cd /data && cat < a"), context().copy(additionalDirectories = listOf(GuestPath("/data")))) is Verdict.Allow)
+    }
+
     @Test fun `r07 and r09 command wildcard table distinguishes a single trailing wildcard`() {
         val m = RuleMatcher(GuestPath("/workspace"), GuestPath("/root"))
         for ((pattern, matches, misses) in listOf(
@@ -98,6 +109,25 @@ class PermissionAlignmentTest {
         assertTrue(eval(bash("git log main"), context(kind = RuleKind.Allow, rules = arrayOf("Bash(git log * main)"))) is Verdict.Allow)
     }
 
+    @Test fun `r15 dangling operators cannot be approved even by a bare Bash allow`() {
+        for (raw in listOf("npm test &&", "npm test || # end", "npm test |", "&& npm test", "npm test && ; echo x")) {
+            assertTrue(raw, ShellAnalyzer.analyze(raw) is ShellAnalysis.Untrusted)
+            assertEquals(raw, Verdict.Ask, eval(bash(raw), context(kind = RuleKind.Allow, rules = arrayOf("Bash", "Bash(npm *)"))))
+        }
+        assertTrue(ShellAnalyzer.analyze("npm test &&\n echo x") is ShellAnalysis.Parsed)
+        assertTrue(ShellAnalyzer.analyze("echo x;\n") is ShellAnalysis.Parsed)
+    }
+
+    @Test fun `r17 exec-capable globs and git after cd need approval`() {
+        for (raw in listOf("find . -name *.ts", "find . -name 'x'*.ts", "sort *.txt", "git diff *.ts", "cd packages/api && git status")) {
+            assertEquals(raw, Verdict.Ask, eval(bash(raw)))
+        }
+        for (raw in listOf("find . -name '*.ts'", "find . -name \\*.ts", "ls *.ts", "wc -l *.ts", "git status", "cd packages/api && ls")) {
+            assertTrue(raw, eval(bash(raw)) is Verdict.Allow)
+        }
+        assertTrue(eval(bash("cd packages/api && git status"), context(kind = RuleKind.Allow, rules = arrayOf("Bash(git status)"))) is Verdict.Allow)
+    }
+
     @Test fun `r20 bare xargs matches its inner rule but flags retain xargs semantics`() {
         val m = RuleMatcher(GuestPath("/workspace"), GuestPath("/root"))
         val rule = PermissionRule.parse(RuleKind.Allow, "Bash(grep *)", "p")!!
@@ -109,6 +139,16 @@ class PermissionAlignmentTest {
         assertTrue(eval(bash("bash -c 'rm -rf build/'"), context(rules = arrayOf("Bash(rm *)"))) is Verdict.Deny)
     }
 
+    @Test fun `r41 acceptEdits file commands require every write target within working directories`() {
+        val c = context(PermissionMode.AcceptEdits).copy(additionalDirectories = listOf(GuestPath("/data/project")))
+        for (raw in listOf("mkdir -p build", "touch one two", "mv a b", "cp a b", "cp -t build a b", "mv --target-directory=build a", "cd /data/project && mkdir -p build", "cp /etc/hosts /data/project/hosts")) {
+            assertTrue(raw, eval(bash(raw), c) is Verdict.Allow)
+        }
+        for (raw in listOf("mkdir build /etc/other", "touch /tmp/a", "mv /etc/a b", "cp a /etc/b", "cp a /data/project2/a", "touch \$TARGET", "cp -t /etc a", "touch .bashrc", "cp /etc/.bashrc .", "mkdir a && npm test")) {
+            assertEquals(raw, Verdict.Ask, eval(bash(raw), c))
+        }
+    }
+
     @Test fun `r42 plan asks for non-readonly operations while explicit deny still wins`() {
         val c = context(PermissionMode.Plan)
         assertEquals(Verdict.Ask, eval(file("/workspace/a", true), c))
@@ -117,9 +157,68 @@ class PermissionAlignmentTest {
         assertTrue(eval(file("/workspace/a", true), context(PermissionMode.Plan, RuleKind.Deny, "Edit(a)")) is Verdict.Deny)
     }
 
+    @Test fun `r47 additional directories respect boundaries and retain Device classification`() {
+        val c = context(PermissionMode.AcceptEdits).copy(additionalDirectories = listOf(GuestPath("/data/project"), GuestPath("/sdcard")))
+        assertTrue(eval(file("/data/project/out", true), c) is Verdict.Allow)
+        assertEquals(Verdict.Ask, eval(file("/data/project2/out", true), c))
+        assertEquals(Verdict.Ask, eval(file("/data/project/../out", true), c))
+        assertEquals(Verdict.Ask, eval(file("/sdcard/photo", true), c.copy(mode = PermissionMode.BypassPermissions)))
+        assertEquals(Verdict.Ask, eval(file("/sdcard/photo"), c, true))
+    }
+
     @Test fun `r28 Write path rules are not consulted but bare Write tool rules still apply`() {
         assertEquals(Verdict.Ask, eval(file("/workspace/a", true), context(kind = RuleKind.Allow, rules = arrayOf("Write(a)"))))
         assertTrue(eval(file("/workspace/a", true), context(kind = RuleKind.Allow, rules = arrayOf("Write"))) is Verdict.Allow)
     }
 
+    @Test fun `r49 Device reads ask in ordinary modes bypass allows and dontAsk needs an allow`() {
+        for (path in listOf("/sdcard/photo.jpg", "/storage/emulated/0/Documents/a.txt")) {
+            for (mode in listOf(PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.Plan)) assertEquals(Verdict.Ask, eval(file(path), context(mode), true))
+            assertTrue(eval(file(path), context(PermissionMode.BypassPermissions), true) is Verdict.Allow)
+            assertTrue(eval(file(path), context(PermissionMode.DontAsk), true) is Verdict.Deny)
+            assertTrue(eval(file(path), context(PermissionMode.DontAsk, RuleKind.Allow, "Read(//sdcard/**)", "Read(//storage/**)"), true) is Verdict.Allow)
+        }
+        assertEquals(Verdict.Ask, eval(bash("cat < /sdcard/photo")))
+        assertEquals(Verdict.Ask, eval(bash("cat /sdcard/photo")))
+        assertEquals(Verdict.Ask, eval(bash("cd /sdcard && ls")))
+        assertEquals(Verdict.Ask, eval(bash("cat \$FILE")))
+        assertTrue(eval(file("/sdcard/photo"), context(PermissionMode.BypassPermissions, RuleKind.Deny, "Read(//sdcard/**)"), true) is Verdict.Deny)
+    }
+
+    @Test fun `r24 and r45 Min rootfs reads and safety floors remain intentional`() {
+        assertTrue(eval(file("/tmp/notes.txt"), context(), true) is Verdict.Allow)
+        val c = context(PermissionMode.BypassPermissions, RuleKind.Allow, "Edit(//**)")
+        assertEquals(Verdict.Ask, eval(file("/workspace/.git/config", true), c))
+        assertEquals(Verdict.Ask, eval(bash("rm -rf /"), c))
+        assertEquals(Verdict.Ask, eval(bash("echo \$(curl https://example.com/payload)"), c))
+    }
+
+    @Test fun `r49 known Bash readers cannot bypass Device approval through options or globs`() {
+        for (raw in listOf("grep -n photo /sdcard/a", "rg --ignore-file .ignore photo /sdcard/a",
+            "jq --arg name value . /sdcard/a.json", "jq -f /sdcard/filter.jq input.json",
+            "find -L /sdcard -name '*.txt'", "cd /sdcard && grep -r photo", "cat /s*/a", "ls /storage/*")) {
+            assertEquals(raw, Verdict.Ask, eval(bash(raw)))
+        }
+        assertTrue(eval(bash("grep /sdcard/pattern local.txt")) is Verdict.Allow)
+        assertTrue(eval(bash("jq --arg name /sdcard/value . local.json")) is Verdict.Allow)
+        val strictHost = context().copy(scopeOf = { path ->
+            require(path.value.none { it in "*?[" }) { "Host path resolver must not receive a glob" }
+            defaultScope(path)
+        })
+        assertTrue(eval(bash("ls *.ts"), strictHost) is Verdict.Allow)
+        assertTrue(eval(bash("ls '*.ts'"), strictHost) is Verdict.Allow)
+        assertEquals(Verdict.Ask, eval(bash("wc -l /sdcard/*.txt"), strictHost))
+    }
+
+    @Test fun `r49 explicit Bash approval covers only operands of its own command`() {
+        assertTrue(RuleMatcher(GuestPath("/workspace"), GuestPath("/root")).matchesTool(
+            PermissionRule.parse(RuleKind.Allow, "Bash(*)", "p")!!, "Bash"))
+        val c = context(kind = RuleKind.Allow, rules = arrayOf("Bash(npm test)"))
+        assertEquals(Verdict.Ask, eval(bash("npm test && cat /sdcard/photo"), c))
+        assertEquals(Verdict.Ask, eval(bash("npm test && cat > output"), c))
+        assertTrue(eval(bash("cat /sdcard/photo"), context(kind = RuleKind.Allow, rules = arrayOf("Bash(cat *)"))) is Verdict.Allow)
+        assertTrue(eval(bash("npm test && cat /sdcard/photo"), context(kind = RuleKind.Allow, rules = arrayOf("Bash(*)"))) is Verdict.Allow)
+        assertTrue(eval(bash("npm test > output"), c) is Verdict.Allow)
+        assertEquals(Verdict.Ask, eval(bash("cat < /etc/passwd"), context(kind = RuleKind.Allow, rules = arrayOf("Bash(*)"))))
+    }
 }

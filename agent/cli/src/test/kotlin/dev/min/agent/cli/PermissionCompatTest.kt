@@ -92,7 +92,7 @@ class PermissionCompatTest {
                 // 与内核 policyContext() 同一入口：RuleEntry → PermissionRule.from，认不出的写法返回 null
                 ruleFrom(RuleEntry(kind, spec.text, spec.source, spec.baseDir))
             }
-            val context = policyContext(mode, rules, fs)
+            val context = policyContext(mode, rules, fs, snapshot.merged.fileAccessDirectories(cwd, home))
 
             val tools = desktopTools()
             val ctx = TestToolContext(fs = fs, cwd = cwd)
@@ -158,11 +158,11 @@ class PermissionCompatTest {
     }
 
     /** 照内核 policyContext() 组上下文：模式、规则、cwd、home 与宿主按路径分级的函数 */
-    private fun policyContext(mode: PermissionMode, rules: List<Any?>, fs: FakeFs): Any {
+    private fun policyContext(mode: PermissionMode, rules: List<Any?>, fs: FakeFs, directories: List<GuestPath>): Any {
         val scopeOf: (GuestPath) -> PathScope = { p -> fs.scopeOf(p) }
-        // 主构造 6 参 + DefaultConstructorMarker：cwd/home/autoMemoryDir 的描述符是 String（value class），末参传 null
-        val ctor = policyContextClass.constructors.single { it.parameterCount == 7 }
-        return ctor.newInstance(mode, rules, cwd.value, home.value, scopeOf, null, null)
+        // value class 参数仍用 String；新增的目录列表走正式设置入口，不能靠 FakeFs 伪装成工作区。
+        val ctor = policyContextClass.constructors.single { it.parameterCount == 8 }
+        return ctor.newInstance(mode, rules, cwd.value, home.value, scopeOf, null, directories, null)
     }
 
     /** PolicyEngine.evaluate(ask, readOnly, context)；Verdict 子类名映射成 allow / ask / deny */
