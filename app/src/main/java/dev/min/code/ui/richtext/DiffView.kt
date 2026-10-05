@@ -55,7 +55,11 @@ fun DiffView(
     showFileHeader: Boolean = true,
 ) {
     val allLines = remember(diff, showFileHeader) {
-        val lines = diff.lines()
+        // 文件头前面可能还有一行 `new file mode` / `deleted file mode`（Write 新建、Codex、Bash 的新建 / 删除），
+        // 一并算文件头：不然隐藏了 `---`/`+++` 之后它孤零零留在最上面
+        val lines = diff.lines().let { all ->
+            if (showFileHeader) all else all.dropWhile { it == "new file mode" || it == "deleted file mode" }
+        }
         if (!showFileHeader && lines.size >= 2 &&
             lines[0].startsWith("---") && lines[1].startsWith("+++")
         ) {

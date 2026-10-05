@@ -907,8 +907,27 @@ class ClaudeCodeVM(
         }
     }
 
-    /** 撤销一次编辑类工具造成的文件改动（只还原文件，对话历史不变） */
-    fun revertToolCall(toolUseId: String) = onActive { it.revertToolCall(toolUseId) }
+    /**
+     * 撤销一次编辑类工具造成的文件改动（只还原文件，对话历史不变）。
+     * [onRestored] 在还原**成功**之后回调（主线程），失败不回调——页面据此才把它标成「已撤销」。
+     */
+    fun revertToolCall(toolUseId: String, onRestored: () -> Unit = {}) {
+        val manager = registry.active() ?: return
+        viewModelScope.launch { if (manager.revertToolCall(toolUseId)) onRestored() }
+    }
+
+    /**
+     * 把一个文件在本会话里的全部改动整批撤回去（从最后一次往前还原；同样只动文件）。
+     * [toolUseIds] 按会话顺序（旧 → 新）。[onRestored] 收到**真的还原成功**的那几个。
+     */
+    fun revertFile(name: String, toolUseIds: List<String>, onRestored: (Set<String>) -> Unit) {
+        val manager = registry.active() ?: return
+        viewModelScope.launch { onRestored(manager.revertFile(name, toolUseIds)) }
+    }
+
+    /** [toolUseIds] 里存过文件快照的那些，决定「改动过的文件」面板里谁有撤销按钮 */
+    suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> =
+        registry.active()?.checkpointed(toolUseIds).orEmpty()
 
     // 不在 onCleared 里杀会话：ClaudeCodeManager 是 Koin single，
     // 会话本就该比页面活得久（切到别的页面、转屏都会重建 VM）。

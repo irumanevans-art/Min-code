@@ -307,7 +307,7 @@ class ClaudeCodeSession internal constructor(
 
     override suspend fun searchFiles(query: String, limit: Int): List<String> = manager.searchFiles(query, limit)
 
-    override suspend fun hasCheckpoint(toolUseId: String): Boolean = manager.hasCheckpoint(toolUseId)
+    override suspend fun hasCheckpoint(toolUseId: String): Boolean = toolUseId in manager.checkpointed(listOf(toolUseId))
 
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? {
         val shell = ClaudeStateMapper.shellsOf(manager.state.value, externals.value.services)

@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -24,6 +25,7 @@ import dev.min.code.ui.session.NoteEntry
 import dev.min.code.ui.session.ThinkingEntry
 import dev.min.code.ui.session.FollowTailEffect
 import dev.min.code.ui.session.awaitingToolUseId
+import dev.min.code.ui.session.blockIndexOf
 import dev.min.code.ui.session.groupTranscript
 import dev.min.code.ui.session.rememberTranscriptFollow
 import dev.min.code.ui.session.rememberTranscriptLabels
@@ -44,6 +46,9 @@ internal fun CodexTranscript(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     contentPadding: PaddingValues = PaddingValues(),
+    /** 「改动过的文件」浮层请求滚到哪一条（顶层条目 id）；滚完调 [onJumped] 清掉 */
+    jumpTo: String? = null,
+    onJumped: () -> Unit = {},
 ) {
     val blocks = remember(session.items) { groupTranscript(session.items) }
     // 工具卡文案与 Claude 侧同一份字头包：两个引擎画同一套卡片，文案也同源
@@ -59,6 +64,14 @@ internal fun CodexTranscript(
     // 盯的是列表布局，打开会话时回放的历史进了 layoutInfo 自然就跟到底
     val follow = rememberTranscriptFollow(listState)
     FollowTailEffect(listState, follow)
+    LaunchedEffect(jumpTo) {
+        val index = jumpTo?.let { blockIndexOf(blocks, it) } ?: return@LaunchedEffect
+        if (index >= 0) {
+            follow.detach()
+            listState.animateScrollToItem(index)
+        }
+        onJumped()
+    }
 
     // 挂着审批时那张卡显示成「等你批准」而不是转圈。Codex 的 itemId 就是卡的 toolUseId
     //（见 CodexChatMapping），不需要按工具名回退

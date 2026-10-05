@@ -88,6 +88,35 @@ class ClaudeCodeCheckpointStoreTest {
         assertEquals("v0", file.readText())
     }
 
+    /**
+     * 面板靠 restoreEach 知道哪几条真的还原了：缺快照的那条不能出现在结果里，
+     * 否则界面把它标成「已撤销」，文件却还是改过的样子。
+     */
+    @Test
+    fun `restoreEach reports only the snapshots that really restored`() {
+        val (checkpoints, workspace) = store()
+        val file = File(workspace, "files/a.txt").apply {
+            parentFile?.mkdirs()
+            writeText("v0")
+        }
+        checkpoints.snapshot(sessionId, "t1", "/workspace/a.txt", file)
+        file.writeText("v1")
+        checkpoints.snapshot(sessionId, "t2", "/workspace/a.txt", file)
+        file.writeText("v2")
+
+        // t-missing 从没存过快照
+        val restored = checkpoints.restoreEach(sessionId, listOf("t1", "t-missing", "t2"), resolver(workspace))
+
+        assertEquals(setOf("t1", "t2"), restored)
+        assertEquals("v0", file.readText())
+    }
+
+    @Test
+    fun `restoreEach with nothing restorable returns an empty set`() {
+        val (checkpoints, workspace) = store()
+        assertTrue(checkpoints.restoreEach(sessionId, listOf("nope"), resolver(workspace)).isEmpty())
+    }
+
     /** 同一个 tool_use 只存一次：重复的 tool_use 帧不能把已经存好的原始内容覆盖掉 */
     @Test
     fun `snapshotting the same tool use twice keeps the first content`() {

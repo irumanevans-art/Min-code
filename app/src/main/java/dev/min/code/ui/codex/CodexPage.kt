@@ -69,6 +69,9 @@ import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.frostSource
 import dev.min.code.ui.components.frostBand
+import dev.min.code.ui.session.ChangedFilesLayer
+import dev.min.code.ui.session.rememberChangedFilesLabels
+import dev.min.code.core.session.changedFiles
 import dev.min.code.ui.components.rememberFrostState
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
@@ -181,6 +184,10 @@ private fun CodexPageContent(vm: CodexVM) {
             var dockPx by remember { mutableIntStateOf(with(density) { DOCK_ESTIMATE.roundToPx() }) }
             val dockReserve = with(density) { dockPx.toDp() }
             val frost = rememberFrostState()
+            // 本会话改过的文件（底部浮层）。Codex 没有快照机制：不传 canUndo，所有改动只能看、能跳转，不能撤
+            val changed = remember(session.items) { changedFiles(session.items) }
+            val changedLabels = rememberChangedFilesLabels()
+            var jumpTo by remember { mutableStateOf<String?>(null) }
             CompositionLocalProvider(LocalFrost provides frost) {
                 Box(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).imePadding()) {
                     Box(Modifier.fillMaxSize().frostSource(frost)) {
@@ -193,6 +200,8 @@ private fun CodexPageContent(vm: CodexVM) {
                                 // 量出来的输入坞高度：挂了附件、排了消息时坞会长高，最后一条不能被它压住
                                 bottom = dockReserve,
                             ),
+                            jumpTo = jumpTo,
+                            onJumped = { jumpTo = null },
                         )
                     }
                     Box(
@@ -201,41 +210,54 @@ private fun CodexPageContent(vm: CodexVM) {
                             .fillMaxWidth()
                             .frostBand(fromTop = false, chrome = dockReserve),
                     )
-                    CodexComposer(
-                        draftState = draft,
-                        enabled = session.canSend,
-                        busy = session.busy,
-                        queued = session.queued,
-                        attachments = attachments,
-                        modelText = session.options.model
-                            ?: stringResource(R.string.session_model_default),
-                        // 和 Claude 那边同一个写法：权限 · 强度
-                        modeText = session.options.permissionLabel() + " · " +
-                            (session.options.effort ?: stringResource(R.string.codex_effort_default)),
-                        onDraftChange = vm::setDraft,
-                        onSend = vm::send,
-                        onTakeQueued = vm::takeQueued,
-                        onImportFile = vm::importFile,
-                        onRemoveAttachment = vm::removeAttachment,
-                        onSearchFiles = vm::searchFiles,
-                        onSlash = { slash ->
-                            when (slash) {
-                                CodexSlash.NEW -> vm.startNew()
-                                else -> {
-                                    settingsSection = slash.toSection()
-                                    showSettings = true
-                                }
-                            }
-                        },
-                        onOpenSettings = {
-                            settingsSection = null
-                            showSettings = true
-                        },
-                        onStop = vm::stop,
-                        modifier = Modifier
+                    // 浮层在输入胶囊正上方，和 Claude 页同一个位置；一起量高度，会话流的底部留白跟着长
+                    Column(
+                        Modifier
                             .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
                             .onSizeChanged { dockPx = it.height },
-                    )
+                    ) {
+                        ChangedFilesLayer(
+                            files = changed,
+                            undoneIds = emptySet(),
+                            labels = changedLabels,
+                            onJumpTo = { jumpTo = it },
+                            onUndo = null,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                        CodexComposer(
+                            draftState = draft,
+                            enabled = session.canSend,
+                            busy = session.busy,
+                            queued = session.queued,
+                            attachments = attachments,
+                            modelText = session.options.model
+                                ?: stringResource(R.string.session_model_default),
+                            // 和 Claude 那边同一个写法：权限 · 强度
+                            modeText = session.options.permissionLabel() + " · " +
+                                (session.options.effort ?: stringResource(R.string.codex_effort_default)),
+                            onDraftChange = vm::setDraft,
+                            onSend = vm::send,
+                            onTakeQueued = vm::takeQueued,
+                            onImportFile = vm::importFile,
+                            onRemoveAttachment = vm::removeAttachment,
+                            onSearchFiles = vm::searchFiles,
+                            onSlash = { slash ->
+                                when (slash) {
+                                    CodexSlash.NEW -> vm.startNew()
+                                    else -> {
+                                        settingsSection = slash.toSection()
+                                        showSettings = true
+                                    }
+                                }
+                            },
+                            onOpenSettings = {
+                                settingsSection = null
+                                showSettings = true
+                            },
+                            onStop = vm::stop,
+                        )
+                    }
                 }
             }
         } else {

@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -198,15 +198,17 @@ internal fun <S : Any> AccordionSection(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.weight(1f))
+        // 值撑满标签之外的全部宽度并右对齐：箭头才会落在同一列。
+        // 之前是 Spacer(weight) + 值(weight, fill=false)，值多宽箭头就跟到哪，五行各歪各的
         Text(
             text = value,
             style = MaterialTheme.typography.labelMedium,
             fontFamily = JetbrainsMono,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier.weight(1f),
         )
         Icon(
             HugeIcons.ArrowDown01,

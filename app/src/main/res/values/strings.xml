@@ -198,6 +198,16 @@
   <string name="session_status_failed">Session failed</string>
   <string name="session_blank_starting">Starting session</string>
   <string name="session_plan_banner">Claude proposed a plan</string>
+  <!-- 底部「改动过的文件」浮层（ChangedFilesLayer） -->
+  <string name="changed_files_title">%1$d files changed</string>
+  <string name="changed_files_times">%1$d×</string>
+  <string name="changed_files_undone">undone</string>
+  <string name="changed_files_back">Back to list</string>
+  <string name="changed_files_jump">Jump to the turn that changed it</string>
+  <string name="changed_files_no_diff">No diff recorded for this change.</string>
+  <string name="changed_files_cannot_undo">This change has no snapshot, so it cannot be undone (Bash edits and agent-side changes are not snapshotted).</string>
+  <string name="changed_files_undo_file">Undo all changes to %1$s</string>
+  <string name="changed_files_diff_separator">@@ change %1$d @@</string>
   <string name="session_live_stopping">Ending session</string>
   <string name="session_live_applying">Applying session settings</string>
   <string name="session_live_applying_relaunch">Applying session settings (restarting CLI)</string>

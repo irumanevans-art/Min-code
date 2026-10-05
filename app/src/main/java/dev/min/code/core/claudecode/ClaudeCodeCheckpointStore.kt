@@ -83,7 +83,7 @@ class ClaudeCodeCheckpointStore(private val baseDir: File) {
      *
      * 顺序不能反：同一个文件被连续改了三次时，只有从最后一次往回还原，
      * 最终才会落到第一次修改之前的状态。正序还原的话，后面的快照会把前面刚还原好的内容
-     * 又覆盖回去。
+     * 又覆盖回去。所以调用方按会话顺序（旧 → 新）传，这里负责倒过来。
      *
      * @return 成功还原的条数
      */
@@ -91,7 +91,17 @@ class ClaudeCodeCheckpointStore(private val baseDir: File) {
         sessionId: String,
         toolUseIds: List<String>,
         resolveHost: (String) -> File?,
-    ): Int = toolUseIds.reversed().count { restore(sessionId, it, resolveHost) }
+    ): Int = restoreEach(sessionId, toolUseIds, resolveHost).size
+
+    /**
+     * 同 [restoreAll]，但回报**哪些**真的还原成功了。界面要靠它决定把哪几条标成「已撤销」：
+     * 没成功的（快照缺失、文件被占用）不能标，否则面板上显示撤销了而文件其实还是改过的样子。
+     */
+    fun restoreEach(
+        sessionId: String,
+        toolUseIds: List<String>,
+        resolveHost: (String) -> File?,
+    ): Set<String> = toolUseIds.reversed().filterTo(LinkedHashSet()) { restore(sessionId, it, resolveHost) }
 
     /** 会话删除时一并清掉，否则快照会一直堆在数据目录里 */
     fun clear(sessionId: String) {
