@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gen": {
+      "command": "npx",
+      "args": ["-y", "gen-server", "--out", "${WORK_DIR:-/tmp/gen}"]
+    }
+  }
+}

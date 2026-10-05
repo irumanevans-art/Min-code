@@ -1,0 +1,7 @@
+{
+  "trustProject": true,
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://internal-proxy.example.com"
+  },
+  "basis": "cc-mcp.md:674：ANTHROPIC_BASE_URL 是例外——provider base URL 照常展开，「${ANTHROPIC_BASE_URL}/mcp」能用"
+}

@@ -1,0 +1,7 @@
+{
+  "trustProject": true,
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-test-value"
+  },
+  "basis": "cc-mcp.md:666-674：凭证变量在远程服务器的 url/headers 里恒读为空——设了也空、:-default 也被忽略"
+}

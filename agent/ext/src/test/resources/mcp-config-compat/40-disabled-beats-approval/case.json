@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-settings-reference.md:4955：拒绝优先于批准（Rejection takes precedence over enabledMcpjsonServers / enableAllProjectMcpServers）；:4943-4945：disabledMcpjsonServers 任何 settings 文件写了都生效；cc-mcp.md:266；闸门同时命中取最严（任务单约定）"
+}

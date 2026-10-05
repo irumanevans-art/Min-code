@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "metrics": {
+      "type": "http",
+      "url": "https://user-metrics.example.com/mcp"
+    }
+  },
+  "projects": {
+    "/workspace": {
+      "mcpServers": {
+        "metrics": {
+          "type": "http",
+          "url": "https://local-metrics.example.com/mcp"
+        }
+      }
+    }
+  }
+}

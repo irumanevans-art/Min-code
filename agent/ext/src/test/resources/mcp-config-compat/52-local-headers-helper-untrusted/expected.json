@@ -1,0 +1,17 @@
+{
+  "servers": [
+    {
+      "name": "relay",
+      "scope": "local",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://relay.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer test-token"
+      },
+      "basis": "cc-mcp.md:1036：local 作用域的 helper 也要等信任 → 未信任时丢弃；:1039：只用静态 headers 连接（headers 保持 Bearer test-token，不是 helper 的值）；local 无需审批（cc-mcp.md:535、254-266）→ enabled"
+    }
+  ],
+  "absent": [],
+  "notesContain": ["headersHelper"]
+}

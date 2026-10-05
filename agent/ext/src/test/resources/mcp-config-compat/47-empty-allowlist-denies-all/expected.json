@@ -1,0 +1,20 @@
+{
+  "servers": [
+    {
+      "name": "alpha",
+      "scope": "project",
+      "transport": "http",
+      "gate": "denied",
+      "basis": "cc-managed-mcp.md:281 + cc-settings-reference.md:4867：allowlist 为空数组时用户加的服务器全被挡；审批已过（enableAllProjectMcpServers）也挡——allowlist 是另一层"
+    },
+    {
+      "name": "scratch",
+      "scope": "local",
+      "transport": "http",
+      "gate": "denied",
+      "basis": "cc-managed-mcp.md:301：各 settings 作用域的 allowlist 合并生效；空数组挡掉所有用户配置的服务器"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:45-54：managed-mcp.json 存在即只加载它定义的服务器，local/project/user 一律不加载；:68-91：格式同 .mcp.json"
+}

@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:85,194：有 url 无 type 是配置错误（没有 type 会按 stdio 读），Claude Code 跳过该服务器并报告"
+}

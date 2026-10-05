@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:83：type 字段接受 streamable-http 作为 http 的别名"
+}

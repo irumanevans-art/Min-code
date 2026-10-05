@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "slow": {
+      "type": "http",
+      "url": "https://slow.example.com/mcp",
+      "timeout": 500
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "trustProject": true,
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-test-value"
+  },
+  "basis": "cc-mcp.md:666：凭证名单只管远程服务器的 url/headers；:640：stdio 的 env 是正常展开位置"
+}

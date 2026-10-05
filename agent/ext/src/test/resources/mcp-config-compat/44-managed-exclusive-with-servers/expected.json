@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "corp",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://corp.example.com/mcp",
+      "basis": "cc-managed-mcp.md:47-50：只加载 managed-mcp.json 定义的服务器；:68-91：条目形态同 .mcp.json；组织提供的服务器无需用户批准（:45-54）"
+    }
+  ],
+  "absent": ["alpha", "usr"],
+  "notesContain": []
+}

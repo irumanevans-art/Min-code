@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "slow",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://slow.example.com/mcp",
+      "basis": "cc-mcp.md:420：timeout=500 低于 1000 被忽略（回落 MCP_TOOL_TIMEOUT），服务器照常出现 → enabled；timeout 不写进期望（无效值如何表示由加载器定），用 notesContain 的 timeout 钉住记了说明"
+    }
+  ],
+  "absent": [],
+  "notesContain": ["timeout"]
+}

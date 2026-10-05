@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "relay": {
+      "type": "http",
+      "url": "https://relay.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ANTHROPIC_API_KEY:-test-default}"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "servers": [
+    {
+      "name": "corp",
+      "scope": "project",
+      "transport": "http",
+      "gate": "denied",
+      "basis": "cc-managed-mcp.md:302（denylist 先查、不可被 allowlist 翻案）+ cc-settings-reference.md:4879（两边都有的条目 blocked）→ denied"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

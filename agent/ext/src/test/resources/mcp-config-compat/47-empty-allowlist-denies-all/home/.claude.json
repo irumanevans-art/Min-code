@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "/workspace": {
+      "mcpServers": {
+        "scratch": {
+          "type": "http",
+          "url": "https://scratch.example.com/mcp"
+        }
+      }
+    }
+  }
+}

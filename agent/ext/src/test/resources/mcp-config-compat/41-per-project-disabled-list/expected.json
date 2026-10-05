@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "notes",
+      "scope": "user",
+      "transport": "http",
+      "gate": "disabled",
+      "url": "https://notes.example.com/mcp",
+      "basis": "cc-mcp.md:313-315：projects[\"/workspace\"].disabledMcpServers 关掉该项目的这台 user 服务器 → disabled（条目保留、不连接）"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

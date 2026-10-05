@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:609-613：同名服务器取最高优先级源（local > project > user）的整条定义，不按字段合并；:611 local 第一"
+}

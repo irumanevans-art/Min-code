@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:127：managed-mcp.json 读不出/解析不了时企业配置标为 failed to parse，其服务器不出现；任务单约定：失败即关（fail closed），一台都不加载"
+}

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nope": {
+      "type": "http",
+      "url": "https://api.other.com/mcp"
+    },
+    "ok": {
+      "type": "http",
+      "url": "https://api.example.com/mcp"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:162：managedMcpServers 不独占——用户自己的服务器保留，managed 提供的额外进来；:204：同名时 managed 胜（本样本不同名）"
+}

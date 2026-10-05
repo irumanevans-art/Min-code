@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "deploy": {
+      "type": "stdio",
+      "command": "/usr/local/bin/deploy",
+      "env": {
+        "DEPLOY_ENV": "prod"
+      }
+    }
+  }
+}

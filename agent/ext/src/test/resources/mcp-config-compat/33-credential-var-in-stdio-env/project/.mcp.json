@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "tool": {
+      "command": "npx",
+      "args": ["-y", "tool-server"],
+      "env": {
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}

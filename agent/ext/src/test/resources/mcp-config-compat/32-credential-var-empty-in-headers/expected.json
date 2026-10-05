@@ -1,0 +1,17 @@
+{
+  "servers": [
+    {
+      "name": "relay",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://relay.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer "
+      },
+      "basis": "cc-mcp.md:670：ANTHROPIC_API_KEY 在凭证名单里；:674：无论设没设都读空、:-default 回退被忽略 → 服务器收到「Bearer 」+ 空凭证"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

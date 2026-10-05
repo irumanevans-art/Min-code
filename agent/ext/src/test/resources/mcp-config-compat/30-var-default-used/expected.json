@@ -1,0 +1,15 @@
+{
+  "servers": [
+    {
+      "name": "gen",
+      "scope": "project",
+      "transport": "stdio",
+      "gate": "enabled",
+      "command": "npx",
+      "args": ["-y", "gen-server", "--out", "/tmp/gen"],
+      "basis": "cc-mcp.md:632+639：WORK_DIR 未设（case.json env 为空），默认值 /tmp/gen 展开进 args；unresolvedVars 不含它"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

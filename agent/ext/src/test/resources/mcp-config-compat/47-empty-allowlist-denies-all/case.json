@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:281 与 cc-settings-reference.md:4867：allowedMcpServers 设为空数组 = 全不放行（未设才是全放行）"
+}

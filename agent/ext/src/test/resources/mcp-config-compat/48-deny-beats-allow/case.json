@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:302：先查 denylist，「Nothing overrides a denylist match」；cc-settings-reference.md:4879：两边都有的服务器被挡"
+}

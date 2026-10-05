@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "events",
+      "scope": "project",
+      "transport": "ws",
+      "gate": "disabled",
+      "url": "wss://mcp.example.com/socket",
+      "basis": "Min MCP设计.md:165：ws 首期不做 → 条目保留、gate=disabled（不是丢弃）；cc-mcp.md:147-158：CC 本身支持 ws"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

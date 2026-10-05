@@ -1,0 +1,5 @@
+{
+  "trustProject": false,
+  "env": {},
+  "basis": "cc-mcp.md:1036：project 与 local 作用域的 headersHelper 都要等该项目的信任对话；:1039：未信任时只用静态 headers 连接（helper 不执行）"
+}

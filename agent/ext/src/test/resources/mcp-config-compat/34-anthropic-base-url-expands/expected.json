@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "proxy",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://internal-proxy.example.com/mcp",
+      "basis": "cc-mcp.md:674：ANTHROPIC_BASE_URL 不在「读空」名单，远程 url 里照常展开"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

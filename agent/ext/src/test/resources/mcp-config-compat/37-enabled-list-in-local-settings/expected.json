@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "name": "alpha",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://alpha.example.com/mcp",
+      "basis": "cc-settings-reference.md:4977+4980：enabledMcpjsonServers 名单里的服务器免问直连；cc-mcp.md:264：settings.local.json 在受信任目录生效"
+    },
+    {
+      "name": "beta",
+      "scope": "project",
+      "transport": "http",
+      "gate": "needs-approval",
+      "url": "https://beta.example.com/mcp",
+      "basis": "cc-settings-reference.md:4977：名单只批准写进去的；cc-mcp.md:588：项目服务器未经批准要弹审批 → needs-approval"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

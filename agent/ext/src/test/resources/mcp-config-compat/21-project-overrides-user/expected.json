@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "docs",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://docs.example.com/mcp",
+      "basis": "cc-mcp.md:609-613：project 盖过 user；cc-settings-reference.md:4963：enableAllProjectMcpServers 免审批 → enabled"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

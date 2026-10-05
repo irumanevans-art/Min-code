@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:316：allowlist 一旦含 serverCommand 条目，stdio 必须按命令匹配，serverName 不再放行；:320：命令与参数逐项精确；cc-settings-reference.md:4879 同"
+}

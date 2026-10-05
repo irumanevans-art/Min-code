@@ -1,0 +1,16 @@
+{
+  "servers": [
+    {
+      "name": "gen",
+      "scope": "project",
+      "transport": "stdio",
+      "gate": "enabled",
+      "command": "npx",
+      "args": ["-y", "gen-server", "${MISSING}"],
+      "unresolvedVars": ["MISSING"],
+      "basis": "cc-mcp.md:662：保留字面 ${MISSING}（args 原样）、unresolvedVars 含变量名；:293：警告点名变量 → notesContain 含 MISSING"
+    }
+  ],
+  "absent": [],
+  "notesContain": ["MISSING"]
+}

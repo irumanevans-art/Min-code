@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "alpha",
+      "scope": "project",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://alpha.example.com/mcp",
+      "basis": "cc-settings-reference.md:4979（scope: Any file）+ cc-mcp.md:260：user settings 的批准名单生效 → enabled"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

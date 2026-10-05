@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:328：https://*.example.com/* 匹配 example.com 的任意子域；:315：allowlist 存在时远程服务器必须匹配 serverUrl 条目"
+}

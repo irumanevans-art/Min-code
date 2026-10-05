@@ -1,0 +1,15 @@
+{
+  "servers": [
+    {
+      "name": "fs",
+      "scope": "project",
+      "transport": "stdio",
+      "gate": "enabled",
+      "command": "npx",
+      "args": ["-y", "fs-server"],
+      "basis": "cc-mcp.md:85：缺 type 按 stdio 读；cc-settings-reference.md:4963：受信任 + enableAllProjectMcpServers → enabled"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

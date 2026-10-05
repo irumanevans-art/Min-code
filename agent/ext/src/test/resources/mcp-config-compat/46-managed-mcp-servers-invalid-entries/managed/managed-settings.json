@@ -1,0 +1,20 @@
+{
+  "managedMcpServers": {
+    "cmd-override": {
+      "type": "http",
+      "url": "https://ok.example.com/mcp",
+      "command": "run-me"
+    },
+    "plain-http": {
+      "type": "http",
+      "url": "http://insecure.example.com/mcp"
+    },
+    "var-user": {
+      "type": "sse",
+      "url": "https://e.example.com/mcp",
+      "headers": {
+        "X-Key": "${VAR}"
+      }
+    }
+  }
+}

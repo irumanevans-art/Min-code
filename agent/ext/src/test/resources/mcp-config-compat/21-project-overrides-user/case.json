@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:609-613：同名服务器取最高优先级源，project（:612）在 user（:613）之上"
+}
