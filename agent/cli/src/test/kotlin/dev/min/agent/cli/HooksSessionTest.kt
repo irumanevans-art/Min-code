@@ -336,18 +336,23 @@ class HooksSessionTest {
     private fun alwaysBlockStop() = settings(hook("Stop", script("never-done", """cat > /dev/null; printf '%s' '{"decision":"block","reason":"再检查"}'""")))
 
     @Test
-    fun `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP overrides the cap, non-positive or garbage values are ignored`() = run {
-        alwaysBlockStop()
-        val capped = RoutingModel { reply(TextPart("做完了")) }
-        val (rt, _) = session(capped, env = mapOf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP" to "2"))
-        rt.say("修 bug")
-        assertEquals("最初一次 + 被拦 2 次", 3, capped.requests.size)
+    fun `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP overrides the cap, non-positive or garbage values are ignored`() = runBlocking {
+        // 五个独立会话会跑 34 次真实 hook；慢机器上不能让它们合用一次会话的等待期限。
+        withTimeout(60_000) {
+            alwaysBlockStop()
+            val capped = RoutingModel { reply(TextPart("做完了")) }
+            val (rt, _) = session(capped, env = mapOf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP" to "2"))
+            rt.say("修 bug")
+            assertEquals("最初一次 + 被拦 2 次", 3, capped.requests.size)
+        }
 
         for (bad in listOf("0", "-3", "abc", "")) {
-            val model = RoutingModel { reply(TextPart("做完了")) }
-            val (rt2, _) = session(model, env = mapOf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP" to bad))
-            rt2.say("修 bug")
-            assertEquals("值「$bad」忽略，用默认的 8", 9, model.requests.size)
+            withTimeout(60_000) {
+                val model = RoutingModel { reply(TextPart("做完了")) }
+                val (rt2, _) = session(model, env = mapOf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP" to bad))
+                rt2.say("修 bug")
+                assertEquals("值「$bad」忽略，用默认的 8", 9, model.requests.size)
+            }
         }
     }
 
