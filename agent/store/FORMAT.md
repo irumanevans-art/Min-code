@@ -78,3 +78,8 @@
   `tool_outcome.result.fileEdits[]` 新增可选字段 `before`、`after`（内容 id：原文的 SHA-256；内容在宿主的快照仓库里——Android 在 App 私有目录、桌面在 `~/.min-agent/`——日志里只有 id）。含新事件的日志旧版本打不开；旧日志照常读。
 - v1 增量（2026-10-05）：新增事件 `mcp_servers_loaded`（MCP 服务器清单：每台 `name`、`scope`、`transport`、`state`，可选 `reason`、`toolCount`；可选 `notes`；**不含**请求头、环境变量的值）、`mcp_tools_snapshot`（生效的 MCP 工具：`tools[]` 每项 `name`（给模型的全名）、`server` / `tool`（原名，路由用）、`description`、`inputSchema`（整形后），可选 `readOnlyHint`、`requiresUserInteraction`、`maxResultChars`；可选 `instructions`（服务器名 → 说明）、`note`），定义在 `spi/McpEvents.kt`（MCP设计 §11）。两者都是整份替换；会话内的变化只在回合开始时写（回合开头那条 `turn_started` 之后）。工具表 = 内置工具 + 最后一份 `mcp_tools_snapshot`（再按子 agent 定义与整工具 deny 规则筛）。
   `subagent_origin` 新增可选字段 `mcpTools`（子 agent 定义里 `mcp__…` 的允许写法；缺省 = 不限）、`mcpDenied`（禁止写法；空时不落盘）。含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-05）：`hook_context_added.target` 新增变体 `next_message`（挂在下一条提升为正式消息的输入上，不区分来源——SubagentStart 的上下文：
+  普通子 agent 的第一条输入是委派指令，来源是父会话而不是人，`next_user_message` 只认人发的消息挂不上它；分身没有新输入，挂在继承来的最后那条
+  助手消息的工具结果后面，沿用 `tool_results` 变体）。SessionStart(resume)、PermissionRequest、SessionEnd、Notification 四个事件不新增日志事件：
+  复用 `hooks_ran`；PermissionRequest 的替人答复复用 `approval_requested` + `approval_resolved`（`decidedBy = hook`，同一次提交写入，折叠成已决议）。
+  含新变体的日志旧版本打不开；旧日志照常读。

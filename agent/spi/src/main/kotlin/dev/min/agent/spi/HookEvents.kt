@@ -67,6 +67,14 @@ sealed interface HookContextTarget {
     @SerialName("next_user_message")
     data object NextUserMessage : HookContextTarget
 
+    /**
+     * 挂在下一条提升为正式消息的输入上，不区分来源（SubagentStart：普通子 agent 的第一条输入是委派指令，
+     * 来源是父会话而不是人，[NextUserMessage] 只认人发的、挂不上它）
+     */
+    @Serializable
+    @SerialName("next_message")
+    data object NextMessage : HookContextTarget
+
     /** 挂在这条用户消息上（UserPromptSubmit） */
     @Serializable
     @SerialName("message")

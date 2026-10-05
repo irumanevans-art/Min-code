@@ -16,6 +16,8 @@ import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.FORK_AGENT_TYPE
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.LogHeader
@@ -31,6 +33,9 @@ import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.store.LOG_FORMAT_VERSION
+import dev.min.agent.ext.hooks.HookEvent
+import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.SubagentStartInput
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.QuestionId
 import dev.min.agent.spi.PermissionAsk
@@ -49,6 +54,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.jsonObject
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -407,6 +413,8 @@ class SessionHub(
         )
         if (!background) awaitedInForeground += childId
         watch(child, reconcile = false)
+        // SubagentStart（hooks设计 §7）：子会话建好之后、第一个回合之前跑——上下文要赶在子会话的第一个请求之前挂好
+        runSubagentStart(child)
         if (fork) {
             child.startDelegated()
         } else {
@@ -485,6 +493,31 @@ class SessionHub(
         } catch (e: Exception) {
             null
         }
+    }
+
+    /**
+     * SubagentStart：输入只有 agent_id / agent_type（都在通用字段里，matcher 匹配 agent_type）。
+     * 上下文的挂靠分两种：普通子 agent 挂它的第一条输入（委派指令——来源是父会话不是人，[HookContextTarget.NextUserMessage]
+     * 只认人发的消息挂不上，所以新开 [HookContextTarget.NextMessage]）；分身没有新输入，挂继承来的最后那条
+     * 助手消息的工具结果后面——分身首请求的前缀不变量只管到那条消息为止，挂在它后面不破坏（子agent设计 §3.3）
+     */
+    private suspend fun runSubagentStart(child: SessionRuntime) {
+        val origin = child.state.value.origin ?: return
+        val specific = HookJson.encodeToJsonElement(
+            SubagentStartInput.serializer(), SubagentStartInput(),
+        ).jsonObject
+        val outcome = HookDriver(child).run(HookEvent.SubagentStart, origin.agentType, specific) ?: return
+        val target: HookContextTarget = if (origin.fork) {
+            // 分身没有新输入：挂在继承来的最后那条助手消息的工具结果后面
+            val anchor = child.state.value.history.filterIsInstance<HistoryEntry.Assistant>().lastOrNull()?.messageId
+            HookContextTarget.ToolResults(
+                checkNotNull(anchor) { "分身日志里没有继承来的助手消息，SubagentStart 的上下文没处挂" },
+            )
+        } else {
+            HookContextTarget.NextMessage
+        }
+        val events = outcome.contexts.map { HookContextAdded(target, HookEvent.SubagentStart.name, it) }
+        if (events.isNotEmpty()) child.commit(events, Durability.Sync)
     }
 
     // ---- 报告 ----

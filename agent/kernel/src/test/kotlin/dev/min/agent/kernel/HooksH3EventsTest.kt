@@ -441,4 +441,111 @@ class HooksH3EventsTest {
         return hub.create(GuestPath("/workspace"), TEST_MODEL, mode, initial = listOf(hooks))
     }
 
+    // ---- SubagentStart ----
+
+    @Test
+    fun `SubagentStart injects context at the subagent's first message`() = run {
+        val http = FakeHttp {
+            HttpHookResult.Responded(
+                200,
+                """{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"遵守安全审查清单 SEC-1"}}""",
+            )
+        }
+        val model = RoutingModel { req ->
+            val last = req.messages.last().parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+            if (last == "委派一个") {
+                reply(ToolCallPart(CallId("c1"), "Agent", args("description" to "看看", "prompt" to "去看看", "subagent_type" to "Explore")), stop = StopReason.ToolUse)
+            } else reply(TextPart("好"))
+        }
+        val hub = hub(model, http, tools = listOf(bash, dev.min.agent.tools.AgentTool))
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SubagentStart", "Explore"))))),
+        )
+        rt.say("委派一个")
+        val child = rt.state.value.children.keys.single()
+        rt.state.first { s -> s.children.getValue(child).reportedTurns.isNotEmpty() && s.turn == null }
+
+        val body = http.sent.single().body
+        assertTrue(body, body.contains("\"hook_event_name\":\"SubagentStart\""))
+        assertTrue(body, body.contains("\"agent_type\":\"Explore\""))
+        assertTrue(body, body.contains("\"agent_id\":\"${child.value}\""))
+        // 上下文挂在子会话的第一条输入（委派指令）上，赶在子会话的第一个请求之前
+        val childEvents = store.open(child)!!.read().toList().map { it.event }
+        val contexts = childEvents.filterIsInstance<dev.min.agent.spi.HookContextAdded>()
+        assertEquals(1, contexts.size)
+        assertEquals(dev.min.agent.spi.HookContextTarget.NextMessage, contexts.single().target)
+        assertEquals("SubagentStart", contexts.single().event)
+        val childRequest = model.requests.first { req -> req.messages.size == 1 && req.messages.single().parts.filterIsInstance<TextPart>().joinToString("") { it.text } != "委派一个" }
+        val delegation = childRequest.messages.single()
+        val reminder = (delegation.parts.last() as TextPart).text
+        assertTrue(reminder, reminder.contains("<system-reminder>") && reminder.contains("SEC-1"))
+        // 日志即真相：子会话自己的日志里记了这批 hook
+        assertEquals("SubagentStart", childEvents.filterIsInstance<HooksRan>().single().event)
+    }
+
+    @Test
+    fun `a fork gets its SubagentStart context after the inherited tool results`() = run {
+        val http = FakeHttp {
+            HttpHookResult.Responded(
+                200,
+                """{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"分身须知：接着上一条往下干"}}""",
+            )
+        }
+        val model = RoutingModel { req ->
+            val last = req.messages.last().parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+            if (last == "分身一个") {
+                reply(ToolCallPart(CallId("c1"), "Agent", args("description" to "接着干", "prompt" to "把剩下的做完", "subagent_type" to "fork", "run_in_background" to false)), stop = StopReason.ToolUse)
+            } else reply(TextPart("好"))
+        }
+        val hub = hub(model, http, tools = listOf(bash, dev.min.agent.tools.AgentTool))
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SubagentStart"))))),
+        )
+        rt.say("分身一个")
+        rt.state.first { it.turn == null }
+        val child = rt.state.value.children.keys.single()
+        val childEvents = store.open(child)!!.read().toList().map { it.event }
+        val contexts = childEvents.filterIsInstance<dev.min.agent.spi.HookContextAdded>()
+        assertEquals(1, contexts.size)
+        val target = contexts.single().target
+        assertTrue("分身挂在继承来的最后那条助手消息的工具结果后面", target is dev.min.agent.spi.HookContextTarget.ToolResults)
+        // 挂靠的消息在子会话历史里（继承来的那条），reminder 在分身第一个请求里、排在工具结果之后
+        val anchor = (target as dev.min.agent.spi.HookContextTarget.ToolResults).assistantMessageId
+        val forkRt = hub.get(child)!!
+        assertTrue(forkRt.state.value.history.any { it.messageId == anchor && it is HistoryEntry.Assistant })
+        val forkRequest = model.requests.first { req -> req.messages.any { m -> m.parts.any { p -> (p as? TextPart)?.text?.contains("分身须知") == true } } }
+        val partIndex = forkRequest.messages.indexOfFirst { m -> m.parts.any { p -> (p as? TextPart)?.text?.contains("分身须知") == true } }
+        val reminderParts = forkRequest.messages[partIndex].parts
+        assertTrue(
+            "reminder 在工具结果之后",
+            reminderParts.indexOfLast { it is TextPart && it.text.contains("分身须知") } >
+                reminderParts.indexOfFirst { it is dev.min.agent.protocol.ToolResultPart },
+        )
+    }
+
+    @Test
+    fun `the matcher filters SubagentStart by agent type`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = RoutingModel { req ->
+            val last = req.messages.last().parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+            if (last == "委派一个") {
+                reply(ToolCallPart(CallId("c1"), "Agent", args("description" to "看看", "prompt" to "去看看", "subagent_type" to "Explore")), stop = StopReason.ToolUse)
+            } else reply(TextPart("好"))
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val hub = SessionHub(
+            store, hubDeps(model, http, tools = listOf(bash, dev.min.agent.tools.AgentTool)), scope,
+        )
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SubagentStart", "Plan"))))),
+        )
+        rt.say("委派一个")
+        val child = rt.state.value.children.keys.single()
+        rt.state.first { s -> s.children.getValue(child).reportedTurns.isNotEmpty() && s.turn == null }
+        assertTrue("matcher 是 Plan，Explore 不匹配", http.sent.isEmpty())
+    }
+
 }

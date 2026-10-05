@@ -43,6 +43,7 @@ data class ConversationMark(
     val memoryCoveredKeys: Int,
     val maskedSize: Int,
     val pendingHookContexts: List<String>,
+    val pendingInputContexts: List<String>,
     val memoryPathsInContext: Set<GuestPath>,
     val compaction: CompactionView?,
     val compactionContexts: Map<String, List<String>>,
@@ -66,7 +67,7 @@ data class RewoundSegment(
 
 internal fun SessionState.conversationMark() = ConversationMark(
     history.size, toolResults.size, hookContexts.size, memoryAttachments.size, memoryCovered.size, masked.size,
-    pendingHookContexts, memoryPathsInContext, compaction, compactionContexts, tasks,
+    pendingHookContexts, pendingInputContexts, memoryPathsInContext, compaction, compactionContexts, tasks,
 )
 
 /**
@@ -134,6 +135,7 @@ internal fun SessionState.withRewind(record: EventRecord, e: ConversationRewound
         toolResults = toolResults.prefix(keep.toolResultsSize),
         hookContexts = hookContexts.prefix(keep.hookContextKeys),
         pendingHookContexts = keep.pendingHookContexts,
+        pendingInputContexts = keep.pendingInputContexts,
         memoryAttachments = memoryAttachments.prefix(keep.memoryAttachmentKeys),
         memoryCovered = memoryCovered.prefix(keep.memoryCoveredKeys),
         memoryPathsInContext = keep.memoryPathsInContext,
