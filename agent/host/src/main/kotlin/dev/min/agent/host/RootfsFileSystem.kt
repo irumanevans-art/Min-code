@@ -124,7 +124,7 @@ class RootfsFileSystem(
      */
     override suspend fun writeAtomic(path: GuestPath, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
         val real = canonical(path)
-        bindFor(real)?.takeIf { it.readOnly }?.let { throw GuestPathException(path, "位于只读挂载 ${it.guest} 内") }
+        requireWritable(path)
         val host = hostOf(components(real.value))
         val parent = host.parent ?: throw GuestPathException(path, "不能写根目录")
         Files.createDirectories(parent)
@@ -157,6 +157,11 @@ class RootfsFileSystem(
     }
 
     // ---- 映射细节 ----
+
+    /** 快照恢复还会删文件/建目录；这些动作必须沿用文件工具的只读挂载边界。 */
+    internal fun requireWritable(path: GuestPath) {
+        bindFor(canonical(path))?.takeIf { it.readOnly }?.let { throw GuestPathException(path, "位于只读挂载 ${it.guest} 内") }
+    }
 
     private fun hostOf(parts: List<String>): Path {
         val guest = "/" + parts.joinToString("/")

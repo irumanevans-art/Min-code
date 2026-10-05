@@ -1,0 +1,1479 @@
+{
+  "git": "git version 2.55.0.windows.2",
+  "generatedAt": "2026-10-05T04:05:36.132Z",
+  "samples": [
+    {
+      "case": 0,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.log\n!important.log\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x.log",
+      "directory": false,
+      "ignored": true,
+      "pattern": "*.log",
+      "source": ".gitignore"
+    },
+    {
+      "case": 0,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.log\n!important.log\n"
+        }
+      ],
+      "exclude": "",
+      "path": "important.log",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!important.log",
+      "source": ".gitignore"
+    },
+    {
+      "case": 0,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.log\n!important.log\n"
+        }
+      ],
+      "exclude": "",
+      "path": "src/x.log",
+      "directory": false,
+      "ignored": true,
+      "pattern": "*.log",
+      "source": ".gitignore"
+    },
+    {
+      "case": 0,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.log\n!important.log\n"
+        }
+      ],
+      "exclude": "",
+      "path": "src/important.log",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!important.log",
+      "source": ".gitignore"
+    },
+    {
+      "case": 0,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.log\n!important.log\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x.txt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 1,
+      "rules": [
+        {
+          "base": "",
+          "text": "cache/\n!cache/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "cache",
+      "directory": true,
+      "ignored": true,
+      "pattern": "cache/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 1,
+      "rules": [
+        {
+          "base": "",
+          "text": "cache/\n!cache/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "cache/keep.txt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "cache/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 1,
+      "rules": [
+        {
+          "base": "",
+          "text": "cache/\n!cache/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "cache/sub/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "cache/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 1,
+      "rules": [
+        {
+          "base": "",
+          "text": "cache/\n!cache/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "src/cache",
+      "directory": true,
+      "ignored": true,
+      "pattern": "cache/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 1,
+      "rules": [
+        {
+          "base": "",
+          "text": "cache/\n!cache/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "src/cache/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "cache/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 2,
+      "rules": [
+        {
+          "base": "",
+          "text": "/cache/\n"
+        }
+      ],
+      "exclude": "",
+      "path": "cache",
+      "directory": true,
+      "ignored": true,
+      "pattern": "/cache/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 2,
+      "rules": [
+        {
+          "base": "",
+          "text": "/cache/\n"
+        }
+      ],
+      "exclude": "",
+      "path": "cache/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "/cache/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 2,
+      "rules": [
+        {
+          "base": "",
+          "text": "/cache/\n"
+        }
+      ],
+      "exclude": "",
+      "path": "src/cache",
+      "directory": true,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 2,
+      "rules": [
+        {
+          "base": "",
+          "text": "/cache/\n"
+        }
+      ],
+      "exclude": "",
+      "path": "src/cache/x",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 3,
+      "rules": [
+        {
+          "base": "",
+          "text": "foo/bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo/bar",
+      "directory": true,
+      "ignored": true,
+      "pattern": "foo/bar",
+      "source": ".gitignore"
+    },
+    {
+      "case": 3,
+      "rules": [
+        {
+          "base": "",
+          "text": "foo/bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo/bar/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "foo/bar",
+      "source": ".gitignore"
+    },
+    {
+      "case": 3,
+      "rules": [
+        {
+          "base": "",
+          "text": "foo/bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x/foo/bar",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 3,
+      "rules": [
+        {
+          "base": "",
+          "text": "foo/bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo/bart",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 4,
+      "rules": [
+        {
+          "base": "",
+          "text": "a/**/b\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/b",
+      "directory": false,
+      "ignored": true,
+      "pattern": "a/**/b",
+      "source": ".gitignore"
+    },
+    {
+      "case": 4,
+      "rules": [
+        {
+          "base": "",
+          "text": "a/**/b\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/x/b",
+      "directory": false,
+      "ignored": true,
+      "pattern": "a/**/b",
+      "source": ".gitignore"
+    },
+    {
+      "case": 4,
+      "rules": [
+        {
+          "base": "",
+          "text": "a/**/b\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/x/y/b",
+      "directory": false,
+      "ignored": true,
+      "pattern": "a/**/b",
+      "source": ".gitignore"
+    },
+    {
+      "case": 4,
+      "rules": [
+        {
+          "base": "",
+          "text": "a/**/b\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/bee",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 4,
+      "rules": [
+        {
+          "base": "",
+          "text": "a/**/b\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x/a/b",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 5,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/foo/bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo/bar",
+      "directory": false,
+      "ignored": true,
+      "pattern": "**/foo/bar",
+      "source": ".gitignore"
+    },
+    {
+      "case": 5,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/foo/bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x/foo/bar",
+      "directory": false,
+      "ignored": true,
+      "pattern": "**/foo/bar",
+      "source": ".gitignore"
+    },
+    {
+      "case": 5,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/foo/bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x/y/foo/bar",
+      "directory": false,
+      "ignored": true,
+      "pattern": "**/foo/bar",
+      "source": ".gitignore"
+    },
+    {
+      "case": 5,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/foo/bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo/bark",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 6,
+      "rules": [
+        {
+          "base": "",
+          "text": "abc/**\n!abc/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "abc",
+      "directory": true,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 6,
+      "rules": [
+        {
+          "base": "",
+          "text": "abc/**\n!abc/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "abc/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "abc/**",
+      "source": ".gitignore"
+    },
+    {
+      "case": 6,
+      "rules": [
+        {
+          "base": "",
+          "text": "abc/**\n!abc/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "abc/keep.txt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!abc/keep.txt",
+      "source": ".gitignore"
+    },
+    {
+      "case": 6,
+      "rules": [
+        {
+          "base": "",
+          "text": "abc/**\n!abc/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "abc/sub/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "abc/**",
+      "source": ".gitignore"
+    },
+    {
+      "case": 6,
+      "rules": [
+        {
+          "base": "",
+          "text": "abc/**\n!abc/keep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x/abc/x",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 7,
+      "rules": [
+        {
+          "base": "",
+          "text": "a?c.[ch]\n[!0-9]*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "abc.c",
+      "directory": false,
+      "ignored": true,
+      "pattern": "a?c.[ch]",
+      "source": ".gitignore"
+    },
+    {
+      "case": 7,
+      "rules": [
+        {
+          "base": "",
+          "text": "a?c.[ch]\n[!0-9]*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "axc.h",
+      "directory": false,
+      "ignored": true,
+      "pattern": "a?c.[ch]",
+      "source": ".gitignore"
+    },
+    {
+      "case": 7,
+      "rules": [
+        {
+          "base": "",
+          "text": "a?c.[ch]\n[!0-9]*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "ac.c",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 7,
+      "rules": [
+        {
+          "base": "",
+          "text": "a?c.[ch]\n[!0-9]*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "abc.cpp",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 7,
+      "rules": [
+        {
+          "base": "",
+          "text": "a?c.[ch]\n[!0-9]*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x.tmp",
+      "directory": false,
+      "ignored": true,
+      "pattern": "[!0-9]*.tmp",
+      "source": ".gitignore"
+    },
+    {
+      "case": 7,
+      "rules": [
+        {
+          "base": "",
+          "text": "a?c.[ch]\n[!0-9]*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "1.tmp",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 7,
+      "rules": [
+        {
+          "base": "",
+          "text": "a?c.[ch]\n[!0-9]*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/abc.c",
+      "directory": false,
+      "ignored": true,
+      "pattern": "a?c.[ch]",
+      "source": ".gitignore"
+    },
+    {
+      "case": 8,
+      "rules": [
+        {
+          "base": "",
+          "text": "\\#literal\n\\!literal\nspace\\ name\ntrailing\\ \nordinary   \n"
+        }
+      ],
+      "exclude": "",
+      "path": "#literal",
+      "directory": false,
+      "ignored": true,
+      "pattern": "\\#literal",
+      "source": ".gitignore"
+    },
+    {
+      "case": 8,
+      "rules": [
+        {
+          "base": "",
+          "text": "\\#literal\n\\!literal\nspace\\ name\ntrailing\\ \nordinary   \n"
+        }
+      ],
+      "exclude": "",
+      "path": "!literal",
+      "directory": false,
+      "ignored": true,
+      "pattern": "\\!literal",
+      "source": ".gitignore"
+    },
+    {
+      "case": 8,
+      "rules": [
+        {
+          "base": "",
+          "text": "\\#literal\n\\!literal\nspace\\ name\ntrailing\\ \nordinary   \n"
+        }
+      ],
+      "exclude": "",
+      "path": "space name",
+      "directory": false,
+      "ignored": true,
+      "pattern": "space\\ name",
+      "source": ".gitignore"
+    },
+    {
+      "case": 8,
+      "rules": [
+        {
+          "base": "",
+          "text": "\\#literal\n\\!literal\nspace\\ name\ntrailing\\ \nordinary   \n"
+        }
+      ],
+      "exclude": "",
+      "path": "trailing ",
+      "directory": false,
+      "ignored": true,
+      "pattern": "trailing\\ ",
+      "source": ".gitignore"
+    },
+    {
+      "case": 8,
+      "rules": [
+        {
+          "base": "",
+          "text": "\\#literal\n\\!literal\nspace\\ name\ntrailing\\ \nordinary   \n"
+        }
+      ],
+      "exclude": "",
+      "path": "ordinary",
+      "directory": false,
+      "ignored": true,
+      "pattern": "ordinary",
+      "source": ".gitignore"
+    },
+    {
+      "case": 8,
+      "rules": [
+        {
+          "base": "",
+          "text": "\\#literal\n\\!literal\nspace\\ name\ntrailing\\ \nordinary   \n"
+        }
+      ],
+      "exclude": "",
+      "path": "ordinary ",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 9,
+      "rules": [
+        {
+          "base": "",
+          "text": "# comment\n\n\\*.txt\n\\?.txt\n\\[x\\]\n"
+        }
+      ],
+      "exclude": "",
+      "path": "*.txt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "\\*.txt",
+      "source": ".gitignore"
+    },
+    {
+      "case": 9,
+      "rules": [
+        {
+          "base": "",
+          "text": "# comment\n\n\\*.txt\n\\?.txt\n\\[x\\]\n"
+        }
+      ],
+      "exclude": "",
+      "path": "?.txt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "\\?.txt",
+      "source": ".gitignore"
+    },
+    {
+      "case": 9,
+      "rules": [
+        {
+          "base": "",
+          "text": "# comment\n\n\\*.txt\n\\?.txt\n\\[x\\]\n"
+        }
+      ],
+      "exclude": "",
+      "path": "[x]",
+      "directory": false,
+      "ignored": true,
+      "pattern": "\\[x\\]",
+      "source": ".gitignore"
+    },
+    {
+      "case": 9,
+      "rules": [
+        {
+          "base": "",
+          "text": "# comment\n\n\\*.txt\n\\?.txt\n\\[x\\]\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a.txt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 9,
+      "rules": [
+        {
+          "base": "",
+          "text": "# comment\n\n\\*.txt\n\\?.txt\n\\[x\\]\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 10,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.txt\n!keep.txt\n"
+        },
+        {
+          "base": "sub",
+          "text": "!*.txt\nkeep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x.txt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "*.txt",
+      "source": ".gitignore"
+    },
+    {
+      "case": 10,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.txt\n!keep.txt\n"
+        },
+        {
+          "base": "sub",
+          "text": "!*.txt\nkeep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "keep.txt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!keep.txt",
+      "source": ".gitignore"
+    },
+    {
+      "case": 10,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.txt\n!keep.txt\n"
+        },
+        {
+          "base": "sub",
+          "text": "!*.txt\nkeep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/x.txt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!*.txt",
+      "source": "sub/.gitignore"
+    },
+    {
+      "case": 10,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.txt\n!keep.txt\n"
+        },
+        {
+          "base": "sub",
+          "text": "!*.txt\nkeep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/keep.txt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "keep.txt",
+      "source": "sub/.gitignore"
+    },
+    {
+      "case": 10,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.txt\n!keep.txt\n"
+        },
+        {
+          "base": "sub",
+          "text": "!*.txt\nkeep.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/deep/x.txt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!*.txt",
+      "source": "sub/.gitignore"
+    },
+    {
+      "case": 11,
+      "rules": [
+        {
+          "base": "",
+          "text": "ignored/\n"
+        },
+        {
+          "base": "ignored",
+          "text": "!x.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "ignored",
+      "directory": true,
+      "ignored": true,
+      "pattern": "ignored/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 11,
+      "rules": [
+        {
+          "base": "",
+          "text": "ignored/\n"
+        },
+        {
+          "base": "ignored",
+          "text": "!x.txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "ignored/x.txt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "ignored/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 12,
+      "rules": [
+        {
+          "base": "",
+          "text": "tree/*\n!tree/keep/\n!tree/keep/**\n"
+        }
+      ],
+      "exclude": "",
+      "path": "tree",
+      "directory": true,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 12,
+      "rules": [
+        {
+          "base": "",
+          "text": "tree/*\n!tree/keep/\n!tree/keep/**\n"
+        }
+      ],
+      "exclude": "",
+      "path": "tree/drop/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "tree/*",
+      "source": ".gitignore"
+    },
+    {
+      "case": 12,
+      "rules": [
+        {
+          "base": "",
+          "text": "tree/*\n!tree/keep/\n!tree/keep/**\n"
+        }
+      ],
+      "exclude": "",
+      "path": "tree/keep",
+      "directory": true,
+      "ignored": false,
+      "pattern": "!tree/keep/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 12,
+      "rules": [
+        {
+          "base": "",
+          "text": "tree/*\n!tree/keep/\n!tree/keep/**\n"
+        }
+      ],
+      "exclude": "",
+      "path": "tree/keep/x",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!tree/keep/**",
+      "source": ".gitignore"
+    },
+    {
+      "case": 12,
+      "rules": [
+        {
+          "base": "",
+          "text": "tree/*\n!tree/keep/\n!tree/keep/**\n"
+        }
+      ],
+      "exclude": "",
+      "path": "tree/keep/deep/x",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!tree/keep/**",
+      "source": ".gitignore"
+    },
+    {
+      "case": 13,
+      "rules": [
+        {
+          "base": "",
+          "text": "thing/\n"
+        }
+      ],
+      "exclude": "",
+      "path": "thing",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 13,
+      "rules": [
+        {
+          "base": "",
+          "text": "thing/\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/thing",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 13,
+      "rules": [
+        {
+          "base": "",
+          "text": "thing/\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/thing",
+      "directory": true,
+      "ignored": true,
+      "pattern": "thing/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 13,
+      "rules": [
+        {
+          "base": "",
+          "text": "thing/\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/thing/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "thing/",
+      "source": ".gitignore"
+    },
+    {
+      "case": 14,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/x\nfoo/***bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "**/x",
+      "source": ".gitignore"
+    },
+    {
+      "case": 14,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/x\nfoo/***bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "**/x",
+      "source": ".gitignore"
+    },
+    {
+      "case": 14,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/x\nfoo/***bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo/bar",
+      "directory": false,
+      "ignored": true,
+      "pattern": "foo/***bar",
+      "source": ".gitignore"
+    },
+    {
+      "case": 14,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/x\nfoo/***bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo/abcbar",
+      "directory": false,
+      "ignored": true,
+      "pattern": "foo/***bar",
+      "source": ".gitignore"
+    },
+    {
+      "case": 14,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/x\nfoo/***bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo/a/bbar",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 14,
+      "rules": [
+        {
+          "base": "",
+          "text": "**/x\nfoo/***bar\n"
+        }
+      ],
+      "exclude": "",
+      "path": "y",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 15,
+      "rules": [
+        {
+          "base": "",
+          "text": "[a-c]??.kt\nfile[0-9].txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "abc.kt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "[a-c]??.kt",
+      "source": ".gitignore"
+    },
+    {
+      "case": 15,
+      "rules": [
+        {
+          "base": "",
+          "text": "[a-c]??.kt\nfile[0-9].txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "dxx.kt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 15,
+      "rules": [
+        {
+          "base": "",
+          "text": "[a-c]??.kt\nfile[0-9].txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "ax.kt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 15,
+      "rules": [
+        {
+          "base": "",
+          "text": "[a-c]??.kt\nfile[0-9].txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "file1.txt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "file[0-9].txt",
+      "source": ".gitignore"
+    },
+    {
+      "case": 15,
+      "rules": [
+        {
+          "base": "",
+          "text": "[a-c]??.kt\nfile[0-9].txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "filea.txt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 16,
+      "rules": [
+        {
+          "base": "",
+          "text": "/*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "x.tmp",
+      "directory": false,
+      "ignored": true,
+      "pattern": "/*.tmp",
+      "source": ".gitignore"
+    },
+    {
+      "case": 16,
+      "rules": [
+        {
+          "base": "",
+          "text": "/*.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/x.tmp",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 17,
+      "rules": [
+        {
+          "base": "",
+          "text": "a/*/b\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/x/b",
+      "directory": false,
+      "ignored": true,
+      "pattern": "a/*/b",
+      "source": ".gitignore"
+    },
+    {
+      "case": 17,
+      "rules": [
+        {
+          "base": "",
+          "text": "a/*/b\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/x/y/b",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 17,
+      "rules": [
+        {
+          "base": "",
+          "text": "a/*/b\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a/b",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 18,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.tmp\n"
+        },
+        {
+          "base": "sub",
+          "text": "/one.tmp\n!two.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "one.tmp",
+      "directory": false,
+      "ignored": true,
+      "pattern": "*.tmp",
+      "source": ".gitignore"
+    },
+    {
+      "case": 18,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.tmp\n"
+        },
+        {
+          "base": "sub",
+          "text": "/one.tmp\n!two.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/one.tmp",
+      "directory": false,
+      "ignored": true,
+      "pattern": "/one.tmp",
+      "source": "sub/.gitignore"
+    },
+    {
+      "case": 18,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.tmp\n"
+        },
+        {
+          "base": "sub",
+          "text": "/one.tmp\n!two.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/two.tmp",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!two.tmp",
+      "source": "sub/.gitignore"
+    },
+    {
+      "case": 18,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.tmp\n"
+        },
+        {
+          "base": "sub",
+          "text": "/one.tmp\n!two.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/deep/one.tmp",
+      "directory": false,
+      "ignored": true,
+      "pattern": "*.tmp",
+      "source": ".gitignore"
+    },
+    {
+      "case": 18,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.tmp\n"
+        },
+        {
+          "base": "sub",
+          "text": "/one.tmp\n!two.tmp\n"
+        }
+      ],
+      "exclude": "",
+      "path": "sub/deep/two.tmp",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!two.tmp",
+      "source": "sub/.gitignore"
+    },
+    {
+      "case": 19,
+      "rules": [
+        {
+          "base": "",
+          "text": "foo\\\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 19,
+      "rules": [
+        {
+          "base": "",
+          "text": "foo\\\n"
+        }
+      ],
+      "exclude": "",
+      "path": "foo\\",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    },
+    {
+      "case": 20,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.out\n!keep.out\n"
+        }
+      ],
+      "exclude": "keep.out\nprivate/\n",
+      "path": "a.out",
+      "directory": false,
+      "ignored": true,
+      "pattern": "*.out",
+      "source": ".gitignore"
+    },
+    {
+      "case": 20,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.out\n!keep.out\n"
+        }
+      ],
+      "exclude": "keep.out\nprivate/\n",
+      "path": "keep.out",
+      "directory": false,
+      "ignored": false,
+      "pattern": "!keep.out",
+      "source": ".gitignore"
+    },
+    {
+      "case": 20,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.out\n!keep.out\n"
+        }
+      ],
+      "exclude": "keep.out\nprivate/\n",
+      "path": "private/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "private/",
+      "source": ".git/info/exclude"
+    },
+    {
+      "case": 20,
+      "rules": [
+        {
+          "base": "",
+          "text": "*.out\n!keep.out\n"
+        }
+      ],
+      "exclude": "keep.out\nprivate/\n",
+      "path": "sub/private/x",
+      "directory": false,
+      "ignored": true,
+      "pattern": "private/",
+      "source": ".git/info/exclude"
+    },
+    {
+      "case": 21,
+      "rules": [
+        {
+          "base": "",
+          "text": "a[[:digit:]].txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "a1.txt",
+      "directory": false,
+      "ignored": true,
+      "pattern": "a[[:digit:]].txt",
+      "source": ".gitignore"
+    },
+    {
+      "case": 21,
+      "rules": [
+        {
+          "base": "",
+          "text": "a[[:digit:]].txt\n"
+        }
+      ],
+      "exclude": "",
+      "path": "aa.txt",
+      "directory": false,
+      "ignored": false,
+      "pattern": "",
+      "source": ""
+    }
+  ]
+}
