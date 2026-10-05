@@ -39,19 +39,16 @@ fun main(argv: Array<String>) {
 private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     val app = DesktopApp(args, scope)
     app.checkKey()
-    val runtime = app.openSession()
-    try {
-        return interact(app, runtime, args, scope)
-    } finally {
-        // 退出 = prompt_input_exit：SessionEnd 在会话卸下之前跑，清理类 hook 有机会收尾
-        app.exitSession(runtime)
-    }
+    return interact(app, app.openSession(), args, scope)
 }
 
-private suspend fun interact(app: DesktopApp, runtime: dev.min.agent.kernel.SessionRuntime, args: CliArgs, scope: CoroutineScope): Int {
+private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.SessionRuntime, args: CliArgs, scope: CoroutineScope): Int {
+    // /branch 会换会话：退出时的 SessionEnd 要跟当前会话走（分支是用户现在所在的对话）
+    var runtime = initial
     val stdin = System.`in`.bufferedReader()
-    ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
-    System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
+    var ui = ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
+    try {
+        System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
 
     // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
     suspend fun say(input: String): Boolean {
@@ -87,7 +84,7 @@ private suspend fun interact(app: DesktopApp, runtime: dev.min.agent.kernel.Sess
         return if (result.completed) 0 else 1
     }
 
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/branch 分支当前会话；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
         val line = stdin.readLine() ?: return 0
@@ -103,10 +100,27 @@ private suspend fun interact(app: DesktopApp, runtime: dev.min.agent.kernel.Sess
             }
             trimmed == "/output-style" || trimmed.startsWith("/output-style ") ->
                 outputStyleCommand(app, runtime, trimmed.removePrefix("/output-style").trim())
+            trimmed == "/branch" -> {
+                // 分支并切过去继续聊：原会话一个字不动（CC 的 /branch 同样复制转录后切换写入）
+                try {
+                    val branched = app.branchSession(runtime)
+                    ui.cancel()
+                    runtime = branched
+                    ui = ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
+                    System.err.println("已切到分支 ${runtime.sessionId.value}（分支自 ${branched.state.value.branched?.from?.value}；原会话保留，可各自 --resume）")
+                } catch (e: dev.min.agent.kernel.SessionBranchRefused) {
+                    System.err.println(e.message)
+                }
+            }
             trimmed in REWIND_COMMANDS -> rewindCommand(runtime, stdin)
             trimmed.startsWith("/rewind-undo ") -> rewindUndoCommand(runtime, trimmed.removePrefix("/rewind-undo ").trim())
             else -> say(line)
         }
+    }
+    } finally {
+        // 退出 = prompt_input_exit：SessionEnd 在会话（用户最后所在的那个，可能是分支）卸下之前跑，清理类 hook 有机会收尾
+        app.exitSession(runtime)
+        ui.cancel()
     }
 }
 

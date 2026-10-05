@@ -110,6 +110,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is SkillsLoaded -> copy(skills = e)
         is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e)
         is dev.min.agent.spi.StructuredOutputDelivered -> copy(structuredOutput = e)
+        is dev.min.agent.spi.SessionBranched -> copy(branched = e)
         is SettingsChanged -> copy(
             settings = settings.copy(
                 cwd = e.cwd ?: settings.cwd,

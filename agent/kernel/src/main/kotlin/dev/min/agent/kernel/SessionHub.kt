@@ -50,6 +50,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -104,6 +105,9 @@ object SessionEndReasons {
     const val PROMPT_INPUT_EXIT = "prompt_input_exit"
     const val OTHER = "other"
 }
+
+/** [SessionHub.branch] 拒绝的原因（会话在跑 / 复制期间会话动了 / 不是根会话），message 直接给人看 */
+class SessionBranchRefused(message: String) : Exception(message)
 
 /**
  * 一个进程一个：持有所有在线的会话运行时，负责委派子 agent、交付报告、恢复后的补发（docs/agent/detail/子agent设计.md §5）。
@@ -385,6 +389,48 @@ class SessionHub(
         if (runtime.state.value.origin == null && userResumed.add(runtime.sessionId)) {
             runtime.runSessionStart("resume")
         }
+    }
+
+    /**
+     * 会话分支（CC 的 `/branch` 与 `--fork-session`）：把整份日志复制成一个新根会话（新 id、新头），
+     * 末尾追加一条 [SessionBranched] 作为分界；原会话一个字不动。必须是空闲的根会话——
+     * 有回合在跑就拒绝（复制到一半的对话没有意义）。子 agent **不复制**：分支里的引用仍指向原来的
+     * 子会话，且只读（[sendMessage] / [stopChild] 按归属检查拒掉）；要往下派活就在分支里重新委派。
+     *
+     * 复制完核对一眼原会话没再写：读日志快照期间刚开了新回合的话，这份分支会缺尾巴，拒绝让人重试
+     * 比给一个截断的分支好。分支不跑 SessionStart(startup)：它是原对话的延续，不是新会话。
+     */
+    suspend fun branch(id: SessionId): SessionRuntime {
+        val source = get(id) ?: open(id) ?: throw SessionBranchRefused("找不到会话 ${id.value}。")
+        val s = source.state.value
+        if (s.origin != null) throw SessionBranchRefused("子 agent 会话不能分支；对它的根会话分支。")
+        if (s.turn != null) throw SessionBranchRefused("会话正在进行中，等这一轮结束再分支。")
+        val copied = store.open(id)?.read()?.toList()
+            ?: throw SessionBranchRefused("会话 ${id.value} 的日志打不开了。")
+        val atSeq = copied.lastOrNull()?.seq ?: 0L
+        if (source.state.value.lastSeq != atSeq) {
+            throw SessionBranchRefused("分支期间会话有了新事件，请重试。")
+        }
+        val header = LogHeader(LOG_FORMAT_VERSION, SessionId(deps.ids.next("s")), deps.clock.nowMs())
+        val branched = dev.min.agent.spi.SessionBranched(
+            from = id, atSeq = atSeq,
+            // 冻结原会话的环境事实与缓存键：分支首个请求的前缀与原会话逐字相同，提示缓存接得上
+            basis = promptBasisOf(s, deps), cacheKey = s.header.sessionId.value,
+        )
+        val runtime = SessionRuntime.create(
+            store, header,
+            created = copied.first().event as dev.min.agent.spi.SessionCreated,
+            deps, scope,
+            initial = copied.drop(1).map { it.event } + branched,
+            // 快照全在复制来的事件里，不重读磁盘（重读会被磁盘上的中途变化带偏，前缀对不上）
+            loadMemory = false, loadSettings = false, loadSkills = false, hub = this,
+            runStartHooks = false,
+        )
+        register(runtime)
+        // 根会话接上 MCP（快照已在日志里，与 open 同一套）；检查点的回收根给新会话登记一份（复用 Checkpointer.retain）
+        attachMcp(runtime, fresh = false)
+        runtime.checkpointer.retainAfterTurn()
+        return runtime
     }
 
     /** 在线的会话；不打开 */
@@ -721,6 +767,10 @@ class SessionHub(
         }
         val child = findChild(state, target) ?: return error(unknownChild(state, target))
         val runtime = open(child.child) ?: return error("子 agent ${child.child.value} 的会话打不开了。")
+        // 归属检查：它得是本会话自己委派的。分支复制来的引用指向原会话的子 agent——只读，不能替原会话发话
+        if (runtime.state.value.origin?.parent != from.sessionId) {
+            return error("这个子 agent 属于别的会话（分支不接管子 agent），不能从这里给它发消息；要往下派活请重新委派。")
+        }
         runtime.receive(
             ClientMsgId("message:${from.sessionId.value}:${callId.value}"), listOf(TextPart(text)), Delivery.Steer,
             InputOrigin.Parent(from.sessionId), TurnTrigger.User,
@@ -733,6 +783,10 @@ class SessionHub(
         val state = from.state.value
         val child = findChild(state, target.trim()) ?: return error(unknownChild(state, target.trim()))
         val runtime = open(child.child) ?: return error("子 agent ${child.child.value} 的会话打不开了。")
+        // 同上：分支里的旧引用只读
+        if (runtime.state.value.origin?.parent != from.sessionId) {
+            return error("这个子 agent 属于别的会话（分支不接管子 agent），不能从这里停它。")
+        }
         if (runtime.state.value.turn == null) return ok("它现在没有在跑。")
         runtime.interrupt()
         return ok("已让它停下；它的报告（标为未做完）会照常交给你。")

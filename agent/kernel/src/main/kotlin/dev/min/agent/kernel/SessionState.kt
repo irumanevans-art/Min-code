@@ -86,6 +86,11 @@ data class SessionState(
     val children: Map<SessionId, ChildSummary> = emptyMap(),
     /** 最近结束的那个回合。子 agent 的报告取它的结局 */
     val lastTurn: EndedTurn? = null,
+    /**
+     * 本会话是分支出来的（最后一条 session_branched）；null = 不是。界面据此显示「分支自 …」，
+     * 组请求时沿用事件里冻结的环境事实与缓存键（前缀与原会话逐字相同，提示缓存接得上）
+     */
+    val branched: dev.min.agent.spi.SessionBranched? = null,
     /** 会话创建时冻结的权限规则（最后一条 PermissionRulesLoaded） */
     val rules: List<RuleEntry> = emptyList(),
     /** 本会话里人选「总是允许」攒下的规则，按答复顺序；来源记为 session */

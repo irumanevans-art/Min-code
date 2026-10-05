@@ -390,7 +390,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             messages = state.modelMessages(),
             tools = specs,
             effort = state.settings.effort,
-            cacheKey = origin?.cacheKey ?: state.header.sessionId.value,
+            // 分支沿用原会话的缓存键（session_branched 冻结）：OpenAI 系的 prompt_cache_key 落到同一个缓存分片
+            cacheKey = origin?.cacheKey ?: state.branched?.cacheKey ?: state.header.sessionId.value,
             memory = state.memory,
             // 子 agent 的工具表里没有 Skill 就不列清单：列了模型也调不了，白占 token
             skills = state.skills?.takeIf { _ -> specs.any { it.name == SkillTool.name } },
@@ -453,13 +454,16 @@ internal class TurnAbort(message: String, val kind: ModelFailureKind? = null) : 
 /** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
 internal class TurnLimitReached : Exception()
 
-/** 组系统提示用的环境事实：子会话带着的（分身 = 父会话的）优先，否则由本会话的创建时间与 cwd 推出 */
+/** 组系统提示用的环境事实：子会话带着的（分身 = 父会话的）优先；分支会话用 session_branched 冻结的原会话事实；
+ *  否则由本会话的创建时间与 cwd 推出。分支不带原会话的事实，日期一变系统提示就变，缓存前缀全断 */
 internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
-    state.origin?.promptBasis ?: PromptBasis(
-        platform = deps.platform,
-        cwd = state.created.cwd.value,
-        date = LocalDate.ofInstant(Instant.ofEpochMilli(state.header.createdAtMs), deps.zone).toString(),
-    )
+    state.origin?.promptBasis
+        ?: state.branched?.basis
+        ?: PromptBasis(
+            platform = deps.platform,
+            cwd = state.created.cwd.value,
+            date = LocalDate.ofInstant(Instant.ofEpochMilli(state.header.createdAtMs), deps.zone).toString(),
+        )
 
 /** 本会话能用的工具，保持 [KernelDeps.tools] 的固定顺序。新开的子 agent 按定义取子集；分身与根会话是全部 */
 internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable): List<Tool<*>> {

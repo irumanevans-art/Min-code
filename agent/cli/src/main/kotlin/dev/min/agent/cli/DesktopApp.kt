@@ -7,6 +7,7 @@ import dev.min.agent.kernel.HostPorts
 import dev.min.agent.kernel.HubLimits
 import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
+import dev.min.agent.kernel.SessionBranchRefused
 import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.kernel.SessionEndReasons
 import dev.min.agent.kernel.SessionHub
@@ -54,6 +55,7 @@ import dev.min.agent.tools.WebFetchTool
 import dev.min.agent.tools.WebSearchTool
 import dev.min.agent.host.CachedWebPort
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import java.nio.file.Files
 import java.nio.file.Path
@@ -224,14 +226,42 @@ internal class DesktopApp(
     }
 
     suspend fun openSession(): SessionRuntime {
-        args.resume?.let { id ->
-            val sessionId = SessionId(id)
-            // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
-            return hub().open(sessionId, resumedByUser = true)
-                ?: throw UsageException("找不到会话 $id")
+        val resumeId = args.resume?.let(::SessionId)
+            ?: if (args.continueMostRecent) latestRootSession() ?: throw UsageException("当前目录还没有可接着的会话。") else null
+        if (resumeId != null) {
+            if (!args.forkSession) {
+                // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
+                return hub().open(resumeId, resumedByUser = true)
+                    ?: throw UsageException("找不到会话 ${resumeId.value}")
+            }
+            // --fork-session：读原会话（这不算用户 resume），在分支上跑这次的 -p；原会话一个字不动。
+            // SessionStart(resume) 跑在分支上——用户接着用的是分支
+            hub().open(resumeId) ?: throw UsageException("找不到会话 ${resumeId.value}")
+            val branch = hub().branch(resumeId)
+            return checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
+    }
+
+    /** 交互模式 /branch：从当前会话分出一个新根会话（忙 / 找不到时抛 [SessionBranchRefused]，终端打印原因） */
+    suspend fun branchSession(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
+
+    /**
+     * --continue：当前目录最近一次根会话。按日志头两条事件筛（cwd 相同 + 第二条不是 subagent_origin）。
+     * CC 还会把 -p 会话从 --continue 里排除；Min 的日志没有「是不是 -p 跑的」这个标记，挑最近的根会话（见汇报）
+     */
+    private suspend fun latestRootSession(): SessionId? {
+        val cwd = paths.guestOfHost(args.cwd)
+        for (header in store.list().asReversed()) {
+            val log = store.open(header.sessionId) ?: continue
+            val head = log.read().take(2).toList()
+            val created = head.firstOrNull()?.event as? dev.min.agent.spi.SessionCreated ?: continue
+            if (created.cwd != cwd) continue
+            if (head.getOrNull(1)?.event is dev.min.agent.spi.SubagentOrigin) continue
+            return header.sessionId
+        }
+        return null
     }
 
     /**

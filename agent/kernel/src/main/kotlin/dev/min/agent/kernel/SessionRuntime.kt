@@ -592,6 +592,8 @@ class SessionRuntime private constructor(
             loadSettings: Boolean = true,
             loadSkills: Boolean = true,
             hub: SessionHub? = null,
+            /** false = 不跑 SessionStart(startup)。分支（Hub.branch）用它：分支是原对话的延续，不是新会话（CC 的 fork 同样不跑） */
+            runStartHooks: Boolean = true,
         ): SessionRuntime {
             val log = store.create(header)
             val records = log.append(listOf(created) + initial, Durability.Sync)
@@ -609,7 +611,7 @@ class SessionRuntime private constructor(
             }
             // 子会话的清单由 initial 带来（继承父会话那份），不再读磁盘
             if (loadSkills) runtime.loadSkills()
-            if (runtime.state.value.origin == null) runtime.runSessionStart("startup")
+            if (runStartHooks && runtime.state.value.origin == null) runtime.runSessionStart("startup")
             return runtime
         }
 
