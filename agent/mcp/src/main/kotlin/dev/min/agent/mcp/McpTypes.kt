@@ -5,27 +5,51 @@ import kotlinx.serialization.json.*
 
 interface McpTransport {
     suspend fun send(message: JsonObject)
+    /** POST 的读超时由调用硬上限决定；旧传输与装饰器可保留单参数实现。 */
+    suspend fun send(message: JsonObject, timeoutMs: Long?) = send(message)
+    /** 可选的会话协商能力，装饰器通过接口委托转发，不依赖具体传输类。 */
+    val negotiation: McpNegotiation? get() = null
     /** 只允许一个收集者；断开以 McpTransportClosed 结束，连接持有者负责 close。 */
     val incoming: Flow<JsonObject>
     suspend fun close()
 }
+
+interface McpNegotiation {
+    var reinitialize: (suspend () -> Unit)?
+    /** 清空旧会话，并禁止握手内的 404 重入恢复回调。 */
+    fun beginHandshake()
+    fun negotiated(version: String)
+    fun endHandshake()
+}
+
+sealed class McpException(message: String) : Exception(safeLog(message))
 
 class McpTransportClosed(
     reason: String,
     val exitCode: Int? = null,
     stderrTail: List<String> = emptyList(),
     val httpStatus: Int? = null,
-) : Exception(safeLog(reason)) {
+) : McpException(reason) {
     val reason: String = safeLog(reason)
     val stderrTail: List<String> = stderrTail.map(::safeLog)
     val needsAuth: Boolean get() = httpStatus == 401 || httpStatus == 403
 }
 
-class McpRpcException(val code: Int, message: String, val data: JsonElement? = null) : Exception(safeLog(message))
-class McpTimeoutException(val kind: Kind, message: String) : Exception(safeLog(message)) {
+class McpRpcException(
+    val code: Int,
+    message: String,
+    val data: JsonElement? = null,
+    /** 原始 error.message 是协议数据；异常显示仍去掉已知凭证形态。 */
+    val serverMessage: String? = message,
+) : McpException(message)
+class McpTimeoutException(val kind: Kind, message: String) : McpException(message) {
     enum class Kind { Idle, Hard }
 }
-class McpHttpException(val status: Int, val needsAuth: Boolean, message: String) : Exception(safeLog(message))
+class McpHttpException(val status: Int, val needsAuth: Boolean, message: String) : McpException(message)
+class McpProtocolException(message: String) : McpException(message)
+
+internal fun mcpFailure(error: Exception, description: String): McpException =
+    error as? McpException ?: McpProtocolException(description)
 
 data class McpClientOptions(
     val clientVersion: String,
@@ -117,9 +141,9 @@ internal fun rpcNotification(method: String, params: JsonObject? = null) = build
 internal fun parseTool(o: JsonObject): McpToolDef {
     val a = o.obj("annotations")
     return McpToolDef(
-        o.text("name") ?: throw McpTransportClosed("MCP tools/list 返回的工具没有名称。"),
+        o.text("name") ?: throw McpProtocolException("MCP tools/list 返回的工具没有名称。"),
         o.text("title"), o.text("description"),
-        o.obj("inputSchema") ?: throw McpTransportClosed("MCP tools/list 返回的工具缺少输入 schema。"),
+        o.obj("inputSchema") ?: throw McpProtocolException("MCP tools/list 返回的工具缺少输入 schema。"),
         o.obj("outputSchema"), a?.let { McpToolAnnotations(it.text("title"), it.bool("readOnlyHint"), it.bool("destructiveHint"), it.bool("idempotentHint"), it.bool("openWorldHint")) }, o.obj("_meta"),
     )
 }

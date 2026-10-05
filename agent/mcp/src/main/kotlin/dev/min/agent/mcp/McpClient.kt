@@ -3,6 +3,7 @@ package dev.min.agent.mcp
 import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
@@ -24,17 +25,20 @@ class McpClient(
     private class Pending(val method: String, val progress: (McpProgress) -> Unit) {
         val result = CompletableDeferred<JsonElement>()
         val activity = Channel<Unit>(Channel.CONFLATED)
+        val progressQueue = Channel<McpProgress>(16, BufferOverflow.DROP_OLDEST)
     }
     private val pending = mutableMapOf<Long, Pending>()
     private val mutableState = MutableStateFlow<McpConnectionState>(McpConnectionState.Connecting)
     val state: StateFlow<McpConnectionState> = mutableState.asStateFlow()
-    private val events = MutableSharedFlow<McpNotification>(extraBufferCapacity = 64)
-    val notifications: Flow<McpNotification> = events.asSharedFlow()
+    private val listVersion = MutableStateFlow(0L)
+    /** 幂等失效信号：慢订阅者可合并中间版本，晚订阅者也能看到已经变过。 */
+    val toolsListVersion: StateFlow<Long> = listVersion.asStateFlow()
+    val notifications: Flow<McpNotification> = toolsListVersion.filter { it > 0 }.map { McpNotification.ToolsListChanged }
     private var server: McpServerInfo? = null
     private val displayName: String get() = safeLog(options.serverLabel)
 
     init {
-        transport.negotiation()?.reinitialize = {
+        transport.negotiation?.reinitialize = {
             handshake.withLock { establish() }
         }
         connectionScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -60,13 +64,30 @@ class McpClient(
         server ?: establish()
     }
 
-    private suspend fun establish(): McpServerInfo = try { initialize() } catch (e: Exception) {
-        val failure = if (e is McpTransportClosed) McpTransportClosed("$displayName：${e.reason}", e.exitCode, e.stderrTail, e.httpStatus) else e
-        if (failure is McpTransportClosed) terminate(failure)
-        else if (e is McpHttpException) terminate(McpTransportClosed(e.message!!, httpStatus = e.status))
-        else if (e is McpTimeoutException) terminate(McpTransportClosed(e.message!!))
-        withContext(NonCancellable) { close() }
-        throw failure
+    private suspend fun establish(): McpServerInfo {
+        try {
+            repeat(2) { attempt ->
+                transport.negotiation?.beginHandshake()
+                try {
+                    // initialized 是通知，不能靠 pending 的计时器保护；整个握手尝试都必须有界。
+                    return withTimeoutOrNull(options.requestTimeoutMs) { initialize() }
+                        ?: throw McpTimeoutException(McpTimeoutException.Kind.Hard, "$displayName：握手超过总时限。")
+                } catch (e: McpHttpException) {
+                    if (e.status != 404 || attempt == 1) throw e
+                    debug("MCP 握手会话已过期，正在重新开始一次完整握手。")
+                } finally { transport.negotiation?.endHandshake() }
+            }
+            throw McpProtocolException("$displayName：握手未完成。")
+        } catch (e: CancellationException) {
+            terminate(McpTransportClosed("$displayName：握手已取消。"))
+            withContext(NonCancellable) { close() }
+            throw e
+        } catch (e: Exception) {
+            val failure = mcpFailure(e, "$displayName：握手失败。")
+            terminate(if (failure is McpTransportClosed) failure else McpTransportClosed(failure.message.orEmpty(), httpStatus = (failure as? McpHttpException)?.status))
+            withContext(NonCancellable) { close() }
+            throw failure
+        }
     }
 
     private suspend fun initialize(): McpServerInfo {
@@ -75,8 +96,8 @@ class McpClient(
         val info = generation.initialize(options) { method, params ->
             request(method, params, options.requestTimeoutMs)
         }
-        transport.negotiation()?.protocolVersion = info.protocolVersion
-        generation.initializedNotification()?.let { transport.send(it) }
+        transport.negotiation?.negotiated(info.protocolVersion)
+        generation.initializedNotification()?.let { transport.send(it, options.requestTimeoutMs) }
         ensureOpen()
         server = info
         mutableState.value = McpConnectionState.Ready(info)
@@ -91,11 +112,11 @@ class McpClient(
         repeat(options.maxToolPages) {
             val params = cursor?.let { buildJsonObject { put("cursor", it) } }
             val result = request("tools/list", params, options.requestTimeoutMs) as? JsonObject
-                ?: throw McpTransportClosed("$displayName：tools/list 响应不是对象。")
-            val page = result["tools"] as? JsonArray ?: throw McpTransportClosed("$displayName：tools/list 响应缺少工具列表。")
-            tools += page.map {
-                try { parseTool(it as? JsonObject ?: throw McpTransportClosed("tools/list 的工具不是对象。")) }
-                catch (e: McpTransportClosed) { throw McpTransportClosed("$displayName：${e.reason}") }
+                ?: throw McpProtocolException("$displayName：tools/list 响应不是对象。")
+            val page = result["tools"] as? JsonArray ?: throw McpProtocolException("$displayName：tools/list 响应缺少工具列表。")
+            for (raw in page) {
+                try { tools += parseTool(raw as? JsonObject ?: throw McpProtocolException("tools/list 的工具不是对象。")) }
+                catch (e: McpException) { debug("MCP tools/list 跳过缺少名称或输入 schema 的畸形工具。") }
             }
             cursor = result.text("nextCursor") ?: return tools
             if (!seen.add(cursor)) { debug("MCP tools/list 游标重复，已停止翻页。"); return tools }
@@ -110,15 +131,20 @@ class McpClient(
         onProgress: (McpProgress) -> Unit = NO_PROGRESS,
         idleTimeoutMs: Long,
         hardTimeoutMs: Long? = null,
-    ): McpCallResult {
-        ready()
-        val result = request("tools/call", buildJsonObject {
-            put("name", name); put("arguments", arguments)
-        }, idleTimeoutMs, hardTimeoutMs, onProgress) as? JsonObject
-            ?: throw McpTransportClosed("$displayName：tools/call 响应不是对象。")
-        val content = result["content"] as? JsonArray
-            ?: throw McpTransportClosed("$displayName：tools/call 响应缺少内容列表。")
-        return McpCallResult(content.map(::parseContent), result["structuredContent"], result.bool("isError") ?: false)
+    ): McpCallResult = coroutineScope {
+        if (idleTimeoutMs <= 0 || (hardTimeoutMs != null && hardTimeoutMs <= 0)) throw McpProtocolException("MCP 调用超时必须大于零。")
+        // 等恢复不能把工具调用的硬时限重新开始；同一个截止信号贯穿等待、发送与收响应。
+        val deadline = hardTimeoutMs?.let { async { delay(it) } }
+        try {
+            ready(deadline)
+            val result = request("tools/call", buildJsonObject {
+                put("name", name); put("arguments", arguments)
+            }, idleTimeoutMs, hardTimeoutMs, onProgress, deadline) as? JsonObject
+                ?: throw McpProtocolException("$displayName：tools/call 响应不是对象。")
+            val content = result["content"] as? JsonArray
+                ?: throw McpProtocolException("$displayName：tools/call 响应缺少内容列表。")
+            McpCallResult(content.map(::parseContent), result["structuredContent"], result.bool("isError") ?: false)
+        } finally { deadline?.cancel() }
     }
 
     suspend fun ping() { ready(); request("ping", null, options.requestTimeoutMs) }
@@ -127,8 +153,9 @@ class McpClient(
     private suspend fun request(
         method: String, params: JsonObject?, idleMs: Long, hardMs: Long? = null,
         progress: (McpProgress) -> Unit = NO_PROGRESS,
+        deadline: Deferred<Unit>? = null,
     ): JsonElement = coroutineScope {
-        require(idleMs > 0 && (hardMs == null || hardMs > 0)) { "MCP 调用超时必须大于零。" }
+        if (idleMs <= 0 || (hardMs != null && hardMs <= 0)) throw McpProtocolException("MCP 调用超时必须大于零。")
         val id = ids.incrementAndGet()
         val p = Pending(method, progress)
         synchronized(pending) { ensureOpen(); pending[id] = p }
@@ -136,13 +163,18 @@ class McpClient(
             params?.forEach { (k, v) -> put(k, v) }
             put("_meta", buildJsonObject { params?.obj("_meta")?.forEach { (k, v) -> put(k, v) }; put("progressToken", id) })
         } else params
+        if (progress !== NO_PROGRESS) connectionScope.launch(Dispatchers.Default) {
+            for (value in p.progressQueue) {
+                catchingNonCancellation { progress(value) }.onFailure { debug("MCP 进度回调失败，已继续等待结果。") }
+            }
+        }
         // send 可能读一个长 POST SSE 响应；计时和接收不能排在它结束之后。
         val sender = launch {
-            try { transport.send(generation.request(id, method, actualParams)) }
+            try { transport.send(generation.request(id, method, actualParams), hardMs ?: if (method == "initialize" || method == "tools/list" || method == "ping") options.requestTimeoutMs else null) }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { p.result.completeExceptionally(e) }
+            catch (e: Exception) { p.result.completeExceptionally(mcpFailure(e, "$displayName：$method 发送失败。")) }
         }
-        val hard = hardMs?.let { async { delay(it) } }
+        val hard = deadline ?: hardMs?.let { async { delay(it) } }
         try {
             while (true) {
                 val value = select<JsonElement?> {
@@ -155,7 +187,7 @@ class McpClient(
             }
             @Suppress("UNREACHABLE_CODE") error("不可到达")
         } catch (e: Exception) {
-            if (e is CancellationException || e is McpTimeoutException) {
+            if (method != "initialize" && (e is CancellationException || e is McpTimeoutException)) {
                 // 调用方已经取消也要给服务器一次有界的清理机会，不把原取消包装成普通错误。
                 withContext(NonCancellable) {
                     withTimeoutOrNull(1_000) {
@@ -168,7 +200,7 @@ class McpClient(
             throw e
         } finally {
             synchronized(pending) { pending.remove(id) }
-            hard?.cancel(); sender.cancel(); p.activity.close()
+            hard?.cancel(); sender.cancel(); p.activity.close(); p.progressQueue.close()
         }
     }
 
@@ -187,8 +219,9 @@ class McpClient(
                     buildJsonObject {
                         put("jsonrpc", "2.0"); put("id", id)
                         putJsonObject("error") {
-                            put("code", if (e is McpRpcException && e.code == -32601) -32601 else -32603)
-                            put("message", if (e is McpRpcException && e.code == -32601) "不支持这个 MCP 请求方法。" else "MCP 客户端处理服务器请求失败。")
+                            put("code", if (e is McpRpcException) e.code else -32603)
+                            put("message", if (e is McpRpcException) e.serverMessage ?: e.message.orEmpty() else "MCP 客户端处理服务器请求失败。")
+                            if (e is McpRpcException) e.data?.let { put("data", it) }
                         }
                     }
                 }
@@ -196,7 +229,7 @@ class McpClient(
             }
         } else if (method != null) {
             when (method) {
-                "notifications/tools/list_changed" -> events.emit(McpNotification.ToolsListChanged)
+                "notifications/tools/list_changed" -> listVersion.update { it + 1 }
                 "notifications/progress" -> {
                     val params = message.obj("params") ?: return
                     val token = (params["progressToken"] as? JsonPrimitive)?.longOrNull ?: return
@@ -204,8 +237,7 @@ class McpClient(
                     if (p.progress === NO_PROGRESS) return
                     val progress = params.number("progress") ?: return
                     p.activity.trySend(Unit)
-                    catchingNonCancellation { p.progress(McpProgress(progress, params.number("total"), params.text("message"))) }
-                        .onFailure { debug("MCP 进度回调失败，已继续等待结果。") }
+                    p.progressQueue.trySend(McpProgress(progress, params.number("total"), params.text("message")))
                 }
             }
         } else if (id != null) {
@@ -214,16 +246,35 @@ class McpClient(
             if (p == null) { debug("MCP 忽略未知请求 id 的响应。"); return }
             val error = message.obj("error")
             if (error != null) {
-                // 不把不可信错误正文拼进异常；原始 data 可供上层按协议读取。
-                p.result.completeExceptionally(McpRpcException((error["code"] as? JsonPrimitive)?.intOrNull ?: -32603,
-                    "$displayName：${p.method} 返回 JSON-RPC 错误。", error["data"]))
+                val code = (error["code"] as? JsonPrimitive)?.intOrNull ?: -32603
+                val serverMessage = error.text("message")
+                p.result.completeExceptionally(McpRpcException(code,
+                    "$displayName：${p.method} 返回 JSON-RPC 错误 $code${serverMessage?.let { ": $it" }.orEmpty()}", error["data"], serverMessage))
             } else if (message.containsKey("result")) p.result.complete(message.getValue("result"))
             else debug("MCP 忽略没有 result 或 error 的响应。")
         } else debug("MCP 忽略无法路由的消息。")
     }
 
     private fun debug(message: String) { catchingNonCancellation { options.onDebug(message) } }
-    private fun ready() { ensureOpen(); check(state.value is McpConnectionState.Ready) { "$displayName：服务器尚未完成握手。" } }
+    private suspend fun ready(deadline: Deferred<Unit>? = null) {
+        ensureOpen()
+        if (deadline?.isCompleted == true) throw McpTimeoutException(McpTimeoutException.Kind.Hard, "$displayName：tools/call 超过调用总时限。")
+        if (state.value is McpConnectionState.Connecting) {
+            withTimeoutOrNull(options.requestTimeoutMs) {
+                coroutineScope {
+                    val restored = async { state.first { it !is McpConnectionState.Connecting } }
+                    try {
+                        select<McpConnectionState> {
+                            restored.onAwait { it }
+                            deadline?.onAwait { throw McpTimeoutException(McpTimeoutException.Kind.Hard, "$displayName：tools/call 等待连接恢复时超过总时限。") }
+                        }
+                    } finally { restored.cancel() }
+                }
+            }
+                ?: throw McpTimeoutException(McpTimeoutException.Kind.Hard, "$displayName：等待连接恢复超过总时限。")
+        }
+        ensureOpen()
+    }
     private fun ensureOpen() {
         val s = state.value
         if (s is McpConnectionState.Closed) throw McpTransportClosed(s.reason, s.exitCode, s.stderrTail, s.httpStatus)

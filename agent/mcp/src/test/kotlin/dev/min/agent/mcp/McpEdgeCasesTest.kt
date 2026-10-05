@@ -8,16 +8,18 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class McpEdgeCasesTest {
-    @Test fun `progress callback failure is contained but cancellation closes connection`() = runTest {
+    @Test fun `progress callback failure is contained and cancellation only stops callback dispatcher`() = runTest {
         for (cancel in listOf(false, true)) {
-            val t = FakeTransport(); val logs = mutableListOf<String>(); val c = McpClient(t, backgroundScope, McpClientOptions("1", onDebug = logs::add))
+            val t = FakeTransport(); val logs = mutableListOf<String>(); val invoked = CompletableDeferred<Unit>()
+            val c = McpClient(t, backgroundScope, McpClientOptions("1", onDebug = { logs.add(it); invoked.complete(Unit) }))
             c.connect(); t.respond = { m -> if (m.text("method") == "tools/call") {
                 t.received.send(rpcNotification("notifications/progress", buildJsonObject { put("progressToken", m.getValue("id")); put("progress", 1) }))
                 t.received.send(result(m.getValue("id"), json("""{"content":[]}""")))
             } }
-            val e = try { c.callTool("x", emptyObject, { if (cancel) throw CancellationException("stop") else error("secret") }, 1_000); null } catch (e: McpTransportClosed) { e }
-            if (cancel) { assertNotNull(e); assertTrue(c.state.value is McpConnectionState.Closed) }
-            else { assertNull(e); assertTrue(logs.any { "回调失败" in it }); assertTrue(c.state.value is McpConnectionState.Ready) }
+            c.callTool("x", emptyObject, { if (cancel) { invoked.complete(Unit); throw CancellationException("stop") } else error("secret") }, 1_000)
+            invoked.await()
+            assertTrue(c.state.value is McpConnectionState.Ready)
+            if (!cancel) assertTrue(logs.any { "回调失败" in it })
             c.close()
         }
     }
@@ -43,10 +45,10 @@ class McpEdgeCasesTest {
         } }
         c.ping(); assertTrue(logs.any { "版本" in it }); assertTrue(logs.any { "未知" in it }); c.close()
     }
-    @Test fun `invalid tool metadata is a protocol failure instead of silently returning no tools`() = runTest {
-        val t = FakeTransport(); val c = McpClient(t, backgroundScope, McpClientOptions("1")); c.connect()
+    @Test fun `invalid tool metadata is skipped with a diagnostic`() = runTest {
+        val t = FakeTransport(); val logs = mutableListOf<String>(); val c = McpClient(t, backgroundScope, McpClientOptions("1", onDebug = logs::add)); c.connect()
         t.respond = { m -> if (m.text("method") == "tools/list") t.received.send(result(m.getValue("id"), json("""{"tools":[{"name":"bad"}]}"""))) }
-        try { c.listTools(); fail("expected schema failure") } catch (e: McpTransportClosed) { assertTrue(e.reason.contains("schema")) }; c.close()
+        assertTrue(c.listTools().isEmpty()); assertTrue(logs.any { "跳过" in it }); c.close()
     }
 
     @Test fun `diagnostic string representations never dump raw headers data or URL credentials`() {

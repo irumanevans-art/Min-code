@@ -14,7 +14,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
@@ -36,10 +35,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - [send]：`request.timeoutMs` 作为读超时，即整个响应最长等多久。
  * - [stream]：读超时是**两次收到数据之间最长的静默**，取 `request.timeoutMs` 与 [maxStallMs] 的较小者。
  *   手机网络切换时常出现半死的连接：不断也不来数据。按静默判断断流，交给内核当作可重试的网络错误处理。
+ * - [open]：原样端口只用 `request.timeoutMs`，协议调用者自行决定空闲和总时限；不沿用模型的停滞上限。
  *
  * ## 取消
- * 读流是阻塞调用，协程取消打断不了它。读取时另起一个看门的子协程：一旦取消就断开连接，阻塞的读随即抛错退出——
- * 否则用户按了中断，连接还挂着，照样在消耗流量和 token。
+ * JDK 的阻塞读与 disconnect 可能争用内部锁。模型流和原样流通过独立 IO 读取者交付有界队列，
+ * 取消不等待阻塞线程；断开在独立 IO 协程中发起。物理清理可能等到新数据、EOF 或读超时。
  *
  * 请求头里有凭证：这里不记任何日志，异常信息里只有状态码与响应体（[HttpRequest.toString] 本身也不含头）。
  */
@@ -57,7 +57,7 @@ class UrlConnectionTransport(
             var connection: HttpURLConnection? = null
             var handedOff = false
             try {
-                connection = open(request, minOf(request.timeoutMs, maxStallMs), writeBody = false)
+                connection = open(request, request.timeoutMs, writeBody = false)
                 connectionRef.set(connection)
                 if (!continuation.isActive) return@launch
                 // 固定长度上传会令 JDK 把 401 交给认证重试并丢掉 errorStream；原样端口要保留该正文。
@@ -70,7 +70,9 @@ class UrlConnectionTransport(
                 continuation.cancel(e)
                 throw e
             } catch (e: Exception) {
-                if (continuation.isActive) continuation.resumeWithException(IOException("原样 HTTP 连接或响应头读取失败。"))
+                if (continuation.isActive) continuation.resumeWithException(
+                    if (e is java.net.SocketTimeoutException) java.net.SocketTimeoutException("原样 HTTP 等待响应头超时。")
+                    else IOException("原样 HTTP 连接或响应头读取失败。"))
             } finally { if (!handedOff) connection?.disconnect() }
         }
     }
@@ -105,7 +107,7 @@ class UrlConnectionTransport(
                     throw e
                 } catch (e: IOException) {
                     currentCoroutineContext().ensureActive()
-                    chunks.close(IOException("原样 HTTP 正文读取失败。"))
+                    chunks.close(if (e is java.net.SocketTimeoutException) java.net.SocketTimeoutException("原样 HTTP 正文读取超时。") else IOException("原样 HTTP 正文读取失败。"))
                 } catch (e: Exception) {
                     chunks.close(IOException("原样 HTTP 正文读取失败。"))
                 } finally { release() }
@@ -142,40 +144,42 @@ class UrlConnectionTransport(
     }
 
     override fun stream(request: HttpRequest): Flow<SseEvent> = flow {
-        val connection = open(request, readTimeoutMs = minOf(request.timeoutMs, maxStallMs))
-        try {
-            coroutineScope {
-                val watchdog = launch {
-                    try {
-                        awaitCancellation()
-                    } finally {
-                        connection.disconnect()
-                    }
-                }
-                try {
-                    val status = connection.responseCode
-                    if (status !in 200..299) throw HttpStatusException(status, headersOf(connection), readError(connection))
-                    // 错误页里的行不是 SSE 字段，会被解析器全部忽略；必须在传输边界保住正文，让两种协议同样归 Other。
-                    val mediaType = connection.contentType?.substringBefore(';')?.trim()
-                    if (!mediaType.equals("text/event-stream", ignoreCase = true)) {
-                        val preview = connection.inputStream.use(::readPreview)
-                        throw HttpStatusException(status, headersOf(connection), preview)
-                    }
-                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                        SseReader(reader).forEach { emit(it) }
-                    }
-                } catch (e: IOException) {
-                    // 看门协程断开连接后，阻塞的读会抛 IOException。这时候真正发生的是「取消」，要按取消抛出：
-                    // 否则编解码器会把它当成可重试的网络错误，内核就会在用户按了中断之后记一次失败再退避重试
-                    currentCoroutineContext().ensureActive()
-                    throw e
-                }
-                watchdog.cancel()
-            }
-        } finally {
-            connection.disconnect()
+        val io = CoroutineScope(Dispatchers.IO)
+        val connectionRef = java.util.concurrent.atomic.AtomicReference<HttpURLConnection?>()
+        val closed = AtomicBoolean()
+        val events = Channel<SseEvent>(1)
+        fun release() {
+            closed.set(true)
+            connectionRef.getAndSet(null)?.let { connection -> io.launch { connection.disconnect() } }
         }
-    }.flowOn(Dispatchers.IO)
+        // 不作为收集者的子协程：结构化等待无法打断 JDK 正在持锁的 read/close。
+        val reader = io.launch {
+            try {
+                val connection = open(request, readTimeoutMs = minOf(request.timeoutMs, maxStallMs))
+                connectionRef.set(connection)
+                if (closed.get()) return@launch
+                val status = connection.responseCode
+                if (status !in 200..299) throw HttpStatusException(status, headersOf(connection), readError(connection))
+                // 错误页里的行不是 SSE 字段，会被解析器全部忽略；必须在传输边界保住正文，让两种协议同样归 Other。
+                val mediaType = connection.contentType?.substringBefore(';')?.trim()
+                if (!mediaType.equals("text/event-stream", ignoreCase = true)) {
+                    val preview = connection.inputStream.use(::readPreview)
+                    throw HttpStatusException(status, headersOf(connection), preview)
+                }
+                connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    SseReader(reader).forEach { events.send(it) }
+                }
+                events.close()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                events.cancel(e)
+                throw e
+            } catch (e: Exception) {
+                events.close(e)
+            } finally { release() }
+        }
+        try { for (event in events) emit(event) }
+        finally { reader.cancel(); events.cancel(); release() }
+    }
 
     private fun open(request: HttpRequest, readTimeoutMs: Long, writeBody: Boolean = true): HttpURLConnection {
         val connection = URL(request.url).openConnection() as HttpURLConnection

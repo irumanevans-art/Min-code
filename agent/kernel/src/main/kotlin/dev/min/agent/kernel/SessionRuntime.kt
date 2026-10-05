@@ -200,7 +200,8 @@ class SessionRuntime private constructor(
         if (events.isEmpty()) return emptyList()
         return withContext(NonCancellable) {
             commitLock.withLock {
-                if (!precondition(_state.value)) return@withLock null
+                // 封存后（已从 Hub 卸下）一条都不写：之后再打开会有新的运行时写同一份日志，两个写者会把日志写坏
+                if (sealed || !precondition(_state.value)) return@withLock null
                 val records = log.append(events, durability)
                 _state.value = records.fold(_state.value) { s, r -> s.apply(r) }
                 records
@@ -440,7 +441,7 @@ class SessionRuntime private constructor(
      */
     private suspend fun <T> whileIdle(block: suspend () -> T): T? {
         val job = synchronized(turnLock) {
-            if (turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return null
+            if (sealed || turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return null
             // 在锁里就启动：启动之前它的 isActive 是假的，startTurnIfIdle 会从这个空档里溜进去
             scope.async { block() }.also { maintenanceJob = it }
         }
@@ -465,9 +466,29 @@ class SessionRuntime private constructor(
      * 放在同一个 Job 里而不是结束回调里再开，是为了让「Job 结束 = 空闲」没有空隙。
      * 被中断或失败的回合不自动开下一回合（学 Claude Code：中断后排队的话退回输入框由人决定）。
      */
+    /**
+     * 卸下前封住：没有回合（含正在启动、还没写 TurnStarted 的）、也没有维护在跑时封住并返回 true。
+     * 封住之后不再开回合、任何写入都直接拒绝（不落盘）——卸下之后这个对象可能还被别的协程拿着（例如正要交付报告的），
+     * 而再次打开会话会建一个新的运行时写同一份日志，两个写者会把日志写坏。被拒的子 agent 报告不会丢：
+     * 重新打开时 Hub 会补交没交付的报告
+     */
+    internal fun sealIfIdle(): Boolean = synchronized(turnLock) {
+        if (turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return false
+        sealed = true
+        true
+    }
+
+    /** 封住之后发现整棵树卸不下（别的会话忙）：解封，什么都没发生过 */
+    internal fun unseal() {
+        synchronized(turnLock) { sealed = false }
+    }
+
+    @Volatile
+    private var sealed = false
+
     private fun startTurnIfIdle(trigger: TurnTrigger) {
         synchronized(turnLock) {
-            if (turnJob?.isActive == true || maintenanceJob?.isActive == true) return
+            if (sealed || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
             if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification) && s.inbox.isEmpty()) return

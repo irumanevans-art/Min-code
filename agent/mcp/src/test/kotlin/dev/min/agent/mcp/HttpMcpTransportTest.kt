@@ -98,8 +98,8 @@ class HttpMcpTransportTest {
                 }
             }
             withClient(StreamableHttpMcpTransport(s.url + "/mcp", { emptyList() }, s.http, enableGetStream = false)) { c ->
-                c.connect(); val progress = mutableListOf<McpProgress>(); val notification = async(start = CoroutineStart.UNDISPATCHED) { c.notifications.first() }
-                c.callTool("x", emptyObject, progress::add, 3_000); assertEquals(1, progress.size); notification.await()
+                c.connect(); val progress = CompletableDeferred<McpProgress>(); val notification = async(start = CoroutineStart.UNDISPATCHED) { c.notifications.first() }
+                c.callTool("x", emptyObject, { progress.complete(it) }, 3_000); assertEquals(1.0, progress.await().progress, 0.0); notification.await()
                 withTimeout(2_000) { while (replies.none { it.text("id") == "server" }) delay(10) }
                 assertEquals(emptyObject, replies.first { it.text("id") == "server" }["result"])
             }
@@ -139,7 +139,7 @@ class HttpMcpTransportTest {
             val count = AtomicInteger(); s.server.createContext("/mcp") { e -> count.incrementAndGet(); e.reply(status, "secret header-value") }
             val t = StreamableHttpMcpTransport(s.url.replace("//", "//user:pass@") + "/mcp?key=secret", { listOf("Authorization" to "header-value") }, s.http, retryDelaysMs = listOf(1, 2, 4))
             withClient(t) { c -> val e = try { c.connect(); null } catch (e: McpHttpException) { e }; assertEquals(status, e!!.status); assertEquals(status != 404, e.needsAuth); assertFalse(e.toString().contains("secret")); assertFalse(e.toString().contains("pass")); assertFalse(e.toString().contains("header-value")) }
-            assertEquals(1, count.get()); assertFalse(t.toString().contains("secret"))
+            assertEquals(if (status == 404) 2 else 1, count.get()); assertFalse(t.toString().contains("secret"))
         }
     }
     @Test fun `initial 5xx retries three times and network io errors also retry`() = runBlocking {
@@ -198,7 +198,7 @@ class HttpMcpTransportTest {
         for (body in listOf("x".repeat(201), "<html>secret</html>")) LoopbackHttp().use { s ->
             s.server.createContext("/mcp") { e -> e.reply(200, body, if (body.startsWith("<")) "text/html" else "application/json") }
             withClient(StreamableHttpMcpTransport(s.url + "/mcp", { emptyList() }, s.http, maxMessageBytes = 200, enableGetStream = false)) { c ->
-                val e = try { c.connect(); null } catch (e: McpTransportClosed) { e }; assertNotNull(e); assertFalse(e.toString().contains("secret"))
+                val e = try { c.connect(); null } catch (e: McpException) { e }; assertNotNull(e); assertFalse(e.toString().contains("secret"))
             }
         }
     }

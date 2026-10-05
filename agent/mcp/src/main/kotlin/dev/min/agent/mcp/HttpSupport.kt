@@ -45,7 +45,7 @@ internal fun validateEndpoint(raw: String): URI {
 }
 internal fun sameOrigin(a: URI, b: URI): Boolean {
     fun port(u: URI) = if (u.port >= 0) u.port else if (u.scheme.equals("https", true)) 443 else 80
-    return a.scheme.equals(b.scheme, true) && a.host.equals(b.host, true) && port(a) == port(b) && b.userInfo == null
+    return a.scheme.equals(b.scheme, true) && a.host.equals(b.host, true) && port(a) == port(b) && (b.userInfo == null || b.userInfo == a.userInfo)
 }
 internal fun HttpStreamingResponse.header(name: String): String? = headers.firstOrNull { it.first.equals(name, true) }?.second
 internal fun HttpStreamingResponse.mediaType(): String? = header("Content-Type")?.substringBefore(';')?.trim()?.lowercase()
@@ -69,6 +69,7 @@ internal suspend fun openMcp(
             return response
         } catch (e: CancellationException) { throw e }
         catch (e: java.io.IOException) {
+            if (!initial && e is java.net.SocketTimeoutException) throw java.net.SocketTimeoutException("MCP HTTP 等待响应超时。")
             if (!initial || attempt >= retryDelaysMs.size) throw McpHttpNetworkException("MCP 服务器 ${safeUrl(request.url)} HTTP 连接失败或超时。")
             debug("MCP 首次 HTTP 连接暂时失败，准备重试。"); delay(retryDelaysMs[attempt++])
         }

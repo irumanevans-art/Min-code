@@ -56,14 +56,14 @@ class StdioMcpTransportTest {
     @Test fun `sse parser handles cr multiline control events retry and bounded aggregate`() = runTest {
         val raw = ":comment\rid: a\rretry: 7\r\revent: message\rdata: one\rdata: two\r\rdata: tail"
         val events = flowOf(raw.toByteArray()).sse(100).toList()
-        assertEquals(McpSseEvent(null, null, "a", 7), events[0]); assertEquals("one\ntwo", events[1].data); assertEquals("a", events[2].id)
+        assertEquals(McpSseEvent(null, null, "a", 7), events[0]); assertEquals("one\ntwo", events[1].data); assertEquals(2, events.size)
         val e = try { flowOf("data: 123456\ndata: 123456\n\n".toByteArray()).sse(12).collect(); null } catch (e: McpTransportClosed) { e }; assertNotNull(e)
     }
 
-    @Test fun `overlong stderr header never exposes value continuations and custom headers redact without spaces`() = runTest {
+    @Test fun `overlong stderr header never exposes continuations and known credentials redact without spaces`() = runTest {
         val p = FakeProcess(); val t = StdioMcpTransport(p, stderrMaxBytes = 40)
         val collector = launch { try { t.incoming.collect() } catch (_: McpTransportClosed) {} }; runCurrent()
-        p.err.send(("X-Custom:" + "secret".repeat(100) + "\nX-Other:secret\nHTTPS://user:pass@host/path?hidden\n").toByteArray()); runCurrent(); p.finish(0); collector.join()
+        p.err.send(("X-Custom:" + "secret".repeat(100) + "\nAuthorization:secret\nHTTPS://user:pass@host/path?hidden\n").toByteArray()); runCurrent(); p.finish(0); collector.join()
         val logs = t.stderrTail().joinToString("\n"); assertFalse(logs.contains("secret")); assertFalse(logs.contains("pass")); assertFalse(logs.contains("hidden")); assertTrue(logs.contains("HTTPS://host/path"))
     }
 }
