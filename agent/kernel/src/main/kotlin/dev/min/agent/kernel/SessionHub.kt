@@ -194,7 +194,16 @@ class SessionHub(
     suspend fun close(id: SessionId): Boolean {
         val tree = subtreeOnline(id)
         if (tree.isEmpty()) return false
-        if (tree.any { runtimes[it]?.state?.value?.turn != null }) return false
+        // 逐个「确认空闲并封住」（原子的，在运行时的回合锁里）：只看 turn 会漏掉「回合已启动、TurnStarted 还没落盘」的空窗，
+        // 那时卸下，之后再打开就有两个运行时写同一份日志。有一个封不住就全部解封、放弃
+        val sealed = ArrayList<SessionRuntime>()
+        for (rt in tree.mapNotNull { runtimes[it] }) {
+            if (!rt.sealIfIdle()) {
+                sealed.forEach { it.unseal() }
+                return false
+            }
+            sealed += rt
+        }
         tree.forEach(::unload)
         return true
     }
@@ -266,7 +275,14 @@ class SessionHub(
         }
         collect(root)
         if (runtimes.containsKey(root)) stopTree(root)
-        for (id in order) runtimes[id]?.let { rt -> rt.interrupt(); rt.awaitIdle() }
+        // 停下并封住：停下之后报告可能又唤醒一个回合，所以停、等、封反复几轮
+        for (id in order) runtimes[id]?.let { rt ->
+            repeat(STOP_ROUNDS) {
+                rt.interrupt()
+                rt.awaitIdle()
+                if (rt.sealIfIdle()) return@let
+            }
+        }
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {

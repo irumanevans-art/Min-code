@@ -323,6 +323,8 @@ class CompactionTest {
         repeat(3) {
             assertTrue(rt.compact())
             rt.state.first { s -> s.turn == null && s.compactionFailures == it + 1 }
+            // 状态显示空闲时回合的 Job 可能还在收尾：不等它，下一次 compact() 会被当成「有回合在跑」而拒绝（满负载下偶发）
+            rt.awaitIdle()
         }
         assertTrue(events(rt).filterIsInstance<CompactionFailed>().all { it.reason == "模型没有给出摘要" })
         val summariesBefore = model.requests.count { it.isSummary() }
