@@ -72,3 +72,28 @@ host 原来没有序列化 DTO，只有 SPI 间接带入的运行库。新增 @S
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261005-ANDROID-SNAPSHOT-PROBE] best_practice
+
+**Logged**: 2026-10-05T14:07:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+设备快照验收须保留预算失败，并区分原始内容、仓库文件字节与磁盘块占用。
+
+### Details
+最终 APK 的版本码 63 低于设备已有 64，普通 adb install -r 被拒绝；调试包使用 -r -d 保留数据后安装成功。原 rootfs 的 /usr/share 首次超过规定预算，没有发布 index 或 manifest；/usr/share/locale 虽有目录却没有普通文件，不能当作文件性能证据。最终 /usr/share/doc 的 163 个真实文件首次 15651 ms、增量 4625 ms，同清单、增量新增内容 0。探针 repositoryBytes 是所有工作区仓库合计，含失败留下的对象；doc 仓库文件字节增量为 829354，du 的 2572 KiB 另含目录与块开销。
+
+### Suggested Action
+安装前核对调试版本；测量前确认真实文件数，完整保留失败探索日志。输出说明统计范围，不把预算阈值当实测时间、不把全仓库总和当单工作区占用。仅在持有本任务模拟器锁时操作设备，结束核对锁内容再释放。
+
+### Metadata
+- Source: error
+- Related Files: app/src/debug/java/dev/min/code/debug/SnapshotProbe.kt
+- Tags: android, snapshot, performance, storage, emulator
+- Pattern-Key: tests.android_snapshot_measurement_scope
+- Recurrence-Count: 1
+
+---
