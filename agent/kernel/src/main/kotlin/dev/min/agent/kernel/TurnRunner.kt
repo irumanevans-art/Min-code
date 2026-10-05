@@ -75,9 +75,10 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val turnId = TurnId(deps.ids.next("turn"))
         val startedAt = deps.clock.nowMs()
         rt.commit(listOf(TurnStarted(turnId, trigger)), Durability.Sync)
-        // 排着的 MCP 变化在回合开头一次性生效（MCP设计 §5.3）：回合中途不改工具表
-        rt.applyStagedMcp()
         return try {
+            // 排着的 MCP 变化在回合开头一次性生效（MCP设计 §5.3）：回合中途不改工具表。
+            // 要放在 try 里：新会话的第一回合会在这里等首份快照（最多 5 秒），这时被中断也得有收尾，否则会话卡在「进行中」
+            rt.applyStagedMcp()
             if (trigger == TurnTrigger.Compact) {
                 compactOnly(turnId)
             } else {

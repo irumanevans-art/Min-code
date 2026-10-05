@@ -21,6 +21,8 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.McpToolsSnapshot
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.ToolOutcome
+import dev.min.agent.spi.TurnEnded
+import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnStarted
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.FakeArtifacts
@@ -254,6 +256,35 @@ class McpManagerTest {
         val failure = McpResults.failure("srv", McpRpcException(-32602, "参数不对"))
         assertTrue(failure.isError)
         assertTrue(failure.content.filterIsInstance<TextPart>().single().text.contains("-32602"))
+    }
+
+    // ---- 首份快照与中断（验收复核补的用例）----
+
+    @Test
+    fun `interrupting the first turn while it waits for the first snapshot closes that turn and keeps the snapshot`() = run {
+        val connector = FakeConnector(connectDelayMs = 300)
+        val model = ScriptedModel(reply(TextPart("一")), reply(TextPart("二")))
+        val rt = hub(model, connector, waitMs = 3_000).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.send(ClientMsgId("u-first"), listOf(TextPart("第一轮")))
+        delay(100)
+        rt.interrupt()
+        rt.awaitIdle()
+        assertTrue("被中断的回合要有收尾，否则会话卡在「进行中」", events(rt).filterIsInstance<TurnEnded>().single().outcome is TurnOutcome.Interrupted)
+        delay(600)
+        rt.say("第二轮")
+        assertEquals("被中断的回合不该带走首份快照", listOf("mcp__github__search"), model.requests.last().toolNames())
+    }
+
+    @Test
+    fun `tools that arrive between the first snapshot and the first turn are written once`() = run {
+        val connector = FakeConnector(connectDelayMs = 300)
+        val model = ScriptedModel(reply(TextPart("一")))
+        val rt = hub(model, connector, waitMs = 50).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        while (connector.made.isEmpty()) delay(20)
+        delay(200) // 首份快照（50ms 到点，服务器还没连上）早已取好，服务器随后连上，用户这才发第一句
+        rt.say("第一轮")
+        assertEquals(listOf("mcp__github__search"), model.requests.single().toolNames())
+        assertEquals("日志里不该先写一份空的过期快照", 1, events(rt).filterIsInstance<McpToolsSnapshot>().size)
     }
 
     @Suppress("unused")
