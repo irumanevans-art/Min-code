@@ -556,25 +556,45 @@ class ClaudeCodeManager(
      * 所以要先 [refundHeldMessages] 再 shutdown。
      */
     fun startSession(options: SessionOptions = SessionOptions()) {
+        // 真正的启动在协程里排队：状态写成「启动中」之前，注册表数名额会漏掉它，连开几个就能越过并发上限。
+        // 只记一个内部标记（[holdsSlot] 看它），不提前改对外的状态——状态流的时序有特征测试钉着
+        startPending = true
         scope.launch {
-            sessionMutex.withLock {
+            try {
+                startLocked(options)
+            } finally {
+                startPending = false
+            }
+        }
+    }
+
+    /** startSession 已调用、启动协程还没把状态写成「启动中」 */
+    @Volatile
+    private var startPending = false
+
+    /** 这个 manager 占不占一个并发名额：活着的进程，或刚叫它启动、还没轮到的（注册表数名额用，见 [startSession]） */
+    val holdsSlot: Boolean
+        get() = startPending || isLive
+
+    private suspend fun startLocked(options: SessionOptions) {
+        sessionMutex.withLock {
+            shutdown()
+            titleGenerationAttemptedFor = null
+            // 上一个会话里 `!` 攒下的输出不能带进新会话
+            takeShellContext()
+            _state.value = SessionState(
+                status = SessionStatus.Starting,
+                options = options,
+                cwd = CwdPath.normalize(options.cwd),
+            )
+            startPending = false
+            runCatching { launchCli(options) }.onFailure { e ->
+                Log.e(TAG, "startSession failed", e)
+                // 启动中打的字还攥在调度台上，shutdown 会连队列一起清掉 —— 先退回输入框
+                refundHeldMessages("会话启动失败，消息已退回输入框")
                 shutdown()
-                titleGenerationAttemptedFor = null
-                // 上一个会话里 `!` 攒下的输出不能带进新会话
-                takeShellContext()
-                _state.value = SessionState(
-                    status = SessionStatus.Starting,
-                    options = options,
-                    cwd = CwdPath.normalize(options.cwd),
-                )
-                runCatching { launchCli(options) }.onFailure { e ->
-                    Log.e(TAG, "startSession failed", e)
-                    // 启动中打的字还攥在调度台上，shutdown 会连队列一起清掉 —— 先退回输入框
-                    refundHeldMessages("会话启动失败，消息已退回输入框")
-                    shutdown()
-                    _state.update {
-                        it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
-                    }
+                _state.update {
+                    it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
                 }
             }
         }

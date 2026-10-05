@@ -315,4 +315,16 @@ class ClaudeCodeSessionRegistryTest {
             assertEquals(emptyList<ClaudeCodeSessionRegistry.LiveSession>(), rh.registry.liveSessions.value)
         }
     }
+
+    @Test
+    fun `sessions created back to back count against the cap before their start coroutines run`() = runBlocking<Unit> {
+        RegistryHarness("bash_with_permission").use { rh ->
+            // 不等握手连开三个：启动在各自的协程里排队，名额必须从叫它启动那一刻就算上，也不能被当成死会话清掉
+            val started = List(3) { rh.registry.newSession(ClaudeCodeManager.SessionOptions()) }
+            assertTrue(started.all { it != null })
+            assertNull("第四个被并发上限挡住", rh.registry.newSession(ClaudeCodeManager.SessionOptions()))
+            assertEquals(3, rh.factoryCalls)
+            started.forEach { m -> assertTrue("刚启动的会话占着名额", m!!.holdsSlot) }
+        }
+    }
 }

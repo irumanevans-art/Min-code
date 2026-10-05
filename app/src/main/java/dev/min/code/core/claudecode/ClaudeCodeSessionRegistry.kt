@@ -289,7 +289,7 @@ class ClaudeCodeSessionRegistry(
     fun pruneDead() {
         val active = _activeKey.value
         val dead = synchronized(managers) {
-            managers.filter { (key, m) -> key != active && !m.isLive }.keys.toList()
+            managers.filter { (key, m) -> key != active && !m.holdsSlot }.keys.toList()
         }
         if (dead.isEmpty()) return
         Log.i(TAG, "pruning ${dead.size} dead session(s)")
@@ -323,7 +323,7 @@ class ClaudeCodeSessionRegistry(
         return busy
     }
 
-    fun liveCount(): Int = synchronized(managers) { managers.values.count { it.isLive } }
+    fun liveCount(): Int = synchronized(managers) { managers.values.count { it.holdsSlot } }
 
     fun canStartMore(): Boolean = liveCount() < MAX_CONCURRENT
 
