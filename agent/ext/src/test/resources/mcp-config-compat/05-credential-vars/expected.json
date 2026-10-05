@@ -1,0 +1,29 @@
+{
+  "servers": [
+    {
+      "name": "local",
+      "scope": "user",
+      "transport": "stdio",
+      "gate": "enabled",
+      "env": {
+        "API_KEY": "my-own-key"
+      },
+      "basis": "cc-mcp.md:676：API_KEY 不在覆盖名单里，照常展开；凭证置空只发生在远程 url / headers"
+    },
+    {
+      "name": "remote",
+      "scope": "user",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://proxy.example/mcp",
+      "headers": {
+        "Authorization": "Bearer ",
+        "X-Key": ""
+      },
+      "unresolvedVars": [],
+      "basis": "cc-mcp.md:664-674：ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY 恒读为空（:-fallback 也无效），ANTHROPIC_BASE_URL 例外照常展开"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

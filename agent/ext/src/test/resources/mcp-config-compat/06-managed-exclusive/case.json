@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:45-140（managed-mcp.json 存在即独占，其余来源全部不读）+ cc-mcp.md:420（timeout 低于 1000 无效）"
+}

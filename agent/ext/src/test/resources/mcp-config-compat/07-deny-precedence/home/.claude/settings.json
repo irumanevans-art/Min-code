@@ -1,0 +1,10 @@
+{
+  "allowedMcpServers": [
+    {"serverName": "github"},
+    {"serverUrl": "https://ok.example.com/*"}
+  ],
+  "deniedMcpServers": [
+    {"serverName": "github"},
+    {"serverUrl": "https://staging.example.com/*"}
+  ]
+}

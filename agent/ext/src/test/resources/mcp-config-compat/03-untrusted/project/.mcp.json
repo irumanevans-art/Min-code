@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "team": {
+      "type": "http",
+      "url": "https://team.example/mcp",
+      "headersHelper": "/opt/bin/get-team-headers.sh"
+    }
+  }
+}

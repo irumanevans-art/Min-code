@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "elsewhere": {
+      "type": "http",
+      "url": "https://other.example.com/mcp"
+    },
+    "fine": {
+      "type": "http",
+      "url": "https://ok.example.com/api"
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "staging": {
+      "type": "http",
+      "url": "https://staging.example.com/api"
+    }
+  },
+  "projects": {
+    "/workspace": {
+      "disabledMcpServers": ["fine"]
+    }
+  }
+}

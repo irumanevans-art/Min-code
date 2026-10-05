@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "hub": {
+      "type": "http",
+      "url": "https://hub.example/mcp"
+    }
+  },
+  "projects": {
+    "/workspace": {
+      "mcpServers": {
+        "local-helper": {
+          "type": "http",
+          "url": "https://lh.example/mcp",
+          "headersHelper": "helper.sh"
+        }
+      }
+    }
+  }
+}

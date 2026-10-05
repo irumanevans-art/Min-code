@@ -1,0 +1,38 @@
+{
+  "servers": [
+    {
+      "name": "api",
+      "scope": "user",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://api.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer tok-789"
+      },
+      "basis": "cc-mcp.md:631-632：${API_BASE:-…} 取默认值，${API_TOKEN} 取环境值"
+    },
+    {
+      "name": "db",
+      "scope": "user",
+      "transport": "stdio",
+      "gate": "enabled",
+      "command": "/usr/bin/pg-mcp",
+      "args": ["--dsn", "postgres://db.local/app"],
+      "env": {
+        "PGPASSWORD": "pg-fake-secret"
+      },
+      "basis": "cc-mcp.md:636-640：command / args / env 都展开；PG_BIN 未设用默认"
+    },
+    {
+      "name": "partial",
+      "scope": "user",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://p.example/${TENANT}/mcp",
+      "unresolvedVars": ["TENANT"],
+      "basis": "cc-mcp.md:660-662：未设且无默认 → 保留字面、点名变量给警告"
+    }
+  ],
+  "absent": [],
+  "notesContain": ["TENANT"]
+}

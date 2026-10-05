@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-mcp.md:607-621（Scope hierarchy and precedence：同名取最高优先级来源的整条定义、不按字段合并；cc-mcp.md:291 同名端点不同要警告）"
+}

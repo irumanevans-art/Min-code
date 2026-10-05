@@ -1,0 +1,5 @@
+{
+  "trustProject": false,
+  "env": {},
+  "basis": "cc-mcp.md:254-266（未信任的仓库里入库的批准键不算）+ cc-mcp.md:1034-1042（headersHelper 要等工作区信任）+ MCP设计.md §3（比 CC 严：不信任就不启动，不管批准与否）"
+}

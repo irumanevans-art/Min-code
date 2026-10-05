@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "remote": {
+      "type": "http",
+      "url": "${ANTHROPIC_BASE_URL}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ANTHROPIC_AUTH_TOKEN}",
+        "X-Key": "${ANTHROPIC_API_KEY:-fallback}"
+      }
+    },
+    "local": {
+      "command": "srv",
+      "env": {
+        "API_KEY": "${API_KEY}"
+      }
+    }
+  }
+}

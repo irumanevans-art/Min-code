@@ -1,0 +1,39 @@
+{
+  "servers": [
+    {
+      "name": "elsewhere",
+      "scope": "user",
+      "transport": "http",
+      "gate": "denied",
+      "reasonContains": "allowedMcpServers",
+      "basis": "cc-managed-mcp.md:315：allowlist 里有 serverUrl 项后，远程必须匹配一个 URL；elsewhere 不匹配任何条目"
+    },
+    {
+      "name": "fine",
+      "scope": "user",
+      "transport": "http",
+      "gate": "disabled",
+      "url": "https://ok.example.com/api",
+      "reasonContains": "disabledMcpServers",
+      "basis": "cc-mcp.md:309-316：用户在 /mcp 里按项目停用的名单；停用比「不在 allowlist 之外但匹配」……它匹配 allowlist，仍被停用"
+    },
+    {
+      "name": "github",
+      "scope": "user",
+      "transport": "http",
+      "gate": "denied",
+      "reasonContains": "deniedMcpServers",
+      "basis": "cc-managed-mcp.md:302：denylist 命中优先于一切，同在 allow 与 deny 时 deny 说话"
+    },
+    {
+      "name": "staging",
+      "scope": "user",
+      "transport": "http",
+      "gate": "denied",
+      "reasonContains": "deniedMcpServers",
+      "basis": "cc-managed-mcp.md:322：serverUrl 通配匹配，https://staging.example.com/* 命中 /api"
+    }
+  ],
+  "absent": [],
+  "notesContain": []
+}

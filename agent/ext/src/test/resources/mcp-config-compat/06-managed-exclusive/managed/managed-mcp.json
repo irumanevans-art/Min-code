@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "sentry": {
+      "type": "http",
+      "url": "https://mcp.sentry.dev/mcp"
+    },
+    "toolong": {
+      "type": "http",
+      "url": "https://t.example/mcp",
+      "timeout": 500
+    }
+  }
+}

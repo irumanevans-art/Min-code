@@ -1,0 +1,5 @@
+{
+  "trustProject": true,
+  "env": {},
+  "basis": "cc-managed-mcp.md:297-342（deny 永远优先；allowlist 有 serverUrl 项后远程必须匹配 URL、serverName 不再放行）+ cc-mcp.md:309-320（/mcp 的按项目停用名单 disabledMcpServers）"
+}

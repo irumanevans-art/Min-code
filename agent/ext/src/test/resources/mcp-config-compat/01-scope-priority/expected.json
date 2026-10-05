@@ -1,0 +1,24 @@
+{
+  "servers": [
+    {
+      "name": "personal",
+      "scope": "user",
+      "transport": "stdio",
+      "gate": "enabled",
+      "command": "npx",
+      "args": ["-y", "personal-server"],
+      "basis": "cc-mcp.md:598-605：user 作用域存 ~/.claude.json 顶层，不需要批准"
+    },
+    {
+      "name": "shared",
+      "scope": "local",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://local.example/mcp",
+      "shadowed": ["project", "user"],
+      "basis": "cc-mcp.md:607-613：local > project > user，整条生效；被盖住的两层记进 shadowed"
+    }
+  ],
+  "absent": ["stranger"],
+  "notesContain": ["端点不同"]
+}

@@ -1,0 +1,30 @@
+{
+  "managedMcpServers": {
+    "search": {
+      "type": "http",
+      "url": "https://search.example.com/mcp"
+    },
+    "records": {
+      "type": "http",
+      "url": "https://records.example.com/mcp",
+      "headers": {
+        "X-Records-Key": "issued-for-all-users"
+      }
+    },
+    "bad-local": {
+      "command": "srv"
+    },
+    "bad-http": {
+      "type": "http",
+      "url": "http://plain.example/mcp"
+    },
+    "bad-var": {
+      "type": "http",
+      "url": "https://v.example/${TOKEN}"
+    },
+    "streamable": {
+      "type": "streamable-http",
+      "url": "https://s.example/mcp"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "managedExclusive": true,
+  "servers": [
+    {
+      "name": "github",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "basis": "cc-managed-mcp.md:47-54：只有 managed 文件定义的与 managedMcpServers 能加载"
+    },
+    {
+      "name": "sentry",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://mcp.sentry.dev/mcp",
+      "basis": "cc-managed-mcp.md:68-91：文件格式同 .mcp.json"
+    },
+    {
+      "name": "toolong",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "timeoutMs": null,
+      "basis": "cc-mcp.md:420：低于 1000 的 timeout 无效"
+    },
+    {
+      "name": "wiki",
+      "scope": "managed",
+      "transport": "http",
+      "gate": "enabled",
+      "url": "https://wiki.example/mcp",
+      "basis": "cc-managed-mcp.md:47-50、160-214：managedMcpServers 与 managed 文件一起加载"
+    }
+  ],
+  "absent": ["personal", "team"],
+  "notesContain": ["低于 1000"]
+}
