@@ -1,0 +1,13 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Permission system（:17-18）与 §Read-only commands：内置只读命令清单（ls、cat、echo、pwd、grep、find、wc、which、diff、stat、du、cd 与只读形态的 git）在任何模式都不问（:265）；其余 Bash 命令与 WebFetch 要批准（:18、:20）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "ls -la" }, "expected": "allow", "basis": "ls 在只读清单里（:265）。" },
+    { "tool": "Bash", "input": { "command": "cat README.md" }, "expected": "allow", "basis": "cat 在只读清单里（:265）。" },
+    { "tool": "Bash", "input": { "command": "pwd" }, "expected": "allow", "basis": "pwd 在只读清单里（:265）。" },
+    { "tool": "Bash", "input": { "command": "git status" }, "expected": "allow", "basis": "只读形态的 git 免批（:265）。" },
+    { "tool": "Bash", "input": { "command": "git commit -m x" }, "expected": "ask", "basis": "git 的写形态不在只读清单，Bash 命令默认要批准（:18、:265）。" },
+    { "tool": "Bash", "input": { "command": "npm test" }, "expected": "ask", "basis": "npm test 不在只读清单（:265），default 模式要问（:18）。" },
+    { "tool": "Bash", "input": { "command": "curl https://example.com" }, "expected": "ask", "basis": "curl 不在只读清单（:265）。" }
+  ]
+}

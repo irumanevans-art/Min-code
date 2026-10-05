@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Compound commands（:223-225）与 §Read-only commands（:265）：每条子命令独立判定；没被 allow 覆盖的子命令若是只读清单里的（ls、echo、grep）也能跑。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "git status && npm test" }, "expected": "ask", "basis": "npm test 没被规则覆盖也不是只读命令（:265 清单里没有 npm），整条复合命令要问（:224）。" },
+    { "tool": "Bash", "input": { "command": "git status; ls" }, "expected": "allow", "basis": "git status 被规则覆盖，ls 是只读命令（:265）。" },
+    { "tool": "Bash", "input": { "command": "echo hi | grep hi" }, "expected": "allow", "basis": "管道拆开后 echo 与 grep 都是只读命令（:224 分隔符含 |；:265）。" }
+  ]
+}

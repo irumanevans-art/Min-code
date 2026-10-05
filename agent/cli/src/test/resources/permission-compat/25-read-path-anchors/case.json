@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Read and Edit：//path 是文件系统根起的绝对路径（:353），~/path 相对家目录（:354）；单一斜杠开头的 /path 锚在设置文件来源（:355、:359 警告）。",
+  "calls": [
+    { "tool": "Read", "input": { "file_path": "/tmp/secrets/key.pem" }, "expected": "deny", "basis": "//tmp/secrets/** 是绝对路径模式（:353）。" },
+    { "tool": "Read", "input": { "file_path": "/root/.ssh/id_rsa" }, "expected": "deny", "basis": "~/ 相对家目录 /root（:354）。" },
+    { "tool": "Read", "input": { "file_path": "/workspace/src/app.ts" }, "expected": "allow", "basis": "两条 deny 都不命中；工作目录内的读取免批（:17）。" }
+  ]
+}

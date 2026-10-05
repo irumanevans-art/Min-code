@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Agent (subagents)：Agent(Explore) 匹配 Explore 子代理；这类规则加在 deny 数组里即可禁用对应 agent（:524-528，示例 :532-538）。",
+  "calls": [
+    { "tool": "Agent", "input": { "description": "explore code", "prompt": "find the entry points", "subagent_type": "Explore" }, "expected": "deny", "basis": "Agent(Explore) 命中即拒（:524-528）。" }
+  ]
+}

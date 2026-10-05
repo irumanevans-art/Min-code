@@ -1,0 +1,10 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Read and Edit：Edit 规则适用于所有改文件的内建工具（:339）；Read deny 也拦住同路径的 Edit 与 Write（:341）。",
+  "pendingFix": "第二 call：原文 :341 说 Read deny 规则同样拦住同路径的 Edit/Write（含新建），期望 deny；Min 的路径匹配按访问类型分开（RuleMatcher.matchesPath：Read 规则只对读访问生效），Edit /workspace/.env 没命中 Read deny，落到 default 模式问人。期望按原文写，差异待复核。第一 call 证明 Edit 家族覆盖 Write 两边一致（:339）。",
+  "calls": [
+    { "tool": "Write", "input": { "file_path": "/workspace/secrets/a.txt", "content": "x" }, "expected": "deny", "basis": "Edit deny 规则覆盖 Write（:339）。" },
+    { "tool": "Edit", "input": { "file_path": "/workspace/.env", "old_string": "a", "new_string": "b" }, "expected": "deny", "basis": "Read deny 同样拦住同路径的 Edit（:341）。" },
+    { "tool": "Write", "input": { "file_path": "/workspace/other.txt", "content": "x" }, "expected": "ask", "basis": "文件修改在 default 模式要批准（:19）。" }
+  ]
+}

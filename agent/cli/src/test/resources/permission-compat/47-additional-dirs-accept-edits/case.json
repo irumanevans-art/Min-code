@@ -1,0 +1,8 @@
+{
+  "mode": "acceptEdits",
+  "basis": "cc-permissions.md §Working directories（:583）与 §Permission modes（:83）：additionalDirectories 内文件的编辑跟随当前模式——acceptEdits 对工作目录或 additionalDirectories 内的路径自动接受编辑。",
+  "pendingFix": "CC 原文 :83/:583 说 acceptEdits 对 additionalDirectories 内的路径自动接受编辑，期望 allow；Min 的 PolicyContext 没有 additionalDirectories 概念（isWorkspaceEditOnly 只认 /workspace 与自动记忆目录），/data 在引擎里是 rootfs，实测仍要问。期望按原文写，差异待复核。",
+  "calls": [
+    { "tool": "Write", "input": { "file_path": "/data/x.txt", "content": "x" }, "expected": "allow", "basis": "acceptEdits 自动接受 additionalDirectories 内的编辑（:83、:583）。" }
+  ]
+}

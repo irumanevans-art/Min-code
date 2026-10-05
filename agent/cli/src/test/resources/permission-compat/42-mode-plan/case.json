@@ -1,0 +1,11 @@
+{
+  "mode": "plan",
+  "basis": "cc-permissions.md §Permission modes：plan 模式下 Claude 读文件、跑只读 shell 命令做调研，但不改你的源文件（:84）；非只读的 shell 命令走常规权限流程（:647「any other shell command goes through the regular permission flow」）。",
+  "pendingFix": "第四 call：原文 :84/:647 说 plan 模式下非只读命令走常规权限流程（即问人），期望 ask；Min 在 plan 模式对非只读调用直接拒绝（「计划模式下只能读不能改」）。方向上 Min 更保守，但与文档结论不同，期望按原文写，待复核。",
+  "calls": [
+    { "tool": "Read", "input": { "file_path": "/workspace/src/app.ts" }, "expected": "allow", "basis": "plan 模式读文件做调研（:84）。" },
+    { "tool": "Bash", "input": { "command": "git status" }, "expected": "allow", "basis": "只读 shell 命令在 plan 模式下放行（:84）。" },
+    { "tool": "Write", "input": { "file_path": "/workspace/src/app.ts", "content": "x" }, "expected": "deny", "basis": "plan 模式不改源文件（:84）。" },
+    { "tool": "Bash", "input": { "command": "npm test" }, "expected": "ask", "basis": "非只读命令走常规权限流程（:647）；npm test 不在只读清单（:265）。" }
+  ]
+}

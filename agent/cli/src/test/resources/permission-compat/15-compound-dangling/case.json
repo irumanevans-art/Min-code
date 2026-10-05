@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Compound commands：&& 或 || 后面没有内容（npm test &&）时整条命令按解析不了处理，不拆成子命令参与 allow 匹配，Bash(npm *) 批准不了它（:229）。",
+  "pendingFix": "CC 原文把悬空的 && 视为解析不了、不允许 allow 匹配（:229），期望 ask；Min 的 ShellAnalyzer 把末尾空段直接过滤掉了（splitCommands 丢空组），实测按 npm test 匹配 Bash(npm *) 放行。期望按原文写，差异待复核。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "npm test &&" }, "expected": "ask", "basis": "悬空的 && = 解析不了，allow 规则不适用（:229）。" }
+  ]
+}

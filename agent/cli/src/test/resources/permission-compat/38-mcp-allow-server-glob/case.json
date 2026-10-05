@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Tool name wildcards / §MCP：allow 规则只在字面 mcp__<server>__ 前缀之后接受通配，服务器段必须无通配；mcp__* 这类未锚定的 allow glob 被跳过（带警告）且不自动批准任何东西（:209）。deny 的工具名通配有效（:197）。",
+  "pendingFix": "第一 call：原文 :209 说 mcp__* 这样的 allow 通配被跳过、不自动批准任何东西，期望 ask；Min 的 PermissionRule.parse 接受 mcp__* 并在 matchesTool 里按 mcp 前缀匹配全部 MCP 工具，实测放行。期望按原文写，差异待复核。第二 call 的 deny 通配两边一致（:197）。",
+  "calls": [
+    { "tool": "mcp__github__get_issue", "input": {}, "expected": "ask", "basis": "未锚定的 allow 通配被跳过，不自动批准（:209）。" },
+    { "tool": "mcp__gitlab__merge", "input": {}, "expected": "deny", "basis": "deny 的工具名通配有效且 deny 先行（:197、:62）。" }
+  ]
+}

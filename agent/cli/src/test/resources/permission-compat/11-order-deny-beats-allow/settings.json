@@ -1,0 +1,6 @@
+{
+  "permissions": {
+    "allow": ["Bash(aws s3 ls)"],
+    "deny": ["Bash(aws *)"]
+  }
+}

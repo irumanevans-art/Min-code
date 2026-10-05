@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Permission rule syntax / Match all uses of a tool：裸工具名匹配该工具的全部使用（:101-105）；allow 规则让 Claude Code 无需手动批准（:58）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "git status" }, "expected": "allow", "basis": "裸 Bash 规则覆盖一切 Bash 命令（:105）。" },
+    { "tool": "Bash", "input": { "command": "npm test" }, "expected": "allow", "basis": "同一条规则覆盖任意命令（:105）。" }
+  ]
+}

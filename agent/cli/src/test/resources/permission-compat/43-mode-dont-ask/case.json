@@ -1,0 +1,10 @@
+{
+  "mode": "dontAsk",
+  "basis": "cc-permissions.md §Permission modes：dontAsk 自动拒绝一切本会提示的调用；工作目录内的文件读取与无需批准的操作照跑，经 /permissions 或 permissions.allow 预先批准的工具也照跑（:86）。规则写法：项目设置里的 /generated/** 锚在主工作目录（:355、:366），即 /workspace/generated/**。",
+  "calls": [
+    { "tool": "Write", "input": { "file_path": "/workspace/generated/a.txt", "content": "x" }, "expected": "allow", "basis": "被 allow 规则预先批准的操作在 dontAsk 下照跑（:86）；/generated/** 在项目设置里锚到 /workspace/generated/**（:366）。" },
+    { "tool": "Write", "input": { "file_path": "/workspace/scratch.txt", "content": "x" }, "expected": "deny", "basis": "本会提示的调用被自动拒绝（:86）。" },
+    { "tool": "Bash", "input": { "command": "npm test" }, "expected": "deny", "basis": "没有预先批准的命令被自动拒绝（:86）。" },
+    { "tool": "Read", "input": { "file_path": "/workspace/src/app.ts" }, "expected": "allow", "basis": "工作目录内的文件读取照跑（:86、:17）。" }
+  ]
+}

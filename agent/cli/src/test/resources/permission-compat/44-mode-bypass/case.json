@@ -1,0 +1,9 @@
+{
+  "mode": "bypassPermissions",
+  "basis": "cc-permissions.md §Permission modes：bypassPermissions 跳过权限提示，除了任何模式都不自动批准的操作（:87）；§Settings precedence：deny 规则任何层级都拦得住，别的层级允许不了（:671-673）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "npm test" }, "expected": "deny", "basis": "bypass 不推翻 deny 规则（:671-673）。" },
+    { "tool": "Write", "input": { "file_path": "/workspace/out.txt", "content": "x" }, "expected": "allow", "basis": "bypass 模式跳过提示（:87）。" },
+    { "tool": "Bash", "input": { "command": "ls" }, "expected": "allow", "basis": "同上（:87；ls 本来也是只读，:265）。" }
+  ]
+}

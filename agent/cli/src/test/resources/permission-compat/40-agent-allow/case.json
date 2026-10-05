@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Agent (subagents)：Agent(AgentName) 按类型匹配子代理（:524-528）；allow 规则让对应委派免批（:58）。",
+  "calls": [
+    { "tool": "Agent", "input": { "description": "explore code", "prompt": "find the entry points", "subagent_type": "Explore" }, "expected": "allow", "basis": "Explore 被 allow 覆盖（:524-528、:58）。" }
+  ]
+}

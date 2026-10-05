@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Working directories：additionalDirectories 里的文件与原工作目录同规则——不用提示即可读，编辑跟随当前模式（:583）；§Additional directories grant file access, not configuration：settings 里的 additionalDirectories 只给文件访问，不加载该目录的任何配置（:612）。",
+  "calls": [
+    { "tool": "Read", "input": { "file_path": "/data/report.txt" }, "expected": "allow", "basis": "additionalDirectories 内可免提示读取（:583）。" }
+  ]
+}

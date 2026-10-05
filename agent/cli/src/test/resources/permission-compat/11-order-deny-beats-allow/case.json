@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Manage permissions：规则按 deny → ask → allow 求值，与具体程度无关（:62）；宽的 deny 压过窄的 allow，allow 不能从 deny 里豁免（:64）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "aws s3 ls" }, "expected": "deny", "basis": "Bash(aws *) 命中即拒，allow 的窄规则救不回来（:64）。" }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §WebFetch / Allow or deny every fetch：WebFetch(domain:*) 覆盖每一个 URL（:475），在 allow 里等于不问就抓（:490）；它与裸 WebFetch 的区别在沙箱域名清单与 artifact 读取上（:483-492），结论层都是放行。",
+  "calls": [
+    { "tool": "WebFetch", "input": { "url": "https://cdn.example.net/p", "prompt": "summarize" }, "expected": "allow", "basis": "domain:* 覆盖全部域名（:475、:490）。" }
+  ]
+}

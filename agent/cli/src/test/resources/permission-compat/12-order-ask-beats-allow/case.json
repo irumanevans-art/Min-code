@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Manage permissions：deny → ask → allow 的次序同样适用于 ask 与 allow 之间——ask 命中就提示，哪怕更具体的 allow 也命中同一次调用（:62、:64）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "git push origin main" }, "expected": "ask", "basis": "ask 优先于 allow（:64）。" },
+    { "tool": "Bash", "input": { "command": "git status" }, "expected": "allow", "basis": "没有 ask 命中，allow 覆盖（:58）。" }
+  ]
+}
