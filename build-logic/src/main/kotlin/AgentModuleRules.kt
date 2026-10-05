@@ -13,6 +13,7 @@ import org.gradle.api.artifacts.ProjectDependency
 object AgentModuleRules {
     private const val PROTOCOL = ":agent:protocol"
     private const val SPI = ":agent:spi"
+    private const val MCP = ":agent:mcp"
     private const val STORE = ":agent:store"
     private const val LLM = ":agent:llm"
     private const val POLICY = ":agent:policy"
@@ -24,11 +25,12 @@ object AgentModuleRules {
     private const val TESTKIT = ":agent:testkit"
     private const val CLI = ":agent:cli"
 
-    private val BELOW_KERNEL = setOf(PROTOCOL, SPI, STORE, LLM, POLICY, CONTEXT, TOOLS, EXT)
+    private val BELOW_KERNEL = setOf(PROTOCOL, SPI, STORE, LLM, POLICY, CONTEXT, TOOLS, EXT, MCP)
 
     val allowed: Map<String, Set<String>> = mapOf(
         PROTOCOL to emptySet(),
         SPI to setOf(PROTOCOL),
+        MCP to setOf(PROTOCOL, SPI),
         STORE to setOf(PROTOCOL, SPI),
         LLM to setOf(PROTOCOL, SPI),
         POLICY to setOf(PROTOCOL, SPI),
