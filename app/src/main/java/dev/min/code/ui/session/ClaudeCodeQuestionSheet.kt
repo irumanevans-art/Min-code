@@ -25,9 +25,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import dev.min.code.R
 import androidx.compose.ui.unit.dp
-import dev.min.code.core.claudecode.ClaudeCodeEvent
 import dev.min.code.core.claudecode.ClaudeCodeQuestion
-import dev.min.code.core.claudecode.parseAskUserQuestions
+import dev.min.code.core.engine.PendingInteraction
+import dev.min.code.core.engine.QuestionAnswerInput
+import dev.min.code.core.engine.QuestionView
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkCheckbox
@@ -65,22 +66,22 @@ import dev.min.code.ui.theme.sea
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ClaudeCodeQuestionSheet(
-    pending: ClaudeCodeEvent.PermissionRequest,
+    pending: PendingInteraction.Question,
     origin: PermissionOrigin,
-    onAnswer: (Map<String, String>) -> Unit,
+    onAnswer: (List<QuestionAnswerInput>) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val questions = remember(pending.input) { parseAskUserQuestions(pending.input) }
+    val questions = pending.questions
     // 选中的**预置**选项。单选模式下这个集合最多一个元素。
-    val selected = remember(pending.requestId) { mutableStateMapOf<String, Set<String>>() }
+    val selected = remember(pending.id) { mutableStateMapOf<String, Set<String>>() }
     // 「其他」有没有被勾上。和 [selected] 完全独立 —— 它就是多出来的一个选项，
     // 不是"另一种输入模式"，所以勾选状态和预置项互不影响。
-    val customChecked = remember(pending.requestId) { mutableStateMapOf<String, Boolean>() }
+    val customChecked = remember(pending.id) { mutableStateMapOf<String, Boolean>() }
     // 「其他」里填的文本。**任何选择动作都不许动它** —— 之前点一下预置项就把它清空，
     // 用户辛苦打的字凭空消失。
-    val customText = remember(pending.requestId) { mutableStateMapOf<String, String>() }
+    val customText = remember(pending.id) { mutableStateMapOf<String, String>() }
 
-    fun answerOf(q: ClaudeCodeQuestion): String = composeAnswer(
+    fun answerOf(q: QuestionView): String = composeAnswer(
         question = q,
         selected = selected[q.question].orEmpty(),
         customChecked = customChecked[q.question] == true,
@@ -175,7 +176,13 @@ internal fun ClaudeCodeQuestionSheet(
                     modifier = Modifier.weight(1f),
                 ) { Text(stringResource(R.string.question_skip)) }
                 InkButton(
-                    onClick = { onAnswer(questions.associate { it.question to answerOf(it) }) },
+                    onClick = {
+                        onAnswer(
+                            questions.map {
+                                answerInputOf(it, selected[it.question].orEmpty(), customChecked[it.question] == true, customText[it.question].orEmpty())
+                            },
+                        )
+                    },
                     enabled = complete,
                     modifier = Modifier.weight(1f),
                 ) { Text(stringResource(R.string.question_submit)) }
@@ -186,7 +193,7 @@ internal fun ClaudeCodeQuestionSheet(
 
 @Composable
 private fun QuestionBlock(
-    question: ClaudeCodeQuestion,
+    question: QuestionView,
     selected: Set<String>,
     customChecked: Boolean,
     customText: String,
@@ -316,17 +323,51 @@ private fun OptionRow(
  * 否则重放/对拍时会看到无意义的差异。
  */
 internal fun composeAnswer(
+    question: QuestionView,
+    selected: Set<String>,
+    customChecked: Boolean,
+    customText: String,
+): String = composeAnswer(question.options.map { it.label }, question.multiSelect, selected, customChecked, customText)
+
+/**
+ * 同一份拼法的旧签名（CLI 解析出来的 [ClaudeCodeQuestion]）。页面已经改读通用的 [QuestionView]，
+ * 这个只剩 `ClaudeCodeAskUserQuestionTest` 在用 —— 那份测试钉着旧签名，不能改，所以留一个薄壳；连同测试一起清理时删掉。
+ */
+internal fun composeAnswer(
     question: ClaudeCodeQuestion,
+    selected: Set<String>,
+    customChecked: Boolean,
+    customText: String,
+): String = composeAnswer(question.options.map { it.label }, question.multiSelect, selected, customChecked, customText)
+
+private fun composeAnswer(
+    labels: List<String>,
+    multiSelect: Boolean,
     selected: Set<String>,
     customChecked: Boolean,
     customText: String,
 ): String {
     val typed = customText.trim()
     val parts = buildList {
-        question.options.forEach { if (it.label in selected) add(it.label) }
+        labels.forEach { if (it in selected) add(it) }
         if (customChecked && typed.isNotEmpty()) add(typed)
     }
     // 勾了「其他」却没填字：这一问就算没答完，返回空串让提交按钮保持禁用
     if (customChecked && typed.isEmpty()) return ""
-    return if (question.multiSelect) parts.joinToString(", ") else parts.firstOrNull().orEmpty()
+    return if (multiSelect) parts.joinToString(", ") else parts.firstOrNull().orEmpty()
 }
+
+/**
+ * 一问的作答，回传给引擎的形状：选中的预置项按**选项原始顺序**，加上「其他」里填的字。
+ * 引擎把它们用「, 」连起来，得到的字符串和 [composeAnswer] 一模一样（单选时只有一项，多选时预置项在前、手填在最后）。
+ */
+internal fun answerInputOf(
+    question: QuestionView,
+    selected: Set<String>,
+    customChecked: Boolean,
+    customText: String,
+): QuestionAnswerInput = QuestionAnswerInput(
+    question = question.question,
+    selected = question.options.map { it.label }.filter { it in selected },
+    other = customText.trim().takeIf { customChecked && it.isNotEmpty() },
+)

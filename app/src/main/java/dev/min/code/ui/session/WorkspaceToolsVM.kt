@@ -8,24 +8,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import dev.min.code.core.claudecode.BackgroundShell
-import dev.min.code.core.claudecode.ClaudeCodeImage
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
-import dev.min.code.core.claudecode.OutputTail
-import dev.min.code.core.claudecode.backgroundShells
-import dev.min.code.core.claudecode.readShellOutput
+import dev.min.code.core.engine.ImageInput
 import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.network.NetworkSnapshot
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
@@ -42,11 +33,13 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
 /**
- * 会话页旁边那些「和引擎无关」的工具：附件 / 图片、预览槽、进程表与网络、后台 shell。
+ * 会话页旁边那些「和引擎无关」的工具：附件 / 图片、预览槽、进程表与网络。后台 shell 属于会话本身（任务表在会话状态里），
+ * 读输出 / 停止经 [SessionVM]。
  *
  * 从原来的 ClaudeCodeVM 拆出来（M2-B B6a，纯搬家）。预览槽的三个来源（注册表里认出的本机地址、
  * [LocalPreviewBus]、进程表）都在 init 里订阅，和原来一样随页面创建那一刻开始，不能挪到别处懒订阅。
- * 后台 shell 要读活跃会话的任务表，直接读注册表的 [ClaudeCodeSessionRegistry.state]，不经过 [SessionVM]。
+ * 本机预览地址的第一个来源（agent 输出里认出来的）读旧注册表的 [ClaudeCodeSessionRegistry.localPreviewUrls]：它合并**所有**在线会话的
+ * （后台会话起的服务也要能打开），而通用会话的 `signals.PreviewUrl` 是每个会话各一条，订阅它会连带订上撤回消息那条（见 `SessionVM.withdrawnMessages`）。
  */
 class WorkspaceToolsVM(
     private val context: Application,
@@ -131,32 +124,6 @@ class WorkspaceToolsVM(
         localServices.stop(id, LocalServiceStopReason.UserStop)
     }
 
-    /**
-     * 本会话的后台 shell（CLI 的 + 进程表里本会话托管的），底栏「N shell」和它的面板读这一份。
-     * 为什么两处合一、bypass 下的孪生怎么认，见 [backgroundShells]。
-     */
-    internal val backgroundShells: StateFlow<List<BackgroundShell>> = combine(registry.state, localServices.services) { s, services ->
-        backgroundShells(s.tasks, s.items, services, s.sessionId)
-    }
-        .distinctUntilChanged()
-        .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    /** 读一次某个后台 shell 的输出尾巴（面板在跑时轮询它） */
-    internal suspend fun readShellOutput(shell: BackgroundShell): OutputTail? = withContext(Dispatchers.IO) {
-        readShellOutput(shell, workspaceRepository.workspaceDir(), registry.state.value.sessionId, localServices::logOf)
-    }
-
-    /**
-     * 停掉一个后台 shell，各走各的路：CLI 的发 stop_task，托管的（含 bypass 下的孪生）停进程表。
-     * 失败返回给用户看的那句话。
-     */
-    internal suspend fun stopBackgroundShell(shell: BackgroundShell): String? {
-        shell.hostedServiceId?.let { localServices.stop(it, LocalServiceStopReason.UserStop) }
-        val taskId = shell.cliTaskId ?: return null
-        return registry.active()?.stopTask(taskId)
-    }
-
     fun logOf(id: String): String = localServices.logOf(id)
 
     fun toggleServiceLog(id: String) {
@@ -220,7 +187,7 @@ class WorkspaceToolsVM(
      * 与其上传原图白花流量和 token，不如在本地缩好再发。统一转 JPEG ——
      * 手机拍的照片本来就是 JPEG，PNG 编同一张图能大好几倍。
      */
-    suspend fun loadImage(uri: Uri): ClaudeCodeImage? = withContext(Dispatchers.IO) {
+    suspend fun loadImage(uri: Uri): ImageInput? = withContext(Dispatchers.IO) {
         val bitmap = ImageUtils.loadOptimizedBitmap(context, uri, IMAGE_MAX_EDGE)
             ?: return@withContext null
         val bytes = ByteArrayOutputStream().use { out ->
@@ -228,7 +195,7 @@ class WorkspaceToolsVM(
             out.toByteArray()
         }
         bitmap.recycle()
-        ClaudeCodeImage(
+        ImageInput(
             mediaType = "image/jpeg",
             base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
         )

@@ -6,6 +6,8 @@ import dev.min.code.core.claudecode.ClaudeCodeImage
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
+import dev.min.code.core.claudecode.OUTPUT_TAIL_LINES
+import dev.min.code.core.claudecode.OutputTail
 import dev.min.code.core.engine.AgentSession
 import dev.min.code.core.engine.AgentSessionState
 import dev.min.code.core.engine.CONTINUE_PROMPT
@@ -23,6 +25,7 @@ import dev.min.code.core.engine.SessionCommand
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SessionSignal
 import dev.min.code.core.engine.StopAction
+import dev.min.code.core.engine.TaskOutputTail
 import dev.min.code.core.engine.UserInput
 import dev.min.code.core.engine.stopActionFor
 import dev.min.code.core.session.ChatItem
@@ -36,6 +39,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.shareIn
@@ -52,7 +56,8 @@ import kotlinx.coroutines.flow.stateIn
  * @param key 注册表 key = CLI 的 session id；新建会话在 manager 起来之前就定好了
  * @param externals 映射要的外部信息（人手标题、进程表、当前供应商档…），变了会重算状态
  * @param stopHostedService 停进程表里托管的那一半后台 shell（`LocalServiceRegistry.stop`）
- * @param readShellOutput 读后台 shell 输出尾巴（`readShellOutput`，要 workspaceDir，所以由 Engine 提供）
+ * @param readShellOutput 读后台 shell 输出尾巴（`readShellOutput`，要 workspaceDir，所以由 Engine 提供）。第二个参数是 CLI 的
+ *   session id：没有 outputFile 的运行中任务要靠它去 /tmp 下按 `<sid>/tasks/<taskId>` 找文件
  */
 class ClaudeCodeSession internal constructor(
     val manager: ClaudeCodeManager,
@@ -62,7 +67,7 @@ class ClaudeCodeSession internal constructor(
     private val metaStore: ClaudeCodeSessionMetaStore? = null,
     private val configStore: ClaudeCodeConfigStore? = null,
     private val stopHostedService: (String) -> Unit = {},
-    private val readShellOutput: suspend (BackgroundShell) -> String? = { null },
+    private val readShellOutput: suspend (BackgroundShell, sessionId: String?) -> OutputTail? = { _, _ -> null },
 ) : AgentSession {
 
     /** 自己的子作用域：close 时只取消本会话订阅的那几条流，不牵连 Engine 的作用域 */
@@ -76,8 +81,13 @@ class ClaudeCodeSession internal constructor(
     /** 命令判定用的现算状态：`state` 流在调度器上有一拍延迟，判「这张卡还在不在」不能读旧的 */
     private fun fresh(): AgentSessionState = ClaudeStateMapper.map(ref, manager.state.value, externals.value)
 
+    // 逐字增量不进 state（在 [stream] 里）：先把它们从 manager 的状态里剥掉再判等，流式期间每个 token 都不会走到映射，
+    // 也就不会为一个 token 把整张会话（条目、子 agent、后台任务…）重算一遍。manager 的状态对象每个 token 换一个，
+    // 但 items 等大字段是同一个引用，剥完判等很便宜。
     // 初值同步算好：Eagerly 的 stateIn 在调度器上才开始收集，第一次读 value 不能是空壳
-    override val state: StateFlow<AgentSessionState> = combine(manager.state, externals) { s, c ->
+    override val state: StateFlow<AgentSessionState> = combine(
+        manager.state.map(::withoutLiveText).distinctUntilChanged(), externals,
+    ) { s, c ->
         ClaudeStateMapper.map(ref, s, c)
     }.stateIn(scope, SharingStarted.Eagerly, ClaudeStateMapper.map(ref, manager.state.value, externals.value))
 
@@ -134,7 +144,9 @@ class ClaudeCodeSession internal constructor(
             is SessionCommand.RunShell -> { manager.runShell(command.command); CommandResult.Accepted }
             is SessionCommand.StopSubagent -> stopSubagent(command)
             is SessionCommand.StopTask -> stopTask(command, current)
-            is SessionCommand.Revert -> { manager.revertToolCall(command.toolUseId); CommandResult.Accepted }
+            // 还原成功才算受理：面板据此才把它标成「已撤销」（原 VM.revertToolCall 的 onRestored 语义）
+            is SessionCommand.Revert ->
+                if (manager.revertToolCall(command.toolUseId)) CommandResult.Accepted else CommandResult.Rejected("没有这次改动的快照")
             is SessionCommand.Refresh -> refresh(command)
         }
     }
@@ -157,7 +169,8 @@ class ClaudeCodeSession internal constructor(
             is SendTarget.Subagent -> {
                 val thread = fresh().threads.firstOrNull { it.threadId == target.threadId }
                     ?: return CommandResult.Stale("没有这个子 agent：${target.threadId}")
-                if (!thread.messageable) return CommandResult.Rejected("拿不到这个子 agent 的 id，没法把话转给它")
+                // 拿不到 agentId（很老的历史会话）也照样转给 manager：它会在对话流里留一句「找不到这个子 agent 的 id」，
+                // 那是界面上唯一说得清原因的地方；这里先拒绝的话，输入框清空了却什么说明都没有
                 // 图片递不进子 agent（hook 只能带文字），manager 会补一条说明
                 manager.sendToSubagent(target.threadId, input.text, dropImages = input.images.size)
                 CommandResult.Accepted
@@ -309,10 +322,18 @@ class ClaudeCodeSession internal constructor(
 
     override suspend fun hasCheckpoint(toolUseId: String): Boolean = toolUseId in manager.checkpointed(listOf(toolUseId))
 
-    override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? {
-        val shell = ClaudeStateMapper.shellsOf(manager.state.value, externals.value.services)
+    override suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> = manager.checkpointed(toolUseIds)
+
+    override suspend fun revertFile(name: String, toolUseIds: List<String>): Set<String> = manager.revertFile(name, toolUseIds)
+
+    override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? =
+        readTaskTail(taskId)?.text?.takeLast(maxChars)
+
+    override suspend fun readTaskTail(taskId: String): TaskOutputTail? {
+        val state = manager.state.value
+        val shell = ClaudeStateMapper.shellsOf(state, externals.value.services)
             .firstOrNull { it.key == taskId } ?: return null
-        return readShellOutput(shell)?.takeLast(maxChars)
+        return readShellOutput(shell, state.sessionId)?.let { TaskOutputTail(it.text, it.clipped, OUTPUT_TAIL_LINES) }
     }
 
     /**
@@ -327,4 +348,16 @@ class ClaudeCodeSession internal constructor(
             scope.cancel()
         }
     }
+
+    /**
+     * 只撤掉本包装自己订阅的那几条流，**不动 manager**。旧注册表摘掉一个会话（它自己 dispose 了 manager）、
+     * 引擎把这个包装从表里丢掉时调：不然每开过一个会话就永远留着三条收集协程。
+     */
+    internal fun release() {
+        scope.cancel()
+    }
 }
+
+/** 去掉逐字增量，见 [ClaudeCodeSession.state] */
+private fun withoutLiveText(s: ClaudeCodeManager.SessionState): ClaudeCodeManager.SessionState =
+    if (s.streamingText.isEmpty() && s.streamingThinking.isEmpty()) s else s.copy(streamingText = "", streamingThinking = "")

@@ -75,9 +75,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
-import dev.min.code.core.claudecode.SubagentThread
+import dev.min.code.core.engine.AgentThread
 import dev.min.code.core.claudecode.subagentTypeName
-import dev.min.code.core.claudecode.switcherLabels
+import dev.min.code.core.engine.switcherLabels
 import dev.min.code.core.session.ChatItem
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkSheet
@@ -129,7 +129,7 @@ internal val LocalOpenSubagent = compositionLocalOf<((String) -> Unit)?> { null 
  */
 @Composable
 internal fun RowScope.AgentSwitcher(
-    threads: List<SubagentThread>,
+    threads: List<AgentThread>,
     selected: String?,
     onSelect: (String?) -> Unit,
     modifier: Modifier = Modifier,
@@ -181,7 +181,7 @@ private data class TabSpan(val x: Float, val width: Float)
 
 @Composable
 private fun AgentTabs(
-    threads: List<SubagentThread>,
+    threads: List<AgentThread>,
     labels: List<String>,
     selected: String?,
     onSelect: (String?) -> Unit,
@@ -232,11 +232,11 @@ private fun AgentTabs(
             )
             threads.forEachIndexed { i, thread ->
                 AgentTab(
-                    key = thread.toolUseId,
+                    key = thread.threadId,
                     label = labels[i],
                     thread = thread,
-                    selected = thread.toolUseId == selected,
-                    onClick = { onSelect(thread.toolUseId) },
+                    selected = thread.threadId == selected,
+                    onClick = { onSelect(thread.threadId) },
                     spans = spans,
                 )
             }
@@ -265,7 +265,7 @@ private fun AgentTabs(
 private fun AgentTab(
     key: String,
     label: String,
-    thread: SubagentThread?,
+    thread: AgentThread?,
     selected: Boolean,
     onClick: () -> Unit,
     spans: SnapshotStateMap<String, TabSpan>,
@@ -361,7 +361,7 @@ private fun AllAgentsButton(count: Int, onClick: () -> Unit) {
  */
 @Composable
 private fun AgentListSheet(
-    threads: List<SubagentThread>,
+    threads: List<AgentThread>,
     labels: List<String>,
     selected: String?,
     onSelect: (String?) -> Unit,
@@ -395,12 +395,12 @@ private fun AgentListSheet(
                     AgentListRow(
                         title = labels[i],
                         status = subagentPhaseLabel(thread.phase),
-                        failed = thread.phase == SubagentThread.Phase.Failed,
+                        failed = thread.phase == AgentThread.Phase.Failed,
                         detail = thread.description,
                         activity = thread.activity?.takeIf { thread.running },
-                        selected = thread.toolUseId == selected,
+                        selected = thread.threadId == selected,
                         mark = thread,
-                        onClick = { onSelect(thread.toolUseId) },
+                        onClick = { onSelect(thread.threadId) },
                     )
                 }
             }
@@ -415,7 +415,7 @@ private fun AgentListRow(
     detail: String,
     activity: String?,
     selected: Boolean,
-    mark: SubagentThread?,
+    mark: AgentThread?,
     onClick: () -> Unit,
     failed: Boolean = false,
 ) {
@@ -497,11 +497,11 @@ private fun Modifier.fadingEdges(scroll: ScrollState): Modifier = this
 
 /** 状态记号：在跑是一粒呼吸的海点，出错是朱，其余（完成 / 停止）是一粒静止的石墨点 */
 @Composable
-private fun AgentMark(thread: SubagentThread, onSea: Boolean, size: Dp = 6.dp) {
+private fun AgentMark(thread: AgentThread, onSea: Boolean, size: Dp = 6.dp) {
     val palette = MaterialTheme.sea
     when (thread.phase) {
-        SubagentThread.Phase.Running -> LiveDot(if (onSea) palette.onSea else palette.sea, size = size)
-        SubagentThread.Phase.Failed -> Seal(size = size, color = palette.vermilion)
+        AgentThread.Phase.Running -> LiveDot(if (onSea) palette.onSea else palette.sea, size = size)
+        AgentThread.Phase.Failed -> Seal(size = size, color = palette.vermilion)
         else -> Seal(size = size, color = if (onSea) palette.onSea else palette.graphite)
     }
 }
@@ -510,12 +510,13 @@ private fun AgentMark(thread: SubagentThread, onSea: Boolean, size: Dp = 6.dp) {
 internal fun subagentTypeLabel(type: String): String = subagentTypeName(type, stringResource(R.string.agent_type_fork))
 
 @Composable
-internal fun subagentPhaseLabel(phase: SubagentThread.Phase): String = stringResource(
+internal fun subagentPhaseLabel(phase: AgentThread.Phase): String = stringResource(
     when (phase) {
-        SubagentThread.Phase.Running -> R.string.agent_phase_running
-        SubagentThread.Phase.Done -> R.string.agent_phase_done
-        SubagentThread.Phase.Failed -> R.string.agent_phase_failed
-        SubagentThread.Phase.Stopped -> R.string.agent_phase_stopped
+        AgentThread.Phase.Running -> R.string.agent_phase_running
+        AgentThread.Phase.Done -> R.string.agent_phase_done
+        AgentThread.Phase.Failed -> R.string.agent_phase_failed
+        // Interrupted（进程重启时被打断）只有 Min 会有，现在页面上看不到；先按「已停止」说
+        AgentThread.Phase.Stopped, AgentThread.Phase.Interrupted -> R.string.agent_phase_stopped
     }
 )
 
@@ -524,7 +525,7 @@ internal fun subagentPhaseLabel(phase: SubagentThread.Phase): String = stringRes
  * 跟着顶栏一起浮在对话上（顶栏高度量过再垫进列表，字不会被挡住）。
  */
 @Composable
-internal fun SubagentViewHeader(thread: SubagentThread, onBack: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SubagentViewHeader(thread: AgentThread, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val backLabel = stringResource(R.string.agent_view_back_label)
     Row(
         modifier = modifier

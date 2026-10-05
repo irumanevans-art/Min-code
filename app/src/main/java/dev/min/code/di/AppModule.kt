@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
+import dev.min.code.core.claudecode.readShellOutput
 import me.rerere.workspace.WorkspaceShellStatus
 import org.koin.dsl.bind
 import dev.min.code.core.browser.GuestOpenInbox
@@ -197,6 +199,13 @@ val appModule = module {
             currentProfile = settings.settings.map { s -> s.activeProfile?.id to s.profiles.associate { it.id to it.label } }
                 .stateIn(scope, SharingStarted.Eagerly, null to emptyMap()),
             stopHostedService = { get<LocalServiceRegistry>().stop(it) },
+            // 后台 shell 面板读输出尾巴：要工作区目录（host 路径）与进程表的日志，只有组合根拿得到
+            readShellOutput = { shell, sessionId ->
+                val services = get<LocalServiceRegistry>()
+                withContext(Dispatchers.IO) {
+                    readShellOutput(shell, workspace.workspaceDir(), sessionId, services::logOf)
+                }
+            },
         )
     } bind AgentEngine::class
     single {

@@ -23,8 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import dev.min.code.R
-import dev.min.code.core.claudecode.ClaudeCodeEvent
-import dev.min.code.core.claudecode.SubagentThread
+import dev.min.code.core.engine.AgentThread
+import dev.min.code.core.engine.PendingInteraction
+import dev.min.code.core.engine.awaitedToolName
 import dev.min.code.ui.richtext.MarkdownBlock
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.sea
@@ -39,14 +40,14 @@ import dev.min.code.ui.theme.sea
  * 列表状态自己一份：切回 main 时主会话停在原来的位置，不被这里的滚动带走。
  * 子 agent 结束后照样能看——内容挂在它那张 Agent 卡上，卡一直在。
  *
- * @param pendingPermission 会话挂着的权限请求；子 agent 调的工具要批准时，它的卡要显示成「等你批准」
+ * @param pendingInteraction 会话挂着的交互卡（队头）；子 agent 调的工具要批准时，它的卡要显示成「等你批准」
  */
 @Composable
 internal fun SubagentConversation(
-    thread: SubagentThread,
+    thread: AgentThread,
     labels: TranscriptLabels,
     contentPadding: PaddingValues,
-    pendingPermission: ClaudeCodeEvent.PermissionRequest?,
+    pendingInteraction: PendingInteraction?,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -54,11 +55,11 @@ internal fun SubagentConversation(
     FollowTailEffect(listState, follow)
     val blocks = remember(thread.items) { groupTranscript(thread.items) }
     // 开合状态提在列表外面，理由同主会话（LazyColumn 会回收滚出屏幕的条目）
-    val manualExpanded = remember(thread.toolUseId) { mutableStateMapOf<String, Boolean>() }
+    val manualExpanded = remember(thread.threadId) { mutableStateMapOf<String, Boolean>() }
     val awaiting = awaitingToolUseId(
         items = thread.items,
-        pendingToolName = pendingPermission?.toolName,
-        pendingToolUseId = pendingPermission?.toolUseId,
+        pendingToolName = pendingInteraction?.awaitedToolName,
+        pendingToolUseId = pendingInteraction?.toolUseId,
     )
     val hasPrompt = !thread.prompt.isNullOrBlank()
     CompositionLocalProvider(LocalAwaitingToolUseId provides awaiting) {
@@ -72,7 +73,7 @@ internal fun SubagentConversation(
                 item(key = "prompt") {
                     SubagentPromptEntry(
                         prompt = thread.prompt.orEmpty(),
-                        id = thread.toolUseId,
+                        id = thread.threadId,
                         isLast = blocks.isEmpty() && !thread.running,
                     )
                 }
@@ -128,7 +129,7 @@ private fun SubagentPromptEntry(prompt: String, id: String, isLast: Boolean) {
 
 /** 末尾那条「它正在干什么」：进度摘要 > 最近的工具 > 工作中。跑完就不挂了 */
 @Composable
-private fun SubagentLiveEntry(thread: SubagentThread, isFirst: Boolean) {
+private fun SubagentLiveEntry(thread: AgentThread, isFirst: Boolean) {
     TranscriptEntry(
         marker = if (thread.running) RailMarker.SquareFilled else RailMarker.Dash,
         isFirst = isFirst,

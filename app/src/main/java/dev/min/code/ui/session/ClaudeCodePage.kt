@@ -101,14 +101,20 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.min.code.R
-import dev.min.code.core.claudecode.ASK_USER_QUESTION_TOOL
 import dev.min.code.core.claudecode.CHECKPOINT_TOOLS
-import dev.min.code.core.claudecode.ClaudeCodeEvent
-import dev.min.code.core.claudecode.ClaudeCodeManager
-import dev.min.code.core.claudecode.PermissionSuggestion
-import dev.min.code.core.claudecode.subagentThreads
 import dev.min.code.core.claudecode.subagentTypeName
-import dev.min.code.core.claudecode.switcherThreads
+import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.AgentThread
+import dev.min.code.core.engine.ApprovalOption
+import dev.min.code.core.engine.InteractionAnswer
+import dev.min.code.core.engine.LiveStream
+import dev.min.code.core.engine.PendingInteraction
+import dev.min.code.core.session.PathScope
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import dev.min.code.core.engine.awaitedToolName
+import dev.min.code.core.engine.switcherThreads
 import dev.min.code.ui.components.BrandMark
 import dev.min.code.ui.components.LocalFrost
 import dev.min.code.ui.components.frostSource
@@ -166,8 +172,6 @@ import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.changedFiles
 import dev.min.code.core.session.undoCandidates
 import dev.min.code.core.session.SessionStatus
-import dev.min.code.core.session.escapedPaths
-import dev.min.code.core.session.touchesDeviceStorage
 
 /**
  * Claude Code 页：官方 claude CLI 跑在工作区 Rootfs 里，stream-json 协议桥接为界面。
@@ -195,14 +199,15 @@ fun ClaudeCodePage(
     val navController = LocalNavController.current
     val context = LocalContext.current
     val setup by maintenanceVm.setup.collectAsStateWithLifecycle()
-    // 流式输出时 SessionState 每个 token 换一个新对象。页面上几乎所有地方（顶栏、抽屉、输入坞、
-    // 起始面板）都不关心正在长的那段正文，所以它们读的是剥掉逐 token 字段之后的 [session]：
-    // 按值判等，流式期间一次都不变，整页不再跟着每个 token 重组。真要看正文的只有会话流里
-    // 那两个条目，它们直接读 [liveSession]（见 SessionContent）。
-    // 两者从同一个快照派生，不会出现「流式条目已经收起、定稿条目还没进列表」那一帧空白。
+    // 正在长的那段正文 / 思考不在 [AgentSessionState] 里，而在 [LiveStream]（[stream]）：流式期间只有会话流里
+    // 那两个条目读它，整页不会跟着每个 token 重组。
+    // 剩下的逐消息跳变是本轮输出 token 数（每条消息结束时涨一次）：顶栏、抽屉、输入坞、起始面板都不关心它，
+    // 所以它们读的是剥掉这个计数之后的 [session]，按值判等，计数涨的时候不动；只有会话流末尾那行计时 / 吐字量读完整的 [liveSession]
+    // （见 SessionContent）。两者从同一个快照派生，不会出现「流式条目已经收起、定稿条目还没进列表」那一帧空白。
     val liveSession = vm.session.collectAsStateWithLifecycle()
+    val stream = vm.stream.collectAsStateWithLifecycle()
     val session by remember(liveSession) {
-        derivedStateOf(structuralEqualityPolicy()) { liveSession.value.withoutStream() }
+        derivedStateOf(structuralEqualityPolicy()) { liveSession.value.withoutLiveCounters() }
     }
     val sessions by listVm.sessions.collectAsStateWithLifecycle()
     val maintenance by maintenanceVm.maintenance.collectAsStateWithLifecycle()
@@ -409,6 +414,7 @@ fun ClaudeCodePage(
             SessionContent(
                 session = session,
                 liveSession = liveSession,
+                stream = stream,
                 vm = vm,
                 toolsVm = toolsVm,
                 configVm = configVm,
@@ -471,7 +477,7 @@ fun ClaudeCodePage(
                             session = session,
                             cliVersion = setup.cliVersion,
                             onStart = vm::start,
-                            lastOptions = vm.lastOptions(),
+                            defaultCwd = vm.defaultCwd(),
                             onListCwd = vm::listCwdFolders,
                             onCreateCwd = vm::createCwdFolder,
                             connected = connected,
@@ -484,25 +490,25 @@ fun ClaudeCodePage(
         } // CompositionLocalProvider LocalUriHandler
     }
 
-    session.pendingPermission?.let { pending ->
+    session.headInteraction?.let { pending ->
         val forkName = stringResource(R.string.agent_type_fork)
-        val origin = permissionOriginOf(pending, session.tasks, session.permissionQueue.size) { subagentTypeName(it, forkName) }
-        // AskUserQuestion 走的是同一个 can_use_tool 帧，但要的是「在选项里挑」而不是
-        // 「允许/拒绝」，答案还得经 updatedInput 回传 —— 两种面板不能混用
-        if (pending.toolName == ASK_USER_QUESTION_TOOL) {
+        val origin = permissionOriginOf(pending.origin) { subagentTypeName(it, forkName) }
+        // 提问走的是同一个 can_use_tool 帧，但要的是「在选项里挑」而不是「允许/拒绝」，
+        // 答案还得回传给模型 —— 两种面板不能混用
+        if (pending is PendingInteraction.Question) {
             ClaudeCodeQuestionSheet(
                 pending = pending,
                 origin = origin,
-                onAnswer = { answers -> vm.answerQuestions(answers) },
+                onAnswer = { answers -> vm.answer(pending.id, InteractionAnswer.Answer(answers)) },
                 // 跳过 = 允许工具带着空答案跑完。不能回 deny：那会被模型当成
                 // "用户拒绝了这次提问"，它多半会停下来问为什么，而不是继续干活
-                onDismiss = { vm.answerQuestions(emptyMap()) },
+                onDismiss = { vm.answer(pending.id, InteractionAnswer.Decline) },
             )
         } else {
             PermissionSheet(
                 pending = pending,
                 origin = origin,
-                onAnswer = { allow, suggestion -> vm.answerPermission(allow, suggestion = suggestion) },
+                onAnswer = { optionId -> vm.answer(pending.id, InteractionAnswer.Choose(optionId)) },
             )
         }
     }
@@ -515,7 +521,7 @@ fun ClaudeCodePage(
         ClaudeCodeMaintenanceSheet(
             state = maintenance,
             // 只数进程还活着的：注册表里会留着刚结束的壳，按 size 数会把更新按钮锁死
-            liveSessionCount = liveSessions.count { it.isLive },
+            liveSessionCount = liveSessions.count { it.keepAlive },
             onDismiss = {
                 showMaintenance = false
                 maintenanceVm.dismissMaintenanceError()
@@ -807,15 +813,20 @@ private fun WideSidebarScaffold(
     }
 }
 
-/** 去掉逐 token 在变的字段（流式正文、思考、本条消息的输出计数），见 ClaudeCodePage 顶部 */
-private fun ClaudeCodeManager.SessionState.withoutStream(): ClaudeCodeManager.SessionState =
-    if (streamingText.isEmpty() && streamingThinking.isEmpty() && outputTokensCurrent == 0) this
-    else copy(streamingText = "", streamingThinking = "", outputTokensCurrent = 0)
+/**
+ * 去掉本轮正在长的输出 token 计数（当前这条消息的累计 + 由它加总出来的本轮总数），见 ClaudeCodePage 顶部。
+ * 空闲时 [AgentSessionState.turn] 为 null，计数也不会被谁读，原样返回。
+ */
+private fun AgentSessionState.withoutLiveCounters(): AgentSessionState {
+    val turn = turn ?: return this
+    if (turn.outputTokensCurrent == 0 && usage.turnOutputTokens == null) return this
+    return copy(turn = turn.copy(outputTokensCurrent = 0), usage = usage.copy(turnOutputTokens = null))
+}
 
 @Composable
-private fun ClaudeCodeManager.SessionState.subtitle(): String = when {
+private fun AgentSessionState.subtitle(): String = when {
     stopping -> stringResource(R.string.session_settings_busy_stopping)
-    applyingSettings || applyingEffort -> stringResource(R.string.session_settings_busy)
+    settings.applying -> stringResource(R.string.session_settings_busy)
     status == SessionStatus.Running -> {
         // 模型名是机器产物，原样；工具计数的量词是人话，走资源
         val tools = if (toolCount > 0) {
@@ -824,7 +835,7 @@ private fun ClaudeCodeManager.SessionState.subtitle(): String = when {
             null
         }
         val running = stringResource(R.string.session_meta_live)
-        listOfNotNull(model, tools).joinToString(" · ").ifBlank { running }
+        listOfNotNull(reportedModel, tools).joinToString(" · ").ifBlank { running }
     }
 
     status == SessionStatus.Starting -> stringResource(R.string.session_status_starting_cli)
@@ -966,10 +977,12 @@ internal class LastNonNull<T : Any>(initial: T?) {
 
 @Composable
 private fun SessionContent(
-    /** 剥掉了逐 token 字段的会话状态，见 ClaudeCodePage 顶部的说明 */
-    session: ClaudeCodeManager.SessionState,
-    /** 完整状态。只在最小的作用域里读（流式条目、当前轮进度），别在函数体顶层读 */
-    liveSession: State<ClaudeCodeManager.SessionState>,
+    /** 剥掉了本轮输出 token 计数的会话状态，见 ClaudeCodePage 顶部的说明 */
+    session: AgentSessionState,
+    /** 完整状态。只在最小的作用域里读（当前轮进度），别在函数体顶层读 */
+    liveSession: State<AgentSessionState>,
+    /** 逐字增量（正在长的正文 / 思考）。只在最小的作用域里读（流式条目），别在函数体顶层读 */
+    stream: State<LiveStream>,
     vm: SessionVM,
     toolsVm: WorkspaceToolsVM,
     configVm: ClaudeConfigVM,
@@ -985,8 +998,8 @@ private fun SessionContent(
     // 「跳到改动的那一轮」要滚列表，滚完就不跟底了（见 [onJumpTo]）
     val scope = rememberCoroutineScope()
     // 只在「有没有流式内容」翻转时才让本函数重组，正文每长一截不算
-    val streaming by remember(liveSession) {
-        derivedStateOf { liveSession.value.let { it.streamingText.isNotBlank() || it.streamingThinking.isNotBlank() } }
+    val streaming by remember(stream) {
+        derivedStateOf { stream.value.let { it.text.isNotBlank() || it.thinking.isNotBlank() } }
     }
     // 工具卡的字头在组合期取好传下去：TranscriptItem 的调用方（搜索、导出）不是 Composable
     val transcriptLabels = rememberTranscriptLabels()
@@ -995,12 +1008,11 @@ private fun SessionContent(
     val showLiveTurn = !streaming && (
         session.busy ||
             session.stopping ||
-            session.applyingSettings ||
-            session.applyingEffort ||
+            session.settings.applying ||
             session.status == SessionStatus.Starting ||
-            session.retryNotice != null ||
+            session.turn?.retry != null ||
             // 后台 shell 不算「这一轮在跑」：它们跨轮活着，归底栏的「N shell」管
-            session.runningTasks.any { !it.isShell }
+            session.runningThreads.isNotEmpty()
     )
 
     // 连续的思考/工具活动折成块，跑完自动收起（见 [TranscriptBlock]）。
@@ -1043,8 +1055,8 @@ private fun SessionContent(
     // 正在看哪个子 agent（发起它的 Agent 调用的 toolUseId），null = main。按会话记：换会话回到 main。
     // 切换条和子 agent 视图的数据都从聊天流 + 任务表现推（SubagentThreads.kt），不另存
     var selectedAgent by rememberSaveable(activeKey) { mutableStateOf<String?>(null) }
-    val agentThreads = remember(session.items, session.tasks) { subagentThreads(session.items, session.tasks) }
-    val viewedAgent = agentThreads.firstOrNull { it.toolUseId == selectedAgent }
+    val agentThreads = session.threads
+    val viewedAgent = agentThreads.firstOrNull { it.threadId == selectedAgent }
 
     // 交互式斜杠命令（/mcp、/agents、/memory…）打开的配置面板。它们改的是 Rootfs 里的
     // 配置文件，和「会话设置」那张 sheet 是两回事，所以状态提在这里而不是输入栏内部。
@@ -1054,7 +1066,7 @@ private fun SessionContent(
     var showTerminal by rememberSaveable { mutableStateOf(false) }
     // 底栏「N shell」点开的面板。按会话记：换了会话不该还开着上一个会话的 shell
     var showShells by rememberSaveable(activeKey) { mutableStateOf(false) }
-    val shells by toolsVm.backgroundShells.collectAsStateWithLifecycle()
+    val shells = session.tasks
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
 
@@ -1102,8 +1114,8 @@ private fun SessionContent(
     // 挂着权限请求时，那张卡要显示成「等你批准」而不是转圈（见 [LocalAwaitingToolUseId]）
     val awaitingToolUseId = awaitingToolUseId(
         items = session.items,
-        pendingToolName = session.pendingPermission?.toolName,
-        pendingToolUseId = session.pendingPermission?.toolUseId,
+        pendingToolName = session.headInteraction?.awaitedToolName,
+        pendingToolUseId = session.headInteraction?.toolUseId,
     )
 
     CompositionLocalProvider(
@@ -1165,20 +1177,20 @@ private fun SessionContent(
                 if (streaming) {
                     item(key = "streaming") {
                         // 整页只有这里和下面的当前轮进度逐 token 读完整状态
-                        val live = liveSession.value
+                        val live = stream.value
                         Column {
-                            if (live.streamingThinking.isNotBlank()) {
+                            if (live.thinking.isNotBlank()) {
                                 ThinkingEntry(
-                                    text = live.streamingThinking,
+                                    text = live.thinking,
                                     id = "streaming-thinking",
                                     isFirst = blocks.isEmpty(),
-                                    isLast = live.streamingText.isBlank() && !showLiveTurn,
+                                    isLast = live.text.isBlank() && !showLiveTurn,
                                     streaming = true,
                                 )
                             }
-                            if (live.streamingText.isNotBlank()) {
+                            if (live.text.isNotBlank()) {
                                 AssistantEntry(
-                                    text = live.streamingText,
+                                    text = live.text,
                                     isFirst = false,
                                     isLast = !showLiveTurn,
                                     streaming = true,
@@ -1204,16 +1216,16 @@ private fun SessionContent(
         // 子 agent 视图：一张纸盖在主会话流上。主列表一直在底下、状态不动，所以选回 main 时
         // 滚动位置原样还在；在两个子 agent 之间切换是淡入淡出
         AnimatedContent(
-            targetState = viewedAgent?.toolUseId,
+            targetState = viewedAgent?.threadId,
             transitionSpec = { fadeIn(InkMotion.effect()) togetherWith fadeOut(InkMotion.effect()) },
             label = "subagentView",
         ) { shownId ->
-            val shown = agentThreads.firstOrNull { it.toolUseId == shownId }
+            val shown = agentThreads.firstOrNull { it.threadId == shownId }
             if (shown != null) {
                 SubagentConversation(
                     thread = shown,
                     labels = transcriptLabels,
-                    pendingPermission = session.pendingPermission,
+                    pendingInteraction = session.headInteraction,
                     contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topReserve, bottom = bottomReserve),
                     modifier = Modifier.background(MaterialTheme.sea.paper),
                 )
@@ -1398,11 +1410,11 @@ private fun SessionContent(
                         // 子 agent 视图里：话说给它（收件箱 / 经主会话转交），停止键只停它
                         onSend = { text, images ->
                             val target = viewedAgent
-                            if (target != null) vm.sendToSubagent(target.toolUseId, text, images) else vm.send(text, images)
+                            if (target != null) vm.sendToSubagent(target.threadId, text, images) else vm.send(text, images)
                         },
                         onInterrupt = {
                             val target = viewedAgent
-                            if (target != null) vm.stopSubagent(target.toolUseId) else vm.interrupt()
+                            if (target != null) vm.stopSubagent(target.threadId) else vm.interrupt()
                         },
                         hintOverride = viewedAgent?.let { stringResource(R.string.agent_composer_hint, subagentTypeLabel(it.agentType)) },
                         busyOverride = viewedAgent?.running,
@@ -1448,8 +1460,8 @@ private fun SessionContent(
         BackgroundShellSheet(
             shells = shells,
             onDismiss = { showShells = false },
-            readOutput = toolsVm::readShellOutput,
-            onStop = toolsVm::stopBackgroundShell,
+            readOutput = { vm.readTaskOutput(it.id) },
+            onStop = { vm.stopTask(it.id) },
         )
     }
 
@@ -1514,13 +1526,13 @@ internal fun TranscriptItem(
  */
 @Composable
 private fun LiveTurnEntry(
-    session: ClaudeCodeManager.SessionState,
+    session: AgentSessionState,
     isFirst: Boolean,
     isLast: Boolean,
 ) {
     val starting = session.status == SessionStatus.Starting
-    val tasks = session.runningTasks.filterNot { it.isShell }
-    val retry = session.retryNotice
+    val agents = session.runningThreads
+    val retry = session.turn?.retry?.text
     val runningTool = session.items
         .asReversed()
         .filterIsInstance<ChatItem.ToolCall>()
@@ -1532,14 +1544,14 @@ private fun LiveTurnEntry(
     val label = listOfNotNull(
         when {
             session.stopping -> stringResource(R.string.session_live_stopping)
-            session.applyingSettings -> stringResource(R.string.session_live_applying)
-            session.applyingEffort -> stringResource(R.string.session_live_applying_relaunch)
+            session.settings.hotSwapping -> stringResource(R.string.session_live_applying)
+            session.settings.relaunching -> stringResource(R.string.session_live_applying_relaunch)
             starting -> stringResource(R.string.session_live_starting)
-            else -> statusPhaseLabel(session.statusPhase)
+            else -> statusPhaseLabel(session.turn?.phase)
                 ?: runningToolLabel
                 ?: stringResource(R.string.session_live_generating)
         },
-        session.statusDetail?.takeIf { it.isNotBlank() },
+        session.turn?.detail?.takeIf { it.isNotBlank() },
     ).joinToString(" · ")
 
     TranscriptEntry(
@@ -1573,7 +1585,7 @@ private fun LiveTurnEntry(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        tasks.forEach { task -> SubagentLine(task) }
+        agents.forEach { thread -> SubagentLine(thread) }
     }
 }
 
@@ -1587,8 +1599,8 @@ private fun LiveTurnEntry(
  * 代价是它随消息边界跳变（一次工具往返一跳）而不是平滑增长。宁可跳，不可编。
  */
 @Composable
-private fun TurnMeter(session: ClaudeCodeManager.SessionState) {
-    val startedAt = session.turnStartedAt
+private fun TurnMeter(session: AgentSessionState) {
+    val startedAt = session.turn?.startedAt
     // 每秒重算一次。key 带上 startedAt：新一轮开始时要立刻从 0 重新计
     var elapsedMs by remember(startedAt) { mutableStateOf(0L) }
     LaunchedEffect(startedAt, session.busy) {
@@ -1601,7 +1613,7 @@ private fun TurnMeter(session: ClaudeCodeManager.SessionState) {
 
     val parts = listOfNotNull(
         elapsedMs.takeIf { startedAt != null && it >= 1_000 }?.let { formatDuration(it) },
-        session.turnOutputTokens.takeIf { it > 0 }?.let { "↓${formatTokens(it)}" },
+        session.usage.turnOutputTokens?.takeIf { it > 0 }?.let { "↓${formatTokens(it)}" },
     )
     if (parts.isEmpty()) return
     Text(
@@ -1655,16 +1667,17 @@ private fun statusPhaseLabel(phase: String?): String? = when (phase) {
  * 数据来自 `task_started` / `task_progress` / `task_updated`，按 task_id 原地更新。
  */
 @Composable
-private fun SubagentLine(task: ClaudeCodeManager.TaskInfo) {
-    val toolUsesLabel = task.toolUses?.takeIf { it > 0 }?.let {
+private fun SubagentLine(thread: AgentThread) {
+    val progress = thread.progress
+    val toolUsesLabel = progress?.toolUses?.takeIf { it > 0 }?.let {
         stringResource(R.string.session_subagent_tool_uses, it)
     }
     val meta = listOfNotNull(
-        task.lastToolName,
+        progress?.lastTool,
         toolUsesLabel,
         // token 数是机器产物。和回执行同一个口径（formatTokens 有一位小数），
         // 1500 tok 曾在这里被整数除法截成 "1k tok"
-        task.totalTokens?.takeIf { it > 0 }?.let { formatTokens(it) },
+        progress?.tokens?.takeIf { it > 0 }?.let { formatTokens(it) },
     ).joinToString(" · ")
     val azure = MaterialTheme.sea.sea
     Row(
@@ -1674,13 +1687,13 @@ private fun SubagentLine(task: ClaudeCodeManager.TaskInfo) {
     ) {
         SubagentMarker(azure)
         Text(
-            text = task.subagentType?.let { subagentTypeLabel(it) } ?: stringResource(R.string.session_subagent_default),
+            text = thread.agentType.let { subagentTypeLabel(it) },
             style = MaterialTheme.typography.labelSmall,
             color = azure,
             maxLines = 1,
         )
         Text(
-            text = task.summary?.takeIf { it.isNotBlank() } ?: task.progress?.takeIf { it.isNotBlank() } ?: task.description,
+            text = progress?.summary?.takeIf { it.isNotBlank() } ?: progress?.detail?.takeIf { it.isNotBlank() } ?: progress?.description.orEmpty(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
@@ -1807,10 +1820,13 @@ private fun PlanBanner(onOpen: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PermissionSheet(
-    pending: ClaudeCodeEvent.PermissionRequest,
+    /** 审批卡或计划审批卡（提问卡走 [ClaudeCodeQuestionSheet]） */
+    pending: PendingInteraction,
     origin: PermissionOrigin,
-    onAnswer: (allow: Boolean, suggestion: PermissionSuggestion?) -> Unit,
+    /** 点了哪个按钮，传它的 [ApprovalOption.id] */
+    onAnswer: (optionId: String) -> Unit,
 ) {
+    val approval = pending as? PendingInteraction.Approval
     // **不允许滑动关掉**。这个 sheet 是在会话流上方弹出来的，而用户很可能正在往回滑看历史 ——
     // 弹出的那一瞬间手指还在移动，一下就把它滑走了，而滑走等于 onDismissRequest，
     // 之前那会直接回一个 deny。ExitPlanMode 被误拒的后果尤其重：模型会以为你否了这份计划，
@@ -1838,23 +1854,23 @@ private fun PermissionSheet(
             ) {
                 Seal()
                 Text(
-                    pending.toolName,
+                    pending.awaitedToolName,
                     style = MaterialTheme.typography.titleSmall,
                     fontFamily = JetbrainsMono,
                 )
             }
             PermissionOriginLines(origin, denyHint = true)
-            pending.description?.takeIf { it.isNotBlank() }?.let {
+            approval?.description?.takeIf { it.isNotBlank() }?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium)
             }
-            pending.blockedPath?.takeIf { it.isNotBlank() }?.let {
+            approval?.blockedPath?.takeIf { it.isNotBlank() }?.let {
                 Text(
                     stringResource(R.string.session_permission_blocked_path, it),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.sea.vermilion,
                 )
             }
-            pending.decisionReason?.takeIf { it.isNotBlank() }?.let {
+            approval?.reason?.takeIf { it.isNotBlank() }?.let {
                 Text(
                     stringResource(R.string.session_permission_reason, it),
                     style = MaterialTheme.typography.labelSmall,
@@ -1863,8 +1879,8 @@ private fun PermissionSheet(
             }
             // 要动的东西跑到 /workspace 之外了。挂了整机存储之后这是唯一能把
             // 「改容器里的 /etc」和「改你相册里的照片」分开说的地方
-            val escaped = remember(pending.input) { escapedPaths(pending.input) }
-            val onDevice = remember(pending.input) { touchesDeviceStorage(pending.input) }
+            val escaped = approval?.paths.orEmpty().map { it.path }
+            val onDevice = approval?.paths.orEmpty().any { it.scope == PathScope.Device }
             if (escaped.isNotEmpty()) {
                 Text(
                     text = if (onDevice) {
@@ -1886,8 +1902,9 @@ private fun PermissionSheet(
             // 原来这里是 `input.toString()` 截断成一行流水账 —— 用户点「允许」时
             // 其实看不到自己批准了什么，而那正是权限确认唯一的意义。
             ToolInputPreview(
-                name = pending.toolName,
-                input = pending.input,
+                name = pending.awaitedToolName,
+                // 计划审批卡只带计划正文：ExitPlanMode 的预览也只读 `plan`
+                input = approval?.input ?: planInputOf(pending),
                 labels = rememberTranscriptLabels(),
             )
 
@@ -1899,12 +1916,12 @@ private fun PermissionSheet(
             ) {
                 // 拒绝是判定（朱砂），允许是主动作（墨 / 金）
                 InkButton(
-                    onClick = { onAnswer(false, null) },
+                    onClick = { onAnswer(ApprovalOption.DENY_AND_STOP) },
                     modifier = Modifier.weight(1f),
                     tone = InkButtonTone.Vermilion,
                 ) { Text(stringResource(R.string.session_permission_deny)) }
                 InkButton(
-                    onClick = { onAnswer(true, null) },
+                    onClick = { onAnswer(ApprovalOption.ALLOW) },
                     modifier = Modifier.weight(1f),
                 ) { Text(stringResource(R.string.session_permission_allow_once)) }
             }
@@ -1914,9 +1931,9 @@ private fun PermissionSheet(
             // 而这一档改坏了没有 undo（rootfs 里改砸了重装就回来，相册里的照片不会）。
             // 每一次都值得单独看一眼——这正是把整机交出去之后仅剩的那道闸。
             if (!onDevice) {
-                pending.suggestions.forEach { suggestion ->
+                approval?.options.orEmpty().filter { it.kind == ApprovalOption.Kind.AllowAlways }.forEach { suggestion ->
                     InkButton(
-                        onClick = { onAnswer(true, suggestion) },
+                        onClick = { onAnswer(suggestion.id) },
                         modifier = Modifier.fillMaxWidth(),
                         tone = InkButtonTone.Paper,
                         icon = HugeIcons.Tick01,
@@ -1929,12 +1946,19 @@ private fun PermissionSheet(
     }
 }
 
+/** 计划审批卡 -> 预览组件要的入参形状（只有 `plan` 一项） */
+private fun planInputOf(pending: PendingInteraction): JsonObject = buildJsonObject {
+    (pending as? PendingInteraction.PlanReview)?.let { put("plan", it.plan) }
+}
+
 @Composable
 internal fun StartPanel(
-    session: ClaudeCodeManager.SessionState,
+    session: AgentSessionState,
     cliVersion: String?,
-    onStart: (ClaudeCodeManager.SessionOptions) -> Unit,
-    lastOptions: ClaudeCodeManager.SessionOptions = session.options,
+    /** (跳过权限确认, 工作目录)。其余设置沿用上次的，由会话层取 */
+    onStart: (Boolean, String) -> Unit,
+    /** 面板上默认选中的工作目录（上次用过的） */
+    defaultCwd: String,
     onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
     onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
     /** false = 还没有可用的供应商，见 [SessionVM.connected] */
@@ -1942,7 +1966,7 @@ internal fun StartPanel(
     onOpenProviders: () -> Unit = {},
 ) {
     var skipPermissions by rememberSaveable { mutableStateOf(false) }
-    var cwd by rememberSaveable { mutableStateOf(lastOptions.cwd.ifBlank { ClaudeCodeManager.DEFAULT_CWD }) }
+    var cwd by rememberSaveable { mutableStateOf(defaultCwd) }
     var pickingCwd by remember { mutableStateOf(false) }
     // 挂在 ConnectPrompt 外面：登录成功那一刻 ConnectPrompt 就收起了，见它的注释
     var subscriptionLogin by remember { mutableStateOf(false) }
@@ -2023,15 +2047,7 @@ internal fun StartPanel(
                     }
                 }
                 InkButton(
-                    onClick = {
-                        onStart(
-                            lastOptions.copy(
-                                skipPermissions = skipPermissions,
-                                resumeSessionId = null,
-                                cwd = cwd,
-                            ),
-                        )
-                    },
+                    onClick = { onStart(skipPermissions, cwd) },
                     modifier = Modifier.fillMaxWidth(),
                     icon = HugeIcons.Play,
                 ) {

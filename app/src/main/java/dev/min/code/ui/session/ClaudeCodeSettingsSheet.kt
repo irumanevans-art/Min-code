@@ -23,6 +23,11 @@ import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
 import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ReasoningLevel
+import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.Choice
+import dev.min.code.core.engine.SettingsView
+import dev.min.code.core.engine.SlashCommandView
+import dev.min.code.core.engine.claude.ClaudeStateMapper
 import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.InkDivider
 
@@ -86,14 +91,14 @@ internal fun LocalSlash.toSection(): SettingsSection? = when (this) {
 
 @Composable
 internal fun ClaudeCodeSettingsSheet(
-    session: ClaudeCodeManager.SessionState,
+    session: AgentSessionState,
     initialSection: SettingsSection?,
     chineseDescriptions: Boolean,
     onSetChineseDescriptions: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     /** (模型, 是否同时存成新会话默认)，语义见 [ModelPicker] */
     onSetModel: (String?, Boolean) -> Unit,
-    onSetPermissionMode: (ClaudeCodePermissionMode) -> Unit,
+    onSetPermissionMode: (String) -> Unit,
     onApplyEffort: (String?, Boolean) -> Unit,
     onSetPromptCacheTtl: (String) -> Unit,
     onSetCwd: (String) -> Unit,
@@ -103,11 +108,12 @@ internal fun ClaudeCodeSettingsSheet(
 ) {
     // 展开的分区。null = 全部折叠，只看五行概览
     var open by remember { mutableStateOf(initialSection) }
-    val settingsBusy = session.applyingSettings || session.applyingEffort || session.stopping
+    val settings = session.settings
+    val settingsBusy = settings.applying || session.stopping
     // 转圈 + 文案跟对话流 LiveTurnEntry 同一句话，状态连续
     val busyLabel = when {
         session.stopping -> stringResource(R.string.session_settings_busy_stopping)
-        session.applyingEffort -> stringResource(R.string.session_settings_busy_relaunch)
+        settings.relaunching -> stringResource(R.string.session_settings_busy_relaunch)
         else -> stringResource(R.string.session_settings_busy)
     }
     SessionSettingsFrame(
@@ -118,17 +124,18 @@ internal fun ClaudeCodeSettingsSheet(
     ) {
         Section(
             section = SettingsSection.MODEL,
-            value = session.modelChipLabel(),
+            value = settings.modelChipLabel(),
             open = open,
             onToggle = { open = it },
         ) {
             ModelPicker(
-                models = session.availableModels,
-                relayModels = session.relayModels,
-                relayChecked = session.relayModelsChecked,
-                relayError = session.relayModelsError,
-                current = session.currentModel,
-                appliedModel = session.appliedModel,
+                models = settings.catalogModels,
+                aliasModels = settings.aliasModels,
+                relayModels = settings.relayModels,
+                relayChecked = !settings.modelsLoading,
+                relayError = settings.modelsError,
+                current = settings.requestedModel,
+                appliedModel = settings.applied.model,
                 chineseDescriptions = chineseDescriptions,
                 enabled = !settingsBusy,
                 onPick = onSetModel,
@@ -137,38 +144,39 @@ internal fun ClaudeCodeSettingsSheet(
 
         Section(
             section = SettingsSection.MODE,
-            value = session.permissionMode.label,
+            value = settings.mode.label,
             open = open,
             onToggle = { open = it },
         ) {
-            ClaudeCodePermissionMode.entries.forEach { mode ->
+            settings.modes.forEach { mode ->
                 OptionRow(
                     title = mode.label,
-                    subtitle = stringResource(mode.descRes()),
-                    selected = mode == session.permissionMode,
+                    subtitle = ClaudeCodePermissionMode.fromWire(mode.id)?.let { stringResource(it.descRes()) },
+                    selected = mode.id == settings.mode.id,
                     enabled = !settingsBusy,
-                    onClick = { onSetPermissionMode(mode) },
+                    onClick = { onSetPermissionMode(mode.id) },
                 )
             }
         }
 
         Section(
             section = SettingsSection.EFFORT,
-            value = session.effortChipLabel(),
+            value = settings.effortChipLabel(),
             open = open,
             onToggle = { open = it },
         ) {
-            EffortPicker(session = session, enabled = !settingsBusy, onApply = onApplyEffort)
+            EffortPicker(settings = settings, enabled = !settingsBusy, onApply = onApplyEffort)
         }
 
         Section(
             section = SettingsSection.CACHE,
-            value = session.options.promptCacheTtl,
+            value = settings.promptCacheTtl,
             open = open,
             onToggle = { open = it },
         ) {
             PromptCacheTtlPicker(
-                current = session.options.promptCacheTtl,
+                options = settings.extra(ClaudeStateMapper.OPTION_CACHE_TTL)?.options.orEmpty(),
+                current = settings.promptCacheTtl,
                 enabled = !settingsBusy,
                 onPick = onSetPromptCacheTtl,
             )
@@ -261,7 +269,7 @@ private fun Section(
 @Composable
 private fun DescriptionLanguageSwitch(
     chinese: Boolean,
-    commands: List<ClaudeCodeManager.SlashCommand>,
+    commands: List<SlashCommandView>,
     onChange: (Boolean) -> Unit,
 ) {
     val translated = remember(commands) { translatedCommandCount(commands.map { it.name }) }
@@ -292,8 +300,10 @@ private fun DescriptionLanguageSwitch(
 
 @Composable
 private fun ModelPicker(
-    models: List<ClaudeCodeManager.ModelOption>,
-    relayModels: List<ClaudeCodeManager.RelayModel>,
+    models: List<Choice>,
+    /** CLI 目录里缺席、但该让人选到的别名（Fable 这类），见 [SettingsView.aliasModels] */
+    aliasModels: List<Choice>,
+    relayModels: List<Choice>,
     relayChecked: Boolean,
     relayError: String?,
     current: String?,
@@ -311,22 +321,21 @@ private fun ModelPicker(
     // 中转站列表里选模型时要不要带 [1m]。默认跟当前选中项走：用着 opus-5[1m] 的人
     // 换到别的多半也想要 1M。原生 1M 的模型（Fable / Opus 5 / Sonnet 5）不受这个开关影响。
     var longContext by remember { mutableStateOf(ClaudeCodeModelCatalog.hasLongContextSuffix(current)) }
-    val listed = models.map { it.value }.toSet()
-    val listedFamilies = models.map { ClaudeCodeModelCatalog.familyOf(it.resolvedModel ?: it.value) }.toSet()
+    val listed = models.map { it.id }.toSet()
+    val listedFamilies = models.map { ClaudeCodeModelCatalog.familyOf(it.resolvedId ?: it.id) }.toSet()
     // 推荐区：CLI 目录里整个家族都缺席时才补（选中过 Fable 之后 CLI 自己会列出来）
-    val promoted = ClaudeCodeManager.HIDDEN_MODEL_ALIASES.filter { alias ->
-        alias.value in ClaudeCodeManager.PROMOTED_MODEL_IDS &&
-            ClaudeCodeModelCatalog.familyOf(alias.value) !in listedFamilies
+    val promoted = aliasModels.filter { alias ->
+        alias.recommended && ClaudeCodeModelCatalog.familyOf(alias.id) !in listedFamilies
     }
-    val hidden = ClaudeCodeManager.HIDDEN_MODEL_ALIASES.filter { it.value !in listed && it !in promoted }
+    val hidden = aliasModels.filter { it.id !in listed && it !in promoted }
     val relayIds = relayModels.map { it.id }.toSet()
     // 当前选中项若不在任何目录里（手输的名字），也要显示出来，否则选中项凭空消失
     val orphan = current
         ?.takeIf {
-            it !in listed && hidden.none { h -> h.value == it } && promoted.none { p -> p.value == it } &&
+            it !in listed && hidden.none { h -> h.id == it } && promoted.none { p -> p.id == it } &&
                 ClaudeCodeModelCatalog.stripLongContext(it) !in relayIds
         }
-        ?.let { ClaudeCodeManager.ModelOption(value = it, displayName = it, hiddenAlias = true) }
+        ?.let { Choice(id = it, label = it) }
     val pick = { value: String? -> if (enabled) onPick(value, asDefault) }
     // 中转站的 [1m] 开关只在列表里真有"加了才是 1M"的模型时才出现 —— 对着一列原生 1M 的
     // 模型问"要不要启用 1M"，正是"咋设置 1m 上下文"这种困惑的来源
@@ -363,20 +372,20 @@ private fun ModelPicker(
         )
         promoted.forEach { model ->
             OptionRow(
-                title = model.displayName,
-                subtitle = modelDescription(model.value, model.description, chineseDescriptions),
-                selected = ClaudeCodeModelCatalog.sameModel(model.value, current),
+                title = model.label,
+                subtitle = modelDescription(model.id, model.description, chineseDescriptions),
+                selected = ClaudeCodeModelCatalog.sameModel(model.id, current),
                 enabled = enabled,
-                onClick = { pick(model.value) },
+                onClick = { pick(model.id) },
             )
         }
         models.forEach { model ->
             OptionRow(
-                title = model.displayName,
-                subtitle = modelDescription(model.value, model.description, chineseDescriptions),
-                selected = model.value == current,
+                title = model.label,
+                subtitle = modelDescription(model.id, model.description, chineseDescriptions),
+                selected = model.id == current,
                 enabled = enabled,
-                onClick = { pick(model.value) },
+                onClick = { pick(model.id) },
             )
         }
 
@@ -412,12 +421,13 @@ private fun ModelPicker(
                 val wantsSuffix = longContext && ClaudeCodeModelCatalog.longContextSuffixMeaningful(model.id)
                 val value = if (wantsSuffix) "${model.id}${ClaudeCodeModelCatalog.LONG_CONTEXT_SUFFIX}" else model.id
                 val described = modelDescription(model.id, null, chineseDescriptions)
+                // 中转站没给显示名时 label 就是 id，description 为空；有显示名时 description 是 id（原来的第二行）
                 OptionRow(
-                    title = model.displayName ?: model.id,
-                    subtitle = described ?: model.displayName?.let { model.id },
+                    title = model.label,
+                    subtitle = described ?: model.description,
                     selected = current == value || current == model.id ||
                         current == "${model.id}${ClaudeCodeModelCatalog.LONG_CONTEXT_SUFFIX}",
-                    monospaceTitle = model.displayName == null,
+                    monospaceTitle = model.description == null,
                     enabled = enabled,
                     onClick = { pick(value) },
                 )
@@ -428,11 +438,11 @@ private fun ModelPicker(
             SettingsSubHeader(stringResource(R.string.session_model_alias_header))
             extras.forEach { model ->
                 OptionRow(
-                    title = model.displayName,
-                    subtitle = modelDescription(model.value, model.description, chineseDescriptions),
-                    selected = model.value == current,
+                    title = model.label,
+                    subtitle = modelDescription(model.id, model.description, chineseDescriptions),
+                    selected = model.id == current,
                     enabled = enabled,
-                    onClick = { pick(model.value) },
+                    onClick = { pick(model.id) },
                 )
             }
         }
@@ -459,32 +469,33 @@ private fun ModelPicker(
  */
 @Composable
 private fun EffortPicker(
-    session: ClaudeCodeManager.SessionState,
+    settings: SettingsView,
     enabled: Boolean = true,
     onApply: (String?, Boolean) -> Unit,
 ) {
     Column {
-        session.appliedEffort?.let { applied ->
+        settings.applied.effort?.let { applied ->
             SettingsSubHeader(
                 stringResource(R.string.session_effort_applied, applied) +
-                    if (session.appliedUltracode) {
+                    if (settings.applied.ultracode) {
                         stringResource(R.string.session_effort_ultracode_on)
                     } else {
                         ""
                     }
             )
         }
-        if (!effortSupportedFor(session)) {
+        if (!settings.effortSupported) {
             // CLI 面板原话 "Effort not supported for Haiku"：列一排点了没反应的档位不如直说
             SettingsSubHeader(stringResource(R.string.session_effort_unsupported))
         }
         SettingsSubHeader(stringResource(R.string.session_effort_restart))
-        effortLevelsFor(session).forEach { level ->
-            val effort = levelToEffort(level)
+        settings.efforts.forEach { level ->
+            // 「跟随默认」的 id 是空串，对引擎说「不传 flag」就是 null
+            val effort = level.id.ifEmpty { null }
             OptionRow(
                 title = effort ?: stringResource(R.string.session_effort_default),
                 subtitle = effortHint(effort),
-                selected = !session.options.ultracode && session.currentEffort == effort,
+                selected = !settings.ultracode && settings.requestedEffort == effort,
                 monospaceTitle = effort != null,
                 enabled = enabled,
                 onClick = { onApply(effort, false) },
@@ -494,7 +505,7 @@ private fun EffortPicker(
         OptionRow(
             title = "Ultracode",
             subtitle = stringResource(R.string.session_effort_ultracode_sub),
-            selected = session.options.ultracode,
+            selected = settings.ultracode,
             enabled = enabled,
             onClick = { onApply(null, true) },
         )
@@ -516,13 +527,14 @@ private fun EffortPicker(
  */
 @Composable
 private fun PromptCacheTtlPicker(
+    options: List<Choice>,
     current: String,
     enabled: Boolean = true,
     onPick: (String) -> Unit,
 ) {
     Column {
         SettingsSubHeader(stringResource(R.string.session_cache_restart))
-        ClaudeCodeManager.PROMPT_CACHE_TTLS.forEach { ttl ->
+        options.map { it.id }.forEach { ttl ->
             OptionRow(
                 title = if (ttl == ClaudeCodeManager.DEFAULT_PROMPT_CACHE_TTL) stringResource(R.string.session_cache_default_suffix, ttl) else ttl,
                 subtitle = promptCacheHint(ttl),
@@ -576,6 +588,10 @@ internal fun effortHint(effort: String?): String? = when (effort) {
     else -> null
 }
 
+// 下面三个（levelToEffort / effortLevelsFor / effortSupportedFor）页面已经不用了：档位表改由适配器算好放进
+// SettingsView.efforts / effortSupported（ClaudeStateMapper，同一套规则）。它们只剩 ClaudeCodeEffortMappingTest 在用，
+// 那份测试钉着旧签名（吃 ClaudeCodeManager.SessionState），不能改，所以留着；和测试一起清理时删掉。
+
 /**
  * ReasoningLevel ↔ CLI effort 的映射。
  *
@@ -620,13 +636,26 @@ internal fun effortSupportedFor(session: ClaudeCodeManager.SessionState): Boolea
     return ClaudeCodeModelCatalog.supportsEffort(model)
 }
 
-/** 底栏摘要里的 effort 段 —— 优先用 CLI 回读的真实值 */
+// ---------------------------------------------------------------------------
+// 通用设置视图上的小取值（摘要行 / 面板共用）。CC 的键见 [ClaudeStateMapper]
+// ---------------------------------------------------------------------------
+
+/** 用户**请求**的模型（选中行按它判）。null = 跟随默认 */
+internal val SettingsView.requestedModel: String? get() = model?.id?.ifEmpty { null }
+
+/** 用户请求的强度。null = 不传 flag */
+internal val SettingsView.requestedEffort: String? get() = effort?.id?.ifEmpty { null }
+
+internal val SettingsView.ultracode: Boolean get() = extra(ClaudeStateMapper.OPTION_ULTRACODE)?.value == "true"
+
+internal val SettingsView.promptCacheTtl: String get() = extra(ClaudeStateMapper.OPTION_CACHE_TTL)?.value.orEmpty()
+
+/** 底栏摘要里的 effort 段 —— 优先用 CLI 回读的真实值（适配器已把它和 ultracode 折进 label） */
 @Composable
-internal fun ClaudeCodeManager.SessionState.effortChipLabel(): String {
+internal fun SettingsView.effortChipLabel(): String {
     // 先取出来再判断：条件里调 stringResource 可读性更差，而它本来就是常量查表
     val fallback = stringResource(R.string.session_effort_chip_default)
-    if (options.ultracode || appliedUltracode) return "ultracode"
-    return appliedEffort ?: currentEffort ?: fallback
+    return effort?.label?.takeIf { it.isNotBlank() } ?: fallback
 }
 
 /**
@@ -634,17 +663,10 @@ internal fun ClaudeCodeManager.SessionState.effortChipLabel(): String {
  *
  * 没有显式选过模型时只写"默认"是不够的：用户看不出**实际**在跑哪个模型，
  * 切换失败（CLI 拒绝 / 中转站不供应）时更是完全无感 —— 界面停在"默认"，
- * 看起来就像"点了没反应"。有 `get_settings` 回读的 applied.model 就显示它。
+ * 看起来就像"点了没反应"。有 `get_settings` 回读的 applied.model 就显示它（适配器已折进 label）。
  */
 @Composable
-internal fun ClaudeCodeManager.SessionState.modelChipLabel(): String {
+internal fun SettingsView.modelChipLabel(): String {
     val fallback = stringResource(R.string.session_model_default)
-    val selected = currentModel
-    if (selected != null) {
-        return (availableModels + ClaudeCodeManager.HIDDEN_MODEL_ALIASES)
-            .firstOrNull { it.value == selected }
-            ?.displayName
-            ?: selected
-    }
-    return appliedModel ?: model ?: fallback
+    return model?.label?.takeIf { it.isNotBlank() } ?: fallback
 }

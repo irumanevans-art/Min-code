@@ -40,6 +40,13 @@ data class AgentSessionState(
     val errorMessage: String?,
     /** 用的哪个供应商档、是否已过时 / 已被删 */
     val connection: ConnectionView?,
+    /**
+     * 引擎自己报的当前模型名（CC：init 帧里的 `model`），顶栏副标题用。与 [SettingsView.model] 不是一回事：
+     * 那个是「用户请求的」+「底栏芯片显示的」，这个是引擎回报的原话。设计 §3.4 没有，B6(b) 为保持副标题不变补上。
+     */
+    val reportedModel: String? = null,
+    /** 引擎报的工具数（CC：init 帧里的工具列表长度），顶栏副标题「N 个工具」用。0 = 不显示。同上，B6(b) 补 */
+    val toolCount: Int = 0,
 ) {
     /** 回合在跑。「忙」只有这一个定义，别在别处用 status 推 */
     val busy: Boolean get() = turn != null
@@ -48,6 +55,9 @@ data class AgentSessionState(
 
     /** 还没送进引擎、停止时要退回输入框的排队消息数 */
     val queuedCount: Int get() = items.count { it is ChatItem.UserText && it.queued }
+
+    /** 还在跑、任务表里还有它的子 agent。会话流末尾那几行「在跑的子 agent」读它（后台 shell 不在其内，归 [tasks]） */
+    val runningThreads: List<AgentThread> get() = threads.filter { it.running && it.tracked }
 
     /** 供应商档被删了：会话只读（§5.1），不能发送、不出 ▶ */
     val readOnly: Boolean get() = connection?.removed == true
@@ -151,7 +161,7 @@ data class SettingsView(
     val effortNeedsRestart: Boolean,
     val mode: Choice,
     val modes: List<Choice>,
-    /** 正在应用设置（CC 的 applyingSettings） */
+    /** 正在应用设置（CC 的 applyingSettings 或 applyingEffort 任一个）。要分开说是哪一种读 [hotSwapping] / [relaunching] */
     val applying: Boolean,
     /** CC：提示缓存 TTL、ultracode；Codex：summary；Min：无 */
     val extras: List<EngineOptionView>,
@@ -160,7 +170,32 @@ data class SettingsView(
      * Min 里模型 `supportsImages` 为假时图片项置灰，不是整个隐藏。
      */
     val modelSupportsImages: Boolean = true,
+    /**
+     * 引擎自己的模型目录（CC：CLI 的 `list_models`）。[models] 是它加上中转站真供应的合并表，
+     * 设置面板要把「目录 / 中转站 / 隐藏别名」分段画，所以另给原料。B6(b) 补（设计 §3.4 没有）。
+     */
+    val catalogModels: List<Choice> = emptyList(),
+    /** 中转站 `/v1/models` 真实供应的模型。[Choice.label] = 显示名或 id；有显示名时 [Choice.description] 是 id */
+    val relayModels: List<Choice> = emptyList(),
+    /** 查中转站模型表失败的原因；null = 没失败（[modelsLoading] 为假且表为空时是「查到空」） */
+    val modelsError: String? = null,
+    /** CLI 当前选中目录里没列出来、但该让人选到的别名（Fable 这类），[Choice.recommended] 的排在推荐区 */
+    val aliasModels: List<Choice> = emptyList(),
+    /** 热切换设置（切模型 / 权限 / cwd …）进行中。CC 的 `applyingSettings`；转圈文案「正在应用」。B6(b) 补 */
+    val hotSwapping: Boolean = false,
+    /** 正在重启进程续接会话以应用设置（换强度 / 缓存 TTL）。CC 的 `applyingEffort`；转圈文案「正在重启」。B6(b) 补 */
+    val relaunching: Boolean = false,
+    /**
+     * 当前模型有没有强度这个概念（CC：Haiku 整个家族没有）。为假时 [efforts] 只剩「跟随默认」，面板要明说「不支持」。
+     * 不能拿 `efforts.any { 有值 }` 推：模型支持强度、但目录报的档位一个都对不上时 [efforts] 也只剩一项。B6(b) 补
+     */
+    val effortSupported: Boolean = true,
+    /** 引擎回读的**实际生效**配置，可能与请求的不同（ultracode 时强度回读为 xhigh）。面板上「默认（实际：…）」读它 */
+    val applied: AppliedSettings = AppliedSettings(),
 ) {
+    /** 按键取一个引擎专有设置项 */
+    fun extra(key: String): EngineOptionView? = extras.firstOrNull { it.key == key }
+
     companion object {
         val Empty = SettingsView(
             model = null, models = emptyList(), modelsLoading = false,
@@ -183,6 +218,12 @@ data class Choice(
     val description: String? = null,
     val warning: String? = null,
     val profileId: String? = null,
+    /** 这个别名解析到的真实模型 id（CC：`resolvedModel`），面板按它判模型家族 */
+    val resolvedId: String? = null,
+    /** 这个模型支持的强度档（CC：`supportedEffortLevels`）。空 = 没报 */
+    val supportedEfforts: List<String> = emptyList(),
+    /** 置顶推荐（CC 的 `PROMOTED_MODEL_IDS`）。只有 [SettingsView.aliasModels] 里用 */
+    val recommended: Boolean = false,
 ) {
     /**
      * 选这一项会不会换供应商：[connection] 是会话当前用的档。界面据此在切换时提示一句
@@ -196,6 +237,9 @@ data class Choice(
         val None = Choice(id = "", label = "")
     }
 }
+
+/** 引擎回读的实际生效配置。null / false = 没读到 */
+data class AppliedSettings(val model: String? = null, val effort: String? = null, val ultracode: Boolean = false)
 
 /** 引擎专有的一个设置项（CC 缓存 TTL、Codex summary…）。改它发 [SessionCommand.SetEngineOption] */
 data class EngineOptionView(

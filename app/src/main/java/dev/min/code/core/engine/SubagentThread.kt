@@ -46,6 +46,8 @@ data class AgentThread(
     val messageable: Boolean = true,
     /** 它自己停在半路时的 ▶（子 agent 页左槽用）。只有 Min 填，规则同 [offerResume] */
     val resume: ResumeOffer? = null,
+    /** 会话流末尾那行「在跑的子 agent」要的细项。B6(b) 补（设计 §3.7 没有） */
+    val progress: ThreadProgress? = null,
 ) {
     enum class Phase {
         Running,
@@ -66,8 +68,22 @@ data class AgentThread(
 
     fun toLabel(): AgentLabel = AgentLabel(
         threadId = threadId, agentType = agentType, name = name, description = description, background = background,
+        fork = fork,
     )
 }
+
+/**
+ * 子 agent 此刻的进度细项，原样来自引擎的进度帧（CC：`task_progress` / `task_updated`）。
+ * [description] 是任务说明（始终在），[summary] / [detail] 是它此刻在干什么的两层说法（前者优先）。
+ */
+data class ThreadProgress(
+    val description: String,
+    val summary: String? = null,
+    val detail: String? = null,
+    val lastTool: String? = null,
+    val toolUses: Int? = null,
+    val tokens: Int? = null,
+)
 
 /**
  * 一个后台任务（后台 shell、本地服务）。
@@ -83,9 +99,21 @@ data class BackgroundTask(
     val toolUseId: String?,
     val pid: Int?,
     val logRef: String?,
+    /** 命令全文（[label] 优先用说明，说明为空才退回命令）。B6(b) 补：后台任务面板要把两者分开显示 */
+    val command: String = "",
+    /** 托管服务的退出码；CLI 不报 shell 的退出码 */
+    val exitCode: Int? = null,
+    val source: Source = Source.Cli,
+    /** 发起它的是 Monitor 工具 */
+    val monitor: Boolean = false,
 ) {
+    /** 谁在管它：CLI 的任务、本机进程表托管的服务，或两边各一份（bypass 下的孪生） */
+    enum class Source { Cli, Hosted, Both }
+
     enum class Kind { Shell, Service }
     enum class Status { Running, Done, Failed, Stopped }
+
+    val isRunning: Boolean get() = status == Status.Running
 }
 
 // ---------------------------------------------------------------------------

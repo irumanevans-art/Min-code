@@ -3,47 +3,102 @@ package dev.min.code.ui.session
 import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import dev.min.code.R
-import dev.min.code.core.claudecode.ClaudeCodeConfigStore
 import dev.min.code.core.claudecode.ClaudeCodeCostLedger
-import dev.min.code.core.claudecode.ClaudeCodeImage
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
+import dev.min.code.core.claudecode.DraftImage
+import dev.min.code.core.engine.AgentSession
+import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.CloseReason
+import dev.min.code.core.engine.CommandResult
+import dev.min.code.core.engine.EngineKind
+import dev.min.code.core.engine.ImageInput
+import dev.min.code.core.engine.InteractionAnswer
+import dev.min.code.core.engine.LiveStream
+import dev.min.code.core.engine.RefreshTarget
+import dev.min.code.core.engine.SendTarget
+import dev.min.code.core.engine.SessionCommand
+import dev.min.code.core.engine.SessionRef
+import dev.min.code.core.engine.SessionSignal
+import dev.min.code.core.engine.StartOptions
+import dev.min.code.core.engine.TaskOutputTail
+import dev.min.code.core.engine.UserInput
+import dev.min.code.core.engine.claude.ClaudeCodeEngine
+import dev.min.code.core.engine.claude.ClaudeStateMapper
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
+import dev.min.code.core.rootfs.MENTION_LIMIT
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.rootfs.createCwdFolder
 import dev.min.code.core.rootfs.listCwdFolders
+import dev.min.code.core.session.SessionStatus
 import dev.min.code.core.settings.SettingsStore
 import me.rerere.workspace.WorkspaceFileEntry
+import java.util.UUID
 
 /**
  * 当前会话本身：状态、输入框草稿、发消息与会话内的各种控制。
  *
- * 从原来的 ClaudeCodeVM 拆出来（M2-B B6a，纯搬家，行为不变）。「谁是活跃会话」只有注册表一个来源，
- * 这里的 [session] / [activeSessionKey] 是它的直通，其它 VM（[SessionListVM]、[WorkspaceToolsVM]、
- * [MaintenanceVM]）要读就直接读注册表，不经过本类。本类独占的状态是 [composerDraft] 和 [notice]。
+ * 从原来的 ClaudeCodeVM 拆出来（M2-B B6a），B6(b) 起页面读的是引擎无关的类型：状态是 [AgentSessionState]，
+ * 逐字增量是 [LiveStream]，写入一律是 [SessionCommand] 经 [AgentSession.submit]。
+ *
+ * ## 为什么建 / 开 / 关会话仍走旧注册表
+ *
+ * 设计 §3.10 写的是经 `AgentSessionRegistry.create/open/close`，但那条路和现行为有三处不一样，B6 要求行为不变：
+ * 1. 它先查引擎的 availability，没连供应商时直接 Unavailable；旧页面照样让人点「启动会话」；
+ * 2. 它的并发名额算「在线 ∪ 界面打开着的」，崩掉的壳留在 attached 里会一直占位，没有 `pruneDead` 那样的回收；
+ * 3. `close` 只摘它自己的 attached，旧注册表里的 manager 还在，`pruneDead` 靠旧的活跃项判「用户正看着」。
+ * 所以生命周期仍由 [ClaudeCodeSessionRegistry] 管（B9 把它拆进 `ClaudeCodeEngine` 时一并换掉），**活跃会话只有它一个来源**：
+ * [ClaudeCodeEngine.activeSession] 把它的活跃项套成通用会话，本类读状态、发命令都经那一个对象。
+ *
+ * 本类独占的状态是 [composerDraft] 和 [notice]。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class SessionVM(
     private val context: Application,
     private val registry: ClaudeCodeSessionRegistry,
+    private val engine: ClaudeCodeEngine,
     private val workspaceRepository: WorkspaceRepository,
-    private val configStore: ClaudeCodeConfigStore,
     private val costLedger: ClaudeCodeCostLedger,
     private val settingsStore: SettingsStore,
     private val drafts: ComposerDraftStore,
 ) : ViewModel() {
-    /** 活跃会话的状态（注册表在多个会话间切换时自动跟随） */
-    val session = registry.state
+    /** 当前活跃的会话（通用接口）。没有时 null */
+    private val active: StateFlow<AgentSession?> = engine.activeSession
+
+    /**
+     * 活跃会话的状态（注册表在多个会话间切换时自动跟随）。没有活跃会话时给一个 Idle 占位，
+     * 页面侧不用到处判空，和改造前一样。
+     *
+     * 初值取此刻活跃会话的当前状态而不是占位：VM 在转屏 / 回到页面时重建，会话早就在跑，
+     * 第一帧不能先闪一下「没有会话」的启动面板。
+     */
+    val session: StateFlow<AgentSessionState> = active
+        .flatMapLatest { it?.state ?: flowOf(NoSession) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, active.value?.state?.value ?: NoSession)
+
+    /** 活跃会话的逐字增量（正文 / 思考）。和 [session] 分开，流式期间只有读它的那一块在重组 */
+    val stream: StateFlow<LiveStream> = active
+        .flatMapLatest { it?.stream ?: flowOf(LiveStream.Empty) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, active.value?.stream?.value ?: LiveStream.Empty)
 
     /**
      * 注册表的会话 key。CLI 还没回报 `sessionId` 时状态里是空的，
@@ -58,11 +113,22 @@ class SessionVM(
     private val _composerDraft = MutableStateFlow(ComposerDraft.Empty)
     val composerDraft: StateFlow<ComposerDraft> = _composerDraft.asStateFlow()
 
+    /** 命令被拒、话要原样退回输入框（会话已关掉发不出去）。和 [SessionSignal.Withdrawn] 合并成 [withdrawnMessages] */
+    private val returnedMessages = MutableSharedFlow<ComposerDraft>(extraBufferCapacity = 4)
+
     /**
      * 按停止键（Esc）在本轮还没产出时撤回的消息，要原样退还给输入框。
      * 和 [composerDraft] 分开：那是可以被重放的状态，这是一次性事件。
+     *
+     * 没人收（页面没组合）时不订阅引擎的信号：manager 靠「有没有订阅者」决定要不要把话落盘兜底，
+     * 订阅了又不看就等于把话吞掉。
      */
-    val withdrawnMessages = registry.withdrawnMessages
+    val withdrawnMessages: Flow<ComposerDraft> = merge(
+        active.flatMapLatest { session ->
+            session?.signals?.filterIsInstance<SessionSignal.Withdrawn>()?.map { it.input.toComposerDraft() } ?: emptyFlow()
+        },
+        returnedMessages,
+    )
 
     /** 今天的累计花费，跨会话、跨重启。底栏那个金额读它 */
     val dailyCostUsd: StateFlow<Double> = costLedger.dailyCostUsd
@@ -76,8 +142,8 @@ class SessionVM(
         viewModelScope.launch { settingsStore.setChineseDescriptions(enabled) }
     }
 
-    /** 正在跑的会话，供抽屉打运行中标记 */
-    val liveSessions = registry.liveSessions
+    /** 在线会话的摘要（`keepAlive` = 进程活着），供抽屉打运行中标记、终端页给每个在跑的会话开页签 */
+    val liveSessions = engine.live
 
     /** 达到并发上限时给 UI 一个提示 */
     private val _notice = MutableStateFlow<String?>(null)
@@ -103,18 +169,52 @@ class SessionVM(
     }
 
     // --- 会话（多会话：注册表持有多个 manager，各自一个 CLI 进程） ---
-    fun start(options: ClaudeCodeManager.SessionOptions) {
-        if (registry.newSession(options) == null) atCapacity()
-        else attachComposer(registry.activeKey.value)
+
+    /**
+     * 启动面板的「启动会话」。设置沿用活跃会话的（没有就是上次用过的那套，引擎自己取），
+     * 只有工作目录和「跳过权限」是面板上现选的。
+     */
+    fun start(skipPermissions: Boolean, cwd: String) {
+        val base = startOptionsOfActive()
+        create(base.copy(cwd = cwd, modeId = if (skipPermissions) ClaudeCodePermissionMode.BYPASS.wire else base.modeId))
     }
 
     fun newSession() {
-        // 没有活跃会话时（刚启动 App）不能退回 SessionOptions() 的默认值 ——
-        // 那会把用户上次选的模型/effort 丢掉，新会话默默跑在 CLI 默认模型上
-        val options = registry.lastOptions()
-        if (registry.newSession(options) == null) atCapacity()
-        else attachComposer(registry.activeKey.value)
+        // 没有活跃会话时（刚启动 App）不能退回默认值 —— 那会把用户上次选的模型/effort 丢掉，
+        // 新会话默默跑在 CLI 默认模型上。startOptionsOfActive 在没有活跃会话时交给引擎取上次存的那套
+        create(startOptionsOfActive())
     }
+
+    private fun create(options: StartOptions) {
+        viewModelScope.launch {
+            // 引擎的 create 里没有真正的挂起点（旧注册表同步建），这里和原来一样同步走完
+            if (engine.create(options).isFailure) atCapacity()
+            else attachComposer(registry.activeKey.value)
+        }
+    }
+
+    /**
+     * 照搬活跃会话此刻的设置当作新会话的起点。每一项都显式给：空串是「明确跟随默认」，
+     * 与 null（没说，沿用上次存的）不同，见 [ClaudeCodeEngine.create]。
+     */
+    private fun startOptionsOfActive(): StartOptions {
+        val current = active.value?.state?.value ?: return StartOptions(cwd = registry.lastOptions().cwd)
+        val settings = current.settings
+        val ultracode = settings.extras.firstOrNull { it.key == ClaudeStateMapper.OPTION_ULTRACODE }?.value == "true"
+        return StartOptions(
+            cwd = current.cwd,
+            modelId = settings.model?.id ?: "",
+            modeId = settings.mode.id,
+            effortId = if (ultracode) ClaudeStateMapper.OPTION_ULTRACODE else settings.effort?.id ?: "",
+            engineOptions = settings.extras
+                .filter { it.key == ClaudeStateMapper.OPTION_CACHE_TTL }
+                .associate { it.key to it.value },
+        )
+    }
+
+    /** 启动面板上默认选中的工作目录：活跃会话的，没有就是上次用过的；空白退回 /workspace */
+    fun defaultCwd(): String =
+        (active.value?.state?.value?.cwd ?: registry.lastOptions().cwd).ifBlank { ClaudeCodeManager.DEFAULT_CWD }
 
     /** 已在跑就直接切过去（不重启进程），否则新起一个并 --resume 续上 */
     fun openSession(id: String) {
@@ -131,15 +231,6 @@ class SessionVM(
         drafts.rememberActive(id)
         _composerDraft.value = existing
     }
-
-    /** 仅切换活跃会话 */
-    fun switchTo(key: String) {
-        registry.switchTo(key)
-        attachComposer(key)
-    }
-
-    /** 停掉某个会话的进程并从注册表移除 */
-    fun closeSession(key: String) = registry.closeSession(key)
 
     /**
      * 抽屉行菜单里的「结束会话」：只停进程，transcript 留着，之后点开照样 --resume 续上。
@@ -194,58 +285,81 @@ class SessionVM(
     }
 
     // --- 会话内控制（对应 Desktop 底栏），只作用于活跃会话 ---
-    fun send(text: String, images: List<ClaudeCodeImage> = emptyList()) =
-        registry.onActive { it.send(text, images) }
+
+    /**
+     * 把一条命令交给活跃会话。没有活跃会话时静默忽略 ——
+     * UI 在没有会话时显示的是启动面板，本来就点不到这些控件。
+     * 在 [viewModelScope]（Main.immediate）里发：不挂起的命令和原来的直接调用一样同步走完。
+     */
+    private fun command(build: (id: String) -> SessionCommand, onResult: (CommandResult) -> Unit = {}) {
+        val target = active.value ?: return
+        viewModelScope.launch { onResult(target.submit(build(UUID.randomUUID().toString()))) }
+    }
+
+    fun send(text: String, images: List<ImageInput> = emptyList()) {
+        val input = UserInput(text.trim(), images)
+        if (input.isBlank) return
+        command({ SessionCommand.Send(it, input) }) { result ->
+            // 会话已经关掉 / 没起来：没有 stdin 可写，话不能就这么吞掉 —— 原样退回输入框（原 manager.send 的做法）
+            if (result is CommandResult.Rejected && session.value.status.let { it != SessionStatus.Running && it != SessionStatus.Starting }) {
+                returnedMessages.tryEmit(input.toComposerDraft())
+            }
+        }
+    }
 
     /** `@` 提及的文件补全。没有活跃会话时给空表，输入框自然不弹候选。 */
     suspend fun searchFiles(query: String): List<String> =
-        registry.active()?.searchFiles(query).orEmpty()
+        active.value?.searchFiles(query, MENTION_LIMIT).orEmpty()
 
-    fun answerPermission(
-        allow: Boolean,
-        message: String? = null,
-        suggestion: dev.min.code.core.claudecode.PermissionSuggestion? = null,
-    ) = registry.onActive { it.answerPermission(allow, message, suggestion) }
+    /** 回答一张交互卡（审批 / 提问 / 计划审批）。[interactionId] 是 [dev.min.code.core.engine.PendingInteraction.id] */
+    fun answer(interactionId: String, answer: InteractionAnswer) =
+        command({ SessionCommand.Answer(it, interactionId, answer) })
 
-    /** 应答 AskUserQuestion：把选项填回 updatedInput.answers。空 map = 跳过。 */
-    fun answerQuestions(answers: Map<String, String>) = registry.onActive { it.answerQuestions(answers) }
+    fun interrupt() = command({ SessionCommand.Interrupt(it) })
 
-    fun interrupt() = registry.onActive { it.interrupt() }
+    /** 子 agent 视图里发的话。图片递不进子 agent（hook 只能带文字），适配器会让 manager 补一条说明 */
+    fun sendToSubagent(threadId: String, text: String, images: List<ImageInput> = emptyList()) =
+        command({ SessionCommand.Send(it, UserInput(text, images), SendTarget.Subagent(threadId)) })
 
-    /** 子 agent 视图里发的话。图片递不进子 agent（hook 只能带文字），见 [ClaudeCodeManager.sendToSubagent] */
-    fun sendToSubagent(toolUseId: String, text: String, images: List<ClaudeCodeImage> = emptyList()) =
-        registry.onActive { it.sendToSubagent(toolUseId, text, dropImages = images.size) }
+    fun stopSubagent(threadId: String) = command({ SessionCommand.StopSubagent(it, threadId) })
 
-    fun stopSubagent(toolUseId: String) = registry.onActive { it.stopSubagent(toolUseId) }
-    fun runShell(command: String) = registry.onActive { it.runShell(command) }
-    fun stop() = registry.onActive { it.stopSession() }
+    fun runShell(command: String) = command({ SessionCommand.RunShell(it, command) })
+
+    /** 顶栏停止键：只停进程，会话留在页面上显示「已结束」（[CloseReason.UserEnded]） */
+    fun stop() {
+        val target = active.value ?: return
+        viewModelScope.launch { target.close(CloseReason.UserEnded) }
+    }
+
     /**
      * 切模型。[asDefault] 对齐 CLI `/model` 的 Enter / `s`：
-     * true = 本会话热切 + 写 settings.json 的 `model`（新会话、终端页的 `claude` 都跟着变）；
+     * true = 本会话热切 + 写 settings.json 的 `model`（新会话、终端页的 `claude` 都跟着变，写文件那步在适配器里）；
      * false = 只改这个会话。`/model <名字>` 这种带参数的写法在 CLI 里等于 Enter，也走 true。
+     * [model] 为 null = 跟随默认。
      */
-    fun setModel(model: String?, asDefault: Boolean = true) {
-        registry.onActive { it.setModel(model, asDefault) }
-        if (asDefault) viewModelScope.launch { configStore.saveDefaultModel(model) }
-    }
-    fun setPermissionMode(mode: ClaudeCodePermissionMode) = registry.onActive { it.setPermissionMode(mode) }
-    fun applyEffort(effort: String?, ultracode: Boolean = false) = registry.onActive { it.applyEffort(effort, ultracode) }
+    fun setModel(model: String?, asDefault: Boolean = true) =
+        command({ SessionCommand.SetModel(it, model.orEmpty(), asDefault = asDefault) })
+
+    fun setPermissionMode(modeId: String) = command({ SessionCommand.SetMode(it, modeId) })
+
+    /** [ultracode] 为真时 [effort] 无意义（ultracode 自己就是一档 effort，与强度互斥） */
+    fun applyEffort(effort: String?, ultracode: Boolean = false) =
+        command({ SessionCommand.SetEffort(it, if (ultracode) ClaudeStateMapper.OPTION_ULTRACODE else effort) })
 
     /** 提示缓存 TTL（5m / 1h）。和 effort 一样要重启 CLI 续接会话 */
-    fun setPromptCacheTtl(ttl: String) = registry.onActive { it.setPromptCacheTtl(ttl) }
+    fun setPromptCacheTtl(ttl: String) =
+        command({ SessionCommand.SetEngineOption(it, ClaudeStateMapper.OPTION_CACHE_TTL, ttl) })
 
-    fun refreshModels() = registry.onActive { it.refreshModels() }
-    fun refreshPlan() = registry.onActive { it.refreshPlan() }
+    fun refreshModels() = command({ SessionCommand.Refresh(it, setOf(RefreshTarget.Models)) })
+    fun refreshPlan() = command({ SessionCommand.Refresh(it, setOf(RefreshTarget.Plan)) })
 
     fun refreshUsage() {
         // 跨过午夜之后那个数字应该自己归零，而不是等下一次花钱才刷新
         costLedger.refresh()
-        registry.onActive { it.refreshUsage() }
+        command({ SessionCommand.Refresh(it, setOf(RefreshTarget.Usage)) })
     }
-    fun setCwd(path: String) = registry.onActive { it.setCwd(path) }
 
-    /** 新建会话时的默认配置（含上次选的工作目录） */
-    fun lastOptions(): ClaudeCodeManager.SessionOptions = registry.lastOptions()
+    fun setCwd(path: String) = command({ SessionCommand.SetCwd(it, path) })
 
     /**
      * 列出某个 guest 路径下的条目，给选文件夹面板用。
@@ -271,23 +385,36 @@ class SessionVM(
      * 撤销一次编辑类工具造成的文件改动（只还原文件，对话历史不变）。
      * [onRestored] 在还原**成功**之后回调（主线程），失败不回调——页面据此才把它标成「已撤销」。
      */
-    fun revertToolCall(toolUseId: String, onRestored: () -> Unit = {}) {
-        val manager = registry.active() ?: return
-        viewModelScope.launch { if (manager.revertToolCall(toolUseId)) onRestored() }
-    }
+    fun revertToolCall(toolUseId: String, onRestored: () -> Unit = {}) =
+        command({ SessionCommand.Revert(it, toolUseId) }) { if (it == CommandResult.Accepted) onRestored() }
 
     /**
      * 把一个文件在本会话里的全部改动整批撤回去（从最后一次往前还原；同样只动文件）。
      * [toolUseIds] 按会话顺序（旧 → 新）。[onRestored] 收到**真的还原成功**的那几个。
      */
     fun revertFile(name: String, toolUseIds: List<String>, onRestored: (Set<String>) -> Unit) {
-        val manager = registry.active() ?: return
-        viewModelScope.launch { onRestored(manager.revertFile(name, toolUseIds)) }
+        val target = active.value ?: return
+        viewModelScope.launch { onRestored(target.revertFile(name, toolUseIds)) }
     }
 
     /** [toolUseIds] 里存过文件快照的那些，决定「改动过的文件」面板里谁有撤销按钮 */
     suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> =
-        registry.active()?.checkpointed(toolUseIds).orEmpty()
+        active.value?.checkpointed(toolUseIds).orEmpty()
+
+    // --- 后台任务（底栏「N shell」和它的面板） ---
+
+    /** 读一次某个后台任务的输出尾巴（面板在跑时轮询它） */
+    suspend fun readTaskOutput(taskId: String): TaskOutputTail? = active.value?.readTaskTail(taskId)
+
+    /**
+     * 停掉一个后台任务，各走各的路：CLI 的发 stop_task，托管的（含 bypass 下的孪生）停进程表（适配器分）。
+     * 失败返回给用户看的那句话。
+     */
+    suspend fun stopTask(taskId: String): String? {
+        val target = active.value ?: return null
+        val result = target.submit(SessionCommand.StopTask(UUID.randomUUID().toString(), taskId))
+        return (result as? CommandResult.Rejected)?.message
+    }
 
     /** `/init` 是 prompt 型内置命令，无头模式下当普通消息发过去就会执行 */
     fun runInit() = send("/init")
@@ -295,4 +422,16 @@ class SessionVM(
     // 不在 onCleared 里杀会话：ClaudeCodeManager 是 Koin single，
     // 会话本就该比页面活得久（切到别的页面、转屏都会重建 VM）。
     // 结束会话由用户在标题栏显式点「停止」。
+
+    private companion object {
+        /** 没有活跃会话时的占位：Idle，其余全空。和改造前 `SessionState()` 的默认值同一个作用 */
+        val NoSession: AgentSessionState =
+            AgentSessionState.initial(SessionRef(EngineKind.ClaudeCode, "")).copy(status = SessionStatus.Idle)
+    }
 }
+
+/** 通用输入 -> 输入框草稿，和原 manager 退还时拼的一样（图片名按序号） */
+private fun UserInput.toComposerDraft() = ComposerDraft(
+    text = text,
+    images = images.mapIndexed { i, img -> DraftImage(name = "图片 ${i + 1}", mediaType = img.mediaType, base64 = img.base64) },
+)

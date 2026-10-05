@@ -13,6 +13,7 @@ import dev.min.code.core.claudecode.backgroundShells
 import dev.min.code.core.claudecode.subagentThreads
 import dev.min.code.core.engine.AgentSessionState
 import dev.min.code.core.engine.AgentThread
+import dev.min.code.core.engine.AppliedSettings
 import dev.min.code.core.engine.BackgroundTask
 import dev.min.code.core.engine.Choice
 import dev.min.code.core.engine.ConnectionView
@@ -23,6 +24,7 @@ import dev.min.code.core.engine.RetryNotice
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SettingsView
 import dev.min.code.core.engine.SlashCommandView
+import dev.min.code.core.engine.ThreadProgress
 import dev.min.code.core.engine.TurnEnd
 import dev.min.code.core.engine.TurnProgress
 import dev.min.code.core.engine.TurnReceipt
@@ -88,6 +90,8 @@ object ClaudeStateMapper {
             stopping = state.stopping,
             errorMessage = state.errorMessage,
             connection = connectionOf(state, context),
+            reportedModel = state.model,
+            toolCount = state.toolCount,
         ).let { mapped ->
             // 线程名下待处理的交互数要等交互队列算好才填
             mapped.copy(threads = mapped.threads.withPendingCounts(mapped.interactions))
@@ -151,12 +155,27 @@ object ClaudeStateMapper {
             models = modelChoices(state),
             // 中转站目录还没查过：页面上显示「正在查询」
             modelsLoading = !state.relayModelsChecked,
+            catalogModels = state.availableModels.map {
+                Choice(it.value, it.displayName, it.description, resolvedId = it.resolvedModel, supportedEfforts = it.supportedEffortLevels)
+            },
+            relayModels = state.relayModels.map { Choice(it.id, it.displayName ?: it.id, description = if (it.displayName != null) it.id else null) },
+            modelsError = state.relayModelsError,
+            // 目录里缺席的别名（Fable 这类）：CLI 只把当前选中的放进 list_models，不补这一格用户会陷进「选不到」
+            aliasModels = ClaudeCodeManager.HIDDEN_MODEL_ALIASES.map {
+                Choice(it.value, it.displayName, it.description, recommended = it.value in ClaudeCodeManager.PROMOTED_MODEL_IDS)
+            },
+            applied = AppliedSettings(state.appliedModel, state.appliedEffort, state.appliedUltracode),
             effort = Choice(options.effort ?: FOLLOW_DEFAULT, chipEffort),
             efforts = effortChoices(state),
             effortNeedsRestart = true, // CC 没有 set_effort，只能重启进程（EngineCapabilities.effortHotSwap = false）
             mode = mode.first { it.id == state.permissionMode.wire },
             modes = mode,
             applying = state.applyingSettings || state.applyingEffort,
+            // 都没有（跟随默认且还没回读）就当支持
+            effortSupported = (state.appliedModel ?: state.options.model ?: state.model)
+                ?.let(ClaudeCodeModelCatalog::supportsEffort) ?: true,
+            hotSwapping = state.applyingSettings,
+            relaunching = state.applyingEffort,
             extras = listOf(
                 EngineOptionView(
                     key = OPTION_CACHE_TTL, label = "Prompt cache TTL", value = options.promptCacheTtl,
@@ -265,6 +284,12 @@ object ClaudeStateMapper {
             pendingInteractions = 0,
             usage = null, // 任务表的 totalTokens 是总量，不是上下文 / 输出量，对不上 UsageView 的任何一栏
             childRef = null,
+            progress = task?.let {
+                ThreadProgress(
+                    description = it.description, summary = it.summary, detail = it.progress,
+                    lastTool = it.lastToolName, toolUses = it.toolUses, tokens = it.totalTokens,
+                )
+            },
             tracked = tracked,
             // 拿到 agentId 才能递话（历史会话里拿不到就不能）
             messageable = agentId != null,
@@ -289,6 +314,14 @@ object ClaudeStateMapper {
                 toolUseId = state.tasks.firstOrNull { it.id == shell.cliTaskId }?.toolUseId,
                 pid = null,
                 logRef = shell.outputFile,
+                command = shell.command,
+                exitCode = shell.exitCode,
+                source = when {
+                    shell.cliTaskId != null && shell.hostedServiceId != null -> BackgroundTask.Source.Both
+                    shell.cliTaskId != null -> BackgroundTask.Source.Cli
+                    else -> BackgroundTask.Source.Hosted
+                },
+                monitor = shell.monitor,
             )
         }
 

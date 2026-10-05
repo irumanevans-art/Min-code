@@ -27,7 +27,7 @@ import dev.min.code.R
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
+import dev.min.code.core.engine.LiveSessionSummary
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.settings.ThemeMode
 import dev.min.code.ui.components.InkButtonTone
@@ -71,7 +71,7 @@ import org.koin.core.parameter.parametersOf
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ClaudeCodeTerminalSheet(
-    liveSessions: List<ClaudeCodeSessionRegistry.LiveSession>,
+    liveSessions: List<LiveSessionSummary>,
     onDismiss: () -> Unit,
 ) {
     val vm: WorkspaceDetailVM = koinViewModel(
@@ -92,8 +92,8 @@ fun ClaudeCodeTerminalSheet(
 
     // 在跑的会话各开一个页签。一个都没在跑（全是历史会话）时退回一个普通页签，
     // 否则点开终端只会看到一句"没有标签页"，等于这个按钮坏了
-    val live = liveSessions.filter { it.isLive }
-    LaunchedEffect(root, live.map { it.key }) {
+    val live = liveSessions.filter { it.keepAlive }
+    LaunchedEffect(root, live.map { it.ref.id }) {
         val currentRoot = root ?: return@LaunchedEffect
         if (live.isEmpty()) {
             sessionManager.ensureSession(currentRoot)
@@ -102,9 +102,9 @@ fun ClaudeCodeTerminalSheet(
                 root = currentRoot,
                 sessions = live.map {
                     WorkspaceTerminalSessionManager.SessionTab(
-                        key = it.key,
-                        cwd = it.cwd.ifBlank { null },
-                        label = terminalTabLabel(it.cwd),
+                        key = it.ref.id,
+                        cwd = it.cwd,
+                        label = terminalTabLabel(it.cwd.orEmpty()),
                     )
                 },
             )

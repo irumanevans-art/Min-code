@@ -1,6 +1,5 @@
 package dev.min.code.ui.session
 
-import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.session.ChatItem
 
 /**

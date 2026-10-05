@@ -56,7 +56,7 @@ internal fun claudeInteractions(
                 QuestionView(
                     question = q.question,
                     header = q.header,
-                    options = q.options.map { QuestionOptionView(it.label, it.description) },
+                    options = q.options.map { QuestionOptionView(it.label, it.description, it.preview) },
                     multiSelect = q.multiSelect,
                 )
             },
@@ -78,6 +78,7 @@ internal fun claudeInteractions(
             toolName = request.toolName,
             input = request.input,
             summary = request.description?.takeIf { it.isNotBlank() } ?: request.toolName,
+            description = request.description,
             paths = escapedPaths(request.input).map { PathView(it, pathScope(it)) },
             commands = commandsOf(request),
             domains = domainsOf(request),
@@ -150,6 +151,7 @@ private fun originPathOf(
             name = null,
             description = task?.description?.takeIf { it.isNotBlank() } ?: task?.subagentType ?: agentId.take(8),
             background = task?.backgrounded == true,
+            fork = task?.subagentType == FORK_SUBAGENT_TYPE,
         ),
     )
 }
