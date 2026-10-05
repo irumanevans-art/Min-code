@@ -53,6 +53,11 @@ internal class ConsoleUi(
                 if (announced.add(call.callId)) out.println("\n▸ ${call.tool} ${summarize(call.input.toString())}")
                 when (val phase = call.phase) {
                     is CallPhase.AwaitingApproval -> if (answered.add(phase.approvalId.value)) {
+                        // 弹审批提示时跑 Notification hooks（permission_prompt；CC 的字段原文照写）。
+                        // CC 等约 6 秒确认人不在才发，终端这里没有那套打字检测，弹的时候直接发
+                        if (approve == ApprovalAnswer.Ask) {
+                            runtime.notifyHooks("permission_prompt", "Claude needs your permission", "Permission needed")
+                        }
                         val choice = decide(call.tool, phase.ask.summary)
                         runtime.answerApproval(phase.approvalId, choice)
                     }
@@ -76,6 +81,8 @@ internal class ConsoleUi(
             runtime.declineQuestion(asked.questionId)
             return
         }
+        // 提问也算「需要人」：CC 没有专门的提问通知类型，取最近的 agent_needs_input（取舍见汇报）
+        runtime.notifyHooks("agent_needs_input", "Claude is waiting for your answer")
         val answers = mutableListOf<QuestionAnswer>()
         for (question in asked.questions) {
             val answer = readAnswer(question)

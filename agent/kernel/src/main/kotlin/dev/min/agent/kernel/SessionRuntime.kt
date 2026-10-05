@@ -8,6 +8,7 @@ import dev.min.agent.ext.config.SettingsLoader
 import dev.min.agent.ext.config.SettingsSnapshot
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.NotificationInput
 import dev.min.agent.ext.hooks.SessionStartInput
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
@@ -405,6 +406,18 @@ class SessionRuntime private constructor(
     /** 分身的第一个回合：没有新输入，任务就在继承来的那次 Agent 调用的结果里 */
     internal fun startDelegated() {
         startTurnIfIdle(TurnTrigger.Delegated)
+    }
+
+    /**
+     * 宿主发系统通知时跑 Notification hooks（hooks设计 §7：内核不发通知，何时算「该通知」由宿主决定）。
+     * matcher 匹配通知类型（取值照 CC：permission_prompt、idle_prompt……），只执行、不改内核状态，记一条 [HooksRan]
+     */
+    suspend fun notifyHooks(type: String, message: String, title: String? = null) {
+        val specific = HookJson.encodeToJsonElement(
+            NotificationInput.serializer(),
+            NotificationInput(message = message, title = title, notificationType = type),
+        ).jsonObject
+        HookDriver(this).run(HookEvent.Notification, type, specific)
     }
 
     // ---- 检查点与回退（检查点与rewind设计 §4） ----

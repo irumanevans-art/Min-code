@@ -353,6 +353,27 @@ class HooksSessionTest {
         assertTrue(ran.joinToString(), ran.any { it.event == "SessionStart" } && ran.any { it.event == "SessionEnd" })
     }
 
+    @Test
+    fun `showing an approval prompt fires a permission_prompt notification`() = run {
+        settings(hook("Notification", script("notify", "cat > /dev/null; echo ran >> notify.txt"), "permission_prompt"))
+        val model = RoutingModel { req ->
+            if (req.messages.size == 1) reply(bashCall("c1", "rm -rf build"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val (rt, store) = session(model)
+        val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            ConsoleUi(rt, ApprovalAnswer.Ask, java.io.BufferedReader(java.io.StringReader("y\n")), System.err).attach(uiScope)
+            val before = rt.state.value.lastTurn?.turnId
+            rt.send(ClientMsgId("u-notify"), listOf(TextPart("清理")))
+            rt.state.first { it.turn == null && it.lastTurn?.turnId != before }
+        } finally {
+            uiScope.cancel()
+        }
+        assertEquals("终端问过人、人答了 y，命令执行", listOf("rm -rf build"), ran)
+        assertEquals("Notification", store.events(rt).filterIsInstance<HooksRan>().single().event)
+        assertEquals("hook 只因弹卡跑了一次", listOf("ran"), Files.readAllLines(work.resolve("notify.txt")))
+    }
+
     // ---- 信任 ----
 
     @Test

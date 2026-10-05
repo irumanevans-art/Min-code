@@ -608,4 +608,30 @@ class HooksH3EventsTest {
         rt.state.first { it.turn == null }
     }
 
+    // ---- Notification ----
+
+    @Test
+    fun `notifyHooks runs Notification hooks for the type and changes nothing else`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = RoutingModel { req -> reply(TextPart("好")) }
+        val hub = hub(model, http)
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("Notification", "permission_prompt"))))),
+        )
+        rt.notifyHooks("permission_prompt", "Claude needs your permission", "Permission needed")
+        val body = http.sent.single().body
+        assertTrue(body, body.contains("\"hook_event_name\":\"Notification\""))
+        assertTrue(body, body.contains("\"message\":\"Claude needs your permission\""))
+        assertTrue(body, body.contains("\"title\":\"Permission needed\""))
+        assertTrue(body, body.contains("\"notification_type\":\"permission_prompt\""))
+        assertEquals("Notification", events(rt).filterIsInstance<HooksRan>().single().event)
+
+        // matcher 不匹配的类型不跑；别的类型也不受影响
+        rt.notifyHooks("idle_prompt", "Claude is waiting for you")
+        assertEquals(1, http.sent.size)
+        // 只执行、不改状态：没有回合、没有输入
+        assertTrue(rt.state.value.turn == null && rt.state.value.inbox.isEmpty())
+    }
+
 }
