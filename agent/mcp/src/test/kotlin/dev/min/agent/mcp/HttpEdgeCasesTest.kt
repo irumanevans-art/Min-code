@@ -94,7 +94,7 @@ class HttpEdgeCasesTest {
             assertEquals(if (status == 429) 1 else 4, count.get())
         }
     }
-    @Test fun `oversized server message closes HTTP connection and fails other pending calls`() = runBlocking {
+    @Test fun `oversized POST response only fails its request and leaves connection usable`() = runBlocking {
         LoopbackHttp().use { s ->
             s.server.createContext("/mcp") { e ->
                 if (e.requestMethod != "POST") e.reply(405) else {
@@ -104,8 +104,8 @@ class HttpEdgeCasesTest {
                 }
             }
             withClient(StreamableHttpMcpTransport(s.url + "/mcp", { emptyList() }, s.http, maxMessageBytes = 1000, enableGetStream = false)) { c ->
-                c.connect(); try { c.ping(); fail("expected") } catch (_: McpTransportClosed) {}
-                withTimeout(2_000) { while (c.state.value !is McpConnectionState.Closed) delay(5) }
+                c.connect(); try { c.ping(); fail("expected") } catch (_: McpProtocolException) {}
+                assertTrue(c.state.value is McpConnectionState.Ready)
             }
         }
     }
@@ -119,7 +119,7 @@ class HttpEdgeCasesTest {
             for (brokenProvider in listOf(false, true)) {
                 val t = StreamableHttpMcpTransport(s.url + "/mcp?token=hidden", { if (brokenProvider) error("header secret") else emptyList() }, http)
                 withClient(t) { c ->
-                    val e = try { c.connect(); null } catch (e: McpTransportClosed) { e }
+                    val e = try { c.connect(); null } catch (e: McpException) { e }
                     assertNotNull(e); for (secret in listOf("secret", "pass", "hidden")) assertFalse(e.toString().contains(secret))
                 }
             }

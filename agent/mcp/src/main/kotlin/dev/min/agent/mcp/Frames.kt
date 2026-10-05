@@ -7,8 +7,13 @@ import java.io.ByteArrayOutputStream
 
 internal const val DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
+/** 观察者异常不拥有连接生命周期；取消仍交还调用它的协程。 */
+internal fun safeDebug(debug: (String) -> Unit): (String) -> Unit = { message ->
+    catchingNonCancellation { debug(message) }
+}
+
 /** 先按字节限流再解 UTF-8，避免分块切断多字节字符，也避免 readLine 无界分配。 */
-internal fun Flow<ByteArray>.lines(limit: Int): Flow<String> = flow {
+internal fun Flow<ByteArray>.lines(limit: Int, emitResidual: Boolean = true): Flow<String> = flow {
     val line = ByteArrayOutputStream()
     var skipLf = false
     collect { chunk ->
@@ -23,7 +28,7 @@ internal fun Flow<ByteArray>.lines(limit: Int): Flow<String> = flow {
             }
         }
     }
-    if (line.size() > 0) emit(line.toString("UTF-8"))
+    if (emitResidual && line.size() > 0) emit(line.toString("UTF-8"))
 }
 
 internal suspend fun decodeMessages(raw: String, debug: (String) -> Unit, tolerateNoise: Boolean = false, emit: suspend (JsonObject) -> Unit) {
@@ -54,7 +59,7 @@ internal fun Flow<ByteArray>.sse(limit: Int): Flow<McpSseEvent> = flow {
         if (touched) emit(McpSseEvent(event, data.takeIf { it.isNotEmpty() }?.joinToString("\n"), id, retry))
         event = null; data.clear(); size = 0; touched = false
     }
-    this@sse.lines(limit).collect { line ->
+    this@sse.lines(limit, emitResidual = false).collect { line ->
         if (line.isEmpty()) dispatch()
         else if (!line.startsWith(":")) {
             val key = line.substringBefore(':')
@@ -73,7 +78,7 @@ internal fun Flow<ByteArray>.sse(limit: Int): Flow<McpSseEvent> = flow {
             }
         }
     }
-    dispatch()
+    // SSE 只在空行处提交事件；EOF 的半帧要留给 Last-Event-ID 续传，不能当作完整响应。
 }
 
 internal suspend fun Flow<ByteArray>.boundedBytes(limit: Int): ByteArray {
@@ -87,6 +92,8 @@ internal suspend fun Flow<ByteArray>.boundedBytes(limit: Int): ByteArray {
 
 internal fun safeUrl(url: String): String = url.substringBefore('?').substringBefore('#').replace(Regex("//[^/]*@"), "//")
 internal fun safeLog(line: String): String = line
-    .replace(Regex("(?i)https?://[^\\s]+")) { safeUrl(it.value) }
-    .replace(Regex("(?i)(authorization|cookie|[\\w-]*(?:api[-_]?key|token))\\s*[:=].*"), "$1: ***")
-    .replace(Regex("(^|\\s)([A-Za-z][\\w-]*)\\s*:(?!//)\\s*.*"), "$1$2: ***")
+    .replace(Regex("(?i)\\b[a-z][a-z0-9+.-]*://[^\\s]+")) { safeUrl(it.value) }
+    .replace(Regex("""(?i)("(?:proxy-)?authorization"\s*:\s*)"(?:\\.|[^"\\])*""""), "$1\"***\"")
+    .replace(Regex("""(?im)((?:proxy-)?authorization\s*[:=]\s*)[^\r\n]+"""), "$1***")
+    .replace(Regex("""(?i)\bBearer\s+[^\s,;"'}]+"""), "Bearer ***")
+    .replace(Regex("""(?i)(\b[\w-]*(?:token|secret|password|key)[\w-]*\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s&;,]+)"""), "$1***")

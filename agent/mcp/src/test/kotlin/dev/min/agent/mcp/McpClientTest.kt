@@ -45,7 +45,7 @@ class McpClientTest {
             val t = FakeTransport(); t.respond = { m -> if (m.text("method") == "initialize") t.received.send(result(m.getValue("id"), initializeResult(v))) }
             val c = client(t)
             if (v.startsWith("2099")) {
-                val e = try { c.connect(); error("expected") } catch (e: McpTransportClosed) { e }
+                val e = try { c.connect(); error("expected") } catch (e: McpProtocolException) { e }
                 assertTrue(e.message!!.contains("不支持")); assertTrue(t.closed)
             } else assertEquals(v, c.connect().protocolVersion)
             c.close()
@@ -105,11 +105,11 @@ class McpClientTest {
         assertEquals(listOf(McpContent.Text::class, McpContent.Image::class, McpContent.Audio::class, McpContent.ResourceLink::class, McpContent.EmbeddedResource::class, McpContent.Unknown::class), r.content.map { it::class }); c.close()
     }
     @Test fun `progress routes only its token resets idle clock and completes long operation`() = runTest {
-        val t = FakeTransport(); val c = client(t); c.connect(); t.respond = {}; val seen = mutableListOf<McpProgress>()
-        val call = async { c.callTool("x", emptyObject, seen::add, 100, 1_000) }; runCurrent()
+        val t = FakeTransport(); val c = client(t); c.connect(); t.respond = {}; val seen = mutableListOf<McpProgress>(); val done = CompletableDeferred<Unit>()
+        val call = async { c.callTool("x", emptyObject, { seen.add(it); if (seen.size == 3) done.complete(Unit) }, 100, 1_000) }; runCurrent()
         val id = t.sent.last().getValue("id"); assertEquals(id, t.sent.last().obj("params")!!.obj("_meta")!!["progressToken"])
         repeat(3) { advanceTimeBy(80); t.received.send(rpcNotification("notifications/progress", buildJsonObject { put("progressToken", id); put("progress", it); put("total", 3) })); runCurrent() }
-        t.received.send(result(id, json("""{"content":[]}"""))); call.await(); assertEquals(3, seen.size); c.close()
+        t.received.send(result(id, json("""{"content":[]}"""))); call.await(); done.await(); assertEquals(3, seen.size); c.close()
     }
     @Test fun `hard timeout is not extended by progress and sends cancellation`() = runTest {
         val t = FakeTransport(); val c = client(t); c.connect(); t.respond = {}
