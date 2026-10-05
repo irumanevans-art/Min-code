@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Read and Edit：deny 列表里 Read(*.env) 之后跟 Read(!sample.env)，拦截任意深度的 .env 但豁免 sample.env；! 规则只对同文件里列在它前面的规则生效（:430、:432）。",
+  "calls": [
+    { "tool": "Read", "input": { "file_path": "/workspace/other.env" }, "expected": "deny", "basis": "*.env 命中且无豁免（:430）。" },
+    { "tool": "Read", "input": { "file_path": "/workspace/sample.env" }, "expected": "allow", "basis": "!sample.env 把它从同一 deny 列表里豁免出来（:430）；读取免批（:17）。" }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Read and Edit：Read 规则尽最大努力应用到所有读文件的内建工具，包括 Grep 与 Glob（:339）；Grep/Glob 按 path 参数解析后的目录应用 Read deny（:452），deny/ask 的单段目录模式匹配该目录本身与任意深度的副本（:397）。",
+  "pendingFix": "两个 call：原文 :452 说 Grep/Glob 的 Read deny 应用到搜索目录本身、:397 说 Read(secrets/**) 匹配名为 secrets 的目录，期望 deny；Min 的模式 /workspace/secrets/** 要求 secrets/ 之后还有内容，对目录路径本身（无尾随内容）匹配不上，实测放行。期望按原文写，差异待复核。第三 call 证明规则不命中时 Grep 照常免批，两边一致。",
+  "calls": [
+    { "tool": "Grep", "input": { "pattern": "TODO", "path": "/workspace/secrets" }, "expected": "deny", "basis": "Read deny 应用于 Grep 的搜索目录（:339、:452）。" },
+    { "tool": "Glob", "input": { "pattern": "**/*", "path": "/workspace/secrets" }, "expected": "deny", "basis": "Read deny 应用于 Glob 的搜索目录（:339）。" },
+    { "tool": "Grep", "input": { "pattern": "TODO", "path": "/workspace/src" }, "expected": "allow", "basis": "规则不命中 src；Grep 是只读工具（:17）。" }
+  ]
+}

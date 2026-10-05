@@ -1,0 +1,12 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Read-only commands：所有旗标都只读的命令可以带不带引号的 glob（ls *.ts、wc -l src/*.py，:269）；带写/执行能力旗标的命令（find、sort、sed、git）出现不带引号的 glob 时要问，因为 glob 可能展开成 -delete 这类旗标（:273）；cd 换目录后接 git 要问（:282），cd 后接其他只读命令不问（:280）。",
+  "pendingFix": "两处差异，期望都按原文写：(1) find . -name *.ts——原文 :273 说 find 这类带执行能力旗标的命令出现不带引号的 glob 要问，Min 把 find 无 -delete/-exec 一律当只读，实测放行；(2) cd packages/api && git status——原文 :282 说 cd 换目录后接 git 要问（git 会执行新目录的 hooks），Min 认为两条都是只读命令，实测放行。均为 Min 比 CC 松，待复核。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "ls *.ts" }, "expected": "allow", "basis": "ls 的每个旗标都只读，不带引号的 glob 允许（:269）。" },
+    { "tool": "Bash", "input": { "command": "wc -l src/*.py" }, "expected": "allow", "basis": "同上（:269）。" },
+    { "tool": "Bash", "input": { "command": "find . -name *.ts" }, "expected": "ask", "basis": "find 有执行能力旗标（-delete/-exec），不带引号的 glob 触发提示（:273）。" },
+    { "tool": "Bash", "input": { "command": "cd packages/api && ls" }, "expected": "allow", "basis": "cd 进工作目录内的路径也是只读，每段单独看都合格（:280）。" },
+    { "tool": "Bash", "input": { "command": "cd packages/api && git status" }, "expected": "ask", "basis": "cd 与 git 同现且换了目录：git 可能在新目录执行 hooks，要问（:282）。" }
+  ]
+}

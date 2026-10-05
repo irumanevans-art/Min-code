@@ -1,0 +1,13 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Read and Edit：裸文件名按 gitignore 语义匹配任意深度，Read(.env) 等价 Read(**/.env)（:387-391）；单段目录模式的深度按规则类型区分——deny/ask 的 Read(secrets/**) 匹配任意深度的 secrets 目录（:397）；gitignore 的 * 只在单个路径段内（:421）。",
+  "pendingFix": "Read(secrets/**) 的第二 call：原文 :397 说 deny/ask 规则的单段目录模式匹配任意深度（vendor/pkg/secrets 也在内），Min 对含 / 的模式一律锚在 cwd（RuleMatcher.pathPattern 只有裸文件名才加 (.*/)?），实测 vendor/pkg/secrets/key 没被拒。期望按原文写，差异待复核。",
+  "calls": [
+    { "tool": "Read", "input": { "file_path": "/workspace/secrets/key" }, "expected": "deny", "basis": "cwd 下的 secrets 命中（:397）。" },
+    { "tool": "Read", "input": { "file_path": "/workspace/vendor/pkg/secrets/key" }, "expected": "deny", "basis": "deny/ask 的单段目录模式匹配任意深度（:397）。" },
+    { "tool": "Read", "input": { "file_path": "/workspace/.env" }, "expected": "deny", "basis": "裸文件名匹配任意深度（:387-391）。" },
+    { "tool": "Read", "input": { "file_path": "/workspace/src/.env" }, "expected": "deny", "basis": "同上，子目录里也命中（:391）。" },
+    { "tool": "Read", "input": { "file_path": "/workspace/docs/a.md" }, "expected": "deny", "basis": "docs/*.md 命中该层的 md（:421）。" },
+    { "tool": "Read", "input": { "file_path": "/workspace/docs/sub/b.md" }, "expected": "allow", "basis": "* 不跨 /，子目录里的 b.md 不在规则内；工作目录内读取免批（:421、:17）。" }
+  ]
+}

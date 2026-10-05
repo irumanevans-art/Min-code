@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Wildcard patterns：Bash(ls*) 没有空格，lsof 也匹配（:182、:189）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "ls -la" }, "expected": "allow", "basis": "表 :182 Matches 列。" },
+    { "tool": "Bash", "input": { "command": "lsof" }, "expected": "allow", "basis": "无空格的 ls* 连 lsof 也算（:189）。" }
+  ]
+}

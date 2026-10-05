@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Match all uses of a tool：Bash(*) 等价于裸 Bash（:109）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "node script.js" }, "expected": "allow", "basis": "Bash(*) 与 Bash 等价，匹配全部命令（:109）。" }
+  ]
+}

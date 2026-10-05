@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §MCP：mcp__puppeteer__* 与 mcp__puppeteer 同义、匹配该服务器全部工具（:515）；mcp__puppeteer__puppeteer_navigate 精确匹配单个工具（:516）。",
+  "calls": [
+    { "tool": "mcp__puppeteer__puppeteer_navigate", "input": {}, "expected": "allow", "basis": "mcp__puppeteer__* 覆盖全部工具（:515）。" },
+    { "tool": "mcp__github__get_issue", "input": {}, "expected": "allow", "basis": "精确工具规则命中（:516）。" },
+    { "tool": "mcp__github__create_issue", "input": {}, "expected": "ask", "basis": "只批了 get_issue 一个工具（:516）。" }
+  ]
+}

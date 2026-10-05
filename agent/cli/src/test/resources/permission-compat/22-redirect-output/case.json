@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Redirections：输出重定向的目标按「直接写了那个文件」检查——对照 Edit 规则、受保护路径与工作目录（:306）；目标落在工作目录里即可放行，工作目录之外要批准；/dev/null 这类背后没有文件的目标不检查（:309）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "echo hi > out.txt" }, "expected": "allow", "basis": "命令被 allow 覆盖，目标 out.txt 在工作目录内（:306、:583）。" },
+    { "tool": "Bash", "input": { "command": "echo hi > /tmp/out.txt" }, "expected": "ask", "basis": "目标在工作目录之外，要批准（:306）。" },
+    { "tool": "Bash", "input": { "command": "echo hi > /dev/null" }, "expected": "allow", "basis": "/dev/null 不检查（:309）。" }
+  ]
+}

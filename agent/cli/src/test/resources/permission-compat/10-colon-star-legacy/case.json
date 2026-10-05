@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Wildcard patterns：:* 后缀是尾随通配的旧写法，Bash(ls:*) 与 Bash(ls *) 匹配同样的命令（:191）；权限对话框只写空格形式，:* 只在模式末尾被认（:193）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "ls -la" }, "expected": "allow", "basis": "ls:* 等价 ls *（:191）。" },
+    { "tool": "Bash", "input": { "command": "ls" }, "expected": "allow", "basis": "等价尾随通配，裸命令也匹配（:191、:188）。" }
+  ]
+}

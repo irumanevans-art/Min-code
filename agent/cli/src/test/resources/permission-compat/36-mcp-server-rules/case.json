@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §MCP：mcp__server 匹配该服务器的全部工具（:514）；deny 的裸名规则把工具从模型上下文移除（:66）。",
+  "calls": [
+    { "tool": "mcp__github__get_issue", "input": {}, "expected": "allow", "basis": "mcp__github 覆盖该服务器全部工具（:514）。" },
+    { "tool": "mcp__gitlab__merge", "input": {}, "expected": "deny", "basis": "mcp__gitlab 的 deny 命中该服务器全部工具（:514、:66）。" },
+    { "tool": "mcp__slack__post", "input": {}, "expected": "ask", "basis": "没有规则覆盖 slack 服务器；MCP 工具默认要批准（:18 表外的默认流程，CC 对未列 MCP 工具走提示）。" }
+  ]
+}

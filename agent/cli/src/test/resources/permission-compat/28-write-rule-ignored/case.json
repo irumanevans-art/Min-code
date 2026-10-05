@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Read and Edit：文件权限只对照 Edit(path) 与 Read(path) 规则检查；给 Write、NotebookEdit、Glob 或 MultiEdit 写路径规则时 CC 接受它但从不查询它，并启动时警告——应改用 Edit(docs/**) 这类写法（:343）。",
+  "pendingFix": "CC 原文 :343 明确 Write(路径) 规则被接受但从不查询，期望这次 Write 落到 default 模式问人（ask）；Min 的 RuleMatcher 把 Write 当 Edit 家族处理（EDIT_FAMILY 含 Write），allow 规则命中后实测放行。期望按原文写，差异待复核。",
+  "calls": [
+    { "tool": "Write", "input": { "file_path": "/workspace/generated/out.txt", "content": "x" }, "expected": "ask", "basis": "Write(路径) 规则从不被查询，等于没有这条 allow（:343）；文件修改要批准（:19）。" }
+  ]
+}

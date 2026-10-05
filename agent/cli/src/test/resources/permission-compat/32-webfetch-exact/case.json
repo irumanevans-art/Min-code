@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §WebFetch：WebFetch(domain:example.com) 匹配到 example.com 的请求（:473）；子域不在内，匹配按主机名做（:471、:473）。",
+  "calls": [
+    { "tool": "WebFetch", "input": { "url": "https://example.com/a", "prompt": "summarize" }, "expected": "allow", "basis": "精确域名命中（:473）。" },
+    { "tool": "WebFetch", "input": { "url": "https://api.example.com/a", "prompt": "summarize" }, "expected": "ask", "basis": "api.example.com 不是 example.com（:473）；WebFetch 默认要批准（:20）。" }
+  ]
+}

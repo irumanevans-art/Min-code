@@ -1,0 +1,12 @@
+{
+  "mode": "acceptEdits",
+  "basis": "cc-permissions.md §Permission modes：acceptEdits 自动接受文件编辑，以及 mkdir、touch、mv、cp 这类常见文件系统命令——仅限工作目录或 additionalDirectories 内的路径（:83）；工作目录外的编辑不自动接受。",
+  "pendingFix": "第四 call：原文 :83 说 acceptEdits 自动接受工作目录内的 mkdir/touch/mv/cp 等常见文件系统命令，期望 allow；Min 的 acceptEdits 只放行纯文件编辑（isWorkspaceEditOnly 要求不跑命令），mkdir 命令实测仍要问。期望按原文写，差异待复核。",
+  "calls": [
+    { "tool": "Edit", "input": { "file_path": "/workspace/src/app.ts", "old_string": "a", "new_string": "b" }, "expected": "allow", "basis": "工作目录内的文件编辑被自动接受（:83）。" },
+    { "tool": "Write", "input": { "file_path": "/workspace/out.txt", "content": "x" }, "expected": "allow", "basis": "同上（:83）。" },
+    { "tool": "Write", "input": { "file_path": "/root/notes.txt", "content": "x" }, "expected": "ask", "basis": "自动接受只限工作目录（或 additionalDirectories）内的路径，/root 在外（:83）。" },
+    { "tool": "Bash", "input": { "command": "mkdir -p build" }, "expected": "allow", "basis": "acceptEdits 自动接受工作目录内的常见文件系统命令 mkdir（:83）。" },
+    { "tool": "Bash", "input": { "command": "npm test" }, "expected": "ask", "basis": "npm test 不是文件编辑也不是常见文件系统命令（:83），要问。" }
+  ]
+}

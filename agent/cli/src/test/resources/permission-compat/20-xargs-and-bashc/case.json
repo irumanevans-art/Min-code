@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Wrappers：裸 xargs 会被剥掉，Bash(grep *) 匹配 xargs grep pattern（:241）；§What a Bash rule doesn't match：deny 规则不匹配换了形态的同一程序，bash -c 'rm -rf build/' 不被 Bash(rm *) 拦下（:251-256），交给其余规则与模式（:259）。",
+  "pendingFix": "两处差异，期望都按原文写：(1) xargs grep pattern——原文 :241 说裸 xargs 被剥掉、内层命令参与匹配，期望 allow；Min 的包装清单（ShellAnalyzer.WRAPPERS）不含 xargs，实测落到 default 模式问人。(2) bash -c 'rm -rf build/'——原文 :256 说 Bash(rm *) 这类 deny 不拦换了形态的同一程序（bash -c 在 Doesn't stop 列），期望按模式问人（ask）；Min 会剥开 bash -c 分析内层命令并让 deny 命中，实测 deny——Min 比 CC 严，但与文档不同，待复核。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "xargs grep pattern" }, "expected": "allow", "basis": "裸 xargs 被剥掉，内层命令匹配规则（:241）。" },
+    { "tool": "Bash", "input": { "command": "bash -c 'rm -rf build/'" }, "expected": "ask", "basis": "deny 规则不覆盖 bash -c 里的调用（:256），default 模式下 rm 非只读要问（:18）。" }
+  ]
+}

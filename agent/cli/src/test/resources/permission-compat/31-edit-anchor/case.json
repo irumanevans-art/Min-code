@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Read and Edit：项目设置里的 /path 锚在会话主工作目录（:366），Edit(/docs/**) 改的是 <cwd>/docs/ 而非 /docs/（:382）；本样本规则在 project 设置里，/src/** 即 /workspace/src/**。",
+  "calls": [
+    { "tool": "Edit", "input": { "file_path": "/workspace/src/app.ts", "old_string": "a", "new_string": "b" }, "expected": "allow", "basis": "/src/** 锚在 cwd，/workspace/src/ 下的编辑被 allow（:366、:382）。" },
+    { "tool": "Edit", "input": { "file_path": "/workspace/docs/x.md", "old_string": "a", "new_string": "b" }, "expected": "ask", "basis": "docs/ 不在 /src/** 内；文件修改 default 模式要批（:19）。" }
+  ]
+}

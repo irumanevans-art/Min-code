@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §What a Bash rule doesn't match：Bash(curl *) 拦得住 curl https://example.com，拦不住 /usr/bin/curl …（:255）；拦不住的交给其余规则与权限模式（:259），default 模式下 curl 要批准（:18）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "/usr/bin/curl https://example.com" }, "expected": "ask", "basis": "deny 不匹配换个写法的同一程序（:255），落到模式判定要问（:259、:18）。" }
+  ]
+}

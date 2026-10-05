@@ -1,0 +1,10 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Wildcard patterns：Bash(git log * main) 匹配 git log --oneline main 等，不匹配 git log main（中间的 * 必须占住一段文本）（:178）。",
+  "pendingFix": "第二 call：原文 :178 的表把 git log main 明确列在 Bash(git log * main) 的 Doesn't match 列（中间的 * 必须占住一段文本，:188「尾随 * 连带匹配裸命令只在它是唯一通配符时成立」同义），期望 ask；Min 的模式转成正则时中间的 * 用 .*（可匹配空），实测 git log main 也被放行。期望按原文写，差异待复核。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "git log --oneline main" }, "expected": "allow", "basis": "表 :178 Matches 列。" },
+    { "tool": "Bash", "input": { "command": "git log main" }, "expected": "ask", "basis": "表 :178 Doesn't match 列：* 与 main 之间没有内容可占。" },
+    { "tool": "Bash", "input": { "command": "git push origin main" }, "expected": "ask", "basis": "git push 不匹配 git log 前缀（:178）。" }
+  ]
+}

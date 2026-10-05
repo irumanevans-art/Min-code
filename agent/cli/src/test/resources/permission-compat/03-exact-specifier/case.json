@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Use specifiers / Wildcard patterns：无 * 的规则只匹配一条精确命令（:117、:150、:176）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "npm run build" }, "expected": "allow", "basis": "精确命中（:117）。" },
+    { "tool": "Bash", "input": { "command": "npm run build --watch" }, "expected": "ask", "basis": "多出来的参数不在规则里（:176 Doesn't match 列）；命令非只读，default 模式要问（:18）。" }
+  ]
+}

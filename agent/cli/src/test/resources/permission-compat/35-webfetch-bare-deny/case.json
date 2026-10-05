@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Allow or deny every fetch：deny 列表里的裸 WebFetch 把工具整个移除，Claude 无法再抓取（:489 deny 列；:66 裸名 deny 的语义）。",
+  "calls": [
+    { "tool": "WebFetch", "input": { "url": "https://example.com/a", "prompt": "summarize" }, "expected": "deny", "basis": "裸 WebFetch deny = 工具整体被禁（:489、:66）。" }
+  ]
+}

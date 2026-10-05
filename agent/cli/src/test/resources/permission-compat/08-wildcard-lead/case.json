@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Wildcard patterns：开头的 * 代表程序名（:172、:187）；Bash(* --version) 匹配 node --version，不匹配 node -v（:180）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "node --version" }, "expected": "allow", "basis": "表 :180 Matches 列。" },
+    { "tool": "Bash", "input": { "command": "node -v" }, "expected": "ask", "basis": "表 :180 Doesn't match 列。" }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Compound commands：分隔符 && || ; | |& & 与换行把复合命令拆开，每条子命令都要被规则独立覆盖（:224）；放行 git status && npm test 的例子见 :231。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "git status && npm test" }, "expected": "allow", "basis": "两条子命令各有一条 allow 规则覆盖（:224、:231）。" }
+  ]
+}

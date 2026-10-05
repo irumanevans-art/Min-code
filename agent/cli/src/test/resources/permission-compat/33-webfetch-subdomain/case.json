@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §WebFetch：*.example.com 匹配任意深度的子域（api.example.com、a.b.example.com），但不匹配 example.com 本身（:474）。",
+  "calls": [
+    { "tool": "WebFetch", "input": { "url": "https://api.example.com/a", "prompt": "summarize" }, "expected": "allow", "basis": "子域命中（:474）。" },
+    { "tool": "WebFetch", "input": { "url": "https://a.b.example.com/a", "prompt": "summarize" }, "expected": "allow", "basis": "任意深度的子域都命中（:474）。" },
+    { "tool": "WebFetch", "input": { "url": "https://example.com/a", "prompt": "summarize" }, "expected": "ask", "basis": "裸域不在 *.example.com 内（:474）。" }
+  ]
+}

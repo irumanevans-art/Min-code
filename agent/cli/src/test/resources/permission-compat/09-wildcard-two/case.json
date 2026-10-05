@@ -1,0 +1,9 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Wildcard patterns：Bash(* --help *) 匹配 npm --help x 但不匹配 npm --help；尾随 * 连带匹配裸命令的规则只在它是唯一通配符时成立（:183、:188）。",
+  "pendingFix": "第二 call：原文 :183/:188 说 Bash(* --help *) 不匹配 npm --help（第二个 * 必须占住一段文本），期望 ask；Min 的 * 转成 .*（可匹配空），实测 npm --help 也被放行。期望按原文写，差异待复核。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "npm --help x" }, "expected": "allow", "basis": "表 :183 Matches 列。" },
+    { "tool": "Bash", "input": { "command": "npm --help" }, "expected": "ask", "basis": "表 :183 Doesn't match 列：第二个 * 必须占住一段文本。" }
+  ]
+}

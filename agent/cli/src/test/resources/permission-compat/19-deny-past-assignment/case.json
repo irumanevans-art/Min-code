@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "basis": "cc-permissions.md §Wrappers：allow 规则过不了未知变量的赋值，但 deny / ask 规则匹配任何前置赋值之后的内容——FOO=bar rm -rf tmp/ 仍被 Bash(rm *) 拒绝（:239）。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "rm -rf build/" }, "expected": "deny", "basis": "deny 规则直接命中。" },
+    { "tool": "Bash", "input": { "command": "FOO=bar rm -rf tmp/" }, "expected": "deny", "basis": "deny 规则匹配任何前置赋值之后（:239）。" }
+  ]
+}
