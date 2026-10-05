@@ -301,6 +301,58 @@ class HooksSessionTest {
         assertEquals(dev.min.agent.spi.DecidedBy.Hook("PermissionRequest"), resolved.decidedBy)
     }
 
+    // ---- SessionStart(resume) / SessionEnd ----
+
+    /** 与 [session] 同一套装配，但把 Hub 留给测试用（close / open(resumedByUser)） */
+    private suspend fun hubSession(model: ModelClient, trust: Boolean = false): Triple<SessionRuntime, FileSessionStore, SessionHub> {
+        val store = FileSessionStore(root.resolve("sessions"), { System.currentTimeMillis() })
+        val logDir = Files.createDirectories(root.resolve("logs"))
+        val deps = KernelDeps(
+            clock = { System.currentTimeMillis() },
+            ids = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
+            models = { ResolvedModel(TEST_PROFILE, model) },
+            tools = listOf(bash),
+            host = HostPorts(paths.fs, JvmSearch(paths.fs), LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir))) { FakeArtifacts() },
+            platform = "test",
+            zone = ZoneOffset.UTC,
+            memoryHome = paths.guestOfHost(home),
+            hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
+            trustProjectHooks = { trust },
+            env = { null },
+        )
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val hub = SessionHub(store, deps, scope)
+        return Triple(hub.create(paths.guestOfHost(work), TEST_MODEL, PermissionMode.BypassPermissions), store, hub)
+    }
+
+    @Test
+    fun `resume and session end run their hooks with real scripts`() = run {
+        val script = Files.createDirectories(home.resolve(".claude/hooks")).resolve("lifecycle.sh")
+        Files.writeString(script, "#!/bin/bash\ncat > /dev/null\necho ran >> lifecycle.txt\n")
+        settings(
+            """{"SessionStart": [{"matcher": "resume", "hooks": [{"type": "command", "command": "bash '${shellPath(script)}'"}]}],
+                "SessionEnd": [{"hooks": [{"type": "command", "command": "bash '${shellPath(script)}'", "timeout": 5}]}]}""",
+        )
+        val marker = work.resolve("lifecycle.txt")
+        val model = RoutingModel { req -> reply(TextPart("好")) }
+        val (first, store, hub) = hubSession(model)
+        first.say("干活")
+        assertTrue(hub.close(first.sessionId))
+        assertEquals("close 时 SessionEnd 先跑一遍", 1, Files.readAllLines(marker).size)
+
+        // 用户打开（--resume 的路）：SessionStart(source = resume) 再写一行
+        val resumed = hub.open(first.sessionId, resumedByUser = true)!!
+        resumed.say("接着")
+        assertEquals(2, Files.readAllLines(marker).size)
+
+        hub.open(first.sessionId, resumedByUser = true)
+        assertTrue("同一进程第二次打开不跑", Files.readAllLines(marker).size == 2)
+        assertTrue(hub.close(first.sessionId, dev.min.agent.kernel.SessionEndReasons.PROMPT_INPUT_EXIT))
+        assertEquals("SessionEnd 同一进程只跑一次", 2, Files.readAllLines(marker).size)
+        val ran = store.events(first).filterIsInstance<HooksRan>()
+        assertTrue(ran.joinToString(), ran.any { it.event == "SessionStart" } && ran.any { it.event == "SessionEnd" })
+    }
+
     // ---- 信任 ----
 
     @Test

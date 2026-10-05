@@ -548,4 +548,64 @@ class HooksH3EventsTest {
         assertTrue("matcher 是 Plan，Explore 不匹配", http.sent.isEmpty())
     }
 
+    // ---- SessionEnd ----
+
+    @Test
+    fun `closing a root session runs SessionEnd before it leaves memory`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = RoutingModel { req -> reply(TextPart("好")) }
+        val hub = hub(model, http)
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SessionEnd"))))),
+        )
+        rt.say("干活")
+        assertTrue(hub.close(rt.sessionId, SessionEndReasons.PROMPT_INPUT_EXIT))
+        val body = http.sent.single().body
+        assertTrue(body, body.contains("\"hook_event_name\":\"SessionEnd\""))
+        assertTrue(body, body.contains("\"reason\":\"prompt_input_exit\""))
+        assertTrue(body, body.contains("\"session_id\":\"${rt.sessionId.value}\""))
+        assertEquals("SessionEnd", events(rt).filterIsInstance<HooksRan>().single().event)
+        // 已卸下后再 close 是空操作（同一进程里 SessionEnd 只跑一次）
+        assertTrue(hub.close(rt.sessionId).not())
+    }
+
+    @Test
+    fun `deleting an offline session still runs SessionEnd before the log goes`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = RoutingModel { req -> reply(TextPart("好")) }
+        val firstScope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val first = SessionHub(store, hubDeps(model, http), firstScope)
+        val rt = first.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SessionEnd", "other"))))),
+        )
+        rt.say("干活")
+        firstScope.cancel()
+        // 换一个 Hub（等于换进程）：根会话不在线，删除前也临时打开跑一遍 SessionEnd
+        val second = SessionHub(store, hubDeps(model, http), CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it })
+        assertTrue(second.delete(rt.sessionId))
+        assertEquals("删日志之前跑过一次 SessionEnd", 1, http.sent.count { it.body.contains("\"reason\":\"other\"") })
+        assertTrue(store.open(rt.sessionId) == null)
+    }
+
+    @Test
+    fun `a busy tree does not run SessionEnd`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = object : ModelClient {
+            override fun stream(request: ModelRequest): Flow<ModelStreamEvent> = flow { kotlinx.coroutines.awaitCancellation() }
+        }
+        val hub = hub(model, http)
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SessionEnd"))))),
+        )
+        rt.send(ClientMsgId("u1"), listOf(TextPart("干活")))
+        rt.state.first { it.turn != null }
+        assertTrue("回合在跑，close 拒绝", hub.close(rt.sessionId).not())
+        assertTrue(http.sent.isEmpty())
+        rt.interrupt()
+        rt.state.first { it.turn == null }
+    }
+
 }

@@ -35,6 +35,7 @@ import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.store.LOG_FORMAT_VERSION
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.SessionEndInput
 import dev.min.agent.ext.hooks.SubagentStartInput
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.QuestionId
@@ -96,6 +97,13 @@ data class HubLimits(
     /** 同时在流式请求模型的子 agent 最多几个。等审批的子 agent 不占名额；根会话不受限 */
     val maxConcurrentChildRequests: Int = 3,
 )
+
+/** CC 的 SessionEnd reason 取值：Min 里目前只会出现这两个（clear / resume / logout 没有对应流程） */
+object SessionEndReasons {
+    /** 用户在输入提示前退出（桌面 CLI 的退出路径） */
+    const val PROMPT_INPUT_EXIT = "prompt_input_exit"
+    const val OTHER = "other"
+}
 
 /**
  * 一个进程一个：持有所有在线的会话运行时，负责委派子 agent、交付报告、恢复后的补发（docs/agent/detail/子agent设计.md §5）。
@@ -195,12 +203,14 @@ class SessionHub(
 
     /**
      * 卸下一个会话及它在线的整棵子树（运行时离开内存，日志不动，之后 [open] 能原样重开）。
-     * 子树里有回合在跑就拒绝（返回 false）：卸下会丢掉正在跑的协程，得先停下或等它跑完
+     * 子树里有回合在跑就拒绝（返回 false）：卸下会丢掉正在跑的协程，得先停下或等它跑完。
+     * 根会话卸下前跑 SessionEnd（hooks设计 §7）：清理类的 hook 有机会收尾，[HooksRan] 先落盘再卸下
      */
-    suspend fun close(id: SessionId): Boolean {
+    suspend fun close(id: SessionId, reason: String = SessionEndReasons.OTHER): Boolean {
         val tree = subtreeOnline(id)
         if (tree.isEmpty()) return false
         if (tree.any { runtimes[it]?.state?.value?.turn != null }) return false
+        runtimes[id]?.takeIf { it.state.value.origin == null }?.let { runSessionEnd(it, reason) }
         tree.forEach(::unload)
         return true
     }
@@ -250,10 +260,10 @@ class SessionHub(
      * 关掉一棵子树：先 [stopTree]，再卸下（日志不动，之后 [open] 能重开）。界面「关闭会话」用它，[close] 只关空闲的。
      * 停树与卸下之间可能又起了新回合（刚被唤醒的父会话、刚委派的子会话），所以最多重试 [STOP_ROUNDS] 轮；仍卸不下返回 false
      */
-    suspend fun shutdown(id: SessionId): Boolean {
+    suspend fun shutdown(id: SessionId, reason: String = SessionEndReasons.OTHER): Boolean {
         repeat(STOP_ROUNDS) {
             stopTree(id)
-            if (close(id)) return true
+            if (close(id, reason)) return true
         }
         return false
     }
@@ -262,7 +272,7 @@ class SessionHub(
      * 删除一个会话及它的全部后代（日志与附件）。先中断整棵树里在跑的回合并等它们收尾，再从叶子往根逐个删：
      * 删到一半被杀时，留下的是完整的上半棵树，而不是一个找不到父会话的孤儿。返回根会话是否删掉了
      */
-    suspend fun delete(root: SessionId): Boolean {
+    suspend fun delete(root: SessionId, reason: String = SessionEndReasons.OTHER): Boolean {
         val headers = store.list()
         val childrenOf = headers.filter { it.parent != null }.groupBy({ it.parent!! }, { it.sessionId })
         val order = mutableListOf<SessionId>()
@@ -273,6 +283,9 @@ class SessionHub(
         collect(root)
         if (runtimes.containsKey(root)) stopTree(root)
         for (id in order) runtimes[id]?.let { rt -> rt.interrupt(); rt.awaitIdle() }
+        // 根会话的 SessionEnd 在删日志之前跑；不在内存里的也临时打开跑一遍（清理类 hook 的副作用不该因为会话不在线就跳过）
+        val rootRuntime = runtimes[root] ?: SessionRuntime.open(store, root, deps, scope)
+        if (rootRuntime != null && rootRuntime.state.value.origin == null) runSessionEnd(rootRuntime, reason)
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {
@@ -493,6 +506,21 @@ class SessionHub(
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** 本进程里已经跑过 SessionEnd 的根会话：同一会话在同一进程里只结束一次（关了再删不重复跑） */
+    private val sessionEnded = ConcurrentHashMap.newKeySet<SessionId>()
+
+    /**
+     * SessionEnd（根会话关闭 / 删除时）：无决策控制，失败与超时只记说明；关闭流程等它跑完或超时
+     * （引擎的批超时兜底，默认每台 2 秒——CC 的 1.5 秒预算按整秒向上取），不会无限期卡住关闭
+     */
+    private suspend fun runSessionEnd(rt: SessionRuntime, reason: String) {
+        if (rt.state.value.origin != null || !sessionEnded.add(rt.sessionId)) return
+        val specific = HookJson.encodeToJsonElement(
+            SessionEndInput.serializer(), SessionEndInput(reason = reason),
+        ).jsonObject
+        HookDriver(rt).run(HookEvent.SessionEnd, reason, specific)
     }
 
     /**
