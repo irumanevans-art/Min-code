@@ -89,6 +89,11 @@ class RootfsFileSystem(
     /** guest 路径 → 宿主路径（先解析链接） */
     fun hostPath(path: GuestPath): Path = hostOf(components(canonical(path).value))
 
+    /** 扫描根只解析一次；树内只在真实挂载点换宿主目录，普通条目不重复解析父路径。 */
+    internal fun snapshotMounts(root: GuestPath): Map<String, Path> = binds
+        .filter { it.guest != root && it.guest.isUnder(root) }
+        .associate { it.guest.value.removePrefix(root.value.trimEnd('/') + "/") to it.host }
+
     override fun scopeOf(path: GuestPath): PathScope {
         val real = canonical(path)
         return when {

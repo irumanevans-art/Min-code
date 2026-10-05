@@ -9,6 +9,19 @@ internal class SnapshotIgnore(private val rules: List<Rule> = emptyList()) {
     fun withFile(base: String, text: String): SnapshotIgnore = SnapshotIgnore(rules + parse(base, text))
     fun withExcludeFile(base: String, text: String): SnapshotIgnore = SnapshotIgnore(parse(base, text) + rules)
 
+    /** 扫描器只会进入可见父目录，祖先已经检查过，不能为每个子文件再匹配整条祖先链。 */
+    fun ignoredEntry(path: String, directory: Boolean): Boolean {
+        var excluded = false
+        val bytes = byteCharacters(path)
+        for (rule in rules) {
+            if (rule.directoryOnly && !directory) continue
+            val relative = if (rule.base.isEmpty()) bytes else
+                path.takeIf { it.startsWith(rule.base + "/") }?.removePrefix(rule.base + "/")?.let(::byteCharacters) ?: continue
+            if (rule.regex.matches(relative)) excluded = !rule.negated
+        }
+        return excluded
+    }
+
     fun ignored(path: String, directory: Boolean): Boolean {
         val parts = path.split('/')
         // Git 不进入已排除的父目录；对子文件取反也不能把它救回来。

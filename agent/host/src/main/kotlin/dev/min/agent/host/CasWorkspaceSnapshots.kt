@@ -17,14 +17,17 @@ class CasWorkspaceSnapshots(
     private val home: GuestPath = GuestPath("/root"),
     private val clockMs: () -> Long = System::currentTimeMillis,
     private val nanoTime: () -> Long = System::nanoTime,
+    private val timing: ((SnapshotTiming) -> Unit)? = null,
 ) : WorkspaceSnapshots {
+    /** 调试探针仍取当前一代映射，计时仓库只隔离存储，不能重造挂载。 */
+    fun fileSystemForProbe(): RootfsFileSystem = currentFileSystem()
     val directory: Path = storageRoot.resolve("snapshots")
     private val stores = ConcurrentHashMap<String, CasSnapshotStore>()
     override fun store(root: GuestPath): SnapshotStore {
         val path = normalizedGuest(root.value)
         return stores.computeIfAbsent(path) {
             val label = path.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]"), "_").take(60).ifEmpty { "root" }
-            CasSnapshotStore(path, SnapshotRepository(directory.resolve(snapshotHash(path.encodeToByteArray()).take(16) + "-" + label)), currentFileSystem, normalizedGuest(home.value), clockMs, nanoTime)
+            CasSnapshotStore(path, SnapshotRepository(directory.resolve(snapshotHash(path.encodeToByteArray()).take(16) + "-" + label)), currentFileSystem, normalizedGuest(home.value), clockMs, nanoTime, timing)
         }
     }
     /** 仓库首次超预算会记失败；设置层将来可用此入口明确要求重新尝试。 */
@@ -52,26 +55,32 @@ internal class CasSnapshotStore(
     private val home: String,
     private val clockMs: () -> Long,
     private val nanoTime: () -> Long,
+    private val timing: ((SnapshotTiming) -> Unit)?,
 ) : SnapshotStore {
     override suspend fun snapshot(budget: SnapshotBudget): SnapshotResult = withContext(Dispatchers.IO) {
         val started = nanoTime()
+        val measuredStart = System.nanoTime()
+        val timer = SnapshotTimer()
         var first = false
         try {
             val fs = currentFileSystem()
-            if (root == "/" || root == home || fs.hostPath(GuestPath(root)) == fs.hostPath(GuestPath(home))) return@withContext SnapshotResult.Unavailable("不在根目录或主目录上拍整树快照。")
+            if (root == "/" || root == home || timer.measure("guestResolve") { fs.hostPath(GuestPath(root)) == fs.hostPath(GuestPath(home)) }) return@withContext SnapshotResult.Unavailable("不在根目录或主目录上拍整树快照。")
             if (budget.timeoutMs <= 0 || budget.firstTimeoutMs <= 0 || budget.maxFiles < 0 || budget.maxNewBytes < 0) return@withContext SnapshotResult.Unavailable("快照预算无效。")
-            first = repository.readIndex() == null
+            first = timer.measure("index") { repository.readIndex() } == null
             val deadline = SnapshotDeadline(nanoTime, if (first) budget.firstTimeoutMs else budget.timeoutMs)
-            val result = withTimeoutOrNull(if (first) budget.firstTimeoutMs else budget.timeoutMs) { repository.locked(deadline::check) {
+            val result = withTimeoutOrNull(if (first) budget.firstTimeoutMs else budget.timeoutMs) { repository.locked(deadline::check, timer) {
                 val unavailable = repository.dir.resolve("unavailable")
                 if (Files.exists(unavailable)) return@locked SnapshotResult.Unavailable(Files.readAllBytes(unavailable).decodeToString())
-                val index = repository.readIndex()
+                val index = timer.measure("index") { repository.readIndex() }
                 try {
-                    val scan = SnapshotScanner(fs, root, repository, index, budget, deadline, true).scan()
+                    val scan = SnapshotScanner(fs, root, repository, index, budget, deadline, true, timer).scan()
                     deadline.check()
                     // 清单只有全扫描通过后才能发布，不能让半张清单被当作“文件不存在”。
-                    val id = repository.writeManifest(scan.manifest)
-                    repository.writeIndex(SnapshotIndex(writtenAtMs = clockMs(), scannedAtMs = clockMs(), manifest = id, files = scan.cache))
+                    val id = timer.measure("manifestSync") { repository.writeManifest(scan.manifest) }
+                    // 不推进没变的 index 时间，保留旧 racy 桶直到文件确实重写了缓存。
+                    if (index == null || index.manifest != id || index.files != scan.cache) {
+                        timer.measure("index") { repository.writeIndex(SnapshotIndex(writtenAtMs = clockMs(), scannedAtMs = clockMs(), manifest = id, files = scan.cache)) }
+                    }
                     val files = scan.manifest.entries.filter { it.kind == "file" }
                     SnapshotResult.Taken(ManifestId(id), SnapshotStats(files.size, files.sumOf { it.size }, scan.newBytes, scan.manifest.skipped.size, (nanoTime() - started) / 1_000_000))
                 } catch (e: SnapshotLimit) {
@@ -87,6 +96,7 @@ internal class CasSnapshotStore(
             SnapshotResult.Unavailable(e.message.orEmpty())
         }
         catch (e: Exception) { SnapshotResult.Unavailable("工作区或快照仓库无法读取或写入。") }
+        finally { timing?.invoke(timer.result(System.nanoTime() - measuredStart)) }
     }
 
     private suspend fun markFirstFailure(reason: String) {

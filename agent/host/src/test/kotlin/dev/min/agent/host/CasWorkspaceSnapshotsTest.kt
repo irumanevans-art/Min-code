@@ -64,6 +64,76 @@ class CasWorkspaceSnapshotsTest {
         assertEquals("bbbb", store.read(ContentId(repository.readManifest(second.manifest.value)!!.entries.single().content!!))!!.decodeToString())
     }
 
+    @Test fun unchanged_incremental_reads_no_content_and_does_not_rewrite_index() = runBlocking {
+        val file = put("src/x", "stable")
+        Files.setLastModifiedTime(file, FileTime.fromMillis(now - 10_000))
+        val measurements = mutableListOf<SnapshotTiming>()
+        val measured = CasWorkspaceSnapshots(storage, { mapper }, clockMs = { now }, timing = measurements::add)
+        val measuredStore = measured.store(g("/workspace"))
+        val first = measuredStore.snapshot(budget) as SnapshotResult.Taken
+        val bytes = Files.readAllBytes(repository.dir.resolve("index"))
+        now += 10_000
+        val second = measuredStore.snapshot(budget) as SnapshotResult.Taken
+        assertEquals(first.manifest, second.manifest)
+        assertEquals(1, measurements[0].contentReads)
+        assertEquals(0, measurements[1].contentReads)
+        assertArrayEquals(bytes, Files.readAllBytes(repository.dir.resolve("index")))
+        // 缓存只节省读取；对象丢失时还必须重读补齐，不能返回不可恢复的清单。
+        val id = repository.readManifest(first.manifest.value)!!.entries.single { it.kind == "file" }.content!!
+        Files.delete(repository.objectPath(id))
+        assertEquals(first.manifest, (measuredStore.snapshot(budget) as SnapshotResult.Taken).manifest)
+        assertEquals(1, measurements[2].contentReads)
+        assertEquals("stable", measuredStore.read(ContentId(id))!!.decodeToString())
+    }
+
+    @Test fun unchanged_racy_index_does_not_advance_cutoff_and_hide_later_same_bucket_edit() = runBlocking {
+        val file = put("x", "aaaa")
+        val coarse = now / 2_000 * 2_000
+        Files.setLastModifiedTime(file, FileTime.fromMillis(coarse))
+        val first = take()
+        now += 10_000
+        assertEquals(first.manifest, take().manifest)
+        put("x", "bbbb"); Files.setLastModifiedTime(file, FileTime.fromMillis(coarse))
+        assertNotEquals(first.manifest, take().manifest)
+    }
+
+    @Test fun decoded_index_cache_observes_other_repository_writes_and_corruption() = runBlocking {
+        put("x", "aaaa"); take()
+        val original = repository.readIndex()!!
+        val other = SnapshotRepository(repository.dir)
+        other.writeIndex(original.copy(writtenAtMs = now + 10_000))
+        assertEquals(now + 10_000, repository.readIndex()!!.writtenAtMs)
+        Files.write(repository.dir.resolve("index"), "broken".encodeToByteArray())
+        assertNull(repository.readIndex())
+        other.writeIndex(original)
+        assertEquals(original, repository.readIndex())
+    }
+
+    @Test fun nested_mount_hides_underlying_symlink_and_does_not_follow_guest_links() = runBlocking {
+        val bound = Files.createDirectories(disk.getPath("/bound"))
+        Files.write(bound.resolve("x"), "bound".encodeToByteArray())
+        Files.createSymbolicLink(files.resolve("nested"), disk.getPath("/outside"))
+        Files.createSymbolicLink(files.resolve("link"), disk.getPath("/bound"))
+        mapper = RootfsFileSystem(linux, listOf(BindMount(g("/workspace"), files), BindMount(g("/workspace/nested"), bound)))
+        val manifest = repository.readManifest(take().manifest.value)!!
+        assertEquals("dir", manifest.entries.single { it.path == "nested" }.kind)
+        assertTrue(manifest.entries.any { it.path == "nested/x" })
+        assertEquals("symlink", manifest.entries.single { it.path == "link" }.kind)
+        assertFalse(manifest.entries.any { it.path.startsWith("link/") })
+    }
+
+    @Test fun unix_backslash_file_name_preserves_manifest_path_and_restore_target() = runBlocking {
+        put("src/a\\b", "before")
+        val target = take()
+        val manifest = repository.readManifest(target.manifest.value)!!
+        assertTrue(manifest.entries.any { it.path == "src/a\\b" })
+        assertFalse(manifest.entries.any { it.path == "src/a/b" })
+        put("src/a\\b", "after")
+        store.restore(target.manifest, emptyList())
+        assertEquals("before", bytes("src/a\\b"))
+        assertFalse(Files.exists(files.resolve("src/a/b")))
+    }
+
     @Test fun exclusions_large_files_and_symlinks_are_visible_as_protected_regions() = runBlocking {
         put("code", "old"); put("node_modules/x", "ignored old"); put("build/a", "build old")
         put("big", ""); Files.write(files.resolve("big"), ByteArray(4 * 1024 * 1024 + 1))

@@ -38,8 +38,15 @@ import java.util.zip.InflaterInputStream
 @Serializable internal data class SnapshotRoots(val version: Int = 1, val session: String, val updatedAtMs: Long, val manifests: List<String>, val contents: List<String>)
 
 internal val snapshotJson = Json { encodeDefaults = true; ignoreUnknownKeys = false }
-internal fun snapshotHash(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-internal fun validSnapshotId(id: String): Boolean = id.matches(Regex("[0-9a-f]{64}"))
+internal fun snapshotHash(bytes: ByteArray): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+    val hex = "0123456789abcdef"
+    return CharArray(digest.size * 2).also { out -> digest.forEachIndexed { i, byte ->
+        val n = byte.toInt() and 255
+        out[i * 2] = hex[n ushr 4]; out[i * 2 + 1] = hex[n and 15]
+    } }.concatToString()
+}
+internal fun validSnapshotId(id: String): Boolean = id.length == 64 && id.all { it in '0'..'9' || it in 'a'..'f' }
 internal fun normalizedGuest(path: String): String {
     require(path.startsWith('/')) { "检查点路径必须是绝对路径。" }
     val parts = ArrayList<String>()
@@ -51,19 +58,24 @@ internal fun normalizedGuest(path: String): String {
 internal class SnapshotRepository(val dir: Path) {
     val objects: Path get() = dir.resolve("objects")
     val manifests: Path get() = dir.resolve("manifests")
+    @Volatile private var cachedIndex: Pair<ByteArray, SnapshotIndex>? = null
     private val mutex = locks.computeIfAbsent(dir.toAbsolutePath().normalize()) { Mutex() }
 
-    suspend fun <T> locked(check: suspend () -> Unit = {}, block: suspend () -> T): T = mutex.withLock {
-        check()
-        Files.createDirectories(dir)
-        FileChannel.open(dir.resolve("lock"), CREATE, WRITE).use { channel ->
-            var lock: java.nio.channels.FileLock? = null
-            while (lock == null) {
-                check(); currentCoroutineContext().ensureActive()
-                lock = try { channel.tryLock() } catch (_: OverlappingFileLockException) { null }
-                if (lock == null) delay(10)
+    suspend fun <T> locked(check: suspend () -> Unit = {}, timer: SnapshotTimer? = null, block: suspend () -> T): T {
+        val lockStarted = System.nanoTime()
+        return mutex.withLock {
+            check()
+            Files.createDirectories(dir)
+            FileChannel.open(dir.resolve("lock"), CREATE, WRITE).use { channel ->
+                var lock: java.nio.channels.FileLock? = null
+                while (lock == null) {
+                    check(); currentCoroutineContext().ensureActive()
+                    lock = try { channel.tryLock() } catch (_: OverlappingFileLockException) { null }
+                    if (lock == null) delay(10)
+                }
+                timer?.let { it.nanos["lock"] = it.nanos.getValue("lock") + System.nanoTime() - lockStarted }
+                try { block() } finally { lock.release() }
             }
-            try { block() } finally { lock.release() }
         }
     }
 
@@ -86,22 +98,29 @@ internal class SnapshotRepository(val dir: Path) {
             bytes.takeIf { snapshotHash(it) == id }
         }.getOrNull()
     }
-    suspend fun writeContent(bytes: ByteArray): Pair<String, Boolean> {
-        currentCoroutineContext().ensureActive()
-        val id = snapshotHash(bytes)
+    suspend fun writeContent(bytes: ByteArray, id: String = snapshotHash(bytes)): Pair<String, Boolean> {
+        val context = currentCoroutineContext()
+        return writeContentChecked(bytes, id) { context.ensureActive() }
+    }
+    fun writeContentChecked(bytes: ByteArray, id: String, knownAbsent: Boolean = false, parents: MutableSet<Path>? = null, check: () -> Unit): Pair<String, Boolean> {
+        check()
         val path = objectPath(id)
-        if (Files.exists(path)) return id to false
+        if (!knownAbsent && Files.exists(path)) return id to false
         val buffer = java.io.ByteArrayOutputStream()
         DeflaterOutputStream(buffer).use { output ->
             var offset = 0
             while (offset < bytes.size) {
-                currentCoroutineContext().ensureActive()
+                check()
                 val count = minOf(64 * 1024, bytes.size - offset)
                 output.write(bytes, offset, count); offset += count
             }
         }
         val compressed = buffer.toByteArray()
-        atomic(path, compressed, sync = false)
+        if (parents != null && path.parent !in parents) {
+            Files.createDirectories(path.parent)
+            parents.add(path.parent)
+        }
+        atomic(path, compressed, sync = false, createParent = parents == null)
         return id to true
     }
     fun readManifest(id: String): SnapshotManifest? {
@@ -125,14 +144,22 @@ internal class SnapshotRepository(val dir: Path) {
         return id
     }
     fun readIndex(): SnapshotIndex? = catchingNonCancellation {
-        snapshotJson.decodeFromString<SnapshotIndex>(Files.readAllBytes(dir.resolve("index")).decodeToString()).also { require(it.version == 1) }
+        val bytes = Files.readAllBytes(dir.resolve("index"))
+        // 每次仍读磁盘；只有字节完全相同才复用解码，其他进程写入和损坏都不能被内存缓存遮住。
+        cachedIndex?.takeIf { it.first.contentEquals(bytes) }?.second ?: snapshotJson
+            .decodeFromString<SnapshotIndex>(bytes.decodeToString())
+            .also { require(it.version == 1); cachedIndex = bytes to it }
     }.getOrNull()
-    fun writeIndex(index: SnapshotIndex) = atomic(dir.resolve("index"), snapshotJson.encodeToString(index).encodeToByteArray(), sync = false)
+    fun writeIndex(index: SnapshotIndex) {
+        val bytes = snapshotJson.encodeToString(index).encodeToByteArray()
+        atomic(dir.resolve("index"), bytes, sync = false)
+        cachedIndex = bytes to index
+    }
 
     companion object {
         private val locks = ConcurrentHashMap<Path, Mutex>()
-        fun atomic(path: Path, bytes: ByteArray, sync: Boolean) {
-            Files.createDirectories(path.parent)
+        fun atomic(path: Path, bytes: ByteArray, sync: Boolean, createParent: Boolean = true) {
+            if (createParent) Files.createDirectories(path.parent)
             val temp = path.parent.resolve(".tmp-${UUID.randomUUID()}")
             try {
                 FileChannel.open(temp, CREATE_NEW, WRITE).use { channel ->

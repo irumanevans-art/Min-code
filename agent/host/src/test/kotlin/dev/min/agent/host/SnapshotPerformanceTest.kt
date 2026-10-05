@@ -25,7 +25,7 @@ class SnapshotPerformanceTest {
             Files.write(path, ("// source $n\n" + "fun value$n() = $n\n".repeat(50)).encodeToByteArray())
             Files.setLastModifiedTime(path, FileTime.fromMillis(now - 10_000))
         }
-        val snapshots = CasWorkspaceSnapshots(tmp.newFolder("agent").toPath(), { RootfsFileSystem(root) })
+        val snapshots = CasWorkspaceSnapshots(tmp.newFolder("agent").toPath(), { RootfsFileSystem(root) }, timing = { println("SNAPSHOT_STAGES $it") })
         val store = snapshots.store(GuestPath("/workspace/project"))
         val start = System.nanoTime()
         val first = store.snapshot(SnapshotBudget.DESKTOP)
@@ -38,6 +38,12 @@ class SnapshotPerformanceTest {
         first as SnapshotResult.Taken; second as SnapshotResult.Taken
         assertEquals(5_000, first.stats.files); assertEquals(first.manifest, second.manifest)
         assertEquals(0, second.stats.newBytes)
+        repeat(3) { pass ->
+            val incremental = System.nanoTime()
+            val warm = store.snapshot(SnapshotBudget.DESKTOP) as SnapshotResult.Taken
+            assertEquals(first.manifest, warm.manifest)
+            println("SNAPSHOT_DESKTOP_WARM pass=${pass + 1} durationMs=${(System.nanoTime() - incremental) / 1_000_000}")
+        }
         var size = 0L
         Files.walk(snapshots.directory).use { paths -> paths.filter { Files.isRegularFile(it) }.forEach { size += Files.size(it) } }
         println("SNAPSHOT_DESKTOP files=5000 firstMs=$firstMs incrementalMs=$secondMs repositoryBytes=$size firstNewBytes=${first.stats.newBytes} incrementalNewBytes=${second.stats.newBytes}")
