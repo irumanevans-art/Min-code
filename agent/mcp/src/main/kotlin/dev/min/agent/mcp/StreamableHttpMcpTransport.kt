@@ -64,7 +64,14 @@ class StreamableHttpMcpTransport(
                             throw McpTransportClosed("MCP 服务器 ${safeUrl(endpoint)} initialize 返回了不合法的会话标识。")
                         session = next
                     }
-                    if (it.status != 202 && it.status != 204) consumePost(it, message["id"])
+                    try {
+                        if (it.status != 202 && it.status != 204) consumePost(it, message["id"])
+                    } catch (e: McpHttpException) {
+                        // 续传 GET 也携带会话；它的 404 与原 POST 的过期必须共享一次恢复预算。
+                        if (e.status != 404 || oldSession == null || refreshed) throw e
+                        recover(oldSession); refreshed = true
+                        return@use
+                    }
                     if (message.text("method") == "notifications/initialized") startGet()
                     return
                 }

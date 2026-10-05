@@ -14,6 +14,41 @@ class HttpEdgeCasesTest {
         val c = McpClient(t, this, McpClientOptions("1", requestTimeoutMs = 3_000))
         try { withTimeout(10_000) { block(c) } } finally { c.close() }
     }
+    @Test fun `post SSE resume 404 reinitializes and resends once but second expiry fails`() = runBlocking {
+        for (failAgain in listOf(false, true)) LoopbackHttp().use { s ->
+            val initializations = AtomicInteger(); val gets = AtomicInteger()
+            val initializeSessions = Collections.synchronizedList(mutableListOf<String?>())
+            val calls = Collections.synchronizedList(mutableListOf<JsonObject>())
+            s.server.createContext("/mcp") { e ->
+                if (e.requestMethod == "GET") { gets.incrementAndGet(); assertEquals("resume", e.requestHeaders.getFirst("Last-Event-ID")); e.reply(404) }
+                else if (e.requestMethod != "POST") e.reply(405)
+                else {
+                    val m = json(e.requestBody.readBytes().decodeToString())
+                    when (m.text("method")) {
+                        "initialize" -> {
+                            initializeSessions += e.requestHeaders.getFirst("Mcp-Session-Id")
+                            e.responseHeaders.add("Mcp-Session-Id", "s${initializations.incrementAndGet()}")
+                            e.reply(200, result(m.getValue("id"), initializeResult()).toString())
+                        }
+                        "tools/call" -> {
+                            calls += m
+                            if (failAgain || e.requestHeaders.getFirst("Mcp-Session-Id") == "s1")
+                                e.reply(200, "id: resume\nretry: 1\n\n", "text/event-stream")
+                            else e.reply(200, result(m.getValue("id"), json("""{"content":[]}""")).toString())
+                        }
+                        else -> e.reply(202)
+                    }
+                }
+            }
+            withClient(StreamableHttpMcpTransport(s.url + "/mcp", { emptyList() }, s.http, enableGetStream = false)) { c ->
+                c.connect()
+                val failure = try { c.callTool("x", emptyObject, idleTimeoutMs = 3_000); null } catch (e: McpHttpException) { e }
+                if (failAgain) assertEquals(404, failure!!.status) else assertNull(failure)
+            }
+            assertEquals(2, initializations.get()); assertEquals(listOf(null, null), initializeSessions)
+            assertEquals(2, calls.size); assertEquals(calls[0], calls[1]); assertEquals(if (failAgain) 2 else 1, gets.get())
+        }
+    }
     @Test fun `concurrent session 404s share one reinitialization`() = runBlocking {
         LoopbackHttp().use { s ->
             val initializations = AtomicInteger(); val oldPosts = CountDownLatch(2)
