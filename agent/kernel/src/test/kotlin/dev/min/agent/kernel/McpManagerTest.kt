@@ -88,7 +88,8 @@ class McpManagerTest {
         override val instructions: String = "先搜再建。"
         var result: (String, JsonObject) -> McpCallResult = { t, _ -> McpCallResult(listOf(McpContent.Text("$t 完成")), null, false) }
         var closed = false
-        override suspend fun listTools() = tools
+        var listFails = false
+        override suspend fun listTools() = if (listFails) error("tools/list 失败") else tools
         override suspend fun call(tool: String, arguments: JsonObject, onProgress: (McpProgress) -> Unit, idleTimeoutMs: Long, hardTimeoutMs: Long?): McpCallResult {
             onProgress(McpProgress(1.0, 2.0))
             return result(tool, arguments)
@@ -103,13 +104,13 @@ class McpManagerTest {
         }
     }
 
-    private inner class FakeConnector(var connectDelayMs: Long = 0) : McpConnector {
+    private inner class FakeConnector(var connectDelayMs: Long = 0, val listFails: Boolean = false) : McpConnector {
         val made = CopyOnWriteArrayList<FakeConnection>()
         val specs = CopyOnWriteArrayList<McpServerSpec>()
         override suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection {
             specs += spec
             delay(connectDelayMs)
-            return FakeConnection(listOf(tool("search", readOnly = true))).also { made += it }
+            return FakeConnection(listOf(tool("search", readOnly = true))).also { it.listFails = listFails; made += it }
         }
     }
 
@@ -258,7 +259,27 @@ class McpManagerTest {
         assertTrue(failure.content.filterIsInstance<TextPart>().single().text.contains("-32602"))
     }
 
-    // ---- 首份快照与中断（验收复核补的用例）----
+    // ---- 验收复核（2026-10-06）补的用例 ----
+
+    @Test
+    fun `a connection that finishes after the linger is closed, not left as an orphan`() = run {
+        val connector = FakeConnector(connectDelayMs = 400)
+        val hub = hub(ScriptedModel(), connector, lingerMs = 50)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        assertTrue(hub.close(rt.sessionId))
+        while (connector.made.isEmpty()) delay(10)
+        // 会话早走了、等待期也过了，连接才连上：没有任何人持有它
+        withTimeout(3_000) { while (!connector.made.single().closed) delay(20) }
+    }
+
+    @Test
+    fun `a server whose tools cannot be listed is closed instead of staying half open`() = run {
+        val connector = FakeConnector(listFails = true)
+        val hub = hub(ScriptedModel(), connector)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        withTimeout(3_000) { while (hub.mcp.statusOf(rt.sessionId).singleOrNull()?.state != "failed") delay(20) }
+        assertTrue("握手成了但列不出工具：进程不能留着", connector.made.single().closed)
+    }
 
     @Test
     fun `interrupting the first turn while it waits for the first snapshot closes that turn and keeps the snapshot`() = run {
@@ -285,6 +306,49 @@ class McpManagerTest {
         rt.say("第一轮")
         assertEquals(listOf("mcp__github__search"), model.requests.single().toolNames())
         assertEquals("日志里不该先写一份空的过期快照", 1, events(rt).filterIsInstance<McpToolsSnapshot>().size)
+    }
+
+    @Test
+    fun `a reopened session keeps its logged tools while the servers are still starting`() = run {
+        val connector = FakeConnector(connectDelayMs = 300)
+        val model = ScriptedModel(reply(TextPart("一")), reply(TextPart("二")))
+        val hub = hub(model, connector, lingerMs = 50, waitMs = 3_000)
+        val first = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        first.say("第一轮")
+        assertEquals(listOf("mcp__github__search"), model.requests[0].toolNames())
+        assertTrue(hub.close(first.sessionId))
+        delay(400) // 连接已按等待期回收，重开时要重新起（又得 300ms）
+        val reopened = hub.open(first.sessionId)!!
+        reopened.say("第二轮")
+        assertEquals("服务器还在重新启动：工具表沿用日志里的，不先去掉再加回", listOf("mcp__github__search"), model.requests[1].toolNames())
+        assertEquals("没变化就不写新快照", 1, events(reopened).filterIsInstance<McpToolsSnapshot>().size)
+    }
+
+    @Test
+    fun `a late detach of an old runtime does not take down the reopened session's connection`() = run {
+        val connector = FakeConnector()
+        val hub = hub(ScriptedModel(), connector, lingerMs = 100)
+        val old = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        assertTrue(hub.close(old.sessionId))
+        val reopened = hub.open(old.sessionId)!!
+        hub.mcp.detach(old) // 旧运行时的卸下姗姗来迟（关了马上重开时可能晚于新运行时的接入）
+        delay(400)
+        assertFalse("重开的会话还在用", connector.made.single().closed)
+        assertEquals(1, hub.mcp.statusOf(reopened.sessionId).size)
+    }
+
+    @Test
+    fun `closeAll shuts every connection, including the ones still waiting out the linger`() = run {
+        val connector = FakeConnector()
+        val hub = hub(ScriptedModel(), connector, lingerMs = 60_000)
+        val a = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        while (connector.made.isEmpty()) delay(10)
+        delay(50)
+        assertTrue(hub.close(a.sessionId))
+        delay(100)
+        assertFalse(connector.made.single().closed)
+        hub.mcp.closeAll()
+        assertTrue(connector.made.single().closed)
     }
 
     @Suppress("unused")

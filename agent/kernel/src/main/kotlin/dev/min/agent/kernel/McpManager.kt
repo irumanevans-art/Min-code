@@ -15,9 +15,11 @@ import dev.min.agent.spi.McpServersLoaded
 import dev.min.agent.spi.McpToolEntry
 import dev.min.agent.spi.McpToolsSnapshot
 import dev.min.agent.spi.ToolResult
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -26,6 +28,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -60,6 +63,8 @@ internal class McpManager(
         @Volatile var restarts = 0
         var refs = 0
         var linger: Job? = null
+        /** 没人要了、已从表里摘掉：还在途中的连接（慢启动、重启）连上之后要自己收掉，不然就是没人管的孤儿进程 */
+        @Volatile var retired = false
         /** 第一次连接有结局（成功或失败）时完成：创建会话时据此决定等不等 */
         val settled = CompletableDeferred<Unit>()
     }
@@ -70,8 +75,9 @@ internal class McpManager(
     }
 
     private val lock = Mutex()
-    private val entries = HashMap<Key, Entry>()
-    private val bindings = HashMap<SessionId, Binding>()
+    // statusOf 在界面线程读、attach / detach 在锁里改，所以用并发表
+    private val entries = ConcurrentHashMap<Key, Entry>()
+    private val bindings = ConcurrentHashMap<SessionId, Binding>()
     private val stdioGate = Semaphore(STDIO_CONNECT_PARALLELISM)
     private val remoteGate = Semaphore(REMOTE_CONNECT_PARALLELISM)
 
@@ -83,7 +89,10 @@ internal class McpManager(
     suspend fun attach(rt: SessionRuntime, config: McpConfigSnapshot, projectRoot: GuestPath, fresh: Boolean) {
         val binding = lock.withLock {
             val acquired = config.servers.filter { it.gate == McpGate.Enabled }.associate { it.spec.name to acquire(it.spec, projectRoot) }
-            Binding(rt, config, acquired).also { bindings[rt.sessionId] = it }
+            Binding(rt, config, acquired).also { created ->
+                // 同一个会话号还留着旧的接入（关了马上重开，旧运行时的卸下还没轮到）：放掉它，不然它那份引用永远不归零
+                bindings.put(rt.sessionId, created)?.entries?.values?.forEach { release(it) }
+            }
         }
         rt.mcpCaller = callerFor(binding)
         if (config.servers.isEmpty() && config.notes.isEmpty()) {
@@ -93,7 +102,9 @@ internal class McpManager(
         if (fresh) {
             rt.mcpFirstSnapshot = scope.async {
                 withTimeoutOrNull(startupWaitMs) { binding.entries.values.forEach { it.settled.await() } }
-                snapshotOf(binding).also { binding.loaded = true }
+                // 先标「已写过首份」再取快照：取快照之后才到的变化会排到下一回合，不会掉进两者之间的空档
+                binding.loaded = true
+                snapshotOf(binding, previous = null)
             }
         } else {
             binding.loaded = true
@@ -101,12 +112,25 @@ internal class McpManager(
         }
     }
 
-    /** 会话卸下（关闭、删除）：放掉它的连接引用，归零的等一会儿再关 */
-    suspend fun detach(sessionId: SessionId) {
+    /**
+     * 会话卸下（关闭、删除）：放掉它的连接引用，归零的等一会儿再关。
+     * 认运行时对象而不只是会话号：关了马上重开时，旧运行时的卸下可能晚于新运行时的接入，不能把新的那份摘掉
+     */
+    suspend fun detach(rt: SessionRuntime) {
         lock.withLock {
-            val binding = bindings.remove(sessionId) ?: return
+            val binding = bindings[rt.sessionId]?.takeIf { it.rt === rt } ?: return
+            bindings.remove(rt.sessionId)
             binding.entries.values.forEach { release(it) }
         }
+    }
+
+    /** 宿主退出时用：所有连接（含还在等回收的）按礼貌顺序关掉，免得不看 stdin 的服务器变成孤儿进程 */
+    suspend fun closeAll() {
+        val all = lock.withLock {
+            bindings.clear()
+            entries.values.toList().also { entries.clear(); it.forEach { e -> e.retired = true; e.linger?.cancel() } }
+        }
+        all.forEach { e -> e.connection?.let { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
     }
 
     /** 界面「MCP 服务器」面板用：某个会话的服务器此刻的状态 */
@@ -131,6 +155,8 @@ internal class McpManager(
             val close = lock.withLock {
                 if (entry.refs > 0 || entries[entry.key] !== entry) return@withLock false
                 entries.remove(entry.key)
+                // 先标退役、再读连接；start 那头是先存连接、再看退役——两边总有一边看得到对方，慢启动或重启中的连接不会漏掉
+                entry.retired = true
                 true
             }
             if (close) entry.connection?.close()
@@ -141,9 +167,16 @@ internal class McpManager(
         scope.launch {
             val gate = if (entry.spec is McpServerSpec.Stdio) stdioGate else remoteGate
             gate.withPermit {
+                var connection: McpConnection? = null
                 try {
-                    val connection = connector.connect(entry.spec, entry.projectRoot, scope)
+                    connection = connector.connect(entry.spec, entry.projectRoot, scope)
                     entry.connection = connection
+                    if (entry.retired) {
+                        // 连的过程中最后一个会话走了、等待期也过了：没人要这条连接了，收掉，别留成孤儿进程
+                        entry.connection = null
+                        withContext(NonCancellable) { connection.close() }
+                        return@withPermit
+                    }
                     entry.tools = connection.listTools()
                     entry.instructions = connection.instructions
                     entry.status = CONNECTED
@@ -152,6 +185,9 @@ internal class McpManager(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    // 握手成了但工具表没列出来：这条连接没法用，关掉（否则状态是失败、进程却还活着，调用还会走进去）
+                    entry.connection = null
+                    connection?.let { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
                     entry.status = if (needsAuth(e)) NEEDS_AUTH else FAILED
                     entry.reason = e.message ?: e::class.simpleName
                 }
@@ -200,18 +236,22 @@ internal class McpManager(
 
     private fun restage(binding: Binding) {
         val current = binding.rt.state.value.mcpTools
-        val (servers, tools) = snapshotOf(binding)
+        val (servers, tools) = snapshotOf(binding, current)
         if (current != null && current.tools == tools.tools && current.instructions == tools.instructions) return
         binding.rt.stageMcp(servers, tools.copy(note = changeNote(current?.tools.orEmpty(), tools.tools)))
     }
 
     // ---- 快照 ----
 
-    private fun snapshotOf(binding: Binding): Pair<McpServersLoaded, McpToolsSnapshot> {
-        // 连上过的都算（掉线了也保留最后一次的工具，见 watch）；从没连上的没有工具
-        val ready = binding.entries.values.filter { it.tools != null }
+    /**
+     * [previous] 是日志里已有的那份（重新打开的会话）：这个进程里还没连上过的服务器，工具与说明沿用它的，
+     * 不然重开会话后、服务器还在启动的头几秒，快照会把它们的工具全去掉再加回来（两次缓存失效，第一回合还没得用）
+     */
+    private fun snapshotOf(binding: Binding, previous: McpToolsSnapshot?): Pair<McpServersLoaded, McpToolsSnapshot> {
         val notes = ArrayList(binding.config.notes)
         val shaped = ArrayList<Triple<Entry, McpToolDef, McpShaping.Shaped.Ok>>()
+        // 连上过的都算（掉线了也保留最后一次的工具，见 watch）；从没连上的没有工具
+        val ready = binding.entries.values.filter { it.tools != null }
         for (entry in ready) for (def in entry.tools.orEmpty()) {
             when (val s = McpShaping.shape(def.inputSchema)) {
                 is McpShaping.Shaped.Ok -> shaped += Triple(entry, def, s)
@@ -219,7 +259,7 @@ internal class McpManager(
             }
         }
         val names = McpNames.assign(shaped.map { (e, d, _) -> e.spec.name to d.name })
-        val tools = shaped.map { (e, d, s) ->
+        val live = shaped.map { (e, d, s) ->
             McpToolEntry(
                 name = names.getValue(e.spec.name to d.name),
                 server = e.spec.name,
@@ -231,7 +271,12 @@ internal class McpManager(
                 maxResultChars = (d.meta?.get(META_MAX_RESULT_CHARS) as? JsonPrimitive)?.intOrNull,
             )
         }
-        val instructions = ready.mapNotNull { e -> e.instructions?.takeIf { it.isNotBlank() }?.let { e.spec.name to McpShaping.truncate(it) } }.toMap()
+        val unconnected = binding.entries.values.filter { it.tools == null }.map { it.spec.name }.toSet()
+        // 按配置里的服务器顺序摆：沿用的工具待在它原来的位置，工具表的前缀不因此变
+        val order = binding.config.servers.map { it.spec.name }
+        val tools = (live + previous?.tools.orEmpty().filter { it.server in unconnected }).sortedBy { order.indexOf(it.server) }
+        val instructions = ready.mapNotNull { e -> e.instructions?.takeIf { it.isNotBlank() }?.let { e.spec.name to McpShaping.truncate(it) } }.toMap() +
+            previous?.instructions.orEmpty().filterKeys { it in unconnected }
         return McpServersLoaded(serverInfos(binding), notes) to McpToolsSnapshot(tools, instructions)
     }
 
