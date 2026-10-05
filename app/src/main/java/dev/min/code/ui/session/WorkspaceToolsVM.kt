@@ -102,11 +102,6 @@ class WorkspaceToolsVM(
         _previewSlot.update { it.collapsed() }
     }
 
-    /** 清空位（服务全停、用户明确拆掉时）。平时关掉只用 [collapsePreview]。 */
-    fun clearPreview() {
-        _previewSlot.value = PreviewSlot()
-    }
-
     fun refreshNetworkSnapshot() {
         viewModelScope.launch(Dispatchers.IO) {
             _runtime.update { it.copy(loading = true) }

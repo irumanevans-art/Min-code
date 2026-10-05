@@ -106,16 +106,6 @@ class ClaudeCodeSessionRegistry(
         .stateIn(scope, SharingStarted.Eagerly, ClaudeCodeManager.SessionState())
 
     /**
-     * 活跃会话里被 Esc 撤回、要退还给输入框的消息。
-     *
-     * 只跟活跃会话：后台会话被撤回的消息塞进当前这个会话的输入框是张冠李戴。
-     * `replay = 0` —— 这是一次性事件，补发等于切回来时输入框又被填一遍。
-     */
-    val withdrawnMessages: SharedFlow<ComposerDraft> = activeManager
-        .flatMapLatest { it?.withdrawnMessages ?: emptyFlow() }
-        .shareIn(scope, SharingStarted.Eagerly, replay = 0)
-
-    /**
      * 任意会话发现的本机 loopback 预览 URL。
      * 合并所有 live manager，不只活跃会话——后台会话起的服务也要能打开。
      */
