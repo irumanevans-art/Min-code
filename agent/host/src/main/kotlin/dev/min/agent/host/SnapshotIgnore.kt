@@ -7,6 +7,7 @@ internal class SnapshotIgnore(private val rules: List<Rule> = emptyList()) {
     internal data class Rule(val base: String, val regex: Regex, val directoryOnly: Boolean, val negated: Boolean)
 
     fun withFile(base: String, text: String): SnapshotIgnore = SnapshotIgnore(rules + parse(base, text))
+    fun withExcludeFile(base: String, text: String): SnapshotIgnore = SnapshotIgnore(parse(base, text) + rules)
 
     fun ignored(path: String, directory: Boolean): Boolean {
         val parts = path.split('/')

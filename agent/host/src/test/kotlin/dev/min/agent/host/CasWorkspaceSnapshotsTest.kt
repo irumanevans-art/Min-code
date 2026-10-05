@@ -241,4 +241,34 @@ class CasWorkspaceSnapshotsTest {
         assertEquals("bound old", Files.readAllBytes(bound.resolve("x")).decodeToString())
         assertFalse(Files.exists(files.resolve("nested/x")))
     }
+
+    @Test fun worktree_git_file_and_shared_common_directory_excludes_use_guest_mapping() = runBlocking {
+        val common = Files.createDirectories(linux.resolve("meta/common/info"))
+        Files.write(common.resolve("exclude"), "private.txt\n*.log\n".encodeToByteArray())
+        val branch = Files.createDirectories(linux.resolve("meta/worktrees/branch"))
+        Files.write(branch.resolve("commondir"), "../../common\n".encodeToByteArray())
+        put(".git", "gitdir: /meta/worktrees/branch\n")
+        put(".gitignore", "!keep.log\n")
+        put("private.txt"); put("drop.log"); put("keep.log"); put("node_modules/source")
+        val first = take()
+        val entries = repository.readManifest(first.manifest.value)!!.entries
+        assertFalse(entries.any { it.path in listOf("private.txt", "drop.log") })
+        assertTrue(entries.any { it.path == "keep.log" })
+        assertTrue(entries.any { it.path == "node_modules/source" })
+        // 桌面 git 写宿主绝对路径；仍翻回现有 mapper 的 guest 空间，不能自建映射。
+        put(".git", "gitdir: ${branch}\n")
+        assertEquals(first.manifest, take().manifest)
+    }
+
+    @Test fun nested_repository_info_exclude_has_its_own_directory_scope() = runBlocking {
+        put("sub/.git/info/exclude", "generated/\n")
+        put("sub/generated/x", "before"); put("generated/x", "root visible")
+        val target = take()
+        val manifest = repository.readManifest(target.manifest.value)!!
+        assertTrue("sub/generated" in manifest.excludedDirectories)
+        assertTrue(manifest.entries.any { it.path == "generated/x" })
+        put("sub/generated/x", "after")
+        store.restore(target.manifest, emptyList())
+        assertEquals("after", bytes("sub/generated/x"))
+    }
 }

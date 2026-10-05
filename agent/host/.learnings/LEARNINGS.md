@@ -48,3 +48,27 @@ host 原来没有序列化 DTO，只有 SPI 间接带入的运行库。新增 @S
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261005-GITDIR-MAPPING] best_practice
+
+**Logged**: 2026-10-05T12:40:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+快照读取 Git exclude 时也必须复用 guest/host 映射，支持 worktree 的 gitdir 和 commondir。
+
+### Details
+只读工作区 .git/info/exclude 会漏掉 .git 是指针文件的 worktree。真实回归先复现 Git 目录 guest 绝对路径、宿主绝对路径、commondir 共享 exclude 与嵌套仓库作用域。RootfsFileSystem 将既有的链接反向映射抽成内部方法共用；扫描器按其解析指针，并使 info/exclude 低于 .gitignore。两个回归与完整 host 检查通过，没有自建第二套挂载映射。
+
+### Suggested Action
+把 Git 元数据的位置与工作区位置分开看；不要跟随宿主的 guest 链接，也不要把不能读取的规则当成空规则而继续删除恢复。
+
+### Metadata
+- Source: error
+- Related Files: agent/host/src/main/kotlin/dev/min/agent/host/RootfsFileSystem.kt, agent/host/src/main/kotlin/dev/min/agent/host/SnapshotScanner.kt
+- Tags: git, worktree, rootfs, paths, excludes
+- Recurrence-Count: 1
+
+---

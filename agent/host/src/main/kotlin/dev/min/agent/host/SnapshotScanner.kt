@@ -50,9 +50,6 @@ internal class SnapshotScanner(
         val git = Files.exists(host.resolve(".git"), NOFOLLOW_LINKS)
         var ignore = SnapshotIgnore()
         if (!git) ignore = ignore.withFile("", SnapshotIgnore.DEFAULT)
-        if (Files.isDirectory(host.resolve(".git"), NOFOLLOW_LINKS)) {
-            readIgnore(host.resolve(".git/info/exclude"))?.let { ignore = ignore.withFile("", it) }
-        }
         visit("", host, ignore)
         deadline.check()
         return SnapshotScan(SnapshotManifest(root = root, entries = entries.sortedBy { it.path }, excludedDirectories = excluded.sorted(), skipped = skipped.sortedBy { it.path }), nextCache.sortedBy { it.path }, newBytes)
@@ -68,7 +65,10 @@ internal class SnapshotScanner(
     private suspend fun visit(relative: String, host: Path, inherited: SnapshotIgnore) {
         deadline.check()
         var ignore = inherited
-        try { readIgnore(host.resolve(".gitignore"))?.let { ignore = ignore.withFile(relative, it) } }
+        try {
+            gitExclude(relative, host)?.let { ignore = ignore.withExcludeFile(relative, it) }
+            readIgnore(host.resolve(".gitignore"))?.let { ignore = ignore.withFile(relative, it) }
+        }
         catch (e: IOException) { if (relative.isEmpty()) throw e; skipped += SnapshotSkip(relative, "无法读取目录的忽略规则。"); return }
         val children = try {
             Files.newDirectoryStream(host).use { stream -> stream.toList().sortedBy { it.fileName.toString() } }
@@ -106,6 +106,29 @@ internal class SnapshotScanner(
                 }
             } catch (e: IOException) { skipped += SnapshotSkip(path, "无法读取文件或元数据。") }
         }
+    }
+
+    private fun gitExclude(relative: String, host: Path): String? {
+        val marker = host.resolve(".git")
+        if (!Files.exists(marker, NOFOLLOW_LINKS) || Files.isSymbolicLink(marker)) return null
+        val directory = if (relative.isEmpty()) root else "$root/$relative"
+        var git = "$directory/.git"
+        if (Files.isRegularFile(marker, NOFOLLOW_LINKS)) {
+            val pointer = readIgnore(marker)?.lineSequence()?.firstOrNull().orEmpty()
+            if (!pointer.startsWith("gitdir: ")) throw IOException("Git 目录指针无效。")
+            git = resolveGitPath(directory, pointer.removePrefix("gitdir: ").trim())
+        }
+        val common = readIgnore(fs.hostPath(GuestPath("$git/commondir")))?.trim()
+        if (!common.isNullOrEmpty()) git = resolveGitPath(git, common)
+        return readIgnore(fs.hostPath(GuestPath("$git/info/exclude")))
+    }
+
+    private fun resolveGitPath(base: String, target: String): String {
+        val path = fs.hostPath(GuestPath(base)).fileSystem.getPath(target)
+        if (path.isAbsolute) fs.guestPathForHost(path)?.let { return normalizedGuest(it.value) }
+        val relative = target.replace('\\', '/')
+        if (!relative.startsWith('/') && path.isAbsolute) throw IOException("Git 目录不在挂载范围内。")
+        return normalizedGuest(if (relative.startsWith('/')) relative else "$base/$relative")
     }
 
     private fun countFile() {

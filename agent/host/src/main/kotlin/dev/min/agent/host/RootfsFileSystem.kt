@@ -184,9 +184,16 @@ class RootfsFileSystem(
     /** 链接目标若是宿主上 rootfs / 挂载内部的绝对路径，翻译回 guest 路径；否则原样（按 guest 路径解释） */
     private fun guestTargetOf(target: String): String {
         if (!target.startsWith("/")) return target
-        underHost(target, root)?.let { return "/$it" }
-        binds.forEach { bind -> underHost(target, bind.host)?.let { return bind.guest.value.trimEnd('/') + "/" + it } }
-        return target
+        return guestPathForHost(root.fileSystem.getPath(target))?.value ?: target
+    }
+
+    /** git worktree 的 .git 文件可能写宿主绝对路径；与链接共用已有的反向映射，不能另猜挂载。 */
+    internal fun guestPathForHost(host: Path): GuestPath? {
+        val target = host.toAbsolutePath().toString().replace('\\', '/')
+        underHost(target, root)?.let { return GuestPath("/$it") }
+        binds.forEach { bind -> underHost(target, bind.host)?.let { return GuestPath(bind.guest.value.trimEnd('/') + "/" + it) } }
+        if (root == root.root && host.fileSystem == root.fileSystem && target.startsWith('/')) return GuestPath(target)
+        return null
     }
 
     /** [target] 在宿主目录 [base] 之内时返回相对部分，否则 null */
