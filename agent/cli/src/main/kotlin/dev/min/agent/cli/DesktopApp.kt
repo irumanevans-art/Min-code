@@ -51,7 +51,13 @@ import dev.min.agent.tools.WriteTool
 import dev.min.agent.tools.WebFetchTool
 import dev.min.agent.tools.WebSearchTool
 import dev.min.agent.host.CachedWebPort
+import dev.min.agent.host.CasWorkspaceSnapshots
+import dev.min.agent.spi.SnapshotBudget
+import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.toList
 import java.nio.file.Files
 import java.nio.file.Path
@@ -99,6 +105,7 @@ internal class DesktopApp(
 ) {
     private val paths = DesktopPaths(workspace = args.cwd, scratchRoot = home.resolve("root"))
     private val store = FileSessionStore(home.resolve("sessions"), { System.currentTimeMillis() })
+    internal val snapshots = CasWorkspaceSnapshots(home, { paths.fs }, paths.guestOfHost(claudeHome))
 
     private val selection = resolveModel(args, Catalog.bundled())
     private val provider = selection.provider
@@ -178,6 +185,7 @@ internal class DesktopApp(
                 web = CachedWebPort(DESKTOP_PAGE_CONVERTER, cacheTtlMs = args.webCacheTtlMs, deadlineMs = args.webDeadlineMs),
                 searchBackend = searchBackend,
                 httpHooks = JvmHttpHookClient(),
+                snapshots = snapshots,
                 artifacts = { sessionId ->
                     val artifactsDir = home.resolve("sessions").resolve(sessionId.value).resolve("artifacts")
                     object : ArtifactSink {
@@ -202,6 +210,7 @@ internal class DesktopApp(
             // CLI 自己读模型 key 的变量不交给内核：http hook 的 allowedEnvVars 点名它也只能插成空串（凭证不进 hook 请求）
             env = hookEnvReader(hiddenEnv),
             hiddenEnv = hiddenEnv,
+            checkpointBudget = SnapshotBudget.DESKTOP,
         )
     }
 
@@ -213,6 +222,15 @@ internal class DesktopApp(
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
+    }
+
+    /** 退出前让根会话登记完引用；GC 在 IO 上运行，CLI 最外层等它结束再取消进程 scope。 */
+    suspend fun closeSession(runtime: SessionRuntime): Job {
+        hubInstance?.shutdown(runtime.sessionId)
+        return scope.launch(Dispatchers.IO) {
+            catchingNonCancellation { snapshots.gc(cleanupPeriodDays = 30) }
+                .onFailure { System.err.println("检查点仓库清理失败，将在下次关闭会话时重试。") }
+        }
     }
 
     private fun platformDescription(): String {

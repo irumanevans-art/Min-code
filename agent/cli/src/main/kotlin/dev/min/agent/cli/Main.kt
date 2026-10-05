@@ -40,58 +40,60 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     val app = DesktopApp(args, scope)
     app.checkKey()
     val runtime = app.openSession()
-    val stdin = System.`in`.bufferedReader()
-    ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
-    System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
+    try {
+        val stdin = System.`in`.bufferedReader()
+        ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
+        System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
 
-    // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
-    suspend fun say(input: String): Boolean {
-        val config = app.config()
-        val text = when (val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime))) {
-            is InputAction.Send -> action.text
-            is InputAction.Notice -> {
-                System.err.println(action.message)
-                return false
-            }
-        }
-        runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(text)))
-        runtime.awaitIdle()
-        println()
-        return true
-    }
-
-    val prompt = args.prompt
-    if (prompt != null) {
-        val fromSeq = runtime.state.value.lastSeq + 1
-        if (!say(prompt)) return 2
-        val state = runtime.state.value
-        val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq), state.usage)
-        result.failure?.let { System.err.println(it) }
-        if (args.json) {
-            println(result.json())
-        }
-        return if (result.completed) 0 else 1
-    }
-
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
-    while (true) {
-        print("\n> ")
-        val line = stdin.readLine() ?: return 0
-        val trimmed = line.trim()
-        when {
-            trimmed.isEmpty() -> continue
-            trimmed == "/exit" -> return 0
-            trimmed == "/compact" || trimmed.startsWith("/compact ") -> {
-                if (runtime.compact(trimmed.removePrefix("/compact").trim())) {
-                    runtime.awaitIdle()
-                    System.err.println(compactionNote(runtime.state.value))
+        // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
+        suspend fun say(input: String): Boolean {
+            val config = app.config()
+            val text = when (val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime))) {
+                is InputAction.Send -> action.text
+                is InputAction.Notice -> {
+                    System.err.println(action.message)
+                    return false
                 }
             }
-            trimmed in REWIND_COMMANDS -> rewindCommand(runtime, stdin)
-            trimmed.startsWith("/rewind-undo ") -> rewindUndoCommand(runtime, trimmed.removePrefix("/rewind-undo ").trim())
-            else -> say(line)
+            runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(text)))
+            runtime.awaitIdle()
+            println()
+            return true
         }
-    }
+
+        val prompt = args.prompt
+        if (prompt != null) {
+            val fromSeq = runtime.state.value.lastSeq + 1
+            if (!say(prompt)) return 2
+            val state = runtime.state.value
+            val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq), state.usage)
+            result.failure?.let { System.err.println(it) }
+            if (args.json) {
+                println(result.json())
+            }
+            return if (result.completed) 0 else 1
+        }
+
+        System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+        while (true) {
+            print("\n> ")
+            val line = stdin.readLine() ?: return 0
+            val trimmed = line.trim()
+            when {
+                trimmed.isEmpty() -> continue
+                trimmed == "/exit" -> return 0
+                trimmed == "/compact" || trimmed.startsWith("/compact ") -> {
+                    if (runtime.compact(trimmed.removePrefix("/compact").trim())) {
+                        runtime.awaitIdle()
+                        System.err.println(compactionNote(runtime.state.value))
+                    }
+                }
+                trimmed in REWIND_COMMANDS -> rewindCommand(runtime, stdin)
+                trimmed.startsWith("/rewind-undo ") -> rewindUndoCommand(runtime, trimmed.removePrefix("/rewind-undo ").trim())
+                else -> say(line)
+            }
+        }
+    } finally { app.closeSession(runtime).join() }
 }
 
 /** /compact 之后给人看的一句话：压缩成了没有、原文在哪 */
