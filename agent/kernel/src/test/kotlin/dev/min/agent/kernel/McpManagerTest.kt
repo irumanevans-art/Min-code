@@ -107,9 +107,15 @@ class McpManagerTest {
     private inner class FakeConnector(var connectDelayMs: Long = 0, val listFails: Boolean = false) : McpConnector {
         val made = CopyOnWriteArrayList<FakeConnection>()
         val specs = CopyOnWriteArrayList<McpServerSpec>()
+        val cancelledConnects = java.util.concurrent.atomic.AtomicInteger()
         override suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection {
             specs += spec
-            delay(connectDelayMs)
+            try {
+                delay(connectDelayMs)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                cancelledConnects.incrementAndGet()
+                throw e
+            }
             return FakeConnection(listOf(tool("search", readOnly = true))).also { it.listFails = listFails; made += it }
         }
     }
@@ -349,6 +355,16 @@ class McpManagerTest {
         assertFalse(connector.made.single().closed)
         hub.mcp.closeAll()
         assertTrue(connector.made.single().closed)
+    }
+
+    @Test
+    fun `closeAll cancels a connection that is still starting, so the half-started process is reclaimed`() = run {
+        val connector = FakeConnector(connectDelayMs = 60_000)
+        val hub = hub(ScriptedModel(), connector)
+        hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        while (connector.specs.isEmpty()) delay(10)
+        hub.mcp.closeAll()
+        assertEquals("closeAll 要等起到一半的连接收尾，不然宿主马上退出时它的进程就留下了", 1, connector.cancelledConnects.get())
     }
 
     @Suppress("unused")

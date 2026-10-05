@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -65,6 +66,8 @@ internal class McpManager(
         var linger: Job? = null
         /** 没人要了、已从表里摘掉：还在途中的连接（慢启动、重启）连上之后要自己收掉，不然就是没人管的孤儿进程 */
         @Volatile var retired = false
+        /** 正在连（首次或重启）的那个协程；宿主退出时要取消它并等它收尾，起到一半的进程才不会留下 */
+        @Volatile var starting: Job? = null
         /** 第一次连接有结局（成功或失败）时完成：创建会话时据此决定等不等 */
         val settled = CompletableDeferred<Unit>()
     }
@@ -124,13 +127,19 @@ internal class McpManager(
         }
     }
 
-    /** 宿主退出时用：所有连接（含还在等回收的）按礼貌顺序关掉，免得不看 stdin 的服务器变成孤儿进程 */
+    /**
+     * 宿主退出时用：所有连接（含还在等回收的、还在连的）按礼貌顺序关掉，免得不看 stdin 的服务器变成孤儿进程。
+     * 还在连的先取消（握手被取消会走关停顺序，起到一半的进程也会收掉）再等它收尾
+     */
     suspend fun closeAll() {
         val all = lock.withLock {
             bindings.clear()
             entries.values.toList().also { entries.clear(); it.forEach { e -> e.retired = true; e.linger?.cancel() } }
         }
-        all.forEach { e -> e.connection?.let { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
+        all.forEach { e ->
+            e.starting?.cancelAndJoin()
+            e.connection?.let { dev.min.agent.spi.catchingNonCancellation { it.close() } }
+        }
     }
 
     /** 界面「MCP 服务器」面板用：某个会话的服务器此刻的状态 */
@@ -164,7 +173,7 @@ internal class McpManager(
     }
 
     private fun start(entry: Entry) {
-        scope.launch {
+        entry.starting = scope.launch {
             val gate = if (entry.spec is McpServerSpec.Stdio) stdioGate else remoteGate
             gate.withPermit {
                 var connection: McpConnection? = null
