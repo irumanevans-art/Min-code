@@ -234,6 +234,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             scopeOf = deps.host.fs::scopeOf,
             // 自动记忆目录：acceptEdits 下对它的写入与工作区同等放行（设计 §2.4）
             autoMemoryDir = s.autoMemory?.directory,
+            additionalDirectories = s.additionalDirectories,
         )
     }
 

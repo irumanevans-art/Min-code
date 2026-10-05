@@ -335,8 +335,9 @@ class SessionRuntime private constructor(
                 text = spec.text, source = spec.source, baseDir = spec.baseDir,
             )
         }
-        if (rules.isEmpty() && snapshot.notes.isEmpty()) return
-        commit(listOf(PermissionRulesLoaded(rules, snapshot.notes)), Durability.Sync)
+        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"))
+        if (rules.isEmpty() && snapshot.notes.isEmpty() && directories.isEmpty()) return
+        commit(listOf(PermissionRulesLoaded(rules, snapshot.notes, directories)), Durability.Sync)
     }
 
     /**

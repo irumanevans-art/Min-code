@@ -197,7 +197,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 else s.copy(sessionRules = s.sessionRules + RuleEntry(RuleKindData.Allow, always, SESSION_RULE_SOURCE, s.settings.cwd))
             }
         }
-        is PermissionRulesLoaded -> copy(rules = e.rules)
+        is PermissionRulesLoaded -> copy(rules = e.rules, additionalDirectories = e.additionalDirectories)
         is HooksLoaded -> copy(hooks = e.sources, hooksHttpPolicy = e.httpPolicy)
         is HooksRan -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is HookContextAdded -> when (val target = e.target) {

@@ -83,6 +83,7 @@ data class SessionState(
     val lastTurn: EndedTurn? = null,
     /** 会话创建时冻结的权限规则（最后一条 PermissionRulesLoaded） */
     val rules: List<RuleEntry> = emptyList(),
+    val additionalDirectories: List<GuestPath> = emptyList(),
     /** 本会话里人选「总是允许」攒下的规则，按答复顺序；来源记为 session */
     val sessionRules: List<RuleEntry> = emptyList(),
     /**
