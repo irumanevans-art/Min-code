@@ -106,6 +106,9 @@ class SessionHub(
     agents: List<AgentDefinition> = BuiltinAgents.all,
 ) {
     private val definitions: Map<String, AgentDefinition> = agents.associateBy { it.name }
+
+    /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
+    internal var mcp = McpManager(scope, ClientConnector(deps.host.processes, deps.host.mcpHttp, deps.host.exec, MCP_CLIENT_VERSION))
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
     private val openLock = Mutex()
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
@@ -184,7 +187,23 @@ class SessionHub(
         val header = LogHeader(LOG_FORMAT_VERSION, id, deps.clock.nowMs())
         val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort), deps, scope, initial, hub = this)
         register(runtime)
+        attachMcp(runtime, fresh = true)
         return runtime
+    }
+
+    /**
+     * 读 MCP 配置（与 CC 同一套文件，MCP设计 §3）并接上。没有主目录的宿主不接；配置读不了只记日志、不拦会话。
+     * 项目层的信任沿用 hooks 那一个（工作区信任由宿主判定）
+     */
+    private suspend fun attachMcp(runtime: SessionRuntime, fresh: Boolean) {
+        val home = deps.memoryHome ?: return
+        if (runtime.state.value.origin != null) return
+        val cwd = runtime.state.value.created.cwd
+        val config = dev.min.agent.spi.catchingNonCancellation {
+            val settings = dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, home)
+            dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env)
+        }.getOrNull() ?: return
+        mcp.attach(runtime, config, cwd, fresh)
     }
 
     /**
@@ -303,6 +322,9 @@ class SessionHub(
             register(opened)
             opened
         } ?: return null
+        // 根会话重新接上 MCP（快照已在日志里）；子会话沿用父会话的调用口（父会话先于子会话打开）
+        val origin = runtime.state.value.origin
+        if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { runtime.mcpCaller = it.mcpCaller }
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
         return runtime
@@ -490,6 +512,7 @@ class SessionHub(
     }
 
     private fun unload(id: SessionId) {
+        scope.launch { mcp.detach(id) }
         observers.remove(id)?.cancel()
         watchJobs.remove(id)?.cancel()
         watched -= id
@@ -629,6 +652,8 @@ class SessionHub(
 
     private companion object {
         const val AGENT_TOOL = "Agent"
+        /** 握手时报给 MCP 服务器的客户端版本 */
+        const val MCP_CLIENT_VERSION = "1"
         private const val MCP_PREFIX = "mcp__"
 
         /** [stopTree] 收集子树、[shutdown] 重试「停树 + 卸下」的最多轮数 */

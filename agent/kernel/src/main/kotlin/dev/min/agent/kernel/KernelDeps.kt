@@ -43,6 +43,8 @@ class HostPorts(
      * 传进来的端口会被套上 [QuotaProcessPort]，对外的 [processes] 恒带配额。
      */
     processes: dev.min.agent.spi.ProcessPort = dev.min.agent.spi.ProcessPort.Unavailable,
+    /** 远程 MCP 服务器（Streamable HTTP / 旧 SSE）用的 HTTP 端口（MCP设计 §1）；null = 只能连 stdio 服务器 */
+    val mcpHttp: dev.min.agent.spi.HttpTransport? = null,
     /** 检查点的快照仓库（检查点与rewind设计 §6）。默认不可用：不建检查点，rewind 只能回退对话 */
     val snapshots: dev.min.agent.spi.WorkspaceSnapshots = dev.min.agent.spi.WorkspaceSnapshots.Unavailable,
 ) {

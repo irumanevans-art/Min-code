@@ -129,7 +129,19 @@ class SessionRuntime private constructor(
         stagedMcp = listOfNotNull(servers, tools)
     }
 
+    /**
+     * 新会话的首份 MCP 快照（McpManager 在后台连服务器）：第一回合开头等它（最多到接上后 5 秒），写进日志再发请求。
+     * 只用一次
+     */
+    @Volatile
+    internal var mcpFirstSnapshot: kotlinx.coroutines.Deferred<Pair<dev.min.agent.spi.McpServersLoaded, dev.min.agent.spi.McpToolsSnapshot>>? = null
+
     internal suspend fun applyStagedMcp() {
+        mcpFirstSnapshot?.let { first ->
+            mcpFirstSnapshot = null
+            val (servers, tools) = first.await()
+            commit(listOf(servers, tools), Durability.Sync)
+        }
         val events = stagedMcp ?: return
         stagedMcp = null
         commit(events, Durability.Sync)

@@ -156,7 +156,11 @@ object MinKernelDeps {
         tools: List<Tool<*>> = minTools(),
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
-        host = HostPorts(ports.fs, ports.search, ports.exec, { ports.artifacts(it) }, httpHooks = JvmHttpHookClient(), processes = ports.processes),
+        host = HostPorts(
+            ports.fs, ports.search, ports.exec, { ports.artifacts(it) }, httpHooks = JvmHttpHookClient(), processes = ports.processes,
+            // 远程 MCP 服务器走宿主侧的 HTTP（不经 proot）；stdio 服务器经 processes 进 proot
+            mcpHttp = dev.min.agent.host.UrlConnectionTransport(),
+        ),
         platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
     )
 }
