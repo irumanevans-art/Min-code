@@ -1,0 +1,17 @@
+{
+  "event": "SessionStart",
+  "target": "startup",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["startup context: main branch is main; run ./gradlew check before pushing."],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §SessionStart：matcher 对应会话发起方式，startup=新会话（:1102-1106）；input 的 source 同名取值（:1128）；additionalContext 注入对话开头（:1163-1167）。三个 matcher 组只应命中本组。"
+}

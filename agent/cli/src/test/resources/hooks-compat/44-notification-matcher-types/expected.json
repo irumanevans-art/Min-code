@@ -1,0 +1,17 @@
+{
+  "event": "Notification",
+  "target": "permission_prompt",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Notification：按通知类型匹配，省略 matcher 匹配全部（:2250）；用不同 matcher 分别响应不同类型（:2293-2320）；permission_prompt 表示权限提示已等待约六秒（:2256）；纯文本 stdout 只进调试日志（:782）。"
+}

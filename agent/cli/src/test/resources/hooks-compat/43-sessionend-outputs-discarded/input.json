@@ -1,0 +1,7 @@
+{
+  "session_id": "s-43",
+  "transcript_path": "/home/user/.claude/projects/p/43.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "SessionEnd",
+  "reason": "clear"
+}

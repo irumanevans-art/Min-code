@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "manual",
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/guard-compact.sh\"" }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "event": "PreCompact",
+  "target": "manual",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": ["manual compact blocked: 2 uncommitted files, commit or stash first"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §PreCompact：matcher 取 manual（/compact）或 auto（:3049-3054）；exit 2 拦下压缩，manual 时 stderr 显示给用户（:3056）；per-event 表同列 PreCompact | Yes | Blocks compaction（:877）。"
+}

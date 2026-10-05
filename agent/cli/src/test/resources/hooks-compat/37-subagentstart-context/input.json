@@ -1,0 +1,8 @@
+{
+  "session_id": "s-37",
+  "transcript_path": "/home/user/.claude/projects/p/37.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "SubagentStart",
+  "agent_id": "agent-37",
+  "agent_type": "Explore"
+}

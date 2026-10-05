@@ -1,0 +1,8 @@
+{
+  "session_id": "s-46",
+  "transcript_path": "/home/user/.claude/projects/p/46.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "Notification",
+  "message": "Claude is waiting for your input",
+  "notification_type": "idle_prompt"
+}

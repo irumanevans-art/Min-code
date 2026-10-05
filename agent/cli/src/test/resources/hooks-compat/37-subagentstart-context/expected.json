@@ -1,0 +1,17 @@
+{
+  "event": "SubagentStart",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["Explore brief: read-only investigation; report findings as file paths with line numbers."],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §SubagentStart：matcher 按 agent 类型过滤（:2342），additionalContext 注入子 agent 对话开头、首个 prompt 之前（:2361-2365，示例 :2367-2374）。"
+}

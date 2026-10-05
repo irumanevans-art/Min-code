@@ -1,0 +1,17 @@
+{
+  "event": "UserPromptSubmit",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["the linter in this repo enforces 2-space indent and single quotes"],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §UserPromptSubmit decision control：exit 0 加上下文有两条路——纯文本 stdout 或 JSON 的 additionalContext（:1348-1351）；以 system reminder 形式与提交的 prompt 并列注入（:1353，示例 :1367-1378）。"
+}

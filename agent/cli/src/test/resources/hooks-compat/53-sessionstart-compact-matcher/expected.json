@@ -1,0 +1,17 @@
+{
+  "event": "SessionStart",
+  "target": "compact",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": ["compact context: earlier turns were compacted; the migration plan is in docs/migration.md."],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §SessionStart：matcher compact 对应自动或手动压缩后（:1109）；source 取值 compact（:1128）；additionalContext 注入对话开头（:1163-1167）。"
+}

@@ -1,0 +1,14 @@
+{
+  "session_id": "s-39",
+  "transcript_path": "/home/user/.claude/projects/p/39.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "agent-39",
+  "agent_type": "Explore",
+  "agent_transcript_path": "/home/user/.claude/projects/p/39/subagents/agent-39.jsonl",
+  "last_assistant_message": "Analysis complete. Found 3 potential issues.",
+  "background_tasks": [],
+  "session_crons": []
+}

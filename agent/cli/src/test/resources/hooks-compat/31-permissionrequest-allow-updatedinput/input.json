@@ -1,0 +1,17 @@
+{
+  "session_id": "s-31",
+  "transcript_path": "/home/user/.claude/projects/p/31.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Bash",
+  "tool_input": { "command": "npm run lint" },
+  "permission_suggestions": [
+    {
+      "type": "addRules",
+      "rules": [{ "toolName": "Bash", "ruleContent": "npm run lint" }],
+      "behavior": "allow",
+      "destination": "localSettings"
+    }
+  ]
+}

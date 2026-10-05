@@ -1,0 +1,17 @@
+{
+  "event": "PostToolUseFailure",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": ["The test run failed because port 3000 is already taken; stop the stale dev server and rerun"],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Decision control：PostToolUseFailure 在顶层 decision 行，decision:\"block\"+reason 作反馈（:1019）；§Exit code 2 behavior per event：该事件本身不可阻断（:866），反馈只是给模型的处理建议。"
+}

@@ -1,0 +1,17 @@
+{
+  "event": "Notification",
+  "target": "permission_prompt",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §Exit code 2 behavior per event：Notification 的 exit code 与 stderr 都被忽略（:869）；§Notification：通知钩子不能阻断或修改通知（:2338）。"
+}

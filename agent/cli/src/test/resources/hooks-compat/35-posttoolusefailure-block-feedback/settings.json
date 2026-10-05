@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/failure-block.sh\"" }
+        ]
+      }
+    ]
+  }
+}

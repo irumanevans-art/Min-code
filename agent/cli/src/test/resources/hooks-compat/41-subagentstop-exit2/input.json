@@ -1,0 +1,14 @@
+{
+  "session_id": "s-41",
+  "transcript_path": "/home/user/.claude/projects/p/41.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "agent-41",
+  "agent_type": "Explore",
+  "agent_transcript_path": "/home/user/.claude/projects/p/41/subagents/agent-41.jsonl",
+  "last_assistant_message": "Benchmark finished with 2 regressions.",
+  "background_tasks": [],
+  "session_crons": []
+}
