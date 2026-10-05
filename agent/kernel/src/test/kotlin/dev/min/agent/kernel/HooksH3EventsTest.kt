@@ -17,6 +17,7 @@ import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.StopReason
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
+import dev.min.agent.spi.ApprovalRequested
 import dev.min.agent.spi.CommandAccess
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HarnessProfile
@@ -141,8 +142,11 @@ class HooksH3EventsTest {
         ),
     )
 
-    private fun hub(model: ModelClient, http: FakeHttp, trust: Boolean = false, tools: List<Tool<*>> = listOf(bash)): SessionHub {
-        val deps = KernelDeps(
+    private fun hub(model: ModelClient, http: FakeHttp, trust: Boolean = false, tools: List<Tool<*>> = listOf(bash)): SessionHub =
+        SessionHub(store, hubDeps(model, http, trust, tools), CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it })
+
+    private fun hubDeps(model: ModelClient, http: FakeHttp, trust: Boolean = false, tools: List<Tool<*>> = listOf(bash)): KernelDeps =
+        KernelDeps(
             clock = { 1_000 },
             ids = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
             models = { ResolvedModel(TEST_PROFILE, model) },
@@ -153,9 +157,6 @@ class HooksH3EventsTest {
             memoryHome = null,
             trustProjectHooks = { trust },
         )
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
-        return SessionHub(store, deps, scope)
-    }
 
     private suspend fun events(rt: SessionRuntime): List<SessionEvent> =
         store.open(rt.sessionId)!!.read().toList().map { it.event }
@@ -249,4 +250,195 @@ class HooksH3EventsTest {
         hub.open(rt.sessionId, resumedByUser = true)
         assertEquals("matcher 是 startup，resume 不匹配", 1, http.sent.size)
     }
+
+    // ---- PermissionRequest ----
+
+    /** 配了 PermissionRequest（matcher = Bash）的快照 */
+    private fun permHook() = HooksLoaded(listOf(HookSourceData("user", hook("PermissionRequest", "Bash"))))
+
+    private fun decision(body: String) = """{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":$body}}"""
+
+    private fun bashModel(command: String) = RoutingModel { req ->
+        if (req.messages.size == 1) reply(ToolCallPart(CallId("c1"), "Bash", args("command" to command)), stop = StopReason.ToolUse)
+        else reply(TextPart("好"))
+    }
+
+    @Test
+    fun `an allow answers the approval for the user without a card`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, decision("""{"behavior":"allow"}""")) }
+        val model = bashModel("rm -rf build")
+        val rt = hubWith(PermissionMode.Default, model, http, permHook())
+        rt.say("清理")
+        val body = http.sent.single().body
+        assertTrue(body, body.contains("\"hook_event_name\":\"PermissionRequest\""))
+        assertTrue(body, body.contains("\"tool_name\":\"Bash\""))
+        assertTrue(body, body.contains("\"tool_input\":{\"command\":\"rm -rf build\"}"))
+        assertTrue(body, body.contains("\"permission_mode\":\"default\""))
+        assertTrue("PermissionRequest 的输入没有 tool_use_id（CC 原文）", !body.contains("tool_use_id"))
+        val done = rt.state.value
+        assertEquals("hook 答了 allow，工具照常执行", "ran: rm -rf build", (done.toolResults.getValue(CallId("c1")).content.single() as TextPart).text)
+        val log = events(rt)
+        val resolved = log.filterIsInstance<dev.min.agent.spi.ApprovalResolved>().single()
+        assertEquals(dev.min.agent.spi.DecidedBy.Hook("PermissionRequest"), resolved.decidedBy)
+        assertEquals(dev.min.agent.spi.ApprovalChoice.Once, resolved.choice)
+    }
+
+    @Test
+    fun `a deny refuses the call with the hook's message for the model`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, decision("""{"behavior":"deny","message":"公司策略禁止删库"}""")) }
+        val model = bashModel("rm -rf build")
+        val rt = hubWith(PermissionMode.Default, model, http, permHook())
+        rt.say("清理")
+        val result = rt.state.value.toolResults.getValue(CallId("c1"))
+        assertTrue(result.isError)
+        val text = (result.content.single() as TextPart).text
+        assertTrue(text, text.contains("PermissionRequest hook 拒绝了这次调用") && text.contains("公司策略禁止删库"))
+        val resolved = events(rt).filterIsInstance<dev.min.agent.spi.ApprovalResolved>().single()
+        assertEquals(dev.min.agent.spi.ApprovalChoice.Deny("公司策略禁止删库"), resolved.choice)
+        assertEquals(dev.min.agent.spi.DecidedBy.Hook("PermissionRequest"), resolved.decidedBy)
+    }
+
+    @Test
+    fun `a deny with interrupt ends the turn like continue false`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, decision("""{"behavior":"deny","message":"维护窗口，先别动","interrupt":true}""")) }
+        val model = bashModel("rm -rf build")
+        val rt = hubWith(PermissionMode.Default, model, http, permHook())
+        rt.say("看看")
+        val done = rt.state.value
+        assertEquals(dev.min.agent.spi.TurnOutcome.Interrupted(dev.min.agent.spi.InterruptedBy.Hook), done.lastTurn!!.outcome)
+        assertEquals("调用被拒，没有执行", true, done.toolResults.getValue(CallId("c1")).isError)
+        assertTrue(events(rt).any { it is dev.min.agent.spi.Note && it.text.contains("维护窗口") })
+    }
+
+    @Test
+    fun `no decision means the human card, after PreToolUse has had its say`() = run {
+        // PreToolUse 与 PermissionRequest 都配了：PreToolUse 先跑（合流图顺序），PermissionRequest 在判定是 Ask 之后
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = bashModel("rm -rf build")
+        val hooks = HooksLoaded(
+            listOf(
+                HookSourceData("user", hook("PreToolUse", "Bash")),
+                HookSourceData("user", hook("PermissionRequest", "Bash", url = "https://hooks.example/perm")),
+            ),
+        )
+        val rt = hubWith(PermissionMode.Default, model, http, hooks)
+        rt.send(ClientMsgId("u1"), listOf(TextPart("清理")))
+        rt.state.first { it.turn?.calls?.get(CallId("c1"))?.phase is CallPhase.AwaitingApproval }
+        val order = http.sent.map { it.url }
+        assertEquals(listOf("https://hooks.example/x", "https://hooks.example/perm"), order)
+        // 人答了才执行
+        rt.answerApproval(
+            (rt.state.value.turn!!.calls.getValue(CallId("c1")).phase as CallPhase.AwaitingApproval).approvalId,
+            dev.min.agent.spi.ApprovalChoice.Once,
+        )
+        rt.state.first { it.turn == null }
+        assertEquals("ran: rm -rf build", (rt.state.value.toolResults.getValue(CallId("c1")).content.single() as TextPart).text)
+    }
+
+    @Test
+    fun `the floor keeps asking despite a hook allow`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, decision("""{"behavior":"allow"}""")) }
+        val model = bashModel("rm -rf /")
+        val rt = hubWith(PermissionMode.Default, model, http, permHook())
+        rt.send(ClientMsgId("u1"), listOf(TextPart("清空")))
+        rt.state.first { it.turn?.calls?.get(CallId("c1"))?.phase is CallPhase.AwaitingApproval }
+        val requested = events(rt).filterIsInstance<dev.min.agent.spi.ApprovalRequested>().single()
+        assertNotNull("安全底线的问人，hook 的 allow 越不过", requested.floorReason)
+        assertTrue(events(rt).any { it is dev.min.agent.spi.Note && it.text.contains("底线") })
+    }
+
+    @Test
+    fun `an alwaysAsk tool never takes a hook allow`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, decision("""{"behavior":"allow"}""")) }
+        val alwaysAsk = object : Tool<JsonObject> {
+            override val name = "ExitPlanMode"
+            override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+            override val traits = ToolTraits(alwaysAsk = true)
+            override fun description(profile: HarnessProfile) = "批计划"
+            override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
+            override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "批计划")
+            override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+                emit(ToolProgress.Done(ToolResult(listOf(TextPart("计划批了")))))
+            }
+        }
+        val planModel = RoutingModel { req ->
+            if (req.messages.size == 1) reply(ToolCallPart(CallId("c1"), "ExitPlanMode", args()), stop = StopReason.ToolUse)
+            else reply(TextPart("好"))
+        }
+        val deps = hubDeps(planModel, http, tools = listOf(alwaysAsk))
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val hub = SessionHub(store, deps, scope)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions, initial = listOf(permHook2()))
+        rt.send(ClientMsgId("u1"), listOf(TextPart("看计划")))
+        rt.state.first { it.turn?.calls?.get(CallId("c1"))?.phase is CallPhase.AwaitingApproval }
+        assertEquals("alwaysAsk 的问人，hook 的 allow 无效", 1, events(rt).filterIsInstance<dev.min.agent.spi.ApprovalRequested>().size)
+        assertTrue(events(rt).any { it is dev.min.agent.spi.Note && it.text.contains("底线") })
+    }
+
+    @Test
+    fun `an allow may rewrite the input, which is then re-evaluated`() = run {
+        val http = FakeHttp {
+            HttpHookResult.Responded(200, decision("""{"behavior":"allow","updatedInput":{"command":"timeout 60 make"}}"""))
+        }
+        val model = bashModel("make")
+        val rt = hubWith(PermissionMode.Default, model, http, permHook())
+        rt.send(ClientMsgId("u1"), listOf(TextPart("构建")))
+        // 改写成另一条仍要问人的命令：重评后照常问人（不再跑第二遍 hook），人批了就用改写后的入参执行
+        rt.state.first { it.turn?.calls?.get(CallId("c1"))?.phase is CallPhase.AwaitingApproval }
+        assertEquals("hook 只跑一次", 1, http.sent.size)
+        val ask = (rt.state.value.turn!!.calls.getValue(CallId("c1")).phase as CallPhase.AwaitingApproval).ask
+        assertEquals("审批卡上的是改写后的命令", "timeout 60 make", ask.commands.single().raw)
+        rt.answerApproval(
+            (rt.state.value.turn!!.calls.getValue(CallId("c1")).phase as CallPhase.AwaitingApproval).approvalId,
+            dev.min.agent.spi.ApprovalChoice.Once,
+        )
+        rt.state.first { it.turn == null }
+        assertEquals("ran: timeout 60 make", (rt.state.value.toolResults.getValue(CallId("c1")).content.single() as TextPart).text)
+        assertEquals(
+            "timeout 60 make",
+            (events(rt).filterIsInstance<dev.min.agent.spi.ToolInputRewritten>().single().input["command"] as JsonPrimitive).content,
+        )
+    }
+
+    @Test
+    fun `a rewrite into floor territory goes back to the human`() = run {
+        val http = FakeHttp {
+            HttpHookResult.Responded(200, decision("""{"behavior":"allow","updatedInput":{"command":"rm -rf /"}}"""))
+        }
+        val model = bashModel("make")
+        val rt = hubWith(PermissionMode.Default, model, http, permHook())
+        rt.send(ClientMsgId("u1"), listOf(TextPart("构建")))
+        // 改写后的入参重评又踩到底线：照常问人
+        rt.state.first { it.turn?.calls?.get(CallId("c1"))?.phase is CallPhase.AwaitingApproval }
+        assertNotNull(events(rt).filterIsInstance<dev.min.agent.spi.ApprovalRequested>().single().floorReason)
+    }
+
+    @Test
+    fun `updatedPermissions is ignored with a note`() = run {
+        val http = FakeHttp {
+            HttpHookResult.Responded(200, decision("""{"behavior":"allow","updatedPermissions":[{"type":"setMode","mode":"bypassPermissions"}]}"""))
+        }
+        val model = bashModel("make")
+        val rt = hubWith(PermissionMode.Default, model, http, permHook())
+        rt.say("构建")
+        val ran = events(rt).filterIsInstance<HooksRan>().single { it.event == "PermissionRequest" }
+        assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("updatedPermissions") && it.contains("忽略") })
+        assertEquals("模式没有被 hook 改掉", PermissionMode.Default, rt.state.value.settings.mode)
+    }
+
+    /** 配了 PermissionRequest（matcher = ExitPlanMode）的快照 */
+    private fun permHook2() = HooksLoaded(listOf(HookSourceData("user", hook("PermissionRequest", "ExitPlanMode"))))
+
+    /** Default 模式 + 指定 hooks 的会话（bash 的判定是 Ask，才轮得到 PermissionRequest） */
+    private suspend fun hubWith(
+        mode: PermissionMode,
+        model: ModelClient,
+        http: FakeHttp,
+        hooks: HooksLoaded,
+    ): SessionRuntime {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val hub = SessionHub(store, hubDeps(model, http), scope)
+        return hub.create(GuestPath("/workspace"), TEST_MODEL, mode, initial = listOf(hooks))
+    }
+
 }

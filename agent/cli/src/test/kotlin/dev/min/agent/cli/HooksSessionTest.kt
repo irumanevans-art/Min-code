@@ -284,6 +284,23 @@ class HooksSessionTest {
         assertTrue(ran.isEmpty())
     }
 
+    // ---- PermissionRequest ----
+
+    @Test
+    fun `a PermissionRequest hook answers the approval with a real script`() = run {
+        val allow = """{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"""
+        settings(hook("PermissionRequest", script("perm-allow", "cat > /dev/null; printf '%s' '$allow'"), "Bash"))
+        val model = RoutingModel { req ->
+            if (req.messages.size == 1) reply(bashCall("c1", "mkdir out"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val (rt, store) = session(model)
+        val done = rt.say("建目录")
+        assertEquals("hook 答了 allow，命令直接执行", listOf("mkdir out"), ran)
+        assertTrue("替人答的结论落成 ApprovalResolved(by = Hook)", done.toolResults.getValue(CallId("c1")).isError.not())
+        val resolved = store.events(rt).filterIsInstance<dev.min.agent.spi.ApprovalResolved>().single()
+        assertEquals(dev.min.agent.spi.DecidedBy.Hook("PermissionRequest"), resolved.decidedBy)
+    }
+
     // ---- 信任 ----
 
     @Test

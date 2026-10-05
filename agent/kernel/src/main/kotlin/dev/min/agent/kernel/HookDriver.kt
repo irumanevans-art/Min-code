@@ -138,7 +138,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         val allRuns = runs + http.runs
         val combined = combine(event, allRuns.map { interpret(event, it) })
         val outcome = toOutcome(event, combined)
-        val problems = combined.nonBlockingErrors +
+        val problems = combined.nonBlockingErrors + combined.notes +
             allRuns.filter { it.failedToStart }.map { "「${label(it.handler)}」没能运行（路径写错时门禁会悄悄失效）" } +
             allRuns.filter { it.timedOut }.map { "「${label(it.handler)}」超时" } +
             http.skipped + http.notes + hiddenEnvNotes(httpMatch.handlers) + executionFailures

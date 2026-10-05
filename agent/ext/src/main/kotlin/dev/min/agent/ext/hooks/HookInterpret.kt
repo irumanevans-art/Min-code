@@ -43,6 +43,7 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
         additionalContext = listOfNotNull(parsed.context?.let(::HookText)),
         updatedInput = parsed.input, systemMessage = parsed.common.systemMessage?.let(::HookText),
         specificOutput = parsed.specific, attachmentRequests = largeStrings(parsed.raw),
+        notes = base.notes + parsed.notes,
     ) else base.copy(nonBlockingError = error)
 
     if (run.exitCode == 2 && event in EXIT_TWO_BLOCKS) {
@@ -77,7 +78,7 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
 private data class ParsedOutput(
     val raw: JsonObject, val common: HookOutputCommon, val specific: JsonObject?,
     val decision: HookDecision, val reason: String?, val context: String?, val input: JsonObject?,
-    val interrupt: Boolean,
+    val interrupt: Boolean, val notes: List<String> = emptyList(),
 )
 
 private fun parseOutput(event: HookEvent, text: String): ParsedOutput {
@@ -92,6 +93,7 @@ private fun parseOutput(event: HookEvent, text: String): ParsedOutput {
     var input: JsonObject? = null
     var reason: String? = common.reason
     var interrupt = false
+    val extraNotes = mutableListOf<String>()
     var decision = if (common.decision == "block" && event in TOP_LEVEL_BLOCKS) HookDecision.Block else HookDecision.Neutral
     if (common.decision != null) {
         val allowed = if (event == HookEvent.PreToolUse) setOf("approve", "block") else setOf("block")
@@ -122,6 +124,8 @@ private fun parseOutput(event: HookEvent, text: String): ParsedOutput {
                     reason = o.message
                     if (decision == HookDecision.Allow) input = o.updatedInput
                     interrupt = decision == HookDecision.Deny && o.interrupt == true
+                    // updatedPermissions（加规则 / 切模式）本期不做：收到就说明，别让用户以为生效了
+                    if (o.updatedPermissions != null) extraNotes += "hook 的 updatedPermissions 本期不支持，已忽略"
                 }
             }
             HookEvent.PreModelSwitch -> {
@@ -157,7 +161,7 @@ private fun parseOutput(event: HookEvent, text: String): ParsedOutput {
             else -> Unit
         }
     }
-    return ParsedOutput(raw, common, specific, decision, reason, context, input, interrupt)
+    return ParsedOutput(raw, common, specific, decision, reason, context, input, interrupt, extraNotes.toList())
 }
 
 private fun permission(value: String, defer: Boolean = false): HookDecision = when (value) {
