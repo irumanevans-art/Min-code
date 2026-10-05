@@ -22,7 +22,7 @@ import dev.min.code.ui.components.ToastType
 
 /** 抽屉拿到的两个入口：行菜单里的「导出」、题跋上的「导入」 */
 class SessionTransferActions(
-    val export: (ClaudeCodeVM.SessionEntry) -> Unit,
+    val export: (SessionListVM.SessionEntry) -> Unit,
     val import: () -> Unit,
 )
 
@@ -35,7 +35,7 @@ class SessionTransferActions(
  * 得活得比它久——选文件那一下抽屉可能已经收起来了。
  */
 @Composable
-fun rememberSessionTransfer(vm: ClaudeCodeVM, sessions: List<ClaudeCodeVM.SessionEntry>): SessionTransferActions {
+fun rememberSessionTransfer(vm: SessionListVM, sessions: List<SessionListVM.SessionEntry>): SessionTransferActions {
     val context = LocalContext.current
     val toaster = LocalToaster.current
     // 选位置那一趟 Activity 可能被系统回收重建，要导出的是哪一条得跟着存档
@@ -58,7 +58,7 @@ fun rememberSessionTransfer(vm: ClaudeCodeVM, sessions: List<ClaudeCodeVM.Sessio
         }
     }
 
-    val onImportResult: (ClaudeCodeVM.SessionImportOutcome) -> Unit = { outcome ->
+    val onImportResult: (SessionListVM.SessionImportOutcome) -> Unit = { outcome ->
         val (text, type) = importMessage(context, outcome)
         toaster.show(text, type)
     }
@@ -96,18 +96,18 @@ fun rememberSessionTransfer(vm: ClaudeCodeVM, sessions: List<ClaudeCodeVM.Sessio
     }
 }
 
-private fun importMessage(context: Context, outcome: ClaudeCodeVM.SessionImportOutcome): Pair<String, ToastType> =
+private fun importMessage(context: Context, outcome: SessionListVM.SessionImportOutcome): Pair<String, ToastType> =
     when (outcome) {
-        is ClaudeCodeVM.SessionImportOutcome.Imported -> context.getString(
+        is SessionListVM.SessionImportOutcome.Imported -> context.getString(
             R.string.session_import_done,
             outcome.sessionId.take(8),
             outcome.cwd,
         ) to ToastType.Success
-        ClaudeCodeVM.SessionImportOutcome.Running ->
+        SessionListVM.SessionImportOutcome.Running ->
             context.getString(R.string.session_import_running) to ToastType.Error
-        ClaudeCodeVM.SessionImportOutcome.Failed ->
+        SessionListVM.SessionImportOutcome.Failed ->
             context.getString(R.string.session_import_failed) to ToastType.Error
-        is ClaudeCodeVM.SessionImportOutcome.Rejected -> when (outcome.reason) {
+        is SessionListVM.SessionImportOutcome.Rejected -> when (outcome.reason) {
             SessionImportReject.EMPTY -> context.getString(R.string.session_import_empty)
             SessionImportReject.TOO_LARGE -> context.getString(
                 R.string.session_import_too_large,

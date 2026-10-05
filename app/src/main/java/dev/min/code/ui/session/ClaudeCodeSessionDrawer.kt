@@ -115,7 +115,7 @@ import me.rerere.hugeicons.stroke.Tag01
  */
 @Composable
 fun ClaudeCodeSessionDrawer(
-    sessions: List<ClaudeCodeVM.SessionEntry>,
+    sessions: List<SessionListVM.SessionEntry>,
     permanent: Boolean = false,
     /** 宽屏分栏时由外层拖动手势决定；null 则退回 300.dp */
     paneWidth: Dp? = null,
@@ -127,7 +127,7 @@ fun ClaudeCodeSessionDrawer(
     onSetCategory: (String, String?) -> Unit = { _, _ -> },
     categories: List<String> = emptyList(),
     /** 行菜单里的「导出」；null 时不给这一项 */
-    onExportSession: ((ClaudeCodeVM.SessionEntry) -> Unit)? = null,
+    onExportSession: ((SessionListVM.SessionEntry) -> Unit)? = null,
     /** 行菜单里的「结束会话」（只对进程还活着的行给）；null 时不给这一项 */
     onEndSession: ((String) -> Unit)? = null,
     /** 题跋上的「导入」；null 时不给这个按钮 */
@@ -147,11 +147,11 @@ fun ClaudeCodeSessionDrawer(
     var systemOpen by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(visible) { if (!visible) systemOpen = false }
     BackHandler(enabled = visible && systemOpen) { systemOpen = false }
-    var pendingDelete by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
+    var pendingDelete by remember { mutableStateOf<SessionListVM.SessionEntry?>(null) }
     var quickProvider by remember { mutableStateOf(false) }
     val providerName = rememberClaudeConnectionLabel()
-    var pendingRename by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
-    var pendingCategory by remember { mutableStateOf<ClaudeCodeVM.SessionEntry?>(null) }
+    var pendingRename by remember { mutableStateOf<SessionListVM.SessionEntry?>(null) }
+    var pendingCategory by remember { mutableStateOf<SessionListVM.SessionEntry?>(null) }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
@@ -500,7 +500,7 @@ private fun ActionRow(
 
 @Composable
 private fun SessionRow(
-    entry: ClaudeCodeVM.SessionEntry,
+    entry: SessionListVM.SessionEntry,
     onClick: () -> Unit,
     onPin: () -> Unit,
     onRename: () -> Unit,

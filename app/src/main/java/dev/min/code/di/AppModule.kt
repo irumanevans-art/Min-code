@@ -48,7 +48,11 @@ import dev.min.code.core.settings.ProviderSync
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.ui.files.WorkspaceDetailVM
 import dev.min.code.ui.codex.CodexVM
-import dev.min.code.ui.session.ClaudeCodeVM
+import dev.min.code.ui.session.ClaudeConfigVM
+import dev.min.code.ui.session.MaintenanceVM
+import dev.min.code.ui.session.SessionListVM
+import dev.min.code.ui.session.SessionVM
+import dev.min.code.ui.session.WorkspaceToolsVM
 import dev.min.code.ui.providers.ProvidersVM
 import dev.min.code.ui.settings.SettingsVM
 import dev.min.code.ui.setup.SetupVM
@@ -247,7 +251,12 @@ val appModule = module {
     // 盯投递目录的人不能等某个页面先打开（见 GuestOpenInbox）
     single(createdAtStart = true) { GuestOpenInbox(get(), get<AppScope>()) }
 
-    viewModelOf(::ClaudeCodeVM)
+    // 原来的 ClaudeCodeVM 按职责拆成五个（M2-B B6a）；ClaudeCodePage 一次取齐
+    viewModelOf(::SessionVM)
+    viewModelOf(::SessionListVM)
+    viewModelOf(::WorkspaceToolsVM)
+    viewModelOf(::MaintenanceVM)
+    viewModelOf(::ClaudeConfigVM)
     viewModel {
         CodexVM(
             runtime = get(),

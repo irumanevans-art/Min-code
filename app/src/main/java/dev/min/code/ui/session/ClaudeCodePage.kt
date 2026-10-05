@@ -185,10 +185,16 @@ import dev.min.code.core.session.touchesDeviceStorage
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
+fun ClaudeCodePage(
+    vm: SessionVM = koinViewModel(),
+    listVm: SessionListVM = koinViewModel(),
+    toolsVm: WorkspaceToolsVM = koinViewModel(),
+    maintenanceVm: MaintenanceVM = koinViewModel(),
+    configVm: ClaudeConfigVM = koinViewModel(),
+) {
     val navController = LocalNavController.current
     val context = LocalContext.current
-    val setup by vm.setup.collectAsStateWithLifecycle()
+    val setup by maintenanceVm.setup.collectAsStateWithLifecycle()
     // 流式输出时 SessionState 每个 token 换一个新对象。页面上几乎所有地方（顶栏、抽屉、输入坞、
     // 起始面板）都不关心正在长的那段正文，所以它们读的是剥掉逐 token 字段之后的 [session]：
     // 按值判等，流式期间一次都不变，整页不再跟着每个 token 重组。真要看正文的只有会话流里
@@ -198,11 +204,11 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     val session by remember(liveSession) {
         derivedStateOf(structuralEqualityPolicy()) { liveSession.value.withoutStream() }
     }
-    val sessions by vm.sessions.collectAsStateWithLifecycle()
-    val maintenance by vm.maintenance.collectAsStateWithLifecycle()
-    val useNpmMirror by vm.useNpmMirror.collectAsStateWithLifecycle()
-    val runtime by vm.runtime.collectAsStateWithLifecycle()
-    val localServiceList by vm.localServiceList.collectAsStateWithLifecycle()
+    val sessions by listVm.sessions.collectAsStateWithLifecycle()
+    val maintenance by maintenanceVm.maintenance.collectAsStateWithLifecycle()
+    val useNpmMirror by maintenanceVm.useNpmMirror.collectAsStateWithLifecycle()
+    val runtime by toolsVm.runtime.collectAsStateWithLifecycle()
+    val localServiceList by toolsVm.localServiceList.collectAsStateWithLifecycle()
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val dailyCostUsd by vm.dailyCostUsd.collectAsStateWithLifecycle()
     // 英文界面下这张表整个不生效，见 isChineseUi —— 在这里合掉，
@@ -211,6 +217,10 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     val chineseDescriptions = zhDescriptionSetting && isChineseUi()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val connected by vm.connected.collectAsStateWithLifecycle()
+    // 环境状态读完就重扫磁盘会话：原来 refresh() 末尾直接调 refreshSessions()，拆成两个 VM 后由页面转发
+    LaunchedEffect(maintenanceVm, listVm) {
+        maintenanceVm.sessionsStale.collect { listVm.refreshSessions() }
+    }
     val toaster = LocalToaster.current
     LaunchedEffect(notice) {
         val text = notice ?: return@LaunchedEffect
@@ -251,7 +261,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     var showPlan by rememberSaveable { mutableStateOf(false) }
     var showMaintenance by rememberSaveable { mutableStateOf(false) }
     var showRuntime by rememberSaveable { mutableStateOf(false) }
-    val previewSlot by vm.previewSlot.collectAsStateWithLifecycle()
+    val previewSlot by toolsVm.previewSlot.collectAsStateWithLifecycle()
 
     // 通知权限（Android 13+ 要运行时申请）在环境就绪那一刻要一次：后台等审批、任务完成、
     // 会话中断全靠通知，没有它用户切出去就是聋的。放在向导之后而不是启动时——先让人看到
@@ -273,10 +283,10 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         if (session.status == SessionStatus.Running && !session.busy) {
             vm.refreshUsage()
             vm.refreshPlan()
-            vm.refreshSessions()
+            listVm.refreshSessions()
             delay(2_500)
             if (session.status == SessionStatus.Running) {
-                vm.refreshSessions()
+                listVm.refreshSessions()
             }
         }
     }
@@ -322,7 +332,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
 
     // 导出用的字头在这里取好：toTranscriptText 在 onClick 里跑，那儿拿不到资源
     val transcriptLabels = rememberTranscriptLabels()
-    val sessionTransfer = rememberSessionTransfer(vm, sessions)
+    val sessionTransfer = rememberSessionTransfer(listVm, sessions)
 
     val drawer: @Composable (paneWidth: Dp?) -> Unit = { paneWidth ->
         ClaudeCodeSessionDrawer(
@@ -338,11 +348,11 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 afterSidebarNav()
                 vm.openSession(id)
             },
-            onDeleteSession = vm::deleteSession,
-            onPinSession = vm::pinSession,
-            onRenameSession = vm::renameSession,
-            onSetCategory = vm::setSessionCategory,
-            categories = vm.sessionCategories(),
+            onDeleteSession = { id -> listVm.deleteSession(id, onActiveDeleted = vm::resetComposerDraft) },
+            onPinSession = listVm::pinSession,
+            onRenameSession = listVm::renameSession,
+            onSetCategory = listVm::setSessionCategory,
+            categories = listVm.sessionCategories(),
             onExportSession = sessionTransfer.export,
             onEndSession = vm::endSession,
             onImportSession = sessionTransfer.import,
@@ -358,7 +368,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             // 关掉 / 返回时回到的都是抽屉的「系统」页（见 ClaudeCodeSessionDrawer）
             onOpenTerminal = { navController.navigate(Screen.Terminal) },
             onOpenRuntime = {
-                vm.refreshNetworkSnapshot()
+                toolsVm.refreshNetworkSnapshot()
                 showRuntime = true
             },
             onOpenSettings = { navController.navigate(Screen.Settings) },
@@ -367,7 +377,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 navController.navigate(Screen.Providers)
             },
             onOpenMaintenance = {
-                vm.loadEnvironment()
+                maintenanceVm.loadEnvironment()
                 showMaintenance = true
             },
             // 没内容时不给这一行 —— 一个复制出来是空字符串的按钮只会让人以为坏了
@@ -392,7 +402,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
         drawer = drawer,
     ) {
         val previewHandler = rememberLocalPreviewUriHandler { url ->
-            vm.openPreview(url)
+            toolsVm.openPreview(url)
         }
         CompositionLocalProvider(LocalUriHandler provides previewHandler) {
         if (live) {
@@ -400,6 +410,8 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                 session = session,
                 liveSession = liveSession,
                 vm = vm,
+                toolsVm = toolsVm,
+                configVm = configVm,
                 dailyCostUsd = dailyCostUsd,
                 chineseDescriptions = chineseDescriptions,
                 // 宽屏也始终给汉堡：展开=收起，收起=展开（对齐 Kimi / DeepSeek）
@@ -441,7 +453,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                             InkIconButton(
                                 icon = HugeIcons.Refresh01,
                                 contentDescription = stringResource(R.string.session_refresh_status),
-                                onClick = { vm.refresh() },
+                                onClick = { maintenanceVm.refresh() },
                             )
                         },
                     )
@@ -454,7 +466,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
                             status = stringResource(R.string.session_loading),
                             detail = setup.cliVersion?.let { "claude $it" },
                         )
-                        !setup.ready -> SetupPage(onReady = vm::refresh)
+                        !setup.ready -> SetupPage(onReady = maintenanceVm::refresh)
                         else -> StartPanel(
                             session = session,
                             cliVersion = setup.cliVersion,
@@ -506,14 +518,14 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             liveSessionCount = liveSessions.count { it.isLive },
             onDismiss = {
                 showMaintenance = false
-                vm.dismissMaintenanceError()
+                maintenanceVm.dismissMaintenanceError()
             },
-            onCheckUpdate = vm::checkCliUpdate,
-            onUpdateCli = vm::updateCli,
+            onCheckUpdate = maintenanceVm::checkCliUpdate,
+            onUpdateCli = maintenanceVm::updateCli,
             useNpmMirror = useNpmMirror,
-            onSetUseNpmMirror = vm::setUseNpmMirror,
-            onUpgradeApt = vm::upgradeApt,
-            onReinstallNode = vm::reinstallNode,
+            onSetUseNpmMirror = maintenanceVm::setUseNpmMirror,
+            onUpgradeApt = maintenanceVm::upgradeApt,
+            onReinstallNode = maintenanceVm::reinstallNode,
             onOpenWorkspace = {
                 showMaintenance = false
                 // 去的是另一处（工作区文件），不是「系统」的下一层：抽屉跟着收起
@@ -529,13 +541,13 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
             loading = runtime.loading,
             services = localServiceList,
             expandedLogId = runtime.expandedLogId,
-            logOf = vm::logOf,
+            logOf = toolsVm::logOf,
             onDismiss = { showRuntime = false },
-            onRefresh = vm::refreshNetworkSnapshot,
-            onStopService = vm::stopLocalService,
-            onToggleLog = vm::toggleServiceLog,
+            onRefresh = toolsVm::refreshNetworkSnapshot,
+            onStopService = toolsVm::stopLocalService,
+            onToggleLog = toolsVm::toggleServiceLog,
             // 进程表「打开」= 按预览位键，不是第二套 WebView；这张表和抽屉由下面的让位统一收掉
-            onOpenPreview = vm::openPreview,
+            onOpenPreview = toolsVm::openPreview,
         )
     }
 
@@ -557,7 +569,7 @@ fun ClaudeCodePage(vm: ClaudeCodeVM = koinViewModel()) {
     if (previewSlot.expanded && slotUrl != null) {
         LocalPreviewPane(
             url = slotUrl,
-            onCollapse = vm::collapsePreview,
+            onCollapse = toolsVm::collapsePreview,
         )
     }
 }
@@ -958,7 +970,9 @@ private fun SessionContent(
     session: ClaudeCodeManager.SessionState,
     /** 完整状态。只在最小的作用域里读（流式条目、当前轮进度），别在函数体顶层读 */
     liveSession: State<ClaudeCodeManager.SessionState>,
-    vm: ClaudeCodeVM,
+    vm: SessionVM,
+    toolsVm: WorkspaceToolsVM,
+    configVm: ClaudeConfigVM,
     dailyCostUsd: Double,
     chineseDescriptions: Boolean,
     onOpenPlan: () -> Unit,
@@ -1040,7 +1054,7 @@ private fun SessionContent(
     var showTerminal by rememberSaveable { mutableStateOf(false) }
     // 底栏「N shell」点开的面板。按会话记：换了会话不该还开着上一个会话的 shell
     var showShells by rememberSaveable(activeKey) { mutableStateOf(false) }
-    val shells by vm.backgroundShells.collectAsStateWithLifecycle()
+    val shells by toolsVm.backgroundShells.collectAsStateWithLifecycle()
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
 
@@ -1242,7 +1256,7 @@ private fun SessionContent(
                 Spacer(Modifier.weight(1f))
                 // 预览位：始终在。有 loopback 服务才有效；关掉是藏，不是拆。
                 // 不要用 Globe（抽屉「进程」已占用）。
-                val preview by vm.previewSlot.collectAsStateWithLifecycle()
+                val preview by toolsVm.previewSlot.collectAsStateWithLifecycle()
                 val previewArmed = !preview.url.isNullOrBlank()
                 Spacer(Modifier.width(6.dp))
                 PaperDisc {
@@ -1256,7 +1270,7 @@ private fun SessionContent(
                             onClick = {
                                 if (!previewArmed) return@InkIconButton
                                 focusManager.clearFocus()
-                                vm.togglePreview()
+                                toolsVm.togglePreview()
                             },
                             enabled = previewArmed,
                             tint = if (preview.expanded && previewArmed) {
@@ -1401,13 +1415,13 @@ private fun SessionContent(
                         chineseDescriptions = chineseDescriptions,
                         onSetChineseDescriptions = vm::setChineseDescriptions,
                         onRefreshUsage = vm::refreshUsage,
-                        onImportFile = vm::importFile,
+                        onImportFile = toolsVm::importFile,
                         onSetCwd = vm::setCwd,
                         onListCwd = vm::listCwdFolders,
                         onCreateCwd = vm::createCwdFolder,
-                        onDeleteWorkspaceFile = vm::deleteWorkspaceFile,
+                        onDeleteWorkspaceFile = toolsVm::deleteWorkspaceFile,
                         onSearchFiles = vm::searchFiles,
-                        onLoadImage = vm::loadImage,
+                        onLoadImage = toolsVm::loadImage,
                         onOpenLocalCommand = { configCommand = it },
                         onComposerFocusChange = onComposerFocusChange,
                         restoredDraft = composerDraft,
@@ -1424,7 +1438,8 @@ private fun SessionContent(
     configCommand?.let { command ->
         ClaudeCodeConfigSheet(
             command = command,
-            vm = vm,
+            vm = configVm,
+            onRunInit = vm::runInit,
             onDismiss = { configCommand = null },
         )
     }
@@ -1433,8 +1448,8 @@ private fun SessionContent(
         BackgroundShellSheet(
             shells = shells,
             onDismiss = { showShells = false },
-            readOutput = vm::readShellOutput,
-            onStop = vm::stopBackgroundShell,
+            readOutput = toolsVm::readShellOutput,
+            onStop = toolsVm::stopBackgroundShell,
         )
     }
 
@@ -1922,7 +1937,7 @@ internal fun StartPanel(
     lastOptions: ClaudeCodeManager.SessionOptions = session.options,
     onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
     onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
-    /** false = 还没有可用的供应商，见 [ClaudeCodeVM.connected] */
+    /** false = 还没有可用的供应商，见 [SessionVM.connected] */
     connected: Boolean = true,
     onOpenProviders: () -> Unit = {},
 ) {

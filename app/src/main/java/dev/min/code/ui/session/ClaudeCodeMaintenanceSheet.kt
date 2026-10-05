@@ -75,7 +75,7 @@ import me.rerere.hugeicons.stroke.ArrowDown01
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ClaudeCodeMaintenanceSheet(
-    state: ClaudeCodeVM.MaintenanceState,
+    state: MaintenanceVM.MaintenanceState,
     liveSessionCount: Int,
     onDismiss: () -> Unit,
     onCheckUpdate: () -> Unit,
@@ -216,12 +216,12 @@ internal fun ClaudeCodeMaintenanceSheet(
             InkButton(
                 onClick = onUpdateCli,
                 enabled = actionable && (state.cliIncomplete || state.updateAvailable),
-                busy = state.running == ClaudeCodeVM.MaintenanceTask.UpdateCli,
+                busy = state.running == MaintenanceVM.MaintenanceTask.UpdateCli,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
                     when {
-                        state.running == ClaudeCodeVM.MaintenanceTask.UpdateCli -> stringResource(R.string.maint_updating)
+                        state.running == MaintenanceVM.MaintenanceTask.UpdateCli -> stringResource(R.string.maint_updating)
                         state.cliIncomplete -> stringResource(R.string.maint_repair_install)
                         state.updateAvailable -> stringResource(R.string.maint_update_to, state.latestCliVersion.orEmpty())
                         state.latestCliVersion == null -> stringResource(R.string.maint_update_check_first)
@@ -243,11 +243,11 @@ internal fun ClaudeCodeMaintenanceSheet(
                 onClick = onUpgradeApt,
                 enabled = actionable,
                 tone = InkButtonTone.Paper,
-                busy = state.running == ClaudeCodeVM.MaintenanceTask.AptUpgrade,
+                busy = state.running == MaintenanceVM.MaintenanceTask.AptUpgrade,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    if (state.running == ClaudeCodeVM.MaintenanceTask.AptUpgrade) stringResource(R.string.maint_apt_upgrading)
+                    if (state.running == MaintenanceVM.MaintenanceTask.AptUpgrade) stringResource(R.string.maint_apt_upgrading)
                     else stringResource(R.string.maint_apt_update)
                 )
             }
@@ -303,11 +303,11 @@ internal fun ClaudeCodeMaintenanceSheet(
                         onClick = onReinstallNode,
                         enabled = actionable,
                         tone = InkButtonTone.Paper,
-                        busy = state.running == ClaudeCodeVM.MaintenanceTask.ReinstallNode,
+                        busy = state.running == MaintenanceVM.MaintenanceTask.ReinstallNode,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            if (state.running == ClaudeCodeVM.MaintenanceTask.ReinstallNode) stringResource(R.string.maint_node_reinstalling)
+                            if (state.running == MaintenanceVM.MaintenanceTask.ReinstallNode) stringResource(R.string.maint_node_reinstalling)
                             else stringResource(R.string.maint_node_reinstall)
                         )
                     }
@@ -336,7 +336,7 @@ private fun placeholder(loading: Boolean): String =
     stringResource(if (loading) R.string.maint_loading else R.string.maint_not_installed)
 
 @Composable
-private fun updateHint(state: ClaudeCodeVM.MaintenanceState): String = when {
+private fun updateHint(state: MaintenanceVM.MaintenanceState): String = when {
     state.checking -> ""
     state.latestCliVersion == null -> stringResource(R.string.maint_not_checked)
     state.updateAvailable -> stringResource(R.string.maint_update_available, state.latestCliVersion)

@@ -78,7 +78,9 @@ import me.rerere.hugeicons.stroke.Delete02
 @Composable
 internal fun ClaudeCodeConfigSheet(
     command: LocalSlash,
-    vm: ClaudeCodeVM,
+    vm: ClaudeConfigVM,
+    /** `/init` 是发给会话的消息，不是配置文件，所以由调用方接到 [SessionVM.runInit] */
+    onRunInit: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -95,7 +97,7 @@ internal fun ClaudeCodeConfigSheet(
                 LocalSlash.MCP -> McpSection(vm)
                 LocalSlash.AGENTS -> AgentsSection(vm)
                 // /init 是发给 CLI 的一条消息，发完就该回到会话看它干活，所以顺手关面板
-                LocalSlash.MEMORY -> MemorySection(vm, onRunInit = { vm.runInit(); onDismiss() })
+                LocalSlash.MEMORY -> MemorySection(vm, onRunInit = { onRunInit(); onDismiss() })
                 LocalSlash.CONFIG -> ConfigSection(vm)
                 LocalSlash.HOOKS -> PermissionsSection(vm)
                 // 会话类命令走 ClaudeCodeSettingsSheet，不该走到这里
@@ -168,7 +170,7 @@ private fun DeleteButton(onClick: () -> Unit) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun McpSection(vm: ClaudeCodeVM) {
+private fun McpSection(vm: ClaudeConfigVM) {
     val scope = rememberCoroutineScope()
     var servers by remember { mutableStateOf<List<ClaudeCodeConfigStore.McpServer>>(emptyList()) }
     var editing by remember { mutableStateOf<ClaudeCodeConfigStore.McpServer?>(null) }
@@ -413,7 +415,7 @@ private fun DraftTextField(
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun AgentsSection(vm: ClaudeCodeVM) {
+private fun AgentsSection(vm: ClaudeConfigVM) {
     val scope = rememberCoroutineScope()
     var agents by remember { mutableStateOf<List<ClaudeCodeConfigStore.AgentDefinition>>(emptyList()) }
     var editing by remember { mutableStateOf<ClaudeCodeConfigStore.AgentDefinition?>(null) }
@@ -584,7 +586,7 @@ private fun AgentEditor(
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun MemorySection(vm: ClaudeCodeVM, onRunInit: () -> Unit) {
+private fun MemorySection(vm: ClaudeConfigVM, onRunInit: () -> Unit) {
     val scope = rememberCoroutineScope()
     var userScope by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
@@ -697,7 +699,7 @@ private fun ProviderSection() {
 }
 
 @Composable
-private fun ConfigSection(vm: ClaudeCodeVM) {
+private fun ConfigSection(vm: ClaudeConfigVM) {
     val scope = rememberCoroutineScope()
     var outputStyle by remember { mutableStateOf("") }
     var statusLine by remember { mutableStateOf("") }
@@ -799,7 +801,7 @@ private fun ConfigSection(vm: ClaudeCodeVM) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun PermissionsSection(vm: ClaudeCodeVM) {
+private fun PermissionsSection(vm: ClaudeConfigVM) {
     val scope = rememberCoroutineScope()
     var bucket by remember { mutableStateOf("allow") }
     var rules by remember { mutableStateOf<List<String>>(emptyList()) }

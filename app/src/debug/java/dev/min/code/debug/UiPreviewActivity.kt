@@ -301,10 +301,10 @@ private fun sceneIcon(scene: PreviewScene) = when (scene) {
 private fun SessionsPreview() {
     val now = System.currentTimeMillis()
     val entries = listOf(
-        dev.min.code.ui.session.ClaudeCodeVM.SessionEntry("a", "检查工作区，整理这次修改", now - 120_000, 12, isLive = true, isActive = true, pinned = true, titled = true),
-        dev.min.code.ui.session.ClaudeCodeVM.SessionEntry("b", "把 proot 补丁拆成独立模块", now - 3_600_000, 41, isLive = true, isActive = false, category = "工作", titled = true),
-        dev.min.code.ui.session.ClaudeCodeVM.SessionEntry("c", "文件页导入导出联调", now - 86_400_000, 7, isLive = false, isActive = false, category = "工作"),
-        dev.min.code.ui.session.ClaudeCodeVM.SessionEntry("d", "签名动画：龙凤与轨迹的双层提取方案讨论，以及输入坞底板的裁切位置", now - 172_800_000, 3, isLive = false, isActive = false),
+        dev.min.code.ui.session.SessionListVM.SessionEntry("a", "检查工作区，整理这次修改", now - 120_000, 12, isLive = true, isActive = true, pinned = true, titled = true),
+        dev.min.code.ui.session.SessionListVM.SessionEntry("b", "把 proot 补丁拆成独立模块", now - 3_600_000, 41, isLive = true, isActive = false, category = "工作", titled = true),
+        dev.min.code.ui.session.SessionListVM.SessionEntry("c", "文件页导入导出联调", now - 86_400_000, 7, isLive = false, isActive = false, category = "工作"),
+        dev.min.code.ui.session.SessionListVM.SessionEntry("d", "签名动画：龙凤与轨迹的双层提取方案讨论，以及输入坞底板的裁切位置", now - 172_800_000, 3, isLive = false, isActive = false),
     )
     dev.min.code.ui.session.ClaudeCodeSessionDrawer(
         sessions = entries,
