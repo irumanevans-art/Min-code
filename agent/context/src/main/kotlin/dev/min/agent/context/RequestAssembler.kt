@@ -31,9 +31,10 @@ object RequestAssembler {
         autoMemory: AutoMemoryInfo? = null,
         /** 服务器名 → MCP 服务器给的说明（已截断、已按名字排序） */
         mcpInstructions: Map<String, String> = emptyMap(),
+        outputStyle: dev.min.agent.spi.OutputStyleLoaded? = null,
     ): ModelRequest = ModelRequest(
         profile = profile,
-        system = SystemPrompt.build(profile, environment, memory, agentInstructions, skills, autoMemory, mcpInstructions),
+        system = SystemPrompt.build(profile, environment, memory, agentInstructions, skills, autoMemory, mcpInstructions, outputStyle),
         messages = messages,
         tools = tools,
         effort = effort,

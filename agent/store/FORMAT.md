@@ -80,3 +80,5 @@
   `tool_outcome.result.fileEdits[]` 新增可选字段 `before`、`after`（内容 id：原文的 SHA-256；内容在宿主的快照仓库里——Android 在 App 私有目录、桌面在 `~/.min-agent/`——日志里只有 id）。含新事件的日志旧版本打不开；旧日志照常读。
 - v1 增量（2026-10-05）：新增事件 `mcp_servers_loaded`（MCP 服务器清单：每台 `name`、`scope`、`transport`、`state`，可选 `reason`、`toolCount`；可选 `notes`；**不含**请求头、环境变量的值）、`mcp_tools_snapshot`（生效的 MCP 工具：`tools[]` 每项 `name`（给模型的全名）、`server` / `tool`（原名，路由用）、`description`、`inputSchema`（整形后），可选 `readOnlyHint`、`requiresUserInteraction`、`maxResultChars`；可选 `instructions`（服务器名 → 说明）、`note`），定义在 `spi/McpEvents.kt`（MCP设计 §11）。两者都是整份替换；会话内的变化只在回合开始时写（回合开头那条 `turn_started` 之后）。工具表 = 内置工具 + 最后一份 `mcp_tools_snapshot`（再按子 agent 定义与整工具 deny 规则筛）。
   `subagent_origin` 新增可选字段 `mcpTools`（子 agent 定义里 `mcp__…` 的允许写法；缺省 = 不限）、`mcpDenied`（禁止写法；空时不落盘）。含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-05）：新增事件 `output_style_loaded`（会话创建时冻结的 output style：`name`、`body`、`keepCodingInstructions`、可选 `description` / `notes`，`spi/OutputStyleEvents.kt`）。
+  没设 `outputStyle`、设的是 Default、或找不到（回 Default 并给 Note）时不写；子 agent 里只有分身带（普通子 agent 不用样式，分身继承父会话快照）。含新事件的日志旧版本打不开；旧日志照常读。

@@ -108,6 +108,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         // 同记忆：取最后一条，以后显式刷新时整份替换
         is SkillsLoaded -> copy(skills = e)
+        is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e)
         is SettingsChanged -> copy(
             settings = settings.copy(
                 cwd = e.cwd ?: settings.cwd,

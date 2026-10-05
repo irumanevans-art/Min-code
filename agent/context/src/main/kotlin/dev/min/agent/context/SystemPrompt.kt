@@ -39,10 +39,24 @@ object SystemPrompt {
         skills: SkillsLoaded? = null,
         autoMemory: AutoMemoryInfo? = null,
         mcpInstructions: Map<String, String> = emptyMap(),
+        outputStyle: dev.min.agent.spi.OutputStyleLoaded? = null,
     ): List<String> = listOfNotNull(
-        RULES, environmentBlock(env), memoryBlock(memory), autoMemoryBlock(memory, autoMemory),
+        // 有样式且不保留工程指令时，第一段换成只有身份的版本（样式接管语气与响应格式）；
+        // 其余情况（无样式 / Default / keep）第一段逐字不变——缓存前缀的纪律
+        if (outputStyle != null && !outputStyle.keepCodingInstructions) STYLE_IDENTITY else RULES,
+        styleBlock(outputStyle),
+        environmentBlock(env), memoryBlock(memory), autoMemoryBlock(memory, autoMemory),
         skillsBlock(skills, profile), mcpBlock(mcpInstructions), agentInstructions?.let(::agentBlock),
     )
+
+    /**
+     * output style 的正文（会话创建时冻结的快照）。放在第一段之后、环境之前——固定位置；样式段的存在与否
+     * 不影响后面几段的顺序。keep-coding-instructions 为真时工程指令（RULES 里的那几条）保留，样式是追加；
+     * 为假时它们被样式取代（CC：自定义样式默认省略内置的软件工程指令）
+     */
+    private fun styleBlock(style: dev.min.agent.spi.OutputStyleLoaded?): String? = style?.let {
+        "# Output style: ${it.name}\n\n${it.body.trim()}"
+    }
 
     /**
      * MCP 服务器自己给的使用说明（MCP设计 §5.2）。放在 skill 清单之后、子 agent 角色说明之前：MCP 快照会在回合开头变，
@@ -78,6 +92,16 @@ object SystemPrompt {
           retrying anything that has side effects.
         - If a call is denied, do not retry it unchanged; take the note into account and choose another way or ask.
         - Do not guess at facts you can check with a tool. When you are done, say what changed and anything left to do.
+    """.trimIndent()
+
+    /**
+     * 样式接管语气与响应格式时的第一段：身份与语言保留（「用用户的语言回答」是应用级行为，不是软件工程指令；
+     * 「Be concise」这类语气要求归样式管，所以不在这段里），软件工程做事方式那几条让位给样式正文
+     */
+    private val STYLE_IDENTITY = """
+        You are Min Agent, a coding agent running inside the Min app on the user's Android phone.
+        You work in a Linux environment through the tools you are given. The user reads your replies on a small screen.
+        Reply in the user's language.
     """.trimIndent()
 
     private fun environmentBlock(env: Environment): String = """

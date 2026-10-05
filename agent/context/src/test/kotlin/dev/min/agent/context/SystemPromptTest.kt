@@ -218,4 +218,32 @@ class SystemPromptTest {
         )
         assertEquals(SystemPrompt.build(profile, env, autoIndex, autoMemory = autoInfo), request.system)
     }
+
+    // ---- output style ----
+
+    private val IDENTITY_WITH_STYLE = listOf(
+        "You are Min Agent, a coding agent running inside the Min app on the user's Android phone.",
+        "You work in a Linux environment through the tools you are given. The user reads your replies on a small screen.",
+        "Reply in the user's language.",
+    ).joinToString("\n")
+
+    @Test
+    fun `a style without keep replaces the coding rules and adds its own block second`() {
+        val style = dev.min.agent.spi.OutputStyleLoaded(name = "Explanatory", body = "Explain as you go.")
+        val prompt = SystemPrompt.build(profile, env, outputStyle = style)
+        assertEquals("样式段固定在第二段（身份之后、环境之前）", 3, prompt.size)
+        assertEquals("身份段换成只有身份与语言的版本", IDENTITY_WITH_STYLE, prompt[0])
+        assertEquals("# Output style: Explanatory\n\nExplain as you go.", prompt[1])
+        assertEquals("后面几段不受影响", SystemPrompt.build(profile, env).drop(1), prompt.drop(2))
+        assertTrue("工程指令被样式取代", "Read a file before you edit it" !in prompt[0])
+    }
+
+    @Test
+    fun `a style with keep keeps the coding rules byte for byte`() {
+        val style = dev.min.agent.spi.OutputStyleLoaded(name = "Terse", body = "少说。", keepCodingInstructions = true)
+        val prompt = SystemPrompt.build(profile, env, outputStyle = style)
+        assertEquals(3, prompt.size)
+        assertEquals("keep 时第一段与无样式时逐字相同", SystemPrompt.build(profile, env)[0], prompt[0])
+        assertEquals("# Output style: Terse\n\n少说。", prompt[1])
+    }
 }
