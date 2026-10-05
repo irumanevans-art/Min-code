@@ -98,3 +98,55 @@ Failure [INSTALL_FAILED_ABORTED: User rejected permissions]
 - Related Files: app/build/outputs/apk/debug/app-universal-debug.apk
 
 ---
+
+## [ERR-20261006-PLAN-LEGACY-TEST-WAIT] integration_test_timeout
+
+**Logged**: 2026-10-05T20:17:40.741Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+计划模式从直接拒绝变为审批后，旧测试等待结束而超时
+
+### Error
+TimeoutCancellationException
+
+### Context
+4 个 kernel 原用例假定 Plan 写工具自动拒绝并等待 turn 结束；新行为停在 AwaitingApproval，等待预算到期。改为等待审批，明确 Deny 后继续，另加 Once 真正执行用例；计划正文和未获批不写的断言保留，原等待预算不改。
+
+### Suggested Fix
+按新的真实交互显式回答审批；独立场景分别计时，不扩大生产预算或删除原断言。通用约定已写入 AGENTS.md。
+
+### Metadata
+- Reproducible: yes
+- Related Files: agent/kernel/src/test/kotlin/dev/min/agent/kernel/PlanModeTest.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/PolicyWiringTest.kt
+- Evidence: agent/policy/build/review/plan-old-test-xml, agent/policy/build/review/stop-cap-timeout.xml
+
+---
+
+## [ERR-20261006-STOP-SCENARIO-DEADLINE] integration_test_timeout
+
+**Logged**: 2026-10-05T20:17:40.742Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+多个独立真实 hook 场景共用 60 秒导致整套超时
+
+### Error
+TimeoutCancellationException
+
+### Context
+CLI Stop-cap 验证五个独立会话共执行 34 次真实 hook，Windows 进程开销令整个用例超过共享 60 秒。每个场景分别沿用既有 60 秒，仍验证 3 次/9 次请求和非法配置回退；不改生产 cap。全量 CLI 123 tests、0 failures 验证通过。
+
+### Suggested Fix
+按新的真实交互显式回答审批；独立场景分别计时，不扩大生产预算或删除原断言。通用约定已写入 AGENTS.md。
+
+### Metadata
+- Reproducible: yes
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/HooksSessionTest.kt
+- Evidence: agent/policy/build/review/plan-old-test-xml, agent/policy/build/review/stop-cap-timeout.xml
+
+---
