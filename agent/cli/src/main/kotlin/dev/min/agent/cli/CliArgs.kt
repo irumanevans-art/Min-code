@@ -33,6 +33,14 @@ data class CliArgs(
     val maxWebSearches: Int = 200,
     val webCacheTtlMs: Long = 900_000,
     val webDeadlineMs: Long = 300_000,
+    /** -p 一次运行里模型请求的次数上限；null = 没给（再看 CLAUDE_CODE_MAX_TURNS） */
+    val maxTurns: Int? = null,
+    /** -p 模式下的结构化输出 schema（--json-schema 的原文，@文件 已在读入时展开）；null = 不用 */
+    val jsonSchema: kotlinx.serialization.json.JsonObject? = null,
+    /** --resume / --continue 时在分支上跑（原会话不动） */
+    val forkSession: Boolean = false,
+    /** --continue：接着当前目录最近一次根会话 */
+    val continueMostRecent: Boolean = false,
 )
 
 class UsageException(message: String) : Exception(message)
@@ -61,6 +69,10 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --max-web-searches <n> 根会话及其子 agent 的搜索上限，默认 200
   --web-cache-ttl-ms <n> 网页缓存毫秒，默认 900000；0 关闭缓存
   --web-deadline-ms <n>  下载总截止毫秒，默认 300000；0 取消截止
+  --max-turns <n>        -p 一次运行里模型请求的次数上限；没给时读 CLAUDE_CODE_MAX_TURNS
+  --json-schema <JSON|@文件> -p 模式下要求模型按 JSON Schema 交结构化答案（经 StructuredOutput 工具）
+  --fork-session         与 --resume / --continue 一起用：在分支上跑，原会话不动
+  --continue             接着当前目录最近一次根会话（相当于按目录挑 --resume）
 """
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -70,7 +82,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     while (i < argv.size) {
         val arg = argv[i]
         when (arg) {
-            "--json", "--trust" -> flags += arg
+            "--json", "--trust", "--fork-session", "--continue" -> flags += arg
             "-h", "--help" -> throw UsageException(USAGE)
             else -> {
                 if (!arg.startsWith("-")) throw UsageException("不认识的参数：$arg\n\n$USAGE")
@@ -86,6 +98,15 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     }
 
     val prompt = values["-p"]
+    if (values["--json-schema"] != null && prompt == null) {
+        throw UsageException("--json-schema 只在 -p 非交互模式下可用（结构化输出是给跑批要结果的，不是给交互会话的）")
+    }
+    if ("--fork-session" in flags && values["--resume"] == null && "--continue" !in flags) {
+        throw UsageException("--fork-session 要与 --resume 或 --continue 一起用")
+    }
+    if (values["--resume"] != null && "--continue" in flags) {
+        throw UsageException("--resume 与 --continue 只能给一个")
+    }
     fun nonNegativeLong(name: String, default: Long): Long = values[name]?.let {
         it.toLongOrNull()?.takeIf { n -> n >= 0 } ?: throw UsageException("$name 必须是非负整数")
     } ?: default
@@ -127,6 +148,10 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         maxWebSearches = int("--max-web-searches") ?: 200,
         webCacheTtlMs = nonNegativeLong("--web-cache-ttl-ms", 900_000),
         webDeadlineMs = nonNegativeLong("--web-deadline-ms", 300_000),
+        maxTurns = int("--max-turns"),
+        jsonSchema = values["--json-schema"]?.let(::readJsonSchemaArg),
+        forkSession = "--fork-session" in flags,
+        continueMostRecent = "--continue" in flags,
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages
@@ -136,4 +161,38 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
             }
         },
     )
+}
+
+/**
+ * `--json-schema` 的取值：要么是 schema 的 JSON 文本，要么 `@文件路径`（内容整份当 schema）。
+ * 不是合法的 JSON 对象就在启动时报错退出——schema 错了跑下去也没有意义（CC 同样在启动时校验）
+ */
+private fun readJsonSchemaArg(raw: String): kotlinx.serialization.json.JsonObject {
+    val text = if (raw.startsWith("@")) {
+        val file = Path.of(raw.removePrefix("@"))
+        try {
+            java.nio.file.Files.readString(file)
+        } catch (e: java.io.IOException) {
+            throw UsageException("读不了 --json-schema 的文件 ${raw.removePrefix("@")}：${e.message}")
+        }
+    } else raw
+    val parsed = try {
+        dev.min.agent.protocol.AgentJson.parseToJsonElement(text)
+    } catch (e: kotlinx.serialization.SerializationException) {
+        throw UsageException("--json-schema 不是合法的 JSON：${e.message?.lineSequence()?.firstOrNull()}")
+    }
+    return parsed as? kotlinx.serialization.json.JsonObject
+        ?: throw UsageException("--json-schema 必须是一个 JSON 对象（JSON Schema），实际是 ${parsed::class.simpleName}")
+}
+
+/**
+ * 根会话的请求次数上限：`--max-turns` 优先；没给时读 `CLAUDE_CODE_MAX_TURNS`（经内核同一个环境读取口，
+ * 模型 key 那类被藏起来的变量在这里也读不到）。环境变量不是正整数就在启动时报错退出（CC 原文），
+ * 而不是当作没有上限——静默忽略一个写错的限制比停下来更危险
+ */
+internal fun resolveMaxTurns(flag: Int?, env: (String) -> String?): Int? {
+    flag?.let { return it }
+    val value = env("CLAUDE_CODE_MAX_TURNS") ?: return null
+    return value.trim().toIntOrNull()?.takeIf { it > 0 }
+        ?: throw UsageException("CLAUDE_CODE_MAX_TURNS 必须是正整数，实际是 \"$value\"")
 }

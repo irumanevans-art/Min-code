@@ -16,9 +16,17 @@ class CliResultTest {
         assertEquals(JsonPrimitive(200L), result.json()["output_tokens"])
     }
     @Test fun `successful zero token replies still complete and missing terminal cannot succeed`() {
-        assertTrue(CliResult("s",listOf(record(TurnEnded(TurnId("t"), TurnOutcome.Completed, Usage(), 0))), Usage()).completed)
+        assertTrue(CliResult("s",listOf(record(TurnEnded(TurnId("t"),TurnOutcome.Completed,Usage(),0))),Usage()).completed)
         assertFalse(CliResult("s",emptyList(),Usage(outputTokens=900)).completed)
         assertFalse(CliResult("s",listOf(record(TurnEnded(TurnId("t"),TurnOutcome.Interrupted(InterruptedBy.User),Usage(),0))),Usage(outputTokens=900)).completed)
+    }
+    @Test fun `subtype follows CC naming - success, error_max_turns on the request limit, error_during_execution`() {
+        fun subtypeOf(outcome: TurnOutcome) =
+            CliResult("s", listOf(record(TurnEnded(TurnId("t"), outcome, Usage(), 0))), Usage()).subtype
+        assertEquals("success", subtypeOf(TurnOutcome.Completed))
+        assertEquals("error_max_turns", subtypeOf(TurnOutcome.Interrupted(InterruptedBy.Limit)))
+        assertEquals("error_during_execution", subtypeOf(TurnOutcome.Failed("HTTP 401")))
+        assertEquals("error_during_execution", subtypeOf(TurnOutcome.Interrupted(InterruptedBy.User)))
     }
     @Test fun `JSON separates current usage from cumulative and includes actual request fingerprints`() {
         val usage = Usage(10,20,100,30)

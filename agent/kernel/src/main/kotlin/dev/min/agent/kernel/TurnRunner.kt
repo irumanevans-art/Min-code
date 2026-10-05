@@ -140,9 +140,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     }
 
     private suspend fun loop(turnId: TurnId) {
-        // 子 agent 定义里的 maxTurns：到了就停，报告标「未完成，可续」（与 Claude Code 的 partial 一致）
-        val agentLimit = rt.state.value.origin?.maxTurns
-        repeat(agentLimit ?: MAX_REQUESTS_PER_TURN) {
+        // 请求次数上限：子 agent 用定义里的 maxTurns，根会话用 --max-turns / CLAUDE_CODE_MAX_TURNS（运行时选项，不进日志）。
+        // 到了就以 Interrupted(Limit) 收尾，可续——CC 把它叫 error_max_turns（--json 的 subtype）
+        val origin = rt.state.value.origin
+        val limit = origin?.maxTurns ?: deps.rootMaxTurns.takeIf { origin == null }
+        repeat(limit ?: MAX_REQUESTS_PER_TURN) {
             val completed = requestWithRetry(turnId)
             val calls = completed.message.parts.filterIsInstance<ToolCallPart>()
             when {
@@ -156,7 +158,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             // 工具批结束 = 安全点：插话在这里送达（docs/agent/04-子系统设计.md §4.1）
             promote(setOf(Delivery.Steer))
         }
-        if (agentLimit != null) throw TurnLimitReached()
+        if (limit != null) throw TurnLimitReached()
         throw TurnAbort("单个回合的模型请求达到 $MAX_REQUESTS_PER_TURN 次上限，已停止。检查是不是陷入了循环。")
     }
 

@@ -167,6 +167,8 @@ internal class DesktopApp(
             Wire.OpenAIResponses -> OpenAIResponsesClient(provider, transport, secrets)
             else -> throw UsageException("CLI 尚不支持协议 ${provider.wire}")
         }
+        // 内核读环境变量都走这一个口（CLAUDE_CODE_MAX_TURNS、hook 的插值……）：模型 key 的变量对内核是 null
+        val envReader = hookEnvReader(hiddenEnv)
         return KernelDeps(
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
@@ -210,8 +212,10 @@ internal class DesktopApp(
             trustProjectHooks = { args.trust },
             fastModel = fastSelection?.profile?.ref,
             maxWebSearches = args.maxWebSearches,
+            // --max-turns 优先，没给时读 CLAUDE_CODE_MAX_TURNS（CC：不是正整数就启动时报错退出）。只属于这次运行，不进日志
+            rootMaxTurns = resolveMaxTurns(args.maxTurns, envReader),
             // CLI 自己读模型 key 的变量不交给内核：http hook 的 allowedEnvVars 点名它也只能插成空串（凭证不进 hook 请求）
-            env = hookEnvReader(hiddenEnv),
+            env = envReader,
             hiddenEnv = hiddenEnv,
         )
     }
