@@ -145,6 +145,7 @@ class BranchSessionTest {
             prompt = input.str("prompt")!!,
             agentType = input.str("subagent_type"),
             background = input.bool("run_in_background") ?: true,
+            name = input.str("name"),
         )
         when (val r = ctx.agents.delegate(request)) {
             is DelegateResult.Started -> ToolResult(listOf(TextPart("已启动 ${r.child.value}")))
@@ -259,7 +260,7 @@ class BranchSessionTest {
     fun `children are not copied and stay read-only to the branch`() = run {
         val model = RoutingModel { req ->
             when {
-                req.last() == "派个后台的" -> reply(call("c1", "Agent", "prompt" to "后台任务", "run_in_background" to true), stop = StopReason.ToolUse)
+                req.last() == "派个后台的" -> reply(call("c1", "Agent", "prompt" to "后台任务", "run_in_background" to true, "name" to "后台任务"), stop = StopReason.ToolUse)
                 req.last() == "分支里给它发消息" -> reply(call("s1", "SendMessage", "to" to "后台任务", "message" to "hi"), stop = StopReason.ToolUse)
                 else -> reply(TextPart("好"))
             }
@@ -275,14 +276,12 @@ class BranchSessionTest {
         // 子会话没有复制：引用还是原来那个 id，磁盘上也没有多出新的子会话日志
         assertEquals(setOf(child), branch.state.value.children.keys)
         assertEquals(3, store.list().size) // 原会话 + 子会话 + 分支
-        // 引用只读：从分支给原会话的子 agent 发消息，被归属检查拒掉
+        // 引用只读：从分支给原会话的子 agent 发消息，被归属检查拒掉（不能只是「找不到」——按名字找得到才证明走到了护栏）
         branch.say("分支里给它发消息")
         val outcome = store.open(branch.sessionId)!!.read().toList()
             .map { it.event }.filterIsInstance<dev.min.agent.spi.ToolOutcome>().last()
-        assertTrue(
-            "错误结果要说清归属：" + outcome.result.content.filterIsInstance<TextPart>().joinToString { it.text },
-            outcome.result.isError,
-        )
+        val refusal = outcome.result.content.filterIsInstance<TextPart>().joinToString { it.text }
+        assertTrue("错误结果要说清归属：$refusal", outcome.result.isError && refusal.contains("属于别的会话"))
         // 原会话那边的子 agent 日志没被分支动过
         val childLog = events(child)
         assertTrue(childLog.filterIsInstance<dev.min.agent.spi.InputReceived>()
