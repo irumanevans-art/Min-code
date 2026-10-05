@@ -12,22 +12,24 @@ import dev.min.agent.mcp.McpProgress
 import dev.min.agent.mcp.McpToolDef
 import dev.min.agent.mcp.StdioMcpTransport
 import dev.min.agent.mcp.StreamableHttpMcpTransport
-import dev.min.agent.spi.Exec
-import dev.min.agent.spi.ExecOptions
-import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HttpTransport
 import dev.min.agent.spi.ProcessPort
 import dev.min.agent.spi.ProcessSpec
-import dev.min.agent.spi.ShellCommand
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import java.io.ByteArrayOutputStream
 
 /*
  * McpManager 与协议层之间的一层薄壳（MCP设计 §4）：管理器的调度、共享、快照只认 [McpConnection]，
@@ -59,12 +61,11 @@ internal fun interface McpConnector {
 
 /**
  * 真的连接：stdio 经宿主的长寿进程端口（[ProcessPort]，带配额），远程经 [HttpTransport]。
- * [exec] 用来跑 `headersHelper`（10 秒内向 stdout 输出一个 JSON 对象，CC 同）。
+ * `headersHelper`（10 秒内向 stdout 输出一个 JSON 对象，CC 同）也走 [ProcessPort]，见 [HeadersHelper]。
  */
 internal class ClientConnector(
     private val processes: ProcessPort,
     private val http: HttpTransport?,
-    private val exec: Exec,
     private val clientVersion: String,
 ) : McpConnector {
 
@@ -86,7 +87,7 @@ internal class ClientConnector(
             }
             is McpServerSpec.Remote -> {
                 val port = http ?: error("这个环境没有配置 HTTP 端口，连不了远程 MCP 服务器 ${spec.name}。")
-                val headers: suspend () -> List<Pair<String, String>> = { remoteHeaders(spec, projectRoot) }
+                val headers = HeadersHelper(processes, spec, projectRoot)::headers
                 val transport = when (spec.kind) {
                     McpTransportKind.Http -> StreamableHttpMcpTransport(spec.url, headers, port)
                     McpTransportKind.Sse -> LegacySseMcpTransport(spec.url, headers, port)
@@ -116,22 +117,54 @@ internal class ClientConnector(
         }
     }
 
-    /** 静态头 + headersHelper 的输出（同名的以 helper 为准，CC 同）。helper 失败时只用静态头 */
-    private suspend fun remoteHeaders(spec: McpServerSpec.Remote, projectRoot: GuestPath): List<Pair<String, String>> {
+}
+
+/**
+ * 一条远程连接的请求头：静态头 + headersHelper 的输出（同名的以 helper 为准，CC 同）。
+ *
+ * - **每条连接只跑一次**（CC：每次连接 / 重连执行，不缓存）。传输层每发一个请求都会来取头，不缓存的话每次工具调用、
+ *   每条 SSE 都要起一个 shell（手机上经 proot 要一秒多）。令牌中途过期要等重连才会换——401 重跑重试一次留给 OAuth 那一期。
+ * - 经 [ProcessPort] 而不是 [Exec]：Exec 会把输出完整留在日志文件里（后台任务靠它读），而 helper 的输出就是令牌，
+ *   不能明文留在磁盘上。
+ * - 失败（非零退出、超时、输出不是 JSON 对象）只用静态头，且不缓存——下一个请求再试。
+ */
+internal class HeadersHelper(
+    private val processes: ProcessPort,
+    private val spec: McpServerSpec.Remote,
+    private val projectRoot: GuestPath,
+    private val timeoutMs: Long = HEADERS_HELPER_TIMEOUT_MS,
+) {
+    private val lock = Mutex()
+    private var cached: List<Pair<String, String>>? = null
+
+    suspend fun headers(): List<Pair<String, String>> {
         val helper = spec.headersHelper ?: return spec.headers.toList()
-        val result = exec.run(
-            ShellCommand(
-                script = helper,
+        cached?.let { return it }
+        return lock.withLock {
+            cached ?: run(helper)?.let { dynamic -> (spec.headers + dynamic).toList().also { cached = it } } ?: spec.headers.toList()
+        }
+    }
+
+    private suspend fun run(helper: String): Map<String, String>? {
+        val process = processes.spawn(
+            ProcessSpec(
+                argv = listOf("bash", "-c", helper),
                 cwd = projectRoot,
                 env = mapOf("CLAUDE_CODE_MCP_SERVER_NAME" to spec.name, "CLAUDE_CODE_MCP_SERVER_URL" to spec.url),
+                label = "mcp-headers:${spec.name}",
             ),
-            ExecOptions(timeoutMs = HEADERS_HELPER_TIMEOUT_MS, foregroundBudgetMs = null),
         )
-        val output = (result as? ExecResult.Exited)?.takeIf { it.exitCode == 0 }?.output ?: return spec.headers.toList()
-        val dynamic = dev.min.agent.spi.catchingNonCancellation { Json.parseToJsonElement(output.trim()).jsonObject }.getOrNull()
-            ?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.takeIf { it.isString }?.let { k to it.content } }?.toMap()
-            ?: return spec.headers.toList()
-        return (spec.headers + dynamic).toList()
+        try {
+            val output = withTimeoutOrNull(timeoutMs) {
+                val bytes = ByteArrayOutputStream()
+                process.stdout.collect { bytes.write(it) }
+                if (process.exit.await() == 0) bytes.toString(Charsets.UTF_8) else null
+            } ?: return null
+            return dev.min.agent.spi.catchingNonCancellation { Json.parseToJsonElement(output.trim()).jsonObject }.getOrNull()
+                ?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.takeIf { it.isString }?.let { k to it.content } }?.toMap()
+        } finally {
+            withContext(NonCancellable) { process.shutdown() }
+        }
     }
 
     companion object {
