@@ -208,7 +208,8 @@ internal class DesktopApp(
     suspend fun openSession(): SessionRuntime {
         args.resume?.let { id ->
             val sessionId = SessionId(id)
-            return hub().open(sessionId)
+            // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
+            return hub().open(sessionId, resumedByUser = true)
                 ?: throw UsageException("找不到会话 $id")
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。

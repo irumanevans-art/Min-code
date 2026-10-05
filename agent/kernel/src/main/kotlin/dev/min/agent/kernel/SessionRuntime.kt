@@ -253,14 +253,17 @@ class SessionRuntime private constructor(
         }
     }
 
-    /** SessionStart（source = startup）：加的上下文挂到第一条人发的消息上 */
-    private suspend fun runSessionStart() {
+    /**
+     * SessionStart：startup（新建根会话）与 resume（用户打开已有会话，[SessionHub.open] 判定）两条 source，
+     * 加的上下文挂到下一条人发的消息上——resume 也走同一条路（CC：hook 的上下文要赶在第一个请求之前到达模型）
+     */
+    internal suspend fun runSessionStart(source: String) {
         val driver = HookDriver(this)
         val specific = HookJson.encodeToJsonElement(
             SessionStartInput.serializer(),
-            SessionStartInput(source = "startup", model = state.value.settings.model.modelId),
+            SessionStartInput(source = source, model = state.value.settings.model.modelId),
         ).jsonObject
-        val outcome = driver.run(HookEvent.SessionStart, "startup", specific) ?: return
+        val outcome = driver.run(HookEvent.SessionStart, source, specific) ?: return
         val events = outcome.contexts.map { HookContextAdded(HookContextTarget.NextUserMessage, HookEvent.SessionStart.name, it) }
         if (events.isNotEmpty()) commit(events, Durability.Sync)
     }
@@ -501,7 +504,7 @@ class SessionRuntime private constructor(
             }
             // 子会话的清单由 initial 带来（继承父会话那份），不再读磁盘
             if (loadSkills) runtime.loadSkills()
-            if (runtime.state.value.origin == null) runtime.runSessionStart()
+            if (runtime.state.value.origin == null) runtime.runSessionStart("startup")
             return runtime
         }
 

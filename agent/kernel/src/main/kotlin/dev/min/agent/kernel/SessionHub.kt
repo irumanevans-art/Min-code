@@ -291,11 +291,21 @@ class SessionHub(
     }
 
     /**
+     * 本进程里已经以「用户打开」跑过 SessionStart(resume) 的根会话。同一进程里同一会话只跑一次
+     * （Hub 内部为了补交报告、打开子会话也会 open，那不算 resume；进程重启后再打开算新的一次，CC 的 --resume 同样每次启动跑）
+     */
+    private val userResumed = ConcurrentHashMap.newKeySet<SessionId>()
+
+    /**
      * 打开会话（已在线就直接给）。打开时做两件恢复的事：它若是子会话，开始盯它的回合结局；
      * 它若委派过子 agent，把还没交付的报告补进收件箱——**不自动开回合**（崩溃后不自动续跑，02 §5）。
+     * [resumedByUser] 为真且是根会话时先跑 SessionStart(source = resume)（hooks设计 §7），本进程里同一会话只跑一次。
      */
-    suspend fun open(id: SessionId): SessionRuntime? {
-        runtimes[id]?.let { return it }
+    suspend fun open(id: SessionId, resumedByUser: Boolean = false): SessionRuntime? {
+        runtimes[id]?.let { runtime ->
+            if (resumedByUser) resumeStart(runtime)
+            return runtime
+        }
         val runtime = openLock.withLock {
             runtimes[id]?.let { return@withLock it }
             val opened = SessionRuntime.open(store, id, deps, scope, hub = this) ?: return@withLock null
@@ -303,9 +313,17 @@ class SessionHub(
             register(opened)
             opened
         } ?: return null
+        resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
         return runtime
+    }
+
+    /** 用户打开一个根会话：跑 SessionStart(resume)，子会话与跑过一次的不跑 */
+    private suspend fun resumeStart(runtime: SessionRuntime) {
+        if (runtime.state.value.origin == null && userResumed.add(runtime.sessionId)) {
+            runtime.runSessionStart("resume")
+        }
     }
 
     /** 在线的会话；不打开 */

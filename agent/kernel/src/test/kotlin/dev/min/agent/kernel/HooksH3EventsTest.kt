@@ -1,0 +1,252 @@
+package dev.min.agent.kernel
+
+import dev.min.agent.testkit.FakeArtifacts
+import dev.min.agent.testkit.FakeFs
+import dev.min.agent.testkit.FakeSearch
+import dev.min.agent.testkit.TEST_MODEL
+import dev.min.agent.testkit.TEST_PROFILE
+import dev.min.agent.testkit.args
+import dev.min.agent.testkit.reply
+import dev.min.agent.llm.ModelClient
+import dev.min.agent.llm.ModelRequest
+import dev.min.agent.llm.ModelStreamEvent
+import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.ClientMsgId
+import dev.min.agent.protocol.PermissionMode
+import dev.min.agent.protocol.SessionId
+import dev.min.agent.protocol.StopReason
+import dev.min.agent.protocol.TextPart
+import dev.min.agent.protocol.ToolCallPart
+import dev.min.agent.spi.CommandAccess
+import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HarnessProfile
+import dev.min.agent.spi.HookSourceData
+import dev.min.agent.spi.HooksLoaded
+import dev.min.agent.spi.HooksRan
+import dev.min.agent.spi.HttpHookClient
+import dev.min.agent.spi.HttpHookRequest
+import dev.min.agent.spi.HttpHookResult
+import dev.min.agent.spi.LogHeader
+import dev.min.agent.spi.PermissionAsk
+import dev.min.agent.spi.SessionCreated
+import dev.min.agent.spi.SessionEvent
+import dev.min.agent.spi.Tool
+import dev.min.agent.spi.ToolContext
+import dev.min.agent.spi.ToolInput
+import dev.min.agent.spi.ToolProgress
+import dev.min.agent.spi.ToolResult
+import dev.min.agent.spi.ToolTraits
+import dev.min.agent.store.FileSessionStore
+import dev.min.agent.store.LOG_FORMAT_VERSION
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.time.ZoneOffset
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * H3 剩下五个事件接进内核（docs/agent/detail/hooks设计.md §7 事件表）：SessionStart(resume)、PermissionRequest、
+ * SubagentStart、SessionEnd、Notification。这里不碰真网络：http hook 端口是假的，只记下发了什么、回什么；
+ * 输入字段按 CC 原文逐字段断言（research/scratch/hooks.md 各事件的 input 一节）。
+ */
+class HooksH3EventsTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    private val scopes = mutableListOf<CoroutineScope>()
+    private val ids = AtomicLong(0)
+    private val store by lazy { FileSessionStore(tmp.root.toPath(), { 0L }) }
+
+    @After
+    fun tearDown() = scopes.forEach { it.cancel() }
+
+    private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(20_000) { block() } }
+
+    private class FakeHttp(var reply: (HttpHookRequest) -> HttpHookResult) : HttpHookClient {
+        val sent = CopyOnWriteArrayList<HttpHookRequest>()
+        override suspend fun send(request: HttpHookRequest): HttpHookResult {
+            sent += request
+            return reply(request)
+        }
+    }
+
+    private class RoutingModel(private val route: (ModelRequest) -> dev.min.agent.testkit.Step) : ModelClient {
+        val requests = CopyOnWriteArrayList<ModelRequest>()
+        override fun stream(request: ModelRequest): Flow<ModelStreamEvent> = flow {
+            requests += request
+            emitAll(route(request)(request))
+        }
+    }
+
+    /** 像 Bash：默认要人批准（模式 Default 下判定是 Ask） */
+    private val bash = object : Tool<JsonObject> {
+        override val name = "Bash"
+        override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+        override val traits = ToolTraits()
+        override fun description(profile: HarnessProfile) = "跑命令"
+        override fun parse(raw: JsonObject) =
+            if (raw["command"] is JsonPrimitive) ToolInput.Valid(raw) else ToolInput.Invalid("缺 command")
+
+        override fun permissionAsk(input: JsonObject, ctx: ToolContext) =
+            PermissionAsk(name, "跑命令", commands = listOf(CommandAccess((input["command"] as JsonPrimitive).content)))
+
+        override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            emit(ToolProgress.Done(ToolResult(listOf(TextPart("ran: ${(input["command"] as JsonPrimitive).content}")))))
+        }
+    }
+
+    private fun hook(event: String, matcher: String? = null, url: String = "https://hooks.example/x") = JsonObject(
+        mapOf(
+            event to kotlinx.serialization.json.JsonArray(
+                listOf(
+                    JsonObject(
+                        buildMap {
+                            matcher?.let { put("matcher", JsonPrimitive(it)) }
+                            put(
+                                "hooks",
+                                kotlinx.serialization.json.JsonArray(
+                                    listOf(
+                                        JsonObject(
+                                            mapOf(
+                                                "type" to JsonPrimitive("http"),
+                                                "url" to JsonPrimitive(url),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            )
+                        },
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    private fun hub(model: ModelClient, http: FakeHttp, trust: Boolean = false, tools: List<Tool<*>> = listOf(bash)): SessionHub {
+        val deps = KernelDeps(
+            clock = { 1_000 },
+            ids = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
+            models = { ResolvedModel(TEST_PROFILE, model) },
+            tools = tools,
+            host = HostPorts(FakeFs(), FakeSearch(), dev.min.agent.testkit.FakeExec(), { FakeArtifacts() }, httpHooks = http),
+            platform = "test",
+            zone = ZoneOffset.UTC,
+            memoryHome = null,
+            trustProjectHooks = { trust },
+        )
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        return SessionHub(store, deps, scope)
+    }
+
+    private suspend fun events(rt: SessionRuntime): List<SessionEvent> =
+        store.open(rt.sessionId)!!.read().toList().map { it.event }
+
+    private suspend fun SessionRuntime.say(text: String) {
+        val before = state.value.lastTurn?.turnId
+        send(ClientMsgId("u${ids.incrementAndGet()}"), listOf(TextPart(text)))
+        state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+    }
+
+    // ---- SessionStart(resume) ----
+
+    @Test
+    fun `opening a session as the user runs SessionStart with source resume, once per process`() = run {
+        val http = FakeHttp {
+            HttpHookResult.Responded(
+                200,
+                """{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"上次改到一半：网关那部分"}}""",
+            )
+        }
+        val model = RoutingModel { req -> reply(TextPart("好")) }
+        val hub = hub(model, http)
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SessionStart", "resume"))))),
+        )
+        rt.say("干活")
+        assertTrue(hub.close(rt.sessionId))
+
+        val reopened = hub.open(rt.sessionId, resumedByUser = true)!!
+        assertEquals("只有 resume 那一次（startup 的那次没配上 matcher）", 1, http.sent.size)
+        val body = http.sent.single().body
+        assertTrue(body, body.contains("\"hook_event_name\":\"SessionStart\""))
+        assertTrue(body, body.contains("\"source\":\"resume\""))
+        assertTrue(body, body.contains("\"session_id\":\"${rt.sessionId.value}\""))
+        assertTrue("通用字段不带 tool_use_id 一类工具字段", !body.contains("tool_name"))
+        val ran = events(rt).filterIsInstance<HooksRan>().single()
+        assertEquals("SessionStart", ran.event)
+
+        // 上下文挂到重开后第一条人发的消息上（与 startup 同一条路），赶在第一个请求之前
+        reopened.say("接着改")
+        val resumedMessage = model.requests.last().messages.last()
+        assertEquals("接着改", (resumedMessage.parts.first() as TextPart).text)
+        val reminder = (resumedMessage.parts.last() as TextPart).text
+        assertTrue(reminder, reminder.contains("上次改到一半：网关那部分"))
+
+        // 同一进程里第二次打开不再跑（CC 的 --resume 是每次启动跑一次，进程内不算新的一次）
+        assertTrue(hub.close(rt.sessionId))
+        hub.open(rt.sessionId, resumedByUser = true)
+        assertEquals(1, http.sent.size)
+    }
+
+    @Test
+    fun `internal opens and child sessions never run SessionStart(resume)`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = RoutingModel { req ->
+            val last = req.messages.last().parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+            if (last == "委派一个") {
+                reply(ToolCallPart(CallId("c1"), "Agent", args("description" to "看看", "prompt" to "去看看", "subagent_type" to "Explore")), stop = StopReason.ToolUse)
+            } else reply(TextPart("好"))
+        }
+        val hub = hub(model, http, tools = listOf(bash, dev.min.agent.tools.AgentTool))
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("委派一个")
+        val child = rt.state.value.children.keys.single()
+        // 后台委派的报告会在 say 返回后异步送达并唤醒一个新回合：等那个回合真正结束再关，
+        // 别让 close 在「回合已启动、TurnStarted 还没落盘」的空窗里卸下还在写的运行时
+        rt.state.first { s -> s.turn == null && s.lastTurn?.trigger == dev.min.agent.spi.TurnTrigger.Notification }
+
+        assertTrue(hub.close(rt.sessionId))
+        // 内部打开（补交报告那条路）：不带标志，不算用户打开
+        hub.open(rt.sessionId)
+        // 子会话即使带着标志也不跑（只有根会话有 SessionStart）
+        hub.open(child, resumedByUser = true)
+        assertTrue(http.sent.isEmpty())
+        assertTrue(events(rt).none { it is HooksRan })
+    }
+
+    @Test
+    fun `the startup matcher does not match a resumed session`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = RoutingModel { req -> reply(TextPart("好")) }
+        val hub = hub(model, http)
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SessionStart", "startup"))))),
+        )
+        rt.say("干活")
+        assertEquals("创建时 startup 跑了一次", 1, http.sent.size)
+        assertTrue(hub.close(rt.sessionId))
+        hub.open(rt.sessionId, resumedByUser = true)
+        assertEquals("matcher 是 startup，resume 不匹配", 1, http.sent.size)
+    }
+}
