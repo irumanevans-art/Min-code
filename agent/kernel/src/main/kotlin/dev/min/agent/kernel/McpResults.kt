@@ -82,7 +82,7 @@ internal object McpResults {
     /** 调用失败（不是工具自己说的 isError）给模型的话：说清是哪种失败、能不能重试 */
     fun failure(server: String, e: Exception): ToolResult {
         val text = when (e) {
-            is McpRpcException -> "MCP 服务器 $server 拒绝了这次调用（错误码 ${e.code}）：${e.message}"
+            is McpRpcException -> "MCP 服务器 $server 拒绝了这次调用（错误码 ${e.code}）：${e.serverMessage ?: e.message}"
             is McpTimeoutException -> when (e.kind) {
                 McpTimeoutException.Kind.Idle -> "MCP 服务器 $server 太久没有回应也没有报进度，这次调用已取消。结果未知：有副作用的操作先确认状态，不要盲目重试。"
                 McpTimeoutException.Kind.Hard -> "这次调用超过了 MCP 服务器 $server 配置的时限，已取消。结果未知：有副作用的操作先确认状态，不要盲目重试。"
