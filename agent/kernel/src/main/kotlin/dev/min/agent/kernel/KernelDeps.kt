@@ -91,6 +91,11 @@ class KernelDeps(
      */
     val rootMaxTurns: Int? = null,
     /**
+     * `--json-schema` 的结构化输出方案（null = 没开）。同为运行时选项；只给根会话（子 agent 与分身
+     * 不经 StructuredOutput 交卷——最终答案属于主对话，CC 的结构化输出也只在 -p 的主会话上）
+     */
+    val structuredOutput: StructuredOutputPlan? = null,
+    /**
      * 环境变量的读取口。内核不直接读进程环境：宿主决定给它什么（桌面 CLI 给 `System.getenv`），
      * 内核测试给固定的表，不随跑测试的机器变。现在只读 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`
      */

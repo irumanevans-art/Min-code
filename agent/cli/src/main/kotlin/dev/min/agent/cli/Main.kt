@@ -72,12 +72,17 @@ private suspend fun interact(app: DesktopApp, runtime: dev.min.agent.kernel.Sess
     val prompt = args.prompt
     if (prompt != null) {
         val fromSeq = runtime.state.value.lastSeq + 1
-        if (!say(prompt)) return 2
+        // --json-schema：要求追加在用户消息后面，不改系统提示（任务单拍板）——提示词里带着 schema 交卷方式
+        val effective = if (args.jsonSchema != null) structuredOutputPrompt(prompt) else prompt
+        if (!say(effective)) return 2
         val state = runtime.state.value
         val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq), state.usage)
         result.failure?.let { System.err.println(it) }
         if (args.json) {
             println(result.json())
+        } else if (args.jsonSchema != null) {
+            // 没开 --json 也要把结构化答案打出来：跑批要的就是它
+            result.json()["structured_output"]?.let(::println)
         }
         return if (result.completed) 0 else 1
     }
@@ -112,3 +117,11 @@ internal fun compactionNote(state: dev.min.agent.kernel.SessionState): String {
     val failure = (ended.outcome as? dev.min.agent.spi.TurnOutcome.Failed)?.message
     return failure ?: "已压缩较早的对话；原文在 ${state.compaction?.transcriptPath ?: "会话附件"}"
 }
+
+/**
+ * `--json-schema` 时拼在用户消息后面的交卷要求（不改系统提示，任务单拍板）。schema 本身不用重复：
+ * StructuredOutput 工具的入参 schema 就是它，工具表里有
+ */
+internal fun structuredOutputPrompt(prompt: String): String =
+    "$prompt\n\n（本任务要求结构化输出：最终答案必须通过调用 StructuredOutput 工具交出——参数就是符合给定 JSON Schema 的答案，" +
+        "整个任务只调用一次；需要时先用别的工具收集信息，最后调用它交卷。）"

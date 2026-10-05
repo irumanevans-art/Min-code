@@ -10,6 +10,7 @@ import dev.min.agent.kernel.ResolvedModel
 import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.kernel.SessionEndReasons
 import dev.min.agent.kernel.SessionHub
+import dev.min.agent.kernel.StructuredOutputPlan
 import dev.min.agent.tools.AgentType
 import dev.min.agent.tools.AgentToolOf
 import dev.min.agent.kernel.AgentCatalog
@@ -214,6 +215,8 @@ internal class DesktopApp(
             maxWebSearches = args.maxWebSearches,
             // --max-turns 优先，没给时读 CLAUDE_CODE_MAX_TURNS（CC：不是正整数就启动时报错退出）。只属于这次运行，不进日志
             rootMaxTurns = resolveMaxTurns(args.maxTurns, envReader),
+            // --json-schema（只在 -p 模式有值，CliArgs 已校验）：同样是这次运行的选择，不进日志
+            structuredOutput = args.jsonSchema?.let(::StructuredOutputPlan),
             // CLI 自己读模型 key 的变量不交给内核：http hook 的 allowedEnvVars 点名它也只能插成空串（凭证不进 hook 请求）
             env = envReader,
             hiddenEnv = hiddenEnv,

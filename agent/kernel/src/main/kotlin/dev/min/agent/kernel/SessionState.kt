@@ -73,6 +73,11 @@ data class SessionState(
      * 分身继承这份快照（前缀与父会话逐字相同），普通子 agent 不用样式。没设 / Default / 找不到时为 null
      */
     val outputStyle: dev.min.agent.spi.OutputStyleLoaded? = null,
+    /**
+     * 已交卷的结构化输出（最后一条 StructuredOutputDelivered，`--json-schema` 用）。null = 没交或没开。
+     * 交了卷的回合随即收尾，一个回合最多采纳一条；最终答案从日志直接重建
+     */
+    val structuredOutput: dev.min.agent.spi.StructuredOutputDelivered? = null,
     /** 展示用事件同样由日志折叠；不进入 modelMessages，避免 UI 说明改变模型历史。 */
     val presentation: List<SessionPresentation> = emptyList(),
     /** 子会话的来历；根会话为 null（docs/agent/detail/子agent设计.md §2.2） */

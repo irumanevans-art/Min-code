@@ -4,6 +4,7 @@ import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.ModelRequestStarted
+import dev.min.agent.spi.StructuredOutputDelivered
 import dev.min.agent.spi.TurnEnded
 import dev.min.agent.spi.TurnOutcome
 import kotlinx.serialization.json.JsonArray
@@ -26,6 +27,9 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
         else -> "error_during_execution"
     }
 
+    /** 校验通过的结构化输出（--json-schema）：只看本次命令之后的事件；失败 / 没开时没有这个字段 */
+    private val structured = events.mapNotNull { it.event as? StructuredOutputDelivered }.lastOrNull()
+
     fun json(): JsonObject = buildJsonObject {
         put("session", session)
         put("completed", completed)
@@ -37,6 +41,7 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
         put("cache_write_tokens", cumulative.cacheWriteTokens)
         put("turn_usage", usageJson(turnUsage))
         put("prefix_fingerprints", JsonArray(events.mapNotNull { (it.event as? ModelRequestStarted)?.prefixFingerprint }.map(::JsonPrimitive)))
+        structured?.let { put("structured_output", it.value) }
         failure?.let { put("error", it) }
     }
 }

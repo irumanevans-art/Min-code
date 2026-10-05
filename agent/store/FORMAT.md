@@ -87,3 +87,6 @@
   含新变体的日志旧版本打不开；旧日志照常读。
 - v1 增量（2026-10-05）：新增事件 `output_style_loaded`（会话创建时冻结的 output style：`name`、`body`、`keepCodingInstructions`、可选 `description` / `notes`，`spi/OutputStyleEvents.kt`）。
   没设 `outputStyle`、设的是 Default、或找不到（回 Default 并给 Note）时不写；子 agent 里只有分身带（普通子 agent 不用样式，分身继承父会话快照）。含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-06）：新增事件 `structured_output`（`turnId`、`value`：模型对 StructuredOutput 一次**通过校验**的调用被采纳为最终答案，`--json-schema` 工具式结构化输出，`spi/StructuredOutputEvents.kt`）。
+  失败的尝试不写这条：留在对话里（错误的工具结果），到重试上限回合以 Failed 收尾。`--max-turns` / `CLAUDE_CODE_MAX_TURNS` 与 `--json-schema` 的方案本身都是运行时选项，不进日志。
+  含新事件的日志旧版本打不开；旧日志照常读。

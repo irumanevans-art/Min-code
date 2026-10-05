@@ -43,6 +43,7 @@ import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.Search
+import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.TaskBoard
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
@@ -464,15 +465,19 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             errorResult("工具执行出错：${e.message ?: e::class.simpleName}")
         }
         val budgeted = ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId)
-        outcome(turnId, callId, budgeted)
+        // StructuredOutput 交卷通过校验：采纳事件与工具结果同一次提交——不会出现「结果说收到了、日志里却没有最终答案」
+        val adopted = if (!budgeted.isError && p.tool is StructuredOutputTool) {
+            listOf(dev.min.agent.spi.StructuredOutputDelivered(turnId, p.raw))
+        } else emptyList()
+        outcome(turnId, callId, budgeted, adopted)
         // 只有成功的调用算「碰到了文件」；读或写都算，目录（Glob / Grep 的搜索根）在 [attachMemory] 里滤掉
         if (!budgeted.isError) touched[callId] = askFor(p).paths.map { it.path }
         postToolUse(turnId, p, budgeted, deps.clock.nowMs() - started)
     }
 
-    private suspend fun outcome(turnId: TurnId, callId: CallId, result: ToolResult) {
+    private suspend fun outcome(turnId: TurnId, callId: CallId, result: ToolResult, extra: List<SessionEvent> = emptyList()) {
         // 结果声明的副作用（如切模式、改任务清单）与结果同一次提交：不会出现「结果说切了、模式没切」
-        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(rt.state.value), Durability.Sync)
+        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(rt.state.value) + extra, Durability.Sync)
     }
 
     /** [turnId] 为 null 只在算权限声明时：那时不该委派任何东西，端口给不可用的 */

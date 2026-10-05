@@ -37,4 +37,15 @@ class CliResultTest {
         assertEquals(JsonPrimitive(100L),(result.json()["turn_usage"] as JsonObject)["cache_read_tokens"])
         assertEquals(JsonArray(listOf(JsonPrimitive("fixed"))),result.json()["prefix_fingerprints"])
     }
+    @Test fun `structured_output appears only when a validated answer was delivered`() {
+        val answer = buildJsonObject { put("name", "Min") }
+        val delivered = listOf(
+            record(StructuredOutputDelivered(TurnId("t"), answer)),
+            record(TurnEnded(TurnId("t"), TurnOutcome.Completed, Usage(), 0)),
+        )
+        assertEquals(answer, CliResult("s", delivered, Usage()).json()["structured_output"])
+        val failed = listOf(record(TurnEnded(TurnId("t"), TurnOutcome.Failed("两次都没过"), Usage(), 0)))
+        assertNull(CliResult("s", failed, Usage()).json()["structured_output"])
+        assertEquals("两次都没过", CliResult("s", failed, Usage()).json()["error"]?.jsonPrimitive?.content)
+    }
 }

@@ -74,4 +74,10 @@ class CliArgsTest {
         assertFalse(parse("--model", "m").forkSession)
         assertFalse(parse("--model", "m").continueMostRecent)
     }
+
+    @Test fun `the structured-output instruction is appended after the user prompt, not into a system prompt`() {
+        val prompt = structuredOutputPrompt("提取名字")
+        assertTrue(prompt.startsWith("提取名字"))
+        assertTrue("要求里要点名工具与一次交卷", prompt.contains("StructuredOutput") && prompt.contains("只调用一次"))
+    }
 }
