@@ -13,6 +13,5 @@
   "timedOut": false,
   "failedToStart": false,
   "notesContain": [],
-  "pendingFix": "CC 原文说 Notification 丢弃 systemMessage 与 continue 字段（:2338「Claude Code discards their systemMessage and continue fields」；:921 通用字段可被事件丢弃、各事件一节写明），continue:false 不该停会话、stopReason 与 systemMessage 不该出现在结论里；引擎实测 shouldContinue=false 且保留 stopReasons、systemMessages。期望按原文写，差异待复核。",
   "basis": "hooks.md §Notification：丢弃 systemMessage 与 continue 字段，只保留 terminalSequence（:2338）；§JSON output：通用字段每个事件都收，但有些事件会丢弃，各事件一节写明（:921）。"
 }

@@ -45,7 +45,11 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
         specificOutput = parsed.specific, attachmentRequests = largeStrings(parsed.raw),
     ) else base.copy(nonBlockingError = error)
 
-    if (run.exitCode == 2 && event in EXIT_TWO_BLOCKS) {
+    if (run.exitCode == 2 && event in EXIT_TWO_FEEDBACK) {
+        // CC 逐事件表：工具已经跑完（或已经失败），exit 2 拦不住什么，只是把 stderr 给模型看——是上下文，不是阻断
+        verdict = verdict.copy(additionalContext = verdict.additionalContext + listOfNotNull(run.stderr.trimEnd().takeIf { it.isNotEmpty() }?.let(::HookText)),
+            nonBlockingError = null)
+    } else if (run.exitCode == 2 && event in EXIT_TWO_BLOCKS) {
         val reason = parsed?.reason?.takeIf { parsed.decision == HookDecision.Block || parsed.decision == HookDecision.Deny }
             ?: run.stderr
         // CC：exit 2 的阻断不能被 JSON 推翻；stdout 解析/校验失败只进调试日志，不再同时报非阻断错误。
@@ -71,7 +75,20 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
         verdict = verdict.copy(nonBlockingError = errorText.preview, attachmentRequests = verdict.attachmentRequests +
             HookAttachmentRequest(listOf("nonBlockingError"), errorText))
     }
-    return verdict
+    return verdict.discardingFieldsOf(event)
+}
+
+/**
+ * 没有决策控制的事件丢掉 CC 说要丢的输出字段：SessionEnd 丢全部 JSON 输出字段（只做清理）；Notification 丢 `systemMessage`
+ * 与 `continue`（一个通知 hook 不能把会话停下）。解析与报错照常，说明照留
+ */
+private fun HookVerdict.discardingFieldsOf(event: HookEvent): HookVerdict = when (event) {
+    HookEvent.SessionEnd -> copy(
+        decision = HookDecision.Neutral, reason = null, shouldContinue = true, stopReason = null,
+        additionalContext = emptyList(), updatedInput = null, systemMessage = null, specificOutput = null,
+    )
+    HookEvent.Notification -> copy(shouldContinue = true, stopReason = null, systemMessage = null)
+    else -> this
 }
 
 private data class ParsedOutput(
@@ -220,5 +237,7 @@ private val EXIT_TWO_IGNORED = setOf(HookEvent.PermissionRequest, HookEvent.Stop
 private val TOP_LEVEL_BLOCKS = setOf(HookEvent.UserPromptSubmit, HookEvent.UserPromptExpansion,
     HookEvent.PostToolUse, HookEvent.PostToolUseFailure, HookEvent.PostToolBatch, HookEvent.Stop,
     HookEvent.SubagentStop, HookEvent.TaskCreated, HookEvent.ConfigChange, HookEvent.PreCompact, HookEvent.PreModelSwitch)
-private val EXIT_TWO_BLOCKS = TOP_LEVEL_BLOCKS + setOf(HookEvent.PreToolUse, HookEvent.TaskCompleted,
+/** CC 逐事件表「Can block? No | Shows stderr to Claude」：exit 2 的 stderr 作为上下文交给模型（JSON 的 decision:block 仍是 TOP_LEVEL_BLOCKS 那条路） */
+private val EXIT_TWO_FEEDBACK = setOf(HookEvent.PostToolUse, HookEvent.PostToolUseFailure)
+private val EXIT_TWO_BLOCKS = TOP_LEVEL_BLOCKS - EXIT_TWO_FEEDBACK + setOf(HookEvent.PreToolUse, HookEvent.TaskCompleted,
     HookEvent.TeammateIdle, HookEvent.Elicitation, HookEvent.ElicitationResult, HookEvent.WorktreeCreate, HookEvent.WorktreeRemove)

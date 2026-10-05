@@ -43,8 +43,9 @@ class HookInterpretTest {
     }
 
     @Test fun `exit 二的阻断能力逐事件覆盖`() {
+        // PostToolUse / PostToolUseFailure 不在里面：CC 逐事件表「Can block? No | Shows stderr to Claude」，stderr 作为上下文
         val blocks = setOf(HookEvent.UserPromptSubmit, HookEvent.UserPromptExpansion, HookEvent.PreToolUse,
-            HookEvent.PostToolUse, HookEvent.PostToolUseFailure, HookEvent.PostToolBatch, HookEvent.SubagentStop,
+            HookEvent.PostToolBatch, HookEvent.SubagentStop,
             HookEvent.TaskCreated, HookEvent.TaskCompleted, HookEvent.Stop, HookEvent.TeammateIdle,
             HookEvent.ConfigChange, HookEvent.WorktreeCreate, HookEvent.WorktreeRemove, HookEvent.PreCompact,
             HookEvent.PreModelSwitch, HookEvent.Elicitation, HookEvent.ElicitationResult)
@@ -52,6 +53,17 @@ class HookInterpretTest {
             assertEquals(event.name, if (event in blocks) HookDecision.Block else HookDecision.Neutral,
                 interpreted(event, "{}", 2).decision)
         }
+    }
+
+    @Test fun `工具跑完之后的事件 exit 二把 stderr 作为上下文交给模型而不是阻断`() {
+        listOf(HookEvent.PostToolUse, HookEvent.PostToolUseFailure).forEach { event ->
+            val v = interpret(event, HandlerRun(handler(event), 2, "", "lint failed\n"))
+            assertEquals(event.name, HookDecision.Neutral, v.decision)
+            assertEquals(event.name, listOf("lint failed"), v.additionalContext.map { it.text })
+            assertNull(v.nonBlockingError)
+        }
+        // JSON 的 decision:block 仍是阻断（反馈给模型）：PostToolUse 的这条路不变
+        assertEquals(HookDecision.Block, interpreted(HookEvent.PostToolUse, """{"decision":"block","reason":"r"}""").decision)
     }
 
     @Test fun `六种忽略 exit 二的事件不把 stderr 报为普通错误`() {
@@ -140,11 +152,21 @@ class HookInterpretTest {
     }
 
     @Test fun `continue false 与 stopReason 优先且仍保留 systemMessage`() {
-        HookEvent.entries.forEach { e ->
+        // Notification 与 SessionEnd 除外：CC 说这两个事件丢弃这些字段（下一条用例）
+        HookEvent.entries.filter { it != HookEvent.Notification && it != HookEvent.SessionEnd }.forEach { e ->
             val v = interpreted(e, """{"continue":false,"stopReason":"stop","systemMessage":"warning"}""")
             assertFalse(e.name, v.shouldContinue); assertEquals("stop", v.stopReason?.text)
             assertEquals("warning", v.systemMessage?.text)
         }
+    }
+
+    @Test fun `Notification 丢弃 continue 与 systemMessage，SessionEnd 丢弃全部输出字段`() {
+        listOf(HookEvent.Notification, HookEvent.SessionEnd).forEach { e ->
+            val v = interpreted(e, """{"continue":false,"stopReason":"stop","systemMessage":"warning"}""")
+            assertTrue(e.name, v.shouldContinue); assertNull(v.stopReason); assertNull(v.systemMessage)
+        }
+        val end = interpreted(HookEvent.SessionEnd, """{"decision":"block","reason":"r","hookSpecificOutput":{"hookEventName":"SessionEnd","additionalContext":"c"}}""")
+        assertEquals(HookDecision.Neutral, end.decision); assertNull(end.reason); assertTrue(end.additionalContext.isEmpty())
     }
 
     @Test fun `超时丢弃输出 PreToolUse ask 其余中性`() {

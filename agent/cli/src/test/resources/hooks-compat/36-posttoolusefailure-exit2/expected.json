@@ -6,13 +6,12 @@
   "reasons": [],
   "shouldContinue": true,
   "stopReasons": [],
-  "additionalContext": [],
+  "additionalContext": ["retry hint: the fixture file is locked by another process"],
   "updatedInput": null,
   "systemMessages": [],
   "nonBlockingErrorCount": 0,
   "timedOut": false,
   "failedToStart": false,
   "notesContain": [],
-  "pendingFix": "CC 原文把 PostToolUseFailure 的 exit 2 定为不阻断、stderr 显示给 Claude（:866「Can block? No | Shows stderr to Claude; the tool already failed」；:794 同义；:850 已发生的事不可阻止），而引擎把该事件放进 exit 2 阻断集合（HookInterpret.kt 的 EXIT_TWO_BLOCKS 含 TOP_LEVEL_BLOCKS），实测 decision=Block、reasons=[stderr]。期望按原文写，差异待复核：对齐引擎（该事件 exit 2 改为把 stderr 交给模型、不阻断）或改样本。",
-  "basis": "hooks.md §Exit code 2 behavior per event：PostToolUseFailure | Can block? No | Shows stderr to Claude; the tool already failed（:866）；§Exit code 0：想给 Claude 看警告就 exit 2，让 Claude 看到 stderr，哪怕工具已经跑过（:794）。"
+  "basis": "复核（2026-10-05）：「Shows stderr to Claude」——stderr 作为上下文交给模型，结论不是阻断。hooks.md §Exit code 2 behavior per event：PostToolUseFailure | Can block? No | Shows stderr to Claude; the tool already failed（:866）；§Exit code 0：想给 Claude 看警告就 exit 2，让 Claude 看到 stderr，哪怕工具已经跑过（:794）。"
 }
