@@ -37,6 +37,7 @@ include(":baselineprofile")
 // Min Agent 自研内核：纯 Kotlin/JVM 模块，依赖规则见 build-logic 的 AgentModuleRules 与 docs/agent/02-总体架构.md §2
 include(":agent:protocol")
 include(":agent:spi")
+include(":agent:mcp")
 include(":agent:store")
 include(":agent:llm")
 include(":agent:policy")

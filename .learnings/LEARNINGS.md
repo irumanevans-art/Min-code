@@ -1544,3 +1544,79 @@ B4 的 ClaudeCodeEngine 原先只报告经自己的 create/open 包装过的会�
 - **Notes**: 新增桥接与 Min 生命周期测试，原 B0 断言保持不变；完整单测和构建通过，并在 emulator-5554 验证通知应答。
 
 ---
+
+## [LRN-20261005-MCP-RECOVERY-BOUNDARY] best_practice
+
+**Logged**: 2026-10-05T10:57:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+MCP 的握手控制消息与普通在途请求要有不同的 404 恢复边界；可选 GET 不拥有主连接生命周期。
+
+### Details
+initialized 的 POST 在握手锁内发送，若传输直接回调握手，会重入同一把 Mutex。客户端要在当前锁内循环重做至多两次完整握手，每次都有总时限。禁止握手控制消息重入恢复时，不能一并禁止旧并发请求迟到的 404；这些请求仍须等待同一次恢复。可选 GET 的非认证失败只结束或重连该流；干净 EOF、心跳和读空闲不消耗失败预算。真实调用的进度能延长空闲等待，因此 raw HTTP open 不可沿用模型流 maxStallMs。
+
+### Suggested Action
+协议测试同时覆盖 initialized 404、重握手 initialized 404、并发迟到 404、GET 非 SSE/EOF/SocketTimeout、长 POST 与进度。接口能力通过委托装饰器测试，避免按传输具体类型协商。
+
+### Metadata
+- Source: user_feedback
+- Related Files: agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt, agent/mcp/src/main/kotlin/dev/min/agent/mcp/StreamableHttpMcpTransport.kt, agent/host/src/main/kotlin/dev/min/agent/host/UrlConnectionTransport.kt
+- Tags: mcp, handshake, deadlock, recovery, timeout, lifecycle
+- Pattern-Key: mcp.control_and_optional_stream_lifecycle
+- Recurrence-Count: 1
+
+---
+
+## [LRN-20261005-MCP-XML-DOM] best_practice
+
+**Logged**: 2026-10-05T11:19:17.7902300+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+变异证据按 XML 元素取失败用例，不用可跨自闭合 testcase 标签的贪婪正则。
+
+### Details
+本次运行的源码变异确实被对应断言杀死，但初版脚本展示失败名时把前面的成功自闭合 testcase 串到了后面的 failure。直接按 XML DOM 读取 testcase/failure 后核实首轮 22 项都命中对应 r01..r16 用例。Node 正则改为惰性匹配，并要求失败名具有该变异对应的功能前缀；另保存独立的 verified-results.json。编译失败、空测试筛选和一般 Gradle 失败不计。
+
+### Suggested Action
+用系统 XML 解析器或成熟 XML 库做最终证据核验；每个变异至少命中自己的功能断言，保留逐项 XML 和日志，不只看进程退出值或展示名。
+
+### Metadata
+- Source: error
+- Related Files: agent/mcp/build/review/mutate-review.cjs, agent/mcp/build/review/verify-mutations.ps1
+- See Also: LRN-20261005-MUTATION-EVIDENCE (agent/mcp/.learnings/LEARNINGS.md)
+- Tags: junit, xml, mutation, evidence
+- Pattern-Key: tests.junit_xml_mutation_evidence
+- Recurrence-Count: 2
+
+---
+
+## [LRN-20261005-JDK-STREAM-CANCEL] best_practice
+
+**Logged**: 2026-10-05T12:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+HttpURLConnection 阻塞读和 disconnect/close 可能争用锁，结构化 watchdog 不能保证取消及时结束。
+
+### Details
+旧提交 e9afd2c 和 MCP 修复前实现都在首帧后完全静默的真实服务器上无法及时 join。原 heartbeat 测试各重复 20 次通过，说明心跳会释放读锁并掩盖该边界。通过独立 IO 读取者和容量 1 的通道，将收集者的逻辑取消与可能阻塞的物理清理解耦；断开独立发起。保持读超时，不放宽断言。500ms 取消用例、原用例重复 20 次、模块全量通过；NonCancellable 内 reader.join 的变异重新使同一断言失败。
+
+### Suggested Action
+阻塞 API 的取消验证要有完全无数据的用例。断开操作本身也可能阻塞，不应在取消调用线程同步执行或作为其必须等待的子任务。明确记录逻辑取消与物理清理时限的区别。
+
+### Metadata
+- Source: user_feedback
+- Related Files: agent/host/src/main/kotlin/dev/min/agent/host/UrlConnectionTransport.kt, agent/host/src/test/kotlin/dev/min/agent/host/UrlConnectionTransportTest.kt
+- Tags: jdk, http, cancellation, lock, blocking
+- Pattern-Key: http.blocking_cleanup_outside_caller_job
+- Recurrence-Count: 1
+
+---

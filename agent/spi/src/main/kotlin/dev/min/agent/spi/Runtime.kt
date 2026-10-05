@@ -40,10 +40,20 @@ class HttpRequest(
     val timeoutMs: Long,
 ) {
     /** 头里可能有凭证，toString 只写方法与地址 */
-    override fun toString(): String = "HttpRequest($method $url)"
+    override fun toString(): String = "HttpRequest($method ${url.substringBefore('?').substringBefore('#').replace(Regex("//[^/]*@"), "//")})"
 }
 
 class HttpResponse(val status: Int, val headers: List<Pair<String, String>>, val body: ByteArray)
+
+/** 正文只能收集一次；未收集或提前放弃时也要 close，避免只读响应头就遗留连接。 */
+class HttpStreamingResponse(
+    val status: Int,
+    val headers: List<Pair<String, String>>,
+    val body: Flow<ByteArray>,
+    private val release: () -> Unit = {},
+) : java.io.Closeable {
+    override fun close() = release()
+}
 
 data class SseEvent(val event: String?, val data: String, val id: String? = null)
 
@@ -52,6 +62,10 @@ class HttpStatusException(val status: Int, val headers: List<Pair<String, String
     RuntimeException("HTTP $status")
 
 interface HttpTransport {
+    /** 原样响应，不分类状态或解析正文；旧端口不必为了新协议实现它。 */
+    suspend fun open(request: HttpRequest): HttpStreamingResponse =
+        throw UnsupportedOperationException("这个 HTTP 端口不支持原样流式响应。")
+
     suspend fun send(request: HttpRequest): HttpResponse
 
     /** 流式（SSE）。非 2xx 或非 SSE 响应抛带正文的 [HttpStatusException]；网络错误原样抛给编解码器 */
