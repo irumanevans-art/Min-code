@@ -284,6 +284,96 @@ class HooksSessionTest {
         assertTrue(ran.isEmpty())
     }
 
+    // ---- PermissionRequest ----
+
+    @Test
+    fun `a PermissionRequest hook answers the approval with a real script`() = run {
+        val allow = """{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"""
+        settings(hook("PermissionRequest", script("perm-allow", "cat > /dev/null; printf '%s' '$allow'"), "Bash"))
+        val model = RoutingModel { req ->
+            if (req.messages.size == 1) reply(bashCall("c1", "mkdir out"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val (rt, store) = session(model)
+        val done = rt.say("建目录")
+        assertEquals("hook 答了 allow，命令直接执行", listOf("mkdir out"), ran)
+        assertTrue("替人答的结论落成 ApprovalResolved(by = Hook)", done.toolResults.getValue(CallId("c1")).isError.not())
+        val resolved = store.events(rt).filterIsInstance<dev.min.agent.spi.ApprovalResolved>().single()
+        assertEquals(dev.min.agent.spi.DecidedBy.Hook("PermissionRequest"), resolved.decidedBy)
+    }
+
+    // ---- SessionStart(resume) / SessionEnd ----
+
+    /** 与 [session] 同一套装配，但把 Hub 留给测试用（close / open(resumedByUser)） */
+    private suspend fun hubSession(model: ModelClient, trust: Boolean = false): Triple<SessionRuntime, FileSessionStore, SessionHub> {
+        val store = FileSessionStore(root.resolve("sessions"), { System.currentTimeMillis() })
+        val logDir = Files.createDirectories(root.resolve("logs"))
+        val deps = KernelDeps(
+            clock = { System.currentTimeMillis() },
+            ids = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
+            models = { ResolvedModel(TEST_PROFILE, model) },
+            tools = listOf(bash),
+            host = HostPorts(paths.fs, JvmSearch(paths.fs), LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir))) { FakeArtifacts() },
+            platform = "test",
+            zone = ZoneOffset.UTC,
+            memoryHome = paths.guestOfHost(home),
+            hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
+            trustProjectHooks = { trust },
+            env = { null },
+        )
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val hub = SessionHub(store, deps, scope)
+        return Triple(hub.create(paths.guestOfHost(work), TEST_MODEL, PermissionMode.BypassPermissions), store, hub)
+    }
+
+    @Test
+    fun `resume and session end run their hooks with real scripts`() = run {
+        val script = Files.createDirectories(home.resolve(".claude/hooks")).resolve("lifecycle.sh")
+        Files.writeString(script, "#!/bin/bash\ncat > /dev/null\necho ran >> lifecycle.txt\n")
+        settings(
+            """{"SessionStart": [{"matcher": "resume", "hooks": [{"type": "command", "command": "bash '${shellPath(script)}'"}]}],
+                "SessionEnd": [{"hooks": [{"type": "command", "command": "bash '${shellPath(script)}'", "timeout": 5}]}]}""",
+        )
+        val marker = work.resolve("lifecycle.txt")
+        val model = RoutingModel { req -> reply(TextPart("好")) }
+        val (first, store, hub) = hubSession(model)
+        first.say("干活")
+        assertTrue(hub.close(first.sessionId))
+        assertEquals("close 时 SessionEnd 先跑一遍", 1, Files.readAllLines(marker).size)
+
+        // 用户打开（--resume 的路）：SessionStart(source = resume) 再写一行
+        val resumed = hub.open(first.sessionId, resumedByUser = true)!!
+        resumed.say("接着")
+        assertEquals(2, Files.readAllLines(marker).size)
+
+        hub.open(first.sessionId, resumedByUser = true)
+        assertTrue("同一进程第二次打开不跑", Files.readAllLines(marker).size == 2)
+        assertTrue(hub.close(first.sessionId, dev.min.agent.kernel.SessionEndReasons.PROMPT_INPUT_EXIT))
+        assertEquals("SessionEnd 同一进程只跑一次", 2, Files.readAllLines(marker).size)
+        val ran = store.events(first).filterIsInstance<HooksRan>()
+        assertTrue(ran.joinToString(), ran.any { it.event == "SessionStart" } && ran.any { it.event == "SessionEnd" })
+    }
+
+    @Test
+    fun `showing an approval prompt fires a permission_prompt notification`() = run {
+        settings(hook("Notification", script("notify", "cat > /dev/null; echo ran >> notify.txt"), "permission_prompt"))
+        val model = RoutingModel { req ->
+            if (req.messages.size == 1) reply(bashCall("c1", "rm -rf build"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val (rt, store) = session(model)
+        val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            ConsoleUi(rt, ApprovalAnswer.Ask, java.io.BufferedReader(java.io.StringReader("y\n")), System.err).attach(uiScope)
+            val before = rt.state.value.lastTurn?.turnId
+            rt.send(ClientMsgId("u-notify"), listOf(TextPart("清理")))
+            rt.state.first { it.turn == null && it.lastTurn?.turnId != before }
+        } finally {
+            uiScope.cancel()
+        }
+        assertEquals("终端问过人、人答了 y，命令执行", listOf("rm -rf build"), ran)
+        assertEquals("Notification", store.events(rt).filterIsInstance<HooksRan>().single().event)
+        assertEquals("hook 只因弹卡跑了一次", listOf("ran"), Files.readAllLines(work.resolve("notify.txt")))
+    }
+
     // ---- 信任 ----
 
     @Test

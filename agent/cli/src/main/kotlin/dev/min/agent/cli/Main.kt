@@ -40,6 +40,15 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     val app = DesktopApp(args, scope)
     app.checkKey()
     val runtime = app.openSession()
+    try {
+        return interact(app, runtime, args, scope)
+    } finally {
+        // 退出 = prompt_input_exit：SessionEnd 在会话卸下之前跑，清理类 hook 有机会收尾
+        app.exitSession(runtime)
+    }
+}
+
+private suspend fun interact(app: DesktopApp, runtime: dev.min.agent.kernel.SessionRuntime, args: CliArgs, scope: CoroutineScope): Int {
     val stdin = System.`in`.bufferedReader()
     ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
     System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")

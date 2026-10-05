@@ -2,6 +2,7 @@ package dev.min.agent.kernel
 
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.PermissionRequestInput
 import dev.min.agent.ext.hooks.PostToolUseFailureInput
 import dev.min.agent.ext.hooks.PostToolUseInput
 import dev.min.agent.ext.hooks.PreToolUseInput
@@ -17,7 +18,9 @@ import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.spi.AgentPort
 import dev.min.agent.spi.SkillPort
+import dev.min.agent.spi.ApprovalChoice
 import dev.min.agent.spi.ApprovalRequested
+import dev.min.agent.spi.ApprovalResolved
 import dev.min.agent.spi.DecidedBy
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
@@ -241,23 +244,121 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         when (val verdict = merge(ready, ask, hook)) {
             is Verdict.Deny -> outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
             is Verdict.Allow -> execute(turnId, ready)
-            Verdict.Ask -> {
-                val approvalId = ApprovalId(deps.ids.next("ap"))
-                // 「总是允许」的建议与踩底线的原因随审批一起落盘：界面据此给按钮、给解释，重启后照样有
-                val context = policyContext()
-                val suggested = if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
-                rt.commit(
-                    listOf(ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context))),
-                    Durability.Sync,
-                )
-                // 等的是日志里的答复，不是回调：界面（或通知栏）写入 ApprovalResolved 后状态一变就往下走
-                val resolved = rt.state.first { s -> s.phaseOf(ready.call.callId) !is CallPhase.AwaitingApproval }
-                when (val phase = resolved.phaseOf(ready.call.callId)) {
-                    is CallPhase.Denied -> outcome(turnId, ready.call.callId, errorResult(deniedMessage(phase.note)))
-                    else -> execute(turnId, ready)
+            Verdict.Ask -> when (val answer = permissionRequest(turnId, ready)) {
+                is PermissionAnswer.Denied -> {
+                    // hook 替人拒了：先落卡再落答（同一次提交，折叠成已决议），不发审批卡
+                    resolveByHook(turnId, ready, ApprovalChoice.Deny(answer.note))
+                    if (answer.interrupt) throw HookStop(answer.note)
+                    outcome(turnId, ready.call.callId, errorResult(hookDeniedMessage(answer.note)))
                 }
+                is PermissionAnswer.Allowed -> when {
+                    // 改写过的入参按新值重评 deny / ask 规则（CC：updatedInput 整体替换后重新评估）；没改写的，allow 就是替人答了眼下的这次问
+                    !answer.rewritten -> {
+                        resolveByHook(turnId, answer.ready, ApprovalChoice.Once)
+                        execute(turnId, answer.ready)
+                    }
+                    else -> when (val reVerdict = verdictFor(answer.ready)) {
+                        is Verdict.Deny -> outcome(turnId, answer.ready.call.callId, errorResult(reVerdict.messageToModel))
+                        // 新入参又踩到要问人的规则：照常问人（不再跑一遍 hook，两个互相改写的 hook 会绕成环）
+                        Verdict.Ask -> requestApproval(turnId, answer.ready)
+                        is Verdict.Allow -> {
+                            resolveByHook(turnId, answer.ready, ApprovalChoice.Once)
+                            execute(turnId, answer.ready)
+                        }
+                    }
+                }
+                // 不答（没输出或无决定）：照常问人
+                PermissionAnswer.None -> requestApproval(turnId, ready)
             }
         }
+    }
+
+    /** hook 替人答复 PermissionRequest 的结果 */
+    private sealed interface PermissionAnswer {
+        data object None : PermissionAnswer
+        class Allowed(val ready: Prepared.Ready, val rewritten: Boolean) : PermissionAnswer
+        class Denied(val note: String?, val interrupt: Boolean) : PermissionAnswer
+    }
+
+    /**
+     * PermissionRequest hooks（hooks设计 §7 合流图最后一行）：判定是 Ask、发审批卡之前跑；输入不带 tool_use_id（CC 原文）。
+     * 能替人答（结论落 [ApprovalResolved] by Hook），不答才发卡。底线不让：alwaysAsk 与安全底线的问人，
+     * hook 的 allow 无效（记说明照常问人）、deny 有效。allow 带的 updatedInput 走 PreToolUse 同一条改写路
+     * （此刻调用还是 Planned，合法）。`interrupt: true` 与 `continue: false` 一样收尾（HookStop）。
+     */
+    private suspend fun permissionRequest(turnId: TurnId, ready: Prepared.Ready): PermissionAnswer {
+        if (!hooks.has(HookEvent.PermissionRequest, ready.call.name)) return PermissionAnswer.None
+        val specific = HookJson.encodeToJsonElement(
+            PermissionRequestInput.serializer(),
+            PermissionRequestInput(toolName = ready.call.name, toolInput = ready.raw),
+        ).jsonObject
+        val outcome = hooks.run(HookEvent.PermissionRequest, ready.call.name, specific, turnId, ready.call.callId) { rule ->
+            PolicyEngine.matchesCondition(rule, askFor(ready), policyContext())
+        } ?: return PermissionAnswer.None
+        return when (outcome.decision) {
+            // 引擎把 deny 归成 Block（behavior=deny 的理由在 reason 里）
+            HookOutcome.Decision.Block -> PermissionAnswer.Denied(outcome.reason, interrupt = false)
+            HookOutcome.Decision.Stop -> PermissionAnswer.Denied(outcome.stopReason, interrupt = true)
+            HookOutcome.Decision.Allow -> {
+                val context = policyContext()
+                if (ready.tool.traits.alwaysAsk || PolicyEngine.floorReason(askFor(ready), context) != null) {
+                    rt.commit(
+                        listOf(Note(NoteLevel.Info, "PermissionRequest hook 允许了 ${ready.call.name}，但它踩着必须由人批准的底线，仍要问人。")),
+                        Durability.Batched,
+                    )
+                    PermissionAnswer.None
+                } else when (val updated = outcome.updatedInput) {
+                    null -> PermissionAnswer.Allowed(ready, rewritten = false)
+                    else -> when (val parsed = ready.tool.parse(updated)) {
+                        is ToolInput.Invalid -> {
+                            rt.commit(
+                                listOf(Note(NoteLevel.Warning, "PermissionRequest hook 改写后的参数不合法（${parsed.messageForModel}），当作没有答复，照常问人。")),
+                                Durability.Batched,
+                            )
+                            PermissionAnswer.None
+                        }
+                        is ToolInput.Valid -> {
+                            rt.commit(listOf(ToolInputRewritten(turnId, ready.call.callId, updated)), Durability.Sync)
+                            PermissionAnswer.Allowed(ready.copy(input = parsed.value, raw = updated), rewritten = true)
+                        }
+                    }
+                }
+            }
+            else -> PermissionAnswer.None
+        }
+    }
+
+    /** 问人：落审批卡并等日志里的答复（界面或通知栏写入 ApprovalResolved 后状态一变就往下走） */
+    private suspend fun requestApproval(turnId: TurnId, ready: Prepared.Ready) {
+        val approvalId = ApprovalId(deps.ids.next("ap"))
+        // 「总是允许」的建议与踩底线的原因随审批一起落盘：界面据此给按钮、给解释，重启后照样有
+        val context = policyContext()
+        val ask = askFor(ready)
+        val suggested = if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
+        rt.commit(
+            listOf(ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context))),
+            Durability.Sync,
+        )
+        val resolved = rt.state.first { s -> s.phaseOf(ready.call.callId) !is CallPhase.AwaitingApproval }
+        when (val phase = resolved.phaseOf(ready.call.callId)) {
+            is CallPhase.Denied -> outcome(turnId, ready.call.callId, errorResult(deniedMessage(phase.note)))
+            else -> execute(turnId, ready)
+        }
+    }
+
+    /** hook 替人答了：先落卡再落答（同一次提交，折叠成已决议），不发审批卡 */
+    private suspend fun resolveByHook(turnId: TurnId, ready: Prepared.Ready, choice: ApprovalChoice) {
+        val approvalId = ApprovalId(deps.ids.next("ap"))
+        val context = policyContext()
+        val ask = askFor(ready)
+        val suggested = if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
+        rt.commit(
+            listOf(
+                ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context)),
+                ApprovalResolved(approvalId, choice, DecidedBy.Hook(HookEvent.PermissionRequest.name)),
+            ),
+            Durability.Sync,
+        )
     }
 
     private sealed interface PreToolUse {
@@ -409,6 +510,10 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
 
         fun deniedMessage(note: String?): String =
             "用户拒绝了这次调用。" + (note?.let { "用户的说明：$it" } ?: "不要原样重试，换个做法或先问清楚。")
+
+        /** hook 替人拒的话术：说清是 PermissionRequest hook 拒的，不是用户 */
+        fun hookDeniedMessage(note: String?): String =
+            "PermissionRequest hook 拒绝了这次调用。" + (note?.let { "说明：$it" } ?: "不要原样重试，换个做法或先问清楚。")
 
         private fun errorResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)
     }

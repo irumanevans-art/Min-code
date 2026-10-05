@@ -8,6 +8,7 @@ import dev.min.agent.kernel.HubLimits
 import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
 import dev.min.agent.kernel.SessionRuntime
+import dev.min.agent.kernel.SessionEndReasons
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.tools.AgentType
 import dev.min.agent.tools.AgentToolOf
@@ -210,12 +211,20 @@ internal class DesktopApp(
     suspend fun openSession(): SessionRuntime {
         args.resume?.let { id ->
             val sessionId = SessionId(id)
-            return hub().open(sessionId)
+            // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
+            return hub().open(sessionId, resumedByUser = true)
                 ?: throw UsageException("找不到会话 $id")
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
     }
+
+    /**
+     * CLI 退出（hooks设计 §7）：SessionEnd（reason = prompt_input_exit，CC 对「用户在输入提示前退出」的取值）
+     * 在根会话卸下之前跑；停不下来的回合先停（shutdown），日志保留
+     */
+    suspend fun exitSession(runtime: SessionRuntime): Boolean =
+        hub().shutdown(runtime.sessionId, SessionEndReasons.PROMPT_INPUT_EXIT)
 
     private fun platformDescription(): String {
         val os = "${System.getProperty("os.name")} ${System.getProperty("os.version")}"

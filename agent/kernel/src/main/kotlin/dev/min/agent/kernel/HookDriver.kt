@@ -100,6 +100,8 @@ internal class HookDriver(private val rt: SessionRuntime) {
             state.settings.effort?.let { put("CLAUDE_EFFORT", wire(it)) }
         }
         val started = deps.clock.nowMs()
+        // SessionEnd 的超时上限照 CC：默认 1.5 秒（整秒粒度取 2），配置写了更长的按配置，最多 60 秒
+        val timeoutCap = if (event == HookEvent.SessionEnd) SESSION_END_TIMEOUT_CAP else MAX_TIMEOUT
         // 两个执行器的异常（协程取消除外）都不许冒出去：hook 的执行问题只是一条非阻断说明、结论中性，
         // 否则一个写错的 URL 就能把回合打成 Failed，在 SessionStart 上还会让会话建不起来
         val executionFailures = java.util.concurrent.CopyOnWriteArrayList<String>()
@@ -110,7 +112,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                     emptyList()
                 } else {
                     catchingNonCancellation {
-                        runner.run(match.handlers, stdin, env, state.settings.cwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) }
+                        runner.run(match.handlers, stdin, env, state.settings.cwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap) }
                     }.getOrElse { e ->
                         executionFailures += "command hook 批执行失败：${describe(e)}"
                         emptyList()
@@ -124,7 +126,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                 } else {
                     catchingNonCancellation {
                         httpRunner.run(httpMatch.handlers, stdin, httpEnv(httpMatch.handlers), httpPolicy()) { h ->
-                            (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT)
+                            (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap)
                         }
                     }.getOrElse { e ->
                         // 只写异常类型：http 的异常信息可能带着 URL（查询串里常有令牌）
@@ -138,7 +140,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         val allRuns = runs + http.runs
         val combined = combine(event, allRuns.map { interpret(event, it) })
         val outcome = toOutcome(event, combined)
-        val problems = combined.nonBlockingErrors +
+        val problems = combined.nonBlockingErrors + combined.notes +
             allRuns.filter { it.failedToStart }.map { "「${label(it.handler)}」没能运行（路径写错时门禁会悄悄失效）" } +
             allRuns.filter { it.timedOut }.map { "「${label(it.handler)}」超时" } +
             http.skipped + http.notes + hiddenEnvNotes(httpMatch.handlers) + executionFailures
@@ -220,9 +222,14 @@ internal class HookDriver(private val rt: SessionRuntime) {
         /** 比 CC 的 600 秒低得多（设计 §3）：手机上一个卡住的 hook 不该拖住整轮；配置里显式写了才更长，最多 600 */
         const val MAX_TIMEOUT = 600
 
+        /** SessionEnd 的超时上限（CC：预算最多被配置抬到 60 秒），默认预算见 [defaultTimeout] */
+        const val SESSION_END_TIMEOUT_CAP = 60
+
         fun defaultTimeout(event: HookEvent): Int = when (event) {
             HookEvent.UserPromptSubmit, HookEvent.PreModelSwitch, HookEvent.PostModelSwitch -> 30
             HookEvent.MessageDisplay -> 10
+            // CC 的默认预算是 1.5 秒；引擎的超时粒度是整秒，向上取 2
+            HookEvent.SessionEnd -> 2
             else -> 60
         }
     }

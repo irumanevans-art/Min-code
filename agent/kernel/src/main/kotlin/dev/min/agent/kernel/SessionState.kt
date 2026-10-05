@@ -110,6 +110,8 @@ data class SessionState(
     val hookContexts: Map<MessageId, List<String>> = emptyMap(),
     /** 还没有消息可挂的 hook 上下文（SessionStart），挂到下一条人发的消息上 */
     val pendingHookContexts: List<String> = emptyList(),
+    /** 等着挂到下一条提升为正式消息的输入上的 hook 上下文（SubagentStart，不区分来源） */
+    val pendingInputContexts: List<String> = emptyList(),
     val webSearches: Int = 0,
     /** 会话创建时冻结的自动记忆状态（最后一条 MemoryLoaded 带的）；null = 没开。系统提示里自动记忆那一段只由它与 [memory] 拼 */
     val autoMemory: AutoMemoryInfo? = null,

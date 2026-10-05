@@ -16,6 +16,8 @@ import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.FORK_AGENT_TYPE
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.LogHeader
@@ -31,6 +33,10 @@ import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.store.LOG_FORMAT_VERSION
+import dev.min.agent.ext.hooks.HookEvent
+import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.SessionEndInput
+import dev.min.agent.ext.hooks.SubagentStartInput
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.QuestionId
 import dev.min.agent.spi.PermissionAsk
@@ -49,6 +55,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.jsonObject
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -90,6 +97,13 @@ data class HubLimits(
     /** 同时在流式请求模型的子 agent 最多几个。等审批的子 agent 不占名额；根会话不受限 */
     val maxConcurrentChildRequests: Int = 3,
 )
+
+/** CC 的 SessionEnd reason 取值：Min 里目前只会出现这两个（clear / resume / logout 没有对应流程） */
+object SessionEndReasons {
+    /** 用户在输入提示前退出（桌面 CLI 的退出路径） */
+    const val PROMPT_INPUT_EXIT = "prompt_input_exit"
+    const val OTHER = "other"
+}
 
 /**
  * 一个进程一个：持有所有在线的会话运行时，负责委派子 agent、交付报告、恢复后的补发（docs/agent/detail/子agent设计.md §5）。
@@ -208,21 +222,25 @@ class SessionHub(
 
     /**
      * 卸下一个会话及它在线的整棵子树（运行时离开内存，日志不动，之后 [open] 能原样重开）。
-     * 子树里有回合在跑就拒绝（返回 false）：卸下会丢掉正在跑的协程，得先停下或等它跑完
+     * 子树里有回合在跑就拒绝（返回 false）：卸下会丢掉正在跑的协程，得先停下或等它跑完。
+     * 根会话卸下前跑 SessionEnd（hooks设计 §7）：清理类的 hook 有机会收尾，[HooksRan] 先落盘再卸下
      */
-    suspend fun close(id: SessionId): Boolean {
+    suspend fun close(id: SessionId, reason: String = SessionEndReasons.OTHER): Boolean {
         val tree = subtreeOnline(id)
         if (tree.isEmpty()) return false
-        // 逐个「确认空闲并封住」（原子的，在运行时的回合锁里）：只看 turn 会漏掉「回合已启动、TurnStarted 还没落盘」的空窗，
-        // 那时卸下，之后再打开就有两个运行时写同一份日志。有一个封不住就全部解封、放弃
-        val sealed = ArrayList<SessionRuntime>()
+        // 逐个「关门」（原子的，在运行时的回合锁里确认空闲、之后不再开回合）：只看 turn 会漏掉「回合已启动、TurnStarted 还没落盘」
+        // 的空窗，那时卸下，之后再打开就有两个运行时写同一份日志。有一个关不上就全部撤回、放弃
+        val closing = ArrayList<SessionRuntime>()
         for (rt in tree.mapNotNull { runtimes[it] }) {
             if (!rt.sealIfIdle()) {
-                sealed.forEach { it.unseal() }
+                closing.forEach { it.unseal() }
                 return false
             }
-            sealed += rt
+            closing += rt
         }
+        // 关了门还能写：SessionEnd 的运行记录要落盘。跑完再封住写入
+        runtimes[id]?.takeIf { it.state.value.origin == null }?.let { runSessionEnd(it, reason) }
+        closing.forEach { it.sealWrites() }
         tree.forEach(::unload)
         return true
     }
@@ -272,10 +290,10 @@ class SessionHub(
      * 关掉一棵子树：先 [stopTree]，再卸下（日志不动，之后 [open] 能重开）。界面「关闭会话」用它，[close] 只关空闲的。
      * 停树与卸下之间可能又起了新回合（刚被唤醒的父会话、刚委派的子会话），所以最多重试 [STOP_ROUNDS] 轮；仍卸不下返回 false
      */
-    suspend fun shutdown(id: SessionId): Boolean {
+    suspend fun shutdown(id: SessionId, reason: String = SessionEndReasons.OTHER): Boolean {
         repeat(STOP_ROUNDS) {
             stopTree(id)
-            if (close(id)) return true
+            if (close(id, reason)) return true
         }
         return false
     }
@@ -284,7 +302,7 @@ class SessionHub(
      * 删除一个会话及它的全部后代（日志与附件）。先中断整棵树里在跑的回合并等它们收尾，再从叶子往根逐个删：
      * 删到一半被杀时，留下的是完整的上半棵树，而不是一个找不到父会话的孤儿。返回根会话是否删掉了
      */
-    suspend fun delete(root: SessionId): Boolean {
+    suspend fun delete(root: SessionId, reason: String = SessionEndReasons.OTHER): Boolean {
         val headers = store.list()
         val childrenOf = headers.filter { it.parent != null }.groupBy({ it.parent!! }, { it.sessionId })
         val order = mutableListOf<SessionId>()
@@ -294,7 +312,7 @@ class SessionHub(
         }
         collect(root)
         if (runtimes.containsKey(root)) stopTree(root)
-        // 停下并封住：停下之后报告可能又唤醒一个回合，所以停、等、封反复几轮
+        // 停下并关门：停下之后报告可能又唤醒一个回合，所以停、等、关反复几轮
         for (id in order) runtimes[id]?.let { rt ->
             repeat(STOP_ROUNDS) {
                 rt.interrupt()
@@ -302,6 +320,11 @@ class SessionHub(
                 if (rt.sealIfIdle()) return@let
             }
         }
+        // 根会话的 SessionEnd 在删日志之前跑；不在内存里的也临时打开跑一遍（清理类 hook 的副作用不该因为会话不在线就跳过）
+        val rootRuntime = runtimes[root] ?: SessionRuntime.open(store, root, deps, scope)
+        if (rootRuntime != null && rootRuntime.state.value.origin == null) runSessionEnd(rootRuntime, reason)
+        for (id in order) runtimes[id]?.sealWrites()
+        rootRuntime?.sealWrites()
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {
@@ -326,11 +349,21 @@ class SessionHub(
     }
 
     /**
+     * 本进程里已经以「用户打开」跑过 SessionStart(resume) 的根会话。同一进程里同一会话只跑一次
+     * （Hub 内部为了补交报告、打开子会话也会 open，那不算 resume；进程重启后再打开算新的一次，CC 的 --resume 同样每次启动跑）
+     */
+    private val userResumed = ConcurrentHashMap.newKeySet<SessionId>()
+
+    /**
      * 打开会话（已在线就直接给）。打开时做两件恢复的事：它若是子会话，开始盯它的回合结局；
      * 它若委派过子 agent，把还没交付的报告补进收件箱——**不自动开回合**（崩溃后不自动续跑，02 §5）。
+     * [resumedByUser] 为真且是根会话时先跑 SessionStart(source = resume)（hooks设计 §7），本进程里同一会话只跑一次。
      */
-    suspend fun open(id: SessionId): SessionRuntime? {
-        runtimes[id]?.let { return it }
+    suspend fun open(id: SessionId, resumedByUser: Boolean = false): SessionRuntime? {
+        runtimes[id]?.let { runtime ->
+            if (resumedByUser) resumeStart(runtime)
+            return runtime
+        }
         val runtime = openLock.withLock {
             runtimes[id]?.let { return@withLock it }
             val opened = SessionRuntime.open(store, id, deps, scope, hub = this) ?: return@withLock null
@@ -341,9 +374,17 @@ class SessionHub(
         // 根会话重新接上 MCP（快照已在日志里）；子会话沿用父会话的调用口（父会话先于子会话打开）
         val origin = runtime.state.value.origin
         if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { runtime.mcpCaller = it.mcpCaller }
+        if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
         return runtime
+    }
+
+    /** 用户打开一个根会话：跑 SessionStart(resume)，子会话与跑过一次的不跑 */
+    private suspend fun resumeStart(runtime: SessionRuntime) {
+        if (runtime.state.value.origin == null && userResumed.add(runtime.sessionId)) {
+            runtime.runSessionStart("resume")
+        }
     }
 
     /** 在线的会话；不打开 */
@@ -427,6 +468,8 @@ class SessionHub(
         )
         if (!background) awaitedInForeground += childId
         watch(child, reconcile = false)
+        // SubagentStart（hooks设计 §7）：子会话建好之后、第一个回合之前跑——上下文要赶在子会话的第一个请求之前挂好
+        runSubagentStart(child)
         if (fork) {
             child.startDelegated()
         } else {
@@ -505,6 +548,46 @@ class SessionHub(
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** 本进程里已经跑过 SessionEnd 的根会话：同一会话在同一进程里只结束一次（关了再删不重复跑） */
+    private val sessionEnded = ConcurrentHashMap.newKeySet<SessionId>()
+
+    /**
+     * SessionEnd（根会话关闭 / 删除时）：无决策控制，失败与超时只记说明；关闭流程等它跑完或超时
+     * （引擎的批超时兜底，默认每台 2 秒——CC 的 1.5 秒预算按整秒向上取），不会无限期卡住关闭
+     */
+    private suspend fun runSessionEnd(rt: SessionRuntime, reason: String) {
+        if (rt.state.value.origin != null || !sessionEnded.add(rt.sessionId)) return
+        val specific = HookJson.encodeToJsonElement(
+            SessionEndInput.serializer(), SessionEndInput(reason = reason),
+        ).jsonObject
+        HookDriver(rt).run(HookEvent.SessionEnd, reason, specific)
+    }
+
+    /**
+     * SubagentStart：输入只有 agent_id / agent_type（都在通用字段里，matcher 匹配 agent_type）。
+     * 上下文的挂靠分两种：普通子 agent 挂它的第一条输入（委派指令——来源是父会话不是人，[HookContextTarget.NextUserMessage]
+     * 只认人发的消息挂不上，所以新开 [HookContextTarget.NextMessage]）；分身没有新输入，挂继承来的最后那条
+     * 助手消息的工具结果后面——分身首请求的前缀不变量只管到那条消息为止，挂在它后面不破坏（子agent设计 §3.3）
+     */
+    private suspend fun runSubagentStart(child: SessionRuntime) {
+        val origin = child.state.value.origin ?: return
+        val specific = HookJson.encodeToJsonElement(
+            SubagentStartInput.serializer(), SubagentStartInput(),
+        ).jsonObject
+        val outcome = HookDriver(child).run(HookEvent.SubagentStart, origin.agentType, specific) ?: return
+        val target: HookContextTarget = if (origin.fork) {
+            // 分身没有新输入：挂在继承来的最后那条助手消息的工具结果后面
+            val anchor = child.state.value.history.filterIsInstance<HistoryEntry.Assistant>().lastOrNull()?.messageId
+            HookContextTarget.ToolResults(
+                checkNotNull(anchor) { "分身日志里没有继承来的助手消息，SubagentStart 的上下文没处挂" },
+            )
+        } else {
+            HookContextTarget.NextMessage
+        }
+        val events = outcome.contexts.map { HookContextAdded(target, HookEvent.SubagentStart.name, it) }
+        if (events.isNotEmpty()) child.commit(events, Durability.Sync)
     }
 
     // ---- 报告 ----

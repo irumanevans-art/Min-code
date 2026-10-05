@@ -8,6 +8,7 @@ import dev.min.agent.ext.config.SettingsLoader
 import dev.min.agent.ext.config.SettingsSnapshot
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.NotificationInput
 import dev.min.agent.ext.hooks.SessionStartInput
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
@@ -266,14 +267,17 @@ class SessionRuntime private constructor(
         }
     }
 
-    /** SessionStart（source = startup）：加的上下文挂到第一条人发的消息上 */
-    private suspend fun runSessionStart() {
+    /**
+     * SessionStart：startup（新建根会话）与 resume（用户打开已有会话，[SessionHub.open] 判定）两条 source，
+     * 加的上下文挂到下一条人发的消息上——resume 也走同一条路（CC：hook 的上下文要赶在第一个请求之前到达模型）
+     */
+    internal suspend fun runSessionStart(source: String) {
         val driver = HookDriver(this)
         val specific = HookJson.encodeToJsonElement(
             SessionStartInput.serializer(),
-            SessionStartInput(source = "startup", model = state.value.settings.model.modelId),
+            SessionStartInput(source = source, model = state.value.settings.model.modelId),
         ).jsonObject
-        val outcome = driver.run(HookEvent.SessionStart, "startup", specific) ?: return
+        val outcome = driver.run(HookEvent.SessionStart, source, specific) ?: return
         val events = outcome.contexts.map { HookContextAdded(HookContextTarget.NextUserMessage, HookEvent.SessionStart.name, it) }
         if (events.isNotEmpty()) commit(events, Durability.Sync)
     }
@@ -417,6 +421,18 @@ class SessionRuntime private constructor(
         startTurnIfIdle(TurnTrigger.Delegated)
     }
 
+    /**
+     * 宿主发系统通知时跑 Notification hooks（hooks设计 §7：内核不发通知，何时算「该通知」由宿主决定）。
+     * matcher 匹配通知类型（取值照 CC：permission_prompt、idle_prompt……），只执行、不改内核状态，记一条 [HooksRan]
+     */
+    suspend fun notifyHooks(type: String, message: String, title: String? = null) {
+        val specific = HookJson.encodeToJsonElement(
+            NotificationInput.serializer(),
+            NotificationInput(message = message, title = title, notificationType = type),
+        ).jsonObject
+        HookDriver(this).run(HookEvent.Notification, type, specific)
+    }
+
     // ---- 检查点与回退（检查点与rewind设计 §4） ----
 
     /** 回退到 [messageId] 之前会发生什么；它不是开启回合的消息（或已被回退掉）时为 null。只读，可在任何时候调用 */
@@ -441,7 +457,7 @@ class SessionRuntime private constructor(
      */
     private suspend fun <T> whileIdle(block: suspend () -> T): T? {
         val job = synchronized(turnLock) {
-            if (sealed || turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return null
+            if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return null
             // 在锁里就启动：启动之前它的 isActive 是假的，startTurnIfIdle 会从这个空档里溜进去
             scope.async { block() }.also { maintenanceJob = it }
         }
@@ -467,28 +483,42 @@ class SessionRuntime private constructor(
      * 被中断或失败的回合不自动开下一回合（学 Claude Code：中断后排队的话退回输入框由人决定）。
      */
     /**
-     * 卸下前封住：没有回合（含正在启动、还没写 TurnStarted 的）、也没有维护在跑时封住并返回 true。
-     * 封住之后不再开回合、任何写入都直接拒绝（不落盘）——卸下之后这个对象可能还被别的协程拿着（例如正要交付报告的），
+     * 卸下前「关门」：没有回合（含正在启动、还没写 TurnStarted 的）、也没有维护在跑时关门并返回 true。
+     * 关门之后不再开回合、不再做维护，但还能写（卸下前要跑 SessionEnd、写它的运行记录）；随后 [sealWrites] 封住写入。
+     * 封住之后任何写入都直接拒绝（不落盘）——卸下之后这个对象可能还被别的协程拿着（例如正要交付报告的），
      * 而再次打开会话会建一个新的运行时写同一份日志，两个写者会把日志写坏。被拒的子 agent 报告不会丢：
      * 重新打开时 Hub 会补交没交付的报告
      */
     internal fun sealIfIdle(): Boolean = synchronized(turnLock) {
         if (turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return false
-        sealed = true
+        closing = true
         true
     }
 
-    /** 封住之后发现整棵树卸不下（别的会话忙）：解封，什么都没发生过 */
-    internal fun unseal() {
-        synchronized(turnLock) { sealed = false }
+    /** 关门之后、卸下之前：从此一条都不写 */
+    internal fun sealWrites() {
+        sealed = true
     }
 
+    /** 关了门却发现整棵树卸不下（别的会话忙）：撤回，什么都没发生过 */
+    internal fun unseal() {
+        synchronized(turnLock) {
+            closing = false
+            sealed = false
+        }
+    }
+
+    /** 关门了：不再开回合、不再做维护 */
+    @Volatile
+    private var closing = false
+
+    /** 封住了：不再写日志 */
     @Volatile
     private var sealed = false
 
     private fun startTurnIfIdle(trigger: TurnTrigger) {
         synchronized(turnLock) {
-            if (sealed || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
+            if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
             if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification) && s.inbox.isEmpty()) return
@@ -534,7 +564,7 @@ class SessionRuntime private constructor(
             }
             // 子会话的清单由 initial 带来（继承父会话那份），不再读磁盘
             if (loadSkills) runtime.loadSkills()
-            if (runtime.state.value.origin == null) runtime.runSessionStart()
+            if (runtime.state.value.origin == null) runtime.runSessionStart("startup")
             return runtime
         }
 

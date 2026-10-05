@@ -139,10 +139,13 @@ fun SessionState.apply(record: EventRecord): SessionState {
             withRewindPoint(e.messageId, fromUser = input.origin == InputOrigin.User, seq = record.seq).copy(
                 inbox = inbox - input,
                 history = history + HistoryEntry.User(e.messageId, input.parts, input.origin),
-                // 人发的消息把等着挂靠的 hook 上下文（SessionStart 的）带上
-                hookContexts = if (input.origin == InputOrigin.User && pendingHookContexts.isNotEmpty()) {
-                    hookContexts + (e.messageId to hookContexts[e.messageId].orEmpty() + pendingHookContexts)
-                } else hookContexts,
+                // hook 上下文跟着提升的消息走：SubagentStart 等着的挂在这条输入上（不区分来源），
+                // SessionStart 等着的只跟人发的消息走
+                hookContexts = hookContexts + (
+                    e.messageId to hookContexts[e.messageId].orEmpty() + pendingInputContexts +
+                        (if (input.origin == InputOrigin.User) pendingHookContexts else emptyList())
+                    ),
+                pendingInputContexts = emptyList(),
                 pendingHookContexts = if (input.origin == InputOrigin.User) emptyList() else pendingHookContexts,
             )
         }
@@ -198,6 +201,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is HooksRan -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is HookContextAdded -> when (val target = e.target) {
             HookContextTarget.NextUserMessage -> copy(pendingHookContexts = pendingHookContexts + e.text)
+            HookContextTarget.NextMessage -> copy(pendingInputContexts = pendingInputContexts + e.text)
             is HookContextTarget.Message -> {
                 check(history.any { it.messageId == target.messageId && it is HistoryEntry.User }) { "hook 上下文挂靠的用户消息 ${target.messageId} 不存在" }
                 copy(hookContexts = hookContexts + (target.messageId to hookContexts[target.messageId].orEmpty() + e.text))
