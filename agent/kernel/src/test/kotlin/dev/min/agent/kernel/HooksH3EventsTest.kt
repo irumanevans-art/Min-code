@@ -218,8 +218,15 @@ class HooksH3EventsTest {
                 reply(ToolCallPart(CallId("c1"), "Agent", args("description" to "看看", "prompt" to "去看看", "subagent_type" to "Explore")), stop = StopReason.ToolUse)
             } else reply(TextPart("好"))
         }
-        val hub = hub(model, http, tools = listOf(bash, dev.min.agent.tools.AgentTool))
-        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val hub = SessionHub(
+            store, hubDeps(model, http, tools = listOf(bash, dev.min.agent.tools.AgentTool)), scope,
+        )
+        // 配上 SessionStart(resume)：子会话要是跑了，http.sent 就会露馅
+        val rt = hub.create(
+            GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(HooksLoaded(listOf(HookSourceData("user", hook("SessionStart", "resume"))))),
+        )
         rt.say("委派一个")
         val child = rt.state.value.children.keys.single()
         // 后台委派的报告会在 say 返回后异步送达并唤醒一个新回合：等那个回合真正结束再关，

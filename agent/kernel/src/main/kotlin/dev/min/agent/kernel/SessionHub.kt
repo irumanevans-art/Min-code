@@ -332,7 +332,7 @@ class SessionHub(
             register(opened)
             opened
         } ?: return null
-        resumeStart(runtime)
+        if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
         return runtime
