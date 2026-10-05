@@ -8,7 +8,7 @@ class SnapshotIgnoreTest {
     @Test fun git_generated_samples_match_including_parent_negation_and_nested_precedence() {
         val json = javaClass.getResource("/snapshot-gitignore/samples.json")!!.readText()
         val samples = Json.parseToJsonElement(json).jsonObject.getValue("samples").jsonArray
-        assertEquals(95, samples.size)
+        assertEquals(123, samples.size)
         for (sample in samples) {
             val item = sample.jsonObject
             var ignore = SnapshotIgnore().withFile("", item.getValue("exclude").jsonPrimitive.content)

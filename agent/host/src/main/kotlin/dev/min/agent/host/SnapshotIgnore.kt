@@ -17,7 +17,7 @@ internal class SnapshotIgnore(private val rules: List<Rule> = emptyList()) {
             var excluded = false
             for (rule in rules) {
                 val relative = if (rule.base.isEmpty()) candidate else candidate.takeIf { it.startsWith(rule.base + "/") }?.removePrefix(rule.base + "/") ?: continue
-                if ((!rule.directoryOnly || isDirectory) && rule.regex.matches(relative)) excluded = !rule.negated
+                if ((!rule.directoryOnly || isDirectory) && rule.regex.matches(byteCharacters(relative))) excluded = !rule.negated
             }
             if (excluded) return true
         }
@@ -47,9 +47,19 @@ internal class SnapshotIgnore(private val rules: List<Rule> = emptyList()) {
             val anchored = line.startsWith('/')
             if (anchored) line = line.drop(1)
             val anywhere = !anchored && '/' !in line
-            val pattern = glob(line) ?: return@mapNotNull null
-            catchingNonCancellation { Rule(base, Regex("^" + (if (anywhere) "(?:.*/)?" else "") + pattern + "$"), directory, negated) }.getOrNull()
+            val pattern = glob(byteCharacters(line)) ?: return@mapNotNull null
+            catchingNonCancellation { Rule(base, Regex("^" + (if (anywhere) "(?:.*/)?" else "") + pattern + "$", RegexOption.DOT_MATCHES_ALL), directory, negated) }.getOrNull()
         }.toList()
+
+        // Git wildmatch 按 UTF-8 字节匹配；? 对中文文件名也只消耗一个字节。
+        private fun byteCharacters(text: String): String = text.encodeToByteArray().toString(Charsets.ISO_8859_1)
+        private val namedClass = Regex("\\[:([a-z]+):\\]")
+        private val classes = mapOf(
+            "alnum" to "a-zA-Z0-9", "alpha" to "a-zA-Z", "blank" to "\\x09\\x20",
+            "cntrl" to "\\x00-\\x1F\\x7F", "digit" to "0-9", "graph" to "\\x21-\\x7E",
+            "lower" to "a-z", "print" to "\\x20-\\x7E", "punct" to "\\x21-\\x2F\\x3A-\\x40\\x5B-\\x60\\x7B-\\x7E",
+            "space" to "\\x09-\\x0D\\x20", "upper" to "A-Z", "xdigit" to "0-9a-fA-F",
+        )
 
         private fun glob(pattern: String): String? = buildString {
             var i = 0
@@ -85,7 +95,9 @@ internal class SnapshotIgnore(private val rules: List<Rule> = emptyList()) {
                             var contents = pattern.substring(i + 1, end)
                             if (contents.startsWith('!')) contents = "^" + contents.drop(1)
                             // POSIX 类照 fnmatch；斜线仍不能被字符类匹配。
-                            contents = contents.replace("[:digit:]", "0-9").replace("[:alpha:]", "a-zA-Z").replace("[:alnum:]", "a-zA-Z0-9")
+                            var invalid = false
+                            contents = namedClass.replace(contents) { classes[it.groupValues[1]] ?: "".also { invalid = true } }
+                            if (invalid) return null
                             append("(?!/)[").append(contents).append(']'); i = end
                         }
                     }
