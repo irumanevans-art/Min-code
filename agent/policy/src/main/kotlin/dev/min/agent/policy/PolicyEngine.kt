@@ -86,7 +86,7 @@ object PolicyEngine {
             PermissionMode.BypassPermissions -> Verdict.Allow(byMode)
             PermissionMode.Plan ->
                 if (effectivelyReadOnly) Verdict.Allow(byMode)
-                else Verdict.Deny(byMode, "计划模式下只能读不能改。先把计划整理好，用 ExitPlanMode 交给用户确认。")
+                else Verdict.Ask
             PermissionMode.DontAsk ->
                 if (effectivelyReadOnly) Verdict.Allow(byMode)
                 else Verdict.Deny(byMode, "当前模式不询问用户，这个操作没有被预先允许。")

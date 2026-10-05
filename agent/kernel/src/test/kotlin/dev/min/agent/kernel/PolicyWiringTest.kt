@@ -128,6 +128,21 @@ class PolicyWiringTest {
 
     private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.open(rt.sessionId)!!.read().toList().map { it.event }
 
+    @Test fun `r42 plan non-readonly calls produce an approval card with planning guidance`() = run {
+        val model = RoutingModel { req ->
+            if (req.messages.size == 1) reply(cmd("c1", "npm test"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val rt = SessionHub(store, deps(model, listOf(bash)), scope).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Plan)
+        rt.send(ClientMsgId("u1"), listOf(TextPart("验证")))
+        val waiting = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
+        val request = events(rt).filterIsInstance<ApprovalRequested>().single()
+        assertTrue(request.ask.summary.contains("计划模式") && request.ask.summary.contains("ExitPlanMode"))
+        assertTrue(ran.isEmpty())
+        rt.answerApproval((waiting.phaseOf(CallId("c1")) as CallPhase.AwaitingApproval).approvalId, ApprovalChoice.Once)
+        rt.state.first { it.turn == null && it.lastTurn != null }
+        assertEquals(listOf("npm test"), ran)
+    }
+
     @Test
     fun `settings rules are snapshotted at creation and decide without asking`() = run {
         settings("""{"permissions": {"allow": ["Bash(npm test *)"], "deny": ["Bash(rm *)"]}}""")

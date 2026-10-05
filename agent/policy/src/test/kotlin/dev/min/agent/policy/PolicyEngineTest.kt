@@ -62,7 +62,7 @@ class PolicyEngineTest {
         assertEquals(Verdict.Ask, v(command, PermissionMode.AcceptEdits))
         assertEquals(Verdict.Ask, v(write("/etc/hosts", PathScope.Rootfs), PermissionMode.AcceptEdits))
         assertTrue(v(command, PermissionMode.BypassPermissions) is Verdict.Allow)
-        assertTrue(v(workspaceWrite, PermissionMode.Plan) is Verdict.Deny)
+        assertEquals(Verdict.Ask, v(workspaceWrite, PermissionMode.Plan))
         assertTrue(v(command, PermissionMode.DontAsk) is Verdict.Deny)
     }
 
@@ -90,14 +90,14 @@ class PolicyEngineTest {
         assertEquals(Verdict.Ask, v(bash("ls && rm a"), ctx()))
         assertEquals(Verdict.Ask, v(bash("ls > out.txt"), ctx()))
         assertEquals(Verdict.Ask, v(bash("git status", "touch a"), ctx()))
-        assertTrue(v(bash("ls > out.txt"), ctx(PermissionMode.Plan)) is Verdict.Deny)
+        assertEquals(Verdict.Ask, v(bash("ls > out.txt"), ctx(PermissionMode.Plan)))
     }
 
     @Test
     fun `unparseable commands are never treated as read-only`() {
         assertEquals(Verdict.Ask, v(bash("echo \$(ls)"), ctx()))
         assertEquals(Verdict.Ask, v(bash("for f in *; do cat \$f; done"), ctx()))
-        assertTrue(v(bash("echo \$(ls)"), ctx(PermissionMode.Plan)) is Verdict.Deny)
+        assertEquals(Verdict.Ask, v(bash("echo \$(ls)"), ctx(PermissionMode.Plan)))
     }
 
     @Test
@@ -144,7 +144,7 @@ class PolicyEngineTest {
         // Bash 写进记忆目录仍是命令，不在「只改文件」的范围里
         assertEquals(Verdict.Ask, v(bash("echo x > $dir/feedback.md"), c))
         // plan 模式照常只读
-        assertTrue(v(write("$dir/feedback.md", PathScope.Rootfs), c.copy(mode = PermissionMode.Plan)) is Verdict.Deny)
+        assertEquals(Verdict.Ask, v(write("$dir/feedback.md", PathScope.Rootfs), c.copy(mode = PermissionMode.Plan)))
     }
 
     // ---- 安全底线 ----

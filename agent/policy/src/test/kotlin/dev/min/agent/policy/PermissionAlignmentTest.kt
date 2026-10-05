@@ -109,6 +109,14 @@ class PermissionAlignmentTest {
         assertTrue(eval(bash("bash -c 'rm -rf build/'"), context(rules = arrayOf("Bash(rm *)"))) is Verdict.Deny)
     }
 
+    @Test fun `r42 plan asks for non-readonly operations while explicit deny still wins`() {
+        val c = context(PermissionMode.Plan)
+        assertEquals(Verdict.Ask, eval(file("/workspace/a", true), c))
+        assertEquals(Verdict.Ask, eval(bash("npm test"), c))
+        assertTrue(eval(file("/workspace/a"), c, true) is Verdict.Allow)
+        assertTrue(eval(file("/workspace/a", true), context(PermissionMode.Plan, RuleKind.Deny, "Edit(a)")) is Verdict.Deny)
+    }
+
     @Test fun `r28 Write path rules are not consulted but bare Write tool rules still apply`() {
         assertEquals(Verdict.Ask, eval(file("/workspace/a", true), context(kind = RuleKind.Allow, rules = arrayOf("Write(a)"))))
         assertTrue(eval(file("/workspace/a", true), context(kind = RuleKind.Allow, rules = arrayOf("Write"))) is Verdict.Allow)

@@ -26,7 +26,7 @@ class PlanModeToolsTest {
         val result = EnterPlanModeTool.call(ctx, "unexpected" to "ignored")
         assertFalse(result.isError)
         assertEquals(listOf(SessionEffect.ModeChange(PermissionMode.Plan)), result.effects)
-        assertTrue(result.text, result.text.contains("ExitPlanMode") && result.text.contains("只能读"))
+        assertTrue(result.text, result.text.contains("ExitPlanMode") && result.text.contains("先只读"))
     }
 
     @Test
