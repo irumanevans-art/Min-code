@@ -160,7 +160,12 @@ data class SessionState(
     val mcpServers: dev.min.agent.spi.McpServersLoaded? = null,
     /** 最后一份生效的 MCP 工具快照：工具表 = 内置工具 + 它（经 [visibleMcpTools] 过滤） */
     val mcpTools: dev.min.agent.spi.McpToolsSnapshot? = null,
+    /** 最近一次会话回顾；null = 还没生成过。自动回顾据它判断「别连着来两次」 */
+    val recap: RecapView? = null,
 )
+
+/** [afterTurn] 是生成回顾时最近结束的那个回合：之后没有新回合就不再自动生成 */
+data class RecapView(val text: String, val trigger: dev.min.agent.spi.RecapTrigger, val afterTurn: TurnId?)
 
 /**
  * 回退链生效中的状态。[model] 是现在用的（链上可能已经走到第二个），[primary] 是会话设置里的主模型；

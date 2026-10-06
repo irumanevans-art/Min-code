@@ -97,3 +97,4 @@
 - v1 增量（2026-10-07）：`ModelFailureKind` 新增取值 `model_unavailable`（模型不存在、已退役、账号无权调用；`model_request_failed.kind` 与 `turn_ended.outcome.failed.kind` 里都可能出现）。含这个取值的日志旧版本打不开。
 - v1 增量（2026-10-07）：新增事件 `model_fallback`（模型回退链，`spi/FallbackEvents.kt`）：`turnId`、`requestId`（刚失败、换模型后用同一 id 重发的请求）、`from` / `to`（`ModelRef`）、`reason`（`ModelFailureKind`：只会是 `overloaded` / `server` / `model_unavailable`）、`message`（供应商报错原文）。
   落在 `model_request_failed`（`willRetry:false`）之后、换模型重发的 `model_request_started`（`attempt` 从 1 重新数）之前。**只管这一个回合**：折叠进 `TurnState.fallback`，回合结束随回合清掉，下一回合先试主模型；因此重开会话不会停在回退模型上。回退链本身（`fallbackModel` / `--fallback-model`）是运行时选项，不进日志、不随 resume 恢复。含新事件的日志旧版本打不开。
+- v1 增量（2026-10-07）：新增事件 `session_recap`（会话回顾，`spi/RecapEvents.kt`）：`text`（一行，≤400 字符）、`trigger`（`manual` / `away`）、`model`（生成它的提取模型）、可选 `usage`（计入会话用量，全零不落盘）。**只给人看，不进模型视图**（折叠只动 `presentation` / `usage` / `recap`，`modelMessages` 与提示前缀与它无关）；任何时候都能落（不要求有进行中的回合）。生成失败或被跳过不写事件。含新事件的日志旧版本打不开。

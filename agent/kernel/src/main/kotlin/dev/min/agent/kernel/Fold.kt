@@ -346,6 +346,12 @@ fun SessionState.apply(record: EventRecord): SessionState {
             taskProblem(e)?.let { error("任务事件不合法：$it") }
             applyTaskEvent(e)
         }
+        // 回顾只给人看：不碰 history，不进 modelMessages；花的钱计入会话用量
+        is dev.min.agent.spi.SessionRecap -> copy(
+            recap = RecapView(e.text, e.trigger, lastTurn?.turnId),
+            usage = usage + e.usage,
+            presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
+        )
         is Note -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is dev.min.agent.spi.WebSearchUsed -> copy(webSearches = webSearches + 1)
         is dev.min.agent.spi.WebExtractionCompleted -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }

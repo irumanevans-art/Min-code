@@ -452,6 +452,14 @@ class SessionRuntime private constructor(
     internal fun takeCompactInstructions(): String? = compactInstructions.also { compactInstructions = null }
 
     /**
+     * 会话回顾（[Recapper]）：用提取模型写一行「刚才在做什么、做到哪、下一步」，落 [dev.min.agent.spi.SessionRecap]，只给人看。
+     * [dev.min.agent.spi.RecapTrigger.Away] 是宿主判定「人离开一段时间回来了」后调的，受自动回顾的闸管；
+     * 失败或跳过都不影响会话，结果里说明原因
+     */
+    suspend fun recap(trigger: dev.min.agent.spi.RecapTrigger = dev.min.agent.spi.RecapTrigger.Manual): RecapResult =
+        Recapper(this).run(trigger)
+
+    /**
      * 空闲时把收件箱里的输入开成一回合（界面的「打断后跑排队那条」，崩溃恢复后补交、由用户确认后处理的报告）。
      * 收件箱空、或已有回合在跑时什么都不做
      */
