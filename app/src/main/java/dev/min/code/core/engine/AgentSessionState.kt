@@ -92,6 +92,9 @@ enum class TurnTriggerView {
     /** 子 agent 报告唤醒父会话，状态行写「子 agent 完成，继续处理」 */
     Notification,
 
+    /** 后台 asyncRewake hook 退出码 2 唤醒了空闲会话，状态行写「后台 hook 报告了问题」 */
+    Hook,
+
     /** 被委派的子 agent 自己的第一个回合 */
     Delegated,
 

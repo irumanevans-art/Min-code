@@ -126,7 +126,11 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             startedAt = turn.startedAtMs,
             // Min 没有「撤回一个字都没出的回合」（输入在回合开始时就提升进历史），所以永远是打断
             produced = true,
-            phase = if (turn.trigger == dev.min.agent.spi.TurnTrigger.Notification) text.subagentWoke() else null,
+            phase = when (turn.trigger) {
+                dev.min.agent.spi.TurnTrigger.Notification -> text.subagentWoke()
+                dev.min.agent.spi.TurnTrigger.Hook -> text.hookWoke()
+                else -> null
+            },
             detail = input.toolStatus,
             // attempt > 1 就是上一次请求失败后在退避重试
             retry = if (attempt > 1) RetryNotice(null, attempt, input.maxRetryAttempts) else null,

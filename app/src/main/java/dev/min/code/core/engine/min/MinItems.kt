@@ -112,6 +112,7 @@ fun triggerViewOf(trigger: TurnTrigger): TurnTriggerView = when (trigger) {
     TurnTrigger.User -> TurnTriggerView.User
     TurnTrigger.Resume -> TurnTriggerView.Resume
     TurnTrigger.Notification -> TurnTriggerView.Notification
+    TurnTrigger.Hook -> TurnTriggerView.Hook
     TurnTrigger.Delegated -> TurnTriggerView.Delegated
     TurnTrigger.Compact -> TurnTriggerView.Compact
 }
@@ -263,6 +264,8 @@ private class ItemsBuilder(
             is TurnStarted -> when (event.trigger) {
                 TurnTrigger.Resume -> items += dividerNote("resume:$seq", text.continued(atMs))
                 TurnTrigger.Notification -> items += dividerNote("wake:$seq", text.subagentWoke())
+                // 后台 asyncRewake hook 唤醒的回合：分隔线说明「是谁」把会话叫醒的
+                TurnTrigger.Hook -> items += dividerNote("hook:$seq", text.hookWoke())
                 else -> Unit
             }
             is TurnEnded -> turnEnded(seq, atMs, event)

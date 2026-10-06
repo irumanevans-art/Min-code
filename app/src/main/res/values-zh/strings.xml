@@ -1065,6 +1065,7 @@
   <string name="min_agent_hook_feedback">%1$s hook 要求模型继续</string>
   <string name="min_agent_continued">继续</string>
   <string name="min_agent_woke">子 agent 完成，继续处理</string>
+  <string name="min_agent_hook_woke">后台 hook 报告了问题</string>
   <string name="min_agent_report_completed">完成</string>
   <string name="min_agent_report_failed">失败</string>
   <string name="min_agent_report_interrupted">已停止</string>
