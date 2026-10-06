@@ -1887,3 +1887,33 @@ AS issuer 不匹配的校验被移除后，回调 iss 校验仍会拒绝，所�
 - **Notes**: AS issuer、覆盖元数据与 helper 认证保持的九个变异均由正常编译后的功能断言检出；宿主专项基线通过。
 
 ---
+
+## [LRN-20261007-OAUTH-LOGIN-STAGING] best_practice
+
+**Logged**: 2026-10-07T03:15:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+公共登录方法返回成功前必须完成下一回合快照的入队，不能仅启动一个通知协程。
+
+### Details
+专项测试因调度较快偶然通过，全量检查在登录成功后马上发送下一条消息时读到了旧工具表。changed 原先 launch 后直接返回，入队与 send 存在真实竞态。登录现在等待 stageChanged；取快照与内存入队留在同一把管理器锁内，普通后台通知仍异步。确定性测试暂停管理器后台调度，登录直接完成网络与连接替身，然后立即 applyStagedMcp，先复现旧表再验证新表，不靠增加等待期限掩盖竞态。
+
+### Suggested Action
+对「方法返回即下一步可用」的公共接口，把必要的内存状态发布作为返回前置条件；用受控调度验证返回契约，保留当前回合冻结语义。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/McpOAuthManagerTest.kt
+- Tags: oauth, snapshot, coroutine, race, return-contract
+- Pattern-Key: auth.login_staging_before_return
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: e36141b4
+- **Notes**: 原全量失败与确定性 red/green XML 已保留；六个 OAuth 管理器用例恢复通过。
+
+---
