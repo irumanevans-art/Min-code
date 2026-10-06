@@ -360,7 +360,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             copy(mcpUrls = mcpUrls + (e.questionId to pending.copy(action = e.action)))
         }
         is dev.min.agent.spi.McpToolsSnapshot -> copy(
-            mcpTools = e.copy(resourceServers = mcpTools?.resourceServers ?: e.resourceServers),
+            mcpTools = e,
             presentation = if (e.note == null) presentation else presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
         )
     }

@@ -284,7 +284,7 @@ internal class McpManager(
     private fun restage(binding: Binding) {
         val current = binding.rt.state.value.mcpTools
         val (servers, tools) = snapshotOf(binding, current)
-        if (current != null && current.tools == tools.tools && current.instructions == tools.instructions) return
+        if (current != null && current.tools == tools.tools && current.instructions == tools.instructions && current.resourceServers == tools.resourceServers) return
         binding.rt.stageMcp(servers, tools.copy(note = changeNote(current?.tools.orEmpty(), tools.tools)))
     }
 
@@ -325,7 +325,7 @@ internal class McpManager(
         val tools = (live + previous?.tools.orEmpty().filter { it.server in unconnected }).sortedBy { order.indexOf(it.server) }
         val instructions = ready.mapNotNull { e -> e.instructions?.takeIf { it.isNotBlank() }?.let { e.spec.name to McpShaping.truncate(it) } }.toMap() +
             previous?.instructions.orEmpty().filterKeys { it in unconnected }
-        val resourceServers = previous?.resourceServers ?: ready.filter { it.connection?.capabilities?.containsKey("resources") == true }.map { it.spec.name }
+        val resourceServers = order.filter { it in previous?.resourceServers.orEmpty() || ready.any { e -> e.spec.name == it && e.connection?.capabilities?.containsKey("resources") == true } }
         return McpServersLoaded(serverInfos(binding), notes) to McpToolsSnapshot(tools, instructions, resourceServers = resourceServers)
     }
 

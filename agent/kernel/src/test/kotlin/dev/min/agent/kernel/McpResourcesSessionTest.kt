@@ -35,19 +35,20 @@ class McpResourcesSessionTest {
         assertTrue(tool.parse(args("server" to "s", "uri" to "ui://app")) is ToolInput.Valid)
     }
 
-    @Test fun `first capability snapshot freezes resource prefix across changes and reopening`() = runBlocking {
+    @Test fun `late capability snapshot adds resource tools at the next turn and replays`() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val model = ScriptedModel(reply(TextPart("ok")), reply(TextPart("again")))
             val deps = testDeps(model, listOf(FakeTool("Probe", READ_ONLY) { ToolResult(listOf(TextPart("ok"))) }))
             val store = FileSessionStore(tmp.root.toPath(), { 0L })
             val rt = SessionRuntime.create(store, LogHeader(LOG_FORMAT_VERSION, SessionId("s"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions), deps, scope)
-            rt.loadMcp(McpServersLoaded(emptyList()), McpToolsSnapshot(emptyList(), resourceServers = listOf("r")))
+            rt.loadMcp(McpServersLoaded(emptyList()), McpToolsSnapshot(emptyList()))
             rt.send(ClientMsgId("u1"), listOf(TextPart("hello"))); rt.awaitIdle()
-            rt.stageMcp(null, McpToolsSnapshot(emptyList()))
+            rt.stageMcp(null, McpToolsSnapshot(emptyList(), resourceServers = listOf("r")))
+            assertEquals(listOf("Probe"), availableTools(rt.state.value, deps).map { it.name })
             rt.send(ClientMsgId("u2"), listOf(TextPart("next"))); rt.awaitIdle()
-            assertEquals(listOf("Probe", "ListMcpResources", "ReadMcpResource"), model.requests[0].tools.map { it.name })
-            assertEquals(model.requests[0].tools, model.requests[1].tools)
+            assertEquals(listOf("Probe"), model.requests[0].tools.map { it.name })
+            assertEquals(listOf("Probe", "ListMcpResources", "ReadMcpResource"), model.requests[1].tools.map { it.name })
             val log = store.open(rt.sessionId)!!
             val restored = fold(log.header, log.read().toList())
             assertEquals(rt.state.value, restored)
