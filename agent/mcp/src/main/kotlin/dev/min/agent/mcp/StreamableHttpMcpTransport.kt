@@ -68,7 +68,7 @@ class StreamableHttpMcpTransport(
                 if (it.status == 404 && oldSession != null && !refreshed && !(handshaking && handshakeMessage)) {
                     recover(oldSession); refreshed = true
                 } else {
-                    if (it.status !in 200..299) throw statusError(it.status, endpoint, "POST 请求")
+                    if (it.status !in 200..299) throw statusError(it.status, endpoint, "POST 请求", it.headers)
                     if (initial) {
                         val next = it.header("Mcp-Session-Id")
                         if (next != null && (next.isEmpty() || next.any { c -> c.code !in 0x21..0x7e }))
@@ -144,7 +144,7 @@ class StreamableHttpMcpTransport(
                     catch (e: java.io.IOException) { debug("MCP POST SSE 续传连接失败，准备继续重连。"); return@repeat }
                     resumed.use {
                         if (it.status in 500..599) { debug("MCP POST SSE 续传暂时失败，准备继续重连。"); return@repeat }
-                        if (it.status !in 200..299) throw statusError(it.status, endpoint, "POST SSE 续传")
+                        if (it.status !in 200..299) throw statusError(it.status, endpoint, "POST SSE 续传", it.headers)
                         if (it.mediaType() != "text/event-stream") throw McpTransportClosed("MCP POST SSE 续传没有返回 SSE。")
                         try { read(it) }
                         catch (e: CancellationException) { throw e }
@@ -170,11 +170,11 @@ class StreamableHttpMcpTransport(
                 try {
                     val response = openMcp(http, request("GET", sessionId = oldSession, lastId = cursor), false, retryDelaysMs, debug)
                     response.use {
-                        if (it.status == 401 || it.status == 403) throw statusError(it.status, endpoint, "GET SSE")
+                        if (it.status == 401 || it.status == 403) throw statusError(it.status, endpoint, "GET SSE", it.headers)
                         if (it.status !in 200..299 && it.status !in 500..599) {
                             debug("MCP 可选 GET SSE 不可用，已停止此流，POST 连接继续可用。"); return@launch
                         }
-                        if (it.status !in 200..299) throw statusError(it.status, endpoint, "GET SSE")
+                        if (it.status !in 200..299) throw statusError(it.status, endpoint, "GET SSE", it.headers)
                         if (it.mediaType() != "text/event-stream") {
                             debug("MCP 可选 GET 未返回 SSE，已停止此流，POST 连接继续可用。"); return@launch
                         }

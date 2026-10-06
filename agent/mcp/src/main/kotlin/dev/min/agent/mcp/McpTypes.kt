@@ -29,6 +29,7 @@ class McpTransportClosed(
     val exitCode: Int? = null,
     stderrTail: List<String> = emptyList(),
     val httpStatus: Int? = null,
+    val authChallenge: McpAuthChallenge? = null,
 ) : McpException(reason) {
     val reason: String = safeLog(reason)
     val stderrTail: List<String> = stderrTail.map(::safeLog)
@@ -45,7 +46,7 @@ class McpRpcException(
 class McpTimeoutException(val kind: Kind, message: String) : McpException(message) {
     enum class Kind { Idle, Hard }
 }
-class McpHttpException(val status: Int, val needsAuth: Boolean, message: String) : McpException(message)
+class McpHttpException(val status: Int, val needsAuth: Boolean, message: String, val authChallenge: McpAuthChallenge? = null) : McpException(message)
 class McpProtocolException(message: String) : McpException(message)
 
 internal fun mcpFailure(error: Exception, description: String): McpException =
@@ -81,7 +82,7 @@ data class McpServerInfo(
 sealed interface McpConnectionState {
     data object Connecting : McpConnectionState
     data class Ready(val server: McpServerInfo) : McpConnectionState
-    data class Closed(val reason: String, val exitCode: Int? = null, val stderrTail: List<String> = emptyList(), val httpStatus: Int? = null) : McpConnectionState {
+    data class Closed(val reason: String, val exitCode: Int? = null, val stderrTail: List<String> = emptyList(), val httpStatus: Int? = null, val authChallenge: McpAuthChallenge? = null) : McpConnectionState {
         val needsAuth: Boolean get() = httpStatus == 401 || httpStatus == 403
         override fun toString(): String = "Closed(${safeLog(reason)}, exitCode=$exitCode, httpStatus=$httpStatus, stderrTail=${stderrTail.map(::safeLog)})"
     }

@@ -378,6 +378,7 @@ object McpConfigLoader {
                         callbackPort = (o["callbackPort"] as? JsonPrimitive)?.takeIf { !it.isString }?.let { it.content.toIntOrNull() },
                         authServerMetadataUrl = s("authServerMetadataUrl"),
                         scopes = s("scopes"),
+                        clientSecret = s("clientSecret"),
                     )
                 },
                 timeoutMs = timeout, alwaysLoad = alwaysLoad,
