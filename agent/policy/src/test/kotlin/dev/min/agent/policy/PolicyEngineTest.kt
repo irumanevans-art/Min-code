@@ -171,8 +171,11 @@ class PolicyEngineTest {
     }
 
     @Test
-    fun `the floor also beats deny rules so the user sees the real reason`() {
-        assertEquals(Verdict.Ask, v(bash("rm -rf /"), ctx(PermissionMode.Default, RuleKind.Deny to "Bash(rm *)")))
+    fun `an explicit deny beats the floor so it can never be approved`() {
+        val verdict = v(bash("rm -rf /"), ctx(PermissionMode.BypassPermissions, RuleKind.Deny to "Bash(rm *)"))
+        assertTrue(verdict is Verdict.Deny)
+        // 没有 deny 时底线照旧问人
+        assertEquals(Verdict.Ask, v(bash("rm -rf /"), ctx(PermissionMode.BypassPermissions)))
     }
 
     @Test

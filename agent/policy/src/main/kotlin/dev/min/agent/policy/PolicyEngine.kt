@@ -48,9 +48,10 @@ fun defaultScope(path: GuestPath): PathScope {
  * 权限判定。纯函数：同样的请求 + 上下文 → 同样的结论。hooks 与审查模型由内核在它之外编排（docs/agent/04-子系统设计.md §4.4）。
  *
  * 顺序：
- * 1. **安全底线**（任何模式都问人，含 bypass）：写手机文件；写受保护路径；递归删关键路径、抹磁盘、强推这类无法挽回的命令；
+ * 1. **拒绝规则**：任一命中即拒（跨层级拒绝优先，与 CC 一致）。排在底线前面：底线的结论是「问人」，
+ *    人点一下就能过；明确写下的 deny（可能来自托管设置）不能因为同时踩了底线就变成可批准。
+ * 2. **安全底线**（任何模式都问人，含 bypass）：写手机文件；写受保护路径；递归删关键路径、抹磁盘、强推这类无法挽回的命令；
  *    看不透的命令里出现危险词。
- * 2. **拒绝规则**：任一命中即拒（跨层级拒绝优先，与 CC 一致）。
  * 3. **询问规则**：任一命中即问。
  * 4. **允许规则**：这次调用碰到的每一样东西（每条简单命令、每个路径、每个域名）都被允许规则或只读命令覆盖，才放行。
  * 5. **模式**：bypass 放行；计划模式非只读询问；dontAsk 拒绝需批的调用；acceptEdits 放行工作区内的编辑和文件命令；默认只放行只读。
@@ -66,8 +67,6 @@ object PolicyEngine {
         val facts = Facts.of(ask, context)
         val matcher = RuleMatcher(context.cwd, context.home)
 
-        if (floorReason(facts) != null) return Verdict.Ask
-
         val deny = context.rules.filter { it.kind == RuleKind.Deny }
         firstHit(facts, deny, matcher)?.let { rule ->
             return Verdict.Deny(
@@ -75,6 +74,9 @@ object PolicyEngine {
                 "这个操作被权限规则「${rule.raw}」（${rule.source}）禁止。不要原样重试，换个做法或请用户调整规则。",
             )
         }
+
+        if (floorReason(facts) != null) return Verdict.Ask
+
         if (firstHit(facts, context.rules.filter { it.kind == RuleKind.Ask }, matcher) != null) return Verdict.Ask
 
         covering(facts, context.rules.filter { it.kind == RuleKind.Allow }, matcher)?.let { rule ->
