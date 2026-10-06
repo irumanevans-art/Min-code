@@ -1,11 +1,16 @@
 package dev.min.code.core.engine.min
 
 import android.content.Context
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Bundle
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import dev.min.agent.kernel.LoopbackMcpAuthorizer
 import dev.min.agent.spi.*
-import dev.min.code.ui.components.openInExternalBrowser
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -27,8 +32,30 @@ import javax.crypto.spec.GCMParameterSpec
 /** 不经 proot 或 WebView；Custom Tab 与回调监听均在 App 进程中。 */
 internal class AndroidMcpAuthorizer(private val context: Context) : McpAuthorizer {
     override suspend fun authorize(redirectPort: Int?,authorizationUrl: suspend (String)->String): String =
-        LoopbackMcpAuthorizer(openPage={ url -> withContext(Dispatchers.Main) { context.openInExternalBrowser(url) } })
+        LoopbackMcpAuthorizer(openPage={ url -> withContext(Dispatchers.Main) { context.openMcpCustomTab(url) } })
             .authorize(redirectPort,authorizationUrl)
+}
+
+/** 普通浏览器出口允许回退，OAuth 只选声明 Custom Tabs 服务的外部提供者。 */
+internal fun mcpCustomTabPackage(candidates: List<String>,defaultPackage: String?,self: String,supports: (String)->Boolean): String? {
+    val available=candidates.filter { it!=self }.distinct().filter(supports)
+    return defaultPackage?.takeIf { it in available } ?: available.firstOrNull()
+}
+
+private fun Context.openMcpCustomTab(url: String): Boolean {
+    val intent=Intent(Intent.ACTION_VIEW,Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+    val candidates=packageManager.queryIntentActivities(intent,PackageManager.MATCH_DEFAULT_ONLY).map { it.activityInfo.packageName }
+    val preferred=packageManager.resolveActivity(intent,PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+    // 既有 https BROWSABLE queries 已让这些浏览器包可见；逐包检查服务，不扩大 App 可见性。
+    val provider=mcpCustomTabPackage(candidates,preferred,packageName) { candidate ->
+        packageManager.resolveService(Intent("android.support.customtabs.action.CustomTabsService").setPackage(candidate),0)
+            ?.serviceInfo?.let { it.exported && it.packageName==candidate } == true
+    } ?: return false
+    intent.setPackage(provider).putExtras(Bundle().apply { putBinder("android.support.customtabs.extra.SESSION",null) })
+    if(this !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    return try { startActivity(intent); true }
+    catch(e: ActivityNotFoundException) { false }
+    catch(e: SecurityException) { false }
 }
 
 /** 只在 App 私有、不备份的目录存密文；rootfs 挂载表从未拿到这里的路径。 */
