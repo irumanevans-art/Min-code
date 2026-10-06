@@ -128,7 +128,7 @@ class SessionHub(
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
     internal var mcp = McpManager(
         scope,
-        ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs),
+        ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs, deps.mcpServerPath),
         startupWaitMs = deps.mcpFirstSnapshotWaitMs,
         sessionLookup = { runtimes[it] },
     )

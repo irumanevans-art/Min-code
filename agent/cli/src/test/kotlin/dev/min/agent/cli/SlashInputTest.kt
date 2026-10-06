@@ -40,8 +40,8 @@ class SlashInputTest {
 
     @Test
     fun `plain text is sent as is`() {
-        assertEquals(InputAction.Send("fix the bug"), input("fix the bug"))
-        assertEquals(InputAction.Send("/etc/hosts?"), input("/etc/hosts?"))
+        assertEquals(InputAction.Send("fix the bug", humanInput=true), input("fix the bug"))
+        assertEquals(InputAction.Send("/etc/hosts?", humanInput=true), input("/etc/hosts?"))
     }
 
     @Test

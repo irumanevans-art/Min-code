@@ -12,6 +12,10 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 
 class McpRootsTest {
+    @Test fun `desktop root mapping returns native Windows file URIs`() = runBlocking {
+        val mapped = rootsResult(listOf(GuestPath("/d/proj space")), { "D:\\proj space" })["roots"]!!.jsonArray.single().jsonObject["uri"]!!.jsonPrimitive.content
+        assertEquals("file:///D:/proj%20space", mapped)
+    }
     @get:Rule val tmp = TemporaryFolder()
 
     @Test fun `roots declare changes and encode current directory and extras`() = runBlocking {

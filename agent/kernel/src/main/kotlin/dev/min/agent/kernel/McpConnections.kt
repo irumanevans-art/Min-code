@@ -83,6 +83,7 @@ internal class ClientConnector(
     private val http: HttpTransport?,
     private val clientVersion: String,
     internal val requestTimeoutMs: Long = 30_000,
+    private val serverPath: (GuestPath) -> String = { it.value },
 ) : McpConnector {
 
     override suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection {
@@ -126,7 +127,7 @@ internal class ClientConnector(
             capabilities = buildJsonObject { putJsonObject("roots") { put("listChanged", true) }; putJsonObject("elicitation") { putJsonObject("form") {}; putJsonObject("url") {} } },
             requestHandler = { method, params ->
                 when (method) {
-                    "roots/list" -> rootsResult(roots())
+                    "roots/list" -> rootsResult(roots(), serverPath)
                     "elicitation/create" -> elicit(params)
                     else -> throw dev.min.agent.mcp.McpRpcException(-32601, "不支持这个 MCP 请求方法。")
                 }
@@ -160,11 +161,13 @@ internal class ClientConnector(
 
 }
 
-internal fun rootsResult(roots: List<GuestPath>): JsonObject = buildJsonObject {
+internal fun rootsResult(roots: List<GuestPath>, serverPath: (GuestPath) -> String = { it.value }): JsonObject = buildJsonObject {
     put("roots", buildJsonArray {
         roots.distinct().forEach { path ->
             // guest 路径属于服务器的运行环境；URI 构造器负责空格、中文与 # 的编码。
-            add(buildJsonObject { put("uri", java.net.URI("file", "", path.value, null).toASCIIString()) })
+            val mapped = serverPath(path).replace('\\', '/')
+            val uriPath = if (Regex("^[A-Za-z]:/").containsMatchIn(mapped)) "/$mapped" else mapped
+            add(buildJsonObject { put("uri", java.net.URI("file", "", uriPath, null).toASCIIString()) })
         }
     })
 }

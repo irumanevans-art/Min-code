@@ -114,6 +114,7 @@ class KernelDeps(
     val mcpFirstSnapshotWaitMs: Long = 5_000,
     /** MCP 握手与单次请求的超时（CC 的 `MCP_TIMEOUT` 默认 30 秒）；Android 上 proot 里冷启动 npx 慢，App 给 120 秒 */
     val mcpConnectTimeoutMs: Long = 30_000,
+    val mcpServerPath: (GuestPath) -> String = { it.value },
     val canAnswerMcpElicitation: Boolean = true,
     val mcpElicitationTimeoutMs: Long = 5 * 60_000,
 ) {
