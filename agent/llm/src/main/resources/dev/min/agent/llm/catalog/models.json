@@ -72,6 +72,30 @@
     "reasoningEcho": "always"
   },
   {
+    "ref": { "providerId": "anthropic", "modelId": "claude-sonnet-5-5" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 10.0,
+      "cacheWritePerMTok": 2.5,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheReadPerMTok": 0.2,
+      "asOf": "2026-10-07"
+    },
+    "family": "claude",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "effortPatches": {
+      "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
+      "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
+      "high": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "high" } },
+      "xhigh": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "xhigh" } },
+      "max": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "max" } }
+    },
+    "reasoningEcho": "always"
+  },
+  {
     "ref": { "providerId": "anthropic", "modelId": "claude-haiku-4-5-20251001" },
     "pricing": {
       "currency": "USD",

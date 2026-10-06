@@ -42,6 +42,7 @@
 | claude-fable-5-1 | reasoningEcho | always | anthropic.md §3（thinking 块 "must be passed back unmodified"；§10 无相反） |
 | claude-opus-5-5 | 同上各字段 | 1000000 / 128000 / true / adaptive×5 / always | anthropic.md §2、§3（"Adaptive (always on)"） |
 | claude-sonnet-5 | 同上各字段 | 1000000 / 128000 / true / adaptive×5 / always | anthropic.md §2、§3（"Adaptive"） |
+| claude-sonnet-5-5 | 同上各字段 | 1000000 / 128000 / true / adaptive×5 / always | Claude API 参考（claude-api skill 模型表，缓存于 2026-09-25）：Sonnet 5.5 为 Sonnet 5 的后继，同 1M 窗口 / 128K 输出 / 同分词器；`thinking.disabled` 返回 400（Min 的 effort 补丁不发 disabled）。2026-10-07 补录 |
 | claude-haiku-4-5-20251001 | contextWindow / maxOutputTokens | 200000 / 64000 | anthropic.md §2（200K / 64K） |
 | claude-haiku-4-5-20251001 | supportsImages | true | anthropic.md §2 |
 | claude-haiku-4-5-20251001 | effortPatches | off=`{"thinking":{"type":"disabled"}}`、high=`{"thinking":{"type":"enabled"}}` | anthropic.md §2（"Extended" 推理）+ §3（`enabled`/`disabled`；任务单规则：开/关两档只写 off 与一个开启档） |
@@ -141,6 +142,7 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
 | claude-fable-5-1 | USD：入 10 / 出 50 / 写 12.5（1h 20）/ 读 0.25 | inventory anthropic.md §2/§6 + platform.claude.com/docs/en/about-claude/pricing.md | 2026-10-07 |
 | claude-opus-5-5 | USD：入 4 / 出 20 / 写 5（1h 8）/ 读 0.2 | 同上 | 2026-10-07 |
 | claude-sonnet-5 | USD：入 2 / 出 10 / 写 2.5（1h 4）/ 读 0.2 | 同上 | 2026-10-07 |
+| claude-sonnet-5-5 | USD：入 2 / 出 10 / 写 2.5（1h 4）/ 读 0.2 | Claude API 参考（claude-api skill 模型表，缓存于 2026-09-25：「same prices ($2 / $10 per MTok, cache reads $0.20)」；写入按 Anthropic 统一的 1.25× / 2× 输入价） | 2026-10-07 |
 | claude-haiku-4-5-20251001 | USD：入 1 / 出 5 / 写 1.25（1h 2）/ 读 0.1 | 同上 | 2026-10-07 |
 | glm-5.3（zhipu / zhipu-openai） | CNY：入 8 / 出 28 / 读 2；无写价（隐式缓存，存储限时免费） | inventory zhipu.md §12.2 + docs.bigmodel.cn/cn/guide/start/pricing.md | 2026-10-07 |
 | glm-5.2（zhipu / zhipu-openai） | CNY：入 8 / 出 28 / 读 2 | 同上 | 2026-10-07 |
