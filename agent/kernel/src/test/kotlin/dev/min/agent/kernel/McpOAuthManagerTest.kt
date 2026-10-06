@@ -9,6 +9,8 @@ import dev.min.agent.store.*
 import dev.min.agent.testkit.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -122,6 +124,36 @@ class McpOAuthManagerTest {
         } finally { scope.cancel() }
     }
     private suspend fun invoke(rt: SessionRuntime)=rt.mcpCaller.call(McpCallRequest("db","ping",args(),rt.sessionId,CallId("c"),FakeArtifacts(),{}))
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun `login returns only after staging tools even when manager background jobs are paused`() = runBlocking {
+        Server().use { s ->
+            val scheduler=TestCoroutineScheduler()
+            val paused=CoroutineScope(SupervisorJob()+StandardTestDispatcher(scheduler))
+            val live=CoroutineScope(SupervisorJob()+Dispatchers.Default)
+            try {
+                val store=FileSessionStore(tmp.newFolder().toPath(),{0L})
+                val rt=SessionHub(store,testDeps(ScriptedModel(reply(TextPart("ok"))),emptyList()),live).create(GuestPath("/w"),TEST_MODEL,PermissionMode.BypassPermissions)
+                rt.loadMcp(McpServersLoaded(emptyList()),McpToolsSnapshot(emptyList()))
+                val connection=object : McpConnection {
+                    override val state=MutableStateFlow<McpConnectionState>(McpConnectionState.Ready(dev.min.agent.mcp.McpServerInfo("2025-11-25",args(),args("tools" to args()),null)))
+                    override val toolsChanged=emptyFlow<Unit>()
+                    override val instructions: String? = null
+                    override suspend fun listTools()=listOf(McpToolDef("ping",null,null,args("type" to "object","properties" to args()),null,null,null))
+                    override suspend fun call(tool: String,arguments: JsonObject,onProgress: (McpProgress)->Unit,idleTimeoutMs: Long,hardTimeoutMs: Long?): McpCallResult=error("unused")
+                    override fun stderrTail()=emptyList<String>()
+                    override suspend fun close() {}
+                }
+                val manager=McpManager(paused,McpConnector { _,_,_ -> connection },oauth=McpOAuthClient(s.http,s.store,s.authorizer))
+                val spec=McpServerSpec.Remote("db",McpScope.User,null,false,McpTransportKind.Http,s.key.endpoint,emptyMap(),null,McpOAuthConfig(clientId="client"))
+                manager.attach(rt,McpConfigSnapshot(listOf(McpServerEntry(spec,McpGate.Enabled,null,emptyList(),emptyList())),emptyList(),false),GuestPath("/w"),fresh=false)
+                manager.login("db",rt.sessionId)
+                assertTrue(rt.state.value.mcpTools!!.tools.isEmpty())
+                // 故意不调度 manager 后台任务；公共登录方法返回后，紧接的回合就应拿到工具。
+                rt.applyStagedMcp()
+                assertEquals(1,rt.state.value.mcpTools!!.tools.size)
+            } finally { paused.cancel(); scheduler.runCurrent(); live.cancel() }
+        }; Unit
+    }
     @Test fun `no token needs login then login stages tools and logout invalidates credentials`() = runBlocking {
         Server().use { s -> case(s) { hub,rt,store ->
             assertEquals("needs-auth",hub.mcp.statusOf(rt.sessionId).single().state)

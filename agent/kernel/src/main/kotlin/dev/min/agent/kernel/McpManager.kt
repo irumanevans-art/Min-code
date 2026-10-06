@@ -318,7 +318,8 @@ internal class McpManager(
                 val c=spec.oauth
                 client.login(tokenKey(entry),dev.min.agent.mcp.McpOAuthSettings(c?.clientId,c?.clientSecret,c?.callbackPort,c?.authServerMetadataUrl,c?.scopes),entry.challenge)
                 val old=entry.connection; entry.connection=null; old?.close()
-                connectEntry(entry); changed(entry); audit(entry,"login","success",rt)
+                // 登录返回后用户可能马上发下一回合，必须先完成入队，再报告成功。
+                connectEntry(entry); stageChanged(entry); audit(entry,"login","success",rt)
             } catch(e: CancellationException) { withContext(NonCancellable) { audit(entry,"login","cancelled",rt) }; throw e }
             catch(e: Exception) { failed(entry,e); audit(entry,"login","failed",rt); throw IllegalStateException(entry.reason ?: "MCP 登录失败。") }
         }
@@ -394,9 +395,13 @@ internal class McpManager(
 
     /** 某条连接的工具表或状态变了：用到它、已经写过首份快照的会话，把新快照排到下一回合 */
     private fun changed(entry: Entry) {
-        scope.launch {
-            val affected = lock.withLock { bindings.values.filter { b -> b.loaded && b.entries.values.any { it === entry } } }
-            affected.forEach { restage(it) }
+        scope.launch { stageChanged(entry) }
+    }
+
+    private suspend fun stageChanged(entry: Entry) {
+        // 取快照到入队保留同一把锁，旧的异步通知不能晚于新快照覆盖它。
+        lock.withLock {
+            bindings.values.filter { b -> b.loaded && b.entries.values.any { it === entry } }.forEach { restage(it) }
         }
     }
 

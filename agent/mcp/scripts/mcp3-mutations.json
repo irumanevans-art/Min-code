@@ -435,8 +435,8 @@
     "Item": "audit_stage",
     "Name": "do-not-stage-login-tools",
     "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
-    "From": "connectEntry(entry); changed(entry); audit(entry,\"login\",\"success\",rt)",
-    "To": "connectEntry(entry); audit(entry,\"login\",\"success\",rt)",
+    "From": "connectEntry(entry); stageChanged(entry); audit(entry,\"login\",\"success\",rt)",
+    "To": "connectEntry(entry); changed(entry); audit(entry,\"login\",\"success\",rt)",
     "Module": "kernel",
     "Test": "*McpOAuthManagerTest"
   },
