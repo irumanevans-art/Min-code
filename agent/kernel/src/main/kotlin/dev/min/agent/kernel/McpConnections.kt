@@ -62,6 +62,8 @@ internal interface McpConnection {
     suspend fun listResources(): List<JsonObject> = emptyList()
     suspend fun listResourceTemplates(): List<JsonObject> = emptyList()
     suspend fun readResource(uri: String): McpCallResult = error("服务器不支持读取资源。")
+    suspend fun listPrompts(): List<JsonObject> = emptyList()
+    suspend fun getPrompt(name: String, arguments: JsonObject): List<dev.min.agent.mcp.McpPromptMessage> = error("服务器不支持 prompts。")
 }
 
 /** 起一条连接并握手完成（失败抛异常，消息给人看）。测试换成替身 */
@@ -138,6 +140,8 @@ internal class ClientConnector(
             override suspend fun listResources() = client.listResources()
             override suspend fun listResourceTemplates() = client.listResourceTemplates()
             override suspend fun readResource(uri: String) = client.readResource(uri)
+            override suspend fun listPrompts() = client.listPrompts()
+            override suspend fun getPrompt(name: String, arguments: JsonObject) = client.getPrompt(name, arguments)
             override suspend fun call(tool: String, arguments: JsonObject, onProgress: (McpProgress) -> Unit, idleTimeoutMs: Long, hardTimeoutMs: Long?) =
                 client.callTool(tool, arguments, onProgress, idleTimeoutMs, hardTimeoutMs)
             override fun stderrTail(): List<String> = tail()

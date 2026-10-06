@@ -12,6 +12,11 @@ import java.nio.file.Files
 
 /** 桌面输入入口：真的 `.claude/skills`、`.claude/commands` 文件经桌面路径映射读出后，`/名字 参数` 展开成要发给模型的内容 */
 class SlashInputTest {
+    @Test fun `MCP prompt arguments reach the shared input action and missing arguments become notice`() {
+        val p = dev.min.agent.ext.mcp.McpPromptCommand("mcp__s__p", "s", "p", listOf(dev.min.agent.ext.mcp.McpPromptArgument("arg", true)))
+        assertTrue(interpretInput("/mcp__s__p \"two words\"", emptyList(), emptyList(), SkillVars(), listOf(p)) is InputAction.Prompt)
+        assertTrue(interpretInput("/mcp__s__p", emptyList(), emptyList(), SkillVars(), listOf(p)) is InputAction.Notice)
+    }
     @get:Rule
     val tmp = TemporaryFolder()
 

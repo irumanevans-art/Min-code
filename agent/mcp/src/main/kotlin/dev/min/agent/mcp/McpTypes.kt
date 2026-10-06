@@ -108,6 +108,7 @@ data class McpToolDef(
 data class McpCallResult(val content: List<McpContent>, val structuredContent: JsonElement?, val isError: Boolean) {
     override fun toString(): String = "McpCallResult(contentCount=${content.size}, isError=$isError)"
 }
+data class McpPromptMessage(val role: String, val content: McpContent)
 sealed interface McpContent {
     data class Text(val text: String) : McpContent {
         override fun toString(): String = "Text(${safeLog(text)})"

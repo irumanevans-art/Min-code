@@ -10,7 +10,10 @@ $mutations = @(
     @{ Item='resources'; Name='hide-ui'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt'; From='uri.startsWith("ui://",'; To='uri.startsWith("wrong://",'; Module='kernel'; Test='*McpResourcesSessionTest' },
     @{ Item='resources'; Name='frozen-prefix'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt'; From='e.copy(resourceServers = mcpTools?.resourceServers ?: e.resourceServers)'; To='e'; Module='kernel'; Test='*McpResourcesSessionTest' },
     @{ Item='resources'; Name='input-content'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt'; From='attached += result.content'; To='attached += emptyList<Part>()'; Module='kernel'; Test='*McpResourcesSessionTest' },
-    @{ Item='resources'; Name='read-image'; File='agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt'; From='embedded.mimeType?.startsWith("image/") == true'; To='embedded.mimeType?.startsWith("wrong/") == true'; Module='mcp'; Test='*McpResourcesTest' }
+    @{ Item='resources'; Name='read-image'; File='agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt'; From='embedded.mimeType?.startsWith("image/") == true'; To='embedded.mimeType?.startsWith("wrong/") == true'; Module='mcp'; Test='*McpResourcesTest' },
+    @{ Item='prompts'; Name='required'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/mcp/McpPromptCommands.kt'; From='it.required && it.name !in values'; To='it.required && it.name !in values && false'; Module='ext'; Test='*McpPromptCommandsTest' },
+    @{ Item='prompts'; Name='quote'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/mcp/McpPromptCommands.kt'; From='if (char == quote) quote = null else token.append(char)'; To='if (char == quote) quote = null else token.append(if (char.isWhitespace()) ''_'' else char)'; Module='ext'; Test='*McpPromptCommandsTest' },
+    @{ Item='prompts'; Name='assistant-content'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpPrompts.kt'; From='mcpCaller.getPrompt(server, prompt, arguments).flatMapIndexed'; To='mcpCaller.getPrompt(server, prompt, arguments).filter { it.role == "user" }.flatMapIndexed'; Module='kernel'; Test='*McpPromptsSessionTest' }
 )
 $results = @()
 foreach ($m in $mutations | Where-Object { $_.Item -eq $Item }) {

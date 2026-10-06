@@ -2,6 +2,8 @@ package dev.min.agent.cli
 
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.TextPart
+import dev.min.agent.kernel.listMcpPrompts
+import dev.min.agent.kernel.getMcpPrompt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,14 +55,24 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
     suspend fun say(input: String): Boolean {
         val config = app.config()
-        val text = when (val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime))) {
-            is InputAction.Send -> action.text
+        val prompts = if (input.trimStart().startsWith("/mcp__")) {
+            try { runtime.listMcpPrompts() }
+            catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
+            catch (e: Exception) { System.err.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
+        } else emptyList()
+        val parts = when (val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime), prompts)) {
+            is InputAction.Send -> listOf(TextPart(action.text))
+            is InputAction.Prompt -> {
+                val result = runtime.getMcpPrompt(action.command.server, action.command.prompt, action.arguments)
+                if (result.isError) { System.err.println(result.content.filterIsInstance<TextPart>().joinToString("\n") { it.text }); return false }
+                result.content
+            }
             is InputAction.Notice -> {
                 System.err.println(action.message)
                 return false
             }
         }
-        runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(text)))
+        runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts)
         runtime.awaitIdle()
         println()
         return true

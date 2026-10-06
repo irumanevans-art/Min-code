@@ -158,6 +158,21 @@ class McpClient(
 
     suspend fun listResourceTemplates(): List<JsonObject> = listPages("resources/templates/list", "resourceTemplates")
 
+    suspend fun listPrompts(): List<JsonObject> = listPages("prompts/list", "prompts")
+
+    suspend fun getPrompt(name: String, arguments: JsonObject): List<McpPromptMessage> {
+        ready()
+        val result = request("prompts/get", buildJsonObject { put("name", name); put("arguments", arguments) }, options.requestTimeoutMs) as? JsonObject
+            ?: throw McpProtocolException("$displayName：prompts/get 响应不是对象。")
+        val messages = result["messages"] as? JsonArray ?: throw McpProtocolException("$displayName：prompts/get 缺少 messages。")
+        return messages.map { raw ->
+            val message = raw as? JsonObject ?: throw McpProtocolException("$displayName：prompt 消息不是对象。")
+            val role = message.text("role")
+            if (role != "user" && role != "assistant") throw McpProtocolException("$displayName：prompt 消息角色不合法。")
+            McpPromptMessage(role, parseContent(message["content"] ?: throw McpProtocolException("$displayName：prompt 消息没有 content。")))
+        }
+    }
+
     suspend fun readResource(uri: String): McpCallResult {
         ready()
         val result = request("resources/read", buildJsonObject { put("uri", uri) }, options.requestTimeoutMs) as? JsonObject

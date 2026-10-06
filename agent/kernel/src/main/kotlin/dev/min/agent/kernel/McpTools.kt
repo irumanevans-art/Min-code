@@ -49,6 +49,8 @@ internal data class McpCallRequest(
 internal fun interface McpCaller {
     suspend fun call(request: McpCallRequest): ToolResult
     suspend fun listResources(servers: List<String>): List<JsonObject> = emptyList()
+    suspend fun listPrompts(): List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList()
+    suspend fun getPrompt(server: String, name: String, arguments: JsonObject): List<dev.min.agent.mcp.McpPromptMessage> = error("服务器不支持 prompts。")
     suspend fun readResource(server: String, uri: String, artifacts: dev.min.agent.spi.ArtifactSink, id: String): ToolResult =
         ToolResult(listOf(TextPart("MCP 服务器 $server 不支持读取资源。")), isError = true)
 

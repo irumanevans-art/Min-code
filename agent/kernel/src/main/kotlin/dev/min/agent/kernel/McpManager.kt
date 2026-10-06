@@ -336,6 +336,25 @@ internal class McpManager(
     // ---- 调用 ----
 
     private fun callerFor(binding: Binding) = object : McpCaller {
+        override suspend fun listPrompts(): List<dev.min.agent.ext.mcp.McpPromptCommand> {
+            withTimeoutOrNull(startupWaitMs) { binding.entries.values.forEach { it.settled.await() } }
+            val definitions = binding.entries.values.filter { it.spec.name != "anthropic-skills" }.flatMap { entry ->
+                val connection = entry.connection?.takeIf { it.capabilities.containsKey("prompts") } ?: return@flatMap emptyList()
+                connection.listPrompts().mapNotNull { raw -> (raw["name"] as? JsonPrimitive)?.content?.let { Triple(entry.spec.name, it, raw) } }
+            }
+            val names = McpNames.assign(definitions.map { it.first to it.second })
+            return definitions.map { (server, prompt, raw) ->
+                val args = (raw["arguments"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { arg ->
+                    val o = arg as? JsonObject ?: return@mapNotNull null
+                    val name = (o["name"] as? JsonPrimitive)?.content ?: return@mapNotNull null
+                    dev.min.agent.ext.mcp.McpPromptArgument(name, (o["required"] as? JsonPrimitive)?.booleanOrNull == true)
+                }
+                dev.min.agent.ext.mcp.McpPromptCommand(names.getValue(server to prompt), server, prompt, args)
+            }
+        }
+        override suspend fun getPrompt(server: String, name: String, arguments: JsonObject) =
+            (binding.entries[server]?.connection ?: error("MCP 服务器 $server 不可用。" )).getPrompt(name, arguments)
+
         override suspend fun listResources(servers: List<String>): List<JsonObject> = servers.flatMap { server ->
             val connection = binding.entries[server]?.connection ?: return@flatMap emptyList()
             val templates = try { connection.listResourceTemplates() }
