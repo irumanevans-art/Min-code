@@ -46,14 +46,16 @@ class McpOAuthHostTest {
         for(n in 0..9) assertNotNull(FileMcpTokenStore(file).load(McpTokenKey("s$n",key.endpoint)))
         Files.writeString(file,"FAKE_SECRET invalid json")
         try { FileMcpTokenStore(file).load(key); fail("corrupt store") } catch(e: IllegalStateException) { assertFalse(generateSequence(e as Throwable) { it.cause }.joinToString().contains("FAKE_SECRET")) }
-        assertEquals("FAKE_SECRET invalid json",Files.readString(file)); Unit
+        assertTrue(Files.readString(file)=="FAKE_SECRET invalid json"); Unit
     }
     @Test fun `manual browser mode accepts callback without displaying code or verifier`() = runBlocking {
-        val output=ByteArrayOutputStream(); val host=DesktopMcpAuthorizer(true)
-        host.output=PrintStream(output); host.input=StringReader("http://127.0.0.1:1234/mcp/oauth/callback?code=FAKE_CODE\n").buffered()
+        var browsed=false
+        val output=ByteArrayOutputStream(); val host=DesktopMcpAuthorizer(true,browser={browsed=true;false},browserAvailable={true})
+        val requested=java.net.ServerSocket(0).use { it.localPort }
+        host.output=PrintStream(output); host.input=StringReader("http://127.0.0.1:$requested/mcp/oauth/callback?code=FAKE_CODE\n").buffered()
         var port=0
-        val result=host.authorize(1234) { port=URI(it).port; "https://as.example/authorize?code_challenge=proof&state=s" }
-        assertEquals(1234,port); assertTrue(result.contains("FAKE_CODE")); assertFalse(output.toString().contains("FAKE_CODE")); assertTrue(output.toString().contains("粘贴完整回调"))
+        val result=host.authorize(requested) { port=URI(it).port; "https://as.example/authorize?code_challenge=proof&state=s" }
+        assertEquals(requested,port); assertFalse(browsed); assertTrue(result.contains("FAKE_CODE")); assertFalse(output.toString().contains("FAKE_CODE")); assertTrue(output.toString().contains("粘贴完整回调"))
         assertTrue(output.toString().contains("https://as.example/authorize")); Unit
     }
     @Test fun `manual skip cancels and CLI supports login logout and no browser flag`() = runBlocking {

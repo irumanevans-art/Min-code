@@ -94,11 +94,13 @@
   `/branch` 与 `--fork-session` 把整份日志复制成一个新根会话后追加它作分界；折叠后组请求沿用事件里冻结的 basis 与 cacheKey，
   分支首个请求的前缀与原会话分支点逐字相同。分支不复制子 agent（引用仍指向原子会话，内核按归属拒绝跨会话发消息/停止）。
   含新事件的日志旧版本打不开；旧日志照常读。
-# MCP2 资源快照与附件
+# MCP3 OAuth 审计
 
 `mcp_authentication`：server、action（login/logout/refresh）、outcome（success/failed/cancelled）。
 操作者所属会话由日志头标识，时间由 EventRecord 提供。仅审计，不改变重放的工具表；
 OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话数据，永远不进日志/附件/快照。
+
+# MCP2 资源快照与附件
 
 `mcp_tools_snapshot.resourceServers`（默认空列表）记录已就绪的 resources 服务器；晚连上的服务器在下一回合加入，掉线保留已知能力。
 `@server:uri` 仅对宿主显式标为人工输入的文本扫描，在发送前转换为预算内的附件与规范 Part，内容随 `input_received.parts` 同步落盘；

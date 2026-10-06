@@ -126,7 +126,7 @@ class McpOAuthClient(
 
     private suspend fun discover(resource: String, settings: McpOAuthSettings, challenge: McpAuthChallenge?): Pair<Metadata, String?> {
         settings.authServerMetadataUrl?.let { override ->
-            if (secureUri(override).scheme != "https") fail(McpOAuthException.Kind.Security)
+            if (!secureUri(override).scheme.equals("https",true)) fail(McpOAuthException.Kind.Security)
             return metadata(json("GET", override) ?: fail(McpOAuthException.Kind.Discovery), null) to null
         }
         val u = secureUri(resource)
@@ -245,7 +245,7 @@ private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8)
 private fun query(url: String, params: List<Pair<String, String>>) = url + (if ('?' in url) "&" else "?") + params.joinToString("&") { "${encode(it.first)}=${encode(it.second)}" }
 private fun secureUri(raw: String): URI {
     val u = try { URI(raw) } catch (e: Exception) { fail(McpOAuthException.Kind.Security) }
-    if (u.host == null || u.userInfo != null || u.fragment != null || !(u.scheme == "https" || (u.scheme == "http" && u.host in setOf("127.0.0.1", "[::1]")))) fail(McpOAuthException.Kind.Security)
+    if (u.host == null || u.userInfo != null || u.fragment != null || !(u.scheme.equals("https",true) || (u.scheme.equals("http",true) && u.host in setOf("127.0.0.1", "[::1]")))) fail(McpOAuthException.Kind.Security)
     return u
 }
 fun canonicalResource(endpoint: String): String {

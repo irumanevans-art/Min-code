@@ -214,7 +214,8 @@ internal class McpManager(
             gate.withPermit {
                 var connection: McpConnection? = null
                 try {
-                    if (entry.spec is McpServerSpec.Remote && oauth != null) {
+                    // helper 的认证头到请求时才知道；不要为预检多跑一次 helper，或替配置的认证刷新 OAuth。
+                    if (entry.spec is McpServerSpec.Remote && oauth != null && entry.spec.headersHelper==null && entry.spec.headers.keys.none { it.equals("Authorization",true) }) {
                         val saved=oauth.store.load(tokenKey(entry))
                         if(saved?.accessToken!=null && saved.expiresAtMs?.let { it<=nowMs() }==true) {
                             oauth.refresh(tokenKey(entry)); entry.authRefreshed=true; audit(entry,"refresh","success")

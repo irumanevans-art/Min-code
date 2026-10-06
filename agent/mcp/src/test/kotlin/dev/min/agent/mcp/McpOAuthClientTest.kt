@@ -53,6 +53,8 @@ class McpOAuthClientTest {
         var responseRefresh = true
         var secret: String? = null
         var tokenAuth = "none"
+        var asAuthMethods = listOf("none","client_secret_basic","client_secret_post")
+        val tokenAuthorizationHeaders=mutableListOf<String?>()
         var networkFailure: Set<String> = emptySet()
         private val entropySequence=AtomicInteger()
         val client = McpOAuthClient(object : HttpTransport {
@@ -95,6 +97,7 @@ class McpOAuthClientTest {
                         put("registration_endpoint", "$base/register")
                         put("code_challenge_methods_supported", JsonArray(pkce.map(::JsonPrimitive)))
                         put("scopes_supported", JsonArray(supportedScopes.map(::JsonPrimitive)))
+                        put("token_endpoint_auth_methods_supported",JsonArray(asAuthMethods.map(::JsonPrimitive)))
                     }
                     path == "/register" -> {
                         registered++
@@ -103,6 +106,7 @@ class McpOAuthClientTest {
                     }
                     path == "/token" -> {
                         exchanged++
+                        tokenAuthorizationHeaders+=x.requestHeaders.getFirst("Authorization")
                         tokenRequests+=params(x.requestBody.readBytes().decodeToString())
                         if(rejectToken) { status=400; buildJsonObject { put("error", "invalid_grant"); put("error_description", "FAKE_ACCESS FAKE_REFRESH FAKE_SECRET FAKE_CODE") } }
                         else buildJsonObject { put("access_token", "FAKE_ACCESS"); if(responseRefresh) put("refresh_token","FAKE_REFRESH"); put("token_type", "Bearer"); put("expires_in", 60) }
@@ -135,8 +139,8 @@ class McpOAuthClientTest {
             assertEquals(70_000L, saved.expiresAtMs)
             f.store.save(f.key,saved.copy(refreshToken="OLD_REFRESH"))
             f.client.refresh(f.key)
-            assertEquals("OLD_REFRESH", f.tokenRequests.last()["refresh_token"])
-            assertEquals("FAKE_REFRESH", f.store.load(f.key)!!.refreshToken)
+            assertTrue(f.tokenRequests.last()["refresh_token"]=="OLD_REFRESH")
+            assertTrue(f.store.load(f.key)!!.refreshToken=="FAKE_REFRESH")
             assertEquals(f.key.endpoint, f.tokenRequests.last()["resource"])
             assertFalse(saved.toString().contains("FAKE_"))
         }; Unit
@@ -166,7 +170,19 @@ class McpOAuthClientTest {
         Unit
     }
     @Test fun `pre registered client bypasses DCR`() = runBlocking {
-        Fixture().use { f -> f.client.login(f.key,McpOAuthSettings(clientId="preset",clientSecret="FAKE_SECRET")); assertEquals(0,f.registered); assertEquals("preset",f.authorization["client_id"]) }; Unit
+        Fixture().use { f ->
+            f.client.login(f.key,McpOAuthSettings(clientId="preset",clientSecret="FAKE_SECRET")); assertEquals(0,f.registered); assertEquals("preset",f.authorization["client_id"])
+            assertTrue(f.tokenAuthorizationHeaders.single()=="Basic ${Base64.getEncoder().encodeToString("preset:FAKE_SECRET".toByteArray())}")
+            assertFalse(f.tokenRequests.single().containsKey("client_secret"))
+        }; Unit
+    }
+    @Test fun `confidential post client sends secret only in token request body`() = runBlocking {
+        Fixture().use { f ->
+            f.asAuthMethods=listOf("client_secret_post")
+            f.client.login(f.key,McpOAuthSettings(clientId="preset",clientSecret="FAKE_SECRET"))
+            assertTrue(f.tokenRequests.single()["client_secret"]=="FAKE_SECRET"); assertNull(f.tokenAuthorizationHeaders.single())
+            assertFalse(f.authorization.values.contains("FAKE_SECRET")); assertTrue(f.store.load(f.key)!!.clientSecret=="FAKE_SECRET")
+        }; Unit
     }
     @Test fun `state missing wrong and duplicated never reaches token exchange`() = runBlocking {
         for (mode in 0..2) Fixture().use { f ->
@@ -205,12 +221,13 @@ class McpOAuthClientTest {
     }
     @Test fun `refresh without replacement retains previous refresh token and endpoint isolation`() = runBlocking {
         Fixture().use { f ->
-            f.client.login(f.key); f.responseRefresh=false; f.client.refresh(f.key); assertEquals("FAKE_REFRESH",f.store.load(f.key)!!.refreshToken)
+            f.client.login(f.key); f.responseRefresh=false; f.client.refresh(f.key); assertTrue(f.store.load(f.key)!!.refreshToken=="FAKE_REFRESH")
             assertNull(f.store.load(McpTokenKey("other",f.key.endpoint))); assertNull(f.store.load(McpTokenKey("db","${f.base}/other")))
         }; Unit
     }
     @Test fun `resource canonicalization preserves escaped path and query`() {
         assertEquals("https://example.com/a%20b?version=1",canonicalResource("https://EXAMPLE.com/a%20b/?version=1"))
+        assertEquals("https://example.com/mcp",canonicalResource("HTTPS://EXAMPLE.com/mcp"))
     }
     @Test fun `root issuer discovery omits duplicate OIDC candidates`() = runBlocking {
         for (asPath in listOf("/.well-known/oauth-authorization-server","/.well-known/openid-configuration")) Fixture().use { f ->

@@ -8,7 +8,11 @@ import java.io.BufferedReader
 import java.io.PrintStream
 import java.net.URI
 
-internal class DesktopMcpAuthorizer(var noBrowser: Boolean) : McpAuthorizer {
+internal class DesktopMcpAuthorizer(
+    var noBrowser: Boolean,
+    private val browser: (String)->Boolean = { browseDesktop(it) },
+    private val browserAvailable: ()->Boolean = { localBrowserAvailable() },
+) : McpAuthorizer {
     var input: BufferedReader? = null
     var output: PrintStream = System.err
     private val pending=StringBuilder()
@@ -16,9 +20,7 @@ internal class DesktopMcpAuthorizer(var noBrowser: Boolean) : McpAuthorizer {
         pending.clear()
         return LoopbackMcpAuthorizer(
             openPage={ url ->
-                if(noBrowser || noLocalBrowser()) false else try {
-                    if(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) { Desktop.getDesktop().browse(URI(url)); true } else false
-                } catch(e: Exception) { false }
+                if(noBrowser || !browserAvailable()) false else browser(url)
             },
             manualUrl={ url -> output.println("请在浏览器打开：${terminalText(url)}\n授权后粘贴完整回调 URL（/skip 取消）；回调内容不会发送给模型。") },
             pollCallback={
@@ -38,6 +40,11 @@ internal class DesktopMcpAuthorizer(var noBrowser: Boolean) : McpAuthorizer {
             },
         ).authorize(redirectPort,authorizationUrl)
     }
-    private fun noLocalBrowser() = System.getenv("CI")=="true" || System.getenv("SSH_CONNECTION")!=null ||
-        (System.getProperty("os.name").startsWith("Linux") && System.getenv("DISPLAY")==null && System.getenv("WAYLAND_DISPLAY")==null)
+    companion object {
+        private fun localBrowserAvailable() = System.getenv("CI")!="true" && System.getenv("SSH_CONNECTION")==null &&
+            !(System.getProperty("os.name").startsWith("Linux") && System.getenv("DISPLAY")==null && System.getenv("WAYLAND_DISPLAY")==null)
+        private fun browseDesktop(url: String): Boolean = try {
+            if(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) { Desktop.getDesktop().browse(URI(url)); true } else false
+        } catch(e: Exception) { false }
+    }
 }

@@ -14,19 +14,24 @@ class LoopbackMcpAuthorizerTest {
         val authorizer=LoopbackMcpAuthorizer(openPage={ true })
         val pending=async { authorizer.authorize(null) { redirect.complete(it); "https://as.example/a" } }
         val uri=URI(redirect.await()); assertEquals("127.0.0.1",uri.host)
+        withContext(Dispatchers.IO) {
+            var outsideConnected=false
+            try { Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.2",uri.port),200); outsideConnected=true } } catch(e: java.io.IOException) { }
+            assertFalse("listener must bind exactly 127.0.0.1",outsideConnected)
+        }
         val text=withContext(Dispatchers.IO) { Socket(uri.host,uri.port).use { socket ->
             socket.getOutputStream().write("GET ${uri.path}?code=FAKE_CODE&state=s&iss=i HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".toByteArray())
             socket.getInputStream().readBytes().decodeToString()
         } }
         assertFalse(text.contains("FAKE_CODE")); assertTrue(text.startsWith("HTTP/1.1 200"))
-        assertEquals("$uri?code=FAKE_CODE&state=s&iss=i",pending.await())
+        assertTrue(pending.await()=="$uri?code=FAKE_CODE&state=s&iss=i")
         ServerSocket(uri.port).close(); Unit
     }
     @Test fun `manual callback prints URL and uses requested redirect port`() = runBlocking {
         val port=ServerSocket(0).use { it.localPort }; val shown=AtomicReference<String>(); var redirect=""
         val authorizer=LoopbackMcpAuthorizer(openPage={ false },manualUrl={shown.set(it)},pollCallback={"$redirect?code=FAKE_CODE"})
         val result=authorizer.authorize(port) { redirect=it; "https://as.example/authorize?state=s" }
-        assertEquals(port,URI(redirect).port); assertEquals("https://as.example/authorize?state=s",shown.get()); assertEquals("$redirect?code=FAKE_CODE",result)
+        assertEquals(port,URI(redirect).port); assertEquals("https://as.example/authorize?state=s",shown.get()); assertTrue(result=="$redirect?code=FAKE_CODE")
         ServerSocket(port).close(); Unit
     }
     @Test fun `cancellation and five minute bounded timeout release listener`() = runBlocking {

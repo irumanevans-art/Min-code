@@ -167,7 +167,7 @@ class McpOAuthManagerTest {
         } }; Unit
     }
     @Test fun `configured Authorization fails and never triggers OAuth discovery or refresh`() = runBlocking {
-        Server().use { s -> s.store.save(s.key,s.saved()); case(s,mapOf("Authorization" to "Bearer FAKE_CONFIGURED")) { hub,rt,_ ->
+        Server().use { s -> s.store.save(s.key,s.saved(9_000)); case(s,mapOf("Authorization" to "Bearer FAKE_CONFIGURED")) { hub,rt,_ ->
             assertEquals("failed",hub.mcp.statusOf(rt.sessionId).single().state); assertEquals(0,s.refreshes.get()); assertEquals(0,s.discoveries.get())
             try { hub.loginMcp("db",rt.sessionId); fail("configured auth") } catch(e: IllegalStateException) { assertFalse(e.toString().contains("FAKE_CONFIGURED")) }
             assertEquals(0,s.discoveries.get())
