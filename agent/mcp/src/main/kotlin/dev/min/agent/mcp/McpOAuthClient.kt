@@ -23,14 +23,29 @@ class McpAuthChallenge(val resourceMetadata: String? = null, val scope: String? 
     override fun toString() = "McpAuthChallenge(***)"
     companion object {
         fun parse(headers: List<Pair<String, String>>): McpAuthChallenge? {
-            val raw = headers.filter { it.first.equals("WWW-Authenticate", true) }.map { it.second }
-                .firstOrNull { Regex("(?:^|,)\\s*Bearer(?:\\s|$)", RegexOption.IGNORE_CASE).containsMatchIn(it) } ?: return null
-            val bearer = Regex("(?:^|,)\\s*Bearer(?:\\s|$)", RegexOption.IGNORE_CASE).find(raw)!!
-            val tail = raw.substring(bearer.range.last + 1)
-            val params = Regex("([A-Za-z_][A-Za-z0-9_-]*)\\s*=\\s*(?:\"((?:\\\\.|[^\"\\\\])*)\"|([^,\\s]+))")
-                .findAll(tail).associate { m -> m.groupValues[1].lowercase() to
-                    (if (m.groupValues[2].isNotEmpty()) m.groupValues[2].replace(Regex("\\\\(.)"), "$1") else m.groupValues[3]) }
-            return McpAuthChallenge(params["resource_metadata"], params["scope"], params["error"])
+            for ((name,raw) in headers) {
+                if(!name.equals("WWW-Authenticate",true)) continue
+                val segments=mutableListOf<String>(); val current=StringBuilder(); var quoted=false; var escaped=false
+                for(c in raw) {
+                    if(c==',' && !quoted) { segments+=current.toString().trim(); current.clear(); continue }
+                    current.append(c)
+                    if(escaped) escaped=false else if(c=='\\' && quoted) escaped=true else if(c=='"') quoted=!quoted
+                }
+                segments+=current.toString().trim()
+                var bearer=false; val params=linkedMapOf<String,String>()
+                for(segment in segments) {
+                    val scheme=Regex("^Bearer(?:\\s+|$)",RegexOption.IGNORE_CASE).find(segment)
+                    val value=if(!bearer && scheme!=null) { bearer=true; segment.substring(scheme.range.last+1) } else segment
+                    if(!bearer) continue
+                    val m=Regex("([A-Za-z_][A-Za-z0-9_-]*)\\s*=\\s*(?:\"((?:\\\\.|[^\"\\\\])*)\"|([^,\\s]+))").matchEntire(value)
+                    if(m==null) break
+                    val key=m.groupValues[1].lowercase()
+                    if(params.containsKey(key)) return null
+                    params[key]=if(value.substringAfter('=').trim().startsWith('"')) m.groupValues[2].replace(Regex("\\\\(.)"), "$1") else m.groupValues[3]
+                }
+                if(bearer) return McpAuthChallenge(params["resource_metadata"],params["scope"],params["error"])
+            }
+            return null
         }
     }
 }
@@ -199,7 +214,11 @@ class McpOAuthClient(
     }
 
     private suspend fun firstJson(urls: List<String>): JsonObject? {
-        for (url in urls) { secureUri(url); json("GET", url)?.let { return it } }
+        for (url in urls) {
+            secureUri(url)
+            try { json("GET",url)?.let { return it } }
+            catch(e: McpOAuthException) { if(e.kind!=McpOAuthException.Kind.Discovery) throw e }
+        }
         return null
     }
     private suspend fun json(method: String, url: String, body: ByteArray? = null, contentType: String? = null): JsonObject? {
@@ -219,7 +238,7 @@ class McpOAuthClient(
 }
 
 private fun strings(j: JsonObject, key: String): List<String> = (j[key] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { v -> v.isString }?.content }.orEmpty()
-private fun validToken(value: String) = value.isNotBlank() && value.length <= 65_536 && value.none { it.isISOControl() }
+private fun validToken(value: String) = value.isNotBlank() && value.length <= 65_536 && value.none { it.isISOControl() || it.isWhitespace() }
 private fun fail(kind: McpOAuthException.Kind): Nothing = throw McpOAuthException(kind)
 private fun b64(bytes: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8)

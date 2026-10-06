@@ -15,6 +15,8 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.test.*
 
 class McpOAuthClientTest {
     private class Store : McpTokenStore {
@@ -51,8 +53,11 @@ class McpOAuthClientTest {
         var responseRefresh = true
         var secret: String? = null
         var tokenAuth = "none"
+        var networkFailure: Set<String> = emptySet()
+        private val entropySequence=AtomicInteger()
         val client = McpOAuthClient(object : HttpTransport {
             override suspend fun open(request: HttpRequest): HttpStreamingResponse = withContext(Dispatchers.IO) {
+                if(URI(request.url).rawPath in networkFailure) throw java.io.IOException("FAKE_SECRET network failure")
                 val actual = if (URI(request.url).host == "configured.example") base + URI(request.url).rawPath else request.url
                 val c = URI(actual).toURL().openConnection() as HttpURLConnection
                 c.requestMethod=request.method
@@ -71,8 +76,8 @@ class McpOAuthClientTest {
             if (cancel) throw CancellationException("test cancel")
             val reply=mutableMapOf("code" to "FAKE_CODE", "state" to authorization.getValue("state"), "iss" to issuer)
             callback(reply)
-            "$base$callbackPath?${form(reply)}" + if (repeatedState) "&state=duplicate" else ""
-        }, nowMs={ 10_000 }, entropy={ n -> ByteArray(n) { it.toByte() } })
+            "$base$callbackPath?${form(reply)}" + if (repeatedState) "&state=${URLEncoder.encode(reply.getValue("state"),Charsets.UTF_8)}" else ""
+        }, nowMs={ 10_000 }, entropy={ n -> val offset=entropySequence.incrementAndGet(); ByteArray(n) { (it+offset).toByte() } })
         init {
             server.createContext("/") { x ->
                 val path=x.requestURI.path
@@ -121,6 +126,7 @@ class McpOAuthClientTest {
             val request=f.tokenRequests.single()
             val verifier=request.getValue("code_verifier")
             assertTrue(verifier.length in 43..128)
+            assertFalse(f.authorization.values.any { it==verifier })
             assertEquals(Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray())),f.authorization["code_challenge"])
             assertEquals(f.key.endpoint, f.authorization["resource"])
             assertEquals(f.key.endpoint, request["resource"])
@@ -241,6 +247,41 @@ class McpOAuthClientTest {
         val storeFailure=expectFailure(McpOAuthException.Kind.RefreshFailed) { McpOAuthClient(http,badStore,McpAuthorizer.Unavailable).refresh(McpTokenKey("db","https://example.com/mcp")) }
         assertFalse(storeFailure.toString().contains("FAKE_REFRESH")); assertNull(storeFailure.cause)
         Unit
+    }
+    @Test fun `network failures continue well known fallback and wrappers redact every secret`() = runBlocking {
+        Fixture().use { f ->
+            f.prPath="/.well-known/oauth-protected-resource"; f.asPath="/.well-known/openid-configuration/tenant"
+            f.networkFailure=setOf("/.well-known/oauth-protected-resource/mcp","/.well-known/oauth-authorization-server/tenant")
+            f.client.login(f.key); assertEquals(1,f.exchanged)
+            val credentials=f.store.load(f.key)!!.copy(clientSecret="FAKE_SECRET")
+            assertFalse(credentials.toString().contains("FAKE_"))
+            assertFalse(McpTokenRecord(f.key,credentials).toString().contains("FAKE_"))
+            assertFalse(McpOAuthSettings(clientSecret="FAKE_SECRET").toString().contains("FAKE_"))
+            assertFalse(McpAuthChallenge("https://example.com?token=FAKE_SECRET","FAKE_SECRET","FAKE_SECRET").toString().contains("FAKE_"))
+        }; Unit
+    }
+    @Test fun `challenge parser isolates Bearer scheme and quoted comma escaped quote`() {
+        val challenge=McpAuthChallenge.parse(listOf("www-authenticate" to "Basic realm=\"old\", bEaReR scope=\"read,write\", realm=\"a\\\"b\", resource_metadata=\"https://example.com/pr\", Basic scope=\"wrong\""))!!
+        assertEquals("read,write",challenge.scope); assertEquals("https://example.com/pr",challenge.resourceMetadata)
+        assertNull(McpAuthChallenge.parse(listOf("WWW-Authenticate" to "Basic realm=\"old\"")))
+    }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun `authorization has exact five minute budget even when authorizer never responds`() = runTest {
+        val http=object : HttpTransport {
+            override suspend fun open(request: HttpRequest): HttpStreamingResponse {
+                val body=if(request.url.contains("oauth-protected-resource")) buildJsonObject { put("resource","https://db.example/mcp"); put("authorization_servers",JsonArray(listOf(JsonPrimitive("https://as.example")))) }
+                else buildJsonObject { put("issuer","https://as.example"); put("authorization_endpoint","https://as.example/a"); put("token_endpoint","https://as.example/t"); put("code_challenge_methods_supported",JsonArray(listOf(JsonPrimitive("S256")))) }
+                return HttpStreamingResponse(200,emptyList(),flowOf(body.toString().toByteArray()))
+            }
+            override suspend fun send(request: HttpRequest): HttpResponse=error("unused")
+            override fun stream(request: HttpRequest): Flow<SseEvent> = error("unused")
+        }
+        var timedOut=false; val entered=CompletableDeferred<Unit>()
+        val client=McpOAuthClient(http,Store(),McpAuthorizer { _,url -> url("http://127.0.0.1:1234/mcp/oauth/callback"); entered.complete(Unit); awaitCancellation() })
+        val job=launch { try { client.login(McpTokenKey("db","https://db.example/mcp"),McpOAuthSettings(clientId="client")) } catch(e: TimeoutCancellationException) { timedOut=true } }
+        runCurrent(); assertTrue(entered.isCompleted)
+        advanceTimeBy(299_999); runCurrent(); assertTrue(job.isActive); assertFalse(timedOut)
+        advanceTimeBy(1); runCurrent(); assertTrue(timedOut); assertTrue(job.isCompleted)
     }
     private suspend fun expectFailure(kind: McpOAuthException.Kind, block: suspend () -> Unit): McpOAuthException {
         try { block(); fail("expected OAuth failure") } catch(e: McpOAuthException) { assertEquals(kind,e.kind); return e }
