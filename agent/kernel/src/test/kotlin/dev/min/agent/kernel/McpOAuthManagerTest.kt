@@ -152,6 +152,7 @@ class McpOAuthManagerTest {
         Server().use { s -> s.store.save(s.key,s.saved()); case(s) { hub,rt,_ ->
             s.alwaysUnauthorized=true; assertTrue(invoke(rt).isError)
             assertEquals(2,s.attempts.get()); assertEquals(1,s.refreshes.get()); assertEquals("needs-auth",hub.mcp.statusOf(rt.sessionId).single().state)
+            assertTrue(invoke(rt).isError); assertEquals(2,s.attempts.get()); assertEquals(1,s.refreshes.get())
         } }; Unit
     }
     @Test fun `rejected refresh immediately requires login and scope failure names missing scope`() = runBlocking {

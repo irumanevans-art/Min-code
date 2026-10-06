@@ -266,6 +266,8 @@ internal class McpManager(
             val missing=e.scope.orEmpty().split(' ').filter { it.matches(Regex("[A-Za-z0-9:_./*\\-]{1,80}")) }.take(12).joinToString(" ")
             if(missing.isEmpty()) "需要登录（needs-auth）。" else "需要额外权限（needs-auth），缺少 scope：$missing。请登录；使用 pinned scopes 时先更新配置。"
         } else if(e is dev.min.agent.mcp.McpOAuthException || e is McpHttpException || e is McpTransportClosed) e.message else "MCP 连接失败。"
+        val old=entry.connection; entry.connection=null
+        old?.let { scope.launch { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
         changed(entry)
     }
     private suspend fun recover(entry: Entry,old: McpConnection?,e: Exception): McpConnection = entry.authLock.withLock {
@@ -282,6 +284,7 @@ internal class McpManager(
         connectEntry(entry)
     }
     private suspend fun <T> authenticated(entry: Entry,block: suspend (McpConnection) -> T): T {
+        if(entry.status==NEEDS_AUTH) throw LoginRequired(entry.challenge?.takeIf { it.error=="insufficient_scope" }?.scope)
         val initial=entry.connection ?: throw LoginRequired()
         try { return block(initial).also { entry.authRefreshed=false } }
         catch(e: CancellationException) { throw e }
