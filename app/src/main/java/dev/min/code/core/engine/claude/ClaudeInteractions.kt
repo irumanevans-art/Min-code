@@ -69,6 +69,7 @@ internal fun claudeInteractions(
             plan = (request.input["plan"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty(),
             // 计划没有「始终允许」：那条建议多半是切权限模式，不该在批准计划时顺手放宽
             options = listOf(allowOption(), denyWithNoteOption(), denyAndStopOption()),
+            extraOptions = suggestionOptions(request),
         )
 
         else -> PendingInteraction.Approval(
@@ -86,20 +87,21 @@ internal fun claudeInteractions(
             blockedPath = request.blockedPath,
             options = buildList {
                 add(allowOption())
-                request.suggestions.forEachIndexed { i, s ->
-                    add(
-                        ApprovalOption(
-                            id = ApprovalOption.ALWAYS_PREFIX + i, label = s.label,
-                            kind = ApprovalOption.Kind.AllowAlways, acceptsNote = false, notificationSafe = false,
-                        ),
-                    )
-                }
+                addAll(suggestionOptions(request))
                 add(denyAndStopOption())
                 add(denyWithNoteOption())
             },
         )
     }
 }.withQueueDepth()
+
+private fun suggestionOptions(request: ClaudeCodeEvent.PermissionRequest): List<ApprovalOption> =
+    request.suggestions.mapIndexed { i, s ->
+        ApprovalOption(
+            id = ApprovalOption.ALWAYS_PREFIX + i, label = s.label,
+            kind = ApprovalOption.Kind.AllowAlways, acceptsNote = false, notificationSafe = false,
+        )
+    }
 
 private fun allowOption() = ApprovalOption(
     id = ApprovalOption.ALLOW, label = "允许", kind = ApprovalOption.Kind.Allow,
@@ -206,7 +208,7 @@ internal fun claudeAnswerCall(
     is PendingInteraction.Approval, is PendingInteraction.PlanReview -> {
         val options = when (card) {
             is PendingInteraction.Approval -> card.options
-            is PendingInteraction.PlanReview -> card.options
+            is PendingInteraction.PlanReview -> card.options + card.extraOptions
             else -> emptyList()
         }
         if (answer !is InteractionAnswer.Choose) {

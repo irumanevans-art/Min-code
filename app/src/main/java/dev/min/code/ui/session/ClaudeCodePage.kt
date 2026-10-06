@@ -1931,7 +1931,8 @@ private fun PermissionSheet(
             // 而这一档改坏了没有 undo（rootfs 里改砸了重装就回来，相册里的照片不会）。
             // 每一次都值得单独看一眼——这正是把整机交出去之后仅剩的那道闸。
             if (!onDevice) {
-                approval?.options.orEmpty().filter { it.kind == ApprovalOption.Kind.AllowAlways }.forEach { suggestion ->
+                val always = approval?.options ?: (pending as? PendingInteraction.PlanReview)?.extraOptions
+                always.orEmpty().filter { it.kind == ApprovalOption.Kind.AllowAlways }.forEach { suggestion ->
                     InkButton(
                         onClick = { onAnswer(suggestion.id) },
                         modifier = Modifier.fillMaxWidth(),

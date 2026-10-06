@@ -63,6 +63,12 @@ sealed interface PendingInteraction {
         /** Markdown 全文 */
         val plan: String,
         val options: List<ApprovalOption>,
+        /**
+         * 引擎随计划带来的「始终允许」类建议（CC：`permission_suggestions`，多半是「切换到 Accept edits」）。
+         * 不放进 [options]：那是通知 / 命令层认的标准选项，计划审批不该在那里出现「始终允许」；
+         * 但会话页现行为是把它们当按钮摆在计划卡下面，B6(b) 换通用类型时不能丢，所以另放一处，答复时 [Answer] 照样按 id 认。
+         */
+        val extraOptions: List<ApprovalOption> = emptyList(),
     ) : PendingInteraction
 
     val kind: InteractionKind

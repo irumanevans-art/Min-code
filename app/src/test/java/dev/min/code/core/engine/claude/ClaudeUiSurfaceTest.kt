@@ -154,4 +154,39 @@ class ClaudeUiSurfaceTest {
             }
         }
     }
+
+    @Test
+    fun `reverting a call that has no snapshot is Rejected so the page does not mark it undone`() = runBlocking<Unit> {
+        RegistryHarness("plain_reply", size = 3).use { rh ->
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val engine = ClaudeCodeEngine(rh.registry, scope, MutableStateFlow<EngineAvailability>(EngineAvailability.Ready))
+                val session = engine.create(StartOptions(cwd = "/workspace")).getOrThrow()
+                rh.harnessOf(rh.registry.get(rh.registry.activeKey.value!!)!!).awaitHandshake()
+                val result = session.submit(dev.min.code.core.engine.SessionCommand.Revert("c1", "no-such-tool-use"))
+                assertTrue(result.toString(), result is dev.min.code.core.engine.CommandResult.Rejected)
+                assertTrue(session.checkpointed(listOf("no-such-tool-use")).isEmpty())
+                assertTrue(session.revertFile("f", listOf("no-such-tool-use")).isEmpty())
+            } finally {
+                scope.cancel()
+            }
+        }
+    }
+
+    @Test
+    fun `a plan card keeps the CLI's suggestion as an extra option the page can show and answer`() {
+        val suggestion = dev.min.code.core.claudecode.PermissionSuggestion("切换到「Accept edits」模式", buildJsonObject { put("type", "setMode") })
+        val request = dev.min.code.core.claudecode.ClaudeCodeEvent.PermissionRequest(
+            requestId = "p1", toolName = "ExitPlanMode", input = buildJsonObject { put("plan", "# 计划") },
+            suggestions = listOf(suggestion),
+        )
+        val card = claudeInteractions(listOf(request), emptyList(), emptyList()).single() as dev.min.code.core.engine.PendingInteraction.PlanReview
+        // 标准选项里没有「始终允许」（通知与命令层只认这些），建议另放 extraOptions
+        assertTrue(card.options.none { it.kind == dev.min.code.core.engine.ApprovalOption.Kind.AllowAlways })
+        assertEquals("切换到「Accept edits」模式", card.extraOptions.single().label)
+        val call = claudeAnswerCall(card, dev.min.code.core.engine.InteractionAnswer.Choose(card.extraOptions.single().id), request, isHead = true)
+        call as ClaudeAnswerCall.Permission
+        assertTrue(call.allow)
+        assertEquals(suggestion, call.suggestion)
+    }
 }
