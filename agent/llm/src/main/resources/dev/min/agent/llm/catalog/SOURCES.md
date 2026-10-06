@@ -129,6 +129,40 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
   doubao 的上下文只能由计费分档「[0, 1024] 千 token」推断（doubao.md §R2a.2「即 1M 级」是转述者推断，
   非文档数字），亦不足为据。
 
+## pricing（2026-10-07 补录）
+
+「每百万 token 标价」进 models.json 各条目的可选 `pricing` 字段；币种照官方定价页原样（不换算），
+`asOf` 为复核日期。取数路径：先转录 inventory 各家价格节（2026-09-28 抓取），再于 2026-10-07 在官方
+定价页逐数复核一致后写入；官方没有单独标价的字段省略（计费回退按输入价算，规则写在 `Pricing.kt` 注释）。
+20 / 22 个条目有价（12 个不同模型）：USD 14 条、CNY 6 条。
+
+| 模型（条目） | pricing 值（每百万 token） | 出处 | 复核日期 |
+|---|---|---|---|
+| claude-fable-5-1 | USD：入 10 / 出 50 / 写 12.5（1h 20）/ 读 0.25 | inventory anthropic.md §2/§6 + platform.claude.com/docs/en/about-claude/pricing.md | 2026-10-07 |
+| claude-opus-5-5 | USD：入 4 / 出 20 / 写 5（1h 8）/ 读 0.2 | 同上 | 2026-10-07 |
+| claude-sonnet-5 | USD：入 2 / 出 10 / 写 2.5（1h 4）/ 读 0.2 | 同上 | 2026-10-07 |
+| claude-haiku-4-5-20251001 | USD：入 1 / 出 5 / 写 1.25（1h 2）/ 读 0.1 | 同上 | 2026-10-07 |
+| glm-5.3（zhipu / zhipu-openai） | CNY：入 8 / 出 28 / 读 2；无写价（隐式缓存，存储限时免费） | inventory zhipu.md §12.2 + docs.bigmodel.cn/cn/guide/start/pricing.md | 2026-10-07 |
+| glm-5.2（zhipu / zhipu-openai） | CNY：入 8 / 出 28 / 读 2 | 同上 | 2026-10-07 |
+| qwen3.8-max（qwen，Anthropic 端点） | CNY：入 12 / 出 36 / 显式写 15 / 显式读 1 | inventory qwen.md §2/§6 + help.aliyun.com/zh/model-studio/qwen3-8-max.md（北京地域） | 2026-10-07 |
+| qwen3.8-max（qwen-openai） | CNY：入 12 / 出 36 / 普通命中读 1.5；无写价 | 同上 | 2026-10-07 |
+| MiniMax-M3（minimax / minimax-openai） | USD：入 0.3 / 出 1.2 / 读 0.06；>512k 档：入 0.6 / 出 2.4 / 读 0.12；无写价列 | inventory minimax.md §2/§6 + platform.minimax.io/docs/guides/pricing-paygo | 2026-10-07 |
+| MiniMax-M2.7（两协议条目） | USD：入 0.3 / 出 1.2 / 写 0.375 / 读 0.06 | 同上 | 2026-10-07 |
+| MiniMax-M2.7-highspeed（两协议条目） | USD：入 0.6 / 出 2.4 / 写 0.375 / 读 0.06 | 同上 | 2026-10-07 |
+| deepseek-flash（deepseek / deepseek-openai） | USD（峰值）：入 0.3 / 出 1.2 / 读 0.006；无写价（隐式磁盘缓存） | inventory deepseek.md §2/§6 + api-docs.deepseek.com/quick_start/pricing | 2026-10-07 |
+| deepseek-v4-pro（两协议条目） | USD（峰值）：入 1.32 / 出 3.96 / 读 0.044 | 同上 | 2026-10-07 |
+
+**各家口径差异**（`cost()` 与 `Pricing.kt` 注释按此实现）：
+- **Anthropic**：写分 5m（1.25x）/ 1h（2x）两档，数据里 5m 进 `cacheWritePerMTok`、1h 进 `cacheWrite1hPerMTok`；
+  Min 的 Usage 不分 TTL，计费一律按 5m 档。官方明示 1M 窗口按标准价、无长上下文分档（2026-10-07 复抓原文）。
+- **zhipu**：隐式缓存，无写价；GLM-5.3/5.2 无输入分档（有分档的是 GLM-5.1 / 5-Turbo / 5，未收录）。
+- **qwen**：一个模型两套缓存价——Anthropic 端点 Min 发 cache_control，走显式缓存价（写 15 / 读 1）；
+  OpenAI 端点 Min 不发缓存标记，走「普通缓存命中」价（读 1.5）；两个条目分开写。
+- **MiniMax**：按输入长度分档（≤512k / >512k），输出与缓存读随档同价；cost() 分档按本次请求输入 token 总数
+  （含缓存读写），边界值归低档。缓存 token 是否计入官方页的「input」口径文档未写（见下第 16 条）。
+- **deepseek**：峰/谷双价（谷 = 峰的一半；peak 为 UTC 周一至五 01:00–04:00 与 06:00–10:00，周末与
+  中国法定节假日全谷）；目录无时段维度，写**峰值**价（保守，实收只会更低）。
+
 ## 拿不准的值（按约定处理，见汇报）
 
 
@@ -157,6 +191,22 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
     （qwen.md §1，北京地域）：实际接入须把 `{WorkspaceId}` 换成业务空间 ID，装配层使用前须校验/替换。
 13. doubao-openai 的 streamUsage=always：官方正文未写 stream_options，openai/NOTES.md 豆包行注明
     「先省略未确认的 include_usage，待实测」——按其建议取 always，联调时若发现末块无 usage 需回头改。
+
+14. MiniMax-M3.1-Flash-Preview 无 pricing：官方 pricing-paygo 页没有这个模型（2026-10-07 复抓确认
+    "Not listed on this page"），minimax.md §2 的输入/输出/缓存读/缓存写四列也全为「文档未写」——
+    一处可用数字都没有，两个协议条目都不写。
+15. deepseek 取峰值价：定价页峰谷双价、目录 schema 无时段字段；按峰值写（花费只会高估不会低估），
+    谷值 = 峰值一半。做精确账单对账前需给 pricing 加时段维度。
+16. MiniMax-M3 的缓存写价：定价页无写价列（2026-10-07 确认 cache write absent），`cacheWritePerMTok`
+    省略 → cost() 按输入价计写 token；若实收同 M2.7 的 1.25x 输入价，M3 花费会被低估。
+    「>512k」边界是否把缓存 token 计入输入总数文档未写，cost() 按任务单口径以总输入（含缓存读写）选档。
+17. Anthropic 的 `cacheWrite1hPerMTok` 只是数据：Usage 不区分 5m/1h 写入，cost() 一律按 5m 档计
+    （Min 发的 cache_control 默认 TTL 也是 5m）；1h 价留给 Usage 细分后或人工对账，当前不进任何计算。
+18. qwen 的「普通缓存命中 1.5 / 显式创建 15、命中 1」是同一模型在两种缓存机制下的两套价，按 Min 在
+    两个端点实发不发缓存标记拆成两个条目（Anthropic 条目 = 显式价、OpenAI 条目 = 普通命中价）；
+    若 Min 将来在 OpenAI 编码器里也发显式缓存标记，需回头改 qwen-openai 条目。
+19. Batch（anthropic/zhipu/qwen 均 5 折上下）、MiniMax Priority 档（1.5x）、Anthropic 美国数据驻留
+    （1.1x）与 Opus 5.5 fast mode（$8/$40）：Min 不发这些开关，一概不计入；目录价格都是标准档的。
 
 ## G5 · DeepSeek 原厂复核（2026-09-30，覆盖以上旧 inventory 值）
 
