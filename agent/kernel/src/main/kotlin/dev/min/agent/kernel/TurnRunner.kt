@@ -471,8 +471,9 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val allowed = state.origin?.tools
     val builtin = if (allowed == null) deps.tools else deps.tools.filter { it.name in allowed }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
-    val resourceTools = if (state.mcpTools?.resourceServers.orEmpty().isEmpty()) emptyList() else listOf(
-        McpResourceTool(false, state.mcpTools!!.resourceServers, mcp), McpResourceTool(true, state.mcpTools!!.resourceServers, mcp),
+    val resourceServers = state.visibleMcpResourceServers(deps)
+    val resourceTools = if (resourceServers.isEmpty()) emptyList() else listOf(
+        McpResourceTool(false, resourceServers, mcp), McpResourceTool(true, resourceServers, mcp),
     )
     val allMcp = state.visibleMcpTools(deps)
     val search = state.usesMcpToolSearch(deps) && allMcp.isNotEmpty()

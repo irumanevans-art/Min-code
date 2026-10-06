@@ -227,6 +227,15 @@ internal fun SessionState.visibleMcpTools(deps: KernelDeps): List<McpToolEntry> 
     }
 }
 
+internal fun SessionState.visibleMcpResourceServers(deps: KernelDeps): List<String> {
+    val policy = PolicyContext(mode=settings.mode, rules=(rules + sessionRules).mapNotNull(PermissionRule::from), cwd=settings.cwd, home=deps.memoryHome ?: GuestPath("/root"))
+    return mcpTools?.resourceServers.orEmpty().filter { server ->
+        val name = McpNames.assign(listOf(server to "resource")).getValue(server to "resource")
+        val agent = origin
+        (agent == null || (agent.mcpDenied.none { matchesMcpPattern(it, name) } && (agent.mcpTools?.any { matchesMcpPattern(it, name) } ?: true))) && !PolicyEngine.deniesWholeTool(name, policy)
+    }
+}
+
 /** 系统提示里「MCP 服务器说明」那一段的原料：只列模型看得到工具的服务器，按服务器名排序 */
 internal fun SessionState.mcpInstructionsFor(visible: List<McpToolEntry>, search: Boolean = mcpToolSearch?.enabled == true): Map<String, String> {
     val servers = visible.map { it.server }.toSet()

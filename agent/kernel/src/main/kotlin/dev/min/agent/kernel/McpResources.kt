@@ -29,8 +29,12 @@ internal class McpResourceTool(private val read: Boolean, private val servers: L
         if (read && (server == null || (raw["uri"] as? JsonPrimitive)?.takeIf { it.isString }?.content.isNullOrBlank())) return ToolInput.Invalid("需要 server 与 uri。")
         return ToolInput.Valid(raw)
     }
-    override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, description(HarnessProfile(ModelFamily.Other, EditStyle.StrReplace)))
+    override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, description(HarnessProfile(ModelFamily.Other, EditStyle.StrReplace)), specifiers = (input["server"] as? JsonPrimitive)?.content?.let(::listOf) ?: servers)
     override fun run(input: JsonObject, ctx: ToolContext) = flow {
+        if (parse(input) is ToolInput.Invalid) {
+            emit(ToolProgress.Done(ToolResult(listOf(TextPart("这个服务器不在会话允许的资源清单里。")), isError=true)))
+            return@flow
+        }
         val server = input["server"]?.jsonPrimitive?.content
         val result = try {
             if (read) caller.readResourceFor(server!!, input["uri"]!!.jsonPrimitive.content, ctx)

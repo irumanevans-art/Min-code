@@ -13,6 +13,17 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 
 class McpResourcesSessionTest {
+    @Test fun `resource tools enforce server denies child restrictions and scoped permission asks`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val deps = testDeps(ScriptedModel(), emptyList())
+            val rt = SessionRuntime.create(FileSessionStore(tmp.root.toPath(), { 0L }), LogHeader(LOG_FORMAT_VERSION, SessionId("s"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.Default), deps, scope, initial=listOf(McpToolsSnapshot(emptyList(), resourceServers=listOf("db")), PermissionRulesLoaded(listOf(RuleEntry(RuleKindData.Deny, "mcp__db", "user")))))
+            assertTrue(availableTools(rt.state.value, deps).isEmpty())
+            val read = McpResourceTool(true, listOf("allowed"), McpCaller.Unavailable)
+            assertEquals(listOf("allowed"), read.permissionAsk(args("server" to "allowed", "uri" to "r://x"), TestToolContext()).specifiers)
+            assertTrue(read.run(args("server" to "db", "uri" to "r://x"), TestToolContext()).toList().filterIsInstance<ToolProgress.Done>().single().result.isError)
+        } finally { scope.cancel() }
+    }
     @get:Rule val tmp = TemporaryFolder()
 
     @Test fun `UI resources are hidden while direct reads remain allowed`() {
