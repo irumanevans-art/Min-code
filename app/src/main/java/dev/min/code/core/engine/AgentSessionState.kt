@@ -80,7 +80,12 @@ data class TurnProgress(
     val outputTokensSettled: Int = 0,
     val outputTokensCurrent: Int = 0,
     val trigger: TurnTriggerView = TurnTriggerView.User,
+    /** 非空 = 主模型倒了、这一回合正在用回退模型（Min 的模型回退链；别的引擎恒为 null） */
+    val fallback: FallbackNotice? = null,
 )
+
+/** 「正在用回退模型 [model]（主模型 [primary] [reason]）」。只带模型 id，文案由界面层本地化 */
+data class FallbackNotice(val model: String, val primary: String, val reason: FailureKind?)
 
 /** 谁开了这一回合 */
 enum class TurnTriggerView {
@@ -139,7 +144,7 @@ enum class InterruptCause {
  * 模型请求失败的种类，镜像内核的 `ModelFailureKind`（K5），但这里是通用层，不引用内核。
  * 界面据此换说明文案：Auth →「先检查供应商」，ContextOverflow →「上下文已满」。
  */
-enum class FailureKind { Network, RateLimited, Overloaded, ContextOverflow, Auth, BadRequest, Server, Other }
+enum class FailureKind { Network, RateLimited, Overloaded, ContextOverflow, Auth, BadRequest, ModelUnavailable, Server, Other }
 
 data class SettingsView(
     val model: Choice?,

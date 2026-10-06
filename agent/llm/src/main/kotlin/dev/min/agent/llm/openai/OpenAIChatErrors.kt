@@ -1,6 +1,7 @@
 package dev.min.agent.llm.openai
 
 import dev.min.agent.llm.ModelException
+import dev.min.agent.llm.UnavailableModel
 import dev.min.agent.spi.ModelFailureKind
 
 internal class OverflowMatcher(extraPatterns: List<String>) {
@@ -29,6 +30,7 @@ internal fun classifyHttpFailure(
         status == 529 -> ModelFailureKind.Overloaded
         status in 500..599 -> ModelFailureKind.Server
         status == 413 || status in 400..499 && overflow.matches(body) -> ModelFailureKind.ContextOverflow
+        status in 400..499 && UnavailableModel.matches(status, body) -> ModelFailureKind.ModelUnavailable
         status in 400..499 -> ModelFailureKind.BadRequest
         else -> ModelFailureKind.Other
     }
@@ -52,7 +54,12 @@ internal fun classifyStreamError(type: String?, body: String, overflow: Overflow
         "rate_limit_error" -> ModelFailureKind.RateLimited
         "overloaded_error" -> ModelFailureKind.Overloaded
         "api_error", "server_error" -> ModelFailureKind.Server
-        else -> if (overflow.matches(body)) ModelFailureKind.ContextOverflow else ModelFailureKind.BadRequest
+        "model_not_found" -> ModelFailureKind.ModelUnavailable
+        else -> when {
+            overflow.matches(body) -> ModelFailureKind.ContextOverflow
+            UnavailableModel.matches(null, body) -> ModelFailureKind.ModelUnavailable
+            else -> ModelFailureKind.BadRequest
+        }
     }
     return ModelException(kind, "流中错误 ${type ?: "unknown"}：${bodyPreview(body)}", beforeFirstByte = before)
 }

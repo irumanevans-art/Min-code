@@ -1,6 +1,8 @@
 package dev.min.agent.cli
 
 import dev.min.agent.protocol.ClientMsgId
+import dev.min.agent.kernel.continueFromSummary
+import dev.min.agent.kernel.resumeAdvice
 import dev.min.agent.protocol.TextPart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +51,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     var ui = ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
     try {
         System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
+        // 交互式续接一个又老又大的会话：缓存早过期了，问一句要不要先压成摘要（-p 不问，照原样续接）
+        if (shouldOfferResume(args)) offerResume(runtime.resumeAdvice(), stdin, System.err, runtime::continueFromSummary)
 
     // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
     suspend fun say(input: String): Boolean {
@@ -84,7 +88,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
         return if (result.completed) 0 else 1
     }
 
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/branch 分支当前会话；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/recap 一行回顾；/rewind 回退；/branch 分支当前会话；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
         val line = stdin.readLine() ?: return 0
@@ -98,6 +102,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
                     System.err.println(compactionNote(runtime.state.value))
                 }
             }
+            trimmed == "/recap" -> System.err.println(recapNote(runtime.recap()))
             trimmed == "/output-style" || trimmed.startsWith("/output-style ") ->
                 outputStyleCommand(app, runtime, trimmed.removePrefix("/output-style").trim())
             trimmed == "/branch" -> {

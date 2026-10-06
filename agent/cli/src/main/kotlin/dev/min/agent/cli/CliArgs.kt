@@ -30,6 +30,8 @@ data class CliArgs(
     val searchBackend: String? = null,
     val searchUrl: String? = null,
     val fastModel: String? = null,
+    /** `--fallback-model a,b`：模型回退链，盖过 settings 的 fallbackModel；每项 `模型` 或 `供应商:模型` */
+    val fallbackModel: String? = null,
     val maxWebSearches: Int = 200,
     val webCacheTtlMs: Long = 900_000,
     val webDeadlineMs: Long = 300_000,
@@ -69,6 +71,8 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --search-backend <id>  brave / tavily / searxng；也可用 MIN_AGENT_SEARCH_BACKEND
   --search-url <url>     SearXNG 基础地址，也可用 MIN_AGENT_SEARXNG_URL
   --fast-model <id>      提取模型，同一供应商；默认会话模型
+  --fallback-model <a,b> 主模型过载（重试用尽）或不可用时按顺序换的备用模型，只管当前回合；每项 模型 或 供应商:模型，
+                         最多三个；盖过 settings 的 fallbackModel，不随 --resume 恢复
   --max-web-searches <n> 根会话及其子 agent 的搜索上限，默认 200
   --web-cache-ttl-ms <n> 网页缓存毫秒，默认 900000；0 关闭缓存
   --web-deadline-ms <n>  下载总截止毫秒，默认 300000；0 取消截止
@@ -148,6 +152,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         },
         searchUrl = values["--search-url"],
         fastModel = values["--fast-model"],
+        fallbackModel = values["--fallback-model"],
         maxWebSearches = int("--max-web-searches") ?: 200,
         webCacheTtlMs = nonNegativeLong("--web-cache-ttl-ms", 900_000),
         webDeadlineMs = nonNegativeLong("--web-deadline-ms", 300_000),

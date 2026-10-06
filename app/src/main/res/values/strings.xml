@@ -1114,6 +1114,7 @@
   <string name="min_agent_fail_context">context is full</string>
   <string name="min_agent_fail_auth">authentication failed, check the provider first</string>
   <string name="min_agent_fail_bad_request">request rejected</string>
+  <string name="min_agent_fail_model_unavailable">model unavailable</string>
   <string name="min_agent_fail_server">provider error</string>
   <string name="min_agent_fail_other">unknown</string>
   <string name="min_agent_disabled">Min Agent is turned off in Experiments</string>

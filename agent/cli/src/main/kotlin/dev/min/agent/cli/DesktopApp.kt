@@ -17,6 +17,8 @@ import dev.min.agent.tools.AgentToolOf
 import dev.min.agent.kernel.AgentCatalog
 import dev.min.agent.ext.config.ClaudeConfig
 import dev.min.agent.ext.config.ClaudeConfigLoader
+import dev.min.agent.ext.config.fallbackModelSetting
+import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.llm.Wire
 import dev.min.agent.llm.anthropic.AnthropicMessagesClient
@@ -118,7 +120,8 @@ internal class DesktopApp(
     private val fastSelection = args.fastModel?.let {
         resolveModel(args.copy(model = it, contextWindow = null, maxOutput = null), Catalog.bundled())
     }
-    private val hiddenEnv: Set<String> = setOfNotNull(keyEnv, fastSelection?.keyEnv)
+    /** 回退链：读完 settings 才知道（[hub] 里填），之前是空的 */
+    private var fallback = FallbackModels.None
     private val searchBackend = desktopSearchBackend(args)
     private var hubInstance: SessionHub? = null
 
@@ -128,6 +131,8 @@ internal class DesktopApp(
      */
     internal suspend fun hub(): SessionHub = hubInstance ?: run {
         val config = config()
+        fallback = resolveFallbackModels(args, Catalog.bundled(), config.settings.merged.fallbackModelSetting(), selection)
+        fallback.notes.forEach { System.err.println(it) }
         val catalog = AgentCatalog.of(config.agents)
         val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null)
         SessionHub(store, deps(tools), scope, HUB_LIMITS, catalog.definitions).also { hubInstance = it }
@@ -155,9 +160,10 @@ internal class DesktopApp(
 
     private val userHome get() = paths.guestOfHost(claudeHome)
 
-    /** 凭证只从环境变量读、只进请求头；这里不打印、不落盘 */
+    /** 凭证只从环境变量读、只进请求头；这里不打印、不落盘。回退链上别家的凭证也只认它自己的那个变量 */
     private val secrets = Secrets { providerId ->
-        if (providerId == provider.id) System.getenv(keyEnv)?.takeIf { it.isNotBlank() }?.let(::Secret) else null
+        val env = if (providerId == provider.id) keyEnv else fallback.selections.values.firstOrNull { it.provider.id == providerId }?.keyEnv
+        env?.let(System::getenv)?.takeIf { it.isNotBlank() }?.let(::Secret)
     }
 
     fun checkKey() {
@@ -171,21 +177,31 @@ internal class DesktopApp(
         // Exec 端口为整个 Hub 共用，句柄的随机 id 保证日志互不覆盖。
         val logDir = Files.createDirectories(home.resolve("exec-logs"))
         val transport = UrlConnectionTransport()
-        val client = when (provider.wire) {
-            Wire.AnthropicMessages -> AnthropicMessagesClient(provider, transport, secrets)
-            Wire.OpenAIChat -> OpenAIChatClient(provider, transport, secrets)
-            Wire.OpenAIResponses -> OpenAIResponsesClient(provider, transport, secrets)
-            else -> throw UsageException("CLI 尚不支持协议 ${provider.wire}")
+        fun clientFor(p: ProviderDescriptor) = when (p.wire) {
+            Wire.AnthropicMessages -> AnthropicMessagesClient(p, transport, secrets)
+            Wire.OpenAIChat -> OpenAIChatClient(p, transport, secrets)
+            Wire.OpenAIResponses -> OpenAIResponsesClient(p, transport, secrets)
+            else -> throw UsageException("CLI 尚不支持协议 ${p.wire}")
         }
+        val client = clientFor(provider)
+        val fallbackClients = fallback.selections.values.map { it.provider }.distinctBy { it.id }
+            .associate { it.id to if (it.id == provider.id) client else clientFor(it) }
+        val keyEnvs = setOfNotNull(keyEnv, fastSelection?.keyEnv) + fallback.selections.values.map { it.keyEnv }
         // 内核读环境变量都走这一个口（CLAUDE_CODE_MAX_TURNS、hook 的插值……）：模型 key 的变量对内核是 null
+        val hiddenEnv: Set<String> = keyEnvs
         val envReader = hookEnvReader(hiddenEnv)
         return KernelDeps(
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
             models = { ref ->
-                val selected = if (ref == profile.ref) profile else fastSelection?.profile?.takeIf { it.ref == ref }
+                val backup = fallback.selections[ref]
+                val selected = if (ref == profile.ref) profile else fastSelection?.profile?.takeIf { it.ref == ref } ?: backup?.profile
                 checkNotNull(selected) { "桌面 CLI 没有配置会话需要的模型 $ref" }
-                ResolvedModel(selected, client)
+                // 备用模型没有凭证就当用不了（内核会跳过它）；不放它去发一个注定 401 的请求再让回合以鉴权失败收场
+                if (backup != null && ref != profile.ref && System.getenv(backup.keyEnv).isNullOrBlank()) {
+                    throw IllegalStateException("没有凭证：请设置环境变量 ${backup.keyEnv}")
+                }
+                ResolvedModel(selected, if (backup != null) fallbackClients.getValue(backup.provider.id) else client)
             },
             tools = tools,
             host = HostPorts(
@@ -194,7 +210,7 @@ internal class DesktopApp(
                 exec = LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir)),
                 processes = LocalProcessPort(
                     paths::hostOf, home.resolve("proc-launch"),
-                    secretEnvNames = desktopSecretEnvNames(keyEnv, fastSelection?.keyEnv),
+                    secretEnvNames = desktopSecretEnvNames(*keyEnvs.toTypedArray()),
                 ),
                 web = CachedWebPort(DESKTOP_PAGE_CONVERTER, cacheTtlMs = args.webCacheTtlMs, deadlineMs = args.webDeadlineMs),
                 // 远程 MCP 服务器（Streamable HTTP / 旧 SSE）走同一个宿主 HTTP 实现
@@ -223,6 +239,7 @@ internal class DesktopApp(
             hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
             trustProjectHooks = { args.trust },
             fastModel = fastSelection?.profile?.ref,
+            fallbackModels = fallback.chain,
             maxWebSearches = args.maxWebSearches,
             // --max-turns 优先，没给时读 CLAUDE_CODE_MAX_TURNS（CC：不是正整数就启动时报错退出）。只属于这次运行，不进日志
             rootMaxTurns = resolveMaxTurns(args.maxTurns, envReader),

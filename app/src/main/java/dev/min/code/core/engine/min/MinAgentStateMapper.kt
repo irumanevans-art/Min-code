@@ -14,6 +14,7 @@ import dev.min.agent.protocol.Usage
 import dev.min.code.core.engine.AgentSessionState
 import dev.min.code.core.engine.BackgroundTask
 import dev.min.code.core.engine.Choice
+import dev.min.code.core.engine.FallbackNotice
 import dev.min.code.core.engine.ConnectionView
 import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.RetryNotice
@@ -133,6 +134,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             outputTokensSettled = turn.usage.outputTokens.toInt(),
             outputTokensCurrent = 0,
             trigger = triggerViewOf(turn.trigger),
+            fallback = turn.fallback?.let { FallbackNotice(it.model.modelId, it.primary.modelId, failureKindOf(it.reason)) },
         )
     }
 

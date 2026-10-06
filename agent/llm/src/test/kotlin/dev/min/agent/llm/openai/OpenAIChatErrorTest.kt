@@ -90,6 +90,16 @@ class OpenAIChatErrorTest {
     }
 
     @Test
+    fun `model not found is its own kind and a bare 404 stays a bad request`() {
+        val missing = failure(404, """{"error":{"code":"model_not_found","message":"The model `gpt-x` does not exist"}}""")
+        assertEquals(ModelFailureKind.ModelUnavailable, missing.kind)
+        assertFalse(missing.retryable)
+        assertEquals(ModelFailureKind.BadRequest, failure(404, "nothing here").kind)
+        // 鉴权永远优先：403 说模型没权限是鉴权问题，回退链不接这一类
+        assertEquals(ModelFailureKind.Auth, failure(403, "model_not_found").kind)
+    }
+
+    @Test
     fun `other 4xx including conflict are bad requests`() {
         for (status in listOf(400, 402, 404, 409, 422)) {
             val err = failure(status)

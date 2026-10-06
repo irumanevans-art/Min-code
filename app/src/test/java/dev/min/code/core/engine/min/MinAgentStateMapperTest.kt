@@ -58,6 +58,7 @@ import dev.min.code.core.engine.FailureKind
 import dev.min.code.core.engine.InterruptCause
 import dev.min.code.core.engine.PendingInteraction
 import dev.min.code.core.engine.SessionRef
+import dev.min.code.core.engine.FallbackNotice
 import dev.min.code.core.engine.TurnEnd
 import dev.min.code.core.engine.TurnTriggerView
 import dev.min.code.core.session.ChatItem
@@ -194,6 +195,21 @@ class MinAgentStateMapperTest {
     private fun ended(outcome: TurnOutcome, lastActivity: Long? = null, tid: TurnId = this.tid) = listOf<SessionEvent>(
         TurnStarted(tid, TurnTrigger.User), TurnEnded(tid, outcome, Usage(), 0, lastActivity),
     )
+
+    @Test fun runningTurnShowsTheFallbackModelAndItIsGoneOnceTheTurnEnds() {
+        val backup = dev.min.agent.protocol.ModelRef("p", "backup")
+        val midTurn = listOf<SessionEvent>(
+            TurnStarted(tid, TurnTrigger.User),
+            ModelRequestStarted(tid, rid, 1, T_MODEL, "fp"),
+            dev.min.agent.spi.ModelRequestFailed(tid, rid, 1, ModelFailureKind.Overloaded, "529", 529, false),
+            dev.min.agent.spi.ModelFallback(tid, rid, T_MODEL, backup, ModelFailureKind.Overloaded, "529"),
+        )
+        val running = foldOf(*user("u1", "hi").toTypedArray(), *midTurn.toTypedArray(), t0 = 1_000)
+        val notice = map(running).turn!!.fallback!!
+        assertEquals(FallbackNotice("backup", T_MODEL.modelId, FailureKind.Overloaded), notice)
+        val finished = foldOf(*user("u1", "hi").toTypedArray(), *midTurn.toTypedArray(), TurnEnded(tid, TurnOutcome.Completed, Usage(), 0), t0 = 1_000)
+        assertNull(map(finished).turn)
+    }
 
     @Test fun userStopIsAQuietNoteWithItsTime() {
         val s = foldOf(*ended(TurnOutcome.Interrupted(InterruptedBy.User)).toTypedArray(), t0 = 1_000)

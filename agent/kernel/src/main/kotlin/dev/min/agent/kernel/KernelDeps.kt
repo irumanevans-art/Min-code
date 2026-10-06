@@ -83,6 +83,14 @@ class KernelDeps(
     val trustProjectHooks: (GuestPath) -> Boolean = { false },
     val memoryLimits: MemoryLimits = MemoryLimits(),
     val fastModel: ModelRef? = null,
+    /**
+     * 模型回退链（`fallbackModel` / `--fallback-model`，已由 [FallbackChain.resolve] 去重截断）：主模型重试用尽仍过载、
+     * 或「不可用」时按顺序换下一个，只管当前回合。纯运行时选项：不进日志、不随重开会话恢复（CC：
+     * `--fallback-model` 不随 resume 恢复）。链上每一项都要能被 [models] 解析，解析不了的跳过并给一条 Note
+     */
+    val fallbackModels: List<ModelRef> = emptyList(),
+    /** 重开会话时建议「从摘要续接」的阈值（[resumeAdvice]）；照 CC：空闲 > 1 小时且上下文 > 100,000 token */
+    val resumeThresholds: ResumeThresholds = ResumeThresholds(),
     val maxWebSearches: Int = 200,
     /**
      * 根会话一个回合里的模型请求次数上限（CLI 的 `--max-turns`，没给时读 `CLAUDE_CODE_MAX_TURNS`）。

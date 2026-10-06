@@ -415,3 +415,41 @@ class SettingsLoaderTest {
         assertTrue(none.notes.isEmpty())
     }
 }
+
+class RuntimeSettingsTest {
+    private val fs = InMemoryFs()
+    private fun load() = runBlocking { SettingsLoader.load(fs, GuestPath("/workspace"), GuestPath("/root")) }.merged
+
+    @Test
+    fun `fallbackModel takes the whole chain from the highest layer that defines it and never merges`() {
+        fs.file("/root/.claude/settings.json", """{"fallbackModel":["a","b"]}""")
+        assertEquals(FallbackModelSetting(listOf("a", "b"), ConfigSource.User), load().fallbackModelSetting())
+        fs.file("/workspace/.claude/settings.json", """{"fallbackModel":["c"]}""")
+        assertEquals(FallbackModelSetting(listOf("c"), ConfigSource.Project), load().fallbackModelSetting())
+        fs.file("/workspace/.claude/settings.local.json", """{"fallbackModel":[]}""")
+        // 空数组也是「定义过」：本层明确不要回退，不能漏到低层去
+        assertEquals(FallbackModelSetting(emptyList(), ConfigSource.Local), load().fallbackModelSetting())
+    }
+
+    @Test
+    fun `a comma separated string is accepted and a wrong typed layer does not hide a good lower one`() {
+        fs.file("/root/.claude/settings.json", """{"fallbackModel":"x, y"}""")
+        assertEquals(listOf("x, y"), load().fallbackModelSetting()?.entries)
+        fs.file("/workspace/.claude/settings.json", """{"fallbackModel":{"a":1}}""")
+        assertEquals(ConfigSource.User, load().fallbackModelSetting()?.source)
+        fs.file("/root/.claude/settings.json", "{}")
+        fs.file("/workspace/.claude/settings.json", "{}")
+        assertNull(load().fallbackModelSetting())
+    }
+
+    @Test
+    fun `awaySummaryEnabled is a plain scalar from the highest layer and absent means unset`() {
+        assertNull(load().awaySummaryEnabled())
+        fs.file("/root/.claude/settings.json", """{"awaySummaryEnabled":false}""")
+        assertEquals(false, load().awaySummaryEnabled())
+        fs.file("/workspace/.claude/settings.local.json", """{"awaySummaryEnabled":true}""")
+        assertEquals(true, load().awaySummaryEnabled())
+        fs.file("/workspace/.claude/settings.local.json", """{"awaySummaryEnabled":"no"}""")
+        assertEquals(false, load().awaySummaryEnabled())
+    }
+}
