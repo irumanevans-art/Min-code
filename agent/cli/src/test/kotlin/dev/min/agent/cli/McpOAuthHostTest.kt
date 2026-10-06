@@ -59,7 +59,7 @@ class McpOAuthHostTest {
         assertTrue(output.toString().contains("https://as.example/authorize")); Unit
     }
     @Test fun `manual skip cancels and CLI supports login logout and no browser flag`() = runBlocking {
-        val host=DesktopMcpAuthorizer(true); host.output=PrintStream(ByteArrayOutputStream()); host.input=StringReader("/skip\n").buffered()
+        val host=DesktopMcpAuthorizer(true,browser={false},browserAvailable={true}); host.output=PrintStream(ByteArrayOutputStream()); host.input=StringReader("/skip\n").buffered()
         try { host.authorize(null) { "https://as.example/a" }; fail("skip") } catch(e: CancellationException) { }
         assertEquals(McpCommand.Login("db",true),parseMcpCommand("/mcp login db --no-browser"))
         assertEquals(McpCommand.Login("db",false),parseMcpCommand("/mcp login db"))
