@@ -21,6 +21,8 @@ class McpElicitationTest {
         val good = listOf(QuestionAnswer(other="a@b.example"), QuestionAnswer(other="https://example.com"), QuestionAnswer(other="2026-10-07"), QuestionAnswer(other="2026-10-07T12:00:00Z"), QuestionAnswer(selected=listOf("red")), QuestionAnswer(selected=listOf("a", "b")))
         assertEquals(json("""{"email":"a@b.example","site":"https://example.com","date":"2026-10-07","time":"2026-10-07T12:00:00Z","color":"red","tags":["a","b"]}"""), mcpFormContent(fields, good))
         for ((index, bad) in listOf(0 to "bad", 1 to "relative", 2 to "2026-02-30", 3 to "2026-10-07", 4 to "green", 5 to "c")) assertNull(mcpFormContent(fields, good.toMutableList().apply { this[index] = QuestionAnswer(other=bad) }))
+        val bool = mcpForm("s", "form", json("""{"type":"object","properties":{"yes":{"type":"boolean","enum":[true]}}}"""))!!
+        assertNull(mcpFormContent(bool, listOf(QuestionAnswer(other="false"))))
     }
     @Test fun `call finishing while question waits for commit cannot corrupt replay`() = runBlocking {
         runCase { rt, _, store -> coroutineScope {

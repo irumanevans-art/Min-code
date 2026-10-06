@@ -23,7 +23,7 @@ fun mcpFormValue(schema: JsonObject, answer: QuestionAnswer): JsonElement? {
         else -> return null
     }
     val enums = schema["enum"] as? JsonArray
-    val matched = enums?.firstOrNull { it == value || (!value.isString && it is JsonPrimitive && !it.isString && it.doubleOrNull == value.doubleOrNull) }
+    val matched = enums?.firstOrNull { it == value || (!value.isString && value.doubleOrNull != null && it is JsonPrimitive && !it.isString && it.doubleOrNull == value.doubleOrNull) }
     if (enums != null && matched == null) return null
     val number = if (value.isString) null else value.doubleOrNull
     if (number != null && (number < (schema["minimum"]?.jsonPrimitive?.doubleOrNull ?: Double.NEGATIVE_INFINITY) || number > (schema["maximum"]?.jsonPrimitive?.doubleOrNull ?: Double.POSITIVE_INFINITY))) return null
