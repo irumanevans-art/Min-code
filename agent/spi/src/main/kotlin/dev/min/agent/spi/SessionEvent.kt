@@ -54,6 +54,14 @@ data class SessionCreated(
 ) : SessionEvent
 
 /**
+ * 会话得了名字（`--name` 建会话时、会话内 `/rename` 改名时）。取最后一条为当前名字。
+ * 名字在写入前已经规整（控制 / 不可见字符换成空格、去首尾空白、最长 200 字符）
+ */
+@Serializable
+@SerialName("session_renamed")
+data class SessionRenamed(val name: String) : SessionEvent
+
+/**
  * 会话中途改设置。只写变了的字段。
  * 对模型的影响以「在对话末尾追加一段说明」表达，不改写前缀（docs/agent/04-子系统设计.md §4.5）。
  */

@@ -403,6 +403,16 @@ class SessionRuntime private constructor(
         commitIf(listOf(QuestionAnswered(questionId, declined = true)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
 
     /**
+     * 给会话改名（`/rename`）。名字先规整（[normalizeSessionName]）；规整后为空返回 null——
+     * 空名拒绝，什么都不写。改名允许与别的会话重名：人是显式改的，不该被悄悄变成别的名字（变体只在 `--name` 建会话时用）
+     */
+    suspend fun rename(raw: String): String? {
+        val name = normalizeSessionName(raw) ?: return null
+        commit(listOf(dev.min.agent.spi.SessionRenamed(name)), Durability.Sync)
+        return name
+    }
+
+    /**
      * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
      * 参数为 null 表示不改；要把思考档位清回「不控制」用 [clearEffort]（与 [effort] 同给时以 [effort] 为准）
      */

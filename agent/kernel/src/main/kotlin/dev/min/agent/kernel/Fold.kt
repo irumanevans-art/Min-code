@@ -88,6 +88,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(lastSeq == 0L) { "SessionCreated 只能是第一条事件" }
             this
         }
+        is dev.min.agent.spi.SessionRenamed -> copy(name = e.name)
         // 取最后一条：以后显式刷新记忆时再追加一条，整份替换前一份快照
         // 快照里的路径换成新快照的；按需加载过的路径原样保留
         is MemoryLoaded -> copy(

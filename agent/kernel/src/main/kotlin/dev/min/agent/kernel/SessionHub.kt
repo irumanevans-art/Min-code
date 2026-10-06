@@ -109,6 +109,24 @@ object SessionEndReasons {
 /** [SessionHub.branch] 拒绝的原因（会话在跑 / 复制期间会话动了 / 不是根会话），message 直接给人看 */
 class SessionBranchRefused(message: String) : Exception(message)
 
+/** 会话列表的一项（界面 B7 与 CLI 的按名续接用）：名字取日志里最后一条 session_renamed */
+data class SessionSummary(
+    val header: LogHeader,
+    val name: String?,
+    val cwd: GuestPath?,
+)
+
+/**
+ * 名字规整（照 CC）：控制字符与不可见字符（零宽、BOM 一类格式字符）换成空格、首尾去空白、最长 200 字符。
+ * 规整后为空返回 null——空名拒绝。日志里存的名字永远是规整后的
+ */
+fun normalizeSessionName(raw: String): String? =
+    raw.map { c -> if (c.isISOControl() || Character.getType(c) == Character.FORMAT.toInt()) ' ' else c }
+        .joinToString("")
+        .trim()
+        .take(200)
+        .ifEmpty { null }
+
 /**
  * 一个进程一个：持有所有在线的会话运行时，负责委派子 agent、交付报告、恢复后的补发（docs/agent/detail/子agent设计.md §5）。
  *
@@ -204,14 +222,71 @@ class SessionHub(
         mode: PermissionMode,
         effort: Effort? = null,
         initial: List<SessionEvent> = emptyList(),
+        /** `--name` 建会话时命名（已规整）；同目录已有同名根会话时自动改成 `-2`、`-3` 变体（CC 是两个英文单词后缀，Min 不带词表） */
+        name: String? = null,
     ): SessionRuntime {
         val id = SessionId(deps.ids.next("s"))
         val header = LogHeader(LOG_FORMAT_VERSION, id, deps.clock.nowMs())
         val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort), deps, scope, initial, hub = this)
+        name?.let { raw ->
+            normalizeSessionName(raw)?.let { wanted ->
+                val final = uniqueName(cwd, wanted)
+                runtime.commit(listOf(dev.min.agent.spi.SessionRenamed(final)), Durability.Sync)
+            }
+        }
         register(runtime)
         attachMcp(runtime, fresh = true)
         return runtime
     }
+
+    /** 同目录下没有别的根会话在用的名字：有就加 `-2`、`-3`……（按名续接按名字找，重名会找错会话） */
+    private suspend fun uniqueName(cwd: GuestPath, wanted: String): String {
+        var candidate = wanted
+        var n = 2
+        while (findSessionByName(cwd, candidate) != null) {
+            candidate = "$wanted-$n"
+            n++
+        }
+        return candidate
+    }
+
+    /**
+     * 按名字找当前目录下最近的根会话（`--resume <名字>`，x 不是会话 id 时用）。
+     * 名字取每个日志里最后一条 session_renamed；从新到旧找，先碰到先赢
+     */
+    suspend fun findSessionByName(cwd: GuestPath, name: String): SessionId? {
+        for (header in store.list().asReversed()) {
+            if (header.parent != null) continue
+            val log = store.open(header.sessionId) ?: continue
+            var created: dev.min.agent.spi.SessionCreated? = null
+            var found: String? = null
+            log.read().collect { record ->
+                when (val e = record.event) {
+                    is dev.min.agent.spi.SessionCreated -> if (created == null) created = e
+                    is dev.min.agent.spi.SessionRenamed -> found = e.name
+                    else -> Unit
+                }
+            }
+            if (created?.cwd == cwd && found == name) return header.sessionId
+        }
+        return null
+    }
+
+    /** 会话列表摘要（界面 B7 用）：头、名字（最后一条 session_renamed）、创建目录 */
+    suspend fun summaries(): List<SessionSummary> =
+        store.list().mapNotNull { header ->
+            val log = store.open(header.sessionId) ?: return@mapNotNull null
+            var created: dev.min.agent.spi.SessionCreated? = null
+            var name: String? = null
+            log.read().collect { record ->
+                when (val e = record.event) {
+                    is dev.min.agent.spi.SessionCreated -> if (created == null) created = e
+                    is dev.min.agent.spi.SessionRenamed -> name = e.name
+                    else -> Unit
+                }
+            }
+            SessionSummary(header, name, created?.cwd)
+        }
 
     /**
      * 读 MCP 配置（与 CC 同一套文件，MCP设计 §3）并接上。没有主目录的宿主不接；配置读不了记一条说明、不拦会话。

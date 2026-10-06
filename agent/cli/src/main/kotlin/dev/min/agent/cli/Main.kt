@@ -96,7 +96,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
         return if (result.completed) 0 else 1
     }
 
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/branch 分支当前会话；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
         val line = stdin.readLine() ?: return 0
@@ -112,6 +112,18 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
             }
             trimmed == "/output-style" || trimmed.startsWith("/output-style ") ->
                 outputStyleCommand(app, runtime, trimmed.removePrefix("/output-style").trim())
+            trimmed == "/rename" || trimmed.startsWith("/rename ") -> {
+                // 不带参数打印当前名字（CC 的 /rename 同样）；带参数改名，空名（规整后）拒绝
+                val wanted = trimmed.removePrefix("/rename").trim()
+                if (wanted.isEmpty()) {
+                    System.err.println(runtime.state.value.name?.let { "当前会话名字：$it" } ?: "这个会话还没有名字（/rename <名字> 起一个）")
+                } else {
+                    when (val renamed = runtime.rename(wanted)) {
+                        null -> System.err.println("名字规整后是空的，换一个。")
+                        else -> System.err.println("已改名为 $renamed")
+                    }
+                }
+            }
             trimmed == "/branch" -> {
                 // 分支并切过去继续聊：原会话一个字不动（CC 的 /branch 同样复制转录后切换写入）
                 try {
