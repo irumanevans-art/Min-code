@@ -25,11 +25,13 @@ class McpElicitationTest {
             val connector = object : McpConnector {
                 override suspend fun connect(spec: dev.min.agent.ext.mcp.McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection = error("必须接交互处理器")
                 override suspend fun connectWithInteraction(spec: dev.min.agent.ext.mcp.McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>, elicit: suspend (JsonObject?) -> JsonObject) = object : McpConnection {
-                    override val state = MutableStateFlow<dev.min.agent.mcp.McpConnectionState>(dev.min.agent.mcp.McpConnectionState.Ready(dev.min.agent.mcp.McpServerInfo("2025-11-25", args(), args("tools" to args()), null)))
+                    override val state = MutableStateFlow<dev.min.agent.mcp.McpConnectionState>(dev.min.agent.mcp.McpConnectionState.Ready(dev.min.agent.mcp.McpServerInfo("2025-11-25", args(), args("tools" to args(), "prompts" to args(), "resources" to args()), null)))
                     override val toolsChanged = emptyFlow<Unit>()
                     override val instructions: String? = null
                     override suspend fun listTools() = listOf(dev.min.agent.mcp.McpToolDef("ask", null, "ask", args("type" to "object"), null, null, null))
                     override suspend fun call(tool: String, arguments: JsonObject, onProgress: (dev.min.agent.mcp.McpProgress) -> Unit, idleTimeoutMs: Long, hardTimeoutMs: Long?) = dev.min.agent.mcp.McpCallResult(listOf(dev.min.agent.mcp.McpContent.Text(elicit(form).toString())), null, false)
+                    override suspend fun getPrompt(name: String, arguments: JsonObject) = listOf(dev.min.agent.mcp.McpPromptMessage("user", dev.min.agent.mcp.McpContent.Text(elicit(form).toString())))
+                    override suspend fun readResource(uri: String) = dev.min.agent.mcp.McpCallResult(listOf(dev.min.agent.mcp.McpContent.Text(elicit(form).toString())), null, false)
                     override fun stderrTail() = emptyList<String>()
                     override suspend fun close() { state.value = dev.min.agent.mcp.McpConnectionState.Closed("closed") }
                 }
@@ -42,8 +44,22 @@ class McpElicitationTest {
             rt.declineQuestion(asked.questionId); rt.awaitIdle()
             val log = store.open(rt.sessionId)!!; val records = log.read().toList()
             assertTrue(records.map { it.event }.filterIsInstance<ToolOutcome>().single().result.content.toString().contains("decline"))
+            val second = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
+            assertTrue(rt.sessionId.value < second.sessionId.value)
+            for (prompt in listOf(true, false)) {
+                val request = async {
+                    if (prompt) second.mcpCaller.getPrompt("s", "p", args())
+                    else second.mcpCaller.readResource("s", "file:///item", deps.host.artifacts(second.sessionId), "before-input")
+                }
+                val inputQuestion = withTimeout(2_000) { second.state.first { it.pendingMcpQuestions.isNotEmpty() }.pendingMcpQuestions.single() }
+                assertTrue(rt.state.value.pendingMcpQuestions.isEmpty())
+                assertNull(second.state.value.turn); assertNull(inputQuestion.mcpTurnId)
+                second.declineQuestion(inputQuestion.questionId); request.await()
+            }
+            val secondLog = store.open(second.sessionId)!!
+            assertEquals(second.state.value, fold(secondLog.header, secondLog.read().toList()))
             assertEquals(rt.state.value, fold(log.header, records))
-            hub.close(rt.sessionId); hub.closeMcpConnections()
+            hub.close(rt.sessionId); hub.close(second.sessionId); hub.closeMcpConnections()
         } finally { scope.cancel() }
     }
     @get:Rule val tmp = TemporaryFolder()

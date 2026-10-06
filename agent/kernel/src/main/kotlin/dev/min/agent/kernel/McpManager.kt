@@ -62,6 +62,7 @@ internal class McpManager(
         @Volatile var lastRoots: List<GuestPath> = emptyList()
         val callLock = Mutex()
         @Volatile var activeCall: McpCallRequest? = null
+        @Volatile var inputOwner: SessionRuntime? = null
         @Volatile var connection: McpConnection? = null
         @Volatile var tools: List<McpToolDef>? = null
         /** 服务器的使用说明：同工具表，掉线后保留最后一次的（系统提示不跟着抖） */
@@ -195,6 +196,7 @@ internal class McpManager(
                     connection = connector.connectWithInteraction(entry.spec, entry.projectRoot, scope, { rootsFor(entry.projectRoot) }) { params ->
                         val active = entry.activeCall
                         val rt = active?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt }
+                            ?: entry.inputOwner
                             ?: bindings.values.filter { it.entries.values.any { e -> e === entry } }.sortedBy { it.rt.sessionId.value }.firstOrNull()?.rt
                         rt?.handleMcpElicitation(entry.spec.name, params, active?.callId)
                             ?: kotlinx.serialization.json.buildJsonObject { put("action", JsonPrimitive("decline")) }
@@ -364,7 +366,12 @@ internal class McpManager(
         }
         override suspend fun getPrompt(server: String, name: String, arguments: JsonObject): List<dev.min.agent.mcp.McpPromptMessage> {
             val entry = binding.entries[server] ?: error("MCP 服务器 $server 不可用。")
-            return entry.callLock.withLock { (entry.connection ?: error("MCP 服务器 $server 不可用。")).getPrompt(name, arguments) }
+            return entry.callLock.withLock {
+                // 输入准备还没有回合，但反向表单仍须交给发起输入的会话，不能交给共享连接的默认宿主。
+                entry.inputOwner = binding.rt
+                try { (entry.connection ?: error("MCP 服务器 $server 不可用。")).getPrompt(name, arguments) }
+                finally { entry.inputOwner = null }
+            }
         }
 
         override suspend fun listResources(servers: List<String>): List<JsonObject> = servers.flatMap { server ->
@@ -380,7 +387,11 @@ internal class McpManager(
             if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { entry.settled.await() }
             val connection = entry.connection ?: return unavailable("MCP 服务器 $server 现在不可用。")
             return try {
-                entry.callLock.withLock { McpResults.toToolResult(server, "resources/read", id, connection.readResource(uri), artifacts) }
+                entry.callLock.withLock {
+                    entry.inputOwner = binding.rt
+                    try { McpResults.toToolResult(server, "resources/read", id, connection.readResource(uri), artifacts) }
+                    finally { entry.inputOwner = null }
+                }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { McpResults.failure(server, e) }
         }

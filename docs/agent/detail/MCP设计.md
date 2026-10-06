@@ -152,6 +152,7 @@ interface LiveProcess {
 > MCP2 已实现（2026-10-06）：form 支持基本标量、enum 与上下限，不支持的 schema 整份 decline。
 > 复用 QuestionAsked，独立表单亦进入 Hub pending；URL 用独立 Asked / Resolved 事件保存服务器、完整 URL 与域名。
 > 回合内关联实际调用；同服务器调用串行，防止反向请求缺少关联字段时答错会话。空闲时选择该连接附着会话中 id 最小者，不开回合。
+> 输入准备中的 resources/read 与 prompts/get 临时记住发起会话，反向提问交回该会话；调用结束或取消时清除归属。
 > 非交互直接 decline；拒绝为 decline，取消、关闭与五分钟超时为 cancel。重开会话取消没有存活回调的遗留请求。
 > CLI 完整展示 URL，只有 y 才调用系统浏览器；App 展示与 Custom Tab 随 B7。
 

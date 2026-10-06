@@ -1796,3 +1796,32 @@ JVM 协程测试明确返回 Unit；变异保存退出码、具体失败测试�
 - **Notes**: 五项均至少三处有效断言失败；恢复后的专项基线均通过。无效初始化结果已排除并重做。
 
 ---
+
+## [LRN-20261006-MCP2-PRETURN-OWNER] best_practice
+
+**Logged**: 2026-10-06T02:56:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+共享 MCP 连接的反向交互须保留输入准备调用的归属，不能把尚未开回合等同于服务器自主空闲请求。
+
+### Details
+工具调用已有 activeCall 可关联运行时，但发送前 resources/read 和 prompts/get 还没有 turn/callId。仅靠闲时最小 sessionId 会把第二个会话触发的表单投到第一个会话。串行锁内临时保存 inputOwner，反向处理优先采用该归属，finally 清除，真正自主空闲才选默认宿主；没有为准备输入伪造回合。
+
+### Suggested Action
+共享连接任何可触发反向交互的请求都保留调用归属，覆盖有回合与输入准备两种路径，并用双会话测试验证目标而非只检查有表单出现。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/McpElicitationTest.kt
+- Tags: mcp, shared-connection, elicitation, session-routing
+- Pattern-Key: mcp.reverse_request_owner
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-06
+- **Notes**: 双会话 resources/read 和 prompts/get 回归通过；移除 inputOwner 回退的变异由同一测试检出。
+
+---
