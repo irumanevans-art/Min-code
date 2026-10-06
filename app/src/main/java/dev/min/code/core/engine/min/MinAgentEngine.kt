@@ -236,6 +236,8 @@ class MinAgentEngine(
 
     override suspend fun closeAll(reason: CloseReason) {
         sessions.value.values.toList().forEach { closeSession(it, reason) }
+        // 「停止全部」之后前台服务可能随即退出：MCP 服务器不能等「无人使用两分钟」，否则进程被杀时成了 proot 里的孤儿
+        hub.closeMcpConnections()
     }
 
     private suspend fun guarded(block: suspend () -> MinAgentSession): Result<AgentSession> = try {

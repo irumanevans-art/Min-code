@@ -48,9 +48,9 @@ import kotlin.coroutines.cancellation.CancellationException
  */
 internal class McpManager(
     private val scope: CoroutineScope,
-    private val connector: McpConnector,
+    internal val connector: McpConnector,
     private val lingerMs: Long = 120_000,
-    private val startupWaitMs: Long = 5_000,
+    internal val startupWaitMs: Long = 5_000,
 ) {
     private data class Key(val projectRoot: String, val name: String, val endpoint: String)
 

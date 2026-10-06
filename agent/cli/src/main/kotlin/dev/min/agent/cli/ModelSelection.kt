@@ -31,7 +31,14 @@ internal fun resolveModel(args: CliArgs, catalog: Catalog): ModelSelection {
     val ref = ModelRef(args.provider, args.model)
     val profile = (catalog.model(ref) ?: ModelProfile(
         ref = ref, family = ModelFamily.Other, contextWindow = 200_000, maxOutputTokens = 8_192,
-    )).let { it.copy(contextWindow = args.contextWindow ?: it.contextWindow, maxOutputTokens = args.maxOutput ?: it.maxOutputTokens) }
+    )).let {
+        it.copy(
+            contextWindow = args.contextWindow ?: it.contextWindow,
+            maxOutputTokens = args.maxOutput ?: it.maxOutputTokens,
+            // 目录里的能力是查证过的，--images 只能补上（目录外的自定义模型默认当它看不了图），不能关掉
+            supportsImages = args.images || it.supportsImages,
+        )
+    }
     // 目录保存厂商模板，业务空间 ID 是用户配置，不能带着占位符联网后再报难读的 DNS 错误。
     if ('{' in provider.baseUrl || '}' in provider.baseUrl) throw UsageException("供应商 ${args.provider} 的地址含占位符，请用 --base-url 指定实际地址")
     return ModelSelection(provider, profile, args.apiKeyEnv ?: "${args.provider.uppercase(Locale.ROOT)}_API_KEY")

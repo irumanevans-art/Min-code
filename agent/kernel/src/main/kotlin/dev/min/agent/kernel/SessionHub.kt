@@ -126,7 +126,11 @@ class SessionHub(
     private val definitions: Map<String, AgentDefinition> = agents.associateBy { it.name }
 
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
-    internal var mcp = McpManager(scope, ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION))
+    internal var mcp = McpManager(
+        scope,
+        ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs),
+        startupWaitMs = deps.mcpFirstSnapshotWaitMs,
+    )
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
     private val openLock = Mutex()
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
@@ -210,7 +214,7 @@ class SessionHub(
     }
 
     /**
-     * 读 MCP 配置（与 CC 同一套文件，MCP设计 §3）并接上。没有主目录的宿主不接；配置读不了只记日志、不拦会话。
+     * 读 MCP 配置（与 CC 同一套文件，MCP设计 §3）并接上。没有主目录的宿主不接；配置读不了记一条说明、不拦会话。
      * 项目层的信任沿用 hooks 那一个（工作区信任由宿主判定）
      */
     private suspend fun attachMcp(runtime: SessionRuntime, fresh: Boolean) {
@@ -220,7 +224,14 @@ class SessionHub(
         val config = dev.min.agent.spi.catchingNonCancellation {
             val settings = dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, home)
             dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env)
-        }.getOrNull() ?: return
+        }.getOrElse { e ->
+            // 只写异常类名：异常消息可能带着配置里的 env / headers 值
+            runtime.commit(
+                listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "MCP 配置没读成（${e::class.simpleName}），这个会话没有接 MCP 服务器。")),
+                Durability.Batched,
+            )
+            return
+        }
         mcp.attach(runtime, config, cwd, fresh)
     }
 

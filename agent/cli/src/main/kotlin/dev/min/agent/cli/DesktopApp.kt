@@ -231,6 +231,8 @@ internal class DesktopApp(
             env = envReader,
             hiddenEnv = hiddenEnv,
             checkpointBudget = SnapshotBudget.DESKTOP,
+            // -p 一上来就发请求、没人在打字：多等一会儿慢服务器，免得它的工具整次运行都缺席（交互仍用默认 5 秒）
+            mcpFirstSnapshotWaitMs = if (args.prompt != null) 30_000 else 5_000,
         )
     }
 

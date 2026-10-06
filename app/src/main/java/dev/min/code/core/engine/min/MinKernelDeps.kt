@@ -168,5 +168,7 @@ object MinKernelDeps {
         ),
         platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
         checkpointBudget = CHECKPOINT_BUDGET,
+        // proot 里冷启动 npx 一类的服务器常超过 CC 的 30 秒默认
+        mcpConnectTimeoutMs = 120_000,
     )
 }

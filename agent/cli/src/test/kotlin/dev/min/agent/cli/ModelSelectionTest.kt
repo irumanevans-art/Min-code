@@ -11,6 +11,7 @@ import dev.min.agent.spi.ModelFamily
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Path
 
@@ -35,6 +36,16 @@ class ModelSelectionTest {
         assertEquals(profile, selected.profile)
         assertEquals(Wire.OpenAIChat, selected.wire)
         assertEquals("CHAT_API_KEY", selected.keyEnv)
+    }
+
+    @Test fun `--images marks a custom model as seeing, but cannot blind a catalog model`() {
+        val empty = Catalog(emptyList(), emptyList())
+        val local = arrayOf("--provider", "local", "--model", "m", "--base-url", "http://localhost/v1", "--wire", "openai_chat")
+        assertFalse(resolveModel(args(*local), empty).profile.supportsImages)
+        assertTrue(resolveModel(args(*local, "--images"), empty).profile.supportsImages)
+        val provider = ProviderDescriptor("chat", "https://example.invalid/v1", Wire.OpenAIChat, AuthScheme.Bearer)
+        val seeing = ModelProfile(ModelRef("chat", "m"), family = ModelFamily.Other, contextWindow = 1000, maxOutputTokens = 100, supportsImages = true)
+        assertTrue(resolveModel(args("--provider", "chat", "--model", "m"), Catalog(listOf(provider), listOf(seeing))).profile.supportsImages)
     }
 
     @Test fun `custom model and explicit overrides are resolved without IO`() {

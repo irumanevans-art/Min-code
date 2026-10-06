@@ -120,14 +120,39 @@ class McpManagerTest {
         }
     }
 
-    private fun hub(model: dev.min.agent.llm.ModelClient, connector: FakeConnector, lingerMs: Long = 60_000, waitMs: Long = 2_000): SessionHub {
+    private fun hub(model: dev.min.agent.llm.ModelClient, connector: FakeConnector, lingerMs: Long = 60_000, waitMs: Long = 2_000): SessionHub =
+        SessionHub(store, deps(model), scope).also { it.mcp = McpManager(scope, connector, lingerMs = lingerMs, startupWaitMs = waitMs) }
+
+    private fun deps(
+        model: dev.min.agent.llm.ModelClient,
+        env: (String) -> String? = { null },
+        waitMs: Long = 5_000,
+        connectTimeoutMs: Long = 30_000,
+    ): KernelDeps {
         val base = testDeps(model, emptyList())
-        val deps = KernelDeps(
+        return KernelDeps(
             clock = base.clock, ids = base.ids, models = base.models, tools = emptyList(),
             host = HostPorts(fs, base.host.search, base.host.exec, base.host.artifacts),
             platform = base.platform, zone = base.zone, retry = base.retry, memoryHome = GuestPath("/root"),
+            env = env, mcpFirstSnapshotWaitMs = waitMs, mcpConnectTimeoutMs = connectTimeoutMs,
         )
-        return SessionHub(store, deps, scope).also { it.mcp = McpManager(scope, connector, lingerMs = lingerMs, startupWaitMs = waitMs) }
+    }
+
+    @Test
+    fun `the hub builds its manager from the host's wait and connect timeout`() {
+        val hub = SessionHub(store, deps(ScriptedModel(), waitMs = 30_000, connectTimeoutMs = 120_000), scope)
+        assertEquals(30_000L, hub.mcp.startupWaitMs)
+        assertEquals(120_000L, (hub.mcp.connector as ClientConnector).requestTimeoutMs)
+    }
+
+    @Test
+    fun `a config that fails to load leaves a note naming only the exception class`() = run {
+        fs.put("/root/.claude.json", """{"mcpServers": {"github": {"command": "gh-mcp", "env": {"TOKEN": "${'$'}{MCP_SECRET}"}}}}""")
+        val env: (String) -> String? = { if (it == "MCP_SECRET") error("token-value-1234") else null }
+        val rt = SessionHub(store, deps(ScriptedModel(), env = env), scope).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val note = events(rt).filterIsInstance<dev.min.agent.spi.Note>().single { it.text.contains("MCP") }
+        assertTrue(note.text, note.text.contains("IllegalStateException"))
+        assertTrue("异常消息可能带着凭证，不能进日志", events(rt).none { it.toString().contains("token-value-1234") })
     }
 
     private suspend fun SessionRuntime.say(text: String) {

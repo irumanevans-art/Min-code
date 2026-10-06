@@ -107,6 +107,13 @@ class KernelDeps(
     val hiddenEnv: Set<String> = emptySet(),
     /** 检查点整树快照的预算（检查点与rewind设计 §3.4）；Android 宿主给自己的一份 */
     val checkpointBudget: dev.min.agent.spi.SnapshotBudget = dev.min.agent.spi.SnapshotBudget.DESKTOP,
+    /**
+     * 首份 MCP 快照在第一回合开头最多等多久（从开始连接算）。交互时用户打字的工夫服务器在连，5 秒够；
+     * `-p` 跑批一上来就发请求、没人等，CLI 给 30 秒，免得慢服务器的工具整次运行都缺席（2026-10-06 拍板）
+     */
+    val mcpFirstSnapshotWaitMs: Long = 5_000,
+    /** MCP 握手与单次请求的超时（CC 的 `MCP_TIMEOUT` 默认 30 秒）；Android 上 proot 里冷启动 npx 慢，App 给 120 秒 */
+    val mcpConnectTimeoutMs: Long = 30_000,
 ) {
     init { require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" } }
 }

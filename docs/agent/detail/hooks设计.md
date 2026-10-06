@@ -106,7 +106,7 @@ CC 文档没写冲突怎么合；Min 的规则（取更安全的一侧，确定�
 alwaysAsk 工具（ExitPlanMode）            → 问人（hook 也不能替人批计划）
 PreToolUse hooks：deny / exit 2           → 拒绝，理由给模型
                   updatedInput            → 换入参，重算 PermissionAsk
-PolicyEngine（安全底线 → deny 规则 → ask 规则 → allow 规则 → 模式）
+PolicyEngine（deny 规则 → 安全底线 → ask 规则 → allow 规则 → 模式）
   底线 Ask                                 → 问人（hook allow 不能越过）
   deny 规则                                → 拒绝（hook allow 不能越过）
   ask 规则命中                             → 问人（hook allow 不能越过；CC：「Deny and ask rules are still evaluated regardless of what the hook returns」）

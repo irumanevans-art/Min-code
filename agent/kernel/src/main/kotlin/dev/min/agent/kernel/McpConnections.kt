@@ -67,10 +67,11 @@ internal class ClientConnector(
     private val processes: ProcessPort,
     private val http: HttpTransport?,
     private val clientVersion: String,
+    internal val requestTimeoutMs: Long = 30_000,
 ) : McpConnector {
 
     override suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection {
-        val options = McpClientOptions(clientVersion = clientVersion, serverLabel = spec.name)
+        val options = McpClientOptions(clientVersion = clientVersion, serverLabel = spec.name, requestTimeoutMs = requestTimeoutMs)
         return when (spec) {
             is McpServerSpec.Stdio -> {
                 val process = processes.spawn(

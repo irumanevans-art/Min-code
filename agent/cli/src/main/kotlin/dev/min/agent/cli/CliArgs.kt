@@ -41,6 +41,8 @@ data class CliArgs(
     val forkSession: Boolean = false,
     /** --continue：接着当前目录最近一次根会话 */
     val continueMostRecent: Boolean = false,
+    /** 声明模型能看图（目录外的自定义模型默认不能，图片会换成文字说明）；目录里已标能看图的不受影响 */
+    val images: Boolean = false,
 )
 
 class UsageException(message: String) : Exception(message)
@@ -56,6 +58,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --api-key-env <名字>   从哪个环境变量读凭证，默认按供应商（如 ANTHROPIC_API_KEY）
   --context <n>          覆盖目录上下文窗口；自定义模型默认 200000
   --max-output <n>       覆盖目录输出上限；自定义模型默认 8192
+  --images               声明模型能看图；自定义模型默认不能（图片换成文字说明发过去）
   --effort <档位>        off / minimal / low / medium / high / xhigh / max
   --mode <模式>          default（默认）/ acceptEdits / plan / bypassPermissions / dontAsk
   --approve ask|yes|no   审批怎么答：交互模式默认 ask，非交互默认 no
@@ -82,7 +85,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     while (i < argv.size) {
         val arg = argv[i]
         when (arg) {
-            "--json", "--trust", "--fork-session", "--continue" -> flags += arg
+            "--json", "--trust", "--fork-session", "--continue", "--images" -> flags += arg
             "-h", "--help" -> throw UsageException(USAGE)
             else -> {
                 if (!arg.startsWith("-")) throw UsageException("不认识的参数：$arg\n\n$USAGE")
@@ -152,6 +155,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         jsonSchema = values["--json-schema"]?.let(::readJsonSchemaArg),
         forkSession = "--fork-session" in flags,
         continueMostRecent = "--continue" in flags,
+        images = "--images" in flags,
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages
