@@ -62,9 +62,12 @@ class McpRemoteHttpTest {
                 }
                 override suspend fun save(key: McpTokenKey,credentials: McpOAuthCredentials) {}; override suspend fun delete(key: McpTokenKey) {}
             }
-            val auth=McpRemoteHttp(port,s,HeadersHelper(processes,s,GuestPath("/w")),store)
+            val helper=HeadersHelper(processes,s,GuestPath("/w"))
+            val auth=McpRemoteHttp(port,s,helper,store)
             repeat(2) {
                 try { auth.open(request); fail("configured auth must fail") } catch(e: McpHttpException) { assertFalse(e.needsAuth) }
+                // 另一个请求可重取并清空 helper 缓存，认证选择不能依赖缓存恰好还带头。
+                if(it==0) helper.reload()
             }
             // 首次 helper 未给头时可加载一次；一旦见过配置认证，后续缺头只能失败，不能偷换认证方式。
             assertEquals(if(authorizedCall==1) 0 else 1,loads)
