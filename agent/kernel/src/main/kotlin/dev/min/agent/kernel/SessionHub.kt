@@ -204,10 +204,12 @@ class SessionHub(
         mode: PermissionMode,
         effort: Effort? = null,
         initial: List<SessionEvent> = emptyList(),
+        /** 这条会话是不是 `-p` / 无头跑的（CC :78：--continue 跳过 -p 会话）；标记随 SessionCreated 落盘 */
+        headless: Boolean = false,
     ): SessionRuntime {
         val id = SessionId(deps.ids.next("s"))
         val header = LogHeader(LOG_FORMAT_VERSION, id, deps.clock.nowMs())
-        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort), deps, scope, initial, hub = this)
+        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort, headless = headless), deps, scope, initial, hub = this)
         register(runtime)
         attachMcp(runtime, fresh = true)
         return runtime

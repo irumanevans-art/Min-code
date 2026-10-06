@@ -46,7 +46,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     // /branch 会换会话：退出时的 SessionEnd 要跟当前会话走（分支是用户现在所在的对话）
     var runtime = initial
     val stdin = System.`in`.bufferedReader()
-    var ui = ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
+    // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout
+    var ui = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope) else null
     try {
         System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
 
@@ -68,20 +69,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
 
     val prompt = args.prompt
     if (prompt != null) {
-        val fromSeq = runtime.state.value.lastSeq + 1
-        // --json-schema：要求追加在用户消息后面，不改系统提示（任务单拍板）——提示词里带着 schema 交卷方式
-        val effective = if (args.jsonSchema != null) structuredOutputPrompt(prompt) else prompt
-        if (!say(effective)) return 2
-        val state = runtime.state.value
-        val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq), state.usage)
-        result.failure?.let { System.err.println(it) }
-        if (args.json) {
-            println(result.json())
-        } else if (args.jsonSchema != null) {
-            // 没开 --json 也要把结构化答案打出来：跑批要的就是它
-            result.json()["structured_output"]?.let(::println)
-        }
-        return if (result.completed) 0 else 1
+        // -p 一次运行：输出分流、结果对象 / 事件流渲染、退出码都在这一条路里（HeadlessCompatTest 同款）
+        return runHeadless(app, runtime, args, scope, stdin, System.out, System.err)
     }
 
     System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/branch 分支当前会话；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
@@ -104,7 +93,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
                 // 分支并切过去继续聊：原会话一个字不动（CC 的 /branch 同样复制转录后切换写入）
                 try {
                     val branched = app.branchSession(runtime)
-                    ui.cancel()
+                    ui?.cancel()
                     runtime = branched
                     ui = ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
                     System.err.println("已切到分支 ${runtime.sessionId.value}（分支自 ${branched.state.value.branched?.from?.value}；原会话保留，可各自 --resume）")
@@ -120,7 +109,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     } finally {
         // 退出 = prompt_input_exit：SessionEnd 在会话（用户最后所在的那个，可能是分支）卸下之前跑，清理类 hook 有机会收尾
         val cleanup = app.exitSession(runtime)
-        ui.cancel()
+        ui?.cancel()
         cleanup.join()
     }
 }

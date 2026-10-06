@@ -10,6 +10,5 @@
     "fields": {
       "is_error": false
     }
-  },
-  "pendingFix": "Min 现在：没有 is_error，语义近似的字段叫 completed（布尔）。原文要：result 对象带 is_error（04-sessions-sdk-automation.md :218）。建议改引擎：加 is_error，与 subtype 同口径取值。"
+  }
 }

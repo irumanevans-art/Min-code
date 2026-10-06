@@ -8,7 +8,7 @@
     "stream-json"
   ],
   "expected": {
-    "streamJson": true
-  },
-  "pendingFix": "Min 现在：没有 stream-json 输出格式（--output-format 不认，也没有逐行 JSON 事件流）。原文要：--output-format stream-json 输出换行分隔的实时 JSON 事件流，首行 system/init（model、tools、MCP servers，04-sessions-sdk-automation.md :37/:39），末行 result（:43）。建议改引擎：加 stream-json 渲染器；本样本只钉「格式存在」，事件形状等实现时再逐条立样本。"
+    "streamFirstInit": true,
+    "streamLastResult": true
+  }
 }

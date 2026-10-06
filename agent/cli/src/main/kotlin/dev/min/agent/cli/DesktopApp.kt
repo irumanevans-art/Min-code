@@ -122,6 +122,9 @@ internal class DesktopApp(
     private val searchBackend = desktopSearchBackend(args)
     private var hubInstance: SessionHub? = null
 
+    /** stream-json 的 init 行要列工具名；跟 Hub 用同一份工具表 */
+    private var toolNamesCache: List<String> = emptyList()
+
     /**
      * 第一次要用时才建：先按 cwd 读一遍 Claude Code 配置，把 `.claude/agents/` 的自定义子 agent 交给 Hub、列进 Agent 工具的说明。
      * 一个 CLI 进程只服务一个项目目录，所以读一次就够；权限规则与记忆由内核在每个会话创建时各自快照。
@@ -130,8 +133,14 @@ internal class DesktopApp(
         val config = config()
         val catalog = AgentCatalog.of(config.agents)
         val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null)
+        toolNamesCache = tools.map { it.name }
         SessionHub(store, deps(tools), scope, HUB_LIMITS, catalog.definitions).also { hubInstance = it }
     }
+
+    /** stream-json 的 init 行用：`供应商/模型 id` */
+    internal fun modelLabel(): String = "${provider.id}/${profile.ref.modelId}"
+
+    internal fun toolNames(): List<String> = toolNamesCache
 
     private var configInstance: ClaudeConfig? = null
 
@@ -253,15 +262,17 @@ internal class DesktopApp(
             return checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
-        return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
+        // headless 标记进 SessionCreated：--continue 由此跳过 -p 跑的会话（CC :78）
+        return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort, headless = args.prompt != null)
     }
 
     /** 交互模式 /branch：从当前会话分出一个新根会话（忙 / 找不到时抛 [SessionBranchRefused]，终端打印原因） */
     suspend fun branchSession(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
 
     /**
-     * --continue：当前目录最近一次根会话。按日志头两条事件筛（cwd 相同 + 第二条不是 subagent_origin）。
-     * CC 还会把 -p 会话从 --continue 里排除；Min 的日志没有「是不是 -p 跑的」这个标记，挑最近的根会话（见汇报）
+     * --continue：当前目录最近一次根会话。按日志头两条事件筛（cwd 相同 + 第二条不是 subagent_origin），
+     * 并跳过 `-p` / 无头跑的（SessionCreated.headless；CC :78 说 --continue 不接 -p / SDK 会话——
+     * 跑批的会话不该被人一次回车接着聊）
      */
     private suspend fun latestRootSession(): SessionId? {
         val cwd = paths.guestOfHost(args.cwd)
@@ -270,6 +281,7 @@ internal class DesktopApp(
             val head = log.read().take(2).toList()
             val created = head.firstOrNull()?.event as? dev.min.agent.spi.SessionCreated ?: continue
             if (created.cwd != cwd) continue
+            if (created.headless) continue
             if (head.getOrNull(1)?.event is dev.min.agent.spi.SubagentOrigin) continue
             return header.sessionId
         }

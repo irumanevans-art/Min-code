@@ -1,0 +1,16 @@
+{
+  "basis": "cc-cli-reference.md :99——「--include-partial-messages | Include partial streaming events in output. Requires --print and --output-format stream-json」；04-sessions-sdk-automation.md :43——「StreamEvent：event 字段承载原生 Anthropic 流事件（content_block_delta …）」。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_PARTIAL_RUN",
+    "--output-format",
+    "stream-json",
+    "--include-partial-messages"
+  ],
+  "expected": {
+    "streamFirstInit": true,
+    "streamLastResult": true,
+    "partialDeltas": true
+  }
+}

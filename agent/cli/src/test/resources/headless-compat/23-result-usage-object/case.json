@@ -1,5 +1,5 @@
 {
-  "basis": "04-sessions-sdk-automation.md :103——「各 subtype 都带 total_cost_usd、usage、num_turns、session_id」；:33——「claude -p \"hello\" --output-format json 查 usage.cache_creation 确认 TTL」。",
+  "basis": "04-sessions-sdk-automation.md :103——「各 subtype 都带 total_cost_usd、usage、num_turns、session_id」；:33——「claude -p \"hello\" --output-format json 查 usage.cache_creation 确认 TTL」（:33 是简写，SDKResultMessage 的逐字段表里写作 cache_creation_input_tokens / cache_read_input_tokens）。",
   "kind": "run",
   "args": [
     "-p",
@@ -11,9 +11,9 @@
       "usage": {
         "input_tokens": "@present",
         "output_tokens": "@present",
-        "cache_creation": "@present"
+        "cache_creation_input_tokens": "@present",
+        "cache_read_input_tokens": "@present"
       }
     }
-  },
-  "pendingFix": "Min 现在：没有 usage 对象——token 平铺在顶层（input_tokens 等，会话累计口径），另给本回合的 turn_usage；键名也不同（cache_write_tokens，不是 CC 的 cache_creation）。原文要：各 subtype 都带 usage 对象（04-sessions-sdk-automation.md :103），含 usage.cache_creation（:33）。建议改引擎：--json 输出补 usage 对象（键名对齐 CC），旧平铺键过渡期保留。"
+  }
 }

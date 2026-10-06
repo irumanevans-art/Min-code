@@ -94,3 +94,6 @@
   `/branch` 与 `--fork-session` 把整份日志复制成一个新根会话后追加它作分界；折叠后组请求沿用事件里冻结的 basis 与 cacheKey，
   分支首个请求的前缀与原会话分支点逐字相同。分支不复制子 agent（引用仍指向原子会话，内核按归属拒绝跨会话发消息/停止）。
   含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-07，无头输出对齐 CC）：`session_created` 新增可选字段 `headless`（这条会话是不是 `-p` / 无头跑的；CC 的 `--continue` 据此跳过 -p / SDK 会话。旧日志缺字段 = 交互）。
+  `turn_ended.outcome`（failed 变体）新增可选字段 `cause`（内核自己的失败原因标记，与模型的 kind 正交；目前只有
+  `structured_output_retries`：--json-schema 重试用尽，CLI 据此把 result.subtype 写成 CC 的 `error_max_structured_output_retries`）。旧日志照常读。

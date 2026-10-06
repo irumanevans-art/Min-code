@@ -1,0 +1,21 @@
+{
+  "basis": "04-sessions-sdk-automation.md :43——「The last line of the stream is a result message」：中途出错照样以 result 行收尾（error 臂带 errors:string[]，:219）。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_STREAM_FAIL",
+    "--output-format",
+    "stream-json"
+  ],
+  "expected": {
+    "streamFirstInit": true,
+    "streamLastResult": true,
+    "exit": "@nonzero",
+    "fields": {
+      "subtype": "error_during_execution",
+      "is_error": true,
+      "errors": "@present",
+      "result": "@absent"
+    }
+  }
+}

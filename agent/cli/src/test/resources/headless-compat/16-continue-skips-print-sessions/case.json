@@ -8,6 +8,5 @@
   ],
   "expected": {
     "notResumed": "true"
-  },
-  "pendingFix": "Min 现在：日志没有「这次是 -p 跑的」标记，--continue 把刚跑的那次 -p 会话当最近会话接上（DesktopApp.latestRootSession 的注释自认了这一点）。原文要：--continue 跳过 claude -p / Agent SDK 创建的会话（cc-cli-reference.md :78）。建议改引擎：会话创建事件记来源，--continue 过滤。"
+  }
 }

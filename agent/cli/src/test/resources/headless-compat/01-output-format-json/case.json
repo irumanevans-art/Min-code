@@ -9,6 +9,5 @@
   ],
   "expected": {
     "stdoutIsJsonObject": true
-  },
-  "pendingFix": "Min 现在：--output-format 不被识别（当作带值的未知选项静默吞掉），stdout 走人读的流式渲染，末行不是 JSON；要 JSON 得用 Min 自己的 --json。原文要：--output-format json 输出含 result/session id/metadata 的 JSON 结果对象（cc-cli-reference.md :110；04-sessions-sdk-automation.md :37）。建议改引擎：把 --output-format 做成一等参数（text/json/stream-json），未知带值参数不要再静默吞。"
+  }
 }
