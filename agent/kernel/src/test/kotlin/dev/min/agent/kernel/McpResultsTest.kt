@@ -34,6 +34,6 @@ class McpResultsTest {
             McpResults.toToolResult("srv", "t", id, McpCallResult(listOf(McpContent.Image(data, "image/png")), null, false), artifacts)
         }
         assertEquals(2, artifacts.files.size)
-        assertTrue(artifacts.files.keys.toString(), artifacts.files.keys.all { it.startsWith("mcp/") && ".." !in it.removePrefix("mcp/").substringBefore('-') })
+        assertTrue(artifacts.files.keys.toString(), artifacts.files.keys.all { name -> name.startsWith("mcp/") && name.split('/').none { it == ".." || it == "." } })
     }
 }
