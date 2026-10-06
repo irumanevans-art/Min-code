@@ -38,6 +38,7 @@ internal class ConsoleUi(
     private val finished = mutableSetOf<CallId>()
     private val answered = mutableSetOf<String>()
     private val questionsSeen = mutableSetOf<String>()
+    private val notesSeen = mutableSetOf<Long>()
     private val idleAnswers = java.util.concurrent.ConcurrentHashMap<String, MutableList<QuestionAnswer>>()
     @Volatile var mainOwnsInput: Boolean = false
     @Volatile private var idleInput: Pair<dev.min.agent.protocol.SessionId, String>? = null
@@ -56,6 +57,14 @@ internal class ConsoleUi(
             }
         }
         combine(runtime.state, hub?.pending ?: flowOf(emptyList())) { state, pending -> state to pending }.collect { (state, pending) ->
+            idleInput?.let { owner ->
+                val target = if (owner.first == runtime.sessionId) runtime else hub?.get(owner.first)
+                if (target == null || (target.state.value.pendingMcpQuestions.none { it.questionId.value == owner.second } && target.state.value.pendingMcpUrls.none { it.request.questionId.value == owner.second })) idleInput = null
+            }
+            state.presentation.forEach { item ->
+                val note = item.record.event as? dev.min.agent.spi.Note
+                if (note != null && note.text.startsWith("MCP ") && notesSeen.add(item.record.seq)) out.println("\n${terminalText(note.text)}")
+            }
             tasksSeen?.let { before -> taskProgressLines(before, state.tasks).forEach(out::println) }
             tasksSeen = state.tasks
             val calls = state.turn?.calls?.values.orEmpty()
