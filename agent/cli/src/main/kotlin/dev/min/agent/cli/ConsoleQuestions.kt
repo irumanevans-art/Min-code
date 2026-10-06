@@ -31,6 +31,7 @@ internal fun parseConsoleAnswer(question: UserQuestion, line: String): ConsoleAn
 
 private fun parseConsoleValue(question: UserQuestion, line: String): ConsoleAnswer {
     val text = line.trim()
+    if (text == "/skip") return ConsoleAnswer.Skip
     val optional = question.inputType != null && question.options.any { it.label == "（不提供此字段）" }
     if (optional && (text.isEmpty() || text == "-")) return ConsoleAnswer.Answer(QuestionAnswer(selected=listOf("（不提供此字段）")))
     if (text.isEmpty()) return ConsoleAnswer.Skip
@@ -55,11 +56,11 @@ private fun parseConsoleValue(question: UserQuestion, line: String): ConsoleAnsw
 }
 
 internal fun renderQuestion(question: UserQuestion): String = buildString {
-    append("  ? [").append(question.header).append("] ").append(question.question)
+    append("  ? [").append(terminalText(question.header)).append("] ").append(terminalText(question.question))
     append(if (question.multiSelect) "（可多选）" else "（单选）").append('\n')
     question.options.forEachIndexed { i, option ->
-        append("    ").append(i + 1).append(". ").append(option.label)
-        if (option.description.isNotBlank()) append(" —— ").append(option.description)
+        append("    ").append(i + 1).append(". ").append(terminalText(option.label))
+        if (option.description.isNotBlank()) append(" —— ").append(terminalText(option.description))
         append('\n')
     }
     append("  输入编号")
