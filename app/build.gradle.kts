@@ -194,6 +194,9 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.core)
+    // 设备工具的权限口径测试直接对着 PolicyEngine 判定；工具上下文的假实现在 testkit
+    testImplementation(project(":agent:policy"))
+    testImplementation(project(":agent:testkit"))
 }
 
 baselineProfile {

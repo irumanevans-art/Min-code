@@ -1,12 +1,51 @@
 package dev.min.code.core.device
 
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * 暴露给 MCP 客户端的设备操作工具 schema。
+ * 七个设备工具的两套名字：MCP 通道（Claude Code 引擎，经 [DeviceMcpServer]）用 snake_case，
+ * Min Agent 的原生工具（`core/engine/min/MinDeviceTools.kt`）用大驼峰、统一 `Device` 前缀。
+ *
+ * 描述、入参 schema 与执行结果里的文字只在 [DEVICE_TOOLS] 与 [DeviceController] 里写**一份**，写的是 MCP 名字；
+ * 原生通道经 [DeviceToolNames.toNative] 把文字里提到的工具名换成自己的名字，所以两边的措辞不会各改各的。
+ * 为什么不是模板：这些文字里到处在互相引用（「先 device_ui_tree 再 device_tap」），
+ * 用占位符拼一遍既难读，也容易漏掉 [DeviceController] 里的失败提示——换名放在出口，一处管全部。
+ */
+enum class DeviceToolKind(val mcpName: String, val nativeName: String) {
+    UiTree("device_ui_tree", "DeviceUiTree"),
+    Tap("device_tap", "DeviceTap"),
+    Input("device_input", "DeviceType"),
+    Swipe("device_swipe", "DeviceSwipe"),
+    OpenApp("device_open_app", "DeviceOpenApp"),
+    Screenshot("device_screenshot", "DeviceScreenshot"),
+    Back("device_back", "DeviceBack"),
+}
+
+object DeviceToolNames {
+    /** 把文字里的 MCP 工具名换成原生名字。任何一个 MCP 名都不是另一个的前缀，顺序换不会出错 */
+    fun toNative(text: String): String =
+        DeviceToolKind.entries.fold(text) { acc, kind -> acc.replace(kind.mcpName, kind.nativeName) }
+
+    /** schema 里所有字符串值（description、enum 项）过 [toNative]；键名不动 */
+    fun toNative(element: JsonElement): JsonElement = when (element) {
+        is JsonObject -> JsonObject(element.mapValues { toNative(it.value) })
+        is JsonArray -> JsonArray(element.map(::toNative))
+        is JsonPrimitive -> if (element.isString) JsonPrimitive(toNative(element.content)) else element
+    }
+}
+
+/** [DEVICE_TOOLS] 里 [kind] 对应的那条（MCP 名字、MCP 措辞的原始定义） */
+fun deviceToolDefinition(kind: DeviceToolKind): McpTool =
+    DEVICE_TOOLS.first { it.name == kind.mcpName }
+
+/**
+ * 暴露给 MCP 客户端的设备操作工具 schema；也是 Min Agent 原生工具描述与入参 schema 的唯一来源。
  *
  * 这个文件只有定义，没有执行逻辑；handler 按 [McpTool.name] 分发。三个带 `index` 的工具
  * （device_tap / device_input / device_swipe）的 description 都反复强调索引 freshness，

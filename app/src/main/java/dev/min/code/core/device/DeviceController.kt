@@ -8,7 +8,21 @@ import android.view.accessibility.AccessibilityNodeInfo
 import dev.min.code.core.settings.SettingsStore
 
 /**
- * 六个设备工具的实现。MCP server 只管收发帧，真正干活的在这里。
+ * 设备操作的窄接口：调用方（[DeviceMcpServer]、Min Agent 的原生工具）只用到这七个动作，
+ * 测试里换成不碰无障碍服务的替身。全是阻塞调用（等无障碍回调 / 手势完成），调用方自己决定在哪个线程上跑。
+ */
+interface DeviceActions {
+    fun uiTree(): DeviceController.Result
+    fun screenshot(): DeviceController.ImageResult
+    fun tap(index: Int): DeviceController.Result
+    fun input(index: Int, text: String): DeviceController.Result
+    fun swipe(direction: String, index: Int?): DeviceController.Result
+    fun openApp(packageName: String): DeviceController.Result
+    fun back(): DeviceController.Result
+}
+
+/**
+ * 七个设备工具的实现。MCP server 与 Min Agent 的原生工具只管收发，真正干活的在这里。
  *
  * ## 索引怎么保持有效
  *
@@ -35,7 +49,7 @@ class DeviceController(
      */
     private val agentDisplay: AgentDisplaySession? = null,
     private val settings: SettingsStore? = null,
-) {
+) : DeviceActions {
 
     /**
      * 读屏。唯一的只读操作，不过 [PackagePolicyGuard] 那道闸。
@@ -49,7 +63,7 @@ class DeviceController(
      * 所以节点少到不像一个真实界面时，明确告诉它还有 `device_screenshot` 这条路。
      * 判断标准放得很松（[THIN_TREE_NODES]），宁可多提一次——提了它不一定用，不提它一定卡住。
      */
-    fun uiTree(): Result {
+    override fun uiTree(): Result {
         val service = MinAccessibilityService.instance.get()
             ?: return Result.failure(NOT_CONNECTED)
         val root = service.rootNode()
@@ -83,7 +97,7 @@ class DeviceController(
      * 让每次读屏的 token 成本变成一个薛定谔的数，而模型完全不知道自己刚花了多少。
      * 让它自己决定要不要付这个钱。
      */
-    fun screenshot(): ImageResult {
+    override fun screenshot(): ImageResult {
         val service = MinAccessibilityService.instance.get()
             ?: return ImageResult.failure(NOT_CONNECTED)
         val bitmap = service.screenshot()
@@ -139,7 +153,7 @@ class DeviceController(
         }
     }
 
-    fun tap(index: Int): Result = withNode(index) { service, node, label ->
+    override fun tap(index: Int): Result = withNode(index) { service, node, label ->
         if (service.click(node)) {
             Result.success("已点击 $label")
         } else {
@@ -150,7 +164,7 @@ class DeviceController(
         }
     }
 
-    fun input(index: Int, text: String): Result = withNode(index) { service, node, label ->
+    override fun input(index: Int, text: String): Result = withNode(index) { service, node, label ->
         when {
             !node.isEditable -> Result.failure(
                 "$label 不是输入框，填不进字。重新读一次屏幕，找带 editable 标记的那个。"
@@ -167,7 +181,7 @@ class DeviceController(
      * 位移方向是相反的。这层翻译放在这里而不是让模型自己想：让模型去推理「往下翻要
      * 把手指往上划」，它有一半的时候会反。
      */
-    fun swipe(direction: String, index: Int?): Result {
+    override fun swipe(direction: String, index: Int?): Result {
         val service = MinAccessibilityService.instance.get()
             ?: return Result.failure(NOT_CONNECTED)
         guardWrite()?.let { return it }
@@ -221,7 +235,7 @@ class DeviceController(
      * 前台是 `com.android.settings`（在名单里），于是 agent 连"打开别的应用"都被拒绝，
      * 而那恰恰是离开那个界面的唯一办法。
      */
-    fun openApp(packageName: String): Result {
+    override fun openApp(packageName: String): Result {
         PackagePolicyGuard.allowsWrite(packageName, writeAllowlist()).let {
             if (it is PackagePolicyGuard.Decision.Denied) {
                 return Result.failure("不能打开 $packageName：${it.reason}")
@@ -245,7 +259,7 @@ class DeviceController(
         }.getOrElse { Result.failure("打开 $packageName 失败：${it.message}") }
     }
 
-    fun back(): Result {
+    override fun back(): Result {
         val service = MinAccessibilityService.instance.get()
             ?: return Result.failure(NOT_CONNECTED)
         guardWrite()?.let { return it }

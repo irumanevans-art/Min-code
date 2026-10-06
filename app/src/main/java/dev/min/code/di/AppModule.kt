@@ -213,6 +213,7 @@ val appModule = module {
             context = get(), settings = get(), workspace = get(), runner = get<ProotShellRunner>(),
             appScope = get<AppScope>(), drafts = get(), meta = get(named("min")),
             enabled = MutableStateFlow(BuildConfig.DEBUG),
+            devices = get<DeviceController>(),
         )
     } bind AgentEngine::class
     single { AgentSessionRegistry(getAll<AgentEngine>(), get<AppScope>()) }
