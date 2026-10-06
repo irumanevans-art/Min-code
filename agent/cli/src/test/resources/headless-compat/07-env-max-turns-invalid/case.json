@@ -1,0 +1,9 @@
+{
+  "basis": "02-hooks-settings-env-cli.md :377——「A value that is not a positive integer is rejected at startup with an error rather than treated as no cap」。",
+  "kind": "env",
+  "flag": null,
+  "envValue": "abc",
+  "expected": {
+    "usageError": true
+  }
+}

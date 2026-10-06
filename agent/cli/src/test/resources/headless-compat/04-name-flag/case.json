@@ -1,0 +1,13 @@
+{
+  "basis": "cc-cli-reference.md :107——「--name, -n | Set a display name for the session, shown in /resume and the terminal title」。",
+  "kind": "parse",
+  "args": [
+    "--name",
+    "CC_NAME"
+  ],
+  "expected": {
+    "usageError": false,
+    "sessionName": "CC_NAME"
+  },
+  "pendingFix": "Min 现在：--name 被静默吞掉，会话没有显示名。原文要：--name/-n 给会话设显示名，可被 --resume <名字> 接着用（cc-cli-reference.md :107）。建议改引擎：把名字记进会话并让 --resume 认名字。"
+}

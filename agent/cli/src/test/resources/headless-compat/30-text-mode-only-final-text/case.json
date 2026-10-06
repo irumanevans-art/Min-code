@@ -1,0 +1,14 @@
+{
+  "basis": "04-sessions-sdk-automation.md :37——「--output-format = text（默认）/json（含 result、session id、metadata）/stream-json」；cc-cli-reference.md :110——「options: text, json, stream-json」。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_TEXT_RUN",
+    "--output-format",
+    "text"
+  ],
+  "expected": {
+    "stdout": "CC_TEXT_OK"
+  },
+  "pendingFix": "Min 现在：text 模式（默认无 --json）的 stdout 混着流式正文、工具调用行（▸）与结果行（✓），审批提示也走 stdout。原文要：text 只输出最终回复文本（04-sessions-sdk-automation.md :37：text 与 json 的差别就是 metadata，text 即纯文本）。建议改引擎：-p 的 text 模式把工具/说明类输出改走 stderr，stdout 只留最终文本。审批/说明走 stderr 的细节原文没写（见汇报），这里只按「stdout 只有最终文本」对拍。"
+}

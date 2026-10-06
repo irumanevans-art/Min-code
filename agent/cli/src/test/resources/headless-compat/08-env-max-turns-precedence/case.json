@@ -1,0 +1,9 @@
+{
+  "basis": "02-hooks-settings-env-cli.md :377——「Equivalent to passing --max-turns, which takes precedence when both are set」。",
+  "kind": "env",
+  "flag": 3,
+  "envValue": "9",
+  "expected": {
+    "value": 3
+  }
+}

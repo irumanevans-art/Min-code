@@ -1,0 +1,15 @@
+{
+  "basis": "04-sessions-sdk-automation.md :218——success 臂：「type:\"result\"、subtype:\"success\"…」。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_TYPE",
+    "--json"
+  ],
+  "expected": {
+    "fields": {
+      "type": "result"
+    }
+  },
+  "pendingFix": "Min 现在：--json 的结果对象没有 type 字段。原文要：result 对象带 type:\"result\"（04-sessions-sdk-automation.md :218）。建议改引擎：--json 输出加 type。该样本用 Min 的 --json 取结果对象（CC 的 --output-format json 在 01 号单独立案）。"
+}

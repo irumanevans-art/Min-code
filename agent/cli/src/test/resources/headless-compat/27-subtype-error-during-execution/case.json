@@ -1,0 +1,15 @@
+{
+  "basis": "04-sessions-sdk-automation.md :103——「error_during_execution」。退出码原文未说明，按非零对拍。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_FAIL",
+    "--json"
+  ],
+  "expected": {
+    "exit": "@nonzero",
+    "fields": {
+      "subtype": "error_during_execution"
+    }
+  }
+}

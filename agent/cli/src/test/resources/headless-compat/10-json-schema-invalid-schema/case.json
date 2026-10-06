@@ -1,0 +1,13 @@
+{
+  "basis": "cc-cli-reference.md :101——「Claude Code exits with an error on an invalid schema」。",
+  "kind": "parse",
+  "args": [
+    "-p",
+    "CC_SCHEMA",
+    "--json-schema",
+    "{oops"
+  ],
+  "expected": {
+    "usageError": true
+  }
+}

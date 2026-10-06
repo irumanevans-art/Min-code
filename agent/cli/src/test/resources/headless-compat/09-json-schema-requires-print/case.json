@@ -1,0 +1,11 @@
+{
+  "basis": "cc-cli-reference.md :101——「--json-schema | Get validated JSON output matching a JSON Schema after the agent completes its workflow (print mode only)」。",
+  "kind": "parse",
+  "args": [
+    "--json-schema",
+    "{}"
+  ],
+  "expected": {
+    "usageError": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "basis": "原文未说明：cc-cli-reference.md :78/:124 分别写 --continue 与 --resume，没写两者同时给的行为。期望按 Min 现状（启动报错，二者只能给一个）。",
+  "kind": "parse",
+  "args": [
+    "--resume",
+    "s1",
+    "--continue"
+  ],
+  "expected": {
+    "usageError": true
+  }
+}

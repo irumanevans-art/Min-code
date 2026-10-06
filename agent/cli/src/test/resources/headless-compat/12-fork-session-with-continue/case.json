@@ -1,0 +1,12 @@
+{
+  "basis": "cc-cli-reference.md :92——「(use with --resume or --continue)」。",
+  "kind": "parse",
+  "args": [
+    "--continue",
+    "--fork-session"
+  ],
+  "expected": {
+    "usageError": false,
+    "forkSession": true
+  }
+}

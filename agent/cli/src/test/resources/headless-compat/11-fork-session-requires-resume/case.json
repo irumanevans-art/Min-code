@@ -1,0 +1,10 @@
+{
+  "basis": "cc-cli-reference.md :92——「--fork-session | When resuming, create a new session ID instead of reusing the original (use with --resume or --continue)」。",
+  "kind": "parse",
+  "args": [
+    "--fork-session"
+  ],
+  "expected": {
+    "usageError": true
+  }
+}

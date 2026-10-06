@@ -1,0 +1,13 @@
+{
+  "basis": "cc-cli-reference.md :116——「--print, -p | Print response without interactive mode」。",
+  "kind": "parse",
+  "args": [
+    "--print",
+    "CC_PRINT"
+  ],
+  "expected": {
+    "usageError": false,
+    "prompt": "CC_PRINT"
+  },
+  "pendingFix": "Min 现在：--print 不是 -p 的长形——被当未知选项吞掉取值，prompt 为 null、会进交互模式。原文要：--print 与 -p 同义（cc-cli-reference.md :116）。建议改引擎：把 --print 别名到 -p。"
+}
