@@ -621,6 +621,33 @@
     "Test": "*McpOAuthHostTest"
   },
   {
+    "Item": "android_authorizer",
+    "Name": "include-Min-as-browser",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "candidates.filter { it!=self }",
+    "To": "candidates.filter { true }",
+    "Module": "app",
+    "Test": "*AndroidMcpCustomTabTest"
+  },
+  {
+    "Item": "android_authorizer",
+    "Name": "allow-ordinary-browser-fallback",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": ".distinct().filter(supports)",
+    "To": ".distinct()",
+    "Module": "app",
+    "Test": "*AndroidMcpCustomTabTest"
+  },
+  {
+    "Item": "android_authorizer",
+    "Name": "ignore-capable-default-browser",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "defaultPackage?.takeIf { it in available } ?: available.firstOrNull()",
+    "To": "available.firstOrNull()",
+    "Module": "app",
+    "Test": "*AndroidMcpCustomTabTest"
+  },
+  {
     "Item": "android_store",
     "Name": "write-plaintext",
     "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
