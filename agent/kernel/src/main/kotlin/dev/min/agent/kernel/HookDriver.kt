@@ -58,10 +58,12 @@ internal class HookDriver(private val rt: SessionRuntime) {
     fun has(event: HookEvent, target: String?): Boolean {
         if (rt.state.value.hooks.isEmpty()) return false
         // `if` 条件先按成立算：宁可让调用离开并行批走单个流程，也不要漏跑门禁。
-        // http 处理器也要算：并行批不经过 PreToolUse，漏算它等于让只配了 http 门禁的只读调用绕过门禁
+        // http 处理器也要算：并行批不经过 PreToolUse，漏算它等于让只配了 http 门禁的只读调用绕过门禁。
+        // async 也要算：它不挡调用，但 PostToolUse 一类事件靠 has() 短路，漏算会让后台 hook 根本不启动
         val set = hookSet()
         return set.matchingDetailed(event, target) { true }.handlers.isNotEmpty() ||
-            set.matchingHttp(event, target) { true }.handlers.isNotEmpty()
+            set.matchingHttp(event, target) { true }.handlers.isNotEmpty() ||
+            set.matchingAsync(event, target) { true }.handlers.isNotEmpty()
     }
 
     private val httpRunner = HookHttpRunner(deps.host.httpHooks)
@@ -90,7 +92,9 @@ internal class HookDriver(private val rt: SessionRuntime) {
         // http 的处理器与 command 分开挑（`matchingDetailed` 只认 executable 的 command）：
         // 只配了 http hook 的事件此前会在这里被判成「没有匹配的处理器」而静默不跑
         val httpMatch = hookSet().matchingHttp(event, target, ifMatches)
-        if (match.handlers.isEmpty() && httpMatch.handlers.isEmpty()) return null
+        // async / asyncRewake 的 command 处理器：甩进后台就回来，不挡这一批（CC 的 Run hooks in the background）
+        val asyncMatch = hookSet().matchingAsync(event, target, ifMatches)
+        if (match.handlers.isEmpty() && httpMatch.handlers.isEmpty() && asyncMatch.handlers.isEmpty()) return null
         val state = rt.state.value
         val stdin = JsonObject(HookJson.encodeToJsonElement(HookInputCommon.serializer(), common(event, state)).jsonObject + specific)
         val env = buildMap {
@@ -98,6 +102,17 @@ internal class HookDriver(private val rt: SessionRuntime) {
             put("CLAUDE_PROJECT_DIR", deps.hookShellPath(state.created.cwd))
             put("MIN_HOOK", "1")
             state.settings.effort?.let { put("CLAUDE_EFFORT", wire(it)) }
+        }
+        // 后台 hook 先启动再跑同步批：它不等谁，也没人等它。timeout 只给 asyncRewake（CC：async 不套 timeout）
+        asyncMatch.handlers.forEach { h ->
+            rt.asyncHooks.launch(
+                event, h, stdin, env, state.settings.cwd,
+                if (h.asyncRewake) (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) else null,
+            )
+        }
+        if (match.handlers.isEmpty() && httpMatch.handlers.isEmpty()) {
+            // 只有异步 hook：本批没有要合并的结论，给一个中性的（调用方拿它判断放行/拦截，中性即放行）
+            return HookOutcome(HookOutcome.Decision.Neutral, null, emptyList(), null, null, emptyList())
         }
         val started = deps.clock.nowMs()
         // SessionEnd 的超时上限照 CC：默认 1.5 秒（整秒粒度取 2），配置写了更长的按配置，最多 60 秒
@@ -183,11 +198,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
     }
 
     /** 超过 1 万字的输出不直接进上下文：原文存附件，给前 2,000 字的预览加路径（CC 同）。脚本 echo 带出的首尾空白去掉 */
-    private suspend fun text(event: HookEvent, t: HookText): String {
-        if (!t.needsAttachment) return t.text.trim()
-        val path = deps.host.artifacts(rt.sessionId).put("hooks/${event.name}-${deps.ids.next("h")}.txt", t.text.toByteArray(Charsets.UTF_8))
-        return t.preview + "\n…[hook 输出共 ${t.text.length} 字，全文在 $path]"
-    }
+    private suspend fun text(event: HookEvent, t: HookText): String = attachText(deps, rt.sessionId, event, t)
 
     /**
      * http hook 头插值用的环境变量表。只解析**可能被插值**的名字（处理器与 settings 两道闸列出的那些）：
@@ -224,6 +235,16 @@ internal class HookDriver(private val rt: SessionRuntime) {
 
         /** SessionEnd 的超时上限（CC：预算最多被配置抬到 60 秒），默认预算见 [defaultTimeout] */
         const val SESSION_END_TIMEOUT_CAP = 60
+
+        /**
+         * hook 输出进上下文前的整形（同步与后台两条路共用）：短文去首尾空白直接用；
+         * 超过 1 万字的原文存附件、只给前 2,000 字预览加路径（CC 同）
+         */
+        internal suspend fun attachText(deps: KernelDeps, sessionId: dev.min.agent.protocol.SessionId, event: HookEvent, t: HookText): String {
+            if (!t.needsAttachment) return t.text.trim()
+            val path = deps.host.artifacts(sessionId).put("hooks/${event.name}-${deps.ids.next("h")}.txt", t.text.toByteArray(Charsets.UTF_8))
+            return t.preview + "\n…[hook 输出共 ${t.text.length} 字，全文在 $path]"
+        }
 
         fun defaultTimeout(event: HookEvent): Int = when (event) {
             HookEvent.UserPromptSubmit, HookEvent.PreModelSwitch, HookEvent.PostModelSwitch -> 30

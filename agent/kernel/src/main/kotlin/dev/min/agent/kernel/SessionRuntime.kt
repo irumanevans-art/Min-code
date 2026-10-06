@@ -155,6 +155,12 @@ class SessionRuntime private constructor(
     /** 检查点与回退（检查点与rewind设计） */
     internal val checkpointer = Checkpointer(this)
 
+    /**
+     * 后台 hook（`async` / `asyncRewake`）：一个运行时一份，跑着的进程与「只报一次」的记录都在这里——
+     * HookDriver 是按需建的（一个运行时会有好几个），状态必须挂在运行时上
+     */
+    internal val asyncHooks = AsyncHookRunner(this, scope)
+
     /** settings 里的 `fileCheckpointingEnabled`（缺省为开）；创建时随那份 settings 一起读，重新打开的会话第一次要用时再读 */
     @Volatile
     private var checkpointsBySettings: Boolean? = null
@@ -564,13 +570,16 @@ class SessionRuntime private constructor(
             if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
-            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification) && s.inbox.isEmpty()) return
+            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification || trigger == TurnTrigger.Hook) && s.inbox.isEmpty()) return
             turnJob = scope.launch {
                 val runner = TurnRunner(this@SessionRuntime)
                 var next: TurnTrigger? = trigger
                 while (next != null) {
                     val completed = runner.run(next)
-                    next = if (completed && _state.value.inbox.isNotEmpty()) TurnTrigger.User else null
+                    // 排队的输入接续下一回合：唤醒它的输入来自 asyncRewake hook 时，回合的触发也记 hook（日志里看得出是谁唤醒的）
+                    next = if (completed && _state.value.inbox.isNotEmpty()) {
+                        if (_state.value.inbox.first().origin is InputOrigin.Hook) TurnTrigger.Hook else TurnTrigger.User
+                    } else null
                 }
             }
         }

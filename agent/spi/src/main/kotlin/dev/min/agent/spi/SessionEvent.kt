@@ -110,6 +110,9 @@ enum class TurnTrigger {
     /** 空闲时收到子 agent 的报告或消息，自动开回合接着处理 */
     @SerialName("notification") Notification,
 
+    /** 后台 `asyncRewake` hook 退出码 2，把 stderr 作为系统提醒唤醒了空闲会话 */
+    @SerialName("hook") Hook,
+
     /** 子会话的第一个回合：父会话刚委派过来（分身没有新输入，靠这个开局） */
     @SerialName("delegated") Delegated,
 

@@ -256,6 +256,8 @@ class SessionHub(
         // 关了门还能写：SessionEnd 的运行记录要落盘。跑完再封住写入
         runtimes[id]?.takeIf { it.state.value.origin == null }?.let { runSessionEnd(it, reason) }
         closing.forEach { it.sealWrites() }
+        // 卸下即杀后台 hook 进程并清掉暂存目录：手机上不能留孤儿进程（async 设计的边界；`-p` teardown 同此）
+        closing.forEach { it.asyncHooks.cancelAll() }
         tree.forEach(::unload)
         return true
     }
@@ -346,6 +348,9 @@ class SessionHub(
         if (rootRuntime != null && rootRuntime.state.value.origin == null) runSessionEnd(rootRuntime, reason)
         for (id in order) runtimes[id]?.sealWrites()
         rootRuntime?.sealWrites()
+        // 与 close 同一条边界：删除即杀后台 hook 进程（含临时打开来跑 SessionEnd 的那个运行时）
+        order.mapNotNull { runtimes[it] }.forEach { it.asyncHooks.cancelAll() }
+        rootRuntime?.asyncHooks?.cancelAll()
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {

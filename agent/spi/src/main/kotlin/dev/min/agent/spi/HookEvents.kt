@@ -57,6 +57,11 @@ data class HooksRan(
     val callId: CallId? = null,
     /** 非阻断错误、超时、没跑起来——给人看 */
     val problems: List<String> = emptyList(),
+    /**
+     * 这是后台（`async` / `asyncRewake`）hook 完成时的记录：它启动时不落事件（进程死了日志里就没有
+     * 「还在跑」的痕迹，重开会话不假装在等），完成时各落一条（handlers = 1）。控制字段对它一律无效
+     */
+    val background: Boolean = false,
 ) : SessionEvent
 
 /** hook 加给模型的上下文挂在哪 */

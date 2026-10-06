@@ -156,8 +156,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is TurnStarted -> {
             check(turn == null) { "上一回合 ${turn?.turnId} 还没结束就开始了 ${e.turnId}" }
             val started = copy(turn = TurnState(e.turnId, e.trigger, record.atMs, openRequest = null, calls = emptyMap(), usage = Usage()))
-            // 续跑、被子 agent 报告唤醒的回合在转录里留一道分隔（「接着做」「子 agent 完成，继续处理」）；用户发起的回合由用户消息本身标示
-            if (e.trigger == TurnTrigger.Resume || e.trigger == TurnTrigger.Notification) {
+            // 续跑、被子 agent 报告或后台 asyncRewake hook 唤醒的回合在转录里留一道分隔；用户发起的回合由用户消息本身标示
+            if (e.trigger == TurnTrigger.Resume || e.trigger == TurnTrigger.Notification || e.trigger == TurnTrigger.Hook) {
                 started.copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
             } else started
         }
