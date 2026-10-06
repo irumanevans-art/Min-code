@@ -1082,7 +1082,7 @@
   <string name="min_agent_mode_auto">自动</string>
   <string name="min_agent_mode_dont_ask">不再询问</string>
   <string name="min_agent_mode_bypass">跳过权限</string>
-  <string name="min_agent_mode_bypass_warning">所有工具调用都不再询问，包括改写这台设备上的文件</string>
+  <string name="min_agent_mode_bypass_warning">工具调用都不再询问，包括设备工具在这台手机屏幕上点按、输入；只有安全底线（如改写手机存储里的文件）仍会问你</string>
   <string name="min_agent_effort_off">关闭</string>
   <string name="min_agent_effort_minimal">极低</string>
   <string name="min_agent_effort_low">低</string>

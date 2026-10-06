@@ -1087,7 +1087,7 @@
   <string name="min_agent_mode_auto">Auto</string>
   <string name="min_agent_mode_dont_ask">Don\'t ask</string>
   <string name="min_agent_mode_bypass">Skip permissions</string>
-  <string name="min_agent_mode_bypass_warning">Every tool call runs without asking, including writes to this device</string>
+  <string name="min_agent_mode_bypass_warning">Tool calls run without asking, including device tools that tap and type on this phone; only the safety floor (such as writing files in phone storage) still asks</string>
   <string name="min_agent_effort_off">Off</string>
   <string name="min_agent_effort_minimal">Minimal</string>
   <string name="min_agent_effort_low">Low</string>
