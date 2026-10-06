@@ -208,13 +208,11 @@ internal class AsyncHookRunner(
     }
 
     /**
-     * 会话卸下前调用：停掉轮询协程、杀掉还在跑的 hook 进程、清掉暂存目录。进程可能已经退出（kill 报
-     * no such process），忽略即可。pid 文件的内容必须长得像 pid 才用它——目录在 rootfs 里，模型改得了它
+     * 会话卸下前调用：停掉轮询协程。杀进程与清目录由每个协程的 finally（NonCancellable 的 [cleanup]）做——
+     * cancel 之后它必然执行，这里不重复 reap。pid 文件的内容必须长得像 pid 才用它——目录在 rootfs 里，模型改得了它
      */
     suspend fun cancelAll() {
-        val all = running.values.toList()
-        all.forEach { it.job.cancel() }
-        all.forEach { reap(it.dir) }
+        running.values.toList().forEach { it.job.cancel() }
     }
 
     /** 收尾：尽力杀进程（自然结束时多半已退出，kill 报错忽略），再删掉整个暂存目录 */
