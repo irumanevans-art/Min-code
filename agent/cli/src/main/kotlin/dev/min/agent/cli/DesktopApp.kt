@@ -54,8 +54,14 @@ import dev.min.agent.tools.WriteTool
 import dev.min.agent.tools.WebFetchTool
 import dev.min.agent.tools.WebSearchTool
 import dev.min.agent.host.CachedWebPort
+import dev.min.agent.host.CasWorkspaceSnapshots
+import dev.min.agent.spi.SnapshotBudget
+import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.toList
 import java.nio.file.Files
 import java.nio.file.Path
@@ -103,6 +109,7 @@ internal class DesktopApp(
 ) {
     private val paths = DesktopPaths(workspace = args.cwd, scratchRoot = home.resolve("root"))
     private val store = FileSessionStore(home.resolve("sessions"), { System.currentTimeMillis() })
+    internal val snapshots = CasWorkspaceSnapshots(home, { paths.fs }, paths.guestOfHost(claudeHome))
 
     private val selection = resolveModel(args, Catalog.bundled())
     private val provider = selection.provider
@@ -194,6 +201,7 @@ internal class DesktopApp(
                 mcpHttp = dev.min.agent.host.UrlConnectionTransport(),
                 searchBackend = searchBackend,
                 httpHooks = JvmHttpHookClient(),
+                snapshots = snapshots,
                 artifacts = { sessionId ->
                     val artifactsDir = home.resolve("sessions").resolve(sessionId.value).resolve("artifacts")
                     object : ArtifactSink {
@@ -222,6 +230,7 @@ internal class DesktopApp(
             // CLI 自己读模型 key 的变量不交给内核：http hook 的 allowedEnvVars 点名它也只能插成空串（凭证不进 hook 请求）
             env = envReader,
             hiddenEnv = hiddenEnv,
+            checkpointBudget = SnapshotBudget.DESKTOP,
         )
     }
 
@@ -266,13 +275,18 @@ internal class DesktopApp(
 
     /**
      * CLI 退出（hooks设计 §7）：SessionEnd（reason = prompt_input_exit，CC 对「用户在输入提示前退出」的取值）
-     * 在根会话卸下之前跑；停不下来的回合先停（shutdown），日志保留
+     * 在根会话卸下之前跑；停不下来的回合先停（shutdown），日志保留。
+     * 卸下即登记完检查点引用，随后在 IO 上清理快照仓库；返回的 Job 由 CLI 最外层等完再取消进程 scope
      */
-    suspend fun exitSession(runtime: SessionRuntime): Boolean =
-        hub().shutdown(runtime.sessionId, SessionEndReasons.PROMPT_INPUT_EXIT).also {
-            // 进程马上要退出：MCP 服务器不能等「无人使用两分钟」，现在就按礼貌顺序关掉
-            hub().closeMcpConnections()
+    suspend fun exitSession(runtime: SessionRuntime): Job {
+        hub().shutdown(runtime.sessionId, SessionEndReasons.PROMPT_INPUT_EXIT)
+        // 进程马上要退出：MCP 服务器不能等「无人使用两分钟」，现在就按礼貌顺序关掉
+        hub().closeMcpConnections()
+        return scope.launch(Dispatchers.IO) {
+            catchingNonCancellation { snapshots.gc(cleanupPeriodDays = 30) }
+                .onFailure { System.err.println("检查点仓库清理失败，将在下次关闭会话时重试。") }
         }
+    }
 
     private fun platformDescription(): String {
         val os = "${System.getProperty("os.name")} ${System.getProperty("os.version")}"

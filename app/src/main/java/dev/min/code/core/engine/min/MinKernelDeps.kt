@@ -28,6 +28,8 @@ import dev.min.agent.spi.Search
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.WorkspaceFs
+import dev.min.agent.spi.WorkspaceSnapshots
+import dev.min.agent.spi.SnapshotBudget
 import dev.min.agent.tools.AgentToolOf
 import dev.min.agent.tools.AskUserQuestionTool
 import dev.min.agent.tools.BashTool
@@ -141,6 +143,7 @@ fun minTools(): List<Tool<*>> = listOf(
 )
 
 object MinKernelDeps {
+    val CHECKPOINT_BUDGET = SnapshotBudget(15_000, 60_000, 20_000, 256L * 1024 * 1024)
     /** 平台描述写进系统提示，也是前缀的一部分 */
     const val PLATFORM = "Ubuntu 24.04 (proot on Android)"
 
@@ -154,13 +157,16 @@ object MinKernelDeps {
         ids: IdGenerator = IdGenerator { "${it}_${UUID.randomUUID().toString().replace("-", "")}" },
         zone: ZoneId = ZoneId.systemDefault(),
         tools: List<Tool<*>> = minTools(),
+        snapshots: WorkspaceSnapshots = WorkspaceSnapshots.Unavailable,
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
         host = HostPorts(
             ports.fs, ports.search, ports.exec, { ports.artifacts(it) }, httpHooks = JvmHttpHookClient(), processes = ports.processes,
+            snapshots = snapshots,
             // 远程 MCP 服务器走宿主侧的 HTTP（不经 proot）；stdio 服务器经 processes 进 proot
             mcpHttp = dev.min.agent.host.UrlConnectionTransport(),
         ),
         platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
+        checkpointBudget = CHECKPOINT_BUDGET,
     )
 }

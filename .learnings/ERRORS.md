@@ -150,3 +150,32 @@ CLI Stop-cap 验证五个独立会话共执行 34 次真实 hook，Windows 进�
 - Evidence: agent/policy/build/review/plan-old-test-xml, agent/policy/build/review/stop-cap-timeout.xml
 
 ---
+
+## [ERR-20261006-MUTATION-SMARTCAST] mutation_harness
+
+**Logged**: 2026-10-05T18:10:19.7118129Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+强制 false 的变异会破坏 Kotlin 的条件别名 smart cast，编译失败不能算检出。
+
+### Error
+val reusable = false && ... 导致 SnapshotCacheEntry? 的访问编译失败，JUnit count=0。
+
+### Context
+快照缓存零读取变异。初版结果标为 INVALID，证据保存于 agent/host/build/perf/mutations-before-index-cache。
+
+### Suggested Fix
+在保持原非空推导的分支处加入实际不成立的路径条件，而非破坏整个 smart cast 链。
+
+### Metadata
+- Reproducible: yes
+- Related Files: agent/host/build/perf/mutate.cjs
+
+### Resolution
+- **Resolved**: 2026-10-05T18:10:19.7118129Z
+- **Notes**: if (reusable && path.isEmpty()) 正常编译，真实零内容读取断言变红；12 个有效变异均检出，路径修正后该项复测也检出。
+
+---

@@ -1692,3 +1692,77 @@ additionalDirectories 不能只加 PolicyContext 字段；需加载后事件冻�
 - Promoted: AGENTS.md
 
 ---
+
+## [LRN-20261006-SNAPSHOT-PERF] best_practice
+
+**Logged**: 2026-10-05T18:10:19.7118129Z
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+快照优化先保存同机分段基线，再消除重复路径解析；缓存优化必须同时验证 racy、对象丢失和跨实例更新。
+
+### Details
+本轮桌面基线增量 guestResolve 3383 ms；宿主 no-follow walkFileTree 属性与现有挂载表消除了逐条 canonical。安全 stat 命中必须在实际读取前计数，强制重读变异能使零读取断言失败，单看 newBytes=0 不能证明不读取。未变 index 不重写也不推进粗粒度 racy cutoff；解码缓存仍每次读磁盘，只能在字节完全相同时复用，否则可能遮住别的进程或损坏。实测有明显负载差异与真实预算超时，不能改断言/预算来制造达标；对象段包含压缩及原子发布，不能未细分就称为纯磁盘时间。Unix 反斜杠文件名只按真正的宿主分隔符转换。
+
+### Suggested Action
+同时保存基线、冷增量、预热增量和失败样本。根与挂载仍由 RootfsFileSystem 提供；新增缓存要测跨实例写入/损坏、缺对象补读和 racy 边界，保留旧格式与取消语义。
+
+### Metadata
+- Source: error
+- Related Files: agent/host/src/main/kotlin/dev/min/agent/host/SnapshotScanner.kt, agent/host/src/main/kotlin/dev/min/agent/host/SnapshotFormat.kt
+- Tags: snapshot, performance, racy-clean, index, mount
+- Pattern-Key: snapshots.measure_before_optimize
+- Recurrence-Count: 1
+
+---
+
+## [LRN-20261006-FILEKEY-PROBE] correction
+
+**Logged**: 2026-10-05T18:10:19.7118129Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+不要把 fileKey 可空这一一般事实直接当作当前性能失败的根因。
+
+### Details
+最初推测 Windows 枚举 key=null、stat key!=null 导致误判；实际 Java 探针两者都为 null，失败 XML 显示的是 60 秒预算超时。已恢复原 fileKey 比较，不以未经证实的差异修改正确性条件。
+
+### Suggested Action
+对平台属性差异先用同路径最小真实探针确认，区分超时、内容变动和元数据差异。
+
+### Metadata
+- Source: error
+- Related Files: agent/host/build/perf/Attributes.java
+- Tags: windows, nio, filekey, evidence
+- Recurrence-Count: 1
+
+---
+
+## [LRN-20261006-HOOK-SCENARIO-DEADLINES] best_practice
+
+**Logged**: 2026-10-05T18:25:29.0413036Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+真实 shell 集成测试的复合场景应逐个设置等待期限，不将多个独立会话合用一个短期限。
+
+### Details
+Stop cap 用例覆盖 cap=2 和四个无效值，执行 34 次真实 Stop hook。原来五个会话共同受 60 秒上限约束，在本机整套与隔离运行都超时；同套八次 hook 的用例耗时约 16 秒。改为每个独立会话保留原 60 秒限制，所有请求次数断言、生产预算和 hook 行为不变。12 个模块 check 全绿（1498 tests），无需削弱快照 60 秒首次预算的成功断言。
+
+### Suggested Action
+复合真实 I/O 集成测试按独立场景包 withTimeout。超时日志保留，先区分功能死锁与多场景累计实际耗时，不能把重跑或测试期限变动当成产品性能优化。
+
+### Metadata
+- Source: error
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/HooksSessionTest.kt
+- Tags: integration-test, shell, timeout
+- Pattern-Key: tests.independent_scenario_deadlines
+- Recurrence-Count: 1
+
+---

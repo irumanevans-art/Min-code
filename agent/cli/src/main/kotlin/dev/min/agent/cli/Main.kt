@@ -119,8 +119,9 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     }
     } finally {
         // 退出 = prompt_input_exit：SessionEnd 在会话（用户最后所在的那个，可能是分支）卸下之前跑，清理类 hook 有机会收尾
-        app.exitSession(runtime)
+        val cleanup = app.exitSession(runtime)
         ui.cancel()
+        cleanup.join()
     }
 }
 

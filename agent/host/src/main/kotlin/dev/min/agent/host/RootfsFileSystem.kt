@@ -89,6 +89,11 @@ class RootfsFileSystem(
     /** guest 路径 → 宿主路径（先解析链接） */
     fun hostPath(path: GuestPath): Path = hostOf(components(canonical(path).value))
 
+    /** 扫描根只解析一次；树内只在真实挂载点换宿主目录，普通条目不重复解析父路径。 */
+    internal fun snapshotMounts(root: GuestPath): Map<String, Path> = binds
+        .filter { it.guest != root && it.guest.isUnder(root) }
+        .associate { it.guest.value.removePrefix(root.value.trimEnd('/') + "/") to it.host }
+
     override fun scopeOf(path: GuestPath): PathScope {
         val real = canonical(path)
         return when {
@@ -124,7 +129,7 @@ class RootfsFileSystem(
      */
     override suspend fun writeAtomic(path: GuestPath, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
         val real = canonical(path)
-        bindFor(real)?.takeIf { it.readOnly }?.let { throw GuestPathException(path, "位于只读挂载 ${it.guest} 内") }
+        requireWritable(path)
         val host = hostOf(components(real.value))
         val parent = host.parent ?: throw GuestPathException(path, "不能写根目录")
         Files.createDirectories(parent)
@@ -158,6 +163,11 @@ class RootfsFileSystem(
 
     // ---- 映射细节 ----
 
+    /** 快照恢复还会删文件/建目录；这些动作必须沿用文件工具的只读挂载边界。 */
+    internal fun requireWritable(path: GuestPath) {
+        bindFor(canonical(path))?.takeIf { it.readOnly }?.let { throw GuestPathException(path, "位于只读挂载 ${it.guest} 内") }
+    }
+
     private fun hostOf(parts: List<String>): Path {
         val guest = "/" + parts.joinToString("/")
         val bind = binds.firstOrNull { GuestPath(guest).isUnder(it.guest) }
@@ -179,9 +189,16 @@ class RootfsFileSystem(
     /** 链接目标若是宿主上 rootfs / 挂载内部的绝对路径，翻译回 guest 路径；否则原样（按 guest 路径解释） */
     private fun guestTargetOf(target: String): String {
         if (!target.startsWith("/")) return target
-        underHost(target, root)?.let { return "/$it" }
-        binds.forEach { bind -> underHost(target, bind.host)?.let { return bind.guest.value.trimEnd('/') + "/" + it } }
-        return target
+        return guestPathForHost(root.fileSystem.getPath(target))?.value ?: target
+    }
+
+    /** git worktree 的 .git 文件可能写宿主绝对路径；与链接共用已有的反向映射，不能另猜挂载。 */
+    internal fun guestPathForHost(host: Path): GuestPath? {
+        val target = host.toAbsolutePath().toString().replace('\\', '/')
+        underHost(target, root)?.let { return GuestPath("/$it") }
+        binds.forEach { bind -> underHost(target, bind.host)?.let { return GuestPath(bind.guest.value.trimEnd('/') + "/" + it) } }
+        if (root == root.root && host.fileSystem == root.fileSystem && target.startsWith('/')) return GuestPath(target)
+        return null
     }
 
     /** [target] 在宿主目录 [base] 之内时返回相对部分，否则 null */

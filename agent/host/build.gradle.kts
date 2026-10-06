@@ -1,5 +1,6 @@
 plugins {
     id("min.agent.jvm")
+    alias(libs.plugins.kotlin.serialization)
 }
 
 dependencies {
