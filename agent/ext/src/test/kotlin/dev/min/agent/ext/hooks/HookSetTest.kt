@@ -68,7 +68,10 @@ class HookSetTest {
         assertTrue(set.handlers.none { it.executable })
         val match = set.matchingDetailed(HookEvent.Stop, null)
         assertTrue(match.handlers.isEmpty()); assertEquals(5, match.notes.size)
-        assertTrue(match.notes.all { it.contains("本期不执行") })
+        // 同步批只跑同步 command：未知类型照旧「本期不执行」，http 分流到 http 通道，异步 command 交给后台执行器
+        assertTrue(match.notes.count { it.contains("本期不执行") } == 3)
+        assertTrue(match.notes.count { it.contains("http 通道") } == 1)
+        assertTrue(match.notes.count { it.contains("后台执行器") } == 1)
     }
 
     @Test fun `工具 if 由调用方注入且没有注入时可见地跳过`() {
@@ -109,5 +112,44 @@ class HookSetTest {
         assertFalse(matchesHookTarget(HookEvent.SubagentStop, "reviewer", null))
         assertTrue(matchesHookTarget(HookEvent.SubagentStop, ".*", null))
         assertTrue(matchesHookTarget(HookEvent.PreModelSwitch, "specific", null))
+    }
+
+    // ---- async / asyncRewake / once ----
+
+    @Test fun `async 与 asyncRewake 进字段、不进同步批、由 matchingAsync 挑出`() {
+        val set = HookSet.parse(listOf(source("""{"PreToolUse":[{"hooks":[
+          {"type":"command","command":"sync"},
+          {"type":"command","command":"bg","async":true},
+          {"type":"command","command":"watch","asyncRewake":true}]}]}""")))
+        val byCommand = set.handlers.associateBy { it.command }
+        assertEquals(false, byCommand.getValue("sync").async)
+        assertEquals(true, byCommand.getValue("bg").async)
+        assertEquals(true, byCommand.getValue("watch").asyncRewake)
+        // 同步批只认 sync；异步批拿到另外两个，且各自的 asyncRewake 标记保留（内核据此决定要不要套 timeout）
+        assertEquals(listOf("sync"), set.matchingDetailed(HookEvent.PreToolUse, null).handlers.map { it.command })
+        val async = set.matchingAsync(HookEvent.PreToolUse, null)
+        assertEquals(setOf("bg", "watch"), async.handlers.map { it.command }.toSet())
+        assertEquals(listOf(false, true), async.handlers.sortedBy { it.command }.map { it.asyncRewake })
+    }
+
+    @Test fun `同一命令的同步版与异步版不会在去重时互吞`() {
+        val set = HookSet.parse(listOf(source("""{"Stop":[{"hooks":[
+          {"type":"command","command":"a"},{"type":"command","command":"a","async":true}]}]}""")))
+        assertEquals(2, set.handlers.size)
+        assertEquals(1, set.matchingDetailed(HookEvent.Stop, null).handlers.size)
+        assertEquals(1, set.matchingAsync(HookEvent.Stop, null).handlers.size)
+    }
+
+    @Test fun `once 解析成布尔且 matcher 与 if 同样作用于异步批`() {
+        val set = HookSet.parse(listOf(source("""{"PostToolUse":[
+          {"matcher":"Write","hooks":[{"type":"command","command":"t","once":true,"async":true}]},
+          {"hooks":[{"type":"command","command":"all","asyncRewake":true,"if":"Bash(git *)"}]}]}""")))
+        val byCommand = set.handlers.associateBy { it.command }
+        assertEquals(true, byCommand.getValue("t").once)
+        assertEquals(false, byCommand.getValue("all").once)
+        assertEquals(listOf("t"), set.matchingAsync(HookEvent.PostToolUse, "Write").handlers.map { it.command })
+        assertEquals(listOf("all"), set.matchingAsync(HookEvent.PostToolUse, "Read", ifMatches = { it == "Bash(git *)" }).handlers.map { it.command })
+        assertTrue(set.matchingAsync(HookEvent.PostToolUse, "Read").handlers.isEmpty())
+        assertTrue(set.matchingAsync(HookEvent.PostToolUse, "Bash", ifMatches = { _ -> false }).handlers.isEmpty())
     }
 }

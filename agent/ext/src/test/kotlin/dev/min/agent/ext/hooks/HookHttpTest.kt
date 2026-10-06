@@ -39,11 +39,11 @@ class HookHttpTest {
         val http = set.matchingHttp(HookEvent.PreToolUse, "Bash")
         assertEquals(listOf("http://a/one", "http://a/two"), http.handlers.map { it.url })
         assertTrue(http.notes.isEmpty())
-        // matchingDetailed 的既有行为不变：http 仍按「本期不执行此 hook 类型」跳过（每个处理器一条 note）
+        // matchingDetailed 的既有行为不变：http 不进同步 command 批（每个处理器一条 note，说明去了 http 通道）
         val command = set.matchingDetailed(HookEvent.PreToolUse, "Bash")
         assertEquals(listOf("sh x.sh"), command.handlers.map { it.command })
         assertEquals(2, command.notes.size)
-        assertTrue(command.notes.all { it.contains("本期不执行此 hook 类型") })
+        assertTrue(command.notes.all { it.contains("http 通道") })
         // 事件绑定照旧：别的事件一个都挑不出来
         assertTrue(set.matchingHttp(HookEvent.Stop, null).handlers.isEmpty())
     }
