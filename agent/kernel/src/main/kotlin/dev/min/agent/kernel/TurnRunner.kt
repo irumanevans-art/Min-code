@@ -141,25 +141,59 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     }
 
     private suspend fun loop(turnId: TurnId) {
-        // 子 agent 定义里的 maxTurns：到了就停，报告标「未完成，可续」（与 Claude Code 的 partial 一致）
-        val agentLimit = rt.state.value.origin?.maxTurns
-        repeat(agentLimit ?: MAX_REQUESTS_PER_TURN) {
+        // 请求次数上限：子 agent 用定义里的 maxTurns，根会话用 --max-turns / CLAUDE_CODE_MAX_TURNS（运行时选项，不进日志）。
+        // 到了就以 Interrupted(Limit) 收尾，可续——CC 把它叫 error_max_turns（--json 的 subtype）
+        val origin = rt.state.value.origin
+        val limit = origin?.maxTurns ?: deps.rootMaxTurns.takeIf { origin == null }
+        // --json-schema（工具式结构化输出）：根会话这次运行要求模型用 StructuredOutput 交出符合 schema 的最终答案
+        val plan = deps.structuredOutput.takeIf { origin == null }
+        val maxAttempts = if (plan != null) structuredOutputAttempts() else 0
+        var failedAttempts = 0
+        repeat(limit ?: MAX_REQUESTS_PER_TURN) {
             val completed = requestWithRetry(turnId)
             val calls = completed.message.parts.filterIsInstance<ToolCallPart>()
             when {
                 calls.isEmpty() -> {
+                    // 没交卷就想结束：提醒它还有结构化输出的要求，计入次数（每回提醒、每回都算，直到上限）
+                    if (plan != null && rt.state.value.structuredOutput == null) {
+                        failedAttempts++
+                        if (failedAttempts >= maxAttempts) throw TurnAbort(structuredOutputFailure(maxAttempts))
+                        rt.receive(
+                            ClientMsgId("structured-output:${turnId.value}:$failedAttempts"),
+                            listOf(TextPart(STRUCTURED_OUTPUT_REMINDER)),
+                            Delivery.Steer,
+                            InputOrigin.Hook("structured_output"),
+                            startTurn = null,
+                        )
+                    }
                     // 模型说完了；生成期间有人插话就接着回应；Stop hook 拦下「结束」也接着做；否则回合结束
                     if (promote(setOf(Delivery.Steer)) == 0 && !stopHookContinues(turnId, completed)) return
                 }
                 completed.truncated -> tools.rejectTruncated(turnId, calls)
                 else -> tools.executeAll(turnId, calls)
             }
+            // 交了卷：回合就此收尾，不必再让模型说话（同一批里的其他调用照常执行、结果照常落盘）
+            if (plan != null) {
+                if (rt.state.value.structuredOutput != null) return
+                if (calls.any { it.name == StructuredOutputTool.NAME }) {
+                    // 调了 StructuredOutput 但没交成（校验失败，错误结果已回给模型）：算一次未通过
+                    failedAttempts++
+                    if (failedAttempts >= maxAttempts) throw TurnAbort(structuredOutputFailure(maxAttempts))
+                }
+            }
             // 工具批结束 = 安全点：插话在这里送达（docs/agent/04-子系统设计.md §4.1）
             promote(setOf(Delivery.Steer))
         }
-        if (agentLimit != null) throw TurnLimitReached()
+        if (limit != null) throw TurnLimitReached()
         throw TurnAbort("单个回合的模型请求达到 $MAX_REQUESTS_PER_TURN 次上限，已停止。检查是不是陷入了循环。")
     }
+
+    /** 结构化输出总共允许几次尝试（首次 + 重试，CC 的 MAX_STRUCTURED_OUTPUT_RETRIES，默认 5）；不是正整数就用默认 */
+    private fun structuredOutputAttempts(): Int =
+        deps.env(STRUCTURED_OUTPUT_ATTEMPTS_ENV)?.trim()?.toIntOrNull()?.takeIf { it > 0 } ?: DEFAULT_STRUCTURED_OUTPUT_ATTEMPTS
+
+    private fun structuredOutputFailure(maxAttempts: Int) =
+        "模型连续 $maxAttempts 次都没能交出符合 --json-schema 的结构化答案（上限可用环境变量 $STRUCTURED_OUTPUT_ATTEMPTS_ENV 调整），本次运行失败。"
 
     /**
      * 把收件箱里指定投递方式的输入提升为正式消息，返回提升了几条。
@@ -357,7 +391,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             messages = state.modelMessages(),
             tools = specs,
             effort = state.settings.effort,
-            cacheKey = origin?.cacheKey ?: state.header.sessionId.value,
+            // 分支沿用原会话的缓存键（session_branched 冻结）：OpenAI 系的 prompt_cache_key 落到同一个缓存分片
+            cacheKey = origin?.cacheKey ?: state.branched?.cacheKey ?: state.header.sessionId.value,
             memory = state.memory,
             // 子 agent 的工具表里没有 Skill 就不列清单：列了模型也调不了，白占 token
             skills = state.skills?.takeIf { _ -> specs.any { it.name == SkillTool.name } },
@@ -395,6 +430,16 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         /** 覆盖上限的环境变量名，与 CC 相同 */
         const val STOP_CAP_ENV = "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP"
 
+        /** 结构化输出（--json-schema）默认允许的总尝试次数：首次 + 4 次重试（CC 的 MAX_STRUCTURED_OUTPUT_RETRIES 默认 5） */
+        const val DEFAULT_STRUCTURED_OUTPUT_ATTEMPTS = 5
+
+        /** 覆盖结构化输出尝试次数的环境变量名，与 CC 相同（不带 CLAUDE_CODE 前缀） */
+        const val STRUCTURED_OUTPUT_ATTEMPTS_ENV = "MAX_STRUCTURED_OUTPUT_RETRIES"
+
+        /** 模型想空手结束时给它的提醒（作为 steer 输入进对话，日志里可见） */
+        const val STRUCTURED_OUTPUT_REMINDER =
+            "本次任务要求结构化输出：最终答案必须通过调用 StructuredOutput 工具交出（参数符合给定的 JSON Schema，只调用一次）。请现在调用它。"
+
         /** 防止模型陷入「调工具 → 看结果 → 再调」的死循环把钱烧光；循环检测（M3）落地后这只是最后一道闸 */
         const val MAX_REQUESTS_PER_TURN = 200
 
@@ -410,20 +455,25 @@ internal class TurnAbort(message: String, val kind: ModelFailureKind? = null) : 
 /** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
 internal class TurnLimitReached : Exception()
 
-/** 组系统提示用的环境事实：子会话带着的（分身 = 父会话的）优先，否则由本会话的创建时间与 cwd 推出 */
+/** 组系统提示用的环境事实：子会话带着的（分身 = 父会话的）优先；分支会话用 session_branched 冻结的原会话事实；
+ *  否则由本会话的创建时间与 cwd 推出。分支不带原会话的事实，日期一变系统提示就变，缓存前缀全断 */
 internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
-    state.origin?.promptBasis ?: PromptBasis(
-        platform = deps.platform,
-        cwd = state.created.cwd.value,
-        date = LocalDate.ofInstant(Instant.ofEpochMilli(state.header.createdAtMs), deps.zone).toString(),
-    )
+    state.origin?.promptBasis
+        ?: state.branched?.basis
+        ?: PromptBasis(
+            platform = deps.platform,
+            cwd = state.created.cwd.value,
+            date = LocalDate.ofInstant(Instant.ofEpochMilli(state.header.createdAtMs), deps.zone).toString(),
+        )
 
 /** 本会话能用的工具，保持 [KernelDeps.tools] 的固定顺序。新开的子 agent 按定义取子集；分身与根会话是全部 */
 internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable): List<Tool<*>> {
     val allowed = state.origin?.tools
     val builtin = if (allowed == null) deps.tools else deps.tools.filter { it.name in allowed }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
-    return builtin + state.visibleMcpTools(deps).map { McpToolAdapter(it, mcp) }
+    val base = builtin + state.visibleMcpTools(deps).map { McpToolAdapter(it, mcp) }
+    // StructuredOutput 排在最后（--json-schema 是这一根会话这次运行的要求；子 agent 与分身不经它交卷）
+    return if (deps.structuredOutput != null && state.origin == null) base + StructuredOutputTool(deps.structuredOutput!!) else base
 }
 
 /**

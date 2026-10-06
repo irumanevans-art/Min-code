@@ -85,6 +85,17 @@ class KernelDeps(
     val fastModel: ModelRef? = null,
     val maxWebSearches: Int = 200,
     /**
+     * 根会话一个回合里的模型请求次数上限（CLI 的 `--max-turns`，没给时读 `CLAUDE_CODE_MAX_TURNS`）。
+     * 纯运行时选项：不进日志、不改前缀——它只属于这一次进程运行，重开会话不该带着它。
+     * 只对根会话生效；子 agent 用来历里的 [dev.min.agent.spi.SubagentOrigin.maxTurns]，两层互不干扰
+     */
+    val rootMaxTurns: Int? = null,
+    /**
+     * `--json-schema` 的结构化输出方案（null = 没开）。同为运行时选项；只给根会话（子 agent 与分身
+     * 不经 StructuredOutput 交卷——最终答案属于主对话，CC 的结构化输出也只在 -p 的主会话上）
+     */
+    val structuredOutput: StructuredOutputPlan? = null,
+    /**
      * 环境变量的读取口。内核不直接读进程环境：宿主决定给它什么（桌面 CLI 给 `System.getenv`），
      * 内核测试给固定的表，不随跑测试的机器变。现在只读 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`
      */

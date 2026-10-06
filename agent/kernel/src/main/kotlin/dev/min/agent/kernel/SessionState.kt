@@ -73,6 +73,11 @@ data class SessionState(
      * 分身继承这份快照（前缀与父会话逐字相同），普通子 agent 不用样式。没设 / Default / 找不到时为 null
      */
     val outputStyle: dev.min.agent.spi.OutputStyleLoaded? = null,
+    /**
+     * 已交卷的结构化输出（最后一条 StructuredOutputDelivered，`--json-schema` 用）。null = 没交或没开。
+     * 交了卷的回合随即收尾，一个回合最多采纳一条；最终答案从日志直接重建
+     */
+    val structuredOutput: dev.min.agent.spi.StructuredOutputDelivered? = null,
     /** 展示用事件同样由日志折叠；不进入 modelMessages，避免 UI 说明改变模型历史。 */
     val presentation: List<SessionPresentation> = emptyList(),
     /** 子会话的来历；根会话为 null（docs/agent/detail/子agent设计.md §2.2） */
@@ -81,6 +86,11 @@ data class SessionState(
     val children: Map<SessionId, ChildSummary> = emptyMap(),
     /** 最近结束的那个回合。子 agent 的报告取它的结局 */
     val lastTurn: EndedTurn? = null,
+    /**
+     * 本会话是分支出来的（最后一条 session_branched）；null = 不是。界面据此显示「分支自 …」，
+     * 组请求时沿用事件里冻结的环境事实与缓存键（前缀与原会话逐字相同，提示缓存接得上）
+     */
+    val branched: dev.min.agent.spi.SessionBranched? = null,
     /** 会话创建时冻结的权限规则（最后一条 PermissionRulesLoaded） */
     val rules: List<RuleEntry> = emptyList(),
     /** 本会话里人选「总是允许」攒下的规则，按答复顺序；来源记为 session */

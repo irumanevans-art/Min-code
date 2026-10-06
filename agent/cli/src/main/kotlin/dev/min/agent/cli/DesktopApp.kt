@@ -7,9 +7,11 @@ import dev.min.agent.kernel.HostPorts
 import dev.min.agent.kernel.HubLimits
 import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
+import dev.min.agent.kernel.SessionBranchRefused
 import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.kernel.SessionEndReasons
 import dev.min.agent.kernel.SessionHub
+import dev.min.agent.kernel.StructuredOutputPlan
 import dev.min.agent.tools.AgentType
 import dev.min.agent.tools.AgentToolOf
 import dev.min.agent.kernel.AgentCatalog
@@ -53,6 +55,7 @@ import dev.min.agent.tools.WebFetchTool
 import dev.min.agent.tools.WebSearchTool
 import dev.min.agent.host.CachedWebPort
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import java.nio.file.Files
 import java.nio.file.Path
@@ -167,6 +170,8 @@ internal class DesktopApp(
             Wire.OpenAIResponses -> OpenAIResponsesClient(provider, transport, secrets)
             else -> throw UsageException("CLI 尚不支持协议 ${provider.wire}")
         }
+        // 内核读环境变量都走这一个口（CLAUDE_CODE_MAX_TURNS、hook 的插值……）：模型 key 的变量对内核是 null
+        val envReader = hookEnvReader(hiddenEnv)
         return KernelDeps(
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
@@ -210,21 +215,53 @@ internal class DesktopApp(
             trustProjectHooks = { args.trust },
             fastModel = fastSelection?.profile?.ref,
             maxWebSearches = args.maxWebSearches,
+            // --max-turns 优先，没给时读 CLAUDE_CODE_MAX_TURNS（CC：不是正整数就启动时报错退出）。只属于这次运行，不进日志
+            rootMaxTurns = resolveMaxTurns(args.maxTurns, envReader),
+            // --json-schema（只在 -p 模式有值，CliArgs 已校验）：同样是这次运行的选择，不进日志
+            structuredOutput = args.jsonSchema?.let(::StructuredOutputPlan),
             // CLI 自己读模型 key 的变量不交给内核：http hook 的 allowedEnvVars 点名它也只能插成空串（凭证不进 hook 请求）
-            env = hookEnvReader(hiddenEnv),
+            env = envReader,
             hiddenEnv = hiddenEnv,
         )
     }
 
     suspend fun openSession(): SessionRuntime {
-        args.resume?.let { id ->
-            val sessionId = SessionId(id)
-            // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
-            return hub().open(sessionId, resumedByUser = true)
-                ?: throw UsageException("找不到会话 $id")
+        val resumeId = args.resume?.let(::SessionId)
+            ?: if (args.continueMostRecent) latestRootSession() ?: throw UsageException("当前目录还没有可接着的会话。") else null
+        if (resumeId != null) {
+            if (!args.forkSession) {
+                // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
+                return hub().open(resumeId, resumedByUser = true)
+                    ?: throw UsageException("找不到会话 ${resumeId.value}")
+            }
+            // --fork-session：读原会话（这不算用户 resume），在分支上跑这次的 -p；原会话一个字不动。
+            // SessionStart(resume) 跑在分支上——用户接着用的是分支
+            hub().open(resumeId) ?: throw UsageException("找不到会话 ${resumeId.value}")
+            val branch = hub().branch(resumeId)
+            return checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
+    }
+
+    /** 交互模式 /branch：从当前会话分出一个新根会话（忙 / 找不到时抛 [SessionBranchRefused]，终端打印原因） */
+    suspend fun branchSession(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
+
+    /**
+     * --continue：当前目录最近一次根会话。按日志头两条事件筛（cwd 相同 + 第二条不是 subagent_origin）。
+     * CC 还会把 -p 会话从 --continue 里排除；Min 的日志没有「是不是 -p 跑的」这个标记，挑最近的根会话（见汇报）
+     */
+    private suspend fun latestRootSession(): SessionId? {
+        val cwd = paths.guestOfHost(args.cwd)
+        for (header in store.list().asReversed()) {
+            val log = store.open(header.sessionId) ?: continue
+            val head = log.read().take(2).toList()
+            val created = head.firstOrNull()?.event as? dev.min.agent.spi.SessionCreated ?: continue
+            if (created.cwd != cwd) continue
+            if (head.getOrNull(1)?.event is dev.min.agent.spi.SubagentOrigin) continue
+            return header.sessionId
+        }
+        return null
     }
 
     /**

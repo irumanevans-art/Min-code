@@ -2,7 +2,9 @@ package dev.min.agent.cli
 
 import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.ModelRequestStarted
+import dev.min.agent.spi.StructuredOutputDelivered
 import dev.min.agent.spi.TurnEnded
 import dev.min.agent.spi.TurnOutcome
 import kotlinx.serialization.json.JsonArray
@@ -18,9 +20,20 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
     val failure: String? get() = ends.mapNotNull { (it.outcome as? TurnOutcome.Failed)?.message }.lastOrNull()
     val turnUsage: Usage get() = ends.fold(Usage()) { total, end -> total + end.usage }
 
+    /** CC 对 result.subtype 的叫法：success / error_max_turns（--max-turns 到限）/ error_during_execution */
+    val subtype: String get() = when {
+        completed -> "success"
+        ends.any { (it.outcome as? TurnOutcome.Interrupted)?.by == InterruptedBy.Limit } -> "error_max_turns"
+        else -> "error_during_execution"
+    }
+
+    /** 校验通过的结构化输出（--json-schema）：只看本次命令之后的事件；失败 / 没开时没有这个字段 */
+    private val structured = events.mapNotNull { it.event as? StructuredOutputDelivered }.lastOrNull()
+
     fun json(): JsonObject = buildJsonObject {
         put("session", session)
         put("completed", completed)
+        put("subtype", subtype)
         // 保留既有累计字段的口径；新加单次命令的用量，resume 后无需手算差值。
         put("input_tokens", cumulative.inputTokens)
         put("output_tokens", cumulative.outputTokens)
@@ -28,6 +41,7 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
         put("cache_write_tokens", cumulative.cacheWriteTokens)
         put("turn_usage", usageJson(turnUsage))
         put("prefix_fingerprints", JsonArray(events.mapNotNull { (it.event as? ModelRequestStarted)?.prefixFingerprint }.map(::JsonPrimitive)))
+        structured?.let { put("structured_output", it.value) }
         failure?.let { put("error", it) }
     }
 }
