@@ -7,6 +7,7 @@ import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.kernel.pendingMcpQuestions
 import dev.min.agent.kernel.pendingMcpUrls
 import dev.min.agent.kernel.resolveMcpUrl
+import dev.min.agent.kernel.cancelMcpQuestion
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.ApprovalChoice
@@ -87,7 +88,7 @@ internal class ConsoleUi(
                     out.println("\nMCP 服务器 ${pending.request.server} 请求打开网址：${pending.request.message}\n域名：${pending.request.domain}\n完整 URL：${pending.request.url}\n是否打开？[y/n]")
                     if (pending.request.callId != null || !mainOwnsInput) {
                         out.flush()
-                        val action = consentToMcpUrl(pending.request.url, input.readLine().orEmpty())
+                        val action = consentToMcpUrl(pending.request.url, input.readLine())
                         runtime.resolveMcpUrl(pending.request.questionId, action)
                     }
                 }
@@ -96,7 +97,7 @@ internal class ConsoleUi(
         }
     }
 
-    /** 逐题问；任何一题直接回车（或输入流结束）就整组拒答。非 ask 模式没有人在终端前，直接拒答 */
+    /** 回车是拒答；外部请求遇到输入流结束需要回 cancel，不能混成用户明确拒绝。 */
     private suspend fun answerQuestions(asked: AskedQuestion) {
         if (approve != ApprovalAnswer.Ask && asked.server == null) {
             runtime.declineQuestion(asked.questionId)
@@ -107,11 +108,15 @@ internal class ConsoleUi(
         val answers = mutableListOf<QuestionAnswer>()
         for (question in asked.questions) {
             val answer = readAnswer(question)
-            if (answer == null) {
+            if (answer == null && asked.server != null) {
+                runtime.cancelMcpQuestion(asked.questionId)
+                return
+            }
+            if (answer == null || answer == ConsoleAnswer.Skip) {
                 runtime.declineQuestion(asked.questionId)
                 return
             }
-            answers += answer
+            answers += (answer as ConsoleAnswer.Answer).answer
         }
         runtime.answerQuestion(asked.questionId, answers)
     }
@@ -138,14 +143,14 @@ internal class ConsoleUi(
         return false
     }
 
-    private fun readAnswer(question: UserQuestion): QuestionAnswer? {
+    private fun readAnswer(question: UserQuestion): ConsoleAnswer? {
         out.print("\n" + renderQuestion(question) + " ")
         while (true) {
             out.flush()
             val line = input.readLine() ?: return null
             when (val parsed = parseConsoleAnswer(question, line)) {
-                is ConsoleAnswer.Answer -> return parsed.answer
-                ConsoleAnswer.Skip -> return null
+                is ConsoleAnswer.Answer -> return parsed
+                ConsoleAnswer.Skip -> return parsed
                 is ConsoleAnswer.Retry -> out.print("  ${parsed.reason}：")
             }
         }

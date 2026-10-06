@@ -128,7 +128,8 @@ suspend fun SessionRuntime.resolveMcpUrl(id: QuestionId, action: String): Boolea
     return commitIf(listOf(McpUrlElicitationResolved(id, action)), Durability.Sync) { it.mcpUrls[id]?.action == null && id in it.mcpUrls } != null
 }
 
-internal suspend fun SessionRuntime.cancelMcpQuestion(id: QuestionId) {
+/** 宿主输入流结束等取消需要与用户拒答区分，才能向服务器回 cancel。 */
+suspend fun SessionRuntime.cancelMcpQuestion(id: QuestionId) {
     commitIf(listOf(QuestionAnswered(id, declined = true, cancelled = true)), Durability.Sync) { it.mcpQuestions[id]?.outcome == null && id in it.mcpQuestions }
 }
 
