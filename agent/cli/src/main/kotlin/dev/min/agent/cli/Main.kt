@@ -61,7 +61,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
             catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
             catch (e: Exception) { System.err.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
         } else emptyList()
-        val parts = when (val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime), prompts)) {
+        val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime), prompts)
+        val parts = when (action) {
             is InputAction.Send -> listOf(TextPart(action.text))
             is InputAction.Prompt -> {
                 val result = runtime.getMcpPrompt(action.command.server, action.command.prompt, action.arguments)
@@ -73,7 +74,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
                 return false
             }
         }
-        runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts)
+        runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)
         runtime.awaitIdle()
         println()
         return true

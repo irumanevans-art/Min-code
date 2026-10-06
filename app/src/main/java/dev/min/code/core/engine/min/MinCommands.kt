@@ -120,7 +120,7 @@ class MinCommandHandler(
         }
         // 回合在跑就插话（Steer：当前工具批结束后送达，对齐 CC 的「交棒进 stdin」）；空闲时 send 直接开回合，投递方式无所谓
         val delivery = if (runtime.state.value.turn != null) Delivery.Steer else Delivery.Queue
-        val accepted = runtime.send(ClientMsgId(command.commandId), partsOf(command.input), delivery)
+        val accepted = runtime.send(ClientMsgId(command.commandId), partsOf(command.input), delivery, scanMcpMentions = true)
         return if (accepted) CommandResult.Accepted else CommandResult.Duplicate
     }
 

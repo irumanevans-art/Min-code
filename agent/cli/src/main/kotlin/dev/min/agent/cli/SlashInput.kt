@@ -9,7 +9,7 @@ import dev.min.agent.ext.skills.SlashResult
 /** 终端里敲下的一行该怎么处理 */
 internal sealed interface InputAction {
     /** 把 [text] 当用户消息发给模型（普通输入原样，斜杠命令是展开后的内容） */
-    data class Send(val text: String) : InputAction
+    data class Send(val text: String, val humanInput: Boolean = false) : InputAction
 
     /** 不发给模型，只在终端提示一句（未知命令、不能用斜杠调用的 skill） */
     data class Notice(val message: String) : InputAction
@@ -22,7 +22,7 @@ internal sealed interface InputAction {
  */
 internal fun interpretInput(line: String, skills: List<SkillDef>, commands: List<CommandDef>, vars: SkillVars, prompts: List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList()): InputAction =
     when (val r = SlashCommands.expand(line, skills, commands, vars, prompts)) {
-        SlashResult.NotACommand -> InputAction.Send(line)
+        SlashResult.NotACommand -> InputAction.Send(line, humanInput = true)
         is SlashResult.Expanded -> InputAction.Send(r.text)
         is SlashResult.Unknown -> InputAction.Notice("没有名为 /${r.name} 的 skill 或命令。")
         is SlashResult.NotInvocable -> InputAction.Notice("/${r.name} 设置了 user-invocable: false，只有模型能调用它。")

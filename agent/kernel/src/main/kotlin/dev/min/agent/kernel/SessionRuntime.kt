@@ -372,9 +372,9 @@ class SessionRuntime private constructor(
      * 收一条用户输入。同一个 [clientMsgId] 重发只收一次（返回 false）。
      * 空闲时直接开回合；回合进行中时，[Delivery.Steer] 在当前工具批结束后送达，[Delivery.Queue] 等下一回合。
      */
-    suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue): Boolean = inputPrepareLock.withLock {
+    suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue, scanMcpMentions: Boolean = false): Boolean = inputPrepareLock.withLock {
         if (clientMsgId in state.value.seenInputs) return@withLock false
-        val prepared = attachMcpResources(parts, clientMsgId)
+        val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
         commitIf(listOf(InputReceived(clientMsgId, prepared, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
             ?: return false
         startTurnIfIdle(TurnTrigger.User)
