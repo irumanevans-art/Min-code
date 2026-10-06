@@ -1825,3 +1825,33 @@ JVM 协程测试明确返回 Unit；变异保存退出码、具体失败测试�
 - **Notes**: 双会话 resources/read 和 prompts/get 回归通过；移除 inputOwner 回退的变异由同一测试检出。
 
 ---
+
+## [LRN-20261007-MCP2-REVERSE-TRUST] correction
+
+**Logged**: 2026-10-07T01:20:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+MCP 服务器生成的 prompt 不能触发跨服务器资源提取，合法的零字段表单也必须由人确认。
+
+### Details
+独立复核证明 send 的无来源 mention 扫描让 A 的 prompt 读取 B，properties={} 则直接 accept。人工输入来源改为宿主显式打开扫描，默认关闭；空 schema 仍持久化一张确认卡。任何关联调用的反向问题，提交前必须在 commitIf 锁内复核 turnId 与 EffectPending，否则竞态会先 append 再 fold 失败，损坏重放。
+
+### Suggested Action
+外部文本展开与人工文本在输入入口携带明确来源；对允许空 schema 的交互保留人工同意步骤；用提交锁阻塞的确定性竞态测试覆盖日志可重放，而不仅检查响应动作。
+
+### Metadata
+- Source: user_feedback
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt
+- Tags: mcp, trust-boundary, consent, replay, race
+- Pattern-Key: mcp.reverse_request_trust_and_commit
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: 71dc2518, 230d7593, 37719d04
+- **Notes**: 空表单、跨服务器 prompt、call 结束与 turn 切换的确定性复现已覆盖。
+
+---
