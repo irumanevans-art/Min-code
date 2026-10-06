@@ -37,7 +37,9 @@ foreach ($m in $selected) {
         $log = Get-Content -LiteralPath (Join-Path $dest 'gradle.log') -Raw
         $executed = $log.Contains("> Task $task FAILED")
         $valid = $code -ne 0 -and $executed -and $failed.Count -gt 0 -and $log -notmatch 'Compilation error|No tests found|compileTestKotlin FAILED|compileKotlin FAILED|compileDebugKotlin FAILED|compileDebugUnitTestKotlin FAILED'
-        if ($log -match 'FAKE_ACCESS|FAKE_REFRESH|FAKE_SECRET|FAKE_CODE|OLD_REFRESH') { throw "变异证据暴露了假凭证，请修正断言：$($m.Item)/$($m.Name)" }
+        $credentialPattern = 'FAKE_ACCESS|FAKE_REFRESH|FAKE_SECRET|FAKE_CODE|OLD_REFRESH'
+        $leakingXml = @(Get-ChildItem -LiteralPath $dest -Filter 'TEST-*.xml' | Where-Object { [IO.File]::ReadAllText($_.FullName) -match $credentialPattern })
+        if ($log -match $credentialPattern -or $leakingXml.Count -gt 0) { throw "变异证据暴露了假凭证，请修正断言：$($m.Item)/$($m.Name)" }
         $result = @{ item=$m.Item; mutation=$m.Name; killed=$valid; exit=$code; failures=$failed }
         $results += $result
         $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $dest 'result.json')

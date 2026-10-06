@@ -513,6 +513,60 @@
     "Test": "*McpOAuthClientTest"
   },
   {
+    "Item": "metadata_security",
+    "Name": "accept-issuer-query",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (secureUri(issuer).rawQuery != null)",
+    "To": "if (secureUri(issuer).rawQuery != null && false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "metadata_security",
+    "Name": "accept-issuer-fragment",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "u.fragment != null ||",
+    "To": "false ||",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "metadata_security",
+    "Name": "accept-public-HTTP",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "u.host in setOf(\"127.0.0.1\", \"[::1]\")",
+    "To": "true",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "helper_boundary",
+    "Name": "forget-initial-authorization",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if (initial.any { it.first.equals(\"Authorization\", true) }) configuredAuthorizationSeen = true",
+    "To": "if (false) configuredAuthorizationSeen = true",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
+    "Item": "helper_boundary",
+    "Name": "forget-reloaded-authorization",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if (configured) configuredAuthorizationSeen = true",
+    "To": "if (false) configuredAuthorizationSeen = true",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
+    "Item": "helper_boundary",
+    "Name": "ignore-authorization-choice",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if (!configuredAuthorizationSeen && headers.none",
+    "To": "if (headers.none",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
     "Item": "cli_flow",
     "Name": "ignore-no-browser",
     "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/DesktopMcpAuthorizer.kt",
