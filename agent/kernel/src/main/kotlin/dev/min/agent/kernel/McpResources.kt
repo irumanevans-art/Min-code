@@ -42,7 +42,7 @@ internal class McpResourceTool(private val read: Boolean, private val servers: L
 }
 
 internal suspend fun SessionRuntime.attachMcpResources(parts: List<Part>, id: ClientMsgId): List<Part> {
-    val mentions = parts.filterIsInstance<TextPart>().flatMap { text -> RESOURCE_MENTION.findAll(text.text).map { it.groupValues[1] to it.groupValues[2] }.toList() }.distinct()
+    val mentions = parts.filterIsInstance<TextPart>().flatMap { text -> RESOURCE_MENTION.findAll(text.text).map { it.groupValues[1] to it.groupValues[2].trimEnd('.', ',', ';', ':', ')', ']', '}') }.filter { it.second.isNotEmpty() }.toList() }.distinct()
     if (mentions.isEmpty()) return parts
     val attached = mutableListOf<Part>()
     for ((index, mention) in mentions.withIndex()) {
@@ -59,4 +59,4 @@ internal suspend fun SessionRuntime.attachMcpResources(parts: List<Part>, id: Cl
     return parts + attached
 }
 
-private val RESOURCE_MENTION = Regex("@([A-Za-z0-9_-]+):([^\\s]+)")
+private val RESOURCE_MENTION = Regex("(?<![\\p{L}\\p{N}@])@([A-Za-z0-9_-]+):([^\\s]+)")
