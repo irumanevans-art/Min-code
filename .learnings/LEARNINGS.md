@@ -1858,7 +1858,7 @@ MCP 服务器生成的 prompt 不能触发跨服务器资源提取，合法的�
 
 ## [LRN-20261007-OAUTH-TEST-BOUNDARIES] best_practice
 
-**Logged**: 2026-10-07T03:08:00+08:00
+**Logged**: 2026-10-07T03:26:12.2562950+08:00
 **Priority**: high
 **Status**: resolved
 **Area**: tests
@@ -1890,7 +1890,7 @@ AS issuer 不匹配的校验被移除后，回调 iss 校验仍会拒绝，所�
 
 ## [LRN-20261007-OAUTH-LOGIN-STAGING] best_practice
 
-**Logged**: 2026-10-07T03:15:00+08:00
+**Logged**: 2026-10-07T03:26:12.2562950+08:00
 **Priority**: high
 **Status**: resolved
 **Area**: backend
@@ -1915,5 +1915,35 @@ AS issuer 不匹配的校验被移除后，回调 iss 校验仍会拒绝，所�
 - **Resolved**: 2026-10-07
 - **Commit/PR**: e36141b4
 - **Notes**: 原全量失败与确定性 red/green XML 已保留；六个 OAuth 管理器用例恢复通过。
+
+---
+
+## [LRN-20261007-HOST-CAPABILITY-AND-STATE] best_practice
+
+**Logged**: 2026-10-07T03:26:12.2562950+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+复用宿主入口时验证其实际回退语义；状态测试不能用前一阶段的发布代替目标阶段。
+
+### Details
+App 既有外部浏览器出口给 ACTION_VIEW 添加 Custom Tab extra，但浏览器不支持时会普通打开；OAuth 的「只走 Custom Tab」要求更严格，宿主改为在既有可见浏览器包里检查 CustomTabsService，排除 Min，优先支持能力的默认浏览器，无提供者拒绝。未改既有普通链接出口或 UI。全量检查还发现既有撤回提问用例在 pendingPermission 变空后立即断言 Note，卡撤下与 Note 是两次发布；沿用既有 awaitState 等到 Note，再检查迟到应答未写入，没有增加等待期限或改产品行为。
+
+### Suggested Action
+判断可复用接口是否允许不符合需求的回退；测试等待真正被断言的状态。OAuth 失败阶段、凭证产物与公共返回契约两项验证经验已提升到根 AGENTS.md。
+
+### Metadata
+- Source: error
+- Related Files: app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt, app/src/test/java/dev/min/code/core/claudecode/ClaudeCodeCliWithdrawalTest.kt, AGENTS.md
+- Tags: custom-tabs, capability, fallback, stateflow, race, test-oracle
+- Pattern-Key: host.capability_and_state_publication
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: 32f2cba9, 4cb24a5c
+- **Notes**: 四个提供者选择与八个既有撤回用例通过；真机包可见性及 Custom Tab 流程未验。
 
 ---
