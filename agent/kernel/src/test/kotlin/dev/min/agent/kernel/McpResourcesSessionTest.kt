@@ -19,9 +19,19 @@ class McpResourcesSessionTest {
             val deps = testDeps(ScriptedModel(), emptyList())
             val rt = SessionRuntime.create(FileSessionStore(tmp.root.toPath(), { 0L }), LogHeader(LOG_FORMAT_VERSION, SessionId("s"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.Default), deps, scope, initial=listOf(McpToolsSnapshot(emptyList(), resourceServers=listOf("db")), PermissionRulesLoaded(listOf(RuleEntry(RuleKindData.Deny, "mcp__db", "user")))))
             assertTrue(availableTools(rt.state.value, deps).isEmpty())
-            val read = McpResourceTool(true, listOf("allowed"), McpCaller.Unavailable)
+            var reads = 0
+            val caller = object : McpCaller {
+                override suspend fun call(request: McpCallRequest) = ToolResult(emptyList())
+                override suspend fun readResource(server: String, uri: String, artifacts: ArtifactSink, id: String): ToolResult { reads++; return ToolResult(emptyList()) }
+            }
+            val read = McpResourceTool(true, listOf("allowed"), caller)
             assertEquals(listOf("allowed"), read.permissionAsk(args("server" to "allowed", "uri" to "r://x"), TestToolContext()).specifiers)
             assertTrue(read.run(args("server" to "db", "uri" to "r://x"), TestToolContext()).toList().filterIsInstance<ToolProgress.Done>().single().result.isError)
+            assertEquals(0, reads)
+            assertTrue(McpResourceTool(false, listOf("allowed"), caller).parse(args("server" to 123)) is ToolInput.Invalid)
+            val state = rt.state.value.copy(rules=emptyList(), origin=SubagentOrigin(SessionId("p"), SessionId("p"), CallId("c"), "t", false, 1, cacheKey="t", mcpTools=listOf("mcp__other")))
+            assertTrue(availableTools(state, deps).isEmpty())
+            assertTrue(availableTools(state.copy(origin=state.origin!!.copy(mcpTools=null, mcpDenied=listOf("mcp__db"))), deps).isEmpty())
         } finally { scope.cancel() }
     }
     @get:Rule val tmp = TemporaryFolder()

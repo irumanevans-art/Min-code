@@ -230,7 +230,7 @@ internal fun SessionState.visibleMcpTools(deps: KernelDeps): List<McpToolEntry> 
 internal fun SessionState.visibleMcpResourceServers(deps: KernelDeps): List<String> {
     val policy = PolicyContext(mode=settings.mode, rules=(rules + sessionRules).mapNotNull(PermissionRule::from), cwd=settings.cwd, home=deps.memoryHome ?: GuestPath("/root"))
     return mcpTools?.resourceServers.orEmpty().filter { server ->
-        val name = McpNames.assign(listOf(server to "resource")).getValue(server to "resource")
+        val name = "mcp__${McpNames.sanitize(server)}"
         val agent = origin
         (agent == null || (agent.mcpDenied.none { matchesMcpPattern(it, name) } && (agent.mcpTools?.any { matchesMcpPattern(it, name) } ?: true))) && !PolicyEngine.deniesWholeTool(name, policy)
     }

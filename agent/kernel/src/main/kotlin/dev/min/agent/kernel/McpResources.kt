@@ -25,6 +25,7 @@ internal class McpResourceTool(private val read: Boolean, private val servers: L
     override fun description(profile: HarnessProfile) = if (read) "读取 MCP 服务器资源的 URI。" else "列出 MCP 资源与资源模板；server 可选。"
     override fun parse(raw: JsonObject): ToolInput<JsonObject> {
         val server = (raw["server"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        if (raw.containsKey("server") && server == null) return ToolInput.Invalid("server 必须是字符串。")
         if (server != null && server !in servers) return ToolInput.Invalid("这个服务器不在会话的资源清单里。")
         if (read && (server == null || (raw["uri"] as? JsonPrimitive)?.takeIf { it.isString }?.content.isNullOrBlank())) return ToolInput.Invalid("需要 server 与 uri。")
         return ToolInput.Valid(raw)
