@@ -128,9 +128,11 @@ class SessionHub(
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
     internal var mcp = McpManager(
         scope,
-        ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs, deps.mcpServerPath),
+        ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs, deps.mcpServerPath, deps.mcpTokenStore),
         startupWaitMs = deps.mcpFirstSnapshotWaitMs,
         sessionLookup = { runtimes[it] },
+        oauth = deps.host.mcpHttp?.let { dev.min.agent.mcp.McpOAuthClient(it, deps.mcpTokenStore, deps.mcpAuthorizer, deps.clock::nowMs) },
+        nowMs = deps.clock::nowMs,
     )
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
     private val openLock = Mutex()
@@ -319,6 +321,10 @@ class SessionHub(
      * 只靠卸下会话不够：那只是开始计「无人使用」的两分钟，宿主进程先退出了的话，不看 stdin 的服务器就成了孤儿进程
      */
     suspend fun closeMcpConnections() = mcp.closeAll()
+
+    suspend fun loginMcp(server: String, sessionId: SessionId? = null) = mcp.login(server, sessionId)
+    suspend fun logoutMcp(server: String, sessionId: SessionId? = null) = mcp.logout(server, sessionId)
+    fun mcpServers(sessionId: SessionId) = mcp.statusOf(sessionId)
 
     /**
      * 删除一个会话及它的全部后代（日志与附件）。先中断整棵树里在跑的回合并等它们收尾，再从叶子往根逐个删：

@@ -4,6 +4,11 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
+/** 审计只记操作者所属会话、服务器、动作和固定结果；时间与操作者会话由 EventRecord/日志头提供。 */
+@Serializable
+@SerialName("mcp_authentication")
+data class McpAuthentication(val server: String, val action: String, val outcome: String) : SessionEvent
+
 /*
  * MCP 的会话快照（docs/agent/detail/MCP设计.md §5.2、§11）。工具表 = 内置工具 + 最后一份 [McpToolsSnapshot]；
  * 请求只凭日志重建，所以服务器给的工具定义与说明原样（截断、整形之后）落盘。请求头、环境变量的值永远不进日志。
