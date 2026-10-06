@@ -8,6 +8,12 @@ import org.junit.Test
 import kotlinx.serialization.json.*
 
 class McpPromptCommandsTest {
+    @Test fun `windows paths preserve ordinary backslashes inside and outside quotes`() {
+        for (raw in listOf("C:\\Users\\me\\a.txt", "\"C:\\Users\\me\\a.txt\"", "C:\\")) {
+            val result = McpPromptCommands.arguments(raw, listOf(McpPromptArgument("path"))) as McpPromptArgs.Valid
+            assertEquals(raw.removeSurrounding("\""), result.arguments["path"]!!.jsonPrimitive.content)
+        }
+    }
     private val args = listOf(McpPromptArgument("title", true), McpPromptArgument("priority", true), McpPromptArgument("extra"))
     @Test fun `positional named and quoted arguments retain declared order`() {
         val positional = McpPromptCommands.arguments("\"two words\" high", args) as McpPromptArgs.Valid

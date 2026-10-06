@@ -36,10 +36,10 @@ object McpPromptCommands {
         var quote: Char? = null
         var started = false
         var escape = false
-        for (char in raw) {
+        for ((index, char) in raw.withIndex()) {
             when {
                 escape -> { token.append(char); escape = false; started = true }
-                char == '\\' -> { escape = true; started = true }
+                char == '\\' && raw.getOrNull(index + 1) in listOf('"', '\'', '\\') -> { escape = true; started = true }
                 quote != null -> if (char == quote) quote = null else token.append(char)
                 char == '"' || char == '\'' -> { quote = char; started = true }
                 char.isWhitespace() -> if (started) { tokens += token.toString(); token.clear(); started = false }
