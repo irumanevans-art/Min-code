@@ -94,12 +94,24 @@ class MinHostPorts(private val current: () -> MinHostGeneration, tasks: MinBackg
     }
     fun artifacts(session: SessionId): ArtifactSink = object : ArtifactSink {
         override suspend fun put(name: String, bytes: ByteArray): String {
-            require(name.matches(Regex("[A-Za-z0-9._-]+")) && name != "." && name != "..")
-            val path = GuestPath("/root/.min/artifacts/${session.value}/$name")
+            val path = artifactPath(session, name)
             current().fs.writeAtomic(path, bytes)
             return path.value
         }
     }
+}
+
+private val ARTIFACT_SEGMENT = Regex("[A-Za-z0-9._-]+")
+
+/**
+ * 附件的 guest 路径。内核与工具给的名字带一级子目录（`tool-results/<id>.txt`、`mcp/<id>-1-image.png`、`web/…`），
+ * 所以允许 `/` 分段；每段仍只收安全字符，`.` 与 `..` 不行，名字就跳不出会话的附件目录。
+ * 以前整个名字按一段校验，带子目录的名字一律抛 IllegalArgumentException——超预算的工具结果、MCP 返回的图都存不下来。
+ */
+internal fun artifactPath(session: SessionId, name: String): GuestPath {
+    val segments = name.split('/')
+    require(segments.all { it.matches(ARTIFACT_SEGMENT) && it != "." && it != ".." }) { "附件名不合法：$name" }
+    return GuestPath("/root/.min/artifacts/${session.value}/$name")
 }
 
 /**
