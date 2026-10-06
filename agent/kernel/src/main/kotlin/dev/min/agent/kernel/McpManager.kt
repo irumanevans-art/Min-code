@@ -61,7 +61,8 @@ internal class McpManager(
     private inner class Entry(val key: Key, val spec: McpServerSpec, val projectRoot: GuestPath) {
         @Volatile var lastRoots: List<GuestPath> = emptyList()
         val callLock = Mutex()
-        @Volatile var activeCall: McpCallRequest? = null
+        val activeCalls = ConcurrentHashMap<Pair<SessionId, dev.min.agent.protocol.CallId>, McpCallRequest>()
+        suspend fun <T> interact(block: suspend () -> T): T = if (refs >= 2) callLock.withLock { block() } else block()
         @Volatile var inputOwner: SessionRuntime? = null
         @Volatile var connection: McpConnection? = null
         @Volatile var tools: List<McpToolDef>? = null
@@ -194,7 +195,7 @@ internal class McpManager(
                 var connection: McpConnection? = null
                 try {
                     connection = connector.connectWithInteraction(entry.spec, entry.projectRoot, scope, { rootsFor(entry.projectRoot) }) { params ->
-                        val active = entry.activeCall
+                        val active = entry.activeCalls.values.singleOrNull()
                         val rt = active?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt }
                             ?: entry.inputOwner
                             ?: bindings.values.filter { it.entries.values.any { e -> e === entry } }.sortedWith(compareByDescending<Binding> { it.rt.lastMcpActivity }.thenBy { it.rt.sessionId.value }).firstOrNull()?.rt
@@ -372,7 +373,7 @@ internal class McpManager(
         }
         override suspend fun getPrompt(server: String, name: String, arguments: JsonObject): List<dev.min.agent.mcp.McpPromptMessage> {
             val entry = binding.entries[server] ?: error("MCP 服务器 $server 不可用。")
-            return entry.callLock.withLock {
+            return entry.interact {
                 // 输入准备还没有回合，但反向表单仍须交给发起输入的会话，不能交给共享连接的默认宿主。
                 entry.inputOwner = binding.rt
                 try { (entry.connection ?: error("MCP 服务器 $server 不可用。")).getPrompt(name, arguments) }
@@ -393,7 +394,7 @@ internal class McpManager(
             if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { entry.settled.await() }
             val connection = entry.connection ?: return unavailable("MCP 服务器 $server 现在不可用。")
             return try {
-                entry.callLock.withLock {
+                entry.interact {
                     entry.inputOwner = binding.rt
                     try { McpResults.toToolResult(server, "resources/read", id, connection.readResource(uri), artifacts) }
                     finally { entry.inputOwner = null }
@@ -413,8 +414,9 @@ internal class McpManager(
         if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { while (entry.connection == null && entry.status == PENDING) delay(50) }
         val connection = entry.connection
             ?: return unavailable("MCP 服务器 ${request.server} 现在不可用" + (entry.reason?.let { "：$it" } ?: "。"))
-        return entry.callLock.withLock {
-        entry.activeCall = request
+        return entry.interact {
+        val key = request.sessionId to request.callId
+        entry.activeCalls[key] = request
         try {
             val result = if (request.resourceUri != null) connection.readResource(request.resourceUri) else connection.call(
                 request.tool, request.arguments,
@@ -427,7 +429,7 @@ internal class McpManager(
             throw e
         } catch (e: Exception) {
             McpResults.failure(request.server, e)
-        } finally { entry.activeCall = null }
+        } finally { entry.activeCalls.remove(key) }
         }
         }
     }
