@@ -117,7 +117,8 @@ class MinAgentEngine(
     private val ports = MinHostPorts({ generation }, tasks, dev.min.agent.spi.Clock { System.currentTimeMillis() })
 
     internal val snapshots = CasWorkspaceSnapshots(File(context.filesDir, "agent").toPath(), { generation.fs }, MinKernelDeps.MEMORY_HOME)
-    private val kernelDeps = MinKernelDeps.build(resolver, ports, snapshots = snapshots)
+    private val kernelDeps = MinKernelDeps.build(resolver, ports, snapshots = snapshots,
+        mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context))
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
     internal val processes: dev.min.agent.spi.ProcessPort get() = kernelDeps.host.processes

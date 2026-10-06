@@ -158,6 +158,8 @@ object MinKernelDeps {
         zone: ZoneId = ZoneId.systemDefault(),
         tools: List<Tool<*>> = minTools(),
         snapshots: WorkspaceSnapshots = WorkspaceSnapshots.Unavailable,
+        mcpTokenStore: dev.min.agent.spi.McpTokenStore = dev.min.agent.spi.McpTokenStore.Unavailable,
+        mcpAuthorizer: dev.min.agent.spi.McpAuthorizer = dev.min.agent.spi.McpAuthorizer.Unavailable,
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
         host = HostPorts(
@@ -170,5 +172,7 @@ object MinKernelDeps {
         checkpointBudget = CHECKPOINT_BUDGET,
         // proot 里冷启动 npx 一类的服务器常超过 CC 的 30 秒默认
         mcpConnectTimeoutMs = 120_000,
+        mcpTokenStore = mcpTokenStore,
+        mcpAuthorizer = mcpAuthorizer,
     )
 }
