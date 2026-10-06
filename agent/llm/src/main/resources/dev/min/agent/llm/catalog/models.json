@@ -1,6 +1,15 @@
 [
   {
     "ref": { "providerId": "anthropic", "modelId": "claude-fable-5-1" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 50.0,
+      "cacheWritePerMTok": 12.5,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheReadPerMTok": 0.25,
+      "asOf": "2026-10-07"
+    },
     "family": "claude",
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
@@ -16,6 +25,15 @@
   },
   {
     "ref": { "providerId": "anthropic", "modelId": "claude-opus-5-5" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 4.0,
+      "outputPerMTok": 20.0,
+      "cacheWritePerMTok": 5.0,
+      "cacheWrite1hPerMTok": 8.0,
+      "cacheReadPerMTok": 0.2,
+      "asOf": "2026-10-07"
+    },
     "family": "claude",
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
@@ -31,6 +49,15 @@
   },
   {
     "ref": { "providerId": "anthropic", "modelId": "claude-sonnet-5" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 10.0,
+      "cacheWritePerMTok": 2.5,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheReadPerMTok": 0.2,
+      "asOf": "2026-10-07"
+    },
     "family": "claude",
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
@@ -46,6 +73,15 @@
   },
   {
     "ref": { "providerId": "anthropic", "modelId": "claude-haiku-4-5-20251001" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 5.0,
+      "cacheWritePerMTok": 1.25,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheReadPerMTok": 0.1,
+      "asOf": "2026-10-07"
+    },
     "family": "claude",
     "contextWindow": 200000,
     "maxOutputTokens": 64000,
@@ -58,6 +94,13 @@
   },
   {
     "ref": { "providerId": "zhipu", "modelId": "glm-5.3" },
+    "pricing": {
+      "currency": "CNY",
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 28.0,
+      "cacheReadPerMTok": 2.0,
+      "asOf": "2026-10-07"
+    },
     "family": "glm",
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
@@ -65,6 +108,13 @@
   },
   {
     "ref": { "providerId": "zhipu", "modelId": "glm-5.2" },
+    "pricing": {
+      "currency": "CNY",
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 28.0,
+      "cacheReadPerMTok": 2.0,
+      "asOf": "2026-10-07"
+    },
     "family": "glm",
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
@@ -72,6 +122,14 @@
   },
   {
     "ref": { "providerId": "qwen", "modelId": "qwen3.8-max" },
+    "pricing": {
+      "currency": "CNY",
+      "inputPerMTok": 12.0,
+      "outputPerMTok": 36.0,
+      "cacheWritePerMTok": 15.0,
+      "cacheReadPerMTok": 1.0,
+      "asOf": "2026-10-07"
+    },
     "family": "qwen",
     "contextWindow": 1000000,
     "maxOutputTokens": 131072,
@@ -103,6 +161,16 @@
   },
   {
     "ref": { "providerId": "minimax", "modelId": "MiniMax-M3" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2,
+      "cacheReadPerMTok": 0.06,
+      "tiers": [
+        { "aboveInputTokens": 512000, "inputPerMTok": 0.6, "outputPerMTok": 2.4, "cacheReadPerMTok": 0.12 }
+      ],
+      "asOf": "2026-10-07"
+    },
     "family": "minimax",
     "contextWindow": 1000000,
     "maxOutputTokens": 131072,
@@ -115,6 +183,14 @@
   },
   {
     "ref": { "providerId": "minimax", "modelId": "MiniMax-M2.7" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2,
+      "cacheWritePerMTok": 0.375,
+      "cacheReadPerMTok": 0.06,
+      "asOf": "2026-10-07"
+    },
     "family": "minimax",
     "contextWindow": 204800,
     "maxOutputTokens": 65536,
@@ -122,6 +198,14 @@
   },
   {
     "ref": { "providerId": "minimax", "modelId": "MiniMax-M2.7-highspeed" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4,
+      "cacheWritePerMTok": 0.375,
+      "cacheReadPerMTok": 0.06,
+      "asOf": "2026-10-07"
+    },
     "family": "minimax",
     "contextWindow": 204800,
     "maxOutputTokens": 65536,
@@ -129,6 +213,13 @@
   },
   {
     "ref": { "providerId": "deepseek", "modelId": "deepseek-flash" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2,
+      "cacheReadPerMTok": 0.006,
+      "asOf": "2026-10-07"
+    },
     "family": "deepseek",
     "contextWindow": 1048576,
     "maxOutputTokens": 393216,
@@ -137,6 +228,13 @@
   },
   {
     "ref": { "providerId": "deepseek", "modelId": "deepseek-v4-pro" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 1.32,
+      "outputPerMTok": 3.96,
+      "cacheReadPerMTok": 0.044,
+      "asOf": "2026-10-07"
+    },
     "family": "deepseek",
     "contextWindow": 1048576,
     "maxOutputTokens": 393216,
@@ -144,6 +242,13 @@
   },
   {
     "ref": { "providerId": "deepseek-openai", "modelId": "deepseek-flash" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2,
+      "cacheReadPerMTok": 0.006,
+      "asOf": "2026-10-07"
+    },
     "family": "deepseek",
     "contextWindow": 1048576,
     "maxOutputTokens": 393216,
@@ -160,6 +265,13 @@
   },
   {
     "ref": { "providerId": "deepseek-openai", "modelId": "deepseek-v4-pro" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 1.32,
+      "outputPerMTok": 3.96,
+      "cacheReadPerMTok": 0.044,
+      "asOf": "2026-10-07"
+    },
     "family": "deepseek",
     "contextWindow": 1048576,
     "maxOutputTokens": 393216,
@@ -175,6 +287,13 @@
   },
   {
     "ref": { "providerId": "zhipu-openai", "modelId": "glm-5.3" },
+    "pricing": {
+      "currency": "CNY",
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 28.0,
+      "cacheReadPerMTok": 2.0,
+      "asOf": "2026-10-07"
+    },
     "family": "glm",
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
@@ -187,6 +306,13 @@
   },
   {
     "ref": { "providerId": "zhipu-openai", "modelId": "glm-5.2" },
+    "pricing": {
+      "currency": "CNY",
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 28.0,
+      "cacheReadPerMTok": 2.0,
+      "asOf": "2026-10-07"
+    },
     "family": "glm",
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
@@ -198,6 +324,13 @@
   },
   {
     "ref": { "providerId": "qwen-openai", "modelId": "qwen3.8-max" },
+    "pricing": {
+      "currency": "CNY",
+      "inputPerMTok": 12.0,
+      "outputPerMTok": 36.0,
+      "cacheReadPerMTok": 1.5,
+      "asOf": "2026-10-07"
+    },
     "family": "qwen",
     "contextWindow": 1000000,
     "maxOutputTokens": 131072,
@@ -225,6 +358,16 @@
   },
   {
     "ref": { "providerId": "minimax-openai", "modelId": "MiniMax-M3" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2,
+      "cacheReadPerMTok": 0.06,
+      "tiers": [
+        { "aboveInputTokens": 512000, "inputPerMTok": 0.6, "outputPerMTok": 2.4, "cacheReadPerMTok": 0.12 }
+      ],
+      "asOf": "2026-10-07"
+    },
     "family": "minimax",
     "contextWindow": 1000000,
     "maxOutputTokens": 131072,
@@ -237,6 +380,14 @@
   },
   {
     "ref": { "providerId": "minimax-openai", "modelId": "MiniMax-M2.7" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2,
+      "cacheWritePerMTok": 0.375,
+      "cacheReadPerMTok": 0.06,
+      "asOf": "2026-10-07"
+    },
     "family": "minimax",
     "contextWindow": 204800,
     "maxOutputTokens": 65536,
@@ -244,6 +395,14 @@
   },
   {
     "ref": { "providerId": "minimax-openai", "modelId": "MiniMax-M2.7-highspeed" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4,
+      "cacheWritePerMTok": 0.375,
+      "cacheReadPerMTok": 0.06,
+      "asOf": "2026-10-07"
+    },
     "family": "minimax",
     "contextWindow": 204800,
     "maxOutputTokens": 65536,

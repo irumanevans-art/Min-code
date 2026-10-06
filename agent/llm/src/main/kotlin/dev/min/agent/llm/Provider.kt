@@ -143,6 +143,8 @@ data class ModelProfile(
     val editStyle: EditStyle = EditStyle.StrReplace,
     val effortPatches: Map<Effort, JsonObject> = emptyMap(),
     val reasoningEcho: ReasoningEcho = ReasoningEcho.Always,
+    /** 官方标价（每百万 token，币种照原样）；查不到可靠价格的模型留 null（出处见 catalog/SOURCES.md「pricing」） */
+    val pricing: ModelPricing? = null,
 )
 
 /**

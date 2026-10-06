@@ -77,5 +77,27 @@ class CatalogTest {
                 )
             }
         }
+
+        // pricing（可选字段）：价格为正、asOf 是日期、分档边界落在 0 与上下文窗口之间
+        for (model in catalog.models) {
+            val pricing = model.pricing ?: continue
+            assertTrue(
+                "标价应为正：${model.ref} ${pricing.inputPerMTok}/${pricing.outputPerMTok}",
+                pricing.inputPerMTok > 0 && pricing.outputPerMTok > 0,
+            )
+            pricing.cacheWritePerMTok?.let { assertTrue("缓存写价应为正：${model.ref} $it", it > 0) }
+            pricing.cacheWrite1hPerMTok?.let { assertTrue("缓存写 1h 价应为正：${model.ref} $it", it > 0) }
+            pricing.cacheReadPerMTok?.let { assertTrue("缓存读价应为正：${model.ref} $it", it > 0) }
+            assertTrue(
+                "asOf 应为 ISO 日期：${model.ref} ${pricing.asOf}",
+                Regex("""\d{4}-\d{2}-\d{2}""").matches(pricing.asOf),
+            )
+            for (tier in pricing.tiers) {
+                assertTrue(
+                    "分档边界应在 0 与上下文窗口之间：${model.ref} ${tier.aboveInputTokens} (窗口 ${model.contextWindow})",
+                    tier.aboveInputTokens in 1 until model.contextWindow.toLong(),
+                )
+            }
+        }
     }
 }
