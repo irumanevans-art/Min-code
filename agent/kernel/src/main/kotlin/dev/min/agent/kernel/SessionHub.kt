@@ -122,7 +122,7 @@ class SessionHub(
     private val definitions: Map<String, AgentDefinition> = agents.associateBy { it.name }
 
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
-    internal var mcp = McpManager(scope, ClientConnector(deps.host.processes, deps.host.mcpHttp, deps.host.exec, MCP_CLIENT_VERSION))
+    internal var mcp = McpManager(scope, ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION))
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
     private val openLock = Mutex()
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
@@ -297,6 +297,12 @@ class SessionHub(
         }
         return false
     }
+
+    /**
+     * 宿主退出前调用：把全部 MCP 服务器连接按礼貌顺序关掉（关 stdin → 等 2 秒 → SIGTERM → SIGKILL），连同还在等回收的。
+     * 只靠卸下会话不够：那只是开始计「无人使用」的两分钟，宿主进程先退出了的话，不看 stdin 的服务器就成了孤儿进程
+     */
+    suspend fun closeMcpConnections() = mcp.closeAll()
 
     /**
      * 删除一个会话及它的全部后代（日志与附件）。先中断整棵树里在跑的回合并等它们收尾，再从叶子往根逐个删：
@@ -613,7 +619,8 @@ class SessionHub(
     }
 
     private fun unload(id: SessionId) {
-        scope.launch { mcp.detach(id) }
+        // 把运行时对象带上：关了马上重开时，这次卸下可能晚于新运行时的接入，McpManager 只摘它自己那份
+        runtimes[id]?.let { rt -> scope.launch { mcp.detach(rt) } }
         observers.remove(id)?.cancel()
         watchJobs.remove(id)?.cancel()
         watched -= id

@@ -121,8 +121,7 @@ class SessionRuntime private constructor(
     internal var mcpCaller: McpCaller = McpCaller.Unavailable
 
     /** 排着、等下一回合开头生效的 MCP 变化（后连上的服务器、list_changed）。只在内存里：没生效的变化不进日志 */
-    @Volatile
-    private var stagedMcp: List<SessionEvent>? = null
+    private val stagedMcp = java.util.concurrent.atomic.AtomicReference<List<SessionEvent>?>(null)
 
     /** 会话创建时的首份 MCP 快照：直接写（还没有回合，不必等） */
     internal suspend fun loadMcp(servers: dev.min.agent.spi.McpServersLoaded, tools: dev.min.agent.spi.McpToolsSnapshot) {
@@ -131,7 +130,7 @@ class SessionRuntime private constructor(
 
     /** MCP 的变化排到下一回合开头（设计 §5.3）；后排的整份替换先排的 */
     internal fun stageMcp(servers: dev.min.agent.spi.McpServersLoaded?, tools: dev.min.agent.spi.McpToolsSnapshot) {
-        stagedMcp = listOfNotNull(servers, tools)
+        stagedMcp.set(listOfNotNull(servers, tools))
     }
 
     /**
@@ -143,13 +142,14 @@ class SessionRuntime private constructor(
 
     internal suspend fun applyStagedMcp() {
         mcpFirstSnapshot?.let { first ->
-            mcpFirstSnapshot = null
+            // 等的时候被取消（用户在第一回合开头就按了中断）不能丢：保留到下一回合再等，不然这个会话就一直没有 MCP 工具
             val (servers, tools) = first.await()
-            commit(listOf(servers, tools), Durability.Sync)
+            mcpFirstSnapshot = null
+            // 等的期间排进来的变化是更新的整份快照，直接写它；先写过期的首份再写它，日志里会多一份没用过的快照
+            commit(stagedMcp.getAndSet(null) ?: listOf(servers, tools), Durability.Sync)
+            return
         }
-        val events = stagedMcp ?: return
-        stagedMcp = null
-        commit(events, Durability.Sync)
+        commit(stagedMcp.getAndSet(null) ?: return, Durability.Sync)
     }
 
     /** 检查点与回退（检查点与rewind设计） */

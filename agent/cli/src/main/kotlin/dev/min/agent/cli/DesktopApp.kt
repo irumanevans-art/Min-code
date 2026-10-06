@@ -116,7 +116,7 @@ internal class DesktopApp(
      * 第一次要用时才建：先按 cwd 读一遍 Claude Code 配置，把 `.claude/agents/` 的自定义子 agent 交给 Hub、列进 Agent 工具的说明。
      * 一个 CLI 进程只服务一个项目目录，所以读一次就够；权限规则与记忆由内核在每个会话创建时各自快照。
      */
-    private suspend fun hub(): SessionHub = hubInstance ?: run {
+    internal suspend fun hub(): SessionHub = hubInstance ?: run {
         val config = config()
         val catalog = AgentCatalog.of(config.agents)
         val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null)
@@ -232,7 +232,10 @@ internal class DesktopApp(
      * 在根会话卸下之前跑；停不下来的回合先停（shutdown），日志保留
      */
     suspend fun exitSession(runtime: SessionRuntime): Boolean =
-        hub().shutdown(runtime.sessionId, SessionEndReasons.PROMPT_INPUT_EXIT)
+        hub().shutdown(runtime.sessionId, SessionEndReasons.PROMPT_INPUT_EXIT).also {
+            // 进程马上要退出：MCP 服务器不能等「无人使用两分钟」，现在就按礼貌顺序关掉
+            hub().closeMcpConnections()
+        }
 
     private fun platformDescription(): String {
         val os = "${System.getProperty("os.name")} ${System.getProperty("os.version")}"

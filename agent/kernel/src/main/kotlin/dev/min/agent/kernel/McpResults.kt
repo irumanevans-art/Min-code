@@ -24,6 +24,8 @@ internal object McpResults {
     /** 内联给模型的图片上限（base64 之前）；更大的只存附件、给路径 */
     const val MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
 
+    private val INLINE_IMAGE_TYPES = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
+
     suspend fun toToolResult(server: String, tool: String, callId: String, result: McpCallResult, artifacts: ArtifactSink): ToolResult {
         val parts = ArrayList<Part>()
         val text = StringBuilder()
@@ -41,11 +43,16 @@ internal object McpResults {
                     } else {
                         // 原图同时落附件：模型以后要引用、用户要另存都靠这个路径（CC 2.1.283 起同样落盘）
                         val path = store("image", extensionOf(content.mimeType), bytes)
-                        if (bytes.size <= MAX_INLINE_IMAGE_BYTES) {
-                            parts += ImagePart(content.mimeType, ImageSource.Base64(content.data))
-                            text.appendBlock("[图片，原图在 $path]")
-                        } else {
-                            text.appendBlock("[图片太大（${bytes.size} 字节），没有直接给你看，原图在 $path]")
+                        val mime = content.mimeType.substringBefore(';').trim().lowercase().let { if (it == "image/jpg") "image/jpeg" else it }
+                        when {
+                            // 各家视觉接口只认这四种；svg / bmp 之类原样塞进去会让供应商 400，而这条结果已经写进日志，
+                            // 之后每个请求都会带着它——整个会话从此发不出去
+                            mime !in INLINE_IMAGE_TYPES -> text.appendBlock("[图片（$mime）这种格式没法直接给你看，原图在 $path]")
+                            bytes.size > MAX_INLINE_IMAGE_BYTES -> text.appendBlock("[图片太大（${bytes.size} 字节），没有直接给你看，原图在 $path]")
+                            else -> {
+                                parts += ImagePart(mime, ImageSource.Base64(content.data))
+                                text.appendBlock("[图片，原图在 $path]")
+                            }
                         }
                     }
                 }
@@ -102,6 +109,8 @@ internal object McpResults {
         "image/jpeg", "image/jpg" -> "jpg"
         "image/gif" -> "gif"
         "image/webp" -> "webp"
+        "image/svg+xml" -> "svg"
+        "image/bmp" -> "bmp"
         "audio/mpeg" -> "mp3"
         "audio/wav", "audio/x-wav" -> "wav"
         else -> "bin"
