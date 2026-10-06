@@ -20,26 +20,48 @@ internal fun mcpForm(server: String, message: String, schema: JsonObject): List<
     val required = (schema["required"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }.toSet()
     if (!properties.keys.containsAll(required)) return null
     return properties.map { (name, raw) ->
-        val field = raw as? JsonObject ?: return null
-        if (field.keys.any { it !in setOf("type", "title", "description", "enum", "enumNames", "default", "minimum", "maximum", "minLength", "maxLength") }) return null
+        var field = raw as? JsonObject ?: return null
+        if (field.keys.any { it !in setOf("type", "title", "description", "enum", "enumNames", "oneOf", "default", "minimum", "maximum", "minLength", "maxLength", "format", "items", "minItems", "maxItems", "uniqueItems") }) return null
+        fun normalizedEnum(value: JsonObject): JsonObject? {
+            val branches = value["oneOf"] as? JsonArray ?: return value
+            if (value.containsKey("enum")) return null
+            val constants = branches.map { branch ->
+                val b = branch as? JsonObject ?: return null
+                if (b.keys != setOf("const", "title") || b["const"] !is JsonPrimitive || b["title"] !is JsonPrimitive) return null
+                b.getValue("const")
+            }
+            return JsonObject(value - "oneOf" + mapOf("enum" to JsonArray(constants), "enumNames" to JsonArray(branches.map { it.jsonObject.getValue("title") })))
+        }
+        field = normalizedEnum(field) ?: return null
         val type = (field["type"] as? JsonPrimitive)?.content ?: return null
-        if (type !in setOf("string", "number", "integer", "boolean")) return null
-        val enum = field["enum"] as? JsonArray
+        if (type !in setOf("string", "number", "integer", "boolean", "array")) return null
+        if (field["format"] != null && (type != "string" || field["format"]?.jsonPrimitive?.content !in setOf("email", "uri", "date", "date-time"))) return null
+        val choiceSchema = if (type == "array") {
+            val items = field["items"] as? JsonObject ?: return null
+            if (items.keys.any { it !in setOf("type", "enum", "enumNames", "oneOf") } || items["type"]?.jsonPrimitive?.content != "string") return null
+            val normalized = normalizedEnum(items) ?: return null
+            if (normalized["enum"] !is JsonArray) return null
+            field = JsonObject(field + ("items" to normalized))
+            normalized
+        } else field
+        val enum = choiceSchema["enum"] as? JsonArray
         if (enum != null && (enum.isEmpty() || enum.any { it !is JsonPrimitive || it is JsonNull || it.content == OMIT })) return null
         if (enum != null && enum.any { rawValue ->
             val value = rawValue.jsonPrimitive
-            when (type) {
+            when (if (type == "array") "string" else type) {
                 "string" -> !value.isString
                 "boolean" -> value.isString || value.booleanOrNull == null
                 "integer" -> value.isString || value.longOrNull == null
                 else -> value.isString || value.doubleOrNull?.isFinite() != true
             }
         }) return null
-        val choices = enum?.map { QuestionOption(it.jsonPrimitive.content, "") }
+        val titles = choiceSchema["enumNames"] as? JsonArray
+        if (titles != null && titles.size != enum?.size) return null
+        val choices = enum?.mapIndexed { i, value -> QuestionOption(value.jsonPrimitive.content, titles?.get(i)?.jsonPrimitive?.content.orEmpty()) }
             ?: if (type == "boolean") listOf(QuestionOption("true", "是"), QuestionOption("false", "否")) else emptyList()
         McpFormField(name, field, name in required, UserQuestion(
             "MCP 服务器 $server 请求：$message\n${field["description"]?.jsonPrimitive?.content ?: name}",
-            name.take(12), choices + if (name in required) emptyList() else listOf(QuestionOption(OMIT, "省略可选字段")), inputType = type,
+            name.take(12), choices + if (name in required) emptyList() else listOf(QuestionOption(OMIT, "省略可选字段")), multiSelect = type == "array", inputType = type, inputSchema = field,
         ))
     }
 }
@@ -48,22 +70,8 @@ internal fun mcpFormContent(fields: List<McpFormField>, answers: List<QuestionAn
     if (fields.size != answers.size) return null
     val content = linkedMapOf<String, JsonElement>()
     for ((field, answer) in fields.zip(answers)) {
-        val text = answer.other ?: answer.selected.singleOrNull() ?: return null
-        if (text == OMIT && !field.required) continue
-        val value: JsonPrimitive = when (field.schema["type"]!!.jsonPrimitive.content) {
-            "string" -> JsonPrimitive(text)
-            "boolean" -> JsonPrimitive(text.toBooleanStrictOrNull() ?: return null)
-            "integer" -> JsonPrimitive(text.toLongOrNull() ?: return null)
-            "number" -> JsonPrimitive(text.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return null)
-            else -> return null
-        }
-        val enum = field.schema["enum"] as? JsonArray
-        val enumValue = enum?.firstOrNull { it == value || (!value.isString && it is JsonPrimitive && !it.isString && it.doubleOrNull == value.doubleOrNull) }
-        if (enum != null && enumValue == null) return null
-        val number = if (!value.isString) value.doubleOrNull else null
-        if (number != null && (number < (field.schema["minimum"]?.jsonPrimitive?.doubleOrNull ?: Double.NEGATIVE_INFINITY) || number > (field.schema["maximum"]?.jsonPrimitive?.doubleOrNull ?: Double.POSITIVE_INFINITY))) return null
-        if (value.isString && (text.length < (field.schema["minLength"]?.jsonPrimitive?.intOrNull ?: 0) || text.length > (field.schema["maxLength"]?.jsonPrimitive?.intOrNull ?: Int.MAX_VALUE))) return null
-        content[field.name] = enumValue ?: value
+        if ((answer.other == OMIT || answer.selected == listOf(OMIT)) && !field.required) continue
+        content[field.name] = mcpFormValue(field.schema, answer) ?: return null
     }
     return JsonObject(content)
 }

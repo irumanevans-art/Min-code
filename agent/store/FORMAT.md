@@ -105,6 +105,7 @@
 
 - `question_asked` 新增 `mcpServer`（默认 null）与 `standalone`（默认 false）。外部 form 可独立于回合；
   空闲时 turnId / callId 为 `mcp-idle`，回合内则保存真实调用标识。questions 带服务器来源，inputType（默认 null）提示基本类型。
+  `questions.inputSchema`（默认 null）保存 MCP 字段约束供宿主逐字段校验；支持 string format、带标题枚举与枚举数组多选。
 - `question_answered.cancelled` 默认 false；取消时 declined=true，区分拒答与取消。外部表单从日志独立折叠，恢复时未完成请求补 cancel。
 - `mcp_url_elicitation_asked`：questionId、server、完整 url、domain、message、elicitationId、可选 turnId / callId。
 - `mcp_url_elicitation_resolved`：questionId、action（accept / decline / cancel）。待处理项同时进入 Hub pending，

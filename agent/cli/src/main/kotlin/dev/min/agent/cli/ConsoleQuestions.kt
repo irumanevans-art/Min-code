@@ -23,6 +23,13 @@ internal sealed interface ConsoleAnswer {
 private val NUMBER_LIST = Regex("""^\d+(\s*[,，、\s]\s*\d+)*$""")
 
 internal fun parseConsoleAnswer(question: UserQuestion, line: String): ConsoleAnswer {
+    val result = parseConsoleValue(question, line)
+    val schema = question.inputSchema
+    if (result is ConsoleAnswer.Answer && schema != null && result.answer.selected != listOf("（不提供此字段）") && dev.min.agent.spi.mcpFormValue(schema, result.answer) == null) return ConsoleAnswer.Retry("这个字段不符合类型或约束，请重新输入")
+    return result
+}
+
+private fun parseConsoleValue(question: UserQuestion, line: String): ConsoleAnswer {
     val text = line.trim()
     val optional = question.inputType != null && question.options.any { it.label == "（不提供此字段）" }
     if (optional && (text.isEmpty() || text == "-")) return ConsoleAnswer.Answer(QuestionAnswer(selected=listOf("（不提供此字段）")))

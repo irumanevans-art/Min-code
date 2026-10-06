@@ -33,6 +33,8 @@ data class UserQuestion(
     val multiSelect: Boolean = false,
     /** MCP 表单中的基本类型，宿主据此选择输入控件；旧提问没有此字段。 */
     val inputType: String? = null,
+    /** MCP 字段约束供宿主重问时使用；不让非法输入冒充用户拒绝。 */
+    val inputSchema: JsonObject? = null,
 )
 
 /**
