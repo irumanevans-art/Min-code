@@ -15,6 +15,8 @@ class McpRootsTest {
     @Test fun `desktop root mapping returns native Windows file URIs`() = runBlocking {
         val mapped = rootsResult(listOf(GuestPath("/d/proj space")), { "D:\\proj space" })["roots"]!!.jsonArray.single().jsonObject["uri"]!!.jsonPrimitive.content
         assertEquals("file:///D:/proj%20space", mapped)
+        val options = ClientConnector(ProcessPort.Unavailable, null, "1", serverPath={ "D:\\proj space" }).clientOptions("s", { listOf(GuestPath("/d/proj space")) })
+        assertEquals(mapped, options.requestHandler("roots/list", null).jsonObject["roots"]!!.jsonArray.single().jsonObject["uri"]!!.jsonPrimitive.content)
     }
     @get:Rule val tmp = TemporaryFolder()
 

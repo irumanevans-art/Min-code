@@ -13,6 +13,19 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 
 class McpToolSearchTest {
+    @Test fun `initial ToolSearch denial stays frozen when later rules are removed`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val base = testDeps(ScriptedModel(), emptyList())
+            val deps = KernelDeps(base.clock, base.ids, base.models, base.tools, base.host, base.platform, base.zone, env={ "true" })
+            val rt = SessionRuntime.create(FileSessionStore(tmp.newFolder().toPath(), { 0L }), LogHeader(LOG_FORMAT_VERSION, SessionId("s"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions), deps, scope, initial=listOf(PermissionRulesLoaded(listOf(RuleEntry(RuleKindData.Deny, "ToolSearch", "user")))))
+            rt.loadMcp(McpServersLoaded(emptyList()), snapshot)
+            assertTrue(rt.state.value.mcpToolSearch!!.denied); assertFalse(rt.state.value.mcpToolSearch!!.enabled)
+            rt.commit(listOf(PermissionRulesLoaded(emptyList())), Durability.Sync)
+            rt.stageMcp(null, snapshot); rt.applyStagedMcp()
+            assertTrue(rt.state.value.mcpToolSearch!!.denied); assertFalse(rt.state.value.mcpToolSearch!!.enabled)
+        } finally { scope.cancel() }
+    }
     @get:Rule val tmp = TemporaryFolder()
     private fun tool(name: String, always: Boolean = false, description: String = "database $name") = McpToolEntry("mcp__db__$name", "db", name, description, args("type" to "object"), alwaysLoad=always)
     private fun call(id: String, query: String) = ToolCallPart(CallId(id), "ToolSearch", args("query" to query))

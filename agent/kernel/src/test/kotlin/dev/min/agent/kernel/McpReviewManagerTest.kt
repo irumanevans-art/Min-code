@@ -30,7 +30,7 @@ class McpReviewManagerTest {
         override fun stderrTail() = emptyList<String>()
         override suspend fun close() { state.value = McpConnectionState.Closed("closed") }
     }
-    private suspend fun case(names: List<String> = listOf("s"), block: suspend (SessionHub, FileSessionStore, MutableMap<String, Connection>, MutableMap<String, suspend (JsonObject?) -> JsonObject>) -> Unit) {
+    private suspend fun case(names: List<String> = listOf("s"), late: Boolean = false, block: suspend (SessionHub, FileSessionStore, MutableMap<String, Connection>, MutableMap<String, suspend (JsonObject?) -> JsonObject>) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val fs = FakeFs().apply { put("/root/.claude.json", args("mcpServers" to JsonObject(names.associateWith { args("command" to "fake") })).toString()) }
@@ -42,11 +42,12 @@ class McpReviewManagerTest {
             val connector = object : McpConnector {
                 override suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection = error("interaction required")
                 override suspend fun connectWithInteraction(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>, elicit: suspend (JsonObject?) -> JsonObject): McpConnection {
+                    if (late) delay(200)
                     handlers[spec.name] = elicit
                     return Connection(spec.name).also { connections[spec.name] = it }
                 }
             }
-            hub.mcp = McpManager(scope, connector, startupWaitMs=1_000)
+            hub.mcp = McpManager(scope, connector, startupWaitMs=if (late) 10 else 1_000)
             withTimeout(5_000) { block(hub, store, connections, handlers) }
             hub.closeMcpConnections()
         } finally { scope.cancel() }
@@ -88,11 +89,29 @@ class McpReviewManagerTest {
         } }
     }
     @Test fun `delegated children count as attached sessions on shared MCP connections`() = runBlocking {
-        case { hub, _, _, _ ->
+        case { hub, _, connections, _ -> coroutineScope {
             val parent = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
             parent.listMcpPrompts()
             val result = hub.portFor(parent, TurnId("parent"), CallId("delegate")).delegate(DelegateRequest("child", "hello", background=false)) as DelegateResult.Finished
             assertEquals(listOf("s"), hub.mcp.statusOf(result.child).map { it.name })
+            val active = AtomicInteger(); val maximum = AtomicInteger()
+            connections.getValue("s").read = { val n=active.incrementAndGet(); maximum.updateAndGet { maxOf(it, n) }; delay(50); active.decrementAndGet() }
+            val one = async { parent.mcpCaller.readResource("s", "r://1", FakeArtifacts(), "1") }
+            val two = async { hub.get(result.child)!!.mcpCaller.readResource("s", "r://2", FakeArtifacts(), "2") }
+            one.await(); two.await(); assertEquals(1, maximum.get())
+        } }
+    }
+    @Test fun `late resource capability restages even when tool catalog stays empty`() = runBlocking {
+        case(late=true) { hub, store, connections, _ ->
+            val rt = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
+            rt.send(ClientMsgId("one"), listOf(TextPart("hello"))); rt.awaitIdle()
+            assertTrue(rt.state.value.mcpTools!!.resourceServers.isEmpty())
+            withTimeout(1_000) { while (connections.isEmpty()) delay(5) }
+            delay(50)
+            assertTrue(rt.state.value.mcpTools!!.resourceServers.isEmpty())
+            rt.send(ClientMsgId("two"), listOf(TextPart("hello"))); rt.awaitIdle()
+            assertEquals(listOf("s"), rt.state.value.mcpTools!!.resourceServers)
+            val log=store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         }
     }
 }

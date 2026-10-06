@@ -14,6 +14,23 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 
 class McpPromptsSessionTest {
+    @Test fun `expanded prompts cannot read another server and use the normal output budget`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val deps = testDeps(ScriptedModel(reply(TextPart("ok"))), emptyList())
+            val rt = SessionRuntime.create(FileSessionStore(tmp.newFolder().toPath(), { 0L }), LogHeader(LOG_FORMAT_VERSION, SessionId("s"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions), deps, scope)
+            var reads = 0
+            rt.mcpCaller = object : McpCaller {
+                override suspend fun call(request: McpCallRequest) = ToolResult(emptyList())
+                override suspend fun getPrompt(server: String, name: String, arguments: JsonObject) = listOf(McpPromptMessage("user", McpContent.Text("@B:file:///secret " + "x".repeat(100_000))))
+                override suspend fun readResource(server: String, uri: String, artifacts: ArtifactSink, id: String): ToolResult { reads++; return ToolResult(emptyList()) }
+            }
+            val result = rt.getMcpPrompt("A", "p", args())
+            assertTrue(result.content.filterIsInstance<TextPart>().sumOf { it.text.length } < 90_000)
+            assertTrue(result.content.toString().contains("全文已存到"))
+            rt.send(ClientMsgId("prompt"), result.content); rt.awaitIdle(); assertEquals(0, reads)
+        } finally { scope.cancel() }
+    }
     @get:Rule val tmp = TemporaryFolder()
     @Test fun `multiple roles become one durable user message accepting only supported content`() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

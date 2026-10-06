@@ -29,12 +29,14 @@ internal class FakeTransport : McpTransport {
 @OptIn(ExperimentalCoroutinesApi::class)
 class McpClientTest {
     @Test fun `server cancellation suppresses response to reverse elicitation`() = runTest {
+        for (swallow in listOf(false, true)) {
         val t = FakeTransport()
-        val c = client(t, McpClientOptions("1", requestHandler = { _, _ -> awaitCancellation() }))
+        val c = client(t, McpClientOptions("1", requestHandler = { _, _ -> try { awaitCancellation() } catch (e: CancellationException) { if (!swallow) throw e; emptyObject } }))
         c.connect()
         t.received.send(json("""{"jsonrpc":"2.0","id":"elicitation","method":"elicitation/create","params":{}}""")); runCurrent()
         t.received.send(rpcNotification("notifications/cancelled", json("""{"requestId":"elicitation"}"""))); runCurrent()
         assertFalse(t.sent.any { it["id"] == JsonPrimitive("elicitation") }); c.close()
+        }
     }
     @Test fun `idle deadline pauses for reverse requests and restarts after answering`() = runTest {
         for (method in listOf("tools/call", "prompts/get", "resources/read")) {
@@ -52,7 +54,7 @@ class McpClientTest {
             t.received.send(json("""{"jsonrpc":"2.0","id":"ask","method":"elicitation/create","params":{}}""")); runCurrent()
             advanceTimeBy(401); runCurrent(); assertFalse(method, call.isCompleted)
             advanceTimeBy(80); runCurrent(); assertFalse(method, call.isCompleted)
-            advanceTimeBy(21); runCurrent(); assertEquals(McpTimeoutException.Kind.Idle, call.await()!!.kind)
+            advanceTimeBy(21); runCurrent(); assertEquals(McpTimeoutException.Kind.Idle, withTimeout(1_000) { call.await() }!!.kind)
             c.close()
         }
     }
