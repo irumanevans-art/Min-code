@@ -1855,3 +1855,35 @@ MCP 服务器生成的 prompt 不能触发跨服务器资源提取，合法的�
 - **Notes**: 空表单、跨服务器 prompt、call 结束与 turn 切换的确定性复现已覆盖。
 
 ---
+
+## [LRN-20261007-OAUTH-TEST-BOUNDARIES] best_practice
+
+**Logged**: 2026-10-07T03:08:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+认证失败测试要断言失败发生的阶段，凭证断言和浏览器测试替身也必须覆盖变异执行路径。
+
+### Details
+AS issuer 不匹配的校验被移除后，回调 iss 校验仍会拒绝，所以仅断言最终 Security 异常会放过前置安全边界；补充浏览器未打开、注册未发生的断言才能检出。helper 缓存仍含 Authorization 会掩盖重取后的认证保持缺失，测试在下一请求前显式重取为空，证明不能靠缓存偶然带头。CLI 的 no-browser 被移除后，未注入替身的取消用例可能打开真实浏览器并等完整五分钟，所有授权用例都应注入浏览器端口。
+
+凭证用 assertEquals 失败时可进入 JUnit XML，因此使用布尔断言或已遮蔽的对象；同时扫描日志及 XML。协程 stack recovery 可复制已净化的异常并把原异常作为 cause，安全断言应检查整个 cause 链是否泄密，不应把 cause 非空等同泄密。URI rawPath 已转义，多参数 URI 构造器会把 % 再编码；保留 rawPath 并测含 %20 的路径。
+
+### Suggested Action
+对安全校验同时验证最终结果和前置副作用；测试用例的外部端口一律注入替身；假凭证使用不打印值的失败断言，并审计全部异常链和测试产物。
+
+### Metadata
+- Source: error
+- Related Files: agent/mcp/src/test/kotlin/dev/min/agent/mcp/McpOAuthClientTest.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/McpRemoteHttpTest.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/McpOAuthHostTest.kt, agent/mcp/scripts/mcp3-mutations.ps1
+- Tags: oauth, mutation, privacy, phase-oracle, browser, coroutine, uri
+- Pattern-Key: tests.auth_side_effect_and_credential_boundaries
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: 8da11856, 12267b40, 4b09aab9, d0c5da97
+- **Notes**: AS issuer、覆盖元数据与 helper 认证保持的九个变异均由正常编译后的功能断言检出；宿主专项基线通过。
+
+---
