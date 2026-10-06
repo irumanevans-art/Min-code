@@ -160,6 +160,8 @@ data class SessionState(
     val mcpServers: dev.min.agent.spi.McpServersLoaded? = null,
     /** 最后一份生效的 MCP 工具快照：工具表 = 内置工具 + 它（经 [visibleMcpTools] 过滤） */
     val mcpTools: dev.min.agent.spi.McpToolsSnapshot? = null,
+    val mcpToolSearch: dev.min.agent.spi.McpToolSearchConfigured? = null,
+    val loadedMcpTools: List<String> = emptyList(),
     val mcpQuestions: Map<QuestionId, AskedQuestion> = emptyMap(),
     val mcpUrls: Map<QuestionId, McpUrlPending> = emptyMap(),
 )

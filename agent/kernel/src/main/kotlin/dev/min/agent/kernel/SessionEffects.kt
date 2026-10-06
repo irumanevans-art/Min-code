@@ -27,6 +27,11 @@ internal fun ToolResult.effectEvents(state: SessionState): List<SessionEvent> {
     val events = mutableListOf<SessionEvent>()
     for (effect in effects) {
         val event: SessionEvent = when (effect) {
+            is SessionEffect.McpLoadTools -> {
+                val names = effect.names.distinct().filter { name -> name !in working.loadedMcpTools && working.mcpTools?.tools?.any { it.name == name } == true }
+                if (names.isEmpty()) continue
+                dev.min.agent.spi.McpToolsLoaded(names)
+            }
             is SessionEffect.ModeChange -> SettingsChanged(mode = effect.mode)
             // 只改父会话对子 agent 的记账，Fold 在 ToolOutcome 上直接应用，不另写事件
             is SessionEffect.ReportDelivered -> continue
@@ -40,7 +45,7 @@ internal fun ToolResult.effectEvents(state: SessionState): List<SessionEvent> {
             events += Note(NoteLevel.Warning, "任务清单的一次修改被忽略：$problem")
             continue
         }
-        working = working.applyTaskEvent(event)
+        working = if (event is dev.min.agent.spi.McpToolsLoaded) working.copy(loadedMcpTools = (working.loadedMcpTools + event.names).distinct()) else working.applyTaskEvent(event)
         events += event
     }
     return events

@@ -314,6 +314,7 @@ internal class McpManager(
                 readOnlyHint = d.annotations?.readOnlyHint == true,
                 requiresUserInteraction = (d.meta?.get(META_REQUIRES_INTERACTION) as? JsonPrimitive)?.booleanOrNull == true,
                 maxResultChars = (d.meta?.get(META_MAX_RESULT_CHARS) as? JsonPrimitive)?.intOrNull,
+                alwaysLoad = e.spec.alwaysLoad || (d.meta?.get("anthropic/alwaysLoad") as? JsonPrimitive)?.booleanOrNull == true,
             )
         }
         val unconnected = binding.entries.values.filter { it.tools == null }.map { it.spec.name }.toSet()

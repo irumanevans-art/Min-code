@@ -17,7 +17,12 @@ $mutations = @(
     @{ Item='elicitation'; Name='unattended'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt'; From='!deps.canAnswerMcpElicitation'; To='false'; Module='kernel'; Test='*McpElicitationTest' },
     @{ Item='elicitation'; Name='typed-content'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt'; From='"integer" -> JsonPrimitive(text.toLongOrNull() ?: return null)'; To='"integer" -> JsonPrimitive(text)'; Module='kernel'; Test='*McpElicitationTest' },
     @{ Item='elicitation'; Name='url-consent'; File='agent/cli/src/main/kotlin/dev/min/agent/cli/McpUrlConsent.kt'; From='if (reply.trim().lowercase() !in setOf("y", "yes"))'; To='if (false && reply.trim().lowercase() !in setOf("y", "yes"))'; Module='cli'; Test='*McpUrlConsentTest' },
-    @{ Item='elicitation'; Name='reverse-cancel'; File='agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt'; From='put("action", "cancel")'; To='put("action", "decline")'; Module='mcp'; Test='*McpClientTest' }
+    @{ Item='elicitation'; Name='reverse-cancel'; File='agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt'; From='put("action", "cancel")'; To='put("action", "decline")'; Module='mcp'; Test='*McpClientTest' },
+    @{ Item='toolsearch'; Name='threshold'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpToolSearch.kt'; From='tokens > window'; To='tokens >= window'; Module='kernel'; Test='*McpToolSearchTest' },
+    @{ Item='toolsearch'; Name='append-order'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt'; From='loadedMcpTools = (loadedMcpTools + e.names).distinct()'; To='loadedMcpTools = (loadedMcpTools + e.names).distinct().sorted()'; Module='kernel'; Test='*McpToolSearchTest' },
+    @{ Item='toolsearch'; Name='inherit'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionHub.kt'; From='parent.loadedMcpTools.takeIf'; To='emptyList<String>().takeIf'; Module='kernel'; Test='*McpToolSearchTest' },
+    @{ Item='toolsearch'; Name='server-always'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt'; From='e.spec.alwaysLoad ||'; To='false ||'; Module='kernel'; Test='*McpManagerTest' },
+    @{ Item='toolsearch'; Name='tool-always'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt'; From='d.meta?.get("anthropic/alwaysLoad")'; To='d.meta?.get("wrong/alwaysLoad")'; Module='kernel'; Test='*McpManagerTest' }
 )
 $results = @()
 foreach ($m in $mutations | Where-Object { $_.Item -eq $Item }) {

@@ -103,6 +103,9 @@ data class QuestionAnswered(
  */
 @Serializable
 sealed interface SessionEffect {
+    @Serializable
+    @SerialName("mcp_load_tools")
+    data class McpLoadTools(val names: List<String>) : SessionEffect
     /** 切换权限模式（计划模式的进出）。内核落成 [SettingsChanged] */
     @Serializable
     @SerialName("mode_change")

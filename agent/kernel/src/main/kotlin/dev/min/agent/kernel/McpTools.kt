@@ -228,7 +228,11 @@ internal fun SessionState.visibleMcpTools(deps: KernelDeps): List<McpToolEntry> 
 }
 
 /** 系统提示里「MCP 服务器说明」那一段的原料：只列模型看得到工具的服务器，按服务器名排序 */
-internal fun SessionState.mcpInstructionsFor(visible: List<McpToolEntry>): Map<String, String> {
+internal fun SessionState.mcpInstructionsFor(visible: List<McpToolEntry>, search: Boolean = mcpToolSearch?.enabled == true): Map<String, String> {
     val servers = visible.map { it.server }.toSet()
-    return mcpTools?.instructions.orEmpty().filterKeys { it in servers }.toSortedMap()
+    val instructions = mcpTools?.instructions.orEmpty().filterKeys { it in servers }.toSortedMap()
+    if (!search) return instructions
+    return servers.sorted().associateWith { server ->
+        listOfNotNull(instructions[server], "MCP 工具名称（通过 ToolSearch 查询并加载）：" + visible.filter { it.server == server }.joinToString(", ") { it.name }).joinToString("\n")
+    }
 }

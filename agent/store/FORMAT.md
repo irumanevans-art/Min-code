@@ -109,3 +109,13 @@
 - `mcp_url_elicitation_asked`：questionId、server、完整 url、domain、message、elicitationId、可选 turnId / callId。
 - `mcp_url_elicitation_resolved`：questionId、action（accept / decline / cancel）。待处理项同时进入 Hub pending，
   `What.Question.mcpUrl` 保留 URL 元数据供 B7 宿主显示和打开；记录事件不会发网络请求或启动回合。
+
+## MCP2 ToolSearch
+
+- `mcp_tools_snapshot.tools[].alwaysLoad`（默认 false）：服务器 alwaysLoad 或工具元数据的合并结果。
+- `mcp_tool_search_configured`：首份快照同批记录 enabled、estimatedTokens、contextWindow、thresholdPercent、strategy（默认 auto）；
+  strategy 冻结环境选择，后续工具快照在下一回合生效时重新估算并记录模式，不在回合中切换。
+  旧日志无此事件时为全量。deny ToolSearch 随持久规则派生为全量。
+- `mcp_tools_loaded`：names 是本批发现的工具全名，按返回顺序追加并去重。顺序与集合完全由日志折叠。
+  `ToolResult.effects` 的 `mcp_load_tools` 与 ToolOutcome 同一次提交生成该事件；下一次请求追加加载的 schema，
+  内置、资源、alwaysLoad、ToolSearch 和 StructuredOutput 已有前缀保持原样。压缩不清除；子 agent / 分身继承模式和顺序。

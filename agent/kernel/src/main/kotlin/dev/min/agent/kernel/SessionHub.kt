@@ -591,7 +591,8 @@ class SessionHub(
      * MCP 同理：子 agent 用父会话那份快照（分身的工具表与系统提示必须与父会话逐字相同；新开的子 agent 按来历里的写法再筛）。
      * 连接是共用的（McpManager 按服务器与项目共享），所以不需要子会话自己再连
      */
-    private fun inheritedMcp(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.mcpServers, parent.mcpTools)
+    private fun inheritedMcp(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.mcpServers, parent.mcpTools, parent.mcpToolSearch,
+        parent.loadedMcpTools.takeIf { it.isNotEmpty() }?.let { dev.min.agent.spi.McpToolsLoaded(it) })
 
     private fun toolsFor(definition: AgentDefinition, depth: Int): List<String>? {
         val names = deps.tools.map { it.name }

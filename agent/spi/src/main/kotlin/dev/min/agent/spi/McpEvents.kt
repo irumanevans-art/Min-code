@@ -48,6 +48,7 @@ data class McpToolEntry(
     val requiresUserInteraction: Boolean = false,
     /** `_meta["anthropic/maxResultSizeChars"]`（上限 500,000）；null = 用默认的结果预算 */
     val maxResultChars: Int? = null,
+    val alwaysLoad: Boolean = false,
 )
 
 /**
@@ -65,3 +66,11 @@ data class McpToolsSnapshot(
     /** 首份快照确定资源工具是否进表；后续快照沿用它，保持内置前缀。 */
     val resourceServers: List<String> = emptyList(),
 ) : SessionEvent
+
+@Serializable
+@SerialName("mcp_tool_search_configured")
+data class McpToolSearchConfigured(val enabled: Boolean, val estimatedTokens: Int, val contextWindow: Int, val thresholdPercent: Double, val strategy: String = "auto") : SessionEvent
+
+@Serializable
+@SerialName("mcp_tools_loaded")
+data class McpToolsLoaded(val names: List<String>) : SessionEvent

@@ -127,7 +127,7 @@ class SessionRuntime private constructor(
 
     /** 会话创建时的首份 MCP 快照：直接写（还没有回合，不必等） */
     internal suspend fun loadMcp(servers: dev.min.agent.spi.McpServersLoaded, tools: dev.min.agent.spi.McpToolsSnapshot) {
-        commit(listOf(servers, tools), Durability.Sync)
+        commit(prepareMcpEvents(listOf(servers, tools)), Durability.Sync)
     }
 
     /** MCP 的变化排到下一回合开头（设计 §5.3）；后排的整份替换先排的 */
@@ -148,10 +148,20 @@ class SessionRuntime private constructor(
             val (servers, tools) = first.await()
             mcpFirstSnapshot = null
             // 等的期间排进来的变化是更新的整份快照，直接写它；先写过期的首份再写它，日志里会多一份没用过的快照
-            commit(stagedMcp.getAndSet(null) ?: listOf(servers, tools), Durability.Sync)
+            commit(prepareMcpEvents(stagedMcp.getAndSet(null) ?: listOf(servers, tools)), Durability.Sync)
             return
         }
-        commit(stagedMcp.getAndSet(null) ?: return, Durability.Sync)
+        commit(prepareMcpEvents(stagedMcp.getAndSet(null) ?: return), Durability.Sync)
+    }
+
+    private fun prepareMcpEvents(events: List<SessionEvent>): List<SessionEvent> {
+        val previous = state.value.mcpToolSearch
+        // 旧日志沿用原来的全量工具表；新会话冻结策略，迟到服务器只在快照生效边界重新估算。
+        if (state.value.mcpTools != null && previous == null) return events
+        val tools = events.filterIsInstance<dev.min.agent.spi.McpToolsSnapshot>().lastOrNull() ?: return events
+        val window = deps.models.resolve(state.value.settings.model).profile.contextWindow
+        val selected = selectMcpSearchMode(tools, window, previous?.strategy ?: deps.env("ENABLE_TOOL_SEARCH"), state.value.deniesToolSearch(deps))
+        return if (selected == previous) events else events + selected
     }
 
     /** 检查点与回退（检查点与rewind设计） */
