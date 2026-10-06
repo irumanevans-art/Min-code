@@ -45,7 +45,7 @@ internal fun mcpForm(server: String, message: String, schema: JsonObject): List<
             normalized
         } else field
         val enum = choiceSchema["enum"] as? JsonArray
-        if (enum != null && (enum.isEmpty() || enum.any { it !is JsonPrimitive || it is JsonNull || it.content == OMIT })) return null
+        if (enum != null && (enum.isEmpty() || enum.any { it !is JsonPrimitive || it is JsonNull || it.content in setOf(OMIT, MCP_EMPTY_SELECTION) })) return null
         if (enum != null && enum.any { rawValue ->
             val value = rawValue.jsonPrimitive
             when (if (type == "array") "string" else type) {
@@ -57,8 +57,9 @@ internal fun mcpForm(server: String, message: String, schema: JsonObject): List<
         }) return null
         val titles = choiceSchema["enumNames"] as? JsonArray
         if (titles != null && titles.size != enum?.size) return null
-        val choices = enum?.mapIndexed { i, value -> QuestionOption(value.jsonPrimitive.content, titles?.get(i)?.jsonPrimitive?.content.orEmpty()) }
+        val choices = (enum?.mapIndexed { i, value -> QuestionOption(value.jsonPrimitive.content, titles?.get(i)?.jsonPrimitive?.content.orEmpty()) }
             ?: if (type == "boolean") listOf(QuestionOption("true", "是"), QuestionOption("false", "否")) else emptyList()
+        ) + if (type == "array" && (field["minItems"]?.jsonPrimitive?.intOrNull ?: 0) == 0) listOf(QuestionOption(MCP_EMPTY_SELECTION, "提供空数组")) else emptyList()
         McpFormField(name, field, name in required, UserQuestion(
             "MCP 服务器 $server 请求：$message\n${field["description"]?.jsonPrimitive?.content ?: name}",
             name.take(12), choices + if (name in required) emptyList() else listOf(QuestionOption(OMIT, "省略可选字段")), multiSelect = type == "array", inputType = type, inputSchema = field,

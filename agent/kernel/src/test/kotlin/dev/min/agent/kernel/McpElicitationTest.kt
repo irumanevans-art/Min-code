@@ -13,6 +13,34 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 
 class McpElicitationTest {
+    @Test fun `multi select can explicitly provide an empty required array`() {
+        val fields=mcpForm("s","tags",json("""{"type":"object","properties":{"tags":{"type":"array","items":{"type":"string","enum":["a","b"]}}},"required":["tags"]}"""))!!
+        assertTrue(fields.single().question.options.any { it.label == "（空列表）" })
+        assertEquals(json("""{"tags":[]}"""),mcpFormContent(fields,listOf(QuestionAnswer(selected=listOf("（空列表）")))))
+    }
+    @Test fun `confirmation refusal and unsupported URL hosts never accept`() = runBlocking {
+        assertFalse(testDeps(ScriptedModel(), emptyList()).canAnswerMcpUrlElicitation)
+        runCase { rt, _, _ -> coroutineScope {
+            val request = async { rt.handleMcpElicitation("s", json("""{"message":"confirm","requestedSchema":{"type":"object","properties":{}}}""")) }
+            val q = rt.state.first { it.pendingMcpQuestions.isNotEmpty() }.pendingMcpQuestions.single()
+            rt.answerQuestion(q.questionId, listOf(QuestionAnswer(selected=listOf("拒绝"))))
+            assertEquals("decline", request.await()["action"]!!.jsonPrimitive.content)
+        } }
+    }
+
+    @Test fun `question must retain the exact turn when call id is reused`() = runBlocking {
+        runCase { rt, _, store -> coroutineScope {
+            val old = TurnId("old"); val next = TurnId("next"); val call = CallId("same")
+            rt.commit(listOf(TurnStarted(old, TurnTrigger.User), ToolPlanned(old, call, "mcp__s__x", args(), ResumePolicy.Unknown), ToolEffectPending(old, call)), Durability.Sync)
+            val mutex = SessionRuntime::class.java.getDeclaredField("commitLock").apply { isAccessible = true }.get(rt) as kotlinx.coroutines.sync.Mutex
+            mutex.lock()
+            val finish = async(start=CoroutineStart.UNDISPATCHED) { rt.commit(listOf(ToolOutcome(old, call, ToolResult(emptyList())), TurnEnded(old, TurnOutcome.Completed, Usage(), 0), TurnStarted(next, TurnTrigger.User), ToolPlanned(next, call, "mcp__s__x", args(), ResumePolicy.Unknown), ToolEffectPending(next, call)), Durability.Sync) }
+            val request = async(start=CoroutineStart.UNDISPATCHED) { rt.handleMcpElicitation("s", form, call) }
+            mutex.unlock(); finish.await()
+            assertEquals("cancel", request.await()["action"]!!.jsonPrimitive.content)
+            val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+        } }
+    }
     @Test fun `formats titled enums and enum arrays validate typed answers`() {
         val schema = json("""{"type":"object","properties":{"email":{"type":"string","format":"email"},"site":{"type":"string","format":"uri"},"date":{"type":"string","format":"date"},"time":{"type":"string","format":"date-time"},"color":{"type":"string","oneOf":[{"const":"red","title":"红"},{"const":"blue","title":"蓝"}]},"tags":{"type":"array","items":{"type":"string","enum":["a","b"]},"minItems":1,"maxItems":2}},"required":["email","site","date","time","color","tags"]}""")
         val fields = mcpForm("s", "form", schema)!!

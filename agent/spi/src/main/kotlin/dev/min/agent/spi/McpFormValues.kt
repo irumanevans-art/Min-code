@@ -5,12 +5,14 @@ import java.net.URI
 import java.time.LocalDate
 import java.time.OffsetDateTime
 
+const val MCP_EMPTY_SELECTION = "（空列表）"
+
 /** CLI 与内核使用同一套字段校验，避免终端收下的值到了服务器边界才整份作废。 */
 fun mcpFormValue(schema: JsonObject, answer: QuestionAnswer): JsonElement? {
     if (schema["type"]?.jsonPrimitive?.content == "array") {
         if (answer.other != null || answer.selected.toSet().size != answer.selected.size) return null
         val items = schema["items"] as? JsonObject ?: return null
-        val values = answer.selected.map { mcpFormValue(items, QuestionAnswer(other=it)) ?: return null }
+        val values = if (answer.selected == listOf(MCP_EMPTY_SELECTION)) emptyList() else answer.selected.map { mcpFormValue(items, QuestionAnswer(other=it)) ?: return null }
         if (values.size < (schema["minItems"]?.jsonPrimitive?.intOrNull ?: 0) || values.size > (schema["maxItems"]?.jsonPrimitive?.intOrNull ?: Int.MAX_VALUE)) return null
         return JsonArray(values)
     }
