@@ -116,6 +116,7 @@ class KernelDeps(
     val mcpConnectTimeoutMs: Long = 30_000,
     val mcpServerPath: (GuestPath) -> String = { it.value },
     val canAnswerMcpElicitation: Boolean = true,
+    val canAnswerMcpUrlElicitation: Boolean = false,
     val mcpElicitationTimeoutMs: Long = 5 * 60_000,
 ) {
     init { require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" } }

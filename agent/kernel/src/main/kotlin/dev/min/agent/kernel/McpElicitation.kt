@@ -94,6 +94,7 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
     if (callId != null && linked == null) return elicitationResult("cancel")
     val id = QuestionId(deps.ids.next("mcpq"))
     if (mode == "url") {
+        if (!deps.canAnswerMcpUrlElicitation) return elicitationResult("decline")
         val url = (params["url"] as? JsonPrimitive)?.content ?: return elicitationResult("decline")
         val uri = catchingNonCancellation { URI(url) }.getOrNull()
         if (uri?.scheme?.lowercase() !in setOf("http", "https") || uri?.host.isNullOrBlank()) return elicitationResult("decline")

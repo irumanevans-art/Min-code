@@ -122,11 +122,11 @@ class McpElicitationTest {
     private val form = json("""{"message":"填写","requestedSchema":{"type":"object","properties":{"name":{"type":"string"},"count":{"type":"integer"},"ratio":{"type":"number"},"enabled":{"type":"boolean"},"color":{"type":"string","enum":["red","blue"]}},"required":["name","count","ratio","enabled","color"]}}""")
     private val url = json("""{"mode":"url","message":"登录","url":"https://example.com/auth?a=1#section","elicitationId":"flow"}""")
 
-    private suspend fun runCase(canAnswer: Boolean = true, timeout: Long = 2_000, block: suspend (SessionRuntime, SessionHub, FileSessionStore) -> Unit) {
+    private suspend fun runCase(canAnswer: Boolean = true, timeout: Long = 2_000, canOpenUrl: Boolean = true, block: suspend (SessionRuntime, SessionHub, FileSessionStore) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val base = testDeps(ScriptedModel(), emptyList())
-            val deps = KernelDeps(base.clock, base.ids, base.models, emptyList(), base.host, base.platform, base.zone, canAnswerMcpElicitation = canAnswer, mcpElicitationTimeoutMs = timeout)
+            val deps = KernelDeps(base.clock, base.ids, base.models, emptyList(), base.host, base.platform, base.zone, canAnswerMcpElicitation = canAnswer, canAnswerMcpUrlElicitation = canOpenUrl, mcpElicitationTimeoutMs = timeout)
             val store = FileSessionStore(tmp.newFolder().toPath(), { 0L })
             val hub = SessionHub(store, deps, scope)
             val rt = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
@@ -152,6 +152,10 @@ class McpElicitationTest {
     }
 
     @Test fun `unsupported schema and unattended hosts decline without pending interactions`() = runBlocking {
+        runCase(canOpenUrl=false) { rt, _, _ ->
+            assertEquals("decline", rt.handleMcpElicitation("s", url)["action"]!!.jsonPrimitive.content)
+            assertTrue(rt.state.value.mcpUrls.isEmpty())
+        }
         runCase { rt, _, _ ->
             val unsupported = json("""{"message":"x","requestedSchema":{"type":"object","properties":{"nested":{"type":"object"}}}}""")
             assertEquals("decline", rt.handleMcpElicitation("s", unsupported)["action"]!!.jsonPrimitive.content)
