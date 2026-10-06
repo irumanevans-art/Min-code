@@ -47,6 +47,7 @@ internal interface McpConnection {
 
     /** 服务器写给模型的使用说明（握手时给的）；没有为 null */
     val instructions: String?
+    val capabilities: JsonObject get() = (state.value as? McpConnectionState.Ready)?.server?.capabilities ?: JsonObject(emptyMap())
 
     suspend fun listTools(): List<McpToolDef>
 
@@ -58,6 +59,9 @@ internal interface McpConnection {
     suspend fun close()
 
     suspend fun rootsChanged() {}
+    suspend fun listResources(): List<JsonObject> = emptyList()
+    suspend fun listResourceTemplates(): List<JsonObject> = emptyList()
+    suspend fun readResource(uri: String): McpCallResult = error("服务器不支持读取资源。")
 }
 
 /** 起一条连接并握手完成（失败抛异常，消息给人看）。测试换成替身 */
@@ -129,7 +133,11 @@ internal class ClientConnector(
             override val state = client.state
             override val toolsChanged: Flow<Unit> = client.notifications.filterIsInstance<McpNotification.ToolsListChanged>().map { }
             override val instructions: String? = info.instructions
-            override suspend fun listTools(): List<McpToolDef> = client.listTools()
+            override suspend fun listTools(): List<McpToolDef> = if (info.capabilities.containsKey("tools")) client.listTools() else emptyList()
+            override val capabilities = info.capabilities
+            override suspend fun listResources() = client.listResources()
+            override suspend fun listResourceTemplates() = client.listResourceTemplates()
+            override suspend fun readResource(uri: String) = client.readResource(uri)
             override suspend fun call(tool: String, arguments: JsonObject, onProgress: (McpProgress) -> Unit, idleTimeoutMs: Long, hardTimeoutMs: Long?) =
                 client.callTool(tool, arguments, onProgress, idleTimeoutMs, hardTimeoutMs)
             override fun stderrTail(): List<String> = tail()

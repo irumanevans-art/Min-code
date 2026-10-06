@@ -6,7 +6,11 @@ New-Item -ItemType Directory -Force -Path $evidence | Out-Null
 $mutations = @(
     @{ Item='roots'; Name='capability'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpConnections.kt'; From='put("listChanged", true)'; To='put("listChanged", false)'; Module='kernel'; Test='*McpRootsTest' },
     @{ Item='roots'; Name='project-union'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt'; From='.flatMap { it.rt.state.value.additionalDirectories }'; To='.flatMap { emptyList<GuestPath>() }'; Module='kernel'; Test='*McpRootsTest' },
-    @{ Item='roots'; Name='change-notification'; File='agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt'; From='rpcNotification("notifications/roots/list_changed")'; To='rpcNotification("notifications/roots/changed")'; Module='mcp'; Test='*McpClientTest' }
+    @{ Item='roots'; Name='change-notification'; File='agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt'; From='rpcNotification("notifications/roots/list_changed")'; To='rpcNotification("notifications/roots/changed")'; Module='mcp'; Test='*McpClientTest' },
+    @{ Item='resources'; Name='hide-ui'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt'; From='uri.startsWith("ui://",'; To='uri.startsWith("wrong://",'; Module='kernel'; Test='*McpResourcesSessionTest' },
+    @{ Item='resources'; Name='frozen-prefix'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt'; From='e.copy(resourceServers = mcpTools?.resourceServers ?: e.resourceServers)'; To='e'; Module='kernel'; Test='*McpResourcesSessionTest' },
+    @{ Item='resources'; Name='input-content'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt'; From='attached += result.content'; To='attached += emptyList<Part>()'; Module='kernel'; Test='*McpResourcesSessionTest' },
+    @{ Item='resources'; Name='read-image'; File='agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt'; From='embedded.mimeType?.startsWith("image/") == true'; To='embedded.mimeType?.startsWith("wrong/") == true'; Module='mcp'; Test='*McpResourcesTest' }
 )
 $results = @()
 foreach ($m in $mutations | Where-Object { $_.Item -eq $Item }) {

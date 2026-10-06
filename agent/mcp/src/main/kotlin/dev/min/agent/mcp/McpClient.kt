@@ -154,6 +154,41 @@ class McpClient(
         transport.send(rpcNotification("notifications/roots/list_changed"), options.requestTimeoutMs)
     }
 
+    suspend fun listResources(): List<JsonObject> = listPages("resources/list", "resources")
+
+    suspend fun listResourceTemplates(): List<JsonObject> = listPages("resources/templates/list", "resourceTemplates")
+
+    suspend fun readResource(uri: String): McpCallResult {
+        ready()
+        val result = request("resources/read", buildJsonObject { put("uri", uri) }, options.requestTimeoutMs) as? JsonObject
+            ?: throw McpProtocolException("$displayName：resources/read 响应不是对象。")
+        val contents = result["contents"] as? JsonArray
+            ?: throw McpProtocolException("$displayName：resources/read 缺少 contents。")
+        return McpCallResult(contents.map { resource ->
+            val embedded = parseContent(buildJsonObject { put("type", "resource"); put("resource", resource) })
+            if (embedded is McpContent.EmbeddedResource && embedded.text == null && embedded.blob != null && embedded.mimeType?.startsWith("image/") == true)
+                McpContent.Image(embedded.blob, embedded.mimeType)
+            else embedded
+        }, null, false)
+    }
+
+    private suspend fun listPages(method: String, field: String): List<JsonObject> {
+        ready()
+        val items = mutableListOf<JsonObject>()
+        val seen = mutableSetOf<String>()
+        var cursor: String? = null
+        repeat(options.maxToolPages) {
+            val result = request(method, cursor?.let { buildJsonObject { put("cursor", it) } }, options.requestTimeoutMs) as? JsonObject
+                ?: throw McpProtocolException("$displayName：$method 响应不是对象。")
+            val page = result[field] as? JsonArray ?: throw McpProtocolException("$displayName：$method 缺少 $field。")
+            items += page.mapNotNull { it as? JsonObject }
+            cursor = result.text("nextCursor") ?: return items
+            if (!seen.add(cursor)) { debug("MCP $method 游标重复，已停止翻页。"); return items }
+        }
+        debug("MCP $method 已到分页上限，已停止翻页。")
+        return items
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun request(
         method: String, params: JsonObject?, idleMs: Long, hardMs: Long? = null,

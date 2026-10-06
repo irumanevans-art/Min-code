@@ -471,7 +471,10 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val allowed = state.origin?.tools
     val builtin = if (allowed == null) deps.tools else deps.tools.filter { it.name in allowed }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
-    val base = builtin + state.visibleMcpTools(deps).map { McpToolAdapter(it, mcp) }
+    val resourceTools = if (state.mcpTools?.resourceServers.orEmpty().isEmpty()) emptyList() else listOf(
+        McpResourceTool(false, state.mcpTools!!.resourceServers, mcp), McpResourceTool(true, state.mcpTools!!.resourceServers, mcp),
+    )
+    val base = builtin + resourceTools + state.visibleMcpTools(deps).map { McpToolAdapter(it, mcp) }
     // StructuredOutput 排在最后（--json-schema 是这一根会话这次运行的要求；子 agent 与分身不经它交卷）
     return if (deps.structuredOutput != null && state.origin == null) base + StructuredOutputTool(deps.structuredOutput!!) else base
 }

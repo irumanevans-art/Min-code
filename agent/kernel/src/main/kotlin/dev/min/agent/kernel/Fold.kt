@@ -348,7 +348,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         // MCP 快照整份替换；变化说明给界面看（模型从工具表与系统提示里看到变化）
         is dev.min.agent.spi.McpServersLoaded -> copy(mcpServers = e)
         is dev.min.agent.spi.McpToolsSnapshot -> copy(
-            mcpTools = e,
+            mcpTools = e.copy(resourceServers = mcpTools?.resourceServers ?: e.resourceServers),
             presentation = if (e.note == null) presentation else presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
         )
     }

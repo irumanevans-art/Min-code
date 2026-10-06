@@ -94,3 +94,9 @@
   `/branch` 与 `--fork-session` 把整份日志复制成一个新根会话后追加它作分界；折叠后组请求沿用事件里冻结的 basis 与 cacheKey，
   分支首个请求的前缀与原会话分支点逐字相同。分支不复制子 agent（引用仍指向原子会话，内核按归属拒绝跨会话发消息/停止）。
   含新事件的日志旧版本打不开；旧日志照常读。
+# MCP2 资源快照与附件
+
+`mcp_tools_snapshot.resourceServers`（默认空列表）记录首份快照中声明 resources 的服务器。
+后续快照沿用首份值，决定 ListMcpResources / ReadMcpResource 是否在稳定工具前缀中。
+`@server:uri` 在发送前转换为附件与规范 Part，内容随 `input_received.parts` 同步落盘；
+附件全文存 ArtifactSink，并在快照仓库可用时保留 ContentId。恢复与压缩从既有 Part 重建，不访问服务器。

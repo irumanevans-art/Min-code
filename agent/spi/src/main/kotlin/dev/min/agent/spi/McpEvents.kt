@@ -62,4 +62,6 @@ data class McpToolsSnapshot(
     val instructions: Map<String, String> = emptyMap(),
     /** 给人看的变化说明（「新增 github 的 12 个工具」）；首份快照通常没有 */
     val note: String? = null,
+    /** 首份快照确定资源工具是否进表；后续快照沿用它，保持内置前缀。 */
+    val resourceServers: List<String> = emptyList(),
 ) : SessionEvent

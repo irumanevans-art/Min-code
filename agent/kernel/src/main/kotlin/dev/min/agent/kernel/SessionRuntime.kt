@@ -105,6 +105,7 @@ class SessionRuntime private constructor(
     }
 
     private val commitLock = Mutex()
+    private val inputPrepareLock = Mutex()
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
@@ -360,11 +361,13 @@ class SessionRuntime private constructor(
      * 收一条用户输入。同一个 [clientMsgId] 重发只收一次（返回 false）。
      * 空闲时直接开回合；回合进行中时，[Delivery.Steer] 在当前工具批结束后送达，[Delivery.Queue] 等下一回合。
      */
-    suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue): Boolean {
-        commitIf(listOf(InputReceived(clientMsgId, parts, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
+    suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue): Boolean = inputPrepareLock.withLock {
+        if (clientMsgId in state.value.seenInputs) return@withLock false
+        val prepared = attachMcpResources(parts, clientMsgId)
+        commitIf(listOf(InputReceived(clientMsgId, prepared, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
             ?: return false
         startTurnIfIdle(TurnTrigger.User)
-        return true
+        true
     }
 
     /** 撤回还没送达模型的输入（Min 现有的「按 Esc 退回输入框」）。已送达的撤不回，返回 false */

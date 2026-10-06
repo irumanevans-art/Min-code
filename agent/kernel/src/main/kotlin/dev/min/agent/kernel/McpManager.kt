@@ -34,6 +34,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlin.coroutines.cancellation.CancellationException
@@ -312,7 +313,8 @@ internal class McpManager(
         val tools = (live + previous?.tools.orEmpty().filter { it.server in unconnected }).sortedBy { order.indexOf(it.server) }
         val instructions = ready.mapNotNull { e -> e.instructions?.takeIf { it.isNotBlank() }?.let { e.spec.name to McpShaping.truncate(it) } }.toMap() +
             previous?.instructions.orEmpty().filterKeys { it in unconnected }
-        return McpServersLoaded(serverInfos(binding), notes) to McpToolsSnapshot(tools, instructions)
+        val resourceServers = previous?.resourceServers ?: ready.filter { it.connection?.capabilities?.containsKey("resources") == true }.map { it.spec.name }
+        return McpServersLoaded(serverInfos(binding), notes) to McpToolsSnapshot(tools, instructions, resourceServers = resourceServers)
     }
 
     private fun serverInfos(binding: Binding): List<McpServerInfo> = binding.config.servers.map { configured ->
@@ -333,14 +335,33 @@ internal class McpManager(
 
     // ---- 调用 ----
 
-    private fun callerFor(binding: Binding) = McpCaller { request ->
+    private fun callerFor(binding: Binding) = object : McpCaller {
+        override suspend fun listResources(servers: List<String>): List<JsonObject> = servers.flatMap { server ->
+            val connection = binding.entries[server]?.connection ?: return@flatMap emptyList()
+            val templates = try { connection.listResourceTemplates() }
+                catch (e: dev.min.agent.mcp.McpRpcException) { if (e.code == -32601) emptyList() else throw e }
+            val resources = connection.listResources() + templates
+            resources.filterNot(::isMcpAppResource).map { JsonObject(it + ("server" to JsonPrimitive(server))) }
+        }
+
+        override suspend fun readResource(server: String, uri: String, artifacts: dev.min.agent.spi.ArtifactSink, id: String): ToolResult {
+            val entry = binding.entries[server] ?: return unavailable("MCP 服务器 $server 不在会话配置里。")
+            if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { entry.settled.await() }
+            val connection = entry.connection ?: return unavailable("MCP 服务器 $server 现在不可用。")
+            return try {
+                McpResults.toToolResult(server, "resources/read", id, connection.readResource(uri), artifacts)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { McpResults.failure(server, e) }
+        }
+
+        override suspend fun call(request: McpCallRequest): ToolResult {
         val entry = binding.entries[request.server]
-            ?: return@McpCaller unavailable("MCP 服务器 ${request.server} 不在这个会话的配置里了。")
+            ?: return unavailable("MCP 服务器 ${request.server} 不在这个会话的配置里了。")
         // 还在连（刚创建、刚重启）：等一小会儿再说（CC：恢复的会话对还在连的服务器最多等 10 秒）
         if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { while (entry.connection == null && entry.status == PENDING) delay(50) }
         val connection = entry.connection
-            ?: return@McpCaller unavailable("MCP 服务器 ${request.server} 现在不可用" + (entry.reason?.let { "：$it" } ?: "。"))
-        try {
+            ?: return unavailable("MCP 服务器 ${request.server} 现在不可用" + (entry.reason?.let { "：$it" } ?: "。"))
+        return try {
             val result = connection.call(
                 request.tool, request.arguments,
                 onProgress = { p -> request.progress(p.message ?: p.total?.let { "${p.progress.toLong()} / ${it.toLong()}" } ?: "进度 ${p.progress}") },
@@ -353,6 +374,7 @@ internal class McpManager(
         } catch (e: Exception) {
             McpResults.failure(request.server, e)
         }
+    }
     }
 
     private fun unavailable(text: String) = ToolResult(listOf(TextPart(text)), isError = true)

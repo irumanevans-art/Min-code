@@ -48,6 +48,9 @@ internal data class McpCallRequest(
  */
 internal fun interface McpCaller {
     suspend fun call(request: McpCallRequest): ToolResult
+    suspend fun listResources(servers: List<String>): List<JsonObject> = emptyList()
+    suspend fun readResource(server: String, uri: String, artifacts: dev.min.agent.spi.ArtifactSink, id: String): ToolResult =
+        ToolResult(listOf(TextPart("MCP 服务器 $server 不支持读取资源。")), isError = true)
 
     companion object {
         val Unavailable = McpCaller { r ->
