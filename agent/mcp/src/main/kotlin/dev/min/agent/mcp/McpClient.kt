@@ -149,6 +149,11 @@ class McpClient(
 
     suspend fun ping() { ready(); request("ping", null, options.requestTimeoutMs) }
 
+    suspend fun rootsChanged() {
+        ready()
+        transport.send(rpcNotification("notifications/roots/list_changed"), options.requestTimeoutMs)
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun request(
         method: String, params: JsonObject?, idleMs: Long, hardMs: Long? = null,

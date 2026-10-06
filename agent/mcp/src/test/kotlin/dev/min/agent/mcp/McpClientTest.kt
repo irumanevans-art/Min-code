@@ -28,6 +28,11 @@ internal class FakeTransport : McpTransport {
 }
 @OptIn(ExperimentalCoroutinesApi::class)
 class McpClientTest {
+    @Test fun `roots changed sends protocol notification`() = runTest {
+        val t = FakeTransport(); val c = client(t); c.connect(); c.rootsChanged()
+        assertEquals("notifications/roots/list_changed", t.sent.last().text("method"))
+        assertFalse(t.sent.last().containsKey("id")); c.close()
+    }
     private fun TestScope.client(t: FakeTransport, options: McpClientOptions = McpClientOptions("1")) = McpClient(t, backgroundScope, options)
 
     @Test fun `handshake sends correct version info and empty capabilities then initialized`() = runTest {

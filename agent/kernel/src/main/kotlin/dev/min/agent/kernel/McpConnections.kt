@@ -29,6 +29,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import java.io.ByteArrayOutputStream
 
 /*
@@ -52,11 +56,15 @@ internal interface McpConnection {
     fun stderrTail(): List<String>
 
     suspend fun close()
+
+    suspend fun rootsChanged() {}
 }
 
 /** 起一条连接并握手完成（失败抛异常，消息给人看）。测试换成替身 */
 internal fun interface McpConnector {
     suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection
+    suspend fun connectWithRoots(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>): McpConnection =
+        connect(spec, projectRoot, scope)
 }
 
 /**
@@ -71,14 +79,17 @@ internal class ClientConnector(
 ) : McpConnector {
 
     override suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection {
-        val options = McpClientOptions(clientVersion = clientVersion, serverLabel = spec.name, requestTimeoutMs = requestTimeoutMs)
+        return connectWithRoots(spec, projectRoot, scope) { listOf(projectRoot) }
+    }
+
+    override suspend fun connectWithRoots(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>): McpConnection {
+        val options = clientOptions(spec.name, roots)
         return when (spec) {
             is McpServerSpec.Stdio -> {
                 val process = processes.spawn(
                     ProcessSpec(
                         argv = listOf(spec.command) + spec.args,
                         cwd = projectRoot,
-                        // CC 注入的两个（会话 id 不给：连接按项目共享，不属于某一个会话）
                         env = spec.env + mapOf("CLAUDE_PROJECT_DIR" to projectRoot.value, "CLAUDECODE" to "1"),
                         label = "mcp:${spec.name}",
                     ),
@@ -99,6 +110,14 @@ internal class ClientConnector(
         }
     }
 
+    internal fun clientOptions(server: String, roots: () -> List<GuestPath>) =
+        McpClientOptions(clientVersion = clientVersion, serverLabel = server, requestTimeoutMs = requestTimeoutMs,
+            capabilities = buildJsonObject { putJsonObject("roots") { put("listChanged", true) } },
+            requestHandler = { method, _ ->
+                if (method != "roots/list") throw dev.min.agent.mcp.McpRpcException(-32601, "不支持这个 MCP 请求方法。")
+                rootsResult(roots())
+            })
+
     private suspend fun open(client: McpClient, tail: () -> List<String>): McpConnection {
         val info = try {
             client.connect()
@@ -115,9 +134,19 @@ internal class ClientConnector(
                 client.callTool(tool, arguments, onProgress, idleTimeoutMs, hardTimeoutMs)
             override fun stderrTail(): List<String> = tail()
             override suspend fun close() = client.close()
+            override suspend fun rootsChanged() = client.rootsChanged()
         }
     }
 
+}
+
+internal fun rootsResult(roots: List<GuestPath>): JsonObject = buildJsonObject {
+    put("roots", buildJsonArray {
+        roots.distinct().forEach { path ->
+            // guest 路径属于服务器的运行环境；URI 构造器负责空格、中文与 # 的编码。
+            add(buildJsonObject { put("uri", java.net.URI("file", "", path.value, null).toASCIIString()) })
+        }
+    })
 }
 
 /**

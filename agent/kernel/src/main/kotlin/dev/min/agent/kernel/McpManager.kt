@@ -24,6 +24,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -55,6 +57,7 @@ internal class McpManager(
     private data class Key(val projectRoot: String, val name: String, val endpoint: String)
 
     private inner class Entry(val key: Key, val spec: McpServerSpec, val projectRoot: GuestPath) {
+        @Volatile var lastRoots: List<GuestPath> = emptyList()
         @Volatile var connection: McpConnection? = null
         @Volatile var tools: List<McpToolDef>? = null
         /** 服务器的使用说明：同工具表，掉线后保留最后一次的（系统提示不跟着抖） */
@@ -75,6 +78,7 @@ internal class McpManager(
     /** 一个根会话用到的服务器：配置里的全部（含没放行的，给界面看）与放行了的连接 */
     private inner class Binding(val rt: SessionRuntime, val config: McpConfigSnapshot, val entries: Map<String, Entry>) {
         @Volatile var loaded = false
+        var rootsWatch: Job? = null
     }
 
     private val lock = Mutex()
@@ -94,8 +98,11 @@ internal class McpManager(
             val acquired = config.servers.filter { it.gate == McpGate.Enabled }.associate { it.spec.name to acquire(it.spec, projectRoot) }
             Binding(rt, config, acquired).also { created ->
                 // 同一个会话号还留着旧的接入（关了马上重开，旧运行时的卸下还没轮到）：放掉它，不然它那份引用永远不归零
-                bindings.put(rt.sessionId, created)?.entries?.values?.forEach { release(it) }
+                bindings.put(rt.sessionId, created)?.let { old -> old.rootsWatch?.cancel(); old.entries.values.forEach { release(it) } }
             }
+        }
+        binding.rootsWatch = scope.launch {
+            rt.state.map { it.additionalDirectories }.distinctUntilChanged().collect { notifyRoots(projectRoot) }
         }
         rt.mcpCaller = callerFor(binding)
         if (config.servers.isEmpty() && config.notes.isEmpty()) {
@@ -123,7 +130,9 @@ internal class McpManager(
         lock.withLock {
             val binding = bindings[rt.sessionId]?.takeIf { it.rt === rt } ?: return
             bindings.remove(rt.sessionId)
+            binding.rootsWatch?.cancel()
             binding.entries.values.forEach { release(it) }
+            binding.entries.values.map { it.projectRoot }.distinct().forEach { notifyRoots(it) }
         }
     }
 
@@ -133,6 +142,7 @@ internal class McpManager(
      */
     suspend fun closeAll() {
         val all = lock.withLock {
+            bindings.values.forEach { it.rootsWatch?.cancel() }
             bindings.clear()
             entries.values.toList().also { entries.clear(); it.forEach { e -> e.retired = true; e.linger?.cancel() } }
         }
@@ -178,7 +188,7 @@ internal class McpManager(
             gate.withPermit {
                 var connection: McpConnection? = null
                 try {
-                    connection = connector.connect(entry.spec, entry.projectRoot, scope)
+                    connection = connector.connectWithRoots(entry.spec, entry.projectRoot, scope) { rootsFor(entry.projectRoot) }
                     entry.connection = connection
                     if (entry.retired) {
                         // 连的过程中最后一个会话走了、等待期也过了：没人要这条连接了，收掉，别留成孤儿进程
@@ -203,6 +213,22 @@ internal class McpManager(
             }
             entry.settled.complete(Unit)
             changed(entry)
+        }
+    }
+
+    internal fun rootsFor(projectRoot: GuestPath): List<GuestPath> =
+        (listOf(projectRoot) + bindings.values.filter { b -> b.entries.values.any { it.projectRoot == projectRoot } }
+            .flatMap { it.rt.state.value.additionalDirectories }).distinct().sortedBy { it.value }
+
+    private fun notifyRoots(projectRoot: GuestPath) {
+        scope.launch {
+            entries.values.filter { it.projectRoot == projectRoot }.forEach { e ->
+                val roots = rootsFor(projectRoot)
+                if (e.lastRoots != roots) {
+                    e.lastRoots = roots
+                    e.connection?.let { dev.min.agent.spi.catchingNonCancellation { it.rootsChanged() } }
+                }
+            }
         }
     }
 
