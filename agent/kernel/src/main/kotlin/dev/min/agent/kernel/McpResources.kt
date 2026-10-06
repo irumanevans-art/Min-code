@@ -46,9 +46,10 @@ internal suspend fun SessionRuntime.attachMcpResources(parts: List<Part>, id: Cl
     if (mentions.isEmpty()) return parts
     val attached = mutableListOf<Part>()
     for ((index, mention) in mentions.withIndex()) {
-        val result = try { mcpCaller.readResource(mention.first, mention.second, deps.host.artifacts(sessionId), "input-${id.value}-$index") }
+        val raw = try { mcpCaller.readResource(mention.first, mention.second, deps.host.artifacts(sessionId), "input-${id.value}-$index") }
         catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
         catch (e: Exception) { McpResults.failure(mention.first, e) }
+        val result = ResultBudget.apply(raw, MCP_RESULT_BUDGET_CHARS, deps.host.artifacts(sessionId), CallId("input-${id.value}-$index"))
         val text = result.content.filterIsInstance<TextPart>().joinToString("\n") { it.text }
         val path = catchingNonCancellation { deps.host.artifacts(sessionId).put("mcp/input-${id.value}-$index.txt", text.toByteArray()) }.getOrElse { "附件保存失败，内容已随消息记录" }
         val contentId = preserve(text.toByteArray())

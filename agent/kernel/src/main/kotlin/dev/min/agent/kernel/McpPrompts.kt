@@ -19,6 +19,7 @@ suspend fun SessionRuntime.getMcpPrompt(server: String, prompt: String, argument
             else -> emptyList()
         }
     }
-    if (parts.isEmpty()) ToolResult(listOf(TextPart("MCP prompt 没有可用的文本、图片或资源。")), isError = true) else ToolResult(parts)
+    if (parts.isEmpty()) ToolResult(listOf(TextPart("MCP prompt 没有可用的文本、图片或资源。")), isError = true)
+    else ResultBudget.apply(ToolResult(parts), MCP_RESULT_BUDGET_CHARS, deps.host.artifacts(sessionId), dev.min.agent.protocol.CallId("prompt-${deps.ids.next("p")}"))
 } catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
 catch (e: Exception) { McpResults.failure(server, e) }

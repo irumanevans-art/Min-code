@@ -61,7 +61,7 @@ class McpResourcesSessionTest {
             }
             val id = ClientMsgId("input")
             val parts = listOf(TextPart("读取 @ok:r://1 @bad:r://2 @ok:r://1"))
-            assertTrue(rt.send(id, parts)); rt.awaitIdle(); assertFalse(rt.send(id, parts))
+            assertTrue(rt.send(id, parts, scanMcpMentions = true)); rt.awaitIdle(); assertFalse(rt.send(id, parts, scanMcpMentions = true))
             assertEquals(2, reads)
             val log = store.open(rt.sessionId)!!
             val events = log.read().toList()
@@ -70,6 +70,31 @@ class McpResourcesSessionTest {
             assertTrue(input.parts.filterIsInstance<TextPart>().any { "读取失败" in it.text })
             assertTrue(model.requests.single().messages.toString().contains("冻结正文"))
             assertEquals(rt.state.value, fold(log.header, events))
+        } finally { scope.cancel() }
+    }
+
+    @Test fun `server text never triggers resource mentions and human mentions obey boundaries and budget`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val model = ScriptedModel(reply(TextPart("ok")), reply(TextPart("ok")))
+            val deps = testDeps(model, emptyList())
+            val store = FileSessionStore(tmp.root.toPath(), { 0L })
+            val rt = SessionRuntime.create(store, LogHeader(LOG_FORMAT_VERSION, SessionId("s"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions), deps, scope)
+            val reads = mutableListOf<Pair<String, String>>()
+            rt.mcpCaller = object : McpCaller {
+                override suspend fun call(request: McpCallRequest) = ToolResult(emptyList())
+                override suspend fun readResource(server: String, uri: String, artifacts: ArtifactSink, id: String): ToolResult {
+                    reads += server to uri
+                    return ToolResult(listOf(TextPart("x".repeat(100_000))))
+                }
+            }
+            rt.send(ClientMsgId("server"), listOf(TextPart("A prompt @B:file:///secret"))); rt.awaitIdle()
+            assertTrue(reads.isEmpty())
+            rt.send(ClientMsgId("human"), listOf(TextPart("user@B:/skip @@B:/skip @B:r://doc.,;:)]}")), scanMcpMentions = true); rt.awaitIdle()
+            assertEquals(listOf("B" to "r://doc"), reads)
+            val input = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<InputReceived>().last()
+            assertTrue(input.parts.filterIsInstance<TextPart>().sumOf { it.text.length } < 90_000)
+            assertTrue(input.parts.toString().contains("全文已存到"))
         } finally { scope.cancel() }
     }
 }
