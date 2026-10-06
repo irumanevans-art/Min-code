@@ -50,3 +50,4 @@ foreach ($m in $selected) {
 $invalid = @($results | Where-Object { -not $_.killed })
 Write-Output "有效检出 $($results.Count - $invalid.Count)/$($results.Count)"
 if ($invalid.Count -gt 0) { exit 1 }
+exit 0
