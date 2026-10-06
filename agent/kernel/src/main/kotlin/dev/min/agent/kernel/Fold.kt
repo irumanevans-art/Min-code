@@ -366,7 +366,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         )
     }
     val stamped = next.turn?.let { next.copy(turn = it.copy(lastEventAtMs = record.atMs)) } ?: next
-    return stamped.copy(lastSeq = record.seq)
+    return stamped.copy(lastSeq = record.seq, lastEventAtMs = record.atMs)
 }
 
 /** 「总是允许」攒下的规则的来源名（审计时显示「是本会话里你允许的」） */

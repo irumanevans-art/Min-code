@@ -90,6 +90,10 @@ class SessionRuntime private constructor(
     /** 管着它的 Hub；没有时（单会话嵌入、旧测试）工具拿到的子 agent 端口是不可用的 */
     internal val hub: SessionHub? = null,
 ) {
+    /** 重开出来的会话才有（[resumeAdvice] 的基线）；新建的为 null */
+    @Volatile
+    internal var resumeBasis: ResumeBasis? = null
+
     /** 子会话的模型请求要过 Hub 的并发闸（手机上同时流式的子 agent 有上限）；根会话为 null，不受限 */
     @Volatile
     internal var requestGate: Semaphore? = null
@@ -640,8 +644,11 @@ class SessionRuntime private constructor(
         ): SessionRuntime? {
             val log = store.open(id) ?: return null
             val state = fold(log.header, log.read().toList())
+            // 静置时间在写恢复事件之前取：补的收尾事件不是用户的动静，不能把会话「唤醒」
+            val quietSince = state.lastEventAtMs
             val runtime = SessionRuntime(log, state, deps, scope, hub)
             runtime.commit(planRecovery(state), Durability.Sync)
+            runtime.resumeBasis = ResumeBasis(quietSince, runtime.state.value.lastTurn?.turnId)
             return runtime
         }
     }

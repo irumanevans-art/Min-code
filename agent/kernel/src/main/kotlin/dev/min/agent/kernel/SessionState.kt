@@ -162,6 +162,8 @@ data class SessionState(
     val mcpTools: dev.min.agent.spi.McpToolsSnapshot? = null,
     /** 最近一次会话回顾；null = 还没生成过。自动回顾据它判断「别连着来两次」 */
     val recap: RecapView? = null,
+    /** 最后一条事件落盘的时刻：重开时据此知道会话静置了多久（[resumeAdvice]） */
+    val lastEventAtMs: Long = 0,
 )
 
 /** [afterTurn] 是生成回顾时最近结束的那个回合：之后没有新回合就不再自动生成 */
