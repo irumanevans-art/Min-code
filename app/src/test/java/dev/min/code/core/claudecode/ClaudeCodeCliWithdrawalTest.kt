@@ -135,6 +135,8 @@ class ClaudeCodeCliWithdrawalTest {
             h.awaitState("提问卡") { it.pendingPermission != null }
             h.process.emit(cancel("ask-1"))
             h.awaitState("卡撤掉") { it.pendingPermission == null }
+            // 卡撤下与说明是两次状态发布，先等到说明，不能依赖读循环恰好已经执行下一步。
+            h.awaitState("撤回说明") { st -> st.items.any { it is ChatItem.Note && it.text.startsWith("CLI 撤回了这次提问") } }
             assertTrue(notes(h).any { it.startsWith("CLI 撤回了这次提问") })
 
             h.manager.answerQuestions(mapOf("Which one?" to "A"))
