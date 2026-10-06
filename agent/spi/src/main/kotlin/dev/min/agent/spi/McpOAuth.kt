@@ -39,6 +39,11 @@ interface McpTokenStore {
     }
 }
 
+@Serializable
+data class McpTokenRecord(val key: McpTokenKey, val credentials: McpOAuthCredentials) {
+    override fun toString() = "McpTokenRecord(***)"
+}
+
 /** 先绑定 loopback 端口，再构造包含真实 redirect_uri 的授权 URL，避免先挑端口再绑定的竞态。 */
 fun interface McpAuthorizer {
     suspend fun authorize(redirectPort: Int?, authorizationUrl: suspend (redirectUri: String) -> String): String
