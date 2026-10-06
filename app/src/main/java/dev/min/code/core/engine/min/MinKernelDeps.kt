@@ -101,18 +101,12 @@ class MinHostPorts(private val current: () -> MinHostGeneration, tasks: MinBackg
     }
 }
 
-private val ARTIFACT_SEGMENT = Regex("[A-Za-z0-9._-]+")
-
 /**
- * 附件的 guest 路径。内核与工具给的名字带一级子目录（`tool-results/<id>.txt`、`mcp/<id>-1-image.png`、`web/…`），
- * 所以允许 `/` 分段；每段仍只收安全字符，`.` 与 `..` 不行，名字就跳不出会话的附件目录。
- * 以前整个名字按一段校验，带子目录的名字一律抛 IllegalArgumentException——超预算的工具结果、MCP 返回的图都存不下来。
+ * 附件的 guest 路径。名字的校验与桌面宿主共用 [dev.min.agent.spi.ArtifactNames.validate]（允许 `tool-results/…` 这类子目录，
+ * 每段只收安全字符、不许 `.` / `..`）。以前这里整个名字按一段校验，带子目录的名字一律抛异常——超预算的工具结果、MCP 返回的图都存不下来
  */
-internal fun artifactPath(session: SessionId, name: String): GuestPath {
-    val segments = name.split('/')
-    require(segments.all { it.matches(ARTIFACT_SEGMENT) && it != "." && it != ".." }) { "附件名不合法：$name" }
-    return GuestPath("/root/.min/artifacts/${session.value}/$name")
-}
+internal fun artifactPath(session: SessionId, name: String): GuestPath =
+    GuestPath("/root/.min/artifacts/${session.value}/${dev.min.agent.spi.ArtifactNames.validate(name)}")
 
 /**
  * 转发到当前一代的 proot 进程，并登记转入后台的命令。杀进程要回到**起它的那一代**：

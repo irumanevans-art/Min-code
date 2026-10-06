@@ -172,10 +172,11 @@ class FakeExec(var script: (ShellCommand, ExecOptions) -> ExecResult = { _, _ ->
     }
 }
 
+/** 与真宿主一样校验名字：哪个工具或内核路径产出了不合法的附件名，用到这个替身的测试就会红 */
 class FakeArtifacts : ArtifactSink {
     val files = mutableMapOf<String, ByteArray>()
     override suspend fun put(name: String, bytes: ByteArray): String {
-        files[name] = bytes
+        files[dev.min.agent.spi.ArtifactNames.validate(name)] = bytes
         return "artifacts/$name"
     }
 }

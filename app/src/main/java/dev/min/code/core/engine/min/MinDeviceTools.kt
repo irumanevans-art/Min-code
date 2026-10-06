@@ -4,6 +4,7 @@ import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
 import dev.min.agent.protocol.Part
 import dev.min.agent.protocol.TextPart
+import dev.min.agent.spi.ArtifactNames
 import dev.min.agent.spi.HarnessProfile
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.Tool
@@ -218,14 +219,11 @@ private class ScreenshotTool(private val actions: DeviceActions) : DeviceTool<Un
         val note = StringBuilder(DeviceToolNames.toNative(shot.text))
         val bytes = catchingNonCancellation { Base64.getDecoder().decode(base64) }.getOrNull()
         if (bytes != null) {
-            val saved = catchingNonCancellation { ctx.artifacts.put("device/${safeName(ctx.callId.value)}-screenshot.png", bytes) }
+            val saved = catchingNonCancellation { ctx.artifacts.put("device/${ArtifactNames.segment(ctx.callId.value)}-screenshot.png", bytes) }
             saved.getOrNull()?.let { note.append("\n[截图原图在 $it]") }
         }
         parts += TextPart(note.toString())
         parts += ImagePart("image/png", ImageSource.Base64(base64))
         return ToolResult(parts)
     }
-
-    /** 附件名每段只收安全字符；调用 id 来自供应商，不保证只有这些 */
-    private fun safeName(id: String) = id.replace(Regex("[^A-Za-z0-9._-]"), "_")
 }

@@ -546,7 +546,7 @@ internal object ResultBudget {
         val texts = result.content.filterIsInstance<TextPart>()
         val full = texts.joinToString("") { it.text }
         if (full.length <= budgetChars) return result
-        val path = artifacts.put("tool-results/${callId.value}.txt", full.toByteArray(Charsets.UTF_8))
+        val path = artifacts.put("tool-results/${dev.min.agent.spi.ArtifactNames.segment(callId.value)}.txt", full.toByteArray(Charsets.UTF_8))
         val half = budgetChars / 2
         val preview = buildString {
             append(full, 0, half)

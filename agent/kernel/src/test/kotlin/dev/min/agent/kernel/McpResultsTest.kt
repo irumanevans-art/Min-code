@@ -24,4 +24,16 @@ class McpResultsTest {
         val jpg = McpResults.toToolResult("srv", "t", "c2", McpCallResult(listOf(McpContent.Image(data, "image/jpg")), null, false), artifacts)
         assertEquals("非标准的 image/jpg 改成 image/jpeg 再给", "image/jpeg", jpg.content.filterIsInstance<ImagePart>().single().mediaType)
     }
+
+    @Test
+    fun `call ids from the provider are cleaned before they become attachment names`() = runBlocking {
+        val data = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3))
+        val artifacts = FakeArtifacts()
+        // 有的供应商的调用 id 带冒号；恶意的代理可以给 `../`。FakeArtifacts 与真宿主同一道校验，名字不合法这里就抛
+        for (id in listOf("functions.bash:0", "../../x")) {
+            McpResults.toToolResult("srv", "t", id, McpCallResult(listOf(McpContent.Image(data, "image/png")), null, false), artifacts)
+        }
+        assertEquals(2, artifacts.files.size)
+        assertTrue(artifacts.files.keys.toString(), artifacts.files.keys.all { it.startsWith("mcp/") && ".." !in it.removePrefix("mcp/").substringBefore('-') })
+    }
 }

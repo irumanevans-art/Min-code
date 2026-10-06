@@ -31,7 +31,7 @@ internal object McpResults {
         val text = StringBuilder()
         var attachment = 0
         suspend fun store(kind: String, ext: String, bytes: ByteArray): String =
-            artifacts.put("mcp/$callId-${++attachment}-$kind.$ext", bytes)
+            artifacts.put("mcp/${dev.min.agent.spi.ArtifactNames.segment(callId)}-${++attachment}-$kind.$ext", bytes)
 
         for (content in result.content) {
             when (content) {

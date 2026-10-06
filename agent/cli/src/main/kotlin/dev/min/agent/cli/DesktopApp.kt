@@ -206,7 +206,8 @@ internal class DesktopApp(
                     val artifactsDir = home.resolve("sessions").resolve(sessionId.value).resolve("artifacts")
                     object : ArtifactSink {
                         override suspend fun put(name: String, bytes: ByteArray): String {
-                            val file = artifactsDir.resolve(name)
+                            // 与 Android 宿主同一道校验：名字里带着供应商给的调用 id，不查就可能写出附件目录
+                            val file = artifactsDir.resolve(dev.min.agent.spi.ArtifactNames.validate(name))
                             Files.createDirectories(file.parent)
                             Files.write(file, bytes)
                             return paths.guestOfHost(file).value
