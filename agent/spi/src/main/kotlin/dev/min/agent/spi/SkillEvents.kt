@@ -2,6 +2,7 @@ package dev.min.agent.spi
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /*
  * skill 清单进日志的形状，以及工具调用 skill 的端口。单独一个文件放，理由同 MemoryEvents.kt。
@@ -36,6 +37,8 @@ data class SkillEntry(
     /** true = 不列给模型、模型调用也会被拒（只有用户能用 `/名字` 调） */
     val disableModelInvocation: Boolean = false,
     val userInvocable: Boolean = true,
+    /** frontmatter 的 `hooks:` 原文（与 settings 里的 hooks 同一格式）：调用这个 skill / command 时登记进会话，本会话余下回合生效 */
+    val hooks: JsonObject? = null,
 )
 
 /**

@@ -38,7 +38,6 @@ data class AgentCatalog(val definitions: List<AgentDefinition>, val notes: List<
             val unsupported = buildList {
                 if (def.skills.isNotEmpty()) add("skills")
                 if (def.mcpServers != null) add("mcpServers")
-                if (def.hooks != null) add("hooks")
                 if (def.memory != null) add("memory")
                 if (def.isolation != null) add("isolation")
             }
@@ -56,6 +55,9 @@ data class AgentCatalog(val definitions: List<AgentDefinition>, val notes: List<
                 effort = effort,
                 omitMemory = def.omitClaudeMd,
                 alwaysBackground = def.background == true,
+                // frontmatter 的 hooks 进子 agent 的会话日志（运行期间生效）；Stop→SubagentStop 的改写在登记时做
+                hooks = def.hooks,
+                hooksLayer = def.source.label,
             )
         }
 

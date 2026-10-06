@@ -471,6 +471,33 @@ class SessionRuntime private constructor(
     }
 
     /**
+     * 登记一个 skill / command 的 frontmatter hooks（hooks设计 §frontmatter）：本会话余下回合一直生效。
+     * 模型调 Skill 工具与用户敲 `/名字` 两条路都到这里（斜杠展开在宿主，那里拿到展开的组件名后调本方法）。
+     * 项目层（project / local）要过工作区信任——与 settings 的 hooks 同一条规则（CC：项目 skill 同 settings）。
+     * 幂等：同名组件已登记就不再写（处理器翻倍等于同一个门禁跑两遍）
+     */
+    suspend fun registerComponentHooks(kind: String, name: String, layer: String, hooks: kotlinx.serialization.json.JsonObject) {
+        if (hooks.isEmpty()) return
+        if (layer == "project" || layer == "local") {
+            val trusted = deps.trustProjectHooks(state.value.created.cwd)
+            if (!trusted) {
+                commit(
+                    listOf(
+                        Note(
+                            NoteLevel.Warning,
+                            "$layer 层「$name」的 frontmatter hooks 带了 ${hooks.keys.count { k -> dev.min.agent.ext.hooks.HookEvent.entries.any { it.name == k } }} 个事件的 hooks，未启用：工作区还没有被信任。",
+                        ),
+                    ),
+                    Durability.Batched,
+                )
+                return
+            }
+        }
+        if (state.value.componentHooks.any { it.kind == kind && it.name == name }) return
+        commit(listOf(dev.min.agent.spi.ComponentHooksRegistered(kind, name, layer, hooks)), Durability.Sync)
+    }
+
+    /**
      * 宿主发系统通知时跑 Notification hooks（hooks设计 §7：内核不发通知，何时算「该通知」由宿主决定）。
      * matcher 匹配通知类型（取值照 CC：permission_prompt、idle_prompt……），只执行、不改内核状态，记一条 [HooksRan]
      */

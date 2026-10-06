@@ -29,13 +29,13 @@ internal object SkillSnapshots {
             SkillEntry(
                 name = it.name, description = it.description, path = it.path, kind = SkillKind.Skill, whenToUse = it.whenToUse,
                 source = it.source.label, argumentHint = it.argumentHint, arguments = it.arguments,
-                disableModelInvocation = it.disableModelInvocation, userInvocable = it.userInvocable,
+                disableModelInvocation = it.disableModelInvocation, userInvocable = it.userInvocable, hooks = it.hooks,
             )
         } + config.commands.map {
             SkillEntry(
                 name = it.name, description = it.description, path = it.path, kind = SkillKind.Command, whenToUse = it.whenToUse,
                 source = it.source.label, argumentHint = it.argumentHint, arguments = it.arguments,
-                disableModelInvocation = it.disableModelInvocation, userInvocable = it.userInvocable,
+                disableModelInvocation = it.disableModelInvocation, userInvocable = it.userInvocable, hooks = it.hooks,
             )
         }
         val merged = config.settings.merged
@@ -75,6 +75,8 @@ internal class KernelSkillPort(
         }
         val body = SkillFiles.readBody(fs, entry.path)
             ?: return SkillInvocation.Rejected("skill「$name」的文件现在读不了（${entry.path.value}，可能在会话开始后被删除或改动）。告诉用户，或不用这个 skill 继续。")
+        // skill 被调用（模型走的这条路）：frontmatter hooks 登记进本会话，余下回合生效（幂等，重复调用不叠加）
+        entry.hooks?.let { rt.registerComponentHooks(entry.kind.name.lowercase(), entry.name, entry.source ?: "user", it) }
         val baseDir = if (entry.kind == SkillKind.Skill) entry.path.value.substringBeforeLast('/') else null
         val vars = SkillVars(
             sessionId = rt.sessionId.value,

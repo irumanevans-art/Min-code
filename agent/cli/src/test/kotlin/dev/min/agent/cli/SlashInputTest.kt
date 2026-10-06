@@ -43,7 +43,13 @@ class SlashInputTest {
     fun `a skill and a nested command expand with their arguments`() {
         val skill = input("/fix 42") as InputAction.Send
         assertTrue(skill.text, skill.text.startsWith("Base directory for this skill: ") && skill.text.endsWith("Fix issue 42 now."))
-        assertEquals(InputAction.Send("Make component Button"), input("/frontend:component Button"))
+        // 展开带上组件名：宿主据此登记 frontmatter hooks
+        assertEquals(listOf("fix"), skill.names)
+        val command = input("/frontend:component Button") as InputAction.Send
+        assertEquals("Make component Button", command.text)
+        assertEquals(listOf("frontend:component"), command.names)
+        // 普通输入不带名字
+        assertTrue((input("plain text") as InputAction.Send).names.isEmpty())
     }
 
     @Test

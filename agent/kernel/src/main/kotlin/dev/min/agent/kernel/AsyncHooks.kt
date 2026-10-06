@@ -173,6 +173,8 @@ internal class AsyncHookRunner(
             }
         }
         rt.commit(events, Durability.Batched)
+        // once 的成功口径与同步路径一致：跑完、退出码 0、没超时没缺胳膊少腿（exit 2 会走下面的唤醒，不算成功）
+        if (handler.once && run.exitCode == 0 && !run.timedOut && !verdict.failedToStart) spendOnce(rt, handler)
         if (wake) {
             val text = run.stderr.ifBlank { run.stdout }.trim().ifEmpty { "（后台 hook「$label」以退出码 2 结束，没有输出说明）" }
             rt.receive(

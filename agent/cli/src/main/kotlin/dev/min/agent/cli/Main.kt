@@ -53,12 +53,24 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
     suspend fun say(input: String): Boolean {
         val config = app.config()
-        val text = when (val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime))) {
+        val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime))
+        val text = when (action) {
             is InputAction.Send -> action.text
             is InputAction.Notice -> {
                 System.err.println(action.message)
                 return false
             }
+        }
+        // 用户用斜杠调用 skill / command（CC 的 Hooks in skills and agents）：frontmatter hooks 从这一刻起
+        // 在本会话登记，余下回合生效。模型调 Skill 工具的路在内核（KernelSkillPort），两条路同一套登记
+        action.names.forEach { name ->
+            val skill = config.skills.firstOrNull { it.name == name }
+            if (skill != null) {
+                skill.hooks?.let { runtime.registerComponentHooks("skill", name, skill.source.label, it) }
+                return@forEach
+            }
+            val command = config.commands.firstOrNull { it.name == name }
+            command?.hooks?.let { runtime.registerComponentHooks("command", name, command.source.label, it) }
         }
         runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(text)))
         runtime.awaitIdle()

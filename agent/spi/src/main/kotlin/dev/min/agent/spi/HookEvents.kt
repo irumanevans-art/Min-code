@@ -21,6 +21,37 @@ data class HookSourceData(
 )
 
 /**
+ * skill / command 被调用、或子 agent 被委派时登记的 frontmatter hooks（CC 的 Hooks in skills and agents）。
+ * 与 [HooksLoaded] 的两层差别：它**在会话中途**登记（skill：人用斜杠命令或模型调 Skill 工具的那一刻；
+ * agent：子会话创建时），且 skill / command 的登记在本会话余下回合一直生效；子 agent 的写在子会话自己的
+ * 日志里，会话结束即随它出局，不进父会话也不传给孙会话。原文照存，解析与 settings 的 hooks 同一套
+ */
+@Serializable
+@SerialName("component_hooks_registered")
+data class ComponentHooksRegistered(
+    /** "skill" / "command" / "agent" */
+    val kind: String,
+    /** 组件名（skill / command / 子 agent 的名字） */
+    val name: String,
+    /** 定义来自哪一层：managed / user / project / local——项目层（project / local）要过工作区信任才生效 */
+    val layer: String,
+    val hooks: JsonObject,
+) : SessionEvent
+
+/**
+ * `once: true` 的 hook 成功跑过一次后，把它从对应组件的 hooks 里移除（CC：失败、exit 2 拦截、超时都不算成功）。
+ * [hooks] 是移除后的整份替换；删空了（不再有任何处理器）就把那条登记整个撤掉。
+ * 只有 skill / command 的 frontmatter 认 `once`——settings 与 agent 定义里的同名键忽略（CC 原文），所以本事件只会由前者产生
+ */
+@Serializable
+@SerialName("component_hooks_updated")
+data class ComponentHooksUpdated(
+    val kind: String,
+    val name: String,
+    val hooks: JsonObject,
+) : SessionEvent
+
+/**
  * 各生效层合并后的 `type:http` 两道闸（设计 §8 H3）。设置只在会话创建时读一次，所以随快照冻结。
  * 列表是各层并集；**空数组是有意义的值**：[allowedUrls] 为空 = 拦掉所有 http hook，[allowedEnvVars] 为空 = 一个变量都不许插值。
  * null = 所有生效层都没定义这道闸（不设限）。

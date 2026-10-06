@@ -201,6 +201,16 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is PermissionRulesLoaded -> copy(rules = e.rules, additionalDirectories = e.additionalDirectories)
         is HooksLoaded -> copy(hooks = e.sources, hooksHttpPolicy = e.httpPolicy)
+        is dev.min.agent.spi.ComponentHooksRegistered -> {
+            // 同名组件重复登记（模型又调了一次同一个 skill）不叠加：处理器翻倍等于同一个门禁跑两遍
+            val exists = componentHooks.any { it.kind == e.kind && it.name == e.name }
+            copy(componentHooks = if (exists) componentHooks.map { if (it.kind == e.kind && it.name == e.name) e else it } else componentHooks + e)
+        }
+        is dev.min.agent.spi.ComponentHooksUpdated -> copy(
+            componentHooks = componentHooks.map { c ->
+                if (c.kind == e.kind && c.name == e.name) c.copy(hooks = e.hooks) else c
+            }.filterNot { it.kind == e.kind && it.name == e.name && it.hooks.isEmpty() },
+        )
         is HooksRan -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is HookContextAdded -> when (val target = e.target) {
             HookContextTarget.NextUserMessage -> copy(pendingHookContexts = pendingHookContexts + e.text)

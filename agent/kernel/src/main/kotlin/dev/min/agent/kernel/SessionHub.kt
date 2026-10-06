@@ -524,6 +524,23 @@ class SessionHub(
         }
         val background = request.background || definition?.alwaysBackground == true
 
+        // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
+        // 不进父会话（inheritedRules 复制的是 settings 快照），也不会随继承传给孙会话。Stop 改写成
+        // SubagentStop（CC：子会话里触发的是它自己的完成事件）。项目层定义（project / local）要过工作区信任
+        // ——与 settings 同一条规则；Min 里 `-p` 不自动信任，CC 的「-p 不算接受信任」天然成立
+        definition?.hooks?.let { h ->
+            val layer = definition.hooksLayer ?: "user"
+            val trusted = !(layer == "project" || layer == "local") || deps.trustProjectHooks(ps.created.cwd)
+            if (trusted) {
+                initial += dev.min.agent.spi.ComponentHooksRegistered("agent", definition.name, layer, stopToSubagentStop(h))
+            } else {
+                parent.commit(
+                    listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "$layer 层子 agent「${definition.name}」的 frontmatter hooks 未启用：工作区还没有被信任。")),
+                    Durability.Batched,
+                )
+            }
+        }
+
         val child = SessionRuntime.create(
             store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps) + inheritedMcp(ps),
             // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载（来历里的 omitMemory 管着，重开后同样）；分身照常——它接着父会话的活干
@@ -838,4 +855,15 @@ class SessionHub(
         /** [stopTree] 收集子树、[shutdown] 重试「停树 + 卸下」的最多轮数 */
         const val STOP_ROUNDS = 3
     }
+}
+
+/**
+ * 子 agent 定义里的 `Stop` 改成 `SubagentStop`（CC：子会话结束触发的是它自己的完成事件）。
+ * 两个键都有时把 Stop 的组接到 SubagentStop 后面；其余键原样
+ */
+internal fun stopToSubagentStop(hooks: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
+    val stop = hooks["Stop"] as? kotlinx.serialization.json.JsonArray ?: return hooks
+    val existing = hooks["SubagentStop"] as? kotlinx.serialization.json.JsonArray
+    val merged = kotlinx.serialization.json.JsonArray(existing.orEmpty() + stop)
+    return kotlinx.serialization.json.JsonObject(hooks - "Stop" + ("SubagentStop" to merged))
 }
