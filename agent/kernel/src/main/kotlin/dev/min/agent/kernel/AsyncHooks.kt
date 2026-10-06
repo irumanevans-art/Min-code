@@ -9,6 +9,7 @@ import dev.min.agent.protocol.TextPart
 import kotlin.coroutines.cancellation.CancellationException
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.ExecHandle
 import dev.min.agent.spi.ExecOptions
 import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
@@ -21,32 +22,46 @@ import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.TurnTrigger
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 
 /**
  * 后台 hook 执行器（docs/agent/detail/hooks设计.md §async）：`async` / `asyncRewake` 的 command handler
- * 不挡回合——启动脚本把 hook 进程甩进 shell 后台并记下 pid，本侧一个协程轮询结果文件，完成了才落 [HooksRan]
- * 与上下文。启动本身不落事件：进程死了日志里就没有「还在跑」的痕迹，重开会话不假装在等（日志即真相）。
+ * 不挡回合——宿主的 exec 后台机制（[ExecResult.Backgrounded]）替我们养着进程，本侧一个协程轮询结果文件，
+ * 完成了才落 [HooksRan] 与上下文。启动本身不落事件：进程死了日志里就没有「还在跑」的痕迹，重开会话不假装
+ * 在等（日志即真相）。
  *
- * 生命周期跟着运行时：会话卸下（close / shutdown / delete）时 [cancelAll] 杀掉还在跑的进程并清掉暂存目录——
- * 手机上不能留孤儿进程（这是 Min 加的边界，CC 的 `-p` teardown 同样 kill）。
+ * 为什么用宿主的后台句柄而不是自己 `( … ) &` 加 pid 文件：Android 的命令上下文是 `killOnExit = true`，
+ * 启动脚本一退出 proot 就把 hook 一起带走；桌面上 `kill -9 <pid>` 只杀得着子 shell、孙进程成了孤儿。
+ * 宿主的 `kill(handle)` 按整棵进程树回收（只杀自己名下的），两种宿主都闭环。生命周期跟着运行时：
+ * 会话卸下（close / shutdown / delete）时 [cancelAll] 杀掉还在跑的进程并清掉暂存目录——手机上不能留
+ * 孤儿进程（这是 Min 加的边界，CC 的 `-p` teardown 同样 kill）
  */
 internal class AsyncHookRunner(
     private val rt: SessionRuntime,
     private val scope: CoroutineScope,
     /** 测试给小间隔；生产半秒足够新（后台 hook 的输出本来就不赶时间） */
     private val pollIntervalMs: Long = 500,
+    /** 存活探测的间隔：比轮询稀得多——探测要起一个进程，不能每 500ms 一个 */
+    private val livenessIntervalMs: Long = 5_000,
 ) {
     private val deps = rt.deps
 
-    private class Running(val id: String, val dir: GuestPath, val job: Job)
+    private class Running(val id: String, val dir: GuestPath, val handle: ExecHandle?, val job: Job)
 
     private val running = java.util.concurrent.ConcurrentHashMap<String, Running>()
+
+    /** launch 与 cancelAll 互斥：关会话时正在启动的 hook 也要拿到句柄再被杀，不漏任务 */
+    private val launchLock = Mutex()
 
     /** 起不来的 handler 只报一次（CC 2.1.287 的修复：脚本缺失不再反复唤醒、反复刷屏） */
     private val reportedBroken = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -58,7 +73,7 @@ internal class AsyncHookRunner(
     /**
      * 启动一个后台 hook 并立刻返回（不挡回合）。[stdin] / [env] 与同步批同一份（HookDriver 组好的）；
      * [timeoutSeconds] 只对 asyncRewake 有值——CC 明说 async 不套 timeout，asyncRewake 要套。
-     * 启动脚本把 hook 进程甩进 shell 后台就退出：这一步只花毫秒，真正干活的进程在后台继续
+     * 前台预算压到 1ms：宿主把进程挂进自己的后台机制后返回句柄，脚本本身活着多久 hook 就跑多久
      */
     suspend fun launch(
         event: HookEvent,
@@ -68,6 +83,7 @@ internal class AsyncHookRunner(
         cwd: GuestPath,
         timeoutSeconds: Int?,
     ) {
+        launchLock.withLock {
         val id = deps.ids.next("hookbg")
         // 删除只能走 shell，id 必须是单个安全路径段，不能把范围扩到 hooks 目录以外
         require(SAFE_ID.matches(id)) { "后台 hook id 必须是安全路径段" }
@@ -75,22 +91,32 @@ internal class AsyncHookRunner(
         deps.host.fs.writeAtomic(child(dir, "in.json"), stdin.toString().encodeToByteArray())
         deps.host.fs.writeAtomic(child(dir, "start.sh"), script(handler, env, dir, timeoutSeconds).encodeToByteArray())
         val started = deps.clock.nowMs()
-        // Windows 的 ProcessBuilder -> Git Bash 会破坏复杂的 -c 参数；与同步批同一条路：脚本文本走文件端口（HookBatchRunner 同）
+        // Windows 的 ProcessBuilder -> Git Bash 会破坏复杂的 -c 参数；与同步批同一条路：脚本文本走文件端口（HookBatchRunner 同）。
+        // timeoutMs 给到天级：Android 宿主会在到点时硬杀后台进程（桌面不设限），它是后台 hook 的寿命上限而不是本轮的等待
         val result = deps.host.exec.run(
             ShellCommand("sh ${cq(deps.hookShellPath(child(dir, "start.sh")))}", cwd),
-            ExecOptions(5_000),
+            ExecOptions(timeoutMs = MAX_LIFETIME_MS, foregroundBudgetMs = 1),
         )
-        if (result is ExecResult.Backgrounded) deps.host.exec.kill(result.handle)
-        val job = scope.launch { watch(id, event, handler, dir, started, timedOutBySelf = timeoutSeconds != null) }
-        running[id] = Running(id, dir, job)
+        val handle = (result as? ExecResult.Backgrounded)?.handle
+        // 先登记再启动（懒启动）：cancelAll 拿锁做快照，不会在登记前把任务漏掉
+        val job = scope.launch(start = CoroutineStart.LAZY) { watch(id, event, handler, dir, handle, started, timeoutSeconds != null) }
+        running[id] = Running(id, dir, handle, job)
+        job.start()
+        }
     }
 
-    /** 后台 hook 的启动脚本：进程甩进 shell 后台、pid 落文件（卸下时按它杀），退出码与输出各落各的文件 */
+    /**
+     * 后台 hook 的启动脚本：进程号、输出、退出码各落各的文件。脚本自己就是进程树的根（不甩后台），
+     * 宿主按句柄整树回收；数字都先写 `.tmp` 再 `mv`，轮询侧只见完整文件、读不到半截
+     */
     private fun script(handler: HookHandler, env: Map<String, String>, dir: GuestPath, timeoutSeconds: Int?): String = buildString {
         append("# Min async hook\n")
         env.forEach { (name, value) ->
             if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(name)) append("export $name=${q(value)}\n")
         }
+        append("if command -v mv >/dev/null 2>&1; then\n")
+        append("  atomic_out() { printf '%s\\n' \"\$2\" > \"\$1.tmp\" && mv \"\$1.tmp\" \"\$1\"; }\n")
+        append("else\n  atomic_out() { printf '%s\\n' \"\$2\" > \"\$1\"; }\nfi\n")
         val invocation = if (handler.args != null) {
             val argv = (handler.command?.let(::listOf) ?: emptyList()) + handler.args!!
             argv.joinToString(" ", transform = ::q)
@@ -98,9 +124,8 @@ internal class AsyncHookRunner(
         val input = q(deps.hookShellPath(child(dir, "in.json")))
         val out = q(deps.hookShellPath(child(dir, "out")))
         val err = q(deps.hookShellPath(child(dir, "err")))
-        val code = q(deps.hookShellPath(child(dir, "code")))
-        append("(\n")
-        // asyncRewake 套 timeout（超时退出码 124）；async 不套（CC 原文）。没有 timeout 命令时退化为不套
+        append("atomic_out ${q(deps.hookShellPath(child(dir, "pid")))} \"\$\$\"\n")
+        // asyncRewake 套 timeout（超时退出码 124，-k 补杀后 137；没有 timeout 命令时退化为不套——CC 原文）
         if (timeoutSeconds != null) {
             append("if command -v timeout >/dev/null 2>&1; then\n")
             append("timeout -k 2 $timeoutSeconds $invocation < $input > $out 2> $err\n")
@@ -108,27 +133,38 @@ internal class AsyncHookRunner(
         } else {
             append("$invocation < $input > $out 2> $err\n")
         }
-        append("printf '%s\\n' \"\$?\" > $code\n")
-        append(") &\n")
-        append("printf '%s\\n' \"\$!\" > ${q(deps.hookShellPath(child(dir, "pid")))}\n")
+        append("atomic_out ${q(deps.hookShellPath(child(dir, "code")))} \"\$?\"\n")
     }
 
-    private suspend fun watch(id: String, event: HookEvent, handler: HookHandler, dir: GuestPath, startedAt: Long, timedOutBySelf: Boolean) {
+    private suspend fun watch(
+        id: String,
+        event: HookEvent,
+        handler: HookHandler,
+        dir: GuestPath,
+        handle: ExecHandle?,
+        startedAt: Long,
+        timedOutBySelf: Boolean,
+    ) {
         val codeFile = child(dir, "code")
         try {
-            while (fs.stat(codeFile) == null) {
-                pollProbe?.invoke()
-                delay(pollIntervalMs)
+            if (!waitForResult(codeFile, dir, handle, startedAt)) {
+                // 兜底：进程没了而退出码没写出（被外部杀死、崩溃）——不能无限轮询，落一条说明收尾
+                finishWithProblem(event, handler, startedAt, "进程结束了，但没写出退出码（被外部杀死或崩溃）")
+                return
             }
+            val code = read(child(dir, "code"))?.trim()?.toIntOrNull()
+            val out = readBounded(child(dir, "out"))
+            val err = readBounded(child(dir, "err"))
             val run = dev.min.agent.ext.hooks.HandlerRun(
                 handler = handler,
-                exitCode = read(child(dir, "code"))?.trim()?.toIntOrNull(),
-                stdout = read(child(dir, "out")).orEmpty(),
-                stderr = read(child(dir, "err")).orEmpty(),
-                timedOut = timedOutBySelf && read(child(dir, "code"))?.trim() == "124",
+                exitCode = code,
+                stdout = out.text,
+                stderr = err.text,
+                // 124 = TERM 生效；137 = 没理 TERM、被 -k 的 KILL 补杀——都是自己杀的，按超时算
+                timedOut = timedOutBySelf && (code == 124 || code == 137),
                 durationMs = (deps.clock.nowMs() - startedAt).coerceAtLeast(0),
             )
-            finish(event, handler, run)
+            finish(event, handler, run, out.truncated, err.truncated)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -136,12 +172,57 @@ internal class AsyncHookRunner(
             finishWithProblem(event, handler, startedAt, "后台 hook 收尾失败：${e.javaClass.simpleName}")
         } finally {
             running.remove(id)
-            withContext(NonCancellable) { cleanup(dir) }
+            withContext(NonCancellable) { cleanup(dir, handle) }
+        }
+    }
+
+    /** 等结果文件出现；进程先没了（退出码永远等不来）返回 false */
+    private suspend fun waitForResult(codeFile: GuestPath, dir: GuestPath, handle: ExecHandle?, startedAt: Long): Boolean {
+        var lastProbe = 0L
+        while (fs.stat(codeFile) == null) {
+            pollProbe?.invoke()
+            val now = deps.clock.nowMs()
+            if (handle != null && now - startedAt >= livenessIntervalMs && now - lastProbe >= livenessIntervalMs) {
+                lastProbe = now
+                if (!alive(dir)) {
+                    // 进程可能正走在写退出码的路上：缓一步再判一次，别把刚完成的误报成死
+                    delay(pollIntervalMs * 2)
+                    if (fs.stat(codeFile) == null && !alive(dir)) return false
+                }
+            }
+            delay(pollIntervalMs)
+        }
+        return true
+    }
+
+    /** 进程还活着吗：pid 文件里像 pid 才信（目录在 rootfs 里，模型改得了内容），`kill -0` 探测 */
+    private suspend fun alive(dir: GuestPath): Boolean {
+        val pid = try {
+            read(child(dir, "pid"))?.trim()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return true // pid 还没写出来：当作活着，别误判
+        if (!SAFE_PID.matches(pid)) return true
+        return try {
+            val r = deps.host.exec.run(ShellCommand("kill -0 $pid", rt.state.value.settings.cwd), ExecOptions(2_000))
+            r is ExecResult.Exited && r.exitCode == 0
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            true // 探测自己没跑成：当作活着
         }
     }
 
     /** 后台 hook 跑完了：剥掉控制字段（动作已经发生了）、落 HooksRan、把输出安排给下一个回合 */
-    private suspend fun finish(event: HookEvent, handler: HookHandler, run: dev.min.agent.ext.hooks.HandlerRun) {
+    private suspend fun finish(
+        event: HookEvent,
+        handler: HookHandler,
+        run: dev.min.agent.ext.hooks.HandlerRun,
+        outTruncated: Boolean,
+        errTruncated: Boolean,
+    ) {
         val label = label(handler)
         val verdict = interpret(event, run)
         val problems = mutableListOf<String>()
@@ -152,6 +233,8 @@ internal class AsyncHookRunner(
             problems += "「$label」是后台 hook，decision / continue / updatedInput 这类控制字段无效（对应的动作已经发生了），已忽略"
         }
         if (run.timedOut) problems += "「$label」超时被杀"
+        if (outTruncated) problems += "「$label」的 stdout 超过 ${READ_CAP_BYTES / 1024}KB，只保留了开头"
+        if (errTruncated) problems += "「$label」的 stderr 超过 ${READ_CAP_BYTES / 1024}KB，只保留了开头"
         val rewake = handler.asyncRewake
         val wake = rewake && run.exitCode == 2 && !run.timedOut && !verdict.failedToStart
         if (verdict.failedToStart) {
@@ -173,10 +256,13 @@ internal class AsyncHookRunner(
             }
         }
         rt.commit(events, Durability.Batched)
-        // once 的成功口径与同步路径一致：跑完、退出码 0、没超时没缺胳膊少腿（exit 2 会走下面的唤醒，不算成功）
-        if (handler.once && run.exitCode == 0 && !run.timedOut && !verdict.failedToStart) spendOnce(rt, handler)
+        // once 的成功口径与同步路径同一把尺（见 HookDriver.onceSucceeded）；exit 2 会走下面的唤醒，不算成功
+        if (handler.once && onceSucceeded(event, run, verdict)) spendOnce(rt, handler)
         if (wake) {
-            val text = run.stderr.ifBlank { run.stdout }.trim().ifEmpty { "（后台 hook「$label」以退出码 2 结束，没有输出说明）" }
+            // 唤醒文本照同步路径限长：超长存附件给预览（读文件时也只读了有界的开头）
+            val raw = run.stderr.ifBlank { run.stdout }.trim()
+                .ifEmpty { "（后台 hook「$label」以退出码 2 结束，没有输出说明）" }
+            val text = HookDriver.attachText(deps, rt.sessionId, event, HookText(raw))
             rt.receive(
                 ClientMsgId("async-rewake:${rt.sessionId.value}:${deps.ids.next("rewake")}"),
                 listOf(TextPart("后台 asyncRewake hook「$label」报告了问题，需要你处理：\n$text")),
@@ -207,32 +293,44 @@ internal class AsyncHookRunner(
         null
     }
 
+    /** 结果文件按字节上限读：hook 的输出没人限过大小，整个读进内存可能把进程吃爆 */
+    private suspend fun readBounded(path: GuestPath): Bounded = try {
+        val stat = fs.stat(path)
+        if (stat == null) Bounded("", false)
+        else {
+            val bytes = fs.read(path, 0, READ_CAP_BYTES)
+            // 尾巴上可能切了半个多字节字符，decode 成替换字符——预览够用
+            Bounded(bytes.decodeToString(), stat.size > bytes.size)
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        Bounded("", false)
+    }
+
+    private class Bounded(val text: String, val truncated: Boolean)
+
     /**
-     * 会话卸下前调用：停掉轮询协程。杀进程与清目录由每个协程的 finally（NonCancellable 的 [cleanup]）做——
-     * cancel 之后它必然执行，这里不重复 reap。pid 文件的内容必须长得像 pid 才用它——目录在 rootfs 里，模型改得了它
+     * 会话卸下前调用：join 而不是只 cancel——返回时后台进程已杀完、暂存目录已删（每个协程的 finally
+     * 是 NonCancellable 的 [cleanup]）。拿锁做快照：与正在进行的 launch 互斥，不会漏掉刚起的任务
      */
     suspend fun cancelAll() {
-        running.values.toList().forEach { it.job.cancel() }
+        val all = launchLock.withLock { running.values.toList() }
+        all.forEach { catchingNonCancellation { it.job.cancelAndJoin() } }
     }
 
-    /** 收尾：尽力杀进程（自然结束时多半已退出，kill 报错忽略），再删掉整个暂存目录 */
-    private suspend fun cleanup(dir: GuestPath) {
-        reap(dir)
-    }
-
-    private suspend fun reap(dir: GuestPath) {
-        val cwd = rt.state.value.settings.cwd
+    /**
+     * 收尾：自然结束（退出码已写出）只删目录、不杀——句柄在宿主运行表里可能已被摘掉，盲目杀有误伤的
+     * 窗口；没结束就 `kill(handle)` 整树回收。删目录是唯一的一次进程调用
+     */
+    private suspend fun cleanup(dir: GuestPath, handle: ExecHandle?) {
         try {
-            val pid = read(child(dir, "pid"))?.trim()
-            if (pid != null && Regex("[0-9]{1,10}").matches(pid)) {
-                val kill = deps.host.exec.run(
-                    // kill 自己 + kill 直接子进程（pkill -P）：后台 job 是一层 subshell，命令在里面
-                    ShellCommand("kill -9 $pid 2>/dev/null; pkill -9 -P $pid 2>/dev/null; true", cwd),
-                    ExecOptions(5_000),
-                )
-                if (kill is ExecResult.Backgrounded) deps.host.exec.kill(kill.handle)
-            }
-            val rm = deps.host.exec.run(ShellCommand("rm -rf -- ${q(deps.hookShellPath(dir))}", cwd), ExecOptions(5_000))
+            val finished = fs.stat(child(dir, "code")) != null
+            if (!finished && handle != null) deps.host.exec.kill(handle)
+            val rm = deps.host.exec.run(
+                ShellCommand("rm -rf -- ${q(deps.hookShellPath(dir))}", rt.state.value.settings.cwd),
+                ExecOptions(5_000),
+            )
             if (rm is ExecResult.Backgrounded) deps.host.exec.kill(rm.handle)
         } catch (e: CancellationException) {
             throw e
@@ -253,5 +351,12 @@ internal class AsyncHookRunner(
 
     private companion object {
         val SAFE_ID = Regex("[A-Za-z0-9_-]+")
+        val SAFE_PID = Regex("[0-9]{1,10}")
+
+        /** 后台 hook 的寿命上限：Android 宿主到点硬杀（桌面宿主对后台进程不设限），7 天足够任何会话 */
+        const val MAX_LIFETIME_MS = 86_400_000L * 7
+
+        /** 单个结果文件的读取上限（字节）：预览要 2,000 字、附件上限 1 万字，64KB 绰绰有余 */
+        const val READ_CAP_BYTES = 64 * 1024
     }
 }

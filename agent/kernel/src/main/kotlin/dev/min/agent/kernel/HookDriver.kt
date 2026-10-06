@@ -127,10 +127,10 @@ internal class HookDriver(private val rt: SessionRuntime) {
         ifMatches: ((String) -> Boolean)? = null,
     ): HookOutcome? {
         if (rt.state.value.hooks.isEmpty() && rt.state.value.componentHooks.isEmpty()) return null
-        val (commandHandlers, matchNotes) = all { it.matchingDetailed(event, target, ifMatches) }
+        val (commandHandlers, _) = all { it.matchingDetailed(event, target, ifMatches) }
         // http 的处理器与 command 分开挑（`matchingDetailed` 只认 executable 的 command）：
         // 只配了 http hook 的事件此前会在这里被判成「没有匹配的处理器」而静默不跑
-        val (httpHandlers, httpNotes) = all { it.matchingHttp(event, target, ifMatches) }
+        val (httpHandlers, _) = all { it.matchingHttp(event, target, ifMatches) }
         // async / asyncRewake 的 command 处理器：甩进后台就回来，不挡这一批（CC 的 Run hooks in the background）
         val asyncHandlers = all { it.matchingAsync(event, target, ifMatches) }.first
         if (commandHandlers.isEmpty() && httpHandlers.isEmpty() && asyncHandlers.isEmpty()) return null
@@ -142,23 +142,33 @@ internal class HookDriver(private val rt: SessionRuntime) {
             put("MIN_HOOK", "1")
             state.settings.effort?.let { put("CLAUDE_EFFORT", wire(it)) }
         }
-        // 后台 hook 先启动再跑同步批：它不等谁，也没人等它。timeout 只给 asyncRewake（CC：async 不套 timeout）
-        asyncHandlers.forEach { h ->
-            rt.asyncHooks.launch(
-                event, h, stdin, env, state.settings.cwd,
-                if (h.asyncRewake) (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) else null,
-            )
-        }
-        if (commandHandlers.isEmpty() && httpHandlers.isEmpty()) {
-            // 只有异步 hook：本批没有要合并的结论，给一个中性的（调用方拿它判断放行/拦截，中性即放行）
-            return HookOutcome(HookOutcome.Decision.Neutral, null, emptyList(), null, null, emptyList())
-        }
-        val started = deps.clock.nowMs()
-        // SessionEnd 的超时上限照 CC：默认 1.5 秒（整秒粒度取 2），配置写了更长的按配置，最多 60 秒
-        val timeoutCap = if (event == HookEvent.SessionEnd) SESSION_END_TIMEOUT_CAP else MAX_TIMEOUT
         // 两个执行器的异常（协程取消除外）都不许冒出去：hook 的执行问题只是一条非阻断说明、结论中性，
         // 否则一个写错的 URL 就能把回合打成 Failed，在 SessionStart 上还会让会话建不起来
         val executionFailures = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val started = deps.clock.nowMs()
+        // 后台 hook 先启动再跑同步批：它不等谁，也没人等它。timeout 只给 asyncRewake（CC：async 不套 timeout）。
+        // 启动失败只写异常类名、不打断回合——SessionEnd 上也不该让 close 在封写前中断
+        asyncHandlers.forEach { h ->
+            val t = if (h.asyncRewake) (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) else null
+            catchingNonCancellation { rt.asyncHooks.launch(event, h, stdin, env, state.settings.cwd, t) }
+                .getOrElse { e -> executionFailures += "后台 hook「${label(h)}」启动失败：${e.javaClass.simpleName}" }
+        }
+        if (commandHandlers.isEmpty() && httpHandlers.isEmpty()) {
+            // 只有异步 hook：本批没有要合并的结论，给一个中性的（调用方拿它判断放行/拦截，中性即放行）；
+            // 启动失败也要落一条，不能因为走了捷径就静默
+            if (executionFailures.isNotEmpty()) {
+                rt.commit(
+                    listOf(
+                        HooksRan(event.name, 0, "neutral", deps.clock.nowMs() - started, turnId, callId, executionFailures.toList()),
+                        Note(NoteLevel.Warning, "$event hook：" + executionFailures.joinToString("；")),
+                    ),
+                    Durability.Batched,
+                )
+            }
+            return HookOutcome(HookOutcome.Decision.Neutral, null, emptyList(), null, null, emptyList())
+        }
+        // SessionEnd 的超时上限照 CC：默认 1.5 秒（整秒粒度取 2），配置写了更长的按配置，最多 60 秒
+        val timeoutCap = if (event == HookEvent.SessionEnd) SESSION_END_TIMEOUT_CAP else MAX_TIMEOUT
         // command 与 http 两批并发跑（CC：同一事件匹配上的 hook 并行），各自的超时不串行叠加
         val (runs, http) = coroutineScope {
             val commandBatch = async {
@@ -192,12 +202,17 @@ internal class HookDriver(private val rt: SessionRuntime) {
             commandBatch.await() to httpBatch.await()
         }
         val allRuns = runs + http.runs
-        // once（CC：只在 skill / command 的 frontmatter 里生效）：成功跑过一次的处理器从组件里移除；
-        // 失败、exit 2 拦截、超时都不算成功。settings 与 agent 定义里的 once 由 spendOnce 自己忽略
-        allRuns.forEach { r -> if (r.handler.once && r.exitCode == 0 && !r.timedOut && !r.failedToStart) spendOnce(rt, r.handler) }
-        val combined = combine(event, allRuns.map { interpret(event, it) })
+        val verdicts = allRuns.map { interpret(event, it) }
+        // once（CC：只在 skill / command 的 frontmatter 里生效）：成功跑过一次的处理器从组件里移除。
+        // 「成功」= 跑完（退出码 0）、没超时没起不来、没有非阻断错误、也没被它自己拦下（exit 2 拦截、
+        // JSON 的 decision / permissionDecision 拒绝、continue:false 同属拦截，hook 保留）。settings 与
+        // agent 定义里的 once 由 spendOnce 自己忽略
+        allRuns.forEachIndexed { i, r -> if (r.handler.once && onceSucceeded(event, r, verdicts[i])) spendOnce(rt, r.handler) }
+        val combined = combine(event, verdicts)
         val outcome = toOutcome(event, combined)
-        val problems = combined.nonBlockingErrors + combined.notes + matchNotes + httpNotes + componentNotes +
+        // 分流说明（http 走 http 通道、async 走后台执行器、本期不支持的类型）不进 problems：它们只是
+        // 「这一批谁没来」的事实，每次触发都会出现，进了 problems 就是每回合一条 Warning（M2 的回归）
+        val problems = combined.nonBlockingErrors + combined.notes +
             allRuns.filter { it.failedToStart }.map { "「${label(it.handler)}」没能运行（路径写错时门禁会悄悄失效）" } +
             allRuns.filter { it.timedOut }.map { "「${label(it.handler)}」超时" } +
             http.skipped + http.notes + hiddenEnvNotes(httpHandlers) + executionFailures
@@ -311,6 +326,20 @@ internal data class HookOutcome(
 
     val label: String get() = decision.name.lowercase()
 }
+
+/**
+ * `once: true` 的「成功跑过一次」（同步与后台两条路同一把尺）：跑完（退出码 0）、没超时没起不来、
+ * 没有非阻断错误、结论是放行或中性——它自己拦下的（exit 2、JSON 的 decision / permissionDecision 拒绝、
+ * continue:false）不算成功，hook 保留
+ */
+internal fun onceSucceeded(
+    event: HookEvent,
+    run: dev.min.agent.ext.hooks.HandlerRun,
+    verdict: dev.min.agent.ext.hooks.HookVerdict,
+): Boolean =
+    run.exitCode == 0 && !run.timedOut && !run.failedToStart && verdict.nonBlockingError == null &&
+        (verdict.decision == HookDecision.Neutral || verdict.decision == HookDecision.Allow) &&
+        verdict.shouldContinue && verdict.stopReason == null
 
 /**
  * `once: true` 的处理器成功跑完一次：把它从所属组件的 hooks 原文里删掉（整份替换），此后不再匹配。

@@ -357,6 +357,11 @@ class AsyncHooksSessionTest {
 
     // ---- 关闭杀进程 ----
 
+    /** 用 `bash -lc 'kill -0 <pid>'` 探 marker 里记的进程还活着吗 */
+    private fun aliveByMarker(marker: Path): Boolean =
+        ProcessBuilder("bash", "-lc", "if kill -0 \$(cat '${shellPath(marker)}') 2>/dev/null; then echo alive; else echo dead; fi")
+            .redirectErrorStream(true).start().inputStream.bufferedReader().readText().trim() == "alive"
+
     @Test
     fun `关闭会话杀掉还在跑的后台 hook 进程`() = run {
         val marker = work.resolve("hookpid")
@@ -365,7 +370,7 @@ class AsyncHooksSessionTest {
                 "PostToolUse",
                 script("long", """
                     cat > /dev/null
-                    echo \$\$ > '${shellPath(marker)}'
+                    echo ${'$'}${'$'} > '${shellPath(marker)}'
                     sleep 30
                 """),
                 "Bash",
@@ -377,12 +382,90 @@ class AsyncHooksSessionTest {
         }
         val (hub, rt, _) = session(model)
         rt.say("跑")
-        // hook 起来了（pid 文件出现）再关
+        // hook 起来了（pid 文件出现）再关；先确认它真的活着——否则「杀掉了」断言是空的
         while (!Files.exists(marker)) delay(50)
+        assertEquals("关闭前后台 hook 进程活着（否则下面的断言不成立）", true, aliveByMarker(marker))
         assertTrue(hub.shutdown(rt.sessionId))
-        delay(500)
-        val alive = ProcessBuilder("bash", "-lc", "if kill -0 \$(cat '${shellPath(marker)}') 2>/dev/null; then echo alive; else echo dead; fi")
-            .redirectErrorStream(true).start().inputStream.bufferedReader().readText().trim()
-        assertEquals("后台 hook 进程被杀掉：$alive", "dead", alive)
+        // shutdown 返回时进程应已收尾（cancelAll join 了每个协程的 NonCancellable 清理）
+        assertEquals("后台 hook 进程被杀掉", false, aliveByMarker(marker))
+    }
+
+    @Test
+    fun `进程被外部杀死而退出码没写出时轮询有兜底，不无限等`() = run {
+        settings(hook("PostToolUse", "sh", "Bash", extra = ",\"args\":[\"-c\",\"kill -9 \$PPID; sleep 2\"],\"async\":true"))
+        val model = RoutingModel { req ->
+            if (req.lastText().contains("跑")) reply(bashCall("c1", "start"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val (_, rt, store) = session(model)
+        rt.say("跑")
+        // hook 的 sh 杀了自己的父脚本（写退出码的那位）：code 永远不出现，轮询兜底在存活探测后收尾
+        awaitBackground(store, rt, 1)
+        val ran = store.events(rt).filterIsInstance<HooksRan>().single { it.background }
+        assertTrue("落了说明：${ran.problems}", ran.problems.any { it.contains("没写出退出码") })
+        delay(1_000)
+        assertEquals("兜底收尾不唤醒", TurnTrigger.User, rt.state.value.lastTurn?.trigger)
+    }
+
+    // ---- 输出限长（与同步路径同一把尺） ----
+
+    @Test
+    fun `asyncRewake 的唤醒文本超长时存附件给预览`() = run {
+        settings(
+            hook(
+                "PostToolUse",
+                script("noisy", """
+                    cat > /dev/null
+                    sleep 1
+                    head -c 30000 /dev/zero | tr '\0' 'x' >&2
+                    exit 2
+                """),
+                "Bash",
+                extra = ",\"asyncRewake\":true",
+            ),
+        )
+        val model = RoutingModel { req ->
+            when {
+                req.lastText() == "跑" -> reply(bashCall("c1", "watch"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("我去修"))
+            }
+        }
+        val (_, rt, store) = session(model)
+        rt.say("跑")
+        awaitBackground(store, rt, 1)
+        rt.state.first { it.lastTurn?.trigger == TurnTrigger.Hook }
+        while (model.requests.none { r -> r.messages.last().parts.any { (it as? TextPart)?.text?.contains("需要你处理") == true } }) delay(50)
+        val woken = model.requests.last()
+        val wake = woken.lastText()
+        assertTrue("超长输出走了附件：$wake", wake.contains("hook 输出共 30000 字"))
+        assertTrue("进上下文的是预览不是全文：${wake.length}", wake.length < 3_000)
+    }
+
+    // ---- 分流说明不进 problems（M2） ----
+
+    @Test
+    fun `同步与后台混批时分流说明不落 Warning`() = run {
+        val quick = script("quick", "cat > /dev/null")
+        val slow = script("slow", "cat > /dev/null\nsleep 1")
+        settings(
+            """
+            {"PostToolUse": [
+              {"matcher": "Bash", "hooks": [
+                {"type": "command", "command": ${JsonPrimitive(quick)}},
+                {"type": "command", "command": ${JsonPrimitive(slow)}, "async": true}
+              ]}
+            ]}
+            """.trimIndent(),
+        )
+        val model = RoutingModel { req ->
+            if (req.lastText().contains("跑")) reply(bashCall("c1", "echo hi"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val (_, rt, store) = session(model)
+        rt.say("跑")
+        awaitBackground(store, rt, 1)
+        val notes = store.events(rt).filterIsInstance<Note>()
+        assertTrue(
+            "「谁走哪条通道」的分流说明不该刷 Warning：$notes",
+            notes.none { it.text.contains("后台执行器") || it.text.contains("不在本批") },
+        )
     }
 }
