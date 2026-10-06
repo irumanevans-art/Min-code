@@ -128,6 +128,44 @@ class PolicyWiringTest {
 
     private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.open(rt.sessionId)!!.read().toList().map { it.event }
 
+    @Test fun `r47 additional directories reach execution and survive reopening without extra settings`() = run {
+        fs.scopes["/data"] = dev.min.agent.spi.PathScope.Rootfs
+        settings("""{"permissions":{"additionalDirectories":["/data/project"]}}""")
+        fs.put("/data/project/.claude/settings.json", """{"permissions":{"allow":["Bash"]}}""")
+        val model = RoutingModel { req ->
+            if (req.messages.size == 1) reply(cmd("c1", "touch /data/project/new.txt"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val deps = deps(model, listOf(bash))
+        val hub = SessionHub(store, deps, scope)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.AcceptEdits)
+        assertEquals(listOf(GuestPath("/data/project")), events(rt).filterIsInstance<PermissionRulesLoaded>().single().additionalDirectories)
+        assertEquals(listOf(GuestPath("/data/project")), rt.state.value.additionalDirectories)
+        assertTrue(rt.state.value.rules.isEmpty())
+        rt.send(ClientMsgId("u1"), listOf(TextPart("创建")))
+        rt.state.first { it.turn == null && it.lastTurn != null || it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
+        assertEquals(listOf("touch /data/project/new.txt"), ran)
+        assertTrue(events(rt).none { it is ApprovalRequested })
+        hub.close(rt.sessionId)
+        settings("""{"permissions":{"additionalDirectories":["/other"]}}""")
+        val reopened = hub.open(rt.sessionId)!!
+        assertEquals(listOf(GuestPath("/data/project")), reopened.state.value.additionalDirectories)
+    }
+
+    @Test fun `r42 plan non-readonly calls produce an approval card with planning guidance`() = run {
+        val model = RoutingModel { req ->
+            if (req.messages.size == 1) reply(cmd("c1", "npm test"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val rt = SessionHub(store, deps(model, listOf(bash)), scope).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Plan)
+        rt.send(ClientMsgId("u1"), listOf(TextPart("验证")))
+        val waiting = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
+        val request = events(rt).filterIsInstance<ApprovalRequested>().single()
+        assertTrue(request.ask.summary.contains("计划模式") && request.ask.summary.contains("ExitPlanMode"))
+        assertTrue(ran.isEmpty())
+        rt.answerApproval((waiting.phaseOf(CallId("c1")) as CallPhase.AwaitingApproval).approvalId, ApprovalChoice.Once)
+        rt.state.first { it.turn == null && it.lastTurn != null }
+        assertEquals(listOf("npm test"), ran)
+    }
+
     @Test
     fun `settings rules are snapshotted at creation and decide without asking`() = run {
         settings("""{"permissions": {"allow": ["Bash(npm test *)"], "deny": ["Bash(rm *)"]}}""")
@@ -203,7 +241,7 @@ class PolicyWiringTest {
 
     @Test
     fun `children inherit the parent's rules, including session ones`() = run {
-        settings("""{"permissions": {"deny": ["Bash(curl *)"]}}""")
+        settings("""{"permissions": {"deny": ["Bash(curl *)"], "additionalDirectories": ["/data/project"]}}""")
         val model = RoutingModel { req ->
             when {
                 req.last() == "子任务" -> reply(TextPart("完成"))
@@ -221,6 +259,7 @@ class PolicyWiringTest {
         val child = hub.get(done.children.keys.single())!!
         assertEquals(listOf("Bash(curl *)"), child.state.value.rules.map { it.text })
         assertEquals("子会话不自己再读 settings", 1, events(child).count { it is PermissionRulesLoaded })
+        assertEquals(parent.state.value.additionalDirectories, child.state.value.additionalDirectories)
     }
 
     @Test

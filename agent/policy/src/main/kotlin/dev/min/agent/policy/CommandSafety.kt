@@ -28,6 +28,8 @@ object CommandSafety {
 
     fun isReadOnly(cmd: SimpleCommand): Boolean {
         if (cmd.redirects.any { it.writesFile }) return false
+        // 通配可能扩成 -delete 等选项；只有所有选项均只读的程序才免批。
+        if (cmd.hasUnquotedGlob && cmd.program in setOf("find", "sort", "sed", "git")) return false
         val args = cmd.argv.drop(1)
         return when (cmd.program) {
             in READ_ONLY_PROGRAMS -> true
@@ -81,6 +83,10 @@ object CommandSafety {
      * 踩了安全底线就返回原因（给人看的一句话），否则 null。[all] 是同一段命令里的全部简单命令（判断「下载后直接执行」要看前后）。
      */
     fun dangerReason(cmd: SimpleCommand, all: List<SimpleCommand>): String? {
+        if (cmd.fromXargs && cmd.program in setOf("rm", "rmdir", "shred") &&
+            (cmd.program == "rmdir" || cmd.argv.drop(1).any { RECURSIVE_FLAG.matches(it) || it == "--recursive" })) {
+            return "递归删除的目标来自管道，删到哪里要执行时才知道"
+        }
         // sudo / doas 换个身份跑后面那条：剥掉再看（在 proot 里 sudo 多半就是 root，不能当成更安全）
         if (cmd.program == "sudo" || cmd.program == "doas") {
             val inner = elevated(cmd.argv.drop(1)) ?: return null

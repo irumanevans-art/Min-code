@@ -1,9 +1,22 @@
 {
   "mode": "default",
-  "basis": "cc-permissions.md §Permission system：只读工具「在工作目录与 additionalDirectories 之内」免批（:17）——工作目录之外的读取仍要批准。",
-  "pendingFix": "CC 原文 :17 把只读工具的免批限定在工作目录与 additionalDirectories 之内，工作目录之外的读取（Read /tmp/notes.txt）要批准；Min 把 Read 工具整体当只读（traits.readOnly=true），任何路径都免批。Min 侧这是 rootfs 隔离下的有意设计（读取交给沙箱围栏），但与 CC 文档结论不同，期望按原文写，待复核。",
+  "basis": "cc-permissions.md §Permission system：只读工具「在工作目录与 additionalDirectories 之内」免批（:17）——工作目录之外的读取仍要批准。；2026-10-06 决定保留 rootfs 工作区外读取免批。",
   "calls": [
-    { "tool": "Read", "input": { "file_path": "/workspace/src/app.ts" }, "expected": "allow", "basis": "工作目录内的读取免批（:17）。" },
-    { "tool": "Read", "input": { "file_path": "/tmp/notes.txt" }, "expected": "ask", "basis": "工作目录之外的读取要批准（:17）。" }
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "/workspace/src/app.ts"
+      },
+      "expected": "allow",
+      "basis": "工作目录内的读取免批（:17）。"
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "/tmp/notes.txt"
+      },
+      "expected": "allow",
+      "basis": "任务单拍板保留 Min：rootfs 是手机 Linux 沙箱，读取工作区外系统文件很常见，免批以避免反复打扰；Device 文件另行审批。"
+    }
   ]
 }

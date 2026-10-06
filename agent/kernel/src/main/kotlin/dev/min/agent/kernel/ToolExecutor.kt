@@ -199,7 +199,13 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         return if (batch.size > 1) batch else emptyList()
     }
 
-    private fun askFor(p: Prepared.Ready): PermissionAsk = p.tool.permissionAsk(p.input, context(null, p.call.callId))
+    private fun askFor(p: Prepared.Ready): PermissionAsk {
+        val ask = p.tool.permissionAsk(p.input, context(null, p.call.callId))
+        // 计划模式仍可由用户批准具体操作；提示放在审批卡，不再伪装成已拒绝的工具结果。
+        return if (rt.state.value.settings.mode == PermissionMode.Plan && !p.tool.traits.readOnly && p.tool.name != "ExitPlanMode") ask.copy(
+            summary = ask.summary + "\n当前在计划模式：先只读地整理方案，用 ExitPlanMode 提交计划；此操作如需改动，请由用户确认。",
+        ) else ask
+    }
 
     // alwaysAsk 先于权限引擎：模式（含 bypass）与规则都不能替人批准这类调用
     private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict =
@@ -229,6 +235,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             scopeOf = deps.host.fs::scopeOf,
             // 自动记忆目录：acceptEdits 下对它的写入与工作区同等放行（设计 §2.4）
             autoMemoryDir = s.autoMemory?.directory,
+            additionalDirectories = s.additionalDirectories,
         )
     }
 

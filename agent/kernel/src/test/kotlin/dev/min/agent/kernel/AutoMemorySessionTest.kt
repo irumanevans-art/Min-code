@@ -253,7 +253,7 @@ class AutoMemorySessionTest {
     }
 
     @Test
-    fun `plan mode keeps the memory directory read-only`() = run {
+    fun `plan mode memory writes ask and a user denial keeps them read-only`() = run {
         fs.put("$memoryDir/MEMORY.md", "user.md: x\n")
         scripted = ScriptedModel(
             reply(writeCall("c1", "$memoryDir/feedback.md", "别用 Tab"), stop = StopReason.ToolUse),
@@ -261,9 +261,12 @@ class AutoMemorySessionTest {
         )
         val rt = session(mode = PermissionMode.Plan)
         rt.send(msg(), listOf(TextPart("记一条")))
+        val waiting = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
+        assertTrue(fs.writes.isEmpty())
+        rt.answerApproval((waiting.phaseOf(CallId("c1")) as CallPhase.AwaitingApproval).approvalId, ApprovalChoice.Deny("计划模式先别改"))
         rt.awaitIdle()
 
-        assertFalse(events().any { it is ApprovalRequested })
+        assertEquals(1, events().count { it is ApprovalRequested })
         assertTrue(fs.writes.isEmpty())
         val result = events().filterIsInstance<dev.min.agent.spi.ToolOutcome>().single { it.callId == CallId("c1") }.result
         assertTrue(result.text, result.isError && "计划模式" in result.text)

@@ -1,8 +1,14 @@
 {
   "mode": "default",
   "basis": "cc-permissions.md §Read and Edit：路径模式四种前缀的表里 path 与 ./path 同为「相对当前目录」（:356），两者等价；裸 .env 拦任意深度的 .env（:387-391）。",
-  "pendingFix": "CC 原文 :356 把 path 与 ./path 列为同一行（都是相对当前目录），Read(./.env) 应与 Read(.env) 等效、拦下 /workspace/.env，期望 deny；Min 的 pathPattern 对含 / 的模式直接把 ./ 拼进锚点（/workspace/./.env，. 未剥掉），实测规则匹配不上、放行。期望按原文写，差异待复核。",
   "calls": [
-    { "tool": "Read", "input": { "file_path": "/workspace/.env" }, "expected": "deny", "basis": "./path 与 path 等价，都相对当前目录（:356）；裸文件名拦任意深度（:387-391）。" }
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "/workspace/.env"
+      },
+      "expected": "deny",
+      "basis": "./path 与 path 等价，都相对当前目录（:356）；裸文件名拦任意深度（:387-391）。"
+    }
   ]
 }

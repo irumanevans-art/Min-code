@@ -47,7 +47,17 @@ internal object SettingsMerger {
                 droppedByManagedOnly += all.size
                 continue
             }
-            for ((kind, text) in all) rules += RuleSpec(kind, text, layer.source.label, layer.baseDir)
+            for ((kind, text) in all) {
+                val tool = text.trim().substringBefore('(')
+                val server = tool.removePrefix("mcp__").substringBefore("__")
+                if (kind == RuleSpecKind.Allow && ('*' in tool || '?' in tool) &&
+                    (!tool.startsWith("mcp__") || server.isEmpty() || '*' in server || '?' in server ||
+                        "__" !in tool.removePrefix("mcp__"))) {
+                    notes += "跳过 ${layer.path} 的 allow 规则 $text：工具名通配必须锚定字面的 MCP 服务器，不能通配服务器段"
+                    continue
+                }
+                rules += RuleSpec(kind, text, layer.source.label, layer.baseDir)
+            }
         }
         if (droppedByManagedOnly > 0) {
             notes += "managed 设置了 allowManagedPermissionRulesOnly：忽略了 user / project / local 层共 $droppedByManagedOnly 条权限规则"

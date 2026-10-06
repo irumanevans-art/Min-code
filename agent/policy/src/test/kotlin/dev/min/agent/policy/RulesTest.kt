@@ -98,7 +98,7 @@ class RulesTest {
         assertFalse(m.matchesPath(rule("Edit(src/*.kt)"), write("/workspace/app/src/x/a.kt")))
         // 不含斜杠：任意深度的文件名
         assertTrue(m.matchesPath(rule("Read(.env)"), read("/workspace/app/config/.env")))
-        assertTrue(m.matchesPath(rule("Read(*.pem)"), read("/root/keys/id.pem")))
+        assertFalse(m.matchesPath(rule("Read(*.pem)"), read("/root/keys/id.pem")))
         assertFalse(m.matchesPath(rule("Read(.env)"), read("/workspace/app/.env.example")))
         assertTrue(m.matchesPath(rule("Read(//workspace/**/secret?.txt)"), read("/workspace/a/b/secret1.txt")))
         assertTrue(m.matchesPath(rule("Read(//workspace/**/secret?.txt)"), read("/workspace/secret1.txt")))
@@ -108,7 +108,7 @@ class RulesTest {
     fun `read rules do not cover writes and edit rules do not cover reads`() {
         assertFalse(m.matchesPath(rule("Read(//etc/**)"), write("/etc/hosts")))
         assertFalse(m.matchesPath(rule("Edit(//etc/**)"), read("/etc/hosts")))
-        assertTrue(m.matchesPath(rule("Write(//etc/**)"), write("/etc/hosts")))
+        assertFalse(m.matchesPath(rule("Write(//etc/**)"), write("/etc/hosts")))
         assertFalse(m.matchesPath(rule("Bash(//etc/**)"), write("/etc/hosts")))
         assertFalse(m.matchesPath(rule("Edit"), write("/etc/hosts")))
     }

@@ -36,4 +36,6 @@ data class RuleEntry(
 data class PermissionRulesLoaded(
     val rules: List<RuleEntry>,
     val notes: List<String> = emptyList(),
+    /** 同规则一起冻结；缺省为空兼容已有日志。 */
+    val additionalDirectories: List<GuestPath> = emptyList(),
 ) : SessionEvent

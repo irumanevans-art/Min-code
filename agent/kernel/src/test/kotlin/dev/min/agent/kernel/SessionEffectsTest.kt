@@ -104,12 +104,15 @@ class SessionEffectsTest {
         )
         val rt = newSession(model, listOf(switch, write), PermissionMode.AcceptEdits)
         rt.send(ClientMsgId("u1"), text("先计划"))
+        val waiting = rt.state.first { it.phaseOf(CallId("c2")) is CallPhase.AwaitingApproval }
+        assertEquals(0, wrote)
+        rt.answerApproval((waiting.phaseOf(CallId("c2")) as CallPhase.AwaitingApproval).approvalId, ApprovalChoice.Deny("计划模式先别改"))
         rt.awaitIdle()
 
         val s = rt.state.value
         assertEquals(PermissionMode.Plan, s.settings.mode)
         assertEquals(PermissionMode.AcceptEdits, s.settings.modeBeforePlan)
-        // 第二个调用按新模式判定：计划模式下写被拒，没有问人、没有执行
+        // 第二个调用按新模式询问，用户拒绝后不执行，不能沿用切模式之前的自动编辑权限。
         assertEquals(0, wrote)
         val denied = model.requests[1].messages.last().parts[1] as ToolResultPart
         assertTrue(denied.isError)
@@ -119,7 +122,7 @@ class SessionEffectsTest {
         val batch = batches.single { b -> b.any { (it as? ToolOutcome)?.callId == CallId("c1") } }
         assertEquals(listOf(ToolOutcome::class, SettingsChanged::class), batch.map { it::class })
         assertEquals(SettingsChanged(mode = PermissionMode.Plan), batch[1])
-        assertTrue(records().none { it.event is ApprovalRequested })
+        assertEquals(1, records().count { it.event is ApprovalRequested })
         assertLogIsTruth(rt)
     }
 

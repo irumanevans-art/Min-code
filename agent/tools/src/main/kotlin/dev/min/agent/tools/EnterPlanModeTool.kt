@@ -19,14 +19,14 @@ import kotlinx.serialization.json.JsonObject
  * 进入计划模式（与 Claude Code 同名）：动手之前先只读地摸清情况、想好方案，再用 [ExitPlanModeTool] 交给人批准。
  *
  * 工具不改会话状态，只在结果里声明 [SessionEffect.ModeChange]，由内核与结果同一次落盘；
- * 计划模式下的限制（非只读工具一律拒绝）由现有权限引擎执行，这里不重复。
+ * 非只读调用仍走常规审批；这里说明先出计划的口径，不替用户拒绝具体操作。
  * traits：只读、不需审批（进计划模式只会让 agent 更受限）、恢复策略 Replay（没有外部副作用，没落盘就等于没发生）。
  */
 object EnterPlanModeTool : Tool<Unit> {
     override val name = "EnterPlanMode"
 
     const val ENTERED_MESSAGE =
-        "已进入计划模式：现在只能读文件、搜索和用 AskUserQuestion 向用户提问，写文件、执行命令都会被拒绝。" +
+        "已进入计划模式：现在应先只读地调研、搜索和用 AskUserQuestion 向用户提问，非只读调用会按权限规则交给用户确认。" +
             "把情况摸清、想清楚方案后，用 ExitPlanMode 把计划交给用户批准；批准后才能开始改动。"
 
     const val ALREADY_MESSAGE = "已经在计划模式中。想清楚方案后，用 ExitPlanMode 把计划交给用户批准。"
@@ -38,7 +38,7 @@ object EnterPlanModeTool : Tool<Unit> {
     override fun description(profile: HarnessProfile) =
         "进入计划模式：在动手做复杂或有歧义的改动之前，先只读地摸清情况、想好方案，交给用户批准后再实施。" +
             "适合要改多个文件、有几种做法需要取舍、或需求还不清楚的任务；简单直接的小改动和纯问答不要用。" +
-            "计划模式下只能读文件、搜索和用 AskUserQuestion 提问，任何改动都会被拒绝；方案想好后用 ExitPlanMode 提交计划。"
+            "计划模式下先只读地调研、搜索和用 AskUserQuestion 提问，非只读调用走常规审批；方案想好后用 ExitPlanMode 提交计划。"
 
     // 没有入参；模型多给的字段一律忽略，不为它多要一个来回
     override fun parse(raw: JsonObject): ToolInput<Unit> = ToolInput.Valid(Unit)

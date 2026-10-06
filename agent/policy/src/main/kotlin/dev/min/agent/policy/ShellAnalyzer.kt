@@ -10,6 +10,12 @@ data class SimpleCommand(
     /** 有参数含未展开的变量（`$X`、`${X}`）：值在执行时才知道 */
     val hasExpansion: Boolean = false,
     val original: List<String> = argv,
+    /** 仅记录引号外的通配，避免把字面 '*.ts' 当成可能扩成选项的输入。 */
+    val hasUnquotedGlob: Boolean = false,
+    val fromXargs: Boolean = false,
+    /** 保留外层调用用于规则原文匹配，内层 argv 仍负责 deny 与底线分析。 */
+    val outerForms: List<List<String>> = emptyList(),
+    val unquotedGlobIndices: Set<Int> = emptySet(),
 ) {
     val program: String get() = argv.firstOrNull()?.substringAfterLast('/').orEmpty()
     val text: String get() = argv.joinToString(" ")
@@ -17,6 +23,7 @@ data class SimpleCommand(
 }
 
 data class Redirect(val op: String, val target: String) {
+    val readsFile: Boolean get() = op.contains('<') && !target.startsWith("&") && target != "/dev/null"
     /** 往文件里写（`>`、`>>`、`&>`、`>|`），目标不是 /dev/null，也不是复制文件描述符（`2>&1`） */
     val writesFile: Boolean
         get() = op.contains('>') && !target.startsWith("&") && target != "/dev/null"
@@ -40,7 +47,7 @@ object ShellAnalyzer {
     private const val MAX_NESTING = 2
 
     /** 包装命令：剥掉它们，看被包装的那条命令 */
-    private val WRAPPERS = setOf("timeout", "nice", "nohup", "time", "command", "env", "exec", "stdbuf")
+    private val WRAPPERS = setOf("timeout", "nice", "nohup", "time", "command", "env", "exec", "stdbuf", "xargs")
     private val SHELLS = setOf("bash", "sh", "dash", "zsh")
     private val RESERVED = setOf(
         "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac",
@@ -56,7 +63,8 @@ object ShellAnalyzer {
             is TokenizeResult.Ok -> t.tokens
         }
         val commands = mutableListOf<SimpleCommand>()
-        for (group in splitCommands(tokens)) {
+        val groups = splitCommands(tokens) ?: return ShellAnalysis.Untrusted("连接符前后缺少命令")
+        for (group in groups) {
             when (val one = buildCommand(group, depth)) {
                 is Built.Fail -> return ShellAnalysis.Untrusted(one.reason)
                 is Built.Many -> commands += one.commands
@@ -70,11 +78,22 @@ object ShellAnalyzer {
         data class Fail(val reason: String) : Built
     }
 
-    private fun splitCommands(tokens: List<Token>): List<List<Token>> {
+    private fun splitCommands(tokens: List<Token>): List<List<Token>>? {
         val groups = mutableListOf<MutableList<Token>>(mutableListOf())
+        var needsRight = false
         for (t in tokens) {
-            if (t is Token.Separator) groups.add(mutableListOf()) else groups.last().add(t)
+            if (t is Token.Separator) {
+                val required = t.op in setOf("&&", "||", "|", "|&")
+                if (t.op == ";;" || groups.last().isEmpty() && t.op != "\n") return null
+                if (needsRight && t.op != "\n") return null
+                needsRight = required || needsRight
+                if (groups.last().isNotEmpty()) groups.add(mutableListOf())
+            } else {
+                groups.last().add(t)
+                needsRight = false
+            }
         }
+        if (needsRight) return null
         return groups.filter { it.isNotEmpty() }
     }
 
@@ -91,7 +110,7 @@ object ShellAnalyzer {
                     redirects += Redirect(t.op, target.text)
                     i++
                 }
-                Token.Separator -> Unit
+                is Token.Separator -> Unit
             }
             i++
         }
@@ -118,7 +137,13 @@ object ShellAnalyzer {
                 if (depth >= MAX_NESTING) return Built.Fail("$program -c 嵌套过深")
                 return when (val nested = analyze(inner.text, depth + 1)) {
                     is ShellAnalysis.Untrusted -> Built.Fail(nested.reason)
-                    is ShellAnalysis.Parsed -> Built.Many(nested.commands.map { it.copy(redirects = it.redirects + redirects) })
+                    is ShellAnalysis.Parsed -> Built.Many(nested.commands.map {
+                        it.copy(
+                            redirects = it.redirects + redirects, outerForms = it.outerForms + listOf(original),
+                            // 剥开的 xargs 仍会从 stdin 补参数；再剥 shell 不能丢掉已有递归删除底线。
+                            fromXargs = it.fromXargs || argv.take(argv.size - unwrapped.size).any { word -> word.text.substringAfterLast('/') == "xargs" },
+                        )
+                    })
                 }
             }
         }
@@ -129,6 +154,9 @@ object ShellAnalyzer {
                     redirects = redirects,
                     hasExpansion = unwrapped.any { it.expansion },
                     original = original,
+                    hasUnquotedGlob = unwrapped.any { it.unquotedGlob },
+                    fromXargs = argv.take(argv.size - unwrapped.size).any { it.text.substringAfterLast('/') == "xargs" },
+                    unquotedGlobIndices = unwrapped.indices.filter { unwrapped[it].unquotedGlob }.toSet(),
                 ),
             ),
         )
@@ -144,6 +172,8 @@ object ShellAnalyzer {
             if (name !in WRAPPERS) return rest
             rest = rest.drop(1)
             when (name) {
+                // 带参数的 xargs 会改变内层 argv，不能拿内层规则替它作批准。
+                "xargs" -> if (rest.isEmpty() || rest.first().text.startsWith("-")) return listOf(head) + rest
                 // timeout [选项] 时长 命令
                 "timeout" -> {
                     // -s 信号、-k 时长各带一个值
@@ -179,9 +209,9 @@ object ShellAnalyzer {
          * [quotedAny]：词里有引号或转义（引号里的东西不是关键字）；[expansion]：含未展开的变量；
          * [assignment]：`NAME=…` 且等号之前没有引号（`FOO='a b'` 是赋值，`'FOO'=1` 不是）
          */
-        data class Word(val text: String, val quotedAny: Boolean, val expansion: Boolean, val assignment: Boolean = false) : Token
+        data class Word(val text: String, val quotedAny: Boolean, val expansion: Boolean, val assignment: Boolean = false, val unquotedGlob: Boolean = false) : Token
         data class RedirectOp(val op: String) : Token
-        data object Separator : Token
+        data class Separator(val op: String) : Token
     }
 
     private sealed interface TokenizeResult {
@@ -195,6 +225,7 @@ object ShellAnalyzer {
         private var inWord = false
         private var quoted = false
         private var expansion = false
+        private var unquotedGlob = false
 
         /** 词里第一个引号 / 转义出现的位置；判断赋值要看等号之前有没有引号 */
         private var quoteStart = -1
@@ -205,7 +236,7 @@ object ShellAnalyzer {
                 val c = s[i]
                 val fail = when {
                     c == ' ' || c == '\t' -> { endWord(); i++; null }
-                    c == '\n' || c == '\r' -> { endWord(); separator(); i++; null }
+                    c == '\n' || c == '\r' -> { endWord(); separator("\n"); i++; null }
                     c == '#' && !inWord -> { skipComment(); null }
                     c == '\'' -> singleQuoted()
                     c == '"' -> doubleQuoted()
@@ -215,7 +246,7 @@ object ShellAnalyzer {
                     c == ';' || c == '&' || c == '|' -> operator()
                     c == '<' || c == '>' -> redirect()
                     c == '(' || c == ')' -> "含子 shell 或进程替换"
-                    else -> { append(c); i++; null }
+                    else -> { if (c in "*?[") unquotedGlob = true; append(c); i++; null }
                 }
                 if (fail != null) return TokenizeResult.Failed(fail)
             }
@@ -233,12 +264,13 @@ object ShellAnalyzer {
                 val text = word.toString()
                 val eq = text.indexOf('=')
                 val assignment = ASSIGNMENT.matches(text) && (quoteStart < 0 || quoteStart > eq)
-                tokens += Token.Word(text, quoted, expansion, assignment)
+                tokens += Token.Word(text, quoted, expansion, assignment, unquotedGlob)
             }
             word.setLength(0)
             inWord = false
             quoted = false
             expansion = false
+            unquotedGlob = false
             quoteStart = -1
         }
 
@@ -248,8 +280,8 @@ object ShellAnalyzer {
             inWord = true
         }
 
-        private fun separator() {
-            if (tokens.lastOrNull() != Token.Separator) tokens += Token.Separator
+        private fun separator(op: String) {
+            if (op != "\n" || tokens.lastOrNull() != Token.Separator("\n")) tokens += Token.Separator(op)
         }
 
         private fun skipComment() {
@@ -328,12 +360,13 @@ object ShellAnalyzer {
         private fun operator(): String? {
             endWord()
             val two = s.substring(i, minOf(i + 2, s.length))
+            val op = if (two in setOf("&&", "||", "|&", ";;")) two else s[i].toString()
             when {
                 two == "&&" || two == "||" || two == "|&" || two == ";;" -> i += 2
                 two == "&>" -> return redirect()
                 else -> i++
             }
-            separator()
+            separator(op)
             return null
         }
 

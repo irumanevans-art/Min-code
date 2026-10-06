@@ -24,7 +24,7 @@ data class PermissionRule(
 
     companion object {
         /** 工具名允许 `mcp__服务器__*` 这种尾部通配 */
-        private val SHAPE = Regex("""^([A-Za-z0-9_\-]+(?:__\*)?)(?:\((.*)\))?$""")
+        private val SHAPE = Regex("""^([A-Za-z0-9_*?\-]+)(?:\((.*)\))?$""")
 
         /** 日志里的规则原文（[RuleEntry]）→ 规则。认不出的写法返回 null */
         fun from(entry: RuleEntry): PermissionRule? = parse(
@@ -41,7 +41,16 @@ data class PermissionRule(
             val m = SHAPE.matchEntire(text.trim()) ?: return null
             val spec = m.groupValues[2].takeIf { m.groups[2] != null }?.trim()
             if (spec != null && spec.isEmpty()) return null
+            if (kind == RuleKind.Allow && !validAllowTool(m.groupValues[1])) return null
             return PermissionRule(kind, m.groupValues[1], spec, source, baseDir)
+        }
+
+        /** 放宽只能指定已经配置的服务器，不能靠服务器通配悄悄批准后来接入的工具。 */
+        internal fun validAllowTool(tool: String): Boolean {
+            if ('*' !in tool && '?' !in tool) return true
+            if (!tool.startsWith("mcp__")) return false
+            val server = tool.removePrefix("mcp__").substringBefore("__")
+            return server.isNotEmpty() && '*' !in server && '?' !in server && "__" in tool.removePrefix("mcp__")
         }
     }
 }
@@ -60,11 +69,17 @@ private val EDIT_FAMILY = setOf("Edit", "Write", "MultiEdit", "NotebookEdit")
 internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPath) {
 
     fun matchesTool(rule: PermissionRule, tool: String): Boolean {
+        if (rule.tool == "Bash" && rule.specifier == "*") return tool == "Bash"
         if (rule.specifier != null) return false
+        if (rule.kind == RuleKind.Allow && !PermissionRule.validAllowTool(rule.tool)) return false
+        if (rule.kind != RuleKind.Allow && ('*' in rule.tool || '?' in rule.tool)) {
+            return Regex(globToRegex(rule.tool, anyChars = true, questionWildcard = true)).matches(tool)
+        }
         if (rule.tool == tool) return true
-        if (rule.tool == "Read" && tool in READ_FAMILY) return true
+        if (rule.tool == "Read" && (tool in READ_FAMILY || rule.kind == RuleKind.Deny && tool in setOf("Edit", "Write"))) return true
         if (rule.tool == "Edit" && tool in EDIT_FAMILY) return true
         if (rule.tool.startsWith("mcp__") && tool.startsWith("mcp__")) {
+            if ('*' in rule.tool || '?' in rule.tool) return Regex(globToRegex(rule.tool, anyChars = true, questionWildcard = true)).matches(tool)
             val prefix = rule.tool.removeSuffix("__*")
             return tool == prefix || tool.startsWith("${prefix}__")
         }
@@ -75,19 +90,22 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
         if (rule.tool != "Bash") return false
         val spec = rule.specifier ?: return false
         val pattern = bashPattern(spec)
-        return pattern.matches(cmd.text) || pattern.matches(cmd.originalText)
+        return pattern.matches(cmd.text) || pattern.matches(cmd.originalText) ||
+            cmd.outerForms.any { pattern.matches(it.joinToString(" ")) }
     }
 
-    fun matchesPath(rule: PermissionRule, access: PathAccess): Boolean {
+    fun matchesPath(rule: PermissionRule, access: PathAccess, tool: String? = null): Boolean {
         val family = when (rule.tool) {
             "Read" -> AccessKind.Read
-            "Edit", "Write" -> AccessKind.Write
+            "Edit" -> AccessKind.Write
             else -> return false
         }
-        // 写权限也意味着能读：Edit 规则不覆盖读，Read 规则不覆盖写——与 CC 一致，分开判断
-        if (access.kind != family) return false
+        // Read 的拒绝也阻止 Edit/Write 的先读后写；允许与询问不能借此授予写权限。
+        val readDenyWrite = rule.tool == "Read" && rule.kind == RuleKind.Deny && access.kind == AccessKind.Write &&
+            (tool == null || tool in setOf("Edit", "Write", "Bash"))
+        if (access.kind != family && !readDenyWrite) return false
         val spec = rule.specifier?.removePrefix("!") ?: return false
-        return pathPattern(spec, rule.baseDir).matches(access.path.value)
+        return pathPattern(spec, rule.baseDir, rule.kind).matches(normalizePolicyPath(access.path.value))
     }
 
     fun matchesDomain(rule: PermissionRule, domain: String): Boolean {
@@ -119,28 +137,46 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
 
     private fun bashPattern(spec: String): Regex {
         val normalized = spec.replace(Regex("\\s+"), " ").trim().let { if (it.endsWith(":*")) it.removeSuffix(":*") + " *" else it }
-        if (normalized.endsWith(" *")) {
+        if (normalized.endsWith(" *") && normalized.count { it == '*' } == 1) {
             val prefix = normalized.removeSuffix(" *")
             return Regex(globToRegex(prefix, anyChars = true) + "( .*)?")
         }
         return Regex(globToRegex(normalized, anyChars = true))
     }
 
-    private fun pathPattern(spec: String, baseDir: GuestPath?): Regex {
+    private fun pathPattern(raw: String, baseDir: GuestPath?, kind: RuleKind): Regex {
+        val spec = normalizeRelativePattern(raw)
         val absolute = when {
             spec.startsWith("//") -> spec.removePrefix("/")
             spec.startsWith("~/") -> home.value.trimEnd('/') + "/" + spec.removePrefix("~/")
             spec.startsWith("/") -> (baseDir ?: cwd).value.trimEnd('/') + spec
-            '/' !in spec -> return Regex("(.*/)?" + globToRegex(spec, anyChars = false))
+            '/' !in spec -> cwd.value.trimEnd('/') + "/**/" + spec
+            kind != RuleKind.Allow && Regex("[^/]+/\\*\\*").matches(spec) -> cwd.value.trimEnd('/') + "/**/" + spec
             else -> cwd.value.trimEnd('/') + "/" + spec
         }
-        return Regex(globToRegex(absolute, anyChars = false))
+        val clean = normalizePolicyPath(absolute)
+        // 目录与其内容是同一权限边界，搜索根恰好等于被拒目录时也必须命中。
+        return if (clean.endsWith("/**")) Regex(globToRegex(clean.removeSuffix("/**"), false) + "(?:/.*)?")
+        else Regex(globToRegex(clean, anyChars = false))
+    }
+
+    private fun normalizeRelativePattern(raw: String): String {
+        if (raw.startsWith("//")) return "/" + normalizePolicyPath(raw)
+        if (raw.startsWith("~/")) return raw
+        // 相对路径的前导 .. 要留给锚点解析，不能先截断到相对根。
+        val parts = ArrayDeque<String>()
+        for (part in raw.split('/')) when (part) {
+            "", "." -> Unit
+            ".." -> if (parts.isNotEmpty() && parts.last() != "..") parts.removeLast() else parts.addLast(part)
+            else -> parts.addLast(part)
+        }
+        return (if (raw.startsWith('/')) "/" else "") + parts.joinToString("/")
     }
 
     /**
      * glob → 正则。[anyChars] 为真时 `*` 匹配任意字符（命令）；为假时 `*` 不跨 `/`、`**` 跨目录（路径）。
      */
-    private fun globToRegex(glob: String, anyChars: Boolean): String {
+    private fun globToRegex(glob: String, anyChars: Boolean, questionWildcard: Boolean = !anyChars): String {
         val sb = StringBuilder()
         var i = 0
         while (i < glob.length) {
@@ -149,11 +185,21 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
                 !anyChars && glob.startsWith("**/", i) -> { sb.append("(.*/)?"); i += 3; continue }
                 !anyChars && glob.startsWith("**", i) -> { sb.append(".*"); i += 2; continue }
                 c == '*' -> sb.append(if (anyChars) ".*" else "[^/]*")
-                c == '?' && !anyChars -> sb.append("[^/]")
+                c == '?' && questionWildcard -> sb.append(if (anyChars) "." else "[^/]")
                 else -> sb.append(Regex.escape(c.toString()))
             }
             i++
         }
         return sb.toString()
     }
+}
+
+internal fun normalizePolicyPath(path: String): String {
+    val parts = ArrayDeque<String>()
+    for (part in path.split('/')) when (part) {
+        "", "." -> Unit
+        ".." -> parts.removeLastOrNull()
+        else -> parts.addLast(part)
+    }
+    return parts.joinToString("/", prefix = "/")
 }

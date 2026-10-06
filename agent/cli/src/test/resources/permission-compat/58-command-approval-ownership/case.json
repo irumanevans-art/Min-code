@@ -1,0 +1,22 @@
+{
+  "mode": "default",
+  "basis": "allow 仅覆盖获批命令的路径操作数，不能替后一条只读命令授予手机读取或重定向写入权限。",
+  "calls": [
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "npm test && cat /sdcard/photo"
+      },
+      "expected": "ask",
+      "basis": "cat 的 Device 读取没有被允许。"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "npm test && cat > output"
+      },
+      "expected": "ask",
+      "basis": "后一条 cat 的写重定向没有被允许。"
+    }
+  ]
+}

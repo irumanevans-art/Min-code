@@ -1,8 +1,14 @@
 {
   "mode": "default",
   "basis": "cc-permissions.md §Redirections：输入重定向 < file 的目标按 Read 规则与工作目录检查，工作目录之外的目标要批准（:307）。",
-  "pendingFix": "CC 原文把 < file 的目标当一次文件读取检查、工作目录之外要批准（:307），期望 ask；Min 的命令分析只把写重定向变成路径访问，输入重定向目标不进 Facts.paths，cat 本身又是只读命令，实测放行。期望按原文写，差异待复核。",
   "calls": [
-    { "tool": "Bash", "input": { "command": "cat < /etc/passwd" }, "expected": "ask", "basis": "输入重定向目标在工作目录之外，要批准（:307）。" }
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cat < /etc/passwd"
+      },
+      "expected": "ask",
+      "basis": "输入重定向目标在工作目录之外，要批准（:307）。"
+    }
   ]
 }

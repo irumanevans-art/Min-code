@@ -1620,3 +1620,75 @@ HttpURLConnection 阻塞读和 disconnect/close 可能争用锁，结构化 watc
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261006-POLICY-MATCH-VS-MODE] best_practice
+
+**Logged**: 2026-10-05T20:06:12.101Z
+**Priority**: high
+**Status**: promoted
+**Area**: tests
+
+### Summary
+规则匹配与模式最终判定需要分开断言
+
+### Details
+07 的 git log main 不命中中间通配规则，但只读基线仍 allow；不能为满足样本 ask 而改变只读策略。48 的初次归一化变异只测根路径会存活，嵌套 ./ 与裸名等价才区分行为。
+
+### Suggested Action
+权限测试分开验证匹配、模式和完整设置接线，变异须对应真实失败断言；通用验证约定已提升到 AGENTS.md。
+
+### Metadata
+- Source: code_review
+- Related Files: agent/policy/src/test/kotlin/dev/min/agent/policy/PermissionAlignmentTest.kt
+- Tags: permission, mutation, normalization
+- Promoted: AGENTS.md
+
+---
+
+## [LRN-20261006-POLICY-OPERAND-OWNERSHIP] best_practice
+
+**Logged**: 2026-10-05T20:06:12.112Z
+**Priority**: high
+**Status**: promoted
+**Area**: backend
+
+### Summary
+路径权限必须关联所属命令，宿主路径解析不能接收 shell glob
+
+### Details
+静态 Bash 读取操作数也需要 Device 分类。复合命令前一条 allow 不可批准后条 cat 的手机读取或写重定向。Windows Path 不接受 *，先取字面父前缀分类；根通配可能命中 sdcard/storage 时保守归 Device。xargs 再剥 bash -c 后仍须保留 stdin 追加参数的删除底线。
+
+### Suggested Action
+权限测试分开验证匹配、模式和完整设置接线，变异须对应真实失败断言；通用验证约定已提升到 AGENTS.md。
+
+### Metadata
+- Source: code_review
+- Related Files: agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt, agent/policy/src/main/kotlin/dev/min/agent/policy/ShellAnalyzer.kt
+- Tags: permission, device, shell, windows
+- Promoted: AGENTS.md
+
+---
+
+## [LRN-20261006-POLICY-STATE-WIRING] best_practice
+
+**Logged**: 2026-10-05T20:06:12.112Z
+**Priority**: high
+**Status**: promoted
+**Area**: backend
+
+### Summary
+持久权限设置要验证完整事件与上下文链路
+
+### Details
+additionalDirectories 不能只加 PolicyContext 字段；需加载后事件冻结，Fold 重放、重开、子会话继承和 ToolExecutor 注入都验证。无 rules 但有目录也应落盘，旧日志默认空；访问目录不是配置搜索根。通过分别删除各接点的变异证明测试覆盖链路。
+
+### Suggested Action
+权限测试分开验证匹配、模式和完整设置接线，变异须对应真实失败断言；通用验证约定已提升到 AGENTS.md。
+
+### Metadata
+- Source: code_review
+- Related Files: agent/kernel/src/test/kotlin/dev/min/agent/kernel/PolicyWiringTest.kt
+- Tags: permission, replay, settings
+- Promoted: AGENTS.md
+
+---

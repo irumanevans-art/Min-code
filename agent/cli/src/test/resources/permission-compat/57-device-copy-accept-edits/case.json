@@ -1,0 +1,8 @@
+{
+  "mode": "acceptEdits",
+  "basis": "2026-10-06 任务单：工作区内文件命令可自动批准，但读取 Device 源文件仍需授权；rootfs 系统文件读取保留 Min 的免批决定。",
+  "calls": [
+    { "tool": "Bash", "input": { "command": "cp /sdcard/Documents/private.txt /workspace/copy.txt" }, "expected": "ask", "basis": "目标在工作区不能替代对手机源文件的读取授权。" },
+    { "tool": "Bash", "input": { "command": "cp /etc/passwd /workspace/copy.txt" }, "expected": "allow", "basis": "rootfs 读取按任务单 24 号决定免批，唯一写目标与可能的目录内文件都在工作区。" }
+  ]
+}
