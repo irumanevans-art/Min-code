@@ -87,4 +87,12 @@ class McpReviewManagerTest {
             assertEquals("decline", request.await()["action"]!!.jsonPrimitive.content)
         } }
     }
+    @Test fun `delegated children count as attached sessions on shared MCP connections`() = runBlocking {
+        case { hub, _, _, _ ->
+            val parent = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
+            parent.listMcpPrompts()
+            val result = hub.portFor(parent, TurnId("parent"), CallId("delegate")).delegate(DelegateRequest("child", "hello", background=false)) as DelegateResult.Finished
+            assertEquals(listOf("s"), hub.mcp.statusOf(result.child).map { it.name })
+        }
+    }
 }

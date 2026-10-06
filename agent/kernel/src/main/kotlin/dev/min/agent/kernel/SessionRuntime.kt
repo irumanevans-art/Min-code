@@ -225,7 +225,7 @@ class SessionRuntime private constructor(
                 if (sealed || !precondition(_state.value)) return@withLock null
                 val records = log.append(events, durability)
                 _state.value = records.fold(_state.value) { s, r -> s.apply(r) }
-                if (events.any { it is InputReceived || it is dev.min.agent.spi.TurnEnded }) lastMcpActivity = mcpActivitySequence.incrementAndGet()
+                if (events.any { (it is InputReceived && it.origin == InputOrigin.User) || it is dev.min.agent.spi.TurnEnded }) lastMcpActivity = mcpActivitySequence.incrementAndGet()
                 records
             }
         }

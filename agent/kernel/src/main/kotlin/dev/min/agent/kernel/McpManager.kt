@@ -71,7 +71,7 @@ internal class McpManager(
         @Volatile var status: String = PENDING
         @Volatile var reason: String? = null
         @Volatile var restarts = 0
-        var refs = 0
+        @Volatile var refs = 0
         var linger: Job? = null
         /** 没人要了、已从表里摘掉：还在途中的连接（慢启动、重启）连上之后要自己收掉，不然就是没人管的孤儿进程 */
         @Volatile var retired = false
@@ -125,6 +125,21 @@ internal class McpManager(
         } else {
             binding.loaded = true
             restage(binding)
+        }
+    }
+
+    /** 子会话也占一份引用，才能在反向交互时区分归属并对共享连接加锁。 */
+    suspend fun attachInherited(rt: SessionRuntime, parent: SessionRuntime) {
+        val binding = lock.withLock {
+            val source = bindings[parent.sessionId] ?: return@withLock null
+            if (bindings[rt.sessionId]?.rt === rt) return@withLock bindings[rt.sessionId]
+            bindings.remove(rt.sessionId)?.let { old -> old.rootsWatch?.cancel(); old.entries.values.forEach(::release) }
+            source.entries.values.forEach { it.refs++; it.linger?.cancel(); it.linger = null }
+            Binding(rt, source.config, source.entries).also { it.loaded = true; bindings[rt.sessionId] = it }
+        }
+        rt.mcpCaller = if (binding == null) parent.mcpCaller else callerFor(binding)
+        if (binding != null) binding.rootsWatch = scope.launch {
+            rt.state.map { it.additionalDirectories }.distinctUntilChanged().collect { binding.entries.values.map { e -> e.projectRoot }.distinct().forEach(::notifyRoots) }
         }
     }
 

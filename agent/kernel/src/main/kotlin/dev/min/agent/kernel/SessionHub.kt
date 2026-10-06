@@ -395,7 +395,7 @@ class SessionHub(
         } ?: return null
         // 根会话重新接上 MCP（快照已在日志里）；子会话沿用父会话的调用口（父会话先于子会话打开）
         val origin = runtime.state.value.origin
-        if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { runtime.mcpCaller = it.mcpCaller }
+        if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
         if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
@@ -526,7 +526,7 @@ class SessionHub(
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
         )
         child.requestGate = childGate
-        child.mcpCaller = parent.mcpCaller
+        mcp.attachInherited(child, parent)
         register(child)
         parent.commit(
             listOf(SubagentSpawned(turnId, callId, childId, type, fork, background, request.description, request.name)),
