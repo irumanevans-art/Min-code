@@ -35,6 +35,8 @@ data class LiveSessionSummary(
     val lastAssistantText: String? = null,
     val resume: ResumeBrief? = null,
     val lastTurnEnd: TurnEnd? = null,
+    /** 会话的工作目录（终端页给每个在跑的会话开页签用）。B6(b) 补 */
+    val cwd: String? = null,
 )
 
 /** 队头交互的最小描述：通知按 [id] 判断「是不是换了一张」，按 [kind] 决定带不带按钮 */
@@ -71,4 +73,5 @@ fun AgentSessionState.toLiveSummary(keepAlive: Boolean): LiveSessionSummary = Li
     lastAssistantText = items.filterIsInstance<ChatItem.AssistantText>().lastOrNull()?.text,
     resume = resume?.brief(),
     lastTurnEnd = lastTurn?.end,
+    cwd = cwd.ifBlank { null },
 )

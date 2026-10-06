@@ -8,6 +8,7 @@ import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeEvent
 import dev.min.code.core.claudecode.ClaudeCodeManager.TaskInfo
 import dev.min.code.core.claudecode.FORK_SUBAGENT_TYPE
+import dev.min.code.core.engine.InteractionOrigin
 
 /**
  * 权限卡 / 提问卡顶上那一行：这张卡是谁要的、后面还排着几张。
@@ -25,6 +26,11 @@ internal data class PermissionOrigin(
     val queuedAfter: Int,
 )
 
+/**
+ * CLI 的原始请求 + 任务表 -> 来源行。页面已经改读通用的 [InteractionOrigin]（下面那个重载），这个只剩 B0 的特征快照
+ * （`ClaudeStateSnapshot`，黄金测试的基准）和两份旧测试在用 —— 它们钉着这个签名，不能改，所以留着；
+ * 和那几份测试一起清理时删掉。
+ */
 internal fun permissionOriginOf(
     pending: ClaudeCodeEvent.PermissionRequest,
     tasks: List<TaskInfo>,
@@ -41,6 +47,21 @@ internal fun permissionOriginOf(
         background = task?.backgrounded == true,
         fork = task?.subagentType == FORK_SUBAGENT_TYPE,
         queuedAfter = (queueSize - 1).coerceAtLeast(0),
+    )
+}
+
+internal fun permissionOriginOf(
+    origin: InteractionOrigin,
+    /** 说明为空时适配器退回的是类型名原文，类型名给人看的说法由调用方换（fork → 分身） */
+    typeName: (String) -> String = { it },
+): PermissionOrigin {
+    val label = origin.agent
+    return PermissionOrigin(
+        // 适配器的名牌说明 = 任务说明 > 类型名 > id 前 8 位；落到类型名那一档时说明就等于类型，再换成给人看的说法
+        agent = label?.let { if (it.description == it.agentType) typeName(it.description) else it.description },
+        background = label?.background == true,
+        fork = label?.fork == true,
+        queuedAfter = origin.queuedAfter,
     )
 }
 

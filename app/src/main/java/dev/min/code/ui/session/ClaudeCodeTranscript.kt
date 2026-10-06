@@ -64,7 +64,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
-import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.SUBAGENT_TOOLS
 import dev.min.code.ui.components.InkSpinner
 import dev.min.code.ui.richtext.MarkdownBlock

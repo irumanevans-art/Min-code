@@ -54,12 +54,38 @@ interface AgentSession {
     /** 这次工具调用能不能撤销文件改动（[EngineCapabilities.checkpointRevert] 为假时永远 false） */
     suspend fun hasCheckpoint(toolUseId: String): Boolean = false
 
+    /** [toolUseIds] 里存过文件快照的那些（一次问盘，面板据此决定谁有撤销钮）。默认逐个问 [hasCheckpoint]，B6(b) 补批量版 */
+    suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> =
+        toolUseIds.filterTo(LinkedHashSet()) { hasCheckpoint(it) }
+
+    /**
+     * 把一个文件在本会话里的全部改动整批撤回去（只还原文件，不动对话），返回**真的还原成功**的 toolUseId。
+     * 设计 §3.3 的 [SessionCommand.Revert] 只有单条、结果只有受理与否；「整文件撤销」要拿回成功的是哪几条，
+     * 命令的返回值装不下，所以补在这里。[checkpointRevert] 为假的引擎返回空集。B6(b) 补
+     */
+    suspend fun revertFile(name: String, toolUseIds: List<String>): Set<String> = emptySet()
+
     /** 后台任务的输出（[EngineCapabilities.backgroundTasks] 为假或任务不存在时 null），最多 [maxChars] 个字符 */
     suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = null
+
+    /**
+     * 后台任务输出的尾巴，连同「是不是被截过」。[readTaskOutput] 只给文字，面板要在被截时多写一句「只显示最后 N 行」，
+     * 所以另给这个；默认由 [readTaskOutput] 推（认为没截）。B6(b) 补
+     */
+    suspend fun readTaskTail(taskId: String): TaskOutputTail? =
+        readTaskOutput(taskId, Int.MAX_VALUE)?.let { TaskOutputTail(it, clipped = false) }
 
     /** 释放：Claude / Codex 关进程；Min 中断本会话树里在跑的回合，从 Hub 卸下运行时 */
     suspend fun close(reason: CloseReason)
 }
+
+/** [AgentSession.readTaskTail] 的结果 */
+data class TaskOutputTail(
+    val text: String,
+    val clipped: Boolean,
+    /** 引擎最多保留几行尾巴（被截时面板写「只显示最后 N 行」）。0 = 没说 */
+    val lineLimit: Int = 0,
+)
 
 /** 为什么关。适配器据此决定要不要保留草稿、要不要中断子 agent */
 enum class CloseReason {

@@ -221,7 +221,6 @@
   <string name="session_phase_requesting">Requesting</string>
   <string name="session_phase_compacting">Compacting context</string>
   <string name="session_phase_busy">Busy</string>
-  <string name="session_subagent_default">Subtask</string>
   <string name="session_subagent_tool_uses">%1$d calls</string>
   <string name="session_turn_took">Took %1$s</string>
   <string name="session_turn_done">Done</string>

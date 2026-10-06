@@ -219,7 +219,6 @@
   <string name="session_phase_requesting">请求中</string>
   <string name="session_phase_compacting">压缩上下文中</string>
   <string name="session_phase_busy">处理中</string>
-  <string name="session_subagent_default">子任务</string>
   <string name="session_subagent_tool_uses">%1$d 次调用</string>
   <string name="session_turn_took">用时 %1$s</string>
   <string name="session_turn_done">已完成</string>

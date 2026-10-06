@@ -39,9 +39,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
-import dev.min.code.core.claudecode.BackgroundShell
-import dev.min.code.core.claudecode.OUTPUT_TAIL_LINES
-import dev.min.code.core.claudecode.OutputTail
+import dev.min.code.core.engine.BackgroundTask
+import dev.min.code.core.engine.TaskOutputTail
 import dev.min.code.ui.components.LiveDot
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
@@ -75,21 +74,21 @@ import me.rerere.hugeicons.stroke.ArrowLeft01
  */
 @Composable
 internal fun BackgroundShellSheet(
-    shells: List<BackgroundShell>,
+    shells: List<BackgroundTask>,
     onDismiss: () -> Unit,
-    readOutput: suspend (BackgroundShell) -> OutputTail?,
-    onStop: suspend (BackgroundShell) -> String?,
+    readOutput: suspend (BackgroundTask) -> TaskOutputTail?,
+    onStop: suspend (BackgroundTask) -> String?,
 ) {
     // 只有一个时直接进详情，和终端一样；返回列表的箭头只在有列表可回时给
-    var selectedKey by rememberSaveable { mutableStateOf(shells.singleOrNull()?.key) }
-    val lastSeen = remember { mutableStateOf<BackgroundShell?>(null) }
-    val selected = selectedKey?.let { key -> shells.firstOrNull { it.key == key } ?: lastSeen.value?.takeIf { it.key == key } }
+    var selectedKey by rememberSaveable { mutableStateOf(shells.singleOrNull()?.id) }
+    val lastSeen = remember { mutableStateOf<BackgroundTask?>(null) }
+    val selected = selectedKey?.let { key -> shells.firstOrNull { it.id == key } ?: lastSeen.value?.takeIf { it.id == key } }
     if (selected != null) lastSeen.value = selected
 
     InkSheet(onDismissRequest = onDismiss) {
         AnimatedContent(
             targetState = selected,
-            contentKey = { it?.key },
+            contentKey = { it?.id },
             transitionSpec = { InkMotion.enter togetherWith InkMotion.exit },
             label = "shellSheet",
         ) { shell ->
@@ -102,11 +101,11 @@ internal fun BackgroundShellSheet(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (shell == null) {
-                    ShellList(shells, onOpen = { selectedKey = it.key })
+                    ShellList(shells, onOpen = { selectedKey = it.id })
                 } else {
                     ShellDetail(
                         shell = shell,
-                        onBack = if (shells.any { it.key != shell.key }) {
+                        onBack = if (shells.any { it.id != shell.id }) {
                             { selectedKey = null }
                         } else {
                             null
@@ -139,7 +138,7 @@ private fun SheetTitle(text: String, onBack: (() -> Unit)? = null) {
 }
 
 @Composable
-private fun ShellList(shells: List<BackgroundShell>, onOpen: (BackgroundShell) -> Unit) {
+private fun ShellList(shells: List<BackgroundTask>, onOpen: (BackgroundTask) -> Unit) {
     SheetTitle(stringResource(R.string.shell_sheet_title))
     Column {
         shells.forEachIndexed { i, shell ->
@@ -175,10 +174,10 @@ private fun ShellList(shells: List<BackgroundShell>, onOpen: (BackgroundShell) -
 
 @Composable
 private fun ShellDetail(
-    shell: BackgroundShell,
+    shell: BackgroundTask,
     onBack: (() -> Unit)?,
-    readOutput: suspend (BackgroundShell) -> OutputTail?,
-    onStop: suspend (BackgroundShell) -> String?,
+    readOutput: suspend (BackgroundTask) -> TaskOutputTail?,
+    onStop: suspend (BackgroundTask) -> String?,
 ) {
     SheetTitle(stringResource(R.string.shell_details_title), onBack)
 
@@ -216,7 +215,7 @@ private fun ShellDetail(
     if (shell.isRunning) {
         val scope = rememberCoroutineScope()
         val toaster = LocalToaster.current
-        var stopping by remember(shell.key) { mutableStateOf(false) }
+        var stopping by remember(shell.id) { mutableStateOf(false) }
         InkButton(
             onClick = {
                 stopping = true
@@ -259,9 +258,9 @@ private fun FieldText(text: String) {
  * 在跑时每 [OUTPUT_REFRESH_MS] 读一次，结束后再读最后一次就停。
  */
 @Composable
-private fun OutputPane(shell: BackgroundShell, readOutput: suspend (BackgroundShell) -> OutputTail?) {
+private fun OutputPane(shell: BackgroundTask, readOutput: suspend (BackgroundTask) -> TaskOutputTail?) {
     val current by rememberUpdatedState(shell)
-    val tail by produceState<OutputTail?>(null, shell.key, shell.isRunning) {
+    val tail by produceState<TaskOutputTail?>(null, shell.id, shell.isRunning) {
         while (true) {
             value = readOutput(current)
             if (!current.isRunning) break
@@ -279,14 +278,14 @@ private fun OutputPane(shell: BackgroundShell, readOutput: suspend (BackgroundSh
     }
     if (tail?.clipped == true) {
         Text(
-            stringResource(R.string.shell_output_clipped, OUTPUT_TAIL_LINES),
+            stringResource(R.string.shell_output_clipped, tail?.lineLimit ?: 0),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
     val vertical = rememberScrollState()
     val horizontal = rememberScrollState()
-    var follow by remember(shell.key) { mutableStateOf(true) }
+    var follow by remember(shell.id) { mutableStateOf(true) }
     // 手指拖动时才重判「是不是停在底部」：内容自己长高时 value < maxValue 是常态，不代表人往上翻了
     LaunchedEffect(vertical) {
         snapshotFlow { vertical.value to vertical.isScrollInProgress }.collect { (value, dragging) ->
@@ -323,7 +322,7 @@ private fun OutputPane(shell: BackgroundShell, readOutput: suspend (BackgroundSh
 
 /** 状态记号：在跑是呼吸的海点，结束了是一粒静止的点（失败是朱） */
 @Composable
-private fun StateMark(shell: BackgroundShell) {
+private fun StateMark(shell: BackgroundTask) {
     if (shell.isRunning) {
         LiveDot(MaterialTheme.sea.sea)
     } else {
@@ -332,42 +331,42 @@ private fun StateMark(shell: BackgroundShell) {
 }
 
 @Composable
-private fun stateColor(shell: BackgroundShell): Color = when (shell.state) {
-    BackgroundShell.State.Running -> MaterialTheme.sea.seaDeep
-    BackgroundShell.State.Failed -> MaterialTheme.sea.vermilion
+private fun stateColor(shell: BackgroundTask): Color = when (shell.status) {
+    BackgroundTask.Status.Running -> MaterialTheme.sea.seaDeep
+    BackgroundTask.Status.Failed -> MaterialTheme.sea.vermilion
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @Composable
-private fun stateLabel(shell: BackgroundShell): String {
-    val base = when (shell.state) {
-        BackgroundShell.State.Running -> stringResource(R.string.shell_state_running)
-        BackgroundShell.State.Completed -> stringResource(R.string.shell_state_completed)
-        BackgroundShell.State.Failed -> stringResource(R.string.shell_state_failed)
-        BackgroundShell.State.Stopped -> stringResource(R.string.shell_state_stopped)
+private fun stateLabel(shell: BackgroundTask): String {
+    val base = when (shell.status) {
+        BackgroundTask.Status.Running -> stringResource(R.string.shell_state_running)
+        BackgroundTask.Status.Done -> stringResource(R.string.shell_state_completed)
+        BackgroundTask.Status.Failed -> stringResource(R.string.shell_state_failed)
+        BackgroundTask.Status.Stopped -> stringResource(R.string.shell_state_stopped)
     }
     // 被停掉的不写退出码：那是信号杀出来的数（进程表里常记成 0），不是它自己的结局
     val exit = shell.exitCode
-        ?.takeIf { shell.state == BackgroundShell.State.Completed || shell.state == BackgroundShell.State.Failed }
+        ?.takeIf { shell.status == BackgroundTask.Status.Done || shell.status == BackgroundTask.Status.Failed }
         ?.let { stringResource(R.string.shell_exit_code, it) }
     return listOfNotNull(base, exit).joinToString(" · ")
 }
 
 @Composable
-private fun sourceLabel(shell: BackgroundShell): String = when {
-    shell.cliTaskId != null && shell.hostedServiceId != null -> stringResource(R.string.shell_source_both)
-    shell.cliTaskId != null -> stringResource(R.string.shell_source_cli)
+private fun sourceLabel(shell: BackgroundTask): String = when {
+    shell.source == BackgroundTask.Source.Both -> stringResource(R.string.shell_source_both)
+    shell.source == BackgroundTask.Source.Cli -> stringResource(R.string.shell_source_cli)
     else -> stringResource(R.string.shell_source_hosted)
 }
 
 /**
- * 运行时长：在跑时从 [BackgroundShell.startedAt] 每秒走；结束了定格在结束那一刻，
+ * 运行时长：在跑时从 [BackgroundTask.startedAt] 每秒走；结束了定格在结束那一刻，
  * 结束时刻不可知（托管服务）就不写 —— 宁缺，不写一个还在涨的假数。
  */
 @Composable
-private fun runtimeLabel(shell: BackgroundShell): String? {
+private fun runtimeLabel(shell: BackgroundTask): String? {
     if (shell.startedAt <= 0L) return null
-    val now by produceState(System.currentTimeMillis(), shell.key, shell.isRunning) {
+    val now by produceState(System.currentTimeMillis(), shell.id, shell.isRunning) {
         while (shell.isRunning) {
             value = System.currentTimeMillis()
             delay(1_000)

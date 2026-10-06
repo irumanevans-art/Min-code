@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
+import dev.min.code.core.claudecode.readShellOutput
 import me.rerere.workspace.WorkspaceShellStatus
 import org.koin.dsl.bind
 import dev.min.code.core.browser.GuestOpenInbox
@@ -48,7 +50,11 @@ import dev.min.code.core.settings.ProviderSync
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.ui.files.WorkspaceDetailVM
 import dev.min.code.ui.codex.CodexVM
-import dev.min.code.ui.session.ClaudeCodeVM
+import dev.min.code.ui.session.ClaudeConfigVM
+import dev.min.code.ui.session.MaintenanceVM
+import dev.min.code.ui.session.SessionListVM
+import dev.min.code.ui.session.SessionVM
+import dev.min.code.ui.session.WorkspaceToolsVM
 import dev.min.code.ui.providers.ProvidersVM
 import dev.min.code.ui.settings.SettingsVM
 import dev.min.code.ui.setup.SetupVM
@@ -193,6 +199,13 @@ val appModule = module {
             currentProfile = settings.settings.map { s -> s.activeProfile?.id to s.profiles.associate { it.id to it.label } }
                 .stateIn(scope, SharingStarted.Eagerly, null to emptyMap()),
             stopHostedService = { get<LocalServiceRegistry>().stop(it) },
+            // 后台 shell 面板读输出尾巴：要工作区目录（host 路径）与进程表的日志，只有组合根拿得到
+            readShellOutput = { shell, sessionId ->
+                val services = get<LocalServiceRegistry>()
+                withContext(Dispatchers.IO) {
+                    readShellOutput(shell, workspace.workspaceDir(), sessionId, services::logOf)
+                }
+            },
         )
     } bind AgentEngine::class
     single {
@@ -248,7 +261,12 @@ val appModule = module {
     // 盯投递目录的人不能等某个页面先打开（见 GuestOpenInbox）
     single(createdAtStart = true) { GuestOpenInbox(get(), get<AppScope>()) }
 
-    viewModelOf(::ClaudeCodeVM)
+    // 原来的 ClaudeCodeVM 按职责拆成五个（M2-B B6a）；ClaudeCodePage 一次取齐
+    viewModelOf(::SessionVM)
+    viewModelOf(::SessionListVM)
+    viewModelOf(::WorkspaceToolsVM)
+    viewModelOf(::MaintenanceVM)
+    viewModelOf(::ClaudeConfigVM)
     viewModel {
         CodexVM(
             runtime = get(),

@@ -112,7 +112,7 @@ class SessionSearchTest {
         title: String,
         category: String? = null,
         bodyText: String = "",
-    ) = ClaudeCodeVM.SessionEntry(
+    ) = SessionListVM.SessionEntry(
         id = id,
         title = title,
         updatedAt = 0L,

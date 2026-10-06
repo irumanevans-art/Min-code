@@ -7,6 +7,7 @@ import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.claudecode.ComposerDraftStore
+import dev.min.code.core.claudecode.OutputTail
 import dev.min.code.core.engine.AgentEngine
 import dev.min.code.core.engine.AgentSession
 import dev.min.code.core.engine.CloseReason
@@ -25,6 +26,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -46,7 +49,7 @@ class ClaudeCodeEngine internal constructor(
     services: StateFlow<List<LocalService>> = MutableStateFlow(emptyList()),
     currentProfile: StateFlow<Pair<String?, Map<String, String>>> = MutableStateFlow(null to emptyMap()),
     private val stopHostedService: (String) -> Unit = {},
-    private val readShellOutput: suspend (BackgroundShell) -> String? = { null },
+    private val readShellOutput: suspend (BackgroundShell, sessionId: String?) -> OutputTail? = { _, _ -> null },
 ) : AgentEngine {
     override val kind: EngineKind = EngineKind.ClaudeCode
     override val capabilities: EngineCapabilities = EngineCapabilities.ClaudeCode
@@ -86,12 +89,14 @@ class ClaudeCodeEngine internal constructor(
         val base = registry.configProbe().lastOptions()
         val mode = options.modeId?.let(ClaudeCodePermissionMode::fromWire) ?: base.permissionMode
         val ultracode = options.effortId == ClaudeStateMapper.OPTION_ULTRACODE
+        // 空串 = 明确「跟随默认」（[ClaudeStateMapper.FOLLOW_DEFAULT]），与 null（没说，沿用上次）不同：
+        // 抽屉里「新会话」要照搬当前会话的设置，当前会话没选过模型就该是没选过，而不是借上次存的那个
         val manager = registry.newSession(
             base.copy(
                 skipPermissions = mode == ClaudeCodePermissionMode.BYPASS,
                 permissionMode = mode,
-                model = options.modelId ?: base.model,
-                effort = if (ultracode) null else options.effortId ?: base.effort,
+                model = if (options.modelId == null) base.model else options.modelId.ifEmpty { null },
+                effort = if (ultracode) null else if (options.effortId == null) base.effort else options.effortId.ifEmpty { null },
                 ultracode = ultracode,
                 cwd = options.cwd,
                 promptCacheTtl = options.engineOptions[ClaudeStateMapper.OPTION_CACHE_TTL] ?: base.promptCacheTtl,
@@ -112,19 +117,45 @@ class ClaudeCodeEngine internal constructor(
         attach(id, manager)
     }
 
-    private fun attach(key: String, manager: ClaudeCodeManager): ClaudeCodeSession {
+    /** 取或建：同一个 manager 只有一个包装。建的同时丢掉旧注册表已经不认的那些 */
+    private fun attach(key: String, manager: ClaudeCodeManager): ClaudeCodeSession = synchronized(sessions) {
+        // 旧注册表登记 manager 的同时就把它设成活跃项，[activeSession] 在另一个线程上立刻来取同一个包装，
+        // 而 create / open 紧接着也要取：两边必须拿到同一个，否则后到的把先到的撤掉，界面就绑在一个已经停了订阅的壳上
+        sessions.value[key]?.takeIf { it.manager === manager }?.let { return it }
         val session = ClaudeCodeSession(
             manager = manager, key = key, parentScope = scope, externals = context, metaStore = metaStore,
             configStore = configStore, stopHostedService = stopHostedService, readShellOutput = readShellOutput,
         )
-        // 注册表可能在 newSession / openSession 里 pruneDead 掉了别的会话：只留它还认的
-        sessions.value = sessions.value.filterKeys { registry.get(it) != null } + (key to session)
-        return session
+        // 注册表可能在 newSession / openSession 里 pruneDead 掉了别的会话：只留它还认的，丢掉的撤掉它订阅的流
+        val old = sessions.value
+        val kept = old.filterKeys { registry.get(it) != null && it != key }
+        (old - kept.keys).values.forEach { it.release() }
+        sessions.value = kept + (key to session)
+        session
     }
+
+    /**
+     * 旧注册表里 [key] 这个会话套成的通用会话；没有这个会话返回 null。**不看进程死活、不会重启它**：
+     * 页面要显示崩掉 / 已结束的会话，`open` 对死进程会重开，不能用在这里。
+     * 同一个 manager 返回同一个包装（订阅只建一份）。
+     */
+    fun sessionFor(key: String): ClaudeCodeSession? {
+        val manager = registry.get(key) ?: return null
+        return attach(key, manager)
+    }
+
+    /**
+     * 界面当前显示的会话：旧注册表的活跃项（它至今仍是「谁是活跃会话」的唯一来源，B9 才把它拆进来）套成通用会话。
+     * B6 的页面只经这里读状态、发命令；建 / 开 / 关会话仍走旧注册表，原因见 `SessionVM` 头注释。
+     */
+    val activeSession: StateFlow<ClaudeCodeSession?> = registry.activeKey
+        .map { key -> key?.let(::sessionFor) }
+        // 初值同步取：页面（VM）在转屏 / 回页面时重建，会话早就在跑，第一帧读到 null 会闪出启动面板
+        .stateIn(scope, SharingStarted.Eagerly, registry.activeKey.value?.let(::sessionFor))
 
     override suspend fun closeAll(reason: CloseReason) {
         registry.closeAll()
-        sessions.value = emptyMap()
+        sessions.getAndUpdate { emptyMap() }.values.forEach { it.release() }
     }
 
 }

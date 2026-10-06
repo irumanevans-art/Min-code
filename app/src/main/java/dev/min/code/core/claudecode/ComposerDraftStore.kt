@@ -122,7 +122,7 @@ class ComposerDraftStore(private val root: File) {
     /**
      * 只判定能不能打开，**不**消耗顺延。
      *
-     * 消耗必须发生在会话真的打开之后（见 [ClaudeCodeVM.openSession]）：
+     * 消耗必须发生在会话真的打开之后（见 [dev.min.code.ui.session.SessionVM.openSession]）：
      * 并发满了注册表会返回 null，若这里先把指针清掉，空框就找不回来。
      * 冲突时同样不消耗，用户可以改开另一个空会话。
      */

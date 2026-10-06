@@ -86,7 +86,11 @@ import dev.min.code.ui.session.ClaudeCodeSettingsSheet
 import dev.min.code.ui.session.StartPanel
 import dev.min.code.ui.session.AgentSwitcher
 import dev.min.code.ui.session.SessionTaskStrip
-import dev.min.code.core.claudecode.SubagentThread
+import dev.min.code.core.claudecode.ClaudeCodePermissionMode
+import dev.min.code.core.engine.AgentThread
+import dev.min.code.core.engine.EngineKind
+import dev.min.code.core.engine.SessionRef
+import dev.min.code.core.engine.claude.ClaudeStateMapper
 import dev.min.code.ui.session.ToolEntry
 import dev.min.code.ui.session.rememberTranscriptLabels
 import dev.min.code.ui.session.UserEntry
@@ -232,9 +236,10 @@ private fun Preview(
                     ) {
                         when (scene) {
                             PreviewScene.Start -> StartPanel(
-                                session = ClaudeCodeManager.SessionState(),
+                                session = ClaudeCodeManager.SessionState().toAgentState(),
                                 cliVersion = "2.1.261",
-                                onStart = { scene = PreviewScene.Blank },
+                                defaultCwd = "/workspace",
+                                onStart = { _, _ -> scene = PreviewScene.Blank },
                             )
                             PreviewScene.Blank -> BlankPage(starting = false)
                             PreviewScene.Loading -> LoadingScreen(detail = "正在读取工作区", progress = 0.64f)
@@ -257,13 +262,13 @@ private fun Preview(
                 }
             }
             if (settingsOpen) ClaudeCodeSettingsSheet(
-                session = session,
+                session = session.toAgentState(),
                 initialSection = null,
                 chineseDescriptions = chineseDescriptions,
                 onSetChineseDescriptions = { chineseDescriptions = it },
                 onDismiss = { settingsOpen = false },
                 onSetModel = { model, _ -> session = session.copy(model = model, options = session.options.copy(model = model)) },
-                onSetPermissionMode = { session = session.copy(permissionMode = it) },
+                onSetPermissionMode = { session = session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode) },
                 onApplyEffort = { effort, ultra -> session = session.copy(options = session.options.copy(effort = effort, ultracode = ultra)) },
                 onSetPromptCacheTtl = { session = session.copy(options = session.options.copy(promptCacheTtl = it)) },
                 onSetCwd = { session = session.copy(cwd = it) },
@@ -301,10 +306,10 @@ private fun sceneIcon(scene: PreviewScene) = when (scene) {
 private fun SessionsPreview() {
     val now = System.currentTimeMillis()
     val entries = listOf(
-        dev.min.code.ui.session.ClaudeCodeVM.SessionEntry("a", "检查工作区，整理这次修改", now - 120_000, 12, isLive = true, isActive = true, pinned = true, titled = true),
-        dev.min.code.ui.session.ClaudeCodeVM.SessionEntry("b", "把 proot 补丁拆成独立模块", now - 3_600_000, 41, isLive = true, isActive = false, category = "工作", titled = true),
-        dev.min.code.ui.session.ClaudeCodeVM.SessionEntry("c", "文件页导入导出联调", now - 86_400_000, 7, isLive = false, isActive = false, category = "工作"),
-        dev.min.code.ui.session.ClaudeCodeVM.SessionEntry("d", "签名动画：龙凤与轨迹的双层提取方案讨论，以及输入坞底板的裁切位置", now - 172_800_000, 3, isLive = false, isActive = false),
+        dev.min.code.ui.session.SessionListVM.SessionEntry("a", "检查工作区，整理这次修改", now - 120_000, 12, isLive = true, isActive = true, pinned = true, titled = true),
+        dev.min.code.ui.session.SessionListVM.SessionEntry("b", "把 proot 补丁拆成独立模块", now - 3_600_000, 41, isLive = true, isActive = false, category = "工作", titled = true),
+        dev.min.code.ui.session.SessionListVM.SessionEntry("c", "文件页导入导出联调", now - 86_400_000, 7, isLive = false, isActive = false, category = "工作"),
+        dev.min.code.ui.session.SessionListVM.SessionEntry("d", "签名动画：龙凤与轨迹的双层提取方案讨论，以及输入坞底板的裁切位置", now - 172_800_000, 3, isLive = false, isActive = false),
     )
     dev.min.code.ui.session.ClaudeCodeSessionDrawer(
         sessions = entries,
@@ -531,7 +536,7 @@ private fun ConversationPreview(
                         agents = { AgentSwitcher(agents, selectedAgent, onSelect = { selectedAgent = it }) },
                     )
                     ClaudeCodeInputBar(
-                        session = session.copy(busy = variant == "streaming"),
+                        session = session.copy(busy = variant == "streaming").toAgentState(),
                         onSend = { text, _ ->
                             messages = messages + text
                             scope.launch { delay(50); list.animateScrollToItem(5 + messages.lastIndex) }
@@ -539,7 +544,7 @@ private fun ConversationPreview(
                         onInterrupt = {},
                         onRunShell = { command -> messages = messages + "!$command" },
                         onSetModel = { model, _ -> onSession(session.copy(model = model, options = session.options.copy(model = model))) },
-                        onSetPermissionMode = { onSession(session.copy(permissionMode = it)) },
+                        onSetPermissionMode = { onSession(session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode)) },
                         onApplyEffort = { effort, ultra -> onSession(session.copy(options = session.options.copy(effort = effort, ultracode = ultra))) },
                         onSetPromptCacheTtl = { onSession(session.copy(options = session.options.copy(promptCacheTtl = it))) },
                         onRequestModels = {},
@@ -628,6 +633,10 @@ private fun ChangedFilesPreview() {
     }
 }
 
+/** 预览里的假会话仍用 CLI 的原始状态来摆（改字段方便），喂给页面前经适配器转成通用状态，走的是和真会话同一条映射 */
+private fun ClaudeCodeManager.SessionState.toAgentState() =
+    ClaudeStateMapper.map(SessionRef(EngineKind.ClaudeCode, sessionId ?: "ui-preview"), this)
+
 private fun fixtureSession() = ClaudeCodeManager.SessionState(
     status = SessionStatus.Running,
     sessionId = "ui-preview",
@@ -641,20 +650,21 @@ private fun fixtureSession() = ClaudeCodeManager.SessionState(
 )
 
 /** 子 agent 页签的假数据：agents1 = 只有一个在跑；agents = 四个，两个同类型、一个跑完、一个出错，一行放不下 */
-private fun previewAgents(variant: String): List<SubagentThread> {
-    fun agent(id: String, type: String, description: String, phase: SubagentThread.Phase, activity: String? = null) =
-        SubagentThread(
-            toolUseId = id, agentId = "a$id", agentType = type, description = description, prompt = description,
-            phase = phase, activity = activity, items = emptyList(), tracked = true,
+private fun previewAgents(variant: String): List<AgentThread> {
+    fun agent(id: String, type: String, description: String, phase: AgentThread.Phase, activity: String? = null) =
+        AgentThread(
+            threadId = id, parentThreadId = null, depth = 0, agentType = type, name = null, description = description,
+            prompt = description, fork = false, background = false, phase = phase, activity = activity, items = emptyList(),
+            pendingInteractions = 0, usage = null, childRef = null, tracked = true,
         )
-    val explore = agent("t1", "Explore", "审查 Min 项目源码", SubagentThread.Phase.Running, "Grep AgentSwitcher")
+    val explore = agent("t1", "Explore", "审查 Min 项目源码", AgentThread.Phase.Running, "Grep AgentSwitcher")
     return when (variant) {
         "agents1" -> listOf(explore)
         "agents" -> listOf(
             explore,
-            agent("t2", "general-purpose", "核对 CHANGELOG 与发版记录", SubagentThread.Phase.Running, "Read CHANGELOG.md"),
-            agent("t3", "general-purpose", "跑单测并整理失败用例", SubagentThread.Phase.Done),
-            agent("t4", "Plan", "拆 ClaudeCodeManager 的下一刀", SubagentThread.Phase.Failed),
+            agent("t2", "general-purpose", "核对 CHANGELOG 与发版记录", AgentThread.Phase.Running, "Read CHANGELOG.md"),
+            agent("t3", "general-purpose", "跑单测并整理失败用例", AgentThread.Phase.Done),
+            agent("t4", "Plan", "拆 ClaudeCodeManager 的下一刀", AgentThread.Phase.Failed),
         )
         else -> emptyList()
     }

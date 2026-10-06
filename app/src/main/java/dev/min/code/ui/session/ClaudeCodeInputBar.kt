@@ -35,10 +35,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.min.code.R
-import dev.min.code.core.claudecode.ClaudeCodeImage
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
-import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.userShellCommand
 import dev.min.code.core.claudecode.DraftAttachment
@@ -58,6 +56,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Image02
+import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.ImageInput
+import dev.min.code.core.engine.SlashCommandView
 import dev.min.code.core.session.SessionStatus
 
 /** 上下文用到这个比例就变告警色 —— CLI 到这一带会自动压缩，值得提前知道 */
@@ -72,14 +73,14 @@ private val NoWithdrawals: Flow<ComposerDraft> = emptyFlow()
  */
 @Composable
 internal fun ClaudeCodeInputBar(
-    session: ClaudeCodeManager.SessionState,
-    onSend: (String, List<ClaudeCodeImage>) -> Unit,
+    session: AgentSessionState,
+    onSend: (String, List<ImageInput>) -> Unit,
     onInterrupt: () -> Unit,
     /** `!` 开头的一行：Min 自己在 rootfs 里跑，不经模型（见 UserShell.kt） */
     onRunShell: (String) -> Unit,
     /** (模型, 是否同时存成新会话默认)。`/model <名字>` 与 CLI 一致按「存成默认」处理 */
     onSetModel: (String?, Boolean) -> Unit,
-    onSetPermissionMode: (ClaudeCodePermissionMode) -> Unit,
+    onSetPermissionMode: (String) -> Unit,
     onApplyEffort: (String?, Boolean) -> Unit,
     onSetPromptCacheTtl: (String) -> Unit,
     onRequestModels: () -> Unit,
@@ -100,7 +101,7 @@ internal fun ClaudeCodeInputBar(
     /** `@` 提及的文件补全，返回 guest 侧绝对路径 */
     onSearchFiles: suspend (String) -> List<String> = { emptyList() },
     /** 相册/截图 → 已缩放编码好的 image block；失败返回 null */
-    onLoadImage: suspend (Uri) -> ClaudeCodeImage? = { null },
+    onLoadImage: suspend (Uri) -> ImageInput? = { null },
     /** 打开本地接管的交互式命令面板（/mcp、/agents…） */
     onOpenLocalCommand: (LocalSlash) -> Unit = {},
     /**
@@ -133,7 +134,7 @@ internal fun ClaudeCodeInputBar(
     }
     // 图片走 image content block，不落盘、不进工作区，所以和 attachments 分开存
     var images by remember {
-        mutableStateOf(restoredDraft.images.map { PendingImage(it.name, ClaudeCodeImage(it.mediaType, it.base64)) })
+        mutableStateOf(restoredDraft.images.map { PendingImage(it.name, ImageInput(it.mediaType, it.base64)) })
     }
     // 附件芯片上的 × 会真删工作区里的文件，误触无法挽回 —— 先确认再删
     var pendingAttachmentDelete by remember { mutableStateOf<Attachment?>(null) }
@@ -159,7 +160,7 @@ internal fun ClaudeCodeInputBar(
     LaunchedEffect(withdrawnMessages) {
         withdrawnMessages.collect { draft ->
             input = if (input.isBlank()) draft.text else draft.text + "\n" + input
-            images = draft.images.map { PendingImage(it.name, ClaudeCodeImage(it.mediaType, it.base64)) } + images
+            images = draft.images.map { PendingImage(it.name, ImageInput(it.mediaType, it.base64)) } + images
         }
     }
     DisposableEffect(Unit) {
@@ -309,7 +310,7 @@ internal fun ClaudeCodeInputBar(
             onSetModel(
                 resolveSlashModel(
                     requested,
-                    session.relayModels,
+                    session.settings.relayModels.map { ClaudeCodeManager.RelayModel(it.id) },
                 ).takeUnless { it.equals("default", ignoreCase = true) },
                 true,
             )
@@ -451,8 +452,8 @@ internal fun ClaudeCodeInputBar(
                     contextText = usage.contextText,
                     contextWarn = usage.warn,
                     costText = usage.costText,
-                    modelText = session.modelChipLabel(),
-                    modeText = "${session.permissionMode.label} · ${session.effortChipLabel()}",
+                    modelText = session.settings.modelChipLabel(),
+                    modeText = "${session.settings.mode.label} · ${session.settings.effortChipLabel()}",
                     onRefreshUsage = onRefreshUsage,
                     onOpenSettings = { openSettings(null) },
                 )
@@ -495,14 +496,14 @@ private data class ComposerUsage(
 
 @Composable
 private fun composerUsage(
-    session: ClaudeCodeManager.SessionState,
+    session: AgentSessionState,
     dailyCostUsd: Double,
 ): ComposerUsage {
-    val used = session.contextTokens
+    val used = session.usage.contextTokens
     // CLI 对不认识的 id 会报 200k。Fable 5.1 是原生 1M，信 CLI 就会画出 97k/200k。
     val limit = ClaudeCodeModelCatalog.effectiveContextLimit(
-        session.contextLimit,
-        session.appliedModel ?: session.currentModel ?: session.model,
+        session.usage.contextLimit,
+        session.settings.applied.model ?: session.settings.requestedModel ?: session.reportedModel,
     )
     val ratio = if (used != null && limit > 0) (used.toFloat() / limit).coerceIn(0f, 1f) else null
     return ComposerUsage(
@@ -511,7 +512,7 @@ private fun composerUsage(
         contextText = used?.let { "${it / 1000}k/${ClaudeCodeModelCatalog.formatContextWindow(limit)}" },
         // 逼近上限转朱砂 —— CLI 到那一带会自动压缩上下文，这件事发生前用户有权知道
         warn = (ratio ?: 0f) >= CONTEXT_WARN_RATIO,
-        costText = costLabel(dailyCostUsd, session.costText?.let { parseSessionCostUsd(it) }),
+        costText = costLabel(dailyCostUsd, session.usage.costText?.let { parseSessionCostUsd(it) }),
     )
 }
 
@@ -555,12 +556,12 @@ internal fun costLabel(dailyUsd: Double, sessionUsd: Double?): String? {
 private data class Attachment(val name: String, val path: String)
 
 /** 待随下一条消息发出的图片。不落盘 —— 截图这种一次性图片没有留在工作区的理由。 */
-private data class PendingImage(val name: String, val block: ClaudeCodeImage)
+private data class PendingImage(val name: String, val block: ImageInput)
 
 @Composable
 private fun SlashCommandList(
-    commands: List<ClaudeCodeManager.SlashCommand>,
-    onPick: (ClaudeCodeManager.SlashCommand) -> Unit,
+    commands: List<SlashCommandView>,
+    onPick: (SlashCommandView) -> Unit,
 ) {
     Column(modifier = Modifier.heightIn(max = 200.dp)) {
         commands.forEach { cmd ->

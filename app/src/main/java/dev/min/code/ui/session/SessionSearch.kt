@@ -1,6 +1,5 @@
 package dev.min.code.ui.session
 
-import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.session.ChatItem
 
 /**
@@ -10,15 +9,15 @@ import dev.min.code.core.session.ChatItem
 
 /** 会话抽屉：按标题 / 分类 / id / 正文 子串过滤（大小写不敏感）。空查询 = 原样返回。 */
 internal fun filterSessionEntries(
-    sessions: List<ClaudeCodeVM.SessionEntry>,
+    sessions: List<SessionListVM.SessionEntry>,
     query: String,
-): List<ClaudeCodeVM.SessionEntry> {
+): List<SessionListVM.SessionEntry> {
     val q = query.trim()
     if (q.isEmpty()) return sessions
     return sessions.filter { it.matchesSessionQuery(q) }
 }
 
-internal fun ClaudeCodeVM.SessionEntry.matchesSessionQuery(query: String): Boolean {
+internal fun SessionListVM.SessionEntry.matchesSessionQuery(query: String): Boolean {
     val q = query.trim()
     if (q.isEmpty()) return true
     return title.contains(q, ignoreCase = true) ||
