@@ -9,6 +9,7 @@ import java.net.URI
 
 internal val MCP_IDLE_CALL = CallId("mcp-idle")
 private const val OMIT = "（不提供此字段）"
+private val CREDENTIAL_FIELD = Regex("password|passwd|secret|token|api[ _-]*key|credential", RegexOption.IGNORE_CASE)
 
 internal data class McpFormField(val name: String, val schema: JsonObject, val required: Boolean, val question: UserQuestion)
 
@@ -98,6 +99,13 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
         return elicitationResult(state.value.mcpUrls[id]?.action ?: "cancel")
     }
     val schema = params["requestedSchema"] as? JsonObject
+    val sensitive = (schema?.get("properties") as? JsonObject)?.any { (name, raw) ->
+        CREDENTIAL_FIELD.containsMatchIn(name) || CREDENTIAL_FIELD.containsMatchIn(((raw as? JsonObject)?.get("title") as? JsonPrimitive)?.content.orEmpty())
+    } == true
+    if (sensitive) {
+        commit(listOf(Note(NoteLevel.Warning, "MCP 服务器 $server 请求通过表单收集敏感凭证，已拒绝整份请求。")), Durability.Sync)
+        return elicitationResult("decline")
+    }
     val fields = if (mode == "form" && schema != null) catchingNonCancellation { mcpForm(server, message, schema) }.getOrNull() else null
     if (fields == null) {
         commit(listOf(Note(NoteLevel.Warning, "MCP 服务器 $server 的 elicitation 表单包含不能映射的 schema，已拒绝整份请求。")), Durability.Sync)
