@@ -1,0 +1,15 @@
+{
+  "basis": "04-sessions-sdk-automation.md :218——success 臂字段「session_id」；:103——「各 subtype 都带 … session_id」。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_SESSION_ID",
+    "--json"
+  ],
+  "expected": {
+    "fields": {
+      "session_id": "@present"
+    }
+  },
+  "pendingFix": "Min 现在：字段名是 session。原文要：session_id（04-sessions-sdk-automation.md :103/:218）。建议改引擎：改名（或过渡期双写）。"
+}

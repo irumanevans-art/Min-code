@@ -1,0 +1,12 @@
+{
+  "basis": "cc-cli-reference.md :104——「--max-turns | Limit the number of agentic turns (print mode only). … No limit by default.」",
+  "kind": "parse",
+  "args": [
+    "--max-turns",
+    "3"
+  ],
+  "expected": {
+    "usageError": false,
+    "maxTurns": 3
+  }
+}

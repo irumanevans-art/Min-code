@@ -1,0 +1,15 @@
+{
+  "basis": "04-sessions-sdk-automation.md :103——「各 subtype 都带 total_cost_usd、usage、num_turns、session_id」；:104——turn = one round trip inside the loop。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_NUM_TURNS",
+    "--json"
+  ],
+  "expected": {
+    "fields": {
+      "num_turns": "@present"
+    }
+  },
+  "pendingFix": "Min 现在：没有 num_turns（可从本次事件的 ModelRequestStarted 数推出）。原文要：各 subtype 都带 num_turns（04-sessions-sdk-automation.md :103）。建议改引擎：--json 输出加 num_turns。"
+}

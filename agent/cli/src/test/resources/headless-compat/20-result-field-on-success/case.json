@@ -1,0 +1,15 @@
+{
+  "basis": "04-sessions-sdk-automation.md :103——「success（唯一带 result 字段）」；:218——success 臂字段「result」。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_RESULT",
+    "--json"
+  ],
+  "expected": {
+    "fields": {
+      "result": "CC_OK"
+    }
+  },
+  "pendingFix": "Min 现在：成功的结果对象里没有 result 字段——最终回复文本不上 stdout（--json 也一样）。原文要：result 只在 success subtype 带最终响应文本（04-sessions-sdk-automation.md :103/:218）。建议改引擎：--json 输出加 result=最终文本。"
+}

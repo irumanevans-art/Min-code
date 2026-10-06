@@ -1,0 +1,19 @@
+{
+  "basis": "cc-cli-reference.md :101——「Get validated JSON output matching a JSON Schema after the agent completes its workflow (print mode only)」；04-sessions-sdk-automation.md :218——success 臂的「structured_output?」。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_SO_OK",
+    "--json",
+    "--json-schema",
+    "{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]}"
+  ],
+  "expected": {
+    "exit": 0,
+    "fields": {
+      "structured_output": {
+        "answer": "CC_ANSWER"
+      }
+    }
+  }
+}

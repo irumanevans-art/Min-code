@@ -1,0 +1,11 @@
+{
+  "basis": "原文未说明：cc-cli-reference.md :104 只写了到上限时退出，没写非正整数的取值怎么处理（启动报错写在 CLAUDE_CODE_MAX_TURNS 的条目里，02-hooks-settings-env-cli.md :377，那是环境变量）。期望按 Min 现状（UsageException → 退出码 2）。",
+  "kind": "parse",
+  "args": [
+    "--max-turns",
+    "0"
+  ],
+  "expected": {
+    "usageError": true
+  }
+}

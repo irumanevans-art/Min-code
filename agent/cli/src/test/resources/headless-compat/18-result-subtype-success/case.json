@@ -1,0 +1,15 @@
+{
+  "basis": "04-sessions-sdk-automation.md :103——「ResultMessage.subtype：success（唯一带 result 字段）…」。退出码原文未说明，按 Min 现状（completed → 0）。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_SUBTYPE",
+    "--json"
+  ],
+  "expected": {
+    "exit": 0,
+    "fields": {
+      "subtype": "success"
+    }
+  }
+}

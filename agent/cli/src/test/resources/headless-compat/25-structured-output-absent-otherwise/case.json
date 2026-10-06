@@ -1,0 +1,14 @@
+{
+  "basis": "04-sessions-sdk-automation.md :218——structured_output? 是可选字段：没给 --json-schema 就不该出现。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_SO_NONE",
+    "--json"
+  ],
+  "expected": {
+    "fields": {
+      "structured_output": "@absent"
+    }
+  }
+}

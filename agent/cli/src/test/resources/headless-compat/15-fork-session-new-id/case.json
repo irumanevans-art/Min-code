@@ -1,0 +1,13 @@
+{
+  "basis": "cc-cli-reference.md :92——「create a new session ID instead of reusing the original」。",
+  "kind": "fork-run",
+  "args": [
+    "-p",
+    "CC_FORK_BASE",
+    "--json"
+  ],
+  "expected": {
+    "forkNewId": "true",
+    "originalUntouched": "true"
+  }
+}

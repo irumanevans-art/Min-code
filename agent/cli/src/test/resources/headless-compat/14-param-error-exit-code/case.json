@@ -1,0 +1,12 @@
+{
+  "basis": "原文未说明：三份出处没有 -p 参数错误的退出码表。期望按 Min 现状（Main.kt 把 UsageException 映射成 exitProcess(2)）。",
+  "kind": "parse",
+  "args": [
+    "--max-turns",
+    "0"
+  ],
+  "expected": {
+    "usageError": true,
+    "exit": 2
+  }
+}

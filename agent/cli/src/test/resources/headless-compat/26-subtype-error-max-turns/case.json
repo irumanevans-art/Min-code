@@ -1,0 +1,17 @@
+{
+  "basis": "04-sessions-sdk-automation.md :103——「error_max_turns」；cc-cli-reference.md :104——「Exits with an error when the limit is reached」（具体退出码未说明，按非零对拍）。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_LIMIT",
+    "--json",
+    "--max-turns",
+    "1"
+  ],
+  "expected": {
+    "exit": "@nonzero",
+    "fields": {
+      "subtype": "error_max_turns"
+    }
+  }
+}
