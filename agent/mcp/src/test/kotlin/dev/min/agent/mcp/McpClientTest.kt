@@ -28,13 +28,33 @@ internal class FakeTransport : McpTransport {
 }
 @OptIn(ExperimentalCoroutinesApi::class)
 class McpClientTest {
-    @Test fun `server can cancel reverse elicitation and receives cancel`() = runTest {
+    @Test fun `server cancellation suppresses response to reverse elicitation`() = runTest {
         val t = FakeTransport()
         val c = client(t, McpClientOptions("1", requestHandler = { _, _ -> awaitCancellation() }))
         c.connect()
         t.received.send(json("""{"jsonrpc":"2.0","id":"elicitation","method":"elicitation/create","params":{}}""")); runCurrent()
         t.received.send(rpcNotification("notifications/cancelled", json("""{"requestId":"elicitation"}"""))); runCurrent()
-        assertEquals("cancel", t.sent.last().obj("result")!!.text("action")); c.close()
+        assertFalse(t.sent.any { it["id"] == JsonPrimitive("elicitation") }); c.close()
+    }
+    @Test fun `idle deadline pauses for reverse requests and restarts after answering`() = runTest {
+        for (method in listOf("tools/call", "prompts/get", "resources/read")) {
+            val t = FakeTransport()
+            val c = client(t, McpClientOptions("1", requestTimeoutMs=100, requestHandler = { _, _ -> delay(400); emptyObject }))
+            c.connect(); t.respond = {}
+            val call = async { try {
+                when (method) {
+                    "tools/call" -> c.callTool("x", emptyObject, idleTimeoutMs=100)
+                    "prompts/get" -> c.getPrompt("x", emptyObject)
+                    else -> c.readResource("r://x")
+                }; null
+            } catch (e: McpTimeoutException) { e } }
+            runCurrent(); advanceTimeBy(80)
+            t.received.send(json("""{"jsonrpc":"2.0","id":"ask","method":"elicitation/create","params":{}}""")); runCurrent()
+            advanceTimeBy(401); runCurrent(); assertFalse(method, call.isCompleted)
+            advanceTimeBy(80); runCurrent(); assertFalse(method, call.isCompleted)
+            advanceTimeBy(21); runCurrent(); assertEquals(McpTimeoutException.Kind.Idle, call.await()!!.kind)
+            c.close()
+        }
     }
     @Test fun `roots changed sends protocol notification`() = runTest {
         val t = FakeTransport(); val c = client(t); c.connect(); c.rootsChanged()

@@ -29,6 +29,7 @@ class McpClient(
     }
     private val pending = mutableMapOf<Long, Pending>()
     private val serverRequests = mutableMapOf<JsonElement, Job>()
+    private val serverCancelled = mutableSetOf<JsonElement>()
     private val reversePending = AtomicLong()
 
     private fun wakeIdleTimers() { synchronized(pending) { pending.values.forEach { it.activity.trySend(Unit) } } }
@@ -281,6 +282,7 @@ class McpClient(
                     buildJsonObject { put("jsonrpc", "2.0"); put("id", id); put("result", result) }
                 } catch (e: CancellationException) {
                     if (method != "elicitation/create") throw e
+                    if (synchronized(serverRequests) { id in serverCancelled }) return@launch
                     withContext(NonCancellable) {
                         withTimeoutOrNull(1_000) { catchingNonCancellation { transport.send(buildJsonObject {
                             put("jsonrpc", "2.0"); put("id", id); putJsonObject("result") { put("action", "cancel") }
@@ -298,9 +300,9 @@ class McpClient(
                         }
                     }
                 }
-                catchingNonCancellation { transport.send(response) }.onFailure { debug("MCP 服务器请求的回复发送失败。") }
+                if (!synchronized(serverRequests) { id in serverCancelled }) catchingNonCancellation { transport.send(response) }.onFailure { debug("MCP 服务器请求的回复发送失败。") }
             } finally {
-                synchronized(serverRequests) { serverRequests.remove(id) }
+                synchronized(serverRequests) { serverRequests.remove(id); serverCancelled.remove(id) }
                 reversePending.decrementAndGet(); wakeIdleTimers()
             }
             }
@@ -308,7 +310,9 @@ class McpClient(
             handler.start()
         } else if (method != null) {
             when (method) {
-                "notifications/cancelled" -> message.obj("params")?.get("requestId")?.let { requestId -> synchronized(serverRequests) { serverRequests[requestId] }?.cancel() }
+                "notifications/cancelled" -> message.obj("params")?.get("requestId")?.let { requestId ->
+                    synchronized(serverRequests) { serverRequests[requestId]?.also { serverCancelled.add(requestId); it.cancel() } }
+                }
                 "notifications/tools/list_changed" -> listVersion.update { it + 1 }
                 "notifications/progress" -> {
                     val params = message.obj("params") ?: return
