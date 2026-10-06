@@ -169,6 +169,9 @@ enum class ModelFailureKind {
     @SerialName("context_overflow") ContextOverflow,
     @SerialName("auth") Auth,
     @SerialName("bad_request") BadRequest,
+
+    /** 模型不存在、已退役、账号无权调用：重试没有意义，模型回退链（`fallbackModel`）会换下一个 */
+    @SerialName("model_unavailable") ModelUnavailable,
     @SerialName("server") Server,
     @SerialName("other") Other,
 }

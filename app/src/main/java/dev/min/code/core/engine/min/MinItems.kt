@@ -91,6 +91,7 @@ fun failureKindOf(kind: ModelFailureKind?): FailureKind? = when (kind) {
     ModelFailureKind.ContextOverflow -> FailureKind.ContextOverflow
     ModelFailureKind.Auth -> FailureKind.Auth
     ModelFailureKind.BadRequest -> FailureKind.BadRequest
+    ModelFailureKind.ModelUnavailable -> FailureKind.ModelUnavailable
     ModelFailureKind.Server -> FailureKind.Server
     ModelFailureKind.Other -> FailureKind.Other
 }

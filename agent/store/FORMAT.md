@@ -94,3 +94,4 @@
   `/branch` 与 `--fork-session` 把整份日志复制成一个新根会话后追加它作分界；折叠后组请求沿用事件里冻结的 basis 与 cacheKey，
   分支首个请求的前缀与原会话分支点逐字相同。分支不复制子 agent（引用仍指向原子会话，内核按归属拒绝跨会话发消息/停止）。
   含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-07）：`ModelFailureKind` 新增取值 `model_unavailable`（模型不存在、已退役、账号无权调用；`model_request_failed.kind` 与 `turn_ended.outcome.failed.kind` 里都可能出现）。含这个取值的日志旧版本打不开。

@@ -139,7 +139,7 @@ enum class InterruptCause {
  * 模型请求失败的种类，镜像内核的 `ModelFailureKind`（K5），但这里是通用层，不引用内核。
  * 界面据此换说明文案：Auth →「先检查供应商」，ContextOverflow →「上下文已满」。
  */
-enum class FailureKind { Network, RateLimited, Overloaded, ContextOverflow, Auth, BadRequest, Server, Other }
+enum class FailureKind { Network, RateLimited, Overloaded, ContextOverflow, Auth, BadRequest, ModelUnavailable, Server, Other }
 
 data class SettingsView(
     val model: Choice?,

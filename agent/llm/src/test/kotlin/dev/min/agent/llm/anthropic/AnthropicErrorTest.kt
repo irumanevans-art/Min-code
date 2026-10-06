@@ -41,6 +41,21 @@ class AnthropicErrorTest {
     }
 
     @Test
+    fun `404 for a missing model is unavailable while overflow and plain bad requests keep their kinds`() {
+        val missing = fail(404, anthropicError("not_found_error", "model: claude-retired-1"))
+        assertEquals(ModelFailureKind.ModelUnavailable, missing.kind)
+        assertEquals(404, missing.httpStatus)
+        assertFalse(missing.retryable)
+        // 404 但与模型无关（别的资源不存在）：仍是 BadRequest
+        assertEquals(ModelFailureKind.BadRequest, fail(404, anthropicError("not_found_error", "file not found")).kind)
+        // 超长优先：同样是 4xx，不能被误归成模型不可用
+        assertEquals(
+            ModelFailureKind.ContextOverflow,
+            fail(400, anthropicError("invalid_request_error", "prompt is too long: model limit 200000")).kind,
+        )
+    }
+
+    @Test
     fun `401 and 403 are auth failures`() {
         for (status in listOf(401, 403)) {
             val err = fail(status, anthropicError("authentication_error", "invalid x-api-key"))

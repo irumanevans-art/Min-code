@@ -170,6 +170,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
             FailureKind.ContextOverflow -> R.string.min_agent_fail_context
             FailureKind.Auth -> R.string.min_agent_fail_auth
             FailureKind.BadRequest -> R.string.min_agent_fail_bad_request
+            FailureKind.ModelUnavailable -> R.string.min_agent_fail_model_unavailable
             FailureKind.Server -> R.string.min_agent_fail_server
             FailureKind.Other, null -> R.string.min_agent_fail_other
         },

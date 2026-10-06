@@ -1,6 +1,7 @@
 package dev.min.agent.llm.anthropic
 
 import dev.min.agent.llm.ModelException
+import dev.min.agent.llm.UnavailableModel
 import dev.min.agent.spi.ModelFailureKind
 
 /*
@@ -48,7 +49,13 @@ internal fun classifyHttpFailure(
         status == 529 -> failure(ModelFailureKind.Overloaded)
         status in 500..599 -> failure(ModelFailureKind.Server)
         // 超长优先于 BadRequest：它走压缩流水线，不是「改改请求再发」
-        status in 400..499 -> failure(if (overflow.matches(body)) ModelFailureKind.ContextOverflow else ModelFailureKind.BadRequest)
+        status in 400..499 -> failure(
+            when {
+                overflow.matches(body) -> ModelFailureKind.ContextOverflow
+                UnavailableModel.matches(status, body) -> ModelFailureKind.ModelUnavailable
+                else -> ModelFailureKind.BadRequest
+            },
+        )
         else -> failure(ModelFailureKind.Other)
     }
 }
@@ -78,7 +85,12 @@ internal fun classifyStreamError(
         "api_error" -> ModelFailureKind.Server
         "rate_limit_error" -> ModelFailureKind.RateLimited
         "authentication_error", "permission_error" -> ModelFailureKind.Auth
-        else -> if (overflow.matches(message.orEmpty())) ModelFailureKind.ContextOverflow else ModelFailureKind.BadRequest
+        "not_found_error" -> if (UnavailableModel.matches(404, message.orEmpty())) ModelFailureKind.ModelUnavailable else ModelFailureKind.BadRequest
+        else -> when {
+            overflow.matches(message.orEmpty()) -> ModelFailureKind.ContextOverflow
+            UnavailableModel.matches(null, message.orEmpty()) -> ModelFailureKind.ModelUnavailable
+            else -> ModelFailureKind.BadRequest
+        }
     }
     return ModelException(kind, text, beforeFirstByte = beforeFirstByte)
 }

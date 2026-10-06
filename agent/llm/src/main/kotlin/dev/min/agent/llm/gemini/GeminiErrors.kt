@@ -1,6 +1,7 @@
 package dev.min.agent.llm.gemini
 
 import dev.min.agent.llm.ModelException
+import dev.min.agent.llm.UnavailableModel
 import dev.min.agent.spi.ModelFailureKind
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -37,6 +38,8 @@ private fun kind(code: Int?, status: String?, body: String, overflow: GeminiOver
     code == null && status == "INTERNAL" -> ModelFailureKind.Server
     code == null && status == "DEADLINE_EXCEEDED" -> ModelFailureKind.Network
     (code != null && code in 400..499 || status == "INVALID_ARGUMENT") && overflow.matches(body) -> ModelFailureKind.ContextOverflow
+    // NOT_FOUND 也可能是别的资源（上传的文件、缓存内容）不存在，只有正文提到模型才算模型不可用
+    (code == 404 || status == "NOT_FOUND") && UnavailableModel.matches(404, body) -> ModelFailureKind.ModelUnavailable
     code != null && code in 400..499 || status in setOf("INVALID_ARGUMENT", "NOT_FOUND", "FAILED_PRECONDITION") -> ModelFailureKind.BadRequest
     else -> ModelFailureKind.Other
 }

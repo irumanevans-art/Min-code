@@ -1109,6 +1109,7 @@
   <string name="min_agent_fail_context">上下文已满</string>
   <string name="min_agent_fail_auth">认证失败，先检查供应商</string>
   <string name="min_agent_fail_bad_request">请求被拒绝</string>
+  <string name="min_agent_fail_model_unavailable">模型不可用</string>
   <string name="min_agent_fail_server">供应商出错</string>
   <string name="min_agent_fail_other">未知原因</string>
   <string name="min_agent_disabled">Min Agent 在「实验」里被关闭了</string>

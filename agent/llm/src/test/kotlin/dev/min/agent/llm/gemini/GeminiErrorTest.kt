@@ -21,6 +21,11 @@ class GeminiErrorTest {
     @Test fun `http auth wins over overflow`() {
         for (code in listOf(401, 403)) { val e = http(code, "prompt is too long"); assertEquals(ModelFailureKind.Auth, e.kind); assertFalse(e.retryable); assertTrue(e.beforeFirstByte) }
     }
+    @Test fun `http 404 naming the model is unavailable but a 404 about another resource is not`() {
+        val gone = http(404, """{"error":{"code":404,"status":"NOT_FOUND","message":"models/gemini-old is not found"}}""")
+        assertEquals(ModelFailureKind.ModelUnavailable, gone.kind); assertFalse(gone.retryable)
+        assertEquals(ModelFailureKind.BadRequest, http(404, """{"error":{"code":404,"message":"File abc is not found"}}""").kind)
+    }
     @Test fun `http ordinary 4xx include not found and payload too large`() {
         for (code in listOf(400, 402, 404, 409, 413, 422)) { val e = http(code); assertEquals(ModelFailureKind.BadRequest, e.kind); assertEquals(code, e.httpStatus); assertFalse(e.retryable) }
     }
