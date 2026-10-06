@@ -29,6 +29,9 @@ class McpClient(
     }
     private val pending = mutableMapOf<Long, Pending>()
     private val serverRequests = mutableMapOf<JsonElement, Job>()
+    private val reversePending = AtomicLong()
+
+    private fun wakeIdleTimers() { synchronized(pending) { pending.values.forEach { it.activity.trySend(Unit) } } }
     private val mutableState = MutableStateFlow<McpConnectionState>(McpConnectionState.Connecting)
     val state: StateFlow<McpConnectionState> = mutableState.asStateFlow()
     private val listVersion = MutableStateFlow(0L)
@@ -237,7 +240,11 @@ class McpClient(
                     p.result.onAwait { it }
                     p.activity.onReceive { null }
                     hard?.onAwait { throw McpTimeoutException(McpTimeoutException.Kind.Hard, "$displayName：$method 超过调用总时限。") }
-                    onTimeout(idleMs) { throw McpTimeoutException(McpTimeoutException.Kind.Idle, "$displayName：$method 等待响应或进度超时。") }
+                    // 服务器在等本客户端回答时无法继续处理请求；配置的总时限仍然有效。
+                    if (reversePending.get() == 0L) onTimeout(idleMs) {
+                        if (reversePending.get() == 0L) throw McpTimeoutException(McpTimeoutException.Kind.Idle, "$displayName：$method 等待响应或进度超时。")
+                        null
+                    }
                 }
                 if (value != null) return@coroutineScope value
             }
@@ -265,6 +272,7 @@ class McpClient(
         val method = message.text("method")
         val id = message["id"]
         if (method != null && id != null) {
+            reversePending.incrementAndGet(); wakeIdleTimers()
             val handler = connectionScope.launch(start = CoroutineStart.LAZY) {
             try {
                 val response = try {
@@ -291,7 +299,10 @@ class McpClient(
                     }
                 }
                 catchingNonCancellation { transport.send(response) }.onFailure { debug("MCP 服务器请求的回复发送失败。") }
-            } finally { synchronized(serverRequests) { serverRequests.remove(id) } }
+            } finally {
+                synchronized(serverRequests) { serverRequests.remove(id) }
+                reversePending.decrementAndGet(); wakeIdleTimers()
+            }
             }
             synchronized(serverRequests) { serverRequests[id] = handler }
             handler.start()
