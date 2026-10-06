@@ -129,8 +129,8 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
     if (fields.isEmpty()) return if ((outcome as QuestionOutcome.Answered).answers.singleOrNull()?.selected == listOf("同意")) elicitationResult("accept", JsonObject(emptyMap())) else elicitationResult("decline")
     val content = mcpFormContent(fields, (outcome as QuestionOutcome.Answered).answers)
     if (content == null) {
-        commit(listOf(Note(NoteLevel.Warning, "MCP 服务器 $server 的表单答案不符合字段类型或约束，已拒绝请求。")), Durability.Sync)
-        return elicitationResult("decline")
+        commit(listOf(Note(NoteLevel.Warning, "MCP 服务器 $server 的表单答案不符合字段类型或约束，已取消请求。")), Durability.Sync)
+        return elicitationResult("cancel")
     }
     return elicitationResult("accept", content)
 }
