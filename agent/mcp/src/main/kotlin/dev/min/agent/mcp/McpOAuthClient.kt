@@ -154,7 +154,7 @@ class McpOAuthClient(
 
     private fun metadata(j: JsonObject, expectedIssuer: String?): Metadata {
         val issuer = j.text("issuer") ?: fail(McpOAuthException.Kind.Discovery)
-        secureUri(issuer)
+        if (secureUri(issuer).rawQuery != null) fail(McpOAuthException.Kind.Security)
         if (expectedIssuer != null && issuer != expectedIssuer) fail(McpOAuthException.Kind.Security)
         val auth = j.text("authorization_endpoint") ?: fail(McpOAuthException.Kind.Discovery)
         val token = j.text("token_endpoint") ?: fail(McpOAuthException.Kind.Discovery)

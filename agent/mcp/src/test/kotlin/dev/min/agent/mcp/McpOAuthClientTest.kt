@@ -40,6 +40,7 @@ class McpOAuthClientTest {
         var resourceScopes: List<String>? = listOf("read")
         var resourceMismatch = false
         var issuerMismatch = false
+        var metadataIssuer: String? = null
         var registered = 0
         var exchanged = 0
         var rejectToken = false
@@ -92,7 +93,7 @@ class McpOAuthClientTest {
                         resourceScopes?.let { put("scopes_supported", JsonArray(it.map(::JsonPrimitive))) }
                     }
                     path == asPath -> buildJsonObject {
-                        put("issuer", if(issuerMismatch) "$issuer/" else issuer)
+                        put("issuer", metadataIssuer ?: if(issuerMismatch) "$issuer/" else issuer)
                         put("authorization_endpoint", "$base/authorize"); put("token_endpoint", "$base/token")
                         put("registration_endpoint", "$base/register")
                         put("code_challenge_methods_supported", JsonArray(pkce.map(::JsonPrimitive)))
@@ -203,7 +204,7 @@ class McpOAuthClientTest {
     }
     @Test fun `resource binding issuer metadata and redirect binding are exact`() = runBlocking {
         Fixture().use { f -> f.resourceMismatch=true; expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) } }
-        Fixture().use { f -> f.issuerMismatch=true; expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) } }
+        Fixture().use { f -> f.issuerMismatch=true; expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) }; assertTrue(f.authorization.isEmpty()); assertEquals(0,f.registered) }
         Fixture().use { f -> f.callbackPath="/wrong"; expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) }; assertEquals(0,f.exchanged) }
         Unit
     }
@@ -239,6 +240,14 @@ class McpOAuthClientTest {
         for (pinned in listOf(null,"restricted")) Fixture().use { f ->
             f.asPath="/override"; f.client.login(f.key,McpOAuthSettings(authServerMetadataUrl="https://configured.example/override",scopes=pinned))
             assertEquals("/override",f.paths.first()); assertEquals(if(pinned==null) "admin offline_access" else "restricted offline_access",f.authorization["scope"])
+        }; Unit
+    }
+    @Test fun `override metadata rejects issuer query fragment and public HTTP before browser`() = runBlocking {
+        for (suffix in listOf("?tenant=x", "#fragment", "public-http")) Fixture().use { f ->
+            f.asPath="/override"
+            f.metadataIssuer=if(suffix=="public-http") "http://as.example/tenant" else "${f.issuer}$suffix"
+            expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key,McpOAuthSettings(authServerMetadataUrl="https://configured.example/override")) }
+            assertTrue(f.authorization.isEmpty()); assertEquals(0,f.registered); assertEquals(0,f.exchanged)
         }; Unit
     }
     @Test fun `registration is reusable but issuer changes require new registration`() = runBlocking {
