@@ -80,7 +80,12 @@ data class TurnProgress(
     val outputTokensSettled: Int = 0,
     val outputTokensCurrent: Int = 0,
     val trigger: TurnTriggerView = TurnTriggerView.User,
+    /** 非空 = 主模型倒了、这一回合正在用回退模型（Min 的模型回退链；别的引擎恒为 null） */
+    val fallback: FallbackNotice? = null,
 )
+
+/** 「正在用回退模型 [model]（主模型 [primary] [reason]）」。只带模型 id，文案由界面层本地化 */
+data class FallbackNotice(val model: String, val primary: String, val reason: FailureKind?)
 
 /** 谁开了这一回合 */
 enum class TurnTriggerView {
