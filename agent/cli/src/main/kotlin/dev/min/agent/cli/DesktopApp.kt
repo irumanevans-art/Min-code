@@ -26,6 +26,7 @@ import dev.min.agent.llm.openai.OpenAIResponsesClient
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.Secret
 import dev.min.agent.spi.PageConverter
@@ -144,6 +145,12 @@ internal class DesktopApp(
         projectDir = paths.guestOfHost(args.cwd).value,
         effort = runtime.state.value.settings.effort?.name?.lowercase(),
     )
+
+    /** 会话冻结清单里定义的正文（斜杠展开用）：与模型路径同一条读取（SkillFiles.readBody），不读实时配置 */
+    internal suspend fun readSkillBody(path: GuestPath): String? =
+        dev.min.agent.spi.catchingNonCancellation {
+            dev.min.agent.ext.skills.SkillFiles.readBody(paths.fs, path)
+        }.getOrNull()
 
     /** /output-style 用：磁盘上的样式（managed + 用户 + 项目链，近者胜），与内核会话创建时同一套读法 */
     suspend fun outputStyles() = dev.min.agent.ext.styles.OutputStyleFiles.available(

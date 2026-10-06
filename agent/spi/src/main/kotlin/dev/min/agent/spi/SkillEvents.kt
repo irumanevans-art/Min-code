@@ -37,6 +37,8 @@ data class SkillEntry(
     /** true = 不列给模型、模型调用也会被拒（只有用户能用 `/名字` 调） */
     val disableModelInvocation: Boolean = false,
     val userInvocable: Boolean = true,
+    /** frontmatter 的 `context`（现在只认 `fork`）：斜杠叠放规则要用，与正文同批冻结 */
+    val context: String? = null,
     /** frontmatter 的 `hooks:` 原文（与 settings 里的 hooks 同一格式）：调用这个 skill / command 时登记进会话，本会话余下回合生效 */
     val hooks: JsonObject? = null,
 )
