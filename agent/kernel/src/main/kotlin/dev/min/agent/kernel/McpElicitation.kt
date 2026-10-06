@@ -89,7 +89,7 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
         val uri = catchingNonCancellation { URI(url) }.getOrNull()
         if (uri?.scheme?.lowercase() !in setOf("http", "https") || uri?.host.isNullOrBlank()) return elicitationResult("decline")
         val request = McpUrlElicitationAsked(id, server, url, uri!!.host, message, (params["elicitationId"] as? JsonPrimitive)?.content, linked?.turnId, callId)
-        commit(listOf(request), Durability.Sync)
+        if (commitIf(listOf(request), Durability.Sync) { current -> callId == null || (current.turn?.turnId == linked?.turnId && current.turn?.calls?.get(callId)?.phase is CallPhase.EffectPending) } == null) return elicitationResult("cancel")
         val answer = try { withTimeoutOrNull(deps.mcpElicitationTimeoutMs) {
             state.first { it.mcpUrls[id]?.action != null || (callId != null && it.pendingMcpUrls.none { p -> p.request.questionId == id }) }
                 .mcpUrls[id]?.action
@@ -104,7 +104,10 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
         return elicitationResult("decline")
     }
     val questions = if (fields.isEmpty()) listOf(UserQuestion("MCP 服务器 $server 请求：$message", "确认", listOf(QuestionOption("同意", "确认服务器请求"), QuestionOption("拒绝", "拒绝服务器请求")))) else fields.map { it.question }
-    commit(listOf(QuestionAsked(linked?.turnId ?: TurnId("mcp-idle"), id, callId ?: MCP_IDLE_CALL, questions, server, standalone = true)), Durability.Sync)
+    // 检查与追加必须在同一把提交锁里；调用可能在 schema 映射期间已结束。
+    if (commitIf(listOf(QuestionAsked(linked?.turnId ?: TurnId("mcp-idle"), id, callId ?: MCP_IDLE_CALL, questions, server, standalone = true)), Durability.Sync) { current ->
+        callId == null || (current.turn?.turnId == linked?.turnId && current.turn?.calls?.get(callId)?.phase is CallPhase.EffectPending)
+    } == null) return elicitationResult("cancel")
     var answered = try { withTimeoutOrNull(deps.mcpElicitationTimeoutMs) {
         state.first { it.mcpQuestions[id]?.outcome != null || (callId != null && it.pendingMcpQuestions.none { q -> q.questionId == id }) }.mcpQuestions[id]
     } } catch (e: CancellationException) { withContext(NonCancellable) { cancelMcpQuestion(id) }; throw e }
