@@ -1766,3 +1766,33 @@ Stop cap 用例覆盖 cap=2 和四个无效值，执行 34 次真实 Stop hook�
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261006-MCP2-TEST-EVIDENCE] best_practice
+
+**Logged**: 2026-10-06T03:00:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Gradle 变异必须隔离运行，以具体功能断言失败证明检出，不能将 JUnit 初始化失败算作有效变异。
+
+### Details
+Kotlin 的 `@Test fun ... = runBlocking { ... }` 会把最后一个表达式的类型作为方法返回类型；末尾为 Boolean 时，JUnit4 报 initializationError，所有功能断言根本未运行。MCP2 将这类测试末尾改为 Unit，并重新执行有效变异。脚本解析测试 XML，要求指定测试类中的非 initializationError 失败，排除编译失败与未找到测试；每次 finally 恢复源码。另一个陷阱是同一 Gradle 命令有多个 test 任务时，后置 --tests 只过滤它紧邻的任务；基线与变异必须串行，单个任务单独过滤，不让另一任务或源码突变污染结果。
+
+### Suggested Action
+JVM 协程测试明确返回 Unit；变异保存退出码、具体失败测试和 XML，并在恢复后复跑基线。不要在同一工作树同时做变异和正常测试。
+
+### Metadata
+- Source: error
+- Related Files: agent/mcp/scripts/mcp2-mutations.ps1, agent/kernel/src/test/kotlin/dev/min/agent/kernel/McpRootsTest.kt
+- Tags: junit4, kotlin, gradle, mutation, evidence
+- Pattern-Key: tests.functional_mutation_evidence
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-06
+- **Commit/PR**: fac11054, b1bfd647
+- **Notes**: 五项均至少三处有效断言失败；恢复后的专项基线均通过。无效初始化结果已排除并重做。
+
+---

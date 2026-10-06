@@ -103,6 +103,12 @@ interface LiveProcess {
 
 ### 5.3 什么时候进工具表
 
+> MCP2 已实现（2026-10-06，agent/mcp2）：定义字符数 / 3.2 向上取整估 token，严格超过窗口 10% 才按需；
+> true / false / auto:N 冻结成日志策略，快照变化在下一回合重算。deny ToolSearch 强制全量。
+> alwaysLoad（服务器或工具元数据）始终进前缀；已加载 schema 按日志顺序追加在完整稳定前缀之后。
+> 查询按名字精确 60、前缀 25、包含 15，服务器精确 20、包含 10，描述包含 3 加分；同分沿用快照顺序，最多五个。
+> select: 接完整工具名，按指定顺序精确选择。ToolOutcome 与 McpToolsLoaded 原子提交，下一请求才追加。
+
 工具表是稳定前缀的一部分（Anthropic 的缓存顺序是 tools → system → messages，改工具表 = 整段缓存失效）。所以：
 
 - **全量模式**（默认）：MCP 工具定义总量不超过窗口的 10% 时，首个快照里的工具全部进工具表，排在内置工具之后，会话内不变。
@@ -127,6 +133,12 @@ interface LiveProcess {
 
 ## 8. resources 与 prompts（MCP2）
 
+> MCP2 已实现（2026-10-06）：资源与模板列表共用分页保护；resources 能力以首份快照冻结是否加入两项工具。
+> ui:// 与 MCP App HTML 只在列表隐藏，直接 URI 可读。输入引用转换结果与附件随 InputReceived 落盘，重放不重读。
+> prompt 参数支持引号与 --名字=值；同入口优先本地 skill、自定义命令、MCP prompt。
+> 多条 user / assistant 消息按原序合成一份用户输入，以文字标明原角色；仅保留文本、图片、资源。
+> CC 文档没有定义跨供应商的多角色合并算法，这一条是 Min 的实现决定，不伪造 assistant 历史。
+
 - 模型侧工具：`ListMcpResources`、`ReadMcpResource`（与 CC 同名）。
 - 输入里的 `@server:uri` 引用：发送前读出内容作为附件（界面的 `@` 补全在 M2-B 之后接）。
 - prompts → 斜杠命令 `/mcp__<server>__<prompt>`，参数按空白切词；接进现有 `SlashCommands`。
@@ -134,8 +146,14 @@ interface LiveProcess {
 ## 9. 客户端能力
 
 - **elicitation**（声明 form + url）：form → 现有的提问卡（`QuestionAsked`，界面与通知都能答）；url → 卡片展示完整 URL 与域名，用户点了才用 Custom Tab 打开（规范：未经同意不打开、不预取）。卡片写明是哪个服务器在要。
-- **roots**：回应会话 cwd（以后加上 additional dirs），集合变化发 `list_changed`。
+- **roots**：声明 listChanged，回应连接所属项目 cwd 与附着会话 additional dirs 的去重并集；设置与附着集合变化发 list_changed。共享 roots 不扩大单会话权限。
 - **sampling**：不声明（CC 文档也没有）。
+
+> MCP2 已实现（2026-10-06）：form 支持基本标量、enum 与上下限，不支持的 schema 整份 decline。
+> 复用 QuestionAsked，独立表单亦进入 Hub pending；URL 用独立 Asked / Resolved 事件保存服务器、完整 URL 与域名。
+> 回合内关联实际调用；同服务器调用串行，防止反向请求缺少关联字段时答错会话。空闲时选择该连接附着会话中 id 最小者，不开回合。
+> 非交互直接 decline；拒绝为 decline，取消、关闭与五分钟超时为 cancel。重开会话取消没有存活回调的遗留请求。
+> CLI 完整展示 URL，只有 y 才调用系统浏览器；App 展示与 Custom Tab 随 B7。
 
 ## 10. OAuth（已拍板：做）
 
@@ -151,6 +169,8 @@ MCP1 / MCP2 期间远程服务器只支持请求头带令牌（用户自己在�
 - `mcp_servers_loaded`：会话创建时的服务器快照（名字、作用域、传输、状态、说明；**不含**请求头、环境变量的值）。
 - `mcp_tools_snapshot`：生效的 MCP 工具（全名、原始 server/tool 名、说明、inputSchema、traits）。会话内每次生效的变化追加一条（整份替换）。请求只凭日志重建：工具表 = 内置工具 + 最后一份快照。
 - 工具调用本身走现有的 `ToolPlanned` / `ToolOutcome`，不新增。
+- MCP2 新增 `mcp_tool_search_configured` / `mcp_tools_loaded`、`mcp_url_elicitation_asked` / `mcp_url_elicitation_resolved`。
+  form 扩展现有 question 事件；资源能力与 alwaysLoad 扩展快照。工具表由快照、模式与有序加载事件重建，压缩与子 agent 继承相同顺序。
 - 全部登记 `agent/store/FORMAT.md`。
 
 ## 12. 分期与分工
@@ -161,7 +181,7 @@ MCP1 / MCP2 期间远程服务器只支持请求头带令牌（用户自己在�
 | MCP1a | 协议层 `:agent:mcp`：JSON-RPC、2025-11-25 握手（按「代」分开）、stdio / Streamable HTTP / 旧 SSE 三种传输（含会话 id、SSE 续传）、tools/list 分页、tools/call、取消、进度、ping、list_changed；`HttpTransport` 加原样响应的流式接口；官方参考服务器录真帧做回放测试 | GPT（2026-10-05 派出） |
 | MCP1b | 配置读取与信任 / 批准（§3）：`:agent:ext` 的 `McpConfigLoader`，产出带闸门结论的服务器表；批准写回 `settings.local.json`；兼容样本集（格式两单共用） | GLM 5.3 写加载器、Flash 写样本（2026-10-05 派出） |
 | MCP1c | McpManager（§4）、工具适配器、命名、快照与事件、全量模式（§5.1–5.3 全量部分）、权限与结果（§6–7）、内核与两个宿主接线 | O。**底子已合入（2026-10-05）**：`mcp_servers_loaded` / `mcp_tools_snapshot` 事件与折叠、工具表 = 内置 + 快照（MCP 在后）、系统提示的「MCP 服务器说明」段、变化排到回合开头生效、命名（64 字符 + 哈希）与 schema 整形、工具适配器（默认问人、只读提示只管并行、`requiresUserInteraction` 恒问）、整工具 deny 从工具表去掉、子 agent 按定义里的 `mcp__` 写法筛、分身与子 agent 继承快照；调用经内核内部的 `McpCaller`。**McpManager 已合入（2026-10-06）**：连接按（项目、服务器、端点）共享、无人用后留 2 分钟；新会话不等连接，首份快照在第一回合开头写（最多等到接上后 5 秒）；晚到与 list_changed 排到下一回合；stdio 掉线重启一次；**服务器掉线不改工具表**（保留最后一次的工具与说明，调用时说「现在不可用」——比去掉再加回少两次缓存失效）；结果按 §7 转换并包 `<mcp-result>`；两个宿主接了 HTTP。**端到端验收（2026-10-06，桌面 Sonnet）**：桌面 CLI + 官方参考服务器全项通过，复核修了 9 处。随后拍板：首份快照等待交互 5 秒、`-p` 30 秒（`KernelDeps.mcpFirstSnapshotWaitMs`）；连接与单次请求超时桌面 30 秒、Android 120 秒（`mcpConnectTimeoutMs`）；模型不收图片时图片在组请求处集中换成文字（`ImageDegrade`，不在 MCP 结果里各自判断）；进度不落日志；headersHelper 遇 401 重跑放 MCP3；配置读取失败落一条只带异常类名的说明。**剩下**：模拟器验收（模拟器无外网、rootfs 无 node，改用纯 bash 的 stdio 桩服务器，已派桌面 Sonnet）、界面面板（随 B7） |
-| MCP2 | resources / prompts（§8）、按需模式与 ToolSearch（§5.3）、elicitation / roots（§9） | GPT（2026-10-06 派出，`agent/mcp2`） |
+| MCP2 | resources / prompts（§8）、按需模式与 ToolSearch（§5.3）、elicitation / roots（§9） | GPT，已实现（2026-10-06，`agent/mcp2`）；验收与变异见 CODEX_REPORT_2026-10-06_mcp2.md |
 | MCP3 | OAuth（§10，已拍板做） | 待定 |
 | MCP4 | 2026-07-28 现代协议（discover、MRTR、`subscriptions/listen`、新的请求头）与两代自动探测 | GPT |
 | — | 界面：服务器面板（状态、工具数、stderr、重连、开关）、批准卡片、elicitation 卡片 | 随 M2-B B7 |
