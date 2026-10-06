@@ -94,3 +94,13 @@
   `/branch` 与 `--fork-session` 把整份日志复制成一个新根会话后追加它作分界；折叠后组请求沿用事件里冻结的 basis 与 cacheKey，
   分支首个请求的前缀与原会话分支点逐字相同。分支不复制子 agent（引用仍指向原子会话，内核按归属拒绝跨会话发消息/停止）。
   含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-06）：后台 hooks 与组件 hooks 落地（`async` / `asyncRewake`、skill / command / 子 agent frontmatter 的 hooks）：
+  `hooks_ran` 新增可选字段 `background`（`true` = 这是后台 hook **完成时**的记录，`handlers` 恒为 1；启动不落事件——进程死了日志里就没有「还在跑」的痕迹，重开会话不假装在等；
+  完成时的 `decision` 恒为 `neutral`：控制字段对后台 hook 一律无效，收到时在 `problems` 里说明忽略）。`asyncRewake` 退出码 2 唤醒空闲会话时写
+  `input_received`（`origin = hook`，`delivery = queue`）并开一个新回合；`turn_started.trigger` 新增取值 `hook`（后台 hook 唤醒的回合，转录里与 `resume` / `notification` 一样留分隔）。
+  新增事件 `component_hooks_registered`（`kind`：skill / command / agent，`name`、`layer`（managed / user / project / local——项目层过工作区信任后才登记）、`hooks`：frontmatter 原文）：
+  skill / command 被调用（模型调 Skill 工具、用户敲 `/名字`）时登记进本会话，余下回合一直生效，重开会话照常折叠出来；子 agent 的写在**子会话**自己的日志里（`Stop` 键在写入前改写成 `SubagentStop`），会话结束即随它出局，不进父会话、不传给孙会话。同名组件重复登记不叠加。
+  新增事件 `component_hooks_updated`（`kind`、`name`、`hooks`：移除后的整份替换）：`once: true` 的处理器成功跑一次（退出码 0、没超时、没起不来）后从所属组件移除；失败、exit 2、超时都保留。只有 skill / command 响应 `once`（settings 与 agent 定义的忽略，CC 原文）。
+  含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-06）：新增事件 `session_renamed`（`name`：`--name` 建会话或 `/rename` 改名，写入前已规整——控制与不可见格式字符换空格、去首尾空白、最长 200 字符；空名不写）。
+  折叠取最后一条为当前名字；`--resume <名字>` 据此按名找当前目录最近的根会话。同名建会话时内核自动改成 `-2`、`-3` 变体（改名的值原样保留）。含新事件的日志旧版本打不开；旧日志照常读。
