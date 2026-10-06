@@ -20,7 +20,7 @@ class McpToolSearchTest {
 
     @Test fun `mode honors exact threshold auto percent overrides and deny`() {
         val tokens = selectMcpSearchMode(snapshot, 1_000, "true", false).estimatedTokens
-        assertFalse(selectMcpSearchMode(snapshot, tokens * 10, null, false).enabled)
+        assertTrue(selectMcpSearchMode(snapshot, tokens * 10, null, false).enabled)
         assertTrue(selectMcpSearchMode(snapshot, tokens * 10 - 1, "auto", false).enabled)
         assertTrue(selectMcpSearchMode(snapshot, tokens * 10, "auto:5", false).enabled)
         assertFalse(selectMcpSearchMode(snapshot, 1, "false", false).enabled)
@@ -41,7 +41,7 @@ class McpToolSearchTest {
     @Test fun `late catalog reevaluates frozen strategy only when staged snapshot applies`() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            val base = testDeps(ScriptedModel(), emptyList()); var env = "auto:0"
+            val base = testDeps(ScriptedModel(), emptyList()); var env = "auto:0.01"
             val deps = KernelDeps(base.clock, base.ids, base.models, base.tools, base.host, base.platform, base.zone, env = { if (it == "ENABLE_TOOL_SEARCH") env else null })
             val store = FileSessionStore(tmp.root.toPath(), { 0L })
             val rt = SessionRuntime.create(store, LogHeader(LOG_FORMAT_VERSION, SessionId("late"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions), deps, scope)
@@ -52,7 +52,9 @@ class McpToolSearchTest {
             assertFalse(rt.state.value.mcpToolSearch!!.enabled)
             rt.applyStagedMcp()
             assertTrue(rt.state.value.mcpToolSearch!!.enabled)
-            assertEquals("auto:0.0", rt.state.value.mcpToolSearch!!.strategy)
+            assertEquals("auto:0.01", rt.state.value.mcpToolSearch!!.strategy)
+            rt.stageMcp(null, McpToolsSnapshot(emptyList())); rt.applyStagedMcp()
+            assertTrue(rt.state.value.mcpToolSearch!!.enabled)
             val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         } finally { scope.cancel() }
     }
@@ -88,14 +90,14 @@ class McpToolSearchTest {
         } finally { scope.cancel() }
     }
 
-    @Test fun `ToolSearch deny returns full catalog despite the frozen enabled mode`() = runBlocking {
+    @Test fun `late ToolSearch deny cannot rearrange the frozen enabled catalog`() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val deps = testDeps(ScriptedModel(), emptyList())
             val store = FileSessionStore(tmp.root.toPath(), { 0L })
             val rt = SessionRuntime.create(store, LogHeader(LOG_FORMAT_VERSION, SessionId("s"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions), deps, scope,
                 initial=listOf(snapshot, McpToolSearchConfigured(true, 1, 1, 10.0), PermissionRulesLoaded(listOf(RuleEntry(RuleKindData.Deny, "ToolSearch", "user")))))
-            assertEquals(snapshot.tools.map { it.name }, availableTools(rt.state.value, deps).map { it.name })
+            assertEquals(listOf("mcp__db__bootstrap", "ToolSearch"), availableTools(rt.state.value, deps).map { it.name })
             val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         } finally { scope.cancel() }
     }

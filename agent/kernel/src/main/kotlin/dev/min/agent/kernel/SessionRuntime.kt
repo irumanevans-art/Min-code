@@ -160,7 +160,8 @@ class SessionRuntime private constructor(
         if (state.value.mcpTools != null && previous == null) return events
         val tools = events.filterIsInstance<dev.min.agent.spi.McpToolsSnapshot>().lastOrNull() ?: return events
         val window = deps.models.resolve(state.value.settings.model).profile.contextWindow
-        val selected = selectMcpSearchMode(tools, window, previous?.strategy ?: deps.env("ENABLE_TOOL_SEARCH"), state.value.deniesToolSearch(deps))
+        val selected = selectMcpSearchMode(tools, window, previous?.strategy ?: deps.env("ENABLE_TOOL_SEARCH"), previous?.denied ?: state.value.deniesToolSearch(deps))
+            .let { if (previous?.enabled == true) it.copy(enabled=true) else it }
         return if (selected == previous) events else events + selected
     }
 

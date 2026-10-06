@@ -15,16 +15,16 @@ internal fun selectMcpSearchMode(snapshot: McpToolsSnapshot, window: Int, settin
     val enabled = !denied && when (value) {
         "true" -> true
         "false" -> false
-        else -> tokens > window * threshold / 100.0
+        else -> tokens >= window * threshold / 100.0
     }
-    return McpToolSearchConfigured(enabled, tokens, window, threshold, strategy)
+    return McpToolSearchConfigured(enabled, tokens, window, threshold, strategy, denied)
 }
 
 internal fun SessionState.deniesToolSearch(deps: KernelDeps): Boolean = PolicyEngine.deniesWholeTool("ToolSearch", PolicyContext(
     mode=settings.mode, rules=(rules + sessionRules).mapNotNull(PermissionRule::from), cwd=settings.cwd, home=deps.memoryHome ?: GuestPath("/root"),
 ))
 
-internal fun SessionState.usesMcpToolSearch(deps: KernelDeps) = mcpToolSearch?.enabled == true && !deniesToolSearch(deps)
+internal fun SessionState.usesMcpToolSearch(deps: KernelDeps) = mcpToolSearch?.enabled == true
 
 internal fun searchMcpTools(tools: List<McpToolEntry>, query: String): List<McpToolEntry> {
     if (query.startsWith("select:")) {

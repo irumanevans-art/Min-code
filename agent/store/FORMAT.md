@@ -96,9 +96,8 @@
   含新事件的日志旧版本打不开；旧日志照常读。
 # MCP2 资源快照与附件
 
-`mcp_tools_snapshot.resourceServers`（默认空列表）记录首份快照中声明 resources 的服务器。
-后续快照沿用首份值，决定 ListMcpResources / ReadMcpResource 是否在稳定工具前缀中。
-`@server:uri` 在发送前转换为附件与规范 Part，内容随 `input_received.parts` 同步落盘；
+`mcp_tools_snapshot.resourceServers`（默认空列表）记录已就绪的 resources 服务器；晚连上的服务器在下一回合加入，掉线保留已知能力。
+`@server:uri` 仅对宿主显式标为人工输入的文本扫描，在发送前转换为预算内的附件与规范 Part，内容随 `input_received.parts` 同步落盘；
 附件全文存 ArtifactSink，并在快照仓库可用时保留 ContentId。恢复与压缩从既有 Part 重建，不访问服务器。
 
 ## MCP2 elicitation
@@ -115,8 +114,8 @@
 
 - `mcp_tools_snapshot.tools[].alwaysLoad`（默认 false）：服务器 alwaysLoad 或工具元数据的合并结果。
 - `mcp_tool_search_configured`：首份快照同批记录 enabled、estimatedTokens、contextWindow、thresholdPercent、strategy（默认 auto）；
-  strategy 冻结环境选择，后续工具快照在下一回合生效时重新估算并记录模式，不在回合中切换。
-  旧日志无此事件时为全量。deny ToolSearch 随持久规则派生为全量。
+  strategy 冻结环境选择，`denied`（默认 false）冻结首份快照的 ToolSearch deny 判定；按需模式在边界重新估算，只可 false→true。
+  旧日志无此事件时为全量；中途增加 deny 只阻止执行，不重新排列工具表。阈值比较为 >=。
 - `mcp_tools_loaded`：names 是本批发现的工具全名，按返回顺序追加并去重。顺序与集合完全由日志折叠。
   `ToolResult.effects` 的 `mcp_load_tools` 与 ToolOutcome 同一次提交生成该事件；下一次请求追加加载的 schema，
   内置、资源、alwaysLoad、ToolSearch 和 StructuredOutput 已有前缀保持原样。压缩不清除；子 agent / 分身继承模式和顺序。

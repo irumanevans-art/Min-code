@@ -69,7 +69,7 @@ data class McpToolsSnapshot(
 
 @Serializable
 @SerialName("mcp_tool_search_configured")
-data class McpToolSearchConfigured(val enabled: Boolean, val estimatedTokens: Int, val contextWindow: Int, val thresholdPercent: Double, val strategy: String = "auto") : SessionEvent
+data class McpToolSearchConfigured(val enabled: Boolean, val estimatedTokens: Int, val contextWindow: Int, val thresholdPercent: Double, val strategy: String = "auto", val denied: Boolean = false) : SessionEvent
 
 @Serializable
 @SerialName("mcp_tools_loaded")
