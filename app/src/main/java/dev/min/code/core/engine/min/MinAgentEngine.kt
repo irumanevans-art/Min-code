@@ -94,6 +94,8 @@ class MinAgentEngine(
     override val text: MinAgentText = ResMinAgentText(context),
     private val enabled: StateFlow<Boolean> = MutableStateFlow(true),
     transport: HttpTransport = UrlConnectionTransport(),
+    /** 设备操作（读屏、点击……）；null = 没有设备工具（测试）。开关见 [minToolsWithDevice] */
+    devices: dev.min.code.core.device.DeviceActions? = null,
 ) : AgentEngine, MinSessionHost {
     override val kind = EngineKind.MinAgent
     override val capabilities = EngineCapabilities.MinAgent
@@ -117,7 +119,11 @@ class MinAgentEngine(
     private val ports = MinHostPorts({ generation }, tasks, dev.min.agent.spi.Clock { System.currentTimeMillis() })
 
     internal val snapshots = CasWorkspaceSnapshots(File(context.filesDir, "agent").toPath(), { generation.fs }, MinKernelDeps.MEMORY_HOME)
-    private val kernelDeps = MinKernelDeps.build(resolver, ports, snapshots = snapshots)
+    private val kernelDeps = MinKernelDeps.build(
+        resolver, ports, snapshots = snapshots,
+        // 与 Claude Code 引擎那边的 DeviceMcpRegistrar 读同一个设置：controlDevice
+        tools = minToolsWithDevice(devices, enabled = { settings.snapshot?.controlDevice == true }),
+    )
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
     internal val processes: dev.min.agent.spi.ProcessPort get() = kernelDeps.host.processes
