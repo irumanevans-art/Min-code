@@ -484,7 +484,7 @@ class SessionRuntime private constructor(
      * 登记一个 skill / command 的 frontmatter hooks（hooks设计 §frontmatter）：本会话余下回合一直生效。
      * 模型调 Skill 工具与用户敲 `/名字` 两条路都到这里（斜杠展开在宿主，那里拿到展开的组件名后调本方法）。
      * 项目层（project / local）要过工作区信任——与 settings 的 hooks 同一条规则（CC：项目 skill 同 settings）。
-     * 幂等：同名组件已登记就不再写（处理器翻倍等于同一个门禁跑两遍）
+     * 每次**调用**都重新登记全量（CC 的 invoke 时 register）：整份替换同名的旧登记，`once` 已用掉的也回来
      */
     suspend fun registerComponentHooks(kind: String, name: String, layer: String, hooks: kotlinx.serialization.json.JsonObject) {
         if (hooks.isEmpty()) return
@@ -503,7 +503,6 @@ class SessionRuntime private constructor(
                 return
             }
         }
-        if (state.value.componentHooks.any { it.kind == kind && it.name == name }) return
         commit(listOf(dev.min.agent.spi.ComponentHooksRegistered(kind, name, layer, hooks)), Durability.Sync)
     }
 

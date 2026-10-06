@@ -14,6 +14,8 @@ import dev.min.agent.spi.DelegateRequest
 import dev.min.agent.spi.DelegateResult
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.ExecOptions
+import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.FORK_AGENT_TYPE
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HookContextAdded
@@ -27,6 +29,7 @@ import dev.min.agent.spi.PermissionRulesLoaded
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.SessionStore
+import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.SubagentSpawned
 import dev.min.agent.spi.ToolResult
@@ -117,15 +120,28 @@ data class SessionSummary(
 )
 
 /**
- * 名字规整（照 CC）：控制字符与不可见字符（零宽、BOM 一类格式字符）换成空格、首尾去空白、最长 200 字符。
- * 规整后为空返回 null——空名拒绝。日志里存的名字永远是规整后的
+ * 名字规整（照 CC）：控制字符与不可见字符（零宽、BOM 一类格式字符，含补充平面的 TAG 一族）换成空格、
+ * 首尾去空白、最长 200 个**码点**。按 code point 而不是 UTF-16 码元：按码元截会把代理对截成两半，
+ * 落盘成 ?，重开后名字与运行时对不上（违反日志即真相）、按名续接也找不到。规整后为空返回 null——空名拒绝。
+ * 日志里存的名字永远是规整后的
  */
-fun normalizeSessionName(raw: String): String? =
-    raw.map { c -> if (c.isISOControl() || Character.getType(c) == Character.FORMAT.toInt()) ' ' else c }
-        .joinToString("")
-        .trim()
-        .take(200)
+fun normalizeSessionName(raw: String): String? {
+    val cleaned = buildString {
+        raw.codePoints().forEach { cp ->
+            val invisible = Character.isISOControl(cp) ||
+                Character.getType(cp) == Character.FORMAT.toInt() ||
+                cp == 0x2028 || cp == 0x2029 // 行/段分隔：日志一行一条事件，名字里不能混进换行
+            appendCodePoint(if (invisible) ' '.code else cp)
+        }
+    }
+    // limit(200) 按码点截；codePoints 的收集器直接拼 StringBuilder，不落中间数组
+    return cleaned.trim()
+        .codePoints()
+        .limit(200)
+        .collect({ StringBuilder() }, { sb, cp -> sb.appendCodePoint(cp) }, { a, b -> a.append(b) })
+        .toString()
         .ifEmpty { null }
+}
 
 /**
  * 一个进程一个：持有所有在线的会话运行时，负责委派子 agent、交付报告、恢复后的补发（docs/agent/detail/子agent设计.md §5）。
@@ -142,6 +158,25 @@ class SessionHub(
     agents: List<AgentDefinition> = BuiltinAgents.all,
 ) {
     private val definitions: Map<String, AgentDefinition> = agents.associateBy { it.name }
+
+    init {
+        // 启动时清扫上一条命留下的后台 hook 暂存目录：进程死了目录还在，in.json 里带着工具入参
+        // （可能含密钥），不能一直躺在盘上。此刻本 Hub 还没有在线会话，剩下的 hookbg_* 必然是孤儿
+        scope.launch { sweepOrphanHookDirs() }
+    }
+
+    private suspend fun sweepOrphanHookDirs() {
+        dev.min.agent.spi.catchingNonCancellation {
+            val root = GuestPath("/root/.min/hooks")
+            val orphans = deps.host.fs.list(root).filter { it.kind == dev.min.agent.spi.FileKind.Directory && it.name.startsWith("hookbg_") }
+            if (orphans.isEmpty()) return@catchingNonCancellation
+            val rm = deps.host.exec.run(
+                ShellCommand("rm -rf -- " + orphans.joinToString(" ") { d -> "'${root.value}/${d.name}'" }, root),
+                ExecOptions(5_000),
+            )
+            if (rm is ExecResult.Backgrounded) deps.host.exec.kill(rm.handle)
+        }
+    }
 
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
     internal var mcp = McpManager(
@@ -240,10 +275,10 @@ class SessionHub(
     }
 
     /** 同目录下没有别的根会话在用的名字：有就加 `-2`、`-3`……（按名续接按名字找，重名会找错会话） */
-    private suspend fun uniqueName(cwd: GuestPath, wanted: String): String {
+    private suspend fun uniqueName(cwd: GuestPath, wanted: String, exclude: SessionId? = null): String {
         var candidate = wanted
         var n = 2
-        while (findSessionByName(cwd, candidate) != null) {
+        while (findSessionByName(cwd, candidate, exclude) != null) {
             candidate = "$wanted-$n"
             n++
         }
@@ -254,9 +289,9 @@ class SessionHub(
      * 按名字找当前目录下最近的根会话（`--resume <名字>`，x 不是会话 id 时用）。
      * 名字取每个日志里最后一条 session_renamed；从新到旧找，先碰到先赢
      */
-    suspend fun findSessionByName(cwd: GuestPath, name: String): SessionId? {
+    suspend fun findSessionByName(cwd: GuestPath, name: String, exclude: SessionId? = null): SessionId? {
         for (header in store.list().asReversed()) {
-            if (header.parent != null) continue
+            if (header.parent != null || header.sessionId == exclude) continue
             val log = store.open(header.sessionId) ?: continue
             var created: dev.min.agent.spi.SessionCreated? = null
             var found: String? = null
@@ -524,6 +559,10 @@ class SessionHub(
             runStartHooks = false,
         )
         register(runtime)
+        // 分支沿用原会话的名字会跟原会话重名（按名续接取到较新的分支、原会话反而找不到）：同目录占用时套 -2 变体
+        s.name?.let { n ->
+            runtime.commit(listOf(dev.min.agent.spi.SessionRenamed(uniqueName(s.created.cwd, n, exclude = runtime.sessionId))), Durability.Sync)
+        }
         // 根会话接上 MCP（快照已在日志里，与 open 同一套）；检查点的回收根给新会话登记一份（复用 Checkpointer.retain）
         attachMcp(runtime, fresh = false)
         runtime.checkpointer.retainAfterTurn()
@@ -617,7 +656,8 @@ class SessionHub(
         }
 
         val child = SessionRuntime.create(
-            store, header, created, deps, scope, initial + inheritedRules(ps) + inheritedSkills(ps) + inheritedMcp(ps),
+            store, header, created, deps, scope,
+            initial + inheritedRules(ps) + inheritedSkills(ps) + inheritedMcp(ps) + inheritedComponentHooks(ps),
             // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载（来历里的 omitMemory 管着，重开后同样）；分身照常——它接着父会话的活干
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
         )
@@ -688,6 +728,15 @@ class SessionHub(
      * 连接是共用的（McpManager 按服务器与项目共享），所以不需要子会话自己再连
      */
     private fun inheritedMcp(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.mcpServers, parent.mcpTools)
+
+    /**
+     * skill / command 登记的 frontmatter hooks 也是门禁（PreToolUse 拦危险命令一类），子 agent / 分身
+     * 绕过它是漏洞：创建时快照继承父会话当时的组件 hooks（与 settings hooks 的继承同一口径——各自的日志、
+     * 互不回写，`once` 在子会话里用掉只改子会话）。Stop 改写成 SubagentStop（子会话里触发的是它自己的
+     * 完成事件，不改写就永远不响）
+     */
+    private fun inheritedComponentHooks(parent: SessionState): List<SessionEvent> =
+        parent.componentHooks.map { c -> c.copy(hooks = stopToSubagentStop(c.hooks)) }
 
     private fun toolsFor(definition: AgentDefinition, depth: Int): List<String>? {
         val names = deps.tools.map { it.name }

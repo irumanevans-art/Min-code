@@ -104,3 +104,10 @@
   含新事件的日志旧版本打不开；旧日志照常读。
 - v1 增量（2026-10-06）：新增事件 `session_renamed`（`name`：`--name` 建会话或 `/rename` 改名，写入前已规整——控制与不可见格式字符换空格、去首尾空白、最长 200 字符；空名不写）。
   折叠取最后一条为当前名字；`--resume <名字>` 据此按名找当前目录最近的根会话。同名建会话时内核自动改成 `-2`、`-3` 变体（改名的值原样保留）。含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-07，hooks-async 复核修复）：`skills_loaded.entries[]` 新增可选字段 `hooks`（skill / command frontmatter 的 `hooks:` 原文，2026-10-06 引入、当时漏登记）与
+  `context`（frontmatter 的 `context`，现在只认 `fork`；斜杠叠放规则要用）。旧日志缺这两个键照常读（没有即无 hooks / 非 fork）。
+  `once` 的「成功」口径收紧：退出码 0 之外还要结论为 Neutral / Allow、没有非阻断错误、没被它自己拦下（exit 2、JSON 的 `decision` / `permissionDecision` 拒绝、`continue:false` 同属拦截）——
+  拦截过的 `once` 不写 `component_hooks_updated`，hook 保留。skill / command **每次被调用**都重新写一条 `component_hooks_registered`（整份替换同名旧登记，`once` 已用掉的也回来；不再去重跳过）。
+  委派子 agent / 分身时父会话当时的全部 `component_hooks_registered` 以快照写进子会话日志（`Stop` 键改写成 `SubagentStop`；`once` 在子会话里用掉只改子会话）——取代上一条「不传给孙会话」的说法。
+  `session_renamed` 的规整改为按 **code point**：截 200 个码点（不是 UTF-16 码元，不再截出半个代理对）、U+2028 / U+2029 也换空格、补充平面的格式字符（U+E0000 一族 TAG）按码点判不可见。
+  `/branch` 复制来的名字与本目录已有名字撞车时，分支在复制完的日志末尾再写一条 `session_renamed` 改成 `-2` 变体。含新字段的日志旧版本打不开；旧日志照常读。

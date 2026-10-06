@@ -77,6 +77,11 @@ class SessionNamingTest {
         assertEquals("auth refactor", normalizeSessionName("  auth\u0000refactor\n"))
         assertEquals("x".repeat(200), normalizeSessionName("x".repeat(300)))
         assertNull(normalizeSessionName("  \u0000\u200B \n"))
+        // M6：按 code point 截 200——UTF-16 码元截会把代理对截成两半；U+2028/2029 与补充平面的 TAG 字符按不可见换空格
+        assertEquals("a" + "😀".repeat(199), normalizeSessionName("a" + "😀".repeat(200)))
+        assertEquals("a b", normalizeSessionName("a\u2028b"))
+        assertEquals("a b", normalizeSessionName("a\u2029b"))
+        assertEquals("x y", normalizeSessionName("x" + String(Character.toChars(0xE0001)) + "y"))
         val h = hub()
         val rt = h.create(cwd, TEST_MODEL, PermissionMode.Default)
         assertEquals(null, rt.rename("\u0001\u0002"))   // 空名：拒绝、不写
@@ -88,6 +93,21 @@ class SessionNamingTest {
         assertEquals("orbit", rt.state.value.name)
         assertEquals(listOf("太空计划", "orbit"), store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>().map { it.name })
         logIsTruth(rt)
+    }
+
+    @Test
+    fun `代理对名字截断后重开一致，按名也找得到`() = run {
+        val longName = "a" + "😀".repeat(200) // 规整后是 200 个码点、399 个码元
+        val h = hub()
+        val rt = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = longName)
+        val normalized = "a" + "😀".repeat(199)
+        assertEquals(normalized, rt.state.value.name)
+        // 重开（新 hub 模拟新进程）：名字从日志折叠回来，逐字相等（没有被截出半个代理对落成 ?）
+        val reopened = hub().open(rt.sessionId)!!
+        assertEquals(normalized, reopened.state.value.name)
+        assertEquals(rt.state.value, reopened.state.value)
+        // 按名续接找得到（findSessionByName 读的是日志里的同一个名字）
+        assertEquals(rt.sessionId, h.findSessionByName(cwd, normalized))
     }
 
     @Test
@@ -132,5 +152,17 @@ class SessionNamingTest {
         val reopened = hub().open(rt.sessionId)!!
         assertEquals("harvest", reopened.state.value.name)
         assertEquals(rt.state.value, reopened.state.value)
+    }
+
+    @Test
+    fun `分支沿用原会话名字时套 -2 变体，按名续接仍取到原会话`() = run {
+        val h = hub()
+        val rt = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = "auth")
+        val branched = h.branch(rt.sessionId)
+        assertEquals("分支与原会话重名时加变体", "auth-2", branched.state.value.name)
+        // 按名续接取到的是原会话（较新的分支不叫 auth）
+        assertEquals(rt.sessionId, h.findSessionByName(cwd, "auth"))
+        assertEquals(branched.sessionId, h.findSessionByName(cwd, "auth-2"))
+        logIsTruth(branched)
     }
 }
