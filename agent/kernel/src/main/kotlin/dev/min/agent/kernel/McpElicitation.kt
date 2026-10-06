@@ -103,8 +103,8 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
         commit(listOf(Note(NoteLevel.Warning, "MCP 服务器 $server 的 elicitation 表单包含不能映射的 schema，已拒绝整份请求。")), Durability.Sync)
         return elicitationResult("decline")
     }
-    if (fields.isEmpty()) return elicitationResult("accept", JsonObject(emptyMap()))
-    commit(listOf(QuestionAsked(linked?.turnId ?: TurnId("mcp-idle"), id, callId ?: MCP_IDLE_CALL, fields.map { it.question }, server, standalone = true)), Durability.Sync)
+    val questions = if (fields.isEmpty()) listOf(UserQuestion("MCP 服务器 $server 请求：$message", "确认", listOf(QuestionOption("同意", "确认服务器请求"), QuestionOption("拒绝", "拒绝服务器请求")))) else fields.map { it.question }
+    commit(listOf(QuestionAsked(linked?.turnId ?: TurnId("mcp-idle"), id, callId ?: MCP_IDLE_CALL, questions, server, standalone = true)), Durability.Sync)
     var answered = try { withTimeoutOrNull(deps.mcpElicitationTimeoutMs) {
         state.first { it.mcpQuestions[id]?.outcome != null || (callId != null && it.pendingMcpQuestions.none { q -> q.questionId == id }) }.mcpQuestions[id]
     } } catch (e: CancellationException) { withContext(NonCancellable) { cancelMcpQuestion(id) }; throw e }
@@ -115,6 +115,7 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
     if (answered == null || answered.cancelled || answered.outcome == null) return elicitationResult("cancel")
     val outcome = answered.outcome
     if (outcome is QuestionOutcome.Declined) return elicitationResult("decline")
+    if (fields.isEmpty()) return if ((outcome as QuestionOutcome.Answered).answers.singleOrNull()?.selected == listOf("同意")) elicitationResult("accept", JsonObject(emptyMap())) else elicitationResult("decline")
     val content = mcpFormContent(fields, (outcome as QuestionOutcome.Answered).answers)
     if (content == null) {
         commit(listOf(Note(NoteLevel.Warning, "MCP 服务器 $server 的表单答案不符合字段类型或约束，已拒绝请求。")), Durability.Sync)

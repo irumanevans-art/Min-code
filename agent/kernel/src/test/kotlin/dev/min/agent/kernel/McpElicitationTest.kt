@@ -13,6 +13,17 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 
 class McpElicitationTest {
+    @Test fun `empty schema requires explicit human confirmation`() = runBlocking {
+        runCase { rt, _, _ -> coroutineScope {
+            val request = async { rt.handleMcpElicitation("danger", json("""{"message":"确认删除全部数据？","requestedSchema":{"type":"object","properties":{}}}""")) }
+            val asked = withTimeout(500) { rt.state.first { it.pendingMcpQuestions.isNotEmpty() }.pendingMcpQuestions.single() }
+            assertFalse(request.isCompleted)
+            assertTrue(asked.questions.single().question.contains("danger"))
+            assertTrue(asked.questions.single().question.contains("确认删除全部数据？"))
+            rt.answerQuestion(asked.questionId, listOf(QuestionAnswer(selected=listOf("同意"))))
+            assertEquals(json("""{"action":"accept","content":{}}"""), request.await())
+        } }
+    }
     @Test fun `manager associates reverse elicitation with its actual executing MCP call`() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
