@@ -120,6 +120,7 @@ class SessionRuntime private constructor(
     /** MCP 工具的调用口（MCP设计 §6）：McpManager 接上之前是不可用的；子会话由 Hub 设成父会话那个 */
     @Volatile
     internal var mcpCaller: McpCaller = McpCaller.Unavailable
+    internal val mcpClosed = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     /** 排着、等下一回合开头生效的 MCP 变化（后连上的服务器、list_changed）。只在内存里：没生效的变化不进日志 */
     private val stagedMcp = java.util.concurrent.atomic.AtomicReference<List<SessionEvent>?>(null)
@@ -389,15 +390,20 @@ class SessionRuntime private constructor(
      * 那是界面的 bug，不是用户的选择，什么都不写。那次提问已经不在等了（另一端先答了、回合已结束）返回 false。
      */
     suspend fun answerQuestion(questionId: QuestionId, answers: List<QuestionAnswer>): Boolean {
+        if (questionId in state.value.mcpUrls) {
+            require(answers.size == 1)
+            return resolveMcpUrl(questionId, if (answers.single().selected == listOf("y")) "accept" else "decline")
+        }
         // 问题落盘后不再变，在锁外取来校验即可；「还在等」才必须与写入同在一把锁里判定
-        val asked = _state.value.turn?.questions?.get(questionId) ?: return false
+        val asked = _state.value.turn?.questions?.get(questionId) ?: _state.value.mcpQuestions[questionId] ?: return false
         answerProblem(asked.questions, answers)?.let { throw IllegalArgumentException("答案不合法：$it") }
         return commitIf(listOf(QuestionAnswered(questionId, answers)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
     }
 
     /** 用户关掉提问、不回答：模型会收到「用户没有回答」，按现有信息继续。不在等了返回 false */
     suspend fun declineQuestion(questionId: QuestionId): Boolean =
-        commitIf(listOf(QuestionAnswered(questionId, declined = true)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
+        if (questionId in state.value.mcpUrls) resolveMcpUrl(questionId, "decline")
+        else commitIf(listOf(QuestionAnswered(questionId, declined = true)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
 
     /**
      * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
@@ -637,6 +643,7 @@ class SessionRuntime private constructor(
             val state = fold(log.header, log.read().toList())
             val runtime = SessionRuntime(log, state, deps, scope, hub)
             runtime.commit(planRecovery(state), Durability.Sync)
+            runtime.cancelMcpElicitations(close = false)
             return runtime
         }
     }

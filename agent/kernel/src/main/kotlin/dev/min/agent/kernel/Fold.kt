@@ -347,6 +347,15 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is ConversationRewound -> withRewind(record, e)
         // MCP 快照整份替换；变化说明给界面看（模型从工具表与系统提示里看到变化）
         is dev.min.agent.spi.McpServersLoaded -> copy(mcpServers = e)
+        is dev.min.agent.spi.McpUrlElicitationAsked -> {
+            check(e.questionId !in mcpUrls)
+            copy(mcpUrls = mcpUrls + (e.questionId to McpUrlPending(e, atMs = record.atMs)))
+        }
+        is dev.min.agent.spi.McpUrlElicitationResolved -> {
+            val pending = checkNotNull(mcpUrls[e.questionId])
+            check(pending.action == null && e.action in listOf("accept", "decline", "cancel"))
+            copy(mcpUrls = mcpUrls + (e.questionId to pending.copy(action = e.action)))
+        }
         is dev.min.agent.spi.McpToolsSnapshot -> copy(
             mcpTools = e.copy(resourceServers = mcpTools?.resourceServers ?: e.resourceServers),
             presentation = if (e.note == null) presentation else presentation + SessionPresentation(record, history.lastOrNull()?.messageId),

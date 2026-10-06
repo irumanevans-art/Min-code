@@ -25,6 +25,7 @@ private val NUMBER_LIST = Regex("""^\d+(\s*[,，、\s]\s*\d+)*$""")
 internal fun parseConsoleAnswer(question: UserQuestion, line: String): ConsoleAnswer {
     val text = line.trim()
     if (text.isEmpty()) return ConsoleAnswer.Skip
+    if (question.options.isEmpty() || (question.inputType != null && question.options.all { it.label == "（不提供此字段）" })) return ConsoleAnswer.Answer(QuestionAnswer(other = text))
     // 只有编号才当作选择；混了别的字（如「2 个都要」）就是用户自己写的话
     if (!NUMBER_LIST.matches(text)) return ConsoleAnswer.Answer(QuestionAnswer(other = text))
     val picks = text.split(',', '，', '、', ' ', '\t').filter { it.isNotBlank() }.map { it.toInt() }.distinct()

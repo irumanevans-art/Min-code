@@ -85,7 +85,7 @@ data class HubPending(
             val floorReason: String?,
         ) : What
 
-        data class Question(val questionId: QuestionId, val callId: CallId, val questions: List<UserQuestion>) : What
+        data class Question(val questionId: QuestionId, val callId: CallId, val questions: List<UserQuestion>, val mcpUrl: dev.min.agent.spi.McpUrlElicitationAsked? = null) : What
     }
 }
 
@@ -130,6 +130,7 @@ class SessionHub(
         scope,
         ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs),
         startupWaitMs = deps.mcpFirstSnapshotWaitMs,
+        sessionLookup = { runtimes[it] },
     )
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
     private val openLock = Mutex()
@@ -255,7 +256,7 @@ class SessionHub(
         }
         // 关了门还能写：SessionEnd 的运行记录要落盘。跑完再封住写入
         runtimes[id]?.takeIf { it.state.value.origin == null }?.let { runSessionEnd(it, reason) }
-        closing.forEach { it.sealWrites() }
+        closing.forEach { it.cancelMcpElicitations(); it.sealWrites() }
         tree.forEach(::unload)
         return true
     }
@@ -344,8 +345,8 @@ class SessionHub(
         // 根会话的 SessionEnd 在删日志之前跑；不在内存里的也临时打开跑一遍（清理类 hook 的副作用不该因为会话不在线就跳过）
         val rootRuntime = runtimes[root] ?: SessionRuntime.open(store, root, deps, scope)
         if (rootRuntime != null && rootRuntime.state.value.origin == null) runSessionEnd(rootRuntime, reason)
-        for (id in order) runtimes[id]?.sealWrites()
-        rootRuntime?.sealWrites()
+        for (id in order) runtimes[id]?.let { it.cancelMcpElicitations(); it.sealWrites() }
+        rootRuntime?.let { it.cancelMcpElicitations(); it.sealWrites() }
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {
@@ -706,17 +707,18 @@ class SessionHub(
     }
 
     private fun pendingOf(id: SessionId, s: SessionState): List<HubPending> {
-        val t = s.turn ?: return emptyList()
+        val t = s.turn
         val origin = s.origin
         fun item(atMs: Long, what: HubPending.What) =
             HubPending(id, origin?.root ?: id, origin?.parent, origin?.agentType, atMs, what)
-        val approvals = t.calls.values.mapNotNull { call ->
+        val approvals = t?.calls?.values.orEmpty().mapNotNull { call ->
             (call.phase as? CallPhase.AwaitingApproval)?.let { a ->
                 item(a.requestedAtMs, HubPending.What.Approval(a.approvalId, call.callId, call.tool, a.ask, a.suggestedRule, a.floorReason))
             }
         }
-        val questions = t.pendingQuestions.map { q -> item(q.askedAtMs, HubPending.What.Question(q.questionId, q.callId, q.questions)) }
-        return approvals + questions
+        val questions = (t?.pendingQuestions.orEmpty() + s.pendingMcpQuestions).map { q -> item(q.askedAtMs, HubPending.What.Question(q.questionId, q.callId, q.questions)) }
+        val urls = s.pendingMcpUrls.map { p -> item(p.atMs, HubPending.What.Question(p.request.questionId, p.request.callId ?: MCP_IDLE_CALL, listOf(urlQuestion(p.request)), p.request)) }
+        return approvals + questions + urls
     }
 
     /**

@@ -40,6 +40,7 @@ internal data class McpCallRequest(
     /** 结果里的图片原图、音频、二进制资源落到这里（会话附件） */
     val artifacts: dev.min.agent.spi.ArtifactSink,
     val progress: (String) -> Unit,
+    val resourceUri: String? = null,
 )
 
 /**
@@ -53,6 +54,7 @@ internal fun interface McpCaller {
     suspend fun getPrompt(server: String, name: String, arguments: JsonObject): List<dev.min.agent.mcp.McpPromptMessage> = error("服务器不支持 prompts。")
     suspend fun readResource(server: String, uri: String, artifacts: dev.min.agent.spi.ArtifactSink, id: String): ToolResult =
         ToolResult(listOf(TextPart("MCP 服务器 $server 不支持读取资源。")), isError = true)
+    suspend fun readResourceFor(server: String, uri: String, ctx: ToolContext): ToolResult = readResource(server, uri, ctx.artifacts, ctx.callId.value)
 
     companion object {
         val Unavailable = McpCaller { r ->
@@ -92,7 +94,7 @@ internal class McpToolAdapter(private val entry: McpToolEntry, private val calle
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = channelFlow {
         val result = caller.call(
-            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts) { text -> trySend(ToolProgress.Status(text)) },
+            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts, { text -> trySend(ToolProgress.Status(text)) }),
         )
         send(ToolProgress.Done(result))
     }

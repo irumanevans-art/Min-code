@@ -33,7 +33,7 @@ internal class McpResourceTool(private val read: Boolean, private val servers: L
     override fun run(input: JsonObject, ctx: ToolContext) = flow {
         val server = input["server"]?.jsonPrimitive?.content
         val result = try {
-            if (read) caller.readResource(server!!, input["uri"]!!.jsonPrimitive.content, ctx.artifacts, ctx.callId.value)
+            if (read) caller.readResourceFor(server!!, input["uri"]!!.jsonPrimitive.content, ctx)
             else ToolResult(listOf(TextPart(JsonArray(caller.listResources(server?.let(::listOf) ?: servers).filterNot(::isMcpAppResource)).toString())))
         } catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
         catch (e: Exception) { McpResults.failure(server ?: "资源列表", e) }
@@ -50,7 +50,7 @@ internal suspend fun SessionRuntime.attachMcpResources(parts: List<Part>, id: Cl
         catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
         catch (e: Exception) { McpResults.failure(mention.first, e) }
         val text = result.content.filterIsInstance<TextPart>().joinToString("\n") { it.text }
-        val path = deps.host.artifacts(sessionId).put("mcp/input-${id.value}-$index.txt", text.toByteArray())
+        val path = catchingNonCancellation { deps.host.artifacts(sessionId).put("mcp/input-${id.value}-$index.txt", text.toByteArray()) }.getOrElse { "附件保存失败，内容已随消息记录" }
         val contentId = preserve(text.toByteArray())
         attached += TextPart("[MCP 附件 @${mention.first}:${mention.second}，$path${contentId?.let { "，内容 ${it.value}" }.orEmpty()}${if (result.isError) "；读取失败，消息照常发送" else ""}]")
         // 内容与图片直接随 InputReceived 落盘，复开和压缩只重放这份输入，不再读取服务器。

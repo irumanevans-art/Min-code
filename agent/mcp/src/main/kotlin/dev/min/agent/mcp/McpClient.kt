@@ -28,6 +28,7 @@ class McpClient(
         val progressQueue = Channel<McpProgress>(16, BufferOverflow.DROP_OLDEST)
     }
     private val pending = mutableMapOf<Long, Pending>()
+    private val serverRequests = mutableMapOf<JsonElement, Job>()
     private val mutableState = MutableStateFlow<McpConnectionState>(McpConnectionState.Connecting)
     val state: StateFlow<McpConnectionState> = mutableState.asStateFlow()
     private val listVersion = MutableStateFlow(0L)
@@ -264,12 +265,21 @@ class McpClient(
         val method = message.text("method")
         val id = message["id"]
         if (method != null && id != null) {
-            connectionScope.launch {
+            val handler = connectionScope.launch(start = CoroutineStart.LAZY) {
+            try {
                 val response = try {
                     // ping 不能排在用户交互 handler 后面等待。
                     val result = if (method == "ping") emptyObject else options.requestHandler(method, message.obj("params"))
                     buildJsonObject { put("jsonrpc", "2.0"); put("id", id); put("result", result) }
-                } catch (e: CancellationException) { throw e }
+                } catch (e: CancellationException) {
+                    if (method != "elicitation/create") throw e
+                    withContext(NonCancellable) {
+                        withTimeoutOrNull(1_000) { catchingNonCancellation { transport.send(buildJsonObject {
+                            put("jsonrpc", "2.0"); put("id", id); putJsonObject("result") { put("action", "cancel") }
+                        }) } }
+                    }
+                    return@launch
+                }
                 catch (e: Exception) {
                     buildJsonObject {
                         put("jsonrpc", "2.0"); put("id", id)
@@ -281,9 +291,13 @@ class McpClient(
                     }
                 }
                 catchingNonCancellation { transport.send(response) }.onFailure { debug("MCP 服务器请求的回复发送失败。") }
+            } finally { synchronized(serverRequests) { serverRequests.remove(id) } }
             }
+            synchronized(serverRequests) { serverRequests[id] = handler }
+            handler.start()
         } else if (method != null) {
             when (method) {
+                "notifications/cancelled" -> message.obj("params")?.get("requestId")?.let { requestId -> synchronized(serverRequests) { serverRequests[requestId] }?.cancel() }
                 "notifications/tools/list_changed" -> listVersion.update { it + 1 }
                 "notifications/progress" -> {
                     val params = message.obj("params") ?: return

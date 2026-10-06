@@ -71,6 +71,7 @@ internal fun interface McpConnector {
     suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection
     suspend fun connectWithRoots(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>): McpConnection =
         connect(spec, projectRoot, scope)
+    suspend fun connectWithInteraction(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>, elicit: suspend (JsonObject?) -> JsonObject): McpConnection = connectWithRoots(spec, projectRoot, scope, roots)
 }
 
 /**
@@ -89,7 +90,11 @@ internal class ClientConnector(
     }
 
     override suspend fun connectWithRoots(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>): McpConnection {
-        val options = clientOptions(spec.name, roots)
+        return connectWithInteraction(spec, projectRoot, scope, roots) { buildJsonObject { put("action", "decline") } }
+    }
+
+    override suspend fun connectWithInteraction(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>, elicit: suspend (JsonObject?) -> JsonObject): McpConnection {
+        val options = clientOptions(spec.name, roots, elicit)
         return when (spec) {
             is McpServerSpec.Stdio -> {
                 val process = processes.spawn(
@@ -116,12 +121,15 @@ internal class ClientConnector(
         }
     }
 
-    internal fun clientOptions(server: String, roots: () -> List<GuestPath>) =
+    internal fun clientOptions(server: String, roots: () -> List<GuestPath>, elicit: suspend (JsonObject?) -> JsonObject = { buildJsonObject { put("action", "decline") } }) =
         McpClientOptions(clientVersion = clientVersion, serverLabel = server, requestTimeoutMs = requestTimeoutMs,
-            capabilities = buildJsonObject { putJsonObject("roots") { put("listChanged", true) } },
-            requestHandler = { method, _ ->
-                if (method != "roots/list") throw dev.min.agent.mcp.McpRpcException(-32601, "不支持这个 MCP 请求方法。")
-                rootsResult(roots())
+            capabilities = buildJsonObject { putJsonObject("roots") { put("listChanged", true) }; putJsonObject("elicitation") { putJsonObject("form") {}; putJsonObject("url") {} } },
+            requestHandler = { method, params ->
+                when (method) {
+                    "roots/list" -> rootsResult(roots())
+                    "elicitation/create" -> elicit(params)
+                    else -> throw dev.min.agent.mcp.McpRpcException(-32601, "不支持这个 MCP 请求方法。")
+                }
             })
 
     private suspend fun open(client: McpClient, tail: () -> List<String>): McpConnection {

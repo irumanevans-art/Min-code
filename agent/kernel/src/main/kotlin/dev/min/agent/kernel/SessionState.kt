@@ -160,6 +160,8 @@ data class SessionState(
     val mcpServers: dev.min.agent.spi.McpServersLoaded? = null,
     /** 最后一份生效的 MCP 工具快照：工具表 = 内置工具 + 它（经 [visibleMcpTools] 过滤） */
     val mcpTools: dev.min.agent.spi.McpToolsSnapshot? = null,
+    val mcpQuestions: Map<QuestionId, AskedQuestion> = emptyMap(),
+    val mcpUrls: Map<QuestionId, McpUrlPending> = emptyMap(),
 )
 
 data class CompactionView(
@@ -273,7 +275,18 @@ data class AskedQuestion(
     val questions: List<UserQuestion>,
     val outcome: QuestionOutcome?,
     val askedAtMs: Long = 0,
+    val server: String? = null,
+    val mcpTurnId: TurnId? = null,
+    val cancelled: Boolean = false,
 )
+
+data class McpUrlPending(val request: dev.min.agent.spi.McpUrlElicitationAsked, val action: String? = null, val atMs: Long = 0)
+
+val SessionState.pendingMcpQuestions: List<AskedQuestion>
+    get() = mcpQuestions.values.filter { it.outcome == null && (it.mcpTurnId == null || (turn?.turnId == it.mcpTurnId && turn.calls[it.callId]?.phase is CallPhase.EffectPending)) }
+
+val SessionState.pendingMcpUrls: List<McpUrlPending>
+    get() = mcpUrls.values.filter { it.action == null && (it.request.callId == null || (turn?.turnId == it.request.turnId && turn?.calls?.get(it.request.callId)?.phase is CallPhase.EffectPending)) }
 
 data class OpenRequest(
     val requestId: RequestId,

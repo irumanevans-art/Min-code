@@ -28,6 +28,14 @@ internal class FakeTransport : McpTransport {
 }
 @OptIn(ExperimentalCoroutinesApi::class)
 class McpClientTest {
+    @Test fun `server can cancel reverse elicitation and receives cancel`() = runTest {
+        val t = FakeTransport()
+        val c = client(t, McpClientOptions("1", requestHandler = { _, _ -> awaitCancellation() }))
+        c.connect()
+        t.received.send(json("""{"jsonrpc":"2.0","id":"elicitation","method":"elicitation/create","params":{}}""")); runCurrent()
+        t.received.send(rpcNotification("notifications/cancelled", json("""{"requestId":"elicitation"}"""))); runCurrent()
+        assertEquals("cancel", t.sent.last().obj("result")!!.text("action")); c.close()
+    }
     @Test fun `roots changed sends protocol notification`() = runTest {
         val t = FakeTransport(); val c = client(t); c.connect(); c.rootsChanged()
         assertEquals("notifications/roots/list_changed", t.sent.last().text("method"))

@@ -16,7 +16,7 @@ class McpRootsTest {
 
     @Test fun `roots declare changes and encode current directory and extras`() = runBlocking {
         var dirs = listOf(GuestPath("/项目 space/#"), GuestPath("/extra"))
-        val options = ClientConnector(ProcessPort.Unavailable, null, "1").clientOptions("s") { dirs }
+        val options = ClientConnector(ProcessPort.Unavailable, null, "1").clientOptions("s", roots = { dirs })
         assertEquals(true, options.capabilities["roots"]!!.jsonObject["listChanged"]!!.jsonPrimitive.boolean)
         val first = options.requestHandler("roots/list", null).jsonObject["roots"]!!.jsonArray
         assertEquals(listOf("file:///%E9%A1%B9%E7%9B%AE%20space/%23", "file:///extra"), first.map { it.jsonObject["uri"]!!.jsonPrimitive.content })

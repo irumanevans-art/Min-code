@@ -48,7 +48,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     // /branch 会换会话：退出时的 SessionEnd 要跟当前会话走（分支是用户现在所在的对话）
     var runtime = initial
     val stdin = System.`in`.bufferedReader()
-    var ui = ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
+    var uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out)
+    var ui = uiConsole.attach(scope)
     try {
         System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
 
@@ -99,7 +100,9 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/rewind 回退；/branch 分支当前会话；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
-        val line = stdin.readLine() ?: return 0
+        uiConsole.mainOwnsInput = true
+        val line = try { stdin.readLine() } finally { uiConsole.mainOwnsInput = false } ?: return 0
+        if (uiConsole.consumeIdleMcpInput(line)) continue
         val trimmed = line.trim()
         when {
             trimmed.isEmpty() -> continue
@@ -118,7 +121,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
                     val branched = app.branchSession(runtime)
                     ui.cancel()
                     runtime = branched
-                    ui = ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
+                    uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out)
+                    ui = uiConsole.attach(scope)
                     System.err.println("已切到分支 ${runtime.sessionId.value}（分支自 ${branched.state.value.branched?.from?.value}；原会话保留，可各自 --resume）")
                 } catch (e: dev.min.agent.kernel.SessionBranchRefused) {
                     System.err.println(e.message)

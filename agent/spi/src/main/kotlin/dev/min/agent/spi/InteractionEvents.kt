@@ -31,6 +31,8 @@ data class UserQuestion(
     val header: String,
     val options: List<QuestionOption>,
     val multiSelect: Boolean = false,
+    /** MCP 表单中的基本类型，宿主据此选择输入控件；旧提问没有此字段。 */
+    val inputType: String? = null,
 )
 
 /**
@@ -80,6 +82,9 @@ data class QuestionAsked(
     val questionId: QuestionId,
     val callId: CallId,
     val questions: List<UserQuestion>,
+    val mcpServer: String? = null,
+    /** 外部提问可在空闲时到来，不能为它伪造一次模型回合。 */
+    val standalone: Boolean = false,
 ) : SessionEvent
 
 /** 用户的答复。[declined] 为真表示用户关掉了提问，这时 [answers] 为空 */
@@ -89,6 +94,7 @@ data class QuestionAnswered(
     val questionId: QuestionId,
     val answers: List<QuestionAnswer> = emptyList(),
     val declined: Boolean = false,
+    val cancelled: Boolean = false,
 ) : SessionEvent
 
 /**

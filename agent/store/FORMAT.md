@@ -100,3 +100,12 @@
 后续快照沿用首份值，决定 ListMcpResources / ReadMcpResource 是否在稳定工具前缀中。
 `@server:uri` 在发送前转换为附件与规范 Part，内容随 `input_received.parts` 同步落盘；
 附件全文存 ArtifactSink，并在快照仓库可用时保留 ContentId。恢复与压缩从既有 Part 重建，不访问服务器。
+
+## MCP2 elicitation
+
+- `question_asked` 新增 `mcpServer`（默认 null）与 `standalone`（默认 false）。外部 form 可独立于回合；
+  空闲时 turnId / callId 为 `mcp-idle`，回合内则保存真实调用标识。questions 带服务器来源，inputType（默认 null）提示基本类型。
+- `question_answered.cancelled` 默认 false；取消时 declined=true，区分拒答与取消。外部表单从日志独立折叠，恢复时未完成请求补 cancel。
+- `mcp_url_elicitation_asked`：questionId、server、完整 url、domain、message、elicitationId、可选 turnId / callId。
+- `mcp_url_elicitation_resolved`：questionId、action（accept / decline / cancel）。待处理项同时进入 Hub pending，
+  `What.Question.mcpUrl` 保留 URL 元数据供 B7 宿主显示和打开；记录事件不会发网络请求或启动回合。
