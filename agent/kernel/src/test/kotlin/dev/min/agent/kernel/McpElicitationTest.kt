@@ -13,6 +13,41 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 
 class McpElicitationTest {
+    @Test fun `call finishing while question waits for commit cannot corrupt replay`() = runBlocking {
+        runCase { rt, _, store -> coroutineScope {
+            val turn = TurnId("race"); val call = CallId("race")
+            rt.commit(listOf(TurnStarted(turn, TurnTrigger.User), ToolPlanned(turn, call, "mcp__s__x", args(), ResumePolicy.Unknown), ToolEffectPending(turn, call)), Durability.Sync)
+            val mutex = SessionRuntime::class.java.getDeclaredField("commitLock").apply { isAccessible = true }.get(rt) as kotlinx.coroutines.sync.Mutex
+            mutex.lock()
+            val finish = async(start=CoroutineStart.UNDISPATCHED) { rt.commit(listOf(ToolOutcome(turn, call, ToolResult(emptyList()))), Durability.Sync) }
+            val request = async(start=CoroutineStart.UNDISPATCHED) { rt.handleMcpElicitation("s", form, call) }
+            mutex.unlock(); finish.await()
+            assertEquals("cancel", request.await()["action"]!!.jsonPrimitive.content)
+            val log = store.open(rt.sessionId)!!
+            assertTrue(log.read().toList().none { it.event is QuestionAsked })
+            assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+        } }
+    }
+
+    @Test fun `invalid typed answer cancels instead of claiming human refusal`() = runBlocking {
+        runCase { rt, _, _ -> coroutineScope {
+            val request = async { rt.handleMcpElicitation("s", json("""{"message":"count","requestedSchema":{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]}}""")) }
+            val q = rt.state.first { it.pendingMcpQuestions.isNotEmpty() }.pendingMcpQuestions.single()
+            rt.answerQuestion(q.questionId, listOf(QuestionAnswer(other="3.0")))
+            assertEquals("cancel", request.await()["action"]!!.jsonPrimitive.content)
+        } }
+    }
+
+    @Test fun `credential field names and titles decline before persisting questions`() = runBlocking {
+        runCase { rt, _, store ->
+            for (label in listOf("password", "passwd", "SECRET", "accessToken", "api key", "credential")) for (title in listOf(false, true)) {
+                val property = if (title) args("ordinary" to args("type" to "string", "title" to label)) else args(label to args("type" to "string"))
+                assertEquals(label, "decline", rt.handleMcpElicitation("s", args("message" to "login", "requestedSchema" to args("type" to "object", "properties" to property)))["action"]!!.jsonPrimitive.content)
+            }
+            val events = store.open(rt.sessionId)!!.read().toList().map { it.event }
+            assertTrue(events.none { it is QuestionAsked }); assertTrue(events.filterIsInstance<Note>().any { "敏感" in it.text })
+        }
+    }
     @Test fun `empty schema requires explicit human confirmation`() = runBlocking {
         runCase { rt, _, _ -> coroutineScope {
             val request = async { rt.handleMcpElicitation("danger", json("""{"message":"确认删除全部数据？","requestedSchema":{"type":"object","properties":{}}}""")) }

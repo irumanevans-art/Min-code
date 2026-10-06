@@ -8,6 +8,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConsoleQuestionsTest {
+    @Test fun `optional typed fields omit with dash or enter and invalid integers retry`() {
+        val q = UserQuestion("count", "count", listOf(QuestionOption("（不提供此字段）", "")), inputType="integer")
+        for (line in listOf("-", "")) assertEquals(ConsoleAnswer.Answer(QuestionAnswer(selected=listOf("（不提供此字段）"))), parseConsoleAnswer(q, line))
+        assertEquals(ConsoleAnswer.Answer(QuestionAnswer(other="1")), parseConsoleAnswer(q, "1"))
+        for (line in listOf("3.0", "abc")) assertTrue(parseConsoleAnswer(q, line) is ConsoleAnswer.Retry)
+        assertTrue(renderQuestion(q).contains("-")); assertTrue(renderQuestion(q).contains("省略"))
+    }
     private val options = listOf(QuestionOption("红", "暖色"), QuestionOption("蓝", ""), QuestionOption("绿", ""))
     private val single = UserQuestion("选个颜色？", "颜色", options)
     private val multi = single.copy(multiSelect = true)
