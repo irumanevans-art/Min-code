@@ -352,7 +352,13 @@ internal class McpManager(
             withTimeoutOrNull(startupWaitMs) { binding.entries.values.forEach { it.settled.await() } }
             val definitions = binding.entries.values.filter { it.spec.name != "anthropic-skills" }.flatMap { entry ->
                 val connection = entry.connection?.takeIf { it.capabilities.containsKey("prompts") } ?: return@flatMap emptyList()
-                connection.listPrompts().mapNotNull { raw -> (raw["name"] as? JsonPrimitive)?.content?.let { Triple(entry.spec.name, it, raw) } }
+                val listed = try { connection.listPrompts() }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) {
+                    binding.rt.commit(listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "MCP 服务器 ${entry.spec.name} 的 prompts/list 失败；其他服务器的 prompts 仍可使用。")), dev.min.agent.spi.Durability.Sync)
+                    emptyList()
+                }
+                listed.mapNotNull { raw -> (raw["name"] as? JsonPrimitive)?.content?.let { Triple(entry.spec.name, it, raw) } }
             }
             val names = McpNames.assign(definitions.map { it.first to it.second })
             return definitions.map { (server, prompt, raw) ->
