@@ -197,7 +197,7 @@ internal class McpManager(
                         val active = entry.activeCall
                         val rt = active?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt }
                             ?: entry.inputOwner
-                            ?: bindings.values.filter { it.entries.values.any { e -> e === entry } }.sortedBy { it.rt.sessionId.value }.firstOrNull()?.rt
+                            ?: bindings.values.filter { it.entries.values.any { e -> e === entry } }.sortedWith(compareByDescending<Binding> { it.rt.lastMcpActivity }.thenBy { it.rt.sessionId.value }).firstOrNull()?.rt
                         rt?.handleMcpElicitation(entry.spec.name, params, active?.callId)
                             ?: kotlinx.serialization.json.buildJsonObject { put("action", JsonPrimitive("decline")) }
                     }

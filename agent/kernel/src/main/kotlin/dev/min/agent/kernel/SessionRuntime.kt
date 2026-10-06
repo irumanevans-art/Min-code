@@ -75,6 +75,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.booleanOrNull
 
+private val mcpActivitySequence = java.util.concurrent.atomic.AtomicLong()
+
 /**
  * 一个会话的运行时。会话状态只有一条修改路径：[commit]——先落盘，再折叠进 [state]。
  * 回合跑在 [scope] 里的一个子 Job 上；用户的命令（插话、审批、中断）与回合并发到达，都走 [commit]。
@@ -121,6 +123,7 @@ class SessionRuntime private constructor(
     @Volatile
     internal var mcpCaller: McpCaller = McpCaller.Unavailable
     internal val mcpClosed = kotlinx.coroutines.CompletableDeferred<Unit>()
+    @Volatile internal var lastMcpActivity: Long = 0
 
     /** 排着、等下一回合开头生效的 MCP 变化（后连上的服务器、list_changed）。只在内存里：没生效的变化不进日志 */
     private val stagedMcp = java.util.concurrent.atomic.AtomicReference<List<SessionEvent>?>(null)
@@ -222,6 +225,7 @@ class SessionRuntime private constructor(
                 if (sealed || !precondition(_state.value)) return@withLock null
                 val records = log.append(events, durability)
                 _state.value = records.fold(_state.value) { s, r -> s.apply(r) }
+                if (events.any { it is InputReceived || it is dev.min.agent.spi.TurnEnded }) lastMcpActivity = mcpActivitySequence.incrementAndGet()
                 records
             }
         }
