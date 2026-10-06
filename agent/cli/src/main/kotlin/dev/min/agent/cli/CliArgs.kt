@@ -43,6 +43,7 @@ data class CliArgs(
     val continueMostRecent: Boolean = false,
     /** 声明模型能看图（目录外的自定义模型默认不能，图片会换成文字说明）；目录里已标能看图的不受影响 */
     val images: Boolean = false,
+    val noBrowser: Boolean = false,
 )
 
 class UsageException(message: String) : Exception(message)
@@ -66,6 +67,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --json                 非交互时最后输出一行 JSON 结果（评测用）
   --resume <会话 id>     接着一个已有会话
   --trust                信任当前项目：执行项目 .claude/ 设置里的 hooks（默认只执行用户级与托管的）
+  --no-browser           MCP OAuth 打印授权 URL，手工粘贴回调 URL
   --search-backend <id>  brave / tavily / searxng；也可用 MIN_AGENT_SEARCH_BACKEND
   --search-url <url>     SearXNG 基础地址，也可用 MIN_AGENT_SEARXNG_URL
   --fast-model <id>      提取模型，同一供应商；默认会话模型
@@ -85,7 +87,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     while (i < argv.size) {
         val arg = argv[i]
         when (arg) {
-            "--json", "--trust", "--fork-session", "--continue", "--images" -> flags += arg
+            "--json", "--trust", "--fork-session", "--continue", "--images", "--no-browser" -> flags += arg
             "-h", "--help" -> throw UsageException(USAGE)
             else -> {
                 if (!arg.startsWith("-")) throw UsageException("不认识的参数：$arg\n\n$USAGE")
@@ -156,6 +158,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         forkSession = "--fork-session" in flags,
         continueMostRecent = "--continue" in flags,
         images = "--images" in flags,
+        noBrowser = "--no-browser" in flags,
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages
