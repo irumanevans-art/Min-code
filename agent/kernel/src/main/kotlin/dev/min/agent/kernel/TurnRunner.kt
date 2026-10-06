@@ -35,6 +35,7 @@ import dev.min.agent.spi.Durability
 import dev.min.agent.spi.HarnessProfile
 import dev.min.agent.spi.InputPromoted
 import dev.min.agent.spi.ModelFailureKind
+import dev.min.agent.spi.ModelFallback
 import dev.min.agent.spi.ModelRequestFailed
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.TurnEnded
@@ -294,13 +295,15 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
     private suspend fun requestWithRetry(turnId: TurnId): ModelStreamEvent.Completed {
         val requestId = RequestId(deps.ids.next("req"))
+        // 尝试次数按「当前这个模型」数：换到回退模型后从 1 重来，重试预算与界面的「第 n 次」都不该带着主模型的失败
         var attempt = 1
-        // 发请求前按阈值遮蔽 / 摘要（docs/agent/detail/压缩设计.md §2）；撞墙时再压缩一次，只重试一次
-        compactor.beforeRequest(turnId, deps.models.resolve(rt.state.value.settings.model))
+        // 发请求前按阈值遮蔽 / 摘要（docs/agent/detail/压缩设计.md §2）；撞墙时再压缩一次，只重试一次。
+        // 回退链生效中（同一回合的后续请求）按回退模型的窗口算
+        compactor.beforeRequest(turnId, deps.models.resolve(rt.state.value.activeModel))
         var overflowCompacted = false
         while (true) {
             val state = rt.state.value
-            val model = deps.models.resolve(state.settings.model)
+            val model = deps.models.resolve(state.activeModel)
             val request = assemble(state, model.profile)
             rt.commit(
                 listOf(ModelRequestStarted(turnId, requestId, attempt, model.profile.ref, prefixFingerprint(request))),
@@ -336,11 +339,52 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     attempt++
                     continue
                 }
-                if (!willRetry) throw TurnAbort("模型请求失败（${e.kind}）：${e.message}", e.kind)
+                if (!willRetry) {
+                    // 重试用尽（或根本不可重试）：换链上的下一个模型，同一个请求在新模型上重新来过
+                    val fallback = switchToFallback(turnId, requestId, e)
+                    if (fallback != null) {
+                        attempt = 1
+                        overflowCompacted = false
+                        // 新模型的窗口可能更小：先按它的预算遮蔽 / 摘要
+                        compactor.beforeRequest(turnId, fallback)
+                        continue
+                    }
+                    throw TurnAbort(failureMessage(e), e.kind)
+                }
                 delay(deps.retry.delayMs(attempt, e.retryAfterMs))
                 attempt++
             }
         }
+    }
+
+    /**
+     * 模型回退链（[KernelDeps.fallbackModels]）：这类失败（[FallbackPolicy.triggers]）在重试用尽后换链上的下一个能用的模型，
+     * 落 [ModelFallback] 并返回它；链空了或没有可换的返回 null，调用方照常让回合失败。
+     * 链上解析不了的模型（目录里没有、没配凭证）跳过并留一条说明，不让一个写错的备用项挡住后面的好备用
+     */
+    private suspend fun switchToFallback(turnId: TurnId, requestId: RequestId, e: ModelException): ResolvedModel? {
+        if (deps.fallbackModels.isEmpty() || !FallbackPolicy.triggers(e.kind)) return null
+        val state = rt.state.value
+        val current = state.activeModel
+        for (candidate in FallbackPolicy.after(deps.fallbackModels, state.settings.model, current)) {
+            val resolved = dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(candidate) }.getOrElse { problem ->
+                rt.commit(
+                    listOf(Note(NoteLevel.Warning, "回退模型 ${candidate.providerId}:${candidate.modelId} 用不了（${problem.message}），已跳过")),
+                    Durability.Batched,
+                )
+                null
+            } ?: continue
+            rt.commit(listOf(ModelFallback(turnId, requestId, current, candidate, e.kind, e.message ?: e.kind.name)), Durability.Sync)
+            return resolved
+        }
+        return null
+    }
+
+    /** 请求最终失败的说明；这个回合里换过模型的，把走过的路写上，免得只看到最后一个模型的错误 */
+    private fun failureMessage(e: ModelException): String {
+        val fallback = rt.state.value.turn?.fallback
+        val path = if (fallback == null) "" else "（本回合先用主模型 ${fallback.primary.modelId}，失败后换到了 ${fallback.model.modelId}）"
+        return "模型请求失败（${e.kind}）：${e.message}$path"
     }
 
     private suspend fun stream(

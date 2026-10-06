@@ -39,6 +39,7 @@ import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.MemoryAttached
 import dev.min.agent.spi.MemoryLoaded
+import dev.min.agent.spi.ModelFallback
 import dev.min.agent.spi.ModelRequestFailed
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.Note
@@ -177,6 +178,12 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(t.openRequest?.requestId == e.requestId) { "失败的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
             t.copy(openRequest = null)
         }
+        is ModelFallback -> updateTurn(e.turnId) { t ->
+            check(t.openRequest == null) { "模型回退发生在请求失败之后，当前仍有进行中的请求 ${t.openRequest?.requestId}" }
+            val failed = t.fallback?.model ?: settings.model
+            check(failed == e.from) { "回退的起点 ${e.from} 与失败的模型 $failed 对不上" }
+            t.copy(fallback = FallbackInUse(settings.model, e.to, e.reason, e.message))
+        }.copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is ToolPlanned -> updateTurn(e.turnId) { t ->
             check(e.callId !in t.calls) { "重复规划调用 ${e.callId}" }
             t.copy(calls = t.calls + (e.callId to CallState(e.callId, e.tool, e.input, e.resumePolicy, CallPhase.Planned)))

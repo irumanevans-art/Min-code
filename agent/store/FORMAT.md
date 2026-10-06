@@ -95,3 +95,5 @@
   分支首个请求的前缀与原会话分支点逐字相同。分支不复制子 agent（引用仍指向原子会话，内核按归属拒绝跨会话发消息/停止）。
   含新事件的日志旧版本打不开；旧日志照常读。
 - v1 增量（2026-10-07）：`ModelFailureKind` 新增取值 `model_unavailable`（模型不存在、已退役、账号无权调用；`model_request_failed.kind` 与 `turn_ended.outcome.failed.kind` 里都可能出现）。含这个取值的日志旧版本打不开。
+- v1 增量（2026-10-07）：新增事件 `model_fallback`（模型回退链，`spi/FallbackEvents.kt`）：`turnId`、`requestId`（刚失败、换模型后用同一 id 重发的请求）、`from` / `to`（`ModelRef`）、`reason`（`ModelFailureKind`：只会是 `overloaded` / `server` / `model_unavailable`）、`message`（供应商报错原文）。
+  落在 `model_request_failed`（`willRetry:false`）之后、换模型重发的 `model_request_started`（`attempt` 从 1 重新数）之前。**只管这一个回合**：折叠进 `TurnState.fallback`，回合结束随回合清掉，下一回合先试主模型；因此重开会话不会停在回退模型上。回退链本身（`fallbackModel` / `--fallback-model`）是运行时选项，不进日志、不随 resume 恢复。含新事件的日志旧版本打不开。

@@ -162,6 +162,17 @@ data class SessionState(
     val mcpTools: dev.min.agent.spi.McpToolsSnapshot? = null,
 )
 
+/**
+ * 回退链生效中的状态。[model] 是现在用的（链上可能已经走到第二个），[primary] 是会话设置里的主模型；
+ * [reason] / [message] 是促成**最近一次**切换的失败，界面据此写「正在用回退模型 X（主模型 Y 过载）」
+ */
+data class FallbackInUse(
+    val primary: ModelRef,
+    val model: ModelRef,
+    val reason: dev.min.agent.spi.ModelFailureKind,
+    val message: String,
+)
+
 data class CompactionView(
     /** 对应 ContextCompacted.compactionId：SessionStart(compact) 的上下文挂靠键 */
     val compactionId: String,
@@ -203,6 +214,9 @@ data class SessionPresentation(
     val partialMessageId: MessageId? = null,
     val partialParts: List<Part> = emptyList(),
 )
+
+/** 现在发请求该用的模型：回退链生效中用回退模型，否则是会话设置里的 */
+val SessionState.activeModel: ModelRef get() = turn?.fallback?.model ?: settings.model
 
 data class SessionSettings(
     val cwd: GuestPath,
@@ -257,6 +271,8 @@ data class TurnState(
     val userPromoted: Boolean = false,
     /** 本回合模型已经回过话：之后提升的人发的消息是插话，不记回退点 */
     val modelReplied: Boolean = false,
+    /** 主模型在本回合里倒了、已换成回退链上的某一个：回合结束随回合一起清掉（下一回合先试主模型） */
+    val fallback: FallbackInUse? = null,
 ) {
     /**
      * 还在等用户回答的提问，界面据此弹提问卡片（进程重启后同样从日志重建）。
