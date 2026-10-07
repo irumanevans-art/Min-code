@@ -44,6 +44,7 @@ import dev.min.code.core.engine.SendTarget
 import dev.min.code.core.engine.SessionCommand
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SessionSignal
+import dev.min.code.core.engine.StartChoices
 import dev.min.code.core.engine.StartOptions
 import dev.min.code.core.engine.TaskOutputTail
 import dev.min.code.core.engine.UserInput
@@ -112,6 +113,25 @@ class SessionVM(
     private val active: StateFlow<AgentSession?> =
         combine(focus, engine.activeSession, minSession, ::shownSession)
             .stateIn(viewModelScope, SharingStarted.Eagerly, shownSession(focus.value, engine.activeSession.value, minSession.value))
+
+    /** 开始面板上 Min 专有的选项（供应商档 / 模型 / 权限模式）；没有 Min 引擎时 null */
+    val startChoices: StateFlow<StartChoices?> = (agents.engines.firstOrNull { it.kind == EngineKind.MinAgent }?.startChoices
+        ?: MutableStateFlow<StartChoices?>(null))
+
+    /** 各引擎此刻能不能新建会话：开始面板据此把不可用的灰掉、下面写原因和去处 */
+    val availability: StateFlow<Map<EngineKind, EngineAvailability>> =
+        combine(agents.engines.map { engine -> engine.availability.map { engine.kind to it } }) { it.toMap() }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, agents.engines.associate { it.kind to it.availability.value })
+
+    /** 开始面板默认选中的引擎 = 上次用的（没选过是 Claude Code）；Min 关着时退回 Claude Code */
+    val startEngine: StateFlow<EngineKind> = combine(settingsStore.settings, minEnabled) { settings, minOn ->
+        EngineKind.entries.firstOrNull { it.name == settings.lastStartEngine }
+            ?.takeIf { it != EngineKind.Codex && (it != EngineKind.MinAgent || minOn) } ?: EngineKind.ClaudeCode
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, EngineKind.ClaudeCode)
+
+    fun rememberStartEngine(kind: EngineKind) {
+        viewModelScope.launch { settingsStore.setLastStartEngine(kind.name) }
+    }
 
     /** 活跃会话所属引擎能做什么：页面按它决定哪些控件出现（设计 §3.8），不按引擎种类写分支 */
     val capabilities: StateFlow<EngineCapabilities> = active

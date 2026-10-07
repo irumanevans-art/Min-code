@@ -12,6 +12,9 @@ import dev.min.agent.spi.Secrets
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
 import dev.min.code.core.settings.ApiFormat
 import dev.min.code.core.settings.ApiProfile
+import dev.min.code.core.engine.Choice
+import dev.min.code.core.engine.StartChoices
+import dev.min.code.core.engine.StartProfile
 import dev.min.code.core.settings.AppSettings
 
 internal fun agentWire(format: ApiFormat): Wire = when (format) {
@@ -61,6 +64,34 @@ internal fun defaultAgentProfile(settings: AppSettings, requestedId: String?, la
         .firstNotNullOfOrNull { id -> usable.firstOrNull { it.id == id } }
         ?: usable.firstOrNull()
 }
+
+/**
+ * 开始面板的选项表（[StartChoices]）：能用的档各带它能选的模型与默认模型，默认档按 [defaultAgentProfile] 的规矩，
+ * 权限模式表由调用方给（与设置面板同一份）。纯函数：依赖都从参数进来，单测里不用起引擎。
+ *
+ * 默认模型：这个档上次选的 > 档案 env 里指定的 / 目录第一个（[defaultModelId]）；都没有就是 null，面板让用户手填。
+ */
+internal fun startChoicesOf(
+    settings: AppSettings,
+    lastUsedProfileId: String?,
+    lastModelFor: (profileId: String) -> String?,
+    modelIds: (ApiProfile) -> List<String>,
+    defaultModelId: (ApiProfile) -> String?,
+    modes: List<Choice>,
+    defaultModeId: String,
+): StartChoices = StartChoices(
+    profiles = usableAgentProfiles(settings).map { p ->
+        StartProfile(
+            id = p.id,
+            label = p.displayName(),
+            models = modelIds(p).map { id -> Choice(id = id, label = id, profileId = p.id) },
+            defaultModelId = lastModelFor(p.id) ?: defaultModelId(p),
+        )
+    },
+    defaultProfileId = defaultAgentProfile(settings, null, lastUsedProfileId)?.id,
+    modes = modes,
+    defaultModeId = defaultModeId,
+)
 
 /**
  * 凭证只在 Keystore 与 HTTP 头之间流动：每次请求现从设置快照里按档 id 取，档里的 token 改了下一次请求就生效。

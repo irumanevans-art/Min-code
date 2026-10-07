@@ -38,6 +38,7 @@ import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.rootfs.currentBindMounts
 import dev.min.code.core.rootfs.findMentionFiles
+import dev.min.code.core.engine.StartChoices
 import dev.min.code.core.settings.SettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -152,6 +153,14 @@ class MinAgentEngine(
             else -> EngineAvailability.Ready
         }
     }.stateIn(scope, SharingStarted.Eagerly, EngineAvailability.NeedsInstall)
+
+    /** 开始面板的供应商 / 模型 / 权限模式选项：设置一变（连了新档、删了档）就重算 */
+    override val startChoices: StateFlow<StartChoices?> = settings.settings.map { s ->
+        startChoicesOf(
+            s, lastUsed.profileId, lastUsed::modelFor, resolver::modelIds, resolver::defaultModelId,
+            minModeChoices(text), modeId(PermissionMode.Default),
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, null)
 
     override val live: StateFlow<List<LiveSessionSummary>> = sessions.flatMapLatest { map ->
         if (map.isEmpty()) flowOf(emptyList()) else combine(map.values.map { it.summary }) { it.toList() }

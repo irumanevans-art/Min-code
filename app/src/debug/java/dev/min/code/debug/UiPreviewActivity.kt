@@ -239,7 +239,7 @@ private fun Preview(
                                 session = ClaudeCodeManager.SessionState().toAgentState(),
                                 cliVersion = "2.1.261",
                                 defaultCwd = "/workspace",
-                                onStart = { _, _ -> scene = PreviewScene.Blank },
+                                onStart = { scene = PreviewScene.Blank },
                             )
                             PreviewScene.Blank -> BlankPage(starting = false)
                             PreviewScene.Loading -> LoadingScreen(detail = "正在读取工作区", progress = 0.64f)

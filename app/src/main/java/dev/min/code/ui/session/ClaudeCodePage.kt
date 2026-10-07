@@ -231,6 +231,10 @@ fun ClaudeCodePage(
     val zhDescriptionSetting by vm.chineseDescriptions.collectAsStateWithLifecycle()
     val chineseDescriptions = zhDescriptionSetting && isChineseUi()
     val notice by vm.notice.collectAsStateWithLifecycle()
+    val minEnabled by vm.minEnabled.collectAsStateWithLifecycle()
+    val engineAvailability by vm.availability.collectAsStateWithLifecycle()
+    val startChoices by vm.startChoices.collectAsStateWithLifecycle()
+    val startEngine by vm.startEngine.collectAsStateWithLifecycle()
     val connected by vm.connected.collectAsStateWithLifecycle()
     // 环境状态读完就重扫磁盘会话：原来 refresh() 末尾直接调 refreshSessions()，拆成两个 VM 后由页面转发
     LaunchedEffect(maintenanceVm, listVm) {
@@ -487,12 +491,20 @@ fun ClaudeCodePage(
                         else -> StartPanel(
                             session = session,
                             cliVersion = setup.cliVersion,
-                            onStart = { skip, cwd -> vm.start(StartRequest(EngineKind.ClaudeCode, cwd, skipPermissions = skip)) },
+                            onStart = vm::start,
                             defaultCwd = vm.defaultCwd(),
                             onListCwd = vm::listCwdFolders,
                             onCreateCwd = vm::createCwdFolder,
                             connected = connected,
                             onOpenProviders = { navController.navigate(Screen.Providers) },
+                            engines = StartEngines(
+                                minVisible = minEnabled,
+                                availability = engineAvailability,
+                                minChoices = startChoices,
+                                initial = startEngine,
+                                onChoose = vm::rememberStartEngine,
+                                onOpenCodex = { navController.navigate(Screen.Codex) },
+                            ),
                         )
                     }
                 }

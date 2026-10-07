@@ -983,6 +983,12 @@
   <string name="about_contact">联系作者</string>
   <string name="about_contact_qq">QQ %1$s</string>
   <string name="about_contact_qq_copied">已复制 QQ 号</string>
+  <string name="start_min_provider">供应商</string>
+  <string name="start_min_model">模型</string>
+  <string name="start_min_model_other">或手填一个模型 id</string>
+  <string name="start_min_no_models">这个供应商没有预设模型，请在下面手填模型 id。</string>
+  <string name="start_min_mode">权限模式</string>
+  <string name="start_min_open_providers">去连接供应商</string>
   <string name="engine_needs_install">先把运行环境装好（设置 → 系统）。</string>
   <string name="engine_needs_provider">先连一个供应商（设置 → 连接）。</string>
   <string name="settings_group_experiment">实验</string>

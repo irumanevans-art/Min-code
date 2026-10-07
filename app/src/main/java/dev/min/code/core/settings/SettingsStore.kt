@@ -55,6 +55,7 @@ private val KEY_INJECT_SHELL_CREDENTIALS = booleanPreferencesKey("inject_shell_c
 private val KEY_SHARE_DEVICE_STORAGE = booleanPreferencesKey("share_device_storage")
 private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
 private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
+private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
 private val KEY_DEVICE_WRITE_ALLOWLIST = stringSetPreferencesKey("device_write_allowlist")
 private val KEY_A11Y_PROMPT_VERSION = intPreferencesKey("a11y_prompt_version")
 private val KEY_TERMINAL_AUTO_KEYBOARD = booleanPreferencesKey("terminal_auto_keyboard")
@@ -299,6 +300,8 @@ data class AppSettings(
      * 没存过值时的默认由 [minAgentEnabledOf] 按构建类型给，不写进 DataStore：以后改默认，没动过开关的人才会跟着变。
      */
     val minAgentEnabled: Boolean = BuildConfig.DEBUG,
+    /** 开始面板上次选的引擎（[dev.min.code.core.engine.EngineKind] 的 name）。空 = 没选过，默认 Claude Code */
+    val lastStartEngine: String = "",
     /**
      * 设备写操作放行名单：包名精确匹配。在 [dev.min.code.core.device.PackagePolicyGuard]
      * 拦下之前先看这里——人明确勾过的应用，agent 可以代为操作。默认空：行为与以前一样。
@@ -522,6 +525,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             shareDeviceStorage = p[KEY_SHARE_DEVICE_STORAGE] ?: false,
             controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
             minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
+            lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
             deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
             a11yPromptVersion = p[KEY_A11Y_PROMPT_VERSION] ?: 0,
             terminalAutoKeyboard = p[KEY_TERMINAL_AUTO_KEYBOARD] ?: true,
@@ -839,6 +843,9 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setMinAgentEnabled(enabled: Boolean) =
         context.dataStore.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }
+
+    suspend fun setLastStartEngine(engine: String) =
+        context.dataStore.edit { it[KEY_LAST_START_ENGINE] = engine }
 
     suspend fun setDeviceWriteAllowlist(packages: Set<String>) =
         context.dataStore.edit {

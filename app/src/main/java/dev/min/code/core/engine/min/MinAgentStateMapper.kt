@@ -143,9 +143,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
         val profile = lookup.profileOf(model)
         val models = lookup.choices(model)
         val efforts = profile?.effortPatches?.keys.orEmpty().sortedBy { it.ordinal }.map { Choice(effortId(it), text.effort(it)) }
-        val modes = listOf(
-            PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.DontAsk, PermissionMode.BypassPermissions, PermissionMode.Plan,
-        ).map { Choice(modeId(it), text.mode(it), warning = text.modeWarning(it)) }
+        val modes = minModeChoices(text)
         return SettingsView(
             model = models.firstOrNull { it.id == model.modelId && it.profileId == model.providerId }
                 ?: Choice(model.modelId, model.modelId, profileId = model.providerId),
@@ -179,6 +177,11 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
         const val TITLE_CHARS = 80
     }
 }
+
+/** 设置面板与开始面板共用的权限模式表（Auto 要审查模型，Min 还没有，不列） */
+fun minModeChoices(text: MinAgentText): List<Choice> = listOf(
+    PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.DontAsk, PermissionMode.BypassPermissions, PermissionMode.Plan,
+).map { Choice(modeId(it), text.mode(it), warning = text.modeWarning(it)) }
 
 /** 权限模式在命令里的 id：沿用协议里的名字（与 Claude Code 同名同义） */
 fun modeId(mode: PermissionMode): String = when (mode) {
