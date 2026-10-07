@@ -155,6 +155,22 @@ class SessionNamingTest {
     }
 
     @Test
+    fun `孤立代理项换空格：重开一致、同名拿到 -2`() = run {
+        // N4：\uD83D 是不成对的高代理项——原样落盘时 UTF-16 码元转不出合法 UTF-8（读回来变 ?），
+        // 重开的名字与运行时对不上、按名找也找不到。规整时换空格，日志里存的就是能活着转一圈的写法
+        assertEquals("a b", normalizeSessionName("a\uD83Db"))
+        assertEquals("a𐎈b c", normalizeSessionName("a𐎈b\uDC00c")) // 成对的照常保留，只有落单的换
+        val h = hub()
+        val rt = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = "a\uD83Db")
+        assertEquals("a b", rt.state.value.name)
+        val reopened = hub().open(rt.sessionId)!!
+        assertEquals("a b", reopened.state.value.name)
+        assertEquals(rt.state.value, reopened.state.value)
+        val second = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = "a\uD83Db")
+        assertEquals("a b-2", second.state.value.name)
+    }
+
+    @Test
     fun `分支沿用原会话名字时套 -2 变体，按名续接仍取到原会话`() = run {
         val h = hub()
         val rt = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = "auth")

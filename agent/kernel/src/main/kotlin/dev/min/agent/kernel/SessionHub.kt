@@ -130,6 +130,9 @@ fun normalizeSessionName(raw: String): String? {
         raw.codePoints().forEach { cp ->
             val invisible = Character.isISOControl(cp) ||
                 Character.getType(cp) == Character.FORMAT.toInt() ||
+                // 孤立的代理项（code point 落在代理区）：成对的到不了这里；落单的转不出合法 UTF-8，
+                // 落盘读回来变 ?，重开的名字与运行时对不上（N4）——换空格
+                Character.getType(cp) == Character.SURROGATE.toInt() ||
                 cp == 0x2028 || cp == 0x2029 // 行/段分隔：日志一行一条事件，名字里不能混进换行
             appendCodePoint(if (invisible) ' '.code else cp)
         }
