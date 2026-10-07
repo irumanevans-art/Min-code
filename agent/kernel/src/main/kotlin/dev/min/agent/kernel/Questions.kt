@@ -31,9 +31,15 @@ internal suspend fun SessionRuntime.askUser(callId: CallId, questions: List<User
 
 /** [questionId] 还在等答复：属于当前回合、没答过、提问的调用仍在执行。作答命令以此为前置条件，两端同时答只算先落盘的那份 */
 internal fun SessionState.isAwaitingAnswer(questionId: QuestionId): Boolean =
-    turn?.pendingQuestions?.any { it.questionId == questionId } == true
+    turn?.pendingQuestions?.any { it.questionId == questionId } == true || pendingMcpQuestions.any { it.questionId == questionId }
 
 internal fun SessionState.withQuestionAsked(e: QuestionAsked, atMs: Long): SessionState {
+    if (e.standalone) {
+        check(e.mcpServer != null && e.questionId !in mcpQuestions && e.questions.isNotEmpty())
+        val linkedTurn = if (e.callId == MCP_IDLE_CALL) null else e.turnId
+        if (linkedTurn != null) check(turn?.turnId == linkedTurn && turn.calls[e.callId]?.phase is CallPhase.EffectPending)
+        return copy(mcpQuestions = mcpQuestions + (e.questionId to AskedQuestion(e.questionId, e.callId, e.questions, null, atMs, e.mcpServer, linkedTurn)))
+    }
     val t = checkNotNull(turn) { "没有进行中的回合却收到提问 ${e.questionId}" }
     check(t.turnId == e.turnId) { "提问属于 ${e.turnId}，当前回合是 ${t.turnId}" }
     val call = t.calls[e.callId] ?: error("回合 ${e.turnId} 里没有调用 ${e.callId}")
@@ -50,6 +56,11 @@ internal fun SessionState.withQuestionAsked(e: QuestionAsked, atMs: Long): Sessi
  * 折叠若也按选项规则判，日后放宽或收紧规则就会让旧日志打不开。
  */
 internal fun SessionState.withQuestionAnswered(e: QuestionAnswered): SessionState {
+    mcpQuestions[e.questionId]?.let { asked ->
+        check(asked.outcome == null)
+        check(if (e.declined) e.answers.isEmpty() else e.answers.size == asked.questions.size)
+        return copy(mcpQuestions = mcpQuestions + (e.questionId to asked.copy(outcome = if (e.declined) QuestionOutcome.Declined else QuestionOutcome.Answered(e.answers), cancelled = e.cancelled)))
+    }
     val t = checkNotNull(turn) { "没有进行中的回合却收到提问的答复 ${e.questionId}" }
     val asked = t.questions[e.questionId] ?: error("没有提问 ${e.questionId}")
     check(asked.outcome == null) { "提问 ${e.questionId} 已经答过了" }

@@ -40,6 +40,7 @@ internal data class McpCallRequest(
     /** 结果里的图片原图、音频、二进制资源落到这里（会话附件） */
     val artifacts: dev.min.agent.spi.ArtifactSink,
     val progress: (String) -> Unit,
+    val resourceUri: String? = null,
 )
 
 /**
@@ -48,6 +49,12 @@ internal data class McpCallRequest(
  */
 internal fun interface McpCaller {
     suspend fun call(request: McpCallRequest): ToolResult
+    suspend fun listResources(servers: List<String>): List<JsonObject> = emptyList()
+    suspend fun listPrompts(): List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList()
+    suspend fun getPrompt(server: String, name: String, arguments: JsonObject): List<dev.min.agent.mcp.McpPromptMessage> = error("服务器不支持 prompts。")
+    suspend fun readResource(server: String, uri: String, artifacts: dev.min.agent.spi.ArtifactSink, id: String): ToolResult =
+        ToolResult(listOf(TextPart("MCP 服务器 $server 不支持读取资源。")), isError = true)
+    suspend fun readResourceFor(server: String, uri: String, ctx: ToolContext): ToolResult = readResource(server, uri, ctx.artifacts, ctx.callId.value)
 
     companion object {
         val Unavailable = McpCaller { r ->
@@ -87,7 +94,7 @@ internal class McpToolAdapter(private val entry: McpToolEntry, private val calle
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = channelFlow {
         val result = caller.call(
-            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts) { text -> trySend(ToolProgress.Status(text)) },
+            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts, { text -> trySend(ToolProgress.Status(text)) }),
         )
         send(ToolProgress.Done(result))
     }
@@ -220,8 +227,21 @@ internal fun SessionState.visibleMcpTools(deps: KernelDeps): List<McpToolEntry> 
     }
 }
 
+internal fun SessionState.visibleMcpResourceServers(deps: KernelDeps): List<String> {
+    val policy = PolicyContext(mode=settings.mode, rules=(rules + sessionRules).mapNotNull(PermissionRule::from), cwd=settings.cwd, home=deps.memoryHome ?: GuestPath("/root"))
+    return mcpTools?.resourceServers.orEmpty().filter { server ->
+        val name = "mcp__${McpNames.sanitize(server)}"
+        val agent = origin
+        (agent == null || (agent.mcpDenied.none { matchesMcpPattern(it, name) } && (agent.mcpTools?.any { matchesMcpPattern(it, name) } ?: true))) && !PolicyEngine.deniesWholeTool(name, policy)
+    }
+}
+
 /** 系统提示里「MCP 服务器说明」那一段的原料：只列模型看得到工具的服务器，按服务器名排序 */
-internal fun SessionState.mcpInstructionsFor(visible: List<McpToolEntry>): Map<String, String> {
+internal fun SessionState.mcpInstructionsFor(visible: List<McpToolEntry>, search: Boolean = mcpToolSearch?.enabled == true): Map<String, String> {
     val servers = visible.map { it.server }.toSet()
-    return mcpTools?.instructions.orEmpty().filterKeys { it in servers }.toSortedMap()
+    val instructions = mcpTools?.instructions.orEmpty().filterKeys { it in servers }.toSortedMap()
+    if (!search) return instructions
+    return servers.sorted().associateWith { server ->
+        listOfNotNull(instructions[server], "MCP 工具名称（通过 ToolSearch 查询并加载）：" + visible.filter { it.server == server }.joinToString(", ") { it.name }).joinToString("\n")
+    }
 }

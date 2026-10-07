@@ -88,7 +88,7 @@ data class HubPending(
             val floorReason: String?,
         ) : What
 
-        data class Question(val questionId: QuestionId, val callId: CallId, val questions: List<UserQuestion>) : What
+        data class Question(val questionId: QuestionId, val callId: CallId, val questions: List<UserQuestion>, val mcpUrl: dev.min.agent.spi.McpUrlElicitationAsked? = null) : What
     }
 }
 
@@ -181,8 +181,9 @@ class SessionHub(
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
     internal var mcp = McpManager(
         scope,
-        ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs),
+        ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs, deps.mcpServerPath),
         startupWaitMs = deps.mcpFirstSnapshotWaitMs,
+        sessionLookup = { runtimes[it] },
     )
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
     private val openLock = Mutex()
@@ -367,7 +368,7 @@ class SessionHub(
         }
         // 关了门还能写：SessionEnd 的运行记录要落盘。跑完再封住写入
         runtimes[id]?.takeIf { it.state.value.origin == null }?.let { runSessionEnd(it, reason) }
-        closing.forEach { it.sealWrites() }
+        closing.forEach { it.cancelMcpElicitations(); it.sealWrites() }
         // 卸下即杀后台 hook 进程并清掉暂存目录：手机上不能留孤儿进程（async 设计的边界；`-p` teardown 同此）
         closing.forEach { it.asyncHooks.cancelAll() }
         tree.forEach(::unload)
@@ -458,8 +459,8 @@ class SessionHub(
         // 根会话的 SessionEnd 在删日志之前跑；不在内存里的也临时打开跑一遍（清理类 hook 的副作用不该因为会话不在线就跳过）
         val rootRuntime = runtimes[root] ?: SessionRuntime.open(store, root, deps, scope)
         if (rootRuntime != null && rootRuntime.state.value.origin == null) runSessionEnd(rootRuntime, reason)
-        for (id in order) runtimes[id]?.sealWrites()
-        rootRuntime?.sealWrites()
+        for (id in order) runtimes[id]?.let { it.cancelMcpElicitations(); it.sealWrites() }
+        rootRuntime?.let { it.cancelMcpElicitations(); it.sealWrites() }
         // 与 close 同一条边界：删除即杀后台 hook 进程（含临时打开来跑 SessionEnd 的那个运行时）
         order.mapNotNull { runtimes[it] }.forEach { it.asyncHooks.cancelAll() }
         rootRuntime?.asyncHooks?.cancelAll()
@@ -511,7 +512,7 @@ class SessionHub(
         } ?: return null
         // 根会话重新接上 MCP（快照已在日志里）；子会话沿用父会话的调用口（父会话先于子会话打开）
         val origin = runtime.state.value.origin
-        if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { runtime.mcpCaller = it.mcpCaller }
+        if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
         if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
@@ -664,7 +665,7 @@ class SessionHub(
             loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
         )
         child.requestGate = childGate
-        child.mcpCaller = parent.mcpCaller
+        mcp.attachInherited(child, parent)
         register(child)
         parent.commit(
             listOf(SubagentSpawned(turnId, callId, childId, type, fork, background, request.description, request.name)),
@@ -729,7 +730,8 @@ class SessionHub(
      * MCP 同理：子 agent 用父会话那份快照（分身的工具表与系统提示必须与父会话逐字相同；新开的子 agent 按来历里的写法再筛）。
      * 连接是共用的（McpManager 按服务器与项目共享），所以不需要子会话自己再连
      */
-    private fun inheritedMcp(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.mcpServers, parent.mcpTools)
+    private fun inheritedMcp(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.mcpServers, parent.mcpTools, parent.mcpToolSearch,
+        parent.loadedMcpTools.takeIf { it.isNotEmpty() }?.let { dev.min.agent.spi.McpToolsLoaded(it) })
 
     /**
      * skill / command 登记的 frontmatter hooks 也是门禁（PreToolUse 拦危险命令一类），子 agent / 分身
@@ -854,17 +856,18 @@ class SessionHub(
     }
 
     private fun pendingOf(id: SessionId, s: SessionState): List<HubPending> {
-        val t = s.turn ?: return emptyList()
+        val t = s.turn
         val origin = s.origin
         fun item(atMs: Long, what: HubPending.What) =
             HubPending(id, origin?.root ?: id, origin?.parent, origin?.agentType, atMs, what)
-        val approvals = t.calls.values.mapNotNull { call ->
+        val approvals = t?.calls?.values.orEmpty().mapNotNull { call ->
             (call.phase as? CallPhase.AwaitingApproval)?.let { a ->
                 item(a.requestedAtMs, HubPending.What.Approval(a.approvalId, call.callId, call.tool, a.ask, a.suggestedRule, a.floorReason))
             }
         }
-        val questions = t.pendingQuestions.map { q -> item(q.askedAtMs, HubPending.What.Question(q.questionId, q.callId, q.questions)) }
-        return approvals + questions
+        val questions = (t?.pendingQuestions.orEmpty() + s.pendingMcpQuestions).map { q -> item(q.askedAtMs, HubPending.What.Question(q.questionId, q.callId, q.questions)) }
+        val urls = s.pendingMcpUrls.map { p -> item(p.atMs, HubPending.What.Question(p.request.questionId, p.request.callId ?: MCP_IDLE_CALL, listOf(urlQuestion(p.request)), p.request)) }
+        return approvals + questions + urls
     }
 
     /**

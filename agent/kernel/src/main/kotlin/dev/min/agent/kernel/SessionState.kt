@@ -168,6 +168,10 @@ data class SessionState(
     val recap: RecapView? = null,
     /** 最后一条事件落盘的时刻：重开时据此知道会话静置了多久（[resumeAdvice]） */
     val lastEventAtMs: Long = 0,
+    val mcpToolSearch: dev.min.agent.spi.McpToolSearchConfigured? = null,
+    val loadedMcpTools: List<String> = emptyList(),
+    val mcpQuestions: Map<QuestionId, AskedQuestion> = emptyMap(),
+    val mcpUrls: Map<QuestionId, McpUrlPending> = emptyMap(),
 )
 
 /** [afterTurn] 是生成回顾时最近结束的那个回合：之后没有新回合就不再自动生成 */
@@ -300,7 +304,18 @@ data class AskedQuestion(
     val questions: List<UserQuestion>,
     val outcome: QuestionOutcome?,
     val askedAtMs: Long = 0,
+    val server: String? = null,
+    val mcpTurnId: TurnId? = null,
+    val cancelled: Boolean = false,
 )
+
+data class McpUrlPending(val request: dev.min.agent.spi.McpUrlElicitationAsked, val action: String? = null, val atMs: Long = 0)
+
+val SessionState.pendingMcpQuestions: List<AskedQuestion>
+    get() = mcpQuestions.values.filter { it.outcome == null && (it.mcpTurnId == null || (turn?.turnId == it.mcpTurnId && turn.calls[it.callId]?.phase is CallPhase.EffectPending)) }
+
+val SessionState.pendingMcpUrls: List<McpUrlPending>
+    get() = mcpUrls.values.filter { it.action == null && (it.request.callId == null || (turn?.turnId == it.request.turnId && turn?.calls?.get(it.request.callId)?.phase is CallPhase.EffectPending)) }
 
 data class OpenRequest(
     val requestId: RequestId,

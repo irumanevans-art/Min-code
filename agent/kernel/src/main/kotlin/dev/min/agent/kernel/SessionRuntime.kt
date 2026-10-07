@@ -75,6 +75,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.booleanOrNull
 
+private val mcpActivitySequence = java.util.concurrent.atomic.AtomicLong()
+
 /**
  * 一个会话的运行时。会话状态只有一条修改路径：[commit]——先落盘，再折叠进 [state]。
  * 回合跑在 [scope] 里的一个子 Job 上；用户的命令（插话、审批、中断）与回合并发到达，都走 [commit]。
@@ -109,6 +111,7 @@ class SessionRuntime private constructor(
     }
 
     private val commitLock = Mutex()
+    private val inputPrepareLock = Mutex()
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
@@ -123,13 +126,15 @@ class SessionRuntime private constructor(
     /** MCP 工具的调用口（MCP设计 §6）：McpManager 接上之前是不可用的；子会话由 Hub 设成父会话那个 */
     @Volatile
     internal var mcpCaller: McpCaller = McpCaller.Unavailable
+    internal val mcpClosed = kotlinx.coroutines.CompletableDeferred<Unit>()
+    @Volatile internal var lastMcpActivity: Long = 0
 
     /** 排着、等下一回合开头生效的 MCP 变化（后连上的服务器、list_changed）。只在内存里：没生效的变化不进日志 */
     private val stagedMcp = java.util.concurrent.atomic.AtomicReference<List<SessionEvent>?>(null)
 
     /** 会话创建时的首份 MCP 快照：直接写（还没有回合，不必等） */
     internal suspend fun loadMcp(servers: dev.min.agent.spi.McpServersLoaded, tools: dev.min.agent.spi.McpToolsSnapshot) {
-        commit(listOf(servers, tools), Durability.Sync)
+        commit(prepareMcpEvents(listOf(servers, tools)), Durability.Sync)
     }
 
     /** MCP 的变化排到下一回合开头（设计 §5.3）；后排的整份替换先排的 */
@@ -150,10 +155,21 @@ class SessionRuntime private constructor(
             val (servers, tools) = first.await()
             mcpFirstSnapshot = null
             // 等的期间排进来的变化是更新的整份快照，直接写它；先写过期的首份再写它，日志里会多一份没用过的快照
-            commit(stagedMcp.getAndSet(null) ?: listOf(servers, tools), Durability.Sync)
+            commit(prepareMcpEvents(stagedMcp.getAndSet(null) ?: listOf(servers, tools)), Durability.Sync)
             return
         }
-        commit(stagedMcp.getAndSet(null) ?: return, Durability.Sync)
+        commit(prepareMcpEvents(stagedMcp.getAndSet(null) ?: return), Durability.Sync)
+    }
+
+    private fun prepareMcpEvents(events: List<SessionEvent>): List<SessionEvent> {
+        val previous = state.value.mcpToolSearch
+        // 旧日志沿用原来的全量工具表；新会话冻结策略，迟到服务器只在快照生效边界重新估算。
+        if (state.value.mcpTools != null && previous == null) return events
+        val tools = events.filterIsInstance<dev.min.agent.spi.McpToolsSnapshot>().lastOrNull() ?: return events
+        val window = deps.models.resolve(state.value.settings.model).profile.contextWindow
+        val selected = selectMcpSearchMode(tools, window, previous?.strategy ?: deps.env("ENABLE_TOOL_SEARCH"), previous?.denied ?: state.value.deniesToolSearch(deps))
+            .let { if (previous?.enabled == true) it.copy(enabled=true) else it }
+        return if (selected == previous) events else events + selected
     }
 
     /** 检查点与回退（检查点与rewind设计） */
@@ -219,6 +235,7 @@ class SessionRuntime private constructor(
                 if (sealed || !precondition(_state.value)) return@withLock null
                 val records = log.append(events, durability)
                 _state.value = records.fold(_state.value) { s, r -> s.apply(r) }
+                if (events.any { (it is InputReceived && it.origin == InputOrigin.User) || it is dev.min.agent.spi.TurnEnded }) lastMcpActivity = mcpActivitySequence.incrementAndGet()
                 records
             }
         }
@@ -370,11 +387,13 @@ class SessionRuntime private constructor(
      * 收一条用户输入。同一个 [clientMsgId] 重发只收一次（返回 false）。
      * 空闲时直接开回合；回合进行中时，[Delivery.Steer] 在当前工具批结束后送达，[Delivery.Queue] 等下一回合。
      */
-    suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue): Boolean {
-        commitIf(listOf(InputReceived(clientMsgId, parts, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
+    suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue, scanMcpMentions: Boolean = false): Boolean = inputPrepareLock.withLock {
+        if (clientMsgId in state.value.seenInputs) return@withLock false
+        val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
+        commitIf(listOf(InputReceived(clientMsgId, prepared, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
             ?: return false
         startTurnIfIdle(TurnTrigger.User)
-        return true
+        true
     }
 
     /** 撤回还没送达模型的输入（Min 现有的「按 Esc 退回输入框」）。已送达的撤不回，返回 false */
@@ -396,15 +415,20 @@ class SessionRuntime private constructor(
      * 那是界面的 bug，不是用户的选择，什么都不写。那次提问已经不在等了（另一端先答了、回合已结束）返回 false。
      */
     suspend fun answerQuestion(questionId: QuestionId, answers: List<QuestionAnswer>): Boolean {
+        if (questionId in state.value.mcpUrls) {
+            require(answers.size == 1)
+            return resolveMcpUrl(questionId, if (answers.single().selected == listOf("y")) "accept" else "decline")
+        }
         // 问题落盘后不再变，在锁外取来校验即可；「还在等」才必须与写入同在一把锁里判定
-        val asked = _state.value.turn?.questions?.get(questionId) ?: return false
+        val asked = _state.value.turn?.questions?.get(questionId) ?: _state.value.mcpQuestions[questionId] ?: return false
         answerProblem(asked.questions, answers)?.let { throw IllegalArgumentException("答案不合法：$it") }
         return commitIf(listOf(QuestionAnswered(questionId, answers)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
     }
 
     /** 用户关掉提问、不回答：模型会收到「用户没有回答」，按现有信息继续。不在等了返回 false */
     suspend fun declineQuestion(questionId: QuestionId): Boolean =
-        commitIf(listOf(QuestionAnswered(questionId, declined = true)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
+        if (questionId in state.value.mcpUrls) resolveMcpUrl(questionId, "decline")
+        else commitIf(listOf(QuestionAnswered(questionId, declined = true)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
 
     /**
      * 给会话改名（`/rename`）。名字先规整（[normalizeSessionName]）；规整后为空返回 null——
@@ -694,6 +718,7 @@ class SessionRuntime private constructor(
             val runtime = SessionRuntime(log, state, deps, scope, hub)
             runtime.commit(planRecovery(state), Durability.Sync)
             runtime.resumeBasis = ResumeBasis(quietSince, runtime.state.value.lastTurn?.turnId)
+            runtime.cancelMcpElicitations(close = false)
             return runtime
         }
     }

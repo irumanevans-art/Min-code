@@ -18,6 +18,8 @@ sealed interface SlashResult {
      * 展开成功。[text] 是要发给模型的内容；[names] 是被展开的名字（按出现顺序，叠放时不止一个）。
      */
     data class Expanded(val text: String, val names: List<String>) : SlashResult
+    data class McpPrompt(val command: dev.min.agent.ext.mcp.McpPromptCommand, val arguments: kotlinx.serialization.json.JsonObject) : SlashResult
+    data class InvalidArguments(val message: String) : SlashResult
 }
 
 /**
@@ -44,10 +46,17 @@ object SlashCommands {
         skills: List<SkillDef>,
         commands: List<CommandDef>,
         vars: SkillVars = SkillVars(),
+        prompts: List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList(),
     ): SlashResult {
         val trimmed = input.trim()
         val first = nameAt(trimmed) ?: return SlashResult.NotACommand
-        val target = resolve(first.first, skills, commands) ?: return SlashResult.Unknown(first.first)
+        val target = resolve(first.first, skills, commands) ?: run {
+            val prompt = prompts.firstOrNull { it.command == first.first } ?: return SlashResult.Unknown(first.first)
+            return when (val args = dev.min.agent.ext.mcp.McpPromptCommands.arguments(first.second, prompt.arguments)) {
+                is dev.min.agent.ext.mcp.McpPromptArgs.Valid -> SlashResult.McpPrompt(prompt, args.arguments)
+                is dev.min.agent.ext.mcp.McpPromptArgs.Invalid -> SlashResult.InvalidArguments(args.message)
+            }
+        }
         if (!target.userInvocable) return SlashResult.NotInvocable(first.first)
 
         val chosen = mutableListOf(target)

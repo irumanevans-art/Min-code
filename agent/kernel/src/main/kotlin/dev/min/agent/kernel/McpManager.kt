@@ -24,6 +24,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -32,6 +34,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlin.coroutines.cancellation.CancellationException
@@ -51,10 +54,16 @@ internal class McpManager(
     internal val connector: McpConnector,
     private val lingerMs: Long = 120_000,
     internal val startupWaitMs: Long = 5_000,
+    private val sessionLookup: (SessionId) -> SessionRuntime? = { null },
 ) {
     private data class Key(val projectRoot: String, val name: String, val endpoint: String)
 
     private inner class Entry(val key: Key, val spec: McpServerSpec, val projectRoot: GuestPath) {
+        @Volatile var lastRoots: List<GuestPath> = emptyList()
+        val callLock = Mutex()
+        val activeCalls = ConcurrentHashMap<Pair<SessionId, dev.min.agent.protocol.CallId>, McpCallRequest>()
+        suspend fun <T> interact(block: suspend () -> T): T = if (refs >= 2) callLock.withLock { block() } else block()
+        @Volatile var inputOwner: SessionRuntime? = null
         @Volatile var connection: McpConnection? = null
         @Volatile var tools: List<McpToolDef>? = null
         /** 服务器的使用说明：同工具表，掉线后保留最后一次的（系统提示不跟着抖） */
@@ -62,7 +71,7 @@ internal class McpManager(
         @Volatile var status: String = PENDING
         @Volatile var reason: String? = null
         @Volatile var restarts = 0
-        var refs = 0
+        @Volatile var refs = 0
         var linger: Job? = null
         /** 没人要了、已从表里摘掉：还在途中的连接（慢启动、重启）连上之后要自己收掉，不然就是没人管的孤儿进程 */
         @Volatile var retired = false
@@ -75,6 +84,7 @@ internal class McpManager(
     /** 一个根会话用到的服务器：配置里的全部（含没放行的，给界面看）与放行了的连接 */
     private inner class Binding(val rt: SessionRuntime, val config: McpConfigSnapshot, val entries: Map<String, Entry>) {
         @Volatile var loaded = false
+        var rootsWatch: Job? = null
     }
 
     private val lock = Mutex()
@@ -94,8 +104,11 @@ internal class McpManager(
             val acquired = config.servers.filter { it.gate == McpGate.Enabled }.associate { it.spec.name to acquire(it.spec, projectRoot) }
             Binding(rt, config, acquired).also { created ->
                 // 同一个会话号还留着旧的接入（关了马上重开，旧运行时的卸下还没轮到）：放掉它，不然它那份引用永远不归零
-                bindings.put(rt.sessionId, created)?.entries?.values?.forEach { release(it) }
+                bindings.put(rt.sessionId, created)?.let { old -> old.rootsWatch?.cancel(); old.entries.values.forEach { release(it) } }
             }
+        }
+        binding.rootsWatch = scope.launch {
+            rt.state.map { it.additionalDirectories }.distinctUntilChanged().collect { notifyRoots(projectRoot) }
         }
         rt.mcpCaller = callerFor(binding)
         if (config.servers.isEmpty() && config.notes.isEmpty()) {
@@ -115,6 +128,21 @@ internal class McpManager(
         }
     }
 
+    /** 子会话也占一份引用，才能在反向交互时区分归属并对共享连接加锁。 */
+    suspend fun attachInherited(rt: SessionRuntime, parent: SessionRuntime) {
+        val binding = lock.withLock {
+            val source = bindings[parent.sessionId] ?: return@withLock null
+            if (bindings[rt.sessionId]?.rt === rt) return@withLock bindings[rt.sessionId]
+            bindings.remove(rt.sessionId)?.let { old -> old.rootsWatch?.cancel(); old.entries.values.forEach(::release) }
+            source.entries.values.forEach { it.refs++; it.linger?.cancel(); it.linger = null }
+            Binding(rt, source.config, source.entries).also { it.loaded = true; bindings[rt.sessionId] = it }
+        }
+        rt.mcpCaller = if (binding == null) parent.mcpCaller else callerFor(binding)
+        if (binding != null) binding.rootsWatch = scope.launch {
+            rt.state.map { it.additionalDirectories }.distinctUntilChanged().collect { binding.entries.values.map { e -> e.projectRoot }.distinct().forEach(::notifyRoots) }
+        }
+    }
+
     /**
      * 会话卸下（关闭、删除）：放掉它的连接引用，归零的等一会儿再关。
      * 认运行时对象而不只是会话号：关了马上重开时，旧运行时的卸下可能晚于新运行时的接入，不能把新的那份摘掉
@@ -123,7 +151,9 @@ internal class McpManager(
         lock.withLock {
             val binding = bindings[rt.sessionId]?.takeIf { it.rt === rt } ?: return
             bindings.remove(rt.sessionId)
+            binding.rootsWatch?.cancel()
             binding.entries.values.forEach { release(it) }
+            binding.entries.values.map { it.projectRoot }.distinct().forEach { notifyRoots(it) }
         }
     }
 
@@ -133,6 +163,7 @@ internal class McpManager(
      */
     suspend fun closeAll() {
         val all = lock.withLock {
+            bindings.values.forEach { it.rootsWatch?.cancel() }
             bindings.clear()
             entries.values.toList().also { entries.clear(); it.forEach { e -> e.retired = true; e.linger?.cancel() } }
         }
@@ -178,7 +209,14 @@ internal class McpManager(
             gate.withPermit {
                 var connection: McpConnection? = null
                 try {
-                    connection = connector.connect(entry.spec, entry.projectRoot, scope)
+                    connection = connector.connectWithInteraction(entry.spec, entry.projectRoot, scope, { rootsFor(entry.projectRoot) }) { params ->
+                        val active = entry.activeCalls.values.singleOrNull()
+                        val rt = active?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt }
+                            ?: entry.inputOwner
+                            ?: bindings.values.filter { it.entries.values.any { e -> e === entry } }.sortedWith(compareByDescending<Binding> { it.rt.lastMcpActivity }.thenBy { it.rt.sessionId.value }).firstOrNull()?.rt
+                        rt?.handleMcpElicitation(entry.spec.name, params, active?.callId)
+                            ?: kotlinx.serialization.json.buildJsonObject { put("action", JsonPrimitive("decline")) }
+                    }
                     entry.connection = connection
                     if (entry.retired) {
                         // 连的过程中最后一个会话走了、等待期也过了：没人要这条连接了，收掉，别留成孤儿进程
@@ -203,6 +241,22 @@ internal class McpManager(
             }
             entry.settled.complete(Unit)
             changed(entry)
+        }
+    }
+
+    internal fun rootsFor(projectRoot: GuestPath): List<GuestPath> =
+        (listOf(projectRoot) + bindings.values.filter { b -> b.entries.values.any { it.projectRoot == projectRoot } }
+            .flatMap { it.rt.state.value.additionalDirectories }).distinct().sortedBy { it.value }
+
+    private fun notifyRoots(projectRoot: GuestPath) {
+        scope.launch {
+            entries.values.filter { it.projectRoot == projectRoot }.forEach { e ->
+                val roots = rootsFor(projectRoot)
+                if (e.lastRoots != roots) {
+                    e.lastRoots = roots
+                    e.connection?.let { dev.min.agent.spi.catchingNonCancellation { it.rootsChanged() } }
+                }
+            }
         }
     }
 
@@ -246,7 +300,7 @@ internal class McpManager(
     private fun restage(binding: Binding) {
         val current = binding.rt.state.value.mcpTools
         val (servers, tools) = snapshotOf(binding, current)
-        if (current != null && current.tools == tools.tools && current.instructions == tools.instructions) return
+        if (current != null && current.tools == tools.tools && current.instructions == tools.instructions && current.resourceServers == tools.resourceServers) return
         binding.rt.stageMcp(servers, tools.copy(note = changeNote(current?.tools.orEmpty(), tools.tools)))
     }
 
@@ -278,6 +332,7 @@ internal class McpManager(
                 readOnlyHint = d.annotations?.readOnlyHint == true,
                 requiresUserInteraction = (d.meta?.get(META_REQUIRES_INTERACTION) as? JsonPrimitive)?.booleanOrNull == true,
                 maxResultChars = (d.meta?.get(META_MAX_RESULT_CHARS) as? JsonPrimitive)?.intOrNull,
+                alwaysLoad = e.spec.alwaysLoad || (d.meta?.get("anthropic/alwaysLoad") as? JsonPrimitive)?.booleanOrNull == true,
             )
         }
         val unconnected = binding.entries.values.filter { it.tools == null }.map { it.spec.name }.toSet()
@@ -286,7 +341,8 @@ internal class McpManager(
         val tools = (live + previous?.tools.orEmpty().filter { it.server in unconnected }).sortedBy { order.indexOf(it.server) }
         val instructions = ready.mapNotNull { e -> e.instructions?.takeIf { it.isNotBlank() }?.let { e.spec.name to McpShaping.truncate(it) } }.toMap() +
             previous?.instructions.orEmpty().filterKeys { it in unconnected }
-        return McpServersLoaded(serverInfos(binding), notes) to McpToolsSnapshot(tools, instructions)
+        val resourceServers = order.filter { it in previous?.resourceServers.orEmpty() || ready.any { e -> e.spec.name == it && e.connection?.capabilities?.containsKey("resources") == true } }
+        return McpServersLoaded(serverInfos(binding), notes) to McpToolsSnapshot(tools, instructions, resourceServers = resourceServers)
     }
 
     private fun serverInfos(binding: Binding): List<McpServerInfo> = binding.config.servers.map { configured ->
@@ -307,15 +363,77 @@ internal class McpManager(
 
     // ---- 调用 ----
 
-    private fun callerFor(binding: Binding) = McpCaller { request ->
+    private fun callerFor(binding: Binding) = object : McpCaller {
+        override suspend fun listPrompts(): List<dev.min.agent.ext.mcp.McpPromptCommand> {
+            withTimeoutOrNull(startupWaitMs) { binding.entries.values.forEach { it.settled.await() } }
+            val definitions = binding.entries.values.filter { it.spec.name != "anthropic-skills" }.flatMap { entry ->
+                val connection = entry.connection?.takeIf { it.capabilities.containsKey("prompts") } ?: return@flatMap emptyList()
+                val listed = try { connection.listPrompts() }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) {
+                    binding.rt.commit(listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "MCP 服务器 ${entry.spec.name} 的 prompts/list 失败；其他服务器的 prompts 仍可使用。")), dev.min.agent.spi.Durability.Sync)
+                    emptyList()
+                }
+                listed.mapNotNull { raw -> (raw["name"] as? JsonPrimitive)?.content?.let { Triple(entry.spec.name, it, raw) } }
+            }
+            val names = McpNames.assign(definitions.map { it.first to it.second })
+            return definitions.map { (server, prompt, raw) ->
+                val args = (raw["arguments"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { arg ->
+                    val o = arg as? JsonObject ?: return@mapNotNull null
+                    val name = (o["name"] as? JsonPrimitive)?.content ?: return@mapNotNull null
+                    dev.min.agent.ext.mcp.McpPromptArgument(name, (o["required"] as? JsonPrimitive)?.booleanOrNull == true)
+                }
+                dev.min.agent.ext.mcp.McpPromptCommand(names.getValue(server to prompt), server, prompt, args)
+            }
+        }
+        override suspend fun getPrompt(server: String, name: String, arguments: JsonObject): List<dev.min.agent.mcp.McpPromptMessage> {
+            val entry = binding.entries[server] ?: error("MCP 服务器 $server 不可用。")
+            return entry.interact {
+                // 输入准备还没有回合，但反向表单仍须交给发起输入的会话，不能交给共享连接的默认宿主。
+                entry.inputOwner = binding.rt
+                try { (entry.connection ?: error("MCP 服务器 $server 不可用。")).getPrompt(name, arguments) }
+                finally { entry.inputOwner = null }
+            }
+        }
+
+        override suspend fun listResources(servers: List<String>): List<JsonObject> = servers.flatMap { server ->
+            val connection = binding.entries[server]?.connection ?: return@flatMap emptyList()
+            val templates = try { connection.listResourceTemplates() }
+                catch (e: dev.min.agent.mcp.McpRpcException) { if (e.code == -32601) emptyList() else throw e }
+            val resources = connection.listResources() + templates
+            resources.filterNot(::isMcpAppResource).map { JsonObject(it + ("server" to JsonPrimitive(server))) }
+        }
+
+        override suspend fun readResource(server: String, uri: String, artifacts: dev.min.agent.spi.ArtifactSink, id: String): ToolResult {
+            val entry = binding.entries[server] ?: return unavailable("MCP 服务器 $server 不在会话配置里。")
+            if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { entry.settled.await() }
+            val connection = entry.connection ?: return unavailable("MCP 服务器 $server 现在不可用。")
+            return try {
+                entry.interact {
+                    entry.inputOwner = binding.rt
+                    try { McpResults.toToolResult(server, "resources/read", id, connection.readResource(uri), artifacts) }
+                    finally { entry.inputOwner = null }
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { McpResults.failure(server, e) }
+        }
+
+        override suspend fun readResourceFor(server: String, uri: String, ctx: dev.min.agent.spi.ToolContext) = call(
+            McpCallRequest(server, "resources/read", JsonObject(emptyMap()), ctx.sessionId, ctx.callId, ctx.artifacts, {}, resourceUri = uri),
+        )
+
+        override suspend fun call(request: McpCallRequest): ToolResult {
         val entry = binding.entries[request.server]
-            ?: return@McpCaller unavailable("MCP 服务器 ${request.server} 不在这个会话的配置里了。")
+            ?: return unavailable("MCP 服务器 ${request.server} 不在这个会话的配置里了。")
         // 还在连（刚创建、刚重启）：等一小会儿再说（CC：恢复的会话对还在连的服务器最多等 10 秒）
         if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { while (entry.connection == null && entry.status == PENDING) delay(50) }
         val connection = entry.connection
-            ?: return@McpCaller unavailable("MCP 服务器 ${request.server} 现在不可用" + (entry.reason?.let { "：$it" } ?: "。"))
+            ?: return unavailable("MCP 服务器 ${request.server} 现在不可用" + (entry.reason?.let { "：$it" } ?: "。"))
+        return entry.interact {
+        val key = request.sessionId to request.callId
+        entry.activeCalls[key] = request
         try {
-            val result = connection.call(
+            val result = if (request.resourceUri != null) connection.readResource(request.resourceUri) else connection.call(
                 request.tool, request.arguments,
                 onProgress = { p -> request.progress(p.message ?: p.total?.let { "${p.progress.toLong()} / ${it.toLong()}" } ?: "进度 ${p.progress}") },
                 idleTimeoutMs = if (entry.spec is McpServerSpec.Stdio) STDIO_IDLE_TIMEOUT_MS else REMOTE_IDLE_TIMEOUT_MS,
@@ -326,6 +444,8 @@ internal class McpManager(
             throw e
         } catch (e: Exception) {
             McpResults.failure(request.server, e)
+        } finally { entry.activeCalls.remove(key) }
+        }
         }
     }
 

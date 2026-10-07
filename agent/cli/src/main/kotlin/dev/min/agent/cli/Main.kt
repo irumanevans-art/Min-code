@@ -4,6 +4,8 @@ import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.kernel.continueFromSummary
 import dev.min.agent.kernel.resumeAdvice
 import dev.min.agent.protocol.TextPart
+import dev.min.agent.kernel.listMcpPrompts
+import dev.min.agent.kernel.getMcpPrompt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -48,8 +50,10 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     // /branch 会换会话：退出时的 SessionEnd 要跟当前会话走（分支是用户现在所在的对话）
     var runtime = initial
     val stdin = System.`in`.bufferedReader()
-    // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout
-    var ui = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope) else null
+    // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout。
+    // 交给 hub：审批 / 提问 / MCP elicitation 看整棵会话树，子 agent 的待处理项也有人答
+    var uiConsole: ConsoleUi? = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out, app.hub()).apply { mainOwnsInput = true } else null
+    var ui = uiConsole?.attach(scope)
     try {
         System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
         // 交互式续接一个又老又大的会话：缓存早过期了，问一句要不要先压成摘要（-p 不问，照原样续接）
@@ -97,9 +101,19 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
                 return false
             }
         }
-        val action = interpretInput(input, defs?.skills.orEmpty(), defs?.commands.orEmpty(), app.skillVars(runtime))
-        val text = when (action) {
-            is InputAction.Send -> action.text
+        val prompts = if (input.trimStart().startsWith("/mcp__")) {
+            try { runtime.listMcpPrompts() }
+            catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
+            catch (e: Exception) { System.err.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
+        } else emptyList()
+        val action = interpretInput(input, defs?.skills.orEmpty(), defs?.commands.orEmpty(), app.skillVars(runtime), prompts)
+        val parts = when (action) {
+            is InputAction.Send -> listOf(TextPart(action.text))
+            is InputAction.Prompt -> {
+                val result = runtime.getMcpPrompt(action.command.server, action.command.prompt, action.arguments)
+                if (result.isError) { System.err.println(result.content.filterIsInstance<TextPart>().joinToString("\n") { it.text }); return false }
+                result.content
+            }
             is InputAction.Notice -> {
                 System.err.println(action.message)
                 return false
@@ -107,12 +121,12 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
         }
         // 用户用斜杠调用 skill / command（CC 的 Hooks in skills and agents）：frontmatter hooks 从这一刻起
         // 在本会话登记（每次调用都重新登记全量），余下回合生效。模型调 Skill 工具的路在内核（KernelSkillPort），两条路同一套登记
-        action.names.forEach { name ->
+        (action as? InputAction.Send)?.names.orEmpty().forEach { name ->
             entries.firstOrNull { it.name == name }?.let { e ->
                 e.hooks?.let { runtime.registerComponentHooks(e.kind.name.lowercase(), name, e.source ?: "user", it) }
             }
         }
-        runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(text)))
+        runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)
         runtime.awaitIdle()
         println()
         return true
@@ -127,7 +141,10 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/recap 一行回顾；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
+        uiConsole?.mainOwnsInput = true
         val line = stdin.readLine() ?: return 0
+        if (uiConsole?.consumeIdleMcpInput(line) == true) continue
+        uiConsole?.mainOwnsInput = false
         val trimmed = line.trim()
         when {
             trimmed.isEmpty() -> continue
@@ -159,7 +176,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
                     val branched = app.branchSession(runtime)
                     ui?.cancel()
                     runtime = branched
-                    ui = ConsoleUi(runtime, args.approve, stdin, System.out).attach(scope)
+                    uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub())
+                    ui = uiConsole?.attach(scope)
                     System.err.println("已切到分支 ${runtime.sessionId.value}（分支自 ${branched.state.value.branched?.from?.value}；原会话保留，可各自 --resume）")
                 } catch (e: dev.min.agent.kernel.SessionBranchRefused) {
                     System.err.println(e.message)

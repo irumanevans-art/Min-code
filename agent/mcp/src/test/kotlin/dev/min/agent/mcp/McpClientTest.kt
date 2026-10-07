@@ -28,6 +28,41 @@ internal class FakeTransport : McpTransport {
 }
 @OptIn(ExperimentalCoroutinesApi::class)
 class McpClientTest {
+    @Test fun `server cancellation suppresses response to reverse elicitation`() = runTest {
+        for (swallow in listOf(false, true)) {
+        val t = FakeTransport()
+        val c = client(t, McpClientOptions("1", requestHandler = { _, _ -> try { awaitCancellation() } catch (e: CancellationException) { if (!swallow) throw e; emptyObject } }))
+        c.connect()
+        t.received.send(json("""{"jsonrpc":"2.0","id":"elicitation","method":"elicitation/create","params":{}}""")); runCurrent()
+        t.received.send(rpcNotification("notifications/cancelled", json("""{"requestId":"elicitation"}"""))); runCurrent()
+        assertFalse(t.sent.any { it["id"] == JsonPrimitive("elicitation") }); c.close()
+        }
+    }
+    @Test fun `idle deadline pauses for reverse requests and restarts after answering`() = runTest {
+        for (method in listOf("tools/call", "prompts/get", "resources/read")) {
+            val t = FakeTransport()
+            val c = client(t, McpClientOptions("1", requestTimeoutMs=100, requestHandler = { _, _ -> delay(400); emptyObject }))
+            c.connect(); t.respond = {}
+            val call = async { try {
+                when (method) {
+                    "tools/call" -> c.callTool("x", emptyObject, idleTimeoutMs=100)
+                    "prompts/get" -> c.getPrompt("x", emptyObject)
+                    else -> c.readResource("r://x")
+                }; null
+            } catch (e: McpTimeoutException) { e } }
+            runCurrent(); advanceTimeBy(80)
+            t.received.send(json("""{"jsonrpc":"2.0","id":"ask","method":"elicitation/create","params":{}}""")); runCurrent()
+            advanceTimeBy(401); runCurrent(); assertFalse(method, call.isCompleted)
+            advanceTimeBy(80); runCurrent(); assertFalse(method, call.isCompleted)
+            advanceTimeBy(21); runCurrent(); assertEquals(McpTimeoutException.Kind.Idle, withTimeout(1_000) { call.await() }!!.kind)
+            c.close()
+        }
+    }
+    @Test fun `roots changed sends protocol notification`() = runTest {
+        val t = FakeTransport(); val c = client(t); c.connect(); c.rootsChanged()
+        assertEquals("notifications/roots/list_changed", t.sent.last().text("method"))
+        assertFalse(t.sent.last().containsKey("id")); c.close()
+    }
     private fun TestScope.client(t: FakeTransport, options: McpClientOptions = McpClientOptions("1")) = McpClient(t, backgroundScope, options)
 
     @Test fun `handshake sends correct version info and empty capabilities then initialized`() = runTest {

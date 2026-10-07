@@ -118,3 +118,28 @@
 - v1 增量（2026-10-07，无头输出对齐 CC）：`session_created` 新增可选字段 `headless`（这条会话是不是 `-p` / 无头跑的；CC 的 `--continue` 据此跳过 -p / SDK 会话。旧日志缺字段 = 交互）。
   `turn_ended.outcome`（failed 变体）新增可选字段 `cause`（内核自己的失败原因标记，与模型的 kind 正交；目前只有
   `structured_output_retries`：--json-schema 重试用尽，CLI 据此把 result.subtype 写成 CC 的 `error_max_structured_output_retries`）。旧日志照常读。
+# MCP2 资源快照与附件
+
+`mcp_tools_snapshot.resourceServers`（默认空列表）记录已就绪的 resources 服务器；晚连上的服务器在下一回合加入，掉线保留已知能力。
+`@server:uri` 仅对宿主显式标为人工输入的文本扫描，在发送前转换为预算内的附件与规范 Part，内容随 `input_received.parts` 同步落盘；
+附件全文存 ArtifactSink，并在快照仓库可用时保留 ContentId。恢复与压缩从既有 Part 重建，不访问服务器。
+
+## MCP2 elicitation
+
+- `question_asked` 新增 `mcpServer`（默认 null）与 `standalone`（默认 false）。外部 form 可独立于回合；
+  空闲时 turnId / callId 为 `mcp-idle`，回合内则保存真实调用标识。questions 带服务器来源，inputType（默认 null）提示基本类型。
+  `questions.inputSchema`（默认 null）保存 MCP 字段约束供宿主逐字段校验；支持 string format、带标题枚举与枚举数组多选。
+- `question_answered.cancelled` 默认 false；取消时 declined=true，区分拒答与取消。外部表单从日志独立折叠，恢复时未完成请求补 cancel。
+- `mcp_url_elicitation_asked`：questionId、server、完整 url、domain、message、elicitationId、可选 turnId / callId。
+- `mcp_url_elicitation_resolved`：questionId、action（accept / decline / cancel）。待处理项同时进入 Hub pending，
+  `What.Question.mcpUrl` 保留 URL 元数据供 B7 宿主显示和打开；记录事件不会发网络请求或启动回合。
+
+## MCP2 ToolSearch
+
+- `mcp_tools_snapshot.tools[].alwaysLoad`（默认 false）：服务器 alwaysLoad 或工具元数据的合并结果。
+- `mcp_tool_search_configured`：首份快照同批记录 enabled、estimatedTokens、contextWindow、thresholdPercent、strategy（默认 auto）；
+  strategy 冻结环境选择，`denied`（默认 false）冻结首份快照的 ToolSearch deny 判定；按需模式在边界重新估算，只可 false→true。
+  旧日志无此事件时为全量；中途增加 deny 只阻止执行，不重新排列工具表。阈值比较为 >=。
+- `mcp_tools_loaded`：names 是本批发现的工具全名，按返回顺序追加并去重。顺序与集合完全由日志折叠。
+  `ToolResult.effects` 的 `mcp_load_tools` 与 ToolOutcome 同一次提交生成该事件；下一次请求追加加载的 schema，
+  内置、资源、alwaysLoad、ToolSearch 和 StructuredOutput 已有前缀保持原样。压缩不清除；子 agent / 分身继承模式和顺序。

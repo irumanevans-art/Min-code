@@ -8,6 +8,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConsoleQuestionsTest {
+    @Test fun `field constraints retry only the invalid field`() {
+        val schema = kotlinx.serialization.json.Json.parseToJsonElement("""{"type":"integer","minimum":2,"maximum":4}""") as kotlinx.serialization.json.JsonObject
+        val q = UserQuestion("count", "count", emptyList(), inputType="integer", inputSchema=schema)
+        assertTrue(parseConsoleAnswer(q, "1") is ConsoleAnswer.Retry)
+        assertTrue(parseConsoleAnswer(q, "5") is ConsoleAnswer.Retry)
+        assertEquals(ConsoleAnswer.Answer(QuestionAnswer(other="3")), parseConsoleAnswer(q, "3"))
+    }
+    @Test fun `optional typed fields omit with dash or enter and invalid integers retry`() {
+        val q = UserQuestion("count", "count", listOf(QuestionOption("（不提供此字段）", "")), inputType="integer")
+        for (line in listOf("-", "")) assertEquals(ConsoleAnswer.Answer(QuestionAnswer(selected=listOf("（不提供此字段）"))), parseConsoleAnswer(q, line))
+        assertEquals(ConsoleAnswer.Answer(QuestionAnswer(other="1")), parseConsoleAnswer(q, "1"))
+        for (line in listOf("3.0", "abc")) assertTrue(parseConsoleAnswer(q, line) is ConsoleAnswer.Retry)
+        assertTrue(renderQuestion(q).contains("-")); assertTrue(renderQuestion(q).contains("省略"))
+    }
     private val options = listOf(QuestionOption("红", "暖色"), QuestionOption("蓝", ""), QuestionOption("绿", ""))
     private val single = UserQuestion("选个颜色？", "颜色", options)
     private val multi = single.copy(multiSelect = true)

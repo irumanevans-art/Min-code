@@ -1,0 +1,623 @@
+[
+  {
+    "Item": "H1",
+    "Name": "automatic-empty",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "val questions = if (fields.isEmpty())",
+    "To": "if (fields.isEmpty()) return elicitationResult(\"accept\", JsonObject(emptyMap()))\n    val questions = if (fields.isEmpty())",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "H1",
+    "Name": "hide-origin",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "\"MCP 服务器 $server 请求：$message\", \"确认\"",
+    "To": "\"请确认\", \"确认\"",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "H1",
+    "Name": "accept-refusal",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "selected == listOf(\"同意\")",
+    "To": "selected != null",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "H2",
+    "Name": "default-scan",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt",
+    "From": "scanMcpMentions: Boolean = false",
+    "To": "scanMcpMentions: Boolean = true",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "H2",
+    "Name": "ignore-source",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt",
+    "From": "if (scanMcpMentions) attachMcpResources",
+    "To": "if (true) attachMcpResources",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "H2",
+    "Name": "scan-expansions",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/SlashInput.kt",
+    "From": "InputAction.Send(r.text)",
+    "To": "InputAction.Send(r.text, humanInput=true)",
+    "Module": "cli",
+    "Test": "*SlashInputTest"
+  },
+  {
+    "Item": "M1",
+    "Name": "ignore-phase",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "current.turn?.turnId == linked?.turnId && current.turn?.calls?.get(callId)?.phase is CallPhase.EffectPending",
+    "To": "current.turn?.turnId == linked?.turnId",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "M1",
+    "Name": "ignore-turn",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "current.turn?.turnId == linked?.turnId && current.turn?.calls?.get(callId)?.phase is CallPhase.EffectPending",
+    "To": "current.turn?.calls?.get(callId)?.phase is CallPhase.EffectPending",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "M1",
+    "Name": "accept-stale",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "} == null) return elicitationResult(\"cancel\")",
+    "To": "} == null) return elicitationResult(\"accept\")",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "M2",
+    "Name": "no-pause",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt",
+    "From": "reversePending.get() == 0L",
+    "To": "reversePending.get() <= 1L",
+    "Module": "mcp",
+    "Test": "*McpClientTest"
+  },
+  {
+    "Item": "M2",
+    "Name": "no-resume-wake",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt",
+    "From": "reversePending.decrementAndGet(); wakeIdleTimers()",
+    "To": "reversePending.decrementAndGet()",
+    "Module": "mcp",
+    "Test": "*McpClientTest"
+  },
+  {
+    "Item": "M2",
+    "Name": "pause-tools-only",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt",
+    "From": "reversePending.get() == 0L",
+    "To": "(reversePending.get() == 0L || method != \"tools/call\")",
+    "Module": "mcp",
+    "Test": "*McpClientTest"
+  },
+  {
+    "Item": "M3",
+    "Name": "ignore-deny",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpTools.kt",
+    "From": "&& !PolicyEngine.deniesWholeTool(name, policy)",
+    "To": "&& true",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "M3",
+    "Name": "ignore-child-deny",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpTools.kt",
+    "From": "agent.mcpDenied.none { matchesMcpPattern(it, name) }",
+    "To": "true",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "M3",
+    "Name": "lose-server-ask",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt",
+    "From": "specifiers = (input[\"server\"] as? JsonPrimitive)?.content?.let(::listOf) ?: servers",
+    "To": "specifiers = emptyList()",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "M4",
+    "Name": "loose-integer",
+    "File": "agent/spi/src/main/kotlin/dev/min/agent/spi/McpFormValues.kt",
+    "From": "text.toLongOrNull() ?: return null",
+    "To": "text.toDoubleOrNull()?.toLong() ?: return null",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "M4",
+    "Name": "decline-invalid",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "已取消请求。\")), Durability.Sync)\n        return elicitationResult(\"cancel\")",
+    "To": "已取消请求。\")), Durability.Sync)\n        return elicitationResult(\"decline\")",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "M4",
+    "Name": "no-cli-constraints",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleQuestions.kt",
+    "From": "dev.min.agent.spi.mcpFormValue(schema, result.answer) == null",
+    "To": "false",
+    "Module": "cli",
+    "Test": "*ConsoleQuestionsTest"
+  },
+  {
+    "Item": "M5",
+    "Name": "no-enter-omit",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleQuestions.kt",
+    "From": "text.isEmpty() || text == \"-\"",
+    "To": "text == \"-\"",
+    "Module": "cli",
+    "Test": "*ConsoleQuestionsTest"
+  },
+  {
+    "Item": "M5",
+    "Name": "no-dash-omit",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleQuestions.kt",
+    "From": "text.isEmpty() || text == \"-\"",
+    "To": "text.isEmpty()",
+    "Module": "cli",
+    "Test": "*ConsoleQuestionsTest"
+  },
+  {
+    "Item": "M5",
+    "Name": "no-omit-hint",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleQuestions.kt",
+    "From": "- 或直接回车 = 省略可选字段：",
+    "To": "回车提交：",
+    "Module": "cli",
+    "Test": "*ConsoleQuestionsTest"
+  },
+  {
+    "Item": "M6",
+    "Name": "no-mention-budget",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt",
+    "From": "ResultBudget.apply(raw, MCP_RESULT_BUDGET_CHARS, deps.host.artifacts(sessionId), CallId(\"input-${id.value}-$index\"))",
+    "To": "raw",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "M6",
+    "Name": "no-prompt-budget",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpPrompts.kt",
+    "From": "else ResultBudget.apply(ToolResult(parts), MCP_RESULT_BUDGET_CHARS, deps.host.artifacts(sessionId), dev.min.agent.protocol.CallId(\"prompt-${deps.ids.next(\"p\")}\"))",
+    "To": "else ToolResult(parts)",
+    "Module": "kernel",
+    "Test": "*McpPromptsSessionTest"
+  },
+  {
+    "Item": "M6",
+    "Name": "double-budget",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpTools.kt",
+    "From": "MCP_RESULT_BUDGET_CHARS = 80_000",
+    "To": "MCP_RESULT_BUDGET_CHARS = 160_000",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "M7",
+    "Name": "no-connector-map",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpConnections.kt",
+    "From": "rootsResult(roots(), serverPath)",
+    "To": "rootsResult(roots())",
+    "Module": "kernel",
+    "Test": "*McpRootsTest"
+  },
+  {
+    "Item": "M7",
+    "Name": "no-drive-slash",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpConnections.kt",
+    "From": "if (Regex(\"^[A-Za-z]:/\").containsMatchIn(mapped)) \"/$mapped\" else mapped",
+    "To": "mapped",
+    "Module": "kernel",
+    "Test": "*McpRootsTest"
+  },
+  {
+    "Item": "M7",
+    "Name": "no-backslash-map",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpConnections.kt",
+    "From": "serverPath(path).replace('\\\\', '/')",
+    "To": "serverPath(path).replace('\\\\', '\\\\')",
+    "Module": "kernel",
+    "Test": "*McpRootsTest"
+  },
+  {
+    "Item": "L1",
+    "Name": "escape-all",
+    "File": "agent/ext/src/main/kotlin/dev/min/agent/ext/mcp/McpPromptCommands.kt",
+    "From": "char == '\\\\' && raw.getOrNull(index + 1) in listOf('\"', '\\'', '\\\\')",
+    "To": "char == '\\\\'",
+    "Module": "ext",
+    "Test": "*McpPromptCommandsTest"
+  },
+  {
+    "Item": "L1",
+    "Name": "lose-unquoted-slash",
+    "File": "agent/ext/src/main/kotlin/dev/min/agent/ext/mcp/McpPromptCommands.kt",
+    "From": "else -> { token.append(char); started = true }",
+    "To": "else -> { if (char != '\\\\') token.append(char); started = true }",
+    "Module": "ext",
+    "Test": "*McpPromptCommandsTest"
+  },
+  {
+    "Item": "L1",
+    "Name": "lose-quoted-slash",
+    "File": "agent/ext/src/main/kotlin/dev/min/agent/ext/mcp/McpPromptCommands.kt",
+    "From": "if (char == quote) quote = null else token.append(char)",
+    "To": "if (char == quote) quote = null else if (char != '\\\\') token.append(char)",
+    "Module": "ext",
+    "Test": "*McpPromptCommandsTest"
+  },
+  {
+    "Item": "L2",
+    "Name": "propagate-failure",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "catch (e: Exception) {\n                    binding.rt.commit",
+    "To": "catch (e: Exception) {\n                    throw e\n                    binding.rt.commit",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "L2",
+    "Name": "hide-failed-server",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "MCP 服务器 ${entry.spec.name} 的 prompts/list 失败",
+    "To": "MCP 服务器的 prompts/list 失败",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "L2",
+    "Name": "discard-good-prompts",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "emptyList()\n                }\n                listed.mapNotNull",
+    "To": "return emptyList()\n                }\n                listed.mapNotNull",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "L3",
+    "Name": "no-left-boundary",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt",
+    "From": "(?<![\\\\p{L}\\\\p{N}@])@",
+    "To": "@",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "L3",
+    "Name": "double-mention",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt",
+    "From": "\\\\p{N}@]",
+    "To": "\\\\p{N}]",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "L3",
+    "Name": "keep-punctuation",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpResources.kt",
+    "From": ".trimEnd('.', ',', ';', ':', ')', ']', '}')",
+    "To": ".trimEnd()",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "L4",
+    "Name": "keep-ansi",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/TerminalText.kt",
+    "From": ".replace(Regex(\"\\u001B\\\\[[0-?]*[ -/]*[@-~]\"), \"\")",
+    "To": ".replace(Regex(\"NEVER_ANSI\"), \"\")",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L4",
+    "Name": "keep-osc",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/TerminalText.kt",
+    "From": ".replace(Regex(\"\\u001B\\\\][^\\u0007]*(?:\\u0007|\\u001B\\\\\\\\)\"), \"\")",
+    "To": ".replace(Regex(\"NEVER_OSC\"), \"\")",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L4",
+    "Name": "keep-controls",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/TerminalText.kt",
+    "From": "filterNot { it.isISOControl() }",
+    "To": "filterNot { false }",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L5",
+    "Name": "no-announcement",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleUi.kt",
+    "From": "下一行输入是给服务器",
+    "To": "服务器正在提问",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L5",
+    "Name": "no-skip",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleQuestions.kt",
+    "From": "text == \"/skip\"",
+    "To": "text == \"/never-skip\"",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L5",
+    "Name": "consume-unannounced",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleUi.kt",
+    "From": "val owner = idleInput ?: return false",
+    "To": "val owner = idleInput ?: (runtime.sessionId to runtime.state.value.pendingMcpQuestions.first().questionId.value)",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L6",
+    "Name": "root-only",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleUi.kt",
+    "From": "filter { it.root == runtime.sessionId }",
+    "To": "filter { it.session == runtime.sessionId }",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L6",
+    "Name": "wrong-answer-runtime",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleUi.kt",
+    "From": "answerQuestions(asked, target)",
+    "To": "answerQuestions(asked, runtime)",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L6",
+    "Name": "wrong-tree-lookup",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/ConsoleUi.kt",
+    "From": "hub?.get(it.session)",
+    "To": "hub?.get(it.root)",
+    "Module": "cli",
+    "Test": "*McpConsoleReviewTest"
+  },
+  {
+    "Item": "L7",
+    "Name": "freeze-fold",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt",
+    "From": "mcpTools = e,",
+    "To": "mcpTools = e.copy(resourceServers = mcpTools?.resourceServers ?: e.resourceServers),",
+    "Module": "kernel",
+    "Test": "*McpResourcesSessionTest"
+  },
+  {
+    "Item": "L7",
+    "Name": "ignore-resource-only-change",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "&& current.resourceServers == tools.resourceServers",
+    "To": "",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "L7",
+    "Name": "freeze-manager",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "val resourceServers = order.filter",
+    "To": "val resourceServers = previous?.resourceServers ?: order.filter",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "L9",
+    "Name": "ignore-host-mode",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "if (!deps.canAnswerMcpUrlElicitation) return elicitationResult(\"decline\")",
+    "To": "if (false) return elicitationResult(\"decline\")",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "L9",
+    "Name": "capable-by-default",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/KernelDeps.kt",
+    "From": "canAnswerMcpUrlElicitation: Boolean = false",
+    "To": "canAnswerMcpUrlElicitation: Boolean = true",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "L9",
+    "Name": "ignore-unattended",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "!deps.canAnswerMcpElicitation || state.value.settings.mode",
+    "To": "state.value.settings.mode",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "L10",
+    "Name": "allow-password",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "password|passwd|secret",
+    "To": "pw|passwd|secret",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "L10",
+    "Name": "allow-token",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "secret|token|api",
+    "To": "secret|bearer|api",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "L10",
+    "Name": "ignore-title",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "CREDENTIAL_FIELD.containsMatchIn(((raw as? JsonObject)",
+    "To": "false && CREDENTIAL_FIELD.containsMatchIn(((raw as? JsonObject)",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "L11",
+    "Name": "reply-on-cancel",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt",
+    "From": "if (synchronized(serverRequests) { id in serverCancelled }) return@launch",
+    "To": "if (false) return@launch",
+    "Module": "mcp",
+    "Test": "*McpClientTest"
+  },
+  {
+    "Item": "L11",
+    "Name": "forget-peer-cancel",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt",
+    "From": "serverCancelled.add(requestId); it.cancel()",
+    "To": "it.cancel()",
+    "Module": "mcp",
+    "Test": "*McpClientTest"
+  },
+  {
+    "Item": "L11",
+    "Name": "reply-after-swallowed-cancel",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpClient.kt",
+    "From": "if (!synchronized(serverRequests) { id in serverCancelled }) catchingNonCancellation",
+    "To": "if (true) catchingNonCancellation",
+    "Module": "mcp",
+    "Test": "*McpClientTest"
+  },
+  {
+    "Item": "shared",
+    "Name": "single-serialize",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "if (refs >= 2) callLock.withLock",
+    "To": "if (refs >= 1) callLock.withLock",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "shared",
+    "Name": "two-not-serialized",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "if (refs >= 2) callLock.withLock",
+    "To": "if (refs >= 3) callLock.withLock",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "shared",
+    "Name": "ignore-child-ref",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "it.refs++; it.linger?.cancel()",
+    "To": "it.refs += 0; it.linger?.cancel()",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "activity",
+    "Name": "oldest-first",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "compareByDescending<Binding> { it.rt.lastMcpActivity }",
+    "To": "compareBy<Binding> { it.rt.lastMcpActivity }",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "activity",
+    "Name": "no-tracking",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt",
+    "From": "lastMcpActivity = mcpActivitySequence.incrementAndGet()",
+    "To": "lastMcpActivity = 0",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "activity",
+    "Name": "choose-last",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": ".firstOrNull()?.rt",
+    "To": ".lastOrNull()?.rt",
+    "Module": "kernel",
+    "Test": "*McpReviewManagerTest"
+  },
+  {
+    "Item": "search",
+    "Name": "strict-threshold",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpToolSearch.kt",
+    "From": "tokens >= window",
+    "To": "tokens > window",
+    "Module": "kernel",
+    "Test": "*McpToolSearchTest"
+  },
+  {
+    "Item": "search",
+    "Name": "no-latch",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt",
+    "From": ".let { if (previous?.enabled == true) it.copy(enabled=true) else it }",
+    "To": ".let { it }",
+    "Module": "kernel",
+    "Test": "*McpToolSearchTest"
+  },
+  {
+    "Item": "search",
+    "Name": "live-deny",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt",
+    "From": "previous?.denied ?: state.value.deniesToolSearch(deps)",
+    "To": "state.value.deniesToolSearch(deps)",
+    "Module": "kernel",
+    "Test": "*McpToolSearchTest"
+  },
+  {
+    "Item": "schema",
+    "Name": "no-email-validation",
+    "File": "agent/spi/src/main/kotlin/dev/min/agent/spi/McpFormValues.kt",
+    "From": "\"email\" -> Regex(\"^[^\\\\s@]+@[^\\\\s@]+\\\\.[^\\\\s@]+$\").matches(text)",
+    "To": "\"email\" -> true",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "schema",
+    "Name": "lose-enum-titles",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "titles?.get(i)?.jsonPrimitive?.content.orEmpty()",
+    "To": "\"\"",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  },
+  {
+    "Item": "schema",
+    "Name": "single-select-array",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt",
+    "From": "multiSelect = type == \"array\"",
+    "To": "multiSelect = false",
+    "Module": "kernel",
+    "Test": "*McpElicitationTest"
+  }
+]

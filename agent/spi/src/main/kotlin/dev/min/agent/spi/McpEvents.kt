@@ -48,6 +48,7 @@ data class McpToolEntry(
     val requiresUserInteraction: Boolean = false,
     /** `_meta["anthropic/maxResultSizeChars"]`（上限 500,000）；null = 用默认的结果预算 */
     val maxResultChars: Int? = null,
+    val alwaysLoad: Boolean = false,
 )
 
 /**
@@ -62,4 +63,14 @@ data class McpToolsSnapshot(
     val instructions: Map<String, String> = emptyMap(),
     /** 给人看的变化说明（「新增 github 的 12 个工具」）；首份快照通常没有 */
     val note: String? = null,
+    /** 资源服务器晚连上时，与工具集合一起在下一回合更新。 */
+    val resourceServers: List<String> = emptyList(),
 ) : SessionEvent
+
+@Serializable
+@SerialName("mcp_tool_search_configured")
+data class McpToolSearchConfigured(val enabled: Boolean, val estimatedTokens: Int, val contextWindow: Int, val thresholdPercent: Double, val strategy: String = "auto", val denied: Boolean = false) : SessionEvent
+
+@Serializable
+@SerialName("mcp_tools_loaded")
+data class McpToolsLoaded(val names: List<String>) : SessionEvent

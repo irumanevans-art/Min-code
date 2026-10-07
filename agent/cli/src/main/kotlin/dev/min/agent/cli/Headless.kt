@@ -1,6 +1,8 @@
 package dev.min.agent.cli
 
 import dev.min.agent.kernel.SessionRuntime
+import dev.min.agent.kernel.getMcpPrompt
+import dev.min.agent.kernel.listMcpPrompts
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.TextPart
 import kotlinx.coroutines.CoroutineScope
@@ -26,8 +28,9 @@ internal suspend fun runHeadless(
     stdout: PrintStream,
     stderr: PrintStream,
 ): Int {
-    // 非交互默认 --approve no / 拒答提问，ConsoleUi 不会去读 stdin；它的一切打印都进 stderr
-    val ui = ConsoleUi(runtime, args.approve, stdin, stderr).attach(scope)
+    // 非交互默认 --approve no / 拒答提问，ConsoleUi 不会去读 stdin；它的一切打印都进 stderr。
+    // 交给 hub：子 agent 的审批也按 --approve 答掉——以前只答根会话的，子 agent 要审批时整次运行挂到超时（评测集 v1 第 32 题实测）
+    val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub()).attach(scope)
     try {
         val renderer = if (args.outputFormat == OutputFormat.StreamJson) {
             StreamJsonRenderer(app, runtime, args, stdout).also { it.start(scope) }
@@ -35,14 +38,36 @@ internal suspend fun runHeadless(
         val fromSeq = runtime.state.value.lastSeq + 1
         val effective = if (args.jsonSchema != null) structuredOutputPrompt(args.prompt!!) else args.prompt!!
         // -p 的提示词同样过斜杠展开（/名字 一样可用）；展不开（未知命令）在 stderr 提示、按参数错误退出
-        val text = when (val action = interpretInput(effective, app.config().skills, app.config().commands, app.skillVars(runtime))) {
-            is InputAction.Send -> action.text
+        val prompts = if (effective.trimStart().startsWith("/mcp__")) {
+            try { runtime.listMcpPrompts() }
+            catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
+            catch (e: Exception) { stderr.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
+        } else emptyList()
+        val config = app.config()
+        val action = interpretInput(effective, config.skills, config.commands, app.skillVars(runtime), prompts)
+        val parts = when (action) {
+            is InputAction.Send -> listOf(TextPart(action.text))
+            is InputAction.Prompt -> {
+                val result = runtime.getMcpPrompt(action.command.server, action.command.prompt, action.arguments)
+                if (result.isError) {
+                    stderr.println(result.content.filterIsInstance<TextPart>().joinToString("\n") { it.text })
+                    return 1
+                }
+                result.content
+            }
             is InputAction.Notice -> {
                 stderr.println(action.message)
                 return 2
             }
         }
-        runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(text)))
+        // 斜杠调用的 skill / command 登记它们的 frontmatter hooks（与交互模式同一条规矩）
+        (action as? InputAction.Send)?.names.orEmpty().forEach { name ->
+            runtime.state.value.skills?.entries?.firstOrNull { it.name == name }?.let { e ->
+                e.hooks?.let { runtime.registerComponentHooks(e.kind.name.lowercase(), name, e.source ?: "user", it) }
+            }
+        }
+        // 只有人写的提示词才扫 `@server:uri`；展开出来的 skill / prompt 文本不扫（MCP2 复核 H2）
+        runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)
         runtime.awaitIdle()
         stderr.println()
         val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq))

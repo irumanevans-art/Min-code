@@ -23,8 +23,27 @@ internal sealed interface ConsoleAnswer {
 private val NUMBER_LIST = Regex("""^\d+(\s*[,，、\s]\s*\d+)*$""")
 
 internal fun parseConsoleAnswer(question: UserQuestion, line: String): ConsoleAnswer {
+    val result = parseConsoleValue(question, line)
+    val schema = question.inputSchema
+    if (result is ConsoleAnswer.Answer && schema != null && result.answer.selected != listOf("（不提供此字段）") && dev.min.agent.spi.mcpFormValue(schema, result.answer) == null) return ConsoleAnswer.Retry("这个字段不符合类型或约束，请重新输入")
+    return result
+}
+
+private fun parseConsoleValue(question: UserQuestion, line: String): ConsoleAnswer {
     val text = line.trim()
+    if (text == "/skip") return ConsoleAnswer.Skip
+    val optional = question.inputType != null && question.options.any { it.label == "（不提供此字段）" }
+    if (optional && (text.isEmpty() || text == "-")) return ConsoleAnswer.Answer(QuestionAnswer(selected=listOf("（不提供此字段）")))
     if (text.isEmpty()) return ConsoleAnswer.Skip
+    if (question.options.isEmpty() || (question.inputType != null && question.options.all { it.label == "（不提供此字段）" })) {
+        val valid = when (question.inputType) {
+            "integer" -> text.toLongOrNull() != null
+            "number" -> text.toDoubleOrNull()?.isFinite() == true
+            "boolean" -> text.toBooleanStrictOrNull() != null
+            else -> true
+        }
+        return if (valid) ConsoleAnswer.Answer(QuestionAnswer(other=text)) else ConsoleAnswer.Retry("请输入合法的 ${question.inputType} 字段值")
+    }
     // 只有编号才当作选择；混了别的字（如「2 个都要」）就是用户自己写的话
     if (!NUMBER_LIST.matches(text)) return ConsoleAnswer.Answer(QuestionAnswer(other = text))
     val picks = text.split(',', '，', '、', ' ', '\t').filter { it.isNotBlank() }.map { it.toInt() }.distinct()
@@ -37,14 +56,16 @@ internal fun parseConsoleAnswer(question: UserQuestion, line: String): ConsoleAn
 }
 
 internal fun renderQuestion(question: UserQuestion): String = buildString {
-    append("  ? [").append(question.header).append("] ").append(question.question)
+    append("  ? [").append(terminalText(question.header)).append("] ").append(terminalText(question.question))
     append(if (question.multiSelect) "（可多选）" else "（单选）").append('\n')
     question.options.forEachIndexed { i, option ->
-        append("    ").append(i + 1).append(". ").append(option.label)
-        if (option.description.isNotBlank()) append(" —— ").append(option.description)
+        append("    ").append(i + 1).append(". ").append(terminalText(option.label))
+        if (option.description.isNotBlank()) append(" —— ").append(terminalText(option.description))
         append('\n')
     }
     append("  输入编号")
     if (question.multiSelect) append("（多个用逗号分隔）")
-    append("，或直接打字作为「其他」；直接回车 = 这组问题都不回答：")
+    append("，或直接打字作为「其他」；")
+    if (question.inputType != null && question.options.any { it.label == "（不提供此字段）" }) append("- 或直接回车 = 省略可选字段：")
+    else append("直接回车 = 这组问题都不回答：")
 }

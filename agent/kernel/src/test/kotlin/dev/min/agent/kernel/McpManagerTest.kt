@@ -104,7 +104,7 @@ class McpManagerTest {
         }
     }
 
-    private inner class FakeConnector(var connectDelayMs: Long = 0, val listFails: Boolean = false) : McpConnector {
+    private inner class FakeConnector(var connectDelayMs: Long = 0, val listFails: Boolean = false, val alwaysMeta: Boolean = false) : McpConnector {
         val made = CopyOnWriteArrayList<FakeConnection>()
         val specs = CopyOnWriteArrayList<McpServerSpec>()
         val cancelledConnects = java.util.concurrent.atomic.AtomicInteger()
@@ -116,7 +116,7 @@ class McpManagerTest {
                 cancelledConnects.incrementAndGet()
                 throw e
             }
-            return FakeConnection(listOf(tool("search", readOnly = true))).also { it.listFails = listFails; made += it }
+            return FakeConnection(listOf(tool("search", readOnly = true).copy(meta = if (alwaysMeta) args("anthropic/alwaysLoad" to true) else null))).also { it.listFails = listFails; made += it }
         }
     }
 
@@ -136,6 +136,33 @@ class McpManagerTest {
             platform = base.platform, zone = base.zone, retry = base.retry, memoryHome = GuestPath("/root"),
             env = env, mcpFirstSnapshotWaitMs = waitMs, mcpConnectTimeoutMs = connectTimeoutMs,
         )
+    }
+
+    @Test
+    fun `server alwaysLoad bypasses deferral in the first snapshot`() = run {
+        fs.put("/root/.claude.json", """{"mcpServers":{"github":{"command":"gh-mcp","alwaysLoad":true}}}""")
+        val model = ScriptedModel(reply(TextPart("ok")))
+        val connector = FakeConnector()
+        val hub = SessionHub(store, deps(model, env = { if (it == "ENABLE_TOOL_SEARCH") "true" else null }), scope)
+        hub.mcp = McpManager(scope, connector)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("hello")
+        assertTrue(rt.state.value.mcpTools!!.tools.single().alwaysLoad)
+        assertEquals(listOf("mcp__github__search", "ToolSearch"), model.requests.single().toolNames())
+        val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+    }
+
+    @Test
+    fun `tool alwaysLoad metadata bypasses deferral in the first snapshot`() = run {
+        val model = ScriptedModel(reply(TextPart("ok")))
+        val connector = FakeConnector(alwaysMeta=true)
+        val hub = SessionHub(store, deps(model, env = { if (it == "ENABLE_TOOL_SEARCH") "true" else null }), scope)
+        hub.mcp = McpManager(scope, connector)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("hello")
+        assertTrue(rt.state.value.mcpTools!!.tools.single().alwaysLoad)
+        assertEquals(listOf("mcp__github__search", "ToolSearch"), model.requests.single().toolNames())
+        val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
     }
 
     @Test

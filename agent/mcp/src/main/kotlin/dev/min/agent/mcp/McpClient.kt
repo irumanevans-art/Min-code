@@ -28,6 +28,11 @@ class McpClient(
         val progressQueue = Channel<McpProgress>(16, BufferOverflow.DROP_OLDEST)
     }
     private val pending = mutableMapOf<Long, Pending>()
+    private val serverRequests = mutableMapOf<JsonElement, Job>()
+    private val serverCancelled = mutableSetOf<JsonElement>()
+    private val reversePending = AtomicLong()
+
+    private fun wakeIdleTimers() { synchronized(pending) { pending.values.forEach { it.activity.trySend(Unit) } } }
     private val mutableState = MutableStateFlow<McpConnectionState>(McpConnectionState.Connecting)
     val state: StateFlow<McpConnectionState> = mutableState.asStateFlow()
     private val listVersion = MutableStateFlow(0L)
@@ -149,6 +154,61 @@ class McpClient(
 
     suspend fun ping() { ready(); request("ping", null, options.requestTimeoutMs) }
 
+    suspend fun rootsChanged() {
+        ready()
+        transport.send(rpcNotification("notifications/roots/list_changed"), options.requestTimeoutMs)
+    }
+
+    suspend fun listResources(): List<JsonObject> = listPages("resources/list", "resources")
+
+    suspend fun listResourceTemplates(): List<JsonObject> = listPages("resources/templates/list", "resourceTemplates")
+
+    suspend fun listPrompts(): List<JsonObject> = listPages("prompts/list", "prompts")
+
+    suspend fun getPrompt(name: String, arguments: JsonObject): List<McpPromptMessage> {
+        ready()
+        val result = request("prompts/get", buildJsonObject { put("name", name); put("arguments", arguments) }, options.requestTimeoutMs) as? JsonObject
+            ?: throw McpProtocolException("$displayName：prompts/get 响应不是对象。")
+        val messages = result["messages"] as? JsonArray ?: throw McpProtocolException("$displayName：prompts/get 缺少 messages。")
+        return messages.map { raw ->
+            val message = raw as? JsonObject ?: throw McpProtocolException("$displayName：prompt 消息不是对象。")
+            val role = message.text("role")
+            if (role != "user" && role != "assistant") throw McpProtocolException("$displayName：prompt 消息角色不合法。")
+            McpPromptMessage(role, parseContent(message["content"] ?: throw McpProtocolException("$displayName：prompt 消息没有 content。")))
+        }
+    }
+
+    suspend fun readResource(uri: String): McpCallResult {
+        ready()
+        val result = request("resources/read", buildJsonObject { put("uri", uri) }, options.requestTimeoutMs) as? JsonObject
+            ?: throw McpProtocolException("$displayName：resources/read 响应不是对象。")
+        val contents = result["contents"] as? JsonArray
+            ?: throw McpProtocolException("$displayName：resources/read 缺少 contents。")
+        return McpCallResult(contents.map { resource ->
+            val embedded = parseContent(buildJsonObject { put("type", "resource"); put("resource", resource) })
+            if (embedded is McpContent.EmbeddedResource && embedded.text == null && embedded.blob != null && embedded.mimeType?.startsWith("image/") == true)
+                McpContent.Image(embedded.blob, embedded.mimeType)
+            else embedded
+        }, null, false)
+    }
+
+    private suspend fun listPages(method: String, field: String): List<JsonObject> {
+        ready()
+        val items = mutableListOf<JsonObject>()
+        val seen = mutableSetOf<String>()
+        var cursor: String? = null
+        repeat(options.maxToolPages) {
+            val result = request(method, cursor?.let { buildJsonObject { put("cursor", it) } }, options.requestTimeoutMs) as? JsonObject
+                ?: throw McpProtocolException("$displayName：$method 响应不是对象。")
+            val page = result[field] as? JsonArray ?: throw McpProtocolException("$displayName：$method 缺少 $field。")
+            items += page.mapNotNull { it as? JsonObject }
+            cursor = result.text("nextCursor") ?: return items
+            if (!seen.add(cursor)) { debug("MCP $method 游标重复，已停止翻页。"); return items }
+        }
+        debug("MCP $method 已到分页上限，已停止翻页。")
+        return items
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun request(
         method: String, params: JsonObject?, idleMs: Long, hardMs: Long? = null,
@@ -181,7 +241,11 @@ class McpClient(
                     p.result.onAwait { it }
                     p.activity.onReceive { null }
                     hard?.onAwait { throw McpTimeoutException(McpTimeoutException.Kind.Hard, "$displayName：$method 超过调用总时限。") }
-                    onTimeout(idleMs) { throw McpTimeoutException(McpTimeoutException.Kind.Idle, "$displayName：$method 等待响应或进度超时。") }
+                    // 服务器在等本客户端回答时无法继续处理请求；配置的总时限仍然有效。
+                    if (reversePending.get() == 0L) onTimeout(idleMs) {
+                        if (reversePending.get() == 0L) throw McpTimeoutException(McpTimeoutException.Kind.Idle, "$displayName：$method 等待响应或进度超时。")
+                        null
+                    }
                 }
                 if (value != null) return@coroutineScope value
             }
@@ -209,12 +273,23 @@ class McpClient(
         val method = message.text("method")
         val id = message["id"]
         if (method != null && id != null) {
-            connectionScope.launch {
+            reversePending.incrementAndGet(); wakeIdleTimers()
+            val handler = connectionScope.launch(start = CoroutineStart.LAZY) {
+            try {
                 val response = try {
                     // ping 不能排在用户交互 handler 后面等待。
                     val result = if (method == "ping") emptyObject else options.requestHandler(method, message.obj("params"))
                     buildJsonObject { put("jsonrpc", "2.0"); put("id", id); put("result", result) }
-                } catch (e: CancellationException) { throw e }
+                } catch (e: CancellationException) {
+                    if (method != "elicitation/create") throw e
+                    if (synchronized(serverRequests) { id in serverCancelled }) return@launch
+                    withContext(NonCancellable) {
+                        withTimeoutOrNull(1_000) { catchingNonCancellation { transport.send(buildJsonObject {
+                            put("jsonrpc", "2.0"); put("id", id); putJsonObject("result") { put("action", "cancel") }
+                        }) } }
+                    }
+                    return@launch
+                }
                 catch (e: Exception) {
                     buildJsonObject {
                         put("jsonrpc", "2.0"); put("id", id)
@@ -225,10 +300,19 @@ class McpClient(
                         }
                     }
                 }
-                catchingNonCancellation { transport.send(response) }.onFailure { debug("MCP 服务器请求的回复发送失败。") }
+                if (!synchronized(serverRequests) { id in serverCancelled }) catchingNonCancellation { transport.send(response) }.onFailure { debug("MCP 服务器请求的回复发送失败。") }
+            } finally {
+                synchronized(serverRequests) { serverRequests.remove(id); serverCancelled.remove(id) }
+                reversePending.decrementAndGet(); wakeIdleTimers()
             }
+            }
+            synchronized(serverRequests) { serverRequests[id] = handler }
+            handler.start()
         } else if (method != null) {
             when (method) {
+                "notifications/cancelled" -> message.obj("params")?.get("requestId")?.let { requestId ->
+                    synchronized(serverRequests) { serverRequests[requestId]?.also { serverCancelled.add(requestId); it.cancel() } }
+                }
                 "notifications/tools/list_changed" -> listVersion.update { it + 1 }
                 "notifications/progress" -> {
                     val params = message.obj("params") ?: return

@@ -1766,3 +1766,92 @@ Stop cap 用例覆盖 cap=2 和四个无效值，执行 34 次真实 Stop hook�
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261006-MCP2-TEST-EVIDENCE] best_practice
+
+**Logged**: 2026-10-06T03:00:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Gradle 变异必须隔离运行，以具体功能断言失败证明检出，不能将 JUnit 初始化失败算作有效变异。
+
+### Details
+Kotlin 的 `@Test fun ... = runBlocking { ... }` 会把最后一个表达式的类型作为方法返回类型；末尾为 Boolean 时，JUnit4 报 initializationError，所有功能断言根本未运行。MCP2 将这类测试末尾改为 Unit，并重新执行有效变异。脚本解析测试 XML，要求指定测试类中的非 initializationError 失败，排除编译失败与未找到测试；每次 finally 恢复源码。另一个陷阱是同一 Gradle 命令有多个 test 任务时，后置 --tests 只过滤它紧邻的任务；基线与变异必须串行，单个任务单独过滤，不让另一任务或源码突变污染结果。
+
+### Suggested Action
+JVM 协程测试明确返回 Unit；变异保存退出码、具体失败测试和 XML，并在恢复后复跑基线。不要在同一工作树同时做变异和正常测试。
+
+### Metadata
+- Source: error
+- Related Files: agent/mcp/scripts/mcp2-mutations.ps1, agent/kernel/src/test/kotlin/dev/min/agent/kernel/McpRootsTest.kt
+- Tags: junit4, kotlin, gradle, mutation, evidence
+- Pattern-Key: tests.functional_mutation_evidence
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-06
+- **Commit/PR**: fac11054, b1bfd647
+- **Notes**: 五项均至少三处有效断言失败；恢复后的专项基线均通过。无效初始化结果已排除并重做。
+
+---
+
+## [LRN-20261006-MCP2-PRETURN-OWNER] best_practice
+
+**Logged**: 2026-10-06T02:56:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+共享 MCP 连接的反向交互须保留输入准备调用的归属，不能把尚未开回合等同于服务器自主空闲请求。
+
+### Details
+工具调用已有 activeCall 可关联运行时，但发送前 resources/read 和 prompts/get 还没有 turn/callId。仅靠闲时最小 sessionId 会把第二个会话触发的表单投到第一个会话。串行锁内临时保存 inputOwner，反向处理优先采用该归属，finally 清除，真正自主空闲才选默认宿主；没有为准备输入伪造回合。
+
+### Suggested Action
+共享连接任何可触发反向交互的请求都保留调用归属，覆盖有回合与输入准备两种路径，并用双会话测试验证目标而非只检查有表单出现。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/McpElicitationTest.kt
+- Tags: mcp, shared-connection, elicitation, session-routing
+- Pattern-Key: mcp.reverse_request_owner
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-06
+- **Notes**: 双会话 resources/read 和 prompts/get 回归通过；移除 inputOwner 回退的变异由同一测试检出。
+
+---
+
+## [LRN-20261007-MCP2-REVERSE-TRUST] correction
+
+**Logged**: 2026-10-07T01:20:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+MCP 服务器生成的 prompt 不能触发跨服务器资源提取，合法的零字段表单也必须由人确认。
+
+### Details
+独立复核证明 send 的无来源 mention 扫描让 A 的 prompt 读取 B，properties={} 则直接 accept。人工输入来源改为宿主显式打开扫描，默认关闭；空 schema 仍持久化一张确认卡。任何关联调用的反向问题，提交前必须在 commitIf 锁内复核 turnId 与 EffectPending，否则竞态会先 append 再 fold 失败，损坏重放。
+
+### Suggested Action
+外部文本展开与人工文本在输入入口携带明确来源；对允许空 schema 的交互保留人工同意步骤；用提交锁阻塞的确定性竞态测试覆盖日志可重放，而不仅检查响应动作。
+
+### Metadata
+- Source: user_feedback
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpElicitation.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt
+- Tags: mcp, trust-boundary, consent, replay, race
+- Pattern-Key: mcp.reverse_request_trust_and_commit
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: 71dc2518, 230d7593, 37719d04
+- **Notes**: 空表单、跨服务器 prompt、call 结束与 turn 切换的确定性复现已覆盖。
+
+---
