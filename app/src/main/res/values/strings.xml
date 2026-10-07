@@ -1322,6 +1322,7 @@
     <string name="checkpoints_total">%1$s in %2$d workspaces</string>
     <string name="checkpoints_note">Snapshots let you go back to an earlier message. Cleaning up a workspace deletes all of its snapshots: earlier checkpoints of its sessions can no longer be restored.</string>
     <string name="checkpoints_clean">Clean up</string>
+    <string name="checkpoints_clean_title">Delete all snapshots of %1$s?</string>
     <string name="checkpoints_cleared">Snapshots cleaned up</string>
     <string name="checkpoints_clear_failed">Could not clean up: %1$s</string>
     <string name="min_recap_line">Recap · %1$s</string>

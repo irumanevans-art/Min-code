@@ -244,6 +244,16 @@ internal fun RewindOverlay(extras: SessionExtras) {
 @Composable
 internal fun CheckpointsSection(rows: List<dev.min.code.core.engine.RewindStorageRow>, onClear: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    // 清理是删光一个工作区的全部快照、没有撤销：先问一句
+    var confirming by remember { mutableStateOf<dev.min.code.core.engine.RewindStorageRow?>(null) }
+    dev.min.code.ui.components.RikkaConfirmDialog(
+        show = confirming != null,
+        title = stringResource(R.string.checkpoints_clean_title, confirming?.label.orEmpty()),
+        confirmText = stringResource(R.string.checkpoints_clean),
+        dismissText = stringResource(R.string.rewind_cancel),
+        onConfirm = { confirming?.let { onClear(it.id) }; confirming = null },
+        onDismiss = { confirming = null },
+    ) { Text(stringResource(R.string.checkpoints_note)) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (rows.isEmpty()) {
             Text(stringResource(R.string.checkpoints_none), style = MaterialTheme.typography.bodyMedium)
@@ -257,7 +267,7 @@ internal fun CheckpointsSection(rows: List<dev.min.code.core.engine.RewindStorag
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                InkButton(onClick = { onClear(row.id) }, tone = InkButtonTone.Paper, compact = true) {
+                InkButton(onClick = { confirming = row }, tone = InkButtonTone.Paper, compact = true) {
                     Text(stringResource(R.string.checkpoints_clean), style = MaterialTheme.typography.labelMedium)
                 }
             }

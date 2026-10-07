@@ -1317,6 +1317,7 @@
     <string name="checkpoints_total">共 %1$s，%2$d 个工作区</string>
     <string name="checkpoints_note">快照让你能回到之前的某条消息。清理一个工作区会删掉它的全部快照：这个工作区里已有会话的旧检查点就撤不回了。</string>
     <string name="checkpoints_clean">清理</string>
+    <string name="checkpoints_clean_title">删掉 %1$s 的全部快照吗？</string>
     <string name="checkpoints_cleared">快照已清理</string>
     <string name="checkpoints_clear_failed">没能清理：%1$s</string>
     <string name="min_recap_line">回顾 · %1$s</string>
