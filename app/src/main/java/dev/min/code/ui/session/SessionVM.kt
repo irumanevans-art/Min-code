@@ -225,6 +225,15 @@ class SessionVM(
         .map { it.claudeConnected }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    /**
+     * 按下 ▶ 之后、回合还没起来的那一段：键转圈、禁止重复按（`composerKeys` 只认 offerId 仍等于当前 offer 的，过期的自己失效）。
+     * 回合一起来 / offer 变了就丢（见 init 里的收集）；命令被拒（过期、会话没了）也丢，并轻提示一句。
+     *
+     * 声明必须在下面的 init 之前：init 里的收集在主线程立刻执行，属性还没初始化就会读到 null（冷启动崩溃，模拟器验收抓到的）。
+     */
+    private val _pendingResume = MutableStateFlow<PendingResume?>(null)
+    val pendingResume: StateFlow<PendingResume?> = _pendingResume.asStateFlow()
+
     private val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
 
     init {
@@ -462,13 +471,6 @@ class SessionVM(
         command({ SessionCommand.Answer(it, interactionId, answer) })
 
     fun interrupt() = command({ SessionCommand.Interrupt(it) })
-
-    /**
-     * 按下 ▶ 之后、回合还没起来的那一段：键转圈、禁止重复按（`composerKeys` 只认 offerId 仍等于当前 offer 的，过期的自己失效）。
-     * 回合一起来 / offer 变了就丢（见 init 里的收集）；命令被拒（过期、会话没了）也丢，并轻提示一句。
-     */
-    private val _pendingResume = MutableStateFlow<PendingResume?>(null)
-    val pendingResume: StateFlow<PendingResume?> = _pendingResume.asStateFlow()
 
     /** ▶：按 offer 里的 id 续跑（主会话或子 agent 的 offer 都走这一条，适配器按 id 认） */
     fun resume(offer: ResumeOffer) {
