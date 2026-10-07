@@ -2024,3 +2024,32 @@ App 既有外部浏览器出口给 ACTION_VIEW 添加 Custom Tab extra，但浏�
 - **Notes**: 四个提供者选择与八个既有撤回用例通过；真机包可见性及 Custom Tab 流程未验。
 
 ---
+
+## [LRN-20261007-M5] best_practice
+
+**Logged**: 2026-10-07T12:10:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Windows worktree 必须分别处理 shell 可见路径、native Git argv 与 junction 真实路径。
+
+### Details
+真实 Git Bash 测试证明 git worktree add 的 /c/... 参数可能落成 C:/c/...，Exec 的脚本路径处理不能替代 native Git 参数映射。Fs.isSymbolicLink 不能识别 Windows junction，已有祖先需 toRealPath 后拼接未创建后缀；/C 盘符别名必须先映射 /c bind，再解析真实路径，不能把它落进 scratch root。外层 .claude/worktrees 是容器而非配置：只允许已验证的当前隔离根豁免，内部 .git/.claude/凭证和 Device 仍保留底线。WorktreeRemove hook 从原 cwd 执行，避免 Windows 子进程占用被删除目录；JSON cwd 仍报告活动会话位置。Android ProotExec 拒绝非空 ShellCommand.env，固定 Git 控制变量应放进脚本，不能放开任意 env。Git status/remove 也可能读取过滤器/fsmonitor，防执行必须覆盖所有内置 Git 管理命令，而不只是 worktree add。
+
+### Verification
+WorktreeIntegrationTest 真 git、带中文空格单引号路径、真实 junction 与 worktree 清理；WorktreePolicyTest 容器豁免、内部配置、Device、凭证边界。
+
+### Suggested Action
+新路径副作用测试同时覆盖 guest / shell / native argv，以及 symlink 与 Windows junction；禁止以成功退出码替代目录与分支副作用断言。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/Worktrees.kt, agent/cli/src/main/kotlin/dev/min/agent/cli/DesktopCredentials.kt
+- Tags: worktree, windows, paths, isolation
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: 152588d2, 6894c348, ff6c0b97
+- **Notes**: 63 个合格变异；恢复后 13 个 agent check、App 单测与 APK 构建退出 0。大写盘符凭证回归断言和真实 junction 均通过；未做真机 proot 验收。
