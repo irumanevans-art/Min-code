@@ -251,6 +251,7 @@ internal class McpManager(
             if(entry.retired) throw CancellationException("MCP 连接已卸下。")
             entry.tools=connection.listTools(); entry.instructions=connection.instructions
             entry.connection=connection; entry.status=CONNECTED; entry.reason=null
+            entry.challenge=null
             entry.usedAccessToken=usedAccessToken
             watch(entry,connection)
             return connection
@@ -321,6 +322,7 @@ internal class McpManager(
             try {
                 val c=spec.oauth
                 client.login(tokenKey(entry),dev.min.agent.mcp.McpOAuthSettings(c?.clientId,c?.clientSecret,c?.callbackPort,c?.authServerMetadataUrl,c?.scopes),entry.challenge)
+                entry.challenge=null
                     val old=entry.connection
                 // 登录返回后用户可能马上发下一回合，必须先完成入队，再报告成功。
                 val connected=connectEntry(entry)

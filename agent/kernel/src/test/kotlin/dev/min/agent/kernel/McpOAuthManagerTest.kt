@@ -25,6 +25,14 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 class McpOAuthManagerTest {
+    @Test fun `successful login clears stale scope challenge before later plain 401`() = runBlocking {
+        Server().use {s ->s.store.save(s.key,s.saved());case(s) {hub,rt,_ ->
+            s.scopeFailure=true;assertTrue(invoke(rt).isError)
+            s.scopeFailure=false;hub.loginMcp("db",rt.sessionId)
+            s.omitChallenge=true;s.expireOnCall=true
+            assertFalse(invoke(rt).isError);assertEquals(1,s.refreshes.get())
+        }};Unit
+    }
     @Test fun `configured authorization does not depend on OAuth repository availability`() = runBlocking {
         Server().use {s ->s.store.unavailable=true;case(s,mapOf("Authorization" to "Bearer ${s.access}")) {hub,rt,_ ->
             assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state)
@@ -65,6 +73,7 @@ class McpOAuthManagerTest {
         @Volatile var rejectRefresh=false
         @Volatile var scopeFailure=false
         @Volatile var rejectLogin=false
+        @Volatile var omitChallenge=false
         @Volatile var failedCallsGate: CompletableDeferred<Unit>? = null
         val simultaneousFailures=AtomicInteger()
         val store=Store()
@@ -118,7 +127,7 @@ class McpOAuthManagerTest {
                         if(denied || (scopeFailure && method=="tools/call")) {
                             status=if(scopeFailure && method=="tools/call") 403 else 401
                             val scope=if(status==403) ", error=\"insufficient_scope\", scope=\"write:db\"" else ", scope=\"read\""
-                            x.responseHeaders.add("WWW-Authenticate","Bearer resource_metadata=\"$base/.well-known/oauth-protected-resource/mcp\"$scope")
+                            if(!omitChallenge) x.responseHeaders.add("WWW-Authenticate","Bearer resource_metadata=\"$base/.well-known/oauth-protected-resource/mcp\"$scope")
                             expireOnCall=false; args()
                         } else if(request["id"]==null) { status=202; args() }
                         else buildJsonObject {
