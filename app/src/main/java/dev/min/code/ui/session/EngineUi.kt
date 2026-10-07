@@ -65,6 +65,11 @@ internal object EngineUi {
             // CC 的强度分区永远在（它还要在里面说「这个模型不支持」「换了要重启」）；其余引擎没有档位就整段隐藏
             effort = session.settings.efforts.isNotEmpty() || !capabilities.effortHotSwap,
             effortRestartNote = settings.effortNeedsRestart,
+            // 「默认」是谁决定的：CC 是它的 CLI，其余引擎没有 CLI——Min 不传强度参数，由模型自己的默认来
+            effortDefaultLabel = when (kind) {
+                EngineKind.ClaudeCode -> R.string.session_effort_default
+                EngineKind.MinAgent, EngineKind.Codex -> R.string.session_effort_default_model
+            },
             ultracode = settings.extra(ClaudeStateMapper.OPTION_ULTRACODE) != null,
             cache = settings.extra(ClaudeStateMapper.OPTION_CACHE_TTL) != null,
             cwd = capabilities.cwdChange,
@@ -89,6 +94,8 @@ internal data class SettingsLayout(
     val effort: Boolean,
     /** 强度分区顶上写「换强度要重启」 */
     val effortRestartNote: Boolean,
+    /** 「跟随默认」那一行的标题资源 */
+    @StringRes val effortDefaultLabel: Int,
     /** 强度分区底下的 Ultracode 开关 */
     val ultracode: Boolean,
     val cache: Boolean,

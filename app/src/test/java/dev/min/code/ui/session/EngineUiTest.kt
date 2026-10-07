@@ -43,6 +43,7 @@ class EngineUiTest {
         assertTrue(layout.effort && layout.effortRestartNote && layout.ultracode && layout.cache && layout.cwd && layout.commands)
         assertFalse("用量段是 Min 的", layout.usage)
         assertFalse("MCP 面板与信任段是 Min 的", layout.mcp || layout.trust)
+        assertEquals(dev.min.code.R.string.session_effort_default, layout.effortDefaultLabel)
     }
 
     @Test fun `Claude Code's effort section stays even before the model list is read`() {
@@ -61,6 +62,7 @@ class EngineUiTest {
         assertFalse(layout.commands)
         assertTrue(layout.usage)
         assertTrue("Min 有 MCP 面板与工作区信任段", layout.mcp && layout.trust)
+        assertEquals("Min 没有 CLI，强度的「默认」不能写成由 CLI 决定", dev.min.code.R.string.session_effort_default_model, layout.effortDefaultLabel)
     }
 
     @Test fun `Min hides the effort section when the model has no effort levels`() {

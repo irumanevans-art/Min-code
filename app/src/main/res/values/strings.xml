@@ -561,6 +561,7 @@
   <string name="session_effort_ultracode_on"> (ultracode on)</string>
   <string name="session_effort_unsupported">The current model (Haiku) has no effort levels; the CLI ignores --effort. Switch to Sonnet / Opus / Fable for the low…max ladder.</string>
   <string name="session_effort_restart">Changing the level restarts the CLI and resumes this session (there is no set_effort); you cannot send messages while that happens.</string>
+  <string name="session_effort_default_model">Default (the model decides)</string>
   <string name="session_effort_default">Default (the CLI decides)</string>
   <string name="session_effort_chip_default">default</string>
   <string name="session_effort_ultracode_sub">xhigh plus dynamic workflow orchestration. A single pass reasons as deep as xhigh — one step below max — but it schedules several subagents in parallel, so the total spend is usually well above max.</string>

@@ -209,6 +209,7 @@ internal fun ClaudeCodeSettingsSheet(
                 EffortPicker(
                     settings = settings,
                     restartNote = layout.effortRestartNote,
+                    defaultLabel = layout.effortDefaultLabel,
                     ultracode = layout.ultracode,
                     enabled = !settingsBusy,
                     onApply = onApplyEffort,
@@ -589,6 +590,7 @@ private fun EffortPicker(
     restartNote: Boolean,
     /** CC 的 Ultracode 开关；别的引擎没有 */
     ultracode: Boolean,
+    @StringRes defaultLabel: Int,
     enabled: Boolean = true,
     onApply: (String?, Boolean) -> Unit,
 ) {
@@ -612,7 +614,7 @@ private fun EffortPicker(
             // 「跟随默认」的 id 是空串，对引擎说「不传 flag」就是 null
             val effort = level.id.ifEmpty { null }
             OptionRow(
-                title = effort ?: stringResource(R.string.session_effort_default),
+                title = effort ?: stringResource(defaultLabel),
                 subtitle = effortHint(effort),
                 selected = !settings.ultracode && settings.requestedEffort == effort,
                 monospaceTitle = effort != null,
