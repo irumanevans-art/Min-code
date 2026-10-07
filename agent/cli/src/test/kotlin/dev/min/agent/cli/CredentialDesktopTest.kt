@@ -65,6 +65,11 @@ class CredentialDesktopTest {
                 assertFalse(results.getValue(CallId("c4")).isError)
                 assertTrue(results.getValue(CallId("c3")).content.filterIsInstance<TextPart>().any {it.text.contains("ordinary")})
                 val wire=app.records(rt.sessionId,0).joinToString {AgentJson.encodeToString(EventRecord.serializer(),it)}
+                // 配置了 hook 不等于执行过；必须看见真实 allow，才能证明它越不过凭证拒绝。
+                assertTrue(app.records(rt.sessionId,0).any { record ->
+                    val event=record.event
+                    event is HooksRan && event.event=="PreToolUse" && event.decision=="allow" && event.problems.isEmpty()
+                })
                 assertFalse(wire.contains("FAKE_"));assertTrue(requests.none {it.contains("FAKE_")})
                 val artifacts=home.resolve("sessions").resolve(rt.sessionId.value).resolve("artifacts")
                 if(Files.exists(artifacts)) Files.walk(artifacts).use { stream -> assertTrue(stream.filter {Files.isRegularFile(it)}.allMatch { !Files.readString(it).contains("FAKE_") }) }
