@@ -285,6 +285,54 @@ class SessionHub(
         scheduler.start { crons.tick(deps.clock.nowMs()) }
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
 
+    /**
+     * 起 hook agent 子会话并等它跑完一个回合，返回最终回复文本（没有文字给 null）。子会话只读
+     * （Read / Grep / Glob，CC 原文限定）、最多 [HOOK_AGENT_MAX_TURNS] 回合、不跑 SubagentStart hook、
+     * 不写 SubagentSpawned——它不是委派，不进线程表；它的花费落自己的日志（计费点照折，本程预算、
+     * /cost 与 -p 的树汇总都算得到）。会话留在 Hub 里在线挂着（树汇总要读它），进程退出随 Hub 收尾
+     */
+    internal suspend fun runHookAgent(parent: SessionRuntime, prompt: String): String? {
+        val ps = parent.state.value
+        // hook 不能再钩出 hook：hook-agent 的来历类型在 HookDriver 里挡掉模型侧 hook 类型
+        val childId = SessionId(deps.ids.next("s"))
+        val header = LogHeader(
+            dev.min.agent.store.LOG_FORMAT_VERSION, childId, deps.clock.nowMs(), parent = parent.sessionId,
+        )
+        val created = SessionCreated(ps.settings.cwd, ps.settings.model, dev.min.agent.protocol.PermissionMode.DontAsk)
+        val origin = SubagentOrigin(
+            parent = parent.sessionId, root = ps.origin?.root ?: parent.sessionId,
+            parentCall = CallId(deps.ids.next("hookcall")),
+            agentType = HOOK_AGENT_TYPE, fork = false, depth = (ps.origin?.depth ?: 0) + 1,
+            cacheKey = "hook-agent:${childId.value}",
+            tools = HOOK_AGENT_TOOLS, instructions = AGENT_HOOK_INSTRUCTIONS,
+            maxTurns = HOOK_AGENT_MAX_TURNS, omitMemory = true,
+        )
+        val child = SessionRuntime.create(
+            store, header, created, deps, scope, listOf(origin),
+            loadMemory = false, loadSettings = false, loadSkills = false, hub = this,
+        )
+        child.requestGate = childGate
+        register(child)
+        watch(child, reconcile = false)
+        child.receive(
+            ClientMsgId("hook-agent:${childId.value}"), listOf(TextPart(prompt)), Delivery.Queue,
+            InputOrigin.Parent(parent.sessionId), TurnTrigger.User,
+        )
+        // 等子回合结束；调用方套着超时，超时后由 stopHookAgent 收
+        child.state.first { it.turn == null && it.lastTurn != null }
+        return child.state.value.history.lastOrNull { it is HistoryEntry.Assistant }
+            ?.let { (it as HistoryEntry.Assistant).parts.filterIsInstance<TextPart>().joinToString("") { p -> p.text }.ifBlank { null } }
+    }
+
+    /** hook agent 超时后停掉挂着的子回合：静音（不往父会话投报告）再打断 */
+    internal suspend fun stopHookAgent(parent: SessionRuntime) {
+        val agents = subtreeOnline(parent.sessionId).mapNotNull { runtimes[it] }
+            .filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
+        agents.forEach { child -> child.state.value.turn?.let { quietReports += child.sessionId to it.turnId } }
+        agents.forEach { it.interrupt() }
+        agents.forEach { it.awaitIdle() }
+    }
+
     internal suspend fun reserveWebSearch(caller: SessionRuntime, callId: CallId): Boolean {
         val rootId = caller.state.value.origin?.root ?: caller.sessionId
         val root = open(rootId) ?: kotlin.error("找不到搜索所属的根会话。")
