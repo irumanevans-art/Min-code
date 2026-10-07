@@ -113,6 +113,8 @@ class SettingsVM(
         if (enabled) store.setA11yPromptVersion(BuildConfig.VERSION_CODE)
     }
 
+    fun setMinAgentEnabled(enabled: Boolean) = viewModelScope.launch { store.setMinAgentEnabled(enabled) }
+
     fun setDeviceWriteAllowlist(packages: Set<String>) =
         viewModelScope.launch { store.setDeviceWriteAllowlist(packages) }
 

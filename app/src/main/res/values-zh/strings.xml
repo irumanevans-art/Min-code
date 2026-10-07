@@ -981,6 +981,11 @@
   <string name="about_contact">联系作者</string>
   <string name="about_contact_qq">QQ %1$s</string>
   <string name="about_contact_qq_copied">已复制 QQ 号</string>
+  <string name="settings_group_experiment">实验</string>
+  <string name="settings_group_experiment_sub">还没定型的功能（Min Agent）</string>
+  <string name="settings_min_agent_title">Min Agent（实验）</string>
+  <string name="settings_min_agent_on">已开启。新建会话时，Min 和 Claude Code、Codex 并排出现。</string>
+  <string name="settings_min_agent_off">已关闭。App 内置的 agent，不经 CLI、直接在应用里跑。关掉只是藏起来：在跑的回合会跑完，会话也都留着。</string>
   <string name="settings_group_device">设备</string>
   <string name="settings_group_device_sub">存储、真屏操控、虚拟屏、电池</string>
   <string name="settings_group_look">外观与语言</string>
