@@ -92,6 +92,8 @@ internal fun ClaudeCodeInputBar(
     onRunShell: (String) -> Unit,
     /** (模型, 是否同时存成新会话默认)。`/model <名字>` 与 CLI 一致按「存成默认」处理 */
     onSetModel: (String?, Boolean) -> Unit,
+    /** Min 的设置面板选模型：(模型 id, 供应商档 id)，只此一处用 */
+    onSetModelOf: (String, String?) -> Unit,
     onSetPermissionMode: (String) -> Unit,
     onApplyEffort: (String?, Boolean) -> Unit,
     onSetPromptCacheTtl: (String) -> Unit,
@@ -307,7 +309,8 @@ internal fun ClaudeCodeInputBar(
 
     fun submit() {
         // 终端里 Claude Code 的 bash 模式。附件和图片留着，下一条消息接着发
-        userShellCommand(input)?.let { command ->
+        // `!` 是 CC 才有的终端命令；别的引擎里它就是一个普通字符，照常发给模型
+        userShellCommand(input)?.takeIf { EngineUi.userShell(capabilities) }?.let { command ->
             onRunShell(command)
             input = ""
             return
@@ -327,7 +330,8 @@ internal fun ClaudeCodeInputBar(
             input = ""
             return
         }
-        val local = localSlashTarget(input)
+        // 配置面板类命令（/mcp /agents …）是按 CC 的文件布局做的，引擎不支持就不接管，照普通消息发
+        val local = localSlashTarget(input)?.takeIf { it.toSection() != null || EngineUi.configCommands(capabilities) }
         if (local != null) {
             handleLocal(local)
             input = ""
@@ -405,7 +409,7 @@ internal fun ClaudeCodeInputBar(
         )
 
         // 打了 `!` 就说清这一行会怎么跑：它不发给模型，这和输入框里其余所有东西都不一样
-        val shellMode = input.trimStart().let { it.startsWith('!') || it.startsWith('！') }
+        val shellMode = EngineUi.userShell(capabilities) && input.trimStart().let { it.startsWith('!') || it.startsWith('！') }
         AnimatedVisibility(visible = shellMode, enter = InkMotion.expand, exit = InkMotion.collapse) {
             Text(
                 stringResource(R.string.composer_shell_hint, session.cwd.ifBlank { "/workspace" }),
@@ -428,7 +432,7 @@ internal fun ClaudeCodeInputBar(
             stopping = session.stopping,
             readOnly = session.readOnly,
         )
-        val usage = composerUsage(session, dailyCostUsd)
+        val usage = composerUsage(session, if (EngineUi.dailyCost(session.ref.engine)) dailyCostUsd else 0.0)
         ComposerCapsule(
             value = input,
             onValueChange = { next ->
@@ -488,11 +492,13 @@ internal fun ClaudeCodeInputBar(
     if (settingsOpen) {
         ClaudeCodeSettingsSheet(
             session = session,
+            capabilities = capabilities,
             initialSection = settingsSection,
             chineseDescriptions = chineseDescriptions,
             onSetChineseDescriptions = onSetChineseDescriptions,
             onDismiss = { settingsOpen = false },
             onSetModel = { model, asDefault -> onSetModel(model, asDefault); settingsOpen = false },
+            onSetModelOf = { model, profile -> onSetModelOf(model, profile); settingsOpen = false },
             onSetPermissionMode = { onSetPermissionMode(it); settingsOpen = false },
             onApplyEffort = { effort, ultra -> onApplyEffort(effort, ultra); settingsOpen = false },
             onSetPromptCacheTtl = { onSetPromptCacheTtl(it); settingsOpen = false },

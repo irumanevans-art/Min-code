@@ -1186,4 +1186,17 @@
     <string name="session_notification_background_running">Running in background</string>
     <string name="session_notification_stop_all">Stop all</string>
     <string name="session_notification_engine_count">%1$s × %2$d</string>
+    <!-- Min settings section (B7a) -->
+    <string name="session_section_usage">Usage</string>
+    <string name="min_settings_provider">Provider: %1$s</string>
+    <string name="min_settings_provider_note">The provider is fixed when the session is created. Picking another provider\'s model below moves the session there, and the prompt cache starts over.</string>
+    <string name="min_settings_switch_provider">Switches provider · the next request rebuilds the cache</string>
+    <string name="min_settings_model_custom">Other model (same provider)</string>
+    <string name="min_settings_mode_confirm">Switch to %1$s</string>
+    <string name="min_usage_none">No requests yet.</string>
+    <string name="min_usage_context">Context</string>
+    <string name="min_usage_context_value">%1$s / %2$s · %3$d%%</string>
+    <string name="min_usage_cache">Cache hit rate</string>
+    <string name="min_usage_cost">Cost</string>
+    <string name="min_usage_no_price">The catalog has no price for a model used here, so no cost is shown.</string>
 </resources>

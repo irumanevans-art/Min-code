@@ -263,11 +263,13 @@ private fun Preview(
             }
             if (settingsOpen) ClaudeCodeSettingsSheet(
                 session = session.toAgentState(),
+                capabilities = dev.min.code.core.engine.EngineCapabilities.ClaudeCode,
                 initialSection = null,
                 chineseDescriptions = chineseDescriptions,
                 onSetChineseDescriptions = { chineseDescriptions = it },
                 onDismiss = { settingsOpen = false },
                 onSetModel = { model, _ -> session = session.copy(model = model, options = session.options.copy(model = model)) },
+                onSetModelOf = { _, _ -> },
                 onSetPermissionMode = { session = session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode) },
                 onApplyEffort = { effort, ultra -> session = session.copy(options = session.options.copy(effort = effort, ultracode = ultra)) },
                 onSetPromptCacheTtl = { session = session.copy(options = session.options.copy(promptCacheTtl = it)) },
@@ -548,6 +550,7 @@ private fun ConversationPreview(
                         onInterrupt = {},
                         onRunShell = { command -> messages = messages + "!$command" },
                         onSetModel = { model, _ -> onSession(session.copy(model = model, options = session.options.copy(model = model))) },
+                        onSetModelOf = { _, _ -> },
                         onSetPermissionMode = { onSession(session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode)) },
                         onApplyEffort = { effort, ultra -> onSession(session.copy(options = session.options.copy(effort = effort, ultracode = ultra))) },
                         onSetPromptCacheTtl = { onSession(session.copy(options = session.options.copy(promptCacheTtl = it))) },

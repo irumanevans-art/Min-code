@@ -509,7 +509,8 @@ class MinAgentStateMapperTest {
         )
         val s = foldOf(dev.min.agent.spi.SettingsChanged(effort = Effort.Low))
         val view = map(s, lookup = lookup).settings
-        assertEquals(listOf("off", "low", "high"), view.efforts.map { it.id })
+        // 表头多一项「跟随默认」（id 为空）
+        assertEquals(listOf("", "off", "low", "high"), view.efforts.map { it.id })
         assertEquals("low", view.effort!!.id)
         assertEquals(listOf("m1", "m2"), view.models.map { it.id })
         assertTrue(view.models[1].switchesProviderFrom(map(s, lookup = lookup).connection))
@@ -517,6 +518,11 @@ class MinAgentStateMapperTest {
         assertEquals("mode:Default", view.mode.label)
         assertEquals("warn", view.modes.first { it.id == "bypassPermissions" }.warning)
         assertFalse(view.modes.any { it.id == "auto" })
+    }
+
+    @Test fun aModelWithoutEffortLevelsHasAnEmptyEffortTable() {
+        val view = map(foldOf(), lookup = FakeLookup(profile = { T_PROFILE.copy(ref = it, effortPatches = emptyMap()) })).settings
+        assertTrue("没有强度档就不给「跟随默认」，面板据此隐藏整段", view.efforts.isEmpty())
     }
 
     @Test fun usageIsLastRequestOverWindowAndCacheRatioIsCumulative() {

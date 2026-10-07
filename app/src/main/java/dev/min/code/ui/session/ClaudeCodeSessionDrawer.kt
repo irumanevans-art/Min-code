@@ -62,7 +62,6 @@ import androidx.compose.foundation.border
 import dev.min.code.core.claudecode.SessionGroup
 import dev.min.code.core.claudecode.SessionGroupHeader
 import dev.min.code.core.claudecode.groupSessionIds
-import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.LiveDot
@@ -565,7 +564,7 @@ private fun SessionRow(
                         modifier = Modifier.weight(1f),
                     )
                     // 引擎标签只给 Min：Claude Code 是默认引擎，每行都写一遍只是噪声
-                    if (entry.engine == EngineKind.MinAgent) EngineTag(stringResource(R.string.engine_min), entry.isActive)
+                    EngineUi.tag(entry.engine)?.let { EngineTag(stringResource(it), entry.isActive) }
                     // 「中断」：最后一个回合没结束（进程被杀 / 失败 / 达到上限），打开后停止键的位置是 ▶
                     if (entry.interrupted) InterruptedTag()
                     AnimatedVisibility(visible = entry.isActive, enter = InkMotion.enter, exit = InkMotion.exit) {

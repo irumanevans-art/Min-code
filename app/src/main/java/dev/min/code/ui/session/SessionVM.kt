@@ -505,8 +505,8 @@ class SessionVM(
      * false = 只改这个会话。`/model <名字>` 这种带参数的写法在 CLI 里等于 Enter，也走 true。
      * [model] 为 null = 跟随默认。
      */
-    fun setModel(model: String?, asDefault: Boolean = true) =
-        command({ SessionCommand.SetModel(it, model.orEmpty(), asDefault = asDefault) })
+    fun setModel(model: String?, asDefault: Boolean = true, profileId: String? = null) =
+        command({ SessionCommand.SetModel(it, model.orEmpty(), profileId = profileId, asDefault = asDefault) })
 
     fun setPermissionMode(modeId: String) = command({ SessionCommand.SetMode(it, modeId) })
 

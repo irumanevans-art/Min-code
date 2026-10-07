@@ -1181,4 +1181,17 @@
     <string name="session_notification_background_running">后台运行中</string>
     <string name="session_notification_stop_all">停止全部</string>
     <string name="session_notification_engine_count">%1$s × %2$d</string>
+    <!-- Min 设置段（B7a） -->
+    <string name="session_section_usage">用量</string>
+    <string name="min_settings_provider">供应商：%1$s</string>
+    <string name="min_settings_provider_note">供应商在会话创建时定下，不能直接换。选下面别家供应商的模型会把会话一并切过去，提示缓存从头开始。</string>
+    <string name="min_settings_switch_provider">换供应商 · 下一次请求重建缓存</string>
+    <string name="min_settings_model_custom">其他模型（同一供应商）</string>
+    <string name="min_settings_mode_confirm">确认切换到「%1$s」</string>
+    <string name="min_usage_none">还没有请求。</string>
+    <string name="min_usage_context">上下文</string>
+    <string name="min_usage_context_value">%1$s / %2$s · %3$d%%</string>
+    <string name="min_usage_cache">缓存命中率</string>
+    <string name="min_usage_cost">花费</string>
+    <string name="min_usage_no_price">目录里没有这里用过的某个模型的价格，所以不显示花费。</string>
 </resources>

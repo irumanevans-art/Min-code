@@ -147,7 +147,9 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
         val model = root.settings.model
         val profile = lookup.profileOf(model)
         val models = lookup.choices(model)
+        // 档位表头上加一项「跟随默认」（id 为空 = 清掉强度设置，让模型用自己的默认）；模型没有强度档就整张表为空，面板据此隐藏这一段
         val efforts = profile?.effortPatches?.keys.orEmpty().sortedBy { it.ordinal }.map { Choice(effortId(it), text.effort(it)) }
+            .let { levels -> if (levels.isEmpty()) levels else listOf(Choice("", "")) + levels }
         val modes = minModeChoices(text)
         return SettingsView(
             model = models.firstOrNull { it.id == model.modelId && it.profileId == model.providerId }

@@ -104,7 +104,6 @@ import dev.min.code.R
 import dev.min.code.core.claudecode.CHECKPOINT_TOOLS
 import dev.min.code.core.claudecode.subagentTypeName
 import dev.min.code.core.engine.AgentSessionState
-import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.AgentThread
 import dev.min.code.core.engine.ApprovalOption
 import dev.min.code.core.engine.InteractionAnswer
@@ -215,8 +214,7 @@ fun ClaudeCodePage(
         val shown = liveSession.value.ref
         sessions.map { entry ->
             // Min 的行按引用对（它们的 isActive 在列表 VM 里没法定）；Claude 的行只有显示的确实是 Claude 才亮
-            val active = if (entry.engine == EngineKind.MinAgent) entry.ref == shown
-            else entry.isActive && shown.engine == EngineKind.ClaudeCode
+            val active = EngineUi.isEntryActive(entry.ref, entry.isActive, shown)
             if (active == entry.isActive) entry else entry.copy(isActive = active)
         }
     }
@@ -1430,7 +1428,9 @@ private fun SessionContent(
                             if (target != null) vm.stopSubagent(target.threadId) else vm.interrupt()
                         },
                         hintOverride = viewedAgent?.let { stringResource(R.string.agent_composer_hint, subagentTypeLabel(it.agentType)) },
-                        onSetModel = vm::setModel,
+                        onSetModel = { model, asDefault -> vm.setModel(model, asDefault) },
+                        // 面板里选模型只改这个会话，不写「新会话默认」：Min 新会话默认用最近一次的档与模型
+                        onSetModelOf = { model, profile -> vm.setModel(model, asDefault = false, profileId = profile) },
                         onSetPermissionMode = vm::setPermissionMode,
                         onApplyEffort = { effort, ultracode -> vm.applyEffort(effort, ultracode) },
                         onSetPromptCacheTtl = vm::setPromptCacheTtl,
