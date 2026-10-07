@@ -341,4 +341,28 @@ class CasWorkspaceSnapshotsTest {
         store.restore(target.manifest, emptyList())
         assertEquals("after", bytes("sub/generated/x"))
     }
+
+    @Test fun usage_lists_every_workspace_repository_and_clear_empties_one_without_stale_index() = runBlocking {
+        put("a.txt", "hello")
+        val first = take()
+        val usage = snapshots.usage().single()
+        assertTrue("占用要算上内容、清单与索引", usage.bytes > 0)
+        assertEquals("workspace", usage.label)
+        snapshots.clear(usage.id)
+        assertEquals(0, count(repository.dir.resolve("objects")))
+        assertEquals(0, count(repository.dir.resolve("manifests")))
+        assertNull("索引不删的话下一张快照会引用已经不存在的内容", repository.readIndex())
+        assertNull(store.read(ContentId(repository.readManifest(first.manifest.value)?.entries?.firstOrNull()?.content ?: "0".repeat(64))))
+        // 清空之后照常能拍新快照，内容重新写进仓库
+        val again = take()
+        assertEquals(5, again.stats.newBytes)
+        assertEquals(again.manifest, first.manifest)
+    }
+
+    @Test fun clear_refuses_names_that_could_leave_the_repository_directory() = runBlocking {
+        for (bad in listOf("", ".", "..", "../x", "a/b", "a" + (92).toChar() + "b")) {
+            val failure = try { snapshots.clear(bad); null } catch (e: IllegalArgumentException) { e }
+            assertNotNull("应拒绝 [$bad]", failure)
+        }
+    }
 }
