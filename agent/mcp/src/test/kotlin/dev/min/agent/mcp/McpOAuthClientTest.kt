@@ -272,6 +272,11 @@ class McpOAuthClientTest {
             expectFailure(McpOAuthException.Kind.Security){f.client.refresh(f.key)};assertTrue(f.paths.isEmpty())
         };Unit
     }
+    @Test fun `root resource slash is equivalent and localhost is allowed for local MCP`() = runBlocking {
+        Fixture().use {f ->f.resourceEndpoint=f.base;f.prPath="/.well-known/oauth-protected-resource";f.client.login(f.key);assertEquals(1,f.exchanged)}
+        Fixture().use {f ->f.resourceEndpoint=f.base.replace("127.0.0.1","localhost")+"/mcp";f.resourceMetadataValue=f.base+"/mcp";f.client.login(f.key);assertEquals(1,f.exchanged)}
+        assertEquals("http://localhost:1234/",canonicalResource("http://localhost:1234"));Unit
+    }
     @Test fun `root issuer discovery omits duplicate OIDC candidates`() = runBlocking {
         for (asPath in listOf("/.well-known/oauth-authorization-server","/.well-known/openid-configuration")) Fixture().use { f ->
             f.issuerPath=""; f.asPath=asPath; f.client.login(f.key)

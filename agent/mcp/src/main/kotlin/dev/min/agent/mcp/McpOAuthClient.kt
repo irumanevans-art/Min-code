@@ -164,7 +164,7 @@ class McpOAuthClient(
             "$origin/.well-known/oauth-protected-resource",
         )
         val pr = firstJson(candidates.distinct(),allowLoopback) ?: fail(McpOAuthException.Kind.Discovery)
-        if (pr.text("resource") != resource) fail(McpOAuthException.Kind.Security)
+        if (!resourceMatches(pr.text("resource"),resource)) fail(McpOAuthException.Kind.Security)
         val issuers = strings(pr, "authorization_servers")
         if (issuers.isEmpty()) fail(McpOAuthException.Kind.Discovery)
         for (issuer in issuers) {
@@ -272,11 +272,21 @@ private fun fail(kind: McpOAuthException.Kind): Nothing = throw McpOAuthExceptio
 private fun b64(bytes: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8)
 private fun query(url: String, params: List<Pair<String, String>>) = url + (if ('?' in url) "&" else "?") + params.joinToString("&") { "${encode(it.first)}=${encode(it.second)}" }
-private fun loopback(uri: URI) = uri.host?.lowercase() in setOf("127.0.0.1","[::1]","::1")
+private fun loopback(uri: URI) = uri.host?.lowercase() in setOf("127.0.0.1","localhost","[::1]","::1")
 private fun secureUri(raw: String, allowLoopback: Boolean = true): URI {
     val u = try { URI(raw) } catch (e: Exception) { fail(McpOAuthException.Kind.Security) }
     if (u.host == null || u.userInfo != null || u.fragment != null || !(u.scheme.equals("https",true) || (u.scheme.equals("http",true) && allowLoopback && loopback(u)))) fail(McpOAuthException.Kind.Security)
     return u
+}
+/** 只补根路径的斜杠，并把两个本机名字当作同一资源；非根路径仍逐字比较。 */
+private fun resourceMatches(metadata: String?, resource: String): Boolean {
+    if(metadata==null) return false
+    fun comparable(value: String): String {
+        val uri=secureUri(value)
+        val authority=if(uri.scheme.equals("http",true) && uri.host.equals("localhost",true)) "127.0.0.1"+(if(uri.port>=0) ":${uri.port}" else "") else uri.rawAuthority
+        return "${uri.scheme}://$authority${uri.rawPath.orEmpty().ifEmpty { "/" }}"+(uri.rawQuery?.let {"?$it"} ?: "")
+    }
+    return comparable(metadata)==comparable(resource)
 }
 fun canonicalResource(endpoint: String): String {
     val u = secureUri(endpoint)
