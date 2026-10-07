@@ -7,7 +7,7 @@ import org.junit.Test
 import java.lang.reflect.Modifier
 
 /**
- * 把设计 §3.8 的能力位表钉住：27 项 × 3 引擎，一格不差。
+ * 把设计 §3.8 的能力位表钉住：29 项 × 3 引擎，一格不差。
  * 改一格要同时改这里，审查时一眼看得到「谁的什么能力变了」。
  */
 class EngineCapabilitiesTest {
@@ -36,6 +36,8 @@ class EngineCapabilitiesTest {
         "liveTitle" to Triple("true", "false", "false"),
         "exportImport" to Triple("true", "false", "false"),
         "processOutput" to Triple("true", "true", "false"),
+        "resumeAdvice" to Triple("false", "false", "true"),
+        "recap" to Triple("false", "false", "true"),
         "rewind" to Triple("false", "false", "true"),
         "mcpServers" to Triple("false", "false", "true"),
         "workspaceTrust" to Triple("false", "false", "true"),
@@ -43,8 +45,8 @@ class EngineCapabilitiesTest {
     )
 
     @Test
-    fun `the table has the 27 rows the design lists and covers every field`() {
-        assertEquals(27, table.size)
+    fun `the table has the 29 rows the design lists and covers every field`() {
+        assertEquals(29, table.size)
         val fields = EngineCapabilities::class.java.declaredFields
             .filter { !Modifier.isStatic(it.modifiers) }
             .map { it.name }

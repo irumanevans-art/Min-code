@@ -1323,4 +1323,26 @@
     <string name="checkpoints_clean">Clean up</string>
     <string name="checkpoints_cleared">Snapshots cleaned up</string>
     <string name="checkpoints_clear_failed">Could not clean up: %1$s</string>
+    <string name="min_recap_line">Recap · %1$s</string>
+    <string name="fallback_notice">Using fallback model %1$s (primary %2$s %3$s)</string>
+    <string name="fallback_notice_plain">Using fallback model %1$s (primary %2$s is not answering)</string>
+    <string name="fallback_reason_overloaded">is overloaded</string>
+    <string name="fallback_reason_rate_limited">is rate limiting</string>
+    <string name="fallback_reason_unavailable">is unavailable</string>
+    <string name="fallback_reason_network">cannot be reached</string>
+    <string name="resume_advice_title">Continue from a summary?</string>
+    <string name="resume_advice_body">This session has been idle for about %1$s and holds about %2$s tokens of context. The prompt cache has expired, so a full continue rereads the whole conversation at full price%3$s.</string>
+    <string name="resume_advice_cost">" (about %1$s)"</string>
+    <string name="resume_advice_summary_note">Continuing from a summary first compresses the conversation, which is much cheaper, but loses detail.</string>
+    <string name="resume_advice_full">Continue in full</string>
+    <string name="resume_advice_summarize">Continue from summary</string>
+    <string name="resume_advice_failed">Could not summarize, so the session continues in full.</string>
+    <string name="resume_advice_done">Summarized. The session continues from the summary.</string>
+    <string name="recap_menu">Recap this session</string>
+    <string name="recap_skipped">No recap: %1$s</string>
+    <string name="recap_failed">Could not write a recap: %1$s</string>
+    <string name="recap_done">Recap added at the end of the conversation</string>
+    <string name="duration_minutes">%1$d min</string>
+    <string name="duration_hours">%1$d h</string>
+    <string name="duration_days">%1$d days</string>
 </resources>

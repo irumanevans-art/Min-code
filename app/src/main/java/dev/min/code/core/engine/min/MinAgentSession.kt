@@ -2,6 +2,8 @@ package dev.min.code.core.engine.min
 
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.kernel.SessionRuntime
+import dev.min.agent.kernel.continueFromSummary
+import dev.min.agent.kernel.resumeAdvice
 import dev.min.agent.kernel.SessionState
 import dev.min.agent.protocol.SessionId
 import dev.min.code.core.engine.AgentSession
@@ -64,7 +66,6 @@ interface MinSessionHost {
     val maxRetryAttempts: Int
 
     fun titleOverride(sessionId: String): Flow<String?>
-    fun renameSession(sessionId: String, title: String)
     fun rememberDefaultModel(profileId: String, modelId: String)
     suspend fun killTask(taskId: String)
 
@@ -124,7 +125,6 @@ class MinAgentSession(
         hub = host.hub, root = runtime, state = { state.value }, lookup = host.lookup, text = host.text,
         editRestore = editRestore,
         effects = object : MinCommandEffects {
-            override fun rename(title: String) = host.renameSession(rootId.value, title)
             override fun rememberDefaultModel(profileId: String, modelId: String) = host.rememberDefaultModel(profileId, modelId)
             override suspend fun killTask(taskId: String) = host.killTask(taskId)
             override suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String) {
@@ -248,6 +248,18 @@ class MinAgentSession(
     override suspend fun searchFiles(query: String, limit: Int): List<String> = host.searchFiles(state.value.cwd, query, limit)
 
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = host.readTaskOutput(taskId, maxChars)
+
+    override suspend fun resumeAdvice(): dev.min.code.core.engine.ResumeAdviceView? =
+        runtime.resumeAdvice()?.let { dev.min.code.core.engine.ResumeAdviceView(it.idleMs, it.contextTokens, it.rereadCost?.let(::formatCost)) }
+
+    override suspend fun continueFromSummary(): Boolean = runtime.continueFromSummary()
+
+    override suspend fun recap(auto: Boolean): dev.min.code.core.engine.RecapOutcome =
+        when (val result = runtime.recap(if (auto) dev.min.agent.spi.RecapTrigger.Away else dev.min.agent.spi.RecapTrigger.Manual)) {
+            is dev.min.agent.kernel.RecapResult.Generated -> dev.min.code.core.engine.RecapOutcome.Generated(result.text)
+            is dev.min.agent.kernel.RecapResult.Skipped -> dev.min.code.core.engine.RecapOutcome.Skipped(result.reason)
+            is dev.min.agent.kernel.RecapResult.Failed -> dev.min.code.core.engine.RecapOutcome.Failed(result.reason)
+        }
 
     override suspend fun hasCheckpoint(toolUseId: String): Boolean = editRestore.checkpointed(listOf(toolUseId)).isNotEmpty()
     override suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> = editRestore.checkpointed(toolUseIds)

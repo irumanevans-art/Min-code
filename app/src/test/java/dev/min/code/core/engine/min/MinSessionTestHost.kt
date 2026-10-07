@@ -20,7 +20,6 @@ class FakeHost(val kernel: TestKernel, override val lookup: MinModelLookup = Fak
     override val settingsTick: Flow<Unit> = flowOf(Unit)
     override val maxRetryAttempts = 3
     val titles = MutableStateFlow<String?>(null)
-    val renames = mutableListOf<String>()
     val defaults = mutableListOf<Pair<String, String>>()
     val killed = mutableListOf<String>()
     val drafts = mutableListOf<Pair<SessionRef, UserInput>>()
@@ -30,7 +29,6 @@ class FakeHost(val kernel: TestKernel, override val lookup: MinModelLookup = Fak
     var persistResult: PersistRule = PersistRule.Written
 
     override fun titleOverride(sessionId: String): Flow<String?> = titles
-    override fun renameSession(sessionId: String, title: String) { renames += title }
     override fun rememberDefaultModel(profileId: String, modelId: String) { defaults += profileId to modelId }
     override suspend fun killTask(taskId: String) { killed += taskId }
     override suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String): PersistRule {

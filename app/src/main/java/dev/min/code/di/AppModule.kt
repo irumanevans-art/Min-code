@@ -70,6 +70,10 @@ import java.io.File
 
 val appModule = module {
     single { AppScope() }
+    // 前后台与离开时长：自动会话回顾、进后台关闲置 MCP 连接用
+    single { dev.min.code.core.service.AppForeground(get<AppScope>()) }
+    // 前后台与离开时长：自动会话回顾、进后台关闲置 MCP 连接用
+    single { dev.min.code.core.service.AppForeground(get<AppScope>()) }
     single { SettingsStore(get(), get<AppScope>()) }
     // 机内协议路由：只在当前供应商的方言不是原生时才起来，见 RelayController
     single { RelayController(get()) }
@@ -229,6 +233,7 @@ val appModule = module {
             enabled = get<SettingsStore>().settings.map { it.minAgentEnabled }
                 .stateIn(get<AppScope>(), SharingStarted.Eagerly, BuildConfig.DEBUG),
             devices = get<DeviceController>(),
+            foreground = get(),
         )
     } bind AgentEngine::class
     single { AgentSessionRegistry(getAll<AgentEngine>(), get<AppScope>()) }

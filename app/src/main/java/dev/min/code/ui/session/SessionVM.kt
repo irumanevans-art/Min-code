@@ -90,6 +90,7 @@ class SessionVM(
     private val drafts: ComposerDraftStore,
     /** Min 的会话由它管（B6 起 Claude Code 仍走 [registry]，见本类头注释） */
     private val agents: AgentSessionRegistry,
+    foreground: dev.min.code.core.service.AppForeground,
 ) : ViewModel() {
     /** Min 实验开关。关着时 Min 的会话不显示（引擎已被停下、会话文件还在，见 [dev.min.code.core.settings.AppSettings.minAgentEnabled]） */
     val minEnabled: StateFlow<Boolean> = settingsStore.settings.map { it.minAgentEnabled }
@@ -117,7 +118,7 @@ class SessionVM(
             .stateIn(viewModelScope, SharingStarted.Eagerly, shownSession(focus.value, engine.activeSession.value, minSession.value))
 
     /** 信任卡、MCP 批准 / 面板、登录确认的状态与动作（读页面此刻显示的会话的能力，见 [SessionExtras]） */
-    internal val extras = SessionExtras(context, viewModelScope, active, agents, settingsStore)
+    internal val extras = SessionExtras(context, viewModelScope, active, agents, settingsStore, foreground)
 
     /** 开始面板上 Min 专有的选项（供应商档 / 模型 / 权限模式）；没有 Min 引擎时 null */
     val startChoices: StateFlow<StartChoices?> = (agents.engines.firstOrNull { it.kind == EngineKind.MinAgent }?.startChoices

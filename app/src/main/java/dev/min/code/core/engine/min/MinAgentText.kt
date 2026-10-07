@@ -37,6 +37,9 @@ interface MinAgentText {
     fun attachment(): String
     fun redactedThinking(): String
 
+    /** 会话回顾那一行：「回顾 · 刚才在……」 */
+    fun recapLine(recap: String): String
+
     /** 回退折叠行：「已回退的 3 条消息」 */
     fun rewoundTitle(count: Int): String
 
@@ -132,6 +135,8 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun agentMessage(agentType: String, name: String?) = s(R.string.min_agent_message_from, name ?: agentType)
     override fun attachment() = s(R.string.min_agent_attachment)
     override fun redactedThinking() = s(R.string.min_agent_redacted_thinking)
+
+    override fun recapLine(recap: String) = s(R.string.min_recap_line, recap)
 
     override fun rewoundTitle(count: Int) = s(R.string.min_rewound_title, count)
 

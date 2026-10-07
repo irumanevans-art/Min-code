@@ -42,6 +42,10 @@ data class EngineCapabilities(
     val liveTitle: Boolean,
     val exportImport: Boolean,
     val processOutput: Boolean,
+    /** 重开又老又大的会话时「从摘要续接 / 完整续接」的建议（[AgentSession.resumeAdvice]） */
+    val resumeAdvice: Boolean,
+    /** 会话回顾：「回顾」入口与离开后自动回顾（[AgentSession.recap]） */
+    val recap: Boolean,
     /** 长按用户消息「回到这里」、撤销这次回退、快照仓库占用（[RewindControl]）。内核的检查点只有 Min 有；CC 只能撤文件（[checkpointRevert]） */
     val rewind: Boolean,
     /** 会话里的 MCP 服务器面板、批准卡、登录（[McpControl]）。CC 的 MCP 在它自己的配置面板里，Codex 没有 */
@@ -103,6 +107,8 @@ data class EngineCapabilities(
         "liveTitle" to liveTitle.toString(),
         "exportImport" to exportImport.toString(),
         "processOutput" to processOutput.toString(),
+        "resumeAdvice" to resumeAdvice.toString(),
+        "recap" to recap.toString(),
         "rewind" to rewind.toString(),
         "mcpServers" to mcpServers.toString(),
         "workspaceTrust" to workspaceTrust.toString(),
@@ -134,6 +140,8 @@ data class EngineCapabilities(
             liveTitle = true,
             exportImport = true,
             processOutput = true,
+            resumeAdvice = false,
+            recap = false,
             rewind = false,
             mcpServers = false,
             workspaceTrust = false,
@@ -169,6 +177,8 @@ data class EngineCapabilities(
             liveTitle = false,
             exportImport = false,
             processOutput = true,
+            resumeAdvice = false,
+            recap = false,
             rewind = false,
             mcpServers = false,
             workspaceTrust = false,
@@ -210,6 +220,8 @@ data class EngineCapabilities(
             liveTitle = false,
             exportImport = false,
             processOutput = false,
+            resumeAdvice = true,
+            recap = true,
             rewind = true,
             mcpServers = true,
             workspaceTrust = true,

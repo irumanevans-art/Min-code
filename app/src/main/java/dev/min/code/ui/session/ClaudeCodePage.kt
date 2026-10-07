@@ -1607,8 +1607,32 @@ private fun LiveTurnEntry(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        // 主模型倒了、这一回合在用回退模型（Min 的回退链）：一行轻提示，不是错误——回合照常在跑
+        session.turn?.fallback?.let { fallback ->
+            Text(
+                text = fallbackNoticeText(fallback),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         agents.forEach { thread -> SubagentLine(thread) }
     }
+}
+
+/** 「正在用回退模型 X（主模型 Y 过载）」：原因认得的写出来，认不得的只写主模型的名字 */
+@Composable
+internal fun fallbackNoticeText(notice: dev.min.code.core.engine.FallbackNotice): String {
+    val reason = when (notice.reason) {
+        dev.min.code.core.engine.FailureKind.Overloaded -> R.string.fallback_reason_overloaded
+        dev.min.code.core.engine.FailureKind.RateLimited -> R.string.fallback_reason_rate_limited
+        dev.min.code.core.engine.FailureKind.ModelUnavailable -> R.string.fallback_reason_unavailable
+        dev.min.code.core.engine.FailureKind.Network -> R.string.fallback_reason_network
+        else -> null
+    }
+    return if (reason == null) stringResource(R.string.fallback_notice_plain, notice.model, notice.primary)
+    else stringResource(R.string.fallback_notice, notice.model, notice.primary, stringResource(reason))
 }
 
 /**

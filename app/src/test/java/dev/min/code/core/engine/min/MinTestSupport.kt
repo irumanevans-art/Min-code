@@ -97,6 +97,7 @@ class FakeText : MinAgentText {
     override fun agentMessage(agentType: String, name: String?) = "message-from:${name ?: agentType}"
     override fun attachment() = "[img]"
     override fun redactedThinking() = "[redacted]"
+    override fun recapLine(recap: String) = "recap:$recap"
     override fun rewoundTitle(count: Int) = "rewound:$count"
     override fun restoredTitle(kind: RestoreKind, restored: Int, deleted: Int, skipped: Int) = "restored:$kind:$restored:$deleted:$skipped"
     override fun restoredLine(path: String) = "restored $path"

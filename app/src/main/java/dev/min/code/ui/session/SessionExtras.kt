@@ -9,6 +9,8 @@ import dev.min.code.core.engine.McpControl
 import dev.min.code.core.engine.McpLoginCancelled
 import dev.min.code.core.engine.McpLoginPrompt
 import dev.min.code.core.engine.McpServerView
+import dev.min.code.core.engine.RecapOutcome
+import dev.min.code.core.engine.ResumeAdviceView
 import dev.min.code.core.engine.RewindControl
 import dev.min.code.core.engine.RewindResultView
 import dev.min.code.core.engine.RewindScopeView
@@ -18,6 +20,8 @@ import dev.min.code.core.engine.SessionSignal
 import dev.min.code.core.engine.StartOptions
 import dev.min.code.core.engine.TrustProbe
 import dev.min.code.core.engine.WorkspaceTrustControl
+import dev.min.code.core.service.AWAY_RECAP_AFTER_MS
+import dev.min.code.core.service.AppForeground
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.WorkspaceTrust
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +54,7 @@ internal class SessionExtras(
     private val shown: StateFlow<AgentSession?>,
     private val agents: AgentSessionRegistry,
     private val settings: SettingsStore,
+    private val foreground: AppForeground,
 ) {
     private val _notices = MutableSharedFlow<SessionSignal.Notice>(extraBufferCapacity = 8)
 
@@ -182,6 +187,7 @@ internal class SessionExtras(
 
     /** 打开一个已有会话之后：目录还没问过信任、且带项目配置，补一张卡（不拦打开；它的 hooks 早在创建时就定了，这张卡管的是 MCP） */
     fun afterOpen(session: AgentSession) {
+        askResumeAdvice(session)
         if (!session.capabilities.workspaceTrust) return
         val control = trustControl ?: return
         scope.launch {
@@ -232,6 +238,64 @@ internal class SessionExtras(
         scope.launch {
             catchingNonCancellation { control.decide(cwd, trusted) }
                 .onFailure { notice(context.getString(R.string.trust_save_failed, it.message.orEmpty()), error = true) }
+        }
+    }
+
+    // ---- 隔了很久回来：续会话摘要与会话回顾 ----
+
+    private val _resumePrompt = MutableStateFlow<ResumePrompt?>(null)
+
+    /** 重开了一个又老又大的会话、等人选「从摘要续接 / 完整续接」；null = 没有 */
+    val resumePrompt: StateFlow<ResumePrompt?> = _resumePrompt.asStateFlow()
+
+    /** 打开已有会话之后问内核一次：值不值得先压成摘要再续（隔了一个多小时且上下文超十万 token，见内核 `resumeAdvice`） */
+    private fun askResumeAdvice(session: AgentSession) {
+        if (!session.capabilities.resumeAdvice) return
+        scope.launch {
+            val advice = catchingNonCancellation { session.resumeAdvice() }.getOrNull() ?: return@launch
+            _resumePrompt.value = ResumePrompt(session, advice)
+        }
+    }
+
+    /** [summarize] 为真 = 从摘要续接（先压缩，等压完）；否则什么都不做，照原样完整续接 */
+    fun answerResume(summarize: Boolean) {
+        val prompt = _resumePrompt.value ?: return
+        if (!summarize) {
+            _resumePrompt.value = null
+            return
+        }
+        if (prompt.working) return
+        _resumePrompt.value = prompt.copy(working = true)
+        scope.launch {
+            val ok = catchingNonCancellation { prompt.session.continueFromSummary() }.getOrDefault(false)
+            _resumePrompt.value = null
+            notice(context.getString(if (ok) R.string.resume_advice_done else R.string.resume_advice_failed), error = !ok)
+        }
+    }
+
+    /** 「回顾」入口：手动要的，不受自动回顾的闸管；结果落在对话末尾的一行里，这里只在没成时说一句 */
+    fun requestRecap() {
+        val session = shown.value ?: return
+        scope.launch { reportRecap(session, auto = false) }
+    }
+
+    private suspend fun reportRecap(session: AgentSession, auto: Boolean) {
+        if (!session.capabilities.recap || session.state.value.busy) return
+        when (val result = catchingNonCancellation { session.recap(auto) }.getOrElse { RecapOutcome.Failed(it.message.orEmpty()) }) {
+            is RecapOutcome.Generated -> if (!auto) notice(context.getString(R.string.recap_done), error = false)
+            // 自动回顾被闸拦下是常态（对话太短、没有新回合），不打扰；手动要的才说原因
+            is RecapOutcome.Skipped -> if (!auto && result.reason.isNotBlank()) notice(context.getString(R.string.recap_skipped, result.reason), error = false)
+            is RecapOutcome.Failed -> if (!auto) notice(context.getString(R.string.recap_failed, result.reason), error = true)
+        }
+    }
+
+    init {
+        // 离开超过 AWAY_RECAP_AFTER_MS 回到前台：给正看着的会话自动写一次回顾（内核再按自己的闸决定做不做）
+        scope.launch {
+            foreground.returns.collect { awayMs ->
+                val session = shown.value ?: return@collect
+                if (awayMs >= AWAY_RECAP_AFTER_MS) reportRecap(session, auto = true)
+            }
         }
     }
 
@@ -345,3 +409,6 @@ internal class TrustPrompt(val probe: TrustProbe, val then: (() -> Unit)?)
 
 /** 当前工作目录的信任状态：[decision] true 信任（含继承）/ false 明确不信任 / null 没问过 */
 internal data class TrustView(val cwd: String, val decision: Boolean?, val ownTrust: Boolean, val inheritedFrom: String?)
+
+/** 重开大会话时的「从摘要续接」提问。[working] = 正在压缩 */
+internal data class ResumePrompt(val session: AgentSession, val advice: ResumeAdviceView, val working: Boolean = false)

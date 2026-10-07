@@ -1318,4 +1318,26 @@
     <string name="checkpoints_clean">清理</string>
     <string name="checkpoints_cleared">快照已清理</string>
     <string name="checkpoints_clear_failed">没能清理：%1$s</string>
+    <string name="min_recap_line">回顾 · %1$s</string>
+    <string name="fallback_notice">正在用回退模型 %1$s（主模型 %2$s%3$s）</string>
+    <string name="fallback_notice_plain">正在用回退模型 %1$s（主模型 %2$s 没有应答）</string>
+    <string name="fallback_reason_overloaded">过载</string>
+    <string name="fallback_reason_rate_limited">在限流</string>
+    <string name="fallback_reason_unavailable">不可用</string>
+    <string name="fallback_reason_network">连不上</string>
+    <string name="resume_advice_title">从摘要续接吗？</string>
+    <string name="resume_advice_body">这个会话已经静置了约 %1$s，上下文约 %2$s token。提示缓存早已过期，完整续接要把整段对话按全价重读一遍%3$s。</string>
+    <string name="resume_advice_cost">（估算约 %1$s）</string>
+    <string name="resume_advice_summary_note">从摘要续接会先把对话压成摘要，便宜得多，但细节会丢。</string>
+    <string name="resume_advice_full">完整续接</string>
+    <string name="resume_advice_summarize">从摘要续接</string>
+    <string name="resume_advice_failed">没能压成摘要，会话照原样完整续接。</string>
+    <string name="resume_advice_done">已压成摘要，会话从摘要续接。</string>
+    <string name="recap_menu">回顾这个会话</string>
+    <string name="recap_skipped">没有回顾：%1$s</string>
+    <string name="recap_failed">没能写出回顾：%1$s</string>
+    <string name="recap_done">回顾已加在对话末尾</string>
+    <string name="duration_minutes">%1$d 分钟</string>
+    <string name="duration_hours">%1$d 小时</string>
+    <string name="duration_days">%1$d 天</string>
 </resources>

@@ -486,6 +486,7 @@ internal fun ClaudeCodeInputBar(
                     modeText = "${session.settings.mode.label} · ${session.settings.effortChipLabel()}",
                     onRefreshUsage = onRefreshUsage,
                     onOpenSettings = { openSettings(null) },
+                    onRecap = if (capabilities.recap) extras?.let { { it.requestRecap() } } else null,
                 )
             },
         )

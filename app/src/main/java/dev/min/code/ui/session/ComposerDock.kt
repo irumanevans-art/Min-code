@@ -120,6 +120,8 @@ internal fun ComposerPlus(
     showImageItems: Boolean = true,
     onRefreshUsage: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    /** 「回顾这个会话」：给了才有这一项（Min 的 [dev.min.code.core.engine.EngineCapabilities.recap]） */
+    onRecap: (() -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -168,6 +170,9 @@ internal fun ComposerPlus(
                         )
                     },
                 )
+            }
+            if (onRecap != null) {
+                InkMenuItem(stringResource(R.string.recap_menu), icon = HugeIcons.Settings02, onClick = { open = false; onRecap() })
             }
             val hasAttachItems = canAttach || showImageItems
             if (hasAttachItems && (contextText != null || costText != null || modelText.isNotBlank())) InkDivider()

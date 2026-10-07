@@ -165,6 +165,8 @@ private class ItemsBuilder(
             }
             notices(entry.messageId)
         }
+        // 会话回顾（只给人看，不进模型）：回顾之后又有了新回合就过期了，不再显示
+        state.recap?.takeIf { it.afterTurn == state.lastTurn?.turnId }?.let { items += ChatItem.Note("recap", text.recapLine(it.text)) }
         // 还没提升的输入：用户的排队气泡（Esc 可原样撤回）。子 agent / 父会话送来的不画，提升后会以报告卡出现。
         // id 直接用 clientMsgId：WithdrawQueued(clientId) 带的就是 UserText.id，不用再剥前缀
         state.inbox.filter { it.origin == InputOrigin.User }.forEach { input ->

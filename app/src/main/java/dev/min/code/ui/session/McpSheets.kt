@@ -54,6 +54,7 @@ internal fun SessionExtrasOverlays(extras: SessionExtras) {
     val trust by extras.trustPrompt.collectAsStateWithLifecycle()
     val login by extras.loginPrompt.collectAsStateWithLifecycle()
     val approval by extras.pendingApproval.collectAsStateWithLifecycle()
+    val resume by extras.resumePrompt.collectAsStateWithLifecycle()
     when {
         trust != null -> TrustSheet(
             probe = trust!!.probe,
@@ -66,6 +67,7 @@ internal fun SessionExtrasOverlays(extras: SessionExtras) {
             val command by produceState<McpServerCommandLine?>(null, server) { value = extras.describe(server) }
             McpApprovalSheet(server = server, commandLine = command, onAnswer = { allow -> extras.approve(server, allow) })
         }
+        resume != null -> ResumeAdviceSheet(resume!!, onAnswer = extras::answerResume)
         else -> RewindOverlay(extras)
     }
 }
@@ -302,3 +304,48 @@ internal fun splitUrlHost(url: String, domain: String): UrlParts? {
     val start = authorityStart + at + 1
     return UrlParts(url.substring(0, start), url.substring(start, start + host.length), url.substring(start + host.length), hasUserInfo = at >= 0)
 }
+
+/**
+ * 重开一个又老又大的会话：说清为什么问（隔了多久、上下文多大、提示缓存早过期了所以完整续接要按全价重读一遍，
+ * 有价格时给估算花费），再让人选「完整续接」（什么都不做）还是「从摘要续接」（先压成摘要，便宜但丢细节）。
+ * 不能滑掉：两个按钮就是出口，滑走等于替人选了完整续接。
+ */
+@Composable
+internal fun ResumeAdviceSheet(prompt: ResumePrompt, onAnswer: (summarize: Boolean) -> Unit) {
+    val advice = prompt.advice
+    val cost = advice.rereadCost?.let { stringResource(R.string.resume_advice_cost, it) }.orEmpty()
+    CardSheet(onDismiss = {}, dismissible = false) {
+        CardTitle(stringResource(R.string.resume_advice_title))
+        Text(
+            stringResource(R.string.resume_advice_body, idleText(advice.idleMs), tokensText(advice.contextTokens), cost),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            stringResource(R.string.resume_advice_summary_note),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        InkDivider()
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            InkButton(onClick = { onAnswer(false) }, modifier = Modifier.weight(1f), tone = InkButtonTone.Paper, enabled = !prompt.working) {
+                Text(stringResource(R.string.resume_advice_full))
+            }
+            InkButton(onClick = { onAnswer(true) }, modifier = Modifier.weight(1f), busy = prompt.working) {
+                Text(stringResource(R.string.resume_advice_summarize))
+            }
+        }
+    }
+}
+
+/** 「约 3 小时」「约 2 天」：取最大的整单位，不够一小时按分钟 */
+@Composable
+private fun idleText(idleMs: Long): String {
+    val minutes = (idleMs / 60_000).toInt()
+    return when {
+        minutes >= 60 * 24 -> stringResource(R.string.duration_days, minutes / (60 * 24))
+        minutes >= 60 -> stringResource(R.string.duration_hours, minutes / 60)
+        else -> stringResource(R.string.duration_minutes, minutes.coerceAtLeast(1))
+    }
+}
+
+private fun tokensText(tokens: Long): String = if (tokens >= 1000) "${tokens / 1000}k" else tokens.toString()

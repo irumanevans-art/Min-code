@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -97,6 +98,8 @@ class MinAgentEngine(
     transport: HttpTransport = UrlConnectionTransport(),
     /** 设备操作（读屏、点击……）；null = 没有设备工具（测试）。开关见 [minToolsWithDevice] */
     devices: dev.min.code.core.device.DeviceActions? = null,
+    /** 前后台信号：进后台且没有在跑的回合时把没人用的 MCP 连接直接关掉；null = 不管（测试） */
+    foreground: dev.min.code.core.service.AppForeground? = null,
 ) : AgentEngine, MinSessionHost {
     override val kind = EngineKind.MinAgent
     override val capabilities = EngineCapabilities.MinAgent
@@ -195,6 +198,15 @@ class MinAgentEngine(
 
     init {
         scope.launch { tasks.watch() }
+        // 进后台、手上没有在跑的回合：没人用的 MCP 连接现在就关，不等 2 分钟——进程一旦被系统冻结，linger 的定时器不走，
+        // stdio 服务器的子进程就一直挂在 proot 里。回合在后台跑完的那一刻同样触发（running 变空）
+        foreground?.let { fg ->
+            scope.launch {
+                combine(fg.foreground, hub.running) { front, running -> !front && running.isEmpty() }
+                    .distinctUntilChanged().filter { it }
+                    .collect { catchingNonCancellation { hub.closeUnusedMcp() }.onFailure { Log.w(TAG, "closing unused MCP failed", it) } }
+            }
+        }
         // 账本在别处改了（设置页、另一个入口）也要让内核看到
         scope.launch { settings.settings.collect { trust.ledger.value = it.workspaceTrust } }
         // 设备存储开关等变了：空闲时换一代挂载（一个回合从头到尾用同一代）
@@ -272,6 +284,18 @@ class MinAgentEngine(
         }
     }
 
+    override suspend fun renameSession(id: String, title: String): Boolean {
+        val sid = SessionId(id)
+        hub.get(sid)?.let { return it.rename(title) != null }
+        // 没在线的会话：临时打开写一条 session_renamed 再卸下。摘要不用手动更新——它按日志的大小与修改时间校验，下次列表时重建
+        val runtime = hub.open(sid) ?: return false
+        return try {
+            runtime.rename(title) != null
+        } finally {
+            hub.close(sid)
+        }
+    }
+
     override suspend fun closeAll(reason: CloseReason) {
         sessions.value.values.toList().forEach { closeSession(it, reason) }
         // 「停止全部」之后前台服务可能随即退出：MCP 服务器不能等「无人使用两分钟」，否则进程被杀时成了 proot 里的孤儿
@@ -286,7 +310,20 @@ class MinAgentEngine(
         Result.failure(e)
     }
 
+    /**
+     * 迁移：以前改名存在 App 自己的元数据里（`session-meta`），现在改名写内核的 `session_renamed`。
+     * 打开 / 新建会话时把旧标题写进内核并清掉元数据；内核里已经有名字的以内核为准，旧标题直接丢（它一定更早）。
+     * 没打开过的会话列表仍读元数据（[titleOverride]），打开那一刻才迁
+     */
+    private suspend fun migrateLegacyTitle(runtime: dev.min.agent.kernel.SessionRuntime) {
+        val key = SessionRef(EngineKind.MinAgent, runtime.sessionId.value).storageKey
+        val legacy = meta.get(key).title?.takeIf { it.isNotBlank() } ?: return
+        if (runtime.state.value.name == null) runtime.rename(legacy)
+        meta.update(key) { it.copy(title = null) }
+    }
+
     private fun register(runtime: dev.min.agent.kernel.SessionRuntime, pin: Boolean): MinAgentSession {
+        scope.launch { catchingNonCancellation { migrateLegacyTitle(runtime) }.onFailure { Log.w(TAG, "legacy title migration failed", it) } }
         val session = synchronized(this) {
             sessions.value[runtime.sessionId] ?: MinAgentSession(runtime, this, scope).also {
                 sessions.value = sessions.value + (runtime.sessionId to it)
@@ -352,10 +389,6 @@ class MinAgentEngine(
     override fun titleOverride(sessionId: String): Flow<String?> {
         val key = SessionRef(EngineKind.MinAgent, sessionId).storageKey
         return meta.items.map { it[key]?.title?.takeIf(String::isNotBlank) }.distinctUntilChanged()
-    }
-
-    override fun renameSession(sessionId: String, title: String) {
-        meta.update(SessionRef(EngineKind.MinAgent, sessionId).storageKey) { it.copy(title = title.ifBlank { null }) }
     }
 
     override fun rememberDefaultModel(profileId: String, modelId: String) = lastUsed.rememberModel(profileId, modelId)
