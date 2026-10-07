@@ -130,33 +130,38 @@ class Runner:
     def safe_write(self, path, text):
         path.write_text(text.replace(self.key, "[REDACTED]").replace(self.proxy.token, "[REDACTED]"), encoding="utf-8")
 
-    def run(self, name, prompt, approve="yes", resume=None, effort=None, cwd=None):
+    def run(self, name, prompt, approve="yes", resume=None, effort=None, cwd=None, extra_args=None, home=None, timeout=300):
         work = cwd or self.args.evidence / "workspaces" / name
         work.mkdir(parents=True, exist_ok=True)
         if not (work / "source.txt").exists():
             (work / "source.txt").write_text("Project Aurora has 3 workers. Each worker handles 7 jobs. Status: pending.\n", encoding="utf-8")
-        cmd = [str(Path(os.environ["JAVA_HOME"]) / "bin" / "java.exe") if os.name == "nt" else "java",
-               "-cp", str(self.args.cli_home / "lib" / "*"), "dev.min.agent.cli.MainKt",
-               "--provider", self.args.provider, "--model", self.args.model,
-               "--base-url", self.proxy.url, "--wire", self.args.wire,
-               "--api-key-env", self.args.key_env, "--max-output", str(self.args.max_output),
-               "--context", str(self.args.context), "--approve", approve, "--json", "--cwd", str(work), "-p", prompt]
+        cmd = [str(Path(os.environ["JAVA_HOME"]) / "bin" / "java.exe") if os.name == "nt" else "java"]
+        # 桌面评测一律隔离 user.home：不隔离会读到真实的 ~/.claude.json 并把用户的 MCP 服务器起起来。
+        if home:
+            cmd.append("-Duser.home=" + str(home))
+        cmd += ["-cp", str(self.args.cli_home / "lib" / "*"), "dev.min.agent.cli.MainKt",
+                "--provider", self.args.provider, "--model", self.args.model,
+                "--base-url", self.proxy.url, "--wire", self.args.wire,
+                "--api-key-env", self.args.key_env, "--max-output", str(self.args.max_output),
+                "--context", str(self.args.context), "--approve", approve, "--json", "--cwd", str(work), "-p", prompt]
         if resume:
             cmd.extend(["--resume", resume])
         if effort:
             cmd.extend(["--effort", effort])
+        if extra_args:
+            cmd.extend(extra_args)
         first = len(self.proxy.traces)
         child_env = dict(os.environ)
         # CLI / Bash 子进程只拿一次性本机 token，真实供应商 key 留在代理内存到 HTTPS 头之间。
         child_env[self.args.key_env] = self.proxy.token
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=300, env=child_env)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout, env=child_env)
         self.safe_write(self.args.evidence / f"{name}.stdout.txt", proc.stdout)
         self.safe_write(self.args.evidence / f"{name}.stderr.txt", proc.stderr)
         result = next((json.loads(line) for line in reversed(proc.stdout.splitlines()) if line.startswith('{"session"')), {})
         traces = self.proxy.traces[first:]
         self.safe_write(self.args.evidence / f"{name}.trace.json", json.dumps(traces, ensure_ascii=False, indent=2))
         row = {"name": name, "approval": approve, "exit": proc.returncode, "result": result,
-               "requests": len(traces), "workspace": str(work)}
+               "requests": len(traces), "workspace": str(work), "home": str(home) if home else None}
         self.rows.append(row)
         self.safe_write(self.args.evidence / "smoke-results.json", json.dumps(self.rows, ensure_ascii=False, indent=2))
         print(json.dumps({"name": name, "exit": proc.returncode, "completed": result.get("completed"),
