@@ -41,6 +41,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - `resume yes`：打开后按 ▶（Resume 命令，带当前 offerId），不发新话
  * - `op list`：列出会话目录（含「中断」标记）；`op delete`（配 `session`）：经目录删除整个会话
  * - `op proc-probe`：长寿进程端口的设备验收探针，日志里看 `PROBE` 开头的行与最后的 `PROBE_DONE`
+ * - `op profiles`：列出供应商档案（id / 备注 / 地址 / 是否激活；**不打印 key**），验收时据此给 `profile` 传假档案的 id，
+ *   免得没指定档案的会话落到用户真实的端点上
+ * - `op mcp`（配 `session`）：打印该会话日志折叠出的 MCP 服务器清单与工具快照（`MCP_SERVER` / `MCP_TOOL` 行）
+ * - `op close`（配 `session`）：与界面「结束会话」同一条路（UserEnded），放掉订阅并卸下运行时（MCP 连接随引用归零进入宽限）
+ * - `op close-all`：与「停止全部」同一条路（StopAll），并立刻关掉 MCP 连接
  */
 class MinAgentDebugReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -69,6 +74,31 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
                 if (op == "list") {
                     engine.catalog.list().forEach { Log.i(TAG, "LIST ${it.ref.id} interrupted=${it.interrupted} messages=${it.messageCount} title=${it.title}") }
                     Log.i(TAG, "LIST_DONE"); return@launch
+                }
+                if (op == "profiles") {
+                    val current = GlobalContext.get().get<SettingsStore>().current()
+                    current.profiles.forEach { Log.i(TAG, "PROFILE ${it.id} label=${it.label} baseUrl=${it.baseUrl} active=${it.id == current.activeProfile?.id}") }
+                    Log.i(TAG, "PROFILES_DONE"); return@launch
+                }
+                if (op == "close" || op == "mcp") {
+                    val id = checkNotNull(intent.getStringExtra("session")) { "$op 需要 session" }
+                    val opened = engine.open(id).getOrThrow() as MinAgentSession
+                    if (op == "mcp") {
+                        val s = opened.runtime.state.value
+                        s.mcpServers?.servers?.forEach { Log.i(TAG, "MCP_SERVER ${it.name} scope=${it.scope} transport=${it.transport} state=${it.state} tools=${it.toolCount} reason=${it.reason}") }
+                        s.mcpServers?.notes?.forEach { Log.i(TAG, "MCP_NOTE $it") }
+                        s.mcpTools?.tools?.forEach { Log.i(TAG, "MCP_TOOL ${it.name}") }
+                        s.mcpTools?.note?.let { Log.i(TAG, "MCP_TOOLS_NOTE $it") }
+                        Log.i(TAG, "MCP_DONE servers=${s.mcpServers?.servers?.size} tools=${s.mcpTools?.tools?.size}")
+                    } else {
+                        engine.closeSession(opened, dev.min.code.core.engine.CloseReason.UserEnded)
+                        Log.i(TAG, "CLOSED $id")
+                    }
+                    return@launch
+                }
+                if (op == "close-all") {
+                    engine.closeAll(dev.min.code.core.engine.CloseReason.StopAll)
+                    Log.i(TAG, "CLOSED_ALL"); return@launch
                 }
                 if (op == "proc-probe") {
                     // MCP0 验收：proot 里的长寿进程往返、环境、回收、取消、配额（见 ProcessProbe）
