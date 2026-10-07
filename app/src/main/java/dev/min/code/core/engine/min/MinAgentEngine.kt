@@ -316,10 +316,13 @@ class MinAgentEngine(
      * 没打开过的会话列表仍读元数据（[titleOverride]），打开那一刻才迁
      */
     private suspend fun migrateLegacyTitle(runtime: dev.min.agent.kernel.SessionRuntime) {
-        val key = SessionRef(EngineKind.MinAgent, runtime.sessionId.value).storageKey
-        val legacy = meta.get(key).title?.takeIf { it.isNotBlank() } ?: return
+        // 旧标题可能存在两种键下：引擎自己写的用带前缀的 storageKey，列表改名写的是裸 id（两边口径本来就不一致，
+        // 所以列表里离线会话的改名一直没显示出来）。两个都认，写进内核后两个都清
+        val id = runtime.sessionId.value
+        val keys = listOf(SessionRef(EngineKind.MinAgent, id).storageKey, id)
+        val legacy = keys.firstNotNullOfOrNull { meta.get(it).title?.takeIf(String::isNotBlank) } ?: return
         if (runtime.state.value.name == null) runtime.rename(legacy)
-        meta.update(key) { it.copy(title = null) }
+        keys.forEach { key -> if (meta.get(key).title != null) meta.update(key) { it.copy(title = null) } }
     }
 
     private fun register(runtime: dev.min.agent.kernel.SessionRuntime, pin: Boolean): MinAgentSession {
