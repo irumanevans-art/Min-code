@@ -266,7 +266,7 @@ internal fun ClaudeCodeInputBar(
         }
     }
 
-    val running = session.status == SessionStatus.Running
+    val running = session.accepting
     // 输入以 "/" 开头时把斜杠命令顶上来（就地补全，比翻设置面板快）
     val slashQuery = input.takeIf { it.startsWith("/") }?.drop(1)?.substringBefore(' ')
     val matchedCommands = remember(slashQuery, session.slashCommands) {

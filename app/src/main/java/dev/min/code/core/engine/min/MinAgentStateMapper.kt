@@ -116,6 +116,8 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             stopping = input.stopping,
             errorMessage = input.errorMessage,
             connection = ConnectionView(model.providerId, providerLabel, stale = false, removed = removed),
+            // Min 没有进程：空闲的会话 status 是 Idle，但它是打开着的（见 AgentSessionState.open）
+            open = true,
         )
     }
 

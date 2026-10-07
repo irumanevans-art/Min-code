@@ -317,7 +317,7 @@ fun ClaudeCodePage(
     var wideSidebarOpen by rememberSaveable { mutableStateOf(true) }
     var wideSidebarWidthDp by rememberSaveable { mutableFloatStateOf(SIDEBAR_DEFAULT_DP) }
     val live = setup.ready &&
-        (session.status == SessionStatus.Running ||
+        (session.accepting ||
             session.status == SessionStatus.Starting)
 
     val openSessionList: () -> Unit = {
@@ -1337,7 +1337,7 @@ private fun SessionContent(
                         },
                     )
                 }
-                if (session.status == SessionStatus.Running || session.stopping) {
+                if (session.accepting || session.stopping) {
                     Spacer(Modifier.width(6.dp))
                     PaperDisc {
                         InkIconButton(

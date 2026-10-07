@@ -47,7 +47,18 @@ data class AgentSessionState(
     val reportedModel: String? = null,
     /** 引擎报的工具数（CC：init 帧里的工具列表长度），顶栏副标题「N 个工具」用。0 = 不显示。同上，B6(b) 补 */
     val toolCount: Int = 0,
+    /**
+     * 引擎有一个**打开着**的会话在这里。`status` 在 Claude Code / Codex 上「Running = 进程活着」，页面据它判断要不要显示会话；
+     * Min 的会话没有进程，设计 §3.4 规定「有回合在跑 → Running，否则 Idle」，空闲的 Min 会话 `status` 是 Idle，
+     * 页面不能把它当成「没有会话」退回开始面板、也不能把输入框置灰。所以 Min 的映射器填 true，页面用 [accepting] 判。
+     * 默认 false：旧引擎的快照与黄金测试不受影响。
+     */
+    val open: Boolean = false,
 ) {
+    /** 会话页要显示它、输入框要能收字：进程活着（CC / Codex 的 Running），或 Min 这种没进程但打开着的会话 */
+    val accepting: Boolean
+        get() = status == SessionStatus.Running || (open && status != SessionStatus.Closed && status != SessionStatus.Failed)
+
     /** 回合在跑。「忙」只有这一个定义，别在别处用 status 推 */
     val busy: Boolean get() = turn != null
 

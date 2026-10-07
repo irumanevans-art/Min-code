@@ -561,6 +561,14 @@ class MinAgentStateMapperTest {
         assertEquals(SessionStatus.Idle, map(foldOf()).status)
     }
 
+    @Test fun anIdleMinSessionIsStillOpenSoThePageKeepsItAndTheComposerAcceptsInput() {
+        // 设计 §3.4：有回合在跑 → Running，否则 Idle。空闲的 Min 会话没有进程，页面靠 open 才不会把它当成「没有会话」
+        val idle = map(foldOf())
+        assertEquals(SessionStatus.Idle, idle.status)
+        assertTrue(idle.open)
+        assertTrue(idle.accepting)
+    }
+
     @Test fun lastTurnReceiptCarriesTheEnd() {
         val s = foldOf(*ended(TurnOutcome.Interrupted(InterruptedBy.ProcessDeath), lastActivity = 55).toTypedArray())
         val r = map(s).lastTurn!!

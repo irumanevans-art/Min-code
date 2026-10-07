@@ -3,6 +3,7 @@ package dev.min.code.ui.session
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -128,7 +130,18 @@ internal fun StartPanel(
             contentAlignment = BiasAlignment(0f, 1f),
         ) {
             Column(
-                modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
+                modifier = Modifier
+                    .widthIn(max = 480.dp)
+                    .fillMaxWidth()
+                    // Min 一段比 Claude Code 的高得多，会一直长到字标的位置：垫一张近乎不透明的纸，字不压在水纹上
+                    .then(
+                        if (engine == EngineKind.MinAgent) {
+                            Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.94f))
+                                .padding(14.dp)
+                        } else Modifier,
+                    ),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 SectionTitle(stringResource(R.string.workspace_detail_workspace_info))
