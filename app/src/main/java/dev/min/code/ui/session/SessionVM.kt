@@ -39,7 +39,9 @@ import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.ImageInput
 import dev.min.code.core.engine.InteractionAnswer
 import dev.min.code.core.engine.LiveStream
+import dev.min.code.core.engine.PendingResume
 import dev.min.code.core.engine.RefreshTarget
+import dev.min.code.core.engine.ResumeOffer
 import dev.min.code.core.engine.SendTarget
 import dev.min.code.core.engine.SessionCommand
 import dev.min.code.core.engine.SessionRef
@@ -221,6 +223,14 @@ class SessionVM(
     private val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
 
     init {
+        // 回合起来了、或 offer 已经不是按下去的那个：转圈该结束了
+        viewModelScope.launch {
+            session.collect { state ->
+                val pending = _pendingResume.value ?: return@collect
+                val stillOffered = state.resume?.offerId == pending.offerId || state.threads.any { it.resume?.offerId == pending.offerId }
+                if (state.turn != null || !stillOffered) _pendingResume.value = null
+            }
+        }
         // 进程被 FGS 保活、页面重建时，注册表里的会话还在，草稿要从磁盘接回来
         activeSessionKey.value?.let { attachComposer(it) }
     }
@@ -447,6 +457,24 @@ class SessionVM(
         command({ SessionCommand.Answer(it, interactionId, answer) })
 
     fun interrupt() = command({ SessionCommand.Interrupt(it) })
+
+    /**
+     * 按下 ▶ 之后、回合还没起来的那一段：键转圈、禁止重复按（`composerKeys` 只认 offerId 仍等于当前 offer 的，过期的自己失效）。
+     * 回合一起来 / offer 变了就丢（见 init 里的收集）；命令被拒（过期、会话没了）也丢，并轻提示一句。
+     */
+    private val _pendingResume = MutableStateFlow<PendingResume?>(null)
+    val pendingResume: StateFlow<PendingResume?> = _pendingResume.asStateFlow()
+
+    /** ▶：按 offer 里的 id 续跑（主会话或子 agent 的 offer 都走这一条，适配器按 id 认） */
+    fun resume(offer: ResumeOffer) {
+        _pendingResume.value = PendingResume.forPress(offer)
+        command({ SessionCommand.Resume(it, offer.offerId) }) { result ->
+            if (result !is CommandResult.Accepted) {
+                _pendingResume.value = null
+                if (result is CommandResult.Stale) _notice.value = context.getString(R.string.resume_stale)
+            }
+        }
+    }
 
     /** 子 agent 视图里发的话。图片递不进子 agent（hook 只能带文字），适配器会让 manager 补一条说明 */
     fun sendToSubagent(threadId: String, text: String, images: List<ImageInput> = emptyList()) =

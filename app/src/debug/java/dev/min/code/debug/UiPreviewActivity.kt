@@ -537,6 +537,10 @@ private fun ConversationPreview(
                     )
                     ClaudeCodeInputBar(
                         session = session.copy(busy = variant == "streaming").toAgentState(),
+                        capabilities = dev.min.code.core.engine.EngineCapabilities.ClaudeCode,
+                        viewingThread = null,
+                        pendingResume = null,
+                        onResume = {},
                         onSend = { text, _ ->
                             messages = messages + text
                             scope.launch { delay(50); list.animateScrollToItem(5 + messages.lastIndex) }

@@ -582,6 +582,18 @@
   <string name="composer_hint">What are we doing</string>
   <string name="composer_hint_queue">Queue a message</string>
   <string name="composer_hint_not_ready">Session not ready</string>
+  <string name="composer_hint_resume">Tap ▶ to carry on, or type a new instruction</string>
+  <string name="composer_hint_connecting">Reconnecting the session…</string>
+  <string name="composer_resume_desc">Continue: %1$s</string>
+  <string name="composer_resuming">Continuing…</string>
+  <string name="resume_stale">That is no longer something to continue</string>
+  <string name="resume_reason_stopped">you stopped the turn</string>
+  <string name="resume_reason_failed">the request failed (%1$s)</string>
+  <string name="resume_reason_process_death_at">the app was ended by the system at %1$s</string>
+  <string name="resume_reason_process_death">the app was ended by the system</string>
+  <string name="resume_reason_limit">the turn hit its request limit</string>
+  <string name="resume_reason_hook">a hook stopped the turn</string>
+  <string name="resume_reason_engine_exited">the engine exited</string>
   <string name="composer_interrupt">Stop the current task</string>
   <string name="composer_remove">Remove</string>
   <!-- Removing an attachment chip deletes the file from the workspace, so it confirms first -->

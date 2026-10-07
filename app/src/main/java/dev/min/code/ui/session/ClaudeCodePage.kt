@@ -1027,6 +1027,8 @@ private fun SessionContent(
     // 工具卡的字头在组合期取好传下去：TranscriptItem 的调用方（搜索、导出）不是 Composable
     val transcriptLabels = rememberTranscriptLabels()
     val composerDraft by vm.composerDraft.collectAsStateWithLifecycle()
+    val capabilities by vm.capabilities.collectAsStateWithLifecycle()
+    val pendingResume by vm.pendingResume.collectAsStateWithLifecycle()
     val activeKey by vm.activeSessionKey.collectAsStateWithLifecycle()
     val showLiveTurn = !streaming && (
         session.busy ||
@@ -1428,6 +1430,10 @@ private fun SessionContent(
                     val boundId = activeKey
                     ClaudeCodeInputBar(
                         session = session,
+                        capabilities = capabilities,
+                        viewingThread = viewedAgent,
+                        pendingResume = pendingResume,
+                        onResume = vm::resume,
                         // 发送不主动滚到底：在底时新消息按贴底跟随自然跟上，在上面翻着就保持原位
                         onRunShell = { command -> vm.runShell(command) },
                         // 子 agent 视图里：话说给它（收件箱 / 经主会话转交），停止键只停它
@@ -1440,7 +1446,6 @@ private fun SessionContent(
                             if (target != null) vm.stopSubagent(target.threadId) else vm.interrupt()
                         },
                         hintOverride = viewedAgent?.let { stringResource(R.string.agent_composer_hint, subagentTypeLabel(it.agentType)) },
-                        busyOverride = viewedAgent?.running,
                         onSetModel = vm::setModel,
                         onSetPermissionMode = vm::setPermissionMode,
                         onApplyEffort = { effort, ultracode -> vm.applyEffort(effort, ultracode) },

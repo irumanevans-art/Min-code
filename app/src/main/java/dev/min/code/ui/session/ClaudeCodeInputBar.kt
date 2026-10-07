@@ -57,6 +57,11 @@ import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Image02
 import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.AgentThread
+import dev.min.code.core.engine.EngineCapabilities
+import dev.min.code.core.engine.PendingResume
+import dev.min.code.core.engine.ResumeOffer
+import dev.min.code.core.engine.composerKeys
 import dev.min.code.core.engine.ImageInput
 import dev.min.code.core.engine.SlashCommandView
 import dev.min.code.core.session.SessionStatus
@@ -74,6 +79,13 @@ private val NoWithdrawals: Flow<ComposerDraft> = emptyFlow()
 @Composable
 internal fun ClaudeCodeInputBar(
     session: AgentSessionState,
+    /** 这个会话所属引擎的能力位：■ / ▶ 怎么摆、撤回能不能用都看它（设计 §3.8） */
+    capabilities: EngineCapabilities,
+    /** 子 agent 页上正看着的那个线程；左槽和发送键对应它（■ = 停它、▶ = 它的续跑） */
+    viewingThread: AgentThread?,
+    /** 用户按过 ▶、续跑请求已发出但回合还没起来（VM 持有） */
+    pendingResume: PendingResume?,
+    onResume: (ResumeOffer) -> Unit,
     onSend: (String, List<ImageInput>) -> Unit,
     onInterrupt: () -> Unit,
     /** `!` 开头的一行：Min 自己在 rootfs 里跑，不经模型（见 UserShell.kt） */
@@ -117,8 +129,6 @@ internal fun ClaudeCodeInputBar(
     withdrawnMessages: Flow<ComposerDraft> = NoWithdrawals,
     /** 占位字换一句（子 agent 视图：「发给 @general-purpose…」）。null = 照常 */
     hintOverride: String? = null,
-    /** 停止键跟谁的「在跑」走（子 agent 视图：那个子 agent 在跑才出停止键）。null = 跟会话这一轮 */
-    busyOverride: Boolean? = null,
     modifier: Modifier = Modifier,
 ) {
     var input by remember { mutableStateOf(restoredDraft.text) }
@@ -405,7 +415,19 @@ internal fun ClaudeCodeInputBar(
             )
         }
 
-        val canSend = (input.isNotBlank() || attachments.isNotEmpty() || images.isNotEmpty()) && running
+        val inputFilled = input.isNotBlank() || attachments.isNotEmpty() || images.isNotEmpty()
+        val canSend = inputFilled && running
+        val keys = composerKeys(
+            turn = session.turn,
+            resume = session.resume,
+            viewingThread = viewingThread,
+            pendingResume = pendingResume,
+            capabilities = capabilities,
+            inputFilled = inputFilled,
+            queuedCount = session.queuedCount,
+            stopping = session.stopping,
+            readOnly = session.readOnly,
+        )
         val usage = composerUsage(session, dailyCostUsd)
         ComposerCapsule(
             value = input,
@@ -422,8 +444,10 @@ internal fun ClaudeCodeInputBar(
                 }
             },
             enabled = running,
-            busy = busyOverride ?: session.busy,
+            busy = viewingThread?.running ?: session.busy,
             hint = hintOverride,
+            keys = keys,
+            onResume = onResume,
             canSend = canSend,
             onSend = { submit() },
             onInterrupt = onInterrupt,

@@ -578,6 +578,18 @@
   <string name="composer_hint">意欲何为</string>
   <string name="composer_hint_queue">追加消息</string>
   <string name="composer_hint_not_ready">会话未就绪</string>
+  <string name="composer_hint_resume">点 ▶ 接着做，或输入新的指示</string>
+  <string name="composer_hint_connecting">正在接回会话…</string>
+  <string name="composer_resume_desc">继续：%1$s</string>
+  <string name="composer_resuming">正在继续…</string>
+  <string name="resume_stale">这一轮已经不用继续了</string>
+  <string name="resume_reason_stopped">你停止了这一轮</string>
+  <string name="resume_reason_failed">请求失败（%1$s）</string>
+  <string name="resume_reason_process_death_at">应用被系统结束于 %1$s</string>
+  <string name="resume_reason_process_death">应用被系统结束</string>
+  <string name="resume_reason_limit">达到单回合请求上限</string>
+  <string name="resume_reason_hook">hook 叫停了这一轮</string>
+  <string name="resume_reason_engine_exited">引擎已退出</string>
   <string name="composer_interrupt">中断当前任务</string>
   <string name="composer_remove">移除</string>
   <!-- 附件芯片的 × 会把文件从工作区删掉，不是只把它从这条消息里摘走，所以先确认 -->
