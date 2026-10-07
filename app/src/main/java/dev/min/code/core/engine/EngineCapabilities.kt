@@ -42,6 +42,8 @@ data class EngineCapabilities(
     val liveTitle: Boolean,
     val exportImport: Boolean,
     val processOutput: Boolean,
+    /** 会话里的 MCP 服务器面板、批准卡、登录（[McpControl]）。CC 的 MCP 在它自己的配置面板里，Codex 没有 */
+    val mcpServers: Boolean,
     /** 第一次进一个带项目层 hooks / `.mcp.json` 的工作目录前先问信任（[WorkspaceTrustControl]）。CC 有自己的信任对话框，Codex 没有项目层配置 */
     val workspaceTrust: Boolean,
     /** `/mcp /agents /memory /permissions /config` 面板。设计草稿是 Boolean，但表里 Min 写的是「部分」，见 [ConfigFiles] */
@@ -99,6 +101,7 @@ data class EngineCapabilities(
         "liveTitle" to liveTitle.toString(),
         "exportImport" to exportImport.toString(),
         "processOutput" to processOutput.toString(),
+        "mcpServers" to mcpServers.toString(),
         "workspaceTrust" to workspaceTrust.toString(),
         "claudeConfigFiles" to claudeConfigFiles.name,
     )
@@ -128,6 +131,7 @@ data class EngineCapabilities(
             liveTitle = true,
             exportImport = true,
             processOutput = true,
+            mcpServers = false,
             workspaceTrust = false,
             claudeConfigFiles = ConfigFiles.Full,
         )
@@ -161,6 +165,7 @@ data class EngineCapabilities(
             liveTitle = false,
             exportImport = false,
             processOutput = true,
+            mcpServers = false,
             workspaceTrust = false,
             claudeConfigFiles = ConfigFiles.None,
         )
@@ -199,6 +204,7 @@ data class EngineCapabilities(
             liveTitle = false,
             exportImport = false,
             processOutput = false,
+            mcpServers = true,
             workspaceTrust = true,
             claudeConfigFiles = ConfigFiles.Partial,
         )

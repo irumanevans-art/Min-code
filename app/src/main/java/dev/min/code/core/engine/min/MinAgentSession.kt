@@ -52,6 +52,10 @@ interface MinSessionHost {
     val lookup: MinModelLookup
     val tasks: MinBackgroundTasks
 
+    /** 当前一代的工作区文件系统（MCP 批准卡写 settings.local.json、读 .mcp.json 用） */
+    val workspaceFs: dev.min.agent.spi.WorkspaceFs
+    val mcpLoginGate: McpLoginGate
+
     /** 设置变了（供应商档增删改）：模型表、「供应商已删除」要跟着重算 */
     val settingsTick: Flow<Unit>
     val maxRetryAttempts: Int
@@ -101,6 +105,9 @@ class MinAgentSession(
     private val _signals = MutableSharedFlow<SessionSignal>(extraBufferCapacity = 16)
     override val signals: SharedFlow<SessionSignal> = _signals.asSharedFlow()
     override val stream: StateFlow<LiveStream> = live.stream
+    override val mcp: dev.min.code.core.engine.McpControl = MinMcpControl(
+        host.hub, rootId, cwd = { runtime.state.value.created.cwd.value }, fs = { host.workspaceFs }, gate = host.mcpLoginGate,
+    )
 
     private val commands = MinCommandHandler(
         hub = host.hub, root = runtime, state = { state.value }, lookup = host.lookup, text = host.text,

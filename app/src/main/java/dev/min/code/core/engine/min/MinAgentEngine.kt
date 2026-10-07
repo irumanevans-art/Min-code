@@ -113,10 +113,12 @@ class MinAgentEngine(
     private val lastUsed = MinLastUsed(File(context.filesDir, "agent/last-used.json"))
     private val index = MinSessionIndex(File(context.filesDir, "agent/index"), sessionsDir)
     override val tasks = MinBackgroundTasks()
+    override val workspaceFs: dev.min.agent.spi.WorkspaceFs get() = ports.fs
     override val lookup: MinModelLookup = resolver
     override val maxRetryAttempts = 5
 
     @Volatile private var generation: MinHostGeneration = buildGeneration()
+    override val mcpLoginGate = McpLoginGate()
     private val ports = MinHostPorts({ generation }, tasks, dev.min.agent.spi.Clock { System.currentTimeMillis() })
 
     internal val snapshots = CasWorkspaceSnapshots(File(context.filesDir, "agent").toPath(), { generation.fs }, MinKernelDeps.MEMORY_HOME)
@@ -128,7 +130,7 @@ class MinAgentEngine(
         resolver, ports, snapshots = snapshots,
         // 与 Claude Code 引擎那边的 DeviceMcpRegistrar 读同一个设置：controlDevice
         tools = minToolsWithDevice(devices, enabled = { settings.snapshot?.controlDevice == true }),
-        mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context),
+        mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context, mcpLoginGate),
         trustProjectHooks = trust::isTrusted,
     )
 

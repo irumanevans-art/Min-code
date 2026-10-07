@@ -51,6 +51,9 @@ interface AgentSession {
      */
     suspend fun searchFiles(query: String, limit: Int): List<String>
 
+    /** MCP 服务器面板与批准卡（[EngineCapabilities.mcpServers] 为真才有）；其余引擎 null */
+    val mcp: McpControl? get() = null
+
     /** 这次工具调用能不能撤销文件改动（[EngineCapabilities.checkpointRevert] 为假时永远 false） */
     suspend fun hasCheckpoint(toolUseId: String): Boolean = false
 
