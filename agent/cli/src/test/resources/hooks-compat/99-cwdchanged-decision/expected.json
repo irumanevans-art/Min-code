@@ -15,7 +15,5 @@
   "timedOut": false,
   "failedToStart": false,
   "notesContain": [],
-  "basis": "§CwdChanged output：读 watchPaths（替换动态监视列表）与 systemMessage（终端通知），丢弃 continue；不能阻断（:2794–2804）。",
-  "pendingFix": "原文：读 watchPaths 与 systemMessage、丢弃 continue，不能阻断（:2794–2804）。引擎现在：continue:false 会停回合；watchPaths 引擎不收（要等内核接 FileChanged 一并做）。",
-  "minTrigger": "none"
+  "basis": "§CwdChanged output：读 watchPaths（替换动态监视列表）与 systemMessage（终端通知），丢弃 continue；不能阻断（:2794–2804）。"
 }

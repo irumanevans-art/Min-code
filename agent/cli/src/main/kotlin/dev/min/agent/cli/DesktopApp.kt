@@ -89,7 +89,7 @@ internal fun desktopTools(customAgents: List<AgentType> = emptyList(), searchCon
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
     SkillTool,
     WebFetchTool,
-) + if (searchConfigured) listOf(WebSearchTool) else emptyList()
+) + (if (searchConfigured) listOf(WebSearchTool) else emptyList()) + listOf(dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool)
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 
@@ -282,6 +282,7 @@ internal class DesktopApp(
             mcpTokenStore = mcpTokens,
             mcpAuthorizer = mcpAuthorizer,
             mcpServerPath = { paths.hostOf(it).toString() },
+            gitPath = { paths.hostOf(it).toString() },
         )
     }
 
@@ -302,7 +303,12 @@ internal class DesktopApp(
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         // --name 建会话时命名（同目录重名时内核自动加 -2 变体）；headless 标记进 SessionCreated：--continue 由此跳过 -p 跑的会话（CC :78）
-        return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort, name = args.name, headless = args.prompt != null)
+        val runtime = hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort, name = args.name, headless = args.prompt != null)
+        if (args.worktree) {
+            val result = runtime.enterWorktree(args.worktreeName)
+            if (result.isError) throw UsageException(result.content.filterIsInstance<dev.min.agent.protocol.TextPart>().joinToString("") { it.text }, exitCode = 1)
+        }
+        return runtime
     }
 
     /**
@@ -353,6 +359,23 @@ internal class DesktopApp(
         return scope.launch(Dispatchers.IO) {
             catchingNonCancellation { snapshots.gc(cleanupPeriodDays = 30) }
                 .onFailure { System.err.println("检查点仓库清理失败，将在下次关闭会话时重试。") }
+        }
+    }
+
+    suspend fun cleanupWorktree(runtime: SessionRuntime, input: java.io.BufferedReader, out: java.io.PrintStream) {
+        val binding = runtime.state.value.worktree ?: return
+        if (args.prompt != null || binding.pinned) return
+        hub().stopTree(runtime.sessionId)
+        val clean = runtime.worktreeHasWork() == false
+        val automatic = clean && runtime.state.value.name == null && binding.owned
+        val remove = if (automatic) true else {
+            out.println("Worktree ${binding.path} (${binding.branch ?: "hook-managed"})。输入 remove 删除，或回车 keep 保留：")
+            input.readLine()?.trim() == "remove"
+        }
+        val result = runtime.exitWorktree(remove)
+        if (result.isError) {
+            result.content.filterIsInstance<dev.min.agent.protocol.TextPart>().forEach { out.println(it.text) }
+            out.println("已保留 worktree。")
         }
     }
 

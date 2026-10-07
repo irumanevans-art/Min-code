@@ -75,7 +75,7 @@ class HooksCompatTest {
     private val KERNEL_FIRED = setOf(
         "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse",
         "PostToolUseFailure", "Notification", "SubagentStart", "SubagentStop", "Stop", "SessionEnd",
-        "PreCompact", "PostCompact",
+        "PreCompact", "PostCompact", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
     )
 
     @Test fun `hooks 每个事件都有输入与决策样本，触发现状标记与内核清单一致`() {

@@ -13,7 +13,5 @@
   "timedOut": false,
   "failedToStart": false,
   "notesContain": [],
-  "basis": "§WorktreeCreate：worktree 创建时触发（--worktree、isolation:worktree 的子 agent、后台会话隔离），配置后完全取代默认 git 行为（:2929–2935）；输入 name（:2960–2972）。",
-  "pendingFix": "依赖未做功能：Min 还没有 worktree 隔离功能，事件无法端到端触发；输入形状已按原文钉住。",
-  "minTrigger": "none"
+  "basis": "§WorktreeCreate：worktree 创建时触发（--worktree、isolation:worktree 的子 agent、后台会话隔离），配置后完全取代默认 git 行为（:2929–2935）；输入 name（:2960–2972）。"
 }
