@@ -9,6 +9,10 @@ import dev.min.code.core.engine.McpControl
 import dev.min.code.core.engine.McpLoginCancelled
 import dev.min.code.core.engine.McpLoginPrompt
 import dev.min.code.core.engine.McpServerView
+import dev.min.code.core.engine.RewindControl
+import dev.min.code.core.engine.RewindResultView
+import dev.min.code.core.engine.RewindScopeView
+import dev.min.code.core.engine.RewindStorageRow
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SessionSignal
 import dev.min.code.core.engine.StartOptions
@@ -228,6 +232,105 @@ internal class SessionExtras(
         scope.launch {
             catchingNonCancellation { control.decide(cwd, trusted) }
                 .onFailure { notice(context.getString(R.string.trust_save_failed, it.message.orEmpty()), error = true) }
+        }
+    }
+
+    // ---- 检查点与回退 ----
+
+    private val rewindControl: StateFlow<RewindControl?> = shown.map { it?.rewind }
+        .stateIn(scope, SharingStarted.Eagerly, shown.value?.rewind)
+
+    private val _rewindDialog = MutableStateFlow<RewindDialog?>(null)
+
+    /** 回退对话框：加载预览 / 预览确认 / 撤销确认；null = 没有 */
+    val rewindDialog: StateFlow<RewindDialog?> = _rewindDialog.asStateFlow()
+
+    /** 长按「回到这里」：先问内核预览（要恢复 / 删除哪些、撤不回的、会停掉谁），再摆确认框 */
+    fun requestRewind(messageId: String) {
+        val control = rewindControl.value ?: return
+        if (_rewindDialog.value != null) return
+        _rewindDialog.value = RewindDialog.Loading(messageId)
+        scope.launch {
+            val view = catchingNonCancellation { control.preview(messageId) }.getOrNull()
+            if (view == null) {
+                _rewindDialog.value = null
+                notice(context.getString(R.string.rewind_not_available), error = true)
+            } else {
+                _rewindDialog.value = RewindDialog.Preview(view)
+            }
+        }
+    }
+
+    fun confirmRewind(rewindScope: RewindScopeView) {
+        val control = rewindControl.value ?: return
+        val dialog = _rewindDialog.value as? RewindDialog.Preview ?: return
+        if (dialog.working) return
+        _rewindDialog.value = dialog.copy(working = true)
+        scope.launch {
+            val result = catchingNonCancellation { control.rewind(dialog.view.messageId, rewindScope) }
+                .getOrElse { RewindResultView.Refused(it.message.orEmpty()) }
+            _rewindDialog.value = null
+            reportRewind(result)
+        }
+    }
+
+    fun requestUndo(restoreId: String) {
+        if (rewindControl.value == null || _rewindDialog.value != null) return
+        _rewindDialog.value = RewindDialog.Undo(restoreId)
+    }
+
+    fun confirmUndo() {
+        val control = rewindControl.value ?: return
+        val dialog = _rewindDialog.value as? RewindDialog.Undo ?: return
+        if (dialog.working) return
+        _rewindDialog.value = dialog.copy(working = true)
+        scope.launch {
+            val result = catchingNonCancellation { control.undoRestore(dialog.restoreId) }
+                .getOrElse { RewindResultView.Refused(it.message.orEmpty()) }
+            _rewindDialog.value = null
+            reportRewind(result)
+        }
+    }
+
+    fun dismissRewind() {
+        val dialog = _rewindDialog.value
+        // 正在执行的不能取消：恢复一旦开始就要做完（停在半路会留下改了一半的工作区）
+        if (dialog is RewindDialog.Preview && dialog.working || dialog is RewindDialog.Undo && dialog.working) return
+        _rewindDialog.value = null
+    }
+
+    private fun reportRewind(result: RewindResultView) = when (result) {
+        is RewindResultView.Refused -> notice(context.getString(R.string.rewind_failed, result.reason), error = true)
+        is RewindResultView.Done -> {
+            val parts = listOfNotNull(
+                result.restore?.let { context.getString(R.string.rewind_done_code, it.restored, it.deleted, it.skipped) },
+                result.rewoundMessages?.let { context.getString(R.string.rewind_done_conversation, it) },
+            )
+            notice(parts.joinToString("；").ifEmpty { context.getString(R.string.rewind_done_nothing) }, error = false)
+        }
+    }
+
+    /** 会话流里长按 / 撤销钮的出口；页面按 [dev.min.code.core.engine.EngineCapabilities.rewind] 决定提不提供 */
+    val rewindActions = RewindActions(::requestRewind, ::requestUndo)
+
+    // 设置页的快照仓库占用与清理
+
+    private val _storage = MutableStateFlow<List<RewindStorageRow>>(emptyList())
+    val storage: StateFlow<List<RewindStorageRow>> = _storage.asStateFlow()
+
+    /** 打开设置里的检查点段时读一次（遍历仓库目录，不是每帧都做的事） */
+    fun refreshStorage() {
+        val control = rewindControl.value ?: return
+        scope.launch { catchingNonCancellation { control.storage() }.onSuccess { _storage.value = it } }
+    }
+
+    fun clearStorage(id: String) {
+        val control = rewindControl.value ?: return
+        scope.launch {
+            control.clearStorage(id)
+                .onSuccess { notice(context.getString(R.string.checkpoints_cleared), error = false) }
+                .onFailure { notice(context.getString(R.string.checkpoints_clear_failed, it.message.orEmpty()), error = true) }
+            refreshStorage()
         }
     }
 

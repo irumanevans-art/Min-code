@@ -65,6 +65,7 @@ internal enum class SettingsSection(@StringRes val labelRes: Int) {
     USAGE(R.string.session_section_usage),
     MCP(R.string.session_section_mcp),
     TRUST(R.string.session_section_trust),
+    CHECKPOINTS(R.string.session_section_checkpoints),
 }
 
 /**
@@ -274,6 +275,20 @@ internal fun ClaudeCodeSettingsSheet(
                     onLogin = extras::login, onLogout = extras::logout, onApprove = extras::approve,
                     onTrust = { extras.askTrust(session.cwd) },
                 )
+            }
+        }
+
+        if (layout.checkpoints && extras != null) {
+            val rows by extras.storage.collectAsStateWithLifecycle()
+            // 先读一次占用：遍历仓库目录不便宜，所以只在设置面板打开时读一次，不轮询
+            androidx.compose.runtime.LaunchedEffect(Unit) { extras.refreshStorage() }
+            Section(
+                section = SettingsSection.CHECKPOINTS,
+                value = checkpointsSummary(rows),
+                open = open,
+                onToggle = { open = it },
+            ) {
+                CheckpointsSection(rows, onClear = extras::clearStorage)
             }
         }
 

@@ -33,6 +33,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.layout.layout
 import dev.min.code.ui.theme.rememberAnimationsEnabled
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import dev.min.code.ui.components.InkMenuItem
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -468,7 +474,11 @@ internal fun UserEntry(
     isLast: Boolean,
     queued: Boolean = false,
     handoff: ChatItem.Handoff? = null,
+    /** 非空 = 这条消息是回退点：长按出菜单（「回到这里」「复制」）。此时不包 SelectionContainer——长按会被它抢去选字，菜单里给复制代替 */
+    rewindId: String? = null,
 ) {
+    val rewindActions = LocalRewindActions.current.takeIf { rewindId != null }
+    var menuOpen by remember { mutableStateOf(false) }
     TranscriptEntry(
         marker = RailMarker.Dot,
         isFirst = isFirst,
@@ -503,10 +513,11 @@ internal fun UserEntry(
                     .clip(shape)
                     // paper2 和会话底（paper）只差一阶，夜纸下气泡和底融成一片。
                     // 再浅一阶才看得出这是从轨道上长出来的一只气泡
-                    .background(palette.paper3),
+                    .background(palette.paper3)
+                    .then(if (rewindActions != null) Modifier.pointerInput(rewindId) { detectTapGestures(onLongPress = { menuOpen = true }) } else Modifier),
             ) {
                 Box(Modifier.width(2.5.dp).fillMaxHeight().seaFill())
-                SelectionContainer {
+                val bubble: @Composable () -> Unit = {
                     Text(
                         text = text,
                         // 人的声音：楷书，比 sans 放大半号
@@ -514,6 +525,14 @@ internal fun UserEntry(
                         color = scheme.onSurface,
                         modifier = Modifier.padding(start = 12.dp, end = 14.dp, top = 9.dp, bottom = 9.dp),
                     )
+                }
+                if (rewindActions != null) bubble() else SelectionContainer { bubble() }
+                if (rewindActions != null && rewindId != null) {
+                    val clipboard = LocalClipboardManager.current
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        InkMenuItem(stringResource(R.string.rewind_menu_here), onClick = { menuOpen = false; rewindActions.onRewind(rewindId) })
+                        InkMenuItem(stringResource(R.string.rewind_menu_copy), onClick = { menuOpen = false; clipboard.setText(AnnotatedString(text)) })
+                    }
                 }
             }
         }

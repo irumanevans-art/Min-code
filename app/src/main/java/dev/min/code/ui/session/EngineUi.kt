@@ -75,6 +75,7 @@ internal object EngineUi {
             },
             mcp = capabilities.mcpServers,
             trust = capabilities.workspaceTrust,
+            checkpoints = capabilities.rewind,
         )
     }
 }
@@ -99,4 +100,6 @@ internal data class SettingsLayout(
     val mcp: Boolean,
     /** 「工作区信任」分区（[EngineCapabilities.workspaceTrust]） */
     val trust: Boolean,
+    /** 「检查点」分区：快照仓库占用与清理（[EngineCapabilities.rewind]） */
+    val checkpoints: Boolean,
 )

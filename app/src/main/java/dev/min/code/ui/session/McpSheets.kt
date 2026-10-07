@@ -66,6 +66,7 @@ internal fun SessionExtrasOverlays(extras: SessionExtras) {
             val command by produceState<McpServerCommandLine?>(null, server) { value = extras.describe(server) }
             McpApprovalSheet(server = server, commandLine = command, onAnswer = { allow -> extras.approve(server, allow) })
         }
+        else -> RewindOverlay(extras)
     }
 }
 
@@ -178,7 +179,7 @@ internal fun McpLoginSheet(prompt: McpLoginPrompt, onAnswer: (proceed: Boolean) 
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CardSheet(onDismiss: () -> Unit, dismissible: Boolean, content: @Composable () -> Unit) {
+internal fun CardSheet(onDismiss: () -> Unit, dismissible: Boolean, content: @Composable () -> Unit) {
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
         confirmValueChange = { dismissible || it != SheetValue.Hidden },
@@ -196,7 +197,7 @@ private fun CardSheet(onDismiss: () -> Unit, dismissible: Boolean, content: @Com
 }
 
 @Composable
-private fun CardTitle(text: String) {
+internal fun CardTitle(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Seal()
         Text(text, style = MaterialTheme.typography.titleSmall)
