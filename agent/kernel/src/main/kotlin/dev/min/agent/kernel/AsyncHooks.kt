@@ -97,7 +97,21 @@ internal class AsyncHookRunner(
             ShellCommand("sh ${cq(deps.hookShellPath(child(dir, "start.sh")))}", cwd),
             ExecOptions(timeoutMs = MAX_LIFETIME_MS, foregroundBudgetMs = 1),
         )
-        val handle = (result as? ExecResult.Backgrounded)?.handle
+        if (result !is ExecResult.Backgrounded) {
+            // 没转成后台：脚本在前台预算（1ms）内就结束了。跑完了的（退出码文件已在）照常收尾读结果；
+            // 起不来的（Exit 127 一类，退出码永远不会有）直接落说明收尾——句柄是 null 就没有存活探测兜底，
+            // 注册成轮询会无限等到会话关闭（N2）
+            if (fs.stat(child(dir, "code")) != null) {
+                val job = scope.launch(start = CoroutineStart.LAZY) { watch(id, event, handler, dir, null, started, timeoutSeconds != null) }
+                running[id] = Running(id, dir, null, job)
+                job.start()
+            } else {
+                finishWithProblem(event, handler, started, "启动脚本没转入后台就结束了，也没写出退出码（多半是起不来）")
+                withContext(NonCancellable) { cleanup(dir, null) }
+            }
+            return@withLock
+        }
+        val handle = result.handle
         // 先登记再启动（懒启动）：cancelAll 拿锁做快照，不会在登记前把任务漏掉
         val job = scope.launch(start = CoroutineStart.LAZY) { watch(id, event, handler, dir, handle, started, timeoutSeconds != null) }
         running[id] = Running(id, dir, handle, job)
@@ -196,7 +210,10 @@ internal class AsyncHookRunner(
         return true
     }
 
-    /** 进程还活着吗：pid 文件里像 pid 才信（目录在 rootfs 里，模型改得了内容），`kill -0` 探测 */
+    /** 进程还活着吗：pid 文件里像 pid 才信（目录在 rootfs 里，模型改得了内容），`kill -0` 探测。
+     *  只有拿到**明确的非零退出码**才算死：探测超时（重负载下起个探测进程慢很正常）、探测起不来、
+     *  意外转后台都当活着——把超时当已死会误杀健康的长 hook，接着 cleanup 还会杀掉它（N2）
+     */
     private suspend fun alive(dir: GuestPath): Boolean {
         val pid = try {
             read(child(dir, "pid"))?.trim()
@@ -207,8 +224,8 @@ internal class AsyncHookRunner(
         } ?: return true // pid 还没写出来：当作活着，别误判
         if (!SAFE_PID.matches(pid)) return true
         return try {
-            val r = deps.host.exec.run(ShellCommand("kill -0 $pid", rt.state.value.settings.cwd), ExecOptions(2_000))
-            r is ExecResult.Exited && r.exitCode == 0
+            val r = deps.host.exec.run(ShellCommand("kill -0 $pid", rt.state.value.settings.cwd), ExecOptions(10_000))
+            !(r is ExecResult.Exited && r.exitCode != 0)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
