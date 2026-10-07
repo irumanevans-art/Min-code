@@ -72,6 +72,8 @@ data class MinMapperInput(
  * 子 agent 的转录先投影好，再各挂两处：线程自己的 `items`，和发起它的那张 Agent 工具卡的 `subItems`，共用一份列表。
  */
 class MinAgentStateMapper(private val text: MinAgentText, private val lookup: MinModelLookup) {
+    /** 花费账本：按帧的增量记到当时的模型头上（见 [MinCostLedger]）。映射器是每个会话一个、帧顺序送进来，所以带状态没问题 */
+    private val ledger = MinCostLedger { ref -> lookup.profileOf(ref)?.pricing }
 
     fun map(input: MinMapperInput): AgentSessionState {
         val root = checkNotNull(input.nodes[input.root]) { "根会话 ${input.root.value} 不在节点表里" }
@@ -91,6 +93,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
         val threads = minThreads(input.root, input.nodes, ::itemsOf, lookup, canRun = { s -> lookup.providerLabel(s.settings.model.providerId) != null })
         val interactions = minInteractions(input.pending, input.root, input.nodes, threads, text)
         val profile = lookup.profileOf(model)
+        ledger.observe(input.nodes)
         return AgentSessionState(
             ref = input.ref,
             status = when {
@@ -108,7 +111,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             resume = minResumeOffer(root, canRun = !removed, stopping = input.stopping),
             interactions = interactions,
             settings = settingsOf(root, providerLabel),
-            usage = usageViewOf(root, profile?.contextWindow),
+            usage = usageViewOf(root, profile?.contextWindow).copy(costLabel = ledger.label()),
             tasks = input.tasks,
             threads = threads.withPendingCounts(interactions),
             slashCommands = text.slashCommands(),

@@ -188,7 +188,8 @@ data class EngineCapabilities(
             subagents = true,
             subagentDirectMessage = true,
             backgroundTasks = true,
-            cost = false,
+            // 目录有官方标价（ModelProfile.pricing + llm 的 cost()，MinCostLedger）：按币种原样显示，没有价格的模型不显示
+            cost = true,
             cacheStats = true,
             liveTitle = false,
             exportImport = false,

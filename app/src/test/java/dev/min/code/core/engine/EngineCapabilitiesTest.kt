@@ -31,7 +31,7 @@ class EngineCapabilitiesTest {
         "subagents" to Triple("true", "false", "true"),
         "subagentDirectMessage" to Triple("false", "false", "true"),
         "backgroundTasks" to Triple("true", "false", "true"),
-        "cost" to Triple("true", "false", "false"),
+        "cost" to Triple("true", "false", "true"),
         "cacheStats" to Triple("false", "false", "true"),
         "liveTitle" to Triple("true", "false", "false"),
         "exportImport" to Triple("true", "false", "false"),

@@ -275,6 +275,11 @@ data class UsageView(
     val turnOutputTokens: Int?,
     /** 只有 Min 填：cacheRead / 输入总量，0..1 */
     val cacheReadRatio: Double?,
+    /**
+     * 引擎**自己算好**的花费文字，按标价币种原样（不换汇，两种币种并排），界面照写、不解析、不并进「今日合计」。
+     * Min 填（目录价格 × 用量；有一个用过的模型没价格就是 null）。[costText] 是 CC 给的 CLI 原文、要解析成美元，两者别混
+     */
+    val costLabel: String? = null,
 ) {
     companion object {
         val Empty = UsageView(null, null, null, null, null, null)

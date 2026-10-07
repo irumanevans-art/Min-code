@@ -536,7 +536,8 @@ private fun composerUsage(
         contextText = used?.let { "${it / 1000}k/${ClaudeCodeModelCatalog.formatContextWindow(limit)}" },
         // 逼近上限转朱砂 —— CLI 到那一带会自动压缩上下文，这件事发生前用户有权知道
         warn = (ratio ?: 0f) >= CONTEXT_WARN_RATIO,
-        costText = costLabel(dailyCostUsd, session.usage.costText?.let { parseSessionCostUsd(it) }),
+        // 引擎自己算好的花费（Min：按目录价格、币种原样）优先；否则是 CC 的老算法：CLI 原文解析成美元 + 今日合计
+        costText = session.usage.costLabel ?: costLabel(dailyCostUsd, session.usage.costText?.let { parseSessionCostUsd(it) }),
     )
 }
 
