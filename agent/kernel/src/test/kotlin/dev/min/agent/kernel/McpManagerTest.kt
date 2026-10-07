@@ -94,13 +94,14 @@ class McpManagerTest {
             onProgress(McpProgress(1.0, 2.0))
             return result(tool, arguments)
         }
-        override fun stderrTail(): List<String> = emptyList()
+        var stderr: List<String> = emptyList()
+        override fun stderrTail(): List<String> = stderr
         override suspend fun close() {
             closed = true
             state.value = McpConnectionState.Closed("客户端关闭")
         }
         fun die() {
-            state.value = McpConnectionState.Closed("进程退出", exitCode = 1)
+            state.value = McpConnectionState.Closed("进程退出", exitCode = 1, stderrTail = stderr)
         }
     }
 
@@ -128,13 +129,14 @@ class McpManagerTest {
         env: (String) -> String? = { null },
         waitMs: Long = 5_000,
         connectTimeoutMs: Long = 30_000,
+        trust: Boolean = false,
     ): KernelDeps {
         val base = testDeps(model, emptyList())
         return KernelDeps(
             clock = base.clock, ids = base.ids, models = base.models, tools = emptyList(),
             host = HostPorts(fs, base.host.search, base.host.exec, base.host.artifacts),
             platform = base.platform, zone = base.zone, retry = base.retry, memoryHome = GuestPath("/root"),
-            env = env, mcpFirstSnapshotWaitMs = waitMs, mcpConnectTimeoutMs = connectTimeoutMs,
+            env = env, mcpFirstSnapshotWaitMs = waitMs, mcpConnectTimeoutMs = connectTimeoutMs, trustProjectHooks = { trust },
         )
     }
 
@@ -421,4 +423,62 @@ class McpManagerTest {
 
     @Suppress("unused")
     private fun ToolResultPart.text() = content.filterIsInstance<TextPart>().joinToString("") { it.text }
+
+    // ---- 面板用的入口：重读配置、本会话开关、重连、面板行 ----
+
+    @Test
+    fun `turning a server off for this session takes its tools out from the next turn, and back on reuses the connection`() = run {
+        val connector = FakeConnector()
+        val model = ScriptedModel(reply(TextPart("一")), reply(TextPart("二")), reply(TextPart("三")))
+        val hub = hub(model, connector)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("一")
+        assertEquals(listOf("mcp__github__search"), model.requests[0].toolNames())
+        hub.setMcpServerEnabled(rt.sessionId, "github", false)
+        assertEquals("disabled", hub.mcp.statusOf(rt.sessionId).single().state)
+        assertEquals("本会话已关闭。", hub.mcp.statusOf(rt.sessionId).single().reason)
+        rt.say("二")
+        assertTrue("关掉的服务器下一回合起不在工具表里", model.requests[1].toolNames().isEmpty())
+        hub.setMcpServerEnabled(rt.sessionId, "github", true)
+        rt.say("三")
+        assertEquals(listOf("mcp__github__search"), model.requests[2].toolNames())
+        assertEquals("关了又开用的是同一条连接（还在等回收），不重连", 1, connector.specs.size)
+    }
+
+    @Test
+    fun `reloading after approving a project server brings it in without reopening the session`() = run {
+        fs.put("/workspace/.mcp.json", """{"mcpServers": {"proj": {"command": "proj-mcp"}}}""")
+        val connector = FakeConnector()
+        val hub = SessionHub(store, deps(ScriptedModel(), trust = true), scope).also { it.mcp = McpManager(scope, connector, startupWaitMs = 2_000) }
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val before = hub.mcp.statusOf(rt.sessionId).single { it.name == "proj" }
+        assertEquals("not-approved", before.state)
+        assertTrue(dev.min.agent.ext.mcp.McpApprovals.approve(fs, GuestPath("/workspace"), "proj").isSuccess)
+        hub.reloadMcp(rt.sessionId)
+        while (hub.mcp.statusOf(rt.sessionId).single { it.name == "proj" }.state != "connected") delay(20)
+        assertTrue(connector.specs.any { it.name == "proj" })
+    }
+
+    @Test
+    fun `the panel row carries the stderr tail of a server that died, and reconnect starts it over`() = run {
+        val connector = FakeConnector()
+        val hub = hub(ScriptedModel(reply(TextPart("一"))), connector)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("一")
+        connector.made.single().apply { stderr = listOf("boom: missing token"); die() }
+        while (connector.made.size < 2) delay(20)
+        delay(100)
+        connector.made[1].apply { stderr = listOf("boom again"); die() }
+        while (hub.mcp.statusOf(rt.sessionId).single().state != "failed") delay(20)
+        val row = hub.mcpPanel(rt.sessionId).single()
+        assertEquals(listOf("boom again"), row.stderrTail)
+        assertEquals("stdio 没有登录这回事", null, row.signedIn)
+        hub.reconnectMcp("github", rt.sessionId)
+        while (connector.made.size < 3) delay(20)
+        while (hub.mcp.statusOf(rt.sessionId).single().state != "connected") delay(20)
+        assertTrue("重连后旧的失败说明清掉", hub.mcpPanel(rt.sessionId).single().stderrTail.isEmpty())
+        // 「已重启一次」的记号也清了：再掉线会自动重启一次，而不是直接标失败
+        connector.made[2].die()
+        while (connector.made.size < 4) delay(20)
+    }
 }

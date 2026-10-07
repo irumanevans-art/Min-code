@@ -77,6 +77,8 @@ internal class McpManager(
         @Volatile var status: String = PENDING
         @Volatile var reason: String? = null
         @Volatile var restarts = 0
+        /** 最近一次掉线 / 失败时 stdio 的 stderr 尾巴：面板在连接已经没了时还能看到「为什么」 */
+        @Volatile var lastStderr: List<String> = emptyList()
         @Volatile var refs = 0
         var linger: Job? = null
         /** 没人要了、已从表里摘掉：还在途中的连接（慢启动、重启）连上之后要自己收掉，不然就是没人管的孤儿进程 */
@@ -182,6 +184,41 @@ internal class McpManager(
     /** 界面「MCP 服务器」面板用：某个会话的服务器此刻的状态 */
     fun statusOf(sessionId: SessionId): List<McpServerInfo> = bindings[sessionId]?.let { serverInfos(it) }.orEmpty()
 
+    /**
+     * 面板的完整一行：[statusOf] 加上 stdio 的 stderr 尾巴与「是否已登录」。
+     * 已登录只对远程服务器有意义（看私有仓库里有没有访问令牌，不读出令牌本身）；仓库读不了当作未知（null）
+     */
+    suspend fun panelOf(sessionId: SessionId): List<McpServerPanel> {
+        val binding = bindings[sessionId] ?: return emptyList()
+        val infos = serverInfos(binding).associateBy { it.name }
+        return binding.config.servers.map { configured ->
+            val entry = binding.entries[configured.spec.name]
+            val signedIn = if (entry != null && entry.spec is McpServerSpec.Remote && oauth != null) {
+                dev.min.agent.spi.catchingNonCancellation { oauth.store.load(tokenKey(entry))?.accessToken != null }.getOrNull()
+            } else null
+            McpServerPanel(infos.getValue(configured.spec.name), entry?.connection?.stderrTail()?.takeIf { it.isNotEmpty() } ?: entry?.lastStderr.orEmpty(), signedIn)
+        }
+    }
+
+    /**
+     * 面板的「重连」：不管现在是失败、掉线还是卡在连接中，都丢掉旧连接、清掉「已重启一次」的记号，从头起一次。
+     * stdio 掉线只自动重启一次（再掉标失败等人来点），这里就是那个「人来点」
+     */
+    suspend fun reconnect(server: String, sessionId: SessionId) {
+        val entry = bindings[sessionId]?.entries?.get(server) ?: throw IllegalArgumentException("MCP 服务器没有启用，没法重连。")
+        entry.starting?.cancelAndJoin()
+        // 先把 entry.connection 摘掉再关：watch 里的掉线监听看到「已经不是当前连接」就不会再触发自动重启
+        val old = entry.connection
+        entry.connection = null
+        old?.let { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
+        entry.restarts = 0
+        entry.status = PENDING
+        entry.reason = null
+        entry.lastStderr = emptyList()
+        changed(entry)
+        start(entry)
+    }
+
     // ---- 连接 ----
 
     private fun acquire(spec: McpServerSpec, projectRoot: GuestPath): Entry {
@@ -250,7 +287,7 @@ internal class McpManager(
         try {
             if(entry.retired) throw CancellationException("MCP 连接已卸下。")
             entry.tools=connection.listTools(); entry.instructions=connection.instructions
-            entry.connection=connection; entry.status=CONNECTED; entry.reason=null
+            entry.connection=connection; entry.status=CONNECTED; entry.reason=null; entry.lastStderr=emptyList()
             entry.challenge=null
             entry.usedAccessToken=usedAccessToken
             watch(entry,connection)
@@ -266,6 +303,7 @@ internal class McpManager(
     }
     private class LoginRequired(val scope: String? = null) : Exception("MCP 需要登录（needs-auth）。")
     private fun failed(entry: Entry,e: Exception) {
+        (e as? McpTransportClosed)?.stderrTail?.takeIf { it.isNotEmpty() }?.let { entry.lastStderr = it }
         entry.challenge=challenge(e) ?: entry.challenge
         entry.status=if(needsAuth(e) || e is LoginRequired || (e is dev.min.agent.mcp.McpOAuthException && e.kind==dev.min.agent.mcp.McpOAuthException.Kind.RefreshRejected)) NEEDS_AUTH else FAILED
         entry.reason=if(e is LoginRequired) {
@@ -392,6 +430,7 @@ internal class McpManager(
             // 工具表不跟着掉线变：保留最后一次列出的工具，调用时如实说「现在不可用」。
             // 工具表是提示缓存的前缀，一次短暂掉线就去掉、重连后再加回来，要白白失效两次
             entry.connection = null
+            if (closed.stderrTail.isNotEmpty()) entry.lastStderr = closed.stderrTail
             if (entry.spec is McpServerSpec.Stdio && entry.restarts == 0) {
                 entry.restarts++
                 entry.status = PENDING
@@ -617,3 +656,6 @@ internal class McpManager(
         }
     }
 }
+
+/** 面板用的一行（[McpManager.panelOf]）：状态、stdio 的 stderr 尾巴、是否已登录（远程且有令牌；其余 null） */
+data class McpServerPanel(val info: McpServerInfo, val stderrTail: List<String>, val signedIn: Boolean?)

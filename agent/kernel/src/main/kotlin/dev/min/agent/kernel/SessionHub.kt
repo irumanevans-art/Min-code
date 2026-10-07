@@ -347,8 +347,37 @@ class SessionHub(
             )
             return
         }
-        mcp.attach(runtime, config, cwd, fresh)
+        // 「本会话关掉的服务器」只存在内存里（面板的开关）：同一进程里关了再开会话仍然关着，重启进程后回到配置的样子
+        val off = mcpOff[runtime.sessionId].orEmpty()
+        val gated = if (off.isEmpty()) config else config.copy(servers = config.servers.map {
+            if (it.spec.name in off && it.gate == dev.min.agent.ext.mcp.McpGate.Enabled) it.copy(gate = dev.min.agent.ext.mcp.McpGate.Disabled, reason = "本会话已关闭。") else it
+        })
+        mcp.attach(runtime, gated, cwd, fresh)
     }
+
+    private val mcpOff = ConcurrentHashMap<SessionId, Set<String>>()
+
+    /**
+     * 重读 MCP 配置并换上（界面批准了项目服务器、撤销了工作区信任、切了本会话开关之后调）。
+     * 已连着的服务器共享同一条连接（先占后放，不重连）；新放行的服务器后台连、连上后排到下一回合生效，
+     * 被去掉的服务器的工具也在下一回合才从工具表里消失——与 list_changed 同一条路径，缓存前缀只在回合边界变。
+     * 只对根会话有效（子 agent 沿用父会话的服务器表）；会话没在线时什么都不做
+     */
+    suspend fun reloadMcp(id: SessionId) {
+        val runtime = runtimes[id] ?: return
+        attachMcp(runtime, fresh = false)
+    }
+
+    /** 面板的「本会话开关」：关掉的服务器连接引用放掉（别的会话还在用就留着），工具下一回合起不在工具表里 */
+    suspend fun setMcpServerEnabled(id: SessionId, server: String, enabled: Boolean) {
+        mcpOff.compute(id) { _, old -> if (enabled) old.orEmpty() - server else old.orEmpty() + server }
+        reloadMcp(id)
+    }
+
+    /** 面板整行（状态 + stderr 尾巴 + 是否已登录），见 [McpManager.panelOf] */
+    suspend fun mcpPanel(sessionId: SessionId): List<McpServerPanel> = mcp.panelOf(sessionId)
+
+    suspend fun reconnectMcp(server: String, sessionId: SessionId) = mcp.reconnect(server, sessionId)
 
     /**
      * 卸下一个会话及它在线的整棵子树（运行时离开内存，日志不动，之后 [open] 能原样重开）。
@@ -473,6 +502,7 @@ class SessionHub(
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {
+            mcpOff.remove(id)
             forgetSnapshots(id)
             val deleted = store.delete(id)
             if (id == root) deletedRoot = deleted
