@@ -43,7 +43,10 @@ internal class ProotProcessPort(
     private val secretEnvNames: Set<String> = emptySet(),
 ) : ProcessPort {
     override suspend fun spawn(spec: ProcessSpec): LiveProcess {
-        val script = "exec " + spec.argv.joinToString(" ") { shellQuote(it) }
+        // 不用 exec：那样服务器直接成了 proot 的被跟踪进程，被 SIGKILL 杀掉时 proot 自己以 0 退出（模拟器实测：kill -9 之后
+        // 内核报「退出码 0」，像正常退出）。留一个 bash 当父进程，它的 `$?` 对信号杀死给 128+N（137 = SIGKILL），
+        // 再用 exit 原样交出去；代价是每个长寿进程多一个 bash（几 MB），回收时进程树照旧自底向上杀
+        val script = spec.argv.joinToString(" ") { shellQuote(it) } + "\nexit \$?"
         val env = ProcessEnv.build({ null }, spec.env, secretEnvNames, windows = false)
         val context = agentCommandContext(base, spec.cwd, script).copy(env = env)
         return spawnLive(spec.label, host.reaperFor()) {

@@ -340,3 +340,13 @@ class ReviewFixesTest {
         }
     }
 }
+
+class ExitTextTest {
+    @org.junit.Test fun `signal deaths are named and plain exits are not`() {
+        org.junit.Assert.assertEquals("退出码 0", exitText(0))
+        org.junit.Assert.assertEquals("退出码 127", exitText(127))
+        org.junit.Assert.assertEquals("被信号 9 结束，退出码 137", exitText(137))
+        org.junit.Assert.assertEquals("被信号 15 结束，退出码 143", exitText(143))
+        org.junit.Assert.assertEquals("退出码 255", exitText(255))
+    }
+}

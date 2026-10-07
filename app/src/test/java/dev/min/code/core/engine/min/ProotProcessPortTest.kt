@@ -107,11 +107,12 @@ class ProotProcessPortTest {
     // ---------------------------------------------------------------- 命令行与环境
 
     @Test
-    fun `argv 逐项单引号转义后 exec 进 guest 的 bash 且 cwd 用 guest 路径`() = runBlocking {
+    fun `argv 逐项单引号转义后交给 guest 的 bash 跑、末尾原样交出退出码，且 cwd 用 guest 路径`() = runBlocking {
         val (port, host) = port("echo")
         spawned += port.spawn(spec("npx", "-y", "@scope/srv", "a b", "it's", "\$HOME", "中文"))
         assertEquals("", host.context.cwd)
-        assertTrue(host.context.command, host.context.command.startsWith("cd -- '/root/a b'\"'\"'c' && {\nexec 'npx' '-y' '@scope/srv' 'a b' 'it'\"'\"'s' '\$HOME' '中文'\n}"))
+        // 不能是 exec：被 SIGKILL 杀死的被跟踪进程 proot 会报 0，要留一个 bash 父进程把 128+N 交出来
+        assertTrue(host.context.command, host.context.command.startsWith("cd -- '/root/a b'\"'\"'c' && {\n'npx' '-y' '@scope/srv' 'a b' 'it'\"'\"'s' '\$HOME' '中文'\nexit \$?\n}"))
         assertTrue(host.context.killOnExit)
         assertEquals(null, host.context.stdin)
     }
