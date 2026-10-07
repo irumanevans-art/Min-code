@@ -113,4 +113,24 @@ class MinRewindProjectionTest {
         val state = base().copy(presentation = listOf(SessionPresentation(EventRecord(9, 90, event), null)), restores = listOf(event))
         assertEquals("restored:Calls:1:0:0", items(state).filterIsInstance<ChatItem.Folded>().single().title)
     }
+
+    @Test
+    fun `a restore made just before the conversation was rewound stays visible after the folded row`() {
+        val event = ConversationRewound("rw1", MessageId("u1"))
+        val restored = FilesRestored("r1", checkpointId = "ck", preRestore = ManifestId("m".repeat(64)), deleted = listOf(GuestPath("/workspace/a")))
+        val state = base().copy(
+            history = emptyList(),
+            rewound = listOf(RewoundSegment("rw1", null, listOf(HistoryEntry.User(MessageId("u1"), listOf(TextPart("q"))), HistoryEntry.Assistant(MessageId("a1"), listOf(TextPart("a")))), emptyMap())),
+            // 恢复发生在 a1 之后（选「两者」：先恢复代码、再回退对话），a1 随后被回退掉了
+            presentation = listOf(
+                SessionPresentation(EventRecord(8, 80, restored), MessageId("a1")),
+                SessionPresentation(EventRecord(9, 90, event), null),
+            ),
+            restores = listOf(restored),
+        )
+        val out = items(state).filterIsInstance<ChatItem.Folded>()
+        assertEquals(listOf("rewound:rw1", "restored:r1"), out.map { it.id })
+        assertEquals("撤销入口不能被折进回退掉的对话里", "r1", out[1].undoId)
+        assertTrue(out[0].nested.none { it is ChatItem.Folded })
+    }
 }

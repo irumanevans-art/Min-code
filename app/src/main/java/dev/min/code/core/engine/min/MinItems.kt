@@ -288,14 +288,20 @@ private class ItemsBuilder(
      */
     private fun rewound(event: ConversationRewound) {
         val segment = state.rewound.firstOrNull { it.rewindId == event.rewindId } ?: return
+        val deadIds = segment.entries.mapTo(HashSet()) { it.messageId }
+        // 「恢复了文件」的记录挂在回退时最后一条消息之后——选「两者」时那条消息正好被回退掉。它说的是工作区不是对话，
+        // 而且「撤销这次回退」的入口在它上面：不能跟着被折进去（那样就再也点不到了），所以拿出来排在折叠行后面
+        val restores = state.presentation.filter { it.afterMessageId in deadIds && it.record.event is FilesRestored }
         val nested = ItemsBuilder(
             state.copy(
-                history = segment.entries, toolResults = segment.toolResults, presentation = emptyList(), inbox = emptyList(),
-                turn = null, rewindPoints = emptyList(), rewound = emptyList(),
+                history = segment.entries, toolResults = segment.toolResults,
+                presentation = state.presentation.filter { it.afterMessageId in deadIds && it.record.event !is FilesRestored },
+                inbox = emptyList(), turn = null, rewindPoints = emptyList(), rewound = emptyList(),
             ),
             text, subItems = { null }, childOf,
         ).build()
         items += ChatItem.Folded("rewound:${event.rewindId}", text.rewoundTitle(segment.entries.size), nested = nested)
+        restores.forEach { restored(it.record.event as FilesRestored) }
     }
 
     /**
