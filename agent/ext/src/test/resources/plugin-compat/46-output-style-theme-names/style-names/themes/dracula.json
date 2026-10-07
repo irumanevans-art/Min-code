@@ -1,0 +1,7 @@
+{
+  "name": "Dracula",
+  "base": "dark",
+  "overrides": {
+    "claude": "#bd93f9"
+  }
+}

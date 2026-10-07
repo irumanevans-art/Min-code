@@ -1,0 +1,23 @@
+{
+  "name": "lsp-merger",
+  "lspServers": {
+    "pyright": {
+      "command": "pyright-langserver",
+      "args": [
+        "--stdio"
+      ],
+      "extensionToLanguage": {
+        ".py": "python"
+      }
+    },
+    "go": {
+      "command": "/opt/gopls",
+      "args": [
+        "serve"
+      ],
+      "extensionToLanguage": {
+        ".go": "go"
+      }
+    }
+  }
+}

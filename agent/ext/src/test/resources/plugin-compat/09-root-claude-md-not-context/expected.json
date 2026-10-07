@@ -1,0 +1,16 @@
+{
+  "loads": true,
+  "name": "quiet-plugin",
+  "nameSource": "manifest",
+  "warnings": [
+    "not loaded as project context"
+  ],
+  "skills": [
+    {
+      "name": "quiet-plugin:one",
+      "path": "skills/one/SKILL.md"
+    }
+  ],
+  "basis": "PLG:662 与 CMP:670 插件根的 CLAUDE.md 不作为上下文装载，validate 警告原文「CLAUDE.md at the plugin root is not loaded as project context」；要给上下文请写成 skill",
+  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+}

@@ -1,0 +1,43 @@
+{
+  "name": "append-plugin",
+  "commands": {
+    "from-manifest": {
+      "content": "Manifest command body.",
+      "description": "From manifest"
+    }
+  },
+  "agents": [
+    "./agents/manifest-agent.md"
+  ],
+  "skills": [
+    "./extra-skills/"
+  ],
+  "outputStyles": "./styles/",
+  "experimental": {
+    "themes": "./themes/"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "manifest-check.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "manifest-format.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

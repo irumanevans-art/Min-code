@@ -1,0 +1,52 @@
+{
+  "name": "config-schema",
+  "mcpServers": {
+    "api": {
+      "command": "node",
+      "args": [
+        "server.js"
+      ]
+    }
+  },
+  "channels": [
+    {
+      "server": "api",
+      "displayName": "API Bridge"
+    }
+  ],
+  "userConfig": {
+    "api_endpoint": {
+      "type": "string",
+      "title": "API endpoint",
+      "description": "Your team's API endpoint"
+    },
+    "api_token": {
+      "type": "string",
+      "title": "API token",
+      "description": "API authentication token",
+      "sensitive": true
+    },
+    "retries": {
+      "type": "number",
+      "title": "Retries",
+      "description": "Retry count",
+      "default": 3,
+      "min": 0,
+      "max": 10
+    },
+    "strict": {
+      "type": "boolean",
+      "title": "Strict",
+      "description": "Strict mode"
+    },
+    "targets": {
+      "type": "string",
+      "title": "Targets",
+      "description": "Deploy targets",
+      "multiple": true,
+      "default": [
+        "staging"
+      ]
+    }
+  }
+}

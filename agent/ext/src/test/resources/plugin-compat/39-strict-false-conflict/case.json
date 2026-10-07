@@ -1,0 +1,12 @@
+{
+  "root": "conflict-plugin",
+  "install": "marketplace",
+  "marketplaceName": "team-tools",
+  "entry": {
+    "name": "conflict-plugin",
+    "strict": false,
+    "commands": [
+      "./entry-cmds/"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "conflict-plugin",
+  "commands": {
+    "from-manifest": {
+      "content": "Manifest command body."
+    }
+  }
+}

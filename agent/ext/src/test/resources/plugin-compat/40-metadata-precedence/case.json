@@ -1,0 +1,14 @@
+{
+  "root": "precedence-plugin",
+  "install": "marketplace",
+  "marketplaceName": "team-tools",
+  "enabledPlugins": {
+    "deploy@team-tools": true
+  },
+  "entry": {
+    "name": "deploy",
+    "displayName": "Entry Display",
+    "version": "9.9.9",
+    "defaultEnabled": true
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "db": {
+      "command": "node",
+      "args": [
+        "./old-server.js"
+      ]
+    },
+    "cache": {
+      "command": "node",
+      "args": [
+        "./cache.js"
+      ]
+    }
+  }
+}

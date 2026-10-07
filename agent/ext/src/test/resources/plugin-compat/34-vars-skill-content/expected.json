@@ -1,0 +1,17 @@
+{
+  "loads": true,
+  "name": "var-skill",
+  "nameSource": "manifest",
+  "skills": [
+    {
+      "name": "var-skill:run",
+      "path": "skills/run/SKILL.md",
+      "resolvedBodyContains": [
+        "/plugins/cache/local/var-skill/1.0.0/scripts/run.sh",
+        "/workspace"
+      ]
+    }
+  ],
+  "basis": "PLG:574 变量在 skill/command/agent 的 Markdown 正文里就地替换；PLG:576 这些变量不在 Bash 工具的环境里，所以必须写进正文由装载时替换，而不是让模型去读环境",
+  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+}

@@ -1,0 +1,10 @@
+{
+  "root": "id-mapper",
+  "install": "marketplace",
+  "marketplaceName": "corp-tools",
+  "enabledPlugins": {
+    "id-mapper@corp-tools": true
+  },
+  "installRoot": "/plugins/cache/corp-tools/id-mapper/1.0.0",
+  "projectDir": "/workspace"
+}

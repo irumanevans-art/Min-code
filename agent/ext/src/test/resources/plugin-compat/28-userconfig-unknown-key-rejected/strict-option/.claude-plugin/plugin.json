@@ -1,0 +1,11 @@
+{
+  "name": "strict-option",
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "Key",
+      "description": "Key",
+      "format": "hex"
+    }
+  }
+}

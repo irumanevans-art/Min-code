@@ -1,0 +1,12 @@
+{
+  "root": "entry-hooks-file",
+  "install": "marketplace",
+  "marketplaceName": "team-tools",
+  "enabledPlugins": {
+    "entry-hooks-file@team-tools": true
+  },
+  "entry": {
+    "name": "entry-hooks-file",
+    "hooks": "./config/extra-hooks.json"
+  }
+}

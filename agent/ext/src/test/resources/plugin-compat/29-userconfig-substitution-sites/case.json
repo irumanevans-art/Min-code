@@ -1,0 +1,19 @@
+{
+  "root": "ref-subst",
+  "install": "marketplace",
+  "marketplaceName": "team-tools",
+  "enabledPlugins": {
+    "ref-subst@team-tools": true
+  },
+  "pluginConfigs": {
+    "ref-subst@team-tools": {
+      "options": {
+        "api_endpoint": "https://api.example.com",
+        "api_token": "tok-not-a-real-credential"
+      }
+    }
+  },
+  "installRoot": "/plugins/cache/team-tools/ref-subst/1.0.0",
+  "dataRoot": "~/.claude/plugins/data/ref-subst-team-tools",
+  "projectDir": "/workspace"
+}

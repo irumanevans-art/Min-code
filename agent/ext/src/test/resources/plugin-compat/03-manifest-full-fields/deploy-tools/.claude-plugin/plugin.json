@@ -1,0 +1,64 @@
+{
+  "name": "deploy-tools",
+  "displayName": "Deploy Tools",
+  "version": "1.2.0",
+  "description": "Deployment commands, a review agent, and a status monitor",
+  "author": {
+    "name": "Example Team",
+    "email": "dev@example.com",
+    "url": "https://example.com"
+  },
+  "homepage": "https://example.com/docs/deploy-tools",
+  "repository": "https://github.com/example/deploy-tools",
+  "license": "MIT",
+  "keywords": [
+    "deployment",
+    "ci"
+  ],
+  "defaultEnabled": true,
+  "dependencies": [
+    "secrets-vault"
+  ],
+  "metadata": {
+    "catalogId": "cat-123"
+  },
+  "skills": [
+    "./extra-skills/"
+  ],
+  "commands": {
+    "status": {
+      "source": "./commands/status.md",
+      "description": "Show the current deployment status"
+    },
+    "about": {
+      "content": "Explain what the deploy-tools plugin provides.",
+      "description": "Describe this plugin"
+    }
+  },
+  "agents": [
+    "./agents/reviewer.md"
+  ],
+  "hooks": "./config/extra-hooks.json",
+  "mcpServers": {
+    "deploy-api": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server.js"
+      ]
+    }
+  },
+  "lspServers": "./.lsp.json",
+  "outputStyles": "./styles/",
+  "experimental": {
+    "themes": "./themes/",
+    "monitors": "./config/monitors.json"
+  },
+  "userConfig": {
+    "api_token": {
+      "type": "string",
+      "title": "API token",
+      "description": "Token for the deployment API",
+      "sensitive": true
+    }
+  }
+}

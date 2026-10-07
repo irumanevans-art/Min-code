@@ -1,0 +1,4 @@
+{
+  "root": "deploy-tools",
+  "install": "pluginDir"
+}

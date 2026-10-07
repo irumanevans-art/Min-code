@@ -1,0 +1,32 @@
+{
+  "root": "dir-nomatch",
+  "install": "marketplace",
+  "marketplaceName": "team-tools",
+  "enabledPlugins": {
+    "entry-plugin@team-tools": true
+  },
+  "entry": {
+    "name": "entry-plugin",
+    "displayName": "Entry Plugin",
+    "description": "From the marketplace entry.",
+    "commands": {
+      "about": {
+        "content": "Explain what this plugin provides.",
+        "description": "Describe this plugin"
+      }
+    },
+    "hooks": {
+      "PostToolUse": [
+        {
+          "matcher": "Write|Edit",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh\""
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

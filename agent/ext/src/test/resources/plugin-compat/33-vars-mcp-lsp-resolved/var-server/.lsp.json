@@ -1,0 +1,12 @@
+{
+  "gopls": {
+    "command": "gopls",
+    "args": [
+      "serve"
+    ],
+    "extensionToLanguage": {
+      ".go": "go"
+    },
+    "workspaceFolder": "${CLAUDE_PROJECT_DIR}"
+  }
+}

@@ -1,0 +1,5 @@
+---
+description: Migrate
+---
+
+Run migrations.

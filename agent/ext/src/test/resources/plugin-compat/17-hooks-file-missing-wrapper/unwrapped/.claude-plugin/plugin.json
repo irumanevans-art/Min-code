@@ -1,0 +1,6 @@
+{
+  "name": "unwrapped",
+  "hooks": [
+    "./config/bad-hooks.json"
+  ]
+}

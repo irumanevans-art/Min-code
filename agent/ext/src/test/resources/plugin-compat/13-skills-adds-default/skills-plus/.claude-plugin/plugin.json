@@ -1,0 +1,6 @@
+{
+  "name": "skills-plus",
+  "skills": [
+    "./extra-skills/"
+  ]
+}

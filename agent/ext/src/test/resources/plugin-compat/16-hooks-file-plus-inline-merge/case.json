@@ -1,0 +1,4 @@
+{
+  "root": "hook-merger",
+  "install": "pluginDir"
+}

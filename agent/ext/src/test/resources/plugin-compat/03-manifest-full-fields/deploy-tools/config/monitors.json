@@ -1,0 +1,7 @@
+[
+  {
+    "name": "status",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/poll.sh\"",
+    "description": "Deployment status changes"
+  }
+]

@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/format.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/audit.sh",
+            "args": [
+              "--data",
+              "${CLAUDE_PLUGIN_DATA}/cache",
+              "--project",
+              "${CLAUDE_PROJECT_DIR}"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

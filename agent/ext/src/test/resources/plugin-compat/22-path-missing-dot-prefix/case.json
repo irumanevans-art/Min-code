@@ -1,0 +1,7 @@
+{
+  "root": "no-prefix",
+  "install": "pluginDir",
+  "invalidPaths": [
+    "commands/status.md"
+  ]
+}

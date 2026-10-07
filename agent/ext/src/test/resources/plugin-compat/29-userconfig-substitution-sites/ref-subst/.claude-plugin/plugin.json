@@ -1,0 +1,44 @@
+{
+  "name": "ref-subst",
+  "userConfig": {
+    "api_endpoint": {
+      "type": "string",
+      "title": "API endpoint",
+      "description": "Your team's API endpoint"
+    },
+    "api_token": {
+      "type": "string",
+      "title": "API token",
+      "description": "API authentication token",
+      "sensitive": true
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/prepare.sh",
+            "args": [
+              "--endpoint",
+              "${user_config.api_endpoint}"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "api": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server.js"
+      ],
+      "env": {
+        "API_ENDPOINT": "${user_config.api_endpoint}",
+        "API_KEY": "${user_config.api_token}"
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "root": "rooted-plugin",
+  "install": "marketplace",
+  "marketplaceName": "team-tools",
+  "enabledPlugins": {
+    "rooted-plugin@team-tools": true
+  },
+  "entry": {
+    "name": "rooted-plugin",
+    "source": "./",
+    "skills": [
+      "./skills/review/"
+    ]
+  }
+}

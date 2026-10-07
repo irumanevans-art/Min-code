@@ -1,0 +1,7 @@
+{
+  "name": "settler",
+  "settings": {
+    "agent": "reviewer-manifest",
+    "model": "sonnet"
+  }
+}

@@ -1,0 +1,5 @@
+---
+description: Other skill.
+---
+
+Other.

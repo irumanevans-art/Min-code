@@ -1,0 +1,7 @@
+{
+  "root": "escaper",
+  "install": "pluginDir",
+  "invalidPaths": [
+    "./../outside/agent.md"
+  ]
+}

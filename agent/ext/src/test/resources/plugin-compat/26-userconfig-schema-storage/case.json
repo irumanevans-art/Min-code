@@ -1,0 +1,20 @@
+{
+  "root": "config-schema",
+  "install": "marketplace",
+  "marketplaceName": "team-tools",
+  "enabledPlugins": {
+    "config-schema@team-tools": true
+  },
+  "pluginConfigs": {
+    "config-schema@team-tools": {
+      "options": {
+        "api_endpoint": "https://api.example.com",
+        "retries": 3,
+        "strict": true,
+        "targets": [
+          "staging"
+        ]
+      }
+    }
+  }
+}

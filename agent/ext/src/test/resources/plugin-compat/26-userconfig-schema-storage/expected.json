@@ -1,0 +1,60 @@
+{
+  "loads": true,
+  "name": "config-schema",
+  "nameSource": "manifest",
+  "enabled": true,
+  "enabledId": "config-schema@team-tools",
+  "userConfig": [
+    {
+      "key": "api_endpoint",
+      "type": "string",
+      "title": "API endpoint",
+      "description": "Your team's API endpoint",
+      "stored": "pluginConfigs"
+    },
+    {
+      "key": "api_token",
+      "type": "string",
+      "title": "API token",
+      "description": "API authentication token",
+      "sensitive": true,
+      "stored": "secureStorage"
+    },
+    {
+      "key": "retries",
+      "type": "number",
+      "title": "Retries",
+      "description": "Retry count",
+      "default": 3,
+      "min": 0,
+      "max": 10,
+      "stored": "pluginConfigs"
+    },
+    {
+      "key": "strict",
+      "type": "boolean",
+      "title": "Strict",
+      "description": "Strict mode",
+      "stored": "pluginConfigs"
+    },
+    {
+      "key": "targets",
+      "type": "string",
+      "title": "Targets",
+      "description": "Deploy targets",
+      "multiple": true,
+      "default": [
+        "staging"
+      ],
+      "stored": "pluginConfigs"
+    }
+  ],
+  "channels": [
+    {
+      "server": "api",
+      "displayName": "API Bridge"
+    }
+  ],
+  "basis": "PLG:424 选项键只收字母数字下划线、不以数字开头；PLG:426-438 字段表（type/title/description 必填，sensitive 遮罩输入并存进安全存储）；PLG:488 非敏感值存用户 settings 的 pluginConfigs；SET:4751-4776 pluginConfigs 形状（<id>.options）与敏感值去向（Keychain / ~/.claude/.credentials.json）、项目与本地层的条目被忽略；PLG:513/:977（CMP）channel 的 server 必须是本插件 mcpServers 的键；SET:4622-4623 enabledPlugins 按 <插件>@<marketplace> 键控、缺席回退 defaultEnabled",
+  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+}

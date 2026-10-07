@@ -1,0 +1,16 @@
+{
+  "name": "tool-names",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__plugin_tool-names_db__query",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "audit.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

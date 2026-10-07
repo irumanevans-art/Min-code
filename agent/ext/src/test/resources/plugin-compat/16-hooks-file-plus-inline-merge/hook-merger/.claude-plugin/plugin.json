@@ -1,0 +1,18 @@
+{
+  "name": "hook-merger",
+  "hooks": [
+    "./config/extra-hooks.json",
+    {
+      "Notification": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh\""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

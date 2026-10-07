@@ -1,0 +1,81 @@
+{
+  "loads": true,
+  "name": "append-plugin",
+  "nameSource": "manifest",
+  "commands": [
+    {
+      "name": "append-plugin:from-manifest",
+      "content": "Manifest command body.",
+      "description": "From manifest"
+    },
+    {
+      "name": "append-plugin:ping",
+      "source": "entry-cmds/ping.md"
+    }
+  ],
+  "agents": [
+    {
+      "name": "append-plugin:manifest-agent",
+      "file": "agents/manifest-agent.md"
+    },
+    {
+      "name": "append-plugin:entry-agent",
+      "file": "agents/entry-agent.md"
+    }
+  ],
+  "skills": [
+    {
+      "name": "append-plugin:extra",
+      "path": "extra-skills/extra/SKILL.md"
+    },
+    {
+      "name": "append-plugin:ping",
+      "path": "entry-skills/ping/SKILL.md"
+    }
+  ],
+  "outputStyles": [
+    {
+      "name": "append-plugin:manifest-style",
+      "file": "styles/manifest-style.md"
+    },
+    {
+      "name": "append-plugin:entry-style",
+      "file": "entry-styles/entry-style.md"
+    }
+  ],
+  "themes": [
+    {
+      "name": "Manifest Theme",
+      "file": "themes/manifest-theme.json"
+    },
+    {
+      "name": "Entry Theme",
+      "file": "entry-themes/entry-theme.json"
+    }
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "manifest-check.sh",
+        "args": []
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read",
+        "command": "entry-read.sh",
+        "args": []
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": null,
+        "command": "entry-start.sh",
+        "args": []
+      }
+    ]
+  },
+  "basis": "PLG:666 strict 默认 true；PLG:674-675 有清单且 strict 未设/为 true：清单照载，条目的 commands/agents/skills/outputStyles/themes 追加到清单的后面；hooks 是事件级替换——条目声明的事件（PostToolUse）用条目的 matchers 取代清单的，清单独有的事件（PreToolUse）保留，条单独有的事件（SessionStart）新增",
+  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+}

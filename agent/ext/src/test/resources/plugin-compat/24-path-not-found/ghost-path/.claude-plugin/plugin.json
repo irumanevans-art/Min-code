@@ -1,0 +1,4 @@
+{
+  "name": "ghost-path",
+  "commands": "./commands/ghost.md"
+}
