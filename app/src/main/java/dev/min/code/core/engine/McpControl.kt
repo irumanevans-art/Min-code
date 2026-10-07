@@ -58,9 +58,18 @@ data class McpServerView(
     val stderrTail: List<String>,
     /** 远程服务器：本机有没有它的访问令牌。null = 不适用（stdio）或读不出来 */
     val signedIn: Boolean?,
+    /** 本会话在面板里把它关了（[McpControl.setEnabled]）；此时 [state] 是 [McpServerState.Disabled] */
+    val sessionOff: Boolean = false,
 ) {
     /** 项目服务器等批准：批准卡的触发条件 */
     val needsApproval: Boolean get() = state == McpServerState.NotApproved
+
+    /**
+     * 面板上出不出「本会话」开关：只有配置里放行了的服务器有意义（待批准、未信任、被策略拒绝、配置里关着的，开了也连不上）；
+     * 本会话关掉的那台当然要给，不然关了就再也开不回来
+     */
+    val sessionToggle: Boolean
+        get() = sessionOff || state in setOf(McpServerState.Pending, McpServerState.Connected, McpServerState.Failed, McpServerState.NeedsAuth)
 }
 
 enum class McpServerState {

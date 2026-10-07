@@ -31,8 +31,8 @@ internal class MinWorkspaceTrust(
     /** 内核的 `trustProjectHooks` 用：只有明确信任才放行 */
     fun isTrusted(cwd: GuestPath): Boolean = WorkspaceTrust.decision(ledger.value, cwd.value) == true
 
-    override suspend fun probe(cwd: String): TrustProbe? {
-        if (WorkspaceTrust.decision(ledger.value, cwd) != null) return null
+    override suspend fun probe(cwd: String, force: Boolean): TrustProbe? {
+        if (!force && WorkspaceTrust.decision(ledger.value, cwd) != null) return null
         val root = cwd.trimEnd('/')
         val files = ProjectConfigFiles(
             settings = readText("$root/.claude/settings.json"),

@@ -8,9 +8,10 @@ package dev.min.code.core.engine
 interface WorkspaceTrustControl {
     /**
      * 这个目录该不该弹信任卡：没问过、且里面有项目层 hooks 或 `.mcp.json` 才返回内容，已经决定过或什么都没带返回 null。
-     * 读的是磁盘上的文件，所以是挂起函数
+     * 读的是磁盘上的文件，所以是挂起函数。
+     * [force] 为真时不看已有的决定、只看里面有没有项目层配置：用户之前点了「不信任」、后来在面板里想改主意时用
      */
-    suspend fun probe(cwd: String): TrustProbe?
+    suspend fun probe(cwd: String, force: Boolean = false): TrustProbe?
 
     /** 当前的决定：true = 信任（含从父目录继承）、false = 明确不信任、null = 没问过 */
     fun decisionOf(cwd: String): Boolean?

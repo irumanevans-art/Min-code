@@ -242,6 +242,9 @@ fun ClaudeCodePage(
     LaunchedEffect(vm) {
         vm.signalNotices.collect { toaster.show(it.text, if (it.isError) ToastType.Error else ToastType.Success) }
     }
+    LaunchedEffect(vm) {
+        vm.extras.notices.collect { toaster.show(it.text, if (it.isError) ToastType.Error else ToastType.Success) }
+    }
     LaunchedEffect(notice) {
         val text = notice ?: return@LaunchedEffect
         toaster.show(text, ToastType.Error)
@@ -517,6 +520,8 @@ fun ClaudeCodePage(
     session.headInteraction?.let { pending ->
         InteractionSheet(pending = pending, onAnswer = { answer -> vm.answer(pending.id, answer) })
     }
+    // 信任卡 / MCP 批准卡 / 登录确认：谁排在前面见 SessionExtrasOverlays
+    SessionExtrasOverlays(vm.extras)
 
     if (showPlan) {
         ClaudeCodePlanSheet(plan = session.plan, onDismiss = { showPlan = false })
@@ -1447,6 +1452,7 @@ private fun SessionContent(
                         onSearchFiles = vm::searchFiles,
                         onLoadImage = toolsVm::loadImage,
                         onOpenLocalCommand = { configCommand = it },
+                        extras = vm.extras,
                         onComposerFocusChange = onComposerFocusChange,
                         restoredDraft = composerDraft,
                         onDraftChange = { vm.saveComposerDraft(boundId, it) },

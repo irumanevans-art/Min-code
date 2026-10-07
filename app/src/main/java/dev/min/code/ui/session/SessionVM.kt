@@ -116,6 +116,9 @@ class SessionVM(
         combine(focus, engine.activeSession, minSession, ::shownSession)
             .stateIn(viewModelScope, SharingStarted.Eagerly, shownSession(focus.value, engine.activeSession.value, minSession.value))
 
+    /** 信任卡、MCP 批准 / 面板、登录确认的状态与动作（读页面此刻显示的会话的能力，见 [SessionExtras]） */
+    internal val extras = SessionExtras(context, viewModelScope, active, agents, settingsStore)
+
     /** 开始面板上 Min 专有的选项（供应商档 / 模型 / 权限模式）；没有 Min 引擎时 null */
     val startChoices: StateFlow<StartChoices?> = (agents.engines.firstOrNull { it.kind == EngineKind.MinAgent }?.startChoices
         ?: MutableStateFlow<StartChoices?>(null))
@@ -287,6 +290,11 @@ class SessionVM(
 
     /** Min 的会话经统一注册表建：先查引擎可用、再查名额，结果各有一句给人看的话 */
     private fun createMin(options: StartOptions) {
+        // 信任必须在建会话之前问完：会话创建时项目层 hooks 就冻结进日志了
+        extras.gateStart(options, ::createMinNow)
+    }
+
+    private fun createMinNow(options: StartOptions) {
         viewModelScope.launch {
             when (val result = agents.create(EngineKind.MinAgent, options)) {
                 is AttachResult.Ok -> {
@@ -364,6 +372,7 @@ class SessionVM(
                     if (drafts.hasCarry()) drafts.consumeCarry(key)
                     drafts.rememberActive(key)
                     _composerDraft.value = existing
+                    extras.afterOpen(result.session)
                 }
                 else -> _notice.value = attachFailureText(result)
             }

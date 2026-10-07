@@ -42,7 +42,7 @@ internal class MinMcpControl(
         McpServerView(
             name = row.info.name, scope = row.info.scope, transport = row.info.transport,
             state = McpServerState.of(row.info.state), reason = row.info.reason, toolCount = row.info.toolCount,
-            stderrTail = row.stderrTail, signedIn = row.signedIn,
+            stderrTail = row.stderrTail, signedIn = row.signedIn, sessionOff = row.sessionOff,
         )
     }
 
