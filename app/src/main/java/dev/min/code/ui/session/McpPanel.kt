@@ -36,8 +36,8 @@ import dev.min.code.ui.theme.sea
 internal fun mcpSummary(servers: List<McpServerView>): String {
     if (servers.isEmpty()) return stringResource(R.string.mcp_panel_none_short)
     val attention = servers.count { it.state in ATTENTION }
-    val base = stringResource(R.string.mcp_panel_count, servers.size)
-    return if (attention > 0) base + stringResource(R.string.mcp_panel_attention, attention) else base
+    return if (attention > 0) stringResource(R.string.mcp_panel_count_attention, servers.size, attention)
+    else stringResource(R.string.mcp_panel_count, servers.size)
 }
 
 private val ATTENTION = setOf(McpServerState.NotApproved, McpServerState.NeedsAuth, McpServerState.Failed, McpServerState.Untrusted)
@@ -90,8 +90,7 @@ private fun McpServerRow(
     var showStderr by remember(server.name, server.state == McpServerState.Failed) { mutableStateOf(server.state == McpServerState.Failed) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(server.name, style = MaterialTheme.typography.titleSmall, fontFamily = JetbrainsMono, modifier = Modifier.weight(1f, fill = false))
-            Spacer(Modifier.weight(1f))
+            Text(server.name, style = MaterialTheme.typography.titleSmall, fontFamily = JetbrainsMono, modifier = Modifier.weight(1f))
             if (server.state == McpServerState.Connected) LiveDot(palette.ink, size = 6.dp) else Spacer(Modifier.size(6.dp))
             Text(
                 stringResource(stateLabel(server)),
@@ -108,7 +107,9 @@ private fun McpServerRow(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        server.reason?.takeIf { it.isNotBlank() && server.state != McpServerState.Connected && !server.sessionOff }?.let {
+        // 内核给的说明偏工程口吻（带设计文档章节号）；未信任这一种界面自己说人话
+        val reason = if (server.state == McpServerState.Untrusted) stringResource(R.string.mcp_untrusted_reason) else server.reason
+        reason?.takeIf { it.isNotBlank() && server.state != McpServerState.Connected && !server.sessionOff }?.let {
             Text(it, style = MaterialTheme.typography.labelSmall, color = if (server.state == McpServerState.Failed) palette.vermilion else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (server.signedIn == true) {
@@ -193,8 +194,9 @@ private const val STDERR_LINES = 20
 internal fun TrustSection(view: TrustView, onAsk: () -> Unit, onSet: (Boolean?) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(view.cwd, style = MaterialTheme.typography.labelMedium, fontFamily = JetbrainsMono)
+        val state = stringResource(trustStateLabel(view))
         Text(
-            stringResource(trustStateLabel(view)) + (view.inheritedFrom?.let { stringResource(R.string.trust_inherited, it) } ?: ""),
+            view.inheritedFrom?.let { stringResource(R.string.trust_state_inherited, state, it) } ?: state,
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(stringResource(R.string.trust_section_note), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

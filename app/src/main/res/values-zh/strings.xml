@@ -1210,7 +1210,7 @@
     <string name="trust_no_continue">不信任，继续</string>
     <string name="trust_cancel">取消</string>
     <string name="trust_save_failed">没能保存信任决定：%1$s</string>
-    <string name="trust_inherited">（继承自 %1$s）</string>
+    <string name="trust_state_inherited">%1$s（继承自 %2$s）</string>
     <string name="trust_section_note">项目 hooks 对信任之后新建的会话生效；MCP 服务器在已打开的会话里马上被重新读取。</string>
     <string name="trust_revoke">撤销信任</string>
     <string name="trust_distrust_here">不信任这个文件夹</string>
@@ -1239,7 +1239,8 @@
     <string name="mcp_panel_none">这个会话没有配置 MCP 服务器。</string>
     <string name="mcp_panel_none_short">无</string>
     <string name="mcp_panel_count">%1$d 个</string>
-    <string name="mcp_panel_attention"> · %1$d 个要处理</string>
+    <string name="mcp_panel_count_attention">%1$d 个 · %2$d 个要处理</string>
+    <string name="mcp_untrusted_reason">信任这个工作区之前，项目里的 MCP 服务器一个都不会启动。</string>
     <string name="mcp_panel_tools">%1$d 个工具</string>
     <string name="mcp_panel_signed_in">已登录</string>
     <string name="mcp_panel_stderr_show">查看 stderr（%1$d 行）</string>

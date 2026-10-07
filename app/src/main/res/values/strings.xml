@@ -1215,7 +1215,7 @@
     <string name="trust_no_continue">Don\'t trust, continue</string>
     <string name="trust_cancel">Cancel</string>
     <string name="trust_save_failed">Could not save the trust decision: %1$s</string>
-    <string name="trust_inherited"> (inherited from %1$s)</string>
+    <string name="trust_state_inherited">%1$s (inherited from %2$s)</string>
     <string name="trust_section_note">Project hooks take effect for sessions created after you trust the folder; MCP servers are picked up by the open session right away.</string>
     <string name="trust_revoke">Revoke trust</string>
     <string name="trust_distrust_here">Don\'t trust this folder</string>
@@ -1243,8 +1243,9 @@
     <string name="mcp_login_continue">Continue</string>
     <string name="mcp_panel_none">No MCP servers are configured for this session.</string>
     <string name="mcp_panel_none_short">none</string>
-    <string name="mcp_panel_count">%1$d</string>
-    <string name="mcp_panel_attention"> · %1$d need attention</string>
+    <string name="mcp_panel_count">%1$d servers</string>
+    <string name="mcp_panel_count_attention">%1$d servers · %2$d need attention</string>
+    <string name="mcp_untrusted_reason">Until you trust this workspace, none of its project MCP servers are started.</string>
     <string name="mcp_panel_tools">%1$d tools</string>
     <string name="mcp_panel_signed_in">Signed in</string>
     <string name="mcp_panel_stderr_show">Show stderr (%1$d lines)</string>
