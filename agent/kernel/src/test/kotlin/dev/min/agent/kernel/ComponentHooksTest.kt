@@ -222,7 +222,7 @@ class ComponentHooksTest {
         return SessionHub(store, deps(model, http, trust, tools), scope, agents = dev.min.agent.kernel.BuiltinAgents.all + agents)
     }
 
-    private suspend fun events(id: SessionId): List<SessionEvent> = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(id: SessionId): List<SessionEvent> = store.peek(id)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId
@@ -231,7 +231,7 @@ class ComponentHooksTest {
     }
 
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

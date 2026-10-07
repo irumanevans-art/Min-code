@@ -92,6 +92,34 @@ class JsonlSessionLogTest {
     }
 
     @Test
+    fun `peek reads a live log without repairing or touching the file`() = runTest {
+        // 偶发 CorruptLogException 的根因：轮询活日志走了带修复的 open——扫描时写方又追加了完整记录，
+        // truncate(validEnd) 会把它剁掉，之后 seq 断档。peek 只读：撕裂尾巴当「尚未写完」不读出、也不删
+        store().create(header()).append(listOf(created, note("a")), Durability.Sync)
+        val validSize = Files.size(eventsFile())
+        val torn = """{"seq":3,"atMs":5,"event":{"type":"no"""
+        Files.write(eventsFile(), torn.toByteArray(), APPEND)
+
+        val peeked = store().peek(SessionId("s1"))!!
+        assertEquals("文件一个字节都没动（含撕裂尾巴）", validSize + torn.length, Files.size(eventsFile()))
+        assertEquals("撕裂的尾行当尚未写完、不读出", listOf(1L, 2L), peeked.read().toList().map { it.seq })
+        // 写者随后正常附着：修复照旧生效（撕裂尾巴被修掉，接着写）
+        val writer = store().open(SessionId("s1"))!!
+        assertEquals(validSize, Files.size(eventsFile()))
+        assertEquals(3L, writer.append(listOf(note("b")), Durability.Sync).single().seq)
+        assertEquals(listOf(1L, 2L, 3L), store().peek(SessionId("s1"))!!.read().toList().map { it.seq })
+    }
+
+    @Test
+    fun `peek refuses the same corrupt middle line as open`() = runTest {
+        store().create(header()).append(listOf(created), Durability.Sync)
+        Files.write(eventsFile(), "not json\n".toByteArray(), APPEND)
+        val sizeBefore = Files.size(eventsFile())
+        assertThrows(CorruptLogException::class.java) { runBlocking { store().peek(SessionId("s1")) } }
+        assertEquals("peek 报错也不动文件", sizeBefore, Files.size(eventsFile()))
+    }
+
+    @Test
     fun `readers ignore a tail that is still being written`() = runTest {
         val log = store().create(header())
         log.append(listOf(created), Durability.Sync)

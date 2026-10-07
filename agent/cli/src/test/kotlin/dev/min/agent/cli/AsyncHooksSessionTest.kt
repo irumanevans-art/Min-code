@@ -208,7 +208,7 @@ class AsyncHooksSessionTest {
         // 日志即真相
         assertEquals(
             rt.state.value,
-            dev.min.agent.kernel.fold(store.open(rt.sessionId)!!.header, store.open(rt.sessionId)!!.read().toList()),
+            dev.min.agent.kernel.fold(store.peek(rt.sessionId)!!.header, store.peek(rt.sessionId)!!.read().toList()),
         )
     }
 
@@ -282,7 +282,7 @@ class AsyncHooksSessionTest {
         // 日志即真相
         assertEquals(
             rt.state.value,
-            dev.min.agent.kernel.fold(store.open(rt.sessionId)!!.header, store.open(rt.sessionId)!!.read().toList()),
+            dev.min.agent.kernel.fold(store.peek(rt.sessionId)!!.header, store.peek(rt.sessionId)!!.read().toList()),
         )
     }
 

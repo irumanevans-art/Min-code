@@ -31,7 +31,7 @@ class McpConsoleEofTest {
                 withTimeout(2_000) { rt.state.first { it.mcpQuestions[id]?.outcome != null } }
                 assertEquals(input.isEmpty(), rt.state.value.mcpQuestions[id]!!.cancelled)
                 assertNull(rt.state.value.turn)
-                val log = store.open(rt.sessionId)!!
+                val log = store.peek(rt.sessionId)!!
                 assertEquals(rt.state.value, fold(log.header, log.read().toList()))
             } finally { scope.cancel() }
         }

@@ -38,7 +38,7 @@ class McpElicitationTest {
             val request = async(start=CoroutineStart.UNDISPATCHED) { rt.handleMcpElicitation("s", form, call) }
             mutex.unlock(); finish.await()
             assertEquals("cancel", request.await()["action"]!!.jsonPrimitive.content)
-            val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+            val log = store.peek(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         } }
     }
     @Test fun `formats titled enums and enum arrays validate typed answers`() {
@@ -62,7 +62,7 @@ class McpElicitationTest {
             val request = async(start=CoroutineStart.UNDISPATCHED) { rt.handleMcpElicitation("s", form, call) }
             mutex.unlock(); finish.await()
             assertEquals("cancel", request.await()["action"]!!.jsonPrimitive.content)
-            val log = store.open(rt.sessionId)!!
+            val log = store.peek(rt.sessionId)!!
             assertTrue(log.read().toList().none { it.event is QuestionAsked })
             assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         } }
@@ -83,7 +83,7 @@ class McpElicitationTest {
                 val property = if (title) args("ordinary" to args("type" to "string", "title" to label)) else args(label to args("type" to "string"))
                 assertEquals(label, "decline", rt.handleMcpElicitation("s", args("message" to "login", "requestedSchema" to args("type" to "object", "properties" to property)))["action"]!!.jsonPrimitive.content)
             }
-            val events = store.open(rt.sessionId)!!.read().toList().map { it.event }
+            val events = store.peek(rt.sessionId)!!.read().toList().map { it.event }
             assertTrue(events.none { it is QuestionAsked }); assertTrue(events.filterIsInstance<Note>().any { "敏感" in it.text })
         }
     }
@@ -127,7 +127,7 @@ class McpElicitationTest {
             val asked = withTimeout(5_000) { rt.state.first { it.pendingMcpQuestions.isNotEmpty() }.pendingMcpQuestions.single() }
             assertEquals(CallId("invoke"), asked.callId); assertEquals(rt.state.value.turn!!.turnId, asked.mcpTurnId)
             rt.declineQuestion(asked.questionId); rt.awaitIdle()
-            val log = store.open(rt.sessionId)!!; val records = log.read().toList()
+            val log = store.peek(rt.sessionId)!!; val records = log.read().toList()
             assertTrue(records.map { it.event }.filterIsInstance<ToolOutcome>().single().result.content.toString().contains("decline"))
             val second = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
             assertTrue(rt.sessionId.value < second.sessionId.value)
@@ -141,7 +141,7 @@ class McpElicitationTest {
                 assertNull(second.state.value.turn); assertNull(inputQuestion.mcpTurnId)
                 second.declineQuestion(inputQuestion.questionId); request.await()
             }
-            val secondLog = store.open(second.sessionId)!!
+            val secondLog = store.peek(second.sessionId)!!
             assertEquals(second.state.value, fold(secondLog.header, secondLog.read().toList()))
             assertEquals(rt.state.value, fold(log.header, records))
             hub.close(rt.sessionId); hub.close(second.sessionId); hub.closeMcpConnections()
@@ -161,7 +161,7 @@ class McpElicitationTest {
             val hub = SessionHub(store, deps, scope)
             val rt = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
             withTimeout(5_000) { block(rt, hub, store) }
-            val log = store.open(rt.sessionId)!!
+            val log = store.peek(rt.sessionId)!!
             assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         } finally { scope.cancel() }
     }

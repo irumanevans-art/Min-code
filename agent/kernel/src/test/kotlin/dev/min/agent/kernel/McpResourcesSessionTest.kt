@@ -59,7 +59,7 @@ class McpResourcesSessionTest {
             rt.send(ClientMsgId("u2"), listOf(TextPart("next"))); rt.awaitIdle()
             assertEquals(listOf("Probe"), model.requests[0].tools.map { it.name })
             assertEquals(listOf("Probe", "ListMcpResources", "ReadMcpResource"), model.requests[1].tools.map { it.name })
-            val log = store.open(rt.sessionId)!!
+            val log = store.peek(rt.sessionId)!!
             val restored = fold(log.header, log.read().toList())
             assertEquals(rt.state.value, restored)
             assertEquals(availableTools(rt.state.value, deps).map { it.name }, availableTools(restored, deps).map { it.name })
@@ -85,7 +85,7 @@ class McpResourcesSessionTest {
             val parts = listOf(TextPart("读取 @ok:r://1 @bad:r://2 @ok:r://1"))
             assertTrue(rt.send(id, parts, scanMcpMentions = true)); rt.awaitIdle(); assertFalse(rt.send(id, parts, scanMcpMentions = true))
             assertEquals(2, reads)
-            val log = store.open(rt.sessionId)!!
+            val log = store.peek(rt.sessionId)!!
             val events = log.read().toList()
             val input = events.map { it.event }.filterIsInstance<InputReceived>().single()
             assertTrue(input.parts.filterIsInstance<TextPart>().any { it.text == "冻结正文" })
@@ -114,7 +114,7 @@ class McpResourcesSessionTest {
             assertTrue(reads.isEmpty())
             rt.send(ClientMsgId("human"), listOf(TextPart("user@B:/skip @@B:/skip @B:r://doc.,;:)]}")), scanMcpMentions = true); rt.awaitIdle()
             assertEquals(listOf("B" to "r://doc"), reads)
-            val input = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<InputReceived>().last()
+            val input = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<InputReceived>().last()
             assertTrue(input.parts.filterIsInstance<TextPart>().sumOf { it.text.length } < 90_000)
             assertTrue(input.parts.toString().contains("全文已存到"))
         } finally { scope.cancel() }

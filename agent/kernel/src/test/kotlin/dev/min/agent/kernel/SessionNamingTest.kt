@@ -58,7 +58,7 @@ class SessionNamingTest {
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(10_000) { block() } }
 
     private suspend fun logIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 
@@ -67,7 +67,7 @@ class SessionNamingTest {
         val h = hub()
         val rt = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = "auth-refactor")
         assertEquals("auth-refactor", rt.state.value.name)
-        val renames = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>()
+        val renames = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>()
         assertEquals(listOf("auth-refactor"), renames.map { it.name })
         logIsTruth(rt)
     }
@@ -91,7 +91,7 @@ class SessionNamingTest {
         // /rename 再改一次：最后一条赢
         assertEquals("orbit", rt.rename("orbit"))
         assertEquals("orbit", rt.state.value.name)
-        assertEquals(listOf("太空计划", "orbit"), store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>().map { it.name })
+        assertEquals(listOf("太空计划", "orbit"), store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>().map { it.name })
         logIsTruth(rt)
     }
 

@@ -56,7 +56,7 @@ class McpReviewManagerTest {
         case(listOf("bad", "good")) { hub, store, _, _ ->
             val rt = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
             assertEquals(listOf("good"), rt.listMcpPrompts().map { it.server })
-            assertTrue(store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<Note>().any { "bad" in it.text && "prompts/list" in it.text })
+            assertTrue(store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<Note>().any { "bad" in it.text && "prompts/list" in it.text })
         }
     }
     @Test fun `single session requests overlap but shared connection requests serialize`() = runBlocking {
@@ -111,7 +111,7 @@ class McpReviewManagerTest {
             assertTrue(rt.state.value.mcpTools!!.resourceServers.isEmpty())
             rt.send(ClientMsgId("two"), listOf(TextPart("hello"))); rt.awaitIdle()
             assertEquals(listOf("s"), rt.state.value.mcpTools!!.resourceServers)
-            val log=store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+            val log=store.peek(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         }
     }
 }

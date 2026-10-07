@@ -214,7 +214,7 @@ class HttpHookSessionTest {
         assertEquals(1, http.sent.size)
         assertTrue("事件 JSON 原文 POST 出去", http.sent.single().body.contains("\"hook_event_name\":\"PreToolUse\""))
         assertEquals("https://hooks.example/x", http.sent.single().url)
-        val ran = rt.state.value.let { _ -> store.open(rt.sessionId)!!.read().toList().map { it.event } }
+        val ran = rt.state.value.let { _ -> store.peek(rt.sessionId)!!.read().toList().map { it.event } }
             .filterIsInstance<HooksRan>().single()
         assertEquals("deny 与 command 的 deny 同一结论", "block", ran.decision)
     }
@@ -233,7 +233,7 @@ class HttpHookSessionTest {
         val rt = session(model, hooks, http)
         rt.say("跑一下")
         assertTrue("闸门拦下就不该发请求", http.sent.isEmpty())
-        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        val ran = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertEquals("neutral", ran.decision)
         assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("allowedHttpHookUrls") })
     }
@@ -267,7 +267,7 @@ class HttpHookSessionTest {
         val rt = session(model, envlessHook(), http)
         rt.say("跑一下")
         assertTrue(http.sent.isNotEmpty())
-        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        val ran = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertTrue(ran.problems.joinToString(), ran.problems.isNotEmpty())
     }
 
@@ -356,7 +356,7 @@ class HttpHookSessionTest {
     private suspend fun loadedFrom(fs: FakeFs, trust: Boolean): HooksLoaded? {
         val rt = session(RoutingModel { reply(TextPart("好")) }, null, FakeHttp { HttpHookResult.Responded(200, "{}") },
             fs = fs, memoryHome = GuestPath("/root"), trustProject = trust)
-        return store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksLoaded>().lastOrNull()
+        return store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksLoaded>().lastOrNull()
     }
 
     @Test
@@ -387,7 +387,7 @@ class HttpHookSessionTest {
         fs.put("/workspace/.claude/settings.json", """{"allowedHttpHookUrls":["https://hooks.example/*"]}""")
         val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
         val rt = session(lsModel(), null, http, fs = fs, memoryHome = GuestPath("/root"), trustProject = false)
-        val loaded = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksLoaded>().single()
+        val loaded = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksLoaded>().single()
         assertEquals(listOf("https://corp.example/*"), loaded.httpPolicy!!.allowedUrls)
         rt.say("跑一下")
         assertTrue("managed 的闸挡住了用户的 http hook，项目层的闸没被信任所以放不了行", http.sent.isEmpty())
@@ -424,7 +424,7 @@ class HttpHookSessionTest {
         val done = rt.say("跑一下")
         assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
         assertTrue("结论中性，调用照常执行", rt.state.value.toolResults.getValue(CallId("c1")).let { !it.isError })
-        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        val ran = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertEquals("neutral", ran.decision)
         assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("HTTP 请求失败") })
         assertTrue("异常信息里的令牌不进日志", ran.problems.none { it.contains("SECRET") })
@@ -437,7 +437,7 @@ class HttpHookSessionTest {
         val rt = session(lsModel(), hooks, FakeHttp { HttpHookResult.Responded(200, "{}") }, envFn = { error("env down") })
         rt.say("跑一下")
         assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
-        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        val ran = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("http hook 批执行失败") })
     } }
 
@@ -460,7 +460,7 @@ class HttpHookSessionTest {
             idFor = { prefix -> if (prefix == "hooks") "hooks.bad" else "${prefix}_${ids.incrementAndGet()}" })
         rt.say("跑一下")
         assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
-        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        val ran = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("command hook 批执行失败") })
     } }
 
@@ -470,7 +470,7 @@ class HttpHookSessionTest {
         val hooks = HooksLoaded(listOf(HookSourceData("user", httpHook("https://hooks.example/x"))))
         val rt = session(lsModel(), hooks, http)
         rt.say("跑一下")
-        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        val ran = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("已截断") && it.contains("https://hooks.example/x") })
     } }
 
@@ -482,7 +482,7 @@ class HttpHookSessionTest {
         val rt = session(lsModel(), hooks, http)
         rt.say("跑一下")
         // 被闸门拦下的那条说明也不带令牌
-        val events = store.open(rt.sessionId)!!.read().toList().map { it.event }
+        val events = store.peek(rt.sessionId)!!.read().toList().map { it.event }
         val text = events.filterIsInstance<HooksRan>().flatMap { it.problems } + events.filterIsInstance<dev.min.agent.spi.Note>().map { it.text }
         assertTrue(text.joinToString(), text.any { it.contains("https://hooks.example/x") })
         assertTrue(text.joinToString(), text.none { it.contains("SECRET") || it.contains("PW") })
@@ -490,7 +490,7 @@ class HttpHookSessionTest {
         val open = FakeHttp { HttpHookResult.Failed("refused") }
         val rt2 = session(lsModel(), HooksLoaded(listOf(HookSourceData("user", httpHook("https://user:PW@hooks.example/x?token=SECRET")))), open)
         rt2.say("跑一下")
-        val events2 = store.open(rt2.sessionId)!!.read().toList().map { it.event }
+        val events2 = store.peek(rt2.sessionId)!!.read().toList().map { it.event }
         val text2 = events2.filterIsInstance<HooksRan>().flatMap { it.problems } + events2.filterIsInstance<dev.min.agent.spi.Note>().map { it.text }
         assertTrue("失败说明里署名的 URL 也一样", text2.any { it.contains("https://hooks.example/x") } && text2.none { it.contains("SECRET") || it.contains("PW") })
 
@@ -499,7 +499,7 @@ class HttpHookSessionTest {
         // PreToolUse 超时会升成 ask（要人确认），这里只看说明，换成超时中性的 PostToolUse
         val rt3 = session(lsModel(), HooksLoaded(listOf(HookSourceData("user", httpHook("https://user:PW@hooks.example/x?token=SECRET", event = "PostToolUse")))), slow)
         rt3.say("跑一下")
-        val ran3 = store.open(rt3.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        val ran3 = store.peek(rt3.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertTrue(ran3.problems.joinToString(), ran3.problems.any { it.contains("超时") && it.contains("https://hooks.example/x") })
         assertTrue(ran3.problems.joinToString(), ran3.problems.none { it.contains("SECRET") || it.contains("PW") })
     } }
@@ -512,7 +512,7 @@ class HttpHookSessionTest {
         val rt = session(lsModel(), hooks, http, env = mapOf("KEY" to "sk-model-key"), hiddenEnv = setOf("KEY"))
         rt.say("跑一下")
         assertEquals("Bearer ", http.sent.single().headers["Authorization"])
-        val ran = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
+        val ran = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().single()
         assertTrue(ran.problems.joinToString(), ran.problems.any { it.contains("KEY") && it.contains("空串") })
     } }
 
@@ -546,6 +546,6 @@ class HttpHookSessionTest {
         val rt = session(model, null, http)
         rt.say("随口一句")
         assertTrue(http.sent.isEmpty())
-        assertTrue(store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().isEmpty())
+        assertTrue(store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().isEmpty())
     }
 }

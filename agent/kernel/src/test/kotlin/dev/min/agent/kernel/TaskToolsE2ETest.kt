@@ -96,7 +96,7 @@ class TaskToolsE2ETest {
         assertEquals(listOf("2"), s.tasks[0].blocks)
 
         // 结果里预告的编号与内核落盘的事件一致
-        val events = store.open(id)!!.read().toList().map { it.event }
+        val events = store.peek(id)!!.read().toList().map { it.event }
         assertEquals(listOf("1", "2"), events.filterIsInstance<TaskCreated>().map { it.taskId })
         assertEquals("已创建任务 #1「写测试」（pending）。", rt.resultText("c1"))
         assertEquals("已创建任务 #2「跑测试」（pending）。", rt.resultText("c2"))
@@ -108,7 +108,7 @@ class TaskToolsE2ETest {
         assertTrue(s.toolResults.getValue(CallId("c8")).isError)
 
         assertTrue("默认模式下改清单不该弹审批", events.none { it is ApprovalRequested })
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

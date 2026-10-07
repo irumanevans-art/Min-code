@@ -223,7 +223,7 @@ internal class DesktopApp(
     }
 
     suspend fun records(sessionId: SessionId, fromSeq: Long): List<EventRecord> =
-        requireNotNull(store.open(sessionId)).read(fromSeq).toList()
+        requireNotNull(store.peek(sessionId)).read(fromSeq).toList()
 
     private fun deps(tools: List<Tool<*>>): KernelDeps {
         // Exec 端口为整个 Hub 共用，句柄的随机 id 保证日志互不覆盖。
@@ -359,7 +359,7 @@ internal class DesktopApp(
     private suspend fun resolveResume(x: String): SessionId {
         if (SESSION_ID_SHAPE.matches(x)) {
             val asId = SessionId(x)
-            if (store.open(asId) != null) return asId
+            if (store.peek(asId) != null) return asId
         }
         val wanted = dev.min.agent.kernel.normalizeSessionName(x) ?: x
         return hub().findSessionByName(paths.guestOfHost(args.cwd), wanted)
@@ -377,7 +377,7 @@ internal class DesktopApp(
     private suspend fun latestRootSession(): SessionId? {
         val cwd = paths.guestOfHost(args.cwd)
         for (header in store.list().asReversed()) {
-            val log = store.open(header.sessionId) ?: continue
+            val log = store.peek(header.sessionId) ?: continue
             val head = log.read().take(2).toList()
             val created = head.firstOrNull()?.event as? dev.min.agent.spi.SessionCreated ?: continue
             if (created.cwd != cwd) continue

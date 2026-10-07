@@ -59,7 +59,7 @@ class SessionEffectsTest {
     private val batches = Collections.synchronizedList(mutableListOf<List<SessionEvent>>())
     private val recording = object : SessionStore {
         override suspend fun create(header: LogHeader) = record(store.create(header))
-        override suspend fun open(id: SessionId) = store.open(id)?.let(::record)
+        override suspend fun open(id: SessionId) = store.peek(id)?.let(::record)
         override suspend fun list() = store.list()
 
         private fun record(log: SessionLog): SessionLog = object : SessionLog by log {
@@ -85,10 +85,10 @@ class SessionEffectsTest {
         scope,
     )
 
-    private suspend fun records(): List<EventRecord> = store.open(id)!!.read().toList()
+    private suspend fun records(): List<EventRecord> = store.peek(id)!!.read().toList()
 
     private suspend fun assertLogIsTruth(runtime: SessionRuntime) {
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 
@@ -163,7 +163,7 @@ class SessionEffectsTest {
         val written = batches.flatten().filterIsInstance<SettingsChanged>()
         rt.changeSettings(clearEffort = true)
         assertEquals("已经是不控制时不再写事件", written.size, batches.flatten().filterIsInstance<SettingsChanged>().size)
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

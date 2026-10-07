@@ -340,7 +340,7 @@ class SessionHub(
     suspend fun findSessionByName(cwd: GuestPath, name: String, exclude: SessionId? = null): SessionId? {
         for (header in store.list().asReversed()) {
             if (header.parent != null || header.sessionId == exclude) continue
-            val log = store.open(header.sessionId) ?: continue
+            val log = store.peek(header.sessionId) ?: continue
             var created: dev.min.agent.spi.SessionCreated? = null
             var found: String? = null
             log.read().collect { record ->
@@ -358,7 +358,7 @@ class SessionHub(
     /** 会话列表摘要（界面 B7 用）：头、名字（最后一条 session_renamed）、创建目录 */
     suspend fun summaries(): List<SessionSummary> =
         store.list().mapNotNull { header ->
-            val log = store.open(header.sessionId) ?: return@mapNotNull null
+            val log = store.peek(header.sessionId) ?: return@mapNotNull null
             var created: dev.min.agent.spi.SessionCreated? = null
             var name: String? = null
             log.read().collect { record ->
@@ -572,7 +572,7 @@ class SessionHub(
         val port = deps.host.snapshots
         if (port === dev.min.agent.spi.WorkspaceSnapshots.Unavailable) return
         dev.min.agent.spi.catchingNonCancellation {
-            val created = store.open(id)?.read()?.first()?.event as? dev.min.agent.spi.SessionCreated ?: return
+            val created = store.peek(id)?.read()?.first()?.event as? dev.min.agent.spi.SessionCreated ?: return
             port.store(created.cwd).forget(id)
         }
     }
@@ -631,7 +631,7 @@ class SessionHub(
         val s = source.state.value
         if (s.origin != null) throw SessionBranchRefused("子 agent 会话不能分支；对它的根会话分支。")
         if (s.turn != null) throw SessionBranchRefused("会话正在进行中，等这一轮结束再分支。")
-        val copied = store.open(id)?.read()?.toList()
+        val copied = store.peek(id)?.read()?.toList()
             ?: throw SessionBranchRefused("会话 ${id.value} 的日志打不开了。")
         val atSeq = copied.lastOrNull()?.seq ?: 0L
         if (source.state.value.lastSeq != atSeq) {

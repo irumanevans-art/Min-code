@@ -71,9 +71,9 @@ class ForkMaskTest {
     private fun agentCall(id: String, vararg pairs: Pair<String, Any?>) = ToolCallPart(CallId(id), "Agent", args(*pairs))
     private fun hub(model: ModelClient, tools: List<Tool<*>>) = SessionHub(store, testDeps(model, tools), scope)
     private suspend fun parentOf(h: SessionHub) = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
-    private suspend fun events(id: SessionId) = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(id: SessionId) = store.peek(id)!!.read().toList().map { it.event }
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

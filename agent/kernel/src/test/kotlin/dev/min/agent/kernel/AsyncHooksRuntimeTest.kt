@@ -219,7 +219,7 @@ class AsyncHooksRuntimeTest {
         {"matcher": "Bash", "hooks": [{"type": "command", "command": "true", "async": true}]}
     ]}}"""
 
-    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.open(rt.sessionId)!!.read().toList().map { it.event }
+    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId
@@ -250,7 +250,7 @@ class AsyncHooksRuntimeTest {
         )
         assertEquals("探测发生了两次（第 2 次后写出了退出码）", 2, exec.probes.get())
         // 日志即真相
-        assertEquals(rt.state.value, fold(store.open(rt.sessionId)!!.header, store.open(rt.sessionId)!!.read().toList()))
+        assertEquals(rt.state.value, fold(store.peek(rt.sessionId)!!.header, store.peek(rt.sessionId)!!.read().toList()))
     }
 
     // ---- N2：launch 没拿到 Backgrounded 的两条出路 ----

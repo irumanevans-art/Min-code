@@ -241,7 +241,7 @@ class CompactHooksSessionTest {
     }
 
     private suspend fun assertLogIsTruth(store: FileSessionStore, rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

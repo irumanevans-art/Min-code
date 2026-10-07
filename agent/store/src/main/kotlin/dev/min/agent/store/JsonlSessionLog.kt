@@ -96,8 +96,31 @@ class JsonlSessionLog private constructor(
          *
          * 只修**尾部**（最后一个换行符之后的字节）。中间某一行完整却解析失败，说明文件损坏或由更新的版本写入，
          * 这时直接报错、不动文件——截掉它会连带删掉后面的有效记录。
+         *
+         * 只给**写者附着**（重开恢复）用；还在被追加的日志绝对不要走这里做只读轮询——修复性截断会把
+         * 并发写者刚落盘的完整记录剁掉，之后 seq 断档、整份日志报废（偶发 CorruptLogException 的根因）。
+         * 只读请用 [openReadOnly]
          */
         internal fun open(file: Path, clock: Clock): JsonlSessionLog {
+            val (found, lastSeq, validEnd) = scan(file)
+            FileChannel.open(file, WRITE).use { channel ->
+                if (channel.size() > validEnd) {
+                    channel.truncate(validEnd)
+                    channel.force(false)
+                }
+            }
+            return JsonlSessionLog(file, found, lastSeq, clock)
+        }
+
+        /** 只读打开：同一套校验（头版本、seq 连续、中间行损坏照报），但**不动文件**。轮询活日志用 */
+        internal fun openReadOnly(file: Path, clock: Clock): JsonlSessionLog {
+            val (found, lastSeq, _) = scan(file)
+            return JsonlSessionLog(file, found, lastSeq, clock)
+        }
+
+        private data class Scanned(val header: LogHeader, val lastSeq: Long, val validEnd: Long)
+
+        private fun scan(file: Path): Scanned {
             var header: LogHeader? = null
             var lastSeq = 0L
             val validEnd = LogLines.forEachCompleteLineBlocking(file) { line, _ ->
@@ -111,14 +134,7 @@ class JsonlSessionLog private constructor(
                     lastSeq = record.seq
                 }
             }
-            val found = header ?: throw CorruptLogException(file, "没有文件头")
-            FileChannel.open(file, WRITE).use { channel ->
-                if (channel.size() > validEnd) {
-                    channel.truncate(validEnd)
-                    channel.force(false)
-                }
-            }
-            return JsonlSessionLog(file, found, lastSeq, clock)
+            return Scanned(header ?: throw CorruptLogException(file, "没有文件头"), lastSeq, validEnd)
         }
     }
 }

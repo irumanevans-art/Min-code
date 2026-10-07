@@ -48,7 +48,7 @@ class McpRootsTest {
             assertEquals(listOf("/a", "/b", "/project", "/shared"), hub.mcp.rootsFor(GuestPath("/project")).map { it.value })
             hub.close(a.sessionId)
             assertEquals(listOf("/b", "/project", "/shared"), hub.mcp.rootsFor(GuestPath("/project")).map { it.value })
-            val log = store.open(b.sessionId)!!
+            val log = store.peek(b.sessionId)!!
             assertEquals(fold(log.header, log.read().toList()), b.state.value)
             hub.close(b.sessionId)
             hub.close(other.sessionId)
