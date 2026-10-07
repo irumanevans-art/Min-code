@@ -236,6 +236,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             // 自动记忆目录：acceptEdits 下对它的写入与工作区同等放行（设计 §2.4）
             autoMemoryDir = s.autoMemory?.directory,
             additionalDirectories = s.additionalDirectories,
+            credentialPaths = deps.credentialPaths,
+            canonicalPath = deps.canonicalPath,
         )
     }
 
@@ -493,7 +495,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val callId = callId
         override val cwd: GuestPath = rt.state.value.settings.cwd
         override val fs: WorkspaceFs = deps.host.fs
-        override val search: Search = deps.host.search
+        override val search: Search = credentialSearch(deps.host.search, deps.credentialPaths, deps.canonicalPath)
         override val exec: Exec = deps.host.exec
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)

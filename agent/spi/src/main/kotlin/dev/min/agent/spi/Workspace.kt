@@ -53,12 +53,14 @@ data class GrepQuery(
     val contextLines: Int = 0,
     /** 允许跨行匹配（ripgrep 的 -U --multiline-dotall） */
     val multiline: Boolean = false,
+    /** 凭证必须在读文件前排除，且不占命中预算。 */
+    val exclude: (GuestPath) -> Boolean = { false },
 )
 
 /** [isContext] 为真表示这是命中行旁边的上下文行，不是命中本身 */
 data class GrepHit(val path: GuestPath, val line: Int, val text: String, val isContext: Boolean = false)
 
-data class GlobQuery(val pattern: String, val root: GuestPath, val maxResults: Int = 1_000)
+data class GlobQuery(val pattern: String, val root: GuestPath, val maxResults: Int = 1_000, val exclude: (GuestPath) -> Boolean = { false })
 
 /** 搜索端口。Android 宿主用随 APK 带的 ripgrep 在宿主路径上跑，结果映射回 guest 路径 */
 interface Search {

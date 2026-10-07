@@ -74,6 +74,9 @@ class KernelDeps(
      * null = 不加载记忆文件（内核测试、不需要记忆的嵌入场景）；真实宿主都应该给
      */
     val memoryHome: GuestPath? = null,
+    /** 凭证是宿主的信任边界，不能由会话配置、分支或工具输入覆盖。 */
+    val credentialPaths: Set<GuestPath> = emptySet(),
+    val canonicalPath: (GuestPath) -> GuestPath = { it },
     /**
      * guest 路径在 hook 脚本所在 shell 里的写法（docs/agent/detail/hooks设计.md §2）：Android 的 proot 里就是原样；
      * 桌面 CLI 在本机 shell 里跑，要按 DesktopPaths 映射成本机路径

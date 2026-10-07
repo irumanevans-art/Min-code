@@ -18,6 +18,18 @@ import java.nio.file.Path
 
 /** 布局：rootfs 在 /data/rootfs，/workspace 挂到 /data/files；搜索根都在 /workspace 下 */
 class JvmSearchTest {
+    @Test fun `credential exclusion happens before read and result budgets`() = runBlocking {
+        write("a-secret.json", "FAKE_ACCESS")
+        write("b-notes.txt", "ordinary")
+        var excluded=0
+        val deny: (GuestPath)->Boolean = { path -> (path.value.endsWith("a-secret.json")).also { if(it) excluded++ } }
+        val hits=search.grep(GrepQuery(".",root,maxHits=1,contextLines=2,exclude=deny)).toList()
+        assertTrue(hits.size==1 && hits.single().text=="ordinary")
+        val files=search.glob(GlobQuery("**/*",root,1,deny)).toList()
+        assertTrue(files.size==1 && files.single().value.endsWith("b-notes.txt"))
+        assertEquals(2,excluded)
+        Unit
+    }
     private val jfs = Jimfs.newFileSystem(Configuration.unix().toBuilder().setAttributeViews("basic", "posix").build())
     private val rootfs: Path = Files.createDirectories(jfs.getPath("/data/rootfs"))
     private val files: Path = Files.createDirectories(jfs.getPath("/data/files"))

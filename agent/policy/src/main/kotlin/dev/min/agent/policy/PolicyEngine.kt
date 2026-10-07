@@ -32,6 +32,8 @@ data class PolicyContext(
     val scopeOf: (GuestPath) -> PathScope = ::defaultScope,
     val autoMemoryDir: GuestPath? = null,
     val additionalDirectories: List<GuestPath> = emptyList(),
+    val credentialPaths: Set<GuestPath> = emptySet(),
+    val canonicalPath: (GuestPath) -> GuestPath = { it },
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -66,6 +68,10 @@ object PolicyEngine {
     fun evaluate(ask: PermissionAsk, readOnly: Boolean, context: PolicyContext): Verdict {
         val facts = Facts.of(ask, context)
         val matcher = RuleMatcher(context.cwd, context.home)
+
+        if (facts.paths.any { credentialPath(it.path, context, includeAncestors = facts.tool == "Bash") }) {
+            return Verdict.Deny(DecidedBy.Mode(context.mode), "这是 Min 保存的凭证文件，工具不能读取、搜索或修改它。")
+        }
 
         val deny = context.rules.filter { it.kind == RuleKind.Deny }
         firstHit(facts, deny, matcher)?.let { rule ->
@@ -221,6 +227,7 @@ object PolicyEngine {
      * 踩了底线的请求也不给：底线任何规则都绕不过，给了「总是允许」也没用，只会让人以为下次不用问。
      */
     fun suggestRule(ask: PermissionAsk, context: PolicyContext): String? {
+        if (Facts.of(ask, context).paths.any { credentialPath(it.path, context, includeAncestors = ask.tool == "Bash") }) return null
         if (floorReason(ask, context) != null) return null
         if (ask.commands.isNotEmpty()) {
             if (ask.commands.size != 1) return null
