@@ -119,6 +119,7 @@ class MinAgentEngine(
 
     @Volatile private var generation: MinHostGeneration = buildGeneration()
     override val mcpLoginGate = McpLoginGate()
+    override val snapshotRepos: dev.min.agent.host.CasWorkspaceSnapshots? get() = snapshots
     private val ports = MinHostPorts({ generation }, tasks, dev.min.agent.spi.Clock { System.currentTimeMillis() })
 
     internal val snapshots = CasWorkspaceSnapshots(File(context.filesDir, "agent").toPath(), { generation.fs }, MinKernelDeps.MEMORY_HOME)

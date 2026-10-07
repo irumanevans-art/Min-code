@@ -34,6 +34,11 @@ sealed interface ChatItem {
         val queued: Boolean = false,
         /** 这句话是说给某个子 agent 的：说给谁、送到没有。null = 普通的一句（说给主会话） */
         val handoff: Handoff? = null,
+        /**
+         * 这条消息是一个回退点：长按能「回到这里」（Min 的内核检查点，[dev.min.code.core.engine.EngineCapabilities.rewind]）。
+         * 别的引擎恒为 false
+         */
+        val rewindable: Boolean = false,
     ) : ChatItem
 
     /**
@@ -77,6 +82,21 @@ sealed interface ChatItem {
     data class Thinking(override val id: String, val text: String) : ChatItem
 
     data class Note(override val id: String, val text: String, val isError: Boolean = false) : ChatItem
+
+    /**
+     * 一条默认折起来的记录：一行 [title]，点开看 [lines]（逐行说明）与 [nested]（原样的条目，只读、淡化）。
+     * 回退用它：「已回退的 3 条消息」点开是那段被回退掉的对话，「恢复了 5 个文件，跳过 1 个」点开是逐个文件与跳过的原因。
+     * 只有 Min 填（Codex 与 CC 没有这两件事）。
+     *
+     * @param undoId 非空 = 展开后给「撤销这次回退」，值是引擎要的恢复 id（[dev.min.code.core.engine.RewindControl.undoRestore]）
+     */
+    data class Folded(
+        override val id: String,
+        val title: String,
+        val lines: List<String> = emptyList(),
+        val nested: List<ChatItem> = emptyList(),
+        val undoId: String? = null,
+    ) : ChatItem
 
     /**
      * 引擎进程写到 stderr 的原样输出，连续的行并成一条。

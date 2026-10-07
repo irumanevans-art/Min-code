@@ -7,7 +7,7 @@ import org.junit.Test
 import java.lang.reflect.Modifier
 
 /**
- * 把设计 §3.8 的能力位表钉住：26 项 × 3 引擎，一格不差。
+ * 把设计 §3.8 的能力位表钉住：27 项 × 3 引擎，一格不差。
  * 改一格要同时改这里，审查时一眼看得到「谁的什么能力变了」。
  */
 class EngineCapabilitiesTest {
@@ -27,7 +27,7 @@ class EngineCapabilitiesTest {
         "effortHotSwap" to Triple("false", "true", "true"),
         "cwdChange" to Triple("true", "true", "false"),
         "userShell" to Triple("true", "false", "false"),
-        "checkpointRevert" to Triple("true", "false", "false"),
+        "checkpointRevert" to Triple("true", "false", "true"),
         "subagents" to Triple("true", "false", "true"),
         "subagentDirectMessage" to Triple("false", "false", "true"),
         "backgroundTasks" to Triple("true", "false", "true"),
@@ -36,14 +36,15 @@ class EngineCapabilitiesTest {
         "liveTitle" to Triple("true", "false", "false"),
         "exportImport" to Triple("true", "false", "false"),
         "processOutput" to Triple("true", "true", "false"),
+        "rewind" to Triple("false", "false", "true"),
         "mcpServers" to Triple("false", "false", "true"),
         "workspaceTrust" to Triple("false", "false", "true"),
         "claudeConfigFiles" to Triple("Full", "None", "Partial"),
     )
 
     @Test
-    fun `the table has the 26 rows the design lists and covers every field`() {
-        assertEquals(26, table.size)
+    fun `the table has the 27 rows the design lists and covers every field`() {
+        assertEquals(27, table.size)
         val fields = EngineCapabilities::class.java.declaredFields
             .filter { !Modifier.isStatic(it.modifiers) }
             .map { it.name }
@@ -92,7 +93,8 @@ class EngineCapabilitiesTest {
         assertFalse(min.supports(SessionCommand.SetCwd("1", "/x")))
         assertTrue(codex.supports(SessionCommand.SetCwd("1", "/x")))
         assertFalse(min.supports(SessionCommand.RunShell("1", "ls")))
-        assertFalse(min.supports(SessionCommand.Revert("1", "tu")))
+        assertFalse(codex.supports(SessionCommand.Revert("1", "tu")))
+        assertTrue("Min 的撤销走内核编辑记录", min.supports(SessionCommand.Revert("1", "tu")))
         assertTrue(EngineCapabilities.ClaudeCode.supports(SessionCommand.Revert("1", "tu")))
         assertFalse(codex.supports(SessionCommand.StopSubagent("1", "th")))
         assertTrue(min.supports(SessionCommand.StopSubagent("1", "th")))

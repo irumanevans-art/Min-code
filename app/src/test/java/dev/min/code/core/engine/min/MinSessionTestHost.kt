@@ -16,6 +16,7 @@ class FakeHost(val kernel: TestKernel, override val lookup: MinModelLookup = Fak
     override val tasks = MinBackgroundTasks()
     override val workspaceFs: dev.min.agent.spi.WorkspaceFs = kernel.deps.host.fs
     override val mcpLoginGate = McpLoginGate()
+    override val snapshotRepos: dev.min.agent.host.CasWorkspaceSnapshots? = null
     override val settingsTick: Flow<Unit> = flowOf(Unit)
     override val maxRetryAttempts = 3
     val titles = MutableStateFlow<String?>(null)

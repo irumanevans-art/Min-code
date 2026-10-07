@@ -56,6 +56,9 @@ interface MinSessionHost {
     val workspaceFs: dev.min.agent.spi.WorkspaceFs
     val mcpLoginGate: McpLoginGate
 
+    /** 快照仓库（设置页的占用与清理）；没有仓库的环境（测试）为 null */
+    val snapshotRepos: dev.min.agent.host.CasWorkspaceSnapshots?
+
     /** 设置变了（供应商档增删改）：模型表、「供应商已删除」要跟着重算 */
     val settingsTick: Flow<Unit>
     val maxRetryAttempts: Int
@@ -105,12 +108,21 @@ class MinAgentSession(
     private val _signals = MutableSharedFlow<SessionSignal>(extraBufferCapacity = 16)
     override val signals: SharedFlow<SessionSignal> = _signals.asSharedFlow()
     override val stream: StateFlow<LiveStream> = live.stream
+    private val editRestore = MinEditRestore(host.hub, runtime)
+    override val rewind: dev.min.code.core.engine.RewindControl = MinRewindControl(
+        runtime, host.text, host.snapshotRepos, emit = { signal ->
+            // 与撤回同一条路：没人在收信号就落成草稿，那条消息的原文不能丢
+            if (signal is SessionSignal.Withdrawn && _signals.subscriptionCount.value == 0) host.saveWithdrawnDraft(ref, signal.input)
+            else _signals.tryEmit(signal)
+        },
+    )
     override val mcp: dev.min.code.core.engine.McpControl = MinMcpControl(
         host.hub, rootId, cwd = { runtime.state.value.created.cwd.value }, fs = { host.workspaceFs }, gate = host.mcpLoginGate,
     )
 
     private val commands = MinCommandHandler(
         hub = host.hub, root = runtime, state = { state.value }, lookup = host.lookup, text = host.text,
+        editRestore = editRestore,
         effects = object : MinCommandEffects {
             override fun rename(title: String) = host.renameSession(rootId.value, title)
             override fun rememberDefaultModel(profileId: String, modelId: String) = host.rememberDefaultModel(profileId, modelId)
@@ -236,6 +248,10 @@ class MinAgentSession(
     override suspend fun searchFiles(query: String, limit: Int): List<String> = host.searchFiles(state.value.cwd, query, limit)
 
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = host.readTaskOutput(taskId, maxChars)
+
+    override suspend fun hasCheckpoint(toolUseId: String): Boolean = editRestore.checkpointed(listOf(toolUseId)).isNotEmpty()
+    override suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> = editRestore.checkpointed(toolUseIds)
+    override suspend fun revertFile(name: String, toolUseIds: List<String>): Set<String> = editRestore.revert(toolUseIds)
 
     override suspend fun close(reason: CloseReason) = host.closeSession(this, reason)
 

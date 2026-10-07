@@ -270,7 +270,8 @@ class MinCommandTest {
         runBlocking {
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.SetCwd(cmd(), "/x")))
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.RunShell(cmd(), "ls")))
-            assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.Revert(cmd(), "c")))
+            // 撤销现在走内核的编辑记录：没有这次调用的记录就是被拒，不是「不支持」
+            assertTrue(r.session.submit(SessionCommand.Revert(cmd(), "c")) is CommandResult.Rejected)
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.SetEngineOption(cmd(), "k", "v")))
         }
     }

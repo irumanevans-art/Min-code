@@ -53,6 +53,7 @@ class MinCommandHandler(
     private val text: MinAgentText,
     private val effects: MinCommandEffects,
     private val scope: CoroutineScope,
+    private val editRestore: MinEditRestore? = null,
     private val capabilities: EngineCapabilities = EngineCapabilities.MinAgent,
 ) {
     private val deduper = CommandDeduper()
@@ -104,8 +105,12 @@ class MinCommandHandler(
         is SessionCommand.StopTask -> { effects.killTask(command.taskId); CommandResult.Accepted }
         // 模型表每次状态更新都按设置现算，没有要刷新的缓存
         is SessionCommand.Refresh -> CommandResult.Accepted
-        // 能力位为假的几条（cwd / shell / 撤销）在 supports 就拦了；引擎专有设置项 Min 没有
-        is SessionCommand.SetCwd, is SessionCommand.RunShell, is SessionCommand.Revert, is SessionCommand.SetEngineOption ->
+        // 能力位为假的几条（cwd / shell）在 supports 就拦了；引擎专有设置项 Min 没有
+        is SessionCommand.Revert ->
+            if (editRestore == null) CommandResult.Unsupported
+            else if (command.toolUseId in editRestore.revert(listOf(command.toolUseId))) CommandResult.Accepted
+            else CommandResult.Rejected("没能撤销这次修改")
+        is SessionCommand.SetCwd, is SessionCommand.RunShell, is SessionCommand.SetEngineOption ->
             CommandResult.Unsupported
     }
 

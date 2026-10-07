@@ -180,6 +180,7 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
                         is ChatItem.Note -> "Note error=${item.isError} ${item.text}"
                         is ChatItem.ToolCall -> "ToolCall ${item.name} ${item.status} total=${item.resultTotalChars} ${item.result}"
                         is ChatItem.ProcessOutput -> "ProcessOutput ${item.lines.size} lines"
+                        is ChatItem.Folded -> "Folded ${item.title} lines=${item.lines.size} nested=${item.nested.size} undo=${item.undoId}"
                     }
                     Log.i(TAG, "ITEM ${summary.replace("\n", "\\n").take(700)}")
                 }

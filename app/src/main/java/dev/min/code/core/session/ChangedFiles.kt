@@ -119,12 +119,15 @@ fun changedFiles(
 
 /**
  * 值得去问「有没有快照」的 toolUseId：**顶层**、跑完且没失败的编辑类调用。
- * 子 agent 里的编辑不在这里——它们的 tool_use 不走快照（见 `ClaudeCodeManager.checkpointed`），问了也是白问。
+ * 子 agent 里的编辑默认不在这里——CC 里它们的 tool_use 不走快照（见 `ClaudeCodeManager.checkpointed`），问了也是白问；
+ * Min 的内核编辑记录覆盖整棵树，传 [includeSubagents] 把它们也算上。
  */
-fun undoCandidates(items: List<ChatItem>): List<String> = items.mapNotNull { item ->
-    (item as? ChatItem.ToolCall)
-        ?.takeIf { it.name in CHANGE_TOOLS && it.status == ChatItem.ToolCall.Status.Done && !it.isError && it.toolUseId.isNotBlank() }
+fun undoCandidates(items: List<ChatItem>, includeSubagents: Boolean = false): List<String> = items.flatMap { item ->
+    val call = item as? ChatItem.ToolCall ?: return@flatMap emptyList()
+    val own = call.takeIf { it.name in CHANGE_TOOLS && it.status == ChatItem.ToolCall.Status.Done && !it.isError && it.toolUseId.isNotBlank() }
         ?.toolUseId
+    // Min 的编辑记录覆盖整棵子 agent 树（它们各记在自己的运行时里），所以那些调用也值得问；CC 的快照不覆盖，不问
+    listOfNotNull(own) + if (includeSubagents) undoCandidates(call.subItems, includeSubagents = true) else emptyList()
 }
 
 /** 一次调用造成的改动：一个文件一条 */

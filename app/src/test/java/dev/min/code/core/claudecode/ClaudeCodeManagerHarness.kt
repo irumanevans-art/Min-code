@@ -533,6 +533,7 @@ internal fun ChatItem.summary(): String = when (this) {
     is ChatItem.Thinking -> "thinking: $text"
     is ChatItem.Note -> "${if (isError) "error" else "note"}: $text"
     is ChatItem.ProcessOutput -> "stderr: ${lines.joinToString(" | ")}"
+    is ChatItem.Folded -> "folded: $title"
     is ChatItem.ToolCall -> ("tool $name [$status${if (isError) ", error" else ""}]: ${result.orEmpty().trim()}" +
         (if (subItems.isNotEmpty()) " {${subItems.joinToString("; ") { it.summary() }}}" else "")).trimEnd()
 }
