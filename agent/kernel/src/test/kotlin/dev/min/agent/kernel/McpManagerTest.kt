@@ -482,4 +482,20 @@ class McpManagerTest {
         connector.made[2].die()
         while (connector.made.size < 4) delay(20)
     }
+
+    @Test
+    fun `closeUnusedMcp closes the connections that are only waiting out the linger, and leaves the ones in use`() = run {
+        val connector = FakeConnector()
+        val hub = hub(ScriptedModel(), connector, lingerMs = 60_000)
+        val a = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        while (connector.made.isEmpty()) delay(10)
+        delay(100)
+        hub.closeUnusedMcp()
+        assertFalse("会话还开着，连接在用", connector.made.single().closed)
+        assertTrue(hub.close(a.sessionId))
+        delay(100)
+        assertFalse("关了会话但还在等回收（60 秒）", connector.made.single().closed)
+        hub.closeUnusedMcp()
+        assertTrue("进后台时不等 linger", connector.made.single().closed)
+    }
 }

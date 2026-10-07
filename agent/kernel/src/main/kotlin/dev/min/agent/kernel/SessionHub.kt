@@ -468,6 +468,9 @@ class SessionHub(
      */
     suspend fun closeMcpConnections() = mcp.closeAll()
 
+    /** 没有会话在用、正等着回收的 MCP 连接现在就关（宿主进后台时用，见 [McpManager.closeUnused]）；还在用的不动 */
+    suspend fun closeUnusedMcp() = mcp.closeUnused()
+
     suspend fun loginMcp(server: String, sessionId: SessionId? = null) = mcp.login(server, sessionId)
     suspend fun logoutMcp(server: String, sessionId: SessionId? = null) = mcp.logout(server, sessionId)
     fun mcpServers(sessionId: SessionId) = mcp.statusOf(sessionId)

@@ -181,6 +181,24 @@ internal class McpManager(
         }
     }
 
+    /**
+     * 没人用、正在等回收的连接现在就关（不等 [lingerMs]）。宿主进入后台、手上没有在跑的回合时调：
+     * 进程被系统冻结后 linger 的定时器不走，stdio 服务器的子进程就一直挂在 proot 里；还有会话在用的连接不动
+     */
+    suspend fun closeUnused() {
+        val victims = lock.withLock {
+            entries.values.filter { it.refs <= 0 }.onEach { e ->
+                e.linger?.cancel()
+                entries.remove(e.key)
+                e.retired = true
+            }.toList()
+        }
+        victims.forEach { e ->
+            e.starting?.cancelAndJoin()
+            e.connection?.let { dev.min.agent.spi.catchingNonCancellation { it.close() } }
+        }
+    }
+
     /** 界面「MCP 服务器」面板用：某个会话的服务器此刻的状态 */
     fun statusOf(sessionId: SessionId): List<McpServerInfo> = bindings[sessionId]?.let { serverInfos(it) }.orEmpty()
 
