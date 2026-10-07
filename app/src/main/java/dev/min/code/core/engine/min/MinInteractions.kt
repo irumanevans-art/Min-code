@@ -77,7 +77,9 @@ private fun approval(
     } else ask.summary
     return PendingInteraction.Approval(
         id = id, origin = origin, toolUseId = what.callId.value, toolName = what.tool, input = input, summary = summary,
-        paths = ask.paths.map { PathView(it.path.value, scopeOf(it.scope)) },
+        // 卡片上的路径行是「要动的东西跑出了工作区」（界面写「在 /workspace 之外」，设备上的写朱字）：
+        // 内核的 ask.paths 是这次调用碰到的**所有**路径，工作区之内的不该进来，否则每张写文件的卡都会谎称自己在工作区之外
+        paths = ask.paths.map { PathView(it.path.value, scopeOf(it.scope)) }.filter { it.scope != PathScope.Workspace },
         commands = ask.commands.map { it.raw },
         domains = ask.domains,
         // 踩了安全底线的原因：解释「为什么连跳过权限也要问你」

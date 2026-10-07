@@ -440,6 +440,22 @@ class MinAgentStateMapperTest {
         assertTrue(card.options.first { it.id == ApprovalOption.DENY }.acceptsNote)
     }
 
+    @Test fun onlyPathsOutsideTheWorkspaceReachTheCard() {
+        val ask = PermissionAsk(
+            "Write", "write a file",
+            paths = listOf(
+                PathAccess(GuestPath("/workspace/in.txt"), AccessKind.Write, PathScope.Workspace),
+                PathAccess(GuestPath("/etc/out"), AccessKind.Write, PathScope.Rootfs),
+            ),
+        )
+        val input = JsonObject(mapOf("file_path" to JsonPrimitive("/workspace/in.txt")))
+        val s = foldOf(*approvalEvents("c8", "ap8", "Write", input, ask, floor = null).toTypedArray())
+        val what = HubPending.What.Approval(ApprovalId("ap8"), CallId("c8"), "Write", ask, null, null)
+        val card = map(s, pending = listOf(pending("s_root", 5, what))).interactions.single() as PendingInteraction.Approval
+        // 界面把这一行读成「在 /workspace 之外」：工作区之内的路径进来就是谎话（模拟器验收抓到的）
+        assertEquals(listOf("/etc/out"), card.paths.map { it.path })
+    }
+
     @Test fun approvalFromAChildFloatsUpWithItsOriginAndAUniqueId() {
         val ask = PermissionAsk("Bash", "run it")
         val input = JsonObject(mapOf("command" to JsonPrimitive("ls")))
