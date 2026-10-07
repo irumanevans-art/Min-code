@@ -392,8 +392,9 @@ class DeviceController(
     private data class Quad(val a: Float, val b: Float, val c: Float, val d: Float)
 
     private companion object {
+        // 路径要和设置页的层级一致：首页「设备」那一组里的「设备操控」段（SettingsSection.DEVICE）。Claude Code 与 Min 共用这句
         const val NOT_CONNECTED =
-            "设备操控还没打开。请到 Min 的「设置 → 设备操控」开启，" +
+            "设备操控还没打开。请到 Min 的「设置 → 设备 → 设备操控」开启，" +
                 "那里会告诉你怎么在系统设置里授予无障碍权限。"
 
         /**
