@@ -46,6 +46,8 @@ data class McpTokenRecord(val key: McpTokenKey, val credentials: McpOAuthCredent
 
 /** 先绑定 loopback 端口，再构造包含真实 redirect_uri 的授权 URL，避免先挑端口再绑定的竞态。 */
 fun interface McpAuthorizer {
+    /** 只展示授权方和权限，不给模型授权 URL、state 或 PKCE。 */
+    fun preview(issuer: String, authorizationDomain: String, scopes: String?) {}
     suspend fun authorize(redirectPort: Int?, authorizationUrl: suspend (redirectUri: String) -> String): String
     /** 真正的宿主在接受请求前校验 state，客户端收到回调后仍独立复核。 */
     suspend fun authorize(redirectPort: Int?, expectedState: String, authorizationUrl: suspend (redirectUri: String) -> String): String =

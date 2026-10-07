@@ -94,6 +94,7 @@ class McpOAuthClient(
             if ("offline_access" in strings(asMetadata.json, "scopes_supported")) listOf("offline_access") else emptyList()).distinct().joinToString(" ").ifBlank { null }
         var client: McpOAuthCredentials? = null
         var redirect: String? = null
+        authorizer.preview(asMetadata.issuer,URI(asMetadata.authorization).host,scopes)
         val callback = authorizer.authorize(settings.callbackPort, state) { redirectUri ->
             validateRedirect(redirectUri)
             redirect = redirectUri

@@ -15,6 +15,17 @@ import java.nio.file.attribute.*
 import java.net.URI
 
 class McpOAuthHostTest {
+    @Test fun `terminal preview prints issuer domain and scope before browser attempt`() = runBlocking {
+        val output=ByteArrayOutputStream()
+        val host=DesktopMcpAuthorizer(false,browser={
+            val text=output.toString();assertTrue(text.contains("https://as.example"));assertTrue(text.contains("login.example"));assertTrue(text.contains("read write"));false
+        },browserAvailable={true})
+        host.output=PrintStream(output)
+        host.preview("https://as.example","login.example","read write")
+        val port=java.net.ServerSocket(0).use {it.localPort}
+        host.input=StringReader("http://127.0.0.1:$port/mcp/oauth/callback?code=x\n").buffered()
+        host.authorize(port){"https://login.example/a"};Unit
+    }
     @Test fun `desktop authorizer forwards expected state and ignores wrong manual callback`() = runBlocking {
         val host=DesktopMcpAuthorizer(true,browser={false},browserAvailable={true})
         val port=java.net.ServerSocket(0).use {it.localPort}
