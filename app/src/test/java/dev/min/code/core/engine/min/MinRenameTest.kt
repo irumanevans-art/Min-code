@@ -33,4 +33,11 @@ class MinRenameTest {
         val title = indexEntryOf(state("长".repeat(200)), 10, 10, 20).title
         assertEquals(MinIndexEntry.TITLE_CHARS, title.length)
     }
+
+    @Test
+    fun `a session rewound to before its first message is titled by that message, not by its id`() {
+        val dead = listOf(HistoryEntry.User(MessageId("u1"), listOf(TextPart("被回退的第一句"))))
+        val state = foldOf().copy(history = emptyList(), rewound = listOf(dev.min.agent.kernel.RewoundSegment("rw", null, dead, emptyMap())))
+        assertEquals("被回退的第一句", indexEntryOf(state, 10, 10, 20).title)
+    }
 }
