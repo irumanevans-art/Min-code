@@ -1,0 +1,25 @@
+{
+  "session_id": "s-70",
+  "transcript_path": "/home/user/.claude/projects/p/70.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rm -rf node_modules",
+    "description": "Remove node_modules directory"
+  },
+  "permission_suggestions": [
+    {
+      "type": "addRules",
+      "rules": [
+        {
+          "toolName": "Bash",
+          "ruleContent": "rm -rf node_modules"
+        }
+      ],
+      "behavior": "allow",
+      "destination": "localSettings"
+    }
+  ]
+}

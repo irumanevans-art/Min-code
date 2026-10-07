@@ -1,0 +1,17 @@
+{
+  "event": "CwdChanged",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§CwdChanged：主对话的 shell 命令改了工作目录（cd）时触发、无 matcher（:2771–2777）；输入 old_cwd/new_cwd（:2779–2792）。"
+}

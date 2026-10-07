@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/sessionend-decision.sh\""
+          }
+        ],
+        "matcher": "other"
+      }
+    ]
+  }
+}

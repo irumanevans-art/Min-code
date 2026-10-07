@@ -1,0 +1,12 @@
+{
+  "session_id": "s-64",
+  "transcript_path": "/home/user/.claude/projects/p/64.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptExpansion",
+  "expansion_type": "slash_command",
+  "command_name": "example-skill",
+  "command_args": "arg1 arg2",
+  "command_source": "plugin",
+  "prompt": "/example-skill arg1 arg2"
+}

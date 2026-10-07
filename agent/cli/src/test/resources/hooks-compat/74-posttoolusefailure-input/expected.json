@@ -1,0 +1,17 @@
+{
+  "event": "PostToolUseFailure",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PostToolUseFailure input：执行后才失败的调用（执行前被拒的不触发，:2081–2089）；error 首行一般是 Exit code N，is_interrupt 标记按中断结束的失败（:2091–2124）。"
+}

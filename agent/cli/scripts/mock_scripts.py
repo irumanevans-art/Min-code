@@ -14,6 +14,8 @@ import os
 import urllib.request
 from pathlib import Path
 
+import eval_cases
+
 
 def gpath(p):
     """Windows path -> Git Bash style POSIX path the desktop CLI uses."""
@@ -208,11 +210,13 @@ def steps_for(case, work, w, ctx):
                 step("Editing now.", [edit(w + "/greeting.txt", "hello", "hola")]),
                 step("greeting.txt now says hola.")]
     if cid == "36-perm-deny-vendor":
+        # 真模型那次在条目前多插了一个空行；判分已放宽为对行为判分，模拟模型就照这个形状走，
+        # 把「空白差异不算错」钉进回归。
         return [step("Reading both files.",
                      [read(w + "/vendor/lib.py"), read(w + "/CHANGELOG.md")]),
                 step("Trying the vendor fix.", [edit(w + "/vendor/lib.py", "value = 1", "value = 2")]),
                 step("The vendor edit was denied by the permission rules; updating the changelog instead.",
-                     [edit(w + "/CHANGELOG.md", "# Changelog\n", "# Changelog\n## 2026-10-07 eval\n")]),
+                     [edit(w + "/CHANGELOG.md", "# Changelog\n", "# Changelog\n\n## 2026-10-07 eval\n")]),
                 step("Changelog updated; vendor left untouched.")]
     if cid == "37-perm-additional-dirs":
         shared = gpath(Path(str(work) + "-shared"))
@@ -221,8 +225,9 @@ def steps_for(case, work, w, ctx):
                 step("Appending the audit line.", [bash("echo eval-visit >> " + shared + "/audit.log")]),
                 step("rate.txt written and audit.log appended.")]
     if cid == "38-perm-system-read":
-        count = host_localhost_lines()
-        return [step("Reading the hosts file.", [read("/c/Windows/System32/drivers/etc/hosts")]),
+        # hosts 读的是 fixture（ctx["system_hosts"]，setup 写进 <workspace>-system/hosts），行数从同一份常量数出来。
+        count = sum(1 for line in eval_cases.SYSTEM_HOSTS.splitlines() if "localhost" in line.lower())
+        return [step("Reading the hosts file.", [read(ctx["system_hosts"])]),
                 step(f"The hosts file mentions localhost on {count} lines.")]
     if cid == "39-json-schema-total":
         return [step("Reading counts.", [read(w + "/counts.txt")]),
@@ -314,12 +319,3 @@ def subagent_scripts(case, w):
             step("Grepping for the token.", [call("Grep", pattern="TOKEN-QX-88", path=".")]),
             step("part3.txt")]}]
     return []
-
-
-def host_localhost_lines():
-    hosts = Path("C:/Windows/System32/drivers/etc/hosts")
-    try:
-        return sum(1 for line in hosts.read_text(encoding="utf-8", errors="replace").splitlines()
-                   if "localhost" in line.lower())
-    except OSError:
-        return 0

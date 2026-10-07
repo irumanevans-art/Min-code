@@ -157,7 +157,21 @@ class Runner:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout, env=child_env)
         self.safe_write(self.args.evidence / f"{name}.stdout.txt", proc.stdout)
         self.safe_write(self.args.evidence / f"{name}.stderr.txt", proc.stderr)
-        result = next((json.loads(line) for line in reversed(proc.stdout.splitlines()) if line.startswith('{"session"')), {})
+        raw = next((json.loads(line) for line in reversed(proc.stdout.splitlines())
+                    if line.startswith('{"type":"result"')), {})
+        # CLI 的 --json 结果是 CC 的 result 消息形状（CliResult.json）：归一成判分器与烟测用的键。
+        result = {
+            "session": raw.get("session_id"),
+            "completed": raw.get("is_error") is False,
+            "subtype": raw.get("subtype"),
+            "final": raw.get("result"),
+            "num_turns": raw.get("num_turns"),
+            "duration_ms": raw.get("duration_ms"),
+            "usage": raw.get("usage"),
+            "errors": raw.get("errors"),
+            "structured_output": raw.get("structured_output"),
+            "permission_denials": raw.get("permission_denials"),
+        }
         traces = self.proxy.traces[first:]
         self.safe_write(self.args.evidence / f"{name}.trace.json", json.dumps(traces, ensure_ascii=False, indent=2))
         row = {"name": name, "approval": approve, "exit": proc.returncode, "result": result,
@@ -165,7 +179,7 @@ class Runner:
         self.rows.append(row)
         self.safe_write(self.args.evidence / "smoke-results.json", json.dumps(self.rows, ensure_ascii=False, indent=2))
         print(json.dumps({"name": name, "exit": proc.returncode, "completed": result.get("completed"),
-                          "session": result.get("session"), "usage": result.get("turn_usage"),
+                          "session": result.get("session"), "usage": result.get("usage"),
                           "prefixes": result.get("prefix_fingerprints"), "requests": len(traces)}, ensure_ascii=False), flush=True)
         return row
 

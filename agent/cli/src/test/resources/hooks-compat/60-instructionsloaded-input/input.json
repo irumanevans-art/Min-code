@@ -1,0 +1,10 @@
+{
+  "session_id": "s-60",
+  "transcript_path": "/home/user/.claude/projects/p/60.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "InstructionsLoaded",
+  "file_path": "/home/user/repo/CLAUDE.md",
+  "memory_type": "Project",
+  "load_reason": "session_start"
+}

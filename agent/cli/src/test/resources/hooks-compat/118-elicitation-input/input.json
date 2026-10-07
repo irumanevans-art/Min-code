@@ -1,0 +1,19 @@
+{
+  "session_id": "s-118",
+  "transcript_path": "/home/user/.claude/projects/p/118.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "Elicitation",
+  "mcp_server_name": "my-mcp-server",
+  "message": "Please provide your credentials",
+  "mode": "form",
+  "requested_schema": {
+    "type": "object",
+    "properties": {
+      "username": {
+        "type": "string",
+        "title": "Username"
+      }
+    }
+  }
+}

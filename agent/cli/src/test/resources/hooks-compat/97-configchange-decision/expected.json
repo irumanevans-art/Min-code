@@ -1,0 +1,19 @@
+{
+  "event": "ConfigChange",
+  "target": "project_settings",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§ConfigChange decision control：exit 2 或 decision:block 阻止变更生效（policy_settings 不可阻断）；reason 接受但从不展示；阻断不给人与模型任何消息，systemMessage/continue 丢弃（:2751–2769）。",
+  "pendingFix": "原文：reason 接受但从不展示、阻断不给任何消息，systemMessage/continue 丢弃（:2758, :2769）。引擎现在：reason 进 reasons、continue:false 会停回合、systemMessage 进通知。",
+  "minTrigger": "none"
+}

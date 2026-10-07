@@ -1,0 +1,17 @@
+{
+  "event": "SessionEnd",
+  "target": "other",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§SessionEnd：会话终止时触发，matcher 对 reason（clear/resume/logout/prompt_input_exit/other）（:3313–3327）；输入 reason（:3329–3341）。"
+}

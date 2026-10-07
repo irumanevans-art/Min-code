@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/worktreecreate-decision.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

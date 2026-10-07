@@ -1,0 +1,19 @@
+{
+  "event": "SubagentStop",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "Run the integration check before stopping"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§SubagentStop：决策控制同 Stop——decision:block+reason 让子 agent 继续跑，reason 作它的下一步指示；exit 2 同通道；hookSpecificOutput.additionalContext 作非错误反馈（:2411, :2595–2612）。"
+}

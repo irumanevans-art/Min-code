@@ -1,0 +1,14 @@
+{
+  "session_id": "s-84",
+  "transcript_path": "/home/user/.claude/projects/p/84.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "def456",
+  "agent_type": "Explore",
+  "agent_transcript_path": "/home/user/.claude/projects/p/abc123/subagents/agent-def456.jsonl",
+  "last_assistant_message": "Analysis complete. Found 3 potential issues...",
+  "background_tasks": [],
+  "session_crons": []
+}

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/subagentstart-input.sh\""
+          }
+        ],
+        "matcher": "Explore"
+      }
+    ]
+  }
+}

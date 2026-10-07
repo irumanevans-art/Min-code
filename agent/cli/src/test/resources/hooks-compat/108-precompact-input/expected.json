@@ -1,0 +1,17 @@
+{
+  "event": "PreCompact",
+  "target": "manual",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PreCompact：压缩前触发，matcher manual/auto（:3045–3054）；输入 trigger/custom_instructions（manual 且用户没传时为 null，auto 恒 null）（:3062–3075）。"
+}

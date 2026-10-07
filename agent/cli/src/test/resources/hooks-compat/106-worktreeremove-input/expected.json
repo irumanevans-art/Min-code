@@ -1,0 +1,19 @@
+{
+  "event": "WorktreeRemove",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§WorktreeRemove：worktree 移除时触发（退出 --worktree 会话选移除、isolation 子 agent 结束、删后台会话）；输入 worktree_path（:2987–3005, :3026–3038）。",
+  "pendingFix": "依赖未做功能：worktree 隔离 Min 还没有，事件无法端到端触发；输入形状已按原文钉住。",
+  "minTrigger": "none"
+}

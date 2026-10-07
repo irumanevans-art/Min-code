@@ -1,0 +1,23 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Allow",
+  "reasons": [
+    "read-only in CI"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [
+    "Current environment: CI"
+  ],
+  "updatedInput": {
+    "command": "npm test -- --bail"
+  },
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PreToolUse decision control：permissionDecision allow/deny/ask/defer + permissionDecisionReason；updatedInput 整体替换入参、权限规则按改写后的输入再评（:1791–1799）；多 hook 优先级 deny>defer>ask>allow（:1802）；exit 2 同 deny 通道（:1804）。"
+}

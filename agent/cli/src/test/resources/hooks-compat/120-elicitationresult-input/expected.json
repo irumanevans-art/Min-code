@@ -1,0 +1,19 @@
+{
+  "event": "ElicitationResult",
+  "target": "my-mcp-server",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§ElicitationResult：用户答复 MCP elicitation 后、发回服务器前触发，matcher 对服务器名；输入 mcp_server_name/action/content，可缺席 mode/elicitation_id（:3428–3450）。",
+  "pendingFix": "依赖未做功能：MCP elicitation Min 还没有，事件无法端到端触发；输入形状已按原文钉住。",
+  "minTrigger": "none"
+}

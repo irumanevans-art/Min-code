@@ -1,0 +1,26 @@
+{
+  "session_id": "s-90",
+  "transcript_path": "/home/user/.claude/projects/p/90.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": true,
+  "last_assistant_message": "I have completed the refactoring. Here is a summary...",
+  "background_tasks": [
+    {
+      "id": "task-001",
+      "type": "shell",
+      "status": "running",
+      "description": "tail logs",
+      "command": "tail -f /var/log/syslog"
+    }
+  ],
+  "session_crons": [
+    {
+      "id": "cron-001",
+      "schedule": "0 9 * * 1-5",
+      "recurring": true,
+      "prompt": "check the build"
+    }
+  ]
+}

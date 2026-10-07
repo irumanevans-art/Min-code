@@ -1,0 +1,17 @@
+{
+  "event": "PostModelSwitch",
+  "target": ".*opus.*",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PostModelSwitch：会话模型变化后触发（含自动回退与 resume 恢复；fallback chain 只服务一回合的不触发，:3260–3273）；输入同 PreModelSwitch，source 多 auto/resume，source=auto 时 requested_model=null（:3297–3301）。"
+}

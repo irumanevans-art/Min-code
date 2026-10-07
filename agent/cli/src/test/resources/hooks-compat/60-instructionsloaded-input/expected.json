@@ -1,0 +1,17 @@
+{
+  "event": "InstructionsLoaded",
+  "target": "session_start",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§InstructionsLoaded：CLAUDE.md 或 .claude/rules/*.md 载入时触发，matcher 对 load_reason；经 Project instructions 直读 AGENTS.md 不触发（:1278–1284）；输入 file_path/memory_type/load_reason，按需另有 globs/trigger_file_path/parent_file_path（:1286–1297）。"
+}

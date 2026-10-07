@@ -1,0 +1,17 @@
+{
+  "event": "PostCompact",
+  "target": "auto",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PostCompact：压缩完成后触发，matcher 同 PreCompact；输入 trigger/compact_summary（:3077–3101）。"
+}

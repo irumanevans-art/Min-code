@@ -1,0 +1,17 @@
+{
+  "event": "Setup",
+  "target": "init",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§Setup：只在 --init-only / -p --init / -p --maintenance 触发，正常启动不触发（:1239–1250）；输入多一个 trigger=init|maintenance（:1258–1270）。"
+}

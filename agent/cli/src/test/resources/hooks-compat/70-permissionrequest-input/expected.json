@@ -1,0 +1,17 @@
+{
+  "event": "PermissionRequest",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PermissionRequest input：tool_name/tool_input，无 tool_use_id（:1885–1887）；permission_suggestions 是建议的权限更新条目（:1944–1972）。"
+}

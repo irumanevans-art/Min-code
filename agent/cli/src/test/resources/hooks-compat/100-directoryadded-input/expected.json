@@ -1,0 +1,17 @@
+{
+  "event": "DirectoryAdded",
+  "target": "slash_command",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§DirectoryAdded：/add-dir 或 SDK register_repo_root 加目录后触发（--add-dir 启动参数不算）；后台跑、默认 600 秒（:2806–2825）；matcher 对来源，输入 directory/source（:2827–2845）。"
+}

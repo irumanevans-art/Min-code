@@ -1,0 +1,9 @@
+{
+  "session_id": "s-100",
+  "transcript_path": "/home/user/.claude/projects/p/100.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "DirectoryAdded",
+  "directory": "/home/user/other-repo",
+  "source": "slash_command"
+}

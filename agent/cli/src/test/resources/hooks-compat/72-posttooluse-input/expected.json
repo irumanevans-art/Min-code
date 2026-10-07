@@ -1,0 +1,17 @@
+{
+  "event": "PostToolUse",
+  "target": "Write",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PostToolUse input：工具成功后触发；tool_input 与 tool_response 同给，duration_ms 不含权限审批与 PreToolUse 的时间（:1985–2012）。"
+}

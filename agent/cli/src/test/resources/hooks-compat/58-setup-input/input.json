@@ -1,0 +1,7 @@
+{
+  "session_id": "s-58",
+  "transcript_path": "/home/user/.claude/projects/p/58.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "Setup",
+  "trigger": "init"
+}

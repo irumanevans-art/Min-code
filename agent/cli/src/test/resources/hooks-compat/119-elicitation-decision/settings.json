@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Elicitation": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/elicitation-decision.sh\""
+          }
+        ],
+        "matcher": "my-mcp-server"
+      }
+    ]
+  }
+}

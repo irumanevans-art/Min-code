@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/premodelswitch-decision.sh\""
+          }
+        ],
+        "matcher": "claude-opus-5"
+      }
+    ]
+  }
+}

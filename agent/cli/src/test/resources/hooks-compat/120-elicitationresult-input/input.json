@@ -1,0 +1,14 @@
+{
+  "session_id": "s-120",
+  "transcript_path": "/home/user/.claude/projects/p/120.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "ElicitationResult",
+  "mcp_server_name": "my-mcp-server",
+  "action": "accept",
+  "content": {
+    "username": "alice"
+  },
+  "mode": "form",
+  "elicitation_id": "elicit-123"
+}

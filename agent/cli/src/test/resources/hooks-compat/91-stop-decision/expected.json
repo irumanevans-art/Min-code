@@ -1,0 +1,19 @@
+{
+  "event": "Stop",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "Must be provided when Claude is blocked from stopping"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§Stop decision control：decision:block+reason 阻止停止（reason 必给）；hookSpecificOutput.additionalContext 作非错误反馈、同样受 stop_hook_active 与 8 次上限约束（:2595–2623）。"
+}

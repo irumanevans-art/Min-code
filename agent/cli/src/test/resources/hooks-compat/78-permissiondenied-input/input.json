@@ -1,0 +1,14 @@
+{
+  "session_id": "s-78",
+  "transcript_path": "/home/user/.claude/projects/p/78.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionDenied",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rm -rf /tmp/build",
+    "description": "Clean build directory"
+  },
+  "tool_use_id": "toolu_01ABC123",
+  "reason": "[Irreversible Local Destruction]"
+}

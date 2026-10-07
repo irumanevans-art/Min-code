@@ -134,7 +134,8 @@ def main():
             try:
                 if case.get("setup"):
                     case.update(case["setup"](work, ctx) or {})
-                prompt = case["prompt"].replace("%HTTP_URL%", ctx.get("http_url", ""))
+                prompt = case["prompt"].replace("%HTTP_URL%", ctx.get("http_url", "")) \
+                                       .replace("%SYSTEM_HOSTS%", ctx.get("system_hosts", ""))
                 if os.environ.get("EVAL_MOCK_URL"):
                     # 模拟模型跑全量调通：每题开跑前把该题的脚本灌进 mock 服务（真模型跑不设这个变量）。
                     import mock_scripts

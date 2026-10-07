@@ -1,0 +1,23 @@
+{
+  "event": "MessageDisplay",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§MessageDisplay output：displayContent 替换屏显文本，纯显示——转录与模型看到的仍是原文；不能阻断，systemMessage 与 continue 被丢弃（:1480–1488）。",
+  "specific": {
+    "hookEventName": "MessageDisplay",
+    "displayContent": "Here is the plan:"
+  },
+  "pendingFix": "原文：displayContent 只改屏显，systemMessage 与 continue 被丢弃（:1488）。引擎现在：continue:false 会停回合、systemMessage 照常进通知；displayContent 已在 specificOutput 收下。",
+  "minTrigger": "none"
+}

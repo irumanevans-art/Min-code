@@ -1,0 +1,17 @@
+{
+  "event": "ConfigChange",
+  "target": "project_settings",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§ConfigChange：settings/托管策略/skill 文件变化时触发，matcher 对来源（user_settings/project_settings/local_settings/policy_settings/skills）（:2700–2714）；输入 source/file_path（:2736–2749）。"
+}

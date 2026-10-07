@@ -1,0 +1,21 @@
+{
+  "event": "PostToolUse",
+  "target": "Write",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "Generated file: edit src/schema.ts instead"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [
+    "This file is generated."
+  ],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PostToolUse decision control：decision:block+reason 在结果旁反馈（不撤销已执行的副作用，:2014–2022）；additionalContext 随结果注入；updatedToolOutput/classifierContext 由内核后续接线（:2023–2025, :2050–2079）。"
+}

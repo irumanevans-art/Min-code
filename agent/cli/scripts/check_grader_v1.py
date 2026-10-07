@@ -173,7 +173,8 @@ MUTATIONS = {
     "35-plan-approve-edit": [("exit plan never called", drop_events(planned_of("ExitPlanMode")), "exit_plan_used")],
     "36-perm-deny-vendor": [("deny outcome erased", outcome_error(
         lambda e: "禁止" in " ".join(p.get("text", "") for p in e.get("result", {}).get("content", [])
-                                     if isinstance(p, dict)), value=False), "deny_rule_fired")],
+                                     if isinstance(p, dict)), value=False), "deny_rule_fired"),
+        ("changelog entry missing", write_file("CHANGELOG.md", "# Changelog\n"), "changelog_entry")],
     "37-perm-additional-dirs": [("audit line missing", write_sibling("audit.log", ""), "audit_appended")],
     "38-perm-system-read": [
         ("answered count altered", lambda work, home, row: _bump_count(row), "count_answered"),
@@ -216,9 +217,11 @@ def main():
             with tempfile.TemporaryDirectory() as tmp:
                 wc = Path(tmp) / "work"
                 shutil.copytree(work, wc)
-                shared_src = Path(str(work) + "-shared")
-                if shared_src.exists():
-                    shutil.copytree(shared_src, Path(str(wc) + "-shared"))
+                # 工作区的「<名字>-后缀」兄弟目录是题目 fixture 的一部分（37 的 -shared 附加目录、
+                # 38 的 -system hosts fixture），一起拷走，判分才能在拷贝里看到同样的输入。
+                for sibling in sorted(work.parent.glob(work.name + "-*")):
+                    if sibling.is_dir():
+                        shutil.copytree(sibling, Path(str(wc) + sibling.name[len(work.name):]))
                 hc = Path(tmp) / "home"
                 if row.get("home"):
                     shutil.copytree(row["home"], hc)

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/stopfailure-input.sh\""
+          }
+        ],
+        "matcher": "rate_limit"
+      }
+    ]
+  }
+}
