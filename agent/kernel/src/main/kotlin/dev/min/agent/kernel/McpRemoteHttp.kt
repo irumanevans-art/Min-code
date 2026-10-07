@@ -5,7 +5,7 @@ import dev.min.agent.mcp.McpHttpException
 import dev.min.agent.spi.*
 import java.net.URI
 
-/** helper 的凭证优先于 OAuth，401 只重跑一次 helper，不能替用户切换认证方式。 */
+/** helper 的凭证优先于 OAuth，401/403 只重跑一次 helper，不能替用户切换认证方式。 */
 internal class McpRemoteHttp(
     private val delegate: HttpTransport,
     private val spec: McpServerSpec.Remote,
@@ -38,7 +38,7 @@ internal class McpRemoteHttp(
             return delegate.open(HttpRequest(request.method,request.url,headers,request.body,request.timeoutMs))
         }
         var response=attempt(initial)
-        if(response.status==401 && spec.headersHelper!=null) {
+        if(response.status in setOf(401,403) && spec.headersHelper!=null) {
             response.close()
             val fresh=helper.reload()
             configured = configured || fresh.any { it.first.equals("Authorization",true) }
