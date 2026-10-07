@@ -36,6 +36,7 @@ class McpOAuthClientTest {
         var prPath = "/.well-known/oauth-protected-resource/mcp"
         var asPath = "/.well-known/oauth-authorization-server/tenant"
         var pkce = listOf("S256")
+        var issSupported: Boolean? = null
         var supportedScopes = listOf("admin", "offline_access")
         var resourceScopes: List<String>? = listOf("read")
         var resourceMismatch = false
@@ -97,6 +98,7 @@ class McpOAuthClientTest {
                         put("authorization_endpoint", "$base/authorize"); put("token_endpoint", "$base/token")
                         put("registration_endpoint", "$base/register")
                         put("code_challenge_methods_supported", JsonArray(pkce.map(::JsonPrimitive)))
+                        issSupported?.let { put("authorization_response_iss_parameter_supported",it) }
                         put("scopes_supported", JsonArray(supportedScopes.map(::JsonPrimitive)))
                         put("token_endpoint_auth_methods_supported",JsonArray(asAuthMethods.map(::JsonPrimitive)))
                     }
@@ -191,10 +193,23 @@ class McpOAuthClientTest {
             expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) }; assertEquals(0,f.exchanged); assertTrue(f.store.values.isEmpty())
         }; Unit
     }
-    @Test fun `issuer missing wrong and normalized variants never exchange authorization code`() = runBlocking {
-        for (mode in 0..3) Fixture().use { f ->
-            f.callback={ if(mode==0) it.remove("iss") else it["iss"]=when(mode) { 1 -> "${f.issuer}/"; 2 -> f.issuer.replace("http:","HTTP:"); else -> "${f.base}/wrong" } }
+    @Test fun `issuer wrong and normalized variants never exchange authorization code`() = runBlocking {
+        for (mode in 1..3) Fixture().use { f ->
+            f.callback={ it["iss"]=when(mode) { 1 -> "${f.issuer}/"; 2 -> f.issuer.replace("http:","HTTP:"); else -> "${f.base}/wrong" } }
             expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) }; assertEquals(0,f.exchanged)
+        }; Unit
+    }
+    @Test fun `missing issuer accepted only when AS does not declare response support`() = runBlocking {
+        for(supported in listOf(null,false)) Fixture().use { f ->
+            f.issSupported=supported; f.callback={it.remove("iss")}; f.client.login(f.key)
+            assertEquals(1,f.exchanged); assertNotNull(f.store.load(f.key))
+        }; Unit
+    }
+    @Test fun `missing issuer rejected when AS declares response support`() = runBlocking {
+        Fixture().use { f ->
+            f.issSupported=true; f.callback={it.remove("iss")}
+            expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) }
+            assertEquals(0,f.exchanged); assertNull(f.store.load(f.key))
         }; Unit
     }
     @Test fun `unsupported missing and plain only PKCE are refused before browser`() = runBlocking {

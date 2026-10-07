@@ -104,8 +104,10 @@ class McpOAuthClient(
         val params = callbackParams(callback, redirect ?: fail(McpOAuthException.Kind.Security))
         val returnedState = params["state"] ?: fail(McpOAuthException.Kind.Security)
         if (!MessageDigest.isEqual(state.toByteArray(), returnedState.toByteArray())) fail(McpOAuthException.Kind.Security)
-        // iss 逐字比较；缺失也拒绝，授权码绝不能先交给未验证的令牌端点。
-        if (params["iss"] != asMetadata.issuer) fail(McpOAuthException.Kind.Security)
+        // RFC 9207：有 iss 必须逐字匹配；仅声明支持的服务器才必须返回它。
+        val returnedIssuer=params["iss"]
+        val requiresIssuer=asMetadata.json["authorization_response_iss_parameter_supported"] == JsonPrimitive(true)
+        if ((returnedIssuer != null && returnedIssuer != asMetadata.issuer) || (returnedIssuer == null && requiresIssuer)) fail(McpOAuthException.Kind.Security)
         if (params.containsKey("error")) fail(McpOAuthException.Kind.Token)
         val code = params["code"]?.takeIf { it.isNotBlank() } ?: fail(McpOAuthException.Kind.Security)
         val credentials = token(registered, listOf(
