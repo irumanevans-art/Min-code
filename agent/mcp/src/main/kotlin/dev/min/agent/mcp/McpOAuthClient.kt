@@ -129,7 +129,8 @@ class McpOAuthClient(
             if(current.accessToken!=null && (current.refreshToken!=observed.refreshToken || current.accessToken!=observed.accessToken || (rejectedAccessToken!=null && current.accessToken!=rejectedAccessToken))) return@withLock current
             suspend fun exchange(old: McpOAuthCredentials): McpOAuthCredentials {
                 val refresh=old.refreshToken ?: fail(McpOAuthException.Kind.RefreshRejected)
-                secureUri(old.issuer);secureUri(old.tokenEndpoint)
+                val allowLoopback=loopback(secureUri(key.endpoint))
+                secureUri(old.issuer,allowLoopback);secureUri(old.tokenEndpoint,allowLoopback)
                 return token(old,listOf("grant_type" to "refresh_token","refresh_token" to refresh,"resource" to canonicalResource(key.endpoint)),refreshing=true)
             }
             val next=try {exchange(current)} catch(e: McpOAuthException) {
@@ -145,9 +146,10 @@ class McpOAuthClient(
     }
 
     private suspend fun discover(resource: String, settings: McpOAuthSettings, challenge: McpAuthChallenge?): Pair<Metadata, String?> {
+        val allowLoopback=loopback(secureUri(resource))
         settings.authServerMetadataUrl?.let { override ->
             if (!secureUri(override).scheme.equals("https",true)) fail(McpOAuthException.Kind.Security)
-            return metadata(json("GET", override) ?: fail(McpOAuthException.Kind.Discovery), null) to null
+            return metadata(json("GET", override) ?: fail(McpOAuthException.Kind.Discovery), null, allowLoopback) to null
         }
         val u = secureUri(resource)
         val origin = URI(u.scheme, u.rawAuthority, null, null, null).toASCIIString()
@@ -155,30 +157,30 @@ class McpOAuthClient(
             "$origin/.well-known/oauth-protected-resource${u.rawPath.orEmpty().takeUnless { it == "/" }.orEmpty()}",
             "$origin/.well-known/oauth-protected-resource",
         )
-        val pr = firstJson(candidates.distinct()) ?: fail(McpOAuthException.Kind.Discovery)
+        val pr = firstJson(candidates.distinct(),allowLoopback) ?: fail(McpOAuthException.Kind.Discovery)
         if (pr.text("resource") != resource) fail(McpOAuthException.Kind.Security)
         val issuers = strings(pr, "authorization_servers")
         if (issuers.isEmpty()) fail(McpOAuthException.Kind.Discovery)
         for (issuer in issuers) {
-            val i = secureUri(issuer)
+            val i = secureUri(issuer,allowLoopback)
             if (i.rawQuery != null || i.fragment != null) fail(McpOAuthException.Kind.Security)
             val root = URI(i.scheme, i.rawAuthority, null, null, null).toASCIIString()
             val path = i.rawPath.orEmpty().trimEnd('/')
             val urls = listOf("$root/.well-known/oauth-authorization-server$path", "$root/.well-known/openid-configuration$path") +
                 if (path.isNotEmpty()) listOf("$root$path/.well-known/openid-configuration") else emptyList()
-            val asJson = firstJson(urls) ?: continue
-            return metadata(asJson, issuer) to strings(pr, "scopes_supported").joinToString(" ").ifBlank { null }
+            val asJson = firstJson(urls,allowLoopback) ?: continue
+            return metadata(asJson, issuer, allowLoopback) to strings(pr, "scopes_supported").joinToString(" ").ifBlank { null }
         }
         fail(McpOAuthException.Kind.Discovery)
     }
 
-    private fun metadata(j: JsonObject, expectedIssuer: String?): Metadata {
+    private fun metadata(j: JsonObject, expectedIssuer: String?, allowLoopback: Boolean): Metadata {
         val issuer = j.text("issuer") ?: fail(McpOAuthException.Kind.Discovery)
-        if (secureUri(issuer).rawQuery != null) fail(McpOAuthException.Kind.Security)
+        if (secureUri(issuer,allowLoopback).rawQuery != null) fail(McpOAuthException.Kind.Security)
         if (expectedIssuer != null && issuer != expectedIssuer) fail(McpOAuthException.Kind.Security)
         val auth = j.text("authorization_endpoint") ?: fail(McpOAuthException.Kind.Discovery)
         val token = j.text("token_endpoint") ?: fail(McpOAuthException.Kind.Discovery)
-        secureUri(auth); secureUri(token)
+        secureUri(auth,allowLoopback); secureUri(token,allowLoopback)
         return Metadata(j, issuer, auth, token)
     }
 
@@ -194,7 +196,7 @@ class McpOAuthClient(
         var method = if (secret == null) "none" else if ("client_secret_post" in strings(asMetadata.json, "token_endpoint_auth_methods_supported") && "client_secret_basic" !in strings(asMetadata.json, "token_endpoint_auth_methods_supported")) "client_secret_post" else "client_secret_basic"
         if (id == null) {
             val endpoint = asMetadata.json.text("registration_endpoint") ?: fail(McpOAuthException.Kind.Registration)
-            secureUri(endpoint)
+            secureUri(endpoint,loopback(secureUri(key.endpoint)))
             val body = buildJsonObject {
                 put("client_name", "Min MCP client"); put("application_type", "native")
                 put("redirect_uris", JsonArray(listOf(JsonPrimitive(redirect))))
@@ -211,6 +213,7 @@ class McpOAuthClient(
     }
 
     private suspend fun token(old: McpOAuthCredentials, values: List<Pair<String, String>>, refreshing: Boolean): McpOAuthCredentials {
+        secureUri(old.tokenEndpoint,loopback(secureUri(values.first { it.first=="resource" }.second)))
         val form = values.toMutableList()
         val headers = mutableListOf("Content-Type" to "application/x-www-form-urlencoded", "Accept" to "application/json")
         if (old.tokenEndpointAuthMethod == "client_secret_basic") {
@@ -233,9 +236,9 @@ class McpOAuthClient(
         return old.copy(accessToken=access, refreshToken=refresh, expiresAtMs=duration?.let { nowMs() + it * 1000 }, scope=j.text("scope") ?: old.scope)
     }
 
-    private suspend fun firstJson(urls: List<String>): JsonObject? {
+    private suspend fun firstJson(urls: List<String>, allowLoopback: Boolean): JsonObject? {
         for (url in urls) {
-            secureUri(url)
+            secureUri(url,allowLoopback)
             try { json("GET",url)?.let { return it } }
             catch(e: McpOAuthException) { if(e.kind!=McpOAuthException.Kind.Discovery) throw e }
         }
@@ -263,9 +266,10 @@ private fun fail(kind: McpOAuthException.Kind): Nothing = throw McpOAuthExceptio
 private fun b64(bytes: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8)
 private fun query(url: String, params: List<Pair<String, String>>) = url + (if ('?' in url) "&" else "?") + params.joinToString("&") { "${encode(it.first)}=${encode(it.second)}" }
-private fun secureUri(raw: String): URI {
+private fun loopback(uri: URI) = uri.host?.lowercase() in setOf("127.0.0.1","[::1]","::1")
+private fun secureUri(raw: String, allowLoopback: Boolean = true): URI {
     val u = try { URI(raw) } catch (e: Exception) { fail(McpOAuthException.Kind.Security) }
-    if (u.host == null || u.userInfo != null || u.fragment != null || !(u.scheme.equals("https",true) || (u.scheme.equals("http",true) && u.host in setOf("127.0.0.1", "[::1]")))) fail(McpOAuthException.Kind.Security)
+    if (u.host == null || u.userInfo != null || u.fragment != null || !(u.scheme.equals("https",true) || (u.scheme.equals("http",true) && allowLoopback && loopback(u)))) fail(McpOAuthException.Kind.Security)
     return u
 }
 fun canonicalResource(endpoint: String): String {
