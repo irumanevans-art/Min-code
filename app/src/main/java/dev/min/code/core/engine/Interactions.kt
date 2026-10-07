@@ -54,6 +54,13 @@ sealed interface PendingInteraction {
         override val toolUseId: String?,
         /** CC 与内核同形：question、header、options(label, description)、multiSelect */
         val questions: List<QuestionView>,
+        /** 这是 MCP 服务器在向用户要信息（elicitation）而不是模型在提问：服务器名。null = 模型的 AskUserQuestion */
+        val server: String? = null,
+        /**
+         * MCP 的 url 模式：服务器请用户去一个网址完成一件事。非空时不画选项，画一张显示服务器、完整 URL 与高亮域名的卡，
+         * 用户点「打开」才由 App 打开（MCP 规范：不预取、不自动打开）。答复：打开 = [InteractionAnswer.Answer] 选 `y`，拒绝 = [InteractionAnswer.Decline]
+         */
+        val url: UrlRequest? = null,
     ) : PendingInteraction
 
     data class PlanReview(
@@ -135,6 +142,9 @@ data class AgentLabel(
     /** 分叉子 agent（CC 的 `fork`：继承父会话完整上下文、一律后台跑）。卡上说「分身」而不是「子 agent」。B6(b) 补 */
     val fork: Boolean = false,
 )
+
+/** MCP url 模式的请求内容：[message] 是服务器写给人看的理由，[domain] 是内核从 URL 里解出来的主机名 */
+data class UrlRequest(val url: String, val domain: String, val message: String)
 
 data class PathView(val path: String, val scope: PathScope)
 

@@ -117,7 +117,11 @@ internal fun ClaudeCodeQuestionSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Seal()
-                Text(stringResource(R.string.question_title), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    // MCP 服务器在要信息时写明是谁在要（模型自己的提问用原标题）
+                    pending.server?.let { stringResource(R.string.question_title_mcp, it) } ?: stringResource(R.string.question_title),
+                    style = MaterialTheme.typography.titleMedium,
+                )
             }
             PermissionOriginLines(origin, denyHint = false)
 

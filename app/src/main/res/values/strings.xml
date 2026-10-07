@@ -1267,4 +1267,13 @@
     <string name="mcp_action_login">Sign in</string>
     <string name="mcp_action_logout">Sign out</string>
     <string name="mcp_action_reconnect">Reconnect</string>
+    <string name="question_title_mcp">MCP server %1$s is asking you</string>
+    <string name="mcp_url_title">%1$s asks you to open a web page</string>
+    <string name="mcp_url_domain">Domain</string>
+    <string name="mcp_url_full">Full address</string>
+    <string name="mcp_url_userinfo_warning">This address has a user name in front of the host. The part before the @ is not where the page is — check the highlighted host.</string>
+    <string name="mcp_url_note">Nothing is opened or fetched until you tap Open. The page opens in your browser, outside Min.</string>
+    <string name="mcp_url_open">Open</string>
+    <string name="mcp_url_decline">Decline</string>
+    <string name="mcp_url_no_browser">No browser is available on this device to open the page.</string>
 </resources>

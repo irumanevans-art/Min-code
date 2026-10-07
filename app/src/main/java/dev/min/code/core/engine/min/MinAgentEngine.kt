@@ -132,6 +132,8 @@ class MinAgentEngine(
         tools = minToolsWithDevice(devices, enabled = { settings.snapshot?.controlDevice == true }),
         mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context, mcpLoginGate),
         trustProjectHooks = trust::isTrusted,
+        // 界面有 url 卡（McpUrlSheet）：显示完整 URL 与域名，点了才用 Custom Tab 打开
+        canAnswerMcpUrlElicitation = true,
     )
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */

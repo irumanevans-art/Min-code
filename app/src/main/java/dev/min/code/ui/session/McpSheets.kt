@@ -15,6 +15,19 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import dev.min.code.ui.components.openInExternalBrowser
+import dev.min.code.ui.components.ToastType
+import dev.min.code.ui.components.LocalToaster
+import dev.min.code.core.engine.UrlRequest
+import dev.min.code.core.engine.QuestionAnswerInput
+import dev.min.code.core.engine.PendingInteraction
+import dev.min.code.core.engine.InteractionAnswer
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -207,4 +220,84 @@ private fun MonoBlock(label: String, value: String, emphasized: Boolean = false)
             color = if (emphasized) MaterialTheme.sea.ink else MaterialTheme.colorScheme.onSurface,
         )
     }
+}
+
+/**
+ * MCP 的 url 模式提问：服务器请用户去一个网址完成一件事（授权、付款、填敏感信息）。MCP 规范的两个 MUST 在这里落实：
+ * 一，**完整 URL 与域名**摆在用户面前（域名单独放大、在 URL 里高亮，URL 里夹带用户名的写警告——`https://好域名@坏域名/` 这类障眼法）；
+ * 二，**不预取、不自动打开**：只有用户点「打开」这一下才用外部浏览器（Custom Tab）打开，没有浏览器就留在卡上说明、不当作同意。
+ * 「打开」的答复是选 `y`（内核据此回 accept），「拒绝」是 Decline。
+ */
+@Composable
+internal fun McpUrlSheet(pending: PendingInteraction.Question, request: UrlRequest, onAnswer: (InteractionAnswer) -> Unit) {
+    val context = LocalContext.current
+    val toaster = LocalToaster.current
+    val noBrowser = stringResource(R.string.mcp_url_no_browser)
+    val parts = remember(request.url, request.domain) { splitUrlHost(request.url, request.domain) }
+    CardSheet(onDismiss = {}, dismissible = false) {
+        CardTitle(stringResource(R.string.mcp_url_title, pending.server.orEmpty()))
+        if (request.message.isNotBlank()) Text(request.message, style = MaterialTheme.typography.bodyMedium)
+        MonoBlock(stringResource(R.string.mcp_url_domain), request.domain, emphasized = true)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stringResource(R.string.mcp_url_full), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = buildAnnotatedString {
+                    if (parts == null) append(request.url) else {
+                        append(parts.before)
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.sea.ink)) { append(parts.host) }
+                        append(parts.after)
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = JetbrainsMono,
+            )
+        }
+        if (parts?.hasUserInfo == true) {
+            Text(stringResource(R.string.mcp_url_userinfo_warning), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.sea.vermilion)
+        }
+        Text(
+            stringResource(R.string.mcp_url_note),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        InkDivider()
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            InkButton(onClick = { onAnswer(InteractionAnswer.Decline) }, modifier = Modifier.weight(1f), tone = InkButtonTone.Vermilion) {
+                Text(stringResource(R.string.mcp_url_decline))
+            }
+            InkButton(
+                onClick = {
+                    // 打开不了（没有外部浏览器）就别替用户点头：卡留着，他可以拒绝
+                    if (context.openInExternalBrowser(request.url)) {
+                        onAnswer(InteractionAnswer.Answer(listOf(QuestionAnswerInput(pending.questions.firstOrNull()?.question.orEmpty(), listOf("y")))))
+                    } else {
+                        toaster.show(noBrowser, ToastType.Error)
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text(stringResource(R.string.mcp_url_open)) }
+        }
+    }
+}
+
+/** URL 拆成「主机之前 / 主机 / 主机之后」，给高亮用。[hasUserInfo] = 主机前面还有 `用户名@` */
+internal data class UrlParts(val before: String, val host: String, val after: String, val hasUserInfo: Boolean)
+
+/**
+ * 在 [url] 里定位主机名 [domain]。按 URL 语法找（authority = `//` 到下一个 `/ ? #`，主机在最后一个 `@` 之后、端口之前），
+ * 而不是在整串里找第一处 [domain]：`https://evil.com.attacker.net@evil.com/` 的主机是后面那个，字符串搜索会高亮到前面的伪装部分上。
+ * 找不到（形状不对、主机与 [domain] 对不上）返回 null，调用方整串原样显示、不高亮。
+ */
+internal fun splitUrlHost(url: String, domain: String): UrlParts? {
+    val schemeEnd = url.indexOf("://").takeIf { it > 0 } ?: return null
+    val authorityStart = schemeEnd + 3
+    val authorityEnd = url.indexOfAny(charArrayOf('/', '?', '#'), authorityStart).let { if (it < 0) url.length else it }
+    val authority = url.substring(authorityStart, authorityEnd)
+    val at = authority.lastIndexOf('@')
+    val hostPort = authority.substring(at + 1)
+    // IPv6 字面量 [::1]:8080 里的冒号不是端口分隔；其余主机名里没有冒号，第一个冒号起是端口
+    val host = if (hostPort.startsWith("[")) hostPort.substringBefore(']') + "]" else hostPort.substringBefore(':')
+    if (!host.equals(domain, ignoreCase = true)) return null
+    val start = authorityStart + at + 1
+    return UrlParts(url.substring(0, start), url.substring(start, start + host.length), url.substring(start + host.length), hasUserInfo = at >= 0)
 }

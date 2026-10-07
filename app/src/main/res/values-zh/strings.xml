@@ -1262,4 +1262,13 @@
     <string name="mcp_action_login">登录</string>
     <string name="mcp_action_logout">退出登录</string>
     <string name="mcp_action_reconnect">重连</string>
+    <string name="question_title_mcp">MCP 服务器 %1$s 在向你要信息</string>
+    <string name="mcp_url_title">%1$s 请你打开一个网页</string>
+    <string name="mcp_url_domain">域名</string>
+    <string name="mcp_url_full">完整地址</string>
+    <string name="mcp_url_userinfo_warning">这个地址在主机前面带了用户名。@ 之前的部分不是页面所在的位置——请看高亮的主机名。</string>
+    <string name="mcp_url_note">点「打开」之前什么都不会打开、也不会预先访问。页面在浏览器里打开，不在 Min 里。</string>
+    <string name="mcp_url_open">打开</string>
+    <string name="mcp_url_decline">拒绝</string>
+    <string name="mcp_url_no_browser">这台设备上没有可用的浏览器来打开页面。</string>
 </resources>

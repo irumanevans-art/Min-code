@@ -168,6 +168,8 @@ object MinKernelDeps {
         mcpAuthorizer: dev.min.agent.spi.McpAuthorizer = dev.min.agent.spi.McpAuthorizer.Unavailable,
         /** 项目层 hooks 与项目 `.mcp.json` 共用的工作区信任；默认不信任 */
         trustProjectHooks: (GuestPath) -> Boolean = { false },
+        /** MCP 的 url 模式提问：界面有卡片让人看清网址、点了才打开才为真，否则内核直接回 decline */
+        canAnswerMcpUrlElicitation: Boolean = false,
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
         host = HostPorts(
@@ -183,5 +185,6 @@ object MinKernelDeps {
         mcpTokenStore = mcpTokenStore,
         mcpAuthorizer = mcpAuthorizer,
         trustProjectHooks = trustProjectHooks,
+        canAnswerMcpUrlElicitation = canAnswerMcpUrlElicitation,
     )
 }
