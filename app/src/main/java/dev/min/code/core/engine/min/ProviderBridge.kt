@@ -29,21 +29,46 @@ internal fun agentAuth(tokenEnvKey: String): AuthScheme = when (tokenEnvKey) {
     else -> error("未知鉴权类型")
 }
 
+/**
+ * 一个档在 Min 里实际请求的 base 地址。
+ *
+ * Claude 风格的档入库时会**剥掉末尾 `/v1`**（`normalizeBaseUrl`：CLI 自己去拼 `/v1/messages`），
+ * 但 OpenAI 系方言（Chat / Responses）的客户端是 `base + "/responses"` 直接拼——档里剥过了就会请求 `…/responses`，
+ * 对 `…/v1/responses` 的真实端点是 404（模拟器上用 Lunora 的档实测到的），目录里「地址 + 方言」的匹配也永远对不上。
+ * 这里还原：目录里有的地址（带不带 `/v1` 都试）以目录为准；档里本来就带着版本段（`/v1`、`/v4`…）的原样用；
+ * 其余按 OpenAI 的约定补 `/v1`（和 `joinOpenAiApi` 同一个口径）。Anthropic 方言不动。
+ */
+internal fun agentBaseUrl(profile: ApiProfile, catalog: Catalog): String {
+    val wire = agentWire(profile.apiFormat)
+    if (wire == Wire.AnthropicMessages) return profile.baseUrl
+    val given = profile.baseUrl.trimEnd('/')
+    val known = catalog.providers.filter { it.wire == wire }.map { it.baseUrl.trimEnd('/') }
+    return when {
+        given in known -> profile.baseUrl
+        "$given/v1" in known -> "$given/v1"
+        VERSION_SEGMENT.containsMatchIn(given) -> profile.baseUrl
+        else -> "$given/v1"
+    }
+}
+
+private val VERSION_SEGMENT = Regex("/v\\d+$", RegexOption.IGNORE_CASE)
+
 internal data class ProviderSelection(val provider: ProviderDescriptor, val model: ModelProfile, val notice: String?)
 
 internal fun selectProvider(profile: ApiProfile, modelId: String, catalog: Catalog): ProviderSelection {
     require(modelId.isNotBlank()) { "请指定模型 id" }
     val wire = agentWire(profile.apiFormat)
+    val baseUrl = agentBaseUrl(profile, catalog)
     val bundled = catalog.providers.firstOrNull {
-        it.baseUrl.trimEnd('/') == profile.baseUrl.trimEnd('/') && it.wire == wire &&
+        it.baseUrl.trimEnd('/') == baseUrl.trimEnd('/') && it.wire == wire &&
             catalog.model(ModelRef(it.id, modelId)) != null
     }
     val ref = ModelRef(profile.id, modelId)
     val model = bundled?.let { catalog.model(ModelRef(it.id, modelId)) }?.copy(ref = ref)
         ?: ModelProfile(ref, family = ModelFamily.Other,
             contextWindow = ClaudeCodeModelCatalog.assumedContextWindow(modelId), maxOutputTokens = 8192)
-    val provider = bundled?.copy(id = profile.id, baseUrl = profile.baseUrl, auth = agentAuth(profile.tokenEnvKey))
-        ?: ProviderDescriptor(profile.id, profile.baseUrl, wire, agentAuth(profile.tokenEnvKey))
+    val provider = bundled?.copy(id = profile.id, baseUrl = baseUrl, auth = agentAuth(profile.tokenEnvKey))
+        ?: ProviderDescriptor(profile.id, baseUrl, wire, agentAuth(profile.tokenEnvKey))
     return ProviderSelection(provider, model, if (bundled == null) "未在目录中，能力按保守值处理" else null)
 }
 

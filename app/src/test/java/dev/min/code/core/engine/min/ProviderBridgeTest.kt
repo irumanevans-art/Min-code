@@ -38,6 +38,17 @@ class ProviderBridgeTest {
         assertNull(selected.notice)
         assertFalse(selected.provider.toString().contains(profile.token))
     }
+    @Test fun openAiProfilesGetTheirStrippedVersionSegmentBack() {
+        // 入库时 Claude 风格的 normalizeBaseUrl 剥掉了 /v1；OpenAI 系方言要它，否则请求 …/responses 404
+        val stripped = profile.copy(baseUrl = "https://example.test")
+        assertEquals("目录里有 …/v1 的就按目录", "https://example.test/v1", agentBaseUrl(stripped, catalog))
+        assertNull(selectProvider(stripped, "model", catalog).notice)
+        assertEquals("https://proxy.test/v1", agentBaseUrl(profile.copy(baseUrl = "https://proxy.test"), catalog))
+        assertEquals("档里本来就带版本段的原样", "https://x.test/api/v4", agentBaseUrl(profile.copy(baseUrl = "https://x.test/api/v4"), catalog))
+        assertEquals("已经带 /v1（含尾斜杠）的原样", profile.baseUrl, agentBaseUrl(profile, catalog))
+        // Anthropic 方言不动
+        assertEquals("https://example.test", agentBaseUrl(stripped.copy(apiFormat = ApiFormat.ANTHROPIC_MESSAGES), catalog))
+    }
     @Test fun unknownAddressDoesNotBorrowNamedModelCapabilities() {
         val selected = selectProvider(profile.copy(baseUrl = "https://proxy.test"), "model", catalog)
         assertEquals(ModelFamily.Other, selected.model.family)
