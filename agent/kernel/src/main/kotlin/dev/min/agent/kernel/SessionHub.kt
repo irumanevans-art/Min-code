@@ -168,17 +168,57 @@ class SessionHub(
         scope.launch { sweepOrphanHookDirs() }
     }
 
-    private suspend fun sweepOrphanHookDirs() {
+    /**
+     * 本 Hub 实例在 hook 暂存目录里留下的 owner 记号（实例 id + 进程 pid）。桌面多终端共用 `~/.min/root`，
+     * 启动清扫按它区分：**别的实例**留下的目录、且那个进程已确认死掉（N2 的判死口径）才删——
+     * 本实例自己的（包括正在跑的）不动，清扫与首会话 SessionStart 后台 hook 的竞态也就不存在了（N1）
+     */
+    internal val hookStagingOwner = "${deps.ids.next("hub")} ${currentPid()}"
+
+    /** 桌面取 JVM 进程号；Android 老 API 没有 ProcessHandle（33+ 才有），拿不到就写 0（清扫视作「认不了主」） */
+    private fun currentPid(): Long = try {
+        ProcessHandle.current().pid()
+    } catch (_: Throwable) {
+        0L
+    }
+
+    /** 启动清扫（init 里异步跑；测试直调以便确定性驱动）。internal 仅为测试可见性，不进公共 API */
+    internal suspend fun sweepOrphanHookDirs() {
         dev.min.agent.spi.catchingNonCancellation {
             val root = GuestPath("/root/.min/hooks")
-            val orphans = deps.host.fs.list(root).filter { it.kind == dev.min.agent.spi.FileKind.Directory && it.name.startsWith("hookbg_") }
-            if (orphans.isEmpty()) return@catchingNonCancellation
+            val candidates = deps.host.fs.list(root).filter { it.kind == dev.min.agent.spi.FileKind.Directory && it.name.startsWith("hookbg_") }
+            if (candidates.isEmpty()) return@catchingNonCancellation
+            val doomed = mutableListOf<GuestPath>()
+            for (entry in candidates) {
+                val dir = GuestPath("${root.value}/${entry.name}")
+                val owner = try {
+                    deps.host.fs.read(GuestPath("${dir.value}/owner")).decodeToString().trim()
+                } catch (_: Exception) {
+                    "" // 读不了按「认不了主」处理：不敢删
+                }
+                val parts = owner.split(' ')
+                if (parts.size != 2) continue // 没有 owner 文件（老版本留下的）或格式不对：认不了主，留着
+                if (parts[0] == hookStagingOwner.substringBefore(' ')) continue // 本实例的，正在用
+                val pid = parts[1].toLongOrNull() ?: continue
+                if (pid <= 0) continue // 认不出进程：不敢按死处理
+                if (ownerConfirmedDead(pid)) doomed += dir
+            }
+            if (doomed.isEmpty()) return@catchingNonCancellation
+            // 路径必须过 hookShellPath（与 AsyncHooks.cleanup 同一条规矩）：桌面 guest 路径在宿主 shell 里不存在
             val rm = deps.host.exec.run(
-                ShellCommand("rm -rf -- " + orphans.joinToString(" ") { d -> "'${root.value}/${d.name}'" }, root),
-                ExecOptions(5_000),
+                ShellCommand("rm -rf -- " + doomed.joinToString(" ") { d -> "'${deps.hookShellPath(d)}'" }, root),
+                ExecOptions(15_000),
             )
             if (rm is ExecResult.Backgrounded) deps.host.exec.kill(rm.handle)
         }
+    }
+
+    /** owner 进程确认死了才真：探测超时 / 起不来都当活着（与后台 hook 存活探测同一个口径，N2） */
+    private suspend fun ownerConfirmedDead(pid: Long): Boolean = try {
+        val r = deps.host.exec.run(ShellCommand("kill -0 $pid", GuestPath("/root")), ExecOptions(10_000))
+        r is ExecResult.Exited && r.exitCode != 0
+    } catch (_: Exception) {
+        false
     }
 
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */

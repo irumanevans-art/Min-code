@@ -90,6 +90,8 @@ internal class AsyncHookRunner(
         require(SAFE_ID.matches(id)) { "后台 hook id 必须是安全路径段" }
         val dir = GuestPath("/root/.min/hooks/$id")
         deps.host.fs.writeAtomic(child(dir, "in.json"), stdin.toString().encodeToByteArray())
+        // owner 记号（N1）：启动清扫据此认「这是谁留下的」——别的实例的目录、且其进程确认已死，才会被删
+        deps.host.fs.writeAtomic(child(dir, "owner"), (rt.hub?.hookStagingOwner ?: "unowned 0").encodeToByteArray())
         deps.host.fs.writeAtomic(child(dir, "start.sh"), script(handler, env + handler.pluginEnv, dir, timeoutSeconds).encodeToByteArray())
         val started = deps.clock.nowMs()
         // Windows 的 ProcessBuilder -> Git Bash 会破坏复杂的 -c 参数；与同步批同一条路：脚本文本走文件端口（HookBatchRunner 同）。

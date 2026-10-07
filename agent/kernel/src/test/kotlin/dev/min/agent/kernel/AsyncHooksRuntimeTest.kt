@@ -138,13 +138,19 @@ class AsyncHooksRuntimeTest {
                     startResult
                 }
                 command.script.startsWith("kill -0") -> {
-                    val n = probes.incrementAndGet()
-                    hookDirs().forEach { maybeFinish(it) }
-                    probeResult()
+                    val pid = command.script.removePrefix("kill -0").trim()
+                    probeAnswers[pid] ?: run {
+                        probes.incrementAndGet()
+                        hookDirs().forEach { maybeFinish(it) }
+                        probeResult()
+                    }
                 }
                 else -> ExecResult.Exited(0, "", false, 1)
             }
         }
+
+        /** 按 pid 指定 `kill -0 <pid>` 的回放（清扫的 owner 探活用）；没指定的 pid 走 [probeResult] */
+        val probeAnswers = java.util.concurrent.ConcurrentHashMap<String, ExecResult>()
 
         private suspend fun maybeFinish(dir: String) {
             if (probes.get() >= finishAtProbe) {
@@ -191,7 +197,7 @@ class AsyncHooksRuntimeTest {
 
     private fun args(): JsonObject = JsonObject(mapOf("command" to JsonPrimitive("echo hi")))
 
-    private fun hub(exec: Exec, fs: WorkspaceFs): SessionHub {
+    private fun hub(exec: Exec, fs: WorkspaceFs, hookShellPath: (GuestPath) -> String = { it.value }): SessionHub {
         val model = RoutingModel { req ->
             if (req.lastText().contains("跑")) reply(bashCall("c1"), stop = StopReason.ToolUse) else reply(TextPart("好"))
         }
@@ -202,6 +208,7 @@ class AsyncHooksRuntimeTest {
             models = base.models, tools = listOf(bash),
             host = HostPorts(fs, base.host.search, exec, base.host.artifacts),
             platform = "test", zone = ZoneOffset.UTC, memoryHome = GuestPath("/root"),
+            hookShellPath = hookShellPath,
             env = { name -> if (name == "CLAUDE_CODE_DISABLE_AUTO_MEMORY") "1" else null },
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
@@ -312,5 +319,35 @@ class AsyncHooksRuntimeTest {
             "宿主能探活时就不该再起 kill -0 探测进程：${exec.commands}",
             exec.commands.none { it.startsWith("kill -0") },
         )
+    }
+
+    // ---- N1：启动清扫认 owner、只删别的实例且进程确认已死的目录，路径过 hookShellPath ----
+
+    @Test
+    fun `启动清扫只删别的实例且进程确认已死的目录，删除路径过映射`() = run {
+        val fs = MemFs()
+        val exec = ScriptedExec(fs)
+        // 1234 确认死（kill -0 非零）；5678 探测超时（当活着，不删）
+        exec.probeAnswers["1234"] = ExecResult.Exited(1, "", false, 1)
+        exec.probeAnswers["5678"] = ExecResult.TimedOut("", false)
+        // 先建 hub（此刻 hooks 目录是空的，init 的异步清扫无事可做），再预置四种目录
+        val h = hub(exec, fs, hookShellPath = { "M:" + it.value })
+        fs.files["/root/.min/hooks/hookbg_dead/in.json"] = "{}"
+        fs.files["/root/.min/hooks/hookbg_dead/owner"] = "other-instance 1234\n"
+        fs.files["/root/.min/hooks/hookbg_mine/in.json"] = "{}"
+        fs.files["/root/.min/hooks/hookbg_mine/owner"] = h.hookStagingOwner
+        fs.files["/root/.min/hooks/hookbg_alive/in.json"] = "{}"
+        fs.files["/root/.min/hooks/hookbg_alive/owner"] = "other-instance 5678\n"
+        fs.files["/root/.min/hooks/hookbg_old/in.json"] = "{}" // 老版本没有 owner：认不了主，留着
+        h.sweepOrphanHookDirs()
+        val rms = exec.commands.filter { it.startsWith("rm -rf") }
+        assertTrue("发过删除", rms.isNotEmpty())
+        val joined = rms.joinToString("\n")
+        assertTrue("只删确认死的那个，且路径过 hookShellPath 映射：$joined", joined.contains("M:/root/.min/hooks/hookbg_dead"))
+        assertTrue("本实例的不删：$joined", !joined.contains("hookbg_mine"))
+        assertTrue("owner 进程没确认死的不删：$joined", !joined.contains("hookbg_alive"))
+        assertTrue("没有 owner 文件的（认不了主）不删：$joined", !joined.contains("hookbg_old"))
+        assertTrue("原始 guest 路径不该直接进删除命令：$joined", !joined.contains("'/root/.min/hooks/"))
+        assertTrue("探过 owner 进程", exec.commands.any { it == "kill -0 1234" || it.startsWith("kill -0 1234") })
     }
 }
