@@ -337,12 +337,15 @@ class HooksSessionTest {
         val model = RoutingModel { req -> reply(TextPart("好")) }
         val (first, store, hub) = hubSession(model)
         first.say("干活")
+        // TurnEnded 已发布时回合 Job 还可能在收尾；close 要求真正空闲，不能用状态发布代替 Job 完成。
+        first.awaitIdle()
         assertTrue(hub.close(first.sessionId))
         assertEquals("close 时 SessionEnd 先跑一遍", 1, Files.readAllLines(marker).size)
 
         // 用户打开（--resume 的路）：SessionStart(source = resume) 再写一行
         val resumed = hub.open(first.sessionId, resumedByUser = true)!!
         resumed.say("接着")
+        resumed.awaitIdle()
         assertEquals(2, Files.readAllLines(marker).size)
 
         hub.open(first.sessionId, resumedByUser = true)

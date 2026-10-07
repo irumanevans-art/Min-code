@@ -1,3 +1,28 @@
+## [LRN-20261007-REFLECTION-IDLE] best_practice
+
+**Logged**: 2026-10-07
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+扩展 PolicyContext 要同步反射测试；卸下会话测试必须等待回合 Job 真正结束。
+
+### Details
+H1 增加两个上下文字段后，CLI 兼容测试仍按旧的八参数 JVM 签名找构造器，58 个样本均在判定前抛 NoSuchElementException；专项红确认后改为新签名并传空凭证集及恒等解析，保留所有样本期望，专项恢复绿。完整检查另发现 HooksSessionTest 在 first.say 看到 TurnEnded 后立即 close，旧 Job 尚活跃时 close 正确返回 false；独立复跑可绿，源码显示两种空闲含义不同。该生命周期测试在两个 say 后调用已有 awaitIdle 再卸下，原断言与预算不变。
+
+### Suggested Action
+公共上下文结构变化应检索构造器反射调用；需要关闭或卸下运行时的测试等待 Job 完成，不能只等折叠状态 turn=null。
+
+### Metadata
+- Source: error
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/PermissionCompatTest.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/HooksSessionTest.kt
+- Tags: reflection, coroutine, race, test-oracle
+- Pattern-Key: testing.context_signature_and_idle_job
+- Recurrence-Count: 1
+
+---
+
 ## [LRN-20261007-GIT-BASH-VERIFY] best_practice
 
 **Logged**: 2026-10-07
