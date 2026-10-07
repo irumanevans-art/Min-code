@@ -20,6 +20,19 @@ import dev.min.code.core.claudecode.ComposerDraftStore
 import dev.min.code.core.claudecode.CwdPath
 import dev.min.code.core.claudecode.SessionImportReject
 import dev.min.code.core.claudecode.SessionMeta
+import dev.min.code.core.engine.AgentSessionRegistry
+import dev.min.code.core.engine.CloseReason
+import dev.min.code.core.engine.DeleteResult
+import dev.min.code.core.engine.EngineKind
+import dev.min.code.core.engine.SessionCommand
+import dev.min.code.core.engine.SessionRef
+import dev.min.code.core.engine.SessionSummary
+import dev.min.code.core.settings.SettingsStore
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import java.util.UUID
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -31,12 +44,25 @@ import java.io.OutputStream
  * 由 [deleteSession] 的回调交给 [SessionVM.resetComposerDraft]，草稿仍只有它一个持有者。
  * 磁盘扫描由 [refreshSessions] 触发；环境状态读完那一刻的重扫由页面接 [MaintenanceVM.sessionsStale] 转发过来。
  */
+@OptIn(FlowPreview::class)
 class SessionListVM(
     private val context: Application,
     private val registry: ClaudeCodeSessionRegistry,
     private val drafts: ComposerDraftStore,
     private val sessionMeta: ClaudeCodeSessionMetaStore,
+    /** Min 的会话经它开 / 关（B6 起 Claude Code 仍走 [registry]） */
+    private val agents: AgentSessionRegistry,
+    /** Min 会话的元数据（置顶、分类、改名），与 Min 引擎读标题的是同一个 */
+    private val minMeta: ClaudeCodeSessionMetaStore,
+    settingsStore: SettingsStore,
 ) : ViewModel() {
+    /** Min 实验开关。关着时抽屉里不列 Min 的会话（会话与日志都还在，开回来原样列出） */
+    private val minEnabled: StateFlow<Boolean> = settingsStore.settings.map { it.minAgentEnabled }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, settingsStore.snapshot?.minAgentEnabled ?: false)
+
+    /** Min 引擎目录里的会话摘要（内核日志的派生索引，含「中断」标记） */
+    private val _minSessions = MutableStateFlow<List<SessionSummary>>(emptyList())
+
     /** 磁盘上的 transcript（CLI 自己写的） */
     private val _diskSessions = MutableStateFlow<List<ClaudeCodeSessionStore.SessionSummary>>(emptyList())
 
@@ -57,7 +83,13 @@ class SessionListVM(
         val bodyText: String = "",
         /** CLI 已经把 transcript 落过盘。刚开、还没跑完一轮的会话没有文件，也就没有可导出的东西 */
         val onDisk: Boolean = true,
-    )
+        /** 哪个引擎的会话。抽屉据此打「Min」标签、决定行菜单里有没有导出 */
+        val engine: EngineKind = EngineKind.ClaudeCode,
+        /** 最后一个回合没结束（Min 启动扫描认出来的「中断」），打开后是 ▶ */
+        val interrupted: Boolean = false,
+    ) {
+        val ref: SessionRef get() = SessionRef(engine, id)
+    }
 
     /**
      * 会话列表 = 磁盘 transcript ∪ 当前活着的会话。
@@ -71,7 +103,15 @@ class SessionListVM(
      * 于是每崩一次就多一行点不开的幽灵会话，把真正的历史挤到看不见的地方。
      */
     val sessions: StateFlow<List<SessionEntry>> =
-        combine(_diskSessions, registry.liveSessions, registry.state, sessionMeta.items) { disk, live, active, meta ->
+        combine(
+            combine(_diskSessions, registry.liveSessions, registry.state, sessionMeta.items) { disk, live, active, meta ->
+                ClaudeInputs(disk, live, active, meta)
+            },
+            combine(_minSessions, agents.live, minMeta.items, minEnabled) { min, live, meta, on ->
+                MinInputs(if (on) min else emptyList(), live, meta)
+            },
+        ) { claude, min ->
+            val (disk, live, active, meta) = claude
             val running = live.filter { it.isLive }
             val liveIds = running.map { it.key }.toSet()
             val activeId = active.sessionId
@@ -113,16 +153,72 @@ class SessionListVM(
                     onDisk = false,
                 )
             }
-            (orphanLive + fromDisk).sortedWith(
+            val fromMin = min.sessions.map { m ->
+                val extra = min.meta[m.ref.id] ?: SessionMeta()
+                val running = min.live.firstOrNull { it.ref == m.ref }
+                SessionEntry(
+                    id = m.ref.id,
+                    title = extra.title?.takeIf { it.isNotBlank() } ?: m.title,
+                    updatedAt = m.updatedAt,
+                    messageCount = m.messageCount,
+                    isLive = running?.keepAlive == true,
+                    // 谁是「正在看的」由页面按当前会话的引用盖上（两边各有一个活跃项，只有页面知道显示的是哪边）
+                    isActive = false,
+                    pinned = extra.pinned,
+                    category = extra.category,
+                    titled = true,
+                    bodyText = m.bodyText,
+                    // Min 的会话没有「落盘文件」可导出（目录的 export 返回不支持）
+                    onDisk = false,
+                    engine = EngineKind.MinAgent,
+                    interrupted = m.interrupted && running == null,
+                )
+            }
+            (orphanLive + fromDisk + fromMin).sortedWith(
                 compareByDescending<SessionEntry> { it.pinned }
                     .thenByDescending { it.isLive }
                     .thenByDescending { it.updatedAt },
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private data class ClaudeInputs(
+        val disk: List<ClaudeCodeSessionStore.SessionSummary>,
+        val live: List<ClaudeCodeSessionRegistry.LiveSession>,
+        val active: ClaudeCodeManager.SessionState,
+        val meta: Map<String, SessionMeta>,
+    )
+
+    private data class MinInputs(
+        val sessions: List<SessionSummary>,
+        val live: List<dev.min.code.core.engine.LiveSessionSummary>,
+        val meta: Map<String, SessionMeta>,
+    )
+
+    init {
+        // Min 的索引在会话事件之后异步更新：会话的回合起落时重列一次，标题、条数、「中断」标记才跟得上
+        viewModelScope.launch {
+            agents.live.map { list -> list.filter { it.ref.engine == EngineKind.MinAgent }.map { it.ref to it.busy } }
+                .distinctUntilChanged().debounce(MIN_RELIST_DEBOUNCE_MS).collect { reloadMin() }
+        }
+    }
+
+    private suspend fun reloadMin() {
+        // 目录读不出来（索引坏了 / 引擎被关）不该拖垮抽屉：当作没有 Min 会话，下一次重列再试
+        _minSessions.value = try {
+            agents.engine(EngineKind.MinAgent).catalog.list()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     /** 历史会话直接读 CLI 自己写的 transcript，不依赖 App 侧持久化 */
     fun refreshSessions() {
-        viewModelScope.launch { reloadSessions() }
+        viewModelScope.launch {
+            reloadMin()
+            reloadSessions()
+        }
     }
 
     /** 每次重扫领一个号；扫完时号已经不是最新的，说明后面还有一次更晚开始的扫描，结果让给它 */
@@ -144,7 +240,12 @@ class SessionListVM(
      * 删除会话。删到的正是活跃会话（含刚被 [ClaudeCodeSessionRegistry.closeSession] 摘掉、
      * 状态里还留着它 id 的那一帧）时回调 [onActiveDeleted]，由调用方清掉输入框。
      */
-    fun deleteSession(id: String, onActiveDeleted: () -> Unit = {}) {
+    fun deleteSession(ref: SessionRef, onActiveDeleted: () -> Unit = {}) {
+        if (ref.engine == EngineKind.MinAgent) {
+            deleteMin(ref, onActiveDeleted)
+            return
+        }
+        val id = ref.id
         viewModelScope.launch {
             registry.closeSession(id)
             (registry.active() ?: registry.configProbe()).deleteSession(id)
@@ -157,19 +258,44 @@ class SessionListVM(
         }
     }
 
-    fun pinSession(id: String, pinned: Boolean) = sessionMeta.update(id) { it.copy(pinned = pinned) }
+    /**
+     * 删一个 Min 会话：先把它从「界面打开着的」里摘掉（顺带中断在跑的回合），再经目录连根带树删干净。
+     * 在用的会话被删时回调 [onActiveDeleted]，由调用方清输入框；仍在用 / 删不掉的留给界面一句提示
+     */
+    private fun deleteMin(ref: SessionRef, onActiveDeleted: () -> Unit) {
+        viewModelScope.launch {
+            val wasActive = agents.activeRef.value == ref
+            agents.close(ref, CloseReason.Deleted)
+            // 删不掉（仍在用 / 失败）时列表重列后这一行还在，用户看得见；元数据只在真删掉之后才忘
+            if (agents.engine(EngineKind.MinAgent).catalog.delete(ref.id) == DeleteResult.Deleted) minMeta.forget(ref.id)
+            if (wasActive) onActiveDeleted()
+            refreshSessions()
+        }
+    }
 
-    fun setSessionCategory(id: String, category: String?) =
-        sessionMeta.update(id) { it.copy(category = category?.trim()?.takeIf { name -> name.isNotBlank() }) }
+    fun pinSession(ref: SessionRef, pinned: Boolean) = metaOf(ref).update(ref.id) { it.copy(pinned = pinned) }
 
-    fun sessionCategories(): List<String> = sessionMeta.categories()
+    fun setSessionCategory(ref: SessionRef, category: String?) =
+        metaOf(ref).update(ref.id) { it.copy(category = category?.trim()?.takeIf { name -> name.isNotBlank() }) }
 
-    fun renameSession(id: String, title: String) {
+    /** 分类名两个引擎共用一张候选表：同一个分类下可以既有 Claude 会话也有 Min 会话 */
+    fun sessionCategories(): List<String> = (sessionMeta.categories() + minMeta.categories()).distinct()
+
+    fun renameSession(ref: SessionRef, title: String) {
         val trimmed = title.trim()
         if (trimmed.isBlank()) return
-        sessionMeta.update(id) { it.copy(title = trimmed) }
-        if (registry.activeKey.value == id) registry.onActive { it.renameSession(trimmed) }
+        metaOf(ref).update(ref.id) { it.copy(title = trimmed) }
+        if (ref.engine == EngineKind.MinAgent) {
+            // 在线的会话把新标题也递给引擎（状态里的 title 跟着变）；没在线的只改元数据，列表读它
+            val online = agents.attached.value.firstOrNull { it.ref == ref }
+            if (online != null) viewModelScope.launch { online.submit(SessionCommand.Rename(UUID.randomUUID().toString(), trimmed)) }
+            return
+        }
+        if (registry.activeKey.value == ref.id) registry.onActive { it.renameSession(trimmed) }
     }
+
+    private fun metaOf(ref: SessionRef): ClaudeCodeSessionMetaStore =
+        if (ref.engine == EngineKind.MinAgent) minMeta else sessionMeta
 
     // --- 会话导出 / 导入（搬 CLI 的 transcript JSONL，规则见 ClaudeCodeSessionTransfer） ---
 
@@ -261,4 +387,8 @@ class SessionListVM(
     }
 
     private fun isLiveSession(id: String) = registry.get(id)?.isLive == true
+
+    private companion object {
+        const val MIN_RELIST_DEBOUNCE_MS = 400L
+    }
 }

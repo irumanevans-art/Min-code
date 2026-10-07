@@ -60,6 +60,9 @@ interface MinSessionHost {
     fun renameSession(sessionId: String, title: String)
     fun rememberDefaultModel(profileId: String, modelId: String)
     suspend fun killTask(taskId: String)
+
+    /** 把「总是允许」的规则写进某一层 settings 文件，返回给人看的结局 */
+    suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String): PersistRule
     suspend fun readTaskOutput(taskId: String, maxChars: Int): String?
     suspend fun searchFiles(cwd: String, query: String, limit: Int): List<String>
 
@@ -105,6 +108,15 @@ class MinAgentSession(
             override fun rename(title: String) = host.renameSession(rootId.value, title)
             override fun rememberDefaultModel(profileId: String, modelId: String) = host.rememberDefaultModel(profileId, modelId)
             override suspend fun killTask(taskId: String) = host.killTask(taskId)
+            override suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String) {
+                // 结局只用轻提示说一句：规则已经对本会话生效，文件没写成不该让这次批准失败
+                when (val result = host.persistAllowRule(layer, rule, cwd)) {
+                    PersistRule.Written -> _signals.tryEmit(SessionSignal.Notice(host.text.ruleSaved(layer), isError = false))
+                    PersistRule.AlreadyThere -> Unit
+                    is PersistRule.Refused -> _signals.tryEmit(SessionSignal.Notice(host.text.ruleNotSaved(result.reason), isError = true))
+                    is PersistRule.Failed -> _signals.tryEmit(SessionSignal.Notice(host.text.ruleNotSaved(result.reason), isError = true))
+                }
+            }
             override fun emit(signal: SessionSignal) {
                 // 撤回的话不能丢：没人在收信号（界面不在）就落成草稿
                 if (signal is SessionSignal.Withdrawn && _signals.subscriptionCount.value == 0) host.saveWithdrawnDraft(ref, signal.input)

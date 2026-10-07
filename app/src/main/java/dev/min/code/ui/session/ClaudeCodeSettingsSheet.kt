@@ -25,11 +25,15 @@ import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ReasoningLevel
 import dev.min.code.core.engine.AgentSessionState
 import dev.min.code.core.engine.Choice
+import dev.min.code.core.engine.EngineCapabilities
 import dev.min.code.core.engine.SettingsView
 import dev.min.code.core.engine.SlashCommandView
 import dev.min.code.core.engine.claude.ClaudeStateMapper
+import dev.min.code.ui.components.InkButton
+import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.InkDivider
+import dev.min.code.ui.theme.sea
 
 /**
  * 会话设置：模型 / 权限模式 / 思考强度 / 提示缓存 / 工作目录 / 斜杠命令。
@@ -57,6 +61,7 @@ internal enum class SettingsSection(@StringRes val labelRes: Int) {
     CACHE(R.string.session_section_cache),
     CWD(R.string.session_section_cwd),
     COMMANDS(R.string.session_section_commands),
+    USAGE(R.string.session_section_usage),
 }
 
 /**
@@ -92,12 +97,15 @@ internal fun LocalSlash.toSection(): SettingsSection? = when (this) {
 @Composable
 internal fun ClaudeCodeSettingsSheet(
     session: AgentSessionState,
+    capabilities: EngineCapabilities,
     initialSection: SettingsSection?,
     chineseDescriptions: Boolean,
     onSetChineseDescriptions: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     /** (模型, 是否同时存成新会话默认)，语义见 [ModelPicker] */
     onSetModel: (String?, Boolean) -> Unit,
+    /** Min 的模型选择：(模型 id, 供应商档 id)，选别家档的模型就是跨供应商切换 */
+    onSetModelOf: (String, String?) -> Unit,
     onSetPermissionMode: (String) -> Unit,
     onApplyEffort: (String?, Boolean) -> Unit,
     onSetPromptCacheTtl: (String) -> Unit,
@@ -110,6 +118,8 @@ internal fun ClaudeCodeSettingsSheet(
     var open by remember { mutableStateOf(initialSection) }
     val settings = session.settings
     val settingsBusy = settings.applying || session.stopping
+    // 哪些分区出现、各用哪种画法：全部由 EngineUi 按引擎与能力位给出，这里不判断引擎
+    val layout = EngineUi.settingsLayout(session.ref.engine, capabilities, session)
     // 转圈 + 文案跟对话流 LiveTurnEntry 同一句话，状态连续
     val busyLabel = when {
         session.stopping -> stringResource(R.string.session_settings_busy_stopping)
@@ -128,18 +138,27 @@ internal fun ClaudeCodeSettingsSheet(
             open = open,
             onToggle = { open = it },
         ) {
-            ModelPicker(
-                models = settings.catalogModels,
-                aliasModels = settings.aliasModels,
-                relayModels = settings.relayModels,
-                relayChecked = !settings.modelsLoading,
-                relayError = settings.modelsError,
-                current = settings.requestedModel,
-                appliedModel = settings.applied.model,
-                chineseDescriptions = chineseDescriptions,
-                enabled = !settingsBusy,
-                onPick = onSetModel,
-            )
+            when (layout.modelPicker) {
+                ModelPickerStyle.Cli -> ModelPicker(
+                    models = settings.catalogModels,
+                    aliasModels = settings.aliasModels,
+                    relayModels = settings.relayModels,
+                    relayChecked = !settings.modelsLoading,
+                    relayError = settings.modelsError,
+                    current = settings.requestedModel,
+                    appliedModel = settings.applied.model,
+                    chineseDescriptions = chineseDescriptions,
+                    enabled = !settingsBusy,
+                    onPick = onSetModel,
+                )
+                ModelPickerStyle.Providers -> MinModelPicker(
+                    settings = settings,
+                    connection = session.connection,
+                    // 供应商档被删了的会话是只读的（适配器也会拒），别让人点
+                    enabled = !settingsBusy && !session.readOnly,
+                    onPick = onSetModelOf,
+                )
+            }
         }
 
         Section(
@@ -148,56 +167,90 @@ internal fun ClaudeCodeSettingsSheet(
             open = open,
             onToggle = { open = it },
         ) {
+            // 带 warning 的模式（Min 的「跳过权限」）不一点就切：先把话说在前面，再点确认才切（朱字，与开始面板同一套）
+            var confirming by remember { mutableStateOf<String?>(null) }
             settings.modes.forEach { mode ->
+                val needsConfirm = mode.warning != null && mode.id != settings.mode.id
                 OptionRow(
                     title = mode.label,
                     subtitle = ClaudeCodePermissionMode.fromWire(mode.id)?.let { stringResource(it.descRes()) },
                     selected = mode.id == settings.mode.id,
                     enabled = !settingsBusy,
-                    onClick = { onSetPermissionMode(mode.id) },
+                    onClick = { if (needsConfirm) confirming = mode.id else onSetPermissionMode(mode.id) },
+                )
+                if (needsConfirm && confirming == mode.id) {
+                    ModeConfirm(
+                        warning = mode.warning.orEmpty(),
+                        label = stringResource(R.string.min_settings_mode_confirm, mode.label),
+                        enabled = !settingsBusy,
+                        onConfirm = { onSetPermissionMode(mode.id) },
+                    )
+                }
+            }
+        }
+
+        if (layout.effort) {
+            Section(
+                section = SettingsSection.EFFORT,
+                value = settings.effortChipLabel(),
+                open = open,
+                onToggle = { open = it },
+            ) {
+                EffortPicker(
+                    settings = settings,
+                    restartNote = layout.effortRestartNote,
+                    ultracode = layout.ultracode,
+                    enabled = !settingsBusy,
+                    onApply = onApplyEffort,
                 )
             }
         }
 
-        Section(
-            section = SettingsSection.EFFORT,
-            value = settings.effortChipLabel(),
-            open = open,
-            onToggle = { open = it },
-        ) {
-            EffortPicker(settings = settings, enabled = !settingsBusy, onApply = onApplyEffort)
+        if (layout.cache) {
+            Section(
+                section = SettingsSection.CACHE,
+                value = settings.promptCacheTtl,
+                open = open,
+                onToggle = { open = it },
+            ) {
+                PromptCacheTtlPicker(
+                    options = settings.extra(ClaudeStateMapper.OPTION_CACHE_TTL)?.options.orEmpty(),
+                    current = settings.promptCacheTtl,
+                    enabled = !settingsBusy,
+                    onPick = onSetPromptCacheTtl,
+                )
+            }
         }
 
-        Section(
-            section = SettingsSection.CACHE,
-            value = settings.promptCacheTtl,
-            open = open,
-            onToggle = { open = it },
-        ) {
-            PromptCacheTtlPicker(
-                options = settings.extra(ClaudeStateMapper.OPTION_CACHE_TTL)?.options.orEmpty(),
-                current = settings.promptCacheTtl,
-                enabled = !settingsBusy,
-                onPick = onSetPromptCacheTtl,
-            )
+        if (layout.cwd) {
+            Section(
+                section = SettingsSection.CWD,
+                value = session.cwd,
+                open = open,
+                onToggle = { open = it },
+            ) {
+                CwdPicker(
+                    current = session.cwd,
+                    enabled = !settingsBusy,
+                    onPick = onSetCwd,
+                    onList = onListCwd,
+                    onCreate = onCreateCwd,
+                )
+            }
         }
 
-        Section(
-            section = SettingsSection.CWD,
-            value = session.cwd,
-            open = open,
-            onToggle = { open = it },
-        ) {
-            CwdPicker(
-                current = session.cwd,
-                enabled = !settingsBusy,
-                onPick = onSetCwd,
-                onList = onListCwd,
-                onCreate = onCreateCwd,
-            )
+        if (layout.usage) {
+            Section(
+                section = SettingsSection.USAGE,
+                value = minUsageSummary(session.usage),
+                open = open,
+                onToggle = { open = it },
+            ) {
+                MinUsageSection(session.usage)
+            }
         }
 
-        if (session.slashCommands.isNotEmpty()) {
+        if (layout.commands) {
             Section(
                 section = SettingsSection.COMMANDS,
                 value = stringResource(R.string.session_commands_count, session.slashCommands.size),
@@ -470,6 +523,10 @@ private fun ModelPicker(
 @Composable
 private fun EffortPicker(
     settings: SettingsView,
+    /** 换强度要重启进程（CC）。别的引擎热切，不写这句 */
+    restartNote: Boolean,
+    /** CC 的 Ultracode 开关；别的引擎没有 */
+    ultracode: Boolean,
     enabled: Boolean = true,
     onApply: (String?, Boolean) -> Unit,
 ) {
@@ -488,7 +545,7 @@ private fun EffortPicker(
             // CLI 面板原话 "Effort not supported for Haiku"：列一排点了没反应的档位不如直说
             SettingsSubHeader(stringResource(R.string.session_effort_unsupported))
         }
-        SettingsSubHeader(stringResource(R.string.session_effort_restart))
+        if (restartNote) SettingsSubHeader(stringResource(R.string.session_effort_restart))
         settings.efforts.forEach { level ->
             // 「跟随默认」的 id 是空串，对引擎说「不传 flag」就是 null
             val effort = level.id.ifEmpty { null }
@@ -501,14 +558,25 @@ private fun EffortPicker(
                 onClick = { onApply(effort, false) },
             )
         }
-        InkDivider(Modifier.padding(vertical = 6.dp))
-        OptionRow(
-            title = "Ultracode",
-            subtitle = stringResource(R.string.session_effort_ultracode_sub),
-            selected = settings.ultracode,
-            enabled = enabled,
-            onClick = { onApply(null, true) },
-        )
+        if (ultracode) {
+            InkDivider(Modifier.padding(vertical = 6.dp))
+            OptionRow(
+                title = "Ultracode",
+                subtitle = stringResource(R.string.session_effort_ultracode_sub),
+                selected = settings.ultracode,
+                enabled = enabled,
+                onClick = { onApply(null, true) },
+            )
+        }
+    }
+}
+
+/** 切到带警告的权限模式前的确认：朱字写清后果，按钮才真切。与开始面板里的朱字是同一套措辞（适配器给的 [Choice.warning]） */
+@Composable
+private fun ModeConfirm(warning: String, label: String, enabled: Boolean, onConfirm: () -> Unit) {
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(warning, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.sea.vermilion)
+        InkButton(onClick = onConfirm, enabled = enabled, tone = InkButtonTone.Vermilion, compact = true) { Text(label) }
     }
 }
 

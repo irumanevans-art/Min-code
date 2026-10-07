@@ -72,6 +72,8 @@ data class MinMapperInput(
  * 子 agent 的转录先投影好，再各挂两处：线程自己的 `items`，和发起它的那张 Agent 工具卡的 `subItems`，共用一份列表。
  */
 class MinAgentStateMapper(private val text: MinAgentText, private val lookup: MinModelLookup) {
+    /** 花费账本：按帧的增量记到当时的模型头上（见 [MinCostLedger]）。映射器是每个会话一个、帧顺序送进来，所以带状态没问题 */
+    private val ledger = MinCostLedger { ref -> lookup.profileOf(ref)?.pricing }
 
     fun map(input: MinMapperInput): AgentSessionState {
         val root = checkNotNull(input.nodes[input.root]) { "根会话 ${input.root.value} 不在节点表里" }
@@ -91,6 +93,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
         val threads = minThreads(input.root, input.nodes, ::itemsOf, lookup, canRun = { s -> lookup.providerLabel(s.settings.model.providerId) != null })
         val interactions = minInteractions(input.pending, input.root, input.nodes, threads, text)
         val profile = lookup.profileOf(model)
+        ledger.observe(input.nodes)
         return AgentSessionState(
             ref = input.ref,
             status = when {
@@ -108,7 +111,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             resume = minResumeOffer(root, canRun = !removed, stopping = input.stopping),
             interactions = interactions,
             settings = settingsOf(root, providerLabel),
-            usage = usageViewOf(root, profile?.contextWindow),
+            usage = usageViewOf(root, profile?.contextWindow).copy(costLabel = ledger.label()),
             tasks = input.tasks,
             threads = threads.withPendingCounts(interactions),
             slashCommands = text.slashCommands(),
@@ -116,6 +119,8 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             stopping = input.stopping,
             errorMessage = input.errorMessage,
             connection = ConnectionView(model.providerId, providerLabel, stale = false, removed = removed),
+            // Min 没有进程：空闲的会话 status 是 Idle，但它是打开着的（见 AgentSessionState.open）
+            open = true,
         )
     }
 
@@ -146,10 +151,10 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
         val model = root.settings.model
         val profile = lookup.profileOf(model)
         val models = lookup.choices(model)
+        // 档位表头上加一项「跟随默认」（id 为空 = 清掉强度设置，让模型用自己的默认）；模型没有强度档就整张表为空，面板据此隐藏这一段
         val efforts = profile?.effortPatches?.keys.orEmpty().sortedBy { it.ordinal }.map { Choice(effortId(it), text.effort(it)) }
-        val modes = listOf(
-            PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.DontAsk, PermissionMode.BypassPermissions, PermissionMode.Plan,
-        ).map { Choice(modeId(it), text.mode(it), warning = text.modeWarning(it)) }
+            .let { levels -> if (levels.isEmpty()) levels else listOf(Choice("", "")) + levels }
+        val modes = minModeChoices(text)
         return SettingsView(
             model = models.firstOrNull { it.id == model.modelId && it.profileId == model.providerId }
                 ?: Choice(model.modelId, model.modelId, profileId = model.providerId),
@@ -183,6 +188,11 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
         const val TITLE_CHARS = 80
     }
 }
+
+/** 设置面板与开始面板共用的权限模式表（Auto 要审查模型，Min 还没有，不列） */
+fun minModeChoices(text: MinAgentText): List<Choice> = listOf(
+    PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.DontAsk, PermissionMode.BypassPermissions, PermissionMode.Plan,
+).map { Choice(modeId(it), text.mode(it), warning = text.modeWarning(it)) }
 
 /** 权限模式在命令里的 id：沿用协议里的名字（与 Claude Code 同名同义） */
 fun modeId(mode: PermissionMode): String = when (mode) {

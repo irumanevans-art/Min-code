@@ -162,7 +162,15 @@ fun InkRadio(selected: Boolean, onClick: (() -> Unit)?, modifier: Modifier = Mod
  * 分段选择：纸的轨道，一块海在选项之间滑（弹簧）。选中项的字是纸白，其余是石墨。
  */
 @Composable
-fun InkSegmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun InkSegmented(
+    options: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    /** 置灰的选项下标：字变淡，但**仍然可点**——点了才好在下面写「为什么用不了、去哪里解决」 */
+    dimmed: Set<Int> = emptySet(),
+) {
     val scheme = MaterialTheme.colorScheme
     val index = selected.coerceIn(0, (options.size - 1).coerceAtLeast(0))
     var width by remember { mutableIntStateOf(0) }
@@ -208,7 +216,12 @@ fun InkSegmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, 
                         .padding(horizontal = 6.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(label, style = MaterialTheme.typography.labelMedium, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (i in dimmed) color.copy(alpha = 0.45f) else color,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+                    )
                 }
             }
         }

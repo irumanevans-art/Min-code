@@ -612,6 +612,7 @@ enum class SettingsSection(@androidx.annotation.StringRes val title: Int, @andro
     CONNECTION(R.string.settings_group_connection, R.string.settings_group_connection_sub),
     DEVICE(R.string.settings_group_device, R.string.settings_group_device_sub),
     LOOK(R.string.settings_group_look, R.string.settings_group_look_sub),
+    EXPERIMENT(R.string.settings_group_experiment, R.string.settings_group_experiment_sub),
 }
 
 /**
@@ -651,6 +652,7 @@ fun SettingsSectionPage(section: String, vm: SettingsVM = koinViewModel()) {
                     SettingsSection.CONNECTION -> ConnectionSettings(vm, settings)
                     SettingsSection.DEVICE -> DeviceSettings(vm, settings)
                     SettingsSection.LOOK -> LookSettings(vm, settings)
+                    SettingsSection.EXPERIMENT -> ExperimentSettings(vm, settings)
                 }
             }
         }
@@ -721,6 +723,22 @@ private fun DeviceSettings(vm: SettingsVM, settings: AppSettings) {
     }
     VirtualDisplayRow(vm = vm)
     BatteryRow()
+}
+
+/**
+ * 「实验」：还没定型的功能各占一行开关。现在只有 Min Agent（自研内核的第三个会话引擎）。
+ * 关着时开始面板、抽屉里都没有 Min 的任何入口；关开关会停下 Min 在跑的回合、但不删任何会话（见 [AppSettings.minAgentEnabled]）。
+ */
+@Composable
+private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
+    SettingRow(
+        title = stringResource(R.string.settings_min_agent_title),
+        subtitle = stringResource(
+            if (settings.minAgentEnabled) R.string.settings_min_agent_on else R.string.settings_min_agent_off,
+        ),
+        onClick = { vm.setMinAgentEnabled(!settings.minAgentEnabled) },
+        trailing = { InkSwitch(checked = settings.minAgentEnabled, onCheckedChange = vm::setMinAgentEnabled) },
+    )
 }
 
 @Composable

@@ -155,6 +155,8 @@
   <string name="session_sidebar_resize">Drag to resize session list</string>
   <string name="session_queued">Queued · picked up after this step</string>
   <string name="session_in_use">In use</string>
+  <string name="session_interrupted">Interrupted</string>
+  <string name="engine_min">Min</string>
   <string name="session_copy_transcript">Copy whole session</string>
   <string name="session_drawer_files">Workspace files</string>
   <string name="session_drawer_maintenance">Environment and updates</string>
@@ -580,6 +582,18 @@
   <string name="composer_hint">What are we doing</string>
   <string name="composer_hint_queue">Queue a message</string>
   <string name="composer_hint_not_ready">Session not ready</string>
+  <string name="composer_hint_resume">Tap ▶ to carry on, or type a new instruction</string>
+  <string name="composer_hint_connecting">Reconnecting the session…</string>
+  <string name="composer_resume_desc">Continue: %1$s</string>
+  <string name="composer_resuming">Continuing…</string>
+  <string name="resume_stale">That is no longer something to continue</string>
+  <string name="resume_reason_stopped">you stopped the turn</string>
+  <string name="resume_reason_failed">the request failed (%1$s)</string>
+  <string name="resume_reason_process_death_at">the app was ended by the system at %1$s</string>
+  <string name="resume_reason_process_death">the app was ended by the system</string>
+  <string name="resume_reason_limit">the turn hit its request limit</string>
+  <string name="resume_reason_hook">a hook stopped the turn</string>
+  <string name="resume_reason_engine_exited">the engine exited</string>
   <string name="composer_interrupt">Stop the current task</string>
   <string name="composer_remove">Remove</string>
   <!-- Removing an attachment chip deletes the file from the workspace, so it confirms first -->
@@ -986,6 +1000,19 @@
   <string name="about_contact">Contact</string>
   <string name="about_contact_qq">QQ %1$s</string>
   <string name="about_contact_qq_copied">QQ number copied</string>
+  <string name="start_min_provider">Provider</string>
+  <string name="start_min_model">Model</string>
+  <string name="start_min_model_other">Or type a model id</string>
+  <string name="start_min_no_models">This provider has no preset models. Type a model id below.</string>
+  <string name="start_min_mode">Permission mode</string>
+  <string name="start_min_open_providers">Connect a provider</string>
+  <string name="engine_needs_install">Finish the runtime setup first (Settings → System).</string>
+  <string name="engine_needs_provider">Connect a provider first (Settings → Connection).</string>
+  <string name="settings_group_experiment">Experimental</string>
+  <string name="settings_group_experiment_sub">Features that are not finished yet (Min Agent)</string>
+  <string name="settings_min_agent_title">Min Agent (experimental)</string>
+  <string name="settings_min_agent_on">On. Min shows up next to Claude Code and Codex when you start a session.</string>
+  <string name="settings_min_agent_off">Off. A built-in agent that runs inside the app instead of a CLI. Turning it off stops any running Min turn and hides it everywhere; your sessions are kept and come back when you turn it on.</string>
   <string name="settings_group_device">Device</string>
   <string name="settings_group_device_sub">Storage, on-screen control, virtual screen, battery</string>
   <string name="settings_group_look">Look &amp; language</string>
@@ -1100,6 +1127,12 @@
   <string name="min_agent_option_allow">Allow</string>
   <string name="min_agent_option_deny">Deny</string>
   <string name="min_agent_option_deny_stop">Deny and stop</string>
+  <string name="min_agent_rule_saved_local">Saved to this project\'s .claude/settings.local.json</string>
+  <string name="min_agent_rule_saved_user">Saved to ~/.claude/settings.json</string>
+  <string name="min_agent_rule_not_saved">Allowed for this session, but the rule was not saved: %1$s</string>
+  <string name="min_agent_option_always_session">Always allow this session: %1$s</string>
+  <string name="min_agent_option_always_local">Always allow in this project: %1$s</string>
+  <string name="min_agent_option_always_user">Always allow everywhere: %1$s</string>
   <string name="min_agent_option_plan_approve">Approve the plan</string>
   <string name="min_agent_option_plan_revise">Send it back</string>
   <string name="min_agent_delegation">Delegate to %1$s · %2$s</string>
@@ -1154,4 +1187,17 @@
     <string name="session_notification_background_running">Running in background</string>
     <string name="session_notification_stop_all">Stop all</string>
     <string name="session_notification_engine_count">%1$s × %2$d</string>
+    <!-- Min settings section (B7a) -->
+    <string name="session_section_usage">Usage</string>
+    <string name="min_settings_provider">Provider: %1$s</string>
+    <string name="min_settings_provider_note">The provider is fixed when the session is created. Picking another provider\'s model below moves the session there, and the prompt cache starts over.</string>
+    <string name="min_settings_switch_provider">Switches provider · the next request rebuilds the cache</string>
+    <string name="min_settings_model_custom">Other model (same provider)</string>
+    <string name="min_settings_mode_confirm">Switch to %1$s</string>
+    <string name="min_usage_none">No requests yet.</string>
+    <string name="min_usage_context">Context</string>
+    <string name="min_usage_context_value">%1$s / %2$s · %3$d%%</string>
+    <string name="min_usage_cache">Cache hit rate</string>
+    <string name="min_usage_cost">Cost</string>
+    <string name="min_usage_no_price">The catalog has no price for a model used here, so no cost is shown.</string>
 </resources>

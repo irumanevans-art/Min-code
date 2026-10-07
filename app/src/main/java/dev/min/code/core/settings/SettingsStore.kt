@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import dev.min.code.BuildConfig
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -53,6 +54,8 @@ private val KEY_GUEST_CONFIG_SECRETS = booleanPreferencesKey("guest_config_secre
 private val KEY_INJECT_SHELL_CREDENTIALS = booleanPreferencesKey("inject_shell_credentials")
 private val KEY_SHARE_DEVICE_STORAGE = booleanPreferencesKey("share_device_storage")
 private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
+private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
+private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
 private val KEY_DEVICE_WRITE_ALLOWLIST = stringSetPreferencesKey("device_write_allowlist")
 private val KEY_A11Y_PROMPT_VERSION = intPreferencesKey("a11y_prompt_version")
 private val KEY_TERMINAL_AUTO_KEYBOARD = booleanPreferencesKey("terminal_auto_keyboard")
@@ -291,6 +294,16 @@ data class AppSettings(
      */
     val controlDevice: Boolean = false,
     /**
+     * Min Agent（自研内核的第三个会话引擎）的实验开关。release 默认关、debug 默认开（M2-B 设计 §10.2 拍板 1）：
+     * 新引擎首发的通行做法，真机门槛过了再议是否改默认。**关着时一切 Min 入口都不出现**——开始面板的分段、
+     * 抽屉里的 Min 会话、设置里的 Min 段。关开关时 Min 引擎整个停下（在跑的回合被中断、会话卸载，见 `AgentSessionRegistry` 对 Disabled 的处理）：入口藏起来之后不留看不见的回合；
+     * 会话与日志一个不删，开回来列表里还在，被打断的标「中断」、可以 ▶ 续上。
+     * 没存过值时的默认由 [minAgentEnabledOf] 按构建类型给，不写进 DataStore：以后改默认，没动过开关的人才会跟着变。
+     */
+    val minAgentEnabled: Boolean = BuildConfig.DEBUG,
+    /** 开始面板上次选的引擎（[dev.min.code.core.engine.EngineKind] 的 name）。空 = 没选过，默认 Claude Code */
+    val lastStartEngine: String = "",
+    /**
      * 设备写操作放行名单：包名精确匹配。在 [dev.min.code.core.device.PackagePolicyGuard]
      * 拦下之前先看这里——人明确勾过的应用，agent 可以代为操作。默认空：行为与以前一样。
      */
@@ -512,6 +525,8 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
             shareDeviceStorage = p[KEY_SHARE_DEVICE_STORAGE] ?: false,
             controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
+            minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
+            lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
             deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
             a11yPromptVersion = p[KEY_A11Y_PROMPT_VERSION] ?: 0,
             terminalAutoKeyboard = p[KEY_TERMINAL_AUTO_KEYBOARD] ?: true,
@@ -826,6 +841,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setControlDevice(enabled: Boolean) =
         context.dataStore.edit { it[KEY_CONTROL_DEVICE] = enabled }
+
+    suspend fun setMinAgentEnabled(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }
+
+    suspend fun setLastStartEngine(engine: String) =
+        context.dataStore.edit { it[KEY_LAST_START_ENGINE] = engine }
 
     suspend fun setDeviceWriteAllowlist(packages: Set<String>) =
         context.dataStore.edit {
@@ -1278,3 +1299,6 @@ private object TokenCipher {
         return generator.generateKey()
     }
 }
+
+/** [AppSettings.minAgentEnabled] 的取值：存过就用存的，没存过按构建类型（debug 开、release 关） */
+internal fun minAgentEnabledOf(stored: Boolean?, debugBuild: Boolean): Boolean = stored ?: debugBuild

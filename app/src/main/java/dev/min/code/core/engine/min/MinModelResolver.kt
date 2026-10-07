@@ -44,7 +44,7 @@ class MinModelResolver(
         val profile = checkNotNull(profile(ref.providerId)) { "供应商档 ${ref.providerId} 不存在（可能已被删除）" }
         check(!profile.missingToken) { "供应商「${profile.displayName()}」没有 key" }
         val selection = selectProvider(profile, ref.modelId, catalog)
-        val key = ClientKey(profile.id, profile.baseUrl, selection.provider.wire, profile.tokenEnvKey)
+        val key = ClientKey(profile.id, selection.provider.baseUrl, selection.provider.wire, profile.tokenEnvKey)
         val client = clients.getOrPut(key) {
             when (selection.provider.wire) {
                 Wire.AnthropicMessages -> AnthropicMessagesClient(selection.provider, transport, secrets)
@@ -71,7 +71,7 @@ class MinModelResolver(
         val fromEnv = ENV_MODEL_KEYS.mapNotNull { profile.env[it]?.trim()?.takeIf(String::isNotEmpty) }
         val wire = agentWire(profile.apiFormat)
         val fromCatalog = catalog.providers
-            .filter { it.baseUrl.trimEnd('/') == profile.baseUrl.trimEnd('/') && it.wire == wire }
+            .filter { it.baseUrl.trimEnd('/') == agentBaseUrl(profile, catalog).trimEnd('/') && it.wire == wire }
             .flatMap { p -> catalog.models.filter { it.ref.providerId == p.id }.map { it.ref.modelId } }
         return (fromEnv + fromCatalog).distinct()
     }

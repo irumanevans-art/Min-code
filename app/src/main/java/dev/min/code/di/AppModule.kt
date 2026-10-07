@@ -225,7 +225,9 @@ val appModule = module {
         MinAgentEngine(
             context = get(), settings = get(), workspace = get(), runner = get<ProotShellRunner>(),
             appScope = get<AppScope>(), drafts = get(), meta = get(named("min")),
-            enabled = MutableStateFlow(BuildConfig.DEBUG),
+            // 实验开关：release 默认关、debug 默认开，设置里「实验」可改。关着时引擎 Disabled，一切入口不出现
+            enabled = get<SettingsStore>().settings.map { it.minAgentEnabled }
+                .stateIn(get<AppScope>(), SharingStarted.Eagerly, BuildConfig.DEBUG),
             devices = get<DeviceController>(),
         )
     } bind AgentEngine::class
@@ -263,7 +265,8 @@ val appModule = module {
 
     // 原来的 ClaudeCodeVM 按职责拆成五个（M2-B B6a）；ClaudeCodePage 一次取齐
     viewModelOf(::SessionVM)
-    viewModelOf(::SessionListVM)
+    // Min 会话的元数据是 named("min") 那一份（与 Min 引擎读标题的是同一个），viewModelOf 按类型解析取不到它
+    viewModel { SessionListVM(get(), get(), get(), get(), get(), get(named("min")), get()) }
     viewModelOf(::WorkspaceToolsVM)
     viewModelOf(::MaintenanceVM)
     viewModelOf(::ClaudeConfigVM)

@@ -38,6 +38,7 @@ import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.rootfs.currentBindMounts
 import dev.min.code.core.rootfs.findMentionFiles
+import dev.min.code.core.engine.StartChoices
 import dev.min.code.core.settings.SettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -154,6 +155,14 @@ class MinAgentEngine(
         }
     }.stateIn(scope, SharingStarted.Eagerly, EngineAvailability.NeedsInstall)
 
+    /** 开始面板的供应商 / 模型 / 权限模式选项：设置一变（连了新档、删了档）就重算 */
+    override val startChoices: StateFlow<StartChoices?> = settings.settings.map { s ->
+        startChoicesOf(
+            s, lastUsed.profileId, lastUsed::modelFor, resolver::modelIds, resolver::defaultModelId,
+            minModeChoices(text), modeId(PermissionMode.Default),
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, null)
+
     override val live: StateFlow<List<LiveSessionSummary>> = sessions.flatMapLatest { map ->
         if (map.isEmpty()) flowOf(emptyList()) else combine(map.values.map { it.summary }) { it.toList() }
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -213,6 +222,7 @@ class MinAgentEngine(
     // ---- AgentEngine ----
 
     override suspend fun create(options: StartOptions): Result<AgentSession> = guarded {
+        check(enabled.value) { text.engineDisabled() }
         val current = settings.current()
         val profile = checkNotNull(defaultAgentProfile(current, options.profileId, lastUsed.profileId)) { text.noUsableProvider() }
         val modelId = options.modelId?.takeIf { it.isNotBlank() }
@@ -232,6 +242,8 @@ class MinAgentEngine(
     }
 
     override suspend fun open(id: String): Result<AgentSession> = guarded {
+        // 关着时旧通知、旧深链也不能把会话重新拉起来
+        check(enabled.value) { text.engineDisabled() }
         settings.current()
         val sid = SessionId(id)
         openLock.withLock {
@@ -338,6 +350,9 @@ class MinAgentEngine(
         val logRef = tasks.find(taskId)?.handle?.logPath ?: return@withContext null
         catchingNonCancellation { clippedLog(generation.fs.hostPath(logRef).toFile(), maxChars).first }.getOrNull()
     }
+
+    override suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String): PersistRule =
+        writeAllowRule(generation.fs, layer, rule, GuestPath(cwd), MinKernelDeps.MEMORY_HOME)
 
     override suspend fun searchFiles(cwd: String, query: String, limit: Int): List<String> = withContext(Dispatchers.IO) {
         catchingNonCancellation { findMentionFiles(generation.fs.hostPath(GuestPath(cwd)).toFile(), cwd, query, limit) }.getOrDefault(emptyList())

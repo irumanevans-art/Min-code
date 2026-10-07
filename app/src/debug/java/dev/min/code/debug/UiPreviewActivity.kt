@@ -239,7 +239,7 @@ private fun Preview(
                                 session = ClaudeCodeManager.SessionState().toAgentState(),
                                 cliVersion = "2.1.261",
                                 defaultCwd = "/workspace",
-                                onStart = { _, _ -> scene = PreviewScene.Blank },
+                                onStart = { scene = PreviewScene.Blank },
                             )
                             PreviewScene.Blank -> BlankPage(starting = false)
                             PreviewScene.Loading -> LoadingScreen(detail = "正在读取工作区", progress = 0.64f)
@@ -263,11 +263,13 @@ private fun Preview(
             }
             if (settingsOpen) ClaudeCodeSettingsSheet(
                 session = session.toAgentState(),
+                capabilities = dev.min.code.core.engine.EngineCapabilities.ClaudeCode,
                 initialSection = null,
                 chineseDescriptions = chineseDescriptions,
                 onSetChineseDescriptions = { chineseDescriptions = it },
                 onDismiss = { settingsOpen = false },
                 onSetModel = { model, _ -> session = session.copy(model = model, options = session.options.copy(model = model)) },
+                onSetModelOf = { _, _ -> },
                 onSetPermissionMode = { session = session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode) },
                 onApplyEffort = { effort, ultra -> session = session.copy(options = session.options.copy(effort = effort, ultracode = ultra)) },
                 onSetPromptCacheTtl = { session = session.copy(options = session.options.copy(promptCacheTtl = it)) },
@@ -537,6 +539,10 @@ private fun ConversationPreview(
                     )
                     ClaudeCodeInputBar(
                         session = session.copy(busy = variant == "streaming").toAgentState(),
+                        capabilities = dev.min.code.core.engine.EngineCapabilities.ClaudeCode,
+                        viewingThread = null,
+                        pendingResume = null,
+                        onResume = {},
                         onSend = { text, _ ->
                             messages = messages + text
                             scope.launch { delay(50); list.animateScrollToItem(5 + messages.lastIndex) }
@@ -544,6 +550,7 @@ private fun ConversationPreview(
                         onInterrupt = {},
                         onRunShell = { command -> messages = messages + "!$command" },
                         onSetModel = { model, _ -> onSession(session.copy(model = model, options = session.options.copy(model = model))) },
+                        onSetModelOf = { _, _ -> },
                         onSetPermissionMode = { onSession(session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode)) },
                         onApplyEffort = { effort, ultra -> onSession(session.copy(options = session.options.copy(effort = effort, ultracode = ultra))) },
                         onSetPromptCacheTtl = { onSession(session.copy(options = session.options.copy(promptCacheTtl = it))) },

@@ -57,6 +57,11 @@ import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Image02
 import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.AgentThread
+import dev.min.code.core.engine.EngineCapabilities
+import dev.min.code.core.engine.PendingResume
+import dev.min.code.core.engine.ResumeOffer
+import dev.min.code.core.engine.composerKeys
 import dev.min.code.core.engine.ImageInput
 import dev.min.code.core.engine.SlashCommandView
 import dev.min.code.core.session.SessionStatus
@@ -74,12 +79,21 @@ private val NoWithdrawals: Flow<ComposerDraft> = emptyFlow()
 @Composable
 internal fun ClaudeCodeInputBar(
     session: AgentSessionState,
+    /** 这个会话所属引擎的能力位：■ / ▶ 怎么摆、撤回能不能用都看它（设计 §3.8） */
+    capabilities: EngineCapabilities,
+    /** 子 agent 页上正看着的那个线程；左槽和发送键对应它（■ = 停它、▶ = 它的续跑） */
+    viewingThread: AgentThread?,
+    /** 用户按过 ▶、续跑请求已发出但回合还没起来（VM 持有） */
+    pendingResume: PendingResume?,
+    onResume: (ResumeOffer) -> Unit,
     onSend: (String, List<ImageInput>) -> Unit,
     onInterrupt: () -> Unit,
     /** `!` 开头的一行：Min 自己在 rootfs 里跑，不经模型（见 UserShell.kt） */
     onRunShell: (String) -> Unit,
     /** (模型, 是否同时存成新会话默认)。`/model <名字>` 与 CLI 一致按「存成默认」处理 */
     onSetModel: (String?, Boolean) -> Unit,
+    /** Min 的设置面板选模型：(模型 id, 供应商档 id)，只此一处用 */
+    onSetModelOf: (String, String?) -> Unit,
     onSetPermissionMode: (String) -> Unit,
     onApplyEffort: (String?, Boolean) -> Unit,
     onSetPromptCacheTtl: (String) -> Unit,
@@ -117,8 +131,6 @@ internal fun ClaudeCodeInputBar(
     withdrawnMessages: Flow<ComposerDraft> = NoWithdrawals,
     /** 占位字换一句（子 agent 视图：「发给 @general-purpose…」）。null = 照常 */
     hintOverride: String? = null,
-    /** 停止键跟谁的「在跑」走（子 agent 视图：那个子 agent 在跑才出停止键）。null = 跟会话这一轮 */
-    busyOverride: Boolean? = null,
     modifier: Modifier = Modifier,
 ) {
     var input by remember { mutableStateOf(restoredDraft.text) }
@@ -266,7 +278,7 @@ internal fun ClaudeCodeInputBar(
         }
     }
 
-    val running = session.status == SessionStatus.Running
+    val running = session.accepting
     // 输入以 "/" 开头时把斜杠命令顶上来（就地补全，比翻设置面板快）
     val slashQuery = input.takeIf { it.startsWith("/") }?.drop(1)?.substringBefore(' ')
     val matchedCommands = remember(slashQuery, session.slashCommands) {
@@ -297,7 +309,8 @@ internal fun ClaudeCodeInputBar(
 
     fun submit() {
         // 终端里 Claude Code 的 bash 模式。附件和图片留着，下一条消息接着发
-        userShellCommand(input)?.let { command ->
+        // `!` 是 CC 才有的终端命令；别的引擎里它就是一个普通字符，照常发给模型
+        userShellCommand(input)?.takeIf { EngineUi.userShell(capabilities) }?.let { command ->
             onRunShell(command)
             input = ""
             return
@@ -317,7 +330,8 @@ internal fun ClaudeCodeInputBar(
             input = ""
             return
         }
-        val local = localSlashTarget(input)
+        // 配置面板类命令（/mcp /agents …）是按 CC 的文件布局做的，引擎不支持就不接管，照普通消息发
+        val local = localSlashTarget(input)?.takeIf { it.toSection() != null || EngineUi.configCommands(capabilities) }
         if (local != null) {
             handleLocal(local)
             input = ""
@@ -395,7 +409,7 @@ internal fun ClaudeCodeInputBar(
         )
 
         // 打了 `!` 就说清这一行会怎么跑：它不发给模型，这和输入框里其余所有东西都不一样
-        val shellMode = input.trimStart().let { it.startsWith('!') || it.startsWith('！') }
+        val shellMode = EngineUi.userShell(capabilities) && input.trimStart().let { it.startsWith('!') || it.startsWith('！') }
         AnimatedVisibility(visible = shellMode, enter = InkMotion.expand, exit = InkMotion.collapse) {
             Text(
                 stringResource(R.string.composer_shell_hint, session.cwd.ifBlank { "/workspace" }),
@@ -405,8 +419,20 @@ internal fun ClaudeCodeInputBar(
             )
         }
 
-        val canSend = (input.isNotBlank() || attachments.isNotEmpty() || images.isNotEmpty()) && running
-        val usage = composerUsage(session, dailyCostUsd)
+        val inputFilled = input.isNotBlank() || attachments.isNotEmpty() || images.isNotEmpty()
+        val canSend = inputFilled && running
+        val keys = composerKeys(
+            turn = session.turn,
+            resume = session.resume,
+            viewingThread = viewingThread,
+            pendingResume = pendingResume,
+            capabilities = capabilities,
+            inputFilled = inputFilled,
+            queuedCount = session.queuedCount,
+            stopping = session.stopping,
+            readOnly = session.readOnly,
+        )
+        val usage = composerUsage(session, if (EngineUi.dailyCost(session.ref.engine)) dailyCostUsd else 0.0)
         ComposerCapsule(
             value = input,
             onValueChange = { next ->
@@ -422,8 +448,10 @@ internal fun ClaudeCodeInputBar(
                 }
             },
             enabled = running,
-            busy = busyOverride ?: session.busy,
+            busy = viewingThread?.running ?: session.busy,
             hint = hintOverride,
+            keys = keys,
+            onResume = onResume,
             canSend = canSend,
             onSend = { submit() },
             onInterrupt = onInterrupt,
@@ -464,11 +492,13 @@ internal fun ClaudeCodeInputBar(
     if (settingsOpen) {
         ClaudeCodeSettingsSheet(
             session = session,
+            capabilities = capabilities,
             initialSection = settingsSection,
             chineseDescriptions = chineseDescriptions,
             onSetChineseDescriptions = onSetChineseDescriptions,
             onDismiss = { settingsOpen = false },
             onSetModel = { model, asDefault -> onSetModel(model, asDefault); settingsOpen = false },
+            onSetModelOf = { model, profile -> onSetModelOf(model, profile); settingsOpen = false },
             onSetPermissionMode = { onSetPermissionMode(it); settingsOpen = false },
             onApplyEffort = { effort, ultra -> onApplyEffort(effort, ultra); settingsOpen = false },
             onSetPromptCacheTtl = { onSetPromptCacheTtl(it); settingsOpen = false },
@@ -512,7 +542,8 @@ private fun composerUsage(
         contextText = used?.let { "${it / 1000}k/${ClaudeCodeModelCatalog.formatContextWindow(limit)}" },
         // 逼近上限转朱砂 —— CLI 到那一带会自动压缩上下文，这件事发生前用户有权知道
         warn = (ratio ?: 0f) >= CONTEXT_WARN_RATIO,
-        costText = costLabel(dailyCostUsd, session.usage.costText?.let { parseSessionCostUsd(it) }),
+        // 引擎自己算好的花费（Min：按目录价格、币种原样）优先；否则是 CC 的老算法：CLI 原文解析成美元 + 今日合计
+        costText = session.usage.costLabel ?: costLabel(dailyCostUsd, session.usage.costText?.let { parseSessionCostUsd(it) }),
     )
 }
 

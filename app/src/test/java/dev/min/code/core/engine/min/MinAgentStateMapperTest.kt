@@ -440,6 +440,22 @@ class MinAgentStateMapperTest {
         assertTrue(card.options.first { it.id == ApprovalOption.DENY }.acceptsNote)
     }
 
+    @Test fun onlyPathsOutsideTheWorkspaceReachTheCard() {
+        val ask = PermissionAsk(
+            "Write", "write a file",
+            paths = listOf(
+                PathAccess(GuestPath("/workspace/in.txt"), AccessKind.Write, PathScope.Workspace),
+                PathAccess(GuestPath("/etc/out"), AccessKind.Write, PathScope.Rootfs),
+            ),
+        )
+        val input = JsonObject(mapOf("file_path" to JsonPrimitive("/workspace/in.txt")))
+        val s = foldOf(*approvalEvents("c8", "ap8", "Write", input, ask, floor = null).toTypedArray())
+        val what = HubPending.What.Approval(ApprovalId("ap8"), CallId("c8"), "Write", ask, null, null)
+        val card = map(s, pending = listOf(pending("s_root", 5, what))).interactions.single() as PendingInteraction.Approval
+        // 界面把这一行读成「在 /workspace 之外」：工作区之内的路径进来就是谎话（模拟器验收抓到的）
+        assertEquals(listOf("/etc/out"), card.paths.map { it.path })
+    }
+
     @Test fun approvalFromAChildFloatsUpWithItsOriginAndAUniqueId() {
         val ask = PermissionAsk("Bash", "run it")
         val input = JsonObject(mapOf("command" to JsonPrimitive("ls")))
@@ -509,7 +525,8 @@ class MinAgentStateMapperTest {
         )
         val s = foldOf(dev.min.agent.spi.SettingsChanged(effort = Effort.Low))
         val view = map(s, lookup = lookup).settings
-        assertEquals(listOf("off", "low", "high"), view.efforts.map { it.id })
+        // 表头多一项「跟随默认」（id 为空）
+        assertEquals(listOf("", "off", "low", "high"), view.efforts.map { it.id })
         assertEquals("low", view.effort!!.id)
         assertEquals(listOf("m1", "m2"), view.models.map { it.id })
         assertTrue(view.models[1].switchesProviderFrom(map(s, lookup = lookup).connection))
@@ -517,6 +534,11 @@ class MinAgentStateMapperTest {
         assertEquals("mode:Default", view.mode.label)
         assertEquals("warn", view.modes.first { it.id == "bypassPermissions" }.warning)
         assertFalse(view.modes.any { it.id == "auto" })
+    }
+
+    @Test fun aModelWithoutEffortLevelsHasAnEmptyEffortTable() {
+        val view = map(foldOf(), lookup = FakeLookup(profile = { T_PROFILE.copy(ref = it, effortPatches = emptyMap()) })).settings
+        assertTrue("没有强度档就不给「跟随默认」，面板据此隐藏整段", view.efforts.isEmpty())
     }
 
     @Test fun usageIsLastRequestOverWindowAndCacheRatioIsCumulative() {
@@ -559,6 +581,14 @@ class MinAgentStateMapperTest {
     @Test fun stoppingFlagAndStatusPassThrough() {
         assertTrue(map(foldOf(), stopping = true).stopping)
         assertEquals(SessionStatus.Idle, map(foldOf()).status)
+    }
+
+    @Test fun anIdleMinSessionIsStillOpenSoThePageKeepsItAndTheComposerAcceptsInput() {
+        // 设计 §3.4：有回合在跑 → Running，否则 Idle。空闲的 Min 会话没有进程，页面靠 open 才不会把它当成「没有会话」
+        val idle = map(foldOf())
+        assertEquals(SessionStatus.Idle, idle.status)
+        assertTrue(idle.open)
+        assertTrue(idle.accepting)
     }
 
     @Test fun lastTurnReceiptCarriesTheEnd() {

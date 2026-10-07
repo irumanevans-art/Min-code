@@ -77,19 +77,30 @@ private fun approval(
     } else ask.summary
     return PendingInteraction.Approval(
         id = id, origin = origin, toolUseId = what.callId.value, toolName = what.tool, input = input, summary = summary,
-        paths = ask.paths.map { PathView(it.path.value, scopeOf(it.scope)) },
+        // 卡片上的路径行是「要动的东西跑出了工作区」（界面写「在 /workspace 之外」，设备上的写朱字）：
+        // 内核的 ask.paths 是这次调用碰到的**所有**路径，工作区之内的不该进来，否则每张写文件的卡都会谎称自己在工作区之外
+        paths = ask.paths.map { PathView(it.path.value, scopeOf(it.scope)) }.filter { it.scope != PathScope.Workspace },
         commands = ask.commands.map { it.raw },
         domains = ask.domains,
         // 踩了安全底线的原因：解释「为什么连跳过权限也要问你」
         reason = what.floorReason,
         blockedPath = null,
-        // 「总是允许」等 B7 的审批卡把规则写进用户选的那一层 settings 再开（能力位 approvalAlways 仍为假）
+        // 内核给了建议规则（`suggestedRule`，CC 语法）才有「总是允许」：本会话 / 本项目 / 所有项目三档，写哪一层由用户点哪个。
+        // 排在标准三项后面；委派（Agent）与踩了安全底线的调用内核不给建议规则（floorReason 不为空时连跳过权限也要问）
         options = listOf(
             ApprovalOption(ApprovalOption.ALLOW, text.optionAllow(), ApprovalOption.Kind.Allow, acceptsNote = false, notificationSafe = true),
             ApprovalOption(ApprovalOption.DENY, text.optionDeny(), ApprovalOption.Kind.Deny, acceptsNote = true, notificationSafe = true),
             ApprovalOption(ApprovalOption.DENY_AND_STOP, text.optionDenyAndStop(), ApprovalOption.Kind.DenyAndStop, acceptsNote = false, notificationSafe = false),
-        ),
+        ) + alwaysOptions(what.suggestedRule, text),
     )
+}
+
+/** 「总是允许」的三档按钮；没有建议规则就一个都没有。不进通知：要看清规则，必须回 App 里点 */
+private fun alwaysOptions(rule: String?, text: MinAgentText): List<ApprovalOption> {
+    if (rule.isNullOrBlank()) return emptyList()
+    return RuleLayer.entries.map { layer ->
+        ApprovalOption(AlwaysOptionIds.of(layer, rule), text.optionAlways(layer, rule), ApprovalOption.Kind.AllowAlways, acceptsNote = false, notificationSafe = false)
+    }
 }
 
 private fun planReview(id: String, origin: InteractionOrigin, what: HubPending.What.Approval, text: MinAgentText) =
@@ -118,6 +129,8 @@ private fun scopeOf(scope: KernelPathScope): PathScope = when (scope) {
 class MinInteractionRouter(
     private val session: (SessionId) -> MinAnswerTarget?,
     private val interrupt: suspend (SessionId) -> Unit,
+    /** 「总是允许」落到文件：(层, 规则)。内核那一步（本会话规则）已经在 [MinAnswerTarget.approve] 里完成，这里只管持久化 */
+    private val persistRule: suspend (RuleLayer, String) -> Unit = { _, _ -> },
 ) {
     suspend fun answer(interactionId: String, answer: InteractionAnswer): CommandResult {
         val (sessionId, localId) = InteractionIds.split(interactionId) ?: return CommandResult.Rejected("交互 id 不合法：$interactionId")
@@ -127,7 +140,13 @@ class MinInteractionRouter(
                 ApprovalOption.ALLOW -> target.approve(ApprovalId(localId), ApprovalChoice.Once)
                 ApprovalOption.DENY -> target.approve(ApprovalId(localId), ApprovalChoice.Deny(answer.note?.takeIf { it.isNotBlank() }))
                 ApprovalOption.DENY_AND_STOP -> target.approve(ApprovalId(localId), ApprovalChoice.Deny()).also { if (it) interrupt(SessionId(sessionId)) }
-                else -> return CommandResult.Rejected("没有这个选项：${answer.optionId}")
+                else -> {
+                    val always = AlwaysOptionIds.parse(answer.optionId)
+                        ?: return CommandResult.Rejected("没有这个选项：${answer.optionId}")
+                    val (layer, rule) = always
+                    // 先让内核放行并记下本会话规则；放行成功了才写文件——另一端已经答过（Stale）就不该再改用户的配置
+                    target.approve(ApprovalId(localId), ApprovalChoice.Always(rule)).also { applied -> if (applied && layer != RuleLayer.Session) persistRule(layer, rule) }
+                }
             }
             is InteractionAnswer.Answer -> try {
                 target.answer(QuestionId(localId), answer.answers.map { QuestionAnswer(it.selected, it.other) })

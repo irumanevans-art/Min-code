@@ -37,6 +37,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.min.code.R
+import dev.min.code.core.engine.ComposerHint
+import dev.min.code.core.engine.ComposerKeys
+import dev.min.code.core.engine.ResumeOffer
 import dev.min.code.ui.components.InkIconButton
 import dev.min.code.ui.components.LocalFrost
 import dev.min.code.ui.components.frostPane
@@ -72,6 +75,12 @@ internal fun ComposerCapsule(
     onFocusChange: (Boolean) -> Unit = {},
     /** 调用方指定的占位字（子 agent 视图）；会话还没就绪时仍说「未就绪」 */
     hint: String? = null,
+    /**
+     * 左槽的键（`composerKeys` 算好的）。给了就用它画 ■ / ▶ 并按它的占位字；不给（Codex 页）就是原来的样子：
+     * [busy] 时一个朱色的 ■。
+     */
+    keys: ComposerKeys? = null,
+    onResume: (ResumeOffer) -> Unit = {},
 ) {
     val palette = MaterialTheme.sea
     val fieldInteraction = remember { MutableInteractionSource() }
@@ -120,7 +129,7 @@ internal fun ComposerCapsule(
                     enabled = enabled,
                     interactionSource = fieldInteraction,
                     decorationBox = { inner ->
-                        val hint = hint?.takeIf { enabled } ?: composerHint(enabled = enabled, busy = busy)
+                        val hint = hint?.takeIf { enabled } ?: composerHint(enabled = enabled, busy = busy, keys = keys)
                         // 最小高度放在这里而不是外层：字才会在胶囊里垂直居中，多行时再往上长
                         Box(Modifier.heightIn(min = 40.dp), contentAlignment = Alignment.CenterStart) {
                             if (value.isEmpty() && hint.isNotEmpty()) {
@@ -148,7 +157,9 @@ internal fun ComposerCapsule(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy((-6).dp),
                 ) {
-                    AnimatedVisibility(
+                    if (keys != null) {
+                        StopResumeKey(left = keys.left, onStop = onInterrupt, onResume = onResume)
+                    } else AnimatedVisibility(
                         visible = busy,
                         enter = InkMotion.expand,
                         exit = InkMotion.collapse,
@@ -183,8 +194,11 @@ internal fun ComposerCapsule(
  * busy 时换成「追加消息」——按下去的含义变了（排队，不是立即发），提示就得跟着变。
  */
 @Composable
-private fun composerHint(enabled: Boolean, busy: Boolean): String = when {
+private fun composerHint(enabled: Boolean, busy: Boolean, keys: ComposerKeys?): String = when {
     !enabled -> stringResource(R.string.composer_hint_not_ready)
+    // 有键时占位字跟键走（点 ▶ 接着做 / 正在接回会话）；没有键的 Codex 页只分忙与不忙
+    keys?.hint == ComposerHint.ResumeOrNew -> stringResource(R.string.composer_hint_resume)
+    keys?.hint == ComposerHint.Connecting -> stringResource(R.string.composer_hint_connecting)
     busy -> stringResource(R.string.composer_hint_queue)
     else -> stringResource(R.string.composer_hint)
 }

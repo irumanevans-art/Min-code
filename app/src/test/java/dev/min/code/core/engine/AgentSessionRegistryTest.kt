@@ -103,6 +103,18 @@ class AgentSessionRegistryTest {
     }
 
     @Test
+    fun `an engine turning Disabled loses its attached sessions and the active pointer falls back`() = run {
+        val c = ok(registry.create(EngineKind.ClaudeCode, opts))
+        ok(registry.create(EngineKind.MinAgent, opts))
+        assertEquals(EngineKind.MinAgent, registry.activeRef.value?.engine)
+        min.availability.value = EngineAvailability.Disabled("off")
+        registry.attached.awaitValue { list -> list.none { it.ref.engine == EngineKind.MinAgent } }
+        assertSame("活跃项落到别家剩下的会话，而不是留着一个被关掉的", c, registry.active.value)
+        assertEquals(CloseReason.StopAll, min.closeAllReason)
+        assertNull("别的引擎不受牵连", cc.closeAllReason)
+    }
+
+    @Test
     fun `an unavailable engine is refused with its availability`() = run {
         cc.availability.value = EngineAvailability.NeedsInstall
         assertEquals(AttachResult.Unavailable(EngineAvailability.NeedsInstall), registry.create(EngineKind.ClaudeCode, opts))

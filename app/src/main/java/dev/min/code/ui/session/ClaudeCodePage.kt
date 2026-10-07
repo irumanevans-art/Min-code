@@ -210,6 +210,14 @@ fun ClaudeCodePage(
         derivedStateOf(structuralEqualityPolicy()) { liveSession.value.withoutLiveCounters() }
     }
     val sessions by listVm.sessions.collectAsStateWithLifecycle()
+    val drawerSessions = remember(sessions, liveSession.value.ref) {
+        val shown = liveSession.value.ref
+        sessions.map { entry ->
+            // Min 的行按引用对（它们的 isActive 在列表 VM 里没法定）；Claude 的行只有显示的确实是 Claude 才亮
+            val active = EngineUi.isEntryActive(entry.ref, entry.isActive, shown)
+            if (active == entry.isActive) entry else entry.copy(isActive = active)
+        }
+    }
     val maintenance by maintenanceVm.maintenance.collectAsStateWithLifecycle()
     val useNpmMirror by maintenanceVm.useNpmMirror.collectAsStateWithLifecycle()
     val runtime by toolsVm.runtime.collectAsStateWithLifecycle()
@@ -221,12 +229,19 @@ fun ClaudeCodePage(
     val zhDescriptionSetting by vm.chineseDescriptions.collectAsStateWithLifecycle()
     val chineseDescriptions = zhDescriptionSetting && isChineseUi()
     val notice by vm.notice.collectAsStateWithLifecycle()
+    val minEnabled by vm.minEnabled.collectAsStateWithLifecycle()
+    val engineAvailability by vm.availability.collectAsStateWithLifecycle()
+    val startChoices by vm.startChoices.collectAsStateWithLifecycle()
+    val startEngine by vm.startEngine.collectAsStateWithLifecycle()
     val connected by vm.connected.collectAsStateWithLifecycle()
     // 环境状态读完就重扫磁盘会话：原来 refresh() 末尾直接调 refreshSessions()，拆成两个 VM 后由页面转发
     LaunchedEffect(maintenanceVm, listVm) {
         maintenanceVm.sessionsStale.collect { listVm.refreshSessions() }
     }
     val toaster = LocalToaster.current
+    LaunchedEffect(vm) {
+        vm.signalNotices.collect { toaster.show(it.text, if (it.isError) ToastType.Error else ToastType.Success) }
+    }
     LaunchedEffect(notice) {
         val text = notice ?: return@LaunchedEffect
         toaster.show(text, ToastType.Error)
@@ -303,7 +318,7 @@ fun ClaudeCodePage(
     var wideSidebarOpen by rememberSaveable { mutableStateOf(true) }
     var wideSidebarWidthDp by rememberSaveable { mutableFloatStateOf(SIDEBAR_DEFAULT_DP) }
     val live = setup.ready &&
-        (session.status == SessionStatus.Running ||
+        (session.accepting ||
             session.status == SessionStatus.Starting)
 
     val openSessionList: () -> Unit = {
@@ -344,16 +359,17 @@ fun ClaudeCodePage(
             permanent = wide,
             visible = if (wide) wideSidebarOpen else drawerState.isOpen,
             paneWidth = paneWidth,
-            sessions = sessions,
+            // 两边（旧注册表 / 统一注册表）各有一个活跃项，哪行亮由页面按当前会话的引用盖章
+            sessions = drawerSessions,
             onNewSession = {
                 afterSidebarNav()
                 vm.newSession()
             },
-            onOpenSession = { id ->
+            onOpenSession = { ref ->
                 afterSidebarNav()
-                vm.openSession(id)
+                vm.openSession(ref)
             },
-            onDeleteSession = { id -> listVm.deleteSession(id, onActiveDeleted = vm::resetComposerDraft) },
+            onDeleteSession = { ref -> listVm.deleteSession(ref, onActiveDeleted = vm::resetComposerDraft) },
             onPinSession = listVm::pinSession,
             onRenameSession = listVm::renameSession,
             onSetCategory = listVm::setSessionCategory,
@@ -482,6 +498,14 @@ fun ClaudeCodePage(
                             onCreateCwd = vm::createCwdFolder,
                             connected = connected,
                             onOpenProviders = { navController.navigate(Screen.Providers) },
+                            engines = StartEngines(
+                                minVisible = minEnabled,
+                                availability = engineAvailability,
+                                minChoices = startChoices,
+                                initial = startEngine,
+                                onChoose = vm::rememberStartEngine,
+                                onOpenCodex = { navController.navigate(Screen.Codex) },
+                            ),
                         )
                     }
                 }
@@ -491,26 +515,7 @@ fun ClaudeCodePage(
     }
 
     session.headInteraction?.let { pending ->
-        val forkName = stringResource(R.string.agent_type_fork)
-        val origin = permissionOriginOf(pending.origin) { subagentTypeName(it, forkName) }
-        // 提问走的是同一个 can_use_tool 帧，但要的是「在选项里挑」而不是「允许/拒绝」，
-        // 答案还得回传给模型 —— 两种面板不能混用
-        if (pending is PendingInteraction.Question) {
-            ClaudeCodeQuestionSheet(
-                pending = pending,
-                origin = origin,
-                onAnswer = { answers -> vm.answer(pending.id, InteractionAnswer.Answer(answers)) },
-                // 跳过 = 允许工具带着空答案跑完。不能回 deny：那会被模型当成
-                // "用户拒绝了这次提问"，它多半会停下来问为什么，而不是继续干活
-                onDismiss = { vm.answer(pending.id, InteractionAnswer.Decline) },
-            )
-        } else {
-            PermissionSheet(
-                pending = pending,
-                origin = origin,
-                onAnswer = { optionId -> vm.answer(pending.id, InteractionAnswer.Choose(optionId)) },
-            )
-        }
+        InteractionSheet(pending = pending, onAnswer = { answer -> vm.answer(pending.id, answer) })
     }
 
     if (showPlan) {
@@ -1004,6 +1009,8 @@ private fun SessionContent(
     // 工具卡的字头在组合期取好传下去：TranscriptItem 的调用方（搜索、导出）不是 Composable
     val transcriptLabels = rememberTranscriptLabels()
     val composerDraft by vm.composerDraft.collectAsStateWithLifecycle()
+    val capabilities by vm.capabilities.collectAsStateWithLifecycle()
+    val pendingResume by vm.pendingResume.collectAsStateWithLifecycle()
     val activeKey by vm.activeSessionKey.collectAsStateWithLifecycle()
     val showLiveTurn = !streaming && (
         session.busy ||
@@ -1314,7 +1321,7 @@ private fun SessionContent(
                         },
                     )
                 }
-                if (session.status == SessionStatus.Running || session.stopping) {
+                if (session.accepting || session.stopping) {
                     Spacer(Modifier.width(6.dp))
                     PaperDisc {
                         InkIconButton(
@@ -1405,6 +1412,10 @@ private fun SessionContent(
                     val boundId = activeKey
                     ClaudeCodeInputBar(
                         session = session,
+                        capabilities = capabilities,
+                        viewingThread = viewedAgent,
+                        pendingResume = pendingResume,
+                        onResume = vm::resume,
                         // 发送不主动滚到底：在底时新消息按贴底跟随自然跟上，在上面翻着就保持原位
                         onRunShell = { command -> vm.runShell(command) },
                         // 子 agent 视图里：话说给它（收件箱 / 经主会话转交），停止键只停它
@@ -1417,8 +1428,9 @@ private fun SessionContent(
                             if (target != null) vm.stopSubagent(target.threadId) else vm.interrupt()
                         },
                         hintOverride = viewedAgent?.let { stringResource(R.string.agent_composer_hint, subagentTypeLabel(it.agentType)) },
-                        busyOverride = viewedAgent?.running,
-                        onSetModel = vm::setModel,
+                        onSetModel = { model, asDefault -> vm.setModel(model, asDefault) },
+                        // 面板里选模型只改这个会话，不写「新会话默认」：Min 新会话默认用最近一次的档与模型
+                        onSetModelOf = { model, profile -> vm.setModel(model, asDefault = false, profileId = profile) },
                         onSetPermissionMode = vm::setPermissionMode,
                         onApplyEffort = { effort, ultracode -> vm.applyEffort(effort, ultracode) },
                         onSetPromptCacheTtl = vm::setPromptCacheTtl,
@@ -1807,267 +1819,3 @@ private fun PlanBanner(onOpen: () -> Unit) {
 // ---------------------------------------------------------------------------
 // 权限确认
 // ---------------------------------------------------------------------------
-
-/**
- * 权限确认。用底部 sheet 而不是 AlertDialog：审批是**高频一键动作**，
- * 模态对话框把整屏盖掉、按钮还在屏幕中间，单手够不着；底部 sheet 拇指可达，
- * 上面正在读的内容也还看得见。
- *
- * 「始终允许 …」来自 `can_use_tool` 请求附带的 `permission_suggestions`：
- * 把用户选中的那条原样回传，CLI 就会写规则，之后同类调用不再询问。
- * 没有它的话，默认 Manual 模式下每一条 Bash、每一次 Edit 都要重新点一遍。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PermissionSheet(
-    /** 审批卡或计划审批卡（提问卡走 [ClaudeCodeQuestionSheet]） */
-    pending: PendingInteraction,
-    origin: PermissionOrigin,
-    /** 点了哪个按钮，传它的 [ApprovalOption.id] */
-    onAnswer: (optionId: String) -> Unit,
-) {
-    val approval = pending as? PendingInteraction.Approval
-    // **不允许滑动关掉**。这个 sheet 是在会话流上方弹出来的，而用户很可能正在往回滑看历史 ——
-    // 弹出的那一瞬间手指还在移动，一下就把它滑走了，而滑走等于 onDismissRequest，
-    // 之前那会直接回一个 deny。ExitPlanMode 被误拒的后果尤其重：模型会以为你否了这份计划，
-    // 转头去改方案。出口只留两个明确的按钮。
-    val sheetState = rememberModalBottomSheetState(
-        skipPartiallyExpanded = true,
-        confirmValueChange = { it != SheetValue.Hidden },
-    )
-    InkSheet(
-        onDismissRequest = { /* 只能按按钮，见上 */ },
-        sheetState = sheetState,
-        dismissible = false,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Seal()
-                Text(
-                    pending.awaitedToolName,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontFamily = JetbrainsMono,
-                )
-            }
-            PermissionOriginLines(origin, denyHint = true)
-            approval?.description?.takeIf { it.isNotBlank() }?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium)
-            }
-            approval?.blockedPath?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    stringResource(R.string.session_permission_blocked_path, it),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.sea.vermilion,
-                )
-            }
-            approval?.reason?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    stringResource(R.string.session_permission_reason, it),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // 要动的东西跑到 /workspace 之外了。挂了整机存储之后这是唯一能把
-            // 「改容器里的 /etc」和「改你相册里的照片」分开说的地方
-            val escaped = approval?.paths.orEmpty().map { it.path }
-            val onDevice = approval?.paths.orEmpty().any { it.scope == PathScope.Device }
-            if (escaped.isNotEmpty()) {
-                Text(
-                    text = if (onDevice) {
-                        stringResource(R.string.session_permission_device_path, escaped.first())
-                    } else {
-                        stringResource(R.string.session_permission_outside_workspace, escaped.first())
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = JetbrainsMono,
-                    color = if (onDevice) {
-                        MaterialTheme.sea.vermilion
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-
-            // 按工具类型渲染入参：编辑类给 diff，Bash 给高亮命令，其余给美化 JSON。
-            // 原来这里是 `input.toString()` 截断成一行流水账 —— 用户点「允许」时
-            // 其实看不到自己批准了什么，而那正是权限确认唯一的意义。
-            ToolInputPreview(
-                name = pending.awaitedToolName,
-                // 计划审批卡只带计划正文：ExitPlanMode 的预览也只读 `plan`
-                input = approval?.input ?: planInputOf(pending),
-                labels = rememberTranscriptLabels(),
-            )
-
-            InkDivider()
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                // 拒绝是判定（朱砂），允许是主动作（墨 / 金）
-                InkButton(
-                    onClick = { onAnswer(ApprovalOption.DENY_AND_STOP) },
-                    modifier = Modifier.weight(1f),
-                    tone = InkButtonTone.Vermilion,
-                ) { Text(stringResource(R.string.session_permission_deny)) }
-                InkButton(
-                    onClick = { onAnswer(ApprovalOption.ALLOW) },
-                    modifier = Modifier.weight(1f),
-                ) { Text(stringResource(R.string.session_permission_allow_once)) }
-            }
-            // 「始终允许」放在主按钮下方：它改的是持久规则，不该和一次性批准同等醒目。
-            //
-            // 碰到设备上的真实文件时**一条都不给**：那条规则会把往后所有同类写入都放过去，
-            // 而这一档改坏了没有 undo（rootfs 里改砸了重装就回来，相册里的照片不会）。
-            // 每一次都值得单独看一眼——这正是把整机交出去之后仅剩的那道闸。
-            if (!onDevice) {
-                val always = approval?.options ?: (pending as? PendingInteraction.PlanReview)?.extraOptions
-                always.orEmpty().filter { it.kind == ApprovalOption.Kind.AllowAlways }.forEach { suggestion ->
-                    InkButton(
-                        onClick = { onAnswer(suggestion.id) },
-                        modifier = Modifier.fillMaxWidth(),
-                        tone = InkButtonTone.Paper,
-                        icon = HugeIcons.Tick01,
-                    ) {
-                        Text(suggestion.label, style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** 计划审批卡 -> 预览组件要的入参形状（只有 `plan` 一项） */
-private fun planInputOf(pending: PendingInteraction): JsonObject = buildJsonObject {
-    (pending as? PendingInteraction.PlanReview)?.let { put("plan", it.plan) }
-}
-
-@Composable
-internal fun StartPanel(
-    session: AgentSessionState,
-    cliVersion: String?,
-    /** (跳过权限确认, 工作目录)。其余设置沿用上次的，由会话层取 */
-    onStart: (Boolean, String) -> Unit,
-    /** 面板上默认选中的工作目录（上次用过的） */
-    defaultCwd: String,
-    onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
-    onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
-    /** false = 还没有可用的供应商，见 [SessionVM.connected] */
-    connected: Boolean = true,
-    onOpenProviders: () -> Unit = {},
-) {
-    var skipPermissions by rememberSaveable { mutableStateOf(false) }
-    var cwd by rememberSaveable { mutableStateOf(defaultCwd) }
-    var pickingCwd by remember { mutableStateOf(false) }
-    // 挂在 ConnectPrompt 外面：登录成功那一刻 ConnectPrompt 就收起了，见它的注释
-    var subscriptionLogin by remember { mutableStateOf(false) }
-    SeaSurface {
-    HeroCanvas {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 32.dp),
-            contentAlignment = BiasAlignment(0f, 1f),
-        ) {
-            Column(
-                modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                SectionTitle(stringResource(R.string.workspace_detail_workspace_info))
-                // 产品名，不翻
-                Text("Claude Code", style = MaterialTheme.typography.headlineSmall)
-                CwdPathRow(
-                    cwd = cwd,
-                    trailing = cliVersion,
-                    onClick = { pickingCwd = true },
-                )
-                Spacer(Modifier.height(10.dp))
-                InkDivider()
-                AnimatedVisibility(visible = !connected, enter = InkMotion.expand, exit = InkMotion.collapse) {
-                    ConnectPrompt(
-                        onOpenProviders = onOpenProviders,
-                        onSubscriptionLogin = { subscriptionLogin = true },
-                    )
-                }
-                // 上次崩溃过就在这里说一声：没有联网上报，用户不主动去「关于」里看就永远不知道。
-                // 只提示、不弹窗——启动面板本来就是"停下来看一眼"的地方
-                val context = LocalContext.current
-                // 读崩溃记录要碰磁盘：挪到 IO，别卡在启动面板的组合里
-                var crashed by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) {
-                    crashed = withContext(Dispatchers.IO) {
-                        dev.min.code.core.crash.CrashRecorder.read(context) != null
-                    }
-                }
-                AnimatedVisibility(visible = crashed, enter = InkMotion.expand, exit = InkMotion.collapse) {
-                    Notice(
-                        text = stringResource(R.string.session_start_crash_notice),
-                        tone = NoticeTone.Warn,
-                        action = {
-                            InkTextButton(onClick = { dev.min.code.core.crash.CrashRecorder.clear(context); crashed = false }) {
-                                Text(stringResource(R.string.common_clear), style = MaterialTheme.typography.labelSmall)
-                            }
-                        },
-                    )
-                }
-                session.errorMessage?.let {
-                    Notice(text = it, tone = NoticeTone.Error, maxLines = 6)
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.small)
-                        .clickable { skipPermissions = !skipPermissions }
-                        .padding(horizontal = 6.dp, vertical = 8.dp),
-                ) {
-                    // 整行可点，勾选框自己不接点击
-                    InkCheckbox(checked = skipPermissions, onCheckedChange = null)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        stringResource(R.string.session_start_skip_permissions),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        stringResource(R.string.session_start_skip_permissions_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                InkButton(
-                    onClick = { onStart(skipPermissions, cwd) },
-                    modifier = Modifier.fillMaxWidth(),
-                    icon = HugeIcons.Play,
-                ) {
-                    Text(stringResource(R.string.session_start_action))
-                }
-            }
-        }
-    }
-    }
-    if (pickingCwd) {
-        CwdPickerSheet(
-            current = cwd,
-            onPick = { cwd = it; pickingCwd = false },
-            onDismiss = { pickingCwd = false },
-            onList = onListCwd,
-            onCreate = onCreateCwd,
-        )
-    }
-    if (subscriptionLogin) {
-        ClaudeSubscriptionSheet(onDismiss = { subscriptionLogin = false })
-    }
-}
