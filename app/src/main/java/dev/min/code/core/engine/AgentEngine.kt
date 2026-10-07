@@ -17,6 +17,9 @@ interface AgentEngine {
     /** 开始面板上这个引擎专有的选项；没有的引擎是 null（默认）。见 [StartChoices] */
     val startChoices: StateFlow<StartChoices?> get() = NoStartChoices
 
+    /** 工作区信任（[EngineCapabilities.workspaceTrust] 为真才有）；其余引擎 null */
+    val workspaceTrust: WorkspaceTrustControl? get() = null
+
     /**
      * 引擎自己认定「在线」的会话，含没在界面上打开的（Min：后台子 agent 跑完唤醒的父会话）。
      * [LiveSessionSummary.isActive] / [LiveSessionSummary.attached] 引擎不用填，注册表合并时填。

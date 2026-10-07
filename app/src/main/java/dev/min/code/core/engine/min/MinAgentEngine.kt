@@ -120,11 +120,16 @@ class MinAgentEngine(
     private val ports = MinHostPorts({ generation }, tasks, dev.min.agent.spi.Clock { System.currentTimeMillis() })
 
     internal val snapshots = CasWorkspaceSnapshots(File(context.filesDir, "agent").toPath(), { generation.fs }, MinKernelDeps.MEMORY_HOME)
+    /** 工作区信任：账本在 SettingsStore，内核据它决定项目层 hooks 与 `.mcp.json` 放不放行（见 [MinWorkspaceTrust]） */
+    private val trust = MinWorkspaceTrust(settings, { generation.fs }, changed = { reloadMcpOfOnlineSessions() })
+    override val workspaceTrust: dev.min.code.core.engine.WorkspaceTrustControl = trust
+
     private val kernelDeps = MinKernelDeps.build(
         resolver, ports, snapshots = snapshots,
         // 与 Claude Code 引擎那边的 DeviceMcpRegistrar 读同一个设置：controlDevice
         tools = minToolsWithDevice(devices, enabled = { settings.snapshot?.controlDevice == true }),
         mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context),
+        trustProjectHooks = trust::isTrusted,
     )
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
@@ -185,11 +190,18 @@ class MinAgentEngine(
 
     init {
         scope.launch { tasks.watch() }
+        // 账本在别处改了（设置页、另一个入口）也要让内核看到
+        scope.launch { settings.settings.collect { trust.ledger.value = it.workspaceTrust } }
         // 设备存储开关等变了：空闲时换一代挂载（一个回合从头到尾用同一代）
         scope.launch {
             combine(settings.settings, hub.running) { _, running -> running }.collect { if (it.isEmpty()) refreshGeneration() }
         }
         scope.launch { catchingNonCancellation { recoverInterrupted() }.onFailure { Log.w(TAG, "startup recovery failed", it) } }
+    }
+
+    /** 信任变了：在线的根会话重读 MCP 配置（连不连项目服务器取决于信任；已连着的共享连接不重连） */
+    private suspend fun reloadMcpOfOnlineSessions() {
+        for (id in hub.online.value) hub.get(id)?.takeIf { it.state.value.origin == null }?.let { hub.reloadMcp(id) }
     }
 
     /** 启动扫描：让上次死在回合中途的会话合法收尾（见 [MinStartupRecovery]）。引擎建好时自动跑一次，也可手动触发 */
@@ -224,6 +236,8 @@ class MinAgentEngine(
     override suspend fun create(options: StartOptions): Result<AgentSession> = guarded {
         check(enabled.value) { text.engineDisabled() }
         val current = settings.current()
+        // 内核马上同步问信任：别让它读到收集器还没跟上的旧账本
+        trust.ledger.value = current.workspaceTrust
         val profile = checkNotNull(defaultAgentProfile(current, options.profileId, lastUsed.profileId)) { text.noUsableProvider() }
         val modelId = options.modelId?.takeIf { it.isNotBlank() }
             ?: lastUsed.modelFor(profile.id) ?: checkNotNull(resolver.defaultModelId(profile)) { text.needModelId() }
@@ -244,7 +258,7 @@ class MinAgentEngine(
     override suspend fun open(id: String): Result<AgentSession> = guarded {
         // 关着时旧通知、旧深链也不能把会话重新拉起来
         check(enabled.value) { text.engineDisabled() }
-        settings.current()
+        trust.ledger.value = settings.current().workspaceTrust
         val sid = SessionId(id)
         openLock.withLock {
             sessions.value[sid]?.let { touch(sid, pin = true); return@withLock it }
