@@ -60,6 +60,18 @@ class ProotExecTest {
         assertTrue(host.context.command.contains("cd -- '/root/a b'\"'\"'c'"))
         assertTrue(host.process.stdinClosed)
     }
+    @Test fun gitWorktreeCommandUsesGuestWorktreeCwdWithoutReintroducingHostEnvironment() = runBlocking {
+        val host = FakeHost(complete = true)
+        val path = GuestPath("/workspace/.claude/worktrees/android")
+        val script = "GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false status --porcelain"
+        val result = ProotExec(base(), host).run(ShellCommand(script, path), ExecOptions(1000)) as ExecResult.Exited
+        assertEquals(0, result.exitCode); assertTrue(host.context.env.isEmpty())
+        assertEquals("", host.context.cwd)
+        assertTrue(host.context.command.contains("cd -- '/workspace/.claude/worktrees/android'"))
+        assertEquals("cd -- '${path.value}' && {\n$script\n}", host.context.command)
+        assertFalse(host.context.command.contains("must-disappear"))
+    }
+
     @Test fun timeoutReapsOnceAndReturnsOutput() = runBlocking {
         val host = FakeHost()
         val result = ProotExec(base(), host).run(command, ExecOptions(30)) as ExecResult.TimedOut
