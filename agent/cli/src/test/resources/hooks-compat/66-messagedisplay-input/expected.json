@@ -1,0 +1,17 @@
+{
+  "event": "MessageDisplay",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§MessageDisplay：助手消息分批上屏时触发、不支持 matcher；输入 turn_id/message_id/index/final/delta（:1436–1450, :1454–1478）。-p/SDK 下整条消息一次触发（index=0、final=true、delta 为全文，:1452）。"
+}

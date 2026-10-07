@@ -1,0 +1,25 @@
+{
+  "session_id": "s-76",
+  "transcript_path": "/home/user/.claude/projects/p/76.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolBatch",
+  "tool_calls": [
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "file_path": "/home/user/repo/ledger/accounts.py"
+      },
+      "tool_use_id": "toolu_01",
+      "tool_response": "1 from __future__ import annotations"
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": {
+        "file_path": "/home/user/repo/ledger/transactions.py"
+      },
+      "tool_use_id": "toolu_02",
+      "tool_response": "1 from __future__ import annotations"
+    }
+  ]
+}

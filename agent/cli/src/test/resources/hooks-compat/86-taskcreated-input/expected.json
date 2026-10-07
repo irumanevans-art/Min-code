@@ -1,0 +1,17 @@
+{
+  "event": "TaskCreated",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§TaskCreated：TaskCreate 建任务时触发、无 matcher（没接 Task 工具的会话不触发，:2413–2417）；输入 task_id/task_subject，可缺席 task_description/teammate_name/team_name（:2419–2443）。"
+}

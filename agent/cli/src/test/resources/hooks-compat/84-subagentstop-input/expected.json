@@ -1,0 +1,17 @@
+{
+  "event": "SubagentStop",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§SubagentStop input：stop_hook_active/agent_id/agent_type/agent_transcript_path/last_assistant_message；background_tasks 与 session_crons 属父会话（:2382–2392）。"
+}

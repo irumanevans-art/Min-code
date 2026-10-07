@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/posttooluse-input.sh\""
+          }
+        ],
+        "matcher": "Write"
+      }
+    ]
+  }
+}

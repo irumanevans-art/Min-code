@@ -1,0 +1,17 @@
+{
+  "event": "Notification",
+  "target": "permission_prompt",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§Notification：通知 hook 不能阻断也不改通知——systemMessage/continue 被丢弃，terminalSequence 仍代发（限 OSC 0/1/2/9/99/777 与 BEL，:2338, :941–958）；exit 2 与 stderr 忽略（:869）。"
+}

@@ -1,0 +1,21 @@
+{
+  "event": "TeammateIdle",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "Build artifact missing. Run the build before stopping."
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§TeammateIdle decision control：exit 2 让成员收到 stderr 反馈并继续工作；continue:false 整个停下（同 Stop）（:2680–2697）。",
+  "pendingFix": "依赖未做功能：agent 团队（teammate）Min 还没有，事件无法端到端触发；引擎对 exit 2 的解读已对齐。",
+  "minTrigger": "none"
+}

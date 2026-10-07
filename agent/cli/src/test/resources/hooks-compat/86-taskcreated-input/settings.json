@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/taskcreated-input.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

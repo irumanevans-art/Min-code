@@ -1,0 +1,21 @@
+{
+  "event": "PermissionRequest",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Deny",
+  "reasons": [
+    "rm -rf is not allowed"
+  ],
+  "shouldContinue": false,
+  "stopReasons": [
+    "rm -rf is not allowed"
+  ],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PermissionRequest decision control：decision.behavior allow/deny 代用户作答；deny 带 message（给 Claude 的拒绝理由）与 interrupt:true（连 Claude 一起停）（:1916–1928）；exit 2 对本事件无效（:855）。"
+}

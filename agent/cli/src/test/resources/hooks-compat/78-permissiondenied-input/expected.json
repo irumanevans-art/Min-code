@@ -1,0 +1,17 @@
+{
+  "event": "PermissionDenied",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PermissionDenied：只在 auto mode 拒绝时触发（手动拒绝/deny 规则/PreToolUse 阻断都不算，:2200–2204）；输入含 reason（:2206–2229）。"
+}

@@ -1,0 +1,8 @@
+{
+  "session_id": "s-106",
+  "transcript_path": "/home/user/.claude/projects/p/106.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "WorktreeRemove",
+  "worktree_path": "/home/user/repo/.worktrees/feature-auth"
+}

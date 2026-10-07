@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/configchange-decision.sh\""
+          }
+        ],
+        "matcher": "project_settings"
+      }
+    ]
+  }
+}

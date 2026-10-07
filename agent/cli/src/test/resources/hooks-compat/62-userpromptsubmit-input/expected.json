@@ -1,0 +1,17 @@
+{
+  "event": "UserPromptSubmit",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§UserPromptSubmit input：多 prompt 字段（粘贴占位符已就地展开），有自定义标题时另有 session_title（:1327–1342）。"
+}

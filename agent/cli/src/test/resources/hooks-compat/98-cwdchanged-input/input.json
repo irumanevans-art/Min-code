@@ -1,0 +1,9 @@
+{
+  "session_id": "s-98",
+  "transcript_path": "/home/user/.claude/projects/p/98.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "CwdChanged",
+  "old_cwd": "/home/user/repo",
+  "new_cwd": "/home/user/repo/src"
+}

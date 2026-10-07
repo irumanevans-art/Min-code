@@ -1,0 +1,19 @@
+{
+  "event": "WorktreeRemove",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§WorktreeRemove：exit 0（目录已删）= 移除成功；非零退出且目录还在 = 移除失败（worktree 留在盘上，无 git 回退）；JSON 输出字段被丢弃（:2998–3003, :3040–3043）。",
+  "pendingFix": "原文：JSON 输出字段被丢弃（:3003），任何非零退出码都让移除失败（:883–884, :3040–3043）。引擎现在：continue:false 会停回合、systemMessage 进通知，且只有 exit 2 映射成 Block——exit 1 是中性，内核无从判定「移除失败」；事件本身还依赖未做功能（worktree 隔离）。",
+  "minTrigger": "none"
+}

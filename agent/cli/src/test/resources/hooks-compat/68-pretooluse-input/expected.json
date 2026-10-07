@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PreToolUse input：tool_name/tool_input/tool_use_id（MCP 工具另有 mcp_server，:1584–1609）；Bash 的 tool_input 字段表（:1619–1624）。文件工具的 file_path 恒为绝对路径、Windows 反斜杠（:1590–1595）。"
+}

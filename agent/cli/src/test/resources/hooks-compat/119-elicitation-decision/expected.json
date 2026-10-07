@@ -1,0 +1,26 @@
+{
+  "event": "Elicitation",
+  "target": "my-mcp-server",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§Elicitation output：hookSpecificOutput.action accept/decline/cancel + content 程序化应答；exit 2 拒绝且此时 hookSpecificOutput 被忽略（:3403–3426）。",
+  "specific": {
+    "hookEventName": "Elicitation",
+    "action": "accept",
+    "content": {
+      "username": "alice"
+    }
+  },
+  "pendingFix": "依赖未做功能：MCP elicitation Min 还没有；引擎已能校验 action/content（真正应答要等内核接）。",
+  "minTrigger": "none"
+}

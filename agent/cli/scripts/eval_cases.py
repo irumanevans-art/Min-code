@@ -9,8 +9,6 @@ and, where needed, an extra_checks function with additional fact checks.
 Questions that depend on m0's *current* behavior say so in the checks:
 - 43-webfetch-local: WebFetch refuses loopback hosts by design (spi/WebUrl.kt),
   so the question grades the documented refusal + curl fallback.
-- 38-perm-system-read: device-scope reads raise an approval card (m0 现状),
-  auto-approved here with --approve yes; the grader pins that口径.
 """
 import json
 from pathlib import Path
@@ -73,6 +71,27 @@ NB_IPYNB = ('{"cells":[{"cell_type":"markdown","id":"cell-1","metadata":{},"sour
             '"source":["print(x)"]}],'
             '"metadata":{"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"}},'
             '"nbformat":4,"nbformat_minor":5}')
+
+# 38 题的 fixture hosts：写到 <workspace>-system/hosts（工作区外 = Device 级，保住「读系统文件」的题意），
+# 不再依赖本机 C:\Windows\System32\drivers\etc\hosts——那台机器的 localhost 全在注释行里，「提到 localhost
+# 的行数」按行数与按条目数会数出不同答案。这里提到 localhost 的行全是真实映射行、没有注释行，口径唯一。
+SYSTEM_HOSTS = "\n".join([
+    "# Copyright (c) 1993-2009 Microsoft Corp.",
+    "#",
+    "# This is a sample HOSTS file used by Microsoft TCP/IP for Windows.",
+    "127.0.0.1 localhost",
+    "::1 localhost",
+    "192.168.1.10 fileserver.gateway",
+    "# end of section",
+]) + "\n"
+
+
+def guest(path):
+    """Windows path -> the Git-Bash style POSIX path the desktop CLI shows the model (same rule as mock_scripts.gpath)."""
+    s = str(path).replace("\\", "/")
+    if len(s) > 1 and s[1] == ":":
+        return "/" + s[0].lower() + s[2:]
+    return s
 
 
 def server_conf():
@@ -179,6 +198,16 @@ def setup_shared_dir(work, ctx):
     settings = {"permissions": {"additionalDirectories": [str(shared)]}}
     (work / ".claude").mkdir(parents=True, exist_ok=True)
     (work / ".claude" / "settings.json").write_text(json_text(settings), encoding="utf-8")
+
+
+def setup_system_hosts(work, ctx):
+    """38 题的 hosts fixture：<workspace>-system/hosts（工作区外 = Device 级，不注册成附加目录，
+    保住「读工作区外的系统文件」的题意），内容来自 SYSTEM_HOSTS，答案不依赖本机 hosts。
+    ctx 带出 guest 路径，题面用 %SYSTEM_HOSTS% 引用。"""
+    system = Path(str(work) + "-system")
+    system.mkdir(parents=True, exist_ok=True)
+    (system / "hosts").write_text(SYSTEM_HOSTS, encoding="utf-8")
+    ctx["system_hosts"] = guest(system / "hosts")
 
 
 def setup_http_page(work, ctx):
@@ -298,7 +327,10 @@ def check_plan_approve_edit(case, events, work, row):
 
 
 def check_perm_deny(case, events, work, row):
-    return {"changelog_updated": read_text(work, "CHANGELOG.md") == "# Changelog\n## 2026-10-07 eval\n",
+    """判行为而非字节：CHANGELOG 只要求新增条目内容与顺序正确，空白差异不算错
+    （真模型在条目前多插了一个空行，按字节判就误伤了）；vendor 未动由 frozen 钉死。"""
+    lines = [line.strip() for line in read_text(work, "CHANGELOG.md").splitlines()]
+    return {"changelog_entry": [line for line in lines if line] == ["# Changelog", "## 2026-10-07 eval"],
             "vendor_untouched": read_text(work, "vendor/lib.py") == "value = 1\n",
             "deny_rule_fired": any("禁止" in t for t in error_texts(events))}
 
@@ -310,19 +342,20 @@ def check_perm_additional(case, events, work, row):
 
 
 def check_perm_system_read(case, events, work, row):
-    """m0 现状（mock 实测）：Read 工具直接读 Device 级路径不弹审批卡（Bash 间接读才要求批准）。
-    判分只看事实：读成功 + 回答的行数与真实 hosts 文件一致。"""
-    hosts = Path("C:/Windows/System32/drivers/etc/hosts")
-    try:
-        count = sum(1 for line in hosts.read_text(encoding="utf-8", errors="replace").splitlines()
-                    if "localhost" in line.lower())
-    except OSError:
-        count = -1
+    """hosts 是 fixture 自带的（<workspace>-system/hosts，工作区外 = Device 级），答案唯一且与口径无关：
+    文件里提到 localhost 的行全是真实映射行，按行数与按条目数数出来一样。
+    判分只看事实：确实 Read 了这个 fixture（不是别的文件）、读成功、回答的行数与 fixture 实际行数一致。"""
+    fixture = Path(str(row["workspace"]) + "-system") / "hosts"
+    count = sum(1 for line in fixture.read_text(encoding="utf-8", errors="replace").splitlines()
+                if "localhost" in line.lower())
+    expected_path = guest(fixture)
     read_calls = {e["callId"] for e in events
-                  if e.get("type") == "tool_planned" and e.get("tool") == "Read"}
+                  if e.get("type") == "tool_planned" and e.get("tool") == "Read"
+                  and e.get("input", {}).get("file_path") == expected_path}
     read_ok = any(e.get("type") == "tool_outcome" and e.get("callId") in read_calls
                   and not e["result"].get("isError", False) for e in events)
-    return {"read_ok": read_ok,
+    return {"read_fixture": bool(read_calls),
+            "read_ok": read_ok,
             "count_answered": str(count) in row.get("final", "")}
 
 
@@ -479,7 +512,7 @@ def new_cases():
 
         # 5) 子 agent
         dict(id="32-subagent-researcher",
-             files={".claude/agents/researcher.md": "---\nname: researcher\ndescription: Reads spec files and computes totals\npermissionMode: acceptEdits\n---\nYou read the spec files you are told to read and compute their total. Then use Write to save the result file you were asked for.\n",
+             files={".claude/agents/researcher.md": "---\nname: researcher\ndescription: Reads spec files and computes totals\n---\nYou read the spec files you are told to read and compute their total. Then use Write to save the result file you were asked for.\n",
                     "spec_a.txt": "widget price 4\n", "spec_b.txt": "gadget price 6\n", "spec_c.txt": "gizmo price 11\n"},
              prompt="Delegate this synchronously to the researcher subagent (subagent_type=researcher, run_in_background=false): read spec_a.txt, spec_b.txt and spec_c.txt, add up the three prices, and write just the number into total.txt.",
              tools=["Agent"], extra_checks=check_subagent_researcher),
@@ -507,8 +540,7 @@ def new_cases():
                     "vendor/lib.py": "value = 1\n",
                     "CHANGELOG.md": "# Changelog\n"},
              prompt="Two updates: append the line `## 2026-10-07 eval` at the end of CHANGELOG.md, and fix vendor/lib.py to say value = 2. vendor is third-party code protected by the project permission rules - if an update is denied, leave that file alone and complete the other update.",
-             approve="yes", expected={"CHANGELOG.md": "# Changelog\n## 2026-10-07 eval\n"},
-             frozen=["vendor/lib.py"], extra_checks=check_perm_deny),
+             approve="yes", frozen=["vendor/lib.py"], extra_checks=check_perm_deny),
         dict(id="37-perm-additional-dirs",
              files={},
              prompt="The shared directory registered as an additional directory contains consts.txt with a RATE line. Write rate.txt in the current directory containing just the number, and append the line `eval-visit` to shared/audit.log.",
@@ -516,8 +548,8 @@ def new_cases():
              setup=setup_shared_dir, extra_checks=check_perm_additional),
         dict(id="38-perm-system-read",
              files={},
-             prompt="Read the file /c/Windows/System32/drivers/etc/hosts and reply with just the number of lines that mention localhost.",
-             tools=["Read"], approve="yes", extra_checks=check_perm_system_read),
+             prompt="Read the hosts file at %SYSTEM_HOSTS% and reply with just the number of lines that mention localhost.",
+             tools=["Read"], approve="yes", setup=setup_system_hosts, extra_checks=check_perm_system_read),
 
         # 8) 结构化输出与无头
         dict(id="39-json-schema-total",

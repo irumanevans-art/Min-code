@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Setup": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/setup-input.sh\""
+          }
+        ],
+        "matcher": "init"
+      }
+    ]
+  }
+}

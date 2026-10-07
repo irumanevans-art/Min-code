@@ -1,0 +1,17 @@
+{
+  "event": "UserPromptExpansion",
+  "target": "example-skill",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§UserPromptExpansion：用户直接敲命令展开成 prompt 时触发（PreToolUse 盖不住的直达路径），matcher 对 command_name（:1386–1392）；输入 expansion_type/command_name/command_args/command_source/prompt（:1394–1411）。"
+}

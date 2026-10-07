@@ -1,0 +1,19 @@
+{
+  "event": "SubagentStart",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [
+    "Follow security guidelines for this task"
+  ],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§SubagentStart decision control：只有 additionalContext，注入子 agent 上下文开头；不能阻止创建（:2361–2376）；exit 2 的 stderr 只给人看（:871, :888）。"
+}

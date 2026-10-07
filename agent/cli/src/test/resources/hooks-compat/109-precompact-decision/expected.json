@@ -1,0 +1,20 @@
+{
+  "event": "PreCompact",
+  "target": "manual",
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "Compaction disabled by policy"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PreCompact decision control：exit 2 或 decision:block 阻止压缩（manual 的 stderr 给人）；systemMessage/continue 被丢弃（:3056–3060）。",
+  "pendingFix": "原文：阻止压缩之外，systemMessage/continue 被丢弃（:3060）。引擎现在：continue:false 会停回合、systemMessage 照常进通知。"
+}

@@ -1,0 +1,21 @@
+{
+  "event": "FileChanged",
+  "target": "data.csv",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [
+    "data.csv changed"
+  ],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§FileChanged output：读 watchPaths 与 systemMessage（终端通知）、丢弃 continue，不能阻断（:2917–2927）。",
+  "pendingFix": "原文：读 watchPaths 与 systemMessage、丢弃 continue（:2919–2927）。引擎现在：continue:false 会停回合；watchPaths 引擎不收。",
+  "minTrigger": "none"
+}

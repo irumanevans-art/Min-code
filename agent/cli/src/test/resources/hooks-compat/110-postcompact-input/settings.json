@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/postcompact-input.sh\""
+          }
+        ],
+        "matcher": "auto"
+      }
+    ]
+  }
+}

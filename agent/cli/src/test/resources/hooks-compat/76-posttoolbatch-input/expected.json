@@ -1,0 +1,17 @@
+{
+  "event": "PostToolBatch",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PostToolBatch：一批并行调用全部结算后、下次模型调用前触发一次，无 matcher（:2143–2145）；tool_calls 每项带 tool_response（与模型看到的 tool_result 同形，:2147–2179）。"
+}

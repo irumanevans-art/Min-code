@@ -1,0 +1,17 @@
+{
+  "event": "FileChanged",
+  "target": "data.csv",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§FileChanged：被监视文件变化时触发（文件系统 watcher——Edit/Write/Bash/外部进程都算）；matcher 兼任建监视列表与过滤，按 | 拆成字面文件名（:2852–2895）；输入 file_path/event=change|add|unlink（:2897–2915）。"
+}

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "DirectoryAdded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/directoryadded-decision.sh\""
+          }
+        ],
+        "matcher": "slash_command"
+      }
+    ]
+  }
+}

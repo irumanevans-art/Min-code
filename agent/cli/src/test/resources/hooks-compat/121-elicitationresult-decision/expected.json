@@ -1,0 +1,24 @@
+{
+  "event": "ElicitationResult",
+  "target": "my-mcp-server",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§ElicitationResult output：action/content 覆写答复（发回 MCP 服务器前）；exit 2 把有效动作改成 decline（:3452–3473）。",
+  "specific": {
+    "hookEventName": "ElicitationResult",
+    "action": "decline",
+    "content": {}
+  },
+  "pendingFix": "依赖未做功能：MCP elicitation Min 还没有；引擎已能校验 action/content（覆写要等内核接）。",
+  "minTrigger": "none"
+}

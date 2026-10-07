@@ -1,0 +1,17 @@
+{
+  "event": "Stop",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§Stop input：stop_hook_active（已在续跑中）/last_assistant_message/background_tasks/session_crons；连续续跑 8 次上限（:2533–2539）。"
+}

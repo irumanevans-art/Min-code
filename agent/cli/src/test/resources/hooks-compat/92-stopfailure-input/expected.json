@@ -1,0 +1,17 @@
+{
+  "event": "StopFailure",
+  "target": "rate_limit",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§StopFailure：turn 因 API 错误结束时代替 Stop 触发；matcher 对 error 类型（:2625–2631）；输入 error/error_details/last_assistant_message（此处是错误串本身）（:2633–2649）。"
+}

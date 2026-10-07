@@ -1,0 +1,24 @@
+{
+  "event": "SessionStart",
+  "target": "resume",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [
+    "Current branch: feat/auth-refactor"
+  ],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§SessionStart decision control：additionalContext 加进对话开头；sessionTitle 设标题（clear/compact 忽略）；另有 initialUserMessage/watchPaths/reloadSkills；不能阻断（:1161–1181）。",
+  "specific": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "Current branch: feat/auth-refactor",
+    "sessionTitle": "auth-refactor"
+  }
+}

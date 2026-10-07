@@ -1,0 +1,23 @@
+{
+  "event": "WorktreeCreate",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§WorktreeCreate output：必须返回路径——command 型打 stdout 最后一行非空、http 型用 hookSpecificOutput.worktreePath；失败或没路径 = 创建失败；任何非零退出中止（:2974–2985, :883）。",
+  "specific": {
+    "hookEventName": "WorktreeCreate",
+    "worktreePath": "/home/user/repo/.worktrees/feature-auth"
+  },
+  "pendingFix": "依赖未做功能：worktree 隔离 Min 还没有；引擎已能解码 worktreePath（command 型读 stdout 路径要等内核接）。",
+  "minTrigger": "none"
+}

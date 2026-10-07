@@ -1,0 +1,17 @@
+{
+  "event": "SubagentStart",
+  "target": "Explore",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§SubagentStart：Agent 工具起子 agent（含恢复子 agent）时触发，matcher 对 agent 类型名（插件名带 scope，正则要 ^...$ 锚定）（:2340–2344）；输入 agent_id/agent_type（:2346–2359）。"
+}

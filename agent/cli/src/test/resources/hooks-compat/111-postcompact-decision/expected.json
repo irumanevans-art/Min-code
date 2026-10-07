@@ -1,0 +1,18 @@
+{
+  "event": "PostCompact",
+  "target": "auto",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PostCompact：无决策控制，拦不住压缩结果；systemMessage/continue 被丢弃（:3079, :3103）。",
+  "pendingFix": "原文：systemMessage/continue 被丢弃（:3079）。引擎现在：continue:false 会停回合，reason/systemMessage 也照收（decision:block 已正确忽略）。"
+}

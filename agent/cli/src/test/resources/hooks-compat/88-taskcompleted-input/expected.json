@@ -1,0 +1,17 @@
+{
+  "event": "TaskCompleted",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§TaskCompleted：TaskUpdate 标完成或团队成员带未完任务收尾时触发、无 matcher（:2467–2471）；输入同 TaskCreated（:2473–2498）。"
+}

@@ -1,0 +1,12 @@
+{
+  "session_id": "s-88",
+  "transcript_path": "/home/user/.claude/projects/p/88.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "TaskCompleted",
+  "task_id": "task-001",
+  "task_subject": "Implement user authentication",
+  "task_description": "Add login and signup endpoints",
+  "teammate_name": "implementer",
+  "team_name": "session-a1b2c3d4"
+}

@@ -1,0 +1,18 @@
+{
+  "session_id": "s-72",
+  "transcript_path": "/home/user/.claude/projects/p/72.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/home/user/repo/file.txt",
+    "content": "file content"
+  },
+  "tool_response": {
+    "filePath": "/home/user/repo/file.txt",
+    "type": "create"
+  },
+  "tool_use_id": "toolu_01ABC123",
+  "duration_ms": 12
+}

@@ -1,0 +1,21 @@
+{
+  "event": "UserPromptSubmit",
+  "target": null,
+  "handlerCount": 1,
+  "decision": "Block",
+  "reasons": [
+    "Prompt policy: no deploy commands"
+  ],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [
+    "Deployment policy v3 applies"
+  ],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§UserPromptSubmit decision control：decision:block+reason 在 prompt 到达 Claude 前拦下（reason 只给人、不进上下文，:1355–1365）；hookSpecificOutput.additionalContext 随 prompt 注入；另有 sessionTitle 与 suppressOriginalPrompt（:1362–1384）；exit 2 同 reason 通道（:1365）。"
+}

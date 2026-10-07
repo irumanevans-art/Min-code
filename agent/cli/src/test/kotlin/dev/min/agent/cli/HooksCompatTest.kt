@@ -41,6 +41,11 @@ import kotlin.coroutines.suspendCoroutine
  * `if` 规则的判定由本测试按 expected.json 里声明的 ifRules 注入（引擎本身不认识权限规则）。
  *
  * 期望与实现对不上的样本在 expected.json 里标 pendingFix：差异单独列出、不算失败，逐条复核后再定。
+ * 内核根本不触发的事件，其样本再标 `minTrigger: "none"`：测试断言「内核现在确实不触发」（见 [KERNEL_FIRED]），
+ * 引擎按原文对齐的部分照常钉住——给后面接事件的人当规格；接线后这些样本会开始失败，提醒摘标记。
+ *
+ * 全事件覆盖由「每个事件都有输入与决策样本」那条测试保证：每个 HookEvent 枚举值至少两个样本
+ * （-input 钉输入 JSON 的字段与类型，-decision 钉输出字段的效果；没有决策控制的事件钉「输出被忽略」）。
  */
 class HooksCompatTest {
     @Test fun `hooks 兼容样本的合并结论与期望逐项一致`() {
@@ -59,12 +64,53 @@ class HooksCompatTest {
             failures.joinToString("\n") + pendingNote, failures.isEmpty())
     }
 
+    /**
+     * 内核今天真的会触发的 hooks 事件（桌面会话从建会话到收尾的完整链路；对标清单 05 的「13 个已接上」）：
+     * SessionStart=SessionRuntime.kt:311（compact 另经 Compactor.kt:191）、UserPromptSubmit=TurnRunner.kt:232、
+     * PreToolUse=ToolExecutor.kt:386、PermissionRequest=ToolExecutor.kt:303、PostToolUse/PostToolUseFailure=ToolExecutor.kt:424、
+     * Notification=SessionRuntime.kt:554、SubagentStart=SessionHub.kt:801、SubagentStop=TurnRunner.kt:268、
+     * Stop=TurnRunner.kt:266、SessionEnd=SessionHub.kt:787、PreCompact=Compactor.kt:209、PostCompact=Compactor.kt:178。
+     * 给内核接新事件时更新这份清单：对应 minTrigger:"none" 的样本会开始失败，提醒升级样本并摘掉标记。
+     */
+    private val KERNEL_FIRED = setOf(
+        "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse",
+        "PostToolUseFailure", "Notification", "SubagentStart", "SubagentStop", "Stop", "SessionEnd",
+        "PreCompact", "PostCompact",
+    )
+
+    @Test fun `hooks 每个事件都有输入与决策样本，触发现状标记与内核清单一致`() {
+        val samplesRoot = Paths.get(URI(javaClass.classLoader.getResource("hooks-compat")!!.toString()))
+        val byEvent = linkedMapOf<String, MutableList<Pair<String, String?>>>()
+        Files.list(samplesRoot).use { dirs ->
+            dirs.filter(Files::isDirectory).sorted().forEach { dir ->
+                val expected = Json.parseToJsonElement(
+                    Files.readString(dir.resolve("expected.json"), Charsets.UTF_8)).jsonObject
+                val event = expected.requiredString("event")
+                byEvent.getOrPut(event) { mutableListOf() } +=
+                    dir.fileName.toString() to expected["minTrigger"]?.jsonPrimitive?.contentOrNull
+            }
+        }
+        val all = Class.forName("dev.min.agent.ext.hooks.HookEvent").enumConstants.map { it.toString() }
+        val problems = mutableListOf<String>()
+        for (event in all) {
+            val samples = byEvent[event].orEmpty()
+            if (samples.size < 2) problems += "事件 $event 应至少有 2 个样本（输入 + 决策），实际 ${samples.size}"
+            val marked = samples.count { it.second == "none" }
+            if (event in KERNEL_FIRED && marked > 0)
+                problems += "事件 $event 内核会触发，样本不应标 minTrigger:none"
+            if (event !in KERNEL_FIRED && marked == 0)
+                problems += "事件 $event 内核现在不触发，至少一个样本要标 minTrigger:none 断言现状"
+        }
+        assertTrue("33 个事件的覆盖与触发现状：\n" + problems.joinToString("\n"), problems.isEmpty())
+    }
+
     /** 跑单个样本：拷贝到临时目录 → 引擎全链路 → 与 expected.json 比对；差异写进 failures 或 pending。 */
     private suspend fun runSample(sample: Path, failures: MutableList<String>, pending: MutableList<String>) {
         val name = sample.fileName.toString()
         val expected = Json.parseToJsonElement(
             Files.readString(sample.resolve("expected.json"), Charsets.UTF_8)).jsonObject
         val pendingFix = expected["pendingFix"]?.jsonPrimitive?.contentOrNull
+        val minTrigger = expected["minTrigger"]?.jsonPrimitive?.contentOrNull
         val diffs = mutableListOf<String>()
         var root: Path? = null
         try {
@@ -119,6 +165,10 @@ class HooksCompatTest {
             val expectedInput = expected["updatedInput"].jsonNullSafe
             check(diffs, "updatedInput", expectedInput?.toString(),
                 get(combined, "updatedInput")?.toString(), name)
+            // 事件富控制的原始解码（hookSpecificOutput 整体）：只钉引擎认下的字段组合，如 displayContent/retry/worktreePath/action。
+            (expected["specific"]?.jsonNullSafe)?.let { want ->
+                check(diffs, "specific", want, get(verdicts.last(), "specificOutput") as JsonElement?, name)
+            }
             val errors = get(combined, "nonBlockingErrors") as List<*>
             check(diffs, "nonBlockingErrorCount", expected.intOrNullOf("nonBlockingErrorCount") ?: 0,
                 errors.size, name)
@@ -141,9 +191,16 @@ class HooksCompatTest {
         } finally {
             root?.toFile()?.deleteRecursively()
         }
+        val event = expected.requiredString("event")
+        val notFired = minTrigger == "none"
+        if (notFired && event in KERNEL_FIRED) {
+            failures += "$name minTrigger：样本标着「内核不触发」，内核现在会触发 $event——升级成端到端样本并摘掉标记"
+        }
+        val notFiredNote = if (notFired) "内核现在不触发 $event；" else ""
         when {
-            diffs.isEmpty() -> Unit
-            pendingFix != null -> pending += "[$name] pendingFix：$pendingFix\n" +
+            diffs.isEmpty() && !notFired -> Unit
+            diffs.isEmpty() -> pending += "[$name] pendingFix：$notFiredNote$pendingFix"
+            pendingFix != null -> pending += "[$name] pendingFix：$notFiredNote$pendingFix\n" +
                 diffs.joinToString("\n") { "    $it" }
             else -> failures += diffs
         }

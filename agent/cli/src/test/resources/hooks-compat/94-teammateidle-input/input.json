@@ -1,0 +1,9 @@
+{
+  "session_id": "s-94",
+  "transcript_path": "/home/user/.claude/projects/p/94.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "TeammateIdle",
+  "teammate_name": "researcher",
+  "team_name": "session-a1b2c3d4"
+}

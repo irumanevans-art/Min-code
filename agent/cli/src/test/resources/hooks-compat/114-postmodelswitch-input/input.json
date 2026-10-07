@@ -1,0 +1,16 @@
+{
+  "session_id": "s-114",
+  "transcript_path": "/home/user/.claude/projects/p/114.jsonl",
+  "cwd": "/home/user/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PostModelSwitch",
+  "from_model": "claude-sonnet-5",
+  "to_model": "claude-opus-5",
+  "requested_model": null,
+  "source": "auto",
+  "context_tokens": 182340,
+  "prompt_cache_warm": false,
+  "cache_ttl": "5m",
+  "estimated_cache_write_usd": 1.1396,
+  "pricing": "catalog"
+}

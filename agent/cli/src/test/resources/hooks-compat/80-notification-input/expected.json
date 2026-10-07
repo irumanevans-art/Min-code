@@ -1,0 +1,17 @@
+{
+  "event": "Notification",
+  "target": "permission_prompt",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§Notification：发通知时触发，matcher 对通知类型（permission_prompt/idle_prompt/auth_success/elicitation_*/agent_*/quota_*，:2248–2291）；输入 message/title/notification_type（:2322–2336）。"
+}

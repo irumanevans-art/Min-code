@@ -1,0 +1,17 @@
+{
+  "event": "PreModelSwitch",
+  "target": "claude-opus-5",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PreModelSwitch：用户/客户端请求切模型时触发（自动回退不触发，:3105–3121）；matcher 对目标模型规范名（:3119–3121）；输入 from_model/to_model/requested_model/source + 成本五件套（:3191–3225）。"
+}

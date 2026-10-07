@@ -1,0 +1,17 @@
+{
+  "event": "SessionEnd",
+  "target": "other",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§SessionEnd：无决策控制，拦不住终止；JSON 输出字段（含 systemMessage）被丢弃；整类 hook 共享 1.5 秒预算（CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS 可抬到 60 秒）（:3343–3345）。"
+}

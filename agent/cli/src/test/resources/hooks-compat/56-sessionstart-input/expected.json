@@ -1,0 +1,17 @@
+{
+  "event": "SessionStart",
+  "target": "resume",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "hooks.md §SessionStart input：source 必给（startup/resume/clear/compact/fork），model/agent_type/session_title 可缺席；resume 且转录有回复时另有 seconds_since_last_response/context_tokens/prompt_cache_likely_expired/estimated_cache_write_usd（v2.1.251+）（:1122–1159）。"
+}

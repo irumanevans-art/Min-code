@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/teammateidle-decision.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

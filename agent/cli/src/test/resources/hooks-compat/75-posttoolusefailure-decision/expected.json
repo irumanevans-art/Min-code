@@ -1,0 +1,19 @@
+{
+  "event": "PostToolUseFailure",
+  "target": "Bash",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "reasons": [],
+  "shouldContinue": true,
+  "stopReasons": [],
+  "additionalContext": [
+    "npm registry unreachable; retry with the internal mirror"
+  ],
+  "updatedInput": null,
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "notesContain": [],
+  "basis": "§PostToolUseFailure decision control：只有 additionalContext，随错误一起给 Claude（:2126–2141）。"
+}
