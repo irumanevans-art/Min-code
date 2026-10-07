@@ -32,6 +32,9 @@ interface MinCommandEffects {
     fun rename(title: String)
     fun rememberDefaultModel(profileId: String, modelId: String)
     suspend fun killTask(taskId: String)
+
+    /** 「总是允许」写进某一层 settings 文件。[cwd] 是会话的工作目录（guest 路径）。结局以轻提示告诉用户（成功 / 没写成的原因） */
+    suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String)
 }
 
 /**
@@ -56,6 +59,7 @@ class MinCommandHandler(
     private val router = MinInteractionRouter(
         session = { id -> hub.get(id)?.asAnswerTarget() },
         interrupt = ::interruptFrom,
+        persistRule = { layer, rule -> effects.persistAllowRule(layer, rule, root.state.value.created.cwd.value) },
     )
 
     suspend fun handle(command: SessionCommand): CommandResult {

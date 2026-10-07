@@ -176,7 +176,8 @@ data class EngineCapabilities(
             withdrawInFlight = false,
             interruptTurn = true,
             resume = ResumeSupport.Native,
-            approvalAlways = false,
+            // 内核的规则判定（K14）早已接上；B7 的审批卡把规则写进用户选的那一层 settings（MinPermissionRules）
+            approvalAlways = true,
             questions = true,
             planMode = true,
             modelHotSwap = true,

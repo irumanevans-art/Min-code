@@ -241,6 +241,9 @@ fun ClaudeCodePage(
         maintenanceVm.sessionsStale.collect { listVm.refreshSessions() }
     }
     val toaster = LocalToaster.current
+    LaunchedEffect(vm) {
+        vm.signalNotices.collect { toaster.show(it.text, if (it.isError) ToastType.Error else ToastType.Success) }
+    }
     LaunchedEffect(notice) {
         val text = notice ?: return@LaunchedEffect
         toaster.show(text, ToastType.Error)

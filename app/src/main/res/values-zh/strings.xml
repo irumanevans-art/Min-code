@@ -1121,6 +1121,12 @@
   <string name="min_agent_option_allow">允许</string>
   <string name="min_agent_option_deny">拒绝</string>
   <string name="min_agent_option_deny_stop">拒绝并停止</string>
+  <string name="min_agent_rule_saved_local">已记入本项目的 .claude/settings.local.json</string>
+  <string name="min_agent_rule_saved_user">已记入 ~/.claude/settings.json</string>
+  <string name="min_agent_rule_not_saved">本会话已放行，但规则没有存下来：%1$s</string>
+  <string name="min_agent_option_always_session">本会话总是允许：%1$s</string>
+  <string name="min_agent_option_always_local">本项目总是允许：%1$s</string>
+  <string name="min_agent_option_always_user">所有项目总是允许：%1$s</string>
   <string name="min_agent_option_plan_approve">批准计划</string>
   <string name="min_agent_option_plan_revise">打回修改</string>
   <string name="min_agent_delegation">委派 %1$s · %2$s</string>

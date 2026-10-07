@@ -23,11 +23,17 @@ class FakeHost(val kernel: TestKernel, override val lookup: MinModelLookup = Fak
     val drafts = mutableListOf<Pair<SessionRef, UserInput>>()
     val indexed = mutableListOf<SessionState>()
     val closed = mutableListOf<CloseReason>()
+    val persisted = mutableListOf<Triple<RuleLayer, String, String>>()
+    var persistResult: PersistRule = PersistRule.Written
 
     override fun titleOverride(sessionId: String): Flow<String?> = titles
     override fun renameSession(sessionId: String, title: String) { renames += title }
     override fun rememberDefaultModel(profileId: String, modelId: String) { defaults += profileId to modelId }
     override suspend fun killTask(taskId: String) { killed += taskId }
+    override suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String): PersistRule {
+        persisted += Triple(layer, rule, cwd)
+        return persistResult
+    }
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = null
     override suspend fun searchFiles(cwd: String, query: String, limit: Int): List<String> = emptyList()
     override fun saveWithdrawnDraft(ref: SessionRef, input: UserInput) { drafts += ref to input }

@@ -189,6 +189,11 @@ class SessionVM(
         returnedMessages,
     )
 
+    /** 会话发来的轻提示（「总是允许」的规则存好了 / 没存成的原因）。页面收着弹 Toast；没人收时引擎不会替它攒 */
+    val signalNotices: Flow<SessionSignal.Notice> = active.flatMapLatest { session ->
+        session?.signals?.filterIsInstance<SessionSignal.Notice>() ?: emptyFlow()
+    }
+
     /** 今天的累计花费，跨会话、跨重启。底栏那个金额读它 */
     val dailyCostUsd: StateFlow<Double> = costLedger.dailyCostUsd
 

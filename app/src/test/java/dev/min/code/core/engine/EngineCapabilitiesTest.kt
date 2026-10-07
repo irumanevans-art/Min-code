@@ -20,7 +20,7 @@ class EngineCapabilitiesTest {
         "withdrawInFlight" to Triple("true", "false", "false"),
         "interruptTurn" to Triple("true", "false", "true"),
         "resume" to Triple("Prompted", "None", "Native"),
-        "approvalAlways" to Triple("true", "true", "false"),
+        "approvalAlways" to Triple("true", "true", "true"),
         "questions" to Triple("true", "false", "true"),
         "planMode" to Triple("true", "false", "true"),
         "modelHotSwap" to Triple("true", "true", "true"),

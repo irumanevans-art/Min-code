@@ -1126,6 +1126,12 @@
   <string name="min_agent_option_allow">Allow</string>
   <string name="min_agent_option_deny">Deny</string>
   <string name="min_agent_option_deny_stop">Deny and stop</string>
+  <string name="min_agent_rule_saved_local">Saved to this project\'s .claude/settings.local.json</string>
+  <string name="min_agent_rule_saved_user">Saved to ~/.claude/settings.json</string>
+  <string name="min_agent_rule_not_saved">Allowed for this session, but the rule was not saved: %1$s</string>
+  <string name="min_agent_option_always_session">Always allow this session: %1$s</string>
+  <string name="min_agent_option_always_local">Always allow in this project: %1$s</string>
+  <string name="min_agent_option_always_user">Always allow everywhere: %1$s</string>
   <string name="min_agent_option_plan_approve">Approve the plan</string>
   <string name="min_agent_option_plan_revise">Send it back</string>
   <string name="min_agent_delegation">Delegate to %1$s · %2$s</string>

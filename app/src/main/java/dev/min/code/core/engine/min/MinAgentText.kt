@@ -44,6 +44,13 @@ interface MinAgentText {
     fun optionAllow(): String
     fun optionDeny(): String
     fun optionDenyAndStop(): String
+
+    /** 「总是允许」按钮：[rule] 是 CC 语法的规则原文（`Bash(git status)`），原样显示 */
+    fun optionAlways(layer: RuleLayer, rule: String): String
+
+    /** 规则写进文件之后的一句轻提示 / 没写成的原因 */
+    fun ruleSaved(layer: RuleLayer): String
+    fun ruleNotSaved(reason: String): String
     fun optionApprovePlan(): String
     fun optionRevisePlan(): String
     fun delegation(agentType: String, description: String): String
@@ -143,6 +150,18 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun optionAllow() = s(R.string.min_agent_option_allow)
     override fun optionDeny() = s(R.string.min_agent_option_deny)
     override fun optionDenyAndStop() = s(R.string.min_agent_option_deny_stop)
+    override fun ruleSaved(layer: RuleLayer): String = context.getString(
+        if (layer == RuleLayer.User) R.string.min_agent_rule_saved_user else R.string.min_agent_rule_saved_local,
+    )
+    override fun ruleNotSaved(reason: String): String = context.getString(R.string.min_agent_rule_not_saved, reason)
+    override fun optionAlways(layer: RuleLayer, rule: String): String = context.getString(
+        when (layer) {
+            RuleLayer.Session -> R.string.min_agent_option_always_session
+            RuleLayer.Local -> R.string.min_agent_option_always_local
+            RuleLayer.User -> R.string.min_agent_option_always_user
+        },
+        rule,
+    )
     override fun optionApprovePlan() = s(R.string.min_agent_option_plan_approve)
     override fun optionRevisePlan() = s(R.string.min_agent_option_plan_revise)
     override fun delegation(agentType: String, description: String) = s(R.string.min_agent_delegation, agentType, description)

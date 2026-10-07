@@ -347,6 +347,9 @@ class MinAgentEngine(
         catchingNonCancellation { clippedLog(generation.fs.hostPath(logRef).toFile(), maxChars).first }.getOrNull()
     }
 
+    override suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String): PersistRule =
+        writeAllowRule(generation.fs, layer, rule, GuestPath(cwd), MinKernelDeps.MEMORY_HOME)
+
     override suspend fun searchFiles(cwd: String, query: String, limit: Int): List<String> = withContext(Dispatchers.IO) {
         catchingNonCancellation { findMentionFiles(generation.fs.hostPath(GuestPath(cwd)).toFile(), cwd, query, limit) }.getOrDefault(emptyList())
     }
