@@ -1,4 +1,13 @@
 $ErrorActionPreference='Stop'
+$originalPath=$env:PATH
+# CLI 的真实 hook 用例需要 Git Bash；宿主 PATH 缺失会变成等后台事件超时，必须先验证环境。
+if(!(Get-Command bash -ErrorAction SilentlyContinue)) {
+    $gitBash=Join-Path $env:ProgramFiles 'Git/bin'
+    if(!(Test-Path (Join-Path $gitBash 'bash.exe'))){throw '验证需要 Git Bash，请将 bash 加入 PATH'}
+    $env:PATH="$gitBash;$originalPath"
+}
+& bash -lc ':'
+if($LASTEXITCODE -ne 0){$env:PATH=$originalPath;throw 'Git Bash 环境检查失败'}
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 $dest=Join-Path $repo 'agent/mcp/build/review/fixes/final-check'
 New-Item -ItemType Directory -Force $dest | Out-Null
@@ -28,5 +37,5 @@ try {
     Write-Output "FINAL GRADLE_EXIT=$code"
     $summary | ForEach-Object {Write-Output "$($_.module): tests=$($_.tests) failures=$($_.failures) skipped=$($_.skipped)"}
     Get-Content (Join-Path $dest 'gradle.log') -Tail 24
-} finally {Pop-Location}
+} finally {Pop-Location;$env:PATH=$originalPath}
 exit $code

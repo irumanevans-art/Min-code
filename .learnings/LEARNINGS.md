@@ -1,3 +1,28 @@
+## [LRN-20261007-GIT-BASH-VERIFY] best_practice
+
+**Logged**: 2026-10-07
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+真实 hook 集成验证先检查 Git Bash 环境，并断言 hook 实际产生了目标结论。
+
+### Details
+本轮完整检查的 PowerShell PATH 缺少 bash，后台 hook 启动报 IOException，测试等待完成事件直到 60 秒超时；确认原因后停止本轮自己的测试 worker，保留真实 GRADLE_EXIT=1 与线程日志。验证脚本只在当前进程补充已安装的 Git Bash 路径，完成后恢复 PATH。桌面凭证用例新增事件断言：真实 PreToolUse 返回 allow 且无 problems，避免仅配置了 hook、实际未运行也声称验证成功。另一个 PowerShell 验证问题是 -match 会覆盖自动变量 $Matches，结果集合改名为 $matchedCases 后独立核验 36 项 XML。
+
+### Suggested Action
+外部执行器测试应验证执行环境和真实事件结论；PowerShell 脚本不要用 $Matches 保存业务集合。不能靠增加超时或忽略失败让环境故障变绿。
+
+### Metadata
+- Source: error
+- Related Files: agent/mcp/scripts/mcp3-fixes-check.ps1, agent/mcp/scripts/mcp3-fixes-verify.ps1, agent/cli/src/test/kotlin/dev/min/agent/cli/CredentialDesktopTest.kt
+- Tags: git-bash, path, hooks, test-oracle, powershell
+- Pattern-Key: testing.external_executor_preflight
+- Recurrence-Count: 1
+
+---
+
 ## [LRN-20261007-CREDENTIAL-PATH-ORDER] best_practice
 
 **Logged**: 2026-10-07
