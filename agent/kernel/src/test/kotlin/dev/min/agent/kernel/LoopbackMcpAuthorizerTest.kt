@@ -55,7 +55,7 @@ class LoopbackMcpAuthorizerTest {
         val port=URI(redirect.await()).port; pending.cancelAndJoin(); ServerSocket(port).close()
         var timeoutPort=0
         try { LoopbackMcpAuthorizer(openPage={true},timeoutMs=150).authorize(null) { timeoutPort=URI(it).port; "https://as.example" }; fail("timeout") }
-        catch(e: TimeoutCancellationException) { }
+        catch(e: dev.min.agent.mcp.McpOAuthException) {assertEquals(dev.min.agent.mcp.McpOAuthException.Kind.LoginTimeout,e.kind)}
         ServerSocket(timeoutPort).close(); Unit
     }
     @Test fun `unrelated and oversized requests cannot become callbacks`() = runBlocking {

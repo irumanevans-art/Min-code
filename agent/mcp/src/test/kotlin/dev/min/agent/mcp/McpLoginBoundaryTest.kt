@@ -11,6 +11,15 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 class McpLoginBoundaryTest {
+    @Test fun `five minute login budget becomes domain timeout while caller cancellation remains cancellation`() = runTest {
+        var opened=false
+        val authorizer=McpAuthorizer {_,url -> url("http://127.0.0.1:1234/mcp/oauth/callback");opened=true;awaitCancellation()}
+        val client=McpOAuthClient(http,store,authorizer)
+        try {client.login(key,settings);fail("timeout")} catch(e:McpOAuthException){assertEquals(McpOAuthException.Kind.LoginTimeout,e.kind)}
+        assertTrue(opened)
+        try {withTimeout(10){client.login(key,settings)};fail("outer cancellation")} catch(e:TimeoutCancellationException){}
+        Unit
+    }
     @Test fun `authorization preview contains issuer domain and scopes before opening page`() = runBlocking {
         var preview: List<String?>? = null
         val authorizer=object : McpAuthorizer {

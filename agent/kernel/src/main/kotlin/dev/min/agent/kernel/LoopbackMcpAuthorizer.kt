@@ -21,7 +21,7 @@ class LoopbackMcpAuthorizer(
 ) : McpAuthorizer {
     override suspend fun authorize(redirectPort: Int?, expectedState: String, authorizationUrl: suspend (String)->String): String =
         LoopbackMcpAuthorizer(openPage,manualUrl,pollCallback,timeoutMs,expectedState).authorize(redirectPort,authorizationUrl)
-    override suspend fun authorize(redirectPort: Int?, authorizationUrl: suspend (String) -> String): String = withTimeout(timeoutMs) {
+    override suspend fun authorize(redirectPort: Int?, authorizationUrl: suspend (String) -> String): String = withTimeoutOrNull(timeoutMs) {
         require(redirectPort==null || redirectPort in 1..65535) { "MCP 回调端口无效。" }
         val listener=ServerSocket()
         try {
@@ -38,7 +38,7 @@ class LoopbackMcpAuthorizer(
                 currentCoroutineContext().ensureActive()
                 if(!opened) pollCallback?.invoke()?.let { raw ->
                     val uri=try {URI(raw)} catch(e: Exception){null}
-                    if(uri!=null && uri.scheme=="http" && uri.host=="127.0.0.1" && uri.port==listener.localPort && uri.rawPath=="/mcp/oauth/callback" && validResponse(uri)) return@withTimeout raw
+                    if(uri!=null && uri.scheme=="http" && uri.host=="127.0.0.1" && uri.port==listener.localPort && uri.rawPath=="/mcp/oauth/callback" && validResponse(uri)) return@withTimeoutOrNull raw
                 }
                 val callback=withContext(Dispatchers.IO) {
                     val socket=try { listener.accept() } catch(e: SocketTimeoutException) { return@withContext null }
@@ -67,11 +67,11 @@ class LoopbackMcpAuthorizer(
                         if(accepted) "http://127.0.0.1:${listener.localPort}$target" else null
                     }
                 }
-                if(callback!=null) return@withTimeout callback
+                if(callback!=null) return@withTimeoutOrNull callback
             }
             @Suppress("UNREACHABLE_CODE") error("unreachable")
         } finally { listener.close() }
-    }
+    } ?: throw dev.min.agent.mcp.McpOAuthException(dev.min.agent.mcp.McpOAuthException.Kind.LoginTimeout)
     private fun validResponse(uri: URI): Boolean {
         val params=mutableMapOf<String,String>()
         try {

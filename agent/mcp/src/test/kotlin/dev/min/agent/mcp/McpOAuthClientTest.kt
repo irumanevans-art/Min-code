@@ -346,7 +346,7 @@ class McpOAuthClientTest {
         }
         var timedOut=false; val entered=CompletableDeferred<Unit>()
         val client=McpOAuthClient(http,Store(),McpAuthorizer { _,url -> url("http://127.0.0.1:1234/mcp/oauth/callback"); entered.complete(Unit); awaitCancellation() })
-        val job=launch { try { client.login(McpTokenKey("db","https://db.example/mcp"),McpOAuthSettings(clientId="client")) } catch(e: TimeoutCancellationException) { timedOut=true } }
+        val job=launch { try { client.login(McpTokenKey("db","https://db.example/mcp"),McpOAuthSettings(clientId="client")) } catch(e: McpOAuthException) { assertEquals(McpOAuthException.Kind.LoginTimeout,e.kind);timedOut=true } }
         runCurrent(); assertTrue(entered.isCompleted)
         advanceTimeBy(299_999); runCurrent(); assertTrue(job.isActive); assertFalse(timedOut)
         advanceTimeBy(1); runCurrent(); assertTrue(timedOut); assertTrue(job.isCompleted)

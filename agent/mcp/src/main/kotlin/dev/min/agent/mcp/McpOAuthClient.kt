@@ -2,7 +2,7 @@ package dev.min.agent.mcp
 
 import dev.min.agent.spi.*
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 import java.net.URI
 import java.net.URLDecoder
@@ -61,7 +61,8 @@ class McpOAuthException(val kind: Kind) : Exception(when (kind) {
     Kind.Token -> "MCP OAuth 换取令牌失败。"
     Kind.RefreshRejected -> "MCP 刷新令牌被拒绝，需要重新登录。"
     Kind.RefreshFailed -> "MCP 刷新暂时失败，请重试或重新登录。"
-}) { enum class Kind { Discovery, Security, Registration, Token, RefreshRejected, RefreshFailed } }
+    Kind.LoginTimeout -> "MCP 登录超时。"
+}) { enum class Kind { Discovery, Security, Registration, Token, RefreshRejected, RefreshFailed, LoginTimeout } }
 
 /** OAuth 的网络与密码学仅依赖 SPI；打开页面及存储的实现由宿主提供。 */
 class McpOAuthClient(
@@ -76,8 +77,12 @@ class McpOAuthClient(
         override fun toString() = "Metadata(***)"
     }
 
-    suspend fun login(key: McpTokenKey, settings: McpOAuthSettings = McpOAuthSettings(), challenge: McpAuthChallenge? = null): Unit = withTimeout(300_000) {
-        guarded(McpOAuthException.Kind.Token) { performLogin(key, settings, challenge) }
+    suspend fun login(key: McpTokenKey, settings: McpOAuthSettings = McpOAuthSettings(), challenge: McpAuthChallenge? = null) {
+        val completed=withTimeoutOrNull(300_000) {
+            guarded(McpOAuthException.Kind.Token) { performLogin(key, settings, challenge) }
+            true
+        }
+        if(completed!=true) fail(McpOAuthException.Kind.LoginTimeout)
     }
 
     private suspend fun performLogin(key: McpTokenKey, settings: McpOAuthSettings, challenge: McpAuthChallenge?) {
