@@ -69,7 +69,8 @@ object PolicyEngine {
         val facts = Facts.of(ask, context)
         val matcher = RuleMatcher(context.cwd, context.home)
 
-        if (facts.paths.any { credentialPath(it.path, context, includeAncestors = facts.tool == "Bash") }) {
+        // 宿主凭证不能经工具进入模型或事件；这个拒绝不能降级为可由用户或 hook 批准的询问。
+        if (facts.credentialTargets.any { credentialPath(it, context, includeAncestors = facts.tool == "Bash") }) {
             return Verdict.Deny(DecidedBy.Mode(context.mode), "这是 Min 保存的凭证文件，工具不能读取、搜索或修改它。")
         }
 
@@ -227,7 +228,7 @@ object PolicyEngine {
      * 踩了底线的请求也不给：底线任何规则都绕不过，给了「总是允许」也没用，只会让人以为下次不用问。
      */
     fun suggestRule(ask: PermissionAsk, context: PolicyContext): String? {
-        if (Facts.of(ask, context).paths.any { credentialPath(it.path, context, includeAncestors = ask.tool == "Bash") }) return null
+        if (Facts.of(ask, context).credentialTargets.any { credentialPath(it, context, includeAncestors = ask.tool == "Bash") }) return null
         if (floorReason(ask, context) != null) return null
         if (ask.commands.isNotEmpty()) {
             if (ask.commands.size != 1) return null
@@ -276,6 +277,7 @@ object PolicyEngine {
         /** 前面 cd 到了静态不知道的地方之后的相对重定向目标：写到哪里不知道 */
         val unresolvedWrites: List<String>,
         val paths: List<PathAccess>,
+        val credentialTargets: List<GuestPath>,
         val domains: List<String>,
         val specifiers: List<String>,
         val memoryDir: String?,
@@ -324,11 +326,14 @@ object PolicyEngine {
                 var changedDirectory = false
                 var fileCommandsCovered = true
                 val unresolved = mutableListOf<String>()
+                val credentialTargets = ask.paths.map { it.path }.toMutableList()
                 // 按顺序跟踪 cd：`cd /sdcard && echo x > a` 写的是 /sdcard/a。管道里的 cd 其实不生效，这里一律当生效（宁可多问）
                 var cwd: String? = context.cwd.value
+                var credentialCwd: String? = context.cwd.value
                 for (cmd in commands) {
                     if (changedDirectory && cmd.program == "git") gitAfterCd += cmd
                     for (r in cmd.redirects.filter { it.writesFile || it.readsFile }) {
+                        resolve(r.target, credentialCwd, context, normalize=false)?.let { credentialTargets += it }
                         val path = resolve(r.target, cwd, context)
                         if (path == null) unresolved += r.target
                         else {
@@ -344,6 +349,7 @@ object PolicyEngine {
                     val beforeOperands = filePaths.size
                     if (operands == null && !CommandSafety.isReadOnly(cmd)) fileCommandsCovered = false
                     for (operand in operands.orEmpty()) {
+                        resolve(operand.target, credentialCwd, context, normalize=false)?.let { credentialTargets += it }
                         val path = resolve(operand.target, cwd, context)
                         if (path == null) unresolved += operand.target
                         else filePaths += PathAccess(path, operand.kind, scope(path, context))
@@ -351,6 +357,7 @@ object PolicyEngine {
                     val reads = readCommandPaths(cmd)
                     if (reads == null) unresolved += "读文件命令含未展开的目标"
                     for (operand in reads.orEmpty()) {
+                        resolve(operand.target, credentialCwd, context, normalize=false)?.let { credentialTargets += it }
                         val path = resolve(operand.target, cwd, context)
                         if (path == null) unresolved += operand.target
                         else filePaths += PathAccess(path, AccessKind.Read, scope(path, context, operand.glob))
@@ -359,6 +366,7 @@ object PolicyEngine {
                     if (cmd.program in setOf("cd", "pushd", "popd")) {
                         changedDirectory = true
                         cwd = nextCwd(cmd, cwd, context)
+                        credentialCwd = nextCwd(cmd, credentialCwd, context, normalize=false)
                     }
                 }
                 return Facts(
@@ -378,6 +386,7 @@ object PolicyEngine {
                         it.copy(path = path, scope = if (it.scope == PathScope.Device) it.scope else scope(path, context))
                     } + redirectWrites + redirectReads + filePaths,
                     domains = ask.domains,
+                    credentialTargets = credentialTargets,
                     specifiers = ask.specifiers,
                     memoryDir = context.autoMemoryDir?.let { normalize(it.value) },
                 )
@@ -403,24 +412,26 @@ object PolicyEngine {
             }
 
             /** cd 之后的目录；静态不知道（`cd -`、`popd`、含变量）为 null */
-            private fun nextCwd(cmd: SimpleCommand, cwd: String?, context: PolicyContext): String? {
+            private fun nextCwd(cmd: SimpleCommand, cwd: String?, context: PolicyContext, normalize: Boolean = true): String? {
                 if (cmd.program == "popd" || cmd.hasExpansion) return null
                 val args = cmd.argv.drop(1).filterNot { it == "-P" || it == "-L" || it == "-e" || it == "--" }
                 val target = args.singleOrNull() ?: return if (args.isEmpty()) context.home.value else null
                 if (target == "-") return null
-                return resolve(target, cwd, context)?.value
+                return resolve(target, cwd, context, normalize)?.value
             }
 
             /** 相对路径接到 [cwd] 上，`~` 是家目录，`..` 规范化掉；[cwd] 不知道时相对路径也不知道 */
-            private fun resolve(target: String, cwd: String?, context: PolicyContext): GuestPath? {
+            private fun resolve(target: String, cwd: String?, context: PolicyContext, normalize: Boolean = true): GuestPath? {
                 val absolute = when {
+                    !normalize && target.matches(Regex("[A-Za-z]:[\\\\/].*")) -> "/${target.first().lowercaseChar()}/${target.substring(3).replace('\\','/')}"
                     target.startsWith("/") -> target
                     target == "~" -> context.home.value
                     target.startsWith("~/") -> context.home.value + "/" + target.removePrefix("~/")
                     cwd == null -> return null
                     else -> "$cwd/$target"
                 }
-                return GuestPath(normalize(absolute))
+                // 凭证目标先交给宿主解析链接，不能先折叠 link/.. 而改掉实际目标。
+                return GuestPath(if(normalize) normalize(absolute) else absolute)
             }
 
             /** 去掉 `.`、`..` 与重复的斜杠；`..` 到根为止（与内核一致） */

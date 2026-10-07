@@ -6,14 +6,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CredentialPolicyTest {
+    @Test fun `Windows shell drive paths and backslash paths cannot bypass credential protection`() {
+        val context=PolicyContext(PermissionMode.BypassPermissions,home=GuestPath("/c/Users/x"),cwd=GuestPath("/d/work"),
+            credentialPaths=setOf(GuestPath("/c/users/x/.min-agent/mcp-oauth.json*")),canonicalPath={GuestPath(it.value.lowercase())})
+        for(command in listOf("cat C:/Users/x/.min-agent/mcp-oauth.json","cat 'C:\\Users\\x\\.min-agent\\mcp-oauth.json'")) {
+            assertTrue(PolicyEngine.evaluate(PermissionAsk("Bash","test",commands=listOf(CommandAccess(command))),false,context) is Verdict.Deny)
+        }
+    }
     private val credentials = setOf(GuestPath("/root/.min-agent/mcp-oauth.json*"), GuestPath("/root/.min-agent/.mcp-oauth-*"))
     private fun context(mode: PermissionMode) = PolicyContext(mode, credentialPaths=credentials,
         rules=listOfNotNull(PermissionRule.parse(RuleKind.Allow,"Bash","test"), PermissionRule.parse(RuleKind.Allow,"Read","test")),
-        canonicalPath={ if(it.value=="/workspace/alias") GuestPath("/root/.min-agent/mcp-oauth.json") else it })
+        canonicalPath={ if(it.value in setOf("/workspace/alias","/workspace/link/../mcp-oauth.json")) GuestPath("/root/.min-agent/mcp-oauth.json") else it })
     @Test fun `credential files deny all tools and modes before approvals`() {
         for(mode in PermissionMode.entries) {
             for(tool in listOf("Read","Write","Edit","Grep","Glob","NotebookEdit")) {
-                for(path in listOf("/root/.min-agent/mcp-oauth.json","/root/.min-agent/mcp-oauth.json.lock","/root/.min-agent/.mcp-oauth-123.tmp","/root/.min-agent/../.min-agent/mcp-oauth.json","/workspace/alias")) {
+                for(path in listOf("/root/.min-agent/mcp-oauth.json","/root/.min-agent/mcp-oauth.json.lock","/root/.min-agent/.mcp-oauth-123.tmp","/root/.min-agent/../.min-agent/mcp-oauth.json","/workspace/alias","/workspace/link/../mcp-oauth.json")) {
                     val verdict=PolicyEngine.evaluate(PermissionAsk(tool,"test",paths=listOf(PathAccess(GuestPath(path),if(tool in setOf("Write","Edit","NotebookEdit")) AccessKind.Write else AccessKind.Read,PathScope.Rootfs))),tool in setOf("Read","Grep","Glob"),context(mode))
                     assertTrue("$mode $tool $path must deny",verdict is Verdict.Deny)
                     assertTrue((verdict as Verdict.Deny).messageToModel.contains("这是 Min 保存的凭证文件"))
@@ -23,7 +30,7 @@ class CredentialPolicyTest {
     }
     @Test fun `shell credential operands redirects globs and recursive roots deny`() {
         for(mode in listOf(PermissionMode.Default,PermissionMode.AcceptEdits,PermissionMode.BypassPermissions)) {
-            for(command in listOf("cat ~/.min-agent/mcp-oauth.json","cat < ~/.min-agent/mcp-oauth.json","echo x > ~/.min-agent/mcp-oauth.json","cat ~/.min-agent/mcp-oauth.*","cat ~/.min-agent/*","cd ~/.min-agent && cat mcp-oauth.json","cp ~/.min-agent/mcp-oauth.json /workspace/copy","rg token ~","grep -r token ~/.min-agent")) {
+            for(command in listOf("cat ~/.min-agent/mcp-oauth.json","cat < ~/.min-agent/mcp-oauth.json","echo x > ~/.min-agent/mcp-oauth.json","cat ~/.min-agent/mcp-oauth.*","cat ~/.min-agent/*","cd ~/.min-agent && cat mcp-oauth.json","cp ~/.min-agent/mcp-oauth.json /workspace/copy","rg token ~","grep -r token ~/.min-agent","cat /workspace/link/../mcp-oauth.json","cd /workspace/link && cat ../mcp-oauth.json")) {
                 assertTrue("$mode $command must deny",PolicyEngine.evaluate(PermissionAsk("Bash","test",commands=listOf(CommandAccess(command))),false,context(mode)) is Verdict.Deny)
             }
             assertTrue(PolicyEngine.evaluate(PermissionAsk("Grep","search",paths=listOf(PathAccess(GuestPath("/root"),AccessKind.Read,PathScope.Rootfs))),true,context(mode)) is Verdict.Allow)
