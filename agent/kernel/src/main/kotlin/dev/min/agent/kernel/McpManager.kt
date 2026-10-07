@@ -66,6 +66,7 @@ internal class McpManager(
         val authLock = Mutex()
         @Volatile var challenge: dev.min.agent.mcp.McpAuthChallenge? = null
         @Volatile var authRefreshed = false
+        @Volatile var usedAccessToken: String? = null
         val activeCalls = ConcurrentHashMap<Pair<SessionId, dev.min.agent.protocol.CallId>, McpCallRequest>()
         suspend fun <T> interact(block: suspend () -> T): T = if (refs >= 2) callLock.withLock { block() } else block()
         @Volatile var inputOwner: SessionRuntime? = null
@@ -238,6 +239,7 @@ internal class McpManager(
     }
 
     private suspend fun connectEntry(entry: Entry): McpConnection {
+        val usedAccessToken=if(entry.spec is McpServerSpec.Remote && entry.spec.headersHelper==null && entry.spec.headers.keys.none {it.equals("Authorization",true)}) oauth?.store?.load(tokenKey(entry))?.accessToken else null
         // 配置认证与 OAuth 仓库无关，不能为了刷新归并的标记读取不需要的凭证仓库。
         val connection=connector.connectWithInteraction(entry.spec,entry.projectRoot,scope,{ rootsFor(entry.projectRoot) }) { params ->
             val active=entry.activeCalls.values.singleOrNull()
@@ -249,6 +251,7 @@ internal class McpManager(
             if(entry.retired) throw CancellationException("MCP 连接已卸下。")
             entry.tools=connection.listTools(); entry.instructions=connection.instructions
             entry.connection=connection; entry.status=CONNECTED; entry.reason=null
+            entry.usedAccessToken=usedAccessToken
             watch(entry,connection)
             return connection
         } catch(e: Exception) { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { connection.close() } }; throw e }
@@ -280,7 +283,7 @@ internal class McpManager(
         if(client.store.load(tokenKey(entry))?.accessToken==null) throw LoginRequired()
         entry.connection=null
         old?.let { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
-        try { client.refresh(tokenKey(entry)); entry.authRefreshed=true; audit(entry,"refresh","success") }
+        try { client.refresh(tokenKey(entry),entry.usedAccessToken); entry.authRefreshed=true; audit(entry,"refresh","success") }
         catch(e: CancellationException) { throw e }
         catch(e: Exception) { audit(entry,"refresh","failed"); throw e }
         connectEntry(entry)

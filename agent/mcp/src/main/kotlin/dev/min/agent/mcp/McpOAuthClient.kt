@@ -10,6 +10,9 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class McpOAuthSettings(
     val clientId: String? = null,
@@ -68,6 +71,7 @@ class McpOAuthClient(
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val entropy: (Int) -> ByteArray = { size -> ByteArray(size).also { SecureRandom().nextBytes(it) } },
 ) {
+    private val refreshLocks=ConcurrentHashMap<McpTokenKey,Mutex>()
     private data class Metadata(val json: JsonObject, val issuer: String, val authorization: String, val token: String) {
         override fun toString() = "Metadata(***)"
     }
@@ -117,13 +121,27 @@ class McpOAuthClient(
         store.save(key, credentials)
     }
 
-    suspend fun refresh(key: McpTokenKey): McpOAuthCredentials = guarded(McpOAuthException.Kind.RefreshFailed) {
-        val old = store.load(key) ?: fail(McpOAuthException.Kind.RefreshRejected)
-        val refresh = old.refreshToken ?: fail(McpOAuthException.Kind.RefreshRejected)
-        secureUri(old.issuer); secureUri(old.tokenEndpoint)
-        val next = token(old, listOf("grant_type" to "refresh_token", "refresh_token" to refresh, "resource" to canonicalResource(key.endpoint)), refreshing=true)
-        store.save(key, next)
-        next
+    suspend fun refresh(key: McpTokenKey, rejectedAccessToken: String? = null): McpOAuthCredentials = guarded(McpOAuthException.Kind.RefreshFailed) {
+        val observed=store.load(key) ?: fail(McpOAuthException.Kind.RefreshRejected)
+        refreshLocks.computeIfAbsent(key){Mutex()}.withLock {
+            val current=store.load(key) ?: fail(McpOAuthException.Kind.RefreshRejected)
+            // 同键跨项目共享令牌；等待锁期间已经轮换，或失败连接用的是旧 access token，就复用新凭证。
+            if(current.accessToken!=null && (current.refreshToken!=observed.refreshToken || current.accessToken!=observed.accessToken || (rejectedAccessToken!=null && current.accessToken!=rejectedAccessToken))) return@withLock current
+            suspend fun exchange(old: McpOAuthCredentials): McpOAuthCredentials {
+                val refresh=old.refreshToken ?: fail(McpOAuthException.Kind.RefreshRejected)
+                secureUri(old.issuer);secureUri(old.tokenEndpoint)
+                return token(old,listOf("grant_type" to "refresh_token","refresh_token" to refresh,"resource" to canonicalResource(key.endpoint)),refreshing=true)
+            }
+            val next=try {exchange(current)} catch(e: McpOAuthException) {
+                if(e.kind!=McpOAuthException.Kind.RefreshRejected) throw e
+                val latest=store.load(key) ?: throw e
+                // 别的仓库使用者可能在网络请求期间轮换；仅换过 refresh token 才重试一次。
+                if(latest.refreshToken==current.refreshToken) throw e
+                exchange(latest)
+            }
+            store.save(key,next)
+            next
+        }
     }
 
     private suspend fun discover(resource: String, settings: McpOAuthSettings, challenge: McpAuthChallenge?): Pair<Metadata, String?> {

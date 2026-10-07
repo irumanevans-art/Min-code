@@ -25,10 +25,30 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 class McpOAuthManagerTest {
+    @Test fun `configured authorization does not depend on OAuth repository availability`() = runBlocking {
+        Server().use {s ->s.store.unavailable=true;case(s,mapOf("Authorization" to "Bearer ${s.access}")) {hub,rt,_ ->
+            assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state)
+            assertFalse(invoke(rt).isError);assertEquals(0,s.store.reads.get())
+        }};Unit
+    }
+    @Test fun `two project entries receiving 401 share one rotated refresh`() = runBlocking {
+        Server().use {s ->s.store.save(s.key,s.saved());case(s) {hub,rt,_ ->
+            val other=hub.create(GuestPath("/other"),TEST_MODEL,PermissionMode.BypassPermissions)
+            withTimeout(5000) {while(hub.mcp.statusOf(other.sessionId).single().state=="pending") delay(10)}
+            assertEquals("connected",hub.mcp.statusOf(other.sessionId).single().state)
+            assertEquals(2,s.handshakes.get())
+            s.access="FAKE_ACCESS_EXPIRED";s.failedCallsGate=CompletableDeferred()
+            val results=coroutineScope {awaitAll(async {invoke(rt)},async {invoke(other)})}
+            assertTrue(results.none {it.isError});assertEquals(2,s.simultaneousFailures.get());assertEquals(1,s.refreshes.get())
+            assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state);assertEquals("connected",hub.mcp.statusOf(other.sessionId).single().state)
+        }};Unit
+    }
     @get:Rule val tmp=TemporaryFolder()
     private class Store : McpTokenStore {
+        var unavailable=false
+        val reads=AtomicInteger()
         val values=ConcurrentHashMap<McpTokenKey,McpOAuthCredentials>()
-        override suspend fun load(key: McpTokenKey)=values[key]
+        override suspend fun load(key: McpTokenKey): McpOAuthCredentials? {reads.incrementAndGet();if(unavailable) throw IllegalStateException("unavailable");return values[key]}
         override suspend fun save(key: McpTokenKey,credentials: McpOAuthCredentials) { values[key]=credentials }
         override suspend fun delete(key: McpTokenKey) { values.remove(key) }
     }
@@ -45,6 +65,8 @@ class McpOAuthManagerTest {
         @Volatile var rejectRefresh=false
         @Volatile var scopeFailure=false
         @Volatile var rejectLogin=false
+        @Volatile var failedCallsGate: CompletableDeferred<Unit>? = null
+        val simultaneousFailures=AtomicInteger()
         val store=Store()
         fun saved(expiry: Long?=null)=McpOAuthCredentials(issuer,"$base/authorize","$base/token","client",null,"$base/mcp/oauth/callback",access,"FAKE_REFRESH",expiry)
         val http=object : HttpTransport {
@@ -55,6 +77,13 @@ class McpOAuthManagerTest {
                 request.body?.let { c.doOutput=true; c.outputStream.use { out -> out.write(it) } }
                 val status=c.responseCode
                 val bytes=(if(status<400) c.inputStream else c.errorStream)?.use { it.readBytes() } ?: byteArrayOf()
+                if(status==401 && request.body?.decodeToString()?.contains("\"method\":\"tools/call\"")==true) failedCallsGate?.let {gate ->
+                    val failure=simultaneousFailures.incrementAndGet()
+                    if(failure==2) gate.complete(Unit)
+                    gate.await()
+                    // 第二条旧令牌的 401 延迟到轮换完成，验证慢 Entry 不能再次刷新新令牌。
+                    if(failure==2) while(store.load(key)?.accessToken=="FAKE_ACCESS_INITIAL") delay(1)
+                }
                 HttpStreamingResponse(status,c.headerFields.filterKeys { it!=null }.flatMap { (k,v) -> v.map { k to it } },flowOf(bytes)) { c.disconnect() }
             }
             override suspend fun send(request: HttpRequest): HttpResponse=error("unused")
