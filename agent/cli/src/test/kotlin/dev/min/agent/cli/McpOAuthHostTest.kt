@@ -15,6 +15,15 @@ import java.nio.file.attribute.*
 import java.net.URI
 
 class McpOAuthHostTest {
+    @Test fun `desktop authorizer forwards expected state and ignores wrong manual callback`() = runBlocking {
+        val host=DesktopMcpAuthorizer(true,browser={false},browserAvailable={true})
+        val port=java.net.ServerSocket(0).use {it.localPort}
+        val redirect="http://127.0.0.1:$port/mcp/oauth/callback"
+        host.output=PrintStream(ByteArrayOutputStream())
+        host.input=StringReader("$redirect?code=x&state=wrong\n$redirect?code=x&state=expected\n").buffered()
+        val result=host.authorize(port,"expected"){"https://as.example/a"}
+        assertTrue(result.endsWith("state=expected"));Unit
+    }
     @Test fun `desktop credential path protection covers actual home and case aliases`() {
         val dir=tmp.newFolder().toPath()
         val paths=DesktopPaths(dir,dir.resolve("root"))

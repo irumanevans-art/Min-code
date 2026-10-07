@@ -16,9 +16,12 @@ internal class DesktopMcpAuthorizer(
     var input: BufferedReader? = null
     var output: PrintStream = System.err
     private val pending=StringBuilder()
-    override suspend fun authorize(redirectPort: Int?,authorizationUrl: suspend (String)->String): String {
+    override suspend fun authorize(redirectPort: Int?,authorizationUrl: suspend (String)->String): String = authorizeInternal(redirectPort,null,authorizationUrl)
+    override suspend fun authorize(redirectPort: Int?,expectedState: String,authorizationUrl: suspend (String)->String): String = authorizeInternal(redirectPort,expectedState,authorizationUrl)
+    private suspend fun authorizeInternal(redirectPort: Int?,expectedState: String?,authorizationUrl: suspend (String)->String): String {
         pending.clear()
         return LoopbackMcpAuthorizer(
+            expectedState=expectedState,
             openPage={ url ->
                 if(noBrowser || !browserAvailable()) false else browser(url)
             },

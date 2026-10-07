@@ -31,6 +31,8 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** 不经 proot 或 WebView；Custom Tab 与回调监听均在 App 进程中。 */
 internal class AndroidMcpAuthorizer(private val context: Context) : McpAuthorizer {
+    override suspend fun authorize(redirectPort: Int?,expectedState: String,authorizationUrl: suspend (String)->String): String =
+        LoopbackMcpAuthorizer(openPage={url -> withContext(Dispatchers.Main){context.openMcpCustomTab(url)}},expectedState=expectedState).authorize(redirectPort,authorizationUrl)
     override suspend fun authorize(redirectPort: Int?,authorizationUrl: suspend (String)->String): String =
         LoopbackMcpAuthorizer(openPage={ url -> withContext(Dispatchers.Main) { context.openMcpCustomTab(url) } })
             .authorize(redirectPort,authorizationUrl)

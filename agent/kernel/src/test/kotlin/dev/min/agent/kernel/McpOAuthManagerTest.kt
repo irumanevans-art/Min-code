@@ -44,6 +44,7 @@ class McpOAuthManagerTest {
         @Volatile var alwaysUnauthorized=false
         @Volatile var rejectRefresh=false
         @Volatile var scopeFailure=false
+        @Volatile var rejectLogin=false
         val store=Store()
         fun saved(expiry: Long?=null)=McpOAuthCredentials(issuer,"$base/authorize","$base/token","client",null,"$base/mcp/oauth/callback",access,"FAKE_REFRESH",expiry)
         val http=object : HttpTransport {
@@ -62,7 +63,7 @@ class McpOAuthManagerTest {
         val authorizer=McpAuthorizer { _, url ->
             val redirect="$base/mcp/oauth/callback"
             val params=params(URI(url(redirect)).rawQuery)
-            "$redirect?code=FAKE_CODE&state=${enc(params.getValue("state"))}&iss=${enc(issuer)}"
+            "$redirect?code=FAKE_CODE&state=${enc(if(rejectLogin) "wrong" else params.getValue("state"))}&iss=${enc(issuer)}"
         }
         init {
             server.createContext("/") { x ->
@@ -124,6 +125,16 @@ class McpOAuthManagerTest {
         } finally { scope.cancel() }
     }
     private suspend fun invoke(rt: SessionRuntime)=rt.mcpCaller.call(McpCallRequest("db","ping",args(),rt.sessionId,CallId("c"),FakeArtifacts(),{}))
+    @Test fun `failed scope reauthorization preserves usable connection and records failed audit`() = runBlocking {
+        Server().use {s -> s.store.save(s.key,s.saved());case(s) {hub,rt,store ->
+            assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state)
+            val handshakes=s.handshakes.get();s.rejectLogin=true
+            try {hub.loginMcp("db",rt.sessionId);fail("bad state")} catch(e: IllegalStateException) {assertFalse(e.toString().contains("FAKE_"))}
+            assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state)
+            assertFalse(invoke(rt).isError);assertEquals(handshakes,s.handshakes.get())
+            assertEquals("failed",store.open(rt.sessionId)!!.read().toList().map {it.event}.filterIsInstance<McpAuthentication>().last().outcome)
+        }};Unit
+    }
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test fun `login returns only after staging tools even when manager background jobs are paused`() = runBlocking {
         Server().use { s ->
