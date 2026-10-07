@@ -268,7 +268,10 @@ class SessionVM(
     fun newSession() {
         // 没有活跃会话时（刚启动 App）不能退回默认值 —— 那会把用户上次选的模型/effort 丢掉，
         // 新会话默默跑在 CLI 默认模型上。startOptionsOfActive 在没有活跃会话时交给引擎取上次存的那套
-        if (active.value?.ref?.engine == EngineKind.MinAgent) createMin(startOptionsOfActive()) else create(startOptionsOfActive())
+        // 没有活跃会话时跟「上次开始面板选的引擎」走：刚启动 App、上次用的是 Min，点「新建会话」不能悄悄开出一个 Claude Code
+        // （模拟器验收抓到的）。Min 没有活跃会话就没有可照搬的设置，档与模型由引擎取最近一次用的
+        val engine = active.value?.ref?.engine ?: startEngine.value
+        if (engine == EngineKind.MinAgent) createMin(startOptionsOfActive()) else create(startOptionsOfActive())
     }
 
     private fun create(options: StartOptions) {
