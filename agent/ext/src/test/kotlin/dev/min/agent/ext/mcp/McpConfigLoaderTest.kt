@@ -16,6 +16,16 @@ import org.junit.Test
  * 事实出处：cc-mcp.md 与 cc-managed-mcp.md（行号见 research/inventory/mcp-client.md §1.1–1.5）。
  */
 class McpConfigLoaderTest {
+    @Test fun `oauth client secret expands host environment and missing value stays out of notes`() {
+        val json="""{"mcpServers":{"db":{"type":"http","url":"https://db.example/mcp","oauth":{"clientId":"client","clientSecret":"${'$'}{MCP_SECRET}"}}}}"""
+        val snap=load("$project/.mcp.json" to json,env=mapOf("MCP_SECRET" to "FAKE_SECRET"))
+        assertTrue((snap.entry("db")!!.spec as McpServerSpec.Remote).oauth!!.clientSecret=="FAKE_SECRET")
+        assertTrue(!snap.notesJoined().contains("FAKE_SECRET"))
+        val missing=load("$project/.mcp.json" to json)
+        assertTrue((missing.entry("db")!!.spec as McpServerSpec.Remote).oauth!!.clientSecret=="${'$'}{MCP_SECRET}")
+        assertEquals(listOf("MCP_SECRET"),missing.entry("db")!!.unresolvedVars)
+        assertTrue(!missing.notesJoined().contains("${'$'}{MCP_SECRET}"))
+    }
     private val home = "/home/user"
     private val project = "/workspace"
 

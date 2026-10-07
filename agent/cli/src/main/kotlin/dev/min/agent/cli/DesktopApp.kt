@@ -259,6 +259,8 @@ internal class DesktopApp(
             zone = ZoneId.systemDefault(),
             // 与 CC 读同一份 ~/.claude/CLAUDE.md：桌面上和 Claude Code 对照评测时两边看到的用户说明一致
             memoryHome = userHome,
+            credentialPaths = desktopCredentialPaths(paths, home),
+            canonicalPath = { desktopCanonicalCredentialPath(paths, it) },
             // hook 脚本在本机 shell 里跑：guest 路径换成本机 shell 认得的写法（与 LocalExec 的映射一致）
             hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
             trustProjectHooks = { args.trust },

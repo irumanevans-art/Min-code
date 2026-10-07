@@ -1,3 +1,80 @@
+## [LRN-20261007-REFLECTION-IDLE] best_practice
+
+**Logged**: 2026-10-07
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+扩展 PolicyContext 要同步反射测试；卸下会话测试必须等待回合 Job 真正结束。
+
+### Details
+H1 增加两个上下文字段后，CLI 兼容测试仍按旧的八参数 JVM 签名找构造器，58 个样本均在判定前抛 NoSuchElementException；专项红确认后改为新签名并传空凭证集及恒等解析，保留所有样本期望，专项恢复绿。完整检查另发现 HooksSessionTest 在 first.say 看到 TurnEnded 后立即 close，旧 Job 尚活跃时 close 正确返回 false；独立复跑可绿，源码显示两种空闲含义不同。该生命周期测试在两个 say 后调用已有 awaitIdle 再卸下，原断言与预算不变。
+
+### Suggested Action
+公共上下文结构变化应检索构造器反射调用；需要关闭或卸下运行时的测试等待 Job 完成，不能只等折叠状态 turn=null。
+
+### Metadata
+- Source: error
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/PermissionCompatTest.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/HooksSessionTest.kt
+- Tags: reflection, coroutine, race, test-oracle
+- Pattern-Key: testing.context_signature_and_idle_job
+- Recurrence-Count: 1
+
+---
+
+## [LRN-20261007-GIT-BASH-VERIFY] best_practice
+
+**Logged**: 2026-10-07
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+真实 hook 集成验证先检查 Git Bash 环境，并断言 hook 实际产生了目标结论。
+
+### Details
+本轮完整检查的 PowerShell PATH 缺少 bash，后台 hook 启动报 IOException，测试等待完成事件直到 60 秒超时；确认原因后停止本轮自己的测试 worker，保留真实 GRADLE_EXIT=1 与线程日志。验证脚本只在当前进程补充已安装的 Git Bash 路径，完成后恢复 PATH。桌面凭证用例新增事件断言：真实 PreToolUse 返回 allow 且无 problems，避免仅配置了 hook、实际未运行也声称验证成功。另一个 PowerShell 验证问题是 -match 会覆盖自动变量 $Matches，结果集合改名为 $matchedCases 后独立核验 36 项 XML。
+
+### Suggested Action
+外部执行器测试应验证执行环境和真实事件结论；PowerShell 脚本不要用 $Matches 保存业务集合。不能靠增加超时或忽略失败让环境故障变绿。
+
+### Metadata
+- Source: error
+- Related Files: agent/mcp/scripts/mcp3-fixes-check.ps1, agent/mcp/scripts/mcp3-fixes-verify.ps1, agent/cli/src/test/kotlin/dev/min/agent/cli/CredentialDesktopTest.kt
+- Tags: git-bash, path, hooks, test-oracle, powershell
+- Pattern-Key: testing.external_executor_preflight
+- Recurrence-Count: 1
+
+---
+
+## [LRN-20261007-CREDENTIAL-PATH-ORDER] best_practice
+
+**Logged**: 2026-10-07
+**Priority**: high
+**Status**: promoted
+**Area**: backend
+
+### Summary
+凭证保护先解析原始路径中的链接，再归一化；搜索在读文件前过滤，刷新标记不能引入配置认证对 OAuth 仓库的依赖。
+
+### Details
+MCP3 复核发现桌面凭证虽有私有 ACL，仍可被同用户的模型工具读取。宿主注入路径边界、策略无条件 Deny、搜索在读取与预算前排除后，继续复查发现 link/../file 被策略先折叠，丢失了实际目标；Windows shell 的 C:/ 与单引号反斜杠路径也需要显式映射。原始凭证候选单独保留，按宿主 canonical 解析后再匹配，不改既有模式与规则使用的路径事实。
+
+跨 Entry 刷新需要记住失败连接使用的 access token，但配置 Authorization 的连接不能为此读取 OAuth 仓库。补测仓库不可用而配置认证有效的连接，先复现失败，再只对直接使用 OAuth 的连接读取刷新标记。红/绿与对应源码弱化变异保存于 agent/mcp/build/review/fixes。
+
+### Suggested Action
+安全边界验证同一真实宿主的模型请求、工具结果、事件及附件；搜索过滤必须发生在读取和预算之前。凭证路径与链接的解析顺序、Windows 路径别名、配置认证的仓库独立性已加入根 AGENTS.md。
+
+### Metadata
+- Source: code_review
+- Related Files: agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt, agent/host/src/main/kotlin/dev/min/agent/host/JvmSearch.kt
+- Tags: credentials, path, symlink, windows, oauth, mutation
+- Pattern-Key: security.host_credentials_path_and_read_boundary
+- Promoted: AGENTS.md
+
+---
+
 ## [LRN-20260922-KDOC-NESTED-BLOCK-COMMENT] error
 
 **Logged**: 2026-09-22T14:20:00+08:00

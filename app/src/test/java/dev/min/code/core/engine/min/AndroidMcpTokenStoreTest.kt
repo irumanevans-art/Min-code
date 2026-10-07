@@ -29,11 +29,25 @@ class AndroidMcpTokenStoreTest {
     @Test fun `wrong key and tampered ciphertext fail closed preserve file and redact cause chain`() = runBlocking {
         val file=tmp.newFolder().resolve("mcp-oauth.enc"); val secret=aes(); val store=AndroidMcpTokenStore(file,secret)
         store.save(key,credentials()); val saved=file.readBytes()
-        try { AndroidMcpTokenStore(file,aes()).save(key,credentials()); fail("wrong key") } catch(e: IllegalStateException) { assertFalse(generateSequence(e as Throwable) { it.cause }.joinToString().contains("FAKE_")) }
+        try { AndroidMcpTokenStore(file,aes()).load(key); fail("wrong key") } catch(e: IllegalStateException) { assertFalse(generateSequence(e as Throwable) { it.cause }.joinToString().contains("FAKE_")) }
         assertArrayEquals(saved,file.readBytes())
         val damaged=saved.copyOf().also { it[it.lastIndex]=(it.last().toInt() xor 1).toByte() }; file.writeBytes(damaged)
         try { store.load(key); fail("tampered") } catch(e: IllegalStateException) { assertFalse(generateSequence(e as Throwable) { it.cause }.joinToString().contains("FAKE_")) }
         assertArrayEquals(damaged,file.readBytes()); Unit
+    }
+    @Test fun `save with unreadable ciphertext rebuilds repository and emits only fixed reset note`() = runBlocking {
+        val file=tmp.newFolder().resolve("mcp-oauth.enc");val old=aes()
+        AndroidMcpTokenStore(file,old).save(key,credentials())
+        val notes=mutableListOf<String>();val fresh=aes();val store=AndroidMcpTokenStore(file,fresh){notes+=it}
+        store.save(key,credentials().copy(scope="new"))
+        assertTrue(store.load(key)?.scope=="new");assertEquals(listOf("凭证文件无法解密，已重置"),notes)
+        assertFalse(file.readBytes().decodeToString().contains("FAKE_"));Unit
+    }
+    @Test fun `logout deletes unreadable ciphertext without requiring decryption`() = runBlocking {
+        val file=tmp.newFolder().resolve("mcp-oauth.enc")
+        AndroidMcpTokenStore(file,aes()).save(key,credentials())
+        AndroidMcpTokenStore(file,aes()).delete(key)
+        assertFalse(file.exists());Unit
     }
     @Test fun `concurrent private store instances retain independent server registrations`() = runBlocking {
         val file=tmp.newFolder().resolve("mcp-oauth.enc"); val secret=aes()

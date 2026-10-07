@@ -29,13 +29,19 @@ class McpOAuthClientTest {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val base get() = "http://127.0.0.1:${server.address.port}"
         var issuerPath = "/tenant"
-        val issuer get() = "$base$issuerPath"
-        val key get() = McpTokenKey("db", "$base/mcp")
+        var issuerOverride: String? = null
+        var resourceEndpoint: String? = null
+        var resourceMetadataValue: String? = null
+        var asBase: String? = null
+        var asOverrides: Map<String,String> = emptyMap()
+        val issuer get() = issuerOverride ?: "$base$issuerPath"
+        val key get() = McpTokenKey("db", resourceEndpoint ?: "$base/mcp")
         val store = Store()
         val paths = mutableListOf<String>()
         var prPath = "/.well-known/oauth-protected-resource/mcp"
         var asPath = "/.well-known/oauth-authorization-server/tenant"
         var pkce = listOf("S256")
+        var issSupported: Boolean? = null
         var supportedScopes = listOf("admin", "offline_access")
         var resourceScopes: List<String>? = listOf("read")
         var resourceMismatch = false
@@ -88,17 +94,19 @@ class McpOAuthClientTest {
                 var status=200
                 val body=when {
                     path == prPath || path == "/header-metadata" -> buildJsonObject {
-                        put("resource", if(resourceMismatch) "$base/other" else key.endpoint)
+                        put("resource", if(resourceMismatch) "$base/other" else resourceMetadataValue ?: key.endpoint)
                         put("authorization_servers", JsonArray(listOf(JsonPrimitive(issuer))))
                         resourceScopes?.let { put("scopes_supported", JsonArray(it.map(::JsonPrimitive))) }
                     }
                     path == asPath -> buildJsonObject {
                         put("issuer", metadataIssuer ?: if(issuerMismatch) "$issuer/" else issuer)
-                        put("authorization_endpoint", "$base/authorize"); put("token_endpoint", "$base/token")
-                        put("registration_endpoint", "$base/register")
+                        put("authorization_endpoint", "${asBase ?: base}/authorize"); put("token_endpoint", "${asBase ?: base}/token")
+                        put("registration_endpoint", "${asBase ?: base}/register")
                         put("code_challenge_methods_supported", JsonArray(pkce.map(::JsonPrimitive)))
+                        issSupported?.let { put("authorization_response_iss_parameter_supported",it) }
                         put("scopes_supported", JsonArray(supportedScopes.map(::JsonPrimitive)))
                         put("token_endpoint_auth_methods_supported",JsonArray(asAuthMethods.map(::JsonPrimitive)))
+                        asOverrides.forEach { (key,value)->put(key,value) }
                     }
                     path == "/register" -> {
                         registered++
@@ -191,10 +199,23 @@ class McpOAuthClientTest {
             expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) }; assertEquals(0,f.exchanged); assertTrue(f.store.values.isEmpty())
         }; Unit
     }
-    @Test fun `issuer missing wrong and normalized variants never exchange authorization code`() = runBlocking {
-        for (mode in 0..3) Fixture().use { f ->
-            f.callback={ if(mode==0) it.remove("iss") else it["iss"]=when(mode) { 1 -> "${f.issuer}/"; 2 -> f.issuer.replace("http:","HTTP:"); else -> "${f.base}/wrong" } }
+    @Test fun `issuer wrong and normalized variants never exchange authorization code`() = runBlocking {
+        for (mode in 1..3) Fixture().use { f ->
+            f.callback={ it["iss"]=when(mode) { 1 -> "${f.issuer}/"; 2 -> f.issuer.replace("http:","HTTP:"); else -> "${f.base}/wrong" } }
             expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) }; assertEquals(0,f.exchanged)
+        }; Unit
+    }
+    @Test fun `missing issuer accepted only when AS does not declare response support`() = runBlocking {
+        for(supported in listOf(null,false)) Fixture().use { f ->
+            f.issSupported=supported; f.callback={it.remove("iss")}; f.client.login(f.key)
+            assertEquals(1,f.exchanged); assertNotNull(f.store.load(f.key))
+        }; Unit
+    }
+    @Test fun `missing issuer rejected when AS declares response support`() = runBlocking {
+        Fixture().use { f ->
+            f.issSupported=true; f.callback={it.remove("iss")}
+            expectFailure(McpOAuthException.Kind.Security) { f.client.login(f.key) }
+            assertEquals(0,f.exchanged); assertNull(f.store.load(f.key))
         }; Unit
     }
     @Test fun `unsupported missing and plain only PKCE are refused before browser`() = runBlocking {
@@ -229,6 +250,32 @@ class McpOAuthClientTest {
     @Test fun `resource canonicalization preserves escaped path and query`() {
         assertEquals("https://example.com/a%20b?version=1",canonicalResource("https://EXAMPLE.com/a%20b/?version=1"))
         assertEquals("https://example.com/mcp",canonicalResource("HTTPS://EXAMPLE.com/mcp"))
+    }
+    @Test fun `remote MCP cannot discover or authorize through HTTP loopback AS endpoints`() = runBlocking {
+        for(field in listOf("issuer","authorization_endpoint","token_endpoint","registration_endpoint")) Fixture().use {f ->
+            f.resourceEndpoint="https://configured.example/mcp";f.issuerOverride="https://configured.example/tenant";f.asBase="https://configured.example"
+            f.asOverrides=mapOf(field to "${f.base}/local")
+            expectFailure(McpOAuthException.Kind.Security){f.client.login(f.key)}
+            assertEquals(0,f.registered);assertEquals(0,f.exchanged)
+            if(field!="registration_endpoint") assertTrue(f.authorization.isEmpty())
+        };Unit
+    }
+    @Test fun `remote MCP refuses loopback advertised issuer and refresh endpoint before request`() = runBlocking {
+        Fixture().use {f ->
+            f.resourceEndpoint="https://configured.example/mcp"
+            expectFailure(McpOAuthException.Kind.Security){f.client.login(f.key)}
+            assertEquals(listOf(f.prPath),f.paths);assertTrue(f.authorization.isEmpty())
+        }
+        Fixture().use {f ->
+            f.resourceEndpoint="https://configured.example/mcp"
+            f.store.save(f.key,McpOAuthCredentials("https://configured.example","https://configured.example/a","${f.base}/token","client",redirectUri="${f.base}/mcp/oauth/callback",accessToken="FAKE_ACCESS",refreshToken="FAKE_REFRESH"))
+            expectFailure(McpOAuthException.Kind.Security){f.client.refresh(f.key)};assertTrue(f.paths.isEmpty())
+        };Unit
+    }
+    @Test fun `root resource slash is equivalent and localhost is allowed for local MCP`() = runBlocking {
+        Fixture().use {f ->f.resourceEndpoint=f.base;f.prPath="/.well-known/oauth-protected-resource";f.client.login(f.key);assertEquals(1,f.exchanged)}
+        Fixture().use {f ->f.resourceEndpoint=f.base.replace("127.0.0.1","localhost")+"/mcp";f.resourceMetadataValue=f.base+"/mcp";f.client.login(f.key);assertEquals(1,f.exchanged)}
+        assertEquals("http://localhost:1234/",canonicalResource("http://localhost:1234"));Unit
     }
     @Test fun `root issuer discovery omits duplicate OIDC candidates`() = runBlocking {
         for (asPath in listOf("/.well-known/oauth-authorization-server","/.well-known/openid-configuration")) Fixture().use { f ->
@@ -304,7 +351,7 @@ class McpOAuthClientTest {
         }
         var timedOut=false; val entered=CompletableDeferred<Unit>()
         val client=McpOAuthClient(http,Store(),McpAuthorizer { _,url -> url("http://127.0.0.1:1234/mcp/oauth/callback"); entered.complete(Unit); awaitCancellation() })
-        val job=launch { try { client.login(McpTokenKey("db","https://db.example/mcp"),McpOAuthSettings(clientId="client")) } catch(e: TimeoutCancellationException) { timedOut=true } }
+        val job=launch { try { client.login(McpTokenKey("db","https://db.example/mcp"),McpOAuthSettings(clientId="client")) } catch(e: McpOAuthException) { assertEquals(McpOAuthException.Kind.LoginTimeout,e.kind);timedOut=true } }
         runCurrent(); assertTrue(entered.isCompleted)
         advanceTimeBy(299_999); runCurrent(); assertTrue(job.isActive); assertFalse(timedOut)
         advanceTimeBy(1); runCurrent(); assertTrue(timedOut); assertTrue(job.isCompleted)

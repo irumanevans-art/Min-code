@@ -9,6 +9,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class McpRemoteHttpTest {
+    @Test fun `helper retries 403 once with reloaded headers`() = runBlocking {
+        val processes=Processes();val s=spec();val port=Port {if(it==1) 403 else 200}
+        val auth=McpRemoteHttp(port,s,HeadersHelper(processes,s,GuestPath("/w")),McpTokenStore.Unavailable)
+        auth.open(request).close()
+        assertEquals(2,processes.calls);assertEquals(2,port.requests.size)
+        assertTrue(port.requests.last().headers.any {it.second=="Bearer FAKE_HELPER_2"});Unit
+    }
     private class Processes(val auth: Boolean = true, val authCalls: Set<Int>? = null) : ProcessPort {
         var calls=0
         override suspend fun spawn(spec: ProcessSpec): LiveProcess {

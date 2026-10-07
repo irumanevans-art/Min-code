@@ -9,6 +9,21 @@ import java.net.Socket
 import java.util.concurrent.atomic.AtomicReference
 
 class LoopbackMcpAuthorizerTest {
+    @Test fun `wrong missing and malformed state requests return 400 then valid callback succeeds`() = runBlocking {
+        val redirect=CompletableDeferred<String>()
+        val pending=async {LoopbackMcpAuthorizer(openPage={true},expectedState="expected",timeoutMs=5000).authorize(null) {redirect.complete(it);"https://as.example/a"}}
+        val uri=URI(redirect.await())
+        suspend fun request(query: String)=withContext(Dispatchers.IO) {Socket(uri.host,uri.port).use {
+            it.soTimeout=2000
+            it.getOutputStream().write("GET ${uri.path}?$query HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".toByteArray())
+            it.getInputStream().readBytes().decodeToString()
+        }}
+        for(query in listOf("code=x&state=wrong","code=x","state=expected","state=expected&code=","code=x&state=expected&state=wrong","code=x&state=%ZZ")) {
+            assertTrue(request(query).startsWith("HTTP/1.1 400"));assertFalse(pending.isCompleted)
+        }
+        assertTrue(request("code=x&state=expected").startsWith("HTTP/1.1 200"))
+        assertTrue(pending.await().endsWith("code=x&state=expected"));Unit
+    }
     @Test fun `browser callback listener is loopback only and releases port`() = runBlocking {
         val redirect=CompletableDeferred<String>()
         val authorizer=LoopbackMcpAuthorizer(openPage={ true })
@@ -40,7 +55,7 @@ class LoopbackMcpAuthorizerTest {
         val port=URI(redirect.await()).port; pending.cancelAndJoin(); ServerSocket(port).close()
         var timeoutPort=0
         try { LoopbackMcpAuthorizer(openPage={true},timeoutMs=150).authorize(null) { timeoutPort=URI(it).port; "https://as.example" }; fail("timeout") }
-        catch(e: TimeoutCancellationException) { }
+        catch(e: dev.min.agent.mcp.McpOAuthException) {assertEquals(dev.min.agent.mcp.McpOAuthException.Kind.LoginTimeout,e.kind)}
         ServerSocket(timeoutPort).close(); Unit
     }
     @Test fun `unrelated and oversized requests cannot become callbacks`() = runBlocking {

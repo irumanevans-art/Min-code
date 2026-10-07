@@ -407,7 +407,7 @@ object McpConfigLoader {
                 url = ex(p.url.orEmpty(), credentialEmpty = true),
                 headers = p.headers.mapValues { (_, v) -> ex(v, true) },
                 headersHelper = p.headersHelper,
-                oauth = p.oauth,
+                oauth = p.oauth?.let { it.copy(clientSecret = it.clientSecret?.let { secret -> ex(secret, true) }) },
             ) to unresolved.sorted()
         }
     }

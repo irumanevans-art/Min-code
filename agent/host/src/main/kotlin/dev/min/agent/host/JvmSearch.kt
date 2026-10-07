@@ -47,6 +47,7 @@ class JvmSearch(private val fs: RootfsFileSystem) : Search {
         for (file in candidates(root)) {
             currentCoroutineContext().ensureActive()
             if (include != null && !include.matches(file.rel)) continue
+            if (query.exclude(guestOf(rootGuest, file.rel))) continue
             val text = readText(file.host) ?: continue
             // 只给本文件剩余的配额，避免带出随后被全局上限裁掉的命中的上下文。
             for (hit in scan(text, regex, query.copy(maxHits = query.maxHits - hits), guestOf(rootGuest, file.rel))) {
@@ -68,6 +69,7 @@ class JvmSearch(private val fs: RootfsFileSystem) : Search {
         for (file in candidates(root)) {
             currentCoroutineContext().ensureActive()
             if (!filter.matches(file.rel)) continue
+            if (query.exclude(guestOf(rootGuest, file.rel))) continue
             if (found++ >= query.maxResults) return@flow
             emit(guestOf(rootGuest, file.rel))
         }

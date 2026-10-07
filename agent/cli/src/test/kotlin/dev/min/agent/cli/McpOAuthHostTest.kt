@@ -15,9 +15,48 @@ import java.nio.file.attribute.*
 import java.net.URI
 
 class McpOAuthHostTest {
+    @Test fun `desktop authorizer forwards expected state and ignores wrong manual callback`() = runBlocking {
+        val host=DesktopMcpAuthorizer(true,browser={false},browserAvailable={true})
+        val port=java.net.ServerSocket(0).use {it.localPort}
+        val redirect="http://127.0.0.1:$port/mcp/oauth/callback"
+        host.output=PrintStream(ByteArrayOutputStream())
+        host.input=StringReader("$redirect?code=x&state=wrong\n$redirect?code=x&state=expected\n").buffered()
+        val result=host.authorize(port,"expected"){"https://as.example/a"}
+        assertTrue(result.endsWith("state=expected"));Unit
+    }
+    @Test fun `terminal preview prints issuer domain and scope before browser attempt`() = runBlocking {
+        val output=ByteArrayOutputStream()
+        val host=DesktopMcpAuthorizer(false,browser={
+            val text=output.toString();assertTrue(text.contains("https://as.example"));assertTrue(text.contains("login.example"));assertTrue(text.contains("read write"));false
+        },browserAvailable={true})
+        host.output=PrintStream(output)
+        host.preview("https://as.example","login.example","read write")
+        val port=java.net.ServerSocket(0).use {it.localPort}
+        host.input=StringReader("http://127.0.0.1:$port/mcp/oauth/callback?code=x\n").buffered()
+        host.authorize(port){"https://login.example/a"};Unit
+    }
+    @Test fun `desktop credential path protection covers actual home and case aliases`() {
+        val dir=tmp.newFolder().toPath()
+        val paths=DesktopPaths(dir,dir.resolve("root"))
+        val patterns=desktopCredentialPaths(paths,dir)
+        for(name in listOf("mcp-oauth.json","mcp-oauth.json.lock",".mcp-oauth-crashed.tmp")) {
+            val path=paths.guestOfHost(dir.resolve(name))
+            val canonical=desktopCanonicalCredentialPath(paths,path)
+            assertTrue(patterns.any { canonical.value.startsWith(it.value.removeSuffix("*")) })
+            if(System.getProperty("os.name").startsWith("Windows")) assertEquals(canonical,desktopCanonicalCredentialPath(paths,GuestPath(path.value.uppercase())))
+        }
+    }
     @get:Rule val tmp=TemporaryFolder()
     private val key=McpTokenKey("db","https://db.example/mcp")
     private fun credentials()=McpOAuthCredentials("https://as.example","https://as.example/a","https://as.example/t","client","FAKE_SECRET","http://127.0.0.1:1234/mcp/oauth/callback","FAKE_ACCESS","FAKE_REFRESH",123L)
+    @Test fun `save and logout clean abandoned plaintext temp files under the store lock`() = runBlocking {
+        val dir=tmp.newFolder().toPath();val store=FileMcpTokenStore(dir.resolve("mcp-oauth.json"))
+        val stale=dir.resolve(".mcp-oauth-crashed.tmp");val unrelated=dir.resolve(".unrelated.tmp")
+        Files.writeString(stale,"FAKE_ACCESS");Files.writeString(unrelated,"ordinary")
+        store.save(key,credentials());assertFalse(Files.exists(stale));assertTrue(Files.exists(unrelated))
+        Files.writeString(stale,"FAKE_REFRESH");store.delete(key)
+        assertFalse(Files.exists(stale));assertTrue(Files.exists(unrelated));assertNull(store.load(key));Unit
+    }
     @Test fun `file credentials survive reopen and are bound to name and endpoint`() = runBlocking {
         val dir=tmp.newFolder().toPath(); val file=dir.resolve("mcp-oauth.json")
         val store=FileMcpTokenStore(file); store.save(key,credentials())

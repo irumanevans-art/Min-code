@@ -31,6 +31,8 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** 不经 proot 或 WebView；Custom Tab 与回调监听均在 App 进程中。 */
 internal class AndroidMcpAuthorizer(private val context: Context) : McpAuthorizer {
+    override suspend fun authorize(redirectPort: Int?,expectedState: String,authorizationUrl: suspend (String)->String): String =
+        LoopbackMcpAuthorizer(openPage={url -> withContext(Dispatchers.Main){context.openMcpCustomTab(url)}},expectedState=expectedState).authorize(redirectPort,authorizationUrl)
     override suspend fun authorize(redirectPort: Int?,authorizationUrl: suspend (String)->String): String =
         LoopbackMcpAuthorizer(openPage={ url -> withContext(Dispatchers.Main) { context.openMcpCustomTab(url) } })
             .authorize(redirectPort,authorizationUrl)
@@ -59,14 +61,23 @@ private fun Context.openMcpCustomTab(url: String): Boolean {
 }
 
 /** 只在 App 私有、不备份的目录存密文；rootfs 挂载表从未拿到这里的路径。 */
-internal class AndroidMcpTokenStore private constructor(private val file: File,private val keyProvider: ()->SecretKey) : McpTokenStore {
-    constructor(context: Context) : this(File(context.noBackupFilesDir,"mcp-oauth.enc"),::keystoreKey)
-    internal constructor(file: File,key: SecretKey) : this(file,{key})
+internal class AndroidMcpTokenStore private constructor(private val file: File,private val keyProvider: ()->SecretKey,private val resetNote: (String)->Unit = {}) : McpTokenStore {
+    constructor(context: Context) : this(File(context.noBackupFilesDir,"mcp-oauth.enc"),::keystoreKey,{ android.util.Log.w("MinMcpOAuth",it) })
+    internal constructor(file: File,key: SecretKey,resetNote: (String)->Unit = {}) : this(file,{key},resetNote)
     private val lock=locks.computeIfAbsent(file.absolutePath) { Mutex() }
     private val serializer=ListSerializer(McpTokenRecord.serializer())
     override suspend fun load(key: McpTokenKey): McpOAuthCredentials? = access { read().firstOrNull { it.key==key }?.credentials }
-    override suspend fun save(key: McpTokenKey,credentials: McpOAuthCredentials): Unit = access { write(read().filterNot { it.key==key }+McpTokenRecord(key,credentials)) }
-    override suspend fun delete(key: McpTokenKey): Unit = access { write(read().filterNot { it.key==key }) }
+    override suspend fun save(key: McpTokenKey,credentials: McpOAuthCredentials): Unit = access {
+        var reset=false
+        val records=try {read()} catch(e: UnreadableCredentials){reset=true;emptyList()}
+        write(records.filterNot { it.key==key }+McpTokenRecord(key,credentials))
+        if(reset) resetNote("凭证文件无法解密，已重置")
+    }
+    override suspend fun delete(key: McpTokenKey): Unit = access {
+        // 旧密钥失效时不能先要求解密，否则用户永远无法退出登录。
+        val records=try {read()} catch(e: UnreadableCredentials){Files.deleteIfExists(file.toPath());return@access}
+        write(records.filterNot {it.key==key})
+    }
     private suspend fun <T> access(block: ()->T): T = lock.withLock { withContext(Dispatchers.IO) {
         try { block() }
         catch(e: CancellationException) { throw e }
@@ -75,13 +86,17 @@ internal class AndroidMcpTokenStore private constructor(private val file: File,p
     private fun read(): List<McpTokenRecord> {
         if(!file.exists()) return emptyList()
         val bytes=file.readBytes()
-        if(bytes.size<30 || bytes[0].toInt()!=1 || bytes[1].toInt()!=12) throw IllegalStateException()
-        val cipher=Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE,keyProvider(),GCMParameterSpec(128,bytes.copyOfRange(2,14)))
-        cipher.updateAAD(AAD)
-        val plain=cipher.doFinal(bytes.copyOfRange(14,bytes.size))
-        return try { Json.decodeFromString(serializer,plain.decodeToString()) } finally { plain.fill(0) }
+        if(bytes.size<30 || bytes[0].toInt()!=1 || bytes[1].toInt()!=12) throw UnreadableCredentials()
+        try {
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE,keyProvider(),GCMParameterSpec(128,bytes.copyOfRange(2,14)))
+            cipher.updateAAD(AAD)
+            val plain=cipher.doFinal(bytes.copyOfRange(14,bytes.size))
+            return try { Json.decodeFromString(serializer,plain.decodeToString()) } finally { plain.fill(0) }
+        } catch(e: java.security.GeneralSecurityException){throw UnreadableCredentials()}
+        catch(e: kotlinx.serialization.SerializationException){throw UnreadableCredentials()}
     }
+    private class UnreadableCredentials : Exception()
     private fun write(records: List<McpTokenRecord>) {
         val cipher=Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE,keyProvider()); cipher.updateAAD(AAD)
