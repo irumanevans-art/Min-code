@@ -99,6 +99,13 @@ sealed interface ExecResult {
 interface Exec {
     suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult
     suspend fun kill(handle: ExecHandle)
+
+    /**
+     * 句柄对应的进程还活着吗：宿主按自己登记的 Process 直接判断，**不起探测进程**（N3：靠 `kill -0`
+     * 探活会让每个存活 hook 每几秒起一个进程，exec-logs 下的日志无限堆积）。null = 这个端口说不了（默认），
+     * 调用方退回自己的探测
+     */
+    suspend fun isAlive(handle: ExecHandle): Boolean? = null
 }
 
 /** 大输出、截图等会话附件。返回会话 artifacts 目录下的相对路径 */

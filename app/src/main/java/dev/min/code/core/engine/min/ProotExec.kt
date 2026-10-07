@@ -84,6 +84,11 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         Unit
     }
 
+    /** 按自己登记的 Process 判断存活，不起探测进程（N3）；表里没有 = 已被等待线程摘除 = 不在跑 */
+    override suspend fun isAlive(handle: ExecHandle): Boolean? = withContext(Dispatchers.IO) {
+        running[handle.id]?.process?.isAlive ?: false
+    }
+
     private inner class Running(val process: Process, val log: File, val timeoutMs: Long, val done: () -> Unit) {
         val exit = CompletableDeferred<Int>()
         private val reaped = AtomicBoolean()

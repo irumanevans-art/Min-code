@@ -250,6 +250,9 @@ class SessionRuntime private constructor(
      */
     internal val asyncHooks = AsyncHookRunner(this, scope)
 
+    /** 后台 hook 的轮询节奏。默认值即生产值；内核测试调小（真等 30 秒的退回探测间隔没法做确定性用例） */
+    internal val asyncHookTimings = AsyncHookTimings()
+
     /** settings 里的 `fileCheckpointingEnabled`（缺省为开）；创建时随那份 settings 一起读，重新打开的会话第一次要用时再读 */
     @Volatile
     private var checkpointsBySettings: Boolean? = null
@@ -861,3 +864,11 @@ internal fun checkpointsEnabledIn(snapshot: SettingsSnapshot): Boolean =
 
 /** 环境变量按「真」读：`1` / `true` / `yes`，不分大小写、忽略首尾空白（CC 的环境开关都是这个口径）；没设或别的值为假 */
 internal fun isTruthyEnv(value: String?): Boolean = value?.trim()?.lowercase() in setOf("1", "true", "yes")
+
+/** 后台 hook 的轮询节奏：轮询结果文件 / 句柄探活 / `kill -0` 退回探测的最小间隔 */
+internal class AsyncHookTimings(
+    var pollMs: Long = 500,
+    var livenessMs: Long = 5_000,
+    /** 退回探测要起进程，比句柄探活稀得多（N3） */
+    var fallbackLivenessMs: Long = 30_000,
+)

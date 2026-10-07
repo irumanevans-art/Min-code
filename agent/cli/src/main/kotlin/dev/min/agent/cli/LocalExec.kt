@@ -105,6 +105,13 @@ class LocalExec(
         withContext(Dispatchers.IO) { launch.killTree(process) }
     }
 
+    /** 按自己登记的 Process 判断存活，不起探测进程（N3：每 5 秒一个 `kill -0` 会在 exec-logs 下堆积日志）。
+     *  表里没有 = 进程已结束（等待线程退出时摘除）或不是本端口发的句柄：对宿主而言都不在跑 */
+    override suspend fun isAlive(handle: ExecHandle): Boolean? {
+        val (process, _) = running[handle.id] ?: return false
+        return process.isAlive
+    }
+
     private fun pidOf(process: Process): Int? = try {
         process.pid().toInt()
     } catch (_: UnsupportedOperationException) {

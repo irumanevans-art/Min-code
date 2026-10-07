@@ -119,6 +119,12 @@ class AsyncHooksRuntimeTest {
         var finishAtProbe: Int = 1
         val killed = CopyOnWriteArrayList<ExecHandle>()
 
+        /** 宿主句柄探活的回放：参数是第几次问；null = 端口说不了（退回 kill -0） */
+        var isAliveAnswer: (Int) -> Boolean? = { null }
+        val isAliveChecks = AtomicInteger(0)
+
+        override suspend fun isAlive(handle: ExecHandle): Boolean? = isAliveChecks.incrementAndGet().let(isAliveAnswer)
+
         private fun dirOf(command: String): String? =
             Regex("""sh '(.*)/start\.sh'""").find(command)?.groupValues?.get(1)
 
@@ -226,8 +232,9 @@ class AsyncHooksRuntimeTest {
         fs.writeAtomic(GuestPath("/root/.claude/settings.json"), asyncSettings().toByteArray())
         val h = hub(exec, fs)
         val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.asyncHookTimings.apply { pollMs = 20; livenessMs = 100; fallbackLivenessMs = 100 }
         rt.say("跑")
-        // 等第 2 次探测后的正常收尾（探测间隔默认 5 秒，这里要等 ~10 秒，30 秒上限里够）
+        // 等第 2 次探测后的正常收尾（时距缝已调小，毫秒级）
         while (events(rt).none { (it as? HooksRan)?.background == true }) kotlinx.coroutines.delay(100)
         val ran = events(rt).filterIsInstance<HooksRan>().single { it.background }
         assertTrue(
@@ -250,6 +257,7 @@ class AsyncHooksRuntimeTest {
         fs.writeAtomic(GuestPath("/root/.claude/settings.json"), asyncSettings().toByteArray())
         val h = hub(exec, fs)
         val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.asyncHookTimings.apply { pollMs = 20; livenessMs = 100; fallbackLivenessMs = 100 }
         rt.say("跑")
         while (events(rt).none { (it as? HooksRan)?.background == true }) kotlinx.coroutines.delay(100)
         val ran = events(rt).filterIsInstance<HooksRan>().single { it.background }
@@ -275,10 +283,34 @@ class AsyncHooksRuntimeTest {
         }
         val theHub = hub(deadOnArrival, fs)
         val rt = theHub.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.asyncHookTimings.apply { pollMs = 20; livenessMs = 100; fallbackLivenessMs = 100 }
         rt.say("跑")
         // 老实现会无限轮询（60 秒超时才红）；新实现直接落说明收尾
         while (events(rt).none { (it as? HooksRan)?.background == true }) kotlinx.coroutines.delay(100)
         val ran = events(rt).filterIsInstance<HooksRan>().single { it.background }
         assertTrue("落了起不来的说明：${ran.problems}", ran.problems.any { it.contains("没转入后台") || it.contains("起不来") })
+    }
+
+    // ---- N3：宿主句柄探活优先，不起 kill -0 探测进程 ----
+
+    @Test
+    fun `宿主能按句柄探活时不退回 kill -0，句柄说死了才落兜底`() = run {
+        val fs = MemFs()
+        val exec = ScriptedExec(fs)
+        // 前两次问都说活着（健康长 hook），第三次说死（外部 kill）：轮询应落「没写出退出码」的兜底
+        exec.isAliveAnswer = { n -> n < 3 }
+        fs.writeAtomic(GuestPath("/root/.claude/settings.json"), asyncSettings().toByteArray())
+        val h = hub(exec, fs)
+        val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.asyncHookTimings.apply { pollMs = 20; livenessMs = 100; fallbackLivenessMs = 100 }
+        rt.say("跑")
+        while (events(rt).none { (it as? HooksRan)?.background == true }) kotlinx.coroutines.delay(100)
+        val ran = events(rt).filterIsInstance<HooksRan>().single { it.background }
+        assertTrue("句柄说死了，落了兜底说明：${ran.problems}", ran.problems.any { it.contains("没写出退出码") })
+        assertTrue("问过宿主至少三次", exec.isAliveChecks.get() >= 3)
+        assertTrue(
+            "宿主能探活时就不该再起 kill -0 探测进程：${exec.commands}",
+            exec.commands.none { it.startsWith("kill -0") },
+        )
     }
 }

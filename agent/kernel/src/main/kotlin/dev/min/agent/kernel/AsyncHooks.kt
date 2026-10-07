@@ -49,12 +49,13 @@ import kotlinx.serialization.json.JsonObject
 internal class AsyncHookRunner(
     private val rt: SessionRuntime,
     private val scope: CoroutineScope,
-    /** 测试给小间隔；生产半秒足够新（后台 hook 的输出本来就不赶时间） */
-    private val pollIntervalMs: Long = 500,
-    /** 存活探测的间隔：比轮询稀得多——探测要起一个进程，不能每 500ms 一个 */
-    private val livenessIntervalMs: Long = 5_000,
 ) {
     private val deps = rt.deps
+
+    /** 轮询节奏从 rt 的测试缝读（默认值即生产值；内核测试调小，免得真等半分钟） */
+    private val pollIntervalMs get() = rt.asyncHookTimings.pollMs
+    private val livenessIntervalMs get() = rt.asyncHookTimings.livenessMs
+    private val fallbackLivenessIntervalMs get() = rt.asyncHookTimings.fallbackLivenessMs
 
     private class Running(val id: String, val dir: GuestPath, val handle: ExecHandle?, val job: Job)
 
@@ -193,16 +194,28 @@ internal class AsyncHookRunner(
 
     /** 等结果文件出现；进程先没了（退出码永远等不来）返回 false */
     private suspend fun waitForResult(codeFile: GuestPath, dir: GuestPath, handle: ExecHandle?, startedAt: Long): Boolean {
-        var lastProbe = 0L
+        var lastHandleProbe = 0L
+        var lastPidProbe = 0L
         while (fs.stat(codeFile) == null) {
             pollProbe?.invoke()
             val now = deps.clock.nowMs()
-            if (handle != null && now - startedAt >= livenessIntervalMs && now - lastProbe >= livenessIntervalMs) {
-                lastProbe = now
-                if (!alive(dir)) {
-                    // 进程可能正走在写退出码的路上：缓一步再判一次，别把刚完成的误报成死
-                    delay(pollIntervalMs * 2)
-                    if (fs.stat(codeFile) == null && !alive(dir)) return false
+            if (now - startedAt >= livenessIntervalMs) {
+                // 句柄探活走宿主登记的 Process（不起进程），按原间隔；端口说不了（null）才退回
+                // `kill -0`——那要起进程，间隔拉长到 30 秒（N3）
+                val byHandle = if (handle != null) hostAlive(handle) else null
+                val last = if (byHandle != null) lastHandleProbe else lastPidProbe
+                val interval = if (byHandle != null) livenessIntervalMs else fallbackLivenessIntervalMs
+                if (now - last >= interval) {
+                    if (byHandle != null) lastHandleProbe = now else lastPidProbe = now
+                    val living = byHandle ?: aliveByPid(dir)
+                    if (!living) {
+                        // 进程可能正走在写退出码的路上：缓一步再判一次，别把刚完成的误报成死
+                        delay(pollIntervalMs * 2)
+                        if (fs.stat(codeFile) == null) {
+                            val again = if (handle != null) hostAlive(handle) else null
+                            if (!(again ?: aliveByPid(dir))) return false
+                        }
+                    }
                 }
             }
             delay(pollIntervalMs)
@@ -210,11 +223,16 @@ internal class AsyncHookRunner(
         return true
     }
 
-    /** 进程还活着吗：pid 文件里像 pid 才信（目录在 rootfs 里，模型改得了内容），`kill -0` 探测。
+    /** 宿主按句柄说存活：端口不认识句柄（默认实现）时是 null */
+    private suspend fun hostAlive(handle: ExecHandle): Boolean? =
+        catchingNonCancellation { deps.host.exec.isAlive(handle) }.getOrNull()
+
+    /**
+     * 进程还活着吗（退回路径）：pid 文件里像 pid 才信（目录在 rootfs 里，模型改得了内容），`kill -0` 探测。
      *  只有拿到**明确的非零退出码**才算死：探测超时（重负载下起个探测进程慢很正常）、探测起不来、
      *  意外转后台都当活着——把超时当已死会误杀健康的长 hook，接着 cleanup 还会杀掉它（N2）
      */
-    private suspend fun alive(dir: GuestPath): Boolean {
+    private suspend fun aliveByPid(dir: GuestPath): Boolean {
         val pid = try {
             read(child(dir, "pid"))?.trim()
         } catch (e: CancellationException) {
