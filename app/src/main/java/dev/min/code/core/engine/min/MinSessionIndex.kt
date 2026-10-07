@@ -69,8 +69,10 @@ fun indexEntryOf(state: SessionState, eventsLength: Long, eventsMtime: Long, upd
         id = state.header.sessionId.value,
         createdAt = state.header.createdAtMs,
         updatedAt = updatedAt,
-        title = userTexts.firstOrNull { it.isNotBlank() }?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
-            ?.take(MinIndexEntry.TITLE_CHARS).orEmpty(),
+        // 内核里的名字（/rename、列表改名写的 session_renamed）优先，没有就取第一条用户消息
+        title = state.name?.takeIf { it.isNotBlank() }?.take(MinIndexEntry.TITLE_CHARS)
+            ?: userTexts.firstOrNull { it.isNotBlank() }?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
+                ?.take(MinIndexEntry.TITLE_CHARS).orEmpty(),
         messageCount = userTexts.size + answers.size,
         profileId = state.settings.model.providerId,
         model = state.settings.model.modelId,

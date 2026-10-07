@@ -101,7 +101,8 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
                 root.turn != null -> SessionStatus.Running
                 else -> SessionStatus.Idle
             },
-            title = input.titleOverride?.takeIf { it.isNotBlank() } ?: titleOf(items),
+            // 名字的来源：内核日志里的 session_renamed > 迁移前 App 自己存的标题（打开时会迁进内核）> 第一条用户消息
+            title = root.name?.takeIf { it.isNotBlank() } ?: input.titleOverride?.takeIf { it.isNotBlank() } ?: titleOf(items),
             cwd = root.settings.cwd.value,
             items = items,
             turn = turnOf(root, input),

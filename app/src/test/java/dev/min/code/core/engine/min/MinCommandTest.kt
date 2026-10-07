@@ -283,7 +283,7 @@ class MinCommandTest {
             assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.StopTask(cmd(), "task-1")))
             assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.Refresh(cmd(), setOf(RefreshTarget.Models))))
         }
-        assertEquals(listOf("New name"), r.host.renames); assertEquals(listOf("task-1"), r.host.killed)
+        assertEquals("New name", r.root.state.value.name); assertEquals(listOf("task-1"), r.host.killed)
     }
 
     // ---- 续跑 ----

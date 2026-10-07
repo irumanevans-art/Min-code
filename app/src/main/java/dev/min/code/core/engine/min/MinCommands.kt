@@ -29,7 +29,6 @@ import kotlinx.coroutines.launch
 /** 命令执行完要碰到的、不属于内核的几件事。窄接口：命令单测里换成记录调用的假实现 */
 interface MinCommandEffects {
     fun emit(signal: SessionSignal)
-    fun rename(title: String)
     fun rememberDefaultModel(profileId: String, modelId: String)
     suspend fun killTask(taskId: String)
 
@@ -97,7 +96,8 @@ class MinCommandHandler(
             if (mode == null || mode == PermissionMode.Auto) CommandResult.Rejected("不支持的权限模式：${command.modeId}")
             else { root.changeSettings(mode = mode); CommandResult.Accepted }
         }
-        is SessionCommand.Rename -> { effects.rename(command.title.trim()); CommandResult.Accepted }
+        // 名字写进内核日志（session_renamed）：CLI 的按名续接与列表读同一个。规整后为空（全是空白 / 控制字符）内核拒绝
+        is SessionCommand.Rename -> if (root.rename(command.title) != null) CommandResult.Accepted else CommandResult.Rejected("名字是空的")
         is SessionCommand.StopSubagent -> {
             val child = childRuntime(command.threadId)
             if (child == null) CommandResult.Stale("子 agent 已不在线") else { child.interrupt(); CommandResult.Accepted }
