@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -59,6 +60,16 @@ class AgentSessionRegistry(engines: List<AgentEngine>, scope: CoroutineScope) {
         combine(perEngine, _attached, _activeRef) { lists, attached, active ->
             mergeLiveSummaries(lists, attached.map { it.ref }.toSet(), active)
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+    }
+
+    init {
+        // 引擎被关掉（Min 的实验开关）= 它名下的会话整个停下，并且从界面的打开列表里撤走：
+        // 只在引擎里关的话，界面手里还攥着那个会话对象，开关打回来就是一个永远「正在结束」的僵尸（模拟器验收抓到的）
+        this.engines.forEach { engine ->
+            scope.launch {
+                engine.availability.collect { if (it is EngineAvailability.Disabled) closeEngine(engine.kind, CloseReason.StopAll) }
+            }
+        }
     }
 
     /** 至少一个会话要保活 App 进程。前台服务用它决定起 / 停；单独开一条 flow，几个订阅方不各自重算 */
@@ -131,6 +142,19 @@ class AgentSessionRegistry(engines: List<AgentEngine>, scope: CoroutineScope) {
             found
         }
         session.close(reason)
+    }
+
+    /** 只停一个引擎：它在界面上打开的会话先撤走（活跃项落到别家剩下的最后一个），再由引擎关它名下全部会话 */
+    suspend fun closeEngine(kind: EngineKind, reason: CloseReason) {
+        synchronized(lock) {
+            val remaining = _attached.value.filterNot { it.ref.engine == kind }
+            _attached.value = remaining
+            if (_activeRef.value?.engine == kind) {
+                _activeRef.value = remaining.lastOrNull()?.ref
+                _active.value = remaining.lastOrNull()
+            }
+        }
+        engine(kind).closeAll(reason)
     }
 
     /** 停掉全部（「停止全部」通知、退出页面）。引擎自己负责关它名下所有会话，含没在界面上打开的 */

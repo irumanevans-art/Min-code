@@ -189,13 +189,6 @@ class MinAgentEngine(
             combine(settings.settings, hub.running) { _, running -> running }.collect { if (it.isEmpty()) refreshGeneration() }
         }
         scope.launch { catchingNonCancellation { recoverInterrupted() }.onFailure { Log.w(TAG, "startup recovery failed", it) } }
-        // 实验开关关掉 = Min 整个停下：入口全藏起来之后不能还有看不见的回合在跑工具、花钱，也不能有一张看不见的审批卡在等人。
-        // 会话文件原样留着（开关再打开，列表里还在；被打断的那几个标「中断」，可以 ▶ 续上）
-        scope.launch {
-            enabled.collect { on ->
-                if (!on) catchingNonCancellation { closeAll(CloseReason.StopAll) }.onFailure { Log.w(TAG, "closeAll on switch-off failed", it) }
-            }
-        }
     }
 
     /** 启动扫描：让上次死在回合中途的会话合法收尾（见 [MinStartupRecovery]）。引擎建好时自动跑一次，也可手动触发 */
