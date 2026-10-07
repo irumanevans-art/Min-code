@@ -15,6 +15,14 @@ import java.nio.file.attribute.*
 import java.net.URI
 
 class McpOAuthHostTest {
+    @Test fun `save and logout clean abandoned plaintext temp files under the store lock`() = runBlocking {
+        val dir=tmp.newFolder().toPath();val store=FileMcpTokenStore(dir.resolve("mcp-oauth.json"))
+        val stale=dir.resolve(".mcp-oauth-crashed.tmp");val unrelated=dir.resolve(".unrelated.tmp")
+        Files.writeString(stale,"FAKE_ACCESS");Files.writeString(unrelated,"ordinary")
+        store.save(key,credentials());assertFalse(Files.exists(stale));assertTrue(Files.exists(unrelated))
+        Files.writeString(stale,"FAKE_REFRESH");store.delete(key)
+        assertFalse(Files.exists(stale));assertTrue(Files.exists(unrelated));assertNull(store.load(key));Unit
+    }
     @Test fun `terminal preview prints issuer domain and scope before browser attempt`() = runBlocking {
         val output=ByteArrayOutputStream()
         val host=DesktopMcpAuthorizer(false,browser={

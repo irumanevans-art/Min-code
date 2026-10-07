@@ -18,10 +18,11 @@ internal class FileMcpTokenStore(private val file: Path) : McpTokenStore {
     private val serializer=ListSerializer(McpTokenRecord.serializer())
     override suspend fun load(key: McpTokenKey): McpOAuthCredentials? = access { read().firstOrNull { it.key==key }?.credentials }
     override suspend fun save(key: McpTokenKey, credentials: McpOAuthCredentials): Unit = access {
+        cleanupTemps()
         val records=read().filterNot { it.key==key }+McpTokenRecord(key,credentials)
         write(records)
     }
-    override suspend fun delete(key: McpTokenKey): Unit = access { write(read().filterNot { it.key==key }) }
+    override suspend fun delete(key: McpTokenKey): Unit = access { cleanupTemps(); write(read().filterNot { it.key==key }) }
     private suspend fun <T> access(block: () -> T): T = lock.withLock { withContext(Dispatchers.IO) {
         try {
             Files.createDirectories(file.toAbsolutePath().parent)
@@ -49,6 +50,12 @@ internal class FileMcpTokenStore(private val file: Path) : McpTokenStore {
             }
             Files.move(temp,file,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING)
         } finally { Files.deleteIfExists(temp) }
+    }
+    private fun cleanupTemps() {
+        // 必须持有仓库的跨进程锁，避免把另一写入者尚未发布的明文临时文件删掉。
+        Files.newDirectoryStream(file.toAbsolutePath().parent,".mcp-oauth-*.tmp").use { temps ->
+            for(temp in temps) if(!Files.isDirectory(temp,LinkOption.NOFOLLOW_LINKS)) Files.deleteIfExists(temp)
+        }
     }
     private fun restrict(path: Path) {
         val posix=Files.getFileAttributeView(path,PosixFileAttributeView::class.java)
