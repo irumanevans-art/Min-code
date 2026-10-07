@@ -56,7 +56,7 @@ class SessionListVM(
     private val minMeta: ClaudeCodeSessionMetaStore,
     settingsStore: SettingsStore,
 ) : ViewModel() {
-    /** Min 实验开关。关着时抽屉里不列 Min 的会话（只是藏起来，会话与日志都还在） */
+    /** Min 实验开关。关着时抽屉里不列 Min 的会话（会话与日志都还在，开回来原样列出） */
     private val minEnabled: StateFlow<Boolean> = settingsStore.settings.map { it.minAgentEnabled }
         .stateIn(viewModelScope, SharingStarted.Eagerly, settingsStore.snapshot?.minAgentEnabled ?: false)
 

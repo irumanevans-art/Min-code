@@ -91,7 +91,7 @@ class SessionVM(
     /** Min 的会话由它管（B6 起 Claude Code 仍走 [registry]，见本类头注释） */
     private val agents: AgentSessionRegistry,
 ) : ViewModel() {
-    /** Min 实验开关。关着时 Min 的会话不显示（只是藏起来，不终止，见 [dev.min.code.core.settings.AppSettings.minAgentEnabled]） */
+    /** Min 实验开关。关着时 Min 的会话不显示（引擎已被停下、会话文件还在，见 [dev.min.code.core.settings.AppSettings.minAgentEnabled]） */
     val minEnabled: StateFlow<Boolean> = settingsStore.settings.map { it.minAgentEnabled }
         .stateIn(viewModelScope, SharingStarted.Eagerly, settingsStore.snapshot?.minAgentEnabled ?: false)
 

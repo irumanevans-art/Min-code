@@ -727,7 +727,7 @@ private fun DeviceSettings(vm: SettingsVM, settings: AppSettings) {
 
 /**
  * 「实验」：还没定型的功能各占一行开关。现在只有 Min Agent（自研内核的第三个会话引擎）。
- * 关着时开始面板、抽屉里都没有 Min 的任何入口；开关只是藏起来，不终止在跑的回合、不删会话（见 [AppSettings.minAgentEnabled]）。
+ * 关着时开始面板、抽屉里都没有 Min 的任何入口；关开关会停下 Min 在跑的回合、但不删任何会话（见 [AppSettings.minAgentEnabled]）。
  */
 @Composable
 private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
