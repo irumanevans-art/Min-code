@@ -657,5 +657,5 @@ internal class McpManager(
     }
 }
 
-/** 面板用的一行（[McpManager.panelOf]）：状态、stdio 的 stderr 尾巴、是否已登录（远程且有令牌；其余 null） */
-data class McpServerPanel(val info: McpServerInfo, val stderrTail: List<String>, val signedIn: Boolean?)
+/** 面板用的一行（[McpManager.panelOf]）：状态、stdio 的 stderr 尾巴、是否已登录（远程且有令牌；其余 null）、是否被本会话关掉 */
+data class McpServerPanel(val info: McpServerInfo, val stderrTail: List<String>, val signedIn: Boolean?, val sessionOff: Boolean = false)

@@ -437,6 +437,7 @@ class McpManagerTest {
         hub.setMcpServerEnabled(rt.sessionId, "github", false)
         assertEquals("disabled", hub.mcp.statusOf(rt.sessionId).single().state)
         assertEquals("本会话已关闭。", hub.mcp.statusOf(rt.sessionId).single().reason)
+        assertTrue("面板行要能分清「本会话关的」和「配置里关的」", hub.mcpPanel(rt.sessionId).single().sessionOff)
         rt.say("二")
         assertTrue("关掉的服务器下一回合起不在工具表里", model.requests[1].toolNames().isEmpty())
         hub.setMcpServerEnabled(rt.sessionId, "github", true)

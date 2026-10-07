@@ -375,7 +375,10 @@ class SessionHub(
     }
 
     /** 面板整行（状态 + stderr 尾巴 + 是否已登录），见 [McpManager.panelOf] */
-    suspend fun mcpPanel(sessionId: SessionId): List<McpServerPanel> = mcp.panelOf(sessionId)
+    suspend fun mcpPanel(sessionId: SessionId): List<McpServerPanel> {
+        val off = mcpOff[sessionId].orEmpty()
+        return mcp.panelOf(sessionId).map { it.copy(sessionOff = it.info.name in off) }
+    }
 
     suspend fun reconnectMcp(server: String, sessionId: SessionId) = mcp.reconnect(server, sessionId)
 
