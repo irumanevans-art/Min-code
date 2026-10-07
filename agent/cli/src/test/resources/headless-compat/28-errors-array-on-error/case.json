@@ -10,6 +10,5 @@
     "fields": {
       "errors": "@present"
     }
-  },
-  "pendingFix": "Min 现在：失败时只有 error（单个字符串，且只在有失败消息时出现）。原文要：error 臂带 errors 字符串数组（04-sessions-sdk-automation.md :219）。建议改引擎：失败路径输出 errors 数组（subtype 的对齐见 29 号）。"
+  }
 }

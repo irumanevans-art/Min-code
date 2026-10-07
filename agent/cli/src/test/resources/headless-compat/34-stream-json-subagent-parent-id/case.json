@@ -1,0 +1,16 @@
+{
+  "basis": "cc-cli-reference.md :93——「--forward-subagent-text | Emit subagent text and thinking blocks in the output stream as assistant and user messages with parent_tool_use_id set, so you can reconstruct each subagent's transcript. … Requires --print and --output-format stream-json」；04-sessions-sdk-automation.md :41——「assistant / user：子 agent 消息带 parent_tool_use_id（主会话消息为 null）」。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_SUB_RUN",
+    "--output-format",
+    "stream-json",
+    "--forward-subagent-text"
+  ],
+  "expected": {
+    "streamFirstInit": true,
+    "streamLastResult": true,
+    "subagentLines": true
+  }
+}

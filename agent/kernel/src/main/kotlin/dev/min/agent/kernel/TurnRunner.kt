@@ -105,7 +105,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.User)), Durability.Sync)
             throw e
         } catch (e: TurnAbort) {
-            rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind)), Durability.Sync)
+            rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind, e.failureCause)), Durability.Sync)
             false
         } catch (e: HookStop) {
             // 某个 hook 说 continue: false：结束这一轮，理由给人看（hooks设计 §5）
@@ -158,7 +158,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     // 没交卷就想结束：提醒它还有结构化输出的要求，计入次数（每回提醒、每回都算，直到上限）
                     if (plan != null && rt.state.value.structuredOutput == null) {
                         failedAttempts++
-                        if (failedAttempts >= maxAttempts) throw TurnAbort(structuredOutputFailure(maxAttempts))
+                        if (failedAttempts >= maxAttempts) throw TurnAbort(structuredOutputFailure(maxAttempts), failureCause = dev.min.agent.spi.FAILURE_CAUSE_STRUCTURED_OUTPUT_RETRIES)
                         rt.receive(
                             ClientMsgId("structured-output:${turnId.value}:$failedAttempts"),
                             listOf(TextPart(STRUCTURED_OUTPUT_REMINDER)),
@@ -179,7 +179,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 if (calls.any { it.name == StructuredOutputTool.NAME }) {
                     // 调了 StructuredOutput 但没交成（校验失败，错误结果已回给模型）：算一次未通过
                     failedAttempts++
-                    if (failedAttempts >= maxAttempts) throw TurnAbort(structuredOutputFailure(maxAttempts))
+                    if (failedAttempts >= maxAttempts) throw TurnAbort(structuredOutputFailure(maxAttempts), failureCause = dev.min.agent.spi.FAILURE_CAUSE_STRUCTURED_OUTPUT_RETRIES)
                 }
             }
             // 工具批结束 = 安全点：插话在这里送达（docs/agent/04-子系统设计.md §4.1）
@@ -494,7 +494,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 }
 
 /** 回合放弃（不可重试的模型错误、达到上限）。带给人看的原因 */
-internal class TurnAbort(message: String, val kind: ModelFailureKind? = null) : Exception(message)
+internal class TurnAbort(message: String, val kind: ModelFailureKind? = null, val failureCause: String? = null) : Exception(message)
 
 /** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
 internal class TurnLimitReached : Exception()

@@ -1,0 +1,16 @@
+{
+  "basis": "04-sessions-sdk-automation.md :39——「system/init：会话元数据（model, tools, MCP servers, and loaded plugins）」；「The key is omitted when there are no errors, so a CI gate can fail on a non-empty array」（mcp_server_errors 没有错误就整个省略）。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_STREAM_INIT",
+    "--output-format",
+    "stream-json"
+  ],
+  "expected": {
+    "streamFirstInit": true,
+    "streamLastResult": true,
+    "initFields": ["session_id", "cwd", "model", "tools", "mcp_servers", "permissionMode"],
+    "mcpErrorsKeyAbsent": true
+  }
+}

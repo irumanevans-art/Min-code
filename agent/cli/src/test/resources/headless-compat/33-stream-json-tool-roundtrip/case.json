@@ -1,0 +1,19 @@
+{
+  "basis": "04-sessions-sdk-automation.md :42——「消息流：init → 每轮若干 AssistantMessage（每个 content block 一条）→ 工具结果以 UserMessage（emitted after each tool execution with the tool result content sent back to Claude）→ 文本收尾 → ResultMessage」。",
+  "kind": "run",
+  "args": [
+    "-p",
+    "CC_STREAM_TOOL",
+    "--output-format",
+    "stream-json"
+  ],
+  "expected": {
+    "streamFirstInit": true,
+    "streamLastResult": true,
+    "inOrder": [
+      {"type": "assistant", "block": "tool_use"},
+      {"type": "user", "block": "tool_result"},
+      {"type": "assistant", "block": "text"}
+    ]
+  }
+}

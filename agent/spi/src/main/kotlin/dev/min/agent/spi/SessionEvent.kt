@@ -51,6 +51,8 @@ data class SessionCreated(
     val model: ModelRef,
     val mode: PermissionMode,
     val effort: Effort? = null,
+    /** 这条会话是不是 `-p` / 无头跑的（CC :78：`--continue` 跳过 -p / SDK 会话）；旧日志缺字段 = 交互 */
+    val headless: Boolean = false,
 ) : SessionEvent
 
 /**
@@ -271,9 +273,17 @@ data class ToolOutcome(
 sealed interface TurnOutcome {
     @Serializable @SerialName("completed") data object Completed : TurnOutcome
     /** [kind]：最后那次请求失败的种类（界面据此说「先检查供应商」「上下文已满」）；内核自身的错误为 null */
-    @Serializable @SerialName("failed") data class Failed(val message: String, val kind: ModelFailureKind? = null) : TurnOutcome
+    @Serializable @SerialName("failed") data class Failed(
+        val message: String,
+        val kind: ModelFailureKind? = null,
+        /** 内核自己的失败原因标记（与模型的 [kind] 正交）：目前只有结构化输出重试用尽。null = 没有单独归类 */
+        val cause: String? = null,
+    ) : TurnOutcome
     @Serializable @SerialName("interrupted") data class Interrupted(val by: InterruptedBy) : TurnOutcome
 }
+
+/** [TurnOutcome.Failed.cause] 的取值：结构化输出（--json-schema）重试用尽——CC 的 result.subtype `error_max_structured_output_retries` 靠它区分 */
+const val FAILURE_CAUSE_STRUCTURED_OUTPUT_RETRIES = "structured_output_retries"
 
 @Serializable
 enum class InterruptedBy {

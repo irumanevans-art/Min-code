@@ -99,4 +99,43 @@ class CliArgsTest {
         assertThrows(UsageException::class.java) { parse("--model", "m", "-n", "x", "--continue") }
         assertThrows(UsageException::class.java) { parse("--model", "m", "--name", "x", "-n", "y") }
     }
+
+    // ---- --output-format / --json / --print（CC 的无头参数面）----
+
+    @Test fun `print is the long form of -p and both given is an error`() {
+        assertEquals("CC", parse("--model", "m", "--print", "CC").prompt)
+        assertEquals("CC", parse("--model", "m", "-p", "CC").prompt)
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-p", "a", "--print", "b") }
+    }
+
+    @Test fun `output-format is a first-class flag and json is its alias`() {
+        assertEquals(OutputFormat.Json, parse("--model", "m", "-p", "hi", "--output-format", "json").outputFormat)
+        assertEquals(OutputFormat.StreamJson, parse("--model", "m", "-p", "hi", "--output-format", "stream-json").outputFormat)
+        assertEquals(OutputFormat.Text, parse("--model", "m", "-p", "hi", "--output-format", "text").outputFormat)
+        assertEquals(OutputFormat.Text, parse("--model", "m", "-p", "hi").outputFormat)
+        // --json 是 --output-format json 的别名；冲突才报错
+        assertEquals(OutputFormat.Json, parse("--model", "m", "-p", "hi", "--json").outputFormat)
+        assertTrue(parse("--model", "m", "-p", "hi", "--json").json)
+        assertEquals(OutputFormat.Json, parse("--model", "m", "-p", "hi", "--json", "--output-format", "json").outputFormat)
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-p", "hi", "--json", "--output-format", "text") }
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-p", "hi", "--output-format", "xml") }
+        // 输出格式是给 -p 的（CC :110「for print mode」）
+        assertThrows(UsageException::class.java) { parse("--model", "m", "--json") }
+    }
+
+    @Test fun `unknown arguments are rejected instead of being silently swallowed`() {
+        // 带值的未知参数此前会被静默吞掉（样本 01/03 暴露的问题根源）
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-p", "hi", "--output-format") }
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-p", "hi", "--nope", "value") }
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-p", "hi", "--nope") }
+    }
+
+    @Test fun `partial-messages and forward-subagent-text need print mode and stream-json`() {
+        val base = arrayOf("--model", "m", "-p", "hi", "--output-format", "stream-json")
+        assertTrue(parse(*base, "--include-partial-messages").includePartialMessages)
+        assertTrue(parse(*base, "--forward-subagent-text").forwardSubagentText)
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-p", "hi", "--include-partial-messages") }
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-p", "hi", "--output-format", "json", "--forward-subagent-text") }
+        assertThrows(UsageException::class.java) { parse("--model", "m", "--include-partial-messages") }
+    }
 }

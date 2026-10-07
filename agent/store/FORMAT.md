@@ -115,3 +115,6 @@
   委派子 agent / 分身时父会话当时的全部 `component_hooks_registered` 以快照写进子会话日志（`Stop` 键改写成 `SubagentStop`；`once` 在子会话里用掉只改子会话）——取代上一条「不传给孙会话」的说法。
   `session_renamed` 的规整改为按 **code point**：截 200 个码点（不是 UTF-16 码元，不再截出半个代理对）、U+2028 / U+2029 也换空格、补充平面的格式字符（U+E0000 一族 TAG）按码点判不可见。
   `/branch` 复制来的名字与本目录已有名字撞车时，分支在复制完的日志末尾再写一条 `session_renamed` 改成 `-2` 变体。含新字段的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-07，无头输出对齐 CC）：`session_created` 新增可选字段 `headless`（这条会话是不是 `-p` / 无头跑的；CC 的 `--continue` 据此跳过 -p / SDK 会话。旧日志缺字段 = 交互）。
+  `turn_ended.outcome`（failed 变体）新增可选字段 `cause`（内核自己的失败原因标记，与模型的 kind 正交；目前只有
+  `structured_output_retries`：--json-schema 重试用尽，CLI 据此把 result.subtype 写成 CC 的 `error_max_structured_output_retries`）。旧日志照常读。

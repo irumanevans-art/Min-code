@@ -259,10 +259,12 @@ class SessionHub(
         initial: List<SessionEvent> = emptyList(),
         /** `--name` 建会话时命名（已规整）；同目录已有同名根会话时自动改成 `-2`、`-3` 变体（CC 是两个英文单词后缀，Min 不带词表） */
         name: String? = null,
+        /** 这条会话是不是 `-p` / 无头跑的（CC :78：--continue 跳过 -p 会话）；标记随 SessionCreated 落盘 */
+        headless: Boolean = false,
     ): SessionRuntime {
         val id = SessionId(deps.ids.next("s"))
         val header = LogHeader(LOG_FORMAT_VERSION, id, deps.clock.nowMs())
-        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort), deps, scope, initial, hub = this)
+        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort, headless = headless), deps, scope, initial, hub = this)
         name?.let { raw ->
             normalizeSessionName(raw)?.let { wanted ->
                 val final = uniqueName(cwd, wanted)

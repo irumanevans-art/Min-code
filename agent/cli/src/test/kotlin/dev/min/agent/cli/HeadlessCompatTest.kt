@@ -50,10 +50,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  *
  * 跑法照 DesktopSubagentTest / HooksSessionTest：真 DesktopApp + 本地 OpenAI Chat SSE 假模型
  * （route 返回 null = 回 400，OpenAI Chat 的 400 是不可重试的 BadRequest，回合以 Failed 收尾）。
- * Main.kt 的无头流程在这里逐步镜像：parseArgs → checkKey → openSession → send → awaitIdle →
- * CliResult → 打印（--json 打整份对象；只给 --json-schema 时单独打 structured_output）→ 退出码 completed ? 0 : 1，
- * 参数错误是 UsageException → main 的 exitProcess(2)。只不镜像 exitProcess 本身（测试进程不能退）。
- * 结果对象只对拍 CC 出处列出的字段；Min 多出来的字段（session/completed/turn_usage/prefix_fingerprints）在 pendingFix 文字里说明。
+ * 无头流程与 Main.kt 共用 runHeadless（不再逐步镜像打印规则）：parseArgs → checkKey → openSession →
+ * runHeadless（text/json/stream-json 的 stdout 渲染与退出码都在里面），参数错误是 UsageException →
+ * main 的 exitProcess(2)；只不镜像 exitProcess 本身（测试进程不能退）。
+ * 结果对象只对拍 CC 出处列出的字段；Min 不输出的 CC 字段（total_cost_usd：没有价格数据）在汇报里说明。
  */
 class HeadlessCompatTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -67,7 +67,7 @@ class HeadlessCompatTest {
     @Test fun `无头兼容样本的判定与期望逐项一致`() = run {
         val samplesRoot = Paths.get(URI(javaClass.classLoader.getResource("headless-compat")!!.toString()))
         val samples = Files.list(samplesRoot).use { it.filter(Files::isDirectory).sorted().toList() }
-        assertTrue("样本应 30 个左右（≥30），实际 ${samples.size}", samples.size >= 30)
+        assertTrue("样本应 36 个（≥36），实际 ${samples.size}", samples.size >= 36)
         val failures = mutableListOf<String>()
         val pending = mutableListOf<String>()
         var requests = 0
@@ -175,9 +175,9 @@ class HeadlessCompatTest {
         return diffs
     }
 
-    // ---- run 级：真 DesktopApp + 假模型，镜像 Main.kt 的无头流程 ----
+    // ---- run 级：真 DesktopApp + 假模型，走 Main 同一条无头路（runHeadless） ----
 
-    private class RunOut(val exit: Int, val stdout: String, val sessionId: String, val json: JsonObject, val requests: Int) {
+    private class RunOut(val exit: Int, val stdout: String, val sessionId: String, val requests: Int) {
         fun lastLine(): String = stdout.lineSequence().lastOrNull { it.isNotBlank() } ?: ""
         fun lastJsonLine(): JsonObject? = lastLine().let { line ->
             try {
@@ -186,6 +186,9 @@ class HeadlessCompatTest {
                 null
             }
         }
+        fun jsonLines(): List<JsonObject> = stdout.lineSequence().filter { it.isNotBlank() }
+            .mapNotNull { line -> try { Json.parseToJsonElement(line) as? JsonObject } catch (e: kotlinx.serialization.SerializationException) { null } }
+            .toList()
     }
 
     /** 本地假模型（照 DesktopSubagentTest 的做法）：OpenAI Chat SSE；route 返回 null = 回 400（不可重试） */
@@ -238,36 +241,27 @@ class HeadlessCompatTest {
     private fun freshDir(name: String): Path = Files.createDirectories(tmp.root.toPath().resolve(name))
 
     /**
-     * Main.kt 无头流程的镜像（39-37 区段的 interact 分支）：
-     * parseArgs → checkKey → openSession → ConsoleUi → send → awaitIdle → CliResult → 按打印规则写 stdout。
-     * exitProcess 不镜像（测试进程不能退）；返回的 exit 就是 main 返回给 exitProcess 的码。
+     * 与 Main.kt 同一条无头路（runHeadless）：parseArgs → checkKey → openSession → runHeadless（UI 走
+     * stderr、text/json/stream-json 各自的 stdout 渲染、退出码）。exitProcess 不镜像（测试进程不能退）
      */
     private suspend fun headlessRun(home: Path, work: Path, argv: Array<String>, server: ModelServer): RunOut = withTimeout(60_000) {
         val args = parseArgs(argv, work)
-        val prompt = requireNotNull(args.prompt) { "run 样本的参数里要有 -p" }
+        requireNotNull(args.prompt) { "run 样本的参数里要有 -p" }
         val out = ByteArrayOutputStream()
-        val ps = PrintStream(out, true, "UTF-8")
+        val err = ByteArrayOutputStream()
         val app = DesktopApp(args, scope(), home, claudeHome = Files.createDirectories(home.resolve("claude-home")))
         app.checkKey()
         val runtime = app.openSession()
-        // -p 模式 approve 默认 no：审批/提问都不等人，ConsoleUi 不会读 stdin
-        val ui = ConsoleUi(runtime, args.approve, BufferedReader(StringReader("")), ps).attach(scope())
         try {
-            val fromSeq = runtime.state.value.lastSeq + 1
-            val effective = if (args.jsonSchema != null) structuredOutputPrompt(prompt) else prompt
-            runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(effective)))
-            runtime.awaitIdle()
-            ps.println() // say() 结尾的空行（Main.kt:65）
-            val state = runtime.state.value
-            val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq), state.usage)
-            // 镜像 Main.kt:78-83 的打印规则
-            if (args.json) ps.println(result.json().toString())
-            else if (args.jsonSchema != null) result.json()["structured_output"]?.let { ps.println(it.toString()) }
-            RunOut(if (result.completed) 0 else 1, out.toString("UTF-8"), runtime.sessionId.value, result.json(), server.requests.size)
+            // -p 模式 approve 默认 no：审批/提问都不等人，runHeadless 接的 UI 不会读 stdin
+            val exit = runHeadless(
+                app, runtime, args, scope(),
+                BufferedReader(StringReader("")), PrintStream(out, true, "UTF-8"), PrintStream(err, true, "UTF-8"),
+            )
+            RunOut(exit, out.toString("UTF-8"), runtime.sessionId.value, server.requests.size)
         } finally {
             // 镜像 Main.kt 的 finally：SessionEnd（prompt_input_exit）在卸下会话前跑
             app.exitSession(runtime).join()
-            ui.cancel()
         }
     }
 
@@ -279,8 +273,64 @@ class HeadlessCompatTest {
                 if (out.exit == 0) diffs += "期望非零退出（原文要求该情形按失败退出），实际 0"
             } else if (out.exit != w.int) diffs += "期望退出码 ${w.int}，实际 ${out.exit}"
         }
-        expected["streamJson"]?.let { want ->
-            if (want.jsonPrimitive.boolean) diffs += "CC 有 stream-json 输出格式（cc-cli-reference.md :110「options: text, json, stream-json」），Min 不认 --output-format、也没有流式事件输出"
+        expected["streamFirstInit"]?.let {
+            val first = out.jsonLines().firstOrNull()
+            if (first == null || first["type"]?.jsonPrimitive?.contentOrNull != "system" || first["subtype"]?.jsonPrimitive?.contentOrNull != "init") {
+                diffs += "期望首行是 system/init（04 :39），实际：${out.jsonLines().firstOrNull()?.toString()?.take(200) ?: "（无 JSON 行）"}"
+            }
+        }
+        expected["streamLastResult"]?.let {
+            if (out.lastJsonLine() == null || out.lastJsonLine()!!["type"]?.jsonPrimitive?.contentOrNull != "result") {
+                diffs += "期望末行是 result（04 :43「The last line of the stream is a result message」），实际：${out.lastLine().take(200)}"
+            }
+        }
+        expected["initFields"]?.let { want ->
+            val first = out.jsonLines().firstOrNull()
+            val fields = want.jsonArray.map { it.jsonPrimitive.content }
+            if (first == null) diffs += "期望对拍 init 行字段，但没有 JSON 行"
+            else fields.forEach { f -> if (first[f] == null) diffs += "init 行缺 CC 字段 $f（04 :39）" }
+        }
+        expected["mcpErrorsKeyAbsent"]?.let {
+            val first = out.jsonLines().firstOrNull()
+            if (first?.get("mcp_server_errors") != null) {
+                diffs += "没有连不上的 MCP 服务器时 mcp_server_errors 应整个省略（04 :39），实际带了：${first["mcp_server_errors"]}"
+            }
+        }
+        expected["inOrder"]?.let { want ->
+            // 一组「type + 可选 content 块类型」的约束，各匹配到一行且顺序递增（assistant → 工具结果 → ……）
+            var from = 0
+            want.jsonArray.forEach { constraint ->
+                val c = constraint.jsonObject
+                val wantType = c["type"]!!.jsonPrimitive.content
+                val wantBlock = c["block"]?.jsonPrimitive?.contentOrNull
+                val found = out.jsonLines().drop(from).indexOfFirst { line ->
+                    line["type"]?.jsonPrimitive?.contentOrNull == wantType && (wantBlock == null ||
+                        (line["message"] as? JsonObject)?.get("content")?.jsonArray?.any { b ->
+                            (b as? JsonObject)?.get("type")?.jsonPrimitive?.contentOrNull == wantBlock
+                        } == true)
+                }
+                if (found < 0) diffs += "期望事件流里出现 type=$wantType${wantBlock?.let { "（content 带 $it 块）" } ?: ""}（在已匹配行之后）"
+                else from += found + 1
+            }
+        }
+        expected["subagentLines"]?.let {
+            val lines = out.jsonLines()
+            val sub = lines.filter { it["parent_tool_use_id"]?.jsonPrimitive?.contentOrNull != null }
+            val shape = lines.take(24).joinToString(" | ") { line ->
+                line["type"]?.jsonPrimitive?.contentOrNull + (line["subtype"]?.jsonPrimitive?.contentOrNull?.let { "/$it" } ?: "")
+            }
+            if (sub.isEmpty()) {
+                diffs += "期望 --forward-subagent-text 转发的子 agent 行（parent_tool_use_id 非 null，CC :93），一行都没有。实际行：${lines.joinToString("\n") { it.toString().take(400) }}"
+            } else if (sub.none { it["session_id"]?.jsonPrimitive?.contentOrNull != null && it["session_id"]!!.jsonPrimitive.content != out.sessionId }) {
+                diffs += "子 agent 行应带自己的 session_id（不是根会话的），实际都在根会话名下"
+            }
+        }
+        expected["partialDeltas"]?.let {
+            val has = out.jsonLines().any { line ->
+                line["type"]?.jsonPrimitive?.contentOrNull == "stream_event" &&
+                    (line["event"] as? JsonObject)?.get("delta") != null
+            }
+            if (!has) diffs += "期望 --include-partial-messages 给出 stream_event 增量行（CC :99），一行都没有"
         }
         expected["stdoutIsJsonObject"]?.let { want ->
             if (want.jsonPrimitive.boolean && out.lastJsonLine() == null) {
@@ -370,14 +420,19 @@ class HeadlessCompatTest {
             val home = freshDir("$name-home")
             val work = freshDir("$name-work")
             val first = headlessRun(home, work, baselineArgv(server, work) + args.toTypedArray(), server)
-            val second = headlessRun(home, work, baselineArgv(server, work) + arrayOf("--continue", "-p", "CC_CONT", "--json"), server)
+            // 修好后目录里只有 -p 会话：--continue 没有可接的会话，启动就报错（UsageException = 退出码 2）
+            val second = try {
+                headlessRun(home, work, baselineArgv(server, work) + arrayOf("--continue", "-p", "CC_CONT", "--json"), server)
+            } catch (e: UsageException) {
+                null
+            }
             val diffs = mutableListOf<String>()
             if (case.getValue("expected").jsonObject["notResumed"]?.jsonPrimitive?.contentOrNull == "true" &&
-                second.sessionId == first.sessionId
+                second != null && second.sessionId == first.sessionId
             ) {
-                diffs += "CC :78 说 --continue 跳过 claude -p / Agent SDK 创建的会话，Min 把刚跑的 -p 会话接上了（${second.sessionId}；日志没有 -p 标记）"
+                diffs += "CC :78 说 --continue 跳过 claude -p / Agent SDK 创建的会话，Min 把刚跑的 -p 会话接上了（${second.sessionId}）"
             }
-            return diffs to (first.requests + second.requests)
+            return diffs to (first.requests + (second?.requests ?: 0))
         } finally {
             server.close()
         }
@@ -395,7 +450,24 @@ class HeadlessCompatTest {
         name.startsWith("29") -> { _ -> textResponse("CC_NO_SCHEMA") }
         name.startsWith("30") ->
             { last -> if (last.contains("CC_TEXT_RUN")) toolResponse("t1", "Bash", buildJsonObject { put("command", "echo cc-text") }) else textResponse("CC_TEXT_OK") }
-        name.startsWith("27") || name.startsWith("28") -> { _ -> null }
+        // 33：先一次工具往返，再收文本尾（assistant tool_use → user tool_result → assistant text）
+        name.startsWith("33") ->
+            { last -> if (last.contains("CC_STREAM_TOOL")) toolResponse("t1", "Bash", buildJsonObject { put("command", "echo cc-stream") }) else textResponse("CC_STREAM_OK") }
+        // 34：父会话委派一个子 agent；子会话对委派指令回一段文本
+        name.startsWith("34") -> { last ->
+            when {
+                last.contains("CC_SUB_RUN") -> toolResponse(
+                    "a1", "Agent",
+                    buildJsonObject {
+                        put("description", "去看一眼")
+                        put("prompt", "去看看"); put("subagent_type", "general-purpose"); put("run_in_background", false)
+                    },
+                )
+                last.contains("去看看") -> textResponse("CC_CHILD_DONE")
+                else -> textResponse("CC_OK")
+            }
+        }
+        name.startsWith("36") || name.startsWith("27") || name.startsWith("28") -> { _ -> null }
         else -> { _ -> textResponse("CC_OK") }
     }
 
