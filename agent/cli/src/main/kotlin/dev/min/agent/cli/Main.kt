@@ -54,14 +54,61 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
         // 交互式续接一个又老又大的会话：缓存早过期了，问一句要不要先压成摘要（-p 不问，照原样续接）
         if (shouldOfferResume(args)) offerResume(runtime.resumeAdvice(), stdin, System.err, runtime::continueFromSummary)
 
+    /** 会话冻结清单拼成 ext 的展开形状。正文此刻才读（与模型路径同一条）；读不了的记下名字，调用处提示 */
+    suspend fun frozenDefs(entries: List<dev.min.agent.spi.SkillEntry>): FrozenDefs {
+        val skills = mutableListOf<dev.min.agent.ext.config.SkillDef>()
+        val commands = mutableListOf<dev.min.agent.ext.config.CommandDef>()
+        val unreadable = mutableSetOf<String>()
+        entries.forEach { e ->
+            val body = app.readSkillBody(e.path)
+            if (body == null) {
+                unreadable += e.name
+                return@forEach
+            }
+            val source = dev.min.agent.ext.config.ConfigSource.entries.firstOrNull { it.label == e.source }
+                ?: dev.min.agent.ext.config.ConfigSource.User
+            if (e.kind == dev.min.agent.spi.SkillKind.Command) {
+                commands += dev.min.agent.ext.config.CommandDef(
+                    e.name, e.description, e.path, body, source,
+                    whenToUse = e.whenToUse, argumentHint = e.argumentHint, arguments = e.arguments,
+                    disableModelInvocation = e.disableModelInvocation, userInvocable = e.userInvocable, context = e.context,
+                )
+            } else {
+                skills += dev.min.agent.ext.config.SkillDef(
+                    e.name, e.description, e.path, body, source,
+                    whenToUse = e.whenToUse, argumentHint = e.argumentHint, arguments = e.arguments,
+                    disableModelInvocation = e.disableModelInvocation, userInvocable = e.userInvocable, context = e.context,
+                )
+            }
+        }
+        return FrozenDefs(skills, commands, unreadable)
+    }
+
     // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
     suspend fun say(input: String): Boolean {
-        val config = app.config()
-        val text = when (val action = interpretInput(input, config.skills, config.commands, app.skillVars(runtime))) {
+        // 斜杠路径与模型路径用同一份清单（会话冻结的快照，L8）：不读实时配置——磁盘上中途改了，两条路看到的一致
+        val entries = runtime.state.value.skills?.entries.orEmpty()
+        val defs = if (input.trimStart().startsWith("/")) frozenDefs(entries) else null
+        if (defs != null) {
+            val first = input.trim().split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty().removePrefix("/")
+            if (first in defs.unreadable) {
+                System.err.println("skill「$first」的文件现在读不了（可能在会话开始后被删除或改动）。")
+                return false
+            }
+        }
+        val action = interpretInput(input, defs?.skills.orEmpty(), defs?.commands.orEmpty(), app.skillVars(runtime))
+        val text = when (action) {
             is InputAction.Send -> action.text
             is InputAction.Notice -> {
                 System.err.println(action.message)
                 return false
+            }
+        }
+        // 用户用斜杠调用 skill / command（CC 的 Hooks in skills and agents）：frontmatter hooks 从这一刻起
+        // 在本会话登记（每次调用都重新登记全量），余下回合生效。模型调 Skill 工具的路在内核（KernelSkillPort），两条路同一套登记
+        action.names.forEach { name ->
+            entries.firstOrNull { it.name == name }?.let { e ->
+                e.hooks?.let { runtime.registerComponentHooks(e.kind.name.lowercase(), name, e.source ?: "user", it) }
             }
         }
         runtime.send(ClientMsgId(UUID.randomUUID().toString()), listOf(TextPart(text)))
@@ -88,7 +135,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
         return if (result.completed) 0 else 1
     }
 
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/recap 一行回顾；/rewind 回退；/branch 分支当前会话；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/recap 一行回顾；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
         val line = stdin.readLine() ?: return 0
@@ -105,6 +152,18 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
             trimmed == "/recap" -> System.err.println(recapNote(runtime.recap()))
             trimmed == "/output-style" || trimmed.startsWith("/output-style ") ->
                 outputStyleCommand(app, runtime, trimmed.removePrefix("/output-style").trim())
+            trimmed == "/rename" || trimmed.startsWith("/rename ") -> {
+                // 不带参数打印当前名字（CC 的 /rename 同样）；带参数改名，空名（规整后）拒绝
+                val wanted = trimmed.removePrefix("/rename").trim()
+                if (wanted.isEmpty()) {
+                    System.err.println(runtime.state.value.name?.let { "当前会话名字：$it" } ?: "这个会话还没有名字（/rename <名字> 起一个）")
+                } else {
+                    when (val renamed = runtime.rename(wanted)) {
+                        null -> System.err.println("名字规整后是空的，换一个。")
+                        else -> System.err.println("已改名为 $renamed")
+                    }
+                }
+            }
             trimmed == "/branch" -> {
                 // 分支并切过去继续聊：原会话一个字不动（CC 的 /branch 同样复制转录后切换写入）
                 try {
@@ -129,6 +188,13 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
         cleanup.join()
     }
 }
+
+/** [interpretInput] 要的两组定义，外加「清单里有、正文读不了」的名字（调用处给人提示） */
+private class FrozenDefs(
+    val skills: List<dev.min.agent.ext.config.SkillDef>,
+    val commands: List<dev.min.agent.ext.config.CommandDef>,
+    val unreadable: Set<String>,
+)
 
 /** /compact 之后给人看的一句话：压缩成了没有、原文在哪 */
 internal fun compactionNote(state: dev.min.agent.kernel.SessionState): String {

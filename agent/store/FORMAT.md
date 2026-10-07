@@ -98,3 +98,20 @@
 - v1 增量（2026-10-07）：新增事件 `model_fallback`（模型回退链，`spi/FallbackEvents.kt`）：`turnId`、`requestId`（刚失败、换模型后用同一 id 重发的请求）、`from` / `to`（`ModelRef`）、`reason`（`ModelFailureKind`：只会是 `overloaded` / `server` / `model_unavailable`）、`message`（供应商报错原文）。
   落在 `model_request_failed`（`willRetry:false`）之后、换模型重发的 `model_request_started`（`attempt` 从 1 重新数）之前。**只管这一个回合**：折叠进 `TurnState.fallback`，回合结束随回合清掉，下一回合先试主模型；因此重开会话不会停在回退模型上。回退链本身（`fallbackModel` / `--fallback-model`）是运行时选项，不进日志、不随 resume 恢复。含新事件的日志旧版本打不开。
 - v1 增量（2026-10-07）：新增事件 `session_recap`（会话回顾，`spi/RecapEvents.kt`）：`text`（一行，≤400 字符）、`trigger`（`manual` / `away`）、`model`（生成它的提取模型）、可选 `usage`（计入会话用量，全零不落盘）。**只给人看，不进模型视图**（折叠只动 `presentation` / `usage` / `recap`，`modelMessages` 与提示前缀与它无关）；任何时候都能落（不要求有进行中的回合）。生成失败或被跳过不写事件。含新事件的日志旧版本打不开。
+- v1 增量（2026-10-06）：后台 hooks 与组件 hooks 落地（`async` / `asyncRewake`、skill / command / 子 agent frontmatter 的 hooks）：
+  `hooks_ran` 新增可选字段 `background`（`true` = 这是后台 hook **完成时**的记录，`handlers` 恒为 1；启动不落事件——进程死了日志里就没有「还在跑」的痕迹，重开会话不假装在等；
+  完成时的 `decision` 恒为 `neutral`：控制字段对后台 hook 一律无效，收到时在 `problems` 里说明忽略）。`asyncRewake` 退出码 2 唤醒空闲会话时写
+  `input_received`（`origin = hook`，`delivery = queue`）并开一个新回合；`turn_started.trigger` 新增取值 `hook`（后台 hook 唤醒的回合，转录里与 `resume` / `notification` 一样留分隔）。
+  新增事件 `component_hooks_registered`（`kind`：skill / command / agent，`name`、`layer`（managed / user / project / local——项目层过工作区信任后才登记）、`hooks`：frontmatter 原文）：
+  skill / command 被调用（模型调 Skill 工具、用户敲 `/名字`）时登记进本会话，余下回合一直生效，重开会话照常折叠出来；子 agent 的写在**子会话**自己的日志里（`Stop` 键在写入前改写成 `SubagentStop`），会话结束即随它出局，不进父会话、不传给孙会话。同名组件重复登记不叠加。
+  新增事件 `component_hooks_updated`（`kind`、`name`、`hooks`：移除后的整份替换）：`once: true` 的处理器成功跑一次（退出码 0、没超时、没起不来）后从所属组件移除；失败、exit 2、超时都保留。只有 skill / command 响应 `once`（settings 与 agent 定义的忽略，CC 原文）。
+  含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-06）：新增事件 `session_renamed`（`name`：`--name` 建会话或 `/rename` 改名，写入前已规整——控制与不可见格式字符换空格、去首尾空白、最长 200 字符；空名不写）。
+  折叠取最后一条为当前名字；`--resume <名字>` 据此按名找当前目录最近的根会话。同名建会话时内核自动改成 `-2`、`-3` 变体（改名的值原样保留）。含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-07，hooks-async 复核修复）：`skills_loaded.entries[]` 新增可选字段 `hooks`（skill / command frontmatter 的 `hooks:` 原文，2026-10-06 引入、当时漏登记）与
+  `context`（frontmatter 的 `context`，现在只认 `fork`；斜杠叠放规则要用）。旧日志缺这两个键照常读（没有即无 hooks / 非 fork）。
+  `once` 的「成功」口径收紧：退出码 0 之外还要结论为 Neutral / Allow、没有非阻断错误、没被它自己拦下（exit 2、JSON 的 `decision` / `permissionDecision` 拒绝、`continue:false` 同属拦截）——
+  拦截过的 `once` 不写 `component_hooks_updated`，hook 保留。skill / command **每次被调用**都重新写一条 `component_hooks_registered`（整份替换同名旧登记，`once` 已用掉的也回来；不再去重跳过）。
+  委派子 agent / 分身时父会话当时的全部 `component_hooks_registered` 以快照写进子会话日志（`Stop` 键改写成 `SubagentStop`；`once` 在子会话里用掉只改子会话）——取代上一条「不传给孙会话」的说法。
+  `session_renamed` 的规整改为按 **code point**：截 200 个码点（不是 UTF-16 码元，不再截出半个代理对）、U+2028 / U+2029 也换空格、补充平面的格式字符（U+E0000 一族 TAG）按码点判不可见。
+  `/branch` 复制来的名字与本目录已有名字撞车时，分支在复制完的日志末尾再写一条 `session_renamed` 改成 `-2` 变体。含新字段的日志旧版本打不开；旧日志照常读。

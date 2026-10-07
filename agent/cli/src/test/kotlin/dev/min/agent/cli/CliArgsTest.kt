@@ -80,4 +80,23 @@ class CliArgsTest {
         assertTrue(prompt.startsWith("提取名字"))
         assertTrue("要求里要点名工具与一次交卷", prompt.contains("StructuredOutput") && prompt.contains("只调用一次"))
     }
+
+    // ---- --name / -n ----
+
+    @Test fun `name accepts a display name via both spellings and normalizes it`() {
+        assertEquals("auth refactor", parse("--model", "m", "--name", " auth\u0000refactor ").name)
+        assertEquals("auth", parse("--model", "m", "-n", "auth").name)
+        assertEquals(null, parse("--model", "m").name)
+    }
+
+    @Test fun `name rejects empty-after-normalize values`() {
+        assertThrows(UsageException::class.java) { parse("--model", "m", "--name", "  \n") }
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-n", "\u0000") }
+    }
+
+    @Test fun `name cannot ride along with resume or continue`() {
+        assertThrows(UsageException::class.java) { parse("--model", "m", "--name", "x", "--resume", "s1") }
+        assertThrows(UsageException::class.java) { parse("--model", "m", "-n", "x", "--continue") }
+        assertThrows(UsageException::class.java) { parse("--model", "m", "--name", "x", "-n", "y") }
+    }
 }

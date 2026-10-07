@@ -159,6 +159,12 @@ class SessionRuntime private constructor(
     /** 检查点与回退（检查点与rewind设计） */
     internal val checkpointer = Checkpointer(this)
 
+    /**
+     * 后台 hook（`async` / `asyncRewake`）：一个运行时一份，跑着的进程与「只报一次」的记录都在这里——
+     * HookDriver 是按需建的（一个运行时会有好几个），状态必须挂在运行时上
+     */
+    internal val asyncHooks = AsyncHookRunner(this, scope)
+
     /** settings 里的 `fileCheckpointingEnabled`（缺省为开）；创建时随那份 settings 一起读，重新打开的会话第一次要用时再读 */
     @Volatile
     private var checkpointsBySettings: Boolean? = null
@@ -401,6 +407,16 @@ class SessionRuntime private constructor(
         commitIf(listOf(QuestionAnswered(questionId, declined = true)), Durability.Sync) { it.isAwaitingAnswer(questionId) } != null
 
     /**
+     * 给会话改名（`/rename`）。名字先规整（[normalizeSessionName]）；规整后为空返回 null——
+     * 空名拒绝，什么都不写。改名允许与别的会话重名：人是显式改的，不该被悄悄变成别的名字（变体只在 `--name` 建会话时用）
+     */
+    suspend fun rename(raw: String): String? {
+        val name = normalizeSessionName(raw) ?: return null
+        commit(listOf(dev.min.agent.spi.SessionRenamed(name)), Durability.Sync)
+        return name
+    }
+
+    /**
      * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
      * 参数为 null 表示不改；要把思考档位清回「不控制」用 [clearEffort]（与 [effort] 同给时以 [effort] 为准）
      */
@@ -474,6 +490,32 @@ class SessionRuntime private constructor(
     /** 分身的第一个回合：没有新输入，任务就在继承来的那次 Agent 调用的结果里 */
     internal fun startDelegated() {
         startTurnIfIdle(TurnTrigger.Delegated)
+    }
+
+    /**
+     * 登记一个 skill / command 的 frontmatter hooks（hooks设计 §frontmatter）：本会话余下回合一直生效。
+     * 模型调 Skill 工具与用户敲 `/名字` 两条路都到这里（斜杠展开在宿主，那里拿到展开的组件名后调本方法）。
+     * 项目层（project / local）要过工作区信任——与 settings 的 hooks 同一条规则（CC：项目 skill 同 settings）。
+     * 每次**调用**都重新登记全量（CC 的 invoke 时 register）：整份替换同名的旧登记，`once` 已用掉的也回来
+     */
+    suspend fun registerComponentHooks(kind: String, name: String, layer: String, hooks: kotlinx.serialization.json.JsonObject) {
+        if (hooks.isEmpty()) return
+        if (layer == "project" || layer == "local") {
+            val trusted = deps.trustProjectHooks(state.value.created.cwd)
+            if (!trusted) {
+                commit(
+                    listOf(
+                        Note(
+                            NoteLevel.Warning,
+                            "$layer 层「$name」的 frontmatter hooks 带了 ${hooks.keys.count { k -> dev.min.agent.ext.hooks.HookEvent.entries.any { it.name == k } }} 个事件的 hooks，未启用：工作区还没有被信任。",
+                        ),
+                    ),
+                    Durability.Batched,
+                )
+                return
+            }
+        }
+        commit(listOf(dev.min.agent.spi.ComponentHooksRegistered(kind, name, layer, hooks)), Durability.Sync)
     }
 
     /**
@@ -576,13 +618,16 @@ class SessionRuntime private constructor(
             if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
-            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification) && s.inbox.isEmpty()) return
+            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification || trigger == TurnTrigger.Hook) && s.inbox.isEmpty()) return
             turnJob = scope.launch {
                 val runner = TurnRunner(this@SessionRuntime)
                 var next: TurnTrigger? = trigger
                 while (next != null) {
                     val completed = runner.run(next)
-                    next = if (completed && _state.value.inbox.isNotEmpty()) TurnTrigger.User else null
+                    // 排队的输入接续下一回合：唤醒它的输入来自 asyncRewake hook 时，回合的触发也记 hook（日志里看得出是谁唤醒的）
+                    next = if (completed && _state.value.inbox.isNotEmpty()) {
+                        if (_state.value.inbox.first().origin is InputOrigin.Hook) TurnTrigger.Hook else TurnTrigger.User
+                    } else null
                 }
             }
         }

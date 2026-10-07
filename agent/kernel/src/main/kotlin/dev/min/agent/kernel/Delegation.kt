@@ -49,9 +49,16 @@ data class AgentDefinition(
     val alwaysBackground: Boolean = false,
     /**
      * 只读的内置类型（Explore / Plan）：模式固定为 dontAsk、工具里没有写类工具。
-     * 比 Claude Code 严一点：父会话是 bypass 也不放开——它们按定义就不该改东西。
+     * 比 Claude Code 严一点：父会话是 bypass 也不放开——它们按定义就不该改东西
      */
     val readOnly: Boolean = false,
+    /**
+     * frontmatter 的 `hooks:` 原文（CC 的 Hooks in skills and agents）：只在**这个子 agent 运行期间**生效——
+     * 写进子会话自己的日志，会话结束即出局，不进父会话也不继承给孙会话。其中的 `Stop` 在登记时改写成
+     * `SubagentStop`（CC：子会话里触发的是它自己的完成事件）。[hooksLayer] 是定义来自的层，项目层要过信任
+     */
+    val hooks: kotlinx.serialization.json.JsonObject? = null,
+    val hooksLayer: String? = null,
 )
 
 object BuiltinAgents {

@@ -43,6 +43,8 @@ data class CliArgs(
     val forkSession: Boolean = false,
     /** --continue：接着当前目录最近一次根会话 */
     val continueMostRecent: Boolean = false,
+    /** `--name` / `-n`：建会话时命名（进入内核前已规整；同目录重名时内核自动加 -2 变体）；null = 不命名 */
+    val name: String? = null,
     /** 声明模型能看图（目录外的自定义模型默认不能，图片会换成文字说明）；目录里已标能看图的不受影响 */
     val images: Boolean = false,
 )
@@ -80,6 +82,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --json-schema <JSON|@文件> -p 模式下要求模型按 JSON Schema 交结构化答案（经 StructuredOutput 工具）
   --fork-session         与 --resume / --continue 一起用：在分支上跑，原会话不动
   --continue             接着当前目录最近一次根会话（相当于按目录挑 --resume）
+  --name <名字>, -n      建会话时命名：--resume <名字> 可按名续接；同目录重名自动加 -2、-3
 """
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -107,6 +110,12 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     val prompt = values["-p"]
     if (values["--json-schema"] != null && prompt == null) {
         throw UsageException("--json-schema 只在 -p 非交互模式下可用（结构化输出是给跑批要结果的，不是给交互会话的）")
+    }
+    if (values["--name"] != null && values["-n"] != null) {
+        throw UsageException("--name 与 -n 是同一个参数，给一个就行")
+    }
+    if ((values["--name"] ?: values["-n"]) != null && (values["--resume"] != null || "--continue" in flags)) {
+        throw UsageException("--name 用来给新会话命名，不能与 --resume / --continue 一起用（改名用会话内的 /rename）")
     }
     if ("--fork-session" in flags && values["--resume"] == null && "--continue" !in flags) {
         throw UsageException("--fork-session 要与 --resume 或 --continue 一起用")
@@ -160,6 +169,10 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         jsonSchema = values["--json-schema"]?.let(::readJsonSchemaArg),
         forkSession = "--fork-session" in flags,
         continueMostRecent = "--continue" in flags,
+        name = (values["--name"] ?: values["-n"])?.let { raw ->
+            dev.min.agent.kernel.normalizeSessionName(raw)
+                ?: throw UsageException("--name 规整后是空的（只有空白或控制字符），给个像样的名字")
+        },
         images = "--images" in flags,
         wire = values["--wire"]?.let {
             when (it) {

@@ -23,11 +23,17 @@ data class HookHandler(
     val headers: JsonObject? = null,
     /** type:http 专属：允许插值进头里的环境变量名 */
     val allowedEnvVars: List<String>? = null,
+    /** `async: true`：后台跑、不挡回合（CC 只给 command 定义了这个语义） */
+    val async: Boolean = false,
+    /** `asyncRewake: true`：后台跑，退出码 2 时唤醒模型 */
+    val asyncRewake: Boolean = false,
+    /** `once: true`：成功跑一次后移除。CC 只在 skill frontmatter 里认它，settings 与 agent 定义里忽略——是否响应由执行方（内核）按来源决定 */
+    val once: Boolean = false,
 ) {
-    val executable: Boolean get() = type == "command" && raw["async"] != JsonPrimitive(true) &&
-        raw["asyncRewake"] != JsonPrimitive(true)
+    val executable: Boolean get() = type == "command" && !async && !asyncRewake
 
-    internal fun identity(): List<Any?> = listOf(type, command, args, condition, timeout) +
+    // async / asyncRewake / once 进身份：同一条命令可以既有同步版又有异步版，漏了会在去重时互吞
+    internal fun identity(): List<Any?> = listOf(type, command, args, condition, timeout, async, asyncRewake, once) +
         if (type == "http") listOf(url, headers, allowedEnvVars) else emptyList()
 }
 
@@ -48,8 +54,15 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
             if (handler.event != event || !matchesHookTarget(event, handler.matcher, target)) return@filter false
             val where = "${handler.source.label} $event ${handler.command ?: handler.type}"
             when {
-                !handler.executable -> {
-                    matchNotes += "$where：本期不执行此 hook 类型或异步 hook"
+                handler.type != "command" -> {
+                    // 同步批只跑 command：prompt / agent / mcp_tool 本期不执行；http 由 matchingHttp 另挑
+                    matchNotes += if (handler.type == "http") "$where：http 处理器走 http 通道，不在本批"
+                    else "$where：本期不执行此 hook 类型"
+                    false
+                }
+                handler.async || handler.asyncRewake -> {
+                    // 异步 command 不进同步批：由内核的后台执行器另跑（不挡回合）
+                    matchNotes += "$where：异步 hook 由后台执行器跑，不在本批"
                     false
                 }
                 handler.condition != null && event in IF_EVENTS -> {
@@ -62,6 +75,26 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
             }
         }
         return HookMatch(dedupByIdentity(selected), matchNotes)
+    }
+
+    /**
+     * 挑 `async` / `asyncRewake` 的 command 处理器（CC：这两个字段只对 type:command 有语义）。
+     * 与同步批分开挑：它们不参与「本批怎么合并结论」，由内核的后台执行器各自跑、各自落记录
+     */
+    fun matchingAsync(
+        event: HookEvent,
+        target: String?,
+        ifMatches: ((rule: String) -> Boolean)? = null,
+    ): HookMatch {
+        val selected = handlers.filter { handler ->
+            if (handler.event != event || !matchesHookTarget(event, handler.matcher, target)) return@filter false
+            if (handler.type != "command" || !(handler.async || handler.asyncRewake)) return@filter false
+            // 与同步批同一条规矩：if 条件没人替它判定（has() 之外的路径）就不跑，宁可漏跑也不瞎猜
+            if (handler.condition != null && event in IF_EVENTS) {
+                ifMatches != null && ifMatches(handler.condition)
+            } else true
+        }
+        return HookMatch(dedupByIdentity(selected), emptyList())
     }
 
     /**
@@ -178,13 +211,16 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
                                         }
                                     }
                                 }
-                                listOf("async", "asyncRewake").forEach { key ->
+                                listOf("async", "asyncRewake", "once").forEach { key ->
                                     require(key !in raw || raw[key] == JsonPrimitive(true) || raw[key] == JsonPrimitive(false)) {
                                         "$key 必须是布尔值"
                                     }
                                 }
                                 val h = HookHandler(event, matcherText, type, command, args, timeout, condition,
-                                    layer.source, raw, url, headers, allowedEnvVars)
+                                    layer.source, raw, url, headers, allowedEnvVars,
+                                    async = raw["async"] == JsonPrimitive(true),
+                                    asyncRewake = raw["asyncRewake"] == JsonPrimitive(true),
+                                    once = raw["once"] == JsonPrimitive(true))
                                 val key = listOf(event, matcherText) + h.identity()
                                 val old = unique[key]
                                 if (old == null || priority(h.source) > priority(old.source)) unique[key] = h
@@ -206,8 +242,7 @@ private fun stringOf(value: kotlinx.serialization.json.JsonElement?): String? =
     (value as? JsonPrimitive)?.takeIf { it.isString }?.content
 
 /** async / asyncRewake 只对 command hook 有文档语义；http 挂了异步标记时同样不执行 */
-private fun rawAsync(handler: HookHandler): Boolean =
-    handler.raw["async"] == JsonPrimitive(true) || handler.raw["asyncRewake"] == JsonPrimitive(true)
+private fun rawAsync(handler: HookHandler): Boolean = handler.async || handler.asyncRewake
 
 private fun priority(source: ConfigSource): Int = when (source) {
     ConfigSource.User -> 0

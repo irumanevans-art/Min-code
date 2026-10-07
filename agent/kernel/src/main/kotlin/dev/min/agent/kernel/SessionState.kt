@@ -80,6 +80,8 @@ data class SessionState(
     val structuredOutput: dev.min.agent.spi.StructuredOutputDelivered? = null,
     /** 展示用事件同样由日志折叠；不进入 modelMessages，避免 UI 说明改变模型历史。 */
     val presentation: List<SessionPresentation> = emptyList(),
+    /** 会话的名字（最后一条 session_renamed；--name 建会话或 /rename 改名）。界面列表与按名续接用，不进模型上下文 */
+    val name: String? = null,
     /** 子会话的来历；根会话为 null（docs/agent/detail/子agent设计.md §2.2） */
     val origin: SubagentOrigin? = null,
     /** 本会话委派出去的子 agent，按委派顺序 */
@@ -120,6 +122,8 @@ data class SessionState(
     val taskSeq: Int = 0,
     /** 会话创建时冻结的 hooks（最后一条 HooksLoaded；docs/agent/detail/hooks设计.md §1） */
     val hooks: List<HookSourceData> = emptyList(),
+    /** 会话中途登记的 frontmatter hooks（skill / command 被调用时、子 agent 创建时）；与上面的快照分开存：不随 settings 层去重、也不继承给孙会话 */
+    val componentHooks: List<dev.min.agent.spi.ComponentHooksRegistered> = emptyList(),
     /** 同一条 HooksLoaded 带的 http 两道闸（各生效层合并后的）；null = 没有任何一道闸 */
     val hooksHttpPolicy: HttpPolicyData? = null,
     /** hook 加的上下文，按挂靠的消息（用户消息，或带工具调用的助手消息——挂在它的工具结果后面）；模型视图里渲染成 system-reminder */

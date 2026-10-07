@@ -1069,6 +1069,7 @@
   <string name="min_agent_hook_feedback">%1$s hook asked the model to keep going</string>
   <string name="min_agent_continued">Continued</string>
   <string name="min_agent_woke">A subagent finished, continuing</string>
+  <string name="min_agent_hook_woke">A background hook reported a problem</string>
   <string name="min_agent_report_completed">done</string>
   <string name="min_agent_report_failed">failed</string>
   <string name="min_agent_report_interrupted">stopped</string>

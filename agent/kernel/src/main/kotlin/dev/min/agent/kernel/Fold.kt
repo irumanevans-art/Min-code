@@ -89,6 +89,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(lastSeq == 0L) { "SessionCreated 只能是第一条事件" }
             this
         }
+        is dev.min.agent.spi.SessionRenamed -> copy(name = e.name)
         // 取最后一条：以后显式刷新记忆时再追加一条，整份替换前一份快照
         // 快照里的路径换成新快照的；按需加载过的路径原样保留
         is MemoryLoaded -> copy(
@@ -157,8 +158,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is TurnStarted -> {
             check(turn == null) { "上一回合 ${turn?.turnId} 还没结束就开始了 ${e.turnId}" }
             val started = copy(turn = TurnState(e.turnId, e.trigger, record.atMs, openRequest = null, calls = emptyMap(), usage = Usage()))
-            // 续跑、被子 agent 报告唤醒的回合在转录里留一道分隔（「接着做」「子 agent 完成，继续处理」）；用户发起的回合由用户消息本身标示
-            if (e.trigger == TurnTrigger.Resume || e.trigger == TurnTrigger.Notification) {
+            // 续跑、被子 agent 报告或后台 asyncRewake hook 唤醒的回合在转录里留一道分隔；用户发起的回合由用户消息本身标示
+            if (e.trigger == TurnTrigger.Resume || e.trigger == TurnTrigger.Notification || e.trigger == TurnTrigger.Hook) {
                 started.copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
             } else started
         }
@@ -208,6 +209,16 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is PermissionRulesLoaded -> copy(rules = e.rules, additionalDirectories = e.additionalDirectories)
         is HooksLoaded -> copy(hooks = e.sources, hooksHttpPolicy = e.httpPolicy)
+        is dev.min.agent.spi.ComponentHooksRegistered -> {
+            // 同名组件重复登记（模型又调了一次同一个 skill）不叠加：处理器翻倍等于同一个门禁跑两遍
+            val exists = componentHooks.any { it.kind == e.kind && it.name == e.name }
+            copy(componentHooks = if (exists) componentHooks.map { if (it.kind == e.kind && it.name == e.name) e else it } else componentHooks + e)
+        }
+        is dev.min.agent.spi.ComponentHooksUpdated -> copy(
+            componentHooks = componentHooks.map { c ->
+                if (c.kind == e.kind && c.name == e.name) c.copy(hooks = e.hooks) else c
+            }.filterNot { it.kind == e.kind && it.name == e.name && it.hooks.isEmpty() },
+        )
         is HooksRan -> copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is HookContextAdded -> when (val target = e.target) {
             HookContextTarget.NextUserMessage -> copy(pendingHookContexts = pendingHookContexts + e.text)

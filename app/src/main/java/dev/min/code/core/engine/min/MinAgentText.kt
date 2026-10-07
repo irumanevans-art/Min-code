@@ -29,6 +29,9 @@ interface MinAgentText {
 
     /** 子 agent 报告唤醒了父会话：回合状态行与转录里的分隔线共用这一句 */
     fun subagentWoke(): String
+
+    /** 后台 asyncRewake hook 唤醒了空闲会话：状态行与转录分隔线共用这一句 */
+    fun hookWoke(): String
     fun report(report: MinReport, description: String?): String
     fun agentMessage(agentType: String, name: String?): String
     fun attachment(): String
@@ -92,6 +95,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun hookFeedback(event: String) = s(R.string.min_agent_hook_feedback, event)
     override fun continued(atMs: Long?) = timed(s(R.string.min_agent_continued), atMs)
     override fun subagentWoke() = s(R.string.min_agent_woke)
+    override fun hookWoke() = s(R.string.min_agent_hook_woke)
 
     override fun report(report: MinReport, description: String?): String {
         val status = reportStatusRes(report.status)?.let { s(it) } ?: report.status

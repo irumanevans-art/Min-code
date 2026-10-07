@@ -28,6 +28,7 @@ import dev.min.agent.llm.openai.OpenAIResponsesClient
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.Secret
 import dev.min.agent.spi.PageConverter
@@ -150,6 +151,12 @@ internal class DesktopApp(
         effort = runtime.state.value.settings.effort?.name?.lowercase(),
     )
 
+    /** 会话冻结清单里定义的正文（斜杠展开用）：与模型路径同一条读取（SkillFiles.readBody），不读实时配置 */
+    internal suspend fun readSkillBody(path: GuestPath): String? =
+        dev.min.agent.spi.catchingNonCancellation {
+            dev.min.agent.ext.skills.SkillFiles.readBody(paths.fs, path)
+        }.getOrNull()
+
     /** /output-style 用：磁盘上的样式（managed + 用户 + 项目链，近者胜），与内核会话创建时同一套读法 */
     suspend fun outputStyles() = dev.min.agent.ext.styles.OutputStyleFiles.available(
         paths.fs, paths.guestOfHost(args.cwd), userHome,
@@ -255,7 +262,7 @@ internal class DesktopApp(
     }
 
     suspend fun openSession(): SessionRuntime {
-        val resumeId = args.resume?.let(::SessionId)
+        val resumeId = args.resume?.let { resolveResume(it) }
             ?: if (args.continueMostRecent) latestRootSession() ?: throw UsageException("当前目录还没有可接着的会话。") else null
         if (resumeId != null) {
             if (!args.forkSession) {
@@ -270,7 +277,22 @@ internal class DesktopApp(
             return checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
-        return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort)
+        // --name 建会话时命名（同目录重名时内核自动加 -2 变体）
+        return hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort, name = args.name)
+    }
+
+    /**
+     * `--resume <x>` 的 x：长得像会话 id 且日志存在就当 id；否则按名字找当前目录下最近的根会话
+     * （CC 的 --resume <name> 同一条路）。两者都不是就报错退出
+     */
+    private suspend fun resolveResume(x: String): SessionId {
+        if (SESSION_ID_SHAPE.matches(x)) {
+            val asId = SessionId(x)
+            if (store.open(asId) != null) return asId
+        }
+        val wanted = dev.min.agent.kernel.normalizeSessionName(x) ?: x
+        return hub().findSessionByName(paths.guestOfHost(args.cwd), wanted)
+            ?: throw UsageException("「$x」既不是会话 id，也不是当前目录里命名过的会话（名字用 --name 设、/rename 改）。")
     }
 
     /** 交互模式 /branch：从当前会话分出一个新根会话（忙 / 找不到时抛 [SessionBranchRefused]，终端打印原因） */
@@ -315,5 +337,8 @@ internal class DesktopApp(
 
     private companion object {
         val HUB_LIMITS = HubLimits(maxDepth = 3, maxConcurrentChildRequests = 8)
+
+        /** 会话 id 的形状（与 FileSessionStore 的 SAFE_ID 同一套）：先判形状再查存在，免得名字里的怪字符被当路径拼 */
+        val SESSION_ID_SHAPE = Regex("[A-Za-z0-9_-]{1,128}")
     }
 }
