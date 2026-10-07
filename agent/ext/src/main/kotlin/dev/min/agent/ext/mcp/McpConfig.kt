@@ -70,7 +70,8 @@ data class McpOAuthConfig(
     val authServerMetadataUrl: String? = null,
     /** 空格分隔的 scope 串（RFC 6749 §3.3 的格式），原样保留 */
     val scopes: String? = null,
-)
+    val clientSecret: String? = null,
+) { override fun toString() = "McpOAuthConfig(***)" }
 
 /** 一台服务器 + 它的闸门结论。[reason] 给人看（gate 不是 Enabled 时必有一句），不进模型上下文 */
 data class McpServerEntry(

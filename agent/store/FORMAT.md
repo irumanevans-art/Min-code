@@ -118,6 +118,12 @@
 - v1 增量（2026-10-07，无头输出对齐 CC）：`session_created` 新增可选字段 `headless`（这条会话是不是 `-p` / 无头跑的；CC 的 `--continue` 据此跳过 -p / SDK 会话。旧日志缺字段 = 交互）。
   `turn_ended.outcome`（failed 变体）新增可选字段 `cause`（内核自己的失败原因标记，与模型的 kind 正交；目前只有
   `structured_output_retries`：--json-schema 重试用尽，CLI 据此把 result.subtype 写成 CC 的 `error_max_structured_output_retries`）。旧日志照常读。
+# MCP3 OAuth 审计
+
+`mcp_authentication`：server、action（login/logout/refresh）、outcome（success/failed/cancelled）。
+操作者所属会话由日志头标识，时间由 EventRecord 提供。仅审计，不改变重放的工具表；
+OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话数据，永远不进日志/附件/快照。
+
 # MCP2 资源快照与附件
 
 `mcp_tools_snapshot.resourceServers`（默认空列表）记录已就绪的 resources 服务器；晚连上的服务器在下一回合加入，掉线保留已知能力。

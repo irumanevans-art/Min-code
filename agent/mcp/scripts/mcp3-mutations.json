@@ -1,0 +1,677 @@
+[
+  {
+    "Item": "challenge",
+    "Name": "header-case",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "name.equals(\"WWW-Authenticate\",true)",
+    "To": "name.equals(\"WWW-Authenticate\",false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "challenge",
+    "Name": "scheme-case",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "Regex(\"^Bearer(?:\\\\s+|$)\",RegexOption.IGNORE_CASE)",
+    "To": "Regex(\"^Bearer(?:\\\\s+|$)\")",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "challenge",
+    "Name": "split-quoted-comma",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if(c==',' && !quoted)",
+    "To": "if(c==',')",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "discovery",
+    "Name": "ignore-challenge",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "listOfNotNull(challenge?.resourceMetadata) + listOf(",
+    "To": "emptyList<String>() + listOf(",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "discovery",
+    "Name": "reverse-AS-order",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "val asJson = firstJson(urls) ?: continue",
+    "To": "val asJson = firstJson(urls.reversed()) ?: continue",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "discovery",
+    "Name": "stop-network-fallback",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if(e.kind!=McpOAuthException.Kind.Discovery) throw e",
+    "To": "if(true) throw e",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "binding",
+    "Name": "allow-http-override",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (!secureUri(override).scheme.equals(\"https\",true))",
+    "To": "if (false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "binding",
+    "Name": "ignore-PR-resource",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (pr.text(\"resource\") != resource)",
+    "To": "if (false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "binding",
+    "Name": "ignore-AS-issuer",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (expectedIssuer != null && issuer != expectedIssuer)",
+    "To": "if (false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "registration",
+    "Name": "ignore-preset",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "val preset = settings.clientId?.takeIf { it.isNotBlank() }",
+    "To": "val preset: String? = null",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "registration",
+    "Name": "wrong-application-type",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "put(\"application_type\", \"native\")",
+    "To": "put(\"application_type\", \"web\")",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "registration",
+    "Name": "reuse-other-issuer",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "existing?.issuer == asMetadata.issuer && existing.authorizationEndpoint == asMetadata.authorization && existing.tokenEndpoint == asMetadata.token",
+    "To": "existing != null",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "pkce",
+    "Name": "accept-no-S256",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (\"S256\" !in strings(asMetadata.json, \"code_challenge_methods_supported\"))",
+    "To": "if (false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "pkce",
+    "Name": "plain-method",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "\"code_challenge_method\" to \"S256\"",
+    "To": "\"code_challenge_method\" to \"plain\"",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "pkce",
+    "Name": "wrong-proof",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "MessageDigest.getInstance(\"SHA-256\").digest(verifier.toByteArray(Charsets.US_ASCII))",
+    "To": "MessageDigest.getInstance(\"SHA-1\").digest(verifier.toByteArray(Charsets.US_ASCII))",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "state",
+    "Name": "missing-state-accepted",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "val returnedState = params[\"state\"] ?: fail(McpOAuthException.Kind.Security)",
+    "To": "val returnedState = params[\"state\"] ?: state",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "state",
+    "Name": "ignore-state-equality",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (!MessageDigest.isEqual(state.toByteArray(), returnedState.toByteArray()))",
+    "To": "if (false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "state",
+    "Name": "allow-duplicate-state",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (result.containsKey(key)) fail(McpOAuthException.Kind.Security)",
+    "To": "if (false) fail(McpOAuthException.Kind.Security)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "iss",
+    "Name": "ignore-issuer",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (params[\"iss\"] != asMetadata.issuer)",
+    "To": "if (false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "iss",
+    "Name": "allow-missing-issuer",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (params[\"iss\"] != asMetadata.issuer)",
+    "To": "if (params[\"iss\"] != null && params[\"iss\"] != asMetadata.issuer)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "iss",
+    "Name": "normalize-issuer",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (params[\"iss\"] != asMetadata.issuer)",
+    "To": "if (params[\"iss\"]?.lowercase()?.trimEnd('/') != asMetadata.issuer.lowercase().trimEnd('/'))",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "exchange",
+    "Name": "lose-verifier",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "\"code_verifier\" to verifier",
+    "To": "\"unused\" to verifier",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "exchange",
+    "Name": "lose-resource",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "\"code_verifier\" to verifier, \"resource\" to resource",
+    "To": "\"code_verifier\" to verifier",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "exchange",
+    "Name": "discard-exchanged-token",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "store.save(key, credentials)",
+    "To": "store.save(key, registered)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "scopes",
+    "Name": "ignore-pinned",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "val requested = settings.scopes ?: if",
+    "To": "val requested = if",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "scopes",
+    "Name": "request-AS-catalog",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "else challenge?.scope ?: resourceScopes",
+    "To": "else strings(asMetadata.json, \"scopes_supported\").joinToString(\" \").ifBlank { null }",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "scopes",
+    "Name": "omit-offline-access",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (\"offline_access\" in strings(asMetadata.json, \"scopes_supported\"))",
+    "To": "if (false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "refresh",
+    "Name": "lose-rotation",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "val refresh = j.text(\"refresh_token\")?.also { if (!validToken(it)) fail(McpOAuthException.Kind.Token) } ?: old.refreshToken",
+    "To": "val refresh = old.refreshToken",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "refresh",
+    "Name": "lose-refresh-token-param",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "\"refresh_token\" to refresh",
+    "To": "\"unused\" to refresh",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "refresh",
+    "Name": "do-not-persist-refresh",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "store.save(key, next)",
+    "To": "store.save(key, old)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "client_auth",
+    "Name": "omit-basic-auth",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (old.tokenEndpointAuthMethod == \"client_secret_basic\")",
+    "To": "if (false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "client_auth",
+    "Name": "omit-post-secret",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "form += \"client_secret\" to (old.clientSecret ?: fail(McpOAuthException.Kind.Security))",
+    "To": "form += \"unused\" to (old.clientSecret ?: fail(McpOAuthException.Kind.Security))",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "client_auth",
+    "Name": "discard-registration-secret",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "asMetadata.token, id, secret, redirect",
+    "To": "asMetadata.token, id, null, redirect",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "privacy",
+    "Name": "credential-string-leak",
+    "File": "agent/spi/src/main/kotlin/dev/min/agent/spi/McpOAuth.kt",
+    "From": "override fun toString() = \"McpOAuthCredentials(***)\"",
+    "To": "override fun toString() = \"McpOAuthCredentials($accessToken)\"",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "privacy",
+    "Name": "record-string-leak",
+    "File": "agent/spi/src/main/kotlin/dev/min/agent/spi/McpOAuth.kt",
+    "From": "override fun toString() = \"McpTokenRecord(***)\"",
+    "To": "override fun toString() = \"McpTokenRecord(${credentials.accessToken})\"",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "privacy",
+    "Name": "settings-string-leak",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "override fun toString() = \"McpOAuthSettings(***)\"",
+    "To": "override fun toString() = \"McpOAuthSettings($clientSecret)\"",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "retry",
+    "Name": "skip-refresh",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "try { client.refresh(tokenKey(entry)); entry.authRefreshed=true; audit(entry,\"refresh\",\"success\") }",
+    "To": "try { entry.authRefreshed=true; audit(entry,\"refresh\",\"success\") }",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "retry",
+    "Name": "skip-reconnect",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "        connectEntry(entry)\n    }\n    private suspend fun <T> authenticated",
+    "To": "        old ?: connectEntry(entry)\n    }\n    private suspend fun <T> authenticated",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "retry",
+    "Name": "skip-retry",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "return block(connected).also { entry.authRefreshed=false }",
+    "To": "throw e",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "auth_status",
+    "Name": "wrong-no-token-state",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "|| e is LoginRequired ||",
+    "To": "|| false ||",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "auth_status",
+    "Name": "wrong-rejected-refresh-state",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "e.kind==dev.min.agent.mcp.McpOAuthException.Kind.RefreshRejected",
+    "To": "e.kind!=dev.min.agent.mcp.McpOAuthException.Kind.RefreshRejected",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "auth_status",
+    "Name": "ignore-insufficient-scope",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "if(entry.challenge?.error==\"insufficient_scope\")",
+    "To": "if(false)",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "configured_auth",
+    "Name": "OAuth-fallback",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if(response.status in setOf(401,403) && configured)",
+    "To": "if(false)",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "configured_auth",
+    "Name": "refresh-despite-static-auth",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "entry.spec.headers.keys.none { it.equals(\"Authorization\",true) }",
+    "To": "entry.spec.headers.keys.all { true }",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "configured_auth",
+    "Name": "login-despite-static-auth",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "if(connector.configuredAuthorization(spec,entry.projectRoot))",
+    "To": "if(false)",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "helper",
+    "Name": "no-401-retry",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if(response.status==401 && spec.headersHelper!=null)",
+    "To": "if(response.status==403 && spec.headersHelper!=null)",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
+    "Item": "helper",
+    "Name": "do-not-reload",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "val fresh=helper.reload()",
+    "To": "val fresh=helper.headers()",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
+    "Item": "helper",
+    "Name": "override-protocol-headers",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "+ headers.filterNot { it.first.lowercase() in reserved }",
+    "To": "+ headers",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
+    "Item": "audit_stage",
+    "Name": "do-not-stage-login-tools",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "connectEntry(entry); stageChanged(entry); audit(entry,\"login\",\"success\",rt)",
+    "To": "connectEntry(entry); changed(entry); audit(entry,\"login\",\"success\",rt)",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "audit_stage",
+    "Name": "omit-audit",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "actor?.commit(listOf(dev.min.agent.spi.McpAuthentication(entry.spec.name,action,outcome)),dev.min.agent.spi.Durability.Sync)",
+    "To": "actor?.let { }",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "audit_stage",
+    "Name": "leak-token-into-event",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "dev.min.agent.spi.McpAuthentication(entry.spec.name,action,outcome)",
+    "To": "dev.min.agent.spi.McpAuthentication(entry.spec.name,action,outcome + (oauth?.store?.load(tokenKey(entry))?.accessToken ?: \"\"))",
+    "Module": "kernel",
+    "Test": "*McpOAuthManagerTest"
+  },
+  {
+    "Item": "loopback",
+    "Name": "wildcard-listener",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LoopbackMcpAuthorizer.kt",
+    "From": "InetAddress.getByName(\"127.0.0.1\")",
+    "To": "InetAddress.getByName(\"0.0.0.0\")",
+    "Module": "kernel",
+    "Test": "*LoopbackMcpAuthorizerTest"
+  },
+  {
+    "Item": "loopback",
+    "Name": "ignore-configured-port",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LoopbackMcpAuthorizer.kt",
+    "From": "InetAddress.getByName(\"127.0.0.1\"),redirectPort ?: 0",
+    "To": "InetAddress.getByName(\"127.0.0.1\"),0",
+    "Module": "kernel",
+    "Test": "*LoopbackMcpAuthorizerTest"
+  },
+  {
+    "Item": "loopback",
+    "Name": "accept-other-path",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LoopbackMcpAuthorizer.kt",
+    "From": "uri?.rawPath==\"/mcp/oauth/callback\"",
+    "To": "uri?.rawPath!=null",
+    "Module": "kernel",
+    "Test": "*LoopbackMcpAuthorizerTest"
+  },
+  {
+    "Item": "budget",
+    "Name": "ten-minute-timeout",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "withTimeout(300_000)",
+    "To": "withTimeout(600_000)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "budget",
+    "Name": "premature-timeout",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "withTimeout(300_000)",
+    "To": "withTimeout(3_000)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "budget",
+    "Name": "swallow-cancellation",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "catch (e: CancellationException) { throw e }",
+    "To": "catch (e: CancellationException) { fail(kind) }",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "metadata_security",
+    "Name": "accept-issuer-query",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (secureUri(issuer).rawQuery != null)",
+    "To": "if (secureUri(issuer).rawQuery != null && false)",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "metadata_security",
+    "Name": "accept-issuer-fragment",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "u.fragment != null ||",
+    "To": "false ||",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "metadata_security",
+    "Name": "accept-public-HTTP",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "u.host in setOf(\"127.0.0.1\", \"[::1]\")",
+    "To": "true",
+    "Module": "mcp",
+    "Test": "*McpOAuthClientTest"
+  },
+  {
+    "Item": "helper_boundary",
+    "Name": "forget-initial-authorization",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if (initial.any { it.first.equals(\"Authorization\", true) }) configuredAuthorizationSeen = true",
+    "To": "if (false) configuredAuthorizationSeen = true",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
+    "Item": "helper_boundary",
+    "Name": "forget-reloaded-authorization",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if (configured) configuredAuthorizationSeen = true",
+    "To": "if (false) configuredAuthorizationSeen = true",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
+    "Item": "helper_boundary",
+    "Name": "ignore-authorization-choice",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if (!configuredAuthorizationSeen && headers.none",
+    "To": "if (headers.none",
+    "Module": "kernel",
+    "Test": "*McpRemoteHttpTest"
+  },
+  {
+    "Item": "cli_flow",
+    "Name": "ignore-no-browser",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/DesktopMcpAuthorizer.kt",
+    "From": "if(noBrowser || !browserAvailable())",
+    "To": "if(!browserAvailable())",
+    "Module": "cli",
+    "Test": "*McpOAuthHostTest"
+  },
+  {
+    "Item": "cli_flow",
+    "Name": "ignore-global-flag",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/CliArgs.kt",
+    "From": "noBrowser = \"--no-browser\" in flags",
+    "To": "noBrowser = false",
+    "Module": "cli",
+    "Test": "*McpOAuthHostTest"
+  },
+  {
+    "Item": "cli_flow",
+    "Name": "logout-becomes-login",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/McpCommand.kt",
+    "From": "McpCommand.Logout(tokens[2])",
+    "To": "McpCommand.Login(tokens[2],false)",
+    "Module": "cli",
+    "Test": "*McpOAuthHostTest"
+  },
+  {
+    "Item": "cli_store",
+    "Name": "ignore-endpoint-key",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/FileMcpTokenStore.kt",
+    "From": "firstOrNull { it.key==key }",
+    "To": "firstOrNull { it.key.server==key.server }",
+    "Module": "cli",
+    "Test": "*McpOAuthHostTest"
+  },
+  {
+    "Item": "cli_store",
+    "Name": "do-not-delete",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/FileMcpTokenStore.kt",
+    "From": "write(read().filterNot { it.key==key })",
+    "To": "write(read())",
+    "Module": "cli",
+    "Test": "*McpOAuthHostTest"
+  },
+  {
+    "Item": "cli_store",
+    "Name": "keep-inherited-ACL",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/FileMcpTokenStore.kt",
+    "From": "acl.acl=listOf(AclEntry.newBuilder().setType(AclEntryType.ALLOW).setPrincipal(user).setPermissions(AclEntryPermission.values().toSet()).build())",
+    "To": "acl.acl=acl.acl",
+    "Module": "cli",
+    "Test": "*McpOAuthHostTest"
+  },
+  {
+    "Item": "android_authorizer",
+    "Name": "include-Min-as-browser",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "candidates.filter { it!=self }",
+    "To": "candidates.filter { true }",
+    "Module": "app",
+    "Test": "*AndroidMcpCustomTabTest"
+  },
+  {
+    "Item": "android_authorizer",
+    "Name": "allow-ordinary-browser-fallback",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": ".distinct().filter(supports)",
+    "To": ".distinct()",
+    "Module": "app",
+    "Test": "*AndroidMcpCustomTabTest"
+  },
+  {
+    "Item": "android_authorizer",
+    "Name": "ignore-capable-default-browser",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "defaultPackage?.takeIf { it in available } ?: available.firstOrNull()",
+    "To": "available.firstOrNull()",
+    "Module": "app",
+    "Test": "*AndroidMcpCustomTabTest"
+  },
+  {
+    "Item": "android_store",
+    "Name": "write-plaintext",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "cipher.doFinal(plain) } finally { plain.fill(0) }",
+    "To": "plain.copyOf() } finally { plain.fill(0) }",
+    "Module": "app",
+    "Test": "*AndroidMcpTokenStoreTest"
+  },
+  {
+    "Item": "android_store",
+    "Name": "reuse-IV",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "cipher.init(Cipher.ENCRYPT_MODE,keyProvider()); cipher.updateAAD(AAD)",
+    "To": "cipher.init(Cipher.ENCRYPT_MODE,keyProvider(),GCMParameterSpec(128,ByteArray(12))); cipher.updateAAD(AAD)",
+    "Module": "app",
+    "Test": "*AndroidMcpTokenStoreTest"
+  },
+  {
+    "Item": "android_store",
+    "Name": "ignore-endpoint-key",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "firstOrNull { it.key==key }",
+    "To": "firstOrNull { it.key.server==key.server }",
+    "Module": "app",
+    "Test": "*AndroidMcpTokenStoreTest"
+  }
+]

@@ -43,7 +43,7 @@ class LegacySseMcpTransport(
                     try {
                         val response = openMcp(http, request("GET", url, lastId = cursor), initial, retryDelaysMs, onDebug)
                         response.use {
-                            if (it.status !in 200..299) throw statusError(it.status, url, "旧 SSE GET")
+                            if (it.status !in 200..299) throw statusError(it.status, url, "旧 SSE GET", it.headers)
                             if (it.mediaType() != "text/event-stream") throw McpTransportClosed("MCP 服务器 ${safeUrl(url)} 旧 SSE GET 没有返回 SSE。")
                             initial = false
                             var sawEndpoint = false
@@ -100,7 +100,7 @@ class LegacySseMcpTransport(
             val body = message.toString().toByteArray(Charsets.UTF_8)
             if (body.size > maxMessageBytes) throw McpTransportClosed("MCP 旧 SSE 待发送消息超过 $maxMessageBytes 字节上限。")
             openMcp(http, request("POST", address.toString(), body, readTimeoutMs = timeoutMs ?: 86_400_000), false, retryDelaysMs, onDebug).use {
-                if (it.status !in 200..299) throw statusError(it.status, url, "旧 SSE POST")
+                if (it.status !in 200..299) throw statusError(it.status, url, "旧 SSE POST", it.headers)
             }
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) { throw mcpFailure(e, "MCP 旧 SSE POST 请求失败。") }

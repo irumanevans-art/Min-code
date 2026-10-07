@@ -72,6 +72,7 @@ internal fun interface McpConnector {
     suspend fun connectWithRoots(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>): McpConnection =
         connect(spec, projectRoot, scope)
     suspend fun connectWithInteraction(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>, elicit: suspend (JsonObject?) -> JsonObject): McpConnection = connectWithRoots(spec, projectRoot, scope, roots)
+    suspend fun configuredAuthorization(spec: McpServerSpec.Remote, projectRoot: GuestPath): Boolean = spec.headers.keys.any { it.equals("Authorization",true) }
 }
 
 /**
@@ -84,7 +85,11 @@ internal class ClientConnector(
     private val clientVersion: String,
     internal val requestTimeoutMs: Long = 30_000,
     private val serverPath: (GuestPath) -> String = { it.value },
+    private val tokenStore: dev.min.agent.spi.McpTokenStore = dev.min.agent.spi.McpTokenStore.Unavailable,
 ) : McpConnector {
+
+    override suspend fun configuredAuthorization(spec: McpServerSpec.Remote, projectRoot: GuestPath) =
+        HeadersHelper(processes, spec, projectRoot).headers().any { it.first.equals("Authorization",true) }
 
     override suspend fun connect(spec: McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection {
         return connectWithRoots(spec, projectRoot, scope) { listOf(projectRoot) }
@@ -111,10 +116,12 @@ internal class ClientConnector(
             }
             is McpServerSpec.Remote -> {
                 val port = http ?: error("这个环境没有配置 HTTP 端口，连不了远程 MCP 服务器 ${spec.name}。")
-                val headers = HeadersHelper(processes, spec, projectRoot)::headers
+                val helper = HeadersHelper(processes, spec, projectRoot)
+                val headers = helper::headers
+                val authenticated = McpRemoteHttp(port, spec, helper, tokenStore)
                 val transport = when (spec.kind) {
-                    McpTransportKind.Http -> StreamableHttpMcpTransport(spec.url, headers, port)
-                    McpTransportKind.Sse -> LegacySseMcpTransport(spec.url, headers, port)
+                    McpTransportKind.Http -> StreamableHttpMcpTransport(spec.url, headers, authenticated)
+                    McpTransportKind.Sse -> LegacySseMcpTransport(spec.url, headers, authenticated)
                     McpTransportKind.Stdio, McpTransportKind.Ws -> error("MCP 服务器 ${spec.name} 的传输 ${spec.kind} 首期不支持。")
                 }
                 open(McpClient(transport, scope, options)) { emptyList() }
@@ -176,7 +183,7 @@ internal fun rootsResult(roots: List<GuestPath>, serverPath: (GuestPath) -> Stri
  * 一条远程连接的请求头：静态头 + headersHelper 的输出（同名的以 helper 为准，CC 同）。
  *
  * - **每条连接只跑一次**（CC：每次连接 / 重连执行，不缓存）。传输层每发一个请求都会来取头，不缓存的话每次工具调用、
- *   每条 SSE 都要起一个 shell（手机上经 proot 要一秒多）。令牌中途过期要等重连才会换——401 重跑重试一次留给 OAuth 那一期。
+ *   每条 SSE 都要起一个 shell（手机上经 proot 要一秒多）。401 时显式清缓存重跑一次，仍失败不改用 OAuth。
  * - 经 [ProcessPort] 而不是 [Exec]：Exec 会把输出完整留在日志文件里（后台任务靠它读），而 helper 的输出就是令牌，
  *   不能明文留在磁盘上。
  * - 失败（非零退出、超时、输出不是 JSON 对象）只用静态头，且不缓存——下一个请求再试。
@@ -188,13 +195,18 @@ internal class HeadersHelper(
     private val timeoutMs: Long = HEADERS_HELPER_TIMEOUT_MS,
 ) {
     private val lock = Mutex()
-    private var cached: List<Pair<String, String>>? = null
+    @Volatile private var cached: List<Pair<String, String>>? = null
+
+    suspend fun reload(): List<Pair<String,String>> {
+        lock.withLock { cached = null }
+        return headers()
+    }
 
     suspend fun headers(): List<Pair<String, String>> {
         val helper = spec.headersHelper ?: return spec.headers.toList()
         cached?.let { return it }
         return lock.withLock {
-            cached ?: run(helper)?.let { dynamic -> (spec.headers + dynamic).toList().also { cached = it } } ?: spec.headers.toList()
+            cached ?: run(helper)?.let { dynamic -> (spec.headers.filterKeys { key -> dynamic.keys.none { it.equals(key,true) } } + dynamic).toList().also { cached = it } } ?: spec.headers.toList()
         }
     }
 

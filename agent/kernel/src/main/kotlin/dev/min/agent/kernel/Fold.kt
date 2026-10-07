@@ -372,6 +372,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is ConversationRewound -> withRewind(record, e)
         // MCP 快照整份替换；变化说明给界面看（模型从工具表与系统提示里看到变化）
         is dev.min.agent.spi.McpServersLoaded -> copy(mcpServers = e)
+        is dev.min.agent.spi.McpAuthentication -> this
         is dev.min.agent.spi.McpToolSearchConfigured -> copy(mcpToolSearch = e)
         is dev.min.agent.spi.McpToolsLoaded -> copy(loadedMcpTools = (loadedMcpTools + e.names).distinct())
         is dev.min.agent.spi.McpUrlElicitationAsked -> {

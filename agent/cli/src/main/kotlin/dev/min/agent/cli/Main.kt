@@ -50,6 +50,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
     // /branch 会换会话：退出时的 SessionEnd 要跟当前会话走（分支是用户现在所在的对话）
     var runtime = initial
     val stdin = System.`in`.bufferedReader()
+    app.mcpAuthorizer.input = stdin
     // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout。
     // 交给 hub：审批 / 提问 / MCP elicitation 看整棵会话树，子 agent 的待处理项也有人答
     var uiConsole: ConsoleUi? = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out, app.hub()).apply { mainOwnsInput = true } else null
@@ -149,6 +150,10 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
         when {
             trimmed.isEmpty() -> continue
             trimmed == "/exit" -> return 0
+            trimmed == "/mcp" || trimmed.startsWith("/mcp ") -> {
+                uiConsole?.mainOwnsInput = true
+                try { mcpCommand(app, runtime, trimmed) } finally { uiConsole?.mainOwnsInput = false }
+            }
             trimmed == "/compact" || trimmed.startsWith("/compact ") -> {
                 if (runtime.compact(trimmed.removePrefix("/compact").trim())) {
                     runtime.awaitIdle()

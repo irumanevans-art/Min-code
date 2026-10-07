@@ -55,6 +55,8 @@ data class CliArgs(
     val includePartialMessages: Boolean = false,
     /** --forward-subagent-text（CC :93）：stream-json 里转发子 agent 的消息行（带 parent_tool_use_id） */
     val forwardSubagentText: Boolean = false,
+    /** --no-browser：MCP OAuth 登录不开浏览器，打印授权 URL、让人把回调 URL 粘回来（照 CC） */
+    val noBrowser: Boolean = false,
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
@@ -84,6 +86,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --forward-subagent-text stream-json 转发子 agent 的消息行（带 parent_tool_use_id）
   --resume <会话 id>     接着一个已有会话
   --trust                信任当前项目：执行项目 .claude/ 设置里的 hooks（默认只执行用户级与托管的）
+  --no-browser           MCP OAuth 打印授权 URL，手工粘贴回调 URL
   --search-backend <id>  brave / tavily / searxng；也可用 MIN_AGENT_SEARCH_BACKEND
   --search-url <id>      SearXNG 基础地址，也可用 MIN_AGENT_SEARXNG_URL
   --fast-model <id>      提取模型，同一供应商；默认会话模型
@@ -108,7 +111,7 @@ private val VALUE_ARGS = setOf(
 )
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
-    "--include-partial-messages", "--forward-subagent-text",
+    "--include-partial-messages", "--forward-subagent-text", "--no-browser",
 )
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -228,6 +231,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         images = "--images" in flags,
         includePartialMessages = "--include-partial-messages" in flags,
         forwardSubagentText = "--forward-subagent-text" in flags,
+        noBrowser = "--no-browser" in flags,
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages

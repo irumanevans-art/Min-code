@@ -85,6 +85,14 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
                     cwd = "/workspace", profileId = intent.getStringExtra("profile"), modelId = intent.getStringExtra("model"),
                 ))).getOrThrow() as MinAgentSession
                 sessionId = session.rootId.value
+                if(op=="mcp-login" || op=="mcp-logout") {
+                    val server=checkNotNull(intent.getStringExtra("server")) { "MCP 操作需要 server" }
+                    // 授权可能等五分钟，先释放 Broadcast，再由 App 进程的长寿 scope 等回调。
+                    finish()
+                    if(op=="mcp-login") engine.hub.loginMcp(server,session.rootId) else engine.hub.logoutMcp(server,session.rootId)
+                    Log.i(TAG,"MCP_AUTH_DONE op=$op server=$server")
+                    return@launch
+                }
                 check(DebugDriver.active.add(sessionId)) { "该会话正在运行" }
                 ownsRun = true
                 val before = session.state.value

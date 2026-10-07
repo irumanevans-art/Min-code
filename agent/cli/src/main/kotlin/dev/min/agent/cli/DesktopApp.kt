@@ -112,6 +112,14 @@ internal class DesktopApp(
 ) {
     private val paths = DesktopPaths(workspace = args.cwd, scratchRoot = home.resolve("root"))
     private val store = FileSessionStore(home.resolve("sessions"), { System.currentTimeMillis() })
+    private val mcpTokens = FileMcpTokenStore(home.resolve("mcp-oauth.json"))
+    internal val mcpAuthorizer = DesktopMcpAuthorizer(args.noBrowser)
+
+    suspend fun loginMcp(server: String, runtime: SessionRuntime, noBrowser: Boolean) {
+        mcpAuthorizer.noBrowser=args.noBrowser || noBrowser
+        try { hub().loginMcp(server,runtime.sessionId) } finally { mcpAuthorizer.noBrowser=args.noBrowser }
+    }
+    suspend fun logoutMcp(server: String,runtime: SessionRuntime) = hub().logoutMcp(server,runtime.sessionId)
     internal val snapshots = CasWorkspaceSnapshots(home, { paths.fs }, paths.guestOfHost(claudeHome))
 
     private val selection = resolveModel(args, Catalog.bundled())
@@ -269,6 +277,8 @@ internal class DesktopApp(
             mcpFirstSnapshotWaitMs = if (args.prompt != null) 30_000 else 5_000,
             canAnswerMcpElicitation = args.prompt == null && args.approve != ApprovalAnswer.No,
             canAnswerMcpUrlElicitation = args.prompt == null && args.approve != ApprovalAnswer.No,
+            mcpTokenStore = mcpTokens,
+            mcpAuthorizer = mcpAuthorizer,
             mcpServerPath = { paths.hostOf(it).toString() },
         )
     }

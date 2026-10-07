@@ -54,8 +54,8 @@ class McpClient(
                 terminate(McpTransportClosed("$displayName：连接作用域已取消。"))
                 throw e
             } catch (e: Exception) {
-                terminate(if (e is McpTransportClosed) McpTransportClosed("$displayName：${e.reason}", e.exitCode, e.stderrTail, e.httpStatus)
-                    else if (e is McpHttpException) McpTransportClosed(e.message!!, httpStatus = e.status)
+                terminate(if (e is McpTransportClosed) McpTransportClosed("$displayName：${e.reason}", e.exitCode, e.stderrTail, e.httpStatus, e.authChallenge)
+                    else if (e is McpHttpException) McpTransportClosed(e.message!!, httpStatus = e.status.takeIf { e.needsAuth }, authChallenge = e.authChallenge)
                     else McpTransportClosed("$displayName：服务器连接读取失败。"))
             } finally {
                 withContext(NonCancellable) { catchingNonCancellation { transport.close() } }
@@ -89,7 +89,7 @@ class McpClient(
             throw e
         } catch (e: Exception) {
             val failure = mcpFailure(e, "$displayName：握手失败。")
-            terminate(if (failure is McpTransportClosed) failure else McpTransportClosed(failure.message.orEmpty(), httpStatus = (failure as? McpHttpException)?.status))
+            terminate(if (failure is McpTransportClosed) failure else McpTransportClosed(failure.message.orEmpty(), httpStatus = (failure as? McpHttpException)?.takeIf { it.needsAuth }?.status, authChallenge = (failure as? McpHttpException)?.authChallenge))
             withContext(NonCancellable) { close() }
             throw failure
         }
@@ -361,12 +361,12 @@ class McpClient(
     }
     private fun ensureOpen() {
         val s = state.value
-        if (s is McpConnectionState.Closed) throw McpTransportClosed(s.reason, s.exitCode, s.stderrTail, s.httpStatus)
+        if (s is McpConnectionState.Closed) throw McpTransportClosed(s.reason, s.exitCode, s.stderrTail, s.httpStatus, s.authChallenge)
     }
     private fun terminate(reason: McpTransportClosed) {
         synchronized(pending) {
             if (state.value is McpConnectionState.Closed) return
-            mutableState.value = McpConnectionState.Closed(reason.reason, reason.exitCode, reason.stderrTail, reason.httpStatus)
+            mutableState.value = McpConnectionState.Closed(reason.reason, reason.exitCode, reason.stderrTail, reason.httpStatus, reason.authChallenge)
             pending.values.forEach { it.result.completeExceptionally(reason) }
         }
     }

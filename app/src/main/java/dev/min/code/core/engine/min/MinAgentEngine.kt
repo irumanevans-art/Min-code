@@ -123,6 +123,7 @@ class MinAgentEngine(
         resolver, ports, snapshots = snapshots,
         // 与 Claude Code 引擎那边的 DeviceMcpRegistrar 读同一个设置：controlDevice
         tools = minToolsWithDevice(devices, enabled = { settings.snapshot?.controlDevice == true }),
+        mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context),
     )
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */

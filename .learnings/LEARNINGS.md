@@ -1855,3 +1855,95 @@ MCP 服务器生成的 prompt 不能触发跨服务器资源提取，合法的�
 - **Notes**: 空表单、跨服务器 prompt、call 结束与 turn 切换的确定性复现已覆盖。
 
 ---
+
+## [LRN-20261007-OAUTH-TEST-BOUNDARIES] best_practice
+
+**Logged**: 2026-10-07T03:26:12.2562950+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+认证失败测试要断言失败发生的阶段，凭证断言和浏览器测试替身也必须覆盖变异执行路径。
+
+### Details
+AS issuer 不匹配的校验被移除后，回调 iss 校验仍会拒绝，所以仅断言最终 Security 异常会放过前置安全边界；补充浏览器未打开、注册未发生的断言才能检出。helper 缓存仍含 Authorization 会掩盖重取后的认证保持缺失，测试在下一请求前显式重取为空，证明不能靠缓存偶然带头。CLI 的 no-browser 被移除后，未注入替身的取消用例可能打开真实浏览器并等完整五分钟，所有授权用例都应注入浏览器端口。
+
+凭证用 assertEquals 失败时可进入 JUnit XML，因此使用布尔断言或已遮蔽的对象；同时扫描日志及 XML。协程 stack recovery 可复制已净化的异常并把原异常作为 cause，安全断言应检查整个 cause 链是否泄密，不应把 cause 非空等同泄密。URI rawPath 已转义，多参数 URI 构造器会把 % 再编码；保留 rawPath 并测含 %20 的路径。
+
+### Suggested Action
+对安全校验同时验证最终结果和前置副作用；测试用例的外部端口一律注入替身；假凭证使用不打印值的失败断言，并审计全部异常链和测试产物。
+
+### Metadata
+- Source: error
+- Related Files: agent/mcp/src/test/kotlin/dev/min/agent/mcp/McpOAuthClientTest.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/McpRemoteHttpTest.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/McpOAuthHostTest.kt, agent/mcp/scripts/mcp3-mutations.ps1
+- Tags: oauth, mutation, privacy, phase-oracle, browser, coroutine, uri
+- Pattern-Key: tests.auth_side_effect_and_credential_boundaries
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: 8da11856, 12267b40, 4b09aab9, d0c5da97
+- **Notes**: AS issuer、覆盖元数据与 helper 认证保持的九个变异均由正常编译后的功能断言检出；宿主专项基线通过。
+
+---
+
+## [LRN-20261007-OAUTH-LOGIN-STAGING] best_practice
+
+**Logged**: 2026-10-07T03:26:12.2562950+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+公共登录方法返回成功前必须完成下一回合快照的入队，不能仅启动一个通知协程。
+
+### Details
+专项测试因调度较快偶然通过，全量检查在登录成功后马上发送下一条消息时读到了旧工具表。changed 原先 launch 后直接返回，入队与 send 存在真实竞态。登录现在等待 stageChanged；取快照与内存入队留在同一把管理器锁内，普通后台通知仍异步。确定性测试暂停管理器后台调度，登录直接完成网络与连接替身，然后立即 applyStagedMcp，先复现旧表再验证新表，不靠增加等待期限掩盖竞态。
+
+### Suggested Action
+对「方法返回即下一步可用」的公共接口，把必要的内存状态发布作为返回前置条件；用受控调度验证返回契约，保留当前回合冻结语义。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/McpOAuthManagerTest.kt
+- Tags: oauth, snapshot, coroutine, race, return-contract
+- Pattern-Key: auth.login_staging_before_return
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: e36141b4
+- **Notes**: 原全量失败与确定性 red/green XML 已保留；六个 OAuth 管理器用例恢复通过。
+
+---
+
+## [LRN-20261007-HOST-CAPABILITY-AND-STATE] best_practice
+
+**Logged**: 2026-10-07T03:26:12.2562950+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+复用宿主入口时验证其实际回退语义；状态测试不能用前一阶段的发布代替目标阶段。
+
+### Details
+App 既有外部浏览器出口给 ACTION_VIEW 添加 Custom Tab extra，但浏览器不支持时会普通打开；OAuth 的「只走 Custom Tab」要求更严格，宿主改为在既有可见浏览器包里检查 CustomTabsService，排除 Min，优先支持能力的默认浏览器，无提供者拒绝。未改既有普通链接出口或 UI。全量检查还发现既有撤回提问用例在 pendingPermission 变空后立即断言 Note，卡撤下与 Note 是两次发布；沿用既有 awaitState 等到 Note，再检查迟到应答未写入，没有增加等待期限或改产品行为。
+
+### Suggested Action
+判断可复用接口是否允许不符合需求的回退；测试等待真正被断言的状态。OAuth 失败阶段、凭证产物与公共返回契约两项验证经验已提升到根 AGENTS.md。
+
+### Metadata
+- Source: error
+- Related Files: app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt, app/src/test/java/dev/min/code/core/claudecode/ClaudeCodeCliWithdrawalTest.kt, AGENTS.md
+- Tags: custom-tabs, capability, fallback, stateflow, race, test-oracle
+- Pattern-Key: host.capability_and_state_publication
+- Recurrence-Count: 1
+
+### Resolution
+- **Resolved**: 2026-10-07
+- **Commit/PR**: 32f2cba9, 4cb24a5c
+- **Notes**: 四个提供者选择与八个既有撤回用例通过；真机包可见性及 Custom Tab 流程未验。
+
+---

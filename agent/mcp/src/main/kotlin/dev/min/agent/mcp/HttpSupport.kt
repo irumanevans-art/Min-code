@@ -27,7 +27,7 @@ internal class HttpInbox {
     fun fail(error: Exception) {
         val reason = when (error) {
             is McpTransportClosed -> error
-            is McpHttpException -> McpTransportClosed(error.message!!, httpStatus = error.status)
+            is McpHttpException -> McpTransportClosed(error.message!!, httpStatus = error.status.takeIf { error.needsAuth }, authChallenge = error.authChallenge)
             else -> McpTransportClosed("MCP HTTP 服务器连接读取失败。")
         }
         if (closed.compareAndSet(false, true)) messages.close(reason)
@@ -49,9 +49,10 @@ internal fun sameOrigin(a: URI, b: URI): Boolean {
 }
 internal fun HttpStreamingResponse.header(name: String): String? = headers.firstOrNull { it.first.equals(name, true) }?.second
 internal fun HttpStreamingResponse.mediaType(): String? = header("Content-Type")?.substringBefore(';')?.trim()?.lowercase()
-internal fun statusError(status: Int, url: String, step: String) = McpHttpException(
+internal fun statusError(status: Int, url: String, step: String, headers: List<Pair<String,String>> = emptyList()) = McpHttpException(
     status, status == 401 || status == 403,
-    "MCP 服务器 ${safeUrl(url)} 在$step 返回 HTTP $status。" + if (status == 401 || status == 403) "需要认证（needs-auth），OAuth 登录尚未接入。" else "",
+    "MCP 服务器 ${safeUrl(url)} 在$step 返回 HTTP $status。" + if (status == 401 || status == 403) "需要登录（needs-auth）。" else "",
+    McpAuthChallenge.parse(headers),
 )
 internal class McpHttpNetworkException(message: String) : java.io.IOException(message)
 
@@ -68,6 +69,7 @@ internal suspend fun openMcp(
             }
             return response
         } catch (e: CancellationException) { throw e }
+        catch (e: McpHttpException) { throw e }
         catch (e: java.io.IOException) {
             if (!initial && e is java.net.SocketTimeoutException) throw java.net.SocketTimeoutException("MCP HTTP 等待响应超时。")
             if (!initial || attempt >= retryDelaysMs.size) throw McpHttpNetworkException("MCP 服务器 ${safeUrl(request.url)} HTTP 连接失败或超时。")
