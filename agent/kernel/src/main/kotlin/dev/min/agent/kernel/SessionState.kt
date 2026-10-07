@@ -63,6 +63,8 @@ data class SessionState(
      * 有默认值：没有记忆文件的会话日志里根本没有那条事件
      */
     val memory: List<LoadedMemoryFile> = emptyList(),
+    /** 切目录后已交给模型的指令另存，子会话继承它们时不改父会话稳定提示前缀。 */
+    val cwdMemory: List<LoadedMemoryFile> = emptyList(),
     /**
      * 会话创建时冻结的 skill 清单（最后一条 SkillsLoaded，连同当时的清单预算设置）。系统提示里的清单只由它拼，会话内不变。
      * 没有 skill 的会话日志里没有那条事件，此时为 null
@@ -172,6 +174,9 @@ data class SessionState(
     val loadedMcpTools: List<String> = emptyList(),
     val mcpQuestions: Map<QuestionId, AskedQuestion> = emptyMap(),
     val mcpUrls: Map<QuestionId, McpUrlPending> = emptyMap(),
+    val worktree: dev.min.agent.spi.WorktreeBinding? = null,
+    val finishedWorktrees: List<dev.min.agent.spi.WorktreeFinished> = emptyList(),
+    val cwdWatchPaths: List<GuestPath> = emptyList(),
 )
 
 /** [afterTurn] 是生成回顾时最近结束的那个回合：之后没有新回合就不再自动生成 */

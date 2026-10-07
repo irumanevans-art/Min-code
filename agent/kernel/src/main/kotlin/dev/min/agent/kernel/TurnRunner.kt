@@ -513,7 +513,8 @@ internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
 /** 本会话能用的工具，保持 [KernelDeps.tools] 的固定顺序。新开的子 agent 按定义取子集；分身与根会话是全部 */
 internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable): List<Tool<*>> {
     val allowed = state.origin?.tools
-    val builtin = if (allowed == null) deps.tools else deps.tools.filter { it.name in allowed }
+    val builtin = (if (allowed == null) deps.tools else deps.tools.filter { it.name in allowed })
+        .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
     val resourceServers = state.visibleMcpResourceServers(deps)
     val resourceTools = if (resourceServers.isEmpty()) emptyList() else listOf(

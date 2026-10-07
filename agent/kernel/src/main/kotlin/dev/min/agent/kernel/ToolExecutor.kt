@@ -232,12 +232,22 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             rules = parsedRules,
             cwd = s.settings.cwd,
             home = deps.memoryHome ?: DEFAULT_HOME,
-            scopeOf = deps.host.fs::scopeOf,
+            scopeOf = { path ->
+                val actual = deps.canonicalPath(path)
+                val hostScope = deps.host.fs.scopeOf(actual)
+                when {
+                    hostScope == dev.min.agent.spi.PathScope.Device -> hostScope
+                    Worktrees.under(actual, deps.canonicalPath(s.settings.cwd)) -> dev.min.agent.spi.PathScope.Workspace
+                    hostScope == dev.min.agent.spi.PathScope.Workspace -> dev.min.agent.spi.PathScope.Rootfs
+                    else -> hostScope
+                }
+            },
             // 自动记忆目录：acceptEdits 下对它的写入与工作区同等放行（设计 §2.4）
             autoMemoryDir = s.autoMemory?.directory,
             additionalDirectories = s.additionalDirectories,
             credentialPaths = deps.credentialPaths,
             canonicalPath = deps.canonicalPath,
+            worktreeRoot = s.worktree?.path,
         )
     }
 
@@ -456,6 +466,10 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     private suspend fun execute(turnId: TurnId, p: Prepared.Ready) {
         val callId = p.call.callId
         if (!p.tool.traits.readOnly || p.tool.traits.delegates) gate?.await()
+        worktreeViolation(rt.state.value, deps, askFor(p))?.let {
+            outcome(turnId, callId, errorResult(it))
+            return
+        }
         val started = deps.clock.nowMs()
         rt.commit(listOf(ToolEffectPending(turnId, callId)), Durability.Sync)
         val raw = try {
@@ -500,6 +514,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
+        override val worktrees: dev.min.agent.spi.WorktreePort = if (turnId == null) dev.min.agent.spi.WorktreePort.Unavailable else rt.worktrees
         override val skills: SkillPort = KernelSkillPort(rt, deps.host.fs)
         override val web = if (turnId == null) dev.min.agent.spi.WebPort.Unavailable else deps.host.web
         override val webSearch = if (turnId == null) dev.min.agent.spi.WebSearchPort.Unavailable else

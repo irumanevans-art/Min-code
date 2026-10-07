@@ -131,6 +131,7 @@ class KernelDeps(
     val mcpElicitationTimeoutMs: Long = 5 * 60_000,
     val mcpTokenStore: dev.min.agent.spi.McpTokenStore = dev.min.agent.spi.McpTokenStore.Unavailable,
     val mcpAuthorizer: dev.min.agent.spi.McpAuthorizer = dev.min.agent.spi.McpAuthorizer.Unavailable,
+    val gitPath: (GuestPath) -> String = { it.value },
 ) {
     init { require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" } }
 }

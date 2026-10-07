@@ -47,7 +47,7 @@ class HookInterpretTest {
         val blocks = setOf(HookEvent.UserPromptSubmit, HookEvent.UserPromptExpansion, HookEvent.PreToolUse,
             HookEvent.PostToolBatch, HookEvent.SubagentStop,
             HookEvent.TaskCreated, HookEvent.TaskCompleted, HookEvent.Stop, HookEvent.TeammateIdle,
-            HookEvent.ConfigChange, HookEvent.WorktreeCreate, HookEvent.WorktreeRemove, HookEvent.PreCompact,
+            HookEvent.ConfigChange, HookEvent.PreCompact,
             HookEvent.PreModelSwitch, HookEvent.Elicitation, HookEvent.ElicitationResult)
         HookEvent.entries.forEach { event ->
             assertEquals(event.name, if (event in blocks) HookDecision.Block else HookDecision.Neutral,
@@ -152,12 +152,26 @@ class HookInterpretTest {
     }
 
     @Test fun `continue false 与 stopReason 优先且仍保留 systemMessage`() {
-        // Notification 与 SessionEnd 除外：CC 说这两个事件丢弃这些字段（下一条用例）
-        HookEvent.entries.filter { it != HookEvent.Notification && it != HookEvent.SessionEnd }.forEach { e ->
+        // 无决策控制事件另测；worktree 原始退出码由生命周期处理，不能用 continue 控制会话。
+        HookEvent.entries.filter { it !in setOf(HookEvent.Notification, HookEvent.SessionEnd, HookEvent.CwdChanged, HookEvent.WorktreeCreate, HookEvent.WorktreeRemove) }.forEach { e ->
             val v = interpreted(e, """{"continue":false,"stopReason":"stop","systemMessage":"warning"}""")
             assertFalse(e.name, v.shouldContinue); assertEquals("stop", v.stopReason?.text)
             assertEquals("warning", v.systemMessage?.text)
         }
+    }
+
+    @Test fun `cwd 只通知人 worktree 丢弃控制和通知但保留原始路径输出`() {
+        for (event in listOf(HookEvent.CwdChanged, HookEvent.WorktreeCreate, HookEvent.WorktreeRemove)) {
+            for (exit in listOf(0, 1, 2)) {
+                val verdict = interpreted(event, """{"continue":false,"stopReason":"stop","systemMessage":"warning"}""", exit)
+                assertTrue(verdict.shouldContinue); assertNull(verdict.stopReason)
+                assertEquals(HookDecision.Neutral, verdict.decision)
+                assertEquals(if (event == HookEvent.CwdChanged) "warning" else null, verdict.systemMessage?.text)
+                assertTrue(verdict.additionalContext.isEmpty())
+            }
+        }
+        val create = interpreted(HookEvent.WorktreeCreate, specific(HookEvent.WorktreeCreate, """"worktreePath":"/path""""))
+        assertEquals(kotlinx.serialization.json.JsonPrimitive("/path"), create.specificOutput?.get("worktreePath"))
     }
 
     @Test fun `Notification 丢弃 continue 与 systemMessage，SessionEnd 丢弃全部输出字段`() {

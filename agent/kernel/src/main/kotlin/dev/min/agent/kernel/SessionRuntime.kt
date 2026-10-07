@@ -19,6 +19,7 @@ import dev.min.agent.spi.HooksLoaded
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.OutputStyleLoaded
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.CallId
@@ -105,9 +106,58 @@ class SessionRuntime private constructor(
      * （来历里的 [dev.min.agent.spi.SubagentOrigin.omitMemory]：Explore / Plan、omitClaudeMd）时为 null。
      * 由折叠出的来历推出，所以创建与重新打开一致
      */
-    internal val memoryDiscovery: MemoryDiscovery? by lazy {
+    private var memoryDiscoveryCwd: GuestPath? = null
+    private var cachedMemoryDiscovery: MemoryDiscovery? = null
+    internal val memoryDiscovery: MemoryDiscovery? get() {
         val home = deps.memoryHome
-        if (home == null || state.value.origin?.omitMemory == true) null else MemoryDiscovery(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
+        if (home == null || state.value.origin?.omitMemory == true) return null
+        val cwd = state.value.settings.cwd
+        if (memoryDiscoveryCwd != cwd) {
+            memoryDiscoveryCwd = cwd
+            cachedMemoryDiscovery = MemoryDiscovery(deps.host.fs, cwd, home, deps.memoryLimits, suppressCwdRules = state.value.worktree?.pinned == true)
+        }
+        return cachedMemoryDiscovery
+    }
+
+    internal val worktrees = Worktrees(this)
+    suspend fun enterWorktree(name: String? = null, path: String? = null): dev.min.agent.spi.ToolResult =
+        whileIdle { worktrees.enter(name, path) } ?: dev.min.agent.spi.ToolResult(listOf(dev.min.agent.protocol.TextPart(BUSY)), isError = true)
+    suspend fun exitWorktree(remove: Boolean = false): dev.min.agent.spi.ToolResult =
+        whileIdle { worktrees.exit(remove) } ?: dev.min.agent.spi.ToolResult(listOf(dev.min.agent.protocol.TextPart(BUSY)), isError = true)
+    suspend fun worktreeHasWork(): Boolean? = state.value.worktree?.let {
+        dev.min.agent.spi.catchingNonCancellation { worktrees.hasWork(it) }.getOrDefault(true)
+    }
+
+    internal suspend fun changeCwd(cwd: GuestPath, worktree: dev.min.agent.spi.WorktreeBinding?) {
+        val old = state.value.settings.cwd
+        val home = deps.memoryHome
+        val memory = if (home != null && state.value.origin == null) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
+        val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home) else null
+        val rules = snapshot?.merged?.ruleSpecs()?.map { spec -> RuleEntry(
+            when (spec.kind) { RuleSpecKind.Allow -> RuleKindData.Allow; RuleSpecKind.Ask -> RuleKindData.Ask; RuleSpecKind.Deny -> RuleKindData.Deny },
+            spec.text, spec.source, spec.baseDir,
+        ) }
+        // 原来的显式附加目录是绝对授权，不随 cwd 重新解释；新项目的设置目录在新 cwd 上解析。
+        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home))?.let { (state.value.additionalDirectories + it).distinct() }
+        commit(listOf(dev.min.agent.spi.CwdChanged(old, cwd, worktree, memory.filter { it.path !in state.value.memoryPathsInContext }, rules, dirs)), Durability.Sync)
+        checkpointsBySettings = null
+        val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
+            HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.CwdChangedInput(deps.hookShellPath(old), deps.hookShellPath(cwd))).jsonObject)
+        val watchPaths = hooks?.runs?.filter { it.exitCode == 0 }?.mapNotNull { run ->
+            dev.min.agent.spi.catchingNonCancellation {
+                HookJson.decodeFromString(dev.min.agent.ext.hooks.HookOutputCommon.serializer(), run.stdout.trim()).watchPaths
+            }.getOrNull()
+        }?.lastOrNull()
+        if (watchPaths != null) {
+            dev.min.agent.spi.catchingNonCancellation {
+                val paths = watchPaths.map {
+                    require(it.startsWith('/') || Regex("^[A-Za-z]:[/\\\\].*").matches(it)) { "watchPaths 必须是绝对路径。" }
+                    Worktrees.resolved(it, cwd)
+                }
+                commit(listOf(dev.min.agent.spi.CwdWatchPathsChanged(paths)), Durability.Sync)
+            }.onFailure { commit(listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "CwdChanged watchPaths 无效，保留原监视列表。")), Durability.Sync) }
+        }
+        hub?.cwdChanged(this)
     }
 
     private val commitLock = Mutex()
@@ -196,12 +246,12 @@ class SessionRuntime private constructor(
         val enabled = checkpointsBySettings ?: readCheckpointSetting().also { checkpointsBySettings = it }
         if (!enabled) return null
         // 宿主的仓库出了问题不能拖垮回合或编辑工具：拿不到就当没有仓库
-        return dev.min.agent.spi.catchingNonCancellation { port.store(state.value.created.cwd) }.getOrNull()
+        return dev.min.agent.spi.catchingNonCancellation { port.store(state.value.settings.cwd) }.getOrNull()
     }
 
     private suspend fun readCheckpointSetting(): Boolean {
         val home = deps.memoryHome ?: return true
-        val snapshot = dev.min.agent.spi.catchingNonCancellation { SettingsLoader.load(deps.host.fs, state.value.created.cwd, home) }
+        val snapshot = dev.min.agent.spi.catchingNonCancellation { SettingsLoader.load(deps.host.fs, state.value.settings.cwd, home) }
             .getOrNull() ?: return true
         return checkpointsEnabledIn(snapshot)
     }
@@ -444,7 +494,12 @@ class SessionRuntime private constructor(
      * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
      * 参数为 null 表示不改；要把思考档位清回「不控制」用 [clearEffort]（与 [effort] 同给时以 [effort] 为准）
      */
-    suspend fun changeSettings(model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null, clearEffort: Boolean = false) {
+    suspend fun changeSettings(model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null, clearEffort: Boolean = false, cwd: GuestPath? = null) {
+        if (cwd != null && cwd != state.value.settings.cwd) {
+            require(state.value.worktree == null) { "隔离会话请用 EnterWorktree / ExitWorktree 切换目录。" }
+            require(deps.host.fs.stat(cwd)?.kind == dev.min.agent.spi.FileKind.Directory) { "工作目录不存在：$cwd" }
+            whileIdle { changeCwd(cwd, null) } ?: error(BUSY)
+        }
         val clear = clearEffort && effort == null && state.value.settings.effort != null
         if (model == null && mode == null && effort == null && !clear) return
         commit(listOf(SettingsChanged(model = model, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)

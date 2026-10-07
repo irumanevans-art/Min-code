@@ -124,6 +124,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         specific: JsonObject,
         turnId: TurnId? = null,
         callId: CallId? = null,
+        executionCwd: dev.min.agent.spi.GuestPath? = null,
         ifMatches: ((String) -> Boolean)? = null,
     ): HookOutcome? {
         if (rt.state.value.hooks.isEmpty() && rt.state.value.componentHooks.isEmpty()) return null
@@ -135,6 +136,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         val asyncHandlers = all { it.matchingAsync(event, target, ifMatches) }.first
         if (commandHandlers.isEmpty() && httpHandlers.isEmpty() && asyncHandlers.isEmpty()) return null
         val state = rt.state.value
+        val processCwd = executionCwd ?: state.settings.cwd
         val stdin = JsonObject(HookJson.encodeToJsonElement(HookInputCommon.serializer(), common(event, state)).jsonObject + specific)
         val env = buildMap {
             // 项目根：会话开始时的 cwd，cd 之后也不变（CC 的 CLAUDE_PROJECT_DIR 语义）；写成 shell 里看得见的路径
@@ -150,7 +152,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         // 启动失败只写异常类名、不打断回合——SessionEnd 上也不该让 close 在封写前中断
         asyncHandlers.forEach { h ->
             val t = if (h.asyncRewake) (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) else null
-            catchingNonCancellation { rt.asyncHooks.launch(event, h, stdin, env, state.settings.cwd, t) }
+            catchingNonCancellation { rt.asyncHooks.launch(event, h, stdin, env, processCwd, t) }
                 .getOrElse { e -> executionFailures += "后台 hook「${label(h)}」启动失败：${e.javaClass.simpleName}" }
         }
         if (commandHandlers.isEmpty() && httpHandlers.isEmpty()) {
@@ -176,7 +178,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                     emptyList()
                 } else {
                     catchingNonCancellation {
-                        runner.run(commandHandlers, stdin, env, state.settings.cwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap) }
+                        runner.run(commandHandlers, stdin, env, processCwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap) }
                     }.getOrElse { e ->
                         executionFailures += "command hook 批执行失败：${describe(e)}"
                         emptyList()
@@ -209,7 +211,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         // agent 定义里的 once 由 spendOnce 自己忽略
         allRuns.forEachIndexed { i, r -> if (r.handler.once && onceSucceeded(event, r, verdicts[i])) spendOnce(rt, r.handler) }
         val combined = combine(event, verdicts)
-        val outcome = toOutcome(event, combined)
+        val outcome = toOutcome(event, combined).copy(runs = allRuns)
         // 分流说明（http 走 http 通道、async 走后台执行器、本期不支持的类型）不进 problems：它们只是
         // 「这一批谁没来」的事实，每次触发都会出现，进了 problems 就是每回合一条 Warning（M2 的回归）
         val problems = combined.nonBlockingErrors + combined.notes +
@@ -321,6 +323,7 @@ internal data class HookOutcome(
     val updatedInput: JsonObject?,
     val stopReason: String?,
     val systemMessages: List<String>,
+    val runs: List<dev.min.agent.ext.hooks.HandlerRun> = emptyList(),
 ) {
     enum class Decision { Neutral, Allow, Ask, Block, Stop }
 

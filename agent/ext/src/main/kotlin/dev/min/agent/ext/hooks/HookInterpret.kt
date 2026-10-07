@@ -89,6 +89,8 @@ private fun HookVerdict.discardingFieldsOf(event: HookEvent): HookVerdict = when
         additionalContext = emptyList(), updatedInput = null, systemMessage = null, specificOutput = null,
     )
     HookEvent.Notification -> copy(shouldContinue = true, stopReason = null, systemMessage = null)
+    HookEvent.CwdChanged -> copy(decision = HookDecision.Neutral, reason = null, shouldContinue = true, stopReason = null, additionalContext = emptyList(), updatedInput = null)
+    HookEvent.WorktreeCreate, HookEvent.WorktreeRemove -> copy(decision = HookDecision.Neutral, reason = null, shouldContinue = true, stopReason = null, additionalContext = emptyList(), updatedInput = null, systemMessage = null)
     else -> this
 }
 

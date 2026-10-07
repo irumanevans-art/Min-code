@@ -34,6 +34,7 @@ data class PolicyContext(
     val additionalDirectories: List<GuestPath> = emptyList(),
     val credentialPaths: Set<GuestPath> = emptySet(),
     val canonicalPath: (GuestPath) -> GuestPath = { it },
+    val worktreeRoot: GuestPath? = null,
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -143,10 +144,16 @@ object PolicyEngine {
      */
     fun floorReason(ask: PermissionAsk, context: PolicyContext): String? = floorReason(Facts.of(ask, context))
 
+    private fun protectedPath(path: String, worktreeRoot: String?): Boolean {
+        // 已验证的隔离根只是容器路径；仍检查容器内部的 .git、.claude 与受保护文件名。
+        val relative = if (worktreeRoot != null && path.startsWith("$worktreeRoot/")) path.removePrefix(worktreeRoot) else path
+        return CommandSafety.isProtectedPath(relative)
+    }
+
     private fun floorReason(facts: Facts): String? {
         facts.paths.firstOrNull { it.kind == AccessKind.Write && it.scope == PathScope.Device }
             ?.let { return "要写手机上的真实文件 ${it.path}" }
-        facts.paths.firstOrNull { it.kind == AccessKind.Write && CommandSafety.isProtectedPath(it.path.value) }
+        facts.paths.firstOrNull { it.kind == AccessKind.Write && protectedPath(it.path.value, facts.worktreeRoot) }
             ?.let { return "要改受保护的路径 ${it.path}（版本库元数据、agent 配置或 shell 启动脚本）" }
         facts.unresolvedWrites.firstOrNull { CommandSafety.isProtectedPath("/$it") }
             ?.let { return "要改受保护的文件 $it（版本库元数据、agent 配置或 shell 启动脚本）" }
@@ -281,6 +288,7 @@ object PolicyEngine {
         val domains: List<String>,
         val specifiers: List<String>,
         val memoryDir: String?,
+        val worktreeRoot: String?,
     ) {
         val untrusted: Boolean get() = untrustedRaw.isNotEmpty()
 
@@ -389,6 +397,7 @@ object PolicyEngine {
                     credentialTargets = credentialTargets,
                     specifiers = ask.specifiers,
                     memoryDir = context.autoMemoryDir?.let { normalize(it.value) },
+                    worktreeRoot = context.worktreeRoot?.let { normalize(it.value) },
                 )
             }
 
