@@ -155,6 +155,8 @@
   <string name="session_sidebar_resize">Drag to resize session list</string>
   <string name="session_queued">Queued · picked up after this step</string>
   <string name="session_in_use">In use</string>
+  <string name="session_interrupted">Interrupted</string>
+  <string name="engine_min">Min</string>
   <string name="session_copy_transcript">Copy whole session</string>
   <string name="session_drawer_files">Workspace files</string>
   <string name="session_drawer_maintenance">Environment and updates</string>
@@ -986,6 +988,8 @@
   <string name="about_contact">Contact</string>
   <string name="about_contact_qq">QQ %1$s</string>
   <string name="about_contact_qq_copied">QQ number copied</string>
+  <string name="engine_needs_install">Finish the runtime setup first (Settings → System).</string>
+  <string name="engine_needs_provider">Connect a provider first (Settings → Connection).</string>
   <string name="settings_group_experiment">Experimental</string>
   <string name="settings_group_experiment_sub">Features that are not finished yet (Min Agent)</string>
   <string name="settings_min_agent_title">Min Agent (experimental)</string>

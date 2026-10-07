@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flatMapLatest
@@ -27,7 +28,11 @@ import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
 import dev.min.code.core.claudecode.DraftImage
 import dev.min.code.core.engine.AgentSession
+import dev.min.code.core.engine.AgentSessionRegistry
 import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.AttachResult
+import dev.min.code.core.engine.EngineAvailability
+import dev.min.code.core.engine.EngineCapabilities
 import dev.min.code.core.engine.CloseReason
 import dev.min.code.core.engine.CommandResult
 import dev.min.code.core.engine.EngineKind
@@ -80,9 +85,38 @@ class SessionVM(
     private val costLedger: ClaudeCodeCostLedger,
     private val settingsStore: SettingsStore,
     private val drafts: ComposerDraftStore,
+    /** Min 的会话由它管（B6 起 Claude Code 仍走 [registry]，见本类头注释） */
+    private val agents: AgentSessionRegistry,
 ) : ViewModel() {
+    /** Min 实验开关。关着时 Min 的会话不显示（只是藏起来，不终止，见 [dev.min.code.core.settings.AppSettings.minAgentEnabled]） */
+    val minEnabled: StateFlow<Boolean> = settingsStore.settings.map { it.minAgentEnabled }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, settingsStore.snapshot?.minAgentEnabled ?: false)
+
+    private val minSession: StateFlow<AgentSession?> = combine(agents.active, minEnabled) { session, on ->
+        session?.takeIf { on && it.ref.engine == EngineKind.MinAgent }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, agents.active.value?.takeIf { minEnabled.value && it.ref.engine == EngineKind.MinAgent })
+
+    /**
+     * 显示哪一边。新建 / 打开时显式设（旧注册表的活跃项没变就不会发射），通知等外部切换由 [focusChanges] 跟上。
+     * 初值：有 Claude 活跃会话就是它，否则看 Min。
+     */
+    private val focus = MutableStateFlow(
+        if (engine.activeSession.value == null && minSession.value != null) Shown.Min else Shown.ClaudeCode,
+    )
+
+    init {
+        viewModelScope.launch { focusChanges(registry.activeKey, agents.activeRef).collect { focus.value = it } }
+    }
+
     /** 当前活跃的会话（通用接口）。没有时 null */
-    private val active: StateFlow<AgentSession?> = engine.activeSession
+    private val active: StateFlow<AgentSession?> =
+        combine(focus, engine.activeSession, minSession, ::shownSession)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, shownSession(focus.value, engine.activeSession.value, minSession.value))
+
+    /** 活跃会话所属引擎能做什么：页面按它决定哪些控件出现（设计 §3.8），不按引擎种类写分支 */
+    val capabilities: StateFlow<EngineCapabilities> = active
+        .map { it?.capabilities ?: EngineCapabilities.ClaudeCode }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, active.value?.capabilities ?: EngineCapabilities.ClaudeCode)
 
     /**
      * 活跃会话的状态（注册表在多个会话间切换时自动跟随）。没有活跃会话时给一个 Idle 占位，
@@ -104,7 +138,10 @@ class SessionVM(
      * 注册表的会话 key。CLI 还没回报 `sessionId` 时状态里是空的，
      * 但草稿必须立刻能落盘，所以输入框钉在这个 key 上。
      */
-    val activeSessionKey = registry.activeKey
+    val activeSessionKey: StateFlow<String?> = combine(active, registry.activeKey) { session, claudeKey ->
+        // Min 的会话没有「CLI 还没回报 id」那一段，草稿直接按 storageKey 钉
+        session?.ref?.takeIf { it.engine == EngineKind.MinAgent }?.storageKey ?: claudeKey
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, registry.activeKey.value)
 
     /**
      * 输入框草稿。按会话钉在磁盘上，杀进程再进同一会话还在。
@@ -165,7 +202,7 @@ class SessionVM(
 
     init {
         // 进程被 FGS 保活、页面重建时，注册表里的会话还在，草稿要从磁盘接回来
-        registry.activeKey.value?.let { attachComposer(it) }
+        activeSessionKey.value?.let { attachComposer(it) }
     }
 
     // --- 会话（多会话：注册表持有多个 manager，各自一个 CLI 进程） ---
@@ -174,32 +211,76 @@ class SessionVM(
      * 启动面板的「启动会话」。设置沿用活跃会话的（没有就是上次用过的那套，引擎自己取），
      * 只有工作目录和「跳过权限」是面板上现选的。
      */
-    fun start(skipPermissions: Boolean, cwd: String) {
-        val base = startOptionsOfActive()
-        create(base.copy(cwd = cwd, modeId = if (skipPermissions) ClaudeCodePermissionMode.BYPASS.wire else base.modeId))
+    fun start(request: StartRequest) {
+        if (request.engine == EngineKind.MinAgent) {
+            createMin(StartOptions(cwd = request.cwd, profileId = request.profileId, modelId = request.modelId, modeId = request.modeId))
+            return
+        }
+        val base = claudeStartBase()
+        create(base.copy(cwd = request.cwd, modeId = if (request.skipPermissions) ClaudeCodePermissionMode.BYPASS.wire else base.modeId))
     }
 
+    /** 抽屉的「新建会话」：照搬当前会话（哪个引擎就还是哪个引擎）的设置再开一个 */
     fun newSession() {
         // 没有活跃会话时（刚启动 App）不能退回默认值 —— 那会把用户上次选的模型/effort 丢掉，
         // 新会话默默跑在 CLI 默认模型上。startOptionsOfActive 在没有活跃会话时交给引擎取上次存的那套
-        create(startOptionsOfActive())
+        if (active.value?.ref?.engine == EngineKind.MinAgent) createMin(startOptionsOfActive()) else create(startOptionsOfActive())
     }
 
     private fun create(options: StartOptions) {
         viewModelScope.launch {
             // 引擎的 create 里没有真正的挂起点（旧注册表同步建），这里和原来一样同步走完
             if (engine.create(options).isFailure) atCapacity()
-            else attachComposer(registry.activeKey.value)
+            else {
+                focus.value = Shown.ClaudeCode
+                attachComposer(registry.activeKey.value)
+            }
         }
+    }
+
+    /** Min 的会话经统一注册表建：先查引擎可用、再查名额，结果各有一句给人看的话 */
+    private fun createMin(options: StartOptions) {
+        viewModelScope.launch {
+            when (val result = agents.create(EngineKind.MinAgent, options)) {
+                is AttachResult.Ok -> {
+                    focus.value = Shown.Min
+                    attachComposer(result.session.ref.storageKey)
+                }
+                else -> _notice.value = attachFailureText(result)
+            }
+        }
+    }
+
+    /** 建 / 开会话没成时给人看的那句话 */
+    private fun attachFailureText(result: AttachResult): String = when (result) {
+        is AttachResult.AtCapacity -> context.getString(R.string.vm_max_sessions, result.max)
+        is AttachResult.Unavailable -> availabilityText(context, result.availability)
+        is AttachResult.Failed -> result.message
+        is AttachResult.Ok -> ""
     }
 
     /**
      * 照搬活跃会话此刻的设置当作新会话的起点。每一项都显式给：空串是「明确跟随默认」，
      * 与 null（没说，沿用上次存的）不同，见 [ClaudeCodeEngine.create]。
      */
+    /** 开始面板选 Claude Code 时的起点：当前活跃的是 Claude 会话就照搬它，否则（没有 / 是 Min）交给引擎取上次存的那套 */
+    private fun claudeStartBase(): StartOptions =
+        if (active.value?.ref?.engine == EngineKind.ClaudeCode) startOptionsOfActive()
+        else StartOptions(cwd = registry.lastOptions().cwd)
+
     private fun startOptionsOfActive(): StartOptions {
         val current = active.value?.state?.value ?: return StartOptions(cwd = registry.lastOptions().cwd)
         val settings = current.settings
+        if (current.ref.engine == EngineKind.MinAgent) {
+            // Min：同一个供应商档、同一个模型 / 权限模式 / 思考强度（没选过强度就是没选过，空串 = 明确跟随默认）
+            return StartOptions(
+                cwd = current.cwd,
+                profileId = current.connection?.profileId,
+                modelId = settings.model?.id,
+                modeId = settings.mode.id,
+                effortId = settings.effort?.id ?: "",
+            )
+        }
         val ultracode = settings.extras.firstOrNull { it.key == ClaudeStateMapper.OPTION_ULTRACODE }?.value == "true"
         return StartOptions(
             cwd = current.cwd,
@@ -217,7 +298,32 @@ class SessionVM(
         (active.value?.state?.value?.cwd ?: registry.lastOptions().cwd).ifBlank { ClaudeCodeManager.DEFAULT_CWD }
 
     /** 已在跑就直接切过去（不重启进程），否则新起一个并 --resume 续上 */
-    fun openSession(id: String) {
+    fun openSession(ref: SessionRef) {
+        if (ref.engine == EngineKind.MinAgent) openMin(ref) else openClaude(ref.id)
+    }
+
+    /** Min 的会话经统一注册表开（已经在线就直接切过去，不重开）。草稿按 storageKey 钉，规矩与 Claude 那边一样 */
+    private fun openMin(ref: SessionRef) {
+        val key = ref.storageKey
+        val existing = drafts.load(key)
+        if (drafts.hasCarry() && !existing.isEmpty) {
+            _notice.value = context.getString(R.string.vm_draft_conflict)
+            return
+        }
+        viewModelScope.launch {
+            when (val result = agents.open(ref)) {
+                is AttachResult.Ok -> {
+                    focus.value = Shown.Min
+                    if (drafts.hasCarry()) drafts.consumeCarry(key)
+                    drafts.rememberActive(key)
+                    _composerDraft.value = existing
+                }
+                else -> _notice.value = attachFailureText(result)
+            }
+        }
+    }
+
+    private fun openClaude(id: String) {
         val existing = drafts.load(id)
         if (drafts.hasCarry() && !existing.isEmpty) {
             _notice.value = context.getString(R.string.vm_draft_conflict)
@@ -227,6 +333,7 @@ class SessionVM(
             atCapacity()
             return
         }
+        focus.value = Shown.ClaudeCode
         if (drafts.hasCarry()) drafts.consumeCarry(id)
         drafts.rememberActive(id)
         _composerDraft.value = existing
@@ -237,8 +344,12 @@ class SessionVM(
      * 正看着的那个走顶栏停止键同一条路（留在页面上显示「会话已结束」，攥着的消息退回输入框）；
      * 后台的直接从注册表摘掉 —— 不摘的话活跃项以外的死壳要等下一次 pruneDead 才走
      */
-    fun endSession(id: String) {
-        if (registry.activeKey.value == id) stop() else registry.closeSession(id)
+    fun endSession(ref: SessionRef) {
+        if (ref.engine == EngineKind.MinAgent) {
+            viewModelScope.launch { agents.close(ref, CloseReason.UserEnded) }
+            return
+        }
+        if (registry.activeKey.value == ref.id) stop() else registry.closeSession(ref.id)
     }
 
     private fun atCapacity() {
@@ -258,14 +369,14 @@ class SessionVM(
 
     fun saveComposerDraft(sessionId: String?, draft: ComposerDraft) {
         val id = sessionId ?: return
-        if (id == registry.activeKey.value) _composerDraft.value = draft
+        if (id == activeSessionKey.value) _composerDraft.value = draft
         drafts.save(id, draft)
     }
 
     /** 进后台 / 清进程前拍一张。空框会把指针顺延到下次打开的第一个会话。 */
     fun snapshotComposerOnStop(sessionId: String?, draft: ComposerDraft) {
         val id = sessionId ?: return
-        if (id == registry.activeKey.value) _composerDraft.value = draft
+        if (id == activeSessionKey.value) _composerDraft.value = draft
         drafts.snapshotOnStop(id, draft)
     }
 
@@ -328,7 +439,11 @@ class SessionVM(
     /** 顶栏停止键：只停进程，会话留在页面上显示「已结束」（[CloseReason.UserEnded]） */
     fun stop() {
         val target = active.value ?: return
-        viewModelScope.launch { target.close(CloseReason.UserEnded) }
+        // Min 要经统一注册表关：它同时把会话从「界面打开着的」里摘掉，页面才会回到开始面板
+        viewModelScope.launch {
+            if (target.ref.engine == EngineKind.MinAgent) agents.close(target.ref, CloseReason.UserEnded)
+            else target.close(CloseReason.UserEnded)
+        }
     }
 
     /**
@@ -428,6 +543,27 @@ class SessionVM(
         val NoSession: AgentSessionState =
             AgentSessionState.initial(SessionRef(EngineKind.ClaudeCode, "")).copy(status = SessionStatus.Idle)
     }
+}
+
+/**
+ * 开始面板上点「启动」时的选择。Claude Code 只看 [skipPermissions]（其余沿用上次，由会话层取）；
+ * Min 看供应商档 / 模型 / 权限模式（null = 用最近一次用的，§10.2 拍板 3）。
+ */
+data class StartRequest(
+    val engine: EngineKind,
+    val cwd: String,
+    val skipPermissions: Boolean = false,
+    val profileId: String? = null,
+    val modelId: String? = null,
+    val modeId: String? = null,
+)
+
+/** 引擎不能新建会话时那一行「原因和去处」的文字（开始面板灰掉引擎下面、新建失败的提示都用它） */
+internal fun availabilityText(context: Application, availability: EngineAvailability): String = when (availability) {
+    EngineAvailability.Ready -> ""
+    EngineAvailability.NeedsInstall -> context.getString(R.string.engine_needs_install)
+    EngineAvailability.NeedsProvider -> context.getString(R.string.engine_needs_provider)
+    is EngineAvailability.Disabled -> availability.reason
 }
 
 /** 通用输入 -> 输入框草稿，和原 manager 退还时拼的一样（图片名按序号） */

@@ -104,6 +104,7 @@ import dev.min.code.R
 import dev.min.code.core.claudecode.CHECKPOINT_TOOLS
 import dev.min.code.core.claudecode.subagentTypeName
 import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.AgentThread
 import dev.min.code.core.engine.ApprovalOption
 import dev.min.code.core.engine.InteractionAnswer
@@ -210,6 +211,15 @@ fun ClaudeCodePage(
         derivedStateOf(structuralEqualityPolicy()) { liveSession.value.withoutLiveCounters() }
     }
     val sessions by listVm.sessions.collectAsStateWithLifecycle()
+    val drawerSessions = remember(sessions, liveSession.value.ref) {
+        val shown = liveSession.value.ref
+        sessions.map { entry ->
+            // Min 的行按引用对（它们的 isActive 在列表 VM 里没法定）；Claude 的行只有显示的确实是 Claude 才亮
+            val active = if (entry.engine == EngineKind.MinAgent) entry.ref == shown
+            else entry.isActive && shown.engine == EngineKind.ClaudeCode
+            if (active == entry.isActive) entry else entry.copy(isActive = active)
+        }
+    }
     val maintenance by maintenanceVm.maintenance.collectAsStateWithLifecycle()
     val useNpmMirror by maintenanceVm.useNpmMirror.collectAsStateWithLifecycle()
     val runtime by toolsVm.runtime.collectAsStateWithLifecycle()
@@ -344,16 +354,17 @@ fun ClaudeCodePage(
             permanent = wide,
             visible = if (wide) wideSidebarOpen else drawerState.isOpen,
             paneWidth = paneWidth,
-            sessions = sessions,
+            // 两边（旧注册表 / 统一注册表）各有一个活跃项，哪行亮由页面按当前会话的引用盖章
+            sessions = drawerSessions,
             onNewSession = {
                 afterSidebarNav()
                 vm.newSession()
             },
-            onOpenSession = { id ->
+            onOpenSession = { ref ->
                 afterSidebarNav()
-                vm.openSession(id)
+                vm.openSession(ref)
             },
-            onDeleteSession = { id -> listVm.deleteSession(id, onActiveDeleted = vm::resetComposerDraft) },
+            onDeleteSession = { ref -> listVm.deleteSession(ref, onActiveDeleted = vm::resetComposerDraft) },
             onPinSession = listVm::pinSession,
             onRenameSession = listVm::renameSession,
             onSetCategory = listVm::setSessionCategory,
@@ -476,7 +487,7 @@ fun ClaudeCodePage(
                         else -> StartPanel(
                             session = session,
                             cliVersion = setup.cliVersion,
-                            onStart = vm::start,
+                            onStart = { skip, cwd -> vm.start(StartRequest(EngineKind.ClaudeCode, cwd, skipPermissions = skip)) },
                             defaultCwd = vm.defaultCwd(),
                             onListCwd = vm::listCwdFolders,
                             onCreateCwd = vm::createCwdFolder,

@@ -153,6 +153,8 @@
   <string name="session_sidebar_resize">拖动调整会话列表宽度</string>
   <string name="session_queued">排队中 · 跑完这一步就插进去</string>
   <string name="session_in_use">使用中</string>
+  <string name="session_interrupted">中断</string>
+  <string name="engine_min">Min</string>
   <string name="session_copy_transcript">复制整个会话</string>
   <string name="session_drawer_files">工作区文件</string>
   <string name="session_drawer_maintenance">环境与更新</string>
@@ -981,6 +983,8 @@
   <string name="about_contact">联系作者</string>
   <string name="about_contact_qq">QQ %1$s</string>
   <string name="about_contact_qq_copied">已复制 QQ 号</string>
+  <string name="engine_needs_install">先把运行环境装好（设置 → 系统）。</string>
+  <string name="engine_needs_provider">先连一个供应商（设置 → 连接）。</string>
   <string name="settings_group_experiment">实验</string>
   <string name="settings_group_experiment_sub">还没定型的功能（Min Agent）</string>
   <string name="settings_min_agent_title">Min Agent（实验）</string>

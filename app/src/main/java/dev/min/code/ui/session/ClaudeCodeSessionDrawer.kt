@@ -58,9 +58,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.min.code.R
+import androidx.compose.foundation.border
 import dev.min.code.core.claudecode.SessionGroup
 import dev.min.code.core.claudecode.SessionGroupHeader
 import dev.min.code.core.claudecode.groupSessionIds
+import dev.min.code.core.engine.EngineKind
+import dev.min.code.core.engine.SessionRef
 import dev.min.code.ui.components.InkChip
 import dev.min.code.ui.components.LiveDot
 import dev.min.code.ui.components.InkDialog
@@ -120,16 +123,16 @@ fun ClaudeCodeSessionDrawer(
     /** 宽屏分栏时由外层拖动手势决定；null 则退回 300.dp */
     paneWidth: Dp? = null,
     onNewSession: () -> Unit,
-    onOpenSession: (String) -> Unit,
-    onDeleteSession: (String) -> Unit,
-    onPinSession: (String, Boolean) -> Unit = { _, _ -> },
-    onRenameSession: (String, String) -> Unit = { _, _ -> },
-    onSetCategory: (String, String?) -> Unit = { _, _ -> },
+    onOpenSession: (SessionRef) -> Unit,
+    onDeleteSession: (SessionRef) -> Unit,
+    onPinSession: (SessionRef, Boolean) -> Unit = { _, _ -> },
+    onRenameSession: (SessionRef, String) -> Unit = { _, _ -> },
+    onSetCategory: (SessionRef, String?) -> Unit = { _, _ -> },
     categories: List<String> = emptyList(),
     /** 行菜单里的「导出」；null 时不给这一项 */
     onExportSession: ((SessionListVM.SessionEntry) -> Unit)? = null,
     /** 行菜单里的「结束会话」（只对进程还活着的行给）；null 时不给这一项 */
-    onEndSession: ((String) -> Unit)? = null,
+    onEndSession: ((SessionRef) -> Unit)? = null,
     /** 题跋上的「导入」；null 时不给这个按钮 */
     onImportSession: (() -> Unit)? = null,
     onOpenFiles: () -> Unit = {},
@@ -287,14 +290,14 @@ fun ClaudeCodeSessionDrawer(
                             val s = byId[id] ?: return@items
                             SessionRow(
                                 entry = s,
-                                onClick = { onOpenSession(s.id) },
-                                onPin = { onPinSession(s.id, !s.pinned) },
+                                onClick = { onOpenSession(s.ref) },
+                                onPin = { onPinSession(s.ref, !s.pinned) },
                                 onRename = { pendingRename = s },
                                 onCategorize = { pendingCategory = s },
                                 onDelete = { pendingDelete = s },
                                 // 还没落盘的会话没有文件可导出
                                 onExport = onExportSession?.takeIf { s.onDisk }?.let { export -> { export(s) } },
-                                onEnd = onEndSession?.takeIf { s.isLive }?.let { end -> { end(s.id) } },
+                                onEnd = onEndSession?.takeIf { s.isLive }?.let { end -> { end(s.ref) } },
                             )
                         }
                     }
@@ -391,7 +394,7 @@ fun ClaudeCodeSessionDrawer(
             confirmText = stringResource(R.string.common_delete),
             dismissText = stringResource(R.string.common_cancel),
             onConfirm = {
-                onDeleteSession(target.id)
+                onDeleteSession(target.ref)
                 pendingDelete = null
             },
             onDismiss = { pendingDelete = null },
@@ -403,7 +406,7 @@ fun ClaudeCodeSessionDrawer(
         RenameDialog(
             current = target.title,
             onConfirm = { name ->
-                onRenameSession(target.id, name)
+                onRenameSession(target.ref, name)
                 pendingRename = null
             },
             onDismiss = { pendingRename = null },
@@ -414,7 +417,7 @@ fun ClaudeCodeSessionDrawer(
             current = target.category,
             existing = categories,
             onConfirm = { name ->
-                onSetCategory(target.id, name)
+                onSetCategory(target.ref, name)
                 pendingCategory = null
             },
             onDismiss = { pendingCategory = null },
@@ -561,6 +564,10 @@ private fun SessionRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    // 引擎标签只给 Min：Claude Code 是默认引擎，每行都写一遍只是噪声
+                    if (entry.engine == EngineKind.MinAgent) EngineTag(stringResource(R.string.engine_min), entry.isActive)
+                    // 「中断」：最后一个回合没结束（进程被杀 / 失败 / 达到上限），打开后停止键的位置是 ▶
+                    if (entry.interrupted) InterruptedTag()
                     AnimatedVisibility(visible = entry.isActive, enter = InkMotion.enter, exit = InkMotion.exit) {
                         InUseBadge()
                     }
@@ -777,6 +784,36 @@ private fun InUseBadge() {
         modifier = Modifier
             .background(MaterialTheme.sea.onSea.copy(alpha = 0.22f), RoundedCornerShape(6.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
+/** 引擎标签：描边的一小块，和「使用中」那块玻璃区分开（那块是实心淡白） */
+@Composable
+private fun EngineTag(text: String, onSea: Boolean) {
+    val tint = if (onSea) MaterialTheme.sea.onSea else MaterialTheme.sea.seaDeep
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, lineHeight = 13.sp),
+        color = tint,
+        maxLines = 1,
+        modifier = Modifier
+            .border(1.dp, tint.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
+/** 「中断」标记：朱——它说的是一件没做完的事，是判定 */
+@Composable
+private fun InterruptedTag() {
+    val tint = MaterialTheme.sea.vermilion
+    Text(
+        stringResource(R.string.session_interrupted),
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, lineHeight = 13.sp),
+        color = tint,
+        maxLines = 1,
+        modifier = Modifier
+            .border(1.dp, tint.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
     )
 }
 

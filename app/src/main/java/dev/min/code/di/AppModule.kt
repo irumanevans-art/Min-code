@@ -265,7 +265,8 @@ val appModule = module {
 
     // 原来的 ClaudeCodeVM 按职责拆成五个（M2-B B6a）；ClaudeCodePage 一次取齐
     viewModelOf(::SessionVM)
-    viewModelOf(::SessionListVM)
+    // Min 会话的元数据是 named("min") 那一份（与 Min 引擎读标题的是同一个），viewModelOf 按类型解析取不到它
+    viewModel { SessionListVM(get(), get(), get(), get(), get(), get(named("min")), get()) }
     viewModelOf(::WorkspaceToolsVM)
     viewModelOf(::MaintenanceVM)
     viewModelOf(::ClaudeConfigVM)
