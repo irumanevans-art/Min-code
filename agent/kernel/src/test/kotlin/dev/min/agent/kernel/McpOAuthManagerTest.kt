@@ -25,32 +25,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 class McpOAuthManagerTest {
-    @Test fun `successful login clears stale scope challenge before later plain 401`() = runBlocking {
-        Server().use {s ->s.store.save(s.key,s.saved());case(s) {hub,rt,_ ->
-            s.scopeFailure=true;assertTrue(invoke(rt).isError)
-            s.scopeFailure=false;hub.loginMcp("db",rt.sessionId)
-            s.omitChallenge=true;s.expireOnCall=true
-            assertFalse(invoke(rt).isError);assertEquals(1,s.refreshes.get())
-        }};Unit
-    }
-    @Test fun `configured authorization does not depend on OAuth repository availability`() = runBlocking {
-        Server().use {s ->s.store.unavailable=true;case(s,mapOf("Authorization" to "Bearer ${s.access}")) {hub,rt,_ ->
-            assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state)
-            assertFalse(invoke(rt).isError);assertEquals(0,s.store.reads.get())
-        }};Unit
-    }
-    @Test fun `two project entries receiving 401 share one rotated refresh`() = runBlocking {
-        Server().use {s ->s.store.save(s.key,s.saved());case(s) {hub,rt,_ ->
-            val other=hub.create(GuestPath("/other"),TEST_MODEL,PermissionMode.BypassPermissions)
-            withTimeout(5000) {while(hub.mcp.statusOf(other.sessionId).single().state=="pending") delay(10)}
-            assertEquals("connected",hub.mcp.statusOf(other.sessionId).single().state)
-            assertEquals(2,s.handshakes.get())
-            s.access="FAKE_ACCESS_EXPIRED";s.failedCallsGate=CompletableDeferred()
-            val results=coroutineScope {awaitAll(async {invoke(rt)},async {invoke(other)})}
-            assertTrue(results.none {it.isError});assertEquals(2,s.simultaneousFailures.get());assertEquals(1,s.refreshes.get())
-            assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state);assertEquals("connected",hub.mcp.statusOf(other.sessionId).single().state)
-        }};Unit
-    }
     @get:Rule val tmp=TemporaryFolder()
     private class Store : McpTokenStore {
         var unavailable=false
@@ -163,6 +137,32 @@ class McpOAuthManagerTest {
         } finally { scope.cancel() }
     }
     private suspend fun invoke(rt: SessionRuntime)=rt.mcpCaller.call(McpCallRequest("db","ping",args(),rt.sessionId,CallId("c"),FakeArtifacts(),{}))
+    @Test fun `configured authorization does not depend on OAuth repository availability`() = runBlocking {
+        Server().use {s ->s.store.unavailable=true;case(s,mapOf("Authorization" to "Bearer ${s.access}")) {hub,rt,_ ->
+            assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state)
+            assertFalse(invoke(rt).isError);assertEquals(0,s.store.reads.get())
+        }};Unit
+    }
+    @Test fun `two project entries receiving 401 share one rotated refresh`() = runBlocking {
+        Server().use {s ->s.store.save(s.key,s.saved());case(s) {hub,rt,_ ->
+            val other=hub.create(GuestPath("/other"),TEST_MODEL,PermissionMode.BypassPermissions)
+            withTimeout(5000) {while(hub.mcp.statusOf(other.sessionId).single().state=="pending") delay(10)}
+            assertEquals("connected",hub.mcp.statusOf(other.sessionId).single().state)
+            assertEquals(2,s.handshakes.get())
+            s.access="FAKE_ACCESS_EXPIRED";s.failedCallsGate=CompletableDeferred()
+            val results=coroutineScope {awaitAll(async {invoke(rt)},async {invoke(other)})}
+            assertTrue(results.none {it.isError});assertEquals(2,s.simultaneousFailures.get());assertEquals(1,s.refreshes.get())
+            assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state);assertEquals("connected",hub.mcp.statusOf(other.sessionId).single().state)
+        }};Unit
+    }
+    @Test fun `successful login clears stale scope challenge before later plain 401`() = runBlocking {
+        Server().use {s ->s.store.save(s.key,s.saved());case(s) {hub,rt,_ ->
+            s.scopeFailure=true;assertTrue(invoke(rt).isError)
+            s.scopeFailure=false;hub.loginMcp("db",rt.sessionId)
+            s.omitChallenge=true;s.expireOnCall=true
+            assertFalse(invoke(rt).isError);assertEquals(1,s.refreshes.get())
+        }};Unit
+    }
     @Test fun `failed scope reauthorization preserves usable connection and records failed audit`() = runBlocking {
         Server().use {s -> s.store.save(s.key,s.saved());case(s) {hub,rt,store ->
             assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state)

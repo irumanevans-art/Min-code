@@ -1,0 +1,362 @@
+[
+  {
+    "Item": "H1Path",
+    "Name": "fold-dotdot-before-canonical",
+    "Module": "policy",
+    "File": "agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt",
+    "From": "credentialTargets = credentialTargets,",
+    "To": "credentialTargets = credentialTargets.map { GuestPath(normalize(it.value)) },",
+    "Test": "*CredentialPolicyTest*",
+    "Assertion": "credential files deny|shell credential"
+  },
+  {
+    "Item": "H1Path",
+    "Name": "ignore-windows-drive-operands",
+    "Module": "policy",
+    "File": "agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt",
+    "From": "!normalize && target.matches",
+    "To": "false && !normalize && target.matches",
+    "Test": "*CredentialPolicyTest*",
+    "Assertion": "Windows shell drive paths"
+  },
+  {
+    "Item": "M3Auth",
+    "Name": "read-oauth-store-for-configured-auth",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "entry.spec is McpServerSpec.Remote && entry.spec.headersHelper==null && entry.spec.headers.keys.none {it.equals(\"Authorization\",true)}",
+    "To": "entry.spec is McpServerSpec.Remote",
+    "Test": "*McpOAuthManagerTest*",
+    "Assertion": "configured authorization does not depend"
+  },
+  {
+    "Item": "M2Wiring",
+    "Name": "omit-client-expected-state",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "authorizer.authorize(settings.callbackPort, state)",
+    "To": "authorizer.authorize(settings.callbackPort)",
+    "Test": "*McpLoginBoundaryTest*",
+    "Assertion": "expected state reaches"
+  },
+  {
+    "Item": "M2Wiring",
+    "Name": "omit-desktop-expected-state",
+    "Module": "cli",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/DesktopMcpAuthorizer.kt",
+    "From": "expectedState=expectedState,",
+    "To": "expectedState=null,",
+    "Test": "*McpOAuthHostTest*",
+    "Assertion": "desktop authorizer forwards"
+  },
+  {
+    "Item": "H1",
+    "Name": "remove-credential-deny",
+    "Module": "policy",
+    "File": "agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt",
+    "From": "if (facts.credentialTargets.any { credentialPath",
+    "To": "if (false && facts.credentialTargets.any { credentialPath",
+    "Test": "*CredentialPolicyTest*",
+    "Assertion": "credential files deny|shell credential"
+  },
+  {
+    "Item": "H1",
+    "Name": "omit-desktop-credential-paths",
+    "Module": "cli",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/DesktopApp.kt",
+    "From": "credentialPaths = desktopCredentialPaths(paths, home)",
+    "To": "credentialPaths = emptySet()",
+    "Test": "*CredentialDesktopTest*",
+    "Assertion": "desktop tools cannot expose"
+  },
+  {
+    "Item": "H1",
+    "Name": "omit-kernel-policy-context",
+    "Module": "cli",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt",
+    "From": "credentialPaths = deps.credentialPaths",
+    "To": "credentialPaths = emptySet()",
+    "Test": "*CredentialDesktopTest*",
+    "Assertion": "desktop tools cannot expose"
+  },
+  {
+    "Item": "H1",
+    "Name": "omit-kernel-search-wrapper",
+    "Module": "cli",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt",
+    "From": "override val search: Search = credentialSearch(deps.host.search, deps.credentialPaths, deps.canonicalPath)",
+    "To": "override val search: Search = deps.host.search",
+    "Test": "*CredentialDesktopTest*",
+    "Assertion": "desktop tools cannot expose"
+  },
+  {
+    "Item": "H1",
+    "Name": "read-before-exclude",
+    "Module": "host",
+    "File": "agent/host/src/main/kotlin/dev/min/agent/host/JvmSearch.kt",
+    "From": "if (query.exclude(guestOf(rootGuest, file.rel))) continue",
+    "To": "if (false && query.exclude(guestOf(rootGuest, file.rel))) continue",
+    "Test": "*JvmSearchTest*",
+    "Assertion": "credential exclusion"
+  },
+  {
+    "Item": "H1",
+    "Name": "omit-defensive-result-filter",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/CredentialSearch.kt",
+    "From": ".filter { !credentialPath(it.path,context) }",
+    "To": ".filter { true }",
+    "Test": "*CredentialSearchTest*",
+    "Assertion": "recursive searches omit"
+  },
+  {
+    "Item": "M1",
+    "Name": "ignore-required-issuer",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "val requiresIssuer=asMetadata.json[\"authorization_response_iss_parameter_supported\"] == JsonPrimitive(true)",
+    "To": "val requiresIssuer=false",
+    "Test": "*McpOAuthClientTest*",
+    "Assertion": "missing issuer rejected"
+  },
+  {
+    "Item": "M1",
+    "Name": "require-issuer-unconditionally",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "val requiresIssuer=asMetadata.json[\"authorization_response_iss_parameter_supported\"] == JsonPrimitive(true)",
+    "To": "val requiresIssuer=true",
+    "Test": "*McpOAuthClientTest*",
+    "Assertion": "missing issuer accepted"
+  },
+  {
+    "Item": "M1",
+    "Name": "ignore-wrong-issuer",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "returnedIssuer != null && returnedIssuer != asMetadata.issuer",
+    "To": "false && returnedIssuer != null && returnedIssuer != asMetadata.issuer",
+    "Test": "*McpOAuthClientTest*",
+    "Assertion": "issuer wrong and normalized"
+  },
+  {
+    "Item": "M2",
+    "Name": "accept-wrong-state",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LoopbackMcpAuthorizer.kt",
+    "From": "return params[\"state\"]?.let {MessageDigest.isEqual(state.toByteArray(),it.toByteArray())} == true",
+    "To": "return true",
+    "Test": "*LoopbackMcpAuthorizerTest*",
+    "Assertion": "wrong missing and malformed state"
+  },
+  {
+    "Item": "M2",
+    "Name": "accept-empty-response",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LoopbackMcpAuthorizer.kt",
+    "From": "if(params[\"code\"].isNullOrBlank() && params[\"error\"].isNullOrBlank()) return false",
+    "To": "if(false && params[\"code\"].isNullOrBlank() && params[\"error\"].isNullOrBlank()) return false",
+    "Test": "*LoopbackMcpAuthorizerTest*",
+    "Assertion": "wrong missing and malformed state"
+  },
+  {
+    "Item": "M2",
+    "Name": "close-working-connection-on-login-failure",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "if(entry.status!=CONNECTED || entry.connection==null) failed(entry,e)",
+    "To": "if(true) failed(entry,e)",
+    "Test": "*McpOAuthManagerTest*",
+    "Assertion": "failed scope reauthorization preserves"
+  },
+  {
+    "Item": "M3",
+    "Name": "remove-per-key-mutex",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "refreshLocks.computeIfAbsent(key){Mutex()}.withLock",
+    "To": "Mutex().withLock",
+    "Test": "*McpRefreshConcurrencyTest*",
+    "Assertion": "simultaneous refreshes"
+  },
+  {
+    "Item": "M3",
+    "Name": "remove-refresh-coalescing",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if(current.accessToken!=null && (current.refreshToken",
+    "To": "if(false && current.accessToken!=null && (current.refreshToken",
+    "Test": "*McpRefreshConcurrencyTest*",
+    "Assertion": "simultaneous refreshes"
+  },
+  {
+    "Item": "M3",
+    "Name": "ignore-repository-rotation-after-rejection",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "val latest=store.load(key) ?: throw e",
+    "To": "val latest=current",
+    "Test": "*McpRefreshConcurrencyTest*",
+    "Assertion": "refresh rejection rereads"
+  },
+  {
+    "Item": "M3",
+    "Name": "forget-failed-connection-token",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "client.refresh(tokenKey(entry),entry.usedAccessToken)",
+    "To": "client.refresh(tokenKey(entry))",
+    "Test": "*McpOAuthManagerTest*",
+    "Assertion": "two project entries receiving 401"
+  },
+  {
+    "Item": "L1",
+    "Name": "keep-literal-client-secret",
+    "Module": "ext",
+    "File": "agent/ext/src/main/kotlin/dev/min/agent/ext/mcp/McpConfigLoader.kt",
+    "From": "oauth = p.oauth?.let { it.copy(clientSecret = it.clientSecret?.let { secret -> ex(secret, true) }) },",
+    "To": "oauth = p.oauth,",
+    "Test": "*McpConfigLoaderTest*",
+    "Assertion": "oauth client secret expands"
+  },
+  {
+    "Item": "L2",
+    "Name": "retain-scope-challenge",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt",
+    "From": "entry.challenge=null",
+    "To": "entry.challenge=entry.challenge",
+    "Test": "*McpOAuthManagerTest*",
+    "Assertion": "successful login clears"
+  },
+  {
+    "Item": "L3",
+    "Name": "do-not-retry-helper-403",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpRemoteHttp.kt",
+    "From": "if(response.status in setOf(401,403) && spec.headersHelper!=null)",
+    "To": "if(response.status==401 && spec.headersHelper!=null)",
+    "Test": "*McpRemoteHttpTest*",
+    "Assertion": "helper retries 403"
+  },
+  {
+    "Item": "L4",
+    "Name": "allow-loopback-for-remote-mcp",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "&& allowLoopback && loopback(u)",
+    "To": "&& loopback(u)",
+    "Test": "*McpOAuthClientTest*",
+    "Assertion": "remote MCP"
+  },
+  {
+    "Item": "L4",
+    "Name": "skip-authorization-endpoint-check",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "secureUri(auth,allowLoopback); secureUri(token,allowLoopback)",
+    "To": "secureUri(auth); secureUri(token,allowLoopback)",
+    "Test": "*McpOAuthClientTest*",
+    "Assertion": "remote MCP cannot discover"
+  },
+  {
+    "Item": "L4",
+    "Name": "skip-registration-endpoint-check",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "secureUri(endpoint,loopback(secureUri(key.endpoint)))",
+    "To": "secureUri(endpoint)",
+    "Test": "*McpOAuthClientTest*",
+    "Assertion": "remote MCP cannot discover"
+  },
+  {
+    "Item": "L5",
+    "Name": "skip-authorization-preview",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "authorizer.preview(asMetadata.issuer,URI(asMetadata.authorization).host,scopes)",
+    "To": "// 变异：省略授权预览。",
+    "Test": "*McpLoginBoundaryTest*",
+    "Assertion": "authorization preview"
+  },
+  {
+    "Item": "L5",
+    "Name": "skip-terminal-preview",
+    "Module": "cli",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/DesktopMcpAuthorizer.kt",
+    "From": "output.println(\"MCP OAuth 授权服务器 issuer：",
+    "To": "if(false) output.println(\"MCP OAuth 授权服务器 issuer：",
+    "Test": "*McpOAuthHostTest*",
+    "Assertion": "terminal preview"
+  },
+  {
+    "Item": "L6",
+    "Name": "do-not-rebuild-undecipherable-store",
+    "Module": "app",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "val records=try {read()} catch(e: UnreadableCredentials){reset=true;emptyList()}",
+    "To": "val records=read()",
+    "Test": "*AndroidMcpTokenStoreTest*",
+    "Assertion": "save with unreadable ciphertext"
+  },
+  {
+    "Item": "L6",
+    "Name": "require-decrypt-before-logout",
+    "Module": "app",
+    "File": "app/src/main/java/dev/min/code/core/engine/min/AndroidMcpOAuth.kt",
+    "From": "val records=try {read()} catch(e: UnreadableCredentials){Files.deleteIfExists(file.toPath());return@access}",
+    "To": "val records=read()",
+    "Test": "*AndroidMcpTokenStoreTest*",
+    "Assertion": "logout deletes unreadable"
+  },
+  {
+    "Item": "L7",
+    "Name": "skip-abandoned-temp-cleanup",
+    "Module": "cli",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/FileMcpTokenStore.kt",
+    "From": "        cleanupTemps()\n",
+    "To": "        Unit\n",
+    "Test": "*McpOAuthHostTest*",
+    "Assertion": "save and logout clean"
+  },
+  {
+    "Item": "L7",
+    "Name": "skip-logout-temp-cleanup",
+    "Module": "cli",
+    "File": "agent/cli/src/main/kotlin/dev/min/agent/cli/FileMcpTokenStore.kt",
+    "From": "access { cleanupTemps(); write",
+    "To": "access { write",
+    "Test": "*McpOAuthHostTest*",
+    "Assertion": "save and logout clean"
+  },
+  {
+    "Item": "L8",
+    "Name": "leak-login-timeout-as-cancellation",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if(completed!=true) fail(McpOAuthException.Kind.LoginTimeout)",
+    "To": "if(completed!=true) throw CancellationException(\"登录超时\")",
+    "Test": "*McpLoginBoundaryTest*",
+    "Assertion": "five minute login budget"
+  },
+  {
+    "Item": "L8",
+    "Name": "leak-listener-timeout-as-cancellation",
+    "Module": "kernel",
+    "File": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LoopbackMcpAuthorizer.kt",
+    "From": "} ?: throw dev.min.agent.mcp.McpOAuthException(dev.min.agent.mcp.McpOAuthException.Kind.LoginTimeout)",
+    "To": "} ?: throw CancellationException(\"登录超时\")",
+    "Test": "*LoopbackMcpAuthorizerTest*",
+    "Assertion": "cancellation and five minute"
+  },
+  {
+    "Item": "L9",
+    "Name": "compare-resource-exactly",
+    "Module": "mcp",
+    "File": "agent/mcp/src/main/kotlin/dev/min/agent/mcp/McpOAuthClient.kt",
+    "From": "if (!resourceMatches(pr.text(\"resource\"),resource))",
+    "To": "if (pr.text(\"resource\") != resource)",
+    "Test": "*McpOAuthClientTest*",
+    "Assertion": "root resource slash"
+  }
+]

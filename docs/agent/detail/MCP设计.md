@@ -162,8 +162,20 @@ interface LiveProcess {
 
 **这意味着 Min 自己保存第三方服务的 OAuth 令牌。** 与「Min 不碰 Claude 订阅凭证」是两件事（后者仍然不碰）。
 
-2026-10-04 拍板：**做**（MCP3），令牌存 Keystore，界面上能逐个服务器「退出登录」。桌面 CLI 的令牌存放另议（不进仓库、不进日志，至少用系统凭证库）。
-MCP1 / MCP2 期间远程服务器只支持请求头带令牌（用户自己在配置里写 `Authorization`，或 `headersHelper`）与无鉴权；回 401 时状态标 `needs-auth`，说明「OAuth 登录还没做」。
+2026-10-07：MCP3 已实现，并完成本轮安全复核修复。
+
+- Android 仓库在 `noBackupFilesDir` 存 AES-GCM 密文，密钥由 Keystore 提供，不挂进 rootfs。读失败仍保留密文并返回固定错误；保存遇到无法解密的仓库时重建，成功后仅记录「凭证文件无法解密，已重置」；退出登录可直接删除无法解密的密文。
+- 桌面仓库为 `~/.min-agent/mcp-oauth.json`，文件、锁和临时文件仅当前用户可访问，写入与清理持有跨进程锁。宿主把仓库文件名前缀及 `.mcp-oauth-` 临时文件前缀注入 `PolicyContext.credentialPaths`；工具的凭证访问在任何模式下均为 Deny，hook allow 不能越过。Grep/Glob 在读取前排除凭证，并在内核搜索边界再次过滤返回结果。凭证路径属于宿主约束，不来自会话设置。
+- 回调仅监听 `127.0.0.1`，先绑定端口再生成 redirect URI。授权器收到预期 state，无效 state、重复参数或缺少 code/error 的请求返回 400 后继续等；客户端仍独立复核 state、issuer 和回调地址。五分钟预算耗尽返回「MCP 登录超时」，调用者主动取消仍保持取消语义。
+- 按 [RFC 9207 §2.4–3](https://www.rfc-editor.org/rfc/rfc9207.html#section-2.4)，带了 `iss` 必须逐字等于 AS issuer；缺少 `iss` 时仅在 AS 元数据声明 `authorization_response_iss_parameter_supported: true` 时拒绝。AS issuer 的比较不做 URL 归一化。
+- 发现、注册、授权及刷新中的 HTTP loopback 端点仅在 MCP 服务器本身也位于 loopback 时允许。受保护资源的根路径空串与 `/` 等价，HTTP `localhost` 与 `127.0.0.1` 可等价比较；非根路径和 query 仍必须匹配。
+- 同一 `McpTokenKey` 的刷新在 OAuth 客户端内串行。等待锁期间已经轮换，或失败 Entry 的连接用的是旧 access token 时，复用新凭证；刷新被拒绝后重读仓库，refresh token 已变更则用新值重试一次。重新登录失败保留原本可用的连接，新连接就绪后才替换旧连接；连接和登录成功清除旧 challenge。
+- `headersHelper` 收到 401 或 403 时重跑一次；配置认证仍优先于 OAuth，不能借重试改换认证方式。终端打开浏览器前展示 issuer、授权域名和请求 scope；App 的展示随 B7。
+- `oauth.clientSecret` 支持同一套 `${VAR}` / `${VAR:-default}` 展开及凭证变量置空规则。**不要把 secret 提交进项目的 `.mcp.json`**；使用环境变量或用户私有配置。
+
+**与 CC 的差异**：回调保留数字地址 `127.0.0.1` 和 `/mcp/oauth/callback`，不兼容 CC 的 `localhost` + `/callback` 预注册地址。需要预注册客户端时，应为 Min 配置自己的回调地址和端口。
+
+**待办**：CIMD（Client ID Metadata Document）仍未实现；当前注册顺序为预置 clientId → 动态注册。RFC 7009 服务端令牌撤销本期不做，退出登录仅清除本地凭证并关闭相关连接。
 
 ## 11. 事件与格式
 
@@ -192,3 +204,5 @@ MCP1 / MCP2 期间远程服务器只支持请求头带令牌（用户自己在�
 - proot 里 `npx` / `uvx` 冷启动慢（文件 IO 比宿主慢 26–50 倍，见调研 §5.2），首次启动可能超过 30 秒（Android 的连接超时因此给 120 秒）；交互时首个快照只等 5 秒，慢的服务器在下一回合才加入。
 - 需要图形环境的服务器（Playwright 默认有界面、chrome-devtools-mcp 只认 Chrome）在 proot 里跑不起来，除非它们支持 headless 或连接已有浏览器。
 - `ws` 传输（CC 只在 `.mcp.json` 里支持）首期不做。
+- loopback 回调的阻塞读取受单次 socket 读取期限约束，但本机进程可以持续慢速发送而拖住监听端口；本期按安全复核决定不修。只监听本机地址，外部网络不能直接访问。
+- 退出登录不撤销 AS 已签发的令牌（RFC 7009）；本期仅本地退出。CIMD 与 CC 的预注册回调地址兼容仍待后续实现，见 §10。

@@ -11,29 +11,6 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 class McpLoginBoundaryTest {
-    @Test fun `five minute login budget becomes domain timeout while caller cancellation remains cancellation`() = runTest {
-        var opened=false
-        val authorizer=McpAuthorizer {_,url -> url("http://127.0.0.1:1234/mcp/oauth/callback");opened=true;awaitCancellation()}
-        val client=McpOAuthClient(http,store,authorizer)
-        try {client.login(key,settings);fail("timeout")} catch(e:McpOAuthException){assertEquals(McpOAuthException.Kind.LoginTimeout,e.kind)}
-        assertTrue(opened)
-        try {withTimeout(10){client.login(key,settings)};fail("outer cancellation")} catch(e:TimeoutCancellationException){}
-        Unit
-    }
-    @Test fun `authorization preview contains issuer domain and scopes before opening page`() = runBlocking {
-        var preview: List<String?>? = null
-        val authorizer=object : McpAuthorizer {
-            override fun preview(issuer:String,authorizationDomain:String,scopes:String?){preview=listOf(issuer,authorizationDomain,scopes)}
-            override suspend fun authorize(redirectPort:Int?,authorizationUrl:suspend(String)->String):String {
-                assertEquals(listOf("https://as.example","login.example","read write"),preview)
-                val redirect="http://127.0.0.1:1234/mcp/oauth/callback"
-                val url=authorizationUrl(redirect)
-                val state=URI(url).rawQuery.split('&').first {it.startsWith("state=")}.substringAfter('=')
-                return "$redirect?code=x&state=$state&iss=https%3A%2F%2Fas.example"
-            }
-        }
-        McpOAuthClient(http,store,authorizer).login(key,settings);Unit
-    }
     private val key=McpTokenKey("db","https://db.example/mcp")
     private val settings=McpOAuthSettings(clientId="client",authServerMetadataUrl="https://as.example/meta",scopes="read write")
     private val http=object : HttpTransport {
@@ -58,5 +35,28 @@ class McpLoginBoundaryTest {
             }
         }
         McpOAuthClient(http,store,authorizer).login(key,settings);Unit
+    }
+    @Test fun `authorization preview contains issuer domain and scopes before opening page`() = runBlocking {
+        var preview: List<String?>? = null
+        val authorizer=object : McpAuthorizer {
+            override fun preview(issuer:String,authorizationDomain:String,scopes:String?){preview=listOf(issuer,authorizationDomain,scopes)}
+            override suspend fun authorize(redirectPort:Int?,authorizationUrl:suspend(String)->String):String {
+                assertEquals(listOf("https://as.example","login.example","read write"),preview)
+                val redirect="http://127.0.0.1:1234/mcp/oauth/callback"
+                val url=authorizationUrl(redirect)
+                val state=URI(url).rawQuery.split('&').first {it.startsWith("state=")}.substringAfter('=')
+                return "$redirect?code=x&state=$state&iss=https%3A%2F%2Fas.example"
+            }
+        }
+        McpOAuthClient(http,store,authorizer).login(key,settings);Unit
+    }
+    @Test fun `five minute login budget becomes domain timeout while caller cancellation remains cancellation`() = runTest {
+        var opened=false
+        val authorizer=McpAuthorizer {_,url -> url("http://127.0.0.1:1234/mcp/oauth/callback");opened=true;awaitCancellation()}
+        val client=McpOAuthClient(http,store,authorizer)
+        try {client.login(key,settings);fail("timeout")} catch(e:McpOAuthException){assertEquals(McpOAuthException.Kind.LoginTimeout,e.kind)}
+        assertTrue(opened)
+        try {withTimeout(10){client.login(key,settings)};fail("outer cancellation")} catch(e:TimeoutCancellationException){}
+        Unit
     }
 }

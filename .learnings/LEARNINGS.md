@@ -1,3 +1,30 @@
+## [LRN-20261007-CREDENTIAL-PATH-ORDER] best_practice
+
+**Logged**: 2026-10-07
+**Priority**: high
+**Status**: promoted
+**Area**: backend
+
+### Summary
+凭证保护先解析原始路径中的链接，再归一化；搜索在读文件前过滤，刷新标记不能引入配置认证对 OAuth 仓库的依赖。
+
+### Details
+MCP3 复核发现桌面凭证虽有私有 ACL，仍可被同用户的模型工具读取。宿主注入路径边界、策略无条件 Deny、搜索在读取与预算前排除后，继续复查发现 link/../file 被策略先折叠，丢失了实际目标；Windows shell 的 C:/ 与单引号反斜杠路径也需要显式映射。原始凭证候选单独保留，按宿主 canonical 解析后再匹配，不改既有模式与规则使用的路径事实。
+
+跨 Entry 刷新需要记住失败连接使用的 access token，但配置 Authorization 的连接不能为此读取 OAuth 仓库。补测仓库不可用而配置认证有效的连接，先复现失败，再只对直接使用 OAuth 的连接读取刷新标记。红/绿与对应源码弱化变异保存于 agent/mcp/build/review/fixes。
+
+### Suggested Action
+安全边界验证同一真实宿主的模型请求、工具结果、事件及附件；搜索过滤必须发生在读取和预算之前。凭证路径与链接的解析顺序、Windows 路径别名、配置认证的仓库独立性已加入根 AGENTS.md。
+
+### Metadata
+- Source: code_review
+- Related Files: agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt, agent/host/src/main/kotlin/dev/min/agent/host/JvmSearch.kt
+- Tags: credentials, path, symlink, windows, oauth, mutation
+- Pattern-Key: security.host_credentials_path_and_read_boundary
+- Promoted: AGENTS.md
+
+---
+
 ## [LRN-20260922-KDOC-NESTED-BLOCK-COMMENT] error
 
 **Logged**: 2026-09-22T14:20:00+08:00

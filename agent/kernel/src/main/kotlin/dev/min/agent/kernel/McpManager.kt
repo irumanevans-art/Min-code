@@ -239,8 +239,8 @@ internal class McpManager(
     }
 
     private suspend fun connectEntry(entry: Entry): McpConnection {
-        val usedAccessToken=if(entry.spec is McpServerSpec.Remote && entry.spec.headersHelper==null && entry.spec.headers.keys.none {it.equals("Authorization",true)}) oauth?.store?.load(tokenKey(entry))?.accessToken else null
         // 配置认证与 OAuth 仓库无关，不能为了刷新归并的标记读取不需要的凭证仓库。
+        val usedAccessToken=if(entry.spec is McpServerSpec.Remote && entry.spec.headersHelper==null && entry.spec.headers.keys.none {it.equals("Authorization",true)}) oauth?.store?.load(tokenKey(entry))?.accessToken else null
         val connection=connector.connectWithInteraction(entry.spec,entry.projectRoot,scope,{ rootsFor(entry.projectRoot) }) { params ->
             val active=entry.activeCalls.values.singleOrNull()
             val rt=active?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt } ?: entry.inputOwner
@@ -323,7 +323,7 @@ internal class McpManager(
                 val c=spec.oauth
                 client.login(tokenKey(entry),dev.min.agent.mcp.McpOAuthSettings(c?.clientId,c?.clientSecret,c?.callbackPort,c?.authServerMetadataUrl,c?.scopes),entry.challenge)
                 entry.challenge=null
-                    val old=entry.connection
+                val old=entry.connection
                 // 登录返回后用户可能马上发下一回合，必须先完成入队，再报告成功。
                 val connected=connectEntry(entry)
                 if(old!==connected) old?.close()
