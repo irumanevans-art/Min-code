@@ -565,6 +565,35 @@ class ComponentHooksTest {
         assertLogIsTruth(rt)
     }
 
+    // ---- N5：分身与子 agent 走同一份组件 hooks 继承 ----
+
+    @Test
+    fun `分身继承父会话的组件 hooks，Stop 改成 SubagentStop`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = RoutingModel { req ->
+            when {
+                req.lastText() == "开始" ->
+                    reply(skillCall("c1", "gate"), skillCall("c2", "stopper"), stop = StopReason.ToolUse)
+                req.lastText().contains("gated thing") || req.lastText().contains("Stop things") ->
+                    reply(agentCall("c3", "fork"), stop = StopReason.ToolUse)
+                req.lastText().contains("去看看") -> reply(TextPart("分身干完了"))
+                else -> reply(TextPart("收到"))
+            }
+        }
+        val h = hub(model, http, tools = listOf(bash, SkillTool, agentTool))
+        val rt = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("开始")
+        val fork = h.get(rt.state.first { it.children.isNotEmpty() }.children.keys.first())!!
+        fork.awaitIdle()
+        rt.awaitIdle()
+        // 分身与子 agent 同一行代码（inheritedComponentHooks）：登记时刻的快照都进来了，Stop 改写同理
+        val inherited = events(fork.sessionId).filterIsInstance<dev.min.agent.spi.ComponentHooksRegistered>()
+        assertEquals(setOf("PreToolUse"), inherited.single { it.name == "gate" }.hooks.keys)
+        assertEquals("Stop 在分身里同样改写成 SubagentStop", setOf("SubagentStop"), inherited.single { it.name == "stopper" }.hooks.keys)
+        assertLogIsTruth(fork)
+        assertLogIsTruth(rt)
+    }
+
     // ---- M4：后台 hook 启动失败不打断回合 ----
 
     @Test

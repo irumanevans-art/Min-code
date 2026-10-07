@@ -171,8 +171,9 @@ internal class AsyncHookRunner(
             // 轮询与读取的意外不许把协程炸成未捕获异常：记一条说明照常收尾
             finishWithProblem(event, handler, startedAt, "后台 hook 收尾失败：${e.javaClass.simpleName}")
         } finally {
-            running.remove(id)
+            // 先清理、后出表：反过来的话，正在清理的协程已不在 running 里，cancelAll 返回时它的 rm 可能还没跑
             withContext(NonCancellable) { cleanup(dir, handle) }
+            running.remove(id)
         }
     }
 
@@ -312,11 +313,14 @@ internal class AsyncHookRunner(
 
     /**
      * 会话卸下前调用：join 而不是只 cancel——返回时后台进程已杀完、暂存目录已删（每个协程的 finally
-     * 是 NonCancellable 的 [cleanup]）。拿锁做快照：与正在进行的 launch 互斥，不会漏掉刚起的任务
+     * 是 NonCancellable 的 [cleanup]）。拿锁做快照：与正在进行的 launch 互斥，不会漏掉刚起的任务。
+     * 各任务**并行**收尾：Windows 上一次 `rm` 几百毫秒，十个后台 hook 串行 join 会让关会话多等几秒
      */
-    suspend fun cancelAll() {
+    suspend fun cancelAll() = kotlinx.coroutines.coroutineScope {
         val all = launchLock.withLock { running.values.toList() }
-        all.forEach { catchingNonCancellation { it.job.cancelAndJoin() } }
+        all.forEach { task ->
+            launch { catchingNonCancellation { task.job.cancelAndJoin() } }
+        }
     }
 
     /**

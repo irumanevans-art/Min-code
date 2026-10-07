@@ -696,9 +696,10 @@ class SessionHub(
         val background = request.background || definition?.alwaysBackground == true
 
         // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
-        // 不进父会话（inheritedRules 复制的是 settings 快照），也不会随继承传给孙会话。Stop 改写成
-        // SubagentStop（CC：子会话里触发的是它自己的完成事件）。项目层定义（project / local）要过工作区信任
-        // ——与 settings 同一条规则；Min 里 `-p` 不自动信任，CC 的「-p 不算接受信任」天然成立
+        // 不进父会话（inheritedRules 复制的是 settings 快照）。子会话再派生时经 inheritedComponentHooks
+        // 快照式传给孙会话（M8：登记时刻的一份拷贝，Stop 已在登记时改写成 SubagentStop）。项目层定义
+        // （project / local）要过工作区信任——与 settings 同一条规则；Min 里 `-p` 不自动信任，
+        // CC 的「-p 不算接受信任」天然成立
         definition?.hooks?.let { h ->
             val layer = definition.hooksLayer ?: "user"
             val trusted = !(layer == "project" || layer == "local") || deps.trustProjectHooks(ps.created.cwd)
