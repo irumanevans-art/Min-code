@@ -143,8 +143,8 @@ class HeadlessCompatTest {
             if (have != want.jsonPrimitive.boolean) diffs += "期望 forkSession=${want.jsonPrimitive.boolean}，实际 $have"
         }
         expected["sessionName"]?.let { want ->
-            // CliArgs 没有会话名字段：CC 的 --name（cc-cli-reference.md :107）在 Min 是静默吞掉
-            diffs += "CC 的 --name 给会话设显示名「${want.jsonPrimitive.content}」（cc-cli-reference.md :107），Min 不认这个参数（静默吞掉、会话无名字）"
+            val have = parsed?.name
+            if (have != want.jsonPrimitive.content) diffs += "期望会话名「${want.jsonPrimitive.content}」（cc-cli-reference.md :107），实际 $have"
         }
         expected["exit"]?.let { want ->
             // 原文没写参数错误的退出码；Main.kt 把 UsageException 映射成 exitProcess(2)，这里按 Min 现状对拍
