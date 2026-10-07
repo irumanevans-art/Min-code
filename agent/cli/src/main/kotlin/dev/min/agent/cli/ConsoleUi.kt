@@ -90,6 +90,25 @@ internal class ConsoleUi(
             state.turn?.pendingQuestions.orEmpty().forEach { asked ->
                 if (questionsSeen.add(asked.questionId.value)) answerQuestions(asked)
             }
+            // 子 agent 的审批与提问（整棵树里根是本会话的）：同一套 --approve 与提问口径答掉。
+            // 以前只看根会话自己的回合，-p 下子 agent 要审批时没人答，整次运行挂到超时（评测集 v1 第 32 题）
+            pending.filter { it.root == runtime.sessionId && it.session != runtime.sessionId }.forEach { item ->
+                val target = hub?.get(item.session) ?: return@forEach
+                when (val what = item.what) {
+                    is dev.min.agent.kernel.HubPending.What.Approval -> if (answered.add(what.approvalId.value)) {
+                        out.println("\n▸ [${item.agentType ?: "子 agent"}] ${what.tool} ${summarize(what.ask.summary)}")
+                        if (approve == ApprovalAnswer.Ask) {
+                            target.notifyHooks("permission_prompt", "Claude needs your permission", "Permission needed")
+                        }
+                        target.answerApproval(what.approvalId, decide(what.tool, what.ask.summary))
+                    }
+                    is dev.min.agent.kernel.HubPending.What.Question -> if (what.mcpUrl == null) {
+                        target.state.value.turn?.pendingQuestions.orEmpty()
+                            .filter { it.questionId == what.questionId && it.server == null }
+                            .forEach { asked -> if (questionsSeen.add(asked.questionId.value)) answerQuestions(asked, target) }
+                    }
+                }
+            }
             val targets = (listOf(runtime) + pending.filter { it.root == runtime.sessionId }.mapNotNull { hub?.get(it.session) }).distinctBy { it.sessionId }
             for (target in targets) {
             target.state.value.pendingMcpQuestions.forEach { asked ->

@@ -26,6 +26,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -441,6 +443,42 @@ class HeadlessCompatTest {
     private suspend fun eventCount(home: Path, sessionId: String): Int =
         FileSessionStore(home.resolve("sessions"), { System.currentTimeMillis() })
             .open(SessionId(sessionId))!!.read().toList().size
+
+    /**
+     * Min 自己的回归（不是 CC 样本）：-p 默认模式下子 agent 要审批时，按 --approve（默认 no）答掉，整次运行照常结束。
+     * 以前 runHeadless 的 UI 只答根会话的审批，子会话的 approval_requested 没人答，运行挂到超时（评测集 v1 第 32 题实测）
+     */
+    @Test
+    fun `a subagent approval in print mode is answered instead of hanging the run`() = runBlocking {
+        val work = freshDir("sub-approval-work")
+        val target = work.resolve("child.txt")
+        // 工具收的是 guest 路径：Windows 上 `C:\x` 写成 `/c/x`（与 DesktopPaths 一致），别的系统原样
+        val guestTarget = target.toString().let { if (it.length > 2 && it[1] == ':') "/" + it[0].lowercaseChar() + it.substring(2).replace('\\', '/') else it }
+        ModelServer { last ->
+            when {
+                last.contains("CC_PARENT_DELEGATE") -> toolResponse(
+                    "a1", "Agent",
+                    buildJsonObject {
+                        put("description", "写个文件"); put("prompt", "CC_CHILD_WRITE")
+                        put("subagent_type", "general-purpose"); put("run_in_background", false)
+                    },
+                )
+                last.contains("CC_CHILD_WRITE") -> toolResponse(
+                    "w1", "Write",
+                    buildJsonObject { put("file_path", guestTarget); put("content", "x") },
+                )
+                last.contains("CC_CHILD_DONE") -> textResponse("CC_PARENT_DONE")
+                else -> textResponse("CC_CHILD_DONE")
+            }
+        }.use { server ->
+            val argv = baselineArgv(server, work).map { if (it == "bypassPermissions") "default" else it }.toTypedArray() +
+                arrayOf("-p", "CC_PARENT_DELEGATE")
+            val out = headlessRun(freshDir("sub-approval-home"), work, argv, server)
+            assertEquals("运行照常结束，没有挂到超时", 0, out.exit)
+            assertTrue(out.stdout, out.stdout.contains("CC_PARENT_DONE"))
+            assertFalse("--approve 默认 no：子 agent 的写被拒，文件不该出现", Files.exists(target))
+        }
+    }
 
     /** 按样本号给剧本：路由键是最后一次发给模型的文本（结构化输出的重试提醒也是 user 消息，取尾段） */
     private fun routeFor(name: String): (String) -> String? = when {
