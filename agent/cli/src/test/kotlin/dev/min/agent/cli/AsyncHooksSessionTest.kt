@@ -54,6 +54,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.ZoneOffset
@@ -157,11 +158,33 @@ class AsyncHooksSessionTest {
         state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
     }
 
-    /** 等后台 hook 完成落盘（HooksRan.background 计数到 n） */
+    /** 诊断用：文件前 80 字节的文本预览；读不了给 ? */
+    private fun previewOf(file: File): String = try {
+        val bytes = java.nio.file.Files.readAllBytes(file.toPath())
+        String(bytes, 0, minOf(80, bytes.size), Charsets.UTF_8)
+    } catch (_: Exception) {
+        "?"
+    }
+
+    /** 等后台 hook 完成落盘（HooksRan.background 计数到 n）。超时前先把现场打全再抛，免得偶发失败只剩一个数字 */
     private suspend fun awaitBackground(store: FileSessionStore, rt: SessionRuntime, n: Int) {
+        val started = System.currentTimeMillis()
         while (true) {
-            val count = store.events(rt).count { (it as? HooksRan)?.background == true }
+            val events = store.events(rt)
+            val count = events.count { (it as? HooksRan)?.background == true }
             if (count >= n) return
+            if (System.currentTimeMillis() - started > 45_000) {
+                val staging = StringBuilder()
+                val hookRoot = root.resolve("scratch/root/.min/hooks").toFile()
+                if (hookRoot.isDirectory) hookRoot.listFiles()?.forEach { dir ->
+                    val entries = dir.list().orEmpty().joinToString(", ") { f -> "$f(${previewOf(File(dir, f))})" }
+                    staging.append("\n  ${dir.name}: $entries")
+                }
+                throw AssertionError(
+                    "等了 45 秒只有 $count/$n 条后台 HooksRan。暂存目录（路径、pid、code、输出）：$staging\n" +
+                        "事件日志尾部：\n" + events.takeLast(12).joinToString("\n") { "  $it" },
+                )
+            }
             delay(50)
         }
     }
