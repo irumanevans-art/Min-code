@@ -308,7 +308,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val proseHardDeny = rt.state.value.autoReviewSettings.config.hardDeny.any {
             PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
         }
-        val verdict = if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
+        val verdict = if (PolicyEngine.askRuleHit(ask, policyContext()) != null && policy !is Verdict.Deny) Verdict.Ask
+        else if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
             val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
             // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
             if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
@@ -375,7 +376,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
                 // 审查已决定转人（含失败）；hook 的自动允许不能把它重新变成无人执行。
                 if (!allowDecisions) return PermissionAnswer.None
                 val context = policyContext()
-                if (ready.tool.traits.alwaysAsk || PolicyEngine.floorReason(askFor(ready), context) != null) {
+                if (ready.tool.traits.alwaysAsk || PolicyEngine.askRuleHit(askFor(ready), context) != null || PolicyEngine.floorReason(askFor(ready), context) != null) {
                     rt.commit(
                         listOf(Note(NoteLevel.Info, "PermissionRequest hook 允许了 ${ready.call.name}，但它踩着必须由人批准的底线，仍要问人。")),
                         Durability.Batched,
