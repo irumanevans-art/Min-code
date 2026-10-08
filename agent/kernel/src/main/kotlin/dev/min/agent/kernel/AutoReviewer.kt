@@ -68,11 +68,20 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
         // 工具输出不参与分类：旧日志中的凭证读取也不能被转发到另一家供应商。
         val credentialCalls = state.history.filterIsInstance<HistoryEntry.Assistant>().flatMap { it.toolCalls }.filter { sensitive(it, context) }
         val tainted = credentialCalls.any { state.toolResults[it.callId] != null }
-        val recent = state.history.takeLast(12).map { entry ->
+        val recent = state.history.takeLast(12).mapNotNull { entry ->
             when (entry) {
-                is HistoryEntry.User -> "用户：" + if (tainted) REDACTED else entry.parts.filterIsInstance<TextPart>().joinToString("") { it.text }.take(2_000)
-                is HistoryEntry.Assistant -> entry.toolCalls.joinToString("\n") { old ->
-                    "工具：${old.name} " + if (tainted || sensitive(old, context)) REDACTED else old.input.toString().take(2_000)
+                is HistoryEntry.User -> if (entry.origin != InputOrigin.User) null else buildJsonObject {
+                    put("origin", "user")
+                    // MCP 附件从标记块开始均属外部数据；正文与附件不能共用用户身份。
+                    val text = entry.parts.filterIsInstance<TextPart>().takeWhile { !it.text.startsWith("[MCP 附件 @") }.joinToString("") { it.text }
+                    put("text", if (tainted) REDACTED else text.take(2_000))
+                }
+                is HistoryEntry.Assistant -> buildJsonObject {
+                    put("origin", "assistant")
+                    put("tools", JsonArray(entry.toolCalls.map { old -> buildJsonObject {
+                        put("name", old.name)
+                        put("input", if (tainted || sensitive(old, context)) REDACTED else old.input.toString().take(2_000))
+                    } }))
                 }
             }
         }
@@ -84,8 +93,11 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             put("allow", JsonArray(config.allow.map(::JsonPrimitive)))
         }
         return ModelRequest(profile, listOf(SYSTEM, "可信用户与托管配置：$rules"),
-            listOf(ModelMessage(Role.User, listOf(TextPart("cwd=${context.cwd}\n${recent.joinToString("\n")}\n待审查工具：${call.name}\n入参：$input")))),
-            emptyList(), maxOutputTokens = minOf(profile.maxOutputTokens, 512))
+            listOf(ModelMessage(Role.User, listOf(TextPart(buildJsonObject {
+                put("cwd", context.cwd.value); put("conversation", JsonArray(recent))
+                put("pending_tool", call.name); put("input", input)
+            }.toString())))),
+            emptyList(), maxOutputTokens = minOf(profile.maxOutputTokens, 4096))
     }
 
     private fun sensitive(call: ToolCallPart, context: PolicyContext): Boolean {
