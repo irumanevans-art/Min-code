@@ -10,8 +10,9 @@ class DesktopWebTest {
 
     @Test fun `web tools append and search is registered only when configured`() {
         val original = listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "Skill")
-        assertEquals(original + listOf("WebFetch", "EnterWorktree", "ExitWorktree"), desktopTools().map { it.name })
-        assertEquals(original + listOf("WebFetch", "WebSearch", "EnterWorktree", "ExitWorktree"), desktopTools(searchConfigured = true).map { it.name })
+        val m5 = listOf("TeamCreate", "TeamTask", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
+        assertEquals(original + listOf("WebFetch", "EnterWorktree", "ExitWorktree") + m5, desktopTools().map { it.name })
+        assertEquals(original + listOf("WebFetch", "WebSearch", "EnterWorktree", "ExitWorktree") + m5, desktopTools(searchConfigured = true).map { it.name })
     }
 
     @Test fun `search configuration uses environment keys and missing config omits backend`() {

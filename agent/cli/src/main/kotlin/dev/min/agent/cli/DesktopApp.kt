@@ -56,6 +56,13 @@ import dev.min.agent.tools.TaskUpdateTool
 import dev.min.agent.tools.WriteTool
 import dev.min.agent.tools.WebFetchTool
 import dev.min.agent.tools.WebSearchTool
+import dev.min.agent.tools.CronCreateTool
+import dev.min.agent.tools.CronDeleteTool
+import dev.min.agent.tools.CronListTool
+import dev.min.agent.tools.ScheduleWakeupTool
+import dev.min.agent.tools.TeamCreateTool
+import dev.min.agent.tools.TeamDisbandTool
+import dev.min.agent.tools.TeamTaskTool
 import dev.min.agent.host.CachedWebPort
 import dev.min.agent.host.CasWorkspaceSnapshots
 import dev.min.agent.spi.SnapshotBudget
@@ -89,7 +96,9 @@ internal fun desktopTools(customAgents: List<AgentType> = emptyList(), searchCon
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
     SkillTool,
     WebFetchTool,
-) + (if (searchConfigured) listOf(WebSearchTool) else emptyList()) + listOf(dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool)
+) + (if (searchConfigured) listOf(WebSearchTool) else emptyList()) + listOf(dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool) +
+    // M5：agent 团队与定时任务（只往末尾追加）
+    listOf(TeamCreateTool, TeamTaskTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 
@@ -148,7 +157,12 @@ internal class DesktopApp(
         val catalog = AgentCatalog.of(config.agents)
         val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null)
         toolNamesCache = tools.map { it.name }
-        SessionHub(store, deps(tools), scope, HUB_LIMITS, catalog.definitions).also { hubInstance = it }
+        val limits = HUB_LIMITS.copy(teamMaxConcurrent = teamMaxConcurrentFrom(config.settings.merged.raw("teamMaxConcurrent"), System.err::println))
+        SessionHub(store, deps(tools), scope, limits, catalog.definitions).also {
+            hubInstance = it
+            // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器
+            if (args.prompt == null) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
+        }
     }
 
     /** stream-json 的 init 行用：`供应商/模型 id` */
