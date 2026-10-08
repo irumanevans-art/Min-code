@@ -99,6 +99,9 @@ data class SessionState(
     val rules: List<RuleEntry> = emptyList(),
     val additionalDirectories: List<GuestPath> = emptyList(),
     val autoReviewSettings: dev.min.agent.spi.AutoReviewSettingsLoaded = dev.min.agent.spi.AutoReviewSettingsLoaded(),
+    val autoReviewDenials: Int = 0,
+    val autoReviewConsecutiveDenials: Int = 0,
+    val autoReviewTripped: Boolean = false,
     val modelCosts: Map<String, Double> = emptyMap(),
     val unpricedModelCalls: Int = 0,
     /** 本会话里人选「总是允许」攒下的规则，按答复顺序；来源记为 session */
