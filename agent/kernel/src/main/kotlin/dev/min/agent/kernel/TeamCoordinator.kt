@@ -192,7 +192,7 @@ internal class TeamCoordinator(
         joined.forEach { requestStart(it) }
         return success(
             "团队 $teamId 已建立。\n" + statusText(leader.state.value.team!!) +
-                "\n成员完成后报告会交给你（负责人）；在那之前不要假设它们的结果。可以用 TeamTask 管理任务清单，用 SendMessage 给成员发消息。",
+                "\n成员完成后报告会交给你（负责人）；在那之前不要假设它们的结果。团队共享的任务清单用 TaskCreate / TaskUpdate 等管理，用 SendMessage 给成员发消息。",
         )
     }
 
