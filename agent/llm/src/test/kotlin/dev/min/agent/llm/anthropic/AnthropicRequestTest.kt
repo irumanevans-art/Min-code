@@ -206,6 +206,32 @@ class AnthropicRequestTest {
     }
 
     @Test
+    fun `user words and reminders after tool results are independent text blocks`() {
+        val messages = listOf(
+            userText("问"),
+            ModelMessage(Role.Assistant, listOf(ToolCallPart(CallId("c1"), "Ask", JsonObject(emptyMap())))),
+            ModelMessage(Role.User, listOf(
+                ToolResultPart(CallId("c1"), listOf(TextPart("用户已回答。"))),
+                TextPart("用户回答了你的问题：Room"),
+                TextPart("<system-reminder>\n提示\n</system-reminder>"),
+            )),
+        )
+        assertJson(
+            """
+            {"model":"claude-sonnet-5-5","max_tokens":8000,"stream":true,
+             "messages":[
+              {"role":"user","content":[{"type":"text","text":"问"}]},
+              {"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"Ask","input":{}}]},
+              {"role":"user","content":[
+                {"type":"tool_result","tool_use_id":"c1","content":[{"type":"text","text":"用户已回答。"}]},
+                {"type":"text","text":"用户回答了你的问题：Room"},
+                {"type":"text","text":"<system-reminder>\n提示\n</system-reminder>"}]}]}
+            """,
+            sentBody(request(messages = messages), provider(noCache)),
+        )
+    }
+
+    @Test
     fun `assistant messages that project to nothing are dropped and neighbours merged`() {
         val messages = listOf(
             userText("一"),

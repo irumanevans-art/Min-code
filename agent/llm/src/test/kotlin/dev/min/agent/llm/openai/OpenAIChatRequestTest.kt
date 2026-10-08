@@ -226,6 +226,19 @@ class OpenAIChatRequestTest {
     }
 
     @Test
+    fun `text blocks after tool results stay apart with a blank line between them`() {
+        // 内核的一条工具结果消息：tool_result、用户的话、hook 提醒各自是独立块；字符串形态的 content 不能把它们粘在一起
+        val turns = listOf(ModelMessage(Role.User, listOf(
+            ToolResultPart(CallId("a"), listOf(TextPart("用户已回答。"))),
+            TextPart("用户回答了你的问题：\n- 用哪个库？ → Room"),
+            TextPart("<system-reminder>\n构建提示\n</system-reminder>"),
+        )))
+        assertEquals(json("""[{"role":"tool","tool_call_id":"a","content":"用户已回答。"},
+            {"role":"user","content":"用户回答了你的问题：\n- 用哪个库？ → Room\n\n<system-reminder>\n构建提示\n</system-reminder>"}]"""),
+            messages(sentBody(request(messages = turns))))
+    }
+
+    @Test
     fun `tool images may be inline or replaced by a counted notice`() {
         val turns = listOf(ModelMessage(Role.User, listOf(ToolResultPart(CallId("a"), listOf(TextPart("前"), image, TextPart("后"), image)))))
         assertEquals(json("""[{"role":"tool","tool_call_id":"a","content":[{"type":"text","text":"前"},{"type":"image_url","image_url":{"url":"data:image/png;base64,QUJD"}},

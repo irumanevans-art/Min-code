@@ -21,7 +21,7 @@
 | NotebookEdit | `notebook_path`（绝对，.ipynb）、`cell_id`、`new_source`、`cell_type`、`edit_mode`（replace 默认 / insert / delete） | 先读后写（同 Edit 的 lastSeen 机制）；按 id 定位单元，找不到时列出现有 id；只替换 / 插入 / 删除目标单元那一段文本，其余字节原样保留（缩进、键顺序、别的单元的输出）；replace code 单元清空 outputs 与 execution_count；insert 在 nbformat ≥ 4.5 时生成 8 位十六进制 id。回显改动后的那个单元 |
 | Glob | `pattern`、`path`（可选） | 绝对路径逐行，修改时间从新到旧，最多 100 条，超出注明；无结果一句「没有匹配的文件」 |
 | Grep | `pattern`、`path`、`glob`、`output_mode`、`-i`、`-n`、`-C`、`multiline`、`head_limit`（默认 250） | files_with_matches：路径列表；count：`路径:命中数`；content：`路径:行号:内容`，上下文行用 `-`，不相邻的组之间 `--`。超 head_limit 注明；命中行超 500 字符截断；无命中「没有匹配」 |
-| AskUserQuestion | `questions`：1–4 题，每题 `question`、`header`、2–4 个 `options`（`label` + `description`）、`multiSelect` | 「用户回答了你的问题：」+ 每题一行「问题 → 选择」，用户自填的「其他」标明出处；拒答与 dontAsk 模式各一句说明（不是错误）。不走审批，答复经持久事件送达 |
+| AskUserQuestion | `questions`：1–4 题，每题 `question`、`header`、2–4 个 `options`（`label` + `description`）、`multiSelect` | 工具结果只有一句「用户已回答」；答案（「用户回答了你的问题：」+ 每题一行「问题 → 选择」，自填的「其他」标明出处）放在 `ToolResult.userText`，模型视图作为紧随 tool_result 的独立用户文本块送出；拒答与 dontAsk 模式各一句说明（不是错误）。不走审批，答复经持久事件送达 |
 | EnterPlanMode | 无 | 一句「已进入计划模式：只能读与提问……用 ExitPlanMode 提交计划」，结果声明切到 plan（内核落盘）；已在计划模式时只提醒、不再切换 |
 | ExitPlanMode | `plan`（Markdown） | 总是要人批准（含 bypass），审批卡片摘要即计划正文。获批：「计划已获批准，已退出计划模式（回到 X 模式）」，结果声明回到进入前的模式（没有记录则 default）；不在计划模式时获批不动模式。被拒：内核给出用户的说明，仍在计划模式 |
 | Agent | `description`、`prompt` 必填；`subagent_type`（默认 general-purpose；Explore / Plan 只读；`fork` = 分身）、`model`、`run_in_background`（默认 true）、`name` | 后台：「已在后台启动……完成时你会收到报告，在那之前不要假设它的结果」；前台：`<subagent-report …>` 报告全文（结果带 ReportDelivered，内核据此不在恢复时重复补发）；被拒（类型不存在、超深度 / 数量上限、分身再委派）是写给模型的错误 |
@@ -66,6 +66,6 @@
 - Glob：向端口最多要 1000 条再排序，匹配更多时排序不完整（会注明）；模式语义（是否支持 `**`、大小写）完全由宿主实现决定。
 - Grep：正则在 parse 阶段用 Java 正则预检，ripgrep（Rust regex）语法与之有差异（如 Java 独有的回溯引用与 Rust 独有的部分 Unicode 类），预检通过不保证宿主一定接受，反之亦然；端口只有逐条命中的形状，files / count 模式最多聚合 20000 条命中；文件列表按端口给的顺序，不按修改时间排；`-C` 只在 content 模式生效。
 - AskUserQuestion：header 超 12 个字符不拒绝（界面自己截）、缺省时用问题开头顶上；不支持 Claude Code 的选项预览（preview）与自由回复（response）；等待没有超时，用户不在场就一直挂着，直到作答、拒答或中断。
-- 计划模式：Bash 在现有权限引擎里不是只读工具，计划模式下整条拒绝（Claude Code 允许只读命令），要等命令分析落地；被拒时给模型的是内核通用的「用户拒绝了这次调用」+ 用户说明，没有计划专用的措辞。
+- 计划模式：Bash 在现有权限引擎里不是只读工具，计划模式下整条拒绝（Claude Code 允许只读命令），要等命令分析落地；被拒时给模型的是内核通用的「用户拒绝了这次调用」（工具结果），用户写的说明作为紧随其后的独立用户文本块，没有计划专用的措辞。
 - Bash：M1 每条命令都从会话目录起跑，`cd` / `export` 不跨调用保留；输出是 stdout 与 stderr 合并，分不开；命令分析（tree-sitter）未做，权限只能拿原始命令串判断；后台进程的取消与回收由内核凭句柄做。
 - Skill：只读、可并发，**默认不弹审批**（Claude Code 默认要，因为 `allowed-tools` 能预批准工具；第一期没做那个，正文只是文字，它让模型做的事仍各自过权限）。用户的 `Skill(名字)` / `Skill(名字 *)` 允许、询问、拒绝规则照常生效（权限声明带 skill 名；policy 里尾部 ` *` 的 specifier 规则也匹配不带参数的裸名字）。说明约 190 字符 + schema 118 字符，粗估 250–350 token，属稳定前缀；加在工具表末尾，旧会话前缀不受影响。

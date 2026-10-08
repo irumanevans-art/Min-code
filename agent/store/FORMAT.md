@@ -158,3 +158,10 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - `cwd_watch_paths_changed`：`paths` 替换 CwdChanged hooks 返回的动态 watchPaths（默认空）；冻结绝对路径，重开沿用。FileChanged 文件监视执行器仍待后续里程碑。
 
 - v1 增量（2026-10-08）：新增 `auto_review_settings_loaded`（用户/托管四组规则与独立审查模型、可选能力声明）、`auto_reviewed`（turnId、callId、model、decision、reason、usage）和 `model_charged`（model、usage、可选 amount/currency，缺价明确未知）。审查用量计入回合；花费按请求模型冻结，按币种累计，不以换会话模型重算。含这些事件的日志旧版本打不开。
+
+## 用户文字不进工具结果（2026-10-08）
+
+- `tool_outcome.result` 新增可选字段 `userText`：用户亲口说的话（AskUserQuestion 的答案与自填、拒绝审批时写的说明），空时不落盘。
+  模型视图把它放在同一条用户消息里、紧随全部 `tool_result` 之后，作为独立的文本块（排在 hook / 记忆的 system-reminder 之前）；`content` 只留「用户已回答 / 用户拒绝了」这一句事实。
+  原因：官方对 Haiku 5.5 的说明——放在 tool_result 里的文字会被当作不可信内容忽略，用户中途说的话必须是独立的用户文本块。
+- 旧日志照常读，**不改写历史**：旧日志里用户的话还在 `content` 里，没有 `userText`，请求前缀与之前逐字相同；新日志的旧版本读法会丢掉这个字段（用户的话不再出现在请求里），含 `userText` 的日志旧版本能打开但模型看不到用户的回答。

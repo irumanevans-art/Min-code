@@ -180,7 +180,12 @@ class RecoveryTest {
 
         assertTrue(textFor(afterPlanned, push).startsWith("这次调用没有执行"))
         assertTrue(textFor(beforePlanning, bash).startsWith("这次调用没有执行"))
-        assertEquals("用户拒绝了这次调用。用户的说明：别 push", textFor(afterDeny, push))
+        assertEquals("用户拒绝了这次调用。用户留了话，见下面用户的话；不要原样重试。", textFor(afterDeny, push))
+        // 说明本身是用户的话：恢复补的结果里也在 userText，不进 tool_result
+        assertEquals(
+            "用户拒绝了你刚才的 Bash 调用，并留言：别 push",
+            planRecovery(fold(header, records(script.take(afterDeny)))).filterIsInstance<ToolOutcome>().single { it.callId == push }.result.userText,
+        )
         textFor(bashRunning, bash).let {
             assertTrue(it.contains("结果未知") && it.contains("不要盲目重试"))
             assertTrue("应指出输出日志的位置", it.contains("/tmp/min/h1.log"))
