@@ -1063,12 +1063,22 @@ class SessionHub(
         if (runtime.state.value.origin?.parent != from.sessionId) {
             return error("这个子 agent 属于别的会话（分支不接管子 agent），不能从这里给它发消息；要往下派活请重新委派。")
         }
+        // 曾经的团队成员（团队已解散也一样）开跑要过团队的并发名额：它们解散后仍是这个会话的子会话，若直接开回合，
+        // 一口气发三句就是三个成员同时在跑，绕过 teamMaxConcurrent。名额里排队的收件箱里已有这句话，轮到时先看到
+        val formerMember = from.state.value.team?.members?.any { it.session == child.child } == true
         runtime.receive(
             ClientMsgId("message:${from.sessionId.value}:${callId.value}"), listOf(TextPart(text)), Delivery.Steer,
-            InputOrigin.Parent(from.sessionId), TurnTrigger.User,
+            InputOrigin.Parent(from.sessionId), if (formerMember) null else TurnTrigger.User,
         )
+        if (formerMember) teams.requestStart(child.child)
         val busy = runtime.state.value.turn != null
-        return ok(if (busy) "已送达，它会在当前这批工具结束后看到。" else "已送达，它开始处理了；完成时你会收到报告。")
+        return ok(
+            when {
+                busy -> "已送达，它会在当前这批工具结束后看到。"
+                formerMember && runtime.state.value.turn == null -> "已送达；它在排队等名额（团队的并发上限仍然生效），轮到时先看到这句话。"
+                else -> "已送达，它开始处理了；完成时你会收到报告。"
+            },
+        )
     }
 
     private suspend fun stopChild(from: SessionRuntime, target: String): ToolResult {

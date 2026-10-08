@@ -764,6 +764,29 @@ class TeamSessionTest {
     }
 
     @Test
+    fun `after a disband, messaging old members still goes through the concurrency slots`() = run {
+        val h = hub(leaderBuilds("a", "b", "c") { _, _ -> hang }, HubLimits(teamMaxConcurrent = 1))
+        val (leader, members) = readyTeam(h, "a", "b", "c")
+        members.getValue("a").state.first { it.turn != null }
+        assertFalse(portOf(h, leader).team(TeamOp.Disband(TeamDisbandReason.Completed, null)).isError)
+        members.values.forEach { it.awaitIdle() }
+        assertEquals(0, h.teams.runningCount())
+
+        // 解散后负责人给三个老成员各发一句：没有团队了，但名额还在——同一时刻只能有 1 个在跑
+        for (name in listOf("a", "b", "c")) assertFalse(portOf(h, leader).message(name, "再看一眼").isError)
+        members.getValue("a").state.first { it.turn != null }
+        delay(400)
+        val running = members.values.count { it.state.value.turn != null }
+        assertEquals("teamMaxConcurrent=1：只有一个在跑，另外两个排队（收件箱里有这句话、没开回合）", 1, running)
+        assertEquals(1, h.teams.runningCount())
+        val queued = members.values.filter { it.state.value.turn == null }
+        assertEquals(2, queued.size)
+        // 收件箱里有两条：没来得及开跑的开场任务（解散时它们还在排队）和这句新话，都还没处理
+        assertTrue("排队成员的收件箱：${queued.map { it.state.value.inbox.size }}", queued.all { m -> m.state.value.inbox.size == 2 && m.state.value.inbox.last().parts.any { (it as? TextPart)?.text == "再看一眼" } })
+        assertLogIsTruth(leader)
+    }
+
+    @Test
     fun `only the leader can disband`() = run {
         val h = hub(leaderBuilds("a") { _, _ -> hang })
         val (leader, members) = readyPaused(h, "a")
