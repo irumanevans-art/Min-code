@@ -3,6 +3,7 @@ package dev.min.agent.kernel
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
 import dev.min.agent.ext.hooks.PermissionRequestInput
+import dev.min.agent.ext.hooks.PostToolBatchInput
 import dev.min.agent.ext.hooks.PostToolUseFailureInput
 import dev.min.agent.ext.hooks.PostToolUseInput
 import dev.min.agent.ext.hooks.PreToolUseInput
@@ -136,6 +137,38 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             }
         }
         attachMemory(calls)
+        postToolBatch(turnId, calls)
+    }
+
+    /**
+     * PostToolBatch（hooks.md :2142）：一批调用全部有了结果、下一次模型请求之前，整批只跑一次——放在 [attachMemory] 之后，
+     * 即使 hook 叫停，这一批该落的记忆也已经落了。additionalContext 挂在发起这批调用的助手消息的工具结果后面（与 PostToolUse
+     * 同一个挂靠点）；`decision: block` / exit 2 / `continue: false` 都是「下一次请求前停下 agentic loop」，
+     * 拦截理由留在对话里（原文：「it stays in the conversation, so Claude sees it when the conversation continues」）
+     */
+    private suspend fun postToolBatch(turnId: TurnId, calls: List<ToolCallPart>) {
+        if (calls.isEmpty() || !hooks.has(HookEvent.PostToolBatch, null)) return
+        val results = rt.state.value.toolResults
+        val toolCalls = calls.map { call ->
+            val text = results[call.callId]?.content.orEmpty().filterIsInstance<TextPart>().joinToString("") { it.text }
+            JsonObject(mapOf(
+                "tool_name" to JsonPrimitive(call.name), "tool_input" to call.input,
+                "tool_use_id" to JsonPrimitive(call.callId.value), "tool_response" to JsonPrimitive(text),
+            ))
+        }
+        val specific = HookJson.encodeToJsonElement(PostToolBatchInput.serializer(), PostToolBatchInput(toolCalls = toolCalls)).jsonObject
+        val outcome = hooks.run(HookEvent.PostToolBatch, null, specific, turnId) ?: return
+        val blocked = outcome.decision == HookOutcome.Decision.Block
+        val stopped = outcome.decision == HookOutcome.Decision.Stop
+        val anchor = rt.state.value.history.lastOrNull { e -> e is HistoryEntry.Assistant && e.toolCalls.any { it.callId == calls.first().callId } }
+            ?.messageId
+        if (anchor != null) {
+            val texts = listOfNotNull(outcome.reason.takeIf { blocked }?.let { "PostToolBatch hook 的反馈：$it" }) + outcome.contexts
+            if (texts.isNotEmpty()) {
+                rt.commit(texts.map { HookContextAdded(HookContextTarget.ToolResults(anchor), HookEvent.PostToolBatch.name, it) }, Durability.Sync)
+            }
+        }
+        if (blocked || stopped) throw HookStop(outcome.stopReason ?: outcome.reason)
     }
 
     /**
