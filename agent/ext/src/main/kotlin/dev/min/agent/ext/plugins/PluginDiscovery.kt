@@ -279,8 +279,7 @@ internal fun PluginParser.discoverHooks(
                 val inner = o.arr("hooks") ?: bug("$from 缺 hooks 数组")
                 inner.forEach { h ->
                     val ho = h as? JsonObject ?: bug("$from 的 handler 不是对象")
-                    if (ho.strOrNull("type") != "command") return@forEach
-                    out += PluginHookHandler(o.strOrNull("matcher"), ho.strOrNull("command"), ho.arr("args")?.map { it.jsonPrimitive.content } ?: emptyList(), ho)
+                    out += PluginHookHandler(o.strOrNull("matcher"), ho.strOrNull("command"), ho.arr("args")?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content } ?: emptyList(), ho)
                 }
             }
             return out

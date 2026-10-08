@@ -163,17 +163,25 @@ class SessionRuntime private constructor(
     }
 
     private var pluginsInstance: dev.min.agent.ext.plugins.PluginBundle? = null
+    private var pluginsAttempted = false
     internal suspend fun plugins(): dev.min.agent.ext.plugins.PluginBundle? {
         pluginsInstance?.let { return it }
+        if (pluginsAttempted) return null
         val home = deps.memoryHome ?: return null
         val cwd = state.value.created.cwd
         val settings = SettingsLoader.load(deps.host.fs, cwd, home)
-        return dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
+        return try { dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
             dirs = deps.pluginDirs, canonical = deps.canonicalPath,
             trust = { root -> deps.pluginTrust(root, cwd) },
             secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore),
             installedPath = deps.pluginInstalledPath, shellPath = deps.hookShellPath,
-        ).also { pluginsInstance = it }
+        ).also { pluginsInstance = it; pluginsAttempted = true }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) {
+            pluginsAttempted = true
+            commit(listOf(Note(NoteLevel.Warning, "插件装载失败，本会话按无插件继续")), Durability.Sync)
+            null
+        }
     }
 
     suspend fun readSkillBody(path: GuestPath): String? = plugins()?.readBody(path)

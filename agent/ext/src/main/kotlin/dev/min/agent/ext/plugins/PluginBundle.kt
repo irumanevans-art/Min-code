@@ -9,11 +9,11 @@ import kotlinx.serialization.json.*
 fun pluginHookExportNames(keys: List<String>): List<String> =
     listOf("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_PROJECT_DIR") + keys.map { "CLAUDE_PLUGIN_OPTION_${it.uppercase()}" }
 
-/** 插件只支持 command hook，不能借 frontmatter 把未支持类型绕进既有引擎。 */
+/** 类型和字段交给 HookSet 统一校验，不能在插件发现时静默丢失门禁。 */
 fun commandPluginHooks(events: JsonObject): JsonObject = JsonObject(events.mapNotNull { (event, value) ->
     val groups = (value as? JsonArray)?.mapNotNull { group ->
         val obj = group as? JsonObject ?: return@mapNotNull null
-        val handlers = (obj["hooks"] as? JsonArray)?.filter { (it as? JsonObject)?.get("type") == JsonPrimitive("command") }.orEmpty()
+        val handlers = (obj["hooks"] as? JsonArray).orEmpty()
         if (handlers.isEmpty()) null else JsonObject(obj + ("hooks" to JsonArray(handlers)))
     }.orEmpty()
     if (groups.isEmpty()) null else event to JsonArray(groups)
@@ -32,6 +32,14 @@ class PluginBundle(
     private val contexts: Map<String, Pair<PluginVars, PluginValues>>,
     private val trusted: Set<String>,
 ) {
+    fun resolveHook(handler: dev.min.agent.ext.hooks.HookHandler): dev.min.agent.ext.hooks.HookHandler {
+        val id = (handler.raw["minPluginId"] as? JsonPrimitive)?.content ?: return handler
+        if (id !in trusted) return handler
+        val (vars, values) = contexts.getValue(id)
+        // 真值只存在于执行器的参数与进程环境，冻结的 hooks 与正文仍保留占位符。
+        return handler.copy(args = handler.args?.map { resolvePluginMcp(it, vars, values) },
+            pluginEnv = handler.pluginEnv.mapValues { resolvePluginMcp(it.value, vars, values) })
+    }
     suspend fun readBody(path: GuestPath): String? {
         val plugin = batch.plugins.firstOrNull { path.value.startsWith(it.root.trimEnd('/') + "/") } ?: return SkillFiles.readBody(fs, path)
         val command = plugin.commands.firstOrNull { inlinePath(plugin, it) == path }
@@ -199,6 +207,7 @@ class PluginBundle(
                             val obj = group.jsonObject
                             val handlers = obj.getValue("hooks").jsonArray.mapNotNull handler@{ value ->
                                 val handler = value.jsonObject
+                                if ((handler["type"] as? JsonPrimitive)?.content in setOf("prompt", "agent", "mcp_tool")) notes += "$label 的 ${handler["type"]} hook 本版本未支持执行，声明已保留"
                                 val command = (handler["command"] as? JsonPrimitive)?.content
                                 if (command?.contains("\${user_config.") == true) {
                                     notes += "$label 的 shell hook 引用了 user_config，已跳过；请使用 exec args 或 OPTION 环境变量"
@@ -207,15 +216,22 @@ class PluginBundle(
                                 val out = handler.toMutableMap()
                                 command?.let { out["command"] = JsonPrimitive(vars.paths(it)) }
                                 (handler["args"] as? JsonArray)?.let { args ->
+                                    if (args.any { it !is JsonPrimitive || !it.isString }) {
+                                        notes += "$label 的 hook args 必须是字符串数组，跳过该 handler"
+                                        return@handler null
+                                    }
                                     out["args"] = JsonArray(args.map { JsonPrimitive(resolvePluginBody(it.jsonPrimitive.content, vars, values, sensitive)) })
                                 }
                                 out["minPluginEnv"] = env
+                                out["minPluginId"] = JsonPrimitive(plugin.ref.id)
                                 JsonObject(out)
                             }
                             if (handlers.isEmpty()) null else JsonObject(obj + ("hooks" to JsonArray(handlers)))
                         }
                         if (rendered.isEmpty()) null else event to JsonArray(rendered)
-                    }.toMap())
+                    }.toMap()).also {
+                        notes += dev.min.agent.ext.hooks.HookSet.parse(listOf(HookSource(ConfigSource.Plugin, it))).notes
+                    }
                 }
                 contexts[plugin.ref.id] = vars to values
                 plugin.skills.forEach { skill ->
