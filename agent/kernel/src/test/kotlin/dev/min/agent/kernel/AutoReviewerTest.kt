@@ -94,7 +94,7 @@ class AutoReviewerTest {
         val release = CompletableDeferred<Unit>()
         val reviewer = ModelClient { flow { entering.complete(Unit); release.await(); emit(ModelStreamEvent.Completed(
             ModelMessage(Role.Assistant, listOf(TextPart(decision("allow")))), Usage(), StopReason.EndTurn, false)) } }
-        val rt = session(reviewer)
+        val rt = session(reviewer, rules = listOf(RuleEntry(RuleKindData.Allow, "Bash(*)", "user")))
         rt.send(ClientMsgId("input"), listOf(TextPart("run it")))
         entering.await()
         rt.changeSettings(mode = PermissionMode.Plan)
@@ -145,6 +145,20 @@ class AutoReviewerTest {
         started(rt)
         assertTrue(events(rt).filterIsInstance<HooksRan>().any { it.event == "PermissionDenied" && it.handlers == 1 })
         assertTrue(ran.isEmpty())
+    }
+
+    @Test fun BUG_twenty_total_denials_trip_even_when_nonconsecutive() {
+        val records = mutableListOf<EventRecord>(EventRecord(1, 0, SessionCreated(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Auto)))
+        records += EventRecord(2, 0, TurnStarted(TurnId("t"), TurnTrigger.User))
+        fun add(decision: AutoReviewDecision) { records += EventRecord(records.size.toLong() + 1, 0, AutoReviewed(TurnId("t"), CallId("c"), small, decision, "reason", Usage())) }
+        repeat(19) { add(AutoReviewDecision.Deny); add(AutoReviewDecision.Allow) }
+        val header = LogHeader(LOG_FORMAT_VERSION, SessionId("totals"), 0)
+        assertFalse(fold(header, records).autoReviewTripped)
+        add(AutoReviewDecision.Deny)
+        val state = fold(header, records)
+        assertTrue(state.autoReviewTripped)
+        assertEquals(20, state.autoReviewDenials)
+        assertEquals(1, state.autoReviewConsecutiveDenials)
     }
 
     @Test fun `allow executes and records reviewer usage cost and replay`() = run {
@@ -211,6 +225,7 @@ class AutoReviewerTest {
         assertTrue(started(rt).phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
         assertTrue(ran.isEmpty())
         assertTrue(reviewer.requests.isEmpty())
+        assertNull(events(rt).filterIsInstance<AutoReviewed>().single().model)
     }
 
     @Test fun `hard deny precedes floor and allow without contacting reviewer`() = run {
@@ -228,6 +243,15 @@ class AutoReviewerTest {
         started(rt)
         assertTrue(ran.isEmpty())
         assertEquals(AutoReviewDecision.Deny, events(rt).filterIsInstance<AutoReviewed>().single().decision)
+    }
+
+    @Test fun BUG_single_word_hard_deny_prose_is_sent_to_reviewer() = run {
+        val reviewer = ScriptedModel(reply(TextPart(decision("deny", "[0]"))))
+        val rt = session(reviewer, config = AutoModeConfig(hardDeny = listOf("exfiltration")))
+        started(rt)
+        assertEquals(1, reviewer.requests.size)
+        assertTrue(reviewer.requests.single().system.toString().contains("exfiltration"))
+        assertTrue(ran.isEmpty())
     }
 
     @Test fun `prose hard deny reviews both calls instead of using parallel read shortcut`() = run {
