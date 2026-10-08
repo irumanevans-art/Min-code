@@ -93,6 +93,10 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is dev.min.agent.spi.AutoReviewSettingsLoaded -> copy(autoReviewSettings = e)
         is dev.min.agent.spi.AutoReviewed -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
             presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
+            autoReviewDenials = autoReviewDenials + if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) 1 else 0,
+            autoReviewConsecutiveDenials = if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) autoReviewConsecutiveDenials + 1 else 0,
+            autoReviewTripped = autoReviewTripped || e.decision == dev.min.agent.spi.AutoReviewDecision.Deny &&
+                (autoReviewConsecutiveDenials + 1 >= 3 || autoReviewDenials + 1 >= 20),
         )
         is dev.min.agent.spi.ModelCharged -> {
             val amount = e.amount

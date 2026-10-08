@@ -28,7 +28,8 @@ internal suspend fun runHeadless(
     stdout: PrintStream,
     stderr: PrintStream,
 ): Int {
-    runtime.state.value.ruleNotes.filter { "this workspace has not been trusted" in it }.forEach(stderr::println)
+    runtime.state.value.presentation.flatMap { (it.record.event as? dev.min.agent.spi.PermissionRulesLoaded)?.notes.orEmpty() }
+        .filter { "this workspace has not been trusted" in it }.forEach(stderr::println)
     if (runtime.state.value.settings.mode == dev.min.agent.protocol.PermissionMode.Auto && args.approve == ApprovalAnswer.Yes) {
         stderr.println("警示：-p --mode auto --approve yes，转人的调用会被自动批准。")
     }
