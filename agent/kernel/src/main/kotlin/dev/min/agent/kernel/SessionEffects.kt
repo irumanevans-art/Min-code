@@ -41,7 +41,7 @@ internal fun ToolResult.effectEvents(state: SessionState, nowMs: Long): List<Ses
             is SessionEffect.TaskDelete -> TaskDeleted(effect.taskId)
             is SessionEffect.CronCreate -> dev.min.agent.spi.CronScheduled(
                 working.nextCronId(), effect.prompt, effect.recurring, effect.maxBudgetUsd, nowMs,
-                cron = effect.cron, intervalMs = effect.intervalMs,
+                cron = effect.cron, intervalMs = effect.intervalMs, source = effect.source,
                 // 只有循环任务过期；一次性任务触发一次就结束
                 expiresAtMs = if (effect.recurring) nowMs + dev.min.agent.spi.CRON_RECURRING_TTL_MS else null,
             )

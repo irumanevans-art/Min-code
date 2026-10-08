@@ -124,6 +124,7 @@ data class CronTask(
     val cron: String? = null,
     val intervalMs: Long? = null,
     val expiresAtMs: Long? = null,
+    val source: String? = null,
     val fires: Int = 0,
     val lastFiredAtMs: Long? = null,
     val status: CronStatus = CronStatus.Active,

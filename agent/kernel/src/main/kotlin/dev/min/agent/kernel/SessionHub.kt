@@ -210,7 +210,7 @@ class SessionHub(
 
     /**
      * 接上宿主的定时器：之后每次回调都检查所有在线根会话有没有到点的定时任务。关掉返回的句柄就停。
-     * 不接定时器时定时任务不会自己触发（空闲时的「排着的任务」仍会在回合结束时触发）
+     * 不接定时器时，时间的流逝本身不会触发任何东西；但会话每次状态变化且空闲时也会顺带查一遍（回合结束时排着的任务就是这样触发的）
      */
     fun startScheduling(scheduler: dev.min.agent.spi.Scheduler): AutoCloseable =
         scheduler.start { crons.tick(deps.clock.nowMs()) }

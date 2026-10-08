@@ -186,3 +186,77 @@ object CronListTool : Tool<JsonObject> {
         emit(ToolProgress.Done(ToolResult(listOf(TextPart(text)))))
     }
 }
+
+/**
+ * ScheduleWakeup：自驱循环（`/loop` 不给间隔时）的“下一轮”。和 CronCreate 是**同一个机制的另一个入口**——
+ * 落成一条一次性的间隔任务（`source = wakeup`），所以同样只在会话开着且空闲时触发、同样有单次花费上限、同样随会话日志恢复。
+ * 同一时刻最多一个：再次安排会替掉还没触发的那个；`stop: true` 取消它（不再有下一轮）。间隔 60 秒到 1 小时（Claude Code 同）。
+ */
+object ScheduleWakeupTool : Tool<JsonObject> {
+    override val name = "ScheduleWakeup"
+    override val traits = CRON_TRAITS_WRITE
+
+    private const val MIN_DELAY_SECONDS = 60
+    private const val MAX_DELAY_SECONDS = 3600
+
+    override val inputSchema = subagentSchema(
+        emptyList(),
+        "delaySeconds" to subagentProperty("number", "多少秒后唤醒自己，$MIN_DELAY_SECONDS 到 $MAX_DELAY_SECONDS；stop 为 true 时不用写"),
+        "prompt" to subagentProperty("string", "唤醒时送进会话的提示词（通常是继续做这件事的指令）；stop 为 true 时不用写"),
+        "reason" to subagentProperty("string", "一句话说明为什么等这么久，给用户看"),
+        "stop" to subagentProperty("boolean", "true：取消已安排的唤醒，循环到此为止"),
+        "max_budget_usd" to subagentProperty("number", "这一轮的花费上限（美元），默认 $CRON_DEFAULT_BUDGET_USD"),
+    )
+
+    override fun description(profile: HarnessProfile) =
+        "自驱循环的下一轮：安排一个唤醒，$MIN_DELAY_SECONDS 秒到 $MAX_DELAY_SECONDS 秒后把 prompt 送回本会话（只触发一次；想继续循环就在那一轮里再调用它）。" +
+            "同一时刻最多一个，再次调用会替掉还没触发的。stop=true 取消。和 CronCreate 同一套规矩：只在会话开着且空闲时触发、App 被系统杀掉时不跑、每轮有花费上限。"
+
+    override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
+        raw["stop"]?.let {
+            val p = it as? JsonPrimitive
+            if (p == null || p.isString || p.booleanOrNull == null) throw InvalidSubagentInput("字段 `stop` 必须是布尔值 true 或 false。")
+        }
+        if ((raw["stop"] as? JsonPrimitive)?.booleanOrNull == true) return@validateSubagentInput
+        val delay = (raw["delaySeconds"] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull
+        if (delay == null || delay % 1.0 != 0.0 || delay < MIN_DELAY_SECONDS || delay > MAX_DELAY_SECONDS) {
+            throw InvalidSubagentInput("字段 `delaySeconds` 必须是 $MIN_DELAY_SECONDS 到 $MAX_DELAY_SECONDS 之间的整数秒。")
+        }
+        requireSubagentString(raw, "prompt")
+        if ("reason" in raw) requireSubagentString(raw, "reason")
+        raw["max_budget_usd"]?.let {
+            val p = it as? JsonPrimitive
+            val v = if (p == null || p.isString) null else p.doubleOrNull
+            if (v == null || !v.isFinite() || v <= 0) throw InvalidSubagentInput("字段 `max_budget_usd` 必须是大于 0 的数字（美元）。")
+        }
+    }
+
+    override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "安排唤醒")
+
+    override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+        emit(ToolProgress.Done(wake(input, ctx)))
+    }
+
+    private fun wake(input: JsonObject, ctx: ToolContext): ToolResult {
+        ctx.cronRefusal()?.let { return it }
+        val board = ctx.crons
+        val pending = board.active.filter { it.source == dev.min.agent.spi.CRON_SOURCE_WAKEUP }
+        val cancels = pending.map { SessionEffect.CronDelete(it.id) }
+        if ((input["stop"] as? JsonPrimitive)?.booleanOrNull == true) {
+            val text = if (pending.isEmpty()) "没有安排中的唤醒。" else "已取消安排中的唤醒（${pending.joinToString("、") { it.id }}），循环到此为止。"
+            return ToolResult(listOf(TextPart(text)), effects = cancels)
+        }
+        val delay = (input["delaySeconds"] as JsonPrimitive).doubleOrNull!!.toLong()
+        val budget = (input["max_budget_usd"] as? JsonPrimitive)?.doubleOrNull ?: CRON_DEFAULT_BUDGET_USD
+        val at = board.nowMs + delay * 1000
+        val replaced = if (pending.isEmpty()) "" else "（替掉了还没触发的 ${pending.joinToString("、") { it.id }}）"
+        val reason = input.subagentString("reason")?.let { "，原因：$it" } ?: ""
+        return ToolResult(
+            listOf(TextPart("已安排 $delay 秒后唤醒（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；每轮花费上限 ${usd(budget)}。只在会话开着且空闲时触发，App 被系统杀掉时不跑。")),
+            effects = cancels + SessionEffect.CronCreate(
+                input.subagentString("prompt")!!, recurring = false, maxBudgetUsd = budget,
+                intervalMs = delay * 1000, source = dev.min.agent.spi.CRON_SOURCE_WAKEUP,
+            ),
+        )
+    }
+}

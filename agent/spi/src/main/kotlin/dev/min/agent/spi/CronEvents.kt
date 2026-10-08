@@ -45,7 +45,12 @@ data class CronScheduled(
     val cron: String? = null,
     val intervalMs: Long? = null,
     val expiresAtMs: Long? = null,
+    /** 谁建的：null = CronCreate；[CRON_SOURCE_WAKEUP] = ScheduleWakeup（自驱循环的下一轮，同一时刻最多一个） */
+    val source: String? = null,
 ) : SessionEvent
+
+/** [CronScheduled.source] 的取值：ScheduleWakeup 安排的下一轮 */
+const val CRON_SOURCE_WAKEUP = "wakeup"
 
 /**
  * 到点触发了：与同一次提交里的 `input_received`（`origin = cron`，`clientMsgId` 即这里的 [clientMsgId]）成对出现。

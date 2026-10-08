@@ -46,6 +46,7 @@ import dev.min.agent.testkit.testDeps
 import dev.min.agent.tools.CronCreateTool
 import dev.min.agent.tools.CronDeleteTool
 import dev.min.agent.tools.CronListTool
+import dev.min.agent.tools.ScheduleWakeupTool
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -133,7 +134,7 @@ class CronSessionTest {
         }
     }
 
-    private val tools: List<Tool<*>> = listOf(CronCreateTool, CronDeleteTool, CronListTool, probe)
+    private val tools: List<Tool<*>> = listOf(CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, probe)
 
     private fun deps(model: ModelClient, profile: dev.min.agent.llm.ModelProfile = pricedProfile): KernelDeps {
         val base = testDeps(model, tools)
@@ -235,6 +236,46 @@ class CronSessionTest {
         val list = toolText.getValue(CallId("k3"))
         assertTrue(list, list.contains("c1｜循环｜每 30 分钟｜单次上限 \$0.10") && list.contains("c2｜一次性｜cron 0 9 * * 1-5｜单次上限 \$0.05") && list.contains("提示词：晨报"))
         assertEquals("已取消定时任务 c1（每 30 分钟）。", toolText.getValue(CallId("k4")))
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a self paced loop chains wakeups until it is stopped`() = run {
+        val model = RoutingModel { req ->
+            val last = req.last()
+            when {
+                last == "开始盯" -> reply(ToolCallPart(CallId("w1"), "ScheduleWakeup", args("delaySeconds" to 120, "prompt" to "继续盯构建", "reason" to "等 CI")), stop = StopReason.ToolUse)
+                last.startsWith("[定时任务") && last.contains("继续盯构建") ->
+                    reply(ToolCallPart(CallId("w2"), "ScheduleWakeup", args("delaySeconds" to 300, "prompt" to "继续盯构建")), stop = StopReason.ToolUse)
+                last == "别盯了" -> reply(ToolCallPart(CallId("w3"), "ScheduleWakeup", args("stop" to true)), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.root()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("开始盯")))
+        settle(rt)
+        val first = rt.state.value.crons.single()
+        assertEquals("wakeup", first.source)
+        assertFalse(first.recurring)
+        assertEquals(120_000L, first.intervalMs)
+
+        now.set(t0 + 121_000)
+        h.crons.tick(now.get())
+        rt.state.first { s -> s.crons.size == 2 }
+        settle(rt)
+        val chained = rt.state.value.crons
+        assertEquals(CronStatus.Fired, chained[0].status)
+        assertTrue("唤醒的那一轮里又安排了下一轮", chained[1].active && chained[1].intervalMs == 300_000L)
+
+        rt.send(ClientMsgId("u2"), listOf(TextPart("别盯了")))
+        settle(rt)
+        assertEquals(CronStatus.Cancelled, rt.state.value.crons[1].status)
+        now.set(t0 + 3_600_000)
+        h.crons.tick(now.get())
+        settle(rt)
+        assertEquals("停了就不再有下一轮", 2, rt.state.value.crons.size)
+        assertEquals(1, rt.state.value.crons[0].fires)
         assertLogIsTruth(rt)
     }
 

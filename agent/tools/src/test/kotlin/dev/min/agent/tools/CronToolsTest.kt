@@ -160,3 +160,64 @@ class CronToolsTest {
         assertEquals(JsonPrimitive("object"), CronListTool.inputSchema["type"])
     }
 }
+
+/** ScheduleWakeup：同一个机制的另一个入口 */
+class ScheduleWakeupToolTest {
+    private val t0 = 1_791_446_400_000L
+    private val profile = HarnessProfile(ModelFamily.Claude, EditStyle.StrReplace)
+
+    private fun ctx(tasks: List<CronTask> = emptyList(), refusal: String? = null): ToolContext {
+        val base = TestToolContext()
+        val board = CronBoard(tasks, nextId = "c${tasks.size + 1}", nowMs = t0, zone = ZoneOffset.UTC, refusal = refusal)
+        return object : ToolContext by base {
+            override val crons: CronBoard = board
+        }
+    }
+
+    private fun wakeup(id: String) = CronTask(id, "继续", false, 0.05, t0, intervalMs = 120_000, source = dev.min.agent.spi.CRON_SOURCE_WAKEUP)
+
+    private fun ToolResult.text() = content.filterIsInstance<TextPart>().joinToString("") { it.text }
+
+    @Test
+    fun `scheduling declares a one shot interval task marked as a wakeup`() = runBlocking {
+        val result = ScheduleWakeupTool.call(ctx(), "delaySeconds" to 270, "prompt" to "继续看构建", "reason" to "等 CI")
+        assertEquals(
+            listOf<SessionEffect>(SessionEffect.CronCreate("继续看构建", recurring = false, maxBudgetUsd = 0.05, intervalMs = 270_000, source = "wakeup")),
+            result.effects,
+        )
+        assertTrue(result.text(), result.text().contains("270 秒后唤醒") && result.text().contains("2026-10-08 08:04 UTC") && result.text().contains("等 CI"))
+    }
+
+    @Test
+    fun `a new wakeup replaces the pending one and stop cancels it`() = runBlocking {
+        val pending = listOf(wakeup("c1"), CronTask("c2", "别的", true, 0.05, t0, intervalMs = 600_000))
+        val replaced = ScheduleWakeupTool.call(ctx(pending), "delaySeconds" to 60, "prompt" to "再来")
+        assertEquals(SessionEffect.CronDelete("c1"), replaced.effects.first())
+        assertTrue(replaced.effects.last() is SessionEffect.CronCreate)
+        assertEquals("只替自己的，不碰 CronCreate 建的任务", 2, replaced.effects.size)
+        assertTrue(replaced.text().contains("替掉了还没触发的 c1"))
+
+        val stopped = ScheduleWakeupTool.call(ctx(pending), "stop" to true)
+        assertEquals(listOf<SessionEffect>(SessionEffect.CronDelete("c1")), stopped.effects)
+        assertEquals("没有安排中的唤醒。", ScheduleWakeupTool.call(ctx(), "stop" to true).text())
+    }
+
+    @Test
+    fun `delay must be a whole number of seconds between a minute and an hour`() {
+        assertTrue(ScheduleWakeupTool.reject("prompt" to "x").contains("delaySeconds"))
+        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 59, "prompt" to "x").contains("60 到 3600"))
+        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 3601, "prompt" to "x").contains("60 到 3600"))
+        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 90.5, "prompt" to "x").contains("整数秒"))
+        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 60).contains("prompt"))
+        assertTrue(ScheduleWakeupTool.reject("stop" to "yes").contains("stop"))
+    }
+
+    @Test
+    fun `it is refused where cron is refused and describes the shared rules`() = runBlocking {
+        val refused = ScheduleWakeupTool.call(ctx(refusal = "只能在根会话里建"), "delaySeconds" to 60, "prompt" to "x")
+        assertTrue(refused.isError && refused.effects.isEmpty())
+        val d = ScheduleWakeupTool.description(profile)
+        assertTrue(d.contains("同一时刻最多一个") && d.contains("花费上限") && d.contains("被系统杀掉"))
+        assertTrue(ScheduleWakeupTool.traits.readOnly)
+    }
+}

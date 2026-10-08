@@ -156,6 +156,7 @@ sealed interface SessionEffect {
         val maxBudgetUsd: Double,
         val cron: String? = null,
         val intervalMs: Long? = null,
+        val source: String? = null,
     ) : SessionEffect
 
     /** 取消一条定时任务（CronDelete）。内核落成 [CronCancelled] */

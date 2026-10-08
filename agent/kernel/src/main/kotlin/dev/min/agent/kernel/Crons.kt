@@ -70,7 +70,7 @@ internal fun SessionState.applyCronEvent(e: SessionEvent): SessionState = when (
     is CronScheduled -> copy(
         crons = crons + CronTask(
             e.cronId, e.prompt, e.recurring, e.maxBudgetUsd, e.scheduledAtMs,
-            cron = e.cron, intervalMs = e.intervalMs, expiresAtMs = e.expiresAtMs,
+            cron = e.cron, intervalMs = e.intervalMs, expiresAtMs = e.expiresAtMs, source = e.source,
         ),
         cronSeq = cronSeq + 1,
     )
