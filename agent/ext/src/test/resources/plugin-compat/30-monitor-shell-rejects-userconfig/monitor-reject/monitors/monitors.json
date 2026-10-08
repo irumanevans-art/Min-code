@@ -1,0 +1,7 @@
+[
+  {
+    "name": "log-tail",
+    "command": "tail -F ${user_config.log_path}",
+    "description": "Follow the log"
+  }
+]

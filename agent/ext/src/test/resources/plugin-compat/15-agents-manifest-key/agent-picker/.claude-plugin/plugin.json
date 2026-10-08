@@ -1,0 +1,6 @@
+{
+  "name": "agent-picker",
+  "agents": [
+    "./custom/review/security.md"
+  ]
+}

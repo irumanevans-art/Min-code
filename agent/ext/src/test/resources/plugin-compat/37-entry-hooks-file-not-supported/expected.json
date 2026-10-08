@@ -1,0 +1,16 @@
+{
+  "loads": true,
+  "name": "entry-hooks-file",
+  "nameSource": "marketplace",
+  "errors": [
+    "not yet supported in a marketplace entry"
+  ],
+  "skills": [
+    {
+      "name": "entry-hooks-file:one",
+      "path": "skills/one/SKILL.md"
+    }
+  ],
+  "basis": "PLG:674 条目即清单时 hooks 只吃内联对象形式；文件/数组形式在 /plugin Errors 显示原文「not yet supported in a marketplace entry」。原文没说这是否致命（对照 :676 冲突明说 fails to load），本样本按非致命钉：其余组件照常装载，hooks 为空",
+  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+}

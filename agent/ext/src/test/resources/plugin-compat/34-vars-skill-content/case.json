@@ -1,0 +1,6 @@
+{
+  "root": "var-skill",
+  "install": "pluginDir",
+  "installRoot": "/plugins/cache/local/var-skill/1.0.0",
+  "projectDir": "/workspace"
+}

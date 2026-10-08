@@ -1,0 +1,4 @@
+{
+  "root": "lsp-merger",
+  "install": "pluginDir"
+}

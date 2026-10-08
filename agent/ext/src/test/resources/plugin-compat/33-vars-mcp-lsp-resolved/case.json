@@ -1,0 +1,7 @@
+{
+  "root": "var-server",
+  "install": "pluginDir",
+  "installRoot": "/plugins/cache/local/var-server/1.0.0",
+  "dataRoot": "~/.claude/plugins/data/var-server",
+  "projectDir": "/workspace"
+}

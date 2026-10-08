@@ -1,0 +1,18 @@
+{
+  "name": "channeled",
+  "mcpServers": {
+    "tg": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/bridge.js"
+      ]
+    }
+  },
+  "channels": [
+    {
+      "server": "tg",
+      "displayName": "Telegram",
+      "bogus": 1
+    }
+  ]
+}

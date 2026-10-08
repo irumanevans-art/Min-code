@@ -1,0 +1,5 @@
+---
+description: Default skill.
+---
+
+One.

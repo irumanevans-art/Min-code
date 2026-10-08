@@ -1,0 +1,11 @@
+{
+  "root": "monitor-reject",
+  "install": "pluginDir",
+  "pluginConfigs": {
+    "monitor-reject": {
+      "options": {
+        "log_path": "/var/log/app.log"
+      }
+    }
+  }
+}

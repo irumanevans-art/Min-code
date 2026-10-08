@@ -1,0 +1,46 @@
+{
+  "root": "append-plugin",
+  "install": "marketplace",
+  "marketplaceName": "team-tools",
+  "enabledPlugins": {
+    "append-plugin@team-tools": true
+  },
+  "entry": {
+    "name": "append-plugin",
+    "strict": true,
+    "commands": [
+      "./entry-cmds/"
+    ],
+    "agents": [
+      "./agents/entry-agent.md"
+    ],
+    "skills": [
+      "./entry-skills/"
+    ],
+    "outputStyles": "./entry-styles/",
+    "themes": "./entry-themes/",
+    "hooks": {
+      "PostToolUse": [
+        {
+          "matcher": "Read",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "entry-read.sh"
+            }
+          ]
+        }
+      ],
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "entry-start.sh"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

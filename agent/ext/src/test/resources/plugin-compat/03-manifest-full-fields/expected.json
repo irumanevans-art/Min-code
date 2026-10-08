@@ -1,0 +1,110 @@
+{
+  "loads": true,
+  "name": "deploy-tools",
+  "nameSource": "manifest",
+  "warnings": [
+    "Default commands/ folder is ignored"
+  ],
+  "displayName": "Deploy Tools",
+  "version": "1.2.0",
+  "defaultEnabled": true,
+  "authorName": "Example Team",
+  "metadata": {
+    "catalogId": "cat-123"
+  },
+  "dependencies": [
+    {
+      "name": "secrets-vault",
+      "marketplace": null,
+      "version": null
+    }
+  ],
+  "skills": [
+    {
+      "name": "deploy-tools:helper",
+      "path": "extra-skills/helper/SKILL.md"
+    }
+  ],
+  "commands": [
+    {
+      "name": "deploy-tools:status",
+      "source": "commands/status.md",
+      "description": "Show the current deployment status"
+    },
+    {
+      "name": "deploy-tools:about",
+      "content": "Explain what the deploy-tools plugin provides.",
+      "description": "Describe this plugin"
+    }
+  ],
+  "agents": [
+    {
+      "name": "deploy-tools:reviewer",
+      "file": "agents/reviewer.md",
+      "model": "sonnet"
+    }
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh\"",
+        "args": []
+      }
+    ]
+  },
+  "mcpServers": [
+    {
+      "key": "deploy-api",
+      "serverName": "plugin:deploy-tools:deploy-api",
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server.js"
+      ]
+    }
+  ],
+  "lspServers": [
+    {
+      "key": "gopls",
+      "command": "gopls",
+      "args": [
+        "serve"
+      ],
+      "extensionToLanguage": {
+        ".go": "go"
+      }
+    }
+  ],
+  "outputStyles": [
+    {
+      "name": "deploy-tools:terse",
+      "file": "styles/terse.md"
+    }
+  ],
+  "themes": [
+    {
+      "name": "Dracula",
+      "file": "themes/dracula.json"
+    }
+  ],
+  "monitors": [
+    {
+      "name": "status",
+      "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/poll.sh\"",
+      "description": "Deployment status changes",
+      "when": null
+    }
+  ],
+  "userConfig": [
+    {
+      "key": "api_token",
+      "type": "string",
+      "title": "API token",
+      "description": "Token for the deployment API",
+      "sensitive": true,
+      "stored": "secureStorage"
+    }
+  ],
+  "basis": "PLG:38-89 原文全字段示例；PLG:120-159 字段表；PLG:222 agents 只收 .md 文件；PLG:234 对象键成为前缀后的命令名；PLG:236 source/content 二选一；PLG:410-414 commands/agents/outputStyles 取代默认、skills 追加、hooks/mcpServers/lspServers 合并；CMP:929-930 主题按文件 name、输出样式 <插件>:<名>",
+  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+}

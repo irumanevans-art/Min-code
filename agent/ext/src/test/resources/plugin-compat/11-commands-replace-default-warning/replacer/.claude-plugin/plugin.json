@@ -1,0 +1,9 @@
+{
+  "name": "replacer",
+  "commands": {
+    "ping": {
+      "content": "Ping the deployment endpoint.",
+      "description": "Ping"
+    }
+  }
+}

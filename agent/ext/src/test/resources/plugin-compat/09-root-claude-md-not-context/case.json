@@ -1,0 +1,4 @@
+{
+  "root": "quiet-plugin",
+  "install": "pluginDir"
+}

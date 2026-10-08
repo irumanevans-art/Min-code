@@ -1,0 +1,7 @@
+{
+  "name": "combiner",
+  "commands": [
+    "./commands/",
+    "./extras/ping.md"
+  ]
+}

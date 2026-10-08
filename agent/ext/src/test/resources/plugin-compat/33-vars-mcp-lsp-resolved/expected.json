@@ -1,0 +1,49 @@
+{
+  "loads": true,
+  "name": "var-server",
+  "nameSource": "manifest",
+  "mcpServers": [
+    {
+      "key": "db",
+      "serverName": "plugin:var-server:db",
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server.js"
+      ],
+      "env": {
+        "NODE_PATH": "${CLAUDE_PLUGIN_DATA}/node_modules"
+      },
+      "resolvedArgs": [
+        "/plugins/cache/local/var-server/1.0.0/server.js"
+      ],
+      "resolvedEnv": {
+        "NODE_PATH": "~/.claude/plugins/data/var-server/node_modules"
+      },
+      "exportSet": [
+        "CLAUDE_PLUGIN_ROOT",
+        "CLAUDE_PLUGIN_DATA"
+      ]
+    }
+  ],
+  "lspServers": [
+    {
+      "key": "gopls",
+      "command": "gopls",
+      "args": [
+        "serve"
+      ],
+      "extensionToLanguage": {
+        ".go": "go"
+      },
+      "workspaceFolder": "${CLAUDE_PROJECT_DIR}",
+      "resolvedWorkspaceFolder": "/workspace",
+      "exportSet": [
+        "CLAUDE_PLUGIN_ROOT",
+        "CLAUDE_PLUGIN_DATA",
+        "CLAUDE_PROJECT_DIR"
+      ]
+    }
+  ],
+  "basis": "PLG:571 MCP stdio 在 command/args/env 里解析、进程带 ROOT+DATA；PLG:573 LSP 在 command/args/env/workspaceFolder 里解析、进程带 ROOT+DATA+PROJECT；PLG:576 这两个进程之外（比如 Bash 工具）拿不到这些变量；CMP:1089 MCP server 可以把 NODE_PATH 指到 ${CLAUDE_PLUGIN_DATA}/node_modules",
+  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+}

@@ -1,0 +1,24 @@
+{
+  "loads": true,
+  "name": "id-mapper",
+  "nameSource": "manifest",
+  "enabled": true,
+  "enabledId": "id-mapper@corp-tools",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": null,
+        "command": "mkdir -p \"${CLAUDE_PLUGIN_DATA}/cache\"",
+        "args": [],
+        "resolvedCommand": "mkdir -p \"~/.claude/plugins/data/id-mapper-corp-tools/cache\"",
+        "exportSet": [
+          "CLAUDE_PLUGIN_ROOT",
+          "CLAUDE_PLUGIN_DATA",
+          "CLAUDE_PROJECT_DIR"
+        ]
+      }
+    ]
+  },
+  "basis": "PLG:556/:1061 ${CLAUDE_PLUGIN_DATA} = ~/.claude/plugins/data/<id>/；PLG:556/:1064 <id> 是插件标识（my-plugin@my-marketplace 形）里字母数字_－之外的每个字符换成 -，id-mapper@corp-tools → id-mapper-corp-tools；首次引用时创建、插件更新后保留，卸载才删（PLG:561）；数据类内容写 DATA，别写 ROOT（PLG:559）",
+  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+}

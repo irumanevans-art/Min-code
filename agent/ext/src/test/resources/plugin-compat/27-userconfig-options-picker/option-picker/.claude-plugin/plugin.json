@@ -1,0 +1,16 @@
+{
+  "name": "option-picker",
+  "userConfig": {
+    "tone": {
+      "type": "string",
+      "title": "Tone",
+      "description": "Voice for generated replies",
+      "options": [
+        "neutral",
+        "warm",
+        "formal"
+      ],
+      "default": "neutral"
+    }
+  }
+}
