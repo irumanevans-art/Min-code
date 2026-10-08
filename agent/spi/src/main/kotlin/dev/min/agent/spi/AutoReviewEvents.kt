@@ -30,6 +30,8 @@ data class AutoReviewSettingsLoaded(
     val reviewer: AutoModeReviewer? = null,
     val unavailable: Boolean = false,
     val notes: List<String> = emptyList(),
+    val disableAutoMode: Boolean = false,
+    val disableBypassPermissionsMode: Boolean = false,
 ) : SessionEvent
 
 @Serializable

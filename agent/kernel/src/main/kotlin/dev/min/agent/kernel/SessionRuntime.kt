@@ -353,9 +353,16 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)
-        val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer)
+        val managed = snapshot.merged.layers.lastOrNull { it.source == dev.min.agent.ext.config.ConfigSource.Managed }
+        val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer,
+            disableAutoMode = managed?.permissions?.disableAutoMode == true,
+            disableBypassPermissionsMode = managed?.permissions?.disableBypassPermissionsMode == true)
         if (review.notes.isNotEmpty()) commit(review.notes.map { Note(NoteLevel.Warning, it) }, Durability.Sync)
         if (configured != dev.min.agent.spi.AutoReviewSettingsLoaded()) commit(listOf(configured), Durability.Sync)
+        val mode = state.value.settings.mode
+        if (mode == PermissionMode.Auto && configured.disableAutoMode || mode == PermissionMode.BypassPermissions && configured.disableBypassPermissionsMode) {
+            commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "托管策略禁用了 $mode，使用 Default 模式")), Durability.Sync)
+        }
         loadPermissionRules(snapshot)
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
         val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
@@ -534,6 +541,8 @@ class SessionRuntime private constructor(
         /** 切模型请求的来源，进 PreModelSwitch 的 `source`：command（/model、/config）/ picker / sdk */
         modelSwitchSource: String = "command",
     ) {
+        val locks = state.value.autoReviewSettings
+        require(!(mode == PermissionMode.Auto && locks.disableAutoMode || mode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode)) { "托管策略禁用了这个权限模式" }
         if (cwd != null && cwd != state.value.settings.cwd) {
             require(state.value.worktree == null) { "隔离会话请用 EnterWorktree / ExitWorktree 切换目录。" }
             require(deps.host.fs.stat(cwd)?.kind == dev.min.agent.spi.FileKind.Directory) { "工作目录不存在：$cwd" }
