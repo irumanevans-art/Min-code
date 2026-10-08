@@ -60,7 +60,7 @@ class CronToolsTest {
         assertTrue("没给上限就是不限，不能再冒出一个默认值", text.contains("没有花费上限") && !text.contains("\$0.05"))
         assertTrue(text, !text.contains("宿主设了"))
         assertTrue("把无人值守说给模型", text.contains("无人值守") && text.contains("不要向用户提问"))
-        assertTrue("把手机上的现实写给模型", text.contains("App 被系统杀掉时不跑"))
+        assertTrue("把手机上的现实写给模型：不承诺“每天 9 点一定跑”", text.contains("仅在 Min 在前台或进程仍存活时触发") && text.contains("切到后台一段时间后通常不触发"))
     }
 
     @Test
@@ -161,7 +161,7 @@ class CronToolsTest {
     @Test
     fun `the tools carry the contract the model must know`() {
         val create = CronCreateTool.description(profile)
-        assertTrue(create.contains("7 天") && create.contains("错过的不补跑") && create.contains("无人值守") && create.contains("max_budget_usd") && create.contains("被系统杀掉"))
+        assertTrue(create.contains("7 天") && create.contains("错过的不补跑") && create.contains("无人值守") && create.contains("max_budget_usd") && create.contains("仅在 Min 在前台或进程仍存活时触发") && create.contains("通常不触发"))
         assertTrue(create.contains("预设任务") && create.contains("不是用户发的话"))
         for (tool in listOf(CronCreateTool, CronDeleteTool, CronListTool)) {
             assertTrue("${tool.name} 只改会话自己的任务表，不需要审批", tool.traits.readOnly)
@@ -263,7 +263,7 @@ class ScheduleWakeupToolTest {
         val refused = ScheduleWakeupTool.call(ctx(refusal = "只能在根会话里建"), "delaySeconds" to 60, "prompt" to "x")
         assertTrue(refused.isError && refused.effects.isEmpty())
         val d = ScheduleWakeupTool.description(profile)
-        assertTrue(d.contains("同一时刻最多一个") && d.contains("无人值守") && d.contains("max_budget_usd") && d.contains("被系统杀掉"))
+        assertTrue(d.contains("同一时刻最多一个") && d.contains("无人值守") && d.contains("max_budget_usd") && d.contains("通常不触发"))
         assertTrue(ScheduleWakeupTool.traits.readOnly)
     }
 }

@@ -1159,6 +1159,9 @@
     <string name="session_engine_min">Min Agent</string>
     <string name="session_notification_done">任务已完成</string>
     <string name="session_notification_confirm">%1$s 需要确认</string>
+    <string name="cron_notice_ended">定时任务 %1$s 已结束</string>
+    <string name="cron_notice_budget_stopped">定时任务 %1$s 这次运行被停下</string>
+    <string name="cron_notice_skipped">定时任务 %1$s 这次没有运行</string>
     <string name="session_notification_schedule_confirm">%1$s 的定时任务在等你确认</string>
     <string name="session_notification_tool">请求使用工具：%1$s</string>
     <string name="session_notification_ended">%1$s 会话已结束</string>

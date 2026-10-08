@@ -94,7 +94,7 @@ object CronCreateTool : Tool<JsonObject> {
 
     override fun description(profile: HarnessProfile) =
         "在当前会话里安排一个定时提示词：循环（cron 表达式或间隔）或一次性。任务只在会话开着且空闲时触发，到点时提示词作为一条预设任务送进会话（不是用户发的话）；" +
-            "重开会话会恢复未过期的任务，循环任务创建 7 天后自动过期，错过的不补跑；每个会话最多 $CRON_MAX_ACTIVE 个。App 被系统杀掉时定时任务不跑。" +
+            "重开会话会恢复未过期的任务，循环任务创建 7 天后自动过期，错过的不补跑；每个会话最多 $CRON_MAX_ACTIVE 个。$LIVENESS_NOTE" +
             "这是无人值守的运行，花的是用户自己的额度：默认不限，要限就传 max_budget_usd（一次运行花到它就停）。只有主会话能建，子 agent 与团队成员不行。"
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
@@ -143,7 +143,7 @@ object CronCreateTool : Tool<JsonObject> {
             listOf(
                 TextPart(
                     "已创建定时任务 ${board.nextId}：${preview.scheduleText()}（$lifetime）。下次触发约 ${board.timeText(next)}；" +
-                        board.spendText(budget) + "只在会话开着且空闲时触发，App 被系统杀掉时不跑。",
+                        board.spendText(budget) + "只在会话开着且空闲时触发。$LIVENESS_NOTE",
                 ),
             ),
             effects = listOf(SessionEffect.CronCreate(prompt, recurring, budget, cron = cron, intervalMs = interval)),
@@ -225,7 +225,7 @@ object ScheduleWakeupTool : Tool<JsonObject> {
 
     override fun description(profile: HarnessProfile) =
         "自驱循环的下一轮：安排一个唤醒，$MIN_DELAY_SECONDS 秒到 $MAX_DELAY_SECONDS 秒后把 prompt 送回本会话（只触发一次；想继续循环就在那一轮里再调用它）。" +
-            "同一时刻最多一个，再次调用会替掉还没触发的。stop=true 取消。和 CronCreate 同一套规矩：只在会话开着且空闲时触发、App 被系统杀掉时不跑、无人值守（默认不限花费，要限就传 max_budget_usd）。"
+            "同一时刻最多一个，再次调用会替掉还没触发的。stop=true 取消。和 CronCreate 同一套规矩：只在会话开着且空闲时触发、无人值守（默认不限花费，要限就传 max_budget_usd）。$LIVENESS_NOTE"
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
         raw["stop"]?.let {
@@ -279,7 +279,7 @@ object ScheduleWakeupTool : Tool<JsonObject> {
         val replaced = if (pending.isEmpty()) "" else "（替掉了还没触发的 ${pending.joinToString("、") { it.id }}）"
         val reason = input.subagentString("reason")?.let { "，原因：$it" } ?: ""
         return ToolResult(
-            listOf(TextPart("已安排 $delay 秒后唤醒$clamped（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；${board.spendText(budget)}${chainNote}只在会话开着且空闲时触发，App 被系统杀掉时不跑。")),
+            listOf(TextPart("已安排 $delay 秒后唤醒$clamped（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；${board.spendText(budget)}${chainNote}只在会话开着且空闲时触发。$LIVENESS_NOTE")),
             effects = cancels + SessionEffect.CronCreate(
                 input.subagentString("prompt")!!, recurring = false, maxBudgetUsd = budget,
                 intervalMs = delay * 1000, source = dev.min.agent.spi.CRON_SOURCE_WAKEUP,
@@ -287,3 +287,11 @@ object ScheduleWakeupTool : Tool<JsonObject> {
         )
     }
 }
+
+/**
+ * 手机上的现实，原样写给模型（别让它向用户承诺“每天 9 点一定帮你查”）：定时器是进程里的心跳，不是系统闹钟。
+ * Android 把 App 切到后台一段时间后会冻结或杀掉进程，心跳随之停掉；前台服务只在有回合在跑时才保活，只剩定时任务的会话保不住它。
+ * 所以：只在 Min 在前台、或进程碰巧还活着时才触发；切到后台一段时间后通常不触发，错过的也不补跑。桌面 CLI 同样只在进程活着时工作。
+ */
+private const val LIVENESS_NOTE =
+    "仅在 Min 在前台或进程仍存活时触发，切到后台一段时间后通常不触发（进程被系统冻结或杀掉），错过的不补跑；不要向用户保证“到点一定会跑”。"

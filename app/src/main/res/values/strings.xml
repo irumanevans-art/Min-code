@@ -1164,6 +1164,9 @@
     <string name="session_engine_min">Min Agent</string>
     <string name="session_notification_done">Task completed</string>
     <string name="session_notification_confirm">%1$s needs confirmation</string>
+    <string name="cron_notice_ended">Scheduled task %1$s ended</string>
+    <string name="cron_notice_budget_stopped">Scheduled task %1$s was stopped this run</string>
+    <string name="cron_notice_skipped">Scheduled task %1$s did not run this time</string>
     <string name="session_notification_schedule_confirm">A scheduled task in %1$s is waiting for you</string>
     <string name="session_notification_tool">Requested tool: %1$s</string>
     <string name="session_notification_ended">%1$s session ended</string>

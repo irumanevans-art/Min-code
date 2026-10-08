@@ -204,10 +204,14 @@ class MinAgentEngine(
 
     /** 定时任务的定时器：心跳驱动，不保证精确，App 被杀就不跑（见 [HeartbeatScheduler]） */
     internal val cronHeartbeat = HeartbeatScheduler()
+    private val cronNotifier = CronNoticeNotifier(context)
 
     init {
         scope.launch { tasks.watch() }
         hub.startScheduling(cronHeartbeat)
+        // 定时任务出了事（到期、被花费上限停下、因缺价格跳过、连续超限暂停）：日志里有 Note，这里再发一条系统通知——
+        // 无人值守的任务停了，人不在会话页就看不到那条 Note
+        scope.launch { hub.cronNotices.collect { notice -> catchingNonCancellation { cronNotifier.notify(notice) }.onFailure { Log.w(TAG, "cron notice notification failed", it) } } }
         // 心跳由引擎自己在进程存活期间打；进程能活多久是前台服务的事
         scope.launch {
             while (true) {
@@ -359,14 +363,18 @@ class MinAgentEngine(
         if (pin) pinned += id
     }
 
-    /** 超过 [MAX_RESIDENT] 棵树时，卸下最久没碰的、没被钉住的空闲会话 */
+    /** 超过 [MAX_RESIDENT] 棵树时，卸下最久没碰的、没被钉住、也没有进行中定时任务的空闲会话（理由见 [evictionCandidates]） */
     private suspend fun evictIfNeeded() {
         val over = sessions.value.size - MAX_RESIDENT
         if (over <= 0) return
         val candidates = synchronized(this) {
-            sessions.value.filterKeys { it !in pinned }.keys.sortedBy { touched[it] ?: 0L }
+            evictionCandidates(
+                sessions.value.keys, pinned, touched,
+                hasActiveSchedule = { id -> hub.get(id)?.state?.value?.crons?.any { it.active } == true },
+                over = over,
+            )
         }
-        for (id in candidates.take(over)) sessions.value[id]?.let { closeSession(it, CloseReason.Evicted) }
+        for (id in candidates) sessions.value[id]?.let { closeSession(it, CloseReason.Evicted) }
     }
 
     // ---- 关闭 / 删除 ----
