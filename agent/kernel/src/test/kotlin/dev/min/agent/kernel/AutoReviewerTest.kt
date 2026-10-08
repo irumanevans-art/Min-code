@@ -130,7 +130,8 @@ class AutoReviewerTest {
         val rt = session(reviewer, mainTurns = 4)
         for (i in 1..3) { rt.send(ClientMsgId("u$i"), listOf(TextPart("run it"))); rt.awaitIdle() }
         rt.send(ClientMsgId("u4"), listOf(TextPart("run it")))
-        rt.state.first { it.phaseOf(CallId("c4")) is CallPhase.AwaitingApproval || it.lastTurn != null && it.turn == null && it.seenInputs.size == 4 }
+        rt.state.first { it.phaseOf(CallId("c4")) is CallPhase.AwaitingApproval || CallId("c4") in it.toolResults }
+        assertTrue(rt.state.value.phaseOf(CallId("c4")) is CallPhase.AwaitingApproval)
         assertEquals(3, reviewer.requests.size)
         assertTrue(rt.state.value.autoReviewTripped)
         val content = reviewer.requests.first().system.joinToString(" ")
@@ -159,6 +160,25 @@ class AutoReviewerTest {
         assertTrue(state.autoReviewTripped)
         assertEquals(20, state.autoReviewDenials)
         assertEquals(1, state.autoReviewConsecutiveDenials)
+    }
+
+    @Test fun BUG_defaults_expand_all_sections_but_explicit_empty_replaces_defaults() = run {
+        val rt = session(ScriptedModel())
+        suspend fun rules(config: String): JsonObject {
+            val fs = FakeFs().apply { put("/home/.claude/settings.json", """{"autoMode":$config}""") }
+            val merged = dev.min.agent.ext.config.SettingsLoader.load(fs, GuestPath("/workspace"), GuestPath("/home")).merged
+            val loaded = dev.min.agent.ext.config.autoReviewSettingsOf(merged)
+            return Json.parseToJsonElement(AutoReviewer(rt).request(command("touch out"), TEST_PROFILE, PolicyContext(PermissionMode.Auto), loaded.config).system.last().substringAfter("可信用户与托管配置：")).jsonObject
+        }
+        val defaults = rules("{}")
+        for (key in listOf("environment", "allow", "hard_deny", "soft_deny")) assertTrue(key, defaults[key]!!.jsonArray.isNotEmpty())
+        val expanded = rules("""{"environment":["${'$'}defaults","custom"],"allow":["${'$'}defaults","custom"]}""")
+        for (key in listOf("environment", "allow")) {
+            assertEquals(defaults[key]!!.jsonArray.size + 1, expanded[key]!!.jsonArray.size)
+            assertFalse(expanded[key]!!.toString().contains("${'$'}defaults"))
+        }
+        val empty = rules("""{"soft_deny":[],"hard_deny":[],"allow":[],"environment":[]}""")
+        for (value in empty.values) assertTrue(value.jsonArray.isEmpty())
     }
 
     @Test fun `allow executes and records reviewer usage cost and replay`() = run {
@@ -246,11 +266,11 @@ class AutoReviewerTest {
     }
 
     @Test fun BUG_single_word_hard_deny_prose_is_sent_to_reviewer() = run {
-        val reviewer = ScriptedModel(reply(TextPart(decision("deny", "[0]"))))
-        val rt = session(reviewer, config = AutoModeConfig(hardDeny = listOf("exfiltration")))
+        val reviewer = ScriptedModel(reply(TextPart(decision("deny", "[0]"))), reply(TextPart(decision("deny", "[0]"))))
+        val rt = session(reviewer, command = "ls /workspace", config = AutoModeConfig(hardDeny = listOf("exfiltration")), parallelReads = true)
         started(rt)
-        assertEquals(1, reviewer.requests.size)
-        assertTrue(reviewer.requests.single().system.toString().contains("exfiltration"))
+        assertEquals(2, reviewer.requests.size)
+        assertTrue(reviewer.requests.first().system.toString().contains("exfiltration"))
         assertTrue(ran.isEmpty())
     }
 

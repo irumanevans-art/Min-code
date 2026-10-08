@@ -31,7 +31,9 @@ private fun MergedSettings.parseAutoReviewSettings(): AutoReviewSettingsLoaded {
     val reviewer = trusted.asReversed().firstNotNullOfOrNull { layer ->
         layer.raw["autoModeReviewer"]?.takeUnless { it == JsonNull }?.let(::parseAutoModeReviewer)
     }
-    return AutoReviewSettingsLoaded(AutoModeConfig(entries("environment"), entries("hard_deny"), entries("soft_deny"), entries("allow")), reviewer)
+    val sections = trusted.flatMap { (it.raw["autoMode"] as? JsonObject)?.keys.orEmpty() }
+        .filter { it in setOf("environment", "hard_deny", "soft_deny", "allow") }.toSet()
+    return AutoReviewSettingsLoaded(AutoModeConfig(entries("environment"), entries("hard_deny"), entries("soft_deny"), entries("allow"), sections), reviewer)
 }
 
 fun autoReviewSettingsOf(settings: MergedSettings): AutoReviewSettingsLoaded = settings.autoReviewSettings()
