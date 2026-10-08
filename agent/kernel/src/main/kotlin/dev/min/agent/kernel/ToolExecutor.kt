@@ -318,7 +318,14 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             else if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
         } else initial
         when (verdict) {
-            is Verdict.Deny -> outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
+            is Verdict.Deny -> {
+                if (verdict.by == DecidedBy.Classifier) {
+                    val specific = HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.PermissionDeniedInput.serializer(),
+                        dev.min.agent.ext.hooks.PermissionDeniedInput(ready.call.name, ready.raw, ready.call.callId.value, verdict.messageToModel)).jsonObject
+                    hooks.run(HookEvent.PermissionDenied, ready.call.name, specific, turnId, ready.call.callId)
+                }
+                outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
+            }
             is Verdict.Allow -> execute(turnId, ready)
             Verdict.Ask -> when (val answer = permissionRequest(turnId, ready, allowDecisions = rt.state.value.settings.mode != PermissionMode.Auto)) {
                 is PermissionAnswer.Denied -> {
