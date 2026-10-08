@@ -612,7 +612,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             if (turnId == null) errorResult("提取端口不可用。") else extractWeb(rt, turnId, callId, content, prompt)
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
-        override val tasks: TaskBoard get() = rt.state.value.taskBoard()
+        override val tasks: TaskBoard get() = rt.visibleTaskBoard()
         override val crons: dev.min.agent.spi.CronBoard get() = rt.state.value.cronBoard(rt.deps.clock.nowMs(), rt.deps.zone, rt.hub?.limits?.cronMaxBudgetUsd)
         override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
         override suspend fun preserve(content: ByteArray): dev.min.agent.spi.ContentId? = if (turnId == null) null else rt.preserve(content)

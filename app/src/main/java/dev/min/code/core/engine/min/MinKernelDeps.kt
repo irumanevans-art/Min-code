@@ -148,7 +148,7 @@ fun minTools(): List<Tool<*>> = listOf(
     SkillTool,
     dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool,
     // M5：agent 团队与定时任务（只往末尾追加）
-    dev.min.agent.tools.TeamCreateTool, dev.min.agent.tools.TeamTaskTool, dev.min.agent.tools.TeamDisbandTool,
+    dev.min.agent.tools.TeamCreateTool, dev.min.agent.tools.TeamDisbandTool,
     dev.min.agent.tools.CronCreateTool, dev.min.agent.tools.CronDeleteTool, dev.min.agent.tools.CronListTool, dev.min.agent.tools.ScheduleWakeupTool,
 )
 

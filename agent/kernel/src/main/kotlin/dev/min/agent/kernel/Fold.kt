@@ -388,7 +388,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             applyTaskEvent(e)
         }
         is dev.min.agent.spi.TeamCreated, is dev.min.agent.spi.TeamMemberJoined, is dev.min.agent.spi.TeamTaskCreated,
-        is dev.min.agent.spi.TeamTaskClaimed, is dev.min.agent.spi.TeamTaskDone, is dev.min.agent.spi.TeamDisbanded -> {
+        is dev.min.agent.spi.TeamTaskUpdated, is dev.min.agent.spi.TeamTaskDeleted, is dev.min.agent.spi.TeamDisbanded -> {
             teamProblem(e)?.let { error("团队事件不合法：$it") }
             applyTeamEvent(e)
         }

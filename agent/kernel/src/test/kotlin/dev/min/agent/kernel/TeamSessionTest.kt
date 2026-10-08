@@ -32,9 +32,11 @@ import dev.min.agent.spi.TeamMemberJoined
 import dev.min.agent.spi.TeamMemberSpec
 import dev.min.agent.spi.TeamMessage
 import dev.min.agent.spi.TeamOp
-import dev.min.agent.spi.TeamTaskClaimed
+import dev.min.agent.spi.TaskPatch
+import dev.min.agent.spi.TaskStatus
+import dev.min.agent.spi.TeamTaskDeleted
 import dev.min.agent.spi.TeamTaskCreated
-import dev.min.agent.spi.TeamTaskDone
+import dev.min.agent.spi.TeamTaskUpdated
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
 import dev.min.agent.spi.ToolInput
@@ -218,7 +220,7 @@ class TeamSessionTest {
         }
         // 成员的开场输入给齐了身份、队友和协作方式
         val brief = model.requests.first { it.memberName() == "alice" }.messages.first().parts.filterIsInstance<TextPart>().first().text
-        assertTrue(brief.contains("bob") && brief.contains("TeamTask") && brief.contains("做 alice 的活"))
+        assertTrue(brief.contains("bob") && brief.contains("TaskList") && brief.contains("做 alice 的活"))
 
         val log = events(leader.sessionId)
         val kinds = log.filter { it is TeamCreated || it is TeamMemberJoined }.map { it::class.simpleName }
@@ -338,7 +340,9 @@ class TeamSessionTest {
         val bId = leader.state.value.team!!.member("b")!!.session!!
         h1.get(bId)!!.state.first { it.inbox.isNotEmpty() }
         h1.get(leader.state.value.team!!.member("a")!!.session!!)!!.state.first { it.turn != null }
-        scopes.first().cancel() // 进程死了
+        // 进程死了。cancel 不等收尾：被取消的成员回合在 NonCancellable 里还要写 TurnEnded，必须等它写完再「重启」，
+        // 否则新进程读到的日志和这条收尾事件抢同一个 seq（偶发 "seq 不连续"）
+        scopes.first().coroutineContext[kotlinx.coroutines.Job]!!.apply { cancel(); join() }
 
         val model2 = leaderBuilds("a", "b") { n, _ -> reply(TextPart("$n 做完了")) }
         val h2 = hub(model2, HubLimits(teamMaxConcurrent = 1))
@@ -379,6 +383,9 @@ class TeamSessionTest {
 
     private fun ToolResult.text() = content.filterIsInstance<TextPart>().joinToString("") { it.text }
 
+    private fun taskCreate(subject: String, description: String = "") = TeamOp.TaskCreate(subject, description, null, JsonObject(emptyMap()))
+    private fun taskUpdate(id: String, status: TaskStatus? = null, owner: String? = null) = TeamOp.TaskUpdate(id, TaskPatch(status = status, owner = owner))
+
     @Test
     fun `members change only their own tasks and the leader changes any`() = run {
         val h = hub(leaderBuilds("alice", "bob") { _, _ -> hang })
@@ -387,36 +394,65 @@ class TeamSessionTest {
         val alice = portOf(h, members.getValue("alice"))
         val bob = portOf(h, members.getValue("bob"))
 
-        assertFalse(lead.team(TeamOp.TaskCreate("接口设计", "定义 REST")).isError)
-        assertFalse("成员也能提任务", bob.team(TeamOp.TaskCreate("补测试", "")).isError)
-        assertFalse(alice.team(TeamOp.TaskClaim("1", null)).isError)
+        assertFalse(lead.team(taskCreate("接口设计", "定义 REST")).isError)
+        assertFalse("成员也能提任务", bob.team(taskCreate("补测试")).isError)
+        assertFalse(alice.team(taskUpdate("1", TaskStatus.InProgress, owner = "alice")).isError)
 
         // 违规：bob 完成 alice 的、抢 alice 的、替别人认领、陌生人操作——全被拒，状态不变，负责人日志里各留一条说明
         val notesBefore = leader.state.value.presentation.count { it.record.event is Note }
-        assertTrue(bob.team(TeamOp.TaskDone("1", "我做完了")).isError)
-        assertTrue(bob.team(TeamOp.TaskClaim("1", null)).isError)
-        assertTrue(bob.team(TeamOp.TaskClaim("2", "alice")).isError)
-        assertTrue("不存在的任务", lead.team(TeamOp.TaskDone("99", null)).isError)
+        assertTrue(bob.team(taskUpdate("1", TaskStatus.Completed)).isError)
+        assertTrue(bob.team(taskUpdate("1", owner = "bob")).isError)
+        assertTrue(bob.team(taskUpdate("2", owner = "alice")).isError)
+        assertTrue("不存在的任务", lead.team(taskUpdate("99", TaskStatus.Completed)).isError)
         val task1 = leader.state.value.team!!.task("1")!!
-        assertEquals(TeamTaskStatus.Claimed, task1.status)
+        assertEquals(TaskStatus.InProgress, task1.status)
         assertEquals("alice", task1.owner)
         assertNull(leader.state.value.team!!.task("2")!!.owner)
         val notes = leader.state.value.presentation.map { it.record.event }.filterIsInstance<Note>().map { it.text }
         assertEquals(notesBefore + 4, leader.state.value.presentation.count { it.record.event is Note })
-        assertTrue(notes.any { it.contains("发起人 bob") && it.contains("只能完成自己认领的任务") })
+        assertTrue(notes.any { it.contains("发起人 bob") && it.contains("只能改自己认领的任务") })
         assertTrue(notes.any { it.contains("不能抢") })
 
-        assertFalse(alice.team(TeamOp.TaskDone("1", "接口定好了")).isError)
-        // 负责人改派、代办
-        assertFalse(lead.team(TeamOp.TaskClaim("2", "bob")).isError)
-        assertFalse(lead.team(TeamOp.TaskDone("2", "负责人代为确认")).isError)
+        assertFalse(alice.team(taskUpdate("1", TaskStatus.Completed)).isError)
+        // 成员可以释放自己的认领；负责人改派、代办
+        assertFalse(bob.team(taskUpdate("2", owner = "bob")).isError)
+        assertFalse(bob.team(taskUpdate("2", owner = "")).isError)
+        assertNull(leader.state.value.team!!.task("2")!!.owner)
+        assertFalse(lead.team(taskUpdate("2", owner = "bob")).isError)
+        assertFalse(lead.team(taskUpdate("2", TaskStatus.Completed)).isError)
         val team = leader.state.value.team!!
-        assertEquals(TeamTaskStatus.Done, team.task("1")!!.status)
-        assertEquals("alice", team.task("1")!!.doneBy)
-        assertEquals(TEAM_LEAD, team.task("2")!!.doneBy)
-        // 被拒的转换一条事件都没写
-        val teamEvents = events(leader.sessionId).filter { it is TeamTaskCreated || it is TeamTaskClaimed || it is TeamTaskDone }
-        assertEquals(6, teamEvents.size)
+        assertEquals(TaskStatus.Completed, team.task("1")!!.status)
+        assertEquals(TaskStatus.Completed, team.task("2")!!.status)
+        assertEquals("bob", team.task("2")!!.owner)
+        // 被拒的转换一条事件都没写：2 条创建 + 认领 + alice 完成 + bob 认领 + 释放 + 改派 + 代办完成
+        val teamEvents = events(leader.sessionId).filter { it is TeamTaskCreated || it is TeamTaskUpdated || it is TeamTaskDeleted }
+        assertEquals(8, teamEvents.size)
+        assertLogIsTruth(leader)
+    }
+
+    @Test
+    fun `the task tools of every team member read and write the one shared list`() = run {
+        val h = hub(leaderBuilds("alice", "bob") { _, _ -> hang })
+        val (leader, members) = readyPaused(h, "alice", "bob")
+        val aliceRt = members.getValue("alice")
+        // 负责人、成员、成员各自看到的是同一份团队清单，而不是个人清单
+        portOf(h, leader).team(taskCreate("接口设计"))
+        for ((name, rt) in listOf(TEAM_LEAD to leader, "alice" to aliceRt, "bob" to members.getValue("bob"))) {
+            val board = rt.visibleTaskBoard()
+            assertEquals(name, board.team!!.viewer)
+            assertEquals(listOf("1"), board.tasks.map { it.id })
+            assertEquals("2", board.nextId)
+        }
+        assertTrue("个人清单是空的，没被写进去", leader.state.value.tasks.isEmpty() && aliceRt.state.value.tasks.isEmpty())
+        // 成员的子 agent 不在团队里，看到的是自己那份
+        val sub = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+        assertNull(sub.visibleTaskBoard().team)
+        // 解散后各自回到个人清单
+        portOf(h, leader).team(TeamOp.Disband(TeamDisbandReason.Completed, null))
+        assertNull(leader.visibleTaskBoard().team)
+        assertEquals(emptyList<String>(), leader.visibleTaskBoard().tasks.map { it.id })
+        // 解散让成员停下，它们的“没做完”报告到齐之后日志才不再变，比较折叠才不会和写入撞车
+        leader.state.first { it.inbox.size == 2 }
         assertLogIsTruth(leader)
     }
 
@@ -426,7 +462,7 @@ class TeamSessionTest {
         val (leader, members) = readyPaused(h, "alice")
         val aliceRt = members.getValue("alice")
         val stranger = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
-        val result = portOf(h, stranger).team(TeamOp.TaskCreate("x", ""))
+        val result = portOf(h, stranger).team(taskCreate("x"))
         assertTrue(result.isError)
         assertTrue(result.text().contains("还没有团队"))
         assertTrue(aliceRt.state.value.team == null)
@@ -436,12 +472,13 @@ class TeamSessionTest {
     }
 
     @Test
-    fun `team status lists members and the task list`() = run {
+    fun `a task result shows the whole list with owners`() = run {
         val h = hub(leaderBuilds("alice", "bob") { _, _ -> hang })
         val (leader, _) = readyPaused(h, "alice", "bob")
-        portOf(h, leader).team(TeamOp.TaskCreate("接口设计", ""))
-        val text = portOf(h, leader).team(TeamOp.Status).text()
-        assertTrue(text, text.contains("alice") && text.contains("bob") && text.contains("#1 接口设计（待认领）"))
+        val text = portOf(h, leader).team(taskCreate("接口设计")).text()
+        assertTrue(text, text.contains("#1「接口设计」") && text.contains("#1 接口设计（待认领）"))
+        val claimed = portOf(h, leader).team(taskUpdate("1", owner = "alice")).text()
+        assertTrue(claimed, claimed.contains("#1 接口设计（已认领 · alice）"))
         assertLogIsTruth(leader)
     }
 
@@ -537,7 +574,9 @@ class TeamSessionTest {
         val bobId = members.getValue("bob").sessionId
         portOf(h1, members.getValue("alice")).message("bob", "接口定好了")
         assertEquals(1, members.getValue("bob").state.value.inbox.size)
-        scopes.first().cancel() // 进程死了，邮件还没被读
+        // 进程死了。cancel 不等收尾：被取消的成员回合在 NonCancellable 里还要写 TurnEnded，必须等它写完再「重启」，
+        // 否则新进程读到的日志和这条收尾事件抢同一个 seq（偶发 "seq 不连续"）
+        scopes.first().coroutineContext[kotlinx.coroutines.Job]!!.apply { cancel(); join() } // 邮件还没被读
 
         // 新进程：bob 重开后收件箱里的邮件还在
         val model2 = RoutingModel { req -> if (req.memberName() == "bob") reply(TextPart("读到了")) else reply(TextPart("好")) }
@@ -619,7 +658,7 @@ class TeamSessionTest {
         assertNull(members.getValue("b").state.value.turn)
         val team = leader.state.value.team!!
         assertEquals(TeamDisbandReason.UserEnded, team.disbanded!!.reason)
-        assertTrue(portOf(h, leader).team(TeamOp.TaskCreate("x", "")).isError)
+        assertTrue(portOf(h, leader).team(taskCreate("x")).isError)
         assertTrue("解散后不能重复解散", portOf(h, leader).team(TeamOp.Disband(TeamDisbandReason.Completed, null)).isError)
         // 解散后可以建新团队
         assertFalse(portOf(h, leader).team(TeamOp.Create(listOf(TeamMemberSpec("c", prompt = "x")))).isError)

@@ -18,9 +18,11 @@ import dev.min.agent.spi.TeamDisbanded
 import dev.min.agent.spi.TeamMemberJoined
 import dev.min.agent.spi.TeamMemberSpec
 import dev.min.agent.spi.TeamMessage
-import dev.min.agent.spi.TeamTaskClaimed
+import dev.min.agent.spi.TaskPatch
+import dev.min.agent.spi.TaskStatus
+import dev.min.agent.spi.TeamTaskDeleted
 import dev.min.agent.spi.TeamTaskCreated
-import dev.min.agent.spi.TeamTaskDone
+import dev.min.agent.spi.TeamTaskUpdated
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -84,20 +86,65 @@ class TeamFoldTest {
         assertNull(ready.nameOf(SessionId("stranger")))
     }
 
+    private fun patch(status: TaskStatus? = null, owner: String? = null, subject: String? = null, addBlockedBy: List<String> = emptyList(), addBlocks: List<String> = emptyList()) =
+        TaskPatch(status = status, owner = owner, subject = subject, addBlockedBy = addBlockedBy, addBlocks = addBlocks)
+
+    private fun update(id: String, by: String, p: TaskPatch) = TeamTaskUpdated("team1", id, p, by)
+
     @Test
-    fun `task lifecycle create then claim then done`() {
+    fun `task lifecycle create then claim then work then done is the same record as a personal task`() {
         val state = foldOf(
             created, *joined.toTypedArray(),
-            TeamTaskCreated("team1", "1", "接口设计", by = TEAM_LEAD),
-            TeamTaskClaimed("team1", "1", member = "alice", by = "alice"),
-            TeamTaskDone("team1", "1", by = "alice", summary = "写完了"),
+            TeamTaskCreated("team1", "1", "接口设计", "定义 REST", activeForm = "正在设计接口", by = TEAM_LEAD),
+            update("1", "alice", patch(owner = "alice", status = TaskStatus.InProgress)),
+            update("1", "alice", patch(status = TaskStatus.Completed)),
         )
         val task = state.team!!.task("1")!!
-        assertEquals(TeamTaskStatus.Done, task.status)
+        assertEquals("接口设计", task.subject)
+        assertEquals("定义 REST", task.description)
+        assertEquals("正在设计接口", task.activeForm)
+        assertEquals(TaskStatus.Completed, task.status)
         assertEquals("alice", task.owner)
-        assertEquals("alice", task.doneBy)
-        assertEquals("写完了", task.summary)
         assertEquals("2", state.team!!.nextTaskId())
+        assertTrue("团队清单不碰个人清单", state.tasks.isEmpty())
+    }
+
+    @Test
+    fun `claiming and starting can be one update and a member may release its own claim`() {
+        val state = foldOf(
+            created, *joined.toTypedArray(),
+            TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD),
+            update("1", "alice", patch(owner = "alice", status = TaskStatus.InProgress)),
+        )
+        assertEquals("alice", state.team!!.task("1")!!.owner)
+        val released = state.apply(EventRecord(state.lastSeq + 1, 1, update("1", "alice", patch(owner = ""))))
+        assertNull("释放认领 = owner 传空串", released.team!!.task("1")!!.owner)
+        val bobClaims = released.apply(EventRecord(released.lastSeq + 1, 2, update("1", "bob", patch(owner = "bob"))))
+        assertEquals("bob", bobClaims.team!!.task("1")!!.owner)
+    }
+
+    @Test
+    fun `dependencies and unblocking reuse the personal task list implementation`() {
+        val state = foldOf(
+            created, *joined.toTypedArray(),
+            TeamTaskCreated("team1", "1", "先做", by = TEAM_LEAD),
+            TeamTaskCreated("team1", "2", "后做", by = TEAM_LEAD),
+            update("2", TEAM_LEAD, patch(addBlockedBy = listOf("1"))),
+        )
+        assertEquals(listOf("1"), state.team!!.task("2")!!.blockedBy)
+        assertEquals("两侧对称", listOf("2"), state.team!!.task("1")!!.blocks)
+        // 环、自指、指向不存在的任务都被个人清单那份判断拦下
+        assertRejected(state, update("1", TEAM_LEAD, patch(addBlockedBy = listOf("2"))), "循环依赖")
+        assertRejected(state, update("1", TEAM_LEAD, patch(addBlocks = listOf("1"))), "不能依赖它自己")
+        assertRejected(state, update("1", TEAM_LEAD, patch(addBlocks = listOf("9"))), "没有任务 #9")
+        // 被阻塞的任务，成员不能认领；阻塞者完成后解锁
+        assertRejected(state, update("2", "alice", patch(owner = "alice")), "阻塞")
+        val unblocked = state.apply(EventRecord(state.lastSeq + 1, 1, update("1", TEAM_LEAD, patch(status = TaskStatus.Completed))))
+        assertNull(unblocked.teamProblem(update("2", "alice", patch(owner = "alice"))))
+        // 删除会从别的任务的依赖里摘掉
+        val deleted = state.apply(EventRecord(state.lastSeq + 1, 2, TeamTaskDeleted("team1", "1", TEAM_LEAD)))
+        assertTrue(deleted.team!!.task("2")!!.blockedBy.isEmpty())
+        assertEquals("删除后编号不复用", "3", deleted.team!!.nextTaskId())
     }
 
     @Test
@@ -105,11 +152,10 @@ class TeamFoldTest {
         val state = foldOf(
             created, *joined.toTypedArray(),
             TeamTaskCreated("team1", "1", "由成员提出", by = "bob"),
-            TeamTaskClaimed("team1", "1", member = "alice", by = TEAM_LEAD),
-            TeamTaskClaimed("team1", "1", member = "bob", by = TEAM_LEAD),
+            update("1", TEAM_LEAD, patch(owner = "alice")),
+            update("1", TEAM_LEAD, patch(owner = "bob")),
         )
         assertEquals("bob", state.team!!.task("1")!!.owner)
-        assertEquals("bob", state.team!!.task("1")!!.createdBy)
     }
 
     @Test
@@ -117,59 +163,52 @@ class TeamFoldTest {
         val state = foldOf(
             created, *joined.toTypedArray(),
             TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD),
-            TeamTaskClaimed("team1", "1", member = "alice", by = "alice"),
-            TeamTaskDone("team1", "1", by = TEAM_LEAD),
+            update("1", "alice", patch(owner = "alice")),
+            update("1", TEAM_LEAD, patch(status = TaskStatus.Completed)),
             TeamTaskCreated("team1", "2", "乙", by = TEAM_LEAD),
-            TeamTaskClaimed("team1", "2", member = TEAM_LEAD, by = TEAM_LEAD),
+            update("2", TEAM_LEAD, patch(owner = TEAM_LEAD)),
         )
-        assertEquals(TEAM_LEAD, state.team!!.task("1")!!.doneBy)
+        assertEquals(TaskStatus.Completed, state.team!!.task("1")!!.status)
         assertEquals(TEAM_LEAD, state.team!!.task("2")!!.owner)
     }
 
     @Test
-    fun `a member cannot finish a task someone else claimed`() {
+    fun `a member cannot change or finish a task someone else claimed or nobody claimed`() {
         val state = foldOf(
             created, *joined.toTypedArray(),
             TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD),
-            TeamTaskClaimed("team1", "1", member = "alice", by = "alice"),
+            update("1", "alice", patch(owner = "alice")),
+            TeamTaskCreated("team1", "2", "乙", by = TEAM_LEAD),
         )
-        assertRejected(state, TeamTaskDone("team1", "1", by = "bob"), "只能完成自己认领的任务")
+        assertRejected(state, update("1", "bob", patch(status = TaskStatus.Completed)), "只能改自己认领的任务")
+        assertRejected(state, update("1", "bob", patch(subject = "改个名")), "认领人：alice")
+        assertRejected(state, update("2", "alice", patch(status = TaskStatus.Completed)), "认领人：无")
+        assertRejected(state, TeamTaskDeleted("team1", "1", "bob"), "只能删自己认领的任务")
     }
 
     @Test
-    fun `a member cannot finish a task nobody claimed`() {
+    fun `a member cannot steal assign or release somebody else's claim`() {
+        val state = foldOf(
+            created, *joined.toTypedArray(),
+            TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD),
+            update("1", "alice", patch(owner = "alice")),
+        )
+        assertRejected(state, update("1", "bob", patch(owner = "bob")), "不能抢")
+        assertRejected(state, update("1", "alice", patch(owner = "bob")), "不能把任务指派给别人")
+        assertRejected(state, update("1", "bob", patch(owner = "")), "只能释放自己的认领")
+    }
+
+    @Test
+    fun `owners must be people in the team`() {
         val state = foldOf(created, *joined.toTypedArray(), TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD))
-        assertRejected(state, TeamTaskDone("team1", "1", by = "alice"), "认领人：无")
-    }
-
-    @Test
-    fun `a member cannot steal or assign tasks`() {
-        val state = foldOf(
-            created, *joined.toTypedArray(),
-            TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD),
-            TeamTaskClaimed("team1", "1", member = "alice", by = "alice"),
-        )
-        assertRejected(state, TeamTaskClaimed("team1", "1", member = "bob", by = "bob"), "不能抢")
-        assertRejected(state, TeamTaskClaimed("team1", "1", member = "bob", by = "alice"), "不能把任务指派给别人")
-    }
-
-    @Test
-    fun `finished tasks cannot be claimed or finished again`() {
-        val state = foldOf(
-            created, *joined.toTypedArray(),
-            TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD),
-            TeamTaskClaimed("team1", "1", member = "alice", by = "alice"),
-            TeamTaskDone("team1", "1", by = "alice"),
-        )
-        assertRejected(state, TeamTaskClaimed("team1", "1", member = "bob", by = TEAM_LEAD), "已经完成")
-        assertRejected(state, TeamTaskDone("team1", "1", by = TEAM_LEAD), "已经完成了")
+        assertRejected(state, update("1", TEAM_LEAD, patch(owner = "mallory")), "不是这个团队的成员")
     }
 
     @Test
     fun `unknown tasks, strangers and wrong ids are rejected`() {
         val state = ready()
-        assertRejected(state, TeamTaskClaimed("team1", "9", member = "alice", by = "alice"), "没有团队任务 #9")
-        assertRejected(state, TeamTaskDone("team1", "9", by = TEAM_LEAD), "没有团队任务 #9")
+        assertRejected(state, update("9", "alice", patch(owner = "alice")), "没有团队任务 #9")
+        assertRejected(state, TeamTaskDeleted("team1", "9", TEAM_LEAD), "没有团队任务 #9")
         assertRejected(state, TeamTaskCreated("team1", "1", "x", by = "mallory"), "不是这个团队的成员")
         assertRejected(state, TeamTaskCreated("team1", "5", "x", by = TEAM_LEAD), "不是下一个编号")
         assertRejected(state, TeamTaskCreated("team1", "1", " ", by = TEAM_LEAD), "任务要有标题")
@@ -179,7 +218,7 @@ class TeamFoldTest {
     @Test
     fun `a member that has not joined yet cannot take part`() {
         val onlyAlice = foldOf(created, joined[0], TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD))
-        assertRejected(onlyAlice, TeamTaskClaimed("team1", "1", member = "bob", by = TEAM_LEAD), "不是这个团队的成员")
+        assertRejected(onlyAlice, update("1", TEAM_LEAD, patch(owner = "bob")), "不是这个团队的成员")
     }
 
     @Test
@@ -220,8 +259,8 @@ class TeamFoldTest {
         assertEquals(TeamDisbandReason.Completed, disbanded.team!!.disbanded!!.reason)
         assertEquals("解散后任务还留着", 1, disbanded.team!!.tasks.size)
         assertRejected(disbanded, TeamTaskCreated("team1", "2", "乙", by = TEAM_LEAD), "已经解散")
-        assertRejected(disbanded, TeamTaskClaimed("team1", "1", member = "alice", by = TEAM_LEAD), "已经解散")
-        assertRejected(disbanded, TeamTaskDone("team1", "1", by = TEAM_LEAD), "已经解散")
+        assertRejected(disbanded, update("1", TEAM_LEAD, patch(owner = "alice")), "已经解散")
+        assertRejected(disbanded, TeamTaskDeleted("team1", "1", TEAM_LEAD), "已经解散")
         assertRejected(disbanded, TeamDisbanded("team1", TeamDisbandReason.UserEnded), "已经解散了")
 
         val second = disbanded.apply(EventRecord(disbanded.lastSeq + 1, 1, TeamCreated("team2", leaderId, listOf(TeamMemberSpec("carol", prompt = "x")))))
@@ -245,7 +284,7 @@ class TeamFoldTest {
         val events = arrayOf<SessionEvent>(
             created, *joined.toTypedArray(),
             TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD),
-            TeamTaskClaimed("team1", "1", member = "alice", by = "alice"),
+            update("1", "alice", patch(owner = "alice")),
         )
         assertEquals(foldOf(*events), foldOf(*events))
     }

@@ -23,9 +23,10 @@ import dev.min.agent.spi.TeamMemberJoined
 import dev.min.agent.spi.TeamMemberSpec
 import dev.min.agent.spi.TeamMessage
 import dev.min.agent.spi.TeamOp
-import dev.min.agent.spi.TeamTaskClaimed
+import dev.min.agent.spi.TaskStatus
+import dev.min.agent.spi.TeamTaskDeleted
 import dev.min.agent.spi.TeamTaskCreated
-import dev.min.agent.spi.TeamTaskDone
+import dev.min.agent.spi.TeamTaskUpdated
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnTrigger
 import kotlinx.coroutines.CoroutineScope
@@ -114,15 +115,14 @@ internal class TeamCoordinator(
             is TeamOp.Create -> failure("建团队在 handle 开头已经处理，不会走到这里。")
             is TeamOp.Disband -> disband(root, team, actor, op)
             is TeamOp.TaskCreate -> commitTeamEvent(root, actor, "已创建团队任务") { t ->
-                TeamTaskCreated(t.teamId, t.nextTaskId(), op.title.trim(), op.description.trim(), actor)
+                TeamTaskCreated(t.teamId, t.nextTaskId(), op.subject.trim(), op.description.trim(), op.activeForm?.trim()?.takeIf { it.isNotEmpty() }, op.metadata, actor)
             }
-            is TeamOp.TaskClaim -> commitTeamEvent(root, actor, "已认领") { t ->
-                TeamTaskClaimed(t.teamId, op.taskId.trim().removePrefix("#"), op.member?.trim()?.takeIf { it.isNotEmpty() } ?: actor, actor)
+            is TeamOp.TaskUpdate -> commitTeamEvent(root, actor, "已更新团队任务") { t ->
+                TeamTaskUpdated(t.teamId, op.taskId.trim().removePrefix("#"), op.patch, actor)
             }
-            is TeamOp.TaskDone -> commitTeamEvent(root, actor, "已完成") { t ->
-                TeamTaskDone(t.teamId, op.taskId.trim().removePrefix("#"), actor, op.summary?.trim()?.takeIf { it.isNotEmpty() })
+            is TeamOp.TaskDelete -> commitTeamEvent(root, actor, "已删除团队任务") { t ->
+                TeamTaskDeleted(t.teamId, op.taskId.trim().removePrefix("#"), actor)
             }
-            TeamOp.Status -> success(statusText(root.state.value.team ?: team))
         }
     }
 
@@ -169,8 +169,12 @@ internal class TeamCoordinator(
     private fun memberBrief(teamId: String, spec: TeamMemberSpec, all: List<String>): String {
         val mates = (all - spec.name).joinToString("、").ifEmpty { "（没有其他成员）" }
         return "你是 agent 团队 $teamId 的成员「${spec.name}」，负责人叫 $TEAM_LEAD。队友：$mates。\n" +
-            "协作方式：用 TeamTask 工具查看、认领、完成团队任务（只能改自己认领的任务）；用 SendMessage 给队友（to=名字）、负责人（to=$TEAM_LEAD）发消息，to=$TEAM_ALL 广播给全体。" +
-            "你看不到负责人的对话，需要的信息向负责人要。做完后直接给出报告，报告会交给负责人，由他决定要不要转给用户。\n\n" +
+            "协作方式：你的任务清单（TaskList / TaskGet / TaskCreate / TaskUpdate）就是团队共享的那一份，和负责人、队友共用。" +
+            "认领 = TaskUpdate 把 owner 设成你的名字「${spec.name}」（同时可以 status=in_progress），做完 = status=completed；" +
+            "不再做某条时把 owner 传空串释放认领。你只能改自己认领的任务，不能抢别人的；可以用 TaskCreate 提新任务。" +
+            "用 SendMessage 给队友（to=名字）、负责人（to=$TEAM_LEAD）发消息，to=$TEAM_ALL 广播给全体。你看不到负责人的对话，需要的信息向负责人要。\n" +
+            "做完手上的任务后，先 TaskList 看有没有待认领的（pending、没有 owner、没被未完成任务阻塞）：有就认领接着做；" +
+            "没有了再直接给出报告，报告会交给负责人，由他决定要不要转给用户。\n\n" +
             "你的任务：\n${spec.prompt}"
     }
 
@@ -194,9 +198,9 @@ internal class TeamCoordinator(
             val after = root.state.value.team!!
             success(
                 when (event) {
-                    is TeamTaskCreated -> "$doneText #${event.taskId}：${event.title}"
-                    is TeamTaskClaimed -> "$doneText 任务 #${event.taskId}（认领人：${event.member}）"
-                    is TeamTaskDone -> "$doneText 任务 #${event.taskId}"
+                    is TeamTaskCreated -> "$doneText #${event.taskId}「${event.subject}」"
+                    is TeamTaskUpdated -> "$doneText #${event.taskId}"
+                    is TeamTaskDeleted -> "$doneText #${event.taskId}"
                     else -> doneText
                 } + "\n" + tasksText(after),
             )
@@ -370,7 +374,7 @@ internal class TeamCoordinator(
                 child.lastTurn == null && child.inbox.isNotEmpty() -> TeamMemberStatus.Phase.Queued
                 else -> TeamMemberStatus.Phase.Idle
             }
-            TeamMemberStatus(m.name, m.session, phase, team.tasks.filter { it.owner == m.name && it.status == TeamTaskStatus.Claimed }.map { it.id })
+            TeamMemberStatus(m.name, m.session, phase, team.tasks.filter { it.owner == m.name && it.status != TaskStatus.Completed }.map { it.id })
         }
     }
 
@@ -394,11 +398,11 @@ internal class TeamCoordinator(
         if (team.tasks.isEmpty()) return "任务清单：（空）"
         return "任务清单：\n" + team.tasks.joinToString("\n") { t ->
             val state = when (t.status) {
-                TeamTaskStatus.Pending -> "待认领"
-                TeamTaskStatus.Claimed -> "进行中 · ${t.owner}"
-                TeamTaskStatus.Done -> "已完成 · ${t.doneBy}" + (t.summary?.let { "：$it" } ?: "")
+                TaskStatus.Pending -> t.owner?.let { "已认领 · $it" } ?: "待认领"
+                TaskStatus.InProgress -> "进行中 · ${t.owner ?: "无人认领"}"
+                TaskStatus.Completed -> "已完成" + (t.owner?.let { " · $it" } ?: "")
             }
-            "- #${t.id} ${t.title}（$state）"
+            "- #${t.id} ${t.subject}（$state）"
         }
     }
 

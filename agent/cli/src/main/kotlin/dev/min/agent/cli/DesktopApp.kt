@@ -62,7 +62,6 @@ import dev.min.agent.tools.CronListTool
 import dev.min.agent.tools.ScheduleWakeupTool
 import dev.min.agent.tools.TeamCreateTool
 import dev.min.agent.tools.TeamDisbandTool
-import dev.min.agent.tools.TeamTaskTool
 import dev.min.agent.host.CachedWebPort
 import dev.min.agent.host.CasWorkspaceSnapshots
 import dev.min.agent.spi.SnapshotBudget
@@ -107,7 +106,7 @@ internal fun desktopTools(
     (if (interactive) M5_TOOLS else emptyList())
 
 /** 团队与定时调度的工具（只在交互会话里提供） */
-private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamTaskTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
+private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 

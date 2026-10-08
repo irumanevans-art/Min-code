@@ -2,6 +2,8 @@ package dev.min.agent.spi
 
 import dev.min.agent.protocol.AgentJson
 import dev.min.agent.protocol.SessionId
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -33,15 +35,19 @@ class TeamEventsWireTest {
         )
         assertEventWire(
             TeamTaskCreated("t1", "1", "接口设计", by = "lead"),
-            """{"type":"team_task_created","teamId":"t1","taskId":"1","title":"接口设计","by":"lead"}""",
+            """{"type":"team_task_created","teamId":"t1","taskId":"1","subject":"接口设计","by":"lead"}""",
         )
         assertEventWire(
-            TeamTaskClaimed("t1", "1", "alice", "alice"),
-            """{"type":"team_task_claimed","teamId":"t1","taskId":"1","member":"alice","by":"alice"}""",
+            TeamTaskCreated("t1", "2", "补测试", "覆盖团队清单", "正在补测试", JsonObject(mapOf("p" to JsonPrimitive(1))), "bob"),
+            """{"type":"team_task_created","teamId":"t1","taskId":"2","subject":"补测试","description":"覆盖团队清单","activeForm":"正在补测试","metadata":{"p":1},"by":"bob"}""",
         )
         assertEventWire(
-            TeamTaskDone("t1", "1", "alice", "写完了"),
-            """{"type":"team_task_done","teamId":"t1","taskId":"1","by":"alice","summary":"写完了"}""",
+            TeamTaskUpdated("t1", "1", TaskPatch(status = TaskStatus.InProgress, owner = "alice"), "alice"),
+            """{"type":"team_task_updated","teamId":"t1","taskId":"1","patch":{"status":"in_progress","owner":"alice"},"by":"alice"}""",
+        )
+        assertEventWire(
+            TeamTaskDeleted("t1", "1", "lead"),
+            """{"type":"team_task_deleted","teamId":"t1","taskId":"1","by":"lead"}""",
         )
         assertEventWire(
             TeamDisbanded("t1", TeamDisbandReason.UserEnded),

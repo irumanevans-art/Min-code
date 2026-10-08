@@ -10,18 +10,18 @@ class DesktopWebTest {
 
     @Test fun `web tools append and search is registered only when configured`() {
         val original = listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "Skill")
-        val m5 = listOf("TeamCreate", "TeamTask", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
+        val m5 = listOf("TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
         assertEquals(original + listOf("WebFetch", "EnterWorktree", "ExitWorktree") + m5, desktopTools().map { it.name })
         assertEquals(original + listOf("WebFetch", "WebSearch", "EnterWorktree", "ExitWorktree") + m5, desktopTools(searchConfigured = true).map { it.name })
     }
 
     @Test fun `a one shot -p run gets no team or schedule tools because nothing outlives the process`() {
-        val m5 = listOf("TeamCreate", "TeamTask", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
+        val m5 = listOf("TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
         val oneShot = desktopTools(interactive = false).map { it.name }
         m5.forEach { assertFalse("$it 不该出现在 -p 里", it in oneShot) }
         // 其余工具原样（顺序是稳定前缀）
         assertEquals(desktopTools().map { it.name }.filterNot { it in m5 }, oneShot)
-        assertEquals(m5, desktopTools().map { it.name }.takeLast(7))
+        assertEquals(m5, desktopTools().map { it.name }.takeLast(6))
         assertEquals("带搜索时也一样", desktopTools(searchConfigured = true).map { it.name }.filterNot { it in m5 }, desktopTools(searchConfigured = true, interactive = false).map { it.name })
     }
 

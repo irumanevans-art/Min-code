@@ -17,7 +17,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /*
- * agent 团队的三个工具（docs/agent/detail/agent团队与邮箱设计.md）：TeamCreate / TeamTask / TeamDisband。
+ * agent 团队的两个工具（docs/agent/detail/agent团队与邮箱设计.md）：TeamCreate / TeamDisband。团队的任务清单不另起工具——处于团队中时
+ * TaskCreate / TaskGet / TaskList / TaskUpdate 直接读写团队共享清单（Claude Code 同，见 TaskTools.kt）。
  * 工具只把入参转成 [TeamOp] 交给 [ToolContext.agents]；成员怎么建、任务权限怎么判、名额怎么排都在内核的 SessionHub，
  * 和子 agent 三件套一个分工。团队内发消息不另做工具——就是 SendMessage（to = 成员名 / lead / all）。
  *
@@ -40,7 +41,7 @@ object TeamCreateTool : Tool<JsonObject> {
                 "description" to JsonPrimitive("成员规格，一次声明完（之后不能加人）。每项：name（成员名，不能是 lead / all / main）、prompt（开场任务，写齐背景与目标）、agent_type（可选，默认 general-purpose；不能是 fork）"),
                 "items" to subagentSchema(
                     listOf("name", "prompt"),
-                    "name" to subagentProperty("string", "成员名，之后 SendMessage / TeamTask 用它指这个成员"),
+                    "name" to subagentProperty("string", "成员名，之后 SendMessage 用它指这个成员，任务清单的 owner 也写它"),
                     "prompt" to subagentProperty("string", "成员的开场任务；成员看不到你的对话，背景要给齐"),
                     "agent_type" to subagentProperty("string", "子 agent 类型，默认 general-purpose"),
                 ),
@@ -49,10 +50,10 @@ object TeamCreateTool : Tool<JsonObject> {
     )
 
     override fun description(profile: HarnessProfile) =
-        "建立 agent 团队：声明若干成员，每个成员是独立运行的子会话，可以同时干活、互相发消息、共享一份任务清单；你是负责人（lead）。" +
+        "建立 agent 团队：声明若干成员，每个成员是独立运行的子会话，可以同时干活、互相发消息、共享一份任务清单（TaskCreate / TaskUpdate 等直接操作它，成员做完手上的活会自己去清单里认领下一条）；你是负责人（lead）。" +
             "同时运行的成员数有上限（手机默认 3 个），超出的排队，前一个结束后才启动。成员完成后的报告交给你，不会直接给用户。" +
             "成员的工具调用审批照常由用户在界面上答，团队不给成员额外权限。成员不能再开团队。一次只能有一个进行中的团队，用 TeamDisband 解散后才能建新的。" +
-            "建好后用 TeamTask 管任务清单，用 SendMessage 给成员发消息（to = 成员名，lead，或 all 广播）。收到报告之前不要假设成员的结果。"
+            "建好后用 TaskCreate / TaskUpdate 等管团队共享清单（你也可以认领，owner 写 lead），用 SendMessage 给成员发消息（to = 成员名，lead，或 all 广播）。收到报告之前不要假设成员的结果。"
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
         val members = raw["members"] as? JsonArray ?: throw InvalidSubagentInput("字段 `members` 必须是成员规格的数组。")
@@ -79,52 +80,6 @@ object TeamCreateTool : Tool<JsonObject> {
     private fun specs(input: JsonObject): List<TeamMemberSpec> = (input.getValue("members") as JsonArray).map { m ->
         val o = m as JsonObject
         TeamMemberSpec(o.subagentString("name")!!.trim(), o.subagentString("agent_type")?.trim()?.takeIf { it.isNotEmpty() }, o.subagentString("prompt")!!)
-    }
-}
-
-object TeamTaskTool : Tool<JsonObject> {
-    override val name = "TeamTask"
-    override val traits = TEAM_TRAITS
-
-    private val ACTIONS = listOf("create", "claim", "done", "list")
-
-    override val inputSchema = subagentSchema(
-        listOf("action"),
-        "action" to subagentProperty("string", "create 新建任务 / claim 认领 / done 完成 / list 查看团队与任务清单"),
-        "title" to subagentProperty("string", "create 用：任务标题"),
-        "description" to subagentProperty("string", "create 用：任务说明，可省略"),
-        "task_id" to subagentProperty("string", "claim / done 用：任务编号（list 或 create 的结果里 # 后面那串数字）"),
-        "member" to subagentProperty("string", "claim 用：认领给谁。省略 = 认领给自己；只有负责人能指派给别人或改派"),
-        "summary" to subagentProperty("string", "done 用：一句话结论，可省略"),
-    )
-
-    override fun description(profile: HarnessProfile) =
-        "团队共享的任务清单（和你自己的 TaskCreate 清单是两份）。负责人和成员都能 create；成员只能 claim 给自己、只能 done 自己认领的任务，" +
-            "负责人可以指派、改派、完成任何一条。违规的操作会被拒绝并说明原因。list 返回成员状态与全部任务。"
-
-    override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
-        requireSubagentString(raw, "action")
-        val action = raw.subagentString("action")!!.trim()
-        if (action !in ACTIONS) throw InvalidSubagentInput("字段 `action` 必须是 ${ACTIONS.joinToString(" / ")} 之一。")
-        when (action) {
-            "create" -> requireSubagentString(raw, "title")
-            "claim", "done" -> requireSubagentString(raw, "task_id")
-        }
-        for (key in listOf("description", "member", "summary")) {
-            if (key in raw) requireSubagentString(raw, key)
-        }
-    }
-
-    override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "团队任务：${input.subagentString("action")}")
-
-    override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
-        val op = when (input.subagentString("action")!!.trim()) {
-            "create" -> TeamOp.TaskCreate(input.subagentString("title")!!, input.subagentString("description").orEmpty())
-            "claim" -> TeamOp.TaskClaim(input.subagentString("task_id")!!, input.subagentString("member"))
-            "done" -> TeamOp.TaskDone(input.subagentString("task_id")!!, input.subagentString("summary"))
-            else -> TeamOp.Status
-        }
-        emit(ToolProgress.Done(ctx.agents.team(op)))
     }
 }
 

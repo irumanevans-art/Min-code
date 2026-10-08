@@ -3,6 +3,7 @@ package dev.min.agent.spi
 import dev.min.agent.protocol.SessionId
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /*
  * agent 团队进日志的形状（docs/agent/detail/agent团队与邮箱设计.md §二、§三）。
@@ -69,38 +70,46 @@ data class TeamMessage(
     val broadcast: Boolean = false,
 ) : TeamEvent
 
-/** 新建团队任务。[by] 是发起人（[TEAM_LEAD] 或成员名）；编号由内核按团队内顺序分配 */
+/*
+ * 团队的共享任务清单和个人清单（task_created / task_updated / task_deleted）是**同一套**：Claude Code 里队友用的就是
+ * TaskCreate / TaskGet / TaskList / TaskUpdate，只是清单换成团队的那一份。所以下面三个事件的载荷直接复用个人清单的
+ * 字段与 [TaskPatch]（owner、依赖、解锁都是同一份实现），多的只有 [teamId] 与动手的人 [by]（[TEAM_LEAD] 或成员名）。
+ * 认领 = 把 owner 改成自己，完成 = status 改成 completed，释放认领 = owner 传空串，都是 [TeamTaskUpdated]。
+ */
+
+/** 新建团队任务。编号由内核按团队内顺序分配（删除后也不复用），状态固定从 pending 开始 */
 @Serializable
 @SerialName("team_task_created")
 data class TeamTaskCreated(
     val teamId: String,
     val taskId: String,
-    val title: String,
+    val subject: String,
     val description: String = "",
+    val activeForm: String? = null,
+    val metadata: JsonObject = JsonObject(emptyMap()),
     val by: String,
 ) : TeamEvent
 
 /**
- * 认领任务：[member] 成为负责人。[by] 是动手的人——成员只能认领给自己，负责人可以指派给任何人（含改派）。
- * 任务已被别人认领时，只有负责人能改派
+ * 修改团队任务（状态、文字、认领人、依赖）。[by] 是动手的人。权限（Min 比 Claude Code 更严的一条）：
+ * 成员只能认领给自己、只能释放自己的认领、只能改自己认领的任务；负责人什么都能改（含指派 / 改派）
  */
 @Serializable
-@SerialName("team_task_claimed")
-data class TeamTaskClaimed(
+@SerialName("team_task_updated")
+data class TeamTaskUpdated(
     val teamId: String,
     val taskId: String,
-    val member: String,
+    val patch: TaskPatch,
     val by: String,
 ) : TeamEvent
 
-/** 完成任务。成员只能完成自己认领的，负责人可以完成任何一条；[summary] 是一句结论 */
+/** 删除团队任务，同时从别的任务的依赖里摘掉它。成员只能删自己认领的 */
 @Serializable
-@SerialName("team_task_done")
-data class TeamTaskDone(
+@SerialName("team_task_deleted")
+data class TeamTaskDeleted(
     val teamId: String,
     val taskId: String,
     val by: String,
-    val summary: String? = null,
 ) : TeamEvent
 
 @Serializable
