@@ -216,11 +216,29 @@ class ScheduleWakeupToolTest {
     }
 
     @Test
-    fun `delay must be a whole number of seconds between a minute and an hour`() {
+    fun `an out of range delay is clamped to a minute and an hour and the result says so - same as Claude Code`() = runBlocking {
+        val tooSmall = ScheduleWakeupTool.call(ctx(), "delaySeconds" to 5, "prompt" to "x")
+        assertFalse(tooSmall.text(), tooSmall.isError)
+        assertEquals(60_000L, (tooSmall.effects.single() as SessionEffect.CronCreate).intervalMs)
+        assertTrue(tooSmall.text(), tooSmall.text().contains("60 秒后唤醒") && tooSmall.text().contains("你给的是 5 秒") && tooSmall.text().contains("已调整"))
+
+        val tooBig = ScheduleWakeupTool.call(ctx(), "delaySeconds" to 90_000, "prompt" to "x")
+        assertEquals(3_600_000L, (tooBig.effects.single() as SessionEffect.CronCreate).intervalMs)
+        assertTrue(tooBig.text(), tooBig.text().contains("3600 秒后唤醒") && tooBig.text().contains("你给的是 90000 秒"))
+
+        val fraction = ScheduleWakeupTool.call(ctx(), "delaySeconds" to 90.5, "prompt" to "x")
+        assertEquals("小数四舍五入到整秒", 91_000L, (fraction.effects.single() as SessionEffect.CronCreate).intervalMs)
+
+        val inRange = ScheduleWakeupTool.call(ctx(), "delaySeconds" to 270, "prompt" to "x")
+        assertFalse("范围内的不提夹值", inRange.text().contains("已调整"))
+    }
+
+    @Test
+    fun `delay still has to be a number, and a prompt is still required`() {
         assertTrue(ScheduleWakeupTool.reject("prompt" to "x").contains("delaySeconds"))
-        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 59, "prompt" to "x").contains("60 到 3600"))
-        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 3601, "prompt" to "x").contains("60 到 3600"))
-        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 90.5, "prompt" to "x").contains("整数秒"))
+        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to "soon", "prompt" to "x").contains("delaySeconds"))
+        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 0, "prompt" to "x").contains("delaySeconds"))
+        assertTrue(ScheduleWakeupTool.reject("delaySeconds" to -30, "prompt" to "x").contains("delaySeconds"))
         assertTrue(ScheduleWakeupTool.reject("delaySeconds" to 60).contains("prompt"))
         assertTrue(ScheduleWakeupTool.reject("stop" to "yes").contains("stop"))
     }

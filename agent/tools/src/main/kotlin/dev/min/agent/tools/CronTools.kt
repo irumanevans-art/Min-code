@@ -216,7 +216,7 @@ object ScheduleWakeupTool : Tool<JsonObject> {
 
     override val inputSchema = subagentSchema(
         emptyList(),
-        "delaySeconds" to subagentProperty("number", "多少秒后唤醒自己，$MIN_DELAY_SECONDS 到 $MAX_DELAY_SECONDS；stop 为 true 时不用写"),
+        "delaySeconds" to subagentProperty("number", "多少秒后唤醒自己，$MIN_DELAY_SECONDS 到 $MAX_DELAY_SECONDS（超出会被夹到范围内并在结果里告诉你）；stop 为 true 时不用写"),
         "prompt" to subagentProperty("string", "唤醒时送进会话的提示词（通常是继续做这件事的指令）；stop 为 true 时不用写"),
         "reason" to subagentProperty("string", "一句话说明为什么等这么久，给用户看"),
         "stop" to subagentProperty("boolean", "true：取消已安排的唤醒，循环到此为止"),
@@ -234,8 +234,8 @@ object ScheduleWakeupTool : Tool<JsonObject> {
         }
         if ((raw["stop"] as? JsonPrimitive)?.booleanOrNull == true) return@validateSubagentInput
         val delay = (raw["delaySeconds"] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull
-        if (delay == null || delay % 1.0 != 0.0 || delay < MIN_DELAY_SECONDS || delay > MAX_DELAY_SECONDS) {
-            throw InvalidSubagentInput("字段 `delaySeconds` 必须是 $MIN_DELAY_SECONDS 到 $MAX_DELAY_SECONDS 之间的整数秒。")
+        if (delay == null || !delay.isFinite() || delay <= 0) {
+            throw InvalidSubagentInput("字段 `delaySeconds` 必须是大于 0 的秒数（超出 $MIN_DELAY_SECONDS 到 $MAX_DELAY_SECONDS 的会被调整到范围内，不会报错）。")
         }
         requireSubagentString(raw, "prompt")
         if ("reason" in raw) requireSubagentString(raw, "reason")
@@ -261,13 +261,16 @@ object ScheduleWakeupTool : Tool<JsonObject> {
             val text = if (pending.isEmpty()) "没有安排中的唤醒。" else "已取消安排中的唤醒（${pending.joinToString("、") { it.id }}），循环到此为止。"
             return ToolResult(listOf(TextPart(text)), effects = cancels)
         }
-        val delay = (input["delaySeconds"] as JsonPrimitive).doubleOrNull!!.toLong()
+        // 照 Claude Code：超出范围夹到 60–3600 并在结果里说明被夹过（wasClamped），不当错误拒绝——模型常按“等 CI 十分钟”随手填个大数
+        val asked = (input["delaySeconds"] as JsonPrimitive).doubleOrNull!!.let { Math.round(it) }
+        val delay = asked.coerceIn(MIN_DELAY_SECONDS.toLong(), MAX_DELAY_SECONDS.toLong())
+        val clamped = if (delay != asked) "（你给的是 $asked 秒，超出 $MIN_DELAY_SECONDS 到 $MAX_DELAY_SECONDS 秒的范围，已调整为 $delay 秒）" else ""
         val budget = (input["max_budget_usd"] as? JsonPrimitive)?.doubleOrNull
         val at = board.nowMs + delay * 1000
         val replaced = if (pending.isEmpty()) "" else "（替掉了还没触发的 ${pending.joinToString("、") { it.id }}）"
         val reason = input.subagentString("reason")?.let { "，原因：$it" } ?: ""
         return ToolResult(
-            listOf(TextPart("已安排 $delay 秒后唤醒（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；${board.spendText(budget)}只在会话开着且空闲时触发，App 被系统杀掉时不跑。")),
+            listOf(TextPart("已安排 $delay 秒后唤醒$clamped（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；${board.spendText(budget)}只在会话开着且空闲时触发，App 被系统杀掉时不跑。")),
             effects = cancels + SessionEffect.CronCreate(
                 input.subagentString("prompt")!!, recurring = false, maxBudgetUsd = budget,
                 intervalMs = delay * 1000, source = dev.min.agent.spi.CRON_SOURCE_WAKEUP,
