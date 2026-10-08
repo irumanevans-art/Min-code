@@ -49,6 +49,7 @@ import dev.min.agent.testkit.TEST_MODEL
 import dev.min.agent.testkit.args
 import dev.min.agent.testkit.reply
 import dev.min.agent.testkit.testDeps
+import dev.min.agent.protocol.ModelRef
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -270,6 +271,48 @@ class TeamSessionTest {
         val result = portOf(h, leader).team(TeamOp.Create(listOf(TeamMemberSpec("alice", agentType = "fork", prompt = "x"))))
         assertTrue(result.isError)
         assertNull(leader.state.value.team)
+        assertLogIsTruth(leader)
+    }
+
+    // ---- 成员的模型 ----
+
+    private val altModel = dev.min.agent.protocol.ModelRef("test", "alt")
+
+    /** 认得 TEST_MODEL 和 test/alt 两个模型的 deps（alt 与默认模型同一个脚本客户端，只是 ref 不同） */
+    private fun altDeps(model: ModelClient, tools: List<Tool<*>>): KernelDeps {
+        val base = testDeps(model, tools)
+        return KernelDeps(
+            clock = base.clock, ids = base.ids,
+            models = { ref ->
+                check(ref == TEST_MODEL || ref == altModel) { "未知模型 $ref" }
+                ResolvedModel(dev.min.agent.testkit.TEST_PROFILE.copy(ref = ref), model)
+            },
+            tools = tools, host = base.host, platform = "test", zone = base.zone, retry = base.retry,
+        )
+    }
+
+    @Test
+    fun `a member can run on its own model and the rest follow the leader`() = run {
+        val h = SessionHub(store, altDeps(leaderBuilds("alice", "bob") { _, _ -> hang }, listOf(teamCreate, write)), newScope(), HubLimits())
+        val leader = h.root()
+        val result = portOf(h, leader).team(
+            TeamOp.Create(listOf(TeamMemberSpec("alice", prompt = "x", model = "alt"), TeamMemberSpec("bob", prompt = "y"))),
+        )
+        assertFalse(result.text(), result.isError)
+        val members = leader.members(h)
+        assertEquals("alice 用自己指定的模型", altModel, members.getValue("alice").state.value.settings.model)
+        assertEquals("bob 没指定就跟负责人", TEST_MODEL, members.getValue("bob").state.value.settings.model)
+        assertLogIsTruth(leader)
+    }
+
+    @Test
+    fun `an unknown member model rolls the team back with the reason`() = run {
+        val h = hub(leaderBuilds("alice"))
+        val leader = h.root()
+        val result = portOf(h, leader).team(TeamOp.Create(listOf(TeamMemberSpec("alice", prompt = "x", model = "no-such-model"))))
+        assertTrue(result.isError)
+        assertTrue(result.text(), result.text().contains("不认识模型") && result.text().contains("no-such-model"))
+        assertEquals(TeamDisbandReason.Error, leader.state.value.team!!.disbanded!!.reason)
         assertLogIsTruth(leader)
     }
 

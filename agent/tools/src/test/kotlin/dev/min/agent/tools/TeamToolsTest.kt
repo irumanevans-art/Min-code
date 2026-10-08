@@ -58,12 +58,12 @@ class TeamToolsTest {
             ctx,
             "members" to members(
                 args("name" to "alice", "prompt" to "写后端"),
-                args("name" to " bob ", "prompt" to "读代码", "agent_type" to "Explore"),
+                args("name" to " bob ", "prompt" to "读代码", "agent_type" to "Explore", "model" to " claude-haiku-5-5 "),
             ),
         )
         assertFalse(result.isError)
         assertEquals(
-            TeamOp.Create(listOf(TeamMemberSpec("alice", null, "写后端"), TeamMemberSpec("bob", "Explore", "读代码"))),
+            TeamOp.Create(listOf(TeamMemberSpec("alice", null, "写后端"), TeamMemberSpec("bob", "Explore", "读代码", model = "claude-haiku-5-5"))),
             port.ops.single(),
         )
     }
@@ -75,6 +75,7 @@ class TeamToolsTest {
         assertTrue(TeamCreateTool.reject("members" to JsonArray(listOf(JsonPrimitive("alice")))).contains("members[0]"))
         assertTrue(TeamCreateTool.reject("members" to members(args("name" to "a"))).contains("members[0]"))
         assertTrue(TeamCreateTool.reject("members" to members(args("name" to "a", "prompt" to " "))).contains("prompt"))
+        assertTrue(TeamCreateTool.reject("members" to members(args("name" to "a", "prompt" to "x", "model" to 3))).contains("model"))
     }
 
     @Test

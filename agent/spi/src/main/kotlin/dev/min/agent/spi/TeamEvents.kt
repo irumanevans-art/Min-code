@@ -34,6 +34,8 @@ data class TeamMemberSpec(
     val agentType: String? = null,
     /** 成员的开场任务，作为它的第一条输入 */
     val prompt: String,
+    /** 成员用的模型（已配置的模型 id 或 provider/model）；null = 跟负责人当前模型一致。优先级照子 agent：这里 > agent 定义里的 model > 继承 */
+    val model: String? = null,
 )
 
 /** 建团队。写在负责人（根会话）的日志里，此时成员的子会话还没建 */

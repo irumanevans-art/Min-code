@@ -161,6 +161,7 @@ internal class TeamCoordinator(
                 description = "团队成员 ${spec.name}",
                 prompt = memberBrief(teamId, spec, names),
                 agentType = spec.agentType,
+                model = spec.model,
                 background = true,
                 name = spec.name,
             )

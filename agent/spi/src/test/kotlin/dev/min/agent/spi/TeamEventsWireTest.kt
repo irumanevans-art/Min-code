@@ -22,6 +22,10 @@ class TeamEventsWireTest {
             """{"type":"team_created","teamId":"t1","leader":"s1","members":[{"name":"alice","prompt":"写后端"},{"name":"bob","agentType":"Explore","prompt":"读代码"}]}""",
         )
         assertEventWire(
+            TeamCreated("t1", SessionId("s1"), listOf(TeamMemberSpec("carol", prompt = "审阅", model = "claude-haiku-5-5"))),
+            """{"type":"team_created","teamId":"t1","leader":"s1","members":[{"name":"carol","prompt":"审阅","model":"claude-haiku-5-5"}]}""",
+        )
+        assertEventWire(
             TeamMemberJoined("t1", "alice", SessionId("s2")),
             """{"type":"team_member_joined","teamId":"t1","name":"alice","session":"s2"}""",
         )

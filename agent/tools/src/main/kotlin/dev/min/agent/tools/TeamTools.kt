@@ -38,12 +38,13 @@ object TeamCreateTool : Tool<JsonObject> {
         "members" to JsonObject(
             mapOf(
                 "type" to JsonPrimitive("array"),
-                "description" to JsonPrimitive("成员规格，一次声明完（之后不能加人）。每项：name（成员名，不能是 lead / all / main）、prompt（开场任务，写齐背景与目标）、agent_type（可选，默认 general-purpose；不能是 fork）"),
+                "description" to JsonPrimitive("成员规格，一次声明完（之后不能加人）。每项：name（成员名，不能是 lead / all / main）、prompt（开场任务，写齐背景与目标）、agent_type（可选，默认 general-purpose；不能是 fork）、model（可选，成员用的模型，默认同你）"),
                 "items" to subagentSchema(
                     listOf("name", "prompt"),
                     "name" to subagentProperty("string", "成员名，之后 SendMessage 用它指这个成员，任务清单的 owner 也写它"),
                     "prompt" to subagentProperty("string", "成员的开场任务；成员看不到你的对话，背景要给齐"),
                     "agent_type" to subagentProperty("string", "子 agent 类型，默认 general-purpose"),
+                    "model" to subagentProperty("string", "可选：这个成员用的模型（已配置的模型 id 或 provider/model）。不写就跟你当前的模型一致；便宜的活可以给成员指定小模型"),
                 ),
             ),
         ),
@@ -64,6 +65,7 @@ object TeamCreateTool : Tool<JsonObject> {
                 requireSubagentString(o, "name")
                 requireSubagentString(o, "prompt")
                 if ("agent_type" in o) requireSubagentString(o, "agent_type")
+                if ("model" in o) requireSubagentString(o, "model")
             } catch (e: InvalidSubagentInput) {
                 throw InvalidSubagentInput("members[$i]：${e.message}")
             }
@@ -79,7 +81,10 @@ object TeamCreateTool : Tool<JsonObject> {
 
     private fun specs(input: JsonObject): List<TeamMemberSpec> = (input.getValue("members") as JsonArray).map { m ->
         val o = m as JsonObject
-        TeamMemberSpec(o.subagentString("name")!!.trim(), o.subagentString("agent_type")?.trim()?.takeIf { it.isNotEmpty() }, o.subagentString("prompt")!!)
+        TeamMemberSpec(
+            o.subagentString("name")!!.trim(), o.subagentString("agent_type")?.trim()?.takeIf { it.isNotEmpty() }, o.subagentString("prompt")!!,
+            model = o.subagentString("model")?.trim()?.takeIf { it.isNotEmpty() },
+        )
     }
 }
 
