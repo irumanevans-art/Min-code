@@ -266,6 +266,77 @@ class CronSessionTest {
     }
 
     @Test
+    fun `a wakeup chain shares one seven day lifetime from its first wakeup and then ends`() = run {
+        val day = 24 * 60 * minute
+        val nextDelay = AtomicInteger(300)
+        val model = RoutingModel { req ->
+            val last = req.last()
+            when {
+                last == "开始盯" -> reply(ToolCallPart(CallId("w${req.messages.size}"), "ScheduleWakeup", args("delaySeconds" to 120, "prompt" to "继续盯构建")), stop = StopReason.ToolUse)
+                // 每一轮醒来都再安排下一轮：链会一直续下去，除非被 7 天的寿命拦住
+                last.startsWith("[定时任务") -> reply(ToolCallPart(CallId("w${req.messages.size}"), "ScheduleWakeup", args("delaySeconds" to nextDelay.get(), "prompt" to "继续盯构建")), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.root()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("开始盯")))
+        settle(rt)
+        val first = rt.state.value.crons.single()
+        assertEquals("第一次安排：寿命从现在起 7 天", t0 + 7 * day, first.expiresAtMs)
+
+        // 一路接力到快满 7 天：每一轮的下一轮都继承同一个到期时刻，而不是各自再活 7 天
+        now.set(t0 + 121_000)
+        h.crons.tick(now.get())
+        rt.state.first { it.crons.size == 2 }
+        settle(rt)
+        assertEquals("接力出来的下一轮继承到期时刻", t0 + 7 * day, rt.state.value.crons[1].expiresAtMs)
+        nextDelay.set(60) // 快到寿命尽头了：再排 300 秒会越过它被拒，这一轮只排 60 秒
+        now.set(t0 + 7 * day - 100_000)
+        h.crons.tick(now.get())
+        rt.state.first { it.crons.size == 3 }
+        settle(rt)
+        assertEquals(t0 + 7 * day, rt.state.value.crons[2].expiresAtMs)
+        assertTrue(rt.state.value.crons[2].active)
+
+        // 满 7 天：最后一轮在到期时刻被收掉（age），链到此为止
+        now.set(t0 + 7 * day)
+        h.crons.tick(now.get())
+        settle(rt)
+        val last = rt.state.value.crons[2]
+        assertEquals(CronStatus.Expired, last.status)
+        assertEquals(CronExpiry.Age, events(rt.sessionId).filterIsInstance<CronExpired>().last().reason)
+        assertEquals("不再有下一轮", 3, rt.state.value.crons.size)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `scheduling past the end of the chain is refused with a reason instead of silently extending it`() = run {
+        val day = 24 * 60 * minute
+        val model = RoutingModel { req ->
+            val last = req.last()
+            when {
+                last.startsWith("[定时任务") -> reply(ToolCallPart(CallId("late"), "ScheduleWakeup", args("delaySeconds" to 3600, "prompt" to "还想再盯")), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.root()
+        // 这条链还剩半小时就满 7 天；醒来的这一轮想再等一小时
+        rt.commit(
+            listOf(CronScheduled("c1", "继续", false, null, now.get(), intervalMs = 20 * minute, expiresAtMs = now.get() + 30 * minute, source = dev.min.agent.spi.CRON_SOURCE_WAKEUP)),
+            Durability.Sync,
+        )
+        now.set(now.get() + 21 * minute)
+        h.crons.tick(now.get())
+        settle(rt)
+        val text = rt.state.value.toolResults.getValue(CallId("late")).content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        assertTrue(text, text.contains("7 天") && text.contains("不再安排下一轮"))
+        assertEquals("没有新的唤醒被安排", 1, rt.state.value.crons.size)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
     fun `a self paced loop chains wakeups until it is stopped`() = run {
         val model = RoutingModel { req ->
             val last = req.last()

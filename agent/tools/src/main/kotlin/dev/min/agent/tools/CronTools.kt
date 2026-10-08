@@ -267,10 +267,19 @@ object ScheduleWakeupTool : Tool<JsonObject> {
         val clamped = if (delay != asked) "（你给的是 $asked 秒，超出 $MIN_DELAY_SECONDS 到 $MAX_DELAY_SECONDS 秒的范围，已调整为 $delay 秒）" else ""
         val budget = (input["max_budget_usd"] as? JsonPrimitive)?.doubleOrNull
         val at = board.nowMs + delay * 1000
+        // 唤醒链共用链头那一次的 7 天寿命：下一轮会排到寿命之后的，直接告诉模型这条循环到此为止（内核落事件时也会拦，这里让模型当场知道）
+        val chainEnd = board.wakeupChainExpiresAtMs
+        if (chainEnd != null && at >= chainEnd) {
+            return ToolResult(
+                listOf(TextPart("这条自驱循环从第一次安排起已经满 7 天（${board.timeText(chainEnd)} 到期），不再安排下一轮。需要继续的话请用户重新发起。")),
+                isError = true,
+            )
+        }
+        val chainNote = chainEnd?.let { "这条自驱循环最晚到 ${board.timeText(it)}（从第一次安排起 7 天）。" } ?: ""
         val replaced = if (pending.isEmpty()) "" else "（替掉了还没触发的 ${pending.joinToString("、") { it.id }}）"
         val reason = input.subagentString("reason")?.let { "，原因：$it" } ?: ""
         return ToolResult(
-            listOf(TextPart("已安排 $delay 秒后唤醒$clamped（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；${board.spendText(budget)}只在会话开着且空闲时触发，App 被系统杀掉时不跑。")),
+            listOf(TextPart("已安排 $delay 秒后唤醒$clamped（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；${board.spendText(budget)}${chainNote}只在会话开着且空闲时触发，App 被系统杀掉时不跑。")),
             effects = cancels + SessionEffect.CronCreate(
                 input.subagentString("prompt")!!, recurring = false, maxBudgetUsd = budget,
                 intervalMs = delay * 1000, source = dev.min.agent.spi.CRON_SOURCE_WAKEUP,

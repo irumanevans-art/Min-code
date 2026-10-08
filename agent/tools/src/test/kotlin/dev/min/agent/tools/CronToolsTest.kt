@@ -202,6 +202,21 @@ class ScheduleWakeupToolTest {
     }
 
     @Test
+    fun `a wakeup past the end of its chain is refused and one inside it tells when the chain ends`() = runBlocking {
+        val chainEnd = t0 + 30 * 60_000
+        val board = CronBoard(emptyList(), nextId = "c2", nowMs = t0, zone = ZoneOffset.UTC, refusal = null, wakeupChainExpiresAtMs = chainEnd)
+        val c = object : ToolContext by TestToolContext() {
+            override val crons: CronBoard = board
+        }
+        val late = ScheduleWakeupTool.call(c, "delaySeconds" to 3600, "prompt" to "还想再盯")
+        assertTrue(late.text(), late.isError && late.effects.isEmpty())
+        assertTrue(late.text(), late.text().contains("7 天") && late.text().contains("不再安排下一轮"))
+        val fine = ScheduleWakeupTool.call(c, "delaySeconds" to 600, "prompt" to "再看一眼")
+        assertFalse(fine.text(), fine.isError)
+        assertTrue(fine.text(), fine.text().contains("这条自驱循环最晚到") && fine.text().contains("2026-10-08 08:30 UTC"))
+    }
+
+    @Test
     fun `a new wakeup replaces the pending one and stop cancels it`() = runBlocking {
         val pending = listOf(wakeup("c1"), CronTask("c2", "别的", true, 0.05, t0, intervalMs = 600_000))
         val replaced = ScheduleWakeupTool.call(ctx(pending), "delaySeconds" to 60, "prompt" to "再来")

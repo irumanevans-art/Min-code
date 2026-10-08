@@ -34,6 +34,7 @@ internal fun SessionState.cronBoard(nowMs: Long, zone: ZoneId, budgetCeilingUsd:
     nowMs = nowMs,
     zone = zone,
     budgetCeilingUsd = budgetCeilingUsd,
+    wakeupChainExpiresAtMs = firingWakeup()?.expiresAtMs,
     refusal = if (origin != null) "定时任务只能在根会话里建：子 agent 与团队成员的会话不会被定时触发。请让负责人（主会话）来建。" else null,
 )
 
@@ -53,6 +54,7 @@ internal fun SessionState.cronProblem(e: SessionEvent): String? = when (e) {
             interval != null && interval < CRON_MIN_INTERVAL_MS -> "间隔最短一分钟。"
             parsed is CronParsed.Invalid -> parsed.reason
             e.maxBudgetUsd?.let { !it.isFinite() || it <= 0 } == true -> "单次花费上限必须是大于 0 的有限数。"
+            e.expiresAtMs?.let { it <= e.scheduledAtMs } == true -> "这条自驱循环（ScheduleWakeup）从第一次安排起最多 7 天，已经到期，不再安排下一轮。"
             crons.count { it.active } >= CRON_MAX_ACTIVE -> "一个会话最多同时有 $CRON_MAX_ACTIVE 个定时任务，先删掉几个。"
             else -> null
         }
@@ -171,3 +173,15 @@ internal class CronRun(
 internal class CronBudgetReached(val reason: String) : IllegalStateException("定时任务这次运行已到花费上限：$reason")
 
 internal fun money(usd: Double): String = "$" + String.format(java.util.Locale.ROOT, "%.4f", usd)
+
+/**
+ * 触发当前这一轮的唤醒任务（ScheduleWakeup 安排的）：会话里最近一条人侧输入来自定时任务 X、且 X 是唤醒。
+ * 这一轮里模型再调 ScheduleWakeup，新的一轮就接在同一条链上——共用链头那一次的 7 天寿命，不是各自再活 7 天。
+ * 中途用户插了话（最近输入是用户的）就不再算链上，按全新的一条处理
+ */
+internal fun SessionState.firingWakeup(): CronTask? {
+    if (turn == null) return null
+    val last = history.lastOrNull { it is HistoryEntry.User } as? HistoryEntry.User
+    val id = (last?.origin as? dev.min.agent.spi.InputOrigin.Cron)?.cronId ?: return null
+    return cronTask(id)?.takeIf { it.source == dev.min.agent.spi.CRON_SOURCE_WAKEUP }
+}

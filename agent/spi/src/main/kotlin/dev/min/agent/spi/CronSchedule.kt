@@ -168,6 +168,8 @@ data class CronBoard(
     val refusal: String? = "这个环境不支持定时任务。",
     /** 宿主设的花费天花板（设置项 cronMaxBudgetUsd）；null = 宿主没设。工具据此在结果里说清这个任务实际的单次上限 */
     val budgetCeilingUsd: Double? = null,
+    /** 此刻这一轮是被一条 ScheduleWakeup 唤醒的：那条唤醒链的到期时刻（链从第一次安排起 7 天，接力出来的下一轮继承它）；否则 null */
+    val wakeupChainExpiresAtMs: Long? = null,
 ) {
     /** 这个任务每次运行实际生效的花费上限：任务自己的与宿主天花板取小，都没有就是不限（null） */
     fun effectiveBudgetUsd(taskBudgetUsd: Double?): Double? = listOfNotNull(taskBudgetUsd, budgetCeilingUsd).minOrNull()

@@ -42,8 +42,13 @@ internal fun ToolResult.effectEvents(state: SessionState, nowMs: Long): List<Ses
             is SessionEffect.CronCreate -> dev.min.agent.spi.CronScheduled(
                 working.nextCronId(), effect.prompt, effect.recurring, effect.maxBudgetUsd, nowMs,
                 cron = effect.cron, intervalMs = effect.intervalMs, source = effect.source,
-                // 只有循环任务过期；一次性任务触发一次就结束
-                expiresAtMs = if (effect.recurring) nowMs + dev.min.agent.spi.CRON_RECURRING_TTL_MS else null,
+                // 循环任务 7 天过期；一次性任务触发一次就结束、不按时间过期。例外是 ScheduleWakeup 的接力：整条链共用链头那一次的 7 天
+                // （接在一条唤醒后面的继承它的到期时刻，已经到期的就建不成），否则每一轮各活 7 天，链就永远不会结束
+                expiresAtMs = when {
+                    effect.source == dev.min.agent.spi.CRON_SOURCE_WAKEUP -> working.firingWakeup()?.expiresAtMs ?: (nowMs + dev.min.agent.spi.CRON_RECURRING_TTL_MS)
+                    effect.recurring -> nowMs + dev.min.agent.spi.CRON_RECURRING_TTL_MS
+                    else -> null
+                },
             )
             is SessionEffect.CronDelete -> dev.min.agent.spi.CronCancelled(effect.cronId)
         }
