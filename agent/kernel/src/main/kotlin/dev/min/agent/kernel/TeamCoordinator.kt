@@ -102,6 +102,16 @@ internal class TeamCoordinator(
     /** 刚因为「收尾时又来了新输入」被重新排队的成员：它这次开跑后不再因同样的原因重排，免得起不来时空转 */
     private val leftoverRequeued = HashSet<SessionId>()
 
+    /**
+     * 开跑时收件箱里**全是队友发来的邮件**的成员（它这一轮是被同伴叫起来的，不是负责人派的活，也不是负责人在等答复）。
+     * 它的报告照常进负责人的收件箱，但不叫醒负责人——否则成员之间每聊一句都要烧负责人一整轮（token 放大）。
+     * 负责人下次开回合时会一并看到。负责人发来的消息、开场任务、用户的话都不算：那些报告照常唤醒
+     */
+    private val peerTurns: MutableSet<SessionId> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** 这个成员刚结束的回合是不是被队友的邮件叫起来的（取一次就清掉）。[SessionHub.deliver] 据此决定要不要唤醒负责人 */
+    fun takePeerTurn(id: SessionId): Boolean = peerTurns.remove(id)
+
     // ---- 入口 ----
 
     suspend fun handle(caller: SessionRuntime, turnId: TurnId, callId: CallId, op: TeamOp): ToolResult {
@@ -271,6 +281,8 @@ internal class TeamCoordinator(
                 startTurn = if (toLeader) TurnTrigger.Notification else null,
                 extra = listOf(TeamMessage(team.teamId, messageId, sender, name, text, broadcast)),
             )
+            // 负责人的话成员要答复：哪怕这一轮是队友的邮件起的头，报告也该叫醒负责人
+            if (sender == TEAM_LEAD) peerTurns -= sessionId
             if (!toLeader) requestStart(sessionId)
             notes += "$name：" + deliveryNote(runtime, sessionId)
         }
@@ -315,12 +327,23 @@ internal class TeamCoordinator(
         val id = runtime.sessionId
         active += id
         val allowRetry = leftoverRequeued.remove(id).not()
+        if (startedByPeers(runtime)) peerTurns += id else peerTurns -= id
         runtime.runInbox()
         scope.launch {
             // awaitIdle 等的是整个回合 Job：回合正常结束后若收件箱还有排队的输入，同一个 Job 里接着开下一回合，
             // 所以这里等到的才是「真的没事干了」，不会在两个回合之间错放名额
             runtime.awaitIdle()
             release(id, allowRetry)
+        }
+    }
+
+    /** 收件箱非空且每一条都是队友（不是负责人）发的团队邮件 */
+    private fun startedByPeers(runtime: SessionRuntime): Boolean {
+        val leader = runtime.state.value.origin?.root ?: return false
+        val inbox = runtime.state.value.inbox
+        return inbox.isNotEmpty() && inbox.all {
+            val origin = it.origin as? InputOrigin.Agent
+            origin != null && origin.kind == AgentInputKind.Message && origin.session != leader
         }
     }
 
@@ -353,6 +376,7 @@ internal class TeamCoordinator(
                 queue.remove(id)
                 active -= id
                 leftoverRequeued -= id
+                peerTurns -= id
                 pumpLocked()
             }
         }

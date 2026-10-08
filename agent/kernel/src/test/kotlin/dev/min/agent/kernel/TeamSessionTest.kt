@@ -533,6 +533,47 @@ class TeamSessionTest {
         assertLogIsTruth(leader)
     }
 
+    /** 两个成员做完开场任务、负责人消化完两份报告之后的安静状态 */
+    private suspend fun quietTeam(h: SessionHub, model: RoutingModel): Pair<SessionRuntime, Map<String, SessionRuntime>> {
+        val leader = h.root()
+        leader.send(ClientMsgId("u1"), listOf(TextPart("组个团队")))
+        leader.state.first { s ->
+            s.team?.members?.all { it.session != null } == true &&
+                s.history.count { it is HistoryEntry.User && (it.origin as? InputOrigin.Agent)?.kind == AgentInputKind.Report } == 2
+        }
+        settle(leader)
+        return leader to leader.members(h)
+    }
+
+    @Test
+    fun `a turn a peer's message started reports to the leader's inbox without waking it, a leader message still does`() = run {
+        val model = leaderBuilds("alice", "bob")
+        val h = hub(model)
+        val (leader, members) = quietTeam(h, model)
+        val bob = members.getValue("bob")
+        val turnsBefore = leader.state.value.lastTurn!!.turnId
+        val bobTurnsBefore = bob.state.value.lastTurn!!.turnId
+
+        // 队友给 bob 发消息：bob 跑一轮，报告进负责人的收件箱，但不叫醒负责人（否则成员之间每聊一句都烧负责人一整轮）
+        assertFalse(portOf(h, members.getValue("alice")).message("bob", "接口定好了").isError)
+        bob.state.first { it.lastTurn?.turnId != bobTurnsBefore && it.turn == null }
+        leader.state.first { s -> s.inbox.any { (it.origin as? InputOrigin.Agent)?.session == bob.sessionId } }
+        delay(400)
+        assertEquals("负责人没有被叫醒", turnsBefore, leader.state.value.lastTurn!!.turnId)
+        assertNull(leader.state.value.turn)
+        assertEquals("报告躺在收件箱里，负责人下次开回合时一并看到", 1, leader.state.value.inbox.size)
+        assertLogIsTruth(leader)
+
+        // 对照：负责人自己给 bob 发的消息，它在等答复——这一轮的报告照常唤醒负责人
+        val bobAfterPeer = bob.state.value.lastTurn!!.turnId
+        assertFalse(portOf(h, leader).message("bob", "进度如何").isError)
+        bob.state.first { it.lastTurn?.turnId != bobAfterPeer && it.turn == null }
+        leader.state.first { it.lastTurn?.turnId != turnsBefore }
+        settle(leader)
+        assertEquals("负责人醒来把积压的两份报告一起消化了", 0, leader.state.value.inbox.size)
+        assertLogIsTruth(leader)
+    }
+
     @Test
     fun `a message to the leader wakes it, and to main from a member means the leader`() = run {
         val h = hub(leaderBuilds("alice") { _, _ -> hang })

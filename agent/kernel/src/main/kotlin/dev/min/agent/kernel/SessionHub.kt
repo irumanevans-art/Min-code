@@ -1028,12 +1028,14 @@ class SessionHub(
         val parentLast = parent.state.value.lastTurn?.outcome
         val parentHealthy = parentLast == null || parentLast == TurnOutcome.Completed
         val restarted = (ended.outcome as? TurnOutcome.Interrupted)?.by == InterruptedBy.ProcessDeath
+        // 被队友的邮件叫起来的成员回合：报告只进收件箱，不唤醒负责人（见 TeamCoordinator.peerTurns）。每个回合都要取，免得标记留到下一回合
+        val peerTriggered = teams.takePeerTurn(child.sessionId)
         parent.receive(
             ClientMsgId("report:${child.sessionId.value}:${ended.turnId.value}"),
             listOf(TextPart(report)),
             Delivery.Steer,
             InputOrigin.Agent(child.sessionId, AgentInputKind.Report, ended.turnId),
-            startTurn = if (autoStart && parentHealthy && !restarted && !quiet && child.sessionId !in stopping) {
+            startTurn = if (autoStart && parentHealthy && !restarted && !quiet && !peerTriggered && child.sessionId !in stopping) {
                 TurnTrigger.Notification
             } else null,
         )

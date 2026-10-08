@@ -29,6 +29,7 @@
 - 成员 = 负责人（根会话）的子会话，走 `SessionHub.spawn`；团队状态（成员表、任务清单、是否解散）完全从**负责人日志**的 `team_*` 事件折叠到 `SessionState.team`，没有第二份。成员只能认领给自己、只能完成自己认领的任务，负责人可改派 / 完成全部；违规转换在落盘前被 `teamProblem` 拒，只在负责人日志记一条 warning Note。
 - 邮箱 = 日志事件：`team_message` 写进**收件人**日志，与同一次提交里的 `input_received`（`SendMessage` 同一条 `receive()` 路径）成对出现，所以重开会话仍在收件箱、提升进对话后只读一次。`to` 可写成员名 / `lead` / `all`；发件人在团队里且收件人是队友时走团队邮箱，其余照旧走子 agent 路径。
 - 并发：`HubLimits.teamMaxConcurrent`（默认 3；App 设置项 `teamMaxConcurrent`、CLI settings.json 同名键），超出的成员排队，前一个结束后才启动。超过 8 的设置要用户确认（`TeamLimits.resolve`）。
+- 报告与唤醒：成员每个回合结束照常把报告交进负责人收件箱（`SessionHub.deliver`）；但**被队友的邮件叫起来的**回合（开跑时收件箱里全是队友邮件，`TeamCoordinator.peerTurns`）只入收件箱、不唤醒负责人，免得成员之间每聊一句都烧负责人一整轮；负责人发的消息、开场任务、用户的话引起的回合照常唤醒。
 - 权限不绕过：成员的审批留在根会话的 hub 树上（`HubPending.root` = 负责人），由用户在界面上答，且只有成员自己的运行时答得了；成员不能再开团队，不能是 fork。
 - 模型看到什么：`TeamCreate` / `TeamDisband` 两个工具（外加 `SendMessage` 描述多一句）；任务清单不另起工具——处于团队中时 `TaskCreate` / `TaskGet` / `TaskList` / `TaskUpdate` 直接读写团队共享清单（`SessionRuntime.visibleTaskBoard()`；认领 = owner 设成自己的名字，成员只能改自己认领的）；成员的开场输入给齐身份、队友和协作方式；邮件正文前缀 `[团队邮件 · 来自 X]`。token 代价：团队与定时两族 7 个工具的定义合计约 3,300 字符（约 2,000–2,500 token），每个会话每次请求都带，一次性的前缀变化（升级后第一次请求缓存未命中）；邮件与报告是追加在对话末尾的消息，不动前缀。
 - 已知限制：回退（rewind）到建团队之前，团队状态不随之回退（成员子会话被标为已回退、不再交报告，但 `SessionState.team` 仍在，需要先 TeamDisband）；排队顺序只在内存里——进程重启后排队的成员保持「收件箱有任务、没开过回合」，不自动开跑（与子 agent 崩溃后不自动续跑同一口径）；用户直接在成员会话里打字起的回合不占名额；团队界面（成员列表、消息流）本期只保证内核面（`SessionHub.teamMembers` / `pending`）。
