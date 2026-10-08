@@ -26,11 +26,12 @@ import java.time.ZoneId
 internal fun SessionState.nextCronId(): String = "c${cronSeq + 1}"
 
 /** 给工具看的视图。定时任务只属于根会话：子 agent / 团队成员建了也没人会触发它，所以直接拒绝并说明 */
-internal fun SessionState.cronBoard(nowMs: Long, zone: ZoneId) = CronBoard(
+internal fun SessionState.cronBoard(nowMs: Long, zone: ZoneId, budgetCeilingUsd: Double? = null) = CronBoard(
     tasks = crons,
     nextId = nextCronId(),
     nowMs = nowMs,
     zone = zone,
+    budgetCeilingUsd = budgetCeilingUsd,
     refusal = if (origin != null) "定时任务只能在根会话里建：子 agent 与团队成员的会话不会被定时触发。请让负责人（主会话）来建。" else null,
 )
 
@@ -49,7 +50,7 @@ internal fun SessionState.cronProblem(e: SessionEvent): String? = when (e) {
             (cron == null) == (interval == null) -> "cron 表达式与间隔要恰好给一个。"
             interval != null && interval < CRON_MIN_INTERVAL_MS -> "间隔最短一分钟。"
             parsed is CronParsed.Invalid -> parsed.reason
-            !e.maxBudgetUsd.isFinite() || e.maxBudgetUsd <= 0 -> "单次花费上限必须是大于 0 的有限数。"
+            e.maxBudgetUsd?.let { !it.isFinite() || it <= 0 } == true -> "单次花费上限必须是大于 0 的有限数。"
             crons.count { it.active } >= CRON_MAX_ACTIVE -> "一个会话最多同时有 $CRON_MAX_ACTIVE 个定时任务，先删掉几个。"
             else -> null
         }

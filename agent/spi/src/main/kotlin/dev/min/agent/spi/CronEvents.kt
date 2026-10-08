@@ -23,11 +23,11 @@ const val CRON_RECURRING_TTL_MS = 7L * 24 * 60 * 60 * 1000
 /** 间隔写法的下限：一分钟（cron 表达式本身的最小粒度也是分钟） */
 const val CRON_MIN_INTERVAL_MS = 60_000L
 
-/**
- * 每个定时任务单次运行的默认花费上限（美元）。无人值守地花用户的钱，所以手机上每个任务必须有上限，默认 0.05，可改
- * （M5 总览 §四 决定 3）。触发前估算不了的（模型没有 USD 定价）按保守值处理：不触发、记过期
+/*
+ * 定时任务**没有默认花费上限**：Claude Code 没有，各大 agent 的定时任务也都是花用户自己的额度（用户的口径：「照各大 agent 的实际做法」）。
+ * 早先拍过一个 0.05 美元的默认值，在 Opus 上几乎第一个请求就超，等于任务一触发就被掐——删掉了。
+ * 上限现在是**可选**的 Min 扩展：模型或用户给某个任务设 `max_budget_usd`，宿主还可以设一个天花板（`cronMaxBudgetUsd`，取小）。
  */
-const val CRON_DEFAULT_BUDGET_USD = 0.05
 
 /**
  * 新建一条定时任务。[cronId] 由内核分配（会话内递增、不复用）；[cron]（5 字段表达式）与 [intervalMs]（间隔）恰好给一个。
@@ -40,7 +40,8 @@ data class CronScheduled(
     val cronId: String,
     val prompt: String,
     val recurring: Boolean,
-    val maxBudgetUsd: Double,
+    /** 单次运行的花费上限（美元）；null = 不限（默认，同 Claude Code）。宿主的 cronMaxBudgetUsd 天花板在触发时再取小，不改写这里 */
+    val maxBudgetUsd: Double? = null,
     val scheduledAtMs: Long,
     val cron: String? = null,
     val intervalMs: Long? = null,
@@ -74,13 +75,13 @@ enum class CronExpiry {
     /** 循环任务满 7 天 */
     @SerialName("age") Age,
 
-    /** 一次运行花到了 [CronScheduled.maxBudgetUsd]，或花费无法核对：停下这次运行并取消任务 */
+    /** 一次运行花到了单次上限（任务自己的或宿主天花板），或花费无法核对：停下这次运行并取消任务 */
     @SerialName("budget") Budget,
 
     /** 一次性任务的时刻在会话没开着的时候过去了（不补跑） */
     @SerialName("missed") Missed,
 
-    /** 当前模型没有 USD 定价，花费估算不了，按保守值不触发 */
+    /** 任务设了 USD 上限，但当前模型没有 USD 定价，花费无法核对，按保守值不触发 */
     @SerialName("no_pricing") NoPricing,
 }
 

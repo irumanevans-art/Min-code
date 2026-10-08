@@ -105,9 +105,15 @@ data class HubLimits(
      * 前一个结束后才启动。设置超过 [TeamLimits.CONFIRM_ABOVE] 要先经 [TeamLimits.resolve] 让用户确认
      */
     val teamMaxConcurrent: Int = TeamLimits.DEFAULT_MAX_CONCURRENT,
+    /**
+     * 定时任务单次运行花费的宿主天花板（设置项 `cronMaxBudgetUsd`，美元）。**默认不设**——定时任务和 Claude Code 一样没有默认上限，
+     * 花的是用户自己的额度。设了就是模型传的 `max_budget_usd` 的天花板（取小），任务没传上限时它本身就是上限
+     */
+    val cronMaxBudgetUsd: Double? = null,
 ) {
     init {
         require(teamMaxConcurrent >= 1) { "团队同时运行的成员数至少是 1。" }
+        require(cronMaxBudgetUsd == null || cronMaxBudgetUsd.isFinite() && cronMaxBudgetUsd > 0) { "定时任务的花费天花板必须是大于 0 的有限数。" }
     }
 }
 
@@ -162,7 +168,7 @@ class SessionHub(
     private val store: SessionStore,
     private val deps: KernelDeps,
     private val scope: CoroutineScope,
-    private val limits: HubLimits = HubLimits(),
+    internal val limits: HubLimits = HubLimits(),
     /** 可委派的子 agent 类型：内置 + 组合根从 `.claude/agents/` 读来的（同名时后者覆盖内置） */
     agents: List<AgentDefinition> = BuiltinAgents.all,
 ) {
@@ -203,7 +209,7 @@ class SessionHub(
     internal val teams = TeamCoordinator(this, deps, scope, limits.teamMaxConcurrent)
 
     /** 定时任务的运行时：到点触发、过期、单次花费上限（状态在根会话日志的折叠里） */
-    internal val crons = CronEngine(this, deps, scope)
+    internal val crons = CronEngine(this, deps, scope, limits.cronMaxBudgetUsd)
 
     /** 定时任务出了需要告诉用户的事（7 天到期、花费上限停了一次运行……）；宿主据此发通知，日志里同时有一条 Note */
     val cronNotices: kotlinx.coroutines.flow.SharedFlow<CronNotice> get() = crons.notices

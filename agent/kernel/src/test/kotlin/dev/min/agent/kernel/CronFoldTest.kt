@@ -36,7 +36,7 @@ class CronFoldTest {
         return fold(header, all.mapIndexed { i, e -> EventRecord(i + 1L, 100L + i, e) })
     }
 
-    private fun scheduled(id: String = "c1", recurring: Boolean = true, cron: String? = null, interval: Long? = 600_000, at: Long = 1_000, budget: Double = 0.05) =
+    private fun scheduled(id: String = "c1", recurring: Boolean = true, cron: String? = null, interval: Long? = 600_000, at: Long = 1_000, budget: Double? = null) =
         CronScheduled(id, "检查构建", recurring, budget, at, cron = cron, intervalMs = interval.takeIf { cron == null }, expiresAtMs = if (recurring) at + 604_800_000 else null)
 
     private fun assertRejected(state: SessionState, event: SessionEvent, part: String) {
@@ -53,12 +53,13 @@ class CronFoldTest {
 
     @Test
     fun `a scheduled task folds in with its schedule, budget and expiry`() {
-        val state = foldOf(scheduled(cron = "0 9 * * 1-5"))
+        val state = foldOf(scheduled(cron = "0 9 * * 1-5", budget = 0.25))
         val task = state.crons.single()
         assertEquals("c1", task.id)
         assertEquals("0 9 * * 1-5", task.cron)
         assertNull(task.intervalMs)
-        assertEquals(0.05, task.maxBudgetUsd, 0.0)
+        assertEquals(0.25, task.maxBudgetUsd!!, 0.0)
+        assertNull("不给上限就是不限，没有默认值", foldOf(scheduled()).crons.single().maxBudgetUsd)
         assertEquals(CronStatus.Active, task.status)
         assertEquals(1_000L + 604_800_000, task.expiresAtMs)
         assertEquals("c2", state.nextCronId())
@@ -118,11 +119,11 @@ class CronFoldTest {
     fun `invalid schedules are rejected`() {
         val empty = foldOf()
         assertRejected(empty, scheduled(id = "c2"), "不是下一个编号")
-        assertRejected(empty, CronScheduled("c1", " ", true, 0.05, 1, intervalMs = 600_000), "要有提示词")
-        assertRejected(empty, CronScheduled("c1", "x", true, 0.05, 1), "恰好给一个")
-        assertRejected(empty, CronScheduled("c1", "x", true, 0.05, 1, cron = "* * * * *", intervalMs = 600_000), "恰好给一个")
-        assertRejected(empty, CronScheduled("c1", "x", true, 0.05, 1, intervalMs = 30_000), "最短一分钟")
-        assertRejected(empty, CronScheduled("c1", "x", true, 0.05, 1, cron = "61 * * * *"), "分钟")
+        assertRejected(empty, CronScheduled("c1", " ", true, null, 1, intervalMs = 600_000), "要有提示词")
+        assertRejected(empty, CronScheduled("c1", "x", true, null, 1), "恰好给一个")
+        assertRejected(empty, CronScheduled("c1", "x", true, null, 1, cron = "* * * * *", intervalMs = 600_000), "恰好给一个")
+        assertRejected(empty, CronScheduled("c1", "x", true, null, 1, intervalMs = 30_000), "最短一分钟")
+        assertRejected(empty, CronScheduled("c1", "x", true, null, 1, cron = "61 * * * *"), "分钟")
         assertRejected(empty, scheduled(budget = 0.0), "大于 0")
         assertRejected(empty, scheduled(budget = Double.POSITIVE_INFINITY), "大于 0")
         assertRejected(empty, scheduled(budget = Double.NaN), "大于 0")

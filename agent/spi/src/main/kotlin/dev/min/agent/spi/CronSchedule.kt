@@ -118,7 +118,8 @@ data class CronTask(
     val id: String,
     val prompt: String,
     val recurring: Boolean,
-    val maxBudgetUsd: Double,
+    /** 单次运行的花费上限（美元）；null = 不限 */
+    val maxBudgetUsd: Double?,
     val scheduledAtMs: Long,
     /** 5 字段表达式；与 [intervalMs] 恰好一个非空 */
     val cron: String? = null,
@@ -160,7 +161,12 @@ data class CronBoard(
     val nowMs: Long = 0,
     val zone: ZoneId = ZoneId.of("UTC"),
     val refusal: String? = "这个环境不支持定时任务。",
+    /** 宿主设的花费天花板（设置项 cronMaxBudgetUsd）；null = 宿主没设。工具据此在结果里说清这个任务实际的单次上限 */
+    val budgetCeilingUsd: Double? = null,
 ) {
+    /** 这个任务每次运行实际生效的花费上限：任务自己的与宿主天花板取小，都没有就是不限（null） */
+    fun effectiveBudgetUsd(taskBudgetUsd: Double?): Double? = listOfNotNull(taskBudgetUsd, budgetCeilingUsd).minOrNull()
+
     val active: List<CronTask> get() = tasks.filter { it.active }
     operator fun get(id: String): CronTask? = tasks.firstOrNull { it.id == id }
 }

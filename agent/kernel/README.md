@@ -36,7 +36,7 @@
 ## 定时任务（M5，`Crons.kt` / `CronEngine.kt`；`CronCreate` / `CronDelete` / `CronList` / `ScheduleWakeup`）
 - 会话级：任务存在**根会话自己的日志**里（`cron_scheduled` / `cron_fired` / `cron_cancelled` / `cron_expired`），`SessionState.crons` 由它折叠；重开会话折叠出未过期的任务就是恢复（`CronEngine.attach` 顺带把过期的结案）。子 agent / 团队成员不能建；`/branch` 不继承（分支日志里逐个取消）。
 - 触发（照 Claude Code）：会话开着、**空闲**时才触发（无回合、无维护、收件箱空；忙时到点的任务排着，回合一结束就触发）；错过不补跑（重开 / 打开会话那一刻起重新数；一次性任务的时刻在会话没开着时过去则 `cron_expired(missed)`）；循环任务创建 7 天后 `cron_expired(age)`；每会话最多 50 个。触发 = 在该会话里写一条 `origin = cron` 的输入（与 `cron_fired` 同一次提交），正文明说这是预设任务、不是用户此刻发的话；它不过 UserPromptSubmit hook、不记回退点。
-- 花费上限（手机上多一道）：每个任务有 `maxBudgetUsd`（默认 0.05，`max_budget_usd` 可改），按**一次运行**算。触发前模型没有 USD 定价（估算不了）→ 不触发、`cron_expired(no_pricing)`；运行中 `ModelBilling` 在每次请求前检查、`CronEngine` 盯着状态一花到上限就中断回合、取消任务、记 `cron_expired(budget)` + Note 并经 `SessionHub.cronNotices` 通知宿主。花费照常计入会话（`model_charged`）。
+- 花费上限（**可选，默认不设**，同 Claude Code：定时任务花的是用户自己的额度）：任务可带 `maxBudgetUsd`（`max_budget_usd`），宿主可设 `HubLimits.cronMaxBudgetUsd` 天花板（取小），按**一次运行**算。设了上限而触发前模型没有 USD 定价（核对不了）→ 不触发、`cron_expired(no_pricing)`；运行中 `ModelBilling` 在每次请求前检查、`CronEngine` 盯着状态一花到上限就中断回合、取消任务、记 `cron_expired(budget)` + Note 并经 `SessionHub.cronNotices` 通知宿主。花费照常计入会话（`model_charged`）。
 - 定时器：`Scheduler` 接口（spi）；桌面 `InProcessScheduler`（进程内协程，15 秒一跳）、Android `HeartbeatScheduler`（app 层，心跳驱动）。**不保证精确时刻；只在进程活着时工作——App 被系统杀掉时定时任务不跑**；不做 AlarmManager 精确闹钟（要额外权限）。前台服务现在只在有回合在跑时保活，只有定时任务的会话不会让它一直在。
 - `ScheduleWakeup` 是同一机制的另一个入口：一次性的间隔任务（`source = wakeup`，60–3600 秒），同时最多一个，`stop: true` 取消。
 - 已知限制：`/loop` 命令入口（CLI / 界面）没做；Stop hook 输入里的 `session_crons` 没填；到期 / 花费上限的系统通知只做到 `cronNotices` 流（没有接 Android 通知）；全局的“默认单次上限”设置项没做（逐任务的 `max_budget_usd` 可改）。

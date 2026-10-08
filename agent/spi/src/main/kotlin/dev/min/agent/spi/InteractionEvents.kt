@@ -153,7 +153,7 @@ sealed interface SessionEffect {
     data class CronCreate(
         val prompt: String,
         val recurring: Boolean,
-        val maxBudgetUsd: Double,
+        val maxBudgetUsd: Double? = null,
         val cron: String? = null,
         val intervalMs: Long? = null,
         val source: String? = null,

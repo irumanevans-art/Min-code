@@ -55,6 +55,8 @@ internal class CronEngine(
     private val hub: SessionHub,
     private val deps: KernelDeps,
     private val scope: CoroutineScope,
+    /** 宿主的花费天花板（[HubLimits.cronMaxBudgetUsd]）；null = 没设 */
+    private val ceilingUsd: Double? = null,
 ) {
     private class Attached(val floorMs: Long) {
         /** 每个会话一把锁：触发、过期、花费上限的处理互相串行（同一时刻只有一个在改这个会话的定时任务） */
@@ -129,20 +131,25 @@ internal class CronEngine(
 
     private suspend fun fire(rt: SessionRuntime, task: CronTask, now: Long) {
         val state = rt.state.value
-        // 估算不了花费的（当前模型没有 USD 定价）按保守值：不触发。无人值守地跑一个价格不明的模型，上限就是空话
-        val priced = catchingNonCancellation { deps.models.resolve(state.activeModel).profile.pricing }.getOrNull()
-        if (priced == null || priced.currency != "USD") {
-            expire(rt, task, expired(CronExpiry.NoPricing, null))
-            return
+        // 没有上限（任务没设、宿主也没设天花板）就不记账：和 Claude Code 一样不限，花的是用户自己的额度
+        val limit = listOfNotNull(task.maxBudgetUsd, ceilingUsd).minOrNull()
+        var run: CronRun? = null
+        if (limit != null) {
+            // 设了 USD 上限却估算不了花费的（当前模型没有 USD 定价）按保守值：不触发。价格不明的模型，上限就是空话
+            val priced = catchingNonCancellation { deps.models.resolve(state.activeModel).profile.pricing }.getOrNull()
+            if (priced == null || priced.currency != "USD") {
+                expire(rt, task, expired(CronExpiry.NoPricing, null))
+                return
+            }
+            run = CronRun(task.id, limit, state.modelCosts["USD"] ?: 0.0, state.unpricedModelCalls)
         }
         val clientMsgId = ClientMsgId("cron:${task.id}:${task.fires + 1}")
         val expectedFires = task.fires
-        val run = CronRun(task.id, task.maxBudgetUsd, state.modelCosts["USD"] ?: 0.0, state.unpricedModelCalls)
         // 先立好这次运行的记账再提交：提交一落盘回合就可能开始，第一个模型请求就要看得到上限
         rt.cronRun = run
         val delivered = rt.receive(
             clientMsgId,
-            listOf(TextPart(firedText(task))),
+            listOf(TextPart(firedText(task, limit))),
             Delivery.Queue,
             InputOrigin.Cron(task.id),
             startTurn = TurnTrigger.Cron,
@@ -153,10 +160,11 @@ internal class CronEngine(
         if (!delivered) rt.cronRun = null
     }
 
-    /** 触发时交给模型的话：明说这是预设的定时任务（不是用户此刻的消息），并告诉它有花费上限 */
-    private fun firedText(task: CronTask): String =
-        "[定时任务 ${task.id} 到点触发（${task.scheduleText()}）。这是会话里预设的任务，不是用户此刻发的消息；" +
-            "本次运行的花费上限是 ${money(task.maxBudgetUsd)}，到了会被停止。]\n${task.prompt}"
+    /** 触发时交给模型的话：明说这是预设的定时任务（不是用户此刻的消息）；设了花费上限的，告诉它上限 */
+    private fun firedText(task: CronTask, limitUsd: Double?): String =
+        "[定时任务 ${task.id} 到点触发（${task.scheduleText()}）。这是会话里预设的任务，不是用户此刻发的消息。" +
+            (limitUsd?.let { "本次运行的花费上限是 ${money(it)}，到了会被停止。" } ?: "") +
+            "]\n${task.prompt}"
 
     // ---- 盯着会话状态：花费上限，以及「回合结束就触发排着的任务」 ----
 

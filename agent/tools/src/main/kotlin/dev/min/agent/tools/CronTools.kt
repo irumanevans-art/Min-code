@@ -1,7 +1,6 @@
 package dev.min.agent.tools
 
 import dev.min.agent.protocol.TextPart
-import dev.min.agent.spi.CRON_DEFAULT_BUDGET_USD
 import dev.min.agent.spi.CRON_MAX_ACTIVE
 import dev.min.agent.spi.CRON_MIN_INTERVAL_MS
 import dev.min.agent.spi.CRON_RECURRING_TTL_MS
@@ -57,12 +56,27 @@ private fun usd(v: Double): String {
     return "$" + if (plain.substringAfter('.', "").length >= 2) plain else String.format(Locale.ROOT, "%.2f", v)
 }
 
+/**
+ * 创建结果里关于花费的一句：说清这是无人值守的运行（模型承诺“每天 9 点帮你查”时要知道到点没有人在看），
+ * 以及这个任务实际的单次上限（任务自己的与宿主天花板取小；都没有就是不限）
+ */
+private fun CronBoard.spendText(taskBudgetUsd: Double?): String {
+    val limit = effectiveBudgetUsd(taskBudgetUsd)
+    val spend = when {
+        limit == null -> "没有花费上限，花的是用户自己的额度。"
+        taskBudgetUsd == null -> "宿主设了花费上限 ${usd(limit)}，每次运行花到就停并取消该任务。"
+        limit < taskBudgetUsd -> "宿主设的花费天花板 ${usd(limit)} 比你给的 ${usd(taskBudgetUsd)} 低，按 ${usd(limit)} 算；每次运行花到就停并取消该任务。"
+        else -> "每次运行花费上限 ${usd(limit)}，花到就停并取消该任务。"
+    }
+    return "这是无人值守的运行：到点触发时没有人在看，不要向用户提问、也别依赖审批。$spend"
+}
+
 /** 一条任务的一行说明：循环 / 一次性、调度、上限、触发次数、下次时刻，以及提示词（Claude Code 的 CronList 带限定词与提示词） */
 private fun CronBoard.describe(t: CronTask): String {
     val kind = if (t.recurring) "循环" else "一次性"
     val next = if (t.active) "下次 ${timeText(t.nextFireAt(zone, 0))}" else "已结束：${t.endedBecause}"
     val expiry = t.expiresAtMs?.takeIf { t.active }?.let { "，${timeText(it)} 过期" } ?: ""
-    return "- ${t.id}｜$kind｜${t.scheduleText()}｜单次上限 ${usd(t.maxBudgetUsd)}｜已触发 ${t.fires} 次｜$next$expiry\n  提示词：${t.prompt}"
+    return "- ${t.id}｜$kind｜${t.scheduleText()}｜单次上限 ${effectiveBudgetUsd(t.maxBudgetUsd)?.let(::usd) ?: "不限"}｜已触发 ${t.fires} 次｜$next$expiry\n  提示词：${t.prompt}"
 }
 
 object CronCreateTool : Tool<JsonObject> {
@@ -74,13 +88,13 @@ object CronCreateTool : Tool<JsonObject> {
         "cron" to subagentProperty("string", "5 字段 cron 表达式（分 时 日 月 周），按本机时区；例如 \"0 9 * * 1-5\" 是工作日早上 9 点。与 every 二选一"),
         "every" to subagentProperty("string", "间隔：30m / 2h / 1d（至少 1 分钟）。循环任务每隔这么久触发，一次性任务过这么久触发一次。与 cron 二选一"),
         "recurring" to subagentProperty("boolean", "默认 true：循环；false：只触发一次"),
-        "max_budget_usd" to subagentProperty("number", "每次运行的花费上限（美元），默认 $CRON_DEFAULT_BUDGET_USD；一次运行花到它就被停下并取消该任务"),
+        "max_budget_usd" to subagentProperty("number", "可选：每次运行的花费上限（美元）。不写就不限（和 Claude Code 一样，花的是用户自己的额度）；写了，一次运行花到它就被停下并取消该任务。宿主设了天花板时取较小的"),
     )
 
     override fun description(profile: HarnessProfile) =
         "在当前会话里安排一个定时提示词：循环（cron 表达式或间隔）或一次性。任务只在会话开着且空闲时触发，到点时提示词作为一条预设任务送进会话（不是用户发的话）；" +
             "重开会话会恢复未过期的任务，循环任务创建 7 天后自动过期，错过的不补跑；每个会话最多 $CRON_MAX_ACTIVE 个。App 被系统杀掉时定时任务不跑。" +
-            "无人值守会花用户的额度，所以每次运行有花费上限（默认 \$$CRON_DEFAULT_BUDGET_USD），到了就停。只有主会话能建，子 agent 不行。"
+            "这是无人值守的运行，花的是用户自己的额度：默认不限，要限就传 max_budget_usd（一次运行花到它就停）。只有主会话能建，子 agent 与团队成员不行。"
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
         requireSubagentString(raw, "prompt")
@@ -118,7 +132,7 @@ object CronCreateTool : Tool<JsonObject> {
         val cron = input.subagentString("cron")
         val interval = input.subagentString("every")?.let(::parseCronInterval)
         val recurring = (input["recurring"] as? JsonPrimitive)?.booleanOrNull ?: true
-        val budget = (input["max_budget_usd"] as? JsonPrimitive)?.doubleOrNull ?: CRON_DEFAULT_BUDGET_USD
+        val budget = (input["max_budget_usd"] as? JsonPrimitive)?.doubleOrNull
         val prompt = input.subagentString("prompt")!!
         val preview = CronTask(board.nextId, prompt, recurring, budget, board.nowMs, cron = cron, intervalMs = interval)
         val next = preview.nextFireAt(board.zone)
@@ -128,7 +142,7 @@ object CronCreateTool : Tool<JsonObject> {
             listOf(
                 TextPart(
                     "已创建定时任务 ${board.nextId}：${preview.scheduleText()}（$lifetime）。下次触发约 ${board.timeText(next)}；" +
-                        "每次运行花费上限 ${usd(budget)}，花到就停并取消该任务。只在会话开着且空闲时触发，App 被系统杀掉时不跑。",
+                        board.spendText(budget) + "只在会话开着且空闲时触发，App 被系统杀掉时不跑。",
                 ),
             ),
             effects = listOf(SessionEffect.CronCreate(prompt, recurring, budget, cron = cron, intervalMs = interval)),
@@ -205,12 +219,12 @@ object ScheduleWakeupTool : Tool<JsonObject> {
         "prompt" to subagentProperty("string", "唤醒时送进会话的提示词（通常是继续做这件事的指令）；stop 为 true 时不用写"),
         "reason" to subagentProperty("string", "一句话说明为什么等这么久，给用户看"),
         "stop" to subagentProperty("boolean", "true：取消已安排的唤醒，循环到此为止"),
-        "max_budget_usd" to subagentProperty("number", "这一轮的花费上限（美元），默认 $CRON_DEFAULT_BUDGET_USD"),
+        "max_budget_usd" to subagentProperty("number", "可选：这一轮的花费上限（美元），不写就不限"),
     )
 
     override fun description(profile: HarnessProfile) =
         "自驱循环的下一轮：安排一个唤醒，$MIN_DELAY_SECONDS 秒到 $MAX_DELAY_SECONDS 秒后把 prompt 送回本会话（只触发一次；想继续循环就在那一轮里再调用它）。" +
-            "同一时刻最多一个，再次调用会替掉还没触发的。stop=true 取消。和 CronCreate 同一套规矩：只在会话开着且空闲时触发、App 被系统杀掉时不跑、每轮有花费上限。"
+            "同一时刻最多一个，再次调用会替掉还没触发的。stop=true 取消。和 CronCreate 同一套规矩：只在会话开着且空闲时触发、App 被系统杀掉时不跑、无人值守（默认不限花费，要限就传 max_budget_usd）。"
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
         raw["stop"]?.let {
@@ -247,12 +261,12 @@ object ScheduleWakeupTool : Tool<JsonObject> {
             return ToolResult(listOf(TextPart(text)), effects = cancels)
         }
         val delay = (input["delaySeconds"] as JsonPrimitive).doubleOrNull!!.toLong()
-        val budget = (input["max_budget_usd"] as? JsonPrimitive)?.doubleOrNull ?: CRON_DEFAULT_BUDGET_USD
+        val budget = (input["max_budget_usd"] as? JsonPrimitive)?.doubleOrNull
         val at = board.nowMs + delay * 1000
         val replaced = if (pending.isEmpty()) "" else "（替掉了还没触发的 ${pending.joinToString("、") { it.id }}）"
         val reason = input.subagentString("reason")?.let { "，原因：$it" } ?: ""
         return ToolResult(
-            listOf(TextPart("已安排 $delay 秒后唤醒（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；每轮花费上限 ${usd(budget)}。只在会话开着且空闲时触发，App 被系统杀掉时不跑。")),
+            listOf(TextPart("已安排 $delay 秒后唤醒（编号 ${board.nextId}，约 ${board.timeText(at)}$reason）$replaced；${board.spendText(budget)}只在会话开着且空闲时触发，App 被系统杀掉时不跑。")),
             effects = cancels + SessionEffect.CronCreate(
                 input.subagentString("prompt")!!, recurring = false, maxBudgetUsd = budget,
                 intervalMs = delay * 1000, source = dev.min.agent.spi.CRON_SOURCE_WAKEUP,

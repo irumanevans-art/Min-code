@@ -151,6 +151,8 @@ class MinAgentEngine(
             maxDepth = 3, maxRunningChildren = 10, maxConcurrentChildRequests = 3,
             // 设置项 teamMaxConcurrent：启动时读一次（改了下次启动生效）；设置还没读出来时用默认值
             teamMaxConcurrent = settings.snapshot?.teamMaxConcurrent ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
+            // 定时任务花费天花板（默认不设）：同样启动时读一次
+            cronMaxBudgetUsd = settings.snapshot?.cronMaxBudgetUsd,
         ),
     )
 

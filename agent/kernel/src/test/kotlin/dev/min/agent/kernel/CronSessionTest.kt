@@ -156,9 +156,9 @@ class CronSessionTest {
     /** 最近建的那个 Hub 的作用域：模拟「进程死了」就是取消它 */
     private var currentScope: CoroutineScope? = null
 
-    private fun hub(model: ModelClient, profile: dev.min.agent.llm.ModelProfile = pricedProfile): SessionHub {
+    private fun hub(model: ModelClient, profile: dev.min.agent.llm.ModelProfile = pricedProfile, limits: HubLimits = HubLimits()): SessionHub {
         val scope = newScope().also { currentScope = it }
-        return SessionHub(store, deps(model, profile), scope)
+        return SessionHub(store, deps(model, profile), scope, limits)
     }
 
     private suspend fun SessionHub.root() = create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
@@ -178,7 +178,7 @@ class CronSessionTest {
     }
 
     /** 直接把一条定时任务写进日志（创建走工具的那条路另有测试）；编号取下一个 */
-    private suspend fun schedule(rt: SessionRuntime, every: Long? = 30 * minute, cron: String? = null, recurring: Boolean = true, budget: Double = 0.05, prompt: String = "检查构建"): String {
+    private suspend fun schedule(rt: SessionRuntime, every: Long? = 30 * minute, cron: String? = null, recurring: Boolean = true, budget: Double? = null, prompt: String = "检查构建"): String {
         val id = rt.state.value.nextCronId()
         rt.commit(
             listOf(
@@ -220,7 +220,7 @@ class CronSessionTest {
         assertEquals(listOf("c1", "c2"), state.crons.map { it.id })
         val c1 = state.crons[0]
         assertEquals(CronStatus.Cancelled, c1.status)
-        assertEquals(0.1, c1.maxBudgetUsd, 0.0)
+        assertEquals(0.1, c1.maxBudgetUsd!!, 0.0)
         assertEquals(30 * minute, c1.intervalMs)
         assertEquals(t0 + 7 * 24 * 60 * minute, c1.expiresAtMs)
         val c2 = state.crons[1]
@@ -228,13 +228,13 @@ class CronSessionTest {
         assertFalse(c2.recurring)
         assertNull("一次性任务不按时间过期", c2.expiresAtMs)
         assertEquals("0 9 * * 1-5", c2.cron)
-        assertEquals("不写上限用默认值", 0.05, c2.maxBudgetUsd, 0.0)
+        assertNull("不写上限就是不限，没有默认值", c2.maxBudgetUsd)
 
         val toolText = state.toolResults.mapValues { (_, r) -> r.content.filterIsInstance<TextPart>().joinToString("") { it.text } }
         assertTrue(toolText.getValue(CallId("k1")).contains("每 30 分钟") && toolText.getValue(CallId("k1")).contains("花费上限 \$0.10"))
         assertTrue(toolText.getValue(CallId("k2")), toolText.getValue(CallId("k2")).contains("下次触发约 2026-10-08 09:00 UTC"))
         val list = toolText.getValue(CallId("k3"))
-        assertTrue(list, list.contains("c1｜循环｜每 30 分钟｜单次上限 \$0.10") && list.contains("c2｜一次性｜cron 0 9 * * 1-5｜单次上限 \$0.05") && list.contains("提示词：晨报"))
+        assertTrue(list, list.contains("c1｜循环｜每 30 分钟｜单次上限 \$0.10") && list.contains("c2｜一次性｜cron 0 9 * * 1-5｜单次上限 不限｜") && list.contains("提示词：晨报"))
         assertEquals("已取消定时任务 c1（每 30 分钟）。", toolText.getValue(CallId("k4")))
         assertLogIsTruth(rt)
     }
@@ -301,7 +301,7 @@ class CronSessionTest {
         assertTrue("不冒充人发的话", user.origin != InputOrigin.User)
         val text = (user.parts.single() as TextPart).text
         assertTrue(text, text.startsWith("[定时任务 c1 到点触发（每 30 分钟）。这是会话里预设的任务，不是用户此刻发的消息") && text.endsWith("\n检查构建"))
-        assertTrue("告诉模型有花费上限", text.contains("\$0.0500"))
+        assertTrue("没设上限就不提花费上限，只说这是预设任务", !text.contains("花费上限"))
         assertEquals("不是回退点：不是人发的话", 0, state.rewindPoints.size)
         val log = events(rt.sessionId)
         val fired = log.indexOfFirst { it is CronFired }
@@ -580,10 +580,85 @@ class CronSessionTest {
     }
 
     @Test
-    fun `a model without a USD price is not fired because the spend cannot be estimated`() = run {
+    fun `a task without a cap is never stopped for spending - same as Claude Code`() = run {
+        val rounds = AtomicInteger(0)
+        val model = RoutingModel { req ->
+            // 一次运行里连调 6 次工具：6 × 0.015 = 0.09 美元，远超旧的 0.05 默认值
+            if (req.messages.first().parts.any { (it as? TextPart)?.text?.startsWith("[定时任务") == true } && rounds.incrementAndGet() <= 6)
+                reply(ToolCallPart(CallId("p${rounds.get()}"), "Probe", args()), stop = StopReason.ToolUse)
+            else reply(TextPart("干完了"))
+        }
+        val h = hub(model)
+        val rt = h.root()
+        schedule(rt) // 不给上限
+        now.set(t0 + 31 * minute)
+        h.crons.tick(now.get())
+        rt.state.first { it.crons.single().fires == 1 }
+        settle(rt)
+        val state = rt.state.value
+        assertEquals(7, model.requests.size)
+        assertEquals(0.105, state.modelCosts.getValue("USD"), 1e-9)
+        assertTrue("花多少都不停：任务仍在、回合正常结束", state.crons.single().active)
+        assertEquals(dev.min.agent.spi.TurnOutcome.Completed, state.lastTurn!!.outcome)
+        assertTrue(events(rt.sessionId).none { it is CronExpired })
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a task without a cap fires even when the model has no USD price`() = run {
         val h = hub(answering, TEST_PROFILE)
         val rt = h.root()
-        schedule(rt)
+        schedule(rt) // 不给上限：没有要核对的东西
+        now.set(t0 + 31 * minute)
+        h.crons.tick(now.get())
+        settle(rt)
+        assertEquals(1, rt.state.value.crons.single().fires)
+        assertTrue(rt.state.value.crons.single().active)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `the host ceiling caps a task that gave no cap and wins over a larger one the model asked for`() = run {
+        val model = RoutingModel { req ->
+            if (req.messages.first().parts.any { (it as? TextPart)?.text?.startsWith("[定时任务") == true })
+                reply(ToolCallPart(CallId("p${req.messages.size}"), "Probe", args()), stop = StopReason.ToolUse)
+            else reply(TextPart("好"))
+        }
+        val h = hub(model, limits = HubLimits(cronMaxBudgetUsd = 0.04))
+        val rt = h.root()
+        schedule(rt, budget = 5.0, prompt = "模型要了 5 美元")
+        now.set(t0 + 31 * minute)
+        h.crons.tick(now.get())
+        rt.state.first { it.crons.single().status == CronStatus.Expired }
+        settle(rt)
+        assertEquals("天花板 0.04：花到 0.045 就停", 3, model.requests.size)
+        val text = rt.state.value.history.filterIsInstance<HistoryEntry.User>().single().parts.filterIsInstance<TextPart>().single().text
+        assertTrue("告诉模型的是实际生效的上限，不是它要的 5 美元", text.contains("\$0.0400") && !text.contains("5.0"))
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a task cap bigger than the ceiling is told to the model as the ceiling at creation time`() = run {
+        val model = RoutingModel { req ->
+            if (req.last() == "安排") reply(ToolCallPart(CallId("k1"), "CronCreate", args("every" to "30m", "prompt" to "x", "max_budget_usd" to 5.0)), stop = StopReason.ToolUse)
+            else reply(TextPart("好"))
+        }
+        val h = hub(model, limits = HubLimits(cronMaxBudgetUsd = 0.5))
+        val rt = h.root()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("安排")))
+        settle(rt)
+        val text = rt.state.value.toolResults.getValue(CallId("k1")).content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        assertTrue(text, text.contains("天花板 \$0.50") && text.contains("\$5.00") && text.contains("无人值守"))
+        assertTrue(text, text.contains("不要向用户提问"))
+        val list = h.crons.let { rt.state.value.crons.single() }
+        assertEquals("任务里存的是模型给的值，天花板在触发时再取小", 5.0, list.maxBudgetUsd!!, 0.0)
+    }
+
+    @Test
+    fun `a capped task is not fired on a model without a USD price because the cap cannot be checked`() = run {
+        val h = hub(answering, TEST_PROFILE)
+        val rt = h.root()
+        schedule(rt, budget = 0.1)
         now.set(t0 + 31 * minute)
         h.crons.tick(now.get())
         val task = rt.state.value.crons.single()

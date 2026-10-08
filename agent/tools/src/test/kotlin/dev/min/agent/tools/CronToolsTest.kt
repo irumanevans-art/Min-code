@@ -41,8 +41,8 @@ class CronToolsTest {
 
     private fun ToolResult.text() = content.filterIsInstance<TextPart>().joinToString("") { it.text }
 
-    private fun task(id: String, status: CronStatus = CronStatus.Active, recurring: Boolean = true, interval: Long? = 30 * minute, cron: String? = null, ended: String? = null, fires: Int = 0) =
-        CronTask(id, "检查构建 $id", recurring, 0.05, t0, cron = cron, intervalMs = interval.takeIf { cron == null }, expiresAtMs = (t0 + 7 * 24 * 60 * minute).takeIf { recurring }, fires = fires, status = status, endedBecause = ended)
+    private fun task(id: String, status: CronStatus = CronStatus.Active, recurring: Boolean = true, interval: Long? = 30 * minute, cron: String? = null, ended: String? = null, fires: Int = 0, budget: Double? = 0.05) =
+        CronTask(id, "检查构建 $id", recurring, budget, t0, cron = cron, intervalMs = interval.takeIf { cron == null }, expiresAtMs = (t0 + 7 * 24 * 60 * minute).takeIf { recurring }, fires = fires, status = status, endedBecause = ended)
 
     // ---- CronCreate ----
 
@@ -51,13 +51,15 @@ class CronToolsTest {
         val result = CronCreateTool.call(ctx(board()), "every" to "30m", "prompt" to "检查构建")
         assertFalse(result.text(), result.isError)
         assertEquals(
-            listOf(SessionEffect.CronCreate("检查构建", recurring = true, maxBudgetUsd = 0.05, cron = null, intervalMs = 30 * minute)),
+            listOf(SessionEffect.CronCreate("检查构建", recurring = true, maxBudgetUsd = null, cron = null, intervalMs = 30 * minute)),
             result.effects,
         )
         val text = result.text()
         assertTrue(text, text.startsWith("已创建定时任务 c1：每 30 分钟（循环，创建 7 天后自动过期）"))
         assertTrue(text, text.contains("下次触发约 2026-10-08 08:30 UTC"))
-        assertTrue(text, text.contains("花费上限 \$0.05"))
+        assertTrue("没给上限就是不限，不能再冒出一个默认值", text.contains("没有花费上限") && !text.contains("\$0.05"))
+        assertTrue(text, !text.contains("宿主设了"))
+        assertTrue("把无人值守说给模型", text.contains("无人值守") && text.contains("不要向用户提问"))
         assertTrue("把手机上的现实写给模型", text.contains("App 被系统杀掉时不跑"))
     }
 
@@ -69,6 +71,17 @@ class CronToolsTest {
             result.effects,
         )
         assertTrue(result.text(), result.text().contains("一次性，触发一次就结束") && result.text().contains("2026-10-08 09:00 UTC") && result.text().contains("\$0.20"))
+    }
+
+    @Test
+    fun `a host ceiling is told to the model as the cap that will actually apply`() = runBlocking {
+        val withCeiling = board().copy(budgetCeilingUsd = 0.5)
+        val bigger = CronCreateTool.call(ctx(withCeiling), "every" to "30m", "prompt" to "x", "max_budget_usd" to 5.0).text()
+        assertTrue(bigger, bigger.contains("天花板 \$0.50") && bigger.contains("\$5.00") && bigger.contains("按 \$0.50 算"))
+        val none = CronCreateTool.call(ctx(withCeiling), "every" to "30m", "prompt" to "x").text()
+        assertTrue(none, none.contains("宿主设了花费上限 \$0.50") && !none.contains("没有花费上限"))
+        val smaller = CronCreateTool.call(ctx(withCeiling), "every" to "30m", "prompt" to "x", "max_budget_usd" to 0.1).text()
+        assertTrue(smaller, smaller.contains("每次运行花费上限 \$0.10") && !smaller.contains("天花板"))
     }
 
     @Test
@@ -133,14 +146,14 @@ class CronToolsTest {
     fun `listing shows qualifiers, budget, fires, next time and the prompt, and why finished tasks ended`() = runBlocking {
         val tasks = listOf(
             task("c1", fires = 3),
-            task("c2", recurring = false, interval = null, cron = "0 9 * * 1-5"),
+            task("c2", recurring = false, interval = null, cron = "0 9 * * 1-5", budget = null),
             task("c3", CronStatus.Expired, ended = "花费上限（这次运行花了 \$0.0600，到了单次上限 \$0.0500）"),
         )
         val text = CronListTool.call(ctx(board(tasks))).text()
         val lines = text.lines()
         assertTrue(text, lines[0].startsWith("- c1｜循环｜每 30 分钟｜单次上限 \$0.05｜已触发 3 次｜下次 2026-10-08 08:30 UTC，2026-10-15 08:00 UTC 过期"))
         assertEquals("  提示词：检查构建 c1", lines[1])
-        assertEquals("- c2｜一次性｜cron 0 9 * * 1-5｜单次上限 \$0.05｜已触发 0 次｜下次 2026-10-08 09:00 UTC", lines[2])
+        assertEquals("- c2｜一次性｜cron 0 9 * * 1-5｜单次上限 不限｜已触发 0 次｜下次 2026-10-08 09:00 UTC", lines[2])
         assertTrue(text, text.contains("c3｜循环｜每 30 分钟｜单次上限 \$0.05｜已触发 0 次｜已结束：花费上限"))
         assertEquals("本会话没有定时任务。", CronListTool.call(ctx(board())).text())
     }
@@ -148,7 +161,7 @@ class CronToolsTest {
     @Test
     fun `the tools carry the contract the model must know`() {
         val create = CronCreateTool.description(profile)
-        assertTrue(create.contains("7 天") && create.contains("错过的不补跑") && create.contains("花费上限") && create.contains("被系统杀掉"))
+        assertTrue(create.contains("7 天") && create.contains("错过的不补跑") && create.contains("无人值守") && create.contains("max_budget_usd") && create.contains("被系统杀掉"))
         assertTrue(create.contains("预设任务") && create.contains("不是用户发的话"))
         for (tool in listOf(CronCreateTool, CronDeleteTool, CronListTool)) {
             assertTrue("${tool.name} 只改会话自己的任务表，不需要审批", tool.traits.readOnly)
@@ -182,7 +195,7 @@ class ScheduleWakeupToolTest {
     fun `scheduling declares a one shot interval task marked as a wakeup`() = runBlocking {
         val result = ScheduleWakeupTool.call(ctx(), "delaySeconds" to 270, "prompt" to "继续看构建", "reason" to "等 CI")
         assertEquals(
-            listOf<SessionEffect>(SessionEffect.CronCreate("继续看构建", recurring = false, maxBudgetUsd = 0.05, intervalMs = 270_000, source = "wakeup")),
+            listOf<SessionEffect>(SessionEffect.CronCreate("继续看构建", recurring = false, maxBudgetUsd = null, intervalMs = 270_000, source = "wakeup")),
             result.effects,
         )
         assertTrue(result.text(), result.text().contains("270 秒后唤醒") && result.text().contains("2026-10-08 08:04 UTC") && result.text().contains("等 CI"))
@@ -217,7 +230,7 @@ class ScheduleWakeupToolTest {
         val refused = ScheduleWakeupTool.call(ctx(refusal = "只能在根会话里建"), "delaySeconds" to 60, "prompt" to "x")
         assertTrue(refused.isError && refused.effects.isEmpty())
         val d = ScheduleWakeupTool.description(profile)
-        assertTrue(d.contains("同一时刻最多一个") && d.contains("花费上限") && d.contains("被系统杀掉"))
+        assertTrue(d.contains("同一时刻最多一个") && d.contains("无人值守") && d.contains("max_budget_usd") && d.contains("被系统杀掉"))
         assertTrue(ScheduleWakeupTool.traits.readOnly)
     }
 }

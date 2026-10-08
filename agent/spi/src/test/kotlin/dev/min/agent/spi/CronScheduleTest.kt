@@ -137,6 +137,10 @@ class CronScheduleTest {
             CronScheduled("c2", "提醒我", false, 0.1, 5, intervalMs = 1_200_000),
             """{"type":"cron_scheduled","cronId":"c2","prompt":"提醒我","recurring":false,"maxBudgetUsd":0.1,"scheduledAtMs":5,"intervalMs":1200000}""",
         )
+        check(
+            CronScheduled("c3", "晨报", true, null, 7, cron = "0 9 * * *", expiresAtMs = 604800007),
+            """{"type":"cron_scheduled","cronId":"c3","prompt":"晨报","recurring":true,"scheduledAtMs":7,"cron":"0 9 * * *","expiresAtMs":604800007}""",
+        )
         check(CronFired("c1", 2000, ClientMsgId("cron:c1:1")), """{"type":"cron_fired","cronId":"c1","firedAtMs":2000,"clientMsgId":"cron:c1:1"}""")
         check(CronCancelled("c1"), """{"type":"cron_cancelled","cronId":"c1"}""")
         check(CronExpired("c1", CronExpiry.Budget, "花了 0.06"), """{"type":"cron_expired","cronId":"c1","reason":"budget","detail":"花了 0.06"}""")

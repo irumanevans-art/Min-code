@@ -157,7 +157,10 @@ internal class DesktopApp(
         val catalog = AgentCatalog.of(config.agents)
         val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null)
         toolNamesCache = tools.map { it.name }
-        val limits = HUB_LIMITS.copy(teamMaxConcurrent = teamMaxConcurrentFrom(config.settings.merged.raw("teamMaxConcurrent"), System.err::println))
+        val limits = HUB_LIMITS.copy(
+            teamMaxConcurrent = teamMaxConcurrentFrom(config.settings.merged.raw("teamMaxConcurrent"), System.err::println),
+            cronMaxBudgetUsd = cronMaxBudgetUsdFrom(config.settings.merged.raw("cronMaxBudgetUsd"), System.err::println),
+        )
         SessionHub(store, deps(tools), scope, limits, catalog.definitions).also {
             hubInstance = it
             // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器
