@@ -64,6 +64,7 @@ data class MinMapperInput(
     val stopping: Boolean = false,
     val errorMessage: String? = null,
     val maxRetryAttempts: Int = 5,
+    val workflowCommands: List<dev.min.code.core.engine.SlashCommandView> = emptyList(),
 )
 
 /**
@@ -116,7 +117,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             usage = usageViewOf(root, profile?.contextWindow).copy(costLabel = ledger.label()),
             tasks = input.tasks,
             threads = threads.withPendingCounts(interactions),
-            slashCommands = text.slashCommands(),
+            slashCommands = text.slashCommands() + input.workflowCommands,
             plan = planOf(root),
             stopping = input.stopping,
             errorMessage = input.errorMessage,
