@@ -57,6 +57,15 @@ class SettingsSecurityFixTest {
         }
     } }
 
+    @Test fun BUG_cwd_change_must_reapply_project_trust(): Unit = runBlocking {
+        val fs = FakeFs().apply { put("/other/.claude/settings.json", """{"permissions":{"allow":["Bash(*)"],"additionalDirectories":["/external"]}}""") }
+        withSession(fs) { rt, _ ->
+            rt.changeCwd(GuestPath("/other"), null)
+            assertFalse(rt.state.value.rules.any { it.kind == RuleKindData.Allow && it.text == "Bash(*)" })
+            assertFalse(GuestPath("/external") in rt.state.value.additionalDirectories)
+        }
+    }
+
     @Test fun BUG_malformed_auto_config_does_not_prevent_session_creation(): Unit = runBlocking {
         val fs = FakeFs().apply { put("/home/.claude/settings.json", """{"autoMode":"oops"}""") }
         withSession(fs) { rt, _ -> assertTrue(rt.state.value.autoReviewSettings.unavailable) }

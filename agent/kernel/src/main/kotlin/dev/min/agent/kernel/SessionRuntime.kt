@@ -135,12 +135,13 @@ class SessionRuntime private constructor(
         val home = deps.memoryHome
         val memory = if (home != null && state.value.origin == null) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
         val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home) else null
-        val rules = snapshot?.merged?.ruleSpecs()?.map { spec -> RuleEntry(
+        val trustProject = deps.trustProjectHooks(cwd)
+        val rules = snapshot?.merged?.ruleSpecs(trustProject)?.map { spec -> RuleEntry(
             when (spec.kind) { RuleSpecKind.Allow -> RuleKindData.Allow; RuleSpecKind.Ask -> RuleKindData.Ask; RuleSpecKind.Deny -> RuleKindData.Deny },
             spec.text, spec.source, spec.baseDir,
         ) }
         // 原来的显式附加目录是绝对授权，不随 cwd 重新解释；新项目的设置目录在新 cwd 上解析。
-        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home))?.let { (state.value.additionalDirectories + it).distinct() }
+        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home), trustProject)?.let { (state.value.additionalDirectories + it).distinct() }
         commit(listOf(dev.min.agent.spi.CwdChanged(old, cwd, worktree, memory.filter { it.path !in state.value.memoryPathsInContext }, rules, dirs)), Durability.Sync)
         checkpointsBySettings = null
         val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
