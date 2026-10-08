@@ -72,6 +72,8 @@ internal class CronEngine(
     private val hub: SessionHub,
     private val deps: KernelDeps,
     private val scope: CoroutineScope,
+    /** 全局开关（[HubLimits.cronEnabled]），每次现读。关着时不触发 */
+    private val enabled: () -> Boolean = { true },
     /** 宿主的花费天花板（[HubLimits.cronMaxBudgetUsd]）；null = 没设。每次触发时现读：设置可以中途改 */
     private val ceilingUsd: () -> Double? = { null },
 ) {
@@ -149,6 +151,7 @@ internal class CronEngine(
     // ---- 触发 ----
 
     private suspend fun tickLocked(rt: SessionRuntime, entry: Attached, now: Long) {
+        if (!enabled()) return // 全局关着：不触发也不收（任务留在日志里，打开后照常继续）
         for (task in rt.state.value.crons.filter { it.active }) {
             if (task.isPastExpiry(now)) expire(rt, task, expired(CronExpiry.Age, null))
         }

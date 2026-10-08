@@ -44,6 +44,7 @@
 - 定时器：`Scheduler` 接口（spi）；桌面 `InProcessScheduler`（进程内协程，15 秒一跳）、Android `HeartbeatScheduler`（app 层，心跳驱动）。**不保证精确时刻；只在进程活着时工作——App 被系统杀掉时定时任务不跑**；不做 AlarmManager 精确闹钟（要额外权限）。前台服务现在只在有回合在跑时保活，只有定时任务的会话不会让它一直在。
 - 无人值守：触发的输入（`firedText`）明说这次运行没有人在看——不要向用户提问、需要批准的工具调用会停在那里等人。**审批照 Claude Code 等人答，不自动拒**；回合的触发是 `TurnTrigger.Cron`，App 据此把这类审批卡标成 `InteractionBrief.fromSchedule`，通知标题写「定时任务在等你确认」（通知按钮可直接允许 / 拒绝，走现有的 `SessionSupervisor`）。同一会话里**后续触发也照 Claude Code 等会话空闲**：审批没答，后面到点的任务排着不插队，答完这次运行收尾后随即触发。别的会话不受影响。
 - `ScheduleWakeup` 是同一机制的另一个入口：一次性的间隔任务（`source = wakeup`，60–3600 秒；超出的夹到范围内并在结果里说明，照 Claude Code；整条接力链共用链头那一次的 7 天寿命，`SessionState.firingWakeup()`），同时最多一个，`stop: true` 取消。
+- 全局开关：`HubLimits.cronEnabled`（CLI 的环境变量 `CLAUDE_CODE_DISABLE_CRON`；App 设置里「定时任务（Min）」）。关着时不触发、不能新建（工具说明原因），已有任务留在日志里，打开后照常继续；CLI 设了环境变量时 4 个定时工具干脆不提供，定时器也不挂。
 - `-p` / 非交互会话**不提供**团队与定时的 7 个工具（`desktopTools(interactive = false)`，也不挂定时器）：Claude Code 的 `-p` 没有队友，进程一退定时任务永不触发——给了只会让模型向用户承诺不存在的事。
 - 已知限制：`/loop` 命令入口（CLI / 界面）没做；Stop hook 输入里的 `session_crons` 没填；团队清单没接 `TaskCreated` / `TaskCompleted` hook（个人清单有）；成员建定时任务一律拒绝（见下）。
 - Android 的现实（工具描述与创建结果都如实写给模型）：定时器是进程里的心跳，**不是闹钟**。App 切到后台一段时间后系统会冻结 / 杀掉进程，心跳随之停掉；前台服务只在有回合在跑时才保活，只剩定时任务的会话保不住它——所以只在 Min 在前台或进程仍存活时触发，切到后台一段时间后通常不触发，错过的不补跑。补偿措施：有进行中定时任务的会话不被驻留上限的 LRU 卸下（`MinEviction.kt`，卸下会让任务悄悄不再触发）；到期 / 被花费上限停下 / 因缺价格跳过 / 连续超限暂停时发系统通知（`CronNoticeNotifier`，点开回到会话）。

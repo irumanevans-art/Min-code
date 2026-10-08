@@ -153,6 +153,7 @@ class MinAgentEngine(
             teamMaxConcurrent = settings.snapshot?.teamMaxConcurrent ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
             // 定时任务花费天花板（默认不设）：同样启动时读一次
             cronMaxBudgetUsd = settings.snapshot?.cronMaxBudgetUsd,
+            cronEnabled = settings.snapshot?.cronEnabled ?: true,
         ),
     )
 
@@ -211,8 +212,8 @@ class MinAgentEngine(
         // 团队并发上限与定时任务花费天花板跟着设置走：构造 Hub 时设置快照可能还没读出来（那时按默认值），读出来之后、以及用户改设置之后都要生效。
         // 值越界（设置里不该有）就保持现状，不能因为一个坏值让引擎起不来
         scope.launch {
-            settings.settings.map { it.teamMaxConcurrent to it.cronMaxBudgetUsd }.distinctUntilChanged().collect { (team, ceiling) ->
-                catchingNonCancellation { hub.updateHostLimits(team, ceiling) }.onFailure { Log.w(TAG, "host limits update refused", it) }
+            settings.settings.map { Triple(it.teamMaxConcurrent, it.cronMaxBudgetUsd, it.cronEnabled) }.distinctUntilChanged().collect { (team, ceiling, cron) ->
+                catchingNonCancellation { hub.updateHostLimits(team, ceiling, cron) }.onFailure { Log.w(TAG, "host limits update refused", it) }
             }
         }
         hub.startScheduling(cronHeartbeat)

@@ -110,6 +110,11 @@ data class HubLimits(
      * 花的是用户自己的额度。设了就是模型传的 `max_budget_usd` 的天花板（取小），任务没传上限时它本身就是上限
      */
     val cronMaxBudgetUsd: Double? = null,
+    /**
+     * 定时任务的全局开关（Claude Code 的 `CLAUDE_CODE_DISABLE_CRON`；App 设置里也有）。关着时：不触发、不能新建（工具说明原因），
+     * 已有的任务原样留在日志里，打开后照常继续。默认开
+     */
+    val cronEnabled: Boolean = true,
 ) {
     init {
         require(teamMaxConcurrent in 1..TeamLimits.MAX_CONCURRENT) { "团队同时运行的成员数必须在 1 到 ${TeamLimits.MAX_CONCURRENT} 之间。" }
@@ -214,15 +219,19 @@ class SessionHub(
     internal val teams = TeamCoordinator(this, deps, scope) { this.limits.teamMaxConcurrent }
 
     /** 定时任务的运行时：到点触发、过期、单次花费上限（状态在根会话日志的折叠里） */
-    internal val crons = CronEngine(this, deps, scope) { this.limits.cronMaxBudgetUsd }
+    internal val crons = CronEngine(this, deps, scope, enabled = { this.limits.cronEnabled }) { this.limits.cronMaxBudgetUsd }
 
     /**
      * 宿主设置变了（或启动时设置快照晚于 Hub 才读出来）：更新团队并发上限与定时任务花费天花板，之后的决定立刻按新值。
      * 调高并发上限会放出正在排队的成员；调低不杀正在跑的，只是之后不再放新的。越界的值（并发不在 1..8）抛
      * [IllegalArgumentException]，现状不变
      */
-    fun updateHostLimits(teamMaxConcurrent: Int = limits.teamMaxConcurrent, cronMaxBudgetUsd: Double? = limits.cronMaxBudgetUsd) {
-        limits = limits.copy(teamMaxConcurrent = teamMaxConcurrent, cronMaxBudgetUsd = cronMaxBudgetUsd)
+    fun updateHostLimits(
+        teamMaxConcurrent: Int = limits.teamMaxConcurrent,
+        cronMaxBudgetUsd: Double? = limits.cronMaxBudgetUsd,
+        cronEnabled: Boolean = limits.cronEnabled,
+    ) {
+        limits = limits.copy(teamMaxConcurrent = teamMaxConcurrent, cronMaxBudgetUsd = cronMaxBudgetUsd, cronEnabled = cronEnabled)
         teams.limitsChanged()
     }
 

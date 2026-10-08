@@ -91,8 +91,10 @@ internal fun hookEnvReader(hidden: Set<String>, read: (String) -> String? = Syst
 internal fun desktopTools(
     customAgents: List<AgentType> = emptyList(),
     searchConfigured: Boolean = false,
-    /** false = `-p` 一次性运行：不给团队与定时的 7 个工具（见 [M5_TOOLS]） */
+    /** false = `-p` 一次性运行：不给团队与定时的 6 个工具（见 [M5_TOOLS]） */
     interactive: Boolean = true,
+    /** false = `CLAUDE_CODE_DISABLE_CRON`：定时任务的 4 个工具（CronCreate / CronDelete / CronList / ScheduleWakeup）也不提供 */
+    cronEnabled: Boolean = true,
 ): List<Tool<*>> = listOf(
     ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
@@ -103,10 +105,12 @@ internal fun desktopTools(
 ) + (if (searchConfigured) listOf(WebSearchTool) else emptyList()) + listOf(dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool) +
     // M5：agent 团队与定时任务（只往末尾追加）。`-p` 不给：Claude Code 的 `-p` 没有队友，进程一退定时任务永不触发，
     // 模型在 `-p` 里建了团队 / 定时任务，回合一结束进程就走了，成员被丢、任务根本不会触发，还会向用户承诺不存在的事
-    (if (interactive) M5_TOOLS else emptyList())
+    (if (!interactive) emptyList() else if (cronEnabled) M5_TOOLS else M5_TOOLS.filterNot { it.name in CRON_TOOL_NAMES })
 
 /** 团队与定时调度的工具（只在交互会话里提供） */
 private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
+
+private val CRON_TOOL_NAMES = setOf("CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 
@@ -164,16 +168,18 @@ internal class DesktopApp(
         fallback.notes.forEach { System.err.println(it) }
         val catalog = AgentCatalog.of(config.agents)
         val interactive = args.prompt == null
-        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive)
+        val cronEnabled = !cronDisabledBy(System::getenv)
+        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive, cronEnabled)
         toolNamesCache = tools.map { it.name }
         val limits = HUB_LIMITS.copy(
             teamMaxConcurrent = teamMaxConcurrentFrom(config.settings.merged.raw("teamMaxConcurrent"), System.err::println),
             cronMaxBudgetUsd = cronMaxBudgetUsdFrom(config.settings.merged.raw("cronMaxBudgetUsd"), System.err::println),
+            cronEnabled = cronEnabled,
         )
         SessionHub(store, deps(tools), scope, limits, catalog.definitions).also {
             hubInstance = it
             // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器
-            if (interactive) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
+            if (interactive && cronEnabled) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
         }
     }
 

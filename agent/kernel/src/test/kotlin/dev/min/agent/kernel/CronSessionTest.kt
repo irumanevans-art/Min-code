@@ -921,6 +921,35 @@ class CronSessionTest {
     }
 
     @Test
+    fun `the global switch turns scheduled tasks off without losing them`() = run {
+        val model = RoutingModel { req ->
+            if (req.last() == "安排") reply(ToolCallPart(CallId("k${req.messages.size}"), "CronCreate", args("every" to "30m", "prompt" to "x")), stop = StopReason.ToolUse)
+            else reply(TextPart("好"))
+        }
+        val h = hub(model, limits = HubLimits(cronEnabled = false))
+        val rt = h.root()
+        schedule(rt) // 已有一个任务（比如关闭之前建的）
+        rt.send(ClientMsgId("u1"), listOf(TextPart("安排")))
+        settle(rt)
+        val refusal = rt.state.value.toolResults.values.last().content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        assertTrue(refusal, refusal.contains("已被关闭") && refusal.contains("CLAUDE_CODE_DISABLE_CRON"))
+        assertEquals("关着时不能再建", 1, rt.state.value.crons.size)
+
+        now.set(t0 + 31 * minute)
+        h.crons.tick(now.get())
+        settle(rt)
+        assertEquals("关着时到点也不触发", 0, rt.state.value.crons.single().fires)
+
+        // 打开之后任务还在，下次到点照常触发
+        h.updateHostLimits(cronEnabled = true)
+        now.set(t0 + 62 * minute)
+        h.crons.tick(now.get())
+        settle(rt)
+        assertEquals(1, rt.state.value.crons.single().fires)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
     fun `a capped task on a model without a USD price skips that run once with a note and stays active`() = run {
         val h = hub(answering, TEST_PROFILE)
         val rt = h.root()

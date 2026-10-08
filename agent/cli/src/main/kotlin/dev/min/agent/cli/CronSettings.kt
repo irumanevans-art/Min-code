@@ -18,3 +18,7 @@ internal fun cronMaxBudgetUsdFrom(raw: JsonElement?, note: (String) -> Unit): Do
     }
     return value
 }
+
+/** Claude Code 的 `CLAUDE_CODE_DISABLE_CRON`：设成真值就整个关掉定时任务（工具不提供、定时器不挂）。按 `1` / `true` / `yes` 读 */
+internal fun cronDisabledBy(env: (String) -> String?): Boolean =
+    env("CLAUDE_CODE_DISABLE_CRON")?.trim()?.lowercase() in setOf("1", "true", "yes")

@@ -57,6 +57,7 @@ private val KEY_SHARE_DEVICE_STORAGE = booleanPreferencesKey("share_device_stora
 private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
 private val KEY_TEAM_MAX_CONCURRENT = intPreferencesKey("team_max_concurrent")
 private val KEY_CRON_MAX_BUDGET_USD = doublePreferencesKey("cron_max_budget_usd")
+private val KEY_CRON_ENABLED = booleanPreferencesKey("cron_enabled")
 private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
 private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
 private val KEY_DEVICE_WRITE_ALLOWLIST = stringSetPreferencesKey("device_write_allowlist")
@@ -308,6 +309,11 @@ data class AppSettings(
      */
     val cronMaxBudgetUsd: Double? = null,
     /**
+     * 定时任务的全局开关（Claude Code 的 `CLAUDE_CODE_DISABLE_CRON` 的 App 版）。默认开。关着时 Min 的定时任务不触发、也不能新建，
+     * 已有的任务原样留着，打开后照常继续
+     */
+    val cronEnabled: Boolean = true,
+    /**
      * Min Agent（自研内核的第三个会话引擎）的实验开关。release 默认关、debug 默认开（M2-B 设计 §10.2 拍板 1）：
      * 新引擎首发的通行做法，真机门槛过了再议是否改默认。**关着时一切 Min 入口都不出现**——开始面板的分段、
      * 抽屉里的 Min 会话、设置里的 Min 段。关开关时 Min 引擎整个停下（在跑的回合被中断、会话卸载，见 `AgentSessionRegistry` 对 Disabled 的处理）：入口藏起来之后不留看不见的回合；
@@ -546,6 +552,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
             teamMaxConcurrent = p[KEY_TEAM_MAX_CONCURRENT]?.takeIf { it >= 1 }?.coerceAtMost(dev.min.agent.kernel.TeamLimits.MAX_CONCURRENT) ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
             cronMaxBudgetUsd = p[KEY_CRON_MAX_BUDGET_USD]?.takeIf { it.isFinite() && it > 0 },
+            cronEnabled = p[KEY_CRON_ENABLED] ?: true,
             minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
             lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
             deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
@@ -885,6 +892,9 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
         context.dataStore.edit { if (value == null) it.remove(KEY_CRON_MAX_BUDGET_USD) else it[KEY_CRON_MAX_BUDGET_USD] = value }
         return true
     }
+
+    suspend fun setCronEnabled(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_CRON_ENABLED] = enabled }
 
     suspend fun setMinAgentEnabled(enabled: Boolean) =
         context.dataStore.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }
