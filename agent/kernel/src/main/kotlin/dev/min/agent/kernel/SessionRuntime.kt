@@ -120,6 +120,7 @@ class SessionRuntime private constructor(
     }
 
     internal val worktrees = Worktrees(this)
+    private val modelSwitchHooks = ModelSwitchHooks(this)
     suspend fun enterWorktree(name: String? = null, path: String? = null): dev.min.agent.spi.ToolResult =
         whileIdle { worktrees.enter(name, path) } ?: dev.min.agent.spi.ToolResult(listOf(dev.min.agent.protocol.TextPart(BUSY)), isError = true)
     suspend fun exitWorktree(remove: Boolean = false): dev.min.agent.spi.ToolResult =
@@ -494,15 +495,24 @@ class SessionRuntime private constructor(
      * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
      * 参数为 null 表示不改；要把思考档位清回「不控制」用 [clearEffort]（与 [effort] 同给时以 [effort] 为准）
      */
-    suspend fun changeSettings(model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null, clearEffort: Boolean = false, cwd: GuestPath? = null) {
+    suspend fun changeSettings(
+        model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null, clearEffort: Boolean = false, cwd: GuestPath? = null,
+        /** 切模型请求的来源，进 PreModelSwitch 的 `source`：command（/model、/config）/ picker / sdk */
+        modelSwitchSource: String = "command",
+    ) {
         if (cwd != null && cwd != state.value.settings.cwd) {
             require(state.value.worktree == null) { "隔离会话请用 EnterWorktree / ExitWorktree 切换目录。" }
             require(deps.host.fs.stat(cwd)?.kind == dev.min.agent.spi.FileKind.Directory) { "工作目录不存在：$cwd" }
             whileIdle { changeCwd(cwd, null) } ?: error(BUSY)
         }
+        // 切模型先过 PreModelSwitch：被拒就不改模型（mode / effort 照常生效，它们不归这个 hook 管），理由落一条 Note
+        val from = state.value.settings.model
+        val refusal = if (model != null && model != from) modelSwitchHooks.refusal(from, model, modelSwitchSource) else null
+        if (refusal != null) modelSwitchHooks.noteRefused(refusal)
+        val newModel = model.takeIf { refusal == null }
         val clear = clearEffort && effort == null && state.value.settings.effort != null
-        if (model == null && mode == null && effort == null && !clear) return
-        commit(listOf(SettingsChanged(model = model, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)
+        if (newModel == null && mode == null && effort == null && !clear) return
+        commit(listOf(SettingsChanged(model = newModel, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)
     }
 
     /** 中断当前回合：回合 Job 取消，收尾（每个悬空调用补结果）在回合自己的 finally 里写 */

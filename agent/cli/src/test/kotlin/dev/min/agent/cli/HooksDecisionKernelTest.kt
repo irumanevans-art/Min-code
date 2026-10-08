@@ -12,6 +12,7 @@ import dev.min.agent.llm.ModelClient
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ModelStreamEvent
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.ModelRef
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.StopReason
@@ -111,14 +112,14 @@ class HooksDecisionKernelTest {
     }
 
     /** 测试自己写的 hook 脚本（变体：样本只覆盖一种输出） */
-    private fun installScript(event: String, body: String, matcher: String? = null) {
+    private fun installScript(event: String, body: String, matcher: String? = null, timeout: Int? = null) {
         val file = Files.createDirectories(work.resolve("scripts")).resolve("$event.sh")
         Files.writeString(file, "#!/bin/sh\n$body\n")
         val command = "sh \\\"\$CLAUDE_PROJECT_DIR/scripts/$event.sh\\\""
         Files.createDirectories(home.resolve(".claude")).resolve("settings.json").also {
             Files.writeString(
                 it,
-                """{"hooks":{"$event":[{${matcher?.let { m -> "\"matcher\":\"$m\"," } ?: ""}"hooks":[{"type":"command","command":"$command"}]}]}}""",
+                """{"hooks":{"$event":[{${matcher?.let { m -> "\"matcher\":\"$m\"," } ?: ""}"hooks":[{"type":"command","command":"$command"${timeout?.let { t -> ""","timeout":$t""" } ?: ""}}]}]}}""",
             )
         }
     }
@@ -332,5 +333,68 @@ class HooksDecisionKernelTest {
         val (rt2, store2) = session(again, taskTools)
         rt2.say("完成两次")
         assertEquals("第二次标完成时任务已经是完成状态，不再触发", 1, store2.events(rt2).filterIsInstance<HooksRan>().count { it.isFor("TaskCompleted") })
+    }
+
+    // ---- PreModelSwitch（样本 112 / 113） ----
+
+    private val opus = ModelRef(TEST_MODEL.providerId, "claude-opus-5")
+
+    @Test
+    fun `PreModelSwitch ask is treated as a refusal because the kernel has no prompt (sample 113)`() = run {
+        installSample("113-premodelswitch-decision")
+        val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
+        val before = rt.state.value.settings.model
+        rt.changeSettings(model = opus)
+
+        assertEquals("模型没换", before, rt.state.value.settings.model)
+        val note = store.events(rt).filterIsInstance<Note>().single { it.text.contains("模型没有切换") }
+        assertTrue(note.text, note.text.contains("Switching now re-sends about 180k tokens"))
+        assertEquals(1, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PreModelSwitch") })
+        assertLogIsTruth(store, rt)
+    }
+
+    @Test
+    fun `PreModelSwitch exit 2 blocks, stdin names both models and the source, other settings still apply`() = run {
+        installScript("PreModelSwitch", "cat > \"\$CLAUDE_PROJECT_DIR/switch-input.json\"; echo 'Opus 4.6 is retired' >&2; exit 2", matcher = "claude-opus-5")
+        val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
+        val before = rt.state.value.settings.model
+        rt.changeSettings(model = opus, mode = PermissionMode.Plan, modelSwitchSource = "picker")
+
+        assertEquals(before, rt.state.value.settings.model)
+        assertEquals("模式不归这个 hook 管", PermissionMode.Plan, rt.state.value.settings.mode)
+        val input = kotlinx.serialization.json.Json.parseToJsonElement(Files.readString(work.resolve("switch-input.json"))) as JsonObject
+        assertEquals(before.modelId, (input["from_model"] as JsonPrimitive).content)
+        assertEquals("claude-opus-5", (input["to_model"] as JsonPrimitive).content)
+        assertEquals("picker", (input["source"] as JsonPrimitive).content)
+        assertEquals("PreModelSwitch", (input["hook_event_name"] as JsonPrimitive).content)
+        assertTrue(store.events(rt).filterIsInstance<Note>().any { it.text.contains("Opus 4.6 is retired") })
+    }
+
+    @Test
+    fun `PreModelSwitch lets non-matching targets and allowing hooks through`() = run {
+        installScript("PreModelSwitch", "cat > /dev/null; exit 2", matcher = "claude-opus-5")
+        val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
+        val other = ModelRef(TEST_MODEL.providerId, "claude-haiku-5-5")
+        rt.changeSettings(model = other)
+        assertEquals("matcher 对不上，hook 不跑，切换生效", other, rt.state.value.settings.model)
+        assertEquals(0, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PreModelSwitch") })
+        // 带 [1m] 后缀的目标按规范名匹配（原文），所以会被拦
+        rt.changeSettings(model = ModelRef(TEST_MODEL.providerId, "claude-opus-5[1m]"))
+        assertEquals(other, rt.state.value.settings.model)
+
+        installScript("PreModelSwitch", """cat > /dev/null; printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreModelSwitch","permissionDecision":"allow"}}'""")
+        val (rt2, _) = session(ScriptedModel { _ -> answer(TextPart("好")) })
+        rt2.changeSettings(model = opus)
+        assertEquals(opus, rt2.state.value.settings.model)
+    }
+
+    @Test
+    fun `PreModelSwitch timeout blocks the switch`() = run {
+        installScript("PreModelSwitch", "cat > /dev/null; sleep 20", timeout = 1)
+        val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
+        val before = rt.state.value.settings.model
+        rt.changeSettings(model = opus)
+        assertEquals(before, rt.state.value.settings.model)
+        assertTrue(store.events(rt).filterIsInstance<Note>().any { it.text.contains("超时") })
     }
 }
