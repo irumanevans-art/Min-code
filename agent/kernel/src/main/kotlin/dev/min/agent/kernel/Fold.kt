@@ -90,6 +90,23 @@ fun SessionState.apply(record: EventRecord): SessionState {
             this
         }
         is dev.min.agent.spi.SessionRenamed -> copy(name = e.name)
+        is dev.min.agent.spi.CwdChanged -> {
+            check(settings.cwd == e.oldCwd) { "cwd_changed 的原目录不匹配" }
+            val reminder = listOf("Working directory changed from ${e.oldCwd} to ${e.cwd}. Resolve subsequent paths and commands against the new directory.") + e.memoryFiles.map(dev.min.agent.context.MemoryRender::section)
+            // 工具中切目录时，下一次模型请求就是当前工具结果之后；空闲切换才等下一条输入。
+            val anchor = if (turn != null) history.lastOrNull { it is HistoryEntry.Assistant }?.messageId else null
+            copy(
+                settings = settings.copy(cwd = e.cwd), worktree = e.worktree,
+                cwdMemory = (cwdMemory + e.memoryFiles).distinctBy { it.path },
+                rules = e.rules ?: rules,
+                additionalDirectories = e.additionalDirectories ?: additionalDirectories,
+                pendingInputContexts = if (anchor == null) pendingInputContexts + reminder else pendingInputContexts,
+                hookContexts = if (anchor != null) hookContexts + (anchor to hookContexts[anchor].orEmpty() + reminder) else hookContexts,
+                memoryPathsInContext = memoryPathsInContext + e.memoryFiles.map { it.path },
+            )
+        }
+        is dev.min.agent.spi.WorktreeFinished -> copy(finishedWorktrees = finishedWorktrees + e)
+        is dev.min.agent.spi.CwdWatchPathsChanged -> copy(cwdWatchPaths = e.paths)
         // 取最后一条：以后显式刷新记忆时再追加一条，整份替换前一份快照
         // 快照里的路径换成新快照的；按需加载过的路径原样保留
         is MemoryLoaded -> copy(

@@ -57,12 +57,14 @@ data class CliArgs(
     val forwardSubagentText: Boolean = false,
     /** --no-browser：MCP OAuth 登录不开浏览器，打印授权 URL、让人把回调 URL 粘回来（照 CC） */
     val noBrowser: Boolean = false,
+    val worktree: Boolean = false,
+    val worktreeName: String? = null,
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
 }
 
-class UsageException(message: String) : Exception(message)
+class UsageException(message: String, val exitCode: Int = 2) : Exception(message)
 
 const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示>]
 
@@ -80,6 +82,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --mode <模式>          default（默认）/ acceptEdits / plan / bypassPermissions / dontAsk
   --approve ask|yes|no   审批怎么答：交互模式默认 ask，非交互默认 no
   --cwd <目录>           工作目录，默认当前目录
+  --worktree [名字], -w  在独立 worktree 中运行；不带名字则自动命名
   --output-format <格式> -p 的输出格式：text（默认，stdout 只出最终回复文本）/ json（一行结果对象）/ stream-json（逐行事件流）
   --json                 --output-format json 的别名
   --include-partial-messages stream-json 加输出 text 增量的 stream_event 行
@@ -121,6 +124,10 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     while (i < argv.size) {
         val arg = argv[i]
         when {
+            arg == "--worktree" || arg == "-w" -> {
+                flags += "--worktree"
+                argv.getOrNull(i + 1)?.takeUnless { it.startsWith('-') }?.let { values["--worktree"] = it; i++ }
+            }
             arg in FLAG_ARGS -> flags += arg
             "-h" == arg || "--help" == arg -> throw UsageException(USAGE)
             arg !in VALUE_ARGS -> throw UsageException("不认识的参数：$arg\n\n$USAGE")
@@ -232,6 +239,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         includePartialMessages = "--include-partial-messages" in flags,
         forwardSubagentText = "--forward-subagent-text" in flags,
         noBrowser = "--no-browser" in flags,
+        worktree = "--worktree" in flags,
+        worktreeName = values["--worktree"],
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages

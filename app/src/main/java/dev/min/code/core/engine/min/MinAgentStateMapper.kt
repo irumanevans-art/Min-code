@@ -103,6 +103,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             },
             title = input.titleOverride?.takeIf { it.isNotBlank() } ?: titleOf(items),
             cwd = root.settings.cwd.value,
+            worktree = root.worktree?.let { dev.min.code.core.engine.WorktreeView(it.name, it.path.value, it.branch, it.originalCwd.value, it.pinned) },
             items = items,
             turn = turnOf(root, input),
             lastTurn = root.lastTurn?.let {

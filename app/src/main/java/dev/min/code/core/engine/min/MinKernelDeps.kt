@@ -146,6 +146,7 @@ fun minTools(): List<Tool<*>> = listOf(
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
     SkillTool,
+    dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool,
 )
 
 object MinKernelDeps {

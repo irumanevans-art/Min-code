@@ -149,3 +149,10 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - `mcp_tools_loaded`：names 是本批发现的工具全名，按返回顺序追加并去重。顺序与集合完全由日志折叠。
   `ToolResult.effects` 的 `mcp_load_tools` 与 ToolOutcome 同一次提交生成该事件；下一次请求追加加载的 schema，
   内置、资源、alwaysLoad、ToolSearch 和 StructuredOutput 已有前缀保持原样。压缩不清除；子 agent / 分身继承模式和顺序。
+
+## M5 worktree（2026-10-07）
+
+- `cwd_changed`：`oldCwd`、`cwd`、可空 `worktree`、默认空 `memoryFiles`、可空 `rules` / `additionalDirectories`。后两者为 null 表示保留；空列表表示清空。校验旧目录，折叠当前 cwd 与 binding；原创建环境不改。新增记忆另折叠到 cwdMemory 供隔离子会话继承；目录差异与指令在工具调用中挂当前助手消息的工具结果 system-reminder（下一次模型请求立即可见）；空闲时挂下一条输入。
+- `worktree_finished`：完整 binding 与 `removed`；记录子 agent 自动清理或根会话 keep/remove。
+- `WorktreeBinding` 保存 name/path/originalCwd/repository/branch/baseCommit/hookCreated/owned/pinned。旧日志无 binding；重开按日志恢复。
+- `cwd_watch_paths_changed`：`paths` 替换 CwdChanged hooks 返回的动态 watchPaths（默认空）；冻结绝对路径，重开沿用。FileChanged 文件监视执行器仍待后续里程碑。

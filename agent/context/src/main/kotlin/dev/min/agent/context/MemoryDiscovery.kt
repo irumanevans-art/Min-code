@@ -30,6 +30,7 @@ class MemoryDiscovery(
     cwd: GuestPath,
     home: GuestPath,
     private val limits: MemoryLimits = MemoryLimits(),
+    private val suppressCwdRules: Boolean = false,
 ) {
     private val cwd = normalize(cwd.value)
     private val home = normalize(home.value)
@@ -83,7 +84,7 @@ class MemoryDiscovery(
             fs, home, limits, pathRuleRefs = mutableListOf(), refsOnly = true,
         )
         collector.collectRuleRefs(join(join(home, ".claude"), "rules"))
-        for (dir in MemoryLoader.ancestors(cwd)) collector.collectRuleRefs(join(dir, ".claude/rules"))
+        for (dir in MemoryLoader.ancestors(cwd)) if (!suppressCwdRules || dir != cwd) collector.collectRuleRefs(join(dir, ".claude/rules"))
         collector.pathRuleRefs.orEmpty().distinctBy { it.path }.also { startupRefs = it }
     }
 

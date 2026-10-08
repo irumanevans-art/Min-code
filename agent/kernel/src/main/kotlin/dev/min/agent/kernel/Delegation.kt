@@ -59,6 +59,7 @@ data class AgentDefinition(
      */
     val hooks: kotlinx.serialization.json.JsonObject? = null,
     val hooksLayer: String? = null,
+    val isolationWorktree: Boolean = false,
 )
 
 object BuiltinAgents {
@@ -223,6 +224,10 @@ internal object Reports {
             append("<$TAG id=\"${child.value}\" type=\"${attr(agentType)}\"$name fork=\"$fork\" status=\"$status\"")
             append(" tools=\"${ended.toolCalls}\" tokens=\"$tokens\" duration-ms=\"${ended.durationMs}\">\n")
             append(escape(body.trim()))
+            state.worktree?.let { w ->
+                append("\n\nWorktree: ").append(escape(w.path.value)).append("; branch: ").append(escape(w.branch ?: "hook-managed"))
+                append("; ").append(if (state.finishedWorktrees.lastOrNull()?.removed == true) "removed (no changes)" else "retained")
+            }
             note(ended.outcome)?.let { append("\n\n").append(it) }
             append("\n</$TAG>")
         }

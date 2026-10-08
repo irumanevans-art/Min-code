@@ -114,7 +114,7 @@ internal class McpManager(
             }
         }
         binding.rootsWatch = scope.launch {
-            rt.state.map { it.additionalDirectories }.distinctUntilChanged().collect { notifyRoots(projectRoot) }
+            rt.state.map { it.settings.cwd to it.additionalDirectories }.distinctUntilChanged().collect { notifyRoots(projectRoot) }
         }
         rt.mcpCaller = callerFor(binding)
         if (config.servers.isEmpty() && config.notes.isEmpty()) {
@@ -145,7 +145,7 @@ internal class McpManager(
         }
         rt.mcpCaller = if (binding == null) parent.mcpCaller else callerFor(binding)
         if (binding != null) binding.rootsWatch = scope.launch {
-            rt.state.map { it.additionalDirectories }.distinctUntilChanged().collect { binding.entries.values.map { e -> e.projectRoot }.distinct().forEach(::notifyRoots) }
+            rt.state.map { it.settings.cwd to it.additionalDirectories }.distinctUntilChanged().collect { binding.entries.values.map { e -> e.projectRoot }.distinct().forEach(::notifyRoots) }
         }
     }
 
@@ -352,8 +352,17 @@ internal class McpManager(
     }
 
     internal fun rootsFor(projectRoot: GuestPath): List<GuestPath> =
-        (listOf(projectRoot) + bindings.values.filter { b -> b.entries.values.any { it.projectRoot == projectRoot } }
-            .flatMap { it.rt.state.value.additionalDirectories }).distinct().sortedBy { it.value }
+        bindings.values.filter { b -> b.entries.values.any { it.projectRoot == projectRoot } }
+            .flatMap { listOf(it.rt.state.value.settings.cwd) + it.rt.state.value.additionalDirectories }.distinct().sortedBy { it.value }
+
+    internal suspend fun refreshRoots(rt: SessionRuntime) {
+        val affected = lock.withLock { bindings[rt.sessionId]?.entries?.values?.toList().orEmpty() }
+        for (entry in affected) {
+            val roots = rootsFor(entry.projectRoot)
+            entry.lastRoots = roots
+            entry.connection?.let { dev.min.agent.spi.catchingNonCancellation { it.rootsChanged() } }
+        }
+    }
 
     private fun notifyRoots(projectRoot: GuestPath) {
         scope.launch {

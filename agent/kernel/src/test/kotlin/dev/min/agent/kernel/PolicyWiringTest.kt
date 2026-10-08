@@ -313,7 +313,10 @@ class PolicyWiringTest {
         assertNull(byName.getValue("odd").permissionMode)
         assertTrue(catalog.notes.any { "sonnet" in it })
         assertTrue(catalog.notes.any { "yolo" in it })
-        assertTrue(catalog.notes.any { "isolation" in it && "skills" in it })
+        assertTrue(byName.getValue("odd").isolationWorktree)
+        assertFalse(reviewer.isolationWorktree)
+        assertTrue(catalog.notes.any { "skills" in it })
+        assertFalse(catalog.notes.any { "isolation" in it })
     }
 
     @Test

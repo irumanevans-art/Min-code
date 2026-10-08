@@ -76,6 +76,7 @@ data class HookOutputCommon(
     val reason: String? = null,
     /** 事件富控制的载体，须含 hookEventName；各事件的形状见对应的 XxxSpecificOutput */
     val hookSpecificOutput: JsonElement? = null,
+    val watchPaths: List<String>? = null,
 )
 
 /**

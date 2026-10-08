@@ -32,7 +32,7 @@ fun main(argv: Array<String>) {
             run(args, scope)
         } catch (e: UsageException) {
             System.err.println(e.message)
-            2
+            e.exitCode
         } finally {
             scope.cancel()
         }
@@ -194,6 +194,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
         }
     }
     } finally {
+        uiConsole?.mainOwnsInput = true
+        app.cleanupWorktree(runtime, stdin, System.err)
         // 退出 = prompt_input_exit：SessionEnd 在会话（用户最后所在的那个，可能是分支）卸下之前跑，清理类 hook 有机会收尾
         val cleanup = app.exitSession(runtime)
         ui?.cancel()

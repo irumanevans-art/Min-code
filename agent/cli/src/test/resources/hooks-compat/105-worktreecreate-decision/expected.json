@@ -17,7 +17,5 @@
   "specific": {
     "hookEventName": "WorktreeCreate",
     "worktreePath": "/home/user/repo/.worktrees/feature-auth"
-  },
-  "pendingFix": "依赖未做功能：worktree 隔离 Min 还没有；引擎已能解码 worktreePath（command 型读 stdout 路径要等内核接）。",
-  "minTrigger": "none"
+  }
 }

@@ -155,6 +155,7 @@ interface ToolContext {
 
     /** 委派子 agent。有默认值：不涉及子 agent 的工具与测试替身不用管它 */
     val agents: AgentPort get() = AgentPort.Unavailable
+    val worktrees: WorktreePort get() = WorktreePort.Unavailable
 
     /**
      * 本会话任务清单的只读视图（任务工具用）。有默认值（空清单）：与任务无关的工具和测试替身不用管它。

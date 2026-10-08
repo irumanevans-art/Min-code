@@ -335,6 +335,7 @@ class SessionHub(
     private suspend fun attachMcp(runtime: SessionRuntime, fresh: Boolean) {
         val home = deps.memoryHome ?: return
         if (runtime.state.value.origin != null) return
+        // 连接配置冻结在会话起点，cwd 切换只更新 roots；否则重开会话会悄悄接上另一套服务器。
         val cwd = runtime.state.value.created.cwd
         val config = dev.min.agent.spi.catchingNonCancellation {
             val settings = dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, home)
@@ -348,6 +349,10 @@ class SessionHub(
             return
         }
         mcp.attach(runtime, config, cwd, fresh)
+    }
+
+    internal suspend fun cwdChanged(runtime: SessionRuntime) {
+        mcp.refreshRoots(runtime)
     }
 
     /**
@@ -517,6 +522,7 @@ class SessionHub(
             opened
         } ?: return null
         // 根会话重新接上 MCP（快照已在日志里）；子会话沿用父会话的调用口（父会话先于子会话打开）
+        runtime.worktrees.resumeBinding()
         val origin = runtime.state.value.origin
         if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
         if (resumedByUser) resumeStart(runtime)
@@ -664,11 +670,21 @@ class SessionHub(
             }
         }
 
+        val isolated = if (definition?.isolationWorktree == true) {
+            dev.min.agent.spi.catchingNonCancellation { parent.worktrees.prepare("agent-${childId.value}", null, pinned = true) }
+                .getOrElse { return DelegateResult.Rejected(it.message ?: "Worktree creation failed.") }
+        } else null
+        if (isolated != null) {
+            if (!definition!!.omitMemory) initial += MemoryLoaded((ps.memory + ps.cwdMemory).distinctBy { it.path }, autoMemory = ps.autoMemory)
+            initial += dev.min.agent.spi.CwdChanged(created.cwd, isolated.path, isolated)
+        } else if (ps.worktree != null) {
+            initial += dev.min.agent.spi.CwdChanged(created.cwd, created.cwd, ps.worktree.copy(pinned = true, owned = false))
+        }
         val child = SessionRuntime.create(
             store, header, created, deps, scope,
             initial + inheritedRules(ps) + inheritedSkills(ps) + inheritedMcp(ps) + inheritedComponentHooks(ps),
             // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载（来历里的 omitMemory 管着，重开后同样）；分身照常——它接着父会话的活干
-            loadMemory = definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
+            loadMemory = isolated == null && definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
         )
         child.requestGate = childGate
         mcp.attachInherited(child, parent)
@@ -699,6 +715,7 @@ class SessionHub(
             val ended = child.state.first { it.turn == null && it.lastTurn != null }.lastTurn!!
             val summary = parent.state.value.children[child.sessionId]
             val origin = child.state.value.origin!!
+            child.worktrees.finishChild()
             val report = Reports.render(child.sessionId, summary, origin.agentType, origin.fork, ended, child.state.value)
             consumedInForeground += child.sessionId to ended.turnId
             return DelegateResult.Finished(child.sessionId, ended.turnId, report, Reports.isError(ended.outcome))
@@ -912,6 +929,7 @@ class SessionHub(
         val summary = parent.state.value.children[child.sessionId] ?: return
         // 委派它的调用已被回退掉：报告不送（送了折叠也不收，这里省一次写）
         if (summary.rewound || ended.turnId in summary.reportedTurns) return
+        child.worktrees.finishChild()
         val report = Reports.render(child.sessionId, summary, origin.agentType, origin.fork, ended, child.state.value)
         val parentLast = parent.state.value.lastTurn?.outcome
         val parentHealthy = parentLast == null || parentLast == TurnOutcome.Completed

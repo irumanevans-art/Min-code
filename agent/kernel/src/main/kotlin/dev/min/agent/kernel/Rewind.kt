@@ -91,7 +91,7 @@ internal class Checkpointer(private val rt: SessionRuntime) {
     private suspend fun take(checkpointId: String, turnId: TurnId, messageId: MessageId) {
         val store = rt.snapshotStore() ?: return
         val budget = deps.checkpointBudget
-        val root = rt.state.value.created.cwd
+        val root = rt.state.value.settings.cwd
         val result = try {
             // 预算由宿主掐；这里再兜一层，宿主实现有 bug 时也不至于把回合卡死
             withTimeoutOrNull(budget.firstTimeoutMs + KERNEL_GRACE_MS) {
@@ -167,6 +167,9 @@ internal class Checkpointer(private val rt: SessionRuntime) {
         val s = rt.state.value
         val point = s.rewindPoints.firstOrNull { it.messageId == messageId }
             ?: return RewindOutcome.Refused("这条消息不能回退：它不是开启一轮的消息，或者已经被回退掉了。")
+        val targetRoot = s.checkpoints.firstOrNull { it.event.messageId == messageId }?.event?.root
+        if (scope != RewindScope.Conversation && targetRoot != null && targetRoot != s.settings.cwd)
+            return RewindOutcome.Refused("检查点属于另一个工作目录；先返回 $targetRoot 再恢复代码。")
         val prompt = s.promptOf(messageId)
         // 先停子 agent，再动文件：后台子 agent 还在写的话，会把刚恢复的内容又改回去
         stopChildren(point, scope)

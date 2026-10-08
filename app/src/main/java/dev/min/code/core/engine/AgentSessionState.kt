@@ -54,6 +54,7 @@ data class AgentSessionState(
      * 默认 false：旧引擎的快照与黄金测试不受影响。
      */
     val open: Boolean = false,
+    val worktree: WorktreeView? = null,
 ) {
     /** 会话页要显示它、输入框要能收字：进程活着（CC / Codex 的 Running），或 Min 这种没进程但打开着的会话 */
     val accepting: Boolean
@@ -301,3 +302,6 @@ data class ConnectionView(
 )
 
 data class SlashCommandView(val name: String, val description: String?)
+
+/** 暴露隔离事实，让后续界面能显示工作副本并决定是否提供退出入口。 */
+data class WorktreeView(val name: String, val path: String, val branch: String?, val originalCwd: String, val pinned: Boolean)

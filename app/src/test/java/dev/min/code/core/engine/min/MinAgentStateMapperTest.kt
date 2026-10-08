@@ -107,6 +107,22 @@ class MinAgentStateMapperTest {
     private fun report(type: String, status: String, body: String, id: String = "s_child", extra: String = "") =
         "<subagent-report id=\"$id\" type=\"$type\" fork=\"false\" status=\"$status\"$extra tools=\"3\" tokens=\"1200\" duration-ms=\"4500\">\n$body\n</subagent-report>"
 
+    @Test fun worktreeStateExposesCurrentDirectoryBranchOriginAndPinnedThenClears() {
+        val original = GuestPath("/workspace")
+        val path = GuestPath("/workspace/.claude/worktrees/android")
+        val binding = dev.min.agent.spi.WorktreeBinding("android", path, original, original, "worktree-android", "base", pinned = true)
+        val state = foldOf(dev.min.agent.spi.CwdChanged(original, path, binding))
+        val view = map(state)
+        assertEquals(path.value, view.cwd)
+        assertEquals("android", view.worktree!!.name)
+        assertEquals(path.value, view.worktree!!.path)
+        assertEquals("worktree-android", view.worktree!!.branch)
+        assertEquals(original.value, view.worktree!!.originalCwd)
+        assertTrue(view.worktree!!.pinned)
+        val cleared = foldOf(dev.min.agent.spi.CwdChanged(original, path, binding), dev.min.agent.spi.CwdChanged(path, original))
+        assertNull(map(cleared).worktree); assertEquals(original.value, map(cleared).cwd)
+    }
+
     // ---- 报告卡 ----
 
     @Test fun reportTagIsParsedIntoItsFields() {
