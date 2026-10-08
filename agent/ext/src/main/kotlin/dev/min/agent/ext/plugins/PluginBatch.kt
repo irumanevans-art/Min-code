@@ -10,7 +10,7 @@ data class PluginBatch(
 )
 
 /** 候选只来自本地目录；安装、下载与来源授权由宿主另行处理，加载不能偷偷触网。 */
-suspend fun PluginLoader.loadAll(requests: List<PluginRequest>): PluginBatch {
+suspend fun PluginLoader.loadAll(requests: List<PluginRequest>, lockedNames: Set<String> = emptySet()): PluginBatch {
     val errors = mutableListOf<String>()
     val overrides = mutableListOf<String>()
     val winners = linkedMapOf<String, LoadedPlugin>()
@@ -18,6 +18,10 @@ suspend fun PluginLoader.loadAll(requests: List<PluginRequest>): PluginBatch {
         val result = load(request)
         errors += result.errors
         result.plugin?.let { plugin ->
+            if (request.sideload && plugin.ref.name in lockedNames) {
+                overrides += "--plugin-dir copy of ${plugin.ref.name} ignored: plugin is locked by managed settings"
+                return@let
+            }
             val conflicts = winners.values.filter { it.namespace == plugin.namespace && plugin.enabled }
             conflicts.forEach {
                 winners.remove(it.ref.id)

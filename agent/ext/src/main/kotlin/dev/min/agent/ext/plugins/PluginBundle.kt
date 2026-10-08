@@ -31,6 +31,7 @@ class PluginBundle(
     private val fs: WorkspaceFs,
     private val contexts: Map<String, Pair<PluginVars, PluginValues>>,
     private val trusted: Set<String>,
+    private val approvalRequired: Set<String>,
 ) {
     fun resolveHook(handler: dev.min.agent.ext.hooks.HookHandler): dev.min.agent.ext.hooks.HookHandler {
         val id = (handler.raw["minPluginId"] as? JsonPrimitive)?.content ?: return handler
@@ -66,7 +67,8 @@ class PluginBundle(
                     "CLAUDE_PLUGIN_ROOT" to JsonPrimitive(vars.root), "CLAUDE_PLUGIN_DATA" to JsonPrimitive(vars.data),
                 ))))
             } else resolved
-            PluginMcpSource(server.serverName, config, plugin.ref.id in trusted, if (forbiddenHelper) "headersHelper 不得引用 user_config" else null)
+            PluginMcpSource(server.serverName, config, plugin.ref.id in trusted, if (forbiddenHelper) "headersHelper 不得引用 user_config" else null,
+                requiresApproval = plugin.ref.id in approvalRequired)
         }
     }
 
@@ -159,7 +161,7 @@ class PluginBundle(
                 inlineRoots += canonical(it).value
                 candidates += PluginRequest(it.value, null, enabledPlugins = enabled, sideload = true, disabledDependencies = disabledDependencies)
             }
-            val batch = PluginLoader(fs, canonical).loadAll(candidates)
+            val batch = PluginLoader(fs, canonical).loadAll(candidates, managed?.enabledPlugins?.keys.orEmpty().map { it.substringBefore('@') }.toSet())
             val notes = (batch.errors + batch.overrides + batch.plugins.flatMap { it.warnings }).toMutableList()
             val skillDefs = mutableListOf<SkillDef>()
             val commandDefs = mutableListOf<CommandDef>()
@@ -168,10 +170,12 @@ class PluginBundle(
             val styles = linkedMapOf<String, OutputStyleDef>()
             val contexts = linkedMapOf<String, Pair<PluginVars, PluginValues>>()
             val trusted = mutableSetOf<String>()
+            val approvalRequired = mutableSetOf<String>()
             for (plugin in batch.plugins) {
                 val realRoot = canonical(GuestPath(plugin.root)).value
                 val source = enabledSources[plugin.ref.id]
                 val projectEnabled = source in setOf(ConfigSource.Project, ConfigSource.Local) || scopes[realRoot] in setOf("project", "local")
+                if (projectEnabled) approvalRequired += plugin.ref.id
                 var isTrusted = realRoot in inlineRoots || if (projectEnabled) trust(cwd)
                     else source in setOf(ConfigSource.User, ConfigSource.Managed) || scopes[realRoot] == "user"
                 if (isTrusted) trusted += plugin.ref.id
@@ -281,12 +285,12 @@ class PluginBundle(
                 } }
             }
             notes += io.notes
-            return PluginBundle(batch, skillDefs, commandDefs, agentDefs, hooks, styles, notes, fs, contexts, trusted)
+            return PluginBundle(batch, skillDefs, commandDefs, agentDefs, hooks, styles, notes, fs, contexts, trusted, approvalRequired)
         }
     }
 }
 
 /** 已经由目录信任闸门判定的配置输入；toString 不得打印展开后的 env / headers。 */
-class PluginMcpSource(val name: String, val config: JsonObject, val trusted: Boolean, val error: String? = null) {
+class PluginMcpSource(val name: String, val config: JsonObject, val trusted: Boolean, val error: String? = null, val requiresApproval: Boolean = false) {
     override fun toString(): String = "PluginMcpSource(name=$name, trusted=$trusted)"
 }

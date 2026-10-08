@@ -72,6 +72,7 @@ class MinHostGeneration(
  * 而挂载快照会因设置变化而换代，所以不能把某一代的实例直接塞进去。
  */
 class MinHostPorts(private val current: () -> MinHostGeneration, tasks: MinBackgroundTasks, clock: Clock) {
+    fun canonicalPath(path: GuestPath): GuestPath = current().fs.canonical(path)
     val fs: WorkspaceFs = object : WorkspaceFs {
         override suspend fun stat(path: GuestPath): FileStat? = current().fs.stat(path)
         override suspend fun read(path: GuestPath, offset: Long, limit: Int): ByteArray = current().fs.read(path, offset, limit)
@@ -186,6 +187,7 @@ object MinKernelDeps {
         mcpTokenStore = mcpTokenStore,
         mcpAuthorizer = mcpAuthorizer,
         trustProjectHooks = trustProjectHooks,
+        canonicalPath = ports::canonicalPath,
         canAnswerMcpUrlElicitation = canAnswerMcpUrlElicitation,
     )
 }
