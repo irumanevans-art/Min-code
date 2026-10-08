@@ -92,6 +92,17 @@ class MinSessionIndexTest {
         assertTrue("只读重建，不提交任何恢复事件", before.contentEquals(logFile(id).readBytes()))
     }
 
+    @Test fun rebuildNeverAttachesTheWriterToTheLog() {
+        // H2：回合进行中打开抽屉也会走到 rebuild——open 带修复性截断，对活日志会把写者刚追加的记录剁掉
+        val id = completedSession()
+        val readerOnly = object : dev.min.agent.spi.SessionStore by k.store {
+            override suspend fun open(id: SessionId): dev.min.agent.spi.SessionLog? =
+                error("open 是写者附着专用（带修复性截断）；轮询日志必须走 peek：${id.value}")
+        }
+        val entries = runBlocking { index.list(readerOnly) }
+        assertEquals("重建走 peek，不附着写者", id, entries.single().id)
+    }
+
     @Test fun validIndexIsServedAsIsAndAChangedLogInvalidatesIt() {
         val id = completedSession()
         val first = runBlocking { index.list(k.store) }.single()

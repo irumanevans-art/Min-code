@@ -101,7 +101,8 @@ fun indexEntryOf(state: SessionState, eventsLength: Long, eventsMtime: Long, upd
  * 摘要的磁盘与重建。[sessionsDir] 是 `FileSessionStore` 的根（要拿日志文件的大小 / 修改时间来校验），
  * [dir] 是 `filesDir/agent/index/`。写入原子（先写临时文件再改名）：写一半被杀只会留下旧的一份。
  *
- * 校验与重建都**只读**：重建用 `store.open(id).read()` 折叠，**不提交恢复事件**——恢复只在 `hub.open` 时做
+ * 校验与重建都**只读**：重建用 `store.peek(id).read()` 折叠（open 是写者附着专用，对活日志的修复性截断
+ * 会把写者刚追加的记录剁掉——H2），**不提交恢复事件**——恢复只在 `hub.open` 时做
  * （否则列一次抽屉就会改写所有中断过的会话的日志）。
  */
 class MinSessionIndex(private val dir: File, private val sessionsDir: File) {
@@ -148,7 +149,8 @@ class MinSessionIndex(private val dir: File, private val sessionsDir: File) {
     }
 
     private suspend fun rebuild(store: SessionStore, id: SessionId, length: Long, mtime: Long): MinIndexEntry? {
-        val log = store.open(id) ?: return null
+        // 只读打开（peek）：回合进行中打开抽屉也会走到这里，open 带修复性截断，会把写者刚追加的记录剁掉
+        val log = store.peek(id) ?: return null
         val entry = try {
             val records = log.read().toList()
             // 更新时间 = 最后一条记录的时间：重建出来的和当时增量写的在排序上一致
