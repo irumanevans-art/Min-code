@@ -163,6 +163,12 @@ interface ToolContext {
      */
     val tasks: TaskBoard get() = TaskBoard()
 
+    /**
+     * 本会话定时任务的只读视图（Cron 工具用）。有默认值（不支持）：与定时任务无关的工具和测试替身不用管它。
+     * 定时任务是**根会话**的：子 agent 的视图带 [CronBoard.refusal]
+     */
+    val crons: CronBoard get() = CronBoard()
+
     /** 调用 skill（Skill 工具用）。有默认值：其余工具与测试替身不用管它 */
     val skills: SkillPort get() = SkillPort.Unavailable
     val web: WebPort get() = WebPort.Unavailable

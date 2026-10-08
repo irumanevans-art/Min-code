@@ -338,6 +338,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
                     is SessionEffect.ModeChange -> current
                     // 任务清单的修改同理：由内核紧跟着写成 TaskCreated 等事件，在那些事件上折叠
                     is SessionEffect.TaskCreate, is SessionEffect.TaskUpdate, is SessionEffect.TaskDelete -> current
+                    // 定时任务同理：内核紧跟着写成 cron_scheduled / cron_cancelled
+                    is SessionEffect.CronCreate, is SessionEffect.CronDelete -> current
                     is SessionEffect.McpLoadTools -> current
                 }
             },
@@ -389,6 +391,10 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is dev.min.agent.spi.TeamTaskClaimed, is dev.min.agent.spi.TeamTaskDone, is dev.min.agent.spi.TeamDisbanded -> {
             teamProblem(e)?.let { error("团队事件不合法：$it") }
             applyTeamEvent(e)
+        }
+        is dev.min.agent.spi.CronScheduled, is dev.min.agent.spi.CronFired, is dev.min.agent.spi.CronCancelled, is dev.min.agent.spi.CronExpired -> {
+            cronProblem(e)?.let { error("定时任务事件不合法：$it") }
+            applyCronEvent(e)
         }
         // 邮件事件只记「收到过什么」；校验在发送端（Hub），收件人的日志里不必有团队状态
         is dev.min.agent.spi.TeamMessage -> copy(teamMail = teamMail + TeamMailItem(e.teamId, e.messageId, e.from, e.text, e.broadcast))

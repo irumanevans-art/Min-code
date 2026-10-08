@@ -587,7 +587,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
 
     private suspend fun outcome(turnId: TurnId, callId: CallId, result: ToolResult, extra: List<SessionEvent> = emptyList()) {
         // 结果声明的副作用（如切模式、改任务清单）与结果同一次提交：不会出现「结果说切了、模式没切」
-        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(rt.state.value) + extra, Durability.Sync)
+        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(rt.state.value, rt.deps.clock.nowMs()) + extra, Durability.Sync)
     }
 
     /** [turnId] 为 null 只在算权限声明时：那时不该委派任何东西，端口给不可用的 */
@@ -613,6 +613,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override val tasks: TaskBoard get() = rt.state.value.taskBoard()
+        override val crons: dev.min.agent.spi.CronBoard get() = rt.state.value.cronBoard(rt.deps.clock.nowMs(), rt.deps.zone)
         override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
         override suspend fun preserve(content: ByteArray): dev.min.agent.spi.ContentId? = if (turnId == null) null else rt.preserve(content)
     }

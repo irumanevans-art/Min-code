@@ -167,3 +167,10 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
   所以重开会话仍在收件箱里、提升进对话后只读一次（按 `clientMsgId` 去重）。广播给全体时每个收件人的日志各写一对，`broadcast = true`。
   任务权限在落盘前由 `teamProblem` 判定、折叠时同一份判断再守一遍：成员只能认领给自己、只能完成自己认领的，负责人可改派 / 完成全部；违规转换不写事件，只在负责人日志里记一条 `note`（warning）。
   含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-08，M5 定时调度）：新增事件 `cron_scheduled`（`cronId`、`prompt`、`recurring`、`maxBudgetUsd`、`scheduledAtMs`、`cron`（5 字段表达式）与 `intervalMs`（间隔）恰好一个、循环任务的 `expiresAtMs`）、
+  `cron_fired`（`cronId`、`firedAtMs`、`clientMsgId`）、`cron_cancelled`（`cronId`）、`cron_expired`（`cronId`、`reason`：`age` / `budget` / `missed` / `no_pricing`、可选 `detail`），定义在 `spi/CronEvents.kt`。
+  定时任务是**根会话**的会话级状态，完全从它自己的日志折叠（`SessionState.crons`），重开会话折叠出未过期的任务就是「恢复」；创建时刻与 7 天过期时刻由内核写入时给定，折叠不读时钟。
+  `input_received.origin` 新增变体 `cron`（`cronId`）：到点触发时与 `cron_fired` 同一次提交写入（`clientMsgId` = `cron:<cronId>:<第几次>`），是会话预设的任务、不是人发的话——
+  UserPromptSubmit hook 不过它、不记回退点。`tool_outcome.result.effects` 新增 `cron_create` / `cron_delete`，内核紧跟着落成 `cron_scheduled` / `cron_cancelled`（编号、时刻在落事件时给）。
+  `/branch` 不继承定时任务：分支日志末尾对每个进行中的任务写一条 `cron_cancelled`。循环任务满 7 天、一次运行花到 `maxBudgetUsd`（默认 0.05 美元）、一次性任务的时刻在会话没开着时过去、当前模型没有 USD 定价（花费估算不了）都写 `cron_expired`，同时记一条 `note`（warning）。
+  含新事件的日志旧版本打不开；旧日志照常读。

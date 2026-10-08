@@ -187,6 +187,10 @@ data class SessionState(
     val team: TeamState? = null,
     /** 本会话收到的团队邮件（team_message），按到达顺序；给界面消息流用，模型看到的是同一次提交里的 input_received */
     val teamMail: List<TeamMailItem> = emptyList(),
+    /** 本会话的定时任务（含已结束的，`status` 区分），按创建顺序；由 cron_* 事件折叠（Crons.kt） */
+    val crons: List<dev.min.agent.spi.CronTask> = emptyList(),
+    /** 已分配过的最大定时任务编号：编号在会话里只指一条任务，取消 / 过期后不复用 */
+    val cronSeq: Int = 0,
 )
 
 /** [afterTurn] 是生成回顾时最近结束的那个回合：之后没有新回合就不再自动生成 */
