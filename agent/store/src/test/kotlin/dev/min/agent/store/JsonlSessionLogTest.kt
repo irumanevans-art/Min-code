@@ -25,6 +25,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -108,6 +109,17 @@ class JsonlSessionLogTest {
         assertEquals(validSize, Files.size(eventsFile()))
         assertEquals(3L, writer.append(listOf(note("b")), Durability.Sync).single().seq)
         assertEquals(listOf(1L, 2L, 3L), store().peek(SessionId("s1"))!!.read().toList().map { it.seq })
+    }
+
+    @Test
+    fun `peek 出来的是只读视图，append 会立刻失败`() = runTest {
+        store().create(header()).append(listOf(created, note("a")), Durability.Sync)
+        val sizeBefore = Files.size(eventsFile())
+        val view = store().peek(SessionId("s1"))!!
+        val e = assertThrows(IllegalStateException::class.java) { runBlocking { view.append(listOf(note("x")), Durability.Sync) } }
+        assertTrue("报错要说清该走写者附着：${e.message}", e.message!!.contains("peek"))
+        assertEquals("文件一个字节都没动", sizeBefore, Files.size(eventsFile()))
+        assertEquals(listOf(1L, 2L), store().peek(SessionId("s1"))!!.read().toList().map { it.seq })
     }
 
     @Test

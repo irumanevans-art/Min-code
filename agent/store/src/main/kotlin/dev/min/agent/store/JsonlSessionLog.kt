@@ -39,10 +39,13 @@ class JsonlSessionLog private constructor(
     override val header: LogHeader,
     private var lastSeq: Long,
     private val clock: Clock,
+    /** 只读视图（[openReadOnly]）：读者轮询活日志用，[append] 一律拒绝——写者只有附着的那一个 */
+    private val readOnly: Boolean = false,
 ) : SessionLog {
     private val mutex = Mutex()
 
     override suspend fun append(events: List<SessionEvent>, durability: Durability): List<EventRecord> {
+        check(!readOnly) { "peek 出来的是只读视图，不能追加；要写请经写者附着（SessionStore.open）拿日志" }
         if (events.isEmpty()) return emptyList()
         return mutex.withLock {
             withContext(Dispatchers.IO) {
@@ -112,10 +115,13 @@ class JsonlSessionLog private constructor(
             return JsonlSessionLog(file, found, lastSeq, clock)
         }
 
-        /** 只读打开：同一套校验（头版本、seq 连续、中间行损坏照报），但**不动文件**。轮询活日志用 */
+        /**
+         * 只读打开：同一套校验（头版本、seq 连续、中间行损坏照报），但**不动文件**、[append] 一律拒绝。
+         * 轮询活日志用——返回的视图没有可用的 [append]，误用当场报错而不是悄悄多出一个并发写者
+         */
         internal fun openReadOnly(file: Path, clock: Clock): JsonlSessionLog {
             val (found, lastSeq, _) = scan(file)
-            return JsonlSessionLog(file, found, lastSeq, clock)
+            return JsonlSessionLog(file, found, lastSeq, clock, readOnly = true)
         }
 
         private data class Scanned(val header: LogHeader, val lastSeq: Long, val validEnd: Long)
