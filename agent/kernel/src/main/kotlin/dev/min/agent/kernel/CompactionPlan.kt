@@ -88,7 +88,7 @@ internal object CompactionPlanner {
         val lastAssistant = state.history.indexOfLast { it is HistoryEntry.Assistant }
         val tail = state.history.drop(lastAssistant + 1)
         val results = (state.history.getOrNull(lastAssistant) as? HistoryEntry.Assistant)?.toolCalls.orEmpty()
-            .sumOf { call -> state.toolResults[call.callId]?.content?.sumOf(Tokens::of) ?: 0L }
+            .sumOf { call -> state.toolResults[call.callId]?.let { r -> r.content.sumOf(Tokens::of) + (r.userPart()?.let(Tokens::of) ?: 0L) } ?: 0L }
         val added = tail.sumOf { e -> 4 + (if (e is HistoryEntry.User) e.parts else (e as HistoryEntry.Assistant).parts).sumOf(Tokens::of) }
         // 工具批之后按需加载的记忆也是上次请求之后才进视图的
         val attached = (state.history.getOrNull(lastAssistant) as? HistoryEntry.Assistant)?.let { state.memoryAttachments[it.messageId] }
@@ -163,6 +163,8 @@ internal object CompactionPlanner {
 
     private fun partsOf(entry: HistoryEntry, state: SessionState): List<Part> = when (entry) {
         is HistoryEntry.User -> entry.parts
-        is HistoryEntry.Assistant -> entry.parts + entry.toolCalls.flatMap { state.toolResults[it.callId]?.content.orEmpty() }
+        is HistoryEntry.Assistant -> entry.parts + entry.toolCalls.flatMap { call ->
+            state.toolResults[call.callId]?.let { it.content + listOfNotNull(it.userPart()) }.orEmpty()
+        }
     }
 }
