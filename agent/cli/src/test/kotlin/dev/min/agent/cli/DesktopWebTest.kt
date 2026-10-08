@@ -15,6 +15,16 @@ class DesktopWebTest {
         assertEquals(original + listOf("WebFetch", "WebSearch", "EnterWorktree", "ExitWorktree") + m5, desktopTools(searchConfigured = true).map { it.name })
     }
 
+    @Test fun `a one shot -p run gets no team or schedule tools because nothing outlives the process`() {
+        val m5 = listOf("TeamCreate", "TeamTask", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
+        val oneShot = desktopTools(interactive = false).map { it.name }
+        m5.forEach { assertFalse("$it 不该出现在 -p 里", it in oneShot) }
+        // 其余工具原样（顺序是稳定前缀）
+        assertEquals(desktopTools().map { it.name }.filterNot { it in m5 }, oneShot)
+        assertEquals(m5, desktopTools().map { it.name }.takeLast(7))
+        assertEquals("带搜索时也一样", desktopTools(searchConfigured = true).map { it.name }.filterNot { it in m5 }, desktopTools(searchConfigured = true, interactive = false).map { it.name })
+    }
+
     @Test fun `search configuration uses environment keys and missing config omits backend`() {
         assertNull(desktopSearchBackend(args()) { null })
         assertNull(desktopSearchBackend(args("--search-backend", "brave")) { null })

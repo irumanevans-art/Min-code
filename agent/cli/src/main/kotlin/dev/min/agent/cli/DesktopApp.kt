@@ -89,7 +89,12 @@ internal fun hookEnvReader(hidden: Set<String>, read: (String) -> String? = Syst
  * 桌面宿主的工具表。顺序就是发给模型的顺序，属于稳定前缀：只往末尾追加，不重排、不删除
  * （docs/agent/07-工程规范.md 第 10 条），否则所有会话的缓存前缀一起失效。
  */
-internal fun desktopTools(customAgents: List<AgentType> = emptyList(), searchConfigured: Boolean = false): List<Tool<*>> = listOf(
+internal fun desktopTools(
+    customAgents: List<AgentType> = emptyList(),
+    searchConfigured: Boolean = false,
+    /** false = `-p` 一次性运行：不给团队与定时的 7 个工具（见 [M5_TOOLS]） */
+    interactive: Boolean = true,
+): List<Tool<*>> = listOf(
     ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
@@ -97,8 +102,12 @@ internal fun desktopTools(customAgents: List<AgentType> = emptyList(), searchCon
     SkillTool,
     WebFetchTool,
 ) + (if (searchConfigured) listOf(WebSearchTool) else emptyList()) + listOf(dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool) +
-    // M5：agent 团队与定时任务（只往末尾追加）
-    listOf(TeamCreateTool, TeamTaskTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
+    // M5：agent 团队与定时任务（只往末尾追加）。`-p` 不给：Claude Code 的 `-p` 没有队友，进程一退定时任务永不触发，
+    // 模型在 `-p` 里建了团队 / 定时任务，回合一结束进程就走了，成员被丢、任务根本不会触发，还会向用户承诺不存在的事
+    (if (interactive) M5_TOOLS else emptyList())
+
+/** 团队与定时调度的工具（只在交互会话里提供） */
+private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamTaskTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 
@@ -155,7 +164,8 @@ internal class DesktopApp(
         fallback = resolveFallbackModels(args, Catalog.bundled(), config.settings.merged.fallbackModelSetting(), selection)
         fallback.notes.forEach { System.err.println(it) }
         val catalog = AgentCatalog.of(config.agents)
-        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null)
+        val interactive = args.prompt == null
+        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive)
         toolNamesCache = tools.map { it.name }
         val limits = HUB_LIMITS.copy(
             teamMaxConcurrent = teamMaxConcurrentFrom(config.settings.merged.raw("teamMaxConcurrent"), System.err::println),
@@ -164,7 +174,7 @@ internal class DesktopApp(
         SessionHub(store, deps(tools), scope, limits, catalog.definitions).also {
             hubInstance = it
             // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器
-            if (args.prompt == null) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
+            if (interactive) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
         }
     }
 

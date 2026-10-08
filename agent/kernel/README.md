@@ -39,4 +39,5 @@
 - 花费上限（**可选，默认不设**，同 Claude Code：定时任务花的是用户自己的额度）：任务可带 `maxBudgetUsd`（`max_budget_usd`），宿主可设 `HubLimits.cronMaxBudgetUsd` 天花板（取小），按**一次运行**、**整棵会话树**（根、子 agent、团队成员）合计。`CronRun` 在每个模型请求发出前由 `ModelBilling` 查，花到了就不再发——所以正常结束的运行不算超限。超限**只停这一次运行**：回合 `Interrupted(Budget)`、树里其余会话一并停下、写 `cron_budget_stopped` + Note + 通知，任务保持进行中；连续 2 次才写 `cron_expired(budget)` 暂停。一次性任务与唤醒被停同样留痕。设了上限而触发前模型没有 USD 定价（核对不了）→ **本次跳过**，任务保持进行中：循环任务从跳过那刻重新数（不补跑），一次性任务等价格有了再触发；Note + `CronNotice.Skipped` 只提示一次（再次真的触发过后才重新计）。花费照常计入会话（`model_charged`）。
 - 定时器：`Scheduler` 接口（spi）；桌面 `InProcessScheduler`（进程内协程，15 秒一跳）、Android `HeartbeatScheduler`（app 层，心跳驱动）。**不保证精确时刻；只在进程活着时工作——App 被系统杀掉时定时任务不跑**；不做 AlarmManager 精确闹钟（要额外权限）。前台服务现在只在有回合在跑时保活，只有定时任务的会话不会让它一直在。
 - `ScheduleWakeup` 是同一机制的另一个入口：一次性的间隔任务（`source = wakeup`，60–3600 秒），同时最多一个，`stop: true` 取消。
+- `-p` / 非交互会话**不提供**团队与定时的 7 个工具（`desktopTools(interactive = false)`，也不挂定时器）：Claude Code 的 `-p` 没有队友，进程一退定时任务永不触发——给了只会让模型向用户承诺不存在的事。
 - 已知限制：`/loop` 命令入口（CLI / 界面）没做；Stop hook 输入里的 `session_crons` 没填；到期 / 花费上限的系统通知只做到 `cronNotices` 流（没有接 Android 通知）；全局的“默认单次上限”设置项没做（逐任务的 `max_budget_usd` 可改）。
