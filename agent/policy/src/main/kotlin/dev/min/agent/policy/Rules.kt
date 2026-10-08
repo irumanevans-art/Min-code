@@ -39,6 +39,10 @@ data class PermissionRule(
         /** 认不出的写法返回 null（调用方记一条说明，不要猜） */
         fun parse(kind: RuleKind, text: String, source: String, baseDir: GuestPath? = null): PermissionRule? {
             val m = SHAPE.matchEntire(text.trim()) ?: return null
+            // 审查 hard_deny 的单词也可能是散文；只有明确工具写法才进入静态权限匹配。
+            if (source == "autoMode.hard_deny" && m.groups[2] == null &&
+                m.groupValues[1] !in setOf("Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob", "Agent", "Task", "Monitor", "WebFetch", "WebSearch") &&
+                !m.groupValues[1].startsWith("mcp__")) return null
             val spec = m.groupValues[2].takeIf { m.groups[2] != null }?.trim()
             if (spec != null && spec.isEmpty()) return null
             if (kind == RuleKind.Allow && !validAllowTool(m.groupValues[1])) return null
