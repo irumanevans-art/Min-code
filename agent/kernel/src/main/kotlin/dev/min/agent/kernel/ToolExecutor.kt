@@ -312,7 +312,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         else if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
             val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
             // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
-            if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
+            if (rt.state.value.settings.mode != PermissionMode.Auto) merge(ready, askFor(ready), hook)
+            else if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
         } else initial
         when (verdict) {
             is Verdict.Deny -> outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
