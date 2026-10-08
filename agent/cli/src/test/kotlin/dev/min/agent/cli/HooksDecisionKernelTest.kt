@@ -429,7 +429,8 @@ class HooksDecisionKernelTest {
         installSample("113-premodelswitch-decision")
         val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
         val before = rt.state.value.settings.model
-        rt.changeSettings(model = opus)
+        val refusal = rt.changeSettings(model = opus)
+        assertTrue("被拒时把理由还给宿主（宿主据此别报成功）：$refusal", refusal!!.contains("Switching now re-sends about 180k tokens"))
 
         assertEquals("模型没换", before, rt.state.value.settings.model)
         val note = store.events(rt).filterIsInstance<Note>().single { it.text.contains("模型没有切换") }
@@ -443,7 +444,8 @@ class HooksDecisionKernelTest {
         installScript("PreModelSwitch", "cat > \"\$CLAUDE_PROJECT_DIR/switch-input.json\"; echo 'Opus 4.6 is retired' >&2; exit 2", matcher = "claude-opus-5")
         val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
         val before = rt.state.value.settings.model
-        rt.changeSettings(model = opus, mode = PermissionMode.Plan, modelSwitchSource = "picker")
+        val refusal = rt.changeSettings(model = opus, mode = PermissionMode.Plan, modelSwitchSource = "picker")
+        assertTrue("exit 2 的 stderr 是理由：$refusal", refusal!!.contains("Opus 4.6 is retired"))
 
         assertEquals(before, rt.state.value.settings.model)
         assertEquals("模式不归这个 hook 管", PermissionMode.Plan, rt.state.value.settings.mode)
@@ -469,7 +471,7 @@ class HooksDecisionKernelTest {
 
         installScript("PreModelSwitch", """cat > /dev/null; printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreModelSwitch","permissionDecision":"allow"}}'""")
         val (rt2, _) = session(ScriptedModel { _ -> answer(TextPart("好")) })
-        rt2.changeSettings(model = opus)
+        assertEquals("放行时没有拒绝理由", null, rt2.changeSettings(model = opus))
         assertEquals(opus, rt2.state.value.settings.model)
     }
 

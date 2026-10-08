@@ -527,13 +527,14 @@ class SessionRuntime private constructor(
 
     /**
      * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
+     * 返回 PreModelSwitch hook 拒绝切模型的理由（模型没切；mode / effort 照常生效）；没被拒返回 null——宿主靠它别把“没切成”报成成功
      * 参数为 null 表示不改；要把思考档位清回「不控制」用 [clearEffort]（与 [effort] 同给时以 [effort] 为准）
      */
     suspend fun changeSettings(
         model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null, clearEffort: Boolean = false, cwd: GuestPath? = null,
         /** 切模型请求的来源，进 PreModelSwitch 的 `source`：command（/model、/config）/ picker / sdk */
         modelSwitchSource: String = "command",
-    ) {
+    ): String? {
         if (cwd != null && cwd != state.value.settings.cwd) {
             require(state.value.worktree == null) { "隔离会话请用 EnterWorktree / ExitWorktree 切换目录。" }
             require(deps.host.fs.stat(cwd)?.kind == dev.min.agent.spi.FileKind.Directory) { "工作目录不存在：$cwd" }
@@ -545,10 +546,11 @@ class SessionRuntime private constructor(
         if (refusal != null) modelSwitchHooks.noteRefused(refusal)
         val newModel = model.takeIf { refusal == null }
         val clear = clearEffort && effort == null && state.value.settings.effort != null
-        if (newModel == null && mode == null && effort == null && !clear) return
+        if (newModel == null && mode == null && effort == null && !clear) return refusal
         commit(listOf(SettingsChanged(model = newModel, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)
         // 模型真的换了才通知；同一个模型再设一次不算切换
         if (newModel != null && newModel != from) modelSwitchHooks.applied(from, newModel, modelSwitchSource)
+        return refusal
     }
 
     /** 宿主设置入口；只修改审查模型，不改变会话模型或稳定提示前缀。 */
