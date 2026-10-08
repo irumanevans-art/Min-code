@@ -193,6 +193,10 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             if (p !is Prepared.Ready || !p.tool.traits.readOnly || !p.tool.traits.concurrencySafe) break
             // 有 PreToolUse hook 的调用走单个流程：hook 的结论要与权限判定合流（hooks设计 §7）
             if (hooks.has(HookEvent.PreToolUse, p.call.name)) break
+            // 自然语言 hard_deny 需要分类器匹配，不能从只读并行快路绕过去。
+            if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.config.hardDeny.any {
+                PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
+            }) break
             if (verdictFor(p) !is Verdict.Allow) break
             batch += p
         }
@@ -248,6 +252,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             credentialPaths = deps.credentialPaths,
             canonicalPath = deps.canonicalPath,
             worktreeRoot = s.worktree?.path,
+            autoHardDeny = s.autoReviewSettings.config.hardDeny,
         )
     }
 
@@ -261,10 +266,21 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             is PreToolUse.Proceed -> pre.ready to pre.decision
         }
         val ask = askFor(ready)
-        when (val verdict = merge(ready, ask, hook)) {
+        val policy = verdictFor(ready, ask)
+        val initial = merge(ready, ask, hook)
+        val hardDenied = policy is Verdict.Deny && (policy.by as? DecidedBy.Rule)?.source == "autoMode.hard_deny"
+        val proseHardDeny = rt.state.value.autoReviewSettings.config.hardDeny.any {
+            PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
+        }
+        val verdict = if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
+            val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
+            // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
+            if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
+        } else initial
+        when (verdict) {
             is Verdict.Deny -> outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
             is Verdict.Allow -> execute(turnId, ready)
-            Verdict.Ask -> when (val answer = permissionRequest(turnId, ready)) {
+            Verdict.Ask -> when (val answer = permissionRequest(turnId, ready, allowDecisions = rt.state.value.settings.mode != PermissionMode.Auto)) {
                 is PermissionAnswer.Denied -> {
                     // hook 替人拒了：先落卡再落答（同一次提交，折叠成已决议），不发审批卡
                     resolveByHook(turnId, ready, ApprovalChoice.Deny(answer.note))
@@ -306,7 +322,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
      * hook 的 allow 无效（记说明照常问人）、deny 有效。allow 带的 updatedInput 走 PreToolUse 同一条改写路
      * （此刻调用还是 Planned，合法）。`interrupt: true` 与 `continue: false` 一样收尾（HookStop）。
      */
-    private suspend fun permissionRequest(turnId: TurnId, ready: Prepared.Ready): PermissionAnswer {
+    private suspend fun permissionRequest(turnId: TurnId, ready: Prepared.Ready, allowDecisions: Boolean = true): PermissionAnswer {
         if (!hooks.has(HookEvent.PermissionRequest, ready.call.name)) return PermissionAnswer.None
         val specific = HookJson.encodeToJsonElement(
             PermissionRequestInput.serializer(),
@@ -320,6 +336,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             HookOutcome.Decision.Block -> PermissionAnswer.Denied(outcome.reason, interrupt = false)
             HookOutcome.Decision.Stop -> PermissionAnswer.Denied(outcome.stopReason, interrupt = true)
             HookOutcome.Decision.Allow -> {
+                // 审查已决定转人（含失败）；hook 的自动允许不能把它重新变成无人执行。
+                if (!allowDecisions) return PermissionAnswer.None
                 val context = policyContext()
                 if (ready.tool.traits.alwaysAsk || PolicyEngine.floorReason(askFor(ready), context) != null) {
                     rt.commit(

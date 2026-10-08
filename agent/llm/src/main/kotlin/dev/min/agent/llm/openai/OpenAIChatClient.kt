@@ -40,7 +40,7 @@ class OpenAIChatClient(
             url = provider.baseUrl.trimEnd('/') + "/chat/completions",
             headers = headers(key),
             body = body.toByteArray(Charsets.UTF_8),
-            timeoutMs = REQUEST_TIMEOUT_MS,
+            timeoutMs = request.timeoutMs,
         )
         val parser = OpenAIChatStreamParser(request.profile, quirks, overflow)
         emitAll(

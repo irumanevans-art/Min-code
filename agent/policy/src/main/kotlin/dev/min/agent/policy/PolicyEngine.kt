@@ -35,6 +35,7 @@ data class PolicyContext(
     val credentialPaths: Set<GuestPath> = emptySet(),
     val canonicalPath: (GuestPath) -> GuestPath = { it },
     val worktreeRoot: GuestPath? = null,
+    val autoHardDeny: List<String> = emptyList(),
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -70,6 +71,13 @@ object PolicyEngine {
         val facts = Facts.of(ask, context)
         val matcher = RuleMatcher(context.cwd, context.home)
 
+        if (context.mode == PermissionMode.Auto) {
+            val rules = context.autoHardDeny.mapNotNull { PermissionRule.parse(RuleKind.Deny, it, "autoMode.hard_deny") }
+            firstHit(facts, rules, matcher)?.let { rule ->
+                return Verdict.Deny(DecidedBy.Rule(rule.raw, rule.source), "autoMode.hard_deny 禁止这个操作：${rule.raw}")
+            }
+        }
+
         // 宿主凭证不能经工具进入模型或事件；这个拒绝不能降级为可由用户或 hook 批准的询问。
         if (facts.credentialTargets.any { credentialPath(it, context, includeAncestors = facts.tool == "Bash") }) {
             return Verdict.Deny(DecidedBy.Mode(context.mode), "这是 Min 保存的凭证文件，工具不能读取、搜索或修改它。")
@@ -103,7 +111,7 @@ object PolicyEngine {
                 else Verdict.Deny(byMode, "当前模式不询问用户，这个操作没有被预先允许。")
             PermissionMode.AcceptEdits ->
                 if (effectivelyReadOnly || facts.isWorkspaceEditOnly || facts.isWorkspaceFileCommand) Verdict.Allow(byMode) else Verdict.Ask
-            // auto 模式的审查模型在 M5 落地，在那之前按 default 处理
+            // 需要审批的 auto 调用由内核先审查；纯权限引擎不发网络请求。
             PermissionMode.Default, PermissionMode.Auto ->
                 if (effectivelyReadOnly) Verdict.Allow(byMode) else Verdict.Ask
         }

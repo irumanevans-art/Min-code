@@ -45,7 +45,7 @@ internal class Recapper(private val rt: SessionRuntime) {
             val model = deps.models.resolve(ref)
             val request = request(state, model.profile)
             var completed: ModelStreamEvent.Completed? = null
-            model.client.stream(request).collect { if (it is ModelStreamEvent.Completed) completed = it }
+            rt.modelBilling.stream(model, request).collect { if (it is ModelStreamEvent.Completed) completed = it }
             completed ?: throw ModelException(dev.min.agent.spi.ModelFailureKind.Network, "回顾的流在给出完整回复之前结束了", beforeFirstByte = false)
         }
         val completed = outcome.getOrElse { return RecapResult.Failed(it.message ?: it::class.simpleName.orEmpty()) }

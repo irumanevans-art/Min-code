@@ -333,6 +333,9 @@ class SessionRuntime private constructor(
      * 项目层（project / local）的 hooks 只在工作区被信任时才进快照：它们会在手机上执行任意命令（hooks设计 §1）。
      */
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
+        val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)
+        val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer)
+        if (configured != dev.min.agent.spi.AutoReviewSettingsLoaded()) commit(listOf(configured), Durability.Sync)
         loadPermissionRules(snapshot)
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
         val hooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
@@ -504,6 +507,17 @@ class SessionRuntime private constructor(
         if (model == null && mode == null && effort == null && !clear) return
         commit(listOf(SettingsChanged(model = model, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)
     }
+
+    /** 宿主设置入口；只修改审查模型，不改变会话模型或稳定提示前缀。 */
+    suspend fun changeAutoModeReviewer(reviewer: dev.min.agent.spi.AutoModeReviewer?) {
+        if (reviewer != null) resolveReviewer(reviewer)
+        commit(listOf(state.value.autoReviewSettings.copy(reviewer = reviewer)), Durability.Sync)
+    }
+
+    internal fun resolveReviewer(reviewer: dev.min.agent.spi.AutoModeReviewer): ResolvedModel =
+        deps.reviewerModels?.invoke(reviewer) ?: deps.models.resolve(reviewer.model)
+
+    internal val modelBilling = ModelBilling(this)
 
     /** 中断当前回合：回合 Job 取消，收尾（每个悬空调用补结果）在回合自己的 finally 里写 */
     fun interrupt() {
@@ -735,6 +749,9 @@ class SessionRuntime private constructor(
             val log = store.create(header)
             val records = log.append(listOf(created) + initial, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
+            if (loadSettings && deps.memoryHome == null && deps.autoModeReviewer != null) {
+                runtime.commit(listOf(dev.min.agent.spi.AutoReviewSettingsLoaded(reviewer = deps.autoModeReviewer)), Durability.Sync)
+            }
             val home = deps.memoryHome
             if (home != null) {
                 // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照

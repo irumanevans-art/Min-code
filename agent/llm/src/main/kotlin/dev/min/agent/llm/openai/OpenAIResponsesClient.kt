@@ -43,7 +43,7 @@ class OpenAIResponsesClient(
         put("accept", "text/event-stream")
         provider.extraHeaders.forEach { (name, value) -> put(name, value) }
         put("user-agent", "min-agent")
-        val http = HttpRequest("POST", provider.baseUrl.trimEnd('/') + "/responses", headers.values.toList(), body.toByteArray(), 600_000L)
+        val http = HttpRequest("POST", provider.baseUrl.trimEnd('/') + "/responses", headers.values.toList(), body.toByteArray(), request.timeoutMs)
         val parser = OpenAIResponsesStreamParser(request.profile, overflow)
         emitAll(transport.stream(http).transformWhile { event ->
             parser.feed(event).forEach { emit(it) }

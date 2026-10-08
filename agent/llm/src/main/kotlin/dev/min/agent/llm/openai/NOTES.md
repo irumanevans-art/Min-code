@@ -45,7 +45,7 @@
     prompt_cache_key 的官方补充依据：[OpenAI Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)。
 11. **parallelToolCalls=false 的含义按规格是省略字段**，不是发 `false`。若模型默认并行开启，省略不能强制关闭；
     显式 `false` 可以从 effort 补丁传入，长期应由规格明确这两个意图是否需要分开。
-12. **超时固定 600 秒**，与现有 Anthropic 客户端一致；豆包资料建议 1800 秒以上，但现有 ModelRequest 没有超时字段。
+12. **超时默认 600 秒**，与 Anthropic 客户端一致；使用内核传入的 `ModelRequest.timeoutMs`，会话与审查共享设置。
     不擅改接口。调用方可以取消 Flow；如需长超时，应由接口 / 传输层另行设计。
 13. **扩展推理只显式开启**。encryptedReasoningField 指定时，把字符串增量合成同模型 OpaquePart，
     下一次请求只回传这个配置字段；其他 opaque 不映射到请求。不将 opaque 对象任意合并进 assistant，以免覆盖 role 或工具。

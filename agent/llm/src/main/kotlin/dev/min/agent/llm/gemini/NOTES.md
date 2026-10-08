@@ -35,7 +35,7 @@ troubleshooting 页面本次没有提供可用的完整经典错误表，因此 
 1. **认证接口不足**：AuthScheme 没有 GoogleApiKey。为避免改动另外三套的枚举和宿主分支，Gemini 的 XApiKey 用
    `GeminiQuirks.apiKeyHeader`（默认 x-goog-api-key）。Bearer 仍按既有描述符发送。代理可明确设 x-api-key，没有臆造供应商条目。
 2. **baseUrl 语义**：inventory 给主机根，其他协议目录常包含版本前缀；两种都接受，已含 v1/v1beta 不重复补版本。
-   拒绝带斜杠、查询、片段的模型 id，凭证始终只进头。600 秒超时沿用已有编解码器。
+   拒绝带斜杠、查询、片段的模型 id，凭证始终只进头。超时使用 `ModelRequest.timeoutMs`，默认沿用 600 秒。
 3. **schema**：选择 parameters 的 OpenAPI 子集而非新 parametersJsonSchema。删不支持的限制并交本地工具校验，
    不把数字 enum 转字符串。引用展开、const/oneOf/nullable 改写属于 Min 的投影策略，不声称是 Google SDK 自动行为。
    循环引用、外部引用、tuple items、多重 union 显式拒绝。键和数组保持输入次序，纯函数不修改原 schema。

@@ -24,6 +24,7 @@ data class ModelRequest(
     /** null = 取 [ModelProfile.maxOutputTokens] */
     val maxOutputTokens: Int? = null,
     val cache: CacheHints = CacheHints(),
+    val timeoutMs: Long = 600_000,
 )
 
 data class ToolSpec(val name: String, val description: String, val inputSchema: JsonObject)

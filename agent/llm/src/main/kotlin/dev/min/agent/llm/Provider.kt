@@ -39,6 +39,7 @@ data class ProviderDescriptor(
     val auth: AuthScheme,
     val extraHeaders: Map<String, String> = emptyMap(),
     val quirks: ProviderQuirks = ProviderQuirks(),
+    val fastModel: String? = null,
 )
 
 /** 按线协议分组的怪癖，默认 = 该协议官方的标准行为 */

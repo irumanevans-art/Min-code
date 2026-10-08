@@ -396,7 +396,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val messageId = MessageId(deps.ids.next("msg"))
         val segments = Segmenter(turnId, requestId, messageId)
         var completed: ModelStreamEvent.Completed? = null
-        model.client.stream(request).collect { event ->
+        rt.modelBilling.stream(model, request).collect { event ->
             when (event) {
                 is ModelStreamEvent.Started -> Unit
                 is ModelStreamEvent.TextDelta -> {

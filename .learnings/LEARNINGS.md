@@ -44,7 +44,12 @@ H1 增加两个上下文字段后，CLI 兼容测试仍按旧的八参数 JVM �
 - Related Files: agent/mcp/scripts/mcp3-fixes-check.ps1, agent/mcp/scripts/mcp3-fixes-verify.ps1, agent/cli/src/test/kotlin/dev/min/agent/cli/CredentialDesktopTest.kt
 - Tags: git-bash, path, hooks, test-oracle, powershell
 - Pattern-Key: testing.external_executor_preflight
-- Recurrence-Count: 1
+- Recurrence-Count: 2
+- Last-Seen: 2026-10-08
+
+
+### 2026-10-08 复验
+M5 auto-review 隔离 worktree 的 PowerShell PATH 再次缺 bash；后台 hook 记录启动 IOException 而后超时。按 classpath 参数文件确认仅停止本 worktree 的测试 worker，保留原检查 GRADLE_EXIT=1。新增 auto-review-check.ps1 在当前进程补 Git/bin 并恢复 PATH，--no-daemon 创建新 JVM；没有增加任何测试超时。
 
 ---
 
@@ -2053,3 +2058,28 @@ WorktreeIntegrationTest 真 git、带中文空格单引号路径、真实 juncti
 - **Resolved**: 2026-10-07
 - **Commit/PR**: 152588d2, 6894c348, ff6c0b97
 - **Notes**: 63 个合格变异；恢复后 13 个 agent check、App 单测与 APK 构建退出 0。大写盘符凭证回归断言和真实 junction 均通过；未做真机 proot 验收。
+
+## [LRN-20261008-AUTO-REVIEW-EVENTS] best_practice
+
+**Logged**: 2026-10-08T08:00:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+可选审查设置只在有值时落快照；增加 PolicyContext 字段要同步 CLI 反射桥接。
+
+### Details
+空 auto-review 设置无条件落事件改变既有 SkillSessionTest 的事件位置断言；改为仅非默认设置落事件，子会话同样只继承有值的快照。PolicyContext 新增 autoHardDeny 后，PermissionCompatTest 的 JVM 主构造参数从 11 增为 12，新增空列表并保留所有样本原断言。
+
+### Suggested Action
+新增可选配置事件先核对空配置下的既有会话形状；结构变化检索构造器反射调用。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/PermissionCompatTest.kt
+- Tags: events, settings, reflection
+- See Also: LRN-20261007-REFLECTION-IDLE
+- Recurrence-Count: 1
+
+---

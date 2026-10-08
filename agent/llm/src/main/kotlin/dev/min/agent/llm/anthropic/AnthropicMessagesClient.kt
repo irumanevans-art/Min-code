@@ -43,7 +43,7 @@ class AnthropicMessagesClient(
             url = provider.baseUrl.trimEnd('/') + "/v1/messages",
             headers = headers(key),
             body = body.toByteArray(Charsets.UTF_8),
-            timeoutMs = REQUEST_TIMEOUT_MS,
+            timeoutMs = request.timeoutMs,
         )
         val parser = AnthropicStreamParser(request.profile, overflow)
         emitAll(

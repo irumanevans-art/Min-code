@@ -35,7 +35,7 @@ internal suspend fun extractWeb(rt: SessionRuntime, turnId: TurnId, callId: Call
     repeat(deps.retry.maxAttempts) { index ->
         try {
             var done: ModelStreamEvent.Completed? = null
-            suspend fun collect() { model.client.stream(request).collect { if (it is ModelStreamEvent.Completed) done = it } }
+            suspend fun collect() { rt.modelBilling.stream(model, request).collect { if (it is ModelStreamEvent.Completed) done = it } }
             val gate = rt.requestGate
             if (gate == null) collect() else gate.withPermit { collect() }
             val completed = done ?: throw ModelException(ModelFailureKind.Network, "提取流未完成", beforeFirstByte = false)

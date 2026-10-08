@@ -90,6 +90,16 @@ fun SessionState.apply(record: EventRecord): SessionState {
             this
         }
         is dev.min.agent.spi.SessionRenamed -> copy(name = e.name)
+        is dev.min.agent.spi.AutoReviewSettingsLoaded -> copy(autoReviewSettings = e)
+        is dev.min.agent.spi.AutoReviewed -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
+            presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
+        )
+        is dev.min.agent.spi.ModelCharged -> {
+            val amount = e.amount
+            val currency = e.currency
+            if (amount == null || currency == null) copy(unpricedModelCalls = unpricedModelCalls + 1)
+            else copy(modelCosts = modelCosts + (currency to modelCosts.getOrDefault(currency, 0.0) + amount))
+        }
         is dev.min.agent.spi.CwdChanged -> {
             check(settings.cwd == e.oldCwd) { "cwd_changed 的原目录不匹配" }
             val reminder = listOf("Working directory changed from ${e.oldCwd} to ${e.cwd}. Resolve subsequent paths and commands against the new directory.") + e.memoryFiles.map(dev.min.agent.context.MemoryRender::section)
