@@ -6,7 +6,7 @@ import dev.min.agent.spi.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.*
 
-/** 只读本地目录；市场安装、LSP、monitors 与 prompt/agent/http hook 尚无运行端口，不能在发现时执行。 */
+/** 发现只读本地组件；安装、进程启动与 hook 执行必须留给带信任门禁的使用侧。 */
 class PluginLoader(private val fs: WorkspaceFs, private val canonical: (GuestPath) -> GuestPath = { it }) {
     suspend fun load(request: PluginRequest): PluginLoadOutcome {
         val io = ConfigIo(fs)

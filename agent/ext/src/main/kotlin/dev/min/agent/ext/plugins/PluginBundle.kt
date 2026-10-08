@@ -16,7 +16,7 @@ fun commandPluginHooks(events: JsonObject): JsonObject = JsonObject(events.mapNo
     if (groups.isEmpty()) null else event to JsonArray(groups)
 }.toMap())
 
-/** 不含用户配置值的会话组件；正文在调用时读，密钥只在 MCP 使用侧展开。 */
+/** 不含密钥真值的会话组件；正文在调用时读，密钥仅在 MCP / hook 使用侧展开。 */
 class PluginBundle(
     val batch: PluginBatch,
     val skills: List<SkillDef>,
@@ -176,7 +176,7 @@ class PluginBundle(
                 var isTrusted = realRoot in inlineRoots || if (projectEnabled) trust(cwd)
                     else source in setOf(ConfigSource.User, ConfigSource.Managed) || scopes[realRoot] == "user"
                 if (isTrusted) trusted += plugin.ref.id
-                else if (plugin.hooks.isNotEmpty() || plugin.mcpServers.isNotEmpty()) notes += "plugin:${plugin.namespace} 所在目录未信任，hooks / MCP 未启用"
+                else if (plugin.hooks.isNotEmpty() || plugin.mcpServers.isNotEmpty()) notes += "plugin:${plugin.namespace} 启用来源所属工作区未信任，hooks / MCP 未启用"
                 val vars = PluginVars(shellPath(GuestPath(plugin.root)), shellPath(GuestPath("$pluginsDir/data/${pluginDataId(plugin.ref)}")), shellPath(cwd))
                 val label = "plugin:${plugin.namespace}"
                 val public = options[plugin.ref.id] ?: options[plugin.ref.name] ?: JsonObject(emptyMap())
