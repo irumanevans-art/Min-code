@@ -46,10 +46,16 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     return interact(app, app.openSession(), args, scope)
 }
 
-private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.SessionRuntime, args: CliArgs, scope: CoroutineScope): Int {
+/** 交互循环。[stdin] 默认是进程的标准输入；测试传一个脚本化的 reader 来驱动 `say` 这条斜杠 / 发送路径 */
+internal suspend fun interact(
+    app: DesktopApp,
+    initial: dev.min.agent.kernel.SessionRuntime,
+    args: CliArgs,
+    scope: CoroutineScope,
+    stdin: java.io.BufferedReader = System.`in`.bufferedReader(),
+): Int {
     // /branch 会换会话：退出时的 SessionEnd 要跟当前会话走（分支是用户现在所在的对话）
     var runtime = initial
-    val stdin = System.`in`.bufferedReader()
     app.mcpAuthorizer.input = stdin
     // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout。
     // 交给 hub：审批 / 提问 / MCP elicitation 看整棵会话树，子 agent 的待处理项也有人答
