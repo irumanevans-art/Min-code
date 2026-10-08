@@ -131,6 +131,11 @@ data class CronTask(
     val status: CronStatus = CronStatus.Active,
     /** 结束原因：取消 / 过期（含 [CronExpiry] 与说明） / 一次性已触发 */
     val endedBecause: String? = null,
+    /** 连续因超出花费上限被停下的次数（[CronBudgetStopped] 折叠）；中间有一次正常结束就从头数，见 [stoppedFire] */
+    val overruns: Int = 0,
+
+    /** 最近一次被花费上限停下的是第几次触发；0 = 没有 */
+    val stoppedFire: Int = 0,
 ) {
     val active: Boolean get() = status == CronStatus.Active
 

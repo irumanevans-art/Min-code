@@ -143,6 +143,7 @@ class CronScheduleTest {
         )
         check(CronFired("c1", 2000, ClientMsgId("cron:c1:1")), """{"type":"cron_fired","cronId":"c1","firedAtMs":2000,"clientMsgId":"cron:c1:1"}""")
         check(CronCancelled("c1"), """{"type":"cron_cancelled","cronId":"c1"}""")
+        check(CronBudgetStopped("c1", 2, "花了 0.06"), """{"type":"cron_budget_stopped","cronId":"c1","fire":2,"detail":"花了 0.06"}""")
         check(CronExpired("c1", CronExpiry.Budget, "花了 0.06"), """{"type":"cron_expired","cronId":"c1","reason":"budget","detail":"花了 0.06"}""")
         check(
             InputReceived(ClientMsgId("cron:c1:1"), listOf(dev.min.agent.protocol.TextPart("检查构建")), Delivery.Queue, InputOrigin.Cron("c1")),

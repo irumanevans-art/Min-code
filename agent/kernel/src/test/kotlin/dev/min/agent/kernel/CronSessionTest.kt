@@ -134,7 +134,30 @@ class CronSessionTest {
         }
     }
 
-    private val tools: List<Tool<*>> = listOf(CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, probe)
+    /** 只是把入参转给端口的 Agent（与 BranchSessionTest 同款）：前台委派，等子回合结束 */
+    private val agentTool = object : Tool<JsonObject> {
+        override val name = "Agent"
+        override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+        override val traits = ToolTraits(readOnly = true, concurrencySafe = true, delegates = true)
+        override fun description(profile: HarnessProfile) = "委派"
+        override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
+        override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "委派")
+        override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            val request = dev.min.agent.spi.DelegateRequest(
+                description = "任务",
+                prompt = (input["prompt"] as JsonPrimitive).content,
+                background = (input["run_in_background"] as? JsonPrimitive)?.content == "true",
+            )
+            val result = when (val r = ctx.agents.delegate(request)) {
+                is dev.min.agent.spi.DelegateResult.Started -> ToolResult(listOf(TextPart("已启动 ${r.child.value}")))
+                is dev.min.agent.spi.DelegateResult.Finished -> ToolResult(listOf(TextPart(r.report)), isError = r.isError)
+                is dev.min.agent.spi.DelegateResult.Rejected -> ToolResult(listOf(TextPart(r.messageForModel)), isError = true)
+            }
+            emit(ToolProgress.Done(result))
+        }
+    }
+
+    private val tools: List<Tool<*>> = listOf(CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, probe, agentTool)
 
     private fun deps(model: ModelClient, profile: dev.min.agent.llm.ModelProfile = pricedProfile): KernelDeps {
         val base = testDeps(model, tools)
@@ -178,14 +201,14 @@ class CronSessionTest {
     }
 
     /** 直接把一条定时任务写进日志（创建走工具的那条路另有测试）；编号取下一个 */
-    private suspend fun schedule(rt: SessionRuntime, every: Long? = 30 * minute, cron: String? = null, recurring: Boolean = true, budget: Double? = null, prompt: String = "检查构建"): String {
+    private suspend fun schedule(rt: SessionRuntime, every: Long? = 30 * minute, cron: String? = null, recurring: Boolean = true, budget: Double? = null, prompt: String = "检查构建", source: String? = null): String {
         val id = rt.state.value.nextCronId()
         rt.commit(
             listOf(
                 CronScheduled(
                     id, prompt, recurring, budget, now.get(),
                     cron = cron, intervalMs = every.takeIf { cron == null },
-                    expiresAtMs = if (recurring) now.get() + 7 * 24 * 60 * minute else null,
+                    expiresAtMs = if (recurring) now.get() + 7 * 24 * 60 * minute else null, source = source,
                 ),
             ),
             Durability.Sync,
@@ -521,44 +544,161 @@ class CronSessionTest {
 
     // ---- 花费上限 ----
 
+    /** 定时运行里模型的脚本：burn = 一直调工具（每个请求 0.015 美元，不拦就无限烧钱）；calm = 一句话结束 */
+    private val mode = java.util.concurrent.atomic.AtomicReference("burn")
+
+    private fun ModelRequest.firedRun(): Boolean =
+        messages.first().parts.any { (it as? TextPart)?.text?.startsWith("[定时任务") == true }
+
+    private fun burningModel() = RoutingModel { req ->
+        if (req.firedRun() && mode.get() == "burn") reply(ToolCallPart(CallId("p${req.messages.size}"), "Probe", args()), stop = StopReason.ToolUse)
+        else reply(TextPart("好"))
+    }
+
+    /** 拨表到下一次触发并等这次运行收尾；[n] 是任务此刻应有的触发次数 */
+    private suspend fun SessionHub.fireOnce(rt: SessionRuntime, n: Int, stops: Boolean = false) {
+        now.set(now.get() + 31 * minute)
+        crons.tick(now.get())
+        rt.state.first { s -> s.crons.first().fires == n }
+        // 超限的收尾（记事件、通知）在引擎自己的协程里，回合结束时它可能还没跑完
+        if (stops) rt.state.first { s -> s.crons.first().stoppedFire == n }
+        settle(rt)
+    }
+
+    private fun collectNotices(h: SessionHub): CopyOnWriteArrayList<CronNotice> =
+        CopyOnWriteArrayList<CronNotice>().also { list -> newScope().launch { h.cronNotices.collect { list += it } } }
+
     @Test
-    fun `a run that spends up to the cap is stopped, the task is cancelled with the reason and the user is told`() = run {
-        val model = RoutingModel { req ->
-            // 定时运行里模型一直在调工具：不拦它就会无限烧钱（每个请求 0.015 美元）
-            if (req.messages.first().parts.any { (it as? TextPart)?.text?.startsWith("[定时任务") == true })
-                reply(ToolCallPart(CallId("p${req.messages.size}"), "Probe", args()), stop = StopReason.ToolUse)
-            else reply(TextPart("好"))
-        }
+    fun `an overrun stops only that run - interrupted by budget, the task stays active and the user is told`() = run {
+        val model = burningModel()
         val h = hub(model)
         val rt = h.root()
-        val notices = CopyOnWriteArrayList<CronNotice>()
-        newScope().launch { h.cronNotices.collect { notices += it } }
+        val notices = collectNotices(h)
         delay(100)
         schedule(rt, budget = 0.04)
-        now.set(t0 + 31 * minute)
-        h.crons.tick(now.get())
-        rt.state.first { it.crons.single().status == CronStatus.Expired }
-        settle(rt)
+        h.fireOnce(rt, 1, stops = true)
 
         val state = rt.state.value
         assertEquals("花到 0.045 就停：不会有第四个请求", 3, model.requests.size)
         assertEquals(0.045, state.modelCosts.getValue("USD"), 1e-9)
+        assertEquals("回合结局是预算，不是用户中断", dev.min.agent.spi.TurnOutcome.Interrupted(dev.min.agent.spi.InterruptedBy.Budget), state.lastTurn!!.outcome)
         val task = state.crons.single()
-        assertTrue(task.endedBecause!!, task.endedBecause!!.startsWith("花费上限"))
-        val expired = events(rt.sessionId).filterIsInstance<CronExpired>().single()
-        assertEquals(CronExpiry.Budget, expired.reason)
-        assertTrue(expired.detail!!, expired.detail!!.contains("$0.0450") && expired.detail!!.contains("$0.0400"))
-        assertTrue(events(rt.sessionId).filterIsInstance<Note>().any { it.level == NoteLevel.Warning && it.text.contains("花费上限") })
+        assertTrue("只停这一次运行，任务还在", task.active)
+        assertEquals(1, task.overruns)
+        val log = events(rt.sessionId)
+        val stopped = log.filterIsInstance<dev.min.agent.spi.CronBudgetStopped>().single()
+        assertEquals(1, stopped.fire)
+        assertTrue(stopped.detail!!, stopped.detail!!.contains("\$0.0450") && stopped.detail!!.contains("\$0.0400"))
+        assertTrue(log.none { it is CronExpired })
+        assertTrue(log.filterIsInstance<Note>().any { it.level == NoteLevel.Warning && it.text.contains("花费上限") && it.text.contains("这一次运行") })
         withTimeout(5_000) { while (notices.isEmpty()) delay(20) }
         assertEquals(CronNotice.Kind.BudgetStopped, notices.single().kind)
         assertNull("回合停下了", state.turn)
 
-        // 任务已取消，再到点也不触发
-        now.set(t0 + 3 * 60 * minute)
+        // 任务没取消：下一次到点照常触发，这次平静地结束
+        mode.set("calm")
+        h.fireOnce(rt, 2)
+        assertEquals(dev.min.agent.spi.TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
+        assertTrue(rt.state.value.crons.single().active)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a run that finishes on its own is never counted as an overrun even if it cost more than the cap`() = run {
+        val h = hub(answering) // 一次回复 0.015，上限 0.01：没有下一个请求可拦，运行正常结束
+        val rt = h.root()
+        schedule(rt, budget = 0.01)
+        h.fireOnce(rt, 1)
+        val state = rt.state.value
+        assertEquals(dev.min.agent.spi.TurnOutcome.Completed, state.lastTurn!!.outcome)
+        assertTrue("正常结束的运行不算超限，任务还在", state.crons.single().active)
+        assertEquals(0, state.crons.single().overruns)
+        assertTrue(events(rt.sessionId).none { it is dev.min.agent.spi.CronBudgetStopped || it is CronExpired })
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `two overruns in a row end the task, an overrun after a clean run starts the count over`() = run {
+        val h = hub(burningModel())
+        val rt = h.root()
+        val notices = collectNotices(h)
+        delay(100)
+        schedule(rt, budget = 0.04)
+        h.fireOnce(rt, 1, stops = true)
+        assertEquals(1, rt.state.value.crons.single().overruns)
+        mode.set("calm")
+        h.fireOnce(rt, 2) // 平静的一次
+        mode.set("burn")
+        h.fireOnce(rt, 3, stops = true)
+        assertTrue("超限、正常、超限：不连续，任务还在", rt.state.value.crons.single().active)
+        assertEquals("计数从头数", 1, rt.state.value.crons.single().overruns)
+
+        h.fireOnce(rt, 4, stops = true) // 连着第二次超限
+        rt.state.first { it.crons.single().status == CronStatus.Expired }
+        val task = rt.state.value.crons.single()
+        assertEquals(CronStatus.Expired, task.status)
+        assertTrue(task.endedBecause!!, task.endedBecause!!.contains("连续 2 次"))
+        val expired = events(rt.sessionId).filterIsInstance<CronExpired>().single()
+        assertEquals(CronExpiry.Budget, expired.reason)
+        withTimeout(5_000) { while (notices.none { it.kind == CronNotice.Kind.Expired }) delay(20) }
+        // 暂停之后到点也不触发
+        now.set(now.get() + 3 * 60 * minute)
         h.crons.tick(now.get())
         settle(rt)
-        assertEquals(1, rt.state.value.crons.single().fires)
-        assertEquals(3, model.requests.size)
+        assertEquals(4, rt.state.value.crons.single().fires)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a one shot and a wakeup stopped by the cap leave an event, a note and a notice - never silent`() = run {
+        for (source in listOf(null, dev.min.agent.spi.CRON_SOURCE_WAKEUP)) {
+            val h = hub(burningModel())
+            val rt = h.root()
+            val notices = collectNotices(h)
+            delay(100)
+            schedule(rt, every = 20 * minute, recurring = false, budget = 0.04, source = source)
+            now.set(now.get() + 21 * minute)
+            h.crons.tick(now.get())
+            rt.state.first { it.crons.single().overruns == 1 }
+            settle(rt)
+            val log = events(rt.sessionId)
+            assertEquals("$source", 1, log.count { it is dev.min.agent.spi.CronBudgetStopped })
+            assertTrue("$source", log.filterIsInstance<Note>().any { it.level == NoteLevel.Warning && it.text.contains("花费上限") })
+            withTimeout(5_000) { while (notices.isEmpty()) delay(20) }
+            assertEquals("$source", CronNotice.Kind.BudgetStopped, notices.first().kind)
+            assertEquals("$source", CronStatus.Fired, rt.state.value.crons.single().status)
+            assertLogIsTruth(rt)
+        }
+    }
+
+    @Test
+    fun `spend of a sub agent counts toward the run and stops the whole tree`() = run {
+        val model = RoutingModel { req ->
+            val first = (req.messages.first().parts.firstOrNull() as? TextPart)?.text.orEmpty()
+            when {
+                first.contains("子任务") -> reply(ToolCallPart(CallId("c${req.messages.size}"), "Probe", args()), stop = StopReason.ToolUse) // 子 agent 一直烧
+                req.firedRun() && req.messages.size == 1 -> reply(
+                    ToolCallPart(CallId("a1"), "Agent", args("prompt" to "子任务", "run_in_background" to false)), stop = StopReason.ToolUse,
+                )
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.root()
+        schedule(rt, budget = 0.05)
+        now.set(now.get() + 31 * minute)
+        h.crons.tick(now.get())
+        rt.state.first { it.crons.single().overruns == 1 }
+        settle(rt)
+
+        // 根自己只花了 0.015（一个请求），不到 0.05；加上子 agent 的三个请求 0.06 才超——只看根会话的账会放过它
+        assertEquals("根 1 + 子 3，第 5 个请求被拦", 4, model.requests.size)
+        assertTrue("根会话自己的花费不到上限", rt.state.value.modelCosts.getValue("USD") < 0.05)
+        val child = rt.state.value.children.keys.single()
+        val childRt = h.get(child)!!
+        assertNull("子 agent 也停了", childRt.state.value.turn)
+        assertTrue(rt.state.value.crons.single().active)
+        assertEquals(dev.min.agent.spi.TurnOutcome.Interrupted(dev.min.agent.spi.InterruptedBy.Budget), rt.state.value.lastTurn!!.outcome)
         assertLogIsTruth(rt)
     }
 
@@ -629,7 +769,7 @@ class CronSessionTest {
         schedule(rt, budget = 5.0, prompt = "模型要了 5 美元")
         now.set(t0 + 31 * minute)
         h.crons.tick(now.get())
-        rt.state.first { it.crons.single().status == CronStatus.Expired }
+        rt.state.first { it.crons.single().stoppedFire == 1 }
         settle(rt)
         assertEquals("天花板 0.04：花到 0.045 就停", 3, model.requests.size)
         val text = rt.state.value.history.filterIsInstance<HistoryEntry.User>().single().parts.filterIsInstance<TextPart>().single().text

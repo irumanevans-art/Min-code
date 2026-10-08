@@ -176,6 +176,7 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
   `/branch` 不继承定时任务：分支日志末尾对每个进行中的任务写一条 `cron_cancelled`。循环任务满 7 天、一次运行花到单次上限（`maxBudgetUsd`，**可选、默认不设**；宿主的 `cronMaxBudgetUsd` 天花板取小）、一次性任务的时刻在会话没开着时过去、设了上限却因当前模型没有 USD 定价而估算不了花费都写 `cron_expired`，同时记一条 `note`（warning）。
   含新事件的日志旧版本打不开；旧日志照常读。
 - v1 增量（2026-10-08，M5 定时调度）：`turn_started.trigger` 新增取值 `cron`（定时任务到点唤醒的回合，转录里与 `resume` / `notification` / `hook` 一样留分隔）；`cron_scheduled` 新增可选字段 `source`（`wakeup` = ScheduleWakeup 安排的下一轮，缺省 = CronCreate），`tool_outcome.result.effects` 的 `cron_create` 同带 `source`。含新取值的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-08，M5 定时调度·花费上限口径）：新增事件 `cron_budget_stopped`（`cronId`、`fire`：这次运行是任务的第几次触发、可选 `detail`），定义在 `spi/CronEvents.kt`。设了花费上限的任务，一次运行（**整棵会话树**：根、子 agent、团队成员合计）花到上限后，下一个模型请求被拦下，这一次运行以 `turn_ended.outcome = interrupted(by = budget)` 收尾，并写 `cron_budget_stopped` + 一条 `note`（warning）；**任务保持进行中**。折叠按 `fire` 判断「连续」（紧挨着上一次触发也被停才算，中间有一次正常结束就从头数）；连续 2 次时内核紧跟着写 `cron_expired`（`reason = budget`）暂停任务。一次性任务与 ScheduleWakeup 的唤醒（触发后即 `Fired`）被停时同样写 `cron_budget_stopped` 与 `note`，不静默。`turn_ended.outcome.by` 新增取值 `budget`；`cron_scheduled.maxBudgetUsd` 缺省 = 不限（见上）。含新事件 / 取值的日志旧版本打不开；旧日志照常读。
 
 ## 用户文字不进工具结果（2026-10-08）
 

@@ -75,6 +75,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     suspend fun run(trigger: TurnTrigger): Boolean {
         val turnId = TurnId(deps.ids.next("turn"))
         val startedAt = deps.clock.nowMs()
+        rt.takeInterruptReason() // 上一回合没来得及取走的中断原因不能带到这一回合
         rt.commit(listOf(TurnStarted(turnId, trigger)), Durability.Sync)
         return try {
             // 排着的 MCP 变化在回合开头一次性生效（MCP设计 §5.3）：回合中途不改工具表。
@@ -102,7 +103,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             rt.commit(listOf(TurnEnded(turnId, TurnOutcome.Completed, usage, deps.clock.nowMs() - startedAt)), Durability.Sync)
             true
         } catch (e: CancellationException) {
-            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.User)), Durability.Sync)
+            // 原因默认是用户；定时任务的花费上限停回合时先放下 Budget 再取消（SessionRuntime.interrupt(by)）
+            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(rt.takeInterruptReason())), Durability.Sync)
             throw e
         } catch (e: TurnAbort) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind, e.failureCause)), Durability.Sync)
@@ -111,6 +113,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             // 某个 hook 说 continue: false：结束这一轮，理由给人看（hooks设计 §5）
             val note = listOf(Note(NoteLevel.Info, "hook 停止了这一轮" + (e.reason?.let { "：$it" } ?: "")))
             rt.commit(note + closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Hook)), Durability.Sync)
+            false
+        } catch (e: CronBudgetReached) {
+            // 定时运行花到了单次上限，下一个请求被预检拦下：只停这一次运行，结局记预算（原因在引擎写的 Note 里）
+            rt.takeInterruptReason()
+            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Budget)), Durability.Sync)
             false
         } catch (e: TurnLimitReached) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit)), Durability.Sync)

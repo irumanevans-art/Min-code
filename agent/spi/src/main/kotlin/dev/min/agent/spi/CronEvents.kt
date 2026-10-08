@@ -75,7 +75,7 @@ enum class CronExpiry {
     /** 循环任务满 7 天 */
     @SerialName("age") Age,
 
-    /** 一次运行花到了单次上限（任务自己的或宿主天花板），或花费无法核对：停下这次运行并取消任务 */
+    /** 连续两次运行都花到了单次上限（任务自己的或宿主天花板）：暂停任务（结束，要继续得重新建）。单次超限只停那一次运行，见 [CronBudgetStopped] */
     @SerialName("budget") Budget,
 
     /** 一次性任务的时刻在会话没开着的时候过去了（不补跑） */
@@ -90,6 +90,21 @@ enum class CronExpiry {
 data class CronExpired(
     val cronId: String,
     val reason: CronExpiry,
+    /** 给人看的一句话（花了多少、上限多少） */
+    val detail: String? = null,
+) : SessionEvent
+
+/**
+ * 一次运行因为花费到了上限被停下（任务本身**不**因此结束，除非这是连续第二次）。写在被停的那次运行里：
+ * [fire] 是这次运行是任务的第几次触发（= [CronFired] 之后任务的触发次数），折叠据此判断「连续」——
+ * 紧挨着上一次触发也被停才算连续，中间有一次正常结束就从头数。一次性任务与 ScheduleWakeup 的唤醒（触发后即 `Fired`）同样记，不静默。
+ * 连续第二次超限时内核紧跟着写一条 [CronExpired]（reason = budget）暂停任务。
+ */
+@Serializable
+@SerialName("cron_budget_stopped")
+data class CronBudgetStopped(
+    val cronId: String,
+    val fire: Int,
     /** 给人看的一句话（花了多少、上限多少） */
     val detail: String? = null,
 ) : SessionEvent

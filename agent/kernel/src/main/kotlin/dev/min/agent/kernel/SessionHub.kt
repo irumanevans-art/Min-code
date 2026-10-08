@@ -957,8 +957,11 @@ class SessionHub(
         }
     }
 
+    /** 整棵树此刻都没有回合在跑（含启动中的）：定时运行的记账要等到这时才算结束 */
+    internal fun treeTurnsIdle(id: SessionId): Boolean = subtreeOnline(id).all { runtimes[it]?.isTurnIdle() ?: true }
+
     /** [id] 与它在线的后代（按 SubagentOrigin.parent 往下找） */
-    private fun subtreeOnline(id: SessionId): List<SessionId> {
+    internal fun subtreeOnline(id: SessionId): List<SessionId> {
         if (!runtimes.containsKey(id)) return emptyList()
         val result = mutableListOf(id)
         var i = 0

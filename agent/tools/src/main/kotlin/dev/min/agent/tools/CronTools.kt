@@ -64,11 +64,12 @@ private fun CronBoard.spendText(taskBudgetUsd: Double?): String {
     val limit = effectiveBudgetUsd(taskBudgetUsd)
     val spend = when {
         limit == null -> "没有花费上限，花的是用户自己的额度。"
-        taskBudgetUsd == null -> "宿主设了花费上限 ${usd(limit)}，每次运行花到就停并取消该任务。"
-        limit < taskBudgetUsd -> "宿主设的花费天花板 ${usd(limit)} 比你给的 ${usd(taskBudgetUsd)} 低，按 ${usd(limit)} 算；每次运行花到就停并取消该任务。"
-        else -> "每次运行花费上限 ${usd(limit)}，花到就停并取消该任务。"
+        taskBudgetUsd == null -> "宿主设了花费上限 ${usd(limit)}，每次运行花到就停下这一次运行。"
+        limit < taskBudgetUsd -> "宿主设的花费天花板 ${usd(limit)} 比你给的 ${usd(taskBudgetUsd)} 低，按 ${usd(limit)} 算；每次运行花到就停下这一次运行。"
+        else -> "每次运行花费上限 ${usd(limit)}，花到就停下这一次运行。"
     }
-    return "这是无人值守的运行：到点触发时没有人在看，不要向用户提问、也别依赖审批。$spend"
+    val pause = if (limit != null) "任务本身保持进行中，连续 2 次超限才会暂停并通知用户。" else ""
+    return "这是无人值守的运行：到点触发时没有人在看，不要向用户提问、也别依赖审批。$spend$pause"
 }
 
 /** 一条任务的一行说明：循环 / 一次性、调度、上限、触发次数、下次时刻，以及提示词（Claude Code 的 CronList 带限定词与提示词） */
@@ -88,7 +89,7 @@ object CronCreateTool : Tool<JsonObject> {
         "cron" to subagentProperty("string", "5 字段 cron 表达式（分 时 日 月 周），按本机时区；例如 \"0 9 * * 1-5\" 是工作日早上 9 点。与 every 二选一"),
         "every" to subagentProperty("string", "间隔：30m / 2h / 1d（至少 1 分钟）。循环任务每隔这么久触发，一次性任务过这么久触发一次。与 cron 二选一"),
         "recurring" to subagentProperty("boolean", "默认 true：循环；false：只触发一次"),
-        "max_budget_usd" to subagentProperty("number", "可选：每次运行的花费上限（美元）。不写就不限（和 Claude Code 一样，花的是用户自己的额度）；写了，一次运行花到它就被停下并取消该任务。宿主设了天花板时取较小的"),
+        "max_budget_usd" to subagentProperty("number", "可选：每次运行的花费上限（美元）。不写就不限（和 Claude Code 一样，花的是用户自己的额度）；写了，一次运行（含它启动的子 agent、团队成员）花到它就停下这一次运行，任务保持进行中，连续 2 次超限才暂停。宿主设了天花板时取较小的"),
     )
 
     override fun description(profile: HarnessProfile) =

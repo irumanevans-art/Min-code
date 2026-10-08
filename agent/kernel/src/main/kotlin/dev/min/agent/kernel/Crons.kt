@@ -1,8 +1,10 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.CRON_MAX_ACTIVE
 import dev.min.agent.spi.CRON_MIN_INTERVAL_MS
 import dev.min.agent.spi.CronBoard
+import dev.min.agent.spi.CronBudgetStopped
 import dev.min.agent.spi.CronCancelled
 import dev.min.agent.spi.CronExpiry
 import dev.min.agent.spi.CronExpired
@@ -58,6 +60,15 @@ internal fun SessionState.cronProblem(e: SessionEvent): String? = when (e) {
     is CronFired -> activeTask(e.cronId)
     is CronCancelled -> activeTask(e.cronId)
     is CronExpired -> activeTask(e.cronId)
+    // 一次性任务 / 唤醒触发后就是 Fired，被预算停掉仍要能记下来；取消、过期的任务没有「运行」可停
+    is CronBudgetStopped -> when (val t = cronTask(e.cronId)) {
+        null -> "没有定时任务 ${e.cronId}。"
+        else -> when {
+            t.status != CronStatus.Active && t.status != CronStatus.Fired -> "定时任务 ${e.cronId} 已经结束了（${t.endedBecause ?: t.status.name}）。"
+            e.fire !in 1..t.fires -> "定时任务 ${e.cronId} 还没触发过第 ${e.fire} 次，没有这次运行可停。"
+            else -> null
+        }
+    }
     else -> null
 }
 
@@ -87,6 +98,13 @@ internal fun SessionState.applyCronEvent(e: SessionEvent): SessionState = when (
             )
         },
     )
+    is CronBudgetStopped -> copy(
+        crons = crons.map { t ->
+            if (t.id != e.cronId) t
+            // 「连续」= 紧挨着上一次触发也被停；中间有一次正常结束（没有这条事件）就从头数
+            else t.copy(overruns = if (e.fire > 1 && t.stoppedFire == e.fire - 1) t.overruns + 1 else 1, stoppedFire = e.fire)
+        },
+    )
     is CronCancelled -> copy(crons = crons.map { if (it.id == e.cronId) it.copy(status = CronStatus.Cancelled, endedBecause = "已取消") else it })
     is CronExpired -> copy(
         crons = crons.map { if (it.id == e.cronId) it.copy(status = CronStatus.Expired, endedBecause = expiryText(e)) else it },
@@ -106,27 +124,50 @@ internal fun expiryText(e: CronExpired): String {
 }
 
 /**
- * 一次定时运行的花费记账：从触发那一刻起算，到会话重新空闲为止。花费计入会话（ModelCharged 照常累计），
- * 这里只是「这次运行从多少起算」——上限按**一次运行**算，不是任务的累计（每次触发都有新的 0.05 美元额度）。
- * 运行期间用户插进来的话也算在这次运行里：保守，宁可早停
+ * 一次定时运行的花费记账：从触发那一刻起算，到**整棵会话树**重新空闲为止（根会话、子 agent、团队成员都算——成员是子会话，
+ * 否则无人值守时让别的会话去花钱就绕过了上限）。上限按**一次运行**算，不是任务的累计，每次触发都有新的额度。
+ * 运行期间用户插进来的话也算在这次运行里：保守，宁可早停。
+ *
+ * 记账不看会话状态里的 modelCosts 差值，而是 [charge] 累加：树里哪个会话的 [ModelBilling] 记了一笔，就加到这次运行上。
+ * 这样中途才被打开的老子会话（它之前的花费不属于这次运行）也不会被算进来。
+ *
+ * 强制点是**每个模型请求发出前**（[ModelBilling] 调 [verdict]）：花到上限就不再发。因此一次运行正常结束（没有下一个请求要发）
+ * 就不算超限，哪怕它花的比上限多——首个请求预检不了，只能事后知道。超限时 [trip] 第一个调用者拿到 true，由它去通知引擎收尾。
  */
 internal class CronRun(
+    val rootId: SessionId,
     val cronId: String,
+    /** 这次运行是任务的第几次触发（[CronFired] 之后的触发次数） */
+    val fire: Int,
     val limitUsd: Double,
-    val baselineUsd: Double,
-    val baselineUnpriced: Int,
 ) {
-    fun spentUsd(state: SessionState): Double = (state.modelCosts["USD"] ?: 0.0) - baselineUsd
+    private var spent = 0.0
+    private var unpriced = 0
+    private var tripped = false
+
+    /** 记一笔：[amountUsd] 为 null = 这个请求没有 USD 价格（缺价格、或别的币种），花费无法核对 */
+    @Synchronized
+    fun charge(amount: Double?, currency: String?) {
+        if (amount != null && currency == "USD") spent += amount else unpriced++
+    }
+
+    @Synchronized
+    fun spentUsd(): Double = spent
 
     /** 花到上限、或有一次花费记不出价格（无法核对）：返回给人看的原因；没事返回 null */
-    fun problem(state: SessionState): String? {
-        val spent = spentUsd(state)
-        return when {
-            spent >= limitUsd -> "这次运行花了 ${money(spent)}，到了单次上限 ${money(limitUsd)}"
-            state.unpricedModelCalls > baselineUnpriced -> "这次运行里有模型请求没有 USD 价格，花费无法核对，按到上限处理"
-            else -> null
-        }
+    @Synchronized
+    fun problem(): String? = when {
+        spent >= limitUsd -> "这次运行花了 ${money(spent)}，到了单次上限 ${money(limitUsd)}"
+        unpriced > 0 -> "这次运行里有模型请求没有 USD 价格，花费无法核对，按到上限处理"
+        else -> null
     }
+
+    /** 标记为已超限；第一次调用返回 true（由它负责收尾），之后返回 false */
+    @Synchronized
+    fun trip(): Boolean = (!tripped).also { tripped = true }
 }
+
+/** 定时运行花到上限后，树里任何会话再要发模型请求都抛它：回合以 [dev.min.agent.spi.InterruptedBy.Budget] 收尾（不是「内部错误」） */
+internal class CronBudgetReached(val reason: String) : IllegalStateException("定时任务这次运行已到花费上限：$reason")
 
 internal fun money(usd: Double): String = "$" + String.format(java.util.Locale.ROOT, "%.4f", usd)

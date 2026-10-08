@@ -108,6 +108,33 @@ class CronFoldTest {
     }
 
     @Test
+    fun `budget stops count consecutive runs and a run in between starts the count over`() {
+        fun stopped(fire: Int) = dev.min.agent.spi.CronBudgetStopped("c1", fire, "超限")
+        fun fired(n: Int) = CronFired("c1", 1_000L * n, ClientMsgId("cron:c1:$n"))
+        val one = foldOf(scheduled(), fired(1), stopped(1)).crons.single()
+        assertEquals(1, one.overruns)
+        assertTrue("只停那一次运行，任务还在", one.active)
+
+        val two = foldOf(scheduled(), fired(1), stopped(1), fired(2), stopped(2)).crons.single()
+        assertEquals("第 1、2 次连着超限", 2, two.overruns)
+
+        val gap = foldOf(scheduled(), fired(1), stopped(1), fired(2), fired(3), stopped(3)).crons.single()
+        assertEquals("第 2 次正常结束过，从头数", 1, gap.overruns)
+    }
+
+    @Test
+    fun `a budget stop is valid for a finished one shot but not for a cancelled or expired task or a run that never happened`() {
+        val stopped = dev.min.agent.spi.CronBudgetStopped("c1", 1, null)
+        val oneShot = foldOf(scheduled(recurring = false), CronFired("c1", 700_000, ClientMsgId("cron:c1:1")))
+        assertNull("一次性任务触发后是 Fired，被预算停掉仍要能记下来", oneShot.cronProblem(stopped))
+        assertRejected(foldOf(scheduled()), stopped, "还没触发过")
+        val fired = foldOf(scheduled(), CronFired("c1", 700_000, ClientMsgId("cron:c1:1")))
+        assertRejected(fired.let { foldOf(scheduled(), CronFired("c1", 700_000, ClientMsgId("cron:c1:1")), CronCancelled("c1")) }, stopped, "已经结束")
+        assertRejected(fired, dev.min.agent.spi.CronBudgetStopped("c9", 1, null), "没有定时任务 c9")
+        assertRejected(fired, dev.min.agent.spi.CronBudgetStopped("c1", 5, null), "还没触发过")
+    }
+
+    @Test
     fun `events for unknown tasks are rejected`() {
         val state = foldOf(scheduled())
         assertRejected(state, CronFired("c9", 5, ClientMsgId("x")), "没有定时任务 c9")

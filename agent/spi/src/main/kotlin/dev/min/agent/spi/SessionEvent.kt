@@ -300,6 +300,9 @@ enum class InterruptedBy {
 
     /** 某个 hook 输出了 `continue: false`（理由在 Note 里） */
     @SerialName("hook") Hook,
+
+    /** 定时任务的这次运行花到了单次花费上限（M5），只停这一次运行 */
+    @SerialName("budget") Budget,
 }
 
 @Serializable

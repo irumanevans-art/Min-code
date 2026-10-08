@@ -37,6 +37,7 @@ import dev.min.agent.spi.DecidedBy
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InputReceived
 import dev.min.agent.spi.PermissionRulesLoaded
@@ -562,8 +563,30 @@ class SessionRuntime private constructor(
     internal val modelBilling = ModelBilling(this)
 
     /** 中断当前回合：回合 Job 取消，收尾（每个悬空调用补结果）在回合自己的 finally 里写 */
-    fun interrupt() {
-        synchronized(turnLock) { turnJob }?.cancel()
+    fun interrupt() = interrupt(InterruptedBy.User)
+
+    /**
+     * 同上，但回合的结局记 [by]（目前只有定时任务的花费上限用 [InterruptedBy.Budget]）。原因先放下再取消：
+     * 回合的 catch 里读它，读不到就是用户
+     */
+    internal fun interrupt(by: InterruptedBy) {
+        val job = synchronized(turnLock) { turnJob }?.takeIf { it.isActive } ?: return
+        interruptReason = by
+        job.cancel()
+    }
+
+    @Volatile
+    private var interruptReason: InterruptedBy? = null
+
+    /** 取走中断原因（取一次就清掉）；没有 = 用户中断 */
+    internal fun takeInterruptReason(): InterruptedBy = interruptReason.also { interruptReason = null } ?: InterruptedBy.User
+
+    /**
+     * 这次定时运行的记账：根会话自己持有，树里的子 agent / 团队成员取根会话的那份（[CronRun] 按整棵树累计）。没有运行在记账为 null
+     */
+    internal fun treeCronRun(): CronRun? {
+        val root = _state.value.origin?.root ?: return cronRun
+        return hub?.get(root)?.cronRun
     }
 
     /** 进程被杀恢复后，用户点「继续」：没有新输入也开一回合，让模型看着恢复补上的结果接着做 */

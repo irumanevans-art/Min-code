@@ -392,7 +392,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
             teamProblem(e)?.let { error("团队事件不合法：$it") }
             applyTeamEvent(e)
         }
-        is dev.min.agent.spi.CronScheduled, is dev.min.agent.spi.CronFired, is dev.min.agent.spi.CronCancelled, is dev.min.agent.spi.CronExpired -> {
+        is dev.min.agent.spi.CronScheduled, is dev.min.agent.spi.CronFired, is dev.min.agent.spi.CronCancelled, is dev.min.agent.spi.CronExpired,
+        is dev.min.agent.spi.CronBudgetStopped -> {
             cronProblem(e)?.let { error("定时任务事件不合法：$it") }
             applyCronEvent(e)
         }

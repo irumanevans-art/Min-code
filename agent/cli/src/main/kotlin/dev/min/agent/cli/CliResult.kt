@@ -64,6 +64,7 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
                 InterruptedBy.Hook -> "被 hook 停止"
                 InterruptedBy.User -> "被用户中断"
                 InterruptedBy.ProcessDeath -> "进程中断"
+                InterruptedBy.Budget -> "到达定时任务的花费上限"
             }
         }
     }

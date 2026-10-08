@@ -306,6 +306,7 @@ class SessionEventWireTest {
                 InterruptedBy.User to "user",
                 InterruptedBy.ProcessDeath to "process_death",
                 InterruptedBy.Limit to "limit",
+                InterruptedBy.Budget to "budget",
             ),
         )
         enumCases(

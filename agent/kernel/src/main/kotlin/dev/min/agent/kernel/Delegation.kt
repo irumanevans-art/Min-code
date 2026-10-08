@@ -249,6 +249,7 @@ internal object Reports {
             InterruptedBy.ProcessDeath -> "interrupted-by-restart"
             InterruptedBy.Limit -> "turn-limit"
             InterruptedBy.Hook -> "stopped-by-hook"
+            InterruptedBy.Budget -> "stopped-by-budget"
         }
     }
 

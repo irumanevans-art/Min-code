@@ -100,6 +100,7 @@ internal fun reportStatusRes(status: String): Int? = when (status) {
     "interrupted-by-restart" -> R.string.min_agent_report_restart
     "turn-limit" -> R.string.min_agent_report_limit
     "stopped-by-hook" -> R.string.min_agent_report_hook_stopped
+    "stopped-by-budget" -> R.string.min_agent_report_budget_stopped
     else -> null
 }
 
