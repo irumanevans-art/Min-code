@@ -292,14 +292,14 @@ internal fun PluginParser.discoverHooks(
         }
         files["hooks/hooks.json"]?.let { f ->
             val o = parseJson(f).jsonObject
-            eventMap(o.obj("hooks") ?: bug("hooks/hooks.json 缺 \"hooks\" 包裹"), "hooks/hooks.json")
+            o.obj("hooks")?.let { eventMap(it, "hooks/hooks.json") }
         }
         fun addValue(v: JsonElement, from: String) {
             when (v) {
                 is JsonPrimitive -> {
                     val rel = v.content.removePrefix("./")
                     val f = files[rel] ?: bug("hooks 文件不存在 $rel")
-                    eventMap(parseJson(f).jsonObject.obj("hooks") ?: bug("$rel 缺 \"hooks\" 包裹"), rel)
+                    parseJson(f).jsonObject.obj("hooks")?.let { eventMap(it, rel) }
                 }
                 is JsonObject -> eventMap(v, from)
                 is JsonArray -> v.forEach { addValue(it, from) }

@@ -29,7 +29,7 @@ class PluginLoader(private val fs: WorkspaceFs, private val canonical: (GuestPat
             val declared = declarations.mapNotNull { (_, raw) ->
                 if (!raw.startsWith("./")) null else GuestPaths.join(root, raw).takeIf { it.startsWith(root.trimEnd('/') + "/") }?.removePrefix(root.trimEnd('/') + "/")
             }
-            val roots = setOf(".claude-plugin", "commands", "agents", "skills", "hooks", "output-styles", "workflows", "themes", "bin") + declared.map { it.substringBefore('/') }
+            val roots = setOf(".claude-plugin", "commands", "agents", "skills", "hooks", "output-styles", "workflows", "themes", "monitors", "bin") + declared.map { it.substringBefore('/') }
             val defaultFiles = setOf("SKILL.md", "CLAUDE.md", "settings.json", ".mcp.json", ".lsp.json")
             suspend fun walk(dir: String, depth: Int, ancestors: Set<String>) {
                 if (depth > ConfigIo.MAX_DEPTH) { errors += "插件组件目录嵌套过深：$dir"; return }

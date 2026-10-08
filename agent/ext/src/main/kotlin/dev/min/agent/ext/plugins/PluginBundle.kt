@@ -6,9 +6,6 @@ import dev.min.agent.ext.styles.OutputStyleDef
 import dev.min.agent.spi.*
 import kotlinx.serialization.json.*
 
-fun pluginHookExportNames(keys: List<String>): List<String> =
-    listOf("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_PROJECT_DIR") + keys.map { "CLAUDE_PLUGIN_OPTION_${it.uppercase()}" }
-
 /** 类型和字段交给 HookSet 统一校验，不能在插件发现时静默丢失门禁。 */
 fun commandPluginHooks(events: JsonObject): JsonObject = JsonObject(events.mapNotNull { (event, value) ->
     val groups = (value as? JsonArray)?.mapNotNull { group ->

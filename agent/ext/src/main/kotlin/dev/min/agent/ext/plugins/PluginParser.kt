@@ -21,6 +21,9 @@ internal class PluginParser(internal val directories: Set<String>) {
             collectPaths(raw).forEach { (key, path) ->
                 val bad = mutableListOf<Violation>()
                 checkPath(key, path, files, rootName, bad)
+                if (key == "mcpServers" && !path.startsWith("https://") && !path.endsWith(".json") && !path.endsWith(".mcpb") && !path.endsWith(".dxt")) {
+                    bad += Violation(Kind.MCP_BUNDLE_EXT, "mcpServers 路径 \"$path\" 必须是 .json / .mcpb / .dxt 或 https URL")
+                }
                 if (bad.isNotEmpty()) { invalid += key to path; violations += bad }
             }
             fun filter(key: String, value: JsonElement): JsonElement? = when (value) {
@@ -137,6 +140,8 @@ internal class PluginParser(internal val directories: Set<String>) {
         add("lspServers", m["lspServers"])
         add("outputStyles", m["outputStyles"])
         add("workflows", m["workflows"])
+        add("themes", m["themes"])
+        add("monitors", m["monitors"])
         m.obj("experimental")?.let {
             add("experimental.themes", it["themes"])
             add("experimental.monitors", it["monitors"])
@@ -286,7 +291,7 @@ internal class PluginParser(internal val directories: Set<String>) {
         ENTRY_HOOKS_FILE, CLAUDE_MD, STRICT_CONFLICT, DEFAULT_IGNORED;
 
         val fatal: Boolean get() = this !in setOf(ENTRY_HOOKS_FILE, LSP_FILE_INVALID, CLAUDE_MD, DEFAULT_IGNORED,
-            PATH_PREFIX, PATH_ESCAPE, PATH_MISSING, AGENTS_NOT_MD, SKILLS_NOT_DIR)
+            PATH_PREFIX, PATH_ESCAPE, PATH_MISSING, AGENTS_NOT_MD, SKILLS_NOT_DIR, HOOKS_WRAPPER, MCP_BUNDLE_EXT)
     }
 
     companion object {

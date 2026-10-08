@@ -1,4 +1,7 @@
 {
   "loads": false,
-  "basis": "PLG:97 channels 条目是严格对象，未知键是错误、插件不装载；PLG:513-518 条目字段只有 server/displayName/userConfig"
+  "basis": "PLG:97 channels 条目是严格对象，未知键是错误、插件不装载；PLG:513-518 条目字段只有 server/displayName/userConfig",
+  "errors": [
+    "channels"
+  ]
 }
