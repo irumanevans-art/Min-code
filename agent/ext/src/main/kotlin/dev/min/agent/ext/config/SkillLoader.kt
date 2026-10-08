@@ -97,7 +97,7 @@ internal object SkillLoader {
         return byName.values.toList()
     }
 
-    private suspend fun readSkill(io: ConfigIo, source: ConfigSource, dir: String, dirName: String): SkillDef? {
+    internal suspend fun readSkill(io: ConfigIo, source: ConfigSource, dir: String, dirName: String): SkillDef? {
         val file = GuestPaths.join(dir, "SKILL.md")
         val text = io.readText(file) ?: return null
         val fm = FrontmatterParser.parse(text, file)

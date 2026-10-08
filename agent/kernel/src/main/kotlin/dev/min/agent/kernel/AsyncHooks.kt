@@ -89,7 +89,7 @@ internal class AsyncHookRunner(
         require(SAFE_ID.matches(id)) { "后台 hook id 必须是安全路径段" }
         val dir = GuestPath("/root/.min/hooks/$id")
         deps.host.fs.writeAtomic(child(dir, "in.json"), stdin.toString().encodeToByteArray())
-        deps.host.fs.writeAtomic(child(dir, "start.sh"), script(handler, env, dir, timeoutSeconds).encodeToByteArray())
+        deps.host.fs.writeAtomic(child(dir, "start.sh"), script(handler, env + handler.pluginEnv, dir, timeoutSeconds).encodeToByteArray())
         val started = deps.clock.nowMs()
         // Windows 的 ProcessBuilder -> Git Bash 会破坏复杂的 -c 参数；与同步批同一条路：脚本文本走文件端口（HookBatchRunner 同）。
         // timeoutMs 给到天级：Android 宿主会在到点时硬杀后台进程（桌面不设限），它是后台 hook 的寿命上限而不是本轮的等待

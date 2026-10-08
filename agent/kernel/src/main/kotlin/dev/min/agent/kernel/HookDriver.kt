@@ -69,7 +69,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         if (registered !== componentParsedFrom) {
             val notes = mutableListOf<String>()
             componentSets = registered.mapNotNull { r ->
-                val source = ConfigSource.entries.firstOrNull { it.label == r.layer }
+                val source = if (r.layer.startsWith("plugin:")) ConfigSource.Plugin else ConfigSource.entries.firstOrNull { it.label == r.layer }
                 if (source == null) {
                     notes += "「${r.name}」的 hooks 来自未知层 ${r.layer}，跳过"
                     null

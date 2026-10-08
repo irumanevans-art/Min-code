@@ -132,6 +132,13 @@ class KernelDeps(
     val mcpTokenStore: dev.min.agent.spi.McpTokenStore = dev.min.agent.spi.McpTokenStore.Unavailable,
     val mcpAuthorizer: dev.min.agent.spi.McpAuthorizer = dev.min.agent.spi.McpAuthorizer.Unavailable,
     val gitPath: (GuestPath) -> String = { it.value },
+    val pluginDirs: List<GuestPath> = emptyList(),
+    val pluginInstalledPath: (String) -> GuestPath = { GuestPath(it) },
+    val pluginTrust: (GuestPath, GuestPath) -> Boolean = { root, cwd ->
+        val realRoot = canonicalPath(root).value
+        val realCwd = canonicalPath(cwd).value.trimEnd('/')
+        trustProjectHooks(cwd) && (realRoot == realCwd || realRoot.startsWith("$realCwd/"))
+    },
 ) {
     init { require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" } }
 }

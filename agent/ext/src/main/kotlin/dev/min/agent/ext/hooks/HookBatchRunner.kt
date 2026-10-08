@@ -131,7 +131,9 @@ class HookBatchRunner(
                 val input = quote(shellPathOf(child(dir, "in.json")))
                 val out = quote(shellPathOf(child(dir, "out.$i")))
                 val err = quote(shellPathOf(child(dir, "err.$i")))
-                append("(\nmin_hook_start=\$(date +%s%3N 2>/dev/null)\n")
+                append("(\n")
+                h.pluginEnv.forEach { (key, value) -> if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(key)) append("export $key=${quote(value)}\n") }
+                append("min_hook_start=\$(date +%s%3N 2>/dev/null)\n")
                 append("if [ \"\$min_hook_timeout\" = 1 ]; then\n")
                 append("timeout -k 2 ${timeouts[i]} $invocation < $input > $out 2> $err\n")
                 append("else\n$invocation < $input > $out 2> $err\nfi\n")

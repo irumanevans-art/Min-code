@@ -59,6 +59,7 @@ data class CliArgs(
     val noBrowser: Boolean = false,
     val worktree: Boolean = false,
     val worktreeName: String? = null,
+    val pluginDirs: List<Path> = emptyList(),
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
@@ -88,6 +89,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --include-partial-messages stream-json 加输出 text 增量的 stream_event 行
   --forward-subagent-text stream-json 转发子 agent 的消息行（带 parent_tool_use_id）
   --resume <会话 id>     接着一个已有会话
+  --plugin-dir <目录>   加载本地插件，可重复；项目内的可执行组件仍需 --trust
   --trust                信任当前项目：执行项目 .claude/ 设置里的 hooks（默认只执行用户级与托管的）
   --no-browser           MCP OAuth 打印授权 URL，手工粘贴回调 URL
   --search-backend <id>  brave / tavily / searxng；也可用 MIN_AGENT_SEARCH_BACKEND
@@ -120,10 +122,17 @@ private val FLAG_ARGS = setOf(
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     val values = mutableMapOf<String, String>()
     val flags = mutableSetOf<String>()
+    val pluginDirs = mutableListOf<Path>()
     var i = 0
     while (i < argv.size) {
         val arg = argv[i]
         when {
+            arg == "--plugin-dir" -> {
+                val value = argv.getOrNull(i + 1)?.takeUnless { it.startsWith('-') }
+                    ?: throw UsageException("--plugin-dir 缺少目录")
+                pluginDirs.add(cwdDefault.resolve(value).toAbsolutePath().normalize())
+                i++
+            }
             arg == "--worktree" || arg == "-w" -> {
                 flags += "--worktree"
                 argv.getOrNull(i + 1)?.takeUnless { it.startsWith('-') }?.let { values["--worktree"] = it; i++ }
@@ -241,6 +250,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         noBrowser = "--no-browser" in flags,
         worktree = "--worktree" in flags,
         worktreeName = values["--worktree"],
+        pluginDirs = pluginDirs,
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages

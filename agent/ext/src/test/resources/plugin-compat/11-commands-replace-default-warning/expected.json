@@ -12,6 +12,5 @@
       "description": "Ping"
     }
   ],
-  "basis": "PLG:149 commands 取代默认 commands/ 扫描；PLG:234 对象键成为前缀后的命令名；PLG:416 默认目录被取代时警告原文「Default commands/ folder is ignored because the manifest sets \"commands\"」",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "PLG:149 commands 取代默认 commands/ 扫描；PLG:234 对象键成为前缀后的命令名；PLG:416 默认目录被取代时警告原文「Default commands/ folder is ignored because the manifest sets \"commands\"」"
 }

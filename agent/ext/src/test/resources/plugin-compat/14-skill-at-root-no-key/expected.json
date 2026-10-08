@@ -8,6 +8,5 @@
       "path": "SKILL.md"
     }
   ],
-  "basis": "PLG:615 插件根有 SKILL.md、无 skills/ 且无 skills 键 → 按单个技能装载；CMP:668 此时要设 frontmatter name，否则 marketplace 安装会用缓存目录名。命名「<插件>:<frontmatter 名>」是按 CMP:662（name 只替换最后一段、前缀保留）的外推——根级技能的命名原文未说明",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "PLG:615 插件根有 SKILL.md、无 skills/ 且无 skills 键 → 按单个技能装载；CMP:668 此时要设 frontmatter name，否则 marketplace 安装会用缓存目录名。命名「<插件>:<frontmatter 名>」是按 CMP:662（name 只替换最后一段、前缀保留）的外推——根级技能的命名原文未说明"
 }

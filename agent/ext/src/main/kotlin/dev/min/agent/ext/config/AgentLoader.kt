@@ -33,12 +33,12 @@ internal object AgentLoader {
         return byName.values.toList()
     }
 
-    private suspend fun read(io: ConfigIo, source: ConfigSource, file: String): AgentDef? {
+    internal suspend fun read(io: ConfigIo, source: ConfigSource, file: String, fallbackName: String? = null): AgentDef? {
         val text = io.readText(file) ?: return null
         val fm = FrontmatterParser.parse(text, file)
         io.notes += fm.notes
         val f = FrontmatterFields(fm.fields, file, io.notes)
-        val name = f.string("name")?.trim().orEmpty()
+        val name = (f.string("name") ?: fallbackName)?.trim().orEmpty()
         val description = f.string("description")?.trim().orEmpty()
         when {
             name.isEmpty() -> return skip(io, file, "缺少必填的 `name`")

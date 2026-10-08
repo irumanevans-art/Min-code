@@ -339,7 +339,7 @@ class SessionHub(
         val cwd = runtime.state.value.created.cwd
         val config = dev.min.agent.spi.catchingNonCancellation {
             val settings = dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, home)
-            dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env)
+            dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env, plugins = runtime.plugins()?.mcpSources().orEmpty())
         }.getOrElse { e ->
             // 只写异常类名：异常消息可能带着配置里的 env / headers 值
             runtime.commit(
@@ -646,8 +646,11 @@ class SessionHub(
         }
         val type = request.agentType?.trim()?.takeIf { it.isNotEmpty() } ?: BuiltinAgents.GENERAL_PURPOSE
         val fork = type == FORK_AGENT_TYPE
-        val definition = if (fork) null else definitions[type] ?: return DelegateResult.Rejected(
-            "没有名为 $type 的子 agent 类型。可用的：${(definitions.keys + FORK_AGENT_TYPE).joinToString("、")}。",
+        // 按父会话目录装配，避免只有桌面组合根传入的插件 agent 能被委派。
+        val pluginDefinitions = if (fork) emptyMap() else AgentCatalog.of(parent.plugins()?.agents.orEmpty()).definitions
+            .filter { it.name.contains(':') }.associateBy { it.name }
+        val definition = if (fork) null else pluginDefinitions[type] ?: definitions[type] ?: return DelegateResult.Rejected(
+            "没有名为 $type 的子 agent 类型。可用的：${(definitions.keys + pluginDefinitions.keys + FORK_AGENT_TYPE).joinToString("、")}。",
         )
         val root = parentOrigin?.root ?: parent.sessionId
         val childId = SessionId(deps.ids.next("s"))

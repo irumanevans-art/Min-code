@@ -159,7 +159,27 @@ internal class DesktopApp(
     private var configInstance: ClaudeConfig? = null
 
     /** 启动时读一遍的 Claude Code 配置：Hub 用它的子 agent，斜杠命令用它的 skills 与 commands（同一份，进程内不重读） */
-    suspend fun config(): ClaudeConfig = configInstance ?: ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome).also { configInstance = it }
+    private var pluginBundle: dev.min.agent.ext.plugins.PluginBundle? = null
+    suspend fun config(): ClaudeConfig {
+        configInstance?.let { return it }
+        val base = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome)
+        val cwd = paths.guestOfHost(args.cwd)
+        val plugins = dev.min.agent.ext.plugins.PluginBundle.load(paths.fs, cwd, userHome, base.settings.merged,
+            args.pluginDirs.map(paths::guestOfHost), canonical = { desktopCanonicalCredentialPath(paths, it) },
+            trust = { root -> pluginTrusted(root, cwd) }, secrets = dev.min.agent.ext.plugins.PluginSecretStore(mcpTokens),
+            installedPath = { paths.guestOfHost(java.nio.file.Path.of(it)) }, shellPath = { it.value },
+        )
+        pluginBundle = plugins
+        return base.copy(skills = base.skills + plugins.skills, commands = base.commands + plugins.commands,
+            agents = base.agents + plugins.agents, notes = base.notes + plugins.notes).also { configInstance = it }
+    }
+
+    private fun pluginTrusted(root: GuestPath, cwd: GuestPath): Boolean {
+        if (!args.trust) return false
+        val realRoot = desktopCanonicalCredentialPath(paths, root).value
+        val realCwd = desktopCanonicalCredentialPath(paths, cwd).value.trimEnd('/')
+        return realRoot == realCwd || realRoot.startsWith("$realCwd/")
+    }
 
     /** 斜杠命令展开用的会话事实（CLAUDE_SESSION_ID 等变量）；cwd 取模型看到的 guest 路径 */
     fun skillVars(runtime: SessionRuntime) = SkillVars(
@@ -171,13 +191,14 @@ internal class DesktopApp(
     /** 会话冻结清单里定义的正文（斜杠展开用）：与模型路径同一条读取（SkillFiles.readBody），不读实时配置 */
     internal suspend fun readSkillBody(path: GuestPath): String? =
         dev.min.agent.spi.catchingNonCancellation {
-            dev.min.agent.ext.skills.SkillFiles.readBody(paths.fs, path)
+            pluginBundle?.readBody(path) ?: dev.min.agent.ext.skills.SkillFiles.readBody(paths.fs, path)
         }.getOrNull()
 
     /** /output-style 用：磁盘上的样式（managed + 用户 + 项目链，近者胜），与内核会话创建时同一套读法 */
-    suspend fun outputStyles() = dev.min.agent.ext.styles.OutputStyleFiles.available(
-        paths.fs, paths.guestOfHost(args.cwd), userHome,
-    )
+    suspend fun outputStyles(): Map<String, dev.min.agent.ext.styles.OutputStyleDef> {
+        config()
+        return dev.min.agent.ext.styles.OutputStyleFiles.available(paths.fs, paths.guestOfHost(args.cwd), userHome) + pluginBundle?.styles.orEmpty()
+    }
 
     /** /output-style 写回的位置：项目 `.claude/settings.local.json`（CC 同一个键，互通） */
     fun settingsLocalFile(): java.nio.file.Path = args.cwd.resolve(".claude").resolve("settings.local.json")
@@ -283,6 +304,9 @@ internal class DesktopApp(
             mcpAuthorizer = mcpAuthorizer,
             mcpServerPath = { paths.hostOf(it).toString() },
             gitPath = { paths.hostOf(it).toString() },
+            pluginDirs = args.pluginDirs.map(paths::guestOfHost),
+            pluginInstalledPath = { paths.guestOfHost(java.nio.file.Path.of(it)) },
+            pluginTrust = { root, cwd -> pluginTrusted(root, cwd) },
         )
     }
 

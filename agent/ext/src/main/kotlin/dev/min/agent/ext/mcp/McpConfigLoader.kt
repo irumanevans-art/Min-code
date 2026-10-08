@@ -50,6 +50,7 @@ object McpConfigLoader {
         trustProject: Boolean,
         env: (String) -> String?,
         managedDir: GuestPath = GuestPath("/etc/claude-code"),
+        plugins: List<dev.min.agent.ext.plugins.PluginMcpSource> = emptyList(),
     ): McpConfigSnapshot {
         val io = ConfigIo(fs)
         val notes = io.notes
@@ -92,7 +93,7 @@ object McpConfigLoader {
         val ordered: List<Pair<Origin, Map<String, JsonObject>>> = if (exclusiveServers != null) {
             listOf(Origin.ManagedFile to exclusiveServers, Origin.ManagedSetting to providedServers)
         } else {
-            listOf(Origin.ManagedSetting to providedServers, Origin.Local to localServers, Origin.ProjectFile to projectServers, Origin.User to userServers)
+            listOf(Origin.ManagedSetting to providedServers, Origin.Local to localServers, Origin.ProjectFile to projectServers, Origin.User to userServers, Origin.Plugin to plugins.associate { it.name to it.config })
         }
         val parsed = ordered.flatMap { (origin, servers) ->
             servers.map { (name, raw) -> parseOne(name, raw, origin, notes) }.filterNotNull()
@@ -143,6 +144,10 @@ object McpConfigLoader {
             } else spec
 
             val candidates = mutableListOf<Pair<McpGate, String>>()
+            if (p.origin == Origin.Plugin) plugins.firstOrNull { it.name == p.name }?.error?.let { candidates += McpGate.Disabled to it }
+            if (p.origin == Origin.Plugin && plugins.firstOrNull { it.name == p.name }?.trusted != true) {
+                candidates += McpGate.Untrusted to "插件所在目录未信任"
+            }
             policy.deniedBy(finalSpec)?.let { candidates += McpGate.Denied to "被 deniedMcpServers 拦下（${it.describe}）" }
             // 组织自己的服务器免 allowlist：managedMcpServers 恒免；managed-mcp.json 里用了 ${VAR} 的不免（CC 原文）
             val exempt = p.origin == Origin.ManagedSetting || (p.origin == Origin.ManagedFile && !rawUsesVars(p.raw))
@@ -183,6 +188,7 @@ object McpConfigLoader {
         Local("local", McpScope.Local),
         ProjectFile("project", McpScope.Project),
         User("user", McpScope.User),
+        Plugin("plugin", McpScope.Plugin),
     }
 
     /**
@@ -282,7 +288,11 @@ object McpConfigLoader {
             notes += "跳过 MCP 服务器 \"$name\"：名字是 CC 内置服务器的保留名，请改名"
             return null
         }
-        if (!validName(name)) {
+        val valid = if (origin == Origin.Plugin) {
+            val parts = name.split(':')
+            parts.size == 3 && parts[0] == "plugin" && dev.min.agent.ext.plugins.validPluginName(parts[1]) && validName(parts[2])
+        } else validName(name)
+        if (!valid) {
             notes += "跳过 MCP 服务器 \"$name\"：名字只许字母数字连字符下划线"
             return null
         }

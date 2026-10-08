@@ -162,6 +162,23 @@ class SessionRuntime private constructor(
         hub?.cwdChanged(this)
     }
 
+    private var pluginsInstance: dev.min.agent.ext.plugins.PluginBundle? = null
+    internal suspend fun plugins(): dev.min.agent.ext.plugins.PluginBundle? {
+        pluginsInstance?.let { return it }
+        val home = deps.memoryHome ?: return null
+        val cwd = state.value.created.cwd
+        val settings = SettingsLoader.load(deps.host.fs, cwd, home)
+        return dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
+            dirs = deps.pluginDirs, canonical = deps.canonicalPath,
+            trust = { root -> deps.pluginTrust(root, cwd) },
+            secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore),
+            installedPath = deps.pluginInstalledPath, shellPath = deps.hookShellPath,
+        ).also { pluginsInstance = it }
+    }
+
+    suspend fun readSkillBody(path: GuestPath): String? = plugins()?.readBody(path)
+        ?: dev.min.agent.ext.skills.SkillFiles.readBody(deps.host.fs, path)
+
     private val commitLock = Mutex()
     private val inputPrepareLock = Mutex()
     private val _state = MutableStateFlow(initial)
@@ -337,7 +354,12 @@ class SessionRuntime private constructor(
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         loadPermissionRules(snapshot)
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
-        val hooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
+        val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
+        val plugins = plugins()
+        val pluginHooks = if (snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Managed && it.allowManagedHooksOnly == true } ||
+            snapshot.merged.layers.filter { it.source == dev.min.agent.ext.config.ConfigSource.User || it.source == dev.min.agent.ext.config.ConfigSource.Managed || deps.trustProjectHooks(state.value.created.cwd) }.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true) emptyList()
+        else plugins?.hookSources.orEmpty().map { dev.min.agent.ext.config.HookSource(dev.min.agent.ext.config.ConfigSource.Plugin, it) }
+        val hooks = baseHooks.copy(sources = baseHooks.sources + pluginHooks, notes = baseHooks.notes + plugins?.notes.orEmpty())
         val policy = hooks.httpPolicy.takeIf { it.allowedUrls != null || it.allowedEnvVars != null }
             ?.let { HttpPolicyData(it.allowedUrls, it.allowedEnvVars) }
         // 只有闸、没有任何 hook 也没有说明时没有东西可冻结（闸只管 http hook）
@@ -383,7 +405,7 @@ class SessionRuntime private constructor(
             )
             return
         }
-        val def = OutputStyleFiles.resolve(disk.styles, wanted)
+        val def = OutputStyleFiles.resolve(disk.styles + plugins()?.styles.orEmpty(), wanted)
         when {
             def == null -> commit(
                 listOf(Note(NoteLevel.Warning, "settings 里的 outputStyle \"$wanted\" 找不到（用户 / 项目 / managed 目录与内置样式里都没有），本会话按 Default。名字大小写敏感。")),
@@ -425,7 +447,7 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadSkills() {
         val home = deps.memoryHome ?: return
-        val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home) ?: return
+        val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home, plugins()) ?: return
         commit(listOf(snapshot), Durability.Sync)
     }
 
@@ -592,6 +614,18 @@ class SessionRuntime private constructor(
      */
     suspend fun registerComponentHooks(kind: String, name: String, layer: String, hooks: kotlinx.serialization.json.JsonObject) {
         if (hooks.isEmpty()) return
+        if (layer.startsWith("plugin:")) {
+            val bundle = plugins() ?: return
+            val plugin = bundle.batch.plugins.firstOrNull { "plugin:${it.namespace}" == layer } ?: return
+            val home = deps.memoryHome ?: return
+            val root = deps.canonicalPath(GuestPath(plugin.root)).value
+            val userDir = deps.canonicalPath(GuestPath(home.value.trimEnd('/') + "/.claude/plugins")).value.trimEnd('/')
+            if (!root.startsWith("$userDir/") && !deps.pluginTrust(GuestPath(plugin.root), state.value.created.cwd)) return
+            val filtered = dev.min.agent.ext.plugins.commandPluginHooks(hooks)
+            if (filtered.isEmpty()) return
+            commit(listOf(dev.min.agent.spi.ComponentHooksRegistered(kind, name, "plugin", filtered)), Durability.Sync)
+            return
+        }
         if (layer == "project" || layer == "local") {
             val trusted = deps.trustProjectHooks(state.value.created.cwd)
             if (!trusted) {

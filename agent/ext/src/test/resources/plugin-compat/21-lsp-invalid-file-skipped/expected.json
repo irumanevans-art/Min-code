@@ -6,6 +6,5 @@
     "Invalid LSP server config"
   ],
   "lspServers": [],
-  "basis": "CMP:869 .lsp.json 里任一条目非法 → 整个文件在装载时跳过（连好条目一起），/plugin Errors 显示原文「Invalid LSP server config for \".lsp.json\"」；validate 不读这个文件。缺 extensionToLanguage 即非法（PLG:329 必填、至少一条）",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "CMP:869 .lsp.json 里任一条目非法 → 整个文件在装载时跳过（连好条目一起），/plugin Errors 显示原文「Invalid LSP server config for \".lsp.json\"」；validate 不读这个文件。缺 extensionToLanguage 即非法（PLG:329 必填、至少一条）"
 }

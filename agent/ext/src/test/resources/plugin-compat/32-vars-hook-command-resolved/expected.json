@@ -39,6 +39,5 @@
       }
     ]
   },
-  "basis": "PLG:553-557 三个路径变量（ROOT=已装版本绝对路径、DATA=跨更新数据目录、PROJECT=项目根）；PLG:569 hook 的 command 与 args 里处处解析；PLG:583 shell 形式要给 ${CLAUDE_PLUGIN_ROOT} 套双引号（样本保留引号验证替换是纯文本），exec form 无需引号；PLG:585 不加引号 validate 出 warning；PLG:606/:1066 Windows 上替换出的路径用正斜杠（本样本 installRoot 即正斜杠形）；PLG:559 ROOT 随更新改变，不要把状态写进去",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "PLG:553-557 三个路径变量（ROOT=已装版本绝对路径、DATA=跨更新数据目录、PROJECT=项目根）；PLG:569 hook 的 command 与 args 里处处解析；PLG:583 shell 形式要给 ${CLAUDE_PLUGIN_ROOT} 套双引号（样本保留引号验证替换是纯文本），exec form 无需引号；PLG:585 不加引号 validate 出 warning；PLG:606/:1066 Windows 上替换出的路径用正斜杠（本样本 installRoot 即正斜杠形）；PLG:559 ROOT 随更新改变，不要把状态写进去"
 }

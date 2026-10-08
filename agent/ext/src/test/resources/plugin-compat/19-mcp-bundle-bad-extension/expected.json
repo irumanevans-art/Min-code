@@ -1,5 +1,4 @@
 {
   "loads": false,
-  "basis": "PLG:316 mcpServers 的 bundle 路径必须以 .mcpb/.dxt 结尾，「Any other extension fails validation」；PLG:111 校验失败装载时报同样的错",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "PLG:316 mcpServers 的 bundle 路径必须以 .mcpb/.dxt 结尾，「Any other extension fails validation」；PLG:111 校验失败装载时报同样的错"
 }

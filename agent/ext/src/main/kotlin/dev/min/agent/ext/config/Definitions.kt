@@ -40,6 +40,7 @@ data class SkillDef(
     val metadata: JsonObject? = null,
     val license: String? = null,
     val compatibility: String? = null,
+    val sourceLabel: String = source.label,
 )
 
 /**
@@ -69,6 +70,7 @@ data class CommandDef(
     val metadata: JsonObject? = null,
     val license: String? = null,
     val compatibility: String? = null,
+    val sourceLabel: String = source.label,
 )
 
 /**
@@ -101,6 +103,7 @@ data class AgentDef(
     val color: String? = null,
     val initialPrompt: String? = null,
     val experimental: JsonObject? = null,
+    val sourceLabel: String = source.label,
 )
 
 /** 整个 Claude Code 配置的加载结果。[notes] 汇总各部分的说明（跳过了什么、谁覆盖了谁），只给人看 */

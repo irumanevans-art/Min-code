@@ -19,6 +19,5 @@
       }
     ]
   },
-  "basis": "PLG:30 没有清单时名字来自 marketplace 条目（样本特意让目录名 dir-nomatch ≠ 条目名，钉住优先级）；PLG:674 「No plugin.json: the entry is the manifest, regardless of strict」；PLG:234 对象键成为前缀后的命令名；条目字段集 PLG:664（除目录列出字段外的本页字段 + strict）",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "PLG:30 没有清单时名字来自 marketplace 条目（样本特意让目录名 dir-nomatch ≠ 条目名，钉住优先级）；PLG:674 「No plugin.json: the entry is the manifest, regardless of strict」；PLG:234 对象键成为前缀后的命令名；条目字段集 PLG:664（除目录列出字段外的本页字段 + strict）"
 }
