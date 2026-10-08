@@ -176,7 +176,7 @@ data class PluginLoadOutcome(
 /**
  * [设计] 契约接口。故意不叫 `PluginLoader`：PluginCompatTest 用 Class.forName 探测
  * `dev.min.agent.ext.plugins.PluginLoader` 是否落地，契约自己顶了这个名会误报。
- * [设计] 不抛异常——坏清单、坏路径都进 errors（PLG:111「装载时报同样的错」、CMP:869 整文件跳过照常装载）。
+ * [设计] 不抛异常——坏清单、坏路径都进 errors（PLG:103–113 `validate` 命令报告的错误类别，[设计] 装载沿用同一批错误；CMP:869 整文件跳过照常装载）。
  */
 interface PluginLoaderSpec {
     suspend fun load(request: PluginRequest): PluginLoadOutcome
