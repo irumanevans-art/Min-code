@@ -28,13 +28,14 @@ import java.time.ZoneId
 internal fun SessionState.nextCronId(): String = "c${cronSeq + 1}"
 
 /** 给工具看的视图。定时任务只属于根会话：子 agent / 团队成员建了也没人会触发它，所以直接拒绝并说明 */
-internal fun SessionState.cronBoard(nowMs: Long, zone: ZoneId, budgetCeilingUsd: Double? = null) = CronBoard(
+internal fun SessionState.cronBoard(nowMs: Long, zone: ZoneId, budgetCeilingUsd: Double? = null, nextFireFloors: Map<String, Long> = emptyMap()) = CronBoard(
     tasks = crons,
     nextId = nextCronId(),
     nowMs = nowMs,
     zone = zone,
     budgetCeilingUsd = budgetCeilingUsd,
     wakeupChainExpiresAtMs = firingWakeup()?.expiresAtMs,
+    nextFireFloors = nextFireFloors,
     refusal = if (origin != null) "定时任务只能在根会话里建：子 agent 与团队成员的会话不会被定时触发。请让负责人（主会话）来建。" else null,
 )
 

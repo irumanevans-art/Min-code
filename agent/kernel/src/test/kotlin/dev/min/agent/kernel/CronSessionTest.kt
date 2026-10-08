@@ -584,6 +584,27 @@ class CronSessionTest {
     }
 
     @Test
+    fun `CronList after a reopen shows the next fire counted from the reopen, not a time in the past`() = run {
+        val h1 = hub(answering)
+        val rt1 = h1.root()
+        val id = rt1.sessionId
+        schedule(rt1) // 每 30 分钟，建在 t0
+        currentScope!!.cancel()
+        now.set(t0 + 3 * 24 * 60 * minute) // 三天后重开：循环任务从这一刻重新数
+        val listing = RoutingModel { req ->
+            if (req.last() == "列出") reply(ToolCallPart(CallId("l1"), "CronList", args()), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val h2 = hub(listing).also { it.open(id) }
+        val rt2 = h2.get(id)!!
+        rt2.send(ClientMsgId("u1"), listOf(TextPart("列出")))
+        settle(rt2)
+        val text = rt2.state.value.toolResults.getValue(CallId("l1")).content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        // t0 是 2026-10-08 08:00 UTC；三天后是 10-11 08:00，下一次是 08:30——而不是三天前就该有的 10-08 08:30
+        assertTrue(text, text.contains("下次 2026-10-11 08:30 UTC"))
+        assertLogIsTruth(rt2)
+    }
+
+    @Test
     fun `reopening after seven days expires a recurring task, and a missed one shot is closed not run`() = run {
         val h1 = hub(answering)
         val rt1 = h1.root()

@@ -170,6 +170,11 @@ data class CronBoard(
     val budgetCeilingUsd: Double? = null,
     /** 此刻这一轮是被一条 ScheduleWakeup 唤醒的：那条唤醒链的到期时刻（链从第一次安排起 7 天，接力出来的下一轮继承它）；否则 null */
     val wakeupChainExpiresAtMs: Long? = null,
+    /**
+     * 每个任务「从哪一刻起往后数下一次」的下限：会话（重新）打开的时刻，缺价格跳过过的循环任务还有跳过的那一刻。
+     * CronList 的“下次”必须用同一个下限算，否则重开会话后显示的是几天前就该有的时刻（引擎触发用的是这份下限）
+     */
+    val nextFireFloors: Map<String, Long> = emptyMap(),
 ) {
     /** 这个任务每次运行实际生效的花费上限：任务自己的与宿主天花板取小，都没有就是不限（null） */
     fun effectiveBudgetUsd(taskBudgetUsd: Double?): Double? = listOfNotNull(taskBudgetUsd, budgetCeilingUsd).minOrNull()

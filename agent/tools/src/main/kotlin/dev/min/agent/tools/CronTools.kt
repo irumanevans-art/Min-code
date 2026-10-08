@@ -75,7 +75,7 @@ private fun CronBoard.spendText(taskBudgetUsd: Double?): String {
 /** 一条任务的一行说明：循环 / 一次性、调度、上限、触发次数、下次时刻，以及提示词（Claude Code 的 CronList 带限定词与提示词） */
 private fun CronBoard.describe(t: CronTask): String {
     val kind = if (t.recurring) "循环" else "一次性"
-    val next = if (t.active) "下次 ${timeText(t.nextFireAt(zone, 0))}" else "已结束：${t.endedBecause}"
+    val next = if (t.active) "下次 ${timeText(t.nextFireAt(zone, nextFireFloors[t.id] ?: 0))}" else "已结束：${t.endedBecause}"
     val expiry = t.expiresAtMs?.takeIf { t.active }?.let { "，${timeText(it)} 过期" } ?: ""
     return "- ${t.id}｜$kind｜${t.scheduleText()}｜单次上限 ${effectiveBudgetUsd(t.maxBudgetUsd)?.let(::usd) ?: "不限"}｜已触发 ${t.fires} 次｜$next$expiry\n  提示词：${t.prompt}"
 }

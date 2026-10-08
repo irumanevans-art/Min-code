@@ -110,6 +110,13 @@ internal class CronEngine(
         attached.remove(id)?.watcher?.cancel()
     }
 
+    /** 这个会话每个任务“下一次从哪一刻起往后数”的下限（给 CronList 的“下次”用，口径与 [tickLocked] 的触发一致） */
+    fun nextFireFloors(id: SessionId): Map<String, Long> {
+        val entry = attached[id] ?: return emptyMap()
+        val rt = hub.get(id) ?: return emptyMap()
+        return rt.state.value.crons.associate { it.id to maxOf(entry.floorMs, entry.skippedAt[it.id] ?: 0L) }
+    }
+
     /** 宿主定时器的一次回调：看每个接着的会话有没有到点的任务 */
     suspend fun tick(nowMs: Long) {
         for (id in attached.keys.toList()) {
