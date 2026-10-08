@@ -429,7 +429,14 @@ class SessionRuntime private constructor(
     }
 
     private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
-        val rules = snapshot.merged.ruleSpecs().map { spec ->
+        val trustProject = deps.trustProjectHooks(state.value.created.cwd)
+        val notes = snapshot.notes.toMutableList()
+        if (!trustProject && snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Project &&
+                (it.permissions.allow.isNotEmpty() || it.permissions.additionalDirectories.isNotEmpty()) }) {
+            // 放宽能力的仓库声明需要用户信任；限制能力的 ask / deny 始终保留。
+            notes += "this workspace has not been trusted：项目 permissions.allow / additionalDirectories 暂不生效"
+        }
+        val rules = snapshot.merged.ruleSpecs(trustProject).map { spec ->
             RuleEntry(
                 kind = when (spec.kind) {
                     RuleSpecKind.Allow -> RuleKindData.Allow
@@ -439,9 +446,9 @@ class SessionRuntime private constructor(
                 text = spec.text, source = spec.source, baseDir = spec.baseDir,
             )
         }
-        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"))
-        if (rules.isEmpty() && snapshot.notes.isEmpty() && directories.isEmpty()) return
-        commit(listOf(PermissionRulesLoaded(rules, snapshot.notes, directories)), Durability.Sync)
+        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject)
+        if (rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
+        commit(listOf(PermissionRulesLoaded(rules, notes, directories)), Durability.Sync)
     }
 
     /**
