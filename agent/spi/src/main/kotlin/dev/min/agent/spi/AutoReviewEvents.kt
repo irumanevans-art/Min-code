@@ -28,6 +28,8 @@ data class AutoModeReviewer(
 data class AutoReviewSettingsLoaded(
     val config: AutoModeConfig = AutoModeConfig(),
     val reviewer: AutoModeReviewer? = null,
+    val unavailable: Boolean = false,
+    val notes: List<String> = emptyList(),
 ) : SessionEvent
 
 @Serializable
@@ -42,7 +44,7 @@ enum class AutoReviewDecision {
 data class AutoReviewed(
     val turnId: TurnId,
     val callId: CallId,
-    val model: ModelRef,
+    val model: ModelRef?,
     val decision: AutoReviewDecision,
     val reason: String,
     val usage: Usage = Usage(),

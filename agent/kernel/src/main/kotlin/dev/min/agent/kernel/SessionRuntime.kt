@@ -354,6 +354,7 @@ class SessionRuntime private constructor(
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)
         val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer)
+        if (review.notes.isNotEmpty()) commit(review.notes.map { Note(NoteLevel.Warning, it) }, Durability.Sync)
         if (configured != dev.min.agent.spi.AutoReviewSettingsLoaded()) commit(listOf(configured), Durability.Sync)
         loadPermissionRules(snapshot)
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁

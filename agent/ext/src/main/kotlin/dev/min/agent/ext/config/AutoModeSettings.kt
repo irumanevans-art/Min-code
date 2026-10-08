@@ -8,6 +8,15 @@ import kotlinx.serialization.json.*
 
 /** 仓库配置不能把自身声明为可信环境；四个数组只在用户与托管层累加。 */
 fun MergedSettings.autoReviewSettings(): AutoReviewSettingsLoaded {
+    return try { parseAutoReviewSettings() }
+    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+    catch (_: Exception) {
+        // 失效的审查配置必须关掉自动裁决，但不能阻止默认模式的会话创建。
+        AutoReviewSettingsLoaded(unavailable = true, notes = listOf("autoMode / autoModeReviewer 配置无效，Auto 调用全部交给用户决定"))
+    }
+}
+
+private fun MergedSettings.parseAutoReviewSettings(): AutoReviewSettingsLoaded {
     val trusted = layers.filter { it.source == ConfigSource.User || it.source == ConfigSource.Managed }
     fun entries(key: String): List<String> = trusted.flatMap { layer ->
         val config = layer.raw["autoMode"] ?: return@flatMap emptyList()

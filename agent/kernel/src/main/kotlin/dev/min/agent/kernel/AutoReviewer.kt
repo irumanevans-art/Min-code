@@ -31,6 +31,7 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
         val result = try {
             val hardRule = settings.config.hardDeny.firstOrNull { PolicyEngine.matchesCondition(it, ask, context) }
             when {
+                settings.unavailable -> AutoReviewDecision.Ask to "autoMode 配置不可用，交给用户决定"
                 hardRule != null -> AutoReviewDecision.Deny to "autoMode.hard_deny：$hardRule"
                 alwaysAsk || PolicyEngine.floorReason(ask, context) != null -> AutoReviewDecision.Ask to "必须由人批准的安全底线"
                 else -> {
