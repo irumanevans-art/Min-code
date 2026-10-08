@@ -63,7 +63,9 @@ $cases = @(
     @{ Name='headless-auto-warning'; File='agent/cli/src/main/kotlin/dev/min/agent/cli/Headless.kt'; Before='args.approve == ApprovalAnswer.Yes'; After='args.approve == ApprovalAnswer.No'; Module='cli'; Class='dev.min.agent.cli.HooksExpansionHeadlessTest' },
     @{ Name='app-plugin-env'; File='app/src/main/java/dev/min/code/core/engine/min/ProotExec.kt'; Before='.copy(env = command.env)'; After='.copy(env = emptyMap())'; Module='app'; Class='dev.min.code.core.engine.min.ProotExecTest' },
     @{ Name='app-canonical-path'; File='app/src/main/java/dev/min/code/core/engine/min/MinKernelDeps.kt'; Before='canonicalPath = ports::canonicalPath,'; After='canonicalPath = { it },'; Module='app'; Class='dev.min.code.core.engine.min.MinSnapshotCompositionTest' },
-    @{ Name='hard-deny-priority'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='hardRule != null ->'; After='hardRule != null && !rt.state.value.autoReviewTripped ->'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' }
+    @{ Name='hard-deny-priority'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='hardRule != null ->'; After='hardRule != null && !rt.state.value.autoReviewTripped ->'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
+    @{ Name='dependency-layer-false'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt'; Before='val disabledDependencies = settings.layers.flatMap { it.enabledPlugins.filterValues { value -> !value }.keys }.toSet()'; After='val disabledDependencies = emptySet<String>()'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
+    @{ Name='managed-name-lock'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBatch.kt'; Before='request.sideload && plugin.ref.name in lockedNames'; After='false && request.sideload && plugin.ref.name in lockedNames'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' }
 )
 $summary = @()
 Push-Location $root

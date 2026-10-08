@@ -100,6 +100,19 @@ Inspect
         assertTrue(result.errors.any { "disabled" in it })
     }
 
+    @Test fun BUG_any_layer_false_blocks_dependency_despite_higher_true(): Unit = runBlocking {
+        val fs = FakeFs().apply {
+            put("/home/.claude/settings.json", """{"enabledPlugins":{"a@m":true,"b@m":false}}""")
+            put("/work/.claude/settings.local.json", """{"enabledPlugins":{"b@m":true}}""")
+            put("/etc/claude-code/managed-settings.json", """{"enabledPlugins":{"b@m":true}}""")
+            put("/home/.claude/plugins/cache/m/a/1.0/.claude-plugin/plugin.json", """{"name":"a","dependencies":["b"]}""")
+            put("/home/.claude/plugins/cache/m/b/1.0/.claude-plugin/plugin.json", """{"name":"b"}""")
+        }
+        val loaded = bundle(fs)
+        assertEquals(listOf("b@m"), loaded.batch.plugins.map { it.ref.id })
+        assertTrue(loaded.notes.any { "disabled" in it })
+    }
+
     @Test fun BUG_sideload_replaces_installed_namespace_and_is_trusted(): Unit = runBlocking {
         val fs = FakeFs(); installed(fs)
         fs.put("/home/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
