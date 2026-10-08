@@ -11,8 +11,8 @@ internal fun PluginParser.discover(
         entry: JsonObject?,
         request: PluginRequest,
     ): LoadedPlugin {
-        val marketplaceName = request.ref?.marketplace
-        val install = if (marketplaceName == null) "pluginDir" else "marketplace"
+        val marketplaceName = if (request.sideload) "inline" else request.ref?.marketplace
+        val install = if (marketplaceName == null || request.sideload) "pluginDir" else "marketplace"
         val entryIsManifest = manifest == null && entry != null
         val ns: String
         val nameSource: PluginNameSource
@@ -67,7 +67,7 @@ internal fun PluginParser.discover(
         val displayName = if (install == "marketplace") entry?.strOrNull("displayName") ?: manifestObj?.displayName else manifestObj?.displayName
         val version = manifestObj?.version ?: entry?.strOrNull("version")
         val defaultEnabled = entry?.boolOrNull("defaultEnabled") ?: manifestObj?.defaultEnabled ?: true
-        val enabledId = if (install == "marketplace") "$refName@$marketplaceName" else refName
+        val enabledId = ref.id
         val enabled = request.enabledPlugins[enabledId] ?: defaultEnabled
 
         return LoadedPlugin(
@@ -76,6 +76,7 @@ internal fun PluginParser.discover(
             nameSource = nameSource,
             root = rootName,
             enabled = enabled,
+            explicitlyDisabled = request.enabledPlugins[enabledId] == false || enabledId in request.disabledDependencies,
             displayName = displayName,
             manifest = manifestObj?.copy(version = version, defaultEnabled = defaultEnabled),
             warnings = if (files.containsKey("CLAUDE.md")) listOf("CLAUDE.md at the plugin root is not loaded as project context") else emptyList(),
