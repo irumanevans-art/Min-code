@@ -63,11 +63,18 @@ try {
                 [System.IO.File]::WriteAllText($file, $text.Replace($edit.Before, $edit.After), [System.Text.UTF8Encoding]::new($false))
             }
             $gradleArgs = @()
-            foreach ($run in $case.Runs) {
-                $gradleArgs += (':agent:' + $run.Module + ':test')
-                foreach ($t in $run.Tests) { $gradleArgs += '--tests'; $gradleArgs += ($run.Class + '.' + $t) }
+            # 同一个模块的 test 任务只能出现一次（Gradle 会把重复的任务合并，后面那组 --tests 就丢了），所以按模块归并过滤器
+            foreach ($module in ($case.Runs | ForEach-Object { $_.Module } | Select-Object -Unique)) {
+                $gradleArgs += (':agent:' + $module + ':test')
+                foreach ($run in ($case.Runs | Where-Object { $_.Module -eq $module })) {
+                    foreach ($t in $run.Tests) { $gradleArgs += '--tests'; $gradleArgs += ($run.Class + '.' + $t) }
+                }
             }
             $gradleArgs += '--continue'; $gradleArgs += '--console=plain'
+            # 上一个变异留下的结果文件不能被误当成这一次的红：先删掉，没跑到的测试类就没有文件、算没红
+            foreach ($run in $case.Runs) {
+                Remove-Item -LiteralPath (Join-Path $root ('agent/' + $run.Module + '/build/test-results/test/TEST-' + $run.Class + '.xml')) -ErrorAction SilentlyContinue
+            }
             # Windows PowerShell 5.1：gradle 失败时往 stderr 写的内容在 Stop 模式下会变成终止错误，这里临时放宽，只看退出码
             $savedPreference = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
