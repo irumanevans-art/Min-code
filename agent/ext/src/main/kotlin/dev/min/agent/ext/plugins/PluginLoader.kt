@@ -15,6 +15,11 @@ class PluginLoader(private val fs: WorkspaceFs, private val canonical: (GuestPat
         try {
             val root = GuestPaths.normalize(request.root)
             val files = linkedMapOf<String, String>()
+            val unreadable = linkedMapOf<String, String>()
+            fun failed(path: String, reason: String) {
+                unreadable[path.removePrefix(root.trimEnd('/') + "/")] = reason
+                errors += reason
+            }
             val realRoot = canonical(GuestPath(root)).value
             val directories = mutableSetOf("")
             var textBytes = 0L
@@ -32,27 +37,29 @@ class PluginLoader(private val fs: WorkspaceFs, private val canonical: (GuestPat
             val roots = setOf(".claude-plugin", "commands", "agents", "skills", "hooks", "output-styles", "workflows", "themes", "monitors", "bin") + declared.map { it.substringBefore('/') }
             val defaultFiles = setOf("SKILL.md", "CLAUDE.md", "settings.json", ".mcp.json", ".lsp.json")
             suspend fun walk(dir: String, depth: Int, ancestors: Set<String>) {
-                if (depth > ConfigIo.MAX_DEPTH) { errors += "插件组件目录嵌套过深：$dir"; return }
+                if (depth > ConfigIo.MAX_DEPTH) { failed(dir, "插件组件目录嵌套过深：$dir"); return }
                 for (e in io.entries(dir)) {
                     if (e.name == ".git") continue
                     val path = GuestPaths.join(dir, e.name)
                     val rel = path.removePrefix(root.trimEnd('/') + "/")
                     if (depth == 0 && e.name !in roots && e.name !in defaultFiles) continue
-                    if (files.size > 4096 || textBytes > 8L * 1024 * 1024) { errors += "插件组件超过装载预算：$path"; continue }
+                    if (files.size > 4096 || textBytes > 8L * 1024 * 1024) { failed(path, "插件组件超过装载预算：$path"); continue }
                     val real = canonical(GuestPath(path)).value
                     if (real != realRoot && !real.startsWith(realRoot.trimEnd('/') + "/")) {
-                        errors += "$path escapes plugin directory"; continue
+                        failed(path, "$path escapes plugin directory"); continue
                     }
                     when (io.resolvedKind(dir, e)) {
                         FileKind.Directory -> {
                             directories += path.removePrefix(root.trimEnd('/') + "/")
-                            if (real in ancestors) errors += "插件组件目录链接成环：$path"
+                            if (real in ancestors) failed(path, "插件组件目录链接成环：$path")
                             else walk(path, depth + 1, ancestors + real)
                         }
                         FileKind.File -> {
                             // 不读 bin 与 bundle 的二进制；这里只需要声明路径，避免把任意大树当配置读入内存。
                             if (rel.endsWith(".md") || rel.endsWith(".json")) {
-                                io.readText(path)?.let { files[rel] = it; textBytes += it.toByteArray().size }
+                                val text = io.readText(path)
+                                if (text != null) { files[rel] = text; textBytes += text.toByteArray().size }
+                                else io.notes.lastOrNull()?.let { unreadable[rel] = it }
                             } else files[rel] = ""
                         }
                         else -> Unit
@@ -60,7 +67,7 @@ class PluginLoader(private val fs: WorkspaceFs, private val canonical: (GuestPat
                 }
             }
             walk(root, 0, setOf(realRoot))
-            val result = PluginParser(directories).parse(request, root, files)
+            val result = PluginParser(directories, unreadable).parse(request, root, files)
             val allErrors = (errors + io.notes + result.errors).distinct()
             return result.copy(plugin = result.plugin?.copy(errors = allErrors), errors = allErrors)
         } catch (e: CancellationException) { throw e }

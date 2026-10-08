@@ -3,7 +3,7 @@ package dev.min.agent.ext.plugins
 import dev.min.agent.ext.config.GuestPaths
 import kotlinx.serialization.json.*
 
-internal class PluginParser(internal val directories: Set<String>) {
+internal class PluginParser(internal val directories: Set<String>, private val unreadable: Map<String, String> = emptyMap()) {
     internal val componentErrors = mutableListOf<String>()
     fun parse(request: PluginRequest, root: String, files: Map<String, String>): PluginLoadOutcome {
         val errors = mutableListOf<String>()
@@ -20,7 +20,11 @@ internal class PluginParser(internal val directories: Set<String>) {
             val invalid = mutableSetOf<Pair<String, String>>()
             collectPaths(raw).forEach { (key, path) ->
                 val bad = mutableListOf<Violation>()
-                checkPath(key, path, files, rootName, bad)
+                val rel = pathSegments(rootName, path).drop(1).joinToString("/")
+                val prior = unreadable.entries.firstOrNull { rel == it.key || rel.startsWith(it.key.trimEnd('/') + "/") }?.value
+                // 宿主已经说明越界或超限，仍去掉组件，但不能把同一失败再误报成「不存在」。
+                if (prior != null) bad += Violation(Kind.PATH_MISSING, prior, path = path)
+                else checkPath(key, path, files, rootName, bad)
                 if (key == "mcpServers" && !path.startsWith("https://") && !path.endsWith(".json") && !path.endsWith(".mcpb") && !path.endsWith(".dxt")) {
                     bad += Violation(Kind.MCP_BUNDLE_EXT, "mcpServers 路径 \"$path\" 必须是 .json / .mcpb / .dxt 或 https URL")
                 }

@@ -87,6 +87,7 @@ class PluginLoaderTest {
         assertNotNull(result.plugin)
         assertTrue(result.plugin!!.commands.isEmpty())
         assertTrue(result.errors.any { "escapes plugin directory" in it })
+        assertEquals("同一组件只报告实际路径错误，不能另报不存在", 1, result.errors.size)
     }
 
     @Test fun `bad JSON and field types do not escape and cancellation always does`(): Unit = runBlocking {
