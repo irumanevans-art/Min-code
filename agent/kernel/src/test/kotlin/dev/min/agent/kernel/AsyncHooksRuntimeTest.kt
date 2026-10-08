@@ -125,6 +125,15 @@ class AsyncHooksRuntimeTest {
 
         override suspend fun isAlive(handle: ExecHandle): Boolean? = isAliveChecks.incrementAndGet().let(isAliveAnswer)
 
+        /** owner 判死的回放（宿主侧 isPidAlive）：参数是 pid；null = 端口说不了（当活着） */
+        var pidAliveAnswer: (Long) -> Boolean? = { null }
+        val pidProbes = CopyOnWriteArrayList<Long>()
+
+        override suspend fun isPidAlive(pid: Long): Boolean? {
+            pidProbes += pid
+            return pidAliveAnswer(pid)
+        }
+
         private fun dirOf(command: String): String? =
             Regex("""sh '(.*)/start\.sh'""").find(command)?.groupValues?.get(1)
 
@@ -327,9 +336,8 @@ class AsyncHooksRuntimeTest {
     fun `启动清扫只删别的实例且进程确认已死的目录，删除路径过映射`() = run {
         val fs = MemFs()
         val exec = ScriptedExec(fs)
-        // 1234 确认死（kill -0 非零）；5678 探测超时（当活着，不删）
-        exec.probeAnswers["1234"] = ExecResult.Exited(1, "", false, 1)
-        exec.probeAnswers["5678"] = ExecResult.TimedOut("", false)
+        // 1234 宿主侧确认死；5678 端口说不了（null，当活着，不删）
+        exec.pidAliveAnswer = { pid -> if (pid == 1234L) false else null }
         // 先建 hub（此刻 hooks 目录是空的，init 的异步清扫无事可做），再预置四种目录
         val h = hub(exec, fs, hookShellPath = { "M:" + it.value })
         fs.files["/root/.min/hooks/hookbg_dead/in.json"] = "{}"
@@ -348,6 +356,22 @@ class AsyncHooksRuntimeTest {
         assertTrue("owner 进程没确认死的不删：$joined", !joined.contains("hookbg_alive"))
         assertTrue("没有 owner 文件的（认不了主）不删：$joined", !joined.contains("hookbg_old"))
         assertTrue("原始 guest 路径不该直接进删除命令：$joined", !joined.contains("'/root/.min/hooks/"))
-        assertTrue("探过 owner 进程", exec.commands.any { it == "kill -0 1234" || it.startsWith("kill -0 1234") })
+        assertTrue("owner 判死问的是宿主侧进程表：${exec.pidProbes}", exec.pidProbes.contains(1234L))
+    }
+
+    @Test
+    fun `宿主说 owner 活着就不删，guest shell 的 kill -0 误报死也不算`() = run {
+        val fs = MemFs()
+        val exec = ScriptedExec(fs)
+        // Git Bash 的实况（M4）：拿宿主（Windows JVM）pid 问 msys 的进程表，对活进程也报「No such process」（退出码 1）
+        exec.probeAnswers["4321"] = ExecResult.Exited(1, "", false, 1)
+        exec.pidAliveAnswer = { pid -> if (pid == 4321L) true else null } // 宿主侧的真相：进程活着
+        val h = hub(exec, fs, hookShellPath = { "M:" + it.value })
+        fs.files["/root/.min/hooks/hookbg_live/in.json"] = "{}"
+        fs.files["/root/.min/hooks/hookbg_live/owner"] = "other-instance 4321\n"
+        h.sweepOrphanHookDirs()
+        val rms = exec.commands.filter { it.startsWith("rm -rf") }
+        assertTrue("宿主说活着的 owner 不删：${rms.joinToString("\n")}", rms.none { it.contains("hookbg_live") })
+        assertTrue("问的是宿主侧进程表：${exec.pidProbes}", exec.pidProbes.contains(4321L))
     }
 }

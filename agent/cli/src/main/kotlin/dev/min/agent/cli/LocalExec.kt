@@ -112,6 +112,11 @@ class LocalExec(
         return process.isAlive
     }
 
+    override fun currentPid(): Long = ProcessHandle.current().pid()
+
+    /** 按宿主进程表判任意 pid：owner 是别的桌面终端的 JVM 进程，问宿主最准（M4） */
+    override suspend fun isPidAlive(pid: Long): Boolean? = ProcessHandle.of(pid).isPresent
+
     private fun pidOf(process: Process): Int? = try {
         process.pid().toInt()
     } catch (_: UnsupportedOperationException) {

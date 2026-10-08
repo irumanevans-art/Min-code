@@ -14,6 +14,7 @@ import dev.min.agent.spi.DelegateRequest
 import dev.min.agent.spi.DelegateResult
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.Exec
 import dev.min.agent.spi.ExecOptions
 import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.FORK_AGENT_TYPE
@@ -162,24 +163,20 @@ class SessionHub(
 ) {
     private val definitions: Map<String, AgentDefinition> = agents.associateBy { it.name }
 
-    init {
-        // 启动时清扫上一条命留下的后台 hook 暂存目录：进程死了目录还在，in.json 里带着工具入参
-        // （可能含密钥），不能一直躺在盘上。此刻本 Hub 还没有在线会话，剩下的 hookbg_* 必然是孤儿
-        scope.launch { sweepOrphanHookDirs() }
-    }
-
     /**
      * 本 Hub 实例在 hook 暂存目录里留下的 owner 记号（实例 id + 进程 pid）。桌面多终端共用 `~/.min/root`，
      * 启动清扫按它区分：**别的实例**留下的目录、且那个进程已确认死掉（N2 的判死口径）才删——
-     * 本实例自己的（包括正在跑的）不动，清扫与首会话 SessionStart 后台 hook 的竞态也就不存在了（N1）
+     * 本实例自己的（包括正在跑的）不动，清扫与首会话 SessionStart 后台 hook 的竞态也就不存在了（N1）。
+     * pid 从宿主端口取：内核侧 `ProcessHandle.current()` 在 Android 33 以下拿不到，宿主才知道自己平台怎么取
      */
-    internal val hookStagingOwner = "${java.util.UUID.randomUUID()} ${currentPid()}"
+    internal val hookStagingOwner = "${java.util.UUID.randomUUID()} ${deps.host.exec.currentPid()}"
 
-    /** 桌面取 JVM 进程号；Android 老 API 没有 ProcessHandle（33+ 才有），拿不到就写 0（清扫视作「认不了主」） */
-    private fun currentPid(): Long = try {
-        ProcessHandle.current().pid()
-    } catch (_: Throwable) {
-        0L
+    init {
+        // 启动时清扫上一条命留下的后台 hook 暂存目录：进程死了目录还在，in.json 里带着工具入参
+        // （可能含密钥），不能一直躺在盘上。此刻本 Hub 还没有在线会话，剩下的 hookbg_* 必然是孤儿。
+        // hookStagingOwner 必须声明在前、先初始化：清扫起在另一个线程，先跑的话读到的是没赋值的记号，
+        // 会把本实例自己的目录当成「认不了主的」处理
+        scope.launch { sweepOrphanHookDirs() }
     }
 
     /** 启动清扫（init 里异步跑；测试直调以便确定性驱动）。internal 仅为测试可见性，不进公共 API */
@@ -213,13 +210,13 @@ class SessionHub(
         }
     }
 
-    /** owner 进程确认死了才真：探测超时 / 起不来都当活着（与后台 hook 存活探测同一个口径，N2） */
-    private suspend fun ownerConfirmedDead(pid: Long): Boolean = try {
-        val r = deps.host.exec.run(ShellCommand("kill -0 $pid", GuestPath("/root")), ExecOptions(10_000))
-        r is ExecResult.Exited && r.exitCode != 0
-    } catch (_: Exception) {
-        false
-    }
+    /**
+     * owner 进程确认死了才真：只问宿主侧的进程表（[Exec.isPidAlive]）——guest shell 的 `kill -0` 在 Windows
+     * 拿宿主 pid 问 msys 的进程表，对活着的宿主进程也报「不存在」（M4）。端口说不了（null）或探测出错
+     * 都当活着——删错了没有回头路（与后台 hook 存活探测同一个口径，N2）
+     */
+    private suspend fun ownerConfirmedDead(pid: Long): Boolean =
+        dev.min.agent.spi.catchingNonCancellation { deps.host.exec.isPidAlive(pid) }.getOrNull() == false
 
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
     internal var mcp = McpManager(

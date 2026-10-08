@@ -133,6 +133,11 @@ internal class MinExec(
         (owner[handle.id] ?: current().exec).kill(handle)
         tasks.stopped(handle.id)
     }
+
+    // 存活 / pid 探测都转发给当前一代（ProotExec）：不转发的话端口默认「说不了」，内核退回 kill -0 轮询
+    override suspend fun isAlive(handle: ExecHandle): Boolean? = current().exec.isAlive(handle)
+    override fun currentPid(): Long = current().exec.currentPid()
+    override suspend fun isPidAlive(pid: Long): Boolean? = current().exec.isPidAlive(pid)
 }
 
 /**
