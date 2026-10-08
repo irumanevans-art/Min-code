@@ -291,6 +291,20 @@ class ModelHooksSessionTest {
         assertTrue("没连上 / 工具不存在是非阻断错误：${ran.problems}", ran.problems.any { it.contains("没有已连接的工具") })
     }
 
+    @Test
+    fun `launch 时的 SessionStart 上 mcp_tool 跳过（MCP 还没就绪，CC 原文）`() = run {
+        write("/root/.claude/settings.json", settings(
+            """{"SessionStart": [{"hooks": [
+                {"type": "mcp_tool", "server": "scan", "tool": "boot_check"}
+            ]}]}""",
+        ))
+        val model = RoutingModel { _ -> reply(TextPart("好")) }
+        val h = hub(model)
+        val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        // launch 的 SessionStart（startup/resume）赶不上 MCP 就绪：mcp_tool 跳过、连 HooksRan 都不落（没有别的处理器）
+        assertTrue("没有落 SessionStart 的 hook 记录：${hookRans(rt)}", hookRans(rt).none { it.event == "SessionStart" })
+    }
+
     private fun bashCall(id: String) = ToolCallPart(CallId(id), "Bash", JsonObject(mapOf("command" to JsonPrimitive("rm -rf build"))))
 
     private suspend fun hookRans(rt: SessionRuntime): List<HooksRan> {
