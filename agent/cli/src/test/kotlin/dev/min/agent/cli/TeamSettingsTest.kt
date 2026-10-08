@@ -19,10 +19,10 @@ class TeamSettingsTest {
     }
 
     @Test
-    fun `above eight needs a confirmation the command line cannot ask for, so it is capped with a note`() {
+    fun `above the hard cap of eight it is clamped with a note`() {
         val (value, notes) = read(JsonPrimitive(12))
         assertEquals(8, value)
-        assertTrue(notes.single().contains("超过 8"))
+        assertTrue(notes.single().contains("硬上限 8"))
     }
 
     @Test

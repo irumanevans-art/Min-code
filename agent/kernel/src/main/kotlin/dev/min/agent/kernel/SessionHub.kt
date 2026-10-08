@@ -102,7 +102,7 @@ data class HubLimits(
     val maxConcurrentChildRequests: Int = 3,
     /**
      * 团队同时运行的成员数（设置项 `teamMaxConcurrent`，默认 [TeamLimits.DEFAULT_MAX_CONCURRENT]）。超出的成员排队，
-     * 前一个结束后才启动。设置超过 [TeamLimits.CONFIRM_ABOVE] 要先经 [TeamLimits.resolve] 让用户确认
+     * 前一个结束后才启动。硬上限 [TeamLimits.MAX_CONCURRENT]，设置要先经 [TeamLimits.resolve]；与 [maxConcurrentChildRequests] 的关系见 [TeamLimits]
      */
     val teamMaxConcurrent: Int = TeamLimits.DEFAULT_MAX_CONCURRENT,
     /**
@@ -112,7 +112,7 @@ data class HubLimits(
     val cronMaxBudgetUsd: Double? = null,
 ) {
     init {
-        require(teamMaxConcurrent >= 1) { "团队同时运行的成员数至少是 1。" }
+        require(teamMaxConcurrent in 1..TeamLimits.MAX_CONCURRENT) { "团队同时运行的成员数必须在 1 到 ${TeamLimits.MAX_CONCURRENT} 之间。" }
         require(cronMaxBudgetUsd == null || cronMaxBudgetUsd.isFinite() && cronMaxBudgetUsd > 0) { "定时任务的花费天花板必须是大于 0 的有限数。" }
     }
 }

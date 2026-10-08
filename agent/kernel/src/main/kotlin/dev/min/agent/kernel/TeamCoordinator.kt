@@ -34,29 +34,36 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** 团队同时运行的成员数：默认值、提示线、以及设置项的校验（设计 M5 总览 §四 决定 2） */
+/**
+ * 团队同时运行的成员数：默认值、**硬上限**、以及设置项的校验（M5 总览 §四 决定 2，照 Claude Code 口径改过：不再有「超过要用户确认」）。
+ *
+ * 和全局的 [HubLimits.maxConcurrentChildRequests] 是两道不同的闸，别混：
+ *  - 这里限的是**同时在跑回合的成员数**（回合并发，超出的成员排队等名额，前一个结束才启动）；
+ *  - 那一道限的是**同时在向模型流式要回答的子会话数**（成员也是子会话，请求都过它；桌面 8、手机 3）。
+ * 所以手机上即便 8 个成员都「在跑」，真正同时在流式输出的也最多 3 个，其余在等闸、或在跑工具 / 等审批（那两种不占闸）。
+ * 提高这里的数不会让模型请求更并发，只会让更多成员能同时跑各自的工具。
+ */
 object TeamLimits {
     const val DEFAULT_MAX_CONCURRENT = 3
 
-    /** 超过它的设置要用户明确确认：手机的耗电、发热、额度都吃不消，误设代价大 */
-    const val CONFIRM_ABOVE = 8
+    /** 硬上限：再多手机既跑不动（耗电、发热、额度），负责人也看不过来。设置超过它就按它算，不再问用户 */
+    const val MAX_CONCURRENT = 8
 
     /** 设置项 `teamMaxConcurrent` 的一次输入的结论 */
     sealed interface Setting {
-        data class Accepted(val value: Int) : Setting
-
-        /** 超过 [CONFIRM_ABOVE]：界面问过用户、用户确认后带 `confirmedAboveCap = true` 再来一次 */
-        data class NeedsConfirmation(val value: Int) : Setting
+        /** [note] 非空 = 值被改过（超过硬上限被压到 [MAX_CONCURRENT]），宿主应把它给用户看 */
+        data class Accepted(val value: Int, val note: String? = null) : Setting
         data class Invalid(val reason: String) : Setting
     }
 
-    fun resolve(requested: Int?, confirmedAboveCap: Boolean = false): Setting = when {
+    fun resolve(requested: Int?): Setting = when {
         requested == null -> Setting.Accepted(DEFAULT_MAX_CONCURRENT)
         requested < 1 -> Setting.Invalid("团队同时运行的成员数至少是 1。")
-        requested > CONFIRM_ABOVE && !confirmedAboveCap -> Setting.NeedsConfirmation(requested)
+        requested > MAX_CONCURRENT -> Setting.Accepted(MAX_CONCURRENT, "teamMaxConcurrent=$requested 超过硬上限 $MAX_CONCURRENT，按 $MAX_CONCURRENT 处理。")
         else -> Setting.Accepted(requested)
     }
 }
+
 
 /** 界面读成员状态用的一行（日志 + 成员会话的折叠状态推出来的，不是另存的状态） */
 data class TeamMemberStatus(

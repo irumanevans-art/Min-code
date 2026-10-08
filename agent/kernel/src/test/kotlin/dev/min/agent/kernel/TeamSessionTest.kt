@@ -357,12 +357,25 @@ class TeamSessionTest {
     }
 
     @Test
-    fun `team limits setting asks for confirmation above eight`() {
+    fun `eight is a hard cap - a bigger setting is clamped and there is no confirmation path`() {
         assertEquals(TeamLimits.Setting.Accepted(3), TeamLimits.resolve(null))
         assertEquals(TeamLimits.Setting.Accepted(8), TeamLimits.resolve(8))
-        assertEquals(TeamLimits.Setting.NeedsConfirmation(9), TeamLimits.resolve(9))
-        assertEquals(TeamLimits.Setting.Accepted(9), TeamLimits.resolve(9, confirmedAboveCap = true))
+        val clamped = TeamLimits.resolve(9) as TeamLimits.Setting.Accepted
+        assertEquals("超过 8 不再问用户，直接按 8", 8, clamped.value)
+        assertTrue(clamped.note!!.contains("硬上限 8"))
+        assertEquals(8, (TeamLimits.resolve(1000) as TeamLimits.Setting.Accepted).value)
         assertTrue(TeamLimits.resolve(0) is TeamLimits.Setting.Invalid)
+        assertTrue(TeamLimits.resolve(-1) is TeamLimits.Setting.Invalid)
+    }
+
+    @Test
+    fun `the hub refuses a limit above the hard cap instead of silently running more members`() {
+        try {
+            HubLimits(teamMaxConcurrent = 9)
+            org.junit.Assert.fail("9 超过硬上限 8")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message!!, expected.message!!.contains("8"))
+        }
     }
 
     // ---- 任务清单 ----

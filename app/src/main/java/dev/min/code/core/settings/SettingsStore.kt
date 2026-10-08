@@ -298,8 +298,8 @@ data class AppSettings(
      */
     val controlDevice: Boolean = false,
     /**
-     * Min Agent 的 agent 团队同时运行的成员数（设置项 `teamMaxConcurrent`，M5 决定 2）：默认 3，超出的成员排队。
-     * 超过 8 要用户明确确认才写得进来（[SettingsStore.setTeamMaxConcurrent]）。内核在 App 启动时读一次，改了下次启动生效
+     * Min Agent 的 agent 团队同时运行的成员数（设置项 `teamMaxConcurrent`，M5 决定 2）：默认 3，硬上限 8，超出的成员排队。
+     * 超过 8 的值按 8 写入（[SettingsStore.setTeamMaxConcurrent]）。内核在 App 启动时读一次，改了下次启动生效
      */
     val teamMaxConcurrent: Int = dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
     /**
@@ -544,7 +544,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
             shareDeviceStorage = p[KEY_SHARE_DEVICE_STORAGE] ?: false,
             controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
-            teamMaxConcurrent = p[KEY_TEAM_MAX_CONCURRENT]?.takeIf { it >= 1 } ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
+            teamMaxConcurrent = p[KEY_TEAM_MAX_CONCURRENT]?.takeIf { it >= 1 }?.coerceAtMost(dev.min.agent.kernel.TeamLimits.MAX_CONCURRENT) ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
             cronMaxBudgetUsd = p[KEY_CRON_MAX_BUDGET_USD]?.takeIf { it.isFinite() && it > 0 },
             minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
             lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
@@ -865,11 +865,11 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
         context.dataStore.edit { it[KEY_CONTROL_DEVICE] = enabled }
 
     /**
-     * 改团队并发上限。先过 [dev.min.agent.kernel.TeamLimits.resolve]：超过 8 且调用方还没让用户确认，就不写、把
-     * 「需要确认」原样交回，界面弹确认后带 [confirmedAboveCap] = true 再调；不合法的值也不写
+     * 改团队并发上限。先过 [dev.min.agent.kernel.TeamLimits.resolve]：超过硬上限 8 的值按 8 写入（返回的 [Accepted.note] 给用户看），
+     * 不再有「要确认」的路径；不合法的值（小于 1）不写
      */
-    suspend fun setTeamMaxConcurrent(value: Int, confirmedAboveCap: Boolean = false): dev.min.agent.kernel.TeamLimits.Setting {
-        val setting = dev.min.agent.kernel.TeamLimits.resolve(value, confirmedAboveCap)
+    suspend fun setTeamMaxConcurrent(value: Int): dev.min.agent.kernel.TeamLimits.Setting {
+        val setting = dev.min.agent.kernel.TeamLimits.resolve(value)
         if (setting is dev.min.agent.kernel.TeamLimits.Setting.Accepted) {
             context.dataStore.edit { it[KEY_TEAM_MAX_CONCURRENT] = setting.value }
         }
