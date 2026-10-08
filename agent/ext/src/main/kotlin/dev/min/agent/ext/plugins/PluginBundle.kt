@@ -193,6 +193,12 @@ class PluginBundle(
                 }
                 plugin.commands.forEach { command ->
                     val path = command.sourcePath?.let { GuestPath(GuestPaths.join(plugin.root, it)) } ?: inlinePath(plugin, command)
+                    val realPath = canonical(path).value
+                    val commandRoot = canonical(GuestPath(plugin.root)).value.trimEnd('/')
+                    if (!realPath.startsWith("$commandRoot/")) {
+                        notes += "$label 的 command ${path.value} escapes plugin directory，跳过该组件"
+                        return@forEach
+                    }
                     val def = if (command.content == null) CommandLoader.read(io, ConfigSource.Plugin, path.value, command.name)
                     else CommandDef(command.name, command.description ?: command.content.lineSequence().firstOrNull().orEmpty(), path, command.content, ConfigSource.Plugin)
                     def?.let { commandDefs += it.copy(body = resolvePluginBody(it.body, vars, values, plugin.userConfig.filter { it.sensitive }.map { it.key }.toSet()), description = command.description ?: it.description,
@@ -203,7 +209,9 @@ class PluginBundle(
                 plugin.agents.forEach { agent ->
                     AgentLoader.read(io, ConfigSource.Plugin, GuestPaths.join(plugin.root, agent.filePath), fallbackName = agent.name.substringAfterLast(':'))?.let {
                         val sensitive = plugin.userConfig.filter { d -> d.sensitive }.map { d -> d.key }.toSet()
-                        agentDefs += it.copy(name = agent.name, sourceLabel = label, prompt = resolvePluginBody(it.prompt, vars, values, sensitive), hooks = if (isTrusted) it.hooks?.let(::renderHooks) else null)
+                        // 官方插件 agent 不能自行提供权限模式、hooks、MCP 或启动输入。
+                        agentDefs += it.copy(name = agent.name, sourceLabel = label, prompt = resolvePluginBody(it.prompt, vars, values, sensitive),
+                            hooks = null, permissionMode = null, mcpServers = null, initialPrompt = null)
                     }
                 }
                 if (isTrusted) {

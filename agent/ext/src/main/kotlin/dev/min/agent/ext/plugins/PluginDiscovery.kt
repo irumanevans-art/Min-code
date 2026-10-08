@@ -27,6 +27,7 @@ internal fun PluginParser.discover(
             }
             else -> {
                 ns = rootName
+                if (!validPluginName(ns)) bug("directory name \"$ns\" 不符合插件 name 字符规则")
                 nameSource = PluginNameSource.DIRECTORY_NAME
             }
         }
@@ -108,7 +109,11 @@ internal fun PluginParser.discoverSkills(
         fun add(rel: String, baseName: String) {
             val fm = frontmatter(files.getValue(rel))
             val name = "$ns:" + (fm["name"] ?: baseName)
-            if (!seen.add(name)) { if (skills.any { it.name == name && it.skillMd == rel }) return; bug("技能名重复：$name") }
+            if (!seen.add(name)) {
+                if (skills.any { it.name == name && it.skillMd == rel }) return
+                componentErrors += "技能名重复：$name（$rel），跳过该组件"
+                return
+            }
             skills += PluginSkill(name, rel)
         }
         fun addRootSkill() {
