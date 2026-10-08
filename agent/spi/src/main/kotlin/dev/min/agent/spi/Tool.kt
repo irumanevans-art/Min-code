@@ -222,3 +222,10 @@ enum class EditStyle {
 }
 
 data class HarnessProfile(val family: ModelFamily, val editStyle: EditStyle)
+
+/**
+ * 给人看的结果文字（卡片、终端一行摘要）：工具自己的文本输出，后面接用户的话（[ToolResult.userText]）。
+ * 用户的话不在 [ToolResult.content] 里，但界面上这张卡本来就该显示「用户答了什么、为什么拒绝」；只有发给模型时它们才要分开。
+ */
+fun ToolResult.displayText(separator: String = "\n"): String =
+    (content.filterIsInstance<dev.min.agent.protocol.TextPart>().map { it.text } + listOfNotNull(userText)).joinToString(separator)

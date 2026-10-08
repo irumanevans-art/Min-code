@@ -18,6 +18,7 @@ import dev.min.agent.spi.AgentInputKind
 import dev.min.agent.spi.ConversationRewound
 import dev.min.agent.spi.FilesRestored
 import dev.min.agent.spi.InputOrigin
+import dev.min.agent.spi.displayText
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.ModelFailureKind
 import dev.min.agent.spi.Note
@@ -225,7 +226,8 @@ private class ItemsBuilder(
             // 等审批也是 Running：「在等人」由交互队列表达，不由卡片状态表达
             else -> ChatItem.ToolCall.Status.Running
         }
-        val body = result?.content?.filterIsInstance<TextPart>()?.joinToString("\n") { it.text }
+        // 用户的话（问答的答案、拒绝的说明）不在 content 里（发给模型时要分开），但卡片照旧显示它们
+        val body = result?.displayText()
             ?: (phase as? CallPhase.Denied)?.note
         val card = ChatItem.ToolCall(id, part.callId.value, part.name, part.input, status, isError = error).withClippedResult(body)
         // 内核给的预览已被截过：全文长度以它为准（取两者较大，避免预览把总长冲小）

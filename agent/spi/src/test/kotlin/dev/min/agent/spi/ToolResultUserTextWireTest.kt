@@ -28,4 +28,10 @@ class ToolResultUserTextWireTest {
         assertEquals(AgentJson.parseToJsonElement(expected), AgentJson.parseToJsonElement(encoded))
         assertEquals(outcome, AgentJson.decodeFromString(SessionEvent.serializer(), encoded))
     }
+
+    @Test fun `display text shows the tool output followed by what the user said`() {
+        assertEquals("用户已回答。\n答案：Room",ToolResult(listOf(TextPart("用户已回答。")), userText = "答案：Room").displayText())
+        assertEquals("用户已回答。 答案：Room", ToolResult(listOf(TextPart("用户已回答。")), userText = "答案：Room").displayText(" "))
+        assertEquals("旧结果", ToolResult(listOf(TextPart("旧结果"))).displayText())
+    }
 }
