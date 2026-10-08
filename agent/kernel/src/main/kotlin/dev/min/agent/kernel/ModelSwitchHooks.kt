@@ -2,17 +2,21 @@ package dev.min.agent.kernel
 
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.PostModelSwitchInput
 import dev.min.agent.ext.hooks.PreModelSwitchInput
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.HookContextAdded
+import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.NoteLevel
 import kotlinx.serialization.json.jsonObject
 
 /**
- * 切模型前的 hooks（hooks.md :3100 PreModelSwitch）。时机就是
+ * 切模型前后的 hooks（hooks.md :3100 PreModelSwitch、:3255 PostModelSwitch）。时机就是
  * [SessionRuntime.changeSettings] 里 model 真的变了那一刻——界面的 `/model`、选择器、SDK 的 set_model 都走它。
- * 回退链「一轮替换」不改会话模型、不经过这里（原文：自动回退不触发 PreModelSwitch）。
+ * 回退链「一轮替换」不改会话模型、不经过这里（原文：不触发）；自动回退改会话模型（`source = auto`）与 resume 恢复模型（`source = resume`）
+ * 这两个时机 Min 里没有对应动作，所以 PostModelSwitch 只会收到 command / picker / sdk。
  */
 internal class ModelSwitchHooks(private val rt: SessionRuntime) {
     /**
@@ -35,6 +39,21 @@ internal class ModelSwitchHooks(private val rt: SessionRuntime) {
             outcome.decision == HookOutcome.Decision.Ask ->
                 (outcome.reason ?: "PreModelSwitch hook 要求确认这次切换。") + "（这里没有确认界面，按拒绝处理。）"
             else -> null
+        }
+    }
+
+    /** 切换后通知 hooks；返回的上下文挂在下一条人发的消息上（原文：随切换后的下一次请求送给 Claude） */
+    suspend fun applied(from: ModelRef, to: ModelRef, source: String) {
+        val driver = HookDriver(rt)
+        val target = canonical(to)
+        if (!driver.has(HookEvent.PostModelSwitch, target)) return
+        val specific = HookJson.encodeToJsonElement(
+            PostModelSwitchInput.serializer(),
+            PostModelSwitchInput(fromModel = from.modelId, toModel = to.modelId, source = source, contextTokens = contextTokens()),
+        ).jsonObject
+        val outcome = driver.run(HookEvent.PostModelSwitch, target, specific) ?: return
+        if (outcome.contexts.isNotEmpty()) {
+            rt.commit(outcome.contexts.map { HookContextAdded(HookContextTarget.NextUserMessage, HookEvent.PostModelSwitch.name, it) }, Durability.Sync)
         }
     }
 

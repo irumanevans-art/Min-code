@@ -397,4 +397,56 @@ class HooksDecisionKernelTest {
         assertEquals(before, rt.state.value.settings.model)
         assertTrue(store.events(rt).filterIsInstance<Note>().any { it.text.contains("超时") })
     }
+
+    // ---- PostModelSwitch（样本 114 / 115） ----
+
+    @Test
+    fun `PostModelSwitch additionalContext rides on the next user message (sample 115)`() = run {
+        installSample("115-postmodelswitch-decision")
+        val model = ScriptedModel { _ -> answer(TextPart("好")) }
+        val (rt, store) = session(model)
+        rt.changeSettings(model = opus)
+
+        assertEquals(opus, rt.state.value.settings.model)
+        assertEquals(1, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PostModelSwitch") })
+        assertTrue("切换之后、人说话之前不进请求", model.requests.isEmpty())
+        rt.say("接着干")
+        assertTrue(model.requests.last().allText().contains("On Opus, delegate implementation to subagents."))
+        assertLogIsTruth(store, rt)
+    }
+
+    @Test
+    fun `PostModelSwitch plain stdout is context, stdin carries the switch, and only real switches fire it`() = run {
+        installScript("PostModelSwitch", "cat > \"\$CLAUDE_PROJECT_DIR/post-input.json\"; echo 'Use the big model carefully'", matcher = ".*opus.*")
+        val model = ScriptedModel { _ -> answer(TextPart("好")) }
+        val (rt, store) = session(model)
+        val before = rt.state.value.settings.model
+        rt.changeSettings(model = ModelRef(TEST_MODEL.providerId, "claude-haiku-5-5"))
+        assertEquals("matcher 对不上", 0, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PostModelSwitch") })
+        rt.changeSettings(model = opus, modelSwitchSource = "sdk")
+        val input = kotlinx.serialization.json.Json.parseToJsonElement(Files.readString(work.resolve("post-input.json"))) as JsonObject
+        assertEquals("claude-haiku-5-5", (input["from_model"] as JsonPrimitive).content)
+        assertEquals("claude-opus-5", (input["to_model"] as JsonPrimitive).content)
+        assertEquals("sdk", (input["source"] as JsonPrimitive).content)
+        rt.changeSettings(model = opus)
+        assertEquals("同一个模型再设一次不是切换", 1, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PostModelSwitch") })
+        rt.say("开工")
+        assertTrue(model.requests.last().allText().contains("Use the big model carefully"))
+        assertTrue(before != rt.state.value.settings.model)
+    }
+
+    @Test
+    fun `a refused PreModelSwitch never reaches PostModelSwitch`() = run {
+        val dir = Files.createDirectories(home.resolve(".claude"))
+        Files.createDirectories(work.resolve("scripts"))
+        Files.writeString(work.resolve("scripts/pre.sh"), "#!/bin/sh\ncat > /dev/null\nexit 2\n")
+        Files.writeString(work.resolve("scripts/post.sh"), "#!/bin/sh\ncat > /dev/null\necho posted\n")
+        fun h(event: String, file: String) =
+            """"$event":[{"hooks":[{"type":"command","command":"sh \"${'$'}CLAUDE_PROJECT_DIR/scripts/$file\""}]}]"""
+        Files.writeString(dir.resolve("settings.json"), "{\"hooks\":{${h("PreModelSwitch", "pre.sh")},${h("PostModelSwitch", "post.sh")}}}")
+        val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
+        rt.changeSettings(model = opus)
+        assertEquals(0, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PostModelSwitch") })
+        assertEquals(1, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PreModelSwitch") })
+    }
 }

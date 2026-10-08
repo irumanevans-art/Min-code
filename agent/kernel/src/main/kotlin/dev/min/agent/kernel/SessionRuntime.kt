@@ -513,6 +513,8 @@ class SessionRuntime private constructor(
         val clear = clearEffort && effort == null && state.value.settings.effort != null
         if (newModel == null && mode == null && effort == null && !clear) return
         commit(listOf(SettingsChanged(model = newModel, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)
+        // 模型真的换了才通知；同一个模型再设一次不算切换
+        if (newModel != null && newModel != from) modelSwitchHooks.applied(from, newModel, modelSwitchSource)
     }
 
     /** 中断当前回合：回合 Job 取消，收尾（每个悬空调用补结果）在回合自己的 finally 里写 */
