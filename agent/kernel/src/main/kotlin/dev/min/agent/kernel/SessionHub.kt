@@ -201,6 +201,19 @@ class SessionHub(
 
     /** agent 团队的运行时：建团队、任务清单、邮箱、并发名额（状态本身在负责人日志的折叠里） */
     internal val teams = TeamCoordinator(this, deps, scope, limits.teamMaxConcurrent)
+
+    /** 定时任务的运行时：到点触发、过期、单次花费上限（状态在根会话日志的折叠里） */
+    internal val crons = CronEngine(this, deps, scope)
+
+    /** 定时任务出了需要告诉用户的事（7 天到期、花费上限停了一次运行……）；宿主据此发通知，日志里同时有一条 Note */
+    val cronNotices: kotlinx.coroutines.flow.SharedFlow<CronNotice> get() = crons.notices
+
+    /**
+     * 接上宿主的定时器：之后每次回调都检查所有在线根会话有没有到点的定时任务。关掉返回的句柄就停。
+     * 不接定时器时定时任务不会自己触发（空闲时的「排着的任务」仍会在回合结束时触发）
+     */
+    fun startScheduling(scheduler: dev.min.agent.spi.Scheduler): AutoCloseable =
+        scheduler.start { crons.tick(deps.clock.nowMs()) }
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
 
     internal suspend fun reserveWebSearch(caller: SessionRuntime, callId: CallId): Boolean {
@@ -288,6 +301,7 @@ class SessionHub(
         }
         register(runtime)
         attachMcp(runtime, fresh = true)
+        crons.attach(runtime)
         return runtime
     }
 
@@ -572,7 +586,11 @@ class SessionHub(
         // 根会话重新接上 MCP（快照已在日志里）；子会话沿用父会话的调用口（父会话先于子会话打开）
         runtime.worktrees.resumeBinding()
         val origin = runtime.state.value.origin
-        if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
+        if (origin == null) {
+            attachMcp(runtime, fresh = false)
+            // 重开会话 = 恢复未过期的定时任务（过期的在这里结案）；任务本身从日志折叠里来
+            crons.attach(runtime)
+        } else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
         if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
@@ -616,7 +634,8 @@ class SessionHub(
             store, header,
             created = copied.first().event as dev.min.agent.spi.SessionCreated,
             deps, scope,
-            initial = copied.drop(1).map { it.event } + branched,
+            // 定时任务是会话级的，不跟着分支走（否则同一条提示词会被原会话与分支各触发一次）：在分支日志里把它们逐个取消
+            initial = copied.drop(1).map { it.event } + branched + s.crons.filter { it.active }.map { dev.min.agent.spi.CronCancelled(it.id) },
             // 快照全在复制来的事件里，不重读磁盘（重读会被磁盘上的中途变化带偏，前缀对不上）
             loadMemory = false, loadSettings = false, loadSkills = false, hub = this,
             runStartHooks = false,
@@ -628,6 +647,7 @@ class SessionHub(
         }
         // 根会话接上 MCP（快照已在日志里，与 open 同一套）；检查点的回收根给新会话登记一份（复用 Checkpointer.retain）
         attachMcp(runtime, fresh = false)
+        crons.attach(runtime)
         runtime.checkpointer.retainAfterTurn()
         return runtime
     }
@@ -917,6 +937,7 @@ class SessionHub(
         watched -= id
         quietReports.removeIf { it.first == id }
         teams.forget(id)
+        crons.detach(id)
         runtimes.remove(id)
         synchronized(summaryLock) {
             runningIds -= id

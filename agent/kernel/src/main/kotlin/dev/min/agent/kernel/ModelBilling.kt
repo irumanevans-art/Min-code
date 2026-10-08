@@ -12,7 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
-internal class BudgetExceeded : IllegalStateException("会话已达到 --max-budget-usd，或缺少可核对的 USD 定价。")
+internal class BudgetExceeded(message: String = "会话已达到 --max-budget-usd，或缺少可核对的 USD 定价。") : IllegalStateException(message)
 
 /** 用同一出口计价和限时，避免审查、提取或摘要偷偷绕过会话限制。 */
 internal class ModelBilling(private val rt: SessionRuntime) {
@@ -29,6 +29,12 @@ internal class ModelBilling(private val rt: SessionRuntime) {
         suspend fun collect() {
             val pricing = model.profile.pricing
             if (rt.deps.maxBudgetUsd != null && (exceeded() || pricing == null || pricing.currency != "USD")) throw BudgetExceeded()
+            // 定时任务的这次运行有自己的单次上限：花到了、或这个模型没有 USD 价格（花费无法核对）就不再发请求
+            rt.cronRun?.let { run ->
+                if (run.problem(rt.state.value) != null || pricing == null || pricing.currency != "USD") {
+                    throw BudgetExceeded("定时任务这次运行已到花费上限（${money(run.limitUsd)}），或缺少可核对的 USD 定价。")
+                }
+            }
             val finished = withTimeoutOrNull(rt.deps.modelTimeoutMs) {
                 model.client.stream(request.copy(timeoutMs = rt.deps.modelTimeoutMs)).collect { event ->
                     if (event is ModelStreamEvent.Completed) {
@@ -42,6 +48,6 @@ internal class ModelBilling(private val rt: SessionRuntime) {
             if (finished == null) throw ModelException(ModelFailureKind.Network, "模型请求超时", beforeFirstByte = false)
         }
         // 有预算时串行检查与扣账，避免同一会话的多个辅助请求同时读到尚未花费的余额。
-        if (rt.deps.maxBudgetUsd == null) collect() else lock.withLock { collect() }
+        if (rt.deps.maxBudgetUsd == null && rt.cronRun == null) collect() else lock.withLock { collect() }
     }
 }

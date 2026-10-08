@@ -97,6 +97,13 @@ class SessionRuntime private constructor(
     @Volatile
     internal var resumeBasis: ResumeBasis? = null
 
+    /**
+     * 正在跑的那次定时任务运行的花费记账（[CronEngine] 在触发时立、空闲时清）。模型请求发出前 [ModelBilling] 要看它：
+     * 花到上限就不再发。null = 当前没有定时运行在记账
+     */
+    @Volatile
+    internal var cronRun: CronRun? = null
+
     /** 子会话的模型请求要过 Hub 的并发闸（手机上同时流式的子 agent 有上限）；根会话为 null，不受限 */
     @Volatile
     internal var requestGate: Semaphore? = null
