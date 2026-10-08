@@ -29,16 +29,40 @@ private val WORKTREE_DISCARDS = setOf(DiscardedField.Decision, DiscardedField.Re
  * 原文改了，只改这张表。出处行号指 `research/glm/cache/cc/hooks.md`。
  *
  * 表里没有的事件 = 原文没说丢弃，输出按各自的决策控制处理。
+ * Elicitation / ElicitationResult 原文也丢 systemMessage 与 continue（:3421、:3468），但它们的样本还挂着
+ * 「等 MCP elicitation」，这里先不动，等那条线接上时一起加。
  */
 internal val HOOK_OUTPUT_DISCARDS: Map<HookEvent, Set<DiscardedField>> = mapOf(
+    // :1282 每个退出码都丢 JSON 输出字段（systemMessage / continue / additionalContext…），退出码与 stderr 也忽略（:882）
+    HookEvent.Setup to ALL_OUTPUT,
+    // :1321 无决策控制，JSON 输出字段丢弃；退出码忽略（:895）
+    HookEvent.InstructionsLoaded to ALL_OUTPUT,
+    // :1487 只认 displayContent（留在 specificOutput 里），不能阻断；systemMessage 与 continue 丢弃
+    HookEvent.MessageDisplay to setOf(DiscardedField.Decision, DiscardedField.Reason, DiscardedField.Continue,
+        DiscardedField.SystemMessage),
+    // :2445 decision:block / exit 2 取消建任务（决定与理由保留）；continue:false 忽略，Claude 继续工作
+    HookEvent.TaskCreated to setOf(DiscardedField.Continue),
+    // :2627、:862 输出与退出码全部忽略（terminalSequence 除外——它不进裁决，引擎本来就不带）
+    HookEvent.StopFailure to ALL_OUTPUT,
     // :2339 通知 hook 不能把会话停下，也不能给用户塞 systemMessage；terminalSequence 仍有效
     HookEvent.Notification to setOf(DiscardedField.Continue, DiscardedField.SystemMessage),
+    // :2770 只认阻断决定；reason 接受但不展示、阻断不给人与模型任何消息（exit 2 的 stderr 也一样）；systemMessage / continue 丢弃
+    HookEvent.ConfigChange to setOf(DiscardedField.Reason, DiscardedField.Continue, DiscardedField.SystemMessage),
+    // :2848 不能阻断已完成的加目录，continue 丢弃；systemMessage 是否给 Claude 看取决于来源，由内核按 target 处理
+    HookEvent.DirectoryAdded to setOf(DiscardedField.Continue),
     // :2805 CwdChanged 读 watchPaths 与 systemMessage（只通知人），丢弃 continue；无决策控制
     HookEvent.CwdChanged to setOf(DiscardedField.Decision, DiscardedField.Reason, DiscardedField.Continue,
         DiscardedField.Context, DiscardedField.UpdatedInput),
+    // :2928 FileChanged 读 watchPaths 与 systemMessage，丢弃 continue；不能阻断
+    HookEvent.FileChanged to setOf(DiscardedField.Continue),
     // :2938、:2998 只认成功与否和返回的路径；systemMessage 与 continue 丢弃
     HookEvent.WorktreeCreate to WORKTREE_DISCARDS,
     HookEvent.WorktreeRemove to WORKTREE_DISCARDS,
+    // :3055 阻止压缩之外 systemMessage / continue 丢弃
+    HookEvent.PreCompact to setOf(DiscardedField.Continue, DiscardedField.SystemMessage),
+    // :3074 无决策控制，拦不住压缩结果；systemMessage / continue 丢弃
+    HookEvent.PostCompact to setOf(DiscardedField.Decision, DiscardedField.Reason, DiscardedField.Continue,
+        DiscardedField.SystemMessage),
     // :3338 无决策控制，JSON 输出字段全丢，只做清理（stderr 仍给用户看，所以错误保留）
     HookEvent.SessionEnd to (ALL_OUTPUT - DiscardedField.NonBlockingError),
 )

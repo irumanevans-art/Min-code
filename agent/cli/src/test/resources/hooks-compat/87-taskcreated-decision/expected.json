@@ -16,6 +16,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§TaskCreated decision control：exit 2 或 decision:block 取消建任务并把消息还给 Claude 作工具错误；continue:false 被忽略、Claude 继续工作（:2445–2450）。",
-  "pendingFix": "原文：decision:block 取消建任务，continue:false 被忽略、Claude 继续工作（:2445–2450）。引擎现在：continue:false 会停回合。",
   "minTrigger": "none"
 }
