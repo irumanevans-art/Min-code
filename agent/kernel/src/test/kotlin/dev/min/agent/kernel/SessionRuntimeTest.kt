@@ -159,9 +159,32 @@ class SessionRuntimeTest {
         rt.awaitIdle()
 
         assertEquals(0, ran)
-        val result = model.requests[1].messages[2].parts.single() as ToolResultPart
+        // 用户写的说明不进 tool_result（官方说明：tool_result 里的文字会被当作不可信内容），而是紧随其后的独立用户文本块
+        val parts = model.requests[1].messages[2].parts
+        val result = parts.first() as ToolResultPart
         assertTrue(result.isError)
-        assertTrue((result.content.single() as TextPart).text.contains("别动这个文件"))
+        val resultText = (result.content.single() as TextPart).text
+        assertTrue(resultText, resultText.startsWith("用户拒绝了这次调用。") && !resultText.contains("别动这个文件"))
+        assertEquals(listOf(TextPart("用户拒绝了你刚才的 Write 调用，并留言：别动这个文件")), parts.drop(1))
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a denial without a note leaves no user text and tells the model not to retry as is`() = run {
+        val write = FakeTool("Write", WRITES) { ToolResult(text("写好了")) }
+        val model = ScriptedModel(reply(call("c1", "Write"), stop = StopReason.ToolUse), reply(TextPart("好的，不改")))
+        val rt = newSession(model, listOf(write))
+        rt.send(msg(), text("改一下"))
+
+        val waiting = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
+        rt.answerApproval((waiting.phaseOf(CallId("c1")) as CallPhase.AwaitingApproval).approvalId, ApprovalChoice.Deny())
+        rt.awaitIdle()
+
+        val parts = model.requests[1].messages[2].parts
+        assertEquals(1, parts.size)
+        val result = parts.single() as ToolResultPart
+        assertTrue(result.isError)
+        assertEquals("用户拒绝了这次调用。不要原样重试，换个做法或先问清楚。", (result.content.single() as TextPart).text)
         assertLogIsTruth(rt)
     }
 
