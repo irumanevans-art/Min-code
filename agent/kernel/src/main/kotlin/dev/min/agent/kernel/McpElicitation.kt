@@ -87,7 +87,7 @@ private fun elicitationResult(action: String, content: JsonObject? = null) = bui
 }
 
 internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params: JsonObject?, callId: CallId? = null): JsonObject {
-    if (!deps.canAnswerMcpElicitation || state.value.settings.mode == PermissionMode.DontAsk) return elicitationResult("decline")
+    if (state.value.origin?.workflow == true || !deps.canAnswerMcpElicitation || state.value.settings.mode == PermissionMode.DontAsk) return elicitationResult("decline")
     if (mcpClosed.isCompleted) return elicitationResult("cancel")
     val message = (params?.get("message") as? JsonPrimitive)?.content ?: return elicitationResult("decline")
     val mode = (params["mode"] as? JsonPrimitive)?.content ?: "form"

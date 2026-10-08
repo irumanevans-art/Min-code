@@ -69,10 +69,12 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
     /** 本回合被 UserPromptSubmit 拦下的输入条数 */
     private var blockedInputs = 0
+    private val workflowInputs = mutableListOf<ClientMsgId>()
     private val compactor = Compactor(rt, ::assemble, hooks)
 
     /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
     suspend fun run(trigger: TurnTrigger): Boolean {
+        workflowInputs.clear()
         val turnId = TurnId(deps.ids.next("turn"))
         val startedAt = deps.clock.nowMs()
         rt.commit(listOf(TurnStarted(turnId, trigger)), Durability.Sync)
@@ -90,7 +92,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     val checkpoint = rt.checkpointer.begin(this, turnId)
                     tools.gate = checkpoint
                     try {
-                        loop(turnId)
+                        if (!runSavedWorkflows(turnId, trigger)) loop(turnId)
                         checkpoint?.await()
                     } finally {
                         // 本回合编辑记录里的内容登记进回收的根：会话就此结束的话，最后一轮的改动也得撤得回
@@ -125,6 +127,29 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             }
             false
         }
+    }
+
+    private suspend fun runSavedWorkflows(turnId: TurnId, trigger: TurnTrigger): Boolean {
+        val events = rt.state.value.workflowEvents
+        val requested = events.filterIsInstance<dev.min.agent.spi.WorkflowRequested>().filter { it.input in workflowInputs }
+        val interrupted = if (requested.isEmpty() && trigger == TurnTrigger.Resume) {
+            val completed = events.filterIsInstance<dev.min.agent.spi.WorkflowRunCompleted>().map { it.runId }.toSet()
+            events.filterIsInstance<dev.min.agent.spi.WorkflowRunStarted>().lastOrNull { it.runId !in completed }
+        } else null
+        val calls = requested.map { request -> request.input to kotlinx.serialization.json.buildJsonObject {
+            put("source", kotlinx.serialization.json.JsonPrimitive(request.source))
+            request.args?.let { put("args", it) }
+        } } + listOfNotNull(interrupted?.let { run -> ClientMsgId("workflow-resume:${run.runId}") to kotlinx.serialization.json.buildJsonObject {
+            put("source", kotlinx.serialization.json.JsonPrimitive(run.source)); put("resume_run", kotlinx.serialization.json.JsonPrimitive(run.runId))
+            run.args?.let { put("args", it) }
+        } })
+        if (calls.isEmpty()) return false
+        for ((input, raw) in calls) {
+            val call = ToolCallPart(dev.min.agent.protocol.CallId(deps.ids.next("workflow_call")), "Workflow", raw)
+            rt.commit(listOf(dev.min.agent.spi.WorkflowCallIssued(input, turnId, MessageId(deps.ids.next("msg")), call)), Durability.Sync)
+            tools.executeAll(turnId, listOf(call))
+        }
+        return interrupted != null || workflowInputs.all { input -> requested.any { it.input == input } }
     }
 
     /** 用户手动压缩的回合：只做摘要，不让模型回答；收件箱里的输入留给下一回合 */
@@ -210,6 +235,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             val events = pending.map { InputPromoted(it.clientMsgId, MessageId(deps.ids.next("msg"))) }
             val committed = rt.commitIf(events, Durability.Sync) { s -> s.inbox.map { it.clientMsgId }.containsAll(ids) }
             if (committed != null) {
+                workflowInputs += pending.map { it.clientMsgId }
                 val contexts = events.flatMap { promoted ->
                     screened[promoted.clientMsgId].orEmpty().map { HookContextAdded(HookContextTarget.Message(promoted.messageId), HookEvent.UserPromptSubmit.name, it) }
                 }
@@ -427,7 +453,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val origin = state.origin
         val environment = promptBasisOf(state, deps).let { Environment(it.platform, it.cwd, it.date) }
         val harness = HarnessProfile(profile.family, profile.editStyle)
-        val tools = availableTools(state, deps)
+        val tools = availableTools(state, deps, runtime = rt)
         val specs = tools.map { ToolSpec(it.name, it.description(harness), it.inputSchema) }
         return RequestAssembler.assemble(
             profile = profile,
@@ -511,9 +537,10 @@ internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
         )
 
 /** 本会话能用的工具，保持 [KernelDeps.tools] 的固定顺序。新开的子 agent 按定义取子集；分身与根会话是全部 */
-internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable): List<Tool<*>> {
+internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable, runtime: SessionRuntime? = null): List<Tool<*>> {
     val allowed = state.origin?.tools
-    val builtin = (if (allowed == null) deps.tools else deps.tools.filter { it.name in allowed })
+    val builtins = deps.tools + if (runtime != null && deps.workflowEngine != null && state.origin?.workflow != true) listOf(WorkflowTool(runtime)) else emptyList()
+    val builtin = (if (allowed == null) builtins else builtins.filter { it.name in allowed })
         .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
     val resourceServers = state.visibleMcpResourceServers(deps)

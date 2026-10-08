@@ -35,6 +35,8 @@ data class DelegateRequest(
     val model: String? = null,
     val background: Boolean = true,
     val name: String? = null,
+    /** 工作流节点不能半途向人索取输入；权限审批仍照常挂到 Hub 根会话。 */
+    val workflow: Boolean = false,
 )
 
 sealed interface DelegateResult {

@@ -467,7 +467,8 @@ class SessionRuntime private constructor(
     suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue, scanMcpMentions: Boolean = false): Boolean = inputPrepareLock.withLock {
         if (clientMsgId in state.value.seenInputs) return@withLock false
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
-        commitIf(listOf(InputReceived(clientMsgId, prepared, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
+        val workflow = prepareSavedWorkflow(clientMsgId, prepared)
+        commitIf(listOfNotNull(workflow, InputReceived(clientMsgId, prepared, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
             ?: return false
         startTurnIfIdle(TurnTrigger.User)
         true

@@ -80,7 +80,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     @Volatile
     private var registry: Map<String, Tool<*>> = currentTools()
 
-    private fun currentTools(): Map<String, Tool<*>> = availableTools(rt.state.value, deps, rt.mcpCaller).associateBy { it.name }
+    private fun currentTools(): Map<String, Tool<*>> = availableTools(rt.state.value, deps, rt.mcpCaller, rt).associateBy { it.name }
     private val parallelism = Semaphore(deps.maxParallelTools)
 
     /**
@@ -248,9 +248,14 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     // alwaysAsk 先于权限引擎：模式（含 bypass）与规则都不能替人批准这类调用
-    private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict =
-        if (p.tool.traits.alwaysAsk) Verdict.Ask
-        else PolicyEngine.evaluate(ask, p.tool.traits.readOnly, policyContext())
+    private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict {
+        if (p.tool.traits.alwaysAsk) return Verdict.Ask
+        val verdict = PolicyEngine.evaluate(ask, p.tool.traits.readOnly, policyContext())
+        if (p.tool !is WorkflowTool || verdict is Verdict.Deny) return verdict
+        if (PolicyEngine.askRuleHit(ask, policyContext()) != null) return Verdict.Ask
+        if (verdict is Verdict.Allow && verdict.by is DecidedBy.Rule) return verdict
+        return if (rt.workflowApproved((p.input as WorkflowInput).hash)) Verdict.Allow(DecidedBy.Mode(rt.state.value.settings.mode)) else Verdict.Ask
+    }
 
     private var parsedFromRules: List<RuleEntry>? = null
     private var parsedFromSession: List<RuleEntry>? = null
@@ -303,12 +308,12 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         }
         val ask = askFor(ready)
         val policy = verdictFor(ready, ask)
-        val initial = merge(ready, ask, hook)
+        val initial = if (ready.tool is WorkflowTool && policy == Verdict.Ask) Verdict.Ask else merge(ready, ask, hook)
         val hardDenied = policy is Verdict.Deny && (policy.by as? DecidedBy.Rule)?.source == "autoMode.hard_deny"
         val proseHardDeny = rt.state.value.autoReviewSettings.config.hardDeny.any {
             PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
         }
-        val verdict = if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
+        val verdict = if (ready.tool !is WorkflowTool && (policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
             val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
             // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
             if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
@@ -316,7 +321,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         when (verdict) {
             is Verdict.Deny -> outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
             is Verdict.Allow -> execute(turnId, ready)
-            Verdict.Ask -> when (val answer = permissionRequest(turnId, ready, allowDecisions = rt.state.value.settings.mode != PermissionMode.Auto)) {
+            Verdict.Ask -> when (val answer = permissionRequest(turnId, ready, allowDecisions = ready.tool !is WorkflowTool && rt.state.value.settings.mode != PermissionMode.Auto)) {
                 is PermissionAnswer.Denied -> {
                     // hook 替人拒了：先落卡再落答（同一次提交，折叠成已决议），不发审批卡
                     resolveByHook(turnId, ready, ApprovalChoice.Deny(answer.note))
@@ -613,7 +618,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override val tasks: TaskBoard get() = rt.state.value.taskBoard()
-        override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
+        override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome =
+            if (rt.state.value.origin?.workflow == true) QuestionOutcome.Declined else rt.askUser(callId, questions)
         override suspend fun preserve(content: ByteArray): dev.min.agent.spi.ContentId? = if (turnId == null) null else rt.preserve(content)
     }
 

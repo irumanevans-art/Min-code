@@ -641,7 +641,7 @@ class SessionHub(
             return DelegateResult.Rejected("子 agent 最多嵌套 ${limits.maxDepth} 层，这里不能再委派了。直接自己做。")
         }
         val running = runtimes.values.count { it.state.value.origin != null && it.state.value.turn != null }
-        if (running >= limits.maxRunningChildren) {
+        if (!request.workflow && running >= limits.maxRunningChildren) {
             return DelegateResult.Rejected("已经有 $running 个子 agent 在跑，达到上限。等其中一些完成后再委派，或自己做。")
         }
         val type = request.agentType?.trim()?.takeIf { it.isNotEmpty() } ?: BuiltinAgents.GENERAL_PURPOSE
@@ -664,6 +664,7 @@ class SessionHub(
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = FORK_AGENT_TYPE, fork = true,
                 depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
+                workflow = request.workflow || parentOrigin?.workflow == true,
             )
             initial += forkSeed(ps, callId, request.prompt)
             initial += forkInheritance(ps, callId)
@@ -688,6 +689,8 @@ class SessionHub(
                 // 定义里 mcp__ 开头的写法单独存：MCP 工具运行时才知道有哪些（写了 tools 却没列 MCP 工具 = 一个都不给）
                 mcpTools = definition.tools?.filter { it.startsWith(MCP_PREFIX) },
                 mcpDenied = definition.disallowedTools.filter { it.startsWith(MCP_PREFIX) },
+                // 禁止中途提问是整棵工作流树的约束，不能通过再委派或分身绕开。
+                workflow = request.workflow || parentOrigin?.workflow == true,
             )
         }
         val background = request.background || definition?.alwaysBackground == true
@@ -725,7 +728,8 @@ class SessionHub(
             // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载（来历里的 omitMemory 管着，重开后同样）；分身照常——它接着父会话的活干
             loadMemory = isolated == null && definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
         )
-        child.requestGate = childGate
+        // 工作流自己的节点闸同时管排队与模型请求，不能再被默认 Hub 的 3 个流式槽压回去。
+        child.requestGate = if (request.workflow) null else childGate
         mcp.attachInherited(child, parent)
         register(child)
         parent.commit(
@@ -769,6 +773,17 @@ class SessionHub(
         } finally {
             awaitedInForeground -= child.sessionId
         }
+    }
+
+    internal suspend fun retryWorkflow(parent: SessionRuntime, childId: SessionId, prompt: String): DelegateResult {
+        val child = requireNotNull(get(childId))
+        require(child.state.value.origin?.workflow == true && child.state.value.origin?.parent == parent.sessionId)
+        val previousTurn = child.state.value.lastTurn?.turnId
+        awaitedInForeground += childId
+        child.receive(ClientMsgId(deps.ids.next("workflow_retry")), listOf(TextPart(prompt)), Delivery.Queue,
+            InputOrigin.Parent(parent.sessionId), TurnTrigger.User)
+        child.state.first { it.turn != null || it.lastTurn?.turnId != previousTurn }
+        return awaitForeground(parent, child)
     }
 
     /** 子 agent 守父会话的规矩：父会话的规则快照，连同父会话里「总是允许」攒下的规则（来源仍记 session） */

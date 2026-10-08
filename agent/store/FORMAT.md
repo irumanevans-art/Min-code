@@ -150,6 +150,21 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
   `ToolResult.effects` 的 `mcp_load_tools` 与 ToolOutcome 同一次提交生成该事件；下一次请求追加加载的 schema，
   内置、资源、alwaysLoad、ToolSearch 和 StructuredOutput 已有前缀保持原样。压缩不清除；子 agent / 分身继承模式和顺序。
 
+## M5 Workflow（2026-10-08，v1 增量）
+
+- `workflow_requested`：input（用户消息 id）、name、冻结的 source、可空 args；发现保存命令时与 InputReceived 同步提交。
+- `workflow_call_issued`：input、turnId、messageId、call；用户显式执行产生工具消息，不伪造模型请求或用量。
+- `workflow_approved`：cwd、SHA-256 hash；授权只对同项目、同内容生效。Android 宿主额外在 App 私有目录持久保存。
+- `workflow_run_started`：runId、name、source、hash、args、concurrency（默认 16，Android 宿主指定 4）、attempts（默认 5）；恢复沿用冻结值。
+- `workflow_node_started`：runId、index（启动序，从 0 开始）、prompt、options；新的 started 废弃同序号的旧完成结果。
+- `workflow_node_completed`：runId、index、result（JSON 值）、isError（默认 false）；同步持久后才交回 JS。错误对象有 error/message。
+- `workflow_node_replayed`：runId、index；已完成节点直接复用日志结果，不产生新子会话。
+- `workflow_progress`：runId、kind（phase/log）、message；只给人看，不进入模型历史。
+- `workflow_run_completed`：runId、result；未完成 run 可在同会话恢复。节点全部采用启动序回放，prompt/options 改变或失败时废弃后续缓存。
+- `subagent_origin` 新增 workflow（默认 false）；工作流子会话不接受人类输入提问，仍接受工具权限审批。
+
+这些新增 sealed 事件只能由支持 Workflow 的读端打开；格式字段只增不改。
+
 ## M5 worktree（2026-10-07）
 
 - `cwd_changed`：`oldCwd`、`cwd`、可空 `worktree`、默认空 `memoryFiles`、可空 `rules` / `additionalDirectories`。后两者为 null 表示保留；空列表表示清空。校验旧目录，折叠当前 cwd 与 binding；原创建环境不改。新增记忆另折叠到 cwdMemory 供隔离子会话继承；目录差异与指令在工具调用中挂当前助手消息的工具结果 system-reminder（下一次模型请求立即可见）；空闲时挂下一条输入。
