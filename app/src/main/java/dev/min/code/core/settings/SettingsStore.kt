@@ -54,6 +54,7 @@ private val KEY_GUEST_CONFIG_SECRETS = booleanPreferencesKey("guest_config_secre
 private val KEY_INJECT_SHELL_CREDENTIALS = booleanPreferencesKey("inject_shell_credentials")
 private val KEY_SHARE_DEVICE_STORAGE = booleanPreferencesKey("share_device_storage")
 private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
+private val KEY_TEAM_MAX_CONCURRENT = intPreferencesKey("team_max_concurrent")
 private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
 private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
 private val KEY_DEVICE_WRITE_ALLOWLIST = stringSetPreferencesKey("device_write_allowlist")
@@ -295,6 +296,11 @@ data class AppSettings(
      */
     val controlDevice: Boolean = false,
     /**
+     * Min Agent 的 agent 团队同时运行的成员数（设置项 `teamMaxConcurrent`，M5 决定 2）：默认 3，超出的成员排队。
+     * 超过 8 要用户明确确认才写得进来（[SettingsStore.setTeamMaxConcurrent]）。内核在 App 启动时读一次，改了下次启动生效
+     */
+    val teamMaxConcurrent: Int = dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
+    /**
      * Min Agent（自研内核的第三个会话引擎）的实验开关。release 默认关、debug 默认开（M2-B 设计 §10.2 拍板 1）：
      * 新引擎首发的通行做法，真机门槛过了再议是否改默认。**关着时一切 Min 入口都不出现**——开始面板的分段、
      * 抽屉里的 Min 会话、设置里的 Min 段。关开关时 Min 引擎整个停下（在跑的回合被中断、会话卸载，见 `AgentSessionRegistry` 对 Disabled 的处理）：入口藏起来之后不留看不见的回合；
@@ -531,6 +537,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
             shareDeviceStorage = p[KEY_SHARE_DEVICE_STORAGE] ?: false,
             controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
+            teamMaxConcurrent = p[KEY_TEAM_MAX_CONCURRENT]?.takeIf { it >= 1 } ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
             minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
             lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
             deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
@@ -848,6 +855,18 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setControlDevice(enabled: Boolean) =
         context.dataStore.edit { it[KEY_CONTROL_DEVICE] = enabled }
+
+    /**
+     * 改团队并发上限。先过 [dev.min.agent.kernel.TeamLimits.resolve]：超过 8 且调用方还没让用户确认，就不写、把
+     * 「需要确认」原样交回，界面弹确认后带 [confirmedAboveCap] = true 再调；不合法的值也不写
+     */
+    suspend fun setTeamMaxConcurrent(value: Int, confirmedAboveCap: Boolean = false): dev.min.agent.kernel.TeamLimits.Setting {
+        val setting = dev.min.agent.kernel.TeamLimits.resolve(value, confirmedAboveCap)
+        if (setting is dev.min.agent.kernel.TeamLimits.Setting.Accepted) {
+            context.dataStore.edit { it[KEY_TEAM_MAX_CONCURRENT] = setting.value }
+        }
+        return setting
+    }
 
     suspend fun setMinAgentEnabled(enabled: Boolean) =
         context.dataStore.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }

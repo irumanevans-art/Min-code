@@ -147,7 +147,11 @@ class MinAgentEngine(
         store = store,
         deps = kernelDeps,
         scope = scope,
-        limits = HubLimits(maxDepth = 3, maxRunningChildren = 10, maxConcurrentChildRequests = 3),
+        limits = HubLimits(
+            maxDepth = 3, maxRunningChildren = 10, maxConcurrentChildRequests = 3,
+            // 设置项 teamMaxConcurrent：启动时读一次（改了下次启动生效）；设置还没读出来时用默认值
+            teamMaxConcurrent = settings.snapshot?.teamMaxConcurrent ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
+        ),
     )
 
     /** 供应商档变了的信号：模型表、「供应商已删除」跟着重算。带 replay，新订阅者立刻拿到一个 */
@@ -196,8 +200,19 @@ class MinAgentEngine(
         },
     )
 
+    /** 定时任务的定时器：心跳驱动，不保证精确，App 被杀就不跑（见 [HeartbeatScheduler]） */
+    internal val cronHeartbeat = HeartbeatScheduler()
+
     init {
         scope.launch { tasks.watch() }
+        hub.startScheduling(cronHeartbeat)
+        // 心跳由引擎自己在进程存活期间打；进程能活多久是前台服务的事
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(HeartbeatScheduler.HEARTBEAT_MS)
+                cronHeartbeat.beat()
+            }
+        }
         // 进后台、手上没有在跑的回合：没人用的 MCP 连接现在就关，不等 2 分钟——进程一旦被系统冻结，linger 的定时器不走，
         // stdio 服务器的子进程就一直挂在 proot 里。回合在后台跑完的那一刻同样触发（running 变空）
         foreground?.let { fg ->
