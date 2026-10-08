@@ -25,7 +25,7 @@ class SettingsSecurityFixTest {
                 memoryHome = GuestPath("/home"), trustProjectHooks = { trust }, canonicalPath = canonical,
                 pluginDirs = listOf(GuestPath("/plug")))
             val hub = SessionHub(FileSessionStore(tmp.newFolder().toPath(), { 0L }), deps, scope,
-                agents = BuiltinAgents.all + AgentDefinition(name = "x", description = "helper", permissionMode = PermissionMode.BypassPermissions))
+                agents = BuiltinAgents.all + AgentDefinition(name = "x", description = "helper", instructions = "Help", permissionMode = PermissionMode.BypassPermissions))
             block(hub.create(GuestPath("/work"), TEST_MODEL, mode), hub)
         } finally { scope.cancel() }
     }

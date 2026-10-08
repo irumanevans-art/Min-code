@@ -108,6 +108,16 @@ class ProotExecTest {
         catch (_: IllegalArgumentException) {}
         assertFalse(host.started.isCompleted)
     }
+    @Test fun pluginValuesReachProcessEnvironmentWithoutEnteringScript() = runBlocking {
+        val host = FakeHost(complete = true)
+        val secret = "plugin-proot-private-fixture"
+        ProotExec(base(), host).run(command.copy(env = mapOf("MIN_PLUGIN_0_ENV_0" to secret, "MIN_PLUGIN_0_ARG_1" to secret)), ExecOptions(1000))
+        assertEquals(secret, host.context.env["MIN_PLUGIN_0_ENV_0"])
+        assertEquals(secret, host.context.env["MIN_PLUGIN_0_ARG_1"])
+        assertFalse(host.context.command.contains(secret))
+        assertFalse(host.context.env.containsKey("ANTHROPIC_API_KEY"))
+        assertFalse(host.log.readText().contains(secret))
+    }
     @Test fun clippedOutputKeepsHeadTailAndFullFile() = runBlocking {
         val text = "HEAD" + "x".repeat(3000) + "TAIL"
         val host = FakeHost(text = text, complete = true)

@@ -32,7 +32,8 @@ internal class PluginParser(internal val directories: Set<String>) {
                 is JsonObject -> if (key == "commands") JsonObject(value.filter { (name, command) ->
                     val source = (command as? JsonObject)?.strOrNull("source")
                     source == null || "commands.$name.source" to source !in invalid
-                }) else value
+                }) else if (key == "experimental") JsonObject(value.mapValues { (subkey, item) -> filter("$key.$subkey", item) ?: JsonArray(emptyList()) })
+                    else value
             }
             return JsonObject(raw.mapValues { (key, value) -> filter(key, value) ?: JsonArray(emptyList()) })
         }
