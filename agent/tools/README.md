@@ -21,7 +21,7 @@
 | NotebookEdit | `notebook_path`（绝对，.ipynb）、`cell_id`、`new_source`、`cell_type`、`edit_mode`（replace 默认 / insert / delete） | 先读后写（同 Edit 的 lastSeen 机制）；按 id 定位单元，找不到时列出现有 id；只替换 / 插入 / 删除目标单元那一段文本，其余字节原样保留（缩进、键顺序、别的单元的输出）；replace code 单元清空 outputs 与 execution_count；insert 在 nbformat ≥ 4.5 时生成 8 位十六进制 id。回显改动后的那个单元 |
 | Glob | `pattern`、`path`（可选） | 绝对路径逐行，修改时间从新到旧，最多 100 条，超出注明；无结果一句「没有匹配的文件」 |
 | Grep | `pattern`、`path`、`glob`、`output_mode`、`-i`、`-n`、`-C`、`multiline`、`head_limit`（默认 250） | files_with_matches：路径列表；count：`路径:命中数`；content：`路径:行号:内容`，上下文行用 `-`，不相邻的组之间 `--`。超 head_limit 注明；命中行超 500 字符截断；无命中「没有匹配」 |
-| AskUserQuestion | `questions`：1–4 题，每题 `question`、`header`、2–4 个 `options`（`label` + `description`）、`multiSelect` | 「用户回答了你的问题：」+ 每题一行「问题 → 选择」，用户自填的「其他」标明出处；拒答与 dontAsk 模式各一句说明（不是错误）。不走审批，答复经持久事件送达 |
+| AskUserQuestion | `questions`：1–4 题，每题 `question`、`header`、2–4 个 `options`（`label` + `description`）、`multiSelect` | 工具结果只有一句「用户已回答」；答案（「用户回答了你的问题：」+ 每题一行「问题 → 选择」，自填的「其他」标明出处）放在 `ToolResult.userText`，模型视图作为紧随 tool_result 的独立用户文本块送出；拒答与 dontAsk 模式各一句说明（不是错误）。不走审批，答复经持久事件送达 |
 | EnterPlanMode | 无 | 一句「已进入计划模式：只能读与提问……用 ExitPlanMode 提交计划」，结果声明切到 plan（内核落盘）；已在计划模式时只提醒、不再切换 |
 | ExitPlanMode | `plan`（Markdown） | 总是要人批准（含 bypass），审批卡片摘要即计划正文。获批：「计划已获批准，已退出计划模式（回到 X 模式）」，结果声明回到进入前的模式（没有记录则 default）；不在计划模式时获批不动模式。被拒：内核给出用户的说明，仍在计划模式 |
 | Agent | `description`、`prompt` 必填；`subagent_type`（默认 general-purpose；Explore / Plan 只读；`fork` = 分身）、`model`、`run_in_background`（默认 true）、`name` | 后台：「已在后台启动……完成时你会收到报告，在那之前不要假设它的结果」；前台：`<subagent-report …>` 报告全文（结果带 ReportDelivered，内核据此不在恢复时重复补发）；被拒（类型不存在、超深度 / 数量上限、分身再委派）是写给模型的错误 |
