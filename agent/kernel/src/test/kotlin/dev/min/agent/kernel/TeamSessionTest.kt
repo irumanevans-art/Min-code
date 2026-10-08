@@ -644,7 +644,7 @@ class TeamSessionTest {
     }
 
     @Test
-    fun `a turn a peer's message started reports to the leader's inbox without waking it, a leader message still does`() = run {
+    fun `a turn started by a peer message reports to the leader inbox without waking it, a leader message still does`() = run {
         val model = leaderBuilds("alice", "bob")
         val h = hub(model)
         val (leader, members) = quietTeam(h, model)

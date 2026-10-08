@@ -357,7 +357,7 @@ class MinCommandTest {
 
 /** PreModelSwitch 拦下切换时 setModel 不能报成功（小尾巴 hooks-decision）：映射本身在这里钉住，hook 触发的端到端在 cli 的 HooksDecisionKernelTest */
 class ModelSwitchResultTest {
-    @Test fun `no refusal is accepted and a refusal is rejected with the hook's reason`() {
+    @Test fun `no refusal is accepted and a refusal is rejected with the hook reason`() {
         assertEquals(CommandResult.Accepted, modelSwitchResult(null))
         assertEquals(CommandResult.Rejected("Opus 4.6 is retired"), modelSwitchResult("Opus 4.6 is retired"))
     }

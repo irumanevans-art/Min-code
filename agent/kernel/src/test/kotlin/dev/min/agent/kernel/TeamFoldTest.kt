@@ -188,7 +188,7 @@ class TeamFoldTest {
     }
 
     @Test
-    fun `a member cannot steal assign or release somebody else's claim`() {
+    fun `a member cannot steal assign or release a claim somebody else holds`() {
         val state = foldOf(
             created, *joined.toTypedArray(),
             TeamTaskCreated("team1", "1", "甲", by = TEAM_LEAD),
