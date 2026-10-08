@@ -121,6 +121,7 @@ class SessionRuntime private constructor(
 
     internal val worktrees = Worktrees(this)
     private val modelSwitchHooks = ModelSwitchHooks(this)
+    private val promptExpansion = PromptExpansionHooks(this)
     suspend fun enterWorktree(name: String? = null, path: String? = null): dev.min.agent.spi.ToolResult =
         whileIdle { worktrees.enter(name, path) } ?: dev.min.agent.spi.ToolResult(listOf(dev.min.agent.protocol.TextPart(BUSY)), isError = true)
     suspend fun exitWorktree(remove: Boolean = false): dev.min.agent.spi.ToolResult =
@@ -620,6 +621,13 @@ class SessionRuntime private constructor(
         ).jsonObject
         HookDriver(this).run(HookEvent.Notification, type, specific)
     }
+
+    /**
+     * 宿主把用户敲的斜杠命令展开成提示词之后、发送之前调用（hooks.md UserPromptExpansion）。
+     * 返回 null = 照常发送；返回理由 = 被 hook 拦下，不要发送，把理由给人看。additionalContext 已经记进日志，随后发的那条消息自带
+     */
+    suspend fun promptExpansionHooks(expansionType: String, commandName: String, commandArgs: String, commandSource: String?, prompt: String): String? =
+        promptExpansion.run(expansionType, commandName, commandArgs, commandSource, prompt)
 
     // ---- 检查点与回退（检查点与rewind设计 §4） ----
 

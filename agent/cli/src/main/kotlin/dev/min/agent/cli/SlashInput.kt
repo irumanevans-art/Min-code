@@ -33,3 +33,20 @@ internal fun interpretInput(line: String, skills: List<SkillDef>, commands: List
         is SlashResult.McpPrompt -> InputAction.Prompt(r.command, r.arguments)
         is SlashResult.InvalidArguments -> InputAction.Notice(r.message)
     }
+
+/**
+ * 用户敲的斜杠命令展开之后、发送之前，先过 UserPromptExpansion hooks（交互与 `-p` 共用）。
+ * 只有真的展开了的（skill / command / MCP prompt）才触发；普通输入、未知命令不触发。
+ * 返回 null = 照常发送；否则是被拦下的理由，调用方打印后不要发送。
+ * command_name / command_args 取用户敲的那一行（CC 的样例里 prompt 也是原始行）；command_source 取 skill / command 的来源层。
+ */
+internal suspend fun promptExpansionBlock(runtime: dev.min.agent.kernel.SessionRuntime, line: String, action: InputAction): String? {
+    val expanded = (action as? InputAction.Send)?.names?.isNotEmpty() == true || action is InputAction.Prompt
+    if (!expanded) return null
+    val typed = line.trim()
+    val name = typed.removePrefix("/").substringBefore(' ').trim()
+    val args = typed.substringAfter(' ', "").trim()
+    val source = if (action is InputAction.Prompt) "mcp" else
+        runtime.state.value.skills?.entries?.firstOrNull { it.name == name }?.source ?: "user"
+    return runtime.promptExpansionHooks(if (action is InputAction.Prompt) "mcp_prompt" else "slash_command", name, args, source, typed)
+}

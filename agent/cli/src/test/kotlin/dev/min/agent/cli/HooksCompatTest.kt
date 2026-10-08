@@ -72,7 +72,8 @@ class HooksCompatTest {
      * Stop=TurnRunner.kt:266、SessionEnd=SessionHub.kt:787、PreCompact=Compactor.kt:209、PostCompact=Compactor.kt:178、
      * PostToolBatch=ToolExecutor.kt（executeAll 末尾，样本 77 的端到端见 HooksDecisionKernelTest）、
      * TaskCompleted=ToolExecutor.kt（gateTaskCompletion，样本 89 同）、
-     * PreModelSwitch=ModelSwitchHooks.kt（SessionRuntime.changeSettings 的切模型处，样本 113 同；PostModelSwitch 同处，样本 115）。
+     * PreModelSwitch=ModelSwitchHooks.kt（SessionRuntime.changeSettings 的切模型处，样本 113 同；PostModelSwitch 同处，样本 115）、
+     * UserPromptExpansion=SessionRuntime.promptExpansionHooks（宿主 cli 的 Main.say / runHeadless 在展开之后调，样本 65 的端到端见 HooksExpansionHeadlessTest）。
      * 给内核接新事件时更新这份清单：对应 minTrigger:"none" 的样本会开始失败，提醒升级样本并摘掉标记。
      */
     private val KERNEL_FIRED = setOf(
@@ -80,6 +81,7 @@ class HooksCompatTest {
         "PostToolUseFailure", "Notification", "SubagentStart", "SubagentStop", "Stop", "SessionEnd",
         "PreCompact", "PostCompact", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
         "PostToolBatch", "TaskCompleted", "PreModelSwitch", "PostModelSwitch",
+        "UserPromptExpansion",
     )
 
     @Test fun `hooks 每个事件都有输入与决策样本，触发现状标记与内核清单一致`() {

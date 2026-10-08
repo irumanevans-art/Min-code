@@ -449,4 +449,45 @@ class HooksDecisionKernelTest {
         assertEquals(0, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PostModelSwitch") })
         assertEquals(1, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("PreModelSwitch") })
     }
+
+    // ---- UserPromptExpansion（样本 64 / 65） ----
+
+    @Test
+    fun `UserPromptExpansion block returns the reason, stdin carries the command fields (sample 65)`() = run {
+        installSample("65-userpromptexpansion-decision")
+        val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("ok")) })
+        val reason = rt.promptExpansionHooks("slash_command", "example-skill", "arg1 arg2", "plugin", "/example-skill arg1 arg2")
+        assertEquals("This slash command is not available", reason)
+        assertEquals(1, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("UserPromptExpansion") })
+        // 被拦下的展开，hook 给的上下文不留：否则会挂到用户下一条无关的消息上
+        assertTrue(store.events(rt).filterIsInstance<dev.min.agent.spi.HookContextAdded>().none { it.event == "UserPromptExpansion" })
+        assertLogIsTruth(store, rt)
+    }
+
+    @Test
+    fun `UserPromptExpansion input shape and matcher`() = run {
+        installScript("UserPromptExpansion", "cat > \"\$CLAUDE_PROJECT_DIR/exp-input.json\"", matcher = "example-skill")
+        val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("ok")) })
+        assertEquals(null, rt.promptExpansionHooks("slash_command", "other", "", "user", "/other"))
+        assertEquals("matcher 对 command_name，对不上不跑", 0, store.events(rt).filterIsInstance<HooksRan>().size)
+        assertEquals(null, rt.promptExpansionHooks("slash_command", "example-skill", "arg1 arg2", "plugin", "/example-skill arg1 arg2"))
+        val input = kotlinx.serialization.json.Json.parseToJsonElement(Files.readString(work.resolve("exp-input.json"))) as JsonObject
+        fun field(name: String) = (input[name] as JsonPrimitive).content
+        assertEquals("UserPromptExpansion", field("hook_event_name"))
+        assertEquals("slash_command", field("expansion_type"))
+        assertEquals("example-skill", field("command_name"))
+        assertEquals("arg1 arg2", field("command_args"))
+        assertEquals("plugin", field("command_source"))
+        assertEquals("/example-skill arg1 arg2", field("prompt"))
+    }
+
+    @Test
+    fun `UserPromptExpansion exit 2 blocks with stderr, continue false also stops the expansion`() = run {
+        installScript("UserPromptExpansion", "cat > /dev/null; echo 'deploy needs approval' >&2; exit 2")
+        val (rt, _) = session(ScriptedModel { _ -> answer(TextPart("ok")) })
+        assertEquals("deploy needs approval", rt.promptExpansionHooks("slash_command", "deploy", "", "user", "/deploy")?.trim())
+        installScript("UserPromptExpansion", """cat > /dev/null; printf '%s' '{"continue":false,"stopReason":"paused"}'""")
+        val (rt2, _) = session(ScriptedModel { _ -> answer(TextPart("ok")) })
+        assertEquals("paused", rt2.promptExpansionHooks("slash_command", "deploy", "", "user", "/deploy"))
+    }
 }

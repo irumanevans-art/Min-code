@@ -108,6 +108,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
             catch (e: Exception) { System.err.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
         } else emptyList()
         val action = interpretInput(input, defs?.skills.orEmpty(), defs?.commands.orEmpty(), app.skillVars(runtime), prompts)
+        // UserPromptExpansion：展开之后、发送之前；被拦就把理由给人看，不发
+        promptExpansionBlock(runtime, input, action)?.let { System.err.println(it); return false }
         val parts = when (action) {
             is InputAction.Send -> listOf(TextPart(action.text))
             is InputAction.Prompt -> {
