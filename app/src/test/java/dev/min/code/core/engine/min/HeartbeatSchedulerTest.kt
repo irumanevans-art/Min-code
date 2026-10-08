@@ -48,6 +48,30 @@ class HeartbeatSchedulerTest {
         assertEquals(2, calls.get())
     }
 
+    @Test fun `a failing tick is reported to the error hook instead of vanishing`() = runBlocking {
+        val errors = mutableListOf<Throwable>()
+        val scheduler = HeartbeatScheduler(onError = { errors += it })
+        val calls = AtomicInteger()
+        scheduler.start { if (calls.incrementAndGet() == 1) error("日志写不进去") }
+        scheduler.beat()
+        scheduler.beat()
+        assertEquals("失败的那一次留下了线索，成功的不报", 1, errors.size)
+        assertEquals("日志写不进去", errors.single().message)
+        assertEquals(2, calls.get())
+    }
+
+    @Test fun `cancellation is not reported as an error`() = runBlocking {
+        val errors = mutableListOf<Throwable>()
+        val scheduler = HeartbeatScheduler(onError = { errors += it })
+        scheduler.start { throw kotlinx.coroutines.CancellationException("被取消") }
+        try {
+            scheduler.beat()
+        } catch (expected: kotlinx.coroutines.CancellationException) {
+            // 取消照常往外抛
+        }
+        assertTrue(errors.isEmpty())
+    }
+
     @Test fun `a beat that arrives while the previous tick is still running is dropped`() = runBlocking {
         val scheduler = HeartbeatScheduler()
         val entered = CompletableDeferred<Unit>()

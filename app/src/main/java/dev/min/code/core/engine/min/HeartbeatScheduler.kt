@@ -17,7 +17,10 @@ import kotlinx.coroutines.sync.Mutex
  *
  * 纯 Kotlin、没有 Android 依赖，所以能在 JVM 上单测。
  */
-class HeartbeatScheduler : Scheduler {
+class HeartbeatScheduler(
+    /** 一次回调抛了异常（取消除外）时调：宿主在这里留日志。默认什么都不做——类本身不依赖 Android，Log 由宿主传进来 */
+    private val onError: (Throwable) -> Unit = {},
+) : Scheduler {
     @Volatile
     private var onTick: (suspend () -> Unit)? = null
 
@@ -29,12 +32,13 @@ class HeartbeatScheduler : Scheduler {
         return AutoCloseable { if (this.onTick === onTick) this.onTick = null }
     }
 
-    /** 宿主的心跳：没接内核、或上一次回调还没完时什么都不做；回调抛的异常吞掉（取消除外），下次心跳照常 */
+    /** 宿主的心跳：没接内核、或上一次回调还没完时什么都不做；回调抛的异常交给 [onError]（取消除外），下次心跳照常 */
     suspend fun beat() {
         val tick = onTick ?: return
         if (!running.tryLock()) return
         try {
-            catchingNonCancellation { tick() }
+            // 回调出错不能让心跳停掉（下次照常），但也不能悄悄吞掉：留给宿主记日志
+            catchingNonCancellation { tick() }.onFailure(onError)
         } finally {
             running.unlock()
         }

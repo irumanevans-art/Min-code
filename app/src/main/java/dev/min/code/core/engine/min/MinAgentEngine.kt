@@ -203,7 +203,7 @@ class MinAgentEngine(
     )
 
     /** 定时任务的定时器：心跳驱动，不保证精确，App 被杀就不跑（见 [HeartbeatScheduler]） */
-    internal val cronHeartbeat = HeartbeatScheduler()
+    internal val cronHeartbeat = HeartbeatScheduler(onError = { Log.w(TAG, "cron heartbeat tick failed", it) })
     private val cronNotifier = CronNoticeNotifier(context)
 
     init {
