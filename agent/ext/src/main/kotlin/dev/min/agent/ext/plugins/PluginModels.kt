@@ -3,23 +3,6 @@ package dev.min.agent.ext.plugins
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
-/*
- * 插件加载器的接口草案——只活在测试源里（src/main 没有任何插件代码，PluginCompatTest 有探针断言盯着这一点）。
- * 它是 plugin-compat 样本集（src/test/resources/plugin-compat/）的承接面：每个样本的 expected 字段都能映射到
- * 这里的数据类；实现的人把真加载器接上这些形状，样本就能逐个摘 pendingFix。
- *
- * 标注约定：
- *   [原文]  从 cc-plugins-reference.md（下称 PLG）/ cc-plugins-components.md（CMP）/ cc-settings-reference.md
- *           （SET）直接推出，形状不能改；
- *   [设计]  我的取舍，实现者可以改，改了要同步改样本 expected 的映射和 PluginCompatTest 的比对。
- *
- * 原文钉了但样本没单测的跨实例规则（实现时读这几条）：
- *   - 依赖把插件拉起来：被依赖的插件无视 defaultEnabled 直接启用（PLG:204）；
- *   - 两个插件都设同一个 settings 键：后装载的赢，--debug 记「overrides setting」（CMP:919）；
- *   - 两个 LSP 服务器认领同一个扩展：先注册的服务器接管，另一个不用于该扩展（CMP:874）；
- *   - .mcp.json / .lsp.json 先装载，清单声明的同名服务器/配置后到取代（PLG:305/:322-323）。
- */
-
 /** 插件标识。[原文] enabledPlugins / pluginConfigs 按 `plugin-name@marketplace-name` 键控（SET:4622/:4751）；
  *  --plugin-dir 装载没有 marketplace（PLG:30）。 */
 data class PluginRef(val name: String, val marketplace: String?) {
@@ -102,7 +85,7 @@ data class PluginAgent(val name: String, val filePath: String, val model: String
 
 /** [原文] hooks/hooks.json 与清单 hooks 合并装载（PLG:264）；这里按 matcher+command+args 摊平，
  *  只收 command 型 handler——prompt/agent/http 型 Min 尚无对应物（[设计]）。 */
-data class PluginHookHandler(val matcher: String? = null, val command: String? = null, val args: List<String> = emptyList())
+data class PluginHookHandler(val matcher: String? = null, val command: String? = null, val args: List<String> = emptyList(), val raw: JsonObject = JsonObject(emptyMap()))
 
 /** [原文] 服务器在 /mcp 里叫 plugin:<插件>:<server>，工具叫 mcp__plugin_<插件>_<server>__<tool>（CMP:824-825）；
  *  config 保留原始 JSON（变量替换发生在使用侧）。 */
@@ -146,7 +129,7 @@ data class LoadedPlugin(
     val themes: List<PluginTheme> = emptyList(),
     val monitors: List<PluginMonitor> = emptyList(),
     val workflows: List<PluginWorkflow> = emptyList(),
-    /** [原文] bin/ 下的文件在插件启用期间进 Bash 工具 PATH，排在用户自己的 PATH 之后（PLG:625、CMP:895）。 */
+    /** 保留 bin/ 声明供后续宿主接线；当前加载器不修改 Bash PATH，避免声明被误当成已启用的执行能力。 */
     val binOnPath: List<String> = emptyList(),
     val settings: JsonObject? = null,
     val userConfig: List<PluginUserConfigOption> = emptyList(),
@@ -155,7 +138,7 @@ data class LoadedPlugin(
 
 /**
  * 加载器的输入。[设计] 设置已经在外层合并好（enabledPlugins 的逐键合并照 SettingsMerger 的现成规则）；
- * pluginConfigs 只给用户/托管层的——项目与本地层的条目必须被丢弃（SET:4770），这是加载器的入参约定。
+ * 用户配置与环境不在声明读取阶段传入，敏感值由 PluginValues 与宿主安全仓库在使用侧读取。
  * entry 是 marketplace 条目原样（inline 形状，字段集见 PLG:664-678）。
  */
 data class PluginRequest(
@@ -163,8 +146,6 @@ data class PluginRequest(
     val ref: PluginRef?,
     val entry: JsonObject? = null,
     val enabledPlugins: Map<String, Boolean> = emptyMap(),
-    val pluginConfigs: Map<String, JsonObject> = emptyMap(),
-    val env: (String) -> String? = { null },
 )
 
 data class PluginLoadOutcome(
@@ -172,12 +153,3 @@ data class PluginLoadOutcome(
     val warnings: List<String> = emptyList(),
     val errors: List<String> = emptyList(),
 )
-
-/**
- * [设计] 契约接口。故意不叫 `PluginLoader`：PluginCompatTest 用 Class.forName 探测
- * `dev.min.agent.ext.plugins.PluginLoader` 是否落地，契约自己顶了这个名会误报。
- * [设计] 不抛异常——坏清单、坏路径都进 errors（PLG:111「装载时报同样的错」、CMP:869 整文件跳过照常装载）。
- */
-interface PluginLoaderSpec {
-    suspend fun load(request: PluginRequest): PluginLoadOutcome
-}

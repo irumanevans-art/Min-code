@@ -88,6 +88,5 @@
   "settings": {
     "agent": "security-reviewer"
   },
-  "basis": "PLG:610-626 标准布局表：skills/ 与 commands/ 与 agents/ 扫描、hooks/hooks.json、.mcp.json、.lsp.json、output-styles/、themes/、workflows/、monitors/monitors.json、bin/ 上 Bash PATH、根 settings.json；PLG:630-658 全布局示例；CMP:808 /mcp 里服务器叫 plugin:<插件>:<server>；CMP:824-825 工具名 mcp__plugin_<插件>_<server>__<tool>；CMP:919 settings 的 agent 生效",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "PLG:610-626 标准布局表：skills/ 与 commands/ 与 agents/ 扫描、hooks/hooks.json、.mcp.json、.lsp.json、output-styles/、themes/、workflows/、monitors/monitors.json、bin/ 上 Bash PATH、根 settings.json；PLG:630-658 全布局示例；CMP:808 /mcp 里服务器叫 plugin:<插件>:<server>；CMP:824-825 工具名 mcp__plugin_<插件>_<server>__<tool>；CMP:919 settings 的 agent 生效"
 }

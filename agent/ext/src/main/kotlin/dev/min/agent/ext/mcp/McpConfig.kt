@@ -6,7 +6,7 @@ package dev.min.agent.ext.mcp
  */
 
 /** 配置来源，声明顺序即优先级（同名取最高优先级的**整条**定义，不按字段合并；cc-mcp.md「Scope hierarchy」） */
-enum class McpScope { Managed, Local, Project, User }
+enum class McpScope { Managed, Local, Project, User, Plugin }
 
 enum class McpTransportKind { Stdio, Http, Sse, Ws }
 

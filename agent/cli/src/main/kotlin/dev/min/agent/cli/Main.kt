@@ -72,7 +72,7 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
                 return@forEach
             }
             val source = dev.min.agent.ext.config.ConfigSource.entries.firstOrNull { it.label == e.source }
-                ?: dev.min.agent.ext.config.ConfigSource.User
+                ?: if (e.source?.startsWith("plugin:") == true) dev.min.agent.ext.config.ConfigSource.Plugin else dev.min.agent.ext.config.ConfigSource.User
             if (e.kind == dev.min.agent.spi.SkillKind.Command) {
                 commands += dev.min.agent.ext.config.CommandDef(
                     e.name, e.description, e.path, body, source,

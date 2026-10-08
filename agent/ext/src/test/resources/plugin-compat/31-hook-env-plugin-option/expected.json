@@ -17,6 +17,5 @@
       }
     ]
   },
-  "basis": "CMP:787 hook 进程环境带 CLAUDE_PLUGIN_ROOT 与 CLAUDE_PLUGIN_DATA，外加每个 userConfig 选项的 CLAUDE_PLUGIN_OPTION_<KEY>（PLG:495，键大写；api_token → API_TOKEN）；PLG:569/:573 hook 还拿到 CLAUDE_PROJECT_DIR；PLG:576 这些变量不在 Bash 工具的环境里——shell 命令里读环境是给 hook 用的，不是给模型用的",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "CMP:787 hook 进程环境带 CLAUDE_PLUGIN_ROOT 与 CLAUDE_PLUGIN_DATA，外加每个 userConfig 选项的 CLAUDE_PLUGIN_OPTION_<KEY>（PLG:495，键大写；api_token → API_TOKEN）；PLG:569/:573 hook 还拿到 CLAUDE_PROJECT_DIR；PLG:576 这些变量不在 Bash 工具的环境里——shell 命令里读环境是给 hook 用的，不是给模型用的"
 }

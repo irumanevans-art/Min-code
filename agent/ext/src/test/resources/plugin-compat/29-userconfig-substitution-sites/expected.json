@@ -65,6 +65,5 @@
       ]
     }
   ],
-  "basis": "PLG:494 ${user_config.KEY} 替换进 MCP/LSP 配置、exec-form hook 的 args、skill 与 agent 正文；敏感值在 skill/agent 正文里变成占位符（占位符文本原文未说明，本样本只断言原值不出现）；PLG:495 每个选项以 CLAUDE_PLUGIN_OPTION_<KEY>（键大写）导出给 hook 进程；PLG:569/:571 变量在hook 的 command/args 与 MCP stdio 的 command/args/env 里解析；PLG:582 exec form 每个元素一个参数、无需引号；token 值是哑值，不是真实凭据",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "PLG:494 ${user_config.KEY} 替换进 MCP/LSP 配置、exec-form hook 的 args、skill 与 agent 正文；敏感值在 skill/agent 正文里变成占位符（占位符文本原文未说明，本样本只断言原值不出现）；PLG:495 每个选项以 CLAUDE_PLUGIN_OPTION_<KEY>（键大写）导出给 hook 进程；PLG:569/:571 变量在hook 的 command/args 与 MCP stdio 的 command/args/env 里解析；PLG:582 exec form 每个元素一个参数、无需引号；token 值是哑值，不是真实凭据"
 }

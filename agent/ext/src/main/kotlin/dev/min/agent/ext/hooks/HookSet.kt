@@ -29,11 +29,12 @@ data class HookHandler(
     val asyncRewake: Boolean = false,
     /** `once: true`：成功跑一次后移除。CC 只在 skill frontmatter 里认它，settings 与 agent 定义里忽略——是否响应由执行方（内核）按来源决定 */
     val once: Boolean = false,
+    val pluginEnv: Map<String, String> = if (source == ConfigSource.Plugin) (raw["minPluginEnv"] as? JsonObject)?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { k to it } }?.toMap().orEmpty() else emptyMap(),
 ) {
     val executable: Boolean get() = type == "command" && !async && !asyncRewake
 
     // async / asyncRewake / once 进身份：同一条命令可以既有同步版又有异步版，漏了会在去重时互吞
-    internal fun identity(): List<Any?> = listOf(type, command, args, condition, timeout, async, asyncRewake, once) +
+    internal fun identity(): List<Any?> = listOf(type, command, args, condition, timeout, async, asyncRewake, once, pluginEnv) +
         if (type == "http") listOf(url, headers, allowedEnvVars) else emptyList()
 }
 
@@ -248,6 +249,7 @@ private fun priority(source: ConfigSource): Int = when (source) {
     ConfigSource.User -> 0
     ConfigSource.Project -> 1
     ConfigSource.Local -> 2
+    ConfigSource.Plugin -> 0
     ConfigSource.Managed -> 3
 }
 

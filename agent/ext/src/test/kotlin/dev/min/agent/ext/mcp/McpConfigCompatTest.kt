@@ -189,7 +189,8 @@ class McpConfigCompatTest {
             McpScope.Managed -> "managed"
             McpScope.Local -> "local"
             McpScope.Project -> "project"
-            McpScope.User -> "user"
+            McpScope.Plugin -> "plugin"
+                    McpScope.User -> "user"
         }
 
     private fun JsonObject.requiredString(key: String): String =

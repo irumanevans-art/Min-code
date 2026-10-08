@@ -40,7 +40,7 @@ internal object CommandLoader {
         return byName.values.toList()
     }
 
-    private suspend fun read(io: ConfigIo, source: ConfigSource, file: String, name: String): CommandDef? {
+    internal suspend fun read(io: ConfigIo, source: ConfigSource, file: String, name: String): CommandDef? {
         val text = io.readText(file) ?: return null
         val fm = FrontmatterParser.parse(text, file)
         io.notes += fm.notes

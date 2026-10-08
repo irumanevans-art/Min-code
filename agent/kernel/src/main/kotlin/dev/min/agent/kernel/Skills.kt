@@ -22,20 +22,20 @@ import kotlinx.serialization.json.intOrNull
  */
 internal object SkillSnapshots {
     /** 什么都没读到、也没有要告诉人的说明时返回 null（不写事件） */
-    suspend fun load(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath): SkillsLoaded? {
+    suspend fun load(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath, plugins: dev.min.agent.ext.plugins.PluginBundle? = null): SkillsLoaded? {
         val config = ClaudeConfigLoader.load(fs, cwd, home)
         val notes = config.notes.drop(config.settings.notes.size).toMutableList()
-        val entries = config.skills.map {
+        val entries = (config.skills + plugins?.skills.orEmpty()).distinctBy { it.name }.map {
             SkillEntry(
                 name = it.name, description = it.description, path = it.path, kind = SkillKind.Skill, whenToUse = it.whenToUse,
-                source = it.source.label, argumentHint = it.argumentHint, arguments = it.arguments,
+                source = it.sourceLabel, argumentHint = it.argumentHint, arguments = it.arguments,
                 disableModelInvocation = it.disableModelInvocation, userInvocable = it.userInvocable,
                 context = it.context, hooks = it.hooks,
             )
-        } + config.commands.map {
+        } + (config.commands + plugins?.commands.orEmpty()).distinctBy { it.name }.map {
             SkillEntry(
                 name = it.name, description = it.description, path = it.path, kind = SkillKind.Command, whenToUse = it.whenToUse,
-                source = it.source.label, argumentHint = it.argumentHint, arguments = it.arguments,
+                source = it.sourceLabel, argumentHint = it.argumentHint, arguments = it.arguments,
                 disableModelInvocation = it.disableModelInvocation, userInvocable = it.userInvocable,
                 context = it.context, hooks = it.hooks,
             )
@@ -75,7 +75,7 @@ internal class KernelSkillPort(
                     "不要用别的办法复现它的步骤；需要的话告诉用户这个 skill 要由他们自己运行。",
             )
         }
-        val body = SkillFiles.readBody(fs, entry.path)
+        val body = rt.readSkillBody(entry.path)
             ?: return SkillInvocation.Rejected("skill「$name」的文件现在读不了（${entry.path.value}，可能在会话开始后被删除或改动）。告诉用户，或不用这个 skill 继续。")
         // skill 被调用（模型走的这条路）：frontmatter hooks 登记进本会话，余下回合生效。
         // 每次调用都重新登记全量（CC 的 invoke 时 register），整份替换旧的——once 用掉的也回来

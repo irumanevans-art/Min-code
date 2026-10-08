@@ -14,6 +14,5 @@
       "file": "themes/dracula.json"
     }
   ],
-  "basis": "CMP:930 输出样式出现在 /output-style 为 <插件>:<name>（frontmatter 的 name）；CMP:929 主题按文件里的 name 字段出现在 /theme——不带插件前缀，与输出样式不对称；CMP:932 插件主题只读，用户编辑时存成自己目录里的副本",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "CMP:930 输出样式出现在 /output-style 为 <插件>:<name>（frontmatter 的 name）；CMP:929 主题按文件里的 name 字段出现在 /theme——不带插件前缀，与输出样式不对称；CMP:932 插件主题只读，用户编辑时存成自己目录里的副本"
 }

@@ -14,6 +14,7 @@ enum class ConfigSource(val label: String) {
     User("user"),
     Project("project"),
     Local("local"),
+    Plugin("plugin"),
 }
 
 enum class RuleSpecKind { Allow, Ask, Deny }

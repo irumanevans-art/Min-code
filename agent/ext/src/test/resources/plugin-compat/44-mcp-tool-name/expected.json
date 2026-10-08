@@ -25,6 +25,5 @@
       }
     ]
   },
-  "basis": "CMP:824 服务器在 /mcp 里叫 plugin:<插件>:<server>（mcp_tool hook 也用这个形）；CMP:825/:789 工具名 mcp__plugin_<插件>_<server>__<tool>——权限规则与 hook matcher 都必须写工具全名，只写服务器名永远不匹配",
-  "pendingFix": "Min 还没有插件加载器——本样本是给加载器实现的验收规格。加载器落地后：把样本接上真加载器逐条复核 expected、按结果改成端到端断言，再摘掉本标记（PluginCompatTest 同时会放开「没有加载器」的探针断言）。"
+  "basis": "CMP:824 服务器在 /mcp 里叫 plugin:<插件>:<server>（mcp_tool hook 也用这个形）；CMP:825/:789 工具名 mcp__plugin_<插件>_<server>__<tool>——权限规则与 hook matcher 都必须写工具全名，只写服务器名永远不匹配"
 }
