@@ -222,7 +222,7 @@ internal class Compactor(
 
     private suspend fun collect(model: ResolvedModel, request: ModelRequest): ModelStreamEvent.Completed {
         var completed: ModelStreamEvent.Completed? = null
-        model.client.stream(request).collect { if (it is ModelStreamEvent.Completed) completed = it }
+        rt.modelBilling.stream(model, request).collect { if (it is ModelStreamEvent.Completed) completed = it }
         return completed ?: throw ModelException(dev.min.agent.spi.ModelFailureKind.Network, "流在给出完整回复之前结束了", beforeFirstByte = false)
     }
 

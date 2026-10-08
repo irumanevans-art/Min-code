@@ -60,6 +60,9 @@ data class CliArgs(
     val worktree: Boolean = false,
     val worktreeName: String? = null,
     val pluginDirs: List<Path> = emptyList(),
+    val autoModeReviewer: String? = null,
+    val maxBudgetUsd: Double? = null,
+    val modelTimeoutMs: Long = 600_000,
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
@@ -80,7 +83,10 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --max-output <n>       覆盖目录输出上限；自定义模型默认 8192
   --images               声明模型能看图；自定义模型默认不能（图片换成文字说明发过去）
   --effort <档位>        off / minimal / low / medium / high / xhigh / max
-  --mode <模式>          default（默认）/ acceptEdits / plan / bypassPermissions / dontAsk
+  --mode <模式>          default（默认）/ acceptEdits / plan / bypassPermissions / dontAsk / auto
+  --auto-mode-reviewer <供应商/模型> 独立审查模型；未指定使用同供应商小模型
+  --max-budget-usd <金额> 会话与辅助模型累计 USD 花费上限；缺 USD 定价时拒绝发请求
+  --model-timeout-ms <n> 会话与辅助模型请求超时，默认 600000
   --approve ask|yes|no   审批怎么答：交互模式默认 ask，非交互默认 no
   --cwd <目录>           工作目录，默认当前目录
   --worktree [名字], -w  在独立 worktree 中运行；不带名字则自动命名
@@ -112,7 +118,7 @@ private val VALUE_ARGS = setOf(
     "-p", "--print", "--provider", "--model", "--base-url", "--wire", "--auth", "--api-key-env", "--context",
     "--max-output", "--effort", "--mode", "--approve", "--cwd", "--output-format", "--resume", "--search-backend",
     "--search-url", "--fast-model", "--max-web-searches", "--web-cache-ttl-ms", "--web-deadline-ms", "--max-turns",
-    "--json-schema", "--name", "-n", "--fallback-model",
+    "--json-schema", "--name", "-n", "--fallback-model", "--auto-mode-reviewer", "--max-budget-usd", "--model-timeout-ms",
 )
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
@@ -232,6 +238,16 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         },
         searchUrl = values["--search-url"],
         fastModel = values["--fast-model"],
+        autoModeReviewer = values["--auto-mode-reviewer"]?.also {
+            try { dev.min.agent.ext.config.parseReviewerRef(it) }
+            catch (_: IllegalArgumentException) { throw UsageException("--auto-mode-reviewer 必须是 provider/model") }
+        },
+        maxBudgetUsd = values["--max-budget-usd"]?.let { value ->
+            value.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: throw UsageException("--max-budget-usd 必须是有限正数")
+        },
+        modelTimeoutMs = values["--model-timeout-ms"]?.let { value ->
+            value.toLongOrNull()?.takeIf { it > 0 } ?: throw UsageException("--model-timeout-ms 必须是正整数")
+        } ?: 600_000,
         fallbackModel = values["--fallback-model"],
         maxWebSearches = int("--max-web-searches") ?: 200,
         webCacheTtlMs = nonNegativeLong("--web-cache-ttl-ms", 900_000),

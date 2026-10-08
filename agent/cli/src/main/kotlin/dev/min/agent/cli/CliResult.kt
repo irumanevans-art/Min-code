@@ -23,7 +23,7 @@ import kotlinx.serialization.json.put
 /**
  * `-p` 一次运行的结果对象，字段照 CC 的 result 消息（04-sessions-sdk-automation.md :218–219 的全表里
  * Min 有数据的那部分）：`type`/`subtype`/`is_error`/`result`/`session_id`/`num_turns`/`usage`/`duration_ms`/
- * `structured_output`/`errors`/`permission_denials`。`total_cost_usd` 没有价格数据，不输出（输出 0 会误导）。
+ * `structured_output`/`errors`/`permission_denials`。花费只有全部请求有 USD 定价时输出，未知不能冒充零。
  * 只看本次命令之后的事件（[events]）；旧回合的累计 token 不能证明本轮成功
  */
 internal data class CliResult(val session: String, val events: List<EventRecord>) {
@@ -94,6 +94,10 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
         put("num_turns", numTurns)
         put("duration_ms", durationMs)
         put("usage", usageJson(turnUsage))
+        val charges = events.mapNotNull { it.event as? dev.min.agent.spi.ModelCharged }
+        if (charges.isNotEmpty() && charges.all { it.currency == "USD" && it.amount != null }) {
+            put("total_cost_usd", charges.sumOf { it.amount!! })
+        }
         structured?.let { put("structured_output", it.value) }
         if (!completed) put("errors", JsonArray(errors.map(::JsonPrimitive)))
         if (denials.isNotEmpty()) put("permission_denials", JsonArray(denials))

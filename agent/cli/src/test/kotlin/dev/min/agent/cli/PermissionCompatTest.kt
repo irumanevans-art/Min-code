@@ -163,8 +163,8 @@ class PermissionCompatTest {
         // value class 参数仍用 String；新增的目录列表走正式设置入口，不能靠 FakeFs 伪装成工作区。
         // 新增宿主凭证边界；普通权限样本没有宿主凭证，用空集与恒等解析保持原来的测试语义。
         val canonicalPath: (GuestPath) -> GuestPath = { it }
-        val ctor = policyContextClass.constructors.single { it.parameterCount == 11 }
-        return ctor.newInstance(mode, rules, cwd.value, home.value, scopeOf, null, directories, emptySet<GuestPath>(), canonicalPath, null, null)
+        val ctor = policyContextClass.constructors.single { it.parameterCount == 12 }
+        return ctor.newInstance(mode, rules, cwd.value, home.value, scopeOf, null, directories, emptySet<GuestPath>(), canonicalPath, null, emptyList<String>(), null)
     }
 
     /** PolicyEngine.evaluate(ask, readOnly, context)；Verdict 子类名映射成 allow / ask / deny */

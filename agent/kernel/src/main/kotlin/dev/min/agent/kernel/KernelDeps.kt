@@ -139,8 +139,18 @@ class KernelDeps(
         val realCwd = canonicalPath(cwd).value.trimEnd('/')
         trustProjectHooks(cwd) && (realRoot == realCwd || realRoot.startsWith("$realCwd/"))
     },
+    /** 默认审查按当前会话供应商查目录，不能复用可能跨供应商的提取模型。 */
+    val providerFastModel: (String) -> ModelRef? = { null },
+    val autoModeReviewer: dev.min.agent.spi.AutoModeReviewer? = null,
+    val modelTimeoutMs: Long = 600_000,
+    val maxBudgetUsd: Double? = null,
+    val reviewerModels: ((dev.min.agent.spi.AutoModeReviewer) -> ResolvedModel)? = null,
 ) {
-    init { require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" } }
+    init {
+        require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }
+        require(modelTimeoutMs > 0)
+        require(maxBudgetUsd == null || maxBudgetUsd.isFinite() && maxBudgetUsd > 0)
+    }
 }
 
 /**

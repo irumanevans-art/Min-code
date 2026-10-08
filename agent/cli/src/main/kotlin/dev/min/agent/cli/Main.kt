@@ -163,6 +163,8 @@ private suspend fun interact(app: DesktopApp, initial: dev.min.agent.kernel.Sess
                 }
             }
             trimmed == "/recap" -> System.err.println(recapNote(runtime.recap()))
+            trimmed == "/auto-reviewer" || trimmed.startsWith("/auto-reviewer ") ->
+                autoReviewerCommand(app, runtime, trimmed.removePrefix("/auto-reviewer").trim())
             trimmed == "/output-style" || trimmed.startsWith("/output-style ") ->
                 outputStyleCommand(app, runtime, trimmed.removePrefix("/output-style").trim())
             trimmed == "/rename" || trimmed.startsWith("/rename ") -> {

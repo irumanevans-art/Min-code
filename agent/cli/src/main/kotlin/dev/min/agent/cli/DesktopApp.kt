@@ -203,12 +203,19 @@ internal class DesktopApp(
     /** /output-style 写回的位置：项目 `.claude/settings.local.json`（CC 同一个键，互通） */
     fun settingsLocalFile(): java.nio.file.Path = args.cwd.resolve(".claude").resolve("settings.local.json")
 
+    fun settingsUserFile(): Path = claudeHome.resolve(".claude").resolve("settings.json")
+
+    fun validateReviewer(reviewer: dev.min.agent.spi.AutoModeReviewer?) {
+        reviewer?.let { resolveReviewerSelection(it, Catalog.bundled(), selection) }
+    }
+
     private val userHome get() = paths.guestOfHost(claudeHome)
 
     /** 凭证只从环境变量读、只进请求头；这里不打印、不落盘。回退链上别家的凭证也只认它自己的那个变量 */
     private val secrets = Secrets { providerId ->
         val env = if (providerId == provider.id) keyEnv else fallback.selections.values.firstOrNull { it.provider.id == providerId }?.keyEnv
-        env?.let(System::getenv)?.takeIf { it.isNotBlank() }?.let(::Secret)
+            ?: "${providerId.uppercase(java.util.Locale.ROOT)}_API_KEY"
+        System.getenv(env)?.takeIf { it.isNotBlank() }?.let(::Secret)
     }
 
     fun checkKey() {
@@ -231,7 +238,9 @@ internal class DesktopApp(
         val client = clientFor(provider)
         val fallbackClients = fallback.selections.values.map { it.provider }.distinctBy { it.id }
             .associate { it.id to if (it.id == provider.id) client else clientFor(it) }
-        val keyEnvs = setOfNotNull(keyEnv, fastSelection?.keyEnv) + fallback.selections.values.map { it.keyEnv }
+        val bundledCatalog = Catalog.bundled()
+        val keyEnvs = setOfNotNull(keyEnv, fastSelection?.keyEnv) + fallback.selections.values.map { it.keyEnv } +
+            bundledCatalog.providers.map { "${it.id.uppercase(java.util.Locale.ROOT)}_API_KEY" }
         // 内核读环境变量都走这一个口（CLAUDE_CODE_MAX_TURNS、hook 的插值……）：模型 key 的变量对内核是 null
         val hiddenEnv: Set<String> = keyEnvs
         val envReader = hookEnvReader(hiddenEnv)
@@ -286,6 +295,14 @@ internal class DesktopApp(
             hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
             trustProjectHooks = { args.trust },
             fastModel = fastSelection?.profile?.ref,
+            providerFastModel = { id -> bundledCatalog.provider(id)?.fastModel?.let { dev.min.agent.protocol.ModelRef(id, it) } },
+            autoModeReviewer = args.autoModeReviewer?.let { dev.min.agent.spi.AutoModeReviewer(dev.min.agent.ext.config.parseReviewerRef(it)) },
+            modelTimeoutMs = args.modelTimeoutMs,
+            maxBudgetUsd = args.maxBudgetUsd,
+            reviewerModels = { reviewer ->
+                val selected = resolveReviewerSelection(reviewer, bundledCatalog, selection)
+                ResolvedModel(selected.profile, clientFor(selected.provider))
+            },
             fallbackModels = fallback.chain,
             maxWebSearches = args.maxWebSearches,
             // --max-turns 优先，没给时读 CLAUDE_CODE_MAX_TURNS（CC：不是正整数就启动时报错退出）。只属于这次运行，不进日志

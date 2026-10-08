@@ -26,7 +26,7 @@ class GeminiClient(
         val key = secrets.apiKey(provider.id)?.reveal()
             ?: throw ModelException(ModelFailureKind.Auth, "没有 ${provider.id} 的 API 密钥", beforeFirstByte = true)
         val parser = GeminiStreamParser(request.profile, overflow, fingerprint(body))
-        val http = HttpRequest("POST", url, headers(key), body.toByteArray(Charsets.UTF_8), 600_000L)
+        val http = HttpRequest("POST", url, headers(key), body.toByteArray(Charsets.UTF_8), request.timeoutMs)
         transport.stream(http).catch { error ->
             throw when (error) {
                 is CancellationException -> error

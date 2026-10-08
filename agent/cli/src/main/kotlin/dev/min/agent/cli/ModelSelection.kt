@@ -27,6 +27,7 @@ internal fun resolveModel(args: CliArgs, catalog: Catalog): ModelSelection {
         extraHeaders = bundled?.extraHeaders ?: emptyMap(),
         // 切换线协议时不能把另一种协议的供应商假设带过去。
         quirks = if (bundled?.wire == wire) bundled.quirks else ProviderQuirks(),
+        fastModel = bundled?.fastModel,
     )
     val ref = ModelRef(args.provider, args.model)
     val profile = (catalog.model(ref) ?: ModelProfile(

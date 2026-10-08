@@ -776,6 +776,7 @@ class SessionHub(
         val rules = parent.rules + parent.sessionRules
         // hooks 同理：父会话的门禁（PreToolUse 拦危险命令之类）在子 agent 里照样生效
         return listOfNotNull(
+            parent.autoReviewSettings.takeUnless { it == dev.min.agent.spi.AutoReviewSettingsLoaded() },
             if (rules.isEmpty() && parent.additionalDirectories.isEmpty()) null
             else PermissionRulesLoaded(rules, additionalDirectories = parent.additionalDirectories),
             if (parent.hooks.isEmpty()) null else HooksLoaded(parent.hooks, httpPolicy = parent.hooksHttpPolicy),

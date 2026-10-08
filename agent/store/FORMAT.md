@@ -156,3 +156,5 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - `worktree_finished`：完整 binding 与 `removed`；记录子 agent 自动清理或根会话 keep/remove。
 - `WorktreeBinding` 保存 name/path/originalCwd/repository/branch/baseCommit/hookCreated/owned/pinned。旧日志无 binding；重开按日志恢复。
 - `cwd_watch_paths_changed`：`paths` 替换 CwdChanged hooks 返回的动态 watchPaths（默认空）；冻结绝对路径，重开沿用。FileChanged 文件监视执行器仍待后续里程碑。
+
+- v1 增量（2026-10-08）：新增 `auto_review_settings_loaded`（用户/托管四组规则与独立审查模型、可选能力声明）、`auto_reviewed`（turnId、callId、model、decision、reason、usage）和 `model_charged`（model、usage、可选 amount/currency，缺价明确未知）。审查用量计入回合；花费按请求模型冻结，按币种累计，不以换会话模型重算。含这些事件的日志旧版本打不开。

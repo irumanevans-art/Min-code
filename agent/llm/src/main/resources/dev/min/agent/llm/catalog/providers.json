@@ -15,7 +15,8 @@
         "cacheControl": false,
         "redactedThinking": false
       }
-    }
+    },
+    "fastModel": "deepseek-flash"
   },
   {
     "id": "zhipu",
@@ -39,7 +40,8 @@
     "id": "minimax",
     "baseUrl": "https://api.minimax.io/anthropic",
     "wire": "anthropic_messages",
-    "auth": "bearer"
+    "auth": "bearer",
+    "fastModel": "MiniMax-M3.1-Flash-Preview"
   },
   {
     "id": "moonshot",
@@ -71,7 +73,8 @@
         "promptCacheKey": false,
         "parallelToolCalls": false
       }
-    }
+    },
+    "fastModel": "deepseek-flash"
   },
   {
     "id": "zhipu-openai",
@@ -127,7 +130,8 @@
         "promptCacheKey": false,
         "parallelToolCalls": false
       }
-    }
+    },
+    "fastModel": "MiniMax-M3.1-Flash-Preview"
   },
   {
     "id": "doubao-openai",

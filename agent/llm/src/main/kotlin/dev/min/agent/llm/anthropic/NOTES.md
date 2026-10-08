@@ -27,8 +27,8 @@
 9. **流正常结束却没有 `message_stop`** 按断流处理（Network，`beforeFirstByte` 看是否收到过事件）。
 10. **头去重**：同名头（不区分大小写）后者覆盖前者，顺序按规格；`user-agent: min-agent` 最后放，所以供应商 `extraHeaders`
     改不了它（规格「不伪装成任何官方客户端」）。凭证头由 `provider.auth` 决定，`extraHeaders` 若同名会覆盖它，属数据自己的选择。
-11. **请求超时**固定 600 秒（`HttpRequest.timeoutMs` 必填而 `ModelRequest` 没有对应字段）。长思考首 token 可能很慢；
-    真要中断由内核取消 Flow。若需按模型配置，应在 `ModelProfile` 加字段（不在本任务范围内）。
+11. **请求超时**默认 600 秒；`ModelRequest.timeoutMs` 由内核共享设置提供，会话与辅助审查使用相同值。长思考首 token 可能很慢；
+    内核同时限制整个流的持续时间，中断由取消 Flow 传递给 HTTP 端口。
 12. **超长正则在构造客户端时编译**（大小写不敏感），写错抛 `IllegalArgumentException`，
     不等到错误路径上才炸、盖住原始错误。
 13. **凭证缺失**（`Secrets.apiKey` 返回 null）抛 `ModelException(Auth, beforeFirstByte = true)`，不发请求。
