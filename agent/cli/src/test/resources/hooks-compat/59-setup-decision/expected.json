@@ -14,6 +14,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§Setup decision control：每个退出码都丢弃 JSON 输出字段（systemMessage/continue/additionalContext 等），退出码与 stderr 也忽略（:1272–1274；逐事件表 :872）。",
-  "pendingFix": "原文：Setup 的 JSON 输出字段全部丢弃（:1274）。引擎现在：continue:false 会停回合，reason/stopReason/systemMessage 也照收（decision 已正确忽略）。",
   "minTrigger": "none"
 }

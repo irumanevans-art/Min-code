@@ -45,6 +45,8 @@ internal suspend fun runHeadless(
         } else emptyList()
         val config = app.config()
         val action = interpretInput(effective, config.skills, config.commands, app.skillVars(runtime), prompts)
+        // UserPromptExpansion：被拦就按参数错误退出（与展不开的命令同一档），理由给人看
+        promptExpansionBlock(runtime, effective, action)?.let { stderr.println(it); return 2 }
         val parts = when (action) {
             is InputAction.Send -> listOf(TextPart(action.text))
             is InputAction.Prompt -> {

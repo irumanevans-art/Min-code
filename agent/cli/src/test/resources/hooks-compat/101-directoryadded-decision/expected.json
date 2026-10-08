@@ -16,6 +16,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§DirectoryAdded：无决策控制，不能阻断已完成的加目录；continue 丢弃；slash_command 来源的 systemMessage 作为上下文给 Claude（:2847–2850）。",
-  "pendingFix": "原文：continue 被丢弃（:2847）；slash_command 的 systemMessage 给 Claude 作上下文（:2849）。引擎现在：continue:false 会停回合、systemMessage 进给人的通知。",
   "minTrigger": "none"
 }

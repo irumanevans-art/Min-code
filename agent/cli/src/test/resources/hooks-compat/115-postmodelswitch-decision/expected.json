@@ -15,7 +15,5 @@
   "timedOut": false,
   "failedToStart": false,
   "notesContain": [],
-  "basis": "§PostModelSwitch decision control：exit 0 的纯文本 stdout 或 additionalContext 随切换后下一请求带给 Claude；不能阻断（:3303–3311）。",
-  "pendingFix": "内核不触发的现状说明：引擎行为已按原文对齐，等内核接线后升级成端到端样本。",
-  "minTrigger": "none"
+  "basis": "§PostModelSwitch decision control：exit 0 的纯文本 stdout 或 additionalContext 随切换后下一请求带给 Claude；不能阻断（:3303–3311）。"
 }

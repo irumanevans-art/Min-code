@@ -29,6 +29,8 @@ data class HookVerdict(
     val attachmentRequests: List<HookAttachmentRequest> = emptyList(),
     /** 已经按该事件的形状解码并校验；H2/H3 可继续处理本期尚未接入的字段。 */
     val specificOutput: JsonObject? = null,
+    /** CwdChanged / FileChanged 返回的动态监视列表（原文：替换当前列表）；其他事件恒空。路径是否绝对由消费方校验。 */
+    val watchPaths: List<String> = emptyList(),
 )
 
 data class CombinedVerdict(
@@ -46,6 +48,7 @@ data class CombinedVerdict(
     val notes: List<String>,
     val attachmentRequests: List<HookAttachmentRequest>,
     val verdicts: List<HookVerdict>,
+    val watchPaths: List<String> = emptyList(),
 )
 
 /** 只合并结论，不产生副作用；停止标记与决定分别保留，让 H2 先处理停止再处理许可。 */
@@ -72,5 +75,5 @@ fun combine(event: HookEvent, verdicts: List<HookVerdict>): CombinedVerdict {
         nonBlockingErrors = verdicts.mapNotNull { it.nonBlockingError },
         timedOut = verdicts.any { it.timedOut }, failedToStart = verdicts.any { it.failedToStart },
         notes = verdicts.flatMap { it.notes }, attachmentRequests = verdicts.flatMap { it.attachmentRequests },
-        verdicts = verdicts.toList())
+        verdicts = verdicts.toList(), watchPaths = verdicts.flatMap { it.watchPaths }.distinct())
 }

@@ -18,6 +18,5 @@
     "hookEventName": "MessageDisplay",
     "displayContent": "Here is the plan:"
   },
-  "pendingFix": "原文：displayContent 只改屏显，systemMessage 与 continue 被丢弃（:1488）。引擎现在：continue:false 会停回合、systemMessage 照常进通知；displayContent 已在 specificOutput 收下。",
   "minTrigger": "none"
 }

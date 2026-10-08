@@ -14,6 +14,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§StopFailure：无决策控制；输出与 exit code 全被丢弃，terminalSequence 除外（:2627；逐事件表 :864）。",
-  "pendingFix": "原文：输出与 exit code 全被丢弃，terminalSequence 除外（:2627, :864）。引擎现在：continue:false 会停回合，reason/stopReason/systemMessage 也照收。",
   "minTrigger": "none"
 }

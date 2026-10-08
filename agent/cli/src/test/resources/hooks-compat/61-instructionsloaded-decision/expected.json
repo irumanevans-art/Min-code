@@ -14,6 +14,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§InstructionsLoaded decision control：无决策控制，不能阻止或改写载入，JSON 输出字段丢弃，只作审计/观测（:1311–1313）；exit code 忽略（:885）。",
-  "pendingFix": "原文：JSON 输出字段（systemMessage/continue）被丢弃（:1313）。引擎现在：continue:false 会停回合，reason/systemMessage 也照收。",
   "minTrigger": "none"
 }

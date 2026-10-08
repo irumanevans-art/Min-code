@@ -152,8 +152,8 @@ class HookInterpretTest {
     }
 
     @Test fun `continue false 与 stopReason 优先且仍保留 systemMessage`() {
-        // 无决策控制事件另测；worktree 原始退出码由生命周期处理，不能用 continue 控制会话。
-        HookEvent.entries.filter { it !in setOf(HookEvent.Notification, HookEvent.SessionEnd, HookEvent.CwdChanged, HookEvent.WorktreeCreate, HookEvent.WorktreeRemove) }.forEach { e ->
+        // 丢弃 continue 的事件（HOOK_OUTPUT_DISCARDS 里有 Continue 的）另测，见 HookOutputDiscardsTest。
+        HookEvent.entries.filter { DiscardedField.Continue !in HOOK_OUTPUT_DISCARDS[it].orEmpty() }.forEach { e ->
             val v = interpreted(e, """{"continue":false,"stopReason":"stop","systemMessage":"warning"}""")
             assertFalse(e.name, v.shouldContinue); assertEquals("stop", v.stopReason?.text)
             assertEquals("warning", v.systemMessage?.text)
