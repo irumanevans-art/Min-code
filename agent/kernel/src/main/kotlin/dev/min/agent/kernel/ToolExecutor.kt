@@ -7,6 +7,7 @@ import dev.min.agent.ext.hooks.PostToolBatchInput
 import dev.min.agent.ext.hooks.PostToolUseFailureInput
 import dev.min.agent.ext.hooks.PostToolUseInput
 import dev.min.agent.ext.hooks.PreToolUseInput
+import dev.min.agent.ext.hooks.TaskCompletedInput
 import dev.min.agent.policy.PermissionRule
 import dev.min.agent.policy.PolicyContext
 import dev.min.agent.policy.PolicyEngine
@@ -44,7 +45,9 @@ import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.Search
+import dev.min.agent.spi.SessionEffect
 import dev.min.agent.spi.SessionEvent
+import dev.min.agent.spi.TaskStatus
 import dev.min.agent.spi.TaskBoard
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
@@ -520,7 +523,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         } catch (e: Exception) {
             errorResult("工具执行出错：${e.message ?: e::class.simpleName}")
         }
-        val budgeted = ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId)
+        val budgeted = gateTaskCompletion(turnId, ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId))
         // StructuredOutput 交卷通过校验：采纳事件与工具结果同一次提交——不会出现「结果说收到了、日志里却没有最终答案」
         val adopted = if (!budgeted.isError && p.tool is StructuredOutputTool) {
             listOf(dev.min.agent.spi.StructuredOutputDelivered(turnId, p.raw))
@@ -529,6 +532,39 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         // 只有成功的调用算「碰到了文件」；读或写都算，目录（Glob / Grep 的搜索根）在 [attachMemory] 里滤掉
         if (!budgeted.isError) touched[callId] = askFor(p).paths.map { it.path }
         postToolUse(turnId, p, budgeted, deps.clock.nowMs() - started)
+    }
+
+    /**
+     * TaskCompleted（hooks.md :2468）：任务清单的状态变化是工具**声明**的副作用（[SessionEffect.TaskUpdate]），与结果同一次提交，
+     * 所以拦截只能在提交之前做：把「标为完成」从声明里拿掉，结果换成给模型的错误反馈（原文：exit 2「the task is not marked as
+     * completed and the stderr message is fed back to the model」）。TaskUpdate 触发时 `continue: false` 被忽略（原文），
+     * 因此只认 Block，不认 Stop。已经是完成状态的任务再标一次不算「正在完成」，不跑 hook。
+     */
+    private suspend fun gateTaskCompletion(turnId: TurnId, result: ToolResult): ToolResult {
+        if (result.isError || !hooks.has(HookEvent.TaskCompleted, null)) return result
+        val completing = result.effects.filterIsInstance<SessionEffect.TaskUpdate>().filter { e ->
+            e.patch.status == TaskStatus.Completed && rt.state.value.tasks.firstOrNull { it.id == e.taskId }?.status.let { it != null && it != TaskStatus.Completed }
+        }
+        if (completing.isEmpty()) return result
+        val refused = mutableMapOf<String, String>()
+        for (effect in completing) {
+            val task = rt.state.value.tasks.first { it.id == effect.taskId }
+            val specific = HookJson.encodeToJsonElement(
+                TaskCompletedInput.serializer(),
+                TaskCompletedInput(taskId = task.id, taskSubject = task.subject, taskDescription = task.description.takeIf { it.isNotBlank() }),
+            ).jsonObject
+            val outcome = hooks.run(HookEvent.TaskCompleted, null, specific, turnId) ?: continue
+            if (outcome.decision == HookOutcome.Decision.Block) refused[effect.taskId] = outcome.reason ?: "TaskCompleted hook 没有给出理由"
+        }
+        if (refused.isEmpty()) return result
+        val effects = result.effects.mapNotNull { e ->
+            if (e is SessionEffect.TaskUpdate && e.taskId in refused && e.patch.status == TaskStatus.Completed) {
+                val rest = e.patch.copy(status = null)
+                if (rest.isEmpty) null else e.copy(patch = rest)
+            } else e
+        }
+        val message = refused.entries.joinToString("\n") { (id, reason) -> "TaskCompleted hook 不让把任务 #$id 标为完成，任务保持原状态。反馈：$reason" }
+        return result.copy(content = listOf(TextPart(message)), isError = true, effects = effects)
     }
 
     private suspend fun outcome(turnId: TurnId, callId: CallId, result: ToolResult, extra: List<SessionEvent> = emptyList()) {

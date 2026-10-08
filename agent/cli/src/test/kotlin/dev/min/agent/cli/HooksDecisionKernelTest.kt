@@ -34,7 +34,10 @@ import dev.min.agent.spi.ToolInput
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.ToolTraits
+import dev.min.agent.spi.TaskStatus
 import dev.min.agent.spi.TurnOutcome
+import dev.min.agent.tools.TaskCreateTool
+import dev.min.agent.tools.TaskUpdateTool
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.FakeArtifacts
 import dev.min.agent.testkit.TEST_MODEL
@@ -263,5 +266,71 @@ class HooksDecisionKernelTest {
         assertEquals(1, model3.requests.size)
         assertEquals(TurnOutcome.Interrupted(InterruptedBy.Hook), done3.lastTurn!!.outcome)
         assertTrue(store3.events(rt3).filterIsInstance<Note>().any { it.text.contains("到此为止") })
+    }
+
+    // ---- TaskCompleted（样本 88 / 89） ----
+
+    private val taskTools: List<Tool<*>> = listOf(TaskCreateTool, TaskUpdateTool)
+
+    private fun taskModel(vararg updates: ToolCallPart) = ScriptedModel { req ->
+        when (req.messages.size) {
+            1 -> answer(ToolCallPart(CallId("t1"), "TaskCreate", args("subject" to "Implement auth", "description" to "login and signup")), stop = StopReason.ToolUse)
+            3 -> answer(*updates, stop = StopReason.ToolUse)
+            else -> answer(TextPart("好"))
+        }
+    }
+
+    private fun complete(callId: String = "t2") = ToolCallPart(CallId(callId), "TaskUpdate", args("taskId" to "1", "status" to "completed"))
+
+    @Test
+    fun `TaskCompleted exit 2 keeps the task open and feeds stderr back to the model (sample 89)`() = run {
+        installSample("89-taskcompleted-decision")
+        val model = taskModel(complete())
+        val (rt, store) = session(model, taskTools)
+        val done = rt.say("做任务")
+
+        val result = done.toolResults.getValue(CallId("t2"))
+        assertTrue(result.isError)
+        val text = result.content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        assertTrue(text, text.contains("Tests not passing. Fix failing tests before completing"))
+        assertEquals("任务没有被标完成", TaskStatus.Pending, done.tasks.single().status)
+        assertEquals("hook 被调用了一次", 1, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("TaskCompleted") })
+        assertTrue("模型下一轮看到了反馈", model.requests.last().allText().contains("Tests not passing"))
+        assertLogIsTruth(store, rt)
+    }
+
+    @Test
+    fun `TaskCompleted sees the task and a passing hook lets it complete, continue false is ignored`() = run {
+        installScript("TaskCompleted", """cat > "${'$'}CLAUDE_PROJECT_DIR/task-input.json"; printf '%s' '{"continue":false,"stopReason":"别停"}'""")
+        val (rt, store) = session(taskModel(complete()), taskTools)
+        val done = rt.say("做任务")
+        val input = kotlinx.serialization.json.Json.parseToJsonElement(Files.readString(work.resolve("task-input.json"))) as JsonObject
+        assertEquals("1", (input["task_id"] as JsonPrimitive).content)
+        assertEquals("Implement auth", (input["task_subject"] as JsonPrimitive).content)
+        assertEquals("login and signup", (input["task_description"] as JsonPrimitive).content)
+        assertEquals("hook 没拦，任务完成", TaskStatus.Completed, done.tasks.single().status)
+        assertEquals("TaskUpdate 触发时 continue:false 被忽略，回合照常完成", TurnOutcome.Completed, done.lastTurn!!.outcome)
+        assertLogIsTruth(store, rt)
+    }
+
+    @Test
+    fun `TaskCompleted does not fire for other status changes or for an already completed task`() = run {
+        installScript("TaskCompleted", "cat > /dev/null")
+        val inProgress = ToolCallPart(CallId("t2"), "TaskUpdate", args("taskId" to "1", "status" to "in_progress"))
+        val (rt, store) = session(taskModel(inProgress), taskTools)
+        rt.say("开始")
+        assertEquals(0, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("TaskCompleted") })
+
+        val again = ScriptedModel { req ->
+            when (req.messages.size) {
+                1 -> answer(ToolCallPart(CallId("t1"), "TaskCreate", args("subject" to "x", "description" to "y")), stop = StopReason.ToolUse)
+                3 -> answer(complete("t2"), stop = StopReason.ToolUse)
+                5 -> answer(complete("t3"), stop = StopReason.ToolUse)
+                else -> answer(TextPart("好"))
+            }
+        }
+        val (rt2, store2) = session(again, taskTools)
+        rt2.say("完成两次")
+        assertEquals("第二次标完成时任务已经是完成状态，不再触发", 1, store2.events(rt2).filterIsInstance<HooksRan>().count { it.isFor("TaskCompleted") })
     }
 }
