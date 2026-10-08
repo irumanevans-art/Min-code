@@ -89,6 +89,7 @@ class FakeText : MinAgentText {
     override fun limit() = "limit"
     override fun hookStopped(atMs: Long?) = "hook-stopped"
     override fun hookFeedback(event: String) = "hook-feedback:$event"
+    override fun cronFired(cronId: String) = "cron-fired:$cronId"
     override fun continued(atMs: Long?) = "continued@$atMs"
     override fun subagentWoke() = "woke"
     override fun hookWoke() = "hook-woke"

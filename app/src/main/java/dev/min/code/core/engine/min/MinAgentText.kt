@@ -24,6 +24,9 @@ interface MinAgentText {
     fun hookStopped(atMs: Long?): String
     fun hookFeedback(event: String): String
 
+    /** 定时任务到点触发送进会话的那条输入：说明它不是人发的话 */
+    fun cronFired(cronId: String): String
+
     /** 续跑分隔线的正文，不含两侧的破折号 */
     fun continued(atMs: Long?): String
 
@@ -115,6 +118,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun limit() = s(R.string.min_agent_limit)
     override fun hookStopped(atMs: Long?) = timed(s(R.string.min_agent_hook_stopped), atMs)
     override fun hookFeedback(event: String) = s(R.string.min_agent_hook_feedback, event)
+    override fun cronFired(cronId: String) = s(R.string.min_agent_cron_fired, cronId)
     override fun continued(atMs: Long?) = timed(s(R.string.min_agent_continued), atMs)
     override fun subagentWoke() = s(R.string.min_agent_woke)
     override fun hookWoke() = s(R.string.min_agent_hook_woke)

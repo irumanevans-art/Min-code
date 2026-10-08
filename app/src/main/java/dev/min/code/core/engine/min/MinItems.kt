@@ -198,6 +198,8 @@ private class ItemsBuilder(
             }
             // Stop hook 拦下「结束」时交给模型的理由：不是人说的话，作为说明显示
             is InputOrigin.Hook -> items += ChatItem.Note(id, text.hookFeedback(origin.event) + "\n" + plain(entry.parts))
+            // 定时任务到点触发：会话预设的任务，不画成用户气泡（也就不能被当成「回退到这条用户消息」）
+            is InputOrigin.Cron -> items += ChatItem.Note(id, text.cronFired(origin.cronId) + "\n" + plain(entry.parts))
         }
     }
 
