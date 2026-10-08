@@ -188,11 +188,10 @@ class SessionHub(
             val doomed = mutableListOf<GuestPath>()
             for (entry in candidates) {
                 val dir = GuestPath("${root.value}/${entry.name}")
-                val owner = try {
+                // 取消要穿过去（catchingNonCancellation）：吞了的话清扫会带着已取消的 Job 继续往下删
+                val owner = dev.min.agent.spi.catchingNonCancellation {
                     deps.host.fs.read(GuestPath("${dir.value}/owner")).decodeToString().trim()
-                } catch (_: Exception) {
-                    "" // 读不了按「认不了主」处理：不敢删
-                }
+                }.getOrDefault("") // 读不了按「认不了主」处理：不敢删
                 val parts = owner.split(' ')
                 if (parts.size != 2) continue // 没有 owner 文件（老版本留下的）或格式不对：认不了主，留着
                 if (parts[0] == hookStagingOwner.substringBefore(' ')) continue // 本实例的，正在用

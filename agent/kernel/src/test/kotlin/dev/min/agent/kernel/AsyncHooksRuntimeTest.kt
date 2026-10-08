@@ -35,10 +35,16 @@ import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.TEST_MODEL
 import dev.min.agent.testkit.TEST_PROFILE
 import dev.min.agent.testkit.reply
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
@@ -206,7 +212,12 @@ class AsyncHooksRuntimeTest {
 
     private fun args(): JsonObject = JsonObject(mapOf("command" to JsonPrimitive("echo hi")))
 
-    private fun hub(exec: Exec, fs: WorkspaceFs, hookShellPath: (GuestPath) -> String = { it.value }): SessionHub {
+    private fun hub(
+        exec: Exec,
+        fs: WorkspaceFs,
+        hookShellPath: (GuestPath) -> String = { it.value },
+        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it },
+    ): SessionHub {
         val model = RoutingModel { req ->
             if (req.lastText().contains("跑")) reply(bashCall("c1"), stop = StopReason.ToolUse) else reply(TextPart("好"))
         }
@@ -220,7 +231,6 @@ class AsyncHooksRuntimeTest {
             hookShellPath = hookShellPath,
             env = { name -> if (name == "CLAUDE_CODE_DISABLE_AUTO_MEMORY") "1" else null },
         )
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
         return SessionHub(store, deps, scope)
     }
 
@@ -373,5 +383,35 @@ class AsyncHooksRuntimeTest {
         val rms = exec.commands.filter { it.startsWith("rm -rf") }
         assertTrue("宿主说活着的 owner 不删：${rms.joinToString("\n")}", rms.none { it.contains("hookbg_live") })
         assertTrue("问的是宿主侧进程表：${exec.pidProbes}", exec.pidProbes.contains(4321L))
+    }
+
+    @Test
+    fun `清扫中途被取消就停，不吞着取消继续删`() = run {
+        val fs = MemFs()
+        val exec = ScriptedExec(fs)
+        exec.pidAliveAnswer = { _ -> false } // 所有 owner 都「确认死」：取消被吞的话清扫会一路走到删除
+        val ownerReads = AtomicInteger(0)
+        val secondReadArrived = CompletableDeferred<Unit>()
+        val gated = object : WorkspaceFs by fs {
+            override suspend fun read(path: GuestPath, offset: Long, limit: Int): ByteArray {
+                if (path.value.endsWith("/owner") && ownerReads.incrementAndGet() == 2) {
+                    secondReadArrived.complete(Unit)
+                    awaitCancellation()
+                }
+                return fs.read(path, offset, limit)
+            }
+        }
+        val sweepScope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val h = hub(exec, gated, hookShellPath = { "M:" + it.value }, scope = sweepScope)
+        // 等构造时 init 发起的那次清扫在空目录上跑完（此刻还没有目录）：测试里只剩这一场确定性的清扫
+        sweepScope.coroutineContext.job.children.toList().joinAll()
+        fs.files["/root/.min/hooks/hookbg_a/in.json"] = "{}"
+        fs.files["/root/.min/hooks/hookbg_a/owner"] = "other-instance 111\n"
+        fs.files["/root/.min/hooks/hookbg_b/in.json"] = "{}"
+        fs.files["/root/.min/hooks/hookbg_b/owner"] = "other-instance 222\n"
+        val job = sweepScope.launch { h.sweepOrphanHookDirs() }
+        secondReadArrived.await()
+        job.cancelAndJoin()
+        assertTrue("取消之后不该再发删除命令：${exec.commands}", exec.commands.none { it.startsWith("rm -rf") })
     }
 }
