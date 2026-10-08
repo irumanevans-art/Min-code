@@ -390,6 +390,7 @@ fun AboutPage() {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                QuickJsLicenseNotices()
 
                 SectionTitle(stringResource(R.string.about_last_crash), modifier = Modifier.padding(top = 8.dp))
                 CrashReport(report = crash, onClear = {
@@ -408,6 +409,24 @@ fun AboutPage() {
             }
         }
     }
+}
+
+@Composable
+private fun QuickJsLicenseNotices() {
+    val context = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    var notices by remember { mutableStateOf("") }
+    LaunchedEffect(open) {
+        if (open && notices.isEmpty()) notices = withContext(Dispatchers.IO) {
+            listOf("quickjs-SOURCES.txt", "QuickJS-MIT.txt", "quickjs-kt-Apache-2.0.txt").joinToString("\n\n") { name ->
+                context.assets.open("licenses/$name").bufferedReader().use { it.readText() }
+            }
+        }
+    }
+    InkTextButton(onClick = { open = !open }) {
+        Text("QuickJS MIT / quickjs-kt Apache-2.0 · " + stringResource(if (open) R.string.common_collapse else R.string.common_expand))
+    }
+    if (open) SelectionContainer { Text(notices, style = MaterialTheme.typography.bodySmall) }
 }
 
 /**

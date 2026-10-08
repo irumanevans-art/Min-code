@@ -893,7 +893,7 @@
   <string name="about_check_update_install_failed">Could not start the installer</string>
   <string name="about_whats_new">What\'s new</string>
   <string name="about_credits">Credits and license</string>
-  <string name="about_license_body">This app is released under GNU AGPL-3.0. The proot runtime, rootfs installer and terminal come from RikkaHub (AGPL-3.0); the proot binary comes from the Termux project and the terminal emulator from Termux\'s terminal-view; syntax highlighting and Markdown parsing come from RikkaHub\'s highlight module and JetBrains markdown. Claude Code is a product of Anthropic, and this app is not affiliated with Anthropic.</string>
+  <string name="about_license_body">This app is released under GNU AGPL-3.0. The proot runtime, rootfs installer and terminal come from RikkaHub (AGPL-3.0); the proot binary comes from the Termux project and the terminal emulator from Termux\'s terminal-view; syntax highlighting and Markdown parsing come from RikkaHub\'s highlight module and JetBrains markdown. Claude Code is a product of Anthropic, and this app is not affiliated with Anthropic.\n\nWorkflow uses quickjs-kt 1.0.15 (Apache-2.0, Dokar) and QuickJS (MIT). QuickJS: Copyright (c) 2017-2021 Fabrice Bellard; Copyright (c) 2017-2021 Charlie Gordon. The upstream AAR contains no license files; this app preserves the full notices in bundled licenses assets. Sources: https://github.com/dokar3/quickjs-kt/tree/v1.0.15 and https://github.com/bellard/quickjs/tree/04be246001599f5995fa2f2d8c91a0f198d3f34c.</string>
   <string name="about_last_crash">Last crash</string>
   <string name="about_last_error">Last error (no crash)</string>
   <string name="about_no_record">Nothing recorded.</string>

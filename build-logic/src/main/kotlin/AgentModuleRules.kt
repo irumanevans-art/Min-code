@@ -24,6 +24,7 @@ object AgentModuleRules {
     private const val KERNEL = ":agent:kernel"
     private const val TESTKIT = ":agent:testkit"
     private const val CLI = ":agent:cli"
+    private const val WORKFLOW = ":agent:workflow"
 
     private val BELOW_KERNEL = setOf(PROTOCOL, SPI, STORE, LLM, POLICY, CONTEXT, TOOLS, EXT, MCP)
 
@@ -42,6 +43,8 @@ object AgentModuleRules {
         KERNEL to BELOW_KERNEL,
         TESTKIT to BELOW_KERNEL + KERNEL,
         CLI to BELOW_KERNEL + KERNEL + TESTKIT + HOST,
+        // 唯一原生 Android 宿主适配：其他 agent 模块不得反向依赖它。
+        WORKFLOW to setOf(SPI, EXT),
     )
 
     private val FORBIDDEN_GROUP_PREFIXES = listOf("com.android", "com.google.android", "androidx", "dev.min.code")
@@ -52,11 +55,14 @@ object AgentModuleRules {
             ?: throw GradleException("${project.path} 没有登记在 AgentModuleRules 里：新模块先在 docs/agent/02-总体架构.md §2 和这张表里登记依赖规则")
         val problems = mutableListOf<String>()
         project.configurations.forEach { conf ->
+            // AGP 的 lint/设备测试工具运行在 Gradle 中，不是宿主模块的发布依赖。
+            if (project.path == WORKFLOW && (conf.name == "androidLintTool" || conf.name.startsWith("unified-test-platform-"))) return@forEach
             val isTest = conf.name.startsWith("test")
             conf.dependencies.forEach { dep ->
                 when (dep) {
                     is ProjectDependency -> {
-                        val ok = dep.path in allowedHere || (isTest && dep.path == TESTKIT)
+                        val ownAndroidTest = project.path == WORKFLOW && dep.path == WORKFLOW && conf.name.contains("Test") && conf.name.endsWith("Classpath")
+                        val ok = dep.path in allowedHere || (isTest && dep.path == TESTKIT) || ownAndroidTest
                         if (!ok) problems += "${conf.name} -> ${dep.path}"
                     }
                     is ExternalModuleDependency -> {
