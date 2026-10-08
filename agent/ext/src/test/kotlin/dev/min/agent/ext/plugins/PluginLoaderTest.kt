@@ -72,7 +72,8 @@ class PluginLoaderTest {
             fs.put("/plugins/outside/a.md", "outside")
             fs.plugin("ok")
             val batch = PluginLoader(fs).loadAll(listOf(request("bad"), request("ok")))
-            assertEquals(raw, listOf("ok"), batch.plugins.map { it.namespace })
+            assertEquals(raw, listOf("bad", "ok"), batch.plugins.map { it.namespace })
+            assertTrue(batch.plugins.first().commands.isEmpty())
             assertTrue(batch.errors.isNotEmpty())
         }
     }
@@ -83,7 +84,8 @@ class PluginLoaderTest {
         fs.put("/plugins/bad/.claude-plugin/plugin.json", """{"name":"bad","commands":"./commands/a.md"}""")
         fs.put("/plugins/bad/commands/a.md", "body")
         val result = PluginLoader(fs) { path -> if (path.value.endsWith("/commands/a.md")) GuestPath("/outside/a.md") else path }.load(request("bad"))
-        assertNull(result.plugin)
+        assertNotNull(result.plugin)
+        assertTrue(result.plugin!!.commands.isEmpty())
         assertTrue(result.errors.any { "escapes plugin directory" in it })
     }
 

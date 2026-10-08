@@ -81,7 +81,7 @@ class HooksCompatTest {
         "PostToolUseFailure", "Notification", "SubagentStart", "SubagentStop", "Stop", "SessionEnd",
         "PreCompact", "PostCompact", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
         "PostToolBatch", "TaskCompleted", "PreModelSwitch", "PostModelSwitch",
-        "UserPromptExpansion",
+        "UserPromptExpansion", "PermissionDenied",
     )
 
     @Test fun `hooks 每个事件都有输入与决策样本，触发现状标记与内核清单一致`() {

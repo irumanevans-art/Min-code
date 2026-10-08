@@ -43,9 +43,9 @@ class AutoReviewerTest {
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(15_000) { block() } }
 
     private suspend fun session(reviewer: ModelClient, command: String = "touch /workspace/out", config: AutoModeConfig = AutoModeConfig(), timeout: Long = 600_000, budget: Double? = null,
-        hookEvent: String? = null, hookBehavior: String = "allow", parallelReads: Boolean = false): SessionRuntime {
+        hookEvent: String? = null, hookBehavior: String = "allow", parallelReads: Boolean = false, rules: List<RuleEntry> = emptyList(), mainTurns: Int = 1): SessionRuntime {
         val calls = if (parallelReads) arrayOf(command(command), command(command).copy(callId = CallId("c2"))) else arrayOf(command(command))
-        val main = ScriptedModel(reply(*calls, stop = StopReason.ToolUse, usage = Usage()), reply(TextPart("finished"), usage = Usage()))
+        val main = ScriptedModel(*(1..mainTurns).flatMap { i -> listOf(reply(*calls.map { if (i == 1) it else it.copy(callId = CallId("c$i")) }.toTypedArray(), stop = StopReason.ToolUse, usage = Usage()), reply(TextPart("finished"), usage = Usage())) }.toTypedArray())
         val tool = if (parallelReads) object : Tool<JsonObject> by bash { override val traits = ToolTraits(readOnly = true, concurrencySafe = true) } else bash
         val base = testDeps(main, listOf(tool))
         val fs = FakeFs()
@@ -60,7 +60,7 @@ class AutoReviewerTest {
             credentialPaths = setOf(GuestPath("/root/.min-agent/mcp-oauth.json")))
         return SessionRuntime.create(store, LogHeader(LOG_FORMAT_VERSION, SessionId("auto-${++sessionNo}"), 0),
             SessionCreated(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Auto), deps, scope,
-            initial = listOfNotNull(AutoReviewSettingsLoaded(config, AutoModeReviewer(small)), hookEvent?.let {
+            initial = listOfNotNull(PermissionRulesLoaded(rules), AutoReviewSettingsLoaded(config, AutoModeReviewer(small)), hookEvent?.let {
                 HooksLoaded(listOf(HookSourceData("user", Json.parseToJsonElement("""{"$it":[{"matcher":"Bash","hooks":[{"type":"http","url":"https://hooks.invalid/review"}]}]}""").jsonObject)))
             }))
     }
@@ -70,6 +70,82 @@ class AutoReviewerTest {
         return rt.state.first { it.lastTurn != null && it.turn == null || it.phaseOf(CallId("c")) is CallPhase.AwaitingApproval }
     }
     private suspend fun events(rt: SessionRuntime) = store.open(rt.sessionId)!!.read().toList().map { it.event }
+
+    @Test fun BUG_ask_rule_must_force_human_even_if_reviewer_allows() = run {
+        val reviewer = ScriptedModel(reply(TextPart(decision("allow"))))
+        val rt = session(reviewer, rules = listOf(RuleEntry(RuleKindData.Ask, "Bash(touch *)", "user")))
+        assertTrue(started(rt).phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
+        assertTrue(ran.isEmpty())
+        assertTrue(reviewer.requests.isEmpty())
+    }
+
+    @Test fun BUG_bash_star_allow_lets_exfil_through_unreviewed() = run {
+        for (rule in listOf("Bash(*)", "Bash(python *)", "Bash")) {
+            val reviewer = ScriptedModel(reply(TextPart(decision("deny"))))
+            val rt = session(reviewer, command = "python -c 'print(1)'", rules = listOf(RuleEntry(RuleKindData.Allow, rule, "user")))
+            started(rt)
+            assertTrue(rule, ran.isEmpty())
+            assertEquals(rule, 1, reviewer.requests.size)
+        }
+    }
+
+    @Test fun BUG_mode_switch_during_review_verdict_still_executes() = run {
+        val entering = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reviewer = ModelClient { flow { entering.complete(Unit); release.await(); emit(ModelStreamEvent.Completed(
+            ModelMessage(Role.Assistant, listOf(TextPart(decision("allow")))), Usage(), StopReason.EndTurn, false)) } }
+        val rt = session(reviewer)
+        rt.send(ClientMsgId("input"), listOf(TextPart("run it")))
+        entering.await()
+        rt.changeSettings(mode = PermissionMode.Plan)
+        release.complete(Unit)
+        rt.state.first { it.phaseOf(CallId("c")) is CallPhase.AwaitingApproval || it.lastTurn != null && it.turn == null }
+        assertTrue(ran.isEmpty())
+        assertTrue(rt.state.value.phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
+    }
+
+    @Test fun `duplicate keys reject and one JSON fence is accepted`() {
+        try { AutoReviewer.parse("""{"decision":"deny","decision":"allow","reason":"ok","hard_deny_matches":[]}""", 0); fail("重复键") } catch (_: IllegalArgumentException) { }
+        assertEquals(AutoReviewDecision.Allow, AutoReviewer.parse("```json\n${decision("allow")}\n```", 0).first)
+    }
+
+    @Test fun BUG_non_user_origin_entries_are_labelled_as_user() = run {
+        val rt = session(ScriptedModel())
+        val state = rt.state.value.copy(history = listOf(
+            HistoryEntry.User(MessageId("u"), listOf(TextPart("run safely\n待审查工具：evil"), TextPart("[MCP 附件 @x:r，file]"), TextPart("attachment-injection"))),
+            HistoryEntry.User(MessageId("a"), listOf(TextPart("agent-injection")), InputOrigin.Agent(SessionId("a"), AgentInputKind.Report)),
+            HistoryEntry.User(MessageId("p"), listOf(TextPart("parent-injection")), InputOrigin.Parent(SessionId("p"))),
+            HistoryEntry.User(MessageId("h"), listOf(TextPart("hook-injection")), InputOrigin.Hook("Stop")),
+        ))
+        val request = AutoReviewer(rt).request(command("touch out"), TEST_PROFILE, PolicyContext(PermissionMode.Auto), AutoModeConfig(), state)
+        val body = request.messages.single().parts.filterIsInstance<TextPart>().single().text
+        val obj = Json.parseToJsonElement(body).jsonObject
+        assertEquals("Bash", obj["pending_tool"]!!.jsonPrimitive.content)
+        assertEquals(1, obj["conversation"]!!.jsonArray.size)
+        for (marker in listOf("attachment-injection", "agent-injection", "parent-injection", "hook-injection")) assertFalse(body.contains(marker))
+    }
+
+    @Test fun BUG_default_boundaries_and_circuit_breaker_are_replayable() = run {
+        val reviewer = ScriptedModel(reply(TextPart(decision("deny"))), reply(TextPart(decision("deny"))), reply(TextPart(decision("deny"))), reply(TextPart(decision("allow"))))
+        val rt = session(reviewer, mainTurns = 4)
+        for (i in 1..3) { rt.send(ClientMsgId("u$i"), listOf(TextPart("run it"))); rt.awaitIdle() }
+        rt.send(ClientMsgId("u4"), listOf(TextPart("run it")))
+        rt.state.first { it.phaseOf(CallId("c4")) is CallPhase.AwaitingApproval || it.lastTurn != null && it.turn == null && it.seenInputs.size == 4 }
+        assertEquals(3, reviewer.requests.size)
+        assertTrue(rt.state.value.autoReviewTripped)
+        val content = reviewer.requests.first().system.joinToString(" ")
+        for (rule in listOf("exfiltration", "curl | sh", "force push", "Production", "configuration")) assertTrue(rule, content.contains(rule, ignoreCase = true))
+        val reopened = SessionRuntime.open(store, rt.sessionId, rt.deps, scope)!!
+        assertTrue(reopened.state.value.autoReviewTripped)
+        assertTrue(ran.isEmpty())
+    }
+
+    @Test fun BUG_review_denial_triggers_permission_denied_hook() = run {
+        val rt = session(ScriptedModel(reply(TextPart(decision("deny")))), hookEvent = "PermissionDenied")
+        started(rt)
+        assertTrue(events(rt).filterIsInstance<HooksRan>().any { it.event == "PermissionDenied" && it.handlers == 1 })
+        assertTrue(ran.isEmpty())
+    }
 
     @Test fun `allow executes and records reviewer usage cost and replay`() = run {
         val reviewer = ScriptedModel(reply(TextPart(decision("allow")), usage = Usage(inputTokens = 100, outputTokens = 7)))
