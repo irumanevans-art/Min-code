@@ -166,7 +166,7 @@ class CronSessionTest {
             ids = IdGenerator { prefix -> "${prefix}_${ids.incrementAndGet()}" },
             models = { ref ->
                 check(ref == TEST_MODEL) { "未知模型 $ref" }
-                ResolvedModel(profile, model)
+                ResolvedModel(profileOverride ?: profile, model)
             },
             tools = tools,
             host = base.host,
@@ -175,6 +175,9 @@ class CronSessionTest {
             retry = base.retry,
         )
     }
+
+    /** 测试中途换模型（价格）用：非空时覆盖建 Hub 时给的 profile */
+    @Volatile private var profileOverride: dev.min.agent.llm.ModelProfile? = null
 
     /** 最近建的那个 Hub 的作用域：模拟「进程死了」就是取消它 */
     private var currentScope: CoroutineScope? = null
@@ -795,17 +798,72 @@ class CronSessionTest {
     }
 
     @Test
-    fun `a capped task is not fired on a model without a USD price because the cap cannot be checked`() = run {
+    fun `a capped task on a model without a USD price skips that run once with a note and stays active`() = run {
         val h = hub(answering, TEST_PROFILE)
         val rt = h.root()
+        val notices = collectNotices(h)
+        delay(100)
         schedule(rt, budget = 0.1)
         now.set(t0 + 31 * minute)
         h.crons.tick(now.get())
         val task = rt.state.value.crons.single()
-        assertEquals(CronStatus.Expired, task.status)
-        assertTrue(task.endedBecause!!.contains("没有 USD 定价"))
-        assertEquals(CronExpiry.NoPricing, events(rt.sessionId).filterIsInstance<CronExpired>().single().reason)
-        assertTrue("没有触发，也没有模型请求", events(rt.sessionId).none { it is CronFired } && answering.requests.isEmpty())
+        assertTrue("任务不再被永久取消", task.active)
+        assertEquals(0, task.fires)
+        val log = events(rt.sessionId)
+        assertTrue("没有触发，也没有模型请求", log.none { it is CronFired || it is CronExpired } && answering.requests.isEmpty())
+        val skipNotes = log.filterIsInstance<Note>().filter { it.level == NoteLevel.Warning && it.text.contains("USD") }
+        assertEquals(1, skipNotes.size)
+        assertTrue(skipNotes.single().text, skipNotes.single().text.contains("跳过") && skipNotes.single().text.contains("c1"))
+        withTimeout(5_000) { while (notices.isEmpty()) delay(20) }
+        assertEquals(CronNotice.Kind.Skipped, notices.single().kind)
+
+        // 后面的心跳、后面的几次到点：照样跳过，不重复提示
+        for (step in 1..3) {
+            now.set(now.get() + 31 * minute)
+            h.crons.tick(now.get())
+            h.crons.tick(now.get() + 1)
+        }
+        assertEquals("提示只出一次", 1, events(rt.sessionId).filterIsInstance<Note>().count { it.text.contains("USD") })
+        assertEquals(1, notices.size)
+        assertEquals(0, rt.state.value.crons.single().fires)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a skipped occurrence is not made up later - once the model is priced the next occurrence runs`() = run {
+        val h = hub(answering, TEST_PROFILE)
+        val rt = h.root()
+        schedule(rt, budget = 0.1)
+        now.set(t0 + 31 * minute)
+        h.crons.tick(now.get()) // 跳过这次
+        assertEquals(0, rt.state.value.crons.single().fires)
+        profileOverride = pricedProfile // 用户换回了有价格的模型
+        now.set(t0 + 32 * minute)
+        h.crons.tick(now.get())
+        settle(rt)
+        assertEquals("错过的不补跑：换回来那一刻不会马上触发", 0, rt.state.value.crons.single().fires)
+        now.set(t0 + 62 * minute) // 下一个整点（间隔从跳过那一刻 +31 起数）
+        h.crons.tick(now.get())
+        settle(rt)
+        assertEquals(1, rt.state.value.crons.single().fires)
+        assertTrue(rt.state.value.crons.single().active)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a one shot waits for a priced model instead of being cancelled`() = run {
+        val h = hub(answering, TEST_PROFILE)
+        val rt = h.root()
+        schedule(rt, every = 20 * minute, recurring = false, budget = 0.1)
+        now.set(t0 + 21 * minute)
+        h.crons.tick(now.get())
+        assertTrue(rt.state.value.crons.single().active)
+        assertEquals(0, rt.state.value.crons.single().fires)
+        profileOverride = pricedProfile
+        now.set(t0 + 25 * minute)
+        h.crons.tick(now.get())
+        settle(rt)
+        assertEquals("一次性任务没丢，换回有价格的模型后触发", 1, rt.state.value.crons.single().fires)
         assertLogIsTruth(rt)
     }
 

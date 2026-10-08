@@ -38,6 +38,9 @@ data class CronNotice(val session: SessionId, val cronId: String, val kind: Kind
 
         /** 一次运行花到了单次上限，这一次运行被停下；任务本身还在（除非同时是连续第二次，那时通知的是 [Expired]） */
         BudgetStopped,
+
+        /** 这一次到点没触发：任务设了 USD 花费上限，当前模型却没有 USD 价格，上限核对不了。任务还在，价格有了就恢复 */
+        Skipped,
     }
 }
 
@@ -76,6 +79,12 @@ internal class CronEngine(
         val lock = Mutex()
         var watcher: Job? = null
         val idleCheckQueued = AtomicBoolean(false)
+
+        /** 因缺 USD 价格跳过的循环任务：跳过的那一刻起重新数，这一次不补跑（同「错过不补跑」）。只在内存里，重开会话本来就从打开那刻重新数 */
+        val skippedAt = ConcurrentHashMap<String, Long>()
+
+        /** 已经为「缺 USD 价格」提示过的任务；这次提示后不再重复，直到它真的触发过一次 */
+        val skipNoticed: MutableSet<String> = ConcurrentHashMap.newKeySet()
     }
 
     private val attached = ConcurrentHashMap<SessionId, Attached>()
@@ -137,25 +146,27 @@ internal class CronEngine(
         }
         if (!rt.isQuiescent()) return
         val due = rt.state.value.crons.filter { it.active }
-            .mapNotNull { t -> t.nextFireAt(deps.zone, entry.floorMs)?.takeIf { it <= now }?.let { t to it } }
+            .mapNotNull { t -> t.nextFireAt(deps.zone, maxOf(entry.floorMs, entry.skippedAt[t.id] ?: 0L))?.takeIf { it <= now }?.let { t to it } }
             .minByOrNull { it.second }?.first ?: return
-        fire(rt, due, now)
+        fire(rt, entry, due, now)
     }
 
-    private suspend fun fire(rt: SessionRuntime, task: CronTask, now: Long) {
+    private suspend fun fire(rt: SessionRuntime, entry: Attached, task: CronTask, now: Long) {
         val state = rt.state.value
         // 没有上限（任务没设、宿主也没设天花板）就不记账：和 Claude Code 一样不限，花的是用户自己的额度
         val limit = listOfNotNull(task.maxBudgetUsd, ceilingUsd).minOrNull()
         var run: CronRun? = null
         if (limit != null) {
-            // 设了 USD 上限却估算不了花费的（当前模型没有 USD 定价）按保守值：不触发。价格不明的模型，上限就是空话
+            // 设了 USD 上限却核对不了花费的（当前模型没有 USD 定价，如 CNY 模型、目录外模型）：本次跳过，不触发。
+            // 价格不明的模型，上限就是空话。只跳这一次——用户临时切到别的模型不该让一个 7 天的任务永久作废
             val priced = catchingNonCancellation { deps.models.resolve(state.activeModel).profile.pricing }.getOrNull()
             if (priced == null || priced.currency != "USD") {
-                expire(rt, task, expired(CronExpiry.NoPricing, null))
+                skip(rt, entry, task, now, limit)
                 return
             }
             run = CronRun(rt.sessionId, task.id, task.fires + 1, limit)
         }
+        entry.skipNoticed.remove(task.id)
         val clientMsgId = ClientMsgId("cron:${task.id}:${task.fires + 1}")
         val expectedFires = task.fires
         // 先立好这次运行的记账再提交：提交一落盘回合就可能开始，第一个模型请求就要看得到上限
@@ -171,6 +182,19 @@ internal class CronEngine(
             precondition = { s -> rt.isQuiescent() && s.cronTask(task.id)?.let { it.active && it.fires == expectedFires } == true },
         )
         if (!delivered) rt.cronRun = null
+    }
+
+    /**
+     * 缺 USD 价格，这一次不触发。循环任务从此刻重新数（这一次错过了就是错过了）；一次性任务保持到点，价格有了就在下一次心跳触发。
+     * 提示只给一次：Note 进日志、通知用户，之后同一个任务再跳过不重复（任务真的触发过一次后重新计）
+     */
+    private suspend fun skip(rt: SessionRuntime, entry: Attached, task: CronTask, now: Long, limitUsd: Double) {
+        if (task.recurring) entry.skippedAt[task.id] = now
+        if (!entry.skipNoticed.add(task.id)) return
+        val text = "定时任务 ${task.id}（${task.scheduleText()}）到点了，但当前模型没有 USD 价格，花费上限 ${money(limitUsd)} 核对不了，这一次跳过没有触发。" +
+            "任务还在；换回有 USD 价格的模型后" + (if (task.recurring) "下一次到点会照常运行" else "会触发") + "。"
+        rt.commit(listOf(Note(NoteLevel.Warning, text)), Durability.Batched)
+        _notices.tryEmit(CronNotice(rt.sessionId, task.id, CronNotice.Kind.Skipped, text))
     }
 
     /** 触发时交给模型的话：明说这是预设的定时任务（不是用户此刻的消息）；设了花费上限的，告诉它上限 */

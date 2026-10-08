@@ -81,7 +81,7 @@ enum class CronExpiry {
     /** 一次性任务的时刻在会话没开着的时候过去了（不补跑） */
     @SerialName("missed") Missed,
 
-    /** 任务设了 USD 上限，但当前模型没有 USD 定价，花费无法核对，按保守值不触发 */
+    /** 不再写出：任务设了 USD 上限而当前模型没有 USD 价格时，现在是「这一次跳过」，任务保持进行中。保留取值只为读旧日志 */
     @SerialName("no_pricing") NoPricing,
 }
 
