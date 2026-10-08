@@ -72,8 +72,12 @@ try {
             }
             $filters = @()
             foreach ($t in $case.Tests) { $filters += '--tests'; $filters += ('dev.min.agent.kernel.' + $case.Class + '.' + $t) }
+            # Windows PowerShell 5.1：gradle 失败时往 stderr 写的内容在 Stop 模式下会变成终止错误，这里临时放宽，只看退出码
+            $savedPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
             & .\gradlew.bat ':agent:kernel:test' @filters '--console=plain' *> $log
             $gradleExit = $LASTEXITCODE
+            $ErrorActionPreference = $savedPreference
             $xmlPath = Join-Path $root ('agent/kernel/build/test-results/test/TEST-dev.min.agent.kernel.' + $case.Class + '.xml')
             $compiled = -not (Select-String -LiteralPath $log -Pattern 'compileKotlin FAILED|compileTestKotlin FAILED|Compilation error|^e: ' -Quiet)
             $failedNames = @()
