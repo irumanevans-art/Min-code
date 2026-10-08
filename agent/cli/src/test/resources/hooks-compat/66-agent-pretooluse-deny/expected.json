@@ -1,0 +1,16 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "runner": "agent",
+  "handlerCount": 1,
+  "decision": "Deny",
+  "shouldContinue": true,
+  "reasons": ["the command writes outside the workspace"],
+  "stopReasons": [],
+  "additionalContext": [],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §Agent-based hooks（:3630-3633）：agent 的 ok:false 恒按 continueOnBlock:true——PreToolUse 上等价 permissionDecision:\"deny\"，理由作为工具错误交回模型、回合继续"
+}

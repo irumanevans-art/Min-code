@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "agent", "prompt": "Read-only verify this command is safe before allowing it. $ARGUMENTS" }
+        ]
+      }
+    ]
+  }
+}

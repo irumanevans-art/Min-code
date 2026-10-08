@@ -1,0 +1,16 @@
+{
+  "event": "Stop",
+  "target": null,
+  "runner": "prompt",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "reasons": [],
+  "stopReasons": [],
+  "additionalContext": [],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §Response schema（:3555 起）：ok:true = 放行停止——Stop 上结论中性、无需理由；$ARGUMENTS 换成事件输入（:3527-3531 的 prompt 字段表）"
+}

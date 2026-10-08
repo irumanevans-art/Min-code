@@ -1,0 +1,16 @@
+{
+  "event": "Stop",
+  "target": null,
+  "runner": "agent",
+  "handlerCount": 1,
+  "decision": "Block",
+  "shouldContinue": true,
+  "reasons": ["2 unit tests are still failing"],
+  "stopReasons": [],
+  "additionalContext": [],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §Agent-based hooks（:3625-3633）：子 agent 回 {\"ok\":false,\"reason\":…}；ok:false 按 continueOnBlock:true 处理——Stop 上理由交回模型、回合继续（同 prompt 的 Block）"
+}

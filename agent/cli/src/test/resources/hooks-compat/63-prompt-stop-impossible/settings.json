@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "prompt", "prompt": "Evaluate if Claude should stop: $ARGUMENTS. Reply impossible:true when the condition can never be satisfied." }
+        ]
+      }
+    ]
+  }
+}

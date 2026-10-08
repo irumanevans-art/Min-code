@@ -1,0 +1,17 @@
+{
+  "event": "Stop",
+  "target": null,
+  "runner": "prompt",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "reasons": [],
+  "stopReasons": [],
+  "additionalContext": [],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 1,
+  "nonBlockingErrorsContain": ["口径"],
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §Response schema（:3555）：模型必须回 {\"ok\":…} 的 JSON；没按口径回只是这条 hook 的非阻断错误（门禁挂坏了不该把回合打死），执行继续"
+}
