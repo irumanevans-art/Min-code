@@ -89,12 +89,12 @@ internal class AsyncHookRunner(
         require(SAFE_ID.matches(id)) { "后台 hook id 必须是安全路径段" }
         val dir = GuestPath("/root/.min/hooks/$id")
         deps.host.fs.writeAtomic(child(dir, "in.json"), stdin.toString().encodeToByteArray())
-        deps.host.fs.writeAtomic(child(dir, "start.sh"), script(handler, env + handler.pluginEnv, dir, timeoutSeconds).encodeToByteArray())
+        deps.host.fs.writeAtomic(child(dir, "start.sh"), script(handler, env, dir, timeoutSeconds).encodeToByteArray())
         val started = deps.clock.nowMs()
         // Windows 的 ProcessBuilder -> Git Bash 会破坏复杂的 -c 参数；与同步批同一条路：脚本文本走文件端口（HookBatchRunner 同）。
         // timeoutMs 给到天级：Android 宿主会在到点时硬杀后台进程（桌面不设限），它是后台 hook 的寿命上限而不是本轮的等待
         val result = deps.host.exec.run(
-            ShellCommand("sh ${cq(deps.hookShellPath(child(dir, "start.sh")))}", cwd),
+            ShellCommand("sh ${cq(deps.hookShellPath(child(dir, "start.sh")))}", cwd, dev.min.agent.ext.hooks.pluginProcessEnv(listOf(handler))),
             ExecOptions(timeoutMs = MAX_LIFETIME_MS, foregroundBudgetMs = 1),
         )
         val handle = (result as? ExecResult.Backgrounded)?.handle
@@ -119,8 +119,10 @@ internal class AsyncHookRunner(
         append("else\n  atomic_out() { printf '%s\\n' \"\$2\" > \"\$1\"; }\nfi\n")
         val invocation = if (handler.args != null) {
             val argv = (handler.command?.let(::listOf) ?: emptyList()) + handler.args!!
-            argv.joinToString(" ", transform = ::q)
+            argv.mapIndexed { ai, arg -> if (handler.source == dev.min.agent.ext.config.ConfigSource.Plugin)
+                "\"\${MIN_PLUGIN_0_ARG_$ai}\"" else q(arg) }.joinToString(" ")
         } else "sh -c ${q(requireNotNull(handler.command))}"
+        handler.pluginEnv.keys.forEachIndexed { ei, key -> if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(key)) append("export $key=\"\${MIN_PLUGIN_0_ENV_$ei}\"\n") }
         val input = q(deps.hookShellPath(child(dir, "in.json")))
         val out = q(deps.hookShellPath(child(dir, "out")))
         val err = q(deps.hookShellPath(child(dir, "err")))
