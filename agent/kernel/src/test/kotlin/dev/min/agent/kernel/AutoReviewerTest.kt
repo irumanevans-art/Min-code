@@ -119,6 +119,7 @@ class AutoReviewerTest {
         ))
         val request = AutoReviewer(rt).request(command("touch out"), TEST_PROFILE, PolicyContext(PermissionMode.Auto), AutoModeConfig(), state)
         val body = request.messages.single().parts.filterIsInstance<TextPart>().single().text
+        assertFalse("用户换行必须编码成 JSON 数据，不能成为请求中的伪指令行", body.contains('\n'))
         val obj = Json.parseToJsonElement(body).jsonObject
         assertEquals("Bash", obj["pending_tool"]!!.jsonPrimitive.content)
         assertEquals(1, obj["conversation"]!!.jsonArray.size)
@@ -145,6 +146,21 @@ class AutoReviewerTest {
         val rt = session(ScriptedModel(reply(TextPart(decision("deny")))), hookEvent = "PermissionDenied")
         started(rt)
         assertTrue(events(rt).filterIsInstance<HooksRan>().any { it.event == "PermissionDenied" && it.handlers == 1 })
+        assertTrue(ran.isEmpty())
+    }
+
+    @Test fun BUG_circuit_breaker_never_downgrades_explicit_hard_deny() = run {
+        val reviewer = ScriptedModel(*(1..3).map { reply(TextPart(decision("deny"))) }.toTypedArray())
+        val rt = session(reviewer, mainTurns = 4)
+        for (i in 1..3) { rt.send(ClientMsgId("u$i"), listOf(TextPart("run it"))); rt.awaitIdle() }
+        assertTrue(rt.state.value.autoReviewTripped)
+        rt.commit(listOf(AutoReviewSettingsLoaded(AutoModeConfig(hardDeny = listOf("Bash(touch *)")), AutoModeReviewer(small))), Durability.Sync)
+        rt.send(ClientMsgId("u4"), listOf(TextPart("run it")))
+        rt.state.first { it.phaseOf(CallId("c4")) is CallPhase.AwaitingApproval || CallId("c4") in it.toolResults }
+        assertFalse(rt.state.value.phaseOf(CallId("c4")) is CallPhase.AwaitingApproval)
+        assertTrue(rt.state.value.toolResults.getValue(CallId("c4")).isError)
+        assertEquals(3, reviewer.requests.size)
+        assertNull(events(rt).filterIsInstance<AutoReviewed>().last().model)
         assertTrue(ran.isEmpty())
     }
 

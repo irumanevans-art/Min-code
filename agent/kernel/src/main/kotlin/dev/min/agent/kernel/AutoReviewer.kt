@@ -32,9 +32,10 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
         val result = try {
             val hardRule = settings.config.hardDeny.firstOrNull { PolicyEngine.matchesCondition(it, ask, context) }
             when {
+                // 确定命中的硬边界不能因分类器失效或熔断变成可由人批准的调用。
+                hardRule != null -> AutoReviewDecision.Deny to "autoMode.hard_deny：$hardRule"
                 settings.unavailable -> AutoReviewDecision.Ask to "autoMode 配置不可用，交给用户决定"
                 rt.state.value.autoReviewTripped -> AutoReviewDecision.Ask to "审查连续拒绝 3 次或累计拒绝 20 次，后续需审查的调用交给用户决定"
-                hardRule != null -> AutoReviewDecision.Deny to "autoMode.hard_deny：$hardRule"
                 alwaysAsk || PolicyEngine.floorReason(ask, context) != null -> AutoReviewDecision.Ask to "必须由人批准的安全底线"
                 else -> {
                     val model = rt.resolveReviewer(settings.reviewer ?: AutoModeReviewer(ref))

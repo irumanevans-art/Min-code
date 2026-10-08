@@ -62,7 +62,8 @@ $cases = @(
     @{ Name='headless-trust-note'; File='agent/cli/src/main/kotlin/dev/min/agent/cli/Headless.kt'; Before='.filter { "this workspace has not been trusted" in it }'; After='.filter { false }'; Module='cli'; Class='dev.min.agent.cli.HooksExpansionHeadlessTest' },
     @{ Name='headless-auto-warning'; File='agent/cli/src/main/kotlin/dev/min/agent/cli/Headless.kt'; Before='args.approve == ApprovalAnswer.Yes'; After='args.approve == ApprovalAnswer.No'; Module='cli'; Class='dev.min.agent.cli.HooksExpansionHeadlessTest' },
     @{ Name='app-plugin-env'; File='app/src/main/java/dev/min/code/core/engine/min/ProotExec.kt'; Before='.copy(env = command.env)'; After='.copy(env = emptyMap())'; Module='app'; Class='dev.min.code.core.engine.min.ProotExecTest' },
-    @{ Name='app-canonical-path'; File='app/src/main/java/dev/min/code/core/engine/min/MinKernelDeps.kt'; Before='canonicalPath = ports::canonicalPath,'; After='canonicalPath = { it },'; Module='app'; Class='dev.min.code.core.engine.min.MinSnapshotCompositionTest' }
+    @{ Name='app-canonical-path'; File='app/src/main/java/dev/min/code/core/engine/min/MinKernelDeps.kt'; Before='canonicalPath = ports::canonicalPath,'; After='canonicalPath = { it },'; Module='app'; Class='dev.min.code.core.engine.min.MinSnapshotCompositionTest' },
+    @{ Name='hard-deny-priority'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='hardRule != null ->'; After='hardRule != null && !rt.state.value.autoReviewTripped ->'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' }
 )
 $summary = @()
 Push-Location $root
