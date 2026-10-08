@@ -128,6 +128,9 @@ enum class TurnTrigger {
 
     /** 用户手动压缩（`/compact [焦点]`）：这一回合只做压缩，不调模型回答 */
     @SerialName("compact") Compact,
+
+    /** 定时任务到点触发（M5）：会话空闲时收到一条 `origin = cron` 的输入，自动开回合 */
+    @SerialName("cron") Cron,
 }
 
 @Serializable

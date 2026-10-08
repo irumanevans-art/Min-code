@@ -306,7 +306,7 @@ class CronSessionTest {
         val log = events(rt.sessionId)
         val fired = log.indexOfFirst { it is CronFired }
         assertEquals("cron_fired 与输入同一次提交，紧挨着", ClientMsgId("cron:c1:1"), (log[fired + 1] as InputReceived).clientMsgId)
-        assertEquals(TurnTrigger.Notification, log.filterIsInstance<TurnStarted>().single().trigger)
+        assertEquals("转录里的分隔线要说是定时任务唤醒的，不是子 agent 报告", TurnTrigger.Cron, log.filterIsInstance<TurnStarted>().single().trigger)
         assertEquals("模型看到了它", 1, answering.requests.count { it.last().startsWith("[定时任务") })
         assertLogIsTruth(rt)
 
@@ -359,6 +359,7 @@ class CronSessionTest {
         h.crons.tick(now.get())
         assertEquals(0, rt.state.value.crons.single().fires)
         assertEquals("收件箱里的话没动", 1, rt.state.value.inbox.size)
+        assertLogIsTruth(rt)
     }
 
     @Test
@@ -621,6 +622,7 @@ class CronSessionTest {
         now.set(t0 + 3 * 60 * minute)
         delay(300)
         assertEquals("没有定时器、没有任何状态变化：时间过去了也不会自己触发", 0, rt.state.value.crons.single().fires)
+        assertLogIsTruth(rt)
     }
 
     @Test

@@ -118,6 +118,7 @@ fun triggerViewOf(trigger: TurnTrigger): TurnTriggerView = when (trigger) {
     TurnTrigger.Hook -> TurnTriggerView.Hook
     TurnTrigger.Delegated -> TurnTriggerView.Delegated
     TurnTrigger.Compact -> TurnTriggerView.Compact
+    TurnTrigger.Cron -> TurnTriggerView.Cron
 }
 
 fun EndedTurn.end(): TurnEnd = turnEndOf(outcome)
@@ -276,6 +277,8 @@ private class ItemsBuilder(
                 TurnTrigger.Notification -> items += dividerNote("wake:$seq", text.subagentWoke())
                 // 后台 asyncRewake hook 唤醒的回合：分隔线说明「是谁」把会话叫醒的
                 TurnTrigger.Hook -> items += dividerNote("hook:$seq", text.hookWoke())
+                // 定时任务到点唤醒的回合
+                TurnTrigger.Cron -> items += dividerNote("cron:$seq", text.cronWoke())
                 else -> Unit
             }
             is TurnEnded -> turnEnded(seq, atMs, event)

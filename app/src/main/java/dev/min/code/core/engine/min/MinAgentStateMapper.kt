@@ -137,6 +137,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             phase = when (turn.trigger) {
                 dev.min.agent.spi.TurnTrigger.Notification -> text.subagentWoke()
                 dev.min.agent.spi.TurnTrigger.Hook -> text.hookWoke()
+                dev.min.agent.spi.TurnTrigger.Cron -> text.cronWoke()
                 else -> null
             },
             detail = input.toolStatus,

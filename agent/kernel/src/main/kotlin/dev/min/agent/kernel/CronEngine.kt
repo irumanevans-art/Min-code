@@ -145,7 +145,7 @@ internal class CronEngine(
             listOf(TextPart(firedText(task))),
             Delivery.Queue,
             InputOrigin.Cron(task.id),
-            startTurn = TurnTrigger.Notification,
+            startTurn = TurnTrigger.Cron,
             extra = listOf(CronFired(task.id, now, clientMsgId)),
             // 提交的锁里再判一次：任务还在、没被别的触发抢先、会话确实空闲
             precondition = { s -> rt.isQuiescent() && s.cronTask(task.id)?.let { it.active && it.fires == expectedFires } == true },

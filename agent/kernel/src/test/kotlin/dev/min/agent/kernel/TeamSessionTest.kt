@@ -268,6 +268,7 @@ class TeamSessionTest {
         val result = portOf(h, leader).team(TeamOp.Create(listOf(TeamMemberSpec("alice", agentType = "fork", prompt = "x"))))
         assertTrue(result.isError)
         assertNull(leader.state.value.team)
+        assertLogIsTruth(leader)
     }
 
     // ---- 并发名额 ----
@@ -348,6 +349,7 @@ class TeamSessionTest {
         assertEquals(1, b.state.value.inbox.size)
         assertEquals(0, model2.requests.count { it.memberName() == "b" })
         assertEquals(TeamMemberStatus.Phase.Queued, h2.teamMembers(reopened.sessionId).single { it.name == "b" }.phase)
+        assertLogIsTruth(b)
     }
 
     @Test
@@ -429,6 +431,8 @@ class TeamSessionTest {
         assertTrue(result.text().contains("还没有团队"))
         assertTrue(aliceRt.state.value.team == null)
         assertEquals(0, leader.state.value.team!!.tasks.size)
+        assertLogIsTruth(stranger)
+        assertLogIsTruth(leader)
     }
 
     @Test
@@ -438,6 +442,7 @@ class TeamSessionTest {
         portOf(h, leader).team(TeamOp.TaskCreate("接口设计", ""))
         val text = portOf(h, leader).team(TeamOp.Status).text()
         assertTrue(text, text.contains("alice") && text.contains("bob") && text.contains("#1 接口设计（待认领）"))
+        assertLogIsTruth(leader)
     }
 
     // ---- 嵌套限制 ----
@@ -566,6 +571,8 @@ class TeamSessionTest {
         assertTrue(result.isError)
         assertTrue(result.text().contains("没有叫「nobody」的子 agent"))
         assertEquals(0, leader.state.value.teamMail.size)
+        assertLogIsTruth(leader)
+        members.values.forEach { assertLogIsTruth(it) }
     }
 
     // ---- 权限不绕过 ----
@@ -628,6 +635,7 @@ class TeamSessionTest {
         assertTrue(result.isError)
         assertTrue(leader.state.value.team!!.active)
         assertNotNull(leader.state.value.presentation.map { it.record.event }.filterIsInstance<Note>().singleOrNull { it.level == NoteLevel.Warning && it.text.contains("只有负责人能解散团队") })
-        members.getValue("a").interrupt()
+        assertLogIsTruth(leader)
+        assertLogIsTruth(members.getValue("a"))
     }
 }

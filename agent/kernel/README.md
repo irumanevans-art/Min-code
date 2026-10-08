@@ -31,7 +31,7 @@
 - 并发：`HubLimits.teamMaxConcurrent`（默认 3；App 设置项 `teamMaxConcurrent`、CLI settings.json 同名键），超出的成员排队，前一个结束后才启动。超过 8 的设置要用户确认（`TeamLimits.resolve`）。
 - 权限不绕过：成员的审批留在根会话的 hub 树上（`HubPending.root` = 负责人），由用户在界面上答，且只有成员自己的运行时答得了；成员不能再开团队，不能是 fork。
 - 模型看到什么：`TeamCreate` / `TeamTask` / `TeamDisband` 三个工具（外加 `SendMessage` 描述多一句）；成员的开场输入给齐身份、队友和协作方式；邮件正文前缀 `[团队邮件 · 来自 X]`。token 代价：团队与定时两族 7 个工具的定义合计约 3,300 字符（约 2,000–2,500 token），每个会话每次请求都带，一次性的前缀变化（升级后第一次请求缓存未命中）；邮件与报告是追加在对话末尾的消息，不动前缀。
-- 已知限制：排队顺序只在内存里——进程重启后排队的成员保持「收件箱有任务、没开过回合」，不自动开跑（与子 agent 崩溃后不自动续跑同一口径）；用户直接在成员会话里打字起的回合不占名额；团队界面（成员列表、消息流）本期只保证内核面（`SessionHub.teamMembers` / `pending`）。
+- 已知限制：回退（rewind）到建团队之前，团队状态不随之回退（成员子会话被标为已回退、不再交报告，但 `SessionState.team` 仍在，需要先 TeamDisband）；排队顺序只在内存里——进程重启后排队的成员保持「收件箱有任务、没开过回合」，不自动开跑（与子 agent 崩溃后不自动续跑同一口径）；用户直接在成员会话里打字起的回合不占名额；团队界面（成员列表、消息流）本期只保证内核面（`SessionHub.teamMembers` / `pending`）。
 
 ## 定时任务（M5，`Crons.kt` / `CronEngine.kt`；`CronCreate` / `CronDelete` / `CronList` / `ScheduleWakeup`）
 - 会话级：任务存在**根会话自己的日志**里（`cron_scheduled` / `cron_fired` / `cron_cancelled` / `cron_expired`），`SessionState.crons` 由它折叠；重开会话折叠出未过期的任务就是恢复（`CronEngine.attach` 顺带把过期的结案）。子 agent / 团队成员不能建；`/branch` 不继承（分支日志里逐个取消）。

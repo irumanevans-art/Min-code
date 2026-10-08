@@ -174,3 +174,4 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
   UserPromptSubmit hook 不过它、不记回退点。`tool_outcome.result.effects` 新增 `cron_create` / `cron_delete`，内核紧跟着落成 `cron_scheduled` / `cron_cancelled`（编号、时刻在落事件时给）。
   `/branch` 不继承定时任务：分支日志末尾对每个进行中的任务写一条 `cron_cancelled`。循环任务满 7 天、一次运行花到 `maxBudgetUsd`（默认 0.05 美元）、一次性任务的时刻在会话没开着时过去、当前模型没有 USD 定价（花费估算不了）都写 `cron_expired`，同时记一条 `note`（warning）。
   含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-08，M5 定时调度）：`turn_started.trigger` 新增取值 `cron`（定时任务到点唤醒的回合，转录里与 `resume` / `notification` / `hook` 一样留分隔）；`cron_scheduled` 新增可选字段 `source`（`wakeup` = ScheduleWakeup 安排的下一轮，缺省 = CronCreate），`tool_outcome.result.effects` 的 `cron_create` 同带 `source`。含新取值的日志旧版本打不开；旧日志照常读。
