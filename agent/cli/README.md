@@ -72,3 +72,11 @@ Sonnet 5.5 原生 Anthropic 实测使用 `--provider lunora --wire anthropic --b
   （Windows 上 JDK 不转义内嵌双引号、Git Bash 再拆一遍，带空格 / 引号的参数会碎；`LocalExec` 在 Windows 上也使用临时脚本）。
 - 环境变量白名单继承；模型 key（`--api-key-env`）、快速模型 key、搜索后端 key 永远不进子进程（`desktopSecretEnvNames`）。
 - Windows 回收：`ProcessHandle.descendants()` 看不到 Git Bash fork 出来的孙进程，用 `ps -W` 补全（`MsysProcesses`），每次回收要多起几次 bash（约 0.2 秒一次）。
+# Auto 审查设置与数据发送
+
+`autoModeReviewer` 与 `--auto-mode-reviewer` 可独立指定审查供应商和模型。指定不同供应商时，最近的用户消息与待执行工具入参会发送给第二家供应商；工具结果、MCP 附件、Agent / Parent / Hook 来源消息不发送。审查请求不带工具。
+
+用户与托管设置可配置 `autoMode`；配置损坏会记说明，需审查的调用转人。托管 `permissions.disableAutoMode` / `disableBypassPermissionsMode` 的 `"disable"` 禁止对应模式；项目 allow 与附加目录在工作区受信后生效，ask / deny 始终生效。`-p --mode auto --approve yes` 会自动批准转人的调用，启动时输出警示。
+
+插件 hooks / MCP 按启用来源授权：用户和托管启用可运行，项目及 local 启用需工作区信任；项目插件的 MCP 还需逐服务器批准。`--plugin-dir` 视为用户显式旁加载，受托管 `disableSideloadFlags` 与插件名字锁约束。敏感 hook 选项只在启动进程时展开，脚本与日志保留占位符。
+
