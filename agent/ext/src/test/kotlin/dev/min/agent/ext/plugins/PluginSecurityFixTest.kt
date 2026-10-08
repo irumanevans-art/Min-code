@@ -141,6 +141,7 @@ a
         assertEquals(1, result.plugin!!.skills.size)
         assertEquals(1, result.plugin!!.commands.size)
         assertTrue(result.errors.any { "skills/b/SKILL.md" in it })
+        assertFalse(result.errors.any { "package-lock.json" in it })
     }
 
     @Test fun BUG_directory_name_must_be_valid(): Unit = runBlocking {
@@ -191,5 +192,42 @@ a
         assertEquals("secret-fixture", executions.first().env["MIN_PLUGIN_0_ARG_1"])
         assertTrue(executions.first().env.values.contains("secret-fixture"))
         assertFalse(fs.writes.any { it.second.decodeToString().contains("secret-fixture") })
+    }
+
+    @Test fun BUG_project_plugin_mcp_requires_individual_approval(): Unit = runBlocking {
+        val fs = FakeFs(); installed(fs)
+        fs.put("/work/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
+        suspend fun gate(trust: Boolean): dev.min.agent.ext.mcp.McpGate {
+            val settings = SettingsLoader.load(fs, cwd, home).merged
+            val loaded = bundle(fs, trust = trust)
+            return dev.min.agent.ext.mcp.McpConfigLoader.load(fs, home, cwd, settings, trust, { null }, plugins = loaded.mcpSources()).servers.single().gate
+        }
+        assertEquals(dev.min.agent.ext.mcp.McpGate.Untrusted, gate(false))
+        assertEquals(dev.min.agent.ext.mcp.McpGate.NeedsApproval, gate(true))
+        fs.put("/work/.claude/settings.local.json", """{"enabledMcpjsonServers":["plugin:audit:api"]}""")
+        assertEquals(dev.min.agent.ext.mcp.McpGate.Enabled, gate(true))
+    }
+
+    @Test fun BUG_canonical_cache_escape_is_rejected(): Unit = runBlocking {
+        val fs = FakeFs().apply {
+            put("/home/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
+            put("/home/.claude/plugins/cache/m/audit/1.0/.claude-plugin/plugin.json", """{"name":"audit"}""")
+        }
+        val loaded = PluginBundle.load(fs, cwd, home, SettingsLoader.load(fs, cwd, home).merged,
+            canonical = { if (it.value.startsWith("/home/.claude/plugins/cache/m")) GuestPath(it.value.replace("/home/.claude/plugins/cache/m", "/outside")) else it })
+        assertTrue(loaded.batch.plugins.isEmpty())
+        assertTrue(loaded.notes.any { "escapes cache" in it })
+    }
+
+    @Test fun BUG_command_final_read_rechecks_canonical_containment(): Unit = runBlocking {
+        val fs = FakeFs().apply {
+            put("/plug/.claude-plugin/plugin.json", """{"name":"plug","commands":{"ok":{"source":"./commands/ok.md"}}}""")
+            put("/plug/commands/ok.md", "private-fixture")
+        }
+        var reads = 0
+        val loaded = PluginBundle.load(fs, cwd, home, SettingsLoader.load(fs, cwd, home).merged, listOf(GuestPath("/plug")),
+            canonical = { if (it.value == "/plug/commands/ok.md" && ++reads > 1) GuestPath("/outside/private.md") else it })
+        assertTrue(loaded.commands.isEmpty())
+        assertTrue(loaded.notes.any { "escapes" in it })
     }
 }
