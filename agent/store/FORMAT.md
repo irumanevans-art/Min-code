@@ -166,6 +166,7 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
   `team_message` 写在**收件人**的日志里，与同一次提交里的 `input_received`（`origin = agent`，`kind = message`，`clientMsgId` 为 `team:<teamId>:<messageId>`）成对出现——邮件进收件箱走的就是 SendMessage 那条路，
   所以重开会话仍在收件箱里、提升进对话后只读一次（按 `clientMsgId` 去重）。广播给全体时每个收件人的日志各写一对，`broadcast = true`。
   任务权限在落盘前由 `teamProblem` 判定、折叠时同一份判断再守一遍：成员只能认领给自己、只能完成自己认领的，负责人可改派 / 完成全部；违规转换不写事件，只在负责人日志里记一条 `note`（warning）。
+  `/branch` 不继承团队：分支时剔除全部 `team_*` 事件（团队的负责人字段是建团队那个会话的 id，带到分支日志里折叠必抛），成员仍是原会话的子会话、只在 `subagent_spawned` 引用里保留。
   含新事件的日志旧版本打不开；旧日志照常读。
 - v1 增量（2026-10-08，M5 定时调度）：新增事件 `cron_scheduled`（`cronId`、`prompt`、`recurring`、`maxBudgetUsd`、`scheduledAtMs`、`cron`（5 字段表达式）与 `intervalMs`（间隔）恰好一个、循环任务的 `expiresAtMs`）、
   `cron_fired`（`cronId`、`firedAtMs`、`clientMsgId`）、`cron_cancelled`（`cronId`）、`cron_expired`（`cronId`、`reason`：`age` / `budget` / `missed` / `no_pricing`、可选 `detail`），定义在 `spi/CronEvents.kt`。

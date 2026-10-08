@@ -13,6 +13,12 @@ import kotlinx.serialization.Serializable
  * 全部 append-only；格式纪律同 SessionEvent.kt：变体与字段只加不改不删，默认值发布后不能改。
  */
 
+/**
+ * 所有团队事件的共同类型。团队是**建团队的那个会话**的状态（负责人字段指着它自己的 id），所以这些事件不跟着分支走——
+ * [dev.min.agent.kernel.SessionHub.branch] 靠它整类剔除，不用在那里一个个点名（新加团队事件时漏掉就会让分支折叠失败）
+ */
+sealed interface TeamEvent : SessionEvent
+
 /** 负责人在团队里的名字：任务清单与邮件里的「发起人 / 收件人」用它指负责人（成员的名字不许与它撞） */
 const val TEAM_LEAD = "lead"
 
@@ -36,7 +42,7 @@ data class TeamCreated(
     val teamId: String,
     val leader: SessionId,
     val members: List<TeamMemberSpec>,
-) : SessionEvent
+) : TeamEvent
 
 /** 成员的子会话建好了（紧跟在 SubagentSpawned 之后）；在这条之前，成员只是一份规格 */
 @Serializable
@@ -45,7 +51,7 @@ data class TeamMemberJoined(
     val teamId: String,
     val name: String,
     val session: SessionId,
-) : SessionEvent
+) : TeamEvent
 
 /**
  * 一封邮件，写进**收件人**的日志（同一次提交里还有一条 [InputReceived]：邮件进收件人的收件箱走的就是 SendMessage 那条路，
@@ -61,7 +67,7 @@ data class TeamMessage(
     val to: String,
     val text: String,
     val broadcast: Boolean = false,
-) : SessionEvent
+) : TeamEvent
 
 /** 新建团队任务。[by] 是发起人（[TEAM_LEAD] 或成员名）；编号由内核按团队内顺序分配 */
 @Serializable
@@ -72,7 +78,7 @@ data class TeamTaskCreated(
     val title: String,
     val description: String = "",
     val by: String,
-) : SessionEvent
+) : TeamEvent
 
 /**
  * 认领任务：[member] 成为负责人。[by] 是动手的人——成员只能认领给自己，负责人可以指派给任何人（含改派）。
@@ -85,7 +91,7 @@ data class TeamTaskClaimed(
     val taskId: String,
     val member: String,
     val by: String,
-) : SessionEvent
+) : TeamEvent
 
 /** 完成任务。成员只能完成自己认领的，负责人可以完成任何一条；[summary] 是一句结论 */
 @Serializable
@@ -95,7 +101,7 @@ data class TeamTaskDone(
     val taskId: String,
     val by: String,
     val summary: String? = null,
-) : SessionEvent
+) : TeamEvent
 
 @Serializable
 enum class TeamDisbandReason {
@@ -110,4 +116,4 @@ data class TeamDisbanded(
     val teamId: String,
     val reason: TeamDisbandReason,
     val note: String? = null,
-) : SessionEvent
+) : TeamEvent

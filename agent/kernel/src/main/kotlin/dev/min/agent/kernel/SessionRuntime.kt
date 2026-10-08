@@ -828,8 +828,12 @@ class SessionRuntime private constructor(
             /** false = 不跑 SessionStart(startup)。分支（Hub.branch）用它：分支是原对话的延续，不是新会话（CC 的 fork 同样不跑） */
             runStartHooks: Boolean = true,
         ): SessionRuntime {
+            val events = listOf(created) + initial
+            // 先折叠再落盘：初始事件里有折叠不了的（比如分支带来别的会话的 team_created）就在这里失败，磁盘上不留下
+            // 一个每次打开都抛的孤儿会话（store.list() 会列出它）。seq 与时间由存储分配，这里的只用来验证
+            fold(header, events.mapIndexed { i, e -> EventRecord(i + 1L, deps.clock.nowMs(), e) })
             val log = store.create(header)
-            val records = log.append(listOf(created) + initial, Durability.Sync)
+            val records = log.append(events, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
             if (loadSettings && deps.memoryHome == null && deps.autoModeReviewer != null) {
                 runtime.commit(listOf(dev.min.agent.spi.AutoReviewSettingsLoaded(reviewer = deps.autoModeReviewer)), Durability.Sync)

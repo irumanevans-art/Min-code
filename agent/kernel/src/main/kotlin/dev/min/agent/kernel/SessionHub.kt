@@ -635,7 +635,10 @@ class SessionHub(
             created = copied.first().event as dev.min.agent.spi.SessionCreated,
             deps, scope,
             // 定时任务是会话级的，不跟着分支走（否则同一条提示词会被原会话与分支各触发一次）：在分支日志里把它们逐个取消
-            initial = copied.drop(1).map { it.event } + branched + s.crons.filter { it.active }.map { dev.min.agent.spi.CronCancelled(it.id) },
+            // 团队同理不跟着走：team_created 里的负责人是原会话的 id，到分支日志里折叠必抛（SessionRuntime.create 因此拒绝创建）。
+            // 成员是原会话的子会话，和别的子 agent 一样只在引用里保留（subagent_spawned 照常复制）
+            initial = copied.drop(1).map { it.event }.filterNot { it is dev.min.agent.spi.TeamEvent } + branched +
+                s.crons.filter { it.active }.map { dev.min.agent.spi.CronCancelled(it.id) },
             // 快照全在复制来的事件里，不重读磁盘（重读会被磁盘上的中途变化带偏，前缀对不上）
             loadMemory = false, loadSettings = false, loadSkills = false, hub = this,
             runStartHooks = false,

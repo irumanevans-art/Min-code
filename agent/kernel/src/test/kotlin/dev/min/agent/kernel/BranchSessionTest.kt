@@ -287,4 +287,49 @@ class BranchSessionTest {
         assertTrue(childLog.filterIsInstance<dev.min.agent.spi.InputReceived>()
             .none { (it.origin as? dev.min.agent.spi.InputOrigin.Parent)?.session == branch.sessionId })
     }
+
+    @Test
+    fun `a session that built a team can be branched and the branch opens - team events stay with the original`() = run {
+        val model = RoutingModel { reply(TextPart("好")) }
+        val h = hub(model)
+        val original = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val port = h.portFor(original, dev.min.agent.protocol.TurnId("t-test"), CallId("c-test"))
+        assertTrue(!port.team(dev.min.agent.spi.TeamOp.Create(listOf(dev.min.agent.spi.TeamMemberSpec("alice", prompt = "x")))).isError)
+        port.team(dev.min.agent.spi.TeamOp.Disband(dev.min.agent.spi.TeamDisbandReason.Completed, null))
+        // 成员的报告会唤醒负责人跑通知回合：等安静了再分支
+        original.awaitIdle()
+        original.state.first { it.turn == null && it.inbox.isEmpty() }
+        original.awaitIdle()
+
+        val branch = h.branch(original.sessionId)
+
+        // 团队是负责人这个会话自己的状态（负责人字段指着它），不跟着分支走；分支日志里一条 team_* 都没有
+        assertTrue(events(branch.sessionId).none { it.javaClass.simpleName.startsWith("Team") })
+        assertNull(branch.state.value.team)
+        // 分支能重新打开（这是回归点：之前开分支时折叠到 team_created 就抛，留下打不开的会话）
+        val reopened = SessionRuntime.open(store, branch.sessionId, deps(model, emptyList()), newScope())!!
+        assertNull(reopened.state.value.team)
+        assertNotNull(reopened.state.value.branched)
+        // 原会话的团队原样还在
+        assertNotNull(original.state.value.team)
+    }
+
+    @Test
+    fun `creating a session whose initial events do not fold leaves no orphan log behind`() = run {
+        val model = RoutingModel { reply(TextPart("好")) }
+        val h = hub(model)
+        val original = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val header = LogHeader(LOG_FORMAT_VERSION, SessionId("s_orphan"), 0L)
+        val created = store.open(original.sessionId)!!.read().toList().first().event as SessionCreated
+        val before = store.list().map { it.sessionId }.toSet()
+        // 负责人写着别人的 id：折叠会拒绝（Teams.kt 的 leader 校验）
+        val bad = dev.min.agent.spi.TeamCreated("team_x", original.sessionId, listOf(dev.min.agent.spi.TeamMemberSpec("a", prompt = "x")))
+        try {
+            SessionRuntime.create(store, header, created, deps(model, emptyList()), newScope(), initial = listOf(bad))
+            fail("折叠不了的初始事件应当让创建失败")
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message!!.contains("负责人"))
+        }
+        assertEquals("失败的创建不能在磁盘上留下会话", before, store.list().map { it.sessionId }.toSet())
+    }
 }
