@@ -237,6 +237,7 @@ class SessionEventWireTest {
             ApprovalChoice.Always("Bash(git status *)") to """{"type":"always","rule":"Bash(git status *)"}""",
             ApprovalChoice.Deny() to """{"type":"deny"}""",
             ApprovalChoice.Deny("别 push") to """{"type":"deny","note":"别 push"}""",
+            ApprovalChoice.Deny("非交互模式下没有人审批", fromHost = true) to """{"type":"deny","note":"非交互模式下没有人审批","fromHost":true}""",
         )
         for ((value, expected) in cases) {
             roundTrips(ApprovalChoice.serializer(), value)

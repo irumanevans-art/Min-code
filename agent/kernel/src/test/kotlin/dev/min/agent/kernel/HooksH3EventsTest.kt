@@ -301,7 +301,8 @@ class HooksH3EventsTest {
         val text = (result.content.single() as TextPart).text
         assertTrue(text, text.contains("PermissionRequest hook 拒绝了这次调用") && text.contains("公司策略禁止删库"))
         val resolved = events(rt).filterIsInstance<dev.min.agent.spi.ApprovalResolved>().single()
-        assertEquals(dev.min.agent.spi.ApprovalChoice.Deny("公司策略禁止删库"), resolved.choice)
+        // hook 给的理由是机器的话、不是哪个人写的：fromHost，崩溃恢复补结果时也不会被当成“用户的话”
+        assertEquals(dev.min.agent.spi.ApprovalChoice.Deny("公司策略禁止删库", fromHost = true), resolved.choice)
         assertEquals(dev.min.agent.spi.DecidedBy.Hook("PermissionRequest"), resolved.decidedBy)
     }
 
