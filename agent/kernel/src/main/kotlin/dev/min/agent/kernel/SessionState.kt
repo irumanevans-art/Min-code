@@ -368,7 +368,7 @@ sealed interface CallPhase {
     /** 放行了（规则、hook、模式或人），副作用还没开始 */
     data object Approved : CallPhase
 
-    data class Denied(val note: String?) : CallPhase
+    data class Denied(val note: String?, val fromHost: Boolean = false) : CallPhase
 
     /** 副作用已开始（ToolEffectPending 已落盘） */
     data class EffectPending(val handle: ExecHandle?) : CallPhase

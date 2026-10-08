@@ -68,7 +68,15 @@ sealed interface ApprovalChoice {
     @Serializable @SerialName("always") data class Always(val rule: String) : ApprovalChoice
 
     /** 拒绝，可附一句话给模型（让它换条路，而不是原样重试） */
-    @Serializable @SerialName("deny") data class Deny(val note: String? = null) : ApprovalChoice
+    @Serializable @SerialName("deny") data class Deny(
+        val note: String? = null,
+        /**
+         * [note] 是宿主 / hook 自己生成的话（`-p` 下“没有人审批，已按 --approve no 拒绝”、PermissionRequest hook 的说明），不是哪个人写的。
+         * 只有人亲手写的说明才作为“用户的话”送给模型（tool_result 里的文字会被当作不可信内容，用户的话要独立成块）；
+         * 宿主生成的留在 tool_result 里，免得把机器的话冒充成用户说的
+         */
+        val fromHost: Boolean = false,
+    ) : ApprovalChoice
 }
 
 /** 谁做的决定。审计与调试用：一次放行到底是规则、hook、审查模型还是人给的，要能追到 */

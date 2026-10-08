@@ -225,7 +225,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             val call = t.calls.values.firstOrNull { (it.phase as? CallPhase.AwaitingApproval)?.approvalId == e.approvalId }
                 ?: error("没有在等 ${e.approvalId} 的调用")
             val resolved = when (val choice = e.choice) {
-                is ApprovalChoice.Deny -> CallPhase.Denied(choice.note)
+                is ApprovalChoice.Deny -> CallPhase.Denied(choice.note, choice.fromHost)
                 ApprovalChoice.Once, is ApprovalChoice.Always -> CallPhase.Approved
             }
             val always = (e.choice as? ApprovalChoice.Always)?.rule

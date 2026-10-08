@@ -189,6 +189,31 @@ class SessionRuntimeTest {
     }
 
     @Test
+    fun `a denial note the host generated stays in the tool result and is not sent as the user's words`() = run {
+        val write = FakeTool("Write", WRITES) { ToolResult(text("写好了")) }
+        val model = ScriptedModel(reply(call("c1", "Write"), stop = StopReason.ToolUse), reply(TextPart("好的，不改")))
+        val rt = newSession(model, listOf(write))
+        rt.send(msg(), text("改一下"))
+
+        val waiting = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
+        // 非交互（-p）下宿主自己拒绝的说明：不是哪个人写的话
+        rt.answerApproval(
+            (waiting.phaseOf(CallId("c1")) as CallPhase.AwaitingApproval).approvalId,
+            ApprovalChoice.Deny("非交互模式下没有人审批，已按 --approve no 拒绝", fromHost = true),
+        )
+        rt.awaitIdle()
+
+        val parts = model.requests[1].messages[2].parts
+        assertEquals("不能多出一个“用户说”的文本块", 1, parts.size)
+        val result = parts.single() as ToolResultPart
+        assertTrue(result.isError)
+        val text = (result.content.single() as TextPart).text
+        assertTrue(text, text.contains("非交互模式下没有人审批，已按 --approve no 拒绝") && text.contains("不要原样重试"))
+        assertTrue(text, !text.contains("用户留了话") && !text.contains("用户拒绝了这次调用"))
+        assertLogIsTruth(rt)
+    }
+
+    @Test
     fun `retryable failures are retried under the same request id, others end the turn`() = run {
         val model = ScriptedModel(
             failing(ModelException(ModelFailureKind.Network, "reset", beforeFirstByte = true)),
