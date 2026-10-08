@@ -2109,3 +2109,56 @@ WorktreeIntegrationTest 真 git、带中文空格单引号路径、真实 juncti
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261008-WORKFLOW-REPLAY] best_practice
+
+**Logged**: 2026-10-08T15:10:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+节点重跑时，新的 started 必须立即废弃同序号更早的 completed；异步续聊也要等到新回合状态发布。
+
+### Details
+只按序号收集最后 completed 会把「已完成、重跑 started、进程死亡」误当成已完成。按事件顺序折叠，每次 started 删除旧结果。SessionHub 续聊输入提交后回合异步启动，立即等 idle 会拿到旧回合结果；先等新 turn 或不同 lastTurn，再等待结束。脚本未 await 的 agent 也必须等节点完成后才保存最终结果。删除全局桥接名字还不够：嵌入闭包中的脚本仍能读取桥接局部变量，需独立 AsyncFunction 且只传脚本 API。DelegateRequest 默认后台委派，测试需要显式 background=false 才能在根回合结束时断言孙会话结果。
+
+### Suggested Action
+恢复测试覆盖多次尝试；同时保留真实进程强制终止测试。公共异步续聊接口等待新回合发布后才能读取结果。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/WorkflowRun.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionHub.kt, agent/workflow/src/main/kotlin/dev/min/agent/workflow/QuickJsWorkflowEngine.kt
+- Tags: replay, durable-log, retry, state-publication
+- Pattern-Key: recovery.latest_attempt_invalidates_completion
+- Recurrence-Count: 1
+
+### Verification
+WorkflowRunTest 的旧完成结果回归、WorkflowSessionTest 同 Hub 子会话重试、WorkflowCrashTest 强制杀 JVM 后恢复；回放变异由指定断言检出。
+
+---
+
+## [LRN-20261008-QUICKJS-ARTIFACTS] best_practice
+
+**Logged**: 2026-10-08T15:10:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: infra
+
+### Summary
+原生依赖的许可与测试平台都必须检查实际发布产物，不能只依赖 POM 标签。
+
+### Details
+quickjs-kt-android 1.0.15 AAR 与 source JAR 均未包含 QuickJS 原生源码或 MIT 声明，App 需补入原样上游许可和固定提交来源。同版本 JVM JAR 才能在 Windows 跑真实 QuickJS 单测，替换仅限 workflow UnitTestRuntimeClasspath。Gradle TLS 握手失败时，用系统下载同一官方 Maven 产物并核对 module 的 SHA-256，通过仓库外 init script 的 exclusiveContent 仅映射该模块；保留失败退出码，不能跳过测试。
+
+### Suggested Action
+报告 AAR 实际内容；逐字核对 APK 内许可证。网络回退限定坐标与版本，并保存摘要和真实 Gradle 退出码。
+
+### Metadata
+- Source: error
+- Related Files: agent/workflow/build.gradle.kts, app/src/main/assets/licenses/quickjs-SOURCES.txt
+- Tags: native, license, android, maven, tls
+- Pattern-Key: dependencies.verify_published_native_artifacts
+- Recurrence-Count: 1
+
+---
