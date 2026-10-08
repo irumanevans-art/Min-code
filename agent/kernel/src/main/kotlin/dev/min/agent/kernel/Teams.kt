@@ -4,6 +4,7 @@ import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.TEAM_ALL
 import dev.min.agent.spi.TEAM_LEAD
+import dev.min.agent.spi.TEAM_MAX_MEMBERS
 import dev.min.agent.spi.TaskBoard
 import dev.min.agent.spi.TaskPatch
 import dev.min.agent.spi.TaskRecord
@@ -79,6 +80,7 @@ data class TeamMailItem(
     val broadcast: Boolean,
 )
 
+
 /** 成员名不许用的词：[TEAM_LEAD] 指负责人，[TEAM_ALL] 是广播，`main` 是子 agent 对父会话的既有叫法 */
 val RESERVED_TEAM_NAMES: Set<String> = setOf(TEAM_LEAD, TEAM_ALL, "main", "*")
 
@@ -95,6 +97,7 @@ internal fun SessionState.teamProblem(e: SessionEvent): String? {
             current != null && current.active -> "已经有一个进行中的团队（${current.teamId}），先解散它再建新的。"
             e.leader != header.sessionId -> "团队的负责人必须是建团队的这个会话。"
             e.members.isEmpty() -> "团队至少要有一个成员。"
+            e.members.size > TEAM_MAX_MEMBERS -> "团队最多 $TEAM_MAX_MEMBERS 个成员，收到 ${e.members.size} 个。"
             e.members.any { it.name.isBlank() || it.prompt.isBlank() } -> "每个成员都要有名字和开场任务。"
             // 分身继承负责人的整段对话，没有自己的任务边界；成员要的是各干各的
             e.members.any { it.agentType == dev.min.agent.spi.FORK_AGENT_TYPE } -> "团队成员不能是分身（fork），请用别的子 agent 类型。"

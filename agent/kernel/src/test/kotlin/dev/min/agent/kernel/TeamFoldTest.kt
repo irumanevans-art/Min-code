@@ -16,6 +16,7 @@ import dev.min.agent.spi.TeamCreated
 import dev.min.agent.spi.TeamDisbandReason
 import dev.min.agent.spi.TeamDisbanded
 import dev.min.agent.spi.TeamMemberJoined
+import dev.min.agent.spi.TEAM_MAX_MEMBERS
 import dev.min.agent.spi.TeamMemberSpec
 import dev.min.agent.spi.TeamMessage
 import dev.min.agent.spi.TaskPatch
@@ -234,6 +235,9 @@ class TeamFoldTest {
         assertRejected(root, TeamCreated("team2", leaderId, specs()), "已经有一个进行中的团队")
         assertRejected(foldOf(), TeamCreated("team2", SessionId("someone-else"), specs()), "负责人必须是建团队的这个会话")
         assertRejected(foldOf(), TeamCreated("team2", leaderId, emptyList()), "至少要有一个成员")
+        val ten = (1..TEAM_MAX_MEMBERS).map { TeamMemberSpec("m$it", prompt = "x") }
+        assertNotNull("恰好 $TEAM_MAX_MEMBERS 个还行", foldOf(TeamCreated("team2", leaderId, ten)).team)
+        assertRejected(foldOf(), TeamCreated("team2", leaderId, ten + TeamMemberSpec("m11", prompt = "x")), "最多 $TEAM_MAX_MEMBERS 个成员")
         assertRejected(foldOf(), TeamCreated("team2", leaderId, listOf(TeamMemberSpec("a", prompt = "x"), TeamMemberSpec("a", prompt = "y"))), "不能重复")
         for (reserved in listOf(TEAM_LEAD, TEAM_ALL, "main")) {
             assertRejected(foldOf(), TeamCreated("team2", leaderId, listOf(TeamMemberSpec(reserved, prompt = "x"))), "保留词")

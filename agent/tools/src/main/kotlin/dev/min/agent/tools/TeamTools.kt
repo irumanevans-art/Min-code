@@ -2,6 +2,7 @@ package dev.min.agent.tools
 
 import dev.min.agent.spi.HarnessProfile
 import dev.min.agent.spi.PermissionAsk
+import dev.min.agent.spi.TEAM_MAX_MEMBERS
 import dev.min.agent.spi.TeamDisbandReason
 import dev.min.agent.spi.TeamMemberSpec
 import dev.min.agent.spi.TeamOp
@@ -52,13 +53,14 @@ object TeamCreateTool : Tool<JsonObject> {
 
     override fun description(profile: HarnessProfile) =
         "建立 agent 团队：声明若干成员，每个成员是独立运行的子会话，可以同时干活、互相发消息、共享一份任务清单（TaskCreate / TaskUpdate 等直接操作它，成员做完手上的活会自己去清单里认领下一条）；你是负责人（lead）。" +
-            "同时运行的成员数有上限（手机默认 3 个），超出的排队，前一个结束后才启动。成员完成后的报告交给你，不会直接给用户。" +
+            "一个团队最多 $TEAM_MAX_MEMBERS 个成员；同时运行的成员数另有上限（手机默认 3 个），超出的排队，前一个结束后才启动。成员完成后的报告交给你，不会直接给用户。" +
             "成员的工具调用审批照常由用户在界面上答，团队不给成员额外权限。成员不能再开团队。一次只能有一个进行中的团队，用 TeamDisband 解散后才能建新的。" +
             "建好后用 TaskCreate / TaskUpdate 等管团队共享清单（你也可以认领，owner 写 lead），用 SendMessage 给成员发消息（to = 成员名，lead，或 all 广播）。收到报告之前不要假设成员的结果。"
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
         val members = raw["members"] as? JsonArray ?: throw InvalidSubagentInput("字段 `members` 必须是成员规格的数组。")
         if (members.isEmpty()) throw InvalidSubagentInput("字段 `members` 至少要有一个成员。")
+        if (members.size > TEAM_MAX_MEMBERS) throw InvalidSubagentInput("字段 `members` 最多 $TEAM_MAX_MEMBERS 个成员，收到 ${members.size} 个。")
         members.forEachIndexed { i, m ->
             val o = m as? JsonObject ?: throw InvalidSubagentInput("members[$i] 必须是对象（name、prompt、可选 agent_type）。")
             try {

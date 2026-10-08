@@ -72,6 +72,8 @@ class TeamToolsTest {
     fun `TeamCreate rejects malformed members with a message that names the item`() {
         assertTrue(TeamCreateTool.reject().contains("members"))
         assertTrue(TeamCreateTool.reject("members" to members()).contains("至少要有一个"))
+        val eleven = members(*(1..11).map { args("name" to "m$it", "prompt" to "x") }.toTypedArray())
+        assertTrue(TeamCreateTool.reject("members" to eleven).contains("最多 10 个"))
         assertTrue(TeamCreateTool.reject("members" to JsonArray(listOf(JsonPrimitive("alice")))).contains("members[0]"))
         assertTrue(TeamCreateTool.reject("members" to members(args("name" to "a"))).contains("members[0]"))
         assertTrue(TeamCreateTool.reject("members" to members(args("name" to "a", "prompt" to " "))).contains("prompt"))
@@ -93,6 +95,7 @@ class TeamToolsTest {
     fun `the tools carry the contract the model must know`() {
         val create = TeamCreateTool.description(profile)
         assertTrue(create.contains("上限") && create.contains("排队"))
+        assertTrue("成员数上限写进描述", create.contains("最多 10 个成员"))
         assertTrue("成员的审批仍由用户答", create.contains("审批"))
         assertTrue("成员不能再开团队", create.contains("不能再开团队"))
 

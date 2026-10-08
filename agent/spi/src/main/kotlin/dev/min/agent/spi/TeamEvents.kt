@@ -23,6 +23,9 @@ sealed interface TeamEvent : SessionEvent
 /** 负责人在团队里的名字：任务清单与邮件里的「发起人 / 收件人」用它指负责人（成员的名字不许与它撞） */
 const val TEAM_LEAD = "lead"
 
+/** 一个团队最多声明几个成员（不是同时在跑的上限，那个是内核的 TeamLimits）：再多手机既跑不动，负责人也管不过来 */
+const val TEAM_MAX_MEMBERS = 10
+
 /** 邮件的收件人写这个 = 全体成员（含负责人，不含发件人自己） */
 const val TEAM_ALL = "all"
 
