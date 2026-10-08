@@ -1,5 +1,31 @@
 # Errors
 
+## [ERR-20261008-APP-SNAPSHOT] app_snapshot_non_determinism
+
+**Logged**: 2026-10-08
+**Priority**: medium
+**Status**: pending
+**Area**: tests
+
+### Summary
+插件任务全量检查中，既有 ClaudeStateSnapshotTest.bash_denied_interrupt 在未改动的 App 源码上出现通过与失败两种结果。
+
+### Error
+快照期望 denied 阶段 items.size=4；一次复跑得到 6，多出 error_during_execution 与权限拦截的两条收尾 Note。首轮 13 个 agent check + App 单测 / assembleDebug 的 GRADLE_EXIT=0；下一轮 App 1944 测试出现这 1 条失败。插件任务未修改 app/ 或期望快照。
+
+### Context
+Recorder.stage 通过连续 4 次、间隔 100ms 的相同渲染判断静默；awaitTurnEnd 等 busy=false 与 lastTurnFinishedAt。观察结果与收尾时序差异相符，但本任务不对 App 竞态根因作已验证结论。失败日志和 JUnit XML保存在 agent/ext/build/review/plugin-loader/。
+
+### Suggested Fix
+后续 App 任务应让夹具的收尾事件、取消与队列排空有确定性完成条件，再审查黄金快照；不要通过刷新快照或跳过断言掩盖时序问题。当前插件任务只复跑并如实记录，保持 app/ 不变。
+
+### Metadata
+- Reproducible: intermittent
+- Related Files: app/src/test/java/dev/min/code/core/claudecode/ClaudeStateSnapshotTest.kt
+- Tags: app, snapshot, async, validation
+
+---
+
 ## [ERR-20260905-ADB02] adb_unavailable
 
 **Logged**: 2026-09-05T23:22:00+08:00
