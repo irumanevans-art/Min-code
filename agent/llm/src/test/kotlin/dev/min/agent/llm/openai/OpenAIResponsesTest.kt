@@ -91,6 +91,21 @@ class OpenAIResponsesTest {
         assertFalse(buildResponsesBody(foreign).toString().contains("encrypted-fixture"))
     }
 
+    @Test fun `user words and reminders after tool results are separate from the output and from each other`() {
+        val next = request(listOf(
+            userText("hello"),
+            ModelMessage(Role.Assistant, listOf(ToolCallPart(CallId("call_1"), "Ask", obj("{}")))),
+            ModelMessage(Role.User, listOf(
+                ToolResultPart(CallId("call_1"), listOf(TextPart("用户已回答。"))),
+                TextPart("用户回答了你的问题：\n- 用哪个库？ → Room"),
+                TextPart("<system-reminder>\n提示\n</system-reminder>"),
+            )),
+        ))
+        val tail = (buildResponsesBody(next)["input"] as JsonArray).takeLast(2)
+        assertEquals(obj("""{"type":"function_call_output","call_id":"call_1","output":"用户已回答。"}"""), tail[0])
+        assertEquals(obj("""{"role":"user","content":"用户回答了你的问题：\n- 用哪个库？ → Room\n\n<system-reminder>\n提示\n</system-reminder>"}"""), tail[1])
+    }
+
     @Test fun `tool streaming uses call ordinal rather than output index and preserves invalid arguments`() {
         val events = collect(FakeHttpTransport(FakeHttpTransport.Reply.Sse(listOf(
             event("""{"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","call_id":"c","name":"Read"}}"""),

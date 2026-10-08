@@ -415,7 +415,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         )
         val resolved = rt.state.first { s -> s.phaseOf(ready.call.callId) !is CallPhase.AwaitingApproval }
         when (val phase = resolved.phaseOf(ready.call.callId)) {
-            is CallPhase.Denied -> outcome(turnId, ready.call.callId, errorResult(deniedMessage(phase.note)))
+            is CallPhase.Denied -> outcome(turnId, ready.call.callId, deniedResult(ready.call.name, phase.note))
             else -> execute(turnId, ready)
         }
     }
@@ -625,8 +625,20 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         const val TRUNCATED_MESSAGE =
             "没有执行：你的回复撞上了输出长度上限，这次工具调用的参数可能不完整。请缩小改动范围或分几次调用后重试。"
 
-        fun deniedMessage(note: String?): String =
-            "用户拒绝了这次调用。" + (note?.let { "用户的说明：$it" } ?: "不要原样重试，换个做法或先问清楚。")
+        /**
+         * 用户在审批卡上拒绝了 [tool] 的调用。工具结果只记「用户拒绝了」这一句事实；用户写的说明是用户说的话，
+         * 放进 [ToolResult.userText]，由模型视图作为紧随 tool_result 的独立用户文本块送出——官方说明 tool_result 里的文字
+         * 会被当作不可信内容，Haiku 5.5 会无视用户为什么拒绝。恢复路径（[interruptedResult]）用同一个函数，两条路写出的结果一致。
+         */
+        fun deniedResult(tool: String, note: String?): ToolResult = ToolResult(
+            content = listOf(
+                TextPart(
+                    "用户拒绝了这次调用。" + if (note == null) "不要原样重试，换个做法或先问清楚。" else "用户留了话，见下面用户的话；不要原样重试。",
+                ),
+            ),
+            isError = true,
+            userText = note?.let { "用户拒绝了你刚才的 $tool 调用，并留言：$it" },
+        )
 
         /** hook 替人拒的话术：说清是 PermissionRequest hook 拒的，不是用户 */
         fun hookDeniedMessage(note: String?): String =

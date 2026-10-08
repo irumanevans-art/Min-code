@@ -6,6 +6,7 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolResultPart
 import dev.min.agent.spi.ModelMessage
 import dev.min.agent.spi.Role
+import dev.min.agent.spi.ToolResult
 
 /**
  * 会话状态 → 模型看到的对话。纯函数，只读日志折叠出的东西：模型看得到的一切都来自日志（docs/agent/07-工程规范.md 第 6 条）。
@@ -32,18 +33,21 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
                 add(ModelMessage(Role.Assistant, entry.parts))
                 val calls = entry.toolCalls
                 if (calls.isNotEmpty()) {
+                    // 用户的话（答案、拒绝说明）不进 tool_result：官方说明 tool_result 里的文字会被当作不可信内容。
+                    // 它们是同一条用户消息里、紧随全部 tool_result 的独立文本块，按调用顺序；遮蔽只动工具自己的输出，用户的话一字不省
+                    val results = calls.map { call ->
+                        toolResults[call.callId] ?: error("调用 ${call.callId}（${call.name}）还没有结果，不能发请求")
+                    }
                     add(
                         ModelMessage(
                             Role.User,
-                            calls.map { call ->
-                                val result = toolResults[call.callId]
-                                    ?: error("调用 ${call.callId}（${call.name}）还没有结果，不能发请求")
+                            calls.zip(results).map { (call, result) ->
                                 if (call.callId in masked) {
                                     ToolResultPart(call.callId, listOf(TextPart(maskedStub(call.name, masked[call.callId]))), result.isError)
                                 } else {
                                     ToolResultPart(call.callId, result.content, result.isError)
                                 }
-                            } + reminders(entry.messageId) + memoryReminders(entry.messageId),
+                            } + results.mapNotNull { it.userPart() } + reminders(entry.messageId) + memoryReminders(entry.messageId),
                         ),
                     )
                 }
@@ -51,6 +55,9 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
         }
     }
 }
+
+/** 工具结果里用户亲口说的话，作为独立的文本块；没有为 null（旧日志里用户的话还在 content 里，走不到这里） */
+internal fun ToolResult.userPart(): TextPart? = userText?.takeIf { it.isNotEmpty() }?.let(::TextPart)
 
 /**
  * hook 加的上下文：与 Claude Code 一样包成 system-reminder，挂在消息末尾（工具结果之后——工具结果块必须排在前面）。

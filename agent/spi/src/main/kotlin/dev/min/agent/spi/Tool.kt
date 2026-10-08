@@ -110,6 +110,14 @@ data class ToolResult(
      * 由内核在写 ToolOutcome 的同一次提交里落成对应的设置事件。
      */
     val effects: List<SessionEffect> = emptyList(),
+    /**
+     * 用户亲口说的话（问答里的答案与自填、拒绝审批时写的说明）。它不是工具的输出，不能放进 [content]：
+     * 官方对 Haiku 5.5 的说明是 tool_result 里的文字会被当作不可信内容，用户中途说的话得是独立的用户文本块，
+     * 否则模型会无视用户为什么拒绝、选了什么。所以模型视图把它放在同一条用户消息里、紧随全部 tool_result 之后
+     * （`ModelView`），[content] 只留一句事实（「用户已回答」「用户拒绝了」）。
+     * 随 `tool_outcome` 落盘，所以请求照样只凭日志重建；旧日志里没有这个字段（用户的话还在 [content] 里），读出来是 null，行为不变。
+     */
+    val userText: String? = null,
 )
 
 /**
@@ -220,3 +228,10 @@ enum class EditStyle {
 }
 
 data class HarnessProfile(val family: ModelFamily, val editStyle: EditStyle)
+
+/**
+ * 给人看的结果文字（卡片、终端一行摘要）：工具自己的文本输出，后面接用户的话（[ToolResult.userText]）。
+ * 用户的话不在 [ToolResult.content] 里，但界面上这张卡本来就该显示「用户答了什么、为什么拒绝」；只有发给模型时它们才要分开。
+ */
+fun ToolResult.displayText(separator: String = "\n"): String =
+    (content.filterIsInstance<dev.min.agent.protocol.TextPart>().map { it.text } + listOfNotNull(userText)).joinToString(separator)

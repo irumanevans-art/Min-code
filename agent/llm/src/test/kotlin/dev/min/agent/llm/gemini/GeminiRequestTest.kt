@@ -25,6 +25,19 @@ class GeminiRequestTest {
             assertFalse(sent(request().copy(toolChoice = choice)).containsKey("toolConfig"))
         }
     }
+    @Test fun `user words and reminders after tool results are independent text parts`() {
+        val call = ToolCallPart(CallId("c1"), "Ask", obj("{}"))
+        val body = sent(request(listOf(
+            user(TextPart("问")), assistant(call),
+            user(ToolResultPart(CallId("c1"), listOf(TextPart("用户已回答。"))), TextPart("用户回答了你的问题：Room"), TextPart("<system-reminder>\n提示\n</system-reminder>")),
+        )))
+        val parts = wireParts(body, 2)
+        assertEquals(3, parts.size)
+        assertTrue(parts[0].toString(), (parts[0] as JsonObject).containsKey("functionResponse"))
+        assertEquals(obj("""{"text":"用户回答了你的问题：Room"}"""), parts[1])
+        assertEquals(obj("""{"text":"<system-reminder>\n提示\n</system-reminder>"}"""), parts[2])
+    }
+
     @Test fun `endpoint handles root versions and models prefix`() {
         for ((base, expected) in listOf("https://e/" to "https://e/v1beta", "https://e/v1beta///" to "https://e/v1beta", "https://e/v1/" to "https://e/v1")) {
             assertEquals("$expected/models/gemini-2.5-flash:streamGenerateContent?alt=sse", geminiUrl(base, "models/gemini-2.5-flash"))

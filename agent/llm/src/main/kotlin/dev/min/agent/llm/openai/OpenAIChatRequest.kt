@@ -8,6 +8,7 @@ import dev.min.agent.llm.StreamUsage
 import dev.min.agent.llm.ToolChoice
 import dev.min.agent.llm.ToolResultImages
 import dev.min.agent.llm.deepMerge
+import dev.min.agent.llm.joinedText
 import dev.min.agent.llm.lastUserInputIndex
 import dev.min.agent.llm.partsToSend
 import dev.min.agent.llm.patchFor
@@ -152,7 +153,7 @@ private fun message(role: String, content: JsonElement) = buildJsonObject {
 }
 
 private fun content(parts: List<Part>): JsonElement {
-    if (parts.none { it is ImagePart }) return JsonPrimitive(parts.filterIsInstance<TextPart>().joinToString("") { it.text })
+    if (parts.none { it is ImagePart }) return JsonPrimitive(parts.joinedText())
     return JsonArray(parts.mapNotNull { part ->
         when (part) {
             is TextPart -> if (part.text.isEmpty()) null else buildJsonObject { put("type", "text"); put("text", part.text) }

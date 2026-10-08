@@ -126,7 +126,10 @@ internal class Recapper(private val rt: SessionRuntime) {
                 when (part) {
                     is TextPart -> part.text.take(TRANSCRIPT_CHARS / 4)
                     is ToolCallPart -> {
-                        val result = state.toolResults[part.callId]?.content?.filterIsInstance<TextPart>()?.joinToString("") { it.text }
+                        // 用户的话（答案、拒绝说明）在 userText 里；回顾要写「用户答了什么」，不能因为它不在 content 里就丢
+                        val result = state.toolResults[part.callId]?.let { r ->
+                            listOf(r.content.filterIsInstance<TextPart>().joinToString("") { it.text }).plus(listOfNotNull(r.userText)).joinToString(" ")
+                        }
                         "[调用 ${part.name}" + (result?.let { " → ${it.take(TOOL_RESULT_CHARS)}" } ?: "") + "]"
                     }
                     is ImagePart -> "（图片）"

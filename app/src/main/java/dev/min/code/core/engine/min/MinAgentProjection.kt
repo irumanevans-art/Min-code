@@ -3,6 +3,7 @@ package dev.min.code.core.engine.min
 import dev.min.agent.kernel.*
 import dev.min.agent.protocol.*
 import dev.min.agent.spi.Note
+import dev.min.agent.spi.displayText
 import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.TurnEnded
@@ -32,7 +33,7 @@ fun projectMinAgent(state: SessionState, streamingText: String = "", streamingTh
                     val error = result?.isError == true || denied
                     val status = when { error -> ChatItem.ToolCall.Status.Error; result != null -> ChatItem.ToolCall.Status.Done
                         else -> ChatItem.ToolCall.Status.Running }
-                    val text = result?.content?.filterIsInstance<TextPart>()?.joinToString("\n") { it.text }
+                    val text = result?.displayText()
                         ?: (phase as? CallPhase.Denied)?.note
                     val card = ChatItem.ToolCall(id, part.callId.value, part.name, part.input, status, isError = error)
                         .withClippedResult(text)

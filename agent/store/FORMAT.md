@@ -175,3 +175,10 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
   `/branch` 不继承定时任务：分支日志末尾对每个进行中的任务写一条 `cron_cancelled`。循环任务满 7 天、一次运行花到 `maxBudgetUsd`（默认 0.05 美元）、一次性任务的时刻在会话没开着时过去、当前模型没有 USD 定价（花费估算不了）都写 `cron_expired`，同时记一条 `note`（warning）。
   含新事件的日志旧版本打不开；旧日志照常读。
 - v1 增量（2026-10-08，M5 定时调度）：`turn_started.trigger` 新增取值 `cron`（定时任务到点唤醒的回合，转录里与 `resume` / `notification` / `hook` 一样留分隔）；`cron_scheduled` 新增可选字段 `source`（`wakeup` = ScheduleWakeup 安排的下一轮，缺省 = CronCreate），`tool_outcome.result.effects` 的 `cron_create` 同带 `source`。含新取值的日志旧版本打不开；旧日志照常读。
+
+## 用户文字不进工具结果（2026-10-08）
+
+- `tool_outcome.result` 新增可选字段 `userText`：用户亲口说的话（AskUserQuestion 的答案与自填、拒绝审批时写的说明），空时不落盘。
+  模型视图把它放在同一条用户消息里、紧随全部 `tool_result` 之后，作为独立的文本块（排在 hook / 记忆的 system-reminder 之前）；`content` 只留「用户已回答 / 用户拒绝了」这一句事实。
+  原因：官方对 Haiku 5.5 的说明——放在 tool_result 里的文字会被当作不可信内容忽略，用户中途说的话必须是独立的用户文本块。
+- 旧日志照常读，**不改写历史**：旧日志里用户的话还在 `content` 里，没有 `userText`，请求前缀与之前逐字相同；新日志的旧版本读法会丢掉这个字段（用户的话不再出现在请求里），含 `userText` 的日志旧版本能打开但模型看不到用户的回答。

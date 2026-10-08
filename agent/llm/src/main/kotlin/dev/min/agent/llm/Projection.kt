@@ -72,3 +72,16 @@ fun JsonObject.deepMerge(patch: JsonObject): JsonObject {
     }
     return JsonObject(merged)
 }
+
+/**
+ * OpenAI 系（Chat Completions / Responses）把一条消息里的多个文本块压成一个字符串时用的分隔。
+ * 内核把用户的话、hook 与记忆的 system-reminder 各自放成独立的文本块（Anthropic、Gemini 逐块发送，天然分开）；
+ * 兼容端点（DeepSeek、Kimi、GLM 等）的 user content 多半只认字符串，不认 `[{type:text}]` 数组，
+ * 所以不能改成数组，直接 `joinToString("")` 又会把「用户的话」和紧随的 `<system-reminder>` 粘成一段、边界消失。
+ * 空行分隔：不依赖任何一个块自己以换行结尾。含图片的消息本来就是数组形态，每个文本块独立，不走这里。
+ * 只用于用户消息；工具结果里多段文本的直接拼接是既有行为（快照钉着），这里不动。
+ */
+internal const val TEXT_BLOCK_SEPARATOR = "\n\n"
+
+internal fun List<Part>.joinedText(): String =
+    filterIsInstance<dev.min.agent.protocol.TextPart>().filter { it.text.isNotEmpty() }.joinToString(TEXT_BLOCK_SEPARATOR) { it.text }

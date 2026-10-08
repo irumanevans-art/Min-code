@@ -269,7 +269,7 @@ class AutoMemorySessionTest {
         assertEquals(1, events().count { it is ApprovalRequested })
         assertTrue(fs.writes.isEmpty())
         val result = events().filterIsInstance<dev.min.agent.spi.ToolOutcome>().single { it.callId == CallId("c1") }.result
-        assertTrue(result.text, result.isError && "计划模式" in result.text)
+        assertTrue(result.text, result.isError && "计划模式" in result.userText.orEmpty() && "计划模式" !in result.text)
         assertLogIsTruth(rt)
     }
 

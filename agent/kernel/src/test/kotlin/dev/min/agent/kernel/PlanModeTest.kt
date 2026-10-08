@@ -161,7 +161,7 @@ class PlanModeTest {
         assertEquals("只有获批之后那次写执行了", 1, wrote.get())
         val blocked = rt.resultOf("c2")
         assertTrue(blocked.isError)
-        assertTrue(blocked.text(), blocked.text().contains("计划模式"))
+        assertTrue(blocked.userText, blocked.userText.orEmpty().contains("计划模式") && !blocked.text().contains("计划模式"))
         assertTrue(rt.resultOf("c3").text().contains("bypassPermissions"))
         assertEquals("计划中的写与退出计划各问一次，回到 bypass 后写不用再问", 2, store.open(id)!!.read().toList().count { it.event is ApprovalRequested })
         assertLogIsTruth(store, rt)
@@ -185,11 +185,13 @@ class PlanModeTest {
 
         assertEquals(PermissionMode.Plan, rt.state.value.settings.mode)
         assertEquals(PermissionMode.AcceptEdits, rt.state.value.settings.modeBeforePlan)
-        val rejected = model.requests[2].messages.last().parts.single() as ToolResultPart
+        val rejectedParts = model.requests[2].messages.last().parts
+        val rejected = rejectedParts.first() as ToolResultPart
         assertTrue(rejected.isError)
-        assertTrue((rejected.content.single() as TextPart).text.contains("先别动数据库"))
+        assertFalse("说明不进 tool_result", (rejected.content.single() as TextPart).text.contains("先别动数据库"))
+        assertEquals(listOf(TextPart("用户拒绝了你刚才的 ExitPlanMode 调用，并留言：先别动数据库")), rejectedParts.drop(1))
         assertEquals(0, wrote.get())
-        assertTrue(rt.resultOf("c3").text().contains("计划模式"))
+        assertTrue(rt.resultOf("c3").userText.orEmpty().contains("计划模式"))
         assertLogIsTruth(store, rt)
     }
 

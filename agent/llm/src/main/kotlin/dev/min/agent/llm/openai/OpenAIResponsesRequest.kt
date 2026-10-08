@@ -3,6 +3,7 @@ package dev.min.agent.llm.openai
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ToolChoice
 import dev.min.agent.llm.deepMerge
+import dev.min.agent.llm.joinedText
 import dev.min.agent.llm.lastUserInputIndex
 import dev.min.agent.llm.partsToSend
 import dev.min.agent.llm.patchFor
@@ -91,14 +92,18 @@ private fun responsesInput(request: ModelRequest): JsonArray {
                 }
             }
             val user = message.parts.filter { it is TextPart && it.text.isNotEmpty() || it is ImagePart }
-            if (user.isNotEmpty()) items += buildJsonObject { put("role", "user"); put("content", inputContent(user)) }
+            if (user.isNotEmpty()) items += buildJsonObject { put("role", "user"); put("content", inputContent(user, separate = true)) }
         }
     }
     return JsonArray(items)
 }
 
-private fun inputContent(parts: List<Part>) = if (parts.none { it is ImagePart }) {
-    JsonPrimitive(parts.filterIsInstance<TextPart>().joinToString("") { it.text })
+/**
+ * [separate] = 把多个文本块压成字符串时用 [dev.min.agent.llm.TEXT_BLOCK_SEPARATOR] 隔开：只给用户消息（用户的话与 system-reminder 是独立块）；
+ * 工具输出沿用原样直接拼接，与 Chat 一致（既有快照把工具结果里的多段文本钉成「AB」）。
+ */
+private fun inputContent(parts: List<Part>, separate: Boolean = false) = if (parts.none { it is ImagePart }) {
+    JsonPrimitive(if (separate) parts.joinedText() else parts.filterIsInstance<TextPart>().joinToString("") { it.text })
 } else JsonArray(parts.mapNotNull { part -> when (part) {
     is TextPart -> part.text.takeIf { it.isNotEmpty() }?.let {
         buildJsonObject { put("type", "input_text"); put("text", it) }

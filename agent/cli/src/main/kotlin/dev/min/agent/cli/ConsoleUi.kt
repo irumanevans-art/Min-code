@@ -13,6 +13,7 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.ApprovalChoice
 import dev.min.agent.spi.QuestionAnswer
 import dev.min.agent.spi.TaskRecord
+import dev.min.agent.spi.displayText
 import dev.min.agent.spi.UserQuestion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -81,7 +82,7 @@ internal class ConsoleUi(
                         runtime.answerApproval(phase.approvalId, choice)
                     }
                     is CallPhase.Done -> if (finished.add(call.callId)) {
-                        val text = phase.result.content.filterIsInstance<TextPart>().joinToString(" ") { it.text }
+                        val text = phase.result.displayText(" ")
                         out.println("  ${if (phase.result.isError) "✗" else "✓"} ${summarize(text)}")
                     }
                     else -> Unit
