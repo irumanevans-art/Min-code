@@ -385,6 +385,13 @@ fun SessionState.apply(record: EventRecord): SessionState {
             taskProblem(e)?.let { error("任务事件不合法：$it") }
             applyTaskEvent(e)
         }
+        is dev.min.agent.spi.TeamCreated, is dev.min.agent.spi.TeamMemberJoined, is dev.min.agent.spi.TeamTaskCreated,
+        is dev.min.agent.spi.TeamTaskClaimed, is dev.min.agent.spi.TeamTaskDone, is dev.min.agent.spi.TeamDisbanded -> {
+            teamProblem(e)?.let { error("团队事件不合法：$it") }
+            applyTeamEvent(e)
+        }
+        // 邮件事件只记「收到过什么」；校验在发送端（Hub），收件人的日志里不必有团队状态
+        is dev.min.agent.spi.TeamMessage -> copy(teamMail = teamMail + TeamMailItem(e.teamId, e.messageId, e.from, e.text, e.broadcast))
         // 回顾只给人看：不碰 history，不进 modelMessages；花的钱计入会话用量
         is dev.min.agent.spi.SessionRecap -> copy(
             recap = RecapView(e.text, e.trigger, lastTurn?.turnId),

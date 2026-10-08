@@ -158,3 +158,12 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - `cwd_watch_paths_changed`：`paths` 替换 CwdChanged hooks 返回的动态 watchPaths（默认空）；冻结绝对路径，重开沿用。FileChanged 文件监视执行器仍待后续里程碑。
 
 - v1 增量（2026-10-08）：新增 `auto_review_settings_loaded`（用户/托管四组规则与独立审查模型、可选能力声明）、`auto_reviewed`（turnId、callId、model、decision、reason、usage）和 `model_charged`（model、usage、可选 amount/currency，缺价明确未知）。审查用量计入回合；花费按请求模型冻结，按币种累计，不以换会话模型重算。含这些事件的日志旧版本打不开。
+
+- v1 增量（2026-10-08，M5 agent 团队）：新增事件 `team_created`（`teamId`、`leader`、`members[]`：每个成员规格 `name`、可选 `agentType`、`prompt`）、`team_member_joined`（`teamId`、`name`、`session`：成员的子会话建好，紧跟 `subagent_spawned`）、
+  `team_message`（`teamId`、`messageId`、`from`、`to`、`text`、可选 `broadcast`）、`team_task_created`（`teamId`、`taskId`、`title`、可选 `description`、`by`）、`team_task_claimed`（`teamId`、`taskId`、`member`、`by`）、
+  `team_task_done`（`teamId`、`taskId`、`by`、可选 `summary`）、`team_disbanded`（`teamId`、`reason`：`completed` / `user_ended` / `error`、可选 `note`），定义在 `spi/TeamEvents.kt`（agent团队与邮箱设计 §三）。
+  除 `team_message` 外都写在**负责人（根会话）**的日志里，团队的成员表 / 任务清单 / 是否解散全部从它折叠，没有第二份状态；成员 = 子会话，`subagent_spawned` 照常写。
+  `team_message` 写在**收件人**的日志里，与同一次提交里的 `input_received`（`origin = agent`，`kind = message`，`clientMsgId` 为 `team:<teamId>:<messageId>`）成对出现——邮件进收件箱走的就是 SendMessage 那条路，
+  所以重开会话仍在收件箱里、提升进对话后只读一次（按 `clientMsgId` 去重）。广播给全体时每个收件人的日志各写一对，`broadcast = true`。
+  任务权限在落盘前由 `teamProblem` 判定、折叠时同一份判断再守一遍：成员只能认领给自己、只能完成自己认领的，负责人可改派 / 完成全部；违规转换不写事件，只在负责人日志里记一条 `note`（warning）。
+  含新事件的日志旧版本打不开；旧日志照常读。

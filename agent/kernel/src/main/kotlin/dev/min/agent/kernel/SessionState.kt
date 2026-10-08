@@ -180,6 +180,13 @@ data class SessionState(
     val worktree: dev.min.agent.spi.WorktreeBinding? = null,
     val finishedWorktrees: List<dev.min.agent.spi.WorktreeFinished> = emptyList(),
     val cwdWatchPaths: List<GuestPath> = emptyList(),
+    /**
+     * 本会话作为负责人建的团队（最后一条 team_created 起，由 team_* 事件折叠；解散后仍保留，`active` 为假）。
+     * 只有根会话会有；成员的日志里没有它，成员要知道自己的团队去看根会话（[SessionHub.teamMembers]）
+     */
+    val team: TeamState? = null,
+    /** 本会话收到的团队邮件（team_message），按到达顺序；给界面消息流用，模型看到的是同一次提交里的 input_received */
+    val teamMail: List<TeamMailItem> = emptyList(),
 )
 
 /** [afterTurn] 是生成回顾时最近结束的那个回合：之后没有新回合就不再自动生成 */
