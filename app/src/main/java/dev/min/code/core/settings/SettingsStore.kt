@@ -57,6 +57,7 @@ private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
 private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
 private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
 private val KEY_DEVICE_WRITE_ALLOWLIST = stringSetPreferencesKey("device_write_allowlist")
+private val KEY_WORKSPACE_TRUST = stringSetPreferencesKey("workspace_trust")
 private val KEY_A11Y_PROMPT_VERSION = intPreferencesKey("a11y_prompt_version")
 private val KEY_TERMINAL_AUTO_KEYBOARD = booleanPreferencesKey("terminal_auto_keyboard")
 /** 上一次由我们写进 settings.json 的那些 env 键。是记账，不是配置，见 [SettingsStore.setManagedEnvKeys] */
@@ -309,6 +310,11 @@ data class AppSettings(
      */
     val deviceWriteAllowlist: Set<String> = emptySet(),
     /**
+     * 工作区信任账本（项目层 hooks 与项目 `.mcp.json` 共用这一个信任，见 [WorkspaceTrust]）。
+     * 默认空 = 一个目录都没问过，Min 不跑任何项目层 hook、也不连任何项目 MCP 服务器
+     */
+    val workspaceTrust: Set<String> = emptySet(),
+    /**
      * 上次弹过「更新后请重开无障碍」的 versionCode。0 = 还没弹过。
      * 系统在覆盖安装时会解绑无障碍服务，人必须再去开一次；记下这个数，只在版本变了且
      * 意愿仍开着、服务却没连上时弹一次。
@@ -528,6 +534,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
             lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
             deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
+            workspaceTrust = p[KEY_WORKSPACE_TRUST].orEmpty(),
             a11yPromptVersion = p[KEY_A11Y_PROMPT_VERSION] ?: 0,
             terminalAutoKeyboard = p[KEY_TERMINAL_AUTO_KEYBOARD] ?: true,
             managedEnvKeys = p[KEY_MANAGED_ENV_KEYS].orEmpty(),
@@ -847,6 +854,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setLastStartEngine(engine: String) =
         context.dataStore.edit { it[KEY_LAST_START_ENGINE] = engine }
+
+    /** 记下一个工作目录的信任决定；[trusted] 为 null = 忘掉（下次会再问）。读改写在 DataStore 的同一个事务里 */
+    suspend fun setWorkspaceTrust(cwd: String, trusted: Boolean?) = context.dataStore.edit { prefs ->
+        val next = WorkspaceTrust.with(prefs[KEY_WORKSPACE_TRUST].orEmpty(), cwd, trusted)
+        if (next.isEmpty()) prefs.remove(KEY_WORKSPACE_TRUST) else prefs[KEY_WORKSPACE_TRUST] = next
+    }
 
     suspend fun setDeviceWriteAllowlist(packages: Set<String>) =
         context.dataStore.edit {

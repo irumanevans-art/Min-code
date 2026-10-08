@@ -51,6 +51,24 @@ interface AgentSession {
      */
     suspend fun searchFiles(query: String, limit: Int): List<String>
 
+    /** MCP 服务器面板与批准卡（[EngineCapabilities.mcpServers] 为真才有）；其余引擎 null */
+    val mcp: McpControl? get() = null
+
+    /** 重开一个又老又大的会话时的建议（[EngineCapabilities.resumeAdvice]）；没有建议 / 不支持返回 null。只在刚打开时问一次 */
+    suspend fun resumeAdvice(): ResumeAdviceView? = null
+
+    /** 选了「从摘要续接」：先把对话压成摘要。压成了返回 true；没压成（有回合在跑、模型失败……）会话照原样完整续接，返回 false */
+    suspend fun continueFromSummary(): Boolean = false
+
+    /**
+     * 会话回顾（[EngineCapabilities.recap]）。[auto] 为真是宿主判定「人离开了一阵回来了」后自动调的，受自动回顾的闸管
+     * （对话够长、上次回顾之后有新回合、设置没关）；手动按「回顾」不受这些限制。不支持的引擎返回 [RecapOutcome.Skipped]
+     */
+    suspend fun recap(auto: Boolean): RecapOutcome = RecapOutcome.Skipped("")
+
+    /** 检查点与回退（[EngineCapabilities.rewind] 为真才有）；其余引擎 null */
+    val rewind: RewindControl? get() = null
+
     /** 这次工具调用能不能撤销文件改动（[EngineCapabilities.checkpointRevert] 为假时永远 false） */
     suspend fun hasCheckpoint(toolUseId: String): Boolean = false
 

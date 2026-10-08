@@ -30,12 +30,18 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** 不经 proot 或 WebView；Custom Tab 与回调监听均在 App 进程中。 */
-internal class AndroidMcpAuthorizer(private val context: Context) : McpAuthorizer {
-    override suspend fun authorize(redirectPort: Int?,expectedState: String,authorizationUrl: suspend (String)->String): String =
-        LoopbackMcpAuthorizer(openPage={url -> withContext(Dispatchers.Main){context.openMcpCustomTab(url)}},expectedState=expectedState).authorize(redirectPort,authorizationUrl)
-    override suspend fun authorize(redirectPort: Int?,authorizationUrl: suspend (String)->String): String =
-        LoopbackMcpAuthorizer(openPage={ url -> withContext(Dispatchers.Main) { context.openMcpCustomTab(url) } })
+internal class AndroidMcpAuthorizer(private val context: Context, private val gate: McpLoginGate = McpLoginGate()) : McpAuthorizer {
+    // 授权域名与 scope 先让人看到、点了「继续」才开浏览器（内核先 preview 再 authorize，见 McpLoginGate）
+    override fun preview(issuer: String,authorizationDomain: String,scopes: String?) = gate.preview(issuer,authorizationDomain,scopes)
+    override suspend fun authorize(redirectPort: Int?,expectedState: String,authorizationUrl: suspend (String)->String): String {
+        gate.confirm()
+        return LoopbackMcpAuthorizer(openPage={url -> withContext(Dispatchers.Main){context.openMcpCustomTab(url)}},expectedState=expectedState).authorize(redirectPort,authorizationUrl)
+    }
+    override suspend fun authorize(redirectPort: Int?,authorizationUrl: suspend (String)->String): String {
+        gate.confirm()
+        return LoopbackMcpAuthorizer(openPage={ url -> withContext(Dispatchers.Main) { context.openMcpCustomTab(url) } })
             .authorize(redirectPort,authorizationUrl)
+    }
 }
 
 /** 普通浏览器出口允许回退，OAuth 只选声明 Custom Tabs 服务的外部提供者。 */

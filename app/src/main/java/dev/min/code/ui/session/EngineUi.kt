@@ -27,7 +27,7 @@ internal object EngineUi {
     /**
      * `/mcp /agents /memory /config /hooks` 这几个本地接管命令打开 CC 的配置面板。
      * Min 的配置能力是「部分」（[ConfigFiles.Partial]）：面板整套是按 CC 的文件布局写的，MCP 一项不适用，
-     * 面板里该隐藏哪些分区属于 B7b（MCP 面板等），所以 B7a 只在「完整」时开放入口。
+     * Min 的 MCP 在会话设置的「MCP 服务器」段里（[SettingsLayout.mcp]），不走这套文件面板，所以这里仍只在「完整」时开放入口。
      */
     fun configCommands(capabilities: EngineCapabilities): Boolean = capabilities.claudeConfigFiles == ConfigFiles.Full
 
@@ -65,6 +65,11 @@ internal object EngineUi {
             // CC 的强度分区永远在（它还要在里面说「这个模型不支持」「换了要重启」）；其余引擎没有档位就整段隐藏
             effort = session.settings.efforts.isNotEmpty() || !capabilities.effortHotSwap,
             effortRestartNote = settings.effortNeedsRestart,
+            // 「默认」是谁决定的：CC 是它的 CLI，其余引擎没有 CLI——Min 不传强度参数，由模型自己的默认来
+            effortDefaultLabel = when (kind) {
+                EngineKind.ClaudeCode -> R.string.session_effort_default
+                EngineKind.MinAgent, EngineKind.Codex -> R.string.session_effort_default_model
+            },
             ultracode = settings.extra(ClaudeStateMapper.OPTION_ULTRACODE) != null,
             cache = settings.extra(ClaudeStateMapper.OPTION_CACHE_TTL) != null,
             cwd = capabilities.cwdChange,
@@ -73,6 +78,9 @@ internal object EngineUi {
                 EngineKind.MinAgent -> true
                 EngineKind.ClaudeCode, EngineKind.Codex -> false
             },
+            mcp = capabilities.mcpServers,
+            trust = capabilities.workspaceTrust,
+            checkpoints = capabilities.rewind,
         )
     }
 }
@@ -86,6 +94,8 @@ internal data class SettingsLayout(
     val effort: Boolean,
     /** 强度分区顶上写「换强度要重启」 */
     val effortRestartNote: Boolean,
+    /** 「跟随默认」那一行的标题资源 */
+    @StringRes val effortDefaultLabel: Int,
     /** 强度分区底下的 Ultracode 开关 */
     val ultracode: Boolean,
     val cache: Boolean,
@@ -93,4 +103,10 @@ internal data class SettingsLayout(
     val commands: Boolean,
     /** 「用量」分区：上下文占比 / 缓存命中率 / 花费 */
     val usage: Boolean,
+    /** 「MCP 服务器」分区（[EngineCapabilities.mcpServers]） */
+    val mcp: Boolean,
+    /** 「工作区信任」分区（[EngineCapabilities.workspaceTrust]） */
+    val trust: Boolean,
+    /** 「检查点」分区：快照仓库占用与清理（[EngineCapabilities.rewind]） */
+    val checkpoints: Boolean,
 )

@@ -17,6 +17,9 @@ interface AgentEngine {
     /** 开始面板上这个引擎专有的选项；没有的引擎是 null（默认）。见 [StartChoices] */
     val startChoices: StateFlow<StartChoices?> get() = NoStartChoices
 
+    /** 工作区信任（[EngineCapabilities.workspaceTrust] 为真才有）；其余引擎 null */
+    val workspaceTrust: WorkspaceTrustControl? get() = null
+
     /**
      * 引擎自己认定「在线」的会话，含没在界面上打开的（Min：后台子 agent 跑完唤醒的父会话）。
      * [LiveSessionSummary.isActive] / [LiveSessionSummary.attached] 引擎不用填，注册表合并时填。
@@ -33,6 +36,12 @@ interface AgentEngine {
     suspend fun open(id: String): Result<AgentSession>
 
     suspend fun closeAll(reason: CloseReason)
+
+    /**
+     * 给一个会话改名，在线与否都行（列表里长按改名的会话常常没在线）。Min 写进内核日志（`session_renamed`），
+     * 与 CLI 的 `/rename`、按名续接同一个名字；别的引擎有自己的改名路径，默认不支持。名字规整后为空返回 false
+     */
+    suspend fun renameSession(id: String, title: String): Boolean = false
 }
 
 sealed interface EngineAvailability {

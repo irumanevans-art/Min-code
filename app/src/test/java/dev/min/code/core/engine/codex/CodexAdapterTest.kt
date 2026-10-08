@@ -167,6 +167,7 @@ class CodexAdapterTest {
             is ChatItem.Thinking -> "thinking ${it.text}"
             is ChatItem.Note -> "note error=${it.isError} ${it.text}"
             is ChatItem.ProcessOutput -> "stderr ${it.lines}"
+            is ChatItem.Folded -> "folded ${it.title}"
             is ChatItem.ToolCall -> "tool ${it.name} ${it.status} error=${it.isError} ${it.input} ${it.result}"
         }
     }

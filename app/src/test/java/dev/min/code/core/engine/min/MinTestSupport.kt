@@ -97,6 +97,12 @@ class FakeText : MinAgentText {
     override fun agentMessage(agentType: String, name: String?) = "message-from:${name ?: agentType}"
     override fun attachment() = "[img]"
     override fun redactedThinking() = "[redacted]"
+    override fun recapLine(recap: String) = "recap:$recap"
+    override fun rewoundTitle(count: Int) = "rewound:$count"
+    override fun restoredTitle(kind: RestoreKind, restored: Int, deleted: Int, skipped: Int) = "restored:$kind:$restored:$deleted:$skipped"
+    override fun restoredLine(path: String) = "restored $path"
+    override fun deletedLine(path: String) = "deleted $path"
+    override fun skippedLine(path: String, reason: String) = "skipped $path ($reason)"
     override fun mode(mode: PermissionMode) = "mode:$mode"
     override fun modeWarning(mode: PermissionMode) = if (mode == PermissionMode.BypassPermissions) "warn" else null
     override fun effort(effort: Effort) = "effort:$effort"

@@ -54,7 +54,7 @@ class StdioMcpTransport(
                 if (!process.exit.isCompleted) close()
                 val code = process.exit.await()
                 logs.join()
-                throw McpTransportClosed("MCP stdio 服务器连接已断开（退出码 $code）。", code, stderrTail())
+                throw McpTransportClosed("MCP stdio 服务器连接已断开（${exitText(code)}）。", code, stderrTail())
             }
         } catch (e: CancellationException) { throw e }
         catch (e: McpTransportClosed) { throw e }
@@ -81,3 +81,10 @@ class StdioMcpTransport(
         while (tail.size > stderrMaxLines || tailBytes > stderrMaxBytes) tailBytes -= tail.removeFirst().toByteArray(Charsets.UTF_8).size
     }
 }
+
+/**
+ * 退出码的人话：shell 约定被信号杀死的进程是 128+N（137 = SIGKILL、143 = SIGTERM），写成「被信号 9 结束」。
+ * 服务器自己 `exit 130` 也会被这么写——所以退出码本身始终保留在括号里，不丢信息
+ */
+internal fun exitText(code: Int): String =
+    if (code in 129..192) "被信号 ${code - 128} 结束，退出码 $code" else "退出码 $code"

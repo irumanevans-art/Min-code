@@ -37,6 +37,18 @@ interface MinAgentText {
     fun attachment(): String
     fun redactedThinking(): String
 
+    /** 会话回顾那一行：「回顾 · 刚才在……」 */
+    fun recapLine(recap: String): String
+
+    /** 回退折叠行：「已回退的 3 条消息」 */
+    fun rewoundTitle(count: Int): String
+
+    /** 恢复代码的折叠行标题：「恢复了 5 个文件，删除了 1 个，跳过 2 个」（跳过为 0 时不写）；[kind] 决定开头 */
+    fun restoredTitle(kind: RestoreKind, restored: Int, deleted: Int, skipped: Int): String
+    fun restoredLine(path: String): String
+    fun deletedLine(path: String): String
+    fun skippedLine(path: String, reason: String): String
+
     fun mode(mode: PermissionMode): String
     fun modeWarning(mode: PermissionMode): String?
     fun effort(effort: Effort): String
@@ -67,6 +79,9 @@ interface MinAgentText {
     fun needModelId(): String
     fun sessionNotFound(): String
 }
+
+/** 一次恢复代码是怎么来的：回退到某个检查点 / 撤销上一次回退 / 撤掉某几次编辑调用（改动面板里的撤销） */
+enum class RestoreKind { Checkpoint, Undo, Calls }
 
 /**
  * 子 agent 报告里 `status` 属性（内核 `Reports.statusOf` 写的）对应的文案资源；认不出的返回 null，调用方退回原串。
@@ -120,6 +135,26 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun agentMessage(agentType: String, name: String?) = s(R.string.min_agent_message_from, name ?: agentType)
     override fun attachment() = s(R.string.min_agent_attachment)
     override fun redactedThinking() = s(R.string.min_agent_redacted_thinking)
+
+    override fun recapLine(recap: String) = s(R.string.min_recap_line, recap)
+
+    override fun rewoundTitle(count: Int) = s(R.string.min_rewound_title, count)
+
+    override fun restoredTitle(kind: RestoreKind, restored: Int, deleted: Int, skipped: Int): String {
+        val base = s(
+            when (kind) {
+                RestoreKind.Checkpoint -> R.string.min_restored_checkpoint
+                RestoreKind.Undo -> R.string.min_restored_undo
+                RestoreKind.Calls -> R.string.min_restored_calls
+            },
+            restored, deleted,
+        )
+        return if (skipped > 0) base + s(R.string.min_restored_skipped, skipped) else base
+    }
+
+    override fun restoredLine(path: String) = s(R.string.min_restored_line, path)
+    override fun deletedLine(path: String) = s(R.string.min_deleted_line, path)
+    override fun skippedLine(path: String, reason: String) = s(R.string.min_skipped_line, path, reason)
 
     override fun mode(mode: PermissionMode) = s(
         when (mode) {

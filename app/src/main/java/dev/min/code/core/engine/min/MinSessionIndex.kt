@@ -60,6 +60,8 @@ data class MinIndexEntry(
 fun indexEntryOf(state: SessionState, eventsLength: Long, eventsMtime: Long, updatedAt: Long): MinIndexEntry {
     val userTexts = state.history.filterIsInstance<HistoryEntry.User>().filter { it.origin == InputOrigin.User }
         .map { e -> e.parts.filterIsInstance<TextPart>().joinToString("\n") { it.text } }
+    val rewoundUserTexts = state.rewound.flatMap { it.entries }.filterIsInstance<HistoryEntry.User>().filter { it.origin == InputOrigin.User }
+        .map { e -> e.parts.filterIsInstance<TextPart>().joinToString("\n") { it.text } }
     val answers = state.history.filterIsInstance<HistoryEntry.Assistant>()
         .map { e -> e.parts.filterIsInstance<TextPart>().joinToString("\n") { it.text } }
     val body = (userTexts + answers).filter { it.isNotBlank() }.joinToString("\n").take(MinIndexEntry.BODY_CHARS)
@@ -69,8 +71,11 @@ fun indexEntryOf(state: SessionState, eventsLength: Long, eventsMtime: Long, upd
         id = state.header.sessionId.value,
         createdAt = state.header.createdAtMs,
         updatedAt = updatedAt,
-        title = userTexts.firstOrNull { it.isNotBlank() }?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
-            ?.take(MinIndexEntry.TITLE_CHARS).orEmpty(),
+        // 内核里的名字（/rename、列表改名写的 session_renamed）优先，没有就取第一条用户消息
+        // 对话整个回退到第一条消息之前时 history 是空的，列表里会显示成裸 id：退而取被回退掉的第一条用户消息
+        title = state.name?.takeIf { it.isNotBlank() }?.take(MinIndexEntry.TITLE_CHARS)
+            ?: (userTexts + rewoundUserTexts).firstOrNull { it.isNotBlank() }?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
+                ?.take(MinIndexEntry.TITLE_CHARS).orEmpty(),
         messageCount = userTexts.size + answers.size,
         profileId = state.settings.model.providerId,
         model = state.settings.model.modelId,

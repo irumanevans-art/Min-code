@@ -255,10 +255,10 @@ class MinDeviceToolsTest {
     // ---- 失败与图片 ----
 
     @Test fun accessibilityOffIsAnErrorResultWithTheStepsNotAnException() {
-        device.uiTree = DeviceController.Result.failure("设备操控还没打开。请到 Min 的「设置 → 设备操控」开启，那里会告诉你怎么在系统设置里授予无障碍权限。")
+        device.uiTree = DeviceController.Result.failure("设备操控还没打开。请到 Min 的「设置 → 设备 → 设备操控」开启，那里会告诉你怎么在系统设置里授予无障碍权限。")
         val result = tool(DeviceToolKind.UiTree).call(TestToolContext())
         assertTrue(result.isError)
-        assertTrue(result.text.contains("设置 → 设备操控"))
+        assertTrue(result.text.contains("设置 → 设备 → 设备操控"))
     }
 
     @Test fun anExceptionFromTheDeviceBecomesAnErrorResult() {

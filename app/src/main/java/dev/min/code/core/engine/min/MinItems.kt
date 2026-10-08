@@ -15,6 +15,8 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ThinkingPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.spi.AgentInputKind
+import dev.min.agent.spi.ConversationRewound
+import dev.min.agent.spi.FilesRestored
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.ModelFailureKind
@@ -148,6 +150,9 @@ private class ItemsBuilder(
 ) {
     private val items = mutableListOf<ChatItem>()
 
+    /** 当前还能回退到的用户消息：长按这些才有「回到这里」 */
+    private val rewindIds = state.rewindPoints.mapTo(HashSet()) { it.messageId.value }
+
     /** 上一个回合结束时 items 的长度：回执戳只往它之后的最后一条助手文字上盖 */
     private var stampFloor = 0
 
@@ -160,6 +165,8 @@ private class ItemsBuilder(
             }
             notices(entry.messageId)
         }
+        // 会话回顾（只给人看，不进模型）：回顾之后又有了新回合就过期了，不再显示
+        state.recap?.takeIf { it.afterTurn == state.lastTurn?.turnId }?.let { items += ChatItem.Note("recap", text.recapLine(it.text)) }
         // 还没提升的输入：用户的排队气泡（Esc 可原样撤回）。子 agent / 父会话送来的不画，提升后会以报告卡出现。
         // id 直接用 clientMsgId：WithdrawQueued(clientId) 带的就是 UserText.id，不用再剥前缀
         state.inbox.filter { it.origin == InputOrigin.User }.forEach { input ->
@@ -175,7 +182,7 @@ private class ItemsBuilder(
         val id = entry.messageId.value
         when (val origin = entry.origin) {
             // 子会话视角的 Parent：委派来的任务原文，直接当一条用户气泡（它就是「上级对我说的话」）
-            InputOrigin.User, is InputOrigin.Parent -> items += ChatItem.UserText(id, plain(entry.parts))
+            InputOrigin.User, is InputOrigin.Parent -> items += ChatItem.UserText(id, plain(entry.parts), rewindable = origin == InputOrigin.User && id in rewindIds)
             is InputOrigin.Agent -> {
                 val raw = plain(entry.parts)
                 val child = childOf(origin.session)
@@ -270,8 +277,52 @@ private class ItemsBuilder(
                 else -> Unit
             }
             is TurnEnded -> turnEnded(seq, atMs, event)
+            is ConversationRewound -> rewound(event)
+            is FilesRestored -> restored(event)
             else -> Unit
         }
+    }
+
+    /**
+     * 回退掉的那段对话折成一行「已回退的 N 条消息」，点开是原样的条目（只读）。
+     * 展开的内容用同一个投影，只是拿被回退掉的历史当状态——所以工具卡、报告卡长什么样这里也长什么样；
+     * 回退点清空：被回退掉的消息不能再「回到这里」
+     */
+    private fun rewound(event: ConversationRewound) {
+        val segment = state.rewound.firstOrNull { it.rewindId == event.rewindId } ?: return
+        val deadIds = segment.entries.mapTo(HashSet()) { it.messageId }
+        // 「恢复了文件」的记录挂在回退时最后一条消息之后——选「两者」时那条消息正好被回退掉。它说的是工作区不是对话，
+        // 而且「撤销这次回退」的入口在它上面：不能跟着被折进去（那样就再也点不到了），所以拿出来排在折叠行后面
+        val restores = state.presentation.filter { it.afterMessageId in deadIds && it.record.event is FilesRestored }
+        val nested = ItemsBuilder(
+            state.copy(
+                history = segment.entries, toolResults = segment.toolResults,
+                presentation = state.presentation.filter { it.afterMessageId in deadIds && it.record.event !is FilesRestored },
+                inbox = emptyList(), turn = null, rewindPoints = emptyList(), rewound = emptyList(),
+            ),
+            text, subItems = { null }, childOf,
+        ).build()
+        items += ChatItem.Folded("rewound:${event.rewindId}", text.rewoundTitle(segment.entries.size), nested = nested)
+        restores.forEach { restored(it.record.event as FilesRestored) }
+    }
+
+    /**
+     * 恢复了代码：一行「恢复了 N 个文件……」，点开逐个文件与跳过的原因（CC 只给个数，路径藏在调试日志里）。
+     * 能撤销 = 有「回滚前」快照、本身不是一次撤销、还没被撤销过
+     */
+    private fun restored(event: FilesRestored) {
+        val kind = when {
+            event.undoOf != null -> RestoreKind.Undo
+            event.checkpointId != null -> RestoreKind.Checkpoint
+            else -> RestoreKind.Calls
+        }
+        val lines = event.restored.map { text.restoredLine(it.value) } + event.deleted.map { text.deletedLine(it.value) } +
+            event.skipped.map { text.skippedLine(it.path.value, it.reason) }
+        val canUndo = event.preRestore != null && event.undoOf == null && state.restores.none { it.undoOf == event.restoreId }
+        items += ChatItem.Folded(
+            "restored:${event.restoreId}", text.restoredTitle(kind, event.restored.size, event.deleted.size, event.skipped.size),
+            lines = lines, undoId = event.restoreId.takeIf { canUndo },
+        )
     }
 
     private fun turnEnded(seq: Long, atMs: Long, event: TurnEnded) {

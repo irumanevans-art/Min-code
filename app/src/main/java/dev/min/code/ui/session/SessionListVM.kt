@@ -284,13 +284,15 @@ class SessionListVM(
     fun renameSession(ref: SessionRef, title: String) {
         val trimmed = title.trim()
         if (trimmed.isBlank()) return
-        metaOf(ref).update(ref.id) { it.copy(title = trimmed) }
         if (ref.engine == EngineKind.MinAgent) {
-            // 在线的会话把新标题也递给引擎（状态里的 title 跟着变）；没在线的只改元数据，列表读它
-            val online = agents.attached.value.firstOrNull { it.ref == ref }
-            if (online != null) viewModelScope.launch { online.submit(SessionCommand.Rename(UUID.randomUUID().toString(), trimmed)) }
+            // Min 的名字写进内核日志（在线与否都行），列表与 CLI 读同一个；不再存 App 自己的元数据
+            viewModelScope.launch {
+                agents.engine(EngineKind.MinAgent).renameSession(ref.id, trimmed)
+                refreshSessions()
+            }
             return
         }
+        metaOf(ref).update(ref.id) { it.copy(title = trimmed) }
         if (registry.activeKey.value == ref.id) registry.onActive { it.renameSession(trimmed) }
     }
 

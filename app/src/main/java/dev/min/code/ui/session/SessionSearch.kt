@@ -50,6 +50,8 @@ internal fun ChatItem.searchableText(labels: TranscriptLabels): String? = when (
     is ChatItem.AssistantText -> text.takeIf { it.isNotBlank() }
     is ChatItem.Thinking -> text.takeIf { it.isNotBlank() }
     is ChatItem.Note -> text.takeIf { it.isNotBlank() }
+    // 折叠记录只搜标题：回退掉的对话已经不是这条会话的内容了
+    is ChatItem.Folded -> title
     is ChatItem.ProcessOutput ->
         lines.joinToString("\n").takeIf { it.isNotBlank() }
     is ChatItem.ToolCall -> buildString {

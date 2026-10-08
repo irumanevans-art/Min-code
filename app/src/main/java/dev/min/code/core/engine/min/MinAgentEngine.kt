@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -97,6 +98,8 @@ class MinAgentEngine(
     transport: HttpTransport = UrlConnectionTransport(),
     /** 设备操作（读屏、点击……）；null = 没有设备工具（测试）。开关见 [minToolsWithDevice] */
     devices: dev.min.code.core.device.DeviceActions? = null,
+    /** 前后台信号：进后台且没有在跑的回合时把没人用的 MCP 连接直接关掉；null = 不管（测试） */
+    foreground: dev.min.code.core.service.AppForeground? = null,
 ) : AgentEngine, MinSessionHost {
     override val kind = EngineKind.MinAgent
     override val capabilities = EngineCapabilities.MinAgent
@@ -113,18 +116,28 @@ class MinAgentEngine(
     private val lastUsed = MinLastUsed(File(context.filesDir, "agent/last-used.json"))
     private val index = MinSessionIndex(File(context.filesDir, "agent/index"), sessionsDir)
     override val tasks = MinBackgroundTasks()
+    override val workspaceFs: dev.min.agent.spi.WorkspaceFs get() = ports.fs
     override val lookup: MinModelLookup = resolver
     override val maxRetryAttempts = 5
 
     @Volatile private var generation: MinHostGeneration = buildGeneration()
+    override val mcpLoginGate = McpLoginGate()
+    override val snapshotRepos: dev.min.agent.host.CasWorkspaceSnapshots? get() = snapshots
     private val ports = MinHostPorts({ generation }, tasks, dev.min.agent.spi.Clock { System.currentTimeMillis() })
 
     internal val snapshots = CasWorkspaceSnapshots(File(context.filesDir, "agent").toPath(), { generation.fs }, MinKernelDeps.MEMORY_HOME)
+    /** 工作区信任：账本在 SettingsStore，内核据它决定项目层 hooks 与 `.mcp.json` 放不放行（见 [MinWorkspaceTrust]） */
+    private val trust = MinWorkspaceTrust(settings, { generation.fs }, changed = { reloadMcpOfOnlineSessions() })
+    override val workspaceTrust: dev.min.code.core.engine.WorkspaceTrustControl = trust
+
     private val kernelDeps = MinKernelDeps.build(
         resolver, ports, snapshots = snapshots,
         // 与 Claude Code 引擎那边的 DeviceMcpRegistrar 读同一个设置：controlDevice
         tools = minToolsWithDevice(devices, enabled = { settings.snapshot?.controlDevice == true }),
-        mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context),
+        mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context, mcpLoginGate),
+        trustProjectHooks = trust::isTrusted,
+        // 界面有 url 卡（McpUrlSheet）：显示完整 URL 与域名，点了才用 Custom Tab 打开
+        canAnswerMcpUrlElicitation = true,
     )
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
@@ -185,11 +198,27 @@ class MinAgentEngine(
 
     init {
         scope.launch { tasks.watch() }
+        // 进后台、手上没有在跑的回合：没人用的 MCP 连接现在就关，不等 2 分钟——进程一旦被系统冻结，linger 的定时器不走，
+        // stdio 服务器的子进程就一直挂在 proot 里。回合在后台跑完的那一刻同样触发（running 变空）
+        foreground?.let { fg ->
+            scope.launch {
+                combine(fg.foreground, hub.running) { front, running -> !front && running.isEmpty() }
+                    .distinctUntilChanged().filter { it }
+                    .collect { catchingNonCancellation { hub.closeUnusedMcp() }.onFailure { Log.w(TAG, "closing unused MCP failed", it) } }
+            }
+        }
+        // 账本在别处改了（设置页、另一个入口）也要让内核看到
+        scope.launch { settings.settings.collect { trust.ledger.value = it.workspaceTrust } }
         // 设备存储开关等变了：空闲时换一代挂载（一个回合从头到尾用同一代）
         scope.launch {
             combine(settings.settings, hub.running) { _, running -> running }.collect { if (it.isEmpty()) refreshGeneration() }
         }
         scope.launch { catchingNonCancellation { recoverInterrupted() }.onFailure { Log.w(TAG, "startup recovery failed", it) } }
+    }
+
+    /** 信任变了：在线的根会话重读 MCP 配置（连不连项目服务器取决于信任；已连着的共享连接不重连） */
+    private suspend fun reloadMcpOfOnlineSessions() {
+        for (id in hub.online.value) hub.get(id)?.takeIf { it.state.value.origin == null }?.let { hub.reloadMcp(id) }
     }
 
     /** 启动扫描：让上次死在回合中途的会话合法收尾（见 [MinStartupRecovery]）。引擎建好时自动跑一次，也可手动触发 */
@@ -224,6 +253,8 @@ class MinAgentEngine(
     override suspend fun create(options: StartOptions): Result<AgentSession> = guarded {
         check(enabled.value) { text.engineDisabled() }
         val current = settings.current()
+        // 内核马上同步问信任：别让它读到收集器还没跟上的旧账本
+        trust.ledger.value = current.workspaceTrust
         val profile = checkNotNull(defaultAgentProfile(current, options.profileId, lastUsed.profileId)) { text.noUsableProvider() }
         val modelId = options.modelId?.takeIf { it.isNotBlank() }
             ?: lastUsed.modelFor(profile.id) ?: checkNotNull(resolver.defaultModelId(profile)) { text.needModelId() }
@@ -244,12 +275,24 @@ class MinAgentEngine(
     override suspend fun open(id: String): Result<AgentSession> = guarded {
         // 关着时旧通知、旧深链也不能把会话重新拉起来
         check(enabled.value) { text.engineDisabled() }
-        settings.current()
+        trust.ledger.value = settings.current().workspaceTrust
         val sid = SessionId(id)
         openLock.withLock {
             sessions.value[sid]?.let { touch(sid, pin = true); return@withLock it }
             val runtime = checkNotNull(hub.open(sid)) { text.sessionNotFound() }
             register(runtime, pin = true)
+        }
+    }
+
+    override suspend fun renameSession(id: String, title: String): Boolean {
+        val sid = SessionId(id)
+        hub.get(sid)?.let { return it.rename(title) != null }
+        // 没在线的会话：临时打开写一条 session_renamed 再卸下。摘要不用手动更新——它按日志的大小与修改时间校验，下次列表时重建
+        val runtime = hub.open(sid) ?: return false
+        return try {
+            runtime.rename(title) != null
+        } finally {
+            hub.close(sid)
         }
     }
 
@@ -267,7 +310,23 @@ class MinAgentEngine(
         Result.failure(e)
     }
 
+    /**
+     * 迁移：以前改名存在 App 自己的元数据里（`session-meta`），现在改名写内核的 `session_renamed`。
+     * 打开 / 新建会话时把旧标题写进内核并清掉元数据；内核里已经有名字的以内核为准，旧标题直接丢（它一定更早）。
+     * 没打开过的会话列表仍读元数据（[titleOverride]），打开那一刻才迁
+     */
+    private suspend fun migrateLegacyTitle(runtime: dev.min.agent.kernel.SessionRuntime) {
+        // 旧标题可能存在两种键下：引擎自己写的用带前缀的 storageKey，列表改名写的是裸 id（两边口径本来就不一致，
+        // 所以列表里离线会话的改名一直没显示出来）。两个都认，写进内核后两个都清
+        val id = runtime.sessionId.value
+        val keys = listOf(SessionRef(EngineKind.MinAgent, id).storageKey, id)
+        val legacy = keys.firstNotNullOfOrNull { meta.get(it).title?.takeIf(String::isNotBlank) } ?: return
+        if (runtime.state.value.name == null) runtime.rename(legacy)
+        keys.forEach { key -> if (meta.get(key).title != null) meta.update(key) { it.copy(title = null) } }
+    }
+
     private fun register(runtime: dev.min.agent.kernel.SessionRuntime, pin: Boolean): MinAgentSession {
+        scope.launch { catchingNonCancellation { migrateLegacyTitle(runtime) }.onFailure { Log.w(TAG, "legacy title migration failed", it) } }
         val session = synchronized(this) {
             sessions.value[runtime.sessionId] ?: MinAgentSession(runtime, this, scope).also {
                 sessions.value = sessions.value + (runtime.sessionId to it)
@@ -333,10 +392,6 @@ class MinAgentEngine(
     override fun titleOverride(sessionId: String): Flow<String?> {
         val key = SessionRef(EngineKind.MinAgent, sessionId).storageKey
         return meta.items.map { it[key]?.title?.takeIf(String::isNotBlank) }.distinctUntilChanged()
-    }
-
-    override fun renameSession(sessionId: String, title: String) {
-        meta.update(SessionRef(EngineKind.MinAgent, sessionId).storageKey) { it.copy(title = title.ifBlank { null }) }
     }
 
     override fun rememberDefaultModel(profileId: String, modelId: String) = lastUsed.rememberModel(profileId, modelId)

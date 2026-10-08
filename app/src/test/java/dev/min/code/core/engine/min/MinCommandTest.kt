@@ -270,7 +270,8 @@ class MinCommandTest {
         runBlocking {
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.SetCwd(cmd(), "/x")))
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.RunShell(cmd(), "ls")))
-            assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.Revert(cmd(), "c")))
+            // 撤销现在走内核的编辑记录：没有这次调用的记录就是被拒，不是「不支持」
+            assertTrue(r.session.submit(SessionCommand.Revert(cmd(), "c")) is CommandResult.Rejected)
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.SetEngineOption(cmd(), "k", "v")))
         }
     }
@@ -282,7 +283,7 @@ class MinCommandTest {
             assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.StopTask(cmd(), "task-1")))
             assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.Refresh(cmd(), setOf(RefreshTarget.Models))))
         }
-        assertEquals(listOf("New name"), r.host.renames); assertEquals(listOf("task-1"), r.host.killed)
+        assertEquals("New name", r.root.state.value.name); assertEquals(listOf("task-1"), r.host.killed)
     }
 
     // ---- 续跑 ----

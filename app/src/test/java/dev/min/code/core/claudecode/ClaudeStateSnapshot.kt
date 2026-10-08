@@ -205,6 +205,7 @@ internal object ClaudeStateSnapshot {
                     raw(key, "Note isError=${it.isError}")
                     kv("$key.text", it.text)
                 }
+                is ChatItem.Folded -> raw(key, "Folded ${it.title}")
                 is ChatItem.ProcessOutput -> {
                     raw(key, "ProcessOutput dropped=${it.dropped}")
                     it.lines.forEachIndexed { n, line -> kv("$key.lines[$n]", line) }

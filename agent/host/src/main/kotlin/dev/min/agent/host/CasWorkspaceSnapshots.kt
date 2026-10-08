@@ -36,6 +36,50 @@ class CasWorkspaceSnapshots(
         repository.locked { Files.deleteIfExists(repository.dir.resolve("unavailable")) }
         Unit
     }
+    /**
+     * 设置页的「占用」：每个工作区一个仓库目录，含本进程没打开过的。[SnapshotUsage.id] 是目录名（传给 [clear]），
+     * [SnapshotUsage.label] 是工作区目录名（取自仓库目录名里 hash 之后的部分），给人认。按占用从大到小。
+     */
+    suspend fun usage(): List<SnapshotUsage> = withContext(Dispatchers.IO) {
+        if (!Files.isDirectory(directory)) return@withContext emptyList()
+        Files.newDirectoryStream(directory).use { dirs ->
+            dirs.filter { Files.isDirectory(it, java.nio.file.LinkOption.NOFOLLOW_LINKS) }.map { path ->
+                var bytes = 0L
+                Files.walk(path).use { stream ->
+                    stream.forEach { if (Files.isRegularFile(it, java.nio.file.LinkOption.NOFOLLOW_LINKS)) bytes += Files.size(it) }
+                }
+                val name = path.fileName.toString()
+                SnapshotUsage(name, name.substringAfter('-', name), bytes)
+            }
+        }.sortedByDescending { it.bytes }
+    }
+
+    /**
+     * 清空一个工作区的仓库（设置页的「清理」，设计 §3.5「清空 = 删所有根后回收」）：在仓库锁里删掉保留根、清单、内容与扫描索引，
+     * 只留锁文件。之后这个工作区里已有会话的旧检查点撤不回（预览会说「没有快照」，编辑记录里存过的内容同样没了），
+     * 新的回合照常拍新的。**索引必须一起删**：它记着「这个文件上次的哈希」用来跳过重读，内容删了而索引还在，
+     * 下一张快照会引用已经不存在的内容。[id] 必须是 [usage] 给出的目录名，其它一律拒绝（不跟随、不越界）。
+     * 不走 [collectSnapshots] 的宽限与 24 小时节流：用户点「清理」要的是现在就腾出空间。
+     */
+    suspend fun clear(id: String) {
+        require(id.isNotEmpty() && '/' !in id && '\\' !in id && id != "." && id != "..") { "仓库名不合法。" }
+        val path = directory.resolve(id)
+        if (!Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
+        withContext(Dispatchers.IO) {
+            val repository = SnapshotRepository(path)
+            repository.locked {
+                Files.newDirectoryStream(path).use { entries ->
+                    for (entry in entries) {
+                        if (entry.fileName.toString() == "lock") continue
+                        if (Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                            Files.walk(entry).use { walk -> walk.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
+                        } else Files.deleteIfExists(entry)
+                    }
+                }
+            }
+        }
+    }
+
     /** 所有工作区，包括本进程未打开的；会话关闭时后台调用，设置接线可覆盖 30 天。 */
     suspend fun gc(cleanupPeriodDays: Int = 30): Unit = withContext(Dispatchers.IO) {
         require(cleanupPeriodDays >= 0)
@@ -151,3 +195,6 @@ internal fun snapshotChanges(a: SnapshotManifest, b: SnapshotManifest): List<Tri
         if (!a.visible(path) || !b.visible(path) || before[path] == after[path]) null else Triple(path, before[path], after[path])
     }
 }
+
+/** [CasWorkspaceSnapshots.usage] 的一行 */
+data class SnapshotUsage(val id: String, val label: String, val bytes: Long)

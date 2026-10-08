@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -62,6 +63,9 @@ internal enum class SettingsSection(@StringRes val labelRes: Int) {
     CWD(R.string.session_section_cwd),
     COMMANDS(R.string.session_section_commands),
     USAGE(R.string.session_section_usage),
+    MCP(R.string.session_section_mcp),
+    TRUST(R.string.session_section_trust),
+    CHECKPOINTS(R.string.session_section_checkpoints),
 }
 
 /**
@@ -94,6 +98,10 @@ internal fun LocalSlash.toSection(): SettingsSection? = when (this) {
     LocalSlash.CONFIG, LocalSlash.HOOKS -> null
 }
 
+/** 引擎有 MCP 面板（[EngineCapabilities.mcpServers]）时 `/mcp` 开设置里的 MCP 段；其余引擎它是 CC 配置面板的入口（上面返回 null） */
+internal fun LocalSlash.toSection(capabilities: EngineCapabilities): SettingsSection? =
+    if (this == LocalSlash.MCP && capabilities.mcpServers) SettingsSection.MCP else toSection()
+
 @Composable
 internal fun ClaudeCodeSettingsSheet(
     session: AgentSessionState,
@@ -113,6 +121,8 @@ internal fun ClaudeCodeSettingsSheet(
     onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
     onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
     onPickCommand: (String) -> Unit,
+    /** MCP 面板 / 信任段的状态与动作（[EngineUi.settingsLayout] 说有这两段时才用）；没有它们的引擎传 null */
+    extras: SessionExtras? = null,
 ) {
     // 展开的分区。null = 全部折叠，只看五行概览
     var open by remember { mutableStateOf(initialSection) }
@@ -199,6 +209,7 @@ internal fun ClaudeCodeSettingsSheet(
                 EffortPicker(
                     settings = settings,
                     restartNote = layout.effortRestartNote,
+                    defaultLabel = layout.effortDefaultLabel,
                     ultracode = layout.ultracode,
                     enabled = !settingsBusy,
                     onApply = onApplyEffort,
@@ -247,6 +258,58 @@ internal fun ClaudeCodeSettingsSheet(
                 onToggle = { open = it },
             ) {
                 MinUsageSection(session.usage)
+            }
+        }
+
+        if (layout.mcp && extras != null) {
+            val servers by extras.servers.collectAsStateWithLifecycle()
+            val busy by extras.busy.collectAsStateWithLifecycle()
+            Section(
+                section = SettingsSection.MCP,
+                value = mcpSummary(servers),
+                open = open,
+                onToggle = { open = it },
+            ) {
+                McpPanelSection(
+                    servers = servers, busy = busy,
+                    onReconnect = extras::reconnect, onToggle = extras::setEnabled,
+                    onLogin = extras::login, onLogout = extras::logout, onApprove = extras::approve,
+                    onTrust = { extras.askTrust(session.cwd) },
+                )
+            }
+        }
+
+        if (layout.checkpoints && extras != null) {
+            val rows by extras.storage.collectAsStateWithLifecycle()
+            // 先读一次占用：遍历仓库目录不便宜，所以只在设置面板打开时读一次，不轮询
+            androidx.compose.runtime.LaunchedEffect(Unit) { extras.refreshStorage() }
+            Section(
+                section = SettingsSection.CHECKPOINTS,
+                value = checkpointsSummary(rows),
+                open = open,
+                onToggle = { open = it },
+            ) {
+                CheckpointsSection(rows, onClear = extras::clearStorage)
+            }
+        }
+
+        if (layout.trust && extras != null) {
+            val trust by extras.trustView.collectAsStateWithLifecycle()
+            trust?.let { view ->
+                Section(
+                    section = SettingsSection.TRUST,
+                    value = stringResource(
+                        when (view.decision) {
+                            true -> R.string.trust_state_trusted
+                            false -> R.string.trust_state_refused
+                            null -> R.string.trust_state_unasked
+                        },
+                    ),
+                    open = open,
+                    onToggle = { open = it },
+                ) {
+                    TrustSection(view, onAsk = { extras.askTrust(view.cwd) }, onSet = { extras.setTrust(view.cwd, it) })
+                }
             }
         }
 
@@ -527,6 +590,7 @@ private fun EffortPicker(
     restartNote: Boolean,
     /** CC 的 Ultracode 开关；别的引擎没有 */
     ultracode: Boolean,
+    @StringRes defaultLabel: Int,
     enabled: Boolean = true,
     onApply: (String?, Boolean) -> Unit,
 ) {
@@ -550,7 +614,7 @@ private fun EffortPicker(
             // 「跟随默认」的 id 是空串，对引擎说「不传 flag」就是 null
             val effort = level.id.ifEmpty { null }
             OptionRow(
-                title = effort ?: stringResource(R.string.session_effort_default),
+                title = effort ?: stringResource(defaultLabel),
                 subtitle = effortHint(effort),
                 selected = !settings.ultracode && settings.requestedEffort == effort,
                 monospaceTitle = effort != null,

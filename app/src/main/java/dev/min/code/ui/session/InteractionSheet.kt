@@ -56,7 +56,10 @@ internal fun InteractionSheet(
     val origin = permissionOriginOf(pending.origin) { subagentTypeName(it, forkName) }
     // 提问走的是同一个 can_use_tool 帧，但要的是「在选项里挑」而不是「允许/拒绝」，
     // 答案还得回传给模型 —— 两种面板不能混用
-    if (pending is PendingInteraction.Question) {
+    if (pending is PendingInteraction.Question && pending.url != null) {
+        // MCP 的 url 模式：不是选项题，是一张「去这个网址吗」的卡（规范要求用户点了才打开）
+        McpUrlSheet(pending, pending.url, onAnswer)
+    } else if (pending is PendingInteraction.Question) {
         ClaudeCodeQuestionSheet(
             pending = pending,
             origin = origin,

@@ -123,6 +123,8 @@ internal fun ClaudeCodeInputBar(
      * SelectionContainer 拿走了"——后者不能跟着 clearFocus，否则选区当场作废。
      */
     onComposerFocusChange: (Boolean) -> Unit = {},
+    /** 设置面板里 MCP 段 / 信任段的状态与动作；引擎没有这两段时页面传 null */
+    extras: SessionExtras? = null,
     /** 杀进程再进同一会话时要恢复的草稿。空 = 从空白开始 */
     restoredDraft: ComposerDraft = ComposerDraft.Empty,
     onDraftChange: (ComposerDraft) -> Unit = {},
@@ -303,7 +305,7 @@ internal fun ClaudeCodeInputBar(
 
     /** 本地接管的斜杠命令：会话设置类的开 sheet，配置编辑类的交给页面开专门的面板 */
     fun handleLocal(target: LocalSlash) {
-        val section = target.toSection()
+        val section = target.toSection(capabilities)
         if (section != null) openSettings(section) else onOpenLocalCommand(target)
     }
 
@@ -331,7 +333,7 @@ internal fun ClaudeCodeInputBar(
             return
         }
         // 配置面板类命令（/mcp /agents …）是按 CC 的文件布局做的，引擎不支持就不接管，照普通消息发
-        val local = localSlashTarget(input)?.takeIf { it.toSection() != null || EngineUi.configCommands(capabilities) }
+        val local = localSlashTarget(input)?.takeIf { it.toSection(capabilities) != null || EngineUi.configCommands(capabilities) }
         if (local != null) {
             handleLocal(local)
             input = ""
@@ -484,6 +486,7 @@ internal fun ClaudeCodeInputBar(
                     modeText = "${session.settings.mode.label} · ${session.settings.effortChipLabel()}",
                     onRefreshUsage = onRefreshUsage,
                     onOpenSettings = { openSettings(null) },
+                    onRecap = if (capabilities.recap) extras?.let { { it.requestRecap() } } else null,
                 )
             },
         )
@@ -506,6 +509,7 @@ internal fun ClaudeCodeInputBar(
             onListCwd = onListCwd,
             onCreateCwd = onCreateCwd,
             onPickCommand = { input = "/$it "; settingsOpen = false },
+            extras = extras,
         )
     }
 }

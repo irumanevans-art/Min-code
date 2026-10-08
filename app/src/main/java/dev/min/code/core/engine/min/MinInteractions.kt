@@ -17,6 +17,7 @@ import dev.min.code.core.engine.PathView
 import dev.min.code.core.engine.PendingInteraction
 import dev.min.code.core.engine.QuestionOptionView
 import dev.min.code.core.engine.QuestionView
+import dev.min.code.core.engine.UrlRequest
 import dev.min.code.core.engine.originOf
 import dev.min.code.core.engine.withQueueDepth
 import dev.min.code.core.session.PathScope
@@ -56,11 +57,15 @@ fun minInteractions(
         }
         is HubPending.What.Question -> {
             id = InteractionIds.scoped(item.session.value, what.questionId.value)
+            // 服务器名：url 模式的请求自带；表单模式的提问记在状态的 mcpQuestions 里（模型自己的 AskUserQuestion 没有）
+            val server = what.mcpUrl?.server ?: nodes[item.session]?.mcpQuestions?.get(what.questionId)?.server
             PendingInteraction.Question(
                 id = id, origin = origin, toolUseId = what.callId.value,
                 questions = what.questions.map { q ->
                     QuestionView(q.question, q.header, q.options.map { QuestionOptionView(it.label, it.description) }, q.multiSelect)
                 },
+                server = server,
+                url = what.mcpUrl?.let { UrlRequest(it.url, it.domain, it.message) },
             )
         }
     }

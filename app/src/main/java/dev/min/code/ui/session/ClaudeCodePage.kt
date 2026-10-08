@@ -242,6 +242,9 @@ fun ClaudeCodePage(
     LaunchedEffect(vm) {
         vm.signalNotices.collect { toaster.show(it.text, if (it.isError) ToastType.Error else ToastType.Success) }
     }
+    LaunchedEffect(vm) {
+        vm.extras.notices.collect { toaster.show(it.text, if (it.isError) ToastType.Error else ToastType.Success) }
+    }
     LaunchedEffect(notice) {
         val text = notice ?: return@LaunchedEffect
         toaster.show(text, ToastType.Error)
@@ -517,6 +520,8 @@ fun ClaudeCodePage(
     session.headInteraction?.let { pending ->
         InteractionSheet(pending = pending, onAnswer = { answer -> vm.answer(pending.id, answer) })
     }
+    // 信任卡 / MCP 批准卡 / 登录确认：谁排在前面见 SessionExtrasOverlays
+    SessionExtrasOverlays(vm.extras)
 
     if (showPlan) {
         ClaudeCodePlanSheet(plan = session.plan, onDismiss = { showPlan = false })
@@ -868,6 +873,8 @@ internal fun List<ChatItem>.toTranscriptText(labels: TranscriptLabels): String =
             is ChatItem.AssistantText -> append("## Claude\n\n${item.text}\n\n")
             is ChatItem.Thinking -> append("### ${labels.thinking}\n\n${item.text}\n\n")
             is ChatItem.Note -> append("> ${item.text}\n\n")
+            // 回退掉的对话不导出（导出的是「现在这条对话」），折叠行本身留一句
+            is ChatItem.Folded -> append("> ${item.title}\n\n")
             // 进程输出导成代码块：贴到别处去查的时候，等宽和原样换行都要保住
             is ChatItem.ProcessOutput ->
                 append("```\n${item.lines.joinToString("\n")}\n```\n\n")
@@ -1036,8 +1043,8 @@ private fun SessionContent(
 
     // 本会话改过的文件（底部浮层用）。纯函数，只读 items；会话长起来之后按 items 缓存
     // 能撤销 = 编辑类工具且存过快照：批量问一次磁盘，结果出来之前谁都不给撤销钮。
-    // 子 agent 里的编辑不走快照（见 [undoCandidates]），所以面板上它们只能看、能跳转，不能撤
-    val candidateIds = remember(session.items) { undoCandidates(session.items) }
+    // CC 里子 agent 的编辑不走快照（见 [undoCandidates]），面板上只能看、能跳转，不能撤；Min 的编辑记录覆盖整棵树，它们也能撤
+    val candidateIds = remember(session.items, capabilities.rewind) { undoCandidates(session.items, includeSubagents = capabilities.rewind) }
     var snapshotted by remember(activeKey) { mutableStateOf(emptySet<String>()) }
     LaunchedEffect(candidateIds) { snapshotted = vm.checkpointed(candidateIds) }
     val changed = remember(session.items, snapshotted, transcriptLabels) {
@@ -1130,6 +1137,7 @@ private fun SessionContent(
         LocalAwaitingToolUseId provides awaitingToolUseId,
         LocalFreshEntries provides freshEntries,
         LocalOpenSubagent provides { toolUseId: String -> selectedAgent = toolUseId },
+        LocalRewindActions provides (if (capabilities.rewind) vm.extras.rewindActions else null),
     ) {
     Box(Modifier.fillMaxSize().imePadding()) {
         // 会话流铺满，顶栏 / 输入框浮在上面。铬件高度量完再垫进列表，字不会被挡住。
@@ -1447,6 +1455,7 @@ private fun SessionContent(
                         onSearchFiles = vm::searchFiles,
                         onLoadImage = toolsVm::loadImage,
                         onOpenLocalCommand = { configCommand = it },
+                        extras = vm.extras,
                         onComposerFocusChange = onComposerFocusChange,
                         restoredDraft = composerDraft,
                         onDraftChange = { vm.saveComposerDraft(boundId, it) },
@@ -1503,7 +1512,7 @@ internal fun TranscriptItem(
     canRevert: (String) -> Boolean = { true },
 ) {
     when (item) {
-        is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued, item.handoff)
+        is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued, item.handoff, rewindId = item.id.takeIf { item.rewindable })
         is ChatItem.AssistantText -> AssistantEntry(
             text = item.text,
             isFirst = isFirst,
@@ -1514,6 +1523,7 @@ internal fun TranscriptItem(
         )
         is ChatItem.Thinking -> ThinkingEntry(item.text, item.id, isFirst, isLast)
         is ChatItem.Note -> NoteEntry(item.text, item.isError, isFirst, isLast)
+        is ChatItem.Folded -> FoldedEntry(item, isFirst, isLast, labels, onRevert, canRevert)
         is ChatItem.ProcessOutput -> ProcessOutputEntry(item, isFirst, isLast)
         is ChatItem.ToolCall -> ToolEntry(
             item = item,
@@ -1597,8 +1607,32 @@ private fun LiveTurnEntry(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        // 主模型倒了、这一回合在用回退模型（Min 的回退链）：一行轻提示，不是错误——回合照常在跑
+        session.turn?.fallback?.let { fallback ->
+            Text(
+                text = fallbackNoticeText(fallback),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         agents.forEach { thread -> SubagentLine(thread) }
     }
+}
+
+/** 「正在用回退模型 X（主模型 Y 过载）」：原因认得的写出来，认不得的只写主模型的名字 */
+@Composable
+internal fun fallbackNoticeText(notice: dev.min.code.core.engine.FallbackNotice): String {
+    val reason = when (notice.reason) {
+        dev.min.code.core.engine.FailureKind.Overloaded -> R.string.fallback_reason_overloaded
+        dev.min.code.core.engine.FailureKind.RateLimited -> R.string.fallback_reason_rate_limited
+        dev.min.code.core.engine.FailureKind.ModelUnavailable -> R.string.fallback_reason_unavailable
+        dev.min.code.core.engine.FailureKind.Network -> R.string.fallback_reason_network
+        else -> null
+    }
+    return if (reason == null) stringResource(R.string.fallback_notice_plain, notice.model, notice.primary)
+    else stringResource(R.string.fallback_notice, notice.model, notice.primary, stringResource(reason))
 }
 
 /**
