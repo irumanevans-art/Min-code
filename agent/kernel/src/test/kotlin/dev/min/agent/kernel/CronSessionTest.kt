@@ -903,6 +903,24 @@ class CronSessionTest {
     }
 
     @Test
+    fun `the host ceiling can change while the app runs`() = run {
+        val model = RoutingModel { req ->
+            if (req.last() == "安排") reply(ToolCallPart(CallId("k${req.messages.size}"), "CronCreate", args("every" to "30m", "prompt" to "x")), stop = StopReason.ToolUse)
+            else reply(TextPart("好"))
+        }
+        val h = hub(model) // 启动时没有设置（设置快照还没读出来）
+        val rt = h.root()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("安排")))
+        settle(rt)
+        fun lastText() = rt.state.value.toolResults.values.last().content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        assertTrue(lastText(), lastText().contains("没有花费上限"))
+        h.updateHostLimits(cronMaxBudgetUsd = 0.25) // 设置读出来了
+        rt.send(ClientMsgId("u2"), listOf(TextPart("安排")))
+        settle(rt)
+        assertTrue(lastText(), lastText().contains("宿主设了花费上限 \$0.25"))
+    }
+
+    @Test
     fun `a capped task on a model without a USD price skips that run once with a note and stays active`() = run {
         val h = hub(answering, TEST_PROFILE)
         val rt = h.root()

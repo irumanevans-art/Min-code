@@ -299,7 +299,7 @@ data class AppSettings(
     val controlDevice: Boolean = false,
     /**
      * Min Agent 的 agent 团队同时运行的成员数（设置项 `teamMaxConcurrent`，M5 决定 2）：默认 3，硬上限 8，超出的成员排队。
-     * 超过 8 的值按 8 写入（[SettingsStore.setTeamMaxConcurrent]）。内核在 App 启动时读一次，改了下次启动生效
+     * 超过 8 的值按 8 写入（[SettingsStore.setTeamMaxConcurrent]）。引擎实时跟着它（改了立刻对之后的决定生效，调高会放出排队的成员）
      */
     val teamMaxConcurrent: Int = dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
     /**

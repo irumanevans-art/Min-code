@@ -374,6 +374,29 @@ class TeamSessionTest {
     }
 
     @Test
+    fun `raising the concurrency limit while the team runs lets the waiting members start - the setting is live`() = run {
+        val h = hub(leaderBuilds("a", "b", "c") { _, _ -> hang }, HubLimits(teamMaxConcurrent = 1))
+        val (_, members) = readyTeam(h, "a", "b", "c")
+        members.getValue("a").state.first { it.turn != null }
+        delay(200)
+        assertEquals(1, members.values.count { it.state.value.turn != null })
+        h.updateHostLimits(teamMaxConcurrent = 3)
+        members.getValue("b").state.first { it.turn != null }
+        members.getValue("c").state.first { it.turn != null }
+        assertEquals(3, h.teams.runningCount())
+        // 调低不杀正在跑的：只是之后不再放新的
+        h.updateHostLimits(teamMaxConcurrent = 2)
+        delay(200)
+        assertEquals(3, members.values.count { it.state.value.turn != null })
+        try {
+            h.updateHostLimits(teamMaxConcurrent = 9)
+            org.junit.Assert.fail("超过硬上限 8")
+        } catch (expected: IllegalArgumentException) {
+            assertEquals("被拒的更新不改变现状", 2, h.limits.teamMaxConcurrent)
+        }
+    }
+
+    @Test
     fun `a queued member does not start by itself after a restart`() = run {
         val model1 = leaderBuilds("a", "b") { n, _ -> if (n == "a") hang else reply(TextPart("$n 做完了")) }
         val h1 = hub(model1, HubLimits(teamMaxConcurrent = 1))

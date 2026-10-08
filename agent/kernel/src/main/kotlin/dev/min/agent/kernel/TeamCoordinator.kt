@@ -98,7 +98,8 @@ internal class TeamCoordinator(
     private val hub: SessionHub,
     private val deps: KernelDeps,
     private val scope: CoroutineScope,
-    private val maxConcurrent: Int,
+    /** 当前的并发上限（每次决定时现读，设置可以中途改，见 [SessionHub.updateHostLimits]） */
+    private val maxConcurrent: () -> Int,
 ) {
     private val teamLock = Mutex()
 
@@ -329,7 +330,12 @@ internal class TeamCoordinator(
         }
     }
 
-    private fun hasRoom(): Boolean = active.size < maxConcurrent
+    private fun hasRoom(): Boolean = active.size < maxConcurrent()
+
+    /** 并发上限被调高了：放出正在排队的成员（调低不杀正在跑的，只是之后不再放新的） */
+    fun limitsChanged() {
+        scope.launch { slotLock.withLock { pumpLocked() } }
+    }
 
     private fun startLocked(runtime: SessionRuntime) {
         val id = runtime.sessionId

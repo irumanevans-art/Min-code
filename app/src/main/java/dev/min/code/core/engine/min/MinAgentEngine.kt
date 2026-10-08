@@ -149,7 +149,7 @@ class MinAgentEngine(
         scope = scope,
         limits = HubLimits(
             maxDepth = 3, maxRunningChildren = 10, maxConcurrentChildRequests = 3,
-            // 设置项 teamMaxConcurrent：启动时读一次（改了下次启动生效）；设置还没读出来时用默认值
+            // 设置项 teamMaxConcurrent：初值取已有的快照，没有就用默认值；之后由 init 里的收集器实时更新
             teamMaxConcurrent = settings.snapshot?.teamMaxConcurrent ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
             // 定时任务花费天花板（默认不设）：同样启动时读一次
             cronMaxBudgetUsd = settings.snapshot?.cronMaxBudgetUsd,
@@ -208,6 +208,13 @@ class MinAgentEngine(
 
     init {
         scope.launch { tasks.watch() }
+        // 团队并发上限与定时任务花费天花板跟着设置走：构造 Hub 时设置快照可能还没读出来（那时按默认值），读出来之后、以及用户改设置之后都要生效。
+        // 值越界（设置里不该有）就保持现状，不能因为一个坏值让引擎起不来
+        scope.launch {
+            settings.settings.map { it.teamMaxConcurrent to it.cronMaxBudgetUsd }.distinctUntilChanged().collect { (team, ceiling) ->
+                catchingNonCancellation { hub.updateHostLimits(team, ceiling) }.onFailure { Log.w(TAG, "host limits update refused", it) }
+            }
+        }
         hub.startScheduling(cronHeartbeat)
         // 定时任务出了事（到期、被花费上限停下、因缺价格跳过、连续超限暂停）：日志里有 Note，这里再发一条系统通知——
         // 无人值守的任务停了，人不在会话页就看不到那条 Note

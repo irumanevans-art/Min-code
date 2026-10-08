@@ -72,8 +72,8 @@ internal class CronEngine(
     private val hub: SessionHub,
     private val deps: KernelDeps,
     private val scope: CoroutineScope,
-    /** 宿主的花费天花板（[HubLimits.cronMaxBudgetUsd]）；null = 没设 */
-    private val ceilingUsd: Double? = null,
+    /** 宿主的花费天花板（[HubLimits.cronMaxBudgetUsd]）；null = 没设。每次触发时现读：设置可以中途改 */
+    private val ceilingUsd: () -> Double? = { null },
 ) {
     private class Attached(val floorMs: Long) {
         /** 每个会话一把锁：触发、过期、花费上限的处理互相串行（同一时刻只有一个在改这个会话的定时任务） */
@@ -162,7 +162,7 @@ internal class CronEngine(
     private suspend fun fire(rt: SessionRuntime, entry: Attached, task: CronTask, now: Long) {
         val state = rt.state.value
         // 没有上限（任务没设、宿主也没设天花板）就不记账：和 Claude Code 一样不限，花的是用户自己的额度
-        val limit = listOfNotNull(task.maxBudgetUsd, ceilingUsd).minOrNull()
+        val limit = listOfNotNull(task.maxBudgetUsd, ceilingUsd()).minOrNull()
         var run: CronRun? = null
         if (limit != null) {
             // 设了 USD 上限却核对不了花费的（当前模型没有 USD 定价，如 CNY 模型、目录外模型）：本次跳过，不触发。

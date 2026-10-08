@@ -168,10 +168,15 @@ class SessionHub(
     private val store: SessionStore,
     private val deps: KernelDeps,
     private val scope: CoroutineScope,
-    internal val limits: HubLimits = HubLimits(),
+    limits: HubLimits = HubLimits(),
     /** 可委派的子 agent 类型：内置 + 组合根从 `.claude/agents/` 读来的（同名时后者覆盖内置） */
     agents: List<AgentDefinition> = BuiltinAgents.all,
 ) {
+    /** 宿主可调的上限。会话创建后设置才读出来 / 用户改了设置时用 [updateHostLimits] 更新，之后的决定立刻按新值（读的是这个字段，不是构造时的快照） */
+    @Volatile
+    internal var limits: HubLimits = limits
+        private set
+
     private val definitions: Map<String, AgentDefinition> = agents.associateBy { it.name }
 
     init {
@@ -206,10 +211,20 @@ class SessionHub(
     private val openLock = Mutex()
 
     /** agent 团队的运行时：建团队、任务清单、邮箱、并发名额（状态本身在负责人日志的折叠里） */
-    internal val teams = TeamCoordinator(this, deps, scope, limits.teamMaxConcurrent)
+    internal val teams = TeamCoordinator(this, deps, scope) { this.limits.teamMaxConcurrent }
 
     /** 定时任务的运行时：到点触发、过期、单次花费上限（状态在根会话日志的折叠里） */
-    internal val crons = CronEngine(this, deps, scope, limits.cronMaxBudgetUsd)
+    internal val crons = CronEngine(this, deps, scope) { this.limits.cronMaxBudgetUsd }
+
+    /**
+     * 宿主设置变了（或启动时设置快照晚于 Hub 才读出来）：更新团队并发上限与定时任务花费天花板，之后的决定立刻按新值。
+     * 调高并发上限会放出正在排队的成员；调低不杀正在跑的，只是之后不再放新的。越界的值（并发不在 1..8）抛
+     * [IllegalArgumentException]，现状不变
+     */
+    fun updateHostLimits(teamMaxConcurrent: Int = limits.teamMaxConcurrent, cronMaxBudgetUsd: Double? = limits.cronMaxBudgetUsd) {
+        limits = limits.copy(teamMaxConcurrent = teamMaxConcurrent, cronMaxBudgetUsd = cronMaxBudgetUsd)
+        teams.limitsChanged()
+    }
 
     /** 定时任务出了需要告诉用户的事（7 天到期、花费上限停了一次运行……）；宿主据此发通知，日志里同时有一条 Note */
     val cronNotices: kotlinx.coroutines.flow.SharedFlow<CronNotice> get() = crons.notices
