@@ -649,16 +649,20 @@ class ComponentHooksTest {
         fs2.writeAtomic(GuestPath("/root/.min/hooks/hookbg_9/in.json"), "{}".toByteArray())
         fs2.writeAtomic(GuestPath("/root/.min/hooks/hookbg_9/owner"), "other-instance 4321".toByteArray())
         fs2.writeAtomic(GuestPath("/root/.min/hooks/notes.txt"), "留着".toByteArray())
-        // 探活回非零 = owner 进程确认死；默认回 0（活着）的 FakeExec 会让清扫什么都删不了
-        val exec = dev.min.agent.testkit.FakeExec { command, _ ->
-            if (command.script.startsWith("kill -0")) dev.min.agent.spi.ExecResult.Exited(1, "", false, 1)
-            else dev.min.agent.spi.ExecResult.Exited(0, "", false, 1)
+        // 判死只问宿主侧进程表（M4 之后不再走 guest shell 的 kill -0）：4321 宿主确认死，其余一律当活着
+        val exec = dev.min.agent.testkit.FakeExec { _, _ -> dev.min.agent.spi.ExecResult.Exited(0, "", false, 1) }
+        val pidProbes = java.util.concurrent.CopyOnWriteArrayList<Long>()
+        val probed = object : dev.min.agent.spi.Exec by exec {
+            override suspend fun isPidAlive(pid: Long): Boolean? {
+                pidProbes += pid
+                return if (pid == 4321L) false else null
+            }
         }
         val idle = RoutingModel { _ -> reply(TextPart("x")) }
         val base = dev.min.agent.testkit.testDeps(idle, emptyList())
         val deps2 = KernelDeps(
             clock = base.clock, ids = base.ids, models = base.models, tools = emptyList(),
-            host = HostPorts(fs2, base.host.search, exec, base.host.artifacts),
+            host = HostPorts(fs2, base.host.search, probed, base.host.artifacts),
             platform = base.platform, zone = base.zone, retry = base.retry, memoryHome = null,
         )
         val scope2 = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
@@ -667,7 +671,7 @@ class ComponentHooksTest {
         val rm = exec.runs.single { it.first.script.contains("rm -rf") }
         assertTrue("确认死的孤儿目录被清掉：${rm.first.script}", rm.first.script.contains("hookbg_9"))
         assertTrue("目录以外的文件不动", !rm.first.script.contains("notes.txt"))
-        assertTrue("删之前先探过 owner 进程", exec.runs.any { it.first.script.startsWith("kill -0 4321") })
+        assertTrue("删之前先问过宿主侧的 owner 进程表：$pidProbes", pidProbes.contains(4321L))
     }
 }
 
