@@ -78,4 +78,15 @@ class HookOutputDiscardsTest {
         val v = interpreted(HookEvent.Stop, everything)
         assertEquals(HookDecision.Block, v.decision); assertFalse(v.shouldContinue); assertEquals("m", v.systemMessage?.text)
     }
+
+    @Test fun `CwdChanged 与 FileChanged 读 watchPaths，其他事件不收，合并去重`() {
+        val out = """{"watchPaths":["/a","/b"],"continue":false}"""
+        listOf(HookEvent.CwdChanged, HookEvent.FileChanged).forEach { event ->
+            assertEquals(event.name, listOf("/a", "/b"), interpreted(event, out).watchPaths)
+        }
+        assertTrue(interpreted(HookEvent.Notification, out).watchPaths.isEmpty())
+        val e = HookEvent.FileChanged
+        val merged = combine(e, listOf(interpreted(e, """{"watchPaths":["/a","/b"]}"""), interpreted(e, """{"watchPaths":["/b","/c"]}""")))
+        assertEquals(listOf("/a", "/b", "/c"), merged.watchPaths)
+    }
 }

@@ -43,6 +43,8 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
         additionalContext = listOfNotNull(parsed.context?.let(::HookText)),
         updatedInput = parsed.input, systemMessage = parsed.common.systemMessage?.let(::HookText),
         specificOutput = parsed.specific, attachmentRequests = largeStrings(parsed.raw),
+        // 只有原文写了「读 watchPaths」的事件才收（hooks.md :2805、:2928）；SessionStart 的在 hookSpecificOutput 里，另算
+        watchPaths = if (event in WATCH_PATHS_EVENTS) parsed.common.watchPaths.orEmpty() else emptyList(),
         notes = base.notes + parsed.notes,
     ) else base.copy(nonBlockingError = error)
 
@@ -218,6 +220,8 @@ private fun label(run: HandlerRun): String =
     (run.handler.takeIf { it.type == "http" }?.url?.let(HookHttpRunner::redactUrl)
         ?: run.handler.command ?: run.handler.args?.firstOrNull() ?: run.handler.type)
         .lineSequence().first().take(200)
+
+private val WATCH_PATHS_EVENTS = setOf(HookEvent.CwdChanged, HookEvent.FileChanged)
 
 private val TEXT_CONTEXT_EVENTS = setOf(HookEvent.UserPromptSubmit, HookEvent.UserPromptExpansion,
     HookEvent.SessionStart, HookEvent.PostModelSwitch)

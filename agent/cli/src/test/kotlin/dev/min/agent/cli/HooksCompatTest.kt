@@ -162,6 +162,10 @@ class HooksCompatTest {
                 textsOf(combined, "additionalContext"), name)
             check(diffs, "systemMessages", expected.stringsOf("systemMessages"),
                 textsOf(combined, "systemMessages"), name)
+            // watchPaths（CwdChanged / FileChanged 动态监视列表）：样本写了才比，没写不查
+            if (expected.containsKey("watchPaths")) {
+                check(diffs, "watchPaths", expected.stringsOf("watchPaths"), get(combined, "watchPaths"), name)
+            }
             val expectedInput = expected["updatedInput"].jsonNullSafe
             check(diffs, "updatedInput", expectedInput?.toString(),
                 get(combined, "updatedInput")?.toString(), name)
