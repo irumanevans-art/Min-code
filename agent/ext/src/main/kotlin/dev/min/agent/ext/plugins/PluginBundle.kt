@@ -78,6 +78,21 @@ class PluginBundle(
         ): PluginBundle {
             val io = ConfigIo(fs)
             val candidates = mutableListOf<PluginRequest>()
+            val enabledSources = linkedMapOf<String, ConfigSource>()
+            val enabled = linkedMapOf<String, Boolean>()
+            settings.layers.forEach { layer -> layer.enabledPlugins.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = layer.source } }
+            val managed = settings.layers.lastOrNull { it.source == ConfigSource.Managed }
+            managed?.enabledPlugins?.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = ConfigSource.Managed }
+            val disabledDependencies = settings.layers.flatMap { it.enabledPlugins.filterValues { value -> !value }.keys }.toSet()
+            val scopes = linkedMapOf<String, String?>()
+            val inlineRoots = mutableSetOf<String>()
+            val cacheRoot = canonical(GuestPath(GuestPaths.join(home.value, ".claude/plugins/cache"))).value.trimEnd('/')
+            fun validId(id: String): Boolean {
+                val parts = id.split('@')
+                val valid = parts.size == 2 && validPluginName(parts[0]) && Regex("[A-Za-z0-9_-]+").matches(parts[1])
+                if (!valid) io.notes += "enabledPlugins 插件键不合法，已跳过：$id"
+                return valid
+            }
             val options = linkedMapOf<String, JsonObject>()
             fun localInstall(raw: String): GuestPath? = try { installedPath(raw) }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -97,6 +112,7 @@ class PluginBundle(
                 SettingsReader.parseObject(it, "installed_plugins.json", io.notes)?.get("plugins") as? JsonObject
             }
             index?.forEach { (id, installs) ->
+                if (!validId(id)) return@forEach
                 // 只接已有本地安装记录；远程源、市场安装及自动下载不属于本期。
                 val records = installs as? JsonArray ?: return@forEach
                 val eligible = records.mapNotNull { it as? JsonObject }.filter { record ->
@@ -107,19 +123,34 @@ class PluginBundle(
                 val record = eligible.lastOrNull() ?: return@forEach
                 val rawPath = (record["installPath"] as? JsonPrimitive)?.content ?: return@forEach
                 val path = localInstall(rawPath) ?: return@forEach
+                scopes[canonical(path).value] = (record["scope"] as? JsonPrimitive)?.content
                 candidates += PluginRequest(path.value, PluginRef(id.substringBefore('@'), id.substringAfter('@', "").ifEmpty { null }),
-                    enabledPlugins = settings.enabledPlugins + (id to (settings.enabledPlugins[id] ?: false)))
+                    enabledPlugins = enabled + (id to (enabled[id] ?: false)), disabledDependencies = disabledDependencies)
             }
             // 未安装索引的本地缓存也可以按 enabledPlugins 找到；禁用项仍留作依赖候选。
-            for (id in settings.enabledPlugins.keys) {
+            for (id in enabled.keys) {
+                if (!validId(id)) continue
                 if (candidates.any { it.ref?.id == id }) continue
                 val market = id.substringAfter('@', "")
                 if (market.isEmpty()) continue
                 val base = "$pluginsDir/cache/$market/${id.substringBefore('@')}"
+                if (!canonical(GuestPath(base)).value.startsWith("$cacheRoot/")) {
+                    io.notes += "enabledPlugins 缓存路径 escapes cache：$base"
+                    continue
+                }
                 val versions = io.entries(base).filter { it.kind == FileKind.Directory }
-                versions.lastOrNull()?.let { candidates += PluginRequest("$base/${it.name}", PluginRef(id.substringBefore('@'), market), enabledPlugins = settings.enabledPlugins) }
+                versions.maxWithOrNull(compareBySemanticVersion { it.name })?.let {
+                    val path = GuestPath("$base/${it.name}")
+                    if (!canonical(path).value.startsWith("$cacheRoot/")) io.notes += "enabledPlugins 版本路径 escapes cache：${path.value}"
+                    else candidates += PluginRequest(path.value, PluginRef(id.substringBefore('@'), market), enabledPlugins = enabled, disabledDependencies = disabledDependencies)
+                }
             }
-            dirs.forEach { candidates += PluginRequest(it.value, null) }
+            val disableSideload = (managed?.raw?.get("disableSideloadFlags") as? JsonPrimitive)?.booleanOrNull == true
+            if (disableSideload && dirs.isNotEmpty()) io.notes += "托管 disableSideloadFlags 禁止 --plugin-dir"
+            else dirs.forEach {
+                inlineRoots += canonical(it).value
+                candidates += PluginRequest(it.value, null, enabledPlugins = enabled, sideload = true, disabledDependencies = disabledDependencies)
+            }
             val batch = PluginLoader(fs, canonical).loadAll(candidates)
             val notes = (batch.errors + batch.overrides + batch.plugins.flatMap { it.warnings }).toMutableList()
             val skillDefs = mutableListOf<SkillDef>()
@@ -129,15 +160,17 @@ class PluginBundle(
             val styles = linkedMapOf<String, OutputStyleDef>()
             val contexts = linkedMapOf<String, Pair<PluginVars, PluginValues>>()
             val trusted = mutableSetOf<String>()
-            val realUserPlugins = canonical(GuestPath(pluginsDir)).value.trimEnd('/')
             for (plugin in batch.plugins) {
                 val realRoot = canonical(GuestPath(plugin.root)).value
-                var isTrusted = realRoot.startsWith("$realUserPlugins/") || trust(GuestPath(plugin.root))
+                val source = enabledSources[plugin.ref.id]
+                val projectEnabled = source in setOf(ConfigSource.Project, ConfigSource.Local) || scopes[realRoot] in setOf("project", "local")
+                var isTrusted = realRoot in inlineRoots || if (projectEnabled) trust(cwd)
+                    else source in setOf(ConfigSource.User, ConfigSource.Managed) || scopes[realRoot] == "user"
                 if (isTrusted) trusted += plugin.ref.id
                 else if (plugin.hooks.isNotEmpty() || plugin.mcpServers.isNotEmpty()) notes += "plugin:${plugin.namespace} 所在目录未信任，hooks / MCP 未启用"
                 val vars = PluginVars(shellPath(GuestPath(plugin.root)), shellPath(GuestPath("$pluginsDir/data/${pluginDataId(plugin.ref)}")), shellPath(cwd))
                 val label = "plugin:${plugin.namespace}"
-                val public = options[plugin.ref.id] ?: JsonObject(emptyMap())
+                val public = options[plugin.ref.id] ?: options[plugin.ref.name] ?: JsonObject(emptyMap())
                 val values = try {
                     PluginValues.read(plugin, public, if (isTrusted) secrets else PluginSecretStore(McpTokenStore.Unavailable))
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
