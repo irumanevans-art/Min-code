@@ -79,21 +79,6 @@ fun interpret(event: HookEvent, run: HandlerRun): HookVerdict {
     return verdict.discardingFieldsOf(event)
 }
 
-/**
- * 没有决策控制的事件丢掉 CC 说要丢的输出字段：SessionEnd 丢全部 JSON 输出字段（只做清理）；Notification 丢 `systemMessage`
- * 与 `continue`（一个通知 hook 不能把会话停下）。解析与报错照常，说明照留
- */
-private fun HookVerdict.discardingFieldsOf(event: HookEvent): HookVerdict = when (event) {
-    HookEvent.SessionEnd -> copy(
-        decision = HookDecision.Neutral, reason = null, shouldContinue = true, stopReason = null,
-        additionalContext = emptyList(), updatedInput = null, systemMessage = null, specificOutput = null,
-    )
-    HookEvent.Notification -> copy(shouldContinue = true, stopReason = null, systemMessage = null)
-    HookEvent.CwdChanged -> copy(decision = HookDecision.Neutral, reason = null, shouldContinue = true, stopReason = null, additionalContext = emptyList(), updatedInput = null)
-    HookEvent.WorktreeCreate, HookEvent.WorktreeRemove -> copy(decision = HookDecision.Neutral, reason = null, shouldContinue = true, stopReason = null, additionalContext = emptyList(), updatedInput = null, systemMessage = null)
-    else -> this
-}
-
 private data class ParsedOutput(
     val raw: JsonObject, val common: HookOutputCommon, val specific: JsonObject?,
     val decision: HookDecision, val reason: String?, val context: String?, val input: JsonObject?,
