@@ -117,6 +117,34 @@
     "reasoningEcho": "always"
   },
   {
+    "ref": { "providerId": "anthropic", "modelId": "claude-haiku-5-5" },
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.5,
+      "cacheWritePerMTok": 0.125,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheReadPerMTok": 0.01,
+      "tiers": [
+        { "aboveInputTokens": 100000, "inputPerMTok": 0.5, "outputPerMTok": 2.5, "cacheWritePerMTok": 0.625, "cacheWrite1hPerMTok": 1.0, "cacheReadPerMTok": 0.05 }
+      ],
+      "asOf": "2026-10-08"
+    },
+    "family": "claude",
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "effortPatches": {
+      "off": { "thinking": { "type": "disabled" } },
+      "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
+      "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
+      "high": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "high" } },
+      "xhigh": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "xhigh" } },
+      "max": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "max" } }
+    },
+    "reasoningEcho": "always"
+  },
+  {
     "ref": { "providerId": "zhipu", "modelId": "glm-5.3" },
     "pricing": {
       "currency": "CNY",

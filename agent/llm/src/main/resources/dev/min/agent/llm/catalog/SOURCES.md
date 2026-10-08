@@ -47,6 +47,9 @@
 | claude-haiku-4-5-20251001 | supportsImages | true | anthropic.md §2 |
 | claude-haiku-4-5-20251001 | effortPatches | off=`{"thinking":{"type":"disabled"}}`、high=`{"thinking":{"type":"enabled"}}` | anthropic.md §2（"Extended" 推理）+ §3（`enabled`/`disabled`；任务单规则：开/关两档只写 off 与一个开启档） |
 | claude-haiku-4-5-20251001 | reasoningEcho | always | anthropic.md §3 |
+| claude-haiku-5-5 | contextWindow / maxOutputTokens / supportsImages | 1000000 / 128000 / true | 官方模型页 platform.claude.com/docs/en/models/haiku-5-5/overview（2026-10-08 抓取：Context window 1M、Max output 128K、Input → output: Text and images → text） |
+| claude-haiku-5-5 | effortPatches | off=`{"thinking":{"type":"disabled"}}`；low…max=adaptive + `output_config.effort` | 同上「Thinking: Adaptive」「Default effort: medium」；Prompting Claude Haiku 5.5：关思考只在 low / medium / high 可用（off 不带 effort，API 取默认 medium，合法） |
+| claude-haiku-5-5 | reasoningEcho | always | 与同代 Claude 一致（思考块按账户绑定，同一账户内原样回传） |
 | glm-5.3 | contextWindow / maxOutputTokens | 1000000 / 128000 | zhipu.md §12.2（上下文 1M；「GLM-5.3 最大输出 128K Token」） |
 | glm-5.3 | family / supportsImages | glm / false | 厂商；zhipu.md §12.2 输入模态「文本」 |
 | glm-5.3 | effortPatches | 留空 | zhipu.md §12.1/§12.3 未写 Anthropic 端点的思考控制参数（任务单规则：没写就留空） |
@@ -144,6 +147,7 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
 | claude-sonnet-5 | USD：入 2 / 出 10 / 写 2.5（1h 4）/ 读 0.2 | 同上 | 2026-10-07 |
 | claude-sonnet-5-5 | USD：入 2 / 出 10 / 写 2.5（1h 4）/ 读 0.2 | Claude API 参考（claude-api skill 模型表，缓存于 2026-09-25：「same prices ($2 / $10 per MTok, cache reads $0.20)」；写入按 Anthropic 统一的 1.25× / 2× 输入价） | 2026-10-07 |
 | claude-haiku-4-5-20251001 | USD：入 1 / 出 5 / 写 1.25（1h 2）/ 读 0.1 | 同上 | 2026-10-07 |
+| claude-haiku-5-5 | USD：≤10 万输入 token：入 0.1 / 出 0.5 / 写 0.125（1h 0.2）/ 读 0.01；>10 万：入 0.5 / 出 2.5 / 写 0.625（1h 1）/ 读 0.05 | 官方模型页 Pricing 表（同上，2026-10-08） | 2026-10-08 |
 | glm-5.3（zhipu / zhipu-openai） | CNY：入 8 / 出 28 / 读 2；无写价（隐式缓存，存储限时免费） | inventory zhipu.md §12.2 + docs.bigmodel.cn/cn/guide/start/pricing.md | 2026-10-07 |
 | glm-5.2（zhipu / zhipu-openai） | CNY：入 8 / 出 28 / 读 2 | 同上 | 2026-10-07 |
 | qwen3.8-max（qwen，Anthropic 端点） | CNY：入 12 / 出 36 / 显式写 15 / 显式读 1 | inventory qwen.md §2/§6 + help.aliyun.com/zh/model-studio/qwen3-8-max.md（北京地域） | 2026-10-07 |
