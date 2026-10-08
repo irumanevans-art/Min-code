@@ -66,6 +66,7 @@ internal const val CRON_PAUSE_AFTER_OVERRUNS = 2
  * 花费上限（可选，默认没有，同 Claude Code）：设了上限的任务触发时立一份 [CronRun]，整棵会话树的花费都记到它头上；
  * 每个模型请求发出前 [ModelBilling] 查它，花到了就不再发（请求前拦，所以正常结束的运行不算超限）。超限**只停这一次运行**：
  * 回合以 [InterruptedBy.Budget] 收尾、子 agent / 团队成员一并停下，任务保持进行中；连续 [CRON_PAUSE_AFTER_OVERRUNS] 次才暂停任务。
+ * 记账撤销要等整棵树安静（见 [stopForBudget]）。
  */
 internal class CronEngine(
     private val hub: SessionHub,
@@ -215,7 +216,7 @@ internal class CronEngine(
                 entry.lock.withLock {
                     // 这次运行的记账要等整棵树都安静了才结束：根会话答完了，后台子 agent / 团队成员可能还在花钱。
                     // 它们的报告会回到根会话的收件箱，那一下状态变化会再来判一次
-                    if (rt.cronRun != null && rt.isQuiescent() && hub.treeTurnsIdle(rt.sessionId)) rt.cronRun = null
+                    clearRunIfQuiet(rt)
                     tickLocked(rt, entry, deps.clock.nowMs())
                 }
             }
@@ -233,23 +234,31 @@ internal class CronEngine(
     }
 
     /**
-     * 这次运行花到了上限：记账结束、整棵树停下（被拦的请求本来就让各自的回合以 Budget 收尾，这里补上那些此刻没在发请求的——
+     * 这次运行花到了上限：整棵树停下（被拦的请求本来就让各自的回合以 Budget 收尾，这里补上那些此刻没在发请求的——
      * 在跑长工具的根、后台子 agent），记 cron_budget_stopped + 一条 Note、通知用户。任务保持进行中，
      * 连续 [CRON_PAUSE_AFTER_OVERRUNS] 次才再记一条 cron_expired(budget) 暂停它。
-     * 记账一结束，后面的活动（子 agent 被停的报告引起的回合、用户的话）就是普通的会话活动，不再受这次上限管
+     *
+     * 记账**不在这里撤**，留到整棵树真的安静（[clearRunIfQuiet]）：运行已经到上限，期间任何还想发的请求（比如前台等着子 agent 的根，
+     * 子 agent 一被停它就醒来要发下一个请求）都该被同一个预检拦下，而不是因为记账先撤了就漏过去、多花一轮
      */
     private suspend fun stopForBudget(run: CronRun, problem: String) {
         val rt = hub.get(run.rootId) ?: return
         val entry = attached[run.rootId] ?: return
         entry.lock.withLock {
-            // 每次运行只会被通知一次（CronRun.trip），所以不用再靠 cronRun 判重；它可能已被「树空闲」的判断先清掉了
-            if (rt.cronRun === run) rt.cronRun = null
             val task = rt.state.value.cronTask(run.cronId)
             if (task != null && task.status != CronStatus.Cancelled && task.status != CronStatus.Expired) recordStop(rt, task, run, problem)
         }
         // 事件落盘之后再停（停整棵树要等各会话收尾，不握着锁）
         for (child in rt.state.value.children.keys) hub.stopTree(child)
         rt.interrupt(InterruptedBy.Budget)
+        rt.awaitIdle()
+        // 根已经空闲时没有后续的状态变化来触发「树空闲」的判断（盯状态的协程只在根的状态变时才来），这里主动判一次
+        entry.lock.withLock { if (rt.cronRun === run) clearRunIfQuiet(rt) }
+    }
+
+    /** 这次运行的记账要等整棵树都安静了才结束 */
+    private fun clearRunIfQuiet(rt: SessionRuntime) {
+        if (rt.cronRun != null && rt.isQuiescent() && hub.treeTurnsIdle(rt.sessionId)) rt.cronRun = null
     }
 
     private suspend fun recordStop(rt: SessionRuntime, task: CronTask, run: CronRun, problem: String) {
