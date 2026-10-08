@@ -29,6 +29,7 @@
 - 成员 = 负责人（根会话）的子会话，走 `SessionHub.spawn`；团队状态（成员表、任务清单、是否解散）完全从**负责人日志**的 `team_*` 事件折叠到 `SessionState.team`，没有第二份。成员只能认领给自己、只能完成自己认领的任务，负责人可改派 / 完成全部；违规转换在落盘前被 `teamProblem` 拒，只在负责人日志记一条 warning Note。
 - 邮箱 = 日志事件：`team_message` 写进**收件人**日志，与同一次提交里的 `input_received`（`SendMessage` 同一条 `receive()` 路径）成对出现，所以重开会话仍在收件箱、提升进对话后只读一次。`to` 可写成员名 / `lead` / `all`；发件人在团队里且收件人是队友时走团队邮箱，其余照旧走子 agent 路径。
 - 并发：`HubLimits.teamMaxConcurrent`（默认 3；App 设置项 `teamMaxConcurrent`、CLI settings.json 同名键），超出的成员排队，前一个结束后才启动。硬上限 8（`TeamLimits.MAX_CONCURRENT`，设置超过它按 8 算，不再问用户）。这道闸限的是同时在跑回合的成员数；与全局 `HubLimits.maxConcurrentChildRequests`（同时向模型流式要回答的子会话数，手机 3）是两回事——提高前者不会让模型请求更并发，见 `TeamLimits` 注释。
+- `TeammateIdle` hook：成员回合要结束（Stop/SubagentStop 之后、报告交出之前）、团队清单又没有可认领的活时触发；exit 2 让成员带着理由接着干（与 Stop 共用计数与上限），`continue:false` 整个停下。
 - 报告与唤醒：成员每个回合结束照常把报告交进负责人收件箱（`SessionHub.deliver`）；但**被队友的邮件叫起来的**回合（开跑时收件箱里全是队友邮件，`TeamCoordinator.peerTurns`）只入收件箱、不唤醒负责人，免得成员之间每聊一句都烧负责人一整轮；负责人发的消息、开场任务、用户的话引起的回合照常唤醒。
 - 成员的模型：`TeamMemberSpec.model`（`TeamCreate` 每个成员可传 `model`）；优先级照子 agent：规格里的 > agent 定义里的 > 继承负责人当前模型；不认识的模型整个团队建不成（回滚并说明）。
 - 权限不绕过：成员的审批留在根会话的 hub 树上（`HubPending.root` = 负责人），由用户在界面上答，且只有成员自己的运行时答得了；成员不能再开团队，不能是 fork。

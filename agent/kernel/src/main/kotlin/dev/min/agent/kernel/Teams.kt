@@ -211,3 +211,7 @@ internal fun SessionRuntime.visibleTaskBoard(): TaskBoard {
     val viewer = team?.nameOf(sessionId)
     return if (team != null && viewer != null) team.boardFor(viewer) else s.taskBoard()
 }
+
+/** 团队清单里可认领的活：pending、没人认领、没被未完成的任务阻塞（成员做完手上的活，先看有没有这样的） */
+internal fun TaskRecord.claimableIn(team: TeamState): Boolean =
+    status == TaskStatus.Pending && owner == null && blockedBy.all { team.task(it)?.status == TaskStatus.Completed }
