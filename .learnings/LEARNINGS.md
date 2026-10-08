@@ -1,3 +1,29 @@
+## [LRN-20261008-PLG] best_practice
+
+**Logged**: 2026-10-08
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+桌面真实 hook 测试必须映射 scratch guest 路径，并正确引用含空格的 shell 路径。
+
+### Details
+插件会话测试最初直接使用 `/root/.min/hooks`，Git Bash 无法找到 DesktopPaths 的 scratch 文件。沿用 HooksSessionTest 的 `paths.guestOfHost(paths.hostOf(path)).value` 映射后，真实文件副作用、HooksRan 与日志 fold 全部通过。测试目录故意保留中文和空格，marker 重定向路径也必须正确引用。
+
+PowerShell 变异脚本应在匹配前统一 CRLF/LF，恢复时保留原始字节。Kotlin 的 Path 实现 Iterable，向 MutableList<Path> 添加路径用 add，避免 += 重载歧义；JUnit 4 的表达式体 runBlocking 测试显式声明 Unit，避免推断成非 void 后出现 initializationError。
+
+### Suggested Action
+新建端到端测试复用宿主路径适配，断言实际副作用与 `fold(log) == state`。变异只计编译成功后的断言失败，结束后恢复源码并重跑基线。
+
+### Metadata
+- Source: error
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/PluginSessionTest.kt, agent/ext/scripts/plugin-loader-mutations.ps1
+- Tags: plugins, hooks, windows, kotlin, mutation
+- Pattern-Key: tests.desktop_hook_paths
+
+---
+
 ## [LRN-20261007-REFLECTION-IDLE] best_practice
 
 **Logged**: 2026-10-07
