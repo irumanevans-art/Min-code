@@ -169,8 +169,9 @@ class SessionRuntime private constructor(
         if (pluginsAttempted) return null
         val home = deps.memoryHome ?: return null
         val cwd = state.value.created.cwd
+        return try {
         val settings = SettingsLoader.load(deps.host.fs, cwd, home)
-        return try { dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
+        dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
             dirs = deps.pluginDirs, canonical = deps.canonicalPath,
             trust = { root -> deps.pluginTrust(root, cwd) },
             secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore),
