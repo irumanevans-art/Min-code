@@ -173,7 +173,7 @@ class SessionHub(
      * 启动清扫按它区分：**别的实例**留下的目录、且那个进程已确认死掉（N2 的判死口径）才删——
      * 本实例自己的（包括正在跑的）不动，清扫与首会话 SessionStart 后台 hook 的竞态也就不存在了（N1）
      */
-    internal val hookStagingOwner = "${deps.ids.next("hub")} ${currentPid()}"
+    internal val hookStagingOwner = "${java.util.UUID.randomUUID()} ${currentPid()}"
 
     /** 桌面取 JVM 进程号；Android 老 API 没有 ProcessHandle（33+ 才有），拿不到就写 0（清扫视作「认不了主」） */
     private fun currentPid(): Long = try {

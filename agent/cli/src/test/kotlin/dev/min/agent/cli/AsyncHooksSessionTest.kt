@@ -150,7 +150,7 @@ class AsyncHooksSessionTest {
         return Triple(hub, hub.create(paths.guestOfHost(work), TEST_MODEL, mode), store)
     }
 
-    private suspend fun FileSessionStore.events(rt: SessionRuntime): List<SessionEvent> = open(rt.sessionId)!!.read().toList().map { it.event }
+    private suspend fun FileSessionStore.events(rt: SessionRuntime): List<SessionEvent> = peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId

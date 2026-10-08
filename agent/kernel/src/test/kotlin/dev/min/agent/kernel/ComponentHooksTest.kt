@@ -645,9 +645,15 @@ class ComponentHooksTest {
     @Test
     fun `Hub 启动时清扫不属于任何运行时的 hookbg 暂存目录`() = run {
         val fs2 = dev.min.agent.testkit.FakeFs()
+        // N1 之后清扫认 owner：别的实例留下、且其进程确认已死的目录才删（owner 文件 = 实例 id + 进程 pid）
         fs2.writeAtomic(GuestPath("/root/.min/hooks/hookbg_9/in.json"), "{}".toByteArray())
+        fs2.writeAtomic(GuestPath("/root/.min/hooks/hookbg_9/owner"), "other-instance 4321".toByteArray())
         fs2.writeAtomic(GuestPath("/root/.min/hooks/notes.txt"), "留着".toByteArray())
-        val exec = dev.min.agent.testkit.FakeExec()
+        // 探活回非零 = owner 进程确认死；默认回 0（活着）的 FakeExec 会让清扫什么都删不了
+        val exec = dev.min.agent.testkit.FakeExec { command, _ ->
+            if (command.script.startsWith("kill -0")) dev.min.agent.spi.ExecResult.Exited(1, "", false, 1)
+            else dev.min.agent.spi.ExecResult.Exited(0, "", false, 1)
+        }
         val idle = RoutingModel { _ -> reply(TextPart("x")) }
         val base = dev.min.agent.testkit.testDeps(idle, emptyList())
         val deps2 = KernelDeps(
@@ -659,8 +665,9 @@ class ComponentHooksTest {
         SessionHub(store, deps2, scope2)
         while (exec.runs.none { it.first.script.contains("rm -rf") }) delay(10)
         val rm = exec.runs.single { it.first.script.contains("rm -rf") }
-        assertTrue("孤儿目录被清掉：${rm.first.script}", rm.first.script.contains("hookbg_9"))
+        assertTrue("确认死的孤儿目录被清掉：${rm.first.script}", rm.first.script.contains("hookbg_9"))
         assertTrue("目录以外的文件不动", !rm.first.script.contains("notes.txt"))
+        assertTrue("删之前先探过 owner 进程", exec.runs.any { it.first.script.startsWith("kill -0 4321") })
     }
 }
 

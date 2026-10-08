@@ -226,7 +226,7 @@ class CompactHooksSessionTest {
     }
 
     private suspend fun FileSessionStore.events(rt: SessionRuntime): List<SessionEvent> =
-        open(rt.sessionId)!!.read().toList().map { it.event }
+        peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String): SessionState {
         val before = state.value.lastTurn?.turnId
