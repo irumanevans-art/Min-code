@@ -97,7 +97,7 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             put("soft_deny", JsonArray(effective.softDeny.map(::JsonPrimitive)))
             put("allow", JsonArray(effective.allow.map(::JsonPrimitive)))
         }
-        return ModelRequest(profile, listOf(SYSTEM, "可信用户与托管配置：$rules"),
+        return ModelRequest(profile, listOf(SYSTEM, "Begin the JSON response with { and return no prose outside the object.", "可信用户与托管配置：$rules"),
             listOf(ModelMessage(Role.User, listOf(TextPart(buildJsonObject {
                 put("cwd", context.cwd.value); put("conversation", JsonArray(recent))
                 put("pending_tool", call.name); put("input", input)
