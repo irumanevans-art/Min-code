@@ -83,6 +83,11 @@ Inspect
         val result = bundle(fs)
         assertTrue(result.batch.plugins.isEmpty())
         assertTrue(result.notes.any { "enabledPlugins" in it })
+        fs.put("/home/.claude/settings.json", """{"enabledPlugins":{"audit@bad.market":true}}""")
+        fs.put("/home/.claude/plugins/cache/bad.market/audit/1.0/.claude-plugin/plugin.json", """{"name":"audit"}""")
+        val invalidMarket = bundle(fs)
+        assertTrue(invalidMarket.batch.plugins.isEmpty())
+        assertTrue(invalidMarket.notes.any { "enabledPlugins" in it })
     }
 
     @Test fun BUG_explicit_false_blocks_dependency(): Unit = runBlocking {

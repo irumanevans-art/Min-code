@@ -16,7 +16,7 @@ $cases = @(
     @{ Name='circuit-short-circuit'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='rt.state.value.autoReviewTripped ->'; After='false ->'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
     @{ Name='circuit-three'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt'; Before='autoReviewConsecutiveDenials + 1 >= 3'; After='autoReviewConsecutiveDenials + 1 >= 300'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
     @{ Name='circuit-twenty'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt'; Before='autoReviewDenials + 1 >= 20'; After='autoReviewDenials + 1 >= 200'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
-    @{ Name='default-soft'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='softDeny = expand(config.softDeny, DEFAULT_SOFT)'; After='softDeny = config.softDeny'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
+    @{ Name='default-soft'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='softDeny = expand(config.softDeny, DEFAULT_SOFT, "soft_deny")'; After='softDeny = config.softDeny'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
     @{ Name='malformed-auto'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/config/AutoModeSettings.kt'; Before='AutoReviewSettingsLoaded(unavailable = true'; After='AutoReviewSettingsLoaded(unavailable = false'; Module='kernel'; Class='dev.min.agent.kernel.SettingsSecurityFixTest' },
     @{ Name='duplicate-json'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='rejectDuplicateKeys(json)'; After='
 '; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
@@ -32,7 +32,7 @@ $cases = @(
     @{ Name='plugin-key-validation'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt'; Before='return valid
 '; After='return true
 '; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
-    @{ Name='cache-containment'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt'; Before='if (!canonical(GuestPath(base)).value.startsWith("$cacheRoot/"))'; After='if (false && !canonical(GuestPath(base)).value.startsWith("$cacheRoot/"))'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
+    @{ Name='cache-containment'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt'; Before='.value.startsWith("$cacheRoot/")'; After='.value.startsWith("/")'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
     @{ Name='five-hook-types'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt'; Before='val handlers = (obj["hooks"] as? JsonArray).orEmpty()'; After='val handlers = (obj["hooks"] as? JsonArray).orEmpty().filter { (it as? JsonObject)?.get("type") == JsonPrimitive("command") }'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
     @{ Name='dependency-false'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBatch.kt'; Before='dependency && winners[id]?.explicitlyDisabled == true'; After='false && dependency && winners[id]?.explicitlyDisabled == true'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
     @{ Name='bad-hook-args'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt'; Before='if (args.any { it !is JsonPrimitive || !it.isString })'; After='if (false && args.any { it !is JsonPrimitive || !it.isString })'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
@@ -51,7 +51,18 @@ $cases = @(
     @{ Name='undeclared-file'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginLoader.kt'; Before='if (depth == 0 && e.name !in roots && e.name !in defaultFiles) continue'; After='if (false && depth == 0 && e.name !in roots && e.name !in defaultFiles) continue'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
     @{ Name='directory-namespace'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginDiscovery.kt'; Before='if (!validPluginName(ns))'; After='if (false && !validPluginName(ns))'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
     @{ Name='semantic-versions'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt'; Before='versions.maxWithOrNull(compareBySemanticVersion { it.name })'; After='versions.maxByOrNull { it.name }'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
-    @{ Name='project-plugin-mcp'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/mcp/McpConfigLoader.kt'; Before='?.requiresApproval == true &&'; After='?.requiresApproval == false &&'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' }
+    @{ Name='project-plugin-mcp'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/mcp/McpConfigLoader.kt'; Before='?.requiresApproval == true &&'; After='?.requiresApproval == false &&'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
+    @{ Name='context-json'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='}.toString())))),'; After='}.toString().replace("\\n", "\n"))))),'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
+    @{ Name='default-empty'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt'; Before='entries.isEmpty() && section !in config.explicitSections'; After='entries.isEmpty()'; Module='kernel'; Class='dev.min.agent.kernel.AutoReviewerTest' },
+    @{ Name='managed-switch-lock'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt'; Before='require(!(mode == PermissionMode.Auto && locks.disableAutoMode'; After='require(!(false && mode == PermissionMode.Auto && locks.disableAutoMode'; Module='kernel'; Class='dev.min.agent.kernel.SettingsSecurityFixTest' },
+    @{ Name='hook-argv-on-disk'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/hooks/HookBatchRunner.kt'; Before='if (h.source == dev.min.agent.ext.config.ConfigSource.Plugin)'; After='if (false && h.source == dev.min.agent.ext.config.ConfigSource.Plugin)'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginSecurityFixTest' },
+    @{ Name='async-hook-spawn'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AsyncHooks.kt'; Before='cwd, dev.min.agent.ext.hooks.pluginProcessEnv(listOf(handler))'; After='cwd, emptyMap()'; Module='kernel'; Class='dev.min.agent.kernel.AsyncHookSecurityTest' },
+    @{ Name='async-hook-argv-on-disk'; File='agent/kernel/src/main/kotlin/dev/min/agent/kernel/AsyncHooks.kt'; Before='if (handler.source == dev.min.agent.ext.config.ConfigSource.Plugin)'; After='if (false && handler.source == dev.min.agent.ext.config.ConfigSource.Plugin)'; Module='kernel'; Class='dev.min.agent.kernel.AsyncHookSecurityTest' },
+    @{ Name='semantic-prerelease'; File='agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginVersions.kt'; Before='ln.compareTo(rn)'; After='ls[i].compareTo(rs[i])'; Module='ext'; Class='dev.min.agent.ext.plugins.PluginVersionsTest' },
+    @{ Name='headless-trust-note'; File='agent/cli/src/main/kotlin/dev/min/agent/cli/Headless.kt'; Before='.filter { "this workspace has not been trusted" in it }'; After='.filter { false }'; Module='cli'; Class='dev.min.agent.cli.HooksExpansionHeadlessTest' },
+    @{ Name='headless-auto-warning'; File='agent/cli/src/main/kotlin/dev/min/agent/cli/Headless.kt'; Before='args.approve == ApprovalAnswer.Yes'; After='args.approve == ApprovalAnswer.No'; Module='cli'; Class='dev.min.agent.cli.HooksExpansionHeadlessTest' },
+    @{ Name='app-plugin-env'; File='app/src/main/java/dev/min/code/core/engine/min/ProotExec.kt'; Before='.copy(env = command.env)'; After='.copy(env = emptyMap())'; Module='app'; Class='dev.min.code.core.engine.min.ProotExecTest' },
+    @{ Name='app-canonical-path'; File='app/src/main/java/dev/min/code/core/engine/min/MinKernelDeps.kt'; Before='canonicalPath = ports::canonicalPath,'; After='canonicalPath = { it },'; Module='app'; Class='dev.min.code.core.engine.min.MinSnapshotCompositionTest' }
 )
 $summary = @()
 Push-Location $root
@@ -65,10 +76,12 @@ try {
         Write-Output "START $($case.Name)"
         try {
             [System.IO.File]::WriteAllText($file, $source.Replace($case.Before, $case.After), [System.Text.UTF8Encoding]::new($false))
-            & .\gradlew.bat ":agent:$($case.Module):cleanTest" ":agent:$($case.Module):test" '--tests' $case.Class '--console=plain' '--max-workers=2' *> $log
+            $cleanTask = if ($case.Module -eq 'app') { ':app:cleanTestDebugUnitTest' } else { ":agent:$($case.Module):cleanTest" }
+            $testTask = if ($case.Module -eq 'app') { ':app:testDebugUnitTest' } else { ":agent:$($case.Module):test" }
+            & .\gradlew.bat $cleanTask $testTask '--tests' $case.Class '--console=plain' '--max-workers=2' *> $log
             $gradleExit = $LASTEXITCODE
             Add-Content -LiteralPath $log -Value "GRADLE_EXIT=$gradleExit"
-            $xmlPath = Join-Path $root "agent/$($case.Module)/build/test-results/test/TEST-$($case.Class).xml"
+            $xmlPath = Join-Path $root $(if ($case.Module -eq 'app') { "app/build/test-results/testDebugUnitTest/TEST-$($case.Class).xml" } else { "agent/$($case.Module)/build/test-results/test/TEST-$($case.Class).xml" })
             $compiled = -not (Select-String -LiteralPath $log -Pattern 'compileKotlin FAILED|compileTestKotlin FAILED|Compilation error' -Quiet)
             $failedNames = @()
             if (Test-Path -LiteralPath $xmlPath) {

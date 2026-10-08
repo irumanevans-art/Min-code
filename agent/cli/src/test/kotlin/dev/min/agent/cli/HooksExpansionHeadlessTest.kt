@@ -101,16 +101,16 @@ class HooksExpansionHeadlessTest {
         }
     }
 
-    private fun headless(home: Path, work: Path, server: ModelServer, prompt: String): Run = runBlocking {
+    private fun headless(home: Path, work: Path, server: ModelServer, prompt: String, mode: String = "bypassPermissions", trust: Boolean = false, approve: String = "no"): Run = runBlocking {
         withTimeout(60_000) {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
             val args = parseArgs(
                 arrayOf(
                     "--provider", "desktop-test", "--model", "scripted", "--base-url", server.baseUrl,
-                    "--wire", "openai_chat", "--mode", "bypassPermissions",
+                    "--wire", "openai_chat", "--mode", mode, "--approve", approve,
                     "--api-key-env", if (System.getenv("USERNAME") != null) "USERNAME" else "USER",
                     "--cwd", work.toString(), "-p", prompt,
-                ),
+                ) + if (trust) arrayOf("--trust") else emptyArray(),
                 work,
             )
             val err = ByteArrayOutputStream()
@@ -131,6 +131,21 @@ class HooksExpansionHeadlessTest {
 
     private fun dirs(): Pair<Path, Path> =
         Files.createDirectories(tmp.root.toPath().resolve("home")) to Files.createDirectories(tmp.root.toPath().resolve("work"))
+
+    @Test fun BUG_headless_warns_about_untrusted_grants_and_automatic_human_approval() {
+        val (home, work) = dirs()
+        write(work, ".claude/settings.json", """{"permissions":{"allow":["Bash(*)"],"additionalDirectories":["/external"]}}""")
+        ModelServer().use { server ->
+            val untrusted = headless(home, work, server, "just talk", mode = "auto", approve = "yes")
+            assertEquals(0, untrusted.exit)
+            assertTrue(untrusted.stderr, untrusted.stderr.contains("this workspace has not been trusted"))
+            assertTrue(untrusted.stderr, untrusted.stderr.contains("转人的调用会被自动批准"))
+            val trusted = headless(home, work, server, "just talk", mode = "auto", trust = true)
+            assertEquals(0, trusted.exit)
+            assertTrue(trusted.stderr, !trusted.stderr.contains("this workspace has not been trusted"))
+            assertTrue(trusted.stderr, !trusted.stderr.contains("转人的调用会被自动批准"))
+        }
+    }
 
     @Test
     fun `a blocking UserPromptExpansion hook stops the slash command before the model sees it (sample 65)`() {
