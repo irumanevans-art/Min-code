@@ -100,7 +100,16 @@ data class HubLimits(
     val maxRunningChildren: Int = 10,
     /** 同时在流式请求模型的子 agent 最多几个。等审批的子 agent 不占名额；根会话不受限 */
     val maxConcurrentChildRequests: Int = 3,
-)
+    /**
+     * 团队同时运行的成员数（设置项 `teamMaxConcurrent`，默认 [TeamLimits.DEFAULT_MAX_CONCURRENT]）。超出的成员排队，
+     * 前一个结束后才启动。设置超过 [TeamLimits.CONFIRM_ABOVE] 要先经 [TeamLimits.resolve] 让用户确认
+     */
+    val teamMaxConcurrent: Int = TeamLimits.DEFAULT_MAX_CONCURRENT,
+) {
+    init {
+        require(teamMaxConcurrent >= 1) { "团队同时运行的成员数至少是 1。" }
+    }
+}
 
 /** CC 的 SessionEnd reason 取值：Min 里目前只会出现这两个（clear / resume / logout 没有对应流程） */
 object SessionEndReasons {
@@ -189,6 +198,9 @@ class SessionHub(
     )
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
     private val openLock = Mutex()
+
+    /** agent 团队的运行时：建团队、任务清单、邮箱、并发名额（状态本身在负责人日志的折叠里） */
+    internal val teams = TeamCoordinator(this, deps, scope, limits.teamMaxConcurrent)
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
 
     internal suspend fun reserveWebSearch(caller: SessionRuntime, callId: CallId): Boolean {
@@ -628,11 +640,19 @@ class SessionHub(
         override suspend fun delegate(request: DelegateRequest): DelegateResult = spawn(rt, turnId, callId, request)
         override suspend fun message(to: String, text: String): ToolResult = sendMessage(rt, callId, to, text)
         override suspend fun stop(target: String): ToolResult = stopChild(rt, target)
+        override suspend fun team(op: dev.min.agent.spi.TeamOp): ToolResult = teams.handle(rt, turnId, callId, op)
     }
+
+    /** 团队成员的状态行（界面的团队页读；没有团队返回空）。状态来自日志折叠与成员会话的折叠，不是另存的 */
+    fun teamMembers(root: SessionId): List<TeamMemberStatus> = runtimes[root]?.let(teams::members).orEmpty()
 
     // ---- 委派 ----
 
-    private suspend fun spawn(parent: SessionRuntime, turnId: TurnId, callId: CallId, request: DelegateRequest): DelegateResult {
+    /**
+     * [teamMember] 为真：这是 agent 团队的成员（[TeamCoordinator.create] 建的）。它的开场输入照常进收件箱，但**不在这里开回合**——
+     * 开跑要过团队的并发名额，由协调器在所有成员入队之后统一放行
+     */
+    internal suspend fun spawn(parent: SessionRuntime, turnId: TurnId, callId: CallId, request: DelegateRequest, teamMember: Boolean = false): DelegateResult {
         val ps = parent.state.value
         val parentOrigin = ps.origin
         if (parentOrigin?.fork == true) return DelegateResult.Rejected("你是分身，直接执行任务，不要再委派。")
@@ -741,7 +761,7 @@ class SessionHub(
         } else {
             child.receive(
                 ClientMsgId("delegation:${callId.value}"), listOf(TextPart(request.prompt)), Delivery.Queue,
-                InputOrigin.Parent(parent.sessionId), TurnTrigger.User,
+                InputOrigin.Parent(parent.sessionId), if (teamMember) null else TurnTrigger.User,
             )
         }
         if (background) return DelegateResult.Started(childId, request.name, fork)
@@ -896,6 +916,7 @@ class SessionHub(
         watchJobs.remove(id)?.cancel()
         watched -= id
         quietReports.removeIf { it.first == id }
+        teams.forget(id)
         runtimes.remove(id)
         synchronized(summaryLock) {
             runningIds -= id
@@ -988,6 +1009,8 @@ class SessionHub(
     // ---- 续聊与停止 ----
 
     private suspend fun sendMessage(from: SessionRuntime, callId: CallId, to: String, text: String): ToolResult {
+        // 团队邮件与子 agent 消息是同一个入口：发件人和收件人都在团队里就走团队邮箱，其余照旧
+        teams.sendMail(from, to, text)?.let { return it }
         val state = from.state.value
         val target = to.trim()
         if (target == "main" || target == state.origin?.parent?.value) {

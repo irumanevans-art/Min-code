@@ -95,6 +95,8 @@ internal fun SessionState.teamProblem(e: SessionEvent): String? {
             e.leader != header.sessionId -> "团队的负责人必须是建团队的这个会话。"
             e.members.isEmpty() -> "团队至少要有一个成员。"
             e.members.any { it.name.isBlank() || it.prompt.isBlank() } -> "每个成员都要有名字和开场任务。"
+            // 分身继承负责人的整段对话，没有自己的任务边界；成员要的是各干各的
+            e.members.any { it.agentType == dev.min.agent.spi.FORK_AGENT_TYPE } -> "团队成员不能是分身（fork），请用别的子 agent 类型。"
             e.members.map { it.name }.distinct().size != e.members.size -> "成员名字不能重复。"
             e.members.any { it.name in RESERVED_TEAM_NAMES } -> "成员名字不能是保留词（${RESERVED_TEAM_NAMES.joinToString("、")}）。"
             else -> null

@@ -574,11 +574,32 @@ class SessionRuntime private constructor(
         delivery: Delivery,
         origin: InputOrigin,
         startTurn: TurnTrigger?,
+        /**
+         * 和这条输入**同一次提交**一起落盘的附带事件，排在它前面（团队邮件的 team_message、定时任务的 cron_fired）：
+         * 「记了来历」与「输入进了收件箱」要么都在要么都不在，重发被去重时附带事件也不会多写一份
+         */
+        extra: List<SessionEvent> = emptyList(),
+        /** 提交时再判一次的前置条件（与去重条件同在一把锁里）；默认无。定时任务用它保证「触发时确实空闲」 */
+        precondition: (SessionState) -> Boolean = { true },
     ): Boolean {
-        commitIf(listOf(InputReceived(clientMsgId, parts, delivery, origin)), Durability.Sync) { clientMsgId !in it.seenInputs }
+        commitIf(extra + InputReceived(clientMsgId, parts, delivery, origin), Durability.Sync) { clientMsgId !in it.seenInputs && precondition(it) }
             ?: return false
         startTurn?.let(::startTurnIfIdle)
         return true
+    }
+
+    /**
+     * 此刻没有回合、没有维护、也没有排着的输入——定时任务触发的时机（会话空闲）。
+     * 只看 state.turn 不够：回合 Job 已经起了、TurnStarted 还没落盘的空档里 state.turn 仍为 null（见 [whileIdle] 的同款处理）
+     */
+    internal fun isQuiescent(): Boolean = synchronized(turnLock) {
+        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true &&
+            _state.value.turn == null && _state.value.inbox.isEmpty()
+    }
+
+    /** 此刻没有回合在跑（含启动中的），收件箱有无输入不论——团队调度判断「成员是否空闲」用 */
+    internal fun isTurnIdle(): Boolean = synchronized(turnLock) {
+        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true && _state.value.turn == null
     }
 
     @Volatile
