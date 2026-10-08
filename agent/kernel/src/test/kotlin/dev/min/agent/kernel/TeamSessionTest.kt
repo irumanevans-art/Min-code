@@ -418,8 +418,27 @@ class TeamSessionTest {
         assertNull("b 在崩溃前排着队，重启后不自动开跑", b.state.value.lastTurn)
         assertEquals(1, b.state.value.inbox.size)
         assertEquals(0, model2.requests.count { it.memberName() == "b" })
-        assertEquals(TeamMemberStatus.Phase.Queued, h2.teamMembers(reopened.sessionId).single { it.name == "b" }.phase)
+        // 内存里的排队队伍随进程没了：它在日志里还躺着开场任务，但没有任何东西会放行它——不能再显示成「排队中」骗人
+        assertEquals(TeamMemberStatus.Phase.Stalled, h2.teamMembers(reopened.sessionId).single { it.name == "b" }.phase)
+        assertEquals("a 的回合死在中途，已被收尾，不算搁浅", TeamMemberStatus.Phase.Idle, h2.teamMembers(reopened.sessionId).single { it.name == "a" }.phase)
+        // 由人 / 负责人决定：放行搁浅的成员，照常过名额
+        assertEquals(1, h2.resumeTeamMembers(reopened.sessionId))
+        b.state.first { it.lastTurn != null && it.turn == null }
+        assertEquals(1, model2.requests.count { it.memberName() == "b" })
+        assertEquals("放行之后它是真的跑过了", TeamMemberStatus.Phase.Idle, h2.teamMembers(reopened.sessionId).single { it.name == "b" }.phase)
+        assertEquals("已经没有搁浅的了", 0, h2.resumeTeamMembers(reopened.sessionId))
         assertLogIsTruth(b)
+    }
+
+    @Test
+    fun `a genuinely waiting member shows as queued and is not counted as stalled`() = run {
+        val h = hub(leaderBuilds("a", "b") { n, _ -> if (n == "a") hang else reply(TextPart("$n 做完了")) }, HubLimits(teamMaxConcurrent = 1))
+        val (leader, members) = readyTeam(h, "a", "b")
+        members.getValue("a").state.first { it.turn != null }
+        members.getValue("b").state.first { it.inbox.isNotEmpty() }
+        val phases = h.teamMembers(leader.sessionId).associate { it.name to it.phase }
+        assertEquals(TeamMemberStatus.Phase.Queued, phases["b"])
+        assertEquals("队伍里的不需要放行", 0, h.resumeTeamMembers(leader.sessionId))
     }
 
     @Test

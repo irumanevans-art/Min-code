@@ -77,8 +77,14 @@ data class TeamMemberStatus(
         /** 只有规格，子会话还没建 */
         NotJoined,
 
-        /** 开场任务在收件箱里、还没开过回合：等名额，或进程重启后等人决定 */
+        /** 收件箱里有任务、还没开过回合，且确实在本进程的排队队伍里：等名额，轮到时自动开跑 */
         Queued,
+
+        /**
+         * 收件箱里有任务、还没开过回合，但不在任何队伍里——进程重启后内存里的队伍没了，没有东西会放行它（崩溃后不自动续跑，02 §5）。
+         * 要么给它发条消息，要么调 [SessionHub.resumeTeamMembers]（界面的“继续”）放行，照常过名额
+         */
+        Stalled,
         Running,
 
         /** 回合结束了（报告已交给负责人） */
@@ -106,6 +112,12 @@ internal class TeamCoordinator(
     private val slotLock = Mutex()
     private val active = LinkedHashSet<SessionId>()
     private val queue = ArrayDeque<SessionId>()
+
+    /**
+     * [queue] 里的成员的无锁镜像（每次改队列时一起改，改队列只在 [slotLock] 里）：[members] 是同步的只读视图，读不了锁。
+     * 界面据它区分「真在排队」和「搁浅」——进程重启后内存里的队伍没了，日志里仍躺着开场任务的成员没有任何东西会放行它
+     */
+    private val waiting: MutableSet<SessionId> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     /** 刚因为「收尾时又来了新输入」被重新排队的成员：它这次开跑后不再因同样的原因重排，免得起不来时空转 */
     private val leftoverRequeued = HashSet<SessionId>()
@@ -247,6 +259,7 @@ internal class TeamCoordinator(
         }
         slotLock.withLock {
             queue.removeAll(members.toSet())
+            waiting.removeAll(members.toSet())
             leftoverRequeued.removeAll(members.toSet())
         }
         members.forEach { hub.stopTree(it) }
@@ -324,6 +337,7 @@ internal class TeamCoordinator(
             if (!runtime.isTurnIdle()) return // 已经在跑，不是通过团队起的（比如用户直接在成员会话里打字）：不占名额
             if (!hasRoom()) {
                 queue.addLast(member)
+                waiting += member
                 return
             }
             startLocked(runtime)
@@ -369,6 +383,7 @@ internal class TeamCoordinator(
             if (allowRetry && runtime != null && runtime.isTurnIdle() && runtime.state.value.inbox.isNotEmpty() && id !in queue) {
                 leftoverRequeued += id
                 queue.addLast(id)
+                waiting += id
             }
             pumpLocked()
         }
@@ -376,7 +391,7 @@ internal class TeamCoordinator(
 
     private fun pumpLocked() {
         while (hasRoom()) {
-            val next = queue.removeFirstOrNull() ?: return
+            val next = queue.removeFirstOrNull()?.also { waiting -= it } ?: return
             val runtime = hub.get(next) ?: continue
             if (!runtime.isTurnIdle() || runtime.state.value.inbox.isEmpty()) continue
             startLocked(runtime)
@@ -388,6 +403,7 @@ internal class TeamCoordinator(
         scope.launch {
             slotLock.withLock {
                 queue.remove(id)
+                waiting -= id
                 active -= id
                 leftoverRequeued -= id
                 peerTurns -= id
@@ -399,6 +415,16 @@ internal class TeamCoordinator(
     /** 当前占名额的成员数（测试与界面用） */
     suspend fun runningCount(): Int = slotLock.withLock { active.size }
 
+    /**
+     * 放行搁浅的成员（见 [TeamMemberStatus.Phase.Stalled]）：逐个 [requestStart]，照常过名额。返回放行了几个。
+     * 崩溃后不自动续跑是 02 §5 的规矩，所以这是用户 / 负责人显式叫的，不是启动时自动做的
+     */
+    suspend fun resumeStalled(root: SessionRuntime): Int {
+        val stalled = members(root).filter { it.phase == TeamMemberStatus.Phase.Stalled }.mapNotNull { it.session }
+        stalled.forEach { requestStart(it) }
+        return stalled.size
+    }
+
     // ---- 只读视图 ----
 
     fun members(root: SessionRuntime): List<TeamMemberStatus> {
@@ -409,7 +435,8 @@ internal class TeamCoordinator(
                 m.session == null -> TeamMemberStatus.Phase.NotJoined
                 child == null -> TeamMemberStatus.Phase.Idle // 不在线：看不到它的状态，按空闲算（界面可以去打开它）
                 child.turn != null -> TeamMemberStatus.Phase.Running
-                child.lastTurn == null && child.inbox.isNotEmpty() -> TeamMemberStatus.Phase.Queued
+                child.lastTurn == null && child.inbox.isNotEmpty() ->
+                    if (m.session in waiting) TeamMemberStatus.Phase.Queued else TeamMemberStatus.Phase.Stalled
                 else -> TeamMemberStatus.Phase.Idle
             }
             TeamMemberStatus(m.name, m.session, phase, team.tasks.filter { it.owner == m.name && it.status != TaskStatus.Completed }.map { it.id })
@@ -423,6 +450,7 @@ internal class TeamCoordinator(
             val phase = when (phases[m.name]?.phase) {
                 TeamMemberStatus.Phase.Running -> "运行中"
                 TeamMemberStatus.Phase.Queued -> "排队等名额"
+                TeamMemberStatus.Phase.Stalled -> "搁浅（重启后没有自动开跑；给它发条消息或请用户继续才会开始）"
                 TeamMemberStatus.Phase.Idle -> "空闲"
                 TeamMemberStatus.Phase.NotJoined, null -> "未入队"
             }
