@@ -200,7 +200,8 @@ internal class CronEngine(
 
     /** 触发时交给模型的话：明说这是预设的定时任务（不是用户此刻的消息）；设了花费上限的，告诉它上限 */
     private fun firedText(task: CronTask, limitUsd: Double?): String =
-        "[定时任务 ${task.id} 到点触发（${task.scheduleText()}）。这是会话里预设的任务，不是用户此刻发的消息。" +
+        "[定时任务 ${task.id} 到点触发（${task.scheduleText()}）。这是会话里预设的任务，不是用户此刻发的消息，也没有人在看着这次运行：不要向用户提问；" +
+            "需要批准的工具调用会停在那里等人（用户会收到通知），别指望立刻得到答复，能避开就避开。" +
             (limitUsd?.let { "本次运行的花费上限是 ${money(it)}，到了会被停止。" } ?: "") +
             "]\n${task.prompt}"
 

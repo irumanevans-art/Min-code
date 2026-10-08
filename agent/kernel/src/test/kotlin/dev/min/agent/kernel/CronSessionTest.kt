@@ -134,6 +134,19 @@ class CronSessionTest {
         }
     }
 
+    /** 要人批准的写工具（默认模式下会弹审批） */
+    private val write = object : Tool<JsonObject> {
+        override val name = "Write"
+        override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+        override val traits = ToolTraits()
+        override fun description(profile: HarnessProfile) = "写"
+        override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
+        override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "写一个文件")
+        override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            emit(ToolProgress.Done(ToolResult(listOf(TextPart("写好了")))))
+        }
+    }
+
     /** 只是把入参转给端口的 Agent（与 BranchSessionTest 同款）：前台委派，等子回合结束 */
     private val agentTool = object : Tool<JsonObject> {
         override val name = "Agent"
@@ -157,7 +170,7 @@ class CronSessionTest {
         }
     }
 
-    private val tools: List<Tool<*>> = listOf(CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, probe, agentTool)
+    private val tools: List<Tool<*>> = listOf(CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, probe, agentTool, write)
 
     private fun deps(model: ModelClient, profile: dev.min.agent.llm.ModelProfile = pricedProfile): KernelDeps {
         val base = testDeps(model, tools)
@@ -935,6 +948,48 @@ class CronSessionTest {
         h.crons.tick(now.get())
         settle(rt)
         assertEquals("一次性任务没丢，换回有价格的模型后触发", 1, rt.state.value.crons.single().fires)
+        assertLogIsTruth(rt)
+    }
+
+    // ---- 无人值守 ----
+
+    @Test
+    fun `the fired text tells the model nobody is watching so it does not ask questions`() = run {
+        val h = hub(answering)
+        val rt = h.root()
+        schedule(rt)
+        now.set(t0 + 31 * minute)
+        h.crons.tick(now.get())
+        settle(rt)
+        val text = (rt.state.value.history.filterIsInstance<HistoryEntry.User>().single().parts.single() as TextPart).text
+        assertTrue(text, text.contains("没有人在看着这次运行") && text.contains("不要向用户提问") && text.contains("需要批准的工具调用会停在那里等人"))
+    }
+
+    @Test
+    fun `an approval during an unattended run waits for a person - and later fires of the same session wait for the session to be idle`() = run {
+        val model = RoutingModel { req ->
+            if (req.firedRun() && req.messages.size == 1) reply(ToolCallPart(CallId("w${req.messages.size}"), "Write", args()), stop = StopReason.ToolUse)
+            else reply(TextPart("好"))
+        }
+        val h = hub(model)
+        val rt = h.root()
+        schedule(rt)
+        now.set(t0 + 31 * minute)
+        h.crons.tick(now.get())
+        rt.state.first { s -> s.turn?.calls?.values?.any { it.phase is CallPhase.AwaitingApproval } == true }
+
+        // 照 Claude Code：审批照常等人答，不自动拒；同一会话里下一次到点也得等会话空闲，不会插队
+        now.set(t0 + 100 * minute)
+        h.crons.tick(now.get())
+        delay(300)
+        assertEquals("审批还没答，后面的触发在等", 1, rt.state.value.crons.single().fires)
+        assertTrue("没有被自动拒绝", rt.state.value.turn!!.calls.values.any { it.phase is CallPhase.AwaitingApproval })
+
+        // 通知里（或界面上）有人答了：这次运行收尾，排着的那一次随即触发
+        val pending = h.pending.first { list -> list.any { it.session == rt.sessionId } }.single { it.session == rt.sessionId }
+        assertTrue(rt.answerApproval((pending.what as HubPending.What.Approval).approvalId, dev.min.agent.spi.ApprovalChoice.Once))
+        rt.state.first { it.crons.single().fires == 2 }
+        settle(rt)
         assertLogIsTruth(rt)
     }
 
