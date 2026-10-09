@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    implementation(libs.quickjs.jvm)
     implementation(project(":agent:kernel"))
     implementation(project(":agent:host"))
     // 组合根要直接拿到各模块的实现：工具、编解码器、存储、记忆加载（KernelDeps 里的 MemoryLimits）
@@ -21,3 +22,6 @@ dependencies {
 application {
     mainClass.set("dev.min.agent.cli.MainKt")
 }
+
+// 同一份引擎源码分别链接 JVM / Android 原生库，CLI 不依赖 Android AAR。
+kotlin.sourceSets.named("main") { kotlin.srcDir("../workflow/src/main/kotlin") }

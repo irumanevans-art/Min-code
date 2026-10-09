@@ -341,6 +341,8 @@ internal class DesktopApp(
             rootMaxTurns = resolveMaxTurns(args.maxTurns, envReader),
             // --json-schema（只在 -p 模式有值，CliArgs 已校验）：同样是这次运行的选择，不进日志
             structuredOutput = args.jsonSchema?.let(::StructuredOutputPlan),
+            workflowEngine = dev.min.agent.workflow.QuickJsWorkflowEngine(),
+            workflowApprovals = dev.min.agent.host.FileWorkflowApprovals(home.resolve("workflow-approvals").toFile()),
             // CLI 自己读模型 key 的变量不交给内核：http hook 的 allowedEnvVars 点名它也只能插成空串（凭证不进 hook 请求）
             env = envReader,
             hiddenEnv = hiddenEnv,
