@@ -68,8 +68,10 @@ internal data class ProjectConfigFiles(val settings: String?, val local: String?
 
 /**
  * 从三份原文里看出「信任了会发生什么」：配了 hook 的事件名（两份 settings 合并去重，只算真有条目的）、`.mcp.json` 的服务器名，
- * 以及项目 `.claude/settings.json` 里会放宽权限的两项——`permissions.allow`（免问规则）和 `permissions.additionalDirectories`（附加目录）。
- * 后两项只看项目层的 settings.json：内核只在工作区受信后才采纳 Project 层的这两样，`settings.local.json` 是用户自己的本地层，不受信任门管。
+ * 以及会放宽权限的两项——`permissions.allow`（免问规则）和 `permissions.additionalDirectories`（附加目录）。
+ * 后两项**项目层与 local 层都列**，合并去重（项目的在前）：App 里没有 `-p`，未信任时不跑 git，照 CC 的做法
+ * `settings.local.json` 的这两样在信任之前一律不生效（见内核 `LocalSettingsTrust`），所以它们也是「信任了才会发生」的事。
+ * 以前这里只看项目的 `settings.json`，理由是 local 是用户自己的——那条在内核采纳 local 层之前成立，现在不成立了。
  * 都没有就是 null，不弹卡——没有项目层配置的目录没有信任可问。解析不了的文件当没有：宁可少问，也不因为一份坏文件每次弹卡。
  * 纯函数，不读盘。
  */
@@ -79,9 +81,9 @@ internal fun probeOf(cwd: String, files: ProjectConfigFiles): TrustProbe? {
         hooks.filterValues { (it as? JsonArray)?.isNotEmpty() == true }.keys
     }.distinct()
     val servers = files.mcpJson?.let { parseObject(it)?.get("mcpServers") as? JsonObject }?.keys?.toList().orEmpty()
-    val permissions = files.settings?.let { parseObject(it)?.get("permissions") as? JsonObject }
-    val allow = permissions.strings("allow")
-    val directories = permissions.strings("additionalDirectories")
+    val permissions = listOfNotNull(files.settings, files.local).map { parseObject(it)?.get("permissions") as? JsonObject }
+    val allow = permissions.flatMap { it.strings("allow") }.distinct()
+    val directories = permissions.flatMap { it.strings("additionalDirectories") }.distinct()
     if (events.isEmpty() && servers.isEmpty() && allow.isEmpty() && directories.isEmpty()) return null
     return TrustProbe(cwd, events, servers, allow, directories)
 }
