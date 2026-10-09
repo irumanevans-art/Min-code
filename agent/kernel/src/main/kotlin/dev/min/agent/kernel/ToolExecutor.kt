@@ -585,6 +585,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             result ?: errorResult("工具没有给出结果（${p.call.name} 的实现有问题）")
         } catch (e: CancellationException) {
             throw e
+        } catch (e: TurnAbort) {
+            throw e
         } catch (e: Exception) {
             errorResult("工具执行出错：${e.message ?: e::class.simpleName}")
         } finally {

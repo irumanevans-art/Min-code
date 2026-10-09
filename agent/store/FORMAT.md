@@ -223,3 +223,4 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - v1 增量（2026-10-09，对话边界）：新增 `auto_user_context_inherited`（messages：按原顺序冻结父会话 origin=user 的完整文字，不含 MCP 附件）。子会话启动及审查前的父上下文变化先写此事件；没有父进程时仍能重放。约束不解析成永久规则，后来的真实用户撤销随原消息进入同一审查请求；所有用户原文从 history 读取，摘要不删除 history。超过审查窗口转人工，不截断旧边界。分身种子来源和压缩视图保持原形，继承快照存在时不重复种子用户消息。
 
 - v1 语义补充（2026-10-09，auto headless）：`auto_reviewed.reason` 的固定值 `classifier_safety_refused` / `classifier_context_overflow` 区分供应商安全拒绝与上下文溢出，不包含供应商异常原文。后台子 agent 在 headless 下将这两种 Ask 转为原文的 Agent aborted 错误；其他审查失败仍转人工。子 `session_created.headless` 继承父值（字段原已存在）；最新审查从日志折叠，不另建未登记状态。
+- v1 语义补充（2026-10-09，auto 终报退路）：结构化答案也必须先写可交付的 `subagent_report_ready`，拒绝时 Agent 结果为错误、workflow 节点得到 null，不把已交卷的原 JSON 当成审查通过。中断 / 失败且缺本回合的可交付记录时只投影固定说明；headless 后台审查不可继续的错误以 `turn_ended.outcome = failed` 收尾，不吞成可重试的普通工具错误。

@@ -239,7 +239,8 @@ internal object Reports {
         }
     }
 
-    fun isError(outcome: TurnOutcome): Boolean = outcome !is TurnOutcome.Completed
+    fun isError(outcome: TurnOutcome, state: SessionState? = null): Boolean = outcome !is TurnOutcome.Completed ||
+        state?.let { it.settings.mode == dev.min.agent.protocol.PermissionMode.Auto && (it.subagentReport == null || it.subagentReport.review == "withheld") } == true
 
     /** 子回合的结论：最后一条助手消息的正文 */
     private fun finalText(state: SessionState): String =

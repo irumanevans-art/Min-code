@@ -52,7 +52,8 @@ internal suspend fun SessionRuntime.reviewReport(turnId: TurnId, body: String): 
 
 internal suspend fun SessionRuntime.prepareFallbackReport(turnId: TurnId) {
     if (state.value.origin == null || state.value.settings.mode != PermissionMode.Auto) return
-    val body = state.value.history.filterIsInstance<HistoryEntry.Assistant>().lastOrNull()?.parts.orEmpty().filterIsInstance<TextPart>().joinToString("") { it.text }
+    val body = state.value.structuredOutput?.takeIf { it.turnId == turnId }?.value?.toString()
+        ?: state.value.history.filterIsInstance<HistoryEntry.Assistant>().lastOrNull()?.parts.orEmpty().filterIsInstance<TextPart>().joinToString("") { it.text }
     val verdict = reviewReport(turnId, body)
     val ready = if (verdict is Verdict.Allow) SubagentReportReady(turnId, body, if (verdict.by == DecidedBy.Classifier) "approved" else "manual")
         else SubagentReportReady(turnId, "[子 agent 报告未通过审查，正文未交付。]", "withheld")

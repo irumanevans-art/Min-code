@@ -17,12 +17,15 @@ class AutoSpawnTest {
     @get:Rule val tmp = TemporaryFolder()
     private val reviewRef = ModelRef("review", "small")
     private fun decision(value: String) = reply(TextPart("""{"decision":"$value","reason":"spawn verdict","hard_deny_matches":[]}"""))
-    private fun run(reviewer: ModelClient, childModel: ModelClient? = null, headless: Boolean = false, block: suspend (SessionHub, SessionRuntime, FileSessionStore) -> Unit) = runBlocking {
+    private fun run(reviewer: ModelClient, childModel: ModelClient? = null, headless: Boolean = false,
+                    tools: List<Tool<*>> = emptyList(), hook: HttpHookClient? = null,
+                    block: suspend (SessionHub, SessionRuntime, FileSessionStore) -> Unit) = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val child = childModel ?: ModelClient { flow { awaitCancellation() } }
-        val base = testDeps(child, emptyList())
+        val base = testDeps(child, tools)
         val deps = KernelDeps(base.clock, base.ids, models = { ref -> ResolvedModel(TEST_PROFILE.copy(ref = ref), if (ref == reviewRef) reviewer else child) },
-            tools = base.tools, host = base.host, platform = "test", zone = base.zone, autoModeReviewer = AutoModeReviewer(reviewRef))
+            tools = base.tools, host = hook?.let { HostPorts(base.host.fs, base.host.search, base.host.exec, base.host.artifacts, httpHooks = it) } ?: base.host,
+            platform = "test", zone = base.zone, autoModeReviewer = AutoModeReviewer(reviewRef))
         val store = FileSessionStore(tmp.newFolder().toPath(), { 0 })
         try {
             val hub = SessionHub(store, deps, scope)
@@ -164,5 +167,47 @@ class AutoSpawnTest {
             release.complete(Unit)
             assertFalse(result.await()); assertTrue(rt.state.value.children.isEmpty())
         } }
+    }
+    @Test fun workflowStructuredReportIsReviewedAndRejectedValueIsNotDelivered() {
+        for (verdict in listOf("deny", "allow")) {
+            val reviewer = ScriptedModel(decision("allow"), decision(verdict))
+            val schema = Json.parseToJsonElement("""{"type":"object","required":["value"],"properties":{"value":{"type":"string"}}}""").jsonObject
+            val value = args("value" to "SCHEMA_REPORT_BODY")
+            val child = ScriptedModel(reply(ToolCallPart(CallId("structured"), "StructuredOutput", value), stop = StopReason.ToolUse))
+            run(reviewer, childModel = child) { hub, rt, _ ->
+                val result = hub.spawn(rt, TurnId("t"), CallId("call"), DelegateRequest("json task", "deliver json", workflow = true, schema = schema)) as DelegateResult.Finished
+                assertEquals(verdict == "deny", result.isError)
+                assertEquals(verdict == "allow", result.report.contains("SCHEMA_REPORT_BODY"))
+                assertEquals(2, reviewer.requests.size)
+                assertTrue(reviewer.requests.last().messages.toString().contains("SCHEMA_REPORT_BODY"))
+            }
+        }
+    }
+    @Test fun foregroundAgentPostToolUseGetsHandbackNoteObject() {
+        val bodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val reviewer = ScriptedModel(decision("allow"), decision("allow"), decision("allow"))
+        val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("report" to "FULL_REPORT_BODY")), stop = StopReason.ToolUse))
+        run(reviewer, childModel = child, tools = listOf(dev.min.agent.tools.AgentTool),
+            hook = HttpHookClient { bodies += it.body; HttpHookResult.Responded(200, "{}") }) { _, rt, _ ->
+            rt.commit(listOf(HooksLoaded(listOf(HookSourceData("user", Json.parseToJsonElement("""{"PostToolUse":[{"matcher":"Agent","hooks":[{"type":"http","url":"https://hooks.test/post"}]}]}""").jsonObject)))), Durability.Sync)
+            val call = ToolCallPart(CallId("agent-tool"), "Agent", buildJsonObject { put("description", "task"); put("prompt", "task"); put("run_in_background", false) })
+            ToolExecutor(rt).executeAll(TurnId("t"), listOf(call))
+            val response = Json.parseToJsonElement(bodies.single()).jsonObject.getValue("tool_response").jsonObject
+            assertEquals("completed", response.getValue("status").jsonPrimitive.content)
+            assertEquals(HANDBACK_NOTE, response.getValue("content").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content)
+            assertFalse(bodies.single().contains("FULL_REPORT_BODY"))
+            assertTrue(rt.state.value.toolResults.getValue(call.callId).content.toString().contains("FULL_REPORT_BODY"))
+        }
+    }
+    @Test fun headlessBackgroundHandbackRefusalAbortsWithoutRawReport() {
+        val reviewer = ScriptedModel(decision("allow"), reply(TextPart("refused"), stop = StopReason.Refusal))
+        val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("report" to "PRIVATE_REPORT_BODY")), stop = StopReason.ToolUse))
+        run(reviewer, childModel = child, headless = true) { hub, rt, _ ->
+            val result = hub.portFor(rt, TurnId("t"), CallId("call")).delegate(DelegateRequest("task", "task", background = true)) as DelegateResult.Started
+            val ended = hub.get(result.child)!!.state.first { it.lastTurn != null && it.turn == null }.lastTurn!!
+            assertEquals("Agent aborted: auto mode classifier request refused by the safety safeguard in headless mode", (ended.outcome as TurnOutcome.Failed).message)
+            val report = rt.state.first { it.inbox.any { input -> input.origin is InputOrigin.Agent } }.inbox.first { it.origin is InputOrigin.Agent }
+            assertFalse(report.parts.toString().contains("PRIVATE_REPORT_BODY"))
+        }
     }
 }

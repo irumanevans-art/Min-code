@@ -1001,7 +1001,7 @@ class SessionHub(
             child.worktrees.finishChild()
             val report = Reports.render(child.sessionId, summary, origin.agentType, origin.fork, ended, child.state.value)
             consumedInForeground += child.sessionId to ended.turnId
-            return DelegateResult.Finished(child.sessionId, ended.turnId, report, Reports.isError(ended.outcome))
+            return DelegateResult.Finished(child.sessionId, ended.turnId, report, Reports.isError(ended.outcome, child.state.value))
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
                 child.interrupt()

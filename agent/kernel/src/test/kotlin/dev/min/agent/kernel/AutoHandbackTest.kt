@@ -85,4 +85,10 @@ class AutoHandbackTest {
             assertFalse(bodies.single().contains("safe report"))
         }
     }
+    @Test fun interruptedAutoChildCannotDeliverUnreviewedLastText() = run { rt, _, _, _ ->
+        val state = rt.state.value.copy(history = listOf(HistoryEntry.Assistant(MessageId("partial"), listOf(TextPart("UNREVIEWED_PARTIAL")))))
+        val ended = EndedTurn(TurnId("aborted"), TurnTrigger.User, TurnOutcome.Interrupted(InterruptedBy.ProcessDeath), Usage(), 0, 0)
+        val report = Reports.render(rt.sessionId, null, "general-purpose", false, ended, state)
+        assertFalse(report.contains("UNREVIEWED_PARTIAL")); assertTrue(Reports.isError(ended.outcome, state))
+    }
 }

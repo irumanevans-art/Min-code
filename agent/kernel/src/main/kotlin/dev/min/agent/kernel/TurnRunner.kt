@@ -223,7 +223,10 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             }
             // 交了卷：回合就此收尾，不必再让模型说话（同一批里的其他调用照常执行、结果照常落盘）
             if (plan != null) {
-                if (rt.state.value.structuredOutput != null) return
+                if (rt.state.value.structuredOutput != null) {
+                    rt.prepareFallbackReport(turnId)
+                    return
+                }
                 if (calls.any { it.name == StructuredOutputTool.NAME }) {
                     // 调了 StructuredOutput 但没交成（校验失败，错误结果已回给模型）：算一次未通过
                     failedAttempts++
