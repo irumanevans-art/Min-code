@@ -218,12 +218,16 @@ internal object Reports {
     private const val TAG = "subagent-report"
 
     fun render(child: SessionId, summary: ChildSummary?, agentType: String, fork: Boolean, ended: EndedTurn, state: SessionState): String {
-        val body = finalText(state).ifBlank { "（子 agent 没有给出文字报告）" }
-        val status = statusOf(ended.outcome)
+        val reviewed = state.subagentReport?.takeIf { it.turnId == ended.turnId }
+        // 中断、请求上限或异常可能跳过正常收尾；auto 下不能因此泄漏未经审查的最后消息。
+        val withheld = state.settings.mode == dev.min.agent.protocol.PermissionMode.Auto && reviewed == null || reviewed?.review == "withheld"
+        val body = (reviewed?.body ?: if (withheld) "[子 agent 未完成报告审查，正文未交付。]" else finalText(state)).ifBlank { "（子 agent 没有给出文字报告）" }
+        val status = if (withheld) "failed" else statusOf(ended.outcome)
         val tokens = ended.usage.let { it.inputTokens + it.outputTokens + it.cacheReadTokens + it.cacheWriteTokens }
         val name = summary?.name?.let { " name=\"${attr(it)}\"" }.orEmpty()
         return buildString {
             append("<$TAG id=\"${child.value}\" type=\"${attr(agentType)}\"$name fork=\"$fork\" status=\"$status\"")
+            reviewed?.review?.let { append(" review=\"${attr(it)}\" handback=\"${reviewed.handback}\"") }
             append(" tools=\"${ended.toolCalls}\" tokens=\"$tokens\" duration-ms=\"${ended.durationMs}\">\n")
             append(escape(body.trim()))
             state.worktree?.let { w ->

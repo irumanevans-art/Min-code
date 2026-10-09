@@ -217,3 +217,5 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - Bash 入参新增可选 `allowed_domains` 字符串数组（缺省 []，最多 64 项）；只在沙箱开启的 Auto 下强制随命令送分类器，或由明确的命令审批覆盖。获批名单仅本命令生命周期有效；deny 与托管锁始终优先，不写 sessionRules 或用户设置。
 
 - v1 增量（2026-10-09，auto 生成审查）：Agent / Team / Workflow 在共用生成路径上写 `auto_reviewed`；审查转人工时使用独立 review 调用 id 的 `tool_planned` / `approval_requested` / `approval_resolved` / `tool_outcome`，不覆盖正在执行的父工具阶段。合成调用不写助手历史；审批结果及共享熔断可凭日志重建。
+
+- v1 增量（2026-10-09，SubagentHandback）：`subagent_origin.teamMember` 缺省 false，用于区分团队成员与普通本地子 agent；新增 `subagent_report_ready`（turnId、body / review 缺省 null、handback 缺省 false），只记录可交付正文或固定拒绝说明。review = approved / manual / withheld；body 为 null 清除交卷，供 Stop hook 续跑使用。报告标签新增可选 review / handback 属性；老格式按缺省解析。handback 成功后 SubagentStop 的 last_assistant_message 和可选 content 为简短说明；前台 Agent PostToolUse 的 tool_response 改为 status / agentId / content 对象，content 同样不重复报告正文。旧读取器不认识新事件。

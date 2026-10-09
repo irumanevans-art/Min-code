@@ -915,6 +915,7 @@ class SessionHub(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
                 tools = toolsFor(definition, depth), instructions = definition.instructions, maxTurns = definition.maxTurns,
+                teamMember = teamMember,
                 omitMemory = definition.omitMemory,
                 // 定义里 mcp__ 开头的写法单独存：MCP 工具运行时才知道有哪些（写了 tools 却没列 MCP 工具 = 一个都不给）
                 mcpTools = definition.tools?.filter { it.startsWith(MCP_PREFIX) },

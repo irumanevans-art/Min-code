@@ -90,6 +90,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             this
         }
         is dev.min.agent.spi.NetworkSettingsLoaded -> copy(networkSettings = e.settings)
+        is dev.min.agent.spi.SubagentReportReady -> copy(subagentReport = e.takeIf { it.body != null })
         is dev.min.agent.spi.NetworkApprovalRequested -> copy(networkPending = networkPending + (e.approvalId to e))
         is dev.min.agent.spi.NetworkDecision -> copy(networkDecisions = networkDecisions + e,
             networkPending = networkPending - listOfNotNull(e.approvalId).toSet(),

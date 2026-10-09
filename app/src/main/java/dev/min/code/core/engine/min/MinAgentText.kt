@@ -39,6 +39,7 @@ interface MinAgentText {
     /** 后台 asyncRewake hook 唤醒了空闲会话：状态行与转录分隔线共用这一句 */
     fun hookWoke(): String
     fun agentMessage(agentType: String, name: String?): String
+    fun reviewedReport(): String = "已经过审查"
     fun attachment(): String
     fun redactedThinking(): String
 
@@ -134,6 +135,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun hookWoke() = s(R.string.min_agent_hook_woke)
 
     override fun agentMessage(agentType: String, name: String?) = s(R.string.min_agent_message_from, name ?: agentType)
+    override fun reviewedReport() = s(R.string.min_agent_report_reviewed)
     override fun attachment() = s(R.string.min_agent_attachment)
     override fun redactedThinking() = s(R.string.min_agent_redacted_thinking)
 

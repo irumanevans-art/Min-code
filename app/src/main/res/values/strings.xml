@@ -1501,4 +1501,5 @@
     <string name="trust_more">+%1$d more</string>
     <string name="trust_grants_on">This project\'s settings grant:</string>
     <string name="trust_grants_off">If you trust this folder, its settings would grant:</string>
+    <string name="min_agent_report_reviewed">Safety reviewed</string>
 </resources>

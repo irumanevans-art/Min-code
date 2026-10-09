@@ -27,6 +27,9 @@ import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.ToolInputRewritten
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import dev.min.agent.spi.ArtifactSink
@@ -322,6 +325,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         }
         val verdict = if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.unavailable && policy !is Verdict.Deny) Verdict.Ask
         else if (PolicyEngine.askRuleHit(ask, policyContext()) != null && policy !is Verdict.Deny) Verdict.Ask
+        else if (ready.tool is SubagentHandbackTool && policy !is Verdict.Deny) initial
         else if (ready.tool is WorkflowTool && hook == HookOutcome.Decision.Allow && !hardDenied && !proseHardDeny && policy !is Verdict.Deny) initial
         else if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
             val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
@@ -526,6 +530,12 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val event = if (failed) HookEvent.PostToolUseFailure else HookEvent.PostToolUse
         if (!hooks.has(event, p.call.name)) return
         val text = result.content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val handbackChild = result.effects.filterIsInstance<dev.min.agent.spi.SessionEffect.ReportDelivered>().firstOrNull()
+            ?.let { rt.hub?.get(it.child) }?.state?.value?.takeIf { it.subagentReport?.handback == true }
+        val response = if (p.call.name == "Agent" && handbackChild != null) buildJsonObject {
+            put("status", "completed"); put("agentId", handbackChild.header.sessionId.value)
+            put("content", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", HANDBACK_NOTE) })))
+        } else JsonPrimitive(text)
         val specific = if (failed) {
             HookJson.encodeToJsonElement(
                 PostToolUseFailureInput.serializer(),
@@ -536,7 +546,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             JsonObject(
                 HookJson.encodeToJsonElement(
                     PostToolUseInput.serializer(),
-                    PostToolUseInput(toolInput = p.raw, toolResponse = JsonPrimitive(text), durationMs = durationMs),
+                    PostToolUseInput(toolInput = p.raw, toolResponse = response, durationMs = durationMs),
                 ).jsonObject + mapOf("tool_name" to JsonPrimitive(p.call.name), "tool_use_id" to JsonPrimitive(p.call.callId.value)),
             )
         }

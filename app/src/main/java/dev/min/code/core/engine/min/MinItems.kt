@@ -57,6 +57,8 @@ data class MinReport(
     val tokens: Long?,
     val durationMs: Long?,
     val body: String,
+    val review: String? = null,
+    val handback: Boolean = false,
 ) {
     /** 报告是不是「没做完 / 出错」：卡片按失败色画 */
     val isError: Boolean get() = status != "completed"
@@ -80,6 +82,7 @@ fun parseMinReport(text: String): MinReport? {
         status = attrs["status"] ?: "completed", fork = attrs["fork"] == "true",
         tools = attrs["tools"]?.toIntOrNull(), tokens = attrs["tokens"]?.toLongOrNull(),
         durationMs = attrs["duration-ms"]?.toLongOrNull(), body = body,
+        review = attrs["review"], handback = attrs["handback"] == "true",
     )
 }
 
@@ -212,7 +215,7 @@ private class ItemsBuilder(
         description = child?.description?.takeIf { it.isNotBlank() },
         status = report.status, isError = report.isError,
         toolCalls = report.tools, tokens = report.tokens, durationMs = report.durationMs,
-        body = report.body,
+        body = if (report.handback && report.review == "approved") text.reviewedReport() + "\n\n" + report.body else report.body,
     )
 
     private fun parts(messageId: String, content: List<Part>) {
