@@ -174,11 +174,26 @@ internal class ModelHookRunner(private val rt: SessionRuntime) {
         }
     }
 
-    /** ${'$'}ARGUMENTS 占位：写了就换成事件输入 JSON；没写就把输入接到末尾（CC 原文） */
-    private fun promptText(handler: HookHandler, stdin: JsonObject): String {
-        val prompt = handler.prompt.orEmpty()
-        val marker = "${'$'}ARGUMENTS"
-        return if (prompt.contains(marker)) prompt.replace(marker, stdin.toString())
-        else prompt + "\n\n" + stdin
+    private fun promptText(handler: HookHandler, stdin: JsonObject): String = hookPromptText(handler.prompt.orEmpty(), stdin.toString())
+}
+
+/**
+ * prompt / agent hook 的提示词（CC hooks 文档「Prompt and agent hook fields」）：${'$'}ARGUMENTS 换成事件输入 JSON，
+ * 没写占位就把输入接到末尾。反斜杠转义出字面的美元符：`\$1.00` 渲染成 `$1.00`，`\$ARGUMENTS` 是字面文字、不算用了占位；
+ * 反斜杠前面还有反斜杠时不当转义（与技能参数 [dev.min.agent.ext.skills.SkillArguments] 同一口径）
+ */
+internal fun hookPromptText(prompt: String, input: String): String {
+    val marker = "${'$'}ARGUMENTS"
+    val out = StringBuilder()
+    var used = false
+    var i = 0
+    while (i < prompt.length) {
+        val c = prompt[i]
+        when {
+            c == '\\' && prompt.getOrNull(i + 1) == '$' && !(i > 0 && prompt[i - 1] == '\\') -> { out.append('$'); i += 2 }
+            prompt.startsWith(marker, i) -> { out.append(input); used = true; i += marker.length }
+            else -> { out.append(c); i++ }
+        }
     }
+    return if (used) out.toString() else out.append("\n\n").append(input).toString()
 }
