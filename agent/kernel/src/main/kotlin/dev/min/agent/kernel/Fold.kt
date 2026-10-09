@@ -374,7 +374,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
             copy(
                 history = e.messages.map { m ->
                     when (m.role) {
-                        Role.User -> HistoryEntry.User(m.messageId, m.parts)
+                        // 旧分身日志没记来历，不能把无法证明来源的正文升级成可信用户意图。
+                        Role.User -> HistoryEntry.User(m.messageId, m.parts, m.origin ?: InputOrigin.Hook("legacy_fork_seed"))
                         Role.Assistant -> HistoryEntry.Assistant(m.messageId, m.parts)
                     }
                 },

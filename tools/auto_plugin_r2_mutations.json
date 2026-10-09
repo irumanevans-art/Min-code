@@ -1,0 +1,282 @@
+[
+  {
+    "name": "local-allow-trust",
+    "file": "agent/ext/src/main/kotlin/dev/min/agent/ext/config/Settings.kt",
+    "old": "!trustProject && it.kind == RuleSpecKind.Allow",
+    "replacement": "false && it.kind == RuleSpecKind.Allow",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "local-directories-trust",
+    "file": "agent/ext/src/main/kotlin/dev/min/agent/ext/config/Settings.kt",
+    "old": "layers.filter { trustProject ||",
+    "replacement": "layers.filter { true ||",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "git-before-acceptance",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LocalSettingsTrust.kt",
+    "old": "if (!accepted) continue",
+    "replacement": "if (false) continue",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "tracked-local",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LocalSettingsTrust.kt",
+    "old": "checked.exitCode == 1",
+    "replacement": "checked.exitCode == 0",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "claude-symlink",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LocalSettingsTrust.kt",
+    "old": "if (linked) continue",
+    "replacement": "if (false) continue",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "config-home",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LocalSettingsTrust.kt",
+    "old": "if (cwd == configHome &&",
+    "replacement": "if (false && cwd == configHome &&",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "local-headless-wiring",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt",
+    "old": "trustProject || state.value.created.headless",
+    "replacement": "trustProject",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "child-bypass",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ChildPermissions.kt",
+    "old": "if (requested == PermissionMode.BypassPermissions) return parent",
+    "replacement": "if (requested == PermissionMode.BypassPermissions) return requested",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "child-parent-accept",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ChildPermissions.kt",
+    "old": "PermissionMode.BypassPermissions, PermissionMode.AcceptEdits, PermissionMode.Auto",
+    "replacement": "PermissionMode.BypassPermissions, PermissionMode.Auto",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "child-parent-auto",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ChildPermissions.kt",
+    "old": "PermissionMode.BypassPermissions, PermissionMode.AcceptEdits, PermissionMode.Auto",
+    "replacement": "PermissionMode.BypassPermissions, PermissionMode.AcceptEdits",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "child-project-trust",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ChildPermissions.kt",
+    "old": "if (definition.source in setOf(\"project\", \"local\") && !trusted)",
+    "replacement": "if (false)",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "child-auto-lock",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ChildPermissions.kt",
+    "old": "if (requested == PermissionMode.Auto && locks.disableAutoMode)",
+    "replacement": "if (false)",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "child-frozen-lock",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt",
+    "old": "if (currentMode == PermissionMode.Auto && locks.disableAutoMode || currentMode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode)",
+    "replacement": "if (false)",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest"
+  },
+  {
+    "name": "url-token-filter",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt",
+    "old": "\\\\b[A-Za-z][A-Za-z0-9+.-]*://",
+    "replacement": "never-a-url://",
+    "module": "kernel",
+    "test": "AutoReviewerTest.R2_remote_urls*"
+  },
+  {
+    "name": "credential-after-url",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoReviewer.kt",
+    "old": "credentialPath(GuestPath(path), context, includeAncestors = call.name == \"Bash\")",
+    "replacement": "false",
+    "module": "kernel",
+    "test": "AutoReviewerTest.R2_url_filter*"
+  },
+  {
+    "name": "wrapped-interpreters",
+    "file": "agent/policy/src/main/kotlin/dev/min/agent/policy/AutoAllowRules.kt",
+    "old": "if (program !in wrappers) return program",
+    "replacement": "if (true) return program",
+    "module": "policy",
+    "test": "PolicyEngineTest.R2_auto*"
+  },
+  {
+    "name": "extra-interpreters",
+    "file": "agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt",
+    "old": "\"osascript\", \"rscript\", \"tclsh\", \"awk\", \"gawk\",",
+    "replacement": "\"unused-interpreter\",",
+    "module": "policy",
+    "test": "PolicyEngineTest.R2_auto*"
+  },
+  {
+    "name": "classify-shell-wiring",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt",
+    "old": "classifyAllShell = s.autoReviewSettings.config.classifyAllShell",
+    "replacement": "classifyAllShell = false",
+    "module": "kernel",
+    "test": "AutoReviewerTest.R2_classifyAllShell*"
+  },
+  {
+    "name": "classify-readonly",
+    "file": "agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt",
+    "old": "if (context.mode == PermissionMode.Auto && context.classifyAllShell && facts.tool in setOf(\"Bash\", \"PowerShell\"))",
+    "replacement": "if (false)",
+    "module": "kernel",
+    "test": "AutoReviewerTest.R2_classifyAllShell*"
+  },
+  {
+    "name": "classify-trusted-scope",
+    "file": "agent/ext/src/main/kotlin/dev/min/agent/ext/config/AutoModeSettings.kt",
+    "old": "val trusted = layers.filter { it.source == ConfigSource.User || it.source == ConfigSource.Managed }",
+    "replacement": "val trusted = layers",
+    "module": "ext",
+    "test": "AutoModeSettingsTest"
+  },
+  {
+    "name": "fork-origin-export",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/Delegation.kt",
+    "old": "SeedMessage(entry.messageId, Role.User, entry.parts, entry.origin)",
+    "replacement": "SeedMessage(entry.messageId, Role.User, entry.parts)",
+    "module": "kernel",
+    "test": "AutoReviewerTest.R2_fork*"
+  },
+  {
+    "name": "fork-origin-replay",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt",
+    "old": "m.origin ?: InputOrigin.Hook(\"legacy_fork_seed\")",
+    "replacement": "InputOrigin.User",
+    "module": "kernel",
+    "test": "AutoReviewerTest.R2_fork*"
+  },
+  {
+    "name": "legacy-fork-origin",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/Fold.kt",
+    "old": "m.origin ?: InputOrigin.Hook(\"legacy_fork_seed\")",
+    "replacement": "m.origin ?: InputOrigin.User",
+    "module": "kernel",
+    "test": "AutoReviewerTest.R2_fork*"
+  },
+  {
+    "name": "whole-project-plugin",
+    "file": "agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt",
+    "old": "val accepted = request.sideload || !projectEnabled || trust(cwd)",
+    "replacement": "val accepted = true",
+    "module": "ext",
+    "test": "PluginSecurityFixTest"
+  },
+  {
+    "name": "personal-enable-source",
+    "file": "agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt",
+    "old": "settings.layers.filter { it.source == ConfigSource.User }.forEach",
+    "replacement": "settings.layers.filter { false }.forEach",
+    "module": "ext",
+    "test": "PluginSecurityFixTest"
+  },
+  {
+    "name": "dependency-any-false",
+    "file": "agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt",
+    "old": "val disabledDependencies = enabled.filterValues { !it }.keys.toSet()",
+    "replacement": "val disabledDependencies = settings.layers.flatMap { it.enabledPlugins.filterValues { enabled -> !enabled }.keys }.toSet()",
+    "module": "ext",
+    "test": "PluginSecurityFixTest"
+  },
+  {
+    "name": "dependency-final-false",
+    "file": "agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginDiscovery.kt",
+    "old": "explicitlyDisabled = request.enabledPlugins[enabledId] == false || enabledId in request.disabledDependencies",
+    "replacement": "explicitlyDisabled = false",
+    "module": "ext",
+    "test": "PluginSecurityFixTest"
+  },
+  {
+    "name": "managed-plugin-false",
+    "file": "agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt",
+    "old": "managed?.enabledPlugins?.forEach { (id, value) -> enabled[id] = value;",
+    "replacement": "managed?.enabledPlugins?.forEach { (id, value) -> enabled[id] = true;",
+    "module": "ext",
+    "test": "PluginSecurityFixTest"
+  },
+  {
+    "name": "permission-hook-ask",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt",
+    "old": "ready.tool.traits.alwaysAsk || PolicyEngine.floorReason(askFor(ready), context) != null",
+    "replacement": "ready.tool.traits.alwaysAsk || PolicyEngine.askRuleHit(askFor(ready), context) != null || PolicyEngine.floorReason(askFor(ready), context) != null",
+    "module": "kernel",
+    "test": "AutoReviewerTest.R2_permission*"
+  },
+  {
+    "name": "permission-hook-floor",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt",
+    "old": "ready.tool.traits.alwaysAsk || PolicyEngine.floorReason(askFor(ready), context) != null",
+    "replacement": "ready.tool.traits.alwaysAsk",
+    "module": "kernel",
+    "test": "HooksH3EventsTest.the floor*"
+  },
+  {
+    "name": "permission-hook-alwaysAsk",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt",
+    "old": "ready.tool.traits.alwaysAsk || PolicyEngine.floorReason(askFor(ready), context) != null",
+    "replacement": "PolicyEngine.floorReason(askFor(ready), context) != null",
+    "module": "kernel",
+    "test": "HooksH3EventsTest.an alwaysAsk*"
+  },
+  {
+    "name": "team-child-bypass",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ChildPermissions.kt",
+    "old": "if (requested == PermissionMode.BypassPermissions) return parent",
+    "replacement": "if (requested == PermissionMode.BypassPermissions) return requested",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest.R2_TeamCreate*"
+  },
+  {
+    "name": "workflow-child-bypass",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/ChildPermissions.kt",
+    "old": "if (requested == PermissionMode.BypassPermissions) return parent",
+    "replacement": "if (requested == PermissionMode.BypassPermissions) return requested",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest.R2_workflow_agentType*"
+  },
+  {
+    "name": "native-config-home",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LocalSettingsTrust.kt",
+    "old": "val configHome = configGuest?.takeIf { it.startsWith('/') }?.let(::GuestPath) ?: deps.memoryHome",
+    "replacement": "val configHome = deps.memoryHome",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest.R2_native*"
+  },
+  {
+    "name": "native-drive-root",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LocalSettingsTrust.kt",
+    "old": "Regex(\"^[A-Za-z]:(/|$)\")",
+    "replacement": "Regex(\"^[A-Za-z]:/\")",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest.R2_native*"
+  }
+]

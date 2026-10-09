@@ -58,6 +58,7 @@ data class AgentCatalog(val definitions: List<AgentDefinition>, val notes: List<
                 // frontmatter 的 hooks 进子 agent 的会话日志（运行期间生效）；Stop→SubagentStop 的改写在登记时做
                 hooks = def.hooks,
                 hooksLayer = def.sourceLabel,
+                source = def.sourceLabel,
                 isolationWorktree = def.isolation == "worktree",
             )
         }

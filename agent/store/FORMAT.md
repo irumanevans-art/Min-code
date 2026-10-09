@@ -206,5 +206,6 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
   模型视图把它放在同一条用户消息里、紧随全部 `tool_result` 之后，作为独立的文本块（排在 hook / 记忆的 system-reminder 之前）；`content` 只留「用户已回答 / 用户拒绝了」这一句事实。
   原因：官方对 Haiku 5.5 的说明——放在 tool_result 里的文字会被当作不可信内容忽略，用户中途说的话必须是独立的用户文本块。
 - 旧日志照常读，**不改写历史**：旧日志里用户的话还在 `content` 里，没有 `userText`，请求前缀与之前逐字相同；新日志的旧版本读法会丢掉这个字段（用户的话不再出现在请求里），含 `userText` 的日志旧版本能打开但模型看不到用户的回答。
+- v1 增量（2026-10-09，auto 审查与插件第二轮）：`fork_seeded.messages[]`（`SeedMessage`）新增可选字段 `origin`（与 `input_received.origin` 同一种 `InputOrigin`），分身继承的用户消息带上原始来源，折叠后 `HistoryEntry.User.origin` 保留它；auto 审查只把来源为 `user` 的条目当用户意图。旧日志没有 `origin`：折叠时按非用户来源（`hook`，`event = legacy_fork_seed`）处理，不把无法证明来源的正文升格为用户授权（界面上这类旧分身的用户消息显示为 hook 说明）。`auto_review_settings_loaded.config`（`AutoModeConfig`）新增可选布尔 `classifyAllShell`（缺省 false，只取用户 / 托管层）：为真时 Auto 下全部 Bash / PowerShell 的 allow 暂停、一律送审。旧日志读法不变。
 - v1 增量（2026-10-09，团队邮件的发出时刻）：`team_message` 新增可选字段 `sentAtMs`（发出时的宿主时钟毫秒；一次广播的各份相同）。邮件分散在各收件人的日志里、`messageId` 在真实宿主上是随机串，界面的消息流靠它跨收件人排序、合并同一次广播。旧日志没有这个字段，读法不变（界面退回按编号排）。
 - v1 增量（2026-10-08，宿主生成的拒绝说明）：`approval_resolved.choice`（`type: deny`）新增可选字段 `fromHost`（缺省 false，false 不落盘）：`note` 是宿主 / hook 自己生成的话（`-p` 下“非交互模式下没有人审批，已按 --approve no 拒绝”、PermissionRequest hook 的说明），不是人写的。只有人亲手写的说明才进 `tool_outcome.result.userText`；`fromHost` 为真时说明留在 tool_result 的正文里（“这次调用被拒绝了：…”），不再冒充用户的话。旧日志里的拒绝没有这个字段，按人写的读（行为不变）。

@@ -10,6 +10,17 @@ class AutoModeSettingsTest {
     private fun layer(source: ConfigSource, text: String) = SettingsReader.layer(source, "/settings.json", GuestPath("/root"),
         Json.parseToJsonElement(text) as kotlinx.serialization.json.JsonObject, mutableListOf())
 
+    @Test fun R2_classifyAllShell_scope_priority_and_bad_type() {
+        fun result(vararg pairs: Pair<ConfigSource, String>) = SettingsMerger.merge(pairs.map { layer(it.first, it.second) }, mutableListOf()).autoReviewSettings()
+        val on = """{"autoMode":{"classifyAllShell":true}}"""
+        val off = """{"autoMode":{"classifyAllShell":false}}"""
+        assertFalse(result(ConfigSource.Project to on, ConfigSource.Local to on).config.classifyAllShell)
+        assertTrue(result(ConfigSource.User to on, ConfigSource.Project to off).config.classifyAllShell)
+        assertFalse(result(ConfigSource.User to on, ConfigSource.Managed to off).config.classifyAllShell)
+        assertTrue(result(ConfigSource.User to off, ConfigSource.Managed to on).config.classifyAllShell)
+        assertTrue(result(ConfigSource.User to """{"autoMode":{"classifyAllShell":"true"}}""").unavailable)
+    }
+
     @Test fun `project and local cannot configure auto mode or its reviewer`() {
         val settings = SettingsMerger.merge(listOf(
             layer(ConfigSource.User, """{"autoMode":{"environment":["internal"],"hard_deny":["Bash(rm *)"],"soft_deny":["deploy"],"allow":["test"]},"autoModeReviewer":"a/small"}"""),

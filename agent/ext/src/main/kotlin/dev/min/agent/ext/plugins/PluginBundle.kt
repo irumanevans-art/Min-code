@@ -88,9 +88,12 @@ class PluginBundle(
             val enabledSources = linkedMapOf<String, ConfigSource>()
             val enabled = linkedMapOf<String, Boolean>()
             settings.layers.forEach { layer -> layer.enabledPlugins.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = layer.source } }
+            // 同时启用表示已有个人授权，项目重复声明不能把它降为项目插件。
+            settings.layers.filter { it.source == ConfigSource.User }.forEach { layer -> layer.enabledPlugins.filterValues { it }.keys.forEach { enabledSources[it] = ConfigSource.User } }
             val managed = settings.layers.lastOrNull { it.source == ConfigSource.Managed }
             managed?.enabledPlugins?.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = ConfigSource.Managed }
-            val disabledDependencies = settings.layers.flatMap { it.enabledPlugins.filterValues { value -> !value }.keys }.toSet()
+            // 托管层已覆盖最终值；普通低层的 false 不能否决更高层明确启用的依赖。
+            val disabledDependencies = enabled.filterValues { !it }.keys.toSet()
             val scopes = linkedMapOf<String, String?>()
             val inlineRoots = mutableSetOf<String>()
             val cacheRoot = canonical(GuestPath(GuestPaths.join(home.value, ".claude/plugins/cache"))).value.trimEnd('/')
@@ -158,7 +161,16 @@ class PluginBundle(
                 inlineRoots += canonical(it).value
                 candidates += PluginRequest(it.value, null, enabledPlugins = enabled, sideload = true, disabledDependencies = disabledDependencies)
             }
-            val batch = PluginLoader(fs, canonical).loadAll(candidates, managed?.enabledPlugins?.keys.orEmpty().map { it.substringBefore('@') }.toSet())
+            val acceptedCandidates = candidates.filter { request ->
+                val realRoot = canonical(GuestPath(request.root)).value
+                val source = enabledSources[request.ref?.id]
+                val projectEnabled = source in setOf(ConfigSource.Project, ConfigSource.Local) || scopes[realRoot] in setOf("project", "local")
+                val accepted = request.sideload || !projectEnabled || trust(cwd)
+                // 信任前连正文和默认设置也不能装入会话，不能只关掉 hooks / MCP。
+                if (!accepted) io.notes += "plugin:${request.ref?.id ?: request.root} 启用来源所属工作区未信任，整个插件未加载"
+                accepted
+            }
+            val batch = PluginLoader(fs, canonical).loadAll(acceptedCandidates, managed?.enabledPlugins?.keys.orEmpty().map { it.substringBefore('@') }.toSet())
             val notes = (batch.errors + batch.overrides + batch.plugins.flatMap { it.warnings }).toMutableList()
             val skillDefs = mutableListOf<SkillDef>()
             val commandDefs = mutableListOf<CommandDef>()

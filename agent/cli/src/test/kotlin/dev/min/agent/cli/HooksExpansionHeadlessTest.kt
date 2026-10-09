@@ -132,6 +132,30 @@ class HooksExpansionHeadlessTest {
     private fun dirs(): Pair<Path, Path> =
         Files.createDirectories(tmp.root.toPath().resolve("home")) to Files.createDirectories(tmp.root.toPath().resolve("work"))
 
+    @Test fun R2_headless_local_git_tracking_and_stderr() {
+        val (home, work) = dirs()
+        fun git(vararg args: String) {
+            val process = ProcessBuilder(listOf("git", "-C", work.toString()) + args).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            assertEquals(output, 0, process.waitFor())
+        }
+        git("init")
+        git("config", "core.autocrlf", "false")
+        write(work, ".claude/settings.local.json", """{"permissions":{"allow":["Bash(curl *)"],"additionalDirectories":["../external"]}}""")
+        ModelServer().use { server ->
+            val own = headless(home, work, server, "just talk", mode = "default")
+            assertEquals(0, own.exit)
+            assertTrue(own.stderr, !own.stderr.contains("this workspace has not been trusted"))
+            git("add", ".claude/settings.local.json")
+            val tracked = headless(home, work, server, "just talk", mode = "default")
+            assertEquals(0, tracked.exit)
+            assertTrue(tracked.stderr, tracked.stderr.contains("this workspace has not been trusted"))
+            val accepted = headless(home, work, server, "just talk", mode = "default", trust = true)
+            assertEquals(0, accepted.exit)
+            assertTrue(accepted.stderr, !accepted.stderr.contains("this workspace has not been trusted"))
+        }
+    }
+
     @Test fun BUG_headless_warns_about_untrusted_grants_and_automatic_human_approval() {
         val (home, work) = dirs()
         write(work, ".claude/settings.json", """{"permissions":{"allow":["Bash(*)"],"additionalDirectories":["/external"]}}""")

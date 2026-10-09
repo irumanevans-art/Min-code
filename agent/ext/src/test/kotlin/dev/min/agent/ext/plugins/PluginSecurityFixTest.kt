@@ -67,7 +67,8 @@ Inspect
             fs.put("/work/.claude/$file", """{"enabledPlugins":{"audit@m":true}}""")
             val blocked = bundle(fs)
             assertTrue(file, blocked.hookSources.isEmpty())
-            assertFalse(file, blocked.mcpSources().single().trusted)
+            assertTrue(file, blocked.mcpSources().isEmpty())
+            assertTrue(file, blocked.batch.plugins.isEmpty())
             assertFalse(bundle(fs, trust = true).hookSources.isEmpty())
         }
         val fs = FakeFs(); installed(fs)
@@ -100,17 +101,62 @@ Inspect
         assertTrue(result.errors.any { "disabled" in it })
     }
 
-    @Test fun BUG_any_layer_false_blocks_dependency_despite_higher_true(): Unit = runBlocking {
+    @Test fun R2_final_true_allows_dependency_despite_lower_false(): Unit = runBlocking {
+        for (managed in listOf(false, true)) {
         val fs = FakeFs().apply {
             put("/home/.claude/settings.json", """{"enabledPlugins":{"a@m":true,"b@m":false}}""")
             put("/work/.claude/settings.local.json", """{"enabledPlugins":{"b@m":true}}""")
-            put("/etc/claude-code/managed-settings.json", """{"enabledPlugins":{"b@m":true}}""")
+            if (managed) put("/etc/claude-code/managed-settings.json", """{"enabledPlugins":{"b@m":true}}""")
             put("/home/.claude/plugins/cache/m/a/1.0/.claude-plugin/plugin.json", """{"name":"a","dependencies":["b"]}""")
             put("/home/.claude/plugins/cache/m/b/1.0/.claude-plugin/plugin.json", """{"name":"b"}""")
         }
+        val loaded = bundle(fs, trust = true)
+        assertEquals(setOf("a@m", "b@m"), loaded.batch.plugins.map { it.ref.id }.toSet())
+        assertFalse(loaded.notes.any { "disabled" in it })
+        }
+    }
+
+    @Test fun R2_user_enable_is_not_downgraded_by_project_true(): Unit = runBlocking {
+        val fs = FakeFs(); installed(fs)
+        fs.put("/home/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
+        fs.put("/work/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
         val loaded = bundle(fs)
-        assertEquals(listOf("b@m"), loaded.batch.plugins.map { it.ref.id })
-        assertTrue(loaded.notes.any { "disabled" in it })
+        assertEquals(1, loaded.batch.plugins.size)
+        assertEquals(1, loaded.hookSources.size)
+        assertTrue(loaded.mcpSources().single().trusted)
+        assertFalse(loaded.mcpSources().single().requiresApproval)
+    }
+
+    @Test fun R2_untrusted_project_plugin_loads_no_components_or_settings(): Unit = runBlocking {
+        val fs = FakeFs(); installed(fs)
+        fs.put("/work/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
+        val root = "/home/.claude/plugins/cache/m/audit/1.0.0"
+        fs.put("$root/skills/probe/SKILL.md", "---\ndescription: probe\n---\nInjected skill")
+        fs.put("$root/commands/probe.md", "Injected command")
+        fs.put("$root/agents/probe.md", "---\nname: probe\ndescription: probe\n---\nInjected agent")
+        fs.put("$root/settings.json", """{"agent":"audit:probe"}""")
+        val loaded = bundle(fs)
+        assertTrue(loaded.batch.plugins.isEmpty())
+        assertTrue(loaded.batch.settings.isEmpty())
+        assertTrue(loaded.skills.isEmpty()); assertTrue(loaded.commands.isEmpty()); assertTrue(loaded.agents.isEmpty())
+        assertTrue(loaded.styles.isEmpty()); assertTrue(loaded.hookSources.isEmpty()); assertTrue(loaded.mcpSources().isEmpty())
+        val trusted = bundle(fs, trust = true)
+        assertEquals(1, trusted.skills.size); assertEquals(1, trusted.commands.size); assertEquals(1, trusted.agents.size)
+    }
+
+    @Test fun R2_final_false_and_managed_false_both_block_dependency(): Unit = runBlocking {
+        for (managed in listOf(false, true)) {
+            val fs = FakeFs().apply {
+                put("/home/.claude/settings.json", """{"enabledPlugins":{"a@m":true,"b@m":true}}""")
+                put("/work/.claude/settings.local.json", """{"enabledPlugins":{"b@m":${managed}}}""")
+                if (managed) put("/etc/claude-code/managed-settings.json", """{"enabledPlugins":{"b@m":false}}""")
+                put("/home/.claude/plugins/cache/m/a/1.0/.claude-plugin/plugin.json", """{"name":"a","dependencies":["b"]}""")
+                put("/home/.claude/plugins/cache/m/b/1.0/.claude-plugin/plugin.json", """{"name":"b"}""")
+            }
+            val loaded = bundle(fs, trust = true)
+            assertTrue(loaded.batch.plugins.isEmpty())
+            assertTrue(loaded.notes.any { "disabled" in it })
+        }
     }
 
     @Test fun BUG_sideload_replaces_installed_namespace_and_is_trusted(): Unit = runBlocking {
@@ -215,12 +261,12 @@ a
     @Test fun BUG_project_plugin_mcp_requires_individual_approval(): Unit = runBlocking {
         val fs = FakeFs(); installed(fs)
         fs.put("/work/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
-        suspend fun gate(trust: Boolean): dev.min.agent.ext.mcp.McpGate {
+        suspend fun gate(trust: Boolean): dev.min.agent.ext.mcp.McpGate? {
             val settings = SettingsLoader.load(fs, cwd, home).merged
             val loaded = bundle(fs, trust = trust)
-            return dev.min.agent.ext.mcp.McpConfigLoader.load(fs, home, cwd, settings, trust, { null }, plugins = loaded.mcpSources()).servers.single().gate
+            return dev.min.agent.ext.mcp.McpConfigLoader.load(fs, home, cwd, settings, trust, { null }, plugins = loaded.mcpSources()).servers.singleOrNull()?.gate
         }
-        assertEquals(dev.min.agent.ext.mcp.McpGate.Untrusted, gate(false))
+        assertNull(gate(false))
         assertEquals(dev.min.agent.ext.mcp.McpGate.NeedsApproval, gate(true))
         fs.put("/work/.claude/settings.local.json", """{"enabledMcpjsonServers":["plugin:audit:api"]}""")
         assertEquals(dev.min.agent.ext.mcp.McpGate.Enabled, gate(true))

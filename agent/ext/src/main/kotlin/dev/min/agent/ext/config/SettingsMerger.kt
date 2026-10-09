@@ -56,7 +56,7 @@ internal object SettingsMerger {
                     notes += "跳过 ${layer.path} 的 allow 规则 $text：工具名通配必须锚定字面的 MCP 服务器，不能通配服务器段"
                     continue
                 }
-                rules += RuleSpec(kind, text, layer.source.label, layer.baseDir)
+                rules += RuleSpec(kind, text, layer.source.label, layer.baseDir, layer.path)
             }
         }
         if (droppedByManagedOnly > 0) {

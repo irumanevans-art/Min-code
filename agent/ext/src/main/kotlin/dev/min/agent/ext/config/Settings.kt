@@ -26,7 +26,7 @@ enum class RuleSpecKind { Allow, Ask, Deny }
  * project / local 层 = 会话的主工作目录（cwd，**不是**仓库根，也不是 `.claude/`）；user 层 = `~/.claude`；
  * managed 层文档没写，取 managed 文件所在目录（与文档里 `--settings <file>` 的写法同类：文件所在目录）。
  */
-data class RuleSpec(val kind: RuleSpecKind, val text: String, val source: String, val baseDir: GuestPath)
+data class RuleSpec(val kind: RuleSpecKind, val text: String, val source: String, val baseDir: GuestPath, val settingsPath: GuestPath? = null)
 
 /** `permissions` 对象里 Min 现在用得到的键。其余键（如 `blockReadsOutsideWorkingDirectories`）仍在 [SettingsLayer.raw] 里 */
 data class PermissionsSettings(
@@ -126,12 +126,13 @@ class MergedSettings internal constructor(
      * 求值顺序（deny → ask → allow）与同文件内 `!` 取反的语义是 policy 的事，这里只保证不丢、不串层。
      * `allowManagedPermissionRulesOnly` 为真时只剩 managed 层的规则。
      */
-    fun ruleSpecs(trustProject: Boolean = true): List<RuleSpec> =
-        rules.filterNot { !trustProject && it.source == ConfigSource.Project.label && it.kind == RuleSpecKind.Allow }
+    fun ruleSpecs(trustProject: Boolean = true, trustedLocal: Set<GuestPath> = emptySet()): List<RuleSpec> =
+        rules.filterNot { !trustProject && it.kind == RuleSpecKind.Allow &&
+            (it.source == ConfigSource.Project.label || it.source == ConfigSource.Local.label && it.settingsPath !in trustedLocal) }
 
     /** 只扩展文件访问，不能把附加目录当成配置发现根。相对路径从会话 cwd 解析。 */
-    fun fileAccessDirectories(cwd: GuestPath, home: GuestPath, trustProject: Boolean = true): List<GuestPath> =
-        layers.filter { trustProject || it.source != ConfigSource.Project }.flatMap { it.permissions.additionalDirectories }.filter { it.isNotBlank() }.map { target ->
+    fun fileAccessDirectories(cwd: GuestPath, home: GuestPath, trustProject: Boolean = true, trustedLocal: Set<GuestPath> = emptySet()): List<GuestPath> =
+        layers.filter { trustProject || it.source != ConfigSource.Project && (it.source != ConfigSource.Local || it.path in trustedLocal) }.flatMap { it.permissions.additionalDirectories }.filter { it.isNotBlank() }.map { target ->
             val absolute = when {
                 target == "~" -> home.value
                 target.startsWith("~/") -> home.value + "/" + target.removePrefix("~/")

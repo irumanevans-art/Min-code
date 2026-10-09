@@ -111,8 +111,16 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             is JsonObject -> value.values.any(::contains)
             is JsonArray -> value.any(::contains)
             is JsonPrimitive -> value.isString && (
-                Regex("(?:[A-Za-z]:[\\\\/]|/|~/)[^\\s\"']+").findAll(value.content).any { match ->
-                    val path = match.value.replace('\\', '/').let { if (it.startsWith("~/")) context.home.value + it.removePrefix("~") else it }
+                // URL 的 scheme 与远端路径不是本机文件名；否则 https 的 s:/ 会令整次审查失败。
+                Regex("(?:[A-Za-z]:[\\\\/]|/|~/)[^\\s\"']+").findAll(value.content
+                    .replace(Regex("(?i)\\bfile://(?:localhost)?(?=/)"), "")
+                    .replace(Regex("\\b[A-Za-z][A-Za-z0-9+.-]*://[^\\s\"']+"), " ")).any { match ->
+                    val raw = match.value.replace('\\', '/')
+                    val path = when {
+                        raw.startsWith("~/") -> context.home.value + raw.removePrefix("~")
+                        Regex("^[A-Za-z]:/").containsMatchIn(raw) -> "/" + raw[0].lowercaseChar() + raw.drop(2)
+                        else -> raw
+                    }
                     credentialPath(GuestPath(path), context, includeAncestors = call.name == "Bash")
                 } || listOf("file_path", "path").any { key ->
                     (call.input[key] as? JsonPrimitive)?.content?.let { path ->

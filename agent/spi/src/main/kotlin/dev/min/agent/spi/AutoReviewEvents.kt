@@ -15,6 +15,7 @@ data class AutoModeConfig(
     val allow: List<String> = emptyList(),
     /** 空数组表示主动替换默认列表，必须与未配置区分；旧日志没有此字段时保留默认。 */
     val explicitSections: Set<String> = emptySet(),
+    val classifyAllShell: Boolean = false,
 )
 
 /** 目录外模型必须由用户描述能力，不能借会话模型的能力猜测。 */

@@ -33,7 +33,11 @@ private fun MergedSettings.parseAutoReviewSettings(): AutoReviewSettingsLoaded {
     }
     val sections = trusted.flatMap { (it.raw["autoMode"] as? JsonObject)?.keys.orEmpty() }
         .filter { it in setOf("environment", "hard_deny", "soft_deny", "allow") }.toSet()
-    return AutoReviewSettingsLoaded(AutoModeConfig(entries("environment"), entries("hard_deny"), entries("soft_deny"), entries("allow"), sections), reviewer)
+    val arrays = AutoModeConfig(entries("environment"), entries("hard_deny"), entries("soft_deny"), entries("allow"), sections)
+    val classifyAllShell = trusted.mapNotNull { layer -> (layer.raw["autoMode"] as? JsonObject)?.get("classifyAllShell")?.let {
+        (it as? JsonPrimitive)?.takeUnless { p -> p.isString }?.booleanOrNull ?: error("autoMode.classifyAllShell 必须是 Boolean")
+    } }.lastOrNull() ?: false
+    return AutoReviewSettingsLoaded(arrays.copy(classifyAllShell = classifyAllShell), reviewer)
 }
 
 fun autoReviewSettingsOf(settings: MergedSettings): AutoReviewSettingsLoaded = settings.autoReviewSettings()

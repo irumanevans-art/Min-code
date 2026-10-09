@@ -61,6 +61,7 @@ data class AgentDefinition(
     val hooks: kotlinx.serialization.json.JsonObject? = null,
     val hooksLayer: String? = null,
     val isolationWorktree: Boolean = false,
+    val source: String = "builtin",
 )
 
 object BuiltinAgents {
@@ -125,7 +126,7 @@ internal fun forkSeed(parent: SessionState, callId: CallId, prompt: String): For
     val inherited = parent.history.subList(parent.forkBoundary(at), at + 1)
     val messages = inherited.map { entry ->
         when (entry) {
-            is HistoryEntry.User -> SeedMessage(entry.messageId, Role.User, entry.parts)
+            is HistoryEntry.User -> SeedMessage(entry.messageId, Role.User, entry.parts, entry.origin)
             is HistoryEntry.Assistant -> SeedMessage(entry.messageId, Role.Assistant, entry.parts)
         }
     }
