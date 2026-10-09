@@ -179,6 +179,31 @@ class ModelHooksSessionTest {
     }
 
     @Test
+    fun `model 点名解析失败是非阻断错误，不静默换模型`() = run {
+        write("/root/.claude/settings.json", settings(
+            """{"PreToolUse": [{"matcher": "Bash", "hooks": [
+                {"type": "prompt", "prompt": "判断安不安全", "model": "nope/no-such-model"}
+            ]}]}""",
+        ))
+        val model = RoutingModel { req ->
+            when {
+                // 点名模型解析失败时评估请求根本不该发出去；发了就说明静默退回了别的模型
+                req.system.any { it.contains("hook evaluator") } -> reply(TextPart("""{"ok": false, "reason": "静默换模型的否决"}"""), usage = Usage(inputTokens = 100))
+                req.lastText() == "跑" -> reply(bashCall("c1"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("收到"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("跑")
+        // 非阻断：评估失败不拦调用
+        assertTrue("点名模型解析失败不该拦调用", !rt.state.value.toolResults.getValue(CallId("c1")).isError)
+        val ran = hookRans(rt).single { it.event == "PreToolUse" }
+        assertTrue("解析失败要报出来、点名要看得见：${ran.problems}",
+            ran.problems.any { it.contains("no-such-model") && it.contains("失败") })
+    }
+
+    @Test
     fun `prompt hook 没按口径回复只是非阻断错误，工具照常跑`() = run {
         write("/root/.claude/settings.json", settings(
             """{"PreToolUse": [{"matcher": "Bash", "hooks": [

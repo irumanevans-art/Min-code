@@ -125,14 +125,20 @@ internal class ModelHookRunner(private val rt: SessionRuntime) {
      */
     private suspend fun evaluatePrompt(handler: HookHandler, stdin: JsonObject): PromptHookOutcome {
         val state = rt.state.value
-        val named = handler.model?.let { name ->
-            val ref = if ('/' in name) ModelRef(name.substringBefore('/'), name.substringAfter('/'))
-            else ModelRef(state.settings.model.providerId, name)
-            dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(ref) }.getOrNull()
+        val namedModel = handler.model
+        val resolved = if (namedModel != null) {
+            val ref = if ('/' in namedModel) ModelRef(namedModel.substringBefore('/'), namedModel.substringAfter('/'))
+            else ModelRef(state.settings.model.providerId, namedModel)
+            // 点名了模型就必须解析得出来：静默退回 fastModel 会让门禁跑在另一个模型上，配置错误没人看得见
+            dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(ref) }.getOrElse { e ->
+                return PromptHookOutcome.Failed(
+                    "点名模型 $namedModel 解析失败：" + (e.message?.lineSequence()?.firstOrNull() ?: e.javaClass.simpleName),
+                )
+            }
+        } else {
+            deps.fastModel?.let { ref -> dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(ref) }.getOrNull() }
+                ?: deps.models.resolve(state.settings.model)
         }
-        val resolved = named
-            ?: deps.fastModel?.let { ref -> dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(ref) }.getOrNull() }
-            ?: deps.models.resolve(state.settings.model)
         val timeoutMs = ((handler.timeout ?: PROMPT_HOOK_DEFAULT_TIMEOUT).coerceIn(1, HookDriver.MAX_TIMEOUT)) * 1_000L
         val request = ModelRequest(
             profile = resolved.profile,
