@@ -379,3 +379,12 @@ sealed interface CallPhase {
 
     data class Done(val result: ToolResult) : CallPhase
 }
+
+/**
+ * 上一回合是正常结束的（或还没有过回合）：来了报告 / 消息可以自动开回合接着干。
+ * 用户、预算、hook 刚停下的会话不行——停了就是停了，输入只进收件箱等人决定（[SessionHub.deliver]、[SessionRuntime.isParked]）
+ */
+internal fun SessionState.lastTurnAllowsAutoStart(): Boolean {
+    val outcome = lastTurn?.outcome
+    return outcome == null || outcome == TurnOutcome.Completed
+}

@@ -218,7 +218,8 @@ internal class CronEngine(
     // ---- 盯着会话状态：回合结束就触发排着的任务，并结束这次运行的记账 ----
 
     private suspend fun onState(rt: SessionRuntime, entry: Attached, state: SessionState) {
-        val idleLooking = state.turn == null && state.inbox.isEmpty()
+        // 收件箱里有东西、但没有什么会自己把它接走（上一回合是被停下的）也算空闲：否则这次运行的记账撤不掉
+        val idleLooking = state.turn == null && (state.inbox.isEmpty() || !state.lastTurnAllowsAutoStart())
         if (idleLooking && (rt.cronRun != null || state.crons.any { it.active }) && entry.idleCheckQueued.compareAndSet(false, true)) {
             scope.launch {
                 // 状态上看空闲了，回合 Job 可能还没收尾：等它真的结束再判（isQuiescent 看的是 Job）
@@ -269,7 +270,7 @@ internal class CronEngine(
 
     /** 这次运行的记账要等整棵树都安静了才结束 */
     private fun clearRunIfQuiet(rt: SessionRuntime) {
-        if (rt.cronRun != null && rt.isQuiescent() && hub.treeTurnsIdle(rt.sessionId)) rt.cronRun = null
+        if (rt.cronRun != null && (rt.isQuiescent() || rt.isParked()) && hub.treeTurnsIdle(rt.sessionId)) rt.cronRun = null
     }
 
     private suspend fun recordStop(rt: SessionRuntime, task: CronTask, run: CronRun, problem: String) {

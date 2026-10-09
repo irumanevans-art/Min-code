@@ -1094,8 +1094,7 @@ class SessionHub(
         if (summary.rewound || ended.turnId in summary.reportedTurns) return
         child.worktrees.finishChild()
         val report = Reports.render(child.sessionId, summary, origin.agentType, origin.fork, ended, child.state.value)
-        val parentLast = parent.state.value.lastTurn?.outcome
-        val parentHealthy = parentLast == null || parentLast == TurnOutcome.Completed
+        val parentHealthy = parent.state.value.lastTurnAllowsAutoStart()
         val restarted = (ended.outcome as? TurnOutcome.Interrupted)?.by == InterruptedBy.ProcessDeath
         // 被队友的邮件叫起来的成员回合：报告只进收件箱，不唤醒负责人（见 TeamCoordinator.peerTurns）。每个回合都要取，免得标记留到下一回合
         val peerTriggered = teams.takePeerTurn(child.sessionId)
