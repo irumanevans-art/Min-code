@@ -56,7 +56,14 @@ internal class ModelHookRunner(private val rt: SessionRuntime) {
             val hub = rt.hub ?: return@runVerdicts interpretPrompt(
                 event, handler, PromptHookOutcome.Failed("没有 Hub，起不了 hook agent"),
             )
-            val finalText = withTimeoutOrNull(timeoutMs) { hub.runHookAgent(rt, prompt) }
+            val finalText = try {
+                withTimeoutOrNull(timeoutMs) { hub.runHookAgent(rt, prompt) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // L3：父回合被取消（用户打断）时，hook agent 的回合在 Hub 自己的作用域里跑、不会跟着取消——
+                // 没人停它就一直烧 token。这里显式停掉（NonCancellable：取消路径上也要能执行），再把取消原样交回去
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { hub.stopHookAgent(rt) }
+                throw e
+            }
             if (finalText == null) hub.stopHookAgent(rt) // 超时停掉还在跑的子回合（runHookAgent 等的只是回合结束）
             interpretPrompt(event, handler, if (finalText == null) PromptHookOutcome.TimedOut else PromptHookOutcome.Done(finalText))
         }

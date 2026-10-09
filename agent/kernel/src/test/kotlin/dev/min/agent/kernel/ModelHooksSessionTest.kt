@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
@@ -59,6 +60,9 @@ class ModelHooksSessionTest {
     val tmp = TemporaryFolder()
 
     private val scopes = mutableListOf<CoroutineScope>()
+
+    /** 与测试主体并行的协程作用域（跑 say() 这类要等回合收尾的调用，好趁 hook agent 在跑时抓它） */
+    private fun fork(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
 
     @After
     fun tearDown() = scopes.forEach { it.cancel() }
@@ -254,12 +258,14 @@ class ModelHooksSessionTest {
             ]}]}""",
         ))
         val evals = java.util.concurrent.atomic.AtomicLong()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val model = RoutingModel { req ->
             when {
-                // hook agent 子会话的请求：系统提示里有 verifier 的说明。第一次否决（回合继续），之后放行
+                // hook agent 子会话的请求：系统提示里有 verifier 的说明。第一次否决（回合继续）——先拴在闸上，
+                // 让测试有确定的窗口抓到这个跑完即卸下的子会话；之后放行
                 req.system.any { it.contains("hook verifier") } ->
                     if (evals.incrementAndGet() == 1L) {
-                        reply(TextPart("""{"ok": false, "reason": "还有两个测试没过"}"""), usage = Usage(inputTokens = 500, outputTokens = 50))
+                        gated(gate, reply(TextPart("""{"ok": false, "reason": "还有两个测试没过"}"""), usage = Usage(inputTokens = 500, outputTokens = 50)))
                     } else {
                         reply(TextPart("""{"ok": true}"""), usage = Usage(inputTokens = 500, outputTokens = 20))
                     }
@@ -269,17 +275,52 @@ class ModelHooksSessionTest {
         }
         val h = hub(model)
         val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
-        rt.say("做事")
-        // 第一次停被 agent hook 打回去（Block），模型接着回应了理由；第二轮 Stop 不再拦（脚本走完了）……
-        // 路由上「还有两个测试没过」的回应是一次 TextPart，之后回合再停时 hook 脚本已耗尽 → RoutingModel 会抛错。
-        // 改成：回应完理由后直接断言回合的续跑发生过
+        val done = java.util.concurrent.atomic.AtomicBoolean()
+        fork().launch { rt.say("做事"); done.set(true) }
+        // 趁在跑抓住子会话（跑完就被卸下）；之后用捕获的运行时与它的日志断言
+        val child = awaitHookAgent(h)
+        gate.complete(Unit)
+        while (!done.get()) kotlinx.coroutines.delay(10)
+        // 第一次停被 agent hook 打回去（Block），模型接着回应了理由；第二轮 Stop 不再拦（脚本走完了）
         val turns = hookRans(rt).count { it.event == "Stop" }
         assertTrue("Stop 的 agent hook 跑过并落了 HooksRan", turns >= 1)
-        // hook agent 子会话在树上（来历类型 hook-agent、只读工具），它的花费进了自己的日志（model_charged）
-        val agents = h.online.value.mapNotNull { h.get(it) }.filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
-        assertTrue("hook agent 子会话在线挂着（树汇总要读它）", agents.isNotEmpty())
-        assertEquals(listOf("Read", "Grep", "Glob"), agents.first().state.value.origin?.tools)
-        assertTrue("hook agent 的模型请求经自己的账本记账（ModelCharged 落日志）", agents.first().state.value.unpricedModelCalls > 0)
+        // 来历类型 hook-agent、只读工具；花费落自己的日志（ModelCharged）；跑完从 Hub 卸下（L3）
+        assertEquals(HOOK_AGENT_TYPE, child.state.value.origin?.agentType)
+        assertEquals(listOf("Read", "Grep", "Glob"), child.state.value.origin?.tools)
+        assertTrue("hook agent 的模型请求经自己的账本记账（ModelCharged 落日志）", child.state.value.unpricedModelCalls > 0)
+        assertTrue("hook agent 跑完要从 Hub 卸下", child.sessionId !in h.online.value)
+    }
+
+    @Test
+    fun `父回合被打断时 hook agent 一起停掉并卸下`() = run {
+        write("/root/.claude/settings.json", settings(
+            """{"Stop": [{"hooks": [
+                {"type": "agent", "prompt": "确认测试都过了再停：", "timeout": 60}
+            ]}]}""",
+        ))
+        val model = RoutingModel { req ->
+            when {
+                // hook agent 的模型请求永远不回：模拟它跑个没完，看父回合被打断时它会不会被一起收掉
+                req.system.any { it.contains("hook verifier") } -> { _ -> kotlinx.coroutines.flow.flow { kotlinx.coroutines.awaitCancellation() } }
+                else -> reply(TextPart("干完了"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val done = java.util.concurrent.atomic.AtomicBoolean()
+        fork().launch { rt.say("做事"); done.set(true) }
+        val child = awaitHookAgent(h)
+        // 注册与回合启动之间有空窗（全量负载下更宽）：等回合真开起来再打断
+        kotlinx.coroutines.withTimeout(5_000) { child.state.first { it.turn != null } }
+        rt.interrupt()
+        rt.awaitIdle()
+        // L3：打断父回合必须连着停掉 hook agent（它挂在 Hub 自己的作用域里，没人停就一直烧 token）。
+        // 卸下发生在子回合收尾之后，这里轮询等它离开在线表，不跟收尾的先后顺序赌运气
+        kotlinx.coroutines.withTimeout(5_000) {
+            child.state.first { it.turn == null }
+            while (child.sessionId in h.online.value) kotlinx.coroutines.delay(10)
+        }
+        assertTrue("停完要卸下", child.sessionId !in h.online.value)
     }
 
     // ---- M3：hook agent 的继承面 ----
@@ -290,11 +331,13 @@ class ModelHooksSessionTest {
             """{"permissions": {"deny": ["Read(./secret.txt)"]},
                 "hooks": {"Stop": [{"hooks": [{"type": "agent", "prompt": "收尾前确认：", "timeout": 10}]}]}}""")
         val reads = java.util.concurrent.atomic.AtomicLong()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val model = RoutingModel { req ->
             when {
-                // hook agent 子会话：先试图读被 deny 的文件，读到结果（或被拒）后交 JSON 结论
+                // hook agent 子会话：先试图读被 deny 的文件，读到结果（或被拒）后交 JSON 结论。
+                // 第一个请求拴在闸上，测试抓稳子会话再放行
                 req.system.any { it.contains("hook verifier") } -> when (reads.incrementAndGet()) {
-                    1L -> reply(ToolCallPart(CallId("r1"), "Read", JsonObject(mapOf("file_path" to JsonPrimitive("/work/secret.txt")))), stop = StopReason.ToolUse)
+                    1L -> gated(gate, reply(ToolCallPart(CallId("r1"), "Read", JsonObject(mapOf("file_path" to JsonPrimitive("/work/secret.txt")))), stop = StopReason.ToolUse))
                     else -> reply(TextPart("""{"ok": true}"""), usage = Usage(inputTokens = 500))
                 }
                 else -> reply(TextPart("干完了"))
@@ -302,11 +345,12 @@ class ModelHooksSessionTest {
         }
         val h = hub(model)
         val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
-        rt.say("做事")
-        val agents = h.online.value.mapNotNull { h.get(it) }.filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
-        assertTrue("hook agent 跑过了", agents.isNotEmpty())
-        val child = agents.first()
-        // deny 规则继承进子会话：DontAsk 也不放行 deny
+        val done = java.util.concurrent.atomic.AtomicBoolean()
+        fork().launch { rt.say("做事"); done.set(true) }
+        val child = awaitHookAgent(h)
+        gate.complete(Unit)
+        while (!done.get()) kotlinx.coroutines.delay(10)
+        // deny 规则继承进子会话：DontAsk 也不放行 deny（断言用捕获的运行时——它跑完就被卸下，在线表里没有了）
         val result = child.state.value.toolResults[CallId("r1")]
         assertTrue("hook agent 必须守父会话的 deny 规则（读到就被拦）：$result", result?.isError == true)
     }
@@ -318,10 +362,11 @@ class ModelHooksSessionTest {
                 "Stop": [{"hooks": [{"type": "agent", "prompt": "收尾前确认：", "timeout": 10}]}]}""",
         ))
         val reads = java.util.concurrent.atomic.AtomicLong()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val model = RoutingModel { req ->
             when {
                 req.system.any { it.contains("hook verifier") } -> when (reads.incrementAndGet()) {
-                    1L -> reply(ToolCallPart(CallId("r1"), "Read", JsonObject(mapOf("file_path" to JsonPrimitive("/work/anything.txt")))), stop = StopReason.ToolUse)
+                    1L -> gated(gate, reply(ToolCallPart(CallId("r1"), "Read", JsonObject(mapOf("file_path" to JsonPrimitive("/work/anything.txt")))), stop = StopReason.ToolUse))
                     else -> reply(TextPart("""{"ok": true}"""))
                 }
                 else -> reply(TextPart("干完了"))
@@ -329,14 +374,16 @@ class ModelHooksSessionTest {
         }
         val h = hub(model)
         val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
-        rt.say("做事")
+        val done = java.util.concurrent.atomic.AtomicBoolean()
+        fork().launch { rt.say("做事"); done.set(true) }
+        val child = awaitHookAgent(h)
+        gate.complete(Unit)
+        while (!done.get()) kotlinx.coroutines.delay(10)
         // 递归防护：hook agent 里不能再钩出 hook——prompt 门禁没在子会话里响，评估请求一个都没发
         assertTrue("hook agent 里不该发 prompt 评估请求（递归）",
             model.requests.none { req -> req.system.any { it.contains("hook evaluator") } })
-        val agents = h.online.value.mapNotNull { h.get(it) }.filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
-        assertTrue("hook agent 子会话在线", agents.isNotEmpty())
-        assertTrue("hook agent 里不该有任何 HooksRan（hooks 没继承）",
-            hookRans(agents.first()).isEmpty())
+        assertTrue("hook agent 里不该有任何 HooksRan（hooks 没继承）", hookRans(child).isEmpty())
+        assertTrue("hook agent 跑完要从 Hub 卸下（L3）", child.sessionId !in h.online.value)
     }
 
     @Test
@@ -478,5 +525,22 @@ class ModelHooksSessionTest {
     private suspend fun chargedEvents(rt: SessionRuntime): List<dev.min.agent.spi.ModelCharged> {
         val store = FileSessionStore(tmp.root.toPath(), { 0L })
         return store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<dev.min.agent.spi.ModelCharged>()
+    }
+
+    /** 等 hook agent 子会话出现在 Hub 里并抓住它的运行时：它跑完就被卸下，事后在线表里找不到，得趁在跑时捕获 */
+    private suspend fun awaitHookAgent(h: SessionHub): SessionRuntime {
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (System.nanoTime() < deadline) {
+            val found = h.online.value.mapNotNull { h.get(it) }
+                .firstOrNull { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
+            if (found != null) return found
+            kotlinx.coroutines.delay(1)
+        }
+        error("5 秒内没等到 hook agent 子会话上线")
+    }
+
+    /** 把一步模型回复拴在闸上：子会话在首个请求上挂住，测试就有确定的窗口去抓它的运行时（不然跑完即卸下，轮询会错过） */
+    private fun gated(gate: kotlinx.coroutines.CompletableDeferred<Unit>, step: dev.min.agent.testkit.Step): dev.min.agent.testkit.Step = { req ->
+        flow { gate.await(); emitAll(step(req)) }
     }
 }

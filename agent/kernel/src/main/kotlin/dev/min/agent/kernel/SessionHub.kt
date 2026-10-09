@@ -288,8 +288,9 @@ class SessionHub(
     /**
      * 起 hook agent 子会话并等它跑完一个回合，返回最终回复文本（没有文字给 null）。子会话只读
      * （Read / Grep / Glob，CC 原文限定）、最多 [HOOK_AGENT_MAX_TURNS] 回合、不跑 SubagentStart hook、
-     * 不写 SubagentSpawned——它不是委派，不进线程表；它的花费落自己的日志（计费点照折，本程预算、
-     * /cost 与 -p 的树汇总都算得到）。会话留在 Hub 里在线挂着（树汇总要读它），进程退出随 Hub 收尾
+     * 不写 SubagentSpawned——它不是委派，不进线程表；它的花费落自己的日志（ModelCharged，谁的账本
+     * 谁记）。跑完就从 Hub 卸下（L3）：它不在任何在线汇总里，挂着只是泄漏；日志都在磁盘上，要查随时
+     * peek。父回合被取消时由调用方（ModelHookRunner）经 [stopHookAgent] 停掉它
      */
     internal suspend fun runHookAgent(parent: SessionRuntime, prompt: String): String? {
         val ps = parent.state.value
@@ -324,17 +325,20 @@ class SessionHub(
         )
         // 等子回合结束；调用方套着超时，超时后由 stopHookAgent 收
         child.state.first { it.turn == null && it.lastTurn != null }
-        return child.state.value.history.lastOrNull { it is HistoryEntry.Assistant }
+        val text = child.state.value.history.lastOrNull { it is HistoryEntry.Assistant }
             ?.let { (it as HistoryEntry.Assistant).parts.filterIsInstance<TextPart>().joinToString("") { p -> p.text }.ifBlank { null } }
+        unload(child.sessionId)
+        return text
     }
 
-    /** hook agent 超时后停掉挂着的子回合：静音（不往父会话投报告）再打断 */
+    /** hook agent 超时或父回合被取消后收掉挂着的子回合：静音（不往父会话投报告）再打断，收完卸下 */
     internal suspend fun stopHookAgent(parent: SessionRuntime) {
         val agents = subtreeOnline(parent.sessionId).mapNotNull { runtimes[it] }
             .filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
         agents.forEach { child -> child.state.value.turn?.let { quietReports += child.sessionId to it.turnId } }
         agents.forEach { it.interrupt() }
         agents.forEach { it.awaitIdle() }
+        agents.forEach { unload(it.sessionId) }
     }
 
     /**
