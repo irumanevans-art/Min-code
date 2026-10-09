@@ -893,7 +893,7 @@
   <string name="about_check_update_install_failed">Could not start the installer</string>
   <string name="about_whats_new">What\'s new</string>
   <string name="about_credits">Credits and license</string>
-  <string name="about_license_body">This app is released under GNU AGPL-3.0. The proot runtime, rootfs installer and terminal come from RikkaHub (AGPL-3.0); the proot binary comes from the Termux project and the terminal emulator from Termux\'s terminal-view; syntax highlighting and Markdown parsing come from RikkaHub\'s highlight module and JetBrains markdown. Claude Code is a product of Anthropic, and this app is not affiliated with Anthropic.\n\nWorkflow uses quickjs-kt 1.0.15 (Apache-2.0, Dokar) and QuickJS (MIT). QuickJS: Copyright (c) 2017-2021 Fabrice Bellard; Copyright (c) 2017-2021 Charlie Gordon. The upstream AAR contains no license files; this app preserves the full notices in bundled licenses assets. Sources: https://github.com/dokar3/quickjs-kt/tree/v1.0.15 and https://github.com/bellard/quickjs/tree/04be246001599f5995fa2f2d8c91a0f198d3f34c.</string>
+  <string name="about_license_body">This app is released under GNU AGPL-3.0. The proot runtime, rootfs installer and terminal come from RikkaHub (AGPL-3.0); the proot binary comes from the Termux project and the terminal emulator from Termux\'s terminal-view; syntax highlighting and Markdown parsing come from RikkaHub\'s highlight module and JetBrains markdown. Claude Code is a product of Anthropic, and this app is not affiliated with Anthropic.\n\nWorkflow uses quickjs-kt 1.0.15 (Apache-2.0, Dokar) and QuickJS (MIT), c-vector (MIT, Copyright (c) 2015 Evan Teran). QuickJS: Copyright (c) 2017-2021 Fabrice Bellard; Copyright (c) 2017-2021 Charlie Gordon. The upstream AAR contains no license files; this app preserves the full notices in bundled licenses assets. Sources: https://github.com/dokar3/quickjs-kt/tree/v1.0.15 and https://github.com/bellard/quickjs/tree/04be246001599f5995fa2f2d8c91a0f198d3f34c.</string>
   <string name="about_last_crash">Last crash</string>
   <string name="about_last_error">Last error (no crash)</string>
   <string name="about_no_record">Nothing recorded.</string>
@@ -1357,9 +1357,9 @@
     <string name="duration_minutes">%1$d min</string>
     <string name="duration_hours">%1$d h</string>
     <string name="duration_days">%1$d days</string>
-<string name="workflow_remember_project">Do not ask again in this project</string>
-<string name="workflow_view_script">View script</string>
 <string name="settings_workflows_title">Dynamic workflows</string>
 <string name="settings_workflows_on">Enabled for new runs</string>
 <string name="settings_workflows_off">Disabled for new runs</string>
+<string name="workflow_remember_project">Do not ask again in this project</string>
+<string name="workflow_view_script">View script</string>
 </resources>

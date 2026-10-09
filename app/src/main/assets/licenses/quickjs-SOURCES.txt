@@ -15,3 +15,8 @@ Apache-2.0 license files alongside this source attribution.
 
 发布的 Android AAR 仅含原生二进制，不含 QuickJS C 源码或许可声明。
 本应用随包保留上游 MIT 与 Apache-2.0 完整声明，并在许可页公开来源。
+
+c-vector (JNI static dependency) / JNI 静态依赖
+Copyright (c) 2015 Evan Teran — MIT
+https://github.com/eteran/c-vector/blob/774773d/LICENSE
+Full notice: c-vector-MIT.txt / 完整声明见 c-vector-MIT.txt
