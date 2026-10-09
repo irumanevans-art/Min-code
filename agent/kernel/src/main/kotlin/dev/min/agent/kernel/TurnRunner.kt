@@ -142,7 +142,12 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val requested = events.filterIsInstance<dev.min.agent.spi.WorkflowRequested>().filter { it.input in workflowInputs }
         val interrupted = if (requested.isEmpty() && trigger == TurnTrigger.Resume) {
             val completed = events.filterIsInstance<dev.min.agent.spi.WorkflowRunCompleted>().map { it.runId }.toSet()
-            events.filterIsInstance<dev.min.agent.spi.WorkflowRunStarted>().lastOrNull { it.runId !in completed }
+            events.filterIsInstance<dev.min.agent.spi.WorkflowRunStarted>().lastOrNull { run ->
+                run.turnId != null && run.turnId == rt.state.value.lastTurn?.turnId &&
+                    rt.state.value.lastTurn?.outcome is TurnOutcome.Interrupted &&
+                    (run.runId !in completed || events.filterIsInstance<dev.min.agent.spi.WorkflowRunCompleted>()
+                        .lastOrNull { it.runId == run.runId }?.status == "cancelled")
+            }
         } else null
         val calls = requested.map { request -> request.input to kotlinx.serialization.json.buildJsonObject {
             put("source", kotlinx.serialization.json.JsonPrimitive(request.source))

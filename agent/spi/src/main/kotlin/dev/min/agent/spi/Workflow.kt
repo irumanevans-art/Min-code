@@ -43,6 +43,7 @@ data class WorkflowApproved(val cwd: GuestPath, val hash: String) : SessionEvent
 data class WorkflowRunStarted(
     val runId: String, val name: String, val source: String, val hash: String,
     val args: JsonElement? = null, val concurrency: Int = 16, val attempts: Int = 5,
+    val turnId: dev.min.agent.protocol.TurnId? = null,
 ) : SessionEvent
 
 @Serializable
@@ -63,4 +64,4 @@ data class WorkflowProgress(val runId: String, val kind: String, val message: St
 
 @Serializable
 @SerialName("workflow_run_completed")
-data class WorkflowRunCompleted(val runId: String, val result: JsonElement) : SessionEvent
+data class WorkflowRunCompleted(val runId: String, val result: JsonElement, val status: String = "completed") : SessionEvent

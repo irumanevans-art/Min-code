@@ -4,6 +4,8 @@ import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.spi.*
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Semaphore
@@ -92,8 +94,8 @@ internal suspend fun SessionRuntime.executeWorkflow(turnId: TurnId, callId: Call
     val run = input.resume?.let { id -> previous.filterIsInstance<WorkflowRunStarted>().lastOrNull { it.runId == id } ?: error("Unknown workflow run.") }
         ?: WorkflowRunStarted(deps.ids.next("workflow"), input.name, input.source, input.hash, input.args,
             setting("CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS")?.toIntOrNull()?.takeIf { it in 1..256 } ?: deps.workflowConcurrency,
-            setting("MAX_STRUCTURED_OUTPUT_RETRIES")?.toIntOrNull()?.takeIf { it > 0 } ?: 5)
-    require(run.hash == input.hash && run.args == input.args) { "Resume requires the original script and arguments." }
+            setting("MAX_STRUCTURED_OUTPUT_RETRIES")?.toIntOrNull()?.takeIf { it > 0 } ?: 5, turnId = turnId)
+    require(run.args == input.args) { "Resume requires the original arguments." }
     if (input.resume == null) commit(listOf(run), Durability.Sync)
     val hub = requireNotNull(hub) { "Workflow requires SessionHub." }
     val children = ConcurrentHashMap<Int, dev.min.agent.protocol.SessionId>()
@@ -114,7 +116,18 @@ internal suspend fun SessionRuntime.executeWorkflow(turnId: TurnId, callId: Call
             is DelegateResult.Started -> WorkflowAnswer("Workflow node unexpectedly ran in background.", true)
         }
     }
-    val result = engine.evaluate(run.source, run.args, host)
-    commit(listOf(WorkflowRunCompleted(run.runId, result)), Durability.Sync)
-    return ToolResult(listOf(TextPart(result.toString())))
+    try {
+        val result = engine.evaluate(input.source, run.args, host)
+        commit(listOf(WorkflowRunCompleted(run.runId, result)), Durability.Sync)
+        return ToolResult(listOf(TextPart(result.toString())))
+    } catch (e: CancellationException) {
+        // 取消也落终态，恢复只能显式针对本回合，不能被后来的无关 ▶ 捡走。
+        withContext(NonCancellable) { commit(listOf(WorkflowRunCompleted(run.runId, JsonNull, "cancelled")), Durability.Sync) }
+        throw e
+    } catch (e: Exception) {
+        try { commit(listOf(WorkflowRunCompleted(run.runId, workflowError("run_failed", e.message ?: "Workflow failed."), "failed")), Durability.Sync) }
+        catch (inner: CancellationException) { throw inner }
+        catch (inner: Exception) { e.addSuppressed(inner) }
+        throw e
+    }
 }
