@@ -25,6 +25,7 @@ import dev.min.agent.llm.anthropic.AnthropicMessagesClient
 import dev.min.agent.llm.catalog.Catalog
 import dev.min.agent.llm.openai.OpenAIChatClient
 import dev.min.agent.llm.openai.OpenAIResponsesClient
+import dev.min.agent.protocol.ModelRef
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.spi.ArtifactSink
 import dev.min.agent.spi.EventRecord
@@ -166,6 +167,7 @@ internal class DesktopApp(
         val config = config()
         fallback = resolveFallbackModels(args, Catalog.bundled(), config.settings.merged.fallbackModelSetting(), selection)
         fallback.notes.forEach { System.err.println(it) }
+        validateBudgetPricing()
         val catalog = AgentCatalog.of(config.agents)
         val interactive = args.prompt == null
         val cronEnabled = !cronDisabledBy(System::getenv)
@@ -185,6 +187,31 @@ internal class DesktopApp(
 
     /** stream-json 的 init 行用：`供应商/模型 id` */
     internal fun modelLabel(): String = "${provider.id}/${profile.ref.modelId}"
+
+    /**
+     * `--max-budget-usd` fail-closed 的启动面：设了上限，这次运行**可能用到的模型**就都得有 USD 价格——
+     * 主模型、回退链、`--fast-model`、点名的 `--auto-mode-reviewer`，一个没有就启动报错（说清是哪个）。
+     * 没价格的模型跑起来才发现的话，那笔请求核对不了，上限就成了空话；请求发出前的预检（ModelBilling）
+     * 兜底拦剩下的（比如 hook 点名的目录外模型）
+     */
+    private fun validateBudgetPricing() {
+        if (args.maxBudgetUsd == null) return
+        val unpriced = linkedSetOf<ModelRef>()
+        if (profile.pricing?.currency != "USD") unpriced += profile.ref
+        fastSelection?.let { if (it.profile.pricing?.currency != "USD") unpriced += it.profile.ref }
+        for (backup in fallback.selections.values) {
+            if (backup.profile.pricing?.currency != "USD") unpriced += backup.profile.ref
+        }
+        args.autoModeReviewer?.let { setting ->
+            val resolved = resolveReviewerSelection(dev.min.agent.spi.AutoModeReviewer(dev.min.agent.ext.config.parseReviewerRef(setting)), Catalog.bundled(), selection)
+            if (resolved.profile.pricing?.currency != "USD") unpriced += resolved.profile.ref
+        }
+        if (unpriced.isNotEmpty()) {
+            throw UsageException(
+                "设了 --max-budget-usd，但这些模型没有 USD 价格：${unpriced.joinToString("、") { it.modelId }}。" +
+                    "目录里查不到可靠价格的模型量不出 USD 花费，上限核对不了；换有 USD 定价的模型，或去掉上限。")
+        }
+    }
 
     internal fun toolNames(): List<String> = toolNamesCache
 

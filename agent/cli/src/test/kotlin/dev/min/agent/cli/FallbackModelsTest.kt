@@ -145,4 +145,21 @@ class FallbackModelsTest {
             }
         }
     }
+
+    @Test fun `--max-budget-usd fails closed at startup naming the model without a USD price`() = runBlocking {
+        withTimeout(30_000) {
+            ModelServer().use { server ->
+                val home = tmp.newFolder("home-b").toPath()
+                val cwd = tmp.newFolder("work-b").toPath()
+                // gone / backup 都是目录外的自定义模型，没有价格：设了上限就不能带着它们跑
+                val e = try {
+                    DesktopApp(parseArgs(argv(server, cwd, "--fallback-model", "backup", "--max-budget-usd", "5"), cwd), scope(), home, claudeHome = home.resolve("claude-home")).openSession()
+                    null
+                } catch (e: UsageException) { e }
+                assertTrue("设了上限、模型没 USD 价格要启动报错", e != null)
+                assertTrue("报错要点名是哪个模型：${e?.message}", e?.message?.contains("gone") == true && e?.message?.contains("backup") == true)
+                assertEquals(2, e?.exitCode)
+            }
+        }
+    }
 }
