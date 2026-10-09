@@ -312,8 +312,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     private suspend fun stopHookContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
         val state = rt.state.value
         val blocks = state.turn?.stopHookBlocks ?: 0
-        val text = if (state.subagentReport?.let { it.turnId == turnId && it.handback } == true) HANDBACK_NOTE
-            else completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val closing = completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val text = if (state.subagentReport?.let { it.turnId == turnId && it.handback } == true) closing.ifBlank { HANDBACK_NOTE }
+            else closing
         val origin = state.origin
         val (event, specific) = if (origin == null) {
             HookEvent.Stop to HookJson.encodeToJsonElement(StopInput.serializer(), StopInput(stopHookActive = blocks > 0, lastAssistantMessage = text)).jsonObject

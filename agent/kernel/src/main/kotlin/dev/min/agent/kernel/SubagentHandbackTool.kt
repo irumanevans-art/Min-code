@@ -15,13 +15,13 @@ internal class SubagentHandbackTool(private val rt: SessionRuntime) : Tool<Strin
     override val name = "SubagentHandback"
     override val traits = ToolTraits(readOnly = true)
     override val inputSchema = buildJsonObject {
-        put("type", "object"); putJsonObject("properties") { putJsonObject("report") { put("type", "string") } }
-        put("required", JsonArray(listOf(JsonPrimitive("report")))); put("additionalProperties", false)
+        put("type", "object"); putJsonObject("properties") { putJsonObject("message") { put("type", "string") } }
+        put("required", JsonArray(listOf(JsonPrimitive("message")))); put("additionalProperties", false)
     }
     override fun description(profile: HarnessProfile) = "Deliver your final report to the caller after safety review. If rejected, revise the report and call again. An approved handback ends this turn; call it alone."
     override fun parse(raw: JsonObject): ToolInput<String> {
-        val report = (raw["report"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-        return if (raw.keys == setOf("report") && !report.isNullOrBlank()) ToolInput.Valid(report) else ToolInput.Invalid("report 必须是非空文字")
+        val report = (raw["message"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        return if (raw.keys == setOf("message") && !report.isNullOrBlank()) ToolInput.Valid(report) else ToolInput.Invalid("message 必须是非空文字")
     }
     override fun permissionAsk(input: String, ctx: ToolContext) = PermissionAsk(name, "交回子 agent 报告")
     override fun run(input: String, ctx: ToolContext) = flow {

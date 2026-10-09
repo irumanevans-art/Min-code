@@ -21,8 +21,8 @@ class AutoHandbackTest {
                     block: suspend (SessionRuntime, ScriptedModel, ScriptedModel, FileSessionStore) -> Unit) = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val main = mainScript ?: ScriptedModel(
-            reply(ToolCallPart(CallId("bad"), "SubagentHandback", args("report" to "REJECTED_REPORT_RAW")), stop = StopReason.ToolUse),
-            reply(ToolCallPart(CallId("good"), "SubagentHandback", args("report" to "safe report")), stop = StopReason.ToolUse),
+            reply(ToolCallPart(CallId("bad"), "SubagentHandback", args("message" to "REJECTED_REPORT_RAW")), stop = StopReason.ToolUse),
+            reply(ToolCallPart(CallId("good"), "SubagentHandback", args("message" to "safe report")), stop = StopReason.ToolUse),
             reply(TextPart("UNREVIEWED_LAST_MESSAGE")))
         val reviewer = reviewScript ?: ScriptedModel(decision("deny"), decision("allow"))
         val ref = ModelRef("review", "small")
@@ -60,6 +60,12 @@ class AutoHandbackTest {
             val team = rt.state.value.copy(origin = rt.state.value.origin!!.copy(teamMember = true))
             assertFalse(availableTools(team, rt.deps, runtime = rt).any { it.name == "SubagentHandback" })
         }
+    }
+    @Test fun toolInputMatchesDocumentedMessageField() = run { rt, _, _, _ ->
+        val tool = SubagentHandbackTool(rt)
+        assertEquals(listOf("message"), tool.inputSchema.getValue("required").jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(tool.parse(args("message" to "final report")) is ToolInput.Valid)
+        assertTrue(tool.parse(args("report" to "final report")) is ToolInput.Invalid)
     }
     @Test fun fallbackReviewsLastMessageAndWithholdsRejectedText() {
         for (verdict in listOf("deny", "allow")) {

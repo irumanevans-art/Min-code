@@ -38,7 +38,7 @@ class AutoSpawnTest {
     @Test fun foregroundAndBackgroundUseTheSameReviewedReport() {
         for (background in listOf(false, true)) {
             val reviewer = ScriptedModel(decision("allow"), decision("allow"))
-            val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("report" to "reviewed child body")), stop = StopReason.ToolUse))
+            val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("message" to "reviewed child body")), stop = StopReason.ToolUse))
             run(reviewer, childModel = child) { hub, rt, _ ->
                 val result = hub.portFor(rt, TurnId("t"), CallId("agent")).delegate(DelegateRequest("safe task", "do local work", background = background))
                 val report = if (result is DelegateResult.Finished) result.report else {
@@ -186,7 +186,7 @@ class AutoSpawnTest {
     @Test fun foregroundAgentPostToolUseGetsHandbackNoteObject() {
         val bodies = java.util.concurrent.CopyOnWriteArrayList<String>()
         val reviewer = ScriptedModel(decision("allow"), decision("allow"), decision("allow"))
-        val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("report" to "FULL_REPORT_BODY")), stop = StopReason.ToolUse))
+        val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("message" to "FULL_REPORT_BODY")), stop = StopReason.ToolUse))
         run(reviewer, childModel = child, tools = listOf(dev.min.agent.tools.AgentTool),
             hook = HttpHookClient { bodies += it.body; HttpHookResult.Responded(200, "{}") }) { _, rt, _ ->
             rt.commit(listOf(HooksLoaded(listOf(HookSourceData("user", Json.parseToJsonElement("""{"PostToolUse":[{"matcher":"Agent","hooks":[{"type":"http","url":"https://hooks.test/post"}]}]}""").jsonObject)))), Durability.Sync)
@@ -201,7 +201,7 @@ class AutoSpawnTest {
     }
     @Test fun headlessBackgroundHandbackRefusalAbortsWithoutRawReport() {
         val reviewer = ScriptedModel(decision("allow"), reply(TextPart("refused"), stop = StopReason.Refusal))
-        val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("report" to "PRIVATE_REPORT_BODY")), stop = StopReason.ToolUse))
+        val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("message" to "PRIVATE_REPORT_BODY")), stop = StopReason.ToolUse))
         run(reviewer, childModel = child, headless = true) { hub, rt, _ ->
             val result = hub.portFor(rt, TurnId("t"), CallId("call")).delegate(DelegateRequest("task", "task", background = true)) as DelegateResult.Started
             val ended = hub.get(result.child)!!.state.first { it.lastTurn != null && it.turn == null }.lastTurn!!
