@@ -87,7 +87,10 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
 
     /** 按自己登记的 Process 判断存活，不起探测进程（N3）；表里没有 = 已被等待线程摘除 = 不在跑 */
     override suspend fun isAlive(handle: ExecHandle): Boolean? = withContext(Dispatchers.IO) {
-        running[handle.id]?.process?.isAlive ?: false
+        // 看「还在不在运行表里」而不是 `process.isAlive`：进程一退 isAlive 立刻为假，而等待线程要稍后（Android 的
+        // waitFor 是轮询的，实测要晚上几百毫秒）才记下退出码，[exitOf] 在这段空档里是 null——模拟器上后台命令结束的通知
+        // 就因此写成了「拿不到退出码」。表项在退出码记下之后才摘，两件事就一致了
+        running.containsKey(handle.id)
     }
 
     override suspend fun exitOf(handle: ExecHandle): Int? = exits[handle.id]

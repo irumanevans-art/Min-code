@@ -110,8 +110,9 @@ class LocalExec(
     /** 按自己登记的 Process 判断存活，不起探测进程（N3：每 5 秒一个 `kill -0` 会在 exec-logs 下堆积日志）。
      *  表里没有 = 进程已结束（等待线程退出时摘除）或不是本端口发的句柄：对宿主而言都不在跑 */
     override suspend fun isAlive(handle: ExecHandle): Boolean? {
-        val (process, _) = running[handle.id] ?: return false
-        return process.isAlive
+        // 看「还在不在运行表里」而不是 `process.isAlive`：进程一退 isAlive 立刻为假，但退出码要等等待线程读完管道才记下，
+        // 两者之间 [exitOf] 还是 null——后台命令结束的通知会因此写成「拿不到退出码」。表项在退出码记下之后才摘，两件事就一致了
+        return running.containsKey(handle.id)
     }
 
     override suspend fun exitOf(handle: ExecHandle): Int? = exits[handle.id]

@@ -241,4 +241,21 @@ class LocalExecTest {
         assertTrue(eventually { runBlocking { exec.exitOf(r.handle) } != null })
         runBlocking { assertTrue(exec.exitOf(r.handle) != 0) }
     }
+
+    @Test
+    fun `isAlive 一说不在了，退出码就已经查得到（不会出现「结束了却拿不到退出码」的空档）`() {
+        repeat(8) { round ->
+            val r = backgrounded("exit ${round + 1}", budget = 0)
+            // 紧挨着轮询：进程一退就读，不留等待的余地
+            var sawDead = false
+            val deadline = System.nanoTime() + 15_000_000_000L
+            while (System.nanoTime() < deadline && !sawDead) {
+                if (runBlocking { exec.isAlive(r.handle) } == false) {
+                    sawDead = true
+                    runBlocking { assertEquals("第 $round 轮", round + 1, exec.exitOf(r.handle)) }
+                }
+            }
+            assertTrue("第 $round 轮的进程应已结束", sawDead)
+        }
+    }
 }
