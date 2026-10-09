@@ -58,6 +58,8 @@ private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
 private val KEY_TEAM_MAX_CONCURRENT = intPreferencesKey("team_max_concurrent")
 private val KEY_CRON_MAX_BUDGET_USD = doublePreferencesKey("cron_max_budget_usd")
 private val KEY_WORKFLOWS_ENABLED = booleanPreferencesKey("workflows_enabled")
+/** WebSearch 的后端选择与 key：整块 JSON 经 [TokenCipher] 加密，见 [WebSearchConfig] */
+private val KEY_WEB_SEARCH = stringPreferencesKey("web_search")
 private val KEY_CRON_ENABLED = booleanPreferencesKey("cron_enabled")
 private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
 private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
@@ -315,6 +317,8 @@ data class AppSettings(
      */
     val cronEnabled: Boolean = true,
     val workflowsEnabled: Boolean = true,
+    /** Min Agent 的 WebSearch 后端。默认不设：模型看不到 WebSearch，见 [WebSearchConfig] */
+    val webSearch: WebSearchConfig = WebSearchConfig(),
     /**
      * Min Agent（自研内核的第三个会话引擎）的实验开关。release 默认关、debug 默认开（M2-B 设计 §10.2 拍板 1）：
      * 新引擎首发的通行做法，真机门槛过了再议是否改默认。**关着时一切 Min 入口都不出现**——开始面板的分段、
@@ -556,6 +560,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             cronMaxBudgetUsd = p[KEY_CRON_MAX_BUDGET_USD]?.takeIf { it.isFinite() && it > 0 },
             cronEnabled = p[KEY_CRON_ENABLED] ?: true,
             workflowsEnabled = p[KEY_WORKFLOWS_ENABLED] ?: true,
+            webSearch = decodeWebSearch(p[KEY_WEB_SEARCH]),
             minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
             lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
             deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
@@ -898,6 +903,17 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setWorkflowsEnabled(enabled: Boolean) = context.dataStore.edit { it[KEY_WORKFLOWS_ENABLED] = enabled }
 
+    /**
+     * 改 WebSearch 配置：在 DataStore 的一次 edit 里读—改—写，界面只改自己动的那几项（比如只换后端、不碰已填的 key）。
+     * 全部回到默认就删键，不留一块空的密文。密文打不开（换机恢复备份之类）当没配过：这里存的只是一个搜索 key，重填即可
+     */
+    suspend fun updateWebSearch(transform: (WebSearchConfig) -> WebSearchConfig) {
+        context.dataStore.edit { p ->
+            val next = transform(decodeWebSearch(p[KEY_WEB_SEARCH]))
+            if (next == WebSearchConfig()) p.remove(KEY_WEB_SEARCH) else p[KEY_WEB_SEARCH] = TokenCipher.encrypt(encodeWebSearchJson(next))
+        }
+    }
+
     suspend fun setCronEnabled(enabled: Boolean) =
         context.dataStore.edit { it[KEY_CRON_ENABLED] = enabled }
 
@@ -1233,6 +1249,9 @@ private fun decodeCodexProfiles(raw: String?): List<CodexProfile> {
         // 读的时候也规整一遍：旧数据 / 深链 / 手改过的密文都可能带着多余的斜杠
         .map { it.copy(baseUrl = normalizeCodexBaseUrl(it.baseUrl)) }
 }
+
+private fun decodeWebSearch(raw: String?): WebSearchConfig =
+    decodeWebSearchJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
 
 private fun decodeProfiles(raw: String?): List<ApiProfile> =
     decodeProfilesJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())

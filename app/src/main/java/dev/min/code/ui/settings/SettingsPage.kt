@@ -756,6 +756,8 @@ private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
     CronBudgetRow(valueUsd = settings.cronMaxBudgetUsd, onChange = vm::setCronMaxBudgetUsd)
     // agent 团队同时运行的成员数（1–8）
     TeamConcurrencyRow(value = settings.teamMaxConcurrent, onChange = vm::setTeamMaxConcurrent)
+    // WebSearch 后端：默认不设；key 只显示「已填」
+    WebSearchRow(config = settings.webSearch, onSave = vm::saveWebSearch)
 }
 
 @Composable

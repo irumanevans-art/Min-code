@@ -8,6 +8,7 @@ import dev.min.code.core.claudecode.ClaudeSubscription
 import dev.min.code.core.device.AgentDisplaySession
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
+import dev.min.code.core.settings.applying
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
@@ -117,6 +118,10 @@ class SettingsVM(
 
     fun setWorkflowsEnabled(enabled: Boolean) = viewModelScope.launch { store.setWorkflowsEnabled(enabled) }
     fun setCronEnabled(enabled: Boolean) = viewModelScope.launch { store.setCronEnabled(enabled) }
+
+    /** WebSearch 后端：对话框给的是「改了哪些」，已填的 key 界面拿不到也不回显，所以由商店在一次 edit 里合并 */
+    fun saveWebSearch(edit: dev.min.code.core.settings.WebSearchEdit) =
+        viewModelScope.launch { store.updateWebSearch { it.applying(edit) } }
 
     /** 定时任务单次花费上限：null = 不设（默认）。输入框已经按 [dev.min.code.core.settings.parseCronBudgetInput] 校验过 */
     fun setCronMaxBudgetUsd(value: Double?) = viewModelScope.launch { store.setCronMaxBudgetUsd(value) }

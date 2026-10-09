@@ -1475,6 +1475,22 @@
     <string name="settings_cron_budget_invalid">Enter a number above 0, or leave it empty</string>
     <string name="settings_cron_budget_save">Save</string>
     <string name="settings_cron_budget_clear">Remove the cap</string>
+    <string name="settings_web_search_title">Web search (WebSearch)</string>
+    <string name="settings_web_search_off">Off · the model has no WebSearch tool</string>
+    <string name="settings_web_search_ready_key">%1$s · key saved</string>
+    <string name="settings_web_search_ready_url">%1$s · %2$s</string>
+    <string name="settings_web_search_needs_key">%1$s · no key yet, WebSearch stays hidden</string>
+    <string name="settings_web_search_needs_url">%1$s · needs a valid address, WebSearch stays hidden</string>
+    <string name="settings_web_search_backend_none">Off</string>
+    <string name="settings_web_search_key_label">%1$s API key</string>
+    <string name="settings_web_search_key_saved">Saved. Leave blank to keep it</string>
+    <string name="settings_web_search_key_unsaved">Paste your key</string>
+    <string name="settings_web_search_key_clear">Clear the saved key</string>
+    <string name="settings_web_search_key_cleared">The saved key will be cleared on save</string>
+    <string name="settings_web_search_url_label">SearXNG address</string>
+    <string name="settings_web_search_url_invalid">Only http or https addresses, without a username, query or fragment</string>
+    <string name="settings_web_search_hint">Keys are encrypted with the Android Keystore and never shown again. Searches go from this phone to the service you pick; an instance on your LAN works too. With none picked, the model cannot search.</string>
+    <string name="settings_web_search_save">Save</string>
     <!-- M5: teamMaxConcurrent -->
     <string name="settings_team_title">Team members running at once</string>
     <string name="settings_team_subtitle">%1$d (up to %2$d) · the rest of the team waits for a slot</string>

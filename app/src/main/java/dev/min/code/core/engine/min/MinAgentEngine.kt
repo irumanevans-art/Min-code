@@ -130,12 +130,20 @@ class MinAgentEngine(
     private val trust = MinWorkspaceTrust(settings, { generation.fs }, changed = { reloadMcpOfOnlineSessions() })
     override val workspaceTrust: dev.min.code.core.engine.WorkspaceTrustControl = trust
 
+    /** 设置快照还没读出来时按「没配」：宁可这一刻看不到 WebSearch，也不拿半截配置去搜 */
+    private fun webSearchConfig() = settings.snapshot?.webSearch ?: dev.min.code.core.settings.WebSearchConfig()
+
     private val kernelDeps = MinKernelDeps.build(
         resolver, ports, snapshots = snapshots,
         // 与 Claude Code 引擎那边的 DeviceMcpRegistrar 读同一个设置：controlDevice
-        tools = minToolsWithDevice(devices, enabled = { settings.snapshot?.controlDevice == true }),
+        tools = minToolsWithDevice(
+            devices, enabled = { settings.snapshot?.controlDevice == true },
+            // WebSearch 跟设置走：配好后端的下一个请求起模型就看得到它，清掉配置后就没了（不必重建内核）
+            webSearchEnabled = { webSearchConfig().configured },
+        ),
         // 联网工具与模型请求共用一个注入的 HTTP 传输：测试替换一处就够，真机上都是宿主侧的 UrlConnection（不经 proot）
         web = dev.min.agent.host.CachedWebPort(dev.min.agent.tools.web.HtmlPageConverter, transport),
+        searchBackend = ConfiguredSearchBackend(::webSearchConfig, transport),
         mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context, mcpLoginGate),
         trustProjectHooks = trust::isTrusted,
         // 界面有 url 卡（McpUrlSheet）：显示完整 URL 与域名，点了才用 Custom Tab 打开
