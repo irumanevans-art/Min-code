@@ -149,7 +149,7 @@ class LoopbackNetworkProxy(
         fun authority(value: String, defaultPort: Int): NetworkTarget {
             val uri = URI("http://$value")
             require(uri.userInfo == null && uri.rawPath.isEmpty() && uri.query == null && uri.fragment == null)
-            val host = requireNotNull(dev.min.agent.ext.config.NetworkRules.normalizeHost(requireNotNull(uri.host)))
+            val host = requireNotNull(normalizeNetworkHost(requireNotNull(uri.host)))
             val port = if (uri.port < 0) defaultPort else uri.port
             require(host.isNotEmpty() && port in 1..65535)
             return NetworkTarget(host, port)
