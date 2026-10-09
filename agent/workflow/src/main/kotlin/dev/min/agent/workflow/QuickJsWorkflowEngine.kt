@@ -20,12 +20,16 @@ class QuickJsWorkflowEngine(private val idleTimeoutMillis: Long = 30_000) : Work
         val js = QuickJs.create(engineDispatcher)
         val inFlight = AtomicInteger()
         val lastProgress = AtomicLong(System.nanoTime())
-        val watchdog = launch(Dispatchers.IO) {
+        val progressLock = Any()
+        val watchdog = launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             while (isActive) {
                 delay(minOf(100, idleTimeoutMillis))
-                if (inFlight.get() == 0 && (System.nanoTime() - lastProgress.get()) / 1_000_000 >= idleTimeoutMillis) {
-                    js.interruptEvaluation(); break
+                val expired = synchronized(progressLock) {
+                    if (inFlight.get() == 0 && (System.nanoTime() - lastProgress.get()) / 1_000_000 >= idleTimeoutMillis) {
+                        js.interruptEvaluation(); true
+                    } else false
                 }
+                if (expired) break
             }
         }
         fun progressed() { lastProgress.set(System.nanoTime()) }
@@ -34,19 +38,20 @@ class QuickJsWorkflowEngine(private val idleTimeoutMillis: Long = 30_000) : Work
             // 默认值未必传到 JNI；显式限制原生栈，递归错误才不会杀掉宿主进程。
             js.maxStackSize = 256L * 1024
             // JNI 的 timeout 按墙钟累计；在途宿主调用（含落盘回放）必须从无进展预算排除。
-            js.function("__workflowBegin") { inFlight.incrementAndGet(); progressed(); Unit }
+            js.function("__workflowBegin") { synchronized(progressLock) { inFlight.incrementAndGet(); progressed() }; Unit }
             js.asyncFunction("__workflowAgent") { values ->
                 try { host.agent((values[0] as Number).toInt(), values[1] as String,
                     Json.parseToJsonElement(values[2] as String).jsonObject).toString() }
-                finally { progressed(); inFlight.decrementAndGet() }
+                finally { synchronized(progressLock) { progressed(); inFlight.decrementAndGet() } }
             }
             js.asyncFunction("__workflowProgress") { values ->
                 try { host.progress(values[0] as String, values[1] as String); Unit }
-                finally { progressed(); inFlight.decrementAndGet() }
+                finally { synchronized(progressLock) { progressed(); inFlight.decrementAndGet() } }
             }
             var result: JsonElement = JsonNull
             js.function("__workflowResult") { values -> result = Json.parseToJsonElement(values[0] as String); Unit }
             js.evaluate<Unit>(SANDBOX)
+            progressed(); watchdog.start()
             val input = args?.let { "JSON.parse(${JsonPrimitive(it.toString())})" } ?: "undefined"
             val meta = script.meta.toString()
             // 闭包捕获桥接函数，项目脚本只能看见承诺的六个 API；所有原生参数均再次校验。
