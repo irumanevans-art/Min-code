@@ -655,6 +655,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
         override val worktrees: dev.min.agent.spi.WorktreePort = if (turnId == null) dev.min.agent.spi.WorktreePort.Unavailable else rt.worktrees
+        override val background: dev.min.agent.spi.BackgroundPort = if (turnId == null) dev.min.agent.spi.BackgroundPort.Unavailable else rt.background.portFor(callId)
         override val skills: SkillPort = KernelSkillPort(rt, deps.host.fs)
         override val web = if (turnId == null) dev.min.agent.spi.WebPort.Unavailable else deps.host.web
         override val webSearch = if (turnId == null) dev.min.agent.spi.WebSearchPort.Unavailable else

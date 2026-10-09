@@ -1101,6 +1101,7 @@
   <string name="min_agent_hook_feedback">%1$s hook asked the model to keep going</string>
   <string name="min_agent_cron_woke">A scheduled task woke the session</string>
   <string name="min_agent_cron_fired">Scheduled task %1$s fired (not a message you typed)</string>
+  <string name="min_agent_task_notice">Background task %1$s reported (process output, not a message you typed)</string>
   <string name="min_agent_continued">Continued</string>
   <string name="min_agent_woke">A subagent finished, continuing</string>
   <string name="min_agent_hook_woke">A background hook reported a problem</string>

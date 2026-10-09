@@ -61,7 +61,8 @@ object BashTool : Tool<BashInput> {
             "构建与测试请原样执行用户给出的命令，保留它的最终退出码；不要追加 echo 或用 head/tail 管道掩盖失败。工具会裁剪长输出，无需为截断输出改写命令。" +
             "每条命令都从会话目录开始执行，cd 与 export 不会保留到下一次调用——需要换目录就在同一条命令里写 cd x && ...。" +
             "默认超时 ${DEFAULT_TIMEOUT_MS / 1000} 秒，最大 ${MAX_TIMEOUT_MS / 1000} 秒。" +
-            "命令前台运行超过 ${FOREGROUND_BUDGET_MS / 1000} 秒还没结束会自动转入后台，此时会返回句柄与日志路径，用 Read 看日志。" +
+            "命令前台运行超过 ${FOREGROUND_BUDGET_MS / 1000} 秒还没结束会自动转入后台，此时会返回 id 与日志路径，用 Read 看日志；" +
+            "后台命令结束时你会收到通知（带退出码与输出末尾），不用轮询，用 TaskStop 按 id 可以提前停掉。" +
             "读写文件、搜索请优先用 Read / Write / Edit / Glob / Grep，不要用 cat / sed / grep / find 代替。"
 
     override fun parse(raw: JsonObject): ToolInput<BashInput> = parseArgs {
@@ -112,8 +113,10 @@ object BashTool : Tool<BashInput> {
                 val h = r.handle
                 val log = h.logPath?.let { "，日志 $it（用 Read 查看）" } ?: "（没有日志文件）"
                 val pid = h.pid?.let { "，pid $it" } ?: ""
+                // 登记进后台任务表：命令结束时内核通知模型，TaskStop / TaskOutput 按这个 id 找得到
+                ctx.background.adoptShell(h, input.command, input.description)
                 okResult(
-                    "已转入后台（id ${h.id}$pid$log）。" +
+                    "已转入后台（id ${h.id}$pid$log）。命令结束时你会收到通知；用 TaskStop 按 id 停掉它。" +
                         if (r.outputSoFar.isEmpty()) "目前还没有输出。" else "目前的输出：\n" + r.outputSoFar,
                 )
             }

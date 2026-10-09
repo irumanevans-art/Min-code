@@ -1096,6 +1096,7 @@
   <string name="min_agent_hook_feedback">%1$s hook 要求模型继续</string>
   <string name="min_agent_cron_woke">定时任务叫醒了会话</string>
   <string name="min_agent_cron_fired">定时任务 %1$s 到点触发（不是你发的消息）</string>
+  <string name="min_agent_task_notice">后台任务 %1$s 有通知（进程的输出，不是你发的消息）</string>
   <string name="min_agent_continued">继续</string>
   <string name="min_agent_woke">子 agent 完成，继续处理</string>
   <string name="min_agent_hook_woke">后台 hook 报告了问题</string>

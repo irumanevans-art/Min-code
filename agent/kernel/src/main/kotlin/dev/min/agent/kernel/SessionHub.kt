@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -581,6 +582,7 @@ class SessionHub(
         }
         // 卸下即杀后台 hook 进程并清掉暂存目录：手机上不能留孤儿进程（async 设计的边界；`-p` teardown 同此）
         closing.forEach { it.asyncHooks.cancelAll() }
+        closing.forEach { it.background.cancelAll() }
         tree.forEach(::unload)
         return true
     }
@@ -610,6 +612,8 @@ class SessionHub(
                 // 先记下要静音的回合再打断：结局一出现，盯结局的协程就可能去交付
                 tree.forEach { rt -> rt.state.value.turn?.let { quietReports += rt.sessionId to it.turnId } }
                 tree.forEach { it.interrupt() }
+                // 子 agent 被人停下，它起的 watch 一起停（根自己的 watch 不动：■ 停的是回合，不是后台任务，要停用任务条或 TaskStop）
+                tree.filter { it.sessionId != id }.forEach { it.background.stopAllMonitors(BackgroundJobs.Stopper.User) }
                 tree.forEach { it.awaitIdle() }
                 stopTreeProbe?.invoke(round)
             }
@@ -681,6 +685,8 @@ class SessionHub(
         // 与 close 同一条边界：删除即杀后台 hook 进程（含临时打开来跑 SessionEnd 的那个运行时）
         order.mapNotNull { runtimes[it] }.forEach { it.asyncHooks.cancelAll() }
         rootRuntime?.asyncHooks?.cancelAll()
+        order.mapNotNull { runtimes[it] }.forEach { it.background.cancelAll() }
+        rootRuntime?.background?.cancelAll()
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {
@@ -807,7 +813,7 @@ class SessionHub(
     internal fun portFor(rt: SessionRuntime, turnId: TurnId, callId: CallId): AgentPort = object : AgentPort {
         override suspend fun delegate(request: DelegateRequest): DelegateResult = spawn(rt, turnId, callId, request)
         override suspend fun message(to: String, text: String): ToolResult = sendMessage(rt, callId, to, text)
-        override suspend fun stop(target: String): ToolResult = stopChild(rt, target)
+        override suspend fun stop(target: String): ToolResult = stopTask(rt, target)
         override suspend fun team(op: dev.min.agent.spi.TeamOp): ToolResult = teams.handle(rt, turnId, callId, op)
     }
 
@@ -822,6 +828,23 @@ class SessionHub(
         val rt = runtimes[root] ?: return "会话不在线。"
         val team = rt.state.value.team?.takeIf { it.active } ?: return "没有进行中的团队。"
         return teams.disbandTeam(rt, dev.min.agent.spi.TeamDisbanded(team.teamId, dev.min.agent.spi.TeamDisbandReason.UserEnded, note))
+    }
+
+    /**
+     * [root] 这棵树里全部后台任务（含已结束的，按启动时刻排）：界面的任务条读它。树的成员变了（子 agent 起 / 卸下）自动重新订阅
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun backgroundJobs(root: SessionId): kotlinx.coroutines.flow.Flow<List<BackgroundJobInfo>> =
+        online.flatMapLatest {
+            val tree = subtreeOnline(root).mapNotNull { runtimes[it] }
+            if (tree.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList())
+            else kotlinx.coroutines.flow.combine(tree.map { it.background.infos }) { lists -> lists.toList().flatten().sortedBy { it.startedAtMs } }
+        }
+
+    /** 界面的任务条上点「停止」：与模型的 TaskStop 同一条路，只是模型不知道，结局会补一条通知（不唤醒）。返回是否真的停了一个在跑的任务 */
+    suspend fun stopBackgroundJob(root: SessionId, jobId: String): Boolean {
+        val owner = runtimes[root]?.let { jobOwner(it, jobId) } ?: return false
+        return owner.background.stop(jobId, BackgroundJobs.Stopper.User) != null
     }
 
     /** 定时任务的全局开关现在是开还是关（设置里的开关 / `CLAUDE_CODE_DISABLE_CRON`）：界面的清单据此提示“已关闭，不会触发” */
@@ -1263,17 +1286,60 @@ class SessionHub(
         )
     }
 
-    private suspend fun stopChild(from: SessionRuntime, target: String): ToolResult {
+    /**
+     * TaskStop：[target] 可以是后台任务 id（后台命令、watch，本会话的或树里别的 agent 起的）、子 agent / 团队成员 /
+     * 有名字的后台 agent 的 id 或名字。后台任务优先（id 是句柄 / `mon_…`，与会话 id 不会撞）。
+     * 都找不到时，错误里列出正在跑的后台任务与 agent（id + 描述），模型据此改对
+     */
+    private suspend fun stopTask(from: SessionRuntime, target: String): ToolResult {
+        val wanted = target.trim()
+        jobOwner(from, wanted)?.let { owner ->
+            val info = owner.background.stop(wanted, BackgroundJobs.Stopper.Tool)
+            if (info != null) return ok("已停止后台任务 ${info.id}（${info.description}）。")
+            return ok("这个后台任务已经结束了。")
+        }
         val state = from.state.value
-        val child = findChild(state, target.trim()) ?: return error(unknownChild(state, target.trim()))
+        val child = findChild(state, wanted) ?: return error("没有 id 或名字是「$wanted」的后台任务、子 agent 或队友。" + runningTasksSummary(from))
         val runtime = open(child.child) ?: return error("子 agent ${child.child.value} 的会话打不开了。")
         // 同上：分支里的旧引用只读
         if (runtime.state.value.origin?.parent != from.sessionId) {
             return error("这个子 agent 属于别的会话（分支不接管子 agent），不能从这里停它。")
         }
-        if (runtime.state.value.turn == null) return ok("它现在没有在跑。")
+        // 子 agent 起的 watch 随它一起停（CC：停子 agent 时它启动的 monitor 一并停止）
+        val watches = stopWatchesOf(runtime)
+        if (runtime.state.value.turn == null) return ok(if (watches > 0) "它现在没有在跑；它起的 $watches 个 watch 已一并停掉。" else "它现在没有在跑。")
         runtime.interrupt()
-        return ok("已让它停下；它的报告（标为未做完）会照常交给你。")
+        return ok("已让它停下；它的报告（标为未做完）会照常交给你。" + if (watches > 0) "它起的 $watches 个 watch 已一并停掉。" else "")
+    }
+
+    /** 停一个会话与它在线后代的全部 watch（后代也是它的：孙 agent 起的随之停）；返回停了几个 */
+    private suspend fun stopWatchesOf(root: SessionRuntime): Int =
+        subtreeOnline(root.sessionId).mapNotNull { runtimes[it] }.sumOf { it.background.stopAllMonitors(BackgroundJobs.Stopper.User) }
+
+    /** [id] 这个后台任务在哪个会话的表里：先看自己，再看自己所在这棵树里别的会话（主会话停子 agent 起的 watch）。找不到为 null */
+    internal fun jobOwner(from: SessionRuntime, id: String): SessionRuntime? {
+        if (from.background.find(id) != null) return from
+        val root = from.state.value.origin?.root ?: from.sessionId
+        return subtreeOnline(root).mapNotNull { runtimes[it] }.firstOrNull { it.background.find(id) != null }
+    }
+
+    /**
+     * 「没找到任务」的报错里附上的清单：这棵树里正在跑的后台任务与 agent（id + 描述）。
+     * 含别的 agent 起的——CC 2.1.203 起主会话也要能认出并停掉它们
+     */
+    internal fun runningTasksSummary(from: SessionRuntime): String {
+        val root = from.state.value.origin?.root ?: from.sessionId
+        val tree = subtreeOnline(root).mapNotNull { runtimes[it] }
+        val tasks = tree.flatMap { it.background.runningJobsText() }
+        val agents = tree.flatMap { parent ->
+            parent.state.value.children.values.filter { !it.rewound && runtimes[it.child]?.state?.value?.let { c -> c.turn != null || c.lastTurn == null } == true }
+                .map { c -> "${c.child.value}（${c.name?.let { "$it，" }.orEmpty()}${c.agentType}：${c.description}）" }
+        }
+        if (tasks.isEmpty() && agents.isEmpty()) return "现在没有在跑的后台任务或 agent。"
+        return buildString {
+            if (tasks.isNotEmpty()) append("正在跑的后台任务：").append(tasks.joinToString("；")).append("。")
+            if (agents.isNotEmpty()) append("正在跑的 agent：").append(agents.joinToString("；")).append("。")
+        }
     }
 
     /** 被回退掉的子 agent 不算：对模型来说它们从没被委派过 */

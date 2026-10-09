@@ -149,19 +149,25 @@ object TaskStopTool : Tool<JsonObject> {
     override val traits = SUBAGENT_TRAITS
     override val inputSchema = subagentSchema(
         listOf("task_id"),
-        "task_id" to subagentProperty("string", "要中断的子 agent id 或名字"),
+        "task_id" to subagentProperty("string", "要停止的任务 id：后台命令、watch，或子 agent / 队友 / 有名字的后台 agent 的 id 或名字"),
+        "shell_id" to subagentProperty("string", "已弃用，等同 task_id"),
     )
     override fun description(profile: HarnessProfile) =
-        "按 task_id（子 agent id 或名字）中断当前回合；未完成报告仍会送回，可用 SendMessage 续聊。只支持子 agent，暂不支持后台 shell。"
+        "按 task_id 停止一个在跑的后台任务：转后台的 Bash 命令、Monitor 的 watch（杀整棵进程树）；" +
+            "也可以是子 agent、agent 团队的队友或有名字的后台 agent（id 或名字），此时是中断它的当前回合，未完成报告仍会送回，可用 SendMessage 续聊。" +
+            "停一个子 agent 时它起的 watch 一并停掉。找不到 id 时，错误里列出正在跑的后台任务和 agent（id + 描述）。"
+
+    /** `shell_id` 是 CC 里的旧字段名：只给了它就当 task_id 用 */
+    private fun JsonObject.targetId(): String? = subagentString("task_id") ?: subagentString("shell_id")
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
-        requireSubagentString(raw, "task_id")
+        requireSubagentString(raw, if ("task_id" in raw || "shell_id" !in raw) "task_id" else "shell_id")
     }
     override fun permissionAsk(input: JsonObject, ctx: ToolContext) =
-        PermissionAsk(name, "停止任务 ${input.subagentString("task_id")}")
+        PermissionAsk(name, "停止任务 ${input.targetId()}")
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
-        emit(ToolProgress.Done(ctx.agents.stop(input.subagentString("task_id")!!)))
+        emit(ToolProgress.Done(ctx.agents.stop(input.targetId()!!)))
     }
 }
 

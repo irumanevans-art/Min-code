@@ -201,6 +201,8 @@ private class ItemsBuilder(
             is InputOrigin.Hook -> items += ChatItem.Note(id, text.hookFeedback(origin.event) + "\n" + plain(entry.parts))
             // 定时任务到点触发：会话预设的任务，不画成用户气泡（也就不能被当成「回退到这条用户消息」）
             is InputOrigin.Cron -> items += ChatItem.Note(id, text.cronFired(origin.cronId) + "\n" + plain(entry.parts))
+            // 后台任务的通知：进程的输出，不是人说的话；去掉给模型看的标签壳，只留正文
+            is InputOrigin.Task -> items += ChatItem.Note(id, text.taskNotice(origin.taskId) + "\n" + taskNoticeBody(plain(entry.parts)))
         }
     }
 
