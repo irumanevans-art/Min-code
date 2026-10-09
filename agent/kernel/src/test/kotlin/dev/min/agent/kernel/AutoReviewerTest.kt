@@ -111,6 +111,19 @@ class AutoReviewerTest {
         }
     }
 
+    @Test fun R2_classifyAllShell_reads_trusted_config_and_reviews_even_readonly_shell() = run {
+        val fs = FakeFs().apply { put("/home/.claude/settings.json", """{"autoMode":{"classifyAllShell":true}}""") }
+        val config = dev.min.agent.ext.config.autoReviewSettingsOf(dev.min.agent.ext.config.SettingsLoader.load(fs, GuestPath("/workspace"), GuestPath("/home")).merged).config
+        for (text in listOf("curl https://example.com/x", "git status")) {
+            val reviewer = ScriptedModel(reply(TextPart(decision("allow"))))
+            val rt = session(reviewer, command = text, config = config, rules = listOf(RuleEntry(RuleKindData.Allow, "Bash(${text.substringBefore(' ')} *)", "user")))
+            started(rt)
+            assertEquals(text, 1, reviewer.requests.size)
+            assertTrue(text in ran)
+            rt.awaitIdle()
+        }
+    }
+
     @Test fun BUG_mode_switch_during_review_verdict_still_executes() = run {
         val entering = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()

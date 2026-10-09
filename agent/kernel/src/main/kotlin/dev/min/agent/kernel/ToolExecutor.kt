@@ -275,6 +275,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         }
         return PolicyContext(
             mode = s.settings.mode,
+            classifyAllShell = s.autoReviewSettings.config.classifyAllShell,
             rules = parsedRules,
             cwd = s.settings.cwd,
             home = deps.memoryHome ?: DEFAULT_HOME,

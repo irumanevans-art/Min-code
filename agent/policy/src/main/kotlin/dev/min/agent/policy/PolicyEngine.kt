@@ -36,6 +36,7 @@ data class PolicyContext(
     val canonicalPath: (GuestPath) -> GuestPath = { it },
     val worktreeRoot: GuestPath? = null,
     val autoHardDeny: List<String> = emptyList(),
+    val classifyAllShell: Boolean = false,
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -96,10 +97,12 @@ object PolicyEngine {
         if (firstHit(facts, context.rules.filter { it.kind == RuleKind.Ask }, matcher) != null) return Verdict.Ask
 
         covering(facts, context.rules.filter { it.kind == RuleKind.Allow &&
-            (context.mode != PermissionMode.Auto || !suspendedInAuto(it)) }, matcher)?.let { rule ->
+            (context.mode != PermissionMode.Auto || !suspendedInAuto(it, context.classifyAllShell)) }, matcher)?.let { rule ->
             return Verdict.Allow(DecidedBy.Rule(rule.raw, rule.source))
         }
 
+        // classifyAllShell 连只读 shell 也送审；其他工具的只读快路仍按原契约。
+        if (context.mode == PermissionMode.Auto && context.classifyAllShell && facts.tool in setOf("Bash", "PowerShell")) return Verdict.Ask
         val effectivelyReadOnly = (readOnly || facts.isReadOnlyCommand) && !facts.requiresReadApproval
         val byMode = DecidedBy.Mode(context.mode)
         return when (context.mode) {
@@ -121,9 +124,10 @@ object PolicyEngine {
     }
 
     /** 任意代码执行授权在 Auto 里不能越过分类器；窄命令规则仍保留。 */
-    fun suspendedInAuto(rule: PermissionRule): Boolean {
+    fun suspendedInAuto(rule: PermissionRule, classifyAllShell: Boolean = false): Boolean {
         if (rule.tool in setOf("Agent", "Task", "Monitor")) return true
         if (rule.tool !in setOf("Bash", "PowerShell")) return false
+        if (classifyAllShell) return true
         val spec = rule.specifier ?: return true
         if (spec.trim() in setOf("*", ":*")) return true
         val executable = ShellAnalyzer.autoRuleExecutable(spec.trim().let { if (it.endsWith(":*")) it.removeSuffix(":*") + " *" else it }) ?: return true
