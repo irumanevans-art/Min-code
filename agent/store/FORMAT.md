@@ -215,3 +215,5 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 
 - v1 增量（2026-10-09，命令网络批准）：新增 `network_settings_loaded`（`settings`：enabled / enabledManaged 缺省 false；allowedDomains / deniedDomains 缺省 []；allowManagedDomainsOnly / strictAllowlist 缺省 false；httpProxyPort / socksProxyPort 缺省 null）冻结实际生效的 sandbox 网络设置；运行时重读与撤销导致的变化同样先落此事件。新增 `network_approval_requested`（approvalId、callId、domain、port、commandSummary、atMs），独立于 Bash 调用的审批阶段，支持转后台后的连接；新增 `network_decision`（callId、domain、port、outcome = allow / deny、source = rule / user / managed_lock / timeout / mode / classifier、reason、可选 approvalId 缺省 null）。决定必须同步落盘后才能转发；关联 approvalId 的决定移除待批准请求。宿主死亡恢复将孤儿请求记为 timeout / deny。请求凭据与代理 URL 不落事件。含这些新事件的日志旧版本打不开。
 - Bash 入参新增可选 `allowed_domains` 字符串数组（缺省 []，最多 64 项）；只在沙箱开启的 Auto 下强制随命令送分类器，或由明确的命令审批覆盖。获批名单仅本命令生命周期有效；deny 与托管锁始终优先，不写 sessionRules 或用户设置。
+
+- v1 增量（2026-10-09，auto 生成审查）：Agent / Team / Workflow 在共用生成路径上写 `auto_reviewed`；审查转人工时使用独立 review 调用 id 的 `tool_planned` / `approval_requested` / `approval_resolved` / `tool_outcome`，不覆盖正在执行的父工具阶段。合成调用不写助手历史；审批结果及共享熔断可凭日志重建。

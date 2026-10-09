@@ -867,6 +867,24 @@ class SessionHub(
         val definition = if (fork) null else pluginDefinitions[type] ?: definitions[type] ?: return DelegateResult.Rejected(
             "没有名为 $type 的子 agent 类型。可用的：${(definitions.keys + pluginDefinitions.keys + FORK_AGENT_TYPE).joinToString("、")}。",
         )
+        // 三种生成入口在建日志、建 worktree、跑 hook 之前汇合；脚本与助手的文字不能升级成用户授权。
+        if (ps.settings.mode == PermissionMode.Auto) {
+            val capabilities = if (definition == null) availableTools(ps, deps, runtime = parent).map { it.name }
+                else toolsFor(definition, depth) ?: availableTools(ps, deps, runtime = parent).map { it.name }
+            val input = kotlinx.serialization.json.buildJsonObject {
+                put("description", kotlinx.serialization.json.JsonPrimitive(request.description))
+                put("prompt", kotlinx.serialization.json.JsonPrimitive(request.prompt))
+                put("prompt_origin", kotlinx.serialization.json.JsonPrimitive(if (request.workflow) "script" else "assistant"))
+                put("agent_type", kotlinx.serialization.json.JsonPrimitive(type))
+                put("tools", kotlinx.serialization.json.JsonArray(capabilities.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                put("mcp_tools", kotlinx.serialization.json.JsonArray(definition?.tools.orEmpty().filter { it.startsWith(MCP_PREFIX) }.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                put("instructions", kotlinx.serialization.json.JsonPrimitive(definition?.instructions.orEmpty()))
+            }
+            when (val verdict = parent.reviewAutoAction(turnId, "Agent", input, "启动子 agent：${request.description}")) {
+                is dev.min.agent.policy.Verdict.Deny -> return DelegateResult.Rejected(verdict.messageToModel)
+                else -> Unit
+            }
+        }
         val root = parentOrigin?.root ?: parent.sessionId
         val childId = SessionId(deps.ids.next("s"))
         val header = LogHeader(LOG_FORMAT_VERSION, childId, deps.clock.nowMs(), parent = parent.sessionId)

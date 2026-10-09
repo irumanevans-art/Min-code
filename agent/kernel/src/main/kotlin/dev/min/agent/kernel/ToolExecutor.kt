@@ -270,7 +270,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
      * 判定用的上下文：日志里的规则快照 + 本会话「总是允许」的规则、当前模式与 cwd、宿主按**解析后**路径给的分级。
      * 规则列表只在快照或会话规则变了时重新解析：折叠只在变化时换掉这两个列表，所以比引用就够；解析不了的规则跳过（读取时已记过说明）。
      */
-    private fun policyContext(): PolicyContext {
+    internal fun policyContext(): PolicyContext {
         val s = rt.state.value
         if (s.rules !== parsedFromRules || s.sessionRules !== parsedFromSession) {
             parsedRules = (s.rules + s.sessionRules).mapNotNull(PermissionRule::from)
