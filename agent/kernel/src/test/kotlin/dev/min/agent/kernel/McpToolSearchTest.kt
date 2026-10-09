@@ -68,7 +68,7 @@ class McpToolSearchTest {
             assertEquals("auto:0.01", rt.state.value.mcpToolSearch!!.strategy)
             rt.stageMcp(null, McpToolsSnapshot(emptyList())); rt.applyStagedMcp()
             assertTrue(rt.state.value.mcpToolSearch!!.enabled)
-            val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+            val log = store.peek(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         } finally { scope.cancel() }
     }
 
@@ -89,7 +89,7 @@ class McpToolSearchTest {
             assertEquals(requests[1].tools, requests[2].tools.take(requests[1].tools.size))
             assertEquals(listOf("mcp__db__write", "mcp__db__find"), requests[2].tools.takeLast(2).map { it.name })
             assertTrue(requests[0].system.joinToString("\n").contains("mcp__db__write"))
-            val log = store.open(rt.sessionId)!!; val records = log.read().toList()
+            val log = store.peek(rt.sessionId)!!; val records = log.read().toList()
             assertEquals(listOf(listOf("mcp__db__write"), listOf("mcp__db__find")), records.map { it.event }.filterIsInstance<McpToolsLoaded>().map { it.names })
             records.filter { it.event is McpToolsLoaded }.forEach { loaded -> assertTrue(records.first { it.seq == loaded.seq-1 }.event is ToolOutcome) }
             assertEquals(rt.state.value, fold(log.header, records))
@@ -111,7 +111,7 @@ class McpToolSearchTest {
             val rt = SessionRuntime.create(store, LogHeader(LOG_FORMAT_VERSION, SessionId("s"), 0), SessionCreated(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions), deps, scope,
                 initial=listOf(snapshot, McpToolSearchConfigured(true, 1, 1, 10.0), PermissionRulesLoaded(listOf(RuleEntry(RuleKindData.Deny, "ToolSearch", "user")))))
             assertEquals(listOf("mcp__db__bootstrap", "ToolSearch"), availableTools(rt.state.value, deps).map { it.name })
-            val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+            val log = store.peek(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
         } finally { scope.cancel() }
     }
 
@@ -127,12 +127,12 @@ class McpToolSearchTest {
             val result = hub.portFor(rt, TurnId("test-parent"), CallId("delegate")).delegate(DelegateRequest("child", "hello", background=false))
             assertTrue(result is DelegateResult.Finished)
             val child = (result as DelegateResult.Finished).child
-            val log = store.open(child)!!; val state = fold(log.header, log.read().toList())
+            val log = store.peek(child)!!; val state = fold(log.header, log.read().toList())
             assertEquals(rt.state.value.mcpToolSearch, state.mcpToolSearch)
             assertEquals(rt.state.value.loadedMcpTools, state.loadedMcpTools)
             assertEquals(availableTools(rt.state.value, deps).map { it.name }, model.requests.single().tools.map { it.name })
             assertEquals(state, hub.open(child)!!.state.value)
-            val parentLog = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(parentLog.header, parentLog.read().toList()))
+            val parentLog = store.peek(rt.sessionId)!!; assertEquals(rt.state.value, fold(parentLog.header, parentLog.read().toList()))
         } finally { scope.cancel() }
     }
 }

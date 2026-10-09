@@ -106,7 +106,7 @@ class OutputStyleSessionTest {
     }
 
     private suspend fun events(rt: SessionRuntime): List<SessionEvent> =
-        store.open(rt.sessionId)!!.read().toList().map { it.event }
+        store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId
@@ -185,7 +185,7 @@ class OutputStyleSessionTest {
         rt.say("分身一个")
         rt.state.first { it.turn == null }
         val child = rt.state.value.children.keys.single()
-        assertEquals("分身日志里有同一条样式快照", "Terse", store.open(child)!!.read().toList().map { it.event }.filterIsInstance<OutputStyleLoaded>().single().name)
+        assertEquals("分身日志里有同一条样式快照", "Terse", store.peek(child)!!.read().toList().map { it.event }.filterIsInstance<OutputStyleLoaded>().single().name)
         val parentRequest = model.requests.first()
         // 分身指令在工具结果消息里（那条 Agent 调用的结果换成了指令正文）
         fun hasForkDirective(req: ModelRequest) = req.messages.any { m ->
@@ -226,7 +226,7 @@ class OutputStyleSessionTest {
             "普通子 agent 的请求里没有样式段（它有自己的系统提示）",
             childRequest.system.none { it.contains("# Output style:") },
         )
-        val childEvents = store.open(child)!!.read().toList().map { it.event }
+        val childEvents = store.peek(child)!!.read().toList().map { it.event }
         assertTrue("子会话日志里没有样式快照", childEvents.none { it is OutputStyleLoaded })
     }
 }

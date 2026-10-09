@@ -122,7 +122,7 @@ class PlanModeTest {
         )
 
     private suspend fun assertLogIsTruth(store: SessionStore, runtime: SessionRuntime) {
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 
@@ -163,7 +163,7 @@ class PlanModeTest {
         assertTrue(blocked.isError)
         assertTrue(blocked.userText, blocked.userText.orEmpty().contains("计划模式") && !blocked.text().contains("计划模式"))
         assertTrue(rt.resultOf("c3").text().contains("bypassPermissions"))
-        assertEquals("计划中的写与退出计划各问一次，回到 bypass 后写不用再问", 2, store.open(id)!!.read().toList().count { it.event is ApprovalRequested })
+        assertEquals("计划中的写与退出计划各问一次，回到 bypass 后写不用再问", 2, store.peek(id)!!.read().toList().count { it.event is ApprovalRequested })
         assertLogIsTruth(store, rt)
     }
 
@@ -228,7 +228,7 @@ class PlanModeTest {
             assertEquals("没批就还在计划模式", PermissionMode.Plan, s.settings.mode)
             assertTrue(reopened.resultOf("c2").text().startsWith("这次调用没有执行"))
             assertFalse("旧进程的审批卡片答了也不算", reopened.answerApproval(stale, ApprovalChoice.Once))
-            val ended = store.open(id)!!.read().toList().map { it.event }.filterIsInstance<TurnEnded>().single()
+            val ended = store.peek(id)!!.read().toList().map { it.event }.filterIsInstance<TurnEnded>().single()
             assertEquals(TurnOutcome.Interrupted(InterruptedBy.ProcessDeath), ended.outcome)
             assertLogIsTruth(store, reopened)
         } finally {
@@ -325,7 +325,7 @@ class PlanModeTest {
 
             assertTrue(reopened.send(ClientMsgId("fresh"), text("继续")))
             reopened.awaitIdle()
-            assertEquals(TurnOutcome.Completed, store.open(id)!!.read().toList().map { it.event }.filterIsInstance<TurnEnded>().last().outcome)
+            assertEquals(TurnOutcome.Completed, store.peek(id)!!.read().toList().map { it.event }.filterIsInstance<TurnEnded>().last().outcome)
             assertLogIsTruth(store, reopened)
         } finally {
             freshJob.cancelAndJoin()

@@ -158,7 +158,7 @@ class BranchSessionTest {
     private fun call(id: String, tool: String, vararg pairs: Pair<String, Any?>) =
         ToolCallPart(CallId(id), tool, args(*pairs))
 
-    private suspend fun events(id: SessionId): List<SessionEvent> = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(id: SessionId): List<SessionEvent> = store.peek(id)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId
@@ -174,19 +174,19 @@ class BranchSessionTest {
         val h = hub(model)
         val original = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
         original.say("第一句")
-        val before = store.open(original.sessionId)!!.read().toList()
+        val before = store.peek(original.sessionId)!!.read().toList()
         val beforeEvents = before.map { it.event }
         now.set(3 * DAY_MS) // 分支建在第 3 天
         val branch = h.branch(original.sessionId)
         assertNotEquals(original.sessionId, branch.sessionId)
         // 分支日志 = 原日志逐条相同 + 末尾一条 session_branched 指回原会话与分支点
-        val copied = store.open(branch.sessionId)!!.read().toList()
+        val copied = store.peek(branch.sessionId)!!.read().toList()
         assertEquals(beforeEvents, copied.map { it.event }.dropLast(1))
         val mark = copied.last().event as SessionBranched
         assertEquals(original.sessionId, mark.from)
         assertEquals("atSeq 是原会话的最后一条", before.last().seq, mark.atSeq)
         // 原会话一个字不动，也不知道自己被分支过
-        assertEquals(beforeEvents, store.open(original.sessionId)!!.read().toList().map { it.event })
+        assertEquals(beforeEvents, store.peek(original.sessionId)!!.read().toList().map { it.event })
         assertNull(original.state.value.branched)
         assertNotNull(branch.state.value.branched)
         // 日志即真相：重开分支，还是那个「分支自 …」
@@ -211,7 +211,7 @@ class BranchSessionTest {
         assertEquals(listOf("公共的第一句", "分支自己的问题"), branchTexts.map { it.text })
         // 各自重开各自成立
         for (id in listOf(original.sessionId, branch.sessionId)) {
-            val log = store.open(id)!!
+            val log = store.peek(id)!!
             fold(log.header, log.read().toList())
         }
     }
@@ -278,7 +278,7 @@ class BranchSessionTest {
         assertEquals(3, store.list().size) // 原会话 + 子会话 + 分支
         // 引用只读：从分支给原会话的子 agent 发消息，被归属检查拒掉（不能只是「找不到」——按名字找得到才证明走到了护栏）
         branch.say("分支里给它发消息")
-        val outcome = store.open(branch.sessionId)!!.read().toList()
+        val outcome = store.peek(branch.sessionId)!!.read().toList()
             .map { it.event }.filterIsInstance<dev.min.agent.spi.ToolOutcome>().last()
         val refusal = outcome.result.content.filterIsInstance<TextPart>().joinToString { it.text }
         assertTrue("错误结果要说清归属：$refusal", outcome.result.isError && refusal.contains("属于别的会话"))

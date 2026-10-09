@@ -182,11 +182,11 @@ class SubagentTest {
             inbox.filter { (it.origin as? InputOrigin.Agent)?.kind == AgentInputKind.Report }.map { HistoryEntry.User(dev.min.agent.protocol.MessageId("pending"), it.parts, it.origin) }
 
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 
-    private suspend fun events(id: SessionId): List<SessionEvent> = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(id: SessionId): List<SessionEvent> = store.peek(id)!!.read().toList().map { it.event }
 
     // ---- 分身 ----
 
@@ -228,7 +228,7 @@ class SubagentTest {
         assertTrue(reportText.contains("fork=\"true\""))
 
         val child = h.get(done.children.keys.single())!!
-        assertEquals(parent.sessionId, store.open(child.sessionId)!!.header.parent)
+        assertEquals(parent.sessionId, store.peek(child.sessionId)!!.header.parent)
         assertTrue(child.state.value.origin!!.fork)
         assertLogIsTruth(parent)
         assertLogIsTruth(child)

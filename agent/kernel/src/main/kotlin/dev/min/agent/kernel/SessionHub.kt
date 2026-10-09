@@ -14,6 +14,7 @@ import dev.min.agent.spi.DelegateRequest
 import dev.min.agent.spi.DelegateResult
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.Exec
 import dev.min.agent.spi.ExecOptions
 import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.FORK_AGENT_TYPE
@@ -130,6 +131,9 @@ fun normalizeSessionName(raw: String): String? {
         raw.codePoints().forEach { cp ->
             val invisible = Character.isISOControl(cp) ||
                 Character.getType(cp) == Character.FORMAT.toInt() ||
+                // 孤立的代理项（code point 落在代理区）：成对的到不了这里；落单的转不出合法 UTF-8，
+                // 落盘读回来变 ?，重开的名字与运行时对不上（N4）——换空格
+                Character.getType(cp) == Character.SURROGATE.toInt() ||
                 cp == 0x2028 || cp == 0x2029 // 行/段分隔：日志一行一条事件，名字里不能混进换行
             appendCodePoint(if (invisible) ' '.code else cp)
         }
@@ -159,24 +163,59 @@ class SessionHub(
 ) {
     private val definitions: Map<String, AgentDefinition> = agents.associateBy { it.name }
 
+    /**
+     * 本 Hub 实例在 hook 暂存目录里留下的 owner 记号（实例 id + 进程 pid）。桌面多终端共用 `~/.min/root`，
+     * 启动清扫按它区分：**别的实例**留下的目录、且那个进程已确认死掉（N2 的判死口径）才删——
+     * 本实例自己的（包括正在跑的）不动，清扫与首会话 SessionStart 后台 hook 的竞态也就不存在了（N1）。
+     * pid 从宿主端口取：内核侧 `ProcessHandle.current()` 在 Android 33 以下拿不到，宿主才知道自己平台怎么取
+     */
+    internal val hookStagingOwner = "${java.util.UUID.randomUUID()} ${deps.host.exec.currentPid()}"
+
     init {
         // 启动时清扫上一条命留下的后台 hook 暂存目录：进程死了目录还在，in.json 里带着工具入参
-        // （可能含密钥），不能一直躺在盘上。此刻本 Hub 还没有在线会话，剩下的 hookbg_* 必然是孤儿
+        // （可能含密钥），不能一直躺在盘上。此刻本 Hub 还没有在线会话，剩下的 hookbg_* 必然是孤儿。
+        // hookStagingOwner 必须声明在前、先初始化：清扫起在另一个线程，先跑的话读到的是没赋值的记号，
+        // 会把本实例自己的目录当成「认不了主的」处理
         scope.launch { sweepOrphanHookDirs() }
     }
 
-    private suspend fun sweepOrphanHookDirs() {
+    /** 启动清扫（init 里异步跑；测试直调以便确定性驱动）。internal 仅为测试可见性，不进公共 API */
+    internal suspend fun sweepOrphanHookDirs() {
         dev.min.agent.spi.catchingNonCancellation {
             val root = GuestPath("/root/.min/hooks")
-            val orphans = deps.host.fs.list(root).filter { it.kind == dev.min.agent.spi.FileKind.Directory && it.name.startsWith("hookbg_") }
-            if (orphans.isEmpty()) return@catchingNonCancellation
+            val candidates = deps.host.fs.list(root).filter { it.kind == dev.min.agent.spi.FileKind.Directory && it.name.startsWith("hookbg_") }
+            if (candidates.isEmpty()) return@catchingNonCancellation
+            val doomed = mutableListOf<GuestPath>()
+            for (entry in candidates) {
+                val dir = GuestPath("${root.value}/${entry.name}")
+                // 取消要穿过去（catchingNonCancellation）：吞了的话清扫会带着已取消的 Job 继续往下删
+                val owner = dev.min.agent.spi.catchingNonCancellation {
+                    deps.host.fs.read(GuestPath("${dir.value}/owner")).decodeToString().trim()
+                }.getOrDefault("") // 读不了按「认不了主」处理：不敢删
+                val parts = owner.split(' ')
+                if (parts.size != 2) continue // 没有 owner 文件（老版本留下的）或格式不对：认不了主，留着
+                if (parts[0] == hookStagingOwner.substringBefore(' ')) continue // 本实例的，正在用
+                val pid = parts[1].toLongOrNull() ?: continue
+                if (pid <= 0) continue // 认不出进程：不敢按死处理
+                if (ownerConfirmedDead(pid)) doomed += dir
+            }
+            if (doomed.isEmpty()) return@catchingNonCancellation
+            // 路径必须过 hookShellPath（与 AsyncHooks.cleanup 同一条规矩）：桌面 guest 路径在宿主 shell 里不存在
             val rm = deps.host.exec.run(
-                ShellCommand("rm -rf -- " + orphans.joinToString(" ") { d -> "'${root.value}/${d.name}'" }, root),
-                ExecOptions(5_000),
+                ShellCommand("rm -rf -- " + doomed.joinToString(" ") { d -> "'${deps.hookShellPath(d)}'" }, root),
+                ExecOptions(15_000),
             )
             if (rm is ExecResult.Backgrounded) deps.host.exec.kill(rm.handle)
         }
     }
+
+    /**
+     * owner 进程确认死了才真：只问宿主侧的进程表（[Exec.isPidAlive]）——guest shell 的 `kill -0` 在 Windows
+     * 拿宿主 pid 问 msys 的进程表，对活着的宿主进程也报「不存在」（M4）。端口说不了（null）或探测出错
+     * 都当活着——删错了没有回头路（与后台 hook 存活探测同一个口径，N2）
+     */
+    private suspend fun ownerConfirmedDead(pid: Long): Boolean =
+        dev.min.agent.spi.catchingNonCancellation { deps.host.exec.isPidAlive(pid) }.getOrNull() == false
 
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
     internal var mcp = McpManager(
@@ -297,7 +336,7 @@ class SessionHub(
     suspend fun findSessionByName(cwd: GuestPath, name: String, exclude: SessionId? = null): SessionId? {
         for (header in store.list().asReversed()) {
             if (header.parent != null || header.sessionId == exclude) continue
-            val log = store.open(header.sessionId) ?: continue
+            val log = store.peek(header.sessionId) ?: continue
             var created: dev.min.agent.spi.SessionCreated? = null
             var found: String? = null
             log.read().collect { record ->
@@ -315,7 +354,7 @@ class SessionHub(
     /** 会话列表摘要（界面 B7 用）：头、名字（最后一条 session_renamed）、创建目录 */
     suspend fun summaries(): List<SessionSummary> =
         store.list().mapNotNull { header ->
-            val log = store.open(header.sessionId) ?: return@mapNotNull null
+            val log = store.peek(header.sessionId) ?: return@mapNotNull null
             var created: dev.min.agent.spi.SessionCreated? = null
             var name: String? = null
             log.read().collect { record ->
@@ -529,7 +568,7 @@ class SessionHub(
         val port = deps.host.snapshots
         if (port === dev.min.agent.spi.WorkspaceSnapshots.Unavailable) return
         dev.min.agent.spi.catchingNonCancellation {
-            val created = store.open(id)?.read()?.first()?.event as? dev.min.agent.spi.SessionCreated ?: return
+            val created = store.peek(id)?.read()?.first()?.event as? dev.min.agent.spi.SessionCreated ?: return
             port.store(created.cwd).forget(id)
         }
     }
@@ -588,7 +627,7 @@ class SessionHub(
         val s = source.state.value
         if (s.origin != null) throw SessionBranchRefused("子 agent 会话不能分支；对它的根会话分支。")
         if (s.turn != null) throw SessionBranchRefused("会话正在进行中，等这一轮结束再分支。")
-        val copied = store.open(id)?.read()?.toList()
+        val copied = store.peek(id)?.read()?.toList()
             ?: throw SessionBranchRefused("会话 ${id.value} 的日志打不开了。")
         val atSeq = copied.lastOrNull()?.seq ?: 0L
         if (source.state.value.lastSeq != atSeq) {
@@ -693,9 +732,10 @@ class SessionHub(
         val background = request.background || definition?.alwaysBackground == true
 
         // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
-        // 不进父会话（inheritedRules 复制的是 settings 快照），也不会随继承传给孙会话。Stop 改写成
-        // SubagentStop（CC：子会话里触发的是它自己的完成事件）。项目层定义（project / local）要过工作区信任
-        // ——与 settings 同一条规则；Min 里 `-p` 不自动信任，CC 的「-p 不算接受信任」天然成立
+        // 不进父会话（inheritedRules 复制的是 settings 快照）。子会话再派生时经 inheritedComponentHooks
+        // 快照式传给孙会话（M8：登记时刻的一份拷贝，Stop 已在登记时改写成 SubagentStop）。项目层定义
+        // （project / local）要过工作区信任——与 settings 同一条规则；Min 里 `-p` 不自动信任，
+        // CC 的「-p 不算接受信任」天然成立
         definition?.hooks?.let { h ->
             val layer = definition.hooksLayer ?: "user"
             val trusted = !(layer == "project" || layer == "local") || deps.trustProjectHooks(ps.created.cwd)

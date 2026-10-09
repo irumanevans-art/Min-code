@@ -104,10 +104,10 @@ class QuestionFlowTest {
         scope,
     )
 
-    private suspend fun events(): List<SessionEvent> = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(): List<SessionEvent> = store.peek(id)!!.read().toList().map { it.event }
 
     private suspend fun assertLogIsTruth(runtime: SessionRuntime) {
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 

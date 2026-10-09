@@ -213,7 +213,7 @@ class McpOAuthManagerTest {
             assertFalse(invoke(rt).isError)
             hub.logoutMcp("db",rt.sessionId); assertNull(s.store.load(s.key)); assertEquals("needs-auth",hub.mcp.statusOf(rt.sessionId).single().state)
             assertTrue(invoke(rt).isError)
-            val events=store.open(rt.sessionId)!!.read().toList()
+            val events=store.peek(rt.sessionId)!!.read().toList()
             assertEquals(listOf("login","logout"),events.map { it.event }.filterIsInstance<McpAuthentication>().map { it.action })
             val wire=events.joinToString { AgentJson.encodeToString(EventRecord.serializer(),it) }
             assertFalse(wire.contains("FAKE_ACCESS")); assertFalse(wire.contains("FAKE_REFRESH")); assertFalse(wire.contains("FAKE_CODE"))

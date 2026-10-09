@@ -58,7 +58,7 @@ class SessionNamingTest {
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(10_000) { block() } }
 
     private suspend fun logIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 
@@ -67,7 +67,7 @@ class SessionNamingTest {
         val h = hub()
         val rt = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = "auth-refactor")
         assertEquals("auth-refactor", rt.state.value.name)
-        val renames = store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>()
+        val renames = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>()
         assertEquals(listOf("auth-refactor"), renames.map { it.name })
         logIsTruth(rt)
     }
@@ -91,7 +91,7 @@ class SessionNamingTest {
         // /rename 再改一次：最后一条赢
         assertEquals("orbit", rt.rename("orbit"))
         assertEquals("orbit", rt.state.value.name)
-        assertEquals(listOf("太空计划", "orbit"), store.open(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>().map { it.name })
+        assertEquals(listOf("太空计划", "orbit"), store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<SessionRenamed>().map { it.name })
         logIsTruth(rt)
     }
 
@@ -152,6 +152,22 @@ class SessionNamingTest {
         val reopened = hub().open(rt.sessionId)!!
         assertEquals("harvest", reopened.state.value.name)
         assertEquals(rt.state.value, reopened.state.value)
+    }
+
+    @Test
+    fun `孤立代理项换空格：重开一致、同名拿到 -2`() = run {
+        // N4：\uD83D 是不成对的高代理项——原样落盘时 UTF-16 码元转不出合法 UTF-8（读回来变 ?），
+        // 重开的名字与运行时对不上、按名找也找不到。规整时换空格，日志里存的就是能活着转一圈的写法
+        assertEquals("a b", normalizeSessionName("a\uD83Db"))
+        assertEquals("a𐎈b c", normalizeSessionName("a𐎈b\uDC00c")) // 成对的照常保留，只有落单的换
+        val h = hub()
+        val rt = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = "a\uD83Db")
+        assertEquals("a b", rt.state.value.name)
+        val reopened = hub().open(rt.sessionId)!!
+        assertEquals("a b", reopened.state.value.name)
+        assertEquals(rt.state.value, reopened.state.value)
+        val second = h.create(cwd, TEST_MODEL, PermissionMode.Default, name = "a\uD83Db")
+        assertEquals("a b-2", second.state.value.name)
     }
 
     @Test

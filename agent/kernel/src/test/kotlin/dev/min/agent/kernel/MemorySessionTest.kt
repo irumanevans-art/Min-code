@@ -84,10 +84,10 @@ class MemorySessionTest {
     private suspend fun create(model: ScriptedModel, home: GuestPath? = GuestPath("/root")) =
         SessionRuntime.create(store, header, created, deps(model, home), scope)
 
-    private suspend fun events(): List<SessionEvent> = store.open(SessionId("s1"))!!.read().toList().map { it.event }
+    private suspend fun events(): List<SessionEvent> = store.peek(SessionId("s1"))!!.read().toList().map { it.event }
 
     private suspend fun assertLogIsTruth(runtime: SessionRuntime) {
-        val log = store.open(SessionId("s1"))!!
+        val log = store.peek(SessionId("s1"))!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 

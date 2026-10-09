@@ -222,7 +222,7 @@ class ComponentHooksTest {
         return SessionHub(store, deps(model, http, trust, tools), scope, agents = dev.min.agent.kernel.BuiltinAgents.all + agents)
     }
 
-    private suspend fun events(id: SessionId): List<SessionEvent> = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(id: SessionId): List<SessionEvent> = store.peek(id)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId
@@ -231,7 +231,7 @@ class ComponentHooksTest {
     }
 
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 
@@ -565,6 +565,35 @@ class ComponentHooksTest {
         assertLogIsTruth(rt)
     }
 
+    // ---- N5：分身与子 agent 走同一份组件 hooks 继承 ----
+
+    @Test
+    fun `分身继承父会话的组件 hooks，Stop 改成 SubagentStop`() = run {
+        val http = FakeHttp { HttpHookResult.Responded(200, "{}") }
+        val model = RoutingModel { req ->
+            when {
+                req.lastText() == "开始" ->
+                    reply(skillCall("c1", "gate"), skillCall("c2", "stopper"), stop = StopReason.ToolUse)
+                req.lastText().contains("gated thing") || req.lastText().contains("Stop things") ->
+                    reply(agentCall("c3", "fork"), stop = StopReason.ToolUse)
+                req.lastText().contains("去看看") -> reply(TextPart("分身干完了"))
+                else -> reply(TextPart("收到"))
+            }
+        }
+        val h = hub(model, http, tools = listOf(bash, SkillTool, agentTool))
+        val rt = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("开始")
+        val fork = h.get(rt.state.first { it.children.isNotEmpty() }.children.keys.first())!!
+        fork.awaitIdle()
+        rt.awaitIdle()
+        // 分身与子 agent 同一行代码（inheritedComponentHooks）：登记时刻的快照都进来了，Stop 改写同理
+        val inherited = events(fork.sessionId).filterIsInstance<dev.min.agent.spi.ComponentHooksRegistered>()
+        assertEquals(setOf("PreToolUse"), inherited.single { it.name == "gate" }.hooks.keys)
+        assertEquals("Stop 在分身里同样改写成 SubagentStop", setOf("SubagentStop"), inherited.single { it.name == "stopper" }.hooks.keys)
+        assertLogIsTruth(fork)
+        assertLogIsTruth(rt)
+    }
+
     // ---- M4：后台 hook 启动失败不打断回合 ----
 
     @Test
@@ -616,22 +645,33 @@ class ComponentHooksTest {
     @Test
     fun `Hub 启动时清扫不属于任何运行时的 hookbg 暂存目录`() = run {
         val fs2 = dev.min.agent.testkit.FakeFs()
+        // N1 之后清扫认 owner：别的实例留下、且其进程确认已死的目录才删（owner 文件 = 实例 id + 进程 pid）
         fs2.writeAtomic(GuestPath("/root/.min/hooks/hookbg_9/in.json"), "{}".toByteArray())
+        fs2.writeAtomic(GuestPath("/root/.min/hooks/hookbg_9/owner"), "other-instance 4321".toByteArray())
         fs2.writeAtomic(GuestPath("/root/.min/hooks/notes.txt"), "留着".toByteArray())
-        val exec = dev.min.agent.testkit.FakeExec()
+        // 判死只问宿主侧进程表（M4 之后不再走 guest shell 的 kill -0）：4321 宿主确认死，其余一律当活着
+        val exec = dev.min.agent.testkit.FakeExec { _, _ -> dev.min.agent.spi.ExecResult.Exited(0, "", false, 1) }
+        val pidProbes = java.util.concurrent.CopyOnWriteArrayList<Long>()
+        val probed = object : dev.min.agent.spi.Exec by exec {
+            override suspend fun isPidAlive(pid: Long): Boolean? {
+                pidProbes += pid
+                return if (pid == 4321L) false else null
+            }
+        }
         val idle = RoutingModel { _ -> reply(TextPart("x")) }
         val base = dev.min.agent.testkit.testDeps(idle, emptyList())
         val deps2 = KernelDeps(
             clock = base.clock, ids = base.ids, models = base.models, tools = emptyList(),
-            host = HostPorts(fs2, base.host.search, exec, base.host.artifacts),
+            host = HostPorts(fs2, base.host.search, probed, base.host.artifacts),
             platform = base.platform, zone = base.zone, retry = base.retry, memoryHome = null,
         )
         val scope2 = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
         SessionHub(store, deps2, scope2)
         while (exec.runs.none { it.first.script.contains("rm -rf") }) delay(10)
         val rm = exec.runs.single { it.first.script.contains("rm -rf") }
-        assertTrue("孤儿目录被清掉：${rm.first.script}", rm.first.script.contains("hookbg_9"))
+        assertTrue("确认死的孤儿目录被清掉：${rm.first.script}", rm.first.script.contains("hookbg_9"))
         assertTrue("目录以外的文件不动", !rm.first.script.contains("notes.txt"))
+        assertTrue("删之前先问过宿主侧的 owner 进程表：$pidProbes", pidProbes.contains(4321L))
     }
 }
 

@@ -97,6 +97,14 @@ interface SessionStore {
     suspend fun list(): List<LogHeader>
 
     /**
+     * 只读地打开（不修撕裂尾巴、不动文件），返回的视图**不可追加**（真存储里 [SessionLog.append] 会拒绝）。
+     * 轮询一个**还在被追加**的日志必须走它：[open] 是给写者附着用的，会做崩溃修复——对活日志做修复
+     * 会把并发刚追加上去的记录截掉，之后 seq 断档、整个日志报废。
+     * 默认退回 [open]：只读的测试存储没有修复这回事
+     */
+    suspend fun peek(id: SessionId): SessionLog? = open(id)
+
+    /**
      * 删掉一个会话的全部落盘内容（日志与同目录下的附件）。不存在返回 false。
      * 默认不支持（返回 false）：只读的、测试用的存储不用实现；真正的存储（FileSessionStore）覆盖它
      */

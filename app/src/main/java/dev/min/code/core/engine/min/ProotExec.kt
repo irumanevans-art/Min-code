@@ -84,6 +84,19 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         Unit
     }
 
+    /** 按自己登记的 Process 判断存活，不起探测进程（N3）；表里没有 = 已被等待线程摘除 = 不在跑 */
+    override suspend fun isAlive(handle: ExecHandle): Boolean? = withContext(Dispatchers.IO) {
+        running[handle.id]?.process?.isAlive ?: false
+    }
+
+    /** Android 33 以下没有 `ProcessHandle.current()`；owner 记号要的是本进程 pid，宿主侧自己知道 */
+    override fun currentPid(): Long = android.os.Process.myPid().toLong()
+
+    /** 判 owner（前一世的 App 进程）死活：读宿主自己的 /proc，不起探测进程。目录项在就是活着 */
+    override suspend fun isPidAlive(pid: Long): Boolean? = withContext(Dispatchers.IO) {
+        java.io.File("/proc/$pid").exists()
+    }
+
     private inner class Running(val process: Process, val log: File, val timeoutMs: Long, val done: () -> Unit) {
         val exit = CompletableDeferred<Int>()
         private val reaped = AtomicBoolean()

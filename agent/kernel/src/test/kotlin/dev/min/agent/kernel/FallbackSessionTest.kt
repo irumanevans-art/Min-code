@@ -126,10 +126,10 @@ class FallbackSessionTest {
         return state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
     }
 
-    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.open(rt.sessionId)!!.read().toList().map { it.event }
+    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 
@@ -407,7 +407,7 @@ class FallbackSessionTest {
         val backup = ScriptedModel(reply(TextPart("好")))
         val rt = session("s-prefix", deps(mapOf(TEST_MODEL to primary, fb1 to backup), listOf(fb1)))
         rt.say("你好")
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         val records = log.read().toList()
         // 每个前缀都能折叠（严格折叠会对不合法的顺序抛异常），回退期间的前缀里 activeModel 是回退模型
         val seen = records.indices.map { n -> fold(log.header, records.take(n + 1)).activeModel }

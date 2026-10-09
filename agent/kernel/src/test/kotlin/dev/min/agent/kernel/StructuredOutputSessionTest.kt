@@ -150,7 +150,7 @@ class StructuredOutputSessionTest {
     }
 
     private suspend fun events(rt: SessionRuntime): List<SessionEvent> =
-        store.open(rt.sessionId)!!.read().toList().map { it.event }
+        store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
     @Test
     fun `a valid delivery is adopted, ends the turn without another request, and survives reopen`() = run {
@@ -180,7 +180,7 @@ class StructuredOutputSessionTest {
         // 同批的 Echo 照常执行
         assertTrue(log.filterIsInstance<ToolOutcome>().any { !it.result.isError && it.callId.value == "call_2b" })
         // 日志即真相：重开日志折叠出同一份最终答案
-        val reopened = store.open(rt.sessionId)!!
+        val reopened = store.peek(rt.sessionId)!!
         val folded = fold(reopened.header, reopened.read().toList())
         assertEquals(jsonOf("""{"name": "Min"}"""), folded.structuredOutput!!.value)
     }

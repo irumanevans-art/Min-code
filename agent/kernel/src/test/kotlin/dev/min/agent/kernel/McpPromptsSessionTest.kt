@@ -47,7 +47,7 @@ class McpPromptsSessionTest {
             }
             val result = rt.getMcpPrompt("s", "p", args())
             rt.send(ClientMsgId("prompt"), result.content); rt.awaitIdle()
-            val log = store.open(rt.sessionId)!!; val records = log.read().toList()
+            val log = store.peek(rt.sessionId)!!; val records = log.read().toList()
             val input = records.map { it.event }.filterIsInstance<InputReceived>().single()
             val text = input.parts.filterIsInstance<TextPart>().joinToString("\n") { it.text }
             assertTrue(text.contains("问题正文")); assertTrue(text.contains("示例正文")); assertTrue(text.contains("原角色 assistant")); assertFalse(text.contains("音频"))

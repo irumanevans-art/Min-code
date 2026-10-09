@@ -84,11 +84,11 @@ class SessionRuntimeTest {
             scope,
         )
 
-    private suspend fun events(): List<SessionEvent> = store.open(SessionId("s1"))!!.read().toList().map { it.event }
+    private suspend fun events(): List<SessionEvent> = store.peek(SessionId("s1"))!!.read().toList().map { it.event }
 
     /** 日志即真相：重新折叠日志得到的状态 == 运行时内存里的状态 */
     private suspend fun assertLogIsTruth(runtime: SessionRuntime) {
-        val log = store.open(SessionId("s1"))!!
+        val log = store.peek(SessionId("s1"))!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 

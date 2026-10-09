@@ -147,7 +147,7 @@ class TaskStateTest {
     )
 
     private suspend fun assertLogIsTruth(store: SessionStore, runtime: SessionRuntime) {
-        val log = store.open(runtime.sessionId)!!
+        val log = store.peek(runtime.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 
@@ -226,7 +226,7 @@ class TaskStateTest {
             listOf("1:Pending:blocks=[2]:blockedBy=[]", "2:Pending:blocks=[]:blockedBy=[1]"),
             rt.state.value.tasks.map { it.brief() },
         )
-        val notes = store.open(id)!!.read().toList().map { it.event }.filterIsInstance<Note>()
+        val notes = store.peek(id)!!.read().toList().map { it.event }.filterIsInstance<Note>()
         assertEquals(3, notes.size)
         assertTrue(notes[0].text, notes[0].text.contains("没有任务 #9"))
         assertTrue(notes[1].text, notes[1].text.contains("不能依赖它自己"))

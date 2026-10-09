@@ -39,10 +39,13 @@ class JsonlSessionLog private constructor(
     override val header: LogHeader,
     private var lastSeq: Long,
     private val clock: Clock,
+    /** 只读视图（[openReadOnly]）：读者轮询活日志用，[append] 一律拒绝——写者只有附着的那一个 */
+    private val readOnly: Boolean = false,
 ) : SessionLog {
     private val mutex = Mutex()
 
     override suspend fun append(events: List<SessionEvent>, durability: Durability): List<EventRecord> {
+        check(!readOnly) { "peek 出来的是只读视图，不能追加；要写请经写者附着（SessionStore.open）拿日志" }
         if (events.isEmpty()) return emptyList()
         return mutex.withLock {
             withContext(Dispatchers.IO) {
@@ -96,8 +99,34 @@ class JsonlSessionLog private constructor(
          *
          * 只修**尾部**（最后一个换行符之后的字节）。中间某一行完整却解析失败，说明文件损坏或由更新的版本写入，
          * 这时直接报错、不动文件——截掉它会连带删掉后面的有效记录。
+         *
+         * 只给**写者附着**（重开恢复）用；还在被追加的日志绝对不要走这里做只读轮询——修复性截断会把
+         * 并发写者刚落盘的完整记录剁掉，之后 seq 断档、整份日志报废（偶发 CorruptLogException 的根因）。
+         * 只读请用 [openReadOnly]
          */
         internal fun open(file: Path, clock: Clock): JsonlSessionLog {
+            val (found, lastSeq, validEnd) = scan(file)
+            FileChannel.open(file, WRITE).use { channel ->
+                if (channel.size() > validEnd) {
+                    channel.truncate(validEnd)
+                    channel.force(false)
+                }
+            }
+            return JsonlSessionLog(file, found, lastSeq, clock)
+        }
+
+        /**
+         * 只读打开：同一套校验（头版本、seq 连续、中间行损坏照报），但**不动文件**、[append] 一律拒绝。
+         * 轮询活日志用——返回的视图没有可用的 [append]，误用当场报错而不是悄悄多出一个并发写者
+         */
+        internal fun openReadOnly(file: Path, clock: Clock): JsonlSessionLog {
+            val (found, lastSeq, _) = scan(file)
+            return JsonlSessionLog(file, found, lastSeq, clock, readOnly = true)
+        }
+
+        private data class Scanned(val header: LogHeader, val lastSeq: Long, val validEnd: Long)
+
+        private fun scan(file: Path): Scanned {
             var header: LogHeader? = null
             var lastSeq = 0L
             val validEnd = LogLines.forEachCompleteLineBlocking(file) { line, _ ->
@@ -111,14 +140,7 @@ class JsonlSessionLog private constructor(
                     lastSeq = record.seq
                 }
             }
-            val found = header ?: throw CorruptLogException(file, "没有文件头")
-            FileChannel.open(file, WRITE).use { channel ->
-                if (channel.size() > validEnd) {
-                    channel.truncate(validEnd)
-                    channel.force(false)
-                }
-            }
-            return JsonlSessionLog(file, found, lastSeq, clock)
+            return Scanned(header ?: throw CorruptLogException(file, "没有文件头"), lastSeq, validEnd)
         }
     }
 }
