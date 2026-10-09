@@ -448,7 +448,8 @@ class MinAgentEngine(
     }
 
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = withContext(Dispatchers.IO) {
-        val logRef = tasks.find(taskId)?.handle?.logPath ?: return@withContext null
+        // watch 的输出文件在内核的任务表里（命令源是宿主日志，WebSocket 源是内核自己写的事件文件）
+        val logRef = tasks.find(taskId)?.handle?.logPath ?: hub.backgroundJobInfo(taskId)?.outputPath ?: return@withContext null
         catchingNonCancellation { clippedLog(generation.fs.hostPath(logRef).toFile(), maxChars).first }.getOrNull()
     }
 

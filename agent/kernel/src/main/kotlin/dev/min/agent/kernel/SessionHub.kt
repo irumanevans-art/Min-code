@@ -841,6 +841,9 @@ class SessionHub(
             else kotlinx.coroutines.flow.combine(tree.map { it.background.infos }) { lists -> lists.toList().flatten().sortedBy { it.startedAtMs } }
         }
 
+    /** 按 id 找一个后台任务（任意在线会话）：界面读输出文件路径用。找不到为 null */
+    fun backgroundJobInfo(id: String): BackgroundJobInfo? = runtimes.values.firstNotNullOfOrNull { it.background.find(id) }
+
     /** 界面的任务条上点「停止」：与模型的 TaskStop 同一条路，只是模型不知道，结局会补一条通知（不唤醒）。返回是否真的停了一个在跑的任务 */
     suspend fun stopBackgroundJob(root: SessionId, jobId: String): Boolean {
         val owner = runtimes[root]?.let { jobOwner(it, jobId) } ?: return false

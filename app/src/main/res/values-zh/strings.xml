@@ -405,6 +405,12 @@
   <string name="shell_state_completed">已完成</string>
   <string name="shell_state_failed">失败</string>
   <string name="shell_state_stopped">已停止</string>
+  <string name="shell_state_expired">已到期</string>
+  <string name="shell_events">事件</string>
+  <plurals name="shell_events_count">
+    <item quantity="other">%d 条事件</item>
+  </plurals>
+  <string name="shell_remaining">剩余</string>
   <string name="shell_exit_code">exit %1$d</string>
   <string name="shell_monitor">监视</string>
   <string name="shell_stop">停止</string>
