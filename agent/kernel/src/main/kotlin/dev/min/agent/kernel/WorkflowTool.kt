@@ -34,17 +34,21 @@ internal class WorkflowTool(private val rt: SessionRuntime) : Tool<WorkflowInput
     catch (e: IllegalArgumentException) { ToolInput.Invalid(e.message ?: "Invalid workflow.") }
     catch (e: IllegalStateException) { ToolInput.Invalid(e.message ?: "Invalid workflow.") }
     override fun permissionAsk(input: WorkflowInput, ctx: ToolContext) = PermissionAsk(name,
-        "${input.name}\nSHA-256: ${input.hash}\n\n${input.source}", specifiers = listOf(input.hash))
+        "${input.name}\nSHA-256: ${input.hash}\n\n${input.source}", specifiers = listOf(input.name))
     override fun run(input: WorkflowInput, ctx: ToolContext) = flow {
-        // 内容哈希而非名字绑定授权：改脚本后即使同名也必须重新批准。
-        if (!rt.workflowApproved(input.hash)) {
+        if (rt.state.value.settings.mode == dev.min.agent.protocol.PermissionMode.Auto && !rt.workflowApproved(input.hash)) {
             rt.commit(listOf(WorkflowApproved(rt.state.value.settings.cwd, input.hash)), Durability.Sync)
-            rt.deps.workflowApprovals.approve(rt.state.value.settings.cwd, input.hash)
+            rt.deps.workflowApprovals.consentAuto()
         }
         emit(ToolProgress.Done(rt.executeWorkflow(requireNotNull(rt.state.value.turn).turnId, ctx.callId, input)))
     }
 }
 
 internal fun SessionRuntime.workflowApproved(hash: String): Boolean =
-    deps.workflowApprovals.contains(state.value.settings.cwd, hash) || state.value.workflowEvents
-        .filterIsInstance<WorkflowApproved>().any { it.cwd == state.value.settings.cwd && it.hash == hash }
+    deps.workflowApprovals.contains(state.value.settings.cwd, hash) ||
+        state.value.settings.mode == dev.min.agent.protocol.PermissionMode.Auto &&
+        (deps.workflowApprovals.autoConsented() || deps.workflowApprovals === WorkflowApprovals.SessionOnly && state.value.workflowEvents.any { it is WorkflowApproved })
+
+suspend fun SessionRuntime.revokeWorkflowApproval(source: String) {
+    deps.workflowApprovals.revoke(state.value.settings.cwd, WorkflowScript.hash(source))
+}

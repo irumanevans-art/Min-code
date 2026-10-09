@@ -255,7 +255,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         if (p.tool !is WorkflowTool || verdict is Verdict.Deny) return verdict
         if (PolicyEngine.askRuleHit(ask, policyContext()) != null) return Verdict.Ask
         if (verdict is Verdict.Allow && verdict.by is DecidedBy.Rule) return verdict
-        return if (rt.workflowApproved((p.input as WorkflowInput).hash)) Verdict.Allow(DecidedBy.Mode(rt.state.value.settings.mode)) else Verdict.Ask
+        return if (rt.workflowApproved((p.input as WorkflowInput).hash)) Verdict.Allow(DecidedBy.Mode(rt.state.value.settings.mode)) else verdict
     }
 
     private var parsedFromRules: List<RuleEntry>? = null
@@ -309,13 +309,14 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         }
         val ask = askFor(ready)
         val policy = verdictFor(ready, ask)
-        val initial = if (ready.tool is WorkflowTool && policy == Verdict.Ask) Verdict.Ask else merge(ready, ask, hook)
+        val initial = merge(ready, ask, hook)
         val hardDenied = policy is Verdict.Deny && (policy.by as? DecidedBy.Rule)?.source == "autoMode.hard_deny"
         val proseHardDeny = rt.state.value.autoReviewSettings.config.hardDeny.any {
             PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
         }
         val verdict = if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.unavailable && policy !is Verdict.Deny) Verdict.Ask
         else if (PolicyEngine.askRuleHit(ask, policyContext()) != null && policy !is Verdict.Deny) Verdict.Ask
+        else if (ready.tool is WorkflowTool && hook == HookOutcome.Decision.Allow && !hardDenied && !proseHardDeny && policy !is Verdict.Deny) initial
         else if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
             val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
             // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
@@ -340,7 +341,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
                 outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
             }
             is Verdict.Allow -> execute(turnId, ready)
-            Verdict.Ask -> when (val answer = permissionRequest(turnId, ready, allowDecisions = ready.tool !is WorkflowTool && rt.state.value.settings.mode != PermissionMode.Auto)) {
+            Verdict.Ask -> when (val answer = permissionRequest(turnId, ready, allowDecisions = rt.state.value.settings.mode != PermissionMode.Auto)) {
                 is PermissionAnswer.Denied -> {
                     // hook 替人拒了：先落卡再落答（同一次提交，折叠成已决议），不发审批卡
                     resolveByHook(turnId, ready, ApprovalChoice.Deny(answer.note, fromHost = true))
@@ -432,7 +433,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         // 「总是允许」的建议与踩底线的原因随审批一起落盘：界面据此给按钮、给解释，重启后照样有
         val context = policyContext()
         val ask = askFor(ready)
-        val suggested = if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
+        val suggested = if (ready.tool is WorkflowTool) "Workflow(${(ready.input as WorkflowInput).name})" else if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
         rt.commit(
             listOf(ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context))),
             Durability.Sync,
@@ -449,7 +450,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val approvalId = ApprovalId(deps.ids.next("ap"))
         val context = policyContext()
         val ask = askFor(ready)
-        val suggested = if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
+        val suggested = if (ready.tool is WorkflowTool) "Workflow(${(ready.input as WorkflowInput).name})" else if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
         rt.commit(
             listOf(
                 ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context)),

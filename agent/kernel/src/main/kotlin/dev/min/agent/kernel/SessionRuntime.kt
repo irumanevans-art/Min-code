@@ -21,6 +21,7 @@ import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.OutputStyleLoaded
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import dev.min.agent.protocol.ApprovalId
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ClientMsgId
@@ -519,9 +520,17 @@ class SessionRuntime private constructor(
 
     /** 答复一次审批。那次审批已经不在等了（另一端先答了、回合已结束）返回 false */
     suspend fun answerApproval(approvalId: ApprovalId, choice: ApprovalChoice): Boolean {
-        return commitIf(listOf(ApprovalResolved(approvalId, choice, DecidedBy.User)), Durability.Sync) { s ->
+        val workflow = state.value.turn?.calls?.values?.firstOrNull {
+            it.tool == "Workflow" && (it.phase as? CallPhase.AwaitingApproval)?.approvalId == approvalId
+        }
+        val remember = workflow != null && choice is ApprovalChoice.Always
+        val applied = commitIf(listOf(ApprovalResolved(approvalId, if (remember) ApprovalChoice.Once else choice, DecidedBy.User)), Durability.Sync) { s ->
             s.turn?.calls?.values?.any { (it.phase as? CallPhase.AwaitingApproval)?.approvalId == approvalId } == true
         } != null
+        // 只有明确选择本项目不再问才持久化；普通 Once 不增加可跨运行复用的规则。
+        if (applied && remember) deps.workflowApprovals.approve(state.value.settings.cwd,
+            dev.min.agent.ext.workflow.WorkflowScript.hash(requireNotNull(workflow).input["source"]!!.jsonPrimitive.content))
+        return applied
     }
 
     /**

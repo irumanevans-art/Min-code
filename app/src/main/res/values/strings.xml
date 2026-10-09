@@ -1357,4 +1357,6 @@
     <string name="duration_minutes">%1$d min</string>
     <string name="duration_hours">%1$d h</string>
     <string name="duration_days">%1$d days</string>
+<string name="workflow_remember_project">Do not ask again in this project</string>
+<string name="workflow_view_script">View script</string>
 </resources>

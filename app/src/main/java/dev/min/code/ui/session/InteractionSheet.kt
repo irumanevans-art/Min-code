@@ -12,6 +12,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -95,6 +97,7 @@ private fun PermissionSheet(
     /** 点了哪个按钮，传它的 [ApprovalOption.id] */
     onAnswer: (optionId: String) -> Unit,
 ) {
+    var showScript by remember(pending.id) { mutableStateOf(false) }
     val approval = pending as? PendingInteraction.Approval
     // **不允许滑动关掉**。这个 sheet 是在会话流上方弹出来的，而用户很可能正在往回滑看历史 ——
     // 弹出的那一瞬间手指还在移动，一下就把它滑走了，而滑走等于 onDismissRequest，
@@ -170,7 +173,10 @@ private fun PermissionSheet(
             // 按工具类型渲染入参：编辑类给 diff，Bash 给高亮命令，其余给美化 JSON。
             // 原来这里是 `input.toString()` 截断成一行流水账 —— 用户点「允许」时
             // 其实看不到自己批准了什么，而那正是权限确认唯一的意义。
-            ToolInputPreview(
+            if (pending.awaitedToolName == "Workflow") {
+                InkButton(onClick = { showScript = !showScript }, tone = InkButtonTone.Paper) { Text(stringResource(R.string.workflow_view_script)) }
+            }
+            if (pending.awaitedToolName != "Workflow" || showScript) ToolInputPreview(
                 name = pending.awaitedToolName,
                 // 计划审批卡只带计划正文：ExitPlanMode 的预览也只读 `plan`
                 input = approval?.input ?: planInputOf(pending),

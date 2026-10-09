@@ -18,6 +18,10 @@ interface WorkflowHost {
 
 interface WorkflowApprovals {
     fun contains(cwd: GuestPath, hash: String): Boolean
+    suspend fun revoke(cwd: GuestPath, hash: String) {}
+    fun autoConsented(): Boolean = false
+    suspend fun consentAuto() {}
+    suspend fun revokeAuto() {}
     suspend fun approve(cwd: GuestPath, hash: String)
     object SessionOnly : WorkflowApprovals {
         override fun contains(cwd: GuestPath, hash: String) = false
