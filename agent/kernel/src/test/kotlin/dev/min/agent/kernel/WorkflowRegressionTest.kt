@@ -69,8 +69,6 @@ class WorkflowRegressionTest {
             val hub = SessionHub(FileSessionStore(tmp.root.toPath(), { 1000 }), deps(fs,model,engine),scope)
             val rt = hub.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
             rt.send(ClientMsgId("json"), listOf(TextPart("/review")))
-            val approval = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
-            rt.answerApproval(approval.approvalId, ApprovalChoice.Once)
             withTimeout(10000) { rt.state.first { it.lastTurn != null && it.turn == null } }
             assertEquals(value, rt.state.value.workflowEvents.filterIsInstance<WorkflowNodeCompleted>().single().result)
             assertEquals(1,rt.state.value.children.size); assertEquals(2,model.requests.size)

@@ -72,4 +72,24 @@ class WorkflowRunTest {
         val host = WorkflowRun(start(), previous, {}) { _, _, _ -> calls++; WorkflowAnswer("fresh") }
         assertEquals(JsonPrimitive("fresh"), host.agent(0, "changed", options)); assertEquals(1, calls)
     }
+
+    @Test fun progressBudgetSurvivesReplayAndAnnotatesOnlyOnce() = run {
+        val messages=mutableListOf<SessionEvent>()
+        val initial=(0 until 4096).map { WorkflowProgress("run","log","x") }
+        val host=WorkflowRun(start(),initial,{ messages+=it }) { _,_,_ -> WorkflowAnswer("ok") }
+        repeat(10000) { host.progress("log","y") }
+        assertEquals(1,messages.size); assertEquals(WorkflowRun.PROGRESS_DROPPED,(messages.single() as WorkflowProgress).message)
+        val full=WorkflowRun(start(),listOf(WorkflowProgress("run","log","x".repeat(1024*1024))),{ messages+=it }) { _,_,_ -> WorkflowAnswer("ok") }
+        full.progress("log","y"); assertEquals(2,messages.size)
+    }
+    @Test fun editedScriptReusesOnlyLongestUnchangedPrefix() = run {
+        val options=JsonObject(emptyMap())
+        val previous=(0..2).flatMap { i -> listOf(WorkflowNodeStarted("run",i,"old$i",options),WorkflowNodeCompleted("run",i,JsonPrimitive("saved$i"))) }
+        val calls=mutableListOf<Int>()
+        val host=WorkflowRun(start(),previous,{}) { i,_,_ -> calls+=i; WorkflowAnswer("new$i") }
+        assertEquals(JsonPrimitive("saved0"),host.agent(0,"old0",options))
+        assertEquals(JsonPrimitive("new1"),host.agent(1,"changed",options))
+        assertEquals(JsonPrimitive("new2"),host.agent(2,"old2",options))
+        assertEquals(listOf(1,2),calls)
+    }
 }

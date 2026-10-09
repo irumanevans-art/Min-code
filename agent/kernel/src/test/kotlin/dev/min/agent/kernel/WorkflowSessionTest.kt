@@ -25,31 +25,21 @@ class WorkflowSessionTest {
         host = HostPorts(fs, FakeSearch(), FakeExec(), { FakeArtifacts() }), platform = "test", zone = ZoneOffset.UTC,
         trustProjectHooks = { true }, memoryHome = GuestPath("/home"), workflowEngine = engine, env = { env[it] },
     )
-    @Test fun savedCommandRequiresApprovalCachesContentAndReapprovesChanges() = run {
-        val fs = FakeFs().apply { put("/work/.claude/workflows/review.js", source()) }
-        val model = ScriptedModel()
-        var evaluations = 0
-        val engine = WorkflowEngine { _, _, _ -> evaluations++; JsonPrimitive("done") }
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Test fun bypassRunsChangedSavedScriptsWithoutPersistingConsent() = run {
+        val fs=FakeFs().apply { put("/work/.claude/workflows/review.js",source()) }
+        var evaluations=0
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
         try {
-            val store = FileSessionStore(tmp.root.toPath(), { 1000 }); val hub = SessionHub(store, deps(fs, model, engine), scope)
-            val rt = hub.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
-            rt.send(ClientMsgId("one"), listOf(TextPart("/review input")))
-            val pending = hub.pending.first { it.any { p -> p.root == rt.sessionId } }.single()
-            assertEquals(0, evaluations); assertEquals("Workflow", (pending.what as HubPending.What.Approval).tool)
-            rt.answerApproval(pending.what.approvalId, ApprovalChoice.Once)
-            rt.state.first { it.lastTurn != null && it.turn == null }
-            rt.send(ClientMsgId("two"), listOf(TextPart("/review input")))
-            rt.state.first { it.lastTurn != null && it.turn == null && evaluations == 2 }
-            assertTrue(hub.pending.value.none { it.root == rt.sessionId })
-            fs.put("/work/.claude/workflows/review.js", source("// changed"))
-            rt.send(ClientMsgId("three"), listOf(TextPart("/review input")))
-            val again = hub.pending.first { it.any { p -> p.root == rt.sessionId } }.single()
-            assertEquals(2, evaluations)
-            rt.answerApproval((again.what as HubPending.What.Approval).approvalId, ApprovalChoice.Once)
-            rt.state.first { it.turn == null && evaluations == 3 }
-            assertTrue(model.requests.isEmpty())
-            assertEquals(2, rt.state.value.workflowEvents.filterIsInstance<WorkflowApproved>().size)
+            val hub=SessionHub(FileSessionStore(tmp.root.toPath(),{1000}),deps(fs,ScriptedModel(),WorkflowEngine { _,_,_ -> evaluations++; JsonPrimitive("done") }),scope)
+            val rt=hub.create(GuestPath("/work"),TEST_MODEL,PermissionMode.BypassPermissions)
+            for (i in 1..3) {
+                fs.put("/work/.claude/workflows/review.js",source("// $i"))
+                val previous=rt.state.value.lastTurn?.turnId
+                rt.send(ClientMsgId("run$i"),listOf(TextPart("/review")))
+                rt.state.first { it.turn==null && it.lastTurn?.turnId!=previous }
+                assertEquals(i,evaluations); assertTrue(hub.pending.value.isEmpty())
+            }
+            assertTrue(rt.state.value.workflowEvents.filterIsInstance<WorkflowApproved>().isEmpty())
         } finally { scope.cancel() }
     }
     @Test fun schemaRetriesReuseOneHubChildAndCannotAskUser() = run {
@@ -62,8 +52,6 @@ class WorkflowSessionTest {
             val hub = SessionHub(FileSessionStore(tmp.root.toPath(), { 1000 }), deps(fs, model, engine), scope)
             val rt = hub.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
             rt.send(ClientMsgId("one"), listOf(TextPart("/review")))
-            val ask = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
-            rt.answerApproval(ask.approvalId, ApprovalChoice.Once)
             rt.state.first { it.lastTurn != null && it.turn == null }
             assertEquals(TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
             assertEquals(1, rt.state.value.children.size); assertEquals(2, model.requests.size)
@@ -167,8 +155,6 @@ class WorkflowSessionTest {
                 val hub = SessionHub(FileSessionStore(tmp.newFolder().toPath(), { 0 }), deps(fs, model, engine, tools = listOf(spawn, ask)), scope)
                 val rt = hub.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
                 rt.send(ClientMsgId("start"), listOf(TextPart("/review")))
-                val approval = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
-                rt.answerApproval(approval.approvalId, ApprovalChoice.Once)
                 rt.state.first { it.lastTurn != null && it.turn == null }
                 val finished = nested as DelegateResult.Finished
                 assertTrue(hub.get(finished.child)!!.state.value.origin!!.workflow)
@@ -200,8 +186,6 @@ class WorkflowSessionTest {
                     deps(fs, model, engine, env = mapOf("CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS" to "$cap")), scope)
                 val rt = hub.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
                 rt.send(ClientMsgId("start"), listOf(TextPart("/review")))
-                val approval = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
-                rt.answerApproval(approval.approvalId, ApprovalChoice.Once)
                 entered.await()
                 assertEquals(cap, active.get()); assertEquals(cap, maximum.get())
                 release.complete(Unit)
@@ -210,5 +194,65 @@ class WorkflowSessionTest {
                 assertEquals(cap + 3, rt.state.value.children.size); assertEquals(cap, maximum.get())
             } finally { release.complete(Unit); scope.cancel() }
         }
+    }
+
+    @Test fun schemaFailureStopsAtFiveAndResolvesNull() = run {
+        val fs=FakeFs().apply { put("/work/.claude/workflows/review.js",source()) }
+        val model=ScriptedModel(*(1..6).map { reply(TextPart("```json\n{}\n```")) }.toTypedArray())
+        val schema=Json.parseToJsonElement("""{"type":"object","required":["ok"]}""").jsonObject
+        val engine=WorkflowEngine { _,_,host -> host.agent(0,"json",JsonObject(mapOf("schema" to schema))) }
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
+        try {
+            val hub=SessionHub(FileSessionStore(tmp.root.toPath(),{1000}),deps(fs,model,engine),scope)
+            val rt=hub.create(GuestPath("/work"),TEST_MODEL,PermissionMode.BypassPermissions)
+            rt.send(ClientMsgId("schema"),listOf(TextPart("/review")))
+            rt.state.first { it.turn==null && it.lastTurn!=null }
+            val node=rt.state.value.workflowEvents.filterIsInstance<WorkflowNodeCompleted>().single()
+            assertEquals(JsonNull,node.result); assertTrue(node.isError)
+            assertEquals(5,model.requests.size); assertEquals(1,rt.state.value.children.size)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun workflowOptionsSelectDefinitionEffortAndPhase() = run {
+        val fs=FakeFs().apply { put("/work/.claude/workflows/review.js",source()) }
+        val model=ScriptedModel(reply(TextPart("done")))
+        val engine=WorkflowEngine { _,_,host -> host.agent(0,"find",buildJsonObject { put("agentType","Explore"); put("effort","high"); put("phase","Review") }) }
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
+        try {
+            val hub=SessionHub(FileSessionStore(tmp.root.toPath(),{1000}),deps(fs,model,engine),scope)
+            val rt=hub.create(GuestPath("/work"),TEST_MODEL,PermissionMode.BypassPermissions)
+            rt.send(ClientMsgId("options"),listOf(TextPart("/review")))
+            rt.state.first { it.turn==null && it.lastTurn!=null }
+            val child=hub.get(rt.state.value.children.keys.single())!!
+            assertEquals("Explore",child.state.value.origin!!.agentType)
+            assertTrue(model.requests.all { request -> request.tools.none { it.name=="Workflow" } })
+            assertEquals(Effort.High,child.state.value.settings.effort)
+            assertTrue(rt.state.value.workflowEvents.filterIsInstance<WorkflowProgress>().any { it.kind=="phase" && it.message=="Review" })
+        } finally { scope.cancel() }
+    }
+
+    @Test fun ordinarySubagentCannotLaunchWorkflow() = run {
+        val spawn=object:Tool<JsonObject> {
+            override val name="SpawnProbe"
+            override val traits=ToolTraits(delegates=true)
+            override val inputSchema=JsonObject(emptyMap())
+            override fun description(profile:HarnessProfile)="spawn"
+            override fun parse(raw:JsonObject)=ToolInput.Valid(raw)
+            override fun permissionAsk(input:JsonObject,ctx:ToolContext)=PermissionAsk(name,"spawn")
+            override fun run(input:JsonObject,ctx:ToolContext)=flow {
+                ctx.agents.delegate(DelegateRequest("child","child",background=false))
+                emit(ToolProgress.Done(ToolResult(listOf(TextPart("done")))))
+            }
+        }
+        val model=ScriptedModel(reply(ToolCallPart(CallId("spawn"),spawn.name,JsonObject(emptyMap()))),reply(TextPart("child")),reply(TextPart("done")))
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
+        try {
+            val hub=SessionHub(FileSessionStore(tmp.root.toPath(),{1000}),deps(FakeFs(),model,WorkflowEngine { _,_,_ -> JsonNull },tools=listOf(spawn)),scope)
+            val rt=hub.create(GuestPath("/work"),TEST_MODEL,PermissionMode.BypassPermissions)
+            rt.send(ClientMsgId("child"),listOf(TextPart("spawn")))
+            rt.state.first { it.turn==null && it.lastTurn!=null }
+            assertTrue(model.requests.first().tools.any { it.name=="Workflow" })
+            assertTrue(model.requests[1].tools.none { it.name=="Workflow" })
+        } finally { scope.cancel() }
     }
 }
