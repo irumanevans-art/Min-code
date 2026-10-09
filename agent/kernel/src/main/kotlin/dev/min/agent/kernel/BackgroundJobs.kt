@@ -250,7 +250,8 @@ internal class BackgroundJobs(
     private suspend fun startMonitor(request: MonitorRequest, callId: CallId?): MonitorStart {
         request.ws?.let { return startWebSocketMonitor(request, it) }
         val command = request.command ?: return MonitorStart.Rejected("Monitor 需要 command。")
-        if (runningMonitors() >= MAX_MONITORS) {
+        // 上限管的是模型起的 watch；插件声明的（persistent）是用户启用插件的结果，不占这个名额
+        if (!request.persistent && runningMonitors() >= MAX_MONITORS) {
             return MonitorStart.Rejected("这个会话已经有 $MAX_MONITORS 个 watch 在跑，先用 TaskStop 停掉不需要的再开新的。")
         }
         val timeout = if (request.persistent) null else clampTimeout(request.timeoutMs)

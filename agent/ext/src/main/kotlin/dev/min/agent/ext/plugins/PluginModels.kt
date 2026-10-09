@@ -103,6 +103,12 @@ data class PluginTheme(val name: String, val filePath: String)
 /** [原文] monitors 条目（PLG:362-369）；命令不许引用 ${user_config.*}（PLG:388）。 */
 data class PluginMonitor(val name: String, val command: String, val description: String, val whenTrigger: String? = null)
 
+/**
+ * 过了信任闸、可以启动的 monitor（[PluginBundle.monitors]）：[command] 已把路径变量换成宿主路径；[onSkill] 为 null 表示 `always`，
+ * 否则是 `on-skill-invoke:` 后面的 skill 名（第一次调用它时才启动）。[plugin] 是插件的命名空间名
+ */
+data class PluginMonitorLaunch(val plugin: String, val name: String, val command: String, val description: String, val onSkill: String?)
+
 data class PluginWorkflow(val filePath: String)
 
 /**

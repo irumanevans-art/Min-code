@@ -442,6 +442,8 @@ class SessionHub(
         register(runtime)
         attachMcp(runtime, fresh = true)
         crons.attach(runtime)
+        // 插件声明的 monitors 随会话创建自动启动（`-p` 与子 agent 不启，见 PluginMonitors.kt）
+        runtime.startPluginMonitors()
         return runtime
     }
 
@@ -752,6 +754,7 @@ class SessionHub(
     private suspend fun resumeStart(runtime: SessionRuntime) {
         if (runtime.state.value.origin == null && userResumed.add(runtime.sessionId)) {
             runtime.runSessionStart("resume")
+            runtime.startPluginMonitors()
         }
     }
 

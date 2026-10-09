@@ -1,6 +1,7 @@
 package dev.min.agent.cli
 
 import dev.min.agent.kernel.savedWorkflows
+import dev.min.agent.kernel.skillInvoked
 
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.kernel.continueFromSummary
@@ -135,6 +136,8 @@ internal suspend fun interact(
         (action as? InputAction.Send)?.names.orEmpty().forEach { name ->
             entries.firstOrNull { it.name == name }?.let { e ->
                 e.hooks?.let { runtime.registerComponentHooks(e.kind.name.lowercase(), name, e.source ?: "user", it) }
+                // 插件的 on-skill-invoke monitor：用户用斜杠调用 skill 也算「第一次被调用」
+                runtime.skillInvoked(e.name)
             }
         }
         runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)

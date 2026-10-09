@@ -52,7 +52,6 @@ internal class PluginParser(internal val directories: Set<String>, private val u
         val loaded = discover(rootName, files, normalizeDeclarations(safeManifest), normalizeDeclarations(safeEntry), request)
         errors += componentErrors
         if (loaded.lspServers.isNotEmpty()) warnings += "LSP 未支持：仅保留声明，不启动服务器"
-        if (loaded.monitors.isNotEmpty()) warnings += "monitors 未支持：仅保留声明，不启动后台任务"
         return PluginLoadOutcome(loaded.copy(root = root, warnings = warnings, errors = errors), warnings, errors)
     }
 
