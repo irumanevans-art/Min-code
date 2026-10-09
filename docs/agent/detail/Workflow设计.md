@@ -1,28 +1,33 @@
-# Workflow（M5）
+# Workflow（M5 · 独立复核修复）
 
-模型：GPT 6.1 Sol。基线：agent/m0 28ec4172。
+模型：GPT 6.1 Sol。基线合并：agent/m0 13c74026。
 
-QuickJS 只由 Android 宿主模块 agent/workflow 引入；内核使用 spi 的 WorkflowEngine，原有 13 个模块保持纯 JVM。节点使用 SessionHub，继承父会话权限、目录、MCP 与审批树。节点自己控制并发，避免再次受普通子 agent 的三个请求槽限制。禁止 AskUserQuestion 和 MCP elicitation，工具审批照常保留。
+QuickJS 的同一份引擎源码分别由 Android agent/workflow 和桌面 CLI 编译，链接 version catalog 中同版本的 Android / JVM 原生库。内核依赖 spi.WorkflowEngine。手机默认并发 4，桌面 16；CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS 接受 1–256，每个 run 冻结并发与 schema 尝试次数。Workflow 只在主会话可见。
 
-项目脚本放 `.claude/workflows/*.js`，个人放 `~/.claude/workflows/*.js`，项目同名优先。只扫描文件与字面量 meta，不执行发现到的脚本。首语句必须是 `export const meta = {name, description}`，支持可选字符串数组 phases。动态 meta 不进入命令列表。以 `/name 参数` 运行，未传参数为 undefined，参数为原始字符串，无需模型选择脚本。
+项目保存于 .claude/workflows/*.js，个人保存于 ~/.claude/workflows/*.js，项目同名优先。发现过程仅解析字面量 meta，不执行 JS，并使用凭据策略检查实际路径。首语句为 export const meta = {name, description}；phases 兼容字符串和 {title, detail}。未传 args 为 undefined，结构化 args 用 JSON.parse 注入，__proto__ 保持普通自有属性。
 
 ```javascript
-export const meta = {name: 'review', description: 'Review a change', phases: ['Review']};
+export const meta = {name:'review', description:'Review', phases:[{title:'Review',detail:'Check changes'}]};
 await phase('Review');
-await log(args ?? 'Review current changes');
-return await pipeline(['correctness', 'tests'], item => agent(`Review ${item}`, {label: item}));
+return await pipeline(['correctness','tests'],
+  (previous,item,index) => agent(`Review ${item}`,{label:item,effort:'high'}),
+  (previous,item,index) => ({item,result:previous}));
 ```
 
-提供 agent(prompt, {schema?, label?, model?})、pipeline(list, fn)、parallel(...tasks)、phase(title)、log(message)、全局 args。parallel 接受数组或多参数、Promise 或函数。pipeline 保留 null。最多 4,096 项、1,000 个 agent 调用。未 return 时结果为按启动序排列的节点结果。
+agent(prompt, options) 支持 schema、label、model、phase、effort、isolation:'worktree'、agentType；额外字段忽略。isolation 走已有 worktree 端口，agentType 走已有定义。失败或子会话中断返回 null；父回合 CancellationException 传播。pipeline(items,...stages) 每阶段接收 (上一阶段结果,原项,序号)，null 跳过后续阶段并保留位置；parallel 数组或多参数中某项失败返回该位置 null。最多 4096 项和每 run 1000 个 agent，边界包含。
 
-Date.now、Math.random、Date()、无参 new Date 禁用，原构造器不能从 prototype.constructor 取回；指定时间的 Date、Date.UTC/parse 可用。无文件、网络、shell、输入 API 或模块加载器。32 MiB 原生内存上限，JS 执行预算 30 秒不计模型等待；父协程取消打断原生循环并关闭引擎。
+schema 使用子会话内的 StructuredOutput 工具交卷，复用 --json-schema 的校验和重试循环。默认五次，MAX_STRUCTURED_OUTPUT_RETRIES 可配置，冻结值传给子会话。围栏自由文本不会被当作交卷，模型仍能在后续请求用工具交出答案。工作流树不接受 AskUserQuestion / MCP elicitation，工具权限仍挂根 Hub。
 
-手机默认 4；设置 `env.CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS`（或宿主 env）接受 1–256，其他值回退。每次 run 冻结并发和 schema 次数。schema 与 --json-schema 共用 JsonSchema，默认总尝试五次（首次 + 四次重试），MAX_STRUCTURED_OUTPUT_RETRIES 正整数可覆盖。重试在同一子会话里续聊；子会话中断或错误返回 `{error, message}`，父工作流取消继续传播 CancellationException。
+沙箱屏蔽当前时间、随机数、文件、网络、shell、输入和模块加载。引擎专用 dispatcher 有四个守护线程。明确配置 32 MiB JS 内存、256 KiB 原生栈；自有看门狗仅在没有宿主调用在途且 30 秒无进展时中断，落盘回放也是宿主调用。阈值可注入，开始计时前完成固定沙箱初始化；进展更新与中断判定同步，避免宿主调用刚启动就被旧时间误杀。父协程取消仍中断原生循环。
 
-审批卡展示源码和 SHA-256，授权与内容和项目 cwd 绑定，App 在私有目录持久保存，后续会话复用；内容改变重新批准。Workflow(hash) allow/deny/ask 规则生效，deny 优先；首次确认不由 auto reviewer 或 hook allow 跳过。执行只用批准时冻结的源码。
+JS 在异步桥之前限制 prompt 300000 字符、日志/阶段 30000 字符；JS 与宿主各限制每 run 4096 条 / 1 MiB 进度，并仅加一条丢弃说明。宿主预算计入历史回放进度。Workflow 返回值通过现有工具预算限制为 12000 字符，完整节点/运行结果保留在持久日志。
 
-节点 started/completed/result 同步落日志。重开以原脚本、参数和序号回放完成节点，未完成节点重跑；失败或 prompt/options 不同的节点及其后重跑。新的 started 废弃旧 completed。被中断会话点继续自动找最后未完成 run；Workflow 工具也可带 resume_run，需原脚本和 args。回合锁阻止正在运行时二次恢复。
+bypass 直接运行；Manual / acceptEdits 每次询问，只有明确选择本项目不再问才记住 cwd + 源码哈希。Auto 的一次同意由宿主保存，后续调用免额外确认。Workflow / Workflow(name) 规则、PreToolUse allow、AutoReviewer 可预授权；deny / ask 与 auto hard_deny 仍优先。批准后只执行冻结源码。App 和 CLI 共用私有 FileWorkflowApprovals，包含读写、revoke 和 revokeAuto 接口。App 显示查看脚本与项目记住选项；CLI -p 无交互，由原有权限链路决定是否允许。
 
-App 用现有 Note 显示阶段和日志。许可页为 AboutPage，中英文正文和可展开完整文本显示声明；原样上游 MIT、Apache 文件与固定提交来源随 APK assets/licenses 打包。上游 AAR 本身没有声明文件，应用明确补足。
+节点 started / completed 同步落盘后返回给 JS。只有 run 属于刚被中断回合时 ▶ 自动恢复；失败/取消分别落 failed/cancelled 终态。显式 resume_run 可使用修改源码、原 args，按 prompt/options 比较复用最长未改动前缀，首次变动或失败处起全部重跑。新的 started 废弃旧 completed。写盘异常广播给序号等待者；取消收尾写盘失败保留原取消原因。保存命令执行失败使回合与 CLI 结果失败。
 
-桌面 CLI 此阶段未装配 WorkflowEngine；单测使用同版本 JVM 原生引擎，桌面会话不加载 Android AAR。
+CLAUDE_CODE_DISABLE_WORKFLOWS=1、settings.disableWorkflows=true 和 App 全局开关隐藏工具与命令；已开始运行继续使用冻结配置。settings 禁用事件只在禁用时落盘，默认日志形状不变，重开保持。许可页及 APK assets 同步包含 quickjs-kt Apache、QuickJS MIT、c-vector MIT（Evan Teran 2015）原文与固定来源。
+
+核验依据：[Workflow 官方页](https://code.claude.com/docs/en/workflows)、[Agent SDK Workflow 输入](https://code.claude.com/docs/en/agent-sdk/typescript#workflow)、[子 agent 工具可见性](https://code.claude.com/docs/en/sub-agents)。公开页当前没有给出脚本 budget / workflow() 的签名和语义，因此未猜测实现这两项。页面新增的 stallMs / 单节点无输出自动重启管线尚未实现，stallMs 当前被忽略；节点失败按本轮任务单统一返回 null，不宣称已实现 stalled agent 直接 await 的专门终止语义。
+
+正式测试覆盖原生递归五种、内存、30 秒无进展、35 秒宿主后 CPU 工作、进度洪泛、边界、批准、结构化交卷、修改前缀和写盘失败；CLI 端到端使用真引擎、真 SessionHub 与真持久回放。变异脚本 tools/workflow_fixes_mutations.py 保存每项真实退出码、指定断言失败和恢复结果。
