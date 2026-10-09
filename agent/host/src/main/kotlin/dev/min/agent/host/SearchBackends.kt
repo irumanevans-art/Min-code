@@ -53,9 +53,14 @@ class SearXngSearchBackend(
 ) : SearchBackend {
     private val endpoint = baseUrl.trimEnd('/') + "/search"
     init {
-        val uri = URI(baseUrl)
-        require(uri.scheme in listOf("http", "https") && uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null) {
-            "SearXNG 地址必须是无凭证的 HTTP 或 HTTPS 基础地址。"
+        require(isValidBaseUrl(baseUrl)) { "SearXNG 地址必须是无凭证的 HTTP 或 HTTPS 基础地址。" }
+    }
+
+    companion object {
+        /** 构造时的校验就是这一条；宿主的设置界面存之前先用它拦一道，免得存下一个到用时才炸的地址 */
+        fun isValidBaseUrl(baseUrl: String): Boolean {
+            val uri = try { URI(baseUrl) } catch (_: java.net.URISyntaxException) { return false }
+            return uri.scheme in listOf("http", "https") && uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null
         }
     }
     override suspend fun search(query: String, allowedDomains: List<String>, blockedDomains: List<String>, limit: Int): List<SearchHit> {

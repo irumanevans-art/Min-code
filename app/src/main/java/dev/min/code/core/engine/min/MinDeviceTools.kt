@@ -48,18 +48,20 @@ fun deviceTools(actions: DeviceActions): List<Tool<*>> = listOf(
 )
 
 /**
- * 工具表里设备工具随设置开关进出：开关关着就不进表（模型看不到，也就不会去试）。
+ * 工具表里随设置开关进出的那几组工具（设备工具、WebSearch）：开关关着就不进表（模型看不到，也就不会去试）。
  *
  * 内核的 [dev.min.agent.kernel.KernelDeps.tools] 一个进程只建一次，而用户随时可能在设置里改开关，
  * 所以这个表每次被读都现取开关——下一个回合起生效（含已经开着的会话；工具表是稳定前缀的一部分，
  * 这一回合的缓存会因此断一次）。每次读只取一份快照，迭代中途开关翻转不会让长度对不上。
+ * 各组按 [groups] 的顺序接在 [base] 之后，门控工具始终排在表的末尾。
  */
-internal class DeviceGatedTools(
+internal class GatedTools(
     private val base: List<Tool<*>>,
-    private val device: List<Tool<*>>,
-    private val enabled: () -> Boolean,
+    private val groups: List<Group>,
 ) : AbstractList<Tool<*>>() {
-    private fun current(): List<Tool<*>> = if (enabled()) base + device else base
+    class Group(val tools: List<Tool<*>>, val enabled: () -> Boolean)
+
+    private fun current(): List<Tool<*>> = base + groups.filter { it.enabled() }.flatMap { it.tools }
 
     override val size: Int get() = current().size
     override fun get(index: Int): Tool<*> = current()[index]
@@ -68,9 +70,22 @@ internal class DeviceGatedTools(
     override fun listIterator(index: Int): ListIterator<Tool<*>> = current().listIterator(index)
 }
 
-/** 内置工具之后接设备工具；没有设备（桌面、测试）就只有内置工具 */
-fun minToolsWithDevice(devices: DeviceActions?, enabled: () -> Boolean, base: List<Tool<*>> = minTools()): List<Tool<*>> =
-    if (devices == null) base else DeviceGatedTools(base, deviceTools(devices), enabled)
+/**
+ * 内置工具之后接设备工具，再接 WebSearch；没有设备（桌面、测试）就跳过设备那组，[webSearchEnabled] 为 null 就没有 WebSearch。
+ * 两组都是门控，顺序固定：设备在前、WebSearch 在后（各自开关翻转只挪动排在它后面的工具）
+ */
+fun minToolsWithDevice(
+    devices: DeviceActions?,
+    enabled: () -> Boolean,
+    base: List<Tool<*>> = minTools(),
+    webSearchEnabled: (() -> Boolean)? = null,
+): List<Tool<*>> {
+    val groups = listOfNotNull(
+        devices?.let { GatedTools.Group(deviceTools(it), enabled) },
+        webSearchEnabled?.let { GatedTools.Group(listOf(dev.min.agent.tools.WebSearchTool), it) },
+    )
+    return if (groups.isEmpty()) base else GatedTools(base, groups)
+}
 
 // ---- 共用骨架 ----
 

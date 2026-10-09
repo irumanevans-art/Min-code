@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer
 import dev.min.agent.host.CachedWebPort
 import dev.min.agent.host.UrlConnectionTransport
 import dev.min.agent.spi.*
+import dev.min.agent.tools.web.HtmlPageConverter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -36,7 +37,7 @@ class DesktopPageConversionTest {
                 ))
                 override fun stream(request: HttpRequest): Flow<SseEvent> = error("unused")
             }
-            val port = CachedWebPort(DESKTOP_PAGE_CONVERTER, transport)
+            val port = CachedWebPort(HtmlPageConverter, transport)
             val url = "https://example.com/guide/page"
             val page = port.fetch(url) as WebResponse.Page
             assertEquals(url, page.url)

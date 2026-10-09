@@ -8,6 +8,7 @@ import dev.min.code.core.claudecode.ClaudeSubscription
 import dev.min.code.core.device.AgentDisplaySession
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
+import dev.min.code.core.settings.applying
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
@@ -117,6 +118,14 @@ class SettingsVM(
 
     fun setWorkflowsEnabled(enabled: Boolean) = viewModelScope.launch { store.setWorkflowsEnabled(enabled) }
     fun setCronEnabled(enabled: Boolean) = viewModelScope.launch { store.setCronEnabled(enabled) }
+
+    /** WebSearch 后端：对话框给的是「改了哪些」，已填的 key 界面拿不到也不回显，所以由商店在一次 edit 里合并 */
+    fun saveWebSearch(edit: dev.min.code.core.settings.WebSearchEdit) = viewModelScope.launch {
+        // Keystore 加密失败（锁屏变更、系统清了密钥）时不让整个 App 崩在一个搜索 key 上：设置没变，行上的说明还是旧的。
+        // 日志里只写异常类型，不带异常信息和编辑内容（里面可能有 key）
+        dev.min.agent.spi.catchingNonCancellation { store.updateWebSearch { it.applying(edit) } }
+            .onFailure { android.util.Log.w("SettingsVM", "web search settings not saved: ${it.javaClass.simpleName}") }
+    }
 
     /** 定时任务单次花费上限：null = 不设（默认）。输入框已经按 [dev.min.code.core.settings.parseCronBudgetInput] 校验过 */
     fun setCronMaxBudgetUsd(value: Double?) = viewModelScope.launch { store.setCronMaxBudgetUsd(value) }

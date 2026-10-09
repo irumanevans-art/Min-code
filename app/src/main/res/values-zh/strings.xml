@@ -29,6 +29,7 @@
   <string name="documents_root_rootfs">Ubuntu 环境</string>
   <string name="session_permission_device_path">这是你设备上的文件：%1$s</string>
   <string name="session_permission_outside_workspace">在 /workspace 之外：%1$s</string>
+  <string name="session_permission_domains">将访问：%1$s</string>
   <string name="settings_device_storage_title">让 agent 读写这台设备</string>
   <string name="settings_device_storage_off">关着时 agent 只看得见 /workspace。开了会把共享存储（相册、下载、文档）挂到 /sdcard，可写——proot 挂不出只读。</string>
   <string name="settings_device_storage_on">已挂到 /sdcard，可写。Android/data 与 Android/obb 仍然拿不到，那是系统对所有应用的限制。</string>
@@ -1469,6 +1470,22 @@
     <string name="settings_cron_budget_invalid">请输入大于 0 的数字，或留空</string>
     <string name="settings_cron_budget_save">保存</string>
     <string name="settings_cron_budget_clear">不设上限</string>
+    <string name="settings_web_search_title">网页搜索（WebSearch）</string>
+    <string name="settings_web_search_off">未设置 · 模型看不到 WebSearch 工具</string>
+    <string name="settings_web_search_ready_key">%1$s · key 已填</string>
+    <string name="settings_web_search_ready_url">%1$s · %2$s</string>
+    <string name="settings_web_search_needs_key">%1$s · 还没填 key，WebSearch 暂不出现</string>
+    <string name="settings_web_search_needs_url">%1$s · 需要填一个合法地址，WebSearch 暂不出现</string>
+    <string name="settings_web_search_backend_none">不设</string>
+    <string name="settings_web_search_key_label">%1$s API key</string>
+    <string name="settings_web_search_key_saved">已填。留空保持不变</string>
+    <string name="settings_web_search_key_unsaved">粘贴你的 key</string>
+    <string name="settings_web_search_key_clear">清除已填的 key</string>
+    <string name="settings_web_search_key_cleared">保存时会清除已填的 key</string>
+    <string name="settings_web_search_url_label">SearXNG 地址</string>
+    <string name="settings_web_search_url_invalid">只收 http 或 https 地址，不能带用户名、查询串或片段</string>
+    <string name="settings_web_search_hint">key 用 Android Keystore 加密保存，之后不再显示。搜索由这台手机直接发给你选的服务；局域网里自建的实例也可以。不选则模型不能搜索。</string>
+    <string name="settings_web_search_save">保存</string>
     <!-- M5: teamMaxConcurrent -->
     <string name="settings_team_title">团队同时运行的成员数</string>
     <string name="settings_team_subtitle">%1$d（最多 %2$d）· 多出来的成员排队等名额</string>
