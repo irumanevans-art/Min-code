@@ -140,7 +140,8 @@ internal suspend fun SessionRuntime.executeWorkflow(turnId: TurnId, callId: Call
         return ToolResult(listOf(TextPart(result.toString())))
     } catch (e: CancellationException) {
         // 取消也落终态，恢复只能显式针对本回合，不能被后来的无关 ▶ 捡走。
-        withContext(NonCancellable) { commit(listOf(WorkflowRunCompleted(run.runId, JsonNull, "cancelled")), Durability.Sync) }
+        try { withContext(NonCancellable) { commit(listOf(WorkflowRunCompleted(run.runId, JsonNull, "cancelled")), Durability.Sync) } }
+        catch (inner: Exception) { e.addSuppressed(inner) }
         throw e
     } catch (e: Exception) {
         try { commit(listOf(WorkflowRunCompleted(run.runId, workflowError("run_failed", e.message ?: "Workflow failed."), "failed")), Durability.Sync) }

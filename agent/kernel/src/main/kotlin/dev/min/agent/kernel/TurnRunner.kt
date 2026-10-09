@@ -161,6 +161,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             val call = ToolCallPart(dev.min.agent.protocol.CallId(deps.ids.next("workflow_call")), "Workflow", raw)
             rt.commit(listOf(dev.min.agent.spi.WorkflowCallIssued(input, turnId, MessageId(deps.ids.next("msg")), call)), Durability.Sync)
             tools.executeAll(turnId, listOf(call))
+            val result = (rt.state.value.phaseOf(call.callId) as? CallPhase.Done)?.result
+            if (result?.isError == true) throw TurnAbort(result.content.filterIsInstance<TextPart>().joinToString("\n") { it.text })
         }
         return interrupted != null || workflowInputs.all { input -> requested.any { it.input == input } }
     }
