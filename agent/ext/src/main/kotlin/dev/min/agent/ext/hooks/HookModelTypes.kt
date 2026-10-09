@@ -129,7 +129,8 @@ private fun translatePromptVerdict(event: HookEvent, handler: HookHandler, outco
     }
 }
 
-/** mcp_tool 的 `input` 模板插值：字符串值里的 `${路径}` 按点分路径从事件输入 JSON 取值（CC 原文） */
+/** mcp_tool 的 `input` 模板插值：字符串值里的 `${路径}` 按点分路径从事件输入 JSON 取值（CC 原文）。
+ *  只替换字符串原语——数字 / 布尔 / null 保持原类型：服务器按 schema 校验参数，字符串化的 8080 过不了 */
 fun interpolateMcpInput(template: JsonObject, input: JsonObject): JsonObject {
     fun resolve(path: String): String? {
         var node: kotlinx.serialization.json.JsonElement? = input
@@ -143,8 +144,9 @@ fun interpolateMcpInput(template: JsonObject, input: JsonObject): JsonObject {
     }
     val ref = Regex("""\$\{([A-Za-z0-9_.]+)}""")
     return JsonObject(template.mapValues { (_, value) ->
-        when (value) {
-            is JsonPrimitive -> JsonPrimitive(ref.replace(value.content) { m -> resolve(m.groupValues[1]) ?: "" })
+        when {
+            value is JsonPrimitive && value.isString ->
+                JsonPrimitive(ref.replace(value.content) { m -> resolve(m.groupValues[1]) ?: "" })
             else -> value
         }
     })

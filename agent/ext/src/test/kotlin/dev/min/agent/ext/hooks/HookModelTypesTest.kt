@@ -1,9 +1,12 @@
 package dev.min.agent.ext.hooks
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -187,5 +190,18 @@ class HookModelTypesTest {
         assertEquals("/w/a.txt", (interpolated["file_path"] as JsonPrimitive).content)
         assertEquals("原样", (interpolated["plain"] as JsonPrimitive).content)
         assertEquals("取不到换空串", "", (interpolated["missing"] as JsonPrimitive).content)
+    }
+
+    @Test fun `插值只动字符串原语，数字布尔 null 保持原类型`() {
+        // L4：数字 / 布尔 / null 里的值不该被换成字符串——服务器按类型校验参数，字符串化的 8080 过不了 schema
+        val template = buildJsonObject {
+            put("port", 8080)
+            put("strict", true)
+            put("fallback", JsonNull)
+        }
+        val interpolated = interpolateMcpInput(template, buildJsonObject { put("tool_input", buildJsonObject { put("x", "y") }) })
+        assertEquals(8080, (interpolated["port"] as JsonPrimitive).int)
+        assertEquals(true, (interpolated["strict"] as JsonPrimitive).boolean)
+        assertTrue("null 保持 JsonNull", interpolated["fallback"] is JsonNull)
     }
 }
