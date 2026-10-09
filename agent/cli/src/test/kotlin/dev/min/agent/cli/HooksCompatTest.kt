@@ -144,20 +144,57 @@ class HooksCompatTest {
                 val judge: (String) -> Boolean = { rule -> verdicts[rule] == true }
                 judge
             }
-            val match = matchDetailed(set, event, target, ifRules)
-            val handlers = get(match, "Handlers") as List<*>
-            expected.intOrNullOf("handlerCount")?.let {
-                check(diffs, "handlerCount", it, handlers.size, name)
-            }
-
             val stdin = Json.parseToJsonElement(
                 Files.readString(work.resolve("input.json"), Charsets.UTF_8)) as JsonObject
-            val runner = newRunner(exec, fs) { paths.guestOfHost(fs.hostPath(it)).value }
-            val runs = invokeSuspend(runner.javaClass.methods.single { it.name.startsWith("run-") },
-                runner, arrayOf(handlers, stdin, mapOf("CLAUDE_PROJECT_DIR" to cwd.value), cwd.value,
-                    { h: Any -> (get(h, "Timeout") as Int?) ?: 60 }))
-            val verdicts = runs.map { interpret(event, it!!) }
-            val combined = combine(event, verdicts)
+
+            // prompt / agent / mcp_tool 的样本走模型侧驱动：匹配用 matchingModel，结论分别由
+            // interpretPrompt（{ok,reason} 口径）或 interpret（mcp 文本当 command stdout）给出
+            val combined: Any
+            val verdicts: List<Any?>
+            when (val runnerKind = expected["runner"]?.jsonPrimitive?.contentOrNull) {
+                null -> {
+                    val match = matchDetailed(set, event, target, ifRules)
+                    val handlers = get(match, "Handlers") as List<*>
+                    expected.intOrNullOf("handlerCount")?.let {
+                        check(diffs, "handlerCount", it, handlers.size, name)
+                    }
+                    val runner = newRunner(exec, fs) { paths.guestOfHost(fs.hostPath(it)).value }
+                    val runs = invokeSuspend(runner.javaClass.methods.single { it.name.startsWith("run-") },
+                        runner, arrayOf(handlers, stdin, mapOf("CLAUDE_PROJECT_DIR" to cwd.value), cwd.value,
+                            { h: Any -> (get(h, "Timeout") as Int?) ?: 600 }))
+                    verdicts = runs.map { interpret(event, it!!) }
+                    combined = combine(event, verdicts)
+                }
+                "prompt", "agent" -> {
+                    val match = matchModelHandlers(set, event, target, ifRules)
+                    val handlers = get(match, "Handlers") as List<*>
+                    expected.intOrNullOf("handlerCount")?.let {
+                        check(diffs, "handlerCount", it, handlers.size, name)
+                    }
+                    val outcome =
+                        if (expected["runnerOutcome"]?.jsonPrimitive?.contentOrNull == "timeout") promptTimedOut()
+                        else promptDone(Files.readString(sample.resolve(if (runnerKind == "prompt") "model.json" else "agent.json"), Charsets.UTF_8))
+                    verdicts = handlers.map { interpretPrompt(event, it!!, outcome) }
+                    combined = combine(event, verdicts)
+                }
+                "mcp" -> {
+                    val match = matchModelHandlers(set, event, target, ifRules)
+                    val handlers = get(match, "Handlers") as List<*>
+                    expected.intOrNullOf("handlerCount")?.let {
+                        check(diffs, "handlerCount", it, handlers.size, name)
+                    }
+                    val canned = Json.parseToJsonElement(
+                        Files.readString(sample.resolve("mcp.json"), Charsets.UTF_8)).jsonObject
+                    val isError = canned["isError"]?.jsonPrimitive?.booleanOrNull == true
+                    val content = canned["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    val runs = handlers.map { h ->
+                        newHandlerRun(h!!, if (isError) 1 else 0, if (isError) "" else content, if (isError) content else "")
+                    }
+                    verdicts = runs.map { interpret(event, it) }
+                    combined = combine(event, verdicts)
+                }
+                else -> throw IllegalStateException("未知 runner: $runnerKind")
+            }
 
             check(diffs, "decision", expected.requiredString("decision"),
                 get(combined, "decision").toString(), name)
@@ -259,6 +296,29 @@ class HooksCompatTest {
             Class.forName("dev.min.agent.ext.hooks.HookEvent"), String::class.java,
             Class.forName("kotlin.jvm.functions.Function1"))
             .invoke(set, event, target, ifMatches)
+
+    /** 模型侧（prompt / agent / mcp_tool）的匹配：同一套绑定与 if，只是换一条通道 */
+    private fun matchModelHandlers(set: Any, event: Any, target: String?, ifMatches: ((String) -> Boolean)?): Any =
+        set.javaClass.getMethod("matchingModel",
+            Class.forName("dev.min.agent.ext.hooks.HookEvent"), String::class.java,
+            Class.forName("kotlin.jvm.functions.Function1"))
+            .invoke(set, event, target, ifMatches)
+
+    private fun interpretPrompt(event: Any, handler: Any, outcome: Any): Any =
+        Class.forName("dev.min.agent.ext.hooks.HookModelTypesKt")
+            .methods.single { it.name == "interpretPrompt" }.invoke(null, event, handler, outcome)
+
+    private fun promptDone(text: String): Any =
+        Class.forName("dev.min.agent.ext.hooks.PromptHookOutcome\$Done").constructors.single().newInstance(text)
+
+    private fun promptTimedOut(): Any =
+        Class.forName("dev.min.agent.ext.hooks.PromptHookOutcome\$TimedOut").getField("INSTANCE").get(null)
+
+    /** ext 运行期才可见，HandlerRun 也走反射（与样本 60-69 的 mcp 驱动共用） */
+    private fun newHandlerRun(handler: Any, exitCode: Int, stdout: String, stderr: String): Any =
+        Class.forName("dev.min.agent.ext.hooks.HandlerRun")
+            .constructors.single { it.parameterCount == 8 }
+            .newInstance(handler, exitCode, stdout, stderr, false, false, 0L, java.util.ArrayList<String>())
 
     private fun newRunner(exec: LocalExec, fs: RootfsFileSystem, shellPathOf: (GuestPath) -> String): Any =
         Class.forName("dev.min.agent.ext.hooks.HookBatchRunner").constructors.single { it.parameterCount == 5 }

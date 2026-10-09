@@ -9,7 +9,10 @@ import dev.min.agent.ext.hooks.HookDecision
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookInputCommon
 import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.HookMatch
 import dev.min.agent.ext.hooks.HookHttpRunner
+import dev.min.agent.ext.hooks.AGENT_HOOK_DEFAULT_TIMEOUT
+import dev.min.agent.ext.hooks.PROMPT_HOOK_DEFAULT_TIMEOUT
 import dev.min.agent.ext.hooks.HookSet
 import dev.min.agent.ext.hooks.HttpHookBatch
 import dev.min.agent.ext.hooks.HttpHookPolicy
@@ -97,12 +100,16 @@ internal class HookDriver(private val rt: SessionRuntime) {
     /** 这个事件（对这个目标）有没有要跑的 hook。不跑任何东西；PreToolUse 据此决定一个调用能不能进并行批 */
     fun has(event: HookEvent, target: String?): Boolean {
         if (rt.state.value.hooks.isEmpty() && rt.state.value.componentHooks.isEmpty()) return false
+        // hook agent 子会话里不再跑模型侧 hook：hook 钩出 hook 就是无限递归（CC 没有 hook-agent 里的 hook 语义）
+        if (rt.state.value.origin?.agentType == HOOK_AGENT_TYPE) return false
         // `if` 条件先按成立算：宁可让调用离开并行批走单个流程，也不要漏跑门禁。
         // http 处理器也要算：并行批不经过 PreToolUse，漏算它等于让只配了 http 门禁的只读调用绕过门禁。
-        // async 也要算：它不挡调用，但 PostToolUse 一类事件靠 has() 短路，漏算会让后台 hook 根本不启动
+        // async 也要算：它不挡调用，但 PostToolUse 一类事件靠 has() 短路，漏算会让后台 hook 根本不启动。
+        // 模型侧（prompt / agent / mcp_tool）同理：它们也能拦调用
         return all { it.matchingDetailed(event, target) { true } }.first.isNotEmpty() ||
             all { it.matchingHttp(event, target) { true } }.first.isNotEmpty() ||
-            all { it.matchingAsync(event, target) { true } }.first.isNotEmpty()
+            all { it.matchingAsync(event, target) { true } }.first.isNotEmpty() ||
+            all { it.matchingModel(event, target) { true } }.first.isNotEmpty()
     }
 
     private val httpRunner = HookHttpRunner(deps.host.httpHooks)
@@ -128,13 +135,29 @@ internal class HookDriver(private val rt: SessionRuntime) {
         ifMatches: ((String) -> Boolean)? = null,
     ): HookOutcome? {
         if (rt.state.value.hooks.isEmpty() && rt.state.value.componentHooks.isEmpty()) return null
+        // hook agent 子会话不跑模型侧 hook（hook 不能再钩出 hook）；command / http 照旧
+        val hookAgentChild = rt.state.value.origin?.agentType == HOOK_AGENT_TYPE
         val (commandHandlers, _) = all { it.matchingDetailed(event, target, ifMatches) }
         // http 的处理器与 command 分开挑（`matchingDetailed` 只认 executable 的 command）：
         // 只配了 http hook 的事件此前会在这里被判成「没有匹配的处理器」而静默不跑
         val (httpHandlers, _) = all { it.matchingHttp(event, target, ifMatches) }
         // async / asyncRewake 的 command 处理器：甩进后台就回来，不挡这一批（CC 的 Run hooks in the background）
         val asyncHandlers = all { it.matchingAsync(event, target, ifMatches) }.first
-        if (commandHandlers.isEmpty() && httpHandlers.isEmpty() && asyncHandlers.isEmpty()) return null
+        // 模型侧三类（prompt / agent / mcp_tool）同一条合流；事件矩阵在 matchingModel 里挡
+        val (modelHandlers, _) = if (hookAgentChild) {
+            emptyList<dev.min.agent.ext.hooks.HookHandler>() to emptyList<String>()
+        } else {
+            all { it.matchingModel(event, target, ifMatches) }
+        }
+        // CC：launch 时的 SessionStart（startup / resume）与所有 Setup 都赶不上 MCP 就绪——mcp_tool 跳过
+        // （CC 原文记 debug log）；compact 触发的 SessionStart 在会话中途，照常跑
+        val mcpSkippedByStartup = (event == HookEvent.SessionStart && (target == "startup" || target == "resume")) || event == HookEvent.Setup
+        val promptHandlers = modelHandlers.filter { it.type == "prompt" }
+        val agentHandlers = modelHandlers.filter { it.type == "agent" }
+        val mcpHandlers = if (mcpSkippedByStartup) emptyList() else modelHandlers.filter { it.type == "mcp_tool" }
+        if (commandHandlers.isEmpty() && httpHandlers.isEmpty() && asyncHandlers.isEmpty() &&
+            promptHandlers.isEmpty() && agentHandlers.isEmpty() && mcpHandlers.isEmpty()
+        ) return null
         val state = rt.state.value
         val processCwd = executionCwd ?: state.settings.cwd
         val stdin = JsonObject(HookJson.encodeToJsonElement(HookInputCommon.serializer(), common(event, state)).jsonObject + specific)
@@ -151,11 +174,11 @@ internal class HookDriver(private val rt: SessionRuntime) {
         // 后台 hook 先启动再跑同步批：它不等谁，也没人等它。timeout 只给 asyncRewake（CC：async 不套 timeout）。
         // 启动失败只写异常类名、不打断回合——SessionEnd 上也不该让 close 在封写前中断
         asyncHandlers.forEach { h ->
-            val t = if (h.asyncRewake) (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) else null
+            val t = if (h.asyncRewake) (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, MAX_TIMEOUT) else null
             catchingNonCancellation { rt.asyncHooks.launch(event, rt.plugins()?.resolveHook(h) ?: h, stdin, env, processCwd, t) }
                 .getOrElse { e -> executionFailures += "后台 hook「${label(h)}」启动失败：${e.javaClass.simpleName}" }
         }
-        if (commandHandlers.isEmpty() && httpHandlers.isEmpty()) {
+        if (commandHandlers.isEmpty() && httpHandlers.isEmpty() && promptHandlers.isEmpty() && agentHandlers.isEmpty() && mcpHandlers.isEmpty()) {
             // 只有异步 hook：本批没有要合并的结论，给一个中性的（调用方拿它判断放行/拦截，中性即放行）；
             // 启动失败也要落一条，不能因为走了捷径就静默
             if (executionFailures.isNotEmpty()) {
@@ -171,15 +194,16 @@ internal class HookDriver(private val rt: SessionRuntime) {
         }
         // SessionEnd 的超时上限照 CC：默认 1.5 秒（整秒粒度取 2），配置写了更长的按配置，最多 60 秒
         val timeoutCap = if (event == HookEvent.SessionEnd) SESSION_END_TIMEOUT_CAP else MAX_TIMEOUT
-        // command 与 http 两批并发跑（CC：同一事件匹配上的 hook 并行），各自的超时不串行叠加
-        val (runs, http) = coroutineScope {
+        val modelRunner = ModelHookRunner(rt)
+        // command / http / 模型侧各批并发跑（CC：同一事件匹配上的 hook 并行），各自的超时不串行叠加
+        val batches = coroutineScope {
             val commandBatch = async {
                 if (commandHandlers.isEmpty()) {
                     emptyList()
                 } else {
                     catchingNonCancellation {
                         val resolved = commandHandlers.map { rt.plugins()?.resolveHook(it) ?: it }
-                        runner.run(resolved, stdin, env, processCwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap) }
+                        runner.run(resolved, stdin, env, processCwd) { h -> (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, timeoutCap) }
                     }.getOrElse { e ->
                         executionFailures += "command hook 批执行失败：${describe(e)}"
                         emptyList()
@@ -193,7 +217,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                 } else {
                     catchingNonCancellation {
                         httpRunner.run(httpHandlers, stdin, httpEnv(httpHandlers), httpPolicy()) { h ->
-                            (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap)
+                            (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, timeoutCap)
                         }
                     }.getOrElse { e ->
                         // 只写异常类型：http 的异常信息可能带着 URL（查询串里常有令牌）
@@ -202,10 +226,22 @@ internal class HookDriver(private val rt: SessionRuntime) {
                     }
                 }
             }
-            commandBatch.await() to httpBatch.await()
+            // type:prompt：一次模型请求出 {ok,reason}，按事件口径翻成引擎结论
+            val promptBatch = async {
+                if (promptHandlers.isEmpty()) emptyList() else modelRunner.runPrompts(promptHandlers, stdin, event)
+            }
+            // type:agent：只读子 agent 跑完给结论（花费计入会话树）
+            val agentBatch = async {
+                if (agentHandlers.isEmpty()) emptyList() else modelRunner.runAgents(agentHandlers, stdin, event)
+            }
+            // type:mcp_tool：工具文本按 command 的 stdout 口径进 interpret（与 command 同一条解读路）
+            val mcpBatch = async {
+                if (mcpHandlers.isEmpty()) emptyList() else modelRunner.runMcp(mcpHandlers, stdin, event)
+            }
+            HookBatches(commandBatch.await(), httpBatch.await(), promptBatch.await(), agentBatch.await(), mcpBatch.await())
         }
-        val allRuns = runs + http.runs
-        val verdicts = allRuns.map { interpret(event, it) }
+        val allRuns = batches.runs + batches.http.runs + batches.mcpRuns
+        val verdicts = allRuns.map { interpret(event, it) } + batches.promptVerdicts + batches.agentVerdicts
         // once（CC：只在 skill / command 的 frontmatter 里生效）：成功跑过一次的处理器从组件里移除。
         // 「成功」= 跑完（退出码 0）、没超时没起不来、没有非阻断错误、也没被它自己拦下（exit 2 拦截、
         // JSON 的 decision / permissionDecision 拒绝、continue:false 同属拦截，hook 保留）。settings 与
@@ -218,9 +254,9 @@ internal class HookDriver(private val rt: SessionRuntime) {
         val problems = combined.nonBlockingErrors + combined.notes +
             allRuns.filter { it.failedToStart }.map { "「${label(it.handler)}」没能运行（路径写错时门禁会悄悄失效）" } +
             allRuns.filter { it.timedOut }.map { "「${label(it.handler)}」超时" } +
-            http.skipped + http.notes + hiddenEnvNotes(httpHandlers) + executionFailures
+            batches.http.skipped + batches.http.notes + hiddenEnvNotes(httpHandlers) + executionFailures
         val events = buildList {
-            add(HooksRan(event.name, commandHandlers.size + httpHandlers.size, outcome.label, deps.clock.nowMs() - started, turnId, callId, problems))
+            add(HooksRan(event.name, commandHandlers.size + httpHandlers.size + promptHandlers.size + agentHandlers.size + mcpHandlers.size, outcome.label, deps.clock.nowMs() - started, turnId, callId, problems))
             if (problems.isNotEmpty()) add(Note(NoteLevel.Warning, "$event hook：" + problems.joinToString("；")))
             outcome.systemMessages.forEach { add(Note(NoteLevel.Info, it)) }
         }
@@ -271,9 +307,9 @@ internal class HookDriver(private val rt: SessionRuntime) {
         return names.distinct().mapNotNull { name -> deps.env(name)?.let { name to it } }.toMap()
     }
 
-    /** 说明里怎么称呼一个处理器：http 用 URL，但去掉 userinfo 与查询串（令牌常放在那里） */
+    /** 说明里怎么称呼一个处理器：http 用 URL（去掉 userinfo 与查询串，令牌常放在那里），mcp_tool 用 服务器/工具 */
     private fun label(h: dev.min.agent.ext.hooks.HookHandler): String =
-        h.command ?: h.url?.let(HookHttpRunner::redactUrl) ?: h.type
+        h.command ?: h.url?.let(HookHttpRunner::redactUrl) ?: h.server?.let { s -> "$s/${h.tool}" } ?: h.type
 
     /** http 处理器的 allowedEnvVars 点名了宿主藏起来的变量（如 CLI 自己读的模型 key）：它们会被插成空串，告诉人 */
     private fun hiddenEnvNotes(handlers: List<dev.min.agent.ext.hooks.HookHandler>): List<String> =
@@ -306,12 +342,18 @@ internal class HookDriver(private val rt: SessionRuntime) {
             return t.preview + "\n…[hook 输出共 ${t.text.length} 字，全文在 $path]"
         }
 
-        fun defaultTimeout(event: HookEvent): Int = when (event) {
-            HookEvent.UserPromptSubmit, HookEvent.PreModelSwitch, HookEvent.PostModelSwitch -> 30
-            HookEvent.MessageDisplay -> 10
-            // CC 的默认预算是 1.5 秒；引擎的超时粒度是整秒，向上取 2
-            HookEvent.SessionEnd -> 2
-            else -> 60
+        fun defaultTimeout(event: HookEvent, type: String = "command"): Int = when (type) {
+            // CC（hooks.md :426）：prompt 30 秒、agent 60 秒——按类型给；降额表只点名 command / http / mcp_tool，不含这两种
+            "prompt" -> PROMPT_HOOK_DEFAULT_TIMEOUT
+            "agent" -> AGENT_HOOK_DEFAULT_TIMEOUT
+            else -> when (event) {
+                HookEvent.UserPromptSubmit, HookEvent.PreModelSwitch, HookEvent.PostModelSwitch -> 30
+                HookEvent.MessageDisplay -> 10
+                // CC 的默认预算是 1.5 秒；引擎的超时粒度是整秒，向上取 2
+                HookEvent.SessionEnd -> 2
+                // CC :426：command / http / mcp_tool 默认 600 秒（此前这里写 60，抄错了行）
+                else -> 600
+            }
         }
     }
 }
@@ -391,3 +433,12 @@ private fun withoutHandler(hooks: JsonObject, raw: JsonObject): JsonObject {
 
 /** 某个 hook 说 `continue: false`：结束当前回合（Interrupted(Hook)），理由给人看 */
 internal class HookStop(val reason: String?) : Exception(reason)
+
+/** 一次事件的五条执行批（command / http / prompt / agent / mcp_tool）汇在一起往下合并 */
+private data class HookBatches(
+    val runs: List<dev.min.agent.ext.hooks.HandlerRun>,
+    val http: HttpHookBatch,
+    val promptVerdicts: List<dev.min.agent.ext.hooks.HookVerdict>,
+    val agentVerdicts: List<dev.min.agent.ext.hooks.HookVerdict>,
+    val mcpRuns: List<dev.min.agent.ext.hooks.HandlerRun>,
+)

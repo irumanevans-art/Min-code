@@ -1,0 +1,16 @@
+{
+  "event": "Stop",
+  "target": null,
+  "runner": "prompt",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "reasons": [],
+  "stopReasons": [],
+  "additionalContext": [],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §Response schema 的 impossible 字段（:3560-3561）：Stop/SubagentStop 上 ok:false 且 impossible:true 时放行停止（不把回合困死）"
+}

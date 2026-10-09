@@ -30,12 +30,28 @@ data class HookHandler(
     /** `once: true`：成功跑一次后移除。CC 只在 skill frontmatter 里认它，settings 与 agent 定义里忽略——是否响应由执行方（内核）按来源决定 */
     val once: Boolean = false,
     val pluginEnv: Map<String, String> = if (source == ConfigSource.Plugin) (raw["minPluginEnv"] as? JsonObject)?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { k to it } }?.toMap().orEmpty() else emptyMap(),
+    /** type:prompt / type:agent 专属：发给模型的提示词（$ARGUMENTS 是事件输入 JSON 的占位符） */
+    val prompt: String? = null,
+    /** type:prompt / type:agent 专属：点名评估用的模型（「供应商/模型」，与子 agent、autoModeReviewer 同一口径）；null = 执行方默认（fastModel / 会话模型） */
+    val model: String? = null,
+    /** type:prompt 专属：ok:false 时把理由作为工具错误回给模型继续，而不是结束回合（CC 的 continueOnBlock） */
+    val continueOnBlock: Boolean = false,
+    /** type:mcp_tool 专属：MCP 服务器名 */
+    val server: String? = null,
+    /** type:mcp_tool 专属：服务器上的工具名 */
+    val tool: String? = null,
+    /** type:mcp_tool 专属：调用参数模板；字符串值里的 ${路径} 从事件输入 JSON 取值替换 */
+    val mcpInput: JsonObject? = null,
 ) {
     val executable: Boolean get() = type == "command" && !async && !asyncRewake
 
     // async / asyncRewake / once 进身份：同一条命令可以既有同步版又有异步版，漏了会在去重时互吞
+    // pluginEnv 进身份（m0 插件轴）：同一条命令来自不同插件时环境不同，去重不能互吞
     internal fun identity(): List<Any?> = listOf(type, command, args, condition, timeout, async, asyncRewake, once, pluginEnv) +
-        if (type == "http") listOf(url, headers, allowedEnvVars) else emptyList()
+        (if (type == "http") listOf(url, headers, allowedEnvVars) else emptyList<Any?>()) +
+        (if (type == "prompt" || type == "agent") listOf(prompt, model) else emptyList<Any?>()) +
+        (if (type == "prompt") listOf(continueOnBlock) else emptyList<Any?>()) +
+        (if (type == "mcp_tool") listOf(server, tool, mcpInput) else emptyList<Any?>())
 }
 
 data class HookMatch(val handlers: List<HookHandler>, val notes: List<String>)
@@ -56,9 +72,12 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
             val where = "${handler.source.label} $event ${handler.command ?: handler.type}"
             when {
                 handler.type != "command" -> {
-                    // 同步批只跑 command：prompt / agent / mcp_tool 本期不执行；http 由 matchingHttp 另挑
-                    matchNotes += if (handler.type == "http") "$where：http 处理器走 http 通道，不在本批"
-                    else "$where：本期不执行此 hook 类型"
+                    // 同步批只跑 command：http 由 matchingHttp 另挑，prompt / agent / mcp_tool 由 matchingModel 另挑
+                    matchNotes += when (handler.type) {
+                        "http" -> "$where：http 处理器走 http 通道，不在本批"
+                        "prompt", "agent", "mcp_tool" -> "$where：${handler.type} 处理器走模型执行器，不在本批"
+                        else -> "$where：未知通道，不在本批"
+                    }
                     false
                 }
                 handler.async || handler.asyncRewake -> {
@@ -115,6 +134,50 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
                 handler.type != "http" -> false
                 rawAsync(handler) -> {
                     matchNotes += "$where：http 的 async 形态本期不执行"
+                    false
+                }
+                handler.condition != null && event in IF_EVENTS -> {
+                    if (ifMatches == null) {
+                        matchNotes += "$where：未注入 if 判定，跳过处理器"
+                        false
+                    } else ifMatches(handler.condition)
+                }
+                else -> true
+            }
+        }
+        return HookMatch(dedupByIdentity(selected), matchNotes)
+    }
+
+    /**
+     * 挑 `type:prompt` / `type:agent` / `type:mcp_tool` 的处理器（CC hooks.md「Prompt-based hooks」
+     * 「Agent-based hooks」「MCP tool hook fields」）。与 command / http 同一套绑定、`if` 与去重；
+     * 事件支持矩阵在这里挡（prompt/agent 只在带决策控制的那批事件上、PermissionRequest 不收 agent）。
+     * SessionStart 在 startup/resume 时 MCP 还没接好、Setup 永远接不好——mcp_tool 的跳过由内核按
+     * 事件的 source 判（CC 原文），这里不猜
+     */
+    fun matchingModel(
+        event: HookEvent,
+        target: String?,
+        ifMatches: ((rule: String) -> Boolean)? = null,
+    ): HookMatch {
+        val matchNotes = mutableListOf<String>()
+        val selected = handlers.filter { handler ->
+            if (handler.event != event || !matchesHookTarget(event, handler.matcher, target)) return@filter false
+            val where = "${handler.source.label} $event ${handler.prompt ?: handler.server ?: handler.type}"
+            val supported = when (handler.type) {
+                "prompt" -> event in PROMPT_HOOK_EVENTS
+                "agent" -> event in MODEL_HOOK_EVENTS
+                "mcp_tool" -> true
+                else -> false
+            }
+            when {
+                !supported -> {
+                    // CC：不支持的事件上配置了就跳过（debug 记录）——不进 problems（M2 的分流说明同一条规矩）
+                    matchNotes += "$where：${handler.type} 处理器不支持 $event 事件，跳过"
+                    false
+                }
+                rawAsync(handler) -> {
+                    matchNotes += "$where：${handler.type} 的 async 形态没有语义（CC 只给 command 定义），不执行"
                     false
                 }
                 handler.condition != null && event in IF_EVENTS -> {
@@ -212,16 +275,41 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
                                         }
                                     }
                                 }
-                                listOf("async", "asyncRewake", "once").forEach { key ->
+                                listOf("async", "asyncRewake", "once", "continueOnBlock").forEach { key ->
                                     require(key !in raw || raw[key] == JsonPrimitive(true) || raw[key] == JsonPrimitive(false)) {
                                         "$key 必须是布尔值"
+                                    }
+                                }
+                                var prompt: String? = null
+                                var model: String? = null
+                                var continueOnBlock = false
+                                var server: String? = null
+                                var tool: String? = null
+                                var mcpInput: JsonObject? = null
+                                when (type) {
+                                    "prompt", "agent" -> {
+                                        prompt = text("prompt")?.takeUnless { it.isBlank() } ?: error("$type 处理器缺少 prompt")
+                                        model = text("model")?.takeUnless { it.isBlank() }
+                                        // CC：continueOnBlock 只对 prompt 有定义（agent 恒按 true 的行为走，也没有这个字段）
+                                        continueOnBlock = raw["continueOnBlock"] == JsonPrimitive(true)
+                                        if (type == "agent" && raw["continueOnBlock"] != null) {
+                                            error("agent 处理器没有 continueOnBlock（它的 ok:false 恒按 continueOnBlock:true 处理）")
+                                        }
+                                    }
+                                    "mcp_tool" -> {
+                                        server = text("server")?.takeUnless { it.isBlank() } ?: error("mcp_tool 处理器缺少 server")
+                                        tool = text("tool")?.takeUnless { it.isBlank() } ?: error("mcp_tool 处理器缺少 tool")
+                                        // input 可选（CC 原文标 no）：给了就必须是对象
+                                        mcpInput = raw["input"]?.let { it as? JsonObject ?: error("input 必须是对象（参数模板）") }
                                     }
                                 }
                                 val h = HookHandler(event, matcherText, type, command, args, timeout, condition,
                                     layer.source, raw, url, headers, allowedEnvVars,
                                     async = raw["async"] == JsonPrimitive(true),
                                     asyncRewake = raw["asyncRewake"] == JsonPrimitive(true),
-                                    once = raw["once"] == JsonPrimitive(true))
+                                    once = raw["once"] == JsonPrimitive(true),
+                                    prompt = prompt, model = model, continueOnBlock = continueOnBlock,
+                                    server = server, tool = tool, mcpInput = mcpInput)
                                 val key = listOf(event, matcherText) + h.identity()
                                 val old = unique[key]
                                 if (old == null || priority(h.source) > priority(old.source)) unique[key] = h

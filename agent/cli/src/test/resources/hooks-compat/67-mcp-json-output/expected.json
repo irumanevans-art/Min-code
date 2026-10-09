@@ -1,0 +1,16 @@
+{
+  "event": "PostToolUse",
+  "target": "Write",
+  "runner": "mcp",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "reasons": [],
+  "stopReasons": [],
+  "additionalContext": ["security scan: 0 findings"],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §MCP tool hook fields（:548-570 示例即此写法）：input 的字符串值支持 ${tool_input.file_path} 插值（:555）；§How the tool's result is read（:572-574）：文本按 command stdout 的 exit 0 规则解读——JSON 对象里的 additionalContext 生效"
+}

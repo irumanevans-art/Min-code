@@ -1,0 +1,18 @@
+{
+  "event": "Stop",
+  "target": null,
+  "runner": "agent",
+  "runnerOutcome": "timeout",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "reasons": [],
+  "stopReasons": [],
+  "additionalContext": [],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": true,
+  "failedToStart": false,
+  "notesContain": ["超时"],
+  "basis": "hooks.md :426 的默认超时表（agent 60 秒）与 §Agent-based hooks：到时收不到结论就没有决定权——超时的 hook 不阻断（与 command 的超时口径一致，§Timeouts）"
+}

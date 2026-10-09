@@ -1,0 +1,16 @@
+{
+  "event": "PreToolUse",
+  "target": "Bash",
+  "runner": "prompt",
+  "handlerCount": 1,
+  "decision": "Deny",
+  "shouldContinue": false,
+  "reasons": [],
+  "stopReasons": ["This deletes a directory the tests depend on"],
+  "additionalContext": [],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §Response schema 的 PreToolUse 行（:3566-3568）：ok:false 默认拒绝并把理由作为警告、回合结束（continueOnBlock:false）；等价于 Deny + shouldContinue=false，理由在 stopReasons"
+}

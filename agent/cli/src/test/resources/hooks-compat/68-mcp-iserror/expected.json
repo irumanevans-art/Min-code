@@ -1,0 +1,16 @@
+{
+  "event": "PostToolUse",
+  "target": "Write",
+  "runner": "mcp",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "reasons": [],
+  "stopReasons": [],
+  "additionalContext": [],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 1,
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §How the tool's result is read（:572-574）：isError:true 的工具结果是非阻断错误、执行继续（不进上下文）"
+}

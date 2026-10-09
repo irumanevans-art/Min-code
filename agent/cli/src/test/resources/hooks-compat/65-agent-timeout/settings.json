@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "agent", "prompt": "Verify that all unit tests pass. $ARGUMENTS" }
+        ]
+      }
+    ]
+  }
+}

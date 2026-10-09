@@ -63,15 +63,18 @@ class HookSetTest {
     @Test fun `保留未来类型但匹配跳过并给 note`() {
         val set = HookSet.parse(listOf(source("""{"Stop":[{"hooks":[
           {"type":"http","url":"x"},{"type":"prompt","prompt":"p"},{"type":"agent","prompt":"a"},
-          {"type":"mcp_tool"},{"type":"command","command":"a","async":true}]}]}""")))
+          {"type":"mcp_tool","server":"s","tool":"t"},{"type":"command","command":"a","async":true}]}]}""")))
         assertEquals(5, set.handlers.size)
         assertTrue(set.handlers.none { it.executable })
         val match = set.matchingDetailed(HookEvent.Stop, null)
         assertTrue(match.handlers.isEmpty()); assertEquals(5, match.notes.size)
-        // 同步批只跑同步 command：未知类型照旧「本期不执行」，http 分流到 http 通道，异步 command 交给后台执行器
-        assertTrue(match.notes.count { it.contains("本期不执行") } == 3)
+        // 同步批只跑同步 command：http 分流到 http 通道，prompt / agent / mcp_tool 分流到模型执行器，
+        // 异步 command 交给后台执行器（三种模型侧类型现在真有人跑，只是不在 command 批里）
+        assertTrue(match.notes.count { it.contains("模型执行器") } == 3)
         assertTrue(match.notes.count { it.contains("http 通道") } == 1)
         assertTrue(match.notes.count { it.contains("后台执行器") } == 1)
+        // 模型侧的匹配另有一条路，三类都挑得出来
+        assertEquals(3, set.matchingModel(HookEvent.Stop, null).handlers.size)
     }
 
     @Test fun `工具 if 由调用方注入且没有注入时可见地跳过`() {

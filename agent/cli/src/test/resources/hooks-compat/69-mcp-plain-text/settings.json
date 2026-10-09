@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "mcp_tool", "server": "audit", "tool": "session_notice" }
+        ]
+      }
+    ]
+  }
+}

@@ -200,10 +200,19 @@ class HooksDecisionKernelTest {
         return ended
     }
 
-    /** 日志即真相：重放日志得到的状态必须等于运行时状态 */
+    /**
+     * 日志即真相：重放日志得到的状态必须等于运行时状态。走 peek（被查的会话可能还在收报告、仍在追加，
+     * open 的修复性截断会闪红），并等它收敛：批处理持久化下磁盘可以短暂落后于内存（报告刚进状态、
+     * 日志还没 flush），一次性的 assertEquals 在这个窗口上低概率闪红
+     */
     private suspend fun assertLogIsTruth(store: FileSessionStore, rt: SessionRuntime) {
-        val log = store.peek(rt.sessionId)!!
-        assertEquals(fold(log.header, log.read().toList()), rt.state.value)
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (true) {
+            val log = store.peek(rt.sessionId)!!
+            if (fold(log.header, log.read().toList()) == rt.state.value) return
+            check(System.nanoTime() < deadline) { "日志重放与运行时状态没有收敛到一致" }
+            kotlinx.coroutines.delay(25)
+        }
     }
 
     private fun HooksRan.isFor(event: String) = this.event == event
@@ -231,7 +240,8 @@ class HooksDecisionKernelTest {
         rt.say("组队")
         rt.state.first { s -> s.team?.members?.all { it.session != null } == true }
         val alice = rt.state.value.team!!.members.single().session!!
-        // 成员的回合（含 hook 拦下后的续跑）跑完
+        // 成员的回合（含 hook 拦下后的续跑）跑完。轮询活日志必须走 peek：open 带修复性截断，
+        // 赶上写者正追加的窗口会把半行剁掉，之后的追加就 seq 断档（H2 同款，低概率闪红）
         withTimeout(30_000) {
             while (true) {
                 val s = store.peek(alice)?.read()?.toList()?.map { it.event }.orEmpty()

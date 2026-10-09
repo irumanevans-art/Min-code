@@ -123,6 +123,9 @@
 - v1 增量（2026-10-07，无头输出对齐 CC）：`session_created` 新增可选字段 `headless`（这条会话是不是 `-p` / 无头跑的；CC 的 `--continue` 据此跳过 -p / SDK 会话。旧日志缺字段 = 交互）。
   `turn_ended.outcome`（failed 变体）新增可选字段 `cause`（内核自己的失败原因标记，与模型的 kind 正交；目前只有
   `structured_output_retries`：--json-schema 重试用尽，CLI 据此把 result.subtype 写成 CC 的 `error_max_structured_output_retries`）。旧日志照常读。
+- 模型侧 hook 类型（2026-10-08/09，prompt / agent / mcp_tool）**不新增事件**：匹配、`if`、去重与 HooksRan 记录走 command 同一条合流；
+  prompt 的评估请求经账本（`model_charged`）记账；hook agent 子会话是普通子会话日志（`subagent_origin.agentType = "hook-agent"`，
+  不写 `subagent_spawned`），跑完从 Hub 卸下、日志留盘。
 # MCP3 OAuth 审计
 
 `mcp_authentication`：server、action（login/logout/refresh）、outcome（success/failed/cancelled）。

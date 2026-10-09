@@ -1,0 +1,16 @@
+{
+  "event": "SessionStart",
+  "target": "startup",
+  "runner": "mcp",
+  "handlerCount": 1,
+  "decision": "Neutral",
+  "shouldContinue": true,
+  "reasons": [],
+  "stopReasons": [],
+  "additionalContext": ["audit logged: session opened"],
+  "systemMessages": [],
+  "nonBlockingErrorCount": 0,
+  "timedOut": false,
+  "failedToStart": false,
+  "basis": "hooks.md §How the tool's result is read（:572-574）：文本当 command 的 stdout；纯文本（非 JSON 对象）按 exit 0 的文本规则——SessionStart 上 stdout 加入上下文（§SessionStart）。兼容口径注：launch 时的 SessionStart 在内核里跳过 mcp_tool（服务器未就绪），这里测的是它跑起来之后的解读"
+}

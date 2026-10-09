@@ -285,6 +285,75 @@ class SessionHub(
         scheduler.start { crons.tick(deps.clock.nowMs()) }
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
 
+    /**
+     * 起 hook agent 子会话并等它跑完一个回合，返回最终回复文本（没有文字给 null）。子会话只读
+     * （Read / Grep / Glob，CC 原文限定）、最多 [HOOK_AGENT_MAX_TURNS] 回合、不跑 SubagentStart hook、
+     * 不写 SubagentSpawned——它不是委派，不进线程表；它的花费落自己的日志（ModelCharged，谁的账本
+     * 谁记）。跑完就从 Hub 卸下（L3）：它不在任何在线汇总里，挂着只是泄漏；日志都在磁盘上，要查随时
+     * peek。父回合被取消时由调用方（ModelHookRunner）经 [stopHookAgent] 停掉它
+     */
+    internal suspend fun runHookAgent(parent: SessionRuntime, prompt: String): String? {
+        val ps = parent.state.value
+        // hook 不能再钩出 hook：hook-agent 的来历类型在 HookDriver 里挡掉模型侧 hook 类型
+        val childId = SessionId(deps.ids.next("s"))
+        val header = LogHeader(
+            dev.min.agent.store.LOG_FORMAT_VERSION, childId, deps.clock.nowMs(), parent = parent.sessionId,
+        )
+        val created = SessionCreated(ps.settings.cwd, ps.settings.model, dev.min.agent.protocol.PermissionMode.DontAsk)
+        val origin = SubagentOrigin(
+            parent = parent.sessionId, root = ps.origin?.root ?: parent.sessionId,
+            parentCall = CallId(deps.ids.next("hookcall")),
+            agentType = HOOK_AGENT_TYPE, fork = false, depth = (ps.origin?.depth ?: 0) + 1,
+            cacheKey = "hook-agent:${childId.value}",
+            tools = HOOK_AGENT_TOOLS, instructions = AGENT_HOOK_INSTRUCTIONS,
+            maxTurns = HOOK_AGENT_MAX_TURNS, omitMemory = true,
+        )
+        val child = SessionRuntime.create(
+            store, header, created, deps, scope,
+            // M3：守父会话的权限规则（含父会话里「总是允许」攒下的 sessionRules 与附加目录）——hook agent 的
+            // 结论会回灌主模型，它读到了不该读的就等于绕过权限。hooks 一概不继承（settings 与组件的都不）：
+            // hook 钩出 hook 是无限递归，防护就靠这条（HookDriver 里的 HOOK_AGENT_TYPE 守卫是第二道保险）
+            listOf(origin) + inheritedHookAgentRules(ps),
+            loadMemory = false, loadSettings = false, loadSkills = false, hub = this,
+        )
+        child.requestGate = childGate
+        register(child)
+        watch(child, reconcile = false)
+        child.receive(
+            ClientMsgId("hook-agent:${childId.value}"), listOf(TextPart(prompt)), Delivery.Queue,
+            InputOrigin.Parent(parent.sessionId), TurnTrigger.User,
+        )
+        // 等子回合结束；调用方套着超时，超时后由 stopHookAgent 收
+        child.state.first { it.turn == null && it.lastTurn != null }
+        val text = child.state.value.history.lastOrNull { it is HistoryEntry.Assistant }
+            ?.let { (it as HistoryEntry.Assistant).parts.filterIsInstance<TextPart>().joinToString("") { p -> p.text }.ifBlank { null } }
+        unload(child.sessionId)
+        return text
+    }
+
+    /** hook agent 超时或父回合被取消后收掉挂着的子回合：静音（不往父会话投报告）再打断，收完卸下 */
+    internal suspend fun stopHookAgent(parent: SessionRuntime) {
+        val agents = subtreeOnline(parent.sessionId).mapNotNull { runtimes[it] }
+            .filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
+        agents.forEach { child -> child.state.value.turn?.let { quietReports += child.sessionId to it.turnId } }
+        agents.forEach { it.interrupt() }
+        agents.forEach { it.awaitIdle() }
+        agents.forEach { unload(it.sessionId) }
+    }
+
+    /**
+     * hook agent 从父会话继承的权限规则（M3）：口径与子 agent 的 [inheritedRules] 一致（规则快照 +
+     * 「总是允许」攒下的 + 附加目录），但**不带** HooksLoaded / autoReview——hook agent 不跑 hook（递归），
+     * 也不叠审查（它自己是被门禁调来当判官的）
+     */
+    private fun inheritedHookAgentRules(parent: SessionState): List<SessionEvent> {
+        val rules = parent.rules + parent.sessionRules
+        return listOfNotNull(
+            if (rules.isEmpty() && parent.additionalDirectories.isEmpty()) null
+            else PermissionRulesLoaded(rules, additionalDirectories = parent.additionalDirectories),
+        )
+    }
+
     internal suspend fun reserveWebSearch(caller: SessionRuntime, callId: CallId): Boolean {
         val rootId = caller.state.value.origin?.root ?: caller.sessionId
         val root = open(rootId) ?: kotlin.error("找不到搜索所属的根会话。")

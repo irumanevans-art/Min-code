@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          { "type": "mcp_tool", "server": "my_server", "tool": "security_scan" }
+        ]
+      }
+    ]
+  }
+}
