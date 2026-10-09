@@ -190,17 +190,19 @@ class HooksDecisionKernelTest {
     }
 
     private suspend fun FileSessionStore.events(rt: SessionRuntime): List<SessionEvent> =
-        open(rt.sessionId)!!.read().toList().map { it.event }
+        peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String): SessionState {
         val before = state.value.lastTurn?.turnId
         send(ClientMsgId("u-${System.nanoTime()}"), listOf(TextPart(text)))
-        return state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        val ended=state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        awaitIdle()
+        return ended
     }
 
     /** 日志即真相：重放日志得到的状态必须等于运行时状态 */
     private suspend fun assertLogIsTruth(store: FileSessionStore, rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 
@@ -232,11 +234,14 @@ class HooksDecisionKernelTest {
         // 成员的回合（含 hook 拦下后的续跑）跑完
         withTimeout(30_000) {
             while (true) {
-                val s = store.open(alice)?.read()?.toList()?.map { it.event }.orEmpty()
+                val s = store.peek(alice)?.read()?.toList()?.map { it.event }.orEmpty()
                 if (s.any { it is dev.min.agent.spi.TurnEnded }) break
                 kotlinx.coroutines.delay(50)
             }
         }
+        // 子回合结束之后报告仍在异步投递；真相比较要等负责人消费完那条通知。
+        rt.state.first { s -> s.children[alice]?.reportedTurns?.isNotEmpty() == true && s.turn == null && s.inbox.isEmpty() }
+        rt.awaitIdle()
         return rt to store
     }
 
@@ -264,7 +269,7 @@ class HooksDecisionKernelTest {
         assertEquals("TeammateIdle", (input["hook_event_name"] as JsonPrimitive).content)
         assertEquals("alice", (input["teammate_name"] as JsonPrimitive).content)
         assertEquals(rt.state.value.team!!.teamId, (input["team_name"] as JsonPrimitive).content)
-        assertEquals("跑了两次：被拦一次、放行一次", 2, store.open(aliceId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().count { it.isFor("TeammateIdle") })
+        assertEquals("跑了两次：被拦一次、放行一次", 2, store.peek(aliceId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().count { it.isFor("TeammateIdle") })
         // 报告在 hook 放行之后才交给负责人：负责人那边只有一份报告，不是两份
         rt.state.first { s -> s.inbox.size + s.history.count { it is HistoryEntry.User && (it.origin as? dev.min.agent.spi.InputOrigin.Agent)?.kind == dev.min.agent.spi.AgentInputKind.Report } >= 1 }
         assertLogIsTruth(store, rt)

@@ -164,6 +164,7 @@ class BranchSessionTest {
         val before = state.value.lastTurn?.turnId
         send(msg(), listOf(TextPart(text)))
         state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        awaitIdle()
     }
 
     private val DAY_MS = 24L * 60 * 60 * 1000
@@ -296,10 +297,13 @@ class BranchSessionTest {
         val port = h.portFor(original, dev.min.agent.protocol.TurnId("t-test"), CallId("c-test"))
         assertTrue(!port.team(dev.min.agent.spi.TeamOp.Create(listOf(dev.min.agent.spi.TeamMemberSpec("alice", prompt = "x")))).isError)
         port.team(dev.min.agent.spi.TeamOp.Disband(dev.min.agent.spi.TeamDisbandReason.Completed, null))
-        // 成员的报告会唤醒负责人跑通知回合：等安静了再分支
+        // 先等已结束子回合的报告交付；父会话暂时空闲不代表异步报告已经到达。
+        original.state.first { s -> s.children.values.all { child ->
+            h.get(child.child)?.state?.value?.lastTurn?.turnId?.let { it in child.reportedTurns } ?: true
+        } }
+        // 解散时取消的成员报告只入队；下一次用户输入消费报告后才有稳定分支点。
         original.awaitIdle()
-        original.state.first { it.turn == null && it.inbox.isEmpty() }
-        original.awaitIdle()
+        original.say("团队已经解散")
 
         val branch = h.branch(original.sessionId)
 
