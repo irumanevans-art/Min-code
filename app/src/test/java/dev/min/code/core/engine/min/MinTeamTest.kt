@@ -171,6 +171,32 @@ class MinTeamTest {
         )
     }
 
+    @Test fun `with real-host ids the messages still go in send order, and one broadcast is one line`() {
+        // 真实宿主的编号是 tm_<随机串>，排不了序；顺序与广播的合并只能靠发出时刻
+        val nodes = mapOf(
+            root to leader(
+                TeamMessage("team_1", "tm_9f2c", "bob", TEAM_LEAD, "我也在看", true, sentAtMs = 2_000),
+                TeamMessage("team_1", "tm_03ab", "alice", TEAM_LEAD, "做完了", false, sentAtMs = 3_000),
+            ),
+            aliceId to foldOf(
+                TeamMessage("team_1", "tm_e71d", TEAM_LEAD, "alice", "先读 core", false, sentAtMs = 1_000),
+                TeamMessage("team_1", "tm_5a40", "bob", "alice", "我也在看", true, sentAtMs = 2_000),
+                TeamMessage("team_1", "tm_c0de", "bob", "alice", "我也在看", true, sentAtMs = 4_000),
+                id = "s_alice",
+            ),
+            bobId to foldOf(id = "s_bob"),
+        )
+        assertEquals(
+            listOf(
+                Triple(TEAM_LEAD, "alice", "先读 core"),
+                Triple("bob", null, "我也在看"),
+                Triple("alice", TEAM_LEAD, "做完了"),
+                Triple("bob", null, "我也在看"), // 后来又广播了一次同样的话：是另一条
+            ),
+            view(nodes.getValue(root), nodes)!!.messages.map { Triple(it.from, it.to, it.text) },
+        )
+    }
+
     @Test fun `mail left over from an earlier team in the same log is not shown`() {
         val nodes = mapOf(
             root to leader(TeamMessage("team_1", "tm_1", "alice", TEAM_LEAD, "这个团队的", false)),
