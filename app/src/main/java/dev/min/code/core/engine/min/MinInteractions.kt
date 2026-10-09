@@ -97,7 +97,7 @@ private fun approval(
             ApprovalOption(ApprovalOption.DENY, text.optionDeny(), ApprovalOption.Kind.Deny, acceptsNote = true, notificationSafe = true),
             ApprovalOption(ApprovalOption.DENY_AND_STOP, text.optionDenyAndStop(), ApprovalOption.Kind.DenyAndStop, acceptsNote = false, notificationSafe = false),
         ) + if (what.tool == "Workflow" && what.suggestedRule != null) listOf(
-            ApprovalOption(AlwaysOptionIds.of(RuleLayer.Session, what.suggestedRule), text.optionWorkflowRemember(), ApprovalOption.Kind.AllowAlways, acceptsNote = false, notificationSafe = false)
+            ApprovalOption(AlwaysOptionIds.of(RuleLayer.Session, requireNotNull(what.suggestedRule)), text.optionWorkflowRemember(), ApprovalOption.Kind.AllowAlways, acceptsNote = false, notificationSafe = false)
         ) else alwaysOptions(what.suggestedRule, text),
     )
 }
