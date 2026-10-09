@@ -9,7 +9,6 @@ tasks.named("check") { dependsOn(agentSourceCheck) }
 
 android {
     namespace = "dev.min.agent.workflow"
-    defaultConfig { ndk { abiFilters += listOf("arm64-v8a", "x86_64") } }
 }
 
 dependencies {
@@ -17,7 +16,7 @@ dependencies {
     implementation(project(":agent:ext"))
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
-    implementation("io.github.dokar3:quickjs-kt-android:1.0.15")
+    implementation(libs.quickjs.android)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }
@@ -26,6 +25,6 @@ dependencies {
 configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
     resolutionStrategy.dependencySubstitution {
         substitute(module("io.github.dokar3:quickjs-kt-android"))
-            .using(module("io.github.dokar3:quickjs-kt-jvm:1.0.15"))
+            .using(module("io.github.dokar3:quickjs-kt-jvm:${libs.versions.quickjs.get()}"))
     }
 }

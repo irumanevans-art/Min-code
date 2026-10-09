@@ -1,4 +1,5 @@
 [versions]
+quickjs = "1.0.15"
 agp = "9.3.1"
 kotlin = "2.4.10"
 coreKtx = "1.19.0"
@@ -28,6 +29,8 @@ bouncycastle = "1.81"
 spake2 = "2.2.1"
 
 [libraries]
+quickjs-android = { module = "io.github.dokar3:quickjs-kt-android", version.ref = "quickjs" }
+quickjs-jvm = { module = "io.github.dokar3:quickjs-kt-jvm", version.ref = "quickjs" }
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
