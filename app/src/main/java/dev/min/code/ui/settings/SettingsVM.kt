@@ -117,6 +117,12 @@ class SettingsVM(
 
     fun setCronEnabled(enabled: Boolean) = viewModelScope.launch { store.setCronEnabled(enabled) }
 
+    /** 定时任务单次花费上限：null = 不设（默认）。输入框已经按 [dev.min.code.core.settings.parseCronBudgetInput] 校验过 */
+    fun setCronMaxBudgetUsd(value: Double?) = viewModelScope.launch { store.setCronMaxBudgetUsd(value) }
+
+    /** 团队同时运行的成员数；选择器只给 1–8，越界的值商店自己按硬上限处理 */
+    fun setTeamMaxConcurrent(value: Int) = viewModelScope.launch { store.setTeamMaxConcurrent(value) }
+
     fun setDeviceWriteAllowlist(packages: Set<String>) =
         viewModelScope.launch { store.setDeviceWriteAllowlist(packages) }
 

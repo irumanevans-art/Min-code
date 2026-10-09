@@ -1453,4 +1453,18 @@
     <string name="session_scheduled_tag">定时</string>
 
     <string name="schedule_recurring">循环</string>
+
+    <!-- M5: optional cap per scheduled run (default: none, as in Claude Code) -->
+    <string name="settings_cron_budget_title">定时任务的花费上限</string>
+    <string name="settings_cron_budget_none">不设上限（默认）· 一次运行想花多少就花多少</string>
+    <string name="settings_cron_budget_none_short">留空 = 不设上限</string>
+    <string name="settings_cron_budget_value">每次运行最多花 %1$s</string>
+    <string name="settings_cron_budget_field">每次运行的上限（美元）</string>
+    <string name="settings_cron_budget_hint">留空 = 不设上限。任务自己写的上限只能比它更低。要用有 USD 价格的模型：花费核对不了的运行会被跳过。</string>
+    <string name="settings_cron_budget_invalid">请输入大于 0 的数字，或留空</string>
+    <string name="settings_cron_budget_save">保存</string>
+    <string name="settings_cron_budget_clear">不设上限</string>
+    <!-- M5: teamMaxConcurrent -->
+    <string name="settings_team_title">团队同时运行的成员数</string>
+    <string name="settings_team_subtitle">%1$d（最多 %2$d）· 多出来的成员排队等名额</string>
 </resources>

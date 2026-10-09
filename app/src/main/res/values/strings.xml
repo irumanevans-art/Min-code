@@ -1458,4 +1458,18 @@
     <string name="session_scheduled_tag">Scheduled</string>
 
     <string name="schedule_recurring">recurring</string>
+
+    <!-- M5: optional cap per scheduled run (default: none, as in Claude Code) -->
+    <string name="settings_cron_budget_title">Scheduled-task spending cap</string>
+    <string name="settings_cron_budget_none">No cap (default) · a run may spend what it needs</string>
+    <string name="settings_cron_budget_none_short">empty = no cap</string>
+    <string name="settings_cron_budget_value">Each run is stopped at %1$s</string>
+    <string name="settings_cron_budget_field">Cap per run (USD)</string>
+    <string name="settings_cron_budget_hint">Leave empty for no cap. A task\'s own cap can only lower this one. Needs a model with a USD price: a run whose cost can\'t be checked is skipped.</string>
+    <string name="settings_cron_budget_invalid">Enter a number above 0, or leave it empty</string>
+    <string name="settings_cron_budget_save">Save</string>
+    <string name="settings_cron_budget_clear">Remove the cap</string>
+    <!-- M5: teamMaxConcurrent -->
+    <string name="settings_team_title">Team members running at once</string>
+    <string name="settings_team_subtitle">%1$d (up to %2$d) · the rest of the team waits for a slot</string>
 </resources>

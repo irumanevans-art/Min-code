@@ -746,6 +746,10 @@ private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
         onClick = { vm.setCronEnabled(!settings.cronEnabled) },
         trailing = { InkSwitch(checked = settings.cronEnabled, onCheckedChange = vm::setCronEnabled) },
     )
+    // 单次花费上限：可选，留空 = 不设（照 Claude Code 的默认）
+    CronBudgetRow(valueUsd = settings.cronMaxBudgetUsd, onChange = vm::setCronMaxBudgetUsd)
+    // agent 团队同时运行的成员数（1–8）
+    TeamConcurrencyRow(value = settings.teamMaxConcurrent, onChange = vm::setTeamMaxConcurrent)
 }
 
 @Composable
