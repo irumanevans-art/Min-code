@@ -27,6 +27,7 @@ import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.InputBlocked
 import dev.min.agent.spi.InputOrigin
+import dev.min.agent.spi.LIMIT_CAUSE_MAX_BUDGET_USD
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.NoteLevel
 import kotlinx.serialization.json.jsonObject
@@ -96,6 +97,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     try {
                         if (!runSavedWorkflows(turnId, trigger)) loop(turnId)
                         checkpoint?.await()
+                        // 最后一个请求把线压过：回复已在日志里，但按口径这一回合仍以 Limit（预算）收尾、退出码非零——
+                        // 要是没有下一个请求可拦，到限就没人报了
+                        if (rt.hub?.budget?.exceeded() == true) throw TurnBudgetReached()
                     } finally {
                         // 本回合编辑记录里的内容登记进回收的根：会话就此结束的话，最后一轮的改动也得撤得回
                         withContext(NonCancellable) { rt.checkpointer.retainAfterTurn() }
@@ -125,6 +129,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         } catch (e: TurnLimitReached) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit)), Durability.Sync)
             false
+        } catch (e: BudgetExceeded) {
+            // 下一个请求被预检拦下：树里已花到限，或当前模型缺 USD 定价（fail-closed）核对不了
+            finishBudgetCapped()
+        } catch (e: TurnBudgetReached) {
+            finishBudgetCapped()
         } catch (e: Exception) {
             // 意外（内核 bug、日志写不进去……）：尽量把回合收尾，别让会话卡在「进行中」；
             // 收尾本身也失败时（多半是日志坏了），留给下次打开会话时的恢复去补
@@ -135,6 +144,33 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             }
             false
         }
+    }
+
+    /**
+     * 本次运行的 USD 花费到限（`--max-budget-usd`）：回合以 Interrupted(Limit)+limitCause=max_budget_usd 收尾
+     * （-p 的 result.subtype 据此写 error_max_budget_usd），不再是「内部错误」。CC changelog：cap reached →
+     * new spawns denied（[SessionHub.spawn] 的闸门拒）、running background agents halted（根会话停掉在跑的后台子 agent）。
+     *
+     * 停树只由根会话做、且 [SessionHub.haltChildrenOf] 排除根自己：到限的子 agent 只收自己的回合——
+     * 它对自己 interrupt 再 awaitIdle 是在自己的回合 Job 里 join 自己（H1），前台父会话也就永远等不到返回
+     */
+    private suspend fun finishBudgetCapped(): Boolean {
+        if (rt.state.value.origin == null) rt.hub?.haltChildrenOf(rt.sessionId)
+        val budget = rt.hub?.budget
+        val limit = rt.deps.maxBudgetUsd
+        val spent = budget?.spentUsd()
+        val why = if (limit != null && spent != null && spent < limit) {
+            // 上限没花到却被拦：是当前请求的模型缺 USD 定价（fail-closed），花费核对不了
+            "有请求的模型缺 USD 定价，花费核对不了"
+        } else {
+            "已花 ${spent?.let(::money) ?: "?"}，到 --max-budget-usd ${limit?.let(::money) ?: "?"} 的上限"
+        }
+        rt.commit(
+            listOf(Note(NoteLevel.Warning, "本次运行的 USD 花费到限：$why。回合到此为止，新的子 agent 不再派生。")) +
+                closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit), LIMIT_CAUSE_MAX_BUDGET_USD),
+            Durability.Sync,
+        )
+        return false
     }
 
     private suspend fun runSavedWorkflows(turnId: TurnId, trigger: TurnTrigger): Boolean {
@@ -573,6 +609,9 @@ internal class TurnAbort(message: String, val kind: ModelFailureKind? = null, va
 
 /** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
 internal class TurnLimitReached : Exception()
+
+/** `--max-budget-usd` 到限（最后一个请求把线压过、没有下一个请求可拦）：回合以 Interrupted(Limit)+limitCause 收尾 */
+internal class TurnBudgetReached : Exception()
 
 /** 组系统提示用的环境事实：子会话带着的（分身 = 父会话的）优先；分支会话用 session_branched 冻结的原会话事实；
  *  否则由本会话的创建时间与 cwd 推出。分支不带原会话的事实，日期一变系统提示就变，缓存前缀全断 */

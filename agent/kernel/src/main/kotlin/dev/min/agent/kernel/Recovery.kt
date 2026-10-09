@@ -32,7 +32,7 @@ fun planRecovery(state: SessionState): List<SessionEvent> =
  * 把当前回合合法地收尾：进程被杀后的恢复（[planRecovery]）、用户按「中断」、请求失败放弃，共用这一份逻辑，只是结局不同。
  * 没有进行中的回合时返回空列表。
  */
-fun closeTurn(state: SessionState, outcome: TurnOutcome): List<SessionEvent> {
+fun closeTurn(state: SessionState, outcome: TurnOutcome, limitCause: String? = null): List<SessionEvent> {
     val turn = state.turn ?: return emptyList()
     val outcomes = turn.calls.values
         .filter { it.phase !is CallPhase.Done }
@@ -58,6 +58,7 @@ fun closeTurn(state: SessionState, outcome: TurnOutcome): List<SessionEvent> {
         // 进程死了多久不可知（纯函数也不该去读时钟），记 0；「中断于何时」看 lastActivityAtMs
         durationMs = 0,
         lastActivityAtMs = turn.lastEventAtMs,
+        limitCause = limitCause,
     )
 }
 

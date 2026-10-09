@@ -623,6 +623,17 @@ class SessionHub(
     }
 
     /**
+     * 预算到限时停掉在跑的后台子 agent（CC changelog：running background agents halted）。只由**根会话**的
+     * [TurnRunner] 调（见 [TurnRunner.finishBudgetCapped]）：这里天然排除根自己——发起检查的根会话正走在
+     * Limit 收尾的路上，打断它会把 Limit 顶成中断；前台子 agent 此刻本来就是闲的（父回合正等着它们的报告），
+     * 停了报告就没人收。到限的子 agent 只收自己的回合，不经这里。报告按 [stopTree] 的口径静音：
+     * 被停的子 agent 不该再往根会话投报告——那会触发新回合，正是预算要拦的
+     */
+    internal suspend fun haltChildrenOf(rootId: SessionId) {
+        for (child in runtimes[rootId]?.state?.value?.children?.keys.orEmpty()) stopTree(child)
+    }
+
+    /**
      * 关掉一棵子树：先 [stopTree]，再卸下（日志不动，之后 [open] 能重开）。界面「关闭会话」用它，[close] 只关空闲的。
      * 停树与卸下之间可能又起了新回合（刚被唤醒的父会话、刚委派的子会话），所以最多重试 [STOP_ROUNDS] 轮；仍卸不下返回 false
      */
@@ -847,6 +858,10 @@ class SessionHub(
         val ps = parent.state.value
         val parentOrigin = ps.origin
         if (parentOrigin?.fork == true) return DelegateResult.Rejected("你是分身，直接执行任务，不要再委派。")
+        // 预算到限后新的子 agent 不再派生（CC changelog：new spawns denied）——分身、团队成员一样拦在门口
+        if (budget.exceeded()) {
+            return DelegateResult.Rejected("本次运行的 USD 花费已到 --max-budget-usd 的上限，不再派生子 agent。")
+        }
         val depth = (parentOrigin?.depth ?: 0) + 1
         if (depth > limits.maxDepth) {
             return DelegateResult.Rejected("子 agent 最多嵌套 ${limits.maxDepth} 层，这里不能再委派了。直接自己做。")

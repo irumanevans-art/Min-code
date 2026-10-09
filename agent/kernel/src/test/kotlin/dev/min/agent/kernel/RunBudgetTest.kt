@@ -16,6 +16,8 @@ import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.Clock
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HarnessProfile
+import dev.min.agent.spi.InterruptedBy
+import dev.min.agent.spi.LIMIT_CAUSE_MAX_BUDGET_USD
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.RecapTrigger
@@ -25,6 +27,8 @@ import dev.min.agent.spi.ToolInput
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.ToolTraits
+import dev.min.agent.spi.TurnEnded
+import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.TEST_MODEL
 import dev.min.agent.testkit.TEST_PROFILE
@@ -39,12 +43,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -148,6 +154,9 @@ class RunBudgetTest {
 
     private suspend fun SessionHub.root() = create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
 
+    private suspend fun eventsOf(id: SessionId): List<dev.min.agent.spi.SessionEvent> =
+        store.open(id)!!.read().toList().map { it.event }
+
     @Test
     fun `子 agent 的花费把整棵树的下一个请求也拦下`() = run {
         val model = RoutingModel { req ->
@@ -165,6 +174,54 @@ class RunBudgetTest {
         rt.awaitIdle()
         assertEquals("到限后树里谁都不再发请求（根一笔 + 子 agent 一笔）", 2, model.requests.size)
         assertEquals("两笔都进了「一次运行」的账本", 2.0, h.budget.spentUsd(), 1e-9)
+    }
+
+    @Test
+    fun `子 agent 末次请求跨线，自己的回合以 Limit 收尾且前台委派必须返回`() = run {
+        val model = RoutingModel { req ->
+            when (req.last()) {
+                "派活" -> reply(ToolCallPart(CallId("k1"), "Agent", args("prompt" to "任务")), stop = StopReason.ToolUse)
+                // 子 agent 唯一的一笔就把线压过（$2 ≥ 上限 $1.5）：它的回合要以 Limit+limitCause 收尾，
+                // 报告交回根会话——前台委派必须返回，不能因为停树把自己锁死（H1）
+                "任务" -> reply(TextPart("子 agent 干完了"))
+                else -> reply(TextPart("不该走到这"))
+            }
+        }
+        val h = hub(model, budget = 1.5)
+        val rt = h.root()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("派活")))
+        withTimeout(5_000) { rt.awaitIdle() } // H1：跨线后前台委派必须返回
+        val child = h.get(rt.state.value.children.keys.single())!!
+        assertNull("子会话收了自己的回合，没卡在「进行中」", child.state.value.turn)
+        val childEnd = child.state.value.lastTurn!!
+        assertEquals(TurnOutcome.Interrupted(InterruptedBy.Limit), childEnd.outcome)
+        assertEquals(LIMIT_CAUSE_MAX_BUDGET_USD, eventsOf(child.sessionId).filterIsInstance<TurnEnded>().single().limitCause)
+        val rootEnd = rt.state.value.lastTurn!!
+        assertEquals("根会话的回合同样以预算到限收尾", TurnOutcome.Interrupted(InterruptedBy.Limit), rootEnd.outcome)
+        assertEquals(LIMIT_CAUSE_MAX_BUDGET_USD, eventsOf(rt.sessionId).filterIsInstance<TurnEnded>().single().limitCause)
+    }
+
+    @Test
+    fun `到限后新的子 agent 不再派生`() = run {
+        val model = RoutingModel { req ->
+            if (req.last() == "派活") {
+                // 第一笔 $1.2 就把 $1 的上限压过；回复还要委派——闸门该拒绝，之后根的下一个请求被拦
+                reply(ToolCallPart(CallId("k1"), "Agent", args("prompt" to "任务")), stop = StopReason.ToolUse, usage = Usage(inputTokens = 12))
+            } else {
+                reply(TextPart("不该走到这"))
+            }
+        }
+        val h = hub(model, budget = 1.0)
+        val rt = h.root()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("派活")))
+        rt.awaitIdle()
+        assertEquals("预算到限后派生被拒，没有子会话建出来", 0, rt.state.value.children.size)
+        val denied = rt.state.value.toolResults.getValue(CallId("k1"))
+        assertTrue("拒绝理由给到了模型：${denied.content}", denied.isError && denied.content.any { (it as? TextPart)?.text?.contains("不再派生子 agent") == true })
+        assertEquals("根会话以预算到限收尾（不是内部错误）", 1, model.requests.size)
+        val end = eventsOf(rt.sessionId).filterIsInstance<TurnEnded>().single()
+        assertEquals(TurnOutcome.Interrupted(InterruptedBy.Limit), end.outcome)
+        assertEquals(LIMIT_CAUSE_MAX_BUDGET_USD, end.limitCause)
     }
 
     @Test
