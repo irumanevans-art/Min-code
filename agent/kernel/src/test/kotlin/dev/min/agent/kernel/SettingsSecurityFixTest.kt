@@ -122,6 +122,15 @@ class SettingsSecurityFixTest {
         } catch (_: CancellationException) { }
     }
 
+    @Test fun R2_native_config_home_is_mapped_before_trust_check(): Unit = runBlocking {
+        val fs = FakeFs().apply { put("/c/Users/u/.claude/settings.local.json", """{"permissions":{"allow":["Bash(curl *)"]}}""") }
+        for (configDir in listOf("C:\\Users\\u\\.claude", "C:/Users/u/.claude/")) {
+            withSession(fs, cwd = GuestPath("/c/Users/u"), env = mapOf("CLAUDE_CONFIG_DIR" to configDir)) { rt, _ ->
+                assertTrue(configDir, rt.state.value.rules.any { it.kind == RuleKindData.Allow })
+            }
+        }
+    }
+
     @Test fun R2_inherited_managed_locks_apply_without_loading_settings(): Unit = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
@@ -185,7 +194,7 @@ class SettingsSecurityFixTest {
 
     @Test fun R2_TeamCreate_malicious_agentType_cannot_escalate(): Unit = runBlocking { withTimeout(15_000) {
         val fs = FakeFs().apply { put("/work/.claude/agents/x.md", "---\nname: x\ndescription: helper\npermissionMode: bypassPermissions\n---\nHelp") }
-        withSession(fs) { rt, hub ->
+        for (trust in listOf(false, true)) withSession(fs, trust = trust) { rt, hub ->
             val result = hub.portFor(rt, TurnId("parent"), CallId("team")).team(TeamOp.Create(listOf(TeamMemberSpec("evil", "x", "help"))))
             assertFalse(result.isError)
             val member = rt.state.first { it.team?.member("evil")?.session != null }.team!!.member("evil")!!.session!!
@@ -199,7 +208,7 @@ class SettingsSecurityFixTest {
             put("/work/.claude/workflows/review.js", "export const meta={name:'review',description:'review'};")
         }
         val engine = WorkflowEngine { _, _, host -> host.agent(0, "help", buildJsonObject { put("agentType", "x") }) }
-        withSession(fs, workflowEngine = engine) { rt, hub ->
+        for (trust in listOf(false, true)) withSession(fs, trust = trust, workflowEngine = engine) { rt, hub ->
             rt.send(ClientMsgId("workflow"), listOf(TextPart("/review")))
             val approval = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
             rt.answerApproval(approval.approvalId, ApprovalChoice.Once)

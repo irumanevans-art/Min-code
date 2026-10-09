@@ -7,7 +7,12 @@ import kotlin.coroutines.cancellation.CancellationException
 
 /** 未接受工作区前不能启动仓库提供的 Git；检查失败也不能把仓库声明变成用户授权。 */
 internal suspend fun trustedLocalSettings(deps: KernelDeps, snapshot: SettingsSnapshot, cwd: GuestPath, accepted: Boolean): Set<GuestPath> {
-    val configHome = deps.env("CLAUDE_CONFIG_DIR")?.trimEnd('/')?.substringBeforeLast('/')?.let(::GuestPath) ?: deps.memoryHome
+    // CLI 环境变量是本机写法，盘符/反斜杠须先映射为宿主通用的 guest 路径，才能比较会话起点。
+    val configParent = deps.env("CLAUDE_CONFIG_DIR")?.replace('\\', '/')?.trimEnd('/')?.substringBeforeLast('/')
+    val configGuest = configParent?.let {
+        if (Regex("^[A-Za-z]:/").containsMatchIn(it)) "/" + it[0].lowercaseChar() + it.drop(2) else it.ifEmpty { "/" }
+    }
+    val configHome = configGuest?.takeIf { it.startsWith('/') }?.let(::GuestPath) ?: deps.memoryHome
     val result = mutableSetOf<GuestPath>()
     for (layer in snapshot.layers.filter { it.source == ConfigSource.Local }) {
         try {
