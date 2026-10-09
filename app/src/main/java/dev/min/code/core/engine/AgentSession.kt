@@ -66,6 +66,9 @@ interface AgentSession {
      */
     suspend fun recap(auto: Boolean): RecapOutcome = RecapOutcome.Skipped("")
 
+    /** 团队页的“放行 / 解散”（[EngineCapabilities.team] 为真才有）；其余引擎 null */
+    val team: TeamControl? get() = null
+
     /** 检查点与回退（[EngineCapabilities.rewind] 为真才有）；其余引擎 null */
     val rewind: RewindControl? get() = null
 

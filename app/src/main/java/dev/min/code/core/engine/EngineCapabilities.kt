@@ -2,7 +2,7 @@ package dev.min.code.core.engine
 
 /**
  * 一个引擎能做什么。**控件显隐只看它**，界面不按 [EngineKind] 写分支（规矩 2）。
- * 24 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
+ * 30 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
  * 改一格要同时改测试，审查时一眼看得到。
  *
  * 位与命令一一对应的那些，[supports] 能统一兜底；对不上的（引擎专有设置项等）由适配器自己判。
@@ -52,6 +52,8 @@ data class EngineCapabilities(
     val mcpServers: Boolean,
     /** 第一次进一个带项目层 hooks / `.mcp.json` 的工作目录前先问信任（[WorkspaceTrustControl]）。CC 有自己的信任对话框，Codex 没有项目层配置 */
     val workspaceTrust: Boolean,
+    /** agent 团队的页面：成员、共享清单、消息流、放行搁浅的成员、解散（[TeamControl]）。团队在 Min 内核里，CC 的团队在它自己的 CLI 里 */
+    val team: Boolean,
     /** `/mcp /agents /memory /permissions /config` 面板。设计草稿是 Boolean，但表里 Min 写的是「部分」，见 [ConfigFiles] */
     val claudeConfigFiles: ConfigFiles,
 ) {
@@ -112,6 +114,7 @@ data class EngineCapabilities(
         "rewind" to rewind.toString(),
         "mcpServers" to mcpServers.toString(),
         "workspaceTrust" to workspaceTrust.toString(),
+        "team" to team.toString(),
         "claudeConfigFiles" to claudeConfigFiles.name,
     )
 
@@ -145,6 +148,7 @@ data class EngineCapabilities(
             rewind = false,
             mcpServers = false,
             workspaceTrust = false,
+            team = false,
             claudeConfigFiles = ConfigFiles.Full,
         )
 
@@ -182,6 +186,7 @@ data class EngineCapabilities(
             rewind = false,
             mcpServers = false,
             workspaceTrust = false,
+            team = false,
             claudeConfigFiles = ConfigFiles.None,
         )
 
@@ -225,6 +230,7 @@ data class EngineCapabilities(
             rewind = true,
             mcpServers = true,
             workspaceTrust = true,
+            team = true,
             claudeConfigFiles = ConfigFiles.Partial,
         )
 

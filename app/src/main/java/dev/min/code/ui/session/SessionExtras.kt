@@ -18,6 +18,7 @@ import dev.min.code.core.engine.RewindStorageRow
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SessionSignal
 import dev.min.code.core.engine.StartOptions
+import dev.min.code.core.engine.TeamControl
 import dev.min.code.core.engine.TrustProbe
 import dev.min.code.core.engine.WorkspaceTrustControl
 import dev.min.code.core.service.AWAY_RECAP_AFTER_MS
@@ -296,6 +297,30 @@ internal class SessionExtras(
                 val session = shown.value ?: return@collect
                 if (awayMs >= AWAY_RECAP_AFTER_MS) reportRecap(session, auto = true)
             }
+        }
+    }
+
+    // ---- 团队 ----
+
+    private val teamControl: StateFlow<TeamControl?> = shown.map { it?.team }
+        .stateIn(scope, SharingStarted.Eagerly, shown.value?.team)
+
+    /** 团队页的「放行」：[member] 为 null 放行全部搁浅的。结果说一句（放行了几位 / 没有要放行的） */
+    fun releaseStalled(member: String?) {
+        val control = teamControl.value ?: return
+        scope.launch {
+            val released = catchingNonCancellation { control.releaseStalled(member) }.getOrDefault(0)
+            notice(context.getString(if (released > 0) R.string.team_released else R.string.team_release_none, released), error = false)
+        }
+    }
+
+    /** 团队页的「解散」（界面已经确认过）。成功说一句，没成功把原因告诉用户 */
+    fun disbandTeam() {
+        val control = teamControl.value ?: return
+        scope.launch {
+            val problem = catchingNonCancellation { control.disband() }.getOrElse { it.message ?: it.javaClass.simpleName }
+            if (problem == null) notice(context.getString(R.string.team_disbanded), error = false)
+            else notice(context.getString(R.string.team_disband_failed, problem), error = true)
         }
     }
 

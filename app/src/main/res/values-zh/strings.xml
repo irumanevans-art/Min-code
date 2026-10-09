@@ -1364,4 +1364,40 @@
     <string name="session_notification_agent_question">%1$s%2$s提了个问题，请打开会话回答</string>
     <string name="session_notification_agent_plan">%1$s%2$s交了一份计划，请打开会话审阅</string>
 
+    <!-- B10: team page -->
+    <string name="team_chip">团队 · %1$d</string>
+    <string name="team_chip_stalled">团队 · %1$d 位搁浅</string>
+    <string name="team_title">团队 %1$s</string>
+    <string name="team_state_active">进行中</string>
+    <string name="team_state_disbanded">已解散</string>
+    <string name="team_disband_note">解散时说：%1$s</string>
+    <string name="team_members_title">成员 · %1$d</string>
+    <string name="team_phase_notjoined">未加入</string>
+    <string name="team_phase_queued">排队等名额</string>
+    <string name="team_phase_stalled">搁浅</string>
+    <string name="team_phase_running">运行中</string>
+    <string name="team_phase_idle">空闲</string>
+    <string name="team_stalled_hint">重启后有 %1$d 位成员停在开场任务上，没有东西会自己放行它们。</string>
+    <string name="team_release">放行</string>
+    <string name="team_release_all">全部放行</string>
+    <string name="team_member_task">在做：%1$s</string>
+    <string name="team_tasks_title">共享任务清单 · %1$d</string>
+    <string name="team_tasks_empty">还没有任务</string>
+    <string name="team_task_pending">待办</string>
+    <string name="team_task_in_progress">进行中</string>
+    <string name="team_task_done">已完成</string>
+    <string name="team_task_unowned">无人认领</string>
+    <string name="team_task_waiting">等待 %1$s</string>
+    <string name="team_messages_title">成员间消息 · %1$d</string>
+    <string name="team_messages_empty">还没有消息</string>
+    <string name="team_message_all">全体</string>
+    <string name="team_disband">解散团队</string>
+    <string name="team_disband_confirm_title">解散这个团队？</string>
+    <string name="team_disband_confirm_text">成员会立刻停下；它们已有的报告照常交给负责人，任务清单从此冻结。</string>
+    <string name="team_disband_confirm">解散</string>
+    <string name="team_cancel">取消</string>
+    <string name="team_released">已放行 %1$d 位成员</string>
+    <string name="team_release_none">没有需要放行的成员</string>
+    <string name="team_disbanded">团队已解散</string>
+    <string name="team_disband_failed">没能解散：%1$s</string>
 </resources>

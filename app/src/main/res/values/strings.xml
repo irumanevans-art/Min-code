@@ -1369,4 +1369,40 @@
     <string name="session_notification_agent_question">%1$s%2$s asks a question · open the session to answer</string>
     <string name="session_notification_agent_plan">%1$s%2$s submitted a plan · open the session to review</string>
 
+    <!-- B10: team page -->
+    <string name="team_chip">Team · %1$d</string>
+    <string name="team_chip_stalled">Team · %1$d stalled</string>
+    <string name="team_title">Team %1$s</string>
+    <string name="team_state_active">active</string>
+    <string name="team_state_disbanded">disbanded</string>
+    <string name="team_disband_note">Said when it was disbanded: %1$s</string>
+    <string name="team_members_title">Members · %1$d</string>
+    <string name="team_phase_notjoined">not joined</string>
+    <string name="team_phase_queued">waiting for a slot</string>
+    <string name="team_phase_stalled">stalled</string>
+    <string name="team_phase_running">running</string>
+    <string name="team_phase_idle">idle</string>
+    <string name="team_stalled_hint">A restart left %1$d member(s) on their first task with nothing to start them.</string>
+    <string name="team_release">Release</string>
+    <string name="team_release_all">Release all</string>
+    <string name="team_member_task">doing: %1$s</string>
+    <string name="team_tasks_title">Shared task list · %1$d</string>
+    <string name="team_tasks_empty">No tasks yet</string>
+    <string name="team_task_pending">pending</string>
+    <string name="team_task_in_progress">in progress</string>
+    <string name="team_task_done">done</string>
+    <string name="team_task_unowned">unclaimed</string>
+    <string name="team_task_waiting">waiting on %1$s</string>
+    <string name="team_messages_title">Messages between members · %1$d</string>
+    <string name="team_messages_empty">No messages yet</string>
+    <string name="team_message_all">everyone</string>
+    <string name="team_disband">Disband team</string>
+    <string name="team_disband_confirm_title">Disband this team?</string>
+    <string name="team_disband_confirm_text">The members stop now. Reports they already produced still go to the lead, and the task list is frozen.</string>
+    <string name="team_disband_confirm">Disband</string>
+    <string name="team_cancel">Cancel</string>
+    <string name="team_released">Released %1$d member(s)</string>
+    <string name="team_release_none">Nobody was waiting to be released</string>
+    <string name="team_disbanded">Team disbanded</string>
+    <string name="team_disband_failed">Could not disband: %1$s</string>
 </resources>
