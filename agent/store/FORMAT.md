@@ -182,6 +182,8 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 
 - v1 增量（2026-10-08）：新增 `auto_review_settings_loaded`（用户/托管四组规则与独立审查模型、可选能力声明）、`auto_reviewed`（turnId、callId、model、decision、reason、usage）和 `model_charged`（model、usage、可选 amount/currency，缺价明确未知）。审查用量计入回合；花费按请求模型冻结，按币种累计，不以换会话模型重算。含这些事件的日志旧版本打不开。
 
+- v1 增量（2026-10-09，花费与预算）：`turn_ended` 新增可选字段 `limitCause`（outcome 是 `interrupted.limit` 时**为什么**到限；目前唯一取值 `max_budget_usd`：`--max-budget-usd` 的本次运行花费到限，`-p` 的 result.subtype `error_max_budget_usd` 靠它区分于回合数到限。null / 旧日志缺字段 = 回合数到限等旧有原因）。旧日志照常读。预算本身是运行时选项（同 `--max-turns`），不进日志、不随重开恢复：判定在 Hub 的「一次运行」账本上，从本次运行各会话提交的 `model_charged` 折出（resume 重放的旧回合不占预算）。
+
 - v1 增量（2026-10-08，M5 agent 团队）：新增事件 `team_created`（`teamId`、`leader`、`members[]`：每个成员规格 `name`、可选 `agentType`、`prompt`、可选 `model`：成员用的模型，缺省 = 跟负责人当前模型）、`team_member_joined`（`teamId`、`name`、`session`：成员的子会话建好，紧跟 `subagent_spawned`）、
   `team_message`（`teamId`、`messageId`、`from`、`to`、`text`、可选 `broadcast`）、`team_task_created`（`teamId`、`taskId`、`subject`、可选 `description` / `activeForm` / `metadata`、`by`：与个人清单的 `task_created` 同载荷）、`team_task_updated`（`teamId`、`taskId`、`patch`：与个人清单的 `task_updated` 同一个 `TaskPatch`——认领 = `owner`、完成 = `status`、释放认领 = `owner` 传空串、依赖、`by`）、`team_task_deleted`（`teamId`、`taskId`、`by`）、
   `team_disbanded`（`teamId`、`reason`：`completed` / `user_ended` / `error`、可选 `note`），定义在 `spi/TeamEvents.kt`（agent团队与邮箱设计 §三）。
