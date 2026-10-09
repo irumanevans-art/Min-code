@@ -1405,4 +1405,16 @@
     <string name="team_release_none">Nobody was waiting to be released</string>
     <string name="team_disbanded">Team disbanded</string>
     <string name="team_disband_failed">Could not disband: %1$s</string>
+
+    <!-- B10/M5: auto mode and its review model -->
+    <string name="min_agent_mode_auto_warning">A review model approves tool calls that look safe and asks you about the rest. To review, your messages and the tool inputs are sent to the provider of the review model.</string>
+    <string name="session_section_auto_review">Auto-mode review model</string>
+    <string name="auto_review_default">Default (a small model from the session\'s provider)</string>
+    <string name="auto_review_default_value">Default · %1$s</string>
+    <string name="auto_review_default_desc">Uses %1$s from the same provider as this session. Nothing goes to another provider.</string>
+    <string name="auto_review_custom_header">Or pick a model for the review</string>
+    <string name="auto_review_privacy">When you pick a model of another provider, your messages and the tool inputs are sent to that provider for review.</string>
+    <string name="auto_review_failed">Could not change the review model: %1$s</string>
+
+    <string name="auto_review_other_provider">Sent to another provider</string>
 </resources>

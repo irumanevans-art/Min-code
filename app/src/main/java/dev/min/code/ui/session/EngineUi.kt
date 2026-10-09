@@ -81,6 +81,7 @@ internal object EngineUi {
             mcp = capabilities.mcpServers,
             trust = capabilities.workspaceTrust,
             checkpoints = capabilities.rewind,
+            autoReview = capabilities.autoReview && settings.autoReview != null,
         )
     }
 }
@@ -109,4 +110,6 @@ internal data class SettingsLayout(
     val trust: Boolean,
     /** 「检查点」分区：快照仓库占用与清理（[EngineCapabilities.rewind]） */
     val checkpoints: Boolean,
+    /** 「自动模式的审查模型」分区（[EngineCapabilities.autoReview]） */
+    val autoReview: Boolean,
 )

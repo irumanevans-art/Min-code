@@ -12,6 +12,7 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.Usage
 import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.AutoReviewView
 import dev.min.code.core.engine.BackgroundTask
 import dev.min.code.core.engine.Choice
 import dev.min.code.core.engine.FallbackNotice
@@ -40,6 +41,9 @@ interface MinModelLookup {
 
     /** 设置面板的模型表：当前档的在前，其它能用的档的跟在后面（设计 10.2 拍板 4：允许跨供应商换模型） */
     fun choices(current: ModelRef): List<Choice>
+
+    /** 这个供应商档的目录给的小模型（auto 审查的默认模型）；目录里没有 / 档不存在返回 null */
+    fun fastModelOf(providerId: String): ModelRef? = null
 }
 
 /**
@@ -168,6 +172,10 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             effortNeedsRestart = false,
             mode = modes.firstOrNull { it.id == modeId(root.settings.mode) } ?: Choice(modeId(root.settings.mode), text.mode(root.settings.mode)),
             modes = modes,
+            autoReview = AutoReviewView(
+                reviewer = root.autoReviewSettings.reviewer?.let { r -> models.firstOrNull { it.id == r.model.modelId && it.profileId == r.model.providerId } ?: Choice(r.model.modelId, r.model.modelId, profileId = r.model.providerId) },
+                defaultModel = dev.min.agent.kernel.defaultAutoReviewer(model, lookup::fastModelOf).modelId,
+            ),
             applying = false,
             extras = emptyList(),
             // 档被删了拿不到能力：按「不吃图」处理，反正会话只读，发不了
@@ -192,9 +200,9 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
     }
 }
 
-/** 设置面板与开始面板共用的权限模式表（Auto 要审查模型，Min 还没有，不列） */
+/** 设置面板与开始面板共用的权限模式表 */
 fun minModeChoices(text: MinAgentText): List<Choice> = listOf(
-    PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.DontAsk, PermissionMode.BypassPermissions, PermissionMode.Plan,
+    PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.Auto, PermissionMode.DontAsk, PermissionMode.BypassPermissions, PermissionMode.Plan,
 ).map { Choice(modeId(it), text.mode(it), warning = text.modeWarning(it)) }
 
 /** 权限模式在命令里的 id：沿用协议里的名字（与 Claude Code 同名同义） */

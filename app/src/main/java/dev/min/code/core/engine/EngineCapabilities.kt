@@ -2,7 +2,7 @@ package dev.min.code.core.engine
 
 /**
  * 一个引擎能做什么。**控件显隐只看它**，界面不按 [EngineKind] 写分支（规矩 2）。
- * 30 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
+ * 31 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
  * 改一格要同时改测试，审查时一眼看得到。
  *
  * 位与命令一一对应的那些，[supports] 能统一兜底；对不上的（引擎专有设置项等）由适配器自己判。
@@ -54,6 +54,8 @@ data class EngineCapabilities(
     val workspaceTrust: Boolean,
     /** agent 团队的页面：成员、共享清单、消息流、放行搁浅的成员、解散（[TeamControl]）。团队在 Min 内核里，CC 的团队在它自己的 CLI 里 */
     val team: Boolean,
+    /** auto 权限模式与它的审查模型（[SessionCommand.SetAutoReviewer]、[SettingsView.autoReview]）。CC 的 auto 模式在它自己的 CLI 里，Codex 没有 */
+    val autoReview: Boolean,
     /** `/mcp /agents /memory /permissions /config` 面板。设计草稿是 Boolean，但表里 Min 写的是「部分」，见 [ConfigFiles] */
     val claudeConfigFiles: ConfigFiles,
 ) {
@@ -73,6 +75,7 @@ data class EngineCapabilities(
         is SessionCommand.StopSubagent -> subagents
         is SessionCommand.StopTask -> backgroundTasks
         is SessionCommand.Revert -> checkpointRevert
+        is SessionCommand.SetAutoReviewer -> autoReview
         // 没有对应能力位的：停止永远可以；强度 / 模式换不换得了走重启路径，命令照样受理；
         // 引擎专有设置项由适配器按键判（Min 没有任何设置项，自己返回 Unsupported）；改名、刷新都不挑引擎
         is SessionCommand.Interrupt,
@@ -115,6 +118,7 @@ data class EngineCapabilities(
         "mcpServers" to mcpServers.toString(),
         "workspaceTrust" to workspaceTrust.toString(),
         "team" to team.toString(),
+        "autoReview" to autoReview.toString(),
         "claudeConfigFiles" to claudeConfigFiles.name,
     )
 
@@ -149,6 +153,7 @@ data class EngineCapabilities(
             mcpServers = false,
             workspaceTrust = false,
             team = false,
+            autoReview = false,
             claudeConfigFiles = ConfigFiles.Full,
         )
 
@@ -187,6 +192,7 @@ data class EngineCapabilities(
             mcpServers = false,
             workspaceTrust = false,
             team = false,
+            autoReview = false,
             claudeConfigFiles = ConfigFiles.None,
         )
 
@@ -231,6 +237,7 @@ data class EngineCapabilities(
             mcpServers = true,
             workspaceTrust = true,
             team = true,
+            autoReview = true,
             claudeConfigFiles = ConfigFiles.Partial,
         )
 

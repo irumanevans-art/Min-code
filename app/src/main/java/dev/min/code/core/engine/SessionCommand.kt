@@ -79,6 +79,13 @@ sealed interface SessionCommand {
     @Serializable @SerialName("set_mode")
     data class SetMode(override val commandId: String, val modeId: String) : SessionCommand
 
+    /**
+     * 换 auto 模式的审查模型。[modelId] 为 null = 回到默认（与会话同供应商的小模型）；单独指定时 [profileId] 为 null 表示沿用会话的供应商档。
+     * 单独指定一家别的供应商时，用户的消息与工具入参会发给那家——界面在选之前要说清。
+     */
+    @Serializable @SerialName("set_auto_reviewer")
+    data class SetAutoReviewer(override val commandId: String, val modelId: String?, val profileId: String? = null) : SessionCommand
+
     @Serializable @SerialName("set_cwd")
     data class SetCwd(override val commandId: String, val path: String) : SessionCommand
 

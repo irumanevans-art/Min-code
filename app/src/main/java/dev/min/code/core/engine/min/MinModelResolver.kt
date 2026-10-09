@@ -63,6 +63,18 @@ class MinModelResolver(
 
     override fun providerLabel(providerId: String): String? = profile(providerId)?.displayName()
 
+    /** 档对应的目录供应商（地址 + 方言对得上的第一家）给的小模型。档的 id 才是 [ModelRef.providerId]，目录的供应商 id 不是 */
+    override fun fastModelOf(providerId: String): ModelRef? {
+        val profile = profile(providerId) ?: return null
+        val baseUrl = agentBaseUrl(profile, catalog).trimEnd('/')
+        val wire = agentWire(profile.apiFormat)
+        val provider = catalog.providers.firstOrNull { it.baseUrl.trimEnd('/') == baseUrl && it.wire == wire } ?: return null
+        // 内核的默认规则（Anthropic 固定 Haiku，其余读目录的 fastModel，没有就是会话模型自己）原样用，不在这里再抄一份；
+        // 没有小模型时它退回传进去的那个模型（这里是个空 id），按“没有”处理
+        val fast = dev.min.agent.kernel.defaultAutoReviewer(ModelRef(provider.id, "")) { id -> catalog.provider(id)?.fastModel?.let { ModelRef(id, it) } }
+        return fast.modelId.takeIf { it.isNotBlank() }?.let { ModelRef(providerId, it) }
+    }
+
     /**
      * 一个档能选的模型：档案 env 里写的（`ANTHROPIC_MODEL` 在前，三个 `ANTHROPIC_DEFAULT_*_MODEL` 随后）
      * 加上目录里「地址 + 方言」都对得上的随包模型。不在目录里的模型也能用，只是能力按保守值（卡片上标出来）。

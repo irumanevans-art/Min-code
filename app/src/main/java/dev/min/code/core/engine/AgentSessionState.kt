@@ -217,6 +217,8 @@ data class SettingsView(
     val effortSupported: Boolean = true,
     /** 引擎回读的**实际生效**配置，可能与请求的不同（ultracode 时强度回读为 xhigh）。面板上「默认（实际：…）」读它 */
     val applied: AppliedSettings = AppliedSettings(),
+    /** auto 权限模式的审查模型（[EngineCapabilities.autoReview]，Min）。引擎没有 auto 模式为 null */
+    val autoReview: AutoReviewView? = null,
 ) {
     /** 按键取一个引擎专有设置项 */
     fun extra(key: String): EngineOptionView? = extras.firstOrNull { it.key == key }
@@ -262,6 +264,15 @@ data class Choice(
         val None = Choice(id = "", label = "")
     }
 }
+
+/**
+ * auto 模式的审查模型：每个请求前先让一个（通常更小更便宜的）模型判断这次工具调用能不能直接放行。
+ *
+ * @param reviewer 单独指定的审查模型（带它所属的供应商档）；null = 默认
+ * @param defaultModel 默认审查模型的 id：与会话**同供应商**目录里的小模型，目录没给就是会话模型自己。
+ *   「默认」那一行写出它，免得用户不知道默认是谁
+ */
+data class AutoReviewView(val reviewer: Choice?, val defaultModel: String)
 
 /** 引擎回读的实际生效配置。null / false = 没读到 */
 data class AppliedSettings(val model: String? = null, val effort: String? = null, val ultracode: Boolean = false)

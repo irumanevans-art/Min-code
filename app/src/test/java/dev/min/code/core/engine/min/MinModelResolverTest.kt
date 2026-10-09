@@ -36,6 +36,16 @@ class MinModelResolverTest {
         assertEquals(ModelRef("a", "alpha-1"), resolver.resolve(ModelRef("a", "alpha-1")).profile.ref)
     }
 
+    @Test fun theDefaultAutoReviewerIsTheCatalogsSmallModelOfTheSameAddress() {
+        val anthropic = ApiProfile("ant", label = "Anthropic", token = "k", baseUrl = "https://api.anthropic.com")
+        val deepseek = ApiProfile("ds", label = "DeepSeek", token = "k", baseUrl = "https://api.deepseek.com/anthropic")
+        settings = AppSettings(profiles = listOf(a, anthropic, deepseek))
+        assertEquals("Anthropic 固定 Haiku（内核的规则）", ModelRef("ant", "claude-haiku-5-5"), resolver.fastModelOf("ant"))
+        assertEquals("其余读目录的 fastModel，模型引用带的是档的 id", ModelRef("ds", "deepseek-flash"), resolver.fastModelOf("ds"))
+        assertNull("目录里没有这个地址", resolver.fastModelOf("a"))
+        assertNull("档被删了", resolver.fastModelOf("gone"))
+    }
+
     @Test fun subscriptionModeDoesNotStopAnExistingSessionFromResolving() {
         settings = settings!!.copy(claudeAuth = ClaudeAuthMode.SUBSCRIPTION)
         assertNotNull(resolver.resolve(ModelRef("a", "alpha-1")))

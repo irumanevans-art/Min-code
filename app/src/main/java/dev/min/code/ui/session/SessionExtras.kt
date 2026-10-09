@@ -5,6 +5,7 @@ import dev.min.agent.spi.catchingNonCancellation
 import dev.min.code.R
 import dev.min.code.core.engine.AgentSession
 import dev.min.code.core.engine.AgentSessionRegistry
+import dev.min.code.core.engine.CommandResult
 import dev.min.code.core.engine.McpControl
 import dev.min.code.core.engine.McpLoginCancelled
 import dev.min.code.core.engine.McpLoginPrompt
@@ -15,6 +16,7 @@ import dev.min.code.core.engine.RewindControl
 import dev.min.code.core.engine.RewindResultView
 import dev.min.code.core.engine.RewindScopeView
 import dev.min.code.core.engine.RewindStorageRow
+import dev.min.code.core.engine.SessionCommand
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SessionSignal
 import dev.min.code.core.engine.StartOptions
@@ -297,6 +299,17 @@ internal class SessionExtras(
                 val session = shown.value ?: return@collect
                 if (awayMs >= AWAY_RECAP_AFTER_MS) reportRecap(session, auto = true)
             }
+        }
+    }
+
+    // ---- 自动模式的审查模型 ----
+
+    /** 设置里选审查模型：[modelId] 为 null = 回到默认。内核会核对它解析得出来；不行就把原因告诉用户（模型没换） */
+    fun setAutoReviewer(modelId: String?, profileId: String?) {
+        val session = shown.value ?: return
+        scope.launch {
+            val result = session.submit(SessionCommand.SetAutoReviewer(java.util.UUID.randomUUID().toString(), modelId, profileId))
+            if (result is CommandResult.Rejected) notice(context.getString(R.string.auto_review_failed, result.message), error = true)
         }
     }
 

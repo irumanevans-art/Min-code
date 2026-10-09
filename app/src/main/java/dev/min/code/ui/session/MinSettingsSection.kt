@@ -16,6 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.min.code.R
+import dev.min.code.core.engine.AutoReviewView
+import dev.min.code.core.engine.Choice
 import dev.min.code.core.engine.ConnectionView
 import dev.min.code.core.engine.SettingsView
 import dev.min.code.core.engine.UsageView
@@ -69,6 +71,43 @@ internal fun MinModelPicker(
             enabled = enabled,
             onApply = { custom.trim().takeIf { it.isNotEmpty() }?.let { onPick(it, null) } },
         )
+    }
+}
+
+/**
+ * 自动模式的审查模型（B10 / M5）。默认是与会话同供应商的小模型——数据不出这一家；单独指定时可以选别家的模型，
+ * 那时用户的消息与工具入参会发给那家，所以这句话写在表的下面、别家的行上也各标一遍。
+ */
+@Composable
+internal fun AutoReviewSection(
+    view: AutoReviewView,
+    models: List<Choice>,
+    connection: ConnectionView?,
+    enabled: Boolean,
+    /** (模型 id, 档 id)；模型 id 为 null = 回到默认 */
+    onPick: (String?, String?) -> Unit,
+) {
+    Column {
+        OptionRow(
+            title = stringResource(R.string.auto_review_default),
+            subtitle = stringResource(R.string.auto_review_default_desc, view.defaultModel),
+            selected = view.reviewer == null,
+            enabled = enabled,
+            onClick = { onPick(null, null) },
+        )
+        SettingsSubHeader(stringResource(R.string.auto_review_custom_header))
+        models.forEach { choice ->
+            val chosen = view.reviewer
+            OptionRow(
+                title = choice.label,
+                subtitle = stringResource(R.string.auto_review_other_provider).takeIf { choice.switchesProviderFrom(connection) },
+                selected = chosen != null && choice.id == chosen.id && choice.profileId == chosen.profileId,
+                monospaceTitle = true,
+                enabled = enabled,
+                onClick = { onPick(choice.id, choice.profileId) },
+            )
+        }
+        SettingsSubHeader(stringResource(R.string.auto_review_privacy))
     }
 }
 

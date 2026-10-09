@@ -1400,4 +1400,16 @@
     <string name="team_release_none">没有需要放行的成员</string>
     <string name="team_disbanded">团队已解散</string>
     <string name="team_disband_failed">没能解散：%1$s</string>
+
+    <!-- B10/M5: auto mode and its review model -->
+    <string name="min_agent_mode_auto_warning">由审查模型替你批准看起来安全的工具调用，其余仍问你。审查时你的消息与工具入参会发给审查模型所在的供应商。</string>
+    <string name="session_section_auto_review">自动模式的审查模型</string>
+    <string name="auto_review_default">默认（与会话同供应商的小模型）</string>
+    <string name="auto_review_default_value">默认 · %1$s</string>
+    <string name="auto_review_default_desc">用与本会话同一供应商的 %1$s。数据不会发给别家。</string>
+    <string name="auto_review_custom_header">或单独指定审查用的模型</string>
+    <string name="auto_review_privacy">单独指定别家供应商的模型时，你的消息与工具入参会发给那家供应商做审查。</string>
+    <string name="auto_review_failed">没能改审查模型：%1$s</string>
+
+    <string name="auto_review_other_provider">会发给另一家供应商</string>
 </resources>

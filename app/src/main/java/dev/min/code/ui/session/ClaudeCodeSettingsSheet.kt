@@ -58,6 +58,7 @@ import dev.min.code.ui.theme.sea
 internal enum class SettingsSection(@StringRes val labelRes: Int) {
     MODEL(R.string.session_section_model),
     MODE(R.string.session_section_mode),
+    AUTO_REVIEW(R.string.session_section_auto_review),
     EFFORT(R.string.session_section_effort),
     CACHE(R.string.session_section_cache),
     CWD(R.string.session_section_cwd),
@@ -194,6 +195,26 @@ internal fun ClaudeCodeSettingsSheet(
                         label = stringResource(R.string.min_settings_mode_confirm, mode.label),
                         enabled = !settingsBusy,
                         onConfirm = { onSetPermissionMode(mode.id) },
+                    )
+                }
+            }
+        }
+
+        if (layout.autoReview && extras != null) {
+            val review = settings.autoReview
+            if (review != null) {
+                Section(
+                    section = SettingsSection.AUTO_REVIEW,
+                    value = review.reviewer?.label ?: stringResource(R.string.auto_review_default_value, review.defaultModel),
+                    open = open,
+                    onToggle = { open = it },
+                ) {
+                    AutoReviewSection(
+                        view = review,
+                        models = settings.models,
+                        connection = session.connection,
+                        enabled = !settingsBusy && !session.readOnly,
+                        onPick = extras::setAutoReviewer,
                     )
                 }
             }

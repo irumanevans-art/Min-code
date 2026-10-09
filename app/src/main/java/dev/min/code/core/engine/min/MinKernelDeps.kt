@@ -180,6 +180,8 @@ object MinKernelDeps {
         trustProjectHooks: (GuestPath) -> Boolean = { false },
         /** MCP 的 url 模式提问：界面有卡片让人看清网址、点了才打开才为真，否则内核直接回 decline */
         canAnswerMcpUrlElicitation: Boolean = false,
+        /** auto 审查的默认模型：同一个供应商档的目录小模型，没有返回 null（内核再退回会话模型自己） */
+        providerFastModel: (String) -> dev.min.agent.protocol.ModelRef? = { null },
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
         host = HostPorts(
@@ -197,5 +199,6 @@ object MinKernelDeps {
         trustProjectHooks = trustProjectHooks,
         canonicalPath = ports::canonicalPath,
         canAnswerMcpUrlElicitation = canAnswerMcpUrlElicitation,
+        providerFastModel = providerFastModel,
     )
 }

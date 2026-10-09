@@ -258,11 +258,36 @@ class MinCommandTest {
             assertEquals(Effort.High, r.root.state.value.settings.effort)
             assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.SetEffort(cmd(), null)))
             assertTrue(r.session.submit(SessionCommand.SetEffort(cmd(), "turbo")) is CommandResult.Rejected)
-            assertTrue(r.session.submit(SessionCommand.SetMode(cmd(), "auto")) is CommandResult.Rejected)
             assertTrue(r.session.submit(SessionCommand.SetMode(cmd(), "yolo")) is CommandResult.Rejected)
         }
         assertEquals("null = 回到不控制", null, r.root.state.value.settings.effort)
         assertEquals(PermissionMode.Plan, r.root.state.value.settings.mode)
+    }
+
+    @Test fun autoModeIsAcceptedNowThatTheReviewerExists() {
+        val r = rig(ScriptedModel())
+        assertEquals(CommandResult.Accepted, runBlocking { r.session.submit(SessionCommand.SetMode(cmd(), "auto")) })
+        assertEquals(PermissionMode.Auto, r.root.state.value.settings.mode)
+    }
+
+    @Test fun theAutoReviewerIsPickedPerSessionAndNullGoesBackToTheDefault() {
+        val r = rig(ScriptedModel())
+        assertEquals("默认：没有单独指定", null, r.root.state.value.autoReviewSettings.reviewer)
+        assertEquals(CommandResult.Accepted, runBlocking { r.session.submit(SessionCommand.SetAutoReviewer(cmd(), "small", profileId = "p2")) })
+        assertEquals(ModelRef("p2", "small"), r.root.state.value.autoReviewSettings.reviewer!!.model)
+        // 不带档 id = 沿用会话当前的档
+        assertEquals(CommandResult.Accepted, runBlocking { r.session.submit(SessionCommand.SetAutoReviewer(cmd(), "tiny")) })
+        assertEquals(ModelRef(r.root.state.value.settings.model.providerId, "tiny"), r.root.state.value.autoReviewSettings.reviewer!!.model)
+        assertEquals(CommandResult.Accepted, runBlocking { r.session.submit(SessionCommand.SetAutoReviewer(cmd(), null)) })
+        assertEquals(null, r.root.state.value.autoReviewSettings.reviewer)
+    }
+
+    @Test fun anAutoReviewerOnAMissingProviderIsRefusedAndNothingChanges() {
+        val r = rig(ScriptedModel())
+        runBlocking { r.session.submit(SessionCommand.SetAutoReviewer(cmd(), "small", profileId = "p2")) }
+        val gone = runBlocking { r.session.submit(SessionCommand.SetAutoReviewer(cmd(), "small", profileId = "gone")) }
+        assertEquals(CommandResult.Rejected("provider-removed"), gone)
+        assertEquals("拒绝时旧的审查模型还在", ModelRef("p2", "small"), r.root.state.value.autoReviewSettings.reviewer!!.model)
     }
 
     @Test fun commandsTheEngineCannotDoAreUnsupported() {
