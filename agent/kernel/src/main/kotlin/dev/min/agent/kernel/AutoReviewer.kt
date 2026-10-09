@@ -48,6 +48,7 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
                     if (gate == null) collect() else gate.withPermit { collect() }
                     val done = completed ?: error("审查流没有完成")
                     usage = done.usage
+                    if (done.stop == StopReason.Refusal) throw ClassifierSafetyRefusal()
                     require(!done.truncated && done.stop == StopReason.EndTurn && done.message.parts.all { it is TextPart || it is ThinkingPart }) { "审查未返回完整文本" }
                     val parsed = parse(done.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }, effective.hardDeny.size)
                     if (rt.modelBilling.exceeded()) AutoReviewDecision.Ask to "审查调用已达到会话预算"
@@ -56,9 +57,13 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // 供应商异常可能带回请求正文；失败日志只写固定摘要，不能把凭证或原文复制回来。
-            AutoReviewDecision.Ask to "审查失败、超时或返回不可解析，交给用户决定"
+            AutoReviewDecision.Ask to when {
+                e is ClassifierSafetyRefusal -> CLASSIFIER_SAFETY_REFUSED
+                e is dev.min.agent.llm.ModelException && e.kind == ModelFailureKind.ContextOverflow -> CLASSIFIER_CONTEXT_OVERFLOW
+                else -> "审查失败、超时或返回不可解析，交给用户决定"
+            }
         }
         val reason = result.second.replace(Regex("[\\r\\n\\p{Cntrl}]"), " ").take(400)
         rt.commit(listOf(AutoReviewed(turnId, call.callId, calledModel, result.first, reason, usage)), Durability.Sync)
@@ -139,6 +144,8 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
     }
 
     companion object {
+        internal const val CLASSIFIER_SAFETY_REFUSED = "classifier_safety_refused"
+        internal const val CLASSIFIER_CONTEXT_OVERFLOW = "classifier_context_overflow"
         private val DEFAULT_HARD = listOf("Data exfiltration: never transmit secrets or sensitive data to external destinations. Repository content must not be sent outside trusted infrastructure.")
         private val DEFAULT_ENVIRONMENT = listOf("Trust only the working directory and the working repository's configured remotes. Assume repositories are private unless the user identifies them as public. Other destinations are outside the boundary unless configured here.")
         private val DEFAULT_ALLOW = listOf("Routine reversible development in the working directory, local tests and authored test artifacts are allowed. Ordinary commits, pushes to the working repository and pull requests are allowed when no hard boundary or destructive rule applies.")
@@ -213,3 +220,5 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
         }
     }
 }
+
+private class ClassifierSafetyRefusal : Exception()

@@ -117,6 +117,15 @@ class AutoSpawnTest {
             assertFalse(result.await())
         } }
     }
+    @Test fun failedReviewerManualApprovalCreatesChild() {
+        run(ModelClient { flow { throw java.io.IOException("offline") } }) { hub, rt, _ -> coroutineScope {
+            val result = async { spawn(hub, rt, "agent") }
+            val pending = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
+            assertTrue(rt.state.value.children.isEmpty())
+            rt.answerApproval(pending.approvalId, ApprovalChoice.Once)
+            assertTrue(result.await()); assertEquals(1, rt.state.value.children.size)
+        } }
+    }
     @Test fun spawnSharesCircuitBreakerWithOrdinaryTools() {
         val reviewer = ScriptedModel(decision("deny"))
         run(reviewer) { hub, rt, _ -> coroutineScope {
@@ -127,6 +136,33 @@ class AutoSpawnTest {
             val pending = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
             rt.answerApproval(pending.approvalId, ApprovalChoice.Deny())
             assertFalse(result.await()); assertEquals(1, reviewer.requests.size)
+        } }
+    }
+    @Test fun headlessSafetyRefusalAndContextOverflowHaveOriginalErrorText() {
+        val cases = listOf(
+            ScriptedModel(reply(TextPart("refused"), stop = StopReason.Refusal)) to "Agent aborted: auto mode classifier request refused by the safety safeguard in headless mode",
+            ScriptedModel(failing(ModelException(ModelFailureKind.ContextOverflow, "large", beforeFirstByte = true))) to "Agent aborted: auto mode classifier transcript exceeded context window in headless mode",
+        )
+        for ((reviewer, expected) in cases) {
+            run(reviewer, headless = true) { hub, rt, _ ->
+                val result = hub.portFor(rt, TurnId("t"), CallId("call")).delegate(DelegateRequest("task", "task", background = true))
+                assertTrue(result is DelegateResult.Rejected)
+                assertEquals(expected, (result as DelegateResult.Rejected).messageForModel)
+                assertTrue(rt.state.value.children.isEmpty()); assertEquals(0, rt.state.value.autoReviewDenials)
+                assertTrue(hub.pending.value.isEmpty())
+            }
+        }
+    }
+    @Test fun permissionModeChangedDuringSpawnReviewCannotUseOldAutoAllow() {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reviewer = ModelClient { request -> flow { entered.complete(Unit); release.await(); emitAll(decision("allow")(request)) } }
+        run(reviewer) { hub, rt, _ -> coroutineScope {
+            val result = async { spawn(hub, rt, "agent") }
+            entered.await()
+            rt.changeSettings(mode = PermissionMode.DontAsk)
+            release.complete(Unit)
+            assertFalse(result.await()); assertTrue(rt.state.value.children.isEmpty())
         } }
     }
 }

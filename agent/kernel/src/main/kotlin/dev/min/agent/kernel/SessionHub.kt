@@ -869,8 +869,11 @@ class SessionHub(
         )
         // 三种生成入口在建日志、建 worktree、跑 hook 之前汇合；脚本与助手的文字不能升级成用户授权。
         if (ps.settings.mode == PermissionMode.Auto) {
-            val capabilities = if (definition == null) availableTools(ps, deps, runtime = parent).map { it.name }
-                else toolsFor(definition, depth) ?: availableTools(ps, deps, runtime = parent).map { it.name }
+            val candidate = SubagentOrigin(parent.sessionId, parentOrigin?.root ?: parent.sessionId, callId, type, fork, depth,
+                cacheKey = "review", tools = definition?.let { toolsFor(it, depth) },
+                mcpTools = definition?.tools?.filter { it.startsWith(MCP_PREFIX) }, mcpDenied = definition?.disallowedTools.orEmpty().filter { it.startsWith(MCP_PREFIX) },
+                workflow = request.workflow || parentOrigin?.workflow == true, workflowSchema = request.schema, teamMember = teamMember)
+            val capabilities = availableTools(ps.copy(origin = candidate), deps, runtime = parent).map { it.name }
             val input = kotlinx.serialization.json.buildJsonObject {
                 put("description", kotlinx.serialization.json.JsonPrimitive(request.description))
                 put("prompt", kotlinx.serialization.json.JsonPrimitive(request.prompt))
@@ -880,7 +883,8 @@ class SessionHub(
                 put("mcp_tools", kotlinx.serialization.json.JsonArray(definition?.tools.orEmpty().filter { it.startsWith(MCP_PREFIX) }.map { kotlinx.serialization.json.JsonPrimitive(it) }))
                 put("instructions", kotlinx.serialization.json.JsonPrimitive(definition?.instructions.orEmpty()))
             }
-            when (val verdict = parent.reviewAutoAction(turnId, "Agent", input, "启动子 agent：${request.description}")) {
+            when (val verdict = parent.reviewAutoAction(turnId, "Agent", input, "启动子 agent：${request.description}",
+                backgroundSpawn = !request.workflow && (request.background || definition?.alwaysBackground == true))) {
                 is dev.min.agent.policy.Verdict.Deny -> return DelegateResult.Rejected(verdict.messageToModel)
                 else -> Unit
             }
@@ -894,7 +898,7 @@ class SessionHub(
         val initial = mutableListOf<SessionEvent>()
         if (definition == null) {
             // 分身：模型、档位、环境、记忆、缓存键、工具表全部照父会话，前缀才能逐字节相同（设计 §3.2）
-            created = SessionCreated(ps.settings.cwd, ps.settings.model, ps.settings.mode, ps.settings.effort)
+            created = SessionCreated(ps.settings.cwd, ps.settings.model, ps.settings.mode, ps.settings.effort, headless = ps.created.headless)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = FORK_AGENT_TYPE, fork = true,
                 depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
@@ -911,7 +915,7 @@ class SessionHub(
             val model = resolveModel(request.model ?: definition.model, ps.settings.model)
                 ?: return DelegateResult.Rejected("不认识模型「${request.model ?: definition.model}」。不写 model 就用当前模型。")
             val mode = childPermissionMode(ps.settings.mode, definition, deps.trustProjectHooks(ps.settings.cwd), ps.autoReviewSettings)
-            created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort)
+            created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort, headless = ps.created.headless)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",

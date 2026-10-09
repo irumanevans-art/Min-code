@@ -341,6 +341,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             }
             else if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
         } else initial
+        if (verdict == Verdict.Ask) rt.headlessClassifierError(ready.call.callId)?.let { throw TurnAbort(it) }
         when (verdict) {
             is Verdict.Deny -> {
                 if (verdict.by == DecidedBy.Classifier) {

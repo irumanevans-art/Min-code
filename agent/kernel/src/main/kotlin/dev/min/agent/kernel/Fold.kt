@@ -99,6 +99,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is dev.min.agent.spi.AutoReviewSettingsLoaded -> copy(autoReviewSettings = e)
         is dev.min.agent.spi.AutoUserContextInherited -> copy(inheritedAutoUserContext = e.messages)
         is dev.min.agent.spi.AutoReviewed -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
+            lastAutoReview = e,
             presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
             autoReviewDenials = autoReviewDenials + if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) 1 else 0,
             autoReviewConsecutiveDenials = if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) autoReviewConsecutiveDenials + 1 else 0,

@@ -107,6 +107,7 @@ data class SessionState(
     val additionalDirectories: List<GuestPath> = emptyList(),
     val autoReviewSettings: dev.min.agent.spi.AutoReviewSettingsLoaded = dev.min.agent.spi.AutoReviewSettingsLoaded(),
     val autoReviewDenials: Int = 0,
+    val lastAutoReview: dev.min.agent.spi.AutoReviewed? = null,
     val inheritedAutoUserContext: List<String> = emptyList(),
     val forkAutoUserSeedIds: Set<MessageId> = emptySet(),
     val autoReviewConsecutiveDenials: Int = 0,
