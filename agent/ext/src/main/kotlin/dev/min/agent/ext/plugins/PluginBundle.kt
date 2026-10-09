@@ -160,7 +160,16 @@ class PluginBundle(
                 inlineRoots += canonical(it).value
                 candidates += PluginRequest(it.value, null, enabledPlugins = enabled, sideload = true, disabledDependencies = disabledDependencies)
             }
-            val batch = PluginLoader(fs, canonical).loadAll(candidates, managed?.enabledPlugins?.keys.orEmpty().map { it.substringBefore('@') }.toSet())
+            val acceptedCandidates = candidates.filter { request ->
+                val realRoot = canonical(GuestPath(request.root)).value
+                val source = enabledSources[request.ref?.id]
+                val projectEnabled = source in setOf(ConfigSource.Project, ConfigSource.Local) || scopes[realRoot] in setOf("project", "local")
+                val accepted = request.sideload || !projectEnabled || trust(cwd)
+                // 信任前连正文和默认设置也不能装入会话，不能只关掉 hooks / MCP。
+                if (!accepted) io.notes += "plugin:${request.ref?.id ?: request.root} 启用来源所属工作区未信任，整个插件未加载"
+                accepted
+            }
+            val batch = PluginLoader(fs, canonical).loadAll(acceptedCandidates, managed?.enabledPlugins?.keys.orEmpty().map { it.substringBefore('@') }.toSet())
             val notes = (batch.errors + batch.overrides + batch.plugins.flatMap { it.warnings }).toMutableList()
             val skillDefs = mutableListOf<SkillDef>()
             val commandDefs = mutableListOf<CommandDef>()
