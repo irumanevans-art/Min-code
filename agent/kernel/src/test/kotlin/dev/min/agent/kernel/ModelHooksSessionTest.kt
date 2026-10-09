@@ -297,6 +297,8 @@ class ModelHooksSessionTest {
         assertEquals(HOOK_AGENT_TYPE, child.state.value.origin?.agentType)
         assertEquals(listOf("Read", "Grep", "Glob"), child.state.value.origin?.tools)
         assertTrue("hook agent 的模型请求经自己的账本记账（ModelCharged 落日志）", child.state.value.unpricedModelCalls > 0)
+        assertTrue("hook agent 的计费进了树的「一次运行」账本（它是子会话，按根累计）",
+            h.budget.unpricedRequests() >= child.state.value.unpricedModelCalls)
         assertTrue("hook agent 跑完要从 Hub 卸下", child.sessionId !in h.online.value)
     }
 
