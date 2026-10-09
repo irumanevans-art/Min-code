@@ -97,6 +97,25 @@ class ModelHooksSessionTest {
         }
     }
 
+    private val read = object : Tool<JsonObject> {
+        override val name = "Read"
+        override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+        // 只读必须声明：默认「会写」在 DontAsk 下本身就拒，测试就没在测规则继承了。
+        // paths 也必须带：路径规则（Read(./secret.txt)）对着 ask.paths 匹配，不带就永远匹配不上
+        override val traits = ToolTraits(readOnly = true)
+        override fun description(profile: HarnessProfile) = "读文件"
+        override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
+        override fun permissionAsk(input: JsonObject, ctx: ToolContext): PermissionAsk {
+            val path = (input["file_path"] as? JsonPrimitive)?.content ?: "/dev/null"
+            return PermissionAsk(name, "读文件", paths = listOf(
+                dev.min.agent.spi.PathAccess(GuestPath(path), dev.min.agent.spi.AccessKind.Read, dev.min.agent.spi.PathScope.Workspace),
+            ))
+        }
+        override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            emit(ToolProgress.Done(ToolResult(listOf(TextPart("TOP SECRET: 不要给人看")))))
+        }
+    }
+
     private fun settings(hooks: String) = """{"hooks": $hooks}"""
     private fun write(path: String, content: String) {
         fsFiles[path] = content
@@ -123,11 +142,11 @@ class ModelHooksSessionTest {
         override fun scopeOf(path: GuestPath): dev.min.agent.spi.PathScope = dev.min.agent.spi.PathScope.Rootfs
     }
 
-    private fun hub(model: ModelClient): SessionHub {
+    private fun hub(model: ModelClient, tools: List<dev.min.agent.spi.Tool<JsonObject>> = listOf(bash, read)): SessionHub {
         val store = FileSessionStore(tmp.root.toPath(), { 0L })
-        val base = dev.min.agent.testkit.testDeps(model, listOf(bash))
+        val base = dev.min.agent.testkit.testDeps(model, tools)
         val deps = KernelDeps(
-            clock = { System.currentTimeMillis() }, ids = base.ids, models = base.models, tools = listOf(bash),
+            clock = { System.currentTimeMillis() }, ids = base.ids, models = base.models, tools = tools,
             host = dev.min.agent.kernel.HostPorts(fs, base.host.search, base.host.exec, base.host.artifacts),
             platform = "test", zone = ZoneOffset.UTC, memoryHome = GuestPath("/root"),
         )
@@ -261,6 +280,95 @@ class ModelHooksSessionTest {
         assertTrue("hook agent 子会话在线挂着（树汇总要读它）", agents.isNotEmpty())
         assertEquals(listOf("Read", "Grep", "Glob"), agents.first().state.value.origin?.tools)
         assertTrue("hook agent 的模型请求经自己的账本记账（ModelCharged 落日志）", agents.first().state.value.unpricedModelCalls > 0)
+    }
+
+    // ---- M3：hook agent 的继承面 ----
+
+    @Test
+    fun `hook agent 继承父会话权限规则，被 deny 的文件读不到`() = run {
+        write("/root/.claude/settings.json",
+            """{"permissions": {"deny": ["Read(./secret.txt)"]},
+                "hooks": {"Stop": [{"hooks": [{"type": "agent", "prompt": "收尾前确认：", "timeout": 10}]}]}}""")
+        val reads = java.util.concurrent.atomic.AtomicLong()
+        val model = RoutingModel { req ->
+            when {
+                // hook agent 子会话：先试图读被 deny 的文件，读到结果（或被拒）后交 JSON 结论
+                req.system.any { it.contains("hook verifier") } -> when (reads.incrementAndGet()) {
+                    1L -> reply(ToolCallPart(CallId("r1"), "Read", JsonObject(mapOf("file_path" to JsonPrimitive("/work/secret.txt")))), stop = StopReason.ToolUse)
+                    else -> reply(TextPart("""{"ok": true}"""), usage = Usage(inputTokens = 500))
+                }
+                else -> reply(TextPart("干完了"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("做事")
+        val agents = h.online.value.mapNotNull { h.get(it) }.filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
+        assertTrue("hook agent 跑过了", agents.isNotEmpty())
+        val child = agents.first()
+        // deny 规则继承进子会话：DontAsk 也不放行 deny
+        val result = child.state.value.toolResults[CallId("r1")]
+        assertTrue("hook agent 必须守父会话的 deny 规则（读到就被拦）：$result", result?.isError == true)
+    }
+
+    @Test
+    fun `hook agent 不继承 hooks：自己回合里的 PreToolUse 门禁不响`() = run {
+        write("/root/.claude/settings.json", settings(
+            """{"PreToolUse": [{"matcher": "Read", "hooks": [{"type": "prompt", "prompt": "不许读"}]}],
+                "Stop": [{"hooks": [{"type": "agent", "prompt": "收尾前确认：", "timeout": 10}]}]}""",
+        ))
+        val reads = java.util.concurrent.atomic.AtomicLong()
+        val model = RoutingModel { req ->
+            when {
+                req.system.any { it.contains("hook verifier") } -> when (reads.incrementAndGet()) {
+                    1L -> reply(ToolCallPart(CallId("r1"), "Read", JsonObject(mapOf("file_path" to JsonPrimitive("/work/anything.txt")))), stop = StopReason.ToolUse)
+                    else -> reply(TextPart("""{"ok": true}"""))
+                }
+                else -> reply(TextPart("干完了"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("做事")
+        // 递归防护：hook agent 里不能再钩出 hook——prompt 门禁没在子会话里响，评估请求一个都没发
+        assertTrue("hook agent 里不该发 prompt 评估请求（递归）",
+            model.requests.none { req -> req.system.any { it.contains("hook evaluator") } })
+        val agents = h.online.value.mapNotNull { h.get(it) }.filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
+        assertTrue("hook agent 子会话在线", agents.isNotEmpty())
+        assertTrue("hook agent 里不该有任何 HooksRan（hooks 没继承）",
+            hookRans(agents.first()).isEmpty())
+    }
+
+    @Test
+    fun `HOOK_AGENT_TYPE 会话里模型侧 hook 一律不跑（守卫钉住）`() = run {
+        // 这条路径今天到不了（hook agent 不继承 hooks），守卫防的是将来的接线改动——去掉守卫这条必须红
+        val h = hub(RoutingModel { req ->
+            when {
+                req.system.any { it.contains("hook evaluator") } -> reply(TextPart("""{"ok": false, "reason": "不该跑"}"""))
+                req.lastText() == "跑" -> reply(ToolCallPart(CallId("r1"), "Read", JsonObject(mapOf("file_path" to JsonPrimitive("/work/x.txt")))), stop = StopReason.ToolUse)
+                else -> reply(TextPart("收到"))
+            }
+        })
+        val rt = h.create(
+            GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions,
+            initial = listOf(
+                dev.min.agent.spi.SubagentOrigin(
+                    parent = dev.min.agent.protocol.SessionId("s_hook_parent"), root = dev.min.agent.protocol.SessionId("s_hook_parent"),
+                    parentCall = CallId("hc1"), agentType = HOOK_AGENT_TYPE, fork = false, depth = 1,
+                    cacheKey = "hook-agent:guard", tools = HOOK_AGENT_TOOLS, instructions = AGENT_HOOK_INSTRUCTIONS,
+                    maxTurns = HOOK_AGENT_MAX_TURNS, omitMemory = true,
+                ),
+                dev.min.agent.spi.HooksLoaded(listOf(dev.min.agent.spi.HookSourceData(
+                    "user",
+                    kotlinx.serialization.json.Json.parseToJsonElement(
+                        """{"PreToolUse": [{"matcher": "Read", "hooks": [{"type": "prompt", "prompt": "判一下"}]}]}""",
+                    ).let { it as JsonObject },
+                ))),
+            ),
+        )
+        rt.say("跑")
+        assertTrue("HOOK_AGENT_TYPE 会话里不该发模型侧评估请求", hookRans(rt).none { it.event == "PreToolUse" })
+        assertTrue("工具照常跑（不响不等于拦）", !rt.state.value.toolResults.getValue(CallId("r1")).isError)
     }
 
     // ---- mcp_tool ----

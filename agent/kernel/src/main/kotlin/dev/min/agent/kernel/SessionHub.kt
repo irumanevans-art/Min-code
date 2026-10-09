@@ -308,7 +308,11 @@ class SessionHub(
             maxTurns = HOOK_AGENT_MAX_TURNS, omitMemory = true,
         )
         val child = SessionRuntime.create(
-            store, header, created, deps, scope, listOf(origin),
+            store, header, created, deps, scope,
+            // M3：守父会话的权限规则（含父会话里「总是允许」攒下的 sessionRules 与附加目录）——hook agent 的
+            // 结论会回灌主模型，它读到了不该读的就等于绕过权限。hooks 一概不继承（settings 与组件的都不）：
+            // hook 钩出 hook 是无限递归，防护就靠这条（HookDriver 里的 HOOK_AGENT_TYPE 守卫是第二道保险）
+            listOf(origin) + inheritedHookAgentRules(ps),
             loadMemory = false, loadSettings = false, loadSkills = false, hub = this,
         )
         child.requestGate = childGate
@@ -331,6 +335,19 @@ class SessionHub(
         agents.forEach { child -> child.state.value.turn?.let { quietReports += child.sessionId to it.turnId } }
         agents.forEach { it.interrupt() }
         agents.forEach { it.awaitIdle() }
+    }
+
+    /**
+     * hook agent 从父会话继承的权限规则（M3）：口径与子 agent 的 [inheritedRules] 一致（规则快照 +
+     * 「总是允许」攒下的 + 附加目录），但**不带** HooksLoaded / autoReview——hook agent 不跑 hook（递归），
+     * 也不叠审查（它自己是被门禁调来当判官的）
+     */
+    private fun inheritedHookAgentRules(parent: SessionState): List<SessionEvent> {
+        val rules = parent.rules + parent.sessionRules
+        return listOfNotNull(
+            if (rules.isEmpty() && parent.additionalDirectories.isEmpty()) null
+            else PermissionRulesLoaded(rules, additionalDirectories = parent.additionalDirectories),
+        )
     }
 
     internal suspend fun reserveWebSearch(caller: SessionRuntime, callId: CallId): Boolean {
