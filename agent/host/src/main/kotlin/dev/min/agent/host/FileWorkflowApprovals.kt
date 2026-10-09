@@ -7,19 +7,19 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 
-/** 宿主私有目录保存同意，工作区脚本不能给自己添加授权。 */
+/** 宿主私有目录保存明确记住；新前缀不把旧版 Once 标记升级成永久授权。 */
 class FileWorkflowApprovals(private val directory: File) : WorkflowApprovals {
     private fun key(cwd: GuestPath, hash: String): String {
         require(hash.matches(Regex("[a-f0-9]{64}")))
-        return MessageDigest.getInstance("SHA-256").digest("${cwd.value}\u0000$hash".toByteArray())
+        return "remember-v1-" + MessageDigest.getInstance("SHA-256").digest("${cwd.value}\u0000$hash".toByteArray())
             .joinToString("") { "%02x".format(it) }
     }
     override fun contains(cwd: GuestPath, hash: String) = File(directory,key(cwd,hash)).isFile
     override fun autoConsented() = File(directory,"auto-consent").isFile
     private suspend fun save(name: String) = withContext(Dispatchers.IO) {
-        check(directory.isDirectory || directory.mkdirs())
+        check(directory.isDirectory || directory.mkdirs() || directory.isDirectory)
         val file=File(directory,name)
-        check(file.isFile || file.createNewFile()); Unit
+        check(file.isFile || file.createNewFile() || file.isFile); Unit
     }
     override suspend fun approve(cwd: GuestPath, hash: String) = save(key(cwd,hash))
     override suspend fun consentAuto() = save("auto-consent")

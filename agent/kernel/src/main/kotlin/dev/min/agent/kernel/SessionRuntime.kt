@@ -524,6 +524,7 @@ class SessionRuntime private constructor(
 
     /** 答复一次审批。那次审批已经不在等了（另一端先答了、回合已结束）返回 false */
     suspend fun answerApproval(approvalId: ApprovalId, choice: ApprovalChoice): Boolean {
+        val project = state.value.settings.cwd
         val workflow = state.value.turn?.calls?.values?.firstOrNull {
             it.tool == "Workflow" && (it.phase as? CallPhase.AwaitingApproval)?.approvalId == approvalId
         }
@@ -532,7 +533,7 @@ class SessionRuntime private constructor(
             s.turn?.calls?.values?.any { (it.phase as? CallPhase.AwaitingApproval)?.approvalId == approvalId } == true
         } != null
         // 只有明确选择本项目不再问才持久化；普通 Once 不增加可跨运行复用的规则。
-        if (applied && remember) deps.workflowApprovals.approve(state.value.settings.cwd,
+        if (applied && remember) deps.workflowApprovals.approve(project,
             dev.min.agent.ext.workflow.WorkflowScript.hash(requireNotNull(workflow).input["source"]!!.jsonPrimitive.content))
         return applied
     }
