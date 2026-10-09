@@ -576,6 +576,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             throw e
         } catch (e: Exception) {
             errorResult("工具执行出错：${e.message ?: e::class.simpleName}")
+        } finally {
+            networkApprovedCalls.remove(callId)
         }
         val budgeted = gateTaskHooks(turnId, ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId))
         // StructuredOutput 交卷通过校验：采纳事件与工具结果同一次提交——不会出现「结果说收到了、日志里却没有最终答案」

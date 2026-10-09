@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.Semaphore
 import java.io.InputStream
 import java.net.*
 import java.security.SecureRandom
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -84,7 +85,8 @@ class LoopbackNetworkProxy(
             val input = client.getInputStream()
             val head = readHead(input)
             // 不带凭据的同机程序不能触发审批，更不能借用已批准的会话。
-            if (head.values("proxy-authorization") != listOf(credential)) { reply(client, "代理凭据无效"); return }
+            val credentials = head.values("proxy-authorization")
+            if (credentials.size != 1 || !MessageDigest.isEqual(credentials.single().toByteArray(Charsets.UTF_8), credential.toByteArray(Charsets.UTF_8))) { reply(client, "代理凭据无效"); return }
             val target = targetOf(head)
             val decision = withTimeoutOrNull(approvalTimeoutMs) { decide(target) }
                 ?: NetworkVerdict(NetworkOutcome.Deny, NetworkSource.Timeout, "网络批准超时")
@@ -140,7 +142,7 @@ class LoopbackNetworkProxy(
         require(head.values("host").size == 1 && head.values("content-length").size <= 1 && head.values("transfer-encoding").size <= 1)
         require(head.values("content-length").isEmpty() || head.values("transfer-encoding").isEmpty())
         require(head.values("transfer-encoding").isEmpty() || head.values("transfer-encoding").single().equals("chunked", true))
-        head.values("content-length").firstOrNull()?.let { require(it.toLongOrNull()?.let { n -> n in 0..MAX_BODY } == true) }
+        head.values("content-length").firstOrNull()?.let { require(Regex("[0-9]+").matches(it) && it.toLongOrNull()?.let { n -> n in 0..MAX_BODY } == true) }
         return head
     }
     private fun targetOf(head: Head): NetworkTarget {
@@ -173,6 +175,7 @@ class LoopbackNetworkProxy(
         var total = 0L
         while (true) {
             val sizeLine = line(input, 128)
+            require(Regex("[0-9a-fA-F]+").matches(sizeLine.substringBefore(';')))
             val size = sizeLine.substringBefore(';').toLongOrNull(16) ?: error("无效的 HTTP 分块")
             require(size >= 0 && size <= MAX_BODY - total)
             total += size

@@ -25,7 +25,19 @@ class LoopbackNetworkProxyTest {
         threads.forEach { it.join(3000); assertFalse("关闭代理必须回收线程", it.isAlive) }
     }
 
-
+    @Test fun signedLengthAndAmbiguousIpv4CannotTriggerApproval() {
+        val calls = AtomicInteger()
+        LoopbackNetworkProxy().use { proxy -> proxy.open(SessionId("bad")) { calls.incrementAndGet(); deny }.use { lease ->
+            for (host in listOf("0177.0.0.1", "127.00.0.1", "2130706433", "0x7f000001")) {
+                assertTrue(http(lease, host).contains("403"))
+            }
+            socket(lease).use { s ->
+                s.getOutputStream().write("POST / HTTP/1.1\r\nHost: allowed.test\r\n${auth(lease)}Content-Length: +5\r\n\r\nhello".toByteArray())
+                assertTrue(s.getInputStream().readBytes().decodeToString().contains("403"))
+            }
+            assertEquals("无效目标和长度必须在送审之前拒绝", 0, calls.get())
+        } }
+    }
     @Test fun establishedConnectionsSurviveTwentySecondsIdle() = runBlocking {
         for (tunnel in listOf(false, true)) {
             ServerSocket(0).use { upstream ->
@@ -53,7 +65,6 @@ class LoopbackNetworkProxyTest {
             }
         }
     }
-
     private val allow = NetworkVerdict(NetworkOutcome.Allow, NetworkSource.Rule, "允许")
     private val deny = NetworkVerdict(NetworkOutcome.Deny, NetworkSource.Rule, "规则拒绝")
     private fun socket(lease: NetworkLease): Socket = Socket("127.0.0.1", URI(lease.env.getValue("http_proxy")).port).apply { soTimeout = 3000 }
