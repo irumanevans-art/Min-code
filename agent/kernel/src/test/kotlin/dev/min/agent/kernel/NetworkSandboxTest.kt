@@ -15,6 +15,25 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class NetworkSandboxTest {
+    @Test fun brokenManagedSettingsDoNotBlockLocalShell() = run(local = true) { _, rt, fs, _, _, _ ->
+        fs.put("/etc/claude-code/managed-settings.json", "broken")
+        fs.put("/root/.claude/settings.json", """{"sandbox":{"enabled":false},"permissions":{"allow":["Bash"]}}""")
+        rt.send(ClientMsgId("one"), listOf(TextPart("local")))
+        rt.state.first { it.turn == null && it.lastTurn != null }
+        assertTrue(rt.state.value.lastTurn!!.outcome is TurnOutcome.Completed)
+        assertFalse(rt.state.value.toolResults.getValue(CallId("c")).isError)
+        assertTrue(rt.state.value.networkDecisions.isEmpty())
+    }
+    @Test fun brokenManagedSettingsKeepLocalTurnsButCloseNetwork() = run { _, rt, fs, _, _, _ ->
+        fs.put("/etc/claude-code/managed-settings.json", "broken")
+        fs.put("/root/.claude/settings.json", """{"sandbox":{"enabled":false}}""")
+        rt.send(ClientMsgId("one"), listOf(TextPart("fetch")))
+        rt.state.first { it.turn == null && it.lastTurn != null }
+        assertTrue("网络拒绝不能令整个回合失败", rt.state.value.lastTurn!!.outcome is TurnOutcome.Completed)
+        assertEquals(NetworkOutcome.Deny, rt.state.value.networkDecisions.single().outcome)
+        assertTrue(rt.state.value.toolResults.getValue(CallId("c")).isError)
+        assertTrue(rt.refreshNetworkSettings().enabled)
+    }
     @get:Rule val tmp = TemporaryFolder()
     private class Proxy : NetworkProxy {
         lateinit var decide: suspend (NetworkTarget) -> NetworkVerdict
@@ -29,17 +48,18 @@ class NetworkSandboxTest {
         override fun closeSession(session: SessionId) { closed++ }
     }
     private fun run(mode: PermissionMode = PermissionMode.Default, timeout: Long = 1000,
-                    reviewer: ScriptedModel? = null, hosts: List<String> = emptyList(), rule: String = "Bash",
+                    reviewer: ScriptedModel? = null, hosts: List<String> = emptyList(), rule: String = "Bash", local: Boolean = false,
                     block: suspend (SessionHub, SessionRuntime, FakeFs, FileSessionStore, Proxy, ScriptedModel) -> Unit) = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val fs = FakeFs().apply { put("/root/.claude/settings.json", """{"sandbox":{"enabled":true},"permissions":{"allow":["$rule"]}}""") }
         val proxy = Proxy()
-        val raw = buildJsonObject { put("command", "curl https://example.test"); if (hosts.isNotEmpty()) put("allowed_domains", JsonArray(hosts.map(::JsonPrimitive))) }
+        val raw = buildJsonObject { put("command", if (local) "printf local" else "curl https://example.test"); if (hosts.isNotEmpty()) put("allowed_domains", JsonArray(hosts.map(::JsonPrimitive))) }
         val model = ScriptedModel(reply(ToolCallPart(CallId("c"), "Bash", raw), stop = StopReason.ToolUse), reply(TextPart("finished")))
         val base = testDeps(model, listOf(BashTool))
         val exec = object : Exec {
             override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult {
                 assertEquals("http://test-credential@127.0.0.1:8001", command.env["HTTPS_PROXY"])
+                if (local) return ExecResult.Exited(0, "local", false, 0)
                 val verdict = proxy.decide(NetworkTarget("example.test", 443))
                 return ExecResult.Exited(if (verdict.outcome == NetworkOutcome.Allow) 0 else 1, verdict.reason, false, 0)
             }
