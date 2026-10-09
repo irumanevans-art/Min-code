@@ -160,4 +160,18 @@ class MinWebSearchTest {
         assertNotNull(thrown)
         assertEquals("清掉配置后没有多发请求", 2, http.requests.size)
     }
+
+    @Test fun `a key changed in settings is used by the very next search and a cleared key sends nothing`() = runBlocking {
+        var config = WebSearchConfig(backend = SearchBackendKind.BRAVE, braveKey = "KEY-ONE")
+        val http = ScriptedHttp { braveReply() }
+        val backend = ConfiguredSearchBackend({ config }, http)
+        backend.search("q", emptyList(), emptyList(), 3)
+        config = config.copy(braveKey = "KEY-TWO")
+        backend.search("q", emptyList(), emptyList(), 3)
+        assertEquals(listOf("KEY-ONE", "KEY-TWO"), http.requests.map { r -> r.headers.single { it.first == "X-Subscription-Token" }.second })
+        config = config.copy(braveKey = "")
+        val thrown = try { backend.search("q", emptyList(), emptyList(), 3); null } catch (e: IllegalStateException) { e }
+        assertNotNull(thrown)
+        assertEquals("key 清掉后不再发请求", 2, http.requests.size)
+    }
 }
