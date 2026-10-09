@@ -144,16 +144,37 @@ internal class TeamCoordinator(
         return when (op) {
             is TeamOp.Create -> failure("建团队在 handle 开头已经处理，不会走到这里。")
             is TeamOp.Disband -> disband(root, team, actor, op)
-            is TeamOp.TaskCreate -> commitTeamEvent(root, actor, "已创建团队任务") { t ->
-                TeamTaskCreated(t.teamId, t.nextTaskId(), op.subject.trim(), op.description.trim(), op.activeForm?.trim()?.takeIf { it.isNotEmpty() }, op.metadata, actor)
+            is TeamOp.TaskCreate -> {
+                // TaskCreated hook 在落事件之前问：被拒的任务不进清单。编号只是预告，落盘时按锁内最新的清单分配
+                val subject = op.subject.trim()
+                val refusal = TaskHooks(HookDriver(caller)).refuseCreation(turnId, TaskFacts(team.nextTaskId(), subject, op.description.trim().ifBlank { null }, actor, team.teamId))
+                if (refusal != null) return failure("TaskCreated hook 不让创建任务「$subject」，任务没有创建。反馈：$refusal")
+                commitTeamEvent(root, actor, "已创建团队任务") { t ->
+                    TeamTaskCreated(t.teamId, t.nextTaskId(), subject, op.description.trim(), op.activeForm?.trim()?.takeIf { it.isNotEmpty() }, op.metadata, actor)
+                }
             }
-            is TeamOp.TaskUpdate -> commitTeamEvent(root, actor, "已更新团队任务") { t ->
-                TeamTaskUpdated(t.teamId, op.taskId.trim().removePrefix("#"), op.patch, actor)
-            }
+            is TeamOp.TaskUpdate -> updateTask(caller, root, team, actor, turnId, op)
             is TeamOp.TaskDelete -> commitTeamEvent(root, actor, "已删除团队任务") { t ->
                 TeamTaskDeleted(t.teamId, op.taskId.trim().removePrefix("#"), actor)
             }
         }
+    }
+
+    /**
+     * 改团队任务。标为完成要先过 TaskCompleted hook：被拒就保持原状态、同一次更新里的其它字段照改，
+     * 结果是给模型的错误反馈（与个人清单同一口径，见 [TaskHooks]）。已经完成的任务再标一次不算「正在完成」
+     */
+    private suspend fun updateTask(caller: SessionRuntime, root: SessionRuntime, team: TeamState, actor: String, turnId: TurnId, op: TeamOp.TaskUpdate): ToolResult {
+        val taskId = op.taskId.trim().removePrefix("#")
+        val task = team.task(taskId)
+        val completing = op.patch.status == TaskStatus.Completed && task != null && task.status != TaskStatus.Completed
+        val refusal = if (completing) {
+            TaskHooks(HookDriver(caller)).refuseCompletion(turnId, TaskFacts(task!!.id, task.subject, task.description.takeIf { it.isNotBlank() }, actor, team.teamId))
+        } else null
+        val patch = if (refusal != null) op.patch.copy(status = null) else op.patch
+        val committed = if (patch.isEmpty && refusal != null) null else commitTeamEvent(root, actor, "已更新团队任务") { t -> TeamTaskUpdated(t.teamId, taskId, patch, actor) }
+        if (refusal == null) return committed!!
+        return failure("TaskCompleted hook 不让把任务 #$taskId 标为完成，任务保持原状态。反馈：$refusal")
     }
 
     // ---- 建团队 ----
