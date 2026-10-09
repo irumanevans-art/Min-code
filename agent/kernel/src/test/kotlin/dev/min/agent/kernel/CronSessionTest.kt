@@ -467,15 +467,17 @@ class CronSessionTest {
     }
 
     @Test
-    fun `a pending input in the inbox also keeps the session busy`() = run {
+    fun `an input held in the inbox with nothing to pick it up does not block a due task, and the fired turn takes it along`() = run {
+        // 没有回合在跑、也没有回合要开，收件箱里的输入就是停着等人的（2026-10-09 起与「停下的会话」同一口径）：到点照常触发
         val h = hub(answering)
         val rt = h.root()
         schedule(rt)
         rt.commit(listOf(InputReceived(ClientMsgId("held"), listOf(TextPart("还没处理")), dev.min.agent.spi.Delivery.Queue)), Durability.Sync)
         now.set(t0 + 31 * minute)
         h.crons.tick(now.get())
-        assertEquals(0, rt.state.value.crons.single().fires)
-        assertEquals("收件箱里的话没动", 1, rt.state.value.inbox.size)
+        rt.state.first { it.crons.single().fires == 1 }
+        settle(rt)
+        assertEquals(listOf(InputOrigin.User, InputOrigin.Cron("c1")), rt.state.value.history.filterIsInstance<HistoryEntry.User>().map { it.origin })
         assertLogIsTruth(rt)
     }
 
@@ -872,6 +874,86 @@ class CronSessionTest {
         rt.send(ClientMsgId("u1"), listOf(TextPart("接着说")))
         rt.state.first { it.turn == null && it.inbox.isEmpty() && it.lastTurn?.outcome == dev.min.agent.spi.TurnOutcome.Completed }
         assertEquals(1, model.requests.size - before)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a due task fires on a stopped session even with a report parked in its inbox, and that run takes the report along`() = run {
+        // CC：定时任务在两次回合之间、空闲时触发，按停不取消它。收件箱为空的停下会话本来就照常触发；
+        // 停着一份报告也该一样，不然下一次到点跑不跑，取决于停的那一刻子 agent 有没有交回报告
+        val gate = CompletableDeferred<Unit>()
+        val model = RoutingModel { req ->
+            val first = (req.messages.first().parts.firstOrNull() as? TextPart)?.text.orEmpty()
+            when {
+                first.contains("子任务") -> { r -> flow { gate.await(); emitAll(reply(TextPart("慢活干完"))(r)) } }
+                req.firedRun() && req.messages.size == 1 -> reply(
+                    ToolCallPart(CallId("a1"), "Agent", args("prompt" to "子任务", "run_in_background" to false)), stop = StopReason.ToolUse,
+                )
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.root()
+        schedule(rt)
+        now.set(now.get() + 31 * minute)
+        h.crons.tick(now.get())
+        rt.state.first { s -> s.children.isNotEmpty() }
+        h.get(rt.state.value.children.keys.single())!!.state.first { it.turn?.openRequest != null }
+
+        rt.interrupt()
+        rt.state.first { it.turn == null && it.lastTurn?.outcome == dev.min.agent.spi.TurnOutcome.Interrupted(dev.min.agent.spi.InterruptedBy.User) }
+        rt.awaitIdle()
+        assertEquals("报告停在收件箱里等人", 1, rt.state.value.inbox.size)
+        assertEquals(1, rt.state.value.crons.single().fires)
+
+        // 下一次到点：照常触发，这一回合把停着的报告一并接走
+        now.set(now.get() + 31 * minute)
+        h.crons.tick(now.get())
+        rt.state.first { it.turn == null && it.inbox.isEmpty() && it.lastTurn?.outcome == dev.min.agent.spi.TurnOutcome.Completed }
+        assertEquals(2, rt.state.value.crons.single().fires)
+        val origins = rt.state.value.history.filterIsInstance<HistoryEntry.User>().map { it.origin }
+        assertEquals("第二次触发与停着的报告都进了对话", 2, origins.count { it is InputOrigin.Cron })
+        assertTrue(origins.any { it is InputOrigin.Agent })
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a background sub agent the user stopped parks its report on a root that had finished, and the task keeps firing`() = run {
+        // 根交派后台子 agent 后自己正常答完（上一回合 Completed），用户只停那个子 agent：报告是静音的，只进根的收件箱。
+        // 根上一回合是正常结束的，所以不能拿「上一回合被停」认停着的输入——以前这之后到点再也不触发，直到用户说话
+        val gate = CompletableDeferred<Unit>()
+        val model = RoutingModel { req ->
+            val first = (req.messages.first().parts.firstOrNull() as? TextPart)?.text.orEmpty()
+            when {
+                first.contains("子任务") -> { r -> flow { gate.await(); emitAll(reply(TextPart("慢活干完"))(r)) } }
+                req.firedRun() && req.messages.size == 1 -> reply(
+                    ToolCallPart(CallId("a1"), "Agent", args("prompt" to "子任务", "run_in_background" to true)), stop = StopReason.ToolUse,
+                )
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model)
+        val rt = h.root()
+        schedule(rt)
+        now.set(now.get() + 31 * minute)
+        h.crons.tick(now.get())
+        rt.state.first { it.lastTurn?.outcome == dev.min.agent.spi.TurnOutcome.Completed }
+        rt.awaitIdle()
+        val child = rt.state.value.children.keys.single()
+        h.get(child)!!.state.first { it.turn?.openRequest != null }
+
+        h.stopTree(child)
+        rt.state.first { it.inbox.isNotEmpty() }
+        rt.awaitIdle()
+        assertEquals("根上一回合是正常结束的", dev.min.agent.spi.TurnOutcome.Completed, rt.state.value.lastTurn!!.outcome)
+        assertEquals("子 agent 的报告停在收件箱里", 1, rt.state.value.inbox.size)
+
+        // 下一次到点照常触发，这一回合把停着的报告一并接走
+        now.set(now.get() + 31 * minute)
+        h.crons.tick(now.get())
+        rt.state.first { it.crons.single().fires == 2 }
+        settle(rt)
+        assertTrue(rt.state.value.history.filterIsInstance<HistoryEntry.User>().any { it.origin is InputOrigin.Agent })
         assertLogIsTruth(rt)
     }
 

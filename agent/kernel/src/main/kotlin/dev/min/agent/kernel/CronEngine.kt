@@ -81,7 +81,10 @@ internal const val CRON_PAUSE_AFTER_OVERRUNS = 2
  *
  * 触发的条件（Claude Code：会话开着、空闲时才触发）：
  *  - 到点：[tick] 由宿主的 [dev.min.agent.spi.Scheduler] 周期性地叫；
- *  - 空闲：会话没有回合、没有维护、收件箱空（[SessionRuntime.isQuiescent]）。忙的时候到点的任务**排着**：
+ *  - 空闲：会话没有回合、没有维护、收件箱空（[SessionRuntime.isQuiescent]），或者收件箱里只有「停着」、没有东西会自己接走的输入
+ *    （[SessionRuntime.isParked]：上一回合被停下、停树时的静音报告等，等人决定）。Claude Code 的口径是「两次回合之间、空闲时触发」，停下不取消定时任务；
+ *    停过的会话收件箱为空时本来就照常触发，只因收件箱里碰巧停着一份报告就不触发，同一个停下的会话就成了看运气。
+ *    触发的回合把停着的输入一并接走，与用户说下一句话时一样。忙的时候到点的任务**排着**：
  *    它仍然「到点」，回合一结束（盯状态的协程发现会话重新空闲）就触发，不用等下一次心跳；
  *  - 一次只触发一条：触发会开回合，会话立刻又忙了，其余到点的任务等下一次空闲。
  *
@@ -191,7 +194,7 @@ internal class CronEngine(
         for (task in rt.state.value.crons.filter { it.active }) {
             if (task.isPastExpiry(now)) expire(rt, task, expired(CronExpiry.Age, null))
         }
-        if (!rt.isQuiescent()) return
+        if (!rt.idleForCron()) return
         val due = rt.state.value.crons.filter { it.active }
             .mapNotNull { t -> t.nextFireAt(deps.zone, maxOf(entry.floorMs, entry.skippedAt[t.id] ?: 0L))?.takeIf { it <= now }?.let { t to it } }
             .minByOrNull { it.second }?.first ?: return
@@ -226,7 +229,7 @@ internal class CronEngine(
             startTurn = TurnTrigger.Cron,
             extra = listOf(CronFired(task.id, now, clientMsgId)),
             // 提交的锁里再判一次：任务还在、没被别的触发抢先、会话确实空闲
-            precondition = { s -> rt.isQuiescent() && s.cronTask(task.id)?.let { it.active && it.fires == expectedFires } == true },
+            precondition = { s -> rt.idleForCron() && s.cronTask(task.id)?.let { it.active && it.fires == expectedFires } == true },
         )
         if (!delivered) rt.cronRun = null
     }
@@ -254,8 +257,8 @@ internal class CronEngine(
     // ---- 盯着会话状态：回合结束就触发排着的任务，并结束这次运行的记账 ----
 
     private suspend fun onState(rt: SessionRuntime, entry: Attached, state: SessionState) {
-        // 收件箱里有东西、但没有什么会自己把它接走（上一回合是被停下的）也算空闲：否则这次运行的记账撤不掉
-        val idleLooking = state.turn == null && (state.inbox.isEmpty() || !state.lastTurnAllowsAutoStart())
+        // 收件箱有没有东西不在这里判：停着、没人接的输入也算空闲（[SessionRuntime.isParked]），细判在 awaitIdle 之后
+        val idleLooking = state.turn == null
         if (idleLooking && (rt.cronRun != null || state.crons.any { it.active }) && entry.idleCheckQueued.compareAndSet(false, true)) {
             scope.launch {
                 // 状态上看空闲了，回合 Job 可能还没收尾：等它真的结束再判（isQuiescent 看的是 Job）
@@ -304,9 +307,12 @@ internal class CronEngine(
         entry.lock.withLock { if (rt.cronRun === run) clearRunIfQuiet(rt) }
     }
 
+    /** 定时任务可以触发的空闲：真的空闲，或只剩停着等人的输入（见类注释） */
+    private fun SessionRuntime.idleForCron(): Boolean = isQuiescent() || isParked()
+
     /** 这次运行的记账要等整棵树都安静了才结束 */
     private fun clearRunIfQuiet(rt: SessionRuntime) {
-        if (rt.cronRun != null && (rt.isQuiescent() || rt.isParked()) && hub.treeTurnsIdle(rt.sessionId)) rt.cronRun = null
+        if (rt.cronRun != null && rt.idleForCron() && hub.treeTurnsIdle(rt.sessionId)) rt.cronRun = null
     }
 
     private suspend fun recordStop(rt: SessionRuntime, task: CronTask, run: CronRun, overrun: CronOverrun) {
