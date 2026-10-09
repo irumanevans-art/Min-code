@@ -108,6 +108,8 @@ fun turnEndOf(outcome: TurnOutcome): TurnEnd = when (outcome) {
             InterruptedBy.ProcessDeath -> InterruptCause.ProcessDeath
             InterruptedBy.Limit -> InterruptCause.Limit
             InterruptedBy.Hook -> InterruptCause.Hook
+            // 花费上限也是一种上限：界面按「达到上限」处理（原因在引擎写的那条 Note 里）
+            InterruptedBy.Budget -> InterruptCause.Limit
         },
     )
 }
@@ -119,6 +121,7 @@ fun triggerViewOf(trigger: TurnTrigger): TurnTriggerView = when (trigger) {
     TurnTrigger.Hook -> TurnTriggerView.Hook
     TurnTrigger.Delegated -> TurnTriggerView.Delegated
     TurnTrigger.Compact -> TurnTriggerView.Compact
+    TurnTrigger.Cron -> TurnTriggerView.Cron
 }
 
 fun EndedTurn.end(): TurnEnd = turnEndOf(outcome)
@@ -199,6 +202,8 @@ private class ItemsBuilder(
             }
             // Stop hook 拦下「结束」时交给模型的理由：不是人说的话，作为说明显示
             is InputOrigin.Hook -> items += ChatItem.Note(id, text.hookFeedback(origin.event) + "\n" + plain(entry.parts))
+            // 定时任务到点触发：会话预设的任务，不画成用户气泡（也就不能被当成「回退到这条用户消息」）
+            is InputOrigin.Cron -> items += ChatItem.Note(id, text.cronFired(origin.cronId) + "\n" + plain(entry.parts))
         }
     }
 
@@ -276,6 +281,8 @@ private class ItemsBuilder(
                 TurnTrigger.Notification -> items += dividerNote("wake:$seq", text.subagentWoke())
                 // 后台 asyncRewake hook 唤醒的回合：分隔线说明「是谁」把会话叫醒的
                 TurnTrigger.Hook -> items += dividerNote("hook:$seq", text.hookWoke())
+                // 定时任务到点唤醒的回合
+                TurnTrigger.Cron -> items += dividerNote("cron:$seq", text.cronWoke())
                 else -> Unit
             }
             is TurnEnded -> turnEnded(seq, atMs, event)
@@ -344,6 +351,8 @@ private class ItemsBuilder(
                     InterruptedBy.ProcessDeath -> text.processDeath(event.lastActivityAtMs ?: atMs)
                     InterruptedBy.Limit -> text.limit()
                     InterruptedBy.Hook -> text.hookStopped(atMs)
+                    // 为什么停写在紧挨着的那条 Note（花了多少、上限多少）里，这里只标「已停止」
+                    InterruptedBy.Budget -> text.stopped(atMs)
                 },
                 isError = false,
             )

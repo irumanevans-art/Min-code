@@ -24,3 +24,28 @@
 ## 长寿进程配额（`QuotaProcessPort`）
 - `HostPorts.processes` 恒套一层配额：一个宿主一份，所有会话与子 agent 共用，上限 `MAX_LONG_LIVED_PROCESSES = 8`（**暂定**，真机测过 phantom 进程上限后再调）。
   超额时 spawn 抛带说明的 `ProcessSpawnException`（列出占名额的服务器），不排队；名额从起进程前预留到进程退出。
+
+## Agent 团队与邮箱（M5，`Teams.kt` / `TeamCoordinator.kt`；设计 docs/agent/detail/agent团队与邮箱设计.md）
+- 成员 = 负责人（根会话）的子会话，走 `SessionHub.spawn`；团队状态（成员表、任务清单、是否解散）完全从**负责人日志**的 `team_*` 事件折叠到 `SessionState.team`，没有第二份。成员只能认领给自己、只能完成自己认领的任务，负责人可改派 / 完成全部；违规转换在落盘前被 `teamProblem` 拒，只在负责人日志记一条 warning Note。
+- 邮箱 = 日志事件：`team_message` 写进**收件人**日志，与同一次提交里的 `input_received`（`SendMessage` 同一条 `receive()` 路径）成对出现，所以重开会话仍在收件箱、提升进对话后只读一次。`to` 可写成员名 / `lead` / `all`；发件人在团队里且收件人是队友时走团队邮箱，其余照旧走子 agent 路径。
+- 搁浅：进程重启后内存里的排队队伍没了，日志里仍躺着开场任务、没开过回合的成员显示为 `Phase.Stalled`（不再冒充 `Queued`）；`SessionHub.resumeTeamMembers(root)` 显式放行（照常过名额），或负责人给它发条消息。崩溃后不自动续跑的规矩不变。
+- 并发：`HubLimits.teamMaxConcurrent`（默认 3；App 设置项 `teamMaxConcurrent`、CLI settings.json 同名键），超出的成员排队，前一个结束后才启动。硬上限 8（`TeamLimits.MAX_CONCURRENT`，设置超过它按 8 算，不再问用户）。这道闸限的是同时在跑回合的成员数；与全局 `HubLimits.maxConcurrentChildRequests`（同时向模型流式要回答的子会话数，手机 3）是两回事——提高前者不会让模型请求更并发，见 `TeamLimits` 注释。
+- `TeammateIdle` hook：成员回合要结束（Stop/SubagentStop 之后、报告交出之前）、团队清单又没有可认领的活时触发；exit 2 让成员带着理由接着干（与 Stop 共用计数与上限），`continue:false` 整个停下。
+- 报告与唤醒：成员每个回合结束照常把报告交进负责人收件箱（`SessionHub.deliver`）；但**被队友的邮件叫起来的**回合（开跑时收件箱里全是队友邮件，`TeamCoordinator.peerTurns`）只入收件箱、不唤醒负责人，免得成员之间每聊一句都烧负责人一整轮；负责人发的消息、开场任务、用户的话引起的回合照常唤醒。
+- 成员的模型：`TeamMemberSpec.model`（`TeamCreate` 每个成员可传 `model`）；优先级照子 agent：规格里的 > agent 定义里的 > 继承负责人当前模型；不认识的模型整个团队建不成（回滚并说明）。
+- 权限不绕过：成员的审批留在根会话的 hub 树上（`HubPending.root` = 负责人），由用户在界面上答，且只有成员自己的运行时答得了；成员不能再开团队，不能是 fork。
+- 模型看到什么：`TeamCreate` / `TeamDisband` 两个工具（外加 `SendMessage` 描述多一句）；任务清单不另起工具——处于团队中时 `TaskCreate` / `TaskGet` / `TaskList` / `TaskUpdate` 直接读写团队共享清单（`SessionRuntime.visibleTaskBoard()`；认领 = owner 设成自己的名字，成员只能改自己认领的）；成员的开场输入给齐身份、队友和协作方式；邮件正文前缀 `[团队邮件 · 来自 X]`。token 代价：团队与定时两族 7 个工具的定义合计约 3,300 字符（约 2,000–2,500 token），每个会话每次请求都带，一次性的前缀变化（升级后第一次请求缓存未命中）；邮件与报告是追加在对话末尾的消息，不动前缀。
+- 已知限制：回退（rewind）到建团队之前，团队状态不随之回退（成员子会话被标为已回退、不再交报告，但 `SessionState.team` 仍在，需要先 TeamDisband）；排队顺序只在内存里——进程重启后排队的成员保持「收件箱有任务、没开过回合」，不自动开跑（与子 agent 崩溃后不自动续跑同一口径）；用户直接在成员会话里打字起的回合不占名额；团队界面（成员列表、消息流）本期只保证内核面（`SessionHub.teamMembers` / `pending`）。
+
+## 定时任务（M5，`Crons.kt` / `CronEngine.kt`；`CronCreate` / `CronDelete` / `CronList` / `ScheduleWakeup`）
+- 会话级：任务存在**根会话自己的日志**里（`cron_scheduled` / `cron_fired` / `cron_cancelled` / `cron_expired`），`SessionState.crons` 由它折叠；重开会话折叠出未过期的任务就是恢复（`CronEngine.attach` 顺带把过期的结案）。子 agent / 团队成员不能建；`/branch` 不继承（分支日志里逐个取消）。
+- 触发（照 Claude Code）：会话开着、**空闲**时才触发（无回合、无维护、收件箱空；忙时到点的任务排着，回合一结束就触发）；错过不补跑（重开 / 打开会话那一刻起重新数；一次性任务的时刻在会话没开着时过去则 `cron_expired(missed)`）；循环任务创建 7 天后 `cron_expired(age)`；每会话最多 50 个。触发 = 在该会话里写一条 `origin = cron` 的输入（与 `cron_fired` 同一次提交），正文明说这是预设任务、不是用户此刻发的话；它不过 UserPromptSubmit hook、不记回退点。
+- 花费上限（**可选，默认不设**，同 Claude Code：定时任务花的是用户自己的额度）：任务可带 `maxBudgetUsd`（`max_budget_usd`），宿主可设 `HubLimits.cronMaxBudgetUsd` 天花板（取小），按**一次运行**、**整棵会话树**（根、子 agent、团队成员）合计。`CronRun` 在每个模型请求发出前由 `ModelBilling` 查，花到了就不再发——所以正常结束的运行不算超限。超限**只停这一次运行**：回合 `Interrupted(Budget)`、树里其余会话一并停下、写 `cron_budget_stopped` + Note + 通知，任务保持进行中；连续 2 次才写 `cron_expired(budget)` 暂停。一次性任务与唤醒被停同样留痕。设了上限而触发前模型没有 USD 定价（核对不了）→ **本次跳过**，任务保持进行中：循环任务从跳过那刻重新数（不补跑），一次性任务等价格有了再触发；Note + `CronNotice.Skipped` 只提示一次（再次真的触发过后才重新计）。花费照常计入会话（`model_charged`）。
+- 定时器：`Scheduler` 接口（spi）；桌面 `InProcessScheduler`（进程内协程，15 秒一跳）、Android `HeartbeatScheduler`（app 层，心跳驱动）。**不保证精确时刻；只在进程活着时工作——App 被系统杀掉时定时任务不跑**；不做 AlarmManager 精确闹钟（要额外权限）。前台服务现在只在有回合在跑时保活，只有定时任务的会话不会让它一直在。
+- 无人值守：触发的输入（`firedText`）明说这次运行没有人在看——不要向用户提问、需要批准的工具调用会停在那里等人。**审批照 Claude Code 等人答，不自动拒**；回合的触发是 `TurnTrigger.Cron`，App 据此把这类审批卡标成 `InteractionBrief.fromSchedule`，通知标题写「定时任务在等你确认」（通知按钮可直接允许 / 拒绝，走现有的 `SessionSupervisor`）。同一会话里**后续触发也照 Claude Code 等会话空闲**：审批没答，后面到点的任务排着不插队，答完这次运行收尾后随即触发。别的会话不受影响。
+- `ScheduleWakeup` 是同一机制的另一个入口：一次性的间隔任务（`source = wakeup`，60–3600 秒；超出的夹到范围内并在结果里说明，照 Claude Code；整条接力链共用链头那一次的 7 天寿命，`SessionState.firingWakeup()`），同时最多一个，`stop: true` 取消。
+- 全局开关：`HubLimits.cronEnabled`（CLI 的环境变量 `CLAUDE_CODE_DISABLE_CRON`；App 设置里「定时任务（Min）」）。关着时不触发、不能新建（工具说明原因），已有任务留在日志里，打开后照常继续；CLI 设了环境变量时 4 个定时工具干脆不提供，定时器也不挂。
+- `-p` / 非交互会话**不提供**团队与定时的 7 个工具（`desktopTools(interactive = false)`，也不挂定时器）：Claude Code 的 `-p` 没有队友，进程一退定时任务永不触发——给了只会让模型向用户承诺不存在的事。
+- 已知限制：`/loop` 命令入口（CLI / 界面）没做；Stop hook 输入里的 `session_crons` 没填；团队清单没接 `TaskCreated` / `TaskCompleted` hook（个人清单有）；成员建定时任务一律拒绝（见下）。
+- Android 的现实（工具描述与创建结果都如实写给模型）：定时器是进程里的心跳，**不是闹钟**。App 切到后台一段时间后系统会冻结 / 杀掉进程，心跳随之停掉；前台服务只在有回合在跑时才保活，只剩定时任务的会话保不住它——所以只在 Min 在前台或进程仍存活时触发，切到后台一段时间后通常不触发，错过的不补跑。补偿措施：有进行中定时任务的会话不被驻留上限的 LRU 卸下（`MinEviction.kt`，卸下会让任务悄悄不再触发）；到期 / 被花费上限停下 / 因缺价格跳过 / 连续超限暂停时发系统通知（`CronNoticeNotifier`，点开回到会话）。
+- 成员建定时任务：**保留拒绝**（`cronBoard.refusal`）。Claude Code 里队友仍有 Cron 工具（只有 ScheduleWakeup 被子 agent 过滤），但 Min 的定时任务是根会话的会话级状态，成员的会话不会被定时触发，建了也无人响应，所以一律拒并说明、请负责人来建；子 agent 同理。

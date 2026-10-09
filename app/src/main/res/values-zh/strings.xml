@@ -1009,6 +1009,9 @@
   <string name="settings_min_agent_title">Min Agent（实验）</string>
   <string name="settings_min_agent_on">已开启。新建会话时，Min 和 Claude Code、Codex 并排出现。</string>
   <string name="settings_min_agent_off">已关闭。App 内置的 agent，不经 CLI、直接在应用里跑。关掉会停下正在跑的 Min 回合并把入口全部藏起来；会话都留着，再打开就回来。</string>
+  <string name="settings_cron_title">定时任务（Min）</string>
+  <string name="settings_cron_on">已开启。Min 可以安排在会话开着且空闲时运行的提示词。只在 Min 在前台或进程仍存活时触发。</string>
+  <string name="settings_cron_off">已关闭。定时任务不会触发，也不能新建；已有的任务保留，重新打开后继续。</string>
   <string name="settings_group_device">设备</string>
   <string name="settings_group_device_sub">存储、真屏操控、虚拟屏、电池</string>
   <string name="settings_group_look">外观与语言</string>
@@ -1090,6 +1093,8 @@
   <string name="min_agent_limit">达到单回合请求上限</string>
   <string name="min_agent_hook_stopped">被 hook 叫停</string>
   <string name="min_agent_hook_feedback">%1$s hook 要求模型继续</string>
+  <string name="min_agent_cron_woke">定时任务叫醒了会话</string>
+  <string name="min_agent_cron_fired">定时任务 %1$s 到点触发（不是你发的消息）</string>
   <string name="min_agent_continued">继续</string>
   <string name="min_agent_woke">子 agent 完成，继续处理</string>
   <string name="min_agent_hook_woke">后台 hook 报告了问题</string>
@@ -1099,6 +1104,7 @@
   <string name="min_agent_report_restart">被重启打断</string>
   <string name="min_agent_report_limit">达到回合上限</string>
   <string name="min_agent_report_hook_stopped">被 hook 叫停</string>
+  <string name="min_agent_report_budget_stopped">被定时任务的花费上限叫停</string>
   <string name="min_agent_report_calls">%1$d 次工具调用</string>
   <string name="min_agent_report_tokens">%1$s tokens</string>
   <string name="min_agent_message_from">来自 %1$s 的消息</string>
@@ -1156,6 +1162,10 @@
     <string name="session_engine_min">Min Agent</string>
     <string name="session_notification_done">任务已完成</string>
     <string name="session_notification_confirm">%1$s 需要确认</string>
+    <string name="cron_notice_ended">定时任务 %1$s 已结束</string>
+    <string name="cron_notice_budget_stopped">定时任务 %1$s 这次运行被停下</string>
+    <string name="cron_notice_skipped">定时任务 %1$s 这次没有运行</string>
+    <string name="session_notification_schedule_confirm">%1$s 的定时任务在等你确认</string>
     <string name="session_notification_tool">请求使用工具：%1$s</string>
     <string name="session_notification_ended">%1$s 会话已结束</string>
     <string name="session_notification_exited">进程已退出</string>

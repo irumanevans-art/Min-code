@@ -1,6 +1,7 @@
 package dev.min.agent.cli
 
 import dev.min.agent.host.JvmSearch
+import dev.min.agent.kernel.HistoryEntry
 import dev.min.agent.kernel.HostPorts
 import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
@@ -205,6 +206,90 @@ class HooksDecisionKernelTest {
 
     private fun HooksRan.isFor(event: String) = this.event == event
 
+    // ---- TeammateIdle（样本 94 / 95） ----
+
+    /** 把入参转给端口的 TeamCreate（真正的工具在 :agent:tools，这里只测内核时机） */
+    private val teamCreate = object : Tool<JsonObject> {
+        override val name = "TeamCreate"
+        override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+        override val traits = ToolTraits(readOnly = true, delegates = true)
+        override fun description(profile: HarnessProfile) = "建团队"
+        override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
+        override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "建团队")
+        override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            emit(ToolProgress.Done(ctx.agents.team(dev.min.agent.spi.TeamOp.Create(listOf(dev.min.agent.spi.TeamMemberSpec("alice", prompt = "做事"))))))
+        }
+    }
+
+    /** 成员 alice 的请求认得出来：开场输入里写着「成员「alice」」 */
+    private fun ModelRequest.isAlice(): Boolean = (messages.firstOrNull()?.parts?.firstOrNull() as? TextPart)?.text?.contains("成员「alice」") == true
+
+    private suspend fun runTeam(model: ScriptedModel): Pair<SessionRuntime, FileSessionStore> {
+        val (rt, store) = session(model, listOf(teamCreate, TaskCreateTool, TaskUpdateTool))
+        rt.say("组队")
+        rt.state.first { s -> s.team?.members?.all { it.session != null } == true }
+        val alice = rt.state.value.team!!.members.single().session!!
+        // 成员的回合（含 hook 拦下后的续跑）跑完
+        withTimeout(30_000) {
+            while (true) {
+                val s = store.open(alice)?.read()?.toList()?.map { it.event }.orEmpty()
+                if (s.any { it is dev.min.agent.spi.TurnEnded }) break
+                kotlinx.coroutines.delay(50)
+            }
+        }
+        return rt to store
+    }
+
+    @Test
+    fun `TeammateIdle fires when a member is about to idle with nothing to claim, and exit 2 keeps it working (sample 94 and 95)`() = run {
+        installScript(
+            "TeammateIdle",
+            "cat > \"\$CLAUDE_PROJECT_DIR/idle-input.json\"\n" +
+                "n=\$(cat \"\$CLAUDE_PROJECT_DIR/idle-count\" 2>/dev/null || echo 0); n=\$((n+1)); echo \$n > \"\$CLAUDE_PROJECT_DIR/idle-count\"\n" +
+                "if [ \"\$n\" = 1 ]; then echo 'Build artifact missing. Run the build before stopping.' >&2; exit 2; fi",
+        )
+        val model = ScriptedModel { req ->
+            when {
+                req.isAlice() -> answer(TextPart("做完了"))
+                req.messages.size == 1 && req.allText().contains("组队") -> answer(ToolCallPart(CallId("t1"), "TeamCreate", args()), stop = StopReason.ToolUse)
+                else -> answer(TextPart("好"))
+            }
+        }
+        val (rt, store) = runTeam(model)
+        val aliceId = rt.state.value.team!!.members.single().session!!
+        val aliceRequests = model.requests.filter { it.isAlice() }
+        assertEquals("hook 拦下一次，成员又答了一次：共两个请求", 2, aliceRequests.size)
+        assertTrue("理由作为输入交给成员", aliceRequests.last().allText().contains("Build artifact missing. Run the build before stopping."))
+        val input = kotlinx.serialization.json.Json.parseToJsonElement(Files.readString(work.resolve("idle-input.json"))) as JsonObject
+        assertEquals("TeammateIdle", (input["hook_event_name"] as JsonPrimitive).content)
+        assertEquals("alice", (input["teammate_name"] as JsonPrimitive).content)
+        assertEquals(rt.state.value.team!!.teamId, (input["team_name"] as JsonPrimitive).content)
+        assertEquals("跑了两次：被拦一次、放行一次", 2, store.open(aliceId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>().count { it.isFor("TeammateIdle") })
+        // 报告在 hook 放行之后才交给负责人：负责人那边只有一份报告，不是两份
+        rt.state.first { s -> s.inbox.size + s.history.count { it is HistoryEntry.User && (it.origin as? dev.min.agent.spi.InputOrigin.Agent)?.kind == dev.min.agent.spi.AgentInputKind.Report } >= 1 }
+        assertLogIsTruth(store, rt)
+    }
+
+    @Test
+    fun `TeammateIdle does not fire while the shared list still has something to claim, nor for the leader`() = run {
+        installScript("TeammateIdle", "cat > /dev/null; echo ran >> \"\$CLAUDE_PROJECT_DIR/idle-ran\"")
+        val model = ScriptedModel { req ->
+            when {
+                // 成员先往清单里放一条没人认领的任务，然后答完：清单里有可认领的活，不算空闲
+                req.isAlice() && req.messages.size == 1 ->
+                    answer(ToolCallPart(CallId("m1"), "TaskCreate", args("subject" to "下一件事", "description" to "还有活")), stop = StopReason.ToolUse)
+                req.isAlice() -> answer(TextPart("做完了"))
+                req.messages.size == 1 && req.allText().contains("组队") -> answer(ToolCallPart(CallId("t1"), "TeamCreate", args()), stop = StopReason.ToolUse)
+                else -> answer(TextPart("好"))
+            }
+        }
+        val (rt, store) = runTeam(model)
+        assertEquals("有可认领的活，成员不算空闲，hook 没跑", false, Files.exists(work.resolve("idle-ran")))
+        assertEquals(1, rt.state.value.team!!.tasks.size)
+        assertEquals("负责人自己的回合也没触发它", false, Files.exists(work.resolve("idle-ran")))
+        assertLogIsTruth(store, rt)
+    }
+
     // ---- PostToolBatch（样本 76 / 77） ----
 
     @Test
@@ -344,7 +429,8 @@ class HooksDecisionKernelTest {
         installSample("113-premodelswitch-decision")
         val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
         val before = rt.state.value.settings.model
-        rt.changeSettings(model = opus)
+        val refusal = rt.changeSettings(model = opus)
+        assertTrue("被拒时把理由还给宿主（宿主据此别报成功）：$refusal", refusal!!.contains("Switching now re-sends about 180k tokens"))
 
         assertEquals("模型没换", before, rt.state.value.settings.model)
         val note = store.events(rt).filterIsInstance<Note>().single { it.text.contains("模型没有切换") }
@@ -358,7 +444,8 @@ class HooksDecisionKernelTest {
         installScript("PreModelSwitch", "cat > \"\$CLAUDE_PROJECT_DIR/switch-input.json\"; echo 'Opus 4.6 is retired' >&2; exit 2", matcher = "claude-opus-5")
         val (rt, store) = session(ScriptedModel { _ -> answer(TextPart("好")) })
         val before = rt.state.value.settings.model
-        rt.changeSettings(model = opus, mode = PermissionMode.Plan, modelSwitchSource = "picker")
+        val refusal = rt.changeSettings(model = opus, mode = PermissionMode.Plan, modelSwitchSource = "picker")
+        assertTrue("exit 2 的 stderr 是理由：$refusal", refusal!!.contains("Opus 4.6 is retired"))
 
         assertEquals(before, rt.state.value.settings.model)
         assertEquals("模式不归这个 hook 管", PermissionMode.Plan, rt.state.value.settings.mode)
@@ -384,7 +471,7 @@ class HooksDecisionKernelTest {
 
         installScript("PreModelSwitch", """cat > /dev/null; printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreModelSwitch","permissionDecision":"allow"}}'""")
         val (rt2, _) = session(ScriptedModel { _ -> answer(TextPart("好")) })
-        rt2.changeSettings(model = opus)
+        assertEquals("放行时没有拒绝理由", null, rt2.changeSettings(model = opus))
         assertEquals(opus, rt2.state.value.settings.model)
     }
 

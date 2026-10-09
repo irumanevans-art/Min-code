@@ -143,4 +143,24 @@ sealed interface SessionEffect {
     @Serializable
     @SerialName("task_delete")
     data class TaskDelete(val taskId: String) : SessionEffect
+
+    /**
+     * 新建一条定时任务（CronCreate）。编号与创建时刻、7 天过期时刻由内核在落事件时给（工具不读时钟），
+     * 内核落成 [CronScheduled]。[cron] 与 [intervalMs] 恰好一个非空，工具已按同一份规则校验过
+     */
+    @Serializable
+    @SerialName("cron_create")
+    data class CronCreate(
+        val prompt: String,
+        val recurring: Boolean,
+        val maxBudgetUsd: Double? = null,
+        val cron: String? = null,
+        val intervalMs: Long? = null,
+        val source: String? = null,
+    ) : SessionEffect
+
+    /** 取消一条定时任务（CronDelete）。内核落成 [CronCancelled] */
+    @Serializable
+    @SerialName("cron_delete")
+    data class CronDelete(val cronId: String) : SessionEffect
 }

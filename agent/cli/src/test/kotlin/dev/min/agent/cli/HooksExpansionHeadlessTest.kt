@@ -184,4 +184,65 @@ class HooksExpansionHeadlessTest {
             assertTrue("matcher 是 example-skill，别的命令和普通输入不触发", !Files.exists(work.resolve("hook-ran")))
         }
     }
+
+    /**
+     * 交互模式（不带 -p）：stdin 一行一句，走 Main.say 那条路。小尾巴：交互路径的 UserPromptExpansion 之前只有 -p 的测试。
+     * 返回 interact 的退出码与终端（stderr）上给人看的内容
+     */
+    private fun interactive(home: Path, work: Path, server: ModelServer, lines: List<String>): Run = runBlocking {
+        withTimeout(60_000) {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+            val args = parseArgs(
+                arrayOf(
+                    "--provider", "desktop-test", "--model", "scripted", "--base-url", server.baseUrl,
+                    "--wire", "openai_chat", "--mode", "bypassPermissions",
+                    "--api-key-env", if (System.getenv("USERNAME") != null) "USERNAME" else "USER",
+                    "--cwd", work.toString(),
+                ),
+                work,
+            )
+            val app = DesktopApp(args, scope, home, claudeHome = home.resolve("claude-home"))
+            app.checkKey()
+            val runtime = app.openSession()
+            val originalErr = System.err
+            val originalOut = System.out
+            val err = ByteArrayOutputStream()
+            System.setErr(PrintStream(err, true, "UTF-8"))
+            System.setOut(PrintStream(ByteArrayOutputStream(), true, "UTF-8"))
+            try {
+                val exit = interact(app, runtime, args, scope, BufferedReader(StringReader(lines.joinToString("\n", postfix = "\n"))))
+                Run(exit, err.toString("UTF-8"))
+            } finally {
+                System.setErr(originalErr)
+                System.setOut(originalOut)
+            }
+        }
+    }
+
+    @Test
+    fun `in the interactive loop a blocking UserPromptExpansion hook stops the slash command and shows the reason (sample 65)`() {
+        val (home, work) = dirs()
+        setUp(home, work, sample = "65-userpromptexpansion-decision")
+        ModelServer().use { server ->
+            val run = interactive(home, work, server, listOf("/example-skill arg1 arg2", "/exit"))
+            assertEquals(run.stderr, 0, run.exit)
+            assertTrue(run.stderr, run.stderr.contains("This slash command is not available"))
+            assertEquals("被拦下的命令没有发给模型", 0, server.bodies.size)
+        }
+    }
+
+    @Test
+    fun `in the interactive loop an allowing hook adds its context and plain text never reaches the hook`() {
+        val (home, work) = dirs()
+        setUp(home, work, script = "echo ran >> \"${'$'}CLAUDE_PROJECT_DIR/hook-ran\"; printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptExpansion\",\"additionalContext\":\"Checklist before deploy\"}}'")
+        ModelServer().use { server ->
+            val run = interactive(home, work, server, listOf("just talk", "/example-skill arg1", "/exit"))
+            assertEquals(run.stderr, 0, run.exit)
+            assertEquals("普通输入和斜杠命令各发出一次", 2, server.bodies.size)
+            val expanded = server.bodies.last()
+            assertTrue(expanded, expanded.contains("Do the example thing: arg1"))
+            assertTrue(expanded, expanded.contains("Checklist before deploy"))
+            assertEquals("hook 只为匹配的斜杠命令跑了一次", 1, Files.readAllLines(work.resolve("hook-ran")).size)
+        }
+    }
 }

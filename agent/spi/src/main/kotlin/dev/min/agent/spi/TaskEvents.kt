@@ -74,6 +74,8 @@ data class TaskPatch(
 data class TaskBoard(
     val tasks: List<TaskRecord> = emptyList(),
     val nextId: String = "1",
+    /** 非空 = 这是团队的共享清单（处于团队中的会话读写的就是它，不是个人清单）；见 [TeamView] */
+    val team: TeamView? = null,
 ) {
     operator fun get(id: String): TaskRecord? = tasks.firstOrNull { it.id == id }
 }
@@ -132,3 +134,15 @@ private fun reaches(graph: Map<String, List<String>>, from: String, to: String):
     }
     return false
 }
+
+/**
+ * 处于 agent 团队里时，任务清单工具看到的是**团队的共享清单**（Claude Code 同：队友与负责人共用 TaskCreate / TaskGet / TaskList /
+ * TaskUpdate，清单换成团队那一份）。这个视图告诉工具「现在是团队清单」以及「我是谁」——认领要把 owner 写成自己的名字。
+ */
+data class TeamView(
+    val teamId: String,
+    /** 看这份清单的人在团队里的名字：负责人 = [TEAM_LEAD]，成员 = 规格名 */
+    val viewer: String,
+    /** 全部成员名（不含负责人），给 TaskList 的抬头用 */
+    val members: List<String>,
+)

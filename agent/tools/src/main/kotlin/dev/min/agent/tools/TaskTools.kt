@@ -9,6 +9,7 @@ import dev.min.agent.spi.TaskBoard
 import dev.min.agent.spi.TaskPatch
 import dev.min.agent.spi.TaskRecord
 import dev.min.agent.spi.TaskStatus
+import dev.min.agent.spi.TeamOp
 import dev.min.agent.spi.Tool
 import dev.min.agent.spi.ToolContext
 import dev.min.agent.spi.ToolInput
@@ -136,7 +137,7 @@ object TaskCreateTool : Tool<TaskCreateInput> {
             "适合需要三步以上的复杂任务、用户一次给了好几件事、用户明确要求列清单的场合；一两步就能做完的小事、纯问答不要用。" +
             "subject 是祈使句的短标题，description 写清背景和完成标准，activeForm 是进行中显示的进行时短语（不写就显示 subject）。" +
             "新任务一律是 pending，编号由系统分配、在结果里返回；之后用 TaskUpdate 开始、完成它或设置依赖。" +
-            "新建前先用 TaskList 看看有没有重复的任务。"
+            "新建前先用 TaskList 看看有没有重复的任务。" + TEAM_NOTE
 
     override fun parse(raw: JsonObject): ToolInput<TaskCreateInput> = parseArgs {
         val obj = raw.withCanonicalKeys()
@@ -152,6 +153,10 @@ object TaskCreateTool : Tool<TaskCreateInput> {
         PermissionAsk(tool = name, summary = "新建任务：${input.subject.clip(80)}")
 
     override fun run(input: TaskCreateInput, ctx: ToolContext): Flow<ToolProgress> = doneFlow {
+        // 处于团队中：写的是团队共享清单，权限与落事件都在团队那边（TeamCoordinator）
+        if (ctx.tasks.team != null) {
+            return@doneFlow ctx.agents.team(TeamOp.TaskCreate(input.subject, input.description, input.activeForm, input.metadata))
+        }
         // 编号由内核分配，这里只是把视图给的「下一个编号」预告给模型；创建不并发，预告与实际一致
         val id = ctx.tasks.nextId
         ToolResult(
@@ -177,7 +182,7 @@ object TaskGetTool : Tool<TaskGetInput> {
 
     override fun description(profile: HarnessProfile) =
         "按编号取一条任务的完整内容：标题、详细说明、状态、负责人、依赖关系。" +
-            "开始做一条任务之前、或要更新它之前，先读一遍它的最新状态；只想看全部任务的概要用 TaskList。"
+            "开始做一条任务之前、或要更新它之前，先读一遍它的最新状态；只想看全部任务的概要用 TaskList。" + TEAM_NOTE
 
     override fun parse(raw: JsonObject): ToolInput<TaskGetInput> = parseArgs { TaskGetInput(raw.withCanonicalKeys().taskId()) }
 
@@ -216,7 +221,7 @@ object TaskListTool : Tool<Unit> {
     override fun description(profile: HarnessProfile) =
         "列出任务清单里全部任务的概要：编号、标题、状态、负责人、还在等哪些未完成的任务。" +
             "用来看整体进度、找下一件可以做的事（状态 pending、没有未完成阻塞者的任务；条件相同时先做编号小的）、核对有没有重复。" +
-            "要看某条任务的详细说明用 TaskGet。"
+            "要看某条任务的详细说明用 TaskGet。" + TEAM_NOTE
 
     // 没有入参；模型多给的字段一律忽略
     override fun parse(raw: JsonObject): ToolInput<Unit> = ToolInput.Valid(Unit)
@@ -225,10 +230,17 @@ object TaskListTool : Tool<Unit> {
 
     override fun run(input: Unit, ctx: ToolContext): Flow<ToolProgress> = doneFlow {
         val board = ctx.tasks
-        if (board.tasks.isEmpty()) return@doneFlow okResult("任务清单是空的。")
+        val team = board.team
+        // 团队共享清单：先说清这是谁的清单、我是谁（认领要把 owner 写成自己的名字）
+        val heading = team?.let {
+            "这是 agent 团队 ${it.teamId} 的共享清单（你是「${it.viewer}」；成员：${it.members.joinToString("、")}）。" +
+                "认领 = TaskUpdate 把 owner 设成你的名字；找活就挑 pending、没有 owner、没被未完成任务阻塞的。\n"
+        }.orEmpty()
+        if (board.tasks.isEmpty()) return@doneFlow okResult(heading + "任务清单是空的。")
         val count = { s: TaskStatus -> board.tasks.count { it.status == s } }
         okResult(
             buildString {
+                append(heading)
                 append("共 ${board.tasks.size} 个任务：${count(TaskStatus.Completed)} 已完成、")
                 append("${count(TaskStatus.InProgress)} 进行中、${count(TaskStatus.Pending)} 待处理\n")
                 board.tasks.forEach { t ->
@@ -285,7 +297,7 @@ object TaskUpdateTool : Tool<TaskUpdateInput> {
             "状态按 pending → in_progress → completed 流转：开始做之前标 in_progress，真正做完了立刻标 completed，不要攒到最后一起标；" +
             "同一时间尽量只有一条 in_progress。测试没过、实现不完整、卡在没解决的问题上时不要标 completed，保持 in_progress，" +
             "必要时另建一条任务写清阻碍。status 设为 deleted 永久删除任务（同时从别的任务的依赖里摘掉，此时其他字段忽略）。" +
-            "addBlocks / addBlockedBy 设置依赖，只增不减，不允许自己依赖自己或形成循环；metadata 按键合并，值为 null 的键会被删除。"
+            "addBlocks / addBlockedBy 设置依赖，只增不减，不允许自己依赖自己或形成循环；metadata 按键合并，值为 null 的键会被删除。" + TEAM_NOTE
 
     override fun parse(raw: JsonObject): ToolInput<TaskUpdateInput> = parseArgs {
         val obj = raw.withCanonicalKeys()
@@ -329,6 +341,8 @@ object TaskUpdateTool : Tool<TaskUpdateInput> {
         val board = ctx.tasks
         val task = board[input.taskId] ?: return@doneFlow failResult(notFound(board, input.taskId))
         if (input.delete) {
+            // 处于团队中：删的是团队共享清单上的任务（成员只能删自己认领的，权限在 TeamCoordinator）
+            if (board.team != null) return@doneFlow ctx.agents.team(TeamOp.TaskDelete(task.id))
             return@doneFlow ToolResult(
                 listOf(TextPart("已删除任务 ${task.label()}。")),
                 effects = listOf(SessionEffect.TaskDelete(task.id)),
@@ -363,6 +377,8 @@ object TaskUpdateTool : Tool<TaskUpdateInput> {
                 append(if (left == 0) "清单里的任务都已完成。" else "还有 $left 个任务没完成，可以用 TaskList 找下一个。")
             }
         }
+        // 处于团队中：改的是团队共享清单，落团队事件（认领、释放、完成的权限判断在 TeamCoordinator），结果文字由它给
+        if (board.team != null) return@doneFlow ctx.agents.team(TeamOp.TaskUpdate(task.id, patch))
         ToolResult(listOf(TextPart(text)), effects = listOf(SessionEffect.TaskUpdate(task.id, patch)))
     }
 
@@ -377,3 +393,11 @@ object TaskUpdateTool : Tool<TaskUpdateInput> {
         if (p.addBlockedBy.isNotEmpty()) add("被 ${p.addBlockedBy.joinToString("、") { "#$it" }} 阻塞")
     }
 }
+
+/**
+ * 四个任务工具的描述末尾共有的一句：处于 agent 团队里时它们读写的是团队的共享清单（Claude Code 同）。
+ * 描述是静态的（属于稳定前缀），所以写成条件句；会话里到底是哪份清单，TaskList 的结果抬头会明说
+ */
+private const val TEAM_NOTE =
+    "【agent 团队】处于团队中（负责人或成员）时，这些工具读写的是团队共享清单：认领 = owner 设成自己的名字，" +
+        "成员只能认领给自己、只能改自己认领的任务、不再做时 owner 传空串释放认领；负责人可以指派、改派、改全部。"

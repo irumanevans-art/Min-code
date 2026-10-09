@@ -164,9 +164,31 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 
 - v1 增量（2026-10-08）：新增 `auto_review_settings_loaded`（用户/托管四组规则与独立审查模型、可选能力声明）、`auto_reviewed`（turnId、callId、model、decision、reason、usage）和 `model_charged`（model、usage、可选 amount/currency，缺价明确未知）。审查用量计入回合；花费按请求模型冻结，按币种累计，不以换会话模型重算。含这些事件的日志旧版本打不开。
 
+- v1 增量（2026-10-08，M5 agent 团队）：新增事件 `team_created`（`teamId`、`leader`、`members[]`：每个成员规格 `name`、可选 `agentType`、`prompt`、可选 `model`：成员用的模型，缺省 = 跟负责人当前模型）、`team_member_joined`（`teamId`、`name`、`session`：成员的子会话建好，紧跟 `subagent_spawned`）、
+  `team_message`（`teamId`、`messageId`、`from`、`to`、`text`、可选 `broadcast`）、`team_task_created`（`teamId`、`taskId`、`subject`、可选 `description` / `activeForm` / `metadata`、`by`：与个人清单的 `task_created` 同载荷）、`team_task_updated`（`teamId`、`taskId`、`patch`：与个人清单的 `task_updated` 同一个 `TaskPatch`——认领 = `owner`、完成 = `status`、释放认领 = `owner` 传空串、依赖、`by`）、`team_task_deleted`（`teamId`、`taskId`、`by`）、
+  `team_disbanded`（`teamId`、`reason`：`completed` / `user_ended` / `error`、可选 `note`），定义在 `spi/TeamEvents.kt`（agent团队与邮箱设计 §三）。
+  除 `team_message` 外都写在**负责人（根会话）**的日志里，团队的成员表 / 任务清单 / 是否解散全部从它折叠，没有第二份状态；成员 = 子会话，`subagent_spawned` 照常写。
+  `team_message` 写在**收件人**的日志里，与同一次提交里的 `input_received`（`origin = agent`，`kind = message`，`clientMsgId` 为 `team:<teamId>:<messageId>`）成对出现——邮件进收件箱走的就是 SendMessage 那条路，
+  所以重开会话仍在收件箱里、提升进对话后只读一次（按 `clientMsgId` 去重）。广播给全体时每个收件人的日志各写一对，`broadcast = true`。
+  团队任务清单**就是个人清单的另一份实例**：处于团队中时 TaskCreate / TaskGet / TaskList / TaskUpdate 直接读写它（Claude Code 同；没有单独的团队任务工具），记录类型、补丁、依赖校验、折叠都复用个人清单的实现。
+  任务权限在落盘前由 `teamProblem` 判定、折叠时同一份判断再守一遍（Min 比 Claude Code 更严的一条）：成员只能认领给自己、只能释放自己的认领、只能改自己认领的任务（认领与开工可以一次做完），被未完成任务阻塞的不能认领；负责人可指派 / 改派 / 改全部；违规转换不写事件，只在负责人日志里记一条 `note`（warning）。
+  `/branch` 不继承团队：分支时剔除全部 `team_*` 事件（团队的负责人字段是建团队那个会话的 id，带到分支日志里折叠必抛），成员仍是原会话的子会话、只在 `subagent_spawned` 引用里保留。
+  含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-08，M5 定时调度）：新增事件 `cron_scheduled`（`cronId`、`prompt`、`recurring`、可选 `maxBudgetUsd`（缺省 = 不限）、`scheduledAtMs`、`cron`（5 字段表达式）与 `intervalMs`（间隔）恰好一个、循环任务的 `expiresAtMs`）、
+  `cron_fired`（`cronId`、`firedAtMs`、`clientMsgId`）、`cron_cancelled`（`cronId`）、`cron_expired`（`cronId`、`reason`：`age` / `budget` / `missed` / `no_pricing`、可选 `detail`），定义在 `spi/CronEvents.kt`。
+  定时任务是**根会话**的会话级状态，完全从它自己的日志折叠（`SessionState.crons`），重开会话折叠出未过期的任务就是「恢复」；创建时刻与 7 天过期时刻由内核写入时给定，折叠不读时钟。
+  `input_received.origin` 新增变体 `cron`（`cronId`）：到点触发时与 `cron_fired` 同一次提交写入（`clientMsgId` = `cron:<cronId>:<第几次>`），是会话预设的任务、不是人发的话——
+  UserPromptSubmit hook 不过它、不记回退点。`tool_outcome.result.effects` 新增 `cron_create` / `cron_delete`，内核紧跟着落成 `cron_scheduled` / `cron_cancelled`（编号、时刻在落事件时给）。
+  `/branch` 不继承定时任务：分支日志末尾对每个进行中的任务写一条 `cron_cancelled`。循环任务满 7 天、一次运行花到单次上限（`maxBudgetUsd`，**可选、默认不设**；宿主的 `cronMaxBudgetUsd` 天花板取小）、一次性任务的时刻在会话没开着时过去都写 `cron_expired`（`no_pricing` 不再写出：设了上限却缺 USD 价格是「本次跳过」，只记 note，任务保持进行中；取值保留只为读旧日志），同时记一条 `note`（warning）。
+  含新事件的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-08，M5 定时调度）：`turn_started.trigger` 新增取值 `cron`（定时任务到点唤醒的回合，转录里与 `resume` / `notification` / `hook` 一样留分隔）；`cron_scheduled` 新增可选字段 `source`（`wakeup` = ScheduleWakeup 安排的下一轮，缺省 = CronCreate），`tool_outcome.result.effects` 的 `cron_create` 同带 `source`。含新取值的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-08，M5 定时调度·花费上限口径）：新增事件 `cron_budget_stopped`（`cronId`、`fire`：这次运行是任务的第几次触发、可选 `detail`），定义在 `spi/CronEvents.kt`。设了花费上限的任务，一次运行（**整棵会话树**：根、子 agent、团队成员合计）花到上限后，下一个模型请求被拦下，这一次运行以 `turn_ended.outcome = interrupted(by = budget)` 收尾，并写 `cron_budget_stopped` + 一条 `note`（warning）；**任务保持进行中**。折叠按 `fire` 判断「连续」（紧挨着上一次触发也被停才算，中间有一次正常结束就从头数）；连续 2 次时内核紧跟着写 `cron_expired`（`reason = budget`）暂停任务。一次性任务与 ScheduleWakeup 的唤醒（触发后即 `Fired`）被停时同样写 `cron_budget_stopped` 与 `note`，不静默。`turn_ended.outcome.by` 新增取值 `budget`；`cron_scheduled.maxBudgetUsd` 缺省 = 不限（见上）。含新事件 / 取值的日志旧版本打不开；旧日志照常读。
+- v1 增量（2026-10-08，M5 定时调度·唤醒链寿命）：`cron_scheduled.expiresAtMs` 对 `source = wakeup` 的任务也写了——一条自驱循环（ScheduleWakeup 接力）共用**链头那一次**的 7 天寿命，接在一条唤醒后面安排的下一轮继承它的到期时刻；已经到期（到期时刻不晚于创建时刻）的建不成，内核丢掉这次修改并记一条 `note`。到点前按 `age` 过期照旧。旧日志里唤醒任务没有 `expiresAtMs`，读法不变。
+
 ## 用户文字不进工具结果（2026-10-08）
 
 - `tool_outcome.result` 新增可选字段 `userText`：用户亲口说的话（AskUserQuestion 的答案与自填、拒绝审批时写的说明），空时不落盘。
   模型视图把它放在同一条用户消息里、紧随全部 `tool_result` 之后，作为独立的文本块（排在 hook / 记忆的 system-reminder 之前）；`content` 只留「用户已回答 / 用户拒绝了」这一句事实。
   原因：官方对 Haiku 5.5 的说明——放在 tool_result 里的文字会被当作不可信内容忽略，用户中途说的话必须是独立的用户文本块。
 - 旧日志照常读，**不改写历史**：旧日志里用户的话还在 `content` 里，没有 `userText`，请求前缀与之前逐字相同；新日志的旧版本读法会丢掉这个字段（用户的话不再出现在请求里），含 `userText` 的日志旧版本能打开但模型看不到用户的回答。
+- v1 增量（2026-10-08，宿主生成的拒绝说明）：`approval_resolved.choice`（`type: deny`）新增可选字段 `fromHost`（缺省 false，false 不落盘）：`note` 是宿主 / hook 自己生成的话（`-p` 下“非交互模式下没有人审批，已按 --approve no 拒绝”、PermissionRequest hook 的说明），不是人写的。只有人亲手写的说明才进 `tool_outcome.result.userText`；`fromHost` 为真时说明留在 tool_result 的正文里（“这次调用被拒绝了：…”），不再冒充用户的话。旧日志里的拒绝没有这个字段，按人写的读（行为不变）。

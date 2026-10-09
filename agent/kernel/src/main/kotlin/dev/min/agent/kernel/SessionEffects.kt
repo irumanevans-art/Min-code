@@ -21,7 +21,7 @@ import dev.min.agent.spi.ToolResult
  * [state] 是提交时的会话状态：任务编号在这里分配（工具只预告），也用它筛掉不成立的任务效果
  * （目标任务不存在、依赖成环）——筛掉时记一条给人看的警告，不让日志带着一条折叠不了的事件。
  */
-internal fun ToolResult.effectEvents(state: SessionState): List<SessionEvent> {
+internal fun ToolResult.effectEvents(state: SessionState, nowMs: Long): List<SessionEvent> {
     // 工作副本：随着生成的任务事件前进，同一个结果里连着声明两次创建时第二次拿到下一个编号
     var working = state
     val events = mutableListOf<SessionEvent>()
@@ -39,13 +39,29 @@ internal fun ToolResult.effectEvents(state: SessionState): List<SessionEvent> {
                 TaskCreated(working.nextTaskId(), effect.subject, effect.description, effect.activeForm, effect.metadata)
             is SessionEffect.TaskUpdate -> TaskUpdated(effect.taskId, effect.patch)
             is SessionEffect.TaskDelete -> TaskDeleted(effect.taskId)
+            is SessionEffect.CronCreate -> dev.min.agent.spi.CronScheduled(
+                working.nextCronId(), effect.prompt, effect.recurring, effect.maxBudgetUsd, nowMs,
+                cron = effect.cron, intervalMs = effect.intervalMs, source = effect.source,
+                // 循环任务 7 天过期；一次性任务触发一次就结束、不按时间过期。例外是 ScheduleWakeup 的接力：整条链共用链头那一次的 7 天
+                // （接在一条唤醒后面的继承它的到期时刻，已经到期的就建不成），否则每一轮各活 7 天，链就永远不会结束
+                expiresAtMs = when {
+                    effect.source == dev.min.agent.spi.CRON_SOURCE_WAKEUP -> working.firingWakeup()?.expiresAtMs ?: (nowMs + dev.min.agent.spi.CRON_RECURRING_TTL_MS)
+                    effect.recurring -> nowMs + dev.min.agent.spi.CRON_RECURRING_TTL_MS
+                    else -> null
+                },
+            )
+            is SessionEffect.CronDelete -> dev.min.agent.spi.CronCancelled(effect.cronId)
         }
-        val problem = working.taskProblem(event)
+        val problem = working.taskProblem(event) ?: working.cronProblem(event)
         if (problem != null) {
-            events += Note(NoteLevel.Warning, "任务清单的一次修改被忽略：$problem")
+            events += Note(NoteLevel.Warning, (if (event is dev.min.agent.spi.CronScheduled || event is dev.min.agent.spi.CronCancelled) "定时任务的一次修改被忽略：" else "任务清单的一次修改被忽略：") + problem)
             continue
         }
-        working = if (event is dev.min.agent.spi.McpToolsLoaded) working.copy(loadedMcpTools = (working.loadedMcpTools + event.names).distinct()) else working.applyTaskEvent(event)
+        working = when (event) {
+            is dev.min.agent.spi.McpToolsLoaded -> working.copy(loadedMcpTools = (working.loadedMcpTools + event.names).distinct())
+            is dev.min.agent.spi.CronScheduled, is dev.min.agent.spi.CronCancelled -> working.applyCronEvent(event)
+            else -> working.applyTaskEvent(event)
+        }
         events += event
     }
     return events

@@ -69,7 +69,7 @@ internal fun interruptedResult(call: CallState): ToolResult {
     val text = when (val phase = call.phase) {
         CallPhase.Planned, is CallPhase.AwaitingApproval, CallPhase.Approved -> return notStartedResult()
         // 决定已落盘、结果没来得及写：补的结果与正常路径同形，用户的说明照样是独立的用户文本，不进 tool_result
-        is CallPhase.Denied -> return ToolExecutor.deniedResult(call.tool, phase.note)
+        is CallPhase.Denied -> return ToolExecutor.deniedResult(call.tool, phase.note, phase.fromHost)
         is CallPhase.EffectPending -> when (call.resumePolicy) {
             ResumePolicy.Replay ->
                 "这次调用执行到一半时会话被中断，没有拿到结果。它是只读的，可以直接重新调用。"

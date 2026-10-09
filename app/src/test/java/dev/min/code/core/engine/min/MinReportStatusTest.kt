@@ -11,7 +11,7 @@ import org.junit.Test
 class MinReportStatusTest {
     /** 内核 `Reports.statusOf` 的全部取值（改了那边，这里和资源要一起跟上） */
     private val kernelStatuses = listOf(
-        "completed", "failed", "interrupted", "interrupted-by-restart", "turn-limit", "stopped-by-hook",
+        "completed", "failed", "interrupted", "interrupted-by-restart", "turn-limit", "stopped-by-hook", "stopped-by-budget",
     )
 
     @Test
@@ -27,7 +27,7 @@ class MinReportStatusTest {
     @Test
     fun anInterruptedByValueAddedLaterIsCaughtHere() {
         // 内核对每个 InterruptedBy 写一个状态；新增取值时这里要有人想起来补文案
-        assertEquals("InterruptedBy 的取值变了：补内核的 statusOf、资源和上面的状态表", 4, InterruptedBy.entries.size)
+        assertEquals("InterruptedBy 的取值变了：补内核的 statusOf、资源和上面的状态表", 5, InterruptedBy.entries.size)
     }
 
     @Test

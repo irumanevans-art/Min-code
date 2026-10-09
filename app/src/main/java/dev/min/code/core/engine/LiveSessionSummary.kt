@@ -47,13 +47,19 @@ data class InteractionBrief(
     val toolName: String?,
     /** 来自哪个子 agent；主会话为 null。通知标题写「Explore（后台）请求批准：Bash」 */
     val agent: AgentLabel?,
+    /**
+     * 这张卡是定时任务的无人值守运行里弹出来的（回合由定时任务触发）：没有人在盯着，会话停在这里等人答。
+     * 通知标题据此写「定时任务在等你确认」，让人知道不是自己刚发的那句话在等
+     */
+    val fromSchedule: Boolean = false,
 )
 
-fun PendingInteraction.brief(): InteractionBrief = InteractionBrief(
+fun PendingInteraction.brief(fromSchedule: Boolean = false): InteractionBrief = InteractionBrief(
     id = id,
     kind = kind,
     toolName = (this as? PendingInteraction.Approval)?.toolName,
     agent = origin.agent,
+    fromSchedule = fromSchedule,
 )
 
 /**
@@ -66,7 +72,7 @@ fun AgentSessionState.toLiveSummary(keepAlive: Boolean): LiveSessionSummary = Li
     status = status,
     keepAlive = keepAlive,
     busy = busy,
-    headInteraction = headInteraction?.brief(),
+    headInteraction = headInteraction?.brief(fromSchedule = turn?.trigger == TurnTriggerView.Cron),
     interactionCount = interactions.size,
     statusText = turn?.detail ?: turn?.phase,
     errorMessage = errorMessage,

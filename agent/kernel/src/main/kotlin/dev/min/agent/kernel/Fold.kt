@@ -190,7 +190,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(turn == null) { "上一回合 ${turn?.turnId} 还没结束就开始了 ${e.turnId}" }
             val started = copy(turn = TurnState(e.turnId, e.trigger, record.atMs, openRequest = null, calls = emptyMap(), usage = Usage()))
             // 续跑、被子 agent 报告或后台 asyncRewake hook 唤醒的回合在转录里留一道分隔；用户发起的回合由用户消息本身标示
-            if (e.trigger == TurnTrigger.Resume || e.trigger == TurnTrigger.Notification || e.trigger == TurnTrigger.Hook) {
+            if (e.trigger == TurnTrigger.Resume || e.trigger == TurnTrigger.Notification || e.trigger == TurnTrigger.Hook || e.trigger == TurnTrigger.Cron) {
                 started.copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
             } else started
         }
@@ -229,7 +229,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             val call = t.calls.values.firstOrNull { (it.phase as? CallPhase.AwaitingApproval)?.approvalId == e.approvalId }
                 ?: error("没有在等 ${e.approvalId} 的调用")
             val resolved = when (val choice = e.choice) {
-                is ApprovalChoice.Deny -> CallPhase.Denied(choice.note)
+                is ApprovalChoice.Deny -> CallPhase.Denied(choice.note, choice.fromHost)
                 ApprovalChoice.Once, is ApprovalChoice.Always -> CallPhase.Approved
             }
             val always = (e.choice as? ApprovalChoice.Always)?.rule
@@ -342,6 +342,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
                     is SessionEffect.ModeChange -> current
                     // 任务清单的修改同理：由内核紧跟着写成 TaskCreated 等事件，在那些事件上折叠
                     is SessionEffect.TaskCreate, is SessionEffect.TaskUpdate, is SessionEffect.TaskDelete -> current
+                    // 定时任务同理：内核紧跟着写成 cron_scheduled / cron_cancelled
+                    is SessionEffect.CronCreate, is SessionEffect.CronDelete -> current
                     is SessionEffect.McpLoadTools -> current
                 }
             },
@@ -389,6 +391,18 @@ fun SessionState.apply(record: EventRecord): SessionState {
             taskProblem(e)?.let { error("任务事件不合法：$it") }
             applyTaskEvent(e)
         }
+        is dev.min.agent.spi.TeamCreated, is dev.min.agent.spi.TeamMemberJoined, is dev.min.agent.spi.TeamTaskCreated,
+        is dev.min.agent.spi.TeamTaskUpdated, is dev.min.agent.spi.TeamTaskDeleted, is dev.min.agent.spi.TeamDisbanded -> {
+            teamProblem(e)?.let { error("团队事件不合法：$it") }
+            applyTeamEvent(e)
+        }
+        is dev.min.agent.spi.CronScheduled, is dev.min.agent.spi.CronFired, is dev.min.agent.spi.CronCancelled, is dev.min.agent.spi.CronExpired,
+        is dev.min.agent.spi.CronBudgetStopped -> {
+            cronProblem(e)?.let { error("定时任务事件不合法：$it") }
+            applyCronEvent(e)
+        }
+        // 邮件事件只记「收到过什么」；校验在发送端（Hub），收件人的日志里不必有团队状态
+        is dev.min.agent.spi.TeamMessage -> copy(teamMail = teamMail + TeamMailItem(e.teamId, e.messageId, e.from, e.text, e.broadcast))
         // 回顾只给人看：不碰 history，不进 modelMessages；花的钱计入会话用量
         is dev.min.agent.spi.SessionRecap -> copy(
             recap = RecapView(e.text, e.trigger, lastTurn?.turnId),

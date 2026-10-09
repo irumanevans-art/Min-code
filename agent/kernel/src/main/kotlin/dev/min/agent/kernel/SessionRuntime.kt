@@ -37,6 +37,7 @@ import dev.min.agent.spi.DecidedBy
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InputReceived
 import dev.min.agent.spi.PermissionRulesLoaded
@@ -96,6 +97,13 @@ class SessionRuntime private constructor(
     /** 重开出来的会话才有（[resumeAdvice] 的基线）；新建的为 null */
     @Volatile
     internal var resumeBasis: ResumeBasis? = null
+
+    /**
+     * 正在跑的那次定时任务运行的花费记账（[CronEngine] 在触发时立、空闲时清）。模型请求发出前 [ModelBilling] 要看它：
+     * 花到上限就不再发。null = 当前没有定时运行在记账
+     */
+    @Volatile
+    internal var cronRun: CronRun? = null
 
     /** 子会话的模型请求要过 Hub 的并发闸（手机上同时流式的子 agent 有上限）；根会话为 null，不受限 */
     @Volatile
@@ -547,13 +555,14 @@ class SessionRuntime private constructor(
 
     /**
      * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
+     * 返回 PreModelSwitch hook 拒绝切模型的理由（模型没切；mode / effort 照常生效）；没被拒返回 null——宿主靠它别把“没切成”报成成功
      * 参数为 null 表示不改；要把思考档位清回「不控制」用 [clearEffort]（与 [effort] 同给时以 [effort] 为准）
      */
     suspend fun changeSettings(
         model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null, clearEffort: Boolean = false, cwd: GuestPath? = null,
         /** 切模型请求的来源，进 PreModelSwitch 的 `source`：command（/model、/config）/ picker / sdk */
         modelSwitchSource: String = "command",
-    ) {
+    ): String? {
         val locks = state.value.autoReviewSettings
         require(!(mode == PermissionMode.Auto && locks.disableAutoMode || mode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode)) { "托管策略禁用了这个权限模式" }
         if (cwd != null && cwd != state.value.settings.cwd) {
@@ -567,10 +576,11 @@ class SessionRuntime private constructor(
         if (refusal != null) modelSwitchHooks.noteRefused(refusal)
         val newModel = model.takeIf { refusal == null }
         val clear = clearEffort && effort == null && state.value.settings.effort != null
-        if (newModel == null && mode == null && effort == null && !clear) return
+        if (newModel == null && mode == null && effort == null && !clear) return refusal
         commit(listOf(SettingsChanged(model = newModel, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)
         // 模型真的换了才通知；同一个模型再设一次不算切换
         if (newModel != null && newModel != from) modelSwitchHooks.applied(from, newModel, modelSwitchSource)
+        return refusal
     }
 
     /** 宿主设置入口；只修改审查模型，不改变会话模型或稳定提示前缀。 */
@@ -585,8 +595,30 @@ class SessionRuntime private constructor(
     internal val modelBilling = ModelBilling(this)
 
     /** 中断当前回合：回合 Job 取消，收尾（每个悬空调用补结果）在回合自己的 finally 里写 */
-    fun interrupt() {
-        synchronized(turnLock) { turnJob }?.cancel()
+    fun interrupt() = interrupt(InterruptedBy.User)
+
+    /**
+     * 同上，但回合的结局记 [by]（目前只有定时任务的花费上限用 [InterruptedBy.Budget]）。原因先放下再取消：
+     * 回合的 catch 里读它，读不到就是用户
+     */
+    internal fun interrupt(by: InterruptedBy) {
+        val job = synchronized(turnLock) { turnJob }?.takeIf { it.isActive } ?: return
+        interruptReason = by
+        job.cancel()
+    }
+
+    @Volatile
+    private var interruptReason: InterruptedBy? = null
+
+    /** 取走中断原因（取一次就清掉）；没有 = 用户中断 */
+    internal fun takeInterruptReason(): InterruptedBy = interruptReason.also { interruptReason = null } ?: InterruptedBy.User
+
+    /**
+     * 这次定时运行的记账：根会话自己持有，树里的子 agent / 团队成员取根会话的那份（[CronRun] 按整棵树累计）。没有运行在记账为 null
+     */
+    internal fun treeCronRun(): CronRun? {
+        val root = _state.value.origin?.root ?: return cronRun
+        return hub?.get(root)?.cronRun
     }
 
     /** 进程被杀恢复后，用户点「继续」：没有新输入也开一回合，让模型看着恢复补上的结果接着做 */
@@ -604,11 +636,32 @@ class SessionRuntime private constructor(
         delivery: Delivery,
         origin: InputOrigin,
         startTurn: TurnTrigger?,
+        /**
+         * 和这条输入**同一次提交**一起落盘的附带事件，排在它前面（团队邮件的 team_message、定时任务的 cron_fired）：
+         * 「记了来历」与「输入进了收件箱」要么都在要么都不在，重发被去重时附带事件也不会多写一份
+         */
+        extra: List<SessionEvent> = emptyList(),
+        /** 提交时再判一次的前置条件（与去重条件同在一把锁里）；默认无。定时任务用它保证「触发时确实空闲」 */
+        precondition: (SessionState) -> Boolean = { true },
     ): Boolean {
-        commitIf(listOf(InputReceived(clientMsgId, parts, delivery, origin)), Durability.Sync) { clientMsgId !in it.seenInputs }
+        commitIf(extra + InputReceived(clientMsgId, parts, delivery, origin), Durability.Sync) { clientMsgId !in it.seenInputs && precondition(it) }
             ?: return false
         startTurn?.let(::startTurnIfIdle)
         return true
+    }
+
+    /**
+     * 此刻没有回合、没有维护、也没有排着的输入——定时任务触发的时机（会话空闲）。
+     * 只看 state.turn 不够：回合 Job 已经起了、TurnStarted 还没落盘的空档里 state.turn 仍为 null（见 [whileIdle] 的同款处理）
+     */
+    internal fun isQuiescent(): Boolean = synchronized(turnLock) {
+        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true &&
+            _state.value.turn == null && _state.value.inbox.isEmpty()
+    }
+
+    /** 此刻没有回合在跑（含启动中的），收件箱有无输入不论——团队调度判断「成员是否空闲」用 */
+    internal fun isTurnIdle(): Boolean = synchronized(turnLock) {
+        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true && _state.value.turn == null
     }
 
     @Volatile
@@ -795,7 +848,7 @@ class SessionRuntime private constructor(
             if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
-            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification || trigger == TurnTrigger.Hook) && s.inbox.isEmpty()) return
+            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification || trigger == TurnTrigger.Hook || trigger == TurnTrigger.Cron) && s.inbox.isEmpty()) return
             turnJob = scope.launch {
                 val runner = TurnRunner(this@SessionRuntime)
                 var next: TurnTrigger? = trigger
@@ -830,8 +883,12 @@ class SessionRuntime private constructor(
             /** false = 不跑 SessionStart(startup)。分支（Hub.branch）用它：分支是原对话的延续，不是新会话（CC 的 fork 同样不跑） */
             runStartHooks: Boolean = true,
         ): SessionRuntime {
+            val events = listOf(created) + initial
+            // 先折叠再落盘：初始事件里有折叠不了的（比如分支带来别的会话的 team_created）就在这里失败，磁盘上不留下
+            // 一个每次打开都抛的孤儿会话（store.list() 会列出它）。seq 与时间由存储分配，这里的只用来验证
+            fold(header, events.mapIndexed { i, e -> EventRecord(i + 1L, deps.clock.nowMs(), e) })
             val log = store.create(header)
-            val records = log.append(listOf(created) + initial, Durability.Sync)
+            val records = log.append(events, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
             if (loadSettings && deps.memoryHome == null && deps.autoModeReviewer != null) {
                 runtime.commit(listOf(dev.min.agent.spi.AutoReviewSettingsLoaded(reviewer = deps.autoModeReviewer)), Durability.Sync)

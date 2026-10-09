@@ -49,14 +49,12 @@ internal fun SessionState.applyTaskEvent(e: SessionEvent): SessionState = when (
         taskSeq = taskSeq + 1,
     )
     is TaskUpdated -> copy(tasks = tasks.updated(e.taskId, e.patch))
-    is TaskDeleted -> copy(
-        tasks = tasks.filterNot { it.id == e.taskId }
-            .map { it.copy(blocks = it.blocks - e.taskId, blockedBy = it.blockedBy - e.taskId) },
-    )
+    is TaskDeleted -> copy(tasks = tasks.withoutTask(e.taskId))
     else -> this
 }
 
-private fun List<TaskRecord>.updated(id: String, p: TaskPatch): List<TaskRecord> = map { t ->
+/** 对一份任务列表套用一次修改。个人清单与团队共享清单共用这一份实现（owner、依赖对称、解锁都在这里） */
+internal fun List<TaskRecord>.updated(id: String, p: TaskPatch): List<TaskRecord> = map { t ->
     when {
         t.id == id -> t.copy(
             status = p.status ?: t.status,
@@ -86,3 +84,7 @@ private fun String?.cleared(old: String?): String? = when (this) {
 private fun JsonObject.merged(patch: JsonObject): JsonObject =
     if (patch.isEmpty()) this
     else JsonObject((this + patch).filterValues { it !is JsonNull })
+
+/** 删掉一条任务，同时从别的任务的 blocks / blockedBy 里摘掉它（个人清单与团队清单共用） */
+internal fun List<TaskRecord>.withoutTask(id: String): List<TaskRecord> =
+    filterNot { it.id == id }.map { it.copy(blocks = it.blocks - id, blockedBy = it.blockedBy - id) }

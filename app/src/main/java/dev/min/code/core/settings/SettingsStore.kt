@@ -8,6 +8,7 @@ import dev.min.code.BuildConfig
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -54,6 +55,9 @@ private val KEY_GUEST_CONFIG_SECRETS = booleanPreferencesKey("guest_config_secre
 private val KEY_INJECT_SHELL_CREDENTIALS = booleanPreferencesKey("inject_shell_credentials")
 private val KEY_SHARE_DEVICE_STORAGE = booleanPreferencesKey("share_device_storage")
 private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
+private val KEY_TEAM_MAX_CONCURRENT = intPreferencesKey("team_max_concurrent")
+private val KEY_CRON_MAX_BUDGET_USD = doublePreferencesKey("cron_max_budget_usd")
+private val KEY_CRON_ENABLED = booleanPreferencesKey("cron_enabled")
 private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
 private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
 private val KEY_DEVICE_WRITE_ALLOWLIST = stringSetPreferencesKey("device_write_allowlist")
@@ -295,6 +299,21 @@ data class AppSettings(
      */
     val controlDevice: Boolean = false,
     /**
+     * Min Agent 的 agent 团队同时运行的成员数（设置项 `teamMaxConcurrent`，M5 决定 2）：默认 3，硬上限 8，超出的成员排队。
+     * 超过 8 的值按 8 写入（[SettingsStore.setTeamMaxConcurrent]）。引擎实时跟着它（改了立刻对之后的决定生效，调高会放出排队的成员）
+     */
+    val teamMaxConcurrent: Int = dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
+    /**
+     * 定时任务单次运行花费的天花板（美元，设置项 `cronMaxBudgetUsd`）。**默认不设**：定时任务和 Claude Code 一样没有默认上限，
+     * 花的是用户自己的额度；设了就是模型传的 `max_budget_usd` 的天花板（取小）。null = 不限
+     */
+    val cronMaxBudgetUsd: Double? = null,
+    /**
+     * 定时任务的全局开关（Claude Code 的 `CLAUDE_CODE_DISABLE_CRON` 的 App 版）。默认开。关着时 Min 的定时任务不触发、也不能新建，
+     * 已有的任务原样留着，打开后照常继续
+     */
+    val cronEnabled: Boolean = true,
+    /**
      * Min Agent（自研内核的第三个会话引擎）的实验开关。release 默认关、debug 默认开（M2-B 设计 §10.2 拍板 1）：
      * 新引擎首发的通行做法，真机门槛过了再议是否改默认。**关着时一切 Min 入口都不出现**——开始面板的分段、
      * 抽屉里的 Min 会话、设置里的 Min 段。关开关时 Min 引擎整个停下（在跑的回合被中断、会话卸载，见 `AgentSessionRegistry` 对 Disabled 的处理）：入口藏起来之后不留看不见的回合；
@@ -531,6 +550,9 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
             shareDeviceStorage = p[KEY_SHARE_DEVICE_STORAGE] ?: false,
             controlDevice = p[KEY_CONTROL_DEVICE] ?: false,
+            teamMaxConcurrent = p[KEY_TEAM_MAX_CONCURRENT]?.takeIf { it >= 1 }?.coerceAtMost(dev.min.agent.kernel.TeamLimits.MAX_CONCURRENT) ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
+            cronMaxBudgetUsd = p[KEY_CRON_MAX_BUDGET_USD]?.takeIf { it.isFinite() && it > 0 },
+            cronEnabled = p[KEY_CRON_ENABLED] ?: true,
             minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
             lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
             deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
@@ -848,6 +870,31 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setControlDevice(enabled: Boolean) =
         context.dataStore.edit { it[KEY_CONTROL_DEVICE] = enabled }
+
+    /**
+     * 改团队并发上限。先过 [dev.min.agent.kernel.TeamLimits.resolve]：超过硬上限 8 的值按 8 写入（返回的 [Accepted.note] 给用户看），
+     * 不再有「要确认」的路径；不合法的值（小于 1）不写
+     */
+    suspend fun setTeamMaxConcurrent(value: Int): dev.min.agent.kernel.TeamLimits.Setting {
+        val setting = dev.min.agent.kernel.TeamLimits.resolve(value)
+        if (setting is dev.min.agent.kernel.TeamLimits.Setting.Accepted) {
+            context.dataStore.edit { it[KEY_TEAM_MAX_CONCURRENT] = setting.value }
+        }
+        return setting
+    }
+
+    /**
+     * 改定时任务的花费天花板：null = 清掉（不限，默认）。不大于 0 或非有限数的值不写、返回 false——
+     * 写 0 会让每个任务一触发就超限，那不是用户想要的「不限」
+     */
+    suspend fun setCronMaxBudgetUsd(value: Double?): Boolean {
+        if (value != null && (!value.isFinite() || value <= 0)) return false
+        context.dataStore.edit { if (value == null) it.remove(KEY_CRON_MAX_BUDGET_USD) else it[KEY_CRON_MAX_BUDGET_USD] = value }
+        return true
+    }
+
+    suspend fun setCronEnabled(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_CRON_ENABLED] = enabled }
 
     suspend fun setMinAgentEnabled(enabled: Boolean) =
         context.dataStore.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }

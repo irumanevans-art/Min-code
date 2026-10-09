@@ -19,6 +19,7 @@ import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
 import dev.min.agent.ext.hooks.StopInput
 import dev.min.agent.ext.hooks.SubagentStopInput
+import dev.min.agent.ext.hooks.TeammateIdleInput
 import dev.min.agent.ext.hooks.UserPromptSubmitInput
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.spi.CompactionTrigger
@@ -75,6 +76,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     suspend fun run(trigger: TurnTrigger): Boolean {
         val turnId = TurnId(deps.ids.next("turn"))
         val startedAt = deps.clock.nowMs()
+        rt.takeInterruptReason() // 上一回合没来得及取走的中断原因不能带到这一回合
         rt.commit(listOf(TurnStarted(turnId, trigger)), Durability.Sync)
         return try {
             // 排着的 MCP 变化在回合开头一次性生效（MCP设计 §5.3）：回合中途不改工具表。
@@ -102,7 +104,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             rt.commit(listOf(TurnEnded(turnId, TurnOutcome.Completed, usage, deps.clock.nowMs() - startedAt)), Durability.Sync)
             true
         } catch (e: CancellationException) {
-            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.User)), Durability.Sync)
+            // 原因默认是用户；定时任务的花费上限停回合时先放下 Budget 再取消（SessionRuntime.interrupt(by)）
+            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(rt.takeInterruptReason())), Durability.Sync)
             throw e
         } catch (e: TurnAbort) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind, e.failureCause)), Durability.Sync)
@@ -111,6 +114,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             // 某个 hook 说 continue: false：结束这一轮，理由给人看（hooks设计 §5）
             val note = listOf(Note(NoteLevel.Info, "hook 停止了这一轮" + (e.reason?.let { "：$it" } ?: "")))
             rt.commit(note + closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Hook)), Durability.Sync)
+            false
+        } catch (e: CronBudgetReached) {
+            // 定时运行花到了单次上限，下一个请求被预检拦下：只停这一次运行，结局记预算（原因在引擎写的 Note 里）
+            rt.takeInterruptReason()
+            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Budget)), Durability.Sync)
             false
         } catch (e: TurnLimitReached) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit)), Durability.Sync)
@@ -168,7 +176,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                         )
                     }
                     // 模型说完了；生成期间有人插话就接着回应；Stop hook 拦下「结束」也接着做；否则回合结束
-                    if (promote(setOf(Delivery.Steer)) == 0 && !stopHookContinues(turnId, completed)) return
+                    if (promote(setOf(Delivery.Steer)) == 0 && !stopHookContinues(turnId, completed) && !teammateIdleContinues(turnId)) return
                 }
                 completed.truncated -> tools.rejectTruncated(turnId, calls)
                 else -> tools.executeAll(turnId, calls)
@@ -285,6 +293,40 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             listOf(TextPart(feedback)),
             Delivery.Steer,
             InputOrigin.Hook(event.name),
+            startTurn = null,
+        )
+        return promote(setOf(Delivery.Steer)) > 0
+    }
+
+    /**
+     * TeammateIdle（团队成员将空闲时触发，hooks.md :2653）：团队成员的回合要结束了、团队清单里又没有可认领的活——它真的要闲下来了——
+     * 才跑。这时间点在 Stop / SubagentStop 之后、**报告交给负责人之前**，所以拦下（exit 2 / `decision: block`）能让成员接着干，
+     * 而不会先唤醒负责人再改口。`continue: false` 同 Stop：整个停下。理由作为 hook 来源的输入交给成员，
+     * 与 Stop 共用同一个计数与上限（[stopBlockCap]）。
+     *
+     * 「清单里还有可认领的活」（pending、没人认领、没被未完成任务阻塞）时不跑：成员的开场提示就是让它先去认领，不算空闲。
+     * 只对团队成员（已入队、团队进行中）；负责人、普通子 agent、团队解散后的成员都不触发
+     */
+    private suspend fun teammateIdleContinues(turnId: TurnId): Boolean {
+        val origin = rt.state.value.origin ?: return false
+        val team = rt.hub?.get(origin.root)?.state?.value?.team?.takeIf { it.active } ?: return false
+        val name = team.nameOf(rt.sessionId) ?: return false
+        if (team.tasks.any { it.claimableIn(team) } || !hooks.has(HookEvent.TeammateIdle, null)) return false
+        val blocks = rt.state.value.turn?.stopHookBlocks ?: 0
+        val specific = HookJson.encodeToJsonElement(TeammateIdleInput.serializer(), TeammateIdleInput(teammateName = name, teamName = team.teamId)).jsonObject
+        val outcome = hooks.run(HookEvent.TeammateIdle, null, specific, turnId) ?: return false
+        if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
+        if (outcome.decision != HookOutcome.Decision.Block) return false
+        val cap = stopBlockCap()
+        if (blocks >= cap) {
+            rt.commit(listOf(Note(NoteLevel.Warning, "TeammateIdle hook 本回合已经让成员继续了 $cap 次，这次放行")), Durability.Batched)
+            return false
+        }
+        rt.receive(
+            ClientMsgId("hook-stop:${turnId.value}:${blocks + 1}"),
+            listOf(TextPart(outcome.reason ?: "TeammateIdle hook 要求继续，还没做完")),
+            Delivery.Steer,
+            InputOrigin.Hook(HookEvent.TeammateIdle.name),
             startTurn = null,
         )
         return promote(setOf(Delivery.Steer)) > 0

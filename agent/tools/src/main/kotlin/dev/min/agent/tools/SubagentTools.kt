@@ -129,7 +129,8 @@ object SendMessageTool : Tool<JsonObject> {
     )
     override fun description(profile: HarnessProfile) =
         "向子 agent 的 id 或名字发送 message；子 agent 可用 to=main 发给父会话。" +
-            "对方正在运行时作为插话送达，已结束时唤醒并开始新回合，完成后返回报告。消息不包含发送者的历史。"
+            "对方正在运行时作为插话送达，已结束时唤醒并开始新回合，完成后返回报告。消息不包含发送者的历史。" +
+            "在 agent 团队里，to 可以是队友的名字、lead（负责人）或 all（广播给全体）；团队邮件也是这条路。"
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
         requireSubagentString(raw, "to")
@@ -184,7 +185,7 @@ private fun customTypesSection(types: List<AgentType>): String {
 private const val MAX_CUSTOM_TYPES = 30
 private const val MAX_TYPE_DESCRIPTION = 200
 
-private fun subagentSchema(required: List<String>, vararg properties: Pair<String, JsonObject>) = JsonObject(
+internal fun subagentSchema(required: List<String>, vararg properties: Pair<String, JsonObject>) = JsonObject(
     mapOf(
         "type" to JsonPrimitive("object"),
         "properties" to JsonObject(properties.toMap()),
@@ -192,22 +193,22 @@ private fun subagentSchema(required: List<String>, vararg properties: Pair<Strin
     ),
 )
 
-private fun subagentProperty(type: String, description: String) = JsonObject(
+internal fun subagentProperty(type: String, description: String) = JsonObject(
     mapOf("type" to JsonPrimitive(type), "description" to JsonPrimitive(description)),
 )
 
-private fun JsonObject.subagentString(key: String): String? = (this[key] as? JsonPrimitive)?.content
+internal fun JsonObject.subagentString(key: String): String? = (this[key] as? JsonPrimitive)?.content
 
-private class InvalidSubagentInput(message: String) : IllegalArgumentException(message)
+internal class InvalidSubagentInput(message: String) : IllegalArgumentException(message)
 
-private fun requireSubagentString(raw: JsonObject, key: String) {
+internal fun requireSubagentString(raw: JsonObject, key: String) {
     val value = raw[key] as? JsonPrimitive
     if (value == null || !value.isString || value.content.isBlank()) {
         throw InvalidSubagentInput("字段 `$key` 必须是非空字符串。")
     }
 }
 
-private inline fun validateSubagentInput(raw: JsonObject, validate: () -> Unit): ToolInput<JsonObject> = try {
+internal inline fun validateSubagentInput(raw: JsonObject, validate: () -> Unit): ToolInput<JsonObject> = try {
     validate()
     ToolInput.Valid(raw)
 } catch (e: InvalidSubagentInput) {
