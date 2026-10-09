@@ -132,6 +132,9 @@ internal class TeamCoordinator(
     /** 这个成员刚结束的回合是不是被队友的邮件叫起来的（取一次就清掉）。[SessionHub.deliver] 据此决定要不要唤醒负责人 */
     fun takePeerTurn(id: SessionId): Boolean = peerTurns.remove(id)
 
+    /** 成员此刻是不是在排队等并发名额（还没开跑、没有回合）。「整棵树安静」的判定要把它算作还在跑（[SessionHub.treeTurnsIdle]） */
+    fun isWaiting(member: SessionId): Boolean = member in waiting
+
     // ---- 入口 ----
 
     suspend fun handle(caller: SessionRuntime, turnId: TurnId, callId: CallId, op: TeamOp): ToolResult {

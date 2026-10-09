@@ -1149,8 +1149,13 @@ class SessionHub(
         }
     }
 
-    /** 整棵树此刻都没有回合在跑（含启动中的）：定时运行的记账要等到这时才算结束 */
-    internal fun treeTurnsIdle(id: SessionId): Boolean = subtreeOnline(id).all { runtimes[it]?.isTurnIdle() ?: true }
+    /**
+     * 整棵树此刻都没有回合在跑（含启动中的）：定时运行的记账要等到这时才算结束。
+     * 排队等并发名额、还没开跑的团队成员**不算安静**——它们没有回合，但名额一空就会开跑、就会花钱，
+     * 记账要是在它们开跑前撤掉，它们的花费就漏出这次运行的上限（名额是 Hub 级的，可能被别的树占着）
+     */
+    internal fun treeTurnsIdle(id: SessionId): Boolean =
+        subtreeOnline(id).all { (runtimes[it]?.isTurnIdle() ?: true) && !teams.isWaiting(it) }
 
     /** [id] 与它在线的后代（按 SubagentOrigin.parent 往下找） */
     internal fun subtreeOnline(id: SessionId): List<SessionId> {
