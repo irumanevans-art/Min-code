@@ -25,7 +25,7 @@ class WorkflowE2ETest {
             java.nio.file.Files.writeString(scripts.resolve("review.js"),"export const meta={name:'review',description:'Review'}; return 123;")
             val home=tmp.newFolder("home").toPath()
             val args=parseArgs(arrayOf("--provider","desktop-test","--model","scripted","--base-url","http://127.0.0.1:9","--wire","openai_chat",
-                "--mode","bypassPermissions","--api-key-env",if(System.getenv("USERNAME")!=null) "USERNAME" else "USER","-p","/review"),work)
+                "--mode","bypassPermissions","--api-key-env",if(System.getenv("USERNAME")!=null) "USERNAME" else "USER","-p","/review\targs"),work)
             val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
             try {
                 val app=DesktopApp(args,scope,home,claudeHome=tmp.newFolder("claude").toPath())
@@ -40,6 +40,7 @@ class WorkflowE2ETest {
                 assertEquals("123",out.toString().trim())
                 assertEquals(JsonPrimitive(123),rt.state.value.workflowEvents.filterIsInstance<WorkflowRunCompleted>().single().result)
                 assertTrue(app.hub().pending.value.isEmpty())
+                assertEquals(JsonPrimitive("args"),rt.state.value.workflowEvents.filterIsInstance<WorkflowRunStarted>().single().args)
             } finally { scope.cancel() }
         }
     }

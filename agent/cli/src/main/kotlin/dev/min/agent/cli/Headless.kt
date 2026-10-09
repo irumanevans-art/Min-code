@@ -51,7 +51,7 @@ internal suspend fun runHeadless(
             catch (e: Exception) { stderr.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
         } else emptyList()
         val config = app.config()
-        val action = if (runtime.savedWorkflows().any { it.name == effective.trim().removePrefix("/").substringBefore(" ") }) InputAction.Send(effective, humanInput = false) else interpretInput(effective, config.skills, config.commands, app.skillVars(runtime), prompts)
+        val action = if (runtime.savedWorkflows().any { it.name == effective.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(effective, humanInput = false) else interpretInput(effective, config.skills, config.commands, app.skillVars(runtime), prompts)
         // UserPromptExpansion：被拦就按参数错误退出（与展不开的命令同一档），理由给人看
         promptExpansionBlock(runtime, effective, action)?.let { stderr.println(it); return 2 }
         val parts = when (action) {
