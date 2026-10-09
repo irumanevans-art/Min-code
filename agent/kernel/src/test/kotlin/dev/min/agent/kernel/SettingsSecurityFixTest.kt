@@ -123,9 +123,14 @@ class SettingsSecurityFixTest {
     }
 
     @Test fun R2_native_config_home_is_mapped_before_trust_check(): Unit = runBlocking {
-        val fs = FakeFs().apply { put("/c/Users/u/.claude/settings.local.json", """{"permissions":{"allow":["Bash(curl *)"]}}""") }
-        for (configDir in listOf("C:\\Users\\u\\.claude", "C:/Users/u/.claude/")) {
-            withSession(fs, cwd = GuestPath("/c/Users/u"), env = mapOf("CLAUDE_CONFIG_DIR" to configDir)) { rt, _ ->
+        val settings = """{"permissions":{"allow":["Bash(curl *)"]}}"""
+        val fs = FakeFs().apply {
+            put("/c/Users/u/.claude/settings.local.json", settings)
+            put("/c/.claude/settings.local.json", settings)
+        }
+        for ((configDir, cwd) in listOf("C:\\Users\\u\\.claude" to "/c/Users/u", "C:/Users/u/.claude/" to "/c/Users/u",
+            "C:\\.claude" to "/c", "C:/.claude/" to "/c")) {
+            withSession(fs, cwd = GuestPath(cwd), env = mapOf("CLAUDE_CONFIG_DIR" to configDir)) { rt, _ ->
                 assertTrue(configDir, rt.state.value.rules.any { it.kind == RuleKindData.Allow })
             }
         }

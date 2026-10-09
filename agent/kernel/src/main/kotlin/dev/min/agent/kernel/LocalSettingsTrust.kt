@@ -10,7 +10,8 @@ internal suspend fun trustedLocalSettings(deps: KernelDeps, snapshot: SettingsSn
     // CLI 环境变量是本机写法，盘符/反斜杠须先映射为宿主通用的 guest 路径，才能比较会话起点。
     val configParent = deps.env("CLAUDE_CONFIG_DIR")?.replace('\\', '/')?.trimEnd('/')?.substringBeforeLast('/')
     val configGuest = configParent?.let {
-        if (Regex("^[A-Za-z]:/").containsMatchIn(it)) "/" + it[0].lowercaseChar() + it.drop(2) else it.ifEmpty { "/" }
+        // 配置目录直接放在盘符根时，取父目录后只剩 C:，也须映射为 /c。
+        if (Regex("^[A-Za-z]:(/|$)").containsMatchIn(it)) "/" + it[0].lowercaseChar() + it.drop(2) else it.ifEmpty { "/" }
     }
     val configHome = configGuest?.takeIf { it.startsWith('/') }?.let(::GuestPath) ?: deps.memoryHome
     val result = mutableSetOf<GuestPath>()

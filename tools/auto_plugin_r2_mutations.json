@@ -270,5 +270,13 @@
     "replacement": "val configHome = deps.memoryHome",
     "module": "kernel",
     "test": "SettingsSecurityFixTest.R2_native*"
+  },
+  {
+    "name": "native-drive-root",
+    "file": "agent/kernel/src/main/kotlin/dev/min/agent/kernel/LocalSettingsTrust.kt",
+    "old": "Regex(\"^[A-Za-z]:(/|$)\")",
+    "replacement": "Regex(\"^[A-Za-z]:/\")",
+    "module": "kernel",
+    "test": "SettingsSecurityFixTest.R2_native*"
   }
 ]
