@@ -1,5 +1,6 @@
 package dev.min.code.core.engine.min
 
+import dev.min.agent.host.CachedWebPort
 import dev.min.agent.host.JvmHttpHookClient
 import dev.min.agent.host.JvmSearch
 import dev.min.agent.host.RootfsFileSystem
@@ -25,8 +26,10 @@ import dev.min.agent.spi.PathScope
 import dev.min.agent.spi.ProcessPort
 import dev.min.agent.spi.ProcessSpec
 import dev.min.agent.spi.Search
+import dev.min.agent.spi.SearchBackend
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.Tool
+import dev.min.agent.spi.WebPort
 import dev.min.agent.spi.WorkspaceFs
 import dev.min.agent.spi.WorkspaceSnapshots
 import dev.min.agent.spi.SnapshotBudget
@@ -47,7 +50,9 @@ import dev.min.agent.tools.TaskGetTool
 import dev.min.agent.tools.TaskListTool
 import dev.min.agent.tools.TaskUpdateTool
 import dev.min.agent.tools.TaskStopTool
+import dev.min.agent.tools.WebFetchTool
 import dev.min.agent.tools.WriteTool
+import dev.min.agent.tools.web.HtmlPageConverter
 import kotlinx.coroutines.flow.Flow
 import java.time.ZoneId
 import java.util.UUID
@@ -156,6 +161,9 @@ fun minTools(): List<Tool<*>> = listOf(
     // M5：agent 团队与定时任务（只往末尾追加）
     dev.min.agent.tools.TeamCreateTool, dev.min.agent.tools.TeamDisbandTool,
     dev.min.agent.tools.CronCreateTool, dev.min.agent.tools.CronDeleteTool, dev.min.agent.tools.CronListTool, dev.min.agent.tools.ScheduleWakeupTool,
+    // 联网：WebFetch 始终在表里（走宿主侧 HTTP，权限是 `WebFetch(domain:…)` 规则）；WebSearch 要配了搜索后端才有，
+    // 随设置开关进出，由 [minToolsWithDevice] 的门控接在表的最末尾
+    WebFetchTool,
 )
 
 object MinKernelDeps {
@@ -184,6 +192,16 @@ object MinKernelDeps {
         workflowApprovals: dev.min.agent.spi.WorkflowApprovals = dev.min.agent.spi.WorkflowApprovals.SessionOnly,
         /** auto 审查的默认模型：同一个供应商档的目录小模型，没有返回 null（内核再退回会话模型自己） */
         providerFastModel: (String) -> dev.min.agent.protocol.ModelRef? = { null },
+        /**
+         * WebFetch 的网页端口：宿主侧 HTTP（不经 proot，与远程 MCP 同理），页面转换用桌面同一份 [HtmlPageConverter]，
+         * 缓存 15 分钟、总截止 5 分钟（[CachedWebPort] 的默认值，与桌面 CLI 的默认一致）。测试换成脚本化传输，别真联网
+         */
+        web: WebPort = CachedWebPort(HtmlPageConverter),
+        /**
+         * WebSearch 的搜索后端。由调用方做成「每次搜索现取设置」的转发（见 [ConfiguredSearchBackend]）：
+         * [KernelDeps] 一个进程只建一次，而用户随时会在设置里改后端
+         */
+        searchBackend: SearchBackend? = null,
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
         host = HostPorts(
@@ -191,6 +209,7 @@ object MinKernelDeps {
             snapshots = snapshots,
             // 远程 MCP 服务器走宿主侧的 HTTP（不经 proot）；stdio 服务器经 processes 进 proot
             mcpHttp = dev.min.agent.host.UrlConnectionTransport(),
+            web = web, searchBackend = searchBackend,
         ),
         platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
         checkpointBudget = CHECKPOINT_BUDGET,

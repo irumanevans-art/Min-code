@@ -29,6 +29,7 @@
   <string name="documents_root_rootfs">Ubuntu 环境</string>
   <string name="session_permission_device_path">这是你设备上的文件：%1$s</string>
   <string name="session_permission_outside_workspace">在 /workspace 之外：%1$s</string>
+  <string name="session_permission_domains">将访问：%1$s</string>
   <string name="settings_device_storage_title">让 agent 读写这台设备</string>
   <string name="settings_device_storage_off">关着时 agent 只看得见 /workspace。开了会把共享存储（相册、下载、文档）挂到 /sdcard，可写——proot 挂不出只读。</string>
   <string name="settings_device_storage_on">已挂到 /sdcard，可写。Android/data 与 Android/obb 仍然拿不到，那是系统对所有应用的限制。</string>

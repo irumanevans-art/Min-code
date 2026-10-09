@@ -170,6 +170,16 @@ private fun PermissionSheet(
                 )
             }
 
+            // 联网工具（WebFetch）要访问的域名单独成行：入参预览里的 URL 可以很长、主机名埋在中间，
+            // 而「允许」授予的恰恰是对这个域名的访问（「总是允许」写的规则也是 domain:）
+            approval?.domains?.takeIf { it.isNotEmpty() }?.let { domains ->
+                Text(
+                    stringResource(R.string.session_permission_domains, domains.joinToString(", ")),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = JetbrainsMono,
+                )
+            }
+
             // 按工具类型渲染入参：编辑类给 diff，Bash 给高亮命令，其余给美化 JSON。
             // 原来这里是 `input.toString()` 截断成一行流水账 —— 用户点「允许」时
             // 其实看不到自己批准了什么，而那正是权限确认唯一的意义。

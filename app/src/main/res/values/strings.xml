@@ -29,6 +29,7 @@
   <string name="documents_root_rootfs">Ubuntu</string>
   <string name="session_permission_device_path">On your device: %1$s</string>
   <string name="session_permission_outside_workspace">Outside /workspace: %1$s</string>
+  <string name="session_permission_domains">Connects to: %1$s</string>
   <string name="settings_device_storage_title">Let the agent read and write this device</string>
   <string name="settings_device_storage_off">Off — the agent only sees /workspace. Turning this on mounts your shared storage (photos, downloads, documents) at /sdcard, with write access; proot cannot mount it read-only.</string>
   <string name="settings_device_storage_on">Mounted at /sdcard, writable. Android/data and Android/obb stay out of reach — the system blocks those for every app.</string>
