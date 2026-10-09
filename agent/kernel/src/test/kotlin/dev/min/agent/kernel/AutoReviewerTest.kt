@@ -112,6 +112,19 @@ class AutoReviewerTest {
         }
     }
 
+    @Test fun R2_remote_urls_never_enter_host_path_resolver() = run {
+        val rt = session(ScriptedModel())
+        val resolved = mutableListOf<GuestPath>()
+        val ctx = PolicyContext(PermissionMode.Auto, credentialPaths = rt.deps.credentialPaths,
+            canonicalPath = { resolved += it; it })
+        for (url in listOf("https://example.com/x", "ssh://example.com/r.git", "s3://bucket/data", "http://example.com/root/.min-agent/mcp-oauth.json")) {
+            val request = AutoReviewer(rt).request(command("curl $url"), TEST_PROFILE, ctx, AutoModeConfig())
+            val data = Json.parseToJsonElement((request.messages.single().parts.single() as TextPart).text).jsonObject
+            assertNotEquals(url, AutoReviewer.REDACTED, data["input"]!!.jsonPrimitive.content)
+            assertTrue("远端 URL 不应访问本机文件系统：$url", resolved.isEmpty())
+        }
+    }
+
     @Test fun R2_classifyAllShell_reads_trusted_config_and_reviews_even_readonly_shell() = run {
         val fs = FakeFs().apply { put("/home/.claude/settings.json", """{"autoMode":{"classifyAllShell":true}}""") }
         val config = dev.min.agent.ext.config.autoReviewSettingsOf(dev.min.agent.ext.config.SettingsLoader.load(fs, GuestPath("/workspace"), GuestPath("/home")).merged).config

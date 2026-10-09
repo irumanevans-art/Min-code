@@ -102,16 +102,18 @@ Inspect
     }
 
     @Test fun R2_final_true_allows_dependency_despite_lower_false(): Unit = runBlocking {
+        for (managed in listOf(false, true)) {
         val fs = FakeFs().apply {
             put("/home/.claude/settings.json", """{"enabledPlugins":{"a@m":true,"b@m":false}}""")
             put("/work/.claude/settings.local.json", """{"enabledPlugins":{"b@m":true}}""")
-            put("/etc/claude-code/managed-settings.json", """{"enabledPlugins":{"b@m":true}}""")
+            if (managed) put("/etc/claude-code/managed-settings.json", """{"enabledPlugins":{"b@m":true}}""")
             put("/home/.claude/plugins/cache/m/a/1.0/.claude-plugin/plugin.json", """{"name":"a","dependencies":["b"]}""")
             put("/home/.claude/plugins/cache/m/b/1.0/.claude-plugin/plugin.json", """{"name":"b"}""")
         }
-        val loaded = bundle(fs)
+        val loaded = bundle(fs, trust = true)
         assertEquals(setOf("a@m", "b@m"), loaded.batch.plugins.map { it.ref.id }.toSet())
         assertFalse(loaded.notes.any { "disabled" in it })
+        }
     }
 
     @Test fun R2_user_enable_is_not_downgraded_by_project_true(): Unit = runBlocking {

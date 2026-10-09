@@ -349,7 +349,8 @@ class HooksH3EventsTest {
         val model = bashModel("rm -rf /")
         val rt = hubWith(PermissionMode.Default, model, http, permHook())
         rt.send(ClientMsgId("u1"), listOf(TextPart("清空")))
-        rt.state.first { it.turn?.calls?.get(CallId("c1"))?.phase is CallPhase.AwaitingApproval }
+        val state = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval || it.turn == null && it.lastTurn != null }
+        assertTrue("安全底线必须留下人的审批", state.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval)
         val requested = events(rt).filterIsInstance<dev.min.agent.spi.ApprovalRequested>().single()
         assertNotNull("安全底线的问人，hook 的 allow 越不过", requested.floorReason)
         assertTrue(events(rt).any { it is dev.min.agent.spi.Note && it.text.contains("底线") })
@@ -378,7 +379,8 @@ class HooksH3EventsTest {
         val hub = SessionHub(store, deps, scope)
         val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions, initial = listOf(permHook2()))
         rt.send(ClientMsgId("u1"), listOf(TextPart("看计划")))
-        rt.state.first { it.turn?.calls?.get(CallId("c1"))?.phase is CallPhase.AwaitingApproval }
+        val state = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval || it.turn == null && it.lastTurn != null }
+        assertTrue("alwaysAsk 必须留下人的审批", state.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval)
         assertEquals("alwaysAsk 的问人，hook 的 allow 无效", 1, events(rt).filterIsInstance<dev.min.agent.spi.ApprovalRequested>().size)
         assertTrue(events(rt).any { it is dev.min.agent.spi.Note && it.text.contains("底线") })
     }
