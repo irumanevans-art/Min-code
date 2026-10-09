@@ -62,8 +62,13 @@ class HookModelTypesTest {
         val agent = interpretPrompt(HookEvent.PreToolUse, agentHandler(HookEvent.PreToolUse), PromptHookOutcome.Done("""{"ok": false, "reason": "agent 说不"}"""))
         assertEquals(HookDecision.Deny, agent.decision)
         assertTrue(agent.shouldContinue)
-        // ok:true 在 PreToolUse 上像 allow
-        assertEquals(HookDecision.Allow, interpretPrompt(HookEvent.PreToolUse, promptHandler(HookEvent.PreToolUse), PromptHookOutcome.Done("""{"ok": true}""")).decision)
+        // ok:true 一律 Neutral（M1）：CC 的表只定义 ok:false 的行为，ok:true 从不等于 permissionDecision:allow——
+        // 评估器是廉价小模型、输入里有模型可控的 tool_input，翻成放行就绕过审批；只有 command / http 的
+        // permissionDecision:allow 能免审
+        for (event in listOf(HookEvent.PreToolUse, HookEvent.Stop, HookEvent.PostToolUse, HookEvent.UserPromptSubmit)) {
+            assertEquals("ok:true 在 $event 上必须是中性", HookDecision.Neutral,
+                interpretPrompt(event, promptHandler(event), PromptHookOutcome.Done("""{"ok": true}""")).decision)
+        }
     }
 
     @Test fun `UserPromptSubmit 与 PostToolUseFailure 的口径`() {

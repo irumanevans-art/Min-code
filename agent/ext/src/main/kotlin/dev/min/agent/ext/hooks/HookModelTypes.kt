@@ -57,7 +57,8 @@ fun parsePromptDecision(text: String): PromptDecision? {
 }
 
 /**
- * 把模型结论翻译成引擎结论。ok:false 的行为按事件走 CC 的表：
+ * 把模型结论翻译成引擎结论。ok:true 一律中性（免审只有 command / http 的 permissionDecision:allow）；
+ * ok:false 的行为按事件走 CC 的表：
  * - Stop / SubagentStop：理由作为下一条指令交回模型、回合继续（impossible 才放行结束）——同 command 的 Block
  * - PreToolUse：默认拒绝并结束回合；continueOnBlock（agent 恒真）换把理由作为工具错误交回模型继续
  * - PostToolUse：默认结束回合 + 警告；continueOnBlock 换成反馈（同 exit 2 的 block）
@@ -84,8 +85,10 @@ fun interpretPrompt(event: HookEvent, handler: HookHandler, outcome: PromptHookO
         notes = base.notes + "模型回复：${outcome.text.lineSequence().firstOrNull().orEmpty().take(200)}",
     )
     if (decision.ok) {
-        // ok:true = 放行。PreToolUse 上像 permissionDecision:allow 一样免审；别的事件中性即可
-        return if (event == HookEvent.PreToolUse) base.copy(decision = HookDecision.Allow) else base
+        // ok:true 一律中性（M1）：CC 的 Response schema 表只定义 ok:false 的行为，ok:true 从不等于
+        // permissionDecision:allow——评估器是廉价小模型、输入里有模型可控的 tool_input，被注入后翻成
+        // 放行就绕过审批；只有 command / http hook 显式的 permissionDecision:allow 能免审
+        return base
     }
     val reason = decision.reason?.takeIf { it.isNotBlank() }
         ?: return base.copy(nonBlockingError = "「$label」$event hook（${handler.type}）回了 ok:false 但没给 reason（口径要求给）")
