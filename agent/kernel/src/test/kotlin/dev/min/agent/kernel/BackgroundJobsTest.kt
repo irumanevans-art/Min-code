@@ -277,10 +277,15 @@ class BackgroundJobsTest {
         rt.interrupt()
         rt.state.first { it.turn == null }
         rt.backgroundTimings.flushIntervalMs = 60_000 // 不让中途发出，专看结局的合并
+        // 节拍拉长：第一次检查发生在 250 行都读进缓冲之后，缓冲上限的丢弃才是确定的
+        rt.backgroundTimings.flushTickMs = 400
         val started = rt.startWatch()
         val lines = (1..(BackgroundJobs.MAX_BUFFERED_LINES + 50)).joinToString("") { "row-$it\n" }
         r.fs.append(r.exec.log("h1"), lines)
         eventually("全部读进来") { rt.background.find(started.taskId)!!.events == BackgroundJobs.MAX_BUFFERED_LINES + 50 }
+        eventually("第一批通知") { rt.notices().isNotEmpty() }
+        val first = rt.notices().first()
+        assertTrue("缓冲只留最近的 ${BackgroundJobs.MAX_BUFFERED_LINES} 行：最老的 50 行被丢掉并计数", "来不及送达" in first && first.contains("row-51\n") && !first.contains("row-1\n"))
         r.exec.finish("h1", 0)
         eventually("结局通知") { rt.notices().any { "已结束" in it } }
         // 第一批在读到的瞬间就发了（首条不等间隔）；结局通知是最后一条，放不下的更早的行记入省略
