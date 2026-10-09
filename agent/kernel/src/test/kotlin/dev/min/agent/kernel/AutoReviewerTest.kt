@@ -100,6 +100,14 @@ class AutoReviewerTest {
     }
     private suspend fun events(rt: SessionRuntime) = store.open(rt.sessionId)!!.read().toList().map { it.event }
 
+    @Test fun redactedInheritedUserContextCannotAutomaticallyApproveWithoutBoundaries() = run {
+        val reviewer = ScriptedModel(reply(TextPart(decision("allow"))))
+        val rt = session(reviewer, command = "git push")
+        rt.commit(listOf(AutoUserContextInherited(listOf(AutoReviewer.REDACTED))), Durability.Sync)
+        assertTrue("无法读取用户边界时必须转人工", started(rt).phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
+        assertTrue(ran.isEmpty()); assertTrue(reviewer.requests.isEmpty())
+    }
+
     @Test fun BUG_ask_rule_must_force_human_even_if_reviewer_allows() = run {
         val reviewer = ScriptedModel(reply(TextPart(decision("allow"))))
         val rt = session(reviewer, rules = listOf(RuleEntry(RuleKindData.Ask, "Bash(touch *)", "user")))

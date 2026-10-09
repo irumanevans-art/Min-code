@@ -38,6 +38,8 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
                 settings.unavailable -> AutoReviewDecision.Ask to "autoMode 配置不可用，交给用户决定"
                 rt.state.value.autoReviewTripped -> AutoReviewDecision.Ask to "审查连续拒绝 3 次或累计拒绝 20 次，后续需审查的调用交给用户决定"
                 alwaysAsk || PolicyEngine.floorReason(ask, context) != null -> AutoReviewDecision.Ask to "必须由人批准的安全底线"
+                // 为保护凭据隐藏了用户原文时，不能让分类器在看不到边界的情况下自动放行。
+                userContextRedacted(rt.state.value, context) -> AutoReviewDecision.Ask to "用户上下文已因凭据保护脱敏，交给用户决定"
                 else -> {
                     val model = rt.resolveReviewer(settings.reviewer ?: AutoModeReviewer(ref))
                     val effective = defaults(settings.config)
@@ -115,6 +117,10 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             .any { sensitive(it, context) && state.toolResults[it.callId] != null }
         return state.reviewUserTexts().map { if (tainted) REDACTED else it }
     }
+
+    private fun userContextRedacted(state: SessionState, context: PolicyContext): Boolean =
+        state.inheritedAutoUserContext.any { it == REDACTED } || state.history.filterIsInstance<HistoryEntry.Assistant>()
+            .flatMap { it.toolCalls }.any { sensitive(it, context) && state.toolResults[it.callId] != null }
 
     private fun sensitive(call: ToolCallPart, context: PolicyContext): Boolean {
         fun contains(value: JsonElement): Boolean = when (value) {

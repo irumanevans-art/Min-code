@@ -225,3 +225,4 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - v1 语义补充（2026-10-09，auto headless）：`auto_reviewed.reason` 的固定值 `classifier_safety_refused` / `classifier_context_overflow` 区分供应商安全拒绝与上下文溢出，不包含供应商异常原文。后台子 agent 在 headless 下将这两种 Ask 转为原文的 Agent aborted 错误；其他审查失败仍转人工。子 `session_created.headless` 继承父值（字段原已存在）；最新审查从日志折叠，不另建未登记状态。
 - v1 语义补充（2026-10-09，auto 终报退路）：结构化答案也必须先写可交付的 `subagent_report_ready`，拒绝时 Agent 结果为错误、workflow 节点得到 null，不把已交卷的原 JSON 当成审查通过。中断 / 失败且缺本回合的可交付记录时只投影固定说明；headless 后台审查不可继续的错误以 `turn_ended.outcome = failed` 收尾，不吞成可重试的普通工具错误。
 - v1 工具载荷补充（2026-10-09，handback 原文字段）：SubagentHandback 入参为 `message` 非空字符串（不是 report），匹配 hook 的 `tool_input.message`；持久化仍用 `subagent_report_ready.body`。SubagentStop 有收尾文字时保留它，没有时采用短说明；可选 content 与 Agent PostToolUse.content 均用短说明，不复制 message。
+- v1 语义补充（2026-10-09，用户边界脱敏）：凭据读取或继承快照脱敏时不发送分类器请求，`auto_reviewed.decision = ask`，以固定摘要说明转人工；不能因为保护了凭据而把不可读的用户边界当作不存在。
