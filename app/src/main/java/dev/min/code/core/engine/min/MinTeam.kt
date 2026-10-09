@@ -62,7 +62,7 @@ fun minTeamView(
         disbandNote = team.disbanded?.note?.takeIf { it.isNotBlank() },
         members = memberViews,
         tasks = team.tasks.map { it.toView(taskById) },
-        messages = teamMessages(team.leader, team.members.mapNotNull { m -> m.session?.let { it to m.name } }, nodes),
+        messages = teamMessages(team.teamId, team.leader, team.members.mapNotNull { m -> m.session?.let { it to m.name } }, nodes),
     )
 }
 
@@ -80,11 +80,12 @@ private fun TaskRecord.toView(all: Map<String, TaskRecord>) = TeamTaskView(
     waitingOn = blockedBy.filter { all[it]?.status.let { s -> s != null && s != TaskStatus.Completed } },
 )
 
-private fun teamMessages(leader: SessionId, members: List<Pair<SessionId, String>>, nodes: Map<SessionId, SessionState>): List<TeamMessageView> {
+private fun teamMessages(teamId: String, leader: SessionId, members: List<Pair<SessionId, String>>, nodes: Map<SessionId, SessionState>): List<TeamMessageView> {
     val recipients = listOf(leader to TEAM_LEAD) + members
     class Mail(val seq: Long, val from: String, val to: String, val text: String, val broadcast: Boolean)
     val all = recipients.flatMap { (session, name) ->
-        nodes[session]?.teamMail.orEmpty().map { Mail(mailSeq(it.messageId), it.from, name, it.text, it.broadcast) }
+        // 负责人的日志里还躺着前一个（已解散）团队的邮件：只看这个团队的
+        nodes[session]?.teamMail.orEmpty().filter { it.teamId == teamId }.map { Mail(mailSeq(it.messageId), it.from, name, it.text, it.broadcast) }
     }.sortedBy { it.seq }
     // 广播：同一个发件人、同一段话、编号连着发出的那几份合成一条。一对一的消息不合并（同一句话发给两个人就是两条）
     val merged = ArrayList<TeamMessageView>()

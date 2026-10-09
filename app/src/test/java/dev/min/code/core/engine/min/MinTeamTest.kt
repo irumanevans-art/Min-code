@@ -171,6 +171,19 @@ class MinTeamTest {
         )
     }
 
+    @Test fun `mail left over from an earlier team in the same log is not shown`() {
+        val nodes = mapOf(
+            root to leader(TeamMessage("team_1", "tm_1", "alice", TEAM_LEAD, "这个团队的", false)),
+            aliceId to foldOf(TeamMessage("team_old", "tm_0", TEAM_LEAD, "alice", "旧团队的", false), id = "s_alice"),
+        )
+        assertEquals(listOf("这个团队的"), view(nodes.getValue(root), nodes)!!.messages.map { it.text })
+    }
+
+    @Test fun `the title keeps only the start of a long team id`() {
+        assertEquals("09f6ae09", dev.min.code.ui.session.shortTeamId("team_09f6ae09655e48109e965cb40a545e7d"))
+        assertEquals("x", dev.min.code.ui.session.shortTeamId("x"))
+    }
+
     @Test fun `the same one-to-one sentence to two people is two messages, not one`() {
         val nodes = mapOf(
             root to leader(),

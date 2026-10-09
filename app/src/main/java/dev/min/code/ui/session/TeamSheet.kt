@@ -97,7 +97,7 @@ private fun TeamHeader(team: TeamView) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Seal()
-            Text(stringResource(R.string.team_title, team.teamId), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
+            Text(stringResource(R.string.team_title, shortTeamId(team.teamId)), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
             Text(
                 stringResource(if (team.active) R.string.team_state_active else R.string.team_state_disbanded),
                 style = MaterialTheme.typography.labelSmall,
@@ -109,6 +109,9 @@ private fun TeamHeader(team: TeamView) {
         }
     }
 }
+
+/** `team_09f6ae09655e48109e965cb40a545e7d` 太长，标题里只留前 8 位够认出是哪个团队 */
+internal fun shortTeamId(id: String): String = id.removePrefix("team_").take(8)
 
 @Composable
 private fun SectionHeader(text: String) {
