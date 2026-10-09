@@ -89,6 +89,11 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(lastSeq == 0L) { "SessionCreated 只能是第一条事件" }
             this
         }
+        is dev.min.agent.spi.NetworkSettingsLoaded -> copy(networkSettings = e.settings)
+        is dev.min.agent.spi.NetworkApprovalRequested -> copy(networkPending = networkPending + (e.approvalId to e))
+        is dev.min.agent.spi.NetworkDecision -> copy(networkDecisions = networkDecisions + e,
+            networkPending = networkPending - listOfNotNull(e.approvalId).toSet(),
+            presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is dev.min.agent.spi.SessionRenamed -> copy(name = e.name)
         is dev.min.agent.spi.AutoReviewSettingsLoaded -> copy(autoReviewSettings = e)
         is dev.min.agent.spi.AutoReviewed -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(

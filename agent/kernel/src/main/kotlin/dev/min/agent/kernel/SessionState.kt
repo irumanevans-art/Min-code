@@ -98,6 +98,9 @@ data class SessionState(
      */
     val branched: dev.min.agent.spi.SessionBranched? = null,
     /** 会话创建时冻结的权限规则（最后一条 PermissionRulesLoaded） */
+    val networkSettings: dev.min.agent.spi.NetworkSettings = dev.min.agent.spi.NetworkSettings(),
+    val networkPending: Map<ApprovalId, dev.min.agent.spi.NetworkApprovalRequested> = emptyMap(),
+    val networkDecisions: List<dev.min.agent.spi.NetworkDecision> = emptyList(),
     val rules: List<RuleEntry> = emptyList(),
     val permissionNotes: List<String> = emptyList(),
     val additionalDirectories: List<GuestPath> = emptyList(),

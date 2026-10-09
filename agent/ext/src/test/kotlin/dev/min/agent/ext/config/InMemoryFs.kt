@@ -14,7 +14,7 @@ import java.nio.file.NoSuchFileException
  * 目录是隐式的（有文件在它下面就存在）；符号链接只解析整条路径一跳。
  * [list] 故意按名字**倒序**返回：加载器必须自己排序，不能依赖端口给的顺序。
  */
-internal class InMemoryFs(private val workspace: String = "/workspace") : WorkspaceFs {
+internal class InMemoryFs(private val workspace: String = "/workspace", private val allowWrites: Boolean = false) : WorkspaceFs {
     private val files = mutableMapOf<String, ByteArray>()
     private val links = mutableMapOf<String, String>()
     private val broken = mutableSetOf<String>()
@@ -62,7 +62,10 @@ internal class InMemoryFs(private val workspace: String = "/workspace") : Worksp
         return content.copyOfRange(from, minOf(content.size.toLong(), from.toLong() + limit).toInt())
     }
 
-    override suspend fun writeAtomic(path: GuestPath, bytes: ByteArray) = error("加载配置不该写文件")
+    override suspend fun writeAtomic(path: GuestPath, bytes: ByteArray) {
+        check(allowWrites) { "加载配置不该写文件" }
+        this.bytes(path.value, bytes)
+    }
 
     override suspend fun list(dir: GuestPath): List<DirEntry> {
         val d = resolve(dir.value)
