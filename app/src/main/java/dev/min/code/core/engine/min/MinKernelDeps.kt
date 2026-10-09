@@ -168,6 +168,8 @@ fun minTools(): List<Tool<*>> = listOf(
     // 联网：WebFetch 始终在表里（走宿主侧 HTTP，权限是 `WebFetch(domain:…)` 规则）；WebSearch 要配了搜索后端才有，
     // 随设置开关进出，由 [minToolsWithDevice] 的门控接在表的最末尾
     WebFetchTool,
+    // 后台任务：watch 与按 id 取输出（TaskStop 在表的前部，已能停后台命令与 watch）
+    dev.min.agent.tools.MonitorTool, dev.min.agent.tools.TaskOutputTool,
 )
 
 object MinKernelDeps {

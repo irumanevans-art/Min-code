@@ -101,6 +101,8 @@ internal fun desktopTools(
     SkillTool,
     WebFetchTool,
 ) + (if (searchConfigured) listOf(WebSearchTool) else emptyList()) + listOf(dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool) +
+    // 后台任务：watch 与按 id 取输出（TaskStop 在表的前部，已能停后台命令与 watch）。`-p` 也给：watch 期限最长 10 分钟，回合一结束进程就退
+    listOf(dev.min.agent.tools.MonitorTool, dev.min.agent.tools.TaskOutputTool) +
     // M5：agent 团队与定时任务（只往末尾追加）。`-p` 不给：Claude Code 的 `-p` 没有队友，进程一退定时任务永不触发，
     // 模型在 `-p` 里建了团队 / 定时任务，回合一结束进程就走了，成员被丢、任务根本不会触发，还会向用户承诺不存在的事
     (if (!interactive) emptyList() else if (cronEnabled) M5_TOOLS else M5_TOOLS.filterNot { it.name in CRON_TOOL_NAMES })
