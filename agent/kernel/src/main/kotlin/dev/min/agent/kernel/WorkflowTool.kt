@@ -24,7 +24,7 @@ internal class WorkflowTool(private val rt: SessionRuntime) : Tool<WorkflowInput
             put("resume_run", buildJsonObject { put("type", "string") })
         })
     }
-    override fun description(profile: HarnessProfile) = "Run an approved deterministic JavaScript workflow. First statement: export const meta = {name, description}. APIs: agent, pipeline, parallel, phase, log, args. No imports, file or shell access. Resume with the original source, args and resume_run ID."
+    override fun description(profile: HarnessProfile) = "Run an approved deterministic JavaScript workflow. First statement: export const meta = {name, description}. APIs: agent, pipeline, parallel, phase, log, args. No imports, file or shell access. Resume with edited source, original args and resume_run ID."
     override fun parse(raw: JsonObject): ToolInput<WorkflowInput> = try {
         val source = raw["source"]?.jsonPrimitive?.takeIf { it.isString }?.content ?: error("source must be a string")
         val script = WorkflowScript.parse(source)
