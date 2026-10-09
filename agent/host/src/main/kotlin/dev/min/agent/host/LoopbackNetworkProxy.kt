@@ -82,8 +82,10 @@ class LoopbackNetworkProxy(
             try {
                 // 连接建立可能晚于关闭会话，不能把迟到的套接字留在已回收的租约中。
                 if (stopped.get()) return
-                upstream.soTimeout = socketTimeoutMs
+                // 慢接口、git 打包和 SSE 可以长时间不发字节；已批准连接由命令租约负责回收。
+                upstream.soTimeout = 0
                 if (head.method == "CONNECT") {
+                    client.soTimeout = 0
                     client.getOutputStream().apply { write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray()); flush() }
                     coroutineScope {
                         launch { input.copyTo(upstream.getOutputStream()); upstream.shutdownOutput() }
