@@ -89,6 +89,29 @@ class AgentThreadTest {
         assertEquals(emptyList<String>(), switcherLabels(emptyList()))
     }
 
+    @Test
+    fun `a nested thread is written as the whole chain and numbered per chain`() {
+        val ts = listOf(
+            thread("a", "Explore", parent = null, depth = 0),
+            thread("b", "general-purpose", parent = "a", depth = 1),
+            thread("c", "general-purpose", parent = "a", depth = 1),
+            thread("x", "general-purpose", parent = null, depth = 0),
+        )
+        assertEquals(listOf("Explore", "Explore › general-purpose 1", "Explore › general-purpose 2", "general-purpose"), switcherLabels(ts))
+    }
+
+    @Test
+    fun `the chain is found among all threads even when the strip does not list the parent`() {
+        val all = listOf(
+            thread("a", "Explore", parent = null, depth = 0),
+            thread("b", "general-purpose", parent = "a", depth = 1),
+        )
+        val shown = listOf(all[1])
+        assertEquals(listOf("general-purpose"), switcherLabels(shown))
+        assertEquals(listOf("Explore › general-purpose"), switcherLabels(shown, all = all))
+        assertEquals(listOf("探索 › general-purpose"), switcherLabels(shown, all) { if (it == "Explore") "探索" else it })
+    }
+
     // ---------------------------------------------------------------- 树与来源
 
     private val tree = listOf(

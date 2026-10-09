@@ -1346,7 +1346,7 @@ private fun SessionContent(
             val lastViewed = remember { LastNonNull(viewedAgent) }
             val headerThread = lastViewed.update(viewedAgent)
             AnimatedVisibility(visible = viewedAgent != null, enter = InkMotion.expand, exit = InkMotion.collapse) {
-                headerThread?.let { SubagentViewHeader(it, onBack = { selectedAgent = null }) }
+                headerThread?.let { SubagentViewHeader(it, allThreads = agentThreads, onBack = { selectedAgent = null }) }
             }
         }
 
@@ -1415,6 +1415,7 @@ private fun SessionContent(
                             onSelect = { selectedAgent = it },
                         )
                     },
+                            allThreads = agentThreads,
                 )
                 key(activeKey ?: "idle") {
                     val boundId = activeKey

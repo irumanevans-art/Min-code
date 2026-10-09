@@ -78,6 +78,7 @@ import dev.min.code.R
 import dev.min.code.core.engine.AgentThread
 import dev.min.code.core.claudecode.subagentTypeName
 import dev.min.code.core.engine.switcherLabels
+import dev.min.code.core.engine.threadBreadcrumb
 import dev.min.code.core.session.ChatItem
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkSheet
@@ -133,10 +134,12 @@ internal fun RowScope.AgentSwitcher(
     selected: String?,
     onSelect: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    /** 全部线程（不只是条上列的）：嵌套的页签要写出整条链，上级可能已经收出条外 */
+    allThreads: List<AgentThread> = threads,
 ) {
     val label = stringResource(R.string.agent_switcher_label)
     val forkName = stringResource(R.string.agent_type_fork)
-    val labels = remember(threads, forkName) { switcherLabels(threads) { subagentTypeName(it, forkName) } }
+    val labels = remember(threads, allThreads, forkName) { switcherLabels(threads, allThreads) { subagentTypeName(it, forkName) } }
     val scroll = rememberScrollState()
     var showList by rememberSaveable { mutableStateOf(false) }
     // 「全部 N」出现只会让页签更挤，不会反过来让它消失，所以不会来回闪
@@ -525,8 +528,11 @@ internal fun subagentPhaseLabel(phase: AgentThread.Phase): String = stringResour
  * 跟着顶栏一起浮在对话上（顶栏高度量过再垫进列表，字不会被挡住）。
  */
 @Composable
-internal fun SubagentViewHeader(thread: AgentThread, onBack: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SubagentViewHeader(thread: AgentThread, allThreads: List<AgentThread>, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val backLabel = stringResource(R.string.agent_view_back_label)
+    val forkName = stringResource(R.string.agent_type_fork)
+    // 嵌套的写出整条链：「Explore › general-purpose」；顶层的就是它自己的类型
+    val breadcrumb = remember(thread.threadId, allThreads, forkName) { threadBreadcrumb(allThreads, thread.threadId) { subagentTypeName(it, forkName) } }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -553,7 +559,7 @@ internal fun SubagentViewHeader(thread: AgentThread, onBack: () -> Unit, modifie
         }
         AgentMark(thread, onSea = false)
         Text(
-            listOf(subagentTypeLabel(thread.agentType), thread.description, subagentPhaseLabel(thread.phase))
+            listOf(breadcrumb.ifBlank { subagentTypeLabel(thread.agentType) }, thread.description, subagentPhaseLabel(thread.phase))
                 .filter { it.isNotBlank() }
                 .joinToString(" · "),
             style = MaterialTheme.typography.labelMedium,
@@ -620,8 +626,8 @@ private const val ENDED_ALPHA = 0.55f
 /** 几个子 agent 起给「全部 N」：三个以上横滑找人已经不如一眼列全 */
 private const val LIST_AT = 3
 
-/** 页签字宽上限：「general-purpose 2」放得下，更长的自定义 agent 名截断，不把一行吃掉 */
-private val LABEL_MAX_WIDTH = 132.dp
+/** 页签字宽上限：「Explore › general-purpose 2」放得下，更长的自定义 agent 名截断，不把一行吃掉 */
+private val LABEL_MAX_WIDTH = 200.dp
 
 /** 页签高：和右边「N shell」那只标记（PanelChip）齐平 */
 private val TAB_HEIGHT = PanelChipHeight
