@@ -209,6 +209,12 @@ class SessionRuntime private constructor(
     val sessionId: SessionId get() = log.header.sessionId
 
     private val turnLock = Any()
+
+    /**
+     * 已经提交了输入、正要开回合的调用数（[send] / [receive] 的提交与 [startTurnIfIdle] 之间的空档）。
+     * 这段空档里收件箱有东西、回合还没起，[isParked] 不能把它当成「停着、没人接」
+     */
+    private val startsInFlight = java.util.concurrent.atomic.AtomicInteger(0)
     private var turnJob: Job? = null
 
     /** MCP 工具的调用口（MCP设计 §6）：McpManager 接上之前是不可用的；子会话由 Hub 设成父会话那个 */
@@ -509,9 +515,14 @@ class SessionRuntime private constructor(
         if (clientMsgId in state.value.seenInputs) return@withLock false
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
         val workflow = prepareSavedWorkflow(clientMsgId, prepared)
-        commitIf(listOfNotNull(workflow, InputReceived(clientMsgId, prepared, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
-            ?: return false
-        startTurnIfIdle(TurnTrigger.User)
+        startsInFlight.incrementAndGet()
+        try {
+            commitIf(listOfNotNull(workflow, InputReceived(clientMsgId, prepared, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
+                ?: return@withLock false
+            startTurnIfIdle(TurnTrigger.User)
+        } finally {
+            startsInFlight.decrementAndGet()
+        }
         true
     }
 
@@ -659,9 +670,22 @@ class SessionRuntime private constructor(
         /** 提交时再判一次的前置条件（与去重条件同在一把锁里）；默认无。定时任务用它保证「触发时确实空闲」 */
         precondition: (SessionState) -> Boolean = { true },
     ): Boolean {
-        commitIf(extra + InputReceived(clientMsgId, parts, delivery, origin), Durability.Sync) { clientMsgId !in it.seenInputs && precondition(it) }
-            ?: return false
-        startTurn?.let(::startTurnIfIdle)
+        // 计数在前置条件判过之后、落盘之前加：定时任务的前置条件本身要问 [isParked]，先加就把自己挡住了；
+        // 仍在落盘之前，看得到这条输入的人就看得到计数
+        var counted = false
+        try {
+            commitIf(extra + InputReceived(clientMsgId, parts, delivery, origin), Durability.Sync) { s ->
+                (clientMsgId !in s.seenInputs && precondition(s)).also { ok ->
+                    if (ok && startTurn != null) {
+                        startsInFlight.incrementAndGet()
+                        counted = true
+                    }
+                }
+            } ?: return false
+            startTurn?.let(::startTurnIfIdle)
+        } finally {
+            if (counted) startsInFlight.decrementAndGet()
+        }
         return true
     }
 
@@ -675,14 +699,16 @@ class SessionRuntime private constructor(
     }
 
     /**
-     * 没有回合、没有维护，收件箱里却有输入、而且没有任何东西会自己把它们接走：上一回合不是正常结束的（用户 / 预算 / hook 停的……），
-     * 报告与消息只进收件箱等人决定（[SessionHub.deliver] 同一条规矩）。定时运行的记账靠它收尾——
-     * 只认「收件箱为空」的话，停树时前台等子 agent 的根一被打断、报告落进它的收件箱，这次运行就永远撤不掉：
-     * 用户下一句话的花费被算进已经结束的运行，还可能被它的上限拦下
+     * 没有回合、没有维护、也没有正要开的回合，收件箱里却有输入：没有任何东西会自己把它们接走。
+     * 上一回合被停下（用户 / 预算 / hook）、停树时子 agent 的静音报告、队友叫起来的成员回合的报告、进程重启打断的报告……
+     * 都只进收件箱等人决定（[SessionHub.deliver]），而这时上一回合可能是正常结束的，所以不能拿「上一回合怎么结束」来认。
+     * 定时任务把它当空闲（[CronEngine]）：这次运行的记账照常收尾、到点照常触发。只认「收件箱为空」的话，
+     * 记账永远撤不掉（用户下一句话的花费被算进已结束的运行），之后到点也不再触发。
+     * 先看状态、最后看 [startsInFlight]：看到了提交进来的输入，就一定看得到它之前加上的计数
      */
     internal fun isParked(): Boolean = synchronized(turnLock) {
         !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true &&
-            _state.value.turn == null && _state.value.inbox.isNotEmpty() && !_state.value.lastTurnAllowsAutoStart()
+            _state.value.turn == null && _state.value.inbox.isNotEmpty() && startsInFlight.get() == 0
     }
 
     /** 此刻没有回合在跑（含启动中的），收件箱有无输入不论——团队调度判断「成员是否空闲」用 */
@@ -817,8 +843,11 @@ class SessionRuntime private constructor(
         return try {
             job.await()
         } finally {
-            synchronized(turnLock) { if (maintenanceJob === job) maintenanceJob = null }
-            startTurnIfIdle(TurnTrigger.User)
+            // 撤维护与开回合在同一把锁里：中间不留「收件箱有东西、什么都没在跑」的空档（[isParked] 会把它当成停着）
+            synchronized(turnLock) {
+                if (maintenanceJob === job) maintenanceJob = null
+                startTurnIfIdle(TurnTrigger.User)
+            }
         }
     }
 

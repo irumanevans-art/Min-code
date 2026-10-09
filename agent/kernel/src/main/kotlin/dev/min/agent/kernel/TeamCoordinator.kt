@@ -309,6 +309,8 @@ internal class TeamCoordinator(
         if (recipients.isEmpty()) return failure("团队里没有别的人可以收这条广播。")
 
         val notes = mutableListOf<String>()
+        // 一次发出（含广播的每一份）同一个时刻：界面按它跨收件人排序、合并广播
+        val sentAt = deps.clock.nowMs()
         for (name in recipients) {
             val toLeader = name == TEAM_LEAD
             val sessionId = if (toLeader) team.leader else team.member(name)?.session ?: continue
@@ -322,7 +324,7 @@ internal class TeamCoordinator(
                 InputOrigin.Agent(from.sessionId, AgentInputKind.Message),
                 // 负责人不占成员名额，直接唤醒；成员的开跑要过名额
                 startTurn = if (toLeader) TurnTrigger.Notification else null,
-                extra = listOf(TeamMessage(team.teamId, messageId, sender, name, text, broadcast)),
+                extra = listOf(TeamMessage(team.teamId, messageId, sender, name, text, broadcast, sentAt)),
             )
             // 负责人的话成员要答复：哪怕这一轮是队友的邮件起的头，报告也该叫醒负责人
             if (sender == TEAM_LEAD) peerTurns -= sessionId

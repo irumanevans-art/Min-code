@@ -73,6 +73,11 @@ data class TeamMessage(
     val to: String,
     val text: String,
     val broadcast: Boolean = false,
+    /**
+     * 发出的时刻（宿主时钟，毫秒）；一次广播的各份相同。邮件分散在各收件人的日志里，[messageId] 在真实宿主上是随机串、排不了序，
+     * 界面的消息流靠它跨收件人排序、把同一次广播合成一条。旧日志没有（null）
+     */
+    val sentAtMs: Long? = null,
 ) : TeamEvent
 
 /*

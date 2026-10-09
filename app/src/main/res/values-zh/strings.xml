@@ -1432,7 +1432,7 @@
     <string name="cron_body_budget_stopped_done">定时任务 %1$s（%2$s）这一次运行被花费上限停下了：%3$s。这是一次性任务 / 唤醒，已经触发过，不会再跑。</string>
     <string name="cron_body_paused">定时任务 %1$s（%2$s）已暂停：连续第 %3$d 次超过单次花费上限。要继续请调整提示词或上限后重新创建。</string>
     <string name="cron_body_paused_last">定时任务 %1$s（%2$s）已暂停：连续第 %3$d 次超过单次花费上限（最近一次：%4$s）。要继续请调整提示词或上限后重新创建。</string>
-    <string name="cron_body_expired_age">定时任务 %1$s（%2$s）已结束：循环任务满 7 天自动过期。</string>
+    <string name="cron_body_expired_age">定时任务 %1$s（%2$s）已结束：定时任务满 7 天自动过期。</string>
     <string name="cron_body_expired_missed">定时任务 %1$s（%2$s）已结束：一次性任务的时刻在会话没开着时过去了，不补跑。</string>
     <string name="cron_body_expired_no_pricing">定时任务 %1$s（%2$s）已结束：当前模型没有 USD 价格，花费估算不了。</string>
     <!-- M5: scheduled tasks list in the session settings -->

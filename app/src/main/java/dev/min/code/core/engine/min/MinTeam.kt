@@ -82,18 +82,20 @@ private fun TaskRecord.toView(all: Map<String, TaskRecord>) = TeamTaskView(
 
 private fun teamMessages(teamId: String, leader: SessionId, members: List<Pair<SessionId, String>>, nodes: Map<SessionId, SessionState>): List<TeamMessageView> {
     val recipients = listOf(leader to TEAM_LEAD) + members
-    class Mail(val seq: Long, val from: String, val to: String, val text: String, val broadcast: Boolean)
+    class Mail(val at: Long?, val seq: Long, val from: String, val to: String, val text: String, val broadcast: Boolean)
     val all = recipients.flatMap { (session, name) ->
         // 负责人的日志里还躺着前一个（已解散）团队的邮件：只看这个团队的
-        nodes[session]?.teamMail.orEmpty().filter { it.teamId == teamId }.map { Mail(mailSeq(it.messageId), it.from, name, it.text, it.broadcast) }
-    }.sortedBy { it.seq }
-    // 广播：同一个发件人、同一段话、编号连着发出的那几份合成一条。一对一的消息不合并（同一句话发给两个人就是两条）
+        nodes[session]?.teamMail.orEmpty().filter { it.teamId == teamId }.map { Mail(it.sentAtMs, mailSeq(it.messageId), it.from, name, it.text, it.broadcast) }
+    }.sortedWith(compareBy({ it.at ?: 0L }, { it.seq }))
+    // 广播：同一个发件人、同一段话、同一时刻发出的那几份合成一条（没有时刻的旧日志看编号是否连着）。
+    // 一对一的消息不合并（同一句话发给两个人就是两条）
     val merged = ArrayList<TeamMessageView>()
     var lastBroadcast: Mail? = null
     for (mail in all) {
         if (mail.broadcast) {
             val prev = lastBroadcast
-            if (prev != null && prev.from == mail.from && prev.text == mail.text && mail.seq - prev.seq <= BROADCAST_ID_SPREAD) {
+            val sameSend = if (prev?.at != null && mail.at != null) prev.at == mail.at else prev != null && mail.seq - prev.seq <= BROADCAST_ID_SPREAD
+            if (prev != null && prev.from == mail.from && prev.text == mail.text && sameSend) {
                 lastBroadcast = mail
                 continue
             }
@@ -106,7 +108,10 @@ private fun teamMessages(teamId: String, leader: SessionId, members: List<Pair<S
     return merged.takeLast(TEAM_MESSAGE_LIMIT)
 }
 
-/** `tm_12` -> 12；不是这个形状的排在最前（旧日志里的别种编号不该把新消息顶乱） */
+/**
+ * `tm_12` -> 12；不是这个形状的为 0。只在同一时刻内、或没有发出时刻的旧日志里排序用：
+ * 真实宿主的编号是 `tm_<随机串>`，全是 0，顺序只能靠 [dev.min.agent.kernel.TeamMailItem.sentAtMs]
+ */
 internal fun mailSeq(messageId: String): Long = messageId.substringAfterLast('_', "").toLongOrNull() ?: 0L
 
 /**

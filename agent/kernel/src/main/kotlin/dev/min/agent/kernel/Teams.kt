@@ -78,6 +78,8 @@ data class TeamMailItem(
     val from: String,
     val text: String,
     val broadcast: Boolean,
+    /** [dev.min.agent.spi.TeamMessage.sentAtMs] */
+    val sentAtMs: Long? = null,
 )
 
 

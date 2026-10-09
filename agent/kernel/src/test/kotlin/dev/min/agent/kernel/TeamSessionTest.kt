@@ -730,6 +730,10 @@ class TeamSessionTest {
         }
         assertTrue("发件人自己不收", members.getValue("alice").state.value.teamMail.isEmpty())
         assertEquals("负责人也收到", 1, leader.state.value.teamMail.size)
+        // 界面靠发出时刻跨收件人排序、把同一次广播合成一条：每一份都有，而且相同
+        val sentAt = (listOf(leader) + listOf("bob", "carol").map { members.getValue(it) }).map { it.state.value.teamMail.single().sentAtMs }
+        assertNotNull(sentAt.first())
+        assertEquals(1, sentAt.toSet().size)
         leader.awaitIdle()
         assertLogIsTruth(leader)
         members.values.forEach { assertLogIsTruth(it) }
@@ -871,6 +875,8 @@ class TeamSessionTest {
         assertEquals("用户在界面上解散", disbanded.note)
         assertEquals("解散后不能重复解散", "没有进行中的团队。", h.disbandTeam(leader.sessionId))
         assertEquals("不在线的会话", "会话不在线。", h.disbandTeam(dev.min.agent.protocol.SessionId("nope")))
+        // 被停下的成员 a 的报告是异步交到负责人那里的：等它落了再对日志，不然对的是半路的状态
+        leader.state.first { it.inbox.isNotEmpty() }
         leader.awaitIdle()
         assertLogIsTruth(leader)
     }
