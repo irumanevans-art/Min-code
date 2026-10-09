@@ -18,7 +18,8 @@ class SettingsSecurityFixTest {
     @get:Rule val tmp = TemporaryFolder()
     private suspend fun withSession(fs: FakeFs, trust: Boolean = false, mode: PermissionMode = PermissionMode.Default,
         canonical: (GuestPath) -> GuestPath = { it }, cwd: GuestPath = GuestPath("/work"), headless: Boolean = false,
-        exec: FakeExec = FakeExec(), workflowEngine: WorkflowEngine? = null, block: suspend (SessionRuntime, SessionHub) -> Unit) {
+        exec: FakeExec = FakeExec(), workflowEngine: WorkflowEngine? = null, env: Map<String, String> = emptyMap(),
+        block: suspend (SessionRuntime, SessionHub) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val ids = AtomicLong()
         try {
@@ -26,7 +27,7 @@ class SettingsSecurityFixTest {
                 models = { ResolvedModel(TEST_PROFILE, ScriptedModel(reply(TextPart("done")))) }, tools = emptyList(),
                 host = HostPorts(fs, FakeSearch(), exec) { FakeArtifacts() }, platform = "test", zone = ZoneOffset.UTC,
                 memoryHome = GuestPath("/home"), trustProjectHooks = { trust }, canonicalPath = canonical,
-                pluginDirs = listOf(GuestPath("/plug")), workflowEngine = workflowEngine)
+                pluginDirs = listOf(GuestPath("/plug")), workflowEngine = workflowEngine, env = env::get)
             val definitions = dev.min.agent.ext.config.ClaudeConfigLoader.load(fs, cwd, GuestPath("/home")).agents
             val catalog = AgentCatalog.of(definitions)
             val hub = SessionHub(FileSessionStore(tmp.newFolder().toPath(), { 0L }), deps, scope, agents = catalog.definitions)
@@ -87,6 +88,54 @@ class SettingsSecurityFixTest {
             assertFalse(rt.state.value.rules.any { it.kind == RuleKindData.Allow })
             assertTrue(rt.state.value.additionalDirectories.isEmpty())
         }
+    }
+
+    @Test fun R2_config_home_inside_repo_exempts_own_file_but_holds_relocated_root(): Unit = runBlocking {
+        val settings = """{"permissions":{"allow":["Bash(curl *)"],"additionalDirectories":["/external"]}}"""
+        val fs = FakeFs().apply {
+            mkdir("/repo/.git")
+            put("/repo/config/.claude/settings.local.json", settings)
+            put("/repo/.claude/settings.local.json", settings)
+        }
+        withSession(fs, cwd = GuestPath("/repo/config"), env = mapOf("CLAUDE_CONFIG_DIR" to "/repo/config/.claude"),
+            exec = FakeExec { _, _ -> error("接受工作区前不能启动 git") }) { rt, _ ->
+            assertEquals(1, rt.state.value.rules.count { it.kind == RuleKindData.Allow })
+            assertTrue(GuestPath("/external") in rt.state.value.additionalDirectories)
+            assertTrue(rt.state.value.permissionNotes.any { "this workspace has not been trusted" in it })
+        }
+        val root = FakeFs().apply { mkdir("/home/.git"); put("/home/.claude/settings.local.json", settings) }
+        withSession(root, cwd = GuestPath("/home")) { rt, _ -> assertTrue(rt.state.value.rules.isEmpty()) }
+    }
+
+    @Test fun R2_headless_local_no_repo_or_failed_git_and_cancellation(): Unit = runBlocking {
+        val fs = FakeFs().apply { put("/work/.claude/settings.local.json", """{"permissions":{"allow":["Bash(curl *)"]}}""") }
+        withSession(fs, headless = true, exec = FakeExec { _, _ -> error("无仓库不启动 git") }) { rt, _ ->
+            assertTrue(rt.state.value.rules.any { it.kind == RuleKindData.Allow })
+        }
+        fs.mkdir("/work/.git")
+        withSession(fs, headless = true, exec = FakeExec { _, _ -> throw IllegalStateException("git unavailable") }) { rt, _ ->
+            assertFalse(rt.state.value.rules.any { it.kind == RuleKindData.Allow })
+        }
+        try {
+            withSession(fs, headless = true, exec = FakeExec { _, _ -> throw CancellationException("cancel") }) { _, _ -> fail("取消必须传播") }
+            fail("取消必须传播")
+        } catch (_: CancellationException) { }
+    }
+
+    @Test fun R2_inherited_managed_locks_apply_without_loading_settings(): Unit = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            for (mode in listOf(PermissionMode.Auto, PermissionMode.BypassPermissions)) {
+                val deps = testDeps(ScriptedModel(), emptyList())
+                val rt = SessionRuntime.create(FileSessionStore(tmp.newFolder().toPath(), { 0L }),
+                    LogHeader(dev.min.agent.store.LOG_FORMAT_VERSION, SessionId(mode.name), 0),
+                    SessionCreated(GuestPath("/work"), TEST_MODEL, mode), deps, scope,
+                    initial = listOf(AutoReviewSettingsLoaded(disableAutoMode = true, disableBypassPermissionsMode = true)),
+                    loadSettings = false, loadMemory = false, loadSkills = false)
+                assertEquals(PermissionMode.Default, rt.state.value.settings.mode)
+                try { rt.changeSettings(mode = mode); fail("继承锁必须保留") } catch (_: IllegalArgumentException) { }
+            }
+        } finally { scope.cancel() }
     }
 
     @Test fun BUG_auto_parent_ignores_agent_permission_mode(): Unit = runBlocking { withTimeout(15_000) {

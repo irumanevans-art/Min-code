@@ -26,7 +26,7 @@ internal suspend fun trustedLocalSettings(deps: KernelDeps, snapshot: SettingsSn
                 ancestor = GuestPath(ancestor.value.substringBeforeLast('/').ifEmpty { "/" })
             }
             // 主目录豁免只适用于本地那份；重定向到仓库根的 local 文件仍须先接受检查。
-            if (cwd == configHome && parent == configHome && repository == null) { result += layer.path; continue }
+            if (cwd == configHome && parent == configHome && repository != parent) { result += layer.path; continue }
             if (!accepted) continue
             if (repository == null) { result += layer.path; continue }
             val relative = layer.path.value.removePrefix(repository.value.trimEnd('/') + "/")
