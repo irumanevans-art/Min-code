@@ -199,6 +199,8 @@ class ModelHooksSessionTest {
         val charged = chargedEvents(rt)
         assertTrue("prompt hook 的评估请求必须经账本记账（ModelCharged 落日志），实收 ${charged.map { it.usage.inputTokens }}",
             charged.any { it.usage.inputTokens == 100L })
+        // 这笔账同样进「一次运行」的预算账本（H3：辅助请求逐类核对；测试模型没有价格 → 每笔记为量不到）
+        assertEquals("日志里的每笔 ModelCharged（含评估请求）都进了运行账本", charged.size, h.budget.unpricedRequests())
     }
 
     @Test

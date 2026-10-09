@@ -260,6 +260,9 @@ class SessionHub(
     /** 定时任务的运行时：到点触发、过期、单次花费上限（状态在根会话日志的折叠里） */
     internal val crons = CronEngine(this, deps, scope, enabled = { this.limits.cronEnabled }) { this.limits.cronMaxBudgetUsd }
 
+    /** `--max-budget-usd` 的「一次运行」账本：整棵会话树、本次运行（树里各会话提交 `model_charged` 时喂，见 [SessionRuntime.commitIf]） */
+    internal val budget = RunBudget(deps.maxBudgetUsd)
+
     /**
      * 宿主设置变了（或启动时设置快照晚于 Hub 才读出来）：更新团队并发上限与定时任务花费天花板，之后的决定立刻按新值。
      * 调高并发上限会放出正在排队的成员；调低不杀正在跑的，只是之后不再放新的。越界的值（并发不在 1..8）抛

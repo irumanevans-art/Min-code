@@ -49,7 +49,7 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
                     usage = done.usage
                     require(!done.truncated && done.stop == StopReason.EndTurn && done.message.parts.all { it is TextPart || it is ThinkingPart }) { "审查未返回完整文本" }
                     val parsed = parse(done.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }, effective.hardDeny.size)
-                    if (rt.modelBilling.exceeded()) AutoReviewDecision.Ask to "审查调用已达到会话预算"
+                    if (rt.modelBilling.exceeded()) AutoReviewDecision.Ask to "审查调用后本次运行的花费到限，交给用户决定"
                     else parsed
                 }
             }
