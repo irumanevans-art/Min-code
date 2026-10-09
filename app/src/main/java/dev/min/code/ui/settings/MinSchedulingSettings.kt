@@ -84,7 +84,8 @@ private fun CronBudgetDialog(valueUsd: Double?, onDismiss: () -> Unit, onSave: (
 }
 
 /** 0.5 -> "0.5"，1.0 -> "1"：输入框里不带多余的 .0 */
-private fun trimmed(usd: Double): String = if (usd == usd.toLong().toDouble()) usd.toLong().toString() else usd.toString()
+/** 对话框里回显已设的上限。不能用 [Double.toString]：0.0001 会写成 `1.0E-4`，解析器不认，重开对话框就成了错误、存不了 */
+internal fun trimmed(usd: Double): String = java.math.BigDecimal.valueOf(usd).stripTrailingZeros().toPlainString()
 
 /**
  * 团队同时运行的成员数（`teamMaxConcurrent`，1–8）。多出来的成员排队等名额；调低不会杀正在跑的，只是之后不再放新的；
