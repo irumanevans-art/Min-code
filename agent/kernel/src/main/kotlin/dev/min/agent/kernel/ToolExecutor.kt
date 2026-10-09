@@ -586,37 +586,38 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
      */
     private suspend fun gateTaskHooks(turnId: TurnId, result: ToolResult): ToolResult {
         if (result.isError || (!taskHooks.watchesCreation() && !taskHooks.watchesCompletion())) return result
-        val refused = mutableMapOf<SessionEffect, String>()
+        // 按下标记：同一个结果里两条内容相同的 TaskCreate 是两个相等的数据类，按值做键会互相串（一条被拒、两条都被摘掉）
+        val refused = linkedMapOf<Int, String>()
         var nextId = rt.state.value.nextTaskId().toInt()
-        for (effect in result.effects) {
+        for ((index, effect) in result.effects.withIndex()) {
             when (effect) {
                 is SessionEffect.TaskCreate -> {
                     // 同一个结果里连着创建几条时编号依次往后；被拒的那条不占号
                     val id = nextId.toString()
                     val reason = taskHooks.refuseCreation(turnId, TaskFacts(id, effect.subject, effect.description.takeIf { it.isNotBlank() }))
-                    if (reason == null) nextId++ else refused[effect] = reason
+                    if (reason == null) nextId++ else refused[index] = reason
                 }
                 is SessionEffect.TaskUpdate -> {
                     val task = rt.state.value.tasks.firstOrNull { it.id == effect.taskId }
                     if (effect.patch.status == TaskStatus.Completed && task != null && task.status != TaskStatus.Completed) {
                         taskHooks.refuseCompletion(turnId, TaskFacts(task.id, task.subject, task.description.takeIf { it.isNotBlank() }))
-                            ?.let { refused[effect] = it }
+                            ?.let { refused[index] = it }
                     }
                 }
                 else -> Unit
             }
         }
         if (refused.isEmpty()) return result
-        val effects = result.effects.mapNotNull { e ->
+        val effects = result.effects.mapIndexedNotNull { index, e ->
             when {
-                e !in refused -> e
+                index !in refused -> e
                 // 完成被拒：状态留原样，同一次更新里的其它字段（标题、负责人……）照改
                 e is SessionEffect.TaskUpdate -> e.patch.copy(status = null).takeUnless { it.isEmpty }?.let { e.copy(patch = it) }
                 else -> null
             }
         }
-        val message = refused.entries.joinToString("\n") { (effect, reason) ->
-            when (effect) {
+        val message = refused.entries.joinToString("\n") { (index, reason) ->
+            when (val effect = result.effects[index]) {
                 is SessionEffect.TaskCreate -> "TaskCreated hook 不让创建任务「${effect.subject}」，任务没有创建。反馈：$reason"
                 is SessionEffect.TaskUpdate -> "TaskCompleted hook 不让把任务 #${effect.taskId} 标为完成，任务保持原状态。反馈：$reason"
                 else -> reason
