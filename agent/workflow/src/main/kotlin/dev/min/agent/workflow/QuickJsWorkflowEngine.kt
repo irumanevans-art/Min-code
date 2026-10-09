@@ -59,8 +59,18 @@ class QuickJsWorkflowEngine(private val idleTimeoutMillis: Long = 30_000) : Work
                     let node = 0; let agentLimitError;
                     const results = [];
                     const pending = [];
+                    let progressCount = 0, progressBytes = 0, progressDropped = false;
+                    const emitProgress = (kind, message) => {
+                        if (typeof message !== 'string' || message.length > 30000) throw Error('progress exceeds 30000 characters');
+                        // 在原生异步桥之前限流，否则同步死循环会在宿主堆上堆积无限任务。
+                        if (progressCount >= 4096 || progressBytes + message.length * 3 > 1048576) {
+                            if (progressDropped) return Promise.resolve();
+                            progressDropped = true; kind = 'log'; message = 'Workflow progress limit reached; further messages dropped.';
+                        } else { progressCount++; progressBytes += message.length * 3; }
+                        begin(); const task = progress(kind, message); pending.push(task); return task;
+                    };
                     const agent = (prompt, options = {}) => {
-                        if (typeof prompt !== 'string' || !prompt.trim()) throw Error('agent prompt must be a nonempty string');
+                        if (typeof prompt !== 'string' || prompt.length > 300000 || !prompt.trim()) throw Error('agent prompt must be a nonempty string');
                         if (!options || typeof options !== 'object' || Array.isArray(options)) throw Error('agent options must be an object');
                         options = Object.fromEntries(Object.entries(options).filter(([key]) => ['schema','label','model','phase','effort','isolation','agentType'].includes(key)));
                         if (options.schema !== undefined && (!options.schema || typeof options.schema !== 'object' || Array.isArray(options.schema))) throw Error('schema must be an object');
@@ -90,9 +100,9 @@ class QuickJsWorkflowEngine(private val idleTimeoutMillis: Long = 30_000) : Work
                     };
                     const phase = title => {
                         if (typeof title !== 'string') throw Error('phase title must be a string');
-                        begin(); return progress('phase', title);
+                        return emitProgress('phase', title);
                     };
-                    const log = message => { begin(); return progress('log', typeof message === 'string' ? message : JSON.stringify(message)); };
+                    const log = message => emitProgress('log', typeof message === 'string' ? message : JSON.stringify(message));
                     // 独立函数只接收脚本 API，不能通过词法作用域读到桥接函数或内部序号。
                     const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
                     const execute = new AsyncFunction('agent', 'pipeline', 'parallel', 'phase', 'log', 'args', 'meta', ${JsonPrimitive(script.body)});

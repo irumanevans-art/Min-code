@@ -41,4 +41,14 @@ class WorkflowContractsTest {
         val result = QuickJsWorkflowEngine().evaluate(source("let rejected=0; for(const f of [()=>log('x'.repeat(30001)),()=>phase('x'.repeat(30001)),()=>agent('x'.repeat(300001))]) {try {await f()} catch(e){rejected++}} return rejected;"), null, counted)
         assertEquals(JsonPrimitive(3), result); assertEquals(0,calls)
     }
+    @Test fun logFloodHasBoundedHostQueueAndCanBeCancelled() = runBlocking {
+        val messages = java.util.concurrent.atomic.AtomicInteger()
+        val bytes = java.util.concurrent.atomic.AtomicInteger()
+        val counted = object : WorkflowHost by host {
+            override suspend fun progress(kind:String,message:String) { messages.incrementAndGet(); bytes.addAndGet(message.toByteArray().size); delay(3) }
+        }
+        val job = launch { QuickJsWorkflowEngine().evaluate(source("for(;;){log('x'.repeat(30000))}"), null, counted) }
+        delay(1000); withTimeout(5000) { job.cancelAndJoin() }
+        assertTrue(messages.get() <= 4097); assertTrue(bytes.get() <= 1048700)
+    }
 }
