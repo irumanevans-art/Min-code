@@ -123,13 +123,9 @@
 - v1 增量（2026-10-07，无头输出对齐 CC）：`session_created` 新增可选字段 `headless`（这条会话是不是 `-p` / 无头跑的；CC 的 `--continue` 据此跳过 -p / SDK 会话。旧日志缺字段 = 交互）。
   `turn_ended.outcome`（failed 变体）新增可选字段 `cause`（内核自己的失败原因标记，与模型的 kind 正交；目前只有
   `structured_output_retries`：--json-schema 重试用尽，CLI 据此把 result.subtype 写成 CC 的 `error_max_structured_output_retries`）。旧日志照常读。
-- v1 增量（2026-10-08，花费与预算）：`turn_ended` 新增可选字段 `limitCause`（outcome 为 interrupted/limit 时的具体原因；目前只有
-  `max_budget_usd`：--max-budget-usd 的 USD 花费到限——CLI 据此把 result.subtype 写成 CC 的 `error_max_budget_usd`。上限本身是运行时选项不进日志，
-  这里只记「这一回合到限收尾是因为预算」；回合数到限不写（by=limit 本身就是它）。旧日志照常读。
-  会话花费**不新增事件**：`model_request_started.model` + 各用量事件折成计费点（请求用的模型 × 用量），价格取运行时目录现价、
-  不进日志——同一份日志换个价目重算会不同，这是设计而非缺陷。
-- 读与修复（2026-10-08，hooks 第二轮）：日志读法补了只读打开（`SessionStore.peek`）的说明——正在追加的日志只读轮询必须走它，
-  带修复的 `open` 只给写者附着用（详见上面「读与修复」节）。格式本身无变化。
+- 模型侧 hook 类型（2026-10-08/09，prompt / agent / mcp_tool）**不新增事件**：匹配、`if`、去重与 HooksRan 记录走 command 同一条合流；
+  prompt 的评估请求经账本（`model_charged`）记账；hook agent 子会话是普通子会话日志（`subagent_origin.agentType = "hook-agent"`，
+  不写 `subagent_spawned`），跑完从 Hub 卸下、日志留盘。
 # MCP3 OAuth 审计
 
 `mcp_authentication`：server、action（login/logout/refresh）、outcome（success/failed/cancelled）。
