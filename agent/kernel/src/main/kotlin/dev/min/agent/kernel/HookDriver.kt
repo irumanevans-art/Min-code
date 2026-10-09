@@ -11,6 +11,8 @@ import dev.min.agent.ext.hooks.HookInputCommon
 import dev.min.agent.ext.hooks.HookJson
 import dev.min.agent.ext.hooks.HookMatch
 import dev.min.agent.ext.hooks.HookHttpRunner
+import dev.min.agent.ext.hooks.AGENT_HOOK_DEFAULT_TIMEOUT
+import dev.min.agent.ext.hooks.PROMPT_HOOK_DEFAULT_TIMEOUT
 import dev.min.agent.ext.hooks.HookSet
 import dev.min.agent.ext.hooks.HttpHookBatch
 import dev.min.agent.ext.hooks.HttpHookPolicy
@@ -172,7 +174,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         // 后台 hook 先启动再跑同步批：它不等谁，也没人等它。timeout 只给 asyncRewake（CC：async 不套 timeout）。
         // 启动失败只写异常类名、不打断回合——SessionEnd 上也不该让 close 在封写前中断
         asyncHandlers.forEach { h ->
-            val t = if (h.asyncRewake) (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) else null
+            val t = if (h.asyncRewake) (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, MAX_TIMEOUT) else null
             catchingNonCancellation { rt.asyncHooks.launch(event, rt.plugins()?.resolveHook(h) ?: h, stdin, env, processCwd, t) }
                 .getOrElse { e -> executionFailures += "后台 hook「${label(h)}」启动失败：${e.javaClass.simpleName}" }
         }
@@ -201,7 +203,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                 } else {
                     catchingNonCancellation {
                         val resolved = commandHandlers.map { rt.plugins()?.resolveHook(it) ?: it }
-                        runner.run(resolved, stdin, env, processCwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap) }
+                        runner.run(resolved, stdin, env, processCwd) { h -> (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, timeoutCap) }
                     }.getOrElse { e ->
                         executionFailures += "command hook 批执行失败：${describe(e)}"
                         emptyList()
@@ -215,7 +217,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                 } else {
                     catchingNonCancellation {
                         httpRunner.run(httpHandlers, stdin, httpEnv(httpHandlers), httpPolicy()) { h ->
-                            (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap)
+                            (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, timeoutCap)
                         }
                     }.getOrElse { e ->
                         // 只写异常类型：http 的异常信息可能带着 URL（查询串里常有令牌）
@@ -305,9 +307,9 @@ internal class HookDriver(private val rt: SessionRuntime) {
         return names.distinct().mapNotNull { name -> deps.env(name)?.let { name to it } }.toMap()
     }
 
-    /** 说明里怎么称呼一个处理器：http 用 URL，但去掉 userinfo 与查询串（令牌常放在那里） */
+    /** 说明里怎么称呼一个处理器：http 用 URL（去掉 userinfo 与查询串，令牌常放在那里），mcp_tool 用 服务器/工具 */
     private fun label(h: dev.min.agent.ext.hooks.HookHandler): String =
-        h.command ?: h.url?.let(HookHttpRunner::redactUrl) ?: h.type
+        h.command ?: h.url?.let(HookHttpRunner::redactUrl) ?: h.server?.let { s -> "$s/${h.tool}" } ?: h.type
 
     /** http 处理器的 allowedEnvVars 点名了宿主藏起来的变量（如 CLI 自己读的模型 key）：它们会被插成空串，告诉人 */
     private fun hiddenEnvNotes(handlers: List<dev.min.agent.ext.hooks.HookHandler>): List<String> =
@@ -340,12 +342,18 @@ internal class HookDriver(private val rt: SessionRuntime) {
             return t.preview + "\n…[hook 输出共 ${t.text.length} 字，全文在 $path]"
         }
 
-        fun defaultTimeout(event: HookEvent): Int = when (event) {
-            HookEvent.UserPromptSubmit, HookEvent.PreModelSwitch, HookEvent.PostModelSwitch -> 30
-            HookEvent.MessageDisplay -> 10
-            // CC 的默认预算是 1.5 秒；引擎的超时粒度是整秒，向上取 2
-            HookEvent.SessionEnd -> 2
-            else -> 60
+        fun defaultTimeout(event: HookEvent, type: String = "command"): Int = when (type) {
+            // CC（hooks.md :426）：prompt 30 秒、agent 60 秒——按类型给；降额表只点名 command / http / mcp_tool，不含这两种
+            "prompt" -> PROMPT_HOOK_DEFAULT_TIMEOUT
+            "agent" -> AGENT_HOOK_DEFAULT_TIMEOUT
+            else -> when (event) {
+                HookEvent.UserPromptSubmit, HookEvent.PreModelSwitch, HookEvent.PostModelSwitch -> 30
+                HookEvent.MessageDisplay -> 10
+                // CC 的默认预算是 1.5 秒；引擎的超时粒度是整秒，向上取 2
+                HookEvent.SessionEnd -> 2
+                // CC :426：command / http / mcp_tool 默认 600 秒（此前这里写 60，抄错了行）
+                else -> 600
+            }
         }
     }
 }

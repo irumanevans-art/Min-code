@@ -304,6 +304,31 @@ class ModelHooksSessionTest {
     }
 
     @Test
+    fun `mcp_tool 的 timeout 生效：工具挂死按超时收场，回合照常收尾`() = run {
+        write("/root/.claude/settings.json", settings(
+            """{"PostToolUse": [{"matcher": "Bash", "hooks": [
+                {"type": "mcp_tool", "server": "scan", "tool": "hang_scan", "timeout": 1}
+            ]}]}""",
+        ))
+        val model = RoutingModel { req ->
+            if (req.lastText() == "跑") reply(bashCall("c1"), stop = StopReason.ToolUse) else reply(TextPart("收到"))
+        }
+        val h = hub(model)
+        val rt = h.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.loadMcp(
+            McpServersLoaded(emptyList()),
+            McpToolsSnapshot(listOf(McpToolEntry("mcp__scan__hang_scan", "scan", "hang_scan", "挂死", JsonObject(mapOf("type" to JsonPrimitive("object")))))),
+        )
+        rt.mcpCaller = object : McpCaller {
+            override suspend fun call(r: McpCallRequest): ToolResult = kotlinx.coroutines.awaitCancellation()
+        }
+        // say 会等回合收尾：没有超时的话这一行永远等不到（复核 M2 的复现就是回合挂死）
+        rt.say("跑")
+        val ran = hookRans(rt).single { it.event == "PostToolUse" }
+        assertTrue("超时要进 problems：${ran.problems}", ran.problems.any { it.contains("hang_scan") && it.contains("超时") })
+    }
+
+    @Test
     fun `服务器上没有这个工具时照 CC 的失败口径给非阻断错误`() = run {
         write("/root/.claude/settings.json", settings(
             """{"PostToolUse": [{"matcher": "Bash", "hooks": [

@@ -66,10 +66,14 @@ internal class ModelHookRunner(private val rt: SessionRuntime) {
         coroutineScope {
             handlers.map { handler ->
                 async {
-                    val fallback = dev.min.agent.spi.catchingNonCancellation { mcpCall(handler, stdin, event) }
-                    fallback.getOrElse { e ->
-                        dev.min.agent.ext.hooks.HandlerRun(handler, 1, "", "MCP 工具调用失败：${e.javaClass.simpleName}")
-                    }
+                    // M2：mcp_tool 必须有超时——工具挂死不能把整批 hook（连同回合）一起拖死；
+                    // 默认与 command / http 同为 600 秒（CC hooks.md :426），配置写了按配置、封顶同 MAX_TIMEOUT
+                    val seconds = (handler.timeout ?: HookDriver.defaultTimeout(event, "mcp_tool")).coerceIn(1, HookDriver.MAX_TIMEOUT)
+                    withTimeoutOrNull(seconds * 1_000L) {
+                        dev.min.agent.spi.catchingNonCancellation { mcpCall(handler, stdin, event) }.getOrElse { e ->
+                            dev.min.agent.ext.hooks.HandlerRun(handler, 1, "", "MCP 工具调用失败：${e.javaClass.simpleName}")
+                        }
+                    } ?: dev.min.agent.ext.hooks.HandlerRun(handler, null, "", "", timedOut = true)
                 }
             }.awaitAll()
         }

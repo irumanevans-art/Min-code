@@ -161,7 +161,7 @@ class HooksCompatTest {
                     val runner = newRunner(exec, fs) { paths.guestOfHost(fs.hostPath(it)).value }
                     val runs = invokeSuspend(runner.javaClass.methods.single { it.name.startsWith("run-") },
                         runner, arrayOf(handlers, stdin, mapOf("CLAUDE_PROJECT_DIR" to cwd.value), cwd.value,
-                            { h: Any -> (get(h, "Timeout") as Int?) ?: 60 }))
+                            { h: Any -> (get(h, "Timeout") as Int?) ?: 600 }))
                     verdicts = runs.map { interpret(event, it!!) }
                     combined = combine(event, verdicts)
                 }
