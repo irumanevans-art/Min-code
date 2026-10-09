@@ -86,7 +86,9 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --mode <模式>          default（默认）/ acceptEdits / plan / bypassPermissions / dontAsk / auto
   --auto-mode-reviewer <供应商/模型> 独立审查模型；未指定使用同供应商小模型
                                   指定其他供应商时，用户消息与工具入参会发给第二家供应商
-  --max-budget-usd <金额> 会话与辅助模型累计 USD 花费上限；缺 USD 定价时拒绝发请求
+  --max-budget-usd <金额> 本次运行、整棵会话树（子 agent / 审查 / 压缩 / 回顾）累计 USD 花费上限；
+                          缺 USD 定价的模型会拒绝发请求（fail-closed），启动时校验主模型 / 回退链 / fast / 审查模型。
+                          到限的判定在每个请求发出前：越线那条回复的工具照常执行，并发请求可能让最终花费略超上限
   --model-timeout-ms <n> 会话与辅助模型请求超时，默认 600000
   --approve ask|yes|no   审批怎么答：交互模式默认 ask，非交互默认 no
   --cwd <目录>           工作目录，默认当前目录

@@ -1,5 +1,7 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.llm.CostTotals
+import dev.min.agent.llm.ModelUsage
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.Usage
@@ -79,4 +81,20 @@ internal class RunBudget(internal val limitUsd: Double?) {
 
     /** 非 USD 计价的请求次数：定时运行按「花费无法核对」到限处理 */
     fun nonUsdRequests(): Int = synchronized(lock) { roots.values.sumOf { it.nonUsd } }
+
+    /** 计费点的总账快照（[root] = null 时是所有树）：-p 结果按根汇总的花费走这里 */
+    internal fun totalsFor(root: SessionId?): CostTotals = synchronized(lock) {
+        val spends = if (root == null) roots.values.toList() else listOfNotNull(roots[root])
+        val byCurrency = LinkedHashMap<String, Double>()
+        var unpriced = 0
+        val perModel = LinkedHashMap<ModelRef, ModelUsage>()
+        for (spend in spends) {
+            spend.byCurrency.forEach { (c, v) -> byCurrency[c] = (byCurrency[c] ?: 0.0) + v }
+            unpriced += spend.unpriced
+            spend.perModel.forEach { (m, s) ->
+                perModel.merge(m, ModelUsage(s.requests, s.usage)) { a, b -> ModelUsage(a.requests + b.requests, a.usage + b.usage) }
+            }
+        }
+        CostTotals(byCurrency, unpriced, perModel)
+    }
 }

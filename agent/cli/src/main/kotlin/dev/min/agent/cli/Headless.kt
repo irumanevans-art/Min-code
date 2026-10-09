@@ -79,7 +79,8 @@ internal suspend fun runHeadless(
         runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)
         runtime.awaitIdle()
         stderr.println()
-        val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq))
+        // 树级总账：子 agent / hook agent / 团队成员这次运行花的都在（运行账本按根累计，resume 的旧花费不进）
+        val result = CliResult(runtime.sessionId.value, app.records(runtime.sessionId, fromSeq), app.hub().runCostOf(runtime.sessionId))
         result.errors.forEach(stderr::println)
         when (args.outputFormat) {
             OutputFormat.Text ->

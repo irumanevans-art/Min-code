@@ -810,6 +810,9 @@ class SessionHub(
     /** 在线的会话；不打开 */
     fun get(id: SessionId): SessionRuntime? = runtimes[id]
 
+    /** 「一次运行」的花费总账（-p 结果按根汇总）：树里各会话这次运行提交的 `model_charged` 折出，不含 resume 的旧花费 */
+    fun runCostOf(root: SessionId): dev.min.agent.llm.CostTotals = budget.totalsFor(root)
+
     /** 给某个会话某个回合里某次工具调用用的端口 */
     internal fun portFor(rt: SessionRuntime, turnId: TurnId, callId: CallId): AgentPort = object : AgentPort {
         override suspend fun delegate(request: DelegateRequest): DelegateResult = spawn(rt, turnId, callId, request)

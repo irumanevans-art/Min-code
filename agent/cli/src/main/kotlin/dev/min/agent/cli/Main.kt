@@ -149,7 +149,7 @@ internal suspend fun interact(
         return runHeadless(app, runtime, args, scope, stdin, System.out, System.err)
     }
 
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/recap 一行回顾；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
         uiConsole?.mainOwnsInput = true
@@ -171,6 +171,7 @@ internal suspend fun interact(
                 }
             }
             trimmed == "/recap" -> System.err.println(recapNote(runtime.recap()))
+            trimmed == "/cost" -> System.err.println(costReport(app, app.hub(), runtime))
             trimmed == "/auto-reviewer" || trimmed.startsWith("/auto-reviewer ") ->
                 autoReviewerCommand(app, runtime, trimmed.removePrefix("/auto-reviewer").trim())
             trimmed == "/output-style" || trimmed.startsWith("/output-style ") ->

@@ -1,5 +1,8 @@
 package dev.min.agent.cli
 
+import dev.min.agent.llm.ChargedCost
+import dev.min.agent.llm.CostTotals
+import dev.min.agent.llm.totalCost
 import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.ApprovalChoice
 import dev.min.agent.spi.ApprovalRequested
@@ -7,6 +10,7 @@ import dev.min.agent.spi.ApprovalResolved
 import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.FAILURE_CAUSE_STRUCTURED_OUTPUT_RETRIES
 import dev.min.agent.spi.InterruptedBy
+import dev.min.agent.spi.LIMIT_CAUSE_MAX_BUDGET_USD
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.AssistantMessageCompleted
 import dev.min.agent.spi.StructuredOutputDelivered
@@ -26,16 +30,27 @@ import kotlinx.serialization.json.put
  * `structured_output`/`errors`/`permission_denials`。花费只有全部请求有 USD 定价时输出，未知不能冒充零。
  * 只看本次命令之后的事件（[events]）；旧回合的累计 token 不能证明本轮成功
  */
-internal data class CliResult(val session: String, val events: List<EventRecord>) {
+internal data class CliResult(
+    val session: String,
+    val events: List<EventRecord>,
+    /**
+     * 本次运行**整棵树**的花费总账（子 agent、hook agent、团队成员的计费点都在，从运行账本折出——
+     * resume 进来的旧花费不属于这次运行）。null = 折不出树级的（单测合成事件），退回只折根会话事件
+     */
+    val treeCost: CostTotals? = null,
+) {
     private val ends = events.mapNotNull { it.event as? TurnEnded }
     val completed: Boolean get() = ends.isNotEmpty() && ends.all { it.outcome == TurnOutcome.Completed }
 
     /** CC 对 result.subtype 的叫法：success / error_max_turns（--max-turns 到限）/ error_during_execution /
-     *  error_max_structured_output_retries（--json-schema 重试用尽，内核用 Failed.cause 区分出来） */
+     *  error_max_structured_output_retries（--json-schema 重试用尽，内核用 Failed.cause 区分出来）/
+     *  error_max_budget_usd（--max-budget-usd 到限，内核用 TurnEnded.limitCause 区分出来） */
     val subtype: String get() = when {
         completed -> "success"
         ends.any { (it.outcome as? TurnOutcome.Failed)?.cause == FAILURE_CAUSE_STRUCTURED_OUTPUT_RETRIES } ->
             "error_max_structured_output_retries"
+        ends.any { (it.outcome as? TurnOutcome.Interrupted)?.by == InterruptedBy.Limit && it.limitCause == LIMIT_CAUSE_MAX_BUDGET_USD } ->
+            "error_max_budget_usd"
         ends.any { (it.outcome as? TurnOutcome.Interrupted)?.by == InterruptedBy.Limit } -> "error_max_turns"
         else -> "error_during_execution"
     }
@@ -55,13 +70,23 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
     /** 校验通过的结构化输出（--json-schema）：只看本次命令之后的事件；失败 / 没开时没有这个字段 */
     private val structured = events.mapNotNull { it.event as? StructuredOutputDelivered }.lastOrNull()
 
+    /**
+     * 本次运行的花费：优先树级总账（[treeCost]，含子会话的计费点）；没有时退回根会话事件。
+     * 计费点本身就是 model_charged——主请求、压缩、回顾、审查都在里面，首个请求之前的压缩也不会丢
+     */
+    val cost: CostTotals = treeCost ?: totalCost(
+        events.mapNotNull { r ->
+            (r.event as? dev.min.agent.spi.ModelCharged)?.let { ChargedCost(it.model, it.usage, it.amount, it.currency) }
+        },
+    )
+
     /** 失败时的说明列表（CC 的 error 臂带 errors:string[]）；到限与被中断也给一句人能读的原因 */
     val errors: List<String> = ends.mapNotNull { end ->
         when (val outcome = end.outcome) {
             TurnOutcome.Completed -> null
             is TurnOutcome.Failed -> outcome.message
             is TurnOutcome.Interrupted -> when (outcome.by) {
-                InterruptedBy.Limit -> "到达 --max-turns 的回合上限"
+                InterruptedBy.Limit -> if (end.limitCause == LIMIT_CAUSE_MAX_BUDGET_USD) "到达 --max-budget-usd 的花费上限" else "到达 --max-turns 的回合上限"
                 InterruptedBy.Hook -> "被 hook 停止"
                 InterruptedBy.User -> "被用户中断"
                 InterruptedBy.ProcessDeath -> "进程中断"
@@ -96,14 +121,21 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
         put("num_turns", numTurns)
         put("duration_ms", durationMs)
         put("usage", usageJson(turnUsage))
-        val charges = events.mapNotNull { it.event as? dev.min.agent.spi.ModelCharged }
-        if (charges.isNotEmpty() && charges.all { it.currency == "USD" && it.amount != null }) {
-            put("total_cost_usd", charges.sumOf { it.amount!! })
+        // 花费：全部 USD 计价才有 CC 的 total_cost_usd；跨币种（回退到 CNY 计价模型）时换 Min 自己的
+        // total_cost 按币种分列——两种都给会让人以为换过算好了，只给真量得出的那个
+        if (cost.byCurrency.isNotEmpty()) {
+            when {
+                cost.allUsd -> put("total_cost_usd", round6(cost.usd))
+                else -> put("total_cost", JsonObject(cost.byCurrency.mapValues { JsonPrimitive(round6(it.value)) }))
+            }
         }
         structured?.let { put("structured_output", it.value) }
         if (!completed) put("errors", JsonArray(errors.map(::JsonPrimitive)))
         if (denials.isNotEmpty()) put("permission_denials", JsonArray(denials))
     }
+
+    /** 花费数值的位数：截到 1e-6，去掉浮点尾噪（CC 给到 6 位左右） */
+    private fun round6(value: Double): Double = kotlin.math.round(value * 1_000_000.0) / 1_000_000.0
 }
 
 private fun usageJson(usage: Usage): JsonObject = buildJsonObject {
