@@ -219,3 +219,5 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - v1 增量（2026-10-09，auto 生成审查）：Agent / Team / Workflow 在共用生成路径上写 `auto_reviewed`；审查转人工时使用独立 review 调用 id 的 `tool_planned` / `approval_requested` / `approval_resolved` / `tool_outcome`，不覆盖正在执行的父工具阶段。合成调用不写助手历史；审批结果及共享熔断可凭日志重建。
 
 - v1 增量（2026-10-09，SubagentHandback）：`subagent_origin.teamMember` 缺省 false，用于区分团队成员与普通本地子 agent；新增 `subagent_report_ready`（turnId、body / review 缺省 null、handback 缺省 false），只记录可交付正文或固定拒绝说明。review = approved / manual / withheld；body 为 null 清除交卷，供 Stop hook 续跑使用。报告标签新增可选 review / handback 属性；老格式按缺省解析。handback 成功后 SubagentStop 的 last_assistant_message 和可选 content 为简短说明；前台 Agent PostToolUse 的 tool_response 改为 status / agentId / content 对象，content 同样不重复报告正文。旧读取器不认识新事件。
+
+- v1 增量（2026-10-09，对话边界）：新增 `auto_user_context_inherited`（messages：按原顺序冻结父会话 origin=user 的完整文字，不含 MCP 附件）。子会话启动及审查前的父上下文变化先写此事件；没有父进程时仍能重放。约束不解析成永久规则，后来的真实用户撤销随原消息进入同一审查请求；所有用户原文从 history 读取，摘要不删除 history。超过审查窗口转人工，不截断旧边界。分身种子来源和压缩视图保持原形，继承快照存在时不重复种子用户消息。

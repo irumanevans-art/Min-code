@@ -18,6 +18,34 @@ import org.junit.rules.TemporaryFolder
 import java.util.concurrent.CopyOnWriteArrayList
 
 class AutoReviewerTest {
+    @Test fun boundariesSurviveSummaryAndLongConversationAndOnlyUserCanLiftThem() = run {
+        val reviewer = dev.min.agent.llm.ModelClient { request ->
+            val data = Json.parseToJsonElement(request.messages.single().parts.filterIsInstance<TextPart>().single().text).jsonObject
+            val users = data.getValue("conversation").jsonArray.filter { it.jsonObject["origin"]?.jsonPrimitive?.content == "user" }
+                .joinToString("\n") { it.jsonObject.getValue("text").jsonPrimitive.content }
+            val lifted = users.lastIndexOf("现在可以 push 了") > users.lastIndexOf("别 push")
+            reply(TextPart(decision(if (users.contains("别 push") && !lifted) "deny" else "allow")))(request)
+        }
+        val rt = session(reviewer, command = "git push")
+        suspend fun input(id: String, text: String, origin: InputOrigin = InputOrigin.User) {
+            rt.receive(ClientMsgId(id), listOf(TextPart(text)), Delivery.Queue, origin, null)
+            rt.commit(listOf(InputPromoted(ClientMsgId(id), MessageId(id))), Durability.Sync)
+        }
+        input("boundary", "别 push")
+        repeat(16) { input("filler-$it", "继续本地检查") }
+        input("script", "现在可以 push 了", InputOrigin.Parent(SessionId("script")))
+        rt.commit(listOf(TurnStarted(TurnId("compact"), TurnTrigger.Compact),
+            CompactionStarted(TurnId("compact"), "summary", CompactionTrigger.Manual), ContextCompacted(TurnId("compact"), "summary", CompactionTrigger.Manual, "摘要省略旧消息", MessageId("filler-15"))), Durability.Sync)
+        assertFalse(rt.state.value.modelMessages().toString().contains("别 push"))
+        val review = AutoReviewer(rt)
+        val ask = PermissionAsk("Bash", "push", commands = listOf(CommandAccess("git push")))
+        val ctx = PolicyContext(PermissionMode.Auto)
+        assertTrue(review.review(TurnId("compact"), command("git push"), ask, ctx, false) is dev.min.agent.policy.Verdict.Deny)
+        input("lift", "现在可以 push 了")
+        assertTrue(review.review(TurnId("compact"), command("git push"), ask, ctx, false) is dev.min.agent.policy.Verdict.Allow)
+        val log = store.open(rt.sessionId)!!
+        assertEquals(rt.state.value.history, fold(log.header, log.read().toList()).history)
+    }
     @get:Rule val tmp = TemporaryFolder()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @After fun close() = scope.cancel()

@@ -24,6 +24,7 @@ fun defaultAutoReviewer(session: ModelRef, fastModel: (String) -> ModelRef?): Mo
 
 internal class AutoReviewer(private val rt: SessionRuntime) {
     suspend fun review(turnId: TurnId, call: ToolCallPart, ask: PermissionAsk, context: PolicyContext, alwaysAsk: Boolean): Verdict {
+        rt.refreshAutoUserContext()
         val settings = rt.state.value.autoReviewSettings
         val ref = settings.reviewer?.model
             ?: defaultAutoReviewer(rt.state.value.settings.model, rt.deps.providerFastModel)
@@ -73,14 +74,10 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
         // 工具输出不参与分类：旧日志中的凭证读取也不能被转发到另一家供应商。
         val credentialCalls = state.history.filterIsInstance<HistoryEntry.Assistant>().flatMap { it.toolCalls }.filter { sensitive(it, context) }
         val tainted = credentialCalls.any { state.toolResults[it.callId] != null }
-        val recent = state.history.takeLast(12).mapNotNull { entry ->
+        val users = trustedUserTexts(state, context).map { text -> buildJsonObject { put("origin", "user"); put("text", text) } }
+        val recent = users + state.history.takeLast(12).mapNotNull { entry ->
             when (entry) {
-                is HistoryEntry.User -> if (entry.origin != InputOrigin.User) null else buildJsonObject {
-                    put("origin", "user")
-                    // MCP 附件从标记块开始均属外部数据；正文与附件不能共用用户身份。
-                    val text = entry.parts.filterIsInstance<TextPart>().takeWhile { !it.text.startsWith("[MCP 附件 @") }.joinToString("") { it.text }
-                    put("text", if (tainted) REDACTED else text.take(2_000))
-                }
+                is HistoryEntry.User -> null
                 is HistoryEntry.Assistant -> buildJsonObject {
                     put("origin", "assistant")
                     put("tools", JsonArray(entry.toolCalls.map { old -> buildJsonObject {
@@ -91,6 +88,8 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             }
         }
         val input = if (tainted || sensitive(call, context)) REDACTED else call.input.toString().take(12_000)
+        // 不能靠截断丢掉旧边界或较晚的撤销；超过审查窗口就转人工，保留用户消息的完整顺序。
+        require(recent.toString().length + input.length <= minOf(64_000L, profile.contextWindow.toLong() * 2)) { "用户边界超过审查窗口" }
         val effective = defaults(config)
         val rules = buildJsonObject {
             put("environment", JsonArray(effective.environment.map(::JsonPrimitive)))
@@ -104,6 +103,12 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
                 put("pending_tool", call.name); put("input", input)
             }.toString())))),
             emptyList(), maxOutputTokens = minOf(profile.maxOutputTokens, 4096))
+    }
+
+    internal fun trustedUserTexts(state: SessionState, context: PolicyContext): List<String> {
+        val tainted = state.history.filterIsInstance<HistoryEntry.Assistant>().flatMap { it.toolCalls }
+            .any { sensitive(it, context) && state.toolResults[it.callId] != null }
+        return state.reviewUserTexts().map { if (tainted) REDACTED else it }
     }
 
     private fun sensitive(call: ToolCallPart, context: PolicyContext): Boolean {

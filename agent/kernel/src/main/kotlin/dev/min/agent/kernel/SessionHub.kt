@@ -848,7 +848,7 @@ class SessionHub(
      * 开跑要过团队的并发名额，由协调器在所有成员入队之后统一放行
      */
     internal suspend fun spawn(parent: SessionRuntime, turnId: TurnId, callId: CallId, request: DelegateRequest, teamMember: Boolean = false): DelegateResult {
-        val ps = parent.state.value
+        var ps = parent.state.value
         val parentOrigin = ps.origin
         if (parentOrigin?.fork == true) return DelegateResult.Rejected("你是分身，直接执行任务，不要再委派。")
         val depth = (parentOrigin?.depth ?: 0) + 1
@@ -884,6 +884,7 @@ class SessionHub(
                 is dev.min.agent.policy.Verdict.Deny -> return DelegateResult.Rejected(verdict.messageToModel)
                 else -> Unit
             }
+            ps = parent.state.value
         }
         val root = parentOrigin?.root ?: parent.sessionId
         val childId = SessionId(deps.ids.next("s"))
@@ -926,6 +927,7 @@ class SessionHub(
                 workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
             )
         }
+        initial += dev.min.agent.spi.AutoUserContextInherited(AutoReviewer(parent).trustedUserTexts(ps, ToolExecutor(parent, HookDriver(parent)).policyContext()))
         val background = !request.workflow && (request.background || definition?.alwaysBackground == true)
 
         // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），

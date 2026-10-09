@@ -97,6 +97,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is dev.min.agent.spi.SessionRenamed -> copy(name = e.name)
         is dev.min.agent.spi.AutoReviewSettingsLoaded -> copy(autoReviewSettings = e)
+        is dev.min.agent.spi.AutoUserContextInherited -> copy(inheritedAutoUserContext = e.messages)
         is dev.min.agent.spi.AutoReviewed -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
             presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
             autoReviewDenials = autoReviewDenials + if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) 1 else 0,
@@ -378,6 +379,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(origin?.fork == true) { "只有分身会话才能继承对话" }
             check(history.isEmpty() && turn == null) { "继承的对话必须在任何回合之前写入" }
             copy(
+                forkAutoUserSeedIds = e.messages.filter { it.role == Role.User && it.origin == InputOrigin.User }.map { it.messageId }.toSet(),
                 history = e.messages.map { m ->
                     when (m.role) {
                         // 旧分身日志没记来历，不能把无法证明来源的正文升级成可信用户意图。
