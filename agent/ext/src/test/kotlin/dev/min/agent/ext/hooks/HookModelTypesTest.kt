@@ -90,6 +90,16 @@ class HookModelTypesTest {
         }
     }
 
+    @Test fun `模型结论也过逐事件丢弃表，TaskCreated 丢 continue`() {
+        // 与 command 型同一张 HOOK_OUTPUT_DISCARDS：表里与模型侧事件矩阵相交的今天只有 TaskCreated
+        // （:2445 只丢 continue）。钉住它：ok:false 的理由交回模型，但停不住回合
+        val verdict = interpretPrompt(HookEvent.TaskCreated, promptHandler(HookEvent.TaskCreated), PromptHookOutcome.Done("""{"ok": false, "reason": "这个任务没建对"}"""))
+        assertEquals(HookDecision.Block, verdict.decision)
+        assertEquals("这个任务没建对", verdict.reason?.text)
+        assertTrue("TaskCreated 丢弃 continue：模型侧结论停不住回合", verdict.shouldContinue)
+        assertNull(verdict.stopReason)
+    }
+
     @Test fun `没按口径回、执行失败、超时都是非阻断错误`() {
         val malformed = interpretPrompt(HookEvent.Stop, promptHandler(HookEvent.Stop), PromptHookOutcome.Done("我觉得可以了"))
         assertNotNull(malformed.nonBlockingError)

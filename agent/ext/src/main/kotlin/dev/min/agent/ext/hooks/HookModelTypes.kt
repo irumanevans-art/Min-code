@@ -66,8 +66,14 @@ fun parsePromptDecision(text: String): PromptDecision? {
  * - PostToolUseFailure / TaskCreated / TaskCompleted：理由作为工具错误交回模型、回合继续
  * - PermissionRequest / PermissionDenied：没有效果（要 deny 用 command hook 的 decision）
  * 模型没按口径回 / 执行失败 / 超时：非阻断错误（照常往下走）——门禁挂在prompt 上挂坏了不该把工具放行成拦死
+ *
+ * 结果再过 [discardingFieldsOf]（与 command 型同一张逐事件丢弃表）：模型侧事件矩阵与表的交集今天只有
+ * TaskCreated（丢 continue），但两边任一扩展时行为保持与 command 型一致，不另立口径
  */
-fun interpretPrompt(event: HookEvent, handler: HookHandler, outcome: PromptHookOutcome): HookVerdict {
+fun interpretPrompt(event: HookEvent, handler: HookHandler, outcome: PromptHookOutcome): HookVerdict =
+    translatePromptVerdict(event, handler, outcome).discardingFieldsOf(event)
+
+private fun translatePromptVerdict(event: HookEvent, handler: HookHandler, outcome: PromptHookOutcome): HookVerdict {
     val base = HookVerdict(handler)
     val label = handler.prompt?.lineSequence()?.firstOrNull()?.take(60) ?: handler.type
     when (outcome) {
