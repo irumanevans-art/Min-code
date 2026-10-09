@@ -831,6 +831,24 @@ class TeamSessionTest {
     }
 
     @Test
+    fun `the host can disband the team without going through the leader's tool, and only an active team`() = run {
+        val h = hub(leaderBuilds("a", "b") { _, _ -> hang }, HubLimits(teamMaxConcurrent = 1))
+        assertEquals("没有团队", "没有进行中的团队。", h.disbandTeam(h.root().sessionId))
+        val (leader, members) = readyTeam(h, "a", "b")
+        members.getValue("a").state.first { it.turn != null }
+        assertNull(h.disbandTeam(leader.sessionId, "用户在界面上解散"))
+        assertNull("成员停下了", members.getValue("a").state.value.turn)
+        assertEquals(0, h.teams.runningCount())
+        val disbanded = leader.state.value.team!!.disbanded!!
+        assertEquals(TeamDisbandReason.UserEnded, disbanded.reason)
+        assertEquals("用户在界面上解散", disbanded.note)
+        assertEquals("解散后不能重复解散", "没有进行中的团队。", h.disbandTeam(leader.sessionId))
+        assertEquals("不在线的会话", "会话不在线。", h.disbandTeam(dev.min.agent.protocol.SessionId("nope")))
+        leader.awaitIdle()
+        assertLogIsTruth(leader)
+    }
+
+    @Test
     fun `only the leader can disband`() = run {
         val h = hub(leaderBuilds("a") { _, _ -> hang })
         val (leader, members) = readyPaused(h, "a")

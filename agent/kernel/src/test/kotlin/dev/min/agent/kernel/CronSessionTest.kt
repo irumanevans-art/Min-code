@@ -876,6 +876,30 @@ class CronSessionTest {
     }
 
     @Test
+    fun `the host can list and delete scheduled tasks through the hub, the same view and event the tools use`() = run {
+        val h = hub(answering)
+        val rt = h.root()
+        val id = schedule(rt, budget = 0.5)
+        val board = h.cronBoard(rt.sessionId)!!
+        assertEquals(listOf(id), board.active.map { it.id })
+        assertNull("根会话可以建", board.refusal)
+        assertEquals("“下次”的下限与引擎触发用的是同一份", setOf(id), board.nextFireFloors.keys)
+        assertNull("不在线的会话没有视图", h.cronBoard(dev.min.agent.protocol.SessionId("nope")))
+
+        assertFalse("不存在的任务", h.cancelCron(rt.sessionId, "c99"))
+        assertTrue(h.cancelCron(rt.sessionId, id))
+        assertEquals(CronStatus.Cancelled, rt.state.value.crons.single().status)
+        assertEquals(listOf(id), events(rt.sessionId).filterIsInstance<dev.min.agent.spi.CronCancelled>().map { it.cronId })
+        assertFalse("已经取消的不能再取消", h.cancelCron(rt.sessionId, id))
+        // 取消之后到点也不触发
+        now.set(now.get() + 31 * minute)
+        h.crons.tick(now.get())
+        settle(rt)
+        assertEquals(0, rt.state.value.crons.single().fires)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
     fun `the cap is per run, so a cheap run leaves the task alive and every fire gets a fresh allowance`() = run {
         val h = hub(answering) // 每次运行只花 0.015
         val rt = h.root()

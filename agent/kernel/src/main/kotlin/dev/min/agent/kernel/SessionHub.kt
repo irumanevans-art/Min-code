@@ -738,6 +738,24 @@ class SessionHub(
     /** 团队成员的状态行（界面的团队页读；没有团队返回空）。状态来自日志折叠与成员会话的折叠，不是另存的 */
     fun teamMembers(root: SessionId): List<TeamMemberStatus> = runtimes[root]?.let(teams::members).orEmpty()
 
+    /**
+     * 界面的“解散团队”：与负责人用 TeamDisband 同一条路（落 team_disbanded、停成员、清名额），理由记 [TeamDisbandReason.UserEnded]。
+     * 返回 null = 解散了，否则是给人看的原因（没有进行中的团队、会话不在线）。成员已有的报告照常交给负责人
+     */
+    suspend fun disbandTeam(root: SessionId, note: String? = null): String? {
+        val rt = runtimes[root] ?: return "会话不在线。"
+        val team = rt.state.value.team?.takeIf { it.active } ?: return "没有进行中的团队。"
+        return teams.disbandTeam(rt, dev.min.agent.spi.TeamDisbanded(team.teamId, dev.min.agent.spi.TeamDisbandReason.UserEnded, note))
+    }
+
+    /** 界面的定时任务清单：模型用 CronList 看到的同一份视图（含“下次”要的下限、宿主天花板）。会话不在线返回 null */
+    fun cronBoard(root: SessionId): dev.min.agent.spi.CronBoard? = runtimes[root]?.let { rt ->
+        rt.state.value.cronBoard(deps.clock.nowMs(), deps.zone, limits.cronMaxBudgetUsd, crons.nextFireFloors(root), limits.cronEnabled.not())
+    }
+
+    /** 界面删一条定时任务（模型的 CronDelete 是同一个效果）。返回是否真的取消了一条进行中的任务 */
+    suspend fun cancelCron(root: SessionId, cronId: String): Boolean = runtimes[root]?.let { crons.cancel(it, cronId) } ?: false
+
     /** 放行重启后搁浅的团队成员（[TeamMemberStatus.Phase.Stalled]）：界面的“继续”。返回放行了几个；照常过并发名额 */
     suspend fun resumeTeamMembers(root: SessionId): Int = runtimes[root]?.let { teams.resumeStalled(it) } ?: 0
 

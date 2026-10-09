@@ -271,7 +271,7 @@ internal class TeamCoordinator(
     }
 
     /** 写解散事件、停成员、清名额。返回 null = 成功，否则是原因 */
-    private suspend fun disbandTeam(root: SessionRuntime, event: TeamDisbanded): String? {
+    suspend fun disbandTeam(root: SessionRuntime, event: TeamDisbanded): String? {
         val members = teamLock.withLock {
             val problem = root.state.value.teamProblem(event)
             if (problem != null) return problem

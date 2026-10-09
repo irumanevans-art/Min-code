@@ -4,6 +4,7 @@ import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.CronBudgetStopped
+import dev.min.agent.spi.CronCancelled
 import dev.min.agent.spi.CronExpiry
 import dev.min.agent.spi.CronExpired
 import dev.min.agent.spi.CronFired
@@ -141,6 +142,17 @@ internal class CronEngine(
         val entry = attached[id] ?: return emptyMap()
         val rt = hub.get(id) ?: return emptyMap()
         return rt.state.value.crons.associate { it.id to maxOf(entry.floorMs, entry.skippedAt[it.id] ?: 0L) }
+    }
+
+    /**
+     * 宿主（界面）删一条进行中的定时任务：落的是模型用 CronDelete 时同一条 [CronCancelled]，同一把锁（和触发、过期互相串行）。
+     * 返回是否真的取消了一条——任务不存在、已经结束都是 false
+     */
+    suspend fun cancel(rt: SessionRuntime, cronId: String): Boolean {
+        val entry = attached[rt.sessionId] ?: return false
+        return entry.lock.withLock {
+            rt.commitIf(listOf(CronCancelled(cronId)), Durability.Sync) { s -> s.cronTask(cronId)?.active == true } != null
+        }
     }
 
     /** 宿主定时器的一次回调：看每个接着的会话有没有到点的任务 */
