@@ -875,6 +875,8 @@ internal fun List<ChatItem>.toTranscriptText(labels: TranscriptLabels): String =
             is ChatItem.Note -> append("> ${item.text}\n\n")
             // 回退掉的对话不导出（导出的是「现在这条对话」），折叠行本身留一句
             is ChatItem.Folded -> append("> ${item.title}\n\n")
+            // 子 agent 的报告：标题行（类型 · 描述 · 状态）加正文，导出时不折叠
+            is ChatItem.AgentReport -> append("> ${item.agentType}${item.description?.let { " · $it" }.orEmpty()} · ${item.status}\n\n${item.body}\n\n")
             // 进程输出导成代码块：贴到别处去查的时候，等宽和原样换行都要保住
             is ChatItem.ProcessOutput ->
                 append("```\n${item.lines.joinToString("\n")}\n```\n\n")
@@ -1413,9 +1415,9 @@ private fun SessionContent(
                             threads = switcherThreads,
                             selected = selectedAgent,
                             onSelect = { selectedAgent = it },
+                            allThreads = agentThreads,
                         )
                     },
-                            allThreads = agentThreads,
                 )
                 key(activeKey ?: "idle") {
                     val boundId = activeKey
@@ -1525,6 +1527,7 @@ internal fun TranscriptItem(
         is ChatItem.Thinking -> ThinkingEntry(item.text, item.id, isFirst, isLast)
         is ChatItem.Note -> NoteEntry(item.text, item.isError, isFirst, isLast)
         is ChatItem.Folded -> FoldedEntry(item, isFirst, isLast, labels, onRevert, canRevert)
+        is ChatItem.AgentReport -> AgentReportEntry(item, isFirst, isLast)
         is ChatItem.ProcessOutput -> ProcessOutputEntry(item, isFirst, isLast)
         is ChatItem.ToolCall -> ToolEntry(
             item = item,

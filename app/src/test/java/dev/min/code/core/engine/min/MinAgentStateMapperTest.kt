@@ -149,10 +149,34 @@ class MinAgentStateMapperTest {
                 InputOrigin.Agent(child, AgentInputKind.Report, TurnId("ct"))),
             InputPromoted(ClientMsgId("report"), MessageId("m_report")),
         )
-        val card = map(s).items.last() as ChatItem.Note
+        val card = map(s).items.last() as ChatItem.AgentReport
         assertEquals("m_report", card.id)
-        assertEquals("report:Explore:null:completed:find entry:tools=3\nbody", card.text)
+        assertEquals("点卡片跳到发起它的那次 Agent 调用对应的线程", "c1", card.threadId)
+        assertEquals("Explore", card.agentType); assertNull(card.name)
+        assertEquals("find entry", card.description)
+        assertEquals("completed", card.status)
+        assertEquals(3, card.toolCalls); assertEquals(1200L, card.tokens); assertEquals(4500L, card.durationMs)
+        assertEquals("body", card.body)
         assertFalse(card.isError)
+    }
+
+    @Test fun reportCardTakesTheDelegationNameWhenTheTagHasNone() {
+        val child = SessionId("s_child")
+        val s = foldOf(
+            SubagentSpawned(tid, CallId("c1"), child, "Explore", false, true, "d", "finder"),
+            InputReceived(ClientMsgId("r"), listOf(TextPart(report("Explore", "completed", "x"))), Delivery.Steer, InputOrigin.Agent(child, AgentInputKind.Report)),
+            InputPromoted(ClientMsgId("r"), MessageId("m_r")),
+        )
+        assertEquals("finder", (map(s).items.single() as ChatItem.AgentReport).name)
+    }
+
+    @Test fun reportFromAChildTheParentNeverDelegatedIsNotClickable() {
+        val s = foldOf(
+            InputReceived(ClientMsgId("r"), listOf(TextPart(report("Explore", "completed", "x", id = "s_gone"))), Delivery.Steer, InputOrigin.Agent(SessionId("s_gone"), AgentInputKind.Report)),
+            InputPromoted(ClientMsgId("r"), MessageId("m_r")),
+        )
+        val card = map(s).items.single() as ChatItem.AgentReport
+        assertNull(card.threadId); assertNull(card.description)
     }
 
     @Test fun reportStoppedByAHookKeepsItsStatusAndIsDrawnAsError() {
@@ -163,9 +187,10 @@ class MinAgentStateMapperTest {
                 InputOrigin.Agent(child, AgentInputKind.Report)),
             InputPromoted(ClientMsgId("r"), MessageId("m_r")),
         )
-        val card = map(s).items.single() as ChatItem.Note
+        val card = map(s).items.single() as ChatItem.AgentReport
         assertTrue(card.isError)
-        assertEquals("report:Explore:null:stopped-by-hook:d:tools=3\ncut short", card.text)
+        assertEquals("stopped-by-hook", card.status)
+        assertEquals("cut short", card.body)
     }
 
     @Test fun failedReportIsDrawnAsError() {
@@ -176,7 +201,7 @@ class MinAgentStateMapperTest {
                 InputOrigin.Agent(child, AgentInputKind.Report)),
             InputPromoted(ClientMsgId("r"), MessageId("m_r")),
         )
-        assertTrue((map(s).items.single() as ChatItem.Note).isError)
+        assertTrue((map(s).items.single() as ChatItem.AgentReport).isError)
     }
 
     @Test fun agentMessageIsLabelledWithItsSender() {

@@ -1356,4 +1356,7 @@
     <!-- B10: top-bar cost = main session + sub-agents (whole tree) -->
     <string name="min_usage_cost_subagents">其中子 agent</string>
 
+    <!-- B10: sub-agent report card -->
+    <string name="agent_report_expand">展开报告</string>
+    <string name="agent_report_collapse">收起报告</string>
 </resources>

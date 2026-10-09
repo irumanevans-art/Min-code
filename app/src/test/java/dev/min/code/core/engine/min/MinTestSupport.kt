@@ -94,8 +94,6 @@ class FakeText : MinAgentText {
     override fun continued(atMs: Long?) = "continued@$atMs"
     override fun subagentWoke() = "woke"
     override fun hookWoke() = "hook-woke"
-    override fun report(report: MinReport, description: String?) =
-        "report:${report.agentType}:${report.name}:${report.status}:${description}:tools=${report.tools}\n${report.body}"
     override fun agentMessage(agentType: String, name: String?) = "message-from:${name ?: agentType}"
     override fun attachment() = "[img]"
     override fun redactedThinking() = "[redacted]"

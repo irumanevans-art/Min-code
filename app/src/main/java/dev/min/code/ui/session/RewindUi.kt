@@ -117,6 +117,9 @@ private fun NestedLine(item: ChatItem, labels: TranscriptLabels) {
             style = MaterialTheme.typography.labelSmall, fontFamily = JetbrainsMono, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         is ChatItem.Note -> Text(item.text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        is ChatItem.AgentReport -> Text(
+            "· ${item.agentType} · ${item.status}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         is ChatItem.Thinking, is ChatItem.ProcessOutput, is ChatItem.Folded -> Unit
     }
 }

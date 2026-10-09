@@ -1361,4 +1361,7 @@
     <!-- B10: top-bar cost = main session + sub-agents (whole tree) -->
     <string name="min_usage_cost_subagents">of which sub-agents</string>
 
+    <!-- B10: sub-agent report card -->
+    <string name="agent_report_expand">Show report</string>
+    <string name="agent_report_collapse">Hide report</string>
 </resources>

@@ -52,6 +52,8 @@ internal fun ChatItem.searchableText(labels: TranscriptLabels): String? = when (
     is ChatItem.Note -> text.takeIf { it.isNotBlank() }
     // 折叠记录只搜标题：回退掉的对话已经不是这条会话的内容了
     is ChatItem.Folded -> title
+    // 报告搜的是描述和正文（类型、状态词是机器词，搜它们没有意义）
+    is ChatItem.AgentReport -> listOfNotNull(description, body).joinToString("\n").takeIf { it.isNotBlank() }
     is ChatItem.ProcessOutput ->
         lines.joinToString("\n").takeIf { it.isNotBlank() }
     is ChatItem.ToolCall -> buildString {

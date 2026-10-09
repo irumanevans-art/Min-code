@@ -84,6 +84,31 @@ sealed interface ChatItem {
     data class Note(override val id: String, val text: String, val isError: Boolean = false) : ChatItem
 
     /**
+     * 子 agent 交给父会话的报告（Min，B10）：卡上写类型、描述、状态、工具次数、token、耗时，正文默认折叠，
+     * 点卡片跳到那个子 agent 的线程。前台委派的报告是 Agent 工具卡的结果，不会有这一条。
+     *
+     * 数字和状态词都是**结构化的**，措辞由界面按语言组：状态是内核的状态词（`completed` / `failed` / `interrupted` /
+     * `interrupted-by-restart` / `turn-limit` / `stopped-by-hook` / `stopped-by-budget`），不认识的原样显示。
+     *
+     * @param threadId 点卡片要跳到的线程（= 发起它的 Agent 调用的 id）；子会话不在线 / 找不到委派记录时 null，卡片就不可点
+     * @param description 委派时写的任务说明（报告标签里没有，从父会话的委派记录补）
+     * @param isError 没做完 / 出错：卡片按失败色画
+     */
+    data class AgentReport(
+        override val id: String,
+        val threadId: String?,
+        val agentType: String,
+        val name: String?,
+        val description: String?,
+        val status: String,
+        val isError: Boolean,
+        val toolCalls: Int?,
+        val tokens: Long?,
+        val durationMs: Long?,
+        val body: String,
+    ) : ChatItem
+
+    /**
      * 一条默认折起来的记录：一行 [title]，点开看 [lines]（逐行说明）与 [nested]（原样的条目，只读、淡化）。
      * 回退用它：「已回退的 3 条消息」点开是那段被回退掉的对话，「恢复了 5 个文件，跳过 1 个」点开是逐个文件与跳过的原因。
      * 只有 Min 填（Codex 与 CC 没有这两件事）。
