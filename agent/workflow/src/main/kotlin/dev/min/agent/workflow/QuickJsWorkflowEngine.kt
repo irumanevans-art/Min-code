@@ -16,6 +16,8 @@ class QuickJsWorkflowEngine : WorkflowEngine {
         val js = QuickJs.create(Dispatchers.Default)
         try {
             js.memoryLimit = 32L * 1024 * 1024
+            // 默认值未必传到 JNI；显式限制原生栈，递归错误才不会杀掉宿主进程。
+            js.maxStackSize = 256L * 1024
             // 只计 JS 执行时间，等待模型不计入；失控循环仍能被取消和超时打断。
             js.evaluationTimeoutMillis = 30_000
             js.asyncFunction("__workflowAgent") { values ->
