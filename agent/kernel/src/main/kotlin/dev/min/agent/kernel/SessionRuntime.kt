@@ -145,12 +145,13 @@ class SessionRuntime private constructor(
         val memory = if (home != null && state.value.origin == null) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
         val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home) else null
         val trustProject = deps.trustProjectHooks(cwd)
-        val rules = snapshot?.merged?.ruleSpecs(trustProject)?.map { spec -> RuleEntry(
+        val trustedLocal = snapshot?.let { trustedLocalSettings(deps, it, cwd, trustProject || state.value.created.headless) }.orEmpty()
+        val rules = snapshot?.merged?.ruleSpecs(trustProject, trustedLocal)?.map { spec -> RuleEntry(
             when (spec.kind) { RuleSpecKind.Allow -> RuleKindData.Allow; RuleSpecKind.Ask -> RuleKindData.Ask; RuleSpecKind.Deny -> RuleKindData.Deny },
             spec.text, spec.source, spec.baseDir,
         ) }
         // 原来的显式附加目录是绝对授权，不随 cwd 重新解释；新项目的设置目录在新 cwd 上解析。
-        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home), trustProject)?.let { (state.value.additionalDirectories + it).distinct() }
+        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home), trustProject, trustedLocal)?.let { (state.value.additionalDirectories + it).distinct() }
         commit(listOf(dev.min.agent.spi.CwdChanged(old, cwd, worktree, memory.filter { it.path !in state.value.memoryPathsInContext }, rules, dirs)), Durability.Sync)
         checkpointsBySettings = null
         val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
@@ -464,13 +465,15 @@ class SessionRuntime private constructor(
 
     private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
         val trustProject = deps.trustProjectHooks(state.value.created.cwd)
+        val trustedLocal = trustedLocalSettings(deps, snapshot, state.value.created.cwd, trustProject || state.value.created.headless)
         val notes = snapshot.notes.toMutableList()
-        if (!trustProject && snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Project &&
+        if (!trustProject && snapshot.merged.layers.any { (it.source == dev.min.agent.ext.config.ConfigSource.Project ||
+                it.source == dev.min.agent.ext.config.ConfigSource.Local && it.path !in trustedLocal) &&
                 (it.permissions.allow.isNotEmpty() || it.permissions.additionalDirectories.isNotEmpty()) }) {
             // 放宽能力的仓库声明需要用户信任；限制能力的 ask / deny 始终保留。
             notes += "this workspace has not been trusted：项目 permissions.allow / additionalDirectories 暂不生效"
         }
-        val rules = snapshot.merged.ruleSpecs(trustProject).map { spec ->
+        val rules = snapshot.merged.ruleSpecs(trustProject, trustedLocal).map { spec ->
             RuleEntry(
                 kind = when (spec.kind) {
                     RuleSpecKind.Allow -> RuleKindData.Allow
@@ -480,7 +483,7 @@ class SessionRuntime private constructor(
                 text = spec.text, source = spec.source, baseDir = spec.baseDir,
             )
         }
-        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject)
+        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject, trustedLocal)
         if (rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
         commit(listOf(PermissionRulesLoaded(rules, notes, directories)), Durability.Sync)
     }

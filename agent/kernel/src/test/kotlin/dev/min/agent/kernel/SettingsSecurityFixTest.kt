@@ -15,22 +15,23 @@ import java.util.concurrent.atomic.AtomicLong
 class SettingsSecurityFixTest {
     @get:Rule val tmp = TemporaryFolder()
     private suspend fun withSession(fs: FakeFs, trust: Boolean = false, mode: PermissionMode = PermissionMode.Default,
-        canonical: (GuestPath) -> GuestPath = { it }, block: suspend (SessionRuntime, SessionHub) -> Unit) {
+        canonical: (GuestPath) -> GuestPath = { it }, cwd: GuestPath = GuestPath("/work"), headless: Boolean = false,
+        exec: FakeExec = FakeExec(), block: suspend (SessionRuntime, SessionHub) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val ids = AtomicLong()
         try {
             val deps = KernelDeps(clock = { ids.incrementAndGet() }, ids = { "${it}_${ids.incrementAndGet()}" },
                 models = { ResolvedModel(TEST_PROFILE, ScriptedModel(reply(TextPart("done")))) }, tools = emptyList(),
-                host = HostPorts(fs, FakeSearch(), FakeExec()) { FakeArtifacts() }, platform = "test", zone = ZoneOffset.UTC,
+                host = HostPorts(fs, FakeSearch(), exec) { FakeArtifacts() }, platform = "test", zone = ZoneOffset.UTC,
                 memoryHome = GuestPath("/home"), trustProjectHooks = { trust }, canonicalPath = canonical,
                 pluginDirs = listOf(GuestPath("/plug")))
             val hub = SessionHub(FileSessionStore(tmp.newFolder().toPath(), { 0L }), deps, scope,
                 agents = BuiltinAgents.all + AgentDefinition(name = "x", description = "helper", instructions = "Help", permissionMode = PermissionMode.BypassPermissions))
-            block(hub.create(GuestPath("/work"), TEST_MODEL, mode), hub)
+            block(hub.create(cwd, TEST_MODEL, mode, headless = headless), hub)
         } finally { scope.cancel() }
     }
 
-    @Test fun BUG_project_capability_rules_require_trust_but_local_and_restrictions_do_not(): Unit = runBlocking {
+    @Test fun BUG_project_and_unchecked_local_capabilities_require_trust_but_restrictions_do_not(): Unit = runBlocking {
         val fs = FakeFs().apply {
             put("/work/.claude/settings.json", """{"permissions":{"allow":["Bash(*)"],"ask":["Bash(git push *)"],"deny":["Bash(rm *)"],"additionalDirectories":["/external"]}}""")
             put("/work/.claude/settings.local.json", """{"permissions":{"allow":["Bash(npm test)"],"additionalDirectories":["/local"]}}""")
@@ -39,12 +40,49 @@ class SettingsSecurityFixTest {
             assertFalse(rt.state.value.rules.any { it.kind == RuleKindData.Allow && it.text == "Bash(*)" })
             assertTrue(rt.state.value.rules.any { it.kind == RuleKindData.Ask })
             assertTrue(rt.state.value.rules.any { it.kind == RuleKindData.Deny })
-            assertTrue(rt.state.value.rules.any { it.source == "local" && it.kind == RuleKindData.Allow })
-            assertEquals(listOf(GuestPath("/local")), rt.state.value.additionalDirectories)
+            assertFalse(rt.state.value.rules.any { it.source == "local" && it.kind == RuleKindData.Allow })
+            assertTrue(rt.state.value.additionalDirectories.isEmpty())
         }
         withSession(fs, trust = true) { rt, _ ->
             assertTrue(rt.state.value.rules.any { it.kind == RuleKindData.Allow && it.text == "Bash(*)" })
             assertTrue(GuestPath("/external") in rt.state.value.additionalDirectories)
+        }
+    }
+
+    @Test fun R2_local_trust_matrix_and_git_acceptance(): Unit = runBlocking {
+        for (tracked in listOf(false, true)) for (headless in listOf(false, true)) {
+            val fs = FakeFs().apply {
+                mkdir("/work/.git")
+                put("/work/.claude/settings.local.json", """{"permissions":{"allow":["Bash(curl *)"],"ask":["Bash(git *)"],"deny":["Bash(rm *)"],"additionalDirectories":["/external"]}}""")
+            }
+            val commands = mutableListOf<String>()
+            val exec = FakeExec { command, _ ->
+                commands += command.script
+                ExecResult.Exited(if (tracked) 0 else 1, "", false, 1)
+            }
+            withSession(fs, headless = headless, exec = exec) { rt, _ ->
+                val enabled = headless && !tracked
+                assertEquals("tracked=$tracked headless=$headless", enabled, rt.state.value.rules.any { it.kind == RuleKindData.Allow })
+                assertEquals(enabled, GuestPath("/external") in rt.state.value.additionalDirectories)
+                assertTrue(rt.state.value.rules.any { it.kind == RuleKindData.Ask })
+                assertTrue(rt.state.value.rules.any { it.kind == RuleKindData.Deny })
+                assertEquals(headless, commands.any { "ls-files" in it })
+                assertEquals(!enabled, rt.state.value.permissionNotes.any { "this workspace has not been trusted" in it })
+            }
+        }
+        val fs = FakeFs().apply { put("/home/.claude/settings.local.json", """{"permissions":{"allow":["Bash(curl *)"],"additionalDirectories":["/external"]}}""") }
+        val exec = FakeExec { _, _ -> error("配置主目录不运行 git") }
+        withSession(fs, cwd = GuestPath("/home"), exec = exec) { rt, _ ->
+            assertTrue(rt.state.value.rules.any { it.kind == RuleKindData.Allow })
+            assertTrue(GuestPath("/external") in rt.state.value.additionalDirectories)
+        }
+    }
+
+    @Test fun R2_linked_claude_local_is_held_in_headless(): Unit = runBlocking {
+        val fs = FakeFs().apply { put("/work/.claude/settings.local.json", """{"permissions":{"allow":["Bash(curl *)"],"additionalDirectories":["/external"]}}""") }
+        withSession(fs, headless = true, canonical = { if (it.value.startsWith("/work/.claude")) GuestPath(it.value.replace("/work/.claude", "/repo-config")) else it }) { rt, _ ->
+            assertFalse(rt.state.value.rules.any { it.kind == RuleKindData.Allow })
+            assertTrue(rt.state.value.additionalDirectories.isEmpty())
         }
     }
 
