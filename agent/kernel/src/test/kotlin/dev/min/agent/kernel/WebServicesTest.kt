@@ -27,13 +27,17 @@ class WebServicesTest {
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(15_000) { block() } }
     private fun fetchCall() = ToolCallPart(CallId("fetch"), "WebFetch", args("url" to "https://example.com", "prompt" to "question"))
 
-    private fun deps(model: ModelClient, fast: ModelClient? = null, backend: SearchBackend? = null, cap: Int = 200, tools: List<Tool<*>> = listOf(WebFetchTool, WebSearchTool)): KernelDeps {
+    private fun deps(
+        model: ModelClient, fast: ModelClient? = null, backend: SearchBackend? = null, cap: Int = 200, tools: List<Tool<*>> = listOf(WebFetchTool, WebSearchTool),
+        providerSmall: ModelRef? = null,
+    ): KernelDeps {
         val base = testDeps(model, tools, artifacts)
         return KernelDeps(base.clock, base.ids, ModelResolver { ref ->
             if (ref == fastRef) ResolvedModel(TEST_PROFILE.copy(ref = fastRef), requireNotNull(fast)) else base.models.resolve(ref)
         }, tools, HostPorts(base.host.fs, base.host.search, base.host.exec, base.host.artifacts,
             WebPort { WebResponse.Page(it, PageContent(null, "PAGE PRIVATE SOURCE")) }, backend),
-            base.platform, base.zone, base.retry, fastModel = if (fast == null) null else fastRef, maxWebSearches = cap)
+            base.platform, base.zone, base.retry, fastModel = if (fast == null || providerSmall != null) null else fastRef, maxWebSearches = cap,
+            providerFastModel = { id -> providerSmall?.takeIf { id == TEST_MODEL.providerId } })
     }
     private suspend fun create(deps: KernelDeps) = SessionHub(store, deps, scope).create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
     private suspend fun execute(rt: SessionRuntime) {
@@ -60,6 +64,23 @@ class WebServicesTest {
         val records = log.read().toList()
         assertEquals(1, records.count { it.event is WebExtractionCompleted })
         assertEquals(rt.state.value, fold(log.header, records))
+    }
+
+    @Test fun `without an explicit extraction model the provider's small catalog model extracts, as CC uses Haiku`() = run {
+        val main = ScriptedModel(reply(fetchCall(), stop = StopReason.ToolUse), reply(TextPart("done")))
+        val fast = ScriptedModel(reply(TextPart("answer")))
+        val rt = create(deps(main, fast, providerSmall = fastRef))
+        execute(rt)
+        assertEquals(fastRef, fast.requests.single().profile.ref)
+        assertEquals(2, main.requests.size)
+        assertEquals(fastRef, store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<WebExtractionCompleted>().single().model)
+    }
+
+    @Test fun `a provider small model this host cannot resolve falls back to the session model`() = run {
+        val model = ScriptedModel(reply(fetchCall(), stop = StopReason.ToolUse), reply(TextPart("answer")), reply(TextPart("done")))
+        val rt = create(deps(model, providerSmall = ModelRef(TEST_MODEL.providerId, "not-in-this-catalog")))
+        execute(rt)
+        assertEquals(TEST_MODEL, model.requests[1].profile.ref)
     }
 
     @Test fun `unset fast model uses current session model but separate request`() = run {
