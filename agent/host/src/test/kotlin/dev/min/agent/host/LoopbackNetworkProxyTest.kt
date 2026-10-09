@@ -10,6 +10,22 @@ import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
 class LoopbackNetworkProxyTest {
+    @Test fun blockingProxyWorkUsesOwnedPoolAndClosesIt() {
+        val threads = java.util.concurrent.CopyOnWriteArrayList<Thread>()
+        val proxy = LoopbackNetworkProxy(maxConnections = 2, connect = {
+            threads += Thread.currentThread()
+            throw java.io.IOException("替身连接")
+        })
+        try {
+            val leases = (1..3).map { proxy.open(SessionId("pool-$it")) { allow } }
+            leases.forEach { assertTrue(http(it).contains("403")) }
+            assertEquals(3, threads.size)
+            assertTrue("阻塞连接必须使用代理专属线程", threads.all { it.name.startsWith("min-network-proxy-") })
+        } finally { proxy.close() }
+        threads.forEach { it.join(3000); assertFalse("关闭代理必须回收线程", it.isAlive) }
+    }
+
+
     @Test fun establishedConnectionsSurviveTwentySecondsIdle() = runBlocking {
         for (tunnel in listOf(false, true)) {
             ServerSocket(0).use { upstream ->

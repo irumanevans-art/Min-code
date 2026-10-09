@@ -9,7 +9,9 @@ import java.net.*
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** 每次命令有自己的随机凭据；连接不能借用别的会话的审批。HTTPS 只转发字节，不解密。 */
 class LoopbackNetworkProxy(
@@ -21,10 +23,15 @@ class LoopbackNetworkProxy(
     private val leases = ConcurrentHashMap<Lease, SessionId>()
     private val slots = Semaphore(maxConnections)
     private val closed = AtomicBoolean()
+    private val threadIds = AtomicInteger()
+    // 每个租约最多一个 accept，每条连接最多两个转发；独立上限防止挤占命令执行的共享 IO 池。
+    private val dispatcher = Executors.newFixedThreadPool(MAX_LEASES + 2 * maxConnections) { action ->
+        Thread(action, "min-network-proxy-${threadIds.incrementAndGet()}").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
     init { require(approvalTimeoutMs > 0 && socketTimeoutMs > 0 && maxConnections > 0) }
     @Synchronized override fun open(session: SessionId, decide: suspend (NetworkTarget) -> NetworkVerdict): NetworkLease {
         check(!closed.get())
-        check(leases.size < 128) { "网络代理命令租约超过上限" }
+        check(leases.size < MAX_LEASES) { "网络代理命令租约超过上限" }
         val lease = Lease(decide)
         leases[lease] = session
         if (closed.get()) { lease.close(); error("网络代理已关闭") }
@@ -32,10 +39,14 @@ class LoopbackNetworkProxy(
         return lease
     }
     @Synchronized override fun closeSession(session: SessionId) { leases.entries.filter { it.value == session }.forEach { it.key.close() } }
-    @Synchronized override fun close() { closed.set(true); leases.keys.toList().forEach { it.close() } }
+    @Synchronized override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        leases.keys.toList().forEach { it.close() }
+        dispatcher.close()
+    }
 
     private inner class Lease(val decide: suspend (NetworkTarget) -> NetworkVerdict) : NetworkLease {
-        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val scope = CoroutineScope(SupervisorJob() + dispatcher)
         private val server = ServerSocket().apply { bind(InetSocketAddress("127.0.0.1", 0), 32) }
         private val sockets = ConcurrentHashMap.newKeySet<Socket>()
         private val stopped = AtomicBoolean()
@@ -49,6 +60,7 @@ class LoopbackNetworkProxy(
                     client.soTimeout = socketTimeoutMs
                     if (!slots.tryAcquire()) { client.use { reply(it, "代理连接数超过上限") }; continue }
                     sockets += client
+                    if (stopped.get()) { sockets -= client; client.close(); slots.release(); break }
                     launch {
                         try { handle(client) }
                         catch (e: CancellationException) { throw e }
@@ -194,6 +206,7 @@ class LoopbackNetworkProxy(
         socket.getOutputStream().apply { write(("HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray()); write(body); flush() }
     }
     companion object {
+        private const val MAX_LEASES = 128
         private const val MAX_BODY = 64L * 1024 * 1024
         fun proxyEnvironment(http: String, socks: String? = null): Map<String, String> = buildMap {
             for (key in listOf("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")) { val value = if (key == "ALL_PROXY") socks ?: http else http; put(key, value); put(key.lowercase(), value) }
