@@ -50,6 +50,22 @@ fun minInteractions(
     val origin = originOf(threads, threadId)
     val id: String
     val card = when (val what = item.what) {
+        is HubPending.What.Network -> {
+            val request = what.request
+            id = InteractionIds.scoped(item.session.value, request.approvalId.value)
+            PendingInteraction.Approval(
+                id = id, origin = origin, toolUseId = request.callId.value, toolName = "Network",
+                input = JsonObject(emptyMap()), summary = text.networkApprovalSummary(),
+                description = "${text.networkApprovalSummary()}\n${request.domain}:${request.port}\n${request.commandSummary}",
+                paths = emptyList(), commands = listOf(request.commandSummary), domains = listOf("${request.domain}:${request.port}"),
+                reason = null, blockedPath = null,
+                options = listOf(
+                    ApprovalOption(ApprovalOption.ALLOW, text.networkAllowOnce(), ApprovalOption.Kind.Allow, false, true),
+                    ApprovalOption("network_always", text.networkAllowAlways(), ApprovalOption.Kind.AllowAlways, false, false),
+                    ApprovalOption(ApprovalOption.DENY, text.networkDeny(), ApprovalOption.Kind.Deny, true, true),
+                ),
+            )
+        }
         is HubPending.What.Approval -> {
             id = InteractionIds.scoped(item.session.value, what.approvalId.value)
             val input = nodes[item.session]?.turn?.calls?.get(what.callId)?.input ?: JsonObject(emptyMap())
@@ -145,6 +161,7 @@ class MinInteractionRouter(
         val applied = when (answer) {
             is InteractionAnswer.Choose -> when (answer.optionId) {
                 ApprovalOption.ALLOW -> target.approve(ApprovalId(localId), ApprovalChoice.Once)
+                "network_always" -> target.approve(ApprovalId(localId), ApprovalChoice.Always("Network"))
                 ApprovalOption.DENY -> target.approve(ApprovalId(localId), ApprovalChoice.Deny(answer.note?.takeIf { it.isNotBlank() }))
                 ApprovalOption.DENY_AND_STOP -> target.approve(ApprovalId(localId), ApprovalChoice.Deny()).also { if (it) interrupt(SessionId(sessionId)) }
                 else -> {

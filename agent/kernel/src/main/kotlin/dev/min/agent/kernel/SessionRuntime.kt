@@ -129,6 +129,15 @@ class SessionRuntime private constructor(
     }
 
     internal val worktrees = Worktrees(this)
+    internal fun watchNetworkLease(handle: dev.min.agent.spi.ExecHandle, lease: dev.min.agent.spi.NetworkLease, timeoutMs: Long) {
+        scope.launch {
+            try {
+                kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+                    while (deps.host.exec.isAlive(handle) != false) kotlinx.coroutines.delay(1000)
+                }
+            } finally { lease.close() }
+        }
+    }
     private val modelSwitchHooks = ModelSwitchHooks(this)
     private val promptExpansion = PromptExpansionHooks(this)
     suspend fun enterWorktree(name: String? = null, path: String? = null): dev.min.agent.spi.ToolResult =
@@ -383,6 +392,7 @@ class SessionRuntime private constructor(
     internal val workflowSettingsDisabled: Boolean get() = state.value.workflowSettingsDisabled
 
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
+        refreshNetworkSettings()
         if ((snapshot.merged.raw("disableWorkflows") as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull == true || snapshot.merged.env["CLAUDE_CODE_DISABLE_WORKFLOWS"] == "1")
             commit(listOf(dev.min.agent.spi.WorkflowSettingsDisabled()), Durability.Sync)
         val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)
@@ -538,6 +548,7 @@ class SessionRuntime private constructor(
 
     /** 答复一次审批。那次审批已经不在等了（另一端先答了、回合已结束）返回 false */
     suspend fun answerApproval(approvalId: ApprovalId, choice: ApprovalChoice): Boolean {
+        if (approvalId in state.value.networkPending) return answerNetworkApproval(approvalId, choice)
         val project = state.value.settings.cwd
         val workflow = state.value.turn?.calls?.values?.firstOrNull {
             it.tool == "Workflow" && (it.phase as? CallPhase.AwaitingApproval)?.approvalId == approvalId

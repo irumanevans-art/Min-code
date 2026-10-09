@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_group_network">Network</string>
+    <string name="settings_group_network_sub">Command domain approvals and lists</string>
+    <string name="network_enabled">Approve command network domains</string>
+    <string name="network_limit_hint">Off by default. Commands use a host proxy. Programs that ignore proxy variables can connect directly; this is not hard isolation. On Android, network requests can fail when the app is frozen.</string>
+    <string name="network_managed_readonly">Managed · read only</string>
+    <string name="network_managed_only">Only use managed domains</string>
+    <string name="network_managed_on">Enforced by managed settings. Other allow lists and new approvals cannot widen it.</string>
+    <string name="network_managed_off">Not enforced by managed settings.</string>
+    <string name="network_allowed">Allowed domains</string>
+    <string name="network_denied">Denied domains</string>
+    <string name="network_empty">No entries</string>
+    <string name="network_remove">Remove</string>
+    <string name="network_approval_summary">This domain will be accessed. Please confirm.</string>
+    <string name="network_allow_once">Allow once</string>
+    <string name="network_allow_always">Always allow</string>
+    <string name="network_deny">Deny</string>
+    <string name="network_decision_notice">Network %1$s:%2$d · %3$s · %4$s</string>
+</resources>

@@ -20,6 +20,7 @@ data class BashInput(
     val timeoutMs: Long,
     val description: String?,
     val background: Boolean,
+    val allowedDomains: List<String> = emptyList(),
 )
 
 /**
@@ -45,6 +46,11 @@ object BashTool : Tool<BashInput> {
         "timeout" to prop("integer", "超时毫秒数，默认 $DEFAULT_TIMEOUT_MS，最大 $MAX_TIMEOUT_MS（更大的值按最大算）"),
         "description" to prop("string", "用一句话说明这条命令做什么（给用户看）"),
         "run_in_background" to prop("boolean", "true 则立刻转入后台运行，返回句柄与日志路径；适合开发服务器等长时间进程"),
+        "allowed_domains" to kotlinx.serialization.json.buildJsonObject {
+            put("type", kotlinx.serialization.json.JsonPrimitive("array"))
+            put("items", prop("string", "本命令需要的域名，可带 *. 通配与 :端口"))
+            put("description", kotlinx.serialization.json.JsonPrimitive("沙箱开启的 auto 模式下，由分类器随命令批准；仅本命令有效，拒绝规则与托管锁继续生效"))
+        },
     )
 
     override val traits = ToolTraits()
@@ -68,6 +74,14 @@ object BashTool : Tool<BashInput> {
             timeoutMs = timeout,
             description = raw.optString("description")?.takeIf { it.isNotBlank() },
             background = raw.optBool("run_in_background") ?: false,
+            allowedDomains = when (val domains = raw["allowed_domains"]) {
+                null -> emptyList()
+                is kotlinx.serialization.json.JsonArray -> {
+                    if (domains.size > 64) throw BadArg("allowed_domains 最多 64 项。")
+                    domains.map { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content?.takeIf { d -> d.isNotBlank() && d.length <= 255 } ?: throw BadArg("allowed_domains 必须是域名字符串数组。") }.distinct()
+                }
+                else -> throw BadArg("allowed_domains 必须是数组。")
+            },
         )
     }
 
@@ -85,7 +99,7 @@ object BashTool : Tool<BashInput> {
             foregroundBudgetMs = if (input.background) 0 else FOREGROUND_BUDGET_MS,
             maxOutputChars = traits.resultBudgetChars,
         )
-        return when (val r = ctx.exec.run(ShellCommand(input.command, ctx.cwd), options)) {
+        return when (val r = ctx.runShell(ShellCommand(input.command, ctx.cwd), options, input.allowedDomains)) {
             is ExecResult.Exited -> {
                 val text = outputBlock(r.output, r.truncated) + "\n退出码 ${r.exitCode}"
                 if (r.exitCode == 0) okResult(text) else failResult(text)

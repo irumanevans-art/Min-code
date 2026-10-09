@@ -150,10 +150,13 @@ class KernelDeps(
     /** 通用宿主默认 16，手机组合根指定 4；环境设置可在 1–256 内覆盖。 */
     val workflowConcurrency: Int = 16,
     val workflowApprovals: dev.min.agent.spi.WorkflowApprovals = dev.min.agent.spi.WorkflowApprovals.SessionOnly,
+    val networkProxy: dev.min.agent.spi.NetworkProxy? = null,
+    val networkApprovalTimeoutMs: Long = 60_000,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }
         require(workflowConcurrency in 1..256)
+        require(networkApprovalTimeoutMs > 0)
         require(modelTimeoutMs > 0)
         require(maxBudgetUsd == null || maxBudgetUsd.isFinite() && maxBudgetUsd > 0)
     }

@@ -156,6 +156,7 @@ interface ToolContext {
     val fs: WorkspaceFs
     val search: Search
     val exec: Exec
+    suspend fun runShell(command: ShellCommand, options: ExecOptions, allowedDomains: List<String> = emptyList()): ExecResult = exec.run(command, options)
     val artifacts: ArtifactSink
 
     /** 本会话里最近一次（读或写）看到 [path] 时它的状态；没看过为 null。由内核从日志里的 [ToolResult.touched] 推出 */

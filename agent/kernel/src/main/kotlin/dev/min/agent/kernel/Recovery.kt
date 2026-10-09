@@ -26,7 +26,9 @@ import dev.min.agent.spi.TurnOutcome
  * 半截回答（已落盘的 AssistantSegment）只给界面看，不进模型历史：它可能停在一个没说完的工具调用中间。
  */
 fun planRecovery(state: SessionState): List<SessionEvent> =
-    closeTurn(state, TurnOutcome.Interrupted(InterruptedBy.ProcessDeath))
+    state.networkPending.values.map { dev.min.agent.spi.NetworkDecision(it.callId, it.domain, it.port,
+        dev.min.agent.spi.NetworkOutcome.Deny, dev.min.agent.spi.NetworkSource.Timeout, "宿主进程已重启，旧连接不再有效", it.approvalId) } +
+        closeTurn(state, TurnOutcome.Interrupted(InterruptedBy.ProcessDeath))
 
 /**
  * 把当前回合合法地收尾：进程被杀后的恢复（[planRecovery]）、用户按「中断」、请求失败放弃，共用这一份逻辑，只是结局不同。

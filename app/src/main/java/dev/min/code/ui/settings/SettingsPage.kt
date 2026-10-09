@@ -613,6 +613,7 @@ enum class SettingsSection(@androidx.annotation.StringRes val title: Int, @andro
     DEVICE(R.string.settings_group_device, R.string.settings_group_device_sub),
     LOOK(R.string.settings_group_look, R.string.settings_group_look_sub),
     EXPERIMENT(R.string.settings_group_experiment, R.string.settings_group_experiment_sub),
+    NETWORK(R.string.settings_group_network, R.string.settings_group_network_sub),
 }
 
 /**
@@ -653,6 +654,7 @@ fun SettingsSectionPage(section: String, vm: SettingsVM = koinViewModel()) {
                     SettingsSection.DEVICE -> DeviceSettings(vm, settings)
                     SettingsSection.LOOK -> LookSettings(vm, settings)
                     SettingsSection.EXPERIMENT -> ExperimentSettings(vm, settings)
+                    SettingsSection.NETWORK -> NetworkSettingsSection(vm)
                 }
             }
         }

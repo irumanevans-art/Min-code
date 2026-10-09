@@ -277,6 +277,7 @@ internal class DesktopApp(
         val hiddenEnv: Set<String> = keyEnvs
         val envReader = hookEnvReader(hiddenEnv)
         return KernelDeps(
+            networkProxy = dev.min.agent.host.LoopbackNetworkProxy(),
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
             models = { ref ->

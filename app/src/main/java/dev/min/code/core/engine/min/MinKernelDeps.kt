@@ -185,6 +185,7 @@ object MinKernelDeps {
         /** auto 审查的默认模型：同一个供应商档的目录小模型，没有返回 null（内核再退回会话模型自己） */
         providerFastModel: (String) -> dev.min.agent.protocol.ModelRef? = { null },
     ): KernelDeps = KernelDeps(
+        networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
         host = HostPorts(
             ports.fs, ports.search, ports.exec, { ports.artifacts(it) }, httpHooks = JvmHttpHookClient(), processes = ports.processes,
