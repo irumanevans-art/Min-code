@@ -48,6 +48,7 @@ data class DelegateRequest(
     val effort: dev.min.agent.protocol.Effort? = null,
     val isolationWorktree: Boolean = false,
     val schema: JsonObject? = null,
+    val workflowAttempts: Int? = null,
 )
 
 sealed interface DelegateResult {

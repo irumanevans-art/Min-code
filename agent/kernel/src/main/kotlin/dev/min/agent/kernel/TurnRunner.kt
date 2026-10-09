@@ -186,7 +186,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val limit = origin?.maxTurns ?: deps.rootMaxTurns.takeIf { origin == null }
         // --json-schema（工具式结构化输出）：根会话这次运行要求模型用 StructuredOutput 交出符合 schema 的最终答案
         val plan = origin?.workflowSchema?.let(::StructuredOutputPlan) ?: deps.structuredOutput.takeIf { origin == null }
-        val maxAttempts = if (plan != null) structuredOutputAttempts() else 0
+        val maxAttempts = if (plan != null) origin?.workflowAttempts ?: structuredOutputAttempts() else 0
         var failedAttempts = 0
         repeat(limit ?: MAX_REQUESTS_PER_TURN) {
             val completed = requestWithRetry(turnId)

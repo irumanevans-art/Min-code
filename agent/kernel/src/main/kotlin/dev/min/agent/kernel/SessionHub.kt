@@ -781,6 +781,7 @@ class SessionHub(
                 depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
                 workflow = request.workflow || parentOrigin?.workflow == true,
                 workflowSchema = request.schema.takeIf { request.workflow },
+                workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
             )
             initial += forkSeed(ps, callId, request.prompt)
             initial += forkInheritance(ps, callId)
@@ -810,6 +811,7 @@ class SessionHub(
                 // 禁止中途提问是整棵工作流树的约束，不能通过再委派或分身绕开。
                 workflow = request.workflow || parentOrigin?.workflow == true,
                 workflowSchema = request.schema.takeIf { request.workflow },
+                workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
             )
         }
         val background = !request.workflow && (request.background || definition?.alwaysBackground == true)
