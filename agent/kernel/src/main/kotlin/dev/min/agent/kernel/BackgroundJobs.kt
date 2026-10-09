@@ -248,7 +248,7 @@ internal class BackgroundJobs(
     }
 
     private suspend fun startMonitor(request: MonitorRequest, callId: CallId?): MonitorStart {
-        if (request.ws != null) return MonitorStart.Rejected("这个环境还不支持 WebSocket 源，请用 command。")
+        request.ws?.let { return startWebSocketMonitor(request, it) }
         val command = request.command ?: return MonitorStart.Rejected("Monitor 需要 command。")
         if (runningMonitors() >= MAX_MONITORS) {
             return MonitorStart.Rejected("这个会话已经有 $MAX_MONITORS 个 watch 在跑，先用 TaskStop 停掉不需要的再开新的。")
@@ -276,6 +276,72 @@ internal class BackgroundJobs(
             job.runner = scope.launch(start = CoroutineStart.ATOMIC) { watch(job, source, timeout) }
             MonitorStart.Started(id, timeout, source.outputPath)
         }
+    }
+
+    /**
+     * WebSocket 源。打开连接（含握手）放在锁外：它最久要等十几秒，不能让关会话与别的登记陪着等。
+     * 打开前先过网络设置：`sandbox.network.deniedDomains` 里的主机、托管设置只允许名单时名单外的主机，一律不连
+     * （CC 的口径）；地址类的拒绝（私网、链路本地、云元数据）由宿主端口在解析后判
+     */
+    private suspend fun startWebSocketMonitor(request: MonitorRequest, ws: dev.min.agent.spi.MonitorWebSocket): MonitorStart {
+        if (runningMonitors() >= MAX_MONITORS) {
+            return MonitorStart.Rejected("这个会话已经有 $MAX_MONITORS 个 watch 在跑，先用 TaskStop 停掉不需要的再开新的。")
+        }
+        val uri = catchingNonCancellation { java.net.URI(ws.url) }.getOrNull()
+        val host = uri?.host?.removeSurrounding("[", "]") ?: return MonitorStart.Rejected("WebSocket 地址缺少主机。")
+        val secure = uri.scheme.equals("wss", ignoreCase = true)
+        networkDenial(host, if (uri.port > 0) uri.port else if (secure) 443 else 80)?.let { return MonitorStart.Rejected(it) }
+        val timeout = if (request.persistent) null else clampTimeout(request.timeoutMs)
+        val connection = try {
+            deps.host.webSockets.open(ws.url, ws.protocols)
+        } catch (e: dev.min.agent.spi.WebSocketRefused) {
+            return MonitorStart.Rejected(e.message ?: "没连上。")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 只给异常类名：异常消息可能带着地址里的 token
+            return MonitorStart.Rejected("连接失败（${e::class.simpleName}）。")
+        }
+        val id = deps.ids.next("mon")
+        val path = GuestPath("$MONITOR_DIR/$id.log")
+        val started = try {
+            deps.host.fs.writeAtomic(path, ByteArray(0))
+            true
+        } catch (e: CancellationException) {
+            connection.close()
+            throw e
+        } catch (e: Exception) {
+            connection.close()
+            false
+        }
+        if (!started) return MonitorStart.Rejected("没能建输出文件。")
+        return launchLock.withLock {
+            val now = deps.clock.nowMs()
+            // 展示用的地址只留到路径：查询串里常带 token，不进任务表、界面与通知
+            val shown = "${uri.scheme}://${uri.rawAuthority}${uri.rawPath.orEmpty()}"
+            val job = Job(id, BackgroundJobKind.Monitor, request.description, null, shown, path, now, timeout?.let { now + it }, null)
+            register(job)
+            val source = WebSocketMonitorSource(connection, deps.host.fs, path) { FILE_FLUSH_MS }
+            job.runner = scope.launch(start = CoroutineStart.ATOMIC) { watch(job, source, timeout) }
+            MonitorStart.Started(id, timeout, path)
+        }
+    }
+
+    /** 网络设置对这个主机的拒绝（`sandbox.network.deniedDomains`、托管只允许名单）；没有拒绝为 null */
+    private suspend fun networkDenial(host: String, port: Int): String? {
+        val settings = try {
+            rt.refreshNetworkSettings()
+        } catch (e: IllegalStateException) {
+            return e.message ?: "托管网络设置不可读，不打开连接。"
+        }
+        val target = dev.min.agent.spi.NetworkTarget(host, port)
+        if (settings.deniedDomains.any { dev.min.agent.ext.config.NetworkRules.matches(it, target) }) {
+            return "「$host」在网络设置的 deniedDomains 里，不能连接。"
+        }
+        if (settings.allowManagedDomainsOnly && settings.allowedDomains.none { dev.min.agent.ext.config.NetworkRules.matches(it, target) }) {
+            return "托管设置只允许名单内的域名，「$host」不在名单里。"
+        }
+        return null
     }
 
     private fun runningMonitors(): Int = jobs.values.count { it.kind == BackgroundJobKind.Monitor && it.status == BackgroundJobStatus.Running }
@@ -588,6 +654,7 @@ internal class BackgroundJobs(
         const val MAX_NOTICE_CHARS = 8_000
         const val MAX_TRACKED = 64
         const val MONITOR_DIR = "/root/.min/monitors"
+        private const val FILE_FLUSH_MS = 500L
         private const val SHELL_TAIL_CHARS = 2_000
         private const val TASK_OUTPUT_CHARS = 20_000
         private const val MAX_BLOCK_MS = 600_000L

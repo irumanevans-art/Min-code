@@ -1,10 +1,9 @@
-package dev.min.code.core.engine.min
+package dev.min.agent.kernel
 
-import dev.min.agent.kernel.TASK_NOTIFICATION_DISCLAIMER
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class MinTaskNoticeTest {
+class TaskNoticeTest {
     @Test
     fun `去掉给模型认的标签壳与提醒句，只留正文`() {
         val raw = "<task-notification task-id=\"mon_1\" kind=\"monitor\" event=\"lines\">\n监控「盯日志」有 2 条新事件：\nerror a\nerror b\n\n$TASK_NOTIFICATION_DISCLAIMER\n</task-notification>"

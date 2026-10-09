@@ -294,6 +294,7 @@ internal class DesktopApp(
                     secretEnvNames = desktopSecretEnvNames(*keyEnvs.toTypedArray()),
                 ),
                 web = CachedWebPort(HtmlPageConverter, cacheTtlMs = args.webCacheTtlMs, deadlineMs = args.webDeadlineMs),
+                webSockets = dev.min.agent.host.SocketWebSocketPort(),
                 // 远程 MCP 服务器（Streamable HTTP / 旧 SSE）走同一个宿主 HTTP 实现
                 mcpHttp = dev.min.agent.host.UrlConnectionTransport(),
                 searchBackend = searchBackend,

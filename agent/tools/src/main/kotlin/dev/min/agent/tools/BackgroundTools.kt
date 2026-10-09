@@ -76,7 +76,9 @@ object MonitorTool : Tool<MonitorInput> {
             "command 与 ws 二选一。watch 有期限：默认 5 分钟、最长 30 分钟；到期结束时你会收到一条通知，需要的话再开一个。" +
             "返回任务 id 与输出文件路径（可用 Read 读）；用 TaskStop 按 id 提前停掉。" +
             "命令用管道时请加 --line-buffered（如 `tail -f app.log | grep --line-buffered ERROR`），否则输出被缓冲、事件迟迟不来；" +
-            "只打印你关心的行：事件太密时会被合并、省略（完整输出始终在文件里）。命令与 Bash 走同一套权限规则。"
+            "只打印你关心的行：事件太密时会被合并、省略（完整输出始终在文件里）。命令与 Bash 走同一套权限规则。" +
+            "WebSocket 源：每条文本消息一个事件（多行消息里的换行在通知和输出文件里写成 \\n 两个字符）；二进制消息只给一行 `[binary frame, N bytes]`；" +
+            "对端关闭时告诉你关闭码；单条消息超过 1 MiB 就结束 watch（请换带过滤的订阅）；每次打开都要用户批准；私网、链路本地、云元数据地址一律拒绝。"
 
     override fun parse(raw: JsonObject): ToolInput<MonitorInput> = parseArgs {
         val description = raw.reqString("description")

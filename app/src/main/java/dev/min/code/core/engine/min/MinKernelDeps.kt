@@ -208,6 +208,8 @@ object MinKernelDeps {
          * [KernelDeps] 一个进程只建一次，而用户随时会在设置里改后端
          */
         searchBackend: SearchBackend? = null,
+        /** Monitor 的 WebSocket 源：宿主侧直连（不经 proot），连接时校验并钉住地址；测试换成脚本化的假端口 */
+        webSockets: dev.min.agent.spi.WebSocketPort = dev.min.agent.host.SocketWebSocketPort(),
     ): KernelDeps = KernelDeps(
         networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
@@ -216,7 +218,7 @@ object MinKernelDeps {
             snapshots = snapshots,
             // 远程 MCP 服务器走宿主侧的 HTTP（不经 proot）；stdio 服务器经 processes 进 proot
             mcpHttp = dev.min.agent.host.UrlConnectionTransport(),
-            web = web, searchBackend = searchBackend,
+            web = web, searchBackend = searchBackend, webSockets = webSockets,
         ),
         platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
         checkpointBudget = CHECKPOINT_BUDGET,
