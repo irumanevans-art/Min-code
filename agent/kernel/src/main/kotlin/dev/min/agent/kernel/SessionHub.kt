@@ -756,8 +756,11 @@ class SessionHub(
     /** 界面删一条定时任务（模型的 CronDelete 是同一个效果）。返回是否真的取消了一条进行中的任务 */
     suspend fun cancelCron(root: SessionId, cronId: String): Boolean = runtimes[root]?.let { crons.cancel(it, cronId) } ?: false
 
-    /** 放行重启后搁浅的团队成员（[TeamMemberStatus.Phase.Stalled]）：界面的“继续”。返回放行了几个；照常过并发名额 */
-    suspend fun resumeTeamMembers(root: SessionId): Int = runtimes[root]?.let { teams.resumeStalled(it) } ?: 0
+    /**
+     * 放行重启后搁浅的团队成员（[TeamMemberStatus.Phase.Stalled]）：界面的“继续”。返回放行了几个；照常过并发名额。
+     * [member] 非空只放行这一位（成员行上的按钮）；不是搁浅状态的成员放行 0 个
+     */
+    suspend fun resumeTeamMembers(root: SessionId, member: String? = null): Int = runtimes[root]?.let { teams.resumeStalled(it, member) } ?: 0
 
     // ---- 委派 ----
 

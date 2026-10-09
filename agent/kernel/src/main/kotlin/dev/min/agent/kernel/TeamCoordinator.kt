@@ -438,10 +438,11 @@ internal class TeamCoordinator(
 
     /**
      * 放行搁浅的成员（见 [TeamMemberStatus.Phase.Stalled]）：逐个 [requestStart]，照常过名额。返回放行了几个。
-     * 崩溃后不自动续跑是 02 §5 的规矩，所以这是用户 / 负责人显式叫的，不是启动时自动做的
+     * 崩溃后不自动续跑是 02 §5 的规矩，所以这是用户 / 负责人显式叫的，不是启动时自动做的。
+     * [only] 非空只放行这一位成员（界面成员行上的“放行”按钮），否则放行全部搁浅的
      */
-    suspend fun resumeStalled(root: SessionRuntime): Int {
-        val stalled = members(root).filter { it.phase == TeamMemberStatus.Phase.Stalled }.mapNotNull { it.session }
+    suspend fun resumeStalled(root: SessionRuntime, only: String? = null): Int {
+        val stalled = members(root).filter { it.phase == TeamMemberStatus.Phase.Stalled && (only == null || it.name == only) }.mapNotNull { it.session }
         stalled.forEach { requestStart(it) }
         return stalled.size
     }
