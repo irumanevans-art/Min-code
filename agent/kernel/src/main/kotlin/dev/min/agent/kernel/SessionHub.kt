@@ -748,6 +748,9 @@ class SessionHub(
         return teams.disbandTeam(rt, dev.min.agent.spi.TeamDisbanded(team.teamId, dev.min.agent.spi.TeamDisbandReason.UserEnded, note))
     }
 
+    /** 定时任务的全局开关现在是开还是关（设置里的开关 / `CLAUDE_CODE_DISABLE_CRON`）：界面的清单据此提示“已关闭，不会触发” */
+    val cronsEnabled: Boolean get() = limits.cronEnabled
+
     /** 界面的定时任务清单：模型用 CronList 看到的同一份视图（含“下次”要的下限、宿主天花板）。会话不在线返回 null */
     fun cronBoard(root: SessionId): dev.min.agent.spi.CronBoard? = runtimes[root]?.let { rt ->
         rt.state.value.cronBoard(deps.clock.nowMs(), deps.zone, limits.cronMaxBudgetUsd, crons.nextFireFloors(root), limits.cronEnabled.not())
