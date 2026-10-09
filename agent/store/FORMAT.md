@@ -226,3 +226,4 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - v1 语义补充（2026-10-09，auto 终报退路）：结构化答案也必须先写可交付的 `subagent_report_ready`，拒绝时 Agent 结果为错误、workflow 节点得到 null，不把已交卷的原 JSON 当成审查通过。中断 / 失败且缺本回合的可交付记录时只投影固定说明；headless 后台审查不可继续的错误以 `turn_ended.outcome = failed` 收尾，不吞成可重试的普通工具错误。
 - v1 工具载荷补充（2026-10-09，handback 原文字段）：SubagentHandback 入参为 `message` 非空字符串（不是 report），匹配 hook 的 `tool_input.message`；持久化仍用 `subagent_report_ready.body`。SubagentStop 有收尾文字时保留它，没有时采用短说明；可选 content 与 Agent PostToolUse.content 均用短说明，不复制 message。
 - v1 语义补充（2026-10-09，用户边界脱敏）：凭据读取或继承快照脱敏时不发送分类器请求，`auto_reviewed.decision = ask`，以固定摘要说明转人工；不能因为保护了凭据而把不可读的用户边界当作不存在。
+- v1 语义补充（2026-10-09，终报模式与错误详情）：`session_created.mode = auto` 的子会话转入 Plan 等模式后，终报仍须冻结本回合审查记录；交回是只读行为，不被 Plan 的写入禁令误伤。报告适配器只信同一结束回合的 `subagent_report_ready`。Auto 报告的失败说明只交付固定摘要（两条固定 headless 分类器报错可保留），不从 `turn_ended.outcome.message` 旁路交付未经审查的正文。

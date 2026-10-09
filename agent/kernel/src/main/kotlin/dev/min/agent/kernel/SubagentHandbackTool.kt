@@ -8,6 +8,9 @@ import kotlinx.serialization.json.*
 
 internal const val HANDBACK_NOTE = "子 agent 已通过 SubagentHandback 交回报告。"
 
+// Auto 创建的子会话即使转去 Plan，也不能靠改模式把未经审查的结果交回父会话。
+internal fun SessionState.autoReportReviewRequired(): Boolean = settings.mode == PermissionMode.Auto || created.mode == PermissionMode.Auto
+
 internal fun SessionState.handbackAvailable(): Boolean = settings.mode == PermissionMode.Auto &&
     origin?.let { !it.fork && !it.workflow && !it.teamMember } == true
 
@@ -51,7 +54,7 @@ internal suspend fun SessionRuntime.reviewReport(turnId: TurnId, body: String): 
 }
 
 internal suspend fun SessionRuntime.prepareFallbackReport(turnId: TurnId) {
-    if (state.value.origin == null || state.value.settings.mode != PermissionMode.Auto) return
+    if (state.value.origin == null || !state.value.autoReportReviewRequired()) return
     val body = state.value.structuredOutput?.takeIf { it.turnId == turnId }?.value?.toString()
         ?: state.value.history.filterIsInstance<HistoryEntry.Assistant>().lastOrNull()?.parts.orEmpty().filterIsInstance<TextPart>().joinToString("") { it.text }
     val verdict = reviewReport(turnId, body)

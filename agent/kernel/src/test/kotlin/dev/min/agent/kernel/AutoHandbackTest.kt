@@ -97,4 +97,21 @@ class AutoHandbackTest {
         val report = Reports.render(rt.sessionId, null, "general-purpose", false, ended, state)
         assertFalse(report.contains("UNREVIEWED_PARTIAL")); assertTrue(Reports.isError(ended.outcome, state))
     }
+    @Test fun failedAutoChildCannotDeliverUnreviewedErrorText() = run { rt, _, _, _ ->
+        val ended = EndedTurn(TurnId("failed"), TurnTrigger.User, TurnOutcome.Failed("UNREVIEWED_ERROR_BODY"), Usage(), 0, 0)
+        val report = Reports.render(rt.sessionId, null, "general-purpose", false, ended, rt.state.value)
+        assertFalse("错误详情也不能旁路终报审查", report.contains("UNREVIEWED_ERROR_BODY"))
+    }
+    @Test fun autoCreatedChildStillReviewsReportAfterSwitchingToPlan() {
+        for (verdict in listOf("deny", "allow")) {
+            run(mainScript = ScriptedModel(reply(TextPart("PLAN_REPORT_BODY"))), reviewScript = ScriptedModel(decision(verdict))) { rt, _, reviewer, _ ->
+                rt.changeSettings(mode = PermissionMode.Plan)
+                rt.receive(ClientMsgId("parent"), listOf(TextPart("task")), Delivery.Queue, InputOrigin.Parent(SessionId("parent")), TurnTrigger.User)
+                val ended = rt.state.first { it.turn == null && it.lastTurn != null }.lastTurn!!
+                val report = Reports.render(rt.sessionId, null, "general-purpose", false, ended, rt.state.value)
+                assertEquals(verdict == "allow", report.contains("PLAN_REPORT_BODY"))
+                assertEquals(1, reviewer.requests.size)
+            }
+        }
+    }
 }

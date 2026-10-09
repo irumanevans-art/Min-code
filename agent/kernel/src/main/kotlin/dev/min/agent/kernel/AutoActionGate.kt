@@ -6,17 +6,21 @@ import dev.min.agent.spi.*
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonObject
 
+internal const val HEADLESS_CLASSIFIER_SAFETY_ERROR = "Agent aborted: auto mode classifier request refused by the safety safeguard in headless mode"
+internal const val HEADLESS_CLASSIFIER_CONTEXT_ERROR = "Agent aborted: auto mode classifier transcript exceeded context window in headless mode"
+
 /** 生成和交回也走原来的审查、审批与熔断；用独立调用 id，不能改写正在执行的父工具阶段。 */
 internal suspend fun SessionRuntime.reviewAutoAction(turnId: TurnId, name: String, input: JsonObject, summary: String, backgroundSpawn: Boolean = false): Verdict {
     val call = ToolCallPart(CallId(deps.ids.next("review")), name, input)
     val specifier = (input["agent_type"] as? kotlinx.serialization.json.JsonPrimitive)?.content
     val ask = PermissionAsk(name, summary, specifiers = listOfNotNull(specifier))
     val context = ToolExecutor(this, HookDriver(this)).policyContext()
-    val policy = dev.min.agent.policy.PolicyEngine.evaluate(ask, false, context)
+    val readOnly = name == "SubagentHandback"
+    val policy = dev.min.agent.policy.PolicyEngine.evaluate(ask, readOnly, context)
     if (policy is Verdict.Deny) return policy
     var verdict = AutoReviewer(this).review(turnId, call, ask, context, dev.min.agent.policy.PolicyEngine.askRuleHit(ask, context) != null)
     // 审查期间切模式后，旧 Auto 结论不能替新的 Plan / dontAsk 放行生成。
-    if (state.value.settings.mode != context.mode) verdict = dev.min.agent.policy.PolicyEngine.evaluate(ask, false, ToolExecutor(this, HookDriver(this)).policyContext())
+    if (state.value.settings.mode != context.mode) verdict = dev.min.agent.policy.PolicyEngine.evaluate(ask, readOnly, ToolExecutor(this, HookDriver(this)).policyContext())
     if (verdict != Verdict.Ask) return verdict
     headlessClassifierError(call.callId, backgroundSpawn)?.let {
         // 已启动的后台子回合不能把不可继续的审查失败当成普通工具错误，让模型反复重试。
@@ -38,8 +42,8 @@ internal fun SessionRuntime.headlessClassifierError(callId: CallId, backgroundSp
     if (!(state.value.created.headless && backgroundSpawn || parent?.state?.value?.created?.headless == true && background)) return null
     val reviewed = state.value.lastAutoReview?.takeIf { it.callId == callId } ?: return null
     return when (reviewed.reason) {
-        AutoReviewer.CLASSIFIER_SAFETY_REFUSED -> "Agent aborted: auto mode classifier request refused by the safety safeguard in headless mode"
-        AutoReviewer.CLASSIFIER_CONTEXT_OVERFLOW -> "Agent aborted: auto mode classifier transcript exceeded context window in headless mode"
+        AutoReviewer.CLASSIFIER_SAFETY_REFUSED -> HEADLESS_CLASSIFIER_SAFETY_ERROR
+        AutoReviewer.CLASSIFIER_CONTEXT_OVERFLOW -> HEADLESS_CLASSIFIER_CONTEXT_ERROR
         else -> null
     }
 }
