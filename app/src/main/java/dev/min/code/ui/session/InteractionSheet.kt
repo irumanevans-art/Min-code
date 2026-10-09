@@ -126,7 +126,7 @@ private fun PermissionSheet(
             ) {
                 Seal()
                 Text(
-                    pending.awaitedToolName,
+                    if (pending.awaitedToolName == "Network") stringResource(R.string.settings_group_network) else pending.awaitedToolName,
                     style = MaterialTheme.typography.titleSmall,
                     fontFamily = JetbrainsMono,
                 )
@@ -186,7 +186,7 @@ private fun PermissionSheet(
             if (pending.awaitedToolName == "Workflow") {
                 InkButton(onClick = { showScript = !showScript }, tone = InkButtonTone.Paper) { Text(stringResource(R.string.workflow_view_script)) }
             }
-            if (pending.awaitedToolName != "Workflow" || showScript) ToolInputPreview(
+            if (pending.awaitedToolName != "Network" && (pending.awaitedToolName != "Workflow" || showScript)) ToolInputPreview(
                 name = pending.awaitedToolName,
                 // 计划审批卡只带计划正文：ExitPlanMode 的预览也只读 `plan`
                 input = approval?.input ?: planInputOf(pending),
@@ -201,7 +201,7 @@ private fun PermissionSheet(
             ) {
                 // 拒绝是判定（朱砂），允许是主动作（墨 / 金）
                 InkButton(
-                    onClick = { onAnswer(ApprovalOption.DENY_AND_STOP) },
+                    onClick = { onAnswer(primaryDenyOption(pending)) },
                     modifier = Modifier.weight(1f),
                     tone = InkButtonTone.Vermilion,
                 ) { Text(stringResource(R.string.session_permission_deny)) }
@@ -236,3 +236,9 @@ private fun PermissionSheet(
 private fun planInputOf(pending: PendingInteraction): JsonObject = buildJsonObject {
     (pending as? PendingInteraction.PlanReview)?.let { put("plan", it.plan) }
 }
+
+/** 网络拒绝只拦这条连接，让 shell 收到 403 并报告退出码；已有工具的停止按钮保持原语义。 */
+internal fun primaryDenyOption(pending: PendingInteraction): String =
+    (pending as? PendingInteraction.Approval)?.options?.firstOrNull { it.kind == ApprovalOption.Kind.DenyAndStop }?.id
+        ?: (pending as? PendingInteraction.Approval)?.options?.firstOrNull { it.kind == ApprovalOption.Kind.Deny }?.id
+        ?: ApprovalOption.DENY_AND_STOP

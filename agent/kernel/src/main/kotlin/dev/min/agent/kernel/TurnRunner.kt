@@ -75,6 +75,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
     /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
     suspend fun run(trigger: TurnTrigger): Boolean {
+        rt.refreshNetworkSettings()
         workflowInputs.clear()
         val turnId = TurnId(deps.ids.next("turn"))
         val startedAt = deps.clock.nowMs()
@@ -503,7 +504,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val environment = promptBasisOf(state, deps).let { Environment(it.platform, it.cwd, it.date) }
         val harness = HarnessProfile(profile.family, profile.editStyle)
         val tools = availableTools(state, deps, runtime = rt)
-        val specs = tools.map { ToolSpec(it.name, it.description(harness), it.inputSchema) }
+        val specs = tools.map { ToolSpec(it.name, it.description(harness) + if (it.name == "Bash" && rt.state.value.networkSettings.enabled)
+            "网络域名批准已开启：请求经宿主代理；不认代理环境变量的程序可以直连，这不是硬隔离。Android App 被冻结时代理会停，联网可能失败。auto 模式需用 allowed_domains 声明本命令需要的域名，由分类器随命令批准。" else "", it.inputSchema) }
         return RequestAssembler.assemble(
             profile = profile,
             environment = environment,

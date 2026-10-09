@@ -91,11 +91,28 @@ internal class ConsoleUi(
             state.turn?.pendingQuestions.orEmpty().forEach { asked ->
                 if (questionsSeen.add(asked.questionId.value)) answerQuestions(asked)
             }
+            val networkRequests = if (hub == null) state.networkPending.values.map { runtime to it } else
+                pending.filter { it.root == runtime.sessionId }.mapNotNull { item ->
+                    (item.what as? dev.min.agent.kernel.HubPending.What.Network)?.let { what -> hub.get(item.session)?.let { it to what.request } }
+                }
+            for ((target, request) in networkRequests) if (answered.add(request.approvalId.value)) {
+                out.println("\n网络域名 ${terminalText(request.domain)}:${request.port} · ${summarize(request.commandSummary)}")
+                val choice = if (approve != ApprovalAnswer.Ask) decide("Network", request.domain) else {
+                    out.println("允许一次 / 总是允许 / 拒绝 [y/a/n]"); out.flush()
+                    when (input.readLine()?.trim()?.lowercase()) {
+                        "y", "yes" -> ApprovalChoice.Once
+                        "a", "always" -> ApprovalChoice.Always(request.domain)
+                        else -> ApprovalChoice.Deny()
+                    }
+                }
+                target.answerApproval(request.approvalId, choice)
+            }
             // 子 agent 的审批与提问（整棵树里根是本会话的）：同一套 --approve 与提问口径答掉。
             // 以前只看根会话自己的回合，-p 下子 agent 要审批时没人答，整次运行挂到超时（评测集 v1 第 32 题）
             pending.filter { it.root == runtime.sessionId && it.session != runtime.sessionId }.forEach { item ->
                 val target = hub?.get(item.session) ?: return@forEach
                 when (val what = item.what) {
+                    is dev.min.agent.kernel.HubPending.What.Network -> Unit
                     is dev.min.agent.kernel.HubPending.What.Approval -> if (answered.add(what.approvalId.value)) {
                         out.println("\n▸ [${item.agentType ?: "子 agent"}] ${what.tool} ${summarize(what.ask.summary)}")
                         if (approve == ApprovalAnswer.Ask) {

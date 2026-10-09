@@ -284,6 +284,8 @@ private class ItemsBuilder(
         if (entry.partialParts.isNotEmpty()) parts(entry.partialMessageId?.value ?: "notice:$seq:partial", entry.partialParts)
         when (val event = entry.record.event) {
             is Note -> items += ChatItem.Note("notice:$seq", event.text, event.level == NoteLevel.Error)
+            is dev.min.agent.spi.NetworkDecision -> items += ChatItem.Note("network:$seq",
+                text.networkDecision(event.domain, event.port, event.outcome.name, event.reason), event.outcome == dev.min.agent.spi.NetworkOutcome.Deny)
             is dev.min.agent.spi.WorkflowProgress -> items += ChatItem.Note("workflow:$seq", event.message)
             is TurnStarted -> when (event.trigger) {
                 TurnTrigger.Resume -> items += dividerNote("resume:$seq", text.continued(atMs))

@@ -52,7 +52,8 @@ class BashRequestSnapshotTest {
                     "command":{"type":"string","description":"要执行的 shell 命令"},
                     "timeout":{"type":"integer","description":"超时毫秒数，默认 120000，最大 600000（更大的值按最大算）"},
                     "description":{"type":"string","description":"用一句话说明这条命令做什么（给用户看）"},
-                    "run_in_background":{"type":"boolean","description":"true 则立刻转入后台运行，返回句柄与日志路径；适合开发服务器等长时间进程"}}}}}]
+                    "run_in_background":{"type":"boolean","description":"true 则立刻转入后台运行，返回句柄与日志路径；适合开发服务器等长时间进程"},
+                    "allowed_domains":{"type":"array","items":{"type":"string","description":"本命令需要的域名，可带 *. 通配与 :端口"},"description":"沙箱开启的 auto 模式下，由分类器随命令批准；仅本命令有效，拒绝规则与托管锁继续生效"}}}}}]
             """.trimIndent())
             assertEquals(expected, actual)
         } finally { server.stop(0) }

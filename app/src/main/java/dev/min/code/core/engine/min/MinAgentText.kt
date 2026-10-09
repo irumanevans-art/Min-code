@@ -62,6 +62,11 @@ interface MinAgentText {
     fun providerRemoved(): String
 
     fun optionAllow(): String
+    fun networkApprovalSummary(): String = "这个域名将被访问，请确认"
+    fun networkAllowOnce(): String = "允许一次"
+    fun networkAllowAlways(): String = "总是允许"
+    fun networkDeny(): String = "拒绝"
+    fun networkDecision(domain: String, port: Int, outcome: String, reason: String): String = "网络 $domain:$port · $outcome · $reason"
     fun optionDeny(): String
     fun optionDenyAndStop(): String
 
@@ -187,6 +192,11 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun providerRemoved() = s(R.string.min_agent_provider_removed)
 
     override fun optionAllow() = s(R.string.min_agent_option_allow)
+    override fun networkApprovalSummary() = s(R.string.network_approval_summary)
+    override fun networkAllowOnce() = s(R.string.network_allow_once)
+    override fun networkAllowAlways() = s(R.string.network_allow_always)
+    override fun networkDeny() = s(R.string.network_deny)
+    override fun networkDecision(domain: String, port: Int, outcome: String, reason: String) = s(R.string.network_decision_notice, domain, port, outcome, reason)
     override fun optionDeny() = s(R.string.min_agent_option_deny)
     override fun optionDenyAndStop() = s(R.string.min_agent_option_deny_stop)
     override fun ruleSaved(layer: RuleLayer): String = context.getString(

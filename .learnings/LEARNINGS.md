@@ -2313,3 +2313,28 @@ HooksDecisionKernelTest 在队员写入时反复 store.open；open 会修复未�
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261009-NETAPR] best_practice
+
+**Logged**: 2026-10-09T12:20:00Z
+**Priority**: high
+**Status**: promoted
+**Area**: tests
+
+### Summary
+验证新增审批闸门时，测试前置条件必须先通过已有审批，否则原有审批掩盖新闸门缺失。
+
+### Details
+Auto 域名声明强制分类器的测试原本使用裸 Bash allow，裸规则在 Auto 已被暂停，删掉新闸门仍会调用分类器而存活。改成窄 Bash(curl *) 规则并将域名审批与工具审批分离后，该变异以 AssertionError 检出。Android 的卡片数据含 domains / commands 不代表现有 sheet 会显示它们；需验证实际显示字段并在模拟器截图。后台句柄也不代表命令成功，应验输出 / 明确成功标志。
+
+### Suggested Action
+新增闸门变异必须从原本已放行路径触发；审批卡验证现有渲染组件读的字段；后台进程验收追踪实际完成。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/kernel/src/test/kotlin/dev/min/agent/kernel/NetworkSandboxTest.kt, app/src/main/java/dev/min/code/ui/session/InteractionSheet.kt
+- Tags: approval, mutation, android
+
+### Resolution
+- Resolved: 2026-10-09
+- Notes: 已修复用例和卡片，关键测试原则补入 AGENTS.md。

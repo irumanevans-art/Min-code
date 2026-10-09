@@ -253,12 +253,15 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict {
         if (p.tool.traits.alwaysAsk) return Verdict.Ask
         val verdict = PolicyEngine.evaluate(ask, p.tool.traits.readOnly, policyContext())
+        if (p.tool.name == "Bash" && rt.state.value.settings.mode == PermissionMode.Auto &&
+            rt.state.value.networkSettings.enabled && (p.input as? dev.min.agent.tools.BashInput)?.allowedDomains?.isNotEmpty() == true && verdict !is Verdict.Deny) return Verdict.Ask
         if (p.tool !is WorkflowTool || verdict is Verdict.Deny) return verdict
         if (PolicyEngine.askRuleHit(ask, policyContext()) != null) return Verdict.Ask
         if (verdict is Verdict.Allow && verdict.by is DecidedBy.Rule) return verdict
         return if (rt.workflowApproved((p.input as WorkflowInput).hash)) Verdict.Allow(DecidedBy.Mode(rt.state.value.settings.mode)) else verdict
     }
 
+    private val networkApprovedCalls = mutableSetOf<CallId>()
     private var parsedFromRules: List<RuleEntry>? = null
     private var parsedFromSession: List<RuleEntry>? = null
     private var parsedRules: List<PermissionRule> = emptyList()
@@ -301,6 +304,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     private suspend fun runOne(turnId: TurnId, p: Prepared) {
+        if (p.call.name == "Bash") rt.refreshNetworkSettings()
         val planned = when (p) {
             is Prepared.Rejected -> return outcome(turnId, p.call.callId, errorResult(p.messageToModel))
             is Prepared.Ready -> p
@@ -342,7 +346,10 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
                 }
                 outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
             }
-            is Verdict.Allow -> execute(turnId, ready)
+            is Verdict.Allow -> {
+                if (verdict.by == DecidedBy.Classifier) networkApprovedCalls += ready.call.callId
+                execute(turnId, ready)
+            }
             Verdict.Ask -> when (val answer = permissionRequest(turnId, ready)) {
                 is PermissionAnswer.Denied -> {
                     // hook 替人拒了：先落卡再落答（同一次提交，折叠成已决议），不发审批卡
@@ -442,7 +449,10 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val resolved = rt.state.first { s -> s.phaseOf(ready.call.callId) !is CallPhase.AwaitingApproval }
         when (val phase = resolved.phaseOf(ready.call.callId)) {
             is CallPhase.Denied -> outcome(turnId, ready.call.callId, deniedResult(ready.call.name, phase.note, phase.fromHost))
-            else -> execute(turnId, ready)
+            else -> {
+                networkApprovedCalls += ready.call.callId
+                execute(turnId, ready)
+            }
         }
     }
 
@@ -639,6 +649,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val fs: WorkspaceFs = deps.host.fs
         override val search: Search = credentialSearch(deps.host.search, deps.credentialPaths, deps.canonicalPath)
         override val exec: Exec = deps.host.exec
+        override suspend fun runShell(command: dev.min.agent.spi.ShellCommand, options: dev.min.agent.spi.ExecOptions, allowedDomains: List<String>): dev.min.agent.spi.ExecResult =
+            rt.runNetworkShell(callId, command, options, if (callId in networkApprovedCalls) allowedDomains else emptyList())
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable

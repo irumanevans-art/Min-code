@@ -203,6 +203,7 @@ object MinKernelDeps {
          */
         searchBackend: SearchBackend? = null,
     ): KernelDeps = KernelDeps(
+        networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
         host = HostPorts(
             ports.fs, ports.search, ports.exec, { ports.artifacts(it) }, httpHooks = JvmHttpHookClient(), processes = ports.processes,

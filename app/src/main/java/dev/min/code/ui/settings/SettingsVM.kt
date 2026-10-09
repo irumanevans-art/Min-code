@@ -28,6 +28,7 @@ class SettingsVM(
     private val agentDisplay: AgentDisplaySession,
     private val appScope: AppScope,
     private val subscription: ClaudeSubscription,
+    private val minEngine: dev.min.code.core.engine.min.MinAgentEngine,
 ) : ViewModel() {
     val settings: StateFlow<AppSettings> = store.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
@@ -36,6 +37,27 @@ class SettingsVM(
     val agentDisplayActive: StateFlow<AgentDisplaySession.Active?> = agentDisplay.active
 
     val lastPrivilegedError: String? get() = privilegedClient.lastError
+    private val _network = MutableStateFlow<dev.min.agent.ext.config.NetworkSettingsView?>(null)
+    val network = _network.asStateFlow()
+    private val _networkError = MutableStateFlow<String?>(null)
+    val networkError = _networkError.asStateFlow()
+    fun loadNetwork() = networkEdit { }
+    fun setNetworkEnabled(enabled: Boolean) = networkEdit {
+        dev.min.agent.ext.config.NetworkSettingsEditor.setEnabled(minEngine.workspaceFs, dev.min.agent.spi.GuestPath("/workspace"), dev.min.agent.spi.GuestPath("/root"), enabled, minEngine.workspaceTrust.decisionOf("/workspace") == true)
+    }
+    fun removeNetworkDomain(entry: dev.min.agent.ext.config.NetworkDomainEntry) = networkEdit {
+        dev.min.agent.ext.config.NetworkSettingsEditor.remove(minEngine.workspaceFs, entry)
+    }
+    private fun networkEdit(edit: suspend () -> Unit) = viewModelScope.launch {
+        try {
+            edit()
+            _network.value = dev.min.agent.ext.config.NetworkSettingsEditor.view(minEngine.workspaceFs,
+                dev.min.agent.spi.GuestPath("/workspace"), dev.min.agent.spi.GuestPath("/root"),
+                minEngine.workspaceTrust.decisionOf("/workspace") == true)
+            _networkError.value = null
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { _networkError.value = e.message ?: "无法读写网络设置" }
+    }
 
     /** 纯流量冷启动需要「附近的设备」才能开仅本地热点 */
     fun needsNearbyWifiPermission(): Boolean = privilegedStarter.needsNearbyWifiPermission()

@@ -44,7 +44,7 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
 
     override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult = withContext(Dispatchers.IO) {
         // 模型 Bash 不接收任意 env；只有 hook 执行器的独立参数槽可以经进程启动口运输真值。
-        require(command.env.keys.all { Regex("MIN_PLUGIN_[0-9]+_(?:ARG|ENV)_[0-9]+").matches(it) }) { "Min Bash 仅接受插件 hook 参数环境" }
+        require(command.env.keys.all { it in setOf("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy") || Regex("MIN_PLUGIN_[0-9]+_(?:ARG|ENV)_[0-9]+").matches(it) }) { "Min Bash 仅接受宿主代理及插件 hook 参数环境" }
         require(options.timeoutMs > 0 && options.maxOutputChars >= 0)
         val started = System.nanoTime()
         val id = UUID.randomUUID().toString().replace("-", "")

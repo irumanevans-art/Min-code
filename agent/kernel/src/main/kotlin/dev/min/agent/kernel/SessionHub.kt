@@ -80,6 +80,7 @@ data class HubPending(
     val what: What,
 ) {
     sealed interface What {
+        data class Network(val request: dev.min.agent.spi.NetworkApprovalRequested) : What
         data class Approval(
             val approvalId: ApprovalId,
             val callId: CallId,
@@ -571,7 +572,13 @@ class SessionHub(
         }
         // 关了门还能写：SessionEnd 的运行记录要落盘。跑完再封住写入
         runtimes[id]?.takeIf { it.state.value.origin == null }?.let { runSessionEnd(it, reason) }
-        closing.forEach { it.cancelMcpElicitations(); it.sealWrites() }
+        closing.forEach { runtime ->
+            runtime.cancelMcpElicitations()
+            runtime.commit(runtime.state.value.networkPending.values.map { dev.min.agent.spi.NetworkDecision(it.callId, it.domain, it.port,
+                dev.min.agent.spi.NetworkOutcome.Deny, dev.min.agent.spi.NetworkSource.Timeout, "会话已关闭", it.approvalId) }, Durability.Sync)
+            deps.networkProxy?.closeSession(runtime.sessionId)
+            runtime.sealWrites()
+        }
         // 卸下即杀后台 hook 进程并清掉暂存目录：手机上不能留孤儿进程（async 设计的边界；`-p` teardown 同此）
         closing.forEach { it.asyncHooks.cancelAll() }
         tree.forEach(::unload)
@@ -1113,6 +1120,7 @@ class SessionHub(
     }
 
     private fun unload(id: SessionId) {
+        deps.networkProxy?.closeSession(id)
         // 把运行时对象带上：关了马上重开时，这次卸下可能晚于新运行时的接入，McpManager 只摘它自己那份
         runtimes[id]?.let { rt -> scope.launch { mcp.detach(rt) } }
         observers.remove(id)?.cancel()
@@ -1158,7 +1166,8 @@ class SessionHub(
         }
         val questions = (t?.pendingQuestions.orEmpty() + s.pendingMcpQuestions).map { q -> item(q.askedAtMs, HubPending.What.Question(q.questionId, q.callId, q.questions)) }
         val urls = s.pendingMcpUrls.map { p -> item(p.atMs, HubPending.What.Question(p.request.questionId, p.request.callId ?: MCP_IDLE_CALL, listOf(urlQuestion(p.request)), p.request)) }
-        return approvals + questions + urls
+        val network = s.networkPending.values.map { item(it.atMs, HubPending.What.Network(it)) }
+        return approvals + questions + urls + network
     }
 
     /**

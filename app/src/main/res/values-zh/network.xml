@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_group_network">网络</string>
+    <string name="settings_group_network_sub">命令联网的域名批准与名单</string>
+    <string name="network_enabled">命令联网逐域名批准</string>
+    <string name="network_limit_hint">默认关闭。命令经宿主代理联网；不认代理环境变量的程序可以直连，这不是硬隔离。Android App 被冻结时代理会停，联网可能失败。</string>
+    <string name="network_managed_readonly">托管设置 · 只读</string>
+    <string name="network_managed_only">只用托管名单</string>
+    <string name="network_managed_on">由托管层强制；其他允许名单和新批准不能扩大访问范围。</string>
+    <string name="network_managed_off">托管层未启用此限制。</string>
+    <string name="network_allowed">已允许的域名</string>
+    <string name="network_denied">已拒绝的域名</string>
+    <string name="network_empty">暂无条目</string>
+    <string name="network_remove">删除</string>
+    <string name="network_approval_summary">这个域名将被访问，请确认</string>
+    <string name="network_allow_once">允许一次</string>
+    <string name="network_allow_always">总是允许</string>
+    <string name="network_deny">拒绝</string>
+    <string name="network_decision_notice">网络 %1$s:%2$d · %3$s · %4$s</string>
+</resources>
