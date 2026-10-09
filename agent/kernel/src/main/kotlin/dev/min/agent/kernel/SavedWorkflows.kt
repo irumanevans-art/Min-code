@@ -12,7 +12,7 @@ data class SavedWorkflow(val name: String, val description: String, val path: Gu
 
 /** 项目优先；读取限长并由纯字面量解析器发现元数据，补全永远不执行 JS。 */
 suspend fun SessionRuntime.savedWorkflows(): List<SavedWorkflow> {
-    if (deps.workflowEngine == null || state.value.origin?.workflow == true) return emptyList()
+    if (!workflowsAvailable()) return emptyList()
     val paths = listOf(GuestPath(state.value.settings.cwd.value.trimEnd('/') + "/.claude/workflows")) +
         listOfNotNull(deps.memoryHome?.let { GuestPath(it.value.trimEnd('/') + "/.claude/workflows") })
     val found = linkedMapOf<String, SavedWorkflow>()
@@ -21,7 +21,8 @@ suspend fun SessionRuntime.savedWorkflows(): List<SavedWorkflow> {
         for (entry in entries.sortedBy { it.name }) {
             if (entry.kind != FileKind.File || !entry.name.endsWith(".js") || '/' in entry.name || '\\' in entry.name) continue
             val path = GuestPath("${dir.value}/${entry.name}")
-            if (deps.credentialPaths.any { deps.canonicalPath(path) == deps.canonicalPath(it) }) continue
+            if (dev.min.agent.policy.credentialPath(path, dev.min.agent.policy.PolicyContext(
+                dev.min.agent.protocol.PermissionMode.Default, credentialPaths = deps.credentialPaths, canonicalPath = deps.canonicalPath))) continue
             val source = catchingNonCancellation {
                 val stat = deps.host.fs.stat(path)
                 require(stat != null && stat.size <= 256 * 1024)
@@ -43,3 +44,6 @@ internal suspend fun SessionRuntime.prepareSavedWorkflow(input: ClientMsgId, par
     val args = text.drop(name.length + 1).trim().takeIf { it.isNotEmpty() }?.let(::JsonPrimitive)
     return WorkflowRequested(input, name, script.source, args)
 }
+
+internal fun SessionRuntime.workflowsAvailable(): Boolean = deps.workflowEngine != null &&
+    state.value.origin == null && deps.workflowsEnabled() && !workflowSettingsDisabled && deps.env("CLAUDE_CODE_DISABLE_WORKFLOWS") != "1"

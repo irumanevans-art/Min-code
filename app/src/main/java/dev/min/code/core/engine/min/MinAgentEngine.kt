@@ -138,6 +138,7 @@ class MinAgentEngine(
         trustProjectHooks = trust::isTrusted,
         // 界面有 url 卡（McpUrlSheet）：显示完整 URL 与域名，点了才用 Custom Tab 打开
         canAnswerMcpUrlElicitation = true,
+        workflowsEnabled = { settings.snapshot?.workflowsEnabled != false },
         workflowApprovals = MinWorkflowApprovals(File(context.filesDir, "agent/workflow-approvals")),
     )
 

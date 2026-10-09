@@ -739,6 +739,12 @@ private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
         onClick = { vm.setMinAgentEnabled(!settings.minAgentEnabled) },
         trailing = { InkSwitch(checked = settings.minAgentEnabled, onCheckedChange = vm::setMinAgentEnabled) },
     )
+    SettingRow(
+        title = stringResource(R.string.settings_workflows_title),
+        subtitle = stringResource(if (settings.workflowsEnabled) R.string.settings_workflows_on else R.string.settings_workflows_off),
+        onClick = { vm.setWorkflowsEnabled(!settings.workflowsEnabled) },
+        trailing = { InkSwitch(checked = settings.workflowsEnabled, onCheckedChange = vm::setWorkflowsEnabled) },
+    )
     // 定时任务的全局开关（Claude Code 的 CLAUDE_CODE_DISABLE_CRON）：只影响 Min 的定时任务，不删任何任务
     SettingRow(
         title = stringResource(R.string.settings_cron_title),

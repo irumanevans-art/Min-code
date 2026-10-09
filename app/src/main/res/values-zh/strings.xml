@@ -1354,4 +1354,7 @@
     <string name="duration_days">%1$d 天</string>
 <string name="workflow_remember_project">本项目不再问</string>
 <string name="workflow_view_script">查看脚本</string>
+<string name="settings_workflows_title">动态工作流</string>
+<string name="settings_workflows_on">新运行已启用</string>
+<string name="settings_workflows_off">新运行已关闭</string>
 </resources>

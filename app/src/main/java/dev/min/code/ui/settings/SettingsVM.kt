@@ -115,6 +115,7 @@ class SettingsVM(
 
     fun setMinAgentEnabled(enabled: Boolean) = viewModelScope.launch { store.setMinAgentEnabled(enabled) }
 
+    fun setWorkflowsEnabled(enabled: Boolean) = viewModelScope.launch { store.setWorkflowsEnabled(enabled) }
     fun setCronEnabled(enabled: Boolean) = viewModelScope.launch { store.setCronEnabled(enabled) }
 
     fun setDeviceWriteAllowlist(packages: Set<String>) =

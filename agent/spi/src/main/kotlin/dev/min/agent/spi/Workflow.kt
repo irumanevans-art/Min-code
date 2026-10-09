@@ -30,6 +30,10 @@ interface WorkflowApprovals {
 }
 
 @Serializable
+@SerialName("workflow_settings_disabled")
+data class WorkflowSettingsDisabled(val disabled: Boolean = true) : SessionEvent
+
+@Serializable
 @SerialName("workflow_requested")
 data class WorkflowRequested(val input: ClientMsgId, val name: String, val source: String, val args: JsonElement? = null) : SessionEvent
 

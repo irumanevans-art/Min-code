@@ -180,6 +180,7 @@ object MinKernelDeps {
         trustProjectHooks: (GuestPath) -> Boolean = { false },
         /** MCP 的 url 模式提问：界面有卡片让人看清网址、点了才打开才为真，否则内核直接回 decline */
         canAnswerMcpUrlElicitation: Boolean = false,
+        workflowsEnabled: () -> Boolean = { true },
         workflowApprovals: dev.min.agent.spi.WorkflowApprovals = dev.min.agent.spi.WorkflowApprovals.SessionOnly,
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
@@ -200,6 +201,7 @@ object MinKernelDeps {
         canAnswerMcpUrlElicitation = canAnswerMcpUrlElicitation,
         workflowEngine = dev.min.agent.workflow.QuickJsWorkflowEngine(),
         workflowConcurrency = 4,
+        workflowsEnabled = workflowsEnabled,
         workflowApprovals = workflowApprovals,
     )
 }

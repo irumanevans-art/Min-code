@@ -1359,4 +1359,7 @@
     <string name="duration_days">%1$d days</string>
 <string name="workflow_remember_project">Do not ask again in this project</string>
 <string name="workflow_view_script">View script</string>
+<string name="settings_workflows_title">Dynamic workflows</string>
+<string name="settings_workflows_on">Enabled for new runs</string>
+<string name="settings_workflows_off">Disabled for new runs</string>
 </resources>

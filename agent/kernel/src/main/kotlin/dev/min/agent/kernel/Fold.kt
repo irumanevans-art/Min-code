@@ -418,6 +418,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         // MCP 快照整份替换；变化说明给界面看（模型从工具表与系统提示里看到变化）
         is dev.min.agent.spi.McpServersLoaded -> copy(mcpServers = e)
         is dev.min.agent.spi.McpAuthentication -> this
+        is dev.min.agent.spi.WorkflowSettingsDisabled -> copy(workflowSettingsDisabled = e.disabled)
         is dev.min.agent.spi.WorkflowCallIssued -> copy(
             history = history + HistoryEntry.Assistant(e.messageId, listOf(e.call)),
             workflowEvents = workflowEvents + e,

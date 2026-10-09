@@ -373,7 +373,11 @@ class SessionRuntime private constructor(
      * 会话创建时读一次 settings：权限规则与 hooks 各写一份快照（都在会话内冻结）。
      * 项目层（project / local）的 hooks 只在工作区被信任时才进快照：它们会在手机上执行任意命令（hooks设计 §1）。
      */
+    internal val workflowSettingsDisabled: Boolean get() = state.value.workflowSettingsDisabled
+
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
+        if ((snapshot.merged.raw("disableWorkflows") as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull == true || snapshot.merged.env["CLAUDE_CODE_DISABLE_WORKFLOWS"] == "1")
+            commit(listOf(dev.min.agent.spi.WorkflowSettingsDisabled()), Durability.Sync)
         val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)
         val managed = snapshot.merged.layers.lastOrNull { it.source == dev.min.agent.ext.config.ConfigSource.Managed }
         val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer,
