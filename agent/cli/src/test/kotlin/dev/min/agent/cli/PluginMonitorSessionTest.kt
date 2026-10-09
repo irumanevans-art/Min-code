@@ -191,7 +191,16 @@ class PluginMonitorSessionTest {
         hub.shutdown(rt.sessionId)
     } }
 
-    @Test fun `plugin monitors do not count against the model's watch cap, and shutting the session down stops them`(): Unit = runBlocking { withTimeout(120_000) {
+    @Test fun `more plugin monitors than the model's watch cap all start`(): Unit = runBlocking { withTimeout(120_000) {
+        val many = (1..10).joinToString(",", "[", "]") { """{"name":"m$it","command":"echo n$it; sleep 30","description":"watch $it"}""" }
+        val (hub, rt) = session(plugin(root.resolve("p"), many))
+        // 模型起的 watch 最多 8 个；插件声明的是用户启用插件的结果，不占这个名额
+        val list = jobs(hub, rt) { l -> l.count { it.status == BackgroundJobStatus.Running } >= 10 }
+        assertEquals(10, list.count { it.status == BackgroundJobStatus.Running })
+        hub.shutdown(rt.sessionId)
+    } }
+
+    @Test fun `plugin monitors are stopped when the session is shut down`(): Unit = runBlocking { withTimeout(120_000) {
         val (hub, rt) = session(plugin(root.resolve("p"), monitors))
         jobs(hub, rt) { l -> l.count { it.kind == BackgroundJobKind.Monitor && it.status == BackgroundJobStatus.Running } >= 2 }
         assertTrue(hub.shutdown(rt.sessionId))
