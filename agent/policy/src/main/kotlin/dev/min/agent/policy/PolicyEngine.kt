@@ -126,16 +126,18 @@ object PolicyEngine {
         if (rule.tool !in setOf("Bash", "PowerShell")) return false
         val spec = rule.specifier ?: return true
         if (spec.trim() in setOf("*", ":*")) return true
-        val executable = spec.trim().substringBefore(' ').substringBefore(':').substringAfterLast('/').lowercase()
+        val executable = ShellAnalyzer.autoRuleExecutable(spec.trim().let { if (it.endsWith(":*")) it.removeSuffix(":*") + " *" else it }) ?: return true
         val interpreters = setOf(
             "python", "python2", "python3", "pypy", "pypy3", "node", "nodejs", "ruby", "perl", "php", "lua",
             "sh", "bash", "zsh", "dash", "fish", "ksh", "pwsh", "powershell", "cmd", "deno", "bun", "eval", "exec", "env", "xargs",
             "npx", "pnpx", "bunx", "uvx", "sudo", "su", "ssh",
+            "osascript", "rscript", "tclsh", "awk", "gawk",
         )
         // 版本号和可执行文件通配仍能放行解释器代码，不能因拼写不是裸名就绕过分类器。
         val literal = executable.takeWhile { it != '*' && it != '?' }.removeSuffix(".exe")
         return ('*' in spec || '?' in spec) && interpreters.any { name ->
-            name.startsWith(literal) || literal == name || literal.startsWith("$name.")
+            name.startsWith(literal) || literal == name || literal.startsWith("$name.") ||
+                literal.startsWith(name) && literal.removePrefix(name).firstOrNull()?.isDigit() == true
         }
     }
 

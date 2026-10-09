@@ -9,6 +9,7 @@ import dev.min.agent.spi.PathAccess
 import dev.min.agent.spi.PathScope
 import dev.min.agent.spi.PermissionAsk
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -48,6 +49,25 @@ class PolicyEngineTest {
             assertTrue(rule, PolicyEngine.suspendedInAuto(PermissionRule.parse(RuleKind.Allow, rule, "user")!!))
         }
         assertTrue(!PolicyEngine.suspendedInAuto(PermissionRule.parse(RuleKind.Allow, "Bash(npm test *)", "user")!!))
+    }
+
+    @Test fun R2_auto_unwraps_prefixes_and_suspends_more_interpreters() {
+        val prefixes = listOf("timeout 5", "timeout -s KILL 5", "nohup", "command", "time -p", "nice -n 5", "stdbuf -oL", "setsid -f", "flock -x /tmp/lock", "watch -n 1", "busybox", "env -u FOO", "VAR=value", "timeout 5 env VAR=value nice -n 2")
+        for (prefix in prefixes) {
+            val rule = PermissionRule.parse(RuleKind.Allow, "Bash($prefix python *)", "user")!!
+            assertTrue(rule.raw, PolicyEngine.suspendedInAuto(rule))
+            // 赋值由既有匹配器剥掉；验证真实可匹配的内层规则，不能为匹配表扩大默认授权。
+            val matching = if (prefix == "VAR=value") PermissionRule.parse(RuleKind.Allow, "Bash(python *)", "user")!! else rule
+            assertTrue("Default ${matching.raw}", v(bash("$prefix python -c 'print(1)'"), PolicyContext(PermissionMode.Default, listOf(matching))) is Verdict.Allow)
+            assertEquals(matching.raw, Verdict.Ask, v(bash("$prefix python -c 'print(1)'"), PolicyContext(PermissionMode.Auto, listOf(matching))))
+        }
+        for (program in listOf("osascript", "Rscript", "tclsh", "tclsh8.6", "gawk", "/usr/bin/python3.12", "python*", "sh")) {
+            val rule = PermissionRule.parse(RuleKind.Allow, "Bash($program *)", "user")!!
+            assertTrue(rule.raw, PolicyEngine.suspendedInAuto(rule))
+        }
+        for (text in listOf("curl *", "timeout 5 curl *", "env FOO=x curl *", "git *", "npm test", "timeout 5 npm test")) {
+            assertFalse(text, PolicyEngine.suspendedInAuto(PermissionRule.parse(RuleKind.Allow, "Bash($text)", "user")!!))
+        }
     }
 
     @Test

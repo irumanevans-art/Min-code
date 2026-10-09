@@ -57,6 +57,13 @@ object ShellAnalyzer {
 
     fun analyze(script: String): ShellAnalysis = analyze(script, depth = 0)
 
+    /** 规则与命令共用词法；这里只剥包装前缀，不把 sh -c 的正文当成已获批准的内层命令。 */
+    internal fun autoRuleExecutable(spec: String): String? {
+        val tokens = (Tokenizer(spec).tokenize() as? TokenizeResult.Ok)?.tokens ?: return null
+        if (tokens.any { it !is Token.Word }) return null
+        return autoRuleProgram(tokens.filterIsInstance<Token.Word>().map { it.text })
+    }
+
     private fun analyze(script: String, depth: Int): ShellAnalysis {
         val tokens = when (val t = Tokenizer(script).tokenize()) {
             is TokenizeResult.Failed -> return ShellAnalysis.Untrusted(t.reason)
