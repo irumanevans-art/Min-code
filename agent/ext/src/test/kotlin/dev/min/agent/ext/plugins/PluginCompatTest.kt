@@ -122,7 +122,8 @@ class PluginCompatTest(private val dir: File) {
         }
         (expected["hooks"] as? JsonObject)?.let { wantHooks ->
             if (wantHooks.keys.toSet() != got.hooks.keys.toSet()) diff("hooks 事件集", wantHooks.keys, got.hooks.keys)
-            val exports = hookExports(got.userConfig.map { it.key })
+            val production = if (wantHooks.values.any { value -> (value as? JsonArray).orEmpty().any { (it as? JsonObject)?.keys?.any { key -> key in setOf("exportSet", "resolvedArgs") } == true } })
+                productionHooks(got, case, files) else emptyList()
             wantHooks.forEach { (event, list) ->
                 val wantList = (list as? JsonArray)?.map { it.jsonObject } ?: return@forEach
                 val gotList = got.hooks[event] ?: return@forEach
@@ -142,11 +143,12 @@ class PluginCompatTest(private val dir: File) {
                         if (it != actual) diff("hooks $event[$i] resolvedCommand", it, actual)
                     }
                     (item["resolvedArgs"] as? JsonArray)?.map { a -> a.jsonPrimitive.content }?.let { want ->
-                        val actual = g.args.map { substituteUserConfig(substitutePaths(it, case, got.namespace), case, got, allowSensitive = true) }
+                        val actual = production.first { it.event.name == event && it.matcher == g.matcher }.args.orEmpty()
                         if (want != actual) diff("hooks $event[$i] resolvedArgs", want, actual)
                     }
                     (item["exportSet"] as? JsonArray)?.map { a -> a.jsonPrimitive.content }?.let {
-                        if (it != exports) diff("hooks $event[$i] exportSet", it, exports)
+                        val actual = production.first { it.event.name == event && it.matcher == g.matcher }.pluginEnv.keys.toList()
+                        if (it != actual) diff("hooks $event[$i] exportSet", it, actual)
                     }
                 }
             }
@@ -167,7 +169,7 @@ class PluginCompatTest(private val dir: File) {
             }
             item.obj("toolName")?.let { want ->
                 val tool = want.strOrNull("tool") ?: bug("toolName 缺 tool")
-                val actual = "mcp__plugin_${got.namespace}_${g.key}__$tool" // CMP:825
+                val actual = McpNames.assign(listOf(g.serverName to tool)).getValue(g.serverName to tool)
                 if (want.strOrNull("name") != actual) diff("mcp ${g.key} toolName", want.strOrNull("name"), actual)
             }
             (item["resolvedArgs"] as? JsonArray)?.map { a -> a.jsonPrimitive.content }?.let { want ->
@@ -347,7 +349,26 @@ class PluginCompatTest(private val dir: File) {
         if (allowSensitive) resolvePluginMcp(raw, vars(case, got.namespace), values)
         else resolvePluginBody(raw, vars(case, got.namespace), values, got.userConfig.filter { it.sensitive }.map { it.key }.toSet())
     }
-    private fun hookExports(keys: List<String>): List<String> = pluginHookExportNames(keys)
+    private fun productionHooks(got: LoadedPlugin, case: JsonObject, files: Map<String, File>): List<dev.min.agent.ext.hooks.HookHandler> = runBlocking {
+        val fs = FakeFs()
+        val root = vars(case, got.namespace).root
+        files.forEach { (rel, file) -> fs.put("$root/$rel", file.readText()) }
+        val records = mutableMapOf<McpTokenKey, McpOAuthCredentials>()
+        val store = PluginSecretStore(object : McpTokenStore {
+            override suspend fun load(key: McpTokenKey) = records[key]
+            override suspend fun save(key: McpTokenKey, credentials: McpOAuthCredentials) { records[key] = credentials }
+            override suspend fun delete(key: McpTokenKey) { records.remove(key) }
+        })
+        val plugin = PluginLoader(fs).load(PluginRequest(root, null, sideload = true)).plugin!!
+        val saved = savePluginOptions(plugin, case.obj("pluginConfigs")?.obj(got.ref.id)?.obj("options") ?: JsonObject(emptyMap()), store)
+        fs.put("/home/.claude/settings.json", JsonObject(mapOf("pluginConfigs" to JsonObject(mapOf(plugin.ref.id to saved)))).toString())
+        val cwd = GuestPath(vars(case, got.namespace).project)
+        val settings = dev.min.agent.ext.config.SettingsLoader.load(fs, cwd, GuestPath("/home"))
+        val data = "/home/.claude/plugins/data/${pluginDataId(plugin.ref)}"
+        val bundle = PluginBundle.load(fs, cwd, GuestPath("/home"), settings.merged, listOf(GuestPath(root)), secrets = store,
+            shellPath = { if (it.value == data) vars(case, got.namespace).data else it.value })
+        dev.min.agent.ext.hooks.HookSet.parse(bundle.hookSources.map { dev.min.agent.ext.config.HookSource(dev.min.agent.ext.config.ConfigSource.Plugin, it) }).handlers.map(bundle::resolveHook)
+    }
     private fun parseJson(file: File): JsonElement = Json.parseToJsonElement(file.readText())
     private fun bug(message: String): Nothing = error(message)
     private fun markdownBody(text: String): String = dev.min.agent.ext.config.FrontmatterParser.parse(text, "plugin").body

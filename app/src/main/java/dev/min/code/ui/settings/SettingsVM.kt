@@ -115,6 +115,8 @@ class SettingsVM(
 
     fun setMinAgentEnabled(enabled: Boolean) = viewModelScope.launch { store.setMinAgentEnabled(enabled) }
 
+    fun setCronEnabled(enabled: Boolean) = viewModelScope.launch { store.setCronEnabled(enabled) }
+
     fun setDeviceWriteAllowlist(packages: Set<String>) =
         viewModelScope.launch { store.setDeviceWriteAllowlist(packages) }
 

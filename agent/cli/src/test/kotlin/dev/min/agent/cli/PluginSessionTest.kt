@@ -57,7 +57,13 @@ Help inspect the project.
         return marker
     }
 
-    private suspend fun session(dir: Path, trust: Boolean = false, tokens: McpTokenStore = McpTokenStore.Unavailable, spawns: MutableList<ProcessSpec> = mutableListOf()): Pair<SessionRuntime, FileSessionStore> {
+    private suspend fun session(dir: Path, trust: Boolean = false, tokens: McpTokenStore = McpTokenStore.Unavailable, spawns: MutableList<ProcessSpec> = mutableListOf(), installedScope: String? = null): Pair<SessionRuntime, FileSessionStore> {
+        if (installedScope != null) {
+            val plugins = Files.createDirectories(home.resolve(".claude/plugins"))
+            Files.writeString(plugins.resolve("installed_plugins.json"), """{"plugins":{"check@m":[{"scope":"$installedScope","projectPath":"${guest(work).value}","installPath":"${guest(dir).value}"}]}}""")
+            val settingsDir = if (installedScope == "user") home.resolve(".claude") else Files.createDirectories(work.resolve(".claude"))
+            Files.writeString(settingsDir.resolve("settings.json"), """{"enabledPlugins":{"check@m":true}}""")
+        }
         val store = FileSessionStore(root.resolve("sessions"), { System.currentTimeMillis() })
         val logs = Files.createDirectories(root.resolve("exec"))
         val deps = KernelDeps(
@@ -73,7 +79,7 @@ Help inspect the project.
             platform = "test", zone = ZoneOffset.UTC, memoryHome = guest(home),
             hookShellPath = { paths.guestOfHost(paths.hostOf(it)).value }, canonicalPath = { desktopCanonicalCredentialPath(paths, it) },
             credentialPaths = desktopCredentialPaths(paths, privateDir),
-            trustProjectHooks = { trust }, pluginDirs = listOf(guest(dir)),
+            trustProjectHooks = { trust }, pluginDirs = if (installedScope == null) listOf(guest(dir)) else emptyList(),
             mcpTokenStore = tokens, mcpFirstSnapshotWaitMs = 500,
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
@@ -90,7 +96,7 @@ Help inspect the project.
     @Test fun `untrusted project plugin cannot execute hooks`(): Unit = runBlocking { withTimeout(60_000) {
         val dir = work.resolve("plugin")
         val marker = plugin(dir)
-        val (rt, store) = session(dir)
+        val (rt, store) = session(dir, installedScope = "project")
         assertFalse(Files.exists(marker))
         val events = store.open(rt.sessionId)!!.read().toList().map { it.event }
         assertFalse(events.filterIsInstance<HooksRan>().any { it.event == "SessionStart" })
@@ -105,9 +111,9 @@ Help inspect the project.
     } }
 
     @Test fun `user directory plugin executes a real hook without project trust`(): Unit = runBlocking { withTimeout(60_000) {
-        val dir = home.resolve(".claude/plugins/check")
+        val dir = home.resolve(".claude/plugins/cache/m/check/1.0.0")
         val marker = plugin(dir)
-        val (rt, store) = session(dir)
+        val (rt, store) = session(dir, installedScope = "user")
         assertTrue(Files.exists(marker))
         assertEquals("plugin-ran", Files.readString(marker))
         val events = store.open(rt.sessionId)!!.read().toList().map { it.event }
@@ -121,7 +127,7 @@ Help inspect the project.
         val marker = plugin(dir, sensitive = true)
         val tokens = FileMcpTokenStore(privateDir.resolve("mcp-oauth.json"))
         val secret = "private-plugin-test-credential-9012"
-        val loaded = PluginLoader(paths.fs) { desktopCanonicalCredentialPath(paths, it) }.load(PluginRequest(guest(dir).value, null)).plugin!!
+        val loaded = PluginLoader(paths.fs) { desktopCanonicalCredentialPath(paths, it) }.load(PluginRequest(guest(dir).value, null, sideload = true)).plugin!!
         val saved = savePluginOptions(loaded, JsonObject(mapOf("token" to JsonPrimitive(secret))), PluginSecretStore(tokens))
         val settingsFile = Files.createDirectories(home.resolve(".claude")).resolve("settings.json")
         Files.writeString(settingsFile, JsonObject(mapOf("pluginConfigs" to JsonObject(mapOf("check" to saved)))).toString())
@@ -140,7 +146,7 @@ Help inspect the project.
         val encoded = log.read().toList().joinToString("\n") { AgentJson.encodeToString(EventRecord.serializer(), it) }
         assertFalse(encoded.contains(secret))
         assertTrue(synchronized(spawns) { spawns.any { it.env["TOKEN"] == secret } })
-        assertTrue(tokens.load(McpTokenKey("plugin-config:check", "plugin-config:token")) != null)
+        assertTrue(tokens.load(McpTokenKey("plugin-config:check@inline", "plugin-config:token")) != null)
     } }
 
     @Test fun `plugin dir accepts repeated relative paths and requires a value`() {
@@ -149,4 +155,35 @@ Help inspect the project.
         try { parseArgs(arrayOf("--model", "test", "--plugin-dir"), work); fail("missing directory") }
         catch (_: UsageException) { }
     }
+
+    @Test fun `sideload hook receives secret env and argv without writing secrets to scripts or session logs`(): Unit = runBlocking { withTimeout(60_000) {
+        val dir = work.resolve("secret-hook")
+        plugin(dir, sensitive = true)
+        val envMarker = dir.resolve("env.txt")
+        val argMarker = dir.resolve("arg.txt")
+        val script = dir.resolve("inspect.sh")
+        Files.writeString(script, "printf '%s' \"\$CLAUDE_PLUGIN_OPTION_TOKEN\" > '${guest(envMarker).value}'\nprintf '%s' \"\$1\" > '${guest(argMarker).value}'\n")
+        val manifestFile = dir.resolve(".claude-plugin/plugin.json")
+        val manifest = Json.parseToJsonElement(Files.readString(manifestFile)).jsonObject
+        val hook = buildJsonObject {
+            put("type", "command"); put("command", "bash")
+            put("args", JsonArray(listOf(JsonPrimitive(guest(script).value), JsonPrimitive("\${user_config.token}"))))
+        }
+        Files.writeString(manifestFile, JsonObject(manifest + ("hooks" to buildJsonObject {
+            put("SessionStart", JsonArray(listOf(buildJsonObject { put("hooks", JsonArray(listOf(hook))) })))
+        })).toString())
+        val tokens = FileMcpTokenStore(privateDir.resolve("hook-secrets.json"))
+        val secret = "hook-private-fixture-3821"
+        val loaded = PluginLoader(paths.fs).load(PluginRequest(guest(dir).value, null, sideload = true)).plugin!!
+        val saved = savePluginOptions(loaded, JsonObject(mapOf("token" to JsonPrimitive(secret))), PluginSecretStore(tokens))
+        Files.writeString(Files.createDirectories(home.resolve(".claude")).resolve("settings.json"),
+            JsonObject(mapOf("pluginConfigs" to JsonObject(mapOf("check@inline" to saved)))).toString())
+        val (rt, store) = session(dir, tokens = tokens)
+        assertEquals(secret, Files.readString(envMarker))
+        assertEquals(secret, Files.readString(argMarker))
+        val encoded = store.open(rt.sessionId)!!.read().toList().joinToString { AgentJson.encodeToString(EventRecord.serializer(), it) }
+        assertFalse(encoded.contains(secret))
+        Files.walk(root.resolve("scratch")).use { stream -> stream.filter { Files.isRegularFile(it) && it.toString().endsWith(".sh") }.forEach { assertFalse(Files.readString(it).contains(secret)) } }
+        replayMatches(rt, store)
+    } }
 }

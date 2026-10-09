@@ -56,7 +56,7 @@ class WebServicesTest {
         assertEquals(Usage(120, 30, 30, 40), rt.state.value.lastTurn!!.usage)
         assertEquals(2, main.requests.size)
         assertFalse(main.requests.last().messages.toString().contains("PAGE PRIVATE SOURCE"))
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         val records = log.read().toList()
         assertEquals(1, records.count { it.event is WebExtractionCompleted })
         assertEquals(rt.state.value, fold(log.header, records))
@@ -155,7 +155,7 @@ class WebServicesTest {
         val reopenedChild = reopenedHub.open(nested.sessionId)!!
         assertEquals(SearchResponse.LimitReached, searchWeb(reopenedChild, CallId("reopen"), "x", emptyList(), emptyList(), 10))
         assertEquals(3, count.get())
-        val log = store.open(root.sessionId)!!
+        val log = store.peek(root.sessionId)!!
         assertEquals(3, log.read().toList().count { it.event is WebSearchUsed })
     }
 
@@ -206,8 +206,8 @@ class WebServicesTest {
         assertNull(root.state.value.turn)
         assertEquals(1, reported.webSearches)
         assertEquals(0, child.state.value.webSearches)
-        assertEquals(1, store.open(root.sessionId)!!.read().toList().count { it.event is TurnStarted })
-        assertEquals(1, store.open(root.sessionId)!!.read().toList().count { it.event is WebSearchUsed })
+        assertEquals(1, store.peek(root.sessionId)!!.read().toList().count { it.event is TurnStarted })
+        assertEquals(1, store.peek(root.sessionId)!!.read().toList().count { it.event is WebSearchUsed })
 
         assertTrue(hub.shutdown(root.sessionId))
         val reopened = SessionHub(store, deps, scope).open(root.sessionId)!!

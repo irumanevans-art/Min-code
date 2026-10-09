@@ -3,7 +3,8 @@ package dev.min.agent.ext.plugins
 import dev.min.agent.ext.config.GuestPaths
 import kotlinx.serialization.json.*
 
-internal class PluginParser(internal val directories: Set<String>) {
+internal class PluginParser(internal val directories: Set<String>, private val unreadable: Map<String, String> = emptyMap()) {
+    internal val componentErrors = mutableListOf<String>()
     fun parse(request: PluginRequest, root: String, files: Map<String, String>): PluginLoadOutcome {
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
@@ -14,13 +15,42 @@ internal class PluginParser(internal val directories: Set<String>) {
         val rootName = root.substringAfterLast('/')
 
         val violations = mutableListOf<Violation>()
-        validate(manifest, entry, files, rootName, violations)
+        fun safeDeclarations(raw: JsonObject?): JsonObject? {
+            raw ?: return null
+            val invalid = mutableSetOf<Pair<String, String>>()
+            collectPaths(raw).forEach { (key, path) ->
+                val bad = mutableListOf<Violation>()
+                val rel = pathSegments(rootName, path).drop(1).joinToString("/")
+                val prior = unreadable.entries.firstOrNull { rel == it.key || rel.startsWith(it.key.trimEnd('/') + "/") }?.value
+                // 宿主已经说明越界或超限，仍去掉组件，但不能把同一失败再误报成「不存在」。
+                if (prior != null) bad += Violation(Kind.PATH_MISSING, prior, path = path)
+                else checkPath(key, path, files, rootName, bad)
+                if (key == "mcpServers" && !path.startsWith("https://") && !path.endsWith(".json") && !path.endsWith(".mcpb") && !path.endsWith(".dxt")) {
+                    bad += Violation(Kind.MCP_BUNDLE_EXT, "mcpServers 路径 \"$path\" 必须是 .json / .mcpb / .dxt 或 https URL")
+                }
+                if (bad.isNotEmpty()) { invalid += key to path; violations += bad }
+            }
+            fun filter(key: String, value: JsonElement): JsonElement? = when (value) {
+                is JsonPrimitive -> value.takeUnless { key to value.content in invalid }
+                is JsonArray -> JsonArray(value.mapNotNull { filter(key, it) })
+                is JsonObject -> if (key == "commands") JsonObject(value.filter { (name, command) ->
+                    val source = (command as? JsonObject)?.strOrNull("source")
+                    source == null || "commands.$name.source" to source !in invalid
+                }) else if (key == "experimental") JsonObject(value.mapValues { (subkey, item) -> filter("$key.$subkey", item) ?: JsonArray(emptyList()) })
+                    else value
+            }
+            return JsonObject(raw.mapValues { (key, value) -> filter(key, value) ?: JsonArray(emptyList()) })
+        }
+        val safeManifest = safeDeclarations(manifest)
+        val safeEntry = safeDeclarations(entry)
+        validate(safeManifest, safeEntry, files, rootName, violations)
         violations.forEach {
             if (it.kind == Kind.CLAUDE_MD || it.kind == Kind.DEFAULT_IGNORED) warnings += it.detail + (it.docFragment?.let { fragment -> " [$fragment]" } ?: "")
             else errors += it.detail + (it.docFragment?.let { fragment -> " [$fragment]" } ?: "")
         }
         if (violations.any { it.kind.fatal }) return PluginLoadOutcome(warnings = warnings, errors = errors)
-        val loaded = discover(rootName, files, normalizeDeclarations(manifest), normalizeDeclarations(entry), request)
+        val loaded = discover(rootName, files, normalizeDeclarations(safeManifest), normalizeDeclarations(safeEntry), request)
+        errors += componentErrors
         if (loaded.lspServers.isNotEmpty()) warnings += "LSP 未支持：仅保留声明，不启动服务器"
         if (loaded.monitors.isNotEmpty()) warnings += "monitors 未支持：仅保留声明，不启动后台任务"
         return PluginLoadOutcome(loaded.copy(root = root, warnings = warnings, errors = errors), warnings, errors)
@@ -107,6 +137,7 @@ internal class PluginParser(internal val directories: Set<String>) {
             }
         }
         add("commands", m["commands"])
+        m.obj("commands")?.forEach { (name, value) -> add("commands.$name.source", (value as? JsonObject)?.get("source")) }
         add("agents", m["agents"])
         add("skills", m["skills"])
         add("hooks", m["hooks"])
@@ -114,6 +145,8 @@ internal class PluginParser(internal val directories: Set<String>) {
         add("lspServers", m["lspServers"])
         add("outputStyles", m["outputStyles"])
         add("workflows", m["workflows"])
+        add("themes", m["themes"])
+        add("monitors", m["monitors"])
         m.obj("experimental")?.let {
             add("experimental.themes", it["themes"])
             add("experimental.monitors", it["monitors"])
@@ -262,7 +295,8 @@ internal class PluginParser(internal val directories: Set<String>) {
         CHANNELS_UNKNOWN, CHANNELS_SERVER, LSP_CONFIG_RULES, LSP_FILE_INVALID, MONITOR_RULES,
         ENTRY_HOOKS_FILE, CLAUDE_MD, STRICT_CONFLICT, DEFAULT_IGNORED;
 
-        val fatal: Boolean get() = this !in setOf(ENTRY_HOOKS_FILE, LSP_FILE_INVALID, CLAUDE_MD, DEFAULT_IGNORED)
+        val fatal: Boolean get() = this !in setOf(ENTRY_HOOKS_FILE, LSP_FILE_INVALID, CLAUDE_MD, DEFAULT_IGNORED,
+            PATH_PREFIX, PATH_ESCAPE, PATH_MISSING, AGENTS_NOT_MD, SKILLS_NOT_DIR, HOOKS_WRAPPER, MCP_BUNDLE_EXT)
     }
 
     companion object {
@@ -287,7 +321,7 @@ internal class PluginParser(internal val directories: Set<String>) {
 
 /** MCP 命名空间沿用插件清单的名字规则；不能借用普通服务器名的较窄字符集。 */
 internal fun validPluginName(name: String): Boolean =
-    name.isNotEmpty() && !Regex("[\\s@:/\\\\]").containsMatchIn(name) && name.none {
+    name.isNotEmpty() && name !in setOf(".", "..") && !Regex("[\\s@:/\\\\]").containsMatchIn(name) && name.none {
         val c = it.code
         c < 0x20 || c == 0x7f || c in 0x200b..0x200f || c in 0x202a..0x202e || c in 0x2066..0x2069
     }

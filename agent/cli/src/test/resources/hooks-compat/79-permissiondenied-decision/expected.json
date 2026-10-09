@@ -18,6 +18,5 @@
     "hookEventName": "PermissionDenied",
     "retry": true
   },
-  "pendingFix": "内核不触发，且现在接不了：PermissionDenied 只在 auto 模式的分类器拒绝时触发（原文 :2199，手动拒绝、PreToolUse 拦截、deny 规则都不触发），而 Min 的 auto 模式还没有审查模型（PolicyEngine 里「在 M5 落地，在那之前按 default 处理」），没有「auto 拒绝」这个时机。引擎行为已按原文对齐；等 auto 分类器接上后在拒绝处调用并升级成端到端样本。",
-  "minTrigger": "none"
+  "minTrigger": "auto classifier denial"
 }

@@ -13,6 +13,7 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.ApprovalChoice
 import dev.min.agent.spi.QuestionAnswer
 import dev.min.agent.spi.TaskRecord
+import dev.min.agent.spi.displayText
 import dev.min.agent.spi.UserQuestion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -81,7 +82,7 @@ internal class ConsoleUi(
                         runtime.answerApproval(phase.approvalId, choice)
                     }
                     is CallPhase.Done -> if (finished.add(call.callId)) {
-                        val text = phase.result.content.filterIsInstance<TextPart>().joinToString(" ") { it.text }
+                        val text = phase.result.displayText(" ")
                         out.println("  ${if (phase.result.isError) "✗" else "✓"} ${summarize(text)}")
                     }
                     else -> Unit
@@ -205,7 +206,8 @@ internal class ConsoleUi(
 
     private fun decide(tool: String, summary: String): ApprovalChoice = when (approve) {
         ApprovalAnswer.Yes -> ApprovalChoice.Once
-        ApprovalAnswer.No -> ApprovalChoice.Deny("非交互模式下没有人审批，已按 --approve no 拒绝")
+        // 这句是 CLI 自己生成的，不是哪个人写的：fromHost = true，留在 tool_result 里，不能冒充“用户的话”独立成块
+        ApprovalAnswer.No -> ApprovalChoice.Deny("非交互模式下没有人审批，已按 --approve no 拒绝", fromHost = true)
         ApprovalAnswer.Ask -> {
             if ('\n' in summary) {
                 // 多行摘要（ExitPlanMode 的计划正文）整段缩进打印，再单独一行问

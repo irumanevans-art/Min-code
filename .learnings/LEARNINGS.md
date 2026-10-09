@@ -1,3 +1,28 @@
+## [LRN-20261008-PLUGIN-AUTO-BOUNDARIES] best_practice
+
+**Logged**: 2026-10-08T18:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+能力授权按启用来源与当前工作区信任求值；密钥传输同时验证桌面与 Android 生产组合根。
+
+### Details
+插件位于 cache 不代表启用配置可信：project/local 启用及项目安装都需要工作区信任，inline 是用户亲手选择。权限规则的首次加载与 cwd 重新加载都过滤未信任项目 allow / additionalDirectories。hook 的敏感 env 与 exec args 只在 spawn 前解析，冻结声明、事件和脚本保留占位符。Android ProotExec 原本拒绝所有 ShellCommand.env；目前只接受生成的 MIN_PLUGIN 数字索引键并经启动上下文传递，仍拒绝任意环境变量。这项窄例外更新 LRN-20261007-M5 的旧结论。
+
+### Suggested Action
+安全回归穿过真实 PluginBundle / HookBatchRunner / AsyncHookRunner / MinKernelDeps。异步状态断言等待目标 callId 完成，不能用 seenInputs 或前一回合 idle 代替。每个 Windows Gradle 启动显式带 Git Bash PATH，不能依赖前一次 PowerShell 调用的临时环境。
+
+### Metadata
+- Source: code_review
+- Related Files: agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt, app/src/main/java/dev/min/code/core/engine/min/ProotExec.kt
+- Tags: trust, plugin, secrets, android, mutation, async
+- See Also: LRN-20261007-M5
+- Recurrence-Count: 1
+
+---
+
 ## [LRN-20261008-PLG] best_practice
 
 **Logged**: 2026-10-08

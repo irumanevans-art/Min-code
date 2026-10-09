@@ -151,7 +151,7 @@ class McpManagerTest {
         rt.say("hello")
         assertTrue(rt.state.value.mcpTools!!.tools.single().alwaysLoad)
         assertEquals(listOf("mcp__github__search", "ToolSearch"), model.requests.single().toolNames())
-        val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+        val log = store.peek(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
     }
 
     @Test
@@ -164,7 +164,7 @@ class McpManagerTest {
         rt.say("hello")
         assertTrue(rt.state.value.mcpTools!!.tools.single().alwaysLoad)
         assertEquals(listOf("mcp__github__search", "ToolSearch"), model.requests.single().toolNames())
-        val log = store.open(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
+        val log = store.peek(rt.sessionId)!!; assertEquals(rt.state.value, fold(log.header, log.read().toList()))
     }
 
     @Test
@@ -189,7 +189,7 @@ class McpManagerTest {
         awaitIdle()
     }
 
-    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.open(rt.sessionId)!!.read().toList().map { it.event }
+    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private fun ModelRequest.toolNames() = tools.map { it.name }
 

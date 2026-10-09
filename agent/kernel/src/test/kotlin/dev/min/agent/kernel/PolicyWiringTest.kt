@@ -126,7 +126,7 @@ class PolicyWiringTest {
 
     private fun cmd(id: String, command: String) = ToolCallPart(CallId(id), "Bash", args("command" to command))
 
-    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.open(rt.sessionId)!!.read().toList().map { it.event }
+    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
     @Test fun `r47 additional directories reach execution and survive reopening without extra settings`() = run {
         fs.scopes["/data"] = dev.min.agent.spi.PathScope.Rootfs

@@ -127,6 +127,9 @@ enum class TurnTriggerView {
 
     /** 用户手动压缩上下文（`/compact`）：这一回合只做摘要，状态行写「正在压缩」 */
     Compact,
+
+    /** 定时任务到点唤醒了空闲会话（M5），状态行写「定时任务叫醒了会话」 */
+    Cron,
 }
 
 /** 正在退避重试。CC 的 `system/api_retry` 只有一句文字，Min 有次数，所以两个都可空 */

@@ -122,7 +122,7 @@ class PlanModeTest {
         )
 
     private suspend fun assertLogIsTruth(store: SessionStore, runtime: SessionRuntime) {
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 
@@ -161,9 +161,9 @@ class PlanModeTest {
         assertEquals("只有获批之后那次写执行了", 1, wrote.get())
         val blocked = rt.resultOf("c2")
         assertTrue(blocked.isError)
-        assertTrue(blocked.text(), blocked.text().contains("计划模式"))
+        assertTrue(blocked.userText, blocked.userText.orEmpty().contains("计划模式") && !blocked.text().contains("计划模式"))
         assertTrue(rt.resultOf("c3").text().contains("bypassPermissions"))
-        assertEquals("计划中的写与退出计划各问一次，回到 bypass 后写不用再问", 2, store.open(id)!!.read().toList().count { it.event is ApprovalRequested })
+        assertEquals("计划中的写与退出计划各问一次，回到 bypass 后写不用再问", 2, store.peek(id)!!.read().toList().count { it.event is ApprovalRequested })
         assertLogIsTruth(store, rt)
     }
 
@@ -185,11 +185,13 @@ class PlanModeTest {
 
         assertEquals(PermissionMode.Plan, rt.state.value.settings.mode)
         assertEquals(PermissionMode.AcceptEdits, rt.state.value.settings.modeBeforePlan)
-        val rejected = model.requests[2].messages.last().parts.single() as ToolResultPart
+        val rejectedParts = model.requests[2].messages.last().parts
+        val rejected = rejectedParts.first() as ToolResultPart
         assertTrue(rejected.isError)
-        assertTrue((rejected.content.single() as TextPart).text.contains("先别动数据库"))
+        assertFalse("说明不进 tool_result", (rejected.content.single() as TextPart).text.contains("先别动数据库"))
+        assertEquals(listOf(TextPart("用户拒绝了你刚才的 ExitPlanMode 调用，并留言：先别动数据库")), rejectedParts.drop(1))
         assertEquals(0, wrote.get())
-        assertTrue(rt.resultOf("c3").text().contains("计划模式"))
+        assertTrue(rt.resultOf("c3").userText.orEmpty().contains("计划模式"))
         assertLogIsTruth(store, rt)
     }
 
@@ -226,7 +228,7 @@ class PlanModeTest {
             assertEquals("没批就还在计划模式", PermissionMode.Plan, s.settings.mode)
             assertTrue(reopened.resultOf("c2").text().startsWith("这次调用没有执行"))
             assertFalse("旧进程的审批卡片答了也不算", reopened.answerApproval(stale, ApprovalChoice.Once))
-            val ended = store.open(id)!!.read().toList().map { it.event }.filterIsInstance<TurnEnded>().single()
+            val ended = store.peek(id)!!.read().toList().map { it.event }.filterIsInstance<TurnEnded>().single()
             assertEquals(TurnOutcome.Interrupted(InterruptedBy.ProcessDeath), ended.outcome)
             assertLogIsTruth(store, reopened)
         } finally {
@@ -323,7 +325,7 @@ class PlanModeTest {
 
             assertTrue(reopened.send(ClientMsgId("fresh"), text("继续")))
             reopened.awaitIdle()
-            assertEquals(TurnOutcome.Completed, store.open(id)!!.read().toList().map { it.event }.filterIsInstance<TurnEnded>().last().outcome)
+            assertEquals(TurnOutcome.Completed, store.peek(id)!!.read().toList().map { it.event }.filterIsInstance<TurnEnded>().last().outcome)
             assertLogIsTruth(store, reopened)
         } finally {
             freshJob.cancelAndJoin()

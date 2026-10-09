@@ -161,9 +161,9 @@ class ChaosRecoveryTest {
                 }
                 assertEquals(expected, effects.get())
                 assertEquals(scenario == Scenario.WriteAllowed, writtenFiles.isNotEmpty())
-                if (scenario == Scenario.Segments) assertTrue(store.open(id)!!.read().toList().any { it.event is AssistantSegment })
+                if (scenario == Scenario.Segments) assertTrue(store.peek(id)!!.read().toList().any { it.event is AssistantSegment })
             }
-            val beforeRecovery = store.open(id)!!.read().toList()
+            val beforeRecovery = store.peek(id)!!.read().toList()
             val effectsBefore = effects.get()
             val freshJob = SupervisorJob()
             val fresh = CoroutineScope(freshJob + Dispatchers.Default)
@@ -180,7 +180,7 @@ class ChaosRecoveryTest {
                         state.history.filterIsInstance<HistoryEntry.User>().count { it.parts == parts })
                 }
                 assertTrue(planRecovery(state).isEmpty())
-                val log = store.open(id)!!
+                val log = store.peek(id)!!
                 assertEquals(fold(log.header, log.read().toList()), state)
                 assertEquals(effectsBefore, effects.get()) // 恢复绝不能重放写副作用。
                 assertTrue(reopened.send(ClientMsgId("fresh"), text("fresh input")))

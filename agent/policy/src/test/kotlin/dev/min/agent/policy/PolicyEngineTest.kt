@@ -37,6 +37,19 @@ class PolicyEngineTest {
 
     // ---- 模式（无规则）----
 
+    @Test fun BUG_auto_workspace_edits_skip_classifier_but_protected_and_outside_writes_do_not() {
+        assertTrue(v(workspaceWrite, ctx(PermissionMode.Auto)) is Verdict.Allow)
+        assertEquals(Verdict.Ask, v(write("/workspace/.claude/settings.json"), ctx(PermissionMode.Auto)))
+        assertEquals(Verdict.Ask, v(write("/external/out"), ctx(PermissionMode.Auto)))
+    }
+
+    @Test fun BUG_auto_suspends_versioned_and_wildcard_interpreters() {
+        for (rule in listOf("Bash(python3.12 *)", "Bash(python* *)", "Bash(node:*)", "Bash(npx *)", "Agent", "Monitor(*)")) {
+            assertTrue(rule, PolicyEngine.suspendedInAuto(PermissionRule.parse(RuleKind.Allow, rule, "user")!!))
+        }
+        assertTrue(!PolicyEngine.suspendedInAuto(PermissionRule.parse(RuleKind.Allow, "Bash(npm test *)", "user")!!))
+    }
+
     @Test
     fun `writing real phone files always asks, even when bypassing`() {
         PermissionMode.entries.forEach { mode ->

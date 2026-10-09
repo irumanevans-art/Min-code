@@ -188,7 +188,10 @@ class SessionSupervisor(
             channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
             notificationId = interactionNotificationId(ref),
         ) {
-            title = context.getString(R.string.session_notification_confirm, context.engineName(ref.engine))
+            title = context.getString(
+                if (brief.fromSchedule) R.string.session_notification_schedule_confirm else R.string.session_notification_confirm,
+                context.engineName(ref.engine),
+            )
             content = when (brief.kind) {
                 InteractionKind.Approval -> brief.agent?.let { agent ->
                     context.getString(R.string.session_notification_agent_approval,

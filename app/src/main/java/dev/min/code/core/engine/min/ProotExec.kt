@@ -43,13 +43,14 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
     private val logDir = File(base.linuxDir, "root/.min/exec-logs")
 
     override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult = withContext(Dispatchers.IO) {
-        require(command.env.isEmpty()) { "Min Bash 不接受环境变量；凭证只能进 HTTP 头" }
+        // 模型 Bash 不接收任意 env；只有 hook 执行器的独立参数槽可以经进程启动口运输真值。
+        require(command.env.keys.all { Regex("MIN_PLUGIN_[0-9]+_(?:ARG|ENV)_[0-9]+").matches(it) }) { "Min Bash 仅接受插件 hook 参数环境" }
         require(options.timeoutMs > 0 && options.maxOutputChars >= 0)
         val started = System.nanoTime()
         val id = UUID.randomUUID().toString().replace("-", "")
         check(logDir.mkdirs() || logDir.isDirectory)
         val log = File(logDir, "$id.log").apply { createNewFile() }
-        val process = host.launch(agentCommandContext(base, command.cwd, command.script), log)
+        val process = host.launch(agentCommandContext(base, command.cwd, command.script).copy(env = command.env), log)
         val task = Running(process, log, options.timeoutMs) { running.remove(id) }
         running[id] = task
         task.start()
@@ -82,6 +83,19 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         // 只回收本实例拥有的进程，重启后的旧 pid 可能已被系统复用，不能盲杀。
         running[handle.id]?.reap()
         Unit
+    }
+
+    /** 按自己登记的 Process 判断存活，不起探测进程（N3）；表里没有 = 已被等待线程摘除 = 不在跑 */
+    override suspend fun isAlive(handle: ExecHandle): Boolean? = withContext(Dispatchers.IO) {
+        running[handle.id]?.process?.isAlive ?: false
+    }
+
+    /** Android 33 以下没有 `ProcessHandle.current()`；owner 记号要的是本进程 pid，宿主侧自己知道 */
+    override fun currentPid(): Long = android.os.Process.myPid().toLong()
+
+    /** 判 owner（前一世的 App 进程）死活：读宿主自己的 /proc，不起探测进程。目录项在就是活着 */
+    override suspend fun isPidAlive(pid: Long): Boolean? = withContext(Dispatchers.IO) {
+        java.io.File("/proc/$pid").exists()
     }
 
     private inner class Running(val process: Process, val log: File, val timeoutMs: Long, val done: () -> Unit) {

@@ -148,7 +148,14 @@ class MinAgentEngine(
         store = store,
         deps = kernelDeps,
         scope = scope,
-        limits = HubLimits(maxDepth = 3, maxRunningChildren = 10, maxConcurrentChildRequests = 3),
+        limits = HubLimits(
+            maxDepth = 3, maxRunningChildren = 10, maxConcurrentChildRequests = 3,
+            // 设置项 teamMaxConcurrent：初值取已有的快照，没有就用默认值；之后由 init 里的收集器实时更新
+            teamMaxConcurrent = settings.snapshot?.teamMaxConcurrent ?: dev.min.agent.kernel.TeamLimits.DEFAULT_MAX_CONCURRENT,
+            // 定时任务花费天花板（默认不设）：同样启动时读一次
+            cronMaxBudgetUsd = settings.snapshot?.cronMaxBudgetUsd,
+            cronEnabled = settings.snapshot?.cronEnabled ?: true,
+        ),
     )
 
     /** 供应商档变了的信号：模型表、「供应商已删除」跟着重算。带 replay，新订阅者立刻拿到一个 */
@@ -197,8 +204,30 @@ class MinAgentEngine(
         },
     )
 
+    /** 定时任务的定时器：心跳驱动，不保证精确，App 被杀就不跑（见 [HeartbeatScheduler]） */
+    internal val cronHeartbeat = HeartbeatScheduler(onError = { Log.w(TAG, "cron heartbeat tick failed", it) })
+    private val cronNotifier = CronNoticeNotifier(context)
+
     init {
         scope.launch { tasks.watch() }
+        // 团队并发上限与定时任务花费天花板跟着设置走：构造 Hub 时设置快照可能还没读出来（那时按默认值），读出来之后、以及用户改设置之后都要生效。
+        // 值越界（设置里不该有）就保持现状，不能因为一个坏值让引擎起不来
+        scope.launch {
+            settings.settings.map { Triple(it.teamMaxConcurrent, it.cronMaxBudgetUsd, it.cronEnabled) }.distinctUntilChanged().collect { (team, ceiling, cron) ->
+                catchingNonCancellation { hub.updateHostLimits(team, ceiling, cron) }.onFailure { Log.w(TAG, "host limits update refused", it) }
+            }
+        }
+        hub.startScheduling(cronHeartbeat)
+        // 定时任务出了事（到期、被花费上限停下、因缺价格跳过、连续超限暂停）：日志里有 Note，这里再发一条系统通知——
+        // 无人值守的任务停了，人不在会话页就看不到那条 Note
+        scope.launch { hub.cronNotices.collect { notice -> catchingNonCancellation { cronNotifier.notify(notice) }.onFailure { Log.w(TAG, "cron notice notification failed", it) } } }
+        // 心跳由引擎自己在进程存活期间打；进程能活多久是前台服务的事
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(HeartbeatScheduler.HEARTBEAT_MS)
+                cronHeartbeat.beat()
+            }
+        }
         // 进后台、手上没有在跑的回合：没人用的 MCP 连接现在就关，不等 2 分钟——进程一旦被系统冻结，linger 的定时器不走，
         // stdio 服务器的子进程就一直挂在 proot 里。回合在后台跑完的那一刻同样触发（running 变空）
         foreground?.let { fg ->
@@ -343,14 +372,18 @@ class MinAgentEngine(
         if (pin) pinned += id
     }
 
-    /** 超过 [MAX_RESIDENT] 棵树时，卸下最久没碰的、没被钉住的空闲会话 */
+    /** 超过 [MAX_RESIDENT] 棵树时，卸下最久没碰的、没被钉住、也没有进行中定时任务的空闲会话（理由见 [evictionCandidates]） */
     private suspend fun evictIfNeeded() {
         val over = sessions.value.size - MAX_RESIDENT
         if (over <= 0) return
         val candidates = synchronized(this) {
-            sessions.value.filterKeys { it !in pinned }.keys.sortedBy { touched[it] ?: 0L }
+            evictionCandidates(
+                sessions.value.keys, pinned, touched,
+                hasActiveSchedule = { id -> hub.get(id)?.state?.value?.crons?.any { it.active } == true },
+                over = over,
+            )
         }
-        for (id in candidates.take(over)) sessions.value[id]?.let { closeSession(it, CloseReason.Evicted) }
+        for (id in candidates) sessions.value[id]?.let { closeSession(it, CloseReason.Evicted) }
     }
 
     // ---- 关闭 / 删除 ----

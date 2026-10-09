@@ -161,6 +161,18 @@ class InteractionsAndStateTest {
     }
 
     @Test
+    fun `an approval raised during a scheduled run is flagged so the notification can say a task is waiting`() {
+        val cron = AgentSessionState.initial(MIN).copy(
+            turn = turn().copy(trigger = TurnTriggerView.Cron),
+            interactions = listOf(approval("ap1", tool = "Write")),
+        )
+        assertTrue(cron.toLiveSummary(keepAlive = true).headInteraction!!.fromSchedule)
+        val typed = cron.copy(turn = turn())
+        assertFalse("用户自己发起的回合不带这个标记", typed.toLiveSummary(keepAlive = true).headInteraction!!.fromSchedule)
+        assertFalse(approval("a").brief().fromSchedule)
+    }
+
+    @Test
     fun `summary status text falls back to the phase`() {
         val s = AgentSessionState.initial(CC).copy(turn = turn().copy(phase = "requesting")).toLiveSummary(true)
         assertEquals("requesting", s.statusText)

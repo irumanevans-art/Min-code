@@ -1,7 +1,8 @@
 {
-  "loads": false,
+  "loads": true,
   "errors": [
     "not found"
   ],
-  "basis": "PLG:404 组件路径必须存在，「a path that doesn't exist doesn't load」且 Errors 显示原文「<component> path not found: <path>」"
+  "basis": "https://code.claude.com/docs/en/plugins/loading：组件路径或格式无效时 the plugin loads without that component；记录错误，保留其他组件。",
+  "commands": []
 }

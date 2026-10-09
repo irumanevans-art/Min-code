@@ -1,4 +1,8 @@
 {
-  "loads": false,
-  "basis": "PLG:316 mcpServers 的 bundle 路径必须以 .mcpb/.dxt 结尾，「Any other extension fails validation」；PLG:111 校验失败装载时报同样的错"
+  "loads": true,
+  "basis": "https://code.claude.com/docs/en/plugins/loading：组件路径或格式无效时 the plugin loads without that component；记录错误，保留其他组件。",
+  "errors": [
+    ".mcpb"
+  ],
+  "mcpServers": []
 }

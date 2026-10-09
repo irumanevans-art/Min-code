@@ -107,10 +107,10 @@ class RewindRaceTest {
         store, header, SessionCreated(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions), deps(model, tools), scope,
     )
 
-    private suspend fun events(id: SessionId = SessionId("s1")): List<SessionEvent> = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(id: SessionId = SessionId("s1")): List<SessionEvent> = store.peek(id)!!.read().toList().map { it.event }
 
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

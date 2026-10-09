@@ -13,7 +13,5 @@
   "timedOut": false,
   "failedToStart": false,
   "notesContain": [],
-  "basis": "§TeammateIdle：团队成员将空闲时触发、无 matcher（:2653–2657）；输入 teammate_name/team_name（:2659–2678）。",
-  "pendingFix": "依赖未做功能：agent 团队（teammate）Min 还没有，事件无法端到端触发；输入形状已按原文钉住。",
-  "minTrigger": "none"
+  "basis": "§TeammateIdle：团队成员将空闲时触发、无 matcher（:2653–2657）；输入 teammate_name/team_name（:2659–2678）。"
 }

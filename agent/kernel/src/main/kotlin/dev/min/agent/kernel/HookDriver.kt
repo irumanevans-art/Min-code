@@ -152,7 +152,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         // 启动失败只写异常类名、不打断回合——SessionEnd 上也不该让 close 在封写前中断
         asyncHandlers.forEach { h ->
             val t = if (h.asyncRewake) (h.timeout ?: defaultTimeout(event)).coerceIn(1, MAX_TIMEOUT) else null
-            catchingNonCancellation { rt.asyncHooks.launch(event, h, stdin, env, processCwd, t) }
+            catchingNonCancellation { rt.asyncHooks.launch(event, rt.plugins()?.resolveHook(h) ?: h, stdin, env, processCwd, t) }
                 .getOrElse { e -> executionFailures += "后台 hook「${label(h)}」启动失败：${e.javaClass.simpleName}" }
         }
         if (commandHandlers.isEmpty() && httpHandlers.isEmpty()) {
@@ -178,7 +178,8 @@ internal class HookDriver(private val rt: SessionRuntime) {
                     emptyList()
                 } else {
                     catchingNonCancellation {
-                        runner.run(commandHandlers, stdin, env, processCwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap) }
+                        val resolved = commandHandlers.map { rt.plugins()?.resolveHook(it) ?: it }
+                        runner.run(resolved, stdin, env, processCwd) { h -> (h.timeout ?: defaultTimeout(event)).coerceIn(1, timeoutCap) }
                     }.getOrElse { e ->
                         executionFailures += "command hook 批执行失败：${describe(e)}"
                         emptyList()

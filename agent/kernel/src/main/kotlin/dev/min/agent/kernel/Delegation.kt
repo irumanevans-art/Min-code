@@ -54,8 +54,9 @@ data class AgentDefinition(
     val readOnly: Boolean = false,
     /**
      * frontmatter 的 `hooks:` 原文（CC 的 Hooks in skills and agents）：只在**这个子 agent 运行期间**生效——
-     * 写进子会话自己的日志，会话结束即出局，不进父会话也不继承给孙会话。其中的 `Stop` 在登记时改写成
-     * `SubagentStop`（CC：子会话里触发的是它自己的完成事件）。[hooksLayer] 是定义来自的层，项目层要过信任
+     * 写进子会话自己的日志，会话结束即出局，不进父会话。子会话再派生时经 inheritedComponentHooks
+     * 把登记时刻的快照传给孙会话（M8）。其中的 `Stop` 在登记时改写成 `SubagentStop`
+     * （CC：子会话里触发的是它自己的完成事件）。[hooksLayer] 是定义来自的层，项目层要过信任
      */
     val hooks: kotlinx.serialization.json.JsonObject? = null,
     val hooksLayer: String? = null,
@@ -249,6 +250,7 @@ internal object Reports {
             InterruptedBy.ProcessDeath -> "interrupted-by-restart"
             InterruptedBy.Limit -> "turn-limit"
             InterruptedBy.Hook -> "stopped-by-hook"
+            InterruptedBy.Budget -> "stopped-by-budget"
         }
     }
 

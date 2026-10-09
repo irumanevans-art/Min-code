@@ -39,6 +39,12 @@ class FileSessionStore(private val root: Path, private val clock: Clock) : Sessi
         if (Files.exists(file)) JsonlSessionLog.open(file, clock) else null
     }
 
+    /** 只读打开（不做崩溃修复、不动文件）：轮询还在被追加的日志必须走它（见 JsonlSessionLog.openReadOnly） */
+    override suspend fun peek(id: SessionId): SessionLog? = withContext(Dispatchers.IO) {
+        val file = eventsFile(id)
+        if (Files.exists(file)) JsonlSessionLog.openReadOnly(file, clock) else null
+    }
+
     override suspend fun list(): List<LogHeader> = withContext(Dispatchers.IO) {
         if (!Files.isDirectory(root)) return@withContext emptyList()
         Files.list(root).use { dirs ->

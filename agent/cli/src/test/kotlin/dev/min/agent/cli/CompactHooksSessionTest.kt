@@ -226,7 +226,7 @@ class CompactHooksSessionTest {
     }
 
     private suspend fun FileSessionStore.events(rt: SessionRuntime): List<SessionEvent> =
-        open(rt.sessionId)!!.read().toList().map { it.event }
+        peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String): SessionState {
         val before = state.value.lastTurn?.turnId
@@ -241,7 +241,7 @@ class CompactHooksSessionTest {
     }
 
     private suspend fun assertLogIsTruth(store: FileSessionStore, rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

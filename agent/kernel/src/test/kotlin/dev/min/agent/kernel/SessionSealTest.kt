@@ -58,13 +58,13 @@ class SessionSealTest {
         val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
         rt.send(ClientMsgId("u1"), listOf(TextPart("第一句")))
         rt.awaitIdle()
-        val before = store.open(rt.sessionId)!!.read().toList().size
+        val before = store.peek(rt.sessionId)!!.read().toList().size
         assertTrue(hub.close(rt.sessionId))
         // 卸下之后还拿着它的人（迟到的报告交付、界面残留的引用）
         assertFalse(rt.send(ClientMsgId("u2"), listOf(TextPart("迟到的话"))))
         assertFalse(rt.receive(ClientMsgId("r1"), listOf(TextPart("报告")), Delivery.Steer, report(1), startTurn = TurnTrigger.Notification))
         delay(100)
-        assertEquals("日志一条都没多", before, store.open(rt.sessionId)!!.read().toList().size)
+        assertEquals("日志一条都没多", before, store.peek(rt.sessionId)!!.read().toList().size)
         // 重新打开的是新的运行时，日志完好、照常能用
         val reopened = hub.open(rt.sessionId)!!
         assertEquals(before.toLong(), reopened.state.value.lastSeq)

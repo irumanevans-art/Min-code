@@ -215,8 +215,13 @@ class MinCommandHandler(
         val ref = ModelRef(command.profileId ?: current.providerId, command.modelId)
         // 允许跨供应商（设计 10.2 拍板 4）：发送时投影本来就处理跨模型历史，代价是缓存从头开始，界面切换时已经提示过
         if (lookup.providerLabel(ref.providerId) == null) return CommandResult.Rejected(text.providerRemoved())
-        root.changeSettings(model = ref)
+        // PreModelSwitch hook 可以拦下切换：模型没换就不能报成功，也不能把没生效的模型记成默认。理由（含谁拒的）原样交给界面
+        val refusal = root.changeSettings(model = ref)
+        if (refusal != null) return modelSwitchResult(refusal)
         if (command.asDefault) effects.rememberDefaultModel(ref.providerId, ref.modelId)
         return CommandResult.Accepted
     }
 }
+
+/** PreModelSwitch 的结论翻成命令结果：没被拒 = 成功；被拒 = 失败并带 hook 给的原因（界面显示它，不要说“已切换”） */
+internal fun modelSwitchResult(refusal: String?): CommandResult = if (refusal == null) CommandResult.Accepted else CommandResult.Rejected(refusal)

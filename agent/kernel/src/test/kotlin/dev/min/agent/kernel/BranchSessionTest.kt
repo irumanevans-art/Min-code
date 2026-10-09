@@ -158,7 +158,7 @@ class BranchSessionTest {
     private fun call(id: String, tool: String, vararg pairs: Pair<String, Any?>) =
         ToolCallPart(CallId(id), tool, args(*pairs))
 
-    private suspend fun events(id: SessionId): List<SessionEvent> = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(id: SessionId): List<SessionEvent> = store.peek(id)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId
@@ -174,19 +174,19 @@ class BranchSessionTest {
         val h = hub(model)
         val original = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
         original.say("第一句")
-        val before = store.open(original.sessionId)!!.read().toList()
+        val before = store.peek(original.sessionId)!!.read().toList()
         val beforeEvents = before.map { it.event }
         now.set(3 * DAY_MS) // 分支建在第 3 天
         val branch = h.branch(original.sessionId)
         assertNotEquals(original.sessionId, branch.sessionId)
         // 分支日志 = 原日志逐条相同 + 末尾一条 session_branched 指回原会话与分支点
-        val copied = store.open(branch.sessionId)!!.read().toList()
+        val copied = store.peek(branch.sessionId)!!.read().toList()
         assertEquals(beforeEvents, copied.map { it.event }.dropLast(1))
         val mark = copied.last().event as SessionBranched
         assertEquals(original.sessionId, mark.from)
         assertEquals("atSeq 是原会话的最后一条", before.last().seq, mark.atSeq)
         // 原会话一个字不动，也不知道自己被分支过
-        assertEquals(beforeEvents, store.open(original.sessionId)!!.read().toList().map { it.event })
+        assertEquals(beforeEvents, store.peek(original.sessionId)!!.read().toList().map { it.event })
         assertNull(original.state.value.branched)
         assertNotNull(branch.state.value.branched)
         // 日志即真相：重开分支，还是那个「分支自 …」
@@ -211,7 +211,7 @@ class BranchSessionTest {
         assertEquals(listOf("公共的第一句", "分支自己的问题"), branchTexts.map { it.text })
         // 各自重开各自成立
         for (id in listOf(original.sessionId, branch.sessionId)) {
-            val log = store.open(id)!!
+            val log = store.peek(id)!!
             fold(log.header, log.read().toList())
         }
     }
@@ -278,7 +278,7 @@ class BranchSessionTest {
         assertEquals(3, store.list().size) // 原会话 + 子会话 + 分支
         // 引用只读：从分支给原会话的子 agent 发消息，被归属检查拒掉（不能只是「找不到」——按名字找得到才证明走到了护栏）
         branch.say("分支里给它发消息")
-        val outcome = store.open(branch.sessionId)!!.read().toList()
+        val outcome = store.peek(branch.sessionId)!!.read().toList()
             .map { it.event }.filterIsInstance<dev.min.agent.spi.ToolOutcome>().last()
         val refusal = outcome.result.content.filterIsInstance<TextPart>().joinToString { it.text }
         assertTrue("错误结果要说清归属：$refusal", outcome.result.isError && refusal.contains("属于别的会话"))
@@ -286,5 +286,50 @@ class BranchSessionTest {
         val childLog = events(child)
         assertTrue(childLog.filterIsInstance<dev.min.agent.spi.InputReceived>()
             .none { (it.origin as? dev.min.agent.spi.InputOrigin.Parent)?.session == branch.sessionId })
+    }
+
+    @Test
+    fun `a session that built a team can be branched and the branch opens - team events stay with the original`() = run {
+        val model = RoutingModel { reply(TextPart("好")) }
+        val h = hub(model)
+        val original = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val port = h.portFor(original, dev.min.agent.protocol.TurnId("t-test"), CallId("c-test"))
+        assertTrue(!port.team(dev.min.agent.spi.TeamOp.Create(listOf(dev.min.agent.spi.TeamMemberSpec("alice", prompt = "x")))).isError)
+        port.team(dev.min.agent.spi.TeamOp.Disband(dev.min.agent.spi.TeamDisbandReason.Completed, null))
+        // 成员的报告会唤醒负责人跑通知回合：等安静了再分支
+        original.awaitIdle()
+        original.state.first { it.turn == null && it.inbox.isEmpty() }
+        original.awaitIdle()
+
+        val branch = h.branch(original.sessionId)
+
+        // 团队是负责人这个会话自己的状态（负责人字段指着它），不跟着分支走；分支日志里一条 team_* 都没有
+        assertTrue(events(branch.sessionId).none { it.javaClass.simpleName.startsWith("Team") })
+        assertNull(branch.state.value.team)
+        // 分支能重新打开（这是回归点：之前开分支时折叠到 team_created 就抛，留下打不开的会话）
+        val reopened = SessionRuntime.open(store, branch.sessionId, deps(model, emptyList()), newScope())!!
+        assertNull(reopened.state.value.team)
+        assertNotNull(reopened.state.value.branched)
+        // 原会话的团队原样还在
+        assertNotNull(original.state.value.team)
+    }
+
+    @Test
+    fun `creating a session whose initial events do not fold leaves no orphan log behind`() = run {
+        val model = RoutingModel { reply(TextPart("好")) }
+        val h = hub(model)
+        val original = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val header = LogHeader(LOG_FORMAT_VERSION, SessionId("s_orphan"), 0L)
+        val created = store.open(original.sessionId)!!.read().toList().first().event as SessionCreated
+        val before = store.list().map { it.sessionId }.toSet()
+        // 负责人写着别人的 id：折叠会拒绝（Teams.kt 的 leader 校验）
+        val bad = dev.min.agent.spi.TeamCreated("team_x", original.sessionId, listOf(dev.min.agent.spi.TeamMemberSpec("a", prompt = "x")))
+        try {
+            SessionRuntime.create(store, header, created, deps(model, emptyList()), newScope(), initial = listOf(bad))
+            fail("折叠不了的初始事件应当让创建失败")
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message!!.contains("负责人"))
+        }
+        assertEquals("失败的创建不能在磁盘上留下会话", before, store.list().map { it.sessionId }.toSet())
     }
 }

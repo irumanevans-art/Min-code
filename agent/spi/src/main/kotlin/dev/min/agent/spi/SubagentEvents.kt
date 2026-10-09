@@ -153,6 +153,14 @@ sealed interface InputOrigin {
     @Serializable
     @SerialName("hook")
     data class Hook(val event: String) : InputOrigin
+
+    /**
+     * 定时任务到点触发送来的话（[CronFired] 与它同一次提交）。它是会话自己的预设任务，不是人此刻发的：
+     * UserPromptSubmit hook 不过它、不记回退点、不带 SessionStart 的待挂上下文，界面也不画成用户气泡
+     */
+    @Serializable
+    @SerialName("cron")
+    data class Cron(val cronId: String) : InputOrigin
 }
 
 @Serializable

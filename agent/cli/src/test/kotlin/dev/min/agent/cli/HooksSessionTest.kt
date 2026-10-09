@@ -156,7 +156,7 @@ class HooksSessionTest {
         return SessionHub(store, deps, scope).create(paths.guestOfHost(work), TEST_MODEL, mode) to store
     }
 
-    private suspend fun FileSessionStore.events(rt: SessionRuntime): List<SessionEvent> = open(rt.sessionId)!!.read().toList().map { it.event }
+    private suspend fun FileSessionStore.events(rt: SessionRuntime): List<SessionEvent> = peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String): SessionState {
         val before = state.value.lastTurn?.turnId

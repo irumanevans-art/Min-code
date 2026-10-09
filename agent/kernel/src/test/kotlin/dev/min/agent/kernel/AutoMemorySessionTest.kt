@@ -85,10 +85,10 @@ class AutoMemorySessionTest {
 
     private lateinit var scripted: ScriptedModel
 
-    private suspend fun events(): List<SessionEvent> = store.open(SessionId("s1"))!!.read().toList().map { it.event }
+    private suspend fun events(): List<SessionEvent> = store.peek(SessionId("s1"))!!.read().toList().map { it.event }
 
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 
@@ -269,7 +269,7 @@ class AutoMemorySessionTest {
         assertEquals(1, events().count { it is ApprovalRequested })
         assertTrue(fs.writes.isEmpty())
         val result = events().filterIsInstance<dev.min.agent.spi.ToolOutcome>().single { it.callId == CallId("c1") }.result
-        assertTrue(result.text, result.isError && "计划模式" in result.text)
+        assertTrue(result.text, result.isError && "计划模式" in result.userText.orEmpty() && "计划模式" !in result.text)
         assertLogIsTruth(rt)
     }
 

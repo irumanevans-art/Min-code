@@ -28,6 +28,11 @@ internal suspend fun runHeadless(
     stdout: PrintStream,
     stderr: PrintStream,
 ): Int {
+    runtime.state.value.permissionNotes
+        .filter { "this workspace has not been trusted" in it }.forEach(stderr::println)
+    if (runtime.state.value.settings.mode == dev.min.agent.protocol.PermissionMode.Auto && args.approve == ApprovalAnswer.Yes) {
+        stderr.println("警示：-p --mode auto --approve yes，转人的调用会被自动批准。")
+    }
     // 非交互默认 --approve no / 拒答提问，ConsoleUi 不会去读 stdin；它的一切打印都进 stderr。
     // 交给 hub：子 agent 的审批也按 --approve 答掉——以前只答根会话的，子 agent 要审批时整次运行挂到超时（评测集 v1 第 32 题实测）
     val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub()).attach(scope)

@@ -6,20 +6,17 @@ import dev.min.agent.ext.styles.OutputStyleDef
 import dev.min.agent.spi.*
 import kotlinx.serialization.json.*
 
-fun pluginHookExportNames(keys: List<String>): List<String> =
-    listOf("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_PROJECT_DIR") + keys.map { "CLAUDE_PLUGIN_OPTION_${it.uppercase()}" }
-
-/** 插件只支持 command hook，不能借 frontmatter 把未支持类型绕进既有引擎。 */
+/** 类型和字段交给 HookSet 统一校验，不能在插件发现时静默丢失门禁。 */
 fun commandPluginHooks(events: JsonObject): JsonObject = JsonObject(events.mapNotNull { (event, value) ->
     val groups = (value as? JsonArray)?.mapNotNull { group ->
         val obj = group as? JsonObject ?: return@mapNotNull null
-        val handlers = (obj["hooks"] as? JsonArray)?.filter { (it as? JsonObject)?.get("type") == JsonPrimitive("command") }.orEmpty()
+        val handlers = (obj["hooks"] as? JsonArray).orEmpty()
         if (handlers.isEmpty()) null else JsonObject(obj + ("hooks" to JsonArray(handlers)))
     }.orEmpty()
     if (groups.isEmpty()) null else event to JsonArray(groups)
 }.toMap())
 
-/** 不含用户配置值的会话组件；正文在调用时读，密钥只在 MCP 使用侧展开。 */
+/** 不含密钥真值的会话组件；正文在调用时读，密钥仅在 MCP / hook 使用侧展开。 */
 class PluginBundle(
     val batch: PluginBatch,
     val skills: List<SkillDef>,
@@ -31,7 +28,16 @@ class PluginBundle(
     private val fs: WorkspaceFs,
     private val contexts: Map<String, Pair<PluginVars, PluginValues>>,
     private val trusted: Set<String>,
+    private val approvalRequired: Set<String>,
 ) {
+    fun resolveHook(handler: dev.min.agent.ext.hooks.HookHandler): dev.min.agent.ext.hooks.HookHandler {
+        val id = (handler.raw["minPluginId"] as? JsonPrimitive)?.content ?: return handler
+        if (id !in trusted) return handler
+        val (vars, values) = contexts.getValue(id)
+        // 真值只存在于执行器的参数与进程环境，冻结的 hooks 与正文仍保留占位符。
+        return handler.copy(args = handler.args?.map { resolvePluginMcp(it, vars, values) },
+            pluginEnv = handler.pluginEnv.mapValues { resolvePluginMcp(it.value, vars, values) })
+    }
     suspend fun readBody(path: GuestPath): String? {
         val plugin = batch.plugins.firstOrNull { path.value.startsWith(it.root.trimEnd('/') + "/") } ?: return SkillFiles.readBody(fs, path)
         val command = plugin.commands.firstOrNull { inlinePath(plugin, it) == path }
@@ -58,7 +64,8 @@ class PluginBundle(
                     "CLAUDE_PLUGIN_ROOT" to JsonPrimitive(vars.root), "CLAUDE_PLUGIN_DATA" to JsonPrimitive(vars.data),
                 ))))
             } else resolved
-            PluginMcpSource(server.serverName, config, plugin.ref.id in trusted, if (forbiddenHelper) "headersHelper 不得引用 user_config" else null)
+            PluginMcpSource(server.serverName, config, plugin.ref.id in trusted, if (forbiddenHelper) "headersHelper 不得引用 user_config" else null,
+                requiresApproval = plugin.ref.id in approvalRequired)
         }
     }
 
@@ -78,6 +85,21 @@ class PluginBundle(
         ): PluginBundle {
             val io = ConfigIo(fs)
             val candidates = mutableListOf<PluginRequest>()
+            val enabledSources = linkedMapOf<String, ConfigSource>()
+            val enabled = linkedMapOf<String, Boolean>()
+            settings.layers.forEach { layer -> layer.enabledPlugins.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = layer.source } }
+            val managed = settings.layers.lastOrNull { it.source == ConfigSource.Managed }
+            managed?.enabledPlugins?.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = ConfigSource.Managed }
+            val disabledDependencies = settings.layers.flatMap { it.enabledPlugins.filterValues { value -> !value }.keys }.toSet()
+            val scopes = linkedMapOf<String, String?>()
+            val inlineRoots = mutableSetOf<String>()
+            val cacheRoot = canonical(GuestPath(GuestPaths.join(home.value, ".claude/plugins/cache"))).value.trimEnd('/')
+            fun validId(id: String): Boolean {
+                val parts = id.split('@')
+                val valid = parts.size == 2 && validPluginName(parts[0]) && Regex("[A-Za-z0-9_-]+").matches(parts[1])
+                if (!valid) io.notes += "enabledPlugins 插件键不合法，已跳过：$id"
+                return valid
+            }
             val options = linkedMapOf<String, JsonObject>()
             fun localInstall(raw: String): GuestPath? = try { installedPath(raw) }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -97,6 +119,7 @@ class PluginBundle(
                 SettingsReader.parseObject(it, "installed_plugins.json", io.notes)?.get("plugins") as? JsonObject
             }
             index?.forEach { (id, installs) ->
+                if (!validId(id)) return@forEach
                 // 只接已有本地安装记录；远程源、市场安装及自动下载不属于本期。
                 val records = installs as? JsonArray ?: return@forEach
                 val eligible = records.mapNotNull { it as? JsonObject }.filter { record ->
@@ -107,20 +130,35 @@ class PluginBundle(
                 val record = eligible.lastOrNull() ?: return@forEach
                 val rawPath = (record["installPath"] as? JsonPrimitive)?.content ?: return@forEach
                 val path = localInstall(rawPath) ?: return@forEach
+                scopes[canonical(path).value] = (record["scope"] as? JsonPrimitive)?.content
                 candidates += PluginRequest(path.value, PluginRef(id.substringBefore('@'), id.substringAfter('@', "").ifEmpty { null }),
-                    enabledPlugins = settings.enabledPlugins + (id to (settings.enabledPlugins[id] ?: false)))
+                    enabledPlugins = enabled + (id to (enabled[id] ?: false)), disabledDependencies = disabledDependencies)
             }
             // 未安装索引的本地缓存也可以按 enabledPlugins 找到；禁用项仍留作依赖候选。
-            for (id in settings.enabledPlugins.keys) {
+            for (id in enabled.keys) {
+                if (!validId(id)) continue
                 if (candidates.any { it.ref?.id == id }) continue
                 val market = id.substringAfter('@', "")
                 if (market.isEmpty()) continue
                 val base = "$pluginsDir/cache/$market/${id.substringBefore('@')}"
+                if (!canonical(GuestPath(base)).value.startsWith("$cacheRoot/")) {
+                    io.notes += "enabledPlugins 缓存路径 escapes cache：$base"
+                    continue
+                }
                 val versions = io.entries(base).filter { it.kind == FileKind.Directory }
-                versions.lastOrNull()?.let { candidates += PluginRequest("$base/${it.name}", PluginRef(id.substringBefore('@'), market), enabledPlugins = settings.enabledPlugins) }
+                versions.maxWithOrNull(compareBySemanticVersion { it.name })?.let {
+                    val path = GuestPath("$base/${it.name}")
+                    if (!canonical(path).value.startsWith("$cacheRoot/")) io.notes += "enabledPlugins 版本路径 escapes cache：${path.value}"
+                    else candidates += PluginRequest(path.value, PluginRef(id.substringBefore('@'), market), enabledPlugins = enabled, disabledDependencies = disabledDependencies)
+                }
             }
-            dirs.forEach { candidates += PluginRequest(it.value, null) }
-            val batch = PluginLoader(fs, canonical).loadAll(candidates)
+            val disableSideload = (managed?.raw?.get("disableSideloadFlags") as? JsonPrimitive)?.booleanOrNull == true
+            if (disableSideload && dirs.isNotEmpty()) io.notes += "托管 disableSideloadFlags 禁止 --plugin-dir"
+            else dirs.forEach {
+                inlineRoots += canonical(it).value
+                candidates += PluginRequest(it.value, null, enabledPlugins = enabled, sideload = true, disabledDependencies = disabledDependencies)
+            }
+            val batch = PluginLoader(fs, canonical).loadAll(candidates, managed?.enabledPlugins?.keys.orEmpty().map { it.substringBefore('@') }.toSet())
             val notes = (batch.errors + batch.overrides + batch.plugins.flatMap { it.warnings }).toMutableList()
             val skillDefs = mutableListOf<SkillDef>()
             val commandDefs = mutableListOf<CommandDef>()
@@ -129,15 +167,19 @@ class PluginBundle(
             val styles = linkedMapOf<String, OutputStyleDef>()
             val contexts = linkedMapOf<String, Pair<PluginVars, PluginValues>>()
             val trusted = mutableSetOf<String>()
-            val realUserPlugins = canonical(GuestPath(pluginsDir)).value.trimEnd('/')
+            val approvalRequired = mutableSetOf<String>()
             for (plugin in batch.plugins) {
                 val realRoot = canonical(GuestPath(plugin.root)).value
-                var isTrusted = realRoot.startsWith("$realUserPlugins/") || trust(GuestPath(plugin.root))
+                val source = enabledSources[plugin.ref.id]
+                val projectEnabled = source in setOf(ConfigSource.Project, ConfigSource.Local) || scopes[realRoot] in setOf("project", "local")
+                if (projectEnabled) approvalRequired += plugin.ref.id
+                var isTrusted = realRoot in inlineRoots || if (projectEnabled) trust(cwd)
+                    else source in setOf(ConfigSource.User, ConfigSource.Managed) || scopes[realRoot] == "user"
                 if (isTrusted) trusted += plugin.ref.id
-                else if (plugin.hooks.isNotEmpty() || plugin.mcpServers.isNotEmpty()) notes += "plugin:${plugin.namespace} 所在目录未信任，hooks / MCP 未启用"
+                else if (plugin.hooks.isNotEmpty() || plugin.mcpServers.isNotEmpty()) notes += "plugin:${plugin.namespace} 启用来源所属工作区未信任，hooks / MCP 未启用"
                 val vars = PluginVars(shellPath(GuestPath(plugin.root)), shellPath(GuestPath("$pluginsDir/data/${pluginDataId(plugin.ref)}")), shellPath(cwd))
                 val label = "plugin:${plugin.namespace}"
-                val public = options[plugin.ref.id] ?: JsonObject(emptyMap())
+                val public = options[plugin.ref.id] ?: options[plugin.ref.name] ?: JsonObject(emptyMap())
                 val values = try {
                     PluginValues.read(plugin, public, if (isTrusted) secrets else PluginSecretStore(McpTokenStore.Unavailable))
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -166,6 +208,7 @@ class PluginBundle(
                             val obj = group.jsonObject
                             val handlers = obj.getValue("hooks").jsonArray.mapNotNull handler@{ value ->
                                 val handler = value.jsonObject
+                                if ((handler["type"] as? JsonPrimitive)?.content in setOf("prompt", "agent", "mcp_tool")) notes += "$label 的 ${handler["type"]} hook 本版本未支持执行，声明已保留"
                                 val command = (handler["command"] as? JsonPrimitive)?.content
                                 if (command?.contains("\${user_config.") == true) {
                                     notes += "$label 的 shell hook 引用了 user_config，已跳过；请使用 exec args 或 OPTION 环境变量"
@@ -174,15 +217,22 @@ class PluginBundle(
                                 val out = handler.toMutableMap()
                                 command?.let { out["command"] = JsonPrimitive(vars.paths(it)) }
                                 (handler["args"] as? JsonArray)?.let { args ->
+                                    if (args.any { it !is JsonPrimitive || !it.isString }) {
+                                        notes += "$label 的 hook args 必须是字符串数组，跳过该 handler"
+                                        return@handler null
+                                    }
                                     out["args"] = JsonArray(args.map { JsonPrimitive(resolvePluginBody(it.jsonPrimitive.content, vars, values, sensitive)) })
                                 }
                                 out["minPluginEnv"] = env
+                                out["minPluginId"] = JsonPrimitive(plugin.ref.id)
                                 JsonObject(out)
                             }
                             if (handlers.isEmpty()) null else JsonObject(obj + ("hooks" to JsonArray(handlers)))
                         }
                         if (rendered.isEmpty()) null else event to JsonArray(rendered)
-                    }.toMap())
+                    }.toMap()).also {
+                        notes += dev.min.agent.ext.hooks.HookSet.parse(listOf(HookSource(ConfigSource.Plugin, it))).notes
+                    }
                 }
                 contexts[plugin.ref.id] = vars to values
                 plugin.skills.forEach { skill ->
@@ -193,6 +243,12 @@ class PluginBundle(
                 }
                 plugin.commands.forEach { command ->
                     val path = command.sourcePath?.let { GuestPath(GuestPaths.join(plugin.root, it)) } ?: inlinePath(plugin, command)
+                    val realPath = canonical(path).value
+                    val commandRoot = canonical(GuestPath(plugin.root)).value.trimEnd('/')
+                    if (!realPath.startsWith("$commandRoot/")) {
+                        notes += "$label 的 command ${path.value} escapes plugin directory，跳过该组件"
+                        return@forEach
+                    }
                     val def = if (command.content == null) CommandLoader.read(io, ConfigSource.Plugin, path.value, command.name)
                     else CommandDef(command.name, command.description ?: command.content.lineSequence().firstOrNull().orEmpty(), path, command.content, ConfigSource.Plugin)
                     def?.let { commandDefs += it.copy(body = resolvePluginBody(it.body, vars, values, plugin.userConfig.filter { it.sensitive }.map { it.key }.toSet()), description = command.description ?: it.description,
@@ -203,7 +259,9 @@ class PluginBundle(
                 plugin.agents.forEach { agent ->
                     AgentLoader.read(io, ConfigSource.Plugin, GuestPaths.join(plugin.root, agent.filePath), fallbackName = agent.name.substringAfterLast(':'))?.let {
                         val sensitive = plugin.userConfig.filter { d -> d.sensitive }.map { d -> d.key }.toSet()
-                        agentDefs += it.copy(name = agent.name, sourceLabel = label, prompt = resolvePluginBody(it.prompt, vars, values, sensitive), hooks = if (isTrusted) it.hooks?.let(::renderHooks) else null)
+                        // 官方插件 agent 不能自行提供权限模式、hooks、MCP 或启动输入。
+                        agentDefs += it.copy(name = agent.name, sourceLabel = label, prompt = resolvePluginBody(it.prompt, vars, values, sensitive),
+                            hooks = null, permissionMode = null, mcpServers = null, initialPrompt = null)
                     }
                 }
                 if (isTrusted) {
@@ -224,12 +282,12 @@ class PluginBundle(
                 } }
             }
             notes += io.notes
-            return PluginBundle(batch, skillDefs, commandDefs, agentDefs, hooks, styles, notes, fs, contexts, trusted)
+            return PluginBundle(batch, skillDefs, commandDefs, agentDefs, hooks, styles, notes, fs, contexts, trusted, approvalRequired)
         }
     }
 }
 
 /** 已经由目录信任闸门判定的配置输入；toString 不得打印展开后的 env / headers。 */
-class PluginMcpSource(val name: String, val config: JsonObject, val trusted: Boolean, val error: String? = null) {
+class PluginMcpSource(val name: String, val config: JsonObject, val trusted: Boolean, val error: String? = null, val requiresApproval: Boolean = false) {
     override fun toString(): String = "PluginMcpSource(name=$name, trusted=$trusted)"
 }

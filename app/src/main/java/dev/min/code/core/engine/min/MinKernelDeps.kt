@@ -72,6 +72,7 @@ class MinHostGeneration(
  * 而挂载快照会因设置变化而换代，所以不能把某一代的实例直接塞进去。
  */
 class MinHostPorts(private val current: () -> MinHostGeneration, tasks: MinBackgroundTasks, clock: Clock) {
+    fun canonicalPath(path: GuestPath): GuestPath = current().fs.canonical(path)
     val fs: WorkspaceFs = object : WorkspaceFs {
         override suspend fun stat(path: GuestPath): FileStat? = current().fs.stat(path)
         override suspend fun read(path: GuestPath, offset: Long, limit: Int): ByteArray = current().fs.read(path, offset, limit)
@@ -133,6 +134,11 @@ internal class MinExec(
         (owner[handle.id] ?: current().exec).kill(handle)
         tasks.stopped(handle.id)
     }
+
+    // 存活 / pid 探测都转发给当前一代（ProotExec）：不转发的话端口默认「说不了」，内核退回 kill -0 轮询
+    override suspend fun isAlive(handle: ExecHandle): Boolean? = current().exec.isAlive(handle)
+    override fun currentPid(): Long = current().exec.currentPid()
+    override suspend fun isPidAlive(pid: Long): Boolean? = current().exec.isPidAlive(pid)
 }
 
 /**
@@ -147,6 +153,9 @@ fun minTools(): List<Tool<*>> = listOf(
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
     SkillTool,
     dev.min.agent.tools.EnterWorktreeTool, dev.min.agent.tools.ExitWorktreeTool,
+    // M5：agent 团队与定时任务（只往末尾追加）
+    dev.min.agent.tools.TeamCreateTool, dev.min.agent.tools.TeamDisbandTool,
+    dev.min.agent.tools.CronCreateTool, dev.min.agent.tools.CronDeleteTool, dev.min.agent.tools.CronListTool, dev.min.agent.tools.ScheduleWakeupTool,
 )
 
 object MinKernelDeps {
@@ -187,6 +196,7 @@ object MinKernelDeps {
         mcpTokenStore = mcpTokenStore,
         mcpAuthorizer = mcpAuthorizer,
         trustProjectHooks = trustProjectHooks,
+        canonicalPath = ports::canonicalPath,
         canAnswerMcpUrlElicitation = canAnswerMcpUrlElicitation,
         workflowEngine = dev.min.agent.workflow.QuickJsWorkflowEngine(),
         workflowConcurrency = 4,

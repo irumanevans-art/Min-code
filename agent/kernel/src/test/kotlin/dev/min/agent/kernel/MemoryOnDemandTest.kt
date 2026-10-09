@@ -101,10 +101,10 @@ class MemoryOnDemandTest {
             deps(model, tools), scope,
         )
 
-    private suspend fun events(): List<SessionEvent> = store.open(SessionId("s1"))!!.read().toList().map { it.event }
+    private suspend fun events(): List<SessionEvent> = store.peek(SessionId("s1"))!!.read().toList().map { it.event }
 
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 
@@ -489,7 +489,7 @@ class MemoryOnDemandTest {
         child.state.first { it.lastTurn != null && it.turn == null }
         assertTrue("子 agent 读到了子树里的文件", child.state.value.toolResults.isNotEmpty())
         assertEquals(true, child.state.value.origin?.omitMemory)
-        assertTrue(store.open(childId)!!.read().toList().none { it.event is MemoryAttached })
+        assertTrue(store.peek(childId)!!.read().toList().none { it.event is MemoryAttached })
         parent.awaitIdle()
 
         // 重新打开：不吃记忆是创建时定下的事实，不能因为内存里的开关丢了就变
@@ -498,7 +498,7 @@ class MemoryOnDemandTest {
         reopened.send(msg(), listOf(TextPart("再探一下")))
         reopened.awaitIdle()
         assertEquals(2, reopened.state.value.toolResults.size)
-        assertTrue("重开后也不按需加载", store.open(childId)!!.read().toList().none { it.event is MemoryAttached })
+        assertTrue("重开后也不按需加载", store.peek(childId)!!.read().toList().none { it.event is MemoryAttached })
     }
 
     /** 会话创建时的说明：带 paths 的规则在启动时跳过并说明（上面没用到的辅助放这，免得悬空） */

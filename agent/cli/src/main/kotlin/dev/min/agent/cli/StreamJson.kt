@@ -183,6 +183,9 @@ internal class StreamJsonRenderer(
                                             )
                                             put("is_error", result.isError)
                                         },
+                                    ) + listOfNotNull(
+                                        // 用户的话与发给模型的形状一致：同一条 user 消息里紧随 tool_result 的独立 text 块
+                                        result.userText?.let { text -> buildJsonObject { put("type", "text"); put("text", text) } },
                                     ),
                                 ),
                             )

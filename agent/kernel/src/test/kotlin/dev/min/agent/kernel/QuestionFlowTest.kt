@@ -104,10 +104,10 @@ class QuestionFlowTest {
         scope,
     )
 
-    private suspend fun events(): List<SessionEvent> = store.open(id)!!.read().toList().map { it.event }
+    private suspend fun events(): List<SessionEvent> = store.peek(id)!!.read().toList().map { it.event }
 
     private suspend fun assertLogIsTruth(runtime: SessionRuntime) {
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 
@@ -115,7 +115,11 @@ class QuestionFlowTest {
         state.first { it.turn?.pendingQuestions?.isNotEmpty() == true }.turn!!.pendingQuestions.single()
 
     private fun resultIn(model: ScriptedModel, index: Int): ToolResultPart =
-        model.requests[index].messages.last().parts.single() as ToolResultPart
+        model.requests[index].messages.last().parts.first() as ToolResultPart
+
+    /** 紧随 tool_result 的用户文本块（用户的话）；没有为空 */
+    private fun userTextIn(model: ScriptedModel, index: Int): List<String> =
+        model.requests[index].messages.last().parts.filterIsInstance<TextPart>().map { it.text }
 
     private fun ToolResultPart.text() = (content.single() as TextPart).text
 
@@ -136,7 +140,10 @@ class QuestionFlowTest {
 
         val result = resultIn(model, 1)
         assertFalse(result.isError)
-        assertTrue(result.text(), result.text().contains("用哪个数据库？ → PostgreSQL"))
+        // 答案不在 tool_result 里，而在紧随其后的独立用户文本块里（官方说明：tool_result 里的文字会被当作不可信内容）
+        assertEquals(AskUserQuestionTool.ANSWERED_MESSAGE, result.text())
+        val said = userTextIn(model, 1).single()
+        assertTrue(said, said.contains("用哪个数据库？ → PostgreSQL"))
         assertFalse("答过就不再算待答", rt.answerQuestion(pending.questionId, listOf(QuestionAnswer(listOf("SQLite")))))
         val log = events()
         assertEquals(1, log.count { it is QuestionAsked })
@@ -189,7 +196,8 @@ class QuestionFlowTest {
 
         assertTrue(rt.answerQuestion(q, listOf(QuestionAnswer(other = "先用内存"))))
         rt.awaitIdle()
-        assertTrue(resultIn(model, 1).text().contains("（用户自己填写）先用内存"))
+        assertFalse(resultIn(model, 1).text().contains("先用内存"))
+        assertTrue(userTextIn(model, 1).single().contains("（用户自己填写）先用内存"))
         assertLogIsTruth(rt)
     }
 
@@ -204,6 +212,7 @@ class QuestionFlowTest {
         val result = resultIn(model, 1)
         assertFalse(result.isError)
         assertEquals(AskUserQuestionTool.DECLINED_MESSAGE, result.text())
+        assertEquals("没回答就没有用户的话", emptyList<String>(), userTextIn(model, 1))
         assertLogIsTruth(rt)
     }
 

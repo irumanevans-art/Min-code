@@ -84,11 +84,11 @@ class SessionRuntimeTest {
             scope,
         )
 
-    private suspend fun events(): List<SessionEvent> = store.open(SessionId("s1"))!!.read().toList().map { it.event }
+    private suspend fun events(): List<SessionEvent> = store.peek(SessionId("s1"))!!.read().toList().map { it.event }
 
     /** 日志即真相：重新折叠日志得到的状态 == 运行时内存里的状态 */
     private suspend fun assertLogIsTruth(runtime: SessionRuntime) {
-        val log = store.open(SessionId("s1"))!!
+        val log = store.peek(SessionId("s1"))!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 
@@ -159,9 +159,57 @@ class SessionRuntimeTest {
         rt.awaitIdle()
 
         assertEquals(0, ran)
-        val result = model.requests[1].messages[2].parts.single() as ToolResultPart
+        // 用户写的说明不进 tool_result（官方说明：tool_result 里的文字会被当作不可信内容），而是紧随其后的独立用户文本块
+        val parts = model.requests[1].messages[2].parts
+        val result = parts.first() as ToolResultPart
         assertTrue(result.isError)
-        assertTrue((result.content.single() as TextPart).text.contains("别动这个文件"))
+        val resultText = (result.content.single() as TextPart).text
+        assertTrue(resultText, resultText.startsWith("用户拒绝了这次调用。") && !resultText.contains("别动这个文件"))
+        assertEquals(listOf(TextPart("用户拒绝了你刚才的 Write 调用，并留言：别动这个文件")), parts.drop(1))
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a denial without a note leaves no user text and tells the model not to retry as is`() = run {
+        val write = FakeTool("Write", WRITES) { ToolResult(text("写好了")) }
+        val model = ScriptedModel(reply(call("c1", "Write"), stop = StopReason.ToolUse), reply(TextPart("好的，不改")))
+        val rt = newSession(model, listOf(write))
+        rt.send(msg(), text("改一下"))
+
+        val waiting = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
+        rt.answerApproval((waiting.phaseOf(CallId("c1")) as CallPhase.AwaitingApproval).approvalId, ApprovalChoice.Deny())
+        rt.awaitIdle()
+
+        val parts = model.requests[1].messages[2].parts
+        assertEquals(1, parts.size)
+        val result = parts.single() as ToolResultPart
+        assertTrue(result.isError)
+        assertEquals("用户拒绝了这次调用。不要原样重试，换个做法或先问清楚。", (result.content.single() as TextPart).text)
+        assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a denial note the host generated stays in the tool result and is not sent as the user's words`() = run {
+        val write = FakeTool("Write", WRITES) { ToolResult(text("写好了")) }
+        val model = ScriptedModel(reply(call("c1", "Write"), stop = StopReason.ToolUse), reply(TextPart("好的，不改")))
+        val rt = newSession(model, listOf(write))
+        rt.send(msg(), text("改一下"))
+
+        val waiting = rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
+        // 非交互（-p）下宿主自己拒绝的说明：不是哪个人写的话
+        rt.answerApproval(
+            (waiting.phaseOf(CallId("c1")) as CallPhase.AwaitingApproval).approvalId,
+            ApprovalChoice.Deny("非交互模式下没有人审批，已按 --approve no 拒绝", fromHost = true),
+        )
+        rt.awaitIdle()
+
+        val parts = model.requests[1].messages[2].parts
+        assertEquals("不能多出一个“用户说”的文本块", 1, parts.size)
+        val result = parts.single() as ToolResultPart
+        assertTrue(result.isError)
+        val text = (result.content.single() as TextPart).text
+        assertTrue(text, text.contains("非交互模式下没有人审批，已按 --approve no 拒绝") && text.contains("不要原样重试"))
+        assertTrue(text, !text.contains("用户留了话") && !text.contains("用户拒绝了这次调用"))
         assertLogIsTruth(rt)
     }
 

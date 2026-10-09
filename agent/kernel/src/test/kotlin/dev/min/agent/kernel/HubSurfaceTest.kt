@@ -125,7 +125,7 @@ class HubSurfaceTest {
     private suspend fun SessionHub.root() = create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
 
     private suspend fun events(id: dev.min.agent.protocol.SessionId): List<SessionEvent> =
-        store.open(id)!!.read().toList().map { it.event }
+        store.peek(id)!!.read().toList().map { it.event }
 
     // ---- K1 在线集合与卸下 ----
 

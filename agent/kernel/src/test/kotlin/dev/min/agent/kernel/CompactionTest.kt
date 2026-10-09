@@ -120,7 +120,7 @@ class CompactionTest {
     private suspend fun session(model: ModelClient, tools: List<dev.min.agent.spi.Tool<*>> = emptyList(), s: dev.min.agent.spi.SessionStore = store) =
         SessionHub(s, deps(model, tools), newScope()).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
 
-    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.open(rt.sessionId)!!.read().toList().map { it.event }
+    private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String): SessionState {
         val before = state.value.lastTurn?.turnId
@@ -129,7 +129,7 @@ class CompactionTest {
     }
 
     private suspend fun assertLogIsTruth(rt: SessionRuntime) {
-        val log = store.open(rt.sessionId)!!
+        val log = store.peek(rt.sessionId)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

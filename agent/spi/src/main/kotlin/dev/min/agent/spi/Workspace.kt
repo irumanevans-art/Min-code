@@ -99,6 +99,29 @@ sealed interface ExecResult {
 interface Exec {
     suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult
     suspend fun kill(handle: ExecHandle)
+
+    /**
+     * 句柄对应的进程还活着吗：宿主按自己登记的 Process 直接判断，**不起探测进程**（N3：靠 `kill -0`
+     * 探活会让每个存活 hook 每几秒起一个进程，exec-logs 下的日志无限堆积）。null = 这个端口说不了（默认），
+     * 调用方退回自己的探测
+     */
+    suspend fun isAlive(handle: ExecHandle): Boolean? = null
+
+    /**
+     * 本宿主进程的 pid：后台 hook 暂存目录的 owner 记号用它（实例 id + pid），启动清扫据此认「这是谁留下的」。
+     * 默认 0 = 说不了（owner 记号写 0，清扫对它认不了主、不敢删）。
+     * 为什么走端口：内核拿 pid 只有 `ProcessHandle.current()`，Android 33 以下没有它——
+     * 宿主侧（`android.os.Process.myPid()`）才知道自己平台怎么取
+     */
+    fun currentPid(): Long = 0L
+
+    /**
+     * 宿主 pid 还活着吗（按宿主自己的进程表，不是 guest shell 的 `kill -0`）：启动清扫判「owner 进程死了没」用。
+     * 桌面多终端的 owner 是别的 JVM 进程、Android 是前一世的 App 进程，都只能从宿主侧看；
+     * Git Bash 的 `kill -0` 拿 Windows pid 问 msys 进程表，对活进程也报「不存在」，会把活实例的目录当孤儿删掉。
+     * null = 这个端口说不了（默认），调用方按「活着」处理——删错了没有回头路
+     */
+    suspend fun isPidAlive(pid: Long): Boolean? = null
 }
 
 /** 大输出、截图等会话附件。返回会话 artifacts 目录下的相对路径 */

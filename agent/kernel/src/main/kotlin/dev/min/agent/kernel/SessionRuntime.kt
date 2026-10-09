@@ -37,6 +37,7 @@ import dev.min.agent.spi.DecidedBy
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InputReceived
 import dev.min.agent.spi.PermissionRulesLoaded
@@ -97,6 +98,13 @@ class SessionRuntime private constructor(
     @Volatile
     internal var resumeBasis: ResumeBasis? = null
 
+    /**
+     * 正在跑的那次定时任务运行的花费记账（[CronEngine] 在触发时立、空闲时清）。模型请求发出前 [ModelBilling] 要看它：
+     * 花到上限就不再发。null = 当前没有定时运行在记账
+     */
+    @Volatile
+    internal var cronRun: CronRun? = null
+
     /** 子会话的模型请求要过 Hub 的并发闸（手机上同时流式的子 agent 有上限）；根会话为 null，不受限 */
     @Volatile
     internal var requestGate: Semaphore? = null
@@ -135,12 +143,13 @@ class SessionRuntime private constructor(
         val home = deps.memoryHome
         val memory = if (home != null && state.value.origin == null) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
         val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home) else null
-        val rules = snapshot?.merged?.ruleSpecs()?.map { spec -> RuleEntry(
+        val trustProject = deps.trustProjectHooks(cwd)
+        val rules = snapshot?.merged?.ruleSpecs(trustProject)?.map { spec -> RuleEntry(
             when (spec.kind) { RuleSpecKind.Allow -> RuleKindData.Allow; RuleSpecKind.Ask -> RuleKindData.Ask; RuleSpecKind.Deny -> RuleKindData.Deny },
             spec.text, spec.source, spec.baseDir,
         ) }
         // 原来的显式附加目录是绝对授权，不随 cwd 重新解释；新项目的设置目录在新 cwd 上解析。
-        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home))?.let { (state.value.additionalDirectories + it).distinct() }
+        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home), trustProject)?.let { (state.value.additionalDirectories + it).distinct() }
         commit(listOf(dev.min.agent.spi.CwdChanged(old, cwd, worktree, memory.filter { it.path !in state.value.memoryPathsInContext }, rules, dirs)), Durability.Sync)
         checkpointsBySettings = null
         val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
@@ -163,17 +172,26 @@ class SessionRuntime private constructor(
     }
 
     private var pluginsInstance: dev.min.agent.ext.plugins.PluginBundle? = null
+    private var pluginsAttempted = false
     internal suspend fun plugins(): dev.min.agent.ext.plugins.PluginBundle? {
         pluginsInstance?.let { return it }
+        if (pluginsAttempted) return null
         val home = deps.memoryHome ?: return null
         val cwd = state.value.created.cwd
+        return try {
         val settings = SettingsLoader.load(deps.host.fs, cwd, home)
-        return dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
+        dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
             dirs = deps.pluginDirs, canonical = deps.canonicalPath,
             trust = { root -> deps.pluginTrust(root, cwd) },
             secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore),
             installedPath = deps.pluginInstalledPath, shellPath = deps.hookShellPath,
-        ).also { pluginsInstance = it }
+        ).also { pluginsInstance = it; pluginsAttempted = true }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) {
+            pluginsAttempted = true
+            commit(listOf(Note(NoteLevel.Warning, "插件装载失败，本会话按无插件继续")), Durability.Sync)
+            null
+        }
     }
 
     suspend fun readSkillBody(path: GuestPath): String? = plugins()?.readBody(path)
@@ -249,6 +267,9 @@ class SessionRuntime private constructor(
      * HookDriver 是按需建的（一个运行时会有好几个），状态必须挂在运行时上
      */
     internal val asyncHooks = AsyncHookRunner(this, scope)
+
+    /** 后台 hook 的轮询节奏。默认值即生产值；内核测试调小（真等 30 秒的退回探测间隔没法做确定性用例） */
+    internal val asyncHookTimings = AsyncHookTimings()
 
     /** settings 里的 `fileCheckpointingEnabled`（缺省为开）；创建时随那份 settings 一起读，重新打开的会话第一次要用时再读 */
     @Volatile
@@ -353,8 +374,16 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)
-        val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer)
+        val managed = snapshot.merged.layers.lastOrNull { it.source == dev.min.agent.ext.config.ConfigSource.Managed }
+        val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer,
+            disableAutoMode = managed?.permissions?.disableAutoMode == true,
+            disableBypassPermissionsMode = managed?.permissions?.disableBypassPermissionsMode == true)
+        if (review.notes.isNotEmpty()) commit(review.notes.map { Note(NoteLevel.Warning, it) }, Durability.Sync)
         if (configured != dev.min.agent.spi.AutoReviewSettingsLoaded()) commit(listOf(configured), Durability.Sync)
+        val mode = state.value.settings.mode
+        if (mode == PermissionMode.Auto && configured.disableAutoMode || mode == PermissionMode.BypassPermissions && configured.disableBypassPermissionsMode) {
+            commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "托管策略禁用了 $mode，使用 Default 模式")), Durability.Sync)
+        }
         loadPermissionRules(snapshot)
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
         val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
@@ -429,7 +458,14 @@ class SessionRuntime private constructor(
     }
 
     private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
-        val rules = snapshot.merged.ruleSpecs().map { spec ->
+        val trustProject = deps.trustProjectHooks(state.value.created.cwd)
+        val notes = snapshot.notes.toMutableList()
+        if (!trustProject && snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Project &&
+                (it.permissions.allow.isNotEmpty() || it.permissions.additionalDirectories.isNotEmpty()) }) {
+            // 放宽能力的仓库声明需要用户信任；限制能力的 ask / deny 始终保留。
+            notes += "this workspace has not been trusted：项目 permissions.allow / additionalDirectories 暂不生效"
+        }
+        val rules = snapshot.merged.ruleSpecs(trustProject).map { spec ->
             RuleEntry(
                 kind = when (spec.kind) {
                     RuleSpecKind.Allow -> RuleKindData.Allow
@@ -439,9 +475,9 @@ class SessionRuntime private constructor(
                 text = spec.text, source = spec.source, baseDir = spec.baseDir,
             )
         }
-        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"))
-        if (rules.isEmpty() && snapshot.notes.isEmpty() && directories.isEmpty()) return
-        commit(listOf(PermissionRulesLoaded(rules, snapshot.notes, directories)), Durability.Sync)
+        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject)
+        if (rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
+        commit(listOf(PermissionRulesLoaded(rules, notes, directories)), Durability.Sync)
     }
 
     /**
@@ -520,13 +556,16 @@ class SessionRuntime private constructor(
 
     /**
      * 改设置。立即生效（下一次权限判定、下一次请求），不重启任何东西。
+     * 返回 PreModelSwitch hook 拒绝切模型的理由（模型没切；mode / effort 照常生效）；没被拒返回 null——宿主靠它别把“没切成”报成成功
      * 参数为 null 表示不改；要把思考档位清回「不控制」用 [clearEffort]（与 [effort] 同给时以 [effort] 为准）
      */
     suspend fun changeSettings(
         model: ModelRef? = null, mode: PermissionMode? = null, effort: Effort? = null, clearEffort: Boolean = false, cwd: GuestPath? = null,
         /** 切模型请求的来源，进 PreModelSwitch 的 `source`：command（/model、/config）/ picker / sdk */
         modelSwitchSource: String = "command",
-    ) {
+    ): String? {
+        val locks = state.value.autoReviewSettings
+        require(!(mode == PermissionMode.Auto && locks.disableAutoMode || mode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode)) { "托管策略禁用了这个权限模式" }
         if (cwd != null && cwd != state.value.settings.cwd) {
             require(state.value.worktree == null) { "隔离会话请用 EnterWorktree / ExitWorktree 切换目录。" }
             require(deps.host.fs.stat(cwd)?.kind == dev.min.agent.spi.FileKind.Directory) { "工作目录不存在：$cwd" }
@@ -538,10 +577,11 @@ class SessionRuntime private constructor(
         if (refusal != null) modelSwitchHooks.noteRefused(refusal)
         val newModel = model.takeIf { refusal == null }
         val clear = clearEffort && effort == null && state.value.settings.effort != null
-        if (newModel == null && mode == null && effort == null && !clear) return
+        if (newModel == null && mode == null && effort == null && !clear) return refusal
         commit(listOf(SettingsChanged(model = newModel, mode = mode, effort = effort, clearEffort = clear)), Durability.Sync)
         // 模型真的换了才通知；同一个模型再设一次不算切换
         if (newModel != null && newModel != from) modelSwitchHooks.applied(from, newModel, modelSwitchSource)
+        return refusal
     }
 
     /** 宿主设置入口；只修改审查模型，不改变会话模型或稳定提示前缀。 */
@@ -556,8 +596,30 @@ class SessionRuntime private constructor(
     internal val modelBilling = ModelBilling(this)
 
     /** 中断当前回合：回合 Job 取消，收尾（每个悬空调用补结果）在回合自己的 finally 里写 */
-    fun interrupt() {
-        synchronized(turnLock) { turnJob }?.cancel()
+    fun interrupt() = interrupt(InterruptedBy.User)
+
+    /**
+     * 同上，但回合的结局记 [by]（目前只有定时任务的花费上限用 [InterruptedBy.Budget]）。原因先放下再取消：
+     * 回合的 catch 里读它，读不到就是用户
+     */
+    internal fun interrupt(by: InterruptedBy) {
+        val job = synchronized(turnLock) { turnJob }?.takeIf { it.isActive } ?: return
+        interruptReason = by
+        job.cancel()
+    }
+
+    @Volatile
+    private var interruptReason: InterruptedBy? = null
+
+    /** 取走中断原因（取一次就清掉）；没有 = 用户中断 */
+    internal fun takeInterruptReason(): InterruptedBy = interruptReason.also { interruptReason = null } ?: InterruptedBy.User
+
+    /**
+     * 这次定时运行的记账：根会话自己持有，树里的子 agent / 团队成员取根会话的那份（[CronRun] 按整棵树累计）。没有运行在记账为 null
+     */
+    internal fun treeCronRun(): CronRun? {
+        val root = _state.value.origin?.root ?: return cronRun
+        return hub?.get(root)?.cronRun
     }
 
     /** 进程被杀恢复后，用户点「继续」：没有新输入也开一回合，让模型看着恢复补上的结果接着做 */
@@ -575,11 +637,32 @@ class SessionRuntime private constructor(
         delivery: Delivery,
         origin: InputOrigin,
         startTurn: TurnTrigger?,
+        /**
+         * 和这条输入**同一次提交**一起落盘的附带事件，排在它前面（团队邮件的 team_message、定时任务的 cron_fired）：
+         * 「记了来历」与「输入进了收件箱」要么都在要么都不在，重发被去重时附带事件也不会多写一份
+         */
+        extra: List<SessionEvent> = emptyList(),
+        /** 提交时再判一次的前置条件（与去重条件同在一把锁里）；默认无。定时任务用它保证「触发时确实空闲」 */
+        precondition: (SessionState) -> Boolean = { true },
     ): Boolean {
-        commitIf(listOf(InputReceived(clientMsgId, parts, delivery, origin)), Durability.Sync) { clientMsgId !in it.seenInputs }
+        commitIf(extra + InputReceived(clientMsgId, parts, delivery, origin), Durability.Sync) { clientMsgId !in it.seenInputs && precondition(it) }
             ?: return false
         startTurn?.let(::startTurnIfIdle)
         return true
+    }
+
+    /**
+     * 此刻没有回合、没有维护、也没有排着的输入——定时任务触发的时机（会话空闲）。
+     * 只看 state.turn 不够：回合 Job 已经起了、TurnStarted 还没落盘的空档里 state.turn 仍为 null（见 [whileIdle] 的同款处理）
+     */
+    internal fun isQuiescent(): Boolean = synchronized(turnLock) {
+        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true &&
+            _state.value.turn == null && _state.value.inbox.isEmpty()
+    }
+
+    /** 此刻没有回合在跑（含启动中的），收件箱有无输入不论——团队调度判断「成员是否空闲」用 */
+    internal fun isTurnIdle(): Boolean = synchronized(turnLock) {
+        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true && _state.value.turn == null
     }
 
     @Volatile
@@ -766,7 +849,7 @@ class SessionRuntime private constructor(
             if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
-            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification || trigger == TurnTrigger.Hook) && s.inbox.isEmpty()) return
+            if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification || trigger == TurnTrigger.Hook || trigger == TurnTrigger.Cron) && s.inbox.isEmpty()) return
             turnJob = scope.launch {
                 val runner = TurnRunner(this@SessionRuntime)
                 var next: TurnTrigger? = trigger
@@ -801,8 +884,12 @@ class SessionRuntime private constructor(
             /** false = 不跑 SessionStart(startup)。分支（Hub.branch）用它：分支是原对话的延续，不是新会话（CC 的 fork 同样不跑） */
             runStartHooks: Boolean = true,
         ): SessionRuntime {
+            val events = listOf(created) + initial
+            // 先折叠再落盘：初始事件里有折叠不了的（比如分支带来别的会话的 team_created）就在这里失败，磁盘上不留下
+            // 一个每次打开都抛的孤儿会话（store.list() 会列出它）。seq 与时间由存储分配，这里的只用来验证
+            fold(header, events.mapIndexed { i, e -> EventRecord(i + 1L, deps.clock.nowMs(), e) })
             val log = store.create(header)
-            val records = log.append(listOf(created) + initial, Durability.Sync)
+            val records = log.append(events, Durability.Sync)
             val runtime = SessionRuntime(log, fold(header, records), deps, scope, hub)
             if (loadSettings && deps.memoryHome == null && deps.autoModeReviewer != null) {
                 runtime.commit(listOf(dev.min.agent.spi.AutoReviewSettingsLoaded(reviewer = deps.autoModeReviewer)), Durability.Sync)
@@ -862,3 +949,11 @@ internal fun checkpointsEnabledIn(snapshot: SettingsSnapshot): Boolean =
 
 /** 环境变量按「真」读：`1` / `true` / `yes`，不分大小写、忽略首尾空白（CC 的环境开关都是这个口径）；没设或别的值为假 */
 internal fun isTruthyEnv(value: String?): Boolean = value?.trim()?.lowercase() in setOf("1", "true", "yes")
+
+/** 后台 hook 的轮询节奏：轮询结果文件 / 句柄探活 / `kill -0` 退回探测的最小间隔 */
+internal class AsyncHookTimings(
+    var pollMs: Long = 500,
+    var livenessMs: Long = 5_000,
+    /** 退回探测要起进程，比句柄探活稀得多（N3） */
+    var fallbackLivenessMs: Long = 30_000,
+)

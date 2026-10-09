@@ -1014,6 +1014,9 @@
   <string name="settings_min_agent_title">Min Agent (experimental)</string>
   <string name="settings_min_agent_on">On. Min shows up next to Claude Code and Codex when you start a session.</string>
   <string name="settings_min_agent_off">Off. A built-in agent that runs inside the app instead of a CLI. Turning it off stops any running Min turn and hides it everywhere; your sessions are kept and come back when you turn it on.</string>
+  <string name="settings_cron_title">Scheduled tasks (Min)</string>
+  <string name="settings_cron_on">On. Min can schedule prompts that run while a session is open and idle. They only fire while Min is in the foreground or the process is still alive.</string>
+  <string name="settings_cron_off">Off. Scheduled tasks do not fire and cannot be created; existing ones are kept and continue when you turn this back on.</string>
   <string name="settings_group_device">Device</string>
   <string name="settings_group_device_sub">Storage, on-screen control, virtual screen, battery</string>
   <string name="settings_group_look">Look &amp; language</string>
@@ -1095,6 +1098,8 @@
   <string name="min_agent_limit">Reached the per-turn request limit</string>
   <string name="min_agent_hook_stopped">Stopped by a hook</string>
   <string name="min_agent_hook_feedback">%1$s hook asked the model to keep going</string>
+  <string name="min_agent_cron_woke">A scheduled task woke the session</string>
+  <string name="min_agent_cron_fired">Scheduled task %1$s fired (not a message you typed)</string>
   <string name="min_agent_continued">Continued</string>
   <string name="min_agent_woke">A subagent finished, continuing</string>
   <string name="min_agent_hook_woke">A background hook reported a problem</string>
@@ -1104,6 +1109,7 @@
   <string name="min_agent_report_restart">interrupted by a restart</string>
   <string name="min_agent_report_limit">hit its turn limit</string>
   <string name="min_agent_report_hook_stopped">stopped by a hook</string>
+  <string name="min_agent_report_budget_stopped">stopped by the scheduled task spending cap</string>
   <string name="min_agent_report_calls">%1$d tool calls</string>
   <string name="min_agent_report_tokens">%1$s tokens</string>
   <string name="min_agent_message_from">Message from %1$s</string>
@@ -1161,6 +1167,10 @@
     <string name="session_engine_min">Min Agent</string>
     <string name="session_notification_done">Task completed</string>
     <string name="session_notification_confirm">%1$s needs confirmation</string>
+    <string name="cron_notice_ended">Scheduled task %1$s ended</string>
+    <string name="cron_notice_budget_stopped">Scheduled task %1$s was stopped this run</string>
+    <string name="cron_notice_skipped">Scheduled task %1$s did not run this time</string>
+    <string name="session_notification_schedule_confirm">A scheduled task in %1$s is waiting for you</string>
     <string name="session_notification_tool">Requested tool: %1$s</string>
     <string name="session_notification_ended">%1$s session ended</string>
     <string name="session_notification_exited">Process exited</string>

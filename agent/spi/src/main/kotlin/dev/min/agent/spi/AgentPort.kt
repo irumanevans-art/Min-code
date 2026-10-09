@@ -2,6 +2,7 @@ package dev.min.agent.spi
 
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TurnId
+import kotlinx.serialization.json.JsonObject
 
 /**
  * 工具委派子 agent 的端口（Agent / SendMessage / TaskStop 用）。由内核的 SessionHub 实现：
@@ -16,6 +17,13 @@ interface AgentPort {
 
     /** 中断子 agent 的当前回合。返回给模型看的结论 */
     suspend fun stop(target: String): ToolResult
+
+    /**
+     * 团队操作（建团队、任务清单、解散，agent团队与邮箱设计）。发起人是调用这个端口的会话：根会话 = 负责人，
+     * 团队成员 = 成员；其余会话没有团队身份。返回给模型看的结论。有默认值（不可用）：测试替身不用管它
+     */
+    suspend fun team(op: TeamOp): ToolResult =
+        ToolResult(listOf(dev.min.agent.protocol.TextPart("这个环境不支持 agent 团队。")), isError = true)
 
     /** 没有 SessionHub 的场合（单会话嵌入、工具单测）：一律说明不可用 */
     object Unavailable : AgentPort {
@@ -51,3 +59,22 @@ sealed interface DelegateResult {
 
 /** 分身的类型名（与 Claude Code 的 `subagent_type: "fork"` 相同） */
 const val FORK_AGENT_TYPE = "fork"
+
+/** 团队工具能对团队做的事；谁在做由端口所属的会话决定（见 [AgentPort.team]） */
+sealed interface TeamOp {
+    /** 建团队：成员规格由负责人一次声明，之后不能自动扩员 */
+    data class Create(val members: List<TeamMemberSpec>) : TeamOp
+
+    /** 解散（只有负责人）。成员停下，报告照常交给负责人 */
+    data class Disband(val reason: TeamDisbandReason, val note: String?) : TeamOp
+
+    /**
+     * 团队共享清单的三种写操作：TaskCreate / TaskUpdate 在「处于团队中」时（[TaskBoard.team] 非空）走这里，
+     * 载荷与个人清单的同名工具一模一样，只是落成团队事件、权限按团队规则判。读（TaskGet / TaskList）直接读 [TaskBoard]
+     */
+    data class TaskCreate(val subject: String, val description: String, val activeForm: String?, val metadata: JsonObject) : TeamOp
+
+    data class TaskUpdate(val taskId: String, val patch: TaskPatch) : TeamOp
+
+    data class TaskDelete(val taskId: String) : TeamOp
+}

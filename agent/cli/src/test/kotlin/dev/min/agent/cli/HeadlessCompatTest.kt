@@ -480,6 +480,35 @@ class HeadlessCompatTest {
         }
     }
 
+    /**
+     * 小尾巴（usertext 之后）：-p 下 CLI 自己生成的拒绝说明（“非交互模式下没有人审批……”）不是用户写的话，
+     * 留在 tool 结果里，不能再作为独立的用户文本块发给模型冒充用户
+     */
+    @Test
+    fun `the denial note a print run generates itself stays in the tool result and is not sent as a user message`() = runBlocking {
+        val work = freshDir("host-deny-work")
+        val target = work.resolve("denied.txt")
+        val guestTarget = target.toString().let { if (it.length > 2 && it[1] == ':') "/" + it[0].lowercaseChar() + it.substring(2).replace('\\', '/') else it }
+        ModelServer { last ->
+            when {
+                last.contains("CC_WRITE_PLEASE") -> toolResponse("w1", "Write", buildJsonObject { put("file_path", guestTarget); put("content", "x") })
+                else -> textResponse("CC_DENIED_SEEN")
+            }
+        }.use { server ->
+            val argv = baselineArgv(server, work).map { if (it == "bypassPermissions") "default" else it }.toTypedArray() + arrayOf("-p", "CC_WRITE_PLEASE")
+            val out = headlessRun(freshDir("host-deny-home"), work, argv, server)
+            assertEquals(out.stdout, 0, out.exit)
+            assertFalse(Files.exists(target))
+            val second = server.requests.last().getValue("messages").jsonArray.map { it.jsonObject }
+            val toolIndex = second.indexOfLast { it["role"]?.jsonPrimitive?.content == "tool" }
+            assertTrue("第二个请求里要有被拒的工具结果", toolIndex >= 0)
+            val toolText = second[toolIndex]["content"].toString()
+            assertTrue(toolText, toolText.contains("非交互模式下没有人审批"))
+            assertEquals("工具结果之后不能再跟一条“用户说”的消息", toolIndex, second.lastIndex)
+            assertTrue("没有哪条用户消息里出现这句机器的话", second.filter { it["role"]?.jsonPrimitive?.content == "user" }.none { it.toString().contains("非交互模式下没有人审批") })
+        }
+    }
+
     /** 按样本号给剧本：路由键是最后一次发给模型的文本（结构化输出的重试提醒也是 user 消息，取尾段） */
     private fun routeFor(name: String): (String) -> String? = when {
         name.startsWith("24") || name.startsWith("31") ->

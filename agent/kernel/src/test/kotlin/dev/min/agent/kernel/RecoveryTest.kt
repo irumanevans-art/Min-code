@@ -120,6 +120,30 @@ class RecoveryTest {
     private fun records(events: List<SessionEvent>, startSeq: Long = 1) =
         events.mapIndexed { i, e -> EventRecord(startSeq + i, 1_000 + startSeq + i, e) }
 
+
+    @Test
+    fun `a call a hook denied and not yet answered recovers with the hook note kept out of the user's words`() {
+        // 复用上面那段日志的前缀，把用户的拒绝换成 hook / 宿主的（fromHost）
+        val denied = ToolCallPart(CallId("hd"), "Bash", input("d"))
+        val events = listOf<SessionEvent>(
+            SessionCreated(GuestPath("/workspace"), model, PermissionMode.Default),
+            InputReceived(ClientMsgId("u1"), listOf(TextPart("干活")), Delivery.Queue),
+            TurnStarted(TurnId("t1"), TurnTrigger.User),
+            InputPromoted(ClientMsgId("u1"), MessageId("m1")),
+            ModelRequestStarted(TurnId("t1"), RequestId("r1"), attempt = 1, model = model, prefixFingerprint = "p"),
+            AssistantMessageCompleted(
+                TurnId("t1"), RequestId("r1"), MessageId("m2"), listOf(TextPart("跑"), denied),
+                usage = Usage(inputTokens = 10, outputTokens = 2), stop = StopReason.ToolUse,
+            ),
+            ToolPlanned(TurnId("t1"), denied.callId, "Bash", input("d"), ResumePolicy.Unknown),
+            ApprovalRequested(TurnId("t1"), ApprovalId("ap_h"), denied.callId, PermissionAsk("Bash", "危险命令")),
+            ApprovalResolved(ApprovalId("ap_h"), ApprovalChoice.Deny("公司策略禁止", fromHost = true), DecidedBy.Hook("PermissionRequest")),
+        )
+        val outcome = planRecovery(fold(header, records(events))).filterIsInstance<ToolOutcome>().single { it.callId == denied.callId }
+        assertNull("hook 的话不是用户说的，不能进 userText", outcome.result.userText)
+        val text = (outcome.result.content.single() as TextPart).text
+        assertTrue(text, text.contains("这次调用被拒绝了：公司策略禁止"))
+    }
     @Test
     fun `a complete session folds into the expected state and model view`() {
         val state = fold(header, records(script))
@@ -180,7 +204,12 @@ class RecoveryTest {
 
         assertTrue(textFor(afterPlanned, push).startsWith("这次调用没有执行"))
         assertTrue(textFor(beforePlanning, bash).startsWith("这次调用没有执行"))
-        assertEquals("用户拒绝了这次调用。用户的说明：别 push", textFor(afterDeny, push))
+        assertEquals("用户拒绝了这次调用。用户留了话，见下面用户的话；不要原样重试。", textFor(afterDeny, push))
+        // 说明本身是用户的话：恢复补的结果里也在 userText，不进 tool_result
+        assertEquals(
+            "用户拒绝了你刚才的 Bash 调用，并留言：别 push",
+            planRecovery(fold(header, records(script.take(afterDeny)))).filterIsInstance<ToolOutcome>().single { it.callId == push }.result.userText,
+        )
         textFor(bashRunning, bash).let {
             assertTrue(it.contains("结果未知") && it.contains("不要盲目重试"))
             assertTrue("应指出输出日志的位置", it.contains("/tmp/min/h1.log"))

@@ -37,6 +37,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -58,7 +59,7 @@ class SessionEffectsTest {
     private val batches = Collections.synchronizedList(mutableListOf<List<SessionEvent>>())
     private val recording = object : SessionStore {
         override suspend fun create(header: LogHeader) = record(store.create(header))
-        override suspend fun open(id: SessionId) = store.open(id)?.let(::record)
+        override suspend fun open(id: SessionId) = store.peek(id)?.let(::record)
         override suspend fun list() = store.list()
 
         private fun record(log: SessionLog): SessionLog = object : SessionLog by log {
@@ -84,10 +85,10 @@ class SessionEffectsTest {
         scope,
     )
 
-    private suspend fun records(): List<EventRecord> = store.open(id)!!.read().toList()
+    private suspend fun records(): List<EventRecord> = store.peek(id)!!.read().toList()
 
     private suspend fun assertLogIsTruth(runtime: SessionRuntime) {
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), runtime.state.value)
     }
 
@@ -114,9 +115,11 @@ class SessionEffectsTest {
         assertEquals(PermissionMode.AcceptEdits, s.settings.modeBeforePlan)
         // 第二个调用按新模式询问，用户拒绝后不执行，不能沿用切模式之前的自动编辑权限。
         assertEquals(0, wrote)
-        val denied = model.requests[1].messages.last().parts[1] as ToolResultPart
+        val deniedParts = model.requests[1].messages.last().parts
+        val denied = deniedParts[1] as ToolResultPart
         assertTrue(denied.isError)
-        assertTrue((denied.content.single() as TextPart).text.contains("计划模式"))
+        assertFalse((denied.content.single() as TextPart).text.contains("计划模式"))
+        assertEquals(TextPart("用户拒绝了你刚才的 Write 调用，并留言：计划模式先别改"), deniedParts[2])
 
         // 结果与设置是同一次追加，设置紧跟在结果之后
         val batch = batches.single { b -> b.any { (it as? ToolOutcome)?.callId == CallId("c1") } }
@@ -160,7 +163,7 @@ class SessionEffectsTest {
         val written = batches.flatten().filterIsInstance<SettingsChanged>()
         rt.changeSettings(clearEffort = true)
         assertEquals("已经是不控制时不再写事件", written.size, batches.flatten().filterIsInstance<SettingsChanged>().size)
-        val log = store.open(id)!!
+        val log = store.peek(id)!!
         assertEquals(fold(log.header, log.read().toList()), rt.state.value)
     }
 

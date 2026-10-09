@@ -1,4 +1,7 @@
 {
   "loads": false,
-  "basis": "PLG:97/:426 userConfig 选项是严格对象，未知键报错、插件不装载；合法键集见 PLG:426-438 字段表"
+  "basis": "PLG:97/:426 userConfig 选项是严格对象，未知键报错、插件不装载；合法键集见 PLG:426-438 字段表",
+  "errors": [
+    "userConfig"
+  ]
 }

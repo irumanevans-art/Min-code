@@ -114,7 +114,7 @@ class SkillSessionTest {
     private suspend fun create(model: ModelClient, tools: List<Tool<*>> = listOf(SkillTool), home: GuestPath? = GuestPath("/root")) =
         SessionRuntime.create(store, header, created, deps(model, tools, home), newScope())
 
-    private suspend fun events(id: String = "s1"): List<SessionEvent> = store.open(SessionId(id))!!.read().toList().map { it.event }
+    private suspend fun events(id: String = "s1"): List<SessionEvent> = store.peek(SessionId(id))!!.read().toList().map { it.event }
 
     private fun call(id: String, vararg pairs: Pair<String, Any?>) = ToolCallPart(CallId(id), "Skill", args(*pairs))
 

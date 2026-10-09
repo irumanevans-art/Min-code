@@ -14,6 +14,7 @@ import dev.min.agent.spi.DelegateRequest
 import dev.min.agent.spi.DelegateResult
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.Exec
 import dev.min.agent.spi.ExecOptions
 import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.FORK_AGENT_TYPE
@@ -100,7 +101,27 @@ data class HubLimits(
     val maxRunningChildren: Int = 10,
     /** 同时在流式请求模型的子 agent 最多几个。等审批的子 agent 不占名额；根会话不受限 */
     val maxConcurrentChildRequests: Int = 3,
-)
+    /**
+     * 团队同时运行的成员数（设置项 `teamMaxConcurrent`，默认 [TeamLimits.DEFAULT_MAX_CONCURRENT]）。超出的成员排队，
+     * 前一个结束后才启动。硬上限 [TeamLimits.MAX_CONCURRENT]，设置要先经 [TeamLimits.resolve]；与 [maxConcurrentChildRequests] 的关系见 [TeamLimits]
+     */
+    val teamMaxConcurrent: Int = TeamLimits.DEFAULT_MAX_CONCURRENT,
+    /**
+     * 定时任务单次运行花费的宿主天花板（设置项 `cronMaxBudgetUsd`，美元）。**默认不设**——定时任务和 Claude Code 一样没有默认上限，
+     * 花的是用户自己的额度。设了就是模型传的 `max_budget_usd` 的天花板（取小），任务没传上限时它本身就是上限
+     */
+    val cronMaxBudgetUsd: Double? = null,
+    /**
+     * 定时任务的全局开关（Claude Code 的 `CLAUDE_CODE_DISABLE_CRON`；App 设置里也有）。关着时：不触发、不能新建（工具说明原因），
+     * 已有的任务原样留在日志里，打开后照常继续。默认开
+     */
+    val cronEnabled: Boolean = true,
+) {
+    init {
+        require(teamMaxConcurrent in 1..TeamLimits.MAX_CONCURRENT) { "团队同时运行的成员数必须在 1 到 ${TeamLimits.MAX_CONCURRENT} 之间。" }
+        require(cronMaxBudgetUsd == null || cronMaxBudgetUsd.isFinite() && cronMaxBudgetUsd > 0) { "定时任务的花费天花板必须是大于 0 的有限数。" }
+    }
+}
 
 /** CC 的 SessionEnd reason 取值：Min 里目前只会出现这两个（clear / resume / logout 没有对应流程） */
 object SessionEndReasons {
@@ -130,6 +151,9 @@ fun normalizeSessionName(raw: String): String? {
         raw.codePoints().forEach { cp ->
             val invisible = Character.isISOControl(cp) ||
                 Character.getType(cp) == Character.FORMAT.toInt() ||
+                // 孤立的代理项（code point 落在代理区）：成对的到不了这里；落单的转不出合法 UTF-8，
+                // 落盘读回来变 ?，重开的名字与运行时对不上（N4）——换空格
+                Character.getType(cp) == Character.SURROGATE.toInt() ||
                 cp == 0x2028 || cp == 0x2029 // 行/段分隔：日志一行一条事件，名字里不能混进换行
             appendCodePoint(if (invisible) ' '.code else cp)
         }
@@ -153,30 +177,70 @@ class SessionHub(
     private val store: SessionStore,
     private val deps: KernelDeps,
     private val scope: CoroutineScope,
-    private val limits: HubLimits = HubLimits(),
+    limits: HubLimits = HubLimits(),
     /** 可委派的子 agent 类型：内置 + 组合根从 `.claude/agents/` 读来的（同名时后者覆盖内置） */
     agents: List<AgentDefinition> = BuiltinAgents.all,
 ) {
+    /** 宿主可调的上限。会话创建后设置才读出来 / 用户改了设置时用 [updateHostLimits] 更新，之后的决定立刻按新值（读的是这个字段，不是构造时的快照） */
+    @Volatile
+    internal var limits: HubLimits = limits
+        private set
+
     private val definitions: Map<String, AgentDefinition> = agents.associateBy { it.name }
+
+    /**
+     * 本 Hub 实例在 hook 暂存目录里留下的 owner 记号（实例 id + 进程 pid）。桌面多终端共用 `~/.min/root`，
+     * 启动清扫按它区分：**别的实例**留下的目录、且那个进程已确认死掉（N2 的判死口径）才删——
+     * 本实例自己的（包括正在跑的）不动，清扫与首会话 SessionStart 后台 hook 的竞态也就不存在了（N1）。
+     * pid 从宿主端口取：内核侧 `ProcessHandle.current()` 在 Android 33 以下拿不到，宿主才知道自己平台怎么取
+     */
+    internal val hookStagingOwner = "${java.util.UUID.randomUUID()} ${deps.host.exec.currentPid()}"
 
     init {
         // 启动时清扫上一条命留下的后台 hook 暂存目录：进程死了目录还在，in.json 里带着工具入参
-        // （可能含密钥），不能一直躺在盘上。此刻本 Hub 还没有在线会话，剩下的 hookbg_* 必然是孤儿
+        // （可能含密钥），不能一直躺在盘上。此刻本 Hub 还没有在线会话，剩下的 hookbg_* 必然是孤儿。
+        // hookStagingOwner 必须声明在前、先初始化：清扫起在另一个线程，先跑的话读到的是没赋值的记号，
+        // 会把本实例自己的目录当成「认不了主的」处理
         scope.launch { sweepOrphanHookDirs() }
     }
 
-    private suspend fun sweepOrphanHookDirs() {
+    /** 启动清扫（init 里异步跑；测试直调以便确定性驱动）。internal 仅为测试可见性，不进公共 API */
+    internal suspend fun sweepOrphanHookDirs() {
         dev.min.agent.spi.catchingNonCancellation {
             val root = GuestPath("/root/.min/hooks")
-            val orphans = deps.host.fs.list(root).filter { it.kind == dev.min.agent.spi.FileKind.Directory && it.name.startsWith("hookbg_") }
-            if (orphans.isEmpty()) return@catchingNonCancellation
+            val candidates = deps.host.fs.list(root).filter { it.kind == dev.min.agent.spi.FileKind.Directory && it.name.startsWith("hookbg_") }
+            if (candidates.isEmpty()) return@catchingNonCancellation
+            val doomed = mutableListOf<GuestPath>()
+            for (entry in candidates) {
+                val dir = GuestPath("${root.value}/${entry.name}")
+                // 取消要穿过去（catchingNonCancellation）：吞了的话清扫会带着已取消的 Job 继续往下删
+                val owner = dev.min.agent.spi.catchingNonCancellation {
+                    deps.host.fs.read(GuestPath("${dir.value}/owner")).decodeToString().trim()
+                }.getOrDefault("") // 读不了按「认不了主」处理：不敢删
+                val parts = owner.split(' ')
+                if (parts.size != 2) continue // 没有 owner 文件（老版本留下的）或格式不对：认不了主，留着
+                if (parts[0] == hookStagingOwner.substringBefore(' ')) continue // 本实例的，正在用
+                val pid = parts[1].toLongOrNull() ?: continue
+                if (pid <= 0) continue // 认不出进程：不敢按死处理
+                if (ownerConfirmedDead(pid)) doomed += dir
+            }
+            if (doomed.isEmpty()) return@catchingNonCancellation
+            // 路径必须过 hookShellPath（与 AsyncHooks.cleanup 同一条规矩）：桌面 guest 路径在宿主 shell 里不存在
             val rm = deps.host.exec.run(
-                ShellCommand("rm -rf -- " + orphans.joinToString(" ") { d -> "'${root.value}/${d.name}'" }, root),
-                ExecOptions(5_000),
+                ShellCommand("rm -rf -- " + doomed.joinToString(" ") { d -> "'${deps.hookShellPath(d)}'" }, root),
+                ExecOptions(15_000),
             )
             if (rm is ExecResult.Backgrounded) deps.host.exec.kill(rm.handle)
         }
     }
+
+    /**
+     * owner 进程确认死了才真：只问宿主侧的进程表（[Exec.isPidAlive]）——guest shell 的 `kill -0` 在 Windows
+     * 拿宿主 pid 问 msys 的进程表，对活着的宿主进程也报「不存在」（M4）。端口说不了（null）或探测出错
+     * 都当活着——删错了没有回头路（与后台 hook 存活探测同一个口径，N2）
+     */
+    private suspend fun ownerConfirmedDead(pid: Long): Boolean =
+        dev.min.agent.spi.catchingNonCancellation { deps.host.exec.isPidAlive(pid) }.getOrNull() == false
 
     /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
     internal var mcp = McpManager(
@@ -189,6 +253,36 @@ class SessionHub(
     )
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
     private val openLock = Mutex()
+
+    /** agent 团队的运行时：建团队、任务清单、邮箱、并发名额（状态本身在负责人日志的折叠里） */
+    internal val teams = TeamCoordinator(this, deps, scope) { this.limits.teamMaxConcurrent }
+
+    /** 定时任务的运行时：到点触发、过期、单次花费上限（状态在根会话日志的折叠里） */
+    internal val crons = CronEngine(this, deps, scope, enabled = { this.limits.cronEnabled }) { this.limits.cronMaxBudgetUsd }
+
+    /**
+     * 宿主设置变了（或启动时设置快照晚于 Hub 才读出来）：更新团队并发上限与定时任务花费天花板，之后的决定立刻按新值。
+     * 调高并发上限会放出正在排队的成员；调低不杀正在跑的，只是之后不再放新的。越界的值（并发不在 1..8）抛
+     * [IllegalArgumentException]，现状不变
+     */
+    fun updateHostLimits(
+        teamMaxConcurrent: Int = limits.teamMaxConcurrent,
+        cronMaxBudgetUsd: Double? = limits.cronMaxBudgetUsd,
+        cronEnabled: Boolean = limits.cronEnabled,
+    ) {
+        limits = limits.copy(teamMaxConcurrent = teamMaxConcurrent, cronMaxBudgetUsd = cronMaxBudgetUsd, cronEnabled = cronEnabled)
+        teams.limitsChanged()
+    }
+
+    /** 定时任务出了需要告诉用户的事（7 天到期、花费上限停了一次运行……）；宿主据此发通知，日志里同时有一条 Note */
+    val cronNotices: kotlinx.coroutines.flow.SharedFlow<CronNotice> get() = crons.notices
+
+    /**
+     * 接上宿主的定时器：之后每次回调都检查所有在线根会话有没有到点的定时任务。关掉返回的句柄就停。
+     * 不接定时器时，时间的流逝本身不会触发任何东西；但会话每次状态变化且空闲时也会顺带查一遍（回合结束时排着的任务就是这样触发的）
+     */
+    fun startScheduling(scheduler: dev.min.agent.spi.Scheduler): AutoCloseable =
+        scheduler.start { crons.tick(deps.clock.nowMs()) }
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
 
     internal suspend fun reserveWebSearch(caller: SessionRuntime, callId: CallId): Boolean {
@@ -276,6 +370,7 @@ class SessionHub(
         }
         register(runtime)
         attachMcp(runtime, fresh = true)
+        crons.attach(runtime)
         return runtime
     }
 
@@ -297,7 +392,7 @@ class SessionHub(
     suspend fun findSessionByName(cwd: GuestPath, name: String, exclude: SessionId? = null): SessionId? {
         for (header in store.list().asReversed()) {
             if (header.parent != null || header.sessionId == exclude) continue
-            val log = store.open(header.sessionId) ?: continue
+            val log = store.peek(header.sessionId) ?: continue
             var created: dev.min.agent.spi.SessionCreated? = null
             var found: String? = null
             log.read().collect { record ->
@@ -315,7 +410,7 @@ class SessionHub(
     /** 会话列表摘要（界面 B7 用）：头、名字（最后一条 session_renamed）、创建目录 */
     suspend fun summaries(): List<SessionSummary> =
         store.list().mapNotNull { header ->
-            val log = store.open(header.sessionId) ?: return@mapNotNull null
+            val log = store.peek(header.sessionId) ?: return@mapNotNull null
             var created: dev.min.agent.spi.SessionCreated? = null
             var name: String? = null
             log.read().collect { record ->
@@ -529,7 +624,7 @@ class SessionHub(
         val port = deps.host.snapshots
         if (port === dev.min.agent.spi.WorkspaceSnapshots.Unavailable) return
         dev.min.agent.spi.catchingNonCancellation {
-            val created = store.open(id)?.read()?.first()?.event as? dev.min.agent.spi.SessionCreated ?: return
+            val created = store.peek(id)?.read()?.first()?.event as? dev.min.agent.spi.SessionCreated ?: return
             port.store(created.cwd).forget(id)
         }
     }
@@ -560,7 +655,11 @@ class SessionHub(
         // 根会话重新接上 MCP（快照已在日志里）；子会话沿用父会话的调用口（父会话先于子会话打开）
         runtime.worktrees.resumeBinding()
         val origin = runtime.state.value.origin
-        if (origin == null) attachMcp(runtime, fresh = false) else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
+        if (origin == null) {
+            attachMcp(runtime, fresh = false)
+            // 重开会话 = 恢复未过期的定时任务（过期的在这里结案）；任务本身从日志折叠里来
+            crons.attach(runtime)
+        } else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
         if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
@@ -588,7 +687,7 @@ class SessionHub(
         val s = source.state.value
         if (s.origin != null) throw SessionBranchRefused("子 agent 会话不能分支；对它的根会话分支。")
         if (s.turn != null) throw SessionBranchRefused("会话正在进行中，等这一轮结束再分支。")
-        val copied = store.open(id)?.read()?.toList()
+        val copied = store.peek(id)?.read()?.toList()
             ?: throw SessionBranchRefused("会话 ${id.value} 的日志打不开了。")
         val atSeq = copied.lastOrNull()?.seq ?: 0L
         if (source.state.value.lastSeq != atSeq) {
@@ -604,7 +703,11 @@ class SessionHub(
             store, header,
             created = copied.first().event as dev.min.agent.spi.SessionCreated,
             deps, scope,
-            initial = copied.drop(1).map { it.event } + branched,
+            // 定时任务是会话级的，不跟着分支走（否则同一条提示词会被原会话与分支各触发一次）：在分支日志里把它们逐个取消
+            // 团队同理不跟着走：team_created 里的负责人是原会话的 id，到分支日志里折叠必抛（SessionRuntime.create 因此拒绝创建）。
+            // 成员是原会话的子会话，和别的子 agent 一样只在引用里保留（subagent_spawned 照常复制）
+            initial = copied.drop(1).map { it.event }.filterNot { it is dev.min.agent.spi.TeamEvent } + branched +
+                s.crons.filter { it.active }.map { dev.min.agent.spi.CronCancelled(it.id) },
             // 快照全在复制来的事件里，不重读磁盘（重读会被磁盘上的中途变化带偏，前缀对不上）
             loadMemory = false, loadSettings = false, loadSkills = false, hub = this,
             runStartHooks = false,
@@ -616,6 +719,7 @@ class SessionHub(
         }
         // 根会话接上 MCP（快照已在日志里，与 open 同一套）；检查点的回收根给新会话登记一份（复用 Checkpointer.retain）
         attachMcp(runtime, fresh = false)
+        crons.attach(runtime)
         runtime.checkpointer.retainAfterTurn()
         return runtime
     }
@@ -628,11 +732,22 @@ class SessionHub(
         override suspend fun delegate(request: DelegateRequest): DelegateResult = spawn(rt, turnId, callId, request)
         override suspend fun message(to: String, text: String): ToolResult = sendMessage(rt, callId, to, text)
         override suspend fun stop(target: String): ToolResult = stopChild(rt, target)
+        override suspend fun team(op: dev.min.agent.spi.TeamOp): ToolResult = teams.handle(rt, turnId, callId, op)
     }
+
+    /** 团队成员的状态行（界面的团队页读；没有团队返回空）。状态来自日志折叠与成员会话的折叠，不是另存的 */
+    fun teamMembers(root: SessionId): List<TeamMemberStatus> = runtimes[root]?.let(teams::members).orEmpty()
+
+    /** 放行重启后搁浅的团队成员（[TeamMemberStatus.Phase.Stalled]）：界面的“继续”。返回放行了几个；照常过并发名额 */
+    suspend fun resumeTeamMembers(root: SessionId): Int = runtimes[root]?.let { teams.resumeStalled(it) } ?: 0
 
     // ---- 委派 ----
 
-    private suspend fun spawn(parent: SessionRuntime, turnId: TurnId, callId: CallId, request: DelegateRequest): DelegateResult {
+    /**
+     * [teamMember] 为真：这是 agent 团队的成员（[TeamCoordinator.create] 建的）。它的开场输入照常进收件箱，但**不在这里开回合**——
+     * 开跑要过团队的并发名额，由协调器在所有成员入队之后统一放行
+     */
+    internal suspend fun spawn(parent: SessionRuntime, turnId: TurnId, callId: CallId, request: DelegateRequest, teamMember: Boolean = false): DelegateResult {
         val ps = parent.state.value
         val parentOrigin = ps.origin
         if (parentOrigin?.fork == true) return DelegateResult.Rejected("你是分身，直接执行任务，不要再委派。")
@@ -678,6 +793,8 @@ class SessionHub(
                 definition.readOnly -> PermissionMode.DontAsk
                 // 父会话放开了，子 agent 不能收紧也不能另设（与 Claude Code 一致）
                 ps.settings.mode == PermissionMode.BypassPermissions -> PermissionMode.BypassPermissions
+                // Auto 的审查边界必须覆盖子会话，仓库里的定义不能切走这道门禁。
+                ps.settings.mode == PermissionMode.Auto -> PermissionMode.Auto
                 else -> definition.permissionMode ?: ps.settings.mode
             }
             created = SessionCreated(ps.settings.cwd, model, mode, definition.effort ?: ps.settings.effort)
@@ -696,9 +813,10 @@ class SessionHub(
         val background = request.background || definition?.alwaysBackground == true
 
         // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
-        // 不进父会话（inheritedRules 复制的是 settings 快照），也不会随继承传给孙会话。Stop 改写成
-        // SubagentStop（CC：子会话里触发的是它自己的完成事件）。项目层定义（project / local）要过工作区信任
-        // ——与 settings 同一条规则；Min 里 `-p` 不自动信任，CC 的「-p 不算接受信任」天然成立
+        // 不进父会话（inheritedRules 复制的是 settings 快照）。子会话再派生时经 inheritedComponentHooks
+        // 快照式传给孙会话（M8：登记时刻的一份拷贝，Stop 已在登记时改写成 SubagentStop）。项目层定义
+        // （project / local）要过工作区信任——与 settings 同一条规则；Min 里 `-p` 不自动信任，
+        // CC 的「-p 不算接受信任」天然成立
         definition?.hooks?.let { h ->
             val layer = definition.hooksLayer ?: "user"
             val trusted = !(layer == "project" || layer == "local") || deps.trustProjectHooks(ps.created.cwd)
@@ -745,7 +863,7 @@ class SessionHub(
         } else {
             child.receive(
                 ClientMsgId("delegation:${callId.value}"), listOf(TextPart(request.prompt)), Delivery.Queue,
-                InputOrigin.Parent(parent.sessionId), TurnTrigger.User,
+                InputOrigin.Parent(parent.sessionId), if (teamMember) null else TurnTrigger.User,
             )
         }
         if (background) return DelegateResult.Started(childId, request.name, fork)
@@ -911,6 +1029,8 @@ class SessionHub(
         watchJobs.remove(id)?.cancel()
         watched -= id
         quietReports.removeIf { it.first == id }
+        teams.forget(id)
+        crons.detach(id)
         runtimes.remove(id)
         synchronized(summaryLock) {
             runningIds -= id
@@ -921,8 +1041,11 @@ class SessionHub(
         }
     }
 
+    /** 整棵树此刻都没有回合在跑（含启动中的）：定时运行的记账要等到这时才算结束 */
+    internal fun treeTurnsIdle(id: SessionId): Boolean = subtreeOnline(id).all { runtimes[it]?.isTurnIdle() ?: true }
+
     /** [id] 与它在线的后代（按 SubagentOrigin.parent 往下找） */
-    private fun subtreeOnline(id: SessionId): List<SessionId> {
+    internal fun subtreeOnline(id: SessionId): List<SessionId> {
         if (!runtimes.containsKey(id)) return emptyList()
         val result = mutableListOf(id)
         var i = 0
@@ -989,12 +1112,14 @@ class SessionHub(
         val parentLast = parent.state.value.lastTurn?.outcome
         val parentHealthy = parentLast == null || parentLast == TurnOutcome.Completed
         val restarted = (ended.outcome as? TurnOutcome.Interrupted)?.by == InterruptedBy.ProcessDeath
+        // 被队友的邮件叫起来的成员回合：报告只进收件箱，不唤醒负责人（见 TeamCoordinator.peerTurns）。每个回合都要取，免得标记留到下一回合
+        val peerTriggered = teams.takePeerTurn(child.sessionId)
         parent.receive(
             ClientMsgId("report:${child.sessionId.value}:${ended.turnId.value}"),
             listOf(TextPart(report)),
             Delivery.Steer,
             InputOrigin.Agent(child.sessionId, AgentInputKind.Report, ended.turnId),
-            startTurn = if (autoStart && parentHealthy && !restarted && !quiet && child.sessionId !in stopping) {
+            startTurn = if (autoStart && parentHealthy && !restarted && !quiet && !peerTriggered && child.sessionId !in stopping) {
                 TurnTrigger.Notification
             } else null,
         )
@@ -1003,6 +1128,8 @@ class SessionHub(
     // ---- 续聊与停止 ----
 
     private suspend fun sendMessage(from: SessionRuntime, callId: CallId, to: String, text: String): ToolResult {
+        // 团队邮件与子 agent 消息是同一个入口：发件人和收件人都在团队里就走团队邮箱，其余照旧
+        teams.sendMail(from, to, text)?.let { return it }
         val state = from.state.value
         val target = to.trim()
         if (target == "main" || target == state.origin?.parent?.value) {
@@ -1020,12 +1147,22 @@ class SessionHub(
         if (runtime.state.value.origin?.parent != from.sessionId) {
             return error("这个子 agent 属于别的会话（分支不接管子 agent），不能从这里给它发消息；要往下派活请重新委派。")
         }
+        // 曾经的团队成员（团队已解散也一样）开跑要过团队的并发名额：它们解散后仍是这个会话的子会话，若直接开回合，
+        // 一口气发三句就是三个成员同时在跑，绕过 teamMaxConcurrent。名额里排队的收件箱里已有这句话，轮到时先看到
+        val formerMember = from.state.value.team?.members?.any { it.session == child.child } == true
         runtime.receive(
             ClientMsgId("message:${from.sessionId.value}:${callId.value}"), listOf(TextPart(text)), Delivery.Steer,
-            InputOrigin.Parent(from.sessionId), TurnTrigger.User,
+            InputOrigin.Parent(from.sessionId), if (formerMember) null else TurnTrigger.User,
         )
+        if (formerMember) teams.requestStart(child.child)
         val busy = runtime.state.value.turn != null
-        return ok(if (busy) "已送达，它会在当前这批工具结束后看到。" else "已送达，它开始处理了；完成时你会收到报告。")
+        return ok(
+            when {
+                busy -> "已送达，它会在当前这批工具结束后看到。"
+                formerMember && runtime.state.value.turn == null -> "已送达；它在排队等名额（团队的并发上限仍然生效），轮到时先看到这句话。"
+                else -> "已送达，它开始处理了；完成时你会收到报告。"
+            },
+        )
     }
 
     private suspend fun stopChild(from: SessionRuntime, target: String): ToolResult {

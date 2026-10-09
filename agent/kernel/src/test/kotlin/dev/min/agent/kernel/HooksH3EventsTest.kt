@@ -159,7 +159,7 @@ class HooksH3EventsTest {
         )
 
     private suspend fun events(rt: SessionRuntime): List<SessionEvent> =
-        store.open(rt.sessionId)!!.read().toList().map { it.event }
+        store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId
@@ -301,7 +301,8 @@ class HooksH3EventsTest {
         val text = (result.content.single() as TextPart).text
         assertTrue(text, text.contains("PermissionRequest hook 拒绝了这次调用") && text.contains("公司策略禁止删库"))
         val resolved = events(rt).filterIsInstance<dev.min.agent.spi.ApprovalResolved>().single()
-        assertEquals(dev.min.agent.spi.ApprovalChoice.Deny("公司策略禁止删库"), resolved.choice)
+        // hook 给的理由是机器的话、不是哪个人写的：fromHost，崩溃恢复补结果时也不会被当成“用户的话”
+        assertEquals(dev.min.agent.spi.ApprovalChoice.Deny("公司策略禁止删库", fromHost = true), resolved.choice)
         assertEquals(dev.min.agent.spi.DecidedBy.Hook("PermissionRequest"), resolved.decidedBy)
     }
 
@@ -478,7 +479,7 @@ class HooksH3EventsTest {
         assertTrue(body, body.contains("\"agent_type\":\"Explore\""))
         assertTrue(body, body.contains("\"agent_id\":\"${child.value}\""))
         // 上下文挂在子会话的第一条输入（委派指令）上，赶在子会话的第一个请求之前
-        val childEvents = store.open(child)!!.read().toList().map { it.event }
+        val childEvents = store.peek(child)!!.read().toList().map { it.event }
         val contexts = childEvents.filterIsInstance<dev.min.agent.spi.HookContextAdded>()
         assertEquals(1, contexts.size)
         assertEquals(dev.min.agent.spi.HookContextTarget.NextMessage, contexts.single().target)
@@ -513,7 +514,7 @@ class HooksH3EventsTest {
         rt.say("分身一个")
         rt.state.first { it.turn == null }
         val child = rt.state.value.children.keys.single()
-        val childEvents = store.open(child)!!.read().toList().map { it.event }
+        val childEvents = store.peek(child)!!.read().toList().map { it.event }
         val contexts = childEvents.filterIsInstance<dev.min.agent.spi.HookContextAdded>()
         assertEquals(1, contexts.size)
         val target = contexts.single().target
@@ -593,7 +594,7 @@ class HooksH3EventsTest {
         val second = SessionHub(store, hubDeps(model, http), CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it })
         assertTrue(second.delete(rt.sessionId))
         assertEquals("删日志之前跑过一次 SessionEnd", 1, http.sent.count { it.body.contains("\"reason\":\"other\"") })
-        assertTrue(store.open(rt.sessionId) == null)
+        assertTrue(store.peek(rt.sessionId) == null)
     }
 
     @Test

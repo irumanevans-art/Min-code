@@ -229,6 +229,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             if (p !is Prepared.Ready || !p.tool.traits.readOnly || !p.tool.traits.concurrencySafe) break
             // 有 PreToolUse hook 的调用走单个流程：hook 的结论要与权限判定合流（hooks设计 §7）
             if (hooks.has(HookEvent.PreToolUse, p.call.name)) break
+            if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.unavailable) break
             // 自然语言 hard_deny 需要分类器匹配，不能从只读并行快路绕过去。
             if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.config.hardDeny.any {
                 PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
@@ -313,18 +314,36 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val proseHardDeny = rt.state.value.autoReviewSettings.config.hardDeny.any {
             PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
         }
-        val verdict = if (ready.tool !is WorkflowTool && (policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
+        val verdict = if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.unavailable && policy !is Verdict.Deny) Verdict.Ask
+        else if (PolicyEngine.askRuleHit(ask, policyContext()) != null && policy !is Verdict.Deny) Verdict.Ask
+        else if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
             val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
             // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
-            if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
+            if (rt.state.value.settings.mode != PermissionMode.Auto) {
+                val context = policyContext()
+                val currentAsk = askFor(ready)
+                // 切到 Plan 是停止执行的明确意图，恢复的宽 allow 不能替刚返回的分类器放行写操作。
+                val planVerdict = PolicyEngine.evaluate(currentAsk, ready.tool.traits.readOnly,
+                    context.copy(rules = context.rules.filter { it.kind != dev.min.agent.policy.RuleKind.Allow }))
+                if (context.mode == PermissionMode.Plan && planVerdict !is Verdict.Allow) Verdict.Ask
+                else merge(ready, currentAsk, hook)
+            }
+            else if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
         } else initial
         when (verdict) {
-            is Verdict.Deny -> outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
+            is Verdict.Deny -> {
+                if (verdict.by == DecidedBy.Classifier) {
+                    val specific = HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.PermissionDeniedInput.serializer(),
+                        dev.min.agent.ext.hooks.PermissionDeniedInput(ready.call.name, ready.raw, ready.call.callId.value, verdict.messageToModel)).jsonObject
+                    hooks.run(HookEvent.PermissionDenied, ready.call.name, specific, turnId, ready.call.callId)
+                }
+                outcome(turnId, ready.call.callId, errorResult(verdict.messageToModel))
+            }
             is Verdict.Allow -> execute(turnId, ready)
             Verdict.Ask -> when (val answer = permissionRequest(turnId, ready, allowDecisions = ready.tool !is WorkflowTool && rt.state.value.settings.mode != PermissionMode.Auto)) {
                 is PermissionAnswer.Denied -> {
                     // hook 替人拒了：先落卡再落答（同一次提交，折叠成已决议），不发审批卡
-                    resolveByHook(turnId, ready, ApprovalChoice.Deny(answer.note))
+                    resolveByHook(turnId, ready, ApprovalChoice.Deny(answer.note, fromHost = true))
                     if (answer.interrupt) throw HookStop(answer.note)
                     outcome(turnId, ready.call.callId, errorResult(hookDeniedMessage(answer.note)))
                 }
@@ -380,7 +399,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
                 // 审查已决定转人（含失败）；hook 的自动允许不能把它重新变成无人执行。
                 if (!allowDecisions) return PermissionAnswer.None
                 val context = policyContext()
-                if (ready.tool.traits.alwaysAsk || PolicyEngine.floorReason(askFor(ready), context) != null) {
+                if (ready.tool.traits.alwaysAsk || PolicyEngine.askRuleHit(askFor(ready), context) != null || PolicyEngine.floorReason(askFor(ready), context) != null) {
                     rt.commit(
                         listOf(Note(NoteLevel.Info, "PermissionRequest hook 允许了 ${ready.call.name}，但它踩着必须由人批准的底线，仍要问人。")),
                         Durability.Batched,
@@ -420,7 +439,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         )
         val resolved = rt.state.first { s -> s.phaseOf(ready.call.callId) !is CallPhase.AwaitingApproval }
         when (val phase = resolved.phaseOf(ready.call.callId)) {
-            is CallPhase.Denied -> outcome(turnId, ready.call.callId, errorResult(deniedMessage(phase.note)))
+            is CallPhase.Denied -> outcome(turnId, ready.call.callId, deniedResult(ready.call.name, phase.note, phase.fromHost))
             else -> execute(turnId, ready)
         }
     }
@@ -592,7 +611,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
 
     private suspend fun outcome(turnId: TurnId, callId: CallId, result: ToolResult, extra: List<SessionEvent> = emptyList()) {
         // 结果声明的副作用（如切模式、改任务清单）与结果同一次提交：不会出现「结果说切了、模式没切」
-        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(rt.state.value) + extra, Durability.Sync)
+        rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(rt.state.value, rt.deps.clock.nowMs()) + extra, Durability.Sync)
     }
 
     /** [turnId] 为 null 只在算权限声明时：那时不该委派任何东西，端口给不可用的 */
@@ -617,7 +636,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             if (turnId == null) errorResult("提取端口不可用。") else extractWeb(rt, turnId, callId, content, prompt)
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
-        override val tasks: TaskBoard get() = rt.state.value.taskBoard()
+        override val tasks: TaskBoard get() = rt.visibleTaskBoard()
+        override val crons: dev.min.agent.spi.CronBoard get() = rt.state.value.cronBoard(rt.deps.clock.nowMs(), rt.deps.zone, rt.hub?.limits?.cronMaxBudgetUsd, rt.hub?.crons?.nextFireFloors(rt.sessionId).orEmpty(), rt.hub?.limits?.cronEnabled == false)
         override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome =
             if (rt.state.value.origin?.workflow == true) QuestionOutcome.Declined else rt.askUser(callId, questions)
         override suspend fun preserve(content: ByteArray): dev.min.agent.spi.ContentId? = if (turnId == null) null else rt.preserve(content)
@@ -630,8 +650,28 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         const val TRUNCATED_MESSAGE =
             "没有执行：你的回复撞上了输出长度上限，这次工具调用的参数可能不完整。请缩小改动范围或分几次调用后重试。"
 
-        fun deniedMessage(note: String?): String =
-            "用户拒绝了这次调用。" + (note?.let { "用户的说明：$it" } ?: "不要原样重试，换个做法或先问清楚。")
+        /**
+         * 用户在审批卡上拒绝了 [tool] 的调用。工具结果只记「用户拒绝了」这一句事实；用户写的说明是用户说的话，
+         * 放进 [ToolResult.userText]，由模型视图作为紧随 tool_result 的独立用户文本块送出——官方说明 tool_result 里的文字
+         * 会被当作不可信内容，Haiku 5.5 会无视用户为什么拒绝。恢复路径（[interruptedResult]）用同一个函数，两条路写出的结果一致。
+         *
+         * [fromHost]：[note] 是宿主 / hook 自己生成的（`-p` 下“没有人审批，已按 --approve no 拒绝”），不是人写的——
+         * 那就不能当“用户的话”独立成块（冒充用户），说明留在 tool_result 里，如实写成这次调用被拒绝了
+         */
+        fun deniedResult(tool: String, note: String?, fromHost: Boolean = false): ToolResult {
+            if (fromHost && note != null) {
+                return ToolResult(listOf(TextPart("这次调用被拒绝了：$note。不要原样重试，换个做法或先问清楚。")), isError = true)
+            }
+            return ToolResult(
+                content = listOf(
+                    TextPart(
+                        "用户拒绝了这次调用。" + if (note == null) "不要原样重试，换个做法或先问清楚。" else "用户留了话，见下面用户的话；不要原样重试。",
+                    ),
+                ),
+                isError = true,
+                userText = note?.let { "用户拒绝了你刚才的 $tool 调用，并留言：$it" },
+            )
+        }
 
         /** hook 替人拒的话术：说清是 PermissionRequest hook 拒的，不是用户 */
         fun hookDeniedMessage(note: String?): String =

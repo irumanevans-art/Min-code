@@ -29,6 +29,7 @@ class MinSnapshotCompositionTest {
         val ports = MinHostPorts({ generation }, MinBackgroundTasks(), Clock { 0L })
         val snapshots = CasWorkspaceSnapshots(tmp.newFolder("agent").toPath(), { generation.fs })
         val deps = MinKernelDeps.build(models = { error("not used") }, ports = ports, snapshots = snapshots)
+        assertEquals(GuestPath("/workspace/project/x"), deps.canonicalPath(GuestPath("/workspace/project/../project/x")))
         assertSame(snapshots, deps.host.snapshots)
         assertEquals(SnapshotBudget(15_000, 60_000, 20_000, 256L * 1024 * 1024), deps.checkpointBudget)
         val store = deps.host.snapshots.store(GuestPath("/workspace/project"))

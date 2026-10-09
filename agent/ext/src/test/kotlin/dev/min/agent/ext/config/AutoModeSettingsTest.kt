@@ -35,9 +35,8 @@ class AutoModeSettingsTest {
     }
 
     @Test fun `malformed trusted hard deny cannot silently disappear`() {
-        try {
-            SettingsMerger.merge(listOf(layer(ConfigSource.Managed, """{"autoMode":{"hard_deny":false}}""")), mutableListOf()).autoReviewSettings()
-            fail("必须拒绝无效的可信门禁")
-        } catch (_: IllegalArgumentException) { }
+        val result = SettingsMerger.merge(listOf(layer(ConfigSource.Managed, """{"autoMode":{"hard_deny":false}}""")), mutableListOf()).autoReviewSettings()
+        assertTrue(result.unavailable)
+        assertTrue(result.notes.isNotEmpty())
     }
 }

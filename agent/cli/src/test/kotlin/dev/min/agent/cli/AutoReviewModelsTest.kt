@@ -32,11 +32,12 @@ class AutoReviewModelsTest {
         }
     }
 
-    @Test fun `anthropic default uses requested haiku id without borrowing another price`() {
+    @Test fun `anthropic default uses haiku 5 5 with its own catalog price, not another model's`() {
         val main = session()
         val selected = resolveReviewerSelection(AutoModeReviewer(defaultAutoReviewer(main.profile.ref) { null }), catalog, main)
         assertEquals(ModelRef("anthropic", "claude-haiku-5-5"), selected.profile.ref)
-        assertNull(selected.profile.pricing)
+        // 目录 2026-10-08 补上了官方价格（分档：10 万输入 token 以内 0.1 / 0.5）；没有价格时预算上限会让每次审查都失败
+        assertEquals(0.1, selected.profile.pricing!!.inputPerMTok, 0.0)
         assertEquals(main.provider, selected.provider)
     }
 

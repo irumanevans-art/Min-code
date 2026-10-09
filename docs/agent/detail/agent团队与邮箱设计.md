@@ -1,6 +1,6 @@
 # agent 团队与邮箱设计
 
-日期：2026-10-08。状态：草案。依据：CC 的 agent teams（`D:\kimi\workspace\research\inventory\claude-code\` 下的 agent 相关调研，以及 `raw\mcp\cc-sub-agents.md`）；Min 现有的子 agent（`docs/agent/detail/子agent设计.md`）。待定项：并发上限（M5 总览待定 2，本设计先按建议值 3）。
+日期：2026-10-08。状态：草案。**本文初稿在较弱模型下写成，有几处偏离 CC；以 `research/tasks/REVIEW_2026-10-08_team-cron.md` 第一节与 `SONNET_TASKS_2026-10-08_team-cron-fixes.md` 第一节为准**：团队中 `TaskCreate/Get/List/Update` 直接操作共享清单（不另起 `TeamTask`）、成员自己认领、`-p` 下无团队、并发硬上限 8、成员可指定 `model`、接 `TeammateIdle`。依据：CC 的 agent teams（`D:\kimi\workspace\research\inventory\claude-code\` 下的 agent 相关调研，以及 `raw\mcp\cc-sub-agents.md`）；Min 现有的子 agent（`docs/agent/detail/子agent设计.md`）。待定项：并发上限（M5 总览待定 2，本设计先按建议值 3）。
 
 ## 一、要解决什么
 

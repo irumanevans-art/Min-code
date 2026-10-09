@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import dev.min.agent.testkit.*
@@ -118,13 +119,31 @@ class AskUserQuestionToolTest {
         )
         assertFalse(result.isError)
         assertEquals(listOf(listOf(db, modules)), ctx.asked)
+        // 答案是用户说的话：在 userText 里（选项与自填都在），工具结果文本只有一句事实
         assertEquals(
             "用户回答了你的问题：\n" +
                 "- 用哪个数据库？ → PostgreSQL\n" +
                 "- 要哪些模块？ → 登录、支付；（用户自己填写）还要导出 CSV\n" +
                 "请按用户的回答继续。",
-            result.text,
+            result.userText,
         )
+        assertEquals(AskUserQuestionTool.ANSWERED_MESSAGE, result.text)
+        listOf("PostgreSQL", "登录", "支付", "还要导出 CSV").forEach {
+            assertFalse("工具结果文本里不该有用户的回答「$it」：${result.text}", result.text.contains(it))
+        }
+    }
+
+    @Test
+    fun `a picked option alone and a free-text answer alone both stay out of the result text`() = runBlocking {
+        val picked = TestToolContext().apply { answer = { QuestionOutcome.Answered(listOf(QuestionAnswer(listOf("SQLite")))) } }
+            .let { tool.call(it, questions(question("用哪个数据库？", "数据库", listOf(option("PostgreSQL", "关系型"), option("SQLite", "单文件"))))) }
+        assertTrue(picked.userText, picked.userText!!.contains("用哪个数据库？ → SQLite"))
+        assertFalse(picked.text.contains("SQLite"))
+
+        val typed = TestToolContext().apply { answer = { QuestionOutcome.Answered(listOf(QuestionAnswer(other = "先用内存存储"))) } }
+            .let { tool.call(it, questions(question("用哪个数据库？", "数据库", listOf(option("PostgreSQL", "关系型"), option("SQLite", "单文件"))))) }
+        assertTrue(typed.userText, typed.userText!!.contains("用哪个数据库？ → （用户自己填写）先用内存存储"))
+        assertFalse(typed.text.contains("先用内存存储"))
     }
 
     @Test
@@ -140,6 +159,7 @@ class AskUserQuestionToolTest {
         val result = tool.call(ctx, questions(question("一？")))
         assertFalse(result.isError)
         assertEquals(AskUserQuestionTool.DECLINED_MESSAGE, result.text)
+        assertNull(result.userText)
         assertTrue(result.text.contains("没有回答"))
     }
 

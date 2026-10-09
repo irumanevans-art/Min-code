@@ -39,6 +39,9 @@ object AskUserQuestionTool : Tool<AskUserQuestionInput> {
     const val MIN_OPTIONS = 2
     const val MAX_OPTIONS = 4
 
+    /** 工具结果里只留这一句事实；答案本身在紧随其后的用户文本块里 */
+    const val ANSWERED_MESSAGE = "用户已回答你的问题，答案见下面用户的话。"
+
     const val DECLINED_MESSAGE =
         "用户没有回答这些问题（关掉了提问）。请按现有信息自行判断后继续；确实需要用户决定的，换个问法再问，不要原样重复同样的问题。"
 
@@ -166,12 +169,13 @@ object AskUserQuestionTool : Tool<AskUserQuestionInput> {
         // dontAsk 的约定是「会打扰人的一律不做」：在这里等一个不会来的答复只会把无人值守的会话挂死
         if (ctx.mode == PermissionMode.DontAsk) return@doneFlow okResult(DONT_ASK_MESSAGE)
         when (val outcome = ctx.ask(input.questions)) {
-            is QuestionOutcome.Answered -> okResult(formatAnswers(input.questions, outcome.answers))
+            // 答案是用户说的话，不是工具的输出：放进 userText，由模型视图作独立的用户文本块送出（tool_result 里的文字会被当作不可信内容）
+            is QuestionOutcome.Answered -> okResult(ANSWERED_MESSAGE).copy(userText = formatAnswers(input.questions, outcome.answers))
             QuestionOutcome.Declined -> okResult(DECLINED_MESSAGE)
         }
     }
 
-    /** 给模型的话：每题一行「问题 → 选择」，用户自己写的话原样带上并标明出处 */
+    /** 用户的话（[dev.min.agent.spi.ToolResult.userText]）：每题一行「问题 → 选择」，用户自己写的话原样带上并标明出处 */
     fun formatAnswers(questions: List<UserQuestion>, answers: List<QuestionAnswer>): String = buildString {
         append("用户回答了你的问题：\n")
         questions.zip(answers).forEach { (q, a) ->

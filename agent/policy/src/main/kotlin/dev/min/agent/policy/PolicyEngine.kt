@@ -95,7 +95,8 @@ object PolicyEngine {
 
         if (firstHit(facts, context.rules.filter { it.kind == RuleKind.Ask }, matcher) != null) return Verdict.Ask
 
-        covering(facts, context.rules.filter { it.kind == RuleKind.Allow }, matcher)?.let { rule ->
+        covering(facts, context.rules.filter { it.kind == RuleKind.Allow &&
+            (context.mode != PermissionMode.Auto || !suspendedInAuto(it)) }, matcher)?.let { rule ->
             return Verdict.Allow(DecidedBy.Rule(rule.raw, rule.source))
         }
 
@@ -112,8 +113,29 @@ object PolicyEngine {
             PermissionMode.AcceptEdits ->
                 if (effectivelyReadOnly || facts.isWorkspaceEditOnly || facts.isWorkspaceFileCommand) Verdict.Allow(byMode) else Verdict.Ask
             // 需要审批的 auto 调用由内核先审查；纯权限引擎不发网络请求。
-            PermissionMode.Default, PermissionMode.Auto ->
+            PermissionMode.Auto ->
+                if (effectivelyReadOnly || facts.isWorkspaceEditOnly) Verdict.Allow(byMode) else Verdict.Ask
+            PermissionMode.Default ->
                 if (effectivelyReadOnly) Verdict.Allow(byMode) else Verdict.Ask
+        }
+    }
+
+    /** 任意代码执行授权在 Auto 里不能越过分类器；窄命令规则仍保留。 */
+    fun suspendedInAuto(rule: PermissionRule): Boolean {
+        if (rule.tool in setOf("Agent", "Task", "Monitor")) return true
+        if (rule.tool !in setOf("Bash", "PowerShell")) return false
+        val spec = rule.specifier ?: return true
+        if (spec.trim() in setOf("*", ":*")) return true
+        val executable = spec.trim().substringBefore(' ').substringBefore(':').substringAfterLast('/').lowercase()
+        val interpreters = setOf(
+            "python", "python2", "python3", "pypy", "pypy3", "node", "nodejs", "ruby", "perl", "php", "lua",
+            "sh", "bash", "zsh", "dash", "fish", "ksh", "pwsh", "powershell", "cmd", "deno", "bun", "eval", "exec", "env", "xargs",
+            "npx", "pnpx", "bunx", "uvx", "sudo", "su", "ssh",
+        )
+        // 版本号和可执行文件通配仍能放行解释器代码，不能因拼写不是裸名就绕过分类器。
+        val literal = executable.takeWhile { it != '*' && it != '?' }.removeSuffix(".exe")
+        return ('*' in spec || '?' in spec) && interpreters.any { name ->
+            name.startsWith(literal) || literal == name || literal.startsWith("$name.")
         }
     }
 

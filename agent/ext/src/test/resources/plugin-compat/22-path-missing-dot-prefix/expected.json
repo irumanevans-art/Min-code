@@ -1,4 +1,8 @@
 {
-  "loads": false,
-  "basis": "PLG:392 组件路径必须以 ./ 开头，「A path such as commands/foo.md fails validation」；PLG:111 装载时报同样的错"
+  "loads": true,
+  "basis": "https://code.claude.com/docs/en/plugins/loading：组件路径或格式无效时 the plugin loads without that component；记录错误，保留其他组件。",
+  "errors": [
+    "./"
+  ],
+  "commands": []
 }
