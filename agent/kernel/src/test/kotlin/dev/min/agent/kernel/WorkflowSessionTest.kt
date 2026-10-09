@@ -23,7 +23,7 @@ class WorkflowSessionTest {
     private fun deps(fs: FakeFs, model: ModelClient, engine: WorkflowEngine, env: Map<String, String> = emptyMap(), tools: List<Tool<*>> = emptyList()) = KernelDeps(
         clock = { 1000 }, ids = { "${it}_${ids.incrementAndGet()}" }, models = { ResolvedModel(TEST_PROFILE, model) }, tools = tools,
         host = HostPorts(fs, FakeSearch(), FakeExec(), { FakeArtifacts() }), platform = "test", zone = ZoneOffset.UTC,
-        memoryHome = GuestPath("/home"), workflowEngine = engine, env = { env[it] },
+        trustProjectHooks = { true }, memoryHome = GuestPath("/home"), workflowEngine = engine, env = { env[it] },
     )
     @Test fun savedCommandRequiresApprovalCachesContentAndReapprovesChanges() = run {
         val fs = FakeFs().apply { put("/work/.claude/workflows/review.js", source()) }
@@ -54,7 +54,7 @@ class WorkflowSessionTest {
     }
     @Test fun schemaRetriesReuseOneHubChildAndCannotAskUser() = run {
         val fs = FakeFs().apply { put("/work/.claude/workflows/review.js", source()) }
-        val model = ScriptedModel(reply(TextPart("{}")), reply(TextPart("{\"ok\":true}")))
+        val model = ScriptedModel(reply(TextPart("{}")), reply(ToolCallPart(CallId("answer"), "StructuredOutput", Json.parseToJsonElement("{\"ok\":true}").jsonObject)))
         val schema = Json.parseToJsonElement("""{"type":"object","required":["ok"]}""").jsonObject
         val engine = WorkflowEngine { _, _, host -> host.agent(0, "json", JsonObject(mapOf("schema" to schema))) }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

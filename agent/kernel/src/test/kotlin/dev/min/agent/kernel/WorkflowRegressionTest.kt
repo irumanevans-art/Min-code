@@ -58,14 +58,24 @@ class WorkflowRegressionTest {
         }
     }
 
-    @Test fun fencedJsonBurnsAllRetries() = runBlocking {
-        val schema = Json.parseToJsonElement("""{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}}""").jsonObject
-        val options = JsonObject(mapOf("schema" to schema)); var attempts = 0
-        val host = WorkflowRun(WorkflowRunStarted("run", "t", "s", "h", concurrency = 4), emptyList(), {}) { _, _, _ ->
-            attempts++; WorkflowAnswer("```json\n{\"ok\":true}\n```")
-        }
-        val r = host.agent(0, "json", options)
-        assertEquals(Json.parseToJsonElement("{\"ok\":true}"), r)
+    @Test fun fencedJsonDoesNotReplaceStructuredOutputTool() = runBlocking {
+        val fs = FakeFs().apply { put("/work/.claude/workflows/review.js", source()) }
+        val value = Json.parseToJsonElement("{\"ok\":true}").jsonObject
+        val model = ScriptedModel(reply(TextPart("```json\n{\"ok\":true}\n```")), reply(ToolCallPart(CallId("answer"), "StructuredOutput", value)))
+        val schema = Json.parseToJsonElement("{\"type\":\"object\",\"required\":[\"ok\"]}").jsonObject
+        val engine = WorkflowEngine { _, _, host -> host.agent(0, "json", JsonObject(mapOf("schema" to schema))) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val hub = SessionHub(FileSessionStore(tmp.root.toPath(), { 1000 }), deps(fs,model,engine),scope)
+            val rt = hub.create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+            rt.send(ClientMsgId("json"), listOf(TextPart("/review")))
+            val approval = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
+            rt.answerApproval(approval.approvalId, ApprovalChoice.Once)
+            withTimeout(10000) { rt.state.first { it.lastTurn != null && it.turn == null } }
+            assertEquals(value, rt.state.value.workflowEvents.filterIsInstance<WorkflowNodeCompleted>().single().result)
+            assertEquals(1,rt.state.value.children.size); assertEquals(2,model.requests.size)
+            assertTrue(model.requests.all { it.tools.any { tool -> tool.name == "StructuredOutput" } })
+        } finally { scope.cancel() }
     }
 
     @Test fun commitFailureWedgesLaterNodes() = runBlocking {

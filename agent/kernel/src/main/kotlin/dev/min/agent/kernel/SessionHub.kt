@@ -780,6 +780,7 @@ class SessionHub(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = FORK_AGENT_TYPE, fork = true,
                 depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
                 workflow = request.workflow || parentOrigin?.workflow == true,
+                workflowSchema = request.schema.takeIf { request.workflow },
             )
             initial += forkSeed(ps, callId, request.prompt)
             initial += forkInheritance(ps, callId)
@@ -797,7 +798,7 @@ class SessionHub(
                 ps.settings.mode == PermissionMode.Auto -> PermissionMode.Auto
                 else -> definition.permissionMode ?: ps.settings.mode
             }
-            created = SessionCreated(ps.settings.cwd, model, mode, definition.effort ?: ps.settings.effort)
+            created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
@@ -808,9 +809,10 @@ class SessionHub(
                 mcpDenied = definition.disallowedTools.filter { it.startsWith(MCP_PREFIX) },
                 // 禁止中途提问是整棵工作流树的约束，不能通过再委派或分身绕开。
                 workflow = request.workflow || parentOrigin?.workflow == true,
+                workflowSchema = request.schema.takeIf { request.workflow },
             )
         }
-        val background = request.background || definition?.alwaysBackground == true
+        val background = !request.workflow && (request.background || definition?.alwaysBackground == true)
 
         // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
         // 不进父会话（inheritedRules 复制的是 settings 快照）。子会话再派生时经 inheritedComponentHooks
@@ -830,12 +832,12 @@ class SessionHub(
             }
         }
 
-        val isolated = if (definition?.isolationWorktree == true) {
+        val isolated = if (request.isolationWorktree || definition?.isolationWorktree == true) {
             dev.min.agent.spi.catchingNonCancellation { parent.worktrees.prepare("agent-${childId.value}", null, pinned = true) }
                 .getOrElse { return DelegateResult.Rejected(it.message ?: "Worktree creation failed.") }
         } else null
         if (isolated != null) {
-            if (!definition!!.omitMemory) initial += MemoryLoaded((ps.memory + ps.cwdMemory).distinctBy { it.path }, autoMemory = ps.autoMemory)
+            if (definition?.omitMemory != true) initial += MemoryLoaded((ps.memory + ps.cwdMemory).distinctBy { it.path }, autoMemory = ps.autoMemory)
             initial += dev.min.agent.spi.CwdChanged(created.cwd, isolated.path, isolated)
         } else if (ps.worktree != null) {
             initial += dev.min.agent.spi.CwdChanged(created.cwd, created.cwd, ps.worktree.copy(pinned = true, owned = false))

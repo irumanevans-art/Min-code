@@ -49,19 +49,18 @@ class WorkflowRunTest {
             assertEquals(listOf(0, 1), calls)
         }
     }
-    @Test fun schemaRetriesUntilValidAndReturnsErrorAfterFiveAttempts() = run {
-        val schema = Json.parseToJsonElement("""{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}}""").jsonObject
-        val options = JsonObject(mapOf("schema" to schema)); var attempts = 0
-        val host = WorkflowRun(start(), emptyList(), {}) { _, _, _ -> WorkflowAnswer(if (++attempts == 1) "{}" else "{\"ok\":true}") }
-        assertEquals(Json.parseToJsonElement("{\"ok\":true}"), host.agent(0, "json", options)); assertEquals(2, attempts)
-        attempts = 0
-        val failing = WorkflowRun(start(), emptyList(), {}) { _, _, _ -> attempts++; WorkflowAnswer("{}") }
-        assertEquals("schema_retries_exhausted", failing.agent(0, "json", options).jsonObject["error"]!!.jsonPrimitive.content)
-        assertEquals(5, attempts)
+    @Test fun schemaUsesDeliveredStructuredValueAndFailuresResolveNull() = run {
+        val schema = Json.parseToJsonElement("{\"type\":\"object\"}").jsonObject
+        val options = JsonObject(mapOf("schema" to schema))
+        val value = Json.parseToJsonElement("{\"ok\":true}")
+        val host = WorkflowRun(start(), emptyList(), {}) { _, _, _ -> WorkflowAnswer("```json\n{}\n```", structured = value) }
+        assertEquals(value, host.agent(0, "json", options))
+        val failing = WorkflowRun(start(), emptyList(), {}) { _, _, _ -> WorkflowAnswer("failed", true) }
+        assertEquals(JsonNull, failing.agent(0, "json", options))
     }
     @Test fun childFailureResolvesErrorButParentCancellationPropagates() = run {
         val failing = WorkflowRun(start(), emptyList(), {}) { _, _, _ -> WorkflowAnswer("interrupted", true) }
-        assertEquals("agent_failed", failing.agent(0, "x", JsonObject(emptyMap())).jsonObject["error"]!!.jsonPrimitive.content)
+        assertEquals(JsonNull, failing.agent(0, "x", JsonObject(emptyMap())))
         val cancelled = WorkflowRun(start(), emptyList(), {}) { _, _, _ -> throw CancellationException("cancel") }
         try { cancelled.agent(0, "x", JsonObject(emptyMap())); fail("Must propagate cancellation") } catch (_: CancellationException) { }
     }

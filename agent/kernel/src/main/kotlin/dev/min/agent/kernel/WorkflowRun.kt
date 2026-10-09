@@ -16,7 +16,7 @@ import kotlinx.serialization.json.*
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 
-internal data class WorkflowAnswer(val text: String, val isError: Boolean = false)
+internal data class WorkflowAnswer(val text: String, val isError: Boolean = false, val structured: JsonElement? = null)
 
 /** 节点结果先同步落盘才交回 JS，否则进程可能已经消费结果而日志里仍没有它。 */
 internal class WorkflowRun(
@@ -53,14 +53,15 @@ internal class WorkflowRun(
     }
 
     override suspend fun agent(index: Int, prompt: String, options: JsonObject): JsonElement {
-        require(index in 0 until 1000 && prompt.isNotBlank())
-        require(options.keys.all { it in setOf("schema", "label", "model") }) { "Unknown agent option." }
+        require(index in 0 until 1000 && prompt.length <= 300_000 && prompt.isNotBlank())
+        // 包装层忽略未知选项，宿主只读取约定字段。
         options["schema"]?.let { require(it is JsonObject) }
-        for (key in listOf("model", "label")) options[key]?.let { require(it is JsonPrimitive && it.isString) }
+        for (key in listOf("model", "label", "phase", "effort", "isolation", "agentType")) options[key]?.let { require(it is JsonPrimitive && it.isString) }
         // JS 分配序号是同步的；协程启动顺序可能不同，日志判定仍按原启动顺序做。
         next.first { it >= index }
         appendFailure?.let { throw it }
         check(next.value == index) { "Duplicate workflow node." }
+        options["phase"]?.jsonPrimitive?.content?.let { progress("phase", it) }
         val old = starts[index]
         if (old != null && (old.prompt != prompt || old.options != options)) replayBefore = minOf(replayBefore, index)
         val cached = completed[index]?.takeIf { index < replayBefore && !it.isError && old?.prompt == prompt && old.options == options }
@@ -72,21 +73,11 @@ internal class WorkflowRun(
             var failed = false
             val result = try {
                 val schema = options["schema"] as? JsonObject
-                var value: JsonElement = JsonNull
-                var feedback = ""
-                for (attempt in 1..if (schema == null) 1 else run.attempts) {
-                    val answer = invoke(index, prompt + (schema?.let { "\n\nReturn only JSON matching this schema: $it" } ?: "") + feedback, options)
-                    if (answer.isError) { failed = true; value = workflowError("agent_failed", answer.text); break }
-                    if (schema == null) { value = JsonPrimitive(answer.text); break }
-                    val decoded = try { Json.parseToJsonElement(answer.text.trim()) } catch (_: IllegalArgumentException) { null }
-                    val errors = decoded?.let { JsonSchema.validate(schema, it) } ?: listOf("Output must be JSON.")
-                    if (errors.isEmpty()) { value = requireNotNull(decoded); break }
-                    if (attempt == run.attempts) { failed = true; value = workflowError("schema_retries_exhausted", errors.joinToString("\n")); break }
-                    feedback = "\n\nReturn only JSON matching this schema: $schema\nPrevious output was invalid: ${errors.joinToString("; ")}"
-                }
-                value
+                val answer = invoke(index, prompt + if (schema != null) "\n\n交出最终答案时必须调用 StructuredOutput 工具。" else "", options)
+                failed = answer.isError || schema != null && answer.structured == null
+                if (failed) JsonNull else if (schema != null) requireNotNull(answer.structured) else JsonPrimitive(answer.text)
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { failed = true; workflowError("agent_failed", e.message ?: "Agent failed.") }
+            catch (_: Exception) { failed = true; JsonNull }
             persist(WorkflowNodeCompleted(run.runId, index, result, failed))
             result
         }
@@ -118,13 +109,18 @@ internal suspend fun SessionRuntime.executeWorkflow(turnId: TurnId, callId: Call
             setting("CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS")?.toIntOrNull()?.takeIf { it in 1..256 } ?: deps.workflowConcurrency,
             setting("MAX_STRUCTURED_OUTPUT_RETRIES")?.toIntOrNull()?.takeIf { it > 0 } ?: 5, turnId = turnId)
     require(run.args == input.args) { "Resume requires the original arguments." }
-    if (input.resume == null) commit(listOf(run), Durability.Sync)
+    val currentRun = run.copy(source = input.source, hash = input.hash, turnId = turnId)
+    commit(listOf(currentRun), Durability.Sync)
     val hub = requireNotNull(hub) { "Workflow requires SessionHub." }
     val children = ConcurrentHashMap<Int, dev.min.agent.protocol.SessionId>()
-    val host = WorkflowRun(run, previous, { event -> commit(listOf(event), Durability.Sync); Unit }) { index, prompt, options ->
+    val host = WorkflowRun(currentRun, previous, { event -> commit(listOf(event), Durability.Sync); Unit }) { index, prompt, options ->
         val result = if (children[index] == null) hub.portFor(this, turnId, CallId("${callId.value}:$index")).delegate(
             DelegateRequest(options["label"]?.jsonPrimitive?.content ?: "${input.name} #$index", prompt,
-                model = options["model"]?.jsonPrimitive?.content, background = false, workflow = true)
+                model = options["model"]?.jsonPrimitive?.content, background = false, workflow = true,
+                agentType = options["agentType"]?.jsonPrimitive?.content,
+                effort = options["effort"]?.jsonPrimitive?.content?.let { raw -> dev.min.agent.protocol.Effort.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: error("Invalid workflow effort.") },
+                isolationWorktree = options["isolation"]?.jsonPrimitive?.content?.let { require(it == "worktree"); true } ?: false,
+                schema = options["schema"] as? JsonObject)
         ) else hub.retryWorkflow(this, requireNotNull(children[index]), prompt)
         when (result) {
             is DelegateResult.Finished -> {
@@ -132,7 +128,7 @@ internal suspend fun SessionRuntime.executeWorkflow(turnId: TurnId, callId: Call
                 val child = requireNotNull(hub.get(result.child))
                 val answer = child.state.value.history.filterIsInstance<HistoryEntry.Assistant>().lastOrNull()
                     ?.parts?.filterIsInstance<TextPart>()?.joinToString("") { it.text }.orEmpty()
-                WorkflowAnswer(if (result.isError) result.report else answer, result.isError)
+                WorkflowAnswer(if (result.isError) result.report else answer, result.isError, child.state.value.structuredOutput?.value)
             }
             is DelegateResult.Rejected -> WorkflowAnswer(result.messageForModel, true)
             is DelegateResult.Started -> WorkflowAnswer("Workflow node unexpectedly ran in background.", true)

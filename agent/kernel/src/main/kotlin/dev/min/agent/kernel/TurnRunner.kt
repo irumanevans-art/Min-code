@@ -185,7 +185,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val origin = rt.state.value.origin
         val limit = origin?.maxTurns ?: deps.rootMaxTurns.takeIf { origin == null }
         // --json-schema（工具式结构化输出）：根会话这次运行要求模型用 StructuredOutput 交出符合 schema 的最终答案
-        val plan = deps.structuredOutput.takeIf { origin == null }
+        val plan = origin?.workflowSchema?.let(::StructuredOutputPlan) ?: deps.structuredOutput.takeIf { origin == null }
         val maxAttempts = if (plan != null) structuredOutputAttempts() else 0
         var failedAttempts = 0
         repeat(limit ?: MAX_REQUESTS_PER_TURN) {
@@ -600,7 +600,8 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val base = builtin + resourceTools + upfront.map { McpToolAdapter(it, mcp) } +
         if (search) listOf(McpToolSearchTool(allMcp, state.loadedMcpTools)) else emptyList()
     // StructuredOutput 排在最后（--json-schema 是这一根会话这次运行的要求；子 agent 与分身不经它交卷）
-    val prefix = if (deps.structuredOutput != null && state.origin == null) base + StructuredOutputTool(deps.structuredOutput!!) else base
+    val plan = state.origin?.workflowSchema?.let(::StructuredOutputPlan) ?: deps.structuredOutput.takeIf { state.origin == null }
+    val prefix = if (plan != null) base + StructuredOutputTool(plan) else base
     val loaded = if (search) state.loadedMcpTools.mapNotNull { name -> allMcp.firstOrNull { it.name == name && !it.alwaysLoad } } else emptyList()
     return prefix + loaded.map { McpToolAdapter(it, mcp) }
 }
