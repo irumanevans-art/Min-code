@@ -66,6 +66,7 @@ internal enum class SettingsSection(@StringRes val labelRes: Int) {
     USAGE(R.string.session_section_usage),
     MCP(R.string.session_section_mcp),
     TRUST(R.string.session_section_trust),
+    SCHEDULE(R.string.session_section_schedule),
     CHECKPOINTS(R.string.session_section_checkpoints),
 }
 
@@ -330,6 +331,19 @@ internal fun ClaudeCodeSettingsSheet(
                     onToggle = { open = it },
                 ) {
                     TrustSection(view, onAsk = { extras.askTrust(view.cwd) }, onSet = { extras.setTrust(view.cwd, it) })
+                }
+            }
+        }
+
+        if (layout.schedule && extras != null) {
+            session.schedule?.let { view ->
+                Section(
+                    section = SettingsSection.SCHEDULE,
+                    value = if (view.activeCount > 0) stringResource(R.string.schedule_summary_count, view.activeCount) else stringResource(R.string.schedule_summary_none),
+                    open = open,
+                    onToggle = { open = it },
+                ) {
+                    ScheduleSection(view, onDelete = extras::deleteScheduled)
                 }
             }
         }

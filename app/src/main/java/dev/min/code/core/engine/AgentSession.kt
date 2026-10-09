@@ -66,6 +66,9 @@ interface AgentSession {
      */
     suspend fun recap(auto: Boolean): RecapOutcome = RecapOutcome.Skipped("")
 
+    /** 定时任务清单上的“删除”（[EngineCapabilities.schedule] 为真才有）；其余引擎 null */
+    val schedule: ScheduleControl? get() = null
+
     /** 团队页的“放行 / 解散”（[EngineCapabilities.team] 为真才有）；其余引擎 null */
     val team: TeamControl? get() = null
 

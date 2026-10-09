@@ -47,6 +47,7 @@ class MinSessionCatalog(
             model = e.model,
             interrupted = (e.turnOpen && !isOnline(e.id)) || e.deathResumable,
             bodyText = e.bodyText,
+            scheduledTasks = e.activeCrons,
         )
     }
 

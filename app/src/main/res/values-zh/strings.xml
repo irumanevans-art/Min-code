@@ -1430,5 +1430,27 @@
     <string name="cron_body_expired_age">定时任务 %1$s（%2$s）已结束：循环任务满 7 天自动过期。</string>
     <string name="cron_body_expired_missed">定时任务 %1$s（%2$s）已结束：一次性任务的时刻在会话没开着时过去了，不补跑。</string>
     <string name="cron_body_expired_no_pricing">定时任务 %1$s（%2$s）已结束：当前模型没有 USD 价格，花费估算不了。</string>
+    <!-- M5: scheduled tasks list in the session settings -->
+    <string name="session_section_schedule">定时任务</string>
+    <string name="schedule_summary_count">%1$d 个进行中</string>
+    <string name="schedule_summary_none">没有进行中的</string>
+    <string name="schedule_off_note">定时任务在设置里被关掉了，这里的任务不会触发。</string>
+    <string name="schedule_next">下次 %1$s</string>
+    <string name="schedule_budget">每次最多 %1$s</string>
+    <string name="schedule_no_budget">不限花费</string>
+    <string name="schedule_fires">已运行 %1$d 次</string>
+    <string name="schedule_once">一次性</string>
+    <string name="schedule_wakeup">唤醒</string>
+    <string name="schedule_status_fired">已触发</string>
+    <string name="schedule_status_cancelled">已删除</string>
+    <string name="schedule_status_expired">已结束</string>
+    <string name="schedule_delete">删除</string>
+    <string name="schedule_delete_title">删除这个定时任务？</string>
+    <string name="schedule_delete_text">它从此不再触发；已经在跑的这一次不受影响。</string>
+    <string name="schedule_deleted">已删除定时任务 %1$s</string>
+    <string name="schedule_delete_failed">没能删除 %1$s：它已经结束了</string>
+    <!-- M5: marker on a session in the list that has active scheduled tasks -->
+    <string name="session_scheduled_tag">定时</string>
 
+    <string name="schedule_recurring">循环</string>
 </resources>

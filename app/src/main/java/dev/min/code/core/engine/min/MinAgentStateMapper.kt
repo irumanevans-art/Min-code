@@ -70,6 +70,9 @@ data class MinMapperInput(
     val maxRetryAttempts: Int = 5,
     /** 内核报的团队成员状态（`hub.teamMembers(root)`；排队与搁浅要看内存里的队伍，不能只从状态推）。没有团队为空 */
     val teamMembers: List<dev.min.agent.kernel.TeamMemberStatus> = emptyList(),
+    /** 模型 CronList 看到的同一份定时任务视图（`hub.cronBoard(root)`），与全局开关 */
+    val cronBoard: dev.min.agent.spi.CronBoard? = null,
+    val cronsEnabled: Boolean = true,
 )
 
 /**
@@ -120,6 +123,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             tasks = input.tasks,
             threads = threads.withPendingCounts(interactions),
             team = minTeamView(input.root, input.nodes, input.teamMembers, threads),
+            schedule = minScheduleView(input.cronBoard, input.cronsEnabled),
             slashCommands = text.slashCommands(),
             plan = planOf(root),
             stopping = input.stopping,

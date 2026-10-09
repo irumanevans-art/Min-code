@@ -49,10 +49,17 @@ data class MinIndexEntry(
     val bodyText: String = "",
     val eventsLength: Long = 0,
     val eventsMtime: Long = 0,
+    /** 进行中的定时任务数：抽屉里这个会话打「定时」标记 */
+    val activeCrons: Int = 0,
+    /** 摘要的版本：加了字段之后旧摘要（日志没变所以校验过得去）要重建，不然新字段永远是默认值 */
+    val schema: Int = 0,
 ) {
     companion object {
         const val BODY_CHARS = 32 * 1024
         const val TITLE_CHARS = 80
+
+        /** 当前摘要的版本。1 = 有 [activeCrons] */
+        const val SCHEMA = 1
     }
 }
 
@@ -94,6 +101,8 @@ fun indexEntryOf(state: SessionState, eventsLength: Long, eventsMtime: Long, upd
         bodyText = body,
         eventsLength = eventsLength,
         eventsMtime = eventsMtime,
+        activeCrons = state.crons.count { it.active },
+        schema = MinIndexEntry.SCHEMA,
     )
 }
 
@@ -138,7 +147,7 @@ class MinSessionIndex(private val dir: File, private val sessionsDir: File) {
             val id = header.sessionId.value
             val log = withContext(Dispatchers.IO) { eventsOf(id).let { it.length() to it.lastModified() } }
             val cached = read(id)
-            if (cached != null && cached.eventsLength == log.first && cached.eventsMtime == log.second) cached
+            if (cached != null && cached.schema == MinIndexEntry.SCHEMA && cached.eventsLength == log.first && cached.eventsMtime == log.second) cached
             else rebuild(store, header.sessionId, log.first, log.second)
         }
         withContext(Dispatchers.IO) {

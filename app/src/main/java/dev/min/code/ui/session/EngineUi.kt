@@ -82,6 +82,7 @@ internal object EngineUi {
             trust = capabilities.workspaceTrust,
             checkpoints = capabilities.rewind,
             autoReview = capabilities.autoReview && settings.autoReview != null,
+            schedule = capabilities.schedule && session.schedule != null,
         )
     }
 }
@@ -112,4 +113,6 @@ internal data class SettingsLayout(
     val checkpoints: Boolean,
     /** 「自动模式的审查模型」分区（[EngineCapabilities.autoReview]） */
     val autoReview: Boolean,
+    /** 「定时任务」分区：清单与删除（[EngineCapabilities.schedule]，会话里有过定时任务才出现） */
+    val schedule: Boolean,
 )

@@ -57,6 +57,8 @@ data class AgentSessionState(
     val worktree: WorktreeView? = null,
     /** agent 团队（[EngineCapabilities.team]，Min）：成员、共享清单、消息流。没有团队 / 引擎没有这个概念为 null */
     val team: TeamView? = null,
+    /** 这个会话的定时任务（[EngineCapabilities.schedule]，Min）。一条都没建过 / 引擎没有这个概念为 null */
+    val schedule: ScheduleView? = null,
 ) {
     /** 会话页要显示它、输入框要能收字：进程活着（CC / Codex 的 Running），或 Min 这种没进程但打开着的会话 */
     val accepting: Boolean

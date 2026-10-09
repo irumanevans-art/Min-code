@@ -1435,5 +1435,27 @@
     <string name="cron_body_expired_age">Scheduled task %1$s (%2$s) ended: recurring tasks expire after 7 days.</string>
     <string name="cron_body_expired_missed">Scheduled task %1$s (%2$s) ended: its time passed while the session was not open, and a missed one-shot task is not run late.</string>
     <string name="cron_body_expired_no_pricing">Scheduled task %1$s (%2$s) ended: the current model has no USD price, so its cost can\'t be estimated.</string>
+    <!-- M5: scheduled tasks list in the session settings -->
+    <string name="session_section_schedule">Scheduled tasks</string>
+    <string name="schedule_summary_count">%1$d active</string>
+    <string name="schedule_summary_none">none active</string>
+    <string name="schedule_off_note">Scheduled tasks are switched off in Settings; nothing here will fire.</string>
+    <string name="schedule_next">next %1$s</string>
+    <string name="schedule_budget">cap %1$s per run</string>
+    <string name="schedule_no_budget">no spending cap</string>
+    <string name="schedule_fires">ran %1$d times</string>
+    <string name="schedule_once">one-shot</string>
+    <string name="schedule_wakeup">wake-up</string>
+    <string name="schedule_status_fired">ran</string>
+    <string name="schedule_status_cancelled">deleted</string>
+    <string name="schedule_status_expired">ended</string>
+    <string name="schedule_delete">Delete</string>
+    <string name="schedule_delete_title">Delete this scheduled task?</string>
+    <string name="schedule_delete_text">It will never fire again. A run that has already started is not stopped.</string>
+    <string name="schedule_deleted">Deleted scheduled task %1$s</string>
+    <string name="schedule_delete_failed">Could not delete %1$s: it has already ended</string>
+    <!-- M5: marker on a session in the list that has active scheduled tasks -->
+    <string name="session_scheduled_tag">Scheduled</string>
 
+    <string name="schedule_recurring">recurring</string>
 </resources>

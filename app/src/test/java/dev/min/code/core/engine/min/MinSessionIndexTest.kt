@@ -116,6 +116,16 @@ class MinSessionIndexTest {
         assertEquals(first.messageCount + 2, rebuilt.messageCount)
     }
 
+    @Test fun anIndexWrittenBeforeANewFieldWasAddedIsRebuiltEvenThoughTheLogDidNotChange() {
+        val id = completedSession()
+        val first = runBlocking { index.list(k.store) }.single()
+        // 旧版摘要：没有新字段（schema 0）、日志指纹照旧——不重建的话新字段永远是默认值
+        runBlocking { index.write(first.copy(title = "stale", schema = 0, activeCrons = 0)) }
+        val rebuilt = runBlocking { index.list(k.store) }.single()
+        assertEquals("hello index", rebuilt.title)
+        assertEquals(MinIndexEntry.SCHEMA, rebuilt.schema)
+    }
+
     @Test fun orphanIndexFilesAreCleanedAndCorruptOnesAreRebuilt() {
         val id = completedSession()
         runBlocking { index.list(k.store) }

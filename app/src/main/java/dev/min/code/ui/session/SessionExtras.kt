@@ -17,6 +17,7 @@ import dev.min.code.core.engine.RewindResultView
 import dev.min.code.core.engine.RewindScopeView
 import dev.min.code.core.engine.RewindStorageRow
 import dev.min.code.core.engine.SessionCommand
+import dev.min.code.core.engine.ScheduleControl
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SessionSignal
 import dev.min.code.core.engine.StartOptions
@@ -310,6 +311,20 @@ internal class SessionExtras(
         scope.launch {
             val result = session.submit(SessionCommand.SetAutoReviewer(java.util.UUID.randomUUID().toString(), modelId, profileId))
             if (result is CommandResult.Rejected) notice(context.getString(R.string.auto_review_failed, result.message), error = true)
+        }
+    }
+
+    // ---- 定时任务 ----
+
+    private val scheduleControl: StateFlow<ScheduleControl?> = shown.map { it?.schedule }
+        .stateIn(scope, SharingStarted.Eagerly, shown.value?.schedule)
+
+    /** 清单上的「删除」（界面已经确认过）。已经结束的删不了，说一句 */
+    fun deleteScheduled(taskId: String) {
+        val control = scheduleControl.value ?: return
+        scope.launch {
+            val deleted = catchingNonCancellation { control.delete(taskId) }.getOrDefault(false)
+            notice(context.getString(if (deleted) R.string.schedule_deleted else R.string.schedule_delete_failed, taskId), error = !deleted)
         }
     }
 

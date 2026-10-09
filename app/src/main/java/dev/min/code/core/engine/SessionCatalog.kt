@@ -36,6 +36,8 @@ data class SessionSummary(
     val model: String?,
     val interrupted: Boolean,
     val bodyText: String,
+    /** 进行中的定时任务数（Min）；抽屉里打「定时」标记。别的引擎恒为 0 */
+    val scheduledTasks: Int = 0,
 )
 
 sealed interface DeleteResult {

@@ -2,7 +2,7 @@ package dev.min.code.core.engine
 
 /**
  * 一个引擎能做什么。**控件显隐只看它**，界面不按 [EngineKind] 写分支（规矩 2）。
- * 31 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
+ * 32 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
  * 改一格要同时改测试，审查时一眼看得到。
  *
  * 位与命令一一对应的那些，[supports] 能统一兜底；对不上的（引擎专有设置项等）由适配器自己判。
@@ -56,6 +56,8 @@ data class EngineCapabilities(
     val team: Boolean,
     /** auto 权限模式与它的审查模型（[SessionCommand.SetAutoReviewer]、[SettingsView.autoReview]）。CC 的 auto 模式在它自己的 CLI 里，Codex 没有 */
     val autoReview: Boolean,
+    /** 会话的定时任务清单与删除（[ScheduleControl]）。定时任务在 Min 的内核里；CC 的在它自己的 CLI 里，Codex 没有 */
+    val schedule: Boolean,
     /** `/mcp /agents /memory /permissions /config` 面板。设计草稿是 Boolean，但表里 Min 写的是「部分」，见 [ConfigFiles] */
     val claudeConfigFiles: ConfigFiles,
 ) {
@@ -119,6 +121,7 @@ data class EngineCapabilities(
         "workspaceTrust" to workspaceTrust.toString(),
         "team" to team.toString(),
         "autoReview" to autoReview.toString(),
+        "schedule" to schedule.toString(),
         "claudeConfigFiles" to claudeConfigFiles.name,
     )
 
@@ -154,6 +157,7 @@ data class EngineCapabilities(
             workspaceTrust = false,
             team = false,
             autoReview = false,
+            schedule = false,
             claudeConfigFiles = ConfigFiles.Full,
         )
 
@@ -193,6 +197,7 @@ data class EngineCapabilities(
             workspaceTrust = false,
             team = false,
             autoReview = false,
+            schedule = false,
             claudeConfigFiles = ConfigFiles.None,
         )
 
@@ -238,6 +243,7 @@ data class EngineCapabilities(
             workspaceTrust = true,
             team = true,
             autoReview = true,
+            schedule = true,
             claudeConfigFiles = ConfigFiles.Partial,
         )
 
