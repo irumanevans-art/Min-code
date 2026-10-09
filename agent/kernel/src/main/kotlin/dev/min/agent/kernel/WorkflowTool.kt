@@ -15,7 +15,7 @@ internal data class WorkflowInput(val name: String, val source: String, val args
 
 internal class WorkflowTool(private val rt: SessionRuntime) : Tool<WorkflowInput> {
     override val name = "Workflow"
-    override val traits = ToolTraits(delegates = true)
+    override val traits = ToolTraits(delegates = true, resultBudgetChars = 12_000)
     override val inputSchema = buildJsonObject {
         put("type", "object"); put("required", JsonArray(listOf(JsonPrimitive("source"))))
         put("properties", buildJsonObject {
