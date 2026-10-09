@@ -31,9 +31,7 @@ import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.Secret
-import dev.min.agent.spi.PageConverter
-import dev.min.agent.spi.PageContent
-import dev.min.agent.tools.web.HtmlToMarkdown
+import dev.min.agent.tools.web.HtmlPageConverter
 import dev.min.agent.spi.Secrets
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.spi.Tool
@@ -113,12 +111,6 @@ private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamDisbandTool, Cr
 private val CRON_TOOL_NAMES = setOf("CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
 
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
-
-/** host 只认识 SPI；tools 的 HTML 转换器在组合根适配并注入。 */
-internal val DESKTOP_PAGE_CONVERTER = PageConverter { html, baseUrl ->
-    val converted = HtmlToMarkdown.convert(html, baseUrl)
-    PageContent(converted.title, converted.markdown)
-}
 
 /**
  * 桌面宿主的组合根：把内核与各个端口实现装在一起（docs/agent/02-总体架构.md §2：构造注入，一处组装）。
@@ -298,7 +290,7 @@ internal class DesktopApp(
                     paths::hostOf, home.resolve("proc-launch"),
                     secretEnvNames = desktopSecretEnvNames(*keyEnvs.toTypedArray()),
                 ),
-                web = CachedWebPort(DESKTOP_PAGE_CONVERTER, cacheTtlMs = args.webCacheTtlMs, deadlineMs = args.webDeadlineMs),
+                web = CachedWebPort(HtmlPageConverter, cacheTtlMs = args.webCacheTtlMs, deadlineMs = args.webDeadlineMs),
                 // 远程 MCP 服务器（Streamable HTTP / 旧 SSE）走同一个宿主 HTTP 实现
                 mcpHttp = dev.min.agent.host.UrlConnectionTransport(),
                 searchBackend = searchBackend,
