@@ -171,6 +171,11 @@ class ModelHooksSessionTest {
         // 评估请求真的看到了 $ARGUMENTS 换进去的事件输入
         val eval = model.requests.first { req -> req.system.any { it.contains("hook evaluator") } }
         assertTrue("事件输入进了提示词：${eval.allText()}", eval.allText().contains("\"tool_name\""))
+        // 评估请求走 rt.modelBilling（m0 的唯一出口）：ModelCharged 落本会话日志，受预算与超时约束。
+        // 按评估请求独有的 usage（inputTokens=100）认这笔账——主回合的 ModelCharged 隔离不出来
+        val charged = chargedEvents(rt)
+        assertTrue("prompt hook 的评估请求必须经账本记账（ModelCharged 落日志），实收 ${charged.map { it.usage.inputTokens }}",
+            charged.any { it.usage.inputTokens == 100L })
     }
 
     @Test
@@ -310,5 +315,10 @@ class ModelHooksSessionTest {
     private suspend fun hookRans(rt: SessionRuntime): List<HooksRan> {
         val store = FileSessionStore(tmp.root.toPath(), { 0L })
         return store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<HooksRan>()
+    }
+
+    private suspend fun chargedEvents(rt: SessionRuntime): List<dev.min.agent.spi.ModelCharged> {
+        val store = FileSessionStore(tmp.root.toPath(), { 0L })
+        return store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<dev.min.agent.spi.ModelCharged>()
     }
 }

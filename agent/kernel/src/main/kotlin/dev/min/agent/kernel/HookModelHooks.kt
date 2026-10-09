@@ -118,7 +118,11 @@ internal class ModelHookRunner(private val rt: SessionRuntime) {
     private fun label(handler: HookHandler): String =
         (handler.prompt ?: handler.server ?: handler.type).lineSequence().firstOrNull().orEmpty().take(60)
 
-    /** 一次模型请求：fastModel（没配用会话模型），处理器点名了 model 就按「供应商/模型」解析 */
+    /**
+     * 一次模型请求：fastModel（没配用会话模型），处理器点名了 model 就按「供应商/模型」解析。
+     * 请求走 [ModelBilling]——m0 的唯一出口：评估不是免费的（CC 的 prompt hook 走 background 模型，
+     * 一样计费），ModelCharged 落本会话日志、受预算检查与全局模型超时约束，与审查 / 提取 / recap 同一条路
+     */
     private suspend fun evaluatePrompt(handler: HookHandler, stdin: JsonObject): PromptHookOutcome {
         val state = rt.state.value
         val named = handler.model?.let { name ->
@@ -140,7 +144,7 @@ internal class ModelHookRunner(private val rt: SessionRuntime) {
         return try {
             var completed: ModelMessage? = null
             val done = withTimeoutOrNull(timeoutMs) {
-                resolved.client.stream(request).collect { ev ->
+                rt.modelBilling.stream(resolved, request).collect { ev ->
                     if (ev is dev.min.agent.llm.ModelStreamEvent.Completed) completed = ev.message
                 }
                 true
