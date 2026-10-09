@@ -5,7 +5,7 @@ import java.security.MessageDigest
 
 data class WorkflowScript(val meta: JsonObject, val body: String) {
     val name: String get() = requireNotNull((meta["name"] as? JsonPrimitive)?.contentOrNull)
-    val phases: List<String> get() = (meta["phases"] as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
+    val phases: List<String> get() = (meta["phases"] as? JsonArray)?.map { (it as? JsonObject)?.get("title")?.jsonPrimitive?.content ?: it.jsonPrimitive.content }.orEmpty()
 
     companion object {
         fun hash(source: String): String = MessageDigest.getInstance("SHA-256")
@@ -22,7 +22,7 @@ data class WorkflowScript(val meta: JsonObject, val body: String) {
             if (literal.pos < source.length && source[literal.pos] == ';') literal.pos++
             require((meta["name"] as? JsonPrimitive)?.isString == true && meta["name"]!!.jsonPrimitive.content.matches(Regex("[A-Za-z0-9_-]+"))) { "meta.name must be a command name." }
             require((meta["description"] as? JsonPrimitive)?.isString == true) { "meta.description must be a string." }
-            meta["phases"]?.let { phases -> require(phases is JsonArray && phases.all { it is JsonPrimitive && it.isString }) { "meta.phases must be strings." } }
+            meta["phases"]?.let { phases -> require(phases is JsonArray && phases.all { it is JsonPrimitive && it.isString || it is JsonObject && (it["title"] as? JsonPrimitive)?.isString == true && (it["detail"] == null || (it["detail"] as? JsonPrimitive)?.isString == true) }) { "meta.phases must contain titles or {title, detail}." } }
             return WorkflowScript(meta, source.substring(literal.pos))
         }
     }

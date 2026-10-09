@@ -23,4 +23,10 @@ class WorkflowSafetyTest {
     @Test fun toStringRecursion() = rejects("const o={toString(){return String(this)}}; return String(o);")
     @Test fun proxyRecursion() = rejects("const p=new Proxy({}, {get(t,k,r){return r[k]}}); return p.x;")
     @Test fun memoryLimitIsEnforced() = rejects("const a=[]; while(true) a.push('x'.repeat(100000));")
+    @Test fun idleWatchdogInterruptsNativeLoop() = runBlocking {
+        val started = System.nanoTime()
+        try { QuickJsWorkflowEngine(150).evaluate(source("while(true){}"), null, host); fail("Expected interrupt") }
+        catch (_: com.dokar.quickjs.QuickJsInterruptedException) { }
+        assertTrue((System.nanoTime() - started) / 1_000_000 < 5000)
+    }
 }

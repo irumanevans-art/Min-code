@@ -44,7 +44,7 @@ class QuickJsWorkflowEngineTest {
         assertEquals(JsonPrimitive("undefined"), engine.evaluate(script("return typeof args;"), null, host))
     }
     @Test fun limitsAndPhaseNamesAreEnforced() = run {
-        fails("await phase('Other')")
+        assertEquals(JsonPrimitive("ok"), engine.evaluate(script("await phase('Other'); return 'ok';"), null, host))
         fails("await pipeline(Array(4097), x => agent('x'))")
         fails("await parallel(Array(4097))")
         fails("await pipeline(Array(1001).fill('x'), x => agent(x))")

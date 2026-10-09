@@ -47,7 +47,7 @@ class QuickJsWorkflowEngine(private val idleTimeoutMillis: Long = 30_000) : Work
             var result: JsonElement = JsonNull
             js.function("__workflowResult") { values -> result = Json.parseToJsonElement(values[0] as String); Unit }
             js.evaluate<Unit>(SANDBOX)
-            val input = args?.toString() ?: "undefined"
+            val input = args?.let { "JSON.parse(${JsonPrimitive(it.toString())})" } ?: "undefined"
             val meta = script.meta.toString()
             // 闭包捕获桥接函数，项目脚本只能看见承诺的六个 API；所有原生参数均再次校验。
             js.evaluate<Any?>("""
@@ -56,16 +56,16 @@ class QuickJsWorkflowEngine(private val idleTimeoutMillis: Long = 30_000) : Work
                     delete globalThis.__workflowAgent; delete globalThis.__workflowProgress; delete globalThis.__workflowResult; delete globalThis.__workflowBegin;
                     const args = $input, meta = $meta;
                     Object.defineProperty(globalThis, 'args', {value: args, writable: false, configurable: false});
-                    let node = 0;
+                    let node = 0; let agentLimitError;
                     const results = [];
                     const pending = [];
                     const agent = (prompt, options = {}) => {
                         if (typeof prompt !== 'string' || !prompt.trim()) throw Error('agent prompt must be a nonempty string');
                         if (!options || typeof options !== 'object' || Array.isArray(options)) throw Error('agent options must be an object');
-                        if (Object.keys(options).some(key => !['schema', 'label', 'model'].includes(key))) throw Error('unknown agent option');
+                        options = Object.fromEntries(Object.entries(options).filter(([key]) => ['schema','label','model','phase','effort','isolation','agentType'].includes(key)));
                         if (options.schema !== undefined && (!options.schema || typeof options.schema !== 'object' || Array.isArray(options.schema))) throw Error('schema must be an object');
-                        for (const key of ['label', 'model']) if (options[key] !== undefined && typeof options[key] !== 'string') throw Error(key + ' must be a string');
-                        if (node >= 1000) throw Error('Workflow exceeds 1000 agents');
+                        for (const key of ['label', 'model', 'phase', 'effort', 'isolation', 'agentType']) if (options[key] !== undefined && typeof options[key] !== 'string') throw Error(key + ' must be a string');
+                        if (node >= 1000) { agentLimitError = Error('Workflow exceeds 1000 agents'); throw agentLimitError; }
                         const serialized = JSON.stringify(options);
                         const index = node++;
                         begin();
@@ -78,14 +78,18 @@ class QuickJsWorkflowEngine(private val idleTimeoutMillis: Long = 30_000) : Work
                     const parallel = (...tasks) => {
                         if (tasks.length === 1 && Array.isArray(tasks[0])) tasks = tasks[0];
                         if (tasks.length > 4096) throw Error('parallel exceeds 4096 items');
-                        return Promise.all(tasks.map(t => typeof t === 'function' ? t() : t));
+                        return Promise.all(tasks.map(t => Promise.resolve().then(() => typeof t === 'function' ? t() : t).catch(() => null)));
                     };
-                    const pipeline = (list, fn) => {
-                        if (!Array.isArray(list) || list.length > 4096 || typeof fn !== 'function') throw Error('invalid pipeline');
-                        return parallel(list.map((item, i) => () => fn(item, i)));
+                    const pipeline = (list, ...stages) => {
+                        if (!Array.isArray(list) || list.length > 4096 || !stages.length || stages.some(fn => typeof fn !== 'function')) throw Error('invalid pipeline');
+                        return parallel(list.map((item, i) => async () => {
+                            let value = item;
+                            for (const stage of stages) { if (value === null) break; value = await stage(value, item, i); }
+                            return value;
+                        }));
                     };
                     const phase = title => {
-                        if (typeof title !== 'string' || (meta.phases && !meta.phases.includes(title))) throw Error('phase must match meta.phases');
+                        if (typeof title !== 'string') throw Error('phase title must be a string');
                         begin(); return progress('phase', title);
                     };
                     const log = message => { begin(); return progress('log', typeof message === 'string' ? message : JSON.stringify(message)); };
@@ -95,6 +99,7 @@ class QuickJsWorkflowEngine(private val idleTimeoutMillis: Long = 30_000) : Work
                     const value = await execute(agent, pipeline, parallel, phase, log, args, meta);
                     // 等待已发起的节点落盘，避免脚本省略 await 时先保存空的最终结果。
                     await Promise.all(pending);
+                    if (agentLimitError) throw agentLimitError;
                     finish(JSON.stringify(value === undefined ? results : value));
                 })()
             """.trimIndent())
