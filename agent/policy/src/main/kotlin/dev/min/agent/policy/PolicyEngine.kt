@@ -80,7 +80,7 @@ object PolicyEngine {
         }
 
         // 宿主凭证不能经工具进入模型或事件；这个拒绝不能降级为可由用户或 hook 批准的询问。
-        if (facts.credentialTargets.any { credentialPath(it, context, includeAncestors = facts.tool == "Bash") }) {
+        if (facts.credentialTargets.any { credentialPath(it, context, includeAncestors = runsShellCommand(facts.tool)) }) {
             return Verdict.Deny(DecidedBy.Mode(context.mode), "这是 Min 保存的凭证文件，工具不能读取、搜索或修改它。")
         }
 
@@ -102,7 +102,7 @@ object PolicyEngine {
         }
 
         // classifyAllShell 连只读 shell 也送审；其他工具的只读快路仍按原契约。
-        if (context.mode == PermissionMode.Auto && context.classifyAllShell && facts.tool in setOf("Bash", "PowerShell")) return Verdict.Ask
+        if (context.mode == PermissionMode.Auto && context.classifyAllShell && facts.tool in setOf("Bash", "PowerShell", "Monitor")) return Verdict.Ask
         val effectivelyReadOnly = (readOnly || facts.isReadOnlyCommand) && !facts.requiresReadApproval
         val byMode = DecidedBy.Mode(context.mode)
         return when (context.mode) {
@@ -122,6 +122,12 @@ object PolicyEngine {
                 if (effectivelyReadOnly) Verdict.Allow(byMode) else Verdict.Ask
         }
     }
+
+    /**
+     * 这个工具的入参是一条 shell 命令，判定按 Bash 的规矩来（Monitor 的命令源：CC 说它「用与 Bash 同一套权限规则」）。
+     * 规则匹配本来就只看命令、不看工具名；凭证目录的祖先判定、Read 拒绝挡写这类按工具名分支的地方用它，别各写一份 `== "Bash"`
+     */
+    fun runsShellCommand(tool: String): Boolean = tool == "Bash" || tool == "Monitor"
 
     /** 任意代码执行授权在 Auto 里不能越过分类器；窄命令规则仍保留。 */
     fun suspendedInAuto(rule: PermissionRule, classifyAllShell: Boolean = false): Boolean {
@@ -271,8 +277,10 @@ object PolicyEngine {
      * 踩了底线的请求也不给：底线任何规则都绕不过，给了「总是允许」也没用，只会让人以为下次不用问。
      */
     fun suggestRule(ask: PermissionAsk, context: PolicyContext): String? {
-        if (Facts.of(ask, context).credentialTargets.any { credentialPath(it, context, includeAncestors = ask.tool == "Bash") }) return null
+        if (Facts.of(ask, context).credentialTargets.any { credentialPath(it, context, includeAncestors = runsShellCommand(ask.tool)) }) return null
         if (floorReason(ask, context) != null) return null
+        // Monitor 的 WebSocket 源：CC 的弹窗不提供「以后不再问这个主机」，整个 Monitor 放行又太宽
+        if (ask.tool == "Monitor" && ask.commands.isEmpty()) return null
         if (ask.commands.isNotEmpty()) {
             if (ask.commands.size != 1) return null
             val parsed = ShellAnalyzer.analyze(ask.commands.single().raw) as? ShellAnalysis.Parsed ?: return null

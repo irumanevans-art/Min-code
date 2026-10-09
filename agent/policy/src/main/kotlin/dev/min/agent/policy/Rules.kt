@@ -106,7 +106,7 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
         }
         // Read 的拒绝也阻止 Edit/Write 的先读后写；允许与询问不能借此授予写权限。
         val readDenyWrite = rule.tool == "Read" && rule.kind == RuleKind.Deny && access.kind == AccessKind.Write &&
-            (tool == null || tool in setOf("Edit", "Write", "Bash"))
+            (tool == null || tool in setOf("Edit", "Write", "Bash", "Monitor"))
         if (access.kind != family && !readDenyWrite) return false
         val spec = rule.specifier?.removePrefix("!") ?: return false
         return pathPattern(spec, rule.baseDir, rule.kind).matches(normalizePolicyPath(access.path.value))
