@@ -284,6 +284,13 @@ class ModelHooksSessionTest {
         // 第一次停被 agent hook 打回去（Block），模型接着回应了理由；第二轮 Stop 不再拦（脚本走完了）
         val turns = hookRans(rt).count { it.event == "Stop" }
         assertTrue("Stop 的 agent hook 跑过并落了 HooksRan", turns >= 1)
+        // L5：回合必须真的续跑了——否决理由作为下一条指令交回主模型、它回应了，而不是只数 HooksRan。
+        // （把 interpretPrompt 的 Stop 分支改成不拦，这两条都要红）
+        assertTrue("否决理由要作为下一条指令交回主模型",
+            model.requests.any { req -> !req.system.any { it.contains("hook verifier") } && req.allText().contains("还有两个测试没过") })
+        assertTrue("主模型按理由续跑了", rt.state.value.history
+            .filterIsInstance<HistoryEntry.Assistant>()
+            .any { a -> a.parts.any { p -> (p as? TextPart)?.text?.contains("把剩下两个修了") == true } })
         // 来历类型 hook-agent、只读工具；花费落自己的日志（ModelCharged）；跑完从 Hub 卸下（L3）
         assertEquals(HOOK_AGENT_TYPE, child.state.value.origin?.agentType)
         assertEquals(listOf("Read", "Grep", "Glob"), child.state.value.origin?.tools)
