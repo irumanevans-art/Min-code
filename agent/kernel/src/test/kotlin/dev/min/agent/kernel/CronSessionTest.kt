@@ -547,6 +547,13 @@ class CronSessionTest {
         assertTrue(events(rt.sessionId).filterIsInstance<Note>().any { it.level == NoteLevel.Warning && it.text.contains("满 7 天") })
         withTimeout(5_000) { while (notices.isEmpty()) delay(20) }
         assertEquals(CronNotice.Kind.Expired, notices.single().kind)
+        // 界面按语言组句要的事实：原因、日程（固定间隔 30 分钟）、循环
+        notices.single().let { n ->
+            assertEquals(CronExpiry.Age, n.expiry)
+            assertEquals(30 * minute, n.intervalMs)
+            assertNull(n.cron)
+            assertTrue(n.recurring)
+        }
         // 过期之后即使到点也不再触发
         val firesBefore = task.fires
         now.set(t0 + 8 * 24 * 60 * minute)
@@ -708,6 +715,12 @@ class CronSessionTest {
         assertTrue(log.filterIsInstance<Note>().any { it.level == NoteLevel.Warning && it.text.contains("花费上限") && it.text.contains("这一次运行") })
         withTimeout(5_000) { while (notices.isEmpty()) delay(20) }
         assertEquals(CronNotice.Kind.BudgetStopped, notices.single().kind)
+        notices.single().let { n ->
+            assertEquals(CronOverrun(CronOverrun.Cause.Spent, 0.045, 0.04).cause, n.overrun!!.cause)
+            assertEquals(0.045, n.overrun!!.spentUsd, 1e-9)
+            assertEquals(0.04, n.limitUsd!!, 1e-9)
+            assertTrue("任务还在，下次还会跑", n.willRunAgain)
+        }
         assertNull("回合停下了", state.turn)
 
         // 任务没取消：下一次到点照常触发，这次平静地结束
@@ -756,6 +769,11 @@ class CronSessionTest {
         val expired = events(rt.sessionId).filterIsInstance<CronExpired>().single()
         assertEquals(CronExpiry.Budget, expired.reason)
         withTimeout(5_000) { while (notices.none { it.kind == CronNotice.Kind.Expired }) delay(20) }
+        notices.single { it.kind == CronNotice.Kind.Expired }.let { n ->
+            assertEquals(CronExpiry.Budget, n.expiry)
+            assertEquals("连续第二次", 2, n.consecutiveOverruns)
+            assertEquals(CronOverrun.Cause.Spent, n.overrun!!.cause)
+        }
         // 暂停之后到点也不触发
         now.set(now.get() + 3 * 60 * minute)
         h.crons.tick(now.get())
@@ -1015,6 +1033,7 @@ class CronSessionTest {
         assertTrue(skipNotes.single().text, skipNotes.single().text.contains("跳过") && skipNotes.single().text.contains("c1"))
         withTimeout(5_000) { while (notices.isEmpty()) delay(20) }
         assertEquals(CronNotice.Kind.Skipped, notices.single().kind)
+        assertEquals(0.1, notices.single().limitUsd!!, 1e-9)
 
         // 后面的心跳、后面的几次到点：照样跳过，不重复提示
         for (step in 1..3) {
