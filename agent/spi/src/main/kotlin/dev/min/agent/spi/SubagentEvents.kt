@@ -89,7 +89,7 @@ data class SubagentOrigin(
 
 /** 分身继承的一条对话消息：与父会话里那条逐字节相同（含消息 id） */
 @Serializable
-data class SeedMessage(val messageId: MessageId, val role: Role, val parts: List<Part>)
+data class SeedMessage(val messageId: MessageId, val role: Role, val parts: List<Part>, val origin: InputOrigin? = null)
 
 @Serializable
 data class SeedResult(val callId: CallId, val result: ToolResult)

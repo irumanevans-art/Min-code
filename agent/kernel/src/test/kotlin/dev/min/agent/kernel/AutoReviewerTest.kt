@@ -161,6 +161,33 @@ class AutoReviewerTest {
         for (marker in listOf("attachment-injection", "agent-injection", "parent-injection", "hook-injection")) assertFalse(body.contains(marker))
     }
 
+    @Test fun R2_fork_seed_replay_retains_original_user_origins() = run {
+        val rt = session(ScriptedModel())
+        val call = ToolCallPart(CallId("fork"), "Agent", args("prompt" to "help"))
+        val entries = listOf(
+            HistoryEntry.User(MessageId("u"), listOf(TextPart("human"))),
+            HistoryEntry.User(MessageId("a"), listOf(TextPart("agent-injection")), InputOrigin.Agent(SessionId("a"), AgentInputKind.Report)),
+            HistoryEntry.User(MessageId("h"), listOf(TextPart("hook-injection")), InputOrigin.Hook("Stop")),
+            HistoryEntry.User(MessageId("p"), listOf(TextPart("parent-injection")), InputOrigin.Parent(SessionId("p"))),
+            HistoryEntry.User(MessageId("c"), listOf(TextPart("cron-injection")), InputOrigin.Cron("cron")),
+            HistoryEntry.Assistant(MessageId("d"), listOf(call)),
+        )
+        val seed = forkSeed(rt.state.value.copy(history = entries), call.callId, "help")
+        val serialized = dev.min.agent.protocol.AgentJson.encodeToString(ForkSeeded.serializer(), seed)
+        val decoded = dev.min.agent.protocol.AgentJson.decodeFromString(ForkSeeded.serializer(), serialized)
+        val origin = SubagentOrigin(rt.sessionId, rt.sessionId, call.callId, "fork", true, 1, cacheKey = rt.sessionId.value)
+        val events = listOf(rt.state.value.created, origin, decoded).mapIndexed { i, event -> EventRecord(i + 1L, 0, event) }
+        val state = fold(rt.state.value.header, events)
+        assertEquals(entries.filterIsInstance<HistoryEntry.User>().map { it.origin }, state.history.filterIsInstance<HistoryEntry.User>().map { it.origin })
+        val request = AutoReviewer(rt).request(command("touch out"), TEST_PROFILE, PolicyContext(PermissionMode.Auto), AutoModeConfig(), state)
+        val body = (request.messages.single().parts.single() as TextPart).text
+        for (marker in listOf("agent-injection", "hook-injection", "parent-injection", "cron-injection")) assertFalse(marker, body.contains(marker))
+        assertTrue(body.contains("human"))
+        val oldSeed = decoded.copy(messages = decoded.messages.map { it.copy(origin = null) })
+        val oldState = fold(rt.state.value.header, listOf(rt.state.value.created, origin, oldSeed).mapIndexed { i, event -> EventRecord(i + 1L, 0, event) })
+        assertTrue(oldState.history.filterIsInstance<HistoryEntry.User>().all { it.origin != InputOrigin.User })
+    }
+
     @Test fun BUG_default_boundaries_and_circuit_breaker_are_replayable() = run {
         val reviewer = ScriptedModel(reply(TextPart(decision("deny"))), reply(TextPart(decision("deny"))), reply(TextPart(decision("deny"))), reply(TextPart(decision("allow"))))
         val rt = session(reviewer, mainTurns = 4)
