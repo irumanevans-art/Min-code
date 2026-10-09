@@ -1417,4 +1417,23 @@
     <string name="auto_review_failed">Could not change the review model: %1$s</string>
 
     <string name="auto_review_other_provider">Sent to another provider</string>
+
+    <!-- M5: scheduled tasks - schedule wording shared by the list and the notifications -->
+    <string name="cron_schedule_cron">cron %1$s</string>
+    <string name="cron_schedule_minutes">every %1$d min</string>
+    <string name="cron_schedule_hours">every %1$d h</string>
+    <string name="cron_schedule_days">every %1$d d</string>
+    <string name="cron_overrun_spent">this run spent %1$s and reached the per-run cap of %2$s</string>
+    <string name="cron_overrun_unpriced_request">a request in this run had no USD price, so the spending can\'t be checked; treated as over the cap</string>
+    <string name="cron_overrun_unpriced_model">this model has no USD price, so the spending can\'t be checked</string>
+    <string name="cron_body_skipped_recurring">Scheduled task %1$s (%2$s) came due, but the current model has no USD price, so the cap of %3$s can\'t be checked. This run was skipped; the task stays and runs normally next time once a priced model is back.</string>
+    <string name="cron_body_skipped_once">Scheduled task %1$s (%2$s) came due, but the current model has no USD price, so the cap of %3$s can\'t be checked. This run was skipped; the task stays and fires once a priced model is back.</string>
+    <string name="cron_body_budget_stopped_again">A run of scheduled task %1$s (%2$s) was stopped: %3$s. The task stays and runs again next time (it pauses after two overruns in a row).</string>
+    <string name="cron_body_budget_stopped_done">A run of scheduled task %1$s (%2$s) was stopped: %3$s. It was a one-shot task or wake-up that has already fired, so it won\'t run again.</string>
+    <string name="cron_body_paused">Scheduled task %1$s (%2$s) is paused: it hit the per-run cap %3$d runs in a row. To continue, recreate it with a different prompt or cap.</string>
+    <string name="cron_body_paused_last">Scheduled task %1$s (%2$s) is paused: it hit the per-run cap %3$d runs in a row (last time: %4$s). To continue, recreate it with a different prompt or cap.</string>
+    <string name="cron_body_expired_age">Scheduled task %1$s (%2$s) ended: recurring tasks expire after 7 days.</string>
+    <string name="cron_body_expired_missed">Scheduled task %1$s (%2$s) ended: its time passed while the session was not open, and a missed one-shot task is not run late.</string>
+    <string name="cron_body_expired_no_pricing">Scheduled task %1$s (%2$s) ended: the current model has no USD price, so its cost can\'t be estimated.</string>
+
 </resources>

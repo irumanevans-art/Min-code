@@ -1412,4 +1412,23 @@
     <string name="auto_review_failed">没能改审查模型：%1$s</string>
 
     <string name="auto_review_other_provider">会发给另一家供应商</string>
+
+    <!-- M5: scheduled tasks - schedule wording shared by the list and the notifications -->
+    <string name="cron_schedule_cron">cron %1$s</string>
+    <string name="cron_schedule_minutes">每 %1$d 分钟</string>
+    <string name="cron_schedule_hours">每 %1$d 小时</string>
+    <string name="cron_schedule_days">每 %1$d 天</string>
+    <string name="cron_overrun_spent">这次运行花了 %1$s，到了单次上限 %2$s</string>
+    <string name="cron_overrun_unpriced_request">这次运行里有模型请求没有 USD 价格，花费无法核对，按到上限处理</string>
+    <string name="cron_overrun_unpriced_model">这个模型没有 USD 价格，花费无法核对</string>
+    <string name="cron_body_skipped_recurring">定时任务 %1$s（%2$s）到点了，但当前模型没有 USD 价格，花费上限 %3$s 核对不了，这一次跳过没有触发。任务还在；换回有 USD 价格的模型后下一次到点会照常运行。</string>
+    <string name="cron_body_skipped_once">定时任务 %1$s（%2$s）到点了，但当前模型没有 USD 价格，花费上限 %3$s 核对不了，这一次跳过没有触发。任务还在；换回有 USD 价格的模型后会触发。</string>
+    <string name="cron_body_budget_stopped_again">定时任务 %1$s（%2$s）这一次运行被花费上限停下了：%3$s。任务还在，下次到点会照常再跑一次（连续 2 次超限才会暂停）。</string>
+    <string name="cron_body_budget_stopped_done">定时任务 %1$s（%2$s）这一次运行被花费上限停下了：%3$s。这是一次性任务 / 唤醒，已经触发过，不会再跑。</string>
+    <string name="cron_body_paused">定时任务 %1$s（%2$s）已暂停：连续第 %3$d 次超过单次花费上限。要继续请调整提示词或上限后重新创建。</string>
+    <string name="cron_body_paused_last">定时任务 %1$s（%2$s）已暂停：连续第 %3$d 次超过单次花费上限（最近一次：%4$s）。要继续请调整提示词或上限后重新创建。</string>
+    <string name="cron_body_expired_age">定时任务 %1$s（%2$s）已结束：循环任务满 7 天自动过期。</string>
+    <string name="cron_body_expired_missed">定时任务 %1$s（%2$s）已结束：一次性任务的时刻在会话没开着时过去了，不补跑。</string>
+    <string name="cron_body_expired_no_pricing">定时任务 %1$s（%2$s）已结束：当前模型没有 USD 价格，花费估算不了。</string>
+
 </resources>
