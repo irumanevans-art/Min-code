@@ -140,8 +140,12 @@ internal class MinExec(
         tasks.stopped(handle.id)
     }
 
-    // 存活 / pid 探测都转发给当前一代（ProotExec）：不转发的话端口默认「说不了」，内核退回 kill -0 轮询
-    override suspend fun isAlive(handle: ExecHandle): Boolean? = current().exec.isAlive(handle)
+    // 存活探测转发给 ProotExec：不转发的话端口默认「说不了」，内核退回 kill -0 轮询。句柄要问起它的那一代：
+    // 换代后新一代的运行表里没有旧句柄，会把还在跑的后台命令报成「不在了」
+    override suspend fun isAlive(handle: ExecHandle): Boolean? = (owner[handle.id] ?: current().exec).isAlive(handle)
+
+    // 退出码在起它的那一代手里：换代后新一代查不到旧句柄，与 kill 同理要回到 owner
+    override suspend fun exitOf(handle: ExecHandle): Int? = (owner[handle.id] ?: current().exec).exitOf(handle)
     override fun currentPid(): Long = current().exec.currentPid()
     override suspend fun isPidAlive(pid: Long): Boolean? = current().exec.isPidAlive(pid)
 }

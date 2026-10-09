@@ -108,6 +108,13 @@ interface Exec {
     suspend fun isAlive(handle: ExecHandle): Boolean? = null
 
     /**
+     * 后台句柄的退出码：宿主在进程结束时记下，之后能查（只留最近一批）。null = 还在跑、句柄不是本端口发的、
+     * 记录已被挤掉，或这个端口说不了（默认）。为什么要有它：后台命令跑完要告诉模型「成功还是失败」，
+     * 只知道「不在了」（[isAlive] 为假）区分不了；日志文件里也没有退出码
+     */
+    suspend fun exitOf(handle: ExecHandle): Int? = null
+
+    /**
      * 本宿主进程的 pid：后台 hook 暂存目录的 owner 记号用它（实例 id + pid），启动清扫据此认「这是谁留下的」。
      * 默认 0 = 说不了（owner 记号写 0，清扫对它认不了主、不敢删）。
      * 为什么走端口：内核拿 pid 只有 `ProcessHandle.current()`，Android 33 以下没有它——

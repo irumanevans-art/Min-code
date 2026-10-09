@@ -57,7 +57,9 @@ class LocalExec(
         val proc = try {
             process.outputStream.close()
             running[id] = process to launch
-            Running(id, process, logFile, options.maxOutputChars) {
+            Running(id, process, logFile, options.maxOutputChars) { code ->
+                // 退出码先记、再摘出运行表：[isAlive] 一说「不在了」，[exitOf] 就必须已经查得到
+                rememberExit(id, code)
                 try {
                     launch.cleanup()
                 } finally {
@@ -112,6 +114,17 @@ class LocalExec(
         return process.isAlive
     }
 
+    override suspend fun exitOf(handle: ExecHandle): Int? = exits[handle.id]
+
+    /** 最近结束的后台进程的退出码。只留 [MAX_REMEMBERED_EXITS] 条：长会话里后台命令成百上千，表不能一直长 */
+    private val exits = object : java.util.LinkedHashMap<String, Int>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?): Boolean = size > MAX_REMEMBERED_EXITS
+    }.let { java.util.Collections.synchronizedMap(it) }
+
+    private fun rememberExit(id: String, code: Int) {
+        exits[id] = code
+    }
+
     override fun currentPid(): Long = ProcessHandle.current().pid()
 
     /** 按宿主进程表判任意 pid：owner 是别的桌面终端的 JVM 进程，问宿主最准（M4） */
@@ -132,7 +145,7 @@ class LocalExec(
         private val process: Process,
         logFile: Path,
         maxChars: Int,
-        onDone: () -> Unit,
+        onDone: (Int) -> Unit,
     ) {
         val exit = CompletableDeferred<Int>()
         private val collector = OutputCollector(maxChars)
@@ -169,7 +182,7 @@ class LocalExec(
                 // 后台子孙可能还攥着管道写端，EOF 迟迟不来：最多等 2 秒把已到的输出读完
                 pump.join(DRAIN_MS)
                 try {
-                    onDone()
+                    onDone(code)
                 } finally {
                     exit.complete(code)
                 }
@@ -234,5 +247,6 @@ class LocalExec(
 
     private companion object {
         const val DRAIN_MS = 2_000L
+        const val MAX_REMEMBERED_EXITS = 256
     }
 }

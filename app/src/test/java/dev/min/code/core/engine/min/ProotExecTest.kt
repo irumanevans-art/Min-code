@@ -98,6 +98,16 @@ class ProotExecTest {
         withTimeout(2000) { while (host.kills.get() == 0) delay(5) }
         assertFalse(host.process.isAlive); assertEquals(1, host.kills.get())
     }
+    @Test fun exitCodeIsQueryableOnceTheProcessIsGone() = runBlocking {
+        val host = FakeHost(); val exec = ProotExec(base(), host)
+        val result = exec.run(command, ExecOptions(30000, 20)) as ExecResult.Backgrounded
+        assertNull("还在跑：没有退出码", exec.exitOf(result.handle))
+        host.process.code = 5; host.process.finished.countDown()
+        // 先记退出码、再摘出运行表：isAlive 一说不在了，exitOf 就必须有值
+        withTimeout(2000) { while (exec.isAlive(result.handle) != false) delay(5) }
+        assertEquals(5, exec.exitOf(result.handle))
+        assertNull(exec.exitOf(ExecHandle("never-issued", 42)))
+    }
     @Test fun staleHandleDoesNotKillForeignProcess() = runBlocking {
         val host = FakeHost(); ProotExec(base(), host).kill(ExecHandle("old", 42))
         assertEquals(0, host.kills.get())
