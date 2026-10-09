@@ -407,6 +407,20 @@ class BackgroundJobsTest {
     }
 
     @Test
+    fun `TaskOutput 对子 agent 给状态与描述（按 id 或名字），不是 agent 也不是任务才报错`() = run {
+        val r = rig()
+        val rt = r.session()
+        val child = (r.hub.portFor(rt, TurnId("t"), CallId("c1")).delegate(DelegateRequest("查日志", "hang forever", "general-purpose", name = "finder"))) as DelegateResult.Started
+        for (target in listOf(child.child.value, "finder")) {
+            val out = rt.background.taskOutput(target, block = false, timeoutMs = 0)
+            assertFalse(target, out.isError)
+            val text = out.content.filterIsInstance<TextPart>().first().text
+            assertTrue(text, text.contains("运行中") && text.contains("查日志") && text.contains("finder") && text.contains("不必轮询"))
+        }
+        assertTrue(rt.background.taskOutput("nobody", block = false, timeoutMs = 0).isError)
+    }
+
+    @Test
     fun `停一个子 agent，它起的 watch 一起停`() = run {
         val r = rig()
         val rt = r.session()

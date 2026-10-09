@@ -547,6 +547,8 @@ internal class BackgroundJobs(
         val job = jobs[taskId] ?: run {
             // 别的 agent 起的任务（主会话能看子 agent 的 watch）：交给它所在的会话去答
             rt.hub?.jobOwner(rt, taskId)?.let { return it.background.taskOutput(taskId, block, timeoutMs) }
+            // 子 agent / 队友 / 有名字的后台 agent 的 id 或名字：给状态与最近的回复（报告完成时会自动送达，这只是看一眼）
+            rt.hub?.agentOutput(rt, taskId)?.let { return it }
             return unknownTask(taskId)
         }
         if (block && job.status == BackgroundJobStatus.Running) {

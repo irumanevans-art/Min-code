@@ -1330,6 +1330,28 @@ class SessionHub(
     }
 
     /**
+     * TaskOutput 对一个 agent（子 agent / 队友 / 有名字的后台 agent，id 或名字，本树里任一会话委派的）：给它此刻的状态与最近的一条回复。
+     * 它完成时报告会自动送达；这里只是让模型不必为了「看一眼进展」去猜别的办法。不是 agent 返回 null
+     */
+    internal fun agentOutput(from: SessionRuntime, target: String): ToolResult? {
+        val root = from.state.value.origin?.root ?: from.sessionId
+        val tree = subtreeOnline(root).mapNotNull { runtimes[it] }
+        val summary = tree.firstNotNullOfOrNull { parent ->
+            parent.state.value.children.values.firstOrNull { !it.rewound && (it.child.value == target || it.name == target) }
+        } ?: return null
+        val state = runtimes[summary.child]?.state?.value
+        val running = state != null && (state.turn != null || state.lastTurn == null)
+        val last = state?.history?.lastOrNull { it is HistoryEntry.Assistant }?.let { (it as HistoryEntry.Assistant).parts }
+            ?.filterIsInstance<TextPart>()?.joinToString("") { it.text }?.takeIf { it.isNotBlank() }
+        val who = "${summary.child.value}（${summary.name?.let { "$it，" }.orEmpty()}${summary.agentType}：${summary.description}）"
+        return ok(buildString {
+            append("子 agent ").append(who).append("：").append(if (running) "运行中" else "已结束").append("。\n")
+            append(last?.let { "最近的一条回复：\n" + it.take(AGENT_OUTPUT_CHARS) } ?: "还没有文字回复。")
+            append("\n（它完成时报告会自动送到你这里，不必轮询。）")
+        })
+    }
+
+    /**
      * 「没找到任务」的报错里附上的清单：这棵树里正在跑的后台任务与 agent（id + 描述）。
      * 含别的 agent 起的——CC 2.1.203 起主会话也要能认出并停掉它们
      */
@@ -1369,6 +1391,9 @@ class SessionHub(
 
         /** [stopTree] 收集子树、[shutdown] 重试「停树 + 卸下」的最多轮数 */
         const val STOP_ROUNDS = 3
+
+        /** TaskOutput 看 agent 时最近一条回复最多给多少字符 */
+        const val AGENT_OUTPUT_CHARS = 6_000
     }
 }
 

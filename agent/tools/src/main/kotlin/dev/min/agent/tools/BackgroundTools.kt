@@ -178,6 +178,7 @@ object TaskOutputTool : Tool<TaskOutputInput> {
     override fun description(profile: HarnessProfile) =
         "按 task_id 取后台任务（转后台的 Bash 命令、Monitor 的 watch）的状态与输出末尾。已弃用：优先直接用 Read 读任务的输出文件路径" +
             "（开跑时回执里给了），可以分段、可以反复读。block=true（默认）时任务还在跑就等它结束，最多 timeout 毫秒。" +
+            "对子 agent / 队友（id 或名字）给它的状态与最近的一条回复。" +
             "找不到 id 时，错误里会列出正在跑的后台任务和 agent（id + 描述）。"
 
     override fun parse(raw: JsonObject): ToolInput<TaskOutputInput> = parseArgs {
