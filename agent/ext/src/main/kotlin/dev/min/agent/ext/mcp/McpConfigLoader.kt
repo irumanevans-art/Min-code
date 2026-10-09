@@ -146,7 +146,11 @@ object McpConfigLoader {
             val candidates = mutableListOf<Pair<McpGate, String>>()
             if (p.origin == Origin.Plugin) plugins.firstOrNull { it.name == p.name }?.error?.let { candidates += McpGate.Disabled to it }
             if (p.origin == Origin.Plugin && plugins.firstOrNull { it.name == p.name }?.trusted != true) {
-                candidates += McpGate.Untrusted to "插件所在目录未信任"
+                candidates += McpGate.Untrusted to "插件启用来源的工作区未信任"
+            }
+            if (p.origin == Origin.Plugin && plugins.firstOrNull { it.name == p.name }?.requiresApproval == true &&
+                !(enableAll || p.name in enabledMcpjson)) {
+                candidates += McpGate.NeedsApproval to "项目插件 MCP 服务器需要逐服务器批准（enabledMcpjsonServers）"
             }
             policy.deniedBy(finalSpec)?.let { candidates += McpGate.Denied to "被 deniedMcpServers 拦下（${it.describe}）" }
             // 组织自己的服务器免 allowlist：managedMcpServers 恒免；managed-mcp.json 里用了 ${VAR} 的不免（CC 原文）

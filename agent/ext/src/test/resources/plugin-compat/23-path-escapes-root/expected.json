@@ -1,7 +1,8 @@
 {
-  "loads": false,
+  "loads": true,
   "errors": [
     "escapes plugin directory"
   ],
-  "basis": "PLG:401-403 组件路径必须解析在插件根内，「a path that resolves outside the plugin root doesn't load」且 Errors 显示原文「<component> path escapes plugin directory: <path>」；含 .. 的常规情形 validate 报 Path contains \"..\""
+  "basis": "https://code.claude.com/docs/en/plugins/loading：组件路径或格式无效时 the plugin loads without that component；记录错误，保留其他组件。",
+  "commands": []
 }

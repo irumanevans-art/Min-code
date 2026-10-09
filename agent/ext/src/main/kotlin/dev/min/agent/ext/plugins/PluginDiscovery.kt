@@ -11,8 +11,8 @@ internal fun PluginParser.discover(
         entry: JsonObject?,
         request: PluginRequest,
     ): LoadedPlugin {
-        val marketplaceName = request.ref?.marketplace
-        val install = if (marketplaceName == null) "pluginDir" else "marketplace"
+        val marketplaceName = if (request.sideload) "inline" else request.ref?.marketplace
+        val install = if (marketplaceName == null || request.sideload) "pluginDir" else "marketplace"
         val entryIsManifest = manifest == null && entry != null
         val ns: String
         val nameSource: PluginNameSource
@@ -27,6 +27,7 @@ internal fun PluginParser.discover(
             }
             else -> {
                 ns = rootName
+                if (!validPluginName(ns)) bug("directory name \"$ns\" 不符合插件 name 字符规则")
                 nameSource = PluginNameSource.DIRECTORY_NAME
             }
         }
@@ -66,7 +67,7 @@ internal fun PluginParser.discover(
         val displayName = if (install == "marketplace") entry?.strOrNull("displayName") ?: manifestObj?.displayName else manifestObj?.displayName
         val version = manifestObj?.version ?: entry?.strOrNull("version")
         val defaultEnabled = entry?.boolOrNull("defaultEnabled") ?: manifestObj?.defaultEnabled ?: true
-        val enabledId = if (install == "marketplace") "$refName@$marketplaceName" else refName
+        val enabledId = ref.id
         val enabled = request.enabledPlugins[enabledId] ?: defaultEnabled
 
         return LoadedPlugin(
@@ -75,6 +76,7 @@ internal fun PluginParser.discover(
             nameSource = nameSource,
             root = rootName,
             enabled = enabled,
+            explicitlyDisabled = request.enabledPlugins[enabledId] == false || enabledId in request.disabledDependencies,
             displayName = displayName,
             manifest = manifestObj?.copy(version = version, defaultEnabled = defaultEnabled),
             warnings = if (files.containsKey("CLAUDE.md")) listOf("CLAUDE.md at the plugin root is not loaded as project context") else emptyList(),
@@ -108,7 +110,11 @@ internal fun PluginParser.discoverSkills(
         fun add(rel: String, baseName: String) {
             val fm = frontmatter(files.getValue(rel))
             val name = "$ns:" + (fm["name"] ?: baseName)
-            if (!seen.add(name)) { if (skills.any { it.name == name && it.skillMd == rel }) return; bug("技能名重复：$name") }
+            if (!seen.add(name)) {
+                if (skills.any { it.name == name && it.skillMd == rel }) return
+                componentErrors += "技能名重复：$name（$rel），跳过该组件"
+                return
+            }
             skills += PluginSkill(name, rel)
         }
         fun addRootSkill() {
@@ -273,8 +279,7 @@ internal fun PluginParser.discoverHooks(
                 val inner = o.arr("hooks") ?: bug("$from 缺 hooks 数组")
                 inner.forEach { h ->
                     val ho = h as? JsonObject ?: bug("$from 的 handler 不是对象")
-                    if (ho.strOrNull("type") != "command") return@forEach
-                    out += PluginHookHandler(o.strOrNull("matcher"), ho.strOrNull("command"), ho.arr("args")?.map { it.jsonPrimitive.content } ?: emptyList(), ho)
+                    out += PluginHookHandler(o.strOrNull("matcher"), ho.strOrNull("command"), ho.arr("args")?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content } ?: emptyList(), ho)
                 }
             }
             return out
@@ -287,14 +292,14 @@ internal fun PluginParser.discoverHooks(
         }
         files["hooks/hooks.json"]?.let { f ->
             val o = parseJson(f).jsonObject
-            eventMap(o.obj("hooks") ?: bug("hooks/hooks.json 缺 \"hooks\" 包裹"), "hooks/hooks.json")
+            o.obj("hooks")?.let { eventMap(it, "hooks/hooks.json") }
         }
         fun addValue(v: JsonElement, from: String) {
             when (v) {
                 is JsonPrimitive -> {
                     val rel = v.content.removePrefix("./")
                     val f = files[rel] ?: bug("hooks 文件不存在 $rel")
-                    eventMap(parseJson(f).jsonObject.obj("hooks") ?: bug("$rel 缺 \"hooks\" 包裹"), rel)
+                    parseJson(f).jsonObject.obj("hooks")?.let { eventMap(it, rel) }
                 }
                 is JsonObject -> eventMap(v, from)
                 is JsonArray -> v.forEach { addValue(it, from) }

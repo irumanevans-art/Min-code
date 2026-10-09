@@ -59,7 +59,7 @@ class HookBatchRunner(
             // Exec 只运输一个安全引用的路径，Android 也走相同协议。
             val scriptPath = child(dir, "batch.sh")
             fs.writeAtomic(scriptPath, batch.script.encodeToByteArray())
-            val result = exec.run(ShellCommand("sh ${commandQuote(shellPathOf(scriptPath))}", cwd),
+            val result = exec.run(ShellCommand("sh ${commandQuote(shellPathOf(scriptPath))}", cwd, pluginProcessEnv(handlers)),
                 ExecOptions(timeouts.max().toLong() * 1_000 + 5_000))
             if (result is ExecResult.Exited && (result.exitCode != 0 || result.output.isNotBlank())) {
                 notes += "hook 批脚本诊断（退出码 ${result.exitCode}）：${result.output.lineSequence().firstOrNull().orEmpty().take(2_000)}"
@@ -126,13 +126,14 @@ class HookBatchRunner(
                 val invocation = if (h.args != null) {
                     val argv = if (h.command != null) listOf(h.command) + h.args else h.args
                     require(argv.isNotEmpty())
-                    argv.joinToString(" ", transform = ::quote)
+                    argv.mapIndexed { ai, arg -> if (h.source == dev.min.agent.ext.config.ConfigSource.Plugin)
+                        "\"\${MIN_PLUGIN_${i}_ARG_$ai}\"" else quote(arg) }.joinToString(" ")
                 } else "sh -c ${quote(requireNotNull(h.command))}"
                 val input = quote(shellPathOf(child(dir, "in.json")))
                 val out = quote(shellPathOf(child(dir, "out.$i")))
                 val err = quote(shellPathOf(child(dir, "err.$i")))
                 append("(\n")
-                h.pluginEnv.forEach { (key, value) -> if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(key)) append("export $key=${quote(value)}\n") }
+                h.pluginEnv.keys.forEachIndexed { ei, key -> if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(key)) append("export $key=\"\${MIN_PLUGIN_${i}_ENV_$ei}\"\n") }
                 append("min_hook_start=\$(date +%s%3N 2>/dev/null)\n")
                 append("if [ \"\$min_hook_timeout\" = 1 ]; then\n")
                 append("timeout -k 2 ${timeouts[i]} $invocation < $input > $out 2> $err\n")

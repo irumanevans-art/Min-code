@@ -8,6 +8,15 @@ import kotlinx.serialization.json.*
 
 /** 仓库配置不能把自身声明为可信环境；四个数组只在用户与托管层累加。 */
 fun MergedSettings.autoReviewSettings(): AutoReviewSettingsLoaded {
+    return try { parseAutoReviewSettings() }
+    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+    catch (_: Exception) {
+        // 失效的审查配置必须关掉自动裁决，但不能阻止默认模式的会话创建。
+        AutoReviewSettingsLoaded(unavailable = true, notes = listOf("autoMode / autoModeReviewer 配置无效，Auto 调用全部交给用户决定"))
+    }
+}
+
+private fun MergedSettings.parseAutoReviewSettings(): AutoReviewSettingsLoaded {
     val trusted = layers.filter { it.source == ConfigSource.User || it.source == ConfigSource.Managed }
     fun entries(key: String): List<String> = trusted.flatMap { layer ->
         val config = layer.raw["autoMode"] ?: return@flatMap emptyList()
@@ -22,7 +31,9 @@ fun MergedSettings.autoReviewSettings(): AutoReviewSettingsLoaded {
     val reviewer = trusted.asReversed().firstNotNullOfOrNull { layer ->
         layer.raw["autoModeReviewer"]?.takeUnless { it == JsonNull }?.let(::parseAutoModeReviewer)
     }
-    return AutoReviewSettingsLoaded(AutoModeConfig(entries("environment"), entries("hard_deny"), entries("soft_deny"), entries("allow")), reviewer)
+    val sections = trusted.flatMap { (it.raw["autoMode"] as? JsonObject)?.keys.orEmpty() }
+        .filter { it in setOf("environment", "hard_deny", "soft_deny", "allow") }.toSet()
+    return AutoReviewSettingsLoaded(AutoModeConfig(entries("environment"), entries("hard_deny"), entries("soft_deny"), entries("allow"), sections), reviewer)
 }
 
 fun autoReviewSettingsOf(settings: MergedSettings): AutoReviewSettingsLoaded = settings.autoReviewSettings()

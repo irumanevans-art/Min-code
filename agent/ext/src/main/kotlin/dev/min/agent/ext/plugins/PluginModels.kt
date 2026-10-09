@@ -115,6 +115,7 @@ data class LoadedPlugin(
     val nameSource: PluginNameSource,
     val root: String,
     val enabled: Boolean,
+    val explicitlyDisabled: Boolean = false,
     val displayName: String? = null,
     val manifest: LoadedPluginManifest? = null,
     val warnings: List<String> = emptyList(),
@@ -146,6 +147,8 @@ data class PluginRequest(
     val ref: PluginRef?,
     val entry: JsonObject? = null,
     val enabledPlugins: Map<String, Boolean> = emptyMap(),
+    val sideload: Boolean = false,
+    val disabledDependencies: Set<String> = emptySet(),
 )
 
 data class PluginLoadOutcome(

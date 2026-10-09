@@ -1,5 +1,32 @@
 # Errors
 
+## [ERR-20261008-APP-FOLLOWUP-TIMESTAMP] app_test_non_determinism
+
+**Logged**: 2026-10-08T18:03:00+08:00
+**Priority**: medium
+**Status**: pending
+**Area**: tests
+
+### Summary
+auto/plugin 全量验收中，未改动的 ClaudeCodeManager 后台 agent 跟进用例首次失败，原断言单独复跑通过。
+
+### Error
+ClaudeCodeManagerCharacterizationTest 的 CLI-initiated turns 用例等不到 result #3；失败快照已包含 Both agents completed / DONE，busy=false。断言同时要求 lastTurnFinishedAt 非空且不同于第二轮值。不能仅凭这些观察确认竞态根因。
+
+### Context
+第一轮 cleanTest 后 13 agent check 全过，App 1945 用例仅此 1 失败、1 平台条件跳过，assembleDebug 成功；该 characterization 测试及其生产源码相对 m0 无修改。单独复跑同一方法 GRADLE_EXIT=0。证据：research/tasks/apfix-full-check/check.log、app-first-failure.xml、apfix-app-isolated-rerun.log。
+
+### Suggested Fix
+独立的 App 任务应核查结果事件与时钟唯一性，按确定性事件完成条件审查夹具；不要刷新快照、跳过方法或删除断言来掩盖失败。本次只保留证据、原样复跑并重做全量验收。
+
+### Metadata
+- Reproducible: intermittent
+- Related Files: app/src/test/java/dev/min/code/core/claudecode/ClaudeCodeManagerCharacterizationTest.kt
+- Tags: app, async, timestamps, validation
+- See Also: ERR-20261008-APP-SNAPSHOT
+
+---
+
 ## [ERR-20261008-APP-SNAPSHOT] app_snapshot_non_determinism
 
 **Logged**: 2026-10-08

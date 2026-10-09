@@ -135,12 +135,13 @@ class SessionRuntime private constructor(
         val home = deps.memoryHome
         val memory = if (home != null && state.value.origin == null) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
         val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home) else null
-        val rules = snapshot?.merged?.ruleSpecs()?.map { spec -> RuleEntry(
+        val trustProject = deps.trustProjectHooks(cwd)
+        val rules = snapshot?.merged?.ruleSpecs(trustProject)?.map { spec -> RuleEntry(
             when (spec.kind) { RuleSpecKind.Allow -> RuleKindData.Allow; RuleSpecKind.Ask -> RuleKindData.Ask; RuleSpecKind.Deny -> RuleKindData.Deny },
             spec.text, spec.source, spec.baseDir,
         ) }
         // 原来的显式附加目录是绝对授权，不随 cwd 重新解释；新项目的设置目录在新 cwd 上解析。
-        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home))?.let { (state.value.additionalDirectories + it).distinct() }
+        val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home), trustProject)?.let { (state.value.additionalDirectories + it).distinct() }
         commit(listOf(dev.min.agent.spi.CwdChanged(old, cwd, worktree, memory.filter { it.path !in state.value.memoryPathsInContext }, rules, dirs)), Durability.Sync)
         checkpointsBySettings = null
         val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
@@ -163,17 +164,26 @@ class SessionRuntime private constructor(
     }
 
     private var pluginsInstance: dev.min.agent.ext.plugins.PluginBundle? = null
+    private var pluginsAttempted = false
     internal suspend fun plugins(): dev.min.agent.ext.plugins.PluginBundle? {
         pluginsInstance?.let { return it }
+        if (pluginsAttempted) return null
         val home = deps.memoryHome ?: return null
         val cwd = state.value.created.cwd
+        return try {
         val settings = SettingsLoader.load(deps.host.fs, cwd, home)
-        return dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
+        dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
             dirs = deps.pluginDirs, canonical = deps.canonicalPath,
             trust = { root -> deps.pluginTrust(root, cwd) },
             secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore),
             installedPath = deps.pluginInstalledPath, shellPath = deps.hookShellPath,
-        ).also { pluginsInstance = it }
+        ).also { pluginsInstance = it; pluginsAttempted = true }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) {
+            pluginsAttempted = true
+            commit(listOf(Note(NoteLevel.Warning, "插件装载失败，本会话按无插件继续")), Durability.Sync)
+            null
+        }
     }
 
     suspend fun readSkillBody(path: GuestPath): String? = plugins()?.readBody(path)
@@ -356,8 +366,16 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)
-        val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer)
+        val managed = snapshot.merged.layers.lastOrNull { it.source == dev.min.agent.ext.config.ConfigSource.Managed }
+        val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer,
+            disableAutoMode = managed?.permissions?.disableAutoMode == true,
+            disableBypassPermissionsMode = managed?.permissions?.disableBypassPermissionsMode == true)
+        if (review.notes.isNotEmpty()) commit(review.notes.map { Note(NoteLevel.Warning, it) }, Durability.Sync)
         if (configured != dev.min.agent.spi.AutoReviewSettingsLoaded()) commit(listOf(configured), Durability.Sync)
+        val mode = state.value.settings.mode
+        if (mode == PermissionMode.Auto && configured.disableAutoMode || mode == PermissionMode.BypassPermissions && configured.disableBypassPermissionsMode) {
+            commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "托管策略禁用了 $mode，使用 Default 模式")), Durability.Sync)
+        }
         loadPermissionRules(snapshot)
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
         val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
@@ -432,7 +450,14 @@ class SessionRuntime private constructor(
     }
 
     private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
-        val rules = snapshot.merged.ruleSpecs().map { spec ->
+        val trustProject = deps.trustProjectHooks(state.value.created.cwd)
+        val notes = snapshot.notes.toMutableList()
+        if (!trustProject && snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Project &&
+                (it.permissions.allow.isNotEmpty() || it.permissions.additionalDirectories.isNotEmpty()) }) {
+            // 放宽能力的仓库声明需要用户信任；限制能力的 ask / deny 始终保留。
+            notes += "this workspace has not been trusted：项目 permissions.allow / additionalDirectories 暂不生效"
+        }
+        val rules = snapshot.merged.ruleSpecs(trustProject).map { spec ->
             RuleEntry(
                 kind = when (spec.kind) {
                     RuleSpecKind.Allow -> RuleKindData.Allow
@@ -442,9 +467,9 @@ class SessionRuntime private constructor(
                 text = spec.text, source = spec.source, baseDir = spec.baseDir,
             )
         }
-        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"))
-        if (rules.isEmpty() && snapshot.notes.isEmpty() && directories.isEmpty()) return
-        commit(listOf(PermissionRulesLoaded(rules, snapshot.notes, directories)), Durability.Sync)
+        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject)
+        if (rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
+        commit(listOf(PermissionRulesLoaded(rules, notes, directories)), Durability.Sync)
     }
 
     /**
@@ -529,6 +554,8 @@ class SessionRuntime private constructor(
         /** 切模型请求的来源，进 PreModelSwitch 的 `source`：command（/model、/config）/ picker / sdk */
         modelSwitchSource: String = "command",
     ) {
+        val locks = state.value.autoReviewSettings
+        require(!(mode == PermissionMode.Auto && locks.disableAutoMode || mode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode)) { "托管策略禁用了这个权限模式" }
         if (cwd != null && cwd != state.value.settings.cwd) {
             require(state.value.worktree == null) { "隔离会话请用 EnterWorktree / ExitWorktree 切换目录。" }
             require(deps.host.fs.stat(cwd)?.kind == dev.min.agent.spi.FileKind.Directory) { "工作目录不存在：$cwd" }

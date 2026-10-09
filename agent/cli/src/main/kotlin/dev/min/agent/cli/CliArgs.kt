@@ -85,6 +85,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --effort <档位>        off / minimal / low / medium / high / xhigh / max
   --mode <模式>          default（默认）/ acceptEdits / plan / bypassPermissions / dontAsk / auto
   --auto-mode-reviewer <供应商/模型> 独立审查模型；未指定使用同供应商小模型
+                                  指定其他供应商时，用户消息与工具入参会发给第二家供应商
   --max-budget-usd <金额> 会话与辅助模型累计 USD 花费上限；缺 USD 定价时拒绝发请求
   --model-timeout-ms <n> 会话与辅助模型请求超时，默认 600000
   --approve ask|yes|no   审批怎么答：交互模式默认 ask，非交互默认 no

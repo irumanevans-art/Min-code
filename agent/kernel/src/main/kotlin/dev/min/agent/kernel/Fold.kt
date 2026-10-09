@@ -93,6 +93,10 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is dev.min.agent.spi.AutoReviewSettingsLoaded -> copy(autoReviewSettings = e)
         is dev.min.agent.spi.AutoReviewed -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
             presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
+            autoReviewDenials = autoReviewDenials + if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) 1 else 0,
+            autoReviewConsecutiveDenials = if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) autoReviewConsecutiveDenials + 1 else 0,
+            autoReviewTripped = autoReviewTripped || e.decision == dev.min.agent.spi.AutoReviewDecision.Deny &&
+                (autoReviewConsecutiveDenials + 1 >= 3 || autoReviewDenials + 1 >= 20),
         )
         is dev.min.agent.spi.ModelCharged -> {
             val amount = e.amount
@@ -234,7 +238,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 else s.copy(sessionRules = s.sessionRules + RuleEntry(RuleKindData.Allow, always, SESSION_RULE_SOURCE, s.settings.cwd))
             }
         }
-        is PermissionRulesLoaded -> copy(rules = e.rules, additionalDirectories = e.additionalDirectories)
+        is PermissionRulesLoaded -> copy(rules = e.rules, additionalDirectories = e.additionalDirectories, permissionNotes = e.notes)
         is HooksLoaded -> copy(hooks = e.sources, hooksHttpPolicy = e.httpPolicy)
         is dev.min.agent.spi.ComponentHooksRegistered -> {
             // 同名组件重复登记（模型又调了一次同一个 skill）不叠加：处理器翻倍等于同一个门禁跑两遍

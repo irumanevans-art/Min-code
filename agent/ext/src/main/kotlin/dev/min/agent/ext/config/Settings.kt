@@ -126,11 +126,12 @@ class MergedSettings internal constructor(
      * 求值顺序（deny → ask → allow）与同文件内 `!` 取反的语义是 policy 的事，这里只保证不丢、不串层。
      * `allowManagedPermissionRulesOnly` 为真时只剩 managed 层的规则。
      */
-    fun ruleSpecs(): List<RuleSpec> = rules
+    fun ruleSpecs(trustProject: Boolean = true): List<RuleSpec> =
+        rules.filterNot { !trustProject && it.source == ConfigSource.Project.label && it.kind == RuleSpecKind.Allow }
 
     /** 只扩展文件访问，不能把附加目录当成配置发现根。相对路径从会话 cwd 解析。 */
-    fun fileAccessDirectories(cwd: GuestPath, home: GuestPath): List<GuestPath> =
-        permissions.additionalDirectories.filter { it.isNotBlank() }.map { target ->
+    fun fileAccessDirectories(cwd: GuestPath, home: GuestPath, trustProject: Boolean = true): List<GuestPath> =
+        layers.filter { trustProject || it.source != ConfigSource.Project }.flatMap { it.permissions.additionalDirectories }.filter { it.isNotBlank() }.map { target ->
             val absolute = when {
                 target == "~" -> home.value
                 target.startsWith("~/") -> home.value + "/" + target.removePrefix("~/")

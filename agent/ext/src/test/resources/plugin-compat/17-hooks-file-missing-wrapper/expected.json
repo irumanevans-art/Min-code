@@ -1,4 +1,8 @@
 {
-  "loads": false,
-  "basis": "PLG:262 hooks 文件必须带顶层 \"hooks\" 包裹，「A file that contains only the event map, without that wrapper, fails to load」→ 插件装载失败"
+  "loads": true,
+  "basis": "https://code.claude.com/docs/en/plugins/loading：组件路径或格式无效时 the plugin loads without that component；记录错误，保留其他组件。",
+  "errors": [
+    "hooks"
+  ],
+  "hooks": {}
 }

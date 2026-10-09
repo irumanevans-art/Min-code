@@ -716,6 +716,8 @@ class SessionHub(
                 definition.readOnly -> PermissionMode.DontAsk
                 // 父会话放开了，子 agent 不能收紧也不能另设（与 Claude Code 一致）
                 ps.settings.mode == PermissionMode.BypassPermissions -> PermissionMode.BypassPermissions
+                // Auto 的审查边界必须覆盖子会话，仓库里的定义不能切走这道门禁。
+                ps.settings.mode == PermissionMode.Auto -> PermissionMode.Auto
                 else -> definition.permissionMode ?: ps.settings.mode
             }
             created = SessionCreated(ps.settings.cwd, model, mode, definition.effort ?: ps.settings.effort)
