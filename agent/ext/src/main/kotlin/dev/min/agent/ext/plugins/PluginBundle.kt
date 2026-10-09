@@ -208,7 +208,9 @@ class PluginBundle(
                             val obj = group.jsonObject
                             val handlers = obj.getValue("hooks").jsonArray.mapNotNull handler@{ value ->
                                 val handler = value.jsonObject
-                                if ((handler["type"] as? JsonPrimitive)?.content in setOf("prompt", "agent", "mcp_tool")) notes += "$label 的 ${handler["type"]} hook 本版本未支持执行，声明已保留"
+                                // prompt / agent / mcp_tool 型声明原样保留：模型侧执行器认它们（受上面的信任闸管着）。
+                                // mcp_tool 的 server 要写 scoped 名（plugin:<插件名>:<服务器名>，CC hooks.md :546），
+                                // 与 McpConfigLoader 注册插件服务器的名字同一个口径
                                 val command = (handler["command"] as? JsonPrimitive)?.content
                                 if (command?.contains("\${user_config.") == true) {
                                     notes += "$label 的 shell hook 引用了 user_config，已跳过；请使用 exec args 或 OPTION 环境变量"

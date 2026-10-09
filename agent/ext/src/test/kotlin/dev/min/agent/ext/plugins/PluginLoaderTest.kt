@@ -32,6 +32,25 @@ class PluginLoaderTest {
         assertEquals(McpGate.Enabled, mcp.servers.single().gate)
     }
 
+    @Test fun `plugin mcp_tool hook keeps the scoped server name and executes`(): Unit = runBlocking {
+        val fs = FakeFs()
+        fs.plugin("p", """, "mcpServers":{"db":{"command":"node"}}""")
+        fs.put("/plugins/p/hooks/hooks.json", """{"hooks":{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"mcp_tool","server":"plugin:p:db","tool":"query"}]}]}}""")
+        val settings = SettingsLoader.load(fs, GuestPath("/work"), GuestPath("/home"))
+        val bundle = PluginBundle.load(fs, GuestPath("/work"), GuestPath("/home"), settings.merged,
+            dirs = listOf(GuestPath("/plugins/p")), trust = { true })
+        // 插件服务器注册成 scoped 名（plugin:<插件名>:<服务器名>）；hook 声明写的也是它——两边同一个口径才对得上
+        assertEquals("plugin:p:db", bundle.mcpSources().single().name)
+        val set = dev.min.agent.ext.hooks.HookSet.parse(
+            listOf(dev.min.agent.ext.config.HookSource(dev.min.agent.ext.config.ConfigSource.Plugin, bundle.hookSources.single())))
+        val handler = set.handlers.single()
+        assertEquals("mcp_tool", handler.type)
+        assertEquals("plugin:p:db", handler.server)
+        assertEquals("query", handler.tool)
+        // 模型侧类型受信任闸管着会执行，不再有「本版本未支持执行」的过时说明
+        assertFalse(bundle.notes.any { "本版本未支持执行" in it })
+    }
+
     @Test fun `later settings override and dependency default disabled is lifted`(): Unit = runBlocking {
         val fs = FakeFs()
         fs.plugin("base", """, "defaultEnabled":false, "settings":{"agent":"first"}""")

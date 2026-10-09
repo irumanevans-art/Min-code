@@ -142,7 +142,8 @@ a
         val loaded = bundle(fs, listOf(GuestPath("/plug")))
         assertEquals(4, loaded.hookSources.single()["Stop"]!!.jsonArray.sumOf { it.jsonObject["hooks"]!!.jsonArray.size })
         assertTrue(loaded.notes.any { "args" in it })
-        assertTrue(loaded.notes.any { "未支持" in it })
+        // prompt / agent / mcp_tool 型现在有模型侧执行器了（受信任闸管着）——不再有「本版本未支持执行」的过时说明
+        assertFalse(loaded.notes.any { "未支持" in it })
         assertEquals(1, loaded.skills.size)
     }
 
