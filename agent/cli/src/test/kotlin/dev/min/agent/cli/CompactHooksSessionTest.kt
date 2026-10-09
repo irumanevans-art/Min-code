@@ -231,13 +231,19 @@ class CompactHooksSessionTest {
     private suspend fun SessionRuntime.say(text: String): SessionState {
         val before = state.value.lastTurn?.turnId
         send(ClientMsgId("u-${System.nanoTime()}"), listOf(TextPart(text)))
-        return state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        val ended = state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        // 终态事件先发布，回合 Job 仍可能收尾；下一次 compact 需要等真正空闲。
+        awaitIdle()
+        return ended
     }
 
     private suspend fun SessionRuntime.compactNow(instructions: String? = null): SessionState {
         val before = state.value.lastTurn?.turnId
         assertTrue(instructions?.let { compact(it) } ?: compact())
-        return state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        val ended = state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        // 终态事件先发布，回合 Job 仍可能收尾；下一次 compact 需要等真正空闲。
+        awaitIdle()
+        return ended
     }
 
     private suspend fun assertLogIsTruth(store: FileSessionStore, rt: SessionRuntime) {
