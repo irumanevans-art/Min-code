@@ -791,14 +791,7 @@ class SessionHub(
         } else {
             val model = resolveModel(request.model ?: definition.model, ps.settings.model)
                 ?: return DelegateResult.Rejected("不认识模型「${request.model ?: definition.model}」。不写 model 就用当前模型。")
-            val mode = when {
-                definition.readOnly -> PermissionMode.DontAsk
-                // 父会话放开了，子 agent 不能收紧也不能另设（与 Claude Code 一致）
-                ps.settings.mode == PermissionMode.BypassPermissions -> PermissionMode.BypassPermissions
-                // Auto 的审查边界必须覆盖子会话，仓库里的定义不能切走这道门禁。
-                ps.settings.mode == PermissionMode.Auto -> PermissionMode.Auto
-                else -> definition.permissionMode ?: ps.settings.mode
-            }
+            val mode = childPermissionMode(ps.settings.mode, definition, deps.trustProjectHooks(ps.settings.cwd), ps.autoReviewSettings)
             created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,

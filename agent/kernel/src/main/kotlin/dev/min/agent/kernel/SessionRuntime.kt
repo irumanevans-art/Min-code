@@ -923,6 +923,12 @@ class SessionRuntime private constructor(
                 }
             }
             // 子会话的清单由 initial 带来（继承父会话那份），不再读磁盘
+            val locks = runtime.state.value.autoReviewSettings
+            val currentMode = runtime.state.value.settings.mode
+            if (currentMode == PermissionMode.Auto && locks.disableAutoMode || currentMode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode) {
+                // 子会话不重读 settings，但冻结的托管锁仍须在第一个回合前兑现。
+                runtime.commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "托管策略禁用了 $currentMode，使用 Default 模式")), Durability.Sync)
+            }
             if (loadSkills) runtime.loadSkills()
             if (runStartHooks && runtime.state.value.origin == null) runtime.runSessionStart("startup")
             return runtime

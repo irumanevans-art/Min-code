@@ -61,6 +61,7 @@ data class AgentDefinition(
     val hooks: kotlinx.serialization.json.JsonObject? = null,
     val hooksLayer: String? = null,
     val isolationWorktree: Boolean = false,
+    val source: String = "builtin",
 )
 
 object BuiltinAgents {

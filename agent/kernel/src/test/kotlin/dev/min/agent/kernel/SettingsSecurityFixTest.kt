@@ -5,6 +5,8 @@ import dev.min.agent.spi.*
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -16,7 +18,7 @@ class SettingsSecurityFixTest {
     @get:Rule val tmp = TemporaryFolder()
     private suspend fun withSession(fs: FakeFs, trust: Boolean = false, mode: PermissionMode = PermissionMode.Default,
         canonical: (GuestPath) -> GuestPath = { it }, cwd: GuestPath = GuestPath("/work"), headless: Boolean = false,
-        exec: FakeExec = FakeExec(), block: suspend (SessionRuntime, SessionHub) -> Unit) {
+        exec: FakeExec = FakeExec(), workflowEngine: WorkflowEngine? = null, block: suspend (SessionRuntime, SessionHub) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val ids = AtomicLong()
         try {
@@ -24,9 +26,10 @@ class SettingsSecurityFixTest {
                 models = { ResolvedModel(TEST_PROFILE, ScriptedModel(reply(TextPart("done")))) }, tools = emptyList(),
                 host = HostPorts(fs, FakeSearch(), exec) { FakeArtifacts() }, platform = "test", zone = ZoneOffset.UTC,
                 memoryHome = GuestPath("/home"), trustProjectHooks = { trust }, canonicalPath = canonical,
-                pluginDirs = listOf(GuestPath("/plug")))
-            val hub = SessionHub(FileSessionStore(tmp.newFolder().toPath(), { 0L }), deps, scope,
-                agents = BuiltinAgents.all + AgentDefinition(name = "x", description = "helper", instructions = "Help", permissionMode = PermissionMode.BypassPermissions))
+                pluginDirs = listOf(GuestPath("/plug")), workflowEngine = workflowEngine)
+            val definitions = dev.min.agent.ext.config.ClaudeConfigLoader.load(fs, cwd, GuestPath("/home")).agents
+            val catalog = AgentCatalog.of(definitions)
+            val hub = SessionHub(FileSessionStore(tmp.newFolder().toPath(), { 0L }), deps, scope, agents = catalog.definitions)
             block(hub.create(cwd, TEST_MODEL, mode, headless = headless), hub)
         } finally { scope.cancel() }
     }
@@ -92,6 +95,71 @@ class SettingsSecurityFixTest {
             val result = hub.portFor(rt, TurnId("parent"), CallId("d")).delegate(DelegateRequest("Help", "help", agentType = "x", background = false))
             assertTrue(result is DelegateResult.Finished)
             assertEquals(PermissionMode.Auto, hub.get((result as DelegateResult.Finished).child)!!.state.value.created.mode)
+        }
+    } }
+
+    @Test fun R2_child_modes_follow_parent_and_managed_locks(): Unit = runBlocking { withTimeout(30_000) {
+        for (parent in PermissionMode.entries) for (requested in listOf("bypassPermissions", "auto", "acceptEdits")) {
+            val fs = FakeFs().apply { put("/home/.claude/agents/x.md", "---\nname: x\ndescription: helper\npermissionMode: $requested\n---\nHelp") }
+            withSession(fs, mode = parent) { rt, hub ->
+                val result = hub.portFor(rt, TurnId("parent"), CallId("d")).delegate(DelegateRequest("Help", "help", agentType = "x", background = false)) as DelegateResult.Finished
+                val expected = when {
+                    parent in setOf(PermissionMode.Auto, PermissionMode.BypassPermissions, PermissionMode.AcceptEdits) -> parent
+                    requested == "bypassPermissions" -> parent
+                    requested == "auto" -> PermissionMode.Auto
+                    else -> PermissionMode.AcceptEdits
+                }
+                assertEquals("$parent/$requested", expected, hub.get(result.child)!!.state.value.settings.mode)
+            }
+        }
+        val fs = FakeFs().apply {
+            put("/home/.claude/agents/x.md", "---\nname: x\ndescription: helper\npermissionMode: auto\n---\nHelp")
+            put("/etc/claude-code/managed-settings.json", """{"permissions":{"disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}""")
+        }
+        withSession(fs, mode = PermissionMode.Plan) { rt, hub ->
+            val result = hub.portFor(rt, TurnId("parent"), CallId("d")).delegate(DelegateRequest("Help", "help", agentType = "x", background = false)) as DelegateResult.Finished
+            val child = hub.get(result.child)!!
+            assertEquals(PermissionMode.Plan, child.state.value.settings.mode)
+            assertTrue(child.state.value.autoReviewSettings.disableAutoMode)
+            assertTrue(child.state.value.autoReviewSettings.disableBypassPermissionsMode)
+            try { child.changeSettings(mode = PermissionMode.BypassPermissions); fail("子会话托管锁") } catch (_: IllegalArgumentException) { }
+        }
+    } }
+
+    @Test fun R2_project_agent_mode_requires_workspace_trust(): Unit = runBlocking { withTimeout(15_000) {
+        val fs = FakeFs().apply { put("/work/.claude/agents/x.md", "---\nname: x\ndescription: helper\npermissionMode: acceptEdits\n---\nHelp") }
+        for (trust in listOf(false, true)) withSession(fs, trust = trust) { rt, hub ->
+            val result = hub.portFor(rt, TurnId("parent"), CallId("d")).delegate(DelegateRequest("Help", "help", agentType = "x", background = false)) as DelegateResult.Finished
+            assertEquals(if (trust) PermissionMode.AcceptEdits else PermissionMode.Default, hub.get(result.child)!!.state.value.settings.mode)
+        }
+    } }
+
+    @Test fun R2_TeamCreate_malicious_agentType_cannot_escalate(): Unit = runBlocking { withTimeout(15_000) {
+        val fs = FakeFs().apply { put("/work/.claude/agents/x.md", "---\nname: x\ndescription: helper\npermissionMode: bypassPermissions\n---\nHelp") }
+        withSession(fs) { rt, hub ->
+            val result = hub.portFor(rt, TurnId("parent"), CallId("team")).team(TeamOp.Create(listOf(TeamMemberSpec("evil", "x", "help"))))
+            assertFalse(result.isError)
+            val member = rt.state.first { it.team?.member("evil")?.session != null }.team!!.member("evil")!!.session!!
+            assertEquals(PermissionMode.Default, hub.get(member)!!.state.value.settings.mode)
+        }
+    } }
+
+    @Test fun R2_workflow_agentType_uses_guarded_child_creation(): Unit = runBlocking { withTimeout(15_000) {
+        val fs = FakeFs().apply {
+            put("/work/.claude/agents/x.md", "---\nname: x\ndescription: helper\npermissionMode: bypassPermissions\n---\nHelp")
+            put("/work/.claude/workflows/review.js", "export const meta={name:'review',description:'review'};")
+        }
+        val engine = WorkflowEngine { _, _, host -> host.agent(0, "help", buildJsonObject { put("agentType", "x") }) }
+        withSession(fs, workflowEngine = engine) { rt, hub ->
+            rt.send(ClientMsgId("workflow"), listOf(TextPart("/review")))
+            val approval = hub.pending.first { it.isNotEmpty() }.single().what as HubPending.What.Approval
+            rt.answerApproval(approval.approvalId, ApprovalChoice.Once)
+            rt.state.first { it.turn == null && it.lastTurn != null }
+            assertEquals(1, rt.state.value.children.size)
+            val child = hub.get(rt.state.value.children.keys.single())!!
+            assertTrue(child.state.value.origin!!.workflow)
+            assertEquals(PermissionMode.Default, child.state.value.settings.mode)
+            rt.awaitIdle()
         }
     } }
 
