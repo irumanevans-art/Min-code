@@ -127,6 +127,9 @@ class MinAgentSession(
         host.hub, rootId, cwd = { runtime.state.value.created.cwd.value }, fs = { host.workspaceFs }, gate = host.mcpLoginGate,
     )
 
+    override val team: dev.min.code.core.engine.TeamControl = MinTeamControl(host.hub, rootId)
+    override val schedule: dev.min.code.core.engine.ScheduleControl = MinScheduleControl(host.hub, rootId)
+
     private val commands = MinCommandHandler(
         hub = host.hub, root = runtime, state = { state.value }, lookup = host.lookup, text = host.text,
         editRestore = editRestore,
@@ -192,6 +195,10 @@ class MinAgentSession(
         tasks = attributeTasks(p.tracked, p.nodes.values, host.text::backgroundTask),
         stopping = stopping, errorMessage = error, maxRetryAttempts = host.maxRetryAttempts,
         workflowCommands = workflowCommands.value,
+        // 状态一帧一帧到，成员的排队 / 搁浅随成员会话的状态变（开跑、收尾都是状态变化），所以每帧现问一次就跟得上
+        teamMembers = if (p.nodes[rootId]?.team != null) host.hub.teamMembers(rootId) else emptyList(),
+        cronBoard = if (p.nodes[rootId]?.crons?.isNotEmpty() == true) host.hub.cronBoard(rootId) else null,
+        cronsEnabled = host.hub.cronsEnabled,
     )
 
     override val state: StateFlow<AgentSessionState> = run {

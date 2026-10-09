@@ -163,11 +163,11 @@ internal class CronRun(
     @Synchronized
     fun spentUsd(): Double = spent
 
-    /** 花到上限、或有一次花费记不出价格（无法核对）：返回给人看的原因；没事返回 null */
+    /** 花到上限、或有一次花费记不出价格（无法核对）：返回超限的结构化原因；没事返回 null */
     @Synchronized
-    fun problem(): String? = when {
-        spent >= limitUsd -> "这次运行花了 ${money(spent)}，到了单次上限 ${money(limitUsd)}"
-        unpriced > 0 -> "这次运行里有模型请求没有 USD 价格，花费无法核对，按到上限处理"
+    fun overrun(): CronOverrun? = when {
+        spent >= limitUsd -> CronOverrun(CronOverrun.Cause.Spent, spent, limitUsd)
+        unpriced > 0 -> CronOverrun(CronOverrun.Cause.UnpricedRequest, spent, limitUsd)
         else -> null
     }
 
@@ -176,8 +176,32 @@ internal class CronRun(
     fun trip(): Boolean = (!tripped).also { tripped = true }
 }
 
+/**
+ * 一次定时运行为什么被停下。[text] 是同一件事的中文原句（日志里的 Note、[CronBudgetStopped.detail] 用它）；
+ * 宿主要按界面语言自己组句时读结构化的 [cause] 与数字（[CronNotice.overrun]）
+ */
+data class CronOverrun(val cause: Cause, val spentUsd: Double, val limitUsd: Double) {
+    enum class Cause {
+        /** 这次运行花到了上限 */
+        Spent,
+
+        /** 运行里有请求没有 USD 价格，花费无法核对 */
+        UnpricedRequest,
+
+        /** 当前模型没有 USD 价格，下一个请求发不出去 */
+        UnpricedModel,
+    }
+
+    val text: String
+        get() = when (cause) {
+            Cause.Spent -> "这次运行花了 ${money(spentUsd)}，到了单次上限 ${money(limitUsd)}"
+            Cause.UnpricedRequest -> "这次运行里有模型请求没有 USD 价格，花费无法核对，按到上限处理"
+            Cause.UnpricedModel -> "这个模型没有 USD 价格，花费无法核对"
+        }
+}
+
 /** 定时运行花到上限后，树里任何会话再要发模型请求都抛它：回合以 [dev.min.agent.spi.InterruptedBy.Budget] 收尾（不是「内部错误」） */
-internal class CronBudgetReached(val reason: String) : IllegalStateException("定时任务这次运行已到花费上限：$reason")
+internal class CronBudgetReached(val overrun: CronOverrun) : IllegalStateException("定时任务这次运行已到花费上限：${overrun.text}")
 
 internal fun money(usd: Double): String = "$" + String.format(java.util.Locale.ROOT, "%.4f", usd)
 

@@ -2,7 +2,7 @@ package dev.min.code.core.engine
 
 /**
  * 一个引擎能做什么。**控件显隐只看它**，界面不按 [EngineKind] 写分支（规矩 2）。
- * 24 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
+ * 32 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
  * 改一格要同时改测试，审查时一眼看得到。
  *
  * 位与命令一一对应的那些，[supports] 能统一兜底；对不上的（引擎专有设置项等）由适配器自己判。
@@ -52,6 +52,12 @@ data class EngineCapabilities(
     val mcpServers: Boolean,
     /** 第一次进一个带项目层 hooks / `.mcp.json` 的工作目录前先问信任（[WorkspaceTrustControl]）。CC 有自己的信任对话框，Codex 没有项目层配置 */
     val workspaceTrust: Boolean,
+    /** agent 团队的页面：成员、共享清单、消息流、放行搁浅的成员、解散（[TeamControl]）。团队在 Min 内核里，CC 的团队在它自己的 CLI 里 */
+    val team: Boolean,
+    /** auto 权限模式与它的审查模型（[SessionCommand.SetAutoReviewer]、[SettingsView.autoReview]）。CC 的 auto 模式在它自己的 CLI 里，Codex 没有 */
+    val autoReview: Boolean,
+    /** 会话的定时任务清单与删除（[ScheduleControl]）。定时任务在 Min 的内核里；CC 的在它自己的 CLI 里，Codex 没有 */
+    val schedule: Boolean,
     /** `/mcp /agents /memory /permissions /config` 面板。设计草稿是 Boolean，但表里 Min 写的是「部分」，见 [ConfigFiles] */
     val claudeConfigFiles: ConfigFiles,
 ) {
@@ -71,6 +77,7 @@ data class EngineCapabilities(
         is SessionCommand.StopSubagent -> subagents
         is SessionCommand.StopTask -> backgroundTasks
         is SessionCommand.Revert -> checkpointRevert
+        is SessionCommand.SetAutoReviewer -> autoReview
         // 没有对应能力位的：停止永远可以；强度 / 模式换不换得了走重启路径，命令照样受理；
         // 引擎专有设置项由适配器按键判（Min 没有任何设置项，自己返回 Unsupported）；改名、刷新都不挑引擎
         is SessionCommand.Interrupt,
@@ -112,6 +119,9 @@ data class EngineCapabilities(
         "rewind" to rewind.toString(),
         "mcpServers" to mcpServers.toString(),
         "workspaceTrust" to workspaceTrust.toString(),
+        "team" to team.toString(),
+        "autoReview" to autoReview.toString(),
+        "schedule" to schedule.toString(),
         "claudeConfigFiles" to claudeConfigFiles.name,
     )
 
@@ -145,6 +155,9 @@ data class EngineCapabilities(
             rewind = false,
             mcpServers = false,
             workspaceTrust = false,
+            team = false,
+            autoReview = false,
+            schedule = false,
             claudeConfigFiles = ConfigFiles.Full,
         )
 
@@ -182,6 +195,9 @@ data class EngineCapabilities(
             rewind = false,
             mcpServers = false,
             workspaceTrust = false,
+            team = false,
+            autoReview = false,
+            schedule = false,
             claudeConfigFiles = ConfigFiles.None,
         )
 
@@ -214,7 +230,7 @@ data class EngineCapabilities(
             subagents = true,
             subagentDirectMessage = true,
             backgroundTasks = true,
-            // 目录有官方标价（ModelProfile.pricing + llm 的 cost()，MinCostLedger）：按币种原样显示，没有价格的模型不显示
+            // 目录有官方标价（内核按请求记在每个会话的 modelCosts 里，Min 对整棵树求和，见 MinCost.kt）：按币种原样显示，有请求没有价格就不显示
             cost = true,
             cacheStats = true,
             liveTitle = false,
@@ -225,6 +241,9 @@ data class EngineCapabilities(
             rewind = true,
             mcpServers = true,
             workspaceTrust = true,
+            team = true,
+            autoReview = true,
+            schedule = true,
             claudeConfigFiles = ConfigFiles.Partial,
         )
 

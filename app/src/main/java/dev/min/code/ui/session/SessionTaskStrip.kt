@@ -30,6 +30,7 @@ import dev.min.code.ui.theme.sea
  *
  * @param shellCount 在跑的后台 shell 数（CLI 的 + 本会话托管的，见 [dev.min.code.core.claudecode.backgroundShells]）
  * @param showAgents [agents] 槽里有没有东西。槽本身是 Composable，量不出空不空，由调用方说
+ * @param teamLabel 有 agent 团队时右侧多一枚「团队 · N」（搁浅的成员写在里面），点开是 [TeamSheet]；null = 没有团队
  */
 @Composable
 internal fun SessionTaskStrip(
@@ -37,10 +38,12 @@ internal fun SessionTaskStrip(
     onOpenShells: () -> Unit,
     modifier: Modifier = Modifier,
     showAgents: Boolean = false,
+    teamLabel: String? = null,
+    onOpenTeam: () -> Unit = {},
     agents: @Composable RowScope.() -> Unit = {},
 ) {
     AnimatedVisibility(
-        visible = shellCount > 0 || showAgents,
+        visible = shellCount > 0 || showAgents || teamLabel != null,
         modifier = modifier,
         enter = InkMotion.expand,
         exit = InkMotion.collapse,
@@ -55,6 +58,7 @@ internal fun SessionTaskStrip(
             // 槽自己决定怎么占宽（切换条是横向滚动的 weight(1f)）；空着时下面的弹性把 shell 标记推到右边
             agents()
             if (!showAgents) Spacer(Modifier.weight(1f))
+            if (teamLabel != null) PanelChip(icon = null, label = teamLabel, onClick = onOpenTeam, modifier = Modifier.animateContentSize(InkMotion.spatial()))
             // 数到 0 时标记先沉下去，整条再收；退场期间仍写着消失前那个数，不闪成「0 shells」
             val shown = remember { LastNonNull(shellCount.takeIf { it > 0 }) }.update(shellCount.takeIf { it > 0 }) ?: 1
             AnimatedVisibility(visible = shellCount > 0, enter = InkMotion.rise, exit = InkMotion.sink) {

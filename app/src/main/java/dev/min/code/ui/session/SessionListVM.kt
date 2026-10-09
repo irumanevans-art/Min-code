@@ -87,6 +87,8 @@ class SessionListVM(
         val engine: EngineKind = EngineKind.ClaudeCode,
         /** 最后一个回合没结束（Min 启动扫描认出来的「中断」），打开后是 ▶ */
         val interrupted: Boolean = false,
+        /** 进行中的定时任务数（Min）：抽屉里打「定时」标记 */
+        val scheduledTasks: Int = 0,
     ) {
         val ref: SessionRef get() = SessionRef(engine, id)
     }
@@ -172,6 +174,7 @@ class SessionListVM(
                     onDisk = false,
                     engine = EngineKind.MinAgent,
                     interrupted = m.interrupted && running == null,
+                    scheduledTasks = m.scheduledTasks,
                 )
             }
             (orphanLive + fromDisk + fromMin).sortedWith(

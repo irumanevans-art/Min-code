@@ -12,6 +12,7 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.Usage
 import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.AutoReviewView
 import dev.min.code.core.engine.BackgroundTask
 import dev.min.code.core.engine.Choice
 import dev.min.code.core.engine.FallbackNotice
@@ -40,6 +41,9 @@ interface MinModelLookup {
 
     /** 设置面板的模型表：当前档的在前，其它能用的档的跟在后面（设计 10.2 拍板 4：允许跨供应商换模型） */
     fun choices(current: ModelRef): List<Choice>
+
+    /** 这个供应商档的目录给的小模型（auto 审查的默认模型）；目录里没有 / 档不存在返回 null */
+    fun fastModelOf(providerId: String): ModelRef? = null
 }
 
 /**
@@ -65,6 +69,11 @@ data class MinMapperInput(
     val errorMessage: String? = null,
     val maxRetryAttempts: Int = 5,
     val workflowCommands: List<dev.min.code.core.engine.SlashCommandView> = emptyList(),
+    /** 内核报的团队成员状态（`hub.teamMembers(root)`；排队与搁浅要看内存里的队伍，不能只从状态推）。没有团队为空 */
+    val teamMembers: List<dev.min.agent.kernel.TeamMemberStatus> = emptyList(),
+    /** 模型 CronList 看到的同一份定时任务视图（`hub.cronBoard(root)`），与全局开关 */
+    val cronBoard: dev.min.agent.spi.CronBoard? = null,
+    val cronsEnabled: Boolean = true,
 )
 
 /**
@@ -73,9 +82,6 @@ data class MinMapperInput(
  * 子 agent 的转录先投影好，再各挂两处：线程自己的 `items`，和发起它的那张 Agent 工具卡的 `subItems`，共用一份列表。
  */
 class MinAgentStateMapper(private val text: MinAgentText, private val lookup: MinModelLookup) {
-    /** 花费账本：按帧的增量记到当时的模型头上（见 [MinCostLedger]）。映射器是每个会话一个、帧顺序送进来，所以带状态没问题 */
-    private val ledger = MinCostLedger { ref -> lookup.profileOf(ref)?.pricing }
-
     fun map(input: MinMapperInput): AgentSessionState {
         val root = checkNotNull(input.nodes[input.root]) { "根会话 ${input.root.value} 不在节点表里" }
         val model = root.settings.model
@@ -94,7 +100,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
         val threads = minThreads(input.root, input.nodes, ::itemsOf, lookup, canRun = { s -> lookup.providerLabel(s.settings.model.providerId) != null })
         val interactions = minInteractions(input.pending, input.root, input.nodes, threads, text)
         val profile = lookup.profileOf(model)
-        ledger.observe(input.nodes)
+        val cost = treeCostOf(input.root, input.nodes)
         return AgentSessionState(
             ref = input.ref,
             status = when {
@@ -114,10 +120,12 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             resume = minResumeOffer(root, canRun = !removed, stopping = input.stopping),
             interactions = interactions,
             settings = settingsOf(root, providerLabel),
-            usage = usageViewOf(root, profile?.contextWindow).copy(costLabel = ledger.label()),
+            usage = usageViewOf(root, profile?.contextWindow).copy(costLabel = cost.totalLabel(), subagentCostLabel = cost.subagentLabel()),
             tasks = input.tasks,
             threads = threads.withPendingCounts(interactions),
             slashCommands = text.slashCommands() + input.workflowCommands,
+            team = minTeamView(input.root, input.nodes, input.teamMembers, threads),
+            schedule = minScheduleView(input.cronBoard, input.cronsEnabled),
             plan = planOf(root),
             stopping = input.stopping,
             errorMessage = input.errorMessage,
@@ -169,6 +177,10 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             effortNeedsRestart = false,
             mode = modes.firstOrNull { it.id == modeId(root.settings.mode) } ?: Choice(modeId(root.settings.mode), text.mode(root.settings.mode)),
             modes = modes,
+            autoReview = AutoReviewView(
+                reviewer = root.autoReviewSettings.reviewer?.let { r -> models.firstOrNull { it.id == r.model.modelId && it.profileId == r.model.providerId } ?: Choice(r.model.modelId, r.model.modelId, profileId = r.model.providerId) },
+                defaultModel = dev.min.agent.kernel.defaultAutoReviewer(model, lookup::fastModelOf).modelId,
+            ),
             applying = false,
             extras = emptyList(),
             // 档被删了拿不到能力：按「不吃图」处理，反正会话只读，发不了
@@ -193,9 +205,9 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
     }
 }
 
-/** 设置面板与开始面板共用的权限模式表（Auto 要审查模型，Min 还没有，不列） */
+/** 设置面板与开始面板共用的权限模式表 */
 fun minModeChoices(text: MinAgentText): List<Choice> = listOf(
-    PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.DontAsk, PermissionMode.BypassPermissions, PermissionMode.Plan,
+    PermissionMode.Default, PermissionMode.AcceptEdits, PermissionMode.Auto, PermissionMode.DontAsk, PermissionMode.BypassPermissions, PermissionMode.Plan,
 ).map { Choice(modeId(it), text.mode(it), warning = text.modeWarning(it)) }
 
 /** 权限模式在命令里的 id：沿用协议里的名字（与 Claude Code 同名同义） */

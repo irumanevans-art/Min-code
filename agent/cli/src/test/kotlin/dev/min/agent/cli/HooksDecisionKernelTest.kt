@@ -295,6 +295,57 @@ class HooksDecisionKernelTest {
         assertLogIsTruth(store, rt)
     }
 
+    // ---- TaskCreated / TaskCompleted 在团队共享清单上 ----
+
+    /** 成员 alice 依次调用 [calls]（每个请求一个），最后答一句；其余会话照常 */
+    private fun aliceDoes(vararg calls: ToolCallPart) = ScriptedModel { req ->
+        when {
+            req.isAlice() && req.messages.size % 2 == 1 && (req.messages.size / 2) < calls.size ->
+                answer(calls[req.messages.size / 2], stop = StopReason.ToolUse)
+            req.isAlice() -> answer(TextPart("做完了"))
+            req.messages.size == 1 && req.allText().contains("组队") -> answer(ToolCallPart(CallId("t1"), "TeamCreate", args()), stop = StopReason.ToolUse)
+            else -> answer(TextPart("好"))
+        }
+    }
+
+    private fun taskCreate(callId: String, subject: String) =
+        ToolCallPart(CallId(callId), "TaskCreate", args("subject" to subject, "description" to "详情 $subject"))
+
+    @Test
+    fun `TaskCreated on the shared list sees the member and the team, and exit 2 keeps the task out of the list`() = run {
+        installScript(
+            "TaskCreated",
+            """cat >> "${'$'}CLAUDE_PROJECT_DIR/created-input.jsonl"; echo >> "${'$'}CLAUDE_PROJECT_DIR/created-input.jsonl"; """ +
+                """if tail -n 1 "${'$'}CLAUDE_PROJECT_DIR/created-input.jsonl" | grep -q blocked-subject; then echo 'Subject must start with a ticket' >&2; exit 2; fi""",
+        )
+        val model = aliceDoes(taskCreate("m1", "blocked-subject"), taskCreate("m2", "[T-1] real work"))
+        val (rt, store) = runTeam(model)
+        val team = rt.state.value.team!!
+        assertEquals("被拦的没进清单，放行的进了", listOf("[T-1] real work"), team.tasks.map { it.subject })
+        assertTrue("理由还给了成员", model.requests.filter { it.isAlice() }.last().allText().contains("Subject must start with a ticket"))
+        val first = Files.readAllLines(work.resolve("created-input.jsonl")).filter { it.isNotBlank() }.first()
+        val input = kotlinx.serialization.json.Json.parseToJsonElement(first) as JsonObject
+        assertEquals("TaskCreated", (input["hook_event_name"] as JsonPrimitive).content)
+        assertEquals("blocked-subject", (input["task_subject"] as JsonPrimitive).content)
+        assertEquals("alice", (input["teammate_name"] as JsonPrimitive).content)
+        assertEquals(team.teamId, (input["team_name"] as JsonPrimitive).content)
+        assertLogIsTruth(store, rt)
+    }
+
+    @Test
+    fun `TaskCompleted on the shared list keeps the task open when the hook refuses, and does not fire twice for a finished task`() = run {
+        installScript("TaskCompleted", """cat > /dev/null; echo ran >> "${'$'}CLAUDE_PROJECT_DIR/completed-ran"; echo 'Tests not passing' >&2; exit 2""")
+        val complete = ToolCallPart(CallId("m2"), "TaskUpdate", args("taskId" to "1", "status" to "completed", "owner" to "alice"))
+        val model = aliceDoes(taskCreate("m1", "guarded"), complete)
+        val (rt, store) = runTeam(model)
+        val task = rt.state.value.team!!.tasks.single()
+        assertEquals("没被标完成", dev.min.agent.spi.TaskStatus.Pending, task.status)
+        assertEquals("同一次更新里的负责人照改", "alice", task.owner)
+        assertTrue("理由还给了成员", model.requests.filter { it.isAlice() }.last().allText().contains("Tests not passing"))
+        assertEquals(1, Files.readAllLines(work.resolve("completed-ran")).size)
+        assertLogIsTruth(store, rt)
+    }
+
     // ---- PostToolBatch（样本 76 / 77） ----
 
     @Test
@@ -423,6 +474,42 @@ class HooksDecisionKernelTest {
         val (rt2, store2) = session(again, taskTools)
         rt2.say("完成两次")
         assertEquals("第二次标完成时任务已经是完成状态，不再触发", 1, store2.events(rt2).filterIsInstance<HooksRan>().count { it.isFor("TaskCompleted") })
+    }
+
+    // ---- TaskCreated（样本 86 / 87，个人清单） ----
+
+    @Test
+    fun `TaskCreated exit 2 cancels the personal task and feeds stderr back to the model (sample 87)`() = run {
+        installSample("87-taskcreated-decision")
+        val model = ScriptedModel { req ->
+            when (req.messages.size) {
+                1 -> answer(ToolCallPart(CallId("t1"), "TaskCreate", args("subject" to "Implement auth", "description" to "login and signup")), stop = StopReason.ToolUse)
+                else -> answer(TextPart("好"))
+            }
+        }
+        val (rt, store) = session(model, taskTools)
+        val done = rt.say("做任务")
+        val result = done.toolResults.getValue(CallId("t1"))
+        assertTrue(result.isError)
+        assertTrue(result.content.filterIsInstance<TextPart>().joinToString("") { it.text }.contains("Task subject must start with [TICKET-n]"))
+        assertEquals("任务没有创建", 0, done.tasks.size)
+        assertEquals(1, store.events(rt).filterIsInstance<HooksRan>().count { it.isFor("TaskCreated") })
+        assertLogIsTruth(store, rt)
+    }
+
+    @Test
+    fun `TaskCreated sees the task and a passing hook lets it be created, continue false is ignored`() = run {
+        installScript("TaskCreated", """cat > "${'$'}CLAUDE_PROJECT_DIR/created-input.json"; printf '%s' '{"continue":false,"stopReason":"别停"}'""")
+        val (rt, store) = session(taskModel(complete()), taskTools)
+        val done = rt.say("做任务")
+        val input = kotlinx.serialization.json.Json.parseToJsonElement(Files.readString(work.resolve("created-input.json"))) as JsonObject
+        assertEquals("1", (input["task_id"] as JsonPrimitive).content)
+        assertEquals("Implement auth", (input["task_subject"] as JsonPrimitive).content)
+        assertEquals("login and signup", (input["task_description"] as JsonPrimitive).content)
+        assertEquals("个人清单没有团队字段", null, input["teammate_name"])
+        assertEquals(1, done.tasks.size)
+        assertEquals(TurnOutcome.Completed, done.lastTurn!!.outcome)
+        assertLogIsTruth(store, rt)
     }
 
     // ---- PreModelSwitch（样本 112 / 113） ----

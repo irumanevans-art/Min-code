@@ -58,6 +58,7 @@ import dev.min.code.ui.theme.sea
 internal enum class SettingsSection(@StringRes val labelRes: Int) {
     MODEL(R.string.session_section_model),
     MODE(R.string.session_section_mode),
+    AUTO_REVIEW(R.string.session_section_auto_review),
     EFFORT(R.string.session_section_effort),
     CACHE(R.string.session_section_cache),
     CWD(R.string.session_section_cwd),
@@ -65,6 +66,7 @@ internal enum class SettingsSection(@StringRes val labelRes: Int) {
     USAGE(R.string.session_section_usage),
     MCP(R.string.session_section_mcp),
     TRUST(R.string.session_section_trust),
+    SCHEDULE(R.string.session_section_schedule),
     CHECKPOINTS(R.string.session_section_checkpoints),
 }
 
@@ -199,6 +201,26 @@ internal fun ClaudeCodeSettingsSheet(
             }
         }
 
+        if (layout.autoReview && extras != null) {
+            val review = settings.autoReview
+            if (review != null) {
+                Section(
+                    section = SettingsSection.AUTO_REVIEW,
+                    value = review.reviewer?.label ?: stringResource(R.string.auto_review_default_value, review.defaultModel),
+                    open = open,
+                    onToggle = { open = it },
+                ) {
+                    AutoReviewSection(
+                        view = review,
+                        models = settings.models,
+                        connection = session.connection,
+                        enabled = !settingsBusy && !session.readOnly,
+                        onPick = extras::setAutoReviewer,
+                    )
+                }
+            }
+        }
+
         if (layout.effort) {
             Section(
                 section = SettingsSection.EFFORT,
@@ -309,6 +331,19 @@ internal fun ClaudeCodeSettingsSheet(
                     onToggle = { open = it },
                 ) {
                     TrustSection(view, onAsk = { extras.askTrust(view.cwd) }, onSet = { extras.setTrust(view.cwd, it) })
+                }
+            }
+        }
+
+        if (layout.schedule && extras != null) {
+            session.schedule?.let { view ->
+                Section(
+                    section = SettingsSection.SCHEDULE,
+                    value = if (view.activeCount > 0) stringResource(R.string.schedule_summary_count, view.activeCount) else stringResource(R.string.schedule_summary_none),
+                    open = open,
+                    onToggle = { open = it },
+                ) {
+                    ScheduleSection(view, onDelete = extras::deleteScheduled)
                 }
             }
         }

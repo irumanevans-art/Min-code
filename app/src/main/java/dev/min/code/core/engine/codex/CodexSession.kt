@@ -142,7 +142,7 @@ class CodexSession internal constructor(
         is SessionCommand.Refresh -> CommandResult.Accepted
         // 能力位为假的命令在 supports 里已经挡掉，走到这里说明能力表改了而这里没跟上
         is SessionCommand.Resume, is SessionCommand.RunShell, is SessionCommand.StopSubagent,
-        is SessionCommand.StopTask, is SessionCommand.Revert,
+        is SessionCommand.StopTask, is SessionCommand.Revert, is SessionCommand.SetAutoReviewer,
         -> CommandResult.Unsupported
     }
 

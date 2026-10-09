@@ -4,6 +4,7 @@ import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.CronBudgetStopped
+import dev.min.agent.spi.CronCancelled
 import dev.min.agent.spi.CronExpiry
 import dev.min.agent.spi.CronExpired
 import dev.min.agent.spi.CronFired
@@ -30,8 +31,32 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** 定时任务出了需要告诉用户的事（宿主据此发通知；日志里同时有一条 [Note]）。触发本身不通知——那是用户自己设的 */
-data class CronNotice(val session: SessionId, val cronId: String, val kind: Kind, val text: String) {
+/**
+ * 定时任务出了需要告诉用户的事（宿主据此发通知；日志里同时有一条 [Note]）。触发本身不通知——那是用户自己设的。
+ *
+ * [text] 是日志 Note 里那句中文，给没有本地化文案的宿主（CLI、日志）直接用；有界面语言的宿主（App）读下面的结构化事实自己组句，
+ * 不然英文界面下通知正文是中文。事实只描述发生了什么，不带措辞。
+ */
+data class CronNotice(
+    val session: SessionId,
+    val cronId: String,
+    val kind: Kind,
+    val text: String,
+    /** 任务的日程：cron 表达式，或固定间隔（毫秒）；二者恰有一个 */
+    val cron: String? = null,
+    val intervalMs: Long? = null,
+    val recurring: Boolean = true,
+    /** [Kind.Skipped] / [Kind.BudgetStopped] / 因超限暂停的 [Kind.Expired]：花费上限（美元） */
+    val limitUsd: Double? = null,
+    /** [Kind.BudgetStopped] 与因超限暂停的 [Kind.Expired]：为什么超限 */
+    val overrun: CronOverrun? = null,
+    /** [Kind.BudgetStopped]：任务还在，下次到点会照常再跑；false = 这是一次性任务 / 唤醒，已经触发过，不会再跑 */
+    val willRunAgain: Boolean = false,
+    /** [Kind.Expired] 的原因 */
+    val expiry: CronExpiry? = null,
+    /** [Kind.Expired] 且 [expiry] 为 [CronExpiry.Budget]：连续超限了几次 */
+    val consecutiveOverruns: Int = 0,
+) {
     enum class Kind {
         /** 任务结束了（7 天到期、一次性错过、连续两次超限暂停） */
         Expired,
@@ -117,6 +142,17 @@ internal class CronEngine(
         val entry = attached[id] ?: return emptyMap()
         val rt = hub.get(id) ?: return emptyMap()
         return rt.state.value.crons.associate { it.id to maxOf(entry.floorMs, entry.skippedAt[it.id] ?: 0L) }
+    }
+
+    /**
+     * 宿主（界面）删一条进行中的定时任务：落的是模型用 CronDelete 时同一条 [CronCancelled]，同一把锁（和触发、过期互相串行）。
+     * 返回是否真的取消了一条——任务不存在、已经结束都是 false
+     */
+    suspend fun cancel(rt: SessionRuntime, cronId: String): Boolean {
+        val entry = attached[rt.sessionId] ?: return false
+        return entry.lock.withLock {
+            rt.commitIf(listOf(CronCancelled(cronId)), Durability.Sync) { s -> s.cronTask(cronId)?.active == true } != null
+        }
     }
 
     /** 宿主定时器的一次回调：看每个接着的会话有没有到点的任务 */
@@ -205,7 +241,7 @@ internal class CronEngine(
         val text = "定时任务 ${task.id}（${task.scheduleText()}）到点了，但当前模型没有 USD 价格，花费上限 ${money(limitUsd)} 核对不了，这一次跳过没有触发。" +
             "任务还在；换回有 USD 价格的模型后" + (if (task.recurring) "下一次到点会照常运行" else "会触发") + "。"
         rt.commit(listOf(Note(NoteLevel.Warning, text)), Durability.Batched)
-        _notices.tryEmit(CronNotice(rt.sessionId, task.id, CronNotice.Kind.Skipped, text))
+        _notices.tryEmit(CronNotice(rt.sessionId, task.id, CronNotice.Kind.Skipped, text, task.cron, task.intervalMs, task.recurring, limitUsd = limitUsd))
     }
 
     /** 触发时交给模型的话：明说这是预设的定时任务（不是用户此刻的消息）；设了花费上限的，告诉它上限 */
@@ -218,7 +254,8 @@ internal class CronEngine(
     // ---- 盯着会话状态：回合结束就触发排着的任务，并结束这次运行的记账 ----
 
     private suspend fun onState(rt: SessionRuntime, entry: Attached, state: SessionState) {
-        val idleLooking = state.turn == null && state.inbox.isEmpty()
+        // 收件箱里有东西、但没有什么会自己把它接走（上一回合是被停下的）也算空闲：否则这次运行的记账撤不掉
+        val idleLooking = state.turn == null && (state.inbox.isEmpty() || !state.lastTurnAllowsAutoStart())
         if (idleLooking && (rt.cronRun != null || state.crons.any { it.active }) && entry.idleCheckQueued.compareAndSet(false, true)) {
             scope.launch {
                 // 状态上看空闲了，回合 Job 可能还没收尾：等它真的结束再判（isQuiescent 看的是 Job）
@@ -240,8 +277,8 @@ internal class CronEngine(
      * [ModelBilling] 发现这次运行已到上限、拦下了一个请求（每次运行只通知一次，见 [CronRun.trip]）。
      * 在引擎自己的协程里收尾——调用方正站在某个会话的模型请求里，不能在那里等锁、停整棵树
      */
-    fun tripped(run: CronRun, problem: String) {
-        scope.launch { stopForBudget(run, problem) }
+    fun tripped(run: CronRun, overrun: CronOverrun) {
+        scope.launch { stopForBudget(run, overrun) }
     }
 
     /**
@@ -252,12 +289,12 @@ internal class CronEngine(
      * 记账**不在这里撤**，留到整棵树真的安静（[clearRunIfQuiet]）：运行已经到上限，期间任何还想发的请求（比如前台等着子 agent 的根，
      * 子 agent 一被停它就醒来要发下一个请求）都该被同一个预检拦下，而不是因为记账先撤了就漏过去、多花一轮
      */
-    private suspend fun stopForBudget(run: CronRun, problem: String) {
+    private suspend fun stopForBudget(run: CronRun, overrun: CronOverrun) {
         val rt = hub.get(run.rootId) ?: return
         val entry = attached[run.rootId] ?: return
         entry.lock.withLock {
             val task = rt.state.value.cronTask(run.cronId)
-            if (task != null && task.status != CronStatus.Cancelled && task.status != CronStatus.Expired) recordStop(rt, task, run, problem)
+            if (task != null && task.status != CronStatus.Cancelled && task.status != CronStatus.Expired) recordStop(rt, task, run, overrun)
         }
         // 事件落盘之后再停（停整棵树要等各会话收尾，不握着锁）
         for (child in rt.state.value.children.keys) hub.stopTree(child)
@@ -269,10 +306,11 @@ internal class CronEngine(
 
     /** 这次运行的记账要等整棵树都安静了才结束 */
     private fun clearRunIfQuiet(rt: SessionRuntime) {
-        if (rt.cronRun != null && rt.isQuiescent() && hub.treeTurnsIdle(rt.sessionId)) rt.cronRun = null
+        if (rt.cronRun != null && (rt.isQuiescent() || rt.isParked()) && hub.treeTurnsIdle(rt.sessionId)) rt.cronRun = null
     }
 
-    private suspend fun recordStop(rt: SessionRuntime, task: CronTask, run: CronRun, problem: String) {
+    private suspend fun recordStop(rt: SessionRuntime, task: CronTask, run: CronRun, overrun: CronOverrun) {
+        val problem = overrun.text
         val consecutive = if (run.fire > 1 && task.stoppedFire == run.fire - 1) task.overruns + 1 else 1
         val pause = task.active && consecutive >= CRON_PAUSE_AFTER_OVERRUNS
         val what = "定时任务 ${task.id}（${task.scheduleText()}）这一次运行被花费上限停下了：$problem。"
@@ -285,7 +323,14 @@ internal class CronEngine(
         if (pause) events += CronExpired(task.id, CronExpiry.Budget, "连续 $consecutive 次运行都超过单次上限（最近一次：$problem）")
         events += Note(NoteLevel.Warning, text)
         rt.commitIf(events, Durability.Sync) { s -> s.cronTask(task.id)?.let { it.status == CronStatus.Active || it.status == CronStatus.Fired } == true } ?: return
-        _notices.tryEmit(CronNotice(rt.sessionId, task.id, if (pause) CronNotice.Kind.Expired else CronNotice.Kind.BudgetStopped, text))
+        _notices.tryEmit(
+            CronNotice(
+                rt.sessionId, task.id, if (pause) CronNotice.Kind.Expired else CronNotice.Kind.BudgetStopped, text,
+                task.cron, task.intervalMs, task.recurring, limitUsd = run.limitUsd, overrun = overrun,
+                willRunAgain = task.active && !pause,
+                expiry = if (pause) CronExpiry.Budget else null, consecutiveOverruns = if (pause) consecutive else 0,
+            ),
+        )
     }
 
     /** 结案一条任务：cron_expired + 一条给人看的 Note + 通知 */
@@ -294,6 +339,6 @@ internal class CronEngine(
         val text = "定时任务 ${task.id}（${task.scheduleText()}）已结束：${expiryText(event)}。"
         val events: List<SessionEvent> = listOf(event, Note(NoteLevel.Warning, text))
         rt.commitIf(events, Durability.Sync) { s -> s.cronTask(task.id)?.active == true } ?: return
-        _notices.tryEmit(CronNotice(rt.sessionId, task.id, CronNotice.Kind.Expired, text))
+        _notices.tryEmit(CronNotice(rt.sessionId, task.id, CronNotice.Kind.Expired, text, task.cron, task.intervalMs, task.recurring, expiry = event.reason))
     }
 }

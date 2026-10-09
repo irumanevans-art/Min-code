@@ -182,6 +182,8 @@ object MinKernelDeps {
         canAnswerMcpUrlElicitation: Boolean = false,
         workflowsEnabled: () -> Boolean = { true },
         workflowApprovals: dev.min.agent.spi.WorkflowApprovals = dev.min.agent.spi.WorkflowApprovals.SessionOnly,
+        /** auto 审查的默认模型：同一个供应商档的目录小模型，没有返回 null（内核再退回会话模型自己） */
+        providerFastModel: (String) -> dev.min.agent.protocol.ModelRef? = { null },
     ): KernelDeps = KernelDeps(
         clock = clock, ids = ids, models = models, tools = tools,
         host = HostPorts(
@@ -203,5 +205,6 @@ object MinKernelDeps {
         workflowConcurrency = 4,
         workflowsEnabled = workflowsEnabled,
         workflowApprovals = workflowApprovals,
+        providerFastModel = providerFastModel,
     )
 }

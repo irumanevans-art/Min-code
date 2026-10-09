@@ -433,6 +433,33 @@ class TeamSessionTest {
     }
 
     @Test
+    fun `releasing one stalled member by name leaves the other stalled ones alone`() = run {
+        val model1 = leaderBuilds("a", "b", "c") { n, _ -> if (n == "a") hang else reply(TextPart("$n 做完了")) }
+        val h1 = hub(model1, HubLimits(teamMaxConcurrent = 1))
+        val leader = h1.root()
+        leader.send(ClientMsgId("u1"), listOf(TextPart("组个团队")))
+        leader.state.first { s -> s.team?.members?.all { it.session != null } == true }
+        val ids = listOf("b", "c").associateWith { leader.state.value.team!!.member(it)!!.session!! }
+        ids.values.forEach { h1.get(it)!!.state.first { s -> s.inbox.isNotEmpty() } }
+        h1.get(leader.state.value.team!!.member("a")!!.session!!)!!.state.first { it.turn != null }
+        scopes.first().coroutineContext[kotlinx.coroutines.Job]!!.apply { cancel(); join() }
+
+        val model2 = leaderBuilds("a", "b", "c") { n, _ -> reply(TextPart("$n 做完了")) }
+        val h2 = hub(model2, HubLimits(teamMaxConcurrent = 1))
+        val reopened = h2.open(leader.sessionId)!!
+        val b = h2.open(ids.getValue("b"))!!
+        h2.open(ids.getValue("c"))
+        delay(400)
+        val stalled = { h2.teamMembers(reopened.sessionId).filter { it.phase == TeamMemberStatus.Phase.Stalled }.map { it.name }.toSet() }
+        assertEquals(setOf("b", "c"), stalled())
+        assertEquals("不是搁浅状态的不放行", 0, h2.resumeTeamMembers(reopened.sessionId, "nobody"))
+        assertEquals(1, h2.resumeTeamMembers(reopened.sessionId, "b"))
+        b.state.first { it.lastTurn != null && it.turn == null }
+        assertEquals("只放行了 b，c 还在等人", setOf("c"), stalled())
+        assertEquals(0, model2.requests.count { it.memberName() == "c" })
+    }
+
+    @Test
     fun `a genuinely waiting member shows as queued and is not counted as stalled`() = run {
         val h = hub(leaderBuilds("a", "b") { n, _ -> if (n == "a") hang else reply(TextPart("$n 做完了")) }, HubLimits(teamMaxConcurrent = 1))
         val (leader, members) = readyTeam(h, "a", "b")
@@ -827,6 +854,24 @@ class TeamSessionTest {
         assertEquals(2, queued.size)
         // 收件箱里有两条：没来得及开跑的开场任务（解散时它们还在排队）和这句新话，都还没处理
         assertTrue("排队成员的收件箱：${queued.map { it.state.value.inbox.size }}", queued.all { m -> m.state.value.inbox.size == 2 && m.state.value.inbox.last().parts.any { (it as? TextPart)?.text == "再看一眼" } })
+        assertLogIsTruth(leader)
+    }
+
+    @Test
+    fun `the host can disband the team without going through the leader's tool, and only an active team`() = run {
+        val h = hub(leaderBuilds("a", "b") { _, _ -> hang }, HubLimits(teamMaxConcurrent = 1))
+        assertEquals("没有团队", "没有进行中的团队。", h.disbandTeam(h.root().sessionId))
+        val (leader, members) = readyTeam(h, "a", "b")
+        members.getValue("a").state.first { it.turn != null }
+        assertNull(h.disbandTeam(leader.sessionId, "用户在界面上解散"))
+        assertNull("成员停下了", members.getValue("a").state.value.turn)
+        assertEquals(0, h.teams.runningCount())
+        val disbanded = leader.state.value.team!!.disbanded!!
+        assertEquals(TeamDisbandReason.UserEnded, disbanded.reason)
+        assertEquals("用户在界面上解散", disbanded.note)
+        assertEquals("解散后不能重复解散", "没有进行中的团队。", h.disbandTeam(leader.sessionId))
+        assertEquals("不在线的会话", "会话不在线。", h.disbandTeam(dev.min.agent.protocol.SessionId("nope")))
+        leader.awaitIdle()
         assertLogIsTruth(leader)
     }
 

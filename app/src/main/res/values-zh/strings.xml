@@ -1212,7 +1212,7 @@
     <string name="trust_intro">这个文件夹带着项目配置。信任它，Min 就会在你的手机上运行：</string>
     <string name="trust_hooks">Hooks（%1$s）：在工具调用和回合前后自动执行 shell 命令。</string>
     <string name="trust_mcp">.mcp.json 里的 MCP 服务器（%1$s）：你逐个批准后，它们可以运行代码、访问网络。</string>
-    <string name="trust_nothing">没有发现项目 hooks，也没有 .mcp.json 里的服务器。</string>
+    <string name="trust_nothing">没有发现项目的 hooks、.mcp.json 服务器或权限放宽项。</string>
     <string name="trust_warning">只信任你自己写的、或读过的文件夹。克隆来的仓库可以带上 hooks 和服务器，它们能做你的账号在这里能做的一切。</string>
     <string name="trust_distrust_hint">不信任也能用：会话照常工作，只是项目里的 hooks 和 MCP 服务器不会启用。</string>
     <string name="trust_yes">信任</string>
@@ -1222,7 +1222,7 @@
     <string name="trust_cancel">取消</string>
     <string name="trust_save_failed">没能保存信任决定：%1$s</string>
     <string name="trust_state_inherited">%1$s（继承自 %2$s）</string>
-    <string name="trust_section_note">项目 hooks 对信任之后新建的会话生效；MCP 服务器在已打开的会话里马上被重新读取。</string>
+    <string name="trust_section_note">项目的 hooks 与权限规则对信任之后新建的会话生效；MCP 服务器当前打开的会话马上就能用上。</string>
     <string name="trust_revoke">撤销信任</string>
     <string name="trust_distrust_here">不信任这个文件夹</string>
     <string name="trust_state_trusted">已信任</string>
@@ -1357,4 +1357,126 @@
 <string name="settings_workflows_off">新运行已关闭</string>
 <string name="workflow_remember_project">本项目不再问</string>
 <string name="workflow_view_script">查看脚本</string>
+
+    <!-- B10: top-bar cost = main session + sub-agents (whole tree) -->
+    <string name="min_usage_cost_subagents">其中子 agent</string>
+
+    <!-- B10: sub-agent report card -->
+    <string name="agent_report_expand">展开报告</string>
+    <string name="agent_report_collapse">收起报告</string>
+
+    <!-- B10: questions / plans that come up from a sub-agent say who asked -->
+    <string name="session_notification_agent_question">%1$s%2$s提了个问题，请打开会话回答</string>
+    <string name="session_notification_agent_plan">%1$s%2$s交了一份计划，请打开会话审阅</string>
+
+    <!-- B10: team page -->
+    <string name="team_chip">团队 · %1$d</string>
+    <string name="team_chip_stalled">团队 · %1$d 位搁浅</string>
+    <string name="team_title">团队 %1$s</string>
+    <string name="team_state_active">进行中</string>
+    <string name="team_state_disbanded">已解散</string>
+    <string name="team_disband_note">解散时说：%1$s</string>
+    <string name="team_members_title">成员 · %1$d</string>
+    <string name="team_phase_notjoined">未加入</string>
+    <string name="team_phase_queued">排队等名额</string>
+    <string name="team_phase_stalled">搁浅</string>
+    <string name="team_phase_running">运行中</string>
+    <string name="team_phase_idle">空闲</string>
+    <string name="team_stalled_hint">重启后有 %1$d 位成员停在开场任务上，没有东西会自己放行它们。</string>
+    <string name="team_release">放行</string>
+    <string name="team_release_all">全部放行</string>
+    <string name="team_member_task">在做：%1$s</string>
+    <string name="team_tasks_title">共享任务清单 · %1$d</string>
+    <string name="team_tasks_empty">还没有任务</string>
+    <string name="team_task_pending">待办</string>
+    <string name="team_task_in_progress">进行中</string>
+    <string name="team_task_done">已完成</string>
+    <string name="team_task_unowned">无人认领</string>
+    <string name="team_task_waiting">等待 %1$s</string>
+    <string name="team_messages_title">成员间消息 · %1$d</string>
+    <string name="team_messages_empty">还没有消息</string>
+    <string name="team_message_all">全体</string>
+    <string name="team_disband">解散团队</string>
+    <string name="team_disband_confirm_title">解散这个团队？</string>
+    <string name="team_disband_confirm_text">成员会立刻停下；它们已有的报告照常交给负责人，任务清单从此冻结。</string>
+    <string name="team_disband_confirm">解散</string>
+    <string name="team_cancel">取消</string>
+    <string name="team_released">已放行 %1$d 位成员</string>
+    <string name="team_release_none">没有需要放行的成员</string>
+    <string name="team_disbanded">团队已解散</string>
+    <string name="team_disband_failed">没能解散：%1$s</string>
+
+    <!-- B10/M5: auto mode and its review model -->
+    <string name="min_agent_mode_auto_warning">由审查模型替你批准看起来安全的工具调用，其余仍问你。审查时你的消息与工具入参会发给审查模型所在的供应商。</string>
+    <string name="session_section_auto_review">自动模式的审查模型</string>
+    <string name="auto_review_default">默认（与会话同供应商的小模型）</string>
+    <string name="auto_review_default_value">默认 · %1$s</string>
+    <string name="auto_review_default_desc">用与本会话同一供应商的 %1$s。数据不会发给别家。</string>
+    <string name="auto_review_custom_header">或单独指定审查用的模型</string>
+    <string name="auto_review_privacy">单独指定别家供应商的模型时，你的消息与工具入参会发给那家供应商做审查。</string>
+    <string name="auto_review_failed">没能改审查模型：%1$s</string>
+
+    <string name="auto_review_other_provider">会发给另一家供应商</string>
+
+    <!-- M5: scheduled tasks - schedule wording shared by the list and the notifications -->
+    <string name="cron_schedule_cron">cron %1$s</string>
+    <string name="cron_schedule_minutes">每 %1$d 分钟</string>
+    <string name="cron_schedule_hours">每 %1$d 小时</string>
+    <string name="cron_schedule_days">每 %1$d 天</string>
+    <string name="cron_overrun_spent">这次运行花了 %1$s，到了单次上限 %2$s</string>
+    <string name="cron_overrun_unpriced_request">这次运行里有模型请求没有 USD 价格，花费无法核对，按到上限处理</string>
+    <string name="cron_overrun_unpriced_model">这个模型没有 USD 价格，花费无法核对</string>
+    <string name="cron_body_skipped_recurring">定时任务 %1$s（%2$s）到点了，但当前模型没有 USD 价格，花费上限 %3$s 核对不了，这一次跳过没有触发。任务还在；换回有 USD 价格的模型后下一次到点会照常运行。</string>
+    <string name="cron_body_skipped_once">定时任务 %1$s（%2$s）到点了，但当前模型没有 USD 价格，花费上限 %3$s 核对不了，这一次跳过没有触发。任务还在；换回有 USD 价格的模型后会触发。</string>
+    <string name="cron_body_budget_stopped_again">定时任务 %1$s（%2$s）这一次运行被花费上限停下了：%3$s。任务还在，下次到点会照常再跑一次（连续 2 次超限才会暂停）。</string>
+    <string name="cron_body_budget_stopped_done">定时任务 %1$s（%2$s）这一次运行被花费上限停下了：%3$s。这是一次性任务 / 唤醒，已经触发过，不会再跑。</string>
+    <string name="cron_body_paused">定时任务 %1$s（%2$s）已暂停：连续第 %3$d 次超过单次花费上限。要继续请调整提示词或上限后重新创建。</string>
+    <string name="cron_body_paused_last">定时任务 %1$s（%2$s）已暂停：连续第 %3$d 次超过单次花费上限（最近一次：%4$s）。要继续请调整提示词或上限后重新创建。</string>
+    <string name="cron_body_expired_age">定时任务 %1$s（%2$s）已结束：循环任务满 7 天自动过期。</string>
+    <string name="cron_body_expired_missed">定时任务 %1$s（%2$s）已结束：一次性任务的时刻在会话没开着时过去了，不补跑。</string>
+    <string name="cron_body_expired_no_pricing">定时任务 %1$s（%2$s）已结束：当前模型没有 USD 价格，花费估算不了。</string>
+    <!-- M5: scheduled tasks list in the session settings -->
+    <string name="session_section_schedule">定时任务</string>
+    <string name="schedule_summary_count">%1$d 个进行中</string>
+    <string name="schedule_summary_none">没有进行中的</string>
+    <string name="schedule_off_note">定时任务在设置里被关掉了，这里的任务不会触发。</string>
+    <string name="schedule_next">下次 %1$s</string>
+    <string name="schedule_budget">每次最多 %1$s</string>
+    <string name="schedule_no_budget">不限花费</string>
+    <string name="schedule_fires">已运行 %1$d 次</string>
+    <string name="schedule_once">一次性</string>
+    <string name="schedule_wakeup">唤醒</string>
+    <string name="schedule_status_fired">已触发</string>
+    <string name="schedule_status_cancelled">已删除</string>
+    <string name="schedule_status_expired">已结束</string>
+    <string name="schedule_delete">删除</string>
+    <string name="schedule_delete_title">删除这个定时任务？</string>
+    <string name="schedule_delete_text">它从此不再触发；已经在跑的这一次不受影响。</string>
+    <string name="schedule_deleted">已删除定时任务 %1$s</string>
+    <string name="schedule_delete_failed">没能删除 %1$s：它已经结束了</string>
+    <!-- M5: marker on a session in the list that has active scheduled tasks -->
+    <string name="session_scheduled_tag">定时</string>
+
+    <string name="schedule_recurring">循环</string>
+
+    <!-- M5: optional cap per scheduled run (default: none, as in Claude Code) -->
+    <string name="settings_cron_budget_title">定时任务的花费上限</string>
+    <string name="settings_cron_budget_none">不设上限（默认）· 一次运行想花多少就花多少</string>
+    <string name="settings_cron_budget_none_short">留空 = 不设上限</string>
+    <string name="settings_cron_budget_value">每次运行最多花 %1$s</string>
+    <string name="settings_cron_budget_field">每次运行的上限（美元）</string>
+    <string name="settings_cron_budget_hint">留空 = 不设上限。任务自己写的上限只能比它更低。要用有 USD 价格的模型：花费核对不了的运行会被跳过。</string>
+    <string name="settings_cron_budget_invalid">请输入大于 0 的数字，或留空</string>
+    <string name="settings_cron_budget_save">保存</string>
+    <string name="settings_cron_budget_clear">不设上限</string>
+    <!-- M5: teamMaxConcurrent -->
+    <string name="settings_team_title">团队同时运行的成员数</string>
+    <string name="settings_team_subtitle">%1$d（最多 %2$d）· 多出来的成员排队等名额</string>
+
+    <!-- M5: what the project settings grant (shown before trusting) -->
+    <string name="trust_allow">免问的权限规则（%1$d 条）：%2$s</string>
+    <string name="trust_directories">agent 额外可以读写的目录（%1$d 个）：%2$s</string>
+    <string name="trust_more">另有 %1$d 个</string>
+    <string name="trust_grants_on">这个项目的配置授予了：</string>
+    <string name="trust_grants_off">信任这个目录后，它的配置会授予：</string>
 </resources>

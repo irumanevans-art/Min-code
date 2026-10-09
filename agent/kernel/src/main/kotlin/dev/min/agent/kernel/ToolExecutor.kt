@@ -7,7 +7,6 @@ import dev.min.agent.ext.hooks.PostToolBatchInput
 import dev.min.agent.ext.hooks.PostToolUseFailureInput
 import dev.min.agent.ext.hooks.PostToolUseInput
 import dev.min.agent.ext.hooks.PreToolUseInput
-import dev.min.agent.ext.hooks.TaskCompletedInput
 import dev.min.agent.policy.PermissionRule
 import dev.min.agent.policy.PolicyContext
 import dev.min.agent.policy.PolicyEngine
@@ -75,6 +74,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * 后面的调用按新模式走。每个调用副作用之前必落 ToolEffectPending，结束必落 ToolOutcome（docs/agent/02-总体架构.md §4）。
  */
 internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: HookDriver = HookDriver(rt)) {
+    private val taskHooks = TaskHooks(hooks)
+
     private val deps = rt.deps
     /** 现在能用的工具。MCP 快照会在回合开头变（[SessionRuntime.applyStagedMcp]），所以每批调用前重算一次 */
     @Volatile
@@ -566,7 +567,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         } catch (e: Exception) {
             errorResult("工具执行出错：${e.message ?: e::class.simpleName}")
         }
-        val budgeted = gateTaskCompletion(turnId, ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId))
+        val budgeted = gateTaskHooks(turnId, ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId))
         // StructuredOutput 交卷通过校验：采纳事件与工具结果同一次提交——不会出现「结果说收到了、日志里却没有最终答案」
         val adopted = if (!budgeted.isError && p.tool is StructuredOutputTool) {
             listOf(dev.min.agent.spi.StructuredOutputDelivered(turnId, p.raw))
@@ -578,35 +579,49 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     /**
-     * TaskCompleted（hooks.md :2468）：任务清单的状态变化是工具**声明**的副作用（[SessionEffect.TaskUpdate]），与结果同一次提交，
-     * 所以拦截只能在提交之前做：把「标为完成」从声明里拿掉，结果换成给模型的错误反馈（原文：exit 2「the task is not marked as
-     * completed and the stderr message is fed back to the model」）。TaskUpdate 触发时 `continue: false` 被忽略（原文），
-     * 因此只认 Block，不认 Stop。已经是完成状态的任务再标一次不算「正在完成」，不跑 hook。
+     * TaskCreated / TaskCompleted（hooks.md :2445–2468）：任务清单的状态变化是工具**声明**的副作用（[SessionEffect]），与结果同一次提交，
+     * 所以拦截只能在提交之前做：把被拒的那条从声明里拿掉，结果换成给模型的错误反馈（原文：exit 2「the task is not marked as
+     * completed and the stderr message is fed back to the model」）。`continue: false` 被忽略（原文），因此只认 Block，不认 Stop。
+     * 已经是完成状态的任务再标一次不算「正在完成」，不跑 hook。团队清单不走这里（它不是副作用），见 [TeamCoordinator]。
      */
-    private suspend fun gateTaskCompletion(turnId: TurnId, result: ToolResult): ToolResult {
-        if (result.isError || !hooks.has(HookEvent.TaskCompleted, null)) return result
-        val completing = result.effects.filterIsInstance<SessionEffect.TaskUpdate>().filter { e ->
-            e.patch.status == TaskStatus.Completed && rt.state.value.tasks.firstOrNull { it.id == e.taskId }?.status.let { it != null && it != TaskStatus.Completed }
-        }
-        if (completing.isEmpty()) return result
-        val refused = mutableMapOf<String, String>()
-        for (effect in completing) {
-            val task = rt.state.value.tasks.first { it.id == effect.taskId }
-            val specific = HookJson.encodeToJsonElement(
-                TaskCompletedInput.serializer(),
-                TaskCompletedInput(taskId = task.id, taskSubject = task.subject, taskDescription = task.description.takeIf { it.isNotBlank() }),
-            ).jsonObject
-            val outcome = hooks.run(HookEvent.TaskCompleted, null, specific, turnId) ?: continue
-            if (outcome.decision == HookOutcome.Decision.Block) refused[effect.taskId] = outcome.reason ?: "TaskCompleted hook 没有给出理由"
+    private suspend fun gateTaskHooks(turnId: TurnId, result: ToolResult): ToolResult {
+        if (result.isError || (!taskHooks.watchesCreation() && !taskHooks.watchesCompletion())) return result
+        val refused = mutableMapOf<SessionEffect, String>()
+        var nextId = rt.state.value.nextTaskId().toInt()
+        for (effect in result.effects) {
+            when (effect) {
+                is SessionEffect.TaskCreate -> {
+                    // 同一个结果里连着创建几条时编号依次往后；被拒的那条不占号
+                    val id = nextId.toString()
+                    val reason = taskHooks.refuseCreation(turnId, TaskFacts(id, effect.subject, effect.description.takeIf { it.isNotBlank() }))
+                    if (reason == null) nextId++ else refused[effect] = reason
+                }
+                is SessionEffect.TaskUpdate -> {
+                    val task = rt.state.value.tasks.firstOrNull { it.id == effect.taskId }
+                    if (effect.patch.status == TaskStatus.Completed && task != null && task.status != TaskStatus.Completed) {
+                        taskHooks.refuseCompletion(turnId, TaskFacts(task.id, task.subject, task.description.takeIf { it.isNotBlank() }))
+                            ?.let { refused[effect] = it }
+                    }
+                }
+                else -> Unit
+            }
         }
         if (refused.isEmpty()) return result
         val effects = result.effects.mapNotNull { e ->
-            if (e is SessionEffect.TaskUpdate && e.taskId in refused && e.patch.status == TaskStatus.Completed) {
-                val rest = e.patch.copy(status = null)
-                if (rest.isEmpty) null else e.copy(patch = rest)
-            } else e
+            when {
+                e !in refused -> e
+                // 完成被拒：状态留原样，同一次更新里的其它字段（标题、负责人……）照改
+                e is SessionEffect.TaskUpdate -> e.patch.copy(status = null).takeUnless { it.isEmpty }?.let { e.copy(patch = it) }
+                else -> null
+            }
         }
-        val message = refused.entries.joinToString("\n") { (id, reason) -> "TaskCompleted hook 不让把任务 #$id 标为完成，任务保持原状态。反馈：$reason" }
+        val message = refused.entries.joinToString("\n") { (effect, reason) ->
+            when (effect) {
+                is SessionEffect.TaskCreate -> "TaskCreated hook 不让创建任务「${effect.subject}」，任务没有创建。反馈：$reason"
+                is SessionEffect.TaskUpdate -> "TaskCompleted hook 不让把任务 #${effect.taskId} 标为完成，任务保持原状态。反馈：$reason"
+                else -> reason
+            }
+        }
         return result.copy(content = listOf(TextPart(message)), isError = true, effects = effects)
     }
 

@@ -5,6 +5,7 @@ import dev.min.agent.spi.catchingNonCancellation
 import dev.min.code.R
 import dev.min.code.core.engine.AgentSession
 import dev.min.code.core.engine.AgentSessionRegistry
+import dev.min.code.core.engine.CommandResult
 import dev.min.code.core.engine.McpControl
 import dev.min.code.core.engine.McpLoginCancelled
 import dev.min.code.core.engine.McpLoginPrompt
@@ -15,9 +16,12 @@ import dev.min.code.core.engine.RewindControl
 import dev.min.code.core.engine.RewindResultView
 import dev.min.code.core.engine.RewindScopeView
 import dev.min.code.core.engine.RewindStorageRow
+import dev.min.code.core.engine.SessionCommand
+import dev.min.code.core.engine.ScheduleControl
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SessionSignal
 import dev.min.code.core.engine.StartOptions
+import dev.min.code.core.engine.TeamControl
 import dev.min.code.core.engine.TrustProbe
 import dev.min.code.core.engine.WorkspaceTrustControl
 import dev.min.code.core.service.AWAY_RECAP_AFTER_MS
@@ -34,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -220,8 +225,18 @@ internal class SessionExtras(
         }
     }
 
+    /**
+     * 当前目录的项目配置会放宽哪些权限（免问规则、附加目录）：信任段列给人看。探一次磁盘，目录换了才重探；
+     * `force` 因为已信任 / 已拒绝的目录 [WorkspaceTrustControl.probe] 默认返回 null（它只回答「还要不要问」）
+     */
+    private val projectGrants: StateFlow<TrustProbe?> = shown.flatMapLatest { session ->
+        val control = trustControl
+        if (session?.capabilities?.workspaceTrust != true || control == null) flowOf(null)
+        else session.state.map { it.cwd }.distinctUntilChanged().map { cwd -> catchingNonCancellation { control.probe(cwd, force = true) }.getOrNull() }
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
+
     /** 设置面板「工作区信任」那一段：当前目录的状态；引擎不管信任时为 null */
-    val trustView: StateFlow<TrustView?> = combine(shown, settings.settings) { session, app ->
+    val trustView: StateFlow<TrustView?> = combine(shown, settings.settings, projectGrants) { session, app, grants ->
         if (session?.capabilities?.workspaceTrust != true) return@combine null
         val cwd = session.state.value.cwd
         TrustView(
@@ -229,6 +244,7 @@ internal class SessionExtras(
             decision = WorkspaceTrust.decision(app.workspaceTrust, cwd),
             ownTrust = WorkspaceTrust.isOwn(app.workspaceTrust, cwd),
             inheritedFrom = WorkspaceTrust.inheritedFrom(app.workspaceTrust, cwd),
+            grants = grants?.takeIf { it.cwd == cwd },
         )
     }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -296,6 +312,55 @@ internal class SessionExtras(
                 val session = shown.value ?: return@collect
                 if (awayMs >= AWAY_RECAP_AFTER_MS) reportRecap(session, auto = true)
             }
+        }
+    }
+
+    // ---- 自动模式的审查模型 ----
+
+    /** 设置里选审查模型：[modelId] 为 null = 回到默认。内核会核对它解析得出来；不行就把原因告诉用户（模型没换） */
+    fun setAutoReviewer(modelId: String?, profileId: String?) {
+        val session = shown.value ?: return
+        scope.launch {
+            val result = session.submit(SessionCommand.SetAutoReviewer(java.util.UUID.randomUUID().toString(), modelId, profileId))
+            if (result is CommandResult.Rejected) notice(context.getString(R.string.auto_review_failed, result.message), error = true)
+        }
+    }
+
+    // ---- 定时任务 ----
+
+    private val scheduleControl: StateFlow<ScheduleControl?> = shown.map { it?.schedule }
+        .stateIn(scope, SharingStarted.Eagerly, shown.value?.schedule)
+
+    /** 清单上的「删除」（界面已经确认过）。已经结束的删不了，说一句 */
+    fun deleteScheduled(taskId: String) {
+        val control = scheduleControl.value ?: return
+        scope.launch {
+            val deleted = catchingNonCancellation { control.delete(taskId) }.getOrDefault(false)
+            notice(context.getString(if (deleted) R.string.schedule_deleted else R.string.schedule_delete_failed, taskId), error = !deleted)
+        }
+    }
+
+    // ---- 团队 ----
+
+    private val teamControl: StateFlow<TeamControl?> = shown.map { it?.team }
+        .stateIn(scope, SharingStarted.Eagerly, shown.value?.team)
+
+    /** 团队页的「放行」：[member] 为 null 放行全部搁浅的。结果说一句（放行了几位 / 没有要放行的） */
+    fun releaseStalled(member: String?) {
+        val control = teamControl.value ?: return
+        scope.launch {
+            val released = catchingNonCancellation { control.releaseStalled(member) }.getOrDefault(0)
+            notice(context.getString(if (released > 0) R.string.team_released else R.string.team_release_none, released), error = false)
+        }
+    }
+
+    /** 团队页的「解散」（界面已经确认过）。成功说一句，没成功把原因告诉用户 */
+    fun disbandTeam() {
+        val control = teamControl.value ?: return
+        scope.launch {
+            val problem = catchingNonCancellation { control.disband() }.getOrElse { it.message ?: it.javaClass.simpleName }
+            if (problem == null) notice(context.getString(R.string.team_disbanded), error = false)
+            else notice(context.getString(R.string.team_disband_failed, problem), error = true)
         }
     }
 
@@ -408,7 +473,14 @@ internal class SessionExtras(
 internal class TrustPrompt(val probe: TrustProbe, val then: (() -> Unit)?)
 
 /** 当前工作目录的信任状态：[decision] true 信任（含继承）/ false 明确不信任 / null 没问过 */
-internal data class TrustView(val cwd: String, val decision: Boolean?, val ownTrust: Boolean, val inheritedFrom: String?)
+internal data class TrustView(
+    val cwd: String,
+    val decision: Boolean?,
+    val ownTrust: Boolean,
+    val inheritedFrom: String?,
+    /** 这个目录的项目配置会放宽的权限；还没探出来 / 没有为 null */
+    val grants: TrustProbe? = null,
+)
 
 /** 重开大会话时的「从摘要续接」提问。[working] = 正在压缩 */
 internal data class ResumePrompt(val session: AgentSession, val advice: ResumeAdviceView, val working: Boolean = false)

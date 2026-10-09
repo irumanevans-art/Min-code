@@ -55,6 +55,10 @@ data class AgentSessionState(
      */
     val open: Boolean = false,
     val worktree: WorktreeView? = null,
+    /** agent 团队（[EngineCapabilities.team]，Min）：成员、共享清单、消息流。没有团队 / 引擎没有这个概念为 null */
+    val team: TeamView? = null,
+    /** 这个会话的定时任务（[EngineCapabilities.schedule]，Min）。一条都没建过 / 引擎没有这个概念为 null */
+    val schedule: ScheduleView? = null,
 ) {
     /** 会话页要显示它、输入框要能收字：进程活着（CC / Codex 的 Running），或 Min 这种没进程但打开着的会话 */
     val accepting: Boolean
@@ -215,6 +219,8 @@ data class SettingsView(
     val effortSupported: Boolean = true,
     /** 引擎回读的**实际生效**配置，可能与请求的不同（ultracode 时强度回读为 xhigh）。面板上「默认（实际：…）」读它 */
     val applied: AppliedSettings = AppliedSettings(),
+    /** auto 权限模式的审查模型（[EngineCapabilities.autoReview]，Min）。引擎没有 auto 模式为 null */
+    val autoReview: AutoReviewView? = null,
 ) {
     /** 按键取一个引擎专有设置项 */
     fun extra(key: String): EngineOptionView? = extras.firstOrNull { it.key == key }
@@ -261,6 +267,15 @@ data class Choice(
     }
 }
 
+/**
+ * auto 模式的审查模型：每个请求前先让一个（通常更小更便宜的）模型判断这次工具调用能不能直接放行。
+ *
+ * @param reviewer 单独指定的审查模型（带它所属的供应商档）；null = 默认
+ * @param defaultModel 默认审查模型的 id：与会话**同供应商**目录里的小模型，目录没给就是会话模型自己。
+ *   「默认」那一行写出它，免得用户不知道默认是谁
+ */
+data class AutoReviewView(val reviewer: Choice?, val defaultModel: String)
+
 /** 引擎回读的实际生效配置。null / false = 没读到 */
 data class AppliedSettings(val model: String? = null, val effort: String? = null, val ultracode: Boolean = false)
 
@@ -287,6 +302,8 @@ data class UsageView(
      * Min 填（目录价格 × 用量；有一个用过的模型没价格就是 null）。[costText] 是 CC 给的 CLI 原文、要解析成美元，两者别混
      */
     val costLabel: String? = null,
+    /** [costLabel] 里子 agent（含团队成员）花的那一份；没有子 agent 花钱、或总数不全时 null。只有 Min 填（整棵树求和，设计 5.7） */
+    val subagentCostLabel: String? = null,
 ) {
     companion object {
         val Empty = UsageView(null, null, null, null, null, null)

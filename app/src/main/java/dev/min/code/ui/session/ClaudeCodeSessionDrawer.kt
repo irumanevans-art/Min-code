@@ -567,6 +567,8 @@ private fun SessionRow(
                     EngineUi.tag(entry.engine)?.let { EngineTag(stringResource(it), entry.isActive) }
                     // 「中断」：最后一个回合没结束（进程被杀 / 失败 / 达到上限），打开后停止键的位置是 ▶
                     if (entry.interrupted) InterruptedTag()
+                    // 「定时」：这个会话里有进行中的定时任务（用户走开也会自己跑起来），所以被卸下 / 关着也不会漏掉
+                    if (entry.scheduledTasks > 0) ScheduledTag(entry.isActive)
                     AnimatedVisibility(visible = entry.isActive, enter = InkMotion.enter, exit = InkMotion.exit) {
                         InUseBadge()
                     }
@@ -792,6 +794,22 @@ private fun EngineTag(text: String, onSea: Boolean) {
     val tint = if (onSea) MaterialTheme.sea.onSea else MaterialTheme.sea.seaDeep
     Text(
         text,
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, lineHeight = 13.sp),
+        color = tint,
+        maxLines = 1,
+        modifier = Modifier
+            .border(1.dp, tint.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
+/** 「定时」标记：会话里有进行中的定时任务。海色（不是朱）：它是一件安排好的事，不是出了问题 */
+@Composable
+private fun ScheduledTag(onSea: Boolean) {
+    val palette = MaterialTheme.sea
+    val tint = if (onSea) palette.onSea else palette.seaDeep
+    Text(
+        stringResource(R.string.session_scheduled_tag),
         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, lineHeight = 13.sp),
         color = tint,
         maxLines = 1,

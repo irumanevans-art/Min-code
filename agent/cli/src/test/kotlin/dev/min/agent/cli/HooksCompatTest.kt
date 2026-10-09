@@ -71,7 +71,7 @@ class HooksCompatTest {
      * Notification=SessionRuntime.kt:554、SubagentStart=SessionHub.kt:801、SubagentStop=TurnRunner.kt:268、
      * Stop=TurnRunner.kt:266、SessionEnd=SessionHub.kt:787、PreCompact=Compactor.kt:209、PostCompact=Compactor.kt:178、
      * PostToolBatch=ToolExecutor.kt（executeAll 末尾，样本 77 的端到端见 HooksDecisionKernelTest）、
-     * TaskCompleted=ToolExecutor.kt（gateTaskCompletion，样本 89 同）、
+     * TaskCreated / TaskCompleted=ToolExecutor.gateTaskHooks（个人清单，样本 87 / 89）与 TeamCoordinator（团队共享清单；端到端见 HooksDecisionKernelTest）、
      * PreModelSwitch=ModelSwitchHooks.kt（SessionRuntime.changeSettings 的切模型处，样本 113 同；PostModelSwitch 同处，样本 115）、
      * UserPromptExpansion=SessionRuntime.promptExpansionHooks（宿主 cli 的 Main.say / runHeadless 在展开之后调，样本 65 的端到端见 HooksExpansionHeadlessTest）。
      * TeammateIdle=TurnRunner.teammateIdleContinues（团队成员的回合要结束、团队清单又没有可认领的活时；样本 94 / 95 的端到端见 HooksDecisionKernelTest）。
@@ -81,7 +81,7 @@ class HooksCompatTest {
         "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse",
         "PostToolUseFailure", "Notification", "SubagentStart", "SubagentStop", "Stop", "SessionEnd",
         "PreCompact", "PostCompact", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
-        "PostToolBatch", "TaskCompleted", "PreModelSwitch", "PostModelSwitch",
+        "PostToolBatch", "TaskCreated", "TaskCompleted", "PreModelSwitch", "PostModelSwitch",
         "UserPromptExpansion", "PermissionDenied", "TeammateIdle",
     )
 

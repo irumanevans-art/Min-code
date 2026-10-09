@@ -674,6 +674,17 @@ class SessionRuntime private constructor(
             _state.value.turn == null && _state.value.inbox.isEmpty()
     }
 
+    /**
+     * 没有回合、没有维护，收件箱里却有输入、而且没有任何东西会自己把它们接走：上一回合不是正常结束的（用户 / 预算 / hook 停的……），
+     * 报告与消息只进收件箱等人决定（[SessionHub.deliver] 同一条规矩）。定时运行的记账靠它收尾——
+     * 只认「收件箱为空」的话，停树时前台等子 agent 的根一被打断、报告落进它的收件箱，这次运行就永远撤不掉：
+     * 用户下一句话的花费被算进已经结束的运行，还可能被它的上限拦下
+     */
+    internal fun isParked(): Boolean = synchronized(turnLock) {
+        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true &&
+            _state.value.turn == null && _state.value.inbox.isNotEmpty() && !_state.value.lastTurnAllowsAutoStart()
+    }
+
     /** 此刻没有回合在跑（含启动中的），收件箱有无输入不论——团队调度判断「成员是否空闲」用 */
     internal fun isTurnIdle(): Boolean = synchronized(turnLock) {
         !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true && _state.value.turn == null

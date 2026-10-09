@@ -42,9 +42,8 @@ import dev.min.code.core.session.withClippedResult
  *
  * ## 为什么用 Note 承载几样东西
  *
- * 设计 3.11 要给 ChatItem 加 `UserText.continuation`、`Note.marker`、`AgentReport` 三处，但 `core/session/ChatItem.kt`
- * 不在 B3 许可名单里。这里先用现有的 [ChatItem.Note] 承载：中断 / 失败说明、续跑分隔、子 agent 唤醒分隔、子 agent 报告卡。
- * 三种承载只写在 [markerNote] / [dividerNote] / [reportNote] 三个函数里，B7 / B10 加了变体后只改它们。
+ * 设计 3.11 要给 ChatItem 加 `UserText.continuation`、`Note.marker`、`AgentReport` 三处。B10 加了 `AgentReport`；
+ * 另两处还是用现有的 [ChatItem.Note] 承载：中断 / 失败说明、续跑分隔、子 agent 唤醒分隔，只写在 [markerNote] / [dividerNote] 两个函数里。
  */
 
 /** 子 agent 报告标签里的信息（`Reports.render` 的逆）。tools / tokens / duration 缺失或畸形时为 null */
@@ -126,11 +125,10 @@ fun triggerViewOf(trigger: TurnTrigger): TurnTriggerView = when (trigger) {
 
 fun EndedTurn.end(): TurnEnd = turnEndOf(outcome)
 
-// ---- 承载（B7 / B10 加了 ChatItem 变体后只改这三处）----
+// ---- 承载（以后加了 ChatItem 变体只改这两处）----
 
 private fun markerNote(id: String, text: String, isError: Boolean): ChatItem = ChatItem.Note(id, text, isError)
 private fun dividerNote(id: String, text: String): ChatItem = ChatItem.Note(id, "— $text —")
-private fun reportNote(id: String, text: String, isError: Boolean): ChatItem = ChatItem.Note(id, text, isError)
 
 /**
  * 投影一个会话的转录。
@@ -193,8 +191,7 @@ private class ItemsBuilder(
                 when (origin.kind) {
                     AgentInputKind.Report -> {
                         val report = parseMinReport(raw)
-                        items += if (report == null) ChatItem.UserText(id, raw)
-                        else reportNote(id, text.report(report, child?.description), report.isError)
+                        items += if (report == null) ChatItem.UserText(id, raw) else reportCard(id, report, child)
                     }
                     AgentInputKind.Message -> items +=
                         ChatItem.Note(id, text.agentMessage(child?.agentType ?: "agent", child?.name) + "\n" + raw)
@@ -206,6 +203,17 @@ private class ItemsBuilder(
             is InputOrigin.Cron -> items += ChatItem.Note(id, text.cronFired(origin.cronId) + "\n" + plain(entry.parts))
         }
     }
+
+    private fun reportCard(id: String, report: MinReport, child: ChildSummary?) = ChatItem.AgentReport(
+        id = id,
+        // 线程 id 是发起子 agent 的那次 Agent 调用的 id；委派记录不在（父会话是被回退过的旧状态）就不可跳
+        threadId = child?.callId?.value,
+        agentType = report.agentType, name = report.name ?: child?.name,
+        description = child?.description?.takeIf { it.isNotBlank() },
+        status = report.status, isError = report.isError,
+        toolCalls = report.tools, tokens = report.tokens, durationMs = report.durationMs,
+        body = report.body,
+    )
 
     private fun parts(messageId: String, content: List<Part>) {
         content.forEachIndexed { index, part ->

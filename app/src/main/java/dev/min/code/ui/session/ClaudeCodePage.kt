@@ -875,6 +875,8 @@ internal fun List<ChatItem>.toTranscriptText(labels: TranscriptLabels): String =
             is ChatItem.Note -> append("> ${item.text}\n\n")
             // 回退掉的对话不导出（导出的是「现在这条对话」），折叠行本身留一句
             is ChatItem.Folded -> append("> ${item.title}\n\n")
+            // 子 agent 的报告：标题行（类型 · 描述 · 状态）加正文，导出时不折叠
+            is ChatItem.AgentReport -> append("> ${item.agentType}${item.description?.let { " · $it" }.orEmpty()} · ${item.status}\n\n${item.body}\n\n")
             // 进程输出导成代码块：贴到别处去查的时候，等宽和原样换行都要保住
             is ChatItem.ProcessOutput ->
                 append("```\n${item.lines.joinToString("\n")}\n```\n\n")
@@ -1080,6 +1082,8 @@ private fun SessionContent(
     var showTerminal by rememberSaveable { mutableStateOf(false) }
     // 底栏「N shell」点开的面板。按会话记：换了会话不该还开着上一个会话的 shell
     var showShells by rememberSaveable(activeKey) { mutableStateOf(false) }
+    // 任务条上「团队 · N」点开的团队页（成员、共享清单、消息流）。按会话记，理由同上
+    var showTeam by rememberSaveable(activeKey) { mutableStateOf(false) }
     val shells = session.tasks
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
@@ -1346,7 +1350,7 @@ private fun SessionContent(
             val lastViewed = remember { LastNonNull(viewedAgent) }
             val headerThread = lastViewed.update(viewedAgent)
             AnimatedVisibility(visible = viewedAgent != null, enter = InkMotion.expand, exit = InkMotion.collapse) {
-                headerThread?.let { SubagentViewHeader(it, onBack = { selectedAgent = null }) }
+                headerThread?.let { SubagentViewHeader(it, allThreads = agentThreads, onBack = { selectedAgent = null }) }
             }
         }
 
@@ -1401,9 +1405,18 @@ private fun SessionContent(
                 }
                 // 切换条挂在任务条的 leading 槽里，和「N shell」同一行；没有子 agent 时槽是空的
                 val switcherThreads = switcherThreads(agentThreads, selectedAgent)
+                val team = session.team
                 SessionTaskStrip(
                     shellCount = shells.count { it.isRunning },
                     showAgents = switcherThreads.isNotEmpty(),
+                    teamLabel = team?.let {
+                        if (it.active && it.stalledCount > 0) stringResource(R.string.team_chip_stalled, it.stalledCount)
+                        else stringResource(R.string.team_chip, it.members.size)
+                    },
+                    onOpenTeam = {
+                        focusManager.clearFocus()
+                        showTeam = true
+                    },
                     onOpenShells = {
                         focusManager.clearFocus()
                         showShells = true
@@ -1413,6 +1426,7 @@ private fun SessionContent(
                             threads = switcherThreads,
                             selected = selectedAgent,
                             onSelect = { selectedAgent = it },
+                            allThreads = agentThreads,
                         )
                     },
                 )
@@ -1486,6 +1500,19 @@ private fun SessionContent(
         )
     }
 
+    session.team?.takeIf { showTeam }?.let { team ->
+        TeamSheet(
+            team = team,
+            onOpenMember = { threadId ->
+                selectedAgent = threadId
+                showTeam = false
+            },
+            onRelease = vm.extras::releaseStalled,
+            onDisband = vm.extras::disbandTeam,
+            onDismiss = { showTeam = false },
+        )
+    }
+
     if (showTerminal) {
         ClaudeCodeTerminalSheet(
             liveSessions = liveSessions,
@@ -1524,6 +1551,7 @@ internal fun TranscriptItem(
         is ChatItem.Thinking -> ThinkingEntry(item.text, item.id, isFirst, isLast)
         is ChatItem.Note -> NoteEntry(item.text, item.isError, isFirst, isLast)
         is ChatItem.Folded -> FoldedEntry(item, isFirst, isLast, labels, onRevert, canRevert)
+        is ChatItem.AgentReport -> AgentReportEntry(item, isFirst, isLast)
         is ChatItem.ProcessOutput -> ProcessOutputEntry(item, isFirst, isLast)
         is ChatItem.ToolCall -> ToolEntry(
             item = item,

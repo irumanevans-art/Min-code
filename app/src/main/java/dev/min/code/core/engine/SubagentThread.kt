@@ -175,19 +175,28 @@ fun switcherThreads(threads: List<AgentThread>, selectedThreadId: String?): List
     threads.filter { it.tracked || it.threadId == selectedThreadId }
 
 /**
- * 切换条上每个子 agent 叫什么：它的类型（[typeName] 换成给人看的说法，默认原样）。
- * 同一类型不止一个时按顺序补序号（三个 general-purpose 并排也认得出谁是谁）。
+ * 切换条上每个子 agent 叫什么：它的类型（[typeName] 换成给人看的说法，默认原样）；嵌套的从根数起写出整条链，
+ * 「Explore › general-purpose」（链要在 [all]——全部线程——里找，条上可能没有列它的上级）。
+ * 同一条链不止一个时按顺序补序号（三个 general-purpose 并排也认得出谁是谁）。
  * 序号只在 [threads] 这一批里数：条上看得见几个就数几个；认原始类型，不认换过名的显示字。
  */
-fun switcherLabels(threads: List<AgentThread>, typeName: (String) -> String = { it }): List<String> {
-    val total = threads.groupingBy { it.agentType }.eachCount()
+fun switcherLabels(
+    threads: List<AgentThread>,
+    all: List<AgentThread> = threads,
+    typeName: (String) -> String = { it },
+): List<String> {
+    val chains = threads.map { thread -> threadPath(all, thread.threadId).ifEmpty { listOf(thread) } }
+    val keys = chains.map { chain -> chain.joinToString("\u0000") { it.agentType } }
+    val total = keys.groupingBy { it }.eachCount()
     val seen = HashMap<String, Int>()
-    return threads.map { thread ->
-        val type = thread.agentType
-        val shown = typeName(type)
-        if (total.getValue(type) < 2) shown else "$shown ${seen.merge(type, 1, Int::plus)}"
+    return threads.indices.map { i ->
+        val shown = chains[i].joinToString(BREADCRUMB_SEPARATOR) { typeName(it.agentType) }
+        if (total.getValue(keys[i]) < 2) shown else "$shown ${seen.merge(keys[i], 1, Int::plus)}"
     }
 }
+
+/** 嵌套线程名之间的分隔：「Explore › general-purpose」 */
+const val BREADCRUMB_SEPARATOR = " › "
 
 /**
  * 从根到 [threadId] 的线程链（含它自己）。找不到返回空；父链断了（父不在表里）就从断点起算；
@@ -210,7 +219,7 @@ fun threadBreadcrumb(
     threads: List<AgentThread>,
     threadId: String,
     typeName: (String) -> String = { it },
-): String = threadPath(threads, threadId).joinToString(" › ") { typeName(it.agentType) }
+): String = threadPath(threads, threadId).joinToString(BREADCRUMB_SEPARATOR) { typeName(it.agentType) }
 
 /** 一张交互卡从哪个子 agent 来：路径上每一层一块名牌。找不到线程 = 主会话（空路径） */
 fun originOf(threads: List<AgentThread>, threadId: String?): InteractionOrigin =

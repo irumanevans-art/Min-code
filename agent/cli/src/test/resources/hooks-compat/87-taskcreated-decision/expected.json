@@ -15,6 +15,5 @@
   "timedOut": false,
   "failedToStart": false,
   "notesContain": [],
-  "basis": "§TaskCreated decision control：exit 2 或 decision:block 取消建任务并把消息还给 Claude 作工具错误；continue:false 被忽略、Claude 继续工作（:2445–2450）。",
-  "minTrigger": "none"
+  "basis": "§TaskCreated decision control：exit 2 或 decision:block 取消建任务并把消息还给 Claude 作工具错误；continue:false 被忽略、Claude 继续工作（:2445–2450）。"
 }

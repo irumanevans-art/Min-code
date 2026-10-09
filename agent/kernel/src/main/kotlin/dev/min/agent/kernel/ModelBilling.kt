@@ -32,10 +32,11 @@ internal class ModelBilling(private val rt: SessionRuntime) {
             // 定时任务的这次运行有自己的单次上限（整棵会话树合计）：花到了、或这个模型没有 USD 价格（花费无法核对）就不再发请求
             val run = rt.treeCronRun()
             if (run != null) {
-                val reason = run.problem() ?: "这个模型没有 USD 价格，花费无法核对".takeIf { pricing == null || pricing.currency != "USD" }
-                if (reason != null) {
-                    if (run.trip()) rt.hub?.crons?.tripped(run, reason)
-                    throw CronBudgetReached(reason)
+                val overrun = run.overrun()
+                    ?: CronOverrun(CronOverrun.Cause.UnpricedModel, run.spentUsd(), run.limitUsd).takeIf { pricing == null || pricing.currency != "USD" }
+                if (overrun != null) {
+                    if (run.trip()) rt.hub?.crons?.tripped(run, overrun)
+                    throw CronBudgetReached(overrun)
                 }
             }
             val finished = withTimeoutOrNull(rt.deps.modelTimeoutMs) {

@@ -92,10 +92,10 @@ class MinCommandHandler(
         }
         is SessionCommand.SetMode -> {
             val mode = modeOfId(command.modeId)
-            // Auto 要审查模型，Min 还没有（设置面板里也不列）
-            if (mode == null || mode == PermissionMode.Auto) CommandResult.Rejected("不支持的权限模式：${command.modeId}")
+            if (mode == null) CommandResult.Rejected("不支持的权限模式：${command.modeId}")
             else { root.changeSettings(mode = mode); CommandResult.Accepted }
         }
+        is SessionCommand.SetAutoReviewer -> setAutoReviewer(command)
         // 名字写进内核日志（session_renamed）：CLI 的按名续接与列表读同一个。规整后为空（全是空白 / 控制字符）内核拒绝
         is SessionCommand.Rename -> if (root.rename(command.title) != null) CommandResult.Accepted else CommandResult.Rejected("名字是空的")
         is SessionCommand.StopSubagent -> {
@@ -208,6 +208,23 @@ class MinCommandHandler(
             (part.source as? ImageSource.Base64)?.let { ImageInput(part.mediaType, it.data) }
         },
     )
+
+    /**
+     * 审查模型：null = 默认；指定的要解析得出来（供应商档在、有 key），内核 [SessionRuntime.changeAutoModeReviewer] 会再核一次并抛出原因。
+     * 单独指定别家供应商时，数据流向（消息与工具入参）由界面在选之前说清，这里不再拦
+     */
+    private suspend fun setAutoReviewer(command: SessionCommand.SetAutoReviewer): CommandResult {
+        if (state().readOnly) return CommandResult.Rejected(text.providerRemoved())
+        val modelId = command.modelId
+        if (modelId == null) {
+            root.changeAutoModeReviewer(null)
+            return CommandResult.Accepted
+        }
+        val ref = ModelRef(command.profileId ?: root.state.value.settings.model.providerId, modelId)
+        if (lookup.providerLabel(ref.providerId) == null) return CommandResult.Rejected(text.providerRemoved())
+        root.changeAutoModeReviewer(dev.min.agent.spi.AutoModeReviewer(ref))
+        return CommandResult.Accepted
+    }
 
     private suspend fun setModel(command: SessionCommand.SetModel): CommandResult {
         if (state().readOnly) return CommandResult.Rejected(text.providerRemoved())

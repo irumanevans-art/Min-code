@@ -2,6 +2,7 @@ package dev.min.code.ui.session
 
 import dev.min.code.R
 import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.AutoReviewView
 import dev.min.code.core.engine.Choice
 import dev.min.code.core.engine.EngineCapabilities
 import dev.min.code.core.engine.EngineKind
@@ -43,6 +44,7 @@ class EngineUiTest {
         assertTrue(layout.effort && layout.effortRestartNote && layout.ultracode && layout.cache && layout.cwd && layout.commands)
         assertFalse("用量段是 Min 的", layout.usage)
         assertFalse("MCP 面板与信任段是 Min 的", layout.mcp || layout.trust)
+        assertFalse("审查模型是 Min 的", layout.autoReview)
         assertEquals(dev.min.code.R.string.session_effort_default, layout.effortDefaultLabel)
     }
 
@@ -62,6 +64,12 @@ class EngineUiTest {
         assertFalse(layout.commands)
         assertTrue(layout.usage)
         assertTrue("Min 有 MCP 面板与工作区信任段", layout.mcp && layout.trust)
+        assertFalse("审查模型段要等适配器把 autoReview 填进设置", layout.autoReview)
+        val withReview = EngineUi.settingsLayout(
+            EngineKind.MinAgent, EngineCapabilities.MinAgent,
+            session(minRef, minSettings.copy(autoReview = AutoReviewView(reviewer = null, defaultModel = "small"))),
+        )
+        assertTrue(withReview.autoReview)
         assertEquals("Min 没有 CLI，强度的「默认」不能写成由 CLI 决定", dev.min.code.R.string.session_effort_default_model, layout.effortDefaultLabel)
     }
 

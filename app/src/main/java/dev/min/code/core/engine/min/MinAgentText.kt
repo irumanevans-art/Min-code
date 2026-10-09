@@ -38,7 +38,6 @@ interface MinAgentText {
 
     /** 后台 asyncRewake hook 唤醒了空闲会话：状态行与转录分隔线共用这一句 */
     fun hookWoke(): String
-    fun report(report: MinReport, description: String?): String
     fun agentMessage(agentType: String, name: String?): String
     fun attachment(): String
     fun redactedThinking(): String
@@ -129,19 +128,6 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun subagentWoke() = s(R.string.min_agent_woke)
     override fun hookWoke() = s(R.string.min_agent_hook_woke)
 
-    override fun report(report: MinReport, description: String?): String {
-        val status = reportStatusRes(report.status)?.let { s(it) } ?: report.status
-        val parts = listOfNotNull(
-            report.name?.let { "${report.agentType} · $it" } ?: report.agentType,
-            description?.takeIf { it.isNotBlank() },
-            status,
-            report.tools?.let { s(R.string.min_agent_report_calls, it) },
-            report.tokens?.let { s(R.string.min_agent_report_tokens, compactCount(it)) },
-            report.durationMs?.let { compactSeconds(it) },
-        )
-        return parts.joinToString(" · ") + "\n" + report.body
-    }
-
     override fun agentMessage(agentType: String, name: String?) = s(R.string.min_agent_message_from, name ?: agentType)
     override fun attachment() = s(R.string.min_agent_attachment)
     override fun redactedThinking() = s(R.string.min_agent_redacted_thinking)
@@ -177,8 +163,12 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
         },
     )
 
-    override fun modeWarning(mode: PermissionMode) =
-        if (mode == PermissionMode.BypassPermissions) s(R.string.min_agent_mode_bypass_warning) else null
+    override fun modeWarning(mode: PermissionMode) = when (mode) {
+        PermissionMode.BypassPermissions -> s(R.string.min_agent_mode_bypass_warning)
+        // 切到 auto 要点一下确认：把话说在前面——审查时用户的消息与工具入参会发给审查模型所在的供应商
+        PermissionMode.Auto -> s(R.string.min_agent_mode_auto_warning)
+        else -> null
+    }
 
     override fun effort(effort: Effort) = s(
         when (effort) {
@@ -244,7 +234,4 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
             FailureKind.Other, null -> R.string.min_agent_fail_other
         },
     )
-
-    private fun compactCount(n: Long): String = if (n >= 1000) "%.1fk".format(n / 1000.0) else n.toString()
-    private fun compactSeconds(ms: Long): String = "%.1fs".format(ms / 1000.0)
 }

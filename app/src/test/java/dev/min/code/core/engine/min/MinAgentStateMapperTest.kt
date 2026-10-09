@@ -149,10 +149,34 @@ class MinAgentStateMapperTest {
                 InputOrigin.Agent(child, AgentInputKind.Report, TurnId("ct"))),
             InputPromoted(ClientMsgId("report"), MessageId("m_report")),
         )
-        val card = map(s).items.last() as ChatItem.Note
+        val card = map(s).items.last() as ChatItem.AgentReport
         assertEquals("m_report", card.id)
-        assertEquals("report:Explore:null:completed:find entry:tools=3\nbody", card.text)
+        assertEquals("点卡片跳到发起它的那次 Agent 调用对应的线程", "c1", card.threadId)
+        assertEquals("Explore", card.agentType); assertNull(card.name)
+        assertEquals("find entry", card.description)
+        assertEquals("completed", card.status)
+        assertEquals(3, card.toolCalls); assertEquals(1200L, card.tokens); assertEquals(4500L, card.durationMs)
+        assertEquals("body", card.body)
         assertFalse(card.isError)
+    }
+
+    @Test fun reportCardTakesTheDelegationNameWhenTheTagHasNone() {
+        val child = SessionId("s_child")
+        val s = foldOf(
+            SubagentSpawned(tid, CallId("c1"), child, "Explore", false, true, "d", "finder"),
+            InputReceived(ClientMsgId("r"), listOf(TextPart(report("Explore", "completed", "x"))), Delivery.Steer, InputOrigin.Agent(child, AgentInputKind.Report)),
+            InputPromoted(ClientMsgId("r"), MessageId("m_r")),
+        )
+        assertEquals("finder", (map(s).items.single() as ChatItem.AgentReport).name)
+    }
+
+    @Test fun reportFromAChildTheParentNeverDelegatedIsNotClickable() {
+        val s = foldOf(
+            InputReceived(ClientMsgId("r"), listOf(TextPart(report("Explore", "completed", "x", id = "s_gone"))), Delivery.Steer, InputOrigin.Agent(SessionId("s_gone"), AgentInputKind.Report)),
+            InputPromoted(ClientMsgId("r"), MessageId("m_r")),
+        )
+        val card = map(s).items.single() as ChatItem.AgentReport
+        assertNull(card.threadId); assertNull(card.description)
     }
 
     @Test fun reportStoppedByAHookKeepsItsStatusAndIsDrawnAsError() {
@@ -163,9 +187,10 @@ class MinAgentStateMapperTest {
                 InputOrigin.Agent(child, AgentInputKind.Report)),
             InputPromoted(ClientMsgId("r"), MessageId("m_r")),
         )
-        val card = map(s).items.single() as ChatItem.Note
+        val card = map(s).items.single() as ChatItem.AgentReport
         assertTrue(card.isError)
-        assertEquals("report:Explore:null:stopped-by-hook:d:tools=3\ncut short", card.text)
+        assertEquals("stopped-by-hook", card.status)
+        assertEquals("cut short", card.body)
     }
 
     @Test fun failedReportIsDrawnAsError() {
@@ -176,7 +201,7 @@ class MinAgentStateMapperTest {
                 InputOrigin.Agent(child, AgentInputKind.Report)),
             InputPromoted(ClientMsgId("r"), MessageId("m_r")),
         )
-        assertTrue((map(s).items.single() as ChatItem.Note).isError)
+        assertTrue((map(s).items.single() as ChatItem.AgentReport).isError)
     }
 
     @Test fun agentMessageIsLabelledWithItsSender() {
@@ -549,7 +574,25 @@ class MinAgentStateMapperTest {
         assertFalse(view.models[0].switchesProviderFrom(map(s, lookup = lookup).connection))
         assertEquals("mode:Default", view.mode.label)
         assertEquals("warn", view.modes.first { it.id == "bypassPermissions" }.warning)
-        assertFalse(view.modes.any { it.id == "auto" })
+        assertTrue("审查模型有了，Auto 列在模式表里", view.modes.any { it.id == "auto" })
+    }
+
+    @Test fun autoReviewShowsTheDefaultReviewerAndAnExplicitOne() {
+        val lookup = object : MinModelLookup by FakeLookup(others = listOf(Choice("small", "small@P-p2", profileId = "p2"))) {
+            override fun fastModelOf(providerId: String) = dev.min.agent.protocol.ModelRef(providerId, "p-fast")
+        }
+        val defaulted = map(foldOf(), lookup = lookup).settings.autoReview!!
+        assertNull(defaulted.reviewer)
+        assertEquals("默认 = 与会话同供应商目录给的小模型", "p-fast", defaulted.defaultModel)
+
+        val explicit = foldOf(dev.min.agent.spi.AutoReviewSettingsLoaded(reviewer = dev.min.agent.spi.AutoModeReviewer(dev.min.agent.protocol.ModelRef("p2", "small"))))
+        val view = map(explicit, lookup = lookup).settings.autoReview!!
+        assertEquals("small", view.reviewer!!.id); assertEquals("p2", view.reviewer!!.profileId)
+        assertEquals("选单里已有的就用它的标签（带供应商名）", "small@P-p2", view.reviewer!!.label)
+    }
+
+    @Test fun withoutACatalogFastModelTheDefaultReviewerIsTheSessionModelItself() {
+        assertEquals(T_MODEL.modelId, map(foldOf()).settings.autoReview!!.defaultModel)
     }
 
     @Test fun aModelWithoutEffortLevelsHasAnEmptyEffortTable() {

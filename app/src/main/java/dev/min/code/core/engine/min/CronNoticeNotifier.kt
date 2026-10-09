@@ -16,13 +16,13 @@ import dev.min.code.util.sendNotification
  * 内核的 [CronNotice] 流本来只有日志里一条 Note——人不在会话页就看不到：无人值守的任务停了，用户得知道。
  * 触发本身不通知（那是用户自己设的）。点通知回到那个会话。
  */
-internal class CronNoticeNotifier(private val context: Context) {
+internal class CronNoticeNotifier(private val context: Context, private val text: CronText = ResCronText(context)) {
     fun notify(notice: CronNotice) {
         val ref = SessionRef(EngineKind.MinAgent, notice.session.value)
         context.sendNotification(CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID, cronNoticeNotificationId(ref, notice.cronId)) {
             title = context.getString(cronNoticeTitleRes(notice.kind), notice.cronId)
-            // 正文用内核写进日志的那句（含原因、花了多少）；通知栏放不下就折叠，点开看完整
-            content = notice.text
+            // 正文由内核给的结构化事实按界面语言组句（日志里那句中文只在缺事实时兜底）；通知栏放不下就折叠，点开看完整
+            content = cronNoticeBody(notice, text)
             useBigTextStyle = true
             autoCancel = true
             category = NotificationCompat.CATEGORY_STATUS
