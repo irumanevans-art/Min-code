@@ -226,11 +226,11 @@ class ModelHooksSessionTest {
         // 改成：回应完理由后直接断言回合的续跑发生过
         val turns = hookRans(rt).count { it.event == "Stop" }
         assertTrue("Stop 的 agent hook 跑过并落了 HooksRan", turns >= 1)
-        // hook agent 子会话在树上（来历类型 hook-agent、只读工具），它的花费进了树的计费点
+        // hook agent 子会话在树上（来历类型 hook-agent、只读工具），它的花费进了自己的日志（model_charged）
         val agents = h.online.value.mapNotNull { h.get(it) }.filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
         assertTrue("hook agent 子会话在线挂着（树汇总要读它）", agents.isNotEmpty())
         assertEquals(listOf("Read", "Grep", "Glob"), agents.first().state.value.origin?.tools)
-        assertTrue("hook agent 的花费计入它自己的日志（汇总到树）", agents.first().state.value.requestCosts.isNotEmpty())
+        assertTrue("hook agent 的模型请求经自己的账本记账（ModelCharged 落日志）", agents.first().state.value.unpricedModelCalls > 0)
     }
 
     // ---- mcp_tool ----

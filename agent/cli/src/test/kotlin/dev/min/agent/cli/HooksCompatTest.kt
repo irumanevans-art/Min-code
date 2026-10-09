@@ -150,6 +150,7 @@ class HooksCompatTest {
             // prompt / agent / mcp_tool 的样本走模型侧驱动：匹配用 matchingModel，结论分别由
             // interpretPrompt（{ok,reason} 口径）或 interpret（mcp 文本当 command stdout）给出
             val combined: Any
+            val verdicts: List<Any?>
             when (val runnerKind = expected["runner"]?.jsonPrimitive?.contentOrNull) {
                 null -> {
                     val match = matchDetailed(set, event, target, ifRules)
@@ -161,7 +162,8 @@ class HooksCompatTest {
                     val runs = invokeSuspend(runner.javaClass.methods.single { it.name.startsWith("run-") },
                         runner, arrayOf(handlers, stdin, mapOf("CLAUDE_PROJECT_DIR" to cwd.value), cwd.value,
                             { h: Any -> (get(h, "Timeout") as Int?) ?: 60 }))
-                    combined = combine(event, runs.map { interpret(event, it!!) })
+                    verdicts = runs.map { interpret(event, it!!) }
+                    combined = combine(event, verdicts)
                 }
                 "prompt", "agent" -> {
                     val match = matchModelHandlers(set, event, target, ifRules)
@@ -172,7 +174,8 @@ class HooksCompatTest {
                     val outcome =
                         if (expected["runnerOutcome"]?.jsonPrimitive?.contentOrNull == "timeout") promptTimedOut()
                         else promptDone(Files.readString(sample.resolve(if (runnerKind == "prompt") "model.json" else "agent.json"), Charsets.UTF_8))
-                    combined = combine(event, handlers.map { interpretPrompt(event, it!!, outcome) })
+                    verdicts = handlers.map { interpretPrompt(event, it!!, outcome) }
+                    combined = combine(event, verdicts)
                 }
                 "mcp" -> {
                     val match = matchModelHandlers(set, event, target, ifRules)
@@ -187,7 +190,8 @@ class HooksCompatTest {
                     val runs = handlers.map { h ->
                         newHandlerRun(h!!, if (isError) 1 else 0, if (isError) "" else content, if (isError) content else "")
                     }
-                    combined = combine(event, runs.map { interpret(event, it) })
+                    verdicts = runs.map { interpret(event, it) }
+                    combined = combine(event, verdicts)
                 }
                 else -> throw IllegalStateException("未知 runner: $runnerKind")
             }
