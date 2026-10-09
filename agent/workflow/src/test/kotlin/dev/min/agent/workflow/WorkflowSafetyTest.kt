@@ -22,11 +22,20 @@ class WorkflowSafetyTest {
     @Test fun jsonParseRecursion() = rejects("return JSON.parse('['.repeat(100000)+']'.repeat(100000));")
     @Test fun toStringRecursion() = rejects("const o={toString(){return String(this)}}; return String(o);")
     @Test fun proxyRecursion() = rejects("const p=new Proxy({}, {get(t,k,r){return r[k]}}); return p.x;")
-    @Test fun memoryLimitIsEnforced() = rejects("const a=[]; while(true) a.push('x'.repeat(100000));")
+    @Test fun memoryLimitIsEnforced() = rejects("const a=[]; for(let i=0;i<500;i++) a.push('x'.repeat(100000)); return a.length;")
     @Test fun idleWatchdogInterruptsNativeLoop() = runBlocking {
         val started = System.nanoTime()
-        try { QuickJsWorkflowEngine(150).evaluate(source("while(true){}"), null, host); fail("Expected interrupt") }
+        try { withTimeout(2000) { QuickJsWorkflowEngine(150).evaluate(source("while(true){}"), null, host) }; fail("Expected interrupt") }
         catch (_: com.dokar.quickjs.QuickJsInterruptedException) { }
+        catch (_: TimeoutCancellationException) { fail("Idle watchdog did not interrupt native loop") }
         assertTrue((System.nanoTime() - started) / 1_000_000 < 5000)
+    }
+
+    @Test fun defaultWatchdogInterruptsAfterThirtySeconds() = runBlocking {
+        val started=System.nanoTime()
+        try { withTimeout(40000) { QuickJsWorkflowEngine().evaluate(source("while(true){}"),null,host) }; fail("Expected interrupt") }
+        catch (_: com.dokar.quickjs.QuickJsInterruptedException) { }
+        val elapsed=(System.nanoTime()-started)/1000000
+        assertTrue("elapsed=$elapsed",elapsed in 29000..39000)
     }
 }

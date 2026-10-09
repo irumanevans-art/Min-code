@@ -51,4 +51,41 @@ class WorkflowContractsTest {
         delay(1000); withTimeout(5000) { job.cancelAndJoin() }
         assertTrue(messages.get() <= 4097); assertTrue(bytes.get() <= 1048700)
     }
+    @Test fun inclusiveItemAndAgentBoundariesAreAccepted() = runBlocking {
+        assertEquals(JsonPrimitive(4096),QuickJsWorkflowEngine().evaluate(source("return (await pipeline(Array(4096).fill(1),x=>x)).length;"),null,host))
+        assertEquals(JsonPrimitive(4096),QuickJsWorkflowEngine().evaluate(source("return (await parallel(Array(4096).fill(1))).length;"),null,host))
+        assertEquals(JsonPrimitive(1000),QuickJsWorkflowEngine().evaluate(source("for(let i=0;i<1000;i++) await agent('x'); return 1000;"),null,host))
+    }
+    @Test fun supportedOptionsReachTheHostAndUnknownOptionsAreIgnored() = runBlocking {
+        var options=JsonObject(emptyMap())
+        val recording=object:WorkflowHost by host {
+            override suspend fun agent(index:Int,prompt:String,opts:JsonObject):JsonElement { options=opts; return JsonNull }
+        }
+        assertEquals(JsonNull,QuickJsWorkflowEngine().evaluate(source("return await agent('x',{phase:'Review',effort:'high',isolation:'worktree',agentType:'Explore',futureOption:1});"),null,recording))
+        assertEquals(setOf("phase","effort","isolation","agentType"),options.keys)
+    }
+
+    @Test fun slowCachedHostResultsAreExcludedFromIdleBudget() = runBlocking {
+        val replay=object:WorkflowHost by host {
+            override suspend fun agent(index:Int,prompt:String,options:JsonObject):JsonElement { delay(100); return JsonPrimitive("cached") }
+        }
+        assertEquals(JsonPrimitive(10),QuickJsWorkflowEngine(50).evaluate(source("for(let i=0;i<10;i++) await agent('old'); return 10;"),null,replay))
+    }
+
+    @Test fun progressByteBudgetBoundsFiniteFloodBeforeBridge() = runBlocking {
+        var bytes=0; var count=0
+        val limited=object:WorkflowHost by host {
+            override suspend fun progress(kind:String,message:String) { bytes+=message.toByteArray().size; count++ }
+        }
+        QuickJsWorkflowEngine().evaluate(source("for(let i=0;i<200;i++) await log('x'.repeat(30000)); return 1;"),null,limited)
+        assertTrue("bytes=$bytes",bytes<=1048700); assertTrue(count<200)
+    }
+    @Test fun runtimeUsesDedicatedDispatcher() = runBlocking {
+        var thread=""
+        val recorded=object:WorkflowHost by host {
+            override suspend fun progress(kind:String,message:String) { thread=Thread.currentThread().name }
+        }
+        QuickJsWorkflowEngine().evaluate(source("await log('thread');"),null,recorded)
+        assertTrue(thread,thread.startsWith("workflow-js"))
+    }
 }

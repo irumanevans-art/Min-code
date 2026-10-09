@@ -31,6 +31,7 @@ class MinSnapshotCompositionTest {
         val deps = MinKernelDeps.build(models = { error("not used") }, ports = ports, snapshots = snapshots)
         assertEquals(GuestPath("/workspace/project/x"), deps.canonicalPath(GuestPath("/workspace/project/../project/x")))
         assertSame(snapshots, deps.host.snapshots)
+        assertEquals(4, deps.workflowConcurrency)
         assertEquals(SnapshotBudget(15_000, 60_000, 20_000, 256L * 1024 * 1024), deps.checkpointBudget)
         val store = deps.host.snapshots.store(GuestPath("/workspace/project"))
         val target = store.snapshot(deps.checkpointBudget) as SnapshotResult.Taken
