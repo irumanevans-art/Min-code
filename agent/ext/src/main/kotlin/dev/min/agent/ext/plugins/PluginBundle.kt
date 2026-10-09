@@ -92,7 +92,8 @@ class PluginBundle(
             settings.layers.filter { it.source == ConfigSource.User }.forEach { layer -> layer.enabledPlugins.filterValues { it }.keys.forEach { enabledSources[it] = ConfigSource.User } }
             val managed = settings.layers.lastOrNull { it.source == ConfigSource.Managed }
             managed?.enabledPlugins?.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = ConfigSource.Managed }
-            val disabledDependencies = settings.layers.flatMap { it.enabledPlugins.filterValues { value -> !value }.keys }.toSet()
+            // 托管层已覆盖最终值；普通低层的 false 不能否决更高层明确启用的依赖。
+            val disabledDependencies = enabled.filterValues { !it }.keys.toSet()
             val scopes = linkedMapOf<String, String?>()
             val inlineRoots = mutableSetOf<String>()
             val cacheRoot = canonical(GuestPath(GuestPaths.join(home.value, ".claude/plugins/cache"))).value.trimEnd('/')

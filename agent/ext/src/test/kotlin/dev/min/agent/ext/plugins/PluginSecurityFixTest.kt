@@ -101,7 +101,7 @@ Inspect
         assertTrue(result.errors.any { "disabled" in it })
     }
 
-    @Test fun BUG_any_layer_false_blocks_dependency_despite_higher_true(): Unit = runBlocking {
+    @Test fun R2_final_true_allows_dependency_despite_lower_false(): Unit = runBlocking {
         val fs = FakeFs().apply {
             put("/home/.claude/settings.json", """{"enabledPlugins":{"a@m":true,"b@m":false}}""")
             put("/work/.claude/settings.local.json", """{"enabledPlugins":{"b@m":true}}""")
@@ -110,8 +110,8 @@ Inspect
             put("/home/.claude/plugins/cache/m/b/1.0/.claude-plugin/plugin.json", """{"name":"b"}""")
         }
         val loaded = bundle(fs)
-        assertEquals(listOf("b@m"), loaded.batch.plugins.map { it.ref.id })
-        assertTrue(loaded.notes.any { "disabled" in it })
+        assertEquals(setOf("a@m", "b@m"), loaded.batch.plugins.map { it.ref.id }.toSet())
+        assertFalse(loaded.notes.any { "disabled" in it })
     }
 
     @Test fun R2_user_enable_is_not_downgraded_by_project_true(): Unit = runBlocking {
@@ -140,6 +140,21 @@ Inspect
         assertTrue(loaded.styles.isEmpty()); assertTrue(loaded.hookSources.isEmpty()); assertTrue(loaded.mcpSources().isEmpty())
         val trusted = bundle(fs, trust = true)
         assertEquals(1, trusted.skills.size); assertEquals(1, trusted.commands.size); assertEquals(1, trusted.agents.size)
+    }
+
+    @Test fun R2_final_false_and_managed_false_both_block_dependency(): Unit = runBlocking {
+        for (managed in listOf(false, true)) {
+            val fs = FakeFs().apply {
+                put("/home/.claude/settings.json", """{"enabledPlugins":{"a@m":true,"b@m":true}}""")
+                put("/work/.claude/settings.local.json", """{"enabledPlugins":{"b@m":${managed}}}""")
+                if (managed) put("/etc/claude-code/managed-settings.json", """{"enabledPlugins":{"b@m":false}}""")
+                put("/home/.claude/plugins/cache/m/a/1.0/.claude-plugin/plugin.json", """{"name":"a","dependencies":["b"]}""")
+                put("/home/.claude/plugins/cache/m/b/1.0/.claude-plugin/plugin.json", """{"name":"b"}""")
+            }
+            val loaded = bundle(fs, trust = true)
+            assertTrue(loaded.batch.plugins.isEmpty())
+            assertTrue(loaded.notes.any { "disabled" in it })
+        }
     }
 
     @Test fun BUG_sideload_replaces_installed_namespace_and_is_trusted(): Unit = runBlocking {
