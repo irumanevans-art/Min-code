@@ -8,6 +8,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.*
@@ -36,6 +38,19 @@ internal class WorkflowRun(
     }
     private var replayBefore = completed.values.filter { it.isError }.minOfOrNull { it.index } ?: Int.MAX_VALUE
     private val next = MutableStateFlow(0)
+    @Volatile private var appendFailure: Exception? = null
+    private val progressLock = Mutex()
+    private var progressCount = previous.filterIsInstance<WorkflowProgress>().count { it.runId == run.runId }
+    private var progressBytes = previous.filterIsInstance<WorkflowProgress>().filter { it.runId == run.runId }.sumOf { it.message.toByteArray(Charsets.UTF_8).size.toLong() }
+    private var progressDropped = previous.filterIsInstance<WorkflowProgress>().any { it.runId == run.runId && it.message == PROGRESS_DROPPED }
+    private suspend fun persist(event: SessionEvent) {
+        try { append(event) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            // 写盘失败后释放所有按序等待的节点；它们必须看到同一失败，不能永远等一个序号。
+            appendFailure = e; next.value = Int.MAX_VALUE; throw e
+        }
+    }
 
     override suspend fun agent(index: Int, prompt: String, options: JsonObject): JsonElement {
         require(index in 0 until 1000 && prompt.isNotBlank())
@@ -44,12 +59,13 @@ internal class WorkflowRun(
         for (key in listOf("model", "label")) options[key]?.let { require(it is JsonPrimitive && it.isString) }
         // JS 分配序号是同步的；协程启动顺序可能不同，日志判定仍按原启动顺序做。
         next.first { it >= index }
+        appendFailure?.let { throw it }
         check(next.value == index) { "Duplicate workflow node." }
         val old = starts[index]
         if (old != null && (old.prompt != prompt || old.options != options)) replayBefore = minOf(replayBefore, index)
         val cached = completed[index]?.takeIf { index < replayBefore && !it.isError && old?.prompt == prompt && old.options == options }
-        if (cached == null) append(WorkflowNodeStarted(run.runId, index, prompt, options))
-        else append(WorkflowNodeReplayed(run.runId, index))
+        if (cached == null) persist(WorkflowNodeStarted(run.runId, index, prompt, options))
+        else persist(WorkflowNodeReplayed(run.runId, index))
         next.value = index + 1
         if (cached != null) return cached.result
         return gate.withPermit {
@@ -71,15 +87,21 @@ internal class WorkflowRun(
                 value
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { failed = true; workflowError("agent_failed", e.message ?: "Agent failed.") }
-            append(WorkflowNodeCompleted(run.runId, index, result, failed))
+            persist(WorkflowNodeCompleted(run.runId, index, result, failed))
             result
         }
     }
 
     override suspend fun progress(kind: String, message: String) {
         require(kind in listOf("phase", "log") && message.length <= 30_000)
-        append(WorkflowProgress(run.runId, kind, message))
+        progressLock.withLock {
+            val bytes = message.toByteArray(Charsets.UTF_8).size
+            if (progressCount >= 4096 || progressBytes + bytes > 1024 * 1024) {
+                if (!progressDropped) { progressDropped = true; persist(WorkflowProgress(run.runId, "log", PROGRESS_DROPPED)) }
+            } else { persist(WorkflowProgress(run.runId, kind, message)); progressCount++; progressBytes += bytes }
+        }
     }
+    companion object { const val PROGRESS_DROPPED = "Workflow progress limit reached; further messages dropped." }
 }
 
 internal fun workflowError(code: String, message: String): JsonObject = buildJsonObject {

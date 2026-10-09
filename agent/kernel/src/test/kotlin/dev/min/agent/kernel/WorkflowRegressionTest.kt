@@ -73,7 +73,7 @@ class WorkflowRegressionTest {
         val host = WorkflowRun(WorkflowRunStarted("run", "t", "s", "h", concurrency = 4), emptyList(),
             { if (fail) { fail = false; throw java.io.IOException("disk full") } }) { _, _, _ -> WorkflowAnswer("ok") }
         val first = try { host.agent(0, "a", JsonObject(emptyMap())).toString() } catch (e: java.io.IOException) { "node0 threw ${e.message}" }
-        val second = try { withTimeout(3_000) { host.agent(1, "b", JsonObject(emptyMap())).toString() } } catch (e: TimeoutCancellationException) { "node1 HUNG (never started) after 3s" }
+        val second = try { withTimeout(3_000) { host.agent(1, "b", JsonObject(emptyMap())).toString() } } catch (e: java.io.IOException) { "node1 failed: ${e.message}" } catch (e: TimeoutCancellationException) { "node1 HUNG (never started) after 3s" }
         assertFalse(second.contains("HUNG"))
     }
 }
