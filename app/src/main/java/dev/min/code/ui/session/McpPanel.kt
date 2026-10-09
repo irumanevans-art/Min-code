@@ -200,6 +200,19 @@ internal fun TrustSection(view: TrustView, onAsk: () -> Unit, onSet: (Boolean?) 
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(stringResource(R.string.trust_section_note), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // 这个目录的项目配置会放宽哪些权限：已信任 = 正在生效，没信任 = 信任后才会生效（内核只在受信后才采纳项目层的这两样）
+        view.grants?.takeIf { it.relaxesPermissions }?.let { grants ->
+            Text(
+                stringResource(if (view.decision == true) R.string.trust_grants_on else R.string.trust_grants_off),
+                style = MaterialTheme.typography.labelMedium,
+            )
+            if (grants.allowRules.isNotEmpty()) {
+                Text(stringResource(R.string.trust_allow, grants.allowRules.size, previewList(grants.allowRules)), style = MaterialTheme.typography.labelSmall, fontFamily = JetbrainsMono)
+            }
+            if (grants.additionalDirectories.isNotEmpty()) {
+                Text(stringResource(R.string.trust_directories, grants.additionalDirectories.size, previewList(grants.additionalDirectories)), style = MaterialTheme.typography.labelSmall, fontFamily = JetbrainsMono)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             when {
                 view.ownTrust -> ActionButton(R.string.trust_revoke, true, onClick = { onSet(null) })

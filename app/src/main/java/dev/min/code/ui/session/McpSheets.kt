@@ -88,7 +88,14 @@ internal fun TrustSheet(probe: TrustProbe, startsSession: Boolean, onAnswer: (Bo
         if (probe.mcpServers.isNotEmpty()) {
             Bullet(stringResource(R.string.trust_mcp, probe.mcpServers.joinToString(", ")))
         }
-        if (probe.hookEvents.isEmpty() && probe.mcpServers.isEmpty()) {
+        // 信任还会放宽权限：项目 settings 里的免问规则与附加目录要等信任之后才生效，所以在这里列出来让人先看见它们会授予什么
+        if (probe.allowRules.isNotEmpty()) {
+            Bullet(stringResource(R.string.trust_allow, probe.allowRules.size, previewList(probe.allowRules)))
+        }
+        if (probe.additionalDirectories.isNotEmpty()) {
+            Bullet(stringResource(R.string.trust_directories, probe.additionalDirectories.size, previewList(probe.additionalDirectories)))
+        }
+        if (probe.hookEvents.isEmpty() && probe.mcpServers.isEmpty() && !probe.relaxesPermissions) {
             Bullet(stringResource(R.string.trust_nothing))
         }
         Text(
@@ -349,3 +356,15 @@ private fun idleText(idleMs: Long): String {
 }
 
 private fun tokensText(tokens: Long): String = if (tokens >= 1000) "${tokens / 1000}k" else tokens.toString()
+
+/** 清单里的前 [max] 项用逗号连起来，多出来的数量另算（「a, b, c, d, e +3 个」）：规则和目录可能很多，卡片不是用来读全文的 */
+internal fun previewItems(items: List<String>, max: Int = PREVIEW_ITEMS): Pair<String, Int> =
+    items.take(max).joinToString(", ") to (items.size - max).coerceAtLeast(0)
+
+@Composable
+internal fun previewList(items: List<String>, max: Int = PREVIEW_ITEMS): String {
+    val (shown, hidden) = previewItems(items, max)
+    return if (hidden > 0) shown + " " + stringResource(R.string.trust_more, hidden) else shown
+}
+
+private const val PREVIEW_ITEMS = 5

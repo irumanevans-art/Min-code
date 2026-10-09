@@ -27,5 +27,16 @@ interface WorkspaceTrustControl {
  * 信任卡要说的内容：这个目录里的项目层配置会做什么。
  * @param hookEvents 项目 settings 里配了 hook 的事件名（`PreToolUse` ……），空 = 没有 hooks
  * @param mcpServers 项目 `.mcp.json` 里的服务器名，空 = 没有
+ * @param allowRules 项目 `.claude/settings.json` 的 `permissions.allow`：信任之后这些调用不再问人（内核只在工作区受信后才采纳项目层的 allow）
+ * @param additionalDirectories 项目 `.claude/settings.json` 的 `permissions.additionalDirectories`：信任之后 agent 还能读写的目录（同样要受信才生效）
  */
-data class TrustProbe(val cwd: String, val hookEvents: List<String>, val mcpServers: List<String>)
+data class TrustProbe(
+    val cwd: String,
+    val hookEvents: List<String>,
+    val mcpServers: List<String>,
+    val allowRules: List<String> = emptyList(),
+    val additionalDirectories: List<String> = emptyList(),
+) {
+    /** 信任了会放宽权限：有免问规则或附加目录 */
+    val relaxesPermissions: Boolean get() = allowRules.isNotEmpty() || additionalDirectories.isNotEmpty()
+}

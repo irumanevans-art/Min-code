@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -224,8 +225,18 @@ internal class SessionExtras(
         }
     }
 
+    /**
+     * 当前目录的项目配置会放宽哪些权限（免问规则、附加目录）：信任段列给人看。探一次磁盘，目录换了才重探；
+     * `force` 因为已信任 / 已拒绝的目录 [WorkspaceTrustControl.probe] 默认返回 null（它只回答「还要不要问」）
+     */
+    private val projectGrants: StateFlow<TrustProbe?> = shown.flatMapLatest { session ->
+        val control = trustControl
+        if (session?.capabilities?.workspaceTrust != true || control == null) flowOf(null)
+        else session.state.map { it.cwd }.distinctUntilChanged().map { cwd -> catchingNonCancellation { control.probe(cwd, force = true) }.getOrNull() }
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
+
     /** 设置面板「工作区信任」那一段：当前目录的状态；引擎不管信任时为 null */
-    val trustView: StateFlow<TrustView?> = combine(shown, settings.settings) { session, app ->
+    val trustView: StateFlow<TrustView?> = combine(shown, settings.settings, projectGrants) { session, app, grants ->
         if (session?.capabilities?.workspaceTrust != true) return@combine null
         val cwd = session.state.value.cwd
         TrustView(
@@ -233,6 +244,7 @@ internal class SessionExtras(
             decision = WorkspaceTrust.decision(app.workspaceTrust, cwd),
             ownTrust = WorkspaceTrust.isOwn(app.workspaceTrust, cwd),
             inheritedFrom = WorkspaceTrust.inheritedFrom(app.workspaceTrust, cwd),
+            grants = grants?.takeIf { it.cwd == cwd },
         )
     }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -461,7 +473,14 @@ internal class SessionExtras(
 internal class TrustPrompt(val probe: TrustProbe, val then: (() -> Unit)?)
 
 /** 当前工作目录的信任状态：[decision] true 信任（含继承）/ false 明确不信任 / null 没问过 */
-internal data class TrustView(val cwd: String, val decision: Boolean?, val ownTrust: Boolean, val inheritedFrom: String?)
+internal data class TrustView(
+    val cwd: String,
+    val decision: Boolean?,
+    val ownTrust: Boolean,
+    val inheritedFrom: String?,
+    /** 这个目录的项目配置会放宽的权限；还没探出来 / 没有为 null */
+    val grants: TrustProbe? = null,
+)
 
 /** 重开大会话时的「从摘要续接」提问。[working] = 正在压缩 */
 internal data class ResumePrompt(val session: AgentSession, val advice: ResumeAdviceView, val working: Boolean = false)
