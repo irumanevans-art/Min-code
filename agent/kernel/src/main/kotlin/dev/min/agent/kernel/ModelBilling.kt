@@ -43,8 +43,9 @@ internal class ModelBilling(private val rt: SessionRuntime) {
                 model.client.stream(request.copy(timeoutMs = rt.deps.modelTimeoutMs)).collect { event ->
                     if (event is ModelStreamEvent.Completed) {
                         val charged = pricing?.let { cost(it, event.usage) }
-                        rt.commit(listOf(ModelCharged(model.profile.ref, event.usage, charged?.amount, charged?.currency)), Durability.Sync)
-                        run?.charge(charged?.amount, charged?.currency)
+                        val record = ModelCharged(model.profile.ref, event.usage, charged?.amount, charged?.currency)
+                        rt.commit(listOf(record), Durability.Sync)
+                        run?.charge(record)
                     }
                     emit(event)
                 }

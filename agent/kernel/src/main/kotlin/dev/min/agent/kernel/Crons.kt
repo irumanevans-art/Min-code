@@ -137,10 +137,10 @@ internal fun expiryText(e: CronExpired): String {
  * 否则无人值守时让别的会话去花钱就绕过了上限）。上限按**一次运行**算，不是任务的累计，每次触发都有新的额度。
  * 运行期间用户插进来的话也算在这次运行里：保守，宁可早停。
  *
- * 记账不看会话状态里的 modelCosts 差值，而是 [charge] 累加：树里哪个会话的 [ModelBilling] 记了一笔，就加到这次运行上。
- * 这样中途才被打开的老子会话（它之前的花费不属于这次运行）也不会被算进来。
+ * 账本就是 [RunBudget]（与 `--max-budget-usd` 的 [SessionHub.budget] 同一个机制，一次触发 = 一次运行），不另做一套
+ * 树级预算。中途才被打开的老子会话（它之前的花费不属于这次运行）也不会被算进来——账只从 [charge] 累加。
  *
- * 强制点是**每个模型请求发出前**（[ModelBilling] 调 [verdict]）：花到上限就不再发。因此一次运行正常结束（没有下一个请求要发）
+ * 强制点是**每个模型请求发出前**（[ModelBilling] 的预检）：花到上限就不再发。因此一次运行正常结束（没有下一个请求要发）
  * 就不算超限，哪怕它花的比上限多——首个请求预检不了，只能事后知道。超限时 [trip] 第一个调用者拿到 true，由它去通知引擎收尾。
  */
 internal class CronRun(
@@ -150,25 +150,24 @@ internal class CronRun(
     val fire: Int,
     val limitUsd: Double,
 ) {
-    private var spent = 0.0
-    private var unpriced = 0
+    /** 这次运行的花费账本：按根会话一棵树累计（这次运行里树里不会有第二棵树，键就是 [rootId]） */
+    internal val budget = RunBudget(limitUsd)
+
     private var tripped = false
 
-    /** 记一笔：[amountUsd] 为 null = 这个请求没有 USD 价格（缺价格、或别的币种），花费无法核对 */
-    @Synchronized
-    fun charge(amount: Double?, currency: String?) {
-        if (amount != null && currency == "USD") spent += amount else unpriced++
-    }
+    /** 记一笔（[ModelBilling] 结算时调）：金额与币种取 `model_charged` 里冻结好的 */
+    fun charge(event: dev.min.agent.spi.ModelCharged) = budget.charge(rootId, event)
 
-    @Synchronized
-    fun spentUsd(): Double = spent
+    fun spentUsd(): Double = budget.spentUsd()
 
-    /** 花到上限、或有一次花费记不出价格（无法核对）：返回超限的结构化原因；没事返回 null */
-    @Synchronized
-    fun overrun(): CronOverrun? = when {
-        spent >= limitUsd -> CronOverrun(CronOverrun.Cause.Spent, spent, limitUsd)
-        unpriced > 0 -> CronOverrun(CronOverrun.Cause.UnpricedRequest, spent, limitUsd)
-        else -> null
+    /** 花到上限、或有一次花费记不出价格 / 不是 USD（无法核对）：返回超限的结构化原因；没事返回 null */
+    fun overrun(): CronOverrun? {
+        val spent = budget.spentUsd()
+        return when {
+            spent >= limitUsd -> CronOverrun(CronOverrun.Cause.Spent, spent, limitUsd)
+            budget.unpricedRequests() > 0 || budget.nonUsdRequests() > 0 -> CronOverrun(CronOverrun.Cause.UnpricedRequest, spent, limitUsd)
+            else -> null
+        }
     }
 
     /** 标记为已超限；第一次调用返回 true（由它负责收尾），之后返回 false */
