@@ -12,7 +12,7 @@ args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 assets = root / 'app/src/main/assets/licenses'
 apk_dir = root / 'app/build/outputs/apk/release'
-notices = ['QuickJS-MIT.txt', 'quickjs-kt-Apache-2.0.txt', 'quickjs-SOURCES.txt']
+notices = ['QuickJS-MIT.txt', 'quickjs-kt-Apache-2.0.txt', 'quickjs-SOURCES.txt', 'c-vector-MIT.txt']
 evidence = args.evidence.resolve()
 results = []
 
@@ -40,6 +40,7 @@ for abi in ['universal', 'arm64-v8a', 'x86_64']:
 # 除了仓库副本，也逐字比对固定上游下载，防止两处一起被错误修改。
 assert (assets / notices[0]).read_bytes() == (evidence / 'QuickJS-MIT.txt').read_bytes()
 assert (assets / notices[1]).read_bytes() == (evidence / 'Apache-2.0.txt').read_bytes()
+assert (assets / 'c-vector-MIT.txt').read_bytes() == (evidence / 'c-vector-MIT.txt').read_bytes()
 with ZipFile(evidence / 'quickjs-kt-android-1.0.15.aar') as aar:
     aar_notices = [p for p in aar.namelist() if any(n in p.lower() for n in ['license', 'notice', 'copyright'])]
     aar_sources = [p for p in aar.namelist() if p.endswith(('.c', '.h'))]
