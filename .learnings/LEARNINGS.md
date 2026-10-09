@@ -2288,3 +2288,28 @@ HooksDecisionKernelTest 在队员写入时反复 store.open；open 会修复未�
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261009-AUTO-PLUGIN-R2] best_practice
+
+**Logged**: 2026-10-09T15:20:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+权限变异必须由需求断言检出；授权来源须在配置加载、事件序列化与重放之间持续保留。
+
+### Details
+静态 AgentDefinition 替身遗漏 permissionMode 会让抬权复现变成无效场景，改由 ClaudeConfigLoader 和 AgentCatalog 加载真实定义。Gradle 类名过滤与 XML 方法全名不同，统计器同时核对 classname 与 classname.name；超时等待审批不能算 AssertionError 检出，先等待审批或调用完成，再断言审批必须存在。URL 变异初次存活是盘符归一化也修掉了旧异常，补测远端 URL 不能进入宿主 canonicalPath 后稳定检出。ForkSeeded 需要携带 origin，旧种子缺失来源时不能反推成用户授权。
+
+### Suggested Action
+复现用例走真实配置入口；变异只计成功编译且需求断言失败，保留首次存活及超时证据。来源字段经过日志编码/解码和折叠验证；未知历史来源保守处理。Windows 真实 Bash 集成用例显式加入 Git bin 到 PATH。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/test/kotlin/dev/min/agent/kernel/SettingsSecurityFixTest.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/AutoReviewerTest.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/HooksH3EventsTest.kt, tools/auto_plugin_r2_mutations.py
+- Tags: permissions, provenance, mutation, windows
+- Pattern-Key: tests.permission_origin_and_mutation_assertions
+- Recurrence-Count: 1
+
+---
