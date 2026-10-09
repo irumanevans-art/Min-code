@@ -43,7 +43,8 @@ class AutoReviewerTest {
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(15_000) { block() } }
 
     private suspend fun session(reviewer: ModelClient, command: String = "touch /workspace/out", config: AutoModeConfig = AutoModeConfig(), timeout: Long = 600_000, budget: Double? = null,
-        hookEvent: String? = null, hookBehavior: String = "allow", parallelReads: Boolean = false, rules: List<RuleEntry> = emptyList(), mainTurns: Int = 1): SessionRuntime {
+        hookEvent: String? = null, hookBehavior: String = "allow", parallelReads: Boolean = false, rules: List<RuleEntry> = emptyList(), mainTurns: Int = 1,
+        mode: PermissionMode = PermissionMode.Auto): SessionRuntime {
         val calls = if (parallelReads) arrayOf(command(command), command(command).copy(callId = CallId("c2"))) else arrayOf(command(command))
         val main = ScriptedModel(*(1..mainTurns).flatMap { i -> listOf(reply(*calls.map { if (i == 1) it else it.copy(callId = CallId("c$i")) }.toTypedArray(), stop = StopReason.ToolUse, usage = Usage()), reply(TextPart("finished"), usage = Usage())) }.toTypedArray())
         val tool = if (parallelReads) object : Tool<JsonObject> by bash { override val traits = ToolTraits(readOnly = true, concurrencySafe = true) } else bash
@@ -59,7 +60,7 @@ class AutoReviewerTest {
             retry = base.retry, modelTimeoutMs = timeout, maxBudgetUsd = budget,
             credentialPaths = setOf(GuestPath("/root/.min-agent/mcp-oauth.json")))
         return SessionRuntime.create(store, LogHeader(LOG_FORMAT_VERSION, SessionId("auto-${++sessionNo}"), 0),
-            SessionCreated(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Auto), deps, scope,
+            SessionCreated(GuestPath("/workspace"), TEST_MODEL, mode), deps, scope,
             initial = listOfNotNull(PermissionRulesLoaded(rules), AutoReviewSettingsLoaded(config, AutoModeReviewer(small)), hookEvent?.let {
                 HooksLoaded(listOf(HookSourceData("user", Json.parseToJsonElement("""{"$it":[{"matcher":"Bash","hooks":[{"type":"http","url":"https://hooks.invalid/review"}]}]}""").jsonObject)))
             }))
@@ -371,10 +372,32 @@ class AutoReviewerTest {
         assertTrue(ran.isEmpty())
     }
 
-    @Test fun `permission hook cannot auto allow review failure but its denial still applies`() = run {
+    @Test fun R2_permission_hook_answers_ask_rule_in_every_mode_but_never_deny() = run {
+        for (mode in PermissionMode.entries) {
+            val reviewer = ScriptedModel()
+            val rt = session(reviewer, hookEvent = "PermissionRequest", mode = mode,
+                rules = listOf(RuleEntry(RuleKindData.Ask, "Bash(touch *)", "user")))
+            assertFalse(mode.name, started(rt).phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
+            rt.awaitIdle()
+            assertTrue(mode.name, ran.isNotEmpty())
+            assertEquals(mode.name, ApprovalChoice.Once, events(rt).filterIsInstance<ApprovalResolved>().single().choice)
+            assertTrue(reviewer.requests.isEmpty())
+            ran.clear()
+            val denied = session(ScriptedModel(), hookEvent = "PermissionRequest", mode = mode,
+                rules = listOf(RuleEntry(RuleKindData.Deny, "Bash(touch *)", "user")))
+            assertTrue(started(denied).toolResults.getValue(CallId("c")).isError)
+            denied.awaitIdle()
+            assertTrue(ran.isEmpty())
+            assertTrue(events(denied).none { it is ApprovalResolved })
+        }
+    }
+
+    @Test fun `permission hook answers review fallback and its denial still applies`() = run {
         val asked = session(ScriptedModel(failing(IllegalStateException())), hookEvent = "PermissionRequest")
-        assertTrue(started(asked).phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
-        assertTrue(ran.isEmpty())
+        assertFalse(started(asked).phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
+        asked.awaitIdle()
+        assertEquals(listOf("touch /workspace/out"), ran.toList())
+        ran.clear()
         val denied = session(ScriptedModel(reply(TextPart(decision("ask")))), hookEvent = "PermissionRequest", hookBehavior = "deny")
         val state = started(denied)
         assertTrue(state.toolResults.getValue(CallId("c")).isError)
