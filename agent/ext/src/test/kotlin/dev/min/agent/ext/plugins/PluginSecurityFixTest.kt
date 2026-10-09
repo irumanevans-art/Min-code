@@ -248,4 +248,16 @@ a
         assertTrue(loaded.commands.isEmpty())
         assertTrue(loaded.notes.any { "escapes" in it })
     }
+    @Test fun R2_user_enable_is_not_downgraded_by_project_true(): Unit = runBlocking {
+        val fs = FakeFs(); installed(fs)
+        fs.put("/home/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
+        fs.put("/work/.claude/settings.json", """{"enabledPlugins":{"audit@m":true}}""")
+        val loaded = bundle(fs)
+        assertEquals(1, loaded.batch.plugins.size)
+        assertEquals(1, loaded.hookSources.size)
+        assertTrue(loaded.mcpSources().single().trusted)
+        assertFalse(loaded.mcpSources().single().requiresApproval)
+    }
+
+
 }

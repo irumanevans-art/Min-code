@@ -88,6 +88,8 @@ class PluginBundle(
             val enabledSources = linkedMapOf<String, ConfigSource>()
             val enabled = linkedMapOf<String, Boolean>()
             settings.layers.forEach { layer -> layer.enabledPlugins.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = layer.source } }
+            // 同时启用表示已有个人授权，项目重复声明不能把它降为项目插件。
+            settings.layers.filter { it.source == ConfigSource.User }.forEach { layer -> layer.enabledPlugins.filterValues { it }.keys.forEach { enabledSources[it] = ConfigSource.User } }
             val managed = settings.layers.lastOrNull { it.source == ConfigSource.Managed }
             managed?.enabledPlugins?.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = ConfigSource.Managed }
             val disabledDependencies = settings.layers.flatMap { it.enabledPlugins.filterValues { value -> !value }.keys }.toSet()
