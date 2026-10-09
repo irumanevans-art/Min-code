@@ -1359,4 +1359,9 @@
     <!-- B10: sub-agent report card -->
     <string name="agent_report_expand">展开报告</string>
     <string name="agent_report_collapse">收起报告</string>
+
+    <!-- B10: questions / plans that come up from a sub-agent say who asked -->
+    <string name="session_notification_agent_question">%1$s%2$s提了个问题，请打开会话回答</string>
+    <string name="session_notification_agent_plan">%1$s%2$s交了一份计划，请打开会话审阅</string>
+
 </resources>

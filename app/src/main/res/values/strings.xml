@@ -1364,4 +1364,9 @@
     <!-- B10: sub-agent report card -->
     <string name="agent_report_expand">Show report</string>
     <string name="agent_report_collapse">Hide report</string>
+
+    <!-- B10: questions / plans that come up from a sub-agent say who asked -->
+    <string name="session_notification_agent_question">%1$s%2$s asks a question · open the session to answer</string>
+    <string name="session_notification_agent_plan">%1$s%2$s submitted a plan · open the session to review</string>
+
 </resources>

@@ -32,6 +32,7 @@ import dev.min.code.CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.claudecode.ClaudeSubscription
+import dev.min.code.core.claudecode.subagentTypeName
 import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexDecision
 import dev.min.code.core.codex.CodexEvent
@@ -192,15 +193,20 @@ class SessionSupervisor(
                 if (brief.fromSchedule) R.string.session_notification_schedule_confirm else R.string.session_notification_confirm,
                 context.engineName(ref.engine),
             )
+            // 子 agent 上浮的审批 / 提问 / 计划都写明是谁要的：用户从通知栏看不到会话，不说来源就以为是自己刚发的那句话在等
+            val agent = brief.agent
+            val agentName = agent?.let { it.name ?: subagentTypeName(it.agentType, context.getString(R.string.agent_type_fork)) }.orEmpty()
+            val agentSuffix = if (agent?.background == true) context.getString(R.string.session_notification_background) else ""
             content = when (brief.kind) {
-                InteractionKind.Approval -> brief.agent?.let { agent ->
-                    context.getString(R.string.session_notification_agent_approval,
-                        agent.name ?: agent.agentType,
-                        if (agent.background) context.getString(R.string.session_notification_background) else "",
-                        brief.toolName.orEmpty())
-                } ?: context.getString(R.string.session_notification_tool, brief.toolName.orEmpty())
-                InteractionKind.Question -> context.getString(R.string.session_notification_question)
-                InteractionKind.PlanReview -> context.getString(R.string.session_notification_plan)
+                InteractionKind.Approval ->
+                    if (agent != null) context.getString(R.string.session_notification_agent_approval, agentName, agentSuffix, brief.toolName.orEmpty())
+                    else context.getString(R.string.session_notification_tool, brief.toolName.orEmpty())
+                InteractionKind.Question ->
+                    if (agent != null) context.getString(R.string.session_notification_agent_question, agentName, agentSuffix)
+                    else context.getString(R.string.session_notification_question)
+                InteractionKind.PlanReview ->
+                    if (agent != null) context.getString(R.string.session_notification_agent_plan, agentName, agentSuffix)
+                    else context.getString(R.string.session_notification_plan)
             }
             // ongoing：这条不是"看过就算"的提醒，会话真的停在这里等它
             ongoing = true
