@@ -86,18 +86,18 @@ class MinWebSearchTest {
             config = { config },
         )
         val rt = rig.newRoot(PermissionMode.BypassPermissions)
-        rt.send(ClientMsgId("u1"), listOf(TextPart("one"))); rt.awaitIdle()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("one"))); rig.settle(rt)
         assertTrue("没配置：模型看不到 WebSearch", "WebSearch" !in toolNamesOf(rig.model.requests[0]))
         // 选了 Brave 但没填 key 也算没配好
         config = WebSearchConfig(backend = SearchBackendKind.BRAVE)
-        rt.send(ClientMsgId("u2"), listOf(TextPart("two"))); rt.awaitIdle()
+        rt.send(ClientMsgId("u2"), listOf(TextPart("two"))); rig.settle(rt)
         assertTrue("WebSearch" !in toolNamesOf(rig.model.requests[1]))
         config = WebSearchConfig(backend = SearchBackendKind.BRAVE, braveKey = "BRAVE-KEY-1")
-        rt.send(ClientMsgId("u3"), listOf(TextPart("three"))); rt.awaitIdle()
+        rt.send(ClientMsgId("u3"), listOf(TextPart("three"))); rig.settle(rt)
         // 内核会在工具表后面再追加自己的工具（Workflow 等），所以看的是「基础表之后紧跟 WebSearch」
         assertEquals(minTools().map { it.name } + "WebSearch", toolNamesOf(rig.model.requests[2]).take(minTools().size + 1))
         config = WebSearchConfig()
-        rt.send(ClientMsgId("u4"), listOf(TextPart("four"))); rt.awaitIdle()
+        rt.send(ClientMsgId("u4"), listOf(TextPart("four"))); rig.settle(rt)
         assertTrue("清掉配置后工具消失", "WebSearch" !in toolNamesOf(rig.model.requests[3]))
     }
 
@@ -111,7 +111,7 @@ class MinWebSearchTest {
             config = { config },
         )
         val rt = rig.newRoot(PermissionMode.BypassPermissions)
-        rt.send(ClientMsgId("u1"), listOf(TextPart("go"))); rt.awaitIdle()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("go"))); rig.settle(rt)
         val request = http.requests.single()
         assertEquals(key, request.headers.single { it.first == "X-Subscription-Token" }.second)
         assertFalse("key 不进 URL", key in request.url)
@@ -132,7 +132,7 @@ class MinWebSearchTest {
             config = { config },
         )
         val rt = rig.newRoot(PermissionMode.BypassPermissions)
-        rt.send(ClientMsgId("u1"), listOf(TextPart("go"))); rt.awaitIdle()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("go"))); rig.settle(rt)
         assertTrue(rt.state.value.toolResults.getValue(CallId("c1")).isError)
         assertFalse(key in rig.toolText(rt, "c1"))
         assertFalse("日志里没有 key", key in rig.everythingOnDisk())

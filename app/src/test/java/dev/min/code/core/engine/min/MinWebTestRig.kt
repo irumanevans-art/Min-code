@@ -98,6 +98,12 @@ class WebRig(
     /** 会话目录里所有落盘的文本（事件日志、附件）拼成一份，给「key 不外漏」的断言用 */
     fun everythingOnDisk(): String = dir.walkTopDown().filter { it.isFile }.joinToString("\n") { it.readText(Charsets.UTF_8) }
 
+    /**
+     * 等回合停下来，但不无限等：被变异弄坏的权限判定会让回合一直卡在审批上，
+     * 那种情况要变成一条红的测试，而不是一个永远不结束的测试进程
+     */
+    suspend fun settle(rt: SessionRuntime) = kotlinx.coroutines.withTimeout(20_000) { rt.awaitIdle() }
+
     /** 队头那张等人的卡 */
     fun awaitApproval(rt: SessionRuntime) = awaitValue { hub.pending.value.firstOrNull { it.session == rt.sessionId } }
 

@@ -69,7 +69,7 @@ class MinWebFetchTest {
         val http = ScriptedHttp { html("<html><head><title>Hello</title></head><body><main><h1>Title</h1><p>Body text</p></main></body></html>") }
         val rig = rig(rules, http, fetchCall("https://allow.example.com/a"), answer("EXTRACTED"), answer("done"))
         val rt = rig.newRoot()
-        rt.send(ClientMsgId("u1"), listOf(TextPart("go"))); rt.awaitIdle()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("go"))); rig.settle(rt)
         assertTrue("规则放行，不该出现审批卡", rig.hub.pending.value.isEmpty())
         assertEquals(listOf("https://allow.example.com/a"), http.requests.map { it.url })
         val text = rig.toolText(rt, "c1")
@@ -83,7 +83,7 @@ class MinWebFetchTest {
         val http = ScriptedHttp { error("must not be called") }
         val rig = rig(rules, http, fetchCall("https://deny.example.com/x"), answer("ok"))
         val rt = rig.newRoot()
-        rt.send(ClientMsgId("u1"), listOf(TextPart("go"))); rt.awaitIdle()
+        rt.send(ClientMsgId("u1"), listOf(TextPart("go"))); rig.settle(rt)
         assertTrue(http.requests.isEmpty())
         assertTrue(rig.hub.pending.value.isEmpty())
         assertTrue(rt.state.value.toolResults.getValue(CallId("c1")).isError)
@@ -106,7 +106,7 @@ class MinWebFetchTest {
             .single() as PendingInteraction.Approval
         assertEquals(listOf("ask.example.com"), card.domains)
         assertTrue(rt.answerApproval(what.approvalId, ApprovalChoice.Once))
-        rt.awaitIdle()
+        rig.settle(rt)
         assertEquals(1, http.requests.size)
         assertFalse(rt.state.value.toolResults.getValue(CallId("c1")).isError)
     }
@@ -118,7 +118,7 @@ class MinWebFetchTest {
         rt.send(ClientMsgId("u1"), listOf(TextPart("go")))
         val what = ask(rt, rig).what as HubPending.What.Approval
         assertTrue(rt.answerApproval(what.approvalId, ApprovalChoice.Deny(null)))
-        rt.awaitIdle()
+        rig.settle(rt)
         assertTrue(http.requests.isEmpty())
     }
 
@@ -132,7 +132,7 @@ class MinWebFetchTest {
         rt.send(ClientMsgId("u1"), listOf(TextPart("go")))
         val what = ask(rt, rig).what as HubPending.What.Approval
         assertTrue(rt.answerApproval(what.approvalId, ApprovalChoice.Always(requireNotNull(what.suggestedRule))))
-        rt.awaitIdle()
+        rig.settle(rt)
         assertEquals(listOf("https://ask.example.com/1", "https://ask.example.com/2"), http.requests.map { it.url })
         assertTrue("第二次同域名不该再问", rig.hub.pending.value.isEmpty())
     }
