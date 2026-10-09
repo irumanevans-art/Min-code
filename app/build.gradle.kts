@@ -25,8 +25,8 @@ android {
         applicationId = "dev.min.code"
         minSdk = 26
         targetSdk = 37
-        versionCode = 64
-        versionName = "2.1.31"
+        versionCode = 65
+        versionName = "2.1.32"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -154,6 +154,7 @@ dependencies {
     implementation(project(":agent:tools"))
     // McpApprovals：批准 .mcp.json 里的项目服务器时写 settings.local.json（与 CC 互通），不自己再抄一份读改写
     implementation(project(":agent:ext"))
+    implementation(project(":agent:workflow"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)

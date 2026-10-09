@@ -145,9 +145,15 @@ class KernelDeps(
     val modelTimeoutMs: Long = 600_000,
     val maxBudgetUsd: Double? = null,
     val reviewerModels: ((dev.min.agent.spi.AutoModeReviewer) -> ResolvedModel)? = null,
+    val workflowEngine: dev.min.agent.spi.WorkflowEngine? = null,
+    val workflowsEnabled: () -> Boolean = { true },
+    /** 通用宿主默认 16，手机组合根指定 4；环境设置可在 1–256 内覆盖。 */
+    val workflowConcurrency: Int = 16,
+    val workflowApprovals: dev.min.agent.spi.WorkflowApprovals = dev.min.agent.spi.WorkflowApprovals.SessionOnly,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }
+        require(workflowConcurrency in 1..256)
         require(modelTimeoutMs > 0)
         require(maxBudgetUsd == null || maxBudgetUsd.isFinite() && maxBudgetUsd > 0)
     }

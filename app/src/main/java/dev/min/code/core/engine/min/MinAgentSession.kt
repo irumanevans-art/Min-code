@@ -1,5 +1,7 @@
 package dev.min.code.core.engine.min
 
+import dev.min.agent.kernel.savedWorkflows
+
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.kernel.continueFromSummary
@@ -105,6 +107,10 @@ class MinAgentSession(
     private val stopping = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
     private val mapper = MinAgentStateMapper(host.text, host.lookup)
+    private val workflowCommands = runtime.state.map { it.settings.cwd to it.lastTurn?.turnId }
+        .distinctUntilChanged().map {
+            runtime.savedWorkflows().map { saved -> dev.min.code.core.engine.SlashCommandView(saved.name, saved.description) }
+        }.flowOn(Dispatchers.IO).stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _signals = MutableSharedFlow<SessionSignal>(extraBufferCapacity = 16)
     override val signals: SharedFlow<SessionSignal> = _signals.asSharedFlow()
@@ -185,6 +191,7 @@ class MinAgentSession(
         ref = ref, root = rootId, nodes = p.nodes, pending = p.pending, toolStatus = p.status, titleOverride = p.title,
         tasks = attributeTasks(p.tracked, p.nodes.values, host.text::backgroundTask),
         stopping = stopping, errorMessage = error, maxRetryAttempts = host.maxRetryAttempts,
+        workflowCommands = workflowCommands.value,
     )
 
     override val state: StateFlow<AgentSessionState> = run {
@@ -203,7 +210,7 @@ class MinAgentSession(
             host.tasks.tasks,
             host.titleOverride(rootId.value),
         ) { nodes, pending, status, tracked, title -> Parts(nodes, pending, status, tracked, title) }
-        val extras = combine(stopping, error, host.settingsTick) { s, e, _ -> s to e }
+        val extras = combine(stopping, error, host.settingsTick, workflowCommands) { s, e, _, _ -> s to e }
         // 合并 + 后台调度：几百条历史的投影是毫秒级，但不该在界面线程上做，也不必为每一帧都做
         parts.combine(extras) { p, (s, e) -> inputOf(p, s, e) }
             .conflate()

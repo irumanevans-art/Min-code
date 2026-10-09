@@ -2134,3 +2134,157 @@ WorktreeIntegrationTest 真 git、带中文空格单引号路径、真实 juncti
 - Recurrence-Count: 1
 
 ---
+
+## [LRN-20261008-WORKFLOW-REPLAY] best_practice
+
+**Logged**: 2026-10-08T15:10:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+节点重跑时，新的 started 必须立即废弃同序号更早的 completed；异步续聊也要等到新回合状态发布。
+
+### Details
+只按序号收集最后 completed 会把「已完成、重跑 started、进程死亡」误当成已完成。按事件顺序折叠，每次 started 删除旧结果。SessionHub 续聊输入提交后回合异步启动，立即等 idle 会拿到旧回合结果；先等新 turn 或不同 lastTurn，再等待结束。脚本未 await 的 agent 也必须等节点完成后才保存最终结果。删除全局桥接名字还不够：嵌入闭包中的脚本仍能读取桥接局部变量，需独立 AsyncFunction 且只传脚本 API。DelegateRequest 默认后台委派，测试需要显式 background=false 才能在根回合结束时断言孙会话结果。
+
+### Suggested Action
+恢复测试覆盖多次尝试；同时保留真实进程强制终止测试。公共异步续聊接口等待新回合发布后才能读取结果。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/WorkflowRun.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionHub.kt, agent/workflow/src/main/kotlin/dev/min/agent/workflow/QuickJsWorkflowEngine.kt
+- Tags: replay, durable-log, retry, state-publication
+- Pattern-Key: recovery.latest_attempt_invalidates_completion
+- Recurrence-Count: 1
+
+### Verification
+WorkflowRunTest 的旧完成结果回归、WorkflowSessionTest 同 Hub 子会话重试、WorkflowCrashTest 强制杀 JVM 后恢复；回放变异由指定断言检出。
+
+---
+
+## [LRN-20261008-QUICKJS-ARTIFACTS] best_practice
+
+**Logged**: 2026-10-08T15:10:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: infra
+
+### Summary
+原生依赖的许可与测试平台都必须检查实际发布产物，不能只依赖 POM 标签。
+
+### Details
+quickjs-kt-android 1.0.15 AAR 与 source JAR 均未包含 QuickJS 原生源码或 MIT 声明，App 需补入原样上游许可和固定提交来源。同版本 JVM JAR 才能在 Windows 跑真实 QuickJS 单测，替换仅限 workflow UnitTestRuntimeClasspath。Gradle TLS 握手失败时，用系统下载同一官方 Maven 产物并核对 module 的 SHA-256，通过仓库外 init script 的 exclusiveContent 仅映射该模块；保留失败退出码，不能跳过测试。
+
+### Suggested Action
+报告 AAR 实际内容；逐字核对 APK 内许可证。网络回退限定坐标与版本，并保存摘要和真实 Gradle 退出码。
+
+### Metadata
+- Source: error
+- Related Files: agent/workflow/build.gradle.kts, app/src/main/assets/licenses/quickjs-SOURCES.txt
+- Tags: native, license, android, maven, tls
+- Pattern-Key: dependencies.verify_published_native_artifacts
+- Recurrence-Count: 1
+
+---
+
+## [LRN-20261009-NATIVE-BUDGETS] correction
+
+**Logged**: 2026-10-09T10:30:00+08:00
+**Priority**: high
+**Status**: promoted
+**Area**: backend
+
+### Summary
+原生绑定的默认栈限制和 timeout 名称不能证明实际预算语义，必须用真实原生进程验证。
+
+### Details
+QuickJS 绑定未显式配置 maxStackSize 时递归会杀掉整个 JVM/App。evaluationTimeoutMillis 按墙钟累计，35 秒宿主等待后的 CPU 工作被误杀。修复明确设栈 256 KiB，并以在途宿主调用/最后进展做可注入看门狗。同步/async/JSON.parse/toString/Proxy 各有真实 JVM 用例，默认 30 秒死循环和慢宿主后 200 万次循环都有验证。JS 堆限制不能约束 Kotlin 的异步队列，长度和总量须在 JS 跨桥前限制，再由持久层限预算。
+
+### Suggested Action
+显式设置每类原生资源限制；区分宿主等待、回放写盘与 JS 无进展时间；同时检查 JS、异步桥和事件日志的预算。
+
+### Metadata
+- Source: user_feedback
+- Related Files: agent/workflow/src/main/kotlin/dev/min/agent/workflow/QuickJsWorkflowEngine.kt
+- Tags: native, watchdog, memory, bridge
+- Pattern-Key: native.verify_actual_budget_semantics
+- Recurrence-Count: 1
+- Promoted: AGENTS.md
+
+---
+
+## [LRN-20261009-CREDENTIAL-GLOB] best_practice
+
+**Logged**: 2026-10-09T10:30:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+新增真实 CLI 端到端暴露了假文件系统无法发现的 Windows 凭据通配符错误。
+
+### Details
+savedWorkflows 把 credentialPaths 的 mcp-oauth.json* 通配模式交给 canonicalPath，在 Windows 得到 InvalidPathException。复用 policy.credentialPath 的模式判断后，真实 DesktopApp + -p + JVM QuickJS 可以直接执行保存命令。另一个最初的 stale red 超时来自未建立项目规则信任，修正为 user allow 后才观察到模型请求数断言变红；前一个失败不算产品复现或合格变异。循环测试共享 TemporaryFolder 但重置 ID 也会造成测试存储碰撞，需每次独立日志目录。
+
+### Suggested Action
+不要将保护路径模式作为宿主文件名解析；保留真实 Windows 组合根测试；红测试先确认前置权限、ID 和存储条件，再确认需求断言。
+
+### Metadata
+- Source: error
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/SavedWorkflows.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/WorkflowE2ETest.kt
+- Tags: windows, credentials, e2e, preconditions
+- Pattern-Key: tests.validate_permission_preconditions
+- Recurrence-Count: 1
+
+---
+
+## [LRN-20261009-TEST-WAIT-IDLE] best_practice
+
+**Logged**: 2026-10-09T10:37:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+会话终态事件不代表回合 Job 已完成；串联维护操作的集成测试须等待 awaitIdle。
+
+### Details
+全量 CLI 验证偶发 CompactHooksSessionTest.compactNow 的 assertTrue(compact()) 失败。say/compactNow 辅助函数仅等待 turn=null，此时回合 Job 尚在收尾，compact 正确拒绝忙状态。辅助函数显式 awaitIdle 后再返回，保留生产预算、hook 与压缩状态断言。变异恢复命令也应在每个 test 任务后单独写 --tests，末尾单个 --tests 仅绑定最后一个任务，不能假定全任务共享筛选。多行补丁需按原文件 LF/CRLF 匹配并逐字恢复。
+
+### Suggested Action
+根据公开操作的空闲契约等待 Job；保存偶发失败证据；按每个 Gradle test 任务检查筛选与执行结果。磁盘规模验收与 Android/Kotlin 构建并发可挤占真实预算；本轮用 --max-workers=1 串行验收，5000 文件首次 21 秒、增量 0.55 秒，保持生产预算。
+
+### Metadata
+- Source: error
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/CompactHooksSessionTest.kt, tools/workflow_fixes_mutations.py
+- Tags: race, events, gradle, windows
+- Pattern-Key: tests.await_job_idle_before_maintenance
+- Recurrence-Count: 1
+
+---
+
+## [LRN-20261009-LIVE-LOG-CONSENT] best_practice
+
+**Logged**: 2026-10-09T11:12:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+活动日志轮询使用 peek；批准语义升级必须隔离旧版 Once 标记。
+
+### Details
+HooksDecisionKernelTest 在队员写入时反复 store.open；open 会修复未完整的尾部，导致 CORRUPT_SEQ。按存储接口使用 peek 只读轮询，再等报告交付和回合 Job 完成。团队解散时取消成员的报告是静默入队，不能等待凭空启动的通知回合；显式用户输入消费后建立稳定分支点。FileWorkflowApprovals 旧标记由普通 Once 写入，新实现采用 remember-v1 前缀，仅认可明确项目记住；旧键正式红测试为 AssertionError，新格式保留持久化与撤销断言。
+
+### Suggested Action
+区分日志打开修复与活动只读观察，按事件的触发语义建立测试收尾条件；授权存储格式变更时验证旧数据不能扩大授权。
+
+### Metadata
+- Source: error
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/HooksDecisionKernelTest.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/BranchSessionTest.kt, agent/host/src/main/kotlin/dev/min/agent/host/FileWorkflowApprovals.kt
+- Tags: logs, race, approvals, migration
+- Pattern-Key: tests.live_log_peek_and_consent_migration
+- Recurrence-Count: 1
+
+---

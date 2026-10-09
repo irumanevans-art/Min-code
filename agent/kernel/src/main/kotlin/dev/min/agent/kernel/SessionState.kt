@@ -80,6 +80,8 @@ data class SessionState(
      * 交了卷的回合随即收尾，一个回合最多采纳一条；最终答案从日志直接重建
      */
     val structuredOutput: dev.min.agent.spi.StructuredOutputDelivered? = null,
+    val workflowEvents: List<dev.min.agent.spi.SessionEvent> = emptyList(),
+    val workflowSettingsDisabled: Boolean = false,
     /** 展示用事件同样由日志折叠；不进入 modelMessages，避免 UI 说明改变模型历史。 */
     val presentation: List<SessionPresentation> = emptyList(),
     /** 会话的名字（最后一条 session_renamed；--name 建会话或 /rename 改名）。界面列表与按名续接用，不进模型上下文 */

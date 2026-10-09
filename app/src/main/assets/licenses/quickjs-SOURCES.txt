@@ -1,0 +1,22 @@
+quickjs-kt 1.0.15 — Apache-2.0
+https://github.com/dokar3/quickjs-kt/tree/v1.0.15
+License: https://github.com/dokar3/quickjs-kt/blob/v1.0.15/LICENSE.txt
+
+QuickJS — MIT
+Copyright (c) 2017-2021 Fabrice Bellard
+Copyright (c) 2017-2021 Charlie Gordon
+Source pinned by quickjs-kt v1.0.15:
+https://github.com/bellard/quickjs/tree/04be246001599f5995fa2f2d8c91a0f198d3f34c
+License: https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/LICENSE
+
+The published Android AAR contains native binaries, not QuickJS C sources or
+license notices. This application supplies the unchanged upstream MIT and
+Apache-2.0 license files alongside this source attribution.
+
+发布的 Android AAR 仅含原生二进制，不含 QuickJS C 源码或许可声明。
+本应用随包保留上游 MIT 与 Apache-2.0 完整声明，并在许可页公开来源。
+
+c-vector (JNI static dependency) / JNI 静态依赖
+Copyright (c) 2015 Evan Teran — MIT
+https://github.com/eteran/c-vector/blob/774773d/LICENSE
+Full notice: c-vector-MIT.txt / 完整声明见 c-vector-MIT.txt

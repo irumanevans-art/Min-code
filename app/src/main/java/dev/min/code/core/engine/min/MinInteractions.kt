@@ -79,7 +79,7 @@ private fun approval(
     // 委派的卡片正文写「委派 Explore · 查找入口」；prompt 在 input 里，界面默认折叠
     val summary = if (what.tool == AGENT_TOOL) {
         text.delegation(ask.specifiers.firstOrNull() ?: "general-purpose", (input["description"] as? JsonPrimitive)?.content.orEmpty())
-    } else ask.summary
+    } else if (what.tool == "Workflow") ask.summary.substringBefore("\n\n") else ask.summary
     return PendingInteraction.Approval(
         id = id, origin = origin, toolUseId = what.callId.value, toolName = what.tool, input = input, summary = summary,
         // 卡片上的路径行是「要动的东西跑出了工作区」（界面写「在 /workspace 之外」，设备上的写朱字）：
@@ -96,7 +96,9 @@ private fun approval(
             ApprovalOption(ApprovalOption.ALLOW, text.optionAllow(), ApprovalOption.Kind.Allow, acceptsNote = false, notificationSafe = true),
             ApprovalOption(ApprovalOption.DENY, text.optionDeny(), ApprovalOption.Kind.Deny, acceptsNote = true, notificationSafe = true),
             ApprovalOption(ApprovalOption.DENY_AND_STOP, text.optionDenyAndStop(), ApprovalOption.Kind.DenyAndStop, acceptsNote = false, notificationSafe = false),
-        ) + alwaysOptions(what.suggestedRule, text),
+        ) + if (what.tool == "Workflow" && what.suggestedRule != null) listOf(
+            ApprovalOption(AlwaysOptionIds.of(RuleLayer.Session, requireNotNull(what.suggestedRule)), text.optionWorkflowRemember(), ApprovalOption.Kind.AllowAlways, acceptsNote = false, notificationSafe = false)
+        ) else alwaysOptions(what.suggestedRule, text),
     )
 }
 

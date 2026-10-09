@@ -80,7 +80,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     @Volatile
     private var registry: Map<String, Tool<*>> = currentTools()
 
-    private fun currentTools(): Map<String, Tool<*>> = availableTools(rt.state.value, deps, rt.mcpCaller).associateBy { it.name }
+    private fun currentTools(): Map<String, Tool<*>> = availableTools(rt.state.value, deps, rt.mcpCaller, rt).associateBy { it.name }
     private val parallelism = Semaphore(deps.maxParallelTools)
 
     /**
@@ -249,9 +249,14 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     // alwaysAsk 先于权限引擎：模式（含 bypass）与规则都不能替人批准这类调用
-    private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict =
-        if (p.tool.traits.alwaysAsk) Verdict.Ask
-        else PolicyEngine.evaluate(ask, p.tool.traits.readOnly, policyContext())
+    private fun verdictFor(p: Prepared.Ready, ask: PermissionAsk = askFor(p)): Verdict {
+        if (p.tool.traits.alwaysAsk) return Verdict.Ask
+        val verdict = PolicyEngine.evaluate(ask, p.tool.traits.readOnly, policyContext())
+        if (p.tool !is WorkflowTool || verdict is Verdict.Deny) return verdict
+        if (PolicyEngine.askRuleHit(ask, policyContext()) != null) return Verdict.Ask
+        if (verdict is Verdict.Allow && verdict.by is DecidedBy.Rule) return verdict
+        return if (rt.workflowApproved((p.input as WorkflowInput).hash)) Verdict.Allow(DecidedBy.Mode(rt.state.value.settings.mode)) else verdict
+    }
 
     private var parsedFromRules: List<RuleEntry>? = null
     private var parsedFromSession: List<RuleEntry>? = null
@@ -311,6 +316,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         }
         val verdict = if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.unavailable && policy !is Verdict.Deny) Verdict.Ask
         else if (PolicyEngine.askRuleHit(ask, policyContext()) != null && policy !is Verdict.Deny) Verdict.Ask
+        else if (ready.tool is WorkflowTool && hook == HookOutcome.Decision.Allow && !hardDenied && !proseHardDeny && policy !is Verdict.Deny) initial
         else if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
             val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
             // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
@@ -427,7 +433,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         // 「总是允许」的建议与踩底线的原因随审批一起落盘：界面据此给按钮、给解释，重启后照样有
         val context = policyContext()
         val ask = askFor(ready)
-        val suggested = if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
+        val suggested = if (ready.tool is WorkflowTool) "Workflow(${(ready.input as WorkflowInput).name})" else if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
         rt.commit(
             listOf(ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context))),
             Durability.Sync,
@@ -444,7 +450,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val approvalId = ApprovalId(deps.ids.next("ap"))
         val context = policyContext()
         val ask = askFor(ready)
-        val suggested = if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
+        val suggested = if (ready.tool is WorkflowTool) "Workflow(${(ready.input as WorkflowInput).name})" else if (ready.tool.traits.alwaysAsk) null else PolicyEngine.suggestRule(ask, context)
         rt.commit(
             listOf(
                 ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context)),
@@ -633,7 +639,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override val tasks: TaskBoard get() = rt.visibleTaskBoard()
         override val crons: dev.min.agent.spi.CronBoard get() = rt.state.value.cronBoard(rt.deps.clock.nowMs(), rt.deps.zone, rt.hub?.limits?.cronMaxBudgetUsd, rt.hub?.crons?.nextFireFloors(rt.sessionId).orEmpty(), rt.hub?.limits?.cronEnabled == false)
-        override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome = rt.askUser(callId, questions)
+        override suspend fun ask(questions: List<UserQuestion>): QuestionOutcome =
+            if (rt.state.value.origin?.workflow == true) QuestionOutcome.Declined else rt.askUser(callId, questions)
         override suspend fun preserve(content: ByteArray): dev.min.agent.spi.ContentId? = if (turnId == null) null else rt.preserve(content)
     }
 

@@ -204,11 +204,23 @@ internal class ConsoleUi(
         }
     }
 
-    private fun decide(tool: String, summary: String): ApprovalChoice = when (approve) {
+    private fun decide(tool: String, summary: String): ApprovalChoice { return when (approve) {
         ApprovalAnswer.Yes -> ApprovalChoice.Once
         // 这句是 CLI 自己生成的，不是哪个人写的：fromHost = true，留在 tool_result 里，不能冒充“用户的话”独立成块
         ApprovalAnswer.No -> ApprovalChoice.Deny("非交互模式下没有人审批，已按 --approve no 拒绝", fromHost = true)
         ApprovalAnswer.Ask -> {
+            if (tool == "Workflow") {
+                while (true) {
+                    out.println("  工作流：${summary.substringBefore('\n')} [y 是 / a 本项目不再问 / v 查看脚本 / n 否]")
+                    out.flush()
+                    when (input.readLine()?.trim()?.lowercase()) {
+                        "y", "yes" -> return ApprovalChoice.Once
+                        "a" -> return ApprovalChoice.Always("Workflow(${summary.substringBefore('\n')})")
+                        "v" -> out.println(summary)
+                        else -> return ApprovalChoice.Deny()
+                    }
+                }
+            }
             if ('\n' in summary) {
                 // 多行摘要（ExitPlanMode 的计划正文）整段缩进打印，再单独一行问
                 out.println("  需要批准：$tool")
@@ -224,6 +236,8 @@ internal class ConsoleUi(
                 else -> ApprovalChoice.Deny(reply)
             }
         }
+    }
+
     }
 
     private fun summarize(text: String): String {

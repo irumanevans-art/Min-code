@@ -756,7 +756,7 @@ class SessionHub(
             return DelegateResult.Rejected("子 agent 最多嵌套 ${limits.maxDepth} 层，这里不能再委派了。直接自己做。")
         }
         val running = runtimes.values.count { it.state.value.origin != null && it.state.value.turn != null }
-        if (running >= limits.maxRunningChildren) {
+        if (!request.workflow && running >= limits.maxRunningChildren) {
             return DelegateResult.Rejected("已经有 $running 个子 agent 在跑，达到上限。等其中一些完成后再委派，或自己做。")
         }
         val type = request.agentType?.trim()?.takeIf { it.isNotEmpty() } ?: BuiltinAgents.GENERAL_PURPOSE
@@ -779,6 +779,9 @@ class SessionHub(
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = FORK_AGENT_TYPE, fork = true,
                 depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
+                workflow = request.workflow || parentOrigin?.workflow == true,
+                workflowSchema = request.schema.takeIf { request.workflow },
+                workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
             )
             initial += forkSeed(ps, callId, request.prompt)
             initial += forkInheritance(ps, callId)
@@ -796,7 +799,7 @@ class SessionHub(
                 ps.settings.mode == PermissionMode.Auto -> PermissionMode.Auto
                 else -> definition.permissionMode ?: ps.settings.mode
             }
-            created = SessionCreated(ps.settings.cwd, model, mode, definition.effort ?: ps.settings.effort)
+            created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
@@ -805,9 +808,13 @@ class SessionHub(
                 // 定义里 mcp__ 开头的写法单独存：MCP 工具运行时才知道有哪些（写了 tools 却没列 MCP 工具 = 一个都不给）
                 mcpTools = definition.tools?.filter { it.startsWith(MCP_PREFIX) },
                 mcpDenied = definition.disallowedTools.filter { it.startsWith(MCP_PREFIX) },
+                // 禁止中途提问是整棵工作流树的约束，不能通过再委派或分身绕开。
+                workflow = request.workflow || parentOrigin?.workflow == true,
+                workflowSchema = request.schema.takeIf { request.workflow },
+                workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
             )
         }
-        val background = request.background || definition?.alwaysBackground == true
+        val background = !request.workflow && (request.background || definition?.alwaysBackground == true)
 
         // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
         // 不进父会话（inheritedRules 复制的是 settings 快照）。子会话再派生时经 inheritedComponentHooks
@@ -827,12 +834,12 @@ class SessionHub(
             }
         }
 
-        val isolated = if (definition?.isolationWorktree == true) {
+        val isolated = if (request.isolationWorktree || definition?.isolationWorktree == true) {
             dev.min.agent.spi.catchingNonCancellation { parent.worktrees.prepare("agent-${childId.value}", null, pinned = true) }
                 .getOrElse { return DelegateResult.Rejected(it.message ?: "Worktree creation failed.") }
         } else null
         if (isolated != null) {
-            if (!definition!!.omitMemory) initial += MemoryLoaded((ps.memory + ps.cwdMemory).distinctBy { it.path }, autoMemory = ps.autoMemory)
+            if (definition?.omitMemory != true) initial += MemoryLoaded((ps.memory + ps.cwdMemory).distinctBy { it.path }, autoMemory = ps.autoMemory)
             initial += dev.min.agent.spi.CwdChanged(created.cwd, isolated.path, isolated)
         } else if (ps.worktree != null) {
             initial += dev.min.agent.spi.CwdChanged(created.cwd, created.cwd, ps.worktree.copy(pinned = true, owned = false))
@@ -843,7 +850,8 @@ class SessionHub(
             // 不加载记忆文件的子 agent（Explore / Plan）也不按需加载（来历里的 omitMemory 管着，重开后同样）；分身照常——它接着父会话的活干
             loadMemory = isolated == null && definition != null && !definition.omitMemory, loadSettings = false, loadSkills = false, hub = this,
         )
-        child.requestGate = childGate
+        // 工作流自己的节点闸同时管排队与模型请求，不能再被默认 Hub 的 3 个流式槽压回去。
+        child.requestGate = if (request.workflow) null else childGate
         mcp.attachInherited(child, parent)
         register(child)
         parent.commit(
@@ -887,6 +895,17 @@ class SessionHub(
         } finally {
             awaitedInForeground -= child.sessionId
         }
+    }
+
+    internal suspend fun retryWorkflow(parent: SessionRuntime, childId: SessionId, prompt: String): DelegateResult {
+        val child = requireNotNull(get(childId))
+        require(child.state.value.origin?.workflow == true && child.state.value.origin?.parent == parent.sessionId)
+        val previousTurn = child.state.value.lastTurn?.turnId
+        awaitedInForeground += childId
+        child.receive(ClientMsgId(deps.ids.next("workflow_retry")), listOf(TextPart(prompt)), Delivery.Queue,
+            InputOrigin.Parent(parent.sessionId), TurnTrigger.User)
+        child.state.first { it.turn != null || it.lastTurn?.turnId != previousTurn }
+        return awaitForeground(parent, child)
     }
 
     /** 子 agent 守父会话的规矩：父会话的规则快照，连同父会话里「总是允许」攒下的规则（来源仍记 session） */

@@ -889,7 +889,7 @@
   <string name="about_check_update_install_failed">调不起安装器</string>
   <string name="about_whats_new">更新</string>
   <string name="about_credits">来源与许可</string>
-  <string name="about_license_body">本 App 以 GNU AGPL-3.0 发布。proot 运行时、Rootfs 安装与终端部分源自 RikkaHub（AGPL-3.0），proot 二进制来自 Termux 项目，终端模拟器来自 Termux 的 terminal-view，语法高亮与 Markdown 解析分别来自 RikkaHub 的 highlight 模块与 JetBrains markdown。Claude Code 是 Anthropic 的产品，本 App 与 Anthropic 无关。</string>
+  <string name="about_license_body">本 App 以 GNU AGPL-3.0 发布。proot 运行时、Rootfs 安装与终端部分源自 RikkaHub（AGPL-3.0），proot 二进制来自 Termux 项目，终端模拟器来自 Termux 的 terminal-view，语法高亮与 Markdown 解析分别来自 RikkaHub 的 highlight 模块与 JetBrains markdown。Claude Code 是 Anthropic 的产品，本 App 与 Anthropic 无关。\n\nWorkflow 使用 quickjs-kt 1.0.15（Apache-2.0，Dokar）及 QuickJS（MIT）, c-vector（MIT, Copyright (c) 2015 Evan Teran）。QuickJS 版权所有：Copyright (c) 2017-2021 Fabrice Bellard；Copyright (c) 2017-2021 Charlie Gordon。上游 AAR 未附许可文件，本应用在包内 licenses 资产中保留完整声明。来源：https://github.com/dokar3/quickjs-kt/tree/v1.0.15 与 https://github.com/bellard/quickjs/tree/04be246001599f5995fa2f2d8c91a0f198d3f34c。</string>
   <string name="about_last_crash">上次崩溃</string>
   <string name="about_last_error">上次错误（未崩溃）</string>
   <string name="about_no_record">没有记录。</string>
@@ -1352,4 +1352,9 @@
     <string name="duration_minutes">%1$d 分钟</string>
     <string name="duration_hours">%1$d 小时</string>
     <string name="duration_days">%1$d 天</string>
+<string name="settings_workflows_title">动态工作流</string>
+<string name="settings_workflows_on">新运行已启用</string>
+<string name="settings_workflows_off">新运行已关闭</string>
+<string name="workflow_remember_project">本项目不再问</string>
+<string name="workflow_view_script">查看脚本</string>
 </resources>

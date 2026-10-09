@@ -418,6 +418,18 @@ fun SessionState.apply(record: EventRecord): SessionState {
         // MCP 快照整份替换；变化说明给界面看（模型从工具表与系统提示里看到变化）
         is dev.min.agent.spi.McpServersLoaded -> copy(mcpServers = e)
         is dev.min.agent.spi.McpAuthentication -> this
+        is dev.min.agent.spi.WorkflowSettingsDisabled -> copy(workflowSettingsDisabled = e.disabled)
+        is dev.min.agent.spi.WorkflowCallIssued -> copy(
+            history = history + HistoryEntry.Assistant(e.messageId, listOf(e.call)),
+            workflowEvents = workflowEvents + e,
+        )
+        is dev.min.agent.spi.WorkflowRequested, is dev.min.agent.spi.WorkflowApproved,
+        is dev.min.agent.spi.WorkflowRunStarted, is dev.min.agent.spi.WorkflowNodeStarted,
+        is dev.min.agent.spi.WorkflowNodeCompleted, is dev.min.agent.spi.WorkflowNodeReplayed,
+        is dev.min.agent.spi.WorkflowProgress, is dev.min.agent.spi.WorkflowRunCompleted -> copy(
+            workflowEvents = workflowEvents + e,
+            presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
+        )
         is dev.min.agent.spi.McpToolSearchConfigured -> copy(mcpToolSearch = e)
         is dev.min.agent.spi.McpToolsLoaded -> copy(loadedMcpTools = (loadedMcpTools + e.names).distinct())
         is dev.min.agent.spi.McpUrlElicitationAsked -> {

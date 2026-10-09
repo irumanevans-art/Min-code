@@ -67,6 +67,7 @@ interface MinAgentText {
     fun optionDenyAndStop(): String
 
     /** 「总是允许」按钮：[rule] 是 CC 语法的规则原文（`Bash(git status)`），原样显示 */
+    fun optionWorkflowRemember(): String = optionAlways(RuleLayer.Session, "Workflow")
     fun optionAlways(layer: RuleLayer, rule: String): String
 
     /** 规则写进文件之后的一句轻提示 / 没写成的原因 */
@@ -202,6 +203,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
         if (layer == RuleLayer.User) R.string.min_agent_rule_saved_user else R.string.min_agent_rule_saved_local,
     )
     override fun ruleNotSaved(reason: String): String = context.getString(R.string.min_agent_rule_not_saved, reason)
+    override fun optionWorkflowRemember(): String = context.getString(R.string.workflow_remember_project)
     override fun optionAlways(layer: RuleLayer, rule: String): String = context.getString(
         when (layer) {
             RuleLayer.Session -> R.string.min_agent_option_always_session

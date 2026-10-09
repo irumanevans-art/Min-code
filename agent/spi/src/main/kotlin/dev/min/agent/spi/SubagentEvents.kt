@@ -82,6 +82,9 @@ data class SubagentOrigin(
     val mcpTools: List<String>? = null,
     /** 定义的 `disallowedTools` 里的 MCP 写法（含 `mcp__*`），先于 [mcpTools] 应用 */
     val mcpDenied: List<String> = emptyList(),
+    val workflow: Boolean = false,
+    val workflowSchema: kotlinx.serialization.json.JsonObject? = null,
+    val workflowAttempts: Int? = null,
 ) : SessionEvent
 
 /** 分身继承的一条对话消息：与父会话里那条逐字节相同（含消息 id） */

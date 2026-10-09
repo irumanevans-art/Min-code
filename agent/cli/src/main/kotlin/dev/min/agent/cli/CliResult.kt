@@ -50,6 +50,7 @@ internal data class CliResult(val session: String, val events: List<EventRecord>
     val resultText: String? = events.mapNotNull { it.event as? AssistantMessageCompleted }
         .lastOrNull { msg -> msg.parts.any { it is dev.min.agent.protocol.TextPart } }
         ?.let { m -> m.parts.filterIsInstance<dev.min.agent.protocol.TextPart>().joinToString("") { it.text }.trim().ifEmpty { null } }
+        ?: events.mapNotNull { it.event as? dev.min.agent.spi.WorkflowRunCompleted }.lastOrNull { it.status == "completed" }?.result?.toString()
 
     /** 校验通过的结构化输出（--json-schema）：只看本次命令之后的事件；失败 / 没开时没有这个字段 */
     private val structured = events.mapNotNull { it.event as? StructuredOutputDelivered }.lastOrNull()

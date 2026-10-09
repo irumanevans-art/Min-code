@@ -1,5 +1,7 @@
 package dev.min.agent.cli
 
+import dev.min.agent.kernel.savedWorkflows
+
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.kernel.continueFromSummary
 import dev.min.agent.kernel.resumeAdvice
@@ -113,7 +115,7 @@ internal suspend fun interact(
             catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
             catch (e: Exception) { System.err.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
         } else emptyList()
-        val action = interpretInput(input, defs?.skills.orEmpty(), defs?.commands.orEmpty(), app.skillVars(runtime), prompts)
+        val action = if (runtime.savedWorkflows().any { it.name == input.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(input, humanInput = true) else interpretInput(input, defs?.skills.orEmpty(), defs?.commands.orEmpty(), app.skillVars(runtime), prompts)
         // UserPromptExpansion：展开之后、发送之前；被拦就把理由给人看，不发
         promptExpansionBlock(runtime, input, action)?.let { System.err.println(it); return false }
         val parts = when (action) {
