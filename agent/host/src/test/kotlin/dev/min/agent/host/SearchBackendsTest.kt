@@ -83,8 +83,11 @@ class SearchBackendsTest {
     }
 
     @Test fun `searxng invalid base urls and missing credentials fail before sending`() = runBlocking {
-        for (url in listOf("file:///tmp", "https://key:pass@example.com", "https://example.com?key=x"))
+        for (url in listOf("file:///tmp", "https://key:pass@example.com", "https://example.com?key=x", "not a url", "ftp://example.com", "https://example.com#frag", "")) {
             assertThrows(IllegalArgumentException::class.java) { SearXngSearchBackend(url) }
+            assertFalse(url, SearXngSearchBackend.isValidBaseUrl(url))
+        }
+        for (url in listOf("http://10.0.2.2:8080", "https://search.example.com/base/")) assertTrue(url, SearXngSearchBackend.isValidBaseUrl(url))
         val http = FakeHttpTransport()
         val backend = BraveSearchBackend(Secrets { null }, http)
         try { backend.search("x", emptyList(), emptyList(), 1); fail("no key") } catch (_: IllegalStateException) { }
