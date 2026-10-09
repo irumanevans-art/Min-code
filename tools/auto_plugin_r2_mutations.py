@@ -94,4 +94,3 @@ summary = dict(total=len(cases), killed=sum(r["status"] == "KILLED" for r in res
 (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 print(json.dumps(summary), flush=True)
 raise SystemExit(0 if proc.returncode == 0 and summary["killed"] == summary["total"] else 1)
-
