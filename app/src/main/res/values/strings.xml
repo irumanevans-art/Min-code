@@ -1357,4 +1357,8 @@
     <string name="duration_minutes">%1$d min</string>
     <string name="duration_hours">%1$d h</string>
     <string name="duration_days">%1$d days</string>
+
+    <!-- B10: top-bar cost = main session + sub-agents (whole tree) -->
+    <string name="min_usage_cost_subagents">of which sub-agents</string>
+
 </resources>

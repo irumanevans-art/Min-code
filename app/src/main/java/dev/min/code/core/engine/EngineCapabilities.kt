@@ -214,7 +214,7 @@ data class EngineCapabilities(
             subagents = true,
             subagentDirectMessage = true,
             backgroundTasks = true,
-            // 目录有官方标价（ModelProfile.pricing + llm 的 cost()，MinCostLedger）：按币种原样显示，没有价格的模型不显示
+            // 目录有官方标价（内核按请求记在每个会话的 modelCosts 里，Min 对整棵树求和，见 MinCost.kt）：按币种原样显示，有请求没有价格就不显示
             cost = true,
             cacheStats = true,
             liveTitle = false,

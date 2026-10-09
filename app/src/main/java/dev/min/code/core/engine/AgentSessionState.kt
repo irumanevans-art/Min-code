@@ -287,6 +287,8 @@ data class UsageView(
      * Min 填（目录价格 × 用量；有一个用过的模型没价格就是 null）。[costText] 是 CC 给的 CLI 原文、要解析成美元，两者别混
      */
     val costLabel: String? = null,
+    /** [costLabel] 里子 agent（含团队成员）花的那一份；没有子 agent 花钱、或总数不全时 null。只有 Min 填（整棵树求和，设计 5.7） */
+    val subagentCostLabel: String? = null,
 ) {
     companion object {
         val Empty = UsageView(null, null, null, null, null, null)

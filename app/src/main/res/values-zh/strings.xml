@@ -1352,4 +1352,8 @@
     <string name="duration_minutes">%1$d 分钟</string>
     <string name="duration_hours">%1$d 小时</string>
     <string name="duration_days">%1$d 天</string>
+
+    <!-- B10: top-bar cost = main session + sub-agents (whole tree) -->
+    <string name="min_usage_cost_subagents">其中子 agent</string>
+
 </resources>

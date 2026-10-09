@@ -75,7 +75,7 @@ internal fun MinModelPicker(
 /**
  * 用量段：上下文占比、缓存命中率、花费。三样都只读，没有数就不画那一行（而不是画「—」）。
  *
- * 花费来自适配器按目录价格算好的 [UsageView.costLabel]，币种原样；它为 null 而会话又确实有过请求，
+ * 花费是整棵会话树（主会话 + 子 agent）内核记的 [UsageView.costLabel]，币种原样，其中子 agent 的一份另给一行；它为 null 而会话又确实有过请求，
  * 说明用过的模型里有没有价格的——明说，免得用户以为是没统计。
  */
 @Composable
@@ -100,6 +100,7 @@ internal fun MinUsageSection(usage: UsageView) {
         }
         usage.cacheReadRatio?.let { UsageLine(stringResource(R.string.min_usage_cache), "${(it * 100).roundToInt()}%") }
         usage.costLabel?.let { UsageLine(stringResource(R.string.min_usage_cost), it) }
+        usage.subagentCostLabel?.let { UsageLine(stringResource(R.string.min_usage_cost_subagents), it) }
         if (usage.costLabel == null && used != null) SettingsSubHeader(stringResource(R.string.min_usage_no_price))
     }
 }

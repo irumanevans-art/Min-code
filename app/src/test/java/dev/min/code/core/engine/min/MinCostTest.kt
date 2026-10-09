@@ -1,126 +1,67 @@
 package dev.min.code.core.engine.min
 
 import dev.min.agent.llm.Cost
-import dev.min.agent.llm.ModelPricing
-import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.ModelRef
-import dev.min.agent.protocol.RequestId
 import dev.min.agent.protocol.SessionId
-import dev.min.agent.protocol.StopReason
-import dev.min.agent.protocol.TextPart
-import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.Usage
-import dev.min.agent.spi.AssistantMessageCompleted
-import dev.min.agent.spi.ModelFallback
-import dev.min.agent.spi.ModelFailureKind
-import dev.min.agent.spi.ModelRequestFailed
-import dev.min.agent.spi.ModelRequestStarted
-import dev.min.agent.spi.SessionEvent
-import dev.min.agent.spi.TurnEnded
-import dev.min.agent.spi.TurnOutcome
-import dev.min.agent.spi.TurnStarted
-import dev.min.agent.spi.TurnTrigger
+import dev.min.agent.spi.ModelCharged
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 花费账本：增量记到当时的模型头上，币种原样，没价格不显示。 */
+/** 花费：内核按请求记在每个会话的 modelCosts 里，Min 对整棵树求和，币种原样，有请求没价格就不显示。 */
 class MinCostTest {
     private val root = SessionId("s_root")
-    private val usd = ModelPricing(currency = "USD", inputPerMTok = 3.0, outputPerMTok = 15.0, asOf = "2026-10-01")
-    private val cny = ModelPricing(currency = "CNY", inputPerMTok = 2.0, outputPerMTok = 8.0, asOf = "2026-10-01")
+    private val child = SessionId("s_child")
+    private val grandchild = SessionId("s_grand")
     private val other = ModelRef("test", "other")
-    private val prices = mapOf(T_MODEL to usd, other to cny)
+    private val tokens = Usage(inputTokens = 100)
 
-    private fun reply(turn: String, model: ModelRef, usage: Usage, id: String = "a-$turn") = listOf<SessionEvent>(
-        ModelRequestStarted(TurnId(turn), RequestId("r-$id"), 1, model, "fp"),
-        AssistantMessageCompleted(TurnId(turn), RequestId("r-$id"), MessageId(id), listOf(TextPart("ok")), usage, StopReason.EndTurn),
-    )
+    private fun usd(amount: Double) = ModelCharged(T_MODEL, tokens, amount, "USD")
+    private fun cny(amount: Double) = ModelCharged(other, tokens, amount, "CNY")
+    private fun unpriced() = ModelCharged(other, tokens)
 
-    private fun turn(turn: String, model: ModelRef, usage: Usage) =
-        listOf<SessionEvent>(TurnStarted(TurnId(turn), TurnTrigger.User)) + reply(turn, model, usage) +
-            TurnEnded(TurnId(turn), TurnOutcome.Completed, usage, 0)
-
-    private val oneM = Usage(inputTokens = 1_000_000)
-
-    @Test fun `no usage means no cost`() {
-        val ledger = MinCostLedger { prices[it] }
-        ledger.observe(mapOf(root to foldOf()))
-        assertNull(ledger.label())
+    @Test fun `no spend means no cost`() {
+        val cost = treeCostOf(root, mapOf(root to foldOf()))
+        assertNull(cost.totalLabel())
+        assertNull(cost.subagentLabel())
     }
 
-    @Test fun `usage is priced by the model that spent it`() {
-        val ledger = MinCostLedger { prices[it] }
-        ledger.observe(mapOf(root to foldOf(*turn("t1", T_MODEL, oneM).toTypedArray())))
-        assertEquals("$3.00", ledger.label())
+    @Test fun `the root's own spend is the total and there is no sub-agent line`() {
+        val cost = treeCostOf(root, mapOf(root to foldOf(usd(0.0123), usd(0.01))))
+        assertEquals("$0.0223", cost.totalLabel())
+        assertNull("子 agent 没花钱就没有这一行", cost.subagentLabel())
     }
 
-    @Test fun `a frame is only counted once and the next turn adds its own increment`() {
-        val ledger = MinCostLedger { prices[it] }
-        val first = foldOf(*turn("t1", T_MODEL, oneM).toTypedArray())
-        ledger.observe(mapOf(root to first))
-        ledger.observe(mapOf(root to first))
-        val second = foldOf(*(turn("t1", T_MODEL, oneM) + turn("t2", T_MODEL, oneM)).toTypedArray())
-        ledger.observe(mapOf(root to second))
-        assertEquals("$6.00", ledger.label())
-    }
-
-    @Test fun `a turn in progress counts as it streams and is not counted again when it ends`() {
-        val ledger = MinCostLedger { prices[it] }
-        val running = foldOf(TurnStarted(TurnId("t1"), TurnTrigger.User), *reply("t1", T_MODEL, oneM).toTypedArray())
-        ledger.observe(mapOf(root to running))
-        assertEquals("$3.00", ledger.label())
-        val ended = foldOf(*turn("t1", T_MODEL, oneM).toTypedArray())
-        ledger.observe(mapOf(root to ended))
-        assertEquals("结束后总量连续，不能重复算", "$3.00", ledger.label())
-    }
-
-    @Test fun `a fallback turn is priced by the fallback model and the primary by its own`() {
-        val ledger = MinCostLedger { prices[it] }
-        val primaryOnly = foldOf(*turn("t1", T_MODEL, oneM).toTypedArray())
-        ledger.observe(mapOf(root to primaryOnly))
-        // 第二回合主模型倒了，换到回退模型 other 上答完（回退生效中 activeModel = other）
-        val inFallback = foldOf(
-            *turn("t1", T_MODEL, oneM).toTypedArray(),
-            TurnStarted(TurnId("t2"), TurnTrigger.User),
-            ModelRequestStarted(TurnId("t2"), RequestId("rf"), 1, T_MODEL, "fp"),
-            ModelRequestFailed(TurnId("t2"), RequestId("rf"), 1, ModelFailureKind.Overloaded, "529", 529, false),
-            ModelFallback(TurnId("t2"), RequestId("rf"), T_MODEL, other, ModelFailureKind.Overloaded, "529"),
-            *reply("t2", other, oneM, id = "af").toTypedArray(),
-        )
-        ledger.observe(mapOf(root to inFallback))
-        assertEquals("$3.00 + ¥2.0000".replace("¥2.0000", "¥2.00"), ledger.label())
-    }
-
-    @Test fun `a model without a price hides the whole figure rather than showing part of it`() {
-        val ledger = MinCostLedger { if (it == T_MODEL) usd else null }
-        ledger.observe(mapOf(root to foldOf(*turn("t1", T_MODEL, oneM).toTypedArray())))
-        assertEquals("$3.00", ledger.label())
-        val mixed = foldOf(*turn("t1", T_MODEL, oneM).toTypedArray(), TurnStarted(TurnId("t2"), TurnTrigger.User),
-            *reply("t2", T_MODEL, oneM).toTypedArray(), TurnEnded(TurnId("t2"), TurnOutcome.Completed, oneM, 0),
-            // 然后设置里换成没价格的模型
-            dev.min.agent.spi.SettingsChanged(model = other), *turn("t3", other, oneM).toTypedArray())
-        ledger.observe(mapOf(root to mixed))
-        assertNull(ledger.label())
-    }
-
-    @Test fun `a sub-agent session adds its own spend`() {
-        val ledger = MinCostLedger { prices[it] }
-        val child = SessionId("s_child")
-        ledger.observe(
+    @Test fun `the whole tree adds up and the sub-agents' share is shown on its own`() {
+        val cost = treeCostOf(
+            root,
             mapOf(
-                root to foldOf(*turn("t1", T_MODEL, oneM).toTypedArray()),
-                child to foldOf(*turn("c1", T_MODEL, oneM).toTypedArray(), id = "s_child"),
+                root to foldOf(usd(0.01)),
+                child to foldOf(usd(0.02), id = "s_child"),
+                grandchild to foldOf(usd(0.03), id = "s_grand"),
             ),
         )
-        assertEquals("$6.00", ledger.label())
+        assertEquals("$0.0600", cost.totalLabel())
+        assertEquals("孙会话也算子 agent 的一份", "$0.0500", cost.subagentLabel())
     }
 
-    @Test fun `a reopened session books its history to the model in use now`() {
-        val ledger = MinCostLedger { prices[it] }
-        // 新账本第一次见到一个带历史的会话：整份记给此刻的模型（文档里写明的估算）
-        ledger.observe(mapOf(root to foldOf(*turn("t1", other, oneM).toTypedArray(), dev.min.agent.spi.SettingsChanged(model = T_MODEL))))
-        assertEquals("$3.00", ledger.label())
+    @Test fun `two currencies are written side by side and never converted`() {
+        val cost = treeCostOf(root, mapOf(root to foldOf(usd(0.5)), child to foldOf(cny(2.0), id = "s_child")))
+        assertEquals("$0.5000 + ¥2.00", cost.totalLabel())
+        assertEquals("¥2.00", cost.subagentLabel())
+    }
+
+    @Test fun `a request without a price hides the figure rather than showing part of it`() {
+        val cost = treeCostOf(root, mapOf(root to foldOf(usd(0.5)), child to foldOf(unpriced(), id = "s_child")))
+        assertNull(cost.totalLabel())
+        assertNull(cost.subagentLabel())
+    }
+
+    @Test fun `a sub-agent that is not online contributes nothing instead of failing`() {
+        // 映射器只收到在线节点；卸下的后代不在表里（它们的钱要等重开才看得到）
+        val cost = treeCostOf(root, mapOf(root to foldOf(usd(0.25))))
+        assertEquals("$0.2500", cost.totalLabel())
     }
 
     @Test fun `cost text keeps the currency as priced and widens the decimals below one unit`() {
