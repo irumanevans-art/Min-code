@@ -284,8 +284,7 @@ class ClaudeCodeManagerCharacterizationTest {
                     "only file1.txt and summarizes it in one sentence; the second reads only file2.txt and " +
                     "summarizes it in one sentence. Wait for both, then reply DONE.",
             )
-            val firstEnd = h.awaitTurnEnd()
-            val firstFinishedAt = firstEnd.lastTurnFinishedAt
+            h.awaitTurnEnd()
 
             // # pause t2：result #1 之后、自开轮第一帧之前
             val afterResult1 = h.manager.state.value.busy
@@ -300,10 +299,10 @@ class ClaudeCodeManagerCharacterizationTest {
             val duringTurn2 = h.manager.state.value.busy
 
             h.process.releasePause("mid2")
-            // 自开轮的 init 会把 lastTurnFinishedAt 清成 null，只看「变了」会在 result 之前就放行
-            val secondFinishedAt = h.awaitState("result #2") {
-                !it.busy && it.lastTurnFinishedAt != null && it.lastTurnFinishedAt != firstFinishedAt
-            }.lastTurnFinishedAt
+            // 自开轮的 init 会把 lastTurnFinishedAt 清成 null（上面已经等到 init），所以「不忙且有结束时刻」就是这一条 result 到了。
+            // 不能再加「和上一轮的结束时刻不同」：两条 result 落在同一毫秒时它们相等，条件永远不成立，测试干等到超时
+            // （偶发失败的真正原因；机器快、两个放行点贴得近时更容易撞上）
+            h.awaitState("result #2") { !it.busy && it.lastTurnFinishedAt != null }
             val afterResult2 = h.manager.state.value.busy
 
             h.process.releasePause("t3")
@@ -316,9 +315,8 @@ class ClaudeCodeManagerCharacterizationTest {
             val duringTurn3 = h.manager.state.value.busy
 
             h.process.releasePause("mid3")
-            val s = h.awaitState("result #3") {
-                !it.busy && it.lastTurnFinishedAt != null && it.lastTurnFinishedAt != secondFinishedAt
-            }
+            // 同上：init 把结束时刻清成 null 了，不比较上一轮的毫秒值
+            val s = h.awaitState("result #3") { !it.busy && it.lastTurnFinishedAt != null }
 
             // —— 失败信息里带全部采样点 ——
             val busyTrace = "afterResult1=$afterResult1 afterInit2=$afterInit2 duringTurn2=$duringTurn2 " +
