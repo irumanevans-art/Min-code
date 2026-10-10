@@ -68,6 +68,8 @@ data class CliArgs(
     val bare: Boolean = false,
     /** `--safe-mode`（CC :125）：排障档，用户与项目层的定制全不加载；托管 hooks 照常 */
     val safeMode: Boolean = false,
+    /** `--tools`（CC :136）：内置工具表点名收窄；null = 预设（`default` 或没给，不收窄），空集 = 不给任何内置工具 */
+    val tools: Set<String>? = null,
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
@@ -112,6 +114,8 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
                          MCP、命令与 agents、输出样式、工作流、自动记忆）；托管层的 hooks 照常生效，
                          托管的插件、skills、CLAUDE.md、MCP 也不加载；权限与内置工具照常；
                          CLAUDE_CODE_SAFE_MODE=1 等效；两者同时给报错（原文没规定并存）
+  --tools <名字,...>     限定内置工具表（CC 同名）：逗号或空格分隔；default 为预设（不限定）；""（空串）为不给任何内置工具；
+                         未知工具名报错。只管内置工具，MCP 工具照常
   --no-browser           MCP OAuth 打印授权 URL，手工粘贴回调 URL
   --search-backend <id>  brave / tavily / searxng；也可用 MIN_AGENT_SEARCH_BACKEND
   --search-url <id>      SearXNG 基础地址，也可用 MIN_AGENT_SEARXNG_URL
@@ -134,6 +138,7 @@ private val VALUE_ARGS = setOf(
     "--max-output", "--effort", "--mode", "--approve", "--cwd", "--output-format", "--resume", "--search-backend",
     "--search-url", "--fast-model", "--max-web-searches", "--web-cache-ttl-ms", "--web-deadline-ms", "--max-turns",
     "--json-schema", "--name", "-n", "--fallback-model", "--auto-mode-reviewer", "--max-budget-usd", "--model-timeout-ms",
+    "--tools",
 )
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
@@ -287,6 +292,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         pluginDirs = pluginDirs,
         bare = "--bare" in flags,
         safeMode = "--safe-mode" in flags,
+        tools = values["--tools"]?.let(::parseToolsArg),
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages
@@ -296,6 +302,26 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
             }
         },
     )
+}
+
+/**
+ * `--tools` 的取值（CC :136）：逗号或空格分隔的工具名。空串（或只有空白）= 不给任何内置工具（返回空集）；
+ * `default` = 预设，返回 null（不收窄），与具体名字混用是写错了，报错。未知名报错并列出可用的名字——
+ * 静默忽略写错的工具名，会让人以为某个工具已经关掉了
+ */
+internal fun parseToolsArg(raw: String): Set<String>? {
+    val names = raw.split(Regex("[,\\s]+")).filter { it.isNotEmpty() }
+    if (names.isEmpty()) return emptySet()
+    if ("default" in names) {
+        if (names.size > 1) throw UsageException("--tools 的 default 是预设，不能和具体工具名混用")
+        return null
+    }
+    val unknown = names.filterNot { it in ALL_BUILTIN_TOOL_NAMES }
+    if (unknown.isNotEmpty()) {
+        throw UsageException("--tools 不认识的工具：${unknown.joinToString("、")}。可用的内置工具：" +
+            ALL_BUILTIN_TOOL_NAMES.sorted().joinToString("、"))
+    }
+    return names.toSet()
 }
 
 /**

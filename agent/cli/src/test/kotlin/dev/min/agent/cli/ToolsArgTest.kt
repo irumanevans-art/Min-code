@@ -1,5 +1,6 @@
 package dev.min.agent.cli
 
+import kotlinx.coroutines.cancel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -99,6 +100,10 @@ class ToolsArgTest {
     }
 
     private val scopes = mutableListOf<kotlinx.coroutines.CoroutineScope>()
+
+    @org.junit.After
+    fun tearDown() = scopes.forEach { it.cancel() }
+
     private fun newScope(): kotlinx.coroutines.CoroutineScope =
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).also { scopes += it }
 }

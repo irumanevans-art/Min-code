@@ -121,6 +121,19 @@ private val CRON_TOOL_NAMES = setOf("CronCreate", "CronDelete", "CronList", "Sch
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 
 /**
+ * 全部内置工具的名字（不论这次启动配没配搜索、是不是交互、有没有定时）：`--tools` 据此报未知名。
+ * 名字不在这里 = 不是 Min 的内置工具（写错了，或是 MCP 工具——后者 `--tools` 不管）
+ */
+internal val ALL_BUILTIN_TOOL_NAMES: Set<String> by lazy { desktopTools(searchConfigured = true).map { it.name }.toSet() }
+
+/**
+ * `--tools`（CC :136）：内置工具表按点名收窄；null = 预设，不收窄。表序不变（稳定前缀，见 [desktopTools]）。
+ * 只收窄内置工具，MCP 工具不经这里
+ */
+internal fun selectTools(all: List<Tool<*>>, named: Set<String>?): List<Tool<*>> =
+    if (named == null) all else all.filter { it.name in named }
+
+/**
  * 桌面宿主的组合根：把内核与各个端口实现装在一起（docs/agent/02-总体架构.md §2：构造注入，一处组装）。
  * 模型能力来自随包目录，命令行可以覆盖或描述目录外的模型。
  */
@@ -176,8 +189,8 @@ internal class DesktopApp(
         val interactive = args.prompt == null
         val cronEnabled = !cronDisabledBy(System::getenv)
         // --bare：工具表收窄到 CC 点名的那几个（其余档位全表）
-        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive, cronEnabled,
-            bare = customizations == dev.min.agent.kernel.Customizations.Bare)
+        val tools = selectTools(desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive, cronEnabled,
+            bare = customizations == dev.min.agent.kernel.Customizations.Bare), args.tools)
         toolNamesCache = tools.map { it.name }
         val limits = HUB_LIMITS.copy(
             teamMaxConcurrent = teamMaxConcurrentFrom(config.settings.merged.raw("teamMaxConcurrent"), System.err::println),
