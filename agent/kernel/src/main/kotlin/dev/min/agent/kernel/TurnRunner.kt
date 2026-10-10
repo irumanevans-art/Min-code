@@ -362,6 +362,13 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     private suspend fun goalContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
         val condition = rt.state.value.goal.condition ?: return false
         if (goalEvaluationDeferred(rt.background.runningCount())) return false
+        // 同一回合里让模型继续的次数到上限就先停、目标保留：评估器一直说没满足、模型一直说做完了，不能把回合困死。
+        // 与 Stop hook 共用同一个计数（反馈都是 hook 来源的输入）与上限；用户下一句话开新回合，计数从头数
+        val blocks = rt.state.value.turn?.stopHookBlocks ?: 0
+        if (blocks >= stopBlockCap()) {
+            rt.commit(listOf(Note(NoteLevel.Warning, "/goal 本回合已经让模型继续了 ${stopBlockCap()} 次，先停下，目标保留；下一句话会接着评估")), Durability.Batched)
+            return false
+        }
         val closing = completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
         val stdin = HookJson.encodeToJsonElement(StopInput.serializer(), StopInput(stopHookActive = false, lastAssistantMessage = closing)).jsonObject
         val verdict = ModelHookRunner(rt).runPrompts(listOf(goalEvaluationHandler(condition)), stdin, HookEvent.Stop).single()

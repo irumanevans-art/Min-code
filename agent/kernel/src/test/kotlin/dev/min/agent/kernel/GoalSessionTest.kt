@@ -135,6 +135,17 @@ class GoalSessionTest {
     }
 
     @Test
+    fun `a goal the evaluator never accepts stops at the per-turn cap and keeps the goal`() = run {
+        val model = model(List(20) { """{"ok": false, "reason": "还差测试"}""" })
+        val rt = hub(model).create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.setGoal("A")
+        rt.say("开始")
+        // 封顶后不再评估（不烧钱），目标留着给用户下一句话继续
+        assertEquals(TurnRunner.DEFAULT_STOP_BLOCK_CAP, model.requests.count { isEvaluator(it) })
+        assertEquals("A", rt.state.value.goal.condition)
+    }
+
+    @Test
     fun `an evaluation that cannot be read keeps the goal and ends the turn`() = run {
         val model = model(listOf("这不是 JSON"))
         val rt = hub(model).create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
