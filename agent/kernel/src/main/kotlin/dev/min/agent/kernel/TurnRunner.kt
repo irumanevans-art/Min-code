@@ -16,6 +16,7 @@ import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.AssistantMessageCompleted
 import dev.min.agent.ext.hooks.HookEvent
+import dev.min.agent.ext.hooks.HookDecision
 import dev.min.agent.ext.hooks.HookJson
 import dev.min.agent.ext.hooks.StopInput
 import dev.min.agent.ext.hooks.SubagentStopInput
@@ -41,6 +42,10 @@ import dev.min.agent.spi.ModelFallback
 import dev.min.agent.spi.ModelRequestFailed
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.TurnEnded
+import dev.min.agent.spi.GoalCleared
+import dev.min.agent.spi.GoalEndReason
+import dev.min.agent.spi.GoalEvaluated
+import dev.min.agent.spi.GoalVerdict
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnStarted
 import dev.min.agent.spi.TurnTrigger
@@ -345,7 +350,44 @@ internal class TurnRunner(private val rt: SessionRuntime) {
      * 上下文作为同一种 hook 来源的输入交给模型。两种都受 `stop_hook_active` 与同一个上限保护：
      * 同一回合里被拦（含只给上下文）的次数到 [stopBlockCap] 就放行——两个互相较劲的 hook 不能把模型困死在回合里
      */
-    private suspend fun stopHookContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
+    private suspend fun stopHookContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean =
+        hookStopContinues(turnId, completed) || goalContinues(turnId, completed)
+
+    /**
+     * `/goal`（CC：会话级的 prompt 型 Stop hook）：目标还在时，回合要结束就问一次评估器（同一条 prompt hook 路径，计费照常）。
+     * 没满足 → 理由作为下一条指令交回模型，回合继续；满足 / 判定不可能 → 记下结局并清掉目标，回合照常结束。
+     * 评估出错（超时、出错、回复不合口径）→ 目标保留、回合结束，给一条警告；用户下一句话会再推着它往下走。
+     * 有后台工作在跑时不评估（[goalEvaluationDeferred]）：等它完了、真正停下来的那一回合再评估。
+     */
+    private suspend fun goalContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
+        val condition = rt.state.value.goal.condition ?: return false
+        if (goalEvaluationDeferred(rt.background.runningCount())) return false
+        val closing = completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val stdin = HookJson.encodeToJsonElement(StopInput.serializer(), StopInput(stopHookActive = false, lastAssistantMessage = closing)).jsonObject
+        val verdict = ModelHookRunner(rt).runPrompts(listOf(goalEvaluationHandler(condition)), stdin, HookEvent.Stop).single()
+        if (verdict.timedOut || verdict.nonBlockingError != null) {
+            rt.commit(listOf(Note(NoteLevel.Warning, "/goal 评估没有得出结论，目标保留：${verdict.nonBlockingError ?: "超时"}")), Durability.Batched)
+            return false
+        }
+        if (verdict.decision == HookDecision.Block) {
+            val feedback = verdict.reason?.text ?: "/goal 还没达成，接着干"
+            rt.commit(listOf(GoalEvaluated(GoalVerdict.NotMet, feedback)), Durability.Batched)
+            rt.receive(
+                ClientMsgId("goal:${turnId.value}:${rt.state.value.goal.turns}"),
+                listOf(TextPart(feedback)),
+                Delivery.Steer,
+                InputOrigin.Hook(HookEvent.Stop.name),
+                startTurn = null,
+            )
+            return promote(setOf(Delivery.Steer)) > 0
+        }
+        val (verdictKind, end) = if (verdict.impossible) GoalVerdict.Impossible to GoalEndReason.Impossible
+            else GoalVerdict.Met to GoalEndReason.Achieved
+        rt.commit(listOf(GoalEvaluated(verdictKind), GoalCleared(end)), Durability.Sync)
+        return false
+    }
+
+    private suspend fun hookStopContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
         val state = rt.state.value
         val blocks = state.turn?.stopHookBlocks ?: 0
         val closing = completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
