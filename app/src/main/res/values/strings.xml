@@ -1162,7 +1162,7 @@
   <string name="goal_status_deferred_line">◎ /goal waiting on background work: %1$s\nEvaluated %2$d times</string>
   <string name="goal_status_paused_line">◎ /goal paused: %1$s\nReason: %2$s. Your next message resumes evaluation.</string>
   <string name="goal_last_reason">Latest reason: %1$s</string>
-  <string name="goal_chip">◎ %1$s · %2$d</string>
+  <string name="goal_chip">◎ %1$s · %2$d · %3$s</string>
   <string name="goal_status_active">Active</string>
   <string name="goal_status_deferred">Waiting on background work</string>
   <string name="goal_status_paused">Paused</string>

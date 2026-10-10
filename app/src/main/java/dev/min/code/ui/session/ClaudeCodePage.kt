@@ -1423,7 +1423,9 @@ private fun SessionContent(
                         focusManager.clearFocus()
                         showShells = true
                     },
-                    goalLabel = session.goal?.let { stringResource(R.string.goal_chip, it.condition, it.evaluations) },
+                    goalLabel = session.goal?.let { goal ->
+                        stringResource(R.string.goal_chip, goal.condition, goal.evaluations, stringResource(goalStatusRes(goal.status)))
+                    },
                     onOpenGoal = {
                         focusManager.clearFocus()
                         showGoal = true

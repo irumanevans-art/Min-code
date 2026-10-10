@@ -1,5 +1,6 @@
 package dev.min.code.ui.session
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,13 +35,7 @@ internal fun GoalSheet(goal: GoalView, onClear: () -> Unit, onDismiss: () -> Uni
             Text(stringResource(R.string.goal_sheet_title), style = MaterialTheme.typography.titleMedium)
             Text(goal.condition, style = MaterialTheme.typography.bodyMedium)
             Text(
-                stringResource(
-                    when (goal.status) {
-                        GoalStatus.Active -> R.string.goal_status_active
-                        GoalStatus.Deferred -> R.string.goal_status_deferred
-                        GoalStatus.Paused -> R.string.goal_status_paused
-                    },
-                ),
+                stringResource(goalStatusRes(goal.status)),
                 style = MaterialTheme.typography.labelMedium,
             )
             Text(stringResource(R.string.goal_sheet_evaluations, goal.evaluations), style = MaterialTheme.typography.bodySmall)
@@ -54,4 +49,12 @@ internal fun GoalSheet(goal: GoalView, onClear: () -> Unit, onDismiss: () -> Uni
             }
         }
     }
+}
+
+/** 目标状态的文字资源：任务条的标记与详情面板共用，免得两处各写一份 */
+@StringRes
+internal fun goalStatusRes(status: GoalStatus): Int = when (status) {
+    GoalStatus.Active -> R.string.goal_status_active
+    GoalStatus.Deferred -> R.string.goal_status_deferred
+    GoalStatus.Paused -> R.string.goal_status_paused
 }

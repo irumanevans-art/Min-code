@@ -174,8 +174,9 @@ internal class DesktopApp(
         )
         SessionHub(store, deps(tools), scope, limits, catalog.definitions).also {
             hubInstance = it
-            // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器
-            if (interactive && cronEnabled) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
+            // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器。定时任务的开关在引擎里查（CronEngine 的 enabled），
+            // 心跳不跟它走：`/goal` 的 check-in 也挂在这同一个心跳上，定时任务关着时它照常叫醒
+            if (interactive) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
         }
     }
 
