@@ -118,6 +118,8 @@ data class ToolResult(
      * 随 `tool_outcome` 落盘，所以请求照样只凭日志重建；旧日志里没有这个字段（用户的话还在 [content] 里），读出来是 null，行为不变。
      */
     val userText: String? = null,
+    /** 本次编辑新增的错误；正文也带给模型，单独留字段让工具卡在长结果里仍能明确显示摘要。 */
+    val diagnostics: List<LspDiagnostic> = emptyList(),
 )
 
 /**
@@ -183,6 +185,7 @@ interface ToolContext {
 
     /** 调用 skill（Skill 工具用）。有默认值：其余工具与测试替身不用管它 */
     val skills: SkillPort get() = SkillPort.Unavailable
+    val lsp: LspPort get() = LspPort.Unavailable
     val web: WebPort get() = WebPort.Unavailable
     val webSearch: WebSearchPort get() = WebSearchPort.Unavailable
     suspend fun extract(content: String, prompt: String): ToolResult =

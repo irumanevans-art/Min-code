@@ -41,7 +41,7 @@ class MinWebFetchTest {
         assertEquals(listOf("WebFetch", "Monitor", "TaskOutput"), names.takeLast(3))
         assertEquals(
             listOf(
-                "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "Agent", "SendMessage", "TaskStop",
+                "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "LSP", "Agent", "SendMessage", "TaskStop",
                 "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
                 "Skill", "EnterWorktree", "ExitWorktree", "TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup",
             ),

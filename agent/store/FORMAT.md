@@ -2,6 +2,8 @@
 
 `formatVersion: 1`
 
+- v1 增量（2026-10-10，LSP）：`tool_outcome.result.diagnostics` 缺省空数组，记录本次编辑新增的 severity=1 错误。每项为 path（guest 路径）、line / character（1 起 UTF-16 位置）、message、可选 code / source。模型正文附同一诊断，工具卡优先显示数量、位置及明细；旧日志按空数组读取。进程、文档版本与诊断基线不落盘，重开时重新握手取基线。插件配置按来源信任后惰性启动，不新增事件或改版本号。
+
 ## 文件布局
 
 ```

@@ -250,8 +250,15 @@ private class ItemsBuilder(
             else -> ChatItem.ToolCall.Status.Running
         }
         // 用户的话（问答的答案、拒绝的说明）不在 content 里（发给模型时要分开），但卡片照旧显示它们
-        val body = result?.displayText()
-            ?: (phase as? CallPhase.Denied)?.note
+        val body = result?.let { outcome ->
+            // 数量和明细都放在最前面，长 diff 被卡片裁短时不能只剩数量而丢掉错误位置。
+            val summary = outcome.diagnostics.takeIf { it.isNotEmpty() }?.let { issues ->
+                "LSP：本次编辑新增 ${issues.size} 个错误\n" + issues.joinToString("\n") {
+                    "${it.path}:${it.line}:${it.character} ${it.code?.let { code -> "[$code] " }.orEmpty()}${it.message}"
+                }.take(8000) + "\n\n"
+            }.orEmpty()
+            summary + outcome.displayText()
+        } ?: (phase as? CallPhase.Denied)?.note
         val card = ChatItem.ToolCall(id, part.callId.value, part.name, part.input, status, isError = error).withClippedResult(body)
         // 内核给的预览已被截过：全文长度以它为准（取两者较大，避免预览把总长冲小）
         return card.copy(

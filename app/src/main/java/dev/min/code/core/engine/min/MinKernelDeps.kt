@@ -156,7 +156,7 @@ internal class MinExec(
  * 自定义子 agent 类型（`.claude/agents/`）这一步还没接：App 没有 `:agent:ext` 依赖，Agent 工具只列内置三类。
  */
 fun minTools(): List<Tool<*>> = listOf(
-    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
+    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool, dev.min.agent.tools.LspTool,
     AgentToolOf(emptyList()), SendMessageTool, TaskStopTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,

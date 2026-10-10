@@ -60,7 +60,7 @@ data class PermissionRule(
 }
 
 /** 读类工具的规则写成 Read(…)，写类写成 Edit(…)（Claude Code 的约定：Write / NotebookEdit 也认 Edit 规则） */
-private val READ_FAMILY = setOf("Read", "Grep", "Glob")
+private val READ_FAMILY = setOf("Read", "Grep", "Glob", "LSP")
 private val EDIT_FAMILY = setOf("Edit", "Write", "MultiEdit", "NotebookEdit")
 
 /**

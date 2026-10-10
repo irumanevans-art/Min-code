@@ -68,7 +68,7 @@ class SlashInputTest {
         val names = desktopTools().map { it.name }
         assertEquals(listOf("Skill", "WebFetch", "EnterWorktree", "ExitWorktree", "Monitor", "TaskOutput", "TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup"), names.takeLast(12))
         assertEquals(
-            listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop",
+            listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "LSP", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop",
                 "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"),
             names.dropLast(12),
         )

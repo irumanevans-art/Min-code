@@ -100,7 +100,12 @@ internal fun okResult(
     text: String,
     touched: List<FileStamp> = emptyList(),
     fileEdits: List<FileEdit> = emptyList(),
-) = ToolResult(listOf(TextPart(text)), touched = touched, fileEdits = fileEdits)
+    diagnostics: List<dev.min.agent.spi.LspDiagnostic> = emptyList(),
+) = ToolResult(listOf(TextPart(text)) + if (diagnostics.isEmpty()) emptyList() else listOf(TextPart(
+    "\nLSP：本次编辑新增 ${diagnostics.size} 个错误\n" + diagnostics.joinToString("\n") {
+        "${it.path}:${it.line}:${it.character} ${it.code?.let { code -> "[$code] " }.orEmpty()}${it.message}"
+    },
+)), touched = touched, fileEdits = fileEdits, diagnostics = diagnostics)
 
 /**
  * 编辑类工具改完一个文件之后的 [FileEdit]：diff 用改前的文本与改后的文本现算，
@@ -127,7 +132,7 @@ internal fun fileEdit(
 }
 
 /** 一次写盘前后两份内容在快照仓库里的 id；宿主没有仓库时都是 null */
-internal data class StoredContents(val before: ContentId?, val after: ContentId?) {
+internal data class StoredContents(val before: ContentId?, val after: ContentId?, val diagnostics: List<dev.min.agent.spi.LspDiagnostic> = emptyList()) {
     companion object {
         val NONE = StoredContents(null, null)
     }
@@ -139,8 +144,11 @@ internal data class StoredContents(val before: ContentId?, val after: ContentId?
  */
 internal suspend fun preserveWrite(ctx: ToolContext, path: GuestPath, original: ByteArray?, updated: ByteArray): StoredContents {
     val before = original?.let { ctx.preserve(it) }
+    val baselineText = original?.decodeToString() ?: if (ctx.lsp.available && ctx.fs.stat(path) == null) "" else null
+    val token = ctx.lsp.beforeEdit(path, baselineText)
     ctx.fs.writeAtomic(path, updated)
-    return StoredContents(before, ctx.preserve(updated))
+    val after = ctx.preserve(updated)
+    return StoredContents(before, after, ctx.lsp.afterEdit(path, updated.decodeToString(), token))
 }
 
 internal fun failResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)

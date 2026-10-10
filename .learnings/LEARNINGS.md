@@ -131,6 +131,30 @@ MCP3 复核发现桌面凭证虽有私有 ACL，仍可被同用户的模型工�
 
 ---
 
+## [LRN-20261010-LSPPIPE] best_practice
+
+**Logged**: 2026-10-10T08:55:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+短期限不能只围住可能阻塞的宿主写入；协程取消会等待不响应取消的子任务清理。
+
+### Details
+真实 JvmLiveProcess.write 在 Dispatchers.IO 内写 OutputStream，对端不读 stdin 时取消不解除写入。LSP 编辑诊断改为只等待管理器持有的独立任务，超时后取消但不 join；发送也由独立写任务持有。发送取消时半帧状态不明，标记连接失效并独立 shutdown 进程，解除写入。先用 NonCancellable 管道夹具重现短期限失败，再验证 16 个协议用例、独立 JVM 假服务器停读后的 1 MiB 真实写入、配额归零及实际 Android proot。真实测试 finally 有直接关闭进程的救援，只在产品断言之后执行，防回归把测试自身永久挂住。
+
+### Suggested Action
+涉及有界等待时同时核宿主 I/O 是否响应取消；测试停止消费输入的大帧场景与资源释放，不能只测已经读完请求但不回响应的服务器。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/lsp/src/main/kotlin/dev/min/agent/lsp/LspConnection.kt, agent/lsp/src/main/kotlin/dev/min/agent/lsp/LspManager.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/LspSessionTest.kt
+- Tags: timeout, cancellation, stdin, process, backpressure
+- See Also: LRN-20261010-LSPSTART
+
+---
+
 ## [LRN-20260922-KDOC-NESTED-BLOCK-COMMENT] error
 
 **Logged**: 2026-09-22T14:20:00+08:00
@@ -2498,5 +2522,52 @@ JVM 通过不代表 Android 通过；文件根的系统别名、ICU 正则和 Ap
 - Source: self_review
 - Related Files: agent/host/src/main/kotlin/dev/min/agent/host/FilePluginSources.kt, agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginValues.kt, app/src/main/java/dev/min/code/core/engine/min/MinCommands.kt
 - Tags: android, realpath, icu, plugins, integration
+
+---
+
+## [LRN-20261010-LSPDOC] knowledge_gap
+
+**Logged**: 2026-10-10T05:30:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+对标行为必须核当前官方页；存档里泛称「编辑后报告错误和警告」不等于当前 CC 每次报告全部诊断。
+
+### Details
+本轮核 code-intelligence 当前原文已明确编辑下面展示新增诊断摘要，Ctrl+O 展开细节。tools-reference 未列完整 LSP 入参，另核本机官方 @anthropic-ai/claude-code 2.1.295 的内嵌 schema，九个 operation 都要求 filePath、line、character（1 起 UTF-16），workspaceSymbol 另可给 query。Min 仍按任务单只附新增 severity=1 错误，不能把「CC 报全部、Min 才报新增」当作未经核验的超越结论。另核现行 plugin manifest reference，发现旧存档没有的 requestTimeout（CC 2.1.288 起，默认 60000ms），已补严格字段与实际超时覆盖，并停止早期全量、重新 cleanTest。
+
+### Suggested Action
+对标任务先核指定官方页与版本；页面没列 schema 时标清本机官方发布物的版本、哈希和证据，不能猜 API。Windows 运行真实 stdio 测试时确认 Git Bash 位于 PATH；PowerShell 调 Gradle 的含点 -P 参数要整体加引号，数组中的拼接表达式要加括号，避免启动器失败冒充有效变异。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/tools/src/main/kotlin/dev/min/agent/tools/LspTool.kt, agent/lsp/src/main/kotlin/dev/min/agent/lsp/LspManager.kt
+- Tags: lsp, original-source, windows, mutation
+
+---
+
+## [LRN-20261010-LSPSTART] best_practice
+
+**Logged**: 2026-10-10T05:50:00Z
+**Priority**: high
+**Status**: promoted
+**Area**: backend
+
+### Summary
+异步常驻进程的启动结果必须由回收者最终领取；先看 isCompleted 再取消有交接竞态。
+
+### Details
+LSP 诊断等待限 300ms，服务器初始化在独立 scope 中继续。等待方取消后 Entry.connection 可能仍为空，而 Deferred 已经或即将成功创建进程。回收必须先 cancelAndJoin 让终态落定，再领取未取消的成功结果并关闭；反过来检查会漏掉两步之间完成的连接。新增 pending/completed 两种状态回归；丢弃已完成结果的变异正常编译并被 exit 完成断言检出。await 的及时取消保证还意味着「启动已成功」不等于「等待方已取得连接」；取消处理只能清掉失败/取消的完成任务，成功结果必须保留。以可暂停等待方恢复的 dispatcher 先重现断言红，再验证回收。诊断条数上限也须在筛掉警告后应用，210 条警告不能遮住最后一条新增错误。
+
+### Suggested Action
+推广到其它可脱离调用方短期限的启动任务；分别验证正在启动和已完成无人领取的资源归属，而非只验证请求返回。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/lsp/src/main/kotlin/dev/min/agent/lsp/LspManager.kt, agent/lsp/src/test/kotlin/dev/min/agent/lsp/LspManagerTest.kt
+- Tags: cancellation, deferred, process, ownership
+- Promoted: AGENTS.md
 
 ---

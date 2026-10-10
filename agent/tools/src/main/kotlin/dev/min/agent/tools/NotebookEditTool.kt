@@ -157,6 +157,7 @@ object NotebookEditTool : Tool<NotebookEditInput> {
             full.trimEnd(),
             listOf(FileStamp(path, written.size, written.modifiedMs)),
             listOf(fileEdit(path, text, change.text, stored = stored)),
+            diagnostics = stored.diagnostics,
         )
     }
 

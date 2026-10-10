@@ -145,6 +145,7 @@ object EditTool : Tool<EditInput> {
             listOf(FileStamp(path, after.size, after.modifiedMs)),
             // 改动过的文件报给界面（「改动过的文件」面板）：改之前与之后都在手里，不必再读盘
             listOf(fileEdit(path, original.text, updatedText, created = newFile, stored = stored)),
+            diagnostics = stored.diagnostics,
         )
     }
 

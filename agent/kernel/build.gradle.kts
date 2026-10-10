@@ -12,6 +12,7 @@ dependencies {
     implementation(project(":agent:tools"))
     implementation(project(":agent:ext"))
     implementation(project(":agent:mcp"))
+    implementation(project(":agent:lsp"))
     testImplementation(project(":agent:testkit"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

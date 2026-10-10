@@ -647,6 +647,7 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val builtins = deps.tools + if (runtime != null && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList()
     val builtin = (if (allowed == null) builtins else builtins.filter { it.name in allowed })
         .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
+        .filterNot { it.name == "LSP" && runtime?.lsp?.available != true }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
     val resourceServers = state.visibleMcpResourceServers(deps)
     val resourceTools = if (resourceServers.isEmpty()) emptyList() else listOf(

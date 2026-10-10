@@ -51,7 +51,6 @@ internal class PluginParser(internal val directories: Set<String>, private val u
         if (violations.any { it.kind.fatal }) return PluginLoadOutcome(warnings = warnings, errors = errors)
         val loaded = discover(rootName, files, normalizeDeclarations(safeManifest), normalizeDeclarations(safeEntry), request)
         errors += componentErrors
-        if (loaded.lspServers.isNotEmpty()) warnings += "LSP 未支持：仅保留声明，不启动服务器"
         return PluginLoadOutcome(loaded.copy(root = root, warnings = warnings, errors = errors), warnings, errors)
     }
 
@@ -273,13 +272,7 @@ internal class PluginParser(internal val directories: Set<String>, private val u
     }
 
     internal fun lspProblem(v: JsonElement): String? {
-        if (v !is JsonObject) return "不是对象"
-        val unknown = v.keys - LSP_FIELDS
-        if (unknown.isNotEmpty()) return "未知键 $unknown（PLG:324）"
-        if (v.strOrNull("command") == null) return "缺 command（PLG:328）"
-        val e2l = v.obj("extensionToLanguage") ?: return "缺 extensionToLanguage（PLG:329）"
-        if (e2l.isEmpty() || e2l.keys.any { !it.startsWith(".") }) return "extensionToLanguage 必须非空且键以 . 开头（PLG:329）"
-        return null
+        return dev.min.agent.spi.LspServerSpec.problem(v)
     }
 
     internal fun nameOk(name: String): Boolean = validPluginName(name)
@@ -313,7 +306,7 @@ internal class PluginParser(internal val directories: Set<String>, private val u
         val USER_CONFIG_KEY = Regex("[A-Za-z_][A-Za-z0-9_]*") // PLG:424
         val LSP_FIELDS = setOf(
             "command", "extensionToLanguage", "args", "transport", "env", "initializationOptions", "settings",
-            "workspaceFolder", "startupTimeout", "shutdownTimeout", "restartOnCrash", "maxRestarts", "diagnostics",
+            "workspaceFolder", "startupTimeout", "shutdownTimeout", "requestTimeout", "restartOnCrash", "maxRestarts", "diagnostics",
         ) // PLG:326-340
     }
 }

@@ -9,7 +9,7 @@ class DesktopWebTest {
     private fun args(vararg extra: String) = parseArgs(arrayOf("--model", "test", *extra), Path.of("."))
 
     @Test fun `web tools append and search is registered only when configured`() {
-        val original = listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "Skill")
+        val original = listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "LSP", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "Skill")
         val m5 = listOf("TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
         val background = listOf("Monitor", "TaskOutput")
         assertEquals(original + listOf("WebFetch", "EnterWorktree", "ExitWorktree") + background + m5, desktopTools().map { it.name })

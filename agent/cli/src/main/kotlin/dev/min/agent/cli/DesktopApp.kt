@@ -95,7 +95,7 @@ internal fun desktopTools(
     /** false = `CLAUDE_CODE_DISABLE_CRON`：定时任务的 4 个工具（CronCreate / CronDelete / CronList / ScheduleWakeup）也不提供 */
     cronEnabled: Boolean = true,
 ): List<Tool<*>> = listOf(
-    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
+    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool, dev.min.agent.tools.LspTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
@@ -378,6 +378,7 @@ internal class DesktopApp(
             mcpTokenStore = mcpTokens,
             mcpAuthorizer = mcpAuthorizer,
             mcpServerPath = { paths.hostOf(it).toString() },
+            lspGuestPath = { uri -> paths.guestOfHost(java.nio.file.Path.of(java.net.URI(uri))) },
             gitPath = { paths.hostOf(it).toString() },
             pluginDirs = args.pluginDirs.map(paths::guestOfHost),
             pluginInstalledPath = { paths.guestOfHost(java.nio.file.Path.of(it)) },
