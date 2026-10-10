@@ -138,6 +138,8 @@ data class SessionState(
     val tasks: List<TaskRecord> = emptyList(),
     /** 已分配过的最大任务编号。删除任务不回退它，编号因此不会被复用 */
     val taskSeq: Int = 0,
+    /** `/goal` 的目标（goal_* 事件折叠）。没有目标的会话日志里没有这些事件，默认值即「没有目标」 */
+    val goal: GoalState = GoalState(),
     /** 会话创建时冻结的 hooks（最后一条 HooksLoaded；docs/agent/detail/hooks设计.md §1） */
     val hooks: List<HookSourceData> = emptyList(),
     /** 会话中途登记的 frontmatter hooks（skill / command 被调用时、子 agent 创建时）；与上面的快照分开存：不随 settings 层去重、也不继承给孙会话 */
