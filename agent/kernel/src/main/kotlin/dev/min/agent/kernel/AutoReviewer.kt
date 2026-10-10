@@ -35,6 +35,8 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             when {
                 // 确定命中的硬边界不能因分类器失效或熔断变成可由人批准的调用。
                 hardRule != null -> AutoReviewDecision.Deny to "autoMode.hard_deny：$hardRule"
+                // 已停用 Auto 时，旧 Auto 子会话的终报义务不能重新启用分类器。
+                settings.disableAutoMode -> AutoReviewDecision.Ask to "auto 模式已停用，交给用户决定"
                 settings.unavailable -> AutoReviewDecision.Ask to "autoMode 配置不可用，交给用户决定"
                 rt.state.value.autoReviewTripped -> AutoReviewDecision.Ask to "审查连续拒绝 3 次或累计拒绝 20 次，后续需审查的调用交给用户决定"
                 alwaysAsk || PolicyEngine.floorReason(ask, context) != null -> AutoReviewDecision.Ask to "必须由人批准的安全底线"

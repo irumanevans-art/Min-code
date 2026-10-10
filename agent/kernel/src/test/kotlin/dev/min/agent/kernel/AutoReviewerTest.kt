@@ -107,6 +107,17 @@ class AutoReviewerTest {
         assertTrue("无法读取用户边界时必须转人工", started(rt).phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
         assertTrue(ran.isEmpty()); assertTrue(reviewer.requests.isEmpty())
     }
+    @Test fun disabledAutoClassifierCannotApproveFormerAutoReport() = run {
+        val reviewer = ScriptedModel(reply(TextPart(decision("allow"))))
+        val rt = session(reviewer)
+        rt.commit(listOf(rt.state.value.autoReviewSettings.copy(disableAutoMode = true)), Durability.Sync)
+        rt.changeSettings(mode = PermissionMode.Plan)
+        rt.commit(listOf(TurnStarted(TurnId("report"), TurnTrigger.User)), Durability.Sync)
+        val verdict = AutoReviewer(rt).review(TurnId("report"), ToolCallPart(CallId("report"), "SubagentHandback", args("message" to "done")),
+            PermissionAsk("SubagentHandback", "report"), PolicyContext(PermissionMode.Plan), false)
+        assertEquals(dev.min.agent.policy.Verdict.Ask, verdict)
+        assertTrue(reviewer.requests.isEmpty())
+    }
 
     @Test fun BUG_ask_rule_must_force_human_even_if_reviewer_allows() = run {
         val reviewer = ScriptedModel(reply(TextPart(decision("allow"))))
