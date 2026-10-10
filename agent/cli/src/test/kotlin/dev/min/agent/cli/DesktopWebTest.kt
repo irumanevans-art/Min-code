@@ -12,8 +12,8 @@ class DesktopWebTest {
         val original = listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "Skill")
         val m5 = listOf("TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup")
         val background = listOf("Monitor", "TaskOutput")
-        assertEquals(original + listOf("WebFetch", "EnterWorktree", "ExitWorktree") + background + m5 + listOf("EndConversation", "PushNotification"), desktopTools().map { it.name })
-        assertEquals(original + listOf("WebFetch", "WebSearch", "EnterWorktree", "ExitWorktree") + background + m5 + listOf("EndConversation", "PushNotification"), desktopTools(searchConfigured = true).map { it.name })
+        assertEquals(original + listOf("WebFetch", "EnterWorktree", "ExitWorktree") + background + m5 + listOf("EndConversation", "PushNotification", "ListAgents"), desktopTools().map { it.name })
+        assertEquals(original + listOf("WebFetch", "WebSearch", "EnterWorktree", "ExitWorktree") + background + m5 + listOf("EndConversation", "PushNotification", "ListAgents"), desktopTools(searchConfigured = true).map { it.name })
     }
 
     @Test fun `a one shot -p run gets no team or schedule tools because nothing outlives the process`() {
@@ -23,7 +23,7 @@ class DesktopWebTest {
         interactiveOnly.forEach { assertFalse("$it 不该出现在 -p 里", it in oneShot) }
         // 其余工具原样（顺序是稳定前缀）
         assertEquals(desktopTools().map { it.name }.filterNot { it in interactiveOnly }, oneShot)
-        assertEquals(m5, desktopTools().map { it.name }.dropLast(2).takeLast(6))
+        assertEquals(m5, desktopTools().map { it.name }.dropLast(3).takeLast(6))
         assertEquals("带搜索时也一样", desktopTools(searchConfigured = true).map { it.name }.filterNot { it in interactiveOnly }, desktopTools(searchConfigured = true, interactive = false).map { it.name })
     }
 

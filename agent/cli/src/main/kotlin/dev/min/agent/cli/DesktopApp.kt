@@ -115,7 +115,9 @@ internal fun desktopTools(
     // 结束会话（EndConversation）：只在交互的根会话里（CC：-p、--bare、子 agent 都没有）；子 agent 的过滤在内核的 availableTools
     (if (interactive) listOf(dev.min.agent.tools.EndConversationTool) else emptyList()) +
     // 系统通知（PushNotification）：桌面没有通知栏，打一行到标准错误（与内核的别的提示同一条路）
-    listOf(dev.min.agent.tools.PushNotificationTool)
+    listOf(dev.min.agent.tools.PushNotificationTool) +
+    // 能发消息的对象（ListAgents）：只列本会话的子 agent 与团队成员
+    listOf(dev.min.agent.tools.ListAgentsTool)
 
 /** 团队与定时调度的工具（只在交互会话里提供） */
 private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)

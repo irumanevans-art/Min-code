@@ -174,6 +174,8 @@ fun minTools(): List<Tool<*>> = listOf(
     dev.min.agent.tools.EndConversationTool,
     // 系统通知（只往末尾追加）
     dev.min.agent.tools.PushNotificationTool,
+    // 能发消息的对象（只往末尾追加）
+    dev.min.agent.tools.ListAgentsTool,
 )
 
 object MinKernelDeps {
