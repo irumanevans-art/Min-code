@@ -1503,5 +1503,23 @@
     <string name="trust_more">另有 %1$d 个</string>
     <string name="trust_grants_on">这个项目的配置授予了：</string>
     <string name="trust_grants_off">信任这个目录后，它的配置会授予：</string>
-    <string name="min_agent_report_reviewed">已经过审查</string>
+    <string name="min_agent_report_reviewed">已审查</string>
+    <string name="min_agent_report_warning">附警告</string>
+    <string name="min_agent_report_unavailable">未能审查</string>
+    <string name="plugins_title">插件</string>
+    <string name="plugins_subtitle">浏览市场并管理已安装插件</string>
+    <string name="plugins_markets">插件市场</string>
+    <string name="plugins_installed">已安装插件</string>
+    <string name="plugins_source">GitHub owner/repo、git 地址、清单地址、目录或 JSON 源</string>
+    <string name="plugins_add">添加市场</string>
+    <string name="plugins_warning">插件能跑命令、能访问网络。请只添加你信任的来源，安装前核对组件。</string>
+    <string name="plugins_confirm">核对插件组件</string>
+    <string name="plugins_scope">安装作用域</string>
+    <string name="plugins_refresh">刷新</string>
+    <string name="plugins_remove">移除</string>
+    <string name="plugins_update">更新</string>
+    <string name="plugins_uninstall">卸载</string>
+    <string name="plugins_auto_update">自动更新</string>
+    <string name="plugins_cancel">取消</string>
+    <string name="plugins_install">安装</string>
 </resources>

@@ -25,6 +25,8 @@ internal suspend fun SessionRuntime.reviewAutoAction(turnId: TurnId, name: Strin
         if (!readOnly || current is Verdict.Deny) verdict = current
     }
     if (verdict != Verdict.Ask) return verdict
+    // 终报本身不执行动作；CC 在无法核验时附说明交付，父会话的后续动作仍须单独送审。
+    if (readOnly) return verdict
     headlessClassifierError(call.callId, backgroundSpawn)?.let {
         // 已启动的后台子回合不能把不可继续的审查失败当成普通工具错误，让模型反复重试。
         if (state.value.origin != null) throw TurnAbort(it)

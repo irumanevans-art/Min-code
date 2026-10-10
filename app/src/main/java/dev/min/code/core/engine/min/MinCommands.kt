@@ -2,6 +2,14 @@ package dev.min.code.core.engine.min
 
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.kernel.SessionRuntime
+import dev.min.agent.kernel.savedWorkflows
+import dev.min.agent.ext.config.CommandDef
+import dev.min.agent.ext.config.ConfigSource
+import dev.min.agent.ext.config.SkillDef
+import dev.min.agent.ext.skills.SkillVars
+import dev.min.agent.ext.skills.SlashCommands
+import dev.min.agent.ext.skills.SlashResult
+import dev.min.agent.spi.SkillKind
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
@@ -129,8 +137,64 @@ class MinCommandHandler(
         }
         // 回合在跑就插话（Steer：当前工具批结束后送达，对齐 CC 的「交棒进 stdin」）；空闲时 send 直接开回合，投递方式无所谓
         val delivery = if (runtime.state.value.turn != null) Delivery.Steer else Delivery.Queue
-        val accepted = runtime.send(ClientMsgId(command.commandId), partsOf(command.input), delivery, scanMcpMentions = true)
+        val expanded = expandSlash(runtime, command.input.text)
+        if (expanded is SlashInput.Refused) return CommandResult.Rejected(expanded.reason)
+        val input = if (expanded is SlashInput.Expanded) command.input.copy(text = expanded.body) else command.input
+        val accepted = runtime.send(ClientMsgId(command.commandId), partsOf(input), delivery, scanMcpMentions = expanded is SlashInput.Plain)
         return if (accepted) CommandResult.Accepted else CommandResult.Duplicate
+    }
+
+    private sealed interface SlashInput {
+        data object Plain : SlashInput
+        data class Expanded(val body: String) : SlashInput
+        data class Refused(val reason: String) : SlashInput
+    }
+
+    private suspend fun expandSlash(runtime: SessionRuntime, line: String): SlashInput {
+        val typed = line.trim()
+        if (!typed.startsWith("/")) return SlashInput.Plain
+        val name = typed.removePrefix("/").takeWhile { !it.isWhitespace() }
+        // 工作流由内核接管；用户插件命令用冻结清单，不能把安装后的磁盘变化偷渡进旧会话。
+        if (runtime.savedWorkflows().any { it.name == name }) return SlashInput.Plain
+        val entries = runtime.state.value.skills?.entries.orEmpty()
+        val skills = mutableListOf<SkillDef>()
+        val commands = mutableListOf<CommandDef>()
+        val unreadable = mutableSetOf<String>()
+        entries.forEach { entry ->
+            val body = runtime.readSkillBody(entry.path)
+            if (body == null) { unreadable += entry.name; return@forEach }
+            val source = ConfigSource.entries.firstOrNull { it.label == entry.source }
+                ?: if (entry.source?.startsWith("plugin:") == true) ConfigSource.Plugin else ConfigSource.User
+            if (entry.kind == SkillKind.Command) commands += CommandDef(
+                entry.name, entry.description, entry.path, body, source,
+                arguments = entry.arguments, userInvocable = entry.userInvocable, context = entry.context,
+            ) else skills += SkillDef(
+                entry.name, entry.description, entry.path, body, source,
+                arguments = entry.arguments, userInvocable = entry.userInvocable, context = entry.context,
+            )
+        }
+        if (name in unreadable) return SlashInput.Refused("/$name 的文件现在读不了。")
+        val snapshot = runtime.state.value
+        val result = SlashCommands.expand(typed, skills, commands, SkillVars(
+            runtime.sessionId.value, snapshot.settings.cwd.value, snapshot.settings.effort?.name?.lowercase(),
+        ))
+        return when (result) {
+            SlashResult.NotACommand -> SlashInput.Plain
+            is SlashResult.Unknown -> SlashInput.Refused("没有名为 /${result.name} 的 skill 或命令。")
+            is SlashResult.NotInvocable -> SlashInput.Refused("/${result.name} 设置了 user-invocable: false，只有模型能调用它。")
+            is SlashResult.InvalidArguments -> SlashInput.Refused(result.message)
+            is SlashResult.McpPrompt -> SlashInput.Refused("此入口尚不支持 MCP prompt。")
+            is SlashResult.Expanded -> {
+                val args = typed.drop(1 + name.length).trim()
+                runtime.promptExpansionHooks("slash_command", name, args, entries.firstOrNull { it.name == name }?.source ?: "user", typed)
+                    ?.let { return SlashInput.Refused(it) }
+                // 展开的文件内容不是人的引用：不扫描 MCP 提及；组件 hooks 只在调用确实获准后登记。
+                result.names.forEach { called -> entries.firstOrNull { it.name == called }?.let { entry ->
+                    entry.hooks?.let { runtime.registerComponentHooks(entry.kind.name.lowercase(), called, entry.source ?: "user", it) }
+                } }
+                SlashInput.Expanded(result.text)
+            }
+        }
     }
 
     private fun partsOf(input: UserInput): List<Part> = buildList {

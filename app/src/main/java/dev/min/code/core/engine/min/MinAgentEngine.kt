@@ -290,6 +290,31 @@ class MinAgentEngine(
         if (mountKey() != generation.mountKey) generation = buildGeneration()
     }
 
+    fun pluginMarketplace(cwd: String = "/workspace"): dev.min.agent.ext.plugins.PluginMarketplace {
+        val current = generation
+        val home = MinKernelDeps.MEMORY_HOME
+        return dev.min.agent.ext.plugins.PluginMarketplace(current.fs,
+            dev.min.agent.host.FilePluginSources(current.fs, current.exec, GuestPath(home.value + "/.claude/plugins")), home,
+            GuestPath(cwd), { trust.isTrusted(GuestPath(cwd)) }, canonical = current.fs::canonical)
+    }
+    val pluginNotices = MutableStateFlow<List<String>>(emptyList())
+    fun discardPluginPreview(manager: dev.min.agent.ext.plugins.PluginMarketplace, preview: dev.min.agent.ext.plugins.PluginInstallPreview) {
+        scope.launch { try { manager.discard(preview) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { } }
+    }
+    private var pluginUpdateJob: Job? = null
+    private fun schedulePluginUpdates(cwd: String) {
+        if (pluginUpdateJob?.isActive == true || !dev.min.agent.ext.plugins.pluginAutoUpdatesEnabled(System.getenv())) return
+        pluginUpdateJob = scope.launch {
+            kotlinx.coroutines.delay(kotlin.random.Random.nextLong(1, 600_001))
+            try {
+                val market = pluginMarketplace(cwd)
+                val pending = market.reconcileSettings()
+                pluginNotices.value = pending.map { "第三方市场 $it 等待手动添加与确认" } + market.autoUpdate()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { pluginNotices.value = listOf("插件自动更新失败，请从设置页手动重试。") }
+        }
+    }
+
     // ---- AgentEngine ----
 
     override suspend fun create(options: StartOptions): Result<AgentSession> = guarded {
@@ -311,6 +336,7 @@ class MinAgentEngine(
             initial = initial,
         )
         lastUsed.remember(profile.id, modelId)
+        schedulePluginUpdates(runtime.state.value.created.cwd.value)
         register(runtime, pin = true).also { index.update(runtime.state.value) }
     }
 

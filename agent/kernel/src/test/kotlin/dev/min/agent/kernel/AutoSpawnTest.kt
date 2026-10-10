@@ -189,8 +189,9 @@ class AutoSpawnTest {
             val child = ScriptedModel(reply(ToolCallPart(CallId("structured"), "StructuredOutput", value), stop = StopReason.ToolUse))
             run(reviewer, childModel = child) { hub, rt, _ ->
                 val result = hub.spawn(rt, TurnId("t"), CallId("call"), DelegateRequest("json task", "deliver json", workflow = true, schema = schema)) as DelegateResult.Finished
-                assertEquals(verdict == "deny", result.isError)
-                assertEquals(verdict == "allow", result.report.contains("SCHEMA_REPORT_BODY"))
+                assertFalse(result.isError)
+                assertTrue(result.report.contains("SCHEMA_REPORT_BODY"))
+                assertEquals(verdict == "deny", result.report.contains(REPORT_SECURITY_WARNING))
                 assertEquals(2, reviewer.requests.size)
                 assertTrue(reviewer.requests.last().messages.toString().contains("SCHEMA_REPORT_BODY"))
             }
@@ -214,15 +215,16 @@ class AutoSpawnTest {
             assertTrue(rt.state.value.toolResults.getValue(call.callId).content.toString().contains("FULL_REPORT_BODY"))
         }
     }
-    @Test fun headlessBackgroundHandbackRefusalAbortsWithoutRawReport() {
+    @Test fun headlessBackgroundHandbackRefusalDeliversWithSecurityWarning() {
         val reviewer = ScriptedModel(decision("allow"), reply(TextPart("refused"), stop = StopReason.Refusal))
         val child = ScriptedModel(reply(ToolCallPart(CallId("handback"), "SubagentHandback", args("message" to "PRIVATE_REPORT_BODY")), stop = StopReason.ToolUse))
         run(reviewer, childModel = child, headless = true) { hub, rt, _ ->
             val result = hub.portFor(rt, TurnId("t"), CallId("call")).delegate(DelegateRequest("task", "task", background = true)) as DelegateResult.Started
             val ended = hub.get(result.child)!!.state.first { it.lastTurn != null && it.turn == null }.lastTurn!!
-            assertEquals("Agent aborted: auto mode classifier request refused by the safety safeguard in headless mode", (ended.outcome as TurnOutcome.Failed).message)
+            assertEquals(TurnOutcome.Completed, ended.outcome)
             val report = rt.state.first { it.inbox.any { input -> input.origin is InputOrigin.Agent } }.inbox.first { it.origin is InputOrigin.Agent }
-            assertFalse(report.parts.toString().contains("PRIVATE_REPORT_BODY"))
+            assertTrue(report.parts.toString().contains("PRIVATE_REPORT_BODY"))
+            assertTrue(report.parts.toString().contains(REPORT_SECURITY_WARNING))
         }
     }
     @Test fun workflowExecutionReachesCommonSpawnReviewBeforeNodeModel() {

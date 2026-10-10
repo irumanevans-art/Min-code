@@ -157,6 +157,8 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
 
                 InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
 
+                SettingRow(title = stringResource(R.string.plugins_title), subtitle = stringResource(R.string.plugins_subtitle), onClick = { navController.navigate(Screen.Plugins) }, trailing = { NextPageArrow() })
+
                 SettingRow(
                     title = stringResource(R.string.settings_about),
                     onClick = { navController.navigate(Screen.About) },

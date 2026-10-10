@@ -257,6 +257,7 @@ internal class DesktopApp(
     fun settingsLocalFile(): java.nio.file.Path = args.cwd.resolve(".claude").resolve("settings.local.json")
 
     fun settingsUserFile(): Path = claudeHome.resolve(".claude").resolve("settings.json")
+    fun pluginMarketplace() = desktopMarketplace(args.cwd, args.trust, claudeHome)
 
     fun validateReviewer(reviewer: dev.min.agent.spi.AutoModeReviewer?) {
         reviewer?.let { resolveReviewerSelection(it, Catalog.bundled(), selection) }

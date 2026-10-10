@@ -1509,5 +1509,23 @@
     <string name="trust_more">+%1$d more</string>
     <string name="trust_grants_on">This project\'s settings grant:</string>
     <string name="trust_grants_off">If you trust this folder, its settings would grant:</string>
-    <string name="min_agent_report_reviewed">Safety reviewed</string>
+    <string name="min_agent_report_reviewed">Reviewed</string>
+    <string name="min_agent_report_warning">Security warning</string>
+    <string name="min_agent_report_unavailable">Review unavailable</string>
+    <string name="plugins_title">Plugins</string>
+    <string name="plugins_subtitle">Browse marketplaces and manage installed plugins</string>
+    <string name="plugins_markets">Marketplaces</string>
+    <string name="plugins_installed">Installed plugins</string>
+    <string name="plugins_source">GitHub owner/repo, git URL, manifest URL, directory or JSON source</string>
+    <string name="plugins_add">Add marketplace</string>
+    <string name="plugins_warning">Plugins can run commands and access the network. Add only sources you trust, and review the components before installing.</string>
+    <string name="plugins_confirm">Review plugin components</string>
+    <string name="plugins_scope">Install scope</string>
+    <string name="plugins_refresh">Refresh</string>
+    <string name="plugins_remove">Remove</string>
+    <string name="plugins_update">Update</string>
+    <string name="plugins_uninstall">Uninstall</string>
+    <string name="plugins_auto_update">Auto-update</string>
+    <string name="plugins_cancel">Cancel</string>
+    <string name="plugins_install">Install</string>
 </resources>
