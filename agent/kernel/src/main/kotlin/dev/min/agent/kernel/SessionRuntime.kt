@@ -447,10 +447,10 @@ class SessionRuntime private constructor(
         val policy = hooks.httpPolicy.takeIf { it.allowedUrls != null || it.allowedEnvVars != null }
             ?.let { HttpPolicyData(it.allowedUrls, it.allowedEnvVars) }
         // 只有闸、没有任何 hook 也没有说明时没有东西可冻结（闸只管 http hook）
-        if (hooks.sources.isNotEmpty() || hooks.notes.isNotEmpty()) {
+        if (hooks.sources.isNotEmpty() || hooks.notes.isNotEmpty() || hooks.disabledBy != null) {
             // http 的两道闸随快照一起冻结：设置只在会话创建时读得到，之后 hook 执行时再看就晚了
             commit(
-                listOf(HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy)),
+                listOf(HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy, hooks.disabledBy)),
                 Durability.Sync,
             )
         }

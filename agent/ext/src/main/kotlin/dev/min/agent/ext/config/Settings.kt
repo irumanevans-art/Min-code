@@ -92,6 +92,8 @@ data class HookSnapshot(
     val sources: List<HookSource>,
     val httpPolicy: HttpHookPolicy,
     val notes: List<String>,
+    /** hooks 被整体禁用的原因（生效之后）；没有禁用为 null。`/goal` 据此拒绝运行 */
+    val disabledBy: dev.min.agent.spi.HooksDisabledBy? = null,
 )
 
 /**
@@ -185,7 +187,12 @@ class MergedSettings internal constructor(
             }
         }
         val policy = HttpHookPolicy.merge(effective.map { HttpHookPolicy(it.allowedHttpHookUrls, it.httpHookAllowedEnvVars) })
-        return HookSnapshot(sources, policy, notes)
+        val disabledBy = when {
+            disableAll || managedOff -> dev.min.agent.spi.HooksDisabledBy.DisableAllHooks
+            managedOnly -> dev.min.agent.spi.HooksDisabledBy.ManagedOnly
+            else -> null
+        }
+        return HookSnapshot(sources, policy, notes, disabledBy)
     }
 }
 

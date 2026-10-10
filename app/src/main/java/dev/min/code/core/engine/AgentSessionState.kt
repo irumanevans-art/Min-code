@@ -59,6 +59,8 @@ data class AgentSessionState(
     val team: TeamView? = null,
     /** 这个会话的定时任务（[EngineCapabilities.schedule]，Min）。一条都没建过 / 引擎没有这个概念为 null */
     val schedule: ScheduleView? = null,
+    /** 会话进行中的 `/goal`（Min）；没有为 null。任务条上的标记读它 */
+    val goal: GoalView? = null,
 ) {
     /** 会话页要显示它、输入框要能收字：进程活着（CC / Codex 的 Running），或 Min 这种没进程但打开着的会话 */
     val accepting: Boolean

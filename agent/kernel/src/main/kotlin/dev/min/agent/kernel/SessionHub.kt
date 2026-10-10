@@ -287,7 +287,13 @@ class SessionHub(
      * 不接定时器时，时间的流逝本身不会触发任何东西；但会话每次状态变化且空闲时也会顺带查一遍（回合结束时排着的任务就是这样触发的）
      */
     fun startScheduling(scheduler: dev.min.agent.spi.Scheduler): AutoCloseable =
-        scheduler.start { crons.tick(deps.clock.nowMs()) }
+        scheduler.start {
+            crons.tick(deps.clock.nowMs())
+            goalCheckIns.tick(runtimes.values)
+        }
+
+    /** `/goal` 的 check-in 计时：挂在同一个心跳上（[startScheduling]），不另起定时器 */
+    private val goalCheckIns = GoalCheckIns(deps)
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
 
     /**
@@ -760,6 +766,8 @@ class SessionHub(
             attachMcp(runtime, fresh = false)
             // 重开会话 = 恢复未过期的定时任务（过期的在这里结案）；任务本身从日志折叠里来
             crons.attach(runtime)
+            // 重开会话：带着进行中的 /goal 恢复（回合与 check-in 计数清零；已达成或已清除的没有条件，不恢复）
+            runtime.resumeGoal(deps.clock.nowMs())
         } else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
         if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)

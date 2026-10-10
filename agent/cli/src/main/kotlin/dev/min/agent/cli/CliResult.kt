@@ -38,9 +38,11 @@ internal data class CliResult(
      * resume 进来的旧花费不属于这次运行）。null = 折不出树级的（单测合成事件），退回只折根会话事件
      */
     val treeCost: CostTotals? = null,
+    /** 这次运行设了 /goal 却没达成就结束了（[goalUnmetReason]）：不算成功，说明进 errors */
+    val goalUnmet: String? = null,
 ) {
     private val ends = events.mapNotNull { it.event as? TurnEnded }
-    val completed: Boolean get() = ends.isNotEmpty() && ends.all { it.outcome == TurnOutcome.Completed }
+    val completed: Boolean get() = goalUnmet == null && ends.isNotEmpty() && ends.all { it.outcome == TurnOutcome.Completed }
 
     /** CC 对 result.subtype 的叫法：success / error_max_turns（--max-turns 到限）/ error_during_execution /
      *  error_max_structured_output_retries（--json-schema 重试用尽，内核用 Failed.cause 区分出来）/
@@ -93,7 +95,7 @@ internal data class CliResult(
                 InterruptedBy.Budget -> "到达定时任务的花费上限"
             }
         }
-    }
+    } + listOfNotNull(goalUnmet)
 
     /** 本次运行被拒的审批（CC 的 permission_denials）：工具名、调用 id、入参 */
     private val denials: List<JsonObject> by lazy {

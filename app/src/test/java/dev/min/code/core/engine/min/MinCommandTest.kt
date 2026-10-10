@@ -9,7 +9,9 @@ import dev.min.agent.protocol.StopReason
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.spi.Delivery
+import dev.min.agent.spi.GoalSet
 import dev.min.agent.spi.InputReceived
+
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.TurnOutcome
 import dev.min.agent.spi.TurnTrigger
@@ -421,6 +423,39 @@ class MinCommandTest {
         assertEquals(CommandResult.Accepted, r.send("more work", id = "to-child", target = SendTarget.Subagent(thread.threadId)))
         awaitValue(20_000) { r.session.state.value.threads.single().items.firstOrNull { (it as? dev.min.code.core.session.ChatItem.AssistantText)?.text == "child again" } }
         assertEquals(CommandResult.Stale("子 agent 已不在线"), r.send("x", id = "ghost", target = SendTarget.Subagent("nope")))
+    }
+
+    // ---- /goal（会话命令：不进对话，回执走 Notice；文案在 FakeText 里是可断言的标记） ----
+
+    @Test fun `goal with a condition while idle is set and starts a turn, with a receipt and no slash error`() {
+        val r = rig(ScriptedModel(answer("working on it")))
+        assertEquals(CommandResult.Accepted, r.send("/goal 测试全绿"))
+        r.awaitIdle()
+        val events = r.events()
+        assertTrue("目标写进了日志", events.any { it is GoalSet && it.condition == "测试全绿" })
+        assertTrue("条件本身作为指令开了回合", events.filterIsInstance<InputReceived>().any { (it.parts.single() as TextPart).text == "测试全绿" })
+        assertTrue(r.signals.any { it is SessionSignal.Notice && it.text == "goal-set:测试全绿:true" })
+        assertTrue("不当成 skill 报找不到", r.signals.none { it is SessionSignal.Notice && it.isError })
+    }
+
+    @Test fun `goal alone shows the status and clear removes the goal with a receipt`() {
+        val r = rig(ScriptedModel(answer("working on it")))
+        assertEquals(CommandResult.Accepted, r.send("/goal 测试全绿"))
+        r.awaitIdle()
+        r.signals.clear()
+        assertEquals(CommandResult.Accepted, r.send("/goal"))
+        assertEquals(listOf("goal-status:测试全绿:Active"), r.signals.filterIsInstance<SessionSignal.Notice>().map { it.text })
+        r.signals.clear()
+        assertEquals(CommandResult.Accepted, r.send("/goal clear"))
+        assertEquals(listOf("goal-cleared:测试全绿"), r.signals.filterIsInstance<SessionSignal.Notice>().map { it.text })
+        assertTrue("清除后日志里有 goal_cleared", r.events().any { it is dev.min.agent.spi.GoalCleared })
+    }
+
+    @Test fun `clearing with no goal says so and does not write`() {
+        val r = rig(ScriptedModel(answer("unused")))
+        assertEquals(CommandResult.Accepted, r.send("/goal stop"))
+        assertEquals(listOf("goal-status:null:null"), r.signals.filterIsInstance<SessionSignal.Notice>().map { it.text })
+        assertTrue(r.events().none { it is dev.min.agent.spi.GoalCleared })
     }
 }
 

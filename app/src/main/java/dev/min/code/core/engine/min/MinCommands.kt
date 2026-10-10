@@ -1,7 +1,13 @@
 package dev.min.code.core.engine.min
 
 import dev.min.agent.kernel.SessionHub
+import dev.min.agent.kernel.GoalCommand
+import dev.min.agent.kernel.GoalSetResult
 import dev.min.agent.kernel.SessionRuntime
+import dev.min.agent.kernel.clearGoal
+import dev.min.agent.kernel.goalArgumentOf
+import dev.min.agent.kernel.parseGoalCommand
+import dev.min.agent.kernel.setGoal
 import dev.min.agent.kernel.savedWorkflows
 import dev.min.agent.ext.config.CommandDef
 import dev.min.agent.ext.config.ConfigSource
@@ -122,6 +128,28 @@ class MinCommandHandler(
             CommandResult.Unsupported
     }
 
+    /**
+     * `/goal`：设、看、清。回执经 [SessionSignal.Notice] 给界面，不是一条用户消息、不进对话；设不上（hooks 被禁用）是拒绝，原因照内核的说法。
+     */
+    private suspend fun goal(runtime: SessionRuntime, argument: String): CommandResult =
+        when (val parsed = parseGoalCommand(argument)) {
+            GoalCommand.Show -> notice(text.goalStatus(minGoalView(runtime.state.value.goal)))
+            GoalCommand.Clear -> {
+                val before = runtime.state.value.goal.condition
+                if (before != null && runtime.clearGoal()) notice(text.goalCleared(before))
+                else notice(text.goalStatus(null))
+            }
+            is GoalCommand.Set -> when (val result = runtime.setGoal(parsed.condition)) {
+                is GoalSetResult.Refused -> CommandResult.Rejected(result.reason)
+                is GoalSetResult.Set -> notice(text.goalSet(parsed.condition, result.startedTurn))
+            }
+        }
+
+    private fun notice(message: String): CommandResult {
+        effects.emit(SessionSignal.Notice(message, isError = false))
+        return CommandResult.Accepted
+    }
+
     // ---- 发送 ----
 
     private suspend fun send(command: SessionCommand.Send): CommandResult {
@@ -137,6 +165,8 @@ class MinCommandHandler(
         }
         // 回合在跑就插话（Steer：当前工具批结束后送达，对齐 CC 的「交棒进 stdin」）；空闲时 send 直接开回合，投递方式无所谓
         val delivery = if (runtime.state.value.turn != null) Delivery.Steer else Delivery.Queue
+        // `/goal` 是会话命令，不是 skill：在斜杠展开之前接住（子 agent 里的 /goal 当普通话，不设子会话的目标）
+        if (command.target == SendTarget.Main) goalArgumentOf(command.input.text)?.let { return goal(runtime, it) }
         val expanded = expandSlash(runtime, command.input.text)
         if (expanded is SlashInput.Refused) return CommandResult.Rejected(expanded.reason)
         val input = if (expanded is SlashInput.Expanded) command.input.copy(text = expanded.body) else command.input

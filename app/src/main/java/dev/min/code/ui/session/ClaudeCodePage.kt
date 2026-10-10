@@ -1084,6 +1084,8 @@ private fun SessionContent(
     var showShells by rememberSaveable(activeKey) { mutableStateOf(false) }
     // 任务条上「团队 · N」点开的团队页（成员、共享清单、消息流）。按会话记，理由同上
     var showTeam by rememberSaveable(activeKey) { mutableStateOf(false) }
+    // 任务条上「◎ 目标」点开的详情（条件、状态、最近理由、清除）。按会话记，理由同上
+    var showGoal by rememberSaveable(activeKey) { mutableStateOf(false) }
     val shells = session.tasks
     val liveSessions by vm.liveSessions.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
@@ -1421,6 +1423,13 @@ private fun SessionContent(
                         focusManager.clearFocus()
                         showShells = true
                     },
+                    goalLabel = session.goal?.let { goal ->
+                        stringResource(R.string.goal_chip, goal.condition, goal.evaluations, stringResource(goalStatusRes(goal.status)))
+                    },
+                    onOpenGoal = {
+                        focusManager.clearFocus()
+                        showGoal = true
+                    },
                     agents = {
                         AgentSwitcher(
                             threads = switcherThreads,
@@ -1498,6 +1507,10 @@ private fun SessionContent(
             readOutput = { vm.readTaskOutput(it.id) },
             onStop = { vm.stopTask(it.id) },
         )
+    }
+
+    session.goal?.takeIf { showGoal }?.let { goal ->
+        GoalSheet(goal = goal, onClear = { vm.send("/goal clear") }, onDismiss = { showGoal = false })
     }
 
     session.team?.takeIf { showTeam }?.let { team ->

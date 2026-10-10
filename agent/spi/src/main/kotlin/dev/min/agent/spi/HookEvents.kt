@@ -73,7 +73,22 @@ data class HooksLoaded(
     val notes: List<String> = emptyList(),
     /** 合并后的 http 两道闸；与哪一层写没写 hooks 无关（managed 层只下发闸、不写 hooks 也算）。没有任何一道闸时不落盘 */
     val httpPolicy: HttpPolicyData? = null,
+    /**
+     * hooks 被整体禁用的原因（生效之后的结论，不是某一层写了什么）：`/goal` 据此拒绝运行（CC：disableAllHooks 为 true、
+     * 或 managed 设了 allowManagedHooksOnly 时 `/goal` 不可用）。没有禁用时不落盘；旧日志缺字段按「未禁用」读
+     */
+    val disabledBy: HooksDisabledBy? = null,
 ) : SessionEvent
+
+/** hooks 被整体禁用的原因，判定见 [dev.min.agent.ext.config.HookSnapshot.disabledBy] */
+@Serializable
+enum class HooksDisabledBy {
+    /** 生效的 `disableAllHooks` 为 true（managed 层自己关则全关） */
+    @SerialName("disableAllHooks") DisableAllHooks,
+
+    /** managed 设置里有 `allowManagedHooksOnly`：只留托管层的 hooks */
+    @SerialName("allowManagedHooksOnly") ManagedOnly,
+}
 
 /** 一批 hook 跑完的记录：界面「hook 拦了这次调用」、调试慢 hook 都靠它。不影响模型视图 */
 @Serializable

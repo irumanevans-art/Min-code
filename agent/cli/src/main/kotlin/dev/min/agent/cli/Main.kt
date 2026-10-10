@@ -176,7 +176,7 @@ internal suspend fun interact(
     }
 
 
-    System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+    System.err.println("输入要说的话，回车发送；/goal [条件|clear] 设定、查看或清除目标（做到条件满足为止）；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
         print("\n> ")
         uiConsole?.mainOwnsInput = true
@@ -196,6 +196,7 @@ internal suspend fun interact(
                 uiConsole?.mainOwnsInput = true
                 try { mcpCommand(app, runtime, trimmed) } finally { uiConsole?.mainOwnsInput = false }
             }
+            trimmed == "/goal" || trimmed.startsWith("/goal ") -> goalCommandLine(runtime, trimmed.removePrefix("/goal").trim(), System.err)
             trimmed == "/compact" || trimmed.startsWith("/compact ") -> {
                 if (runtime.compact(trimmed.removePrefix("/compact").trim())) {
                     runtime.awaitIdle()

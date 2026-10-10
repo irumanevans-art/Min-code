@@ -445,6 +445,47 @@ class HeadlessCompatTest {
             .open(SessionId(sessionId))!!.read().toList().size
 
     /**
+     * Min 自己的回归（CC：`claude -p "/goal …"` 一路跑到目标结束）：评估器（同一个假模型，按提示词认出来）说满足，运行以 0 结束，
+     * 最终回复照常打出来；评估请求带着对话，主回合只有一次。
+     */
+    @Test
+    fun `print mode with a goal runs the loop to the evaluator's verdict`() = runBlocking {
+        val work = freshDir("goal-met-work")
+        ModelServer { last ->
+            if (last.contains("你在评估一个 /goal")) textResponse("""{"ok": true, "reason": "CC_GOAL_MET"}""")
+            else textResponse("CC_GOAL_WORK_DONE")
+        }.use { server ->
+            val argv = baselineArgv(server, work).map { if (it == "bypassPermissions") "default" else it }.toTypedArray() +
+                arrayOf("-p", "/goal 写完 CC_GOAL_WORK_DONE 就算完成")
+            val out = headlessRun(freshDir("goal-met-home"), work, argv, server)
+            assertEquals("达成了：运行以 0 结束", 0, out.exit)
+            assertTrue(out.stdout, out.stdout.contains("CC_GOAL_WORK_DONE"))
+            assertEquals("主回合一次 + 评估一次", 2, out.requests)
+        }
+    }
+
+    /**
+     * Min 自己的回归：目标一直没满足、模型也不再调工具——防空转停下（目标保留），`-p` 不当成功：
+     * 退出码 1，结果对象的 subtype 是 error_during_execution，错误里写明目标没达成。
+     */
+    @Test
+    fun `print mode with a goal that is never met fails with the reason instead of reporting success`() = runBlocking {
+        val work = freshDir("goal-stall-work")
+        ModelServer { last ->
+            if (last.contains("你在评估一个 /goal")) textResponse("""{"ok": false, "reason": "CC_GOAL_STILL_NOT"}""")
+            else textResponse("CC_GOAL_NOTHING_NEW")
+        }.use { server ->
+            val argv = baselineArgv(server, work).map { if (it == "bypassPermissions") "default" else it }.toTypedArray() +
+                arrayOf("--output-format", "json", "-p", "/goal 一直做下去")
+            val out = headlessRun(freshDir("goal-stall-home"), work, argv, server)
+            assertEquals(out.stdout, 1, out.exit)
+            val result = Json.parseToJsonElement(out.stdout.trim()).jsonObject
+            assertEquals(out.stdout, "error_during_execution", result["subtype"]?.jsonPrimitive?.content)
+            assertTrue(out.stdout, result["errors"].toString().contains("目标没有达成就停下了"))
+        }
+    }
+
+    /**
      * Min 自己的回归（不是 CC 样本）：-p 默认模式下子 agent 要审批时，按 --approve（默认 no）答掉，整次运行照常结束。
      * 以前 runHeadless 的 UI 只答根会话的审批，子会话的 approval_requested 没人答，运行挂到超时（评测集 v1 第 32 题实测）
      */

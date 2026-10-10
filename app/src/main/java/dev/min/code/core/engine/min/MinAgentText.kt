@@ -5,6 +5,8 @@ import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.PermissionMode
 import dev.min.code.R
 import dev.min.code.core.engine.FailureKind
+import dev.min.code.core.engine.GoalStatus
+import dev.min.code.core.engine.GoalView
 import dev.min.code.core.engine.SlashCommandView
 import java.text.DateFormat
 import java.util.Date
@@ -66,6 +68,14 @@ interface MinAgentText {
     fun modelOtherProvider(modelId: String, providerLabel: String): String
     fun modelConservative(): String
     fun providerRemoved(): String
+
+    /** `/goal <条件>` 设上了的回执（[startedTurn]：空闲时已开回合；忙时回合结束才评估） */
+    fun goalSet(condition: String, startedTurn: Boolean): String
+    fun goalCleared(condition: String): String
+
+    /** `/goal` 无参数时的状态说明（没有目标为「没有进行中的目标」） */
+    fun goalStatus(goal: GoalView?): String
+
 
     fun optionAllow(): String
     fun networkApprovalSummary(): String = "这个域名将被访问，请确认"
@@ -200,6 +210,19 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun modelOtherProvider(modelId: String, providerLabel: String) = "$modelId · $providerLabel"
     override fun modelConservative() = s(R.string.min_agent_model_conservative)
     override fun providerRemoved() = s(R.string.min_agent_provider_removed)
+    override fun goalSet(condition: String, startedTurn: Boolean) =
+        if (startedTurn) s(R.string.goal_set_started, condition) else s(R.string.goal_set_deferred, condition)
+    override fun goalCleared(condition: String) = s(R.string.goal_cleared, condition)
+    override fun goalStatus(goal: GoalView?): String {
+        if (goal == null) return s(R.string.goal_none)
+        val head = when (goal.status) {
+            GoalStatus.Paused -> s(R.string.goal_status_paused_line, goal.condition, goal.pausedReason.orEmpty())
+            GoalStatus.Deferred -> s(R.string.goal_status_deferred_line, goal.condition, goal.evaluations)
+            GoalStatus.Active -> s(R.string.goal_status_active_line, goal.condition, goal.evaluations)
+        }
+        return goal.lastReason?.let { head + "\n" + s(R.string.goal_last_reason, it) } ?: head
+    }
+
 
     override fun optionAllow() = s(R.string.min_agent_option_allow)
     override fun networkApprovalSummary() = s(R.string.network_approval_summary)
@@ -231,6 +254,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
         SlashCommandView("effort", s(R.string.min_agent_slash_effort)),
         SlashCommandView("mode", s(R.string.min_agent_slash_mode)),
         SlashCommandView("new", s(R.string.min_agent_slash_new)),
+        SlashCommandView("goal", s(R.string.min_agent_slash_goal)),
     )
 
     override fun backgroundTask(command: String) = command.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(60)

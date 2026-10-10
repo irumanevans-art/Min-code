@@ -168,7 +168,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
         } else {
             check(e.clientMsgId !in seenInputs) { "重复的输入 ${e.clientMsgId}" }
             // 只有 Stop / SubagentStop hook 会送来 hook 来源的输入：每条算一次「拦下结束」
-            val stopHook = e.origin is InputOrigin.Hook
+            // `/goal` 送来的（origin 标 [GOAL_ORIGIN]）不算：它有自己的防空转与 check-in 计数，不该耗掉用户 Stop hook 的次数
+            val stopHook = e.origin is InputOrigin.Hook && (e.origin as InputOrigin.Hook).event != GOAL_ORIGIN
             copy(
                 inbox = inbox + PendingInput(e.clientMsgId, e.parts, e.delivery, e.origin),
                 seenInputs = seenInputs + e.clientMsgId,
@@ -247,7 +248,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             }
         }
         is PermissionRulesLoaded -> copy(rules = e.rules, additionalDirectories = e.additionalDirectories, permissionNotes = e.notes)
-        is HooksLoaded -> copy(hooks = e.sources, hooksHttpPolicy = e.httpPolicy)
+        is HooksLoaded -> copy(hooks = e.sources, hooksHttpPolicy = e.httpPolicy, hooksDisabledBy = e.disabledBy)
         is dev.min.agent.spi.ComponentHooksRegistered -> {
             // 同名组件重复登记（模型又调了一次同一个 skill）不叠加：处理器翻倍等于同一个门禁跑两遍
             val exists = componentHooks.any { it.kind == e.kind && it.name == e.name }
@@ -397,6 +398,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is QuestionAsked -> withQuestionAsked(e, record.atMs)
         is QuestionAnswered -> withQuestionAnswered(e)
+        is dev.min.agent.spi.GoalSet, is dev.min.agent.spi.GoalEvaluated, is dev.min.agent.spi.GoalCleared,
+        is dev.min.agent.spi.GoalDeferred, is dev.min.agent.spi.GoalPaused,
+        is dev.min.agent.spi.GoalCheckIn, is dev.min.agent.spi.GoalResumed -> copy(goal = goal.applyGoal(e))
         is TaskCreated, is TaskUpdated, is TaskDeleted -> {
             taskProblem(e)?.let { error("任务事件不合法：$it") }
             applyTaskEvent(e)
@@ -457,7 +461,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
         )
     }
     val stamped = next.turn?.let { next.copy(turn = it.copy(lastEventAtMs = record.atMs)) } ?: next
-    return stamped.copy(lastSeq = record.seq, lastEventAtMs = record.atMs)
+    // 用户每说一句话，目标的 check-in 计数清零（输入事件在 when 里已经处理过别的部分，这里只补目标）
+    val goaled = if (record.event is dev.min.agent.spi.InputReceived) stamped.copy(goal = stamped.goal.applyGoal(record.event)) else stamped
+    return goaled.copy(lastSeq = record.seq, lastEventAtMs = record.atMs)
 }
 
 /** 「总是允许」攒下的规则的来源名（审计时显示「是本会话里你允许的」） */
