@@ -175,7 +175,7 @@ class BackgroundToolsTest {
     fun `Bash 转后台时登记进后台任务表，回执说明通知与停法`() = runTest {
         val handle = ExecHandle("h9", 9, GuestPath("/root/.min/exec-logs/h9.log"))
         ctx.exec.script = { _, _ -> ExecResult.Backgrounded(handle, "booting") }
-        val r = BashTool.call(ctx, "command" to "npm run dev", "description" to "开发服务器", "run_in_background" to true)
+        val r = BashTool().call(ctx, "command" to "npm run dev", "description" to "开发服务器", "run_in_background" to true)
         assertEquals(listOf(Triple(handle, "npm run dev", "开发服务器")), bg.adopted)
         assertTrue(r.text.contains("h9") && r.text.contains("通知") && r.text.contains("TaskStop") && r.text.contains("/root/.min/exec-logs/h9.log"))
     }
@@ -183,7 +183,7 @@ class BackgroundToolsTest {
     @Test
     fun `前台跑完的命令不登记`() = runTest {
         ctx.exec.script = { _, _ -> ExecResult.Exited(0, "ok", false, 1) }
-        BashTool.call(ctx, "command" to "ls")
+        BashTool().call(ctx, "command" to "ls")
         assertTrue(bg.adopted.isEmpty())
     }
 }

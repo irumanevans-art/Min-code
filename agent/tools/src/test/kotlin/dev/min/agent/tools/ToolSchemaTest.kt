@@ -14,7 +14,7 @@ import org.junit.Test
 
 /** 五个工具的 schema 与描述的共同约束（规格 §1）：只用各家都认的子集，required 都在 properties 里 */
 class ToolSchemaTest {
-    private val tools: List<Tool<*>> = listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool)
+    private val tools: List<Tool<*>> = listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool())
     private val profile = HarnessProfile(ModelFamily.Claude, EditStyle.StrReplace)
 
     @Test

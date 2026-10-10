@@ -97,9 +97,10 @@ internal fun desktopTools(
     /** true = `--bare`（CC :72）：只留原文点名的 Bash、读文件、改文件。NotebookEdit 算改文件——CC 的 Edit(…) 路径规则同样罩住它，保留 */
     bare: Boolean = false,
 ): List<Tool<*>> =
-    if (bare) listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, BashTool) else
+    // bare 档的 Bash 没有后台任务（CC headless 页：none run，到超时就停），由实例自己管 schema / 描述 / 前台预算
+    if (bare) listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, BashTool(allowBackground = false)) else
     listOf(
-    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
+    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool(),
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
