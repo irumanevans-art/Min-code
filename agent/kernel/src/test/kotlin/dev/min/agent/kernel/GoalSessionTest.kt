@@ -44,6 +44,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
@@ -131,6 +132,22 @@ class GoalSessionTest {
         val result = start()
         state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
         return result
+    }
+
+    /**
+     * 心跳叫一次 check-in，并等它开的那一回合结束。上一回合刚结束时 turnJob 可能还没退出（isQuiescent 暂时为假），
+     * 所以没送成就隔一会儿再叫，直到 check-in 的计数动了为止
+     */
+    private suspend fun SessionRuntime.tickAndWaitForCheckIn(deps: KernelDeps) {
+        val before = state.value.lastTurn?.turnId
+        val counted = state.value.goal.checkIns
+        withTimeout(10_000) {
+            while (state.value.goal.checkIns == counted) {
+                GoalCheckIns(deps).tick(listOf(this@tickAndWaitForCheckIn))
+                delay(20)
+            }
+        }
+        state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
     }
 
     private suspend fun SessionRuntime.say(text: String) = turnAfter { send(ClientMsgId("u${System.nanoTime()}"), listOf(TextPart(text))) }
@@ -352,7 +369,7 @@ class GoalSessionTest {
         assertEquals(0, rt.state.value.goal.checkIns)
         // 满 30 分钟：送进收件箱，开一回合，模型看到的是 check-in 的话
         clock.set(1_000_000L + 30 * minute)
-        rt.turnAfter { GoalCheckIns(deps).tick(listOf(rt)) }
+        rt.tickAndWaitForCheckIn(deps)
         assertTrue(model.requests.any { it.allText().contains("后台还有在跑的工作") })
         assertEquals(1, rt.state.value.goal.checkIns)
         assertEquals(1, rt.state.value.goal.idleCheckIns)
@@ -362,7 +379,7 @@ class GoalSessionTest {
         GoalCheckIns(deps).tick(listOf(rt))
         assertEquals(1, rt.state.value.goal.checkIns)
         clock.set(1_000_000L + 30 * minute + 60 * minute)
-        rt.turnAfter { GoalCheckIns(deps).tick(listOf(rt)) }
+        rt.tickAndWaitForCheckIn(deps)
         assertEquals(2, rt.state.value.goal.checkIns)
         assertEquals(2, rt.state.value.goal.idleCheckIns)
     }
@@ -382,7 +399,7 @@ class GoalSessionTest {
         for (gap in listOf(30L, 60L, 120L)) {
             at += gap * minute
             clock.set(at)
-            rt.turnAfter { GoalCheckIns(deps).tick(listOf(rt)) }
+            rt.tickAndWaitForCheckIn(deps)
         }
         assertEquals(3, rt.state.value.goal.idleCheckIns)
         assertTrue("第三次说明空闲 check-in 暂停", rt.events().any { it is Note && it.text.contains("发满 3 次") })
