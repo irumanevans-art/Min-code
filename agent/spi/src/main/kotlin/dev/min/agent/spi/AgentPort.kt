@@ -25,6 +25,12 @@ interface AgentPort {
     suspend fun team(op: TeamOp): ToolResult =
         ToolResult(listOf(dev.min.agent.protocol.TextPart("这个环境不支持 agent 团队。")), isError = true)
 
+    /**
+     * ListAgents：本会话能用 SendMessage 发消息的对象（子 agent、团队成员）。只列本会话这一层，其他本地会话 / 云会话不在内
+     * （跨会话邮箱另做）。有默认值（空）：测试替身与没有 SessionHub 的场合不用管它
+     */
+    suspend fun roster(): List<AgentListing> = emptyList()
+
     /** 没有 SessionHub 的场合（单会话嵌入、工具单测）：一律说明不可用 */
     object Unavailable : AgentPort {
         private fun unavailable() = ToolResult(listOf(dev.min.agent.protocol.TextPart("这个环境不支持子 agent。")), isError = true)
@@ -33,6 +39,20 @@ interface AgentPort {
         override suspend fun stop(target: String): ToolResult = unavailable()
     }
 }
+
+/** ListAgents 列出的一行。[name] 为空的子 agent 只能用 [id] 指它 */
+data class AgentListing(
+    val kind: AgentListingKind,
+    val name: String?,
+    /** 会话 id（SendMessage 也认它） */
+    val id: String,
+    /** running（正在回合里）/ idle（空闲）/ queued（团队成员排队等名额）/ not_started（团队成员还没建子会话） */
+    val state: String,
+    /** 子 agent 的描述（委派时写的一句话）；团队成员为空 */
+    val description: String? = null,
+)
+
+enum class AgentListingKind { Subagent, Teammate }
 
 data class DelegateRequest(
     val description: String,

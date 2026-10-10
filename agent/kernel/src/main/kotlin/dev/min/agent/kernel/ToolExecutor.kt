@@ -312,6 +312,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             is Prepared.Rejected -> return outcome(turnId, p.call.callId, errorResult(p.messageToModel))
             is Prepared.Ready -> p
         }
+        // 不过权限、不跑 PreToolUse hook（ToolTraits.exemptFromPolicy，CC 的 EndConversation）：deny 规则对它无效
+        if (planned.tool.traits.exemptFromPolicy) return execute(turnId, planned)
         val (ready, hook) = when (val pre = preToolUse(turnId, planned)) {
             is PreToolUse.Blocked -> return outcome(turnId, planned.call.callId, errorResult(pre.messageToModel))
             is PreToolUse.Proceed -> pre.ready to pre.decision

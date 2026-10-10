@@ -188,6 +188,8 @@ data class SessionState(
     val lastEventAtMs: Long = 0,
     val mcpToolSearch: dev.min.agent.spi.McpToolSearchConfigured? = null,
     val loadedMcpTools: List<String> = emptyList(),
+    /** 模型用 EndConversation 结束了这个会话（[dev.min.agent.spi.ConversationEnded]）：之后的用户输入不再开回合 */
+    val ended: Boolean = false,
     val mcpQuestions: Map<QuestionId, AskedQuestion> = emptyMap(),
     val mcpUrls: Map<QuestionId, McpUrlPending> = emptyMap(),
     val worktree: dev.min.agent.spi.WorktreeBinding? = null,

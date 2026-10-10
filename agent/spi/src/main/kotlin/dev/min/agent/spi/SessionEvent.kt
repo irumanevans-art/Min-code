@@ -306,6 +306,9 @@ enum class InterruptedBy {
 
     /** 定时任务的这次运行花到了单次花费上限（M5），只停这一次运行 */
     @SerialName("budget") Budget,
+
+    /** 模型调了 EndConversation：安静停下这一回合，会话从此锁住（见 [ConversationEnded]） */
+    @SerialName("conversation_ended") Ended,
 }
 
 @Serializable
@@ -326,6 +329,14 @@ data class TurnEnded(
      */
     val limitCause: String? = null,
 ) : SessionEvent
+
+/**
+ * 模型用 EndConversation 结束了会话（CC：会话锁住，只剩 /clear 之类能用）。同一次提交里紧跟 ToolOutcome 与 [TurnEnded]（Ended）写入；
+ * 折叠后 [SessionState.ended] 为真，之后的用户输入不再开回合。恢复时从日志折叠出同样的锁。
+ */
+@Serializable
+@SerialName("conversation_ended")
+data object ConversationEnded : SessionEvent
 
 // ---- 给人看的 ----
 

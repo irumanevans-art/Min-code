@@ -91,6 +91,7 @@ internal data class CliResult(
                 InterruptedBy.User -> "被用户中断"
                 InterruptedBy.ProcessDeath -> "进程中断"
                 InterruptedBy.Budget -> "到达定时任务的花费上限"
+                InterruptedBy.Ended -> "会话已由模型结束"
             }
         }
     }

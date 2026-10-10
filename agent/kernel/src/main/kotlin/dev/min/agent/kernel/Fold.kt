@@ -353,6 +353,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
                     // 定时任务同理：内核紧跟着写成 cron_scheduled / cron_cancelled
                     is SessionEffect.CronCreate, is SessionEffect.CronDelete -> current
                     is SessionEffect.McpLoadTools -> current
+                    // 结束会话同理：内核紧跟着写成 conversation_ended，在那条事件上折叠
+                    is SessionEffect.ConversationEnd -> current
                 }
             },
         )
@@ -442,6 +444,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         )
         is dev.min.agent.spi.McpToolSearchConfigured -> copy(mcpToolSearch = e)
         is dev.min.agent.spi.McpToolsLoaded -> copy(loadedMcpTools = (loadedMcpTools + e.names).distinct())
+        is dev.min.agent.spi.ConversationEnded -> copy(ended = true)
         is dev.min.agent.spi.McpUrlElicitationAsked -> {
             check(e.questionId !in mcpUrls)
             copy(mcpUrls = mcpUrls + (e.questionId to McpUrlPending(e, atMs = record.atMs)))

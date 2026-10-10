@@ -111,7 +111,9 @@ internal fun desktopTools(
     listOf(dev.min.agent.tools.MonitorTool, dev.min.agent.tools.TaskOutputTool) +
     // M5：agent 团队与定时任务（只往末尾追加）。`-p` 不给：Claude Code 的 `-p` 没有队友，进程一退定时任务永不触发，
     // 模型在 `-p` 里建了团队 / 定时任务，回合一结束进程就走了，成员被丢、任务根本不会触发，还会向用户承诺不存在的事
-    (if (!interactive) emptyList() else if (cronEnabled) M5_TOOLS else M5_TOOLS.filterNot { it.name in CRON_TOOL_NAMES })
+    (if (!interactive) emptyList() else if (cronEnabled) M5_TOOLS else M5_TOOLS.filterNot { it.name in CRON_TOOL_NAMES }) +
+    // 结束会话（EndConversation）：只在交互的根会话里（CC：-p、--bare、子 agent 都没有）；子 agent 的过滤在内核的 availableTools
+    (if (interactive) listOf(dev.min.agent.tools.EndConversationTool) else emptyList())
 
 /** 团队与定时调度的工具（只在交互会话里提供） */
 private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
