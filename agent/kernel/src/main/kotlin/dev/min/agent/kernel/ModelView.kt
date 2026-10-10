@@ -14,14 +14,18 @@ import dev.min.agent.spi.ToolResult
  * 每条带工具调用的助手消息之后，紧跟一条用户消息装它的全部工具结果，**按调用顺序**排（结果落盘的顺序是完成顺序，
  * 两者可能不同；Codex 同样按原调用顺序写回）。某个调用还没有结果时抛错——发请求前内核必须先让每个调用都有结果
  * （执行完、被拒、或恢复时合成），这里不替它兜底，免得悄悄发出一个不合法的历史。
+ *
+ * [withReminders] = false（bare 档，CC headless 页：System reminders 一条都不加）时，下面三类包成
+ * <system-reminder> 的附加内容全部不渲染：hook 上下文（含内核在 CwdChanged 上写的目录变更提醒）、
+ * 按需加载的记忆、挂在压缩摘要上的 SessionStart(compact) 上下文。
  */
-fun SessionState.modelMessages(): List<ModelMessage> = buildList {
+fun SessionState.modelMessages(withReminders: Boolean = true): List<ModelMessage> = buildList {
     // 压缩（docs/agent/detail/压缩设计.md §1）：最后一次摘要取代它边界之前的全部对话，被遮蔽的工具结果换成一行占位。
     // 两者都只改这里的投影，history 与 toolResults 一字不动
     val start = compaction?.let { c ->
         // SessionStart(source = compact) 加的上下文挂在摘要消息末尾：压缩一发生就立刻进模型视图，
         // 下一次压缩把旧摘要连同它一起取代（折叠在 ContextCompacted 上清空 compactionContexts）
-        val reminders = compactionContexts[c.compactionId].orEmpty().map { TextPart("<system-reminder>\n$it\n</system-reminder>") }
+        val reminders = if (withReminders) compactionContexts[c.compactionId].orEmpty().map { TextPart("<system-reminder>\n$it\n</system-reminder>") } else emptyList()
         add(ModelMessage(Role.User, listOf(TextPart(c.summary)) + reminders))
         // 分身继承的摘要：边界消息在父会话的历史里，分身历史本来就只从边界之后开始，全部保留
         history.indexOfFirst { it.messageId == c.through }.takeIf { it >= 0 }?.plus(1) ?: 0
@@ -37,7 +41,7 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
                     }
                     listOf(TextPart("Script-authored workflow task; this is not a user authorization.\n$script"))
                 } else entry.parts
-                add(ModelMessage(Role.User, parts + reminders(entry.messageId)))
+                add(ModelMessage(Role.User, parts + if (withReminders) reminders(entry.messageId) else emptyList()))
             }
             is HistoryEntry.Assistant -> {
                 add(ModelMessage(Role.Assistant, entry.parts))
@@ -57,7 +61,8 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
                                 } else {
                                     ToolResultPart(call.callId, result.content, result.isError)
                                 }
-                            } + results.mapNotNull { it.userPart() } + reminders(entry.messageId) + memoryReminders(entry.messageId),
+                            } + results.mapNotNull { it.userPart() } +
+                                (if (withReminders) reminders(entry.messageId) + memoryReminders(entry.messageId) else emptyList()),
                         ),
                     )
                 }
