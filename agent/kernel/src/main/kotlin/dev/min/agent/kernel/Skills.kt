@@ -22,8 +22,14 @@ import kotlinx.serialization.json.intOrNull
  */
 internal object SkillSnapshots {
     /** 什么都没读到、也没有要告诉人的说明时返回 null（不写事件） */
-    suspend fun load(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath, plugins: dev.min.agent.ext.plugins.PluginBundle? = null): SkillsLoaded? {
-        val config = ClaudeConfigLoader.load(fs, cwd, home)
+    suspend fun load(
+        fs: WorkspaceFs,
+        cwd: GuestPath,
+        home: GuestPath,
+        plugins: dev.min.agent.ext.plugins.PluginBundle? = null,
+        inputs: dev.min.agent.ext.config.SettingsInputs = dev.min.agent.ext.config.SettingsInputs(),
+    ): SkillsLoaded? {
+        val config = ClaudeConfigLoader.load(fs, cwd, home, inputs = inputs)
         val notes = config.notes.drop(config.settings.notes.size).toMutableList()
         val entries = (config.skills + plugins?.skills.orEmpty()).distinctBy { it.name }.map {
             SkillEntry(

@@ -165,6 +165,8 @@ internal class DesktopApp(
      * deps 交给内核，config() / hub() 的加载点读同一份
      */
     private val customizations = resolveCustomizations(args.bare, args.safeMode)
+    /** 这次启动读哪些设置：`--settings` 的一份（CC :128）。内核与 config() 读同一份 */
+    private val settingsInputs = dev.min.agent.ext.config.SettingsInputs(cli = args.settings)
     private val fastSelection = args.fastModel?.let {
         resolveModel(args.copy(model = it, contextWindow = null, maxOutput = null), Catalog.bundled())
     }
@@ -240,7 +242,7 @@ internal class DesktopApp(
     private var pluginBundle: dev.min.agent.ext.plugins.PluginBundle? = null
     suspend fun config(): ClaudeConfig {
         configInstance?.let { return it }
-        val base = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome)
+        val base = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome, inputs = settingsInputs)
         // --bare / --safe-mode：skills / 命令 / 子 agent 定义（含托管层）这次启动不发现（CC :72/:125 的跳过清单；
         // safe 原文的托管保留清单里也没有它们）。settings 照常读——权限规则、模型等键不在清单里
         val definitions = if (customizations == dev.min.agent.kernel.Customizations.Full) base
@@ -417,6 +419,7 @@ internal class DesktopApp(
             pluginTrust = { root, cwd -> pluginTrusted(root, cwd) },
             // 这次启动的定制档位（--bare / --safe-mode）：内核的各加载点从这里读，子会话共用同一个 deps 自然跟随
             customizations = customizations,
+            settingsInputs = settingsInputs,
         )
     }
 

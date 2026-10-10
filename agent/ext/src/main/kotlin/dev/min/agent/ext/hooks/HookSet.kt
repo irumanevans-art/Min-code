@@ -337,6 +337,8 @@ private fun priority(source: ConfigSource): Int = when (source) {
     ConfigSource.User -> 0
     ConfigSource.Project -> 1
     ConfigSource.Local -> 2
+    // --settings 排在 local 之上、managed 之下（CC cli-reference）：与 local 同档，managed 仍是最后一档
+    ConfigSource.Cli -> 2
     ConfigSource.Plugin -> 0
     ConfigSource.Managed -> 3
 }

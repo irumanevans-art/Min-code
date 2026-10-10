@@ -18,8 +18,9 @@ object ClaudeConfigLoader {
         cwd: GuestPath,
         home: GuestPath,
         managedPath: GuestPath = SettingsLoader.DEFAULT_MANAGED_PATH,
+        inputs: SettingsInputs = SettingsInputs(),
     ): ClaudeConfig {
-        val settings = SettingsLoader.load(fs, cwd, home, managedPath)
+        val settings = SettingsLoader.load(fs, cwd, home, managedPath, inputs)
         val io = ConfigIo(fs)
         val cwdPath = GuestPaths.normalize(cwd.value)
         val userDir = GuestPaths.join(GuestPaths.normalize(home.value), ".claude")
@@ -30,6 +31,7 @@ object ClaudeConfigLoader {
 
         fun roots(sub: String, vararg order: ConfigSource): List<DefinitionRoot> = order.mapNotNull { source ->
             when (source) {
+                ConfigSource.Cli -> null
                 ConfigSource.Managed -> DefinitionRoot(source, GuestPaths.join(managedDir, sub))
                 ConfigSource.User -> DefinitionRoot(source, GuestPaths.join(userDir, sub))
                 ConfigSource.Project -> if (projectIsUser) null else DefinitionRoot(source, GuestPaths.join(projectDir, sub))

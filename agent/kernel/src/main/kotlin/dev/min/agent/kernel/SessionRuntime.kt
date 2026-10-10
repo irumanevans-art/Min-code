@@ -156,7 +156,7 @@ class SessionRuntime private constructor(
         val home = deps.memoryHome
         // --bare / --safe-mode：换目录也不能把被跳过的记忆装回来（权限规则照常重读）
         val memory = if (home != null && state.value.origin == null && deps.customizations == Customizations.Full) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
-        val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home) else null
+        val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs) else null
         val trustProject = deps.trustProjectHooks(cwd)
         val trustedLocal = snapshot?.let { trustedLocalSettings(deps, it, cwd, trustProject || state.value.created.headless) }.orEmpty()
         val rules = snapshot?.merged?.ruleSpecs(trustProject, trustedLocal)?.map { spec -> RuleEntry(
@@ -196,7 +196,7 @@ class SessionRuntime private constructor(
         val home = deps.memoryHome ?: return null
         val cwd = state.value.created.cwd
         return try {
-        val settings = SettingsLoader.load(deps.host.fs, cwd, home)
+        val settings = SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs)
         dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
             dirs = deps.pluginDirs, canonical = deps.canonicalPath,
             trust = { root -> deps.pluginTrust(root, cwd) },
@@ -323,7 +323,7 @@ class SessionRuntime private constructor(
 
     private suspend fun readCheckpointSetting(): Boolean {
         val home = deps.memoryHome ?: return true
-        val snapshot = dev.min.agent.spi.catchingNonCancellation { SettingsLoader.load(deps.host.fs, state.value.settings.cwd, home) }
+        val snapshot = dev.min.agent.spi.catchingNonCancellation { SettingsLoader.load(deps.host.fs, state.value.settings.cwd, home, inputs = deps.settingsInputs) }
             .getOrNull() ?: return true
         return checkpointsEnabledIn(snapshot)
     }
@@ -544,7 +544,7 @@ class SessionRuntime private constructor(
         val home = deps.memoryHome ?: return
         // --bare / --safe-mode：skills 与自定义命令（含托管层的）都不发现（CC :72/:125）
         if (deps.customizations != Customizations.Full) return
-        val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home, plugins()) ?: return
+        val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home, plugins(), inputs = deps.settingsInputs) ?: return
         commit(listOf(snapshot), Durability.Sync)
     }
 
@@ -997,7 +997,7 @@ class SessionRuntime private constructor(
             val home = deps.memoryHome
             if (home != null) {
                 // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照
-                val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home) else null
+                val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home, inputs = deps.settingsInputs) else null
                 runtime.checkpointsBySettings = settings?.let(::checkpointsEnabledIn)
                 if (loadMemory) runtime.loadMemory(settings)
                 if (loadSettings) {

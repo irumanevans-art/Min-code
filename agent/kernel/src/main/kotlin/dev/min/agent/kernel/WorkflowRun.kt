@@ -102,7 +102,7 @@ internal fun workflowError(code: String, message: String): JsonObject = buildJso
 internal suspend fun SessionRuntime.executeWorkflow(turnId: TurnId, callId: CallId, input: WorkflowInput): ToolResult {
     val engine = deps.workflowEngine ?: return ToolResult(listOf(TextPart("Workflow engine is unavailable.")), true)
     val previous = state.value.workflowEvents
-    val settingsEnv = deps.memoryHome?.let { dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, state.value.settings.cwd, it).merged.env }.orEmpty()
+    val settingsEnv = deps.memoryHome?.let { dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, state.value.settings.cwd, it, inputs = deps.settingsInputs).merged.env }.orEmpty()
     fun setting(name: String): String? = deps.env(name) ?: settingsEnv[name]
     val run = input.resume?.let { id -> previous.filterIsInstance<WorkflowRunStarted>().lastOrNull { it.runId == id } ?: error("Unknown workflow run.") }
         ?: WorkflowRunStarted(deps.ids.next("workflow"), input.name, input.source, input.hash, input.args,

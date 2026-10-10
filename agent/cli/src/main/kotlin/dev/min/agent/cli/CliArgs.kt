@@ -70,6 +70,8 @@ data class CliArgs(
     val safeMode: Boolean = false,
     /** `--tools`（CC :136）：内置工具表点名收窄；null = 预设（`default` 或没给，不收窄），空集 = 不给任何内置工具 */
     val tools: Set<String>? = null,
+    /** `--settings`（CC :128）：文件或内联 JSON 已读好的一份会话级设置；null = 没给 */
+    val settings: dev.min.agent.ext.config.CliSettings? = null,
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
@@ -114,6 +116,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
                          MCP、命令与 agents、输出样式、工作流、自动记忆）；托管层的 hooks 照常生效，
                          托管的插件、skills、CLAUDE.md、MCP 也不加载；权限与内置工具照常；
                          CLAUDE_CODE_SAFE_MODE=1 等效；两者同时给报错（原文没规定并存）
+  --settings <文件或 JSON> 会话级设置（CC 同名）：盖过三个 settings.json，managed 仍盖过它；相对 --cwd 解析；文件不超过 2 MiB
   --tools <名字,...>     限定内置工具表（CC 同名）：逗号或空格分隔；default 为预设（不限定）；""（空串）为不给任何内置工具；
                          未知工具名报错。只管内置工具，MCP 工具照常
   --no-browser           MCP OAuth 打印授权 URL，手工粘贴回调 URL
@@ -138,7 +141,7 @@ private val VALUE_ARGS = setOf(
     "--max-output", "--effort", "--mode", "--approve", "--cwd", "--output-format", "--resume", "--search-backend",
     "--search-url", "--fast-model", "--max-web-searches", "--web-cache-ttl-ms", "--web-deadline-ms", "--max-turns",
     "--json-schema", "--name", "-n", "--fallback-model", "--auto-mode-reviewer", "--max-budget-usd", "--model-timeout-ms",
-    "--tools",
+    "--tools", "--settings",
 )
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
@@ -293,6 +296,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         bare = "--bare" in flags,
         safeMode = "--safe-mode" in flags,
         tools = values["--tools"]?.let(::parseToolsArg),
+        settings = values["--settings"]?.let { readSettingsArg(it, values["--cwd"]?.let { p -> Path.of(p) } ?: cwdDefault) },
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages
@@ -323,6 +327,44 @@ internal fun parseToolsArg(raw: String): Set<String>? {
     }
     return names.toSet()
 }
+
+/**
+ * `--settings` 的取值（CC :128）：以 `{` 开头的是内联 JSON；否则是文件路径，相对 [cwd]（会话的工作目录）解析，
+ * 必须是普通文件且不超过 2 MiB（CC 原文）。JSON 解析失败、或不是对象，在启动时报用法错误——设置错了却悄悄不生效，
+ * 比停下来更危险（与 --json-schema 同一个口径）
+ */
+internal fun readSettingsArg(raw: String, cwd: Path): dev.min.agent.ext.config.CliSettings {
+    val label: String
+    val text: String
+    if (raw.trimStart().startsWith("{")) {
+        label = "--settings"
+        text = raw
+    } else {
+        val file = cwd.resolve(raw).toAbsolutePath().normalize()
+        if (!java.nio.file.Files.isRegularFile(file)) {
+            throw UsageException("--settings 找不到文件 $file（内联 JSON 要以 { 开头）")
+        }
+        if (java.nio.file.Files.size(file) > SETTINGS_FILE_MAX_BYTES) {
+            throw UsageException("--settings 文件超过 2 MiB：$file")
+        }
+        text = try {
+            java.nio.file.Files.readString(file)
+        } catch (e: java.io.IOException) {
+            throw UsageException("读不了 --settings 的文件 $file：${e.message}")
+        }
+        label = file.toString()
+    }
+    val parsed = try {
+        dev.min.agent.protocol.AgentJson.parseToJsonElement(text)
+    } catch (e: kotlinx.serialization.SerializationException) {
+        throw UsageException("--settings 不是合法的 JSON：${e.message?.lineSequence()?.firstOrNull()}")
+    }
+    if (parsed !is kotlinx.serialization.json.JsonObject) throw UsageException("--settings 必须是一个 JSON 对象（设置文件的内容）")
+    return dev.min.agent.ext.config.CliSettings(label, text)
+}
+
+/** `--settings` 文件的大小上限（CC cli-reference :128：regular file no larger than 2 MiB） */
+private const val SETTINGS_FILE_MAX_BYTES = 2L * 1024 * 1024
 
 /**
  * `--json-schema` 的取值：要么是 schema 的 JSON 文本，要么 `@文件路径`（内容整份当 schema）。
