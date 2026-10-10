@@ -1,5 +1,6 @@
 package dev.min.code.ui.session
 
+import dev.min.code.core.engine.min.monitorWsAddress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -416,6 +417,7 @@ internal fun ToolCallDetail(
                 item.input["command"].asStringOrNull()?.let {
                     HighlightCodeBlock(code = it, language = "bash")
                 }
+                monitorWsAddress(item.input)?.let { HighlightCodeBlock(code = it, language = "text") }
                 // CLI 2.1.269+：Bash 改文件时 tool_use_result.bashEditDiff 带来的 unified diff
                 val editDiff = item.editDiff?.takeIf { it.isNotBlank() }
                 if (editDiff != null) {
@@ -496,6 +498,7 @@ internal fun ToolInputPreview(
                 input["command"].asStringOrNull()?.let {
                     HighlightCodeBlock(code = it, language = "bash")
                 }
+                monitorWsAddress(input)?.let { HighlightCodeBlock(code = it, language = "text") }
                 input["description"].asStringOrNull()?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         it,

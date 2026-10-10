@@ -102,7 +102,8 @@ private fun approval(
         // 内核的 ask.paths 是这次调用碰到的**所有**路径，工作区之内的不该进来，否则每张写文件的卡都会谎称自己在工作区之外
         paths = ask.paths.map { PathView(it.path.value, scopeOf(it.scope)) }.filter { it.scope != PathScope.Workspace },
         commands = ask.commands.map { it.raw },
-        domains = ask.domains,
+        // Monitor 的 WebSocket 源：内核的 ask 里不带域名（WebFetch 的放行规则不能顺手放行长连接），卡上要让人看见连哪里
+        domains = ask.domains + listOfNotNull(if (what.tool == "Monitor") monitorWsHost(input) else null),
         // 踩了安全底线的原因：解释「为什么连跳过权限也要问你」
         reason = what.floorReason,
         blockedPath = null,

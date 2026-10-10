@@ -35,3 +35,19 @@ internal fun watchTasks(jobs: List<BackgroundJobInfo>): List<BackgroundTask> =
             deadlineAt = j.deadlineAtMs,
         )
     }
+
+/**
+ * WebSocket 源的 Monitor 入参里的地址，**只到路径**（去掉查询串与片段：查询串里常带 token，不上屏）。不是 ws 源或地址不合法为 null。
+ * 审批卡与调用详情都用它：入参 `ws` 是个对象，通用的预览认不出来，用户点「允许」时就看不到自己批准的是连哪里
+ */
+internal fun monitorWsAddress(input: kotlinx.serialization.json.JsonObject): String? {
+    val url = ((input["ws"] as? kotlinx.serialization.json.JsonObject)?.get("url") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return null
+    val uri = try { java.net.URI(url) } catch (_: java.net.URISyntaxException) { return null }
+    val scheme = uri.scheme ?: return null
+    val authority = uri.rawAuthority ?: return null
+    return "$scheme://$authority${uri.rawPath.orEmpty()}"
+}
+
+/** 同上，只取 `主机:端口`：审批卡的「将访问：…」一行（与 WebFetch 的域名行同一处） */
+internal fun monitorWsHost(input: kotlinx.serialization.json.JsonObject): String? =
+    monitorWsAddress(input)?.substringAfter("://")?.substringBefore('/')?.substringAfterLast('@')

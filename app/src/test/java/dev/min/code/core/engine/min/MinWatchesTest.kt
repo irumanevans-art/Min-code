@@ -78,6 +78,16 @@ class MinWatchesTest {
         assertEquals("ws wss://feed.example/x", watchTasks(listOf(job(command = null, ws = "wss://feed.example/x"))).single().command)
     }
 
+    @Test fun `审批卡上的 WebSocket 地址只到路径，查询串里的 token 不上屏`() {
+        fun input(url: String) = JsonObject(mapOf("description" to JsonPrimitive("x"), "ws" to JsonObject(mapOf("url" to JsonPrimitive(url)))))
+        assertEquals("wss://feed.example.com:8443/v1/stream", monitorWsAddress(input("wss://feed.example.com:8443/v1/stream?token=SECRET&a=1#frag")))
+        assertEquals("feed.example.com:8443", monitorWsHost(input("wss://feed.example.com:8443/v1/stream?token=SECRET")))
+        assertEquals("127.0.0.1:18771", monitorWsHost(input("ws://127.0.0.1:18771/feed")))
+        assertEquals("host", monitorWsHost(input("ws://host")))
+        assertNull(monitorWsAddress(JsonObject(mapOf("command" to JsonPrimitive("tail -f x")))))
+        assertNull(monitorWsAddress(input("not a url ::")))
+    }
+
     // ---- 真 Hub + 真 MinAgentSession ----
 
     private class MemFs : WorkspaceFs {
