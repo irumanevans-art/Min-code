@@ -46,6 +46,7 @@ cases = [
     ('message-contract', kernel + 'SubagentHandbackTool.kt', 'put("required", JsonArray(listOf(JsonPrimitive("message"))))', 'put("required", JsonArray(listOf(JsonPrimitive("report"))))', 'kernel', 'AutoHandbackTest.toolInputMatchesDocumentedMessageField'),
     ('workflow-runtime-spawn-gate', kernel + 'SessionHub.kt', 'if (ps.settings.mode == PermissionMode.Auto)', 'if (false && ps.settings.mode == PermissionMode.Auto)', 'kernel', 'AutoSpawnTest.workflowExecutionReachesCommonSpawnReviewBeforeNodeModel'),
     ('disabled-auto-report', kernel + 'AutoReviewer.kt', 'settings.disableAutoMode ->', 'false && settings.disableAutoMode ->', 'kernel', 'AutoReviewerTest.disabledAutoClassifierCannotApproveFormerAutoReport'),
+    ('report-mode-race', kernel + 'AutoActionGate.kt', 'if (!readOnly || current is Verdict.Deny)', 'if (true)', 'kernel', 'AutoSpawnTest.modeChangeDuringReportReviewCannotReplaceClassifierDenialWithReadOnlyAllow'),
 ]
 prefix = [str(root / 'gradlew.bat'), '-I', a.init_script, '--console=plain', '--max-workers=1', '--no-daemon']
 env = os.environ.copy()

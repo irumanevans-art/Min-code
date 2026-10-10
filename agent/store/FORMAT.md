@@ -228,3 +228,4 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - v1 语义补充（2026-10-09，用户边界脱敏）：凭据读取或继承快照脱敏时不发送分类器请求，`auto_reviewed.decision = ask`，以固定摘要说明转人工；不能因为保护了凭据而把不可读的用户边界当作不存在。
 - v1 语义补充（2026-10-09，终报模式与错误详情）：`session_created.mode = auto` 的子会话转入 Plan 等模式后，终报仍须冻结本回合审查记录；交回是只读行为，不被 Plan 的写入禁令误伤。报告适配器只信同一结束回合的 `subagent_report_ready`。Auto 报告的失败说明只交付固定摘要（两条固定 headless 分类器报错可保留），不从 `turn_ended.outcome.message` 旁路交付未经审查的正文。
 - v1 语义补充（2026-10-10，Auto 停用后的终报）：`auto_review_settings_loaded.disableAutoMode = true` 时，旧 Auto 子会话的终报审查写 `auto_reviewed.decision = ask`、`model = null`，转人工而不调用分类器；明确硬拒绝仍优先。
+- v1 语义补充（2026-10-10，审查中的模式变更）：终报审查期间切模式，新的显式拒绝仍优先；只读免批不能覆盖已有 `auto_reviewed` 的 deny / ask。生成审查依旧按新模式重算启动权限。

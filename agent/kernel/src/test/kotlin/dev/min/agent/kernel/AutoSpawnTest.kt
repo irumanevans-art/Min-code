@@ -169,6 +169,18 @@ class AutoSpawnTest {
             assertFalse(result.await()); assertTrue(rt.state.value.children.isEmpty())
         } }
     }
+    @Test fun modeChangeDuringReportReviewCannotReplaceClassifierDenialWithReadOnlyAllow() {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reviewer = ModelClient { request -> flow { entered.complete(Unit); release.await(); emitAll(decision("deny")(request)) } }
+        run(reviewer) { _, rt, _ -> coroutineScope {
+            val result = async { rt.reviewReport(TurnId("t"), "PRIVATE_REPORT_BODY") }
+            entered.await()
+            rt.changeSettings(mode = PermissionMode.Plan)
+            release.complete(Unit)
+            assertTrue("改模式不能把终报拒绝改成只读免批", result.await() is dev.min.agent.policy.Verdict.Deny)
+        } }
+    }
     @Test fun workflowStructuredReportIsReviewedAndRejectedValueIsNotDelivered() {
         for (verdict in listOf("deny", "allow")) {
             val reviewer = ScriptedModel(decision("allow"), decision(verdict))

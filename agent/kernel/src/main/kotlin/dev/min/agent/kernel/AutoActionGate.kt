@@ -19,8 +19,11 @@ internal suspend fun SessionRuntime.reviewAutoAction(turnId: TurnId, name: Strin
     val policy = dev.min.agent.policy.PolicyEngine.evaluate(ask, readOnly, context)
     if (policy is Verdict.Deny) return policy
     var verdict = AutoReviewer(this).review(turnId, call, ask, context, dev.min.agent.policy.PolicyEngine.askRuleHit(ask, context) != null)
-    // 审查期间切模式后，旧 Auto 结论不能替新的 Plan / dontAsk 放行生成。
-    if (state.value.settings.mode != context.mode) verdict = dev.min.agent.policy.PolicyEngine.evaluate(ask, readOnly, ToolExecutor(this, HookDriver(this)).policyContext())
+    // 生成要服从新模式；终报的只读免批不能覆盖已经得到的分类器拒绝或人工审查要求。
+    if (state.value.settings.mode != context.mode) {
+        val current = dev.min.agent.policy.PolicyEngine.evaluate(ask, readOnly, ToolExecutor(this, HookDriver(this)).policyContext())
+        if (!readOnly || current is Verdict.Deny) verdict = current
+    }
     if (verdict != Verdict.Ask) return verdict
     headlessClassifierError(call.callId, backgroundSpawn)?.let {
         // 已启动的后台子回合不能把不可继续的审查失败当成普通工具错误，让模型反复重试。
