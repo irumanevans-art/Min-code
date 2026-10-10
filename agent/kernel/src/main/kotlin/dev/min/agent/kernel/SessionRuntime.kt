@@ -420,12 +420,13 @@ class SessionRuntime private constructor(
         val managed = snapshot.merged.layers.lastOrNull { it.source == dev.min.agent.ext.config.ConfigSource.Managed }
         val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer,
             disableAutoMode = managed?.permissions?.disableAutoMode == true,
-            disableBypassPermissionsMode = managed?.permissions?.disableBypassPermissionsMode == true)
+            // --restricted（CC :123）拒绝 bypassPermissions：与托管禁用同一条锁（创建、切换、子会话都经它）
+            disableBypassPermissionsMode = managed?.permissions?.disableBypassPermissionsMode == true || deps.settingsInputs.restricted)
         if (review.notes.isNotEmpty()) commit(review.notes.map { Note(NoteLevel.Warning, it) }, Durability.Sync)
         if (configured != dev.min.agent.spi.AutoReviewSettingsLoaded()) commit(listOf(configured), Durability.Sync)
         val mode = state.value.settings.mode
         if (mode == PermissionMode.Auto && configured.disableAutoMode || mode == PermissionMode.BypassPermissions && configured.disableBypassPermissionsMode) {
-            commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "托管策略禁用了 $mode，使用 Default 模式")), Durability.Sync)
+            commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "这次启动禁用了 $mode（托管策略，或 --restricted），使用 Default 模式")), Durability.Sync)
         }
         loadPermissionRules(snapshot)
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
@@ -638,7 +639,7 @@ class SessionRuntime private constructor(
         modelSwitchSource: String = "command",
     ): String? {
         val locks = state.value.autoReviewSettings
-        require(!(mode == PermissionMode.Auto && locks.disableAutoMode || mode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode)) { "托管策略禁用了这个权限模式" }
+        require(!(mode == PermissionMode.Auto && locks.disableAutoMode || mode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode)) { "这次启动禁用了这个权限模式（托管策略，或 --restricted）" }
         if (cwd != null && cwd != state.value.settings.cwd) {
             require(state.value.worktree == null) { "隔离会话请用 EnterWorktree / ExitWorktree 切换目录。" }
             require(deps.host.fs.stat(cwd)?.kind == dev.min.agent.spi.FileKind.Directory) { "工作目录不存在：$cwd" }
@@ -1010,7 +1011,7 @@ class SessionRuntime private constructor(
             val currentMode = runtime.state.value.settings.mode
             if (currentMode == PermissionMode.Auto && locks.disableAutoMode || currentMode == PermissionMode.BypassPermissions && locks.disableBypassPermissionsMode) {
                 // 子会话不重读 settings，但冻结的托管锁仍须在第一个回合前兑现。
-                runtime.commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "托管策略禁用了 $currentMode，使用 Default 模式")), Durability.Sync)
+                runtime.commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "这次启动禁用了 $currentMode（托管策略，或 --restricted），使用 Default 模式")), Durability.Sync)
             }
             if (loadSkills) runtime.loadSkills()
             if (runStartHooks && runtime.state.value.origin == null) runtime.runSessionStart("startup")

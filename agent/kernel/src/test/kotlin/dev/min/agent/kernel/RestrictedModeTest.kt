@@ -83,7 +83,7 @@ class RestrictedModeTest {
 
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(30_000) { block() } }
 
-    private fun hub(restricted: Boolean, model: ScriptedModel): SessionHub {
+    private fun hub(restricted: Boolean, model: ScriptedModel, workflows: Boolean = false): SessionHub {
         val base = testDeps(model, listOf(read))
         val deps = KernelDeps(
             clock = base.clock, ids = base.ids, models = base.models, tools = listOf(read),
@@ -93,6 +93,8 @@ class RestrictedModeTest {
             trustProjectHooks = { true },
             mcpFirstSnapshotWaitMs = 500,
             settingsInputs = SettingsInputs(restricted = restricted),
+            // 能用的 Workflow（JavaScript 执行器）：受限会话不该把它放进工具表
+            workflowEngine = if (workflows) dev.min.agent.spi.WorkflowEngine { _, _, _ -> JsonPrimitive(1) } else null,
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
         return SessionHub(FileSessionStore(tmp.root.toPath(), { 0L }), deps, scope)
@@ -134,6 +136,21 @@ class RestrictedModeTest {
         val rt = hub(restricted = false, ScriptedModel(reply(TextPart("done")))).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
         rt.changeSettings(mode = PermissionMode.BypassPermissions)
         assertEquals(PermissionMode.BypassPermissions, rt.state.value.settings.mode)
+    }
+
+    // ---- 内置的 Workflow（跑 JavaScript）----
+
+    @Test
+    fun `restricted：内置 Workflow 不在可用工具里`() = run {
+        val rt = hub(restricted = true, ScriptedModel(reply(TextPart("done"))), workflows = true).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+        assertFalse("restricted 不该有 Workflow：${availableTools(rt.state.value, rt.deps, runtime = rt).map { it.name }}",
+            availableTools(rt.state.value, rt.deps, runtime = rt).any { it.name == "Workflow" })
+    }
+
+    @Test
+    fun `对照组：不开 restricted，能用的 Workflow 在工具表里`() = run {
+        val rt = hub(restricted = false, ScriptedModel(reply(TextPart("done"))), workflows = true).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+        assertTrue(availableTools(rt.state.value, rt.deps, runtime = rt).any { it.name == "Workflow" })
     }
 
     // ---- 工作目录限制 ----

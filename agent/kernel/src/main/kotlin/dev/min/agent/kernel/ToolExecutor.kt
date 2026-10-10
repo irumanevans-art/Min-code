@@ -303,6 +303,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             canonicalPath = deps.canonicalPath,
             worktreeRoot = s.worktree?.path,
             autoHardDeny = s.autoReviewSettings.config.hardDeny,
+            // --restricted（CC :123）：内置文件工具限制在工作目录内（PolicyEngine 里排在允许规则之前）
+            confineToWorkingDirectories = deps.settingsInputs.restricted,
         )
     }
 

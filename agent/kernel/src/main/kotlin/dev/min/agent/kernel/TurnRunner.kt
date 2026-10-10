@@ -645,7 +645,8 @@ internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
 /** 本会话能用的工具，保持 [KernelDeps.tools] 的固定顺序。新开的子 agent 按定义取子集；分身与根会话是全部 */
 internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable, runtime: SessionRuntime? = null): List<Tool<*>> {
     val allowed = state.origin?.tools
-    val builtins = deps.tools + if (runtime != null && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList()
+    // --restricted（CC :123）：Workflow 是内置的 JavaScript 执行器（"run … code"），受限会话不给；它不在 CLI 的工具表里，只能在这里去掉
+    val builtins = deps.tools + if (runtime != null && !deps.settingsInputs.restricted && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList()
     val builtin = (if (allowed == null) builtins else builtins.filter { it.name in allowed })
         .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响

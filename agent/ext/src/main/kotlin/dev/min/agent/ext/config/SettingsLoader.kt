@@ -66,16 +66,20 @@ object SettingsLoader {
             layers += SettingsReader.layer(source, path, GuestPath(baseDir), raw, notes)
         }
 
-        val userFile = GuestPaths.join(userDir, "settings.json")
-        read(ConfigSource.User, userFile, userDir)
+        // --restricted（CC :123）：用户、项目、local 三层一个都不读——评测机上的人的设置不能影响受限会话。
+        // 不读的时候连 git 根也不找（找到了也不读，白走一趟文件系统）
+        if (!inputs.restricted) {
+            val userFile = GuestPaths.join(userDir, "settings.json")
+            read(ConfigSource.User, userFile, userDir)
 
-        val projectFile = GuestPaths.join(cwdPath, ".claude/settings.json")
-        if (projectFile != userFile) read(ConfigSource.Project, projectFile, cwdPath)
+            val projectFile = GuestPaths.join(cwdPath, ".claude/settings.json")
+            if (projectFile != userFile) read(ConfigSource.Project, projectFile, cwdPath)
 
-        read(ConfigSource.Local, GuestPaths.join(cwdPath, ".claude/settings.local.json"), cwdPath)
-        val root = gitRoot(io, cwdPath)
-        if (root != null && root != cwdPath && root != homePath) {
-            read(ConfigSource.Local, GuestPaths.join(root, ".claude/settings.local.json"), cwdPath)
+            read(ConfigSource.Local, GuestPaths.join(cwdPath, ".claude/settings.local.json"), cwdPath)
+            val root = gitRoot(io, cwdPath)
+            if (root != null && root != cwdPath && root != homePath) {
+                read(ConfigSource.Local, GuestPaths.join(root, ".claude/settings.local.json"), cwdPath)
+            }
         }
 
         // --settings（CC :128）：文本已由宿主读好（文件或内联 JSON）。坏 JSON 在 [SettingsReader.parseObject] 里记 note 并跳过

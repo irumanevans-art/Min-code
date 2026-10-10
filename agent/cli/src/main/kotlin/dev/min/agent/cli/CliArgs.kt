@@ -70,6 +70,8 @@ data class CliArgs(
     val safeMode: Boolean = false,
     /** `--tools`（CC :136）：内置工具表点名收窄；null = 预设（`default` 或没给，不收窄），空集 = 不给任何内置工具 */
     val tools: Set<String>? = null,
+    /** `--restricted`（CC :123）：受限启动（去掉跑命令的内置工具与 WebFetch，文件工具限在工作目录，只读托管与 --settings，拒绝 bypassPermissions） */
+    val restricted: Boolean = false,
     /** `--settings`（CC :128）：文件或内联 JSON 已读好的一份会话级设置；null = 没给 */
     val settings: dev.min.agent.ext.config.CliSettings? = null,
 ) {
@@ -117,6 +119,9 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
                          托管的插件、skills、CLAUDE.md、MCP 也不加载；权限与内置工具照常；
                          CLAUDE_CODE_SAFE_MODE=1 等效；两者同时给报错（原文没规定并存）
   --settings <文件或 JSON> 会话级设置（CC 同名）：盖过三个 settings.json，managed 仍盖过它；相对 --cwd 解析；文件不超过 2 MiB
+  --restricted           受限启动（CC 同名）：去掉跑命令的内置工具（Bash、Monitor）、Workflow 与 WebFetch（--tools 逐个点名才放回）；
+                         内置文件工具只能碰工作目录（cwd 与 additionalDirectories）；只读托管层与 --settings（用户、项目、local 设置不读）；
+                         拒绝 bypassPermissions。云会话 Min 没有，不涉及
   --tools <名字,...>     限定内置工具表（CC 同名）：逗号或空格分隔；default 为预设（不限定）；""（空串）为不给任何内置工具；
                          未知工具名报错。只管内置工具，MCP 工具照常
   --no-browser           MCP OAuth 打印授权 URL，手工粘贴回调 URL
@@ -146,7 +151,7 @@ private val VALUE_ARGS = setOf(
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
     "--include-partial-messages", "--forward-subagent-text", "--no-browser",
-    "--bare", "--safe-mode",
+    "--bare", "--safe-mode", "--restricted",
 )
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -182,6 +187,10 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         value.toIntOrNull()?.takeIf { it > 0 } ?: throw UsageException("$name 必须是正整数")
     }
 
+    // --restricted 拒绝 bypassPermissions（CC :123）：启动时就报错，不让它先起来再降级
+    if ("--restricted" in flags && values["--mode"]?.equals("bypassPermissions", ignoreCase = true) == true) {
+        throw UsageException("--restricted 不允许 bypassPermissions（--mode bypassPermissions 与受限启动互斥）")
+    }
     // --print 是 -p 的长形（CC :116）：同一个提示词，两边都给是写错了
     if (values["-p"] != null && values["--print"] != null) throw UsageException("-p 与 --print 只能给一个")
     // 两个档位参数互斥：CC 原文没规定并存的行为，报用法错误比悄悄选一个稳（环境变量的冲突在 resolveCustomizations 里同样报）
@@ -296,6 +305,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         bare = "--bare" in flags,
         safeMode = "--safe-mode" in flags,
         tools = values["--tools"]?.let(::parseToolsArg),
+        restricted = "--restricted" in flags,
         settings = values["--settings"]?.let { readSettingsArg(it, values["--cwd"]?.let { p -> Path.of(p) } ?: cwdDefault) },
         wire = values["--wire"]?.let {
             when (it) {
