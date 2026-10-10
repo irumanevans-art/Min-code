@@ -2454,3 +2454,49 @@ SubagentHandback 初版字段用 report；官方 hooks 对 Agent PostToolUse 与
 - Tags: windows, gradle, worktree, process-ownership
 
 ---
+
+## [LRN-20261010-MARKETPACK] best_practice
+
+**Logged**: 2026-10-10T03:20:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+Windows 上 git clone 的 pack 只读位可能让成功拉取后的私有暂存清理失败；项目信任过滤必须早于 settings 合并。
+
+### Details
+本机临时 Git 流程暴露 AccessDeniedException（pack 的 .rev）。清理只对已校验为 plugins 私有树内、非链接文件清 DOS readonly，随后删除；不扩大宿主写权限。另补测试证明未信任项目的 false 不能覆盖个人 enabledPlugins，autoUpdate 声明也不可触发后台拉取。
+
+### Suggested Action
+跨 Windows / Android 的源生命周期测试同时断言拉取、装载与清理。设置中任何能触发副作用的项目键在合并前过滤；最终合并后再判断来源会丢失用户层值。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/host/src/main/kotlin/dev/min/agent/host/FilePluginSources.kt, agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginBundle.kt
+- Tags: windows, git, plugins, trust
+
+---
+
+## [LRN-20261010-MARKETANDROID] best_practice
+
+**Logged**: 2026-10-10T04:02:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+JVM 通过不代表 Android 通过；文件根的系统别名、ICU 正则和 App 发送入口都需真实设备验收。
+
+### Details
+模拟器安装暴露 `/data/user/0` 与物理路径差异，修为根与候选路径两边都 realpath，内部链接逃逸仍拒绝并有断言变异。JDK 接受的未转义结束花括号导致 Android ICU 初始化失败，显式转义后以实际 APK + app_process 验证变量替换。插件已经加载但 App 原先把斜杠原文送模型，补共用展开器、冻结列表和实际索引回归；删除展开步骤由 ComparisonFailure 检出，模拟器本机服务确认收到展开正文。
+
+### Suggested Action
+涉及跨宿主路径、Regex 或宿主入口的变更，不能只证明纯逻辑单测。验收必须检查安装后的新会话实际送达模型的正文；设备探针自身失败不能计作产品变异成功。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/host/src/main/kotlin/dev/min/agent/host/FilePluginSources.kt, agent/ext/src/main/kotlin/dev/min/agent/ext/plugins/PluginValues.kt, app/src/main/java/dev/min/code/core/engine/min/MinCommands.kt
+- Tags: android, realpath, icu, plugins, integration
+
+---
