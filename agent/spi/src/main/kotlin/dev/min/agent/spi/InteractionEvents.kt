@@ -108,6 +108,11 @@ sealed interface SessionEffect {
     @Serializable
     @SerialName("mcp_load_tools")
     data class McpLoadTools(val names: List<String>) : SessionEffect
+    /** 结束会话（EndConversation）。内核落成 [ConversationEnded]，并安静停下本回合 */
+    @Serializable
+    @SerialName("conversation_end")
+    data object ConversationEnd : SessionEffect
+
     /** 切换权限模式（计划模式的进出）。内核落成 [SettingsChanged] */
     @Serializable
     @SerialName("mode_change")

@@ -312,6 +312,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             is Prepared.Rejected -> return outcome(turnId, p.call.callId, errorResult(p.messageToModel))
             is Prepared.Ready -> p
         }
+        // 不过权限、不跑 PreToolUse hook（ToolTraits.exemptFromPolicy，CC 的 EndConversation）：deny 规则对它无效
+        if (planned.tool.traits.exemptFromPolicy) return execute(turnId, planned)
         val (ready, hook) = when (val pre = preToolUse(turnId, planned)) {
             is PreToolUse.Blocked -> return outcome(turnId, planned.call.callId, errorResult(pre.messageToModel))
             is PreToolUse.Proceed -> pre.ready to pre.decision
@@ -679,6 +681,9 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             }
         override suspend fun extract(content: String, prompt: String): ToolResult =
             if (turnId == null) errorResult("提取端口不可用。") else extractWeb(rt, turnId, callId, content, prompt)
+        override val push: dev.min.agent.spi.PushSink = if (turnId == null) dev.min.agent.spi.PushSink.Unavailable else deps.pushSink
+        override val userFiles: dev.min.agent.spi.UserFileSink = if (turnId == null) dev.min.agent.spi.UserFileSink.Unavailable else deps.userFileSink
+        override val mcpWait: dev.min.agent.spi.McpWaitPort = if (turnId == null) dev.min.agent.spi.McpWaitPort.Unavailable else rt.hub?.mcpWaitFor(rt) ?: dev.min.agent.spi.McpWaitPort.Unavailable
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override val tasks: TaskBoard get() = rt.visibleTaskBoard()

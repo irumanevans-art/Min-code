@@ -62,6 +62,11 @@ data class ToolTraits(
      * 检查点的工具闸据此让它与写工具一样等快照拍完（检查点与rewind设计 §1），[readOnly] 管不到这一层
      */
     val delegates: Boolean = false,
+    /**
+     * 不走权限与 PreToolUse hook：调用即执行，deny 规则对它无效（CC 的 EndConversation）。只给「做的事只有它自己」的工具用，
+     * 漏标的代价是多问一次人，所以默认 false
+     */
+    val exemptFromPolicy: Boolean = false,
 ) {
     companion object {
         /**
@@ -185,6 +190,15 @@ interface ToolContext {
     val skills: SkillPort get() = SkillPort.Unavailable
     val web: WebPort get() = WebPort.Unavailable
     val webSearch: WebSearchPort get() = WebSearchPort.Unavailable
+
+    /** 把文件交给用户的设备（SendUserFile）。有默认值（不可用）：其余工具与测试替身不用管它 */
+    val userFiles: UserFileSink get() = UserFileSink.Unavailable
+
+    /** 发系统通知（PushNotification）。有默认值（不可用） */
+    val push: PushSink get() = PushSink.Unavailable
+
+    /** 等后台连接的 MCP 服务器（WaitForMcpServers）。有默认值（不可用） */
+    val mcpWait: McpWaitPort get() = McpWaitPort.Unavailable
     suspend fun extract(content: String, prompt: String): ToolResult =
         ToolResult(listOf(dev.min.agent.protocol.TextPart("这个环境不能提取网页内容。")), isError = true)
 

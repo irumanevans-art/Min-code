@@ -567,6 +567,12 @@ class SessionHub(
 
     suspend fun reconnectMcp(server: String, sessionId: SessionId) = mcp.reconnect(server, sessionId)
 
+    /** WaitForMcpServers 的端口：绑在一个会话上（它的 MCP 服务器）。内核 ToolExecutor 发给工具 */
+    internal fun mcpWaitFor(rt: SessionRuntime): dev.min.agent.spi.McpWaitPort = object : dev.min.agent.spi.McpWaitPort {
+        override suspend fun await(servers: List<String>, timeoutMs: Long): Map<String, String> = mcp.awaitStartup(rt.sessionId, servers, timeoutMs)
+        override fun states(): Map<String, String> = mcp.statesOf(rt.sessionId)
+    }
+
     /**
      * 卸下一个会话及它在线的整棵子树（运行时离开内存，日志不动，之后 [open] 能原样重开）。
      * 子树里有回合在跑就拒绝（返回 false）：卸下会丢掉正在跑的协程，得先停下或等它跑完。
@@ -846,6 +852,38 @@ class SessionHub(
         override suspend fun message(to: String, text: String): ToolResult = sendMessage(rt, callId, to, text)
         override suspend fun stop(target: String): ToolResult = stopTask(rt, target)
         override suspend fun team(op: dev.min.agent.spi.TeamOp): ToolResult = teams.handle(rt, turnId, callId, op)
+        override suspend fun roster(): List<dev.min.agent.spi.AgentListing> = rosterOf(rt)
+    }
+
+    /**
+     * ListAgents：本会话能用 SendMessage 找到的对象。子 agent 从委派记录列（被回退掉的不列，它已经不接收消息）；
+     * 团队成员从团队状态列，不重复计入子 agent。只看这一层，其他本地 / 云会话不在内。
+     */
+    private fun rosterOf(from: SessionRuntime): List<dev.min.agent.spi.AgentListing> {
+        val members = teams.members(from)
+        val memberSessions = members.mapNotNull { it.session }.toSet()
+        val subagents = from.state.value.children.values
+            .filterNot { it.rewound || it.child in memberSessions }
+            .map { c ->
+                dev.min.agent.spi.AgentListing(
+                    dev.min.agent.spi.AgentListingKind.Subagent, c.name, c.child.value,
+                    state = if (runtimes[c.child]?.state?.value?.turn != null) "running" else "idle",
+                    description = c.description,
+                )
+            }
+        val teammates = members.map { m ->
+            dev.min.agent.spi.AgentListing(
+                dev.min.agent.spi.AgentListingKind.Teammate, m.name, m.session?.value ?: m.name,
+                state = when (m.phase) {
+                    TeamMemberStatus.Phase.NotJoined -> "not_started"
+                    TeamMemberStatus.Phase.Queued -> "queued"
+                    TeamMemberStatus.Phase.Stalled -> "stalled"
+                    TeamMemberStatus.Phase.Running -> "running"
+                    TeamMemberStatus.Phase.Idle -> "idle"
+                },
+            )
+        }
+        return subagents + teammates
     }
 
     /** 团队成员的状态行（界面的团队页读；没有团队返回空）。状态来自日志折叠与成员会话的折叠，不是另存的 */

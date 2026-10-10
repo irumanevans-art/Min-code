@@ -139,6 +139,7 @@ private fun reasonOf(end: TurnEnd?, since: Long?): ResumeReason? = when (end) {
         InterruptCause.EngineExited -> ResumeReason.EngineExited
         InterruptCause.Limit -> ResumeReason.Limit
         InterruptCause.Hook -> ResumeReason.HookStopped
-        InterruptCause.Withdrawn -> null
+        // 撤回与「模型结束了会话」都不续：后者的会话已经锁住，续跑也进不去
+        InterruptCause.Withdrawn, InterruptCause.Ended -> null
     }
 }

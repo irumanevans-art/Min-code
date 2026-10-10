@@ -27,6 +27,7 @@ import dev.min.agent.spi.TurnStarted
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.FakeArtifacts
 import dev.min.agent.testkit.FakeFs
+import dev.min.agent.spi.SessionStore
 import dev.min.agent.testkit.ScriptedModel
 import dev.min.agent.testkit.TEST_MODEL
 import dev.min.agent.testkit.args
@@ -191,7 +192,8 @@ class McpManagerTest {
 
     private suspend fun events(rt: SessionRuntime): List<SessionEvent> = store.peek(rt.sessionId)!!.read().toList().map { it.event }
 
-    private fun ModelRequest.toolNames() = tools.map { it.name }
+    // WaitForMcpServers 有它自己的用例（见文末），这里只看 MCP 工具与 ToolSearch 的增减
+    private fun ModelRequest.toolNames() = tools.map { it.name }.filterNot { it == "WaitForMcpServers" }
 
     @Test
     fun `a new session gets its MCP tools in the first request, written when the first turn starts`() = run {
@@ -497,5 +499,60 @@ class McpManagerTest {
         assertFalse("关了会话但还在等回收（60 秒）", connector.made.single().closed)
         hub.closeUnusedMcp()
         assertTrue("进后台时不等 linger", connector.made.single().closed)
+    }
+
+    // ---- WaitForMcpServers（内核一侧）：工具表里何时出现；端口等的是 pending 的服务器 ----
+
+    /** 与 [hub] 相同，只是可以给环境变量（ENABLE_TOOL_SEARCH） */
+    private fun hubWithEnv(model: dev.min.agent.llm.ModelClient, connector: FakeConnector, env: (String) -> String?, waitMs: Long = 2_000, store: SessionStore = this.store): SessionHub =
+        SessionHub(store, deps(model, env = env), scope).also { it.mcp = McpManager(scope, connector, lingerMs = 60_000, startupWaitMs = waitMs) }
+
+    @Test
+    fun `WaitForMcpServers is offered only when tool search is off and an MCP server is configured`() = run {
+        val off = ScriptedModel(reply(TextPart("好")))
+        val offRt = hubWithEnv(off, FakeConnector(), env = { if (it == "ENABLE_TOOL_SEARCH") "false" else null })
+            .create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        offRt.say("看看")
+        assertTrue(off.requests.single().tools.map { it.name }.contains("WaitForMcpServers"))
+
+        val on = ScriptedModel(reply(TextPart("好")))
+        val onRt = hubWithEnv(on, FakeConnector(), env = { if (it == "ENABLE_TOOL_SEARCH") "true" else null }, store = FileSessionStore(tmp.newFolder("on").toPath(), { 0L }))
+            .create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        onRt.say("看看")
+        assertTrue(on.requests.single().tools.map { it.name }.contains("ToolSearch"))
+        assertFalse(on.requests.single().tools.map { it.name }.contains("WaitForMcpServers"))
+    }
+
+    @Test
+    fun `awaitStartup waits for a pending server to connect, and gives up at the timeout with it still pending`() = run {
+        val slow = FakeConnector(connectDelayMs = 300)
+        val h = hubWithEnv(ScriptedModel(reply(TextPart("一"))), slow, env = { null }, waitMs = 50)
+        val rt = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("第一轮")
+        // 首回合没等到它：现在等，300 毫秒后连上
+        assertEquals("connected", h.mcp.awaitStartup(rt.sessionId, emptyList(), 5_000)["github"])
+
+        val stuck = FakeConnector(connectDelayMs = 10_000)
+        val h2 = hubWithEnv(ScriptedModel(reply(TextPart("一"))), stuck, env = { null }, waitMs = 50, store = FileSessionStore(tmp.newFolder("stuck").toPath(), { 0L }))
+        val rt2 = h2.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt2.say("第一轮")
+        val started = System.nanoTime()
+        assertEquals("pending", h2.mcp.awaitStartup(rt2.sessionId, listOf("github"), 100)["github"])
+        assertTrue("超时就放手，不等到服务器真的连上", (System.nanoTime() - started) < 5_000_000_000L)
+    }
+
+    @Test
+    fun `the model's WaitForMcpServers call waits on this session's own server and reports it connected`() = run {
+        val connector = FakeConnector(connectDelayMs = 300)
+        val model = ScriptedModel(
+            reply(dev.min.agent.protocol.ToolCallPart(dev.min.agent.protocol.CallId("w1"), "WaitForMcpServers", args("timeout" to 5)), stop = dev.min.agent.protocol.StopReason.ToolUse),
+            reply(TextPart("好")),
+        )
+        val rt = hubWithEnv(model, connector, env = { if (it == "ENABLE_TOOL_SEARCH") "false" else null }, waitMs = 50)
+            .create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("等一下 github")
+        val result = events(rt).filterIsInstance<dev.min.agent.spi.ToolOutcome>().single().result
+        assertFalse(result.isError)
+        assertTrue(result.content.filterIsInstance<TextPart>().single().text, result.content.filterIsInstance<TextPart>().single().text.contains("已连上"))
     }
 }

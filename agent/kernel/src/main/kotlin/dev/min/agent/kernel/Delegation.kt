@@ -264,6 +264,7 @@ internal object Reports {
             InterruptedBy.Limit -> "turn-limit"
             InterruptedBy.Hook -> "stopped-by-hook"
             InterruptedBy.Budget -> "stopped-by-budget"
+            InterruptedBy.Ended -> "conversation-ended"
         }
     }
 

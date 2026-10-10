@@ -142,6 +142,10 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         } catch (e: TurnLimitReached) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit)), Durability.Sync)
             false
+        } catch (e: ConversationEndedStop) {
+            // 模型自己结束了会话：安静收尾，不当作失败；那句说明让界面与 CLI 看得到
+            rt.commit(listOf(Note(NoteLevel.Info, CONVERSATION_ENDED_NOTE)) + closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Ended)), Durability.Sync)
+            false
         } catch (e: BudgetExceeded) {
             // 下一个请求被预检拦下：树里已花到限，或当前模型缺 USD 定价（fail-closed）核对不了
             finishBudgetCapped()
@@ -268,6 +272,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     tools.executeAll(turnId, calls)
                 }
             }
+            // EndConversation 落了 conversation_ended：这一批的结果都已落盘，回合就此停下，不再请求模型
+            if (rt.state.value.ended) throw ConversationEndedStop()
             if (rt.state.value.subagentReport?.let { it.turnId == turnId && it.handback } == true) {
                 if (!stopHookContinues(turnId, completed) && !teammateIdleContinues(turnId)) return
                 rt.commit(listOf(dev.min.agent.spi.SubagentReportReady(turnId)), Durability.Sync)
@@ -711,6 +717,12 @@ internal class TurnAbort(message: String, val kind: ModelFailureKind? = null, va
 /** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
 internal class TurnLimitReached : Exception()
 
+/** 模型用 EndConversation 结束了会话：工具批结束后安静停下，不再请求模型（[dev.min.agent.spi.ConversationEnded] 已落盘） */
+internal class ConversationEndedStop : Exception()
+
+/** 会话已由模型结束后又来了用户输入：界面与 CLI 都看得到的那句说明 */
+internal const val CONVERSATION_ENDED_NOTE = "会话已由模型结束。新开一个会话（或 /clear）才能继续。"
+
 /** `--max-budget-usd` 到限（最后一个请求把线压过、没有下一个请求可拦）：回合以 Interrupted(Limit)+limitCause 收尾 */
 internal class TurnBudgetReached : Exception()
 
@@ -731,6 +743,8 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val builtins = deps.tools + if (runtime != null && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList()
     val builtin = (if (allowed == null) builtins else builtins.filter { it.name in allowed })
         .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
+        // 子 agent 与分身从不拿到 EndConversation（CC：Subagents never get the tool）
+        .filterNot { it.name == dev.min.agent.tools.END_CONVERSATION_TOOL_NAME && state.origin != null }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
     val resourceServers = state.visibleMcpResourceServers(deps)
     val resourceTools = if (resourceServers.isEmpty()) emptyList() else listOf(
@@ -739,7 +753,11 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val allMcp = state.visibleMcpTools(deps)
     val search = state.usesMcpToolSearch(deps) && allMcp.isNotEmpty()
     val upfront = if (search) allMcp.filter { it.alwaysLoad } else allMcp
-    val base = builtin + resourceTools + upfront.map { McpToolAdapter(it, mcp) } +
+    // WaitForMcpServers：只在工具搜索关闭（ToolSearch 不替人等）且本会话配了 MCP 服务器时出现，接在 MCP 工具之后
+    val waitForMcp = if (!search && runtime != null && runtime.hub?.mcpWaitFor(runtime)?.states()?.isNotEmpty() == true) {
+        listOf(dev.min.agent.tools.WaitForMcpServersTool)
+    } else emptyList()
+    val base = builtin + resourceTools + upfront.map { McpToolAdapter(it, mcp) } + waitForMcp +
         if (search) listOf(McpToolSearchTool(allMcp, state.loadedMcpTools)) else emptyList()
     // StructuredOutput 排在最后（--json-schema 是这一根会话这次运行的要求；子 agent 与分身不经它交卷）
     val plan = state.origin?.workflowSchema?.let(::StructuredOutputPlan) ?: deps.structuredOutput.takeIf { state.origin == null }

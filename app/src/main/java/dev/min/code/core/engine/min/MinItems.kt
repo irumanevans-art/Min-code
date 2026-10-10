@@ -112,6 +112,7 @@ fun turnEndOf(outcome: TurnOutcome): TurnEnd = when (outcome) {
             InterruptedBy.Hook -> InterruptCause.Hook
             // 花费上限也是一种上限：界面按「达到上限」处理（原因在引擎写的那条 Note 里）
             InterruptedBy.Budget -> InterruptCause.Limit
+            InterruptedBy.Ended -> InterruptCause.Ended
         },
     )
 }
@@ -374,6 +375,8 @@ private class ItemsBuilder(
                     InterruptedBy.Hook -> text.hookStopped(atMs)
                     // 为什么停写在紧挨着的那条 Note（花了多少、上限多少）里，这里只标「已停止」
                     InterruptedBy.Budget -> text.stopped(atMs)
+                    // 会话已由模型结束：只标「已停止」，原因是紧挨着的那条 Note（会话已由模型结束，新开会话才能继续）
+                    InterruptedBy.Ended -> text.stopped(atMs)
                 },
                 isError = false,
             )

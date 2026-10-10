@@ -51,6 +51,7 @@ internal fun ToolResult.effectEvents(state: SessionState, nowMs: Long): List<Ses
                 },
             )
             is SessionEffect.CronDelete -> dev.min.agent.spi.CronCancelled(effect.cronId)
+            is SessionEffect.ConversationEnd -> dev.min.agent.spi.ConversationEnded
         }
         val problem = working.taskProblem(event) ?: working.cronProblem(event)
         if (problem != null) {
@@ -59,6 +60,7 @@ internal fun ToolResult.effectEvents(state: SessionState, nowMs: Long): List<Ses
         }
         working = when (event) {
             is dev.min.agent.spi.McpToolsLoaded -> working.copy(loadedMcpTools = (working.loadedMcpTools + event.names).distinct())
+            is dev.min.agent.spi.ConversationEnded -> working.copy(ended = true)
             is dev.min.agent.spi.CronScheduled, is dev.min.agent.spi.CronCancelled -> working.applyCronEvent(event)
             else -> working.applyTaskEvent(event)
         }

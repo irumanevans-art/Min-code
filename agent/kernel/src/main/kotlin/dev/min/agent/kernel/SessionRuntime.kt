@@ -560,6 +560,11 @@ class SessionRuntime private constructor(
      */
     suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue, scanMcpMentions: Boolean = false): Boolean = inputPrepareLock.withLock {
         if (clientMsgId in state.value.seenInputs) return@withLock false
+        // 会话已由模型结束（EndConversation）：不再开回合，只留一句说明（日志里有，界面与 CLI 都看得到）
+        if (state.value.ended) {
+            commit(listOf(Note(NoteLevel.Warning, CONVERSATION_ENDED_NOTE)), Durability.Sync)
+            return@withLock false
+        }
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
         val workflow = prepareSavedWorkflow(clientMsgId, prepared)
         startsInFlight.incrementAndGet()

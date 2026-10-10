@@ -1113,6 +1113,7 @@
   <string name="min_agent_report_limit">达到回合上限</string>
   <string name="min_agent_report_hook_stopped">被 hook 叫停</string>
   <string name="min_agent_report_budget_stopped">被定时任务的花费上限叫停</string>
+  <string name="min_agent_report_conversation_ended">会话已由模型结束</string>
   <string name="min_agent_report_calls">%1$d 次工具调用</string>
   <string name="min_agent_report_tokens">%1$s tokens</string>
   <string name="min_agent_message_from">来自 %1$s 的消息</string>

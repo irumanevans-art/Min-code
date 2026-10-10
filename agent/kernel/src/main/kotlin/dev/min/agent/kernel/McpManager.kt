@@ -202,6 +202,22 @@ internal class McpManager(
     /** 界面「MCP 服务器」面板用：某个会话的服务器此刻的状态 */
     fun statusOf(sessionId: SessionId): List<McpServerInfo> = bindings[sessionId]?.let { serverInfos(it) }.orEmpty()
 
+    /** 本会话配置里的 MCP 服务器：名字 → 状态字（同 [statusOf]）。没有配置为空 */
+    fun statesOf(sessionId: SessionId): Map<String, String> = statusOf(sessionId).associate { it.name to it.state }
+
+    /**
+     * WaitForMcpServers：等 [servers]（空 = 本会话全部）里还在 pending 的连上或失败，最多 [timeoutMs]。
+     * 已经连上或已经失败的不等；超时仍 pending 的照实留在返回值里。返回等完之后的状态。
+     */
+    suspend fun awaitStartup(sessionId: SessionId, servers: List<String>, timeoutMs: Long): Map<String, String> {
+        val binding = bindings[sessionId] ?: return emptyMap()
+        val pending = binding.entries
+            .filter { (name, entry) -> (servers.isEmpty() || name in servers) && entry.status == PENDING }
+            .values.toList()
+        if (pending.isNotEmpty()) withTimeoutOrNull(timeoutMs) { pending.forEach { it.settled.await() } }
+        return statesOf(sessionId)
+    }
+
     /**
      * 面板的完整一行：[statusOf] 加上 stdio 的 stderr 尾巴与「是否已登录」。
      * 已登录只对远程服务器有意义（看私有仓库里有没有访问令牌，不读出令牌本身）；仓库读不了当作未知（null）
