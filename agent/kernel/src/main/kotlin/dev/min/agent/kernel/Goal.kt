@@ -73,7 +73,7 @@ internal fun GoalState.applyGoal(event: SessionEvent): GoalState = when (event) 
 }
 
 /** `/goal` 的参数解读：无参数 = 显示；清除词 = 清掉；其余整段当完成条件 */
-internal sealed interface GoalCommand {
+sealed interface GoalCommand {
     data object Show : GoalCommand
     data object Clear : GoalCommand
     data class Set(val condition: String) : GoalCommand
@@ -82,7 +82,7 @@ internal sealed interface GoalCommand {
 /** CC 原文：`clear`、`stop`、`off`、`reset`、`none`、`cancel` 都能清掉目标（大小写不计） */
 internal val GOAL_CLEAR_WORDS = setOf("clear", "stop", "off", "reset", "none", "cancel")
 
-internal fun parseGoalCommand(argument: String): GoalCommand {
+fun parseGoalCommand(argument: String): GoalCommand {
     val text = argument.trim()
     return when {
         text.isEmpty() -> GoalCommand.Show

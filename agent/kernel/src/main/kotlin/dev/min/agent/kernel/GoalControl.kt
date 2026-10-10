@@ -28,7 +28,7 @@ sealed interface GoalSetResult {
  * 空闲（没有回合、没有排着的输入）时把条件本身当作用户输入开一回合；忙时只设上，当前回合结束时开始评估。
  * hooks 被整体禁用时拒绝（[goalRefusal]），不静默不做。
  */
-internal suspend fun SessionRuntime.setGoal(condition: String): GoalSetResult {
+suspend fun SessionRuntime.setGoal(condition: String): GoalSetResult {
     goalRefusal(state.value.hooksDisabledBy)?.let { return GoalSetResult.Refused(it) }
     val idle = isQuiescent()
     commit(listOf(GoalSet(condition)), Durability.Sync)
@@ -38,7 +38,7 @@ internal suspend fun SessionRuntime.setGoal(condition: String): GoalSetResult {
 }
 
 /** 清掉进行中的目标（用户手动）。没有目标返回 false（界面说 No goal set） */
-internal suspend fun SessionRuntime.clearGoal(): Boolean =
+suspend fun SessionRuntime.clearGoal(): Boolean =
     commitIf(listOf(GoalCleared(GoalEndReason.User)), Durability.Sync) { it.goal.condition != null } != null
 
 /** 重开会话时：带着进行中的目标恢复，写 [GoalResumed] 把回合与 check-in 计数清零。已达成或已清除的目标没有条件，不恢复 */
@@ -74,4 +74,13 @@ internal fun goalFailureEvents(condition: String?, kind: ModelFailureKind?, mess
             Note(NoteLevel.Warning, "Goal paused：$message。目标还在，你的下一句话会接着评估。"),
         )
     }
+}
+
+/**
+ * `-p` 跑 `/goal`（CC：「runs the loop to completion」）要不要继续等：目标还在、没暂停，而后台工作还在跑——
+ * 它结束时会以 Notification 开回合，评估照常进行；非交互没有空闲 check-in，只能等它自己收完。
+ */
+fun SessionRuntime.goalWaitingOnBackground(): Boolean {
+    val goal = state.value.goal
+    return goal.condition != null && goal.paused == null && background.runningCount() > 0
 }
