@@ -164,8 +164,10 @@ class PermissionCompatTest {
         // 新增宿主凭证边界；普通权限样本没有宿主凭证，用空集与恒等解析保持原来的测试语义。
         val canonicalPath: (GuestPath) -> GuestPath = { it }
         // 普通兼容样本不开启全 shell 分类；新增字段必须显式传入，避免把反射签名失配当成规则差异。
-        val ctor = policyContextClass.constructors.single { it.parameterCount == 13 }
-        return ctor.newInstance(mode, rules, cwd.value, home.value, scopeOf, null, directories, emptySet<GuestPath>(), canonicalPath, null, emptyList<String>(), false, null)
+        // 13 个值 + Kotlin 默认参数的标记（DefaultConstructorMarker，最后一个）。--restricted 的 confineToWorkingDirectories
+        // 是新增的显式字段（普通兼容样本不开限制，传 false）
+        val ctor = policyContextClass.constructors.single { it.parameterCount == 14 }
+        return ctor.newInstance(mode, rules, cwd.value, home.value, scopeOf, null, directories, emptySet<GuestPath>(), canonicalPath, null, emptyList<String>(), false, false, null)
     }
 
     /** PolicyEngine.evaluate(ask, readOnly, context)；Verdict 子类名映射成 allow / ask / deny */
