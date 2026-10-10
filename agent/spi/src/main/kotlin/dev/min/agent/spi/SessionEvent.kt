@@ -288,6 +288,9 @@ sealed interface TurnOutcome {
 /** [TurnOutcome.Failed.cause] 的取值：结构化输出（--json-schema）重试用尽——CC 的 result.subtype `error_max_structured_output_retries` 靠它区分 */
 const val FAILURE_CAUSE_STRUCTURED_OUTPUT_RETRIES = "structured_output_retries"
 
+/** [TurnEnded.limitCause] 的取值：`--max-budget-usd` 的本次运行花费到限（区别于回合数到限）——CC 的 result.subtype `error_max_budget_usd` 靠它区分 */
+const val LIMIT_CAUSE_MAX_BUDGET_USD = "max_budget_usd"
+
 @Serializable
 enum class InterruptedBy {
     @SerialName("user") User,
@@ -317,6 +320,11 @@ data class TurnEnded(
      * 旧日志没有它（null），界面退回用事件自己的时间
      */
     val lastActivityAtMs: Long? = null,
+    /**
+     * outcome 是 [InterruptedBy.Limit] 时**为什么**到限（[LIMIT_CAUSE_MAX_BUDGET_USD]：本次运行的 USD 花费到限；
+     * null = 回合数到限等旧有原因）。给读端区分用：-p 的 result.subtype、界面文案。旧日志缺字段 = 没写原因
+     */
+    val limitCause: String? = null,
 ) : SessionEvent
 
 // ---- 给人看的 ----

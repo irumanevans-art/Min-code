@@ -19,10 +19,10 @@ internal class ModelBilling(private val rt: SessionRuntime) {
     private val lock = Mutex()
 
     fun exceeded(): Boolean {
-        val limit = rt.deps.maxBudgetUsd ?: return false
-        val state = rt.state.value
-        return state.unpricedModelCalls > 0 || state.modelCosts.any { it.key != "USD" && it.value > 0 } ||
-            state.modelCosts.getOrDefault("USD", 0.0) >= limit
+        if (rt.deps.maxBudgetUsd == null) return false
+        // 判定在「一次运行」的账本上（整棵树、本次运行，见 [SessionHub.budget]）：会话自己折叠的 modelCosts
+        // 带着续跑前的历史，且看不见树里别的会话花掉的，不能当预算用
+        return rt.hub?.budget?.exceeded() ?: false
     }
 
     fun stream(model: ResolvedModel, request: ModelRequest) = flow {
@@ -43,8 +43,9 @@ internal class ModelBilling(private val rt: SessionRuntime) {
                 model.client.stream(request.copy(timeoutMs = rt.deps.modelTimeoutMs)).collect { event ->
                     if (event is ModelStreamEvent.Completed) {
                         val charged = pricing?.let { cost(it, event.usage) }
-                        rt.commit(listOf(ModelCharged(model.profile.ref, event.usage, charged?.amount, charged?.currency)), Durability.Sync)
-                        run?.charge(charged?.amount, charged?.currency)
+                        val record = ModelCharged(model.profile.ref, event.usage, charged?.amount, charged?.currency)
+                        rt.commit(listOf(record), Durability.Sync)
+                        run?.charge(record)
                     }
                     emit(event)
                 }

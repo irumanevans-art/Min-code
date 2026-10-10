@@ -342,6 +342,9 @@ class SessionRuntime private constructor(
                 if (sealed || !precondition(_state.value)) return@withLock null
                 val records = log.append(events, durability)
                 _state.value = records.fold(_state.value) { s, r -> s.apply(r) }
+                // 「一次运行」的账本从这里喂（--max-budget-usd）：树里任何会话提交 model_charged 都记到它的根名下。
+                // 只数本程提交的事件——重放开来的旧回合不进这本账，预算属于这一次运行
+                hub?.budget?.onCommit(_state.value.origin?.root ?: sessionId, events)
                 if (events.any { (it is InputReceived && it.origin == InputOrigin.User) || it is dev.min.agent.spi.TurnEnded }) lastMcpActivity = mcpActivitySequence.incrementAndGet()
                 records
             }

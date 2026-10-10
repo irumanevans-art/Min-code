@@ -72,7 +72,7 @@ class AutoReviewerTest {
 
     private suspend fun session(reviewer: ModelClient, command: String = "touch /workspace/out", config: AutoModeConfig = AutoModeConfig(), timeout: Long = 600_000, budget: Double? = null,
         hookEvent: String? = null, hookBehavior: String = "allow", parallelReads: Boolean = false, rules: List<RuleEntry> = emptyList(), mainTurns: Int = 1,
-        mode: PermissionMode = PermissionMode.Auto): SessionRuntime {
+        mode: PermissionMode = PermissionMode.Auto, inHub: Boolean = false): SessionRuntime {
         val calls = if (parallelReads) arrayOf(command(command), command(command).copy(callId = CallId("c2"))) else arrayOf(command(command))
         val main = ScriptedModel(*(1..mainTurns).flatMap { i -> listOf(reply(*calls.map { if (i == 1) it else it.copy(callId = CallId("c$i")) }.toTypedArray(), stop = StopReason.ToolUse, usage = Usage()), reply(TextPart("finished"), usage = Usage())) }.toTypedArray())
         val tool = if (parallelReads) object : Tool<JsonObject> by bash { override val traits = ToolTraits(readOnly = true, concurrencySafe = true) } else bash
@@ -87,11 +87,13 @@ class AutoReviewerTest {
         }), platform = "test", zone = base.zone,
             retry = base.retry, modelTimeoutMs = timeout, maxBudgetUsd = budget,
             credentialPaths = setOf(GuestPath("/root/.min-agent/mcp-oauth.json")))
+        // 预算判定在 Hub 的「一次运行」账本上：要测到限行为就得把会话放进 Hub（无 Hub 的独立会话没有运行账本）
+        val hub = if (inHub) SessionHub(store, deps, scope) else null
         return SessionRuntime.create(store, LogHeader(LOG_FORMAT_VERSION, SessionId("auto-${++sessionNo}"), 0),
             SessionCreated(GuestPath("/workspace"), TEST_MODEL, mode), deps, scope,
             initial = listOfNotNull(PermissionRulesLoaded(rules), AutoReviewSettingsLoaded(config, AutoModeReviewer(small)), hookEvent?.let {
                 HooksLoaded(listOf(HookSourceData("user", Json.parseToJsonElement("""{"$it":[{"matcher":"Bash","hooks":[{"type":"http","url":"https://hooks.invalid/review"}]}]}""").jsonObject)))
-            }))
+            }), hub = hub)
     }
 
     private suspend fun started(rt: SessionRuntime): SessionState {
@@ -519,10 +521,12 @@ class AutoReviewerTest {
     }
 
     @Test fun `review charge reaching budget falls back to human and blocks further calls`() = run {
-        val rt = session(ScriptedModel(reply(TextPart(decision("allow")), usage = Usage(inputTokens = 100))), budget = 0.00005)
+        val rt = session(ScriptedModel(reply(TextPart(decision("allow")), usage = Usage(inputTokens = 100))), budget = 0.00005, inHub = true)
         assertTrue(started(rt).phaseOf(CallId("c")) is CallPhase.AwaitingApproval)
         assertTrue(ran.isEmpty())
-        assertEquals(0.0001, rt.state.value.modelCosts.getValue("USD"), 0.000000001)
+        assertEquals(0.0001, rt.state.value.modelCosts.getValue("USD"), 0.0)
         assertTrue(rt.modelBilling.exceeded())
+        // 审查的请求走 ModelBilling：计费进「一次运行」的账本（H3：辅助请求逐类可核对）
+        assertEquals(0.0001, rt.hub!!.budget.spentUsd(), 1e-9)
     }
 }

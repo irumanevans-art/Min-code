@@ -135,4 +135,42 @@ class CliResultTest {
         // 没有被拒的审批时整个键不出现
         assertNull(CliResult("s", emptyList()).json()["permission_denials"])
     }
+
+    @Test
+    fun `a budget cap run reports error_max_budget_usd and its error text names the flag`() {
+        val events = listOf(
+            record(TurnEnded(TurnId("t"), TurnOutcome.Interrupted(InterruptedBy.Limit), Usage(), 0, limitCause = dev.min.agent.spi.LIMIT_CAUSE_MAX_BUDGET_USD)),
+        )
+        val result = CliResult("s", events)
+        assertEquals("error_max_budget_usd", result.subtype)
+        assertEquals(listOf("到达 --max-budget-usd 的花费上限"), result.errors)
+        // 没写原因的 Limit 依旧是回合数到限
+        assertEquals("error_max_turns", CliResult("s", listOf(record(TurnEnded(TurnId("t"), TurnOutcome.Interrupted(InterruptedBy.Limit), Usage(), 0)))).subtype)
+    }
+
+    @Test
+    fun `cost totals follow the run ledger across the tree, multi-currency stays split`() {
+        val usd = dev.min.agent.spi.ModelCharged(ModelRef("test", "m"), Usage(inputTokens = 10), 1.0, "USD")
+        val cny = dev.min.agent.spi.ModelCharged(ModelRef("test", "cn"), Usage(inputTokens = 5), 7.0, "CNY")
+        val compactionFirst = dev.min.agent.spi.ModelCharged(ModelRef("test", "m"), Usage(inputTokens = 3), 0.5, "USD")
+
+        // 全 USD（含首个请求之前的压缩那笔，M5）：CC 的 total_cost_usd
+        val allUsd = CliResult("s", listOf(record(compactionFirst), record(usd))).json()
+        assertEquals(1.5, allUsd["total_cost_usd"]!!.jsonPrimitive.content.toDouble(), 1e-9)
+        assertNull(allUsd["total_cost"])
+
+        // 跨币种：Min 自己的 total_cost 按币种分列，不冒充换算过
+        val mixed = CliResult("s", listOf(record(usd)), treeCost = dev.min.agent.llm.CostTotals(
+            mapOf("USD" to 1.0, "CNY" to 7.0), 0, emptyMap(),
+        )).json()
+        assertNull(mixed["total_cost_usd"])
+        assertEquals(setOf("USD", "CNY"), mixed["total_cost"]!!.jsonObject.keys)
+        assertEquals(7.0, mixed["total_cost"]!!.jsonObject["CNY"]!!.jsonPrimitive.content.toDouble(), 1e-9)
+
+        // 树级总账优先于根会话事件：子 agent 的花费也算进这次运行
+        val tree = CliResult("s", listOf(record(usd)), treeCost = dev.min.agent.llm.CostTotals(
+            mapOf("USD" to 3.0), 0, emptyMap(),
+        )).json()
+        assertEquals(3.0, tree["total_cost_usd"]!!.jsonPrimitive.content.toDouble(), 1e-9)
+    }
 }

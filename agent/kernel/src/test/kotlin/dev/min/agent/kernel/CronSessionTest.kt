@@ -63,7 +63,11 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -170,7 +174,29 @@ class CronSessionTest {
         }
     }
 
-    private val tools: List<Tool<*>> = listOf(CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, probe, agentTool, write)
+    /** 把入参转给端口的 TeamCreate（与 TeamSessionTest 同款）：内核测试不依赖 :agent:tools */
+    private val teamCreate = object : Tool<JsonObject> {
+        override val name = "TeamCreate"
+        override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+        override val traits = ToolTraits(readOnly = true, delegates = true)
+        override fun description(profile: HarnessProfile) = "建团队"
+        override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
+        override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "建团队")
+        override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            val specs = input.getValue("members").jsonArray.map {
+                val o = it.jsonObject
+                dev.min.agent.spi.TeamMemberSpec(o.getValue("name").jsonPrimitive.content, o["agent_type"]?.jsonPrimitive?.content, o.getValue("prompt").jsonPrimitive.content)
+            }
+            emit(ToolProgress.Done(ctx.agents.team(dev.min.agent.spi.TeamOp.Create(specs))))
+        }
+    }
+
+    private fun createTeamCall(id: String, vararg names: String) = ToolCallPart(
+        CallId(id), "TeamCreate",
+        JsonObject(mapOf("members" to JsonArray(names.map { n -> args("name" to n, "prompt" to "做 $n 的活") }))),
+    )
+
+    private val tools: List<Tool<*>> = listOf(CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, probe, agentTool, write, teamCreate)
 
     private fun deps(model: ModelClient, profile: dev.min.agent.llm.ModelProfile = pricedProfile): KernelDeps {
         val base = testDeps(model, tools)
@@ -745,6 +771,53 @@ class CronSessionTest {
         assertEquals(0, state.crons.single().overruns)
         assertTrue(events(rt.sessionId).none { it is dev.min.agent.spi.CronBudgetStopped || it is CronExpired })
         assertLogIsTruth(rt)
+    }
+
+    @Test
+    fun `a member queued for a slot keeps the tree unquiet - its cost stays under the run cap`() = run {
+        // 名额是 Hub 级的（并发 1）：树 1 的成员 m1 占着名额挂着不结束，树 2 的成员 m2 只能排队——
+        // 还没开跑、没有回合，但名额一空它就会开跑、就会花钱。此时树 2 的定时运行答完收尾：
+        // 「整棵树安静」的判定要是把排队的 m2 算作空闲，这次运行的记账就被撤掉，m2 开跑后的花费
+        // 漏出上限。排队的成员要算「还没安静」，记账留到它跑完
+        val m1Gate = CompletableDeferred<Unit>()
+        val gatedM1: Step = { req -> flow { m1Gate.await(); emitAll(reply(TextPart("m1 做完了"))(req)) } }
+        val model = RoutingModel { req ->
+            val who = Regex("成员「([^」]+)」").find(req.messages.first().parts.filterIsInstance<TextPart>().firstOrNull()?.text ?: "")?.groupValues?.get(1)
+            when {
+                who == "m1" -> gatedM1
+                // m2 的开场任务先探一针，第二个请求（0.015 已花、上限 0.02）该被这次运行的上限拦下
+                who == "m2" && req.messages.size <= 2 -> reply(ToolCallPart(CallId("m2p"), "Probe", args()), stop = StopReason.ToolUse)
+                who == "m2" -> reply(TextPart("m2 做完了"))
+                req.last() == "组个团队1" -> reply(createTeamCall("tc1", "m1"), stop = StopReason.ToolUse)
+                req.last() == "组个团队2" -> reply(createTeamCall("tc2", "m2"), stop = StopReason.ToolUse)
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, limits = HubLimits(teamMaxConcurrent = 1))
+        val rt1 = h.root()
+        rt1.send(ClientMsgId("u1"), listOf(TextPart("组个团队1")))
+        rt1.awaitIdle()
+        val m1 = rt1.state.value.team!!.members.single().let { h.get(it.session!!)!! }
+        assertTrue("m1 在跑（挂着占名额）", m1.state.value.turn != null)
+
+        val rt2 = h.root()
+        rt2.send(ClientMsgId("u2"), listOf(TextPart("组个团队2")))
+        rt2.awaitIdle()
+        val m2 = rt2.state.value.team!!.members.single().let { h.get(it.session!!)!! }
+        assertEquals("m2 还在排队（没开跑）", TeamMemberStatus.Phase.Queued, h.teamMembers(rt2.sessionId).single().phase)
+
+        schedule(rt2, budget = 0.02)
+        h.fireOnce(rt2, 1) // 触发的那一回合花 0.015（< 0.02，平静结束）；此刻的收尾判定是这条测试的靶子
+        m1Gate.complete(Unit) // 放 m1 走：名额空出来，排队的 m2 这才开跑
+
+        m2.state.first { it.turn == null && it.lastTurn != null }
+        m2.awaitIdle()
+        // m2 的报告会叫醒负责人再开一回合：等它进了负责人的历史、负责人也安静，再比对状态
+        rt2.state.first { s -> s.history.any { h -> h is HistoryEntry.User && h.parts.any { p -> (p as? TextPart)?.text?.contains("subagent-report") == true } } }
+        settle(rt2)
+        assertEquals("m2 的第二个请求被这次运行的上限拦下", dev.min.agent.spi.TurnOutcome.Interrupted(dev.min.agent.spi.InterruptedBy.Budget), m2.state.value.lastTurn!!.outcome)
+        assertTrue("这次运行被停下（记账没在 m2 开跑前撤掉）", events(rt2.sessionId).any { it is dev.min.agent.spi.CronBudgetStopped })
+        assertLogIsTruth(rt2)
     }
 
     @Test

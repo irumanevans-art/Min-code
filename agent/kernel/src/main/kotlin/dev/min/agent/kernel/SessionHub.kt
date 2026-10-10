@@ -261,6 +261,9 @@ class SessionHub(
     /** 定时任务的运行时：到点触发、过期、单次花费上限（状态在根会话日志的折叠里） */
     internal val crons = CronEngine(this, deps, scope, enabled = { this.limits.cronEnabled }) { this.limits.cronMaxBudgetUsd }
 
+    /** `--max-budget-usd` 的「一次运行」账本：整棵会话树、本次运行（树里各会话提交 `model_charged` 时喂，见 [SessionRuntime.commitIf]） */
+    internal val budget = RunBudget(deps.maxBudgetUsd)
+
     /**
      * 宿主设置变了（或启动时设置快照晚于 Hub 才读出来）：更新团队并发上限与定时任务花费天花板，之后的决定立刻按新值。
      * 调高并发上限会放出正在排队的成员；调低不杀正在跑的，只是之后不再放新的。越界的值（并发不在 1..8）抛
@@ -627,6 +630,17 @@ class SessionHub(
     }
 
     /**
+     * 预算到限时停掉在跑的后台子 agent（CC changelog：running background agents halted）。只由**根会话**的
+     * [TurnRunner] 调（见 [TurnRunner.finishBudgetCapped]）：这里天然排除根自己——发起检查的根会话正走在
+     * Limit 收尾的路上，打断它会把 Limit 顶成中断；前台子 agent 此刻本来就是闲的（父回合正等着它们的报告），
+     * 停了报告就没人收。到限的子 agent 只收自己的回合，不经这里。报告按 [stopTree] 的口径静音：
+     * 被停的子 agent 不该再往根会话投报告——那会触发新回合，正是预算要拦的
+     */
+    internal suspend fun haltChildrenOf(rootId: SessionId) {
+        for (child in runtimes[rootId]?.state?.value?.children?.keys.orEmpty()) stopTree(child)
+    }
+
+    /**
      * 关掉一棵子树：先 [stopTree]，再卸下（日志不动，之后 [open] 能重开）。界面「关闭会话」用它，[close] 只关空闲的。
      * 停树与卸下之间可能又起了新回合（刚被唤醒的父会话、刚委派的子会话），所以最多重试 [STOP_ROUNDS] 轮；仍卸不下返回 false
      */
@@ -803,6 +817,9 @@ class SessionHub(
     /** 在线的会话；不打开 */
     fun get(id: SessionId): SessionRuntime? = runtimes[id]
 
+    /** 「一次运行」的花费总账（-p 结果按根汇总）：树里各会话这次运行提交的 `model_charged` 折出，不含 resume 的旧花费 */
+    fun runCostOf(root: SessionId): dev.min.agent.llm.CostTotals = budget.totalsFor(root)
+
     /** 给某个会话某个回合里某次工具调用用的端口 */
     internal fun portFor(rt: SessionRuntime, turnId: TurnId, callId: CallId): AgentPort = object : AgentPort {
         override suspend fun delegate(request: DelegateRequest): DelegateResult = spawn(rt, turnId, callId, request)
@@ -851,6 +868,10 @@ class SessionHub(
         var ps = parent.state.value
         val parentOrigin = ps.origin
         if (parentOrigin?.fork == true) return DelegateResult.Rejected("你是分身，直接执行任务，不要再委派。")
+        // 预算到限后新的子 agent 不再派生（CC changelog：new spawns denied）——分身、团队成员一样拦在门口
+        if (budget.exceeded()) {
+            return DelegateResult.Rejected("本次运行的 USD 花费已到 --max-budget-usd 的上限，不再派生子 agent。")
+        }
         val depth = (parentOrigin?.depth ?: 0) + 1
         if (depth > limits.maxDepth) {
             return DelegateResult.Rejected("子 agent 最多嵌套 ${limits.maxDepth} 层，这里不能再委派了。直接自己做。")
@@ -1164,8 +1185,13 @@ class SessionHub(
         }
     }
 
-    /** 整棵树此刻都没有回合在跑（含启动中的）：定时运行的记账要等到这时才算结束 */
-    internal fun treeTurnsIdle(id: SessionId): Boolean = subtreeOnline(id).all { runtimes[it]?.isTurnIdle() ?: true }
+    /**
+     * 整棵树此刻都没有回合在跑（含启动中的）：定时运行的记账要等到这时才算结束。
+     * 排队等并发名额、还没开跑的团队成员**不算安静**——它们没有回合，但名额一空就会开跑、就会花钱，
+     * 记账要是在它们开跑前撤掉，它们的花费就漏出这次运行的上限（名额是 Hub 级的，可能被别的树占着）
+     */
+    internal fun treeTurnsIdle(id: SessionId): Boolean =
+        subtreeOnline(id).all { (runtimes[it]?.isTurnIdle() ?: true) && !teams.isWaiting(it) }
 
     /** [id] 与它在线的后代（按 SubagentOrigin.parent 往下找） */
     internal fun subtreeOnline(id: SessionId): List<SessionId> {
