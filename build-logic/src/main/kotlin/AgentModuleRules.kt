@@ -25,6 +25,7 @@ object AgentModuleRules {
     private const val TESTKIT = ":agent:testkit"
     private const val CLI = ":agent:cli"
     private const val WORKFLOW = ":agent:workflow"
+    private const val OTEL = ":agent:otel"
 
     private val BELOW_KERNEL = setOf(PROTOCOL, SPI, STORE, LLM, POLICY, CONTEXT, TOOLS, EXT, MCP)
 
@@ -42,7 +43,9 @@ object AgentModuleRules {
         HOST to setOf(PROTOCOL, SPI),
         KERNEL to BELOW_KERNEL,
         TESTKIT to BELOW_KERNEL + KERNEL,
-        CLI to BELOW_KERNEL + KERNEL + TESTKIT + HOST,
+        // 从会话日志派生的遥测（OTLP/HTTP JSON 与本机 JSONL）：只读日志事件，不认识内核；由宿主（CLI、App）驱动导出
+        OTEL to setOf(PROTOCOL, SPI),
+        CLI to BELOW_KERNEL + KERNEL + TESTKIT + HOST + OTEL,
         // 唯一原生 Android 宿主适配：其他 agent 模块不得反向依赖它。
         WORKFLOW to setOf(SPI, EXT),
     )
