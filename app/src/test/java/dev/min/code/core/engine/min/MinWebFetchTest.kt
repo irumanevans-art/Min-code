@@ -38,14 +38,15 @@ class MinWebFetchTest {
 
     @Test fun `WebFetch is appended after the base tool list, nothing before it moved, and the background-task tools follow it`() {
         val names = minTools().map { it.name }
-        assertEquals(listOf("WebFetch", "Monitor", "TaskOutput"), names.takeLast(3))
+        // 末尾依次是 WebFetch、后台任务两件，最后是 ReportFindings（只往末尾追加）
+        assertEquals(listOf("WebFetch", "Monitor", "TaskOutput", "ReportFindings"), names.takeLast(4))
         assertEquals(
             listOf(
                 "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "Agent", "SendMessage", "TaskStop",
                 "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
                 "Skill", "EnterWorktree", "ExitWorktree", "TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup",
             ),
-            names.dropLast(3),
+            names.dropLast(4),
         )
         assertTrue("WebSearch 不在基础表里：它随设置进出", "WebSearch" !in names)
     }
