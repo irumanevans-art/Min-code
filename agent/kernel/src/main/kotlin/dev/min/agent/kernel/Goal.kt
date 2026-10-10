@@ -173,3 +173,16 @@ internal fun goalRefusal(disabledBy: HooksDisabledBy?): String? = when (disabled
     HooksDisabledBy.DisableAllHooks -> "/goal 不可用：hooks 被 disableAllHooks 关掉了（/goal 是 prompt 型 Stop hook，hooks 关着它就跑不起来）。打开 hooks 后再试。"
     HooksDisabledBy.ManagedOnly -> "/goal 不可用：托管设置里有 allowManagedHooksOnly，只留托管层的 hooks，/goal 不在其内。"
 }
+
+/**
+ * 从一整行输入里取 `/goal` 的参数：`/goal` 本身 = 空串，`/goal 条件` = 条件；不是 `/goal` 开头的返回 null（`/goals` 之类不算）。
+ * CLI 与 App 共用：两边都要认同一条输入。
+ */
+fun goalArgumentOf(line: String): String? {
+    val text = line.trim()
+    return when {
+        text == "/goal" -> ""
+        text.startsWith("/goal ") -> text.removePrefix("/goal").trim()
+        else -> null
+    }
+}

@@ -126,6 +126,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             slashCommands = text.slashCommands() + input.workflowCommands,
             team = minTeamView(input.root, input.nodes, input.teamMembers, threads),
             schedule = minScheduleView(input.cronBoard, input.cronsEnabled),
+            goal = minGoalView(root.goal),
             plan = planOf(root),
             stopping = input.stopping,
             errorMessage = input.errorMessage,

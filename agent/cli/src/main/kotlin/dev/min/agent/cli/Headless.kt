@@ -1,6 +1,7 @@
 package dev.min.agent.cli
 
 import dev.min.agent.kernel.GoalCommand
+import dev.min.agent.kernel.goalArgumentOf
 import dev.min.agent.kernel.GoalSetResult
 import dev.min.agent.kernel.parseGoalCommand
 import dev.min.agent.kernel.savedWorkflows

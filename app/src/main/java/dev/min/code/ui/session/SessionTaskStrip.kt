@@ -40,10 +40,13 @@ internal fun SessionTaskStrip(
     showAgents: Boolean = false,
     teamLabel: String? = null,
     onOpenTeam: () -> Unit = {},
+    /** 进行中的 `/goal` 的标记文字（条件 · 评估次数）；null = 没有目标。点开是 [GoalSheet] */
+    goalLabel: String? = null,
+    onOpenGoal: () -> Unit = {},
     agents: @Composable RowScope.() -> Unit = {},
 ) {
     AnimatedVisibility(
-        visible = shellCount > 0 || showAgents || teamLabel != null,
+        visible = shellCount > 0 || showAgents || teamLabel != null || goalLabel != null,
         modifier = modifier,
         enter = InkMotion.expand,
         exit = InkMotion.collapse,
@@ -58,6 +61,7 @@ internal fun SessionTaskStrip(
             // 槽自己决定怎么占宽（切换条是横向滚动的 weight(1f)）；空着时下面的弹性把 shell 标记推到右边
             agents()
             if (!showAgents) Spacer(Modifier.weight(1f))
+            if (goalLabel != null) PanelChip(icon = null, label = goalLabel, onClick = onOpenGoal, modifier = Modifier.animateContentSize(InkMotion.spatial()))
             if (teamLabel != null) PanelChip(icon = null, label = teamLabel, onClick = onOpenTeam, modifier = Modifier.animateContentSize(InkMotion.spatial()))
             // 数到 0 时标记先沉下去，整条再收；退场期间仍写着消失前那个数，不闪成「0 shells」
             val shown = remember { LastNonNull(shellCount.takeIf { it > 0 }) }.update(shellCount.takeIf { it > 0 }) ?: 1

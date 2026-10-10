@@ -1,6 +1,7 @@
 package dev.min.agent.cli
 
 import dev.min.agent.kernel.GoalCommand
+import dev.min.agent.kernel.goalArgumentOf
 import dev.min.agent.kernel.GoalSetResult
 import dev.min.agent.kernel.GoalState
 import dev.min.agent.kernel.SessionRuntime
@@ -21,16 +22,6 @@ import java.io.PrintStream
 
 /** `-p` 跑目标时，后台工作还在跑就每隔这么久看一次（毫秒） */
 internal const val GOAL_WAIT_POLL_MS = 500L
-
-/** 把 `/goal` 的参数从一整行里取出来；不是 `/goal` 开头的返回 null（`/goals` 之类不算） */
-internal fun goalArgumentOf(line: String): String? {
-    val text = line.trim()
-    return when {
-        text == "/goal" -> ""
-        text.startsWith("/goal ") -> text.removePrefix("/goal").trim()
-        else -> null
-    }
-}
 
 /** `/goal` 无参数时的状态（CC：条件、评估次数、最近理由；暂停、后台等待各说一句；没有进行中的就说最近结束的） */
 internal fun goalStatusText(goal: GoalState): String {

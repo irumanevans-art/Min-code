@@ -1,6 +1,7 @@
 package dev.min.agent.cli
 
 import dev.min.agent.kernel.GoalRecord
+import dev.min.agent.kernel.goalArgumentOf
 import dev.min.agent.kernel.GoalState
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.spi.Delivery
