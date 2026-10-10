@@ -56,7 +56,7 @@ class NetworkSandboxTest {
         val proxy = Proxy()
         val raw = buildJsonObject { put("command", if (local) "printf local" else "curl https://example.test"); if (hosts.isNotEmpty()) put("allowed_domains", JsonArray(hosts.map(::JsonPrimitive))) }
         val model = ScriptedModel(reply(ToolCallPart(CallId("c"), "Bash", raw), stop = StopReason.ToolUse), reply(TextPart("finished")))
-        val base = testDeps(model, listOf(BashTool))
+        val base = testDeps(model, listOf(BashTool()))
         val exec = object : Exec {
             override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult {
                 assertEquals("http://test-credential@127.0.0.1:8001", command.env["HTTPS_PROXY"])
@@ -66,7 +66,7 @@ class NetworkSandboxTest {
             }
             override suspend fun kill(handle: ExecHandle) { }
         }
-        val deps = KernelDeps(base.clock, base.ids, models = { ref -> ResolvedModel(TEST_PROFILE.copy(ref = ref), if (ref.providerId == "review") requireNotNull(reviewer) else model) }, tools = listOf(BashTool),
+        val deps = KernelDeps(base.clock, base.ids, models = { ref -> ResolvedModel(TEST_PROFILE.copy(ref = ref), if (ref.providerId == "review") requireNotNull(reviewer) else model) }, tools = listOf(BashTool()),
             host = HostPorts(fs, FakeSearch(), exec, { FakeArtifacts() }), platform = "test", zone = base.zone,
             memoryHome = GuestPath("/root"), trustProjectHooks = { true }, networkProxy = proxy, networkApprovalTimeoutMs = timeout,
             autoModeReviewer = reviewer?.let { AutoModeReviewer(ModelRef("review", "small")) })

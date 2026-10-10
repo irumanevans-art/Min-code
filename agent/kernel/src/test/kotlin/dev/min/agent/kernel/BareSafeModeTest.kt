@@ -272,6 +272,43 @@ class BareSafeModeTest {
         assertTrue(rt.state.value.toolResults.getValue(CallId("c1")).isError)
     }
 
+    // ---- system reminder ----
+
+    /**
+     * Min 没有「读过的文件在磁盘上变了」的文件监视提醒；内核自己往请求里附加的提醒是 Fold 在 CwdChanged 上
+     * 写的「工作目录变了」一段（连同该目录重读到的记忆小节），模型视图统一包成 <system-reminder>。
+     * CC 原文（headless 页 bare mode）：bare 下这类随消息附加的提醒一概不加。
+     */
+    @Test
+    fun `对照组：普通档把换目录提醒包成 system-reminder 发给模型`() = run {
+        seed()
+        val model = ScriptedModel(reply(TextPart("done")))
+        val h = hub(Customizations.Full, model, listOf(read), FakeExec())
+        val rt = createIn(h)
+        rt.changeCwd(GuestPath("/workspace/sub"), null)
+        rt.say("查一下")
+        val request = model.requests.single()
+        assertTrue(
+            "普通档的请求该带换目录提醒：${request.messages.last().parts}",
+            request.messages.any { m -> m.parts.any { it is TextPart && it.text.contains("<system-reminder>") && it.text.contains("Working directory changed") } },
+        )
+    }
+
+    @Test
+    fun `--bare 不给请求附加 system reminder`() = run {
+        seed()
+        val model = ScriptedModel(reply(TextPart("done")))
+        val h = hub(Customizations.Bare, model, listOf(read), FakeExec())
+        val rt = createIn(h)
+        rt.changeCwd(GuestPath("/workspace/sub"), null)
+        rt.say("查一下")
+        val request = model.requests.single()
+        assertTrue(
+            "bare 的请求不该有 system reminder：${request.messages.flatMap { m -> m.parts.filterIsInstance<TextPart>().map { it.text } }}",
+            request.messages.none { m -> m.parts.any { it is TextPart && "<system-reminder>" in it.text } },
+        )
+    }
+
     // ---- 子 agent ----
 
     @Test

@@ -42,7 +42,7 @@ class BashRequestSnapshotTest {
             val profile = requireNotNull(catalog.model(ModelRef("deepseek-openai", "deepseek-flash")))
             val provider = requireNotNull(catalog.provider(profile.ref.providerId)).copy(baseUrl = "http://127.0.0.1:${server.address.port}")
             val harness = HarnessProfile(profile.family, profile.editStyle)
-            val request = ModelRequest(profile = profile, system = listOf("stable"), tools = listOf(ToolSpec(BashTool.name, BashTool.description(harness), BashTool.inputSchema)), messages = listOf(ModelMessage(Role.User, listOf(TextPart("run tests")))))
+            val request = ModelRequest(profile = profile, system = listOf("stable"), tools = listOf(ToolSpec(BashTool().name, BashTool().description(harness), BashTool().inputSchema)), messages = listOf(ModelMessage(Role.User, listOf(TextPart("run tests")))))
             runBlocking { OpenAIChatClient(provider, UrlConnectionTransport(), Secrets { Secret("test-local") }).stream(request).toList() }
             val actual = (Json.parseToJsonElement(received.get()) as JsonObject)["tools"] as JsonArray
             val expected = Json.parseToJsonElement("""

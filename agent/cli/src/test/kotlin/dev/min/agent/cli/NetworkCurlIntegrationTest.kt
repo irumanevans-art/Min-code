@@ -38,7 +38,7 @@ class NetworkCurlIntegrationTest {
                     val fs = FakeFs().apply { put("/root/.claude/settings.json", """{"sandbox":{"enabled":true,"network":{"allowedDomains":["allowed.test"],"deniedDomains":["denied.test"]}},"permissions":{"allow":["Bash"]}}""") }
                     val command = "curl --fail --silent --show-error http://$host/"
                     val model = ScriptedModel(reply(ToolCallPart(CallId("c"), "Bash", args("command" to command)), stop = StopReason.ToolUse), reply(TextPart("done")))
-                    val base = testDeps(model, listOf(BashTool))
+                    val base = testDeps(model, listOf(BashTool()))
                     val shell = if (System.getProperty("os.name").startsWith("Windows")) listOf("C:/Program Files/Git/bin/bash.exe", "-c") else listOf("bash", "-c")
                     val exec = LocalExec({ root }, root.resolve("logs"), GuestPath("/logs"), shell)
                     val deps = KernelDeps(base.clock, base.ids, base.models, base.tools, HostPorts(fs, FakeSearch(), exec, { FakeArtifacts() }), "test", base.zone,
