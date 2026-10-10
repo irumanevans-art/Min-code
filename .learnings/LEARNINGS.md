@@ -2432,4 +2432,25 @@ SubagentHandback 初版字段用 report；官方 hooks 对 Agent PostToolUse 与
 - Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoActionGate.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/AutoSpawnTest.kt
 - Tags: auto, report, mode-change, concurrency
 
+## [LRN-20261010-PROCESSSCOPE] best_practice
+
+**Logged**: 2026-10-10T02:30:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+同机多个 worktree 跑 Gradle 时，诊断和中止都必须按命令行中的工作树及父进程链定位。
+
+### Details
+中止本轮 Gradle daemon 后，host 测试 worker 成为孤儿；只枚举 GradleWorkerMain 会同时选中另一工作树的 CLI 测试进程。一次只读线程诊断选错，已标为无效证据；随后按 min-code-autotail 的 host tmpdir 和原 daemon 父 PID 双重校验，只清理本轮孤儿，不影响其他工作树。最终验收仍取当前基线的日志、退出码和 XML。
+
+### Suggested Action
+启动长测试时记录进程树。终止或诊断前核对命令行内绝对工作目录、父 PID 和任务身份；不要按 java 名称或 GradleWorkerMain 通配选择所有进程。
+
+### Metadata
+- Source: self_review
+- Related Files: tools/auto_tail_mutations.py
+- Tags: windows, gradle, worktree, process-ownership
+
 ---
