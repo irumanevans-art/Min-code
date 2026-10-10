@@ -146,6 +146,8 @@ data class SessionState(
     val componentHooks: List<dev.min.agent.spi.ComponentHooksRegistered> = emptyList(),
     /** 同一条 HooksLoaded 带的 http 两道闸（各生效层合并后的）；null = 没有任何一道闸 */
     val hooksHttpPolicy: HttpPolicyData? = null,
+    /** hooks 被整体禁用的原因（最后一条 HooksLoaded 的 disabledBy）；null = 没禁用。`/goal` 据此拒绝运行 */
+    val hooksDisabledBy: dev.min.agent.spi.HooksDisabledBy? = null,
     /** hook 加的上下文，按挂靠的消息（用户消息，或带工具调用的助手消息——挂在它的工具结果后面）；模型视图里渲染成 system-reminder */
     val hookContexts: Map<MessageId, List<String>> = emptyMap(),
     /** 还没有消息可挂的 hook 上下文（SessionStart），挂到下一条人发的消息上 */

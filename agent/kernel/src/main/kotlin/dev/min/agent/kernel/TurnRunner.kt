@@ -79,6 +79,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     private val workflowInputs = mutableListOf<ClientMsgId>()
     private val compactor = Compactor(rt, ::assemble, hooks)
 
+    /** 上一次 `/goal` 评估之后，模型调过几批工具（防空转计数用；只在内存里，评估时随 [GoalEvaluated.toolUse] 落盘） */
+    private var toolRoundsSinceEvaluation = 0
+
     /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
     suspend fun run(trigger: TurnTrigger): Boolean {
         rt.refreshNetworkSettings()
@@ -120,12 +123,16 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(rt.takeInterruptReason())), Durability.Sync)
             throw e
         } catch (e: TurnAbort) {
-            rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind, e.failureCause)), Durability.Sync)
+            // `/goal` 随失败处理：不可恢复的清掉，其它暂停（CC），目标事件与回合收尾同一次提交
+            val goal = goalFailureEvents(rt.state.value.goal.condition, e.kind, e.message ?: "回合失败")
+            rt.commit(goal + closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind, e.failureCause)), Durability.Sync)
             false
         } catch (e: HookStop) {
             // 某个 hook 说 continue: false：结束这一轮，理由给人看（hooks设计 §5）
-            val note = listOf(Note(NoteLevel.Info, "hook 停止了这一轮" + (e.reason?.let { "：$it" } ?: "")))
-            rt.commit(note + closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Hook)), Durability.Sync)
+            val reason = "hook 停止了这一轮" + (e.reason?.let { "：$it" } ?: "")
+            // `/goal` 在这种情况下暂停（CC：「a hook that ended the turn」）
+            val goal = goalFailureEvents(rt.state.value.goal.condition, null, reason)
+            rt.commit(listOf(Note(NoteLevel.Info, reason)) + goal + closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Hook)), Durability.Sync)
             false
         } catch (e: CronBudgetReached) {
             // 定时运行花到了单次上限，下一个请求被预检拦下：只停这一次运行，结局记预算（原因在引擎写的 Note 里）
@@ -256,7 +263,10 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     }
                 }
                 completed.truncated -> tools.rejectTruncated(turnId, calls)
-                else -> tools.executeAll(turnId, calls)
+                else -> {
+                    toolRoundsSinceEvaluation++
+                    tools.executeAll(turnId, calls)
+                }
             }
             if (rt.state.value.subagentReport?.let { it.turnId == turnId && it.handback } == true) {
                 if (!stopHookContinues(turnId, completed) && !teammateIdleContinues(turnId)) return
@@ -360,37 +370,49 @@ internal class TurnRunner(private val rt: SessionRuntime) {
      * 有后台工作在跑时不评估（[goalEvaluationDeferred]）：等它完了、真正停下来的那一回合再评估。
      */
     private suspend fun goalContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
-        val condition = rt.state.value.goal.condition ?: return false
-        if (goalEvaluationDeferred(rt.background.runningCount())) return false
-        // 同一回合里让模型继续的次数到上限就先停、目标保留：评估器一直说没满足、模型一直说做完了，不能把回合困死。
-        // 与 Stop hook 共用同一个计数（反馈都是 hook 来源的输入）与上限；用户下一句话开新回合，计数从头数
-        val blocks = rt.state.value.turn?.stopHookBlocks ?: 0
-        if (blocks >= stopBlockCap()) {
-            rt.commit(listOf(Note(NoteLevel.Warning, "/goal 本回合已经让模型继续了 ${stopBlockCap()} 次，先停下，目标保留；下一句话会接着评估")), Durability.Batched)
+        val goal = rt.state.value.goal
+        val condition = goal.condition ?: return false
+        val now = deps.clock.nowMs()
+        val minutes = goalCheckInMinutes(deps.env)
+        if (goalEvaluationDeferred(rt.background.runningCount())) {
+            // 后台还在跑：这一回合不评估（挂起时刻照记）。check-in 到点就在这里送，让模型去看后台的输出
+            return rt.goalCheckInAtTurnEnd(now, minutes) && promote(setOf(Delivery.Steer)) > 0
+        }
+        // 连续几回合没有工具调用就停下、目标保留（CC 防空转；原文没给数字，取 [GOAL_NO_TOOL_ROUNDS_LIMIT]）。
+        // 本回合这一次没调工具：若之前调过（自上次评估以来），这是新的一段，从 1 数；否则接着数
+        val streak = if (toolRoundsSinceEvaluation > 0) 1 else goal.idleRounds + 1
+        if (streak >= GOAL_NO_TOOL_ROUNDS_LIMIT) {
+            rt.commit(listOf(Note(NoteLevel.Warning, "/goal 连续 $GOAL_NO_TOOL_ROUNDS_LIMIT 回合没有调用工具，先停下，目标保留；你下一句话会接着评估")), Durability.Batched)
             return false
         }
-        val closing = completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
-        val stdin = HookJson.encodeToJsonElement(StopInput.serializer(), StopInput(stopHookActive = false, lastAssistantMessage = closing)).jsonObject
+        // 评估器看到的是整段对话（模型视图，工具结果只留开头，见 goalTranscript）
+        val stdin = kotlinx.serialization.json.buildJsonObject {
+            put("conversation", kotlinx.serialization.json.JsonPrimitive(goalTranscript(rt.state.value.modelMessages())))
+        }
         val verdict = ModelHookRunner(rt).runPrompts(listOf(goalEvaluationHandler(condition)), stdin, HookEvent.Stop).single()
         if (verdict.timedOut || verdict.nonBlockingError != null) {
             rt.commit(listOf(Note(NoteLevel.Warning, "/goal 评估没有得出结论，目标保留：${verdict.nonBlockingError ?: "超时"}")), Durability.Batched)
             return false
         }
+        val toolUse = toolRoundsSinceEvaluation > 0
         if (verdict.decision == HookDecision.Block) {
             val feedback = verdict.reason?.text ?: "/goal 还没达成，接着干"
-            rt.commit(listOf(GoalEvaluated(GoalVerdict.NotMet, feedback)), Durability.Batched)
+            rt.commit(listOf(GoalEvaluated(GoalVerdict.NotMet, feedback, toolUse)), Durability.Batched)
+            toolRoundsSinceEvaluation = 0
             rt.receive(
                 ClientMsgId("goal:${turnId.value}:${rt.state.value.goal.turns}"),
                 listOf(TextPart(feedback)),
                 Delivery.Steer,
-                InputOrigin.Hook(HookEvent.Stop.name),
+                InputOrigin.Hook(GOAL_ORIGIN),
                 startTurn = null,
             )
             return promote(setOf(Delivery.Steer)) > 0
         }
+        val reason = verdict.reason?.text
         val (verdictKind, end) = if (verdict.impossible) GoalVerdict.Impossible to GoalEndReason.Impossible
             else GoalVerdict.Met to GoalEndReason.Achieved
-        rt.commit(listOf(GoalEvaluated(verdictKind), GoalCleared(end)), Durability.Sync)
+        rt.commit(listOf(GoalEvaluated(verdictKind, reason, toolUse), GoalCleared(end)), Durability.Sync)
+        toolRoundsSinceEvaluation = 0
         return false
     }
 
@@ -469,6 +491,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     /** 一回合里 Stop hook 最多能让模型继续几次：默认 [DEFAULT_STOP_BLOCK_CAP]，环境变量 [STOP_CAP_ENV]（正整数）可改，别的值忽略 */
     private fun stopBlockCap(): Int = deps.env(STOP_CAP_ENV)?.trim()?.toIntOrNull()?.takeIf { it > 0 } ?: DEFAULT_STOP_BLOCK_CAP
 
+    /** `/goal` 遇到可重试的错误自动重试几次；`CLAUDE_CODE_GOAL_CHECKIN_MINUTES=0` 时不重试（CC：0 关掉 check-in 与自动重试） */
+    private fun goalAutoRetries(): Int = if (goalCheckInMinutes(deps.env) == 0L) 0 else GOAL_AUTO_RETRIES
+
     private suspend fun requestWithRetry(turnId: TurnId): ModelStreamEvent.Completed {
         val requestId = RequestId(deps.ids.next("req"))
         // 尝试次数按「当前这个模型」数：换到回退模型后从 1 重来，重试预算与界面的「第 n 次」都不该带着主模型的失败
@@ -490,7 +515,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 return if (gate == null) stream(turnId, requestId, model, request) else gate.withPermit { stream(turnId, requestId, model, request) }
             } catch (e: ModelException) {
                 val overflowRetry = e.kind == ModelFailureKind.ContextOverflow && !overflowCompacted
-                val willRetry = overflowRetry || e.retryable && attempt < deps.retry.maxAttempts
+                // `/goal` 在跑时（CC）：速率 / 用量限制不重试，直接暂停；其它可重试的错误最多重试 [GOAL_AUTO_RETRIES] 次，之后暂停
+                val goalOn = rt.state.value.goal.condition != null
+                val goalRetryable = !goalOn || e.kind != ModelFailureKind.RateLimited
+                val attemptsAllowed = if (goalOn) goalAutoRetries() + 1 else deps.retry.maxAttempts
+                val willRetry = overflowRetry || e.retryable && goalRetryable && attempt < attemptsAllowed
                 rt.commit(
                     listOf(
                         ModelRequestFailed(turnId, requestId, attempt, e.kind, e.message ?: e.kind.name, e.httpStatus, willRetry),
@@ -527,7 +556,12 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     }
                     throw TurnAbort(failureMessage(e), e.kind)
                 }
-                delay(deps.retry.delayMs(attempt, e.retryAfterMs))
+                val wait = deps.retry.delayMs(attempt, e.retryAfterMs)
+                if (goalOn) {
+                    // CC：「Goal still active」——告诉用户这次失败会自动重试、等多久，免得以为卡住了
+                    rt.commit(listOf(Note(NoteLevel.Info, "Goal still active：${e.message ?: e.kind.name}。${wait / 1000} 秒后自动重试（第 ${attempt + 1} 次）")), Durability.Batched)
+                }
+                delay(wait)
                 attempt++
             }
         }
