@@ -255,7 +255,8 @@ class SettingsSecurityFixTest {
 
     @Test fun BUG_plugin_load_failure_falls_back_but_cancellation_propagates(): Unit = runBlocking {
         withSession(FakeFs(), canonical = { throw IllegalStateException("private failure") }) { rt, _ ->
-            assertTrue(rt.state.value.skills?.entries.orEmpty().isEmpty())
+            // 插件装不上：插件的 skill 没有，内置的照常在清单里
+            assertTrue(rt.state.value.skills?.entries.orEmpty().all { it.source == "内置" })
         }
         try { withSession(FakeFs(), canonical = { throw CancellationException("cancel") }) { _, _ -> }; fail("取消") }
         catch (_: CancellationException) { }

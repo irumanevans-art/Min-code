@@ -101,7 +101,8 @@ Help inspect the project.
         val events = store.open(rt.sessionId)!!.read().toList().map { it.event }
         assertFalse(events.filterIsInstance<HooksRan>().any { it.event == "SessionStart" })
         assertTrue(events.filterIsInstance<HooksLoaded>().flatMap { it.notes }.any { "未信任" in it })
-        assertTrue(rt.state.value.skills?.entries.orEmpty().isEmpty())
+        // 插件装不上：没有插件的 skill，内置的照常在清单里
+        assertTrue(rt.state.value.skills?.entries.orEmpty().all { it.source == "内置" })
         replayMatches(rt, store)
     } }
 
@@ -115,7 +116,8 @@ Help inspect the project.
         assertTrue(events.filterIsInstance<HooksLoaded>().flatMap { it.sources }.any { it.source == "plugin" })
         assertTrue(events.filterIsInstance<HooksRan>().any { it.event == "SessionStart" && it.handlers == 1 && it.problems.isEmpty() })
         // 受信的个人插件仍提供完整正文，整包门禁不能误伤既有个人命令。
-        assertEquals(setOf("check:run", "check:inline"), rt.state.value.skills!!.entries.map { it.name }.toSet())
+        // 内置 skill 也在清单里，这里只看插件自己的两条
+        assertEquals(setOf("check:run", "check:inline"), rt.state.value.skills!!.entries.filter { it.source != "内置" }.map { it.name }.toSet())
         val inline = rt.state.value.skills!!.entries.first { it.name == "check:inline" }
         val body = rt.readSkillBody(inline.path)!!
         val expanded = interpretInput("/check:inline hello", emptyList(), listOf(CommandDef(inline.name, inline.description, inline.path, body, ConfigSource.Plugin)), dev.min.agent.ext.skills.SkillVars())

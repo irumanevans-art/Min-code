@@ -13,6 +13,11 @@ import dev.min.agent.spi.WorkspaceFs
 object SkillFiles {
     /** frontmatter 之后的正文；文件没了、读不了、不是文本返回 null */
     suspend fun readBody(fs: WorkspaceFs, path: GuestPath): String? {
+        // 内置 skill 的正文在资源里，不走文件系统（路径是假的）
+        if (BundledSkills.isBundled(path.value)) {
+            val text = BundledSkills.readText(path.value) ?: return null
+            return FrontmatterParser.parse(text, path.value).body
+        }
         val io = ConfigIo(fs)
         val text = io.readText(path.value) ?: return null
         return FrontmatterParser.parse(text, path.value).body

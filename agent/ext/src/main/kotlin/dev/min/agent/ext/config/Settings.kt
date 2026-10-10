@@ -15,6 +15,8 @@ enum class ConfigSource(val label: String) {
     Project("project"),
     Local("local"),
     Plugin("plugin"),
+    /** 随包自带的 skill（CC 的 bundled skills）：同名时让位给上面的四层；清单里来源标「内置」 */
+    Bundled("内置"),
 }
 
 enum class RuleSpecKind { Allow, Ask, Deny }
