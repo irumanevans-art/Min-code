@@ -170,6 +170,8 @@ fun minTools(): List<Tool<*>> = listOf(
     WebFetchTool,
     // 后台任务：watch 与按 id 取输出（TaskStop 在表的前部，已能停后台命令与 watch）
     dev.min.agent.tools.MonitorTool, dev.min.agent.tools.TaskOutputTool,
+    // 内置 /code-review 的审查结果列表（只往末尾追加）
+    dev.min.agent.tools.ReportFindingsTool,
 )
 
 object MinKernelDeps {
