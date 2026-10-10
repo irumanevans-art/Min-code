@@ -408,7 +408,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             )
             return promote(setOf(Delivery.Steer)) > 0
         }
-        val reason = verdict.reason?.text
+        val reason = (verdict.impossibleReason ?: verdict.reason)?.text
         val (verdictKind, end) = if (verdict.impossible) GoalVerdict.Impossible to GoalEndReason.Impossible
             else GoalVerdict.Met to GoalEndReason.Achieved
         rt.commit(listOf(GoalEvaluated(verdictKind, reason, toolUse), GoalCleared(end)), Durability.Sync)

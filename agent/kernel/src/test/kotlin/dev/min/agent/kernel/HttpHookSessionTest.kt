@@ -376,7 +376,9 @@ class HttpHookSessionTest {
         val fs = FakeFs()
         fs.put("/root/.claude/settings.json", "{$userHttpHook}")
         fs.put("/workspace/.claude/settings.json", """{"disableAllHooks":true}""")
-        assertNull(loadedFrom(fs, trust = true))
+        val loaded = loadedFrom(fs, trust = true)!!
+        assertTrue("关掉的 hooks 不留来源", loaded.sources.isEmpty())
+        assertEquals(dev.min.agent.spi.HooksDisabledBy.DisableAllHooks, loaded.disabledBy)
     }
 
     @Test

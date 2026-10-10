@@ -104,7 +104,7 @@ private fun translatePromptVerdict(event: HookEvent, handler: HookHandler, outco
         HookEvent.Stop, HookEvent.SubagentStop ->
             if (handler.type == "prompt" && decision.impossible) {
                 // 模型判断条件永远满足不了：放行结束，别把回合困死
-                base.copy(impossible = true, reason = HookText(reason), notes = base.notes + "「$label」标记 impossible，放行结束")
+                base.copy(impossible = true, impossibleReason = HookText(reason), notes = base.notes + "「$label」标记 impossible，放行结束")
             } else {
                 base.copy(decision = HookDecision.Block, reason = HookText(reason))
             }
