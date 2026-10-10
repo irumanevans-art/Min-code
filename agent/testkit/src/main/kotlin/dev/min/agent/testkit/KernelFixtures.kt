@@ -38,7 +38,13 @@ private object Unused : WorkspaceFs, Search, Exec {
     override suspend fun kill(handle: ExecHandle) = error("unused")
 }
 
-fun testDeps(model: ModelClient, tools: List<Tool<*>>, artifacts: FakeArtifacts = FakeArtifacts()): KernelDeps {
+fun testDeps(
+    model: ModelClient,
+    tools: List<Tool<*>>,
+    artifacts: FakeArtifacts = FakeArtifacts(),
+    /** 小工具的宿主出口：测试要看通知发没发、文件交没交，就传一个记录用的替身 */
+    pushSink: dev.min.agent.spi.PushSink = dev.min.agent.spi.PushSink.Unavailable,
+): KernelDeps {
     val time = AtomicLong(1_000)
     val counter = AtomicLong(0)
     return KernelDeps(
@@ -53,5 +59,6 @@ fun testDeps(model: ModelClient, tools: List<Tool<*>>, artifacts: FakeArtifacts 
         platform = "test",
         zone = ZoneOffset.UTC,
         retry = RetryPolicy(maxAttempts = 3, baseDelayMs = 1, maxDelayMs = 5),
+        pushSink = pushSink,
     )
 }

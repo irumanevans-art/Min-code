@@ -172,6 +172,8 @@ fun minTools(): List<Tool<*>> = listOf(
     dev.min.agent.tools.MonitorTool, dev.min.agent.tools.TaskOutputTool,
     // 结束会话（只往末尾追加；子 agent 的过滤在内核的 availableTools）
     dev.min.agent.tools.EndConversationTool,
+    // 系统通知（只往末尾追加）
+    dev.min.agent.tools.PushNotificationTool,
 )
 
 object MinKernelDeps {
@@ -212,6 +214,8 @@ object MinKernelDeps {
         searchBackend: SearchBackend? = null,
         /** Monitor 的 WebSocket 源：宿主侧直连（不经 proot），连接时校验并钉住地址；测试换成脚本化的假端口 */
         webSockets: dev.min.agent.spi.WebSocketPort = dev.min.agent.host.SocketWebSocketPort(),
+        /** PushNotification 的宿主出口：手机上走 App 的告警通道发系统通知（[AndroidPushSink]） */
+        pushSink: dev.min.agent.spi.PushSink = dev.min.agent.spi.PushSink.Unavailable,
     ): KernelDeps = KernelDeps(
         networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
@@ -236,5 +240,6 @@ object MinKernelDeps {
         workflowsEnabled = workflowsEnabled,
         workflowApprovals = workflowApprovals,
         providerFastModel = providerFastModel,
+        pushSink = pushSink,
     )
 }
