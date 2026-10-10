@@ -74,7 +74,7 @@ fun supervisorDiff(
             is TurnEnd.Failed -> add(SupervisorEvent.TurnIncomplete(end, current.resume))
             is TurnEnd.Interrupted -> when (end.cause) {
                 // 用户自己按的停止 / 撤回：他就在屏幕前，不打扰
-                InterruptCause.User, InterruptCause.Withdrawn -> Unit
+                InterruptCause.User, InterruptCause.Withdrawn, InterruptCause.Ended -> Unit
                 InterruptCause.ProcessDeath, InterruptCause.EngineExited, InterruptCause.Limit, InterruptCause.Hook ->
                     add(SupervisorEvent.TurnIncomplete(end, current.resume))
             }

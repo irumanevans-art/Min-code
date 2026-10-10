@@ -170,6 +170,12 @@ enum class InterruptCause {
 
     /** 一个字还没出时被撤回，消息已经退回输入框。不出 ▶、不发通知 */
     Withdrawn,
+
+    /**
+     * 模型用 EndConversation 结束了会话（内核的 `InterruptedBy.Ended`）。会话已锁住，不出 ▶（续不了）、不发通知：
+     * 人就在屏幕前，结束的原因写在紧挨着的那条说明里
+     */
+    Ended,
 }
 
 /**

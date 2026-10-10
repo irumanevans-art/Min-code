@@ -20,6 +20,11 @@ class MinReportStatusTest {
     }
 
     @Test
+    fun conversationEndedHasItsOwnString() {
+        assertEquals(R.string.min_agent_report_conversation_ended, reportStatusRes("conversation-ended"))
+    }
+
+    @Test
     fun hookStoppedHasItsOwnString() {
         assertEquals(R.string.min_agent_report_hook_stopped, reportStatusRes("stopped-by-hook"))
     }
@@ -27,7 +32,7 @@ class MinReportStatusTest {
     @Test
     fun anInterruptedByValueAddedLaterIsCaughtHere() {
         // 内核对每个 InterruptedBy 写一个状态；新增取值时这里要有人想起来补文案
-        assertEquals("InterruptedBy 的取值变了：补内核的 statusOf、资源和上面的状态表", 5, InterruptedBy.entries.size)
+        assertEquals("InterruptedBy 的取值变了：补内核的 statusOf、资源和上面的状态表", 6, InterruptedBy.entries.size)
     }
 
     @Test
