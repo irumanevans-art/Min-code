@@ -20,5 +20,10 @@ class GoalEventsWireTest {
         assertEventWire(GoalCleared(GoalEndReason.User), """{"type":"goal_cleared","reason":"user"}""")
         assertEventWire(GoalCheckIn(2), """{"type":"goal_check_in","count":2}""")
         assertEventWire(GoalResumed(5L), """{"type":"goal_resumed","atMs":5}""")
+        assertEventWire(GoalEvaluated(GoalVerdict.NotMet, "改一下", toolUse = true), """{"type":"goal_evaluated","verdict":"not_met","reason":"改一下","toolUse":true}""")
+        assertEventWire(GoalCleared(GoalEndReason.Error, "额度用完"), """{"type":"goal_cleared","reason":"error","detail":"额度用完"}""")
+        assertEventWire(GoalCheckIn(3, atMs = 9L, idle = true), """{"type":"goal_check_in","count":3,"atMs":9,"idle":true}""")
+        assertEventWire(GoalDeferred(7L), """{"type":"goal_deferred","atMs":7}""")
+        assertEventWire(GoalPaused("速率限制"), """{"type":"goal_paused","reason":"速率限制"}""")
     }
 }

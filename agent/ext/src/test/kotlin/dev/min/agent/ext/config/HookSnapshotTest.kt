@@ -14,6 +14,28 @@ import org.junit.Test
  */
 class HookSnapshotTest {
     private val fs = InMemoryFs()
+
+    @Test
+    fun `disableAllHooks in user settings is reported as the reason hooks are off`() {
+        fs.file("/root/.claude/settings.json", """{"disableAllHooks":true,$cmdHooks}""")
+        assertEquals(dev.min.agent.spi.HooksDisabledBy.DisableAllHooks, merged().hookSnapshot(false).disabledBy)
+    }
+
+    @Test
+    fun `managed allowManagedHooksOnly is reported as its own reason and keeps only managed hooks`() {
+        fs.file("/root/.claude/settings.json", "{$cmdHooks}")
+        fs.file(managed, """{"allowManagedHooksOnly":true}""")
+        val snap = merged().hookSnapshot(trustProject = false)
+        assertEquals(dev.min.agent.spi.HooksDisabledBy.ManagedOnly, snap.disabledBy)
+        assertTrue(snap.sources.isEmpty())
+    }
+
+    @Test
+    fun `hooks left on report no disabled reason`() {
+        fs.file("/root/.claude/settings.json", "{$cmdHooks}")
+        assertNull(merged().hookSnapshot(false).disabledBy)
+    }
+
     private val managed = "/etc/claude-code/managed-settings.json"
     private fun merged() = runBlocking { SettingsLoader.load(fs, GuestPath("/workspace"), GuestPath("/root")) }.merged
 
