@@ -35,7 +35,7 @@ object RequestAssembler {
     ): ModelRequest = ModelRequest(
         profile = profile,
         system = SystemPrompt.build(profile, environment, memory, agentInstructions, skills, autoMemory, mcpInstructions, outputStyle),
-        messages = if (profile.supportsImages) messages else ImageDegrade.strip(messages),
+        messages = ImageDegrade.strip(messages, images = profile.supportsImages, documents = profile.supportsPdf),
         tools = tools,
         effort = effort,
         // 手机上断断续续地用，5 分钟的缓存常常等不到下一句话
