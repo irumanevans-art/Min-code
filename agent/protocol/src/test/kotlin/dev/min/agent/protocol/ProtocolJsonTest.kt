@@ -70,6 +70,8 @@ class ProtocolJsonTest {
             TextPart("你好") to """{"type":"text","text":"你好"}""",
             ImagePart("image/png", ImageSource.Base64("QUJD")) to
                 """{"type":"image","mediaType":"image/png","source":{"type":"base64","data":"QUJD"}}""",
+            DocumentPart("application/pdf", ImageSource.Base64("JVBERi0=")) to
+                """{"type":"document","mediaType":"application/pdf","source":{"type":"base64","data":"JVBERi0="}}""",
             ThinkingPart("想一想", origin = model) to
                 """{"type":"thinking","text":"想一想","origin":{"providerId":"anthropic","modelId":"claude-sonnet-5-5"}}""",
             ThinkingPart("想一想", origin = model, signature = "sig") to

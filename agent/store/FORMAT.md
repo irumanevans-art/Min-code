@@ -126,6 +126,8 @@
 - 模型侧 hook 类型（2026-10-08/09，prompt / agent / mcp_tool）**不新增事件**：匹配、`if`、去重与 HooksRan 记录走 command 同一条合流；
   prompt 的评估请求经账本（`model_charged`）记账；hook agent 子会话是普通子会话日志（`subagent_origin.agentType = "hook-agent"`，
   不写 `subagent_spawned`），跑完从 Hub 卸下、日志留盘。
+- v1 增量（2026-10-10）：`Part` 新增变体 `document`（`{"type":"document","mediaType":"application/pdf","source":{...}}`，`source` 与图片同为 `base64` / `artifact` 两种形态）。
+  出现在工具结果的 `content` 里（Read 读 PDF）。含它的日志旧版本打不开（旧版本遇到未知 `Part` 类型即报错）。
 # MCP3 OAuth 审计
 
 `mcp_authentication`：server、action（login/logout/refresh）、outcome（success/failed/cancelled）。

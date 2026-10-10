@@ -5,6 +5,7 @@ import dev.min.agent.ext.config.awaySummaryEnabled
 import dev.min.agent.llm.ModelException
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ModelStreamEvent
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
@@ -133,6 +134,7 @@ internal class Recapper(private val rt: SessionRuntime) {
                         "[调用 ${part.name}" + (result?.let { " → ${it.take(TOOL_RESULT_CHARS)}" } ?: "") + "]"
                     }
                     is ImagePart -> "（图片）"
+                    is DocumentPart -> "（文档）"
                     else -> null
                 }
             }.joinToString(" ")
