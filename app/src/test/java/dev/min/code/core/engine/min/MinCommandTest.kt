@@ -74,6 +74,50 @@ class MinCommandTest {
     private fun Rig.awaitBusy() = awaitValue { root.state.value.turn }
     private fun Rig.awaitIdle() = runBlocking { root.awaitIdle() }
 
+    private fun installedCommandRig(): Rig {
+        val files = mutableMapOf(
+            "/root/.claude/settings.json" to """{"enabledPlugins":{"market-demo@local":true}}""",
+            "/root/.claude/plugins/installed_plugins.json" to """{"version":2,"plugins":{"market-demo@local":[{"scope":"user","installPath":"/root/.claude/plugins/cache/local/market-demo/1"}]}}""",
+            "/root/.claude/plugins/cache/local/market-demo/1/.claude-plugin/plugin.json" to """{"name":"market-demo"}""",
+            "/root/.claude/plugins/cache/local/market-demo/1/commands/hello.md" to "---\ndescription: Marketplace command\ndisable-model-invocation: true\n---\nMARKET_COMMAND_BODY ${'$'}ARGUMENTS",
+            "/root/.claude/plugins/cache/local/market-demo/1/commands/private.md" to "---\ndescription: Private command\nuser-invocable: false\n---\nPRIVATE_BODY",
+        )
+        val fs = object : dev.min.agent.spi.WorkspaceFs {
+            override suspend fun stat(path: dev.min.agent.spi.GuestPath): dev.min.agent.spi.FileStat? =
+                files[path.value]?.let { dev.min.agent.spi.FileStat(dev.min.agent.spi.FileKind.File, it.toByteArray().size.toLong(), 0) }
+                    ?: if (files.keys.any { it.startsWith(path.value.trimEnd('/') + "/") }) dev.min.agent.spi.FileStat(dev.min.agent.spi.FileKind.Directory, 0, 0) else null
+            override suspend fun read(path: dev.min.agent.spi.GuestPath, offset: Long, limit: Int): ByteArray =
+                files.getValue(path.value).toByteArray().drop(offset.toInt()).take(limit).toByteArray()
+            override suspend fun writeAtomic(path: dev.min.agent.spi.GuestPath, bytes: ByteArray) { files[path.value] = bytes.decodeToString() }
+            override suspend fun list(dir: dev.min.agent.spi.GuestPath): List<dev.min.agent.spi.DirEntry> = files.keys
+                .filter { it.startsWith(dir.value.trimEnd('/') + "/") }
+                .map { it.removePrefix(dir.value.trimEnd('/') + "/").substringBefore('/') }.distinct()
+                .map { dev.min.agent.spi.DirEntry(it, stat(dev.min.agent.spi.GuestPath(dir.value.trimEnd('/') + "/" + it))!!.kind) }
+            override fun scopeOf(path: dev.min.agent.spi.GuestPath) = dev.min.agent.spi.PathScope.Workspace
+        }
+        val k = TestKernel(ScriptedModel(answer("done")), fs = fs, memoryHome = dev.min.agent.spi.GuestPath("/root")).also { kernel = it }
+        val host = FakeHost(k)
+        val session = MinAgentSession(runBlocking { k.newRoot() }, host, k.scope)
+        assertTrue("真实安装索引必须由现有加载器读到", session.runtime.state.value.skills!!.entries.any { it.name == "market-demo:hello" })
+        return Rig(k, host, session)
+    }
+
+    @Test fun installedPluginCommandExpandsFrozenBodyInAppBeforeModelSend() {
+        val r = installedCommandRig()
+        assertEquals(CommandResult.Accepted, r.send("/market-demo:hello real-argument"))
+        r.awaitIdle()
+        assertEquals("MARKET_COMMAND_BODY real-argument", (r.events().filterIsInstance<InputReceived>().single().parts.single() as TextPart).text)
+        assertTrue(awaitValue { r.session.state.value.slashCommands.takeIf { commands -> commands.any { it.name == "market-demo:hello" } } } != null)
+    }
+
+    @Test fun nonInvocableAndUnknownPluginCommandsDoNotReachTheModel() {
+        val r = installedCommandRig()
+        assertTrue(r.send("/market-demo:private") is CommandResult.Rejected)
+        assertTrue(r.send("/market-demo:absent") is CommandResult.Rejected)
+        assertTrue(r.events().filterIsInstance<InputReceived>().isEmpty())
+        assertFalse(awaitValue { r.session.state.value.slashCommands.takeIf { it.any { c -> c.name == "market-demo:hello" } } }.any { it.name == "market-demo:private" })
+    }
+
     // ---- 发送 ----
 
     @Test fun sendWhileIdleQueuesAndWhileBusySteers() {

@@ -214,7 +214,7 @@ class AskingTool(override val name: String = "Touch", private val body: suspend 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow { emit(ToolProgress.Done(body())) }
 }
 
-class TestKernel(model: ModelClient, tools: List<Tool<*>> = emptyList(), val dir: File = Files.createTempDirectory("min-b3").toFile()) {
+class TestKernel(model: ModelClient, tools: List<Tool<*>> = emptyList(), val dir: File = Files.createTempDirectory("min-b3").toFile(), fs: WorkspaceFs = Unused, memoryHome: GuestPath? = null) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val time = AtomicLong(10_000)
     private val counter = AtomicLong(0)
@@ -225,7 +225,8 @@ class TestKernel(model: ModelClient, tools: List<Tool<*>> = emptyList(), val dir
         ids = IdGenerator { "${it}_${counter.incrementAndGet()}" },
         models = { ref -> ResolvedModel(T_PROFILE.copy(ref = ref), model) },
         tools = tools,
-        host = HostPorts(Unused, Unused, Unused) { _: SessionId -> NoArtifacts },
+        host = HostPorts(fs, Unused, Unused) { _: SessionId -> NoArtifacts },
+        memoryHome = memoryHome,
         platform = "test", zone = ZoneOffset.UTC,
         retry = RetryPolicy(maxAttempts = 3, baseDelayMs = 1, maxDelayMs = 5),
     )
