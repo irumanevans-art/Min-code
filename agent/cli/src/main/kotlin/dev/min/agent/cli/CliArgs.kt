@@ -2,6 +2,7 @@ package dev.min.agent.cli
 
 import dev.min.agent.llm.AuthScheme
 import dev.min.agent.llm.Wire
+import dev.min.agent.kernel.Customizations
 import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.PermissionMode
 import java.nio.file.Path
@@ -63,6 +64,10 @@ data class CliArgs(
     val autoModeReviewer: String? = null,
     val maxBudgetUsd: Double? = null,
     val modelTimeoutMs: Long = 600_000,
+    /** `--bare`（CC :72）：最小档，跳过各类自动发现，工具表收窄到 Bash 与文件读写改 */
+    val bare: Boolean = false,
+    /** `--safe-mode`（CC :125）：排障档，用户与项目层的定制全不加载；托管 hooks 照常 */
+    val safeMode: Boolean = false,
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
@@ -100,6 +105,13 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --resume <会话 id>     接着一个已有会话
   --plugin-dir <目录>   加载本地插件，可重复；项目内的可执行组件仍需 --trust
   --trust                信任当前项目：执行项目 .claude/ 设置里的 hooks（默认只执行用户级与托管的）
+  --bare                 最小档（CC 同名）：不自动发现 hooks、skills、命令、子 agent、插件、MCP 服务器、
+                         自动记忆、CLAUDE.md；工具表只留 Read / Write / Edit / NotebookEdit / Bash；
+                         CLAUDE_CODE_SIMPLE=1 等效
+  --safe-mode            排障档（CC 同名）：用户与项目层的定制全部不加载（CLAUDE.md、skills、插件、hooks、
+                         MCP、命令与 agents、输出样式、工作流、自动记忆）；托管层的 hooks 照常生效，
+                         托管的插件、skills、CLAUDE.md、MCP 也不加载；权限与内置工具照常；
+                         CLAUDE_CODE_SAFE_MODE=1 等效；两者同时给报错（原文没规定并存）
   --no-browser           MCP OAuth 打印授权 URL，手工粘贴回调 URL
   --search-backend <id>  brave / tavily / searxng；也可用 MIN_AGENT_SEARCH_BACKEND
   --search-url <id>      SearXNG 基础地址，也可用 MIN_AGENT_SEARXNG_URL
@@ -126,6 +138,7 @@ private val VALUE_ARGS = setOf(
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
     "--include-partial-messages", "--forward-subagent-text", "--no-browser",
+    "--bare", "--safe-mode",
 )
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -163,6 +176,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
 
     // --print 是 -p 的长形（CC :116）：同一个提示词，两边都给是写错了
     if (values["-p"] != null && values["--print"] != null) throw UsageException("-p 与 --print 只能给一个")
+    // 两个档位参数互斥：CC 原文没规定并存的行为，报用法错误比悄悄选一个稳（环境变量的冲突在 resolveCustomizations 里同样报）
+    if ("--bare" in flags && "--safe-mode" in flags) throw UsageException("--bare 与 --safe-mode 只能给一个")
     val prompt = values["-p"] ?: values["--print"]
     val outputFormat = when {
         "--json" in flags && values["--output-format"] != null ->
@@ -270,6 +285,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         worktree = "--worktree" in flags,
         worktreeName = values["--worktree"],
         pluginDirs = pluginDirs,
+        bare = "--bare" in flags,
+        safeMode = "--safe-mode" in flags,
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages
@@ -313,4 +330,25 @@ internal fun resolveMaxTurns(flag: Int?, env: (String) -> String?): Int? {
     val value = env("CLAUDE_CODE_MAX_TURNS") ?: return null
     return value.trim().toIntOrNull()?.takeIf { it > 0 }
         ?: throw UsageException("CLAUDE_CODE_MAX_TURNS 必须是正整数，实际是 \"$value\"")
+}
+
+/**
+ * `--bare` / `--safe-mode`（CC :72/:125）与两个环境变量（`CLAUDE_CODE_SIMPLE` / `CLAUDE_CODE_SAFE_MODE`，
+ * 原文「equivalent to passing」）归一成一个档位。环境变量按「真」读（`1`/`true`/`yes`，CC 环境开关的同一口径）。
+ * 原文没规定两种档位同时给怎么办——报用法错误停下来，比悄悄选一个稳。参数与它自己的环境变量同给不算冲突：
+ * CC 里 `--bare` 本来就「sets CLAUDE_CODE_SIMPLE」，二者是同一件事
+ */
+internal fun resolveCustomizations(bare: Boolean, safeMode: Boolean, env: (String) -> String? = System::getenv): Customizations {
+    fun truthy(name: String) = env(name)?.trim()?.lowercase() in setOf("1", "true", "yes")
+    val bareRequested = bare || truthy("CLAUDE_CODE_SIMPLE")
+    val safeRequested = safeMode || truthy("CLAUDE_CODE_SAFE_MODE")
+    if (bareRequested && safeRequested) {
+        throw UsageException("--bare 与 --safe-mode 只能给一个（参数或 CLAUDE_CODE_SIMPLE / CLAUDE_CODE_SAFE_MODE 环境变量都算）；" +
+            "CC 原文没规定两种档位并存的行为。")
+    }
+    return when {
+        bareRequested -> Customizations.Bare
+        safeRequested -> Customizations.Safe
+        else -> Customizations.Full
+    }
 }
