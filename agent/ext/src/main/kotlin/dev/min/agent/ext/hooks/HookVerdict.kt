@@ -26,6 +26,8 @@ data class HookVerdict(
     val timedOut: Boolean = false,
     val failedToStart: Boolean = false,
     val notes: List<String> = emptyList(),
+    /** prompt 型 hook 的 `impossible: true`：评估器判定条件永远满足不了（Stop 上据此放行结束；`/goal` 据此记为失败） */
+    val impossible: Boolean = false,
     val attachmentRequests: List<HookAttachmentRequest> = emptyList(),
     /** 已经按该事件的形状解码并校验；H2/H3 可继续处理本期尚未接入的字段。 */
     val specificOutput: JsonObject? = null,
