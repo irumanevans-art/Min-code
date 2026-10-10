@@ -25,6 +25,9 @@ sealed interface Screen : NavKey {
     @Serializable
     data object Settings : Screen
 
+    @Serializable
+    data object Plugins : Screen
+
     /** 设置的二级页。[section] 是 SettingsSection 的 name（连接与安装 / 设备 / 外观与语言） */
     @Serializable
     data class SettingsSection(val section: String) : Screen

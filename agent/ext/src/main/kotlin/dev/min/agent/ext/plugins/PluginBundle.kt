@@ -89,7 +89,9 @@ class PluginBundle(
             val candidates = mutableListOf<PluginRequest>()
             val enabledSources = linkedMapOf<String, ConfigSource>()
             val enabled = linkedMapOf<String, Boolean>()
-            settings.layers.forEach { layer -> layer.enabledPlugins.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = layer.source } }
+            // 未信任项目不能靠 false 覆盖个人启用；过滤要在逐键合并前完成，作用域记录仍单独守门。
+            val effectiveLayers = settings.layers.filter { it.source !in setOf(ConfigSource.Project, ConfigSource.Local) || trust(cwd) }
+            effectiveLayers.forEach { layer -> layer.enabledPlugins.forEach { (id, value) -> enabled[id] = value; enabledSources[id] = layer.source } }
             // 同时启用表示已有个人授权，项目重复声明不能把它降为项目插件。
             settings.layers.filter { it.source == ConfigSource.User }.forEach { layer -> layer.enabledPlugins.filterValues { it }.keys.forEach { enabledSources[it] = ConfigSource.User } }
             val managed = settings.layers.lastOrNull { it.source == ConfigSource.Managed }
@@ -136,7 +138,7 @@ class PluginBundle(
                 val rawPath = (record["installPath"] as? JsonPrimitive)?.content ?: return@forEach
                 val path = localInstall(rawPath) ?: return@forEach
                 scopes[canonical(path).value] = (record["scope"] as? JsonPrimitive)?.content
-                candidates += PluginRequest(path.value, PluginRef(id.substringBefore('@'), id.substringAfter('@', "").ifEmpty { null }),
+                candidates += PluginRequest(path.value, PluginRef(id.substringBefore('@'), id.substringAfter('@', "").ifEmpty { null }), entry = record["marketplaceEntry"] as? JsonObject,
                     enabledPlugins = enabled + (id to (enabled[id] ?: false)), disabledDependencies = disabledDependencies)
             }
             // 未安装索引的本地缓存也可以按 enabledPlugins 找到；禁用项仍留作依赖候选。

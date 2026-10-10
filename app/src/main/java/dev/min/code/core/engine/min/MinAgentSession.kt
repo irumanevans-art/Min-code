@@ -109,7 +109,11 @@ class MinAgentSession(
     private val mapper = MinAgentStateMapper(host.text, host.lookup)
     private val workflowCommands = runtime.state.map { it.settings.cwd to it.lastTurn?.turnId }
         .distinctUntilChanged().map {
-            runtime.savedWorkflows().map { saved -> dev.min.code.core.engine.SlashCommandView(saved.name, saved.description) }
+            val workflows = runtime.savedWorkflows().map { saved -> dev.min.code.core.engine.SlashCommandView(saved.name, saved.description) }
+            // 列表与发送共用会话冻结清单，用户可调但禁止模型调用的命令也必须能在这里找到。
+            workflows + runtime.state.value.skills?.entries.orEmpty().filter { it.userInvocable }
+                .filter { entry -> workflows.none { it.name == entry.name } }
+                .map { dev.min.code.core.engine.SlashCommandView(it.name, it.description) }
         }.flowOn(Dispatchers.IO).stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _signals = MutableSharedFlow<SessionSignal>(extraBufferCapacity = 16)

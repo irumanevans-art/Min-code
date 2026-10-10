@@ -46,7 +46,8 @@ data class PluginVars(val root: String, val data: String, val project: String) {
         .replace("\${CLAUDE_PLUGIN_DATA}", data).replace("\${CLAUDE_PROJECT_DIR}", project)
 }
 
-private val USER_REFERENCE = Regex("\\$\\{user_config\\.([A-Za-z_][A-Za-z0-9_]*)}")
+// Android ICU 比 JDK 严格：两侧花括号都显式转义，避免装载第一个插件时类初始化崩溃。
+private val USER_REFERENCE = Regex("\\$\\{user_config\\.([A-Za-z_][A-Za-z0-9_]*)\\}")
 private fun text(value: JsonElement): String = (value as? JsonPrimitive)?.content ?: value.toString()
 
 /** MCP 的配置只在使用时展开；缺值保留占位符，解析器能提示缺失而不打印值。 */

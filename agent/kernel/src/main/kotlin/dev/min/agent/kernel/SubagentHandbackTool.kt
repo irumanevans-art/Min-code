@@ -21,7 +21,7 @@ internal class SubagentHandbackTool(private val rt: SessionRuntime) : Tool<Strin
         put("type", "object"); putJsonObject("properties") { putJsonObject("message") { put("type", "string") } }
         put("required", JsonArray(listOf(JsonPrimitive("message")))); put("additionalProperties", false)
     }
-    override fun description(profile: HarnessProfile) = "Deliver your final report to the caller after safety review. If rejected, revise the report and call again. An approved handback ends this turn; call it alone."
+    override fun description(profile: HarnessProfile) = "Deliver your final report to the caller after safety review. A flagged report is delivered with a security warning; an unavailable review adds a verification note. Handback ends this turn; call it alone."
     override fun parse(raw: JsonObject): ToolInput<String> {
         val report = (raw["message"] as? JsonPrimitive)?.takeIf { it.isString }?.content
         return if (raw.keys == setOf("message") && !report.isNullOrBlank()) ToolInput.Valid(report) else ToolInput.Invalid("message 必须是非空文字")
@@ -35,12 +35,8 @@ internal class SubagentHandbackTool(private val rt: SessionRuntime) : Tool<Strin
             return@flow
         }
         val verdict = rt.reviewReport(turnId, input)
-        if (verdict is Verdict.Allow) {
-            rt.commit(listOf(SubagentReportReady(turnId, input, if (verdict.by == DecidedBy.Classifier) "approved" else "manual", handback = true)), Durability.Sync)
-            emit(ToolProgress.Done(ToolResult(listOf(TextPart(HANDBACK_NOTE)))))
-        } else {
-            emit(ToolProgress.Done(ToolResult(listOf(TextPart("报告审查未通过，原文没有交给父会话。请修改后重新调用 SubagentHandback。")), isError = true)))
-        }
+        rt.commit(listOf(rt.reportReady(turnId, input, verdict, handback = true)), Durability.Sync)
+        emit(ToolProgress.Done(ToolResult(listOf(TextPart(HANDBACK_NOTE)))))
     }
 }
 
@@ -58,7 +54,18 @@ internal suspend fun SessionRuntime.prepareFallbackReport(turnId: TurnId) {
     val body = state.value.structuredOutput?.takeIf { it.turnId == turnId }?.value?.toString()
         ?: state.value.history.filterIsInstance<HistoryEntry.Assistant>().lastOrNull()?.parts.orEmpty().filterIsInstance<TextPart>().joinToString("") { it.text }
     val verdict = reviewReport(turnId, body)
-    val ready = if (verdict is Verdict.Allow) SubagentReportReady(turnId, body, if (verdict.by == DecidedBy.Classifier) "approved" else "manual")
-        else SubagentReportReady(turnId, "[子 agent 报告未通过审查，正文未交付。]", "withheld")
-    commit(listOf(ready), Durability.Sync)
+    commit(listOf(reportReady(turnId, body, verdict)), Durability.Sync)
+}
+
+internal const val REPORT_SECURITY_WARNING = "[安全警告：审查标记了子 agent 的工作或报告，或 API 安全检查拒绝了核验。请谨慎核实以下报告；父会话的后续动作仍须正常审查。]"
+internal const val REPORT_VERIFY_NOTE = "[核验说明：未能审查子 agent 的工作和报告。采取行动前，请核实子 agent 的工作。]"
+
+private fun SessionRuntime.reportReady(turnId: TurnId, body: String, verdict: Verdict, handback: Boolean = false): SubagentReportReady {
+    val review = when {
+        verdict is Verdict.Deny || verdict == Verdict.Ask && state.value.lastAutoReview?.reason == AutoReviewer.CLASSIFIER_SAFETY_REFUSED -> "warning"
+        verdict is Verdict.Allow && verdict.by == DecidedBy.Classifier -> "approved"
+        else -> "unavailable"
+    }
+    val prefix = when (review) { "warning" -> REPORT_SECURITY_WARNING + "\n\n"; "unavailable" -> REPORT_VERIFY_NOTE + "\n\n"; else -> "" }
+    return SubagentReportReady(turnId, prefix + body, review, handback)
 }

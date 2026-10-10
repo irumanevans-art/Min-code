@@ -217,8 +217,11 @@ class AskingTool(override val name: String = "Touch", private val body: suspend 
 
 class TestKernel(
     model: ModelClient, tools: List<Tool<*>> = emptyList(), val dir: File = Files.createTempDirectory("min-b3").toFile(),
+    /** 只要文件系统真能读写的测试给 fs（插件市场的会话要读插件目录） */
+    fs: WorkspaceFs = Unused,
+    memoryHome: GuestPath? = null,
     /** 要让工具 / 后台任务真碰文件与进程的测试自己给宿主端口；默认谁碰谁失败 */
-    hostPorts: HostPorts = HostPorts(Unused, Unused, Unused) { _: SessionId -> NoArtifacts },
+    hostPorts: HostPorts = HostPorts(fs, Unused, Unused) { _: SessionId -> NoArtifacts },
 ) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val time = AtomicLong(10_000)
@@ -231,6 +234,7 @@ class TestKernel(
         models = { ref -> ResolvedModel(T_PROFILE.copy(ref = ref), model) },
         tools = tools,
         host = hostPorts,
+        memoryHome = memoryHome,
         platform = "test", zone = ZoneOffset.UTC,
         retry = RetryPolicy(maxAttempts = 3, baseDelayMs = 1, maxDelayMs = 5),
     )

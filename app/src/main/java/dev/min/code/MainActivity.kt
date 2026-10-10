@@ -301,6 +301,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             entry<Screen.Settings> { SettingsPage() }
+                            entry<Screen.Plugins> { dev.min.code.ui.settings.PluginsPage() }
                             entry<Screen.SettingsSection> { key -> SettingsSectionPage(key.section) }
                             entry<Screen.Providers> { ProvidersPage() }
                             entry<Screen.About> { AboutPage() }
