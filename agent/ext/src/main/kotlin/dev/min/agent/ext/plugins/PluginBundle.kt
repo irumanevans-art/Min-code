@@ -84,6 +84,8 @@ class PluginBundle(
             secrets: PluginSecretStore = PluginSecretStore(McpTokenStore.Unavailable),
             installedPath: (String) -> GuestPath = { GuestPath(it) },
             shellPath: (GuestPath) -> String = { it.value },
+            /** false = 不发现已安装 / 设置启用的插件，只装载 [dirs]（bare 档：CC headless 页把 `--plugin-dir` 当唯一的插件入口） */
+            installed: Boolean = true,
         ): PluginBundle {
             val io = ConfigIo(fs)
             val candidates = mutableListOf<PluginRequest>()
@@ -122,7 +124,8 @@ class PluginBundle(
                 }
             }
             val pluginsDir = GuestPaths.join(home.value, ".claude/plugins")
-            val index = io.readText("$pluginsDir/installed_plugins.json")?.let {
+            // bare 档：安装索引与 enabledPlugins 缓存这两条「已安装」来源都跳过，dirs（--plugin-dir）照走下面的通道
+            val index = if (!installed) null else io.readText("$pluginsDir/installed_plugins.json")?.let {
                 SettingsReader.parseObject(it, "installed_plugins.json", io.notes)?.get("plugins") as? JsonObject
             }
             index?.forEach { (id, installs) ->
@@ -142,7 +145,7 @@ class PluginBundle(
                     enabledPlugins = enabled + (id to (enabled[id] ?: false)), disabledDependencies = disabledDependencies)
             }
             // 未安装索引的本地缓存也可以按 enabledPlugins 找到；禁用项仍留作依赖候选。
-            for (id in enabled.keys) {
+            if (installed) for (id in enabled.keys) {
                 if (!validId(id)) continue
                 if (candidates.any { it.ref?.id == id }) continue
                 val market = id.substringAfter('@', "")

@@ -231,11 +231,16 @@ internal class DesktopApp(
         // safe 原文的托管保留清单里也没有它们）。settings 照常读——权限规则、模型等键不在清单里
         val definitions = if (customizations == dev.min.agent.kernel.Customizations.Full) base
             else base.copy(skills = emptyList(), commands = emptyList(), agents = emptyList())
-        val plugins = if (customizations == dev.min.agent.kernel.Customizations.Full) dev.min.agent.ext.plugins.PluginBundle.load(paths.fs, paths.guestOfHost(args.cwd), userHome, base.settings.merged,
+        // bare 下插件还有一条入口：CC headless 页把 `--plugin-dir` 列为 bare 模式传上下文的方式，所以只装载命令行点名的，
+        // 已安装 / 设置启用的照旧不发现（信任口径走 PluginBundle 里现成的 sideload 规则：托管锁定、${'$'}{user_config} 等原样生效）。
+        // safe 原文没有这个例外，维持全部不加载
+        val plugins = if (customizations == dev.min.agent.kernel.Customizations.Safe) null
+        else dev.min.agent.ext.plugins.PluginBundle.load(paths.fs, paths.guestOfHost(args.cwd), userHome, base.settings.merged,
             args.pluginDirs.map(paths::guestOfHost), canonical = { desktopCanonicalCredentialPath(paths, it) },
             trust = { root -> pluginTrusted(root, paths.guestOfHost(args.cwd)) }, secrets = dev.min.agent.ext.plugins.PluginSecretStore(mcpTokens),
             installedPath = { paths.guestOfHost(java.nio.file.Path.of(it)) }, shellPath = { it.value },
-        ) else null
+            installed = customizations == dev.min.agent.kernel.Customizations.Full,
+        )
         pluginBundle = plugins
         return definitions.copy(skills = definitions.skills + plugins?.skills.orEmpty(), commands = definitions.commands + plugins?.commands.orEmpty(),
             agents = definitions.agents + plugins?.agents.orEmpty(), notes = definitions.notes + plugins?.notes.orEmpty()).also { configInstance = it }
