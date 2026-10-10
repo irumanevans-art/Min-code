@@ -128,7 +128,9 @@ internal suspend fun SessionRuntime.executeWorkflow(turnId: TurnId, callId: Call
                 val child = requireNotNull(hub.get(result.child))
                 val answer = child.state.value.history.filterIsInstance<HistoryEntry.Assistant>().lastOrNull()
                     ?.parts?.filterIsInstance<TextPart>()?.joinToString("") { it.text }.orEmpty()
-                WorkflowAnswer(if (result.isError) result.report else answer, result.isError, child.state.value.structuredOutput?.value.takeUnless { result.isError })
+                // 节点文本也必须携带已冻结的警告，不能从最后消息绕过终报适配器。
+                val reviewed = child.state.value.subagentReport?.takeIf { it.turnId == child.state.value.lastTurn?.turnId }
+                WorkflowAnswer(if (result.isError) result.report else reviewed?.body ?: answer, result.isError, child.state.value.structuredOutput?.value.takeUnless { result.isError })
             }
             is DelegateResult.Rejected -> WorkflowAnswer(result.messageForModel, true)
             is DelegateResult.Started -> WorkflowAnswer("Workflow node unexpectedly ran in background.", true)

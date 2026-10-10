@@ -178,6 +178,8 @@
 
 ## 10. 以后
 
+2026-10-10：Auto 终报按 [CC permission modes](https://code.claude.com/docs/en/permission-modes#how-auto-mode-handles-tool-calls) 交付。分类器标记工作 / 报告或 API 安全检查拒绝核验时，保留原报告并前置安全警告；审查不可用时附「行动前核实工作」说明。没有子 agent 重写重试循环，也不转人工。专用 SubagentHandback 与团队 / workflow / fork 的终报退路共用同一冻结事件；App 分别标「已审查」「附警告」「未能审查」。父会话每个后续动作独立送审。中断、失败且缺本回合审查记录时继续扣留未审正文，避免异常绕过正常收尾。
+
 - `isolation: worktree`：宿主侧建 `.claude/worktrees/<名字>`（JGit，与检查点同一套），子会话 cwd 指过去；无改动自动清理、有改动保留并在报告里给路径和分支。
 - 其他引擎当子 agent（官方 CLI / Codex，04 §4.8 最后一条）：作为一种特殊的 agent 类型，报告走同一条交付路径。
 - SubagentStart / SubagentStop hooks：hooks 引擎落地时接。

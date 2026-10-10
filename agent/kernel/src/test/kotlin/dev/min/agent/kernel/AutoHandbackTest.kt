@@ -38,15 +38,14 @@ class AutoHandbackTest {
             withTimeout(8000) { block(rt, main, reviewer, store) }
         } finally { scope.cancel() }
     }
-    @Test fun rejectedHandbackCanBeRevisedAndOnlyApprovedBodyIsDelivered() = run { rt, main, reviewer, store ->
+    @Test fun rejectedHandbackDeliversOriginalWithWarningWithoutRewrite() = run { rt, main, reviewer, store ->
         rt.receive(ClientMsgId("parent"), listOf(TextPart("task")), Delivery.Queue, InputOrigin.Parent(SessionId("parent")), TurnTrigger.User)
         val ended = rt.state.first { it.turn == null && it.lastTurn != null }.lastTurn!!
         val report = Reports.render(rt.sessionId, null, "general-purpose", false, ended, rt.state.value)
-        assertTrue(report.contains("safe report")); assertFalse(report.contains("REJECTED_REPORT_RAW")); assertFalse(report.contains("UNREVIEWED_LAST_MESSAGE"))
-        assertTrue(rt.state.value.toolResults.getValue(CallId("bad")).isError)
-        assertFalse(rt.state.value.toolResults.getValue(CallId("good")).isError)
-        assertEquals(2, reviewer.requests.size); assertEquals(2, main.requests.size)
-        assertTrue(report.contains("review=\"approved\""))
+        assertTrue(report.contains("REJECTED_REPORT_RAW")); assertTrue(report.contains(REPORT_SECURITY_WARNING)); assertFalse(report.contains("UNREVIEWED_LAST_MESSAGE"))
+        assertFalse(rt.state.value.toolResults.getValue(CallId("bad")).isError)
+        assertEquals(1, reviewer.requests.size); assertEquals(1, main.requests.size)
+        assertTrue(report.contains("review=\"warning\""))
         val log = store.open(rt.sessionId)!!
         val replayed = fold(log.header, log.read().toList())
         assertEquals(report, Reports.render(rt.sessionId, null, "general-purpose", false, ended, replayed))
@@ -67,14 +66,15 @@ class AutoHandbackTest {
         assertTrue(tool.parse(args("message" to "final report")) is ToolInput.Valid)
         assertTrue(tool.parse(args("report" to "final report")) is ToolInput.Invalid)
     }
-    @Test fun fallbackReviewsLastMessageAndWithholdsRejectedText() {
+    @Test fun fallbackReviewsLastMessageAndDeliversFlaggedTextWithWarning() {
         for (verdict in listOf("deny", "allow")) {
             run(mainScript = ScriptedModel(reply(TextPart("FALLBACK_BODY"))), reviewScript = ScriptedModel(decision(verdict))) { rt, _, reviewer, _ ->
                 rt.receive(ClientMsgId("parent"), listOf(TextPart("task")), Delivery.Queue, InputOrigin.Parent(SessionId("parent")), TurnTrigger.User)
                 val ended = rt.state.first { it.turn == null && it.lastTurn != null }.lastTurn!!
                 val report = Reports.render(rt.sessionId, null, "general-purpose", false, ended, rt.state.value)
                 assertEquals(1, reviewer.requests.size)
-                assertEquals(verdict == "allow", report.contains("FALLBACK_BODY"))
+                assertTrue(report.contains("FALLBACK_BODY"))
+                assertEquals(verdict == "deny", report.contains(REPORT_SECURITY_WARNING))
                 assertTrue(report.contains("handback=\"false\""))
             }
         }
@@ -109,8 +109,22 @@ class AutoHandbackTest {
                 rt.receive(ClientMsgId("parent"), listOf(TextPart("task")), Delivery.Queue, InputOrigin.Parent(SessionId("parent")), TurnTrigger.User)
                 val ended = rt.state.first { it.turn == null && it.lastTurn != null }.lastTurn!!
                 val report = Reports.render(rt.sessionId, null, "general-purpose", false, ended, rt.state.value)
-                assertEquals(verdict == "allow", report.contains("PLAN_REPORT_BODY"))
+                assertTrue(report.contains("PLAN_REPORT_BODY"))
+                assertEquals(verdict == "deny", report.contains(REPORT_SECURITY_WARNING))
                 assertEquals(1, reviewer.requests.size)
+            }
+        }
+    }
+    @Test fun unavailableAndSafetyRefusedReviewsDeliverWithoutApproval() {
+        for ((response, label, note) in listOf(Triple(reply(TextPart("invalid")), "unavailable", REPORT_VERIFY_NOTE),
+            Triple(reply(TextPart("refused"), stop = StopReason.Refusal), "warning", REPORT_SECURITY_WARNING))) {
+            run(mainScript = ScriptedModel(reply(ToolCallPart(CallId("final"), "SubagentHandback", args("message" to "RAW_BODY")), stop = StopReason.ToolUse)),
+                reviewScript = ScriptedModel(response)) { rt, _, _, _ ->
+                rt.receive(ClientMsgId("parent"), listOf(TextPart("task")), Delivery.Queue, InputOrigin.Parent(SessionId("parent")), TurnTrigger.User)
+                val ended = rt.state.first { it.turn == null && it.lastTurn != null }.lastTurn!!
+                val report = Reports.render(rt.sessionId, null, "general-purpose", false, ended, rt.state.value)
+                assertTrue(report.contains("RAW_BODY")); assertTrue(report.contains(note)); assertTrue(report.contains("review=\"$label\""))
+                assertTrue(rt.state.value.turn?.calls.orEmpty().keys.none { rt.state.value.phaseOf(it) is CallPhase.AwaitingApproval })
             }
         }
     }

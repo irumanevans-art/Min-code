@@ -215,7 +215,12 @@ private class ItemsBuilder(
         description = child?.description?.takeIf { it.isNotBlank() },
         status = report.status, isError = report.isError,
         toolCalls = report.tools, tokens = report.tokens, durationMs = report.durationMs,
-        body = if (report.handback && report.review == "approved") text.reviewedReport() + "\n\n" + report.body else report.body,
+        body = when (report.review) {
+            "approved" -> text.reviewedReport() + "\n\n" + report.body
+            "warning" -> text.warningReport() + "\n\n" + report.body
+            "unavailable" -> text.unavailableReport() + "\n\n" + report.body
+            else -> report.body
+        },
     )
 
     private fun parts(messageId: String, content: List<Part>) {

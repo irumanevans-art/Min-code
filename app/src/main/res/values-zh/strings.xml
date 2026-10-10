@@ -1496,5 +1496,7 @@
     <string name="trust_more">另有 %1$d 个</string>
     <string name="trust_grants_on">这个项目的配置授予了：</string>
     <string name="trust_grants_off">信任这个目录后，它的配置会授予：</string>
-    <string name="min_agent_report_reviewed">已经过审查</string>
+    <string name="min_agent_report_reviewed">已审查</string>
+    <string name="min_agent_report_warning">附警告</string>
+    <string name="min_agent_report_unavailable">未能审查</string>
 </resources>

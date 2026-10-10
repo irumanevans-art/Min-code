@@ -17,10 +17,14 @@ safe report
 </subagent-report>"""
         val s = events().copy(history = listOf(HistoryEntry.User(MessageId("report"), listOf(TextPart(report)), InputOrigin.Agent(SessionId("child"), AgentInputKind.Report, tid))))
         val card = projectMinItems(s, FakeText()).filterIsInstance<ChatItem.AgentReport>().single()
-        assertEquals("已经过审查\n\nsafe report", card.body)
+        assertEquals("已审查\n\nsafe report", card.body)
         assertFalse(card.isError); assertEquals(2, card.toolCalls)
         val manual = s.copy(history = listOf(HistoryEntry.User(MessageId("report"), listOf(TextPart(report.replace("approved", "manual"))), InputOrigin.Agent(SessionId("child"), AgentInputKind.Report, tid))))
         assertEquals("safe report", projectMinItems(manual, FakeText()).filterIsInstance<ChatItem.AgentReport>().single().body)
+        for ((label, title) in listOf("warning" to "附警告", "unavailable" to "未能审查")) {
+            val flagged = s.copy(history = listOf(HistoryEntry.User(MessageId("report"), listOf(TextPart(report.replace("approved", label).replace("handback=\"true\"", "handback=\"false\""))), InputOrigin.Agent(SessionId("child"), AgentInputKind.Report, tid))))
+            assertEquals("$title\n\nsafe report", projectMinItems(flagged, FakeText()).filterIsInstance<ChatItem.AgentReport>().single().body)
+        }
     }
     private val model = ModelRef("provider", "model")
     private val tid = TurnId("turn")
