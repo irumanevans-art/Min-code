@@ -103,6 +103,7 @@
 - v1 增量（2026-10-07）：新增事件 `model_fallback`（模型回退链，`spi/FallbackEvents.kt`）：`turnId`、`requestId`（刚失败、换模型后用同一 id 重发的请求）、`from` / `to`（`ModelRef`）、`reason`（`ModelFailureKind`：只会是 `overloaded` / `server` / `model_unavailable`）、`message`（供应商报错原文）。
   落在 `model_request_failed`（`willRetry:false`）之后、换模型重发的 `model_request_started`（`attempt` 从 1 重新数）之前。**只管这一个回合**：折叠进 `TurnState.fallback`，回合结束随回合清掉，下一回合先试主模型；因此重开会话不会停在回退模型上。回退链本身（`fallbackModel` / `--fallback-model`）是运行时选项，不进日志、不随 resume 恢复。含新事件的日志旧版本打不开。
 - v1 增量（2026-10-07）：新增事件 `session_recap`（会话回顾，`spi/RecapEvents.kt`）：`text`（一行，≤400 字符）、`trigger`（`manual` / `away`）、`model`（生成它的提取模型）、可选 `usage`（计入会话用量，全零不落盘）。**只给人看，不进模型视图**（折叠只动 `presentation` / `usage` / `recap`，`modelMessages` 与提示前缀与它无关）；任何时候都能落（不要求有进行中的回合）。生成失败或被跳过不写事件。含新事件的日志旧版本打不开。
+- v1 增量（2026-10-10）：新增事件 `goal_set`、`goal_evaluated`、`goal_cleared`、`goal_check_in`、`goal_resumed`（`/goal` 目标，`spi/GoalEvents.kt`）：`goal_set.condition` 为完成条件原文；`goal_evaluated.verdict`（`not_met` / `met` / `impossible`）、可选 `reason`；`goal_cleared.reason`（`achieved` / `impossible` / `user` / `error`）；`goal_check_in.count`（本次挂起之后第几次 check-in）；`goal_resumed.atMs`（恢复会话时清零回合与 check-in 计数）。含新事件的日志旧版本打不开。
 - v1 增量（2026-10-06）：后台 hooks 与组件 hooks 落地（`async` / `asyncRewake`、skill / command / 子 agent frontmatter 的 hooks）：
   `hooks_ran` 新增可选字段 `background`（`true` = 这是后台 hook **完成时**的记录，`handlers` 恒为 1；启动不落事件——进程死了日志里就没有「还在跑」的痕迹，重开会话不假装在等；
   完成时的 `decision` 恒为 `neutral`：控制字段对后台 hook 一律无效，收到时在 `problems` 里说明忽略）。`asyncRewake` 退出码 2 唤醒空闲会话时写
