@@ -80,6 +80,8 @@ internal class KernelSkillPort(
         // skill 被调用（模型走的这条路）：frontmatter hooks 登记进本会话，余下回合生效。
         // 每次调用都重新登记全量（CC 的 invoke 时 register），整份替换旧的——once 用掉的也回来
         entry.hooks?.let { rt.registerComponentHooks(entry.kind.name.lowercase(), entry.name, entry.source ?: "user", it) }
+        // 插件声明 `on-skill-invoke:<这个 skill>` 的 monitor：第一次调用时启动
+        rt.startPluginMonitors(entry.name)
         val baseDir = if (entry.kind == SkillKind.Skill) entry.path.value.substringBeforeLast('/') else null
         val vars = SkillVars(
             sessionId = rt.sessionId.value,

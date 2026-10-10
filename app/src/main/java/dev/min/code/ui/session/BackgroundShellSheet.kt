@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -161,7 +162,7 @@ private fun ShellList(shells: List<BackgroundTask>, onOpen: (BackgroundTask) -> 
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        listOfNotNull(stateLabel(shell), runtimeLabel(shell)).joinToString(" · "),
+                        listOfNotNull(stateLabel(shell), runtimeLabel(shell), eventsLabel(shell), remainingLabel(shell)).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = JetbrainsMono,
                         color = stateColor(shell),
@@ -196,6 +197,9 @@ private fun ShellDetail(
         runtimeLabel(shell)?.let { runtime ->
             Field(stringResource(R.string.shell_runtime)) { FieldText(runtime) }
         }
+        // watch 才有：已收到几条事件、离期限还有多久
+        eventsLabel(shell)?.let { events -> Field(stringResource(R.string.shell_events)) { FieldText(events) } }
+        remainingLabel(shell)?.let { left -> Field(stringResource(R.string.shell_remaining)) { FieldText(left) } }
         Field(stringResource(R.string.shell_source)) {
             FieldText(
                 listOfNotNull(
@@ -344,6 +348,7 @@ private fun stateLabel(shell: BackgroundTask): String {
         BackgroundTask.Status.Done -> stringResource(R.string.shell_state_completed)
         BackgroundTask.Status.Failed -> stringResource(R.string.shell_state_failed)
         BackgroundTask.Status.Stopped -> stringResource(R.string.shell_state_stopped)
+        BackgroundTask.Status.Expired -> stringResource(R.string.shell_state_expired)
     }
     // 被停掉的不写退出码：那是信号杀出来的数（进程表里常记成 0），不是它自己的结局
     val exit = shell.exitCode
@@ -374,6 +379,27 @@ private fun runtimeLabel(shell: BackgroundTask): String? {
     }
     val end = if (shell.isRunning) now else shell.endedAt ?: return null
     return formatDuration(end - shell.startedAt)
+}
+
+/** watch 已收到的事件数；不是 watch 为 null。结束后也留着（回头看它一共收到过多少） */
+@Composable
+private fun eventsLabel(shell: BackgroundTask): String? =
+    shell.events?.let { pluralStringResource(R.plurals.shell_events_count, it, it) }
+
+/**
+ * watch 离期限还有多久：只在还在跑且有期限时给，每秒走。过了期限还没被收掉的一刻写 0 秒，不写负数。
+ * 与 [runtimeLabel] 同理：结束了就不写，宁缺，不写一个还在走的假数
+ */
+@Composable
+private fun remainingLabel(shell: BackgroundTask): String? {
+    val deadline = shell.deadlineAt?.takeIf { shell.isRunning } ?: return null
+    val now by produceState(System.currentTimeMillis(), shell.id, shell.isRunning) {
+        while (shell.isRunning) {
+            value = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    return formatDuration((deadline - now).coerceAtLeast(0))
 }
 
 /** 在跑时多久重读一次输出：1.5 秒够看出它在动，又不至于每秒都去读一个可能几 MB 的文件的尾巴 */

@@ -106,12 +106,18 @@ data class BackgroundTask(
     val source: Source = Source.Cli,
     /** 发起它的是 Monitor 工具 */
     val monitor: Boolean = false,
+    /** watch 已收到的事件条数；不是 watch（或这个引擎不数）为 null */
+    val events: Int? = null,
+    /** watch 的期限（时刻，毫秒）；没有期限（后台命令、持久 watch）为 null */
+    val deadlineAt: Long? = null,
 ) {
     /** 谁在管它：CLI 的任务、本机进程表托管的服务，或两边各一份（bypass 下的孪生） */
     enum class Source { Cli, Hosted, Both }
 
     enum class Kind { Shell, Service }
-    enum class Status { Running, Done, Failed, Stopped }
+
+    /** [Expired]：watch 到了期限被收掉（不是自己结束，也不是被人停；模型收到过一条通知） */
+    enum class Status { Running, Done, Failed, Stopped, Expired }
 
     val isRunning: Boolean get() = status == Status.Running
 }

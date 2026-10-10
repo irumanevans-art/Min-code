@@ -164,6 +164,14 @@ sealed interface InputOrigin {
     @Serializable
     @SerialName("cron")
     data class Cron(val cronId: String) : InputOrigin
+
+    /**
+     * 后台任务（Bash 转后台的命令、Monitor 的 watch）送来的通知：是进程的输出与结局，不是人说的话，
+     * 更不是授权——auto 审查与 hook 都不把它当用户意图。[taskId] 是任务 id（后台命令是句柄 id，watch 是 `mon_…`）
+     */
+    @Serializable
+    @SerialName("task")
+    data class Task(val taskId: String) : InputOrigin
 }
 
 @Serializable

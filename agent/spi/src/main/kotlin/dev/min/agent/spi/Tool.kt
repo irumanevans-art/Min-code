@@ -166,6 +166,9 @@ interface ToolContext {
     val agents: AgentPort get() = AgentPort.Unavailable
     val worktrees: WorktreePort get() = WorktreePort.Unavailable
 
+    /** 后台任务（Bash 转后台的命令、Monitor 的 watch）。有默认值（不可用）：其余工具与测试替身不用管它 */
+    val background: BackgroundPort get() = BackgroundPort.Unavailable
+
     /**
      * 本会话任务清单的只读视图（任务工具用）。有默认值（空清单）：与任务无关的工具和测试替身不用管它。
      * 清单是**本会话自己的**：子 agent 的会话看到的是它自己那份，不是父会话的。

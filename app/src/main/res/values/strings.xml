@@ -408,6 +408,13 @@
   <string name="shell_state_completed">Completed</string>
   <string name="shell_state_failed">Failed</string>
   <string name="shell_state_stopped">Stopped</string>
+  <string name="shell_state_expired">Expired</string>
+  <string name="shell_events">Events</string>
+  <plurals name="shell_events_count">
+    <item quantity="one">%d event</item>
+    <item quantity="other">%d events</item>
+  </plurals>
+  <string name="shell_remaining">Time left</string>
   <string name="shell_exit_code">exit %1$d</string>
   <string name="shell_monitor">monitor</string>
   <string name="shell_stop">Stop</string>
@@ -1101,6 +1108,7 @@
   <string name="min_agent_hook_feedback">%1$s hook asked the model to keep going</string>
   <string name="min_agent_cron_woke">A scheduled task woke the session</string>
   <string name="min_agent_cron_fired">Scheduled task %1$s fired (not a message you typed)</string>
+  <string name="min_agent_task_notice">Background task %1$s reported (process output, not a message you typed)</string>
   <string name="min_agent_continued">Continued</string>
   <string name="min_agent_woke">A subagent finished, continuing</string>
   <string name="min_agent_hook_woke">A background hook reported a problem</string>

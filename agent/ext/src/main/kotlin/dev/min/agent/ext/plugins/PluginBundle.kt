@@ -29,6 +29,8 @@ class PluginBundle(
     private val contexts: Map<String, Pair<PluginVars, PluginValues>>,
     private val trusted: Set<String>,
     private val approvalRequired: Set<String>,
+    /** 信任闸之后可以启动的插件 monitor（内核在会话创建 / 重开 / skill 被调用时启动，见 PluginMonitors.kt） */
+    val monitors: List<PluginMonitorLaunch> = emptyList(),
 ) {
     fun resolveHook(handler: dev.min.agent.ext.hooks.HookHandler): dev.min.agent.ext.hooks.HookHandler {
         val id = (handler.raw["minPluginId"] as? JsonPrimitive)?.content ?: return handler
@@ -180,6 +182,7 @@ class PluginBundle(
             val contexts = linkedMapOf<String, Pair<PluginVars, PluginValues>>()
             val trusted = mutableSetOf<String>()
             val approvalRequired = mutableSetOf<String>()
+            val monitors = mutableListOf<PluginMonitorLaunch>()
             for (plugin in batch.plugins) {
                 val realRoot = canonical(GuestPath(plugin.root)).value
                 val source = enabledSources[plugin.ref.id]
@@ -249,6 +252,25 @@ class PluginBundle(
                     }
                 }
                 contexts[plugin.ref.id] = vars to values
+                // monitors：跑 shell 命令，信任口径与同一插件的 hooks 一样（isTrusted 已把安全仓库读失败的情形算进去）。
+                // 命令不许引用 ${'$'}{user_config.*}（CC：引用了的那个 monitor 不启动），路径变量换成宿主路径；环境变量由 shell 自己展开
+                if (isTrusted) plugin.monitors.forEach monitor@{ m ->
+                    if (m.command.contains("${'$'}{user_config.")) {
+                        notes += "$label 的 monitor「${m.name}」的命令引用了 user_config，没有启动"
+                        return@monitor
+                    }
+                    val trigger = m.whenTrigger
+                    val onSkill = when {
+                        trigger == null || trigger == "always" -> null
+                        trigger.startsWith("on-skill-invoke:") && trigger.length > "on-skill-invoke:".length -> trigger.removePrefix("on-skill-invoke:")
+                        else -> {
+                            // 校验层只放行 always 与 on-skill-invoke: 开头的写法；走到这里的是冒号后面没写 skill 名
+                            notes += "$label 的 monitor「${m.name}」写了 on-skill-invoke: 却没有 skill 名，没有启动"
+                            return@monitor
+                        }
+                    }
+                    monitors += PluginMonitorLaunch(plugin.namespace, m.name, vars.paths(m.command), m.description, onSkill)
+                } else if (plugin.monitors.isNotEmpty()) notes += "$label 启用来源所属工作区未信任，monitors 未启动"
                 plugin.skills.forEach { skill ->
                     val path = GuestPaths.join(plugin.root, skill.skillMd)
                     SkillLoader.readSkill(io, ConfigSource.Plugin, GuestPaths.parentOf(path), skill.name.substringAfterLast(':'))?.let { def ->
@@ -296,7 +318,7 @@ class PluginBundle(
                 } }
             }
             notes += io.notes
-            return PluginBundle(batch, skillDefs, commandDefs, agentDefs, hooks, styles, notes, fs, contexts, trusted, approvalRequired)
+            return PluginBundle(batch, skillDefs, commandDefs, agentDefs, hooks, styles, notes, fs, contexts, trusted, approvalRequired, monitors)
         }
     }
 }

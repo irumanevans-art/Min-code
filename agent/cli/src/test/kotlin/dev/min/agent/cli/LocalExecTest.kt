@@ -222,4 +222,40 @@ class LocalExecTest {
     fun `kill 不认识的句柄什么都不做`() {
         runBlocking { exec.kill(ExecHandle("no-such-id", pid = 1, logPath = null)) }
     }
+
+    @Test
+    fun `后台进程自己结束后能查到退出码，还在跑与不认识的句柄是 null`() {
+        val r = backgrounded("sleep 1; exit 7", budget = 0)
+        runBlocking { assertEquals("还在跑：没有退出码", null, exec.exitOf(r.handle)) }
+        assertTrue("进程应已结束", eventually { runBlocking { exec.isAlive(r.handle) } == false })
+        // 先记退出码、再从运行表摘掉：isAlive 一说不在了，exitOf 就必须已经有值
+        runBlocking { assertEquals(7, exec.exitOf(r.handle)) }
+        runBlocking { assertEquals(null, exec.exitOf(ExecHandle("no-such-id", pid = 1, logPath = null))) }
+    }
+
+    @Test
+    fun `被 kill 的后台进程也有退出码`() {
+        val r = backgrounded(ticker, budget = 0)
+        assertTrue(eventually { logSize(logOf(r.handle)) > 20 })
+        runBlocking { exec.kill(r.handle) }
+        assertTrue(eventually { runBlocking { exec.exitOf(r.handle) } != null })
+        runBlocking { assertTrue(exec.exitOf(r.handle) != 0) }
+    }
+
+    @Test
+    fun `isAlive 一说不在了，退出码就已经查得到（不会出现「结束了却拿不到退出码」的空档）`() {
+        repeat(8) { round ->
+            val r = backgrounded("exit ${round + 1}", budget = 0)
+            // 紧挨着轮询：进程一退就读，不留等待的余地
+            var sawDead = false
+            val deadline = System.nanoTime() + 15_000_000_000L
+            while (System.nanoTime() < deadline && !sawDead) {
+                if (runBlocking { exec.isAlive(r.handle) } == false) {
+                    sawDead = true
+                    runBlocking { assertEquals("第 $round 轮", round + 1, exec.exitOf(r.handle)) }
+                }
+            }
+            assertTrue("第 $round 轮的进程应已结束", sawDead)
+        }
+    }
 }

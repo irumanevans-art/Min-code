@@ -209,6 +209,7 @@ class TestToolContext(
     override var modeBeforePlan: PermissionMode? = null
     override var web: dev.min.agent.spi.WebPort = dev.min.agent.spi.WebPort.Unavailable
     override var webSearch: dev.min.agent.spi.WebSearchPort = dev.min.agent.spi.WebSearchPort.Unavailable
+    override var background: dev.min.agent.spi.BackgroundPort = dev.min.agent.spi.BackgroundPort.Unavailable
     val extractions = mutableListOf<Pair<String, String>>()
     var extraction: suspend (String, String) -> ToolResult = { _, _ -> ToolResult(listOf(TextPart("提取端口未配置")), isError = true) }
     override suspend fun extract(content: String, prompt: String): ToolResult {

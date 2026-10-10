@@ -288,6 +288,15 @@ class SessionRuntime private constructor(
     /** 后台 hook 的轮询节奏。默认值即生产值；内核测试调小（真等 30 秒的退回探测间隔没法做确定性用例） */
     internal val asyncHookTimings = AsyncHookTimings()
 
+    /** 后台任务（Bash 转后台的命令、Monitor 的 watch）：一个运行时一张表，会话卸下时一并收掉 */
+    internal val background = BackgroundJobs(this, scope)
+
+    /** 后台任务的节奏。默认值即生产值；内核测试调小 */
+    internal val backgroundTimings = BackgroundTimings()
+
+    /** 本会话已经启动过的插件 monitor（`插件:名字`）：每个只起一次，不论 `always` 还是首次调用 skill */
+    internal val startedPluginMonitors = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     /** settings 里的 `fileCheckpointingEnabled`（缺省为开）；创建时随那份 settings 一起读，重新打开的会话第一次要用时再读 */
     @Volatile
     private var checkpointsBySettings: Boolean? = null

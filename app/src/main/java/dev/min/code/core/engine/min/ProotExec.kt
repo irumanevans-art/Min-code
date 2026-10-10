@@ -51,7 +51,7 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         check(logDir.mkdirs() || logDir.isDirectory)
         val log = File(logDir, "$id.log").apply { createNewFile() }
         val process = host.launch(agentCommandContext(base, command.cwd, command.script).copy(env = command.env), log)
-        val task = Running(process, log, options.timeoutMs) { running.remove(id) }
+        val task = Running(id, process, log, options.timeoutMs) { running.remove(id) }
         running[id] = task
         task.start()
         try {
@@ -87,8 +87,18 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
 
     /** 按自己登记的 Process 判断存活，不起探测进程（N3）；表里没有 = 已被等待线程摘除 = 不在跑 */
     override suspend fun isAlive(handle: ExecHandle): Boolean? = withContext(Dispatchers.IO) {
-        running[handle.id]?.process?.isAlive ?: false
+        // 看「还在不在运行表里」而不是 `process.isAlive`：进程一退 isAlive 立刻为假，而等待线程要稍后（Android 的
+        // waitFor 是轮询的，实测要晚上几百毫秒）才记下退出码，[exitOf] 在这段空档里是 null——模拟器上后台命令结束的通知
+        // 就因此写成了「拿不到退出码」。表项在退出码记下之后才摘，两件事就一致了
+        running.containsKey(handle.id)
     }
+
+    override suspend fun exitOf(handle: ExecHandle): Int? = exits[handle.id]
+
+    /** 最近结束的后台进程的退出码；只留 [MAX_REMEMBERED_EXITS] 条，长会话里表不能一直长 */
+    private val exits = java.util.Collections.synchronizedMap(object : java.util.LinkedHashMap<String, Int>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?): Boolean = size > MAX_REMEMBERED_EXITS
+    })
 
     /** Android 33 以下没有 `ProcessHandle.current()`；owner 记号要的是本进程 pid，宿主侧自己知道 */
     override fun currentPid(): Long = android.os.Process.myPid().toLong()
@@ -98,7 +108,7 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         java.io.File("/proc/$pid").exists()
     }
 
-    private inner class Running(val process: Process, val log: File, val timeoutMs: Long, val done: () -> Unit) {
+    private inner class Running(val id: String, val process: Process, val log: File, val timeoutMs: Long, val done: () -> Unit) {
         val exit = CompletableDeferred<Int>()
         private val reaped = AtomicBoolean()
         @Volatile private var timedOut = false
@@ -118,6 +128,8 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
                 try {
                     if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) { timedOut = true; reap() }
                     val code = process.waitFor()
+                    // 先记退出码、再由 done 摘出运行表：[isAlive] 一说「不在了」，[exitOf] 就必须已经查得到
+                    exits[id] = code
                     exit.complete(code)
                 } catch (e: Throwable) { exit.completeExceptionally(e) }
                 finally { done() }
@@ -131,6 +143,8 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         }
     }
 }
+
+private const val MAX_REMEMBERED_EXITS = 256
 
 /** 后台日志可能很大，只读取有界头尾，UTF-8 解码在各自边界容忍半个字符。 */
 internal fun clippedLog(file: File, max: Int): Pair<String, Boolean> = java.io.RandomAccessFile(file, "r").use { input ->

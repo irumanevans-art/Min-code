@@ -104,13 +104,13 @@ class BashToolTest {
         script(ExecResult.Backgrounded(h, "starting...\n"))
         val r = BashTool.call(ctx, "command" to "npm run dev")
         assertFalse(r.isError)
-        assertEquals("已转入后台（id bg1，pid 4242，日志 /tmp/bg1.log（用 Read 查看））。目前的输出：\nstarting...\n", r.text)
+        assertEquals("已转入后台（id bg1，pid 4242，日志 /tmp/bg1.log（用 Read 查看））。命令结束时你会收到通知；用 TaskStop 按 id 停掉它。目前的输出：\nstarting...\n", r.text)
     }
 
     @Test
     fun `后台没有日志路径也没有输出`() = runTest {
         script(ExecResult.Backgrounded(ExecHandle("bg2"), ""))
-        assertEquals("已转入后台（id bg2（没有日志文件））。目前还没有输出。", BashTool.call(ctx, "command" to "x").text)
+        assertEquals("已转入后台（id bg2（没有日志文件））。命令结束时你会收到通知；用 TaskStop 按 id 停掉它。目前还没有输出。", BashTool.call(ctx, "command" to "x").text)
     }
 
     // ---- 交给端口的参数 ----

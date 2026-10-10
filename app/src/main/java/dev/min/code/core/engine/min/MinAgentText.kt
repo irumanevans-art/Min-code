@@ -30,6 +30,9 @@ interface MinAgentText {
     /** 定时任务把空闲的会话叫醒：回合状态行与转录分隔线共用 */
     fun cronWoke(): String
 
+    /** 后台任务（转后台的命令、watch）送进会话的通知：说明它是进程的输出、不是人发的话 */
+    fun taskNotice(taskId: String): String
+
     /** 续跑分隔线的正文，不含两侧的破折号 */
     fun continued(atMs: Long?): String
 
@@ -129,6 +132,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun hookStopped(atMs: Long?) = timed(s(R.string.min_agent_hook_stopped), atMs)
     override fun hookFeedback(event: String) = s(R.string.min_agent_hook_feedback, event)
     override fun cronFired(cronId: String) = s(R.string.min_agent_cron_fired, cronId)
+    override fun taskNotice(taskId: String) = s(R.string.min_agent_task_notice, taskId.take(12))
     override fun cronWoke() = s(R.string.min_agent_cron_woke)
     override fun continued(atMs: Long?) = timed(s(R.string.min_agent_continued), atMs)
     override fun subagentWoke() = s(R.string.min_agent_woke)

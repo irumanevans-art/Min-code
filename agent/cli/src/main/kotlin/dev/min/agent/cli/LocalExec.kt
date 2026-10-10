@@ -57,7 +57,9 @@ class LocalExec(
         val proc = try {
             process.outputStream.close()
             running[id] = process to launch
-            Running(id, process, logFile, options.maxOutputChars) {
+            Running(id, process, logFile, options.maxOutputChars) { code ->
+                // 退出码先记、再摘出运行表：[isAlive] 一说「不在了」，[exitOf] 就必须已经查得到
+                rememberExit(id, code)
                 try {
                     launch.cleanup()
                 } finally {
@@ -108,8 +110,20 @@ class LocalExec(
     /** 按自己登记的 Process 判断存活，不起探测进程（N3：每 5 秒一个 `kill -0` 会在 exec-logs 下堆积日志）。
      *  表里没有 = 进程已结束（等待线程退出时摘除）或不是本端口发的句柄：对宿主而言都不在跑 */
     override suspend fun isAlive(handle: ExecHandle): Boolean? {
-        val (process, _) = running[handle.id] ?: return false
-        return process.isAlive
+        // 看「还在不在运行表里」而不是 `process.isAlive`：进程一退 isAlive 立刻为假，但退出码要等等待线程读完管道才记下，
+        // 两者之间 [exitOf] 还是 null——后台命令结束的通知会因此写成「拿不到退出码」。表项在退出码记下之后才摘，两件事就一致了
+        return running.containsKey(handle.id)
+    }
+
+    override suspend fun exitOf(handle: ExecHandle): Int? = exits[handle.id]
+
+    /** 最近结束的后台进程的退出码。只留 [MAX_REMEMBERED_EXITS] 条：长会话里后台命令成百上千，表不能一直长 */
+    private val exits = object : java.util.LinkedHashMap<String, Int>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?): Boolean = size > MAX_REMEMBERED_EXITS
+    }.let { java.util.Collections.synchronizedMap(it) }
+
+    private fun rememberExit(id: String, code: Int) {
+        exits[id] = code
     }
 
     override fun currentPid(): Long = ProcessHandle.current().pid()
@@ -132,7 +146,7 @@ class LocalExec(
         private val process: Process,
         logFile: Path,
         maxChars: Int,
-        onDone: () -> Unit,
+        onDone: (Int) -> Unit,
     ) {
         val exit = CompletableDeferred<Int>()
         private val collector = OutputCollector(maxChars)
@@ -169,7 +183,7 @@ class LocalExec(
                 // 后台子孙可能还攥着管道写端，EOF 迟迟不来：最多等 2 秒把已到的输出读完
                 pump.join(DRAIN_MS)
                 try {
-                    onDone()
+                    onDone(code)
                 } finally {
                     exit.complete(code)
                 }
@@ -234,5 +248,6 @@ class LocalExec(
 
     private companion object {
         const val DRAIN_MS = 2_000L
+        const val MAX_REMEMBERED_EXITS = 256
     }
 }

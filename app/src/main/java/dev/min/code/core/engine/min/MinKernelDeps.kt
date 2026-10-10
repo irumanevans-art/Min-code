@@ -140,8 +140,12 @@ internal class MinExec(
         tasks.stopped(handle.id)
     }
 
-    // 存活 / pid 探测都转发给当前一代（ProotExec）：不转发的话端口默认「说不了」，内核退回 kill -0 轮询
-    override suspend fun isAlive(handle: ExecHandle): Boolean? = current().exec.isAlive(handle)
+    // 存活探测转发给 ProotExec：不转发的话端口默认「说不了」，内核退回 kill -0 轮询。句柄要问起它的那一代：
+    // 换代后新一代的运行表里没有旧句柄，会把还在跑的后台命令报成「不在了」
+    override suspend fun isAlive(handle: ExecHandle): Boolean? = (owner[handle.id] ?: current().exec).isAlive(handle)
+
+    // 退出码在起它的那一代手里：换代后新一代查不到旧句柄，与 kill 同理要回到 owner
+    override suspend fun exitOf(handle: ExecHandle): Int? = (owner[handle.id] ?: current().exec).exitOf(handle)
     override fun currentPid(): Long = current().exec.currentPid()
     override suspend fun isPidAlive(pid: Long): Boolean? = current().exec.isPidAlive(pid)
 }
@@ -164,6 +168,8 @@ fun minTools(): List<Tool<*>> = listOf(
     // 联网：WebFetch 始终在表里（走宿主侧 HTTP，权限是 `WebFetch(domain:…)` 规则）；WebSearch 要配了搜索后端才有，
     // 随设置开关进出，由 [minToolsWithDevice] 的门控接在表的最末尾
     WebFetchTool,
+    // 后台任务：watch 与按 id 取输出（TaskStop 在表的前部，已能停后台命令与 watch）
+    dev.min.agent.tools.MonitorTool, dev.min.agent.tools.TaskOutputTool,
 )
 
 object MinKernelDeps {
@@ -202,6 +208,8 @@ object MinKernelDeps {
          * [KernelDeps] 一个进程只建一次，而用户随时会在设置里改后端
          */
         searchBackend: SearchBackend? = null,
+        /** Monitor 的 WebSocket 源：宿主侧直连（不经 proot），连接时校验并钉住地址；测试换成脚本化的假端口 */
+        webSockets: dev.min.agent.spi.WebSocketPort = dev.min.agent.host.SocketWebSocketPort(),
     ): KernelDeps = KernelDeps(
         networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
@@ -210,7 +218,7 @@ object MinKernelDeps {
             snapshots = snapshots,
             // 远程 MCP 服务器走宿主侧的 HTTP（不经 proot）；stdio 服务器经 processes 进 proot
             mcpHttp = dev.min.agent.host.UrlConnectionTransport(),
-            web = web, searchBackend = searchBackend,
+            web = web, searchBackend = searchBackend, webSockets = webSockets,
         ),
         platform = PLATFORM, zone = zone, memoryHome = MEMORY_HOME,
         checkpointBudget = CHECKPOINT_BUDGET,

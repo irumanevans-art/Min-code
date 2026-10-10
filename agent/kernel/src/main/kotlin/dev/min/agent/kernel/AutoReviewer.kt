@@ -139,7 +139,7 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
                         Regex("^[A-Za-z]:/").containsMatchIn(raw) -> "/" + raw[0].lowercaseChar() + raw.drop(2)
                         else -> raw
                     }
-                    credentialPath(GuestPath(path), context, includeAncestors = call.name == "Bash")
+                    credentialPath(GuestPath(path), context, includeAncestors = dev.min.agent.policy.PolicyEngine.runsShellCommand(call.name))
                 } || listOf("file_path", "path").any { key ->
                     (call.input[key] as? JsonPrimitive)?.content?.let { path ->
                         val absolute = if (path.startsWith('/')) path else context.cwd.value + "/" + path

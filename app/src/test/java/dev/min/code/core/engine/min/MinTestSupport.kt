@@ -90,6 +90,7 @@ class FakeText : MinAgentText {
     override fun hookStopped(atMs: Long?) = "hook-stopped"
     override fun hookFeedback(event: String) = "hook-feedback:$event"
     override fun cronFired(cronId: String) = "cron-fired:$cronId"
+    override fun taskNotice(taskId: String) = "task-notice:$taskId"
     override fun cronWoke() = "cron-woke"
     override fun continued(atMs: Long?) = "continued@$atMs"
     override fun subagentWoke() = "woke"
@@ -214,7 +215,11 @@ class AskingTool(override val name: String = "Touch", private val body: suspend 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow { emit(ToolProgress.Done(body())) }
 }
 
-class TestKernel(model: ModelClient, tools: List<Tool<*>> = emptyList(), val dir: File = Files.createTempDirectory("min-b3").toFile()) {
+class TestKernel(
+    model: ModelClient, tools: List<Tool<*>> = emptyList(), val dir: File = Files.createTempDirectory("min-b3").toFile(),
+    /** 要让工具 / 后台任务真碰文件与进程的测试自己给宿主端口；默认谁碰谁失败 */
+    hostPorts: HostPorts = HostPorts(Unused, Unused, Unused) { _: SessionId -> NoArtifacts },
+) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val time = AtomicLong(10_000)
     private val counter = AtomicLong(0)
@@ -225,7 +230,7 @@ class TestKernel(model: ModelClient, tools: List<Tool<*>> = emptyList(), val dir
         ids = IdGenerator { "${it}_${counter.incrementAndGet()}" },
         models = { ref -> ResolvedModel(T_PROFILE.copy(ref = ref), model) },
         tools = tools,
-        host = HostPorts(Unused, Unused, Unused) { _: SessionId -> NoArtifacts },
+        host = hostPorts,
         platform = "test", zone = ZoneOffset.UTC,
         retry = RetryPolicy(maxAttempts = 3, baseDelayMs = 1, maxDelayMs = 5),
     )

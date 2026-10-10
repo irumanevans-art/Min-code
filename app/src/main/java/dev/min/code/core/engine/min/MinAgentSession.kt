@@ -135,7 +135,8 @@ class MinAgentSession(
         editRestore = editRestore,
         effects = object : MinCommandEffects {
             override fun rememberDefaultModel(profileId: String, modelId: String) = host.rememberDefaultModel(profileId, modelId)
-            override suspend fun killTask(taskId: String) = host.killTask(taskId)
+            // 内核的任务表先认（watch、后台命令）；不在里面的（老的、别的宿主登记的）退回进程表
+            override suspend fun killTask(taskId: String) { if (!host.hub.stopBackgroundJob(rootId, taskId)) host.killTask(taskId) }
             override suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String) {
                 // 结局只用轻提示说一句：规则已经对本会话生效，文件没写成不该让这次批准失败
                 when (val result = host.persistAllowRule(layer, rule, cwd)) {
@@ -188,11 +189,13 @@ class MinAgentSession(
         val status: String?,
         val tracked: List<MinBackgroundTasks.Tracked>,
         val title: String?,
+        /** 内核的后台任务表（这棵树里全部）：界面只取其中的 watch，后台命令仍走 [tracked]，免得一条命令列两遍 */
+        val jobs: List<dev.min.agent.kernel.BackgroundJobInfo> = emptyList(),
     )
 
     private fun inputOf(p: Parts, stopping: Boolean, error: String?) = MinMapperInput(
         ref = ref, root = rootId, nodes = p.nodes, pending = p.pending, toolStatus = p.status, titleOverride = p.title,
-        tasks = attributeTasks(p.tracked, p.nodes.values, host.text::backgroundTask),
+        tasks = attributeTasks(p.tracked, p.nodes.values, host.text::backgroundTask) + watchTasks(p.jobs),
         stopping = stopping, errorMessage = error, maxRetryAttempts = host.maxRetryAttempts,
         workflowCommands = workflowCommands.value,
         // 状态一帧一帧到，成员的排队 / 搁浅随成员会话的状态变（开跑、收尾都是状态变化），所以每帧现问一次就跟得上
@@ -217,6 +220,7 @@ class MinAgentSession(
             host.tasks.tasks,
             host.titleOverride(rootId.value),
         ) { nodes, pending, status, tracked, title -> Parts(nodes, pending, status, tracked, title) }
+            .combine(host.hub.backgroundJobs(rootId)) { p, jobs -> p.copy(jobs = jobs) }
         val extras = combine(stopping, error, host.settingsTick, workflowCommands) { s, e, _, _ -> s to e }
         // 合并 + 后台调度：几百条历史的投影是毫秒级，但不该在界面线程上做，也不必为每一帧都做
         parts.combine(extras) { p, (s, e) -> inputOf(p, s, e) }

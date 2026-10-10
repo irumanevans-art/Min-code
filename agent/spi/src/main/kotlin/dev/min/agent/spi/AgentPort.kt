@@ -15,7 +15,7 @@ interface AgentPort {
     /** 给子 agent（按 id 或名字；子 agent 里写 `main` 指父会话）发一句话。返回给模型看的结论 */
     suspend fun message(to: String, text: String): ToolResult
 
-    /** 中断子 agent 的当前回合。返回给模型看的结论 */
+    /** TaskStop：停后台任务（命令、watch）或中断子 agent / 队友的当前回合（id 或名字）。返回给模型看的结论 */
     suspend fun stop(target: String): ToolResult
 
     /**
