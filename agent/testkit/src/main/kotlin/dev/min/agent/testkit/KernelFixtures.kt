@@ -44,6 +44,9 @@ fun testDeps(
     artifacts: FakeArtifacts = FakeArtifacts(),
     /** 小工具的宿主出口：测试要看通知发没发、文件交没交，就传一个记录用的替身 */
     pushSink: dev.min.agent.spi.PushSink = dev.min.agent.spi.PushSink.Unavailable,
+    userFileSink: dev.min.agent.spi.UserFileSink = dev.min.agent.spi.UserFileSink.Unavailable,
+    /** 工作区文件系统：要测读文件的工具（SendUserFile）时传一个 [FakeFs]，默认不可用 */
+    fs: dev.min.agent.spi.WorkspaceFs = Unused,
 ): KernelDeps {
     val time = AtomicLong(1_000)
     val counter = AtomicLong(0)
@@ -55,10 +58,11 @@ fun testDeps(
             ResolvedModel(TEST_PROFILE, model)
         },
         tools = tools,
-        host = HostPorts(Unused, Unused, Unused) { _: SessionId -> artifacts },
+        host = HostPorts(fs, Unused, Unused) { _: SessionId -> artifacts },
         platform = "test",
         zone = ZoneOffset.UTC,
         retry = RetryPolicy(maxAttempts = 3, baseDelayMs = 1, maxDelayMs = 5),
         pushSink = pushSink,
+        userFileSink = userFileSink,
     )
 }

@@ -183,6 +183,8 @@ class KernelDeps(
     val customizations: Customizations = Customizations.Full,
     /** PushNotification 的宿主出口（系统通知 / 桌面打印）。默认不可用：工具照实回告「没有发出」 */
     val pushSink: dev.min.agent.spi.PushSink = dev.min.agent.spi.PushSink.Unavailable,
+    /** SendUserFile 的宿主出口（把文件交给用户的设备）。默认不可用：工具照实回告「没有送达」 */
+    val userFileSink: dev.min.agent.spi.UserFileSink = dev.min.agent.spi.UserFileSink.Unavailable,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }

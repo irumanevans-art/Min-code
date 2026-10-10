@@ -12,6 +12,8 @@ enum class UserFileDisplay { Render, Attach }
 class UserFile(
     /** 文件名（不含目录），给界面与分享用 */
     val name: String,
+    /** 工作区里的路径（guest 路径）：桌面要打印它，手机用不着 */
+    val path: GuestPath,
     /** 按扩展名猜的 MIME，猜不出是 application/octet-stream */
     val mime: String,
     val bytes: ByteArray,

@@ -117,7 +117,9 @@ internal fun desktopTools(
     // 系统通知（PushNotification）：桌面没有通知栏，打一行到标准错误（与内核的别的提示同一条路）
     listOf(dev.min.agent.tools.PushNotificationTool) +
     // 能发消息的对象（ListAgents）：只列本会话的子 agent 与团队成员
-    listOf(dev.min.agent.tools.ListAgentsTool)
+    listOf(dev.min.agent.tools.ListAgentsTool) +
+    // 把文件发给用户（SendUserFile）：桌面打印路径（见下面的 userFileSink）
+    listOf(dev.min.agent.tools.SendUserFileTool)
 
 /** 团队与定时调度的工具（只在交互会话里提供） */
 private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
@@ -339,6 +341,13 @@ internal class DesktopApp(
                 ResolvedModel(selected, if (backup != null) fallbackClients.getValue(backup.provider.id) else client)
             },
             tools = tools,
+            // SendUserFile：桌面没有可推送的客户端，打印文件在磁盘上的路径（终端里能直接打开）
+            userFileSink = object : dev.min.agent.spi.UserFileSink {
+                override suspend fun deliver(file: dev.min.agent.spi.UserFile): Boolean {
+                    System.err.println("[文件] " + (file.caption?.let { "$it：" }.orEmpty()) + paths.hostOf(file.path))
+                    return true
+                }
+            },
             // 桌面没有通知栏：PushNotification 打一行到标准错误（与别的提示同一个流）
             pushSink = object : dev.min.agent.spi.PushSink {
                 override suspend fun push(title: String?, message: String): Boolean {

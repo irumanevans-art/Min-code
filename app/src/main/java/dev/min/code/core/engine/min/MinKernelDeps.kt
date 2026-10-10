@@ -176,6 +176,8 @@ fun minTools(): List<Tool<*>> = listOf(
     dev.min.agent.tools.PushNotificationTool,
     // 能发消息的对象（只往末尾追加）
     dev.min.agent.tools.ListAgentsTool,
+    // 把文件发给用户（只往末尾追加）
+    dev.min.agent.tools.SendUserFileTool,
 )
 
 object MinKernelDeps {
@@ -218,6 +220,8 @@ object MinKernelDeps {
         webSockets: dev.min.agent.spi.WebSocketPort = dev.min.agent.host.SocketWebSocketPort(),
         /** PushNotification 的宿主出口：手机上走 App 的告警通道发系统通知（[AndroidPushSink]） */
         pushSink: dev.min.agent.spi.PushSink = dev.min.agent.spi.PushSink.Unavailable,
+        /** SendUserFile 的宿主出口：手机上写进缓存、发通知（[AndroidUserFileSink]） */
+        userFileSink: dev.min.agent.spi.UserFileSink = dev.min.agent.spi.UserFileSink.Unavailable,
     ): KernelDeps = KernelDeps(
         networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
@@ -243,5 +247,6 @@ object MinKernelDeps {
         workflowApprovals = workflowApprovals,
         providerFastModel = providerFastModel,
         pushSink = pushSink,
+        userFileSink = userFileSink,
     )
 }
