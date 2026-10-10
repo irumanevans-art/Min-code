@@ -94,8 +94,13 @@ internal fun desktopTools(
     interactive: Boolean = true,
     /** false = `CLAUDE_CODE_DISABLE_CRON`：定时任务的 4 个工具（CronCreate / CronDelete / CronList / ScheduleWakeup）也不提供 */
     cronEnabled: Boolean = true,
-): List<Tool<*>> = listOf(
-    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool,
+    /** true = `--bare`（CC :72）：只留原文点名的 Bash、读文件、改文件。NotebookEdit 算改文件——CC 的 Edit(…) 路径规则同样罩住它，保留 */
+    bare: Boolean = false,
+): List<Tool<*>> =
+    // bare 档的 Bash 没有后台任务（CC headless 页：none run，到超时就停），由实例自己管 schema / 描述 / 前台预算
+    if (bare) listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, BashTool(allowBackground = false)) else
+    listOf(
+    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool(),
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
@@ -142,6 +147,11 @@ internal class DesktopApp(
     private val provider = selection.provider
     private val profile = selection.profile
     private val keyEnv = selection.keyEnv
+    /**
+     * 这次启动的定制档位（`--bare` / `--safe-mode` 与两个环境变量的归一，[resolveCustomizations]）：
+     * deps 交给内核，config() / hub() 的加载点读同一份
+     */
+    private val customizations = resolveCustomizations(args.bare, args.safeMode)
     private val fastSelection = args.fastModel?.let {
         resolveModel(args.copy(model = it, contextWindow = null, maxOutput = null), Catalog.bundled())
     }
@@ -165,7 +175,9 @@ internal class DesktopApp(
         val catalog = AgentCatalog.of(config.agents)
         val interactive = args.prompt == null
         val cronEnabled = !cronDisabledBy(System::getenv)
-        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive, cronEnabled)
+        // --bare：工具表收窄到 CC 点名的那几个（其余档位全表）
+        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive, cronEnabled,
+            bare = customizations == dev.min.agent.kernel.Customizations.Bare)
         toolNamesCache = tools.map { it.name }
         val limits = HUB_LIMITS.copy(
             teamMaxConcurrent = teamMaxConcurrentFrom(config.settings.merged.raw("teamMaxConcurrent"), System.err::println),
@@ -217,15 +229,23 @@ internal class DesktopApp(
     suspend fun config(): ClaudeConfig {
         configInstance?.let { return it }
         val base = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome)
-        val cwd = paths.guestOfHost(args.cwd)
-        val plugins = dev.min.agent.ext.plugins.PluginBundle.load(paths.fs, cwd, userHome, base.settings.merged,
+        // --bare / --safe-mode：skills / 命令 / 子 agent 定义（含托管层）这次启动不发现（CC :72/:125 的跳过清单；
+        // safe 原文的托管保留清单里也没有它们）。settings 照常读——权限规则、模型等键不在清单里
+        val definitions = if (customizations == dev.min.agent.kernel.Customizations.Full) base
+            else base.copy(skills = emptyList(), commands = emptyList(), agents = emptyList())
+        // bare 下插件还有一条入口：CC headless 页把 `--plugin-dir` 列为 bare 模式传上下文的方式，所以只装载命令行点名的，
+        // 已安装 / 设置启用的照旧不发现（信任口径走 PluginBundle 里现成的 sideload 规则：托管锁定、${'$'}{user_config} 等原样生效）。
+        // safe 原文没有这个例外，维持全部不加载
+        val plugins = if (customizations == dev.min.agent.kernel.Customizations.Safe) null
+        else dev.min.agent.ext.plugins.PluginBundle.load(paths.fs, paths.guestOfHost(args.cwd), userHome, base.settings.merged,
             args.pluginDirs.map(paths::guestOfHost), canonical = { desktopCanonicalCredentialPath(paths, it) },
-            trust = { root -> pluginTrusted(root, cwd) }, secrets = dev.min.agent.ext.plugins.PluginSecretStore(mcpTokens),
+            trust = { root -> pluginTrusted(root, paths.guestOfHost(args.cwd)) }, secrets = dev.min.agent.ext.plugins.PluginSecretStore(mcpTokens),
             installedPath = { paths.guestOfHost(java.nio.file.Path.of(it)) }, shellPath = { it.value },
+            installed = customizations == dev.min.agent.kernel.Customizations.Full,
         )
         pluginBundle = plugins
-        return base.copy(skills = base.skills + plugins.skills, commands = base.commands + plugins.commands,
-            agents = base.agents + plugins.agents, notes = base.notes + plugins.notes).also { configInstance = it }
+        return definitions.copy(skills = definitions.skills + plugins?.skills.orEmpty(), commands = definitions.commands + plugins?.commands.orEmpty(),
+            agents = definitions.agents + plugins?.agents.orEmpty(), notes = definitions.notes + plugins?.notes.orEmpty()).also { configInstance = it }
     }
 
     private fun pluginTrusted(root: GuestPath, cwd: GuestPath): Boolean {
@@ -383,6 +403,8 @@ internal class DesktopApp(
             pluginDirs = args.pluginDirs.map(paths::guestOfHost),
             pluginInstalledPath = { paths.guestOfHost(java.nio.file.Path.of(it)) },
             pluginTrust = { root, cwd -> pluginTrusted(root, cwd) },
+            // 这次启动的定制档位（--bare / --safe-mode）：内核的各加载点从这里读，子会话共用同一个 deps 自然跟随
+            customizations = customizations,
         )
     }
 

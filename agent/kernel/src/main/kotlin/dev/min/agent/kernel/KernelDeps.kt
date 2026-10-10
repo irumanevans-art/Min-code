@@ -15,6 +15,28 @@ import dev.min.agent.spi.Tool
 import dev.min.agent.spi.WorkspaceFs
 import java.time.ZoneId
 
+/**
+ * 这次启动加载多少定制（CC 的 `--bare` / `--safe-mode`，CC :72/:125）：都是「这次启动少发现一些东西」，
+ * 不改任何已有功能的语义；权限规则、模型选择、内置工具（bare 的工具表由宿主收窄）照常。
+ * 宿主在组合根设这一个字段，各加载点读它——不在各处另判参数。
+ */
+enum class Customizations {
+    /** 全部照常发现与加载（默认） */
+    Full,
+    /**
+     * CC `--bare`（= `CLAUDE_CODE_SIMPLE=1`）：不自动发现 hooks、skills、自定义命令、子 agent 定义、
+     * 已安装插件、MCP 服务器、自动记忆、CLAUDE.md。原文对托管层没有例外，托管 hooks 也一并跳过；
+     * 输出样式与工作流不在跳过清单里，照常
+     */
+    Bare,
+    /**
+     * CC `--safe-mode`（= `CLAUDE_CODE_SAFE_MODE=1`）：CLAUDE.md、skills、插件、hooks、MCP 服务器、
+     * 自定义命令与 agents、输出样式、工作流、自动记忆都不加载。托管设置策略照常生效——**含托管层配的
+     * hooks**；托管的插件、skills、CLAUDE.md 与托管配的 MCP 服务器仍不加载（原文保留清单里没有它们）
+     */
+    Safe,
+}
+
 /** 一个模型：能力描述 + 说它那种线协议的客户端 */
 class ResolvedModel(val profile: ModelProfile, val client: ModelClient)
 
@@ -154,6 +176,11 @@ class KernelDeps(
     val workflowApprovals: dev.min.agent.spi.WorkflowApprovals = dev.min.agent.spi.WorkflowApprovals.SessionOnly,
     val networkProxy: dev.min.agent.spi.NetworkProxy? = null,
     val networkApprovalTimeoutMs: Long = 60_000,
+    /**
+     * 这次启动的定制加载档（[Customizations]）。子会话共用同一个 deps 实例，自然跟随父会话——
+     * 具名子 agent 会自己重读记忆文件（[SessionRuntime.create] 的 loadMemory），闸门必须在 deps 上才关得住
+     */
+    val customizations: Customizations = Customizations.Full,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }

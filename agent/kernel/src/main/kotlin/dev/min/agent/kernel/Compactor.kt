@@ -229,10 +229,11 @@ internal class Compactor(
     private fun allCalls(state: SessionState): List<CallId> =
         state.history.filterIsInstance<HistoryEntry.Assistant>().flatMap { it.toolCalls }.map { it.callId }
 
-    /** 模型视图里会被这次摘要取代的那一段 */
+    /** 模型视图里会被这次摘要取代的那一段；bare 档与请求同一份投影（不发 system reminder），摘要才盖得住模型看到的东西 */
     private fun visibleThrough(state: SessionState, through: MessageId): List<ModelMessage> {
         val end = state.history.indexOfFirst { it.messageId == through }
-        return state.copy(history = state.history.subList(0, end + 1)).modelMessages()
+        return state.copy(history = state.history.subList(0, end + 1))
+            .modelMessages(withReminders = deps.customizations != Customizations.Bare)
     }
 
     /** 被摘掉的原文，渲染成人和模型都读得懂的 Markdown，存成会话附件 */

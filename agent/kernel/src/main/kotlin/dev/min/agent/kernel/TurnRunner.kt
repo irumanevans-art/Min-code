@@ -643,7 +643,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         return RequestAssembler.assemble(
             profile = profile,
             environment = environment,
-            messages = state.modelMessages(),
+            // bare 档不发 system reminder（CC headless 页）：请求的投影按这次启动的档位收口
+            messages = state.modelMessages(withReminders = deps.customizations != Customizations.Bare),
             tools = specs,
             effort = state.settings.effort,
             // 分支沿用原会话的缓存键（session_branched 冻结）：OpenAI 系的 prompt_cache_key 落到同一个缓存分片

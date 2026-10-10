@@ -120,6 +120,9 @@ class SessionRuntime private constructor(
     internal val memoryDiscovery: MemoryDiscovery? get() {
         val home = deps.memoryHome
         if (home == null || state.value.origin?.omitMemory == true) return null
+        // --bare / --safe-mode：记忆不发现，按需加载（读到匹配文件时注入规则）也一并关掉，
+        // 不然启动时跳过的记忆会从这条缝里回来
+        if (deps.customizations != Customizations.Full) return null
         val cwd = state.value.settings.cwd
         if (memoryDiscoveryCwd != cwd) {
             memoryDiscoveryCwd = cwd
@@ -151,7 +154,8 @@ class SessionRuntime private constructor(
     internal suspend fun changeCwd(cwd: GuestPath, worktree: dev.min.agent.spi.WorktreeBinding?) {
         val old = state.value.settings.cwd
         val home = deps.memoryHome
-        val memory = if (home != null && state.value.origin == null) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
+        // --bare / --safe-mode：换目录也不能把被跳过的记忆装回来（权限规则照常重读）
+        val memory = if (home != null && state.value.origin == null && deps.customizations == Customizations.Full) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
         val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home) else null
         val trustProject = deps.trustProjectHooks(cwd)
         val trustedLocal = snapshot?.let { trustedLocalSettings(deps, it, cwd, trustProject || state.value.created.headless) }.orEmpty()
@@ -187,6 +191,8 @@ class SessionRuntime private constructor(
     internal suspend fun plugins(): dev.min.agent.ext.plugins.PluginBundle? {
         pluginsInstance?.let { return it }
         if (pluginsAttempted) return null
+        // --bare / --safe-mode：已安装插件不发现（CC :72/:125）；插件带来的 hooks、skills、样式、MCP、monitors 随之全无
+        if (deps.customizations != Customizations.Full) return null
         val home = deps.memoryHome ?: return null
         val cwd = state.value.created.cwd
         return try {
@@ -366,6 +372,9 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadMemory(settings: SettingsSnapshot?) {
         val home = deps.memoryHome ?: return
+        // --bare / --safe-mode：CLAUDE.md 与自动记忆都在跳过清单里（CC :72/:125），这次启动一个都不读。
+        // 闸门在 deps 上而不是这里看参数：具名子 agent 会自己走这条路径重读，子会话必须跟着父会话的档位
+        if (deps.customizations != Customizations.Full) return
         val memory = MemoryLoader.load(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
         val (autoFiles, autoInfo, autoNotes) = autoMemory(settings, home)
         if (memory.files.isEmpty() && memory.notes.isEmpty() && autoFiles.isEmpty() && autoInfo == null) return
@@ -421,11 +430,20 @@ class SessionRuntime private constructor(
         loadPermissionRules(snapshot)
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
         val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
-        val plugins = plugins()
-        val pluginHooks = if (snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Managed && it.allowManagedHooksOnly == true } ||
-            snapshot.merged.layers.filter { it.source == dev.min.agent.ext.config.ConfigSource.User || it.source == dev.min.agent.ext.config.ConfigSource.Managed || deps.trustProjectHooks(state.value.created.cwd) }.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true) emptyList()
-        else plugins?.hookSources.orEmpty().map { dev.min.agent.ext.config.HookSource(dev.min.agent.ext.config.ConfigSource.Plugin, it) }
-        val hooks = baseHooks.copy(sources = baseHooks.sources + pluginHooks, notes = baseHooks.notes + plugins?.notes.orEmpty())
+        // --bare / --safe-mode 对 hooks 的取舍（CC :72/:125）：bare 一律不发现（原文对托管层也没有例外）；
+        // safe 只留托管层的（原文点名「managed settings policy still applies, including policy-configured hooks」），
+        // 托管插件声明的 hooks 随插件一起不加载（plugins() 在这两种档位下是 null）
+        val hooks = when (deps.customizations) {
+            Customizations.Bare -> baseHooks.copy(sources = emptyList(), notes = emptyList())
+            Customizations.Safe -> baseHooks.copy(sources = baseHooks.sources.filter { it.source == dev.min.agent.ext.config.ConfigSource.Managed })
+            Customizations.Full -> {
+                val plugins = plugins()
+                val pluginHooks = if (snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Managed && it.allowManagedHooksOnly == true } ||
+                    snapshot.merged.layers.filter { it.source == dev.min.agent.ext.config.ConfigSource.User || it.source == dev.min.agent.ext.config.ConfigSource.Managed || deps.trustProjectHooks(state.value.created.cwd) }.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true) emptyList()
+                else plugins?.hookSources.orEmpty().map { dev.min.agent.ext.config.HookSource(dev.min.agent.ext.config.ConfigSource.Plugin, it) }
+                baseHooks.copy(sources = baseHooks.sources + pluginHooks, notes = baseHooks.notes + plugins?.notes.orEmpty())
+            }
+        }
         val policy = hooks.httpPolicy.takeIf { it.allowedUrls != null || it.allowedEnvVars != null }
             ?.let { HttpPolicyData(it.allowedUrls, it.allowedEnvVars) }
         // 只有闸、没有任何 hook 也没有说明时没有东西可冻结（闸只管 http hook）
@@ -459,6 +477,8 @@ class SessionRuntime private constructor(
      * 都不写事件——三种情况下系统提示与没有样式时逐字相同
      */
     private suspend fun loadOutputStyle(snapshot: SettingsSnapshot) {
+        // --safe-mode：输出样式在跳过清单里（CC :125）；--bare 的清单里没有它，照常
+        if (deps.customizations == Customizations.Safe) return
         val wanted = snapshot.merged.outputStyle ?: return
         val home = deps.memoryHome ?: return
         val disk = dev.min.agent.spi.catchingNonCancellation {
@@ -522,6 +542,8 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadSkills() {
         val home = deps.memoryHome ?: return
+        // --bare / --safe-mode：skills 与自定义命令（含托管层的）都不发现（CC :72/:125）
+        if (deps.customizations != Customizations.Full) return
         val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home, plugins()) ?: return
         commit(listOf(snapshot), Durability.Sync)
     }

@@ -34,7 +34,7 @@ class WorktreeIntegrationTest {
     private val store = FileSessionStore(temp.resolve("sessions"), { System.currentTimeMillis() })
     private val ids = AtomicLong()
     private val servers = mutableListOf<HttpServer>()
-    private val tools = listOf(ReadTool, WriteTool, BashTool, EnterWorktreeTool, ExitWorktreeTool, AgentTool)
+    private val tools = listOf(ReadTool, WriteTool, BashTool(), EnterWorktreeTool, ExitWorktreeTool, AgentTool)
 
     @After fun cleanup() {
         servers.forEach { it.stop(0) }
