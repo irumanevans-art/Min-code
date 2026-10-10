@@ -112,13 +112,14 @@ private fun contents(request: ModelRequest): JsonArray {
                     putJsonObject("response") {
                         put(if (result.isError) "error" else "output", result.content.filterIsInstance<TextPart>().joinToString("") { it.text })
                     }
-                    val images = result.content.filterIsInstance<ImagePart>()
-                    if (images.isNotEmpty()) put("parts", JsonArray(images.map { image(it) }))
+                    val attachments = result.content.filter { it is ImagePart || it is DocumentPart }
+                    if (attachments.isNotEmpty()) put("parts", JsonArray(attachments.map(::attachment)))
                 } }
             }
             turn.parts.forEach { part -> when (part) {
                 is TextPart -> if (part.text.isNotEmpty()) wire += text(part.text)
                 is ImagePart -> wire += image(part)
+                is DocumentPart -> wire += document(part)
                 else -> Unit
             } }
         }
@@ -135,4 +136,18 @@ private fun image(part: ImagePart): JsonObject {
     val source = part.source as? ImageSource.Base64
         ?: throw IllegalArgumentException("图片附件必须先内联成 base64 再交给编解码器")
     return buildJsonObject { putJsonObject("inlineData") { put("mimeType", part.mediaType); put("data", source.data) } }
+}
+
+/** PDF 与图片同走 inlineData；mimeType 为 application/pdf（官方文档的 document 输入同样是 base64 + 媒体类型） */
+private fun document(part: DocumentPart): JsonObject {
+    val source = part.source as? ImageSource.Base64
+        ?: throw IllegalArgumentException("文档附件必须先内联成 base64 再交给编解码器")
+    return buildJsonObject { putJsonObject("inlineData") { put("mimeType", part.mediaType); put("data", source.data) } }
+}
+
+/** 函数结果里的附件（图片与文档）按出现顺序放进 functionResponse.parts */
+private fun attachment(part: Part): JsonObject = when (part) {
+    is ImagePart -> image(part)
+    is DocumentPart -> document(part)
+    else -> throw IllegalArgumentException("不是附件：${part::class.simpleName}")
 }

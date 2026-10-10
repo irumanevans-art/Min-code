@@ -38,6 +38,7 @@
 |---|---|---|---|
 | claude-fable-5-1 | contextWindow / maxOutputTokens | 1000000 / 128000 | anthropic.md §2（1M / 128K） |
 | claude-fable-5-1 | supportsImages | true | anthropic.md §2（"All current models support text and image input"） |
+| claude-* （目录内全部 Claude 条目） | supportsPdf | true | 官方 pdf-support 页（platform.claude.com/docs/en/build-with-claude/pdf-support）"All active models support PDF processing"（2026-10-10 抓取） |
 | claude-fable-5-1 | effortPatches | adaptive + `output_config.effort` × low/medium/high/xhigh/max | anthropic.md §2（"Adaptive (always on)"）+ §3（`output_config.effort` 取值 low–max 含 xhigh；形状为任务单给定示例） |
 | claude-fable-5-1 | reasoningEcho | always | anthropic.md §3（thinking 块 "must be passed back unmodified"；§10 无相反） |
 | claude-opus-5-5 | 同上各字段 | 1000000 / 128000 / true / adaptive×5 / always | anthropic.md §2、§3（"Adaptive (always on)"） |

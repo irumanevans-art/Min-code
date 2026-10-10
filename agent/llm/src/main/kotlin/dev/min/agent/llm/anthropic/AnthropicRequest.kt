@@ -7,6 +7,7 @@ import dev.min.agent.llm.deepMerge
 import dev.min.agent.llm.lastUserInputIndex
 import dev.min.agent.llm.partsToSend
 import dev.min.agent.llm.patchFor
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
 import dev.min.agent.protocol.Part
@@ -153,6 +154,7 @@ private fun userBlocks(parts: List<Part>): List<JsonObject> = parts.mapNotNull {
     when (part) {
         is TextPart -> if (part.text.isEmpty()) null else textBlock(part.text)
         is ImagePart -> imageBlock(part)
+        is DocumentPart -> documentBlock(part)
         is ToolResultPart -> toolResultBlock(part)
         else -> null
     }
@@ -175,6 +177,26 @@ private fun imageBlock(part: ImagePart): JsonObject {
     }
 }
 
+/**
+ * PDF 走 Anthropic 的 document 块（base64 源）。与图片同一套「必须先内联」的约束；
+ * 块形状是官方文档（pdf-support）的 `{"type":"document","source":{"type":"base64","media_type","data"}}`。
+ */
+private fun documentBlock(part: DocumentPart): JsonObject {
+    val data = when (val source = part.source) {
+        is ImageSource.Base64 -> source.data
+        is ImageSource.Artifact ->
+            throw IllegalArgumentException("文档附件 ${source.path} 必须先内联成 base64 再交给编解码器")
+    }
+    return buildJsonObject {
+        put("type", "document")
+        putJsonObject("source") {
+            put("type", "base64")
+            put("media_type", part.mediaType)
+            put("data", data)
+        }
+    }
+}
+
 private fun toolResultBlock(part: ToolResultPart): JsonObject = buildJsonObject {
     put("type", "tool_result")
     put("tool_use_id", sanitizeToolId(part.callId.value))
@@ -185,6 +207,7 @@ private fun toolResultBlock(part: ToolResultPart): JsonObject = buildJsonObject 
                 when (inner) {
                     is TextPart -> if (inner.text.isNotEmpty()) add(textBlock(inner.text))
                     is ImagePart -> add(imageBlock(inner))
+                    is DocumentPart -> add(documentBlock(inner))
                     else -> Unit
                 }
             }
