@@ -935,10 +935,8 @@ class SessionRuntime private constructor(
                 var next: TurnTrigger? = trigger
                 while (next != null) {
                     val completed = runner.run(next)
-                    // 排队的输入接续下一回合：唤醒它的输入来自 asyncRewake hook 时，回合的触发也记 hook（日志里看得出是谁唤醒的）
-                    next = if (completed && _state.value.inbox.isNotEmpty()) {
-                        if (_state.value.inbox.first().origin is InputOrigin.Hook) TurnTrigger.Hook else TurnTrigger.User
-                    } else null
+                    // 排队的输入接续下一回合：按排在最前的输入记触发（日志里看得出是谁唤醒的），见 [continuationTrigger]
+                    next = if (completed && _state.value.inbox.isNotEmpty()) continuationTrigger(_state.value.inbox.first().origin) else null
                 }
             }
         }
@@ -1043,3 +1041,15 @@ internal class AsyncHookTimings(
     /** 退回探测要起进程，比句柄探活稀得多（N3） */
     var fallbackLivenessMs: Long = 30_000,
 )
+
+/**
+ * 排队的输入接续下一回合时记哪种触发，与这类输入在空闲时送达的口径一致：子 agent 的报告 / 消息、后台任务的通知
+ * 记 Notification（空闲时 [SessionHub.deliver] 也是这么开回合的），asyncRewake hook 记 Hook，定时任务记 Cron。
+ * 以前除 hook 外一律记 User：报告若在上一回合收尾前到达，接续回合就被记成「用户发起」，同一件事因时序不同记成两样
+ */
+internal fun continuationTrigger(origin: InputOrigin): TurnTrigger = when (origin) {
+    is InputOrigin.Hook -> TurnTrigger.Hook
+    is InputOrigin.Agent, is InputOrigin.Task -> TurnTrigger.Notification
+    is InputOrigin.Cron -> TurnTrigger.Cron
+    InputOrigin.User, is InputOrigin.Parent -> TurnTrigger.User
+}
