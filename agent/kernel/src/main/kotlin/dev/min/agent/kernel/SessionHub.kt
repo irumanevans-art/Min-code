@@ -506,6 +506,9 @@ class SessionHub(
     private suspend fun attachMcp(runtime: SessionRuntime, fresh: Boolean) {
         val home = deps.memoryHome ?: return
         if (runtime.state.value.origin != null) return
+        // --bare / --safe-mode：MCP 服务器不自动发现（CC :72；safe 连托管配的也不连——原文保留清单里没有它）。
+        // create / open / branch / reload 都汇到这一点，闸在这里关得严
+        if (deps.customizations != Customizations.Full) return
         // 连接配置冻结在会话起点，cwd 切换只更新 roots；否则重开会话会悄悄接上另一套服务器。
         val cwd = runtime.state.value.created.cwd
         val config = dev.min.agent.spi.catchingNonCancellation {

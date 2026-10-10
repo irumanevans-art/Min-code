@@ -46,4 +46,7 @@ internal suspend fun SessionRuntime.prepareSavedWorkflow(input: ClientMsgId, par
 }
 
 internal fun SessionRuntime.workflowsAvailable(): Boolean = deps.workflowEngine != null &&
-    state.value.origin == null && deps.workflowsEnabled() && !workflowSettingsDisabled && deps.env("CLAUDE_CODE_DISABLE_WORKFLOWS") != "1"
+    state.value.origin == null && deps.workflowsEnabled() && !workflowSettingsDisabled && deps.env("CLAUDE_CODE_DISABLE_WORKFLOWS") != "1" &&
+    // --safe-mode：工作流在跳过清单里（CC :125）。--bare 的清单里没有它，照常（CC 的 launch-cost 记录只说 bare 让
+    // 工作流发现「更便宜」，语义上没跳过，以 flag 文档为准）
+    deps.customizations != Customizations.Safe
