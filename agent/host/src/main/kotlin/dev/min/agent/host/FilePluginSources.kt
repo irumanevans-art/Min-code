@@ -19,10 +19,12 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
         val root = fs.hostPath(pluginsRoot).toAbsolutePath().normalize()
         val result = fs.hostPath(path).toAbsolutePath().normalize()
         require(result.startsWith(root) && result != root) { "插件副作用超出安装目录" }
+        // Android 的 /data/user/0 是宿主别名；两端都用真实根比较，插件树内部的链接仍逐级拒绝。
+        val physicalRoot = root.toRealPath()
         var cursor: Path? = result
         while (cursor != null && cursor != root.parent) {
             require(!Files.isSymbolicLink(cursor)) { "安装目录包含符号链接" }
-            if (Files.exists(cursor, NOFOLLOW_LINKS)) require(cursor.toRealPath().startsWith(root.toAbsolutePath().normalize())) { "安装目录链接逃逸" }
+            if (Files.exists(cursor, NOFOLLOW_LINKS)) require(cursor.toRealPath().startsWith(physicalRoot)) { "安装目录链接逃逸" }
             if (cursor == root) break
             cursor = cursor.parent
         }

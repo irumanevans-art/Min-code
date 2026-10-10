@@ -34,6 +34,7 @@ cases = [
     ('handback-unavailable-note', handback, [('"unavailable" -> REPORT_VERIFY_NOTE + "\\n\\n"', '"unavailable" -> ""')], 'kernel', 'AutoHandbackTest.unavailableAndSafetyRefusedReviewsDeliverWithoutApproval'),
     ('fallback-delivery', handback, [('commit(listOf(reportReady(turnId, body, verdict)), Durability.Sync)', 'commit(listOf(reportReady(turnId, "WITHHELD", verdict)), Durability.Sync)')], 'kernel', 'AutoHandbackTest.fallbackReviewsLastMessageAndDeliversFlaggedTextWithWarning'),
     ('warning-card', 'app/src/main/java/dev/min/code/core/engine/min/MinItems.kt', [('"warning" -> text.warningReport() + "\\n\\n" + report.body', '"warning" -> report.body')], 'app', 'MinAgentProjectionTest.handbackReportUsesExistingCardWithReviewLabelAndOriginalBody'),
+    ('host-root-alias', host, [('cursor.toRealPath().startsWith(physicalRoot)', 'cursor.toRealPath().startsWith(root.toAbsolutePath().normalize())')], 'host', 'FilePluginSourcesTest.hostRootAliasIsAcceptedButPluginTreeEscapeIsRejected'),
 ]
 prefix = ['cmd', '/c', str(root / 'gradlew.bat'), '--no-daemon', '--max-workers=1', '--console=plain', '-I', 'D:/kimi/workspace/research/tasks/workflow-evidence/maven-init.gradle.kts']
 env = dict(os.environ)

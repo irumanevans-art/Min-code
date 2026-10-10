@@ -58,6 +58,26 @@ class FilePluginSourcesTest {
         rejected("超出安装目录") { host.remove(GuestPath("/secret")) }
         assertEquals("secret", Files.readString(root.resolve("secret")))
     }
+    @Test fun hostRootAliasIsAcceptedButPluginTreeEscapeIsRejected(): Unit = runBlocking {
+        Jimfs.newFileSystem(Configuration.unix()).use { files ->
+            val physical = Files.createDirectories(files.getPath("/physical"))
+            Files.createSymbolicLink(files.getPath("/alias"), physical)
+            Files.createDirectories(physical.resolve("root/.claude/plugins"))
+            val plugin = Files.createDirectories(physical.resolve("plugin"))
+            Files.writeString(plugin.resolve("hello"), "safe")
+            val host = FilePluginSources(RootfsFileSystem(files.getPath("/alias")), noExec, GuestPath("/root/.claude/plugins"))
+            var aliasError: Exception? = null
+            try { host.locked { host.copy(GuestPath("/plugin"), GuestPath("/root/.claude/plugins/package"), PluginFetchLimits()) } }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { aliasError = e }
+            assertNull("宿主根别名不应被当成插件链接逃逸", aliasError)
+            assertEquals("safe", Files.readString(physical.resolve("root/.claude/plugins/package/hello")))
+            Files.createDirectories(physical.resolve("outside"))
+            Files.createSymbolicLink(physical.resolve("root/.claude/plugins/escape"), physical.resolve("outside"))
+            rejected("副作用超出安装目录") { host.remove(GuestPath("/root/.claude/plugins/escape")) }
+            assertTrue(Files.isDirectory(physical.resolve("outside")))
+        }
+    }
     @Test fun validArchiveHonorsDigestAndCancellationIsNotSwallowed() = setup { host, root ->
         Files.write(root.resolve("good.zip"), zip("commands/test.md", "safe"))
         rejected("SHA256") { host.fetch(PluginFetchSource("archive", "/good.zip", sha256 = "0".repeat(64)), GuestPath("/root/.claude/plugins/bad"), PluginFetchLimits()) }
