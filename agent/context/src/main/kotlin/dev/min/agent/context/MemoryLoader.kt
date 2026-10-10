@@ -53,7 +53,9 @@ object MemoryLoader {
         cwd: GuestPath,
         home: GuestPath,
         limits: MemoryLimits = MemoryLimits(),
-    ): MemorySnapshot = Loading(fs, normalize(home.value), limits).run(normalize(cwd.value))
+        /** false = `--restricted`（Min 的解释）：用户级的 `~/.claude/CLAUDE.md`、`~/.claude/rules/` 不读，导入也不许指进 `~/.claude` */
+        includeUser: Boolean = true,
+    ): MemorySnapshot = Loading(fs, normalize(home.value), limits, includeUser = includeUser).run(normalize(cwd.value))
 
     internal const val FILE_TRUNCATED = "[Truncated: this file is longer than %d characters. Read the file for the rest.]"
     internal const val TOTAL_TRUNCATED =
@@ -83,6 +85,8 @@ object MemoryLoader {
         private val directReads: Set<String> = emptySet(),
         /** 按需加载：之前的批次里已经报过问题（读不了、不是文本、导入越界……）的路径。不再读、不再报：同一个坏路径一个会话说一次 */
         knownProblems: Set<String> = emptySet(),
+        /** false = `--restricted`：不收用户级文件，导入也不许指进 `~/.claude`（只许工作区内） */
+        private val includeUser: Boolean = true,
     ) {
         private val homeClaude = join(home, ".claude")
         val files = mutableListOf<LoadedMemoryFile>()
@@ -107,8 +111,10 @@ object MemoryLoader {
         private var used = 0
 
         suspend fun run(cwd: String): MemorySnapshot {
-            add(join(homeClaude, "CLAUDE.md"), MemorySource.User)
-            addRules(join(homeClaude, "rules"))
+            if (includeUser) {
+                add(join(homeClaude, "CLAUDE.md"), MemorySource.User)
+                addRules(join(homeClaude, "rules"))
+            }
             for (dir in ancestors(cwd)) {
                 add(join(dir, "CLAUDE.md"), MemorySource.Project)
                 add(join(dir, ".claude/CLAUDE.md"), MemorySource.Project)
@@ -216,7 +222,7 @@ object MemoryLoader {
 
         /** 工作区按端口的分级判定（宿主会先解析符号链接）；`~/.claude` 按字面路径判定 */
         private fun importable(path: String): Boolean =
-            isUnder(path, homeClaude) ||
+            (includeUser && isUnder(path, homeClaude)) ||
                 catchingNonCancellation { fs.scopeOf(GuestPath(path)) }.getOrNull() == PathScope.Workspace
 
         /**

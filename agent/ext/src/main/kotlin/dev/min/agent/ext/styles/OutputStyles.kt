@@ -61,24 +61,25 @@ object OutputStyleFiles {
     data class DiskStyles(val styles: Map<String, OutputStyleDef>, val notes: List<String>)
 
     /** 名字 → 定义 + 说明。只读磁盘；内置样式不在这里（[resolve] 才把两边合起来，磁盘可覆盖内置同名） */
-    suspend fun load(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath): DiskStyles {
+    suspend fun load(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath, includeUser: Boolean = true): DiskStyles {
         val io = ConfigIo(fs)
-        val styles = scan(io, fs, cwd, home)
+        val styles = scan(io, fs, cwd, home, includeUser)
         return DiskStyles(styles, io.notes.toList())
     }
 
     /** 只列名字用（CLI 的 /output-style 无参）；说明丢弃 */
-    suspend fun available(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath): Map<String, OutputStyleDef> =
-        scan(ConfigIo(fs), fs, cwd, home)
+    suspend fun available(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath, includeUser: Boolean = true): Map<String, OutputStyleDef> =
+        scan(ConfigIo(fs), fs, cwd, home, includeUser)
 
-    private suspend fun scan(io: ConfigIo, fs: WorkspaceFs, cwd: GuestPath, home: GuestPath): Map<String, OutputStyleDef> {
+    private suspend fun scan(io: ConfigIo, fs: WorkspaceFs, cwd: GuestPath, home: GuestPath, includeUser: Boolean): Map<String, OutputStyleDef> {
         val cwdPath = GuestPaths.normalize(cwd.value)
         val userDir = styleDir(GuestPaths.normalize(home.value))
         val managedDir = styleDir(GuestPaths.parentOf(GuestPaths.normalize(SettingsLoader.DEFAULT_MANAGED_PATH.value)))
         // 低的先放、高的后放（覆盖）：managed → user → 项目链（仓库根最远、cwd 最近，最近的最后放）。
         // cwd 就是家目录时项目层不重复算（同 skills 的处理）
         val projectDirs = projectDirs(io, cwdPath).map(::styleDir).filterNot { it == userDir }
-        val dirs = listOf(managedDir, userDir) + projectDirs.asReversed()
+        // --restricted（Min 的解释）：用户目录的样式不读（includeUser = false），项目与 managed 照读
+        val dirs = (if (includeUser) listOf(managedDir, userDir) else listOf(managedDir)) + projectDirs.asReversed()
         val byName = LinkedHashMap<String, OutputStyleDef>()
         for (dir in dirs) {
             for (entry in io.entries(dir)) {

@@ -126,7 +126,7 @@ class SessionRuntime private constructor(
         val cwd = state.value.settings.cwd
         if (memoryDiscoveryCwd != cwd) {
             memoryDiscoveryCwd = cwd
-            cachedMemoryDiscovery = MemoryDiscovery(deps.host.fs, cwd, home, deps.memoryLimits, suppressCwdRules = state.value.worktree?.pinned == true)
+            cachedMemoryDiscovery = MemoryDiscovery(deps.host.fs, cwd, home, deps.memoryLimits, suppressCwdRules = state.value.worktree?.pinned == true, includeUser = !deps.settingsInputs.restricted)
         }
         return cachedMemoryDiscovery
     }
@@ -155,7 +155,7 @@ class SessionRuntime private constructor(
         val old = state.value.settings.cwd
         val home = deps.memoryHome
         // --bare / --safe-mode：换目录也不能把被跳过的记忆装回来（权限规则照常重读）
-        val memory = if (home != null && state.value.origin == null && deps.customizations == Customizations.Full) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits).files else emptyList()
+        val memory = if (home != null && state.value.origin == null && deps.customizations == Customizations.Full) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits, includeUser = !deps.settingsInputs.restricted).files else emptyList()
         val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs) else null
         val trustProject = deps.trustProjectHooks(cwd)
         val trustedLocal = snapshot?.let { trustedLocalSettings(deps, it, cwd, trustProject || state.value.created.headless) }.orEmpty()
@@ -202,6 +202,7 @@ class SessionRuntime private constructor(
             trust = { root -> deps.pluginTrust(root, cwd) },
             secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore),
             installedPath = deps.pluginInstalledPath, shellPath = deps.hookShellPath,
+            installIndex = !deps.settingsInputs.restricted,
         ).also { pluginsInstance = it; pluginsAttempted = true }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) {
@@ -375,7 +376,7 @@ class SessionRuntime private constructor(
         // --bare / --safe-mode：CLAUDE.md 与自动记忆都在跳过清单里（CC :72/:125），这次启动一个都不读。
         // 闸门在 deps 上而不是这里看参数：具名子 agent 会自己走这条路径重读，子会话必须跟着父会话的档位
         if (deps.customizations != Customizations.Full) return
-        val memory = MemoryLoader.load(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits)
+        val memory = MemoryLoader.load(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits, includeUser = !deps.settingsInputs.restricted)
         val (autoFiles, autoInfo, autoNotes) = autoMemory(settings, home)
         if (memory.files.isEmpty() && memory.notes.isEmpty() && autoFiles.isEmpty() && autoInfo == null) return
         commit(listOf(MemoryLoaded(memory.files + autoFiles, memory.notes + autoNotes, autoInfo)), Durability.Sync)
@@ -387,6 +388,8 @@ class SessionRuntime private constructor(
      * 否则按项目键算的默认位置。开着就返回目录与用量（索引还不存在也是 0/0——提示段要告诉模型能写到哪里）。
      */
     private suspend fun autoMemory(settings: SettingsSnapshot?, home: GuestPath): Triple<List<LoadedMemoryFile>, AutoMemoryInfo?, List<String>> {
+        // --restricted（Min 的解释）：自动记忆住在用户目录（~/.claude/projects）下，不开
+        if (deps.settingsInputs.restricted) return Triple(emptyList(), null, emptyList())
         val merged = settings?.merged ?: return Triple(emptyList(), null, emptyList())
         val enabled = merged.autoMemoryEnabled ?: true
         if (!enabled || isTruthyEnv(deps.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY"))) return Triple(emptyList(), null, emptyList())
@@ -483,7 +486,7 @@ class SessionRuntime private constructor(
         val wanted = snapshot.merged.outputStyle ?: return
         val home = deps.memoryHome ?: return
         val disk = dev.min.agent.spi.catchingNonCancellation {
-            OutputStyleFiles.load(deps.host.fs, state.value.created.cwd, home)
+            OutputStyleFiles.load(deps.host.fs, state.value.created.cwd, home, includeUser = !deps.settingsInputs.restricted)
         }.getOrElse {
             // 读目录的意外不该让会话建不起来：按找不到处理，给一条说明
             commit(

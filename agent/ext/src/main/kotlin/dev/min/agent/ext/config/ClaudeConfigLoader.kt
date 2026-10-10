@@ -29,11 +29,12 @@ object ClaudeConfigLoader {
         val projectIsUser = projectDir == userDir
         val managedDir = GuestPaths.join(GuestPaths.parentOf(GuestPaths.normalize(managedPath.value)), ".claude")
 
+        // --restricted（Min 的解释）：用户目录（~/.claude）下的 skills、命令、agents 不读——那是本机用户的东西；项目与托管照读
         fun roots(sub: String, vararg order: ConfigSource): List<DefinitionRoot> = order.mapNotNull { source ->
             when (source) {
                 ConfigSource.Cli -> null
                 ConfigSource.Managed -> DefinitionRoot(source, GuestPaths.join(managedDir, sub))
-                ConfigSource.User -> DefinitionRoot(source, GuestPaths.join(userDir, sub))
+                ConfigSource.User -> if (inputs.restricted) null else DefinitionRoot(source, GuestPaths.join(userDir, sub))
                 ConfigSource.Project -> if (projectIsUser) null else DefinitionRoot(source, GuestPaths.join(projectDir, sub))
                 ConfigSource.Local, ConfigSource.Plugin -> null
             }

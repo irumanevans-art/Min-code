@@ -77,13 +77,13 @@ class RestrictedUserFilesTest {
         assertTrue("项目样式照读：$styles", "ps" in styles)
     }
 
-    @Test fun `对照组：不开 restricted，MCP 的用户层、本项目 local、项目 .mcp.json 都在`() {
+    @Test fun `对照组：不开 restricted，MCP 的用户层、本项目 local、项目 mcp 配置 都在`() {
         val fs = InMemoryFs().also { seed(it) }
         val names = mcpNames(fs, restricted = false)
         assertTrue(names.containsAll(listOf("usersrv", "localsrv", "projsrv")))
     }
 
-    @Test fun `restricted：MCP 不连用户层、本项目 local 与项目 .mcp.json，只连托管与 --settings 声明的`() {
+    @Test fun `restricted：MCP 不连用户层、本项目 local 与项目 mcp 配置，只连托管与 --settings 声明的`() {
         val fs = InMemoryFs().also { seed(it) }
         val names = mcpNames(fs, restricted = true, cli = orgCli)
         assertEquals(listOf("orgsrv"), names)

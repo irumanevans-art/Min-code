@@ -51,7 +51,14 @@ object McpConfigLoader {
         env: (String) -> String?,
         managedDir: GuestPath = GuestPath("/etc/claude-code"),
         plugins: List<dev.min.agent.ext.plugins.PluginMcpSource> = emptyList(),
+        /**
+         * `--restricted`（Min 的解释）：只连托管层与 `--settings` 声明的服务器。用户层（~/.claude.json 顶层）、
+         * 本项目 local（~/.claude.json 的 projects 项）、项目 `.mcp.json` 与插件自带的服务器一律不收；managed-mcp.json 与
+         * `managedMcpServers`（managed 层，以及 --settings 里同名键）照常。
+         */
+        restricted: Boolean = false,
     ): McpConfigSnapshot {
+        val pluginSources = if (restricted) emptyList() else plugins
         val io = ConfigIo(fs)
         val notes = io.notes
         val homeDir = GuestPaths.normalize(home.value)
@@ -72,28 +79,28 @@ object McpConfigLoader {
         // ---- ~/.claude.json：user 顶层、local（按项目路径）、界面停用开关 ----
         val claudeJsonPath = GuestPaths.join(homeDir, ".claude.json")
         val claudeJson = io.readText(claudeJsonPath)?.let { SettingsReader.parseObject(it, claudeJsonPath, notes) }
-        val userServers = claudeJson?.let { mcpServersOf(it, claudeJsonPath, absentMeansOff = false, notes) } ?: LinkedHashMap()
+        val userServers = if (restricted) LinkedHashMap() else claudeJson?.let { mcpServersOf(it, claudeJsonPath, absentMeansOff = false, notes) } ?: LinkedHashMap()
         // projects 下的键与项目路径做规范化比较（尾斜杠不算差别）
         val projectState = (claudeJson?.get("projects") as? JsonObject)
             ?.entries?.firstOrNull { GuestPaths.normalize(it.key) == projectDir }?.value as? JsonObject
-        val localServers = projectState?.let { mcpServersOf(it, claudeJsonPath, absentMeansOff = false, notes) } ?: LinkedHashMap()
+        val localServers = if (restricted) LinkedHashMap() else projectState?.let { mcpServersOf(it, claudeJsonPath, absentMeansOff = false, notes) } ?: LinkedHashMap()
         val uiDisabled = projectState?.stringArrayOf("disabledMcpServers")?.toSet() ?: emptySet()
 
         // ---- 项目 .mcp.json（独占时不读）----
-        val projectServers = if (exclusiveServers != null) LinkedHashMap<String, JsonObject>() else {
+        val projectServers = if (exclusiveServers != null || restricted) LinkedHashMap<String, JsonObject>() else {
             val path = GuestPaths.join(projectDir, ".mcp.json")
             io.readText(path)?.let { SettingsReader.parseObject(it, path, notes) }
                 ?.let { mcpServersOf(it, path, absentMeansOff = false, notes) } ?: LinkedHashMap()
         }
 
         // ---- managedMcpServers（managed 设置层提供，不独占）----
-        val providedServers = managedSettingServers(settings, notes)
+        val providedServers = managedSettingServers(settings, notes, restricted)
 
         // ---- 逐条解析（高优先级在前），同名去重并记 shadowed ----
         val ordered: List<Pair<Origin, Map<String, JsonObject>>> = if (exclusiveServers != null) {
             listOf(Origin.ManagedFile to exclusiveServers, Origin.ManagedSetting to providedServers)
         } else {
-            listOf(Origin.ManagedSetting to providedServers, Origin.Local to localServers, Origin.ProjectFile to projectServers, Origin.User to userServers, Origin.Plugin to plugins.associate { it.name to it.config })
+            listOf(Origin.ManagedSetting to providedServers, Origin.Local to localServers, Origin.ProjectFile to projectServers, Origin.User to userServers, Origin.Plugin to pluginSources.associate { it.name to it.config })
         }
         val parsed = ordered.flatMap { (origin, servers) ->
             servers.map { (name, raw) -> parseOne(name, raw, origin, notes) }.filterNotNull()
@@ -144,11 +151,11 @@ object McpConfigLoader {
             } else spec
 
             val candidates = mutableListOf<Pair<McpGate, String>>()
-            if (p.origin == Origin.Plugin) plugins.firstOrNull { it.name == p.name }?.error?.let { candidates += McpGate.Disabled to it }
-            if (p.origin == Origin.Plugin && plugins.firstOrNull { it.name == p.name }?.trusted != true) {
+            if (p.origin == Origin.Plugin) pluginSources.firstOrNull { it.name == p.name }?.error?.let { candidates += McpGate.Disabled to it }
+            if (p.origin == Origin.Plugin && pluginSources.firstOrNull { it.name == p.name }?.trusted != true) {
                 candidates += McpGate.Untrusted to "插件启用来源的工作区未信任"
             }
-            if (p.origin == Origin.Plugin && plugins.firstOrNull { it.name == p.name }?.requiresApproval == true &&
+            if (p.origin == Origin.Plugin && pluginSources.firstOrNull { it.name == p.name }?.requiresApproval == true &&
                 !(enableAll || p.name in enabledMcpjson)) {
                 candidates += McpGate.NeedsApproval to "项目插件 MCP 服务器需要逐服务器批准（enabledMcpjsonServers）"
             }
@@ -223,14 +230,16 @@ object McpConfigLoader {
      * 只许 http / sse（含 streamable-http 别名）、https URL、无 command / args / env / headersHelper、无 `${VAR}`；
      * 违规的跳过并记 note。非 managed 层写了这个键：忽略并说明（CC：「drops the key with a warning」）。
      */
-    private fun managedSettingServers(settings: MergedSettings, notes: MutableList<String>): LinkedHashMap<String, JsonObject> {
+    private fun managedSettingServers(settings: MergedSettings, notes: MutableList<String>, restricted: Boolean): LinkedHashMap<String, JsonObject> {
+        // --restricted（Min 的解释）：--settings 也算运营方给的来源，同 managed 层一样认 managedMcpServers
+        fun operatorLayer(source: ConfigSource) = source == ConfigSource.Managed || (restricted && source == ConfigSource.Cli)
         for (layer in settings.layers) {
-            if (layer.source != ConfigSource.Managed && layer.raw.containsKey("managedMcpServers")) {
+            if (!operatorLayer(layer.source) && layer.raw.containsKey("managedMcpServers")) {
                 notes += "忽略 ${layer.path.value} 的 `managedMcpServers`：这个键只在 managed 设置层生效"
             }
         }
         val out = LinkedHashMap<String, JsonObject>()
-        for (layer in settings.layers.filter { it.source == ConfigSource.Managed }) {
+        for (layer in settings.layers.filter { operatorLayer(it.source) }) {
             val value = layer.raw["managedMcpServers"] ?: continue
             if (value is JsonNull) continue
             if (value !is JsonObject) {

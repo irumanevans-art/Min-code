@@ -513,7 +513,7 @@ class SessionHub(
         val cwd = runtime.state.value.created.cwd
         val config = dev.min.agent.spi.catchingNonCancellation {
             val settings = dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs)
-            dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env, plugins = runtime.plugins()?.mcpSources().orEmpty())
+            dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env, plugins = runtime.plugins()?.mcpSources().orEmpty(), restricted = deps.settingsInputs.restricted)
         }.getOrElse { e ->
             // 只写异常类名：异常消息可能带着配置里的 env / headers 值
             runtime.commit(

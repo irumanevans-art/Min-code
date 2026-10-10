@@ -1,5 +1,6 @@
 package dev.min.agent.cli
 
+import dev.min.agent.ext.config.ClaudeConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -81,6 +82,22 @@ class RestrictedPluginsTest {
         val config = DesktopApp(parseArgs(argv(work, "--restricted", "--plugin-dir", work.resolve("plug").toString()), work),
             newScope(), home, claudeHome = home).config()
         assertTrue("restricted 下 --plugin-dir 的插件该在：${skillNames(config)}", skillNames(config).contains("check:run"))
+    } }
+
+    @Test fun `restricted：--settings 启用、但只登记在安装索引里的插件不加载（索引不是来源）`() = runBlocking { withTimeout(60_000) {
+        val work = work(); val home = home()
+        // 插件只在安装索引里有（缓存里没有）；启用来自 --settings。索引不是来源，所以不加载
+        val plugins = Files.createDirectories(home.resolve(".claude/plugins"))
+        seedPlugin(home.resolve("indexed-only"))
+        val installPath = home.resolve("indexed-only").toString().replace("\\", "/")
+        Files.writeString(plugins.resolve("installed_plugins.json"),
+            """{"plugins":{"check@m":[{"scope":"user","installPath":"$installPath"}]}}""")
+        val json = """{"enabledPlugins":{"check@m":true}}"""
+        val config = DesktopApp(parseArgs(argv(work, "--restricted", "--settings", json), work), newScope(), home, claudeHome = home).config()
+        assertFalse("restricted 下索引里的插件不该加载：${skillNames(config)}", skillNames(config).contains("check:run"))
+        // 对照：不开 restricted，同样的索引与启用会加载它
+        val control = DesktopApp(parseArgs(argv(work, "--settings", json), work), newScope(), home, claudeHome = home).config()
+        assertTrue("对照组该加载：${skillNames(control)}", skillNames(control).contains("check:run"))
     } }
 
     @Test fun `restricted：--settings 启用的插件加载（从缓存找到）`() = runBlocking { withTimeout(60_000) {

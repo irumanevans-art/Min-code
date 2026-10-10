@@ -273,6 +273,8 @@ internal class DesktopApp(
             trust = { root -> pluginTrusted(root, paths.guestOfHost(args.cwd)) }, secrets = dev.min.agent.ext.plugins.PluginSecretStore(mcpTokens),
             installedPath = { paths.guestOfHost(java.nio.file.Path.of(it)) }, shellPath = { it.value },
             installed = customizations == dev.min.agent.kernel.Customizations.Full,
+            // --restricted（Min 的解释）：安装索引不是来源，只剩托管 / --settings 启用与 --plugin-dir
+            installIndex = !args.restricted,
         )
         pluginBundle = plugins
         return definitions.copy(skills = definitions.skills + plugins?.skills.orEmpty(), commands = definitions.commands + plugins?.commands.orEmpty(),
@@ -302,7 +304,7 @@ internal class DesktopApp(
     /** /output-style 用：磁盘上的样式（managed + 用户 + 项目链，近者胜），与内核会话创建时同一套读法 */
     suspend fun outputStyles(): Map<String, dev.min.agent.ext.styles.OutputStyleDef> {
         config()
-        return dev.min.agent.ext.styles.OutputStyleFiles.available(paths.fs, paths.guestOfHost(args.cwd), userHome) + pluginBundle?.styles.orEmpty()
+        return dev.min.agent.ext.styles.OutputStyleFiles.available(paths.fs, paths.guestOfHost(args.cwd), userHome, includeUser = !args.restricted) + pluginBundle?.styles.orEmpty()
     }
 
     /** /output-style 写回的位置：项目 `.claude/settings.local.json`（CC 同一个键，互通） */

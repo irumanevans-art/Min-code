@@ -86,6 +86,11 @@ class PluginBundle(
             shellPath: (GuestPath) -> String = { it.value },
             /** false = 不发现已安装 / 设置启用的插件，只装载 [dirs]（bare 档：CC headless 页把 `--plugin-dir` 当唯一的插件入口） */
             installed: Boolean = true,
+            /**
+             * false = 不读安装索引（installed_plugins.json）。`--restricted`（Min 的解释）用它：索引不是来源，只剩托管 /
+             * `--settings` 启用（缓存里找）与 [dirs]；与 [installed] 不同，启用来源的缓存查找照做
+             */
+            installIndex: Boolean = true,
         ): PluginBundle {
             val io = ConfigIo(fs)
             val candidates = mutableListOf<PluginRequest>()
@@ -125,7 +130,7 @@ class PluginBundle(
             }
             val pluginsDir = GuestPaths.join(home.value, ".claude/plugins")
             // bare 档：安装索引与 enabledPlugins 缓存这两条「已安装」来源都跳过，dirs（--plugin-dir）照走下面的通道
-            val index = if (!installed) null else io.readText("$pluginsDir/installed_plugins.json")?.let {
+            val index = if (!installed || !installIndex) null else io.readText("$pluginsDir/installed_plugins.json")?.let {
                 SettingsReader.parseObject(it, "installed_plugins.json", io.notes)?.get("plugins") as? JsonObject
             }
             index?.forEach { (id, installs) ->

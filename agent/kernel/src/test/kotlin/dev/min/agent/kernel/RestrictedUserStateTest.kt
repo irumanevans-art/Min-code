@@ -6,7 +6,6 @@ import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.GuestPath
-import dev.min.agent.spi.HostPorts
 import dev.min.agent.spi.MemorySource
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.*
@@ -74,7 +73,7 @@ class RestrictedUserStateTest {
         state.first { it.turn == null && it.lastTurn != null }
     }
 
-    @Test fun `对照组：不开 restricted，用户 CLAUDE.md、自动记忆、用户输出样式都进会话`() = runBlocking { withTimeout(30_000) {
+    @Test fun `对照组：不开 restricted，用户 CLAUDE 文件、自动记忆、用户输出样式都进会话`() = runBlocking { withTimeout(30_000) {
         val rt = session(restricted = false, cli = """{"outputStyle":"us"}""")
         val s = rt.state.value
         assertTrue(s.memory.any { it.path.value.endsWith("/root/.claude/CLAUDE.md") && it.source == MemorySource.User })
@@ -82,7 +81,7 @@ class RestrictedUserStateTest {
         assertEquals("us", s.outputStyle?.name)
     } }
 
-    @Test fun `restricted：用户 CLAUDE.md 与自动记忆不进会话，项目 CLAUDE.md 照进`() = runBlocking { withTimeout(30_000) {
+    @Test fun `restricted：用户 CLAUDE 文件 与自动记忆不进会话，项目 CLAUDE 文件 照进`() = runBlocking { withTimeout(30_000) {
         val rt = session(restricted = true)
         val s = rt.state.value
         assertFalse("用户 CLAUDE.md 不该进：${s.memory.map { it.path.value }}", s.memory.any { it.path.value.endsWith("/root/.claude/CLAUDE.md") })
@@ -95,13 +94,13 @@ class RestrictedUserStateTest {
         assertNull("用户样式不该生效：${rt.state.value.outputStyle}", rt.state.value.outputStyle)
     } }
 
-    @Test fun `对照组：不开 restricted，项目 .mcp.json 的服务器被发现`() = runBlocking { withTimeout(30_000) {
+    @Test fun `对照组：不开 restricted，项目 mcp 配置 的服务器被发现`() = runBlocking { withTimeout(30_000) {
         val rt = session(restricted = false)
         rt.say("查一下")
         assertTrue(rt.state.value.mcpServers!!.servers.any { it.name == "srv" })
     } }
 
-    @Test fun `restricted：项目 .mcp.json 不连，没有 MCP 快照`() = runBlocking { withTimeout(30_000) {
+    @Test fun `restricted：项目 mcp 配置 不连，没有 MCP 快照`() = runBlocking { withTimeout(30_000) {
         val rt = session(restricted = true)
         rt.say("查一下")
         assertNull("restricted 不该发现项目 MCP 服务器：${rt.state.value.mcpServers}", rt.state.value.mcpServers)

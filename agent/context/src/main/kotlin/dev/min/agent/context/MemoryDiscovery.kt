@@ -31,6 +31,8 @@ class MemoryDiscovery(
     home: GuestPath,
     private val limits: MemoryLimits = MemoryLimits(),
     private val suppressCwdRules: Boolean = false,
+    /** false = `--restricted`：用户级的规则与导入都不收（同 [MemoryLoader.load]） */
+    private val includeUser: Boolean = true,
 ) {
     private val cwd = normalize(cwd.value)
     private val home = normalize(home.value)
@@ -53,6 +55,7 @@ class MemoryDiscovery(
             pathRuleRefs = mutableListOf(),
             directReads = files.toSet(),
             knownProblems = knownProblems,
+            includeUser = includeUser,
         )
         val dirs = linkedSetOf<String>()
         for (file in files) dirs += dirsBelowCwd(parentOf(file))
@@ -81,7 +84,7 @@ class MemoryDiscovery(
     /** 用户级与 cwd 及其祖先的 `.claude/rules/` 里带 `paths:` 的规则，按启动时的顺序（宽 → 窄）。只扫一次 */
     private suspend fun startupRuleRefs(): List<PathRuleRef> = startupRefs ?: run {
         val collector = MemoryLoader.Loading(
-            fs, home, limits, pathRuleRefs = mutableListOf(), refsOnly = true,
+            fs, home, limits, pathRuleRefs = mutableListOf(), refsOnly = true, includeUser = includeUser,
         )
         collector.collectRuleRefs(join(join(home, ".claude"), "rules"))
         for (dir in MemoryLoader.ancestors(cwd)) if (!suppressCwdRules || dir != cwd) collector.collectRuleRefs(join(dir, ".claude/rules"))
