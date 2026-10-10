@@ -27,6 +27,7 @@ class NetworkSandboxTest {
     @Test fun brokenManagedSettingsKeepLocalTurnsButCloseNetwork() = run { _, rt, fs, _, _, _ ->
         fs.put("/etc/claude-code/managed-settings.json", "broken")
         fs.put("/root/.claude/settings.json", """{"sandbox":{"enabled":false}}""")
+        assertTrue("损坏的托管策略必须强制关闭网络", rt.refreshNetworkSettings().enabled)
         rt.send(ClientMsgId("one"), listOf(TextPart("fetch")))
         rt.state.first { it.turn == null && it.lastTurn != null }
         assertTrue("网络拒绝不能令整个回合失败", rt.state.value.lastTurn!!.outcome is TurnOutcome.Completed)

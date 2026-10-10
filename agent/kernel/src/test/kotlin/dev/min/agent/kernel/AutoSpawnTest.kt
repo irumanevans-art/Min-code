@@ -19,13 +19,14 @@ class AutoSpawnTest {
     private fun decision(value: String) = reply(TextPart("""{"decision":"$value","reason":"spawn verdict","hard_deny_matches":[]}"""))
     private fun run(reviewer: ModelClient, childModel: ModelClient? = null, headless: Boolean = false,
                     tools: List<Tool<*>> = emptyList(), hook: HttpHookClient? = null,
+                    workflowEngine: WorkflowEngine? = null,
                     block: suspend (SessionHub, SessionRuntime, FileSessionStore) -> Unit) = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val child = childModel ?: ModelClient { flow { awaitCancellation() } }
         val base = testDeps(child, tools)
         val deps = KernelDeps(base.clock, base.ids, models = { ref -> ResolvedModel(TEST_PROFILE.copy(ref = ref), if (ref == reviewRef) reviewer else child) },
             tools = base.tools, host = hook?.let { HostPorts(base.host.fs, base.host.search, base.host.exec, base.host.artifacts, httpHooks = it) } ?: base.host,
-            platform = "test", zone = base.zone, autoModeReviewer = AutoModeReviewer(reviewRef))
+            platform = "test", zone = base.zone, autoModeReviewer = AutoModeReviewer(reviewRef), workflowEngine = workflowEngine)
         val store = FileSessionStore(tmp.newFolder().toPath(), { 0 })
         try {
             val hub = SessionHub(store, deps, scope)
@@ -192,7 +193,9 @@ class AutoSpawnTest {
             rt.commit(listOf(HooksLoaded(listOf(HookSourceData("user", Json.parseToJsonElement("""{"PostToolUse":[{"matcher":"Agent","hooks":[{"type":"http","url":"https://hooks.test/post"}]}]}""").jsonObject)))), Durability.Sync)
             val call = ToolCallPart(CallId("agent-tool"), "Agent", buildJsonObject { put("description", "task"); put("prompt", "task"); put("run_in_background", false) })
             ToolExecutor(rt).executeAll(TurnId("t"), listOf(call))
-            val response = Json.parseToJsonElement(bodies.single()).jsonObject.getValue("tool_response").jsonObject
+            val encoded = Json.parseToJsonElement(bodies.single()).jsonObject.getValue("tool_response")
+            assertTrue("handback 的 Agent PostToolUse 必须保留对象载荷", encoded is JsonObject)
+            val response = encoded.jsonObject
             assertEquals("completed", response.getValue("status").jsonPrimitive.content)
             assertEquals(HANDBACK_NOTE, response.getValue("content").jsonArray.single().jsonObject.getValue("text").jsonPrimitive.content)
             assertFalse(bodies.single().contains("FULL_REPORT_BODY"))
@@ -208,6 +211,22 @@ class AutoSpawnTest {
             assertEquals("Agent aborted: auto mode classifier request refused by the safety safeguard in headless mode", (ended.outcome as TurnOutcome.Failed).message)
             val report = rt.state.first { it.inbox.any { input -> input.origin is InputOrigin.Agent } }.inbox.first { it.origin is InputOrigin.Agent }
             assertFalse(report.parts.toString().contains("PRIVATE_REPORT_BODY"))
+        }
+    }
+    @Test fun workflowExecutionReachesCommonSpawnReviewBeforeNodeModel() {
+        for (verdict in listOf("deny", "allow")) {
+            val reviewer = ScriptedModel(decision(verdict), decision("allow"))
+            val child = ScriptedModel(reply(TextPart("NODE_RESULT")))
+            val engine = WorkflowEngine { _, _, host -> host.agent(0, "git push; script task", JsonObject(emptyMap())) }
+            run(reviewer, childModel = child, workflowEngine = engine) { _, rt, _ ->
+                val result = rt.executeWorkflow(TurnId("t"), CallId("workflow"), WorkflowInput("node", "export const meta={name:'node',description:'task'};", null))
+                val node = rt.state.value.workflowEvents.filterIsInstance<WorkflowNodeCompleted>().single()
+                assertEquals(verdict == "deny", node.isError)
+                assertEquals(if (verdict == "deny") 0 else 1, rt.state.value.children.size)
+                assertEquals(if (verdict == "deny") 0 else 1, child.requests.size)
+                assertEquals(if (verdict == "deny") JsonNull else JsonPrimitive("NODE_RESULT"), node.result)
+                assertFalse(result.isError)
+            }
         }
     }
 }
