@@ -7,6 +7,11 @@ import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.Durability
+import dev.min.agent.spi.Exec
+import dev.min.agent.spi.ExecHandle
+import dev.min.agent.spi.ExecOptions
+import dev.min.agent.spi.ExecResult
+import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.GoalEndReason
 import dev.min.agent.spi.GoalSet
 import dev.min.agent.spi.GuestPath
@@ -61,12 +66,19 @@ class GoalSessionTest {
 
     private fun isEvaluator(req: ModelRequest) = req.system.any { it.contains("hook evaluator") }
 
-    private fun hub(model: ModelClient): SessionHub {
+    /** 宿主进程替身：所有进程都说还活着，让后台命令一直「在跑」（check-in 与评估的推迟靠它） */
+    private object AliveExec : Exec {
+        override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult = error("unused")
+        override suspend fun kill(handle: ExecHandle) = Unit
+        override suspend fun isAlive(handle: ExecHandle): Boolean? = true
+    }
+
+    private fun hub(model: ModelClient, exec: Exec? = null): SessionHub {
         val store = FileSessionStore(tmp.root.toPath(), { 0L })
         val base = dev.min.agent.testkit.testDeps(model, emptyList())
         val deps = KernelDeps(
             clock = { System.currentTimeMillis() }, ids = base.ids, models = base.models, tools = emptyList(),
-            host = dev.min.agent.kernel.HostPorts(base.host.fs, base.host.search, base.host.exec, base.host.artifacts),
+            host = dev.min.agent.kernel.HostPorts(base.host.fs, base.host.search, exec ?: base.host.exec, base.host.artifacts),
             platform = "test", zone = ZoneOffset.UTC, memoryHome = GuestPath("/root"),
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
@@ -132,6 +144,18 @@ class GoalSessionTest {
         assertEquals("测试全绿", goal.condition)
         assertEquals(0, goal.turns)
         assertEquals(1, model.requests.count { !isEvaluator(it) })
+    }
+
+    @Test
+    fun `有后台命令在跑时不评估，回合照常结束，目标保留`() = run {
+        val model = model(listOf("""{"ok": true, "reason": "好"}"""))
+        val rt = hub(model, AliveExec).create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.setGoal("A")
+        rt.background.adoptShell(ExecHandle("sh-goal", 1, GuestPath("/root/.min/exec-logs/sh-goal.log")), "sleep 999", null)
+        rt.say("开始")
+        assertTrue("后台命令确实在跑", rt.background.runningCount() > 0)
+        assertTrue("有后台工作时没有发评估请求", model.requests.none { isEvaluator(it) })
+        assertEquals("A", rt.state.value.goal.condition)
     }
 
     @Test
