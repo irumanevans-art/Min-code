@@ -1,5 +1,6 @@
 package dev.min.agent.tools
 
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
 import dev.min.agent.protocol.TextPart
@@ -21,7 +22,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonObject
 import java.util.Base64
 
-data class ReadInput(val path: GuestPath, val offset: Int, val limit: Int)
+data class ReadInput(val path: GuestPath, val offset: Int, val limit: Int, val pages: String? = null)
 
 /**
  * 读文件（规格 §2）。输出 `cat -n` 风格：模型给 Edit 定位、引用「第几行」都靠这个行号。
@@ -34,6 +35,12 @@ object ReadTool : Tool<ReadInput> {
     const val DEFAULT_LIMIT = 2000
     const val MAX_LINE_CHARS = 2000
     const val MAX_IMAGE_BYTES = 5L * 1024 * 1024
+
+    /** PDF 整份内联进请求：Anthropic 请求体上限 32MB，base64 膨胀约 4/3，这里取 20MB 原文（再大会超供应商的请求体上限） */
+    const val MAX_PDF_BYTES = 20L * 1024 * 1024
+
+    /** 本环境没有 PDF 解析库，不能按页截取；pages 参数给了就照实说 */
+    private const val NO_PAGE_CUT = "本环境不能按页截取 PDF（没有可用的 PDF 解析库），pages 参数暂不可用。不超过 10 页的 PDF 请去掉 pages 整份读取。"
 
     /** 文本文件一次最多读入这么多字节：一个几百 MB 的日志不该整个进内存。超出部分读不到，结果里会说明 */
     const val MAX_TEXT_BYTES = 8 * 1024 * 1024
@@ -48,6 +55,7 @@ object ReadTool : Tool<ReadInput> {
         "file_path" to prop("string", "要读的文件的绝对路径（以 / 开头）"),
         "offset" to prop("integer", "起始行号（notebook 为起始单元序号），从 1 开始；默认 1。只在文件很大、需要分段读时才给"),
         "limit" to prop("integer", "最多读多少行（notebook 为单元数）；默认 $DEFAULT_LIMIT"),
+        "pages" to prop("string", "PDF 专用：要读的页码，如 \"1-5\" 或 \"3\"，一次最多 ${PdfFile.MAX_PAGES_PER_READ} 页。本环境暂不能按页截取，给了会得到说明"),
     )
 
     override val traits = ToolTraits(readOnly = true, concurrencySafe = true, resumePolicy = ResumePolicy.Replay)
@@ -55,7 +63,7 @@ object ReadTool : Tool<ReadInput> {
     override fun description(profile: HarnessProfile) =
         "读取一个文件。file_path 必须是绝对路径（相对路径以当前目录为基准自行拼成绝对路径）。" +
             "默认从第 1 行读最多 $DEFAULT_LIMIT 行，每行前带行号；更长的文件用 offset / limit 分段读。" +
-            "单行超过 $MAX_LINE_CHARS 字符会被截断。可以读图片（png / jpg / gif / webp）；不能读二进制文件。" +
+            "单行超过 $MAX_LINE_CHARS 字符会被截断。可以读图片（png / jpg / gif / webp）；可以读 PDF（不超过 $MAX_PDF_BYTES 字节，不超过 ${PdfFile.MAX_PAGES_WHOLE} 页整份读取，超过的本环境暂不能按页截取）；不能读其他二进制文件。" +
             "也可以读 Jupyter notebook（.ipynb）：按单元给出 id、类型、源码与输出（输出已截断，图片尽量内嵌），此时 offset / limit 按单元计。" +
             "修改已有文件之前必须先用本工具读过它。读目录请改用 Glob 或 Bash 的 ls。"
 
@@ -64,6 +72,7 @@ object ReadTool : Tool<ReadInput> {
             path = absolutePath("file_path", raw.reqString("file_path")),
             offset = raw.optInt("offset", min = 1) ?: 1,
             limit = raw.optInt("limit", min = 1) ?: DEFAULT_LIMIT,
+            pages = raw.optString("pages")?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -84,6 +93,7 @@ object ReadTool : Tool<ReadInput> {
         val stamp = FileStamp(path, stat.size, stat.modifiedMs)
 
         val ext = path.value.substringAfterLast('.', "").lowercase()
+        if (ext == "pdf") return readPdf(input, ctx, stamp, stat.size)
         IMAGE_TYPES[ext]?.let { mediaType ->
             if (stat.size > MAX_IMAGE_BYTES) {
                 return failResult("图片太大（${stat.size} 字节，上限 ${MAX_IMAGE_BYTES} 字节），无法读取。")
@@ -125,6 +135,40 @@ object ReadTool : Tool<ReadInput> {
             if (cutByBytes) add("（文件有 ${stat.size} 字节，超过一次读入上限 $MAX_TEXT_BYTES 字节，后面的内容读不到；需要的话用 Grep 或 Bash）")
         }
         return okResult((listOf(body) + notes).joinToString("\n"), listOf(stamp))
+    }
+
+    /**
+     * PDF：整份内联成文档块。pages 本环境给不了（没有解析库，不能拆页），给了就报错而不是悄悄整份返回——
+     * 模型要的是第几页，整份塞进去会让它以为拿到了想要的内容。
+     * 页数超过 10 页又不给 pages 也报错：整份发过去多半被供应商以难懂的错误拒绝，不如先说清楚。
+     */
+    private suspend fun readPdf(input: ReadInput, ctx: ToolContext, stamp: FileStamp, size: Long): ToolResult {
+        val path = input.path
+        if (size > MAX_PDF_BYTES) return failResult("PDF 太大（$size 字节，上限 $MAX_PDF_BYTES 字节），无法读取。")
+        val bytes = ctx.fs.read(path)
+        PdfFile.problem(bytes, path.toString())?.let { return failResult(it) }
+
+        input.pages?.let { spec ->
+            val range = PdfFile.parsePages(spec)
+                ?: return failResult("字段 `pages` 格式不对：应为 \"3\" 或 \"1-5\"，收到 `$spec`。")
+            if (range.last - range.first + 1 > PdfFile.MAX_PAGES_PER_READ) {
+                return failResult("字段 `pages` 一次最多 ${PdfFile.MAX_PAGES_PER_READ} 页，收到 `$spec`。")
+            }
+            return failResult(NO_PAGE_CUT)
+        }
+
+        val pageCount = PdfFile.pageCount(bytes)
+        if (pageCount != null && pageCount > PdfFile.MAX_PAGES_WHOLE) {
+            return failResult("$path 共 $pageCount 页，超过 ${PdfFile.MAX_PAGES_WHOLE} 页，不能整份读取。$NO_PAGE_CUT")
+        }
+        val pageNote = pageCount?.let { "$it 页" } ?: "页数未知"
+        return ToolResult(
+            content = listOf(
+                TextPart("PDF $path（application/pdf，${bytes.size} 字节，$pageNote）"),
+                DocumentPart("application/pdf", ImageSource.Base64(Base64.getEncoder().encodeToString(bytes))),
+            ),
+            touched = listOf(stamp),
+        )
     }
 
     /** 行号右对齐 6 位 + 制表符；\r\n 的 \r 去掉，免得模型以为行尾有个怪字符 */

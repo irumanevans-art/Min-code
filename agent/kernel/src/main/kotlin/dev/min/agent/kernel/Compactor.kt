@@ -9,6 +9,7 @@ import dev.min.agent.ext.hooks.PostCompactInput
 import dev.min.agent.ext.hooks.PreCompactInput
 import dev.min.agent.ext.hooks.SessionStartInput
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.TextPart
@@ -250,6 +251,7 @@ internal class Compactor(
                         append("```\n").append(p.content.filterIsInstance<TextPart>().joinToString("") { it.text }).append("\n```\n\n")
                     }
                     is ImagePart -> append("（图片）\n\n")
+                    is DocumentPart -> append("（文档）\n\n")
                     else -> Unit
                 }
             }

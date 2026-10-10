@@ -41,6 +41,15 @@ sealed interface ImageSource {
 }
 
 /**
+ * 文档（目前只有 PDF）。[source] 借用 [ImageSource] 的两种形态（内联 base64 / 会话附件路径）：
+ * 同样是「二进制 + 媒体类型」，另起一套只会让内联与降级的代码各写一遍。
+ * 不做成 [ImagePart] 的子类：图片与文档的供应商字段名、模型能力位（supportsImages / supportsPdf）都不同。
+ */
+@Serializable
+@SerialName("document")
+data class DocumentPart(val mediaType: String, val source: ImageSource) : Part
+
+/**
  * 模型的思考过程。[signature] 是 Anthropic 一类供应商用来校验「这段思考没被改过」的签名，
  * 只能原样回传给**同一个模型**；换了模型，编解码器会把它转成普通文本或剔除。
  */
@@ -57,7 +66,7 @@ data class RedactedThinkingPart(val data: String, val origin: ModelRef) : Part
 @SerialName("tool_call")
 data class ToolCallPart(val callId: CallId, val name: String, val input: JsonObject) : Part
 
-/** [content] 只放 [TextPart] 与 [ImagePart]；大输出只留预览，全文在 artifacts 里 */
+/** [content] 只放 [TextPart]、[ImagePart] 与 [DocumentPart]；大输出只留预览，全文在 artifacts 里 */
 @Serializable
 @SerialName("tool_result")
 data class ToolResultPart(

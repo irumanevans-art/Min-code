@@ -14,6 +14,7 @@
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
     "supportsImages": true,
+    "supportsPdf": true,
     "effortPatches": {
       "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
       "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
@@ -38,6 +39,7 @@
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
     "supportsImages": true,
+    "supportsPdf": true,
     "effortPatches": {
       "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
       "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
@@ -62,6 +64,7 @@
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
     "supportsImages": true,
+    "supportsPdf": true,
     "effortPatches": {
       "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
       "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
@@ -86,6 +89,7 @@
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
     "supportsImages": true,
+    "supportsPdf": true,
     "effortPatches": {
       "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },
       "medium": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "medium" } },
@@ -110,6 +114,7 @@
     "contextWindow": 200000,
     "maxOutputTokens": 64000,
     "supportsImages": true,
+    "supportsPdf": true,
     "effortPatches": {
       "off": { "thinking": { "type": "disabled" } },
       "high": { "thinking": { "type": "enabled" } }
@@ -134,6 +139,7 @@
     "contextWindow": 1000000,
     "maxOutputTokens": 128000,
     "supportsImages": true,
+    "supportsPdf": true,
     "effortPatches": {
       "off": { "thinking": { "type": "disabled" } },
       "low": { "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } },

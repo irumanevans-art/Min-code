@@ -2,6 +2,7 @@ package dev.min.agent.kernel
 
 import dev.min.agent.context.MemoryRender
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.OpaquePart
@@ -23,6 +24,9 @@ import dev.min.agent.spi.ModelMessage
 internal object Tokens {
     private const val IMAGE_TOKENS = 1_600L
 
+    // PDF 不拆页，页数常常不可知：按「不超过 10 页、每页约一千多 token」粗估一份 3 万。宁可估多，理由同上
+    private const val DOCUMENT_TOKENS = 30_000L
+
     fun of(text: String): Long {
         var cjk = 0L
         var other = 0L
@@ -37,6 +41,7 @@ internal object Tokens {
         is ToolCallPart -> of(part.name) + of(part.input.toString())
         is ToolResultPart -> part.content.sumOf(::of)
         is ImagePart -> IMAGE_TOKENS
+        is DocumentPart -> DOCUMENT_TOKENS
         is OpaquePart -> of(part.json.toString())
     }
 

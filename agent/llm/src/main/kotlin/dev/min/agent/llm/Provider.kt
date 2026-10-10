@@ -141,6 +141,8 @@ data class ModelProfile(
     val contextWindow: Int,
     val maxOutputTokens: Int,
     val supportsImages: Boolean = false,
+    /** 能否收 PDF（document 块）。与图片分开：OpenAI / Gemini 的视觉模型不等于都收文档，由目录逐条标 */
+    val supportsPdf: Boolean = false,
     val editStyle: EditStyle = EditStyle.StrReplace,
     val effortPatches: Map<Effort, JsonObject> = emptyMap(),
     val reasoningEcho: ReasoningEcho = ReasoningEcho.Always,

@@ -2,6 +2,7 @@ package dev.min.agent.context
 
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
 import dev.min.agent.protocol.ModelRef
@@ -49,5 +50,35 @@ class ImageDegradeTest {
     @Test
     fun `a model with image support gets the images`() {
         assertEquals(messages, assemble(seeing))
+    }
+
+    private val pdf = DocumentPart("application/pdf", ImageSource.Artifact("a/1.pdf"))
+    private val withPdf = listOf(
+        ModelMessage(Role.User, listOf(TextPart("看"), pdf, image)),
+        ModelMessage(Role.User, listOf(ToolResultPart(CallId("c2"), listOf(TextPart("页"), pdf)))),
+    )
+
+    private fun assembleFrom(profile: ModelProfile, from: List<ModelMessage>) =
+        RequestAssembler.assemble(profile, env, from, emptyList(), effort = null, cacheKey = "k").messages
+
+    @Test
+    fun `a model that reads pdf but not images gets placeholders for images only`() {
+        val sent = assembleFrom(blind.copy(supportsPdf = true), withPdf)
+        assertEquals(listOf(TextPart("看"), pdf, TextPart("[图片（image/png）：当前模型不支持看图，这张图没有发给模型]")), sent[0].parts)
+        assertEquals(listOf(TextPart("页"), pdf), (sent[1].parts.single() as ToolResultPart).content)
+    }
+
+    @Test
+    fun `a model that reads images but not pdf gets a placeholder for each document`() {
+        val sent = assembleFrom(blind.copy(supportsImages = true), withPdf)
+        assertEquals(listOf(TextPart("看"), TextPart("[文档（application/pdf）：当前模型不支持读 PDF，这份文档没有发给模型]"), image), sent[0].parts)
+        val content = (sent[1].parts.single() as ToolResultPart).content
+        assertEquals(listOf(TextPart("页"), TextPart("[文档（application/pdf）：当前模型不支持读 PDF，这份文档没有发给模型]")), content)
+    }
+
+    @Test
+    fun `a model that reads both gets everything and the log messages are not mutated`() {
+        assertEquals(withPdf, assembleFrom(blind.copy(supportsImages = true, supportsPdf = true), withPdf))
+        assertEquals(withPdf[0].parts, listOf(TextPart("看"), pdf, image))
     }
 }

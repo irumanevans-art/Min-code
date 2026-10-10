@@ -9,6 +9,7 @@ import dev.min.agent.llm.ToolChoice
 import dev.min.agent.llm.ToolSpec
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.Effort
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
 import dev.min.agent.protocol.ModelRef
@@ -352,6 +353,37 @@ class AnthropicRequestTest {
         assertFalse(dropped.contains("redacted_thinking"))
         val kept = sentBody(request(messages = messages), provider(noCache))
         assertTrue(kept.contains("""{"type":"redacted_thinking","data":"enc"}"""))
+    }
+
+    @Test
+    fun `pdf documents become base64 document blocks in user turns and tool results`() {
+        val pdf = DocumentPart("application/pdf", ImageSource.Base64("JVBERi0="))
+        val messages = listOf(
+            ModelMessage(Role.User, listOf(TextPart("看这份"), pdf)),
+            ModelMessage(Role.Assistant, listOf(ToolCallPart(CallId("toolu_1"), "Read", json("""{"file_path":"/a.pdf"}""") as JsonObject))),
+            ModelMessage(Role.User, listOf(ToolResultPart(CallId("toolu_1"), listOf(TextPart("共 1 页"), pdf)))),
+        )
+        assertJson(
+            """{"model":"claude-sonnet-5-5","max_tokens":8000,"stream":true,"messages":[
+              {"role":"user","content":[{"type":"text","text":"看这份"},
+                {"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}}]},
+              {"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/a.pdf"}}]},
+              {"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[
+                {"type":"text","text":"共 1 页"},
+                {"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}}],"cache_control":{"type":"ephemeral"}}]}]}""",
+            sentBody(request(messages = messages)),
+        )
+    }
+
+    @Test
+    fun `artifact pdf must be inlined before reaching the codec`() {
+        val messages = listOf(ModelMessage(Role.User, listOf(DocumentPart("application/pdf", ImageSource.Artifact("a/b.pdf")))))
+        try {
+            sentBody(request(messages = messages))
+            fail("应抛 IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("a/b.pdf"))
+        }
     }
 
     @Test

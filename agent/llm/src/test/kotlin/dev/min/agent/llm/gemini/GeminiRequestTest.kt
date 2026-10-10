@@ -90,6 +90,13 @@ class GeminiRequestTest {
         assertEquals(json("""[{"text":"看"},{"inlineData":{"mimeType":"image/png","data":"QUJD"}}]"""),
             wireParts(sent(request(listOf(user(TextPart(""), TextPart("看"), ImagePart("image/png", ImageSource.Base64("QUJD")))))), 0))
     }
+    @Test fun `user pdf uses inline data with application pdf mime type`() {
+        assertEquals(json("""[{"text":"看"},{"inlineData":{"mimeType":"application/pdf","data":"JVBERi0="}}]"""),
+            wireParts(sent(request(listOf(user(TextPart("看"), DocumentPart("application/pdf", ImageSource.Base64("JVBERi0=")))))), 0))
+    }
+    @Test fun `artifact pdf in user turn is rejected`() {
+        val t = FakeHttpTransport(); assertTrue(run(t, request(listOf(user(DocumentPart("application/pdf", ImageSource.Artifact("a.pdf")))))).error is IllegalArgumentException); assertTrue(t.requests.isEmpty())
+    }
     @Test fun `artifact in user or tool result is rejected`() {
         val image = ImagePart("image/png", ImageSource.Artifact("a.png"))
         val call = ToolCallPart(CallId("c"), "Read", obj("{}"))

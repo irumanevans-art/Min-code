@@ -149,6 +149,14 @@ class OpenAIResponsesTest {
         assertThrows(CancellationException::class.java) { runBlocking { OpenAIResponsesClient(provider,transport,FakeSecrets()).stream(request()).toList() } }
     }
 
+    @Test fun `pdf documents use input_file with a data url and must be inline`() {
+        val pdf = DocumentPart("application/pdf", ImageSource.Base64("JVBERi0="))
+        val body = buildResponsesBody(request(listOf(ModelMessage(Role.User, listOf(TextPart("看"), pdf)))))
+        assertEquals(AgentJson.parseToJsonElement("""[{"role":"developer","content":"fixed"},{"role":"user","content":[{"type":"input_text","text":"看"},{"type":"input_file","filename":"document.pdf","file_data":"data:application/pdf;base64,JVBERi0="}]}]"""),
+            body["input"])
+        assertThrows(IllegalArgumentException::class.java) { buildResponsesBody(request(listOf(ModelMessage(Role.User, listOf(pdf.copy(source = ImageSource.Artifact("a.pdf")))))))}
+    }
+
     @Test fun `images must be inline and use Responses input types`() {
         val image = ImagePart("image/png", ImageSource.Base64("QUJD"))
         val body = buildResponsesBody(request(listOf(ModelMessage(Role.User,listOf(TextPart("pic"),image)))))

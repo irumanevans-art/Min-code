@@ -7,6 +7,7 @@ import dev.min.agent.llm.joinedText
 import dev.min.agent.llm.lastUserInputIndex
 import dev.min.agent.llm.partsToSend
 import dev.min.agent.llm.patchFor
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.ImageSource
@@ -91,7 +92,7 @@ private fun responsesInput(request: ModelRequest): JsonArray {
                     put("output", inputContent(result.content))
                 }
             }
-            val user = message.parts.filter { it is TextPart && it.text.isNotEmpty() || it is ImagePart }
+            val user = message.parts.filter { it is TextPart && it.text.isNotEmpty() || it is ImagePart || it is DocumentPart }
             if (user.isNotEmpty()) items += buildJsonObject { put("role", "user"); put("content", inputContent(user, separate = true)) }
         }
     }
@@ -102,7 +103,7 @@ private fun responsesInput(request: ModelRequest): JsonArray {
  * [separate] = 把多个文本块压成字符串时用 [dev.min.agent.llm.TEXT_BLOCK_SEPARATOR] 隔开：只给用户消息（用户的话与 system-reminder 是独立块）；
  * 工具输出沿用原样直接拼接，与 Chat 一致（既有快照把工具结果里的多段文本钉成「AB」）。
  */
-private fun inputContent(parts: List<Part>, separate: Boolean = false) = if (parts.none { it is ImagePart }) {
+private fun inputContent(parts: List<Part>, separate: Boolean = false) = if (parts.none { it is ImagePart || it is DocumentPart }) {
     JsonPrimitive(if (separate) parts.joinedText() else parts.filterIsInstance<TextPart>().joinToString("") { it.text })
 } else JsonArray(parts.mapNotNull { part -> when (part) {
     is TextPart -> part.text.takeIf { it.isNotEmpty() }?.let {
@@ -112,6 +113,12 @@ private fun inputContent(parts: List<Part>, separate: Boolean = false) = if (par
         val source = part.source as? ImageSource.Base64
             ?: throw IllegalArgumentException("图片附件必须先内联成 base64 再交给编解码器")
         put("type", "input_image"); put("image_url", "data:${part.mediaType};base64,${source.data}")
+    }
+    is DocumentPart -> buildJsonObject {
+        val source = part.source as? ImageSource.Base64
+            ?: throw IllegalArgumentException("文档附件必须先内联成 base64 再交给编解码器")
+        // 官方形状：input_file 的 file_data 为 data URL；filename 必填（文档本身不带文件名，用固定名）
+        put("type", "input_file"); put("filename", "document.pdf"); put("file_data", "data:${part.mediaType};base64,${source.data}")
     }
     else -> null
 } })

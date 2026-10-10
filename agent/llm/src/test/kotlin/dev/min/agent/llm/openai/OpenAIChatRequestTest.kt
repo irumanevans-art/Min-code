@@ -12,6 +12,7 @@ import dev.min.agent.llm.ToolResultImages
 import dev.min.agent.llm.ToolSpec
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.Effort
+import dev.min.agent.protocol.DocumentPart
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
 import dev.min.agent.protocol.ModelRef
@@ -246,6 +247,28 @@ class OpenAIChatRequestTest {
             messages(sentBody(request(messages = turns), provider(OpenAiChatQuirks(toolResultImages = ToolResultImages.Inline)))))
         assertEquals(json("""[{"role":"tool","tool_call_id":"a","content":"前后\n此处有 2 张图片未发送"}]"""),
             messages(sentBody(request(messages = turns), provider(OpenAiChatQuirks(toolResultImages = ToolResultImages.Unsupported)))))
+    }
+
+    @Test fun `pdf documents become file content parts in user turns and follow each tool-result mode`() {
+        val pdf = DocumentPart("application/pdf", ImageSource.Base64("JVBERi0="))
+        val file = """{"type":"file","file":{"filename":"document.pdf","file_data":"data:application/pdf;base64,JVBERi0="}}"""
+        val user = messages(sentBody(request(messages = listOf(ModelMessage(Role.User, listOf(TextPart("看"), pdf))))))
+        assertEquals(json("""[{"role":"user","content":[{"type":"text","text":"看"},$file]}]"""), user)
+        val tool = listOf(ModelMessage(Role.User, listOf(ToolResultPart(call.callId, listOf(TextPart("共 1 页"), pdf)))))
+        fun toolMessages(mode: ToolResultImages) = messages(sentBody(request(messages = tool), provider(OpenAiChatQuirks(toolResultImages = mode))))
+        assertEquals(json("""[{"role":"tool","tool_call_id":"call:1/中文","content":[{"type":"text","text":"共 1 页"},$file]}]"""), toolMessages(ToolResultImages.Inline))
+        assertEquals(json("""[{"role":"tool","tool_call_id":"call:1/中文","content":"共 1 页\n此处有 1 份文档未发送"}]"""), toolMessages(ToolResultImages.Unsupported))
+        assertEquals(
+            json("""[{"role":"tool","tool_call_id":"call:1/中文","content":"共 1 页"},{"role":"user","content":[$file]}]"""),
+            toolMessages(ToolResultImages.SeparateUserMessage),
+        )
+    }
+
+    @Test fun `artifact pdf is rejected before any Chat request is sent`() {
+        val pdf = DocumentPart("application/pdf", ImageSource.Artifact("a.pdf"))
+        val transport = FakeHttpTransport()
+        assertTrue(run(transport, request(messages = listOf(ModelMessage(Role.User, listOf(pdf))))).error is IllegalArgumentException)
+        assertTrue(transport.requests.isEmpty())
     }
 
     @Test
