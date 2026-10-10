@@ -163,4 +163,27 @@ class MinWatchesTest {
         }
         assertTrue(notices.any { "已被停止" in it })
     }
+
+    @Test fun `WebSocket 源的审批卡写明连哪里（只到路径），没有总是允许的选项`() = runBlocking {
+        val wsModel = RoutedModel { req ->
+            val step = if (req.messages.size == 1) replyParts(
+                listOf(ToolCallPart(CallId("w1"), "Monitor", JsonObject(mapOf(
+                    "description" to JsonPrimitive("行情"),
+                    "ws" to JsonObject(mapOf("url" to JsonPrimitive("wss://feed.example.com:8443/v1/stream?token=SECRET"))),
+                )))), StopReason.ToolUse,
+            ) else answer("ok")
+            step(req)
+        }
+        val k = TestKernel(wsModel, tools = listOf(MonitorTool))
+        try {
+            val rt = k.newRoot(mode = PermissionMode.Default)
+            val session = MinAgentSession(rt, FakeHost(k), k.scope)
+            rt.send(ClientMsgId("u1"), listOf(TextPart("watch the feed")))
+            val card = awaitValue { session.state.value.interactions.filterIsInstance<dev.min.code.core.engine.PendingInteraction.Approval>().firstOrNull() }
+            assertEquals("Monitor", card.toolName)
+            assertEquals(listOf("feed.example.com:8443"), card.domains)
+            assertTrue("没有总是允许：只有允许 / 拒绝 / 拒绝并停止", card.options.none { it.kind == dev.min.code.core.engine.ApprovalOption.Kind.AllowAlways })
+            assertTrue("卡的摘要与域名里没有 token", !card.summary.contains("SECRET") && card.domains.none { "SECRET" in it })
+        } finally { k.close() }
+    }
 }

@@ -126,7 +126,8 @@ object MonitorTool : Tool<MonitorInput> {
             PermissionAsk(name, input.description.clip(SUMMARY_CHARS), commands = listOf(CommandAccess(raw = input.command)))
         } else {
             // WebSocket 源不填 domains：WebFetch(domain:…) 的 allow 规则不能顺手放行一条长连接（CC：每次都弹窗）
-            PermissionAsk(name, "打开 WebSocket：${input.ws!!.url}".clip(SUMMARY_CHARS + 40))
+            // 摘要只写到路径：查询串里常带 token，审批摘要会进日志、通知与卡片
+            PermissionAsk(name, "打开 WebSocket：${input.ws!!.url.substringBefore('?').substringBefore('#')}".clip(SUMMARY_CHARS + 40))
         }
 
     override fun run(input: MonitorInput, ctx: ToolContext): Flow<ToolProgress> = doneFlow {

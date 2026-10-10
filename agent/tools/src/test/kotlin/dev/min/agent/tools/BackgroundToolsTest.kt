@@ -108,6 +108,8 @@ class BackgroundToolsTest {
         assertEquals("Monitor", ask.tool)
         assertTrue(ask.domains.isEmpty() && ask.commands.isEmpty())
         assertTrue("卡片上要看得到地址", ask.summary.contains("wss://feed.example.com/x"))
+        val withToken = MonitorTool.permissionAsk(MonitorTool.parsed("description" to "x", "ws" to ws("wss://feed.example.com/x?token=SECRET#f")), ctx)
+        assertTrue("摘要只到路径，token 不进审批摘要", withToken.summary.endsWith("wss://feed.example.com/x") && !withToken.summary.contains("SECRET"))
     }
 
     @Test
