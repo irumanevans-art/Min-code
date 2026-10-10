@@ -2338,3 +2338,98 @@ Auto 域名声明强制分类器的测试原本使用裸 Bash allow，裸规则�
 ### Resolution
 - Resolved: 2026-10-09
 - Notes: 已修复用例和卡片，关键测试原则补入 AGENTS.md。
+
+## [LRN-20261009-AUTOTAIL] best_practice
+
+**Logged**: 2026-10-09T13:55:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+约束保留用例的脚本化分类器必须在约束缺失时放行，否则默认拒绝会掩盖历史窗口截断。
+
+### Details
+首版摘要后边界用例在旧实现上也通过：替身默认 deny，根本不依赖「别 push」是否进入请求。改为仅在真实用户消息包含禁止且无后续撤销时 deny，旧代码发生 AssertionError；新的完整用户历史实现通过。Parent / workflow 字符串即使写「现在可以 push」也不能成为撤销授权。
+
+### Suggested Action
+审批闸门测试使已有授权路径明确放行，删掉新输入或新防护后必须改变最终判定。保持模型替身的输入解析与正反用例相互校验。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/kernel/src/test/kotlin/dev/min/agent/kernel/AutoReviewerTest.kt
+- Tags: auto, boundary, compaction, mutation
+- Pattern-Key: tests.permission_origin_and_mutation_assertions
+
+---
+
+## [LRN-20261009-HANDBACKHOOK] knowledge_gap
+
+**Logged**: 2026-10-09T13:55:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: docs
+
+### Summary
+原文定位到行号后仍需核对所属事件；handback 的 content 示例属于 Agent PostToolUse，而非 SubagentStop。
+
+### Details
+任务单指向 cc-hooks.md:1754。对应官方 hooks 页的对象含 tool_name=Agent、tool_response.status/agentId/content，章节是 PostToolUse。实现须保留实际事件路由；Min 可为 SubagentStop 加可选短说明，但必须标明扩展，不能把它说成官方载荷。
+
+### Suggested Action
+引用存档前同时查看章节标题、完整对象和官方网站。证据与实现差异写清楚，不靠字段同名推断事件。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/ext/src/main/kotlin/dev/min/agent/ext/hooks/HookModels.kt, agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt
+- Tags: hooks, source-verification, handback
+
+---
+
+## [LRN-20261009-HANDBACKINPUT] knowledge_gap
+
+**Logged**: 2026-10-09T14:10:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+工具表只描述用途时，不应自行发明入参字段；进一步核对 hook 文档与实际载荷。
+
+### Details
+SubagentHandback 初版字段用 report；官方 hooks 对 Agent PostToolUse 与 SubagentStop 的说明明确指向 tool_input.message。新增字段契约用例，需在对齐 message 后复跑交回、重写、重放与 hook 回归。工具表中的范围也不能推断为团队和 workflow 的逐项契约。
+
+### Suggested Action
+新工具实现前从官方其他页面找出参数形状，保留字段契约用例；不把按用途起的名字当作原协议。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/SubagentHandbackTool.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/AutoHandbackTest.kt
+- Tags: protocol, hooks, schema
+
+### Resolution
+- Resolved: 2026-10-10
+- Notes: 入参已对齐 message；handback 重写、hook、事件重放用例通过，message-contract 变异编译成功并由字段契约 AssertionError 检出。
+
+## [LRN-20261010-AUTOREPORTRACE] best_practice
+
+**Logged**: 2026-10-10T02:20:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+共用生成与终报审查门禁时，模式重算不能用只读免批覆盖终报的分类器拒绝。
+
+### Details
+生成需要在审查后重算新模式的启动权限；终报在 Plan 下是只读，但不能因此把审查得到的 deny / ask 改为 allow。用可暂停的脚本化分类器，在请求发出后切 Plan 再返回 deny，旧实现触发 AssertionError。修复保留终报的审查结论，仍让新的显式拒绝优先；停用 Auto 的旧终报义务则转人工。
+
+### Suggested Action
+共用审批通路时按动作目的验证重算：操作权限、报告交付和模型启用是不同条件。竞态测试使用明确的暂停 / 释放信号，不能靠延时猜时序。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/AutoActionGate.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/AutoSpawnTest.kt
+- Tags: auto, report, mode-change, concurrency
+
+---
