@@ -7,9 +7,12 @@ import kotlinx.coroutines.sync.Semaphore
 import java.io.InputStream
 import java.net.*
 import java.security.SecureRandom
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** 每次命令有自己的随机凭据；连接不能借用别的会话的审批。HTTPS 只转发字节，不解密。 */
 class LoopbackNetworkProxy(
@@ -21,10 +24,15 @@ class LoopbackNetworkProxy(
     private val leases = ConcurrentHashMap<Lease, SessionId>()
     private val slots = Semaphore(maxConnections)
     private val closed = AtomicBoolean()
+    private val threadIds = AtomicInteger()
+    // 每个租约最多一个 accept，每条连接最多两个转发；独立上限防止挤占命令执行的共享 IO 池。
+    private val dispatcher = Executors.newFixedThreadPool(MAX_LEASES + 2 * maxConnections) { action ->
+        Thread(action, "min-network-proxy-${threadIds.incrementAndGet()}").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
     init { require(approvalTimeoutMs > 0 && socketTimeoutMs > 0 && maxConnections > 0) }
     @Synchronized override fun open(session: SessionId, decide: suspend (NetworkTarget) -> NetworkVerdict): NetworkLease {
         check(!closed.get())
-        check(leases.size < 128) { "网络代理命令租约超过上限" }
+        check(leases.size < MAX_LEASES) { "网络代理命令租约超过上限" }
         val lease = Lease(decide)
         leases[lease] = session
         if (closed.get()) { lease.close(); error("网络代理已关闭") }
@@ -32,10 +40,14 @@ class LoopbackNetworkProxy(
         return lease
     }
     @Synchronized override fun closeSession(session: SessionId) { leases.entries.filter { it.value == session }.forEach { it.key.close() } }
-    @Synchronized override fun close() { closed.set(true); leases.keys.toList().forEach { it.close() } }
+    @Synchronized override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        leases.keys.toList().forEach { it.close() }
+        dispatcher.close()
+    }
 
     private inner class Lease(val decide: suspend (NetworkTarget) -> NetworkVerdict) : NetworkLease {
-        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val scope = CoroutineScope(SupervisorJob() + dispatcher)
         private val server = ServerSocket().apply { bind(InetSocketAddress("127.0.0.1", 0), 32) }
         private val sockets = ConcurrentHashMap.newKeySet<Socket>()
         private val stopped = AtomicBoolean()
@@ -49,6 +61,7 @@ class LoopbackNetworkProxy(
                     client.soTimeout = socketTimeoutMs
                     if (!slots.tryAcquire()) { client.use { reply(it, "代理连接数超过上限") }; continue }
                     sockets += client
+                    if (stopped.get()) { sockets -= client; client.close(); slots.release(); break }
                     launch {
                         try { handle(client) }
                         catch (e: CancellationException) { throw e }
@@ -72,7 +85,8 @@ class LoopbackNetworkProxy(
             val input = client.getInputStream()
             val head = readHead(input)
             // 不带凭据的同机程序不能触发审批，更不能借用已批准的会话。
-            if (head.values("proxy-authorization") != listOf(credential)) { reply(client, "代理凭据无效"); return }
+            val credentials = head.values("proxy-authorization")
+            if (credentials.size != 1 || !MessageDigest.isEqual(credentials.single().toByteArray(Charsets.UTF_8), credential.toByteArray(Charsets.UTF_8))) { reply(client, "代理凭据无效"); return }
             val target = targetOf(head)
             val decision = withTimeoutOrNull(approvalTimeoutMs) { decide(target) }
                 ?: NetworkVerdict(NetworkOutcome.Deny, NetworkSource.Timeout, "网络批准超时")
@@ -82,8 +96,10 @@ class LoopbackNetworkProxy(
             try {
                 // 连接建立可能晚于关闭会话，不能把迟到的套接字留在已回收的租约中。
                 if (stopped.get()) return
-                upstream.soTimeout = socketTimeoutMs
+                // 慢接口、git 打包和 SSE 可以长时间不发字节；已批准连接由命令租约负责回收。
+                upstream.soTimeout = 0
                 if (head.method == "CONNECT") {
+                    client.soTimeout = 0
                     client.getOutputStream().apply { write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray()); flush() }
                     coroutineScope {
                         launch { input.copyTo(upstream.getOutputStream()); upstream.shutdownOutput() }
@@ -126,14 +142,14 @@ class LoopbackNetworkProxy(
         require(head.values("host").size == 1 && head.values("content-length").size <= 1 && head.values("transfer-encoding").size <= 1)
         require(head.values("content-length").isEmpty() || head.values("transfer-encoding").isEmpty())
         require(head.values("transfer-encoding").isEmpty() || head.values("transfer-encoding").single().equals("chunked", true))
-        head.values("content-length").firstOrNull()?.let { require(it.toLongOrNull()?.let { n -> n in 0..MAX_BODY } == true) }
+        head.values("content-length").firstOrNull()?.let { require(Regex("[0-9]+").matches(it) && it.toLongOrNull()?.let { n -> n in 0..MAX_BODY } == true) }
         return head
     }
     private fun targetOf(head: Head): NetworkTarget {
         fun authority(value: String, defaultPort: Int): NetworkTarget {
             val uri = URI("http://$value")
             require(uri.userInfo == null && uri.rawPath.isEmpty() && uri.query == null && uri.fragment == null)
-            val host = requireNotNull(uri.host).removeSurrounding("[", "]").lowercase().trimEnd('.')
+            val host = requireNotNull(normalizeNetworkHost(requireNotNull(uri.host)))
             val port = if (uri.port < 0) defaultPort else uri.port
             require(host.isNotEmpty() && port in 1..65535)
             return NetworkTarget(host, port)
@@ -159,6 +175,7 @@ class LoopbackNetworkProxy(
         var total = 0L
         while (true) {
             val sizeLine = line(input, 128)
+            require(Regex("[0-9a-fA-F]+").matches(sizeLine.substringBefore(';')))
             val size = sizeLine.substringBefore(';').toLongOrNull(16) ?: error("无效的 HTTP 分块")
             require(size >= 0 && size <= MAX_BODY - total)
             total += size
@@ -192,6 +209,7 @@ class LoopbackNetworkProxy(
         socket.getOutputStream().apply { write(("HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray()); write(body); flush() }
     }
     companion object {
+        private const val MAX_LEASES = 128
         private const val MAX_BODY = 64L * 1024 * 1024
         fun proxyEnvironment(http: String, socks: String? = null): Map<String, String> = buildMap {
             for (key in listOf("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")) { val value = if (key == "ALL_PROXY") socks ?: http else http; put(key, value); put(key.lowercase(), value) }

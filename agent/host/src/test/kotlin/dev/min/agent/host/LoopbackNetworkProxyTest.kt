@@ -10,6 +10,61 @@ import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
 class LoopbackNetworkProxyTest {
+    @Test fun blockingProxyWorkUsesOwnedPoolAndClosesIt() {
+        val threads = java.util.concurrent.CopyOnWriteArrayList<Thread>()
+        val proxy = LoopbackNetworkProxy(maxConnections = 2, connect = {
+            threads += Thread.currentThread()
+            throw java.io.IOException("替身连接")
+        })
+        try {
+            val leases = (1..3).map { proxy.open(SessionId("pool-$it")) { allow } }
+            leases.forEach { assertTrue(http(it).contains("403")) }
+            assertEquals(3, threads.size)
+            assertTrue("阻塞连接必须使用代理专属线程", threads.all { it.name.startsWith("min-network-proxy-") })
+        } finally { proxy.close() }
+        threads.forEach { it.join(3000); assertFalse("关闭代理必须回收线程", it.isAlive) }
+    }
+
+    @Test fun signedLengthAndAmbiguousIpv4CannotTriggerApproval() {
+        val calls = AtomicInteger()
+        LoopbackNetworkProxy().use { proxy -> proxy.open(SessionId("bad")) { calls.incrementAndGet(); deny }.use { lease ->
+            for (host in listOf("0177.0.0.1", "127.00.0.1", "2130706433", "0x7f000001")) {
+                assertTrue(http(lease, host).contains("403"))
+            }
+            socket(lease).use { s ->
+                s.getOutputStream().write("POST / HTTP/1.1\r\nHost: allowed.test\r\n${auth(lease)}Content-Length: +5\r\n\r\nhello".toByteArray())
+                assertTrue(s.getInputStream().readBytes().decodeToString().contains("403"))
+            }
+            assertEquals("无效目标和长度必须在送审之前拒绝", 0, calls.get())
+        } }
+    }
+    @Test fun establishedConnectionsSurviveTwentySecondsIdle() = runBlocking {
+        for (tunnel in listOf(false, true)) {
+            ServerSocket(0).use { upstream ->
+                val serving = launch(Dispatchers.IO) { upstream.accept().use { s ->
+                    if (!tunnel) {
+                        val reader = s.getInputStream().bufferedReader()
+                        while (!reader.readLine().isNullOrEmpty()) { }
+                    }
+                    delay(20_000)
+                    s.getOutputStream().write(if (tunnel) "late".toByteArray() else "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nlate".toByteArray())
+                } }
+                LoopbackNetworkProxy(connect = { Socket("127.0.0.1", upstream.localPort) }).use { proxy ->
+                    proxy.open(SessionId("idle")) { allow }.use { lease ->
+                        socket(lease).use { s ->
+                            s.soTimeout = 30_000
+                            val request = if (tunnel) "CONNECT allowed.test:443" else "GET /"
+                            val host = if (tunnel) "allowed.test:443" else "allowed.test"
+                            s.getOutputStream().write("$request HTTP/1.1\r\nHost: $host\r\n${auth(lease)}\r\n".toByteArray())
+                            if (tunnel) s.shutdownOutput()
+                            assertTrue("建立后的连接不能沿用请求头超时", s.getInputStream().readBytes().decodeToString().endsWith("late"))
+                        }
+                    }
+                }
+                serving.join()
+            }
+        }
+    }
     private val allow = NetworkVerdict(NetworkOutcome.Allow, NetworkSource.Rule, "允许")
     private val deny = NetworkVerdict(NetworkOutcome.Deny, NetworkSource.Rule, "规则拒绝")
     private fun socket(lease: NetworkLease): Socket = Socket("127.0.0.1", URI(lease.env.getValue("http_proxy")).port).apply { soTimeout = 3000 }

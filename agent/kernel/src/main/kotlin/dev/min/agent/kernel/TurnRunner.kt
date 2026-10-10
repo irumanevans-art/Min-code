@@ -209,14 +209,24 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                         )
                     }
                     // 模型说完了；生成期间有人插话就接着回应；Stop hook 拦下「结束」也接着做；否则回合结束
-                    if (promote(setOf(Delivery.Steer)) == 0 && !stopHookContinues(turnId, completed) && !teammateIdleContinues(turnId)) return
+                    if (promote(setOf(Delivery.Steer)) == 0 && !stopHookContinues(turnId, completed) && !teammateIdleContinues(turnId)) {
+                        rt.prepareFallbackReport(turnId)
+                        return
+                    }
                 }
                 completed.truncated -> tools.rejectTruncated(turnId, calls)
                 else -> tools.executeAll(turnId, calls)
             }
+            if (rt.state.value.subagentReport?.let { it.turnId == turnId && it.handback } == true) {
+                if (!stopHookContinues(turnId, completed) && !teammateIdleContinues(turnId)) return
+                rt.commit(listOf(dev.min.agent.spi.SubagentReportReady(turnId)), Durability.Sync)
+            }
             // 交了卷：回合就此收尾，不必再让模型说话（同一批里的其他调用照常执行、结果照常落盘）
             if (plan != null) {
-                if (rt.state.value.structuredOutput != null) return
+                if (rt.state.value.structuredOutput != null) {
+                    rt.prepareFallbackReport(turnId)
+                    return
+                }
                 if (calls.any { it.name == StructuredOutputTool.NAME }) {
                     // 调了 StructuredOutput 但没交成（校验失败，错误结果已回给模型）：算一次未通过
                     failedAttempts++
@@ -302,14 +312,19 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     private suspend fun stopHookContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
         val state = rt.state.value
         val blocks = state.turn?.stopHookBlocks ?: 0
-        val text = completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val closing = completed.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val text = if (state.subagentReport?.let { it.turnId == turnId && it.handback } == true) closing.ifBlank { HANDBACK_NOTE }
+            else closing
         val origin = state.origin
         val (event, specific) = if (origin == null) {
             HookEvent.Stop to HookJson.encodeToJsonElement(StopInput.serializer(), StopInput(stopHookActive = blocks > 0, lastAssistantMessage = text)).jsonObject
         } else {
             HookEvent.SubagentStop to HookJson.encodeToJsonElement(
                 SubagentStopInput.serializer(),
-                SubagentStopInput(stopHookActive = blocks > 0, lastAssistantMessage = text),
+                SubagentStopInput(stopHookActive = blocks > 0, lastAssistantMessage = text,
+                    content = if (state.subagentReport?.handback == true) kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.buildJsonObject {
+                        put("type", kotlinx.serialization.json.JsonPrimitive("text")); put("text", kotlinx.serialization.json.JsonPrimitive(HANDBACK_NOTE))
+                    })) else null),
             ).jsonObject
         }
         val outcome = hooks.run(event, origin?.agentType, specific, turnId) ?: return false
@@ -607,7 +622,8 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val plan = state.origin?.workflowSchema?.let(::StructuredOutputPlan) ?: deps.structuredOutput.takeIf { state.origin == null }
     val prefix = if (plan != null) base + StructuredOutputTool(plan) else base
     val loaded = if (search) state.loadedMcpTools.mapNotNull { name -> allMcp.firstOrNull { it.name == name && !it.alwaysLoad } } else emptyList()
-    return prefix + loaded.map { McpToolAdapter(it, mcp) }
+    return prefix + loaded.map { McpToolAdapter(it, mcp) } +
+        if (runtime != null && state.handbackAvailable()) listOf(SubagentHandbackTool(runtime)) else emptyList()
 }
 
 /**

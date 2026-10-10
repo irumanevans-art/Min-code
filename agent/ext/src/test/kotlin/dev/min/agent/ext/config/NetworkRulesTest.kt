@@ -7,6 +7,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NetworkRulesTest {
+    @org.junit.Test fun ambiguousIpv4IsRejectedBeforeAllowRules() {
+        for (host in listOf("0177.0.0.1", "127.00.0.1", "2130706433", "127.1", "0x7f000001", "0x7f.0.0.1", "256.0.0.1")) {
+            org.junit.Assert.assertNull(host, NetworkRules.normalizeHost(host))
+            org.junit.Assert.assertEquals(host, NetworkOutcome.Deny,
+                NetworkRules.evaluate(NetworkSettings(allowedDomains = listOf("*"), deniedDomains = listOf("127.0.0.1")),
+                    NetworkTarget(host, 80), PermissionMode.BypassPermissions).outcome)
+        }
+        org.junit.Assert.assertEquals("127.0.0.1", NetworkRules.normalizeHost("127.0.0.1"))
+    }
     private fun verdict(s: NetworkSettings, host: String = "api.example.com", port: Int = 443,
                         mode: PermissionMode = PermissionMode.Default, hosts: List<String> = emptyList()) =
         NetworkRules.evaluate(s, NetworkTarget(host, port), mode, hosts).outcome

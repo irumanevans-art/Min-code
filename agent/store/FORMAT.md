@@ -215,3 +215,17 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 
 - v1 增量（2026-10-09，命令网络批准）：新增 `network_settings_loaded`（`settings`：enabled / enabledManaged 缺省 false；allowedDomains / deniedDomains 缺省 []；allowManagedDomainsOnly / strictAllowlist 缺省 false；httpProxyPort / socksProxyPort 缺省 null）冻结实际生效的 sandbox 网络设置；运行时重读与撤销导致的变化同样先落此事件。新增 `network_approval_requested`（approvalId、callId、domain、port、commandSummary、atMs），独立于 Bash 调用的审批阶段，支持转后台后的连接；新增 `network_decision`（callId、domain、port、outcome = allow / deny、source = rule / user / managed_lock / timeout / mode / classifier、reason、可选 approvalId 缺省 null）。决定必须同步落盘后才能转发；关联 approvalId 的决定移除待批准请求。宿主死亡恢复将孤儿请求记为 timeout / deny。请求凭据与代理 URL 不落事件。含这些新事件的日志旧版本打不开。
 - Bash 入参新增可选 `allowed_domains` 字符串数组（缺省 []，最多 64 项）；只在沙箱开启的 Auto 下强制随命令送分类器，或由明确的命令审批覆盖。获批名单仅本命令生命周期有效；deny 与托管锁始终优先，不写 sessionRules 或用户设置。
+
+- v1 增量（2026-10-09，auto 生成审查）：Agent / Team / Workflow 在共用生成路径上写 `auto_reviewed`；审查转人工时使用独立 review 调用 id 的 `tool_planned` / `approval_requested` / `approval_resolved` / `tool_outcome`，不覆盖正在执行的父工具阶段。合成调用不写助手历史；审批结果及共享熔断可凭日志重建。
+
+- v1 增量（2026-10-09，SubagentHandback）：`subagent_origin.teamMember` 缺省 false，用于区分团队成员与普通本地子 agent；新增 `subagent_report_ready`（turnId、body / review 缺省 null、handback 缺省 false），只记录可交付正文或固定拒绝说明。review = approved / manual / withheld；body 为 null 清除交卷，供 Stop hook 续跑使用。报告标签新增可选 review / handback 属性；老格式按缺省解析。handback 成功后 SubagentStop 的 last_assistant_message 和可选 content 为简短说明；前台 Agent PostToolUse 的 tool_response 改为 status / agentId / content 对象，content 同样不重复报告正文。旧读取器不认识新事件。
+
+- v1 增量（2026-10-09，对话边界）：新增 `auto_user_context_inherited`（messages：按原顺序冻结父会话 origin=user 的完整文字，不含 MCP 附件）。子会话启动及审查前的父上下文变化先写此事件；没有父进程时仍能重放。约束不解析成永久规则，后来的真实用户撤销随原消息进入同一审查请求；所有用户原文从 history 读取，摘要不删除 history。超过审查窗口转人工，不截断旧边界。分身种子来源和压缩视图保持原形，继承快照存在时不重复种子用户消息。
+
+- v1 语义补充（2026-10-09，auto headless）：`auto_reviewed.reason` 的固定值 `classifier_safety_refused` / `classifier_context_overflow` 区分供应商安全拒绝与上下文溢出，不包含供应商异常原文。后台子 agent 在 headless 下将这两种 Ask 转为原文的 Agent aborted 错误；其他审查失败仍转人工。子 `session_created.headless` 继承父值（字段原已存在）；最新审查从日志折叠，不另建未登记状态。
+- v1 语义补充（2026-10-09，auto 终报退路）：结构化答案也必须先写可交付的 `subagent_report_ready`，拒绝时 Agent 结果为错误、workflow 节点得到 null，不把已交卷的原 JSON 当成审查通过。中断 / 失败且缺本回合的可交付记录时只投影固定说明；headless 后台审查不可继续的错误以 `turn_ended.outcome = failed` 收尾，不吞成可重试的普通工具错误。
+- v1 工具载荷补充（2026-10-09，handback 原文字段）：SubagentHandback 入参为 `message` 非空字符串（不是 report），匹配 hook 的 `tool_input.message`；持久化仍用 `subagent_report_ready.body`。SubagentStop 有收尾文字时保留它，没有时采用短说明；可选 content 与 Agent PostToolUse.content 均用短说明，不复制 message。
+- v1 语义补充（2026-10-09，用户边界脱敏）：凭据读取或继承快照脱敏时不发送分类器请求，`auto_reviewed.decision = ask`，以固定摘要说明转人工；不能因为保护了凭据而把不可读的用户边界当作不存在。
+- v1 语义补充（2026-10-09，终报模式与错误详情）：`session_created.mode = auto` 的子会话转入 Plan 等模式后，终报仍须冻结本回合审查记录；交回是只读行为，不被 Plan 的写入禁令误伤。报告适配器只信同一结束回合的 `subagent_report_ready`。Auto 报告的失败说明只交付固定摘要（两条固定 headless 分类器报错可保留），不从 `turn_ended.outcome.message` 旁路交付未经审查的正文。
+- v1 语义补充（2026-10-10，Auto 停用后的终报）：`auto_review_settings_loaded.disableAutoMode = true` 时，旧 Auto 子会话的终报审查写 `auto_reviewed.decision = ask`、`model = null`，转人工而不调用分类器；明确硬拒绝仍优先。
+- v1 语义补充（2026-10-10，审查中的模式变更）：终报审查期间切模式，新的显式拒绝仍优先；只读免批不能覆盖已有 `auto_reviewed` 的 deny / ask。生成审查依旧按新模式重算启动权限。

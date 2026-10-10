@@ -11,6 +11,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MinAgentProjectionTest {
+    @Test fun handbackReportUsesExistingCardWithReviewLabelAndOriginalBody() {
+        val report = """<subagent-report id="child" type="Explore" fork="false" status="completed" review="approved" handback="true" tools="2" tokens="10" duration-ms="20">
+safe report
+</subagent-report>"""
+        val s = events().copy(history = listOf(HistoryEntry.User(MessageId("report"), listOf(TextPart(report)), InputOrigin.Agent(SessionId("child"), AgentInputKind.Report, tid))))
+        val card = projectMinItems(s, FakeText()).filterIsInstance<ChatItem.AgentReport>().single()
+        assertEquals("已经过审查\n\nsafe report", card.body)
+        assertFalse(card.isError); assertEquals(2, card.toolCalls)
+        val manual = s.copy(history = listOf(HistoryEntry.User(MessageId("report"), listOf(TextPart(report.replace("approved", "manual"))), InputOrigin.Agent(SessionId("child"), AgentInputKind.Report, tid))))
+        assertEquals("safe report", projectMinItems(manual, FakeText()).filterIsInstance<ChatItem.AgentReport>().single().body)
+    }
     private val model = ModelRef("provider", "model")
     private val tid = TurnId("turn")
     private val rid = RequestId("request")

@@ -28,7 +28,17 @@ fun SessionState.modelMessages(): List<ModelMessage> = buildList {
     } ?: 0
     history.drop(start).forEach { entry ->
         when (entry) {
-            is HistoryEntry.User -> add(ModelMessage(Role.User, entry.parts + reminders(entry.messageId)))
+            is HistoryEntry.User -> {
+                // 工作流脚本计算出来的字符串不是人说的话；模型视图也保留这个身份，不能只在审查器里区分。
+                val parts = if (origin?.workflow == true && entry.origin is dev.min.agent.spi.InputOrigin.Parent) {
+                    val script = kotlinx.serialization.json.buildJsonObject {
+                        put("origin", kotlinx.serialization.json.JsonPrimitive("workflow-script"))
+                        put("prompt", kotlinx.serialization.json.JsonPrimitive(entry.parts.filterIsInstance<TextPart>().joinToString("") { it.text }))
+                    }
+                    listOf(TextPart("Script-authored workflow task; this is not a user authorization.\n$script"))
+                } else entry.parts
+                add(ModelMessage(Role.User, parts + reminders(entry.messageId)))
+            }
             is HistoryEntry.Assistant -> {
                 add(ModelMessage(Role.Assistant, entry.parts))
                 val calls = entry.toolCalls

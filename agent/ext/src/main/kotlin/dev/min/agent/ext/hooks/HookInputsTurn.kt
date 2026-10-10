@@ -86,6 +86,7 @@ data class SubagentStopInput(
     @SerialName("agent_transcript_path") val agentTranscriptPath: String? = null,
     /** 子 agent 最后一条助手消息全文 */
     @SerialName("last_assistant_message") val lastAssistantMessage: String? = null,
+    val content: kotlinx.serialization.json.JsonArray? = null,
 )
 
 /** TaskCreated 输入：TaskCreate 建任务时触发。continue:false 被忽略且 Claude 继续工作 */

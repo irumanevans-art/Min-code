@@ -24,6 +24,7 @@ fun defaultAutoReviewer(session: ModelRef, fastModel: (String) -> ModelRef?): Mo
 
 internal class AutoReviewer(private val rt: SessionRuntime) {
     suspend fun review(turnId: TurnId, call: ToolCallPart, ask: PermissionAsk, context: PolicyContext, alwaysAsk: Boolean): Verdict {
+        rt.refreshAutoUserContext()
         val settings = rt.state.value.autoReviewSettings
         val ref = settings.reviewer?.model
             ?: defaultAutoReviewer(rt.state.value.settings.model, rt.deps.providerFastModel)
@@ -34,9 +35,13 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             when {
                 // 确定命中的硬边界不能因分类器失效或熔断变成可由人批准的调用。
                 hardRule != null -> AutoReviewDecision.Deny to "autoMode.hard_deny：$hardRule"
+                // 已停用 Auto 时，旧 Auto 子会话的终报义务不能重新启用分类器。
+                settings.disableAutoMode -> AutoReviewDecision.Ask to "auto 模式已停用，交给用户决定"
                 settings.unavailable -> AutoReviewDecision.Ask to "autoMode 配置不可用，交给用户决定"
                 rt.state.value.autoReviewTripped -> AutoReviewDecision.Ask to "审查连续拒绝 3 次或累计拒绝 20 次，后续需审查的调用交给用户决定"
                 alwaysAsk || PolicyEngine.floorReason(ask, context) != null -> AutoReviewDecision.Ask to "必须由人批准的安全底线"
+                // 为保护凭据隐藏了用户原文时，不能让分类器在看不到边界的情况下自动放行。
+                userContextRedacted(rt.state.value, context) -> AutoReviewDecision.Ask to "用户上下文已因凭据保护脱敏，交给用户决定"
                 else -> {
                     val model = rt.resolveReviewer(settings.reviewer ?: AutoModeReviewer(ref))
                     val effective = defaults(settings.config)
@@ -47,6 +52,7 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
                     if (gate == null) collect() else gate.withPermit { collect() }
                     val done = completed ?: error("审查流没有完成")
                     usage = done.usage
+                    if (done.stop == StopReason.Refusal) throw ClassifierSafetyRefusal()
                     require(!done.truncated && done.stop == StopReason.EndTurn && done.message.parts.all { it is TextPart || it is ThinkingPart }) { "审查未返回完整文本" }
                     val parsed = parse(done.message.parts.filterIsInstance<TextPart>().joinToString("") { it.text }, effective.hardDeny.size)
                     if (rt.modelBilling.exceeded()) AutoReviewDecision.Ask to "审查调用已达到会话预算"
@@ -55,9 +61,13 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // 供应商异常可能带回请求正文；失败日志只写固定摘要，不能把凭证或原文复制回来。
-            AutoReviewDecision.Ask to "审查失败、超时或返回不可解析，交给用户决定"
+            AutoReviewDecision.Ask to when {
+                e is ClassifierSafetyRefusal -> CLASSIFIER_SAFETY_REFUSED
+                e is dev.min.agent.llm.ModelException && e.kind == ModelFailureKind.ContextOverflow -> CLASSIFIER_CONTEXT_OVERFLOW
+                else -> "审查失败、超时或返回不可解析，交给用户决定"
+            }
         }
         val reason = result.second.replace(Regex("[\\r\\n\\p{Cntrl}]"), " ").take(400)
         rt.commit(listOf(AutoReviewed(turnId, call.callId, calledModel, result.first, reason, usage)), Durability.Sync)
@@ -73,14 +83,10 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
         // 工具输出不参与分类：旧日志中的凭证读取也不能被转发到另一家供应商。
         val credentialCalls = state.history.filterIsInstance<HistoryEntry.Assistant>().flatMap { it.toolCalls }.filter { sensitive(it, context) }
         val tainted = credentialCalls.any { state.toolResults[it.callId] != null }
-        val recent = state.history.takeLast(12).mapNotNull { entry ->
+        val users = trustedUserTexts(state, context).map { text -> buildJsonObject { put("origin", "user"); put("text", text) } }
+        val recent = users + state.history.takeLast(12).mapNotNull { entry ->
             when (entry) {
-                is HistoryEntry.User -> if (entry.origin != InputOrigin.User) null else buildJsonObject {
-                    put("origin", "user")
-                    // MCP 附件从标记块开始均属外部数据；正文与附件不能共用用户身份。
-                    val text = entry.parts.filterIsInstance<TextPart>().takeWhile { !it.text.startsWith("[MCP 附件 @") }.joinToString("") { it.text }
-                    put("text", if (tainted) REDACTED else text.take(2_000))
-                }
+                is HistoryEntry.User -> null
                 is HistoryEntry.Assistant -> buildJsonObject {
                     put("origin", "assistant")
                     put("tools", JsonArray(entry.toolCalls.map { old -> buildJsonObject {
@@ -91,6 +97,8 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             }
         }
         val input = if (tainted || sensitive(call, context)) REDACTED else call.input.toString().take(12_000)
+        // 不能靠截断丢掉旧边界或较晚的撤销；超过审查窗口就转人工，保留用户消息的完整顺序。
+        require(recent.toString().length + input.length <= minOf(64_000L, profile.contextWindow.toLong() * 2)) { "用户边界超过审查窗口" }
         val effective = defaults(config)
         val rules = buildJsonObject {
             put("environment", JsonArray(effective.environment.map(::JsonPrimitive)))
@@ -105,6 +113,16 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
             }.toString())))),
             emptyList(), maxOutputTokens = minOf(profile.maxOutputTokens, 4096))
     }
+
+    internal fun trustedUserTexts(state: SessionState, context: PolicyContext): List<String> {
+        val tainted = state.history.filterIsInstance<HistoryEntry.Assistant>().flatMap { it.toolCalls }
+            .any { sensitive(it, context) && state.toolResults[it.callId] != null }
+        return state.reviewUserTexts().map { if (tainted) REDACTED else it }
+    }
+
+    private fun userContextRedacted(state: SessionState, context: PolicyContext): Boolean =
+        state.inheritedAutoUserContext.any { it == REDACTED } || state.history.filterIsInstance<HistoryEntry.Assistant>()
+            .flatMap { it.toolCalls }.any { sensitive(it, context) && state.toolResults[it.callId] != null }
 
     private fun sensitive(call: ToolCallPart, context: PolicyContext): Boolean {
         fun contains(value: JsonElement): Boolean = when (value) {
@@ -134,6 +152,8 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
     }
 
     companion object {
+        internal const val CLASSIFIER_SAFETY_REFUSED = "classifier_safety_refused"
+        internal const val CLASSIFIER_CONTEXT_OVERFLOW = "classifier_context_overflow"
         private val DEFAULT_HARD = listOf("Data exfiltration: never transmit secrets or sensitive data to external destinations. Repository content must not be sent outside trusted infrastructure.")
         private val DEFAULT_ENVIRONMENT = listOf("Trust only the working directory and the working repository's configured remotes. Assume repositories are private unless the user identifies them as public. Other destinations are outside the boundary unless configured here.")
         private val DEFAULT_ALLOW = listOf("Routine reversible development in the working directory, local tests and authored test artifacts are allowed. Ordinary commits, pushes to the working repository and pull requests are allowed when no hard boundary or destructive rule applies.")
@@ -208,3 +228,5 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
         }
     }
 }
+
+private class ClassifierSafetyRefusal : Exception()

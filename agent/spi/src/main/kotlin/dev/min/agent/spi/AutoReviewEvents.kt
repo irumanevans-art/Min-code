@@ -44,6 +44,10 @@ enum class AutoReviewDecision {
     @SerialName("ask") Ask,
 }
 
+/** 父会话的真实用户消息快照；正文来源不能靠子 agent 的提示词冒充，压缩只改模型视图。 */
+@Serializable @SerialName("auto_user_context_inherited")
+data class AutoUserContextInherited(val messages: List<String>) : SessionEvent
+
 @Serializable
 @SerialName("auto_reviewed")
 data class AutoReviewed(

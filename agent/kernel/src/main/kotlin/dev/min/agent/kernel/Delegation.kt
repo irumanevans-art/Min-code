@@ -218,24 +218,36 @@ internal object Reports {
     private const val TAG = "subagent-report"
 
     fun render(child: SessionId, summary: ChildSummary?, agentType: String, fork: Boolean, ended: EndedTurn, state: SessionState): String {
-        val body = finalText(state).ifBlank { "（子 agent 没有给出文字报告）" }
-        val status = statusOf(ended.outcome)
+        val reviewed = state.subagentReport?.takeIf { it.turnId == ended.turnId }
+        // 中断、请求上限或异常可能跳过正常收尾；auto 下不能因此泄漏未经审查的最后消息。
+        val withheld = state.autoReportReviewRequired() && reviewed == null || reviewed?.review == "withheld"
+        val body = (reviewed?.body ?: if (withheld) "[子 agent 未完成报告审查，正文未交付。]" else finalText(state)).ifBlank { "（子 agent 没有给出文字报告）" }
+        val status = if (withheld) "failed" else statusOf(ended.outcome)
         val tokens = ended.usage.let { it.inputTokens + it.outputTokens + it.cacheReadTokens + it.cacheWriteTokens }
         val name = summary?.name?.let { " name=\"${attr(it)}\"" }.orEmpty()
         return buildString {
             append("<$TAG id=\"${child.value}\" type=\"${attr(agentType)}\"$name fork=\"$fork\" status=\"$status\"")
+            reviewed?.review?.let { append(" review=\"${attr(it)}\" handback=\"${reviewed.handback}\"") }
             append(" tools=\"${ended.toolCalls}\" tokens=\"$tokens\" duration-ms=\"${ended.durationMs}\">\n")
             append(escape(body.trim()))
             state.worktree?.let { w ->
                 append("\n\nWorktree: ").append(escape(w.path.value)).append("; branch: ").append(escape(w.branch ?: "hook-managed"))
                 append("; ").append(if (state.finishedWorktrees.lastOrNull()?.removed == true) "removed (no changes)" else "retained")
             }
-            note(ended.outcome)?.let { append("\n\n").append(it) }
+            // 供应商错误也可能回显原请求；固定的 headless 文案可交付，其他 Auto 错误详情不旁路终报审查。
+            val extra = if (state.autoReportReviewRequired() && ended.outcome is TurnOutcome.Failed &&
+                ended.outcome.message !in setOf(HEADLESS_CLASSIFIER_SAFETY_ERROR, HEADLESS_CLASSIFIER_CONTEXT_ERROR))
+                "[子 agent 失败，未经审查的错误详情未交付。]" else note(ended.outcome)
+            extra?.let { append("\n\n").append(it) }
             append("\n</$TAG>")
         }
     }
 
-    fun isError(outcome: TurnOutcome): Boolean = outcome !is TurnOutcome.Completed
+    fun isError(outcome: TurnOutcome, state: SessionState? = null): Boolean = outcome !is TurnOutcome.Completed ||
+        state?.let { s ->
+            val reviewed = s.subagentReport?.takeIf { it.turnId == s.lastTurn?.turnId }
+            s.autoReportReviewRequired() && (reviewed == null || reviewed.review == "withheld")
+        } == true
 
     /** 子回合的结论：最后一条助手消息的正文 */
     private fun finalText(state: SessionState): String =

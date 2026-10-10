@@ -22,12 +22,14 @@ class SettingsSecurityFixTest {
         block: suspend (SessionRuntime, SessionHub) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val ids = AtomicLong()
+        val reviewer = ModelRef("review", "scripted")
         try {
             val deps = KernelDeps(clock = { ids.incrementAndGet() }, ids = { "${it}_${ids.incrementAndGet()}" },
-                models = { ResolvedModel(TEST_PROFILE, ScriptedModel(reply(TextPart("done")))) }, tools = emptyList(),
+                models = { ref -> ResolvedModel(TEST_PROFILE.copy(ref = ref), ScriptedModel(reply(TextPart(
+                    if (ref == reviewer) """{"decision":"allow","reason":"local test","hard_deny_matches":[]}""" else "done")))) }, tools = emptyList(),
                 host = HostPorts(fs, FakeSearch(), exec) { FakeArtifacts() }, platform = "test", zone = ZoneOffset.UTC,
                 memoryHome = GuestPath("/home"), trustProjectHooks = { trust }, canonicalPath = canonical,
-                pluginDirs = listOf(GuestPath("/plug")), workflowEngine = workflowEngine, env = env::get)
+                pluginDirs = listOf(GuestPath("/plug")), workflowEngine = workflowEngine, env = env::get, autoModeReviewer = AutoModeReviewer(reviewer))
             val definitions = dev.min.agent.ext.config.ClaudeConfigLoader.load(fs, cwd, GuestPath("/home")).agents
             val catalog = AgentCatalog.of(definitions)
             val hub = SessionHub(FileSessionStore(tmp.newFolder().toPath(), { 0L }), deps, scope, agents = catalog.definitions)
@@ -155,6 +157,8 @@ class SettingsSecurityFixTest {
     @Test fun BUG_auto_parent_ignores_agent_permission_mode(): Unit = runBlocking { withTimeout(15_000) {
         val fs = FakeFs().apply { put("/home/.claude/agents/x.md", "---\nname: x\ndescription: helper\npermissionMode: bypassPermissions\n---\nHelp") }
         withSession(fs, mode = PermissionMode.Auto) { rt, hub ->
+            // 真实委派入口属于进行中的父回合；现在启动审查也必须落在这条回合日志上。
+            rt.commit(listOf(TurnStarted(TurnId("parent"), TurnTrigger.User)), Durability.Sync)
             val result = hub.portFor(rt, TurnId("parent"), CallId("d")).delegate(DelegateRequest("Help", "help", agentType = "x", background = false))
             assertTrue(result is DelegateResult.Finished)
             assertEquals(PermissionMode.Auto, hub.get((result as DelegateResult.Finished).child)!!.state.value.created.mode)
@@ -165,6 +169,7 @@ class SettingsSecurityFixTest {
         for (parent in PermissionMode.entries) for (requested in listOf("bypassPermissions", "auto", "acceptEdits")) {
             val fs = FakeFs().apply { put("/home/.claude/agents/x.md", "---\nname: x\ndescription: helper\npermissionMode: $requested\n---\nHelp") }
             withSession(fs, mode = parent) { rt, hub ->
+                rt.commit(listOf(TurnStarted(TurnId("parent"), TurnTrigger.User)), Durability.Sync)
                 val result = hub.portFor(rt, TurnId("parent"), CallId("d")).delegate(DelegateRequest("Help", "help", agentType = "x", background = false)) as DelegateResult.Finished
                 val expected = when {
                     parent in setOf(PermissionMode.Auto, PermissionMode.BypassPermissions, PermissionMode.AcceptEdits) -> parent

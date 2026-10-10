@@ -90,13 +90,16 @@ fun SessionState.apply(record: EventRecord): SessionState {
             this
         }
         is dev.min.agent.spi.NetworkSettingsLoaded -> copy(networkSettings = e.settings)
+        is dev.min.agent.spi.SubagentReportReady -> copy(subagentReport = e.takeIf { it.body != null })
         is dev.min.agent.spi.NetworkApprovalRequested -> copy(networkPending = networkPending + (e.approvalId to e))
         is dev.min.agent.spi.NetworkDecision -> copy(networkDecisions = networkDecisions + e,
             networkPending = networkPending - listOfNotNull(e.approvalId).toSet(),
             presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is dev.min.agent.spi.SessionRenamed -> copy(name = e.name)
         is dev.min.agent.spi.AutoReviewSettingsLoaded -> copy(autoReviewSettings = e)
+        is dev.min.agent.spi.AutoUserContextInherited -> copy(inheritedAutoUserContext = e.messages)
         is dev.min.agent.spi.AutoReviewed -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
+            lastAutoReview = e,
             presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
             autoReviewDenials = autoReviewDenials + if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) 1 else 0,
             autoReviewConsecutiveDenials = if (e.decision == dev.min.agent.spi.AutoReviewDecision.Deny) autoReviewConsecutiveDenials + 1 else 0,
@@ -377,6 +380,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(origin?.fork == true) { "只有分身会话才能继承对话" }
             check(history.isEmpty() && turn == null) { "继承的对话必须在任何回合之前写入" }
             copy(
+                forkAutoUserSeedIds = e.messages.filter { it.role == Role.User && it.origin == InputOrigin.User }.map { it.messageId }.toSet(),
                 history = e.messages.map { m ->
                     when (m.role) {
                         // 旧分身日志没记来历，不能把无法证明来源的正文升级成可信用户意图。

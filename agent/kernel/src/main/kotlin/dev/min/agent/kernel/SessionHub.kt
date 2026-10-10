@@ -848,7 +848,7 @@ class SessionHub(
      * 开跑要过团队的并发名额，由协调器在所有成员入队之后统一放行
      */
     internal suspend fun spawn(parent: SessionRuntime, turnId: TurnId, callId: CallId, request: DelegateRequest, teamMember: Boolean = false): DelegateResult {
-        val ps = parent.state.value
+        var ps = parent.state.value
         val parentOrigin = ps.origin
         if (parentOrigin?.fork == true) return DelegateResult.Rejected("你是分身，直接执行任务，不要再委派。")
         val depth = (parentOrigin?.depth ?: 0) + 1
@@ -867,6 +867,29 @@ class SessionHub(
         val definition = if (fork) null else pluginDefinitions[type] ?: definitions[type] ?: return DelegateResult.Rejected(
             "没有名为 $type 的子 agent 类型。可用的：${(definitions.keys + pluginDefinitions.keys + FORK_AGENT_TYPE).joinToString("、")}。",
         )
+        // 三种生成入口在建日志、建 worktree、跑 hook 之前汇合；脚本与助手的文字不能升级成用户授权。
+        if (ps.settings.mode == PermissionMode.Auto) {
+            val candidate = SubagentOrigin(parent.sessionId, parentOrigin?.root ?: parent.sessionId, callId, type, fork, depth,
+                cacheKey = "review", tools = definition?.let { toolsFor(it, depth) },
+                mcpTools = definition?.tools?.filter { it.startsWith(MCP_PREFIX) }, mcpDenied = definition?.disallowedTools.orEmpty().filter { it.startsWith(MCP_PREFIX) },
+                workflow = request.workflow || parentOrigin?.workflow == true, workflowSchema = request.schema, teamMember = teamMember)
+            val capabilities = availableTools(ps.copy(origin = candidate), deps, runtime = parent).map { it.name }
+            val input = kotlinx.serialization.json.buildJsonObject {
+                put("description", kotlinx.serialization.json.JsonPrimitive(request.description))
+                put("prompt", kotlinx.serialization.json.JsonPrimitive(request.prompt))
+                put("prompt_origin", kotlinx.serialization.json.JsonPrimitive(if (request.workflow) "script" else "assistant"))
+                put("agent_type", kotlinx.serialization.json.JsonPrimitive(type))
+                put("tools", kotlinx.serialization.json.JsonArray(capabilities.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                put("mcp_tools", kotlinx.serialization.json.JsonArray(definition?.tools.orEmpty().filter { it.startsWith(MCP_PREFIX) }.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                put("instructions", kotlinx.serialization.json.JsonPrimitive(definition?.instructions.orEmpty()))
+            }
+            when (val verdict = parent.reviewAutoAction(turnId, "Agent", input, "启动子 agent：${request.description}",
+                backgroundSpawn = !request.workflow && (request.background || definition?.alwaysBackground == true))) {
+                is dev.min.agent.policy.Verdict.Deny -> return DelegateResult.Rejected(verdict.messageToModel)
+                else -> Unit
+            }
+            ps = parent.state.value
+        }
         val root = parentOrigin?.root ?: parent.sessionId
         val childId = SessionId(deps.ids.next("s"))
         val header = LogHeader(LOG_FORMAT_VERSION, childId, deps.clock.nowMs(), parent = parent.sessionId)
@@ -875,7 +898,7 @@ class SessionHub(
         val initial = mutableListOf<SessionEvent>()
         if (definition == null) {
             // 分身：模型、档位、环境、记忆、缓存键、工具表全部照父会话，前缀才能逐字节相同（设计 §3.2）
-            created = SessionCreated(ps.settings.cwd, ps.settings.model, ps.settings.mode, ps.settings.effort)
+            created = SessionCreated(ps.settings.cwd, ps.settings.model, ps.settings.mode, ps.settings.effort, headless = ps.created.headless)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = FORK_AGENT_TYPE, fork = true,
                 depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
@@ -892,11 +915,12 @@ class SessionHub(
             val model = resolveModel(request.model ?: definition.model, ps.settings.model)
                 ?: return DelegateResult.Rejected("不认识模型「${request.model ?: definition.model}」。不写 model 就用当前模型。")
             val mode = childPermissionMode(ps.settings.mode, definition, deps.trustProjectHooks(ps.settings.cwd), ps.autoReviewSettings)
-            created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort)
+            created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort, headless = ps.created.headless)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
                 tools = toolsFor(definition, depth), instructions = definition.instructions, maxTurns = definition.maxTurns,
+                teamMember = teamMember,
                 omitMemory = definition.omitMemory,
                 // 定义里 mcp__ 开头的写法单独存：MCP 工具运行时才知道有哪些（写了 tools 却没列 MCP 工具 = 一个都不给）
                 mcpTools = definition.tools?.filter { it.startsWith(MCP_PREFIX) },
@@ -907,6 +931,7 @@ class SessionHub(
                 workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
             )
         }
+        initial += dev.min.agent.spi.AutoUserContextInherited(AutoReviewer(parent).trustedUserTexts(ps, ToolExecutor(parent, HookDriver(parent)).policyContext()))
         val background = !request.workflow && (request.background || definition?.alwaysBackground == true)
 
         // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
@@ -976,7 +1001,7 @@ class SessionHub(
             child.worktrees.finishChild()
             val report = Reports.render(child.sessionId, summary, origin.agentType, origin.fork, ended, child.state.value)
             consumedInForeground += child.sessionId to ended.turnId
-            return DelegateResult.Finished(child.sessionId, ended.turnId, report, Reports.isError(ended.outcome))
+            return DelegateResult.Finished(child.sessionId, ended.turnId, report, Reports.isError(ended.outcome, child.state.value))
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
                 child.interrupt()

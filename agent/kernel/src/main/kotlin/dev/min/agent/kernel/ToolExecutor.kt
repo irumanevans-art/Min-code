@@ -27,6 +27,9 @@ import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.ToolInputRewritten
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import dev.min.agent.spi.ArtifactSink
@@ -270,7 +273,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
      * 判定用的上下文：日志里的规则快照 + 本会话「总是允许」的规则、当前模式与 cwd、宿主按**解析后**路径给的分级。
      * 规则列表只在快照或会话规则变了时重新解析：折叠只在变化时换掉这两个列表，所以比引用就够；解析不了的规则跳过（读取时已记过说明）。
      */
-    private fun policyContext(): PolicyContext {
+    internal fun policyContext(): PolicyContext {
         val s = rt.state.value
         if (s.rules !== parsedFromRules || s.sessionRules !== parsedFromSession) {
             parsedRules = (s.rules + s.sessionRules).mapNotNull(PermissionRule::from)
@@ -322,6 +325,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         }
         val verdict = if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.unavailable && policy !is Verdict.Deny) Verdict.Ask
         else if (PolicyEngine.askRuleHit(ask, policyContext()) != null && policy !is Verdict.Deny) Verdict.Ask
+        else if (ready.tool is SubagentHandbackTool && policy !is Verdict.Deny) initial
         else if (ready.tool is WorkflowTool && hook == HookOutcome.Decision.Allow && !hardDenied && !proseHardDeny && policy !is Verdict.Deny) initial
         else if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
             val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
@@ -337,6 +341,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             }
             else if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
         } else initial
+        if (verdict == Verdict.Ask) rt.headlessClassifierError(ready.call.callId)?.let { throw TurnAbort(it) }
         when (verdict) {
             is Verdict.Deny -> {
                 if (verdict.by == DecidedBy.Classifier) {
@@ -526,6 +531,12 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         val event = if (failed) HookEvent.PostToolUseFailure else HookEvent.PostToolUse
         if (!hooks.has(event, p.call.name)) return
         val text = result.content.filterIsInstance<TextPart>().joinToString("") { it.text }
+        val handbackChild = result.effects.filterIsInstance<dev.min.agent.spi.SessionEffect.ReportDelivered>().firstOrNull()
+            ?.let { rt.hub?.get(it.child) }?.state?.value?.takeIf { it.subagentReport?.handback == true }
+        val response = if (p.call.name == "Agent" && handbackChild != null) buildJsonObject {
+            put("status", "completed"); put("agentId", handbackChild.header.sessionId.value)
+            put("content", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", HANDBACK_NOTE) })))
+        } else JsonPrimitive(text)
         val specific = if (failed) {
             HookJson.encodeToJsonElement(
                 PostToolUseFailureInput.serializer(),
@@ -536,7 +547,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             JsonObject(
                 HookJson.encodeToJsonElement(
                     PostToolUseInput.serializer(),
-                    PostToolUseInput(toolInput = p.raw, toolResponse = JsonPrimitive(text), durationMs = durationMs),
+                    PostToolUseInput(toolInput = p.raw, toolResponse = response, durationMs = durationMs),
                 ).jsonObject + mapOf("tool_name" to JsonPrimitive(p.call.name), "tool_use_id" to JsonPrimitive(p.call.callId.value)),
             )
         }
@@ -574,8 +585,12 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             result ?: errorResult("工具没有给出结果（${p.call.name} 的实现有问题）")
         } catch (e: CancellationException) {
             throw e
+        } catch (e: TurnAbort) {
+            throw e
         } catch (e: Exception) {
             errorResult("工具执行出错：${e.message ?: e::class.simpleName}")
+        } finally {
+            networkApprovedCalls.remove(callId)
         }
         val budgeted = gateTaskHooks(turnId, ResultBudget.apply(raw, p.tool.traits.resultBudgetChars, deps.host.artifacts(rt.sessionId), callId))
         // StructuredOutput 交卷通过校验：采纳事件与工具结果同一次提交——不会出现「结果说收到了、日志里却没有最终答案」

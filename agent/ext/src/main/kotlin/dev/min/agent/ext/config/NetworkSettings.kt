@@ -42,15 +42,7 @@ fun MergedSettings.networkSettings(trustProject: Boolean = true, trustedLocal: S
 }
 
 object NetworkRules {
-    fun normalizeHost(raw: String): String? {
-        val host = raw.removeSurrounding("[", "]").trimEnd('.').lowercase(Locale.ROOT)
-        if (host.isEmpty() || host.any { it.isWhitespace() || it in "/\\@?#%" }) return null
-        if (':' in host) {
-            if (!Regex("[0-9a-f:.]+").matches(host)) return null
-            return try { InetAddress.getByName(host).hostAddress } catch (_: java.net.UnknownHostException) { null }
-        }
-        return try { IDN.toASCII(host, IDN.USE_STD3_ASCII_RULES).lowercase(Locale.ROOT) } catch (_: IllegalArgumentException) { null }
-    }
+    fun normalizeHost(raw: String): String? = normalizeNetworkHost(raw)
     private fun parse(pattern: String): Pair<String, Int?>? {
         if (pattern.isEmpty() || pattern != pattern.trim()) return null
         val host: String

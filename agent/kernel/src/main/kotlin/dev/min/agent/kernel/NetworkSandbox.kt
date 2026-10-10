@@ -16,10 +16,12 @@ internal suspend fun SessionRuntime.refreshNetworkSettings(): NetworkSettings {
     val home = deps.memoryHome ?: return state.value.networkSettings
     val cwd = state.value.settings.cwd
     val snapshot = SettingsLoader.load(deps.host.fs, cwd, home)
-    check(!snapshot.managedPolicyBroken) { "托管网络设置不可读，拒绝启动命令" }
     val trust = deps.trustProjectHooks(cwd)
     val locals = trustedLocalSettings(deps, snapshot, cwd, trust || state.value.created.headless)
-    val settings = snapshot.merged.networkSettings(trust, locals)
+    // 企业策略损坏不能放宽网络，也不能让纯本地回合失败；强制代理拒绝所有目标，关在连接这一侧。
+    val settings = if (snapshot.managedPolicyBroken) NetworkSettings(enabled = true, enabledManaged = true,
+        deniedDomains = listOf("*"), allowManagedDomainsOnly = true, strictAllowlist = true)
+    else snapshot.merged.networkSettings(trust, locals)
     if (settings != state.value.networkSettings) commit(listOf(NetworkSettingsLoaded(settings)), Durability.Sync)
     return settings
 }
