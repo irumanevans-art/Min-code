@@ -233,3 +233,5 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - v1 语义补充（2026-10-10，审查中的模式变更）：终报审查期间切模式，新的显式拒绝仍优先；只读免批不能覆盖已有 `auto_reviewed` 的 deny / ask。生成审查依旧按新模式重算启动权限。
 
 - v1 语义修订（2026-10-10，CC 附警告交付）：终报审查的 deny 或供应商 safety refusal 不扣留、不重写重试，`subagent_report_ready.review = warning`、body 前置安全警告后保留原文；Ask / 审查不可用 / 停用 Auto 为 `unavailable`、body 前置行动前核验说明，不转人工。allow 分类器结果仍为 `approved`。普通 handback 与团队 / workflow / fork 退路一致；父会话后续动作仍走原审批路径。旧 manual / withheld 日志继续可读。中断、失败、缺本回合审查记录仍不泄漏未审正文。此条取代上述旧交付口径，未增加事件字段。
+
+- 配置文件补充（2026-10-10，插件市场）：市场 / 安装 / 更新 / 卸载是全局配置操作，不新增会话事件。`~/.claude/plugins/known_marketplaces.json` 记录 source / installLocation / lastUpdated / autoUpdate 和 Min 的 confirmed / disabled 墓碑；`installed_plugins.json` version=2 的 plugins[id] 为各作用域记录列表，installPath 使用宿主已有路径口径，另存可选 marketplaceEntry（条目内联组件）与 componentInventory（更新确认清单）。配置时间为宿主毫秒；不是 CC CLI JSON 输出的 ISO 时间契约。旧索引缺两个扩展字段仍加载；新索引由原有 installPath 入口读取，marketplaceEntry 缺省 null。设置复用 enabledPlugins / extraKnownMarketplaces；会话冻结与原有插件加载事件不变。

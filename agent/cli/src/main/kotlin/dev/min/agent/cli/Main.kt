@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import java.nio.file.Path
 import java.util.UUID
 import kotlin.system.exitProcess
@@ -22,6 +23,10 @@ import kotlin.system.exitProcess
  * 交互模式一行一句；`-p` 跑完一句就退出，退出码 0 = 回合正常结束。
  */
 fun main(argv: Array<String>) {
+    if (argv.firstOrNull() == "plugin") {
+        val code = try { runBlocking { standalonePluginCommand(argv) } } catch (e: UsageException) { System.err.println(e.message); e.exitCode }
+        exitProcess(code)
+    }
     val args = try {
         parseArgs(argv, Path.of("").toAbsolutePath())
     } catch (e: UsageException) {
@@ -43,6 +48,10 @@ fun main(argv: Array<String>) {
 }
 
 private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
+    if (args.prompt?.trim()?.let { it == "/plugin" || it.startsWith("/plugin ") } == true) {
+        System.err.println("/plugin isn't available in this environment. Use min-agent plugin commands from your shell.")
+        return 1
+    }
     val app = DesktopApp(args, scope)
     app.checkKey()
     return interact(app, app.openSession(), args, scope)
@@ -58,6 +67,7 @@ internal suspend fun interact(
 ): Int {
     // /branch 会换会话：退出时的 SessionEnd 要跟当前会话走（分支是用户现在所在的对话）
     var runtime = initial
+    var pluginUpdatesStarted = false
     app.mcpAuthorizer.input = stdin
     // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout。
     // 交给 hub：审批 / 提问 / MCP elicitation 看整棵会话树，子 agent 的待处理项也有人答
@@ -138,6 +148,19 @@ internal suspend fun interact(
             }
         }
         runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)
+        if (args.prompt == null && !pluginUpdatesStarted && dev.min.agent.ext.plugins.pluginAutoUpdatesEnabled(System.getenv())) {
+            pluginUpdatesStarted = true
+            scope.launch {
+                kotlinx.coroutines.delay(kotlin.random.Random.nextLong(1, 600_001))
+                try {
+                    val marketplace = app.pluginMarketplace()
+                    val pending = marketplace.reconcileSettings()
+                    if (pending.isNotEmpty()) System.err.println("第三方市场等待手动添加与确认：${pending.joinToString()}")
+                    marketplace.autoUpdate().forEach(System.err::println)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { System.err.println("插件自动更新失败，请从 /plugin 手动重试。") }
+            }
+        }
         runtime.awaitIdle()
         println()
         return true
@@ -148,6 +171,7 @@ internal suspend fun interact(
         // -p 一次运行：输出分流、结果对象 / 事件流渲染、退出码都在这一条路里（HeadlessCompatTest 同款）
         return runHeadless(app, runtime, args, scope, stdin, System.out, System.err)
     }
+
 
     System.err.println("输入要说的话，回车发送；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
     while (true) {
@@ -160,6 +184,11 @@ internal suspend fun interact(
         when {
             trimmed.isEmpty() -> continue
             trimmed == "/exit" -> return 0
+            trimmed == "/plugin" || trimmed.startsWith("/plugin ") -> {
+                uiConsole?.mainOwnsInput = true
+                try { pluginCommand(app.pluginMarketplace(), trimmed.removePrefix("/plugin").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }, stdin, System.out) }
+                finally { uiConsole?.mainOwnsInput = false }
+            }
             trimmed == "/mcp" || trimmed.startsWith("/mcp ") -> {
                 uiConsole?.mainOwnsInput = true
                 try { mcpCommand(app, runtime, trimmed) } finally { uiConsole?.mainOwnsInput = false }
