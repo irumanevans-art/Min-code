@@ -683,6 +683,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             if (turnId == null) errorResult("提取端口不可用。") else extractWeb(rt, turnId, callId, content, prompt)
         override val push: dev.min.agent.spi.PushSink = if (turnId == null) dev.min.agent.spi.PushSink.Unavailable else deps.pushSink
         override val userFiles: dev.min.agent.spi.UserFileSink = if (turnId == null) dev.min.agent.spi.UserFileSink.Unavailable else deps.userFileSink
+        override val mcpWait: dev.min.agent.spi.McpWaitPort = if (turnId == null) dev.min.agent.spi.McpWaitPort.Unavailable else rt.hub?.mcpWaitFor(rt) ?: dev.min.agent.spi.McpWaitPort.Unavailable
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override val tasks: TaskBoard get() = rt.visibleTaskBoard()

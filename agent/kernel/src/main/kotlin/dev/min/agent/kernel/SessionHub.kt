@@ -561,6 +561,12 @@ class SessionHub(
 
     suspend fun reconnectMcp(server: String, sessionId: SessionId) = mcp.reconnect(server, sessionId)
 
+    /** WaitForMcpServers 的端口：绑在一个会话上（它的 MCP 服务器）。内核 ToolExecutor 发给工具 */
+    internal fun mcpWaitFor(rt: SessionRuntime): dev.min.agent.spi.McpWaitPort = object : dev.min.agent.spi.McpWaitPort {
+        override suspend fun await(servers: List<String>, timeoutMs: Long): Map<String, String> = mcp.awaitStartup(rt.sessionId, servers, timeoutMs)
+        override fun states(): Map<String, String> = mcp.statesOf(rt.sessionId)
+    }
+
     /**
      * 卸下一个会话及它在线的整棵子树（运行时离开内存，日志不动，之后 [open] 能原样重开）。
      * 子树里有回合在跑就拒绝（返回 false）：卸下会丢掉正在跑的协程，得先停下或等它跑完。

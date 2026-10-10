@@ -670,7 +670,11 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val allMcp = state.visibleMcpTools(deps)
     val search = state.usesMcpToolSearch(deps) && allMcp.isNotEmpty()
     val upfront = if (search) allMcp.filter { it.alwaysLoad } else allMcp
-    val base = builtin + resourceTools + upfront.map { McpToolAdapter(it, mcp) } +
+    // WaitForMcpServers：只在工具搜索关闭（ToolSearch 不替人等）且本会话配了 MCP 服务器时出现，接在 MCP 工具之后
+    val waitForMcp = if (!search && runtime != null && runtime.hub?.mcpWaitFor(runtime)?.states()?.isNotEmpty() == true) {
+        listOf(dev.min.agent.tools.WaitForMcpServersTool)
+    } else emptyList()
+    val base = builtin + resourceTools + upfront.map { McpToolAdapter(it, mcp) } + waitForMcp +
         if (search) listOf(McpToolSearchTool(allMcp, state.loadedMcpTools)) else emptyList()
     // StructuredOutput 排在最后（--json-schema 是这一根会话这次运行的要求；子 agent 与分身不经它交卷）
     val plan = state.origin?.workflowSchema?.let(::StructuredOutputPlan) ?: deps.structuredOutput.takeIf { state.origin == null }
