@@ -14,5 +14,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§StopFailure：无决策控制；输出与 exit code 全被丢弃，terminalSequence 除外（:2627；逐事件表 :864）。",
-  "minTrigger": "none"
+  "kernelWiring": "TurnRunner 的 catch(TurnAbort)（e.kind != null 的模型/API 错误收尾，代替 Stop）；Min 的 ModelFailureKind 由 stopFailureTarget 映射成原文的 error 类别；端到端见 StopFailureHookTest"
 }

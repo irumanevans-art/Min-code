@@ -18,6 +18,7 @@ import dev.min.agent.spi.AssistantMessageCompleted
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookDecision
 import dev.min.agent.ext.hooks.HookJson
+import dev.min.agent.ext.hooks.StopFailureInput
 import dev.min.agent.ext.hooks.StopInput
 import dev.min.agent.ext.hooks.SubagentStopInput
 import dev.min.agent.ext.hooks.TeammateIdleInput
@@ -123,6 +124,21 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(rt.takeInterruptReason())), Durability.Sync)
             throw e
         } catch (e: TurnAbort) {
+            // StopFailure（hooks.md :2625）：回合因 API 错误结束时代替 Stop——只有带 kind 的（模型/API 错误）才算；
+            // 请求上限、压缩失败这类收尾不是 API 错误，不发。放在回合收尾提交之前，与 Stop 在回合内跑同一条时序。
+            // 无决策控制，输出与退出码全被引擎丢弃，结论用不上
+            if (e.kind != null) {
+                val target = stopFailureTarget(e.kind)
+                HookDriver(rt).run(
+                    HookEvent.StopFailure, target,
+                    HookJson.encodeToJsonElement(
+                        StopFailureInput.serializer(),
+                        StopFailureInput(error = target, errorDetails = kotlinx.serialization.json.JsonPrimitive(e.message ?: ""),
+                            lastAssistantMessage = e.message),
+                    ).jsonObject,
+                    turnId,
+                )
+            }
             // `/goal` 随失败处理：不可恢复的清掉，其它暂停（CC），目标事件与回合收尾同一次提交
             val goal = goalFailureEvents(rt.state.value.goal.condition, e.kind, e.message ?: "回合失败")
             rt.commit(goal + closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind, e.failureCause)), Durability.Sync)
@@ -713,6 +729,17 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
 /** 回合放弃（不可重试的模型错误、达到上限）。带给人看的原因 */
 internal class TurnAbort(message: String, val kind: ModelFailureKind? = null, val failureCause: String? = null) : Exception(message)
+
+/** StopFailure 的 error 类别与 matcher（hooks.md :2636–:2637）：Min 的失败类别对到原文的枚举，没有的都归 unknown */
+internal fun stopFailureTarget(kind: ModelFailureKind): String = when (kind) {
+    ModelFailureKind.RateLimited -> "rate_limit"
+    ModelFailureKind.Overloaded -> "overloaded"
+    ModelFailureKind.Auth -> "authentication_failed"
+    ModelFailureKind.ModelUnavailable -> "model_not_found"
+    ModelFailureKind.Server -> "server_error"
+    ModelFailureKind.ContextOverflow, ModelFailureKind.BadRequest -> "invalid_request"
+    ModelFailureKind.Network, ModelFailureKind.Other -> "unknown"
+}
 
 /** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
 internal class TurnLimitReached : Exception()
