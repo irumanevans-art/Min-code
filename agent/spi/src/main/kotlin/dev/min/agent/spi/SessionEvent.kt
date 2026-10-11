@@ -213,6 +213,12 @@ data class ModelRequestFailed(
     val message: String,
     val httpStatus: Int? = null,
     val willRetry: Boolean = false,
+    /**
+     * [willRetry] 为真时：重发前要等多久（毫秒）、这一类失败最多还允许重试几次（含这一次）。给 stream-json 的 `system/api_retry`
+     * 用（SDK 的 `retry_delay_ms` / `max_retries`）；旧日志与不重试的失败没有（null），读端省略这两个键
+     */
+    val retryDelayMs: Long? = null,
+    val maxRetries: Int? = null,
 ) : SessionEvent
 
 // ---- 工具：planned → (审批) → effect_pending → outcome ----

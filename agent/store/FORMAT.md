@@ -264,3 +264,4 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - v1 增量（2026-10-11，skills 剩余语义）：`skills_loaded.entries[]` 新增可选字段 `agent`（frontmatter `agent`，分身的子 agent 类型）、`background`（默认 true，只对 `context: fork` 有意义）、`allowedTools`（frontmatter `allowed-tools`，调用那一轮免审批；只在内存里生效，重开会话不恢复）。
   新增事件 `skills_discovered`（`entries`、`directories`、可选 `notes`），定义在 `spi/SkillEvents.kt`：模型第一次读写某个子目录里的文件时，懒加载那一层的 `.claude/skills`（`directories` 是检查过的 `.claude/skills` 路径，有没有 skill 都记）。折叠进 `SessionState.nestedSkills`（不改冻结的清单）与 `checkedSkillDirs`；子 agent 继承父会话的这一份。
   `skills_loaded` 的 `source` 新增取值 `add-dir`（`--add-dir` 目录里的 skills / commands）。旧日志缺新字段照常读（默认值即原来的行为），含 `skills_discovered` 的日志旧版本打不开。
+- v1 增量（2026-10-11）：`model_request_failed` 新增可选字段 `retryDelayMs`（重发前等多久，毫秒）与 `maxRetries`（这一类失败最多还允许重试几次），只在 `willRetry:true` 时写；给 `-p --output-format stream-json` 的 `system/api_retry`（SDK 的 `retry_delay_ms` / `max_retries`）用。旧日志没有这两个字段，读端省略对应的键；含新字段的日志旧版本（严格解码）打不开。
