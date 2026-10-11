@@ -18,6 +18,7 @@ import dev.min.agent.ext.config.ConfigSource
 import dev.min.agent.ext.config.SkillDef
 import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.ext.skills.SlashCommands
+import dev.min.agent.ext.skills.SlashGate
 import dev.min.agent.ext.skills.SlashResult
 import dev.min.agent.spi.SkillKind
 import dev.min.agent.protocol.ClientMsgId
