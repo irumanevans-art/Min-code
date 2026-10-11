@@ -92,6 +92,12 @@ data class HubPending(
         ) : What
 
         data class Question(val questionId: QuestionId, val callId: CallId, val questions: List<UserQuestion>, val mcpUrl: dev.min.agent.spi.McpUrlElicitationAsked? = null) : What
+
+        /**
+         * 本机别的会话发来、等收件方的用户批准的消息（[PeerMailbox]）。它不在任何会话的状态里——没进日志，
+         * 批准前对方的模型看不到——所以由 Hub 从邮箱的待批准队列补进来；答复走 [resolvePeerHold]
+         */
+        data class Peer(val messageId: String, val from: SessionId, val fromName: String?, val text: String) : What
     }
 }
 
@@ -1275,7 +1281,7 @@ class SessionHub(
                     if (s.turn != null) runningIds += id else runningIds -= id
                     pendingBySession[id] = pendingOf(id, s)
                     _running.value = runningIds.toSet()
-                    _pending.value = pendingBySession.values.flatten().sortedBy { it.atMs }
+                    publishPendingLocked()
                 }
             }
         }
@@ -1298,7 +1304,7 @@ class SessionHub(
             pendingBySession -= id
             _online.value = _online.value - id
             _running.value = runningIds.toSet()
-            _pending.value = pendingBySession.values.flatten().sortedBy { it.atMs }
+            publishPendingLocked()
         }
     }
 
@@ -1320,6 +1326,24 @@ class SessionHub(
             runtimes.values.filter { it.state.value.origin?.parent == parent }.forEach { result += it.sessionId }
         }
         return result
+    }
+
+    /** 邮箱里待批准的消息（[HubPending.What.Peer]），按收件会话。由 [publishHeld] 在邮箱变动时刷新；与 [pendingBySession] 同一把锁 */
+    private var heldPending: List<HubPending> = emptyList()
+
+    /** 在 [summaryLock] 里调用：会话状态里的交互 + 邮箱里待批准的消息。收件会话已卸下的不列（打开回来时会重新出现） */
+    private fun publishPendingLocked() {
+        _pending.value = (pendingBySession.values.flatten() + heldPending.filter { runtimes.containsKey(it.session) }).sortedBy { it.atMs }
+    }
+
+    /** 邮箱的待批准队列变了（来了一封、批了 / 拒了一封、过期了）：重算这一份并发布。邮箱在它自己的锁外调用，不会两把锁交叉 */
+    private fun publishHeld() {
+        synchronized(summaryLock) {
+            heldPending = peerMail.heldAll().flatMap { (receiver, list) ->
+                list.map { m -> HubPending(receiver, receiver, null, null, m.sentAtMs, HubPending.What.Peer(m.messageId, m.from, m.fromName, m.text)) }
+            }
+            publishPendingLocked()
+        }
     }
 
     private fun pendingOf(id: SessionId, s: SessionState): List<HubPending> {
@@ -1394,7 +1418,7 @@ class SessionHub(
     // ---- 续聊与停止 ----
 
     /** 本机跨会话邮箱（见 [PeerMailbox]）：发现与送达都走它，拒收与批准的口径也在那里 */
-    internal val peerMail = PeerMailbox(this, deps, peers) { this.limits.crossSessionInbound }
+    internal val peerMail = PeerMailbox(this, deps, peers, { this.limits.crossSessionInbound }, onHeldChanged = { publishHeld() })
 
     /** 本 Hub 里在线的根会话（子 agent 不算）。跨会话邮箱只看这一层 */
     internal fun liveRoots(): List<SessionRuntime> = runtimes.values.filter { it.state.value.origin == null }

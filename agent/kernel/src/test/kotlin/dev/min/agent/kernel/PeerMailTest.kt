@@ -9,6 +9,7 @@ import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.TurnId
 import dev.min.agent.spi.AgentListingKind
+import dev.min.agent.spi.Clock
 import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.DelegateRequest
 import dev.min.agent.spi.DelegateResult
@@ -29,6 +30,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -40,6 +42,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 本机跨会话消息（Hub 内两个根会话之间的邮箱）。收件方一律是「不回话的模型」，所以会话停在回合里：
@@ -139,6 +142,44 @@ class PeerMailTest {
         assertTrue(hub.resolvePeerHold(web.sessionId, held.messageId, approve = true))
         assertEquals(1, peerInputs(web).size)
         assertTrue(hub.heldPeerMessages(web.sessionId).isEmpty())
+    }
+
+    @Test
+    fun `a held message is in the hub's pending list for the receiver, and leaves it once resolved`() = run {
+        val hub = hub()
+        val api = hub.newRoot("/a", "api", PermissionMode.Default)
+        val web = hub.newRoot("/b", "web", PermissionMode.BypassPermissions)
+        hub.portOf(api).message("web", "批一下")
+        // 界面与通知都读 pending：待批准的消息要和审批、提问排在同一个队列里，才有卡片可点
+        val item = withTimeout(5_000) { hub.pending.first { list -> list.any { it.what is HubPending.What.Peer } } }
+            .single { it.what is HubPending.What.Peer }
+        assertEquals(web.sessionId, item.session)
+        assertEquals(web.sessionId, item.root)
+        val what = item.what as HubPending.What.Peer
+        assertEquals(api.sessionId, what.from)
+        assertEquals("api", what.fromName)
+        assertEquals("批一下", what.text)
+
+        assertTrue(hub.resolvePeerHold(web.sessionId, what.messageId, approve = false))
+        withTimeout(5_000) { hub.pending.first { list -> list.none { it.what is HubPending.What.Peer } } }
+    }
+
+    @Test
+    fun `without a cross-process transport a held message still expires and the sender is told`() = run {
+        // 手机上没有跨进程的登记表（transport = null）：过期也得照样发生，不能因为没有收件目录就永远挂着
+        val now = AtomicLong(1_000)
+        val hub = SessionHub(store, testDeps(silent, emptyList()).copy(clock = Clock { now.get() }), newScope())
+        val api = hub.newRoot("/a", "api", PermissionMode.Default)
+        val web = hub.newRoot("/b", "web", PermissionMode.BypassPermissions)
+        hub.portOf(api).message("web", "过期")
+        assertEquals(1, hub.heldPeerMessages(web.sessionId).size)
+
+        now.addAndGet(PEER_HOLD_EXPIRY_MS)
+        hub.pumpPeers()
+        assertTrue(hub.heldPeerMessages(web.sessionId).isEmpty())
+        val notice = peerInputs(api).single()
+        assertTrue((notice.parts.single() as TextPart).text.contains("超时"))
+        withTimeout(5_000) { hub.pending.first { list -> list.none { it.what is HubPending.What.Peer } } }
     }
 
     @Test

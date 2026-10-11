@@ -65,13 +65,17 @@ private class Incoming(val messageId: String, val from: SessionId, val fromName:
  * - 身份：发件人的名字与「是不是绕过类」都由发件方的 Hub 按它自己的状态填，模型填不了；桌面收件方的名字取自发件人的登记。
  * - 拒收与批准：拒收的消息什么也不写。本机直送时发件人立刻得到原因；跨进程时得到之后送回的结论。
  *
- * 待批准队列与发送窗口只在内存里：待批准的消息没进日志，宿主重启即丢（发件人得到的是「没有送达」，不会悄悄丢）。
+ * 待批准队列与发送窗口只在内存里：待批准的消息没进日志，宿主重启即丢。跨进程时发件人还在、之后得到「超时」；
+ * 同一进程（手机）里重启时发件人也一起重启了，它那一轮早已结束，不会有人再等这条结论——与 CC 的口径一致（批准框不落盘，五分钟过期）。
+ * 待批准的消息经 [onHeldChanged] 并进 Hub 的 `pending`，界面的卡片与通知读那里。
  */
 internal class PeerMailbox(
     private val hub: SessionHub,
     private val deps: KernelDeps,
     private val transport: PeerTransport?,
     private val policy: () -> PeerInboundPolicy,
+    /** 待批准队列变了。在 [guard] 之外调用：Hub 据此把待批准的消息并进 `pending`（界面的卡片、通知都读那里） */
+    private val onHeldChanged: () -> Unit = {},
 ) {
     /** 只护这两张内存表；锁内不挂起，投递一律在锁外做 */
     private val guard = Any()
@@ -164,6 +168,7 @@ internal class PeerMailbox(
             list.remove(hit)
             hit
         }
+        onHeldChanged()
         val rt = hub.get(receiver)
         if (approve && rt != null) {
             deliverTo(rt, Incoming(item.messageId, item.from, item.fromName, item.text, item.sentAtMs))
@@ -178,6 +183,9 @@ internal class PeerMailbox(
     /** 待批准的消息（界面列出来让用户批） */
     fun heldFor(receiver: SessionId): List<HeldPeerMessage> = synchronized(guard) { held[receiver].orEmpty().toList() }
 
+    /** 全部收件会话的待批准消息（Hub 并进 `pending` 用） */
+    fun heldAll(): Map<SessionId, List<HeldPeerMessage>> = synchronized(guard) { held.filterValues { it.isNotEmpty() }.mapValues { it.value.toList() } }
+
     // ---- 收件（别的进程送来的） ----
 
     /**
@@ -185,11 +193,13 @@ internal class PeerMailbox(
      * 同一时刻只跑一轮：上一轮没完就跳过，免得两轮抢同一批信。
      */
     suspend fun pump() {
-        val t = transport ?: return
         if (!pumping.compareAndSet(false, true)) return
         try {
-            publishLocal()
+            // 过期在前、且不看 transport：手机上没有跨进程收件目录，本 Hub 里的会话之间也会有待批准的消息，
+            // 以前没有 transport 就整个返回，那些消息永远挂着、发件人永远等不到结论
             expireHeld()
+            val t = transport ?: return
+            publishLocal()
             for (rt in hub.liveRoots()) {
                 for (taken in t.take(rt.sessionId.value)) {
                     handleRemote(rt, taken.envelope)
@@ -283,6 +293,7 @@ internal class PeerMailbox(
             list += HeldPeerMessage(m.messageId, m.from, m.fromName, m.text, m.sentAtMs)
             if (list.size > PEER_HOLD_LIMIT) list.removeAt(0) else null
         }
+        onHeldChanged()
         if (dropped != null) {
             outcome(dropped.from, receiver, null, dropped.messageId, "待批准的消息超过上限，它没有送达。", deps.clock.nowMs())
         }
@@ -305,6 +316,7 @@ internal class PeerMailbox(
             }
             out
         }
+        if (expired.isNotEmpty()) onHeldChanged()
         for ((receiver, item) in expired) {
             outcome(item.from, receiver, null, item.messageId, "超时没有人批准，它没有送达。", now)
         }
