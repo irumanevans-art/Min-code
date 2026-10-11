@@ -928,6 +928,7 @@ class SessionHub(
         } else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it); inheritLsp(runtime, it) }
         if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
+        if (runtime.state.value.origin == null) runtime.fileWatches.arm()
         for (child in runtime.state.value.children.keys) open(child)
         return runtime
     }

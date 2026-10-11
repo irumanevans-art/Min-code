@@ -192,6 +192,21 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
         return HookMatch(dedupByIdentity(selected), matchNotes)
     }
 
+    /**
+     * FileChanged 的监视清单里来自 matcher 的那部分（官方 hooks 页「FileChanged」：值按 `|` 切开，每一段登记成**工作目录里的字面文件名**，
+     * `".envrc|.env"` 就是恰好监视这两个文件；正则没有用，`^\.env` 会去监视一个字面叫 `^\.env` 的文件）。
+     * 省略 matcher（或空串）的组「匹配每一个被监视的文件、也不往监视清单里加任何东西」；`"*"` 照原文也按字面文件名 `*` 登记。
+     * 带路径分隔符或 `.` / `..` 的段不是「文件名」，不监视（matcher 不能借它去盯工作目录之外的路径）。
+     * 各处理器类型都算（一个 FileChanged 组可以挂任何类型的 hook）。
+     */
+    fun fileChangedWatchNames(): List<String> = handlers.asSequence()
+        .filter { it.event == HookEvent.FileChanged }
+        .mapNotNull { it.matcher?.takeIf { m -> m.isNotEmpty() } }
+        .flatMap { it.split('|').asSequence() }
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && it != "." && it != ".." && '/' !in it && '\\' !in it && '\u0000' !in it }
+        .distinct().toList()
+
     /** 同一命令可绑定多个 matcher；本次命中多个绑定时仍只执行一次。 */
     private fun dedupByIdentity(selected: List<HookHandler>): List<HookHandler> {
         val unique = linkedMapOf<List<Any?>, HookHandler>()

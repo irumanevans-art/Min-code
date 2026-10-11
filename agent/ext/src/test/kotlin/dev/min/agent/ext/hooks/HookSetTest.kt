@@ -155,4 +155,26 @@ class HookSetTest {
         assertTrue(set.matchingAsync(HookEvent.PostToolUse, "Read").handlers.isEmpty())
         assertTrue(set.matchingAsync(HookEvent.PostToolUse, "Bash", ifMatches = { _ -> false }).handlers.isEmpty())
     }
+    @Test fun `FileChanged 的 matcher 同时是监视清单：按竖线切成字面文件名，省略 matcher 的组不加东西`() {
+        val set = HookSet.parse(listOf(source("""{"FileChanged":[
+          {"matcher":".envrc|.env","hooks":[{"type":"command","command":"a"}]},
+          {"matcher":"data.csv","hooks":[{"type":"http","url":"http://x/"}]},
+          {"hooks":[{"type":"command","command":"dynamic"}]},
+          {"matcher":"","hooks":[{"type":"command","command":"empty"}]},
+          {"matcher":"*","hooks":[{"type":"command","command":"star"}]},
+          {"matcher":"^\\.env","hooks":[{"type":"command","command":"regexish"}]},
+          {"matcher":"../secret|a/b|..|.|ok.txt","hooks":[{"type":"command","command":"escape"}]}],
+          "Stop":[{"matcher":"ignored.txt","hooks":[{"type":"command","command":"s"}]}]}""")))
+        // 正则写法不是正则（原文：^\.env 会去监视一个字面叫这个名字的文件——它不会存在，监不监视都没有触发；这里带反斜杠的段当作路径分隔符不收）；
+        // * 照原文是字面文件名；带路径的段与 . / .. 不是文件名，不监视
+        assertEquals(listOf(".envrc", ".env", "data.csv", "*", "ok.txt"), set.fileChangedWatchNames())
+    }
+
+    @Test fun `FileChanged 的 matcher 按被改文件的 basename 过滤哪些组跑，省略 matcher 的组每个被监视文件都跑`() {
+        val set = HookSet.parse(listOf(source("""{"FileChanged":[
+          {"matcher":".envrc|.env","hooks":[{"type":"command","command":"env"}]},
+          {"hooks":[{"type":"command","command":"any"}]}]}""")))
+        assertEquals(listOf("env", "any"), set.matching(HookEvent.FileChanged, ".envrc").map { it.command })
+        assertEquals(listOf("any"), set.matching(HookEvent.FileChanged, "other.txt").map { it.command })
+    }
 }

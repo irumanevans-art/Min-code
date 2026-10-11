@@ -144,6 +144,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             }
         }
         attachMemory(calls)
+        // 这一批工具改了被监视的文件：FileChanged（与 ConfigChange）的 hook 在下一个模型请求之前跑完
+        rt.fileWatches.pollNow()
         postToolBatch(turnId, calls)
     }
 

@@ -19,6 +19,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§FileChanged output：读 watchPaths 与 systemMessage（终端通知）、丢弃 continue，不能阻断（:2917–2927）。",
-  "minTrigger": "none",
-  "minTriggerReason": "Min 没有对应时机：原文是文件系统 watcher 发现被监视文件变化（:2852），Min 全仓没有文件 watcher（cwdWatchPaths 只存不用），感知不到文件被谁改"
+  "minTrigger": "内核的文件监视（FileWatches：matcher 点名的文件 + hooks 返回的 watchPaths，回合进行中轮询）发现文件变化后触发（端到端：FileChangedHookTest、FileChangedIntegrationTest）"
 }

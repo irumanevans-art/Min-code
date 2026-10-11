@@ -120,3 +120,29 @@ internal class HookTestRig(
 
     fun close() = scope.cancel()
 }
+
+/** 每个组各带自己的 url（用来分辨请求是哪一组发的）：`Triple(事件, matcher 或 null, url)` */
+internal fun httpHookGroups(vararg entries: Triple<String, String?, String>): JsonObject = JsonObject(
+    entries.groupBy({ it.first }, { it.second to it.third }).mapValues { (_, groups) ->
+        JsonArray(groups.map { (matcher, url) ->
+            JsonObject(buildMap {
+                matcher?.let { put("matcher", JsonPrimitive(it)) }
+                put("hooks", JsonArray(listOf(JsonObject(mapOf("type" to JsonPrimitive("http"), "url" to JsonPrimitive(url))))))
+            })
+        })
+    },
+)
+
+/** 一个会改文件系统的假工具：[action] 在工具执行时跑（可以挂起，用来让测试在「工具还没返回」时动磁盘） */
+internal fun actionTool(name: String, action: suspend () -> Unit): dev.min.agent.spi.Tool<JsonObject> = object : dev.min.agent.spi.Tool<JsonObject> {
+    override val name = name
+    override val inputSchema = JsonObject(mapOf("type" to JsonPrimitive("object")))
+    override val traits = dev.min.agent.spi.ToolTraits()
+    override fun description(profile: dev.min.agent.spi.HarnessProfile) = name
+    override fun parse(raw: JsonObject) = dev.min.agent.spi.ToolInput.Valid(raw)
+    override fun permissionAsk(input: JsonObject, ctx: dev.min.agent.spi.ToolContext) = dev.min.agent.spi.PermissionAsk(name, name)
+    override fun run(input: JsonObject, ctx: dev.min.agent.spi.ToolContext): kotlinx.coroutines.flow.Flow<dev.min.agent.spi.ToolProgress> = kotlinx.coroutines.flow.flow {
+        action()
+        emit(dev.min.agent.spi.ToolProgress.Done(dev.min.agent.spi.ToolResult(listOf(TextPart("ok")))))
+    }
+}

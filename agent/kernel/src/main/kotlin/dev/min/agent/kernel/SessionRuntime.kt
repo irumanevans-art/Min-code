@@ -207,21 +207,11 @@ class SessionRuntime private constructor(
         envFiles.clearOnCwdChange()
         val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
             HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.CwdChangedInput(deps.hookShellPath(old), deps.hookShellPath(cwd))).jsonObject)
-        val watchPaths = hooks?.runs?.filter { it.exitCode == 0 }?.mapNotNull { run ->
-            dev.min.agent.spi.catchingNonCancellation {
-                HookJson.decodeFromString(dev.min.agent.ext.hooks.HookOutputCommon.serializer(), run.stdout.trim()).watchPaths
-            }.getOrNull()
-        }?.lastOrNull()
-        if (watchPaths != null) {
-            dev.min.agent.spi.catchingNonCancellation {
-                val paths = watchPaths.map {
-                    require(it.startsWith('/') || Regex("^[A-Za-z]:[/\\\\].*").matches(it)) { "watchPaths 必须是绝对路径。" }
-                    Worktrees.resolved(it, cwd)
-                }
-                commit(listOf(dev.min.agent.spi.CwdWatchPathsChanged(paths)), Durability.Sync)
-            }.onFailure { commit(listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "CwdChanged watchPaths 无效，保留原监视列表。")), Durability.Sync) }
-        }
+        applyWatchPaths(watchPathsOf(hooks), cwd, "CwdChanged")
     }
+
+    /** 文件监视（FileChanged / ConfigChange，[FileWatches]）：回合进行中轮询，空闲时不保活 */
+    internal val fileWatches = FileWatches(this)
 
     /** `CLAUDE_ENV_FILE`：hook 写的 export 在后续每条 Bash 命令前执行（[SessionEnvFiles]） */
     internal val envFiles by lazy(LazyThreadSafetyMode.PUBLICATION) { SessionEnvFiles(this) }
@@ -524,6 +514,8 @@ class SessionRuntime private constructor(
             SessionStartInput(source = source, model = state.value.settings.model.modelId),
         ).jsonObject
         val outcome = driver.run(HookEvent.SessionStart, source, specific) ?: return
+        // SessionStart 的 hookSpecificOutput.watchPaths：初始的动态监视清单（FileChanged 的监视对象）
+        applyWatchPaths(outcome.specific?.get("watchPaths")?.let { it as? kotlinx.serialization.json.JsonArray }?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }, state.value.settings.cwd, "SessionStart")
         val events = outcome.contexts.map { HookContextAdded(HookContextTarget.NextUserMessage, HookEvent.SessionStart.name, it) }
         if (events.isNotEmpty()) commit(events, Durability.Sync)
     }
@@ -1160,6 +1152,8 @@ class SessionRuntime private constructor(
             }
             if (loadSkills) runtime.loadSkills()
             if (runStartHooks && runtime.state.value.origin == null) runtime.runSessionStart("startup")
+            // 文件监视的基线：SessionStart 之后的样子（它的 hook 可能刚写过被监视的文件，那不算「会话中的变化」）
+            if (runtime.state.value.origin == null) runtime.fileWatches.arm()
             return runtime
         }
 

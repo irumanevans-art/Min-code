@@ -217,7 +217,7 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - `cwd_changed`：`oldCwd`、`cwd`、可空 `worktree`、默认空 `memoryFiles`、可空 `rules` / `additionalDirectories`。后两者为 null 表示保留；空列表表示清空。校验旧目录，折叠当前 cwd 与 binding；原创建环境不改。新增记忆另折叠到 cwdMemory 供隔离子会话继承；目录差异与指令在工具调用中挂当前助手消息的工具结果 system-reminder（下一次模型请求立即可见）；空闲时挂下一条输入。
 - `worktree_finished`：完整 binding 与 `removed`；记录子 agent 自动清理或根会话 keep/remove。
 - `WorktreeBinding` 保存 name/path/originalCwd/repository/branch/baseCommit/hookCreated/owned/pinned。旧日志无 binding；重开按日志恢复。
-- `cwd_watch_paths_changed`：`paths` 替换 CwdChanged hooks 返回的动态 watchPaths（默认空）；冻结绝对路径，重开沿用。FileChanged 文件监视执行器仍待后续里程碑。
+- `cwd_watch_paths_changed`：`paths` 替换动态 watchPaths（默认空）；冻结绝对路径，重开沿用。2026-10-12 起它是 FileChanged 的**动态监视清单**（载荷不变、旧日志照常读）：SessionStart 的 `hookSpecificOutput.watchPaths`、CwdChanged / FileChanged 输出里的 `watchPaths` 都落这一条（整份替换，空数组清空；matcher 里点名的文件另算、不进这张表）。
 
 - v1 增量（2026-10-08）：新增 `auto_review_settings_loaded`（用户/托管四组规则与独立审查模型、可选能力声明）、`auto_reviewed`（turnId、callId、model、decision、reason、usage）和 `model_charged`（model、usage、可选 amount/currency，缺价明确未知）。审查用量计入回合；花费按请求模型冻结，按币种累计，不以换会话模型重算。含这些事件的日志旧版本打不开。
 
@@ -340,3 +340,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - 无日志格式变化（2026-10-12，`CLAUDE_ENV_FILE`）：hook 往里追加 `export` 的脚本**不进事件日志**，放在会话附件目录的 `env/` 下（[ArtifactSink.locate] 给路径：桌面 `<home>/sessions/<id>/artifacts/env/`，Android `/root/.min/artifacts/<id>/env/`）。文件：`setup.sh`（Setup）、`sessionstart-<source>.sh`（SessionStart；`source` 取 startup / resume / clear / compact / fork，其余归 `other`）、`cwd.sh`（CwdChanged 与 FileChanged 共用，下一次 CwdChanged 触发时清空）。同一会话重开沿用这些文件，所以它们不属于「日志即真相」的折叠范围——和 shell 环境本身一样是宿主侧状态，丢了只是少了 hook 写过的变量，下一次对应的 hook 触发会重写。不新增事件、不改载荷：旧日志与旧版本不受影响。
 
 - v1 增量（2026-10-12，`/add-dir` 与 DirectoryAdded hook）：新增事件 `directory_added`（`directory`：规范化的绝对 guest 路径；`source`：`slash_command` / `register_repo_root`），定义在 `spi/DirectoryEvents.kt`。会话中途加的工作目录：折叠时并进 `additionalDirectories`（权限引擎按它判：读不再问、写按权限模式；手机文件底线不被覆盖，所以这类目录加不进来），同时记进单独的 `addedDirectories`——`permission_rules_loaded` 重读设置时整份替换的是 settings 里的目录，这一份会被并回去、不会被冲掉。只授予文件访问，目录里的配置不生效；**不写任何 settings 文件**，只在本会话有效，重开会话由这条事件恢复。已经是（或在）工作目录里的目录不写事件、不触发 hook。事件落盘之后在后台跑 DirectoryAdded hooks（不拦加目录；`slash_command` 的 `systemMessage` 以 `hook_context_added`（`NextUserMessage`）交给模型，`register_repo_root` 的只进 `hooks_ran` 记录）。含新事件的日志旧版本打不开；旧日志照常读。
+
+- 无日志格式变化（2026-10-12，FileChanged 文件监视）：监视基线（被监视文件上一次的大小与修改时间）只在内存里，不进日志——它是宿主文件系统的现状快照，重开会话时重新取（那一刻起的变化才算变化）。变化触发的 FileChanged hook 照常以 `hooks_ran`（`event: "FileChanged"`）记录，hook 返回的 watchPaths 落 `cwd_watch_paths_changed`。

@@ -87,8 +87,25 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     /** 上一次 `/goal` 评估之后，模型调过几批工具（防空转计数用；只在内存里，评估时随 [GoalEvaluated.toolUse] 落盘） */
     private var toolRoundsSinceEvaluation = 0
 
-    /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
+    /**
+     * 回合外壳：回合开始前先看一遍文件监视（空闲期间的变化在这里补报），回合里起轮询、回合结束时再看一遍；
+     * 空闲时不轮询（见 [FileWatches]）。轮询随回合起落，不留常驻协程
+     */
     suspend fun run(trigger: TurnTrigger): Boolean {
+        val watching = rt.fileWatches.beginTurn()
+        try {
+            rt.fileWatches.pollNow()
+            val completed = runTurn(trigger)
+            // 回合结束时再看一遍：最后一批工具之后、没赶上轮询的变化。被中断的回合（抛 CancellationException）不补——用户按了停，不该再等 hook
+            rt.fileWatches.pollNow()
+            return completed
+        } finally {
+            watching?.cancel()
+        }
+    }
+
+    /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
+    private suspend fun runTurn(trigger: TurnTrigger): Boolean {
         rt.refreshNetworkSettings()
         workflowInputs.clear()
         val turnId = TurnId(deps.ids.next("turn"))

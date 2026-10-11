@@ -97,6 +97,14 @@ internal class HookDriver(private val rt: SessionRuntime) {
             (settings.notes + componentNotes + rest.flatMap { it.notes })
     }
 
+    /** FileChanged 的 matcher 点名的文件名（settings 与各组件 hooks 一起算）：监视清单里来自 matcher 的那部分，见 [HookSet.fileChangedWatchNames] */
+    fun fileChangedWatchNames(): List<String> {
+        if (rt.state.value.hooks.isEmpty() && rt.state.value.componentHooks.isEmpty()) return emptyList()
+        if (rt.state.value.origin?.agentType == HOOK_AGENT_TYPE) return emptyList()
+        components()
+        return (hookSet().fileChangedWatchNames() + componentSets.flatMap { it.second.fileChangedWatchNames() }).distinct()
+    }
+
     /** 这个事件（对这个目标）有没有要跑的 hook。不跑任何东西；PreToolUse 据此决定一个调用能不能进并行批 */
     fun has(event: HookEvent, target: String?): Boolean {
         if (rt.state.value.hooks.isEmpty() && rt.state.value.componentHooks.isEmpty()) return false
