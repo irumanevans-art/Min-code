@@ -84,7 +84,8 @@ internal suspend fun pluginEvalCommand(arguments: List<String>, cwd: Path, outpu
             hiddenPaths = listOfNotNull(outputDir, jsonPath?.let { cwd.resolve(it).toAbsolutePath() }) + loaded.cases.map { it.dir })
         val singleArmCases = if (!installed && ablationFlag == null) suite.cases.filter { it.context().string("history_file").isNotEmpty() }.map { it.name }.toSet() else emptySet()
         if (singleArmCases.isNotEmpty()) stderr.println("single-arm (no Δ): ${singleArmCases.joinToString()}")
-        val options = EvalOptions(runs, concurrency, threshold, ablation == "with-without", keep, ceiling, singleArmCases = singleArmCases)
+        val interruption = EvalInterrupt()
+        val options = EvalOptions(runs, concurrency, threshold, ablation == "with-without", keep, ceiling, interruption, singleArmCases)
         val kernel = LocalEvalKernel(suite, baseArgs, grants, keep, modelOverride = explicitModel, scaffoldEnabled = scaffold, mockJudgeModel = judgeModel, scripted = models?.let { factory -> { ref -> factory(baseArgs, ref) } })
         val judgeArgs = baseArgs.copy(model = judgeModel ?: baseArgs.fastModel ?: resolveModel(baseArgs, dev.min.agent.llm.catalog.Catalog.bundled()).provider.fastModel ?: baseArgs.model ?: "default")
         val judge = EvalJudge { grader, evidence, case ->
@@ -111,7 +112,7 @@ internal suspend fun pluginEvalCommand(arguments: List<String>, cwd: Path, outpu
             }
             EvalVerdict(votes.count { it == "PASS" } >= 2 && !authFailed, "local judge majority", votes, paid.takeIf { known }, authFailed)
         }
-        val result = runPluginEval(suite, options, kernel, judge)
+        val result = interruption.install().use { runPluginEval(suite, options, kernel, judge) }
         if (suite.cases.isNotEmpty()) {
             val dir = outputDir ?: suite.directory.resolve("results").resolve(Instant.now().toString().replace(':', '-'))
             Files.createDirectories(dir)

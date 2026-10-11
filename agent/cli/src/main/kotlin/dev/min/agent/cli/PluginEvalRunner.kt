@@ -11,7 +11,7 @@ import java.nio.file.FileSystems
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 
 internal data class EvalOptions(val runs: Int? = null, val concurrency: Int = 1, val threshold: Double = 1.0,
-    val ablation: Boolean = true, val keepTemp: Boolean = false, val maxCostUsd: Double? = null, val singleArmCases: Set<String> = emptySet())
+    val ablation: Boolean = true, val keepTemp: Boolean = false, val maxCostUsd: Double? = null, val interrupt: EvalInterrupt? = null, val singleArmCases: Set<String> = emptySet())
 internal data class EvalVerdict(val passed: Boolean, val explanation: String, val votes: List<String> = emptyList(), val costUsd: Double? = 0.0, val authFailed: Boolean = false)
 internal fun interface EvalJudge { suspend fun judge(grader: JsonObject, evidence: EvalEvidence, case: EvalCase): EvalVerdict }
 internal data class EvalRunResult(val json: JsonObject, val exitCode: Int)
@@ -34,14 +34,16 @@ internal suspend fun runPluginEval(suite: EvalSuite, options: EvalOptions, kerne
         val jobs = arms.flatMap { arm -> (1..(options.runs ?: case.runs)).map { repeat -> async {
             gate.withPermit {
                 val permitted = synchronized(costLock) {
-                    if (partialReason == "auth_error") false
+                    if (options.interrupt?.interrupted == true) { partial = true; partialReason = "interrupted"; false }
+                    else if (partialReason == "auth_error") false
                     else if (options.maxCostUsd != null && (!costKnown || spent >= options.maxCostUsd)) { partial = true; partialReason = "cost_ceiling"; false } else true
                 }
                 if (!permitted) return@withPermit arm to null
                 val root = Files.createTempDirectory("min-plugin-eval-")
                 val runStarted = System.nanoTime()
                 try {
-                    val evidence = try { kernel.run(case, arm == "with", root) }
+                    val evidence = try { options.interrupt?.run { kernel.run(case, arm == "with", root) } ?: kernel.run(case, arm == "with", root) }
+                        catch(e: EvalInterrupted) { synchronized(costLock) { partial = true; partialReason = "interrupted" }; return@withPermit arm to null }
                         catch(e: CancellationException) { throw e }
                         catch(e: Exception) { EvalEvidence("", "", emptyList(), emptyMap(), error = "run failed (${e::class.simpleName}): ${e.message}", started = false) }
                     synchronized(costLock) { if (evidence.costUsd == null) costKnown = false else spent += evidence.costUsd
@@ -51,7 +53,8 @@ internal suspend fun runPluginEval(suite: EvalSuite, options: EvalOptions, kerne
                         val paid = grader.string("type") in setOf("llm", "baseline")
                         val canJudge = synchronized(costLock) { partialReason != "auth_error" && (options.maxCostUsd == null || costKnown && spent < options.maxCostUsd) }
                         val verdict = if (paid && !canJudge) { skipped = true; synchronized(costLock) { partial = true; if (partialReason == null) partialReason = "cost_ceiling" }; EvalVerdict(false, "partial run skipped judge") }
-                        else try { gradeEval(grader, evidence, case, judge) }
+                        else try { options.interrupt?.run { gradeEval(grader, evidence, case, judge) } ?: gradeEval(grader, evidence, case, judge) }
+                            catch(e: EvalInterrupted) { synchronized(costLock) { partial = true; partialReason = "interrupted" }; return@withPermit arm to null }
                             catch(e: CancellationException) { throw e }
                             catch(e: Exception) { EvalVerdict(false, "grader failed (${e::class.simpleName}): ${e.message}") }
                         synchronized(costLock) { if (verdict.costUsd == null) costKnown = false else spent += verdict.costUsd
@@ -87,6 +90,7 @@ internal suspend fun runPluginEval(suite: EvalSuite, options: EvalOptions, kerne
             }
         }
     }.awaitAll()
+    if (options.interrupt?.interrupted == true) { partial = true; partialReason = "interrupted" }
     val passed = cases.count { it["aggregates"]!!.jsonObject["passed"]!!.jsonPrimitive.boolean }
     val json = buildJsonObject {
         put("schemaVersion", 1); put("engine", "Min"); put("partial", partial); if (partial) put("partialReason", partialReason)
