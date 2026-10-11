@@ -470,8 +470,9 @@ class StreamControlTest {
         // 宿主走 stdio：两端都得是 stream-json
         assertThrows(UsageException::class.java) { parse("-p", "hi", "--permission-prompt-tool", "stdio") }
         assertThrows(UsageException::class.java) { parse("-p", "--input-format", "stream-json", "--permission-prompt-tool", "stdio") }
-        // Min 没有 MCP 权限提示工具，原文那种写法明说不支持
-        assertThrows(UsageException::class.java) { parse(*base.toTypedArray(), "--permission-prompt-tool", "mcp__perm__approve") }
+        // 原文的写法（MCP 工具名）也认，见 McpPromptToolTest；不是 stdio 也不是 mcp__服务器__工具 的名字不认
+        assertEquals("mcp__perm__approve", parse(*base.toTypedArray(), "--permission-prompt-tool", "mcp__perm__approve").permissionPromptTool)
+        assertThrows(UsageException::class.java) { parse(*base.toTypedArray(), "--permission-prompt-tool", "approve") }
         assertThrows(UsageException::class.java) { parse("-p", "hi", "--permission-prompts", "bogus") }
         // --permission-prompts 是 print 模式的参数
         assertThrows(UsageException::class.java) { parse("--permission-prompts", "none") }

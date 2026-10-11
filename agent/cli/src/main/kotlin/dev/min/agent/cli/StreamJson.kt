@@ -44,6 +44,10 @@ import kotlinx.serialization.json.put
 import java.io.PrintStream
 import java.util.UUID
 
+/** tool_progress 心跳的间隔（SDK：每 30 秒一条）。测试里调小，免得真等 */
+@Volatile
+internal var streamHeartbeatMs: Long = 30_000L
+
 /**
  * `--output-format stream-json` 的渲染器（CC：newline-delimited JSON for real-time streaming）：每行一个
  * JSON 对象，形状照 Agent SDK 的 `SDKMessage`（字段名与可选性照 TypeScript SDK 参考页；Min 没有的字段省略、不编）：
@@ -103,9 +107,20 @@ internal class StreamJsonRenderer(
         jobs += scope.launch {
             runtime.state.collect { state -> mutex.withLock { emitNew(null, state, parentToolUseId = null) } }
         }
-        if (args.includePartialMessages) {
-            jobs += scope.launch {
-                runtime.live.collect { update -> mutex.withLock { streamUpdate(update) } }
+        // 瞬时流总要看：thinking_tokens 不依赖 --include-partial-messages；流事件（stream_event）才要那个开关
+        jobs += scope.launch {
+            runtime.live.collect { update ->
+                mutex.withLock {
+                    thinkingTokens(update)
+                    if (args.includePartialMessages) streamUpdate(update)
+                }
+            }
+        }
+        // 心跳：工具在跑时每隔 [streamHeartbeatMs] 发一条 tool_progress（SDK：每 30 秒一条，heartbeat:true），顺带刷新在跑的子 agent 任务进展
+        jobs += scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(streamHeartbeatMs)
+                mutex.withLock { heartbeat() }
             }
         }
         // 子会话总要盯着：task_started / task_updated 来自它们的日志；它们的消息行只在 --forward-subagent-text 时才发
@@ -251,9 +266,45 @@ internal class StreamJsonRenderer(
     }
 
     /** 子 agent 的任务：委派它的那次 Agent 调用、是不是后台、深度——结束时的 task_updated 要用 */
-    private class Task(val callId: CallId, val background: Boolean)
+    private class Task(val callId: CallId, val background: Boolean, val description: String, val agentType: String, val startedAtMs: Long) {
+        /** task_progress 的 usage：子会话日志里累计的工具调用次数与 token（输入 + 输出），最近一次调用的工具名 */
+        var toolUses = 0
+        var tokens = 0L
+        var lastTool: String? = null
+        var ended = false
+    }
 
     private val tasks = HashMap<String, Task>()
+
+    /** SDKTaskProgressMessage：子 agent 的进展。summary 要 agentProgressSummaries（模型生成的摘要），Min 没有这个选项，省略 */
+    private fun emitTaskProgress(taskId: String, task: Task, sessionId: String) {
+        line(sys("task_progress", sessionId) {
+            put("task_id", taskId)
+            put("tool_use_id", task.callId.value)
+            put("description", task.description)
+            put("subagent_type", task.agentType)
+            put("usage", buildJsonObject {
+                put("total_tokens", task.tokens)
+                put("tool_uses", task.toolUses)
+                put("duration_ms", (System.currentTimeMillis() - task.startedAtMs).coerceAtLeast(0))
+            })
+            task.lastTool?.let { put("last_tool_name", it) }
+        })
+    }
+
+    /** 这些命令的全量清单（SDK 的 commands_changed 是全量替换）：启动时的 skills / 命令 + 嵌套目录里懒加载来的，只列用户能用 `/名字` 调的 */
+    private fun commandsRow(sessionId: String): JsonObject {
+        val state = runtime.state.value
+        val entries = (state.skills?.entries.orEmpty() + state.nestedSkills).filter { it.userInvocable }.distinctBy { it.name }
+        return sys("commands_changed", sessionId) {
+            put("commands", JsonArray(entries.map { e ->
+                buildJsonObject {
+                    put("name", e.name); put("description", e.description)
+                    put("argumentHint", e.argumentHint ?: "")
+                }
+            }))
+        }
+    }
 
     /** 一条日志事件要翻成哪些系统行：通用的交给 [systemRows]，要看会话间关系的（子 agent、审批）在这里 */
     private suspend fun emitSystem(key: String?, record: EventRecord) {
@@ -265,7 +316,7 @@ internal class StreamJsonRenderer(
             is SubagentSpawned -> {
                 // 深度取子会话的来历（根的子 agent = 1）；子会话已经卸下了就按「上一层 + 1」估
                 val depth = app.hub().get(event.child)?.state?.value?.origin?.depth ?: (if (key == null) 1 else 2)
-                tasks[event.child.value] = Task(event.callId, event.background)
+                tasks[event.child.value] = Task(event.callId, event.background, event.description, event.agentType, record.atMs)
                 line(sys("task_started", sessionId) {
                     put("task_id", event.child.value)
                     put("tool_use_id", event.callId.value)
@@ -296,7 +347,15 @@ internal class StreamJsonRenderer(
                     })
                 }
             }
+            is dev.min.agent.spi.ToolPlanned -> if (key != null) tasks[key]?.let { task ->
+                task.toolUses += 1
+                task.lastTool = event.tool
+                emitTaskProgress(key, task, sessionId)
+            }
+            is AssistantMessageCompleted -> if (key != null) tasks[key]?.let { it.tokens += event.usage.inputTokens + event.usage.outputTokens }
+            is dev.min.agent.spi.SkillsDiscovered -> if (key == null) line(commandsRow(sessionId))
             is TurnEnded -> if (key != null) tasks[key]?.let { task ->
+                task.ended = true
                 // 子 agent 的一个回合结束 = 它的任务结束：patch 合进 SDK 侧的任务表（status + end_time）
                 line(sys("task_updated", sessionId) {
                     put("task_id", key)
@@ -385,6 +444,11 @@ internal class StreamJsonRenderer(
     private suspend fun emitNew(key: String?, state: SessionState, parentToolUseId: String?) {
         val mark = seen.getOrPut(key) { Seen(HashSet(), HashSet()) }
         val sessionId = if (key == null) runtime.sessionId.value else key
+        // 工具开始跑的时刻（心跳的 elapsed_time_seconds 从这里数）：状态里第一次看到它处于副作用已开始
+        if (key == null) {
+            val now = System.nanoTime()
+            state.turn?.calls?.values.orEmpty().forEach { if (it.phase is dev.min.agent.kernel.CallPhase.EffectPending) toolSeen.putIfAbsent(it.callId, now) }
+        }
         val records = drain(key, sessionId)
         records.forEach { ingest(it.event) }
         records.forEach { emitSystem(key, it) }
@@ -461,6 +525,65 @@ internal class StreamJsonRenderer(
                 })
             }
         }
+    }
+
+    // ---- thinking_tokens：思考块的 token 估算 ----
+
+    /** 当前思考块：属于哪次请求、累计的 UTF-8 字节数、已经报过的估算值。别的块 / 新请求开始就换新的 */
+    private var thinkingRequest: RequestId? = null
+    private var thinkingBytes = 0L
+    private var thinkingReported = 0L
+
+    /**
+     * SDKThinkingTokensMessage：Min 没有逐块的真实 token 数，估算按「UTF-8 字节数 ÷ 4 向上取整」（英文约 4 字节 / token，
+     * 中文约 3 字节一个字、也差不多一个 token，量级对得上）。只给「估算」用——SDK 原文也说这是进度估算，最终数看 usage。
+     * 增量为 0 的帧（字节数没凑够一个 token）不发
+     */
+    private fun thinkingTokens(update: LiveUpdate) {
+        when (update) {
+            is LiveUpdate.Thinking -> {
+                if (update.text.isEmpty()) return
+                if (thinkingRequest != update.requestId) { thinkingRequest = update.requestId; thinkingBytes = 0; thinkingReported = 0 }
+                thinkingBytes += update.text.toByteArray(Charsets.UTF_8).size
+                val estimate = (thinkingBytes + 3) / 4
+                val delta = estimate - thinkingReported
+                if (delta <= 0) return
+                thinkingReported = estimate
+                line(sys("thinking_tokens", runtime.sessionId.value) {
+                    put("estimated_tokens", estimate)
+                    put("estimated_tokens_delta", delta)
+                })
+            }
+            // 思考块结束（后面接了正文 / 工具调用）：下一个思考块重新数
+            is LiveUpdate.Text, is LiveUpdate.ToolCallStarted -> { thinkingRequest = null }
+            else -> Unit
+        }
+    }
+
+    // ---- tool_progress 心跳与子 agent 的 task_progress ----
+
+    private val toolSeen = HashMap<CallId, Long>()
+
+    private fun heartbeat() {
+        val sessionId = runtime.sessionId.value
+        val now = System.nanoTime()
+        val running = runtime.state.value.turn?.calls?.values.orEmpty()
+            .filter { it.phase is dev.min.agent.kernel.CallPhase.EffectPending }
+        running.forEach { call ->
+            val since = toolSeen.getOrPut(call.callId) { now }
+            line(buildJsonObject {
+                put("type", "tool_progress")
+                put("tool_use_id", call.callId.value)
+                put("tool_name", call.tool)
+                put("parent_tool_use_id", JsonNull)
+                put("elapsed_time_seconds", (now - since) / 1_000_000_000.0)
+                put("heartbeat", true)
+                put("uuid", UUID.randomUUID().toString())
+                put("session_id", sessionId)
+            })
+        }
+        toolSeen.keys.retainAll(running.map { it.callId }.toSet())
+        tasks.forEach { (id, task) -> if (!task.ended) emitTaskProgress(id, task, sessionId) }
     }
 
     // ---- --include-partial-messages：把瞬时流的增量拼成 Anthropic 的流事件 ----

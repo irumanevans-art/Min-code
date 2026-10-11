@@ -228,4 +228,57 @@ class CliResultTest {
         assertEquals(JsonPrimitive(0), json["num_turns"])
         assertNull(CliResult("s", emptyList()).json()["local_command"])
     }
+
+    @Test
+    fun `modelUsage groups the run's charges by model with the SDK keys`() {
+        val m = ModelRef("anthropic", "claude-x")
+        val cny = ModelRef("deepseek", "deepseek-y")
+        val unpriced = ModelRef("custom", "free-z")
+        val events = listOf(
+            record(dev.min.agent.spi.ModelCharged(m, Usage(10, 20, 100, 30), 0.5, "USD")),
+            record(dev.min.agent.spi.ModelCharged(m, Usage(1, 2, 3, 4), 0.25, "USD")),
+            record(dev.min.agent.spi.ModelCharged(cny, Usage(5, 6, 0, 0), 3.0, "CNY")),
+            record(dev.min.agent.spi.ModelCharged(unpriced, Usage(7, 8, 0, 0), null, null)),
+        )
+        val limits = { ref: ModelRef -> if (ref == m) ModelLimits(200_000, 64_000) else null }
+        val usage = CliResult("s", events, modelLimits = limits).json()["modelUsage"]!!.jsonObject
+        assertEquals(setOf("claude-x", "deepseek-y", "free-z"), usage.keys)
+        val first = usage["claude-x"]!!.jsonObject
+        // SDK 的 ModelUsage：键名与大小写照原文（inputTokens、cacheReadInputTokens、costUSD……）
+        assertEquals(JsonPrimitive(11), first["inputTokens"])
+        assertEquals(JsonPrimitive(22), first["outputTokens"])
+        assertEquals(JsonPrimitive(103), first["cacheReadInputTokens"])
+        assertEquals(JsonPrimitive(34), first["cacheCreationInputTokens"])
+        assertEquals(0.75, first["costUSD"]!!.jsonPrimitive.content.toDouble(), 1e-9)
+        assertEquals(JsonPrimitive(200_000), first["contextWindow"])
+        assertEquals(JsonPrimitive(64_000), first["maxOutputTokens"])
+        assertEquals("anthropic", first["provider"]!!.jsonPrimitive.content)
+        // Min 拿不到的：webSearchRequests 没有按模型的账；非 USD / 没有价格的模型没有 costUSD；目录里查不到上限的没有 contextWindow
+        assertNull(first["webSearchRequests"])
+        val second = usage["deepseek-y"]!!.jsonObject
+        assertNull("CNY 计价不能冒充 USD", second["costUSD"])
+        assertNull(second["contextWindow"])
+        assertNull(usage["free-z"]!!.jsonObject["costUSD"])
+    }
+
+    @Test
+    fun `modelUsage is an empty object and duration_api_ms is 0 for a run with no requests`() {
+        val json = CliResult("s", emptyList()).json()
+        assertEquals(JsonObject(emptyMap()), json["modelUsage"])
+        assertEquals(JsonPrimitive(0), json["duration_api_ms"])
+    }
+
+    @Test
+    fun `duration_api_ms sums the time of the model requests, failed attempts included`() {
+        fun at(ms: Long, event: SessionEvent) = EventRecord(1, ms, event)
+        val t = TurnId("t")
+        val events = listOf(
+            at(1000, ModelRequestStarted(t, RequestId("r1"), 1, ModelRef("p", "m"), "f")),
+            at(1300, dev.min.agent.spi.ModelRequestFailed(t, RequestId("r1"), 1, dev.min.agent.spi.ModelFailureKind.Overloaded, "busy", 529, true)),
+            at(2000, ModelRequestStarted(t, RequestId("r1"), 2, ModelRef("p", "m"), "f")),
+            at(2700, AssistantMessageCompleted(t, RequestId("r1"), MessageId("m1"), listOf(TextPart("ok")), Usage(), StopReason.EndTurn)),
+            at(3000, TurnEnded(t, TurnOutcome.Completed, Usage(), 2000)),
+        )
+        assertEquals(JsonPrimitive(1000), CliResult("s", events).json()["duration_api_ms"])
+    }
 }

@@ -49,10 +49,16 @@ internal suspend fun runHeadless(
     // 交给 hub：子 agent 的审批也按 --approve 答掉——以前只答根会话的，子 agent 要审批时整次运行挂到超时（评测集 v1 第 32 题实测）
     // stdio 控制协议（stream-json 输入）：权限询问交给宿主只在 --permission-prompt-tool stdio 且没有 --permission-prompts none 时
     val control = if (args.inputFormat == InputFormat.StreamJson) StdioControl(stdout) else null
-    val host = control.takeIf { args.permissionPromptTool == "stdio" && args.permissionPrompts == PermissionPrompts.Host }
+    val consulted = args.permissionPrompts == PermissionPrompts.Host
+    val host: ApprovalHost? = if (!consulted) null else when (val tool = args.permissionPromptTool) {
+        null -> null
+        "stdio" -> control
+        // MCP 工具名：要审批的调用经这个 MCP 工具问（不要求 stream-json）
+        else -> McpApprovalHost(runtime, tool, stderr)
+    }
     val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub(), host).attach(scope)
     try {
-        if (args.inputFormat == InputFormat.StreamJson) return runStreamInput(app, runtime, args, scope, stdin, stdout, stderr, checkNotNull(control))
+        if (args.inputFormat == InputFormat.StreamJson) return runStreamInput(app, runtime, args, scope, stdin, stdout, stderr, checkNotNull(control), host)
         val renderer = if (args.outputFormat == OutputFormat.StreamJson) {
             StreamJsonRenderer(app, runtime, args, stdout).also { it.start(scope) }
         } else null
@@ -63,6 +69,8 @@ internal suspend fun runHeadless(
         result.errors.forEach(stderr::println)
         printResult(args, result, stdout, renderer)
         renderer?.close()
+        // --permission-prompt-tool 指的 MCP 工具没连上：原文要求这次运行以那条错误、退出码 1 收场
+        if (host?.fatal != null) return 1
         return if (result.completed) 0 else 1
     } finally {
         ui.cancel()
@@ -126,6 +134,7 @@ internal suspend fun runPrompt(
     return PromptRun.Done(
         CliResult(
             runtime.sessionId.value, events, app.hub().runCostOf(runtime.sessionId),
+            modelLimits = app::modelLimits,
             goalUnmet = goal?.let { goalUnmetReason(runtime.state.value.goal, events) },
         ),
     )

@@ -288,6 +288,13 @@ internal class DesktopApp(
     /** stream-json 的 init 行用：`供应商/模型 id` */
     internal fun modelLabel(): String = "${provider.id}/${profile.ref.modelId}"
 
+    /** -p 结果 modelUsage 的窗口与输出上限：先看这次启动配置过的模型（含 --context / --max-output 的覆盖），再查目录；都没有 = 不知道 */
+    internal fun modelLimits(ref: ModelRef): ModelLimits? {
+        val profile = (listOfNotNull(profile, fastSelection?.profile) + fallback.selections.values.map { it.profile }).firstOrNull { it.ref == ref }
+            ?: Catalog.bundled().model(ref)
+        return profile?.let { ModelLimits(it.contextWindow, it.maxOutputTokens) }
+    }
+
     /** stream-json 的 initialize 应答用：磁盘上可用的输出样式名（与 `/output-style` 列的同一份） */
     internal suspend fun availableStyleNames(): List<String> = outputStyles().values.map { it.name }
 

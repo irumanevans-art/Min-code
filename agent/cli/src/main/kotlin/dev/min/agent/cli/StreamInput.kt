@@ -151,6 +151,7 @@ internal suspend fun runStreamInput(
     stdout: PrintStream,
     stderr: PrintStream,
     control: StdioControl,
+    host: ApprovalHost? = null,
 ): Int {
     val renderer = if (args.outputFormat == OutputFormat.StreamJson) {
         StreamJsonRenderer(app, runtime, args, stdout, hostDecidesPermissions = args.permissionPromptTool == "stdio" && args.permissionPrompts == PermissionPrompts.Host).also { it.start(scope) }
@@ -232,6 +233,8 @@ internal suspend fun runStreamInput(
     if (held.isNotEmpty()) stderr.println("stdin 已关闭，${held.size} 条 shouldQuery:false 的消息没有等到下一条触发回合的消息，已丢弃")
     lastJson?.let { stdout.println(it.toString()) }
     renderer?.close()
+    // 权限提示工具找不到：原文要求以那条错误、退出码 1 收场（不论最后一轮怎样）
+    if (host?.fatal != null) exit = 1
     return exit
 }
 

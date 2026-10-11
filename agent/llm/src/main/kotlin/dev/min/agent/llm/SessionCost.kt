@@ -26,7 +26,14 @@ data class CostTotals(
 }
 
 /** 一个模型的累计用量（计费点按模型聚合而来） */
-data class ModelUsage(val requests: Int, val usage: Usage) {
+data class ModelUsage(
+    val requests: Int,
+    val usage: Usage,
+    /** 这个模型按币种累计的花费（跨币种分列，不换算）；没有价格的请求不进来，记在 [unpriced] */
+    val amounts: Map<String, Double> = emptyMap(),
+    /** 花费未知的请求次数 */
+    val unpriced: Int = 0,
+) {
     /** 缓存命中率：缓存读 ÷ 输入侧总量（输入 + 缓存读写）。输入侧为 0 时没有意义，返回 null */
     val cacheReadRatio: Double?
         get() {
@@ -50,9 +57,12 @@ fun totalCost(points: List<ChargedCost>): CostTotals {
             unpriced++
         }
         val prev = perModel[point.model]
+        val priced = point.amount != null && point.currency != null
         perModel[point.model] = ModelUsage(
             requests = (prev?.requests ?: 0) + 1,
             usage = (prev?.usage ?: Usage()) + point.usage,
+            amounts = if (priced) (prev?.amounts.orEmpty() + (point.currency!! to ((prev?.amounts?.get(point.currency) ?: 0.0) + point.amount!!))) else prev?.amounts.orEmpty(),
+            unpriced = (prev?.unpriced ?: 0) + if (priced) 0 else 1,
         )
     }
     return CostTotals(byCurrency, unpriced, perModel)

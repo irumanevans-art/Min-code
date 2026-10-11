@@ -279,4 +279,117 @@ class StreamSystemTest {
         val subtypes = out.ofType("system").map { it.str("subtype") }
         assertEquals(listOf("init"), subtypes)
     }
+
+    // ---- thinking_tokens / commands_changed / tool_progress / task_progress ----
+
+    @Test fun `a thinking block gives thinking_tokens estimates and the result carries modelUsage with the catalog limits`() {
+        val out = runOnce("think", listOf("--provider", "deepseek-openai", "--model", "deepseek-flash", "-p", "T_THINK") + stream, { _ ->
+            response("stop", buildJsonObject {
+                put("role", "assistant"); put("reasoning_content", "先想想这个问题，再回答"); put("content", "THINK_DONE")
+            })
+        })
+        assertEquals(out.stdout + out.stderr, 0, out.exit)
+        val rows = out.system("thinking_tokens")
+        assertTrue("有思考块就有估算行", rows.isNotEmpty())
+        rows.forEach {
+            // SDKThinkingTokensMessage：estimated_tokens（本块累计）/ estimated_tokens_delta（这一帧）
+            assertEquals(setOf("type", "subtype", "estimated_tokens", "estimated_tokens_delta", "uuid", "session_id"), it.keys)
+            assertTrue(it["estimated_tokens_delta"]!!.jsonPrimitive.content.toInt() >= 1)
+        }
+        assertEquals(rows.sumOf { it["estimated_tokens_delta"]!!.jsonPrimitive.content.toInt() }, rows.last()["estimated_tokens"]!!.jsonPrimitive.content.toInt())
+        // 目录里的模型：contextWindow / maxOutputTokens 取自目录，provider 带上
+        val usage = out.results.single()["modelUsage"]!!.jsonObject["deepseek-flash"]!!.jsonObject
+        assertEquals(JsonPrimitive(1048576), usage["contextWindow"])
+        assertEquals("deepseek-openai", usage.str("provider"))
+        assertTrue(out.results.single()["duration_api_ms"]!!.jsonPrimitive.content.toLong() >= 0)
+    }
+
+    @Test fun `no thinking block means no thinking_tokens`() {
+        val out = runOnce("nothink", listOf("-p", "T_PLAIN") + stream, { textResponse("PLAIN") })
+        assertTrue(out.system("thinking_tokens").isEmpty())
+    }
+
+    @Test fun `a skill found in a subdirectory gives commands_changed with the full updated list`() {
+        // Read 的路径要写进剧本，而工作目录在 prepare 里才知道：路由闭包读它
+        var notePath = ""
+        val out = runT {
+            ModelServer { last ->
+                if (last.contains("T_READ")) toolResponse("rd1", "Read", buildJsonObject { put("file_path", notePath) }) else textResponse("READ_DONE")
+            }.use { server ->
+                startLive(tmp.root.toPath(), scope(), "nested", server, listOf("-p", "T_READ") + stream) { work ->
+                    val note = work.resolve("sub/note.txt")
+                    Files.createDirectories(note.parent)
+                    Files.writeString(note, "hello")
+                    val skill = work.resolve("sub/.claude/skills/nested-skill/SKILL.md")
+                    Files.createDirectories(skill.parent)
+                    Files.writeString(skill, "---\nname: nested-skill\ndescription: from a subdirectory\n---\nDo it.")
+                    notePath = guest(note)
+                }.finish()
+            }
+        }
+        assertEquals(out.stdout + out.stderr, 0, out.exit)
+        val changed = out.system("commands_changed")
+        assertTrue(out.stdout, changed.isNotEmpty())
+        val commands = changed.last()["commands"]!!.jsonArray.map { it.jsonObject }
+        val nested = commands.single { it.str("name") == "nested-skill" }
+        // SlashCommand：name / description / argumentHint
+        assertEquals("from a subdirectory", nested.str("description"))
+        assertTrue("argumentHint" in nested.keys)
+    }
+
+    @Test fun `a running tool gets heartbeat tool_progress rows`() {
+        val saved = streamHeartbeatMs
+        streamHeartbeatMs = 200
+        try {
+            val out = runOnce("heartbeat", listOf("-p", "T_SLEEP") + stream, { last ->
+                if (last.contains("T_SLEEP")) toolResponse("sl1", "Bash", buildJsonObject { put("command", "sleep 2") }) else textResponse("SLEPT")
+            })
+            assertEquals(0, out.exit)
+            val beats = out.ofType("tool_progress")
+            assertTrue(out.stdout, beats.isNotEmpty())
+            val beat = beats.first()
+            // SDKToolProgressMessage：type 是顶层 tool_progress，不是 system
+            assertEquals(setOf("type", "tool_use_id", "tool_name", "parent_tool_use_id", "elapsed_time_seconds", "heartbeat", "uuid", "session_id"), beat.keys)
+            assertEquals("sl1", beat.str("tool_use_id"))
+            assertEquals("Bash", beat.str("tool_name"))
+            assertEquals(JsonNull, beat["parent_tool_use_id"])
+            assertEquals(JsonPrimitive(true), beat["heartbeat"])
+            assertTrue(beat["elapsed_time_seconds"]!!.jsonPrimitive.content.toDouble() >= 0.0)
+            // 工具结束之后不再有心跳
+            val lastBeat = out.lines.indexOfLast { it.str("type") == "tool_progress" }
+            val toolResult = out.lines.indexOfFirst { it.str("type") == "user" }
+            assertTrue("心跳都在工具结果之前（$lastBeat / $toolResult）", lastBeat < toolResult)
+        } finally {
+            streamHeartbeatMs = saved
+        }
+    }
+
+    @Test fun `a subagent that uses tools reports task_progress with usage and the last tool`() {
+        val out = runOnce("progress", listOf("-p", "T_DELEGATE") + stream, { last ->
+            when {
+                last.contains("T_DELEGATE") -> toolResponse("a1", "Agent", buildJsonObject {
+                    put("description", "去看一眼"); put("prompt", "去看看"); put("subagent_type", "general-purpose"); put("run_in_background", false)
+                })
+                last.contains("去看看") -> toolResponse("cb1", "Bash", buildJsonObject { put("command", "echo child") })
+                last.contains("child") -> textResponse("CHILD_DONE")
+                else -> textResponse("PARENT_DONE")
+            }
+        })
+        assertEquals(out.stdout + out.stderr, 0, out.exit)
+        val started = out.system("task_started").single()
+        val progress = out.system("task_progress")
+        assertTrue(out.stdout, progress.isNotEmpty())
+        val row = progress.last()
+        // SDKTaskProgressMessage：task_id / tool_use_id / description / subagent_type / usage / last_tool_name；summary 要 agentProgressSummaries，Min 没有
+        assertEquals(setOf("type", "subtype", "task_id", "tool_use_id", "description", "subagent_type", "usage", "last_tool_name", "uuid", "session_id"), row.keys)
+        assertEquals(started.str("task_id"), row.str("task_id"))
+        assertEquals("a1", row.str("tool_use_id"))
+        assertEquals("general-purpose", row.str("subagent_type"))
+        assertEquals("Bash", row.str("last_tool_name"))
+        val usage = row["usage"]!!.jsonObject
+        assertEquals(setOf("total_tokens", "tool_uses", "duration_ms"), usage.keys)
+        assertEquals(JsonPrimitive(1), usage["tool_uses"])
+        val order = out.lines.map { it.str("subtype") ?: it.str("type") }
+        assertTrue(order.toString(), order.indexOf("task_progress") < order.indexOf("task_updated"))
+    }
 }

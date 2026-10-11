@@ -53,6 +53,8 @@ internal data class CliResult(
     val localCommand: String? = null,
     /** 结果行的 uuid（SDK 的 result 必带）；默认每个结果新生成 */
     val uuid: String = java.util.UUID.randomUUID().toString(),
+    /** 模型的窗口与输出上限（modelUsage 的 contextWindow / maxOutputTokens）：查不到的模型返回 null，对应键省略 */
+    val modelLimits: (dev.min.agent.protocol.ModelRef) -> ModelLimits? = { null },
 ) {
     private val ends = events.mapNotNull { it.event as? TurnEnded }
     val completed: Boolean get() = goalUnmet == null && protocolError == null &&
@@ -141,7 +143,9 @@ internal data class CliResult(
         put("stop_reason", stopReason?.let(::JsonPrimitive) ?: JsonNull)
         put("num_turns", numTurns)
         put("duration_ms", durationMs)
+        put("duration_api_ms", apiDurationMs)
         put("usage", usageJson(turnUsage))
+        put("modelUsage", modelUsageJson())
         // 花费：全部 USD 计价才有 CC 的 total_cost_usd；跨币种（回退到 CNY 计价模型）时换 Min 自己的
         // total_cost 按币种分列——两种都给会让人以为换过算好了，只给真量得出的那个
         if (cost.byCurrency.isNotEmpty()) {
@@ -155,6 +159,46 @@ internal data class CliResult(
         terminalReason?.let { put("terminal_reason", it) }
         // SDK 里 permission_denials 是两个臂都必带的数组：没有被拒的就是空数组，不省略
         put("permission_denials", JsonArray(denials))
+    }
+
+    /**
+     * 模型请求花的时间（SDK 的 duration_api_ms）：每个请求从 ModelRequestStarted 到它的完成或失败事件的时间差之和，
+     * 失败后重试的几次各算各的。事件时间是落盘时刻，所以含一点点提交开销——量不出的（没有对应收尾事件）不计
+     */
+    private val apiDurationMs: Long get() {
+        var total = 0L
+        var openAt: Long? = null
+        for (record in events) {
+            when (record.event) {
+                is ModelRequestStarted -> openAt = record.atMs
+                is AssistantMessageCompleted, is dev.min.agent.spi.ModelRequestFailed -> openAt?.let { total += (record.atMs - it).coerceAtLeast(0); openAt = null }
+                else -> Unit
+            }
+        }
+        return total
+    }
+
+    /**
+     * SDK 的 modelUsage：按模型名分的用量与花费（本次运行整棵树，多轮输入时跨轮累计）。Min 拿不到的键省略：
+     * webSearchRequests（搜索次数没有按模型记）、thinkingTokens（用量里没有单列）；costUSD 只在这个模型的全部请求都是 USD 计价时给
+     * （CNY 之类不能冒充 USD，总账里按币种分列的 total_cost 另给）；窗口与输出上限查不到的模型没有这两个键
+     */
+    private fun modelUsageJson(): JsonObject {
+        val byName = cost.perModel.entries.groupBy { it.key.modelId }
+        return buildJsonObject {
+            cost.perModel.forEach { (ref, usage) ->
+                val name = if ((byName[ref.modelId]?.size ?: 1) > 1) "${ref.providerId}/${ref.modelId}" else ref.modelId
+                put(name, buildJsonObject {
+                    put("inputTokens", usage.usage.inputTokens)
+                    put("outputTokens", usage.usage.outputTokens)
+                    put("cacheReadInputTokens", usage.usage.cacheReadTokens)
+                    put("cacheCreationInputTokens", usage.usage.cacheWriteTokens)
+                    if (usage.unpriced == 0 && usage.amounts.keys == setOf("USD")) put("costUSD", round6(usage.amounts.getValue("USD")))
+                    modelLimits(ref)?.let { put("contextWindow", it.contextWindow); put("maxOutputTokens", it.maxOutputTokens) }
+                    put("provider", ref.providerId)
+                })
+            }
+        }
     }
 
     /** 最后一次模型请求的停止原因（result.stop_reason：string | null）；没有请求 = null */
@@ -174,6 +218,9 @@ internal data class CliResult(
     /** 花费数值的位数：截到 1e-6，去掉浮点尾噪（CC 给到 6 位左右） */
     private fun round6(value: Double): Double = kotlin.math.round(value * 1_000_000.0) / 1_000_000.0
 }
+
+/** 一个模型的窗口与输出上限（modelUsage 用） */
+internal data class ModelLimits(val contextWindow: Int, val maxOutputTokens: Int)
 
 private fun usageJson(usage: Usage): JsonObject = buildJsonObject {
     // 键名照 CC（04 :103）：cache 写入叫 cache_creation_input_tokens、读取叫 cache_read_input_tokens

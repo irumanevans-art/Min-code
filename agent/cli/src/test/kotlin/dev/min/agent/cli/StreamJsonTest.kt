@@ -247,7 +247,7 @@ class StreamJsonTest {
         // SDKResultMessage success 臂里 Min 有数据的键（modelUsage / duration_api_ms 等 Min 没有，省略不编）
         val required = setOf(
             "type", "subtype", "uuid", "is_error", "result", "session_id", "stop_reason", "num_turns",
-            "duration_ms", "usage", "terminal_reason", "permission_denials",
+            "duration_ms", "duration_api_ms", "usage", "modelUsage", "terminal_reason", "permission_denials",
         )
         assertTrue("缺：${required - result.keys}", result.keys.containsAll(required))
         assertFalse("success 臂不带 errors", "errors" in result.keys)

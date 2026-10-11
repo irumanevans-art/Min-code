@@ -36,10 +36,10 @@ internal class ConsoleUi(
     private val out: PrintStream,
     private val hub: dev.min.agent.kernel.SessionHub? = null,
     /**
-     * `--permission-prompt-tool stdio`：要审批的工具调用（根会话与子 agent）与 AskUserQuestion 交给 stdio 上的宿主，
+     * `--permission-prompt-tool`（stdio 上的宿主，或 MCP 工具）：要审批的工具调用（根会话与子 agent）与 AskUserQuestion 交给它，
      * 不按 [approve] 自动答。网络域名审批仍按 [approve]（宿主协议里没有对应的询问）
      */
-    private val control: StdioControl? = null,
+    private val host: ApprovalHost? = null,
 ) {
     private val announced = mutableSetOf<CallId>()
     private val finished = mutableSetOf<CallId>()
@@ -93,7 +93,7 @@ internal class ConsoleUi(
                 if (announced.add(call.callId)) out.println("\n▸ ${call.tool} ${summarize(call.input.toString())}")
                 when (val phase = call.phase) {
                     is CallPhase.AwaitingApproval -> if (answered.add(phase.approvalId.value)) {
-                        if (control != null) {
+                        if (host != null) {
                             hostAsk(runtime, null, phase.approvalId.value, call.callId, call.tool, call.input, phase.ask.summary)
                             return@forEach
                         }
@@ -138,7 +138,7 @@ internal class ConsoleUi(
                 when (val what = item.what) {
                     is dev.min.agent.kernel.HubPending.What.Network -> Unit
                     is dev.min.agent.kernel.HubPending.What.Approval -> if (answered.add(what.approvalId.value)) {
-                        if (control != null) {
+                        if (host != null) {
                             val input = target.state.value.turn?.calls?.get(what.callId)?.input ?: kotlinx.serialization.json.JsonObject(emptyMap())
                             hostAsk(target, item.session.value, what.approvalId.value, what.callId, what.tool, input, what.ask.summary)
                             return@forEach
@@ -156,7 +156,7 @@ internal class ConsoleUi(
                     }
                 }
             }
-            if (control != null) {
+            if (host != null) {
                 val awaiting = calls.mapNotNull { (it.phase as? CallPhase.AwaitingApproval)?.approvalId?.value }.toSet() +
                     pending.filter { it.root == runtime.sessionId }.mapNotNull { (it.what as? dev.min.agent.kernel.HubPending.What.Approval)?.approvalId?.value } +
                     (listOf(runtime) + pending.filter { it.root == runtime.sessionId }.mapNotNull { hub?.get(it.session) }).flatMap { r -> r.state.value.turn?.pendingQuestions.orEmpty().map { it.questionId.value } }
@@ -198,7 +198,7 @@ internal class ConsoleUi(
     private fun hostAsk(target: SessionRuntime, agentId: String?, approvalId: String, callId: CallId, tool: String, input: kotlinx.serialization.json.JsonObject, summary: String) {
         val job = uiScope.launch {
             target.notifyHooks("permission_prompt", "Claude needs your permission", "Permission needed")
-            val decision = control!!.ask(StdioControl.HostAsk(target.sessionId, callId, tool, input, summary, agentId))
+            val decision = host!!.ask(StdioControl.HostAsk(target.sessionId, callId, tool, input, summary, agentId))
             target.answerApproval(dev.min.agent.protocol.ApprovalId(approvalId), decision.choice)
             if (decision.interrupt) runtime.interrupt()
         }
@@ -220,7 +220,7 @@ internal class ConsoleUi(
                     }
                 }))
             }
-            val decision = control!!.ask(StdioControl.HostAsk(target.sessionId, asked.callId, "AskUserQuestion", input, "AskUserQuestion"), rewritable = true)
+            val decision = host!!.ask(StdioControl.HostAsk(target.sessionId, asked.callId, "AskUserQuestion", input, "AskUserQuestion"), rewritable = true)
             val answers = if (decision.choice == ApprovalChoice.Once) decision.updatedInput?.let { hostQuestionAnswers(asked.questions, it) } else null
             if (answers == null) target.declineQuestion(asked.questionId)
             else try { target.answerQuestion(asked.questionId, answers) } catch (e: IllegalArgumentException) { target.declineQuestion(asked.questionId) }
@@ -231,7 +231,7 @@ internal class ConsoleUi(
 
     /** 回车是拒答；外部请求遇到输入流结束需要回 cancel，不能混成用户明确拒绝。 */
     private suspend fun answerQuestions(asked: AskedQuestion, target: SessionRuntime = runtime) {
-        if (control != null && asked.server == null) {
+        if (host != null && asked.server == null) {
             hostQuestion(asked, target)
             return
         }

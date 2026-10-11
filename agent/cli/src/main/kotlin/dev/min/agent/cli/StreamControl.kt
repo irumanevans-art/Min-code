@@ -18,6 +18,17 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
+ * 权限询问的去处：stdio 上的宿主（[StdioControl]）或 MCP 权限提示工具（[McpApprovalHost]）。[ask] 返回裁决后的答复；
+ * 任何「没问成 / 没答 / 答得不对」都是拒绝，不是批准
+ */
+internal interface ApprovalHost {
+    suspend fun ask(ask: StdioControl.HostAsk, rewritable: Boolean = false): StdioControl.AskDecision
+
+    /** 这次运行必须以出错收场的原因（提示工具找不到）；null = 没有 */
+    val fatal: String? get() = null
+}
+
+/**
  * `-p --input-format stream-json` 的 stdio 控制协议（CC：Agent SDK 与 CLI 之间的 control_request / control_response）。
  *
  * 信封（cc-sdk-typescript.md：`{ type: "control_request", request_id, request }`，`control_response` 必须回显 `request_id`）：
@@ -35,7 +46,7 @@ import java.util.concurrent.ConcurrentHashMap
  *    又不能悄悄按原入参执行（宿主要的是改写后的——例如把命令限制进沙箱）；
  * 5. `updatedPermissions` 一律不采纳：宿主一句话不能给本机写下持久的放行规则。
  */
-internal class StdioControl(private val out: PrintStream) {
+internal class StdioControl(private val out: PrintStream) : ApprovalHost {
     /** 一次发给宿主、还没回话的询问 */
     private class PendingAsk(val request: JsonObject, val original: JsonObject, val rewritable: Boolean, val answer: CompletableDeferred<AskDecision>)
 
@@ -60,7 +71,7 @@ internal class StdioControl(private val out: PrintStream) {
      * 问宿主并等答复。协程被取消（回合被中断、审批已经不在等了）时给宿主发 `control_cancel_request`、清掉未决项后把取消继续抛出。
      * 宿主已断开 = 立刻拒绝，不发任何东西
      */
-    suspend fun ask(ask: HostAsk, rewritable: Boolean = false): AskDecision {
+    override suspend fun ask(ask: HostAsk, rewritable: Boolean): AskDecision {
         if (closed) return AskDecision(denial("宿主已断开（stdin 已关闭），没有人能批准这次调用"))
         val id = UUID.randomUUID().toString()
         val request = buildJsonObject {
@@ -141,6 +152,14 @@ internal class StdioControl(private val out: PrintStream) {
             }
             val body = response["response"] as? JsonObject
                 ?: return AskDecision(denial("宿主的答复里没有 response 对象，按拒绝处理"))
+            return decideBody(body, original, rewritable)
+        }
+
+        /**
+         * PermissionResult 本体（`{behavior: allow|deny, updatedInput?, message?, interrupt?}`）的裁决——stdio 宿主的 control_response
+         * 与 MCP 权限提示工具的结果共用这一处，两条路的放行条件一字不差
+         */
+        internal fun decideBody(body: JsonObject, original: JsonObject, rewritable: Boolean): AskDecision {
             return when (val behavior = (body["behavior"] as? JsonPrimitive)?.contentOrNull) {
                 "allow" -> {
                     val updated = body["updatedInput"]

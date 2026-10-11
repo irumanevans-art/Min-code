@@ -201,9 +201,12 @@ internal class LiveRun(
 /** 起一次 stream-json 运行（与 Main 同一条 runHeadless），立即返回，由 [LiveRun] 驱动 */
 internal suspend fun startLive(
     root: java.nio.file.Path, scope: kotlinx.coroutines.CoroutineScope, name: String, server: ModelServer, extra: List<String>,
+    /** 工作目录建好之后、会话打开之前先放点文件（嵌套 skill、.mcp.json……） */
+    prepare: (java.nio.file.Path) -> Unit = {},
 ): LiveRun {
     val home = java.nio.file.Files.createDirectories(root.resolve("$name-home"))
     val work = java.nio.file.Files.createDirectories(root.resolve("$name-work"))
+    prepare(work)
     val args = parseArgs(baselineArgv(server, work) + extra.toTypedArray(), work)
     val stdin = QueueReader()
     val out = java.io.ByteArrayOutputStream()

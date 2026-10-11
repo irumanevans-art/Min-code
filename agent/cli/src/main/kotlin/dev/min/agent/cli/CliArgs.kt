@@ -130,6 +130,8 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
                          每条消息一个回合，stdin 关闭即结束；输出格式不限（text 逐轮打最终回复，json 只打最后一轮的结果，stream-json 全量）；
                          --approve ask 不可用（stdin 被占用）
   --replay-user-messages 把 stdin 收到的用户消息回显到 stdout（要求输入输出都是 stream-json）
+  --permission-prompt-tool <mcp__服务器__工具>  权限询问经这个 MCP 工具问（CC 同名）：入参 {tool_name, input, tool_use_id}，结果是文本里的 PermissionResult JSON；
+                         工具找不到 = 报错退出（退出码 1）；报错 / 非 JSON / 缺 behavior / 改写入参 = 拒绝；标了 requiresUserInteraction 的工具 allow 也转拒绝
   --permission-prompt-tool stdio  权限询问交给 stdio 上的宿主（要求 -p 与两端 stream-json）：要审批的调用以 control_request / can_use_tool 发到 stdout，
                          宿主用 control_response（behavior: allow / deny）答复；未应答（含 stdin 关闭）= 拒绝。只认 stdio，不接 MCP 权限提示工具
   --permission-prompts host|none  none = 不问宿主，要审批的一律拒绝（-p 专用）
@@ -294,9 +296,14 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     }
     val promptTool = values["--permission-prompt-tool"]
     if (promptTool != null) {
-        // 原文的 --permission-prompt-tool 是 MCP 工具名；Min 没有这条路，只接 stdio（宿主在 stdin / stdout 上答）
-        if (promptTool != "stdio") throw UsageException("--permission-prompt-tool 只支持 stdio（Min 不接 MCP 权限提示工具，实际是 \"$promptTool\"）")
-        if (inputFormat != InputFormat.StreamJson || outputFormat != OutputFormat.StreamJson) {
+        // 原文（CLI reference）的 --permission-prompt-tool 是 MCP 工具名：mcp__服务器__工具。stdio 是 SDK 控制协议的取值
+        // （宿主在 stdin / stdout 上答），来自 SDK 而不是 CLI 参考页，Min 两种都认
+        val mcpName = Regex("mcp__.+?__.+").matches(promptTool)
+        if (promptTool != "stdio" && !mcpName) {
+            throw UsageException("--permission-prompt-tool 要么是 MCP 工具名（mcp__服务器__工具），要么是 stdio（SDK 控制协议），实际是 \"$promptTool\"")
+        }
+        if (prompt == null) throw UsageException("--permission-prompt-tool 只在 -p 非交互模式下可用")
+        if (promptTool == "stdio" && (inputFormat != InputFormat.StreamJson || outputFormat != OutputFormat.StreamJson)) {
             throw UsageException("--permission-prompt-tool stdio 要与 -p、--input-format stream-json 和 --output-format stream-json 一起用（询问与答复都走 stdio）")
         }
     }
