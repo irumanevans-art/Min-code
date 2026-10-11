@@ -1151,6 +1151,17 @@
   <string name="composer_cost_session">This session %1$s</string>
   <string name="composer_tokens">↑%1$s ↓%2$s</string>
   <string name="min_usage_tokens">Tokens sent / received</string>
+  <string name="cache_break_title">Last cache break · %1$s</string>
+  <string name="cache_break_detail">%1$s cacheable before, %2$s read back, %3$s written again</string>
+  <string name="cache_break_model">Model switched: %1$s → %2$s</string>
+  <string name="cache_break_provider">Provider switched: %1$s → %2$s</string>
+  <string name="cache_break_prefix">System prompt or tool list changed (e.g. MCP tools added or removed)</string>
+  <string name="cache_break_compacted">Context was compacted</string>
+  <string name="cache_break_masked">Old tool outputs were masked</string>
+  <string name="cache_break_rewound">Conversation was rewound</string>
+  <string name="cache_break_effort">Thinking effort changed</string>
+  <string name="cache_break_idle">%1$s minutes since the previous request; the provider may have expired the cache</string>
+  <string name="cache_break_unknown">Nothing in the session log explains it (the provider may have dropped the cache)</string>
   <string name="min_agent_attachment">[attachment]</string>
   <string name="min_agent_redacted_thinking">[encrypted thinking]</string>
   <string name="min_agent_mode_default">Ask each time</string>

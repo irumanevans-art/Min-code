@@ -125,6 +125,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
                 base.copy(
                     costLabel = cost.totalLabel(), subagentCostLabel = cost.subagentLabel(),
                     totalInputTokens = tokensIn.takeIf { it > 0 }, totalOutputTokens = tokensOut.takeIf { it > 0 },
+                    cacheBreak = cacheBreakViewOf(root.cacheWatch.lastBreak, lookup),
                 )
             },
             tasks = input.tasks,
@@ -263,3 +264,14 @@ fun usageViewOf(state: SessionState, contextWindow: Int?): UsageView {
     )
 }
 
+/** 内核的缓存失效 -> 通用视图。换了供应商时两头写供应商名（档被删了就写 id），否则写模型 id */
+fun cacheBreakViewOf(broke: dev.min.agent.kernel.CacheBreak?, lookup: MinModelLookup): dev.min.code.core.engine.CacheBreakView? {
+    broke ?: return null
+    val providerSwitch = dev.min.agent.kernel.CacheBreakReason.ProviderChanged in broke.reasons
+    fun name(ref: ModelRef) = if (providerSwitch) lookup.providerLabel(ref.providerId) ?: ref.providerId else ref.modelId
+    return dev.min.code.core.engine.CacheBreakView(
+        atMs = broke.atMs, cachedBefore = broke.cachedBefore, readNow = broke.readNow, written = broke.written, idleMs = broke.idleMs,
+        causes = broke.reasons.map { dev.min.code.core.engine.CacheBreakCause.valueOf(it.name) },
+        fromModel = name(broke.fromModel), toModel = name(broke.toModel),
+    )
+}

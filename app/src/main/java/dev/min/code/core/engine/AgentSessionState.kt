@@ -323,12 +323,32 @@ data class UsageView(
      */
     val totalInputTokens: Long? = null,
     val totalOutputTokens: Long? = null,
+    /** 最近一次提示缓存失效与原因（只有 Min 填，见内核 `CacheWatch`）；没失效过为 null */
+    val cacheBreak: CacheBreakView? = null,
 ) {
     companion object {
         val Empty = UsageView(null, null, null, null, null, null)
     }
 }
 
+/**
+ * 一次提示缓存失效：上一次请求能缓存 [cachedBefore] token，这一次只读回 [readNow]、重写了 [written]。
+ * [causes] 只来自会话日志里的事实；为空 = 日志里没有能解释的变化，界面照实写「原因不明」，不猜。
+ * [fromModel] / [toModel] 是两次请求用的模型（换了供应商时是供应商名），换模型那一行要写出从谁换到谁
+ */
+data class CacheBreakView(
+    val atMs: Long,
+    val cachedBefore: Long,
+    val readNow: Long,
+    val written: Long,
+    val idleMs: Long,
+    val causes: List<CacheBreakCause>,
+    val fromModel: String,
+    val toModel: String,
+)
+
+/** 失效原因（镜像内核的 `CacheBreakReason`；通用层不引用内核） */
+enum class CacheBreakCause { ModelChanged, ProviderChanged, PrefixChanged, Compacted, OutputsMasked, Rewound, EffortChanged, Idle }
 
 /**
  * @param stale 会话启动之后供应商档改过，要重启才生效（CC 的 `StaleSessionsNotice`）

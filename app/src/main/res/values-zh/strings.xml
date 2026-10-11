@@ -1145,6 +1145,17 @@
   <string name="composer_cost_session">本次 %1$s</string>
   <string name="composer_tokens">↑%1$s ↓%2$s</string>
   <string name="min_usage_tokens">累计发出 / 收回</string>
+  <string name="cache_break_title">最近一次缓存失效 · %1$s</string>
+  <string name="cache_break_detail">上次可缓存 %1$s，这次只读回 %2$s，重新写入 %3$s</string>
+  <string name="cache_break_model">换了模型：%1$s → %2$s</string>
+  <string name="cache_break_provider">换了供应商：%1$s → %2$s</string>
+  <string name="cache_break_prefix">系统提示或工具表变了（例如 MCP 工具增减）</string>
+  <string name="cache_break_compacted">上下文被压缩</string>
+  <string name="cache_break_masked">旧的工具输出被遮蔽</string>
+  <string name="cache_break_rewound">对话被回退</string>
+  <string name="cache_break_effort">改了思考强度</string>
+  <string name="cache_break_idle">距上一次请求 %1$s 分钟，供应商的缓存可能已过期</string>
+  <string name="cache_break_unknown">会话日志里没有能解释的变化（可能是供应商那边清了缓存）</string>
   <string name="min_agent_attachment">[附件]</string>
   <string name="min_agent_redacted_thinking">[加密思考]</string>
   <string name="min_agent_mode_default">每次询问</string>
