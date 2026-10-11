@@ -56,7 +56,7 @@ internal suspend fun runHeadless(
         // MCP 工具名：要审批的调用经这个 MCP 工具问（不要求 stream-json）
         else -> McpApprovalHost.forRuntime(runtime, tool, stderr)
     }
-    val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub(), host).attach(scope)
+    val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub(), host = host).attach(scope)
     try {
         if (args.inputFormat == InputFormat.StreamJson) return runStreamInput(app, runtime, args, scope, stdin, stdout, stderr, checkNotNull(control), host)
         val renderer = if (args.outputFormat == OutputFormat.StreamJson) {
