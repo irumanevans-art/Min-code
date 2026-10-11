@@ -62,6 +62,8 @@ data class EngineCapabilities(
     val claudeConfigFiles: ConfigFiles,
     /** 本地顾问模型选择（Min）；其它引擎使用自己的会话设置。 */
     val advisor: Boolean = false,
+    /** 抽屉行菜单的「从这里分支」（[AgentEngine.branchSession]，Min 内核的 SessionHub.branch）。CC 的分支在它自己的 CLI 里（`/branch`），Codex 没有 */
+    val branch: Boolean = false,
 ) {
     /** 这条命令从能力位上看能不能受理。适配器的 `submit` 先问它，false 就直接返回 [CommandResult.Unsupported] */
     fun supports(command: SessionCommand): Boolean = when (command) {
@@ -127,6 +129,7 @@ data class EngineCapabilities(
         "schedule" to schedule.toString(),
         "claudeConfigFiles" to claudeConfigFiles.name,
         "advisor" to advisor.toString(),
+        "branch" to branch.toString(),
     )
 
     companion object {
@@ -248,6 +251,7 @@ data class EngineCapabilities(
             team = true,
             autoReview = true,
             advisor = true,
+            branch = true,
             schedule = true,
             claudeConfigFiles = ConfigFiles.Partial,
         )

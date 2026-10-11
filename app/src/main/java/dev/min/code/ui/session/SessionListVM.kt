@@ -89,6 +89,8 @@ class SessionListVM(
         val interrupted: Boolean = false,
         /** 进行中的定时任务数（Min）：抽屉里打「定时」标记 */
         val scheduledTasks: Int = 0,
+        /** 会话的工作目录（Min 从索引来）：开始面板的「继续最近的会话」按目录挑。不知道为 null */
+        val cwd: String? = null,
     ) {
         val ref: SessionRef get() = SessionRef(engine, id)
     }
@@ -175,6 +177,7 @@ class SessionListVM(
                     engine = EngineKind.MinAgent,
                     interrupted = m.interrupted && running == null,
                     scheduledTasks = m.scheduledTasks,
+                    cwd = m.cwd,
                 )
             }
             (orphanLive + fromDisk + fromMin).sortedWith(
@@ -297,6 +300,22 @@ class SessionListVM(
         }
         metaOf(ref).update(ref.id) { it.copy(title = trimmed) }
         if (registry.activeKey.value == ref.id) registry.onActive { it.renameSession(trimmed) }
+    }
+
+    /**
+     * 抽屉行菜单的「从这里分支」：引擎复制出一个新会话，成功后交给 [onBranched] 打开它；被拒（会话正在跑等）把原因交给 [onRefused]。
+     * 分支是内核的事，列表只是刷新一下让新会话出现
+     */
+    fun branchSession(ref: SessionRef, onBranched: (SessionRef) -> Unit, onRefused: (String?) -> Unit) {
+        viewModelScope.launch {
+            when (val outcome = agents.engine(ref.engine).branchSession(ref.id)) {
+                is dev.min.code.core.engine.BranchOutcome.Branched -> {
+                    refreshSessions()
+                    onBranched(SessionRef(ref.engine, outcome.id))
+                }
+                is dev.min.code.core.engine.BranchOutcome.Refused -> onRefused(outcome.reason)
+            }
+        }
     }
 
     private fun metaOf(ref: SessionRef): ClaudeCodeSessionMetaStore =

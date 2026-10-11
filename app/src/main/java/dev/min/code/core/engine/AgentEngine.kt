@@ -42,6 +42,19 @@ interface AgentEngine {
      * 与 CLI 的 `/rename`、按名续接同一个名字；别的引擎有自己的改名路径，默认不支持。名字规整后为空返回 false
      */
     suspend fun renameSession(id: String, title: String): Boolean = false
+
+    /**
+     * 把会话 [id] 分支成一个新会话（CC 的 `/branch` 与 `--fork-session`）：整份对话复制过去，原会话一个字不动。
+     * 只有 [EngineCapabilities.branch] 为真的引擎做；返回新会话的 id，拒绝时带给人看的原因
+     */
+    suspend fun branchSession(id: String): BranchOutcome = BranchOutcome.Refused(null)
+}
+
+sealed interface BranchOutcome {
+    data class Branched(val id: String) : BranchOutcome
+
+    /** [reason] 为 null = 这个引擎不支持分支 */
+    data class Refused(val reason: String?) : BranchOutcome
 }
 
 sealed interface EngineAvailability {

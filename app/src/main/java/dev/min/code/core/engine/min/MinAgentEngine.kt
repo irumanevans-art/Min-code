@@ -22,6 +22,7 @@ import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
 import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
 import dev.min.code.core.claudecode.DraftImage
+import dev.min.code.core.engine.BranchOutcome
 import dev.min.code.core.engine.AgentEngine
 import dev.min.code.core.engine.AgentSession
 import dev.min.code.core.engine.CloseReason
@@ -378,6 +379,22 @@ class MinAgentEngine(
             runtime.rename(title) != null
         } finally {
             hub.close(sid)
+        }
+    }
+
+    override suspend fun branchSession(id: String): BranchOutcome {
+        val sid = SessionId(id)
+        // 分支要读原会话的状态：没在线的由 Hub 临时打开，分支完再卸下（与改名同一做法）；在线的不动
+        val wasLoaded = hub.get(sid) != null
+        return try {
+            val branched = hub.branch(sid)
+            // 新会话先卸下，由页面按普通的「打开会话」接上（登记、前台服务、通知都走同一条路）
+            hub.close(branched.sessionId)
+            BranchOutcome.Branched(branched.sessionId.value)
+        } catch (e: dev.min.agent.kernel.SessionBranchRefused) {
+            BranchOutcome.Refused(e.message)
+        } finally {
+            if (!wasLoaded && sessions.value[sid] == null) hub.close(sid)
         }
     }
 

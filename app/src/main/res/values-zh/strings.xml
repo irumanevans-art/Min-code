@@ -175,6 +175,9 @@
   <string name="session_meta_pinned">置顶</string>
   <string name="session_meta_live">运行中</string>
   <string name="session_end">结束会话</string>
+  <string name="session_branch">从这里分支</string>
+  <string name="session_branch_unsupported">这个会话不能分支</string>
+  <string name="session_continue_recent">继续「%1$s」</string>
   <string name="session_meta_messages">%1$d 条</string>
   <string name="session_rename_label">标题</string>
   <string name="session_category">分类</string>

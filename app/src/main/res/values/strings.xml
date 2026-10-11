@@ -177,6 +177,9 @@
   <string name="session_meta_pinned">Pinned</string>
   <string name="session_meta_live">Running</string>
   <string name="session_end">End session</string>
+  <string name="session_branch">Branch from here</string>
+  <string name="session_branch_unsupported">This session cannot be branched</string>
+  <string name="session_continue_recent">Continue “%1$s”</string>
   <string name="session_meta_messages">%1$d msgs</string>
   <string name="session_rename_label">Title</string>
   <string name="session_category">Category</string>

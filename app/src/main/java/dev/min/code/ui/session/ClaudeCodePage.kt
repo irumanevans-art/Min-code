@@ -383,6 +383,16 @@ fun ClaudeCodePage(
             categories = listVm.sessionCategories(),
             onExportSession = sessionTransfer.export,
             onEndSession = vm::endSession,
+            onBranchSession = { ref ->
+                listVm.branchSession(
+                    ref,
+                    onBranched = { branched ->
+                        afterSidebarNav()
+                        vm.openSession(branched)
+                    },
+                    onRefused = { reason -> toaster.show(reason ?: context.getString(R.string.session_branch_unsupported), ToastType.Error) },
+                )
+            },
             onImportSession = sessionTransfer.import,
             onOpenCodex = {
                 afterSidebarNav()
@@ -505,6 +515,8 @@ fun ClaudeCodePage(
                             onCreateCwd = vm::createCwdFolder,
                             connected = connected,
                             onOpenProviders = { navController.navigate(Screen.Providers) },
+                            sessions = sessions,
+                            onContinue = { entry -> vm.openSession(entry.ref) },
                             engines = StartEngines(
                                 minVisible = minEnabled,
                                 availability = engineAvailability,
