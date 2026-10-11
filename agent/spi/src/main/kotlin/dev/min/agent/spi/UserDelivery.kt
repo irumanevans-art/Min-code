@@ -20,6 +20,14 @@ class UserFile(
     val caption: String?,
     /** null = 由客户端按文件类型决定 */
     val display: UserFileDisplay?,
+    /**
+     * 哪个会话的哪次调用发的、是这一批里的第几个。宿主据此把文件存在一个**界面也算得出来**的位置：
+     * 对话流里那张文件卡片只认识这次工具调用，不认识宿主的缓存目录。只靠调用 id 不够——有的中转站给的调用 id 是
+     * `call_0` 这种按序号起的，两个会话会撞上，所以连会话 id 一起
+     */
+    val sessionId: dev.min.agent.protocol.SessionId? = null,
+    val callId: dev.min.agent.protocol.CallId? = null,
+    val index: Int = 0,
 )
 
 /** 文件出口。[deliver] 返回 false = 没有能接收的客户端，文件没送达 */

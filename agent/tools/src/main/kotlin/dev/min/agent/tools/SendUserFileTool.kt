@@ -92,10 +92,12 @@ object SendUserFileTool : Tool<SendUserFileInput> {
 
         // 第二遍：读盘、交给宿主。宿主一个都收不下就停在第一个
         val delivered = mutableListOf<String>()
-        for (path in input.files) {
+        for ((index, path) in input.files.withIndex()) {
             val bytes = ctx.fs.read(path)
             val name = path.value.substringAfterLast('/')
-            val ok = ctx.userFiles.deliver(UserFile(name, path, mimeOf(name), bytes, input.caption, input.display))
+            val ok = ctx.userFiles.deliver(
+                UserFile(name, path, mimeOf(name), bytes, input.caption, input.display, ctx.sessionId, ctx.callId, index),
+            )
             if (!ok) return errorResult("这个环境没有可以接收文件的客户端，文件没有送达（已送达 ${delivered.size} 个）。")
             delivered += name
         }
@@ -108,8 +110,8 @@ object SendUserFileTool : Tool<SendUserFileInput> {
 
     private fun errorResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)
 
-    /** 按扩展名猜 MIME，宿主据此决定怎么打开；猜不出就是二进制 */
-    internal fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+    /** 按扩展名猜 MIME，宿主据此决定怎么打开；猜不出就是二进制。公开给宿主：手机上对话流里的文件卡片按同一张表决定点开还是分享 */
+    fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
         "png" -> "image/png"
         "jpg", "jpeg" -> "image/jpeg"
         "gif" -> "image/gif"

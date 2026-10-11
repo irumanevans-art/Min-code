@@ -61,6 +61,20 @@ class SendUserFileToolTest {
     }
 
     @Test
+    fun `each file carries the session, the call and its place in the batch, so the chat card can find it`() = runBlocking {
+        val sink = RecordingSink()
+        val c = TestToolContext().also {
+            it.fs.put("/work/a.md", "a")
+            it.fs.put("/work/sub/a.md", "b")
+        }
+        SendUserFileTool.call(object : ToolContext by c { override val userFiles: UserFileSink = sink }, "files" to paths("/work/a.md", "/work/sub/a.md"))
+        assertEquals(listOf("s1", "s1"), sink.got.map { it.sessionId?.value })
+        assertEquals(listOf("c1", "c1"), sink.got.map { it.callId?.value })
+        // 两个同名文件靠序号分开，不互相覆盖
+        assertEquals(listOf(0, 1), sink.got.map { it.index })
+    }
+
+    @Test
     fun `display unset and an unknown extension fall back to octet-stream and no display`() = runBlocking {
         val sink = RecordingSink()
         val c = TestToolContext().also { it.fs.put("/work/data.xyz", "x") }
