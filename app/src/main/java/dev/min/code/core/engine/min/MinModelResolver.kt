@@ -43,7 +43,10 @@ class MinModelResolver(
     override fun resolve(ref: ModelRef): ResolvedModel {
         val profile = checkNotNull(profile(ref.providerId)) { "供应商档 ${ref.providerId} 不存在（可能已被删除）" }
         check(!profile.missingToken) { "供应商「${profile.displayName()}」没有 key" }
-        val selection = selectProvider(profile, ref.modelId, catalog)
+        val (modelId, oneMillion) = aliasTarget(profile, ref.modelId)
+        val selection = selectProvider(profile, modelId, catalog).let { sel ->
+            if (oneMillion) sel.copy(model = sel.model.copy(contextWindow = maxOf(sel.model.contextWindow, 1_000_000))) else sel
+        }
         val key = ClientKey(profile.id, selection.provider.baseUrl, selection.provider.wire, profile.tokenEnvKey)
         val client = clients.getOrPut(key) {
             when (selection.provider.wire) {
@@ -59,7 +62,35 @@ class MinModelResolver(
     }
 
     override fun profileOf(ref: ModelRef): ModelProfile? =
-        profile(ref.providerId)?.let { selectProvider(it, ref.modelId, catalog).model }
+        profile(ref.providerId)?.let { selectProvider(it, aliasTarget(it, ref.modelId).first, catalog).model }
+
+    /**
+     * 别名（sonnet / opus / haiku / fable / best / default，以及 opusplan 在内核里展开出的档；可带 `[1m]`）落到这个档的具体型号。
+     * 照 CC 的口径：先看档案 env 里的 `ANTHROPIC_DEFAULT_<档>_MODEL`（`default` 看 `ANTHROPIC_MODEL`），再按「地址 + 方言」找到
+     * 目录里的供应商取它那一档；都没有就原样交给供应商（中转常常自己认 `sonnet` 这类名字）。不是别名的原样返回。
+     * 子 agent 定义里写 `model: sonnet` 靠这里落地——内核不再把别名换成父会话的模型
+     */
+    internal fun aliasTarget(profile: ApiProfile, modelId: String): Pair<String, Boolean> {
+        val (name, oneMillion) = dev.min.agent.llm.catalog.ModelAliases.splitSuffix(modelId)
+        if (!dev.min.agent.llm.catalog.ModelAliases.isAlias(name) || name == "opusplan") return modelId to false
+        fun env(key: String) = profile.env[key]?.trim()?.takeIf(String::isNotEmpty)
+        val fromEnv = when (name) {
+            "default" -> env("ANTHROPIC_MODEL")
+            "best" -> env("ANTHROPIC_DEFAULT_FABLE_MODEL") ?: env("ANTHROPIC_DEFAULT_OPUS_MODEL")
+            else -> env("ANTHROPIC_DEFAULT_${name.uppercase(java.util.Locale.ROOT)}_MODEL")
+        }
+        if (fromEnv != null) return fromEnv to oneMillion
+        val baseUrl = agentBaseUrl(profile, catalog).trimEnd('/')
+        val wire = agentWire(profile.apiFormat)
+        val bundled = catalog.providers.firstOrNull { it.baseUrl.trimEnd('/') == baseUrl && it.wire == wire }
+            ?: return name to oneMillion
+        val concrete = try {
+            dev.min.agent.llm.catalog.ModelAliases.resolve(ModelRef(bundled.id, name), catalog).ref.modelId
+        } catch (_: IllegalArgumentException) {
+            name
+        }
+        return concrete to oneMillion
+    }
 
     override fun providerLabel(providerId: String): String? = profile(providerId)?.displayName()
 
@@ -118,6 +149,7 @@ class MinModelResolver(
     private companion object {
         val ENV_MODEL_KEYS = listOf(
             "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
         )
     }
 }

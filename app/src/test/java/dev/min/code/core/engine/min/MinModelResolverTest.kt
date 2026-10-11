@@ -46,6 +46,20 @@ class MinModelResolverTest {
         assertNull("档被删了", resolver.fastModelOf("gone"))
     }
 
+    @Test fun anAliasResolvesThroughTheProfileEnvFirstThenTheCatalogTierThenAsIs() {
+        val anthropic = ApiProfile("ant", label = "Anthropic", token = "k", baseUrl = "https://api.anthropic.com")
+        settings = AppSettings(profiles = listOf(a, b, anthropic))
+        // 档案 env 的 ANTHROPIC_DEFAULT_HAIKU_MODEL 先于目录
+        assertEquals(ModelRef("a", "alpha-small"), resolver.resolve(ModelRef("a", "haiku")).profile.ref)
+        assertEquals("default 看 ANTHROPIC_MODEL", ModelRef("a", "alpha-1"), resolver.resolve(ModelRef("a", "default")).profile.ref)
+        // 官方地址：目录里这一档的当前版
+        assertEquals(ModelRef("ant", "claude-sonnet-5-5"), resolver.resolve(ModelRef("ant", "sonnet")).profile.ref)
+        assertEquals(1_000_000, resolver.resolve(ModelRef("ant", "opus[1m]")).profile.contextWindow)
+        // 目录里没有的地址、档案也没配：原样交给供应商
+        assertEquals(ModelRef("b", "sonnet"), resolver.resolve(ModelRef("b", "sonnet")).profile.ref)
+        assertEquals("不是别名的原样", ModelRef("ant", "claude-x"), resolver.resolve(ModelRef("ant", "claude-x")).profile.ref)
+    }
+
     @Test fun subscriptionModeDoesNotStopAnExistingSessionFromResolving() {
         settings = settings!!.copy(claudeAuth = ClaudeAuthMode.SUBSCRIPTION)
         assertNotNull(resolver.resolve(ModelRef("a", "alpha-1")))
