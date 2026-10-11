@@ -628,6 +628,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         outcome(turnId, callId, budgeted, adopted)
         // 只有成功的调用算「碰到了文件」；读或写都算，目录（Glob / Grep 的搜索根）在 [attachMemory] 里滤掉
         if (!budgeted.isError) touched[callId] = askFor(p).paths.map { it.path }
+        // security-guidance：编辑后的模式提醒、记下改动、提交 / 推送后的审查（没启用时立即返回）
+        if (!budgeted.isError) rt.security.afterTool(p.call, p.raw, touched[callId].orEmpty())
         postToolUse(turnId, p, budgeted, deps.clock.nowMs() - started)
     }
 

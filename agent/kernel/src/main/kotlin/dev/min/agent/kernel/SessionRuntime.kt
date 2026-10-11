@@ -148,6 +148,8 @@ class SessionRuntime private constructor(
     }
 
     internal val worktrees = Worktrees(this)
+    /** security-guidance 的三层（只在 settings 里启用了才有动作，见 [SecurityGuidanceRuntime]） */
+    internal val security = SecurityGuidanceRuntime(this)
     internal fun watchNetworkLease(handle: dev.min.agent.spi.ExecHandle, lease: dev.min.agent.spi.NetworkLease, timeoutMs: Long) {
         scope.launch {
             try {
@@ -631,6 +633,7 @@ class SessionRuntime private constructor(
         }
         // 用户的新输入开始新的一轮：上一轮 skill 的 allowed-tools 放行到此为止（文档）
         if (state.value.skillGrants.isNotEmpty()) commit(listOf(dev.min.agent.spi.SkillToolsCleared()), Durability.Sync)
+        security.onUserMessage()
         // `--add-dir` 里的 skill 在会话中途变了：新回合开始前重扫（回合进行中收到的追加输入不重扫，等下一个空闲点）
         if (state.value.turn == null) rescanAddDirSkills()
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
