@@ -153,6 +153,8 @@ class MinAgentEngine(
         providerFastModel = resolver::fastModelOf,
         pushSink = AndroidPushSink(context),
         userFileSink = AndroidUserFileSink(context),
+        previewSink = AndroidPreviewSink(),
+        feedbackSink = AndroidFeedbackSink(),
     )
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */

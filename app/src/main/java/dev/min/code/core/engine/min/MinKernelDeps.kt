@@ -180,6 +180,8 @@ fun minTools(): List<Tool<*>> = listOf(
     dev.min.agent.tools.SendUserFileTool,
     // 内置 /code-review 的审查结果列表（只往末尾追加）
     dev.min.agent.tools.ReportFindingsTool,
+    // 本机预览（Artifact）与草稿（SendFeedback）（只往末尾追加）
+    dev.min.agent.tools.ArtifactTool, dev.min.agent.tools.SendFeedbackTool,
 )
 
 object MinKernelDeps {
@@ -224,6 +226,8 @@ object MinKernelDeps {
         pushSink: dev.min.agent.spi.PushSink = dev.min.agent.spi.PushSink.Unavailable,
         /** SendUserFile 的宿主出口：手机上写进缓存、发通知（[AndroidUserFileSink]） */
         userFileSink: dev.min.agent.spi.UserFileSink = dev.min.agent.spi.UserFileSink.Unavailable,
+        previewSink: dev.min.agent.spi.PreviewSink = dev.min.agent.spi.PreviewSink.Unavailable,
+        feedbackSink: dev.min.agent.spi.FeedbackSink = dev.min.agent.spi.FeedbackSink.Unavailable,
     ): KernelDeps = KernelDeps(
         networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
@@ -250,5 +254,7 @@ object MinKernelDeps {
         providerFastModel = providerFastModel,
         pushSink = pushSink,
         userFileSink = userFileSink,
+        previewSink = previewSink,
+        feedbackSink = feedbackSink,
     )
 }

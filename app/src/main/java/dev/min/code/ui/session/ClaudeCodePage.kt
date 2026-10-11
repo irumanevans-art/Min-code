@@ -57,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -144,6 +145,9 @@ import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.preview.LocalPreviewPane
+import dev.min.code.ui.viewer.ArtifactViewerPane
+import dev.min.code.ui.viewer.FeedbackDraftPane
+import dev.min.code.ui.viewer.ViewerInbox
 import dev.min.code.ui.setup.SetupPage
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
@@ -587,6 +591,19 @@ fun ClaudeCodePage(
             url = slotUrl,
             onCollapse = toolsVm::collapsePreview,
         )
+    }
+
+    // 模型交来的 Artifact 预览（工具调用即「在预览位打开」，所以到了就开）与诊断包草稿（只在本机，导出与丢弃都由人点）。
+    // 草稿面板关掉只是藏，下一份草稿来了（drafts.size 变）再出现
+    val artifactFile by ViewerInbox.artifact.collectAsState()
+    val drafts by ViewerInbox.drafts.collectAsState()
+    var draftsHidden by remember { mutableStateOf(false) }
+    LaunchedEffect(drafts.size) { draftsHidden = false }
+    artifactFile?.let { file ->
+        ArtifactViewerPane(file = file, onClose = ViewerInbox::closeArtifact)
+    }
+    if (drafts.isNotEmpty() && !draftsHidden) {
+        FeedbackDraftPane(drafts = drafts, onClose = { draftsHidden = true })
     }
 }
 

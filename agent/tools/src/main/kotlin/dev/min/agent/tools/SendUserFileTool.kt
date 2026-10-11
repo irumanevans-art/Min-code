@@ -1,7 +1,6 @@
 package dev.min.agent.tools
 
 import dev.min.agent.protocol.TextPart
-import dev.min.agent.spi.FileKind
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HarnessProfile
 import dev.min.agent.spi.PermissionAsk
@@ -105,16 +104,7 @@ object SendUserFileTool : Tool<SendUserFileInput> {
     }
 
     /** 这个路径为什么不能发；能发为 null */
-    private suspend fun problemOf(path: GuestPath, ctx: ToolContext): String? {
-        val cwd = ctx.cwd.value.trimEnd('/')
-        if (path.value != cwd && !path.value.startsWith("$cwd/")) return "$path 不在工作区里（只能发工作区的文件）。"
-        val stat = ctx.fs.stat(path) ?: return "$path 不存在。"
-        return when {
-            stat.kind == FileKind.Directory -> "$path 是目录，不能直接发（先打包成一个文件）。"
-            stat.size > MAX_BYTES -> "$path 超过 ${MAX_BYTES / 1024 / 1024} MB，发不了。"
-            else -> null
-        }
-    }
+    private suspend fun problemOf(path: GuestPath, ctx: ToolContext): String? = workspaceFileProblem(path, ctx, MAX_BYTES, "发")
 
     private fun errorResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)
 

@@ -121,7 +121,9 @@ internal fun desktopTools(
     // 把文件发给用户（SendUserFile）：桌面打印路径（见下面的 userFileSink）
     listOf(dev.min.agent.tools.SendUserFileTool) +
     // 内置 /code-review 的审查结果列表（只往末尾追加）；bare 档的五件套不含它，bare 也不发现 skills
-    listOf(dev.min.agent.tools.ReportFindingsTool)
+    listOf(dev.min.agent.tools.ReportFindingsTool) +
+    // 本机预览（Artifact）与草稿（SendFeedback）：只往末尾追加。桌面没有预览位与草稿队列，见下面的 previewSink / feedbackSink
+    listOf(dev.min.agent.tools.ArtifactTool, dev.min.agent.tools.SendFeedbackTool)
 
 /** 团队与定时调度的工具（只在交互会话里提供） */
 private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)
@@ -382,6 +384,24 @@ internal class DesktopApp(
             userFileSink = object : dev.min.agent.spi.UserFileSink {
                 override suspend fun deliver(file: dev.min.agent.spi.UserFile): Boolean {
                     System.err.println("[文件] " + (file.caption?.let { "$it：" }.orEmpty()) + paths.hostOf(file.path))
+                    return true
+                }
+            },
+            // 本机预览（Artifact）：桌面没有预览位，打印文件在磁盘上的路径（终端里能直接打开）
+            previewSink = object : dev.min.agent.spi.PreviewSink {
+                override suspend fun show(file: dev.min.agent.spi.PreviewFile): Boolean {
+                    System.err.println("[预览] " + (file.title?.let { "$it：" }.orEmpty()) + paths.hostOf(file.path))
+                    return true
+                }
+            },
+            // 反馈草稿（SendFeedback）：桌面没有草稿队列，导出诊断包 zip 到本机目录并打印路径；什么都不发送。
+            // 导出走 FeedbackBundle，凭证在这里就去掉，不靠用户记得检查
+            feedbackSink = object : dev.min.agent.spi.FeedbackSink {
+                override suspend fun queue(draft: dev.min.agent.spi.FeedbackDraft): Boolean {
+                    val dir = home.resolve("feedback").resolve("drafts").toFile().apply { mkdirs() }
+                    val zip = java.io.File(dir, "draft-" + System.currentTimeMillis() + ".zip")
+                    zip.writeBytes(dev.min.agent.tools.FeedbackBundle.build(draft, null, "Min desktop CLI", System.getenv(), emptyMap()))
+                    System.err.println("[反馈草稿] " + zip.absolutePath + "（未发送）")
                     return true
                 }
             },

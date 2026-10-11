@@ -200,6 +200,12 @@ interface ToolContext {
     /** 发系统通知（PushNotification）。有默认值（不可用） */
     val push: PushSink get() = PushSink.Unavailable
 
+    /** 在预览位里打开会话产物（Artifact）。有默认值（不可用） */
+    val artifactView: PreviewSink get() = PreviewSink.Unavailable
+
+    /** 起草反馈、放进本机草稿队列（SendFeedback）。有默认值（不可用） */
+    val feedback: FeedbackSink get() = FeedbackSink.Unavailable
+
     /** 等后台连接的 MCP 服务器（WaitForMcpServers）。有默认值（不可用） */
     val mcpWait: McpWaitPort get() = McpWaitPort.Unavailable
     suspend fun extract(content: String, prompt: String): ToolResult =

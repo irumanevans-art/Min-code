@@ -191,6 +191,10 @@ class KernelDeps(
      * 所以子会话与分身自然跟随父会话；宿主在组合根给一次。
      */
     val settingsInputs: dev.min.agent.ext.config.SettingsInputs = dev.min.agent.ext.config.SettingsInputs(),
+    /** Artifact 的宿主出口（本机预览位）。默认不可用：工具照实回告「没有打开」 */
+    val previewSink: dev.min.agent.spi.PreviewSink = dev.min.agent.spi.PreviewSink.Unavailable,
+    /** SendFeedback 的宿主出口（本机草稿队列）。默认不可用：工具照实回告「没有保存」 */
+    val feedbackSink: dev.min.agent.spi.FeedbackSink = dev.min.agent.spi.FeedbackSink.Unavailable,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }
