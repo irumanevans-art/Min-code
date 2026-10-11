@@ -479,7 +479,7 @@ internal class DesktopApp(
                 override suspend fun queue(draft: dev.min.agent.spi.FeedbackDraft): Boolean {
                     val dir = home.resolve("feedback").resolve("drafts").toFile().apply { mkdirs() }
                     val zip = java.io.File(dir, "draft-" + System.currentTimeMillis() + ".zip")
-                    zip.writeBytes(dev.min.agent.tools.FeedbackBundle.build(draft, null, "Min desktop CLI", System.getenv(), emptyMap()))
+                    zip.writeBytes(dev.min.agent.tools.FeedbackBundle.build(draft, draft.sessionLog, "Min desktop CLI", System.getenv(), emptyMap()))
                     System.err.println("[反馈草稿] " + zip.absolutePath + "（未发送）")
                     return true
                 }

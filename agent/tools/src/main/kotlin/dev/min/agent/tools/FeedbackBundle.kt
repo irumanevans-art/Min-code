@@ -8,7 +8,7 @@ import java.util.zip.ZipOutputStream
 /**
  * 诊断包：把一份反馈草稿导出成 zip，供用户自己拿去发（Min 不替用户发）。
  *
- * 包里的东西：`draft.md`（草稿）、`version.txt`（版本）、`config.txt`（环境与设置，去掉凭证）、可选的 `session-log.txt`（本会话日志，由用户选择是否带上）。
+ * 包里的东西：`draft.md`（草稿）、`version.txt`（版本）、`config.txt`（环境与设置，去掉凭证）、可选的 `session-log.txt`（草稿附带的本会话日志，草稿没附则不带）。
  * **不含任何 key、令牌**：凭证来自两处——键名像凭证的环境变量与设置（[SECRET_NAME]）里的值，以及草稿与日志里长得像凭证的字符串（[SHAPED]）。
  * 两道都在导出前替换掉；最后还要扫一遍成品，扫到残留就抛错、不写 zip（[leaks]），宁可导出失败也不泄露。
  */
@@ -55,7 +55,7 @@ object FeedbackBundle {
     private const val MIN_SECRET_LENGTH = 6
 
     /**
-     * 组出 zip。[env] 与 [settings] 是会话看得到的环境变量与设置；[sessionLog] 为 null 表示用户没选带日志。
+     * 组出 zip。[env] 与 [settings] 是会话看得到的环境变量与设置；[sessionLog] 为 null 表示草稿没附日志。
      * 扫描不过（成品里仍有凭证）时抛 [IllegalStateException]，不返回包。
      */
     fun build(

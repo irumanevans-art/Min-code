@@ -48,13 +48,13 @@ import kotlinx.coroutines.withContext
  * 什么都不会自动发送：导出只在本机生成一个 zip 并打开系统分享面板，发给谁、发不发，由用户自己在分享面板里选。
  * 导出的 zip 由 [FeedbackBundle] 组成，凭证在那里去掉（并扫一遍成品）。
  *
- * 诚实的缺口：会话日志没有带进包（[FeedbackBundle.build] 的 sessionLog 传 null），
- * 凭证名单也只有空的环境与设置——手机上没有把 key 的存储接进来，靠的是 sk-/gh_/Bearer 形状的字符串去除。
+ * 会话日志随草稿附带（内核排队时附上，见 [FeedbackDraft.sessionLog]）；
+ * 诚实的缺口：凭证名单只有空的环境与设置，手机上没有把 key 的存储接进来，靠的是 sk-/gh_/Bearer 形状的字符串去除。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedbackDraftPane(
-    drafts: List<FeedbackDraft>,
+    drafts: List<PendingDraft>,
     onClose: () -> Unit,
 ) {
     val screenH = LocalConfiguration.current.screenHeightDp.dp
@@ -75,20 +75,21 @@ fun FeedbackDraftPane(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.sea.ink,
             )
-            drafts.forEach { draft ->
+            drafts.forEach { item ->
                 Spacer(Modifier.height(12.dp))
-                DraftCard(draft)
+                DraftCard(item)
             }
         }
     }
 }
 
 @Composable
-private fun DraftCard(draft: FeedbackDraft) {
+private fun DraftCard(item: PendingDraft) {
+    val draft = item.draft
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // 每条草稿自己的编辑缓冲：改了正文就替换收件箱里的那条，没改就原样
-    var body by remember(draft) { mutableStateOf(draft.body) }
+    var body by remember(item) { mutableStateOf(draft.body) }
     Column(Modifier.fillMaxWidth()) {
         Text(text = draft.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.sea.ink)
         InkTextField(
@@ -99,10 +100,10 @@ private fun DraftCard(draft: FeedbackDraft) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             InkButton(onClick = {
                 val edited = draft.copy(body = body)
-                if (edited != draft) ViewerInbox.replaceDraft(draft, edited)
+                if (edited != draft) ViewerInbox.replaceDraft(item.id, edited)
                 scope.launch { exportBundle(context, edited) }
             }) { Text(stringResource(R.string.viewer_draft_export)) }
-            InkButton(onClick = { ViewerInbox.discardDraft(draft) }) {
+            InkButton(onClick = { ViewerInbox.discardDraft(item.id) }) {
                 Text(stringResource(R.string.viewer_draft_discard))
             }
         }
@@ -114,7 +115,7 @@ private suspend fun exportBundle(context: Context, draft: FeedbackDraft) {
     val uri = withContext(Dispatchers.IO) {
         val bytes = FeedbackBundle.build(
             draft,
-            sessionLog = null,
+            sessionLog = draft.sessionLog,
             versionInfo = "Min ${BuildConfig.VERSION_NAME}",
             env = emptyMap(),
             settings = emptyMap(),

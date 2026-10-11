@@ -70,6 +70,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -843,6 +844,22 @@ class SessionRuntime private constructor(
     /** 分身的第一个回合：没有新输入，任务就在继承来的那次 Agent 调用的结果里 */
     internal fun startDelegated() {
         startTurnIfIdle(TurnTrigger.Delegated)
+    }
+
+    /**
+     * 本会话日志的末尾一段，每行一条 [EventRecord]（与磁盘 JSONL 同格式），供 SendFeedback 的草稿附上。
+     * 只留末尾约 [maxChars] 个字符：日志可以很长，诊断包要的是最近发生了什么；更早的整行丢掉，不截半行。
+     */
+    internal suspend fun sessionLogTail(maxChars: Int): String {
+        val lines = ArrayDeque<String>()
+        var size = 0
+        log.read(1).collect { record ->
+            val line = dev.min.agent.protocol.AgentJson.encodeToString(EventRecord.serializer(), record)
+            lines.addLast(line)
+            size += line.length + 1
+            while (size > maxChars && lines.size > 1) size -= lines.removeFirst().length + 1
+        }
+        return lines.joinToString("\n", postfix = "\n")
     }
 
     /**

@@ -19,6 +19,7 @@ import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.store.FileSessionStore
 import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
+import dev.min.code.ui.viewer.ViewerInbox
 import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
 import dev.min.code.core.claudecode.DraftImage
@@ -115,6 +116,8 @@ class MinAgentEngine(
     private val resolver = MinModelResolver({ settings.snapshot }, transport, text, catalogData)
     private val lastUsed = MinLastUsed(File(context.filesDir, "agent/last-used.json"))
     private val index = MinSessionIndex(File(context.filesDir, "agent/index"), sessionsDir)
+    // 诊断包草稿落在私有目录，重开 App 还在（见 FeedbackDraftBox）；绑定读的是几个小 JSON 文件
+    init { ViewerInbox.bindDrafts(File(context.filesDir, "agent/feedback-drafts")) }
     override val tasks = MinBackgroundTasks()
     override val workspaceFs: dev.min.agent.spi.WorkspaceFs get() = ports.fs
     override val lookup: MinModelLookup = resolver

@@ -14,7 +14,7 @@ import dev.min.agent.spi.NoteLevel
  *   命令引用 `${user_config.*}` 的不启动。这里只管「什么时候启动」。
  * - **交互会话才启动**：`-p` 一次性运行不启动（进程一退就没了，CC 也不起）；子 agent 不起（只根会话）。
  * - **时机**：`when` 缺省 / `always`——会话创建时、用户重开会话时各启一次；`on-skill-invoke:<skill>`——该 skill 第一次被调用时
- *   （模型调 Skill 工具、桌面终端的斜杠命令；App 的斜杠入口目前不经这里）。
+ *   （模型调 Skill 工具、用户斜杠调用：桌面终端与 App 都经 [userInvokedSkills]）。
  * - **不套期限**：持久 watch，会话开着就一直跑，会话卸下时随任务表一起收掉；它起来不用批准（用户启用了这个插件），
  *   但命令仍走网络沙箱。输出的事件与模型起的 watch 一样进收件箱、唤醒空闲会话。
  * - **关掉插件不停**：中途禁用插件时已经在跑的不动，会话结束才停（CC 同）。
@@ -36,3 +36,17 @@ internal suspend fun SessionRuntime.startPluginMonitors(skill: String? = null) {
 
 /** 宿主在用户用斜杠调用某个 skill 时调（桌面终端）；模型走 Skill 工具的那条路由内核自己调。同一个 monitor 一个会话只起一次 */
 suspend fun SessionRuntime.skillInvoked(name: String) = startPluginMonitors(name)
+
+/**
+ * 用户斜杠调用了这些 skill / command（桌面终端、App 斜杠入口共用）：frontmatter hooks 登记进本会话，
+ * 插件的 `on-skill-invoke` monitor 第一次调用时启动。两个宿主都走这里，免得一边忘了另一边的登记。
+ * 调用方要在斜杠展开获准之后才调（被拦下的调用不算「调用过」）。
+ */
+suspend fun SessionRuntime.userInvokedSkills(entries: List<dev.min.agent.spi.SkillEntry>, names: Collection<String>) {
+    names.forEach { name ->
+        entries.firstOrNull { it.name == name }?.let { e ->
+            e.hooks?.let { registerComponentHooks(e.kind.name.lowercase(), name, e.source ?: "user", it) }
+            startPluginMonitors(e.name)
+        }
+    }
+}

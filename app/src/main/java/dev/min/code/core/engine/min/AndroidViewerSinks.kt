@@ -19,10 +19,7 @@ internal class AndroidPreviewSink : PreviewSink {
     }
 }
 
-/** SendFeedback 的草稿队列：放进收件箱，用户在「诊断包草稿」面板里看、改、导出或丢弃。不发送 */
+/** SendFeedback 的草稿队列：落盘进收件箱，用户在「诊断包草稿」面板里看、改、导出或丢弃。不发送；写不进去照实返回 false */
 internal class AndroidFeedbackSink : FeedbackSink {
-    override suspend fun queue(draft: FeedbackDraft): Boolean {
-        ViewerInbox.addDraft(draft)
-        return true
-    }
+    override suspend fun queue(draft: FeedbackDraft): Boolean = ViewerInbox.addDraft(draft)
 }

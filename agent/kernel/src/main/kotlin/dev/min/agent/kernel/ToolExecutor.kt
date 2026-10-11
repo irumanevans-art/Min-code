@@ -710,7 +710,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val push: dev.min.agent.spi.PushSink = if (turnId == null) dev.min.agent.spi.PushSink.Unavailable else deps.pushSink
         override val userFiles: dev.min.agent.spi.UserFileSink = if (turnId == null) dev.min.agent.spi.UserFileSink.Unavailable else deps.userFileSink
         override val artifactView: dev.min.agent.spi.PreviewSink = if (turnId == null) dev.min.agent.spi.PreviewSink.Unavailable else deps.previewSink
-        override val feedback: dev.min.agent.spi.FeedbackSink = if (turnId == null) dev.min.agent.spi.FeedbackSink.Unavailable else deps.feedbackSink
+        override val feedback: dev.min.agent.spi.FeedbackSink = if (turnId == null) dev.min.agent.spi.FeedbackSink.Unavailable else SessionLogFeedbackSink(rt, deps.feedbackSink)
         override val pdfPages: dev.min.agent.spi.PdfPagePort = if (turnId == null) dev.min.agent.spi.PdfPagePort.Unavailable else deps.pdfPages
         override val mcpWait: dev.min.agent.spi.McpWaitPort = if (turnId == null) dev.min.agent.spi.McpWaitPort.Unavailable else rt.hub?.mcpWaitFor(rt) ?: dev.min.agent.spi.McpWaitPort.Unavailable
         override val mode: PermissionMode get() = rt.state.value.settings.mode
@@ -787,3 +787,15 @@ internal object ResultBudget {
         return result.copy(content = listOf(TextPart(preview)) + others, artifact = path, fullChars = full.length.toLong())
     }
 }
+
+/**
+ * SendFeedback 的草稿出口：排队前把本会话日志附在草稿上。模型交上来的只有标题与正文，日志由内核补，
+ * 宿主的草稿队列（桌面的 zip、App 的草稿面板）拿到的就是一份完整的草稿。日志的去凭证在导出时做（FeedbackBundle）。
+ */
+private class SessionLogFeedbackSink(private val rt: SessionRuntime, private val inner: dev.min.agent.spi.FeedbackSink) : dev.min.agent.spi.FeedbackSink {
+    override suspend fun queue(draft: dev.min.agent.spi.FeedbackDraft): Boolean =
+        inner.queue(draft.copy(sessionLog = rt.sessionLogTail(FEEDBACK_LOG_MAX_CHARS)))
+}
+
+/** 草稿附带的日志上限（约 512 KiB）：诊断包要的是最近发生的事，更早的整行丢掉 */
+internal const val FEEDBACK_LOG_MAX_CHARS = 512 * 1024

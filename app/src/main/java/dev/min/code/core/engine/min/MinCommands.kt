@@ -10,6 +10,7 @@ import dev.min.agent.kernel.clearGoal
 import dev.min.agent.kernel.goalArgumentOf
 import dev.min.agent.kernel.parseGoalCommand
 import dev.min.agent.kernel.setGoal
+import dev.min.agent.kernel.userInvokedSkills
 import dev.min.agent.kernel.savedWorkflows
 import dev.min.agent.kernel.userSkillRunPort
 import dev.min.agent.ext.config.CommandDef
@@ -234,9 +235,8 @@ class MinCommandHandler(
             }
             is SlashResult.Expanded -> {
                 // 展开的文件内容不是人的引用：不扫描 MCP 提及；组件 hooks 只在调用确实获准后登记。
-                result.names.forEach { called -> entries.firstOrNull { it.name == called }?.let { entry ->
-                    entry.hooks?.let { runtime.registerComponentHooks(entry.kind.name.lowercase(), called, entry.source ?: "user", it) }
-                } }
+                // 插件的 on-skill-invoke monitor 与桌面终端同一个入口起（userInvokedSkills），两个宿主不各写一份
+                runtime.userInvokedSkills(entries, result.names)
                 SlashInput.Expanded(result.text)
             }
         }

@@ -35,6 +35,11 @@ interface PreviewSink {
 data class FeedbackDraft(
     val title: String,
     val body: String,
+    /**
+     * 排队时内核附上的本会话日志（每行一条事件，磁盘格式），只留末尾一段。模型交上来的草稿里没有这一项；
+     * 诊断包导出时带上它，并经同一套去凭证处理（见 FeedbackBundle）。null = 没有附日志
+     */
+    val sessionLog: String? = null,
 )
 
 /** 草稿出口（SendFeedback）。[queue] 返回 false = 宿主没有草稿队列，草稿没有保存 */
