@@ -25,7 +25,7 @@ internal object AgentLoader {
                 if (winner == null) {
                     byName[agent.name] = agent
                 } else {
-                    val why = if (winner.source == agent.source) "同一来源里先到先得" else "同名时 managed > project > user"
+                    val why = if (winner.source == agent.source) "同一来源里先到先得" else "同名时 managed > project > add-dir > user"
                     io.notes += "子 agent `${agent.name}`（${agent.path}，${agent.source.label}）被 ${winner.path}（${winner.source.label}）覆盖：$why"
                 }
             }
