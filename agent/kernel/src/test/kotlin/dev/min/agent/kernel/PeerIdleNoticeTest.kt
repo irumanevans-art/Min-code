@@ -219,6 +219,20 @@ class PeerIdleNoticeTest {
     }
 
     @Test
+    fun `a receiver that refuses cannot be subscribed to even by a call with no message, so its idle state does not leak`() = run {
+        fs.put("/b/.claude/settings.json", """{"crossSessionInbound":"refuse"}""")
+        val hub = hub(chatty)
+        val api = hub.newRoot("/a", "api")
+        val web = hub.newRoot("/b", "web")
+        web.work("先干点活")
+        val r = hub.portOf(api).notifyWhenIdle("web", null)
+        assertTrue(text(r), r.isError)
+        assertFalse(hub.peerMail.isWatched(web.sessionId))
+        hub.pumpPeers()
+        assertTrue("拒收的会话不能被人从空闲状态上探到什么", idleNotices(api).isEmpty())
+    }
+
+    @Test
     fun `a watcher that refuses inbound messages never subscribes`() = run {
         fs.put("/a/.claude/settings.json", """{"crossSessionInbound":"refuse"}""")
         val hub = hub(chatty)
