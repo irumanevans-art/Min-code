@@ -82,5 +82,15 @@ internal fun goalFailureEvents(condition: String?, kind: ModelFailureKind?, mess
  */
 fun SessionRuntime.goalWaitingOnBackground(): Boolean {
     val goal = state.value.goal
-    return goal.condition != null && goal.paused == null && background.runningCount() > 0
+    return goal.condition != null && goal.paused == null && goalBackgroundWork().isNotEmpty()
 }
+
+/**
+ * 挂住 `/goal` 评估的后台工作（CC：「a subagent or a background shell command」）：后台命令 / Monitor，加上回合还在跑的后台子 agent。
+ * 只数后台命令的话，主回合把活派给后台子 agent 就收尾，评估器在活还没干完时就被问（可能直接判成已达成），
+ * 接着防空转把循环停下，子 agent 回报之后也不再评估。看已落盘的回合状态：子 agent 回报时 TurnEnded 已经落盘
+ */
+internal fun SessionRuntime.goalBackgroundWork(): List<String> =
+    background.runningJobsText() + state.value.children.values
+        .filter { it.background && hub?.get(it.child)?.state?.value?.turn != null }
+        .map { "子 agent ${it.name ?: it.child.value}（${it.description}）" }
