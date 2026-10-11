@@ -347,6 +347,14 @@ class MinAgentEngine(
     fun discardPluginPreview(manager: dev.min.agent.ext.plugins.PluginMarketplace, preview: dev.min.agent.ext.plugins.PluginInstallPreview) {
         scope.launch { try { manager.discard(preview) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { } }
     }
+    private val commandSessions = java.util.concurrent.ConcurrentHashMap.newKeySet<SessionId>()
+    private fun scheduleCommandSources(runtime: dev.min.agent.kernel.SessionRuntime) {
+        if (runtime.state.value.created.loadingModes?.let { it.bare || it.safe || it.restricted } == true || !commandSessions.add(runtime.sessionId)) return
+        scope.launch {
+            val notices = pluginMarketplace(runtime.state.value.created.cwd.value).rerunCommandSources(System.getenv())
+            if (notices.isNotEmpty()) { runtime.awaitIdle(); pluginNotices.value = notices + runtime.reloadPlugins(reconnectServers = true) }
+        }
+    }
     private var pluginUpdateJob: Job? = null
     private fun schedulePluginUpdates(cwd: String) {
         if (pluginUpdateJob?.isActive == true || !dev.min.agent.ext.plugins.pluginAutoUpdatesEnabled(System.getenv())) return
@@ -383,6 +391,7 @@ class MinAgentEngine(
             loadingModes = options.loadingModes ?: dev.min.agent.spi.SessionLoadingModes(),
         )
         lastUsed.remember(profile.id, modelId)
+        scheduleCommandSources(runtime)
         schedulePluginUpdates(runtime.state.value.created.cwd.value)
         register(runtime, pin = true).also { index.update(runtime.state.value) }
     }
@@ -395,7 +404,8 @@ class MinAgentEngine(
         openLock.withLock {
             sessions.value[sid]?.let { touch(sid, pin = true); return@withLock it }
             val runtime = checkNotNull(hub.open(sid)) { text.sessionNotFound() }
-                register(runtime, pin = true)
+            scheduleCommandSources(runtime)
+            register(runtime, pin = true)
         }
     }
 
@@ -519,6 +529,8 @@ class MinAgentEngine(
         val tracked = tasks.find(taskId) ?: return
         ports.exec.kill(tracked.handle)
     }
+
+    override suspend fun reconcilePluginDependencies(cwd: String) = pluginMarketplace(cwd).reconcileDependencies()
 
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = withContext(Dispatchers.IO) {
         // watch 的输出文件在内核的任务表里（命令源是宿主日志，WebSocket 源是内核自己写的事件文件）

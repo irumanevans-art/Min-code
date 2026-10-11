@@ -418,6 +418,35 @@ class PluginMarketplace(
         return InstalledPlugin(id, record.text("scope") ?: "user", record.text("installPath") ?: error("安装记录缺路径"), record.text("projectPath"), record.text("version") ?: "unknown", enabled)
     }
     suspend fun installed(): List<InstalledPlugin> = host.locked { installedUnlocked() }
+    /** 每个会话由宿主调用一次；只复用已安装记录的命令指纹，目录输出改变不构成命令重新授权。 */
+    suspend fun rerunCommandSources(environment: Map<String, String>): List<String> {
+        if (environment["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1") return emptyList()
+        val notices = mutableListOf<String>()
+        for (record in installed().filter { it.enabled }) try {
+            val saved = host.locked { (readObject(path("installed_plugins.json"))["plugins"]?.jsonObject?.get(record.id) as? JsonArray)?.filterIsInstance<JsonObject>()?.firstOrNull { sameScope(it, record.scope) } } ?: continue
+            if ((saved["marketplaceEntry"]?.jsonObject?.get("source") as? JsonObject)?.text("source") != "command") continue
+            val requests = commandsToAccept(record.id)
+            if (requests.size != 1 || requests.single().sha256 != saved.text("commandSha256")) { notices += "${record.id} 命令已变化，请手动预览确认"; continue }
+            val next = preview(record.id, setOf(requests.single().sha256))
+            if (next.fingerprint.take(12) == record.version.substringAfterLast('-')) discard(next)
+            else { install(next, record.scope, true); notices += "${record.id} command 输出已更新" }
+        } catch(e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { notices += "${record.id} command 重跑失败，请手动预览确认" }
+        return notices
+    }
+    /** 重载前只补已经启用插件的普通依赖；command/helper 仍走预览门禁，不能借重载偷偷执行。 */
+    suspend fun reconcileDependencies(): List<String> {
+        val notices = mutableListOf<String>()
+        for (record in installed().filter { it.enabled }) {
+            val ref = parseId(record.id)
+            val loaded = host.locked { PluginLoader(fs, canonical).load(PluginRequest(path("cache/${ref.marketplace}/${ref.name}/${record.version}").value, ref)).plugin }
+            if (loaded?.manifest?.dependencies.isNullOrEmpty()) continue
+            try { install(preview(record.id), record.scope, confirmed = true) }
+            catch(e: kotlinx.coroutines.CancellationException) { throw e }
+            catch(e: Exception) { notices += "${record.id} 依赖未就绪：${e.message}" }
+        }
+        return notices
+    }
     private suspend fun installedUnlocked(): List<InstalledPlugin> {
         val result = mutableListOf<InstalledPlugin>()
         (readObject(path("installed_plugins.json"))["plugins"] as? JsonObject).orEmpty().forEach { (id, records) ->

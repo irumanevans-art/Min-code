@@ -588,6 +588,10 @@ class SessionHub(
         val runtime = runtimes[id] ?: return
         attachMcp(runtime, fresh = false)
     }
+    internal suspend fun reloadPluginLsp(id: SessionId) {
+        val runtime = runtimes[id] ?: return
+        bindLsp(runtime, runtime.state.value.created.cwd, runtime.plugins()?.lspSources().orEmpty())
+    }
 
     /** 面板的「本会话开关」：关掉的服务器连接引用放掉（别的会话还在用就留着），工具下一回合起不在工具表里 */
     suspend fun setMcpServerEnabled(id: SessionId, server: String, enabled: Boolean) {

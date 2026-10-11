@@ -50,6 +50,7 @@ interface MinCommandEffects {
     fun emit(signal: SessionSignal)
     fun rememberDefaultModel(profileId: String, modelId: String)
     suspend fun killTask(taskId: String)
+    suspend fun reconcilePluginDependencies(cwd: String): List<String> = emptyList()
 
     /** 「总是允许」写进某一层 settings 文件。[cwd] 是会话的工作目录（guest 路径）。结局以轻提示告诉用户（成功 / 没写成的原因） */
     suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String)
@@ -173,6 +174,19 @@ class MinCommandHandler(
         val delivery = if (runtime.state.value.turn != null) Delivery.Steer else Delivery.Queue
         // `/goal` 是会话命令，不是 skill：在斜杠展开之前接住（子 agent 里的 /goal 当普通话，不设子会话的目标）
         if (command.target == SendTarget.Main) goalArgumentOf(command.input.text)?.let { return goal(runtime, it) }
+        if (command.target == SendTarget.Main && command.input.images.isEmpty()) {
+            val typed = command.input.text.trim()
+            if (typed == "/reload-plugins" || typed.startsWith("/reload-plugins ")) {
+                val option = typed.removePrefix("/reload-plugins").trim()
+                if (option !in setOf("", "force", "--force")) return CommandResult.Rejected("用法：/reload-plugins [--force]")
+                if (runtime.state.value.turn != null) return CommandResult.Rejected("回合正在运行，请在空闲时重载插件")
+                effects.reconcilePluginDependencies(runtime.state.value.created.cwd.value).forEach { effects.emit(SessionSignal.Notice(it, isError = true)) }
+                val message = runtime.reloadPlugins(force = option.isNotEmpty(), reconnectServers = true)
+                effects.emit(SessionSignal.Notice(message, isError = message.contains("--force")))
+                if (message.contains("--force")) return CommandResult.Rejected(message)
+                return CommandResult.Accepted
+            }
+        }
         val expanded = expandSlash(runtime, command.input.text)
         if (expanded is SlashInput.Refused) return CommandResult.Rejected(expanded.reason)
         val input = if (expanded is SlashInput.Expanded) command.input.copy(text = expanded.body) else command.input

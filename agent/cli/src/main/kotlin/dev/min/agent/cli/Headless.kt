@@ -51,6 +51,13 @@ internal suspend fun runHeadless(
     try {
         val effective = if (args.jsonSchema != null) structuredOutputPrompt(args.prompt!!) else args.prompt!!
         val command = effective.trim()
+        if (command == "/reload-plugins" || command.startsWith("/reload-plugins ")) {
+            val option = command.removePrefix("/reload-plugins").trim()
+            require(option in setOf("", "force", "--force")) { "用法：/reload-plugins [--force]" }
+            app.pluginMarketplace().reconcileDependencies().forEach(stderr::println)
+            stdout.println(runtime.reloadPlugins(force = option.isNotEmpty()))
+            return 0
+        }
         if (command == "/advisor" || command.startsWith("/advisor ")) {
             return if (advisorCommand(runtime, command.removePrefix("/advisor").trim(), app.settingsUserFile(), app::validateAdvisor, stderr)) 0 else 1
         }

@@ -232,6 +232,32 @@ class SessionRuntime private constructor(
         }
     }
 
+    /** 回合与维护共用互斥锁；磁盘变更不能在正在运行的模型请求中偷换工具表或提示快照。 */
+    suspend fun reloadPlugins(force: Boolean = false, reconnectServers: Boolean = false): String = whileIdle {
+        if (deps.customizations != Customizations.Full) return@whileIdle "当前 customization 模式不加载插件"
+        val home = deps.memoryHome ?: return@whileIdle "没有插件配置目录"
+        val old = plugins()
+        val settings = SettingsLoader.load(deps.host.fs, state.value.created.cwd, home, inputs = deps.settingsInputs)
+        val next = dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, state.value.created.cwd, home, settings.merged,
+            dirs = deps.pluginDirs, canonical = deps.canonicalPath, trust = { deps.pluginTrust(it, state.value.created.cwd) },
+            secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore), installedPath = deps.pluginInstalledPath,
+            shellPath = deps.hookShellPath, installIndex = !deps.settingsInputs.restricted)
+        fun mcpSignature(bundle: dev.min.agent.ext.plugins.PluginBundle?) = bundle?.mcpSources().orEmpty().map { listOf(it.name, it.config, it.trusted, it.error, it.requiresApproval) }
+        val serversChanged = mcpSignature(old) != mcpSignature(next) || old?.lspSources().orEmpty() != next.lspSources()
+        if (reconnectServers && serversChanged && !force) return@whileIdle "插件 MCP/LSP 变化会使提示缓存失效；请用 /reload-plugins --force 确认成本"
+        val registered = state.value.componentHooks.filter { it.layer.startsWith("plugin") }
+        pluginsInstance = next; pluginsAttempted = true
+        // 调用时登记的组件 hooks 也要撤销，不能让磁盘上已删除的插件继续执行旧命令。
+        commit(registered.map { dev.min.agent.spi.ComponentHooksUpdated(it.kind, it.name, kotlinx.serialization.json.JsonObject(emptyMap())) }, Durability.Sync)
+        // 没有新 hooks / 样式也要清除旧快照，否则被禁用的插件会继续执行。
+        commit(listOf(HooksLoaded(emptyList(), emptyList()), dev.min.agent.spi.OutputStyleLoaded("Default", "", false), dev.min.agent.spi.SkillsLoaded(emptyList())), Durability.Sync)
+        loadSettings(settings); loadOutputStyle(settings); loadSkills()
+        if (reconnectServers) hub?.reloadMcp(sessionId) else hub?.reloadPluginLsp(sessionId)
+        val message = "Reloaded: ${next.batch.plugins.size} plugins · ${next.skills.size} skills · ${next.commands.size} commands. 插件已重载；下个回合生效。Monitors 下个会话生效。" + if (!reconnectServers && serversChanged) " MCP 保持当前连接，下个会话生效。" else ""
+        commit(listOf(Note(NoteLevel.Info, message)), Durability.Sync)
+        message
+    } ?: "回合正在运行，请在空闲时重载插件"
+
     suspend fun readSkillBody(path: GuestPath): String? = plugins()?.readBody(path)
         ?: dev.min.agent.ext.skills.SkillFiles.readBody(deps.host.fs, path)
 
@@ -323,6 +349,7 @@ class SessionRuntime private constructor(
 
     /** 本会话已经启动过的插件 monitor（`插件:名字`）：每个只起一次，不论 `always` 还是首次调用 skill */
     internal val startedPluginMonitors = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    internal var pluginMonitorSnapshot: List<dev.min.agent.ext.plugins.PluginMonitorLaunch>? = null
 
     /** settings 里的 `fileCheckpointingEnabled`（缺省为开）；创建时随那份 settings 一起读，重新打开的会话第一次要用时再读 */
     @Volatile

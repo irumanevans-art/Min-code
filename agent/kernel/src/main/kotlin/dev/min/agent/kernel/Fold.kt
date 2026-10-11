@@ -154,7 +154,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             nestedSkills = nestedSkills + e.entries.filter { x -> nestedSkills.none { it.name == x.name } },
             checkedSkillDirs = checkedSkillDirs + e.directories,
         )
-        is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e)
+        is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e.takeUnless { it.name == "Default" && it.body.isBlank() && !it.keepCodingInstructions })
         is dev.min.agent.spi.StructuredOutputDelivered -> copy(structuredOutput = e)
         is dev.min.agent.spi.SessionBranched -> copy(branched = e)
         is SettingsChanged -> copy(

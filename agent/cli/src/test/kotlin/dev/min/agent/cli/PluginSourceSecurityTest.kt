@@ -51,6 +51,9 @@ class PluginSourceSecurityTest {
         val bundle = PluginBundle.load(paths.fs, paths.guestOfHost(work), paths.guestOfHost(home), layers.merged, canonical = paths.fs::canonical, installedPath = { paths.guestOfHost(Path.of(it)) })
         assertTrue("托管禁用还须阻止已经安装的 command 插件加载", bundle.batch.plugins.isEmpty())
         Files.delete(root.resolve("managed.json"))
+        put(plugin.resolve("skills/new/SKILL.md"), "---\ndescription: new\n---\nnew")
+        assertTrue(manager.rerunCommandSources(mapOf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1")).isEmpty()); assertFalse(Files.exists(executed))
+        assertTrue(manager.rerunCommandSources(mapOf("DISABLE_AUTOUPDATER" to "1")).any { it.contains("已更新") }); assertTrue(Files.exists(executed)); Files.delete(executed)
         val accepted = manager.commandsToAccept("generated@security").map { it.sha256 }.toSet()
         put(market.resolve(".claude-plugin/marketplace.json"), catalog("echo $plugin")); manager.refresh("security")
         var refused = false
