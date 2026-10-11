@@ -108,6 +108,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     // 回合正常结束前等它落盘：检查点属于这个回合
                     val checkpoint = rt.checkpointer.begin(this, turnId)
                     tools.gate = checkpoint
+                    rt.security.beginTurn(this)
                     try {
                         if (!runSavedWorkflows(turnId, trigger)) loop(turnId)
                         checkpoint?.await()

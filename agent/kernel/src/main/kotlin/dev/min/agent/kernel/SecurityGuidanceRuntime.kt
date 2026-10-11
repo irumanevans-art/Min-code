@@ -5,6 +5,7 @@ import dev.min.agent.ext.config.SettingsLoader
 import dev.min.agent.ext.hooks.HookDecision
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookHandler
+import dev.min.agent.ext.security.SecurityGit
 import dev.min.agent.ext.security.SecurityGuidance
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ModelRef
@@ -22,6 +23,10 @@ import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.SecurityGuidanceSeen
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.catchingNonCancellation
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
@@ -68,6 +73,16 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
     /** 已经报过的发现（归一化后文字的短哈希，见 [fingerprint]）：提交审查与回合末审查说同一件事时不重复；同样以日志为准 */
     private val reported = ConcurrentHashMap.newKeySet<String>()
     private val commitStamps = ArrayDeque<Long>()
+
+    /**
+     * 本回合开头的工作区基线（一个 git tree 哈希，见 [SecurityGit]）。回合一开始就并行去拍，写 / 改文件的工具在 [awaitBaseline] 上等它拍完；
+     * 结果是 null = 不在 git 仓库里（或 git 不可用 / 没有启用回合末审查），此时清单只取文件工具的调用。只根会话用。
+     */
+    @Volatile
+    private var baseline: Deferred<String?>? = null
+
+    /** `git push` 之前的远端引用快照，按调用 id 存；推送完成后对着新的快照算出这次推出去了哪些提交 */
+    private val pushBefore = ConcurrentHashMap<CallId, Map<String, String>>()
 
     private suspend fun config(): Loaded? = loadLock.withLock {
         if (!seeded) {
@@ -120,6 +135,44 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
 
     private fun skipped(): Boolean = rt.state.value.origin?.agentType == HOOK_AGENT_TYPE
 
+    /** 在工作区里跑一条 git 命令（只读 git 的对象库与引用，不联网）；失败 / 超时都返回 null */
+    private suspend fun git(script: String, timeoutMs: Long = GIT_TIMEOUT_MS, maxOutputChars: Int = 4_000): String? {
+        val result = catchingNonCancellation {
+            rt.deps.host.exec.run(ShellCommand(script, rt.state.value.settings.cwd), ExecOptions(timeoutMs = timeoutMs, foregroundBudgetMs = null, maxOutputChars = maxOutputChars))
+        }.getOrNull()
+        return (result as? ExecResult.Exited)?.takeIf { it.exitCode == 0 }?.output
+    }
+
+    private suspend fun snapshotTree(): String? = git(SecurityGit.SNAPSHOT_SCRIPT)?.let(SecurityGit::parseTree)
+
+    /**
+     * 回合开头：并行去拍工作区基线（CC 在 UserPromptSubmit 里做同一件事）。只在根会话、启用了回合末审查时拍。
+     * [scope] 是这一回合的协程作用域，回合收尾前会等它跑完；拍不成（不在仓库里）不是错误，结果是 null。
+     */
+    fun beginTurn(scope: CoroutineScope) {
+        baseline = null
+        pushBefore.clear()
+        if (rt.state.value.origin != null || skipped()) return
+        baseline = scope.async {
+            catchingNonCancellation { if (config()?.layers?.stopReview == true) snapshotTree() else null }.getOrNull()
+        }
+    }
+
+    /** 会改文件（或能派出会改文件的子 agent）的工具跑之前：基线必须已经拍好，否则这个工具的改动会被算进基线里 */
+    suspend fun awaitBaseline() {
+        baseline?.await()
+    }
+
+    /** 工具跑之前：`git push` 先记下远端引用现在指向哪里，推完后才知道这次推出去的是哪些提交 */
+    suspend fun beforeTool(call: ToolCallPart, raw: JsonObject) {
+        if (call.name != "Bash" || skipped()) return
+        val cfg = config() ?: return
+        if (!cfg.layers.commitReview) return
+        val command = (raw["command"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return
+        if (!GIT_PUSH.containsMatchIn(command)) return
+        git(SecurityGit.REMOTE_REFS_SCRIPT)?.let { pushBefore[call.callId] = SecurityGit.parseRefs(it) }
+    }
+
     /**
      * 一次工具调用成功之后。编辑类工具：第 1 层提醒 + 记下改动；Bash 的 `git commit` / `git push`：第 3 层。
      * 只对成功的调用；任何一层出了意外都只记说明，不许让回合失败（与按需加载记忆同一条规矩）。
@@ -169,14 +222,16 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
             if (commitStamps.size >= COMMIT_REVIEWS_PER_HOUR) return
             commitStamps.addLast(now)
         }
-        val shown = rt.runNetworkShell(
+        // git push：审这次推出去的全部提交（推送前后远端引用的差）；没有引用动过（推到 URL、已是最新）就退回最近一个提交
+        val pushed = pushedCommits(call)
+        val shown = if (pushed != null) null else rt.runNetworkShell(
             call.callId,
             ShellCommand("git show --no-color --patch HEAD", rt.state.value.settings.cwd),
             ExecOptions(timeoutMs = 20_000, foregroundBudgetMs = null), emptyList(),
         )
         // 不在仓库里 / 没有提交可看：静默跳过（文档：在仓库之外这两层静默跳过）
-        val diff = (shown as? ExecResult.Exited)?.takeIf { it.exitCode == 0 && it.output.isNotBlank() }?.output ?: return
-        val reason = review(SecurityGuidance.commitReviewPrompt(command, diff.take(MAX_DIFF_CHARS), cfg.guidance), "commit", COMMIT_MODEL_VAR) ?: return
+        val diff = pushed?.text ?: (shown as? ExecResult.Exited)?.takeIf { it.exitCode == 0 && it.output.isNotBlank() }?.output ?: return
+        val reason = review(SecurityGuidance.commitReviewPrompt(command, diff.take(MAX_DIFF_CHARS), cfg.guidance, pushed?.commits ?: 1), "commit", COMMIT_MODEL_VAR) ?: return
         // 回合末审查已经报过同一件事：不再提醒
         val print = fingerprint(reason)
         if (!reported.add(print)) return
@@ -190,6 +245,16 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         )
     }
 
+    /** 这次 `git push` 推出去的提交（补丁文字）；推送前后远端引用没变、或取不到快照时返回 null（调用方退回最近一个提交） */
+    private suspend fun pushedCommits(call: ToolCallPart): SecurityGit.PushLog? {
+        val before = pushBefore.remove(call.callId) ?: return null
+        val after = git(SecurityGit.REMOTE_REFS_SCRIPT)?.let(SecurityGit::parseRefs) ?: return null
+        val tips = SecurityGit.pushedTips(before, after)
+        if (tips.isEmpty()) return null
+        val out = git(SecurityGit.pushLogScript(tips, before.values), maxOutputChars = MAX_DIFF_CHARS * 5) ?: return null
+        return SecurityGit.parsePushLog(out)
+    }
+
     /**
      * 回合要结束了：这一回合改过文件就审一次。返回要交给主模型的反馈（发现了问题），没有就 null。
      * 只在根会话（子 agent 的改动记在根上，由根的回合末统一审）；一次连续最多 [MAX_FIRES] 次，审查者给不出结论（超时、没按口径回）只记说明、不拦。
@@ -198,7 +263,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         if (rt.state.value.origin != null || skipped()) return null
         val cfg = config() ?: return null
         if (!cfg.layers.stopReview) return null
-        val files = synchronized(edited) { LinkedHashMap(edited).also { edited.clear() } }
+        val files = gatherChanges()
         if (files.isEmpty()) {
             stopFires = 0
             return null
@@ -207,7 +272,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
             rt.commit(listOf(Note(NoteLevel.Info, "security-guidance：回合末审查已连续发现问题 $MAX_FIRES 次，这次不再审，交还给你")), Durability.Batched)
             return null
         }
-        val prompt = SecurityGuidance.turnReviewPrompt(files.map { (p, t) -> SecurityGuidance.Changed(p, t) }, cfg.guidance)
+        val prompt = SecurityGuidance.turnReviewPrompt(files, cfg.guidance)
         val reason = review(prompt, "turn-end", TURN_MODEL_VAR)
         if (reason == null) {
             stopFires = 0
@@ -216,6 +281,38 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         stopFires++
         fingerprint(reason).let { if (reported.add(it)) rt.commit(listOf(SecurityGuidanceSeen(reported = listOf(it))), Durability.Batched) }
         return "An independent security review of the files you changed this turn found problems. Fix them in this session, or explain why a finding is not a real issue:\n$reason"
+    }
+
+    /**
+     * 这一回合改了哪些文件：在 git 仓库里以 git 工作区的差异为准（基线 tree 对回合末 tree），所以 Bash 里 sed / 脚本改的、子 agent 改的都在；
+     * 再并上文件工具的调用——被 .gitignore 忽略的、仓库之外的文件 git 看不到，但文件工具写过，照样审。
+     * 同一个文件在两边都有时只留 git 的补丁（它是真实的改动，比「这次写进去的文本」更准）。
+     * 不在仓库里（基线拍不成）或回合末快照失败：退回只取文件工具的调用（此前的做法）。
+     */
+    private suspend fun gatherChanges(): List<SecurityGuidance.Changed> {
+        val toolEdits = synchronized(edited) { LinkedHashMap(edited).also { edited.clear() } }
+        val base = baseline?.let { catchingNonCancellation { it.await() }.getOrNull() }
+        val fromGit = if (base != null) gitChangesSince(base) else null
+        val tools = toolEdits.filter { (path, _) -> fromGit == null || fromGit.none { it.covers(path) } }
+            .map { (path, text) -> SecurityGuidance.Changed(path, text) }
+        return (fromGit?.map { SecurityGuidance.Changed(it.abs, it.patch) }.orEmpty()) + tools
+    }
+
+    private class GitFile(val rel: String, val abs: String, val patch: String) {
+        /** 文件工具记的路径与 git 报的是不是同一个文件：路径整串相同，或以 `/相对路径` 结尾（git 的仓库根可能是宿主写法） */
+        fun covers(toolPath: String) = toolPath == abs || toolPath.endsWith("/$rel")
+    }
+
+    /** 基线之后工作区变了哪些文件。回合末快照拍不成、diff 读不出来返回 null；没有变化返回空表 */
+    private suspend fun gitChangesSince(base: String): List<GitFile>? {
+        val end = snapshotTree() ?: return null
+        // 下一次（同一回合里被审查发现拉回去改完之后）从这里算起：只审审查之后的新改动，没再动文件就不重复审
+        baseline = CompletableDeferred(end)
+        if (end == base) return emptyList()
+        val out = git(SecurityGit.diffScript(base, end), maxOutputChars = 400_000) ?: return null
+        val diff = SecurityGit.parseDiff(out) ?: return null
+        val top = diff.top?.takeIf { it.startsWith("/") }
+        return diff.changes.map { GitFile(it.rel, if (top != null) "$top/${it.rel}" else it.rel, it.patch) }
     }
 
     /** 起审查者跑一遍：发现（ok:false 的 reason）返回文字，没发现或没有结论返回 null（没有结论记一条说明） */
@@ -270,12 +367,14 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         private const val REVIEW_TIMEOUT_SECONDS = 180
         private const val MAX_DIFF_CHARS = 60_000
         private const val HOOK_LABEL = "security-guidance"
+        private const val GIT_TIMEOUT_MS = 30_000L
 
         /** 两个模型侧审查各自的模型变量（CC 文档 Usage cost 一节） */
         const val TURN_MODEL_VAR = "SECURITY_REVIEW_MODEL"
         const val COMMIT_MODEL_VAR = "SG_AGENTIC_MODEL"
 
         /** 命令里有 `git commit` 或 `git push`（可带 `-C dir` 之类的全局选项，可在 `&&` 链里） */
+        private val GIT_PUSH = Regex("""(?:^|[\s;&|(])git\s+(?:-[^\s]+\s+(?:[^\s-][^\s]*\s+)?)*push\b""")
         private val GIT_PUBLISH = Regex("""(?:^|[\s;&|(])git\s+(?:-[^\s]+\s+(?:[^\s-][^\s]*\s+)?)*(?:commit|push)\b""")
     }
 }

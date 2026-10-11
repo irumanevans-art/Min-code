@@ -281,7 +281,7 @@ object SecurityGuidance {
     const val MAX_REVIEW_FILES = 30
 
     /** 每个文件摘录的字符上限：审查者拿到的是「这次写了什么」，要全文自己 Read */
-    const val EXCERPT_CHARS = 4000
+    const val EXCERPT_CHARS = 6000
 
     private const val CHECKLIST = """
 Look for vulnerabilities the author may have introduced, for example: injection (SQL, shell, template, path traversal), missing or bypassable
@@ -306,14 +306,16 @@ Reply with a single JSON object and nothing else: {"ok": true} when you found no
         append("You did not write this code and have no stake in the approach; your only job is to find security problems in the changes.\n")
         append(CHECKLIST)
         append(guidanceBlock(guidance))
-        append("\nFiles changed this turn (at most $MAX_REVIEW_FILES shown; an excerpt of what was written follows each path; Read the file for the full text):\n")
+        append("\n${changed.size} files changed this turn (at most $MAX_REVIEW_FILES shown). A diff of the change follows each path ")
+        append("(for a file git does not track: an excerpt of what was written); Read the file for the full text:\n")
         for (c in changed.take(MAX_REVIEW_FILES)) append("\n=== ").append(c.path).append(" ===\n").append(c.excerpt.take(EXCERPT_CHARS)).append('\n')
         append(VERDICT)
     }
 
     /** 提交 / 推送审查的提示词：模型刚提交的那次改动的 diff（已截断） */
-    fun commitReviewPrompt(command: String, diff: String, guidance: String): String = buildString {
-        append("You are an independent security reviewer. A coding agent just ran `").append(command.take(200)).append("`, which published the change below. ")
+    fun commitReviewPrompt(command: String, diff: String, guidance: String, commits: Int = 1): String = buildString {
+        append("You are an independent security reviewer. A coding agent just ran `").append(command.take(200)).append("`, which published ")
+        append(if (commits > 1) "the $commits commits below (oldest first). " else "the change below. ")
         append("You did not write it; read the surrounding code to decide whether each suspicious pattern is real before reporting it.\n")
         append(CHECKLIST)
         append(guidanceBlock(guidance))

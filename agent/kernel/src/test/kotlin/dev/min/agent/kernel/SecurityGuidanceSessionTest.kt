@@ -71,6 +71,9 @@ class SecurityGuidanceSessionTest {
     private val files = ConcurrentHashMap<String, String>()
     private val exec = FakeExec()
     private var counter = 0
+
+    /** 工具与 git 命令实际发生的先后（测基线是不是在第一次编辑之前拍的） */
+    private val order = java.util.Collections.synchronizedList(mutableListOf<String>())
     private val now = AtomicLong(1_000)
 
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(40_000) { block() } }
@@ -112,6 +115,7 @@ class SecurityGuidanceSessionTest {
             return PermissionAsk(name, "写文件", paths = listOf(PathAccess(GuestPath(path), AccessKind.Write, PathScope.Workspace)))
         }
         override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            order += "write"
             emit(ToolProgress.Done(ToolResult(listOf(TextPart("wrote")))))
         }
     }
@@ -124,6 +128,7 @@ class SecurityGuidanceSessionTest {
         override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
         override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "命令")
         override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            order += "bash"
             emit(ToolProgress.Done(ToolResult(listOf(TextPart("committed")))))
         }
     }
@@ -497,5 +502,182 @@ class SecurityGuidanceSessionTest {
         // 22 次提交里只有前 20 次叫了审查者：主模型 23 次 + 审查者 20 次
         assertEquals(43, model.requests.size)
         assertFalse(model.requests.isEmpty())
+    }
+
+    // ---- 改动清单取 git 工作区的差异（CC：回合开头记基线、回合末 diff） ----
+
+    private val t1 = "1".repeat(40)
+    private val t2 = "2".repeat(40)
+
+    /** 假仓库：前几次快照依次给 [trees]（最后一个一直给下去）；diff 命令给 [diff]；别的命令空输出成功 */
+    private fun gitRepo(trees: List<String>, diff: String = "", extra: (String) -> ExecResult? = { null }) {
+        val queue = ArrayDeque(trees)
+        exec.script = { cmd, _ ->
+            val script = cmd.script
+            extra(script) ?: when {
+                "write-tree" in script -> synchronized(queue) {
+                    // 第一次快照要拍一会儿：写工具若不等基线，就会赶在它前面落笔（记录放在睡醒之后）
+                    if (queue.size == trees.size) Thread.sleep(150)
+                    order += "snapshot"
+                    ExecResult.Exited(0, (if (queue.size > 1) queue.removeFirst() else queue.first()) + "\n", false, 1)
+                }
+                "--name-only" in script -> ExecResult.Exited(0, diff, false, 1)
+                else -> ExecResult.Exited(0, "", false, 1)
+            }
+        }
+    }
+
+    private fun diffOf(vararg files: Pair<String, String>, top: String = "/workspace") =
+        "TOP=$top\n---MIN-SG-NAMES---\n" + files.joinToString("") { it.first + "\n" } + "---MIN-SG-PATCH---\n" +
+            files.joinToString("") { (name, body) -> "diff --git a/$name b/$name\n$body\n" }
+
+    private fun reviewText(req: ModelRequest) = req.messages.flatMap { it.parts.filterIsInstance<TextPart>() }.joinToString("\n") { it.text }
+
+    @Test
+    fun `a change a shell command made, which no file tool saw, is reviewed from the git diff`() = run {
+        enable()
+        gitRepo(listOf(t1, t2), diffOf("x.py" to "+++ b/x.py\n+eval(b)"))
+        val model = ScriptedModel(
+            reply(commitCall("sed -i 's/a/eval(b)/' x.py"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(bad)),
+            reply(TextPart("fixed")),
+        )
+        session(model).say("patch it with sed")
+        val review = reviewText(model.requests[2])
+        assertTrue(review, review.contains("=== /workspace/x.py ===") && review.contains("+eval(b)"))
+        assertEquals(4, model.requests.size)
+    }
+
+    @Test
+    fun `the baseline is taken before the first edit and the closing snapshot after the last`() = run {
+        enable()
+        gitRepo(listOf(t1, t2), diffOf("a.py" to "+x"))
+        val model = ScriptedModel(reply(writeCall("/workspace/a.py", "x"), stop = StopReason.ToolUse), reply(TextPart("done")), reply(TextPart(ok)))
+        session(model).say("write")
+        assertEquals(listOf("snapshot", "write", "snapshot"), order.toList())
+    }
+
+    @Test
+    fun `an unchanged work tree means no review even if commands ran`() = run {
+        enable()
+        // 两个 tree 相同：即便 diff 命令还能吐出东西也不该采信（真 git 里相同的 tree 没有差异，这里故意给一份来证明没去问它）
+        gitRepo(listOf(t1, t1), diffOf("x.py" to "+eval(1)"))
+        val model = ScriptedModel(reply(commitCall("ls"), stop = StopReason.ToolUse), reply(TextPart("done")))
+        session(model).say("look around")
+        assertEquals(2, model.requests.size)
+    }
+
+    @Test
+    fun `files the file tools wrote that git does not list are still reviewed, and a file in both is shown once with its diff`() = run {
+        enable()
+        gitRepo(listOf(t1, t2), diffOf("x.py" to "+++ b/x.py\n+GITPATCH"))
+        val model = ScriptedModel(
+            reply(writeCall("/workspace/x.py", "TOOLTEXT"), stop = StopReason.ToolUse),
+            reply(writeCall("/workspace/ignored.log", "OUTSIDE"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(ok)),
+        )
+        session(model).say("write")
+        val review = reviewText(model.requests[3])
+        assertEquals(1, Regex("=== /workspace/x.py ===").findAll(review).count())
+        assertTrue(review.contains("GITPATCH") && !review.contains("TOOLTEXT"))
+        // git 的清单里没有（被忽略的、仓库之外的）：并上文件工具的摘录
+        assertTrue(review.contains("=== /workspace/ignored.log ===") && review.contains("OUTSIDE"))
+    }
+
+    @Test
+    fun `outside a git repository it falls back to what the file tools wrote`() = run {
+        enable()
+        exec.script = { cmd, _ -> if ("write-tree" in cmd.script) ExecResult.Exited(3, "", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val model = ScriptedModel(
+            reply(commitCall("sed -i s/a/b/ x.py"), stop = StopReason.ToolUse),
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(ok)),
+        )
+        session(model).say("go")
+        val review = reviewText(model.requests[3])
+        assertTrue(review.contains("=== /workspace/a.py ===") && review.contains("print(1)"))
+        // 只有 Bash 改的在仓库之外看不到：不审
+        val bashOnly = ScriptedModel(reply(commitCall("sed -i s/a/b/ x.py"), stop = StopReason.ToolUse), reply(TextPart("done")))
+        session(bashOnly).say("go")
+        assertEquals(2, bashOnly.requests.size)
+    }
+
+    @Test
+    fun `no more than thirty files are shown and the prompt says how many changed`() = run {
+        enable()
+        gitRepo(listOf(t1, t2), diffOf(*(1..40).map { "f$it.py" to "+x$it" }.toTypedArray()))
+        val model = ScriptedModel(reply(commitCall("make"), stop = StopReason.ToolUse), reply(TextPart("done")), reply(TextPart(ok)))
+        session(model).say("generate")
+        val review = reviewText(model.requests[2])
+        assertTrue(review.contains("=== /workspace/f30.py ===") && !review.contains("=== /workspace/f31.py ==="))
+        assertTrue(review, review.contains("40 files changed"))
+    }
+
+    // ---- git push 推出多个提交 ----
+
+    private val c0 = "a".repeat(40)
+    private val c2 = "b".repeat(40)
+
+    /** 假仓库里的一次推送：前后两次远端引用 [before] / [after]，`git log` 给 [log]（第一行 COUNT=…）；`git show HEAD` 给 SHOWHEAD */
+    private fun pushRepo(before: String, after: String, log: String) {
+        val refs = ArrayDeque(listOf(before, after))
+        exec.script = { cmd, _ ->
+            val s = cmd.script
+            when {
+                "for-each-ref" in s -> {
+                    order += "refs"
+                    ExecResult.Exited(0, synchronized(refs) { if (refs.size > 1) refs.removeFirst() else refs.first() }, false, 1)
+                }
+                "rev-list --count" in s -> {
+                    order += "log"
+                    ExecResult.Exited(0, log, false, 1)
+                }
+                s.startsWith("git show") -> ExecResult.Exited(0, "SHOWHEAD diff --git a/h b/h\n+head", false, 1)
+                else -> ExecResult.Exited(0, "", false, 1)
+            }
+        }
+    }
+
+    @Test
+    fun `a push is reviewed over every commit it delivered, not just the latest`() = run {
+        enable()
+        pushRepo(
+            "$c0 refs/remotes/origin/main\n", "$c2 refs/remotes/origin/main\n",
+            "COUNT=2\ncommit $c0\nfirst\n\ndiff --git a/a b/a\n+FIRSTCOMMIT\ncommit $c2\nsecond\n\ndiff --git a/b b/b\n+SECONDCOMMIT\n",
+        )
+        val model = ScriptedModel(
+            reply(commitCall("git push origin main"), stop = StopReason.ToolUse),
+            reply(TextPart(bad)),
+            reply(TextPart("done")),
+        )
+        session(model).say("push")
+        val review = reviewText(model.requests[1])
+        assertTrue(review, review.contains("FIRSTCOMMIT") && review.contains("SECONDCOMMIT") && review.contains("2 commits"))
+        assertFalse(review.contains("SHOWHEAD"))
+        assertTrue(model.requests[2].reminders().any { "a.py:1 eval of user input" in it })
+        // 推送前的远端引用在工具跑之前取、推送后的在它之后取
+        assertEquals(listOf("refs", "bash", "refs", "log"), order.toList())
+    }
+
+    @Test
+    fun `a push that moved no remote ref falls back to the latest commit`() = run {
+        enable()
+        pushRepo("$c0 refs/remotes/origin/main\n", "$c0 refs/remotes/origin/main\n", "COUNT=0\n")
+        val model = ScriptedModel(reply(commitCall("git push https://example.invalid/r.git main"), stop = StopReason.ToolUse), reply(TextPart(ok)), reply(TextPart("done")))
+        session(model).say("push")
+        assertTrue(reviewText(model.requests[1]).contains("SHOWHEAD"))
+    }
+
+    @Test
+    fun `a plain commit still reviews just that commit and takes no remote snapshot`() = run {
+        enable()
+        pushRepo("$c0 refs/remotes/origin/main\n", "$c2 refs/remotes/origin/main\n", "COUNT=2\nx\n")
+        val model = ScriptedModel(reply(commitCall("git commit -m x"), stop = StopReason.ToolUse), reply(TextPart(ok)), reply(TextPart("done")))
+        session(model).say("commit")
+        assertTrue(reviewText(model.requests[1]).contains("SHOWHEAD"))
+        assertEquals(listOf("bash"), order.toList())
     }
 }
