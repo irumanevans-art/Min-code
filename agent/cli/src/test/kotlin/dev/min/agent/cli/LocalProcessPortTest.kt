@@ -33,8 +33,9 @@ import java.nio.file.Path
 
 /**
  * 用真实的 bash / cat / sleep 跑（Windows 上是 Git Bash）。起进程在 Windows 上慢，时间断言都留了大量余量，
- * 只断言「在几秒内发生 / 不发生」。找子进程靠「测试前后多出来的 sleep 进程」：Windows 上拿不到别的进程的命令行，
- * 也不能用 msys 的 pid（那不是 Windows 的 pid）。
+ * 只断言「在几秒内发生 / 不发生」。找子进程靠本测试自己的根 shell（见 [sleeping]），不靠全机器的 sleep 进程：
+ * 同机的其它会话（比如别的 agent 的 shell 里 `sleep 10` 循环）也会起 sleep，按「测试前后多出来的 sleep」判定
+ * 会把别人的 sleep 误认成自己的子进程。
  */
 class LocalProcessPortTest {
     private lateinit var work: Path
@@ -42,6 +43,7 @@ class LocalProcessPortTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val spawned = ArrayList<LiveProcess>()
     private val cwd = GuestPath("/work")
+    private val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
 
     @Before
     fun setUp() {
@@ -86,17 +88,76 @@ class LocalProcessPortTest {
         return condition()
     }
 
-    /** 本机所有活着的 sleep 进程（Windows 上是 Git 的 sleep.exe） */
-    private fun sleepers(): Set<Long> = ProcessHandle.allProcesses()
-        .filter { it.isAlive && it.info().command().map { c -> Path.of(c).fileName.toString().removeSuffix(".exe") == "sleep" }.orElse(false) }
-        .map { it.pid() }.toList().toSet()
+    /**
+     * 起一个子进程树：脚本先把根 shell 的 pid 追加写进 [ROOTS_FILE]（cwd 就是 work，所以用相对路径），再执行 [body]。
+     * 测试靠这个 pid 找到它自己的 sleep 子孙。
+     */
+    private fun sleeping(body: String) = sh("echo \$\$ >> $ROOTS_FILE; $body")
+
+    private fun roots(): List<Long> = try {
+        Files.readAllLines(work.resolve(ROOTS_FILE)).mapNotNull { it.trim().toLongOrNull() }
+    } catch (_: java.nio.file.NoSuchFileException) {
+        emptyList()
+    }
+
+    /**
+     * 本测试见过的 sleep 子孙的 pid（Windows 上是 winpid）。只累计、不删：父进程死了之后 sleep 会改挂到 init，
+     * 之后再按父子关系找就找不到了，所以见过的要记下来，关停后仍能查它死没死。
+     */
+    private val seen = HashSet<Long>()
+
+    /** 本测试的 sleep 子孙（累计见过的，活的死的都有） */
+    private fun sleepers(): Set<Long> {
+        val roots = roots()
+        seen += if (windows) msysSleepers(roots) else javaSleepers(roots)
+        return seen.toSet()
+    }
+
+    /** Linux / macOS：直接用 `ProcessHandle` 的后代 */
+    private fun javaSleepers(roots: List<Long>): Set<Long> = roots
+        .flatMap { r -> ProcessHandle.of(r).map { it.descendants().toList() }.orElse(emptyList()) }
+        .filter { h -> h.isAlive && h.info().command().map { Path.of(it).fileName.toString() == "sleep" }.orElse(false) }
+        .map { it.pid() }.toSet()
+
+    /**
+     * Windows：msys 的 sleep 在 Windows 眼里没有父进程（`ProcessHandle.parent()` 为空），`descendants()` 找不到它，
+     * 只能看 msys 进程表（`ps -W`，列：PID PPID PGID WINPID …）。成员 = 根 pid，以及 PPID 或 PGID 落在成员里的行。
+     * PGID 那一条是为了根被杀后改挂到 init 的孙进程：非交互 shell 里它仍和根同属一个进程组。
+     */
+    private fun msysSleepers(roots: List<Long>): Set<Long> {
+        if (roots.isEmpty()) return emptySet()
+        val text = ProcessBuilder("bash", "-c", "ps -W").redirectErrorStream(true).start().let { p ->
+            p.outputStream.close()
+            p.inputStream.readBytes().toString(Charsets.UTF_8).also { p.waitFor() }
+        }
+        val rows = text.lines().mapNotNull { line ->
+            val c = line.trim().split(Regex("\\s+"))
+            val nums = (0..3).map { c.getOrNull(it)?.toLongOrNull() ?: return@mapNotNull null }
+            PsRow(pid = nums[0], ppid = nums[1], pgid = nums[2], winpid = nums[3], command = c.last())
+        }
+        val members = LinkedHashSet<Long>(roots)
+        var grew = true
+        while (grew) {
+            grew = false
+            for (r in rows) {
+                if (r.pid !in members && (r.ppid in members || r.pgid in members)) {
+                    members += r.pid
+                    grew = true
+                }
+            }
+        }
+        return rows.filter { it.pid in members && it.pid !in roots && it.command.substringAfterLast('/') == "sleep" }
+            .map { it.winpid }.toSet()
+    }
+
+    private class PsRow(val pid: Long, val ppid: Long, val pgid: Long, val winpid: Long, val command: String)
 
     private fun anyAlive(pids: Set<Long>): Boolean = pids.any { pid -> ProcessHandle.of(pid).map { it.isAlive }.orElse(false) }
 
-    /** 等到比 [baseline] 多出至少 [count] 个 sleep，返回这些新进程的 pid */
-    private fun newSleepers(baseline: Set<Long>, count: Int = 1): Set<Long> {
+    /** 等到出现至少 [count] 个本测试的 sleep 子孙，返回它们的 pid */
+    private fun newSleepers(count: Int = 1): Set<Long> {
         var found = emptySet<Long>()
-        assertTrue("子进程应已起来", eventually { found = sleepers() - baseline; found.size >= count })
+        assertTrue("子进程应已起来", eventually { found = sleepers(); found.size >= count })
         return found
     }
 
@@ -270,10 +331,9 @@ class LocalProcessPortTest {
 
     @Test
     fun `shutdown 能结束忽略 SIGTERM 的进程 并且不留子进程`() = runBlocking {
-        val baseline = sleepers()
         // 先忽略 TERM 再起 sleep：被忽略的信号会被子进程继承，所以子进程也只能靠 SIGKILL 收
-        val p = spawn(sh("trap '' TERM; sleep 600 & wait"))
-        val children = newSleepers(baseline)
+        val p = spawn(sleeping("trap '' TERM; sleep 600 & wait"))
+        val children = newSleepers()
         val t0 = System.nanoTime()
         p.shutdown()
         val ms = (System.nanoTime() - t0) / 1_000_000
@@ -284,9 +344,8 @@ class LocalProcessPortTest {
 
     @Test
     fun `shutdown 回收多层后代 孙进程也不留`() = runBlocking {
-        val baseline = sleepers()
-        val p = spawn(sh("sh -c 'sleep 601 & wait' & wait"))
-        val grandchildren = newSleepers(baseline)
+        val p = spawn(sleeping("sh -c 'sleep 601 & wait' & wait"))
+        val grandchildren = newSleepers()
         p.shutdown()
         assertTrue("孙进程应被回收：$grandchildren", eventually(5_000) { !anyAlive(grandchildren) })
     }
@@ -312,24 +371,22 @@ class LocalProcessPortTest {
 
     @Test
     fun `调用 spawn 的协程被取消 进程树被回收`() = runBlocking {
-        val baseline = sleepers()
         val started = kotlinx.coroutines.CompletableDeferred<Unit>()
         val owner = scope.launch {
-            spawn(sh("sleep 602 & wait"))
+            spawn(sleeping("sleep 602 & wait"))
             started.complete(Unit)
             awaitCancellation()
         }
         withTimeout(30_000) { started.await() }
-        val children = newSleepers(baseline)
+        val children = newSleepers()
         owner.cancelAndJoin()
         assertTrue("取消后不该留下进程：$children", eventually(10_000) { !anyAlive(children) })
     }
 
     @Test
     fun `调用 spawn 的协程正常结束 进程不受影响 由持有者 shutdown`() = runBlocking {
-        val baseline = sleepers()
-        val p = scope.async { spawn(sh("sleep 603 & wait")) }.await()
-        val children = newSleepers(baseline)
+        val p = scope.async { spawn(sleeping("sleep 603 & wait")) }.await()
+        val children = newSleepers()
         Thread.sleep(500)
         assertFalse(p.exit.isCompleted)
         assertTrue(anyAlive(children))
@@ -339,25 +396,25 @@ class LocalProcessPortTest {
 
     @Test
     fun `spawn 途中被取消 不会泄漏进程`() = runBlocking {
-        val baseline = sleepers()
         repeat(15) { round ->
             val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                spawn(sh("sleep 604 & wait"), via = port)
+                spawn(sleeping("sleep 604 & wait"), via = port)
                 // 调用方协程要一直活着：spawn 返回后正常结束的 Job 不回收进程（由持有者 shutdown），这里测的是「被取消」
                 awaitCancellation()
             }
             if (round % 3 == 1) Thread.sleep(20L * round)
+            // 取消前先记下这一轮的 sleep：取消之后根死了，孙进程改挂到 init，之后就只能靠这里累计的记录认出来
+            sleepers()
             job.cancelAndJoin()
         }
         Thread.sleep(2_000)
-        assertTrue("不该有泄漏：${sleepers() - baseline}", eventually(15_000) { (sleepers() - baseline).isEmpty() })
+        assertTrue("不该有泄漏：${sleepers()}", eventually(15_000) { !anyAlive(sleepers()) })
     }
 
     @Test
     fun `使用方协程在 write 或 shutdown 中被取消 收尾照样做完`() = runBlocking {
-        val baseline = sleepers()
-        val p = spawn(sh("trap '' TERM; sleep 605 & wait"))
-        val children = newSleepers(baseline)
+        val p = spawn(sleeping("trap '' TERM; sleep 605 & wait"))
+        val children = newSleepers()
         val caller = scope.launch(start = CoroutineStart.UNDISPATCHED) { p.shutdown() }
         caller.cancelAndJoin()
         assertTrue("shutdown 的调用方被取消也要回收完：$children", eventually(20_000) { !anyAlive(children) && p.exit.isCompleted })
@@ -410,3 +467,6 @@ class LocalProcessPortTest {
         assertTrue(eventually { Files.list(work.resolve("launch")).use { files -> files.filter { it.toString().endsWith(".sh") }.count() } == 0L })
     }
 }
+
+/** 根 shell 追加写 pid 的文件名（cwd 是测试的 work 目录，见 [LocalProcessPortTest.sleeping]） */
+private const val ROOTS_FILE = "roots.pid"
