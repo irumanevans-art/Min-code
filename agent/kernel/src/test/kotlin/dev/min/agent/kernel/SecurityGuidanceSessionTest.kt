@@ -340,6 +340,23 @@ class SecurityGuidanceSessionTest {
     }
 
     @Test
+    fun `a commit review finding the turn end review already reported is not repeated`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val model = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(bad)),
+            reply(commitCall(), stop = StopReason.ToolUse),
+            reply(TextPart(bad)),
+            reply(TextPart("committed")),
+        )
+        session(model).say("write and commit")
+        assertEquals(6, model.requests.size)
+        assertTrue(model.requests[5].reminders().none { "published" in it })
+    }
+
+    @Test
     fun `commands that are not a commit or a push are not reviewed, and a clean commit adds nothing`() = run {
         enable()
         exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
