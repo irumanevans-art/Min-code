@@ -149,7 +149,7 @@ class SessionRuntime private constructor(
 
     internal val worktrees = Worktrees(this)
     /** security-guidance 的三层（只在 settings 里启用了才有动作，见 [SecurityGuidanceRuntime]） */
-    internal val security = SecurityGuidanceRuntime(this)
+    internal val security = SecurityGuidanceRuntime(this, scope)
     internal fun watchNetworkLease(handle: dev.min.agent.spi.ExecHandle, lease: dev.min.agent.spi.NetworkLease, timeoutMs: Long) {
         scope.launch {
             try {

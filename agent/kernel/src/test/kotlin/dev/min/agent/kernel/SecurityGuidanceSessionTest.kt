@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.llm.ModelClient
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ClientMsgId
@@ -39,6 +40,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -134,7 +136,7 @@ class SecurityGuidanceSessionTest {
     }
 
     private fun hubFor(
-        model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full,
+        model: ModelClient, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full,
         reviewer: ScriptedModel? = null,
     ): SessionHub {
         val tools = listOf<Tool<JsonObject>>(write, bash)
@@ -153,18 +155,32 @@ class SecurityGuidanceSessionTest {
     }
 
     private suspend fun session(
-        model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full,
-        reviewer: ScriptedModel? = null,
+        model: ModelClient, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full,
+        reviewer: ScriptedModel? = null, headless: Boolean = false,
     ): SessionRuntime =
-        hubFor(model, env, trusted, customizations, reviewer).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        hubFor(model, env, trusted, customizations, reviewer).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions, headless = headless)
 
     /** 重开：同一个日志目录、换一个新的内核实例（新的内存状态、新的脚本模型） */
-    private suspend fun reopen(id: dev.min.agent.protocol.SessionId, model: ScriptedModel): SessionRuntime = hubFor(model).open(id)!!
+    private suspend fun reopen(id: dev.min.agent.protocol.SessionId, model: ModelClient): SessionRuntime = hubFor(model).open(id)!!
 
-    private suspend fun SessionRuntime.say(text: String) {
+    /**
+     * 说一句话并等到会话完全安静：回合收尾后审查在后台跑，发现再作为 hook 来源的输入把会话叫起来跟进，
+     * 所以光等「这个回合结束」不够，要等后台审查全出结论、排进来的跟进回合也跑完。
+     */
+    private suspend fun SessionRuntime.say(text: String, settle: Boolean = true) {
         val before = state.value.lastTurn?.turnId
         send(ClientMsgId("u${++counter}"), listOf(TextPart(text)))
         state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        if (settle) settled()
+    }
+
+    private suspend fun SessionRuntime.settled() {
+        while (true) {
+            security.awaitReviews()
+            state.first { it.turn == null }
+            if (security.pendingReviews() == 0 && isQuiescent()) return
+            kotlinx.coroutines.delay(5)
+        }
     }
 
     private fun writeCall(path: String, content: String) =
@@ -679,5 +695,120 @@ class SecurityGuidanceSessionTest {
         session(model).say("commit")
         assertTrue(reviewText(model.requests[1]).contains("SHOWHEAD"))
         assertEquals(listOf("bash"), order.toList())
+    }
+
+    // ---- 回合末审查在后台跑 ----
+
+    /** 按请求内容分流的模型：[kinds] 记下每个请求是谁发的（main 主模型 / goal 评估器 / review 审查者），按发生顺序 */
+    private inner class RoutingModel(private val route: (ModelRequest, String) -> dev.min.agent.testkit.Step) : ModelClient {
+        val requests = java.util.concurrent.CopyOnWriteArrayList<ModelRequest>()
+        val kinds: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf<String>())
+        override fun stream(request: ModelRequest): Flow<dev.min.agent.llm.ModelStreamEvent> = flow {
+            val kind = when {
+                request.system.any { "hook evaluator" in it } -> "goal"
+                reviewText(request).contains("independent security reviewer") -> "review"
+                else -> "main"
+            }
+            requests += request
+            kinds += kind
+            emitAll(route(request, kind)(request))
+        }
+    }
+
+    @Test
+    fun `an interactive session ends the turn without waiting for the review, and the finding comes back as a follow-up`() = run {
+        enable()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            when (kind) {
+                "review" -> { req -> flow { gate.await(); emitAll(reply(TextPart(bad))(req)) } }
+                else -> when (mains.incrementAndGet()) {
+                    1 -> reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse)
+                    2 -> reply(TextPart("done"))
+                    else -> reply(TextPart("fixed"))
+                }
+            }
+        }
+        val rt = session(model)
+        rt.say("write", settle = false)
+        // 回复已经交出、回合已经结束，审查还卡在那里
+        assertTrue(rt.state.value.turn == null)
+        assertEquals(1, rt.security.pendingReviews())
+        assertEquals(2, model.requests.count { it.system.none { s -> "hook evaluator" in s } && !reviewText(it).contains("independent security reviewer") })
+        assertTrue(rt.state.value.history.filterIsInstance<HistoryEntry.User>().none { it.origin is dev.min.agent.spi.InputOrigin.Hook })
+
+        gate.complete(Unit)
+        rt.settled()
+        assertEquals(listOf("main", "main", "review", "main"), model.kinds.toList())
+        // 发现作为 hook 来源的输入把会话叫起来：主模型最后一次请求里带着它
+        val last = reviewText(model.requests.last())
+        assertTrue(last, last.contains("a.py:1 eval of user input"))
+        val origin = rt.state.value.history.filterIsInstance<HistoryEntry.User>().last().origin
+        assertEquals(dev.min.agent.spi.InputOrigin.Hook("security-guidance"), origin)
+        assertTrue(rt.state.value.turn == null)
+    }
+
+    @Test
+    fun `the background review starts only when the turn really ends, after the goal evaluation`() = run {
+        enable()
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val goals = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            when (kind) {
+                "goal" -> reply(TextPart(if (goals.incrementAndGet() == 1) """{"ok": false, "reason": "keep going"}""" else """{"ok": true, "reason": "done"}"""))
+                "review" -> reply(TextPart(ok))
+                else -> when (mains.incrementAndGet()) {
+                    1 -> reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse)
+                    2 -> reply(TextPart("first answer"))
+                    else -> reply(TextPart("more"))
+                }
+            }
+        }
+        val rt = session(model)
+        rt.commit(listOf(dev.min.agent.spi.GoalSet("all green")), dev.min.agent.spi.Durability.Sync)
+        rt.say("go")
+        // 目标没达成：回合续下去，审查不起；目标达成、回合真的要收尾，才起（并且只起一次，审的是整个回合攒下的改动）
+        assertEquals(listOf("main", "main", "goal", "main", "goal", "review"), model.kinds.toList())
+        assertTrue(reviewText(model.requests.last()).contains("=== /workspace/a.py ==="))
+    }
+
+    @Test
+    fun `a headless session still reviews inline so the process does not exit before the verdict`() = run {
+        enable()
+        val model = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(bad)),
+            reply(TextPart("fixed")),
+        )
+        val rt = session(model, headless = true)
+        rt.say("write", settle = false)
+        // 回合一结束，审查与随后的跟进都已经在这一回合里做完了
+        assertEquals(0, rt.security.pendingReviews())
+        assertEquals(4, model.requests.size)
+        assertTrue(rt.state.value.turn == null)
+    }
+
+    @Test
+    fun `closing the session stops a review that is still running`() = run {
+        enable()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            if (kind == "review") { req -> flow { gate.await(); emitAll(reply(TextPart(bad))(req)) } }
+            else if (mains.incrementAndGet() == 1) reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse)
+            else reply(TextPart("done"))
+        }
+        val hub = hubFor(model)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("write", settle = false)
+        assertEquals(1, rt.security.pendingReviews())
+        hub.close(rt.sessionId)
+        assertEquals(0, rt.security.pendingReviews())
+        // 放开闸门也不会有任何后续：没有新的主模型请求
+        gate.complete(Unit)
+        kotlinx.coroutines.delay(100)
+        assertEquals(2, model.requests.count { it.system.none { s -> "hook evaluator" in s } && !reviewText(it).contains("independent security reviewer") })
     }
 }

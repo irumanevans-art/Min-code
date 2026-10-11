@@ -8,22 +8,31 @@ import dev.min.agent.ext.hooks.HookHandler
 import dev.min.agent.ext.security.SecurityGit
 import dev.min.agent.ext.security.SecurityGuidance
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
+import dev.min.agent.spi.Delivery
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.ExecOptions
 import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
+import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.SecurityGuidanceSeen
 import dev.min.agent.spi.ShellCommand
+import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.catchingNonCancellation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -46,14 +55,15 @@ import java.util.concurrent.ConcurrentHashMap
  * 3. **模型自己 `git commit` / `git push` 之后**：取最近一次提交的 diff，让审查者读周边代码判断是否真有问题；有发现就挂在那次 Bash 结果后面。
  *    每小时最多 20 次；与回合末审查已经报过的同一条发现不重复。
  *
- * 与 CC 的差别（写进对标表）：改动清单取自文件工具（Bash 里 sed / 脚本改的、子 agent 之外的外部改动看不到，CC 取 git 工作区差异），
- * 所以不要求在 git 仓库里；两个模型侧审查是前台跑的（CC 在后台跑、不拖慢回复）；审查者模型就是会话模型，没有
- * SECURITY_REVIEW_MODEL / SG_AGENTIC_MODEL 两个变量。
+ * 改动清单：在 git 仓库里取工作区差异（回合开头拍一个基线 tree、回合末再拍一个，见 [SecurityGit]），再并上文件工具的调用；
+ * 不在仓库里退回只取文件工具的调用。回合末审查交互会话里在后台跑（见 [turnEnd]），提交 / 推送审查仍在那次 Bash 调用里同步审
+ * （它的发现要挂在那次调用的结果后面）。审查者模型由 SECURITY_REVIEW_MODEL / SG_AGENTIC_MODEL 点名（过 availableModels 名单），不点名用会话模型。
+ * 去重表落日志（[SecurityGuidanceSeen]）。
  *
  * 启用：settings 的 `enabledPlugins` 里有 `security-guidance@<市场>: true`（项目 / 本地层要过工作区信任，否则一个没信任的仓库就能替人开出模型调用）；
  * `disableAllHooks`、`--bare` / `--safe-mode` 下不启用（CC 里它是插件，这些都会让插件不生效）。
  */
-internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
+internal class SecurityGuidanceRuntime(private val rt: SessionRuntime, private val scope: CoroutineScope) {
     private class Loaded(val layers: SecurityGuidance.Layers, val patterns: List<SecurityGuidance.Pattern>, val guidance: String, val cwd: GuestPath)
 
     private val loadLock = Mutex()
@@ -68,7 +78,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
 
     /** 根会话上记着：这一回合改过的文件（路径 → 这次写进去的内容摘录），审查后清空 */
     private val edited = LinkedHashMap<String, String>()
-    private var stopFires = 0
+    private val stopFires = java.util.concurrent.atomic.AtomicInteger()
 
     /** 已经报过的发现（归一化后文字的短哈希，见 [fingerprint]）：提交审查与回合末审查说同一件事时不重复；同样以日志为准 */
     private val reported = ConcurrentHashMap.newKeySet<String>()
@@ -130,7 +140,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
 
     /** 用户发了新消息：「连续几次」的计数从头数 */
     fun onUserMessage() {
-        stopFires = 0
+        stopFires.set(0)
     }
 
     private fun skipped(): Boolean = rt.state.value.origin?.agentType == HOOK_AGENT_TYPE
@@ -255,33 +265,101 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         return SecurityGit.parsePushLog(out)
     }
 
+    /** 回合末审查在回合收尾的哪个位置问：[Inline] 在 /goal 评估之前（前台审查），[Background] 在 /goal 评估之后（后台审查，回合真的要结束时才起） */
+    enum class Phase { Inline, Background }
+
     /**
-     * 回合要结束了：这一回合改过文件就审一次。返回要交给主模型的反馈（发现了问题），没有就 null。
-     * 只在根会话（子 agent 的改动记在根上，由根的回合末统一审）；一次连续最多 [MAX_FIRES] 次，审查者给不出结论（超时、没按口径回）只记说明、不拦。
+     * 回合要结束了：这一回合改过文件就审一次（CC：Stop hook 里的后台审查，不拖慢回复，发现了就再给 Claude 一个跟进的提示）。
+     * 只在根会话（子 agent 的改动记在根上，由根的回合末统一审）。
+     *
+     * **前后台**：交互会话里审查在后台跑——这里只把清单与提示词备好、起一个协程就返回 null，回复照常收尾；审查者出结论后，发现以 hook 来源的输入
+     * 排进收件箱（会话空闲就开一个新回合，忙就等下一个回合接续，与 asyncRewake 同一条路），没发现就悄悄结束。
+     * 无头（`-p`）会话回合一收尾进程就退出，后台的结论没人接，所以仍在回合里同步审，发现了作为返回值交回、回合继续（此前的行为）。
+     *
+     * **先后顺序**（回合要结束时 [TurnRunner] 依次问）：Stop hook（可拦、可叫停）→ 前台审查（只无头）→ `/goal` 评估 → 后台审查。
+     * 前三者任何一个把回合续下去，这一回合就还没真的结束，后台审查不起，攒着的改动留给真正收尾的那一次；`/goal` 判「已达成」清掉目标之后才起后台审查，
+     * 它的发现随后带来的跟进回合不再受 `/goal` 管（目标那时已经没了）。
+     *
+     * 一次连续最多 [MAX_FIRES] 次发现，之后交还用户；审查者给不出结论（超时、没按口径回）只记说明、不拦。
      */
-    suspend fun turnEndFeedback(): String? {
+    suspend fun turnEnd(phase: Phase): String? {
         if (rt.state.value.origin != null || skipped()) return null
         val cfg = config() ?: return null
         if (!cfg.layers.stopReview) return null
+        val background = !rt.state.value.created.headless
+        if ((phase == Phase.Background) != background) return null
         val files = gatherChanges()
         if (files.isEmpty()) {
-            stopFires = 0
-            return null
-        }
-        if (stopFires >= MAX_FIRES) {
-            rt.commit(listOf(Note(NoteLevel.Info, "security-guidance：回合末审查已连续发现问题 $MAX_FIRES 次，这次不再审，交还给你")), Durability.Batched)
+            stopFires.set(0)
             return null
         }
         val prompt = SecurityGuidance.turnReviewPrompt(files, cfg.guidance)
-        val reason = review(prompt, "turn-end", TURN_MODEL_VAR)
-        if (reason == null) {
-            stopFires = 0
+        if (!background) return reviewForTurn(prompt)
+        launchBackgroundReview(prompt)
+        return null
+    }
+
+    /** 审一次并把发现整理成交给主模型的文字；连续 [MAX_FIRES] 次发现之后这次不审。没发现 / 没结论 / 被上限拦下返回 null */
+    private suspend fun reviewForTurn(prompt: String): String? {
+        if (stopFires.get() >= MAX_FIRES) {
+            rt.commit(listOf(Note(NoteLevel.Info, "security-guidance：回合末审查已连续发现问题 $MAX_FIRES 次，这次不再审，交还给你")), Durability.Batched)
             return null
         }
-        stopFires++
+        val reason = review(prompt, "turn-end", TURN_MODEL_VAR)
+        if (reason == null) {
+            stopFires.set(0)
+            return null
+        }
+        stopFires.incrementAndGet()
         fingerprint(reason).let { if (reported.add(it)) rt.commit(listOf(SecurityGuidanceSeen(reported = listOf(it))), Durability.Batched) }
         return "An independent security review of the files you changed this turn found problems. Fix them in this session, or explain why a finding is not a real issue:\n$reason"
     }
+
+    /** 还没出结论的后台审查。同一时刻只有一个在审（[reviewLock]），后来的排队，免得两个审查者同时读同一批文件、各报各的 */
+    private val reviewJobs = ConcurrentHashMap.newKeySet<Job>()
+    private val reviewLock = Mutex()
+
+    /** 测试用：后台审查还有几个没出结论 */
+    internal fun pendingReviews(): Int = reviewJobs.size
+
+    /** 测试用：等当前所有后台审查收尾（含把发现排进收件箱） */
+    internal suspend fun awaitReviews() {
+        reviewJobs.toList().forEach { it.join() }
+    }
+
+    /** 会话卸下 / 删除时停掉还在跑的后台审查（连同它起的审查者子会话）：关了的会话不该再有人往它的日志里写东西 */
+    suspend fun cancelReviews() {
+        reviewJobs.toList().forEach { catchingNonCancellation { it.cancelAndJoin() } }
+    }
+
+    private fun launchBackgroundReview(prompt: String) {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            val feedback = try {
+                reviewLock.withLock { reviewForTurn(prompt) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 后台协程里的意外不许炸成未捕获异常：记一条说明（会话已经关了就连说明也写不进去，吞掉）
+                catchingNonCancellation {
+                    rt.commit(listOf(Note(NoteLevel.Warning, "security-guidance 的后台审查出错，已跳过：${e.message?.lineSequence()?.firstOrNull() ?: e::class.simpleName}")), Durability.Batched)
+                }
+                null
+            } ?: return@launch
+            catchingNonCancellation {
+                rt.receive(
+                    ClientMsgId(rt.deps.ids.next("security-review")),
+                    listOf(TextPart(feedback)),
+                    Delivery.Queue,
+                    InputOrigin.Hook("security-guidance"),
+                    startTurn = TurnTrigger.Hook,
+                )
+            }
+        }
+        reviewJobs += job
+        job.invokeOnCompletion { reviewJobs -= job }
+        job.start()
+    }
+
 
     /**
      * 这一回合改了哪些文件：在 git 仓库里以 git 工作区的差异为准（基线 tree 对回合末 tree），所以 Bash 里 sed / 脚本改的、子 agent 改的都在；

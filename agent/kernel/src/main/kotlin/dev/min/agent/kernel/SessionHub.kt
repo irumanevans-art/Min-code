@@ -740,6 +740,7 @@ class SessionHub(
         }
         // 卸下即杀后台 hook 进程并清掉暂存目录：手机上不能留孤儿进程（async 设计的边界；`-p` teardown 同此）
         closing.forEach { it.asyncHooks.cancelAll() }
+        closing.forEach { it.security.cancelReviews() }
         closing.forEach { it.background.cancelAll() }
         // 还挂着的跨会话消息与订阅在卸下前交代清楚：发件人得到「对方已关闭」，盯着它的人收到「退出了」
         closing.filter { it.state.value.origin == null }.forEach { peerMail.sessionClosing(it) }
@@ -856,6 +857,8 @@ class SessionHub(
         // 与 close 同一条边界：删除即杀后台 hook 进程（含临时打开来跑 SessionEnd 的那个运行时）
         order.mapNotNull { runtimes[it] }.forEach { it.asyncHooks.cancelAll() }
         rootRuntime?.asyncHooks?.cancelAll()
+        order.mapNotNull { runtimes[it] }.forEach { it.security.cancelReviews() }
+        rootRuntime?.security?.cancelReviews()
         order.mapNotNull { runtimes[it] }.forEach { it.background.cancelAll() }
         rootRuntime?.background?.cancelAll()
         order.mapNotNull { runtimes[it] }.filter { it.state.value.origin == null }.forEach { peerMail.sessionClosing(it) }
