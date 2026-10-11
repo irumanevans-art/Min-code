@@ -26,7 +26,7 @@ class BundledSkillsSnapshotTest {
         assertEquals("内置", loop.source)
         assertEquals(SkillKind.Skill, loop.kind)
         assertTrue(loop.path.value.startsWith(dev.min.agent.ext.skills.BundledSkills.PATH_PREFIX))
-        assertEquals(listOf("loop", "code-review", "simplify", "batch"), s.entries.map { it.name })
+        assertEquals(listOf("loop", "code-review", "security-review", "simplify", "batch"), s.entries.map { it.name })
     }
 
     @Test
@@ -71,6 +71,6 @@ class BundledSkillsSnapshotTest {
         val fs = FakeFs()
         fs.put("/root/.claude/skills/deploy/SKILL.md", "---\ndescription: deploy\n---\nd")
         val names = load(fs)!!.entries.map { it.name }
-        assertTrue(names.containsAll(listOf("deploy", "loop", "code-review", "simplify", "batch")))
+        assertTrue(names.containsAll(listOf("deploy", "loop", "code-review", "security-review", "simplify", "batch")))
     }
 }

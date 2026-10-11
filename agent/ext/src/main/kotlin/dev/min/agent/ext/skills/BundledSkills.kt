@@ -19,7 +19,7 @@ object BundledSkills {
     const val PATH_PREFIX = "/.min-bundled-skills/"
 
     /** 内置 skill 名，按清单顺序 */
-    val NAMES: List<String> = listOf("loop", "code-review", "simplify", "batch")
+    val NAMES: List<String> = listOf("loop", "code-review", "security-review", "simplify", "batch")
 
     fun path(name: String): String = "$PATH_PREFIX$name/SKILL.md"
 
