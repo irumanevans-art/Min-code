@@ -14,5 +14,6 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§Setup decision control：每个退出码都丢弃 JSON 输出字段（systemMessage/continue/additionalContext 等），退出码与 stderr 也忽略（:1272–1274；逐事件表 :872）。",
-  "minTrigger": "none"
+  "minTrigger": "none",
+  "minTriggerReason": "Min 没有对应时机：原文是 --init-only 或 -p --init/--maintenance 启动时触发（:1239），Min 的 CLI 没有这些旗标，也没有一次性初始化入口"
 }

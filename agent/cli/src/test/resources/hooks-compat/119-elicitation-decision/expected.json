@@ -21,6 +21,5 @@
       "username": "alice"
     }
   },
-  "pendingFix": "依赖未做功能：MCP elicitation Min 还没有；引擎已能校验 action/content（真正应答要等内核接）。",
-  "minTrigger": "none"
+  "kernelWiring": "hookSpecificOutput.action/content 程序化应答、跳过对话框（exit 2 = decline 且忽略 specific）；端到端见 McpElicitationHookTest"
 }

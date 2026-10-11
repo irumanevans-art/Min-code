@@ -1026,6 +1026,9 @@ class SessionRuntime private constructor(
                     runtime.loadSettings(requireNotNull(settings))
                     runtime.loadOutputStyle(requireNotNull(settings))
                 }
+                // InstructionsLoaded（hooks.md :1278）：eager 载入的记忆文件逐文件发。放在 loadSettings 之后，
+                // settings 层的 hooks 快照到那一刻才进状态；子会话的组件 hooks 已随 initial 折叠
+                if (loadMemory) runtime.fireInstructionsLoaded(runtime.state.value.memory, ::eagerLoadReason)
             }
             // 子会话的清单由 initial 带来（继承父会话那份），不再读磁盘
             val locks = runtime.state.value.autoReviewSettings

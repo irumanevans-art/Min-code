@@ -19,6 +19,5 @@
     "action": "decline",
     "content": {}
   },
-  "pendingFix": "依赖未做功能：MCP elicitation Min 还没有；引擎已能校验 action/content（覆写要等内核接）。",
-  "minTrigger": "none"
+  "kernelWiring": "hookSpecificOutput.action/content 覆写用户答复（content 只在 accept 有意义），exit 2 = decline；端到端见 McpElicitationResultHookTest"
 }

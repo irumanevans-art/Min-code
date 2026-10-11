@@ -82,7 +82,7 @@ internal fun urlQuestion(request: McpUrlElicitationAsked) = UserQuestion(
     "打开网址", listOf(QuestionOption("y", "同意后由宿主打开"), QuestionOption("n", "拒绝")),
 )
 
-private fun elicitationResult(action: String, content: JsonObject? = null) = buildJsonObject {
+internal fun elicitationResult(action: String, content: JsonObject? = null) = buildJsonObject {
     put("action", action); content?.let { put("content", it) }
 }
 
@@ -91,24 +91,32 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
     if (mcpClosed.isCompleted) return elicitationResult("cancel")
     val message = (params?.get("message") as? JsonPrimitive)?.content ?: return elicitationResult("decline")
     val mode = (params["mode"] as? JsonPrimitive)?.content ?: "form"
+    val url = (params["url"] as? JsonPrimitive)?.content
+    val schema = params["requestedSchema"] as? JsonObject
+    val elicitationId = (params["elicitationId"] as? JsonPrimitive)?.content
+    // Elicitation（hooks.md :3358）：先问 hooks。给了程序化应答就整段跳过（含下面的对话框与各道自动拒绝——
+    // headless / DontAsk 问不了人的场合，hook 正是应答的口子）；没给就照原路走
+    elicitationHookAnswer(server, message, mode, url, elicitationId, schema)?.let { return it }
     val linked = callId?.let { id -> state.value.turn?.takeIf { it.calls[id]?.phase is CallPhase.EffectPending } }
     if (callId != null && linked == null) return elicitationResult("cancel")
     val id = QuestionId(deps.ids.next("mcpq"))
     if (mode == "url") {
         if (!deps.canAnswerMcpUrlElicitation) return elicitationResult("decline")
-        val url = (params["url"] as? JsonPrimitive)?.content ?: return elicitationResult("decline")
-        val uri = catchingNonCancellation { URI(url) }.getOrNull()
-        if (uri?.scheme?.lowercase() !in setOf("http", "https") || uri?.host.isNullOrBlank()) return elicitationResult("decline")
-        val request = McpUrlElicitationAsked(id, server, url, uri!!.host, message, (params["elicitationId"] as? JsonPrimitive)?.content, linked?.turnId, callId)
+        val uri = url?.let { catchingNonCancellation { URI(it) }.getOrNull() }
+        if (url == null || uri?.scheme?.lowercase() !in setOf("http", "https") || uri?.host.isNullOrBlank()) return elicitationResult("decline")
+        val request = McpUrlElicitationAsked(id, server, url, uri!!.host, message, elicitationId, linked?.turnId, callId)
         if (commitIf(listOf(request), Durability.Sync) { current -> callId == null || (current.turn?.turnId == linked?.turnId && current.turn?.calls?.get(callId)?.phase is CallPhase.EffectPending) } == null) return elicitationResult("cancel")
         val answer = try { withTimeoutOrNull(deps.mcpElicitationTimeoutMs) {
             state.first { it.mcpUrls[id]?.action != null || (callId != null && it.pendingMcpUrls.none { p -> p.request.questionId == id }) }
                 .mcpUrls[id]?.action
         } } catch (e: CancellationException) { withContext(NonCancellable) { resolveMcpUrl(id, "cancel") }; throw e }
         if (answer == null) resolveMcpUrl(id, "cancel")
-        return elicitationResult(state.value.mcpUrls[id]?.action ?: "cancel")
+        val action = state.value.mcpUrls[id]?.action ?: "cancel"
+        // ElicitationResult（原文 :3428）：卡片被决议（answer != null）才算用户答复；超时收尾的 cancel 不发。
+        // 会话关停恰好同时决议卡片的竞态按用户答复算——hook 收到 cancel，只是观测
+        return if (answer == null) elicitationResult(action)
+        else elicitationResultOverride(server, mode, elicitationId, action, null).let { (a, c) -> elicitationResult(a, c) }
     }
-    val schema = params["requestedSchema"] as? JsonObject
     val sensitive = (schema?.get("properties") as? JsonObject)?.any { (name, raw) ->
         CREDENTIAL_FIELD.containsMatchIn(name) || CREDENTIAL_FIELD.containsMatchIn(((raw as? JsonObject)?.get("title") as? JsonPrimitive)?.content.orEmpty())
     } == true
@@ -135,14 +143,21 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
     }
     if (answered == null || answered.cancelled || answered.outcome == null) return elicitationResult("cancel")
     val outcome = answered.outcome
-    if (outcome is QuestionOutcome.Declined) return elicitationResult("decline")
-    if (fields.isEmpty()) return if ((outcome as QuestionOutcome.Answered).answers.singleOrNull()?.selected == listOf("同意")) elicitationResult("accept", JsonObject(emptyMap())) else elicitationResult("decline")
+    // 以下三条都是「用户真的答了」：答复发回服务器前过一遍 ElicitationResult hooks（覆写 action/content）
+    suspend fun resultHook(action: String, content: JsonObject?): JsonObject =
+        elicitationResultOverride(server, mode, elicitationId, action, content).let { (a, c) -> elicitationResult(a, c) }
+    if (outcome is QuestionOutcome.Declined) return resultHook("decline", null)
+    if (fields.isEmpty()) {
+        val accepted = (outcome as QuestionOutcome.Answered).answers.singleOrNull()?.selected == listOf("同意")
+        return resultHook(if (accepted) "accept" else "decline", if (accepted) JsonObject(emptyMap()) else null)
+    }
     val content = mcpFormContent(fields, (outcome as QuestionOutcome.Answered).answers)
     if (content == null) {
+        // 校验失败回 cancel：这不是用户的答复，不发 hooks
         commit(listOf(Note(NoteLevel.Warning, "MCP 服务器 $server 的表单答案不符合字段类型或约束，已取消请求。")), Durability.Sync)
         return elicitationResult("cancel")
     }
-    return elicitationResult("accept", content)
+    return resultHook("accept", content)
 }
 
 suspend fun SessionRuntime.resolveMcpUrl(id: QuestionId, action: String): Boolean {

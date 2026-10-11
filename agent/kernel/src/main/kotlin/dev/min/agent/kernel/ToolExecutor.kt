@@ -214,6 +214,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             val durability = if (found.files.isNotEmpty()) Durability.Sync else Durability.Batched
             rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes, found.covered)), durability)
         }
+        // InstructionsLoaded 的懒加载面（hooks.md :1284）：真的注入了文件才算载入，说明与 covered 不发
+        if (found.files.isNotEmpty()) rt.fireInstructionsLoaded(found.files, ::lazyLoadReason)
     }
 
     @Suppress("UNCHECKED_CAST")

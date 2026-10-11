@@ -75,6 +75,13 @@ class HooksCompatTest {
      * PreModelSwitch=ModelSwitchHooks.kt（SessionRuntime.changeSettings 的切模型处，样本 113 同；PostModelSwitch 同处，样本 115）、
      * UserPromptExpansion=SessionRuntime.promptExpansionHooks（宿主 cli 的 Main.say / runHeadless 在展开之后调，样本 65 的端到端见 HooksExpansionHeadlessTest）。
      * TeammateIdle=TurnRunner.teammateIdleContinues（团队成员的回合要结束、团队清单又没有可认领的活时；样本 94 / 95 的端到端见 HooksDecisionKernelTest）。
+     * InstructionsLoaded=SessionRuntime.create（记忆快照装载后逐文件，eager=session_start、@导入=include）
+     * 与 ToolExecutor.attachMemoryUnguarded（按需注入：nested_traversal / path_glob_match），见 InstructionLoadedHookTest。
+     * StopFailure=TurnRunner 的 catch(TurnAbort)（带 kind 的模型/API 错误收尾，代替 Stop；error 类别由 stopFailureTarget 映射），
+     * 见 StopFailureHookTest。
+     * Elicitation=SessionRuntime.handleMcpElicitation（服务器反问时先问 hooks，hookSpecificOutput 程序化应答、跳过对话框），
+     * 见 McpElicitationHookTest；ElicitationResult=同函数的用户答复出口（用户真的答了才发，覆写 action/content），
+     * 见 McpElicitationResultHookTest。
      * 给内核接新事件时更新这份清单：对应 minTrigger:"none" 的样本会开始失败，提醒升级样本并摘掉标记。
      */
     private val KERNEL_FIRED = setOf(
@@ -82,7 +89,8 @@ class HooksCompatTest {
         "PostToolUseFailure", "Notification", "SubagentStart", "SubagentStop", "Stop", "SessionEnd",
         "PreCompact", "PostCompact", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
         "PostToolBatch", "TaskCreated", "TaskCompleted", "PreModelSwitch", "PostModelSwitch",
-        "UserPromptExpansion", "PermissionDenied", "TeammateIdle",
+        "UserPromptExpansion", "PermissionDenied", "TeammateIdle", "InstructionsLoaded", "StopFailure",
+        "Elicitation", "ElicitationResult",
     )
 
     @Test fun `hooks 每个事件都有输入与决策样本，触发现状标记与内核清单一致`() {

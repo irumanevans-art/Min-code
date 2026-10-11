@@ -14,6 +14,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§ElicitationResult：用户答复 MCP elicitation 后、发回服务器前触发，matcher 对服务器名；输入 mcp_server_name/action/content，可缺席 mode/elicitation_id（:3428–3450）。",
-  "pendingFix": "依赖未做功能：MCP elicitation Min 还没有，事件无法端到端触发；输入形状已按原文钉住。",
-  "minTrigger": "none"
+  "kernelWiring": "handleMcpElicitation 的用户答复出口（超时/关停/自动拒绝不发）；端到端见 McpElicitationResultHookTest"
 }
