@@ -158,7 +158,10 @@ class WorldStateDeltaTest {
         assertNull("已经告知过新日期，不再按系统提示的旧日期比", worldDelta(told, "2026-10-10", "2026-10-11"))
         val next = worldDelta(told, "2026-10-10", "2026-10-12")!!
         assertEquals(WorldNoted("2026-10-12", PermissionMode.Default, "scripted", next.reminder), next)
-        val accept = worldDelta(told.copy(settings = told.settings.copy(mode = PermissionMode.AcceptEdits)), "2026-10-10", "2026-10-11")!!
-        assertTrue(accept.reminder, accept.reminder.contains("acceptEdits") && "plan" !in accept.reminder)
+        assertNull("计划以外的模式之间切换不提醒", worldDelta(told.copy(settings = told.settings.copy(mode = PermissionMode.AcceptEdits)), "2026-10-10", "2026-10-11"))
+        assertNull("一开始就是 bypass 也不提醒", worldDelta(base.copy(settings = base.settings.copy(mode = PermissionMode.BypassPermissions)), "2026-10-10", "2026-10-10"))
+        val planned = told.copy(world = WorldFacts("2026-10-11", PermissionMode.Plan, "scripted"))
+        val out = worldDelta(planned.copy(settings = planned.settings.copy(mode = PermissionMode.AcceptEdits)), "2026-10-10", "2026-10-11")!!
+        assertTrue(out.reminder, out.reminder.contains("plan mode is off") && out.reminder.contains("acceptEdits"))
     }
 }

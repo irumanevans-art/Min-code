@@ -295,8 +295,8 @@ data class WorldFacts(val date: String?, val mode: dev.min.agent.protocol.Permis
 
 /**
  * 这次提升消息前要不要补一段世界状态增量（docs/agent/04-子系统设计.md §4.5）；没有变化返回 null。
- * [basisDate] 是系统提示里的会话日期，[today] 是此刻的当地日期。模式的基准是默认模式：会话一开始就在计划模式里，
- * 第一条消息就要说——系统提示不随模式变（变了就断缓存），模型只能从这里知道
+ * [basisDate] 是系统提示里的会话日期，[today] 是此刻的当地日期。模式只看进出计划模式，基准是不在计划里：
+ * 会话一开始就在计划模式里，第一条消息就要说——系统提示不随模式变（变了就断缓存），模型只能从这里知道
  */
 internal fun worldDelta(state: SessionState, basisDate: String, today: String): dev.min.agent.spi.WorldNoted? {
     val known = state.world
@@ -306,8 +306,9 @@ internal fun worldDelta(state: SessionState, basisDate: String, today: String): 
         if (today != (known?.date ?: basisDate)) {
             add("Date update: today is $today. Dates mentioned earlier in this conversation, including the session date, are no longer current.")
         }
-        val knownMode = known?.mode ?: dev.min.agent.protocol.PermissionMode.Default
-        if (mode != knownMode) add(modeLine(mode, knownMode))
+        // 只有进出计划模式改变模型该怎么做事；其它模式之间的切换由权限层兜着，模型不必知道（也就不为它多写一条）
+        val knownPlan = (known?.mode ?: dev.min.agent.protocol.PermissionMode.Default) == dev.min.agent.protocol.PermissionMode.Plan
+        if ((mode == dev.min.agent.protocol.PermissionMode.Plan) != knownPlan) add(modeLine(mode))
         val knownModel = known?.model
         if (knownModel != null && model != knownModel) {
             add("Model update: this conversation now runs on $model; earlier replies may have been written by $knownModel.")
@@ -316,7 +317,7 @@ internal fun worldDelta(state: SessionState, basisDate: String, today: String): 
     return if (lines.isEmpty()) null else dev.min.agent.spi.WorldNoted(today, mode, model, lines.joinToString("\n"))
 }
 
-private fun modeLine(mode: dev.min.agent.protocol.PermissionMode, from: dev.min.agent.protocol.PermissionMode): String {
+private fun modeLine(mode: dev.min.agent.protocol.PermissionMode): String {
     // 与 settings.json / --permission-mode 里的写法一致
     val name = when (mode) {
         dev.min.agent.protocol.PermissionMode.Default -> "default"
@@ -326,13 +327,11 @@ private fun modeLine(mode: dev.min.agent.protocol.PermissionMode, from: dev.min.
         dev.min.agent.protocol.PermissionMode.DontAsk -> "dontAsk"
         dev.min.agent.protocol.PermissionMode.BypassPermissions -> "bypassPermissions"
     }
-    return when {
-        mode == dev.min.agent.protocol.PermissionMode.Plan ->
-            "Mode update: plan mode is on. Investigate and design only; do not edit files or run commands with side effects. " +
-                "When the plan is ready, submit it with ExitPlanMode for the user's approval."
-        from == dev.min.agent.protocol.PermissionMode.Plan ->
-            "Mode update: plan mode is off; the permission mode is now $name and you may make changes again."
-        else -> "Mode update: the permission mode is now $name."
+    return if (mode == dev.min.agent.protocol.PermissionMode.Plan) {
+        "Mode update: plan mode is on. Investigate and design only; do not edit files or run commands with side effects. " +
+            "When the plan is ready, submit it with ExitPlanMode for the user's approval."
+    } else {
+        "Mode update: plan mode is off; the permission mode is now $name and you may make changes again."
     }
 }
 
