@@ -89,7 +89,8 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
         } }
     }
     private suspend fun gitEnvironment(source: PluginFetchSource): Map<String, String> {
-        val base = mapOf("GIT_TERMINAL_PROMPT" to "0", "GIT_CONFIG_NOSYSTEM" to "1", "GCM_INTERACTIVE" to "never")
+        // Windows 的凭据管理器通常注册在系统配置；受信任源应复用系统和用户的既有登录。
+        val base = mapOf("GIT_TERMINAL_PROMPT" to "0", "GCM_INTERACTIVE" to "never")
         val location = if (source.type == "github") "https://github.com/${source.location}.git" else source.location
         if (!location.startsWith("https://") && !location.startsWith("http://")) return base
         val credentialHeaders = headers(source.copy(location = location)).toMutableMap()
