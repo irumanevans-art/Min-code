@@ -463,7 +463,7 @@ class SecurityGuidanceSessionTest {
             reply(TextPart(bad)),
             reply(TextPart("done")),
         )
-        session(model).say("commit it")
+        session(model, headless = true).say("commit it")
         val review = model.requests[1].messages.flatMap { it.parts.filterIsInstance<TextPart>() }.joinToString("\n") { it.text }
         assertTrue(review.contains("git commit -m change") && review.contains("+eval(x)"))
         assertTrue(model.requests[2].reminders().any { "a.py:1 eval of user input" in it })
@@ -481,7 +481,7 @@ class SecurityGuidanceSessionTest {
             reply(TextPart(bad)),
             reply(TextPart("committed")),
         )
-        session(model).say("write and commit")
+        session(model, headless = true).say("write and commit")
         assertEquals(6, model.requests.size)
         assertTrue(model.requests[5].reminders().none { "published" in it })
     }
@@ -496,7 +496,7 @@ class SecurityGuidanceSessionTest {
             reply(TextPart(ok)),
             reply(TextPart("done")),
         )
-        session(model).say("go")
+        session(model, headless = true).say("go")
         assertTrue(model.requests[3].reminders().isEmpty())
         assertEquals(4, model.requests.size)
         // git status 不审查，git push 审查一次（取最近一次提交的 diff）
@@ -514,7 +514,7 @@ class SecurityGuidanceSessionTest {
         }
         steps += reply(TextPart("done"))
         val model = ScriptedModel(*steps.toTypedArray())
-        session(model).say("commit a lot")
+        session(model, headless = true).say("commit a lot")
         // 22 次提交里只有前 20 次叫了审查者：主模型 23 次 + 审查者 20 次
         assertEquals(43, model.requests.size)
         assertFalse(model.requests.isEmpty())
@@ -669,7 +669,7 @@ class SecurityGuidanceSessionTest {
             reply(TextPart(bad)),
             reply(TextPart("done")),
         )
-        session(model).say("push")
+        session(model, headless = true).say("push")
         val review = reviewText(model.requests[1])
         assertTrue(review, review.contains("FIRSTCOMMIT") && review.contains("SECONDCOMMIT") && review.contains("2 commits"))
         assertFalse(review.contains("SHOWHEAD"))
@@ -683,7 +683,7 @@ class SecurityGuidanceSessionTest {
         enable()
         pushRepo("$c0 refs/remotes/origin/main\n", "$c0 refs/remotes/origin/main\n", "COUNT=0\n")
         val model = ScriptedModel(reply(commitCall("git push https://example.invalid/r.git main"), stop = StopReason.ToolUse), reply(TextPart(ok)), reply(TextPart("done")))
-        session(model).say("push")
+        session(model, headless = true).say("push")
         assertTrue(reviewText(model.requests[1]).contains("SHOWHEAD"))
     }
 
@@ -692,7 +692,7 @@ class SecurityGuidanceSessionTest {
         enable()
         pushRepo("$c0 refs/remotes/origin/main\n", "$c2 refs/remotes/origin/main\n", "COUNT=2\nx\n")
         val model = ScriptedModel(reply(commitCall("git commit -m x"), stop = StopReason.ToolUse), reply(TextPart(ok)), reply(TextPart("done")))
-        session(model).say("commit")
+        session(model, headless = true).say("commit")
         assertTrue(reviewText(model.requests[1]).contains("SHOWHEAD"))
         assertEquals(listOf("bash"), order.toList())
     }
@@ -810,5 +810,132 @@ class SecurityGuidanceSessionTest {
         gate.complete(Unit)
         kotlinx.coroutines.delay(100)
         assertEquals(2, model.requests.count { it.system.none { s -> "hook evaluator" in s } && !reviewText(it).contains("independent security reviewer") })
+    }
+
+    // ---- 提交 / 推送审查在后台跑（交互会话） ----
+
+    private fun isCommitReview(req: ModelRequest) = reviewText(req).contains("A coding agent just ran")
+
+    private fun ModelRequest.isMain() = system.none { "hook evaluator" in it } && !reviewText(this).contains("independent security reviewer")
+
+    private fun SessionRuntime.hookInputs() =
+        state.value.history.filterIsInstance<HistoryEntry.User>().filter { it.origin == dev.min.agent.spi.InputOrigin.Hook("security-guidance") }
+
+    @Test
+    fun `an interactive commit review runs in the background and its finding comes back as a hook input`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff --git a/a.py b/a.py\n+eval(x)", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            if (kind == "review") { req -> flow { gate.await(); emitAll(reply(TextPart(bad))(req)) } }
+            else when (mains.incrementAndGet()) {
+                1 -> reply(commitCall(), stop = StopReason.ToolUse)
+                2 -> reply(TextPart("done"))
+                else -> reply(TextPart("fixed"))
+            }
+        }
+        val rt = session(model)
+        rt.say("commit it", settle = false)
+        // Bash 的结果立刻交回、回合照常收尾，审查者还卡着
+        assertEquals(2, model.requests.count { it.isMain() })
+        assertEquals(1, rt.security.pendingReviews())
+        assertTrue(model.requests[1].reminders().none { "a.py:1" in it })
+        assertTrue(rt.hookInputs().isEmpty())
+
+        gate.complete(Unit)
+        rt.settled()
+        val review = reviewText(model.requests.first { it.system.none { s -> "hook evaluator" in s } && isCommitReview(it) })
+        assertTrue(review.contains("git commit -m change") && review.contains("+eval(x)"))
+        // 发现是 hook 来源的输入（把空闲的会话叫起来跟进），不是挂在工具结果后的提醒
+        assertEquals(1, rt.hookInputs().size)
+        assertTrue(reviewText(model.requests.last()).contains("a.py:1 eval of user input"))
+        assertTrue(model.requests.flatMap { it.reminders() }.none { "a.py:1" in it })
+    }
+
+    @Test
+    fun `a finding that arrives while a turn is running is an interjection into that turn, not a new turn`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val holdMain = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            if (kind == "review") reply(TextPart(bad))
+            else when (mains.incrementAndGet()) {
+                1 -> reply(commitCall(), stop = StopReason.ToolUse)
+                // 第二个请求卡住，直到审查出了结论、发现已经排进收件箱：发现落在回合进行中
+                2 -> { r -> flow { holdMain.await(); emitAll(reply(TextPart("done"))(r)) } }
+                else -> reply(TextPart("fixed"))
+            }
+        }
+        val rt = session(model)
+        rt.send(ClientMsgId("u${++counter}"), listOf(TextPart("commit it")))
+        val firstTurn = rt.state.first { it.turn != null }.turn!!.turnId
+        while (model.requests.count { it.isMain() } < 2 || rt.security.pendingReviews() > 0) kotlinx.coroutines.delay(5)
+        assertTrue(rt.state.value.turn != null)
+        holdMain.complete(Unit)
+        rt.settled()
+        assertEquals(1, rt.hookInputs().size)
+        assertEquals(3, model.requests.count { it.isMain() })
+        // 同一个回合里接着处理：没有另开新回合
+        assertEquals(firstTurn, rt.state.value.lastTurn?.turnId)
+    }
+
+    @Test
+    fun `a background commit review does not loosen the hourly cap`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            if (kind == "review") reply(TextPart(ok))
+            else if (mains.incrementAndGet() <= 22) reply(commitCall(), stop = StopReason.ToolUse)
+            else reply(TextPart("done"))
+        }
+        val rt = session(model)
+        rt.say("commit a lot")
+        // 22 次提交里只有前 20 次起了审查者
+        assertEquals(20, model.requests.count { isCommitReview(it) })
+        assertEquals(23, model.requests.count { it.isMain() })
+    }
+
+    @Test
+    fun `a background commit review does not repeat a finding already reported`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            if (kind == "review") reply(TextPart(bad))
+            else when (mains.incrementAndGet()) {
+                1 -> reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse)
+                2 -> reply(TextPart("done"))
+                3 -> reply(commitCall(), stop = StopReason.ToolUse)
+                else -> reply(TextPart("committed"))
+            }
+        }
+        val rt = session(model)
+        rt.say("write and commit")
+        // 回合末审查报过同一条：提交审查（也报了同一条）不再作为输入送来，只有回合末那一次
+        assertEquals(1, model.requests.count { isCommitReview(it) })
+        assertEquals(1, rt.hookInputs().size)
+        assertEquals(1, rt.state.value.securityReported.size)
+    }
+
+    @Test
+    fun `a push reviewed in the background still takes its remote snapshots before and after the tool`() = run {
+        enable()
+        pushRepo(
+            "$c0 refs/remotes/origin/main\n", "$c2 refs/remotes/origin/main\n",
+            "COUNT=2\ncommit $c0\nfirst\n\ndiff --git a/a b/a\n+FIRSTCOMMIT\ncommit $c2\nsecond\n\ndiff --git a/b b/b\n+SECONDCOMMIT\n",
+        )
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            if (kind == "review") reply(TextPart(ok))
+            else if (mains.incrementAndGet() == 1) reply(commitCall("git push origin main"), stop = StopReason.ToolUse)
+            else reply(TextPart("done"))
+        }
+        session(model).say("push")
+        val review = reviewText(model.requests.first { isCommitReview(it) })
+        assertTrue(review.contains("FIRSTCOMMIT") && review.contains("SECONDCOMMIT") && review.contains("2 commits"))
+        assertEquals(listOf("refs", "bash", "refs", "log"), order.toList())
     }
 }
