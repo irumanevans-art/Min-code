@@ -42,6 +42,8 @@ class ProotExecTest {
         lateinit var log: File
         override fun launch(context: WorkspaceShellContext, log: File): Process {
             this.context = context; this.log = log; log.writeText(text)
+            // 模拟 guest 里的探针：把结束目录写进与日志同目录的 <id>.cwd
+            cwdText?.let { File(log.parentFile, log.nameWithoutExtension + ".cwd").writeText(it) }
             if (complete) process.finished.countDown()
             started.complete(Unit)
             return process
@@ -173,6 +175,49 @@ class ProotExecTest {
         assertEquals(PathScope.Device, fs.scopeOf(GuestPath("/storage/a")))
         assertEquals(PathScope.Rootfs, fs.scopeOf(GuestPath("/etc/a")))
         assertEquals(PathScope.Workspace, fs.scopeOf(GuestPath("/workspace/a")))
+    }
+    // ---- Bash 的 cd 跨命令保留：探针与 endCwd ----
+
+    @Test fun trackedCommandReportsGuestEndCwdAndTheProbeFileIsGone() = runBlocking {
+        val host = FakeHost(complete = true, cwdText = "/root/proj/sub dir\n")
+        val result = ProotExec(base(), host).run(command.copy(trackCwd = true), ExecOptions(1000)) as ExecResult.Exited
+        assertEquals(GuestPath("/root/proj/sub dir"), result.endCwd)
+        assertEquals("输出不受探针影响", "hello\n", result.output)
+        val id = host.log.nameWithoutExtension
+        assertTrue(host.context.command, host.context.command.contains("command pwd >| '/root/.min/exec-logs/$id.cwd'"))
+        assertTrue("用户脚本整个在 eval 里", host.context.command.contains("eval 'printf hello'"))
+        assertFalse(File(host.log.parentFile, "$id.cwd").exists())
+    }
+
+    @Test fun untrackedCommandIsNotWrapped() = runBlocking {
+        val host = FakeHost(complete = true, cwdText = "/root/should/not/be/read")
+        val result = ProotExec(base(), host).run(command, ExecOptions(1000)) as ExecResult.Exited
+        assertNull(result.endCwd)
+        assertFalse(host.context.command.contains("eval"))
+    }
+
+    @Test fun trackedCommandThatNeverWroteTheFileReportsNothing() = runBlocking {
+        val host = FakeHost(complete = true)
+        val result = ProotExec(base(), host).run(command.copy(trackCwd = true), ExecOptions(1000)) as ExecResult.Exited
+        assertNull("exit 提前结束、探针没跑：当作没换目录", result.endCwd)
+    }
+
+    @Test fun garbageInTheProbeFileIsIgnored() = runBlocking {
+        for (garbage in listOf("", "relative", "/ok\u0007bell")) {
+            val host = FakeHost(complete = true, cwdText = garbage)
+            val result = ProotExec(base(), host).run(command.copy(trackCwd = true), ExecOptions(1000)) as ExecResult.Exited
+            assertNull(garbage, result.endCwd)
+        }
+    }
+
+    @Test fun timedOutTrackedCommandReportsNothingAndLeavesNoFile() = runBlocking {
+        val host = FakeHost(cwdText = "/root/proj/sub")
+        ProotExec(base(), host).run(command.copy(trackCwd = true), ExecOptions(30)) as ExecResult.TimedOut
+        // 等待线程在进程被回收后才读走并删文件，轮询到它出现
+        val file = File(host.log.parentFile, host.log.nameWithoutExtension + ".cwd")
+        val deadline = System.currentTimeMillis() + 5_000
+        while (file.exists() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertFalse(file.exists())
     }
     @Test fun sessionLogsAreOutsideRootfs() { assertEquals(File(temp.root, "agent/sessions"), agentSessionsDir(temp.root)) }
 }

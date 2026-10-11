@@ -12,22 +12,31 @@ package dev.min.agent.spi
  * 用户自己设了 EXIT trap 也不碍事：探针在 `exit` 之前已经写好，trap 在 `exit` 时才跑。
  */
 object ShellCwdProbe {
-    /** 包出带探针的脚本。[shellFile] 是**shell 里看得见**的写法（桌面 Windows 要走 Git Bash 的盘符路径），由宿主给 */
-    fun wrap(script: String, shellFile: String): String =
+    /**
+     * 包出带探针的脚本。[shellFile] 是**shell 里看得见**的写法（桌面 Windows 要走 Git Bash 的盘符路径），由宿主给。
+     * [pwdCommand] 是打印当前目录的那条命令：默认 `command pwd`（`command` 绕开用户定义的同名函数）；
+     * Windows 的 Git Bash 要 `command pwd -W`，见 `DesktopPaths.guestOfShell`
+     */
+    fun wrap(script: String, shellFile: String, pwdCommand: String = "command pwd"): String =
         "eval ${quote(script)}\n" +
             "__min_rc=\$?\n" +
-            // `command` 绕开用户定义的 pwd 函数；`>|` 不受 noclobber 影响；写失败（目录没了）静默，只是这次没有目录可报
-            "{ command pwd >| ${quote(shellFile)}; } 2>/dev/null\n" +
+            // `>|` 不受 noclobber 影响；写失败（目录没了、shell 不认 -W）静默，只是这次没有目录可报
+            "{ $pwdCommand >| ${quote(shellFile)}; } 2>/dev/null\n" +
             "exit \$__min_rc\n"
 
-    /** 读到的文件内容 → shell 里的目录；空、不是绝对路径、含控制字符一律 null（当作没换目录） */
+    /**
+     * 读到的文件内容 → shell 打出的目录；空、不是绝对路径（`/...` 或 `C:/...` 盘符写法）、含控制字符一律 null（当作没换目录）。
+     * 怎么变成 guest 路径是宿主的事
+     */
     fun parse(text: String): String? {
         val line = text.lineSequence().firstOrNull()?.trimEnd('\r')?.takeIf { it.isNotEmpty() } ?: return null
-        if (line.length > MAX_PATH_CHARS || !line.startsWith("/") || line.any { it < ' ' }) return null
+        if (line.length > MAX_PATH_CHARS || line.any { it < ' ' }) return null
+        if (!line.startsWith("/") && !DRIVE.containsMatchIn(line)) return null
         return line
     }
 
-    private fun quote(value: String) = "'" + value.replace("'", "'\''") + "'"
+    private fun quote(value: String) = "'" + value.replace("'", "'\\''") + "'"
 
     private const val MAX_PATH_CHARS = 4096
+    private val DRIVE = Regex("^[A-Za-z]:[/\\\\]")
 }

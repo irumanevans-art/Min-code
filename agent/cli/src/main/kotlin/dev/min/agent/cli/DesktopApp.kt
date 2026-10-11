@@ -538,7 +538,7 @@ internal class DesktopApp(
             host = HostPorts(
                 fs = paths.fs,
                 search = JvmSearch(paths.fs),
-                exec = LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir)),
+                exec = LocalExec(paths::hostOf, logDir, paths.guestOfHost(logDir), guestOfShell = paths::guestOfShell),
                 processes = LocalProcessPort(
                     paths::hostOf, home.resolve("proc-launch"),
                     secretEnvNames = desktopSecretEnvNames(*keyEnvs.toTypedArray()),

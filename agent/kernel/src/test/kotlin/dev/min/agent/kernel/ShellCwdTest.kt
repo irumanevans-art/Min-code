@@ -106,6 +106,7 @@ class ShellCwdTest {
         say("go")
         assertEquals(listOf("/old", "/old/sub", "/old"), starts)
         assertNull(rt.state.value.shellCwd)
+        assertFalse("回到项目根不算出界，不能附重置说明", text("c1").contains("Shell cwd was reset"))
         val events = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<ShellCwdChanged>()
         assertEquals(listOf(GuestPath("/old/sub"), null), events.map { it.cwd })
         truth()

@@ -6,6 +6,7 @@ import dev.min.agent.spi.ExecOptions
 import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ShellCommand
+import dev.min.agent.spi.ShellCwdProbe
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -51,9 +52,12 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         val id = UUID.randomUUID().toString().replace("-", "")
         check(logDir.mkdirs() || logDir.isDirectory)
         val log = File(logDir, "$id.log").apply { createNewFile() }
-        val process = host.launch(agentCommandContext(base, command.cwd, command.script).copy(env = command.env,
+        // 结束目录写进 guest 里的临时文件、不走输出流（[ShellCwdProbe]）：日志与通知里不会出现标记，输出截断也丢不了
+        val cwdFile = if (command.trackCwd) File(logDir, "$id.cwd") else null
+        val script = if (cwdFile != null) ShellCwdProbe.wrap(command.script, "/root/.min/exec-logs/$id.cwd") else command.script
+        val process = host.launch(agentCommandContext(base, command.cwd, script).copy(env = command.env,
             isolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand(command.network)), log)
-        val task = Running(id, process, log, options.timeoutMs) { running.remove(id) }
+        val task = Running(id, process, log, options.timeoutMs, cwdFile) { running.remove(id) }
         running[id] = task
         task.start()
         try {
@@ -110,8 +114,10 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         java.io.File("/proc/$pid").exists()
     }
 
-    private inner class Running(val id: String, val process: Process, val log: File, val timeoutMs: Long, val done: () -> Unit) {
+    private inner class Running(val id: String, val process: Process, val log: File, val timeoutMs: Long, val cwdFile: File?, val done: () -> Unit) {
         val exit = CompletableDeferred<Int>()
+        /** 命令跑完时 shell 所在的 guest 目录；进程一退就在等待线程里读走并删文件（转后台事后才结束的也一样不留），早于 [exit] 完成 */
+        @Volatile var endCwd: GuestPath? = null
         private val reaped = AtomicBoolean()
         @Volatile private var timedOut = false
 
@@ -130,6 +136,7 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
                 try {
                     if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) { timedOut = true; reap() }
                     val code = process.waitFor()
+                    cwdFile?.let { endCwd = takeCwdFile(it) }
                     // 先记退出码、再由 done 摘出运行表：[isAlive] 一说「不在了」，[exitOf] 就必须已经查得到
                     exits[id] = code
                     exit.complete(code)
@@ -141,12 +148,23 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         fun result(max: Int, duration: Long): ExecResult {
             val (output, clipped) = clippedLog(log, max)
             return if (timedOut) ExecResult.TimedOut(output, clipped)
-            else ExecResult.Exited(exit.getCompleted(), output, clipped, duration)
+            else ExecResult.Exited(exit.getCompleted(), output, clipped, duration, endCwd = endCwd)
         }
     }
 }
 
 private const val MAX_REMEMBERED_EXITS = 256
+
+/** 读出探针写的目录并删掉文件；读不到、不是路径（脚本 `exit` 了没写、写了半截）都是 null——当作这次没换目录 */
+internal fun takeCwdFile(file: File): GuestPath? {
+    try {
+        return ShellCwdProbe.parse(file.readText(Charsets.UTF_8))?.takeIf { it.startsWith("/") }?.let(::GuestPath)
+    } catch (_: IOException) {
+        return null
+    } finally {
+        file.delete()
+    }
+}
 
 /** 后台日志可能很大，只读取有界头尾，UTF-8 解码在各自边界容忍半个字符。 */
 internal fun clippedLog(file: File, max: Int): Pair<String, Boolean> = java.io.RandomAccessFile(file, "r").use { input ->
