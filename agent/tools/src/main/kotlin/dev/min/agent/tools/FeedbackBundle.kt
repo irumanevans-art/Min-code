@@ -1,6 +1,8 @@
 package dev.min.agent.tools
 
 import dev.min.agent.spi.FeedbackDraft
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -18,7 +20,7 @@ object FeedbackBundle {
 
     /**
      * 长得像凭证的字符串：即便不在环境里（模型或工具把它打印出来了），也要去掉。
-     * 手机端没有凭证名单（env 与 settings 传空表），只能靠这张表，所以按常见几家的公开格式列全：
+     * 这是兜底：宿主交进来的已知秘密（[build] 的 knownSecrets）逐字去掉，没登记过的（模型或工具打印出来的、别处的 key）只能靠这张表，所以按常见几家的公开格式列全：
      * 各家 API key / 令牌、JWT、PEM 私钥块、HTTP 认证头、Slack Webhook。
      */
     private val SHAPED = listOf(
@@ -64,12 +66,14 @@ object FeedbackBundle {
         versionInfo: String,
         env: Map<String, String>,
         settings: Map<String, String>,
+        /** 宿主明确知道的秘密（App 设置里存的各家 key、搜索 key、遥测头部令牌、MCP 令牌）：逐字去掉，不靠键名也不靠形状 */
+        knownSecrets: Set<String> = emptySet(),
     ): ByteArray {
-        val secrets = (env + settings)
-            .filter { SECRET_NAME.containsMatchIn(it.key) }
-            .values
-            .filter { it.length >= MIN_SECRET_LENGTH }
-            .toSet()
+        val secrets = expand(
+            (env + settings)
+                .filter { SECRET_NAME.containsMatchIn(it.key) }
+                .values + knownSecrets,
+        )
         val shownEnv = env.filterKeys { key -> RELEVANT_ENV_PREFIXES.any { key.startsWith(it) } }
         val files = linkedMapOf<String, String>()
         files["draft.md"] = scrub("# ${draft.title}\n\n${draft.body}\n", secrets)
@@ -81,6 +85,22 @@ object FeedbackBundle {
         if (sessionLog != null) files["session-log.txt"] = scrub(sessionLog, secrets)
         check(!leaks(files, secrets)) { "诊断包里还有凭证，拒绝导出。" }
         return zip(files)
+    }
+
+    /**
+     * 给草稿落盘用：与导出同一套去凭证（已知秘密逐字 + 形状 + 地址里的口令 + 口令赋值）。幂等：已经去过的文本再去一遍不变。
+     * 手机端草稿文件在写入时就调它，不等到导出——草稿与会话日志放在同一个私有目录里，但草稿是要给人看、给人发的东西。
+     */
+    fun redact(text: String, knownSecrets: Set<String>): String = scrub(text, expand(knownSecrets))
+
+    /**
+     * 去掉太短的值，再补上每个值的 JSON 转义写法：会话日志每行是 JSON，含引号、反斜杠、换行的秘密写进去时是转义过的，
+     * 逐字对不上。长的排在前面，免得一个秘密是另一个的子串时留下半截。
+     */
+    private fun expand(values: Collection<String>): Set<String> {
+        val usable = values.filter { it.length >= MIN_SECRET_LENGTH }
+        val escaped = usable.map { Json.encodeToString(String.serializer(), it).removeSurrounding("\"") }
+        return (usable + escaped).sortedByDescending { it.length }.toCollection(LinkedHashSet())
     }
 
     /** 把 [secrets] 的每个值与形似凭证的字符串换成占位 */
