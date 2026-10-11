@@ -31,6 +31,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -277,6 +278,80 @@ class SkillShellRunTest {
         assertTrue("got $res", res is dev.min.agent.spi.DelegateResult.Finished)
         val child = hub.get((res as dev.min.agent.spi.DelegateResult.Finished).child)!!
         assertTrue(child.state.value.skillGrants.isEmpty())
+    }
+
+    // ---- allowManagedPermissionRulesOnly：托管层设了，项目 / 个人 / add-dir 来源的 allowed-tools 不生效 ----
+
+    private fun managedOnly(permissions: String = "") {
+        fs.files["/etc/claude-code/managed-settings.json"] =
+            """{"allowManagedPermissionRulesOnly": true${if (permissions.isEmpty()) "" else ", \"permissions\": $permissions"}}"""
+    }
+
+    private fun from(source: ConfigSource, label: String = source.label, allowed: List<String> = listOf("Bash(make build)"), body: String = "!`make build`") = SkillDef(
+        name = "s-${source.name.lowercase()}", description = "d", path = GuestPath("/workspace/.claude/skills/s/SKILL.md"), body = body,
+        source = source, allowedTools = allowed, sourceLabel = label,
+    )
+
+    @Test
+    fun `managed-only ignores the allowed-tools of project, personal and add-dir skills`() = run {
+        managedOnly()
+        // 最后一个是认不出来的来源标签：失败关闭，当作受影响
+        for (skill in listOf(from(ConfigSource.Project), from(ConfigSource.User), from(ConfigSource.AddDir), from(ConfigSource.Cli, label = "mystery"))) {
+            val rt = session()
+            val r = typed(rt, skill)
+            // allowed-tools 不生效：命令回到「需要批准」，非自动模式下整次中止，一条都没跑，也没有放行落日志
+            assertTrue("${skill.sourceLabel} got $r", r is SlashResult.Refused)
+            assertTrue(rt.state.value.skillGrants.isEmpty())
+        }
+        assertTrue(exec.runs.isEmpty())
+    }
+
+    @Test
+    fun `managed-only still lets the managed rules allow the command the ignored skill lists`() = run {
+        managedOnly(permissions = """{"allow": ["Bash(make build)"]}""")
+        val rt = session()
+        // 走托管规则：命令被托管层放行，所以能跑；但这不是 skill 的放行
+        assertTrue(typed(rt, from(ConfigSource.Project)) is SlashResult.Expanded)
+        assertEquals(1, exec.runs.size)
+        assertTrue(rt.state.value.skillGrants.isEmpty())
+    }
+
+    @Test
+    fun `managed-only keeps the allowed-tools of managed, bundled and plugin skills`() = run {
+        managedOnly()
+        for (skill in listOf(from(ConfigSource.Managed), from(ConfigSource.Bundled), from(ConfigSource.Plugin, label = "plugin:demo"))) {
+            val rt = session()
+            assertTrue("${skill.sourceLabel}", typed(rt, skill) is SlashResult.Expanded)
+            assertEquals(listOf("Bash(make build)"), rt.state.value.skillGrants)
+        }
+    }
+
+    @Test
+    fun `managed-only is only about the managed layer, a project setting of it changes nothing`() = run {
+        setProjectSettings("""{"allowManagedPermissionRulesOnly": true}""")
+        val rt = session()
+        assertTrue(typed(rt, from(ConfigSource.Project)) is SlashResult.Expanded)
+    }
+
+    @Test
+    fun `managed-only keeps a forked project skill from handing its allowed-tools to the sub-agent`() = run {
+        managedOnly()
+        val rt = hubSession(ScriptedModel(reply(TextPart("child done"))))
+        val r = typed(rt, project("pr", "summarize", allowed = listOf("Bash(gh pr view *)"), context = "fork", agent = "Explore", background = false))
+        assertTrue("got $r", r is SlashResult.Forked)
+        val child = rt.hub!!.get(rt.state.value.children.keys.single())!!
+        assertTrue(child.state.value.skillGrants.isEmpty())
+    }
+
+    @Test
+    fun `managed-only says which skill had its allowed-tools ignored, once`() = run {
+        managedOnly()
+        val rt = session()
+        typed(rt, from(ConfigSource.Project))
+        typed(rt, from(ConfigSource.Project))
+        assertEquals(listOf("s-project"), rt.ignoredSkillTools())
+        val notes = store.peek(rt.sessionId)!!.read().toList().mapNotNull { it.event as? dev.min.agent.spi.Note }
+        assertEquals(1, notes.count { "s-project" in it.text && "allowManagedPermissionRulesOnly" in it.text })
     }
 
     // ---- 信任与开关 ----

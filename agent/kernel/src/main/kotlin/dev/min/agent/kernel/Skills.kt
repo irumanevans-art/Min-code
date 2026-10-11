@@ -189,7 +189,7 @@ internal class KernelSkillRunPort(
     private var shellDisabledByPolicy: Boolean? = null
 
     override suspend fun begin(owner: SkillRunOwner) {
-        rt.grantSkillTools(owner.allowedTools, owner.baseDir, owner.name)
+        rt.grantSkillRules(rt.skillGrantRules(owner), owner.name)
     }
 
     override suspend fun shell(owner: SkillRunOwner, command: String): RunResult {
@@ -241,7 +241,7 @@ internal class KernelSkillRunPort(
         if (owner.agent == FORK_AGENT_TYPE) return RunResult.Refused("skill「${owner.name}」的 agent 写成了 fork，分身只能由内核派生，skill 不能指定它。")
         val request = DelegateRequest(
             description = "skill ${owner.name}", prompt = prompt, agentType = owner.agent, background = owner.background,
-            skillGrants = resolveSkillGrantRules(owner.allowedTools, owner.baseDir),
+            skillGrants = rt.skillGrantRules(owner),
         )
         return when (val r = hub.spawn(rt, turnId, callId, request)) {
             is DelegateResult.Started -> RunResult.Ok("skill「${owner.name}」已在后台的子 agent（${r.child.value}）里运行，结果会作为消息回到会话。")
@@ -317,6 +317,50 @@ suspend fun SessionRuntime.nestedSkillDefs(): List<SkillDef> = state.value.neste
         disableModelInvocation = entry.disableModelInvocation, userInvocable = entry.userInvocable,
         allowedTools = entry.allowedTools, context = entry.context, agent = entry.agent, background = entry.background, hooks = entry.hooks,
     )
+}
+
+
+
+/**
+ * 托管层设了 `allowManagedPermissionRulesOnly` 时仍然保留 `allowed-tools` 的来源（settings 页原文：「Skills from managed settings and
+ * bundled skills keep their allowed-tools」）。原文列为**忽略**的是仓库 `.claude/`、用户 `~/.claude/skills|commands`、`--add-dir`、
+ * 放在这两处 skills 目录里的 `.claude-plugin` 清单插件——它们在 Min 里的来源标签都是 project / user / add-dir；
+ * 已安装的插件不在原文的名单里，保留。标签认不出来的一律当作受影响（失败关闭）。
+ */
+private fun keepsAllowedToolsUnderManagedOnly(source: String?): Boolean =
+    source == ConfigSource.Managed.label || source == ConfigSource.Bundled.label || source?.startsWith("plugin:") == true
+
+/**
+ * 这次调用真正该放行的 `allowed-tools` 规则（已代入 `${CLAUDE_SKILL_DIR}`）。托管层设了 `allowManagedPermissionRulesOnly`、
+ * 而这个 skill 来自受影响的来源时返回空：那几条工具回到托管规则与常规的权限提示（原文：「go through your organization's managed rules
+ * and the normal permission prompt instead」），并留一条给人看的说明、记进 [ignoredSkillTools]（原文用 `/status` 列出；Min 没有 `/status`）。
+ * 每次调用都重读设置：托管文件会话中途变了，下一次调用就按新的算。放行的写入口（[SessionRuntime.grantSkillRules]）与分身交接
+ * （[KernelSkillRunPort.fork]）都经这里，没有第二条路能把被忽略的规则放进去。
+ */
+internal suspend fun SessionRuntime.skillGrantRules(owner: SkillRunOwner): List<String> {
+    if (owner.allowedTools.isEmpty()) return emptyList()
+    if (!keepsAllowedToolsUnderManagedOnly(owner.source) && managedPermissionRulesOnly()) {
+        if (ignoredSkillToolNames.add(owner.name)) {
+            commit(
+                listOf(dev.min.agent.spi.Note(
+                    dev.min.agent.spi.NoteLevel.Info,
+                    "托管设置里 allowManagedPermissionRulesOnly 已开：skill「${owner.name}」（来自 ${owner.source ?: "未知来源"}）的 allowed-tools 被忽略，" +
+                        "它列的工具按托管规则与常规权限提示处理。",
+                )),
+                Durability.Sync,
+            )
+        }
+        return emptyList()
+    }
+    return resolveSkillGrantRules(owner.allowedTools, owner.baseDir)
+}
+
+/** 本会话里 `allowed-tools` 被 `allowManagedPermissionRulesOnly` 忽略过的 skill 名（按出现顺序，重开会话后重新累积） */
+fun SessionRuntime.ignoredSkillTools(): List<String> = synchronized(ignoredSkillToolNames) { ignoredSkillToolNames.toList() }
+
+private suspend fun SessionRuntime.managedPermissionRulesOnly(): Boolean {
+    val home = deps.memoryHome ?: return false
+    return SettingsLoader.load(deps.host.fs, state.value.settings.cwd, home, inputs = deps.settingsInputs).merged.allowManagedPermissionRulesOnly
 }
 
 /** skill 的 `allowed-tools` 规则文字：`${CLAUDE_SKILL_DIR}`（文档：允许在 allowed-tools 的 Bash 规则里用它）代入 skill 所在目录 */
