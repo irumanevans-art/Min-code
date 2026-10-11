@@ -6,6 +6,8 @@ plugins {
 dependencies {
     testImplementation(project(":agent:lsp"))
     implementation(libs.quickjs.jvm)
+    // 桌面按页截取 PDF（PdfBoxPages）：只在 CLI，不进 App
+    implementation(libs.pdfbox)
     implementation(project(":agent:kernel"))
     implementation(project(":agent:host"))
     // 组合根要直接拿到各模块的实现：工具、编解码器、存储、记忆加载（KernelDeps 里的 MemoryLimits）

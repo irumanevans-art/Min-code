@@ -210,6 +210,9 @@ interface ToolContext {
 
     /** 等后台连接的 MCP 服务器（WaitForMcpServers）。有默认值（不可用） */
     val mcpWait: McpWaitPort get() = McpWaitPort.Unavailable
+
+    /** 按页截取 PDF（Read 的 pages）。有默认值（不可用）：其余工具与测试替身不用管它 */
+    val pdfPages: PdfPagePort get() = PdfPagePort.Unavailable
     suspend fun extract(content: String, prompt: String): ToolResult =
         ToolResult(listOf(dev.min.agent.protocol.TextPart("这个环境不能提取网页内容。")), isError = true)
 

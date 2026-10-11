@@ -395,6 +395,8 @@ internal class DesktopApp(
                     return true
                 }
             },
+            // Read 的 pages：PDFBox 拆出所选页，作为文档块交给模型（见 PdfBoxPages）
+            pdfPages = PdfBoxPages,
             // 本机预览（Artifact）：桌面没有预览位，打印文件在磁盘上的路径（终端里能直接打开）
             previewSink = object : dev.min.agent.spi.PreviewSink {
                 override suspend fun show(file: dev.min.agent.spi.PreviewFile): Boolean {

@@ -229,6 +229,8 @@ object MinKernelDeps {
         userFileSink: dev.min.agent.spi.UserFileSink = dev.min.agent.spi.UserFileSink.Unavailable,
         previewSink: dev.min.agent.spi.PreviewSink = dev.min.agent.spi.PreviewSink.Unavailable,
         feedbackSink: dev.min.agent.spi.FeedbackSink = dev.min.agent.spi.FeedbackSink.Unavailable,
+        /** Read 的 pages（按页截取 PDF）：手机上用系统 PdfRenderer 渲染成图（[AndroidPdfPages]） */
+        pdfPages: dev.min.agent.spi.PdfPagePort = dev.min.agent.spi.PdfPagePort.Unavailable,
     ): KernelDeps = KernelDeps(
         networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
@@ -257,5 +259,6 @@ object MinKernelDeps {
         userFileSink = userFileSink,
         previewSink = previewSink,
         feedbackSink = feedbackSink,
+        pdfPages = pdfPages,
     )
 }

@@ -197,6 +197,8 @@ class KernelDeps(
     val feedbackSink: dev.min.agent.spi.FeedbackSink = dev.min.agent.spi.FeedbackSink.Unavailable,
     /** 桌面 CLI 的主模型解析器只认当前会话链；顾问可另接目录或自定义供应商，App 直接复用 models。 */
     val advisorModels: ModelResolver? = null,
+    /** Read 的 pages（按页截取 PDF）的宿主出口。默认不可用：Read 照实回告「本环境不能按页截取」 */
+    val pdfPages: dev.min.agent.spi.PdfPagePort = dev.min.agent.spi.PdfPagePort.Unavailable,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }

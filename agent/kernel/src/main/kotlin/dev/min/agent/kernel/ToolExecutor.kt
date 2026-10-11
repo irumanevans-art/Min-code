@@ -689,6 +689,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val userFiles: dev.min.agent.spi.UserFileSink = if (turnId == null) dev.min.agent.spi.UserFileSink.Unavailable else deps.userFileSink
         override val artifactView: dev.min.agent.spi.PreviewSink = if (turnId == null) dev.min.agent.spi.PreviewSink.Unavailable else deps.previewSink
         override val feedback: dev.min.agent.spi.FeedbackSink = if (turnId == null) dev.min.agent.spi.FeedbackSink.Unavailable else deps.feedbackSink
+        override val pdfPages: dev.min.agent.spi.PdfPagePort = if (turnId == null) dev.min.agent.spi.PdfPagePort.Unavailable else deps.pdfPages
         override val mcpWait: dev.min.agent.spi.McpWaitPort = if (turnId == null) dev.min.agent.spi.McpWaitPort.Unavailable else rt.hub?.mcpWaitFor(rt) ?: dev.min.agent.spi.McpWaitPort.Unavailable
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan

@@ -27,6 +27,7 @@ uiautomator = "2.3.0"
 benchmark-macro-junit4 = "1.5.0"
 bouncycastle = "1.81"
 spake2 = "2.2.1"
+pdfbox = "3.0.8"
 
 [libraries]
 quickjs-android = { module = "io.github.dokar3:quickjs-kt-android", version.ref = "quickjs" }
@@ -75,6 +76,8 @@ androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomato
 # 配对会在「交换 PeerInfo」时 GCM 解密失败。ADB 协议/TLS/配对代码见 io.github.muntashirakon.adb（移植自 libadb-android，Apache-2.0）
 bouncycastle-bcpkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
 spake2 = { module = "com.github.MuntashirAkon.spake2-java:spake2-android", version.ref = "spake2" }
+# 桌面 CLI 的按页截取（PDFBox，Apache-2.0）；只进 :agent:cli，不进 App（App 用系统 PdfRenderer）
+pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

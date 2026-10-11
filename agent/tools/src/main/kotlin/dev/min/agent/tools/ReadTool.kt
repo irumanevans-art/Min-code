@@ -10,6 +10,7 @@ import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.HarnessProfile
 import dev.min.agent.spi.PathAccess
+import dev.min.agent.spi.PdfPageResult
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.Tool
@@ -39,8 +40,8 @@ object ReadTool : Tool<ReadInput> {
     /** PDF 整份内联进请求：Anthropic 请求体上限 32MB，base64 膨胀约 4/3，这里取 20MB 原文（再大会超供应商的请求体上限） */
     const val MAX_PDF_BYTES = 20L * 1024 * 1024
 
-    /** 本环境没有 PDF 解析库，不能按页截取；pages 参数给了就照实说 */
-    private const val NO_PAGE_CUT = "本环境不能按页截取 PDF（没有可用的 PDF 解析库），pages 参数暂不可用。不超过 10 页的 PDF 请去掉 pages 整份读取。"
+    /** 宿主没有按页截取能力（[PdfPagePort] 不可用）时照实说；pages 参数给了也不悄悄整份返回 */
+    private const val NO_PAGE_CUT = "本环境不能按页截取 PDF，pages 参数暂不可用。不超过 10 页的 PDF 请去掉 pages 整份读取。"
 
     /** 文本文件一次最多读入这么多字节：一个几百 MB 的日志不该整个进内存。超出部分读不到，结果里会说明 */
     const val MAX_TEXT_BYTES = 8 * 1024 * 1024
@@ -55,7 +56,7 @@ object ReadTool : Tool<ReadInput> {
         "file_path" to prop("string", "要读的文件的绝对路径（以 / 开头）"),
         "offset" to prop("integer", "起始行号（notebook 为起始单元序号），从 1 开始；默认 1。只在文件很大、需要分段读时才给"),
         "limit" to prop("integer", "最多读多少行（notebook 为单元数）；默认 $DEFAULT_LIMIT"),
-        "pages" to prop("string", "PDF 专用：要读的页码，如 \"1-5\" 或 \"3\"，一次最多 ${PdfFile.MAX_PAGES_PER_READ} 页。本环境暂不能按页截取，给了会得到说明"),
+        "pages" to prop("string", "PDF 专用：要读的页码，如 \"1-5\" 或 \"3\"，一次最多 ${PdfFile.MAX_PAGES_PER_READ} 页。超过 ${PdfFile.MAX_PAGES_WHOLE} 页的 PDF 必须给它；宿主不能按页截取时会得到说明"),
     )
 
     override val traits = ToolTraits(readOnly = true, concurrencySafe = true, resumePolicy = ResumePolicy.Replay)
@@ -63,7 +64,7 @@ object ReadTool : Tool<ReadInput> {
     override fun description(profile: HarnessProfile) =
         "读取一个文件。file_path 必须是绝对路径（相对路径以当前目录为基准自行拼成绝对路径）。" +
             "默认从第 1 行读最多 $DEFAULT_LIMIT 行，每行前带行号；更长的文件用 offset / limit 分段读。" +
-            "单行超过 $MAX_LINE_CHARS 字符会被截断。可以读图片（png / jpg / gif / webp）；可以读 PDF（不超过 $MAX_PDF_BYTES 字节，不超过 ${PdfFile.MAX_PAGES_WHOLE} 页整份读取，超过的本环境暂不能按页截取）；不能读其他二进制文件。" +
+            "单行超过 $MAX_LINE_CHARS 字符会被截断。可以读图片（png / jpg / gif / webp）；可以读 PDF（不超过 $MAX_PDF_BYTES 字节；不超过 ${PdfFile.MAX_PAGES_WHOLE} 页整份读取，超过的须用 pages 按页截取，一次最多 ${PdfFile.MAX_PAGES_PER_READ} 页）；不能读其他二进制文件。" +
             "也可以读 Jupyter notebook（.ipynb）：按单元给出 id、类型、源码与输出（输出已截断，图片尽量内嵌），此时 offset / limit 按单元计。" +
             "修改已有文件之前必须先用本工具读过它。读目录请改用 Glob 或 Bash 的 ls。"
 
@@ -154,12 +155,27 @@ object ReadTool : Tool<ReadInput> {
             if (range.last - range.first + 1 > PdfFile.MAX_PAGES_PER_READ) {
                 return failResult("字段 `pages` 一次最多 ${PdfFile.MAX_PAGES_PER_READ} 页，收到 `$spec`。")
             }
-            return failResult(NO_PAGE_CUT)
+            // 按页截取交给宿主（桌面拆成文档块，手机渲染成图）；宿主不能做时照实说，不悄悄整份返回
+            val port = ctx.pdfPages
+            if (!port.available) return failResult(NO_PAGE_CUT)
+            return when (val got = port.pages(bytes, range)) {
+                is PdfPageResult.Pages -> ToolResult(
+                    content = listOf(TextPart("PDF $path 第 ${pageSpan(range)}（共 ${got.pageCount} 页）")) + got.parts,
+                    touched = listOf(stamp),
+                )
+                is PdfPageResult.OutOfRange -> failResult("字段 `pages` 超出范围：$path 共 ${got.pageCount} 页，收到 `$spec`。")
+                is PdfPageResult.Failed -> failResult(got.reason)
+            }
         }
 
         val pageCount = PdfFile.pageCount(bytes)
         if (pageCount != null && pageCount > PdfFile.MAX_PAGES_WHOLE) {
-            return failResult("$path 共 $pageCount 页，超过 ${PdfFile.MAX_PAGES_WHOLE} 页，不能整份读取。$NO_PAGE_CUT")
+            val hint = if (ctx.pdfPages.available) {
+                "请用 pages 指定页码（如 \"1-5\"，一次最多 ${PdfFile.MAX_PAGES_PER_READ} 页）。"
+            } else {
+                NO_PAGE_CUT
+            }
+            return failResult("$path 共 $pageCount 页，超过 ${PdfFile.MAX_PAGES_WHOLE} 页，不能整份读取。$hint")
         }
         val pageNote = pageCount?.let { "$it 页" } ?: "页数未知"
         return ToolResult(
@@ -170,6 +186,10 @@ object ReadTool : Tool<ReadInput> {
             touched = listOf(stamp),
         )
     }
+
+    /** 页码说明：`2` 或 `2–5`（同一页不写成区间） */
+    private fun pageSpan(range: IntRange): String =
+        if (range.first == range.last) "${range.first} 页" else "${range.first}–${range.last} 页"
 
     /** 行号右对齐 6 位 + 制表符；\r\n 的 \r 去掉，免得模型以为行尾有个怪字符 */
     private fun numbered(n: Int, line: String): String {
