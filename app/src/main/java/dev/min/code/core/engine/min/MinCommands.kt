@@ -179,6 +179,8 @@ class MinCommandHandler(
         if (command.target == SendTarget.Main && command.input.text.trim() == "/reload-skills") return notice(text.skillsReloaded(runtime.reloadSkills()))
         val expanded = expandSlash(runtime, command.input.text)
         if (expanded is SlashInput.Refused) return CommandResult.Rejected(expanded.reason)
+        // 分身已经接下这次输入（子 agent 的报告或后台启动的说明）：是成功，不是拒绝——输入框不该把原文退回去
+        if (expanded is SlashInput.Handled) return notice(expanded.text)
         val input = if (expanded is SlashInput.Expanded) command.input.copy(text = expanded.body) else command.input
         val accepted = runtime.send(ClientMsgId(command.commandId), partsOf(input), delivery, scanMcpMentions = expanded is SlashInput.Plain)
         return if (accepted) CommandResult.Accepted else CommandResult.Duplicate
@@ -188,6 +190,8 @@ class MinCommandHandler(
         data object Plain : SlashInput
         data class Expanded(val body: String) : SlashInput
         data class Refused(val reason: String) : SlashInput
+        /** 斜杠命令自己处理完了这次输入（分身），[text] 作为说明显示 */
+        data class Handled(val text: String) : SlashInput
     }
 
     private suspend fun expandSlash(runtime: SessionRuntime, line: String): SlashInput {
@@ -217,12 +221,12 @@ class MinCommandHandler(
             is SlashResult.McpPrompt -> SlashInput.Refused("此入口尚不支持 MCP prompt。")
             // 预执行命令被拒或失败：整次输入不发给模型，理由照 Refused 同一条路显示
             is SlashResult.Refused -> SlashInput.Refused(result.message)
-            // 分身：这次输入不发给模型，子 agent 的报告或后台启动的说明以文字显示（与拒绝同一条路，见 SlashInput.Refused）
+            // 分身：这次输入不发给模型，子 agent 的报告或后台启动的说明以说明文字显示
             is SlashResult.Forked -> {
                 entries.firstOrNull { it.name == result.name }?.let { entry ->
                     entry.hooks?.let { runtime.registerComponentHooks(entry.kind.name.lowercase(), result.name, entry.source ?: "user", it) }
                 }
-                SlashInput.Refused(result.text)
+                SlashInput.Handled(result.text)
             }
             is SlashResult.Expanded -> {
                 // 展开的文件内容不是人的引用：不扫描 MCP 提及；组件 hooks 只在调用确实获准后登记。

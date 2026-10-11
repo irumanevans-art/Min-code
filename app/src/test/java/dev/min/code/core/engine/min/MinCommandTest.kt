@@ -162,6 +162,14 @@ class MinCommandTest {
 
     private fun skillFile(description: String, body: String) = "---\ndescription: $description\n---\n$body"
 
+    @Test fun `a forked slash skill is accepted with its outcome as a notice, so the composer does not get the text back`() {
+        val files = mutableMapOf("/workspace/.claude/skills/forky/SKILL.md" to "---\ndescription: forked\ncontext: fork\n---\nDo the forked thing")
+        val r = skillsRig(files)
+        assertEquals(CommandResult.Accepted, r.send("/forky now"))
+        assertTrue("分身的结论以说明显示", awaitValue { r.signals.filterIsInstance<SessionSignal.Notice>().firstOrNull() } != null)
+        assertTrue("这次输入不进主对话", r.events().filterIsInstance<InputReceived>().none { it.clientMsgId.value == "send-/forky now" })
+    }
+
     @Test fun `set cwd moves the session directory through the kernel and a missing directory is rejected`() {
         val r = skillsRig(mutableMapOf("/workspace/sub/README.md" to "x"))
         runBlocking {
