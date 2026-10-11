@@ -125,7 +125,7 @@ internal class KernelSkillPort(
 ) : SkillPort {
     override suspend fun invoke(name: String, args: String?): SkillInvocation {
         val state = rt.state.value
-        val entries = state.skills?.entries.orEmpty() + state.nestedSkills
+        val entries = state.skillEntries()
         val entry = entries.firstOrNull { it.name == name }
             ?: return SkillInvocation.Rejected(unknown(name, entries))
         if (entry.disableModelInvocation) {
@@ -293,13 +293,15 @@ internal fun SkillDef.toEntry(): SkillEntry = SkillEntry(
  * a file in that subdirectory and stay available for the rest of the session」）。只在完整档里做；`--bare` / `--safe-mode`
  * 不自动发现 skills，这里也不做。结果落日志（SkillsDiscovered），重开会话不重新查。
  */
-internal suspend fun SessionRuntime.discoverNestedSkills(touched: List<GuestPath>) {
+internal suspend fun SessionRuntime.discoverNestedSkills(touched: List<GuestPath>, anchor: dev.min.agent.protocol.MessageId? = null) {
     if (deps.customizations != Customizations.Full) return
     val s = state.value
-    val taken = (s.skills?.entries.orEmpty() + s.nestedSkills).map { it.name }.toSet()
+    val taken = s.skillEntries().map { it.name }.toSet()
     val found = SkillDiscovery.nestedSkills(deps.host.fs, s.settings.cwd, touched, s.checkedSkillDirs, taken)
     if (found.checked.isEmpty() && found.notes.isEmpty()) return
-    commit(listOf(SkillsDiscovered(found.skills.map { it.toEntry() }, found.checked, found.notes)), Durability.Batched)
+    // 找到了新 skill 就要让模型知道（追加的 system-reminder，挂在 [anchor] 上），进模型视图的东西要 Sync；只有「查过」的记录 Batched 就够
+    val durability = if (found.skills.isNotEmpty() && anchor != null) Durability.Sync else Durability.Batched
+    commit(listOf(SkillsDiscovered(found.skills.map { it.toEntry() }, found.checked, found.notes, anchor)), durability)
 }
 
 /**
@@ -320,3 +322,27 @@ suspend fun SessionRuntime.nestedSkillDefs(): List<SkillDef> = state.value.neste
 /** skill 的 `allowed-tools` 规则文字：`${CLAUDE_SKILL_DIR}`（文档：允许在 allowed-tools 的 Bash 规则里用它）代入 skill 所在目录 */
 internal fun resolveSkillGrantRules(allowed: List<String>, baseDir: String?): List<String> =
     allowed.map { if (baseDir != null) it.replace("\${CLAUDE_SKILL_DIR}", baseDir) else it }
+
+/**
+ * `--add-dir` 目录里 `.claude/skills` 的热发现（CC skills 文档：「picks up the change within the current session, without a restart」，
+ * 但「doesn't watch the added directory's `.claude/commands/` or `.claude/agents/`」，bare 档不监视）。
+ * Min 没有常驻文件监视，改在用户每次开新回合之前重扫一遍：只读这些目录的 SKILL.md，与会话当前已知的 add-dir skill 比对，
+ * 有新增 / 改动 / 删除才写一条 [dev.min.agent.spi.SkillsRescanned]——系统提示里冻结的清单不动（前缀与缓存不断），
+ * 差异以 system-reminder 附在这条用户消息后告诉模型，Skill 工具按新的找。与完整档的 skills 同样要求项目来源已开放：safe / bare 不走这里。
+ */
+internal suspend fun SessionRuntime.rescanAddDirSkills() {
+    if (deps.customizations != Customizations.Full) return
+    val dirs = deps.settingsInputs.addDirs
+    if (dirs.isEmpty()) return
+    val s = state.value
+    val current = s.skillEntries()
+    val known = current.filter { it.source == ConfigSource.AddDir.label && it.kind == SkillKind.Skill }.associateBy { it.name }
+    // 别的来源占着的名字（项目、用户、托管、插件、内置、命令）还是它们的：附加目录里的同名项当初就没进清单，现在也不进
+    val foreign = current.filter { it.source != ConfigSource.AddDir.label || it.kind != SkillKind.Skill }.map { it.name }.toSet()
+    val scanned = addDirSkills(deps.host.fs, dirs)
+    val fresh = scanned.skills.filter { it.name !in foreign }.map { it.toEntry() }
+    val changed = fresh.filter { known[it.name] != it }
+    val gone = known.keys - fresh.map { it.name }.toSet()
+    if (changed.isEmpty() && gone.isEmpty()) return
+    commit(listOf(dev.min.agent.spi.SkillsRescanned(changed, gone.sorted(), scanned.notes)), Durability.Sync)
+}

@@ -631,6 +631,8 @@ class SessionRuntime private constructor(
         }
         // 用户的新输入开始新的一轮：上一轮 skill 的 allowed-tools 放行到此为止（文档）
         if (state.value.skillGrants.isNotEmpty()) commit(listOf(dev.min.agent.spi.SkillToolsCleared()), Durability.Sync)
+        // `--add-dir` 里的 skill 在会话中途变了：新回合开始前重扫（回合进行中收到的追加输入不重扫，等下一个空闲点）
+        if (state.value.turn == null) rescanAddDirSkills()
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
         val workflow = prepareSavedWorkflow(clientMsgId, prepared)
         startsInFlight.incrementAndGet()

@@ -191,7 +191,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             catchingNonCancellation { deps.host.fs.stat(path)?.kind == FileKind.File }.getOrDefault(false)
         }
         if (files.isEmpty()) return
-        catchingNonCancellation { rt.discoverNestedSkills(files) }.onFailure { e ->
+        val anchor = rt.state.value.history.lastOrNull { e -> e is HistoryEntry.Assistant && e.toolCalls.any { it.callId == calls.first().callId } }?.messageId
+        catchingNonCancellation { rt.discoverNestedSkills(files, anchor) }.onFailure { e ->
             catchingNonCancellation {
                 rt.commit(
                     listOf(Note(NoteLevel.Warning, "加载嵌套目录的 skills 失败，已跳过：${e.message?.lineSequence()?.firstOrNull() ?: e::class.simpleName}")),

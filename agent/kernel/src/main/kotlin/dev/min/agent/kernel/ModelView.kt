@@ -26,7 +26,10 @@ fun SessionState.modelMessages(withReminders: Boolean = true): List<ModelMessage
         // SessionStart(source = compact) 加的上下文挂在摘要消息末尾：压缩一发生就立刻进模型视图，
         // 下一次压缩把旧摘要连同它一起取代（折叠在 ContextCompacted 上清空 compactionContexts）
         val reminders = if (withReminders) compactionContexts[c.compactionId].orEmpty().map { TextPart("<system-reminder>\n$it\n</system-reminder>") } else emptyList()
-        add(ModelMessage(Role.User, listOf(TextPart(c.summary)) + reminders))
+        // 压缩把摘要之前的对话（连同当时追加的「新发现的 skill」提醒）都取代了：会话中途发现的 skill 在摘要后重述一遍，
+        // 否则模型再也不知道它们存在（冻结的系统提示清单里没有它们）
+        val skillNotes = if (withReminders) midSessionSkillReminders().map { TextPart("<system-reminder>\n$it\n</system-reminder>") } else emptyList()
+        add(ModelMessage(Role.User, listOf(TextPart(c.summary)) + reminders + skillNotes))
         // 分身继承的摘要：边界消息在父会话的历史里，分身历史本来就只从边界之后开始，全部保留
         history.indexOfFirst { it.messageId == c.through }.takeIf { it >= 0 }?.plus(1) ?: 0
     } ?: 0
@@ -91,3 +94,7 @@ private fun SessionState.memoryReminders(messageId: MessageId): List<TextPart> =
 /** 被遮蔽的工具结果在模型视图里的样子：说清楚省掉了什么、原文在哪 */
 internal fun maskedStub(tool: String, path: String?): String =
     "[较早的 $tool 输出已省略以节省上下文。" + (path?.let { "原文在 $it，需要时用 Read 读取。" } ?: "需要时可以重新调用。") + "]"
+
+/** 会话中途发现、且仍可用的 skill 的追加提醒文字（压缩之后重述用）；没有就是空 */
+private fun SessionState.midSessionSkillReminders(): List<String> =
+    listOfNotNull(dev.min.agent.context.SkillListing.announcement(nestedSkills.filter { it.name !in removedSkills }, skills?.listingMaxDescChars))

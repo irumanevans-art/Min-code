@@ -679,7 +679,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             cacheKey = origin?.cacheKey ?: state.branched?.cacheKey ?: state.header.sessionId.value,
             memory = state.memory,
             // 子 agent 的工具表里没有 Skill 就不列清单：列了模型也调不了，白占 token
-            skills = state.skills?.takeIf { _ -> specs.any { it.name == SkillTool.name } },
+            // bare 档不给清单（CC headless 页：不给 skill 清单，含 --add-dir 的；skill 仍在 Skill 工具里按名字可调）
+            skills = state.skills?.takeIf { _ -> specs.any { it.name == SkillTool.name } && deps.customizations != Customizations.Bare },
             agentInstructions = origin?.instructions,
             autoMemory = state.autoMemory,
             mcpInstructions = state.mcpInstructionsFor(state.visibleMcpTools(deps), state.usesMcpToolSearch(deps)),
