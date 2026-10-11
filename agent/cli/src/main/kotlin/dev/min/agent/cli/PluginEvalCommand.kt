@@ -15,8 +15,11 @@ internal suspend fun pluginEvalCommand(arguments: List<String>, cwd: Path, outpu
         output.println("plugin eval [plugin path|prompt.md|case.yaml|installed name] --model <id> [CLI model selection flags]\n--trust-plugin --runs 1..50 -j/--concurrency 1..8 --ablation none|with-without --threshold 0..1\n--case <glob> --tag <tags...> --eval-dir <relative> --allow-tools <tools...> --judge-model <id>\n--json [path.json] --output-dir <path> --no-publish --keep-temp --max-cost-usd <usd>\nplugin eval init --bare <case-name> [--eval-dir <relative>]\n--scaffold / --no-scaffold --mocks record；支持 context、MCP mocks、plugins 覆写与交互 init。\nWindows OS shell sandbox 没有等价后端，shell grant 明确拒绝；报告仅本地。")
         return 0
     }
-    if (arguments.firstOrNull() == "init") return try { initPluginEval(arguments.drop(1), cwd, output) }
-        catch(e: CancellationException) { throw e } catch(e: Exception) { stderr.println(e.message); 1 }
+    if (arguments.firstOrNull() == "init") return try {
+        if ("--bare" in arguments) initPluginEval(arguments.drop(1), cwd, output)
+        else interactivePluginEvalInit(arguments.drop(1), cwd, output, input, terminal, models)
+    } catch(e: CancellationException) { throw e }
+        catch(e: Exception) { stderr.println(e.message); 1 }
     try {
         val args = arguments.toMutableList()
         val trust = args.remove("--trust-plugin")

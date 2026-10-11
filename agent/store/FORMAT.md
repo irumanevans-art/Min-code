@@ -2,6 +2,8 @@
 
 `formatVersion: 1`
 
+- 交互 init 使用现有隔离评测与本地报告载荷，候选经加载校验和试跑后发布；不新增事件或改版本号。
+
 - v1 增量（2026-10-11，eval context）：新增 `history_imported {messages: SeedMessage[], results: SeedResult[]}`，只允许空根会话回合前导入；fold 强制 user 来源为 Hook(imported_history)，原文不能成为当前人类授权。eval 报告 schemaVersion=1 的 run 新增 mock_calls、aborted(server/tool/reason)、mockRecordings；abort 的 error=null、score=0。context 的 scaffold/history/只读 add_dirs 与 plugins 覆写不改变会话格式。
 
 - eval grader 正则载荷仍为 pattern/flags；解释器改为 QuickJS RegExp，新增 JS 捕获、Unicode、sticky 及零宽计数兼容，非法 flags 在加载时失败。不新增持久事件，报告 schemaVersion 保持 1。
