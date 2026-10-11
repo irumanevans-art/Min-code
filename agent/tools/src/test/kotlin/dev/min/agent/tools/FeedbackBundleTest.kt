@@ -40,7 +40,7 @@ class FeedbackBundleTest {
     @Test
     fun `no key or token from the environment or the settings reaches the exported zip`() {
         // 环境与设置里都带上假 key：导出的每个条目都不能含它们的值
-        val env = mapOf("ANTHROPIC_API_KEY" to fakeKey, "HOME" to "/data/home")
+        val env = mapOf("ANTHROPIC_API_KEY" to fakeKey, "HOME" to "/data/home", "INTERNAL_PASSWORD" to "plainpw-XYZ123")
         val settings = mapOf("github.token" to fakeToken, "theme" to "dark")
         // 草稿正文与会话日志里模型或工具也可能把 key 写了出来
         val draft = FeedbackDraft("鉴权失败", "我把 $fakeKey 粘进了命令里，还有 $fakeToken")
@@ -49,6 +49,8 @@ class FeedbackBundleTest {
         val all = entries(zip).values.joinToString("\n")
         assertFalse(all, all.contains("FAKEKEY"))
         assertFalse(all, all.contains("FAKETOKEN"))
+        // 不带 sk-/gh_ 形状的凭证只能靠值替换去掉：这一条断言的就是值替换本身
+        assertFalse(all, all.contains("plainpw-XYZ123"))
         assertTrue(all, all.contains("HOME=/data/home"))
         assertTrue(all, all.contains("theme=dark"))
         assertTrue(all, all.contains("ANTHROPIC_API_KEY=[已去除]"))
