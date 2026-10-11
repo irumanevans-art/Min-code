@@ -35,4 +35,11 @@ class ShellCwdPolicyTest {
         // 没有 shell 目录（旧行为）：../a.txt 相对会话目录 = /home/a.txt，出界
         assertTrue(PolicyEngine.evaluate(bash("echo x > ../a.txt"), false, context(null, PermissionMode.BypassPermissions)) is Verdict.Ask)
     }
+
+    @Test fun `Monitor commands run from the shell directory too, so their relative paths resolve there`() {
+        // 原文没写 Monitor 的起点目录，按「同 Bash」处理：起点是 shell 目录，分析就必须按同一个目录做
+        fun monitor(command: String) = PermissionAsk("Monitor", "test", commands = listOf(CommandAccess(command)))
+        assertTrue(PolicyEngine.evaluate(monitor("cat id_rsa"), false, context("/home/u/.ssh")) is Verdict.Deny)
+        assertTrue(PolicyEngine.evaluate(monitor("cat id_rsa"), false, context(null)) is Verdict.Allow)
+    }
 }

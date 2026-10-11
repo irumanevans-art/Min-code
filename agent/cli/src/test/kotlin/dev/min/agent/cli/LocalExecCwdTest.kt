@@ -158,4 +158,18 @@ class LocalExecCwdTest {
         val end = r.endCwd!!.value
         assertFalse(end, end.startsWith(cwd.value))
     }
+
+    // ---- 前导（CLAUDE_ENV_FILE） ----
+
+    @Test fun `the preamble runs in the same shell before the command, outside the probe`() {
+        val r = runBlocking { exec.run(ShellCommand("cd 'sub dir 中文' && echo \"[\$FOO]\"", cwd, trackCwd = true, preamble = "export FOO=bar"), ExecOptions(60_000)) } as ExecResult.Exited
+        assertTrue(r.output, r.output.startsWith("[bar]"))
+        assertEquals("前导不影响目录探针", guest("sub dir 中文"), r.endCwd)
+        // 用户脚本里的 exit 吞不掉前导，退出码照旧
+        val e = runBlocking { exec.run(ShellCommand("echo \"[\$FOO]\"; exit 3", cwd, trackCwd = true, preamble = "export FOO=bar"), ExecOptions(60_000)) } as ExecResult.Exited
+        assertEquals(3, e.exitCode); assertTrue(e.output, e.output.startsWith("[bar]"))
+        // 没有前导：命令原样
+        val none = runBlocking { exec.run(ShellCommand("echo \"[\$FOO]\"", cwd), ExecOptions(60_000)) } as ExecResult.Exited
+        assertTrue(none.output, none.output.startsWith("[]"))
+    }
 }

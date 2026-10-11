@@ -40,3 +40,21 @@ object ShellCwdProbe {
     private const val MAX_PATH_CHARS = 4096
     private val DRIVE = Regex("^[A-Za-z]:[/\\\\]")
 }
+
+/**
+ * `CLAUDE_ENV_FILE` 的前导（官方 hooks 页「Persist environment variables」：每条 Bash 命令先把文件内容当 shell 代码执行，再跑命令本身）。
+ * Android（proot）与桌面两个宿主共用同一份拼法，免得两边各写一套慢慢分叉。
+ *
+ * 放在 [ShellCwdProbe] 的 `eval` **外面**：前导要在同一个 shell 里生效（`export` 才留得住），而用户脚本里的 `exit` 之类不该吞掉它；
+ * 文件还没有（没有 hook 写过）就什么都不做；文件里的语法错误只是这条命令的 stderr 多一行，不会让命令不跑
+ */
+object ShellPreamble {
+    /** [files] 是 shell 里看得见的路径，按给定顺序逐个 source；没有文件时返回 null */
+    fun forFiles(files: List<String>): String? =
+        files.takeIf { it.isNotEmpty() }?.joinToString("\n") { "if [ -f ${quote(it)} ]; then . ${quote(it)}; fi" }
+
+    /** 前导接在脚本前面（没有前导时原样） */
+    fun apply(preamble: String?, script: String): String = if (preamble.isNullOrEmpty()) script else preamble + "\n" + script
+
+    private fun quote(value: String) = "'" + value.replace("'", "'\''") + "'"
+}

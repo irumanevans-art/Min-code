@@ -614,6 +614,9 @@ internal class DesktopApp(
                             Files.write(file, bytes)
                             return paths.guestOfHost(file).value
                         }
+                        // 只给路径不写文件（CLAUDE_ENV_FILE 要在 hook 启动前把路径交给它）；名字照 put 的校验
+                        override fun locate(name: String): String =
+                            paths.guestOfHost(artifactsDir.resolve(dev.min.agent.spi.ArtifactNames.validate(name))).value
                     }
                 },
             ),

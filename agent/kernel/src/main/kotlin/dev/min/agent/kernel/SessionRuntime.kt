@@ -203,6 +203,8 @@ class SessionRuntime private constructor(
      * watchPaths 里的相对写法按 [cwd]（新目录）解析。
      */
     internal suspend fun runCwdChangedHooks(old: GuestPath, cwd: GuestPath) {
+        // 原文：CwdChanged / FileChanged 写进 CLAUDE_ENV_FILE 的变量到下一次 CwdChanged 为止，那时 Claude Code 清掉它们。先清、再跑 hook，hook 才能写新目录的
+        envFiles.clearOnCwdChange()
         val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
             HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.CwdChangedInput(deps.hookShellPath(old), deps.hookShellPath(cwd))).jsonObject)
         val watchPaths = hooks?.runs?.filter { it.exitCode == 0 }?.mapNotNull { run ->
@@ -220,6 +222,9 @@ class SessionRuntime private constructor(
             }.onFailure { commit(listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "CwdChanged watchPaths 无效，保留原监视列表。")), Durability.Sync) }
         }
     }
+
+    /** `CLAUDE_ENV_FILE`：hook 写的 export 在后续每条 Bash 命令前执行（[SessionEnvFiles]） */
+    internal val envFiles by lazy(LazyThreadSafetyMode.PUBLICATION) { SessionEnvFiles(this) }
 
     private var pluginsInstance: dev.min.agent.ext.plugins.PluginBundle? = null
     internal var lsp: dev.min.agent.spi.LspPort = dev.min.agent.spi.LspPort.Unavailable

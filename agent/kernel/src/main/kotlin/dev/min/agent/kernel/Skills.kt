@@ -207,6 +207,8 @@ internal class KernelSkillRunPort(
             summary = "$label 的预执行命令：" + command.take(SUMMARY_CHARS),
             commands = listOf(CommandAccess(raw = command)),
         )
+        // 起点先定：目录失效时这里重置，下面的判定读到的 shell 目录与真正起进程的目录才是同一个（[shellStart]）
+        val start = rt.shellStart().dir
         val context = ToolExecutor(rt, HookDriver(rt)).policyContext()
         when (val verdict = PolicyEngine.evaluate(ask, readOnly = false, context)) {
             is Verdict.Allow -> Unit
@@ -226,7 +228,7 @@ internal class KernelSkillRunPort(
                 return RunResult.Ok(deferredCommand(command))
             }
         }
-        val result = rt.runNetworkShell(callId, ShellCommand(command, rt.state.value.settings.cwd), ExecOptions(timeoutMs = SHELL_TIMEOUT_MS, foregroundBudgetMs = null), emptyList())
+        val result = rt.runNetworkShell(callId, ShellCommand(command, start), ExecOptions(timeoutMs = SHELL_TIMEOUT_MS, foregroundBudgetMs = null), emptyList())
         return when (result) {
             is ExecResult.Exited ->
                 if (result.exitCode == 0) RunResult.Ok(result.output)

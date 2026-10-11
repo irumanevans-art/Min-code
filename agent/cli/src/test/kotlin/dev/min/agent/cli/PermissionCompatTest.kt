@@ -165,9 +165,9 @@ class PermissionCompatTest {
         val canonicalPath: (GuestPath) -> GuestPath = { it }
         // 普通兼容样本不开启全 shell 分类；新增字段必须显式传入，避免把反射签名失配当成规则差异。
         // 普通桌面兼容样本没有 Android guest 策略，显式传 null，确保仍进入原来的规则判定。
-        // 15 个字段（含 shellCwd）加最后的 DefaultConstructorMarker；不能把构造签名失配当成权限行为差异。
-        val ctor = policyContextClass.constructors.single { it.parameterCount == 16 }
-        return ctor.newInstance(mode, rules, cwd.value, home.value, scopeOf, null, directories, emptySet<GuestPath>(), canonicalPath, null, emptyList<String>(), false, false, null, null, null)
+        // 16 个字段（含 shellCwd、shellEnvDir）加最后的 DefaultConstructorMarker；不能把构造签名失配当成权限行为差异。
+        val ctor = policyContextClass.constructors.single { it.parameterCount == 17 }
+        return ctor.newInstance(mode, rules, cwd.value, home.value, scopeOf, null, directories, emptySet<GuestPath>(), canonicalPath, null, emptyList<String>(), false, false, null, null, null, null)
     }
 
     /** PolicyEngine.evaluate(ask, readOnly, context)；Verdict 子类名映射成 allow / ask / deny */

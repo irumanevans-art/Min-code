@@ -77,8 +77,9 @@ class BackgroundJobsTest {
 
     private class MemFs : WorkspaceFs {
         val files = ConcurrentHashMap<String, ByteArray>()
+        val dirs: MutableSet<String> = ConcurrentHashMap.newKeySet()
         override suspend fun stat(path: GuestPath): FileStat? =
-            files[path.value]?.let { FileStat(FileKind.File, it.size.toLong(), 0) }
+            files[path.value]?.let { FileStat(FileKind.File, it.size.toLong(), 0) } ?: if (path.value in dirs) FileStat(FileKind.Directory, 0, 0) else null
         override suspend fun read(path: GuestPath, offset: Long, limit: Int): ByteArray {
             val bytes = files.getValue(path.value)
             val from = offset.toInt().coerceAtMost(bytes.size)
@@ -139,7 +140,7 @@ class BackgroundJobsTest {
 
     private class Rig(val hub: SessionHub, val exec: LogExec, val fs: MemFs, val model: SwitchModel)
 
-    private fun rig(settings: String? = null, proxy: dev.min.agent.spi.NetworkProxy? = null): Rig {
+    private fun rig(settings: String? = null, proxy: dev.min.agent.spi.NetworkProxy? = null, userEnv: Map<String, String> = emptyMap()): Rig {
         val fs = MemFs()
         settings?.let { fs.files["/root/.claude/settings.json"] = it.toByteArray() }
         val exec = LogExec(fs)
@@ -154,7 +155,7 @@ class BackgroundJobsTest {
             retry = base.retry,
             memoryHome = if (settings != null) GuestPath("/root") else null,
             networkProxy = proxy,
-            env = { name -> if (name == "CLAUDE_CODE_DISABLE_AUTO_MEMORY") "1" else null },
+            env = { name -> if (name == "CLAUDE_CODE_DISABLE_AUTO_MEMORY") "1" else userEnv[name] },
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
         return Rig(SessionHub(store, deps, scope), exec, fs, model)
@@ -509,6 +510,53 @@ class BackgroundJobsTest {
         val rt = r.session()
         rt.startWatch()
         assertTrue(r.exec.runs.single().first.env.isEmpty())
+    }
+
+    // ---- Monitor 的起点目录与 CLAUDE_ENV_FILE ----
+
+    @Test
+    fun `模型起的 watch 从 shell 目录起，插件常驻的 watch 仍从会话目录起`() = run {
+        val r = rig()
+        r.fs.dirs += "/work/sub"
+        val rt = r.session()
+        rt.commit(listOf(dev.min.agent.spi.ShellCwdChanged(GuestPath("/work/sub"))), dev.min.agent.spi.Durability.Sync)
+        rt.startWatch()
+        assertEquals("/work/sub", r.exec.runs.single().first.cwd.value)
+        // 插件声明的常驻 watch 是会话级配置，与哪次 cd 无关
+        rt.background.startMonitor(MonitorRequest("常驻", null, "tail -f x", persistent = true))
+        assertEquals("/work", r.exec.runs.last().first.cwd.value)
+    }
+
+    @Test
+    fun `没有 cd 过时 watch 从会话目录起`() = run {
+        val r = rig()
+        val rt = r.session()
+        rt.startWatch()
+        assertEquals("/work", r.exec.runs.single().first.cwd.value)
+    }
+
+    @Test
+    fun `带过来的目录失效时不启动 watch，重置回会话目录让模型重发`() = run {
+        val r = rig()
+        val rt = r.session()
+        // /work/gone 不存在：权限分析是按它做的，换个目录跑就成了没分析过的命令
+        rt.commit(listOf(dev.min.agent.spi.ShellCwdChanged(GuestPath("/work/gone"))), dev.min.agent.spi.Durability.Sync)
+        val first = rt.background.startMonitor(MonitorRequest("x", null, "tail -f x"))
+        assertTrue("got $first", first is MonitorStart.Rejected)
+        assertTrue(r.exec.runs.isEmpty())
+        assertNull(rt.state.value.shellCwd)
+        assertTrue(rt.background.startMonitor(MonitorRequest("x", null, "tail -f x")) is MonitorStart.Started)
+        assertEquals("/work", r.exec.runs.single().first.cwd.value)
+    }
+
+    @Test
+    fun `用户启动前设的 CLAUDE_ENV_FILE 也在 watch 的命令前执行，命令原文不变`() = run {
+        val r = rig(userEnv = mapOf("CLAUDE_ENV_FILE" to "/home/u/venv.sh"))
+        val rt = r.session()
+        rt.startWatch(command = "tail -f app.log")
+        val run = r.exec.runs.single().first
+        assertEquals("tail -f app.log", run.script)
+        assertEquals("if [ -f '/home/u/venv.sh' ]; then . '/home/u/venv.sh'; fi", run.preamble)
     }
 
     // ---- Bash 转后台的命令 ----

@@ -82,6 +82,12 @@ data class ShellCommand(
      * 日志、后台通知里因此都没有标记，输出被截断也不会丢。默认关：hook、Monitor、Skill 的 shell 与后台 hook 都不要这个。
      */
     val trackCwd: Boolean = false,
+    /**
+     * 每次都先在同一个 shell 里执行的前导脚本（Bash 的 `CLAUDE_ENV_FILE`：hook 写进去的 `export` 要在命令之前生效，
+     * 见 [ShellPreamble]）。由内核在权限判定**之后**、起进程之前设置，宿主只负责接在脚本前面：
+     * [script] 仍是模型写的原文，权限分析、网络批准卡、日志看到的都是它，不含前导。默认空
+     */
+    val preamble: String? = null,
 )
 
 data class ExecOptions(
@@ -158,4 +164,11 @@ interface Exec {
 /** 大输出、截图等会话附件。返回会话 artifacts 目录下的相对路径 */
 interface ArtifactSink {
     suspend fun put(name: String, bytes: ByteArray): String
+
+    /**
+     * [put] 同名附件会返回的路径，**不写任何东西**；这个宿主说不出就返回 null（默认）。
+     * 给「路径要事先告诉别的进程、文件由对方去写」的用法：`CLAUDE_ENV_FILE` 要在 hook 启动前把路径放进它的环境，
+     * 而 [put] 会覆盖已有内容，不能拿来探路
+     */
+    fun locate(name: String): String? = null
 }

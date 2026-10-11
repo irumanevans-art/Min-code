@@ -210,6 +210,19 @@ class ProotExecTest {
         assertFalse(File(host.log.parentFile, "$id.cwd").exists())
     }
 
+
+    @Test fun preambleIsPrependedOutsideTheProbeAndScriptIsOtherwiseUnchanged() = runBlocking {
+        val host = FakeHost(complete = true, cwdText = "/root/proj\n")
+        val pre = "if [ -f '/root/.min/artifacts/s/env/cwd.sh' ]; then . '/root/.min/artifacts/s/env/cwd.sh'; fi"
+        ProotExec(base(), host).run(command.copy(trackCwd = true, preamble = pre), ExecOptions(1000))
+        val script = host.context.command
+        // 脚本外面还有 cd 到工作目录的包装；前导紧挨在探针的 eval 之前（在 eval 之外）
+        assertTrue(script, script.contains(pre + "\neval 'printf hello'"))
+        val plain = FakeHost(complete = true)
+        ProotExec(base(), plain).run(command.copy(preamble = pre), ExecOptions(1000))
+        assertTrue("未跟踪目录时前导直接接在原文前：" + plain.context.command, plain.context.command.contains(pre + "\n" + command.script))
+    }
+
     @Test fun untrackedCommandIsNotWrapped() = runBlocking {
         val host = FakeHost(complete = true, cwdText = "/root/should/not/be/read")
         val result = ProotExec(base(), host).run(command, ExecOptions(1000)) as ExecResult.Exited
