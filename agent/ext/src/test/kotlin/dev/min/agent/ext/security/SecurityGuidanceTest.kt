@@ -128,15 +128,67 @@ class SecurityGuidanceTest {
     }
 
     @Test
-    fun `user and project files merge and yaml is noted but not read`() {
+    fun `user and project files merge`() {
         val c = custom(
             "/root/.claude/security-patterns.json" to """{"patterns":[{"rule_name":"u","substrings":["u1"],"reminder":"m"}]}""",
             "/workspace/.claude/security-patterns.json" to """{"patterns":[{"rule_name":"p","substrings":["p1"],"reminder":"m"}]}""",
-            "/workspace/.claude/security-patterns.yaml" to "patterns: []",
         )
         assertEquals(listOf("u", "p"), c.patterns.map { it.rule })
-        assertTrue(c.notes.any { "yaml" in it })
         assertTrue(custom("/workspace/.claude/security-patterns.json" to "{not json").notes.any { "JSON" in it })
+    }
+
+    // ---- YAML 形式（文档：yaml / yml / json 同一个 schema） ----
+
+    private val docYaml = """
+        patterns:
+          - rule_name: internal_api_key
+            substrings: ["sk_live_", "AKIA"]
+            reminder: "Hardcoded API key prefix. Load credentials from the secret manager."
+          - rule_name: tenant_unfiltered_query
+            regex: "\\.objects\\.all\\(\\)"
+            paths: ["**/src/tenants/**"]
+            exclude_paths:
+              - "**/tests/**"
+            reminder: "Multi-tenant code must filter by org_id."
+    """.trimIndent()
+
+    @Test
+    fun `the yaml form from the documentation is read like the json one`() {
+        for (name in listOf("security-patterns.yaml", "security-patterns.yml")) {
+            val c = custom("/workspace/.claude/$name" to docYaml)
+            assertEquals(name, listOf("internal_api_key", "tenant_unfiltered_query"), c.patterns.map { it.rule })
+            assertTrue(c.notes.toString(), c.notes.isEmpty())
+            val all = SecurityGuidance.BUILTIN + c.patterns
+            assertEquals(listOf("internal_api_key"), SecurityGuidance.scan(all, "/workspace/a.py", "k = 'AKIA123'").map { it.rule })
+            assertEquals(listOf("tenant_unfiltered_query"), SecurityGuidance.scan(all, "/workspace/src/tenants/x.py", "Model.objects.all()").map { it.rule })
+            assertTrue(SecurityGuidance.scan(all, "/workspace/src/tenants/tests/x.py", "Model.objects.all()").isEmpty())
+        }
+    }
+
+    @Test
+    fun `yaml json and the two layers merge in order and share the fifty rule cap`() {
+        val c = custom(
+            "/root/.claude/security-patterns.yaml" to "patterns:\n  - {rule_name: u, substrings: [u1], reminder: m}\n",
+            "/workspace/.claude/security-patterns.yml" to "---\npatterns:\n  - rule_name: y\n    substrings: [y1]\n    reminder: m\n",
+            "/workspace/.claude/security-patterns.json" to """{"patterns":[{"rule_name":"j","substrings":["j1"],"reminder":"m"}]}""",
+        )
+        assertEquals(listOf("u", "y", "j"), c.patterns.map { it.rule })
+        val many = (1..60).joinToString("\n") { "  - rule_name: r$it\n    substrings: [x$it]\n    reminder: m" }
+        val capped = custom("/workspace/.claude/security-patterns.yaml" to "patterns:\n$many\n")
+        assertEquals(SecurityGuidance.MAX_CUSTOM_RULES, capped.patterns.size)
+    }
+
+    @Test
+    fun `an invalid yaml file is skipped with a note and the same safety filters apply`() {
+        val bad = custom("/workspace/.claude/security-patterns.yaml" to "patterns:\n  - rule_name: a\n   substrings: [x]\n")
+        assertTrue(bad.patterns.isEmpty())
+        assertTrue(bad.notes.toString(), bad.notes.any { "YAML" in it })
+        val bomb = custom(
+            "/workspace/.claude/security-patterns.yaml" to
+                "patterns:\n  - rule_name: bomb\n    regex: \"(a+)+$\"\n    reminder: m\n  - rule_name: noreminder\n    substrings: [a]\n",
+        )
+        assertTrue(bomb.patterns.isEmpty())
+        assertEquals(2, bomb.notes.size)
     }
 
     // ---- 指引文件 ----

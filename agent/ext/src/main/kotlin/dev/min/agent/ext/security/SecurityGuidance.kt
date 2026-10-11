@@ -1,6 +1,7 @@
 package dev.min.agent.ext.security
 
 import dev.min.agent.ext.config.ConfigIo
+import dev.min.agent.ext.config.FrontmatterParser
 import dev.min.agent.ext.config.GuestPaths
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.WorkspaceFs
@@ -123,7 +124,7 @@ object SecurityGuidance {
 
     private val SKIP_KEYS = setOf("file_path", "path", "notebook_path", "old_string", "old_source", "cell_id", "edit_mode", "cell_type")
 
-    // ---- 自定义模式（security-patterns.json / .yaml / .yml） ----
+    // ---- 自定义模式（security-patterns.yaml / .yml / .json） ----
 
     /** 自定义模式加载结果；[notes] 给人看（跳过了什么、为什么） */
     class Custom(val patterns: List<Pattern>, val notes: List<String>)
@@ -131,8 +132,9 @@ object SecurityGuidance {
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * 读用户层与项目层的 `security-patterns.json`（`.claude/` 下；与 `~/.claude/` 下的同名文件合并，用户在前）。
-     * 文档说 YAML 形式要 PyYAML 才读、JSON 在哪里都行：Min 只读 JSON 形式（`security-patterns.yaml` / `.yml` 存在时给一条说明，不读）。
+     * 读用户层与项目层 `.claude/` 下的 `security-patterns.yaml` / `.yml` / `.json`（文档：三种形状、同一个 schema；用户层在前、项目层在后，
+     * 同一个目录里按 yaml、yml、json 的顺序合并）。文档说 YAML 形式要 PyYAML 才读得出来；Min 用自带的 YAML 子集解析器（[FrontmatterParser]，
+     * 够读 `patterns:` 下的映射列表、引号串、行内列表），不依赖外部库，所以 YAML 也照读；写得不合法的整份跳过并留一条说明。
      * 上限 [MAX_CUSTOM_RULES] 条；提醒截到 [MAX_REMINDER_BYTES]；看起来会灾难性回溯的正则（嵌套量词）跳过。
      */
     suspend fun loadCustom(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath?): Custom {
@@ -144,28 +146,54 @@ object SecurityGuidance {
         val rules = mutableListOf<Pattern>()
         val notes = mutableListOf<String>()
         for (dir in dirs) {
-            for (yaml in listOf("security-patterns.yaml", "security-patterns.yml")) {
-                if (io.readText(GuestPaths.join(dir, yaml)) != null) notes += "${GuestPaths.join(dir, yaml)}：Min 只读 JSON 形式（security-patterns.json），这份没有读"
-            }
-            val file = GuestPaths.join(dir, "security-patterns.json")
-            val text = io.readText(file) ?: continue
-            val root = try {
-                json.parseToJsonElement(text).jsonObject
-            } catch (e: IllegalArgumentException) {
-                notes += "$file：不是合法的 JSON，已跳过"
-                continue
-            }
-            val entries = (root["patterns"] as? JsonArray).orEmpty()
-            for (entry in entries) {
-                val rule = parseRule(entry as? JsonObject ?: continue, file, notes) ?: continue
-                if (rules.size >= MAX_CUSTOM_RULES) {
-                    notes += "自定义规则超过 $MAX_CUSTOM_RULES 条，多出的没有加载"
-                    break
+            for (name in PATTERN_FILES) {
+                val file = GuestPaths.join(dir, name)
+                val text = io.readText(file) ?: continue
+                val root = if (name.endsWith(".json")) {
+                    try {
+                        json.parseToJsonElement(text).jsonObject
+                    } catch (e: IllegalArgumentException) {
+                        notes += "$file：不是合法的 JSON，已跳过"
+                        continue
+                    }
+                } else {
+                    parseYamlRoot(text, file, notes) ?: continue
                 }
-                rules += rule
+                val entries = (root["patterns"] as? JsonArray).orEmpty()
+                for (entry in entries) {
+                    val rule = parseRule(entry as? JsonObject ?: continue, file, notes) ?: continue
+                    if (rules.size >= MAX_CUSTOM_RULES) {
+                        notes += "自定义规则超过 $MAX_CUSTOM_RULES 条，多出的没有加载"
+                        break
+                    }
+                    rules += rule
+                }
             }
         }
         return Custom(rules, notes + io.notes)
+    }
+
+    /** 文档列出的三个文件名，按这个顺序读 */
+    private val PATTERN_FILES = listOf("security-patterns.yaml", "security-patterns.yml", "security-patterns.json")
+
+    /**
+     * 把整份 YAML 当 frontmatter 的内容交给现成的解析器（它读的就是 `---` 夹着的 YAML）：开头自带的 `---` 先去掉，
+     * 第一个单独成行的 `---` / `...` 之后是第二份文档，不读。解析器在 YAML 不合法时返回空字段并带说明，这里据此整份跳过。
+     */
+    private fun parseYamlRoot(text: String, file: String, notes: MutableList<String>): JsonObject? {
+        val lines = text.trimStart { it.code == 0xFEFF }.replace("\r\n", "\n").lines().dropWhile { it.isBlank() }.let { all ->
+            if (all.firstOrNull()?.trimEnd() == "---") all.drop(1) else all
+        }
+        val end = lines.indexOfFirst { it.trimEnd() == "---" || it.trimEnd() == "..." }.takeIf { it >= 0 } ?: lines.size
+        val body = lines.take(end).joinToString("\n")
+        if (body.isBlank()) return null
+        val parsed = FrontmatterParser.parse("---\n$body\n---\n", file)
+        if (parsed.fields.isEmpty()) {
+            notes += "$file：不是合法的 YAML（${parsed.notes.firstOrNull() ?: "读不出任何字段"}），已跳过"
+            return null
+        }
+        notes += parsed.notes
+        return JsonObject(parsed.fields.mapValues { it.value.toJson() })
     }
 
     private fun parseRule(o: JsonObject, file: String, notes: MutableList<String>): Pattern? {
@@ -253,7 +281,7 @@ object SecurityGuidance {
     const val MAX_REVIEW_FILES = 30
 
     /** 每个文件摘录的字符上限：审查者拿到的是「这次写了什么」，要全文自己 Read */
-    const val EXCERPT_CHARS = 4000
+    const val EXCERPT_CHARS = 6000
 
     private const val CHECKLIST = """
 Look for vulnerabilities the author may have introduced, for example: injection (SQL, shell, template, path traversal), missing or bypassable
@@ -278,14 +306,16 @@ Reply with a single JSON object and nothing else: {"ok": true} when you found no
         append("You did not write this code and have no stake in the approach; your only job is to find security problems in the changes.\n")
         append(CHECKLIST)
         append(guidanceBlock(guidance))
-        append("\nFiles changed this turn (at most $MAX_REVIEW_FILES shown; an excerpt of what was written follows each path; Read the file for the full text):\n")
+        append("\n${changed.size} files changed this turn (at most $MAX_REVIEW_FILES shown). A diff of the change follows each path ")
+        append("(for a file git does not track: an excerpt of what was written); Read the file for the full text:\n")
         for (c in changed.take(MAX_REVIEW_FILES)) append("\n=== ").append(c.path).append(" ===\n").append(c.excerpt.take(EXCERPT_CHARS)).append('\n')
         append(VERDICT)
     }
 
     /** 提交 / 推送审查的提示词：模型刚提交的那次改动的 diff（已截断） */
-    fun commitReviewPrompt(command: String, diff: String, guidance: String): String = buildString {
-        append("You are an independent security reviewer. A coding agent just ran `").append(command.take(200)).append("`, which published the change below. ")
+    fun commitReviewPrompt(command: String, diff: String, guidance: String, commits: Int = 1): String = buildString {
+        append("You are an independent security reviewer. A coding agent just ran `").append(command.take(200)).append("`, which published ")
+        append(if (commits > 1) "the $commits commits below (oldest first). " else "the change below. ")
         append("You did not write it; read the surrounding code to decide whether each suspicious pattern is real before reporting it.\n")
         append(CHECKLIST)
         append(guidanceBlock(guidance))

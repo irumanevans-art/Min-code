@@ -108,6 +108,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     // 回合正常结束前等它落盘：检查点属于这个回合
                     val checkpoint = rt.checkpointer.begin(this, turnId)
                     tools.gate = checkpoint
+                    rt.security.beginTurn(this)
                     try {
                         if (!runSavedWorkflows(turnId, trigger)) loop(turnId)
                         checkpoint?.await()
@@ -389,9 +390,13 @@ internal class TurnRunner(private val rt: SessionRuntime) {
      * 没有拦、只给了 `additionalContext` 时同样继续（CC：对话继续，界面标成 Stop hook feedback 而不是错误），
      * 上下文作为同一种 hook 来源的输入交给模型。两种都受 `stop_hook_active` 与同一个上限保护：
      * 同一回合里被拦（含只给上下文）的次数到 [stopBlockCap] 就放行——两个互相较劲的 hook 不能把模型困死在回合里
+     *
+     * 回合要结束时依次问（`||` 短路，前面任何一个把回合续下去，后面的这一回合不再问）：Stop hook → security-guidance 的前台审查（只无头会话）→
+     * `/goal` 评估 → security-guidance 的后台审查（交互会话；它只起一个后台协程、恒返回 false，所以排在最后，等回合真的要收尾才起）
      */
     private suspend fun stopHookContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean =
-        hookStopContinues(turnId, completed) || securityReviewContinues(turnId) || goalContinues(turnId, completed)
+        hookStopContinues(turnId, completed) || securityReviewContinues(turnId, SecurityGuidanceRuntime.Phase.Inline) ||
+            goalContinues(turnId, completed) || securityReviewContinues(turnId, SecurityGuidanceRuntime.Phase.Background)
 
     /**
      * `/goal`（CC：会话级的 prompt 型 Stop hook）：目标还在时，回合要结束就问一次评估器（同一条 prompt hook 路径，计费照常）。
@@ -447,11 +452,13 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     }
 
     /**
-     * security-guidance 的回合末审查（[SecurityGuidanceRuntime.turnEndFeedback]）：这一回合改过文件才审；发现问题就把理由作为 hook 来源的输入
-     * 交回模型、回合继续（CC：「Claude is re-prompted with the findings」）。没启用 / 没改文件 / 审查通过都是 false，不碰回合收尾。
+     * security-guidance 的回合末审查（[SecurityGuidanceRuntime.turnEnd]）：这一回合改过文件才审。收尾顺序见 [stopHookContinues]：
+     * [SecurityGuidanceRuntime.Phase.Inline]（只无头会话）同步审，发现问题就把理由作为 hook 来源的输入交回模型、回合继续；
+     * [SecurityGuidanceRuntime.Phase.Background]（交互会话）只起后台审查、立刻返回 false，发现随后以 hook 来源的输入另行送达
+     * （CC：「Claude is re-prompted with the findings」，审查在后台跑、不拖慢回复）。没启用 / 没改文件 / 审查通过都是 false，不碰回合收尾。
      */
-    private suspend fun securityReviewContinues(turnId: TurnId): Boolean {
-        val feedback = rt.security.turnEndFeedback() ?: return false
+    private suspend fun securityReviewContinues(turnId: TurnId, phase: SecurityGuidanceRuntime.Phase): Boolean {
+        val feedback = rt.security.turnEnd(phase) ?: return false
         rt.receive(
             ClientMsgId(deps.ids.next("security-review")),
             listOf(TextPart(feedback)),

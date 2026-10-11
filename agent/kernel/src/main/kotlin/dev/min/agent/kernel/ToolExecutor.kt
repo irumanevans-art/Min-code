@@ -596,13 +596,18 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
 
     private suspend fun execute(turnId: TurnId, p: Prepared.Ready) {
         val callId = p.call.callId
-        if (!p.tool.traits.readOnly || p.tool.traits.delegates) gate?.await()
+        if (!p.tool.traits.readOnly || p.tool.traits.delegates) {
+            gate?.await()
+            // security-guidance 的工作区基线要在第一个可能改文件的工具之前拍好
+            rt.security.awaitBaseline()
+        }
         worktreeViolation(rt.state.value, deps, askFor(p))?.let {
             outcome(turnId, callId, errorResult(it))
             return
         }
         val started = deps.clock.nowMs()
         rt.commit(listOf(ToolEffectPending(turnId, callId)), Durability.Sync)
+        rt.security.beforeTool(p.call, p.raw)
         val raw = try {
             var result: ToolResult? = null
             p.tool.run(p.input, context(turnId, callId)).collect { progress ->

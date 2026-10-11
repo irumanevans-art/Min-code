@@ -179,6 +179,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is dev.min.agent.spi.SkillToolsGranted -> copy(skillGrants = (skillGrants + e.rules).distinct())
         is dev.min.agent.spi.SkillToolsCleared -> copy(skillGrants = emptyList())
+        is dev.min.agent.spi.SecurityGuidanceSeen -> copy(securityWarned = securityWarned + e.warned, securityReported = securityReported + e.reported)
         is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e)
         is dev.min.agent.spi.StructuredOutputDelivered -> copy(structuredOutput = e)
         is dev.min.agent.spi.SessionBranched -> copy(branched = e)

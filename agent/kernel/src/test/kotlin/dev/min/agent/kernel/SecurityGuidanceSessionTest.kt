@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.llm.ModelClient
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.ClientMsgId
@@ -26,6 +27,8 @@ import dev.min.agent.spi.ToolTraits
 import dev.min.agent.spi.WorkspaceFs
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.FakeExec
+import dev.min.agent.testkit.TEST_PROFILE
+import dev.min.agent.protocol.ModelRef
 import dev.min.agent.testkit.ScriptedModel
 import dev.min.agent.testkit.TEST_MODEL
 import dev.min.agent.testkit.args
@@ -37,6 +40,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -69,6 +73,9 @@ class SecurityGuidanceSessionTest {
     private val files = ConcurrentHashMap<String, String>()
     private val exec = FakeExec()
     private var counter = 0
+
+    /** 工具与 git 命令实际发生的先后（测基线是不是在第一次编辑之前拍的） */
+    private val order = java.util.Collections.synchronizedList(mutableListOf<String>())
     private val now = AtomicLong(1_000)
 
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(40_000) { block() } }
@@ -110,6 +117,7 @@ class SecurityGuidanceSessionTest {
             return PermissionAsk(name, "写文件", paths = listOf(PathAccess(GuestPath(path), AccessKind.Write, PathScope.Workspace)))
         }
         override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            order += "write"
             emit(ToolProgress.Done(ToolResult(listOf(TextPart("wrote")))))
         }
     }
@@ -122,29 +130,57 @@ class SecurityGuidanceSessionTest {
         override fun parse(raw: JsonObject) = ToolInput.Valid(raw)
         override fun permissionAsk(input: JsonObject, ctx: ToolContext) = PermissionAsk(name, "命令")
         override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
+            order += "bash"
             emit(ToolProgress.Done(ToolResult(listOf(TextPart("committed")))))
         }
     }
 
-    private suspend fun session(model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full): SessionRuntime {
+    private fun hubFor(
+        model: ModelClient, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full,
+        reviewer: ScriptedModel? = null,
+    ): SessionHub {
         val tools = listOf<Tool<JsonObject>>(write, bash)
         val base = testDeps(model, tools, idTag = "t${++counter}-")
         val deps = KernelDeps(
-            clock = { now.addAndGet(10) }, ids = base.ids, models = base.models, tools = tools,
+            clock = { now.addAndGet(10) }, ids = base.ids, tools = tools,
+            // 点名了别的审查模型时，除会话模型之外的型号都交给 reviewer 这条脚本
+            models = if (reviewer == null) base.models else ModelResolver { ref -> if (ref == TEST_MODEL) base.models.resolve(ref) else ResolvedModel(TEST_PROFILE.copy(ref = ref), reviewer) },
             host = HostPorts(fs, base.host.search, exec, base.host.artifacts),
             platform = "test", zone = ZoneOffset.UTC, memoryHome = GuestPath("/root"),
             env = { name -> env[name] ?: if (name == "CLAUDE_CODE_DISABLE_AUTO_MEMORY") "1" else null },
             trustProjectHooks = { trusted }, customizations = customizations,
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
-        val hub = SessionHub(FileSessionStore(tmp.root.toPath(), { 0L }), deps, scope)
-        return hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        return SessionHub(FileSessionStore(tmp.root.toPath(), { 0L }), deps, scope)
     }
 
-    private suspend fun SessionRuntime.say(text: String) {
+    private suspend fun session(
+        model: ModelClient, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full,
+        reviewer: ScriptedModel? = null, headless: Boolean = false,
+    ): SessionRuntime =
+        hubFor(model, env, trusted, customizations, reviewer).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions, headless = headless)
+
+    /** 重开：同一个日志目录、换一个新的内核实例（新的内存状态、新的脚本模型） */
+    private suspend fun reopen(id: dev.min.agent.protocol.SessionId, model: ModelClient): SessionRuntime = hubFor(model).open(id)!!
+
+    /**
+     * 说一句话并等到会话完全安静：回合收尾后审查在后台跑，发现再作为 hook 来源的输入把会话叫起来跟进，
+     * 所以光等「这个回合结束」不够，要等后台审查全出结论、排进来的跟进回合也跑完。
+     */
+    private suspend fun SessionRuntime.say(text: String, settle: Boolean = true) {
         val before = state.value.lastTurn?.turnId
         send(ClientMsgId("u${++counter}"), listOf(TextPart(text)))
         state.first { it.turn == null && it.lastTurn != null && it.lastTurn?.turnId != before }
+        if (settle) settled()
+    }
+
+    private suspend fun SessionRuntime.settled() {
+        while (true) {
+            security.awaitReviews()
+            state.first { it.turn == null }
+            if (security.pendingReviews() == 0 && isQuiescent()) return
+            kotlinx.coroutines.delay(5)
+        }
     }
 
     private fun writeCall(path: String, content: String) =
@@ -253,6 +289,37 @@ class SecurityGuidanceSessionTest {
         assertTrue(model.requests[1].reminders().any { "internal_key" in it && "Hardcoded key." in it })
     }
 
+    @Test
+    fun `reminders and findings already given are not given again after the session is reopened`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val first = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "x = eval(s)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(bad)),
+            reply(TextPart("fixed")),
+        )
+        val rt = session(first)
+        rt.say("write")
+        assertTrue(rt.state.value.securityWarned.isNotEmpty() && rt.state.value.securityReported.isNotEmpty())
+
+        val second = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "y = eval(t)"), stop = StopReason.ToolUse),
+            reply(commitCall(), stop = StopReason.ToolUse),
+            reply(TextPart(bad)),
+            reply(TextPart("done")),
+            reply(TextPart(ok)),
+        )
+        val reopened = reopen(rt.sessionId, second)
+        // 日志里的去重表在新实例里原样恢复
+        assertEquals(rt.state.value.securityWarned, reopened.state.value.securityWarned)
+        reopened.say("again")
+        // 同一个模式同一个文件：重开后不再提醒（历史里只有重开前那一条）
+        assertEquals(1, second.requests[1].reminders().count { "dynamic_code_execution" in it })
+        // 回合末审查已经报过的同一条：提交审查不重复提醒
+        assertTrue(second.requests[3].reminders().none { "published" in it })
+    }
+
     // ---- 回合末的独立审查 ----
 
     @Test
@@ -322,6 +389,69 @@ class SecurityGuidanceSessionTest {
         assertEquals(2, model2.requests.size)
     }
 
+    // ---- 审查模型（SECURITY_REVIEW_MODEL / SG_AGENTIC_MODEL） ----
+
+    @Test
+    fun `the review model variables pick the model of each model-backed review`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val main = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(commitCall(), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart("fixed")),
+        )
+        // 审查者的回话按发生顺序：提交审查先、回合末审查后
+        val reviewer = ScriptedModel(reply(TextPart(ok)), reply(TextPart(bad)))
+        session(main, mapOf("SECURITY_REVIEW_MODEL" to "turn-model", "SG_AGENTIC_MODEL" to "other/commit-model"), reviewer = reviewer).say("go")
+        assertEquals(
+            listOf(ModelRef("test", "commit-model").copy(providerId = "other"), ModelRef("test", "turn-model")),
+            reviewer.requests.map { it.profile.ref },
+        )
+        // 主模型自己只有 4 次请求：写、提交、结束、被审查发现重新提示后的收尾
+        assertEquals(4, main.requests.size)
+    }
+
+    @Test
+    fun `without the variables the reviews run on the session model`() = run {
+        enable()
+        val main = ScriptedModel(reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse), reply(TextPart("done")), reply(TextPart(ok)))
+        val reviewer = ScriptedModel()
+        session(main, reviewer = reviewer).say("go")
+        assertEquals(3, main.requests.size)
+        assertTrue(reviewer.requests.isEmpty())
+    }
+
+    @Test
+    fun `a review model outside availableModels is refused and the session model reviews instead`() = run {
+        enable()
+        files["/etc/claude-code/managed-settings.json"] = """{"availableModels":["scripted"]}"""
+        val main = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(ok)),
+        )
+        val reviewer = ScriptedModel(reply(TextPart(ok)))
+        val rt = session(main, mapOf("SECURITY_REVIEW_MODEL" to "turn-model"), reviewer = reviewer)
+        rt.say("go")
+        // 名单外的型号一次都没有被调用；审查落回会话模型
+        assertTrue(reviewer.requests.isEmpty())
+        assertEquals(3, main.requests.size)
+        assertTrue(rt.state.value.presentation.map { it.record.event }.filterIsInstance<dev.min.agent.spi.Note>().any { "availableModels" in it.text && "turn-model" in it.text })
+    }
+
+    @Test
+    fun `a deniedModels entry also stops a named review model`() = run {
+        enable()
+        files["/etc/claude-code/managed-settings.json"] = """{"deniedModels":["commit-model"]}"""
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val main = ScriptedModel(reply(commitCall(), stop = StopReason.ToolUse), reply(TextPart(ok)), reply(TextPart("done")))
+        val reviewer = ScriptedModel(reply(TextPart(ok)))
+        session(main, mapOf("SG_AGENTIC_MODEL" to "commit-model"), reviewer = reviewer).say("commit")
+        assertTrue(reviewer.requests.isEmpty())
+        assertEquals(3, main.requests.size)
+    }
+
     // ---- 提交 / 推送后的审查 ----
 
     @Test
@@ -388,5 +518,297 @@ class SecurityGuidanceSessionTest {
         // 22 次提交里只有前 20 次叫了审查者：主模型 23 次 + 审查者 20 次
         assertEquals(43, model.requests.size)
         assertFalse(model.requests.isEmpty())
+    }
+
+    // ---- 改动清单取 git 工作区的差异（CC：回合开头记基线、回合末 diff） ----
+
+    private val t1 = "1".repeat(40)
+    private val t2 = "2".repeat(40)
+
+    /** 假仓库：前几次快照依次给 [trees]（最后一个一直给下去）；diff 命令给 [diff]；别的命令空输出成功 */
+    private fun gitRepo(trees: List<String>, diff: String = "", extra: (String) -> ExecResult? = { null }) {
+        val queue = ArrayDeque(trees)
+        exec.script = { cmd, _ ->
+            val script = cmd.script
+            extra(script) ?: when {
+                "write-tree" in script -> synchronized(queue) {
+                    // 第一次快照要拍一会儿：写工具若不等基线，就会赶在它前面落笔（记录放在睡醒之后）
+                    if (queue.size == trees.size) Thread.sleep(150)
+                    order += "snapshot"
+                    ExecResult.Exited(0, (if (queue.size > 1) queue.removeFirst() else queue.first()) + "\n", false, 1)
+                }
+                "--name-only" in script -> ExecResult.Exited(0, diff, false, 1)
+                else -> ExecResult.Exited(0, "", false, 1)
+            }
+        }
+    }
+
+    private fun diffOf(vararg files: Pair<String, String>, top: String = "/workspace") =
+        "TOP=$top\n---MIN-SG-NAMES---\n" + files.joinToString("") { it.first + "\n" } + "---MIN-SG-PATCH---\n" +
+            files.joinToString("") { (name, body) -> "diff --git a/$name b/$name\n$body\n" }
+
+    private fun reviewText(req: ModelRequest) = req.messages.flatMap { it.parts.filterIsInstance<TextPart>() }.joinToString("\n") { it.text }
+
+    @Test
+    fun `a change a shell command made, which no file tool saw, is reviewed from the git diff`() = run {
+        enable()
+        gitRepo(listOf(t1, t2), diffOf("x.py" to "+++ b/x.py\n+eval(b)"))
+        val model = ScriptedModel(
+            reply(commitCall("sed -i 's/a/eval(b)/' x.py"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(bad)),
+            reply(TextPart("fixed")),
+        )
+        session(model).say("patch it with sed")
+        val review = reviewText(model.requests[2])
+        assertTrue(review, review.contains("=== /workspace/x.py ===") && review.contains("+eval(b)"))
+        assertEquals(4, model.requests.size)
+    }
+
+    @Test
+    fun `the baseline is taken before the first edit and the closing snapshot after the last`() = run {
+        enable()
+        gitRepo(listOf(t1, t2), diffOf("a.py" to "+x"))
+        val model = ScriptedModel(reply(writeCall("/workspace/a.py", "x"), stop = StopReason.ToolUse), reply(TextPart("done")), reply(TextPart(ok)))
+        session(model).say("write")
+        assertEquals(listOf("snapshot", "write", "snapshot"), order.toList())
+    }
+
+    @Test
+    fun `an unchanged work tree means no review even if commands ran`() = run {
+        enable()
+        // 两个 tree 相同：即便 diff 命令还能吐出东西也不该采信（真 git 里相同的 tree 没有差异，这里故意给一份来证明没去问它）
+        gitRepo(listOf(t1, t1), diffOf("x.py" to "+eval(1)"))
+        val model = ScriptedModel(reply(commitCall("ls"), stop = StopReason.ToolUse), reply(TextPart("done")))
+        session(model).say("look around")
+        assertEquals(2, model.requests.size)
+    }
+
+    @Test
+    fun `files the file tools wrote that git does not list are still reviewed, and a file in both is shown once with its diff`() = run {
+        enable()
+        gitRepo(listOf(t1, t2), diffOf("x.py" to "+++ b/x.py\n+GITPATCH"))
+        val model = ScriptedModel(
+            reply(writeCall("/workspace/x.py", "TOOLTEXT"), stop = StopReason.ToolUse),
+            reply(writeCall("/workspace/ignored.log", "OUTSIDE"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(ok)),
+        )
+        session(model).say("write")
+        val review = reviewText(model.requests[3])
+        assertEquals(1, Regex("=== /workspace/x.py ===").findAll(review).count())
+        assertTrue(review.contains("GITPATCH") && !review.contains("TOOLTEXT"))
+        // git 的清单里没有（被忽略的、仓库之外的）：并上文件工具的摘录
+        assertTrue(review.contains("=== /workspace/ignored.log ===") && review.contains("OUTSIDE"))
+    }
+
+    @Test
+    fun `outside a git repository it falls back to what the file tools wrote`() = run {
+        enable()
+        exec.script = { cmd, _ -> if ("write-tree" in cmd.script) ExecResult.Exited(3, "", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val model = ScriptedModel(
+            reply(commitCall("sed -i s/a/b/ x.py"), stop = StopReason.ToolUse),
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(ok)),
+        )
+        session(model).say("go")
+        val review = reviewText(model.requests[3])
+        assertTrue(review.contains("=== /workspace/a.py ===") && review.contains("print(1)"))
+        // 只有 Bash 改的在仓库之外看不到：不审
+        val bashOnly = ScriptedModel(reply(commitCall("sed -i s/a/b/ x.py"), stop = StopReason.ToolUse), reply(TextPart("done")))
+        session(bashOnly).say("go")
+        assertEquals(2, bashOnly.requests.size)
+    }
+
+    @Test
+    fun `no more than thirty files are shown and the prompt says how many changed`() = run {
+        enable()
+        gitRepo(listOf(t1, t2), diffOf(*(1..40).map { "f$it.py" to "+x$it" }.toTypedArray()))
+        val model = ScriptedModel(reply(commitCall("make"), stop = StopReason.ToolUse), reply(TextPart("done")), reply(TextPart(ok)))
+        session(model).say("generate")
+        val review = reviewText(model.requests[2])
+        assertTrue(review.contains("=== /workspace/f30.py ===") && !review.contains("=== /workspace/f31.py ==="))
+        assertTrue(review, review.contains("40 files changed"))
+    }
+
+    // ---- git push 推出多个提交 ----
+
+    private val c0 = "a".repeat(40)
+    private val c2 = "b".repeat(40)
+
+    /** 假仓库里的一次推送：前后两次远端引用 [before] / [after]，`git log` 给 [log]（第一行 COUNT=…）；`git show HEAD` 给 SHOWHEAD */
+    private fun pushRepo(before: String, after: String, log: String) {
+        val refs = ArrayDeque(listOf(before, after))
+        exec.script = { cmd, _ ->
+            val s = cmd.script
+            when {
+                "for-each-ref" in s -> {
+                    order += "refs"
+                    ExecResult.Exited(0, synchronized(refs) { if (refs.size > 1) refs.removeFirst() else refs.first() }, false, 1)
+                }
+                "rev-list --count" in s -> {
+                    order += "log"
+                    ExecResult.Exited(0, log, false, 1)
+                }
+                s.startsWith("git show") -> ExecResult.Exited(0, "SHOWHEAD diff --git a/h b/h\n+head", false, 1)
+                else -> ExecResult.Exited(0, "", false, 1)
+            }
+        }
+    }
+
+    @Test
+    fun `a push is reviewed over every commit it delivered, not just the latest`() = run {
+        enable()
+        pushRepo(
+            "$c0 refs/remotes/origin/main\n", "$c2 refs/remotes/origin/main\n",
+            "COUNT=2\ncommit $c0\nfirst\n\ndiff --git a/a b/a\n+FIRSTCOMMIT\ncommit $c2\nsecond\n\ndiff --git a/b b/b\n+SECONDCOMMIT\n",
+        )
+        val model = ScriptedModel(
+            reply(commitCall("git push origin main"), stop = StopReason.ToolUse),
+            reply(TextPart(bad)),
+            reply(TextPart("done")),
+        )
+        session(model).say("push")
+        val review = reviewText(model.requests[1])
+        assertTrue(review, review.contains("FIRSTCOMMIT") && review.contains("SECONDCOMMIT") && review.contains("2 commits"))
+        assertFalse(review.contains("SHOWHEAD"))
+        assertTrue(model.requests[2].reminders().any { "a.py:1 eval of user input" in it })
+        // 推送前的远端引用在工具跑之前取、推送后的在它之后取
+        assertEquals(listOf("refs", "bash", "refs", "log"), order.toList())
+    }
+
+    @Test
+    fun `a push that moved no remote ref falls back to the latest commit`() = run {
+        enable()
+        pushRepo("$c0 refs/remotes/origin/main\n", "$c0 refs/remotes/origin/main\n", "COUNT=0\n")
+        val model = ScriptedModel(reply(commitCall("git push https://example.invalid/r.git main"), stop = StopReason.ToolUse), reply(TextPart(ok)), reply(TextPart("done")))
+        session(model).say("push")
+        assertTrue(reviewText(model.requests[1]).contains("SHOWHEAD"))
+    }
+
+    @Test
+    fun `a plain commit still reviews just that commit and takes no remote snapshot`() = run {
+        enable()
+        pushRepo("$c0 refs/remotes/origin/main\n", "$c2 refs/remotes/origin/main\n", "COUNT=2\nx\n")
+        val model = ScriptedModel(reply(commitCall("git commit -m x"), stop = StopReason.ToolUse), reply(TextPart(ok)), reply(TextPart("done")))
+        session(model).say("commit")
+        assertTrue(reviewText(model.requests[1]).contains("SHOWHEAD"))
+        assertEquals(listOf("bash"), order.toList())
+    }
+
+    // ---- 回合末审查在后台跑 ----
+
+    /** 按请求内容分流的模型：[kinds] 记下每个请求是谁发的（main 主模型 / goal 评估器 / review 审查者），按发生顺序 */
+    private inner class RoutingModel(private val route: (ModelRequest, String) -> dev.min.agent.testkit.Step) : ModelClient {
+        val requests = java.util.concurrent.CopyOnWriteArrayList<ModelRequest>()
+        val kinds: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf<String>())
+        override fun stream(request: ModelRequest): Flow<dev.min.agent.llm.ModelStreamEvent> = flow {
+            val kind = when {
+                request.system.any { "hook evaluator" in it } -> "goal"
+                reviewText(request).contains("independent security reviewer") -> "review"
+                else -> "main"
+            }
+            requests += request
+            kinds += kind
+            emitAll(route(request, kind)(request))
+        }
+    }
+
+    @Test
+    fun `an interactive session ends the turn without waiting for the review, and the finding comes back as a follow-up`() = run {
+        enable()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            when (kind) {
+                "review" -> { req -> flow { gate.await(); emitAll(reply(TextPart(bad))(req)) } }
+                else -> when (mains.incrementAndGet()) {
+                    1 -> reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse)
+                    2 -> reply(TextPart("done"))
+                    else -> reply(TextPart("fixed"))
+                }
+            }
+        }
+        val rt = session(model)
+        rt.say("write", settle = false)
+        // 回复已经交出、回合已经结束，审查还卡在那里
+        assertTrue(rt.state.value.turn == null)
+        assertEquals(1, rt.security.pendingReviews())
+        assertEquals(2, model.requests.count { it.system.none { s -> "hook evaluator" in s } && !reviewText(it).contains("independent security reviewer") })
+        assertTrue(rt.state.value.history.filterIsInstance<HistoryEntry.User>().none { it.origin is dev.min.agent.spi.InputOrigin.Hook })
+
+        gate.complete(Unit)
+        rt.settled()
+        assertEquals(listOf("main", "main", "review", "main"), model.kinds.toList())
+        // 发现作为 hook 来源的输入把会话叫起来：主模型最后一次请求里带着它
+        val last = reviewText(model.requests.last())
+        assertTrue(last, last.contains("a.py:1 eval of user input"))
+        val origin = rt.state.value.history.filterIsInstance<HistoryEntry.User>().last().origin
+        assertEquals(dev.min.agent.spi.InputOrigin.Hook("security-guidance"), origin)
+        assertTrue(rt.state.value.turn == null)
+    }
+
+    @Test
+    fun `the background review starts only when the turn really ends, after the goal evaluation`() = run {
+        enable()
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val goals = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            when (kind) {
+                "goal" -> reply(TextPart(if (goals.incrementAndGet() == 1) """{"ok": false, "reason": "keep going"}""" else """{"ok": true, "reason": "done"}"""))
+                "review" -> reply(TextPart(ok))
+                else -> when (mains.incrementAndGet()) {
+                    1 -> reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse)
+                    2 -> reply(TextPart("first answer"))
+                    else -> reply(TextPart("more"))
+                }
+            }
+        }
+        val rt = session(model)
+        rt.commit(listOf(dev.min.agent.spi.GoalSet("all green")), dev.min.agent.spi.Durability.Sync)
+        rt.say("go")
+        // 目标没达成：回合续下去，审查不起；目标达成、回合真的要收尾，才起（并且只起一次，审的是整个回合攒下的改动）
+        assertEquals(listOf("main", "main", "goal", "main", "goal", "review"), model.kinds.toList())
+        assertTrue(reviewText(model.requests.last()).contains("=== /workspace/a.py ==="))
+    }
+
+    @Test
+    fun `a headless session still reviews inline so the process does not exit before the verdict`() = run {
+        enable()
+        val model = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(bad)),
+            reply(TextPart("fixed")),
+        )
+        val rt = session(model, headless = true)
+        rt.say("write", settle = false)
+        // 回合一结束，审查与随后的跟进都已经在这一回合里做完了
+        assertEquals(0, rt.security.pendingReviews())
+        assertEquals(4, model.requests.size)
+        assertTrue(rt.state.value.turn == null)
+    }
+
+    @Test
+    fun `closing the session stops a review that is still running`() = run {
+        enable()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val mains = java.util.concurrent.atomic.AtomicInteger()
+        val model = RoutingModel { _, kind ->
+            if (kind == "review") { req -> flow { gate.await(); emitAll(reply(TextPart(bad))(req)) } }
+            else if (mains.incrementAndGet() == 1) reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse)
+            else reply(TextPart("done"))
+        }
+        val hub = hubFor(model)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("write", settle = false)
+        assertEquals(1, rt.security.pendingReviews())
+        hub.close(rt.sessionId)
+        assertEquals(0, rt.security.pendingReviews())
+        // 放开闸门也不会有任何后续：没有新的主模型请求
+        gate.complete(Unit)
+        kotlinx.coroutines.delay(100)
+        assertEquals(2, model.requests.count { it.system.none { s -> "hook evaluator" in s } && !reviewText(it).contains("independent security reviewer") })
     }
 }
