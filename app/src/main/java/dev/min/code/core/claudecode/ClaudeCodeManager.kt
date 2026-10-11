@@ -256,6 +256,11 @@ class ClaudeCodeManager(
         /** 上一轮结束的时刻，用来显示"14:54 完成" */
         val lastTurnFinishedAt: Long? = null,
         /**
+         * 上一轮怎么收场的（只读记录，「继续」键 ▶ 据此判断）。新一轮开始时清空；
+         * 没跑过任何一轮的新会话是 null。见 [ClaudeTurnEnd]
+         */
+        val lastTurnEnd: ClaudeTurnEnd? = null,
+        /**
          * 子 agent / 后台任务表。按 task_id 原地更新，**不进聊天流** ——
          * task_progress 一个任务能刷几十条。
          */
@@ -648,14 +653,19 @@ class ClaudeCodeManager(
         // 但不是所有退出都走 closeCli —— 崩溃、被系统杀掉只走到这里）
         abandonSubagentMail(subagentInbox.drain())
         dropTasksOfDeadProcess()
+        val exitedAt = System.currentTimeMillis()
         _state.update {
+            // 回合进行中、不是我们关的进程死了：模型还欠一个回答，▶ 会先 --resume 接回来再续（设计 §6.4）。
+            // 用户自己结束会话（unexpected = false）不记：他是有意停的
+            val midTurn = if (it.busy && unexpected) ClaudeTurnEnd(ClaudeTurnEnd.Kind.EngineExited, exitedAt) else it.lastTurnEnd
             if (it.status == SessionStatus.Failed) {
-                it.copy(busy = false, permissionQueue = emptyList())
+                it.copy(busy = false, permissionQueue = emptyList(), lastTurnEnd = midTurn)
             } else {
                 it.copy(
                     status = SessionStatus.Closed,
                     busy = false,
                     permissionQueue = emptyList(),
+                    lastTurnEnd = midTurn,
                     errorMessage = it.errorMessage
                         ?: if (unexpected) "claude 进程退出 (exit $code)" else null,
                 )
@@ -810,6 +820,7 @@ class ClaudeCodeManager(
                             outputTokensCurrent = 0,
                             lastTurnDurationMs = null,
                             lastTurnFinishedAt = null,
+                            lastTurnEnd = null,
                         )
                     }
                 }
@@ -1176,6 +1187,10 @@ class ClaudeCodeManager(
                 val deniedStop = deniedTurn == endedTurn
                 deniedTurn = null
                 val errorNoteId = if (event.isError && !deniedStop) newId() else null
+                val turnEnd = turnEndOfResult(
+                    isError = event.isError, subtype = event.subtype, resultText = event.resultText,
+                    interrupted = interrupted, withdrew = withdrew, deniedStop = deniedStop, atMs = finishedAt,
+                )
                 // 托管进进程表的那几条也是 deny 掉的，CLI 同样列进 permission_denials；
                 // 它们上面已经有托管结局的提示，再说一句「被权限规则拦截」就自相矛盾了。
                 // 用户亲手拒的同理：那是人拒的，不是规则
@@ -1193,6 +1208,7 @@ class ClaudeCodeManager(
                         // 比我们在 send() 里打的时间戳准）；没有才退回本地计时
                         lastTurnDurationMs = durationMs,
                         lastTurnFinishedAt = finishedAt,
+                        lastTurnEnd = turnEnd,
                         // 收尾时把最后一条消息的 token 结转，那一轮的总数才是完整的
                         outputTokensSettled = it.outputTokensSettled + it.outputTokensCurrent,
                         outputTokensCurrent = 0,
@@ -1458,6 +1474,7 @@ class ClaudeCodeManager(
                 outputTokensCurrent = 0,
                 lastTurnDurationMs = null,
                 lastTurnFinishedAt = null,
+                lastTurnEnd = null,
                 // 轮到它了，摘掉「排队中」的标记
                 items = it.items.map { item ->
                     if (item.id == pending.itemId && item is ChatItem.UserText) item.copy(queued = false)
@@ -1855,11 +1872,16 @@ class ClaudeCodeManager(
                 inFlight = null
                 val queuedNext = hasQueuedWork()
                 val noteId = newId()
+                val now = System.currentTimeMillis()
                 _state.update {
                     it.copy(
                         busy = queuedNext,
                         turnProduced = false,
                         permissionQueue = emptyList(),
+                        // CLI 没回 result：按用户停止记（撤回的话那条消息已经退回输入框，不该出 ▶）
+                        lastTurnEnd = ClaudeTurnEnd(
+                            if (interruptWithdrew) ClaudeTurnEnd.Kind.Withdrawn else ClaudeTurnEnd.Kind.Interrupted, now,
+                        ),
                         items = it.items + ChatItem.Note(noteId, "中断超时，已强制解除等待状态", isError = true),
                     )
                 }
@@ -2779,7 +2801,9 @@ class ClaudeCodeManager(
                 try {
                     // 回放来自磁盘，没有吐出它的进程；hook 回调不会出现在 transcript 里
                     replayed.forEach { dispatch(it, fromProcess = NullProcess) }
-                    _state.update { it.copy(items = it.items.keepTurnEndStamps()) }
+                    // transcript 停在半路 = 上次被杀 / 被打断后没来得及收尾：留一条结局，▶ 据此出现
+                    val tail = if (transcriptEndedMidTurn(replayed)) ClaudeTurnEnd(ClaudeTurnEnd.Kind.ProcessDeath) else null
+                    _state.update { it.copy(items = it.items.keepTurnEndStamps(), lastTurnEnd = tail) }
                 } finally {
                     replaying = false
                 }

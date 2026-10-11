@@ -76,7 +76,16 @@ sealed interface ClaudeCodeEvent {
      * assistant 消息里的文本块（整块，非增量）。
      * [at] 只有历史 transcript 才有（行上的 `timestamp`）；实时流不带，完成时刻由 result 那一刻定。
      */
-    data class AssistantText(val text: String, val at: Long? = null) : ClaudeCodeEvent
+    data class AssistantText(
+        val text: String,
+        val at: Long? = null,
+        /**
+         * 这条是 CLI 合成的「API 报错」说明（transcript 行带 `isApiErrorMessage`，如 `API Error: 500 ...`），不是模型的回答。
+         * 重试耗尽时 CLI 把它写进 transcript 当这一轮的收尾；判「是不是停在半路」时它不算回答
+         * （真 CLI 的续跑判定也这样，探针实测，见 [transcriptEndedMidTurn]）。
+         */
+        val apiError: Boolean = false,
+    ) : ClaudeCodeEvent
 
     /**
      * 用户消息。实时流里不会出现（除非开 `--replay-user-messages`），
@@ -1385,8 +1394,9 @@ fun parseTranscriptLine(line: String, sidechainParent: String? = null): List<Cla
 
         "assistant" -> {
             val at = obj.str("timestamp")?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
+            val apiError = obj.bool("isApiErrorMessage") == true
             expandAssistantMessage(obj)
-                .map { if (at != null && it is ClaudeCodeEvent.AssistantText) it.copy(at = at) else it }
+                .map { if (it is ClaudeCodeEvent.AssistantText && (at != null || apiError)) it.copy(at = at, apiError = apiError) else it }
                 .withoutInheritedLaunch(parent)
                 .underSubagent(parent)
         }

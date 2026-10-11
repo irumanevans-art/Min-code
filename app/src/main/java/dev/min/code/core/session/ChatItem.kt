@@ -39,6 +39,11 @@ sealed interface ChatItem {
          * 别的引擎恒为 false
          */
         val rewindable: Boolean = false,
+        /**
+         * 这条是「继续」键代发的续跑提示（[dev.min.code.core.engine.CONTINUE_PROMPT]）：不是人说的话，
+         * 转录里画成一条「— 继续 —」的细分隔线，而不是用户气泡（设计 §6.4 / §6.6）。由适配器按原文认出来。
+         */
+        val continuation: Boolean = false,
     ) : ChatItem
 
     /**

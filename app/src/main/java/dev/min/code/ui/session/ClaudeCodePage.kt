@@ -1583,7 +1583,12 @@ internal fun TranscriptItem(
     canRevert: (String) -> Boolean = { true },
 ) {
     when (item) {
-        is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued, item.handoff, rewindId = item.id.takeIf { item.rewindable })
+        // ▶ 代发的续跑提示不是人说的话：画成细分隔线（设计 §6.6），与 Min 的续跑分隔同一句「— 继续 —」
+        is ChatItem.UserText -> if (item.continuation) {
+            NoteEntry("— ${stringResource(R.string.min_agent_continued)} —", isError = false, isFirst = isFirst, isLast = isLast)
+        } else {
+            UserEntry(item.text, isFirst, isLast, item.queued, item.handoff, rewindId = item.id.takeIf { item.rewindable })
+        }
         is ChatItem.AssistantText -> AssistantEntry(
             text = item.text,
             isFirst = isFirst,

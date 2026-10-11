@@ -40,18 +40,19 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 一个 Claude Code 会话对通用层的样子：包住一个 [ClaudeCodeManager]（一个 CLI 进程），
  * 把状态翻成 [AgentSessionState]、命令转成 manager 的现有方法（设计 §4.1 的命令表）。
  *
- * **只转发，不改 manager**：manager 没有的能力（按 id 撤回排队消息、停止时把排队输入退回输入框、
- * 续跑要先接回进程）这里返回 [CommandResult.Unsupported] 并在对应分支写明缺什么，等 B8 补 manager 再接。
- * 现在没人调用它（不接线），所以这些缺口不改变产品行为。
+ * **只转发**：manager 没有的能力（按 id 撤回排队消息、停止时把排队输入退回输入框）这里返回
+ * [CommandResult.Unsupported] 并在对应分支写明缺什么。续跑（▶）的 manager 侧只读字段 `lastTurnEnd` 是 B8 补的。
  *
  * @param key 注册表 key = CLI 的 session id；新建会话在 manager 起来之前就定好了
  * @param externals 映射要的外部信息（人手标题、进程表、当前供应商档…），变了会重算状态
@@ -203,16 +204,39 @@ class ClaudeCodeSession internal constructor(
     }
 
     /**
-     * ▶。只做「进程还活着」的 Prompted 一种：发 [CONTINUE_PROMPT]。要先接回进程的（[ResumeMode.RelaunchThenPrompted]）
-     * 需要引擎层先 `--resume` 再发，属于 B8，返回 Unsupported。
-     * 现在 manager 没有 `lastTurnEnd`，[AgentSessionState.resume] 恒为 null，所以实际只会走到 Stale。
+     * ▶（设计 §6.4）：代发 [CONTINUE_PROMPT]，与官方 CLI 的 `CLAUDE_CODE_RESUME_INTERRUPTED_TURN` 做的是同一件事，
+     * 区别只是 Min 要等用户按了才发（开那个开关的话每次 `--resume` 都自动续，违背「不自动续跑」）。
+     *
+     * - [ResumeMode.Prompted]（进程还活着）：直接发；
+     * - [ResumeMode.RelaunchThenPrompted]（进程死了 / 会话已关）：先 `openSession`（回放 transcript 加 `--resume <id>`）接回进程，
+     *   等它就绪再发。这一段可能要十几秒，所以命令是挂起的，界面那头的 ▶ 一直转圈。
+     *   接回失败（进程又起不来）返回 Rejected，不发那句话：会话没在跑，发出去只会被退回输入框。
      */
-    private fun resume(command: SessionCommand.Resume): CommandResult {
+    private suspend fun resume(command: SessionCommand.Resume): CommandResult {
         val offer = fresh().resume ?: return CommandResult.Stale("没有可继续的回合")
         if (offer.offerId != command.offerId) return CommandResult.Stale("续跑提议已过期")
-        if (offer.mode == ResumeMode.RelaunchThenPrompted) return CommandResult.Unsupported
+        if (offer.mode == ResumeMode.RelaunchThenPrompted) {
+            val sessionId = manager.state.value.sessionId ?: ref.id
+            manager.openSession(sessionId)
+            if (!awaitRunning()) return CommandResult.Rejected("会话没能接回来，请稍后重试")
+        }
         manager.send(CONTINUE_PROMPT)
         return CommandResult.Accepted
+    }
+
+    /**
+     * 等 `openSession` 把进程接回来。`openSession` 是异步的（先读 transcript 再复位状态），刚调用完状态可能还是旧的
+     * Closed / Failed，所以 Failed / Closed 要在**见过 Starting 之后**才算失败，否则会把旧状态误当成结果。
+     */
+    private suspend fun awaitRunning(): Boolean {
+        var sawStarting = false
+        val settled = withTimeoutOrNull(RELAUNCH_WAIT_MS) {
+            manager.state.first { s ->
+                if (s.status == SessionStatus.Starting) sawStarting = true
+                s.status == SessionStatus.Running || (sawStarting && (s.status == SessionStatus.Failed || s.status == SessionStatus.Closed))
+            }
+        }
+        return settled?.status == SessionStatus.Running
     }
 
     /**
@@ -359,6 +383,9 @@ class ClaudeCodeSession internal constructor(
         scope.cancel()
     }
 }
+
+/** 等 `--resume` 接回进程的上限。冷启动 proot + node 实测几秒到十几秒，机器忙时更慢，取宽的一头 */
+private const val RELAUNCH_WAIT_MS = 60_000L
 
 /** 去掉逐字增量，见 [ClaudeCodeSession.state] */
 private fun withoutLiveText(s: ClaudeCodeManager.SessionState): ClaudeCodeManager.SessionState =

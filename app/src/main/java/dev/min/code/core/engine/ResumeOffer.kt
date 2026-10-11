@@ -62,6 +62,22 @@ data class ResumeBrief(val offerId: String, val reason: ResumeReason)
 const val CONTINUE_PROMPT = "Continue from where you left off."
 
 /**
+ * 把条目里「原文就是续跑提示」的用户消息标成 [dev.min.code.core.session.ChatItem.UserText.continuation]。
+ * CC / Codex 适配器的映射器共用：这句话写进了引擎自己的转录（重开会话回放出来的也是它），认原文最稳。
+ * 没有可标的就原样返回同一个列表对象（映射在每次状态变化都跑，别白白换引用让界面重组）。
+ */
+fun List<dev.min.code.core.session.ChatItem>.withContinuations(): List<dev.min.code.core.session.ChatItem> {
+    if (none { it is dev.min.code.core.session.ChatItem.UserText && !it.continuation && it.text.trim() == CONTINUE_PROMPT }) return this
+    return map {
+        if (it is dev.min.code.core.session.ChatItem.UserText && !it.continuation && it.text.trim() == CONTINUE_PROMPT) {
+            it.copy(continuation = true)
+        } else {
+            it
+        }
+    }
+}
+
+/**
  * 历史末尾长什么样：模型还欠不欠一个回答（§6.1 条件 3）。由适配器从自己的历史 / transcript 判，
  * 通用层只看结论。
  */
