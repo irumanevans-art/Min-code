@@ -384,6 +384,13 @@ fun SessionState.apply(record: EventRecord): SessionState {
             check(lastSeq == 1L) { "SubagentOrigin 必须紧跟在 SessionCreated 之后" }
             copy(origin = e)
         }
+        is dev.min.agent.spi.HistoryImported -> {
+            check(origin == null && history.isEmpty() && turn == null) { "历史只能在空根会话的回合之前导入" }
+            copy(history = e.messages.map { m -> when(m.role) {
+                Role.User -> HistoryEntry.User(m.messageId, m.parts, InputOrigin.Hook("imported_history"))
+                Role.Assistant -> HistoryEntry.Assistant(m.messageId, m.parts)
+            } }, toolResults = e.results.associate { it.callId to it.result })
+        }
         is ForkSeeded -> {
             check(origin?.fork == true) { "只有分身会话才能继承对话" }
             check(history.isEmpty() && turn == null) { "继承的对话必须在任何回合之前写入" }

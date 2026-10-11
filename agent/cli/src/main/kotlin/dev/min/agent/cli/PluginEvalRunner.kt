@@ -11,7 +11,7 @@ import java.nio.file.FileSystems
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 
 internal data class EvalOptions(val runs: Int? = null, val concurrency: Int = 1, val threshold: Double = 1.0,
-    val ablation: Boolean = true, val keepTemp: Boolean = false, val maxCostUsd: Double? = null)
+    val ablation: Boolean = true, val keepTemp: Boolean = false, val maxCostUsd: Double? = null, val singleArmCases: Set<String> = emptySet())
 internal data class EvalVerdict(val passed: Boolean, val explanation: String, val votes: List<String> = emptyList(), val costUsd: Double? = 0.0, val authFailed: Boolean = false)
 internal fun interface EvalJudge { suspend fun judge(grader: JsonObject, evidence: EvalEvidence, case: EvalCase): EvalVerdict }
 internal data class EvalRunResult(val json: JsonObject, val exitCode: Int)
@@ -27,9 +27,10 @@ internal suspend fun runPluginEval(suite: EvalSuite, options: EvalOptions, kerne
     var partialReason: String? = null
     val costLock = Any()
     val cases = suite.cases.map { case ->
-        val scored = case.graders.filter { !options.ablation || it.string("arm") == "both" || it.string("arm") != "with-only" && !(it.string("type") == "tool_used" && it.string("tool") == "Skill") }
+        val ablation = options.ablation && case.name !in options.singleArmCases
+        val scored = case.graders.filter { !ablation || it.string("arm") == "both" || it.string("arm") != "with-only" && !(it.string("type") == "tool_used" && it.string("tool") == "Skill") }
             .ifEmpty { case.graders }
-        val arms = if (options.ablation) listOf("with", "without") else listOf("with")
+        val arms = if (ablation) listOf("with", "without") else listOf("with")
         val jobs = arms.flatMap { arm -> (1..(options.runs ?: case.runs)).map { repeat -> async {
             gate.withPermit {
                 val permitted = synchronized(costLock) {
@@ -59,11 +60,13 @@ internal suspend fun runPluginEval(suite: EvalSuite, options: EvalOptions, kerne
                             if (verdict.votes.isNotEmpty()) put("votes", JsonArray(verdict.votes.map(::JsonPrimitive))) }
                     }
                     val active = grades.filter { it["scored"]!!.jsonPrimitive.boolean }
-                    val score = active.sumOf { if (it["passed"]!!.jsonPrimitive.boolean) it.number("weight", 1.0) else 0.0 } / active.sumOf { it.number("weight", 1.0) }
+                    val score = if (evidence.aborted != null || evidence.error != null) 0.0 else active.sumOf { if (it["passed"]!!.jsonPrimitive.boolean) it.number("weight", 1.0) else 0.0 } / active.sumOf { it.number("weight", 1.0) }
                     arm to buildJsonObject {
                         put("run", repeat); put("score", score); put("error", evidence.error?.let(::JsonPrimitive) ?: JsonNull); put("started", evidence.started)
                         put("graders", JsonArray(grades)); put("lastMessage", evidence.lastMessage); put("trace", evidence.trace)
                         put("files", JsonArray(evidence.files.keys.map(::JsonPrimitive))); put("costUsd", evidence.costUsd?.let(::JsonPrimitive) ?: JsonNull)
+                        put("mock_calls", JsonArray(evidence.mockCalls)); evidence.aborted?.let { put("aborted", it) }
+                        if (evidence.mockRecordings.isNotEmpty()) put("mockRecordings", JsonObject(evidence.mockRecordings))
                         put("durationSeconds", (System.nanoTime() - runStarted) / 1e9)
                         if (skipped) put("skippedPaidGraders", true)
                         if (options.keepTemp) put("sandbox", root.toString())
@@ -116,7 +119,7 @@ internal suspend fun gradeEval(g: JsonObject, e: EvalEvidence, case: EvalCase, j
         }
         "file_exists" -> {
             val matcher = FileSystems.getDefault().getPathMatcher("glob:${g.string("path")}")
-            val found = e.files.keys.any { matcher.matches(Path.of(it)) || matcher.matches(Path.of(it.replace('/', java.io.File.separatorChar))) }
+            val found = e.createdFiles.any { matcher.matches(Path.of(it)) || matcher.matches(Path.of(it.replace('/', java.io.File.separatorChar))) }
             found == (g["exists"]?.jsonPrimitive?.booleanOrNull ?: true)
         }
         "llm", "baseline" -> return requireNotNull(judge) { "没有配置本地 judge" }.judge(g, e, case)
@@ -133,7 +136,7 @@ internal fun evalTarget(target: JsonElement?, e: EvalEvidence): String = when(ta
         require(!path.startsWith('/') && ':' !in path && path.split('/').none { it == ".." }) { "grader file 必须在工作目录内" }
         requireNotNull(e.files[path.removePrefix("./")]) { "grader 文件不存在" }
     }
-    else -> when(target.jsonPrimitive.content) { "last_message" -> e.lastMessage; "trace" -> e.trace; "files" -> e.files.keys.joinToString("\n"); else -> error("本地 eval 不支持该 target") }
+    else -> when(target.jsonPrimitive.content) { "last_message" -> e.lastMessage; "trace" -> e.trace; "files" -> e.createdFiles.joinToString("\n"); "mock_calls" -> e.mockCalls.joinToString("\n"); else -> error("本地 eval 不支持该 target") }
 }
 
 internal fun deleteEvalTemp(root: Path) {
