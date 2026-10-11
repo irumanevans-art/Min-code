@@ -27,6 +27,7 @@ import dev.min.code.core.engine.ApprovalOption
 import dev.min.code.core.engine.InteractionAnswer
 import dev.min.code.core.engine.PendingInteraction
 import dev.min.code.core.engine.awaitedToolName
+import dev.min.code.core.engine.PEER_MESSAGE_APPROVAL
 import dev.min.code.core.session.PathScope
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
@@ -126,7 +127,11 @@ private fun PermissionSheet(
             ) {
                 Seal()
                 Text(
-                    if (pending.awaitedToolName == "Network") stringResource(R.string.settings_group_network) else pending.awaitedToolName,
+                    when (pending.awaitedToolName) {
+                        "Network" -> stringResource(R.string.settings_group_network)
+                        PEER_MESSAGE_APPROVAL -> approval?.summary ?: stringResource(R.string.peer_hold_title)
+                        else -> pending.awaitedToolName
+                    },
                     style = MaterialTheme.typography.titleSmall,
                     fontFamily = JetbrainsMono,
                 )
@@ -186,7 +191,9 @@ private fun PermissionSheet(
             if (pending.awaitedToolName == "Workflow") {
                 InkButton(onClick = { showScript = !showScript }, tone = InkButtonTone.Paper) { Text(stringResource(R.string.workflow_view_script)) }
             }
-            if (pending.awaitedToolName != "Network" && (pending.awaitedToolName != "Workflow" || showScript)) ToolInputPreview(
+            // 网络与跨会话消息没有入参可看：域名 / 原话已经在上面单独成行
+            val noInput = pending.awaitedToolName == "Network" || pending.awaitedToolName == PEER_MESSAGE_APPROVAL
+            if (!noInput && (pending.awaitedToolName != "Workflow" || showScript)) ToolInputPreview(
                 name = pending.awaitedToolName,
                 // 计划审批卡只带计划正文：ExitPlanMode 的预览也只读 `plan`
                 input = approval?.input ?: planInputOf(pending),

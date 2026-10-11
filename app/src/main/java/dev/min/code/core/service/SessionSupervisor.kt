@@ -22,6 +22,7 @@ import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.InteractionBrief
 import dev.min.code.core.engine.InteractionKind
 import dev.min.code.core.engine.LiveSessionSummary
+import dev.min.code.core.engine.PEER_MESSAGE_APPROVAL
 import dev.min.code.core.engine.PendingInteraction
 import dev.min.code.core.engine.ResumeBrief
 import dev.min.code.core.engine.SessionRef
@@ -199,7 +200,8 @@ class SessionSupervisor(
             val agentSuffix = if (agent?.background == true) context.getString(R.string.session_notification_background) else ""
             content = when (brief.kind) {
                 InteractionKind.Approval ->
-                    if (agent != null) context.getString(R.string.session_notification_agent_approval, agentName, agentSuffix, brief.toolName.orEmpty())
+                    if (brief.toolName == PEER_MESSAGE_APPROVAL) context.getString(R.string.session_notification_peer)
+                    else if (agent != null) context.getString(R.string.session_notification_agent_approval, agentName, agentSuffix, brief.toolName.orEmpty())
                     else context.getString(R.string.session_notification_tool, brief.toolName.orEmpty())
                 InteractionKind.Question ->
                     if (agent != null) context.getString(R.string.session_notification_agent_question, agentName, agentSuffix)

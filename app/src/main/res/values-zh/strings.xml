@@ -1134,6 +1134,12 @@
   <string name="min_agent_report_tokens">%1$s tokens</string>
   <string name="min_agent_message_from">来自 %1$s 的消息</string>
   <string name="min_agent_peer_message">来自会话「%1$s」的消息</string>
+  <string name="peer_hold_title">别的会话发来的消息</string>
+  <string name="peer_hold_summary">会话「%1$s」发来一条消息</string>
+  <string name="peer_hold_reason">批准后它进入这个会话的对话，模型会把它当作别的会话说的话，不代表你同意；5 分钟内不处理就算没送达</string>
+  <string name="peer_hold_deliver">送达</string>
+  <string name="peer_hold_refuse">拒收</string>
+  <string name="session_notification_peer">别的会话发来一条消息，等你批准</string>
   <string name="user_file_card_title">发给你的文件（%1$d 个）</string>
   <string name="user_file_gone">已不在本机缓存</string>
   <string name="min_agent_attachment">[附件]</string>

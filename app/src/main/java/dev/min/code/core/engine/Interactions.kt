@@ -100,6 +100,12 @@ const val ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion"
 const val EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode"
 
 /**
+ * 本机别的会话发来、等你批准才进对话的消息（Min 的跨会话邮箱）。它不是工具调用，但走同一张审批卡：
+ * 卡片标题、通知文案按这个名字换成「跨会话消息」，入参预览不画（没有入参，正文在 [PendingInteraction.Approval.description]）
+ */
+const val PEER_MESSAGE_APPROVAL = "PeerMessage"
+
+/**
  * 这张卡在等的是哪个工具。会话流里「这次调用卡在等人批准」的标记靠它回退匹配：引擎没给 [PendingInteraction.toolUseId] 时
  * （CC 的 `can_use_tool` 里它可选），按工具名找最后一条还在跑的同名调用。B6(b) 补，原来页面直接读请求的 `toolName`
  */

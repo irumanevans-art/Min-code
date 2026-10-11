@@ -1140,6 +1140,12 @@
   <string name="min_agent_report_tokens">%1$s tokens</string>
   <string name="min_agent_message_from">Message from %1$s</string>
   <string name="min_agent_peer_message">Message from session “%1$s”</string>
+  <string name="peer_hold_title">Message from another session</string>
+  <string name="peer_hold_summary">Session “%1$s” sent a message</string>
+  <string name="peer_hold_reason">If delivered, it enters the conversation of this session; the model treats it as words from another session, not as your consent. Not handled within 5 minutes counts as not delivered</string>
+  <string name="peer_hold_deliver">Deliver</string>
+  <string name="peer_hold_refuse">Refuse</string>
+  <string name="session_notification_peer">Another session sent a message for your approval</string>
   <string name="user_file_card_title">Files sent to you (%1$d)</string>
   <string name="user_file_gone">No longer cached on this device</string>
   <string name="min_agent_attachment">[attachment]</string>

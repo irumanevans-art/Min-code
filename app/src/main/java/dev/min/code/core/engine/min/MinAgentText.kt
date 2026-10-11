@@ -82,6 +82,10 @@ interface MinAgentText {
 
     fun optionAllow(): String
     fun networkApprovalSummary(): String = "这个域名将被访问，请确认"
+    fun peerHoldSummary(name: String): String = "会话「$name」发来一条消息"
+    fun peerHoldReason(): String = "批准后它进入这个会话的对话，模型会把它当作别的会话说的话，不代表你同意；5 分钟内不处理就算没送达"
+    fun peerDeliver(): String = "送达"
+    fun peerRefuse(): String = "拒收"
     fun networkAllowOnce(): String = "允许一次"
     fun networkAllowAlways(): String = "总是允许"
     fun networkDeny(): String = "拒绝"
@@ -231,6 +235,10 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
 
     override fun optionAllow() = s(R.string.min_agent_option_allow)
     override fun networkApprovalSummary() = s(R.string.network_approval_summary)
+    override fun peerHoldSummary(name: String) = s(R.string.peer_hold_summary, name)
+    override fun peerHoldReason() = s(R.string.peer_hold_reason)
+    override fun peerDeliver() = s(R.string.peer_hold_deliver)
+    override fun peerRefuse() = s(R.string.peer_hold_refuse)
     override fun networkAllowOnce() = s(R.string.network_allow_once)
     override fun networkAllowAlways() = s(R.string.network_allow_always)
     override fun networkDeny() = s(R.string.network_deny)
