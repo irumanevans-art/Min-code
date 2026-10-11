@@ -242,10 +242,36 @@ private class ItemsBuilder(
                 is TextPart -> if (part.text.isNotEmpty()) items += ChatItem.AssistantText(id, part.text)
                 is ThinkingPart -> items += ChatItem.Thinking(id, part.text)
                 is RedactedThinkingPart -> items += ChatItem.Thinking(id, text.redactedThinking())
-                is ToolCallPart -> items += toolCard(id, part)
+                is ToolCallPart -> {
+                    val card = toolCard(id, part)
+                    items += card
+                    if (part.name == dev.min.agent.tools.SendUserFileTool.name && card.status == ChatItem.ToolCall.Status.Done) sentFiles(id, part)?.let { items += it }
+                }
                 else -> Unit
             }
         }
+    }
+
+    /**
+     * SendUserFile 送达之后的文件卡片。文件在宿主缓存里的位置由本会话 id + 调用 id 算出（与 [AndroidUserFileSink] 同一个函数），
+     * 子 agent 发的文件用的是子会话自己的 id——这里的 [state] 就是发出调用的那个会话。入参不合格（没有 files）就不出卡片
+     */
+    private fun sentFiles(id: String, part: ToolCallPart): ChatItem.SentFiles? {
+        val names = (part.input["files"] as? kotlinx.serialization.json.JsonArray).orEmpty()
+            .mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content?.substringAfterLast('/') }
+        if (names.isEmpty()) return null
+        fun str(key: String) = (part.input[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        return ChatItem.SentFiles(
+            id = "$id:files",
+            stageKey = userFileStageKey(state.header.sessionId.value, part.callId.value),
+            names = names,
+            caption = str("caption")?.takeIf { it.isNotBlank() },
+            preferView = when (str("display")) {
+                "render" -> true
+                "attach" -> false
+                else -> null
+            },
+        )
     }
 
     private fun toolCard(id: String, part: ToolCallPart): ChatItem.ToolCall {

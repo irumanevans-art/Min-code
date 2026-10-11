@@ -120,7 +120,7 @@ private fun NestedLine(item: ChatItem, labels: TranscriptLabels) {
         is ChatItem.AgentReport -> Text(
             "· ${item.agentType} · ${item.status}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        is ChatItem.Thinking, is ChatItem.ProcessOutput, is ChatItem.Folded -> Unit
+        is ChatItem.Thinking, is ChatItem.ProcessOutput, is ChatItem.Folded, is ChatItem.SentFiles -> Unit
     }
 }
 

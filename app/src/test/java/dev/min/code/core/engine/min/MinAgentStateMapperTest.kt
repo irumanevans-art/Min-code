@@ -105,6 +105,38 @@ class MinAgentStateMapperTest {
             card.editDiff!!.lineSequence().filter { it.startsWith("+++ ") }.map { it.removePrefix("+++ ") }.toList())
     }
 
+    @Test fun deliveredUserFilesGetAFileCardRightAfterTheToolCard() {
+        val input = JsonObject(mapOf(
+            "files" to kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("/workspace/out/report.pdf"), JsonPrimitive("/workspace/a.png"))),
+            "caption" to JsonPrimitive("周报"),
+            "display" to JsonPrimitive("attach"),
+        ))
+        val call = ToolCallPart(CallId("send1"), "SendUserFile", input)
+        val s = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(call)).toTypedArray(),
+            ToolPlanned(tid, call.callId, call.name, input, ResumePolicy.Unknown), ToolEffectPending(tid, call.callId),
+            ToolOutcome(tid, call.callId, ToolResult(listOf(TextPart("已送达 2 个文件")))))
+        val items = map(s).items
+        val toolIndex = items.indexOfFirst { it is ChatItem.ToolCall }
+        val card = items[toolIndex + 1] as ChatItem.SentFiles
+        assertEquals(listOf("report.pdf", "a.png"), card.names)
+        assertEquals("周报", card.caption)
+        assertEquals(false, card.preferView)
+        // 和宿主落盘用同一把钥匙：会话 id + 调用 id
+        assertEquals(userFileStageKey("s_root", "send1"), card.stageKey)
+    }
+
+    @Test fun aFailedOrRunningSendUserFileHasNoFileCard() {
+        val input = JsonObject(mapOf("files" to kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("/workspace/x.md")))))
+        val call = ToolCallPart(CallId("send2"), "SendUserFile", input)
+        val running = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(call)).toTypedArray(),
+            ToolPlanned(tid, call.callId, call.name, input, ResumePolicy.Unknown))
+        assertTrue(map(running).items.none { it is ChatItem.SentFiles })
+        val failed = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(call)).toTypedArray(),
+            ToolPlanned(tid, call.callId, call.name, input, ResumePolicy.Unknown), ToolEffectPending(tid, call.callId),
+            ToolOutcome(tid, call.callId, ToolResult(listOf(TextPart("没有可以接收文件的客户端")), isError = true)))
+        assertTrue(map(failed).items.none { it is ChatItem.SentFiles })
+    }
+
     @Test fun lspDiagnosticsRemainVisibleAboveLongEditOutput() {
         val issue = dev.min.agent.spi.LspDiagnostic(GuestPath("/workspace/a.t"), 2, 3, "新增类型错误")
         val s = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(ToolCallPart(CallId("edit"), "Edit", empty))).toTypedArray(),

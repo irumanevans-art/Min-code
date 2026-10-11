@@ -187,6 +187,7 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
                         is ChatItem.ToolCall -> "ToolCall ${item.name} ${item.status} total=${item.resultTotalChars} ${item.result}"
                         is ChatItem.ProcessOutput -> "ProcessOutput ${item.lines.size} lines"
                         is ChatItem.AgentReport -> "AgentReport ${item.agentType} ${item.status} thread=${item.threadId} tools=${item.toolCalls} tokens=${item.tokens} ${item.body}"
+                        is ChatItem.SentFiles -> "SentFiles key=${item.stageKey} ${item.names}"
                         is ChatItem.Folded -> "Folded ${item.title} lines=${item.lines.size} nested=${item.nested.size} undo=${item.undoId}"
                     }
                     Log.i(TAG, "ITEM ${summary.replace("\n", "\\n").take(700)}")

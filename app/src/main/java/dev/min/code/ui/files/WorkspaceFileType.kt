@@ -74,9 +74,12 @@ fun WorkspaceFileEntry.detectFileType(): WorkspaceFileType {
     }
 }
 
-fun WorkspaceFileEntry.detectFileKind(): WorkspaceFileKind {
-    if (isDirectory) return WorkspaceFileKind.FOLDER
-    val ext = extension()
+fun WorkspaceFileEntry.detectFileKind(): WorkspaceFileKind =
+    if (isDirectory) WorkspaceFileKind.FOLDER else fileKindOfName(name)
+
+/** 只按文件名分类（对话流里模型发来的文件卡片只有名字，没有 [WorkspaceFileEntry]） */
+internal fun fileKindOfName(name: String): WorkspaceFileKind {
+    val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
     return when {
         ext in MARKDOWN_EXTENSIONS -> WorkspaceFileKind.MARKDOWN
         ext in CODE_EXTENSIONS -> WorkspaceFileKind.CODE
