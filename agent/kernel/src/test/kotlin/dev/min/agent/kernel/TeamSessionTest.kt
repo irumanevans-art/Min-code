@@ -839,6 +839,29 @@ class TeamSessionTest {
     }
 
     @Test
+    fun `rewinding the leader to before the team was built disbands it, rewinding to after leaves it`() = run {
+        val h = hub(leaderBuilds("a"))
+        val leader = h.root()
+        leader.send(ClientMsgId("u1"), listOf(TextPart("组个团队")))
+        settle(leader)
+        leader.send(ClientMsgId("u2"), listOf(TextPart("接着")))
+        settle(leader)
+        val (first, second) = leader.state.value.rewindPoints.map { it.messageId }.take(2).let { it[0] to it[1] }
+        // 回到第二条消息：团队建在它之前，那段对话还在，团队照旧
+        assertTrue(leader.rewind(second, RewindScope.Conversation) is RewindOutcome.Done)
+        assertTrue(leader.state.value.team!!.active)
+        // 回到第一条消息：团队建在那之后，跟着那段对话一起没了
+        assertTrue(leader.rewind(first, RewindScope.Conversation) is RewindOutcome.Done)
+        val team = leader.state.value.team!!
+        assertEquals(TeamDisbandReason.Rewound, team.disbanded?.reason)
+        assertTrue("成员不在跑", team.members.all { h.get(it.session!!)?.state?.value?.turn == null })
+        // 解散落在回退之前：日志里先 team_disbanded 再 conversation_rewound
+        val tail = events(leader.sessionId).filter { it is TeamDisbanded || it is dev.min.agent.spi.ConversationRewound }.takeLast(2)
+        assertTrue(tail.toString(), tail[0] is TeamDisbanded && tail[1] is dev.min.agent.spi.ConversationRewound)
+        assertLogIsTruth(leader)
+    }
+
+    @Test
     fun `after a disband, messaging old members still goes through the concurrency slots`() = run {
         val h = hub(leaderBuilds("a", "b", "c") { _, _ -> hang }, HubLimits(teamMaxConcurrent = 1))
         val (leader, members) = readyTeam(h, "a", "b", "c")

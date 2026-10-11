@@ -127,6 +127,8 @@ enum class TeamDisbandReason {
     @SerialName("completed") Completed,
     @SerialName("user_ended") UserEnded,
     @SerialName("error") Error,
+    /** 负责人的对话回退到了建团队之前：团队属于被回退掉的那段对话（内核自己写，模型的 TeamDisband 选不到它） */
+    @SerialName("rewound") Rewound,
 }
 
 @Serializable

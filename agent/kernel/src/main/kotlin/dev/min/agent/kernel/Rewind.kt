@@ -185,6 +185,7 @@ internal class Checkpointer(private val rt: SessionRuntime) {
         }
         var rewound: ConversationRewound? = null
         if (scope != RewindScope.Code) {
+            disbandTeamCreatedAfter(point)
             val event = ConversationRewound(deps.ids.next("rewind"), messageId)
             rt.commitIf(listOf(event), Durability.Sync) { it.turn == null } ?: return RewindOutcome.Refused(BUSY_NOW)
             rewound = event
@@ -288,6 +289,17 @@ internal class Checkpointer(private val rt: SessionRuntime) {
      * 被回退掉的子 agent 停下时的报告不用在这里撤：折叠把它们标成已回退，之后再来的报告不进收件箱，
      * 已经在收件箱里的随回退一起清掉——与报告什么时候送到无关，没有时序上的空档
      */
+    /**
+     * 对话回到建团队之前：团队属于被回退掉的那段对话，解散它（成员是那段对话里委派出去的，[stopChildren] 已经停了）。
+     * 留着的话，模型不记得建过团队，团队工具与成员的报告却还在，答非所问；团队的任务清单与邮件留在日志里，界面照样看得到。
+     * 建在回退点之前的团队不动：那段对话还在，模型记得它
+     */
+    private suspend fun disbandTeamCreatedAfter(point: RewindPoint) {
+        val team = rt.state.value.team?.takeIf { it.active && it.createdSeq > point.seq } ?: return
+        val hub = rt.hub ?: return
+        hub.teams.disbandTeam(rt, dev.min.agent.spi.TeamDisbanded(team.teamId, dev.min.agent.spi.TeamDisbandReason.Rewound, "对话回退到了建团队之前"))
+    }
+
     private suspend fun stopChildren(point: RewindPoint, scope: RewindScope) {
         val hub = rt.hub ?: return
         val s = rt.state.value
