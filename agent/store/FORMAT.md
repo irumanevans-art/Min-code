@@ -244,3 +244,9 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - 配置文件补充（2026-10-10，插件市场）：市场 / 安装 / 更新 / 卸载是全局配置操作，不新增会话事件。`~/.claude/plugins/known_marketplaces.json` 记录 source / installLocation / lastUpdated / autoUpdate 和 Min 的 confirmed / disabled 墓碑；`installed_plugins.json` version=2 的 plugins[id] 为各作用域记录列表，installPath 使用宿主已有路径口径，另存可选 marketplaceEntry（条目内联组件）与 componentInventory（更新确认清单）。配置时间为宿主毫秒；不是 CC CLI JSON 输出的 ISO 时间契约。旧索引缺两个扩展字段仍加载；新索引由原有 installPath 入口读取，marketplaceEntry 缺省 null。设置复用 enabledPlugins / extraKnownMarketplaces；会话冻结与原有插件加载事件不变。
 
 - v1 增量（2026-10-10，EndConversation）：新增 `conversation_ended`（无字段），`turn_ended.outcome` 的 `interrupted.by` 新增取值 `conversation_ended`（模型结束会话：回合安静停下、不记为失败）；`tool_outcome.result.effects` 新增 `conversation_end`，内核紧跟着落成 `conversation_ended`。折叠后 `SessionState.ended` 为真：之后的用户输入不再开回合，只留一句 `note`（warning）。子 agent 与分身不拿到该工具。含这些事件或取值的日志旧版本打不开；旧日志照常读。
+# M4 apply_patch（2026-10-11）
+
+`apply_patch` 沿用 `tool_planned` / `tool_outcome` 的普通调用形状，入参为 `{ "input": "*** Begin Patch\n…\n*** End Patch" }`。
+Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolCallPart`；回送使用 `custom_tool_call_output`。
+`fileEdits` / `touched` / 内容 id 沿用已有字段。Delete 的 `deleted=true, after=null`；Move 记为目标 created 与源 deleted 两条编辑，便于既有撤销与改动面板处理。
+失败且成功回滚时不报 fileEdits。WorkspaceFs 新增非递归 deleteFile 端口，没有新增序列化载荷或版本号。

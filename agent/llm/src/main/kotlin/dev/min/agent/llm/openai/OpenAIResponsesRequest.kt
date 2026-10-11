@@ -41,18 +41,22 @@ internal fun buildResponsesBody(request: ModelRequest): JsonObject {
         request.cache.key?.let { put("prompt_cache_key", it) }
         if (request.tools.isNotEmpty()) {
             put("tools", JsonArray(request.tools.map { tool -> buildJsonObject {
-                put("type", "function")
+                put("type", if (tool.name == "apply_patch") "custom" else "function")
                 put("name", tool.name)
-                put("description", tool.description)
-                put("parameters", tool.inputSchema)
+                put("description", tool.description + if (tool.name == "apply_patch") " This is a FREEFORM tool; pass the patch directly, do not wrap it in JSON." else "")
+                if (tool.name == "apply_patch") putJsonObject("format") {
+                    put("type", "grammar"); put("syntax", "lark"); put("definition", APPLY_PATCH_GRAMMAR)
+                } else {
+                    put("parameters", tool.inputSchema)
                 // 现有工具的可选参数不是 strict schema，不能让服务端隐式改成必填。
                 put("strict", false)
+                }
             } }))
             put("tool_choice", when (val choice = request.toolChoice) {
                 ToolChoice.Auto -> JsonPrimitive("auto")
                 ToolChoice.Required -> JsonPrimitive("required")
                 ToolChoice.None -> JsonPrimitive("none")
-                is ToolChoice.Named -> buildJsonObject { put("type", "function"); put("name", choice.name) }
+                is ToolChoice.Named -> buildJsonObject { put("type", if (choice.name == "apply_patch") "custom" else "function"); put("name", choice.name) }
             })
             put("parallel_tool_calls", true)
         }
@@ -62,6 +66,7 @@ internal fun buildResponsesBody(request: ModelRequest): JsonObject {
 
 private fun responsesInput(request: ModelRequest): JsonArray {
     val items = mutableListOf<JsonObject>()
+    val patchCalls = request.messages.flatMap { it.parts }.filterIsInstance<ToolCallPart>().filter { it.name == "apply_patch" }.map { it.callId.value }.toSet()
     request.system.filter { it.isNotEmpty() }.joinToString("\n\n").takeIf { it.isNotEmpty() }?.let {
         items += buildJsonObject { put("role", "developer"); put("content", it) }
     }
@@ -71,8 +76,8 @@ private fun responsesInput(request: ModelRequest): JsonArray {
             val parts = partsToSend(message.parts, request.profile.ref, request.profile.reasoningEcho, index > lastInput)
             // 保留供应商的 item id、phase 和加密推理，避免工具循环或前缀缓存因重编码丢字段。
             val raw = parts.filterIsInstance<OpaquePart>().mapNotNull { it.json as? JsonObject }
-                .filter { it["type"]?.jsonPrimitive?.content in setOf("reasoning", "message", "function_call") }
-            val callIds = raw.filter { it["type"]?.jsonPrimitive?.content == "function_call" }
+                .filter { it["type"]?.jsonPrimitive?.content in setOf("reasoning", "message", "function_call", "custom_tool_call") }
+            val callIds = raw.filter { it["type"]?.jsonPrimitive?.content in setOf("function_call", "custom_tool_call") }
                 .mapNotNull { it["call_id"]?.jsonPrimitive?.content }.toSet()
             items += raw
             if (raw.none { it["type"]?.jsonPrimitive?.content == "message" }) {
@@ -81,14 +86,15 @@ private fun responsesInput(request: ModelRequest): JsonArray {
             }
             parts.filterIsInstance<ToolCallPart>().filter { it.callId.value !in callIds }.forEach { call ->
                 items += buildJsonObject {
-                    put("type", "function_call"); put("call_id", call.callId.value)
-                    put("name", call.name); put("arguments", call.input.toString())
+                    put("type", if (call.name == "apply_patch") "custom_tool_call" else "function_call"); put("call_id", call.callId.value)
+                    put("name", call.name)
+                    if (call.name == "apply_patch") put("input", call.input["input"]?.jsonPrimitive?.content.orEmpty()) else put("arguments", call.input.toString())
                 }
             }
         } else {
             message.parts.filterIsInstance<ToolResultPart>().forEach { result ->
                 items += buildJsonObject {
-                    put("type", "function_call_output"); put("call_id", result.callId.value)
+                    put("type", if (result.callId.value in patchCalls) "custom_tool_call_output" else "function_call_output"); put("call_id", result.callId.value)
                     put("output", inputContent(result.content))
                 }
             }

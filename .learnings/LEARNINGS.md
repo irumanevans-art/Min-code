@@ -2571,3 +2571,25 @@ LSP 诊断等待限 300ms，服务器初始化在独立 scope 中继续。等待
 - Promoted: AGENTS.md
 
 ---
+# [LRN-20261011-PATCH-CATALOG] best_practice
+
+**Logged**: 2026-10-11T12:00:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+模型家族接线验收须先断言该家族真实存在，不能只遍历过滤后的空列表。
+
+### Details
+M4 基线 models.json 没有任何 GPT 项。逐个检查 family=GPT 是否选择 ApplyPatch 的测试空集通过，不能证明产品可选择该形态。补充官方资料可核实的 gpt-5.4 profile，并断言 GPT 项非空；目录 editStyle 弱化另做变异。
+
+### Suggested Action
+类似工具或能力接线检查同时验证可达性与逐项正确性；官方资料未核实的型号不能用猜测元数据填充目录。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/llm/src/test/kotlin/dev/min/agent/llm/catalog/CatalogTest.kt
+- Tags: catalog, vacuous-test, profile
+
+---

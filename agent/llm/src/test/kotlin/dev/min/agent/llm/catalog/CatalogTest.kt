@@ -10,6 +10,12 @@ import org.junit.Test
  * 数据本身的事实出处见 resources/dev/min/agent/llm/catalog/SOURCES.md。
  */
 class CatalogTest {
+    @Test fun `all bundled GPT profiles use ApplyPatch other families keep StrReplace`() {
+        assertTrue("目录必须有真实 GPT profile，不能空集通过", Catalog.bundled().models.any { it.family == dev.min.agent.spi.ModelFamily.Gpt })
+        for (model in Catalog.bundled().models) {
+            assertEquals(model.ref.toString(), if (model.family == dev.min.agent.spi.ModelFamily.Gpt) dev.min.agent.spi.EditStyle.ApplyPatch else dev.min.agent.spi.EditStyle.StrReplace, model.editStyle)
+        }
+    }
 
     @Test
     fun `bundled catalog loads and is internally consistent`() {

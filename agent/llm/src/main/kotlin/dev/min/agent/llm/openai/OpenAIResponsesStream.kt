@@ -48,7 +48,7 @@ internal class OpenAIResponsesStreamParser(private val profile: ModelProfile, pr
             "response.reasoning_summary_text.delta" -> out += ModelStreamEvent.ThinkingDelta(data.str("delta").orEmpty())
             "response.output_item.added" -> {
                 val item = data["item"] as? JsonObject
-                if (item?.str("type") == "function_call") {
+                if (item != null && item.str("type") in setOf("function_call", "custom_tool_call")) {
                     val index = data.num("output_index") ?: throw protocolError("工具调用缺少 output_index")
                     val id = item.str("call_id")?.takeIf { it.isNotEmpty() } ?: throw protocolError("工具调用缺少 call_id")
                     val name = item.str("name")?.takeIf { it.isNotEmpty() } ?: throw protocolError("工具调用缺少 name")
@@ -100,14 +100,16 @@ internal class OpenAIResponsesStreamParser(private val profile: ModelProfile, pr
                     }
                     parts += OpaquePart(profile.ref, item)
                 }
-                "function_call" -> {
+                "function_call", "custom_tool_call" -> {
                     val id = item.str("call_id")?.takeIf { it.isNotEmpty() } ?: throw protocolError("工具调用缺少 call_id")
                     if (!ids.add(id)) throw protocolError("工具 call_id 重复")
                     val name = item.str("name")?.takeIf { it.isNotEmpty() } ?: throw protocolError("工具调用缺少 name")
-                    val arguments = item.str("arguments").orEmpty()
+                    val custom = item.str("type") == "custom_tool_call"
+                    if (custom && name != "apply_patch") throw protocolError("不支持的自定义工具：$name")
+                    val arguments = if (custom) item.str("input").orEmpty() else item.str("arguments").orEmpty()
                     val parsed = try { AgentJson.parseToJsonElement(arguments.ifEmpty { "{}" }) as? JsonObject }
                         catch (_: IllegalArgumentException) { null }
-                    parts += ToolCallPart(CallId(id), name, parsed ?: JsonObject(mapOf("__invalid_json" to JsonPrimitive(arguments))))
+                    parts += ToolCallPart(CallId(id), name, if (custom) JsonObject(mapOf("input" to JsonPrimitive(arguments))) else parsed ?: JsonObject(mapOf("__invalid_json" to JsonPrimitive(arguments))))
                     parts += OpaquePart(profile.ref, item)
                 }
                 else -> throw protocolError("不支持的 Responses output item：${item.str("type")}")

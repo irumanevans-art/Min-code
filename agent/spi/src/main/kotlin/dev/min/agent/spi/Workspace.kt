@@ -36,6 +36,9 @@ interface WorkspaceFs {
     /** 先写临时文件再改名，保住原文件的权限位；写一半被杀不会留下半个文件。父目录不存在就建 */
     suspend fun writeAtomic(path: GuestPath, bytes: ByteArray)
 
+    /** 只删文件，不递归目录；沿用 writeAtomic 的映射与只读挂载边界。 */
+    suspend fun deleteFile(path: GuestPath) { throw UnsupportedOperationException("宿主没有文件删除端口") }
+
     suspend fun list(dir: GuestPath): List<DirEntry>
 
     fun scopeOf(path: GuestPath): PathScope

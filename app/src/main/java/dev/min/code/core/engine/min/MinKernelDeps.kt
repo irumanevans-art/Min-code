@@ -82,6 +82,7 @@ class MinHostPorts(private val current: () -> MinHostGeneration, tasks: MinBackg
         override suspend fun stat(path: GuestPath): FileStat? = current().fs.stat(path)
         override suspend fun read(path: GuestPath, offset: Long, limit: Int): ByteArray = current().fs.read(path, offset, limit)
         override suspend fun writeAtomic(path: GuestPath, bytes: ByteArray) = current().fs.writeAtomic(path, bytes)
+        override suspend fun deleteFile(path: GuestPath) = current().fs.deleteFile(path)
         override suspend fun list(dir: GuestPath): List<DirEntry> = current().fs.list(dir)
         override fun scopeOf(path: GuestPath): PathScope = current().fs.scopeOf(path)
     }

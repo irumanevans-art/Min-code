@@ -152,6 +152,13 @@ class RootfsFileSystem(
         Unit
     }
 
+    override suspend fun deleteFile(path: GuestPath): Unit = withContext(Dispatchers.IO) {
+        requireWritable(path)
+        val host = hostPath(path)
+        require(Files.isRegularFile(host)) { "只能删除普通文件：$path" }
+        Files.delete(host)
+    }
+
     override suspend fun list(dir: GuestPath): List<DirEntry> = withContext(Dispatchers.IO) {
         Files.list(hostPath(dir)).use { entries ->
             // Stream.toList 是 JDK 16 API；Android API 26 上只有 Java 8 的 collect。

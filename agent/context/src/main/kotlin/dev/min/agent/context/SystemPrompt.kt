@@ -43,7 +43,8 @@ object SystemPrompt {
     ): List<String> = listOfNotNull(
         // 有样式且不保留工程指令时，第一段换成只有身份的版本（样式接管语气与响应格式）；
         // 其余情况（无样式 / Default / keep）第一段逐字不变——缓存前缀的纪律
-        if (outputStyle != null && !outputStyle.keepCodingInstructions) STYLE_IDENTITY else RULES,
+        if (outputStyle != null && !outputStyle.keepCodingInstructions) STYLE_IDENTITY else
+            if (profile.editStyle == dev.min.agent.spi.EditStyle.ApplyPatch) RULES.replace("Read, Write, Edit, Glob, Grep", "Read, apply_patch, Glob, Grep") else RULES,
         styleBlock(outputStyle),
         environmentBlock(env), memoryBlock(memory), autoMemoryBlock(memory, autoMemory),
         skillsBlock(skills, profile), mcpBlock(mcpInstructions), agentInstructions?.let(::agentBlock),
