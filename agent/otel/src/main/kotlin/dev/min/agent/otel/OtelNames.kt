@@ -1,5 +1,8 @@
 package dev.min.agent.otel
 
+import dev.min.agent.spi.ApprovalChoice
+import dev.min.agent.spi.DecidedBy
+
 /*
  * 指标名与事件名。CC 的名字照抄（claude_code.*，见 monitoring-usage 原文）；Min 没有对应物的加 min. 前缀。
  */
@@ -44,3 +47,20 @@ val OTEL_NAME_TABLE: Map<String, List<String>> = mapOf(
     "settings_changed" to listOf(OtelNames.PERMISSION_MODE_CHANGED),
     "conversation_ended" to listOf(OtelNames.MIN_CONVERSATION_ENDED),
 )
+
+/**
+ * 审批的来源（CC tool_decision 的 source 枚举 + Min 特有的 min_*），事件与 span 共用这一份。
+ * 无人应答按拒绝处理：不是用户的动作，单列 min_timeout，免得被算成 user_abort。
+ */
+internal fun approvalSource(by: DecidedBy, choice: ApprovalChoice): String = when (by) {
+    is DecidedBy.Rule -> "config"
+    is DecidedBy.Hook -> "hook"
+    is DecidedBy.Mode -> "min_mode"
+    is DecidedBy.Classifier -> "min_classifier"
+    is DecidedBy.Timeout -> "min_timeout"
+    is DecidedBy.User -> when (choice) {
+        is ApprovalChoice.Once -> "user_temporary"
+        is ApprovalChoice.Always -> "user_permanent"
+        is ApprovalChoice.Deny -> "user_reject"
+    }
+}
