@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -55,6 +56,25 @@ class SessionEntryPointsTest {
 
         val resumed = app(work, home, "--continue").openSession()
         assertEquals(interactive.sessionId, resumed.sessionId)
+    }
+
+    @Test fun `continue skips a sub-agent session even when it is the newest in the directory`() = runBlocking {
+        val work = work()
+        val home = home()
+        val root = app(work, home).openSession()
+        // 同目录里再落一份更新的子 agent 日志（SessionCreated 紧跟 subagent_origin），--continue 不该接它
+        val later = System.currentTimeMillis() + 60_000
+        val store = FileSessionStore(home.resolve("sessions"), { later })
+        val created = store.peek(root.sessionId)!!.read().first { it.event is dev.min.agent.spi.SessionCreated }.event as dev.min.agent.spi.SessionCreated
+        val child = dev.min.agent.protocol.SessionId("s_child_newest")
+        store.create(dev.min.agent.spi.LogHeader(dev.min.agent.store.LOG_FORMAT_VERSION, child, later)).append(
+            listOf(
+                created,
+                dev.min.agent.spi.SubagentOrigin(root.sessionId, root.sessionId, dev.min.agent.protocol.CallId("c1"), "general-purpose", false, 1, cacheKey = "k"),
+            ),
+            Durability.Sync,
+        )
+        assertEquals(root.sessionId, app(work, home, "--continue").openSession().sessionId)
     }
 
     @Test fun `continue with only print-mode sessions says there is nothing to continue`() = runBlocking {
