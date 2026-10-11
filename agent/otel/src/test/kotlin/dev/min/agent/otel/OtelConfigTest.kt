@@ -218,4 +218,68 @@ class OtelConfigTest {
         assertEquals(listOf("team" to "mobile", "env" to "dev"), config.resourceAttributes)
         assertNotNull(config)
     }
+
+    // ---- 第三段：详细追踪、tool content、入站 TRACEPARENT、属性长度限制 ----
+
+    private val traces = arrayOf(
+        "CLAUDE_CODE_ENABLE_TELEMETRY" to "1", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA" to "1",
+        "OTEL_TRACES_EXPORTER" to "console",
+    )
+
+    @Test
+    fun `详细 beta 追踪要 ENABLE_BETA_TRACING_DETAILED 与 BETA_TRACING_ENDPOINT 成对，ENHANCED beta 单独不开`() {
+        val plain = OtelConfig.fromEnv(env(*traces))
+        assertTrue(plain.tracesEnabled)
+        assertFalse(plain.detailedTracing)
+        val flagOnly = OtelConfig.fromEnv(env(*traces, "ENABLE_BETA_TRACING_DETAILED" to "1"))
+        assertFalse(flagOnly.detailedTracing)
+        assertTrue(flagOnly.problems.any { it.contains("BETA_TRACING_ENDPOINT") })
+        val endpointOnly = OtelConfig.fromEnv(env(*traces, "BETA_TRACING_ENDPOINT" to "https://beta.example.com"))
+        assertFalse(endpointOnly.detailedTracing)
+        val both = OtelConfig.fromEnv(env(*traces, "ENABLE_BETA_TRACING_DETAILED" to "1", "BETA_TRACING_ENDPOINT" to "https://beta.example.com"))
+        assertTrue(both.detailedTracing)
+        assertTrue(both.options("s").detailedTracing)
+        // Min 不向 BETA_TRACING_ENDPOINT 发数据：说明里讲清，且配置里没有任何地方记着这个地址
+        assertTrue(both.problems.any { it.contains("不会向它发送数据") })
+        assertFalse(both.toString().contains("beta.example.com"))
+        // 没有 traces 在产出时，成对设了也不开
+        val noTraces = OtelConfig.fromEnv(env("CLAUDE_CODE_ENABLE_TELEMETRY" to "1", "ENABLE_BETA_TRACING_DETAILED" to "1", "BETA_TRACING_ENDPOINT" to "x", "MIN_TELEMETRY_FILE" to "/tmp/x"))
+        assertFalse(noTraces.detailedTracing)
+    }
+
+    @Test
+    fun `OTEL_LOG_TOOL_CONTENT 默认关，且要求 traces 在产出`() {
+        assertFalse(OtelConfig.fromEnv(env(*traces)).options("s").logToolContent)
+        assertTrue(OtelConfig.fromEnv(env(*traces, "OTEL_LOG_TOOL_CONTENT" to "1")).options("s").logToolContent)
+        // 没开 beta（没有 traces）：开关本身设了也不生效
+        val noBeta = OtelConfig.fromEnv(env("CLAUDE_CODE_ENABLE_TELEMETRY" to "1", "OTEL_TRACES_EXPORTER" to "console", "OTEL_LOG_TOOL_CONTENT" to "1"))
+        assertFalse(noBeta.options("s").logToolContent)
+        // 与另两个内容开关互相独立
+        val promptsOnly = OtelConfig.fromEnv(env(*traces, "OTEL_LOG_USER_PROMPTS" to "1", "OTEL_LOG_TOOL_DETAILS" to "1"))
+        assertFalse(promptsOnly.options("s").logToolContent)
+    }
+
+    @Test
+    fun `入站 TRACEPARENT 只在宿主声明接受时才读（-p 与 SDK），交互会话忽略；坏值忽略`() {
+        val tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        val env = env(*traces, "TRACEPARENT" to tp, "TRACESTATE" to "vendor=x")
+        assertNull(OtelConfig.fromEnv(env).inbound)
+        assertNull(OtelConfig.fromEnv(env, acceptInbound = false).inbound)
+        val inbound = OtelConfig.fromEnv(env, acceptInbound = true).inbound!!
+        assertEquals("0af7651916cd43dd8448eb211c80319c", inbound.traceId)
+        assertEquals("vendor=x", inbound.traceState)
+        assertTrue(OtelConfig.fromEnv(env, acceptInbound = true).options("s").inbound != null)
+        assertNull(OtelConfig.fromEnv(env(*traces, "TRACEPARENT" to "garbage"), acceptInbound = true).inbound)
+    }
+
+    @Test
+    fun `属性长度限制更小时按更小的截断（原文：OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT 与它的 span 变体）`() {
+        assertEquals(61_440, OtelConfig.fromEnv(env(*traces)).contentMaxLength)
+        assertEquals(1000, OtelConfig.fromEnv(env(*traces, "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT" to "1000")).contentMaxLength)
+        assertEquals(500, OtelConfig.fromEnv(env(*traces, "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT" to "500", "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT" to "1000")).contentMaxLength)
+        // 比内容上限还大的限制不放宽
+        assertEquals(2000, OtelConfig.fromEnv(env(*traces, "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH" to "2000", "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT" to "99999")).contentMaxLength)
+        // 非法值忽略
+        assertEquals(61_440, OtelConfig.fromEnv(env(*traces, "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT" to "abc")).contentMaxLength)
+    }
 }

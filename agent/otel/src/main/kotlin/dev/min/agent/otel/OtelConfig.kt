@@ -42,6 +42,17 @@ data class OtelConfig(
     val logToolDetails: Boolean,
     val includeSessionId: Boolean,
     val contentMaxLength: Int,
+    /** OTEL_LOG_TOOL_CONTENT：`tool.output` span 事件带工具内容（原文：默认关，要求 traces；截断口径同 [contentMaxLength]） */
+    val logToolContent: Boolean = false,
+    /** 详细 beta 追踪：ENABLE_BETA_TRACING_DETAILED 与 BETA_TRACING_ENDPOINT 成对设置（原文），见 [detailedTracing] */
+    val betaTracingDetailed: Boolean = false,
+    /** 入站 TRACEPARENT / TRACESTATE；只在宿主声明接受时才有值（原文：-p 与 SDK 会话读，交互会话忽略），见 [fromEnv] 的 acceptInbound */
+    val inbound: TraceParent? = null,
+    /**
+     * 出站传播（Bash / hook 子进程的 TRACEPARENT）：原文口径——`ANTHROPIC_BASE_URL` 没设或指向 Anthropic API 时传播；
+     * 指向自定义代理时默认不传（免得把 trace id 交给第三方），设 `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1` 才传
+     */
+    val propagateTraceparent: Boolean = true,
     /** 配错了的地方（只写变量名与原因，不写值） */
     val problems: List<String>,
 ) {
@@ -58,6 +69,13 @@ data class OtelConfig(
     val tracesEnabled: Boolean get() = enabled && tracesBeta &&
         (tracesEndpoint != null || tracesConsole || localFile != null)
 
+    /**
+     * 详细 beta 追踪生效：traces 在产出、且成对设了 ENABLE_BETA_TRACING_DETAILED 与 BETA_TRACING_ENDPOINT（原文：`CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` 单独不会产出 hook span）。
+     * Min 只把它当开关：**不向 BETA_TRACING_ENDPOINT 发送任何数据**（原文说这对变量还会改变日志与 traces 的去向，Min 不改道——
+     * 遥测去哪只由 OTEL_EXPORTER_OTLP_* 说了算）。原文的组织白名单（交互 CLI 才要）Min 没有对应物。
+     */
+    val detailedTracing: Boolean get() = tracesEnabled && betaTracingDetailed
+
     fun options(sessionId: String): OtelOptions = OtelOptions(
         sessionId = sessionId,
         logUserPrompts = logUserPrompts,
@@ -65,6 +83,10 @@ data class OtelConfig(
         logToolDetails = logToolDetails,
         includeSessionId = includeSessionId,
         contentMaxLength = contentMaxLength,
+        // 原文：OTEL_LOG_TOOL_CONTENT 要求 tracing 开着
+        logToolContent = logToolContent && tracesEnabled,
+        detailedTracing = detailedTracing,
+        inbound = inbound,
     )
 
     /** 头部的值是令牌：字符串形式里一律遮住 */
@@ -83,7 +105,10 @@ data class OtelConfig(
         const val DEFAULT_CONTENT_MAX_LENGTH = 61_440
 
         /** 从环境读配置。[env] 注入是为了测试；宿主传 System::getenv 或设置存储的读取函数 */
-        fun fromEnv(env: (String) -> String?): OtelConfig {
+        fun fromEnv(env: (String) -> String?): OtelConfig = fromEnv(env, acceptInbound = false)
+
+        /** [acceptInbound]：宿主是 -p / SDK 这类非交互会话才为真，此时入站的 TRACEPARENT / TRACESTATE 才被读（原文：交互会话忽略） */
+        fun fromEnv(env: (String) -> String?, acceptInbound: Boolean): OtelConfig {
             val problems = mutableListOf<String>()
             fun flag(name: String) = env(name)?.trim() == "1"
             fun nonEmpty(name: String) = !env(name).isNullOrBlank()
@@ -97,6 +122,16 @@ data class OtelConfig(
             val tracesBeta = flag("CLAUDE_CODE_ENHANCED_TELEMETRY_BETA") || flag("ENABLE_ENHANCED_TELEMETRY_BETA")
             if (enabled && !tracesBeta && (tracesSel.otlp || tracesSel.console)) {
                 problems += "OTEL_TRACES_EXPORTER 已设置，但没有 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1，traces 不会导出（beta）"
+            }
+
+            // 详细 beta 追踪：原文要求这一对变量同时设置；Min 只把它当开关，不向 BETA_TRACING_ENDPOINT 发数据（见 detailedTracing）
+            val detailedFlag = flag("ENABLE_BETA_TRACING_DETAILED")
+            val betaDetailed = detailedFlag && nonEmpty("BETA_TRACING_ENDPOINT")
+            if (enabled && detailedFlag && !betaDetailed) {
+                problems += "ENABLE_BETA_TRACING_DETAILED 需要同时设置 BETA_TRACING_ENDPOINT（成对），详细追踪没有开启"
+            }
+            if (enabled && betaDetailed) {
+                problems += "BETA_TRACING_ENDPOINT 只作为详细追踪的开关：Min 不会向它发送数据，遥测只去 OTEL_EXPORTER_OTLP_* 配的地方"
             }
 
             val generic = env("OTEL_EXPORTER_OTLP_ENDPOINT")?.trim()?.takeIf { it.isNotEmpty() }
@@ -141,11 +176,35 @@ data class OtelConfig(
                 logAssistantResponses = env("OTEL_LOG_ASSISTANT_RESPONSES")?.trim()?.let { it == "1" } ?: flag("OTEL_LOG_USER_PROMPTS"),
                 logToolDetails = flag("OTEL_LOG_TOOL_DETAILS"),
                 includeSessionId = env("OTEL_METRICS_INCLUDE_SESSION_ID")?.trim() != "false",
-                contentMaxLength = env("CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH")?.toIntOrNull()?.takeIf { it > 0 }
-                    ?: DEFAULT_CONTENT_MAX_LENGTH,
+                // 原文：SDK 的属性长度限制（OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT 及其 span / logrecord 变体）更小时，按更小的截断
+                contentMaxLength = listOfNotNull(
+                    env("CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH")?.trim()?.toIntOrNull()?.takeIf { it > 0 } ?: DEFAULT_CONTENT_MAX_LENGTH,
+                    attributeLimit(env, "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT"),
+                    attributeLimit(env, "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT"),
+                    attributeLimit(env, "OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT"),
+                ).min(),
+                logToolContent = flag("OTEL_LOG_TOOL_CONTENT"),
+                betaTracingDetailed = betaDetailed,
+                // 原文：Agent SDK 与 -p 会话读入站 TRACEPARENT / TRACESTATE，交互会话忽略——由宿主用 acceptInbound 声明
+                propagateTraceparent = flag("CLAUDE_CODE_PROPAGATE_TRACEPARENT") || baseUrlIsAnthropicOrUnset(env("ANTHROPIC_BASE_URL")),
+                inbound = if (acceptInbound) TraceParent.parse(env("TRACEPARENT"), env("TRACESTATE")) else null,
                 problems = problems,
             )
         }
+
+        /** ANTHROPIC_BASE_URL 没设、或主机是 anthropic.com（含子域）：不是自定义代理 */
+        private fun baseUrlIsAnthropicOrUnset(raw: String?): Boolean {
+            val value = raw?.trim().orEmpty()
+            if (value.isEmpty()) return true
+            val host = try {
+                java.net.URI(value).host
+            } catch (e: java.net.URISyntaxException) {
+                null
+            } ?: return false
+            return host == "anthropic.com" || host.endsWith(".anthropic.com")
+        }
+
+        private fun attributeLimit(env: (String) -> String?, name: String): Int? = env(name)?.trim()?.toIntOrNull()?.takeIf { it > 0 }
 
         private fun interval(raw: String?, default: Long): Long = raw?.trim()?.toLongOrNull()?.takeIf { it > 0 } ?: default
 

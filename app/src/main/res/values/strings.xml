@@ -1579,7 +1579,7 @@
   <string name="viewer_draft_export">Export diagnostic zip</string>
   <string name="viewer_draft_discard">Discard</string>
   <string name="settings_telemetry_title">Telemetry (local OpenTelemetry)</string>
-  <string name="settings_telemetry_on">On. Exports session metrics, events and traces (sub-agent sessions included) to the endpoint below and to a local JSONL file. Prompt and response text is not included.</string>
+  <string name="settings_telemetry_on">On. Exports session metrics, events and traces (sub-agent sessions included) to the endpoint below and to a local JSONL file. Prompt and response text is not included. While a session is running it exports automatically every few seconds (logs and traces about 5 s, metrics about 60 s) and flushes when the session stops; nothing runs when the app is idle, nothing keeps it alive in the background, and nothing is exported once the process is gone. Bash and hook child processes get a TRACEPARENT for the current span.</string>
   <string name="settings_telemetry_off">Off. Nothing is exported.</string>
   <string name="settings_telemetry_endpoint_title">OTLP endpoint</string>
   <string name="settings_telemetry_endpoint_none">Not set (local file only)</string>

@@ -202,6 +202,14 @@ data class AssistantMessageCompleted(
     val usage: Usage,
     val stop: StopReason,
     val truncated: Boolean = false,
+    /**
+     * 流开始后多久收到第一个流事件（响应头 / message_start，毫秒）。只给遥测（OTel `ttft_ms`）用，不影响请求与模型视图。
+     * 为什么记进日志：遥测一律从日志派生，不另记一份账；这个时间只有发请求的内核看得到，事后推不出来。
+     * null = 没观察到（非流式回退、旧日志）
+     */
+    val ttftMs: Long? = null,
+    /** 流开始后多久收到第一块内容（文本 / 思考 / 工具调用的增量，毫秒）；null = 没有（没有增量就结束了的回复、旧日志）。给 OTel `first_content_ms` */
+    val firstContentMs: Long? = null,
 ) : SessionEvent
 
 @Serializable

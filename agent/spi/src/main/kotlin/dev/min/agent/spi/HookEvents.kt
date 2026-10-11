@@ -108,6 +108,19 @@ data class HooksRan(
      * 「还在跑」的痕迹，重开会话不假装在等），完成时各落一条（handlers = 1）。控制字段对它一律无效
      */
     val background: Boolean = false,
+    /**
+     * 这一批里各处理器的结局计数，给遥测的 hook span（`num_success` / `num_blocking` / `num_non_blocking_error`）用：
+     * 日志里原本只有合并后的结论，推不出「几个处理器」各自怎么样。null = 没记（旧日志、后台 hook、只有启动失败的批）。
+     * 一个处理器只落一类：拦下（block / deny / `continue:false`）→ [blocking]；没跑起来、超时、非阻断错误 → [nonBlockingErrors]；其余 → [succeeded]
+     */
+    val succeeded: Int? = null,
+    val blocking: Int? = null,
+    val nonBlockingErrors: Int? = null,
+    /**
+     * 这批 hook 的 span 标识（遥测的 `claude_code.hook` span id 由它与会话 id 哈希得出）。只在宿主给了追踪上下文时才写：
+     * hook 子进程的 `TRACEPARENT` 要在它启动之前就指向这个 span，而 span 是事后从日志折出来的，所以标识由内核先定、随记录落盘。null = 没写（span id 退回用记录的 seq）
+     */
+    val runId: String? = null,
 ) : SessionEvent
 
 /** hook 加给模型的上下文挂在哪 */

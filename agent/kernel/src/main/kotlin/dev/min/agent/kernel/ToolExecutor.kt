@@ -701,8 +701,14 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val fs: WorkspaceFs = deps.host.fs
         override val search: Search = credentialSearch(deps.host.search, deps.credentialPaths, deps.canonicalPath)
         override val exec: Exec = deps.host.exec
-        override suspend fun runShell(command: dev.min.agent.spi.ShellCommand, options: dev.min.agent.spi.ExecOptions, allowedDomains: List<String>): dev.min.agent.spi.ExecResult =
-            rt.runNetworkShell(callId, command, options, if (callId in networkApprovedCalls) allowedDomains else emptyList())
+        override suspend fun runShell(command: dev.min.agent.spi.ShellCommand, options: dev.min.agent.spi.ExecOptions, allowedDomains: List<String>): dev.min.agent.spi.ExecResult {
+            // 追踪开着时，子进程继承这次工具执行 span 的 TRACEPARENT（原文：Bash 子进程继承当前执行 span）。
+            // 值由宿主算好；算不出来（没开追踪、出错）就什么都不加，遥测不许挡住命令
+            val traceparent = if (turnId == null) null else
+                dev.min.agent.spi.catchingNonCancellation { deps.traceContext.toolExecution(rt.sessionId, turnId, callId) }.getOrNull()
+            val traced = if (traceparent == null) command else command.copy(env = command.env + ("TRACEPARENT" to traceparent))
+            return rt.runNetworkShell(callId, traced, options, if (callId in networkApprovedCalls) allowedDomains else emptyList())
+        }
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override fun canonicalPath(path: GuestPath): GuestPath = deps.canonicalPath(path)

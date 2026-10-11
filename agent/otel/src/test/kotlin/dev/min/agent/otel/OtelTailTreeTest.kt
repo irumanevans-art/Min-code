@@ -1,6 +1,7 @@
 package dev.min.agent.otel
 
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.ModelRef
@@ -21,6 +22,7 @@ import dev.min.agent.spi.ModelCharged
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.ResumePolicy
 import dev.min.agent.spi.SessionCreated
+import dev.min.agent.spi.SettingsChanged
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.ToolEffectPending
 import dev.min.agent.spi.ToolOutcome
@@ -323,6 +325,59 @@ class OtelTailTreeTest {
         assertTrue(transport.requests.none { it.url.endsWith("/v1/traces") })
         val c = tail.cursors().getValue("p")
         assertEquals(c.next, c.spansFrom)
+    }
+
+    @Test
+    fun `跨进程续导时 effort 不丢：续读不是从日志开头起，开头的 SessionCreated 里的 effort 要先折出来`() = runBlocking {
+        val log = FakeSessionLog("p")
+        log.add(1000, SessionCreated(GuestPath("/w"), model, PermissionMode.Default, effort = Effort.High))
+        log.add(1050, SettingsChanged(effort = Effort.XHigh))
+        val tid = TurnId("t1")
+        log.add(1200, TurnStarted(tid, TurnTrigger.User))
+        log.add(1210, ModelRequestStarted(tid, RequestId("r1"), 1, model, "fp"))
+        val cfg = config()
+        val first = OtelTail(sourceOf(log), cfg, OtelExporter(cfg, ScriptedTransport(OK, OK, OK)))
+        first.pump()
+        val cursors = first.cursors()
+        // 请求还开着：下个进程从 TurnStarted 之后的记录重放，不再经过 SessionCreated / SettingsChanged
+        log.add(1300, ModelCharged(model, usage, 0.01, "USD"))
+        log.add(1310, AssistantMessageCompleted(tid, RequestId("r1"), MessageId("m1"), listOf(TextPart("ok")), usage, StopReason.EndTurn))
+        log.add(1400, TurnEnded(tid, TurnOutcome.Completed, usage, durationMs = 200))
+        val t2 = ScriptedTransport(OK, OK, OK)
+        OtelTail(sourceOf(log), cfg, OtelExporter(cfg, t2), initialCursors = cursors).pump()
+        val llm = sent(t2).spans.single { it.name() == "claude_code.llm_request" }
+        assertEquals("xhigh", llm.attr("effort"))
+    }
+
+    @Test
+    fun `入站 TRACEPARENT 一路到导出：interaction 挂在它下面，子会话的父链也用同一条 trace`() = runBlocking {
+        val tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        val base = mapOf(
+            "CLAUDE_CODE_ENABLE_TELEMETRY" to "1", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA" to "1",
+            "OTEL_TRACES_EXPORTER" to "otlp", "OTEL_EXPORTER_OTLP_PROTOCOL" to "http/json",
+            "OTEL_EXPORTER_OTLP_ENDPOINT" to "https://c.example.com", "TRACEPARENT" to tp,
+        )
+        val cfg = OtelConfig.fromEnv({ base[it] }, acceptInbound = true)
+        val parent = FakeSessionLog("p")
+        parent.created(1000)
+        parent.turn(1, 1100, tool = "c9")
+        val child = FakeSessionLog("kid", parent = "p")
+        child.created(1)
+        child.origin("p", "p", "c9", 1)
+        child.turn(1, 1200)
+        val transport = ScriptedTransport(OK)
+        OtelTail(sourceOf(parent, child), cfg, OtelExporter(cfg, transport)).pump()
+        val spans = sent(transport).spans
+        assertTrue(spans.isNotEmpty())
+        // 同一个进程里的所有 span 都在入站的 trace 里（子会话经父链继承）
+        assertTrue(spans.all { it["traceId"]!!.jsonPrimitive.content == "0af7651916cd43dd8448eb211c80319c" })
+        val interaction = spans.single { it.name() == "claude_code.interaction" }
+        assertEquals("b7ad6b7169203331", interaction["parentSpanId"]!!.jsonPrimitive.content)
+        assertEquals("env", interaction.attr("parent.source"))
+        // 子会话的 llm_request 挂在父会话的 Agent 工具 span 下
+        val tool = spans.single { it.name() == "claude_code.tool" }
+        val kidLlm = spans.single { it.name() == "claude_code.llm_request" && it.attr("agent_id") == "kid" }
+        assertEquals(tool.sid(), kidLlm["parentSpanId"]!!.jsonPrimitive.content)
     }
 
     // ---- 导出间隔 ----

@@ -198,6 +198,11 @@ data class KernelDeps(
      * 所以子会话与分身自然跟随父会话；宿主在组合根给一次。
      */
     val settingsInputs: dev.min.agent.ext.config.SettingsInputs = dev.min.agent.ext.config.SettingsInputs(),
+    /**
+     * 当前 span 的 W3C trace context（OTel traces）：Bash 与 hook 子进程的环境里据此带上 `TRACEPARENT`。
+     * 默认不传播；宿主在遥测开着时给一个（见 `:agent:otel` 的 OtelTraceContext）。运行时选项，不进日志。
+     */
+    val traceContext: dev.min.agent.spi.TraceContextProvider = dev.min.agent.spi.TraceContextProvider.None,
     /** Artifact 的宿主出口（本机预览位）。默认不可用：工具照实回告「没有打开」 */
     val previewSink: dev.min.agent.spi.PreviewSink = dev.min.agent.spi.PreviewSink.Unavailable,
     /** SendFeedback 的宿主出口（本机草稿队列）。默认不可用：工具照实回告「没有保存」 */

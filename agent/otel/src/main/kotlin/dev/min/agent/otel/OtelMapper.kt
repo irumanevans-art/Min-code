@@ -44,6 +44,9 @@ class OtelMapper(private val options: OtelOptions) {
     private var promptId: String? = null
     private var mode: PermissionMode? = null
 
+    /** 正在进行的回合（TurnStarted 到 TurnEnded）：记录要带 interaction span 的 id 时用 */
+    private var activeTurn: String? = null
+
     private val planned = HashMap<CallId, PlannedTool>()
     private val effectAt = HashMap<CallId, Long>()
     private val approvalCall = HashMap<ApprovalId, CallId>()
@@ -69,10 +72,16 @@ class OtelMapper(private val options: OtelOptions) {
                     "prompt" to text(content(body, options.logUserPrompts)),
                 )))
             } else emptyList()
-            is TurnStarted -> listOf(log(record, OtelNames.MIN_TURN_STARTED, mapOf(
-                "trigger" to text(e.trigger.name.lowercase()),
-            )))
-            is TurnEnded -> listOf(log(record, OtelNames.MIN_TURN_ENDED, turnEndedAttrs(e)))
+            is TurnStarted -> {
+                activeTurn = e.turnId.value
+                listOf(log(record, OtelNames.MIN_TURN_STARTED, mapOf("trigger" to text(e.trigger.name.lowercase()))))
+            }
+            is TurnEnded -> {
+                // 回合结束这条记录还在 interaction 里；之后才算「不在回合里」
+                val ended = log(record, OtelNames.MIN_TURN_ENDED, turnEndedAttrs(e))
+                activeTurn = null
+                listOf(ended)
+            }
             is ConversationEnded -> listOf(log(record, OtelNames.MIN_CONVERSATION_ENDED, emptyMap()))
             is ModelRequestStarted -> {
                 lastModel = e.model
@@ -275,7 +284,12 @@ class OtelMapper(private val options: OtelOptions) {
         all["event.sequence"] = OtelValue.Whole(record.seq)
         promptId?.let { all["prompt.id"] = text(it) }
         all.putAll(attrs)
-        return OtelLog(name, all, record.atMs)
+        // 原文：-p 与 SDK 会话带着入站 TRACEPARENT 时，记录带 trace_id 与 span_id——在 interaction 里的是 interaction span 的，
+        // 不在的是入站的。子会话的 trace 要沿父链找（映射器看不到父），不带
+        val inbound = options.inbound.takeIf { options.lineage == null }
+        val turn = activeTurn
+        val spanId = if (inbound == null) null else if (turn != null) SpanIds.interaction(options.sessionId, turn) else inbound.spanId
+        return OtelLog(name, all, record.atMs, traceId = inbound?.traceId, spanId = spanId)
     }
 
     private fun withSession(attrs: Map<String, OtelValue>): Map<String, OtelValue> {

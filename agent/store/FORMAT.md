@@ -324,3 +324,9 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - v1 增量（2026-10-11）：`model_request_failed` 新增可选字段 `retryDelayMs`（重发前等多久，毫秒）与 `maxRetries`（这一类失败最多还允许重试几次），只在 `willRetry:true` 时写；给 `-p --output-format stream-json` 的 `system/api_retry`（SDK 的 `retry_delay_ms` / `max_retries`）用。旧日志没有这两个字段，读端省略对应的键；含新字段的日志旧版本（严格解码）打不开。
 
 - v1 增量（2026-10-11，security-guidance 的去重表落日志）：新增事件 `security_guidance_seen`（`warned`：逐次编辑提醒的去重键，规则名与文件路径中间隔一个 NUL；`reported`：已交给主模型的审查发现——归一化后文字的 SHA-256 前 16 个十六进制字符，不存原文），定义在 `spi/SecurityEvents.kt`。折叠进 `SessionState.securityWarned` / `securityReported`（追加）。逐次编辑的提醒与它的 `warned` 同一次提交；回合末审查与提交审查报过的发现写 `reported`。重开会话时 SecurityGuidanceRuntime 据此恢复去重表，同一条不再重复提醒（此前只在内存里）。旧日志没有这条事件，重开后去重表为空（与原来一致）；含这条事件的日志旧版本打不开。
+
+- v1 增量（2026-10-11，OTel 第三段）：给遥测补两类「事后从日志推不出来」的事实，都是可选字段，默认 null 不落盘，旧日志照常读、旧版本忽略字段照常读。
+  `assistant_message_completed` 新增 `ttftMs`（流开始后到第一个流事件的毫秒数，响应头 / message_start）与 `firstContentMs`（到第一块内容增量——文本、思考、工具调用——的毫秒数；一个增量都没有的回复不写，不编造）。内核在 `stream()` 里用会话时钟量，随回复同一次提交落盘。遥测的 `ttft_ms` / `first_content_ms` 取自这里。
+  `hooks_ran` 新增 `succeeded` / `blocking` / `nonBlockingErrors`（这一批里各处理器的结局计数；一个处理器只落一类：拦下（block / deny / `continue:false`）→ `blocking`，没跑起来、超时、非阻断错误 → `nonBlockingErrors`，其余 → `succeeded`；后台 hook 与启动失败的批不写）。遥测 `claude_code.hook` span 的 `num_success` / `num_blocking` / `num_non_blocking_error` 取自这里。
+
+- v1 增量（2026-10-11，OTel 第三段，TRACEPARENT）：`hooks_ran` 再新增可选字段 `runId`（这批 hook 的 span 标识：`<回合 id>:<事件名>:<本会话第几批>`）。**只在宿主给了追踪上下文（`KernelDeps.traceContext`，遥测开着）时才写**：hook 子进程的 `TRACEPARENT` 要在它启动之前就指向这批 hook 自己的 span，而 span 是事后从日志折出来的，所以标识由内核先定、随记录落盘，遥测 hook span 的 id 由它与会话 id 哈希得出（没有 `runId` 时退回用记录的 seq）。旧日志缺字段照常读，旧版本忽略字段照常读。`TRACEPARENT` 本身（Bash / hook 子进程的环境变量）是运行时的事，不进日志。

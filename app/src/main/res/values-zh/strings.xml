@@ -1573,7 +1573,7 @@
   <string name="viewer_draft_export">导出诊断包</string>
   <string name="viewer_draft_discard">丢弃</string>
   <string name="settings_telemetry_title">遥测（本地 OpenTelemetry）</string>
-  <string name="settings_telemetry_on">已开启。把会话的指标、事件与 traces（含子 agent 会话）导出到下面的端点，并写一份本机 JSONL。不含提示词与回复正文。</string>
+  <string name="settings_telemetry_on">已开启。把会话的指标、事件与 traces（含子 agent 会话）导出到下面的端点，并写一份本机 JSONL。不含提示词与回复正文。有会话在跑时每隔几秒自动导出（日志与 traces 约 5 秒，指标约 60 秒），会话停下时补发；App 闲着时没有任何定时器，也不在后台保活，进程没了就不导。Bash 与 hook 的子进程会带上当前 span 的 TRACEPARENT。</string>
   <string name="settings_telemetry_off">已关闭。不导出任何东西。</string>
   <string name="settings_telemetry_endpoint_title">OTLP 端点</string>
   <string name="settings_telemetry_endpoint_none">未设（只写本机文件）</string>

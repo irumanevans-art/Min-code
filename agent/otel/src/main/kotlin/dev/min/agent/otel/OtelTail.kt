@@ -1,11 +1,15 @@
 package dev.min.agent.otel
 
+import dev.min.agent.protocol.Effort
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.SessionCreated
+import dev.min.agent.spi.SettingsChanged
 import dev.min.agent.spi.SessionLog
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.ToolPlanned
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -68,8 +72,9 @@ class OtelTail(
     )
 
     private val states = LinkedHashMap<String, SessionState>()
-    private val lineages = HashMap<String, OtelLineage?>()
-    private val links = HashMap<String, SpanLink?>()
+    /** 当前这一轮读到的会话（按 id）。span 挂靠只在这些会话里找父 */
+    private var byId: Map<String, SessionLog> = emptyMap()
+    private val spanLinks = OtelSpanLinks({ config.inbound }) { id -> byId[id] }
     private val cursorsIn = HashMap(initialCursors)
     private val mutex = Mutex()
 
@@ -124,12 +129,12 @@ class OtelTail(
             exporter.noteFailure("读会话列表失败：${e.javaClass.simpleName}")
             return 0
         }
-        val byId = logs.associateBy { it.header.sessionId.value }
+        byId = logs.associateBy { it.header.sessionId.value }
         var count = 0
         for (log in logs) {
             val id = log.header.sessionId.value
             val state = states[id] ?: try {
-                createState(log, byId)?.also { states[id] = it }
+                createState(log)?.also { states[id] = it }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -184,10 +189,10 @@ class OtelTail(
 
     // ---- 建会话的状态：来历、span 挂靠、起点 ----
 
-    private suspend fun createState(log: SessionLog, byId: Map<String, SessionLog>): SessionState? {
+    private suspend fun createState(log: SessionLog): SessionState? {
         val id = log.header.sessionId.value
-        val lineage = lineageOf(log)
-        val link = if (config.tracesEnabled) linkOf(id, byId) else null
+        val lineage = spanLinks.lineageOf(log)
+        val link = if (config.tracesEnabled) spanLinks.linkOf(id) else null
         val options = config.options(id).copy(lineage = lineage)
         val cursor = cursorsIn[id]
         val metricsFrom: Long = when {
@@ -198,54 +203,29 @@ class OtelTail(
             }
             else -> 1L
         }
-        val spans = if (config.tracesEnabled) OtelSpanMapper(options, link) else null
+        // 跨进程续导时 span 映射器不是从日志开头读起：开头的 SessionCreated / SettingsChanged 里的 effort 要先折出来，否则续导的 llm_request 会缺 effort
+        val readFromSeq = cursor?.let { minOf(it.next, it.spansFrom) } ?: metricsFrom
+        val spans = if (config.tracesEnabled) OtelSpanMapper(options, link, initialEffort = if (readFromSeq > 1) effortBefore(log, readFromSeq) else null) else null
         // 首次读的起点：span 要从游标里记的「开着的 span 的起点」重放，指标与日志从 metricsFrom 起
         val readFrom = if (spans != null && cursor != null) minOf(cursor.next, cursor.spansFrom) else metricsFrom
         cursorsIn.remove(id)
         return SessionState(log, OtelMapper(options), spans, metricsFrom, readFrom)
     }
 
-    /** 子会话的来历：读日志开头的 SubagentOrigin；没有它但头部指着父会话时，只知道父是谁 */
-    private suspend fun lineageOf(log: SessionLog): OtelLineage? {
-        val id = log.header.sessionId.value
-        return lineages.getOrPut(id) {
-            val parent = log.header.parent?.value
-            val origin = log.read(1).take(ORIGIN_WINDOW).toList().map { it.event }.filterIsInstance<SubagentOrigin>().firstOrNull()
-            when {
-                origin != null -> OtelLineage(
-                    parent = origin.parent.value, root = origin.root.value, parentCall = origin.parentCall.value,
-                    agentType = origin.agentType, depth = origin.depth, teamMember = origin.teamMember,
-                )
-                parent != null -> OtelLineage(parent, parent, "", "unknown", 1, false)
-                else -> null
+    /** [seq] 之前最后生效的 effort：读日志里的 SessionCreated 与 SettingsChanged 折出来 */
+    private suspend fun effortBefore(log: SessionLog, seq: Long): Effort? {
+        var effort: Effort? = null
+        for (record in log.read(1).takeWhile { it.seq < seq }.toList()) {
+            when (val e = record.event) {
+                is SessionCreated -> effort = e.effort
+                is SettingsChanged -> {
+                    if (e.clearEffort) effort = null
+                    e.effort?.let { effort = it }
+                }
+                else -> Unit
             }
         }
-    }
-
-    /**
-     * 子会话的 span 挂到哪：父会话里发起委派的那次工具调用。回合 id 取自父会话日志里那次调用的 ToolPlanned，
-     * 因此父子两边各自算出同一个 trace id 与 tool span id，互不依赖对方的映射状态（也不依赖谁先导出）。
-     * 父会话本身也是子会话时，沿父链继承根 trace。找不到（父日志不在、调用不存在）返回 null：这个子会话自成一棵树。
-     */
-    private suspend fun linkOf(id: String, byId: Map<String, SessionLog>): SpanLink? {
-        if (links.containsKey(id)) return links[id]
-        val log = byId[id] ?: return null
-        val lineage = lineageOf(log)
-        val result = if (lineage == null || lineage.parentCall.isEmpty()) null else {
-            val parentLog = byId[lineage.parent]
-            val turn = parentLog?.read(1)?.toList()?.firstNotNullOfOrNull { rec ->
-                (rec.event as? ToolPlanned)?.takeIf { it.callId.value == lineage.parentCall }?.turnId?.value
-            }
-            if (parentLog == null || turn == null) null else {
-                val parentLink = linkOf(lineage.parent, byId)
-                SpanLink(
-                    traceId = parentLink?.traceId ?: SpanIds.trace(lineage.parent, turn),
-                    parentSpanId = SpanIds.tool(lineage.parent, lineage.parentCall),
-                )
-            }
-        }
-        links[id] = result
-        return result
+        return effort
     }
 
     // ---- 发 ----
@@ -264,10 +244,5 @@ class OtelTail(
             exporter.export(batch)
             buf.subList(0, batch.size).clear()
         }
-    }
-
-    private companion object {
-        /** 子会话的来历事件紧跟在 SessionCreated 之后，看开头几条就够 */
-        const val ORIGIN_WINDOW = 8
     }
 }

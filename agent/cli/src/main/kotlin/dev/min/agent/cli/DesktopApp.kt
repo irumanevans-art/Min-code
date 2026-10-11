@@ -471,6 +471,14 @@ internal class DesktopApp(
         if (System.getenv(keyEnv).isNullOrBlank()) throw UsageException("没有凭证：请设置环境变量 $keyEnv")
     }
 
+    /**
+     * 遥测配置：进程环境读一次，导出（[telemetry]）与子进程的 TRACEPARENT（KernelDeps.traceContext）共用这一份。
+     * 入站 TRACEPARENT / TRACESTATE 只在 `-p` 下读（原文：Agent SDK 与 `-p` 会话读，交互会话忽略）。
+     */
+    private val otelConfig: dev.min.agent.otel.OtelConfig by lazy {
+        dev.min.agent.otel.OtelConfig.fromEnv(System::getenv, acceptInbound = args.prompt != null)
+    }
+
     suspend fun records(sessionId: SessionId, fromSeq: Long): List<EventRecord> =
         requireNotNull(store.peek(sessionId)).read(fromSeq).toList()
 
@@ -481,7 +489,7 @@ internal class DesktopApp(
      * console 导出器写 stderr：stdout 是会话输出（-p 的结果、管道），混进遥测会毁掉脚本消费。
      */
     suspend fun telemetry(runtime: SessionRuntime): dev.min.agent.otel.OtelRun? {
-        val config = dev.min.agent.otel.OtelConfig.fromEnv(System::getenv)
+        val config = otelConfig
         if (config.enabled) config.problems.forEach { System.err.println("遥测设置有问题：$it") }
         if (!config.active) return null
         requireNotNull(store.peek(runtime.sessionId)) { "遥测读不到会话日志" }
@@ -517,6 +525,8 @@ internal class DesktopApp(
         val envReader = hookEnvReader(hiddenEnv)
         return KernelDeps(
             networkProxy = dev.min.agent.host.LoopbackNetworkProxy(),
+            // Bash 与 hook 子进程的 TRACEPARENT：追踪开着时才有值（otelConfig 说了算），默认关时什么都不加
+            traceContext = dev.min.agent.otel.OtelTraceContext({ otelConfig }) { id -> store.peek(SessionId(id)) },
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
             models = dev.min.agent.kernel.ModelResolver { requested ->
