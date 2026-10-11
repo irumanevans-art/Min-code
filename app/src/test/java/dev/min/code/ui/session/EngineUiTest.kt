@@ -67,7 +67,7 @@ class EngineUiTest {
         assertFalse(layout.effortRestartNote)
         assertFalse(layout.ultracode)
         assertFalse(layout.cache)
-        assertFalse("Min 没有 cwdChange", layout.cwd)
+        assertTrue("Min 经内核 changeSettings(cwd) 换会话目录", layout.cwd)
         assertFalse(layout.commands)
         assertTrue(layout.usage)
         assertTrue("Min 有 MCP 面板与工作区信任段", layout.mcp && layout.trust)
