@@ -1,5 +1,8 @@
 package dev.min.agent.cli
 
+import dev.min.agent.kernel.BackgroundJobInfo
+import dev.min.agent.kernel.BackgroundJobKind
+import dev.min.agent.kernel.BackgroundJobStatus
 import dev.min.agent.kernel.HistoryEntry
 import dev.min.agent.kernel.LiveUpdate
 import dev.min.agent.kernel.SessionRuntime
@@ -15,9 +18,17 @@ import dev.min.agent.protocol.ThinkingPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.ToolResultPart
 import dev.min.agent.protocol.Usage
+import dev.min.agent.spi.ApprovalChoice
+import dev.min.agent.spi.ApprovalRequested
+import dev.min.agent.spi.ApprovalResolved
 import dev.min.agent.spi.AssistantMessageCompleted
+import dev.min.agent.spi.DecidedBy
+import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.ModelRequestStarted
 import dev.min.agent.spi.SkillKind
+import dev.min.agent.spi.SubagentSpawned
+import dev.min.agent.spi.TurnEnded
+import dev.min.agent.spi.TurnOutcome
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -27,7 +38,6 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -39,25 +49,32 @@ import java.util.UUID
  * JSON 对象，形状照 Agent SDK 的 `SDKMessage`（字段名与可选性照 TypeScript SDK 参考页；Min 没有的字段省略、不编）：
  *
  * - `system`/`init`：会话元数据（session_id、cwd、model、tools、mcp_servers、permissionMode、slash_commands、
- *   skills、plugins、agents、output_style、uuid）；
- * - `assistant`：每条完整的助手消息一行，`message` 是 Anthropic 的消息形状（id / type / role / content 块 /
- *   model / stop_reason / usage，后三项取自这条消息落盘的完成事件）；
+ *   skills、plugins、agents、output_style、uuid；stdin 输入时还有 `capabilities`）；
+ * - `assistant`：**一个 content block 一行**（SDK：「One API turn can produce several assistant messages that share a
+ *   `message.id`」；headless 样本 33 的原文也写「每个 content block 一条」），`message` 是 Anthropic 的消息形状
+ *   （id / type / role / content 块 / model / stop_reason / usage，取自这条消息落盘的完成事件；停止原因与用量在整条消息
+ *   结束时才有，所以前面的块 `stop_reason` 是 null、没有 usage，最后一块才带）；
  * - `user`：工具结果一行（tool_result 块），带 `parent_tool_use_id`；`--replay-user-messages` 时 stdin 来的用户消息
  *   也回显成这种行（带 `isReplay: true`）；
  * - `stream_event`（`--include-partial-messages`）：Anthropic 流事件的最小子集——message_start / content_block_start /
  *   content_block_delta（text_delta、thinking_delta、input_json_delta）/ content_block_stop / message_delta / message_stop；
+ * - 其它 `system` 子类型（api_retry、status、compact_boundary、hook_*、permission_denied、informational）由会话日志里的
+ *   事件翻出来（[systemRows]）；子 agent 与后台命令的 `task_started` / `task_updated` / `task_notification` /
+ *   `background_tasks_changed` 由子会话日志与 Hub 的后台任务表翻出来；
  * - `--forward-subagent-text` 把子 agent 的消息行也发出来（带 `parent_tool_use_id`，CC :93）；
  * - 每个回合一行 `result`（json 模式那个结果对象）——中途出错照样以结果行收尾；多轮（stdin 输入）时每轮一行。
  *
- * 数据从运行时状态来：助手消息看 history 的增长、工具结果看 toolResults 的新键。开始前先把已有的都记成
- * 「已见过」（-p 恢复会话时不重放旧对话）；收尾时再扫一遍状态补齐收集协程可能漏掉的尾巴，然后才发结果行。
- * 几个收集协程并发写同一个输出：所有改状态 / 写行的路径都在 [mutex] 里，行与行不会交错、流块的开合不会乱序
+ * 数据从运行时状态与会话日志来：助手消息看 history 的增长、工具结果看 toolResults 的新键、系统消息从日志尾部（按 seq 游标，
+ * 每条事件只读一次）翻。开始前先把已有的都记成「已见过」（-p 恢复会话时不重放旧对话）；收尾时再扫一遍补齐收集协程可能漏掉的尾巴，
+ * 然后才发结果行。几个收集协程并发写同一个输出：所有改状态 / 写行的路径都在 [mutex] 里，行与行不会交错、流块的开合不会乱序
  */
 internal class StreamJsonRenderer(
     private val app: DesktopApp,
     private val runtime: SessionRuntime,
     private val args: CliArgs,
     private val out: PrintStream,
+    /** 权限询问交给宿主处理（`--permission-prompt-tool stdio`）：宿主自己拒的不再发 `permission_denied`（SDK：那是「没问回调就拒了」的提示） */
+    private val hostDecidesPermissions: Boolean = false,
 ) {
     /** 每个会话一份「已发过什么」；根会话的键是 null */
     private val seen = HashMap<String?, Seen>()
@@ -69,7 +86,7 @@ internal class StreamJsonRenderer(
 
     private lateinit var scope: CoroutineScope
 
-    /** 只读这个进程之后落的事件来取助手消息的元信息（旧会话的历史不重读）；子会话都是本次运行建的，从头读 */
+    /** 只读这个进程之后落的事件（旧会话的历史不重读）；子会话都是本次运行建的，从头读 */
     private var fromSeq: Long = 0
 
     // ---- 当前回合（stdin 多轮：每条用户消息一个回合）----
@@ -91,10 +108,12 @@ internal class StreamJsonRenderer(
                 runtime.live.collect { update -> mutex.withLock { streamUpdate(update) } }
             }
         }
-        if (args.forwardSubagentText) {
-            jobs += scope.launch {
-                app.hub().online.collect { online -> online.forEach { watchChild(it, scope) } }
-            }
+        // 子会话总要盯着：task_started / task_updated 来自它们的日志；它们的消息行只在 --forward-subagent-text 时才发
+        jobs += scope.launch {
+            app.hub().online.collect { online -> online.forEach { watchChild(it, scope) } }
+        }
+        jobs += scope.launch {
+            app.hub().backgroundJobs(runtime.sessionId).collect { infos -> mutex.withLock { emitBackground(infos) } }
         }
     }
 
@@ -119,7 +138,7 @@ internal class StreamJsonRenderer(
 
     /** 回合收尾：把在线子会话盯上、同步扫一遍补齐尾巴、合上没合的流，然后发这个回合的结果行（连续多轮时渲染器继续活着） */
     suspend fun endTurn(result: JsonObject) = mutex.withLock {
-        if (args.forwardSubagentText) app.hub().online.value.forEach { watchChildLocked(it, scope) }
+        app.hub().online.value.forEach { watchChildLocked(it, scope) }
         emitNew(null, runtime.state.value, parentToolUseId = null)
         childRuntimes.values.forEach { child ->
             val parentCall = child.state.value.origin?.parentCall?.value
@@ -187,62 +206,225 @@ internal class StreamJsonRenderer(
             put("plugins", JsonArray(app.loadedPlugins().map { (name, path) -> buildJsonObject { put("name", name); put("path", path) } }))
             put("agents", JsonArray(app.config().agents.map { JsonPrimitive(it.name) }))
             put("output_style", state.outputStyle?.name ?: "default")
+            // 协议行为清单（SDK：feature-detect 用）：stdin 输入时 Min 实现了中断回执与 cancel_queued
+            if (args.inputFormat == InputFormat.StreamJson) {
+                put("capabilities", JsonArray(listOf("interrupt_receipt_v1", "interrupt_cancel_queued_v1").map(::JsonPrimitive)))
+            }
             val errors = state.mcpServers?.servers.orEmpty().filter { it.state != "connected" && it.reason != null }
                 .map { "${it.name}: ${it.reason}" }
             if (errors.isNotEmpty()) put("mcp_server_errors", JsonArray(errors.map { JsonPrimitive(it) }))
         })
     }
 
+    // ---- 会话日志尾部：助手消息的元信息 + 系统消息 ----
+
     /** 一条助手消息落盘的元信息：来自 AssistantMessageCompleted（停止原因、用量）与对应请求的 ModelRequestStarted（模型） */
     private class AssistantMeta(val model: String?, val stop: String?, val usage: Usage?)
 
-    private suspend fun assistantMeta(sessionId: SessionId, from: Long): Map<MessageId, AssistantMeta> {
-        val events = try {
-            app.records(sessionId, from).map { it.event }
+    private class Tail(val sessionId: SessionId, var cursor: Long)
+
+    private val tails = HashMap<String?, Tail>()
+    private val models = HashMap<RequestId, String>()
+    private val metas = HashMap<MessageId, AssistantMeta>()
+    private val asks = HashMap<String, ApprovalRequested>()
+
+    /** 读这个会话日志里还没读过的事件（游标按 seq 推进，每条只读一次）。读不到日志不该让事件流断掉：这些行本来就是尽力而为 */
+    private suspend fun drain(key: String?, sessionId: String): List<EventRecord> {
+        val tail = tails.getOrPut(key) { Tail(SessionId(sessionId), if (key == null) fromSeq else 0) }
+        val records = try {
+            app.records(tail.sessionId, tail.cursor)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {
-            // 读不到日志不该让事件流断掉：这几个字段本来就是可选的，省略即可
-            return emptyMap()
+            return emptyList()
         }
-        val models = events.filterIsInstance<ModelRequestStarted>().associate { it.requestId to it.model.modelId }
-        return events.filterIsInstance<AssistantMessageCompleted>()
-            .associate { it.messageId to AssistantMeta(models[it.requestId], it.stop.wireName(), it.usage) }
+        records.lastOrNull()?.let { tail.cursor = it.seq + 1 }
+        return records
     }
 
-    /** 把 [state] 里还没发过的助手消息与工具结果发出来（收集协程与收尾各调一遍，靠 [seen] 去重；调用方持 [mutex]） */
+    private fun ingest(event: dev.min.agent.spi.SessionEvent) {
+        when (event) {
+            is ModelRequestStarted -> models[event.requestId] = event.model.modelId
+            is AssistantMessageCompleted -> metas[event.messageId] = AssistantMeta(models[event.requestId], event.stop.wireName(), event.usage)
+            else -> Unit
+        }
+    }
+
+    /** 子 agent 的任务：委派它的那次 Agent 调用、是不是后台、深度——结束时的 task_updated 要用 */
+    private class Task(val callId: CallId, val background: Boolean)
+
+    private val tasks = HashMap<String, Task>()
+
+    /** 一条日志事件要翻成哪些系统行：通用的交给 [systemRows]，要看会话间关系的（子 agent、审批）在这里 */
+    private suspend fun emitSystem(key: String?, record: EventRecord) {
+        val sessionId = if (key == null) runtime.sessionId.value else key
+        val event = record.event
+        // 子会话自己的说明 / 重试不外发（SDK 的 system 消息描述的是整个会话）；只翻与任务、审批有关的
+        if (key == null) systemRows(event, sessionId, args.includeHookEvents).forEach(::line)
+        when (event) {
+            is SubagentSpawned -> {
+                // 深度取子会话的来历（根的子 agent = 1）；子会话已经卸下了就按「上一层 + 1」估
+                val depth = app.hub().get(event.child)?.state?.value?.origin?.depth ?: (if (key == null) 1 else 2)
+                tasks[event.child.value] = Task(event.callId, event.background)
+                line(sys("task_started", sessionId) {
+                    put("task_id", event.child.value)
+                    put("tool_use_id", event.callId.value)
+                    put("description", event.description)
+                    put("task_type", "local_agent")
+                    put("is_backgrounded", event.background)
+                    put("spawn_depth", depth)
+                })
+            }
+            is ApprovalRequested -> asks[event.approvalId.value] = event
+            is ApprovalResolved -> {
+                val asked = asks.remove(event.approvalId.value)
+                val denial = event.choice as? ApprovalChoice.Deny
+                // 宿主答的（--permission-prompt-tool stdio）不算「CLI 没问就拒了」；规则 / 模式 / 分类器 / hook / 无人应答的拒绝才是
+                val hostAnswered = hostDecidesPermissions && event.decidedBy == DecidedBy.User
+                if (asked != null && denial != null && !hostAnswered) {
+                    line(sys("permission_denied", sessionId) {
+                        put("tool_name", asked.ask.tool)
+                        put("tool_use_id", asked.callId.value)
+                        if (key != null) put("agent_id", key)
+                        when (val by = event.decidedBy) {
+                            is DecidedBy.Rule -> { put("decision_reason_type", "rule"); put("decision_reason", by.rule) }
+                            is DecidedBy.Mode -> put("decision_reason_type", "mode")
+                            DecidedBy.Classifier -> put("decision_reason_type", "classifier")
+                            else -> Unit
+                        }
+                        put("message", denial.note ?: "权限被拒绝")
+                    })
+                }
+            }
+            is TurnEnded -> if (key != null) tasks[key]?.let { task ->
+                // 子 agent 的一个回合结束 = 它的任务结束：patch 合进 SDK 侧的任务表（status + end_time）
+                line(sys("task_updated", sessionId) {
+                    put("task_id", key)
+                    put("patch", buildJsonObject {
+                        put("status", when (event.outcome) {
+                            TurnOutcome.Completed -> "completed"
+                            is TurnOutcome.Failed -> "failed"
+                            is TurnOutcome.Interrupted -> "killed"
+                        })
+                        put("end_time", record.atMs)
+                    })
+                })
+            }
+            else -> Unit
+        }
+    }
+
+    private fun sys(subtype: String, sessionId: String, fields: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = buildJsonObject {
+        put("type", "system")
+        put("subtype", subtype)
+        fields()
+        put("uuid", UUID.randomUUID().toString())
+        put("session_id", sessionId)
+    }
+
+    // ---- 后台命令 / watch：Hub 的后台任务表 → task_* 与 background_tasks_changed ----
+
+    private val knownJobs = HashMap<String, BackgroundJobInfo>()
+    private var liveSignature: List<String>? = null
+
+    private fun emitBackground(infos: List<BackgroundJobInfo>) {
+        val sessionId = runtime.sessionId.value
+        infos.forEach { info ->
+            val before = knownJobs.put(info.id, info)
+            if (before == null) {
+                line(sys("task_started", sessionId) {
+                    put("task_id", info.id)
+                    put("description", info.description)
+                    put("task_type", "local_bash")
+                    put("is_backgrounded", true)
+                })
+            }
+            if (!info.isRunning && (before == null || before.isRunning)) {
+                val status = when (info.status) {
+                    BackgroundJobStatus.Exited -> if (info.exitCode == null || info.exitCode == 0) "completed" else "failed"
+                    BackgroundJobStatus.Failed -> "failed"
+                    else -> "killed"
+                }
+                line(sys("task_updated", sessionId) {
+                    put("task_id", info.id)
+                    put("patch", buildJsonObject {
+                        put("status", status)
+                        info.endedAtMs?.let { put("end_time", it) }
+                    })
+                })
+                // task_notification 的 output_file 是必带的字符串：没有输出文件的任务只发 task_updated，不编路径
+                info.outputPath?.let { path ->
+                    line(sys("task_notification", sessionId) {
+                        put("task_id", info.id)
+                        put("status", when (status) { "completed" -> "completed"; "failed" -> "failed"; else -> "stopped" })
+                        put("output_file", path.value)
+                        put("summary", "${if (info.kind == BackgroundJobKind.Monitor) "watch" else "后台命令"}「${info.description}」" + when (info.status) {
+                            BackgroundJobStatus.Exited -> "已退出（退出码 ${info.exitCode ?: 0}）"
+                            BackgroundJobStatus.TimedOut -> "到期被收掉"
+                            BackgroundJobStatus.Stopped -> "已被停止"
+                            else -> "出错结束"
+                        })
+                    })
+                }
+            }
+        }
+        // 在跑的全集（SDK：全量替换）：成员变了才发
+        val live = infos.filter { it.isRunning }
+        val signature = live.map { "${it.id}|${it.description}" }
+        if (signature != liveSignature && (liveSignature != null || signature.isNotEmpty())) {
+            line(sys("background_tasks_changed", sessionId) {
+                put("tasks", JsonArray(live.map { j ->
+                    buildJsonObject { put("task_id", j.id); put("task_type", "local_bash"); put("description", j.description) }
+                }))
+            })
+        }
+        liveSignature = signature
+    }
+
+    /** 把 [state] 里还没发过的助手消息与工具结果、以及日志里新落的系统消息发出来（收集协程与收尾各调一遍，靠 [seen] 与游标去重；调用方持 [mutex]） */
     private suspend fun emitNew(key: String?, state: SessionState, parentToolUseId: String?) {
         val mark = seen.getOrPut(key) { Seen(HashSet(), HashSet()) }
         val sessionId = if (key == null) runtime.sessionId.value else key
+        val records = drain(key, sessionId)
+        records.forEach { ingest(it.event) }
+        records.forEach { emitSystem(key, it) }
+        // 子会话的消息行只在 --forward-subagent-text 时才发（没开时它们只用来出 task_* 行）
+        if (key != null && !args.forwardSubagentText) return
         val fresh = state.history.filterIsInstance<HistoryEntry.Assistant>().filter { it.messageId !in mark.assistants }
-        val meta = if (fresh.isEmpty()) emptyMap() else assistantMeta(SessionId(sessionId), if (key == null) fromSeq else 0)
         fresh.forEach { entry ->
             mark.assistants.add(entry.messageId)
-            val info = meta[entry.messageId]
+            val info = metas[entry.messageId]
             // 完整消息到了：这条消息的流（若在发）先合上，再发完整行——与 CC 的先流后整条一致
             if (key == null) closeStream(info?.stop, info?.usage)
-            line(buildJsonObject {
-                put("type", "assistant")
-                put("uuid", UUID.randomUUID().toString())
-                put("session_id", sessionId)
-                put(
-                    "message",
-                    buildJsonObject {
-                        put("id", entry.messageId.value)
-                        put("type", "message")
-                        put("role", "assistant")
-                        put("content", JsonArray(entry.parts.mapNotNull(::block)))
-                        info?.model?.let { put("model", it) }
-                        info?.stop?.let { put("stop_reason", it) }
-                        info?.usage?.let { put("usage", usageJson(it)) }
-                    },
-                )
-                put("parent_tool_use_id", parentToolUseId?.let(::JsonPrimitive) ?: JsonNull)
-                if (key == null && !userUuidOnAssistant) {
-                    userUuidOnAssistant = true
-                    turnUserUuid?.let { put("user_message_uuid", it) }
-                }
-            })
+            val blocks = entry.parts.mapNotNull(::block)
+            // 一个 content block 一行，共用 message.id；没有可发的块（全是 Min 独有的块）也给一行空 content，不让这条消息凭空消失
+            val rows = if (blocks.isEmpty()) listOf<JsonObject?>(null) else blocks
+            rows.forEachIndexed { i, blockJson ->
+                val last = i == rows.lastIndex
+                line(buildJsonObject {
+                    put("type", "assistant")
+                    put("uuid", UUID.randomUUID().toString())
+                    put("session_id", sessionId)
+                    put(
+                        "message",
+                        buildJsonObject {
+                            put("id", entry.messageId.value)
+                            put("type", "message")
+                            put("role", "assistant")
+                            put("content", JsonArray(listOfNotNull(blockJson)))
+                            info?.model?.let { put("model", it) }
+                            // 停止原因与用量在整条消息结束时才知道：只有最后一块带，前面的块 stop_reason 是 null
+                            if (!last) put("stop_reason", JsonNull) else info?.stop?.let { put("stop_reason", it) }
+                            if (last) info?.usage?.let { put("usage", usageJson(it)) }
+                        },
+                    )
+                    put("parent_tool_use_id", parentToolUseId?.let(::JsonPrimitive) ?: JsonNull)
+                    if (key == null && !userUuidOnAssistant) {
+                        userUuidOnAssistant = true
+                        turnUserUuid?.let { put("user_message_uuid", it) }
+                    }
+                })
+            }
         }
         state.toolResults.forEach { (callId, result) ->
             if (mark.results.add(callId)) {

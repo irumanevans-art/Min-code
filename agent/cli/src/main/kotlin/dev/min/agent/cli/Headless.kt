@@ -47,9 +47,12 @@ internal suspend fun runHeadless(
     }
     // 非交互默认 --approve no / 拒答提问，ConsoleUi 不会去读 stdin；它的一切打印都进 stderr。
     // 交给 hub：子 agent 的审批也按 --approve 答掉——以前只答根会话的，子 agent 要审批时整次运行挂到超时（评测集 v1 第 32 题实测）
-    val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub()).attach(scope)
+    // stdio 控制协议（stream-json 输入）：权限询问交给宿主只在 --permission-prompt-tool stdio 且没有 --permission-prompts none 时
+    val control = if (args.inputFormat == InputFormat.StreamJson) StdioControl(stdout) else null
+    val host = control.takeIf { args.permissionPromptTool == "stdio" && args.permissionPrompts == PermissionPrompts.Host }
+    val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub(), host).attach(scope)
     try {
-        if (args.inputFormat == InputFormat.StreamJson) return runStreamInput(app, runtime, args, scope, stdin, stdout, stderr)
+        if (args.inputFormat == InputFormat.StreamJson) return runStreamInput(app, runtime, args, scope, stdin, stdout, stderr, checkNotNull(control))
         val renderer = if (args.outputFormat == OutputFormat.StreamJson) {
             StreamJsonRenderer(app, runtime, args, stdout).also { it.start(scope) }
         } else null

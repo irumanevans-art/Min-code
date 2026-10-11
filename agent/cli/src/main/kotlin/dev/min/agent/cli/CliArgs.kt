@@ -16,6 +16,9 @@ enum class OutputFormat { Text, Json, StreamJson }
 /** `--input-format`（CC cli-reference）：text（默认，提示词来自 -p 参数）/ stream-json（stdin 逐行 JSON 用户消息，多轮在一个进程里跑） */
 enum class InputFormat { Text, StreamJson }
 
+/** `--permission-prompts`（CC cli-reference）：host（默认，权限询问交给宿主）/ none（没人能答，一律拒绝） */
+enum class PermissionPrompts { Host, None }
+
 data class CliArgs(
     val prompt: String?,
     val provider: String,
@@ -63,6 +66,12 @@ data class CliArgs(
     val inputFormat: InputFormat = InputFormat.Text,
     /** `--replay-user-messages`（CC）：把 stdin 收到的用户消息原样回显到 stdout（要求两端都是 stream-json） */
     val replayUserMessages: Boolean = false,
+    /** `--permission-prompt-tool`：只认 `stdio`——权限询问以 `can_use_tool` 控制请求发到 stdout，由 stdin 上的 `control_response` 答复；null = 没给（`-p` 下要审批的调用按 `--approve` 答，默认拒绝） */
+    val permissionPromptTool: String? = null,
+    /** `--permission-prompts`（print 模式）：none 时即便有宿主也不问，要审批的一律拒绝 */
+    val permissionPrompts: PermissionPrompts = PermissionPrompts.Host,
+    /** `--include-hook-events`（CC）：stream-json 里发全部 hook 生命周期行；没有它时只发 SessionStart / Setup 的 */
+    val includeHookEvents: Boolean = false,
     /** --no-browser：MCP OAuth 登录不开浏览器，打印授权 URL、让人把回调 URL 粘回来（照 CC） */
     val noBrowser: Boolean = false,
     val worktree: Boolean = false,
@@ -121,6 +130,10 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
                          每条消息一个回合，stdin 关闭即结束；输出格式不限（text 逐轮打最终回复，json 只打最后一轮的结果，stream-json 全量）；
                          --approve ask 不可用（stdin 被占用）
   --replay-user-messages 把 stdin 收到的用户消息回显到 stdout（要求输入输出都是 stream-json）
+  --permission-prompt-tool stdio  权限询问交给 stdio 上的宿主（要求 -p 与两端 stream-json）：要审批的调用以 control_request / can_use_tool 发到 stdout，
+                         宿主用 control_response（behavior: allow / deny）答复；未应答（含 stdin 关闭）= 拒绝。只认 stdio，不接 MCP 权限提示工具
+  --permission-prompts host|none  none = 不问宿主，要审批的一律拒绝（-p 专用）
+  --include-hook-events  stream-json 发全部 hook 的 hook_started / hook_response（没给时只发 SessionStart / Setup 的）
   --verbose              接受不处理（CC 的 -p stream-json 示例都带它；Min 的事件流本来就是全量的，stderr 的输出也不随它变）
   --resume <会话 id>     接着一个已有会话
   --add-dir <目录...>   附加工作目录（CC 同名）：授予文件访问，并加载它的 .claude/skills 与 .claude/commands（--bare 下只加载 skills）
@@ -161,12 +174,12 @@ private val VALUE_ARGS = setOf(
     "--max-output", "--effort", "--mode", "--approve", "--cwd", "--output-format", "--resume", "--search-backend",
     "--search-url", "--fast-model", "--max-web-searches", "--web-cache-ttl-ms", "--web-deadline-ms", "--max-turns",
     "--json-schema", "--name", "-n", "--fallback-model", "--auto-mode-reviewer", "--max-budget-usd", "--model-timeout-ms",
-    "--tools", "--settings", "--input-format",
+    "--tools", "--settings", "--input-format", "--permission-prompt-tool", "--permission-prompts",
 )
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
     "--include-partial-messages", "--forward-subagent-text", "--no-browser",
-    "--bare", "--safe-mode", "--restricted", "--replay-user-messages", "--verbose",
+    "--bare", "--safe-mode", "--restricted", "--replay-user-messages", "--verbose", "--include-hook-events",
 )
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -271,6 +284,25 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     if ("--replay-user-messages" in flags && (inputFormat != InputFormat.StreamJson || outputFormat != OutputFormat.StreamJson)) {
         throw UsageException("--replay-user-messages 要与 --input-format stream-json 和 --output-format stream-json 一起用")
     }
+    val permissionPrompts = when (val v = values["--permission-prompts"]) {
+        null, "host" -> PermissionPrompts.Host
+        "none" -> PermissionPrompts.None
+        else -> throw UsageException("--permission-prompts 只能是 host 或 none，实际是 \"$v\"")
+    }
+    if (values["--permission-prompts"] != null && prompt == null) {
+        throw UsageException("--permission-prompts 只在 -p 非交互模式下可用")
+    }
+    val promptTool = values["--permission-prompt-tool"]
+    if (promptTool != null) {
+        // 原文的 --permission-prompt-tool 是 MCP 工具名；Min 没有这条路，只接 stdio（宿主在 stdin / stdout 上答）
+        if (promptTool != "stdio") throw UsageException("--permission-prompt-tool 只支持 stdio（Min 不接 MCP 权限提示工具，实际是 \"$promptTool\"）")
+        if (inputFormat != InputFormat.StreamJson || outputFormat != OutputFormat.StreamJson) {
+            throw UsageException("--permission-prompt-tool stdio 要与 -p、--input-format stream-json 和 --output-format stream-json 一起用（询问与答复都走 stdio）")
+        }
+    }
+    if ("--include-hook-events" in flags && (prompt == null || outputFormat != OutputFormat.StreamJson)) {
+        throw UsageException("--include-hook-events 要与 -p 和 --output-format stream-json 一起用")
+    }
     // 审批问人要读 stdin，而 stdin 此时是消息通道：两边抢同一个流，只能在启动时拒绝
     if (inputFormat == InputFormat.StreamJson && values["--approve"]?.equals("ask", ignoreCase = true) == true) {
         throw UsageException("--input-format stream-json 占用了 stdin，--approve ask 没法再从 stdin 读答复；用 --approve yes / no")
@@ -355,6 +387,9 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         forwardSubagentText = "--forward-subagent-text" in flags,
         inputFormat = inputFormat,
         replayUserMessages = "--replay-user-messages" in flags,
+        permissionPromptTool = promptTool,
+        permissionPrompts = permissionPrompts,
+        includeHookEvents = "--include-hook-events" in flags,
         noBrowser = "--no-browser" in flags,
         worktree = "--worktree" in flags,
         worktreeName = values["--worktree"],

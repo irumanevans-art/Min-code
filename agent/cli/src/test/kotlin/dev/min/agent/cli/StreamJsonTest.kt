@@ -147,11 +147,18 @@ class StreamJsonTest {
         assertTrue(reasonOf("""{"type":"user","message":{"role":"user","content":"   "}}""").contains("没有文本内容"))
     }
 
-    @Test fun `keep_alive is ignored, other message types are skipped and control requests are refused`() {
+    @Test fun `keep_alive is ignored, other message types are skipped and control messages are parsed into their own lines`() {
         assertEquals(InputLine.KeepAlive, parseInputLine("""{"type":"keep_alive"}""", 1))
-        assertTrue(parseInputLine("""{"type":"control_response","response":{}}""", 2) is InputLine.Skip)
-        val refused = parseInputLine("""{"type":"control_request","request_id":"r1","request":{"subtype":"interrupt"}}""", 3)
-        assertTrue((refused as InputLine.Reject).reason.contains("control_request"))
+        assertTrue(parseInputLine("""{"type":"mystery"}""", 2) is InputLine.Skip)
+        val control = parseInputLine("""{"type":"control_request","request_id":"r1","request":{"subtype":"interrupt"}}""", 3) as InputLine.Control
+        assertEquals("r1", control.requestId)
+        assertEquals("interrupt", control.request.str("subtype"))
+        val response = parseInputLine("""{"type":"control_response","response":{"subtype":"success","request_id":"q1","response":{"behavior":"deny"}}}""", 4) as InputLine.ControlResponse
+        assertEquals("q1", response.requestId)
+        // 没有 request_id 的控制消息没法对应任何东西：当坏行
+        assertTrue(parseInputLine("""{"type":"control_request","request":{"subtype":"interrupt"}}""", 5) is InputLine.Reject)
+        assertTrue(parseInputLine("""{"type":"control_request","request_id":"r","request":7}""", 6) is InputLine.Reject)
+        assertTrue(parseInputLine("""{"type":"control_response","response":{}}""", 7) is InputLine.Reject)
     }
 
     // ---- 端到端 ----
@@ -251,6 +258,30 @@ class StreamJsonTest {
         assertEquals("completed", result.str("terminal_reason"))
         assertEquals(JsonArray(emptyList()), result["permission_denials"])
         assertEquals(1, result["num_turns"]!!.jsonPrimitive.content.toInt())
+    }
+
+    @Test fun `one assistant row per content block, rows of one message share its id`() {
+        val out = runHeadlessWith("blocks", listOf("-p", "T_BLOCKS") + streamOut) { last ->
+            if (last.contains("T_BLOCKS")) toolsResponse(Triple("call_b", "Bash", buildJsonObject { put("command", "echo b") }), text = "先说一句")
+            else textResponse("BLOCKS_DONE")
+        }
+        assertEquals(listOf("system", "assistant", "assistant", "user", "assistant", "result"), out.lines.map { it.str("type")!! })
+        val (text, tool, final) = out.assistants
+        // SDK：同一次 API 回复可以产出好几条 assistant 消息（一个 content block 一条），共用 message.id
+        fun messageOf(row: JsonObject) = row["message"]!!.jsonObject
+        assertEquals(1, messageOf(text)["content"]!!.jsonArray.size)
+        assertEquals("text", messageOf(text)["content"]!!.jsonArray.single().jsonObject.str("type"))
+        assertEquals("tool_use", messageOf(tool)["content"]!!.jsonArray.single().jsonObject.str("type"))
+        assertEquals(messageOf(text).str("id"), messageOf(tool).str("id"))
+        assertFalse(messageOf(final).str("id") == messageOf(text).str("id"))
+        // 停止原因与用量在流结束时才知道：前面的块是 null、没有 usage，最后一块才带
+        assertEquals(JsonNull, messageOf(text)["stop_reason"])
+        assertNull(messageOf(text)["usage"])
+        assertEquals("tool_use", messageOf(tool).str("stop_reason"))
+        assertNotNull(messageOf(tool)["usage"])
+        // 每一行都是完整的 SDKAssistantMessage
+        out.assistants.forEach { assertEquals(setOf("type", "uuid", "session_id", "message", "parent_tool_use_id"), it.keys) }
+        assertEquals(3, out.assistants.map { it.str("uuid") }.toSet().size)
     }
 
     @Test fun `a tool round trip gives a user line whose tool_result matches the assistant tool_use`() {
@@ -365,10 +396,12 @@ class StreamJsonTest {
         val stdin = userLine("T_ONE", ""","uuid":"u-1"""") + userLine("T_TWO")
         val out = runHeadlessWith("replay", streamIn + streamOut + "--replay-user-messages", stdin, twoTurns("X"))
         assertEquals(0, out.exit)
-        assertEquals(
-            listOf("system", "user", "assistant", "result", "user", "assistant", "result"),
-            out.lines.map { it.str("type")!! },
-        )
+        // 回显在收到消息时就发（读 stdin 与跑回合是两条协程）：每条回显都在它自己那一轮的助手消息之前
+        val types = out.lines.map { it.str("type")!! }
+        assertEquals(listOf("assistant", "result", "assistant", "result"), types.filter { it != "user" && it != "system" })
+        val replayAt = types.indices.filter { types[it] == "user" }
+        val assistantAt = types.indices.filter { types[it] == "assistant" }
+        assertTrue(replayAt[0] < assistantAt[0] && replayAt[1] < assistantAt[1])
         val replays = out.ofType("user")
         // SDKUserMessageReplay：uuid 必带（没给就生成）、isReplay: true、message 原样、parent_tool_use_id null
         replays.forEach {
@@ -424,12 +457,6 @@ class StreamJsonTest {
         assertEquals(1, out.requests.size)
         assertEquals(listOf("success", "error_during_execution"), out.results.map { it.str("subtype") })
         assertTrue(out.results[1]["errors"]!!.toString().contains("第 2 行"))
-    }
-
-    @Test fun `a control request is refused loudly instead of leaving the sender waiting`() {
-        val out = runHeadlessWith("control", streamIn + streamOut, """{"type":"control_request","request_id":"r1","request":{"subtype":"interrupt"}}""" + "\n", twoTurns("X"))
-        assertEquals(1, out.exit)
-        assertTrue(out.results.single()["errors"]!!.toString().contains("control_request"))
     }
 
     @Test fun `a failing turn reports the same subtype and exit code as the json output`() {
