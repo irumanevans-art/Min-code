@@ -75,6 +75,8 @@ interface MinAgentText {
     /** `/goal <条件>` 设上了的回执（[startedTurn]：空闲时已开回合；忙时回合结束才评估） */
     fun goalSet(condition: String, startedTurn: Boolean): String
     fun goalCleared(condition: String): String
+    /** `/reload-skills` 的回执（重扫结果的文字；内核那句是中文，App 按界面语言自己说） */
+    fun skillsReloaded(result: dev.min.agent.kernel.SkillReload): String
 
     /** `/goal` 无参数时的状态说明（没有目标为「没有进行中的目标」） */
     fun goalStatus(goal: GoalView?): String
@@ -218,6 +220,11 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun goalSet(condition: String, startedTurn: Boolean) =
         if (startedTurn) s(R.string.goal_set_started, condition) else s(R.string.goal_set_deferred, condition)
     override fun goalCleared(condition: String) = s(R.string.goal_cleared, condition)
+    override fun skillsReloaded(result: dev.min.agent.kernel.SkillReload) = when {
+        !result.available -> s(R.string.skills_reload_unavailable)
+        result.added.isEmpty() && result.removed.isEmpty() && result.changed.isEmpty() -> s(R.string.skills_reloaded_none, result.total)
+        else -> s(R.string.skills_reloaded_changed, result.total, result.added.size, result.removed.size, result.changed.size)
+    }
     override fun goalStatus(goal: GoalView?): String {
         if (goal == null) return s(R.string.goal_none)
         val head = when (goal.status) {
@@ -260,6 +267,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
         SlashCommandView("mode", s(R.string.min_agent_slash_mode)),
         SlashCommandView("new", s(R.string.min_agent_slash_new)),
         SlashCommandView("goal", s(R.string.min_agent_slash_goal)),
+        SlashCommandView("reload-skills", s(R.string.min_agent_slash_reload_skills)),
     )
 
     override fun backgroundTask(command: String) = command.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(60)

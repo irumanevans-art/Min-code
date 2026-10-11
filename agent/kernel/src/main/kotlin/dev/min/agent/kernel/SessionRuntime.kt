@@ -246,6 +246,8 @@ class SessionRuntime private constructor(
 
     private val commitLock = Mutex()
     private val inputPrepareLock = Mutex()
+    /** 重扫 skills（回合前自动重扫与手动 /reload-skills）互斥：两边同时算差异会重复写事件、重复提醒 */
+    internal val skillRescanLock = Mutex()
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
@@ -640,8 +642,8 @@ class SessionRuntime private constructor(
         // 用户的新输入开始新的一轮：上一轮 skill 的 allowed-tools 放行到此为止（文档）
         if (state.value.skillGrants.isNotEmpty()) commit(listOf(dev.min.agent.spi.SkillToolsCleared()), Durability.Sync)
         security.onUserMessage()
-        // `--add-dir` 里的 skill 在会话中途变了：新回合开始前重扫（回合进行中收到的追加输入不重扫，等下一个空闲点）
-        if (state.value.turn == null) rescanAddDirSkills()
+        // 用户 / 项目 / `--add-dir` 层的 skill 在会话中途变了：新回合开始前重扫（回合进行中收到的追加输入不重扫，等下一个空闲点）
+        if (state.value.turn == null) rescanSkillsBeforeTurn()
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
         val workflow = prepareSavedWorkflow(clientMsgId, prepared)
         startsInFlight.incrementAndGet()
