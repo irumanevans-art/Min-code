@@ -1540,4 +1540,20 @@
     <string name="plugins_auto_update">自动更新</string>
     <string name="plugins_cancel">取消</string>
     <string name="plugins_install">安装</string>
+  <string name="settings_telemetry_title">遥测（本地 OpenTelemetry）</string>
+  <string name="settings_telemetry_on">已开启。把会话的指标与事件导出到下面的端点，并写一份本机 JSONL。不含提示词与回复正文。</string>
+  <string name="settings_telemetry_off">已关闭。不导出任何东西。</string>
+  <string name="settings_telemetry_endpoint_title">OTLP 端点</string>
+  <string name="settings_telemetry_endpoint_none">未设（只写本机文件）</string>
+  <string name="settings_telemetry_endpoint_field">端点，例如 https://collector.example.com</string>
+  <string name="settings_telemetry_headers_title">OTLP 头部</string>
+  <string name="settings_telemetry_headers_set">已设置。加密存放，不回显。</string>
+  <string name="settings_telemetry_headers_unset">未设置</string>
+  <string name="settings_telemetry_headers_field">名=值，多个用逗号分隔。留空保存即清除。</string>
+  <string name="settings_telemetry_export_title">立即导出</string>
+  <string name="settings_telemetry_export_idle">还没导出过</string>
+  <string name="settings_telemetry_export_skipped">遥测关着，没有导出</string>
+  <string name="settings_telemetry_export_result">%1$d 个会话，%2$d 条，失败 %3$d 次</string>
+  <string name="settings_telemetry_problem">设置有问题：%1$s</string>
+  <string name="settings_telemetry_save">保存</string>
 </resources>
