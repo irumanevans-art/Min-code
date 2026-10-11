@@ -34,10 +34,60 @@ internal object PdfFile {
         return null
     }
 
-    /** 数普通对象里的 `/Type /Page` 个数（不含 /Pages）。页对象若藏在压缩的对象流里数不到，返回 null：未知，不是零页 */
+    /**
+     * 数 `/Type /Page` 的个数（不含 /Pages）：明文对象里的，加上压缩对象流里的。
+     * 对象流（PDF 1.5 起，pdfTeX 等默认）里的页对象在明文里一个都看不到；只数明文的话这类 PDF 全是「页数未知」，
+     * 10 页的限制形同虚设，几百页的书会整份发出去，被供应商以页数超限拒绝（这份文档留在历史里，之后每个请求都会再被拒）。
+     * 都数不到返回 null：未知，不是零页
+     */
     fun pageCount(bytes: ByteArray): Int? {
-        val n = PAGE_OBJECT.findAll(bytes.toString(Charsets.ISO_8859_1)).count()
+        val text = bytes.toString(Charsets.ISO_8859_1)
+        val n = PAGE_OBJECT.findAll(text).count() + objectStreams(bytes, text).sumOf { PAGE_OBJECT.findAll(it).count() }
         return if (n == 0) null else n
+    }
+
+    private val OBJECT_STREAM = Regex("/Type\\s*/ObjStm(?![A-Za-z])")
+    private val STREAM_START = Regex("stream\\r?\\n")
+
+    /** 解开的对象流合计最多这么多字节：防压缩炸弹。20 MB 的 PDF 正常解开远小于它，超了就不再往下解（数到多少算多少） */
+    private const val MAX_INFLATED_BYTES = 64 * 1024 * 1024
+
+    /** FlateDecode 的对象流解开后的文本。别的过滤器（LZW 等）不解：少见，数不到就落回「页数未知」 */
+    private fun objectStreams(bytes: ByteArray, text: String): List<String> {
+        val out = mutableListOf<String>()
+        var budget = MAX_INFLATED_BYTES
+        for (m in OBJECT_STREAM.findAll(text)) {
+            val start = STREAM_START.find(text, m.range.last) ?: continue
+            val dict = text.substring(text.lastIndexOf("obj", m.range.first).coerceAtLeast(0), start.range.first)
+            if (!dict.contains("/FlateDecode")) continue
+            val dataStart = start.range.last + 1
+            val dataEnd = text.indexOf("endstream", dataStart).takeIf { it > 0 } ?: continue
+            val inflated = inflate(bytes, dataStart, dataEnd - dataStart, budget) ?: continue
+            budget -= inflated.size
+            out += inflated.toString(Charsets.ISO_8859_1)
+            if (budget <= 0) break
+        }
+        return out
+    }
+
+    /** zlib 解压 [bytes] 的一段，最多 [limit] 字节；数据坏了返回 null（这一个流不数，不让整个读取失败） */
+    private fun inflate(bytes: ByteArray, offset: Int, length: Int, limit: Int): ByteArray? {
+        val inflater = java.util.zip.Inflater()
+        try {
+            inflater.setInput(bytes, offset, length)
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(16 * 1024)
+            while (!inflater.finished() && out.size() < limit) {
+                val n = inflater.inflate(buf)
+                if (n == 0) break // 要更多输入（数据截断）或要预置字典：都解不下去了
+                out.write(buf, 0, minOf(n, limit - out.size()))
+            }
+            return out.toByteArray()
+        } catch (e: java.util.zip.DataFormatException) {
+            return null
+        } finally {
+            inflater.end()
+        }
     }
 
     /** pages 的写法：`3` 或 `1-5`。解析失败返回 null，由调用方报格式错误 */
