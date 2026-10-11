@@ -280,3 +280,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 
 - v1 增量（2026-10-11，嵌套 / 附加目录 skill 的中途通知）：`skills_discovered` 新增可选字段 `assistantMessageId`（触发这次发现的那批工具调用所在的助手消息）：有它时，新发现的 skill 折叠成一段 `<system-reminder>`（`The following skills are now available for use with the Skill tool:` + 每个一行 `- 名字: 说明`）挂在那条助手消息后面的工具结果里，不改冻结的系统提示；缺它（子 agent 继承父会话时）= 只登记、不通知，旧日志同。
   新增事件 `skills_rescanned`（`entries`：新增或改动的 skill，同名替换旧的；`removed`：没了的名字；可选 `notes`），定义在 `spi/SkillEvents.kt`：`--add-dir` 目录里的 `.claude/skills` 在会话中途变了，内核在用户每次开新回合前重扫、有差异才写（`--bare` 不监视，命令与 agents 本来就不监视）。折叠进 `SessionState.nestedSkills`（同名替换）与 `removedSkills`，并把一段 system-reminder 放进 `pendingInputContexts`，随下一条被提升的输入送给模型。压缩之后摘要消息末尾重述仍可用的中途发现的 skill。含这条事件的日志旧版本打不开。
+
+- v1 增量（2026-10-11）：`model_request_failed` 新增可选字段 `retryDelayMs`（重发前等多久，毫秒）与 `maxRetries`（这一类失败最多还允许重试几次），只在 `willRetry:true` 时写；给 `-p --output-format stream-json` 的 `system/api_retry`（SDK 的 `retry_delay_ms` / `max_retries`）用。旧日志没有这两个字段，读端省略对应的键；含新字段的日志旧版本（严格解码）打不开。

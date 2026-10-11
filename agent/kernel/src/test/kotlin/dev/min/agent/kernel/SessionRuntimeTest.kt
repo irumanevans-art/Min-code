@@ -231,6 +231,11 @@ class SessionRuntimeTest {
         assertEquals(listOf(1, 2, 1), starts.map { it.attempt })
         assertEquals(starts[0].requestId, starts[1].requestId)
         assertEquals(listOf(true, false), log.filterIsInstance<ModelRequestFailed>().map { it.willRetry })
+        // 重试的那次失败带着等待与重试上限（stream-json 的 api_retry 要用）；不重试的没有
+        val failures = log.filterIsInstance<ModelRequestFailed>()
+        assertTrue(failures[0].retryDelayMs != null && failures[0].maxRetries != null && failures[0].maxRetries!! >= 1)
+        assertEquals(null, failures[1].retryDelayMs)
+        assertEquals(null, failures[1].maxRetries)
         val outcomes = log.filterIsInstance<TurnEnded>().map { it.outcome }
         assertEquals(TurnOutcome.Completed, outcomes[0])
         assertTrue(outcomes[1] is TurnOutcome.Failed)

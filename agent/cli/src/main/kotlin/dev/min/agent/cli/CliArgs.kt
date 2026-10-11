@@ -13,6 +13,12 @@ enum class ApprovalAnswer { Ask, Yes, No }
 /** `--output-format`（CC :110）：text（默认，stdout 只出最终回复文本）/ json（一行结果对象）/ stream-json（逐行事件流） */
 enum class OutputFormat { Text, Json, StreamJson }
 
+/** `--input-format`（CC cli-reference）：text（默认，提示词来自 -p 参数）/ stream-json（stdin 逐行 JSON 用户消息，多轮在一个进程里跑） */
+enum class InputFormat { Text, StreamJson }
+
+/** `--permission-prompts`（CC cli-reference）：host（默认，权限询问交给宿主）/ none（没人能答，一律拒绝） */
+enum class PermissionPrompts { Host, None }
+
 data class CliArgs(
     val prompt: String?,
     val provider: String,
@@ -57,6 +63,16 @@ data class CliArgs(
     val includePartialMessages: Boolean = false,
     /** --forward-subagent-text（CC :93）：stream-json 里转发子 agent 的消息行（带 parent_tool_use_id） */
     val forwardSubagentText: Boolean = false,
+    /** `--input-format`：stream-json 时 -p 不带提示词，用户消息逐行从 stdin 来（此时 [prompt] 是空串，表示「非交互、无命令行提示」） */
+    val inputFormat: InputFormat = InputFormat.Text,
+    /** `--replay-user-messages`（CC）：把 stdin 收到的用户消息原样回显到 stdout（要求两端都是 stream-json） */
+    val replayUserMessages: Boolean = false,
+    /** `--permission-prompt-tool`：只认 `stdio`——权限询问以 `can_use_tool` 控制请求发到 stdout，由 stdin 上的 `control_response` 答复；null = 没给（`-p` 下要审批的调用按 `--approve` 答，默认拒绝） */
+    val permissionPromptTool: String? = null,
+    /** `--permission-prompts`（print 模式）：none 时即便有宿主也不问，要审批的一律拒绝 */
+    val permissionPrompts: PermissionPrompts = PermissionPrompts.Host,
+    /** `--include-hook-events`（CC）：stream-json 里发全部 hook 生命周期行；没有它时只发 SessionStart / Setup 的 */
+    val includeHookEvents: Boolean = false,
     /** --no-browser：MCP OAuth 登录不开浏览器，打印授权 URL、让人把回调 URL 粘回来（照 CC） */
     val noBrowser: Boolean = false,
     val worktree: Boolean = false,
@@ -119,6 +135,17 @@ const val USAGE = """用法：min-agent [--model <模型 id>] [选项] [-p <提�
   --json                 --output-format json 的别名
   --include-partial-messages stream-json 加输出 text 增量的 stream_event 行
   --forward-subagent-text stream-json 转发子 agent 的消息行（带 parent_tool_use_id）
+  -p --input-format stream-json  非交互多轮：-p 不跟提示词，stdin 逐行读 JSON 用户消息（{"type":"user","message":{"role":"user","content":...}}），
+                         每条消息一个回合，stdin 关闭即结束；输出格式不限（text 逐轮打最终回复，json 只打最后一轮的结果，stream-json 全量）；
+                         --approve ask 不可用（stdin 被占用）
+  --replay-user-messages 把 stdin 收到的用户消息回显到 stdout（要求输入输出都是 stream-json）
+  --permission-prompt-tool <mcp__服务器__工具>  权限询问经这个 MCP 工具问（CC 同名）：入参 {tool_name, input, tool_use_id}，结果是文本里的 PermissionResult JSON；
+                         工具找不到 = 报错退出（退出码 1）；报错 / 非 JSON / 缺 behavior / 改写入参 = 拒绝；标了 requiresUserInteraction 的工具 allow 也转拒绝
+  --permission-prompt-tool stdio  权限询问交给 stdio 上的宿主（要求 -p 与两端 stream-json）：要审批的调用以 control_request / can_use_tool 发到 stdout，
+                         宿主用 control_response（behavior: allow / deny）答复；未应答（含 stdin 关闭）= 拒绝。只认 stdio，不接 MCP 权限提示工具
+  --permission-prompts host|none  none = 不问宿主，要审批的一律拒绝（-p 专用）
+  --include-hook-events  stream-json 发全部 hook 的 hook_started / hook_response（没给时只发 SessionStart / Setup 的）
+  --verbose              接受不处理（CC 的 -p stream-json 示例都带它；Min 的事件流本来就是全量的，stderr 的输出也不随它变）
   --resume <会话 id>     接着一个已有会话
   --add-dir <目录...>   附加工作目录（CC 同名）：授予文件访问，并加载它的 .claude/skills 与 .claude/commands（--bare 下只加载 skills）
   --channels <条目...>  让这些 MCP channel 的消息直接进会话（CC 同名，研究预览）：只收 plugin:<名字>@<市场>，空格分隔；
@@ -164,12 +191,12 @@ private val VALUE_ARGS = setOf(
     "--max-output", "--effort", "--mode", "--approve", "--cwd", "--output-format", "--resume", "--search-backend",
     "--search-url", "--fast-model", "--max-web-searches", "--web-cache-ttl-ms", "--web-deadline-ms", "--max-turns",
     "--json-schema", "--name", "-n", "--fallback-model", "--auto-mode-reviewer", "--max-budget-usd", "--model-timeout-ms",
-    "--tools", "--settings",
+    "--tools", "--settings", "--input-format", "--permission-prompt-tool", "--permission-prompts",
 )
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
     "--include-partial-messages", "--forward-subagent-text", "--no-browser",
-    "--bare", "--safe-mode", "--restricted",
+    "--bare", "--safe-mode", "--restricted", "--replay-user-messages", "--verbose", "--include-hook-events",
 )
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -179,6 +206,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     val addDirs = mutableListOf<Path>()
     val channels = mutableListOf<dev.min.agent.ext.mcp.ChannelRef>()
     val developmentChannels = mutableListOf<dev.min.agent.ext.mcp.ChannelRef>()
+    // `-p` 后面不跟提示词（stream-json 输入时消息从 stdin 来）：记下是哪个写法，循环后再按 --input-format 判定
+    var barePrint: String? = null
     var i = 0
     while (i < argv.size) {
         val arg = argv[i]
@@ -218,6 +247,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
                 flags += "--worktree"
                 argv.getOrNull(i + 1)?.takeUnless { it.startsWith('-') }?.let { values["--worktree"] = it; i++ }
             }
+            // -p / --print：后面是下一个已知参数或到头了，就是没给提示词（CC 的 -p 本来就是开关，提示词是位置参数）
+            (arg == "-p" || arg == "--print") && argv.getOrNull(i + 1).let { it == null || isOptionName(it) } -> barePrint = arg
             arg in FLAG_ARGS -> flags += arg
             "-h" == arg || "--help" == arg -> throw UsageException(USAGE)
             arg !in VALUE_ARGS -> throw UsageException("不认识的参数：$arg\n\n$USAGE")
@@ -243,7 +274,23 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     if (values["-p"] != null && values["--print"] != null) throw UsageException("-p 与 --print 只能给一个")
     // 两个档位参数互斥：CC 原文没规定并存的行为，报用法错误比悄悄选一个稳（环境变量的冲突在 resolveCustomizations 里同样报）
     if ("--bare" in flags && "--safe-mode" in flags) throw UsageException("--bare 与 --safe-mode 只能给一个")
-    val prompt = values["-p"] ?: values["--print"]
+    val inputFormat = when (val v = values["--input-format"]) {
+        null, "text" -> InputFormat.Text
+        "stream-json" -> InputFormat.StreamJson
+        else -> throw UsageException("--input-format 只能是 text 或 stream-json，实际是 \"$v\"")
+    }
+    // stream-json 输入：-p 不跟提示词（消息从 stdin 来）；给了就是写错了——原文没规定并存，停下来比悄悄选一个稳
+    if (inputFormat == InputFormat.StreamJson && (values["-p"] != null || values["--print"] != null)) {
+        throw UsageException("--input-format stream-json 的消息从 stdin 来，-p 后面不要再跟提示词")
+    }
+    if (barePrint != null && inputFormat != InputFormat.StreamJson) {
+        throw UsageException("$barePrint 缺少取值（后面要跟提示词；只有 --input-format stream-json 时才可以不给，消息从 stdin 读）\n\n$USAGE")
+    }
+    if (inputFormat == InputFormat.StreamJson && barePrint == null) {
+        throw UsageException("--input-format stream-json 要与 -p 一起用（非交互模式才读 stdin 里的消息）")
+    }
+    // 空串 = 非交互、没有命令行提示：既有的 `prompt != null` 判断（非交互 / 交互）照旧成立
+    val prompt = values["-p"] ?: values["--print"] ?: if (barePrint != null) "" else null
     val outputFormat = when {
         "--json" in flags && values["--output-format"] != null ->
             // --json 是 --output-format json 的别名：同时给且不一致是写错了
@@ -267,6 +314,37 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     }
     if (flags.contains("--forward-subagent-text") && (prompt == null || outputFormat != OutputFormat.StreamJson)) {
         throw UsageException("--forward-subagent-text 要与 -p 和 --output-format stream-json 一起用")
+    }
+    if ("--replay-user-messages" in flags && (inputFormat != InputFormat.StreamJson || outputFormat != OutputFormat.StreamJson)) {
+        throw UsageException("--replay-user-messages 要与 --input-format stream-json 和 --output-format stream-json 一起用")
+    }
+    val permissionPrompts = when (val v = values["--permission-prompts"]) {
+        null, "host" -> PermissionPrompts.Host
+        "none" -> PermissionPrompts.None
+        else -> throw UsageException("--permission-prompts 只能是 host 或 none，实际是 \"$v\"")
+    }
+    if (values["--permission-prompts"] != null && prompt == null) {
+        throw UsageException("--permission-prompts 只在 -p 非交互模式下可用")
+    }
+    val promptTool = values["--permission-prompt-tool"]
+    if (promptTool != null) {
+        // 原文（CLI reference）的 --permission-prompt-tool 是 MCP 工具名：mcp__服务器__工具。stdio 是 SDK 控制协议的取值
+        // （宿主在 stdin / stdout 上答），来自 SDK 而不是 CLI 参考页，Min 两种都认
+        val mcpName = Regex("mcp__.+?__.+").matches(promptTool)
+        if (promptTool != "stdio" && !mcpName) {
+            throw UsageException("--permission-prompt-tool 要么是 MCP 工具名（mcp__服务器__工具），要么是 stdio（SDK 控制协议），实际是 \"$promptTool\"")
+        }
+        if (prompt == null) throw UsageException("--permission-prompt-tool 只在 -p 非交互模式下可用")
+        if (promptTool == "stdio" && (inputFormat != InputFormat.StreamJson || outputFormat != OutputFormat.StreamJson)) {
+            throw UsageException("--permission-prompt-tool stdio 要与 -p、--input-format stream-json 和 --output-format stream-json 一起用（询问与答复都走 stdio）")
+        }
+    }
+    if ("--include-hook-events" in flags && (prompt == null || outputFormat != OutputFormat.StreamJson)) {
+        throw UsageException("--include-hook-events 要与 -p 和 --output-format stream-json 一起用")
+    }
+    // 审批问人要读 stdin，而 stdin 此时是消息通道：两边抢同一个流，只能在启动时拒绝
+    if (inputFormat == InputFormat.StreamJson && values["--approve"]?.equals("ask", ignoreCase = true) == true) {
+        throw UsageException("--input-format stream-json 占用了 stdin，--approve ask 没法再从 stdin 读答复；用 --approve yes / no")
     }
     if (values["--json-schema"] != null && prompt == null) {
         throw UsageException("--json-schema 只在 -p 非交互模式下可用（结构化输出是给跑批要结果的，不是给交互会话的）")
@@ -346,6 +424,11 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         images = "--images" in flags,
         includePartialMessages = "--include-partial-messages" in flags,
         forwardSubagentText = "--forward-subagent-text" in flags,
+        inputFormat = inputFormat,
+        replayUserMessages = "--replay-user-messages" in flags,
+        permissionPromptTool = promptTool,
+        permissionPrompts = permissionPrompts,
+        includeHookEvents = "--include-hook-events" in flags,
         noBrowser = "--no-browser" in flags,
         worktree = "--worktree" in flags,
         worktreeName = values["--worktree"],
@@ -481,3 +564,7 @@ internal fun resolveCustomizations(bare: Boolean, safeMode: Boolean, env: (Strin
         else -> Customizations.Full
     }
 }
+
+/** 命令行里 `-p` 之后的这个词是不是一个已知参数名（是 = `-p` 没带提示词；不是 = 它就是提示词，哪怕以 `-` 开头） */
+private fun isOptionName(arg: String): Boolean =
+    arg in VALUE_ARGS || arg in FLAG_ARGS || arg in setOf("--add-dir", "--plugin-dir", "--worktree", "-w", "-h", "--help")

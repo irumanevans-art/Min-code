@@ -317,6 +317,35 @@ internal class DesktopApp(
     /** stream-json 的 init 行用：`供应商/模型 id` */
     internal fun modelLabel(): String = "${provider.id}/${profile.ref.modelId}"
 
+    /** -p 结果 modelUsage 的窗口与输出上限：先看这次启动配置过的模型（含 --context / --max-output 的覆盖），再查目录；都没有 = 不知道 */
+    internal fun modelLimits(ref: ModelRef): ModelLimits? {
+        val profile = (listOfNotNull(profile, fastSelection?.profile) + fallback.selections.values.map { it.profile }).firstOrNull { it.ref == ref }
+            ?: Catalog.bundled().model(ref)
+        return profile?.let { ModelLimits(it.contextWindow, it.maxOutputTokens) }
+    }
+
+    /** stream-json 的 initialize 应答用：磁盘上可用的输出样式名（与 `/output-style` 列的同一份） */
+    internal suspend fun availableStyleNames(): List<String> = outputStyles().values.map { it.name }
+
+    /**
+     * stream-json 的 `set_model` 控制请求：`null` / `default` = 启动时的主模型；别的只能是这次启动配置过的模型
+     * （主模型、`--fast-model`、`--fallback-model` 各项）——桌面 CLI 只给这几个备了凭证与客户端，换别的会在下一个请求才炸。
+     * 对不上返回 null，调用方回错误应答
+     */
+    internal fun switchableModel(raw: String?): ModelRef? {
+        if (raw == null || raw == "default") return profile.ref
+        val ref = try { ModelAliases.resolve(ModelRef(provider.id, raw), Catalog.bundled()).ref } catch (_: IllegalArgumentException) { return null }
+        val configured = listOfNotNull(profile.ref, fastSelection?.profile?.ref) + fallback.selections.values.map { it.profile.ref }
+        return configured.firstOrNull { it == ref }
+    }
+
+    /** stream-json 的助手消息 / 流事件里 `message.model` 用：不带供应商前缀的模型 id（Anthropic 消息里的 model 就是这个形状） */
+    internal fun modelId(): String = profile.ref.modelId
+
+    /** stream-json init 行用：已装载插件的名字与根路径（没装载 / safe 档 = 空） */
+    internal fun loadedPlugins(): List<Pair<String, String>> =
+        pluginBundle?.batch?.plugins.orEmpty().map { it.namespace to it.root }
+
     /**
      * `--max-budget-usd` fail-closed 的启动面：设了上限，这次运行**可能用到的模型**就都得有 USD 价格——
      * 主模型、回退链、`--fast-model`、点名的 `--auto-mode-reviewer`，一个没有就启动报错（说清是哪个）。

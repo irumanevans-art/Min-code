@@ -57,6 +57,17 @@ class SessionCostTest {
     }
 
     @Test
+    fun `per-model amounts are kept per currency and unpriced requests are counted per model`() {
+        val totals = totalCost(listOf(charged(m1, 1.0, "USD"), charged(m1, 0.5, "USD"), charged(m1, 4.0, "CNY"), charged(m2, null, null)))
+        val one = totals.perModel.getValue(m1)
+        assertEquals(mapOf("USD" to 1.5, "CNY" to 4.0), one.amounts)
+        assertEquals(0, one.unpriced)
+        val two = totals.perModel.getValue(m2)
+        assertEquals(emptyMap<String, Double>(), two.amounts)
+        assertEquals(1, two.unpriced)
+    }
+
+    @Test
     fun `small amounts keep significant digits, large ones two decimals`() {
         assertEquals("0.000432", formatCostAmount(0.0004321))
         assertEquals("0", formatCostAmount(0.0))

@@ -33,7 +33,11 @@ internal class RunBudget(internal val limitUsd: Double?) {
     }
 
     /** 一个模型的累计：请求次数与用量（给 /cost 与 -p 结果的「各模型用量」） */
-    internal class ModelSpend(var requests: Int, var usage: Usage)
+    internal class ModelSpend(var requests: Int, var usage: Usage) {
+        /** 按币种累计的金额（只记有价格的请求）与没价格的请求数：-p 结果的 modelUsage.costUSD 用 */
+        val amounts = LinkedHashMap<String, Double>()
+        var unpriced = 0
+    }
 
     /** 提交事件时喂账：只认 [ModelCharged]，别的事件（含恢复补的收尾）不进这本「运行」账 */
     fun onCommit(root: SessionId, events: List<SessionEvent>) {
@@ -51,6 +55,7 @@ internal class RunBudget(internal val limitUsd: Double?) {
             val prev = spend.perModel.getOrPut(model) { ModelSpend(0, Usage()) }
             prev.requests += 1
             prev.usage += usage
+            if (amount == null || currency == null) prev.unpriced += 1 else prev.amounts.merge(currency, amount, Double::plus)
             when {
                 amount == null || currency == null -> spend.unpriced += 1
                 currency == "USD" -> {
@@ -92,7 +97,12 @@ internal class RunBudget(internal val limitUsd: Double?) {
             spend.byCurrency.forEach { (c, v) -> byCurrency[c] = (byCurrency[c] ?: 0.0) + v }
             unpriced += spend.unpriced
             spend.perModel.forEach { (m, s) ->
-                perModel.merge(m, ModelUsage(s.requests, s.usage)) { a, b -> ModelUsage(a.requests + b.requests, a.usage + b.usage) }
+                perModel.merge(m, ModelUsage(s.requests, s.usage, s.amounts.toMap(), s.unpriced)) { a, b ->
+                    ModelUsage(
+                        a.requests + b.requests, a.usage + b.usage,
+                        (a.amounts.keys + b.amounts.keys).associateWith { (a.amounts[it] ?: 0.0) + (b.amounts[it] ?: 0.0) }, a.unpriced + b.unpriced,
+                    )
+                }
             }
         }
         CostTotals(byCurrency, unpriced, perModel)

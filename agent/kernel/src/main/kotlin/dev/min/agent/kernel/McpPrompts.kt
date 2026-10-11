@@ -23,3 +23,24 @@ suspend fun SessionRuntime.getMcpPrompt(server: String, prompt: String, argument
     else ResultBudget.apply(ToolResult(parts), MCP_RESULT_BUDGET_CHARS, deps.host.artifacts(sessionId), dev.min.agent.protocol.CallId("prompt-${deps.ids.next("p")}"))
 } catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
 catch (e: Exception) { McpResults.failure(server, e) }
+
+/** 此刻生效的 MCP 工具（全名 `mcp__服务器__工具`）；还没有快照 = 空。`--permission-prompt-tool` 用来找提示工具 */
+fun SessionRuntime.mcpToolEntries(): List<dev.min.agent.spi.McpToolEntry> = state.value.mcpTools?.tools.orEmpty()
+
+/**
+ * 按全名调用一个已连接的 MCP 工具，不走审批 / hooks / 日志（它是 `--permission-prompt-tool` 本身，不是模型的一次工具调用）。
+ * 找不到这个工具返回 null；失败一律是错误结果（isError），不抛异常（取消照常传出）
+ */
+suspend fun SessionRuntime.callMcpToolByName(name: String, arguments: JsonObject): ToolResult? {
+    val entry = mcpToolEntries().firstOrNull { it.name == name } ?: return null
+    return mcpCaller.call(
+        McpCallRequest(
+            server = entry.server, tool = entry.tool, arguments = arguments, sessionId = sessionId,
+            callId = dev.min.agent.protocol.CallId("prompt-${deps.ids.next("p")}"), artifacts = deps.host.artifacts(sessionId), progress = {},
+        ),
+    )
+}
+
+/** MCP 工具结果里服务器给的文本（去掉给模型看的包装、只取文本块）：权限提示工具的结果要按 JSON 解，不能带包装 */
+fun mcpResultText(result: ToolResult): String =
+    result.content.filterIsInstance<TextPart>().joinToString("\n\n") { McpResults.unwrap(it.text) }

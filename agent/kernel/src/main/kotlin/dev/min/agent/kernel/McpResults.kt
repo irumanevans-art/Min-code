@@ -123,6 +123,16 @@ internal object McpResults {
 
     private fun attr(text: String) = text.replace("\"", "'").replace("<", "‹").replace(">", "›")
 
+    /** [toToolResult] 的反操作：去掉给模型看的 `<mcp-result …>` 包装，取回服务器给的文本（不是这个形状的原样返回） */
+    fun unwrap(text: String): String {
+        val open = text.indexOf("<$TAG ")
+        val close = text.lastIndexOf("</$TAG>")
+        if (open != 0 || close < 0) return text
+        val start = text.indexOf(">\n", open)
+        if (start < 0 || start + 2 > close) return text
+        return text.substring(start + 2, close).trimEnd().replace("&lt;$TAG", "<$TAG").replace("&lt;/$TAG", "</$TAG")
+    }
+
     /** 只转义本系统的标签，其余原样：服务器返回的代码、HTML 不该被改写 */
     fun escape(text: String): String = text.replace("<$TAG", "&lt;$TAG").replace("</$TAG", "&lt;/$TAG")
 }

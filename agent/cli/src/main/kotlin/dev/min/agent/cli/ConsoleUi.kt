@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.serialization.json.put
 import java.io.BufferedReader
 import java.io.PrintStream
 
@@ -38,6 +39,11 @@ internal class ConsoleUi(
     private val hub: dev.min.agent.kernel.SessionHub? = null,
     /** 交互终端才提示等批准的跨会话消息（`-p` 没有人能敲 /inbound approve，提示只会污染 stderr） */
     private val announceHeldPeers: Boolean = false,
+    /**
+     * `--permission-prompt-tool`（stdio 上的宿主，或 MCP 工具）：要审批的工具调用（根会话与子 agent）与 AskUserQuestion 交给它，
+     * 不按 [approve] 自动答。网络域名审批仍按 [approve]（宿主协议里没有对应的询问）
+     */
+    private val host: ApprovalHost? = null,
 ) {
     private val announced = mutableSetOf<CallId>()
     private val finished = mutableSetOf<CallId>()
@@ -47,6 +53,9 @@ internal class ConsoleUi(
     private var noticesSeen: MutableSet<String>? = null
     private var channelsSeen: MutableSet<String>? = null
     private val idleAnswers = java.util.concurrent.ConcurrentHashMap<String, MutableList<QuestionAnswer>>()
+    /** 正在等宿主答复的询问（审批 id / 提问 id → 协程）；审批已经不在等了（回合被中断等）就取消它，宿主会收到 control_cancel_request */
+    private val hostJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    private lateinit var uiScope: CoroutineScope
     @Volatile var mainOwnsInput: Boolean = false
     @Volatile private var idleInput: Pair<dev.min.agent.protocol.SessionId, String>? = null
 
@@ -66,6 +75,7 @@ internal class ConsoleUi(
                 delay(500)
             }
         }
+        uiScope = scope
         launch {
             runtime.live.collect { update ->
                 when (update) {
@@ -108,6 +118,10 @@ internal class ConsoleUi(
                 if (announced.add(call.callId)) out.println("\n▸ ${call.tool} ${summarize(call.input.toString())}")
                 when (val phase = call.phase) {
                     is CallPhase.AwaitingApproval -> if (answered.add(phase.approvalId.value)) {
+                        if (host != null) {
+                            hostAsk(runtime, null, phase.approvalId.value, call.callId, call.tool, call.input, phase.ask.summary)
+                            return@forEach
+                        }
                         // 弹审批提示时跑 Notification hooks（permission_prompt；CC 的字段原文照写）。
                         // CC 等约 6 秒确认人不在才发，终端这里没有那套打字检测，弹的时候直接发
                         if (approve == ApprovalAnswer.Ask) {
@@ -149,6 +163,11 @@ internal class ConsoleUi(
                 when (val what = item.what) {
                     is dev.min.agent.kernel.HubPending.What.Network -> Unit
                     is dev.min.agent.kernel.HubPending.What.Approval -> if (answered.add(what.approvalId.value)) {
+                        if (host != null) {
+                            val input = target.state.value.turn?.calls?.get(what.callId)?.input ?: kotlinx.serialization.json.JsonObject(emptyMap())
+                            hostAsk(target, item.session.value, what.approvalId.value, what.callId, what.tool, input, what.ask.summary)
+                            return@forEach
+                        }
                         out.println("\n▸ [${item.agentType ?: "子 agent"}] ${what.tool} ${summarize(what.ask.summary)}")
                         if (approve == ApprovalAnswer.Ask) {
                             target.notifyHooks("permission_prompt", "Claude needs your permission", "Permission needed")
@@ -161,6 +180,12 @@ internal class ConsoleUi(
                             .forEach { asked -> if (questionsSeen.add(asked.questionId.value)) answerQuestions(asked, target) }
                     }
                 }
+            }
+            if (host != null) {
+                val awaiting = calls.mapNotNull { (it.phase as? CallPhase.AwaitingApproval)?.approvalId?.value }.toSet() +
+                    pending.filter { it.root == runtime.sessionId }.mapNotNull { (it.what as? dev.min.agent.kernel.HubPending.What.Approval)?.approvalId?.value } +
+                    (listOf(runtime) + pending.filter { it.root == runtime.sessionId }.mapNotNull { hub?.get(it.session) }).flatMap { r -> r.state.value.turn?.pendingQuestions.orEmpty().map { it.questionId.value } }
+                hostJobs.filterKeys { it !in awaiting }.values.forEach(Job::cancel)
             }
             val targets = (listOf(runtime) + pending.filter { it.root == runtime.sessionId }.mapNotNull { hub?.get(it.session) }).distinctBy { it.sessionId }
             for (target in targets) {
@@ -191,8 +216,50 @@ internal class ConsoleUi(
         }
     }
 
+    /**
+     * 把一次工具审批交给 stdio 上的宿主（`can_use_tool`）：另起协程等答复，不挡住状态收集。答复经 [StdioControl.decide] 裁决
+     * （未应答 / 格式不对 / 伪造 id 都不会变成批准），裁决出的答复走和终端里人答一样的 [SessionRuntime.answerApproval]
+     */
+    private fun hostAsk(target: SessionRuntime, agentId: String?, approvalId: String, callId: CallId, tool: String, input: kotlinx.serialization.json.JsonObject, summary: String) {
+        val job = uiScope.launch {
+            target.notifyHooks("permission_prompt", "Claude needs your permission", "Permission needed")
+            val decision = host!!.ask(StdioControl.HostAsk(target.sessionId, callId, tool, input, summary, agentId))
+            target.answerApproval(dev.min.agent.protocol.ApprovalId(approvalId), decision.choice)
+            if (decision.interrupt) runtime.interrupt()
+        }
+        hostJobs[approvalId] = job
+        job.invokeOnCompletion { hostJobs.remove(approvalId) }
+    }
+
+    /** AskUserQuestion 同样走 can_use_tool（SDK：tool_name 为 AskUserQuestion，答案放 updatedInput.answers）；拒绝或答不上来 = 用户没有回答 */
+    private fun hostQuestion(asked: AskedQuestion, target: SessionRuntime) {
+        val job = uiScope.launch {
+            target.notifyHooks("agent_needs_input", "Claude is waiting for your answer")
+            val input = kotlinx.serialization.json.buildJsonObject {
+                put("questions", kotlinx.serialization.json.JsonArray(asked.questions.map { q ->
+                    kotlinx.serialization.json.buildJsonObject {
+                        put("question", q.question); put("header", q.header); put("multiSelect", q.multiSelect)
+                        put("options", kotlinx.serialization.json.JsonArray(q.options.map { o ->
+                            kotlinx.serialization.json.buildJsonObject { put("label", o.label); put("description", o.description) }
+                        }))
+                    }
+                }))
+            }
+            val decision = host!!.ask(StdioControl.HostAsk(target.sessionId, asked.callId, "AskUserQuestion", input, "AskUserQuestion"), rewritable = true)
+            val answers = if (decision.choice == ApprovalChoice.Once) decision.updatedInput?.let { hostQuestionAnswers(asked.questions, it) } else null
+            if (answers == null) target.declineQuestion(asked.questionId)
+            else try { target.answerQuestion(asked.questionId, answers) } catch (e: IllegalArgumentException) { target.declineQuestion(asked.questionId) }
+        }
+        hostJobs[asked.questionId.value] = job
+        job.invokeOnCompletion { hostJobs.remove(asked.questionId.value) }
+    }
+
     /** 回车是拒答；外部请求遇到输入流结束需要回 cancel，不能混成用户明确拒绝。 */
     private suspend fun answerQuestions(asked: AskedQuestion, target: SessionRuntime = runtime) {
+        if (host != null && asked.server == null) {
+            hostQuestion(asked, target)
+            return
+        }
         if (approve != ApprovalAnswer.Ask && asked.server == null) {
             target.declineQuestion(asked.questionId)
             return

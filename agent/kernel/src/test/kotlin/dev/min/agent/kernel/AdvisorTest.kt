@@ -108,6 +108,9 @@ class AdvisorTest {
             assertEquals(3, charged.size)
             assertEquals(advisor, charged[1].model)
             assertEquals(charged.sumOf { it.amount!! }, hub.runCostOf(rt.sessionId).byCurrency.getValue("USD"), 0.00000001)
+            // 运行账本也按模型留金额（-p 结果的 modelUsage.costUSD 用）：各模型金额之和就是总额，advisor 模型有自己的一份
+            assertEquals(charged.sumOf { it.amount!! }, hub.runCostOf(rt.sessionId).perModel.values.sumOf { it.amounts["USD"] ?: 0.0 }, 0.00000001)
+            assertTrue(hub.runCostOf(rt.sessionId).perModel.getValue(advisor).amounts.getValue("USD") > 0.0)
             assertTrue(events.map { it.event }.filterIsInstance<Note>().any { it.text.contains("other") && it.text.contains("对话") })
             assertEquals(fold(store.peek(rt.sessionId)!!.header, events), rt.state.value)
             rt.changeAdvisor(null)

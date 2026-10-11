@@ -566,9 +566,15 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 val goalRetryable = !goalOn || e.kind != ModelFailureKind.RateLimited
                 val attemptsAllowed = if (goalOn) goalAutoRetries() + 1 else deps.retry.maxAttempts
                 val willRetry = overflowRetry || e.retryable && goalRetryable && attempt < attemptsAllowed
+                // 重发前的等待先算出来、与失败一起落盘（stream-json 的 api_retry 要给 retry_delay_ms）；撞墙重试是压缩后立刻重发，不等
+                val wait = if (willRetry && !overflowRetry) deps.retry.delayMs(attempt, e.retryAfterMs) else 0L
                 rt.commit(
                     listOf(
-                        ModelRequestFailed(turnId, requestId, attempt, e.kind, e.message ?: e.kind.name, e.httpStatus, willRetry),
+                        ModelRequestFailed(
+                            turnId, requestId, attempt, e.kind, e.message ?: e.kind.name, e.httpStatus, willRetry,
+                            retryDelayMs = if (willRetry) wait else null,
+                            maxRetries = if (willRetry) attemptsAllowed - 1 else null,
+                        ),
                     ),
                     Durability.Sync,
                 )
@@ -602,7 +608,6 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     }
                     throw TurnAbort(failureMessage(e), e.kind)
                 }
-                val wait = deps.retry.delayMs(attempt, e.retryAfterMs)
                 if (goalOn) {
                     // CC：「Goal still active」——告诉用户这次失败会自动重试、等多久，免得以为卡住了
                     rt.commit(listOf(Note(NoteLevel.Info, "Goal still active：${e.message ?: e.kind.name}。${wait / 1000} 秒后自动重试（第 ${attempt + 1} 次）")), Durability.Batched)
