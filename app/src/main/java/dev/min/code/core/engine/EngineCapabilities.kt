@@ -230,7 +230,7 @@ data class EngineCapabilities(
             planMode = true,
             modelHotSwap = true,
             effortHotSwap = true,
-            cwdChange = false,
+            cwdChange = true,
             userShell = false,
             // 改动面板的撤销走内核的编辑记录（含子 agent 的编辑），见 MinEditRestore
             checkpointRevert = true,

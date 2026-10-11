@@ -124,12 +124,15 @@ class MinCommandHandler(
         is SessionCommand.StopTask -> { effects.killTask(command.taskId); CommandResult.Accepted }
         // 模型表每次状态更新都按设置现算，没有要刷新的缓存
         is SessionCommand.Refresh -> CommandResult.Accepted
-        // 能力位为假的几条（cwd / shell）在 supports 就拦了；引擎专有设置项 Min 没有
+        // 换会话目录：内核的 changeSettings(cwd) 走 CwdChanged（权限范围、记忆、MCP roots 跟着新目录，模型看到一段提醒）。
+        // 回合进行中、目录不存在、隔离在 worktree 里的会话，内核拒绝，原因原样回给界面
+        is SessionCommand.SetCwd -> { root.changeSettings(cwd = dev.min.agent.spi.GuestPath(command.path)); CommandResult.Accepted }
+        // 能力位为假的 shell 在 supports 就拦了；引擎专有设置项 Min 没有
         is SessionCommand.Revert ->
             if (editRestore == null) CommandResult.Unsupported
             else if (command.toolUseId in editRestore.revert(listOf(command.toolUseId))) CommandResult.Accepted
             else CommandResult.Rejected("没能撤销这次修改")
-        is SessionCommand.SetCwd, is SessionCommand.RunShell, is SessionCommand.SetEngineOption ->
+        is SessionCommand.RunShell, is SessionCommand.SetEngineOption ->
             CommandResult.Unsupported
     }
 

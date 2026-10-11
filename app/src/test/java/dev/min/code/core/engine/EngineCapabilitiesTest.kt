@@ -25,7 +25,7 @@ class EngineCapabilitiesTest {
         "planMode" to Triple("true", "false", "true"),
         "modelHotSwap" to Triple("true", "true", "true"),
         "effortHotSwap" to Triple("false", "true", "true"),
-        "cwdChange" to Triple("true", "true", "false"),
+        "cwdChange" to Triple("true", "true", "true"),
         "userShell" to Triple("true", "false", "false"),
         "checkpointRevert" to Triple("true", "false", "true"),
         "subagents" to Triple("true", "false", "true"),
@@ -98,7 +98,7 @@ class EngineCapabilitiesTest {
     fun `commands tied to a capability bit are gated by it`() {
         val min = EngineCapabilities.MinAgent
         val codex = EngineCapabilities.Codex
-        assertFalse(min.supports(SessionCommand.SetCwd("1", "/x")))
+        assertTrue("Min 经内核 changeSettings(cwd) 换会话目录", min.supports(SessionCommand.SetCwd("1", "/x")))
         assertTrue(codex.supports(SessionCommand.SetCwd("1", "/x")))
         assertFalse(min.supports(SessionCommand.RunShell("1", "ls")))
         assertFalse(codex.supports(SessionCommand.Revert("1", "tu")))

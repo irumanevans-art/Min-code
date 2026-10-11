@@ -162,6 +162,18 @@ class MinCommandTest {
 
     private fun skillFile(description: String, body: String) = "---\ndescription: $description\n---\n$body"
 
+    @Test fun `set cwd moves the session directory through the kernel and a missing directory is rejected`() {
+        val r = skillsRig(mutableMapOf("/workspace/sub/README.md" to "x"))
+        runBlocking {
+            assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.SetCwd(cmd(), "/workspace/sub")))
+            assertEquals("/workspace/sub", r.root.state.value.settings.cwd.value)
+            assertTrue(r.events().any { it is dev.min.agent.spi.CwdChanged })
+            val missing = r.session.submit(SessionCommand.SetCwd(cmd(), "/workspace/nope"))
+            assertTrue("不存在的目录内核拒绝：$missing", missing is CommandResult.Rejected)
+        }
+        assertEquals("/workspace/sub", r.root.state.value.settings.cwd.value)
+    }
+
     @Test fun `slash reload-skills in the app picks up a new skill, says so with a notice and puts it in the menu`() {
         val files = mutableMapOf("/workspace/.claude/skills/old/SKILL.md" to skillFile("old one", "OLD"))
         val r = skillsRig(files)
@@ -411,7 +423,6 @@ class MinCommandTest {
     @Test fun commandsTheEngineCannotDoAreUnsupported() {
         val r = rig(ScriptedModel())
         runBlocking {
-            assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.SetCwd(cmd(), "/x")))
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.RunShell(cmd(), "ls")))
             // 撤销现在走内核的编辑记录：没有这次调用的记录就是被拒，不是「不支持」
             assertTrue(r.session.submit(SessionCommand.Revert(cmd(), "c")) is CommandResult.Rejected)
