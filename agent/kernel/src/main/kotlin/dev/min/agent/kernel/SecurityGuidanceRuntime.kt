@@ -56,8 +56,8 @@ import java.util.concurrent.ConcurrentHashMap
  *    每小时最多 20 次；与回合末审查已经报过的同一条发现不重复。
  *
  * 改动清单：在 git 仓库里取工作区差异（回合开头拍一个基线 tree、回合末再拍一个，见 [SecurityGit]），再并上文件工具的调用；
- * 不在仓库里退回只取文件工具的调用。回合末审查交互会话里在后台跑（见 [turnEnd]），提交 / 推送审查仍在那次 Bash 调用里同步审
- * （它的发现要挂在那次调用的结果后面）。审查者模型由 SECURITY_REVIEW_MODEL / SG_AGENTIC_MODEL 点名（过 availableModels 名单），不点名用会话模型。
+ * 不在仓库里退回只取文件工具的调用。回合末审查与提交 / 推送审查在交互会话里都在后台跑（见 [turnEnd]、[afterBash]、[launchBackground]），
+ * 无头会话里同步审（回合末审查的发现交回主模型、提交审查的发现挂在那次 Bash 结果后面）。审查者模型由 SECURITY_REVIEW_MODEL / SG_AGENTIC_MODEL 点名（过 availableModels 名单），不点名用会话模型。
  * 去重表落日志（[SecurityGuidanceSeen]）。
  *
  * 启用：settings 的 `enabledPlugins` 里有 `security-guidance@<市场>: true`（项目 / 本地层要过工作区信任，否则一个没信任的仓库就能替人开出模型调用）；
@@ -241,7 +241,18 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime, private v
         )
         // 不在仓库里 / 没有提交可看：静默跳过（文档：在仓库之外这两层静默跳过）
         val diff = pushed?.text ?: (shown as? ExecResult.Exited)?.takeIf { it.exitCode == 0 && it.output.isNotBlank() }?.output ?: return
-        val reason = review(SecurityGuidance.commitReviewPrompt(command, diff.take(MAX_DIFF_CHARS), cfg.guidance, pushed?.commits ?: 1), "commit", COMMIT_MODEL_VAR) ?: return
+        val prompt = SecurityGuidance.commitReviewPrompt(command, diff.take(MAX_DIFF_CHARS), cfg.guidance, pushed?.commits ?: 1)
+        if (!rt.state.value.created.headless) {
+            // 交互会话：快的部分（取推送前后的引用、取补丁）已经在上面同步做完——提交可能紧接着又有新提交，引用与 HEAD 不等人——
+            // 审查本身（模型调用）放后台，Bash 的结果照常立刻交回。发现以 hook 来源的输入送回（见 [launchBackground]）。
+            // 每小时 20 次的计数在上面、起审查之前就记了，后台不放宽它；「已报过」的去重在审查者出结论后查（[reviewForCommit]）。
+            // 与回合末的先后：提交审查在回合中途（那次 Bash 调用时）就起，不等回合收尾，不受 Stop hook / `/goal` 的先后约束；
+            // 回合收尾时它还没出结论也不拦（回合照常结束，发现随后另开跟进回合；`/goal` 到那时若已达成则目标已清，跟进不再受它管）。
+            launchBackground { reviewForCommit(prompt) }
+            return
+        }
+        // 无头（`-p`）：进程回合一收尾就退出，后台的结论没人接，仍在这次调用里同步审，发现挂在这次 Bash 结果后面
+        val reason = review(prompt, "commit", COMMIT_MODEL_VAR) ?: return
         // 回合末审查已经报过同一件事：不再提醒
         val print = fingerprint(reason)
         if (!reported.add(print)) return
@@ -273,7 +284,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime, private v
      * 只在根会话（子 agent 的改动记在根上，由根的回合末统一审）。
      *
      * **前后台**：交互会话里审查在后台跑——这里只把清单与提示词备好、起一个协程就返回 null，回复照常收尾；审查者出结论后，发现以 hook 来源的输入
-     * 排进收件箱（会话空闲就开一个新回合，忙就等下一个回合接续，与 asyncRewake 同一条路），没发现就悄悄结束。
+     * 送回（会话空闲就开一个新回合，忙就作为插话送进当前回合，见 [launchBackground]），没发现就悄悄结束。
      * 无头（`-p`）会话回合一收尾进程就退出，后台的结论没人接，所以仍在回合里同步审，发现了作为返回值交回、回合继续（此前的行为）。
      *
      * **先后顺序**（回合要结束时 [TurnRunner] 依次问）：Stop hook（可拦、可叫停）→ 前台审查（只无头）→ `/goal` 评估 → 后台审查。
@@ -295,7 +306,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime, private v
         }
         val prompt = SecurityGuidance.turnReviewPrompt(files, cfg.guidance)
         if (!background) return reviewForTurn(prompt)
-        launchBackgroundReview(prompt)
+        launchBackground { reviewForTurn(prompt) }
         return null
     }
 
@@ -315,6 +326,18 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime, private v
         return "An independent security review of the files you changed this turn found problems. Fix them in this session, or explain why a finding is not a real issue:\n$reason"
     }
 
+    /**
+     * 提交 / 推送后的审查者出了结论：报过同一件事的（回合末审查或此前的提交审查）不再提醒；没报过的记进去重表，返回交给主模型的文字。
+     * 没发现 / 没结论 / 重复都是 null。
+     */
+    private suspend fun reviewForCommit(prompt: String): String? {
+        val reason = review(prompt, "commit", COMMIT_MODEL_VAR) ?: return null
+        val print = fingerprint(reason)
+        if (!reported.add(print)) return null
+        rt.commit(listOf(SecurityGuidanceSeen(reported = listOf(print))), Durability.Batched)
+        return "An independent security review of the change you just published found problems. Fix them in this session, or explain why a finding is not a real issue:\n$reason"
+    }
+
     /** 还没出结论的后台审查。同一时刻只有一个在审（[reviewLock]），后来的排队，免得两个审查者同时读同一批文件、各报各的 */
     private val reviewJobs = ConcurrentHashMap.newKeySet<Job>()
     private val reviewLock = Mutex()
@@ -332,10 +355,15 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime, private v
         reviewJobs.toList().forEach { catchingNonCancellation { it.cancelAndJoin() } }
     }
 
-    private fun launchBackgroundReview(prompt: String) {
+    /**
+     * 起一个后台审查：[work] 在 [reviewLock] 里跑，返回要交给主模型的文字（null = 没发现，悄悄结束）。
+     * 发现以 hook 来源的输入送回：会话空闲就开一个跟进回合；回合正在进行就作为插话（[Delivery.Steer]，在当前这一批工具调用结束后送达，
+     * 回合收尾时还没送的由接续机制接上）。回合末审查与提交 / 推送审查走同一条路。
+     */
+    private fun launchBackground(work: suspend () -> String?) {
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val feedback = try {
-                reviewLock.withLock { reviewForTurn(prompt) }
+                reviewLock.withLock { work() }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -349,7 +377,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime, private v
                 rt.receive(
                     ClientMsgId(rt.deps.ids.next("security-review")),
                     listOf(TextPart(feedback)),
-                    Delivery.Queue,
+                    Delivery.Steer,
                     InputOrigin.Hook("security-guidance"),
                     startTurn = TurnTrigger.Hook,
                 )
