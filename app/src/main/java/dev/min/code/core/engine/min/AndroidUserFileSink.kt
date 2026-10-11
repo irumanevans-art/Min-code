@@ -19,7 +19,7 @@ import kotlinx.coroutines.withContext
 /**
  * 模型用 SendUserFile 发来的文件：先写进缓存目录（经 FileProvider 给出 URI，和工作区分享同一条路），再发一条告警通道的通知。
  * 点通知时按 [UserFile.display] 打开：render 用 ACTION_VIEW 直接看；attach 与未指定用 ACTION_SEND 交给分享面板。
- * 缓存每次写之前先清空，分享过的东西不长期占空间（与工作区分享同一条规矩）。
+ * 缓存按通知槽位分目录，写之前只清自己的槽位（见 [stageUserFile]），一次发多个文件时前面的通知仍然打得开。
  */
 internal class AndroidUserFileSink(private val context: Context) : UserFileSink {
     private val next = AtomicInteger(0)
@@ -70,11 +70,15 @@ internal class AndroidUserFileSink(private val context: Context) : UserFileSink 
     }
 }
 
-/** 把要交给用户的文件写进 [root] 下（经 FileProvider 给出 URI）：写之前先清空 [root]，分享过的东西不长期占空间 */
+/**
+ * 把要交给用户的文件写进 [root]/[slot]/ 下（经 FileProvider 给出 URI）。只清这个槽位：槽位与通知编号一一对应，
+ * 同一槽位的新通知会顶掉旧通知，旧文件随之作废；别的槽位的通知还在，它们指着的文件不能删。
+ * 以前每次都清空整个 [root]，一次发两个文件时第一条通知点开就是一个已被删掉的文件。槽位数有上限，缓存占用也就有上限
+ */
 internal fun stageUserFile(root: File, slot: Int, name: String, bytes: ByteArray): File {
-    root.apply {
-        listFiles()?.forEach { it.deleteRecursively() }
+    val dir = File(root, slot.toString()).apply {
+        deleteRecursively()
         mkdirs()
     }
-    return File(root, name).apply { writeBytes(bytes) }
+    return File(dir, name).apply { writeBytes(bytes) }
 }
