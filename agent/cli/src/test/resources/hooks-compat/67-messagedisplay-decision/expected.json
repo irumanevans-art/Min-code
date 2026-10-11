@@ -18,5 +18,6 @@
     "hookEventName": "MessageDisplay",
     "displayContent": "Here is the plan:"
   },
-  "minTrigger": "none"
+  "minTrigger": "none",
+  "minTriggerReason": "Min 没有对应时机：原文是助手消息流式上屏、每批新完成的行跑一次，displayContent 只替换屏显（:1436）；Min 内核不渲染屏幕（宿主 CLI 直接打印 LiveUpdate 增量、App 另有界面），内核没有「上屏」那一刻，替换屏显也没有落点"
 }

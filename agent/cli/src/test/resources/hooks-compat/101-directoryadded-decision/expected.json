@@ -16,5 +16,6 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§DirectoryAdded：无决策控制，不能阻断已完成的加目录；continue 丢弃；slash_command 来源的 systemMessage 作为上下文给 Claude（:2847–2850）。",
-  "minTrigger": "none"
+  "minTrigger": "none",
+  "minTriggerReason": "Min 没有对应时机：原文是会话中途 /add-dir 或 SDK register_repo_root 加目录之后触发（:2806），Min 没有这两个入口——additionalDirectories 只来自 settings（创建时读、cd 时随 CwdChanged 重读），没有「中途加目录」的动作"
 }
