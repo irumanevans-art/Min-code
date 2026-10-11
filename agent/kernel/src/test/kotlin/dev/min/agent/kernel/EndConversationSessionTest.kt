@@ -68,7 +68,8 @@ class EndConversationSessionTest {
 
     private var counter = 0
 
-    private fun hub(model: ScriptedModel, tools: List<Tool<*>>) = SessionHub(store, testDeps(model, tools), newScope())
+    /** 只有 CC 点名的型号才露出 EndConversation（能力位），这里用一个标了能力位的型号 */
+    private fun hub(model: ScriptedModel, tools: List<Tool<*>>) = SessionHub(store, testDeps(model, tools, profile = dev.min.agent.testkit.TEST_PROFILE.copy(supportsEndConversation = true)), newScope())
 
     private suspend fun SessionRuntime.say(text: String) {
         send(ClientMsgId("u${++counter}"), listOf(TextPart(text)))

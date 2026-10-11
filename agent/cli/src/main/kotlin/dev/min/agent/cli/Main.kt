@@ -93,10 +93,12 @@ internal suspend fun interact(
     // /branch 会换会话：退出时的 SessionEnd 要跟当前会话走（分支是用户现在所在的对话）
     var runtime = initial
     var pluginUpdatesStarted = false
+    // 本次 /fork 出来的复制会话：退出时还在跑的要提醒一句（进程一退它们就断）
+    val forks = mutableListOf<dev.min.agent.kernel.SessionRuntime>()
     app.mcpAuthorizer.input = stdin
     // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout。
     // 交给 hub：审批 / 提问 / MCP elicitation 看整棵会话树，子 agent 的待处理项也有人答
-    var uiConsole: ConsoleUi? = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out, app.hub()).apply { mainOwnsInput = true } else null
+    var uiConsole: ConsoleUi? = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true).apply { mainOwnsInput = true } else null
     var ui = uiConsole?.attach(scope)
     try {
         System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
@@ -205,7 +207,7 @@ internal suspend fun interact(
     suspend fun switchTo(next: dev.min.agent.kernel.SessionRuntime) {
         ui?.cancel()
         runtime = next
-        uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub())
+        uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true)
         ui = uiConsole?.attach(scope)
     }
     while (true) {
@@ -219,7 +221,10 @@ internal suspend fun interact(
             trimmed.isEmpty() -> continue
             // 会话已结束：只放行 /clear、/resume、/help、/exit、/feedback（CC），其余挡下并说明
             endedLockNotice(runtime.state.value.ended, trimmed) != null -> System.err.println(CONVERSATION_ENDED_NOTICE)
-            trimmed == "/exit" -> return 0
+            trimmed == "/exit" -> {
+                forks.filter { it.state.value.turn != null }.forEach { System.err.println("分身 ${it.sessionId.value} 还在做，退出会中断它（日志已保存，之后可 --resume ${it.sessionId.value}）") }
+                return 0
+            }
             trimmed == "/help" -> System.err.println(INTERACTIVE_HELP)
             trimmed == "/clear" || trimmed.startsWith("/clear ") -> {
                 // 另起一个空会话；之前的会话保留，可 /resume 回去。给了名字就先给旧会话起名（CC：标记在 /resume 的列表里）
@@ -239,15 +244,27 @@ internal suspend fun interact(
                 }
             }
             trimmed == "/fork" || trimmed.startsWith("/fork ") -> {
-                // 分身：复制当前会话成另一个根会话，留在这里继续（CC：后台会话，不切过去）。
-                // 暂不接提示词：分身在本进程里不跑回合，要让它干活就 /resume 过去说
-                if (trimmed.removePrefix("/fork").isNotBlank()) System.err.println("/fork 暂不接提示词：先 /fork 分身，再 /resume 切过去发消息。")
-                else try {
-                    val copy = app.forkCopy(runtime)
-                    System.err.println("已分身为会话 ${copy.sessionId.value}（在这里继续；/resume ${copy.sessionId.value} 切过去）")
+                // 分身：复制当前会话成另一个根会话，留在这里继续（CC：后台会话，不切过去）。带提示词时复制出来的那个立刻开始做，
+                // 进度与结果由 ForkWatch 在这里打一行；不带就等着，/resume 过去说第一句话
+                val forkPromptText = trimmed.removePrefix("/fork").trim()
+                try {
+                    val copy = app.forkCopy(runtime, forkPromptText)
+                    forks += copy
+                    if (forkPromptText.isEmpty()) {
+                        System.err.println("已分身为会话 ${copy.sessionId.value}，它在等它的第一句话（在这里继续；/resume ${copy.sessionId.value} 切过去说）")
+                    } else {
+                        ForkWatch(args.approve, System.err).watch(scope, copy)
+                        System.err.println("已分身为会话 ${copy.sessionId.value}，它正在做：${forkPromptText.take(60)}（在这里继续；/resume ${copy.sessionId.value} 切过去看；退出本进程会中断它）")
+                    }
                 } catch (e: dev.min.agent.kernel.SessionBranchRefused) {
                     System.err.println(e.message)
                 }
+            }
+            // 侧任务：请本会话的模型把它交给一个继承完整对话的分身，结果回到这里（见 subtaskPrompt 为什么走模型）
+            trimmed == "/subtask" || trimmed.startsWith("/subtask ") -> {
+                val task = trimmed.removePrefix("/subtask").trim()
+                if (task.isEmpty()) System.err.println("用法：/subtask <任务>（派一个继承当前对话的分身去做，结果回到这里）")
+                else say(subtaskPrompt(task))
             }
             trimmed == "/list-agents" || trimmed == "/peers" -> System.err.println(listAgentsText(app, runtime))
             trimmed == "/plugin" || trimmed.startsWith("/plugin ") -> {
@@ -296,6 +313,10 @@ internal suspend fun interact(
                     System.err.println(e.message)
                 }
             }
+            // 跨会话收件设置与待批准消息（CC 的 /config 行与批准框；Min 的终端没有 /config 面板，所以一个专用命令）
+            trimmed == "/inbound" || trimmed.startsWith("/inbound ") -> inboundCommand(app, runtime, trimmed.removePrefix("/inbound"), System.err)
+            // 反馈（CC 的 /feedback）：无参 = 草稿队列，带文字 = 自己写一份；只排队、不发送（Min 没有发送通道）。会话锁住后也放行（endedLockNotice）
+            trimmed == "/feedback" || trimmed.startsWith("/feedback ") -> feedbackCommand(app.feedbackDrafts, trimmed.removePrefix("/feedback"), app::buildFeedbackZip, System.err)
             trimmed in REWIND_COMMANDS -> rewindCommand(runtime, stdin)
             trimmed.startsWith("/rewind-undo ") -> rewindUndoCommand(runtime, trimmed.removePrefix("/rewind-undo ").trim())
             else -> say(line)

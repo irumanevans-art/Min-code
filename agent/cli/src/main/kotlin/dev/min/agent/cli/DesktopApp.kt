@@ -77,6 +77,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.ZoneId
 import java.util.UUID
+import dev.min.agent.protocol.ClientMsgId
 
 /**
  * 交给内核的环境变量读取口（[dev.min.agent.kernel.KernelDeps.env]）：读进程环境，但 [hidden]（CLI 自己读模型 key 的变量）一律返回 null。
@@ -290,15 +291,17 @@ internal class DesktopApp(
             cronMaxBudgetUsd = cronMaxBudgetUsdFrom(config.settings.merged.raw("cronMaxBudgetUsd"), System.err::println),
             cronEnabled = cronEnabled,
         )
-        // 本机其他进程的会话：登记表与收件目录放在用户目录下（只本用户可读写）。只有交互会话挂这个：它的收件要靠心跳取，
-        // `-p` 跑一次就退出，登记了却没人取会让发件人误以为送到了。退出时 shutdown 会注销本进程的会话；
-        // 进程被杀的，别的进程看见它的登记进程已死，顺手清掉
-        val peers = if (interactive) dev.min.agent.kernel.FilePeerTransport(home.resolve("peers")) else null
+        // 本机其他进程的会话：登记表与收件目录放在用户目录下（只本用户可读写）。交互会话与 `-p` 会话都挂（CC：`claude -p` 像交互会话一样绑收件口，
+        // 长跑的 -p worker 也能收信、出现在名单里）；`--bare` 不挂（原文：bare 模式不绑收件口，列表里没有它）。
+        // 登记了就得有人取信，所以下面两种会话都接心跳。退出时 shutdown 会注销本进程的会话；进程被杀的，别的进程看见它的登记进程已死，顺手清掉
+        val peers = if (customizations != dev.min.agent.kernel.Customizations.Bare) dev.min.agent.kernel.FilePeerTransport(home.resolve("peers")) else null
         SessionHub(store, deps(tools), scope, limits, catalog.definitions, peers = peers).also {
             hubInstance = it
             // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器。定时任务的开关在引擎里查（CronEngine 的 enabled），
             // 心跳不跟它走：`/goal` 的 check-in 也挂在这同一个心跳上，定时任务关着时它照常叫醒
             if (interactive) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
+            // 取信的心跳：`-p` 只挂这一个（一次运行可能只有几十秒，所以间隔比定时心跳短）；交互会话里它与定时心跳里的取信互不干扰（同一时刻只跑一轮）
+            if (peers != null) it.startPeerHeartbeat(dev.min.agent.kernel.InProcessScheduler(scope, PEER_HEARTBEAT_MS))
         }
     }
 
@@ -399,6 +402,17 @@ internal class DesktopApp(
 
     /** /output-style 写回的位置：项目 `.claude/settings.local.json`（CC 同一个键，互通） */
     fun settingsLocalFile(): java.nio.file.Path = args.cwd.resolve(".claude").resolve("settings.local.json")
+
+    /** 反馈草稿队列（SendFeedback 与 `/feedback` 共用；每份是去过凭证的诊断包 zip，什么都不发送） */
+    val feedbackDrafts: FeedbackDrafts by lazy { FeedbackDrafts(home.resolve("feedback").resolve("drafts")) }
+
+    /** 草稿 → 诊断包：凭证在这里就去掉，不靠用户记得检查（见 FeedbackBundle） */
+    fun buildFeedbackZip(draft: dev.min.agent.spi.FeedbackDraft): ByteArray =
+        dev.min.agent.tools.FeedbackBundle.build(draft, draft.sessionLog, "Min desktop CLI", System.getenv(), emptyMap())
+
+    /** 这次启动在 cwd 下读到的各层设置（现读，`/inbound` 写完马上能看到）；managed 与 `--settings` 是否锁了某个键就看它 */
+    suspend fun settingsLayers(): List<dev.min.agent.ext.config.SettingsLayer> =
+        dev.min.agent.ext.config.SettingsLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome, inputs = settingsInputs).layers
 
     fun settingsUserFile(): Path = claudeHome.resolve(".claude").resolve("settings.json")
     fun pluginMarketplace() = desktopMarketplace(args.cwd, isWorkspaceTrusted(), claudeHome)
@@ -521,10 +535,8 @@ internal class DesktopApp(
             // 导出走 FeedbackBundle，凭证在这里就去掉，不靠用户记得检查
             feedbackSink = object : dev.min.agent.spi.FeedbackSink {
                 override suspend fun queue(draft: dev.min.agent.spi.FeedbackDraft): Boolean {
-                    val dir = home.resolve("feedback").resolve("drafts").toFile().apply { mkdirs() }
-                    val zip = java.io.File(dir, "draft-" + System.currentTimeMillis() + ".zip")
-                    zip.writeBytes(dev.min.agent.tools.FeedbackBundle.build(draft, draft.sessionLog, "Min desktop CLI", System.getenv(), emptyMap()))
-                    System.err.println("[反馈草稿] " + zip.absolutePath + "（未发送）")
+                    val zip = feedbackDrafts.queue(buildFeedbackZip(draft))
+                    System.err.println("[反馈草稿] " + zip.toAbsolutePath() + "（未发送；/feedback 看队列）")
                     return true
                 }
             },
@@ -675,10 +687,18 @@ internal class DesktopApp(
     suspend fun branchSession(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
 
     /**
-     * 交互模式 /fork（CC：把当前会话复制成一个新的后台会话，自己留在这里继续）。这里的「后台」是本进程里的另一个根会话：
-     * 复制出来、不切过去、不跑回合。要去看它就 /resume 它。与 /branch 的区别只在切不切过去。
+     * 交互模式 /fork [提示词]（CC：把当前会话复制成一个新的后台会话，自己留在这里继续；带提示词时复制出来的那个立刻开始做）。
+     * 这里的「后台」是本进程里的另一个根会话：复制出来、不切过去，要去看它就 /resume 它。与 /branch 的区别只在切不切过去。
+     * 带提示词的复制会话在 [hub] 里自己跑回合（进程退出就断，日志在磁盘上，可 --resume）；改文件前先建 worktree 的指令见 [forkPrompt]
      */
-    suspend fun forkCopy(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
+    suspend fun forkCopy(runtime: SessionRuntime, prompt: String? = null): SessionRuntime {
+        val copy = hub().branch(runtime.sessionId)
+        if (!prompt.isNullOrBlank()) {
+            val isolate = copy.state.value.worktree == null && inGitCheckout(args.cwd) && "EnterWorktree" in toolNames()
+            copy.send(ClientMsgId(UUID.randomUUID().toString()), listOf(dev.min.agent.protocol.TextPart(forkPrompt(prompt.trim(), isolate))))
+        }
+        return copy
+    }
 
     /** 交互模式 /clear：另起一个空会话（同目录、同模型与模式；--name 的名字不带过来，CC 同款）。 */
     suspend fun newSession(name: String?): SessionRuntime =
@@ -764,3 +784,6 @@ internal class DesktopApp(
         val SESSION_ID_SHAPE = Regex("[A-Za-z0-9_-]{1,128}")
     }
 }
+
+/** 取别的会话来信的心跳间隔（毫秒）：文件邮箱的轮询，一次目录列表很便宜 */
+private const val PEER_HEARTBEAT_MS = 1_000L

@@ -18,6 +18,8 @@ import dev.min.agent.spi.UserQuestion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import java.io.BufferedReader
@@ -34,6 +36,8 @@ internal class ConsoleUi(
     private val input: BufferedReader,
     private val out: PrintStream,
     private val hub: dev.min.agent.kernel.SessionHub? = null,
+    /** 交互终端才提示等批准的跨会话消息（`-p` 没有人能敲 /inbound approve，提示只会污染 stderr） */
+    private val announceHeldPeers: Boolean = false,
 ) {
     private val announced = mutableSetOf<CallId>()
     private val finished = mutableSetOf<CallId>()
@@ -50,6 +54,18 @@ internal class ConsoleUi(
     private var tasksSeen: List<TaskRecord>? = null
 
     fun attach(scope: CoroutineScope): Job = scope.launch {
+        // 别的会话发来、等你批准的消息：挂起时在终端里提一句（CC 在交互会话里弹批准框）。内核的待批准队列不进会话状态，所以轮询；
+        // 预览过 terminalText——对方的文字不能用控制序列改写终端
+        if (announceHeldPeers) launch {
+            val announced = mutableSetOf<String>()
+            while (isActive) {
+                hub?.heldPeerMessages(runtime.sessionId).orEmpty().filter { announced.add(it.messageId) }.forEach { m ->
+                    out.println("\n[跨会话] ${heldLine(m)}\n  /inbound approve ${m.messageId} 批准 · /inbound deny ${m.messageId} 拒收（默认规则挂起的，期限到了按拒收处理）")
+                    out.flush()
+                }
+                delay(500)
+            }
+        }
         launch {
             runtime.live.collect { update ->
                 when (update) {

@@ -33,7 +33,7 @@ class SlashSessionCommandsTest {
             "--cwd", work.toString()) + extra
 
     @Test fun `an ended session refuses everything except clear, resume, help, exit and feedback`() {
-        for (line in listOf("/cost", "/goal", "/compact", "/rewind", "/branch", "/rename x", "/fork", "/list-agents", "/loop 5m x", "hello")) {
+        for (line in listOf("/cost", "/goal", "/compact", "/rewind", "/branch", "/rename x", "/fork", "/fork 做点什么", "/subtask 做点什么", "/list-agents", "/loop 5m x", "hello")) {
             assertEquals(line, CONVERSATION_ENDED_NOTICE, endedLockNotice(ended = true, line = line))
         }
         for (line in listOf("/clear", "/clear keep", "/resume", "/resume abc", "/help", "/exit", "/feedback")) {
