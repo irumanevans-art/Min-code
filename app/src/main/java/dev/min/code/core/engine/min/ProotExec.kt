@@ -45,7 +45,12 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
 
     override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult = withContext(Dispatchers.IO) {
         // 模型 Bash 不接收任意 env；只有 hook 执行器的独立参数槽可以经进程启动口运输真值。
-        require(command.env.keys.all { it in setOf("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy") || Regex("MIN_PLUGIN_[0-9]+_(?:ARG|ENV)_[0-9]+").matches(it) }) { "Min Bash 仅接受宿主代理及插件 hook 参数环境" }
+        // TRACEPARENT 是例外：内核在遥测开着时按 W3C 格式给出（trace id 与 span id 都是哈希出的十六进制，不含任何用户内容），值不合格式一样拒绝。
+        require(command.env.all { (k, v) ->
+            k in setOf("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy") ||
+                Regex("MIN_PLUGIN_[0-9]+_(?:ARG|ENV)_[0-9]+").matches(k) ||
+                (k == "TRACEPARENT" && Regex("00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}").matches(v))
+        }) { "Min Bash 仅接受宿主代理、W3C TRACEPARENT 及插件 hook 参数环境" }
         require(options.timeoutMs > 0 && options.maxOutputChars >= 0)
         val started = System.nanoTime()
         val id = UUID.randomUUID().toString().replace("-", "")

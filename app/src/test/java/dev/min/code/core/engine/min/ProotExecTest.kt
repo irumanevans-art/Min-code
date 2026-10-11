@@ -58,6 +58,27 @@ class ProotExecTest {
         assertEquals(GuestNetwork.Offline, host.context.isolation!!.network)
     }
 
+    private suspend fun rejectsEnv(env: Map<String, String>): Boolean = try {
+        ProotExec(base(), FakeHost(complete = true)).run(command.copy(env = env), ExecOptions(1000))
+        false
+    } catch (e: IllegalArgumentException) {
+        true
+    }
+
+    @Test fun w3cTraceparentIsTheOnlyExtraEnvironmentAndItsValueIsChecked() = runBlocking {
+        val good = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        val host = FakeHost(complete = true)
+        ProotExec(base(), host).run(command.copy(env = mapOf("TRACEPARENT" to good)), ExecOptions(1000))
+        assertEquals(mapOf("TRACEPARENT" to good), host.context.env)
+        // 值不合 W3C 格式（带了换行 / 引号之类，想借环境夹带东西）：拒绝
+        for (bad in listOf("00-short-b7ad6b7169203331-01", "$good\nFOO=1", "'; rm -rf /; '", "")) {
+            assertTrue("应拒绝：$bad", rejectsEnv(mapOf("TRACEPARENT" to bad)))
+        }
+        // 其它名字仍不接受，哪怕和 TRACEPARENT 一起来
+        assertTrue(rejectsEnv(mapOf("TRACEPARENT" to good, "LD_PRELOAD" to "/x")))
+    }
+
+
     @Test fun explicitProxyLeaseIsTransportedToNativePolicy() = runBlocking {
         val host = FakeHost(complete = true)
         ProotExec(base(), host).run(command.copy(network = GuestNetwork.ProxyOnly(listOf(8123))), ExecOptions(1000))

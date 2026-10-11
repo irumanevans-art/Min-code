@@ -136,6 +136,12 @@ class MinAgentEngine(
     /** 设置快照还没读出来时按「没配」：宁可这一刻看不到 WebSearch，也不拿半截配置去搜 */
     private fun webSearchConfig() = settings.snapshot?.webSearch ?: dev.min.code.core.settings.WebSearchConfig()
 
+    /** 遥测配置（按设置现取）：内核据此决定 Bash 与 hook 子进程要不要带 TRACEPARENT；遥测关着返回 null */
+    private val telemetryConfig = dev.min.code.core.telemetry.TelemetryConfigSource(
+        settings = { settings.snapshot?.telemetry },
+        localFile = File(File(context.filesDir, "agent"), dev.min.code.core.telemetry.MinTelemetryExporter.LOCAL_FILE_NAME),
+    )
+
     private val kernelDeps = MinKernelDeps.build(
         resolver, ports, snapshots = snapshots,
         // 与 Claude Code 引擎那边的 DeviceMcpRegistrar 读同一个设置：controlDevice
@@ -159,6 +165,7 @@ class MinAgentEngine(
         previewSink = AndroidPreviewSink(),
         feedbackSink = AndroidFeedbackSink(),
         pdfPages = AndroidPdfPages(AndroidPdfRasterizer(context.cacheDir)),
+        traceContext = dev.min.agent.otel.OtelTraceContext(telemetryConfig::current) { id -> store.peek(SessionId(id)) },
     )
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
@@ -229,8 +236,25 @@ class MinAgentEngine(
     internal val cronHeartbeat = HeartbeatScheduler(onError = { Log.w(TAG, "cron heartbeat tick failed", it) })
     private val cronNotifier = CronNoticeNotifier(context)
 
+    /**
+     * 遥测的自动导出：有会话在跑回合时按间隔导出，闲下来补发一次；没有前台服务与闹钟，闲着时没有任何定时器。
+     * 「立即导出」也走它（有阶段在跑时沿用同一份进度），见 [dev.min.code.core.telemetry.AppTelemetry]
+     */
+    private val appTelemetry = dev.min.code.core.telemetry.AppTelemetry(
+        scope = scope,
+        exporter = dev.min.code.core.telemetry.MinTelemetryExporter(
+            sessionsDir = sessionsDir,
+            stateDir = File(context.filesDir, "agent"),
+            transport = UrlConnectionTransport(),
+        ),
+        settings = settings.settings.map { it.telemetry },
+        headers = { settings.telemetryHeaders() },
+        busy = live.map { list -> list.any { it.busy } },
+    )
+
     init {
         scope.launch { tasks.watch() }
+        appTelemetry.start()
         // 团队并发上限与定时任务花费天花板跟着设置走：构造 Hub 时设置快照可能还没读出来（那时按默认值），读出来之后、以及用户改设置之后都要生效。
         // 值越界（设置里不该有）就保持现状，不能因为一个坏值让引擎起不来
         scope.launch {
@@ -508,11 +532,7 @@ class MinAgentEngine(
 
     /** 遥测「立即导出」：把会话日志里的新事件导出到端点与本机 JSONL（默认关，关着什么都不做）。见 [MinTelemetryExporter] */
     suspend fun exportTelemetry(settings: dev.min.code.core.telemetry.TelemetrySettings, headers: String) =
-        dev.min.code.core.telemetry.MinTelemetryExporter(
-            sessionsDir = sessionsDir,
-            stateDir = File(context.filesDir, "agent"),
-            transport = UrlConnectionTransport(),
-        ).export(settings, headers)
+        appTelemetry.exportNow(settings, headers)
 
     private companion object {
         const val TAG = "MinAgentEngine"

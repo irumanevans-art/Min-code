@@ -234,6 +234,8 @@ object MinKernelDeps {
         feedbackSink: dev.min.agent.spi.FeedbackSink = dev.min.agent.spi.FeedbackSink.Unavailable,
         /** Read 的 pages（按页截取 PDF）：手机上用系统 PdfRenderer 渲染成图（[AndroidPdfPages]） */
         pdfPages: dev.min.agent.spi.PdfPagePort = dev.min.agent.spi.PdfPagePort.Unavailable,
+        /** Bash 与 hook 子进程的 TRACEPARENT（OTel traces）：遥测开着时才有值，见 [dev.min.agent.otel.OtelTraceContext] */
+        traceContext: dev.min.agent.spi.TraceContextProvider = dev.min.agent.spi.TraceContextProvider.None,
     ): KernelDeps = KernelDeps(
         networkProxy = dev.min.agent.host.LoopbackNetworkProxy(maxConnections = 16),
         clock = clock, ids = ids, models = models, tools = tools,
@@ -263,5 +265,6 @@ object MinKernelDeps {
         previewSink = previewSink,
         feedbackSink = feedbackSink,
         pdfPages = pdfPages,
+        traceContext = traceContext,
     )
 }
