@@ -63,7 +63,7 @@ object ArtifactTool : Tool<ArtifactInput> {
     }
 
     override fun permissionAsk(input: ArtifactInput, ctx: ToolContext) =
-        PermissionAsk(name, "在预览位里打开 ${input.path.value}")
+        PermissionAsk(name, "在预览位里打开 ${input.path.value}", paths = workspaceFileReads(listOf(input.path), ctx))
 
     override fun run(input: ArtifactInput, ctx: ToolContext): Flow<ToolProgress> = flow {
         emit(ToolProgress.Done(show(input, ctx)))

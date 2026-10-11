@@ -107,4 +107,33 @@ class ArtifactToolTest {
         assertTrue(ArtifactTool.call(wrap(c, sink), "path" to "/work/big.html").isError)
         assertTrue(sink.got.isEmpty())
     }
+
+    // ---- 工作区边界：与 SendUserFile 同一条检查 ----
+
+    @Test
+    fun `a dot-dot path or a link that leaves the workspace is refused`() = runBlocking {
+        val sink = Recording()
+        val c = TestToolContext().also {
+            it.fs.put("/etc/page.html", "<p>x</p>")
+            it.fs.put("/work/link.html", "<p>y</p>")
+        }
+        val ctx = object : ToolContext by c {
+            override val artifactView: PreviewSink = sink
+            override fun canonicalPath(path: dev.min.agent.spi.GuestPath) =
+                if (path.value == "/work/link.html") dev.min.agent.spi.GuestPath("/sdcard/page.html") else path
+        }
+        for (p in listOf("/work/../etc/page.html", "/work/link.html")) {
+            val result = ArtifactTool.call(ctx, "path" to p)
+            assertTrue(p, result.isError)
+            assertTrue(p + " -> " + result.text, result.text.contains("不在工作区"))
+        }
+        assertTrue(sink.got.isEmpty())
+    }
+
+    @Test
+    fun `the permission ask names the file as a read`() {
+        val ask = ArtifactTool.permissionAsk(ArtifactTool.parsed("path" to "/work/a.html"), TestToolContext())
+        assertEquals(listOf("/work/a.html"), ask.paths.map { it.path.value })
+        assertEquals(dev.min.agent.spi.AccessKind.Read, ask.paths.single().kind)
+    }
 }
