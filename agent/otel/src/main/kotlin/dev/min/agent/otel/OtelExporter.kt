@@ -78,6 +78,9 @@ class OtelExporter(
         }
     }
 
+    /** 宿主的读日志、映射等环节出错时，也把失败记在同一个计数上 */
+    internal fun noteFailure(message: String) = recordFailure(message)
+
     private fun recordFailure(message: String) {
         failures++
         lastFailure = message
