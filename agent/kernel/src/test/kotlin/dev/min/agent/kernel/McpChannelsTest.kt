@@ -131,7 +131,7 @@ class McpChannelsTest {
 
     private val stdioHook = "{\"hook\": {\"command\": \"hook-mcp\"}}"
 
-    private fun deps(model: ModelClient, fs: FakeFs, customizations: Customizations = Customizations.Full, tools: List<dev.min.agent.spi.Tool<*>> = emptyList()): KernelDeps {
+    private fun deps(model: ModelClient, fs: FakeFs, customizations: Customizations = Customizations.Full, tools: List<dev.min.agent.spi.Tool<*>> = emptyList(), restricted: Boolean = false): KernelDeps {
         val base = testDeps(model, emptyList())
         return KernelDeps(
             clock = base.clock, ids = base.ids, models = base.models, tools = tools,
@@ -139,6 +139,7 @@ class McpChannelsTest {
             platform = base.platform, zone = base.zone, retry = base.retry, memoryHome = GuestPath("/root"),
             env = { null }, mcpFirstSnapshotWaitMs = 5_000, mcpConnectTimeoutMs = 30_000, trustProjectHooks = { false },
             customizations = customizations,
+            settingsInputs = dev.min.agent.ext.config.SettingsInputs(restricted = restricted),
         )
     }
 
@@ -389,6 +390,18 @@ class McpChannelsTest {
         assertFalse(hub.channelOptions(rt.sessionId).single().state.enabled)
         val unknown = try { hub.setChannelEnabled(rt.sessionId, "quiet", true, true); null } catch (e: IllegalArgumentException) { e }
         assertTrue("没声明能力的服务器不能勾", unknown != null)
+    }
+
+    @Test
+    fun `restricted start only connects managed servers, and only those can be channels`() = run {
+        val fs = fsWith(stdioHook).apply { put("/etc/claude-code/managed-mcp.json", "{\"mcpServers\": {\"corp\": {\"command\": \"corp-mcp\"}}}") }
+        val connector = Connector(mapOf("hook" to channelCaps, "corp" to channelCaps))
+        val hub = SessionHub(store, deps(ScriptedModel(), fs, restricted = true), scope).also { it.mcp = McpManager(scope, connector, startupWaitMs = 2_000) }
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val refused = hub.setChannels(rt.sessionId, listOf(dev("hook"), dev("corp")))
+        assertEquals("用户层的服务器在受限启动下根本没加载", 1, refused.size); assertTrue(refused.single(), refused.single().startsWith("server:hook"))
+        assertEquals(setOf("corp"), hub.mcp.channelsOf(rt.sessionId).keys)
+        assertTrue(connector.made.keys.none { it == "hook" })
     }
 
     // ---- 审批转发 ----
