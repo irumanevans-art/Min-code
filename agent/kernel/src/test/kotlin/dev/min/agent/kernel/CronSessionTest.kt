@@ -118,7 +118,8 @@ class CronSessionTest {
         }
     }
 
-    private fun ModelRequest.last(): String = messages.last().parts.joinToString("\n") { part ->
+    // 内核附加的提醒（日期跨天等）不算消息本身
+    private fun ModelRequest.last(): String = messages.last().parts.filterNot { it is TextPart && it.text.startsWith("<system-reminder>") }.joinToString("\n") { part ->
         when (part) {
             is TextPart -> part.text
             is ToolResultPart -> part.content.filterIsInstance<TextPart>().joinToString("") { it.text }
