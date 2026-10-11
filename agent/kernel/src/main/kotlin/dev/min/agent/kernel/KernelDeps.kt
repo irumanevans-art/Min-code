@@ -195,6 +195,8 @@ class KernelDeps(
     val previewSink: dev.min.agent.spi.PreviewSink = dev.min.agent.spi.PreviewSink.Unavailable,
     /** SendFeedback 的宿主出口（本机草稿队列）。默认不可用：工具照实回告「没有保存」 */
     val feedbackSink: dev.min.agent.spi.FeedbackSink = dev.min.agent.spi.FeedbackSink.Unavailable,
+    /** Read 的 pages（按页截取 PDF）的宿主出口。默认不可用：Read 照实回告「本环境不能按页截取」 */
+    val pdfPages: dev.min.agent.spi.PdfPagePort = dev.min.agent.spi.PdfPagePort.Unavailable,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }
