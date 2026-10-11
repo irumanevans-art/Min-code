@@ -1,7 +1,7 @@
 package dev.min.agent.cli
 
 import dev.min.agent.kernel.savedWorkflows
-import dev.min.agent.kernel.skillInvoked
+import dev.min.agent.kernel.userInvokedSkills
 
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.kernel.continueFromSummary
@@ -157,13 +157,8 @@ internal suspend fun interact(
         }
         // 用户用斜杠调用 skill / command（CC 的 Hooks in skills and agents）：frontmatter hooks 从这一刻起
         // 在本会话登记（每次调用都重新登记全量），余下回合生效。模型调 Skill 工具的路在内核（KernelSkillPort），两条路同一套登记
-        (action as? InputAction.Send)?.names.orEmpty().forEach { name ->
-            entries.firstOrNull { it.name == name }?.let { e ->
-                e.hooks?.let { runtime.registerComponentHooks(e.kind.name.lowercase(), name, e.source ?: "user", it) }
-                // 插件的 on-skill-invoke monitor：用户用斜杠调用 skill 也算「第一次被调用」
-                runtime.skillInvoked(e.name)
-            }
-        }
+        // 插件的 on-skill-invoke monitor 也在这里起：用户用斜杠调用 skill 也算「第一次被调用」（App 斜杠入口同一个函数）
+        runtime.userInvokedSkills(entries, (action as? InputAction.Send)?.names.orEmpty())
         runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)
         if (args.prompt == null && !pluginUpdatesStarted && dev.min.agent.ext.plugins.pluginAutoUpdatesEnabled(System.getenv())) {
             pluginUpdatesStarted = true

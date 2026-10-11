@@ -11,6 +11,7 @@ import dev.min.agent.kernel.ResolvedModel
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.kernel.skillInvoked
+import dev.min.agent.kernel.userInvokedSkills
 import dev.min.agent.llm.ModelClient
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ModelStreamEvent
@@ -157,6 +158,20 @@ class PluginMonitorSessionTest {
         rt.skillInvoked("watcher:run")
         val after = jobs(hub, rt) { l -> l.any { it.description == "skill watch" } }
         assertEquals("同一个只起一次", 1, after.count { it.description == "skill watch" })
+        hub.shutdown(rt.sessionId)
+    } }
+
+    @Test fun `a slash-expanded skill starts its on-skill-invoke monitor through the shared user-invocation entry point`(): Unit = runBlocking { withTimeout(120_000) {
+        // App 的斜杠入口与桌面终端共用 userInvokedSkills；这里直接走这个入口，证明斜杠展开的名字也触发 monitor
+        val (hub, rt) = session(plugin(root.resolve("p"), monitors))
+        jobs(hub, rt) { l -> l.any { it.description == "always watch" } }
+        val entries = withTimeout(30_000) { rt.state.first { it.skills != null }.skills!!.entries }
+        val name = entries.single { it.name.endsWith("run") }.name
+        assertFalse(jobs(hub, rt) { true }.any { it.description == "skill watch" })
+        rt.userInvokedSkills(entries, listOf(name))
+        jobs(hub, rt) { l -> l.any { it.description == "skill watch" } }
+        rt.userInvokedSkills(entries, listOf(name))
+        assertEquals("同一个只起一次", 1, jobs(hub, rt) { true }.count { it.description == "skill watch" })
         hub.shutdown(rt.sessionId)
     } }
 
