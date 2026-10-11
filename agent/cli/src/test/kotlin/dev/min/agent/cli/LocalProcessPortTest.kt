@@ -326,7 +326,10 @@ class LocalProcessPortTest {
         p.shutdown()
         val ms = (System.nanoTime() - t0) / 1_000_000
         assertTrue(p.exit.isCompleted)
-        assertTrue("耗时 $ms ms", ms < 1_900)
+        // 判据是「自己退出、没走到 SIGTERM」：cat 读到 EOF 正常退出码 0，被 TERM 是 143。只卡耗时的话，
+        // 机器忙时（几路构建同时跑）进程树快照本身就能超过 1.9 秒，测出来的是负载不是行为
+        assertEquals("cat 应在 stdin 关闭后自行退出，而不是被信号收掉", 0, p.exit.await())
+        assertTrue("耗时 $ms ms", ms < 10_000)
     }
 
     @Test
