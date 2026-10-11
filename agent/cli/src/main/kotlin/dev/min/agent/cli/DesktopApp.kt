@@ -77,6 +77,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.ZoneId
 import java.util.UUID
+import dev.min.agent.protocol.ClientMsgId
 
 /**
  * 交给内核的环境变量读取口（[dev.min.agent.kernel.KernelDeps.env]）：读进程环境，但 [hidden]（CLI 自己读模型 key 的变量）一律返回 null。
@@ -671,10 +672,18 @@ internal class DesktopApp(
     suspend fun branchSession(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
 
     /**
-     * 交互模式 /fork（CC：把当前会话复制成一个新的后台会话，自己留在这里继续）。这里的「后台」是本进程里的另一个根会话：
-     * 复制出来、不切过去、不跑回合。要去看它就 /resume 它。与 /branch 的区别只在切不切过去。
+     * 交互模式 /fork [提示词]（CC：把当前会话复制成一个新的后台会话，自己留在这里继续；带提示词时复制出来的那个立刻开始做）。
+     * 这里的「后台」是本进程里的另一个根会话：复制出来、不切过去，要去看它就 /resume 它。与 /branch 的区别只在切不切过去。
+     * 带提示词的复制会话在 [hub] 里自己跑回合（进程退出就断，日志在磁盘上，可 --resume）；改文件前先建 worktree 的指令见 [forkPrompt]
      */
-    suspend fun forkCopy(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
+    suspend fun forkCopy(runtime: SessionRuntime, prompt: String? = null): SessionRuntime {
+        val copy = hub().branch(runtime.sessionId)
+        if (!prompt.isNullOrBlank()) {
+            val isolate = copy.state.value.worktree == null && inGitCheckout(args.cwd) && "EnterWorktree" in toolNames()
+            copy.send(ClientMsgId(UUID.randomUUID().toString()), listOf(dev.min.agent.protocol.TextPart(forkPrompt(prompt.trim(), isolate))))
+        }
+        return copy
+    }
 
     /** 交互模式 /clear：另起一个空会话（同目录、同模型与模式；--name 的名字不带过来，CC 同款）。 */
     suspend fun newSession(name: String?): SessionRuntime =
