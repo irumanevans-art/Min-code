@@ -14,5 +14,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§InstructionsLoaded decision control：无决策控制，不能阻止或改写载入，JSON 输出字段丢弃，只作审计/观测（:1311–1313）；exit code 忽略（:885）。",
-  "minTrigger": "none"
+  "kernelWiring": "SessionRuntime.create（记忆快照后逐文件，eager=session_start、@导入=include）与 ToolExecutor.attachMemoryUnguarded（nested_traversal / path_glob_match）；端到端见 InstructionLoadedHookTest"
 }
