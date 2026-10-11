@@ -336,7 +336,8 @@ class PluginBundle(
                             hooks = null, permissionMode = null, mcpServers = null, initialPrompt = null)
                     }
                 }
-                if (isTrusted) {
+                // 官方 security-guidance 插件的 hooks 是 Python 脚本：Min 用内核自己的同名三层（SecurityGuidanceRuntime）代替，不再跑它的脚本，免得重复审查
+                if (isTrusted && plugin.ref.name != dev.min.agent.ext.security.SecurityGuidance.PLUGIN_NAME) {
                     val events = JsonObject(plugin.hooks.mapValues { (_, handlers) -> JsonArray(handlers.map { handler ->
                         buildJsonObject {
                             handler.matcher?.let { put("matcher", it) }

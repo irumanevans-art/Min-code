@@ -155,10 +155,30 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         // 同记忆：取最后一条，以后显式刷新时整份替换
         is SkillsLoaded -> copy(skills = e)
-        is dev.min.agent.spi.SkillsDiscovered -> copy(
-            nestedSkills = nestedSkills + e.entries.filter { x -> nestedSkills.none { it.name == x.name } },
-            checkedSkillDirs = checkedSkillDirs + e.directories,
-        )
+        is dev.min.agent.spi.SkillsDiscovered -> {
+            // 新发现的 skill 以 system-reminder 追加在发起这批调用的助手消息之后（与 CwdChanged 的目录提醒同一条路，bare 档不渲染）；
+            // 冻结的清单与系统提示一字不动
+            val note = e.assistantMessageId?.let { id -> dev.min.agent.context.SkillListing.announcement(e.entries, skills?.listingMaxDescChars)?.let { id to it } }
+            copy(
+                nestedSkills = nestedSkills + e.entries.filter { x -> nestedSkills.none { it.name == x.name } },
+                checkedSkillDirs = checkedSkillDirs + e.directories,
+                hookContexts = if (note == null) hookContexts else hookContexts + (note.first to hookContexts[note.first].orEmpty() + note.second),
+            )
+        }
+        is dev.min.agent.spi.SkillsRescanned -> {
+            val note = listOfNotNull(
+                dev.min.agent.context.SkillListing.announcement(e.entries, skills?.listingMaxDescChars),
+                dev.min.agent.context.SkillListing.retraction(e.removed),
+            )
+            copy(
+                nestedSkills = nestedSkills.filter { n -> e.entries.none { it.name == n.name } && n.name !in e.removed } + e.entries,
+                removedSkills = removedSkills - e.entries.map { it.name }.toSet() + e.removed,
+                // 下一条被提升的输入带上这段提醒（空闲时重扫才会走到这里，见 SessionRuntime.send）
+                pendingInputContexts = pendingInputContexts + note,
+            )
+        }
+        is dev.min.agent.spi.SkillToolsGranted -> copy(skillGrants = (skillGrants + e.rules).distinct())
+        is dev.min.agent.spi.SkillToolsCleared -> copy(skillGrants = emptyList())
         is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e)
         is dev.min.agent.spi.StructuredOutputDelivered -> copy(structuredOutput = e)
         is dev.min.agent.spi.SessionBranched -> copy(branched = e)

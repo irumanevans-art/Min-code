@@ -37,11 +37,29 @@ object ViewerInbox {
         _artifact.value = null
     }
 
-    /** 放进队列。写不进去返回 false，草稿没有保存（SendFeedback 据此告诉模型） */
-    fun addDraft(draft: FeedbackDraft): Boolean = draftBox.add(draft)
+    /**
+     * 已知秘密的读取口（引擎创建时绑一次）：App 设置里存的各家 key、搜索 key、遥测头部令牌、MCP 令牌，导出诊断包与写草稿时都要逐字去掉。
+     * 读取要解密 Keystore，所以是挂起的；读不出来（出错）当作空名单，只剩形状兜底。
+     */
+    @Volatile private var secretSource: suspend () -> Set<String> = { emptySet() }
 
-    /** 用户改了草稿：覆盖原文件。返回 false = 没有这条或写不进去 */
-    fun replaceDraft(id: String, new: FeedbackDraft): Boolean = draftBox.replace(id, new)
+    fun bindSecrets(source: suspend () -> Set<String>) {
+        secretSource = source
+    }
+
+    suspend fun knownSecrets(): Set<String> = try {
+        secretSource()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        emptySet()
+    }
+
+    /** 放进队列。写不进去返回 false，草稿没有保存（SendFeedback 据此告诉模型）。写入时就去凭证（[knownSecrets] 由调用方取） */
+    fun addDraft(draft: FeedbackDraft, knownSecrets: Set<String> = emptySet()): Boolean = draftBox.add(draft, knownSecrets)
+
+    /** 用户改了草稿：覆盖原文件（同样去凭证）。返回 false = 没有这条或写不进去 */
+    fun replaceDraft(id: String, new: FeedbackDraft, knownSecrets: Set<String> = emptySet()): Boolean = draftBox.replace(id, new, knownSecrets)
 
     /** 丢弃：只删这一条，其余不动 */
     fun discardDraft(id: String): Boolean = draftBox.discard(id)

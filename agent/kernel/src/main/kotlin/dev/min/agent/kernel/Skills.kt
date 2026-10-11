@@ -114,8 +114,8 @@ suspend fun SessionRuntime.loopPlanBlock(args: String): String {
 }
 
 /**
- * Skill 工具背后的端口：按会话**冻结的清单**找 skill（磁盘上中途新增的 skill 这个会话里调不到，与清单里看不到一致），
- * 正文调用时才读、此刻渲染——读到什么都留在那次工具结果里，请求照样能从日志重建。
+ * Skill 工具背后的端口：按会话**冻结的清单**找 skill，再叠上日志里记着的中途变化（嵌套目录懒加载、`--add-dir` 重扫，见 [skillEntries]）；
+ * 用户 / 项目层磁盘上中途新增的 skill 这个会话里调不到。正文调用时才读、此刻渲染——读到什么都留在那次工具结果里，请求照样能从日志重建。
  */
 internal class KernelSkillPort(
     private val rt: SessionRuntime,
@@ -125,7 +125,7 @@ internal class KernelSkillPort(
 ) : SkillPort {
     override suspend fun invoke(name: String, args: String?): SkillInvocation {
         val state = rt.state.value
-        val entries = state.skills?.entries.orEmpty() + state.nestedSkills
+        val entries = state.skillEntries()
         val entry = entries.firstOrNull { it.name == name }
             ?: return SkillInvocation.Rejected(unknown(name, entries))
         if (entry.disableModelInvocation) {
@@ -189,7 +189,7 @@ internal class KernelSkillRunPort(
     private var shellDisabledByPolicy: Boolean? = null
 
     override suspend fun begin(owner: SkillRunOwner) {
-        rt.grantSkillTools(owner.allowedTools, owner.baseDir)
+        rt.grantSkillTools(owner.allowedTools, owner.baseDir, owner.name)
     }
 
     override suspend fun shell(owner: SkillRunOwner, command: String): RunResult {
@@ -210,14 +210,18 @@ internal class KernelSkillRunPort(
             is Verdict.Allow -> Unit
             is Verdict.Deny -> return RunResult.Refused(refusal(command, verdict.messageToModel))
             Verdict.Ask -> {
-                // 文档：注入的命令不弹审批；非自动模式下 ask 与 deny 一样中止调用。自动模式走分类器审查（与普通 Bash 一致），
-                // 分身里不许（文档：forked skill 的 ask 直接中止）
-                if (rt.state.value.settings.mode != PermissionMode.Auto || owner.fork) {
-                    return RunResult.Refused(refusal(command, "这条命令需要用户批准。用 allowed-tools 预先放行它，或让用户批准后再调用。"))
+                // 文档：注入的命令不弹审批；非自动模式下 ask 与 deny 一样中止调用。
+                // 自动模式下不中止：skill 带着「先自己跑这条命令」的指示加载，模型自己的 Bash 调用再走自动模式的常规判定（含分类器）——
+                // 内核不替它先跑、也不在这里单独送审。例外仍中止：指定了 agent 的分身 skill（命令要在子 agent 里跑，没有这条交接），
+                // 以及这个会话里模型没有 Bash 工具（没法照着做）
+                val abortReason = when {
+                    rt.state.value.settings.mode != PermissionMode.Auto -> "这条命令需要用户批准。用 allowed-tools 预先放行它，或让用户批准后再调用。"
+                    owner.fork && owner.agent != null -> "这条命令需要批准，而分身 skill 指定了 agent，自动模式下也不能交给模型代跑。用 allowed-tools 预先放行它。"
+                    availableTools(rt.state.value, rt.deps, runtime = rt).none { it.name == "Bash" } -> "这条命令需要批准，而当前会话里没有 Bash 工具可以让模型自己去跑。"
+                    else -> null
                 }
-                val input = buildJsonObject { put("command", JsonPrimitive(command)) }
-                val review = rt.reviewAutoAction(turnId, "Bash", input, ask.summary)
-                if (review is Verdict.Deny) return RunResult.Refused(refusal(command, review.messageToModel))
+                if (abortReason != null) return RunResult.Refused(refusal(command, abortReason))
+                return RunResult.Ok(deferredCommand(command))
             }
         }
         val result = rt.runNetworkShell(callId, ShellCommand(command, rt.state.value.settings.cwd), ExecOptions(timeoutMs = SHELL_TIMEOUT_MS, foregroundBudgetMs = null), emptyList())
@@ -235,13 +239,20 @@ internal class KernelSkillRunPort(
         val hub = rt.hub ?: return RunResult.Refused("skill「${owner.name}」要在分身里运行，这个环境没有子 agent 支持。")
         // 分身类型只能由内核派生；skill 写成 fork 就是想绕过「分身不能再委派」之类的约束
         if (owner.agent == FORK_AGENT_TYPE) return RunResult.Refused("skill「${owner.name}」的 agent 写成了 fork，分身只能由内核派生，skill 不能指定它。")
-        val request = DelegateRequest(description = "skill ${owner.name}", prompt = prompt, agentType = owner.agent, background = owner.background)
+        val request = DelegateRequest(
+            description = "skill ${owner.name}", prompt = prompt, agentType = owner.agent, background = owner.background,
+            skillGrants = resolveSkillGrantRules(owner.allowedTools, owner.baseDir),
+        )
         return when (val r = hub.spawn(rt, turnId, callId, request)) {
             is DelegateResult.Started -> RunResult.Ok("skill「${owner.name}」已在后台的子 agent（${r.child.value}）里运行，结果会作为消息回到会话。")
             is DelegateResult.Finished -> if (r.isError) RunResult.Refused(r.report) else RunResult.Ok(r.report)
             is DelegateResult.Rejected -> RunResult.Refused(r.messageForModel)
         }
     }
+
+    /** 自动模式下留给模型的交接：这条命令没有被预执行，请它自己用 Bash 先跑（原样给出命令），再按 skill 余下的内容继续 */
+    private fun deferredCommand(command: String) =
+        "[Not pre-run: this command needs approval. Run it yourself with the Bash tool first, then continue with the rest of this skill: $command]"
 
     private fun refusal(command: String, reason: String) = "Shell command permission check failed for pattern \"$command\"：$reason"
 
@@ -282,13 +293,15 @@ internal fun SkillDef.toEntry(): SkillEntry = SkillEntry(
  * a file in that subdirectory and stay available for the rest of the session」）。只在完整档里做；`--bare` / `--safe-mode`
  * 不自动发现 skills，这里也不做。结果落日志（SkillsDiscovered），重开会话不重新查。
  */
-internal suspend fun SessionRuntime.discoverNestedSkills(touched: List<GuestPath>) {
+internal suspend fun SessionRuntime.discoverNestedSkills(touched: List<GuestPath>, anchor: dev.min.agent.protocol.MessageId? = null) {
     if (deps.customizations != Customizations.Full) return
     val s = state.value
-    val taken = (s.skills?.entries.orEmpty() + s.nestedSkills).map { it.name }.toSet()
+    val taken = s.skillEntries().map { it.name }.toSet()
     val found = SkillDiscovery.nestedSkills(deps.host.fs, s.settings.cwd, touched, s.checkedSkillDirs, taken)
     if (found.checked.isEmpty() && found.notes.isEmpty()) return
-    commit(listOf(SkillsDiscovered(found.skills.map { it.toEntry() }, found.checked, found.notes)), Durability.Batched)
+    // 找到了新 skill 就要让模型知道（追加的 system-reminder，挂在 [anchor] 上），进模型视图的东西要 Sync；只有「查过」的记录 Batched 就够
+    val durability = if (found.skills.isNotEmpty() && anchor != null) Durability.Sync else Durability.Batched
+    commit(listOf(SkillsDiscovered(found.skills.map { it.toEntry() }, found.checked, found.notes, anchor)), durability)
 }
 
 /**
@@ -304,4 +317,32 @@ suspend fun SessionRuntime.nestedSkillDefs(): List<SkillDef> = state.value.neste
         disableModelInvocation = entry.disableModelInvocation, userInvocable = entry.userInvocable,
         allowedTools = entry.allowedTools, context = entry.context, agent = entry.agent, background = entry.background, hooks = entry.hooks,
     )
+}
+
+/** skill 的 `allowed-tools` 规则文字：`${CLAUDE_SKILL_DIR}`（文档：允许在 allowed-tools 的 Bash 规则里用它）代入 skill 所在目录 */
+internal fun resolveSkillGrantRules(allowed: List<String>, baseDir: String?): List<String> =
+    allowed.map { if (baseDir != null) it.replace("\${CLAUDE_SKILL_DIR}", baseDir) else it }
+
+/**
+ * `--add-dir` 目录里 `.claude/skills` 的热发现（CC skills 文档：「picks up the change within the current session, without a restart」，
+ * 但「doesn't watch the added directory's `.claude/commands/` or `.claude/agents/`」，bare 档不监视）。
+ * Min 没有常驻文件监视，改在用户每次开新回合之前重扫一遍：只读这些目录的 SKILL.md，与会话当前已知的 add-dir skill 比对，
+ * 有新增 / 改动 / 删除才写一条 [dev.min.agent.spi.SkillsRescanned]——系统提示里冻结的清单不动（前缀与缓存不断），
+ * 差异以 system-reminder 附在这条用户消息后告诉模型，Skill 工具按新的找。与完整档的 skills 同样要求项目来源已开放：safe / bare 不走这里。
+ */
+internal suspend fun SessionRuntime.rescanAddDirSkills() {
+    if (deps.customizations != Customizations.Full) return
+    val dirs = deps.settingsInputs.addDirs
+    if (dirs.isEmpty()) return
+    val s = state.value
+    val current = s.skillEntries()
+    val known = current.filter { it.source == ConfigSource.AddDir.label && it.kind == SkillKind.Skill }.associateBy { it.name }
+    // 别的来源占着的名字（项目、用户、托管、插件、内置、命令）还是它们的：附加目录里的同名项当初就没进清单，现在也不进
+    val foreign = current.filter { it.source != ConfigSource.AddDir.label || it.kind != SkillKind.Skill }.map { it.name }.toSet()
+    val scanned = addDirSkills(deps.host.fs, dirs)
+    val fresh = scanned.skills.filter { it.name !in foreign }.map { it.toEntry() }
+    val changed = fresh.filter { known[it.name] != it }
+    val gone = known.keys - fresh.map { it.name }.toSet()
+    if (changed.isEmpty() && gone.isEmpty()) return
+    commit(listOf(dev.min.agent.spi.SkillsRescanned(changed, gone.sorted(), scanned.notes)), Durability.Sync)
 }

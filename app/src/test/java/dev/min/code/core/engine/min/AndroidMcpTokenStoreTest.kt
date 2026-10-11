@@ -21,6 +21,15 @@ class AndroidMcpTokenStoreTest {
         store.save(key,credentials()); assertFalse(first.contentEquals(file.readBytes()))
         assertEquals(credentials(),store.load(key)); Unit
     }
+    @Test fun `known secrets lists every token and secret of every record, and nothing when the file is unreadable or absent`() = runBlocking {
+        val file=tmp.newFolder().resolve("mcp-oauth.enc"); val secret=aes(); val store=AndroidMcpTokenStore(file,secret)
+        assertEquals(emptySet<String>(),store.knownSecrets())
+        store.save(key,credentials())
+        store.save(McpTokenKey("other","https://other.example/mcp"),credentials().copy(accessToken="OTHER_ACCESS",refreshToken=null,clientSecret=null))
+        assertEquals(setOf("FAKE_SECRET","FAKE_ACCESS","FAKE_REFRESH","OTHER_ACCESS"),store.knownSecrets())
+        // 解不开（换了锁屏 / 换机）：给不出名单，也不抛，更不泄露什么
+        assertEquals(emptySet<String>(),AndroidMcpTokenStore(file,aes()).knownSecrets()); Unit
+    }
     @Test fun `endpoint and name isolate credentials and logout deletes record`() = runBlocking {
         val file=tmp.newFolder().resolve("mcp-oauth.enc"); val store=AndroidMcpTokenStore(file,aes())
         store.save(key,credentials()); assertNull(store.load(McpTokenKey("other",key.endpoint))); assertNull(store.load(McpTokenKey(key.server,"https://other.example")))

@@ -251,7 +251,7 @@ class BareSafeModeTest {
         seed()
         val rt = createIn(hub(Customizations.Full, ScriptedModel(reply(TextPart("done"))), listOf(read), FakeExec()))
         val names = rt.state.value.skills!!.entries.filter { it.source == "内置" }.map { it.name }
-        assertEquals(listOf("loop", "code-review", "simplify", "batch"), names)
+        assertEquals(listOf("loop", "code-review", "security-review", "simplify", "batch"), names)
     }
 
     @Test

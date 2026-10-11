@@ -26,6 +26,22 @@ object SkillListing {
 
     const val INTRO = "The following skills are available for use with the Skill tool:"
 
+    /** 追加通知用的名义窗口：中途新增的 skill 不是冻结清单的一部分，没有「模型窗口」可按，取一个固定值让同一份日志永远渲染出同一段文字 */
+    private const val ANNOUNCE_WINDOW = 200_000
+
+    /**
+     * 会话中途才发现的 skill（嵌套目录懒加载、`--add-dir` 目录里新增 / 改动）怎么告诉模型：一段 system-reminder 的正文，
+     * 格式与冻结清单同款（每个一行 `- 名字: 说明`），放在对话里追加，不碰系统提示（前缀不断）。没有可列的返回 null。
+     */
+    fun announcement(entries: List<SkillEntry>, maxDescChars: Int? = null): String? {
+        val lines = lines(entries, ANNOUNCE_WINDOW, null, maxDescChars)
+        return if (lines.isEmpty()) null else "The following skills are now available for use with the Skill tool:\n\n" + lines.joinToString("\n")
+    }
+
+    /** 同上，反过来：目录里被删掉的 skill。没有名字返回 null */
+    fun retraction(names: List<String>): String? =
+        if (names.isEmpty()) null else "The following skills are no longer available: " + names.joinToString(", ")
+
     /** 没有可列的 skill 返回 null（整段不出现，系统提示不为它多一个空段） */
     fun block(
         entries: List<SkillEntry>,

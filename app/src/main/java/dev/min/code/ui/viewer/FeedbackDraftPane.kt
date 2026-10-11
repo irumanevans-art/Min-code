@@ -99,9 +99,13 @@ private fun DraftCard(item: PendingDraft) {
         )
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             InkButton(onClick = {
-                val edited = draft.copy(body = body)
-                if (edited != draft) ViewerInbox.replaceDraft(item.id, edited)
-                scope.launch { exportBundle(context, edited) }
+                scope.launch {
+                    // 已知秘密在点击时现取（Keystore 解密）：先把用户的改动按它去凭证存回草稿，再导出
+                    val secrets = ViewerInbox.knownSecrets()
+                    val edited = draft.copy(body = body)
+                    if (edited != draft) ViewerInbox.replaceDraft(item.id, edited, secrets)
+                    exportBundle(context, edited, secrets)
+                }
             }) { Text(stringResource(R.string.viewer_draft_export)) }
             InkButton(onClick = { ViewerInbox.discardDraft(item.id) }) {
                 Text(stringResource(R.string.viewer_draft_discard))
@@ -111,7 +115,7 @@ private fun DraftCard(item: PendingDraft) {
 }
 
 /** 导出：在缓存目录生成 zip（先清空），经 FileProvider 交给系统分享面板。只在用户点了导出时发生 */
-private suspend fun exportBundle(context: Context, draft: FeedbackDraft) {
+private suspend fun exportBundle(context: Context, draft: FeedbackDraft, knownSecrets: Set<String>) {
     val uri = withContext(Dispatchers.IO) {
         val bytes = FeedbackBundle.build(
             draft,
@@ -119,6 +123,7 @@ private suspend fun exportBundle(context: Context, draft: FeedbackDraft) {
             versionInfo = "Min ${BuildConfig.VERSION_NAME}",
             env = emptyMap(),
             settings = emptyMap(),
+            knownSecrets = knownSecrets,
         )
         val dir = File(context.cacheDir, "diagnostics").apply {
             listFiles()?.forEach { it.deleteRecursively() }

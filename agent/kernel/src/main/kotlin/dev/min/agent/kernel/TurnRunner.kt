@@ -391,7 +391,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
      * 同一回合里被拦（含只给上下文）的次数到 [stopBlockCap] 就放行——两个互相较劲的 hook 不能把模型困死在回合里
      */
     private suspend fun stopHookContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean =
-        hookStopContinues(turnId, completed) || goalContinues(turnId, completed)
+        hookStopContinues(turnId, completed) || securityReviewContinues(turnId) || goalContinues(turnId, completed)
 
     /**
      * `/goal`（CC：会话级的 prompt 型 Stop hook）：目标还在时，回合要结束就问一次评估器（同一条 prompt hook 路径，计费照常）。
@@ -444,6 +444,22 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         rt.commit(listOf(GoalEvaluated(verdictKind, reason, toolUse), GoalCleared(end)), Durability.Sync)
         toolRoundsSinceEvaluation = 0
         return false
+    }
+
+    /**
+     * security-guidance 的回合末审查（[SecurityGuidanceRuntime.turnEndFeedback]）：这一回合改过文件才审；发现问题就把理由作为 hook 来源的输入
+     * 交回模型、回合继续（CC：「Claude is re-prompted with the findings」）。没启用 / 没改文件 / 审查通过都是 false，不碰回合收尾。
+     */
+    private suspend fun securityReviewContinues(turnId: TurnId): Boolean {
+        val feedback = rt.security.turnEndFeedback() ?: return false
+        rt.receive(
+            ClientMsgId(deps.ids.next("security-review")),
+            listOf(TextPart(feedback)),
+            Delivery.Steer,
+            InputOrigin.Hook("security-guidance"),
+            startTurn = null,
+        )
+        return promote(setOf(Delivery.Steer)) > 0
     }
 
     private suspend fun hookStopContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
@@ -687,7 +703,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             cacheKey = origin?.cacheKey ?: state.branched?.cacheKey ?: state.header.sessionId.value,
             memory = state.memory,
             // 子 agent 的工具表里没有 Skill 就不列清单：列了模型也调不了，白占 token
-            skills = state.skills?.takeIf { _ -> specs.any { it.name == SkillTool.name } },
+            // bare 档不给清单（CC headless 页：不给 skill 清单，含 --add-dir 的；skill 仍在 Skill 工具里按名字可调）
+            skills = state.skills?.takeIf { _ -> specs.any { it.name == SkillTool.name } && deps.customizations != Customizations.Bare },
             agentInstructions = origin?.instructions,
             autoMemory = state.autoMemory,
             mcpInstructions = state.mcpInstructionsFor(state.visibleMcpTools(deps), state.usesMcpToolSearch(deps)),

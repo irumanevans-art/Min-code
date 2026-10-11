@@ -19,7 +19,7 @@ class BundledSkillsTest {
     @Test
     fun `the four bundled skills are listed in their fixed order with the built-in source label`() {
         val defs = BundledSkills.defs()
-        assertEquals(listOf("loop", "code-review", "simplify", "batch"), defs.map { it.name })
+        assertEquals(listOf("loop", "code-review", "security-review", "simplify", "batch"), defs.map { it.name })
         assertTrue(defs.all { it.source == ConfigSource.Bundled })
         assertTrue(defs.all { it.sourceLabel == "内置" })
         assertTrue(defs.all { it.path.value.startsWith(BundledSkills.PATH_PREFIX) && it.path.value.endsWith("/SKILL.md") })

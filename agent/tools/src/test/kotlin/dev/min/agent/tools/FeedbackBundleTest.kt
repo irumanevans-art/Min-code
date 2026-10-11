@@ -122,6 +122,37 @@ class FeedbackBundleTest {
     }
 
     @Test
+    fun `secrets the host knows are removed verbatim even when they have no recognisable shape`() {
+        // 手机端把设置里存的 key、令牌作为「已知秘密」交进来：这些没有 sk- 之类的形状，只能靠逐字替换去掉
+        val known = setOf("plain-provider-key-9d8c7b6a", "search-9f8e7d6c5b", "mcp-access-4a3b2c1d")
+        val draft = FeedbackDraft("t", "我贴了 plain-provider-key-9d8c7b6a 与 search-9f8e7d6c5b")
+        val log = "{\"text\":\"mcp-access-4a3b2c1d\"}\n"
+        val files = entries(FeedbackBundle.build(draft, log, "v", emptyMap(), emptyMap(), knownSecrets = known))
+        val all = files.values.joinToString("\n")
+        for (s in known) assertFalse(s + " in " + all, all.contains(s))
+        assertTrue(all, all.contains("我贴了"))
+    }
+
+    @Test
+    fun `a known secret is also removed from the log in its JSON-escaped form`() {
+        // 会话日志每行是 JSON：含引号 / 反斜杠的秘密写进去时是转义过的，逐字匹配对不上，所以转义后的写法也要去掉
+        val secret = "pw\"quote\\slash-VALUE99"
+        val escaped = "pw\\\"quote\\\\slash-VALUE99"
+        val log = "{\"text\":\"$escaped\"}\n"
+        val session = entries(FeedbackBundle.build(FeedbackDraft("t", "b"), log, "v", emptyMap(), emptyMap(), knownSecrets = setOf(secret))).getValue("session-log.txt")
+        assertFalse(session, session.contains("VALUE99"))
+    }
+
+    @Test
+    fun `redact is the same scrub the export uses, so a draft can be cleaned when it is written`() {
+        val out = FeedbackBundle.redact("key plain-provider-key-9d8c7b6a and sk-ant-api03-ZZZZZZZZZZZZ", setOf("plain-provider-key-9d8c7b6a"))
+        assertFalse(out, out.contains("plain-provider-key") || out.contains("ZZZZZZ"))
+        // 太短的值不当凭证：否则正文里所有的 1 都会被抹掉
+        assertEquals("a 1 b", FeedbackBundle.redact("a 1 b", setOf("1")))
+        assertEquals(out, FeedbackBundle.redact(out, setOf("plain-provider-key-9d8c7b6a")))
+    }
+
+    @Test
     fun `the leak scan finds a secret that survived, so a bad export cannot be written`() {
         assertTrue(FeedbackBundle.leaks(mapOf("a.txt" to "xx $fakeKey yy"), setOf(fakeKey)))
         assertFalse(FeedbackBundle.leaks(mapOf("a.txt" to "clean"), setOf(fakeKey)))

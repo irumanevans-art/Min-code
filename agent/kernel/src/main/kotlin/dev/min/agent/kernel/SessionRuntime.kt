@@ -121,14 +121,15 @@ class SessionRuntime private constructor(
      */
     private var memoryDiscoveryCwd: GuestPath? = null
     /**
-     * 本轮 skill 的 `allowed-tools` 放行（权限规则文字）。文档：「The grant clears when you send your next message」，
-     * 所以用户的下一条输入（[send]）清空它。只在内存里：重开会话后不恢复，工具会重新询问——失败关闭，不会比原来放得更宽。
+     * 把 skill 的 `allowed-tools` 记成本轮放行，落日志（[dev.min.agent.spi.SkillToolsGranted]）。文档：「The grant clears when you send your next message」，
+     * 所以用户的下一条输入（[send]）写一条 SkillToolsCleared。放行以日志为准（折叠进 `SessionState.skillGrants`）：重开会话时原样恢复，
+     * 记的是**已代入**的规则文字，不回头读磁盘上的 skill，所以恢复出来的范围不会比当初大；拒绝与询问规则仍在它之上。
+     * 规则里的 CLAUDE_SKILL_DIR 占位符在此代入（文档：允许在 allowed-tools 的 Bash 规则里用它）
      */
-    internal val skillGrants = java.util.concurrent.CopyOnWriteArrayList<String>()
-
-    /** 把 skill 的 `allowed-tools` 记成本轮放行；`${CLAUDE_SKILL_DIR}` 在规则里代入（文档：允许在 allowed-tools 的 Bash 规则里用它） */
-    internal fun grantSkillTools(allowed: List<String>, baseDir: String?) {
-        for (text in allowed) skillGrants += if (baseDir != null) text.replace("\${CLAUDE_SKILL_DIR}", baseDir) else text
+    internal suspend fun grantSkillTools(allowed: List<String>, baseDir: String?, skill: String = "") {
+        val rules = resolveSkillGrantRules(allowed, baseDir)
+        if (rules.isEmpty() || state.value.skillGrants.containsAll(rules)) return
+        commit(listOf(dev.min.agent.spi.SkillToolsGranted(skill, rules)), Durability.Sync)
     }
 
     private var cachedMemoryDiscovery: MemoryDiscovery? = null
@@ -147,6 +148,8 @@ class SessionRuntime private constructor(
     }
 
     internal val worktrees = Worktrees(this)
+    /** security-guidance 的三层（只在 settings 里启用了才有动作，见 [SecurityGuidanceRuntime]） */
+    internal val security = SecurityGuidanceRuntime(this)
     internal fun watchNetworkLease(handle: dev.min.agent.spi.ExecHandle, lease: dev.min.agent.spi.NetworkLease, timeoutMs: Long) {
         scope.launch {
             try {
@@ -629,7 +632,10 @@ class SessionRuntime private constructor(
             return@withLock false
         }
         // 用户的新输入开始新的一轮：上一轮 skill 的 allowed-tools 放行到此为止（文档）
-        skillGrants.clear()
+        if (state.value.skillGrants.isNotEmpty()) commit(listOf(dev.min.agent.spi.SkillToolsCleared()), Durability.Sync)
+        security.onUserMessage()
+        // `--add-dir` 里的 skill 在会话中途变了：新回合开始前重扫（回合进行中收到的追加输入不重扫，等下一个空闲点）
+        if (state.value.turn == null) rescanAddDirSkills()
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
         val workflow = prepareSavedWorkflow(clientMsgId, prepared)
         startsInFlight.incrementAndGet()

@@ -73,4 +73,34 @@ class FeedbackDraftBoxTest {
         assertEquals(1, b.drafts.value.size)
         assertNull(dir().takeIf { it.exists() }?.listFiles()?.firstOrNull())
     }
+    @Test fun `known secrets are removed when the draft is written, from the title, body and log, on disk and in memory`() {
+        val known = setOf("relay-token-plain-7a1b2c3d", "mcp-access-plain-5b8c9d0e")
+        val b = box()
+        val draft = FeedbackDraft("401 用了 relay-token-plain-7a1b2c3d", "贴了 mcp-access-plain-5b8c9d0e", sessionLog = "{\"t\":\"relay-token-plain-7a1b2c3d\"}\n")
+        assertTrue(b.add(draft, known))
+        for (secret in known) {
+            assertFalse(secret, files().joinToString("\n") { it.readText() }.contains(secret))
+            assertFalse(secret, b.drafts.value.single().draft.let { it.title + it.body + it.sessionLog }.contains(secret))
+        }
+        // 去掉的是秘密本身，其余内容照留
+        assertTrue(files().single().readText().contains("401"))
+        // 重开还是干净的
+        assertFalse(box().drafts.value.single().draft.let { it.title + it.body + it.sessionLog }.contains("relay-token-plain"))
+    }
+
+    @Test fun `an edit that pastes a secret back in is cleaned too`() {
+        val known = setOf("relay-token-plain-7a1b2c3d")
+        val b = box()
+        b.add(FeedbackDraft("t", "原文", sessionLog = "log"), known)
+        val item = b.drafts.value.single()
+        assertTrue(b.replace(item.id, item.draft.copy(body = "我又贴了 relay-token-plain-7a1b2c3d"), known))
+        assertFalse(files().single().readText().contains("relay-token-plain"))
+        assertFalse(b.drafts.value.single().draft.body.contains("relay-token-plain"))
+    }
+
+    @Test fun `shaped credentials are removed at write time even with no known list`() {
+        val b = box()
+        b.add(FeedbackDraft("t", "key sk-ant-api03-SHAPEDKEY0123456789"))
+        assertFalse(files().single().readText().contains("SHAPEDKEY"))
+    }
 }

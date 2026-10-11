@@ -74,6 +74,10 @@ data class SessionState(
     val nestedSkills: List<dev.min.agent.spi.SkillEntry> = emptyList(),
     /** 已经检查过的嵌套 `.claude/skills` 目录（有没有 skill 都记），同一个目录不重复查 */
     val checkedSkillDirs: Set<String> = emptySet(),
+    /** skill `allowed-tools` 的本轮放行（SkillToolsGranted 追加、SkillToolsCleared 清空）：重开会话时从日志恢复，范围不会比原来大 */
+    val skillGrants: List<String> = emptyList(),
+    /** `--add-dir` 里被删掉的 skill 名（SkillsRescanned）：冻结清单里还有它，但不再算可调用的 */
+    val removedSkills: Set<String> = emptySet(),
     /**
      * 会话创建时冻结的 output style（最后一条 OutputStyleLoaded）。系统提示的样式段只由它拼，会话内不变；
      * 分身继承这份快照（前缀与父会话逐字相同），普通子 agent 不用样式。没设 / Default / 找不到时为 null
@@ -473,4 +477,13 @@ sealed interface CallPhase {
 internal fun SessionState.lastTurnAllowsAutoStart(): Boolean {
     val outcome = lastTurn?.outcome
     return outcome == null || outcome == TurnOutcome.Completed
+}
+
+/**
+ * 会话里当前可按名字调用的 skill / command：冻结的清单，被 `--add-dir` 重扫改过的同名项换成新的、被删掉的去掉，
+ * 再接上嵌套目录懒加载来的。系统提示里的清单只看 [SessionState.skills]（冻结），不走这里。
+ */
+internal fun SessionState.skillEntries(): List<dev.min.agent.spi.SkillEntry> {
+    val overlay = nestedSkills.map { it.name }.toSet()
+    return skills?.entries.orEmpty().filter { it.name !in removedSkills && it.name !in overlay } + nestedSkills
 }

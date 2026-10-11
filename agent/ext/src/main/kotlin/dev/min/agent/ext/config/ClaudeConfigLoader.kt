@@ -49,7 +49,10 @@ object ClaudeConfigLoader {
 
         val skills = SkillLoader.load(io, roots("skills", ConfigSource.Managed, ConfigSource.User, ConfigSource.Project) + ancestors + addDirSkills)
         val commands = CommandLoader.load(io, roots("commands", ConfigSource.User, ConfigSource.Project) + addDirCommands, skills.map { it.name }.toSet())
-        val agents = AgentLoader.load(io, roots("agents", ConfigSource.Managed, ConfigSource.Project, ConfigSource.User))
+        // `--add-dir` 的 agents 与项目的并列加载（CC sub-agents 文档：「also loads its .claude/agents/ folder, alongside your project subagents」）；
+        // 优先级表里没有它，Min 取项目之后、用户之前：同名时项目的胜，附加目录的胜过用户的。不监视（会话里改了要重启）
+        val addDirAgents = addDirs.map { DefinitionRoot(ConfigSource.AddDir, GuestPaths.join(GuestPaths.normalize(it), ".claude/agents")) }
+        val agents = AgentLoader.load(io, roots("agents", ConfigSource.Managed, ConfigSource.Project) + addDirAgents + roots("agents", ConfigSource.User))
         return ClaudeConfig(settings, skills, commands, agents, settings.notes + io.notes)
     }
 }

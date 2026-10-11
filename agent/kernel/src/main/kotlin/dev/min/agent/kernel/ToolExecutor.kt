@@ -191,7 +191,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             catchingNonCancellation { deps.host.fs.stat(path)?.kind == FileKind.File }.getOrDefault(false)
         }
         if (files.isEmpty()) return
-        catchingNonCancellation { rt.discoverNestedSkills(files) }.onFailure { e ->
+        val anchor = rt.state.value.history.lastOrNull { e -> e is HistoryEntry.Assistant && e.toolCalls.any { it.callId == calls.first().callId } }?.messageId
+        catchingNonCancellation { rt.discoverNestedSkills(files, anchor) }.onFailure { e ->
             catchingNonCancellation {
                 rt.commit(
                     listOf(Note(NoteLevel.Warning, "加载嵌套目录的 skills 失败，已跳过：${e.message?.lineSequence()?.firstOrNull() ?: e::class.simpleName}")),
@@ -305,7 +306,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             mode = s.settings.mode,
             classifyAllShell = s.autoReviewSettings.config.classifyAllShell,
             // 本轮 skill 的 allowed-tools 放行（照文档：到用户下一条消息为止）；拒绝与询问规则仍在它之上（PolicyEngine 先看拒绝、再看询问）
-            rules = parsedRules + rt.skillGrants.mapNotNull { PermissionRule.parse(dev.min.agent.policy.RuleKind.Allow, it, "skill") },
+            rules = parsedRules + s.skillGrants.mapNotNull { PermissionRule.parse(dev.min.agent.policy.RuleKind.Allow, it, "skill") },
             cwd = s.settings.cwd,
             home = deps.memoryHome ?: DEFAULT_HOME,
             scopeOf = { path ->
@@ -629,6 +630,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         outcome(turnId, callId, budgeted, adopted)
         // 只有成功的调用算「碰到了文件」；读或写都算，目录（Glob / Grep 的搜索根）在 [attachMemory] 里滤掉
         if (!budgeted.isError) touched[callId] = askFor(p).paths.map { it.path }
+        // security-guidance：编辑后的模式提醒、记下改动、提交 / 推送后的审查（没启用时立即返回）
+        if (!budgeted.isError) rt.security.afterTool(p.call, p.raw, touched[callId].orEmpty())
         postToolUse(turnId, p, budgeted, deps.clock.nowMs() - started)
     }
 

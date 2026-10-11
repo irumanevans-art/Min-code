@@ -99,4 +99,37 @@ data class SkillsDiscovered(
     val entries: List<SkillEntry>,
     val directories: List<String>,
     val notes: List<String> = emptyList(),
+    /**
+     * 触发这次发现的那批工具调用所在的助手消息：新 skill 以 system-reminder 追加在它后面的工具结果里告诉模型（CC：加载后「stay available」，
+     * 系统提示里冻结的清单不动，前缀不断）。null = 只登记、不通知（子 agent 继承父会话的这一份时）
+     */
+    val assistantMessageId: dev.min.agent.protocol.MessageId? = null,
 ) : SessionEvent
+
+/**
+ * `--add-dir` 目录里的 `.claude/skills` 在会话中途有变化（CC skills 文档：「picks up the change within the current session, without a restart」；
+ * 命令与 agents 不监视）。内核在用户每次开新回合前重扫一遍，有差异才写这条。[entries] 是新增或改动过的（同名替换旧的），
+ * [removed] 是没了的名字。折叠进 `SessionState.nestedSkills` / `removedSkills`（冻结的清单不动），并以 system-reminder 附在下一条用户消息后告诉模型。
+ */
+@Serializable
+@SerialName("skills_rescanned")
+data class SkillsRescanned(
+    val entries: List<SkillEntry>,
+    val removed: List<String> = emptyList(),
+    val notes: List<String> = emptyList(),
+) : SessionEvent
+
+/**
+ * skill 的 `allowed-tools` 本轮放行（CC 文档：「Tools Claude can use without asking permission during the turn that invokes this skill.
+ * The grant clears when you send your next message」）。[rules] 是**已代入 `${CLAUDE_SKILL_DIR}`** 的权限规则文字：
+ * 日志里记的就是实际放行的那几条，重开会话时按日志恢复，不再回头读磁盘上的 skill（skill 文件中途改宽了也不会让放行变大）。
+ * [skill] 只给人看。折叠进 `SessionState.skillGrants`（追加去重）；拒绝与询问规则仍在它之上。
+ */
+@Serializable
+@SerialName("skill_tools_granted")
+data class SkillToolsGranted(val skill: String, val rules: List<String>) : SessionEvent
+
+/** 用户发了下一条消息：本轮放行到此为止（照文档）。折叠时清空 `SessionState.skillGrants` */
+@Serializable
+@SerialName("skill_tools_cleared")
+data class SkillToolsCleared(val reason: String = "user_message") : SessionEvent
