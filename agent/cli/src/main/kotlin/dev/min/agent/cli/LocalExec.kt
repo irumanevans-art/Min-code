@@ -32,6 +32,7 @@ class LocalExec(
     private val logDir: Path,
     private val guestLogDir: GuestPath,
     private val shell: List<String> = listOf("bash", "-lc"),
+    private val baseEnvironment: Map<String, String>? = null,
 ) : Exec {
 
     /** 还在跑的进程；进程结束（无论前台后台）由等待线程摘除 */
@@ -48,6 +49,7 @@ class LocalExec(
             val builder = ProcessBuilder(launch.argv(command.script))
                 .directory(hostDirOf(command.cwd).toFile())
                 .redirectErrorStream(true)
+            baseEnvironment?.let { builder.environment().clear(); builder.environment().putAll(it) }
             builder.environment().putAll(command.env)
             builder.start()
         } catch (e: Throwable) {

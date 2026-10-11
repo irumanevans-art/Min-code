@@ -2617,3 +2617,50 @@ advisor 第一次端到端调用复用 modelMessages()，因 advisor 自身尚�
 - Pattern-Key: auxiliary-model.pending-tool-view
 
 ---
+
+## [LRN-20261011-EVAL-ISOLATION] best_practice
+
+**Logged**: 2026-10-11T12:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+插件评测的隔离要同时冻结文件系统、设置、记忆、工具授权与评测定义，不能仅更换 cwd。
+
+### Details
+Min 的 memoryEnabled 与 restricted 分开：前者禁止所有自动记忆输入，后者约束本机用户层和读取目录。隔离运行使用无宿主挂载的 rootfs、独立 HOME/TMPDIR、最小 hook 环境、仅目标插件副本，并隐藏 eval 定义/输出。没有 OS shell sandbox 时拒绝 shell grants。脚本化真实工具循环验证 Skill 与 Write，以及私有目录读取被拒绝。
+
+### Suggested Action
+后续增加 context、MCP mocks 或 shell 后端时，把对应路径和服务纳入上述隔离边界，不允许默默退回宿主默认环境。安全条件用实际编译执行后的定向变异证明。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/cli/src/main/kotlin/dev/min/agent/cli/PluginEvalKernel.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/PluginEvalTest.kt
+- Tags: plugin-eval, isolation, scripted-model
+- Pattern-Key: plugin-eval.multi-layer-isolation
+
+---
+## [LRN-20261011-WINDOWS-TEST-PATH] best_practice
+
+**Logged**: 2026-10-11T12:12:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+复用全量验证不仅复制 Gradle argv，还须显式记录 Git Bash 的进程级 PATH。
+
+### Details
+本轮 agent 模块与内核已通过，但 CLI async hooks 连续等不到后台结果。现场 events.jsonl 证明 CreateProcess error=2：默认执行环境没有 bash；Git 安装实际位于 C:/Program Files/Git。正常代码和测试不需改动，验证进程 PATH 加 bin 与 usr/bin 后重跑。停止失败轮只定位当前 worktree 的 GradleWorkerMain 与 worker.tmpdir，不停其它聊天进程。
+
+### Suggested Action
+Windows 全量证据同时记录进程级环境前缀、命令、版本、退出码；先验证 bash/sh 可执行，再跑依赖真实 shell 的整套用例，不能把 PATH 缺失误认为产品超时。
+
+### Metadata
+- Source: debugging
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/AsyncHooksSessionTest.kt
+- Tags: windows, gradle, git-bash, path, evidence
+- Pattern-Key: windows-test.explicit-shell-path
+
+---
