@@ -53,7 +53,18 @@ data class SessionCreated(
     val effort: Effort? = null,
     /** 这条会话是不是 `-p` / 无头跑的（CC :78：`--continue` 跳过 -p / SDK 会话）；旧日志缺字段 = 交互 */
     val headless: Boolean = false,
+    /** null 保留旧日志按进程默认加载的行为；显式选择随日志冻结，重开不会受其它会话影响。 */
+    val loadingModes: SessionLoadingModes? = null,
 ) : SessionEvent
+
+@Serializable
+data class SessionLoadingModes(
+    val safe: Boolean = false,
+    val bare: Boolean = false,
+    val restricted: Boolean = false,
+) {
+    init { require(!(safe && bare)) { "safe 与 bare 不能同时开启" } }
+}
 
 /**
  * 会话得了名字（`--name` 建会话时、会话内 `/rename` 改名时）。取最后一条为当前名字。

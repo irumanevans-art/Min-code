@@ -90,6 +90,7 @@ internal suspend fun standalonePluginCommand(argv: Array<String>): Int {
     var cwd = Path.of("").toAbsolutePath()
     val i = args.indexOf("--cwd")
     if (i >= 0) { if (i + 1 >= args.size) throw UsageException("--cwd 缺值"); cwd = Path.of(args.removeAt(i + 1)).toAbsolutePath(); args.removeAt(i) }
+    if (args.firstOrNull() == "eval") return pluginEvalCommand(args.drop(1), cwd)
     val paths = DesktopPaths(cwd, Path.of(System.getProperty("user.home"), ".min-agent/root"))
     return pluginCommand(desktopMarketplace(cwd, trust), args, System.`in`.bufferedReader(), System.out, { paths.guestOfHost(Path.of(it).toAbsolutePath()).value })
 }

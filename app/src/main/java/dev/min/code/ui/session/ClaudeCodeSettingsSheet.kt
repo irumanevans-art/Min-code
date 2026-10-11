@@ -229,6 +229,12 @@ internal fun ClaudeCodeSettingsSheet(
             }
         }
 
+        settings.loadingModes?.let { modes ->
+            SettingsSubHeader(stringResource(R.string.min_loading_modes))
+            LoadingModeToggle("safe", stringResource(R.string.min_safe_desc), modes.safe, enabled = false) {}
+            LoadingModeToggle("bare", stringResource(R.string.min_bare_desc), modes.bare, enabled = false) {}
+            LoadingModeToggle("restricted", stringResource(R.string.min_restricted_desc), modes.restricted, enabled = false) {}
+        }
         if (layout.effort) {
             Section(
                 section = SettingsSection.EFFORT,

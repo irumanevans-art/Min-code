@@ -340,6 +340,7 @@ class MinAgentEngine(
             mode = options.modeId?.let(::modeOfId) ?: PermissionMode.Default,
             effort = options.effortId?.let(::effortOfId),
             initial = initial,
+            loadingModes = options.loadingModes ?: dev.min.agent.spi.SessionLoadingModes(),
         )
         lastUsed.remember(profile.id, modelId)
         schedulePluginUpdates(runtime.state.value.created.cwd.value)

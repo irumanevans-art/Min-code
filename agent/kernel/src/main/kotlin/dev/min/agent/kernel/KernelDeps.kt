@@ -80,7 +80,7 @@ class HostPorts(
 }
 
 /** 内核的全部外部依赖，由宿主在组合根里一次性给齐（docs/agent/02-总体架构.md §2：构造注入，不做运行时发现） */
-class KernelDeps(
+data class KernelDeps(
     val clock: Clock,
     val ids: IdGenerator,
     val models: ModelResolver,
@@ -98,6 +98,8 @@ class KernelDeps(
      * null = 不加载记忆文件（内核测试、不需要记忆的嵌入场景）；真实宿主都应该给
      */
     val memoryHome: GuestPath? = null,
+    /** 隔离评测只加载目标插件；模型写出的项目说明也不能触发自动记忆发现。 */
+    val memoryEnabled: Boolean = true,
     /** 凭证是宿主的信任边界，不能由会话配置、分支或工具输入覆盖。 */
     val credentialPaths: Set<GuestPath> = emptySet(),
     val canonicalPath: (GuestPath) -> GuestPath = { it },

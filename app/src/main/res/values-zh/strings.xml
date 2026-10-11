@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="min_loading_modes">会话加载开关（创建后固定）</string>
+    <string name="min_safe_desc">跳过记忆、skills、命令、agents、插件、MCP、样式与工作流；保留托管策略和托管 hooks。与 bare 互斥。</string>
+    <string name="min_bare_desc">跳过记忆及扩展自动发现；只留文件读写改与前台 Bash。样式和工作流沿用桌面口径。与 safe 互斥。</string>
+    <string name="min_restricted_desc">只读 rootfs 托管设置；App 没有 --settings 输入。跳过用户配置，移除 Bash、Monitor、WebFetch 和 Workflow，文件限工作目录，禁用跳过权限。</string>
     <string name="session_section_advisor">顾问模型</string>
     <string name="advisor_off">不使用顾问</string>
     <string name="advisor_strength">请选择至少和主模型一样强的模型。目录没有可比较的能力分档，请自行判断。</string>

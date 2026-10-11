@@ -90,11 +90,13 @@ private val mcpActivitySequence = java.util.concurrent.atomic.AtomicLong()
 class SessionRuntime private constructor(
     private val log: SessionLog,
     initial: SessionState,
-    internal val deps: KernelDeps,
+    deps: KernelDeps,
     private val scope: CoroutineScope,
     /** 管着它的 Hub；没有时（单会话嵌入、旧测试）工具拿到的子 agent 端口是不可用的 */
     internal val hub: SessionHub? = null,
 ) {
+    // 所有加载点与工具执行都读取本运行时的独立快照，不能改 Hub 共用的进程依赖。
+    internal val deps: KernelDeps = deps.forSession(initial.created.loadingModes)
     /** 重开出来的会话才有（[resumeAdvice] 的基线）；新建的为 null */
     @Volatile
     internal var resumeBasis: ResumeBasis? = null
@@ -119,7 +121,7 @@ class SessionRuntime private constructor(
     private var cachedMemoryDiscovery: MemoryDiscovery? = null
     internal val memoryDiscovery: MemoryDiscovery? get() {
         val home = deps.memoryHome
-        if (home == null || state.value.origin?.omitMemory == true) return null
+        if (home == null || !deps.memoryEnabled || state.value.origin?.omitMemory == true) return null
         // --bare / --safe-mode：记忆不发现，按需加载（读到匹配文件时注入规则）也一并关掉，
         // 不然启动时跳过的记忆会从这条缝里回来
         if (deps.customizations != Customizations.Full) return null
@@ -155,7 +157,7 @@ class SessionRuntime private constructor(
         val old = state.value.settings.cwd
         val home = deps.memoryHome
         // --bare / --safe-mode：换目录也不能把被跳过的记忆装回来（权限规则照常重读）
-        val memory = if (home != null && state.value.origin == null && deps.customizations == Customizations.Full) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits, includeUser = !deps.settingsInputs.restricted).files else emptyList()
+        val memory = if (home != null && deps.memoryEnabled && state.value.origin == null && deps.customizations == Customizations.Full) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits, includeUser = !deps.settingsInputs.restricted).files else emptyList()
         val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs) else null
         val trustProject = deps.trustProjectHooks(cwd)
         val trustedLocal = snapshot?.let { trustedLocalSettings(deps, it, cwd, trustProject || state.value.created.headless) }.orEmpty()
@@ -375,6 +377,7 @@ class SessionRuntime private constructor(
      * 什么都没读到、自动记忆也没开时不写事件。
      */
     private suspend fun loadMemory(settings: SettingsSnapshot?) {
+        if (!deps.memoryEnabled) return
         val home = deps.memoryHome ?: return
         // --bare / --safe-mode：CLAUDE.md 与自动记忆都在跳过清单里（CC :72/:125），这次启动一个都不读。
         // 闸门在 deps 上而不是这里看参数：具名子 agent 会自己走这条路径重读，子会话必须跟着父会话的档位
@@ -1019,7 +1022,7 @@ class SessionRuntime private constructor(
             val home = deps.memoryHome
             if (home != null) {
                 // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照
-                val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home, inputs = deps.settingsInputs) else null
+                val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home, inputs = runtime.deps.settingsInputs) else null
                 runtime.checkpointsBySettings = settings?.let(::checkpointsEnabledIn)
                 if (loadMemory) runtime.loadMemory(settings)
                 if (loadSettings) {

@@ -200,6 +200,7 @@ data class SettingsView(
     val applying: Boolean,
     /** CC：提示缓存 TTL、ultracode；Codex：summary；Min：无 */
     val extras: List<EngineOptionView>,
+    val loadingModes: dev.min.agent.spi.SessionLoadingModes? = null,
     /**
      * 当前模型能不能吃图。[EngineCapabilities.images] 说的是引擎，这里说的是模型：
      * Min 里模型 `supportsImages` 为假时图片项置灰，不是整个隐藏。
