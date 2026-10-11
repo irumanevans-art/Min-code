@@ -19,6 +19,8 @@ enum class ConfigSource(val label: String) {
     Plugin("plugin"),
     /** 随包自带的 skill（CC 的 bundled skills）：同名时让位给上面的四层；清单里来源标「内置」 */
     Bundled("内置"),
+    /** `--add-dir`（CC 的 Skills 文档「Skills from additional directories」）：附加目录自己的 `.claude/skills`、`.claude/commands`。文档没写它与项目层的优先级，Min 排在项目之下（同名时项目胜） */
+    AddDir("add-dir"),
 }
 
 enum class RuleSpecKind { Allow, Ask, Deny }

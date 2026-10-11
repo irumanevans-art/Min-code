@@ -5,6 +5,8 @@ import dev.min.agent.kernel.goalArgumentOf
 import dev.min.agent.kernel.GoalSetResult
 import dev.min.agent.kernel.parseGoalCommand
 import dev.min.agent.kernel.savedWorkflows
+import dev.min.agent.kernel.userSkillRunPort
+import dev.min.agent.kernel.nestedSkillDefs
 import dev.min.agent.kernel.setGoal
 
 import dev.min.agent.kernel.SessionRuntime
@@ -120,9 +122,9 @@ private suspend fun sendPrompt(
         catch (e: Exception) { stderr.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
     } else emptyList()
     val config = app.config()
-    val action = if (runtime.savedWorkflows().any { it.name == effective.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(effective, humanInput = false) else interpretInput(effective, config.skills, config.commands, app.skillVars(runtime), prompts)
+    val action = if (runtime.savedWorkflows().any { it.name == effective.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(effective, humanInput = false) else interpretInputRun(effective, config.skills + runtime.nestedSkillDefs(), config.commands, app.skillVars(runtime), runtime.userSkillRunPort(), prompts, slashGate(runtime))
     // UserPromptExpansion：被拦就按参数错误退出（与展不开的命令同一档），理由给人看
-    promptExpansionBlock(runtime, effective, action)?.let { stderr.println(it); return 2 }
+    if (action is InputAction.Prompt) promptExpansionBlock(runtime, effective, action)?.let { stderr.println(it); return 2 }
     val parts = when (action) {
         is InputAction.Send -> listOf(TextPart(action.text))
         is InputAction.Prompt -> {

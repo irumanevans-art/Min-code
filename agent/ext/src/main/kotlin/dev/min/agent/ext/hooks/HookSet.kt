@@ -343,6 +343,8 @@ private fun priority(source: ConfigSource): Int = when (source) {
     ConfigSource.Managed -> 3
     // 内置 skill 不带 hooks，这个优先级只是为了 when 穷尽
     ConfigSource.Bundled -> 0
+    // --add-dir 的目录：不是设置层，附加目录自己的 hooks 不在 settings 里读；与用户层同档
+    ConfigSource.AddDir -> 0
 }
 
 internal val IF_EVENTS = setOf(HookEvent.PreToolUse, HookEvent.PostToolUse, HookEvent.PostToolUseFailure,

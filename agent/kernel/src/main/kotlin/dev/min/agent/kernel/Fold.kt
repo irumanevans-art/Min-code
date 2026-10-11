@@ -150,6 +150,10 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         // 同记忆：取最后一条，以后显式刷新时整份替换
         is SkillsLoaded -> copy(skills = e)
+        is dev.min.agent.spi.SkillsDiscovered -> copy(
+            nestedSkills = nestedSkills + e.entries.filter { x -> nestedSkills.none { it.name == x.name } },
+            checkedSkillDirs = checkedSkillDirs + e.directories,
+        )
         is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e)
         is dev.min.agent.spi.StructuredOutputDelivered -> copy(structuredOutput = e)
         is dev.min.agent.spi.SessionBranched -> copy(branched = e)

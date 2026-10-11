@@ -70,6 +70,10 @@ data class SessionState(
      * 没有 skill 的会话日志里没有那条事件，此时为 null
      */
     val skills: SkillsLoaded? = null,
+    /** 嵌套目录里懒加载来的 skills（SkillsDiscovered 累加）：可按名字调用，不进冻结的清单 */
+    val nestedSkills: List<dev.min.agent.spi.SkillEntry> = emptyList(),
+    /** 已经检查过的嵌套 `.claude/skills` 目录（有没有 skill 都记），同一个目录不重复查 */
+    val checkedSkillDirs: Set<String> = emptySet(),
     /**
      * 会话创建时冻结的 output style（最后一条 OutputStyleLoaded）。系统提示的样式段只由它拼，会话内不变；
      * 分身继承这份快照（前缀与父会话逐字相同），普通子 agent 不用样式。没设 / Default / 找不到时为 null

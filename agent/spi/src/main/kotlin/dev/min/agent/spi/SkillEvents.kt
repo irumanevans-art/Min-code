@@ -41,6 +41,12 @@ data class SkillEntry(
     val context: String? = null,
     /** frontmatter 的 `hooks:` 原文（与 settings 里的 hooks 同一格式）：调用这个 skill / command 时登记进会话，本会话余下回合生效 */
     val hooks: JsonObject? = null,
+    /** frontmatter 的 `agent`（`context: fork` 时的子 agent 类型，缺省 general-purpose）；旧日志缺这个键 = null */
+    val agent: String? = null,
+    /** frontmatter 的 `background`（只对 `context: fork` 有意义，缺省 true）；旧日志缺这个键 = true */
+    val background: Boolean = true,
+    /** frontmatter 的 `allowed-tools`：调用它的那一轮免审批的工具（照文档：到用户下一条消息为止）；旧日志缺这个键 = 空 */
+    val allowedTools: List<String> = emptyList(),
 )
 
 /**
@@ -81,3 +87,16 @@ interface SkillPort {
         override suspend fun invoke(name: String, args: String?) = SkillInvocation.Rejected("当前环境没有可用的 skills。")
     }
 }
+
+/**
+ * 嵌套目录里的 skills：模型第一次读写那个子目录的文件时加载（见 `dev.min.agent.ext.config.SkillDiscovery`），之后整个会话可按名字调用。
+ * 它**不改**会话清单（[SkillsLoaded] 冻结不变，系统提示的前缀不断）；[directories] 是这次检查过的 `.claude/skills` 路径，
+ * 有没有 skill 都记，同一个目录不重复查。[entries] 的名字已按重名规则定好（嵌套的重名取 `相对目录:名字`）。
+ */
+@Serializable
+@SerialName("skills_discovered")
+data class SkillsDiscovered(
+    val entries: List<SkillEntry>,
+    val directories: List<String>,
+    val notes: List<String> = emptyList(),
+) : SessionEvent

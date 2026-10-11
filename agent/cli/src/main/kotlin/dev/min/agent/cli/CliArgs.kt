@@ -61,6 +61,8 @@ data class CliArgs(
     val worktree: Boolean = false,
     val worktreeName: String? = null,
     val pluginDirs: List<Path> = emptyList(),
+    /** `--add-dir`（CC）：附加工作目录，授予文件访问，并加载它们的 `.claude/skills` 与 `.claude/commands` */
+    val addDirs: List<Path> = emptyList(),
     val autoModeReviewer: String? = null,
     val maxBudgetUsd: Double? = null,
     val modelTimeoutMs: Long = 600_000,
@@ -109,6 +111,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --include-partial-messages stream-json 加输出 text 增量的 stream_event 行
   --forward-subagent-text stream-json 转发子 agent 的消息行（带 parent_tool_use_id）
   --resume <会话 id>     接着一个已有会话
+  --add-dir <目录...>   附加工作目录（CC 同名）：授予文件访问，并加载它的 .claude/skills 与 .claude/commands（--bare 下只加载 skills）
   --plugin-dir <目录>   加载本地插件，可重复；项目内的可执行组件仍需 --trust
   --trust                信任当前项目：执行项目 .claude/ 设置里的 hooks（默认只执行用户级与托管的）
   --bare                 最小档（CC 同名）：不自动发现 hooks、skills、命令、子 agent、插件、MCP 服务器、
@@ -158,10 +161,21 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     val values = mutableMapOf<String, String>()
     val flags = mutableSetOf<String>()
     val pluginDirs = mutableListOf<Path>()
+    val addDirs = mutableListOf<Path>()
     var i = 0
     while (i < argv.size) {
         val arg = argv[i]
         when {
+            // CC：`--add-dir ../apps ../lib`，一个旗标后面跟着一串目录（到下一个旗标为止），也可以重复写
+            arg == "--add-dir" -> {
+                var j = i + 1
+                while (j < argv.size && !argv[j].startsWith('-')) {
+                    addDirs.add(cwdDefault.resolve(argv[j]).toAbsolutePath().normalize())
+                    j++
+                }
+                if (j == i + 1) throw UsageException("--add-dir 缺少目录")
+                i = j - 1
+            }
             arg == "--plugin-dir" -> {
                 val value = argv.getOrNull(i + 1)?.takeUnless { it.startsWith('-') }
                     ?: throw UsageException("--plugin-dir 缺少目录")
@@ -183,6 +197,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         }
         i++
     }
+    // CC（cli-reference）：--add-dir「Validates that each path exists as a directory」
+    addDirs.firstOrNull { !it.toFile().isDirectory }?.let { throw UsageException("--add-dir 不是目录：$it") }
     fun int(name: String) = values[name]?.let { value ->
         value.toIntOrNull()?.takeIf { it > 0 } ?: throw UsageException("$name 必须是正整数")
     }
@@ -302,6 +318,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         worktree = "--worktree" in flags,
         worktreeName = values["--worktree"],
         pluginDirs = pluginDirs,
+        addDirs = addDirs,
         bare = "--bare" in flags,
         safeMode = "--safe-mode" in flags,
         tools = values["--tools"]?.let(::parseToolsArg),

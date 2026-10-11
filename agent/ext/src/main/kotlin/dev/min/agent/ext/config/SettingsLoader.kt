@@ -17,7 +17,8 @@ data class CliSettings(val label: String, val text: String)
  * - [cli]：`--settings` 的一份；
  * - [restricted]：CC `--restricted`（cli-reference :123）：只读托管层与 [cli]，用户 / 项目 / local 层都不读。
  */
-data class SettingsInputs(val cli: CliSettings? = null, val restricted: Boolean = false)
+/** [addDirs]：`--add-dir` 的目录（绝对路径，宿主已映射）：授予文件访问，并加载它们的 `.claude/skills` 与 `.claude/commands` */
+data class SettingsInputs(val cli: CliSettings? = null, val restricted: Boolean = false, val addDirs: List<GuestPath> = emptyList())
 
 /**
  * 发现并读取 Claude Code 的设置文件（docs/agent/04-子系统设计.md §4.7），合并成 [SettingsSnapshot]。

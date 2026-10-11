@@ -20,8 +20,8 @@ data class SkillVars(
  * 2. 参数替换（[SkillArguments.substitute]）。
  * 3. 参数替换**之后**再代入 `${CLAUDE_SKILL_DIR}` 等变量，所以参数里写的这些变量也会被代入（文档明说）。
  *
- * 不做：`` !`命令` `` 与 ```` ```! ```` 的动态上下文注入。那要在渲染时执行 shell，且文档规定注入的命令走权限判定、失败会让整个调用中止，
- * 是一件独立的事；现在这些标记原样留给模型（第一期已知限制）。
+ * 预执行（`` !`命令` ``）不在这里：它要执行 shell、走权限判定，见 [SkillShell] 与 [SkillRun]；这里只做文字替换。
+ * 渲染本身不执行任何东西。
  */
 object SkillPrompt {
     const val BASE_DIR_PREFIX = "Base directory for this skill: "

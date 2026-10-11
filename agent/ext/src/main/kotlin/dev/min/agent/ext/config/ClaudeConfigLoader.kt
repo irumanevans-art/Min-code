@@ -36,12 +36,19 @@ object ClaudeConfigLoader {
                 ConfigSource.Managed -> DefinitionRoot(source, GuestPaths.join(managedDir, sub))
                 ConfigSource.User -> if (inputs.restricted) null else DefinitionRoot(source, GuestPaths.join(userDir, sub))
                 ConfigSource.Project -> if (projectIsUser) null else DefinitionRoot(source, GuestPaths.join(projectDir, sub))
-                ConfigSource.Local, ConfigSource.Plugin, ConfigSource.Bundled -> null
+                ConfigSource.Local, ConfigSource.Plugin, ConfigSource.Bundled, ConfigSource.AddDir -> null
             }
         }
+        // 仓库里的祖先目录（cwd 往上到仓库根）的项目 skills：cwd 自己的已在 roots 里，这里只补祖先（近的在前）
+        val ancestors = if (projectIsUser) emptyList() else SkillDiscovery.ancestorSkillDirs(fs, cwd).drop(1)
+            .map { DefinitionRoot(ConfigSource.Project, it) }
+        // `--add-dir`：附加目录自己的 skills 与 commands（CC 的 Skills 文档），排在项目层之下
+        val addDirs = inputs.addDirs.map { it.value }.distinct()
+        val addDirSkills = addDirs.map { DefinitionRoot(ConfigSource.AddDir, GuestPaths.join(GuestPaths.normalize(it), ".claude/skills")) }
+        val addDirCommands = addDirs.map { DefinitionRoot(ConfigSource.AddDir, GuestPaths.join(GuestPaths.normalize(it), ".claude/commands")) }
 
-        val skills = SkillLoader.load(io, roots("skills", ConfigSource.Managed, ConfigSource.User, ConfigSource.Project))
-        val commands = CommandLoader.load(io, roots("commands", ConfigSource.User, ConfigSource.Project), skills.map { it.name }.toSet())
+        val skills = SkillLoader.load(io, roots("skills", ConfigSource.Managed, ConfigSource.User, ConfigSource.Project) + ancestors + addDirSkills)
+        val commands = CommandLoader.load(io, roots("commands", ConfigSource.User, ConfigSource.Project) + addDirCommands, skills.map { it.name }.toSet())
         val agents = AgentLoader.load(io, roots("agents", ConfigSource.Managed, ConfigSource.Project, ConfigSource.User))
         return ClaudeConfig(settings, skills, commands, agents, settings.notes + io.notes)
     }

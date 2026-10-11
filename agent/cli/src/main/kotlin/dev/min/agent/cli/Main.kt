@@ -1,6 +1,8 @@
 package dev.min.agent.cli
 
 import dev.min.agent.kernel.savedWorkflows
+import dev.min.agent.kernel.userSkillRunPort
+import dev.min.agent.kernel.nestedSkillDefs
 import dev.min.agent.kernel.skillInvoked
 
 import dev.min.agent.protocol.ClientMsgId
@@ -139,9 +141,9 @@ internal suspend fun interact(
             catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
             catch (e: Exception) { System.err.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
         } else emptyList()
-        val action = if (runtime.savedWorkflows().any { it.name == input.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(input, humanInput = true) else interpretInput(input, defs?.skills.orEmpty(), defs?.commands.orEmpty(), app.skillVars(runtime), prompts)
+        val action = if (runtime.savedWorkflows().any { it.name == input.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(input, humanInput = true) else interpretInputRun(input, defs?.skills.orEmpty() + runtime.nestedSkillDefs(), defs?.commands.orEmpty(), app.skillVars(runtime), runtime.userSkillRunPort(), prompts, slashGate(runtime))
         // UserPromptExpansion：展开之后、发送之前；被拦就把理由给人看，不发
-        promptExpansionBlock(runtime, input, action)?.let { System.err.println(it); return false }
+        if (action is InputAction.Prompt) promptExpansionBlock(runtime, input, action)?.let { System.err.println(it); return false }
         val parts = when (action) {
             // `/loop …` 附上内核的解析结果（间隔取整、提示词选择），与模型调 Skill 工具时附的是同一段
             is InputAction.Send -> listOf(TextPart(action.text + slashLoopBlock(runtime, entries, input, action.names).orEmpty()))
