@@ -1233,7 +1233,9 @@ class SessionHub(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            null
+            // 别名在这家供应商那里落不了地（目录里没有这一档）：CC 的子 agent 覆盖失败时改用后备模型跑而不是让请求失败，
+            // Min 的后备是当前（父会话的）模型；写错的具体型号仍拒绝，让模型自己改
+            if (dev.min.agent.llm.catalog.ModelAliases.isAlias(dev.min.agent.llm.catalog.ModelAliases.splitSuffix(ref.modelId).first)) current else null
         }
     }
 
