@@ -226,7 +226,7 @@ class SubagentToolsTest {
         }
         assertEquals(setOf("description", "prompt"), (AgentTool.inputSchema["required"] as JsonArray).map { (it as JsonPrimitive).content }.toSet())
         assertEquals(6, (AgentTool.inputSchema["properties"] as JsonObject).size)
-        assertEquals(2, (SendMessageTool.inputSchema["properties"] as JsonObject).size)
+        assertEquals(3, (SendMessageTool.inputSchema["properties"] as JsonObject).size) // to + message + notify_when_idle
         assertEquals(2, (TaskStopTool.inputSchema["properties"] as JsonObject).size) // task_id + 已弃用的 shell_id
     }
 

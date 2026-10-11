@@ -123,9 +123,10 @@ object SendMessageTool : Tool<JsonObject> {
     override val name = "SendMessage"
     override val traits = DELEGATING_TRAITS
     override val inputSchema = subagentSchema(
-        listOf("to", "message"),
+        listOf("to"),
         "to" to subagentProperty("string", "子 agent 的 id 或名字；子 agent 用 main 向父会话发消息；也可以是本机其他会话的名字或 id"),
-        "message" to subagentProperty("string", "要发送的消息或后续任务指令"),
+        "message" to subagentProperty("string", "要发送的消息或后续任务指令；只订阅空闲通知（notify_when_idle 为 true）时可以不写"),
+        "notify_when_idle" to subagentProperty("boolean", "true = 请对方（本机上你自己的另一个会话）下次空闲或退出时给你发一次通知。可以附在一条消息上，也可以单独用（不写 message）"),
     )
     override fun description(profile: HarnessProfile) =
         "向子 agent 的 id 或名字发送 message；子 agent 可用 to=main 发给父会话。" +
@@ -133,17 +134,33 @@ object SendMessageTool : Tool<JsonObject> {
             "在 agent 团队里，to 可以是队友的名字、lead（负责人）或 all（广播给全体）；团队邮件也是这条路。" +
             "to 也可以是本机其他 Claude 会话的名字或 id（ListAgents 能列出）：消息以「来自会话 X」的形式进对方对话，不是用户的话；" +
             "对方的用户未批准、或对方设为拒收时不会送达，你会收到结论。名字重复时用 id。" +
-            "不要请对方去做你自己这边被拒绝、或权限不允许的操作：那要交回给你的用户。"
+            "不要请对方去做你自己这边被拒绝、或权限不允许的操作：那要交回给你的用户。" +
+            "notify_when_idle=true：请本机上你自己的另一个会话下次空闲（做完一轮、队列里没有别的事）或退出时给你发一次通知，之后订阅即撤；" +
+            "可以附在一条消息上（先送消息，通知稍后到），也可以单独用——单独用不会给对方开回合、不花它的 token，对方此刻已空闲就立即通知。" +
+            "等了 12 小时仍没有通知就取消订阅并告诉你。只能订阅本机上你自己的其他会话，且只有主会话能订：队友、子 agent、别的机器上的会话不行，整个调用（包括附带的消息）会被拒绝。"
+
+    /** notify_when_idle：缺省 false；写了就必须是真布尔（字符串 "true" 不算，免得模型把一句话当开关） */
+    private fun JsonObject.notifyWhenIdle(): Boolean = (this["notify_when_idle"] as? JsonPrimitive)?.booleanOrNull == true
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
         requireSubagentString(raw, "to")
-        requireSubagentString(raw, "message")
+        raw["notify_when_idle"]?.let { value ->
+            val primitive = value as? JsonPrimitive
+            if (primitive == null || primitive.isString || primitive.booleanOrNull == null) {
+                throw InvalidSubagentInput("字段 `notify_when_idle` 必须是布尔值 true 或 false。")
+            }
+        }
+        // 只订阅空闲通知时可以没有 message；其余情况 message 照旧必填
+        if (!raw.notifyWhenIdle() || "message" in raw) requireSubagentString(raw, "message")
     }
     override fun permissionAsk(input: JsonObject, ctx: ToolContext) =
-        PermissionAsk(name, "向 ${input.subagentString("to")} 发消息")
+        PermissionAsk(name, if (input.notifyWhenIdle()) "订阅 ${input.subagentString("to")} 的空闲通知" + (if (input.subagentString("message") != null) "并发消息" else "") else "向 ${input.subagentString("to")} 发消息")
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = flow {
-        emit(ToolProgress.Done(ctx.agents.message(input.subagentString("to")!!, input.subagentString("message")!!)))
+        val to = input.subagentString("to")!!
+        val result = if (input.notifyWhenIdle()) ctx.agents.notifyWhenIdle(to, input.subagentString("message"))
+        else ctx.agents.message(to, input.subagentString("message")!!)
+        emit(ToolProgress.Done(result))
     }
 }
 
