@@ -189,7 +189,7 @@ internal class DesktopApp(
      */
     private val customizations = resolveCustomizations(args.bare, args.safeMode)
     /** 这次启动读哪些设置：`--settings` 的一份（CC :128）。内核与 config() 读同一份 */
-    private val settingsInputs = dev.min.agent.ext.config.SettingsInputs(cli = args.settings, restricted = args.restricted)
+    private val settingsInputs = dev.min.agent.ext.config.SettingsInputs(cli = args.settings, restricted = args.restricted, addDirs = args.addDirs.map(paths::guestOfHost))
     private val fastSelection = args.fastModel?.let {
         resolveModel(args.copy(model = it, contextWindow = null, maxOutput = null), Catalog.bundled())
     }
@@ -279,7 +279,9 @@ internal class DesktopApp(
         val base = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome, inputs = settingsInputs)
         // --bare / --safe-mode：skills / 命令 / 子 agent 定义（含托管层）这次启动不发现（CC :72/:125 的跳过清单；
         // safe 原文的托管保留清单里也没有它们）。settings 照常读——权限规则、模型等键不在清单里
+        // --bare 只留 --add-dir 目录里的 skills（CLI reference：「Skills in a directory you pass with --add-dir still load」），命令与子 agent 不留
         val definitions = if (customizations == dev.min.agent.kernel.Customizations.Full) base
+            else if (customizations == dev.min.agent.kernel.Customizations.Bare) base.copy(skills = base.skills.filter { it.source == dev.min.agent.ext.config.ConfigSource.AddDir }, commands = emptyList(), agents = emptyList())
             else base.copy(skills = emptyList(), commands = emptyList(), agents = emptyList())
         // bare 下插件还有一条入口：CC headless 页把 `--plugin-dir` 列为 bare 模式传上下文的方式，所以只装载命令行点名的，
         // 已安装 / 设置启用的照旧不发现（信任口径走 PluginBundle 里现成的 sideload 规则：托管锁定、${'$'}{user_config} 等原样生效）。

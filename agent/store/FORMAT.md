@@ -260,3 +260,7 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - v1 增量（2026-10-11）：session_created.loadingModes 可空，缺字段/null 沿用 KernelDeps 进程默认；对象 safe / bare / restricted 默认 false，safe 与 bare 互斥。显式值在创建时冻结，重开照旧，普通子会话、分身、hook agent 和分支继承；不支持会话中途改变加载档。
 
 - v1 增量（2026-10-11，本机跨会话消息）：新增事件 `peer_message`（`messageId`、`from`（发件会话 id）、可选 `fromName`、`text`、`sentAtMs`），定义在 `spi/PeerEvents.kt`，只写在**收件人**的日志里，与同一次提交里的 `input_received`（`origin = peer`，`session` 为发件会话、可选 `name`，`clientMsgId` 为 `peer:<messageId>`）成对出现：邮件进收件箱走的是 SendMessage 那条路，这条只留「谁发的」。折叠进 `SessionState.peerMessages`（界面用）。`input_received.origin` 新增变体 `peer`，回合触发为 `notification`。被拒收、没批准、超时的消息不写任何事件（它们没有进对方的对话）；发件人收到的结论是一条 `origin = peer` 的输入（`clientMsgId` 为 `peer-outcome:<messageId>`），不写 `peer_message`。待批准队列与发送窗口只在内存里，不落盘。含这些事件或变体的日志旧版本打不开；旧日志照常读。
+
+- v1 增量（2026-10-11，skills 剩余语义）：`skills_loaded.entries[]` 新增可选字段 `agent`（frontmatter `agent`，分身的子 agent 类型）、`background`（默认 true，只对 `context: fork` 有意义）、`allowedTools`（frontmatter `allowed-tools`，调用那一轮免审批；只在内存里生效，重开会话不恢复）。
+  新增事件 `skills_discovered`（`entries`、`directories`、可选 `notes`），定义在 `spi/SkillEvents.kt`：模型第一次读写某个子目录里的文件时，懒加载那一层的 `.claude/skills`（`directories` 是检查过的 `.claude/skills` 路径，有没有 skill 都记）。折叠进 `SessionState.nestedSkills`（不改冻结的清单）与 `checkedSkillDirs`；子 agent 继承父会话的这一份。
+  `skills_loaded` 的 `source` 新增取值 `add-dir`（`--add-dir` 目录里的 skills / commands）。旧日志缺新字段照常读（默认值即原来的行为），含 `skills_discovered` 的日志旧版本打不开。

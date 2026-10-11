@@ -65,7 +65,7 @@ internal fun isReservedSkillName(name: String): Boolean = name == "anthropic-ski
  * `<目录>/<名字>/SKILL.md`。优先级照文档 §7.3 的表：managed（企业）> user（个人）> project，
  * **与子 agent 相反**（agent 是项目压过用户）——同名时高优先级胜，被覆盖的记一条说明。
  *
- * 不做：嵌套的 `<子目录>/.claude/skills`（文档说读到那里的文件时才惰性加载，是会话中的事）、`--add-dir`、插件、claude.ai 同步。
+ * 嵌套的 `<子目录>/.claude/skills` 不在这里（它是会话中的事，见 [SkillDiscovery]）；`--add-dir` 由 [ClaudeConfigLoader] 传入根；插件另有来源；claude.ai 同步不做。
  * 保留名：文档写明 `synced` 目录（claude.ai 同步用）不能作 skill 目录名，在 managed / user / project 位置会被跳过。
  */
 internal object SkillLoader {

@@ -11,6 +11,7 @@ import dev.min.agent.kernel.goalArgumentOf
 import dev.min.agent.kernel.parseGoalCommand
 import dev.min.agent.kernel.setGoal
 import dev.min.agent.kernel.savedWorkflows
+import dev.min.agent.kernel.userSkillRunPort
 import dev.min.agent.ext.config.CommandDef
 import dev.min.agent.ext.config.ConfigSource
 import dev.min.agent.ext.config.SkillDef
@@ -189,7 +190,7 @@ class MinCommandHandler(
         val name = typed.removePrefix("/").takeWhile { !it.isWhitespace() }
         // 工作流由内核接管；用户插件命令用冻结清单，不能把安装后的磁盘变化偷渡进旧会话。
         if (runtime.savedWorkflows().any { it.name == name }) return SlashInput.Plain
-        val entries = runtime.state.value.skills?.entries.orEmpty()
+        val entries = runtime.state.value.skills?.entries.orEmpty() + runtime.state.value.nestedSkills
         val skills = mutableListOf<SkillDef>()
         val commands = mutableListOf<CommandDef>()
         val unreadable = mutableSetOf<String>()
@@ -201,22 +202,33 @@ class MinCommandHandler(
             if (entry.kind == SkillKind.Command) commands += CommandDef(
                 entry.name, entry.description, entry.path, body, source,
                 arguments = entry.arguments, userInvocable = entry.userInvocable, context = entry.context,
+                allowedTools = entry.allowedTools, agent = entry.agent, background = entry.background,
             ) else skills += SkillDef(
                 entry.name, entry.description, entry.path, body, source,
                 arguments = entry.arguments, userInvocable = entry.userInvocable, context = entry.context,
+                allowedTools = entry.allowedTools, agent = entry.agent, background = entry.background,
             )
         }
         if (name in unreadable) return SlashInput.Refused("/$name 的文件现在读不了。")
         val snapshot = runtime.state.value
-        val result = SlashCommands.expand(typed, skills, commands, SkillVars(
+        val result = SlashCommands.expandRun(typed, skills, commands, SkillVars(
             runtime.sessionId.value, snapshot.settings.cwd.value, snapshot.settings.effort?.name?.lowercase(),
-        ))
+        ), runtime.userSkillRunPort())
         return when (result) {
             SlashResult.NotACommand -> SlashInput.Plain
             is SlashResult.Unknown -> SlashInput.Refused("没有名为 /${result.name} 的 skill 或命令。")
             is SlashResult.NotInvocable -> SlashInput.Refused("/${result.name} 设置了 user-invocable: false，只有模型能调用它。")
             is SlashResult.InvalidArguments -> SlashInput.Refused(result.message)
             is SlashResult.McpPrompt -> SlashInput.Refused("此入口尚不支持 MCP prompt。")
+            // 预执行命令被拒或失败：整次输入不发给模型，理由照 Refused 同一条路显示
+            is SlashResult.Refused -> SlashInput.Refused(result.message)
+            // 分身：这次输入不发给模型，子 agent 的报告或后台启动的说明以文字显示（与拒绝同一条路，见 SlashInput.Refused）
+            is SlashResult.Forked -> {
+                entries.firstOrNull { it.name == result.name }?.let { entry ->
+                    entry.hooks?.let { runtime.registerComponentHooks(entry.kind.name.lowercase(), result.name, entry.source ?: "user", it) }
+                }
+                SlashInput.Refused(result.text)
+            }
             is SlashResult.Expanded -> {
                 val args = typed.drop(1 + name.length).trim()
                 runtime.promptExpansionHooks("slash_command", name, args, entries.firstOrNull { it.name == name }?.source ?: "user", typed)

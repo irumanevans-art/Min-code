@@ -183,7 +183,26 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
      * 同一批合成一条 [MemoryAttached] 挂在发起它们的助手消息上。放在整批做完之后：hook 上下文在各调用执行时已经落盘，
      * 渲染顺序先 hook 后记忆（见 ModelView）；同批里后面才读到的文件也算，一批只有一条事件。
      */
+    /** 嵌套目录的 skills：模型碰到子目录里的文件时懒加载（与记忆同一个时机）。同样不许让回合失败 */
+    private suspend fun attachNestedSkills(calls: List<ToolCallPart>) {
+        val candidates = calls.flatMap { touched[it.callId].orEmpty() }.distinct()
+        if (candidates.isEmpty()) return
+        val files = candidates.filter { path ->
+            catchingNonCancellation { deps.host.fs.stat(path)?.kind == FileKind.File }.getOrDefault(false)
+        }
+        if (files.isEmpty()) return
+        catchingNonCancellation { rt.discoverNestedSkills(files) }.onFailure { e ->
+            catchingNonCancellation {
+                rt.commit(
+                    listOf(Note(NoteLevel.Warning, "加载嵌套目录的 skills 失败，已跳过：${e.message?.lineSequence()?.firstOrNull() ?: e::class.simpleName}")),
+                    Durability.Batched,
+                )
+            }
+        }
+    }
+
     private suspend fun attachMemory(calls: List<ToolCallPart>) {
+        attachNestedSkills(calls)
         // 按需加载是锦上添花：里面任何地方出了意外（坏的规则、读盘出错……）都只记一条说明，绝不能让回合失败——
         // 否则一条写坏的规则会让这个项目里之后每一次读文件都把回合打成 Failed
         catchingNonCancellation { attachMemoryUnguarded(calls) }.onFailure { e ->
@@ -285,7 +304,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         return PolicyContext(
             mode = s.settings.mode,
             classifyAllShell = s.autoReviewSettings.config.classifyAllShell,
-            rules = parsedRules,
+            // 本轮 skill 的 allowed-tools 放行（照文档：到用户下一条消息为止）；拒绝与询问规则仍在它之上（PolicyEngine 先看拒绝、再看询问）
+            rules = parsedRules + rt.skillGrants.mapNotNull { PermissionRule.parse(dev.min.agent.policy.RuleKind.Allow, it, "skill") },
             cwd = s.settings.cwd,
             home = deps.memoryHome ?: DEFAULT_HOME,
             scopeOf = { path ->
@@ -678,7 +698,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
         override val worktrees: dev.min.agent.spi.WorktreePort = if (turnId == null) dev.min.agent.spi.WorktreePort.Unavailable else rt.worktrees
         override val background: dev.min.agent.spi.BackgroundPort = if (turnId == null) dev.min.agent.spi.BackgroundPort.Unavailable else rt.background.portFor(callId)
-        override val skills: SkillPort = KernelSkillPort(rt, deps.host.fs)
+        override val skills: SkillPort = turnId?.let { KernelSkillPort(rt, deps.host.fs, it, callId) } ?: SkillPort.Unavailable
         override val lsp: dev.min.agent.spi.LspPort get() = rt.lsp
         override val web = if (turnId == null) dev.min.agent.spi.WebPort.Unavailable else deps.host.web
         override val webSearch = if (turnId == null) dev.min.agent.spi.WebSearchPort.Unavailable else

@@ -118,6 +118,17 @@ class SessionRuntime private constructor(
      * 由折叠出的来历推出，所以创建与重新打开一致
      */
     private var memoryDiscoveryCwd: GuestPath? = null
+    /**
+     * 本轮 skill 的 `allowed-tools` 放行（权限规则文字）。文档：「The grant clears when you send your next message」，
+     * 所以用户的下一条输入（[send]）清空它。只在内存里：重开会话后不恢复，工具会重新询问——失败关闭，不会比原来放得更宽。
+     */
+    internal val skillGrants = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+    /** 把 skill 的 `allowed-tools` 记成本轮放行；`${CLAUDE_SKILL_DIR}` 在规则里代入（文档：允许在 allowed-tools 的 Bash 规则里用它） */
+    internal fun grantSkillTools(allowed: List<String>, baseDir: String?) {
+        for (text in allowed) skillGrants += if (baseDir != null) text.replace("\${CLAUDE_SKILL_DIR}", baseDir) else text
+    }
+
     private var cachedMemoryDiscovery: MemoryDiscovery? = null
     internal val memoryDiscovery: MemoryDiscovery? get() {
         val home = deps.memoryHome
@@ -548,7 +559,8 @@ class SessionRuntime private constructor(
                 text = spec.text, source = spec.source, baseDir = spec.baseDir,
             )
         }
-        val directories = snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject, trustedLocal)
+        // `--add-dir`（CC）：与 permissions.additionalDirectories 同一口径，授予文件访问
+        val directories = (snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject, trustedLocal) + deps.settingsInputs.addDirs).distinct()
         if (rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
         commit(listOf(PermissionRulesLoaded(rules, notes, directories)), Durability.Sync)
     }
@@ -559,9 +571,10 @@ class SessionRuntime private constructor(
      */
     private suspend fun loadSkills() {
         val home = deps.memoryHome ?: return
-        // --bare / --safe-mode：skills 与自定义命令（含托管层的）都不发现（CC :72/:125）
-        if (deps.customizations != Customizations.Full) return
-        val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home, plugins(), inputs = deps.settingsInputs) ?: return
+        // --safe-mode：skills 与自定义命令（含托管层的）都不加载（CC :125）。--bare：只加载 --add-dir 目录里的（CC :72、CLI reference）
+        if (deps.customizations == Customizations.Safe) return
+        val bare = deps.customizations == Customizations.Bare
+        val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home, if (bare) null else plugins(), inputs = deps.settingsInputs, addDirsOnly = bare) ?: return
         commit(listOf(snapshot), Durability.Sync)
     }
 
@@ -582,6 +595,8 @@ class SessionRuntime private constructor(
             commit(listOf(Note(NoteLevel.Warning, CONVERSATION_ENDED_NOTE)), Durability.Sync)
             return@withLock false
         }
+        // 用户的新输入开始新的一轮：上一轮 skill 的 allowed-tools 放行到此为止（文档）
+        skillGrants.clear()
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
         val workflow = prepareSavedWorkflow(clientMsgId, prepared)
         startsInFlight.incrementAndGet()
