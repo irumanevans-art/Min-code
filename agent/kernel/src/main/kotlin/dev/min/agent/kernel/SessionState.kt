@@ -122,6 +122,8 @@ data class SessionState(
      * 压缩改写了模型视图之后清空——那次的用量已经不代表下一次请求的大小
      */
     val lastRequestUsage: Usage? = null,
+    /** 提示缓存的账：相邻两次请求比出来的失效与原因（[CacheWatch]），界面的用量段读它 */
+    val cacheWatch: CacheWatch = CacheWatch(),
     /** 模型视图里被遮蔽的工具结果 → 原文所在的会话附件（docs/agent/detail/压缩设计.md §1） */
     val masked: Map<CallId, String?> = emptyMap(),
     /** 最后一次摘要：模型视图里到 [CompactionView.through] 为止的对话换成它 */
