@@ -473,6 +473,20 @@ class McpChannelsTest {
     }
 
     @Test
+    fun `an old request id cannot answer the next approval after the terminal answered the first`() = run {
+        val s = scenario(relayCaps, model = ScriptedModel(deployCall(), reply(ToolCallPart(CallId("c2"), "mcp__hook__deploy", args("target" to "again")), stop = StopReason.ToolUse), reply(TextPart("好"))))
+        s.rt.send(ClientMsgId("u1"), listOf(TextPart("部署")))
+        val first = s.rt.awaitApproval(); waitFor("relay 1") { s.conn.permissionRequests.isNotEmpty() }
+        val oldId = s.conn.permissionRequests.single()[0]
+        s.rt.answerApproval(first.approvalId, ApprovalChoice.Once)
+        waitFor("second approval") { events(s.rt).filterIsInstance<ApprovalRequested>().size == 2 }
+        s.conn.verdict(oldId, true); delay(200)
+        assertEquals("旧审批的 id 答不了新的审批", 1, events(s.rt).filterIsInstance<ApprovalResolved>().size)
+        assertTrue(s.rt.state.value.turn?.calls?.values?.any { it.phase is CallPhase.AwaitingApproval } == true)
+        s.conn.verdict(s.conn.permissionRequests[1][0], false); s.rt.awaitIdle()
+    }
+
+    @Test
     fun `a server without the permission capability is never asked and cannot answer`() = run {
         val s = scenario(channelCaps)
         s.rt.send(ClientMsgId("u1"), listOf(TextPart("部署")))
