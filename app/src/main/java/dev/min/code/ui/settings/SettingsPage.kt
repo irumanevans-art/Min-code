@@ -40,6 +40,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -762,6 +763,8 @@ private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
     TeamConcurrencyRow(value = settings.teamMaxConcurrent, onChange = vm::setTeamMaxConcurrent)
     // 遥测（OpenTelemetry 的本地等价，默认关）：开关、端点、加密的头部、立即导出
     val telemetryReport by vm.telemetryReport.collectAsStateWithLifecycle()
+    val shareContext = LocalContext.current
+    val shareScope = androidx.compose.runtime.rememberCoroutineScope()
     TelemetryRows(
         settings = settings.telemetry,
         report = telemetryReport,
@@ -769,6 +772,7 @@ private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
         onEndpoint = vm::setTelemetryEndpoint,
         onHeaders = vm::setTelemetryHeaders,
         onExport = vm::exportTelemetry,
+        onShare = { shareScope.launch { shareTelemetryFile(shareContext, vm.telemetryFile()) } },
     )
     // WebSearch 后端：默认不设；key 只显示「已填」
     WebSearchRow(config = settings.webSearch, onSave = vm::saveWebSearch)

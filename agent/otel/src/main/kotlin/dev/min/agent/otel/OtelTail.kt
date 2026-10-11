@@ -83,6 +83,9 @@ class OtelTail(
     /** 下一条要读的 seq（单会话时宿主据此把游标存下来） */
     val nextSeq: Long get() = states.values.firstOrNull()?.readNext ?: cursorsIn.values.firstOrNull()?.next ?: 1L
 
+    /** 已经接入导出的会话数（界面据此说「几个会话」） */
+    val sessionCount: Int get() = states.size
+
     /** 全部会话的游标快照：宿主落盘，下次进程从这里续 */
     fun cursors(): Map<String, OtelCursor> {
         val out = LinkedHashMap<String, OtelCursor>(cursorsIn)

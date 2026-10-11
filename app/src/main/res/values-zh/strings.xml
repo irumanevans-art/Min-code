@@ -1563,7 +1563,7 @@
   <string name="viewer_draft_export">导出诊断包</string>
   <string name="viewer_draft_discard">丢弃</string>
   <string name="settings_telemetry_title">遥测（本地 OpenTelemetry）</string>
-  <string name="settings_telemetry_on">已开启。把会话的指标与事件导出到下面的端点，并写一份本机 JSONL。不含提示词与回复正文。</string>
+  <string name="settings_telemetry_on">已开启。把会话的指标、事件与 traces（含子 agent 会话）导出到下面的端点，并写一份本机 JSONL。不含提示词与回复正文。</string>
   <string name="settings_telemetry_off">已关闭。不导出任何东西。</string>
   <string name="settings_telemetry_endpoint_title">OTLP 端点</string>
   <string name="settings_telemetry_endpoint_none">未设（只写本机文件）</string>
@@ -1578,4 +1578,7 @@
   <string name="settings_telemetry_export_result">%1$d 个会话，%2$d 条，失败 %3$d 次</string>
   <string name="settings_telemetry_problem">设置有问题：%1$s</string>
   <string name="settings_telemetry_save">保存</string>
+  <string name="settings_telemetry_share_title">分享导出的文件</string>
+  <string name="settings_telemetry_share_subtitle">把本机 JSONL 文件发给别的应用。请先导出。</string>
+  <string name="settings_telemetry_share_empty">还没有导出过，请先点「立即导出」。</string>
 </resources>
