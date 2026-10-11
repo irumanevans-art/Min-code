@@ -469,9 +469,13 @@ class SessionVM(
         val input = UserInput(text.trim(), images)
         if (input.isBlank) return
         command({ SessionCommand.Send(it, input) }) { result ->
-            // 会话已经关掉 / 没起来：没有 stdin 可写，话不能就这么吞掉 —— 原样退回输入框（原 manager.send 的做法）
-            if (result is CommandResult.Rejected && session.value.status.let { it != SessionStatus.Running && it != SessionStatus.Starting }) {
-                returnedMessages.tryEmit(input.toComposerDraft())
+            if (result is CommandResult.Rejected) {
+                // 被拒的原因要让人看见：斜杠命令不存在、预执行被拒、分身的结果都走这条路，只退回输入框会让人不知道为什么没发出去
+                if (result.message.isNotBlank()) _notice.value = result.message
+                // 会话已经关掉 / 没起来：没有 stdin 可写，话不能就这么吞掉 —— 原样退回输入框（原 manager.send 的做法）
+                if (session.value.status.let { it != SessionStatus.Running && it != SessionStatus.Starting }) {
+                    returnedMessages.tryEmit(input.toComposerDraft())
+                }
             }
         }
     }
