@@ -116,6 +116,11 @@ data class HooksRan(
     val succeeded: Int? = null,
     val blocking: Int? = null,
     val nonBlockingErrors: Int? = null,
+    /**
+     * 这批 hook 的 span 标识（遥测的 `claude_code.hook` span id 由它与会话 id 哈希得出）。只在宿主给了追踪上下文时才写：
+     * hook 子进程的 `TRACEPARENT` 要在它启动之前就指向这个 span，而 span 是事后从日志折出来的，所以标识由内核先定、随记录落盘。null = 没写（span id 退回用记录的 seq）
+     */
+    val runId: String? = null,
 ) : SessionEvent
 
 /** hook 加给模型的上下文挂在哪 */

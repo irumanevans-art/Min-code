@@ -84,8 +84,9 @@ object SpanIds {
     fun blocked(session: String, call: String): String = hex(16, "blocked", session, call)
     fun execution(session: String, call: String): String = hex(16, "execution", session, call)
 
-    /** hook span：一条 hooks_ran 记录一个，id 取自它的 seq */
+    /** hook span：一条 hooks_ran 记录一个。记录带 runId（宿主给了追踪上下文时，hook 子进程的 TRACEPARENT 已经指向它）就用它，否则取记录的 seq */
     fun hook(session: String, seq: Long): String = hex(16, "hook", session, seq.toString())
+    fun hookRun(session: String, runId: String): String = hex(16, "hookrun", session, runId)
 
     private fun hex(length: Int, vararg parts: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(parts.joinToString("\u0000").toByteArray(Charsets.UTF_8))
@@ -652,7 +653,7 @@ class OtelSpanMapper(
         val failed = (e.nonBlockingErrors ?: 0) > 0 || (e.nonBlockingErrors == null && e.problems.isNotEmpty())
         val message = if (failed) e.problems.firstOrNull() ?: "hook error" else null
         return OtelSpan(
-            SpanNames.HOOK, turn.traceId, SpanIds.hook(sid, record.seq), turn.childParent,
+            SpanNames.HOOK, turn.traceId, e.runId?.let { SpanIds.hookRun(sid, it) } ?: SpanIds.hook(sid, record.seq), turn.childParent,
             (record.atMs - e.durationMs).coerceAtLeast(0), record.atMs, attrs, error = message,
         )
     }

@@ -48,6 +48,11 @@ data class OtelConfig(
     val betaTracingDetailed: Boolean = false,
     /** 入站 TRACEPARENT / TRACESTATE；只在宿主声明接受时才有值（原文：-p 与 SDK 会话读，交互会话忽略），见 [fromEnv] 的 acceptInbound */
     val inbound: TraceParent? = null,
+    /**
+     * 出站传播（Bash / hook 子进程的 TRACEPARENT）：原文口径——`ANTHROPIC_BASE_URL` 没设或指向 Anthropic API 时传播；
+     * 指向自定义代理时默认不传（免得把 trace id 交给第三方），设 `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1` 才传
+     */
+    val propagateTraceparent: Boolean = true,
     /** 配错了的地方（只写变量名与原因，不写值） */
     val problems: List<String>,
 ) {
@@ -181,9 +186,22 @@ data class OtelConfig(
                 logToolContent = flag("OTEL_LOG_TOOL_CONTENT"),
                 betaTracingDetailed = betaDetailed,
                 // 原文：Agent SDK 与 -p 会话读入站 TRACEPARENT / TRACESTATE，交互会话忽略——由宿主用 acceptInbound 声明
+                propagateTraceparent = flag("CLAUDE_CODE_PROPAGATE_TRACEPARENT") || baseUrlIsAnthropicOrUnset(env("ANTHROPIC_BASE_URL")),
                 inbound = if (acceptInbound) TraceParent.parse(env("TRACEPARENT"), env("TRACESTATE")) else null,
                 problems = problems,
             )
+        }
+
+        /** ANTHROPIC_BASE_URL 没设、或主机是 anthropic.com（含子域）：不是自定义代理 */
+        private fun baseUrlIsAnthropicOrUnset(raw: String?): Boolean {
+            val value = raw?.trim().orEmpty()
+            if (value.isEmpty()) return true
+            val host = try {
+                java.net.URI(value).host
+            } catch (e: java.net.URISyntaxException) {
+                null
+            } ?: return false
+            return host == "anthropic.com" || host.endsWith(".anthropic.com")
         }
 
         private fun attributeLimit(env: (String) -> String?, name: String): Int? = env(name)?.trim()?.toIntOrNull()?.takeIf { it > 0 }

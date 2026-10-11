@@ -114,6 +114,9 @@ internal class HookDriver(private val rt: SessionRuntime) {
 
     private val httpRunner = HookHttpRunner(deps.host.httpHooks)
 
+    /** 本会话里第几批 hook：只用来给每批一个不重复的 runId（见 [HooksRan.runId]） */
+    private val hookRunCounter = java.util.concurrent.atomic.AtomicLong(0)
+
     /**
      * http hook 的两道闸。设置只在会话创建时读过一次，合并后的结果随 [dev.min.agent.spi.HooksLoaded] 的快照冻结，
      * 这里只是取出来；没有这个字段（旧日志、没配过闸）= 不设限
@@ -167,6 +170,13 @@ internal class HookDriver(private val rt: SessionRuntime) {
             put("MIN_HOOK", "1")
             state.settings.effort?.let { put("CLAUDE_EFFORT", wire(it)) }
         }
+        // 追踪开着时，hook 子进程带上 TRACEPARENT。同步批指向这批 hook 自己的 span（runId 随 hooks_ran 落盘，span 的 id 由它算出）；
+        // 后台 hook 启动时没有自己的 span，指向父（那次工具调用或这个回合）。算不出来就不加：遥测不许挡住 hook
+        val runId = turnId?.let { "${it.value}:${event.name}:${hookRunCounter.incrementAndGet()}" }
+        val syncTrace = turnId?.let { catchingNonCancellation { deps.traceContext.hook(rt.sessionId, it, callId, runId) }.getOrNull() }
+        val asyncTrace = turnId?.let { catchingNonCancellation { deps.traceContext.hook(rt.sessionId, it, callId, null) }.getOrNull() }
+        val syncEnv = if (syncTrace == null) env else env + ("TRACEPARENT" to syncTrace)
+        val asyncEnv = if (asyncTrace == null) env else env + ("TRACEPARENT" to asyncTrace)
         // 两个执行器的异常（协程取消除外）都不许冒出去：hook 的执行问题只是一条非阻断说明、结论中性，
         // 否则一个写错的 URL 就能把回合打成 Failed，在 SessionStart 上还会让会话建不起来
         val executionFailures = java.util.concurrent.CopyOnWriteArrayList<String>()
@@ -175,7 +185,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
         // 启动失败只写异常类名、不打断回合——SessionEnd 上也不该让 close 在封写前中断
         asyncHandlers.forEach { h ->
             val t = if (h.asyncRewake) (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, MAX_TIMEOUT) else null
-            catchingNonCancellation { rt.asyncHooks.launch(event, rt.plugins()?.resolveHook(h) ?: h, stdin, env, processCwd, t) }
+            catchingNonCancellation { rt.asyncHooks.launch(event, rt.plugins()?.resolveHook(h) ?: h, stdin, asyncEnv, processCwd, t) }
                 .getOrElse { e -> executionFailures += "后台 hook「${label(h)}」启动失败：${e.javaClass.simpleName}" }
         }
         if (commandHandlers.isEmpty() && httpHandlers.isEmpty() && promptHandlers.isEmpty() && agentHandlers.isEmpty() && mcpHandlers.isEmpty()) {
@@ -203,7 +213,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                 } else {
                     catchingNonCancellation {
                         val resolved = commandHandlers.map { rt.plugins()?.resolveHook(it) ?: it }
-                        runner.run(resolved, stdin, env, processCwd) { h -> (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, timeoutCap) }
+                        runner.run(resolved, stdin, syncEnv, processCwd) { h -> (h.timeout ?: defaultTimeout(event, h.type)).coerceIn(1, timeoutCap) }
                     }.getOrElse { e ->
                         executionFailures += "command hook 批执行失败：${describe(e)}"
                         emptyList()
@@ -267,6 +277,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                     event.name, commandHandlers.size + httpHandlers.size + promptHandlers.size + agentHandlers.size + mcpHandlers.size,
                     outcome.label, deps.clock.nowMs() - started, turnId, callId, problems,
                     succeeded = verdicts.size - blockingCount - errorCount, blocking = blockingCount, nonBlockingErrors = errorCount,
+                    runId = if (syncTrace != null) runId else null,
                 ),
             )
             if (problems.isNotEmpty()) add(Note(NoteLevel.Warning, "$event hook：" + problems.joinToString("；")))

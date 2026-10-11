@@ -72,8 +72,9 @@ class OtelTail(
     )
 
     private val states = LinkedHashMap<String, SessionState>()
-    private val lineages = HashMap<String, OtelLineage?>()
-    private val links = HashMap<String, SpanLink?>()
+    /** 当前这一轮读到的会话（按 id）。span 挂靠只在这些会话里找父 */
+    private var byId: Map<String, SessionLog> = emptyMap()
+    private val spanLinks = OtelSpanLinks({ config.inbound }) { id -> byId[id] }
     private val cursorsIn = HashMap(initialCursors)
     private val mutex = Mutex()
 
@@ -128,12 +129,12 @@ class OtelTail(
             exporter.noteFailure("读会话列表失败：${e.javaClass.simpleName}")
             return 0
         }
-        val byId = logs.associateBy { it.header.sessionId.value }
+        byId = logs.associateBy { it.header.sessionId.value }
         var count = 0
         for (log in logs) {
             val id = log.header.sessionId.value
             val state = states[id] ?: try {
-                createState(log, byId)?.also { states[id] = it }
+                createState(log)?.also { states[id] = it }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -188,10 +189,10 @@ class OtelTail(
 
     // ---- 建会话的状态：来历、span 挂靠、起点 ----
 
-    private suspend fun createState(log: SessionLog, byId: Map<String, SessionLog>): SessionState? {
+    private suspend fun createState(log: SessionLog): SessionState? {
         val id = log.header.sessionId.value
-        val lineage = lineageOf(log)
-        val link = if (config.tracesEnabled) linkOf(id, byId) else null
+        val lineage = spanLinks.lineageOf(log)
+        val link = if (config.tracesEnabled) spanLinks.linkOf(id) else null
         val options = config.options(id).copy(lineage = lineage)
         val cursor = cursorsIn[id]
         val metricsFrom: Long = when {
@@ -227,49 +228,6 @@ class OtelTail(
         return effort
     }
 
-    /** 子会话的来历：读日志开头的 SubagentOrigin；没有它但头部指着父会话时，只知道父是谁 */
-    private suspend fun lineageOf(log: SessionLog): OtelLineage? {
-        val id = log.header.sessionId.value
-        return lineages.getOrPut(id) {
-            val parent = log.header.parent?.value
-            val origin = log.read(1).take(ORIGIN_WINDOW).toList().map { it.event }.filterIsInstance<SubagentOrigin>().firstOrNull()
-            when {
-                origin != null -> OtelLineage(
-                    parent = origin.parent.value, root = origin.root.value, parentCall = origin.parentCall.value,
-                    agentType = origin.agentType, depth = origin.depth, teamMember = origin.teamMember,
-                )
-                parent != null -> OtelLineage(parent, parent, "", "unknown", 1, false)
-                else -> null
-            }
-        }
-    }
-
-    /**
-     * 子会话的 span 挂到哪：父会话里发起委派的那次工具调用。回合 id 取自父会话日志里那次调用的 ToolPlanned，
-     * 因此父子两边各自算出同一个 trace id 与 tool span id，互不依赖对方的映射状态（也不依赖谁先导出）。
-     * 父会话本身也是子会话时，沿父链继承根 trace。找不到（父日志不在、调用不存在）返回 null：这个子会话自成一棵树。
-     */
-    private suspend fun linkOf(id: String, byId: Map<String, SessionLog>): SpanLink? {
-        if (links.containsKey(id)) return links[id]
-        val log = byId[id] ?: return null
-        val lineage = lineageOf(log)
-        val result = if (lineage == null || lineage.parentCall.isEmpty()) null else {
-            val parentLog = byId[lineage.parent]
-            val turn = parentLog?.read(1)?.toList()?.firstNotNullOfOrNull { rec ->
-                (rec.event as? ToolPlanned)?.takeIf { it.callId.value == lineage.parentCall }?.turnId?.value
-            }
-            if (parentLog == null || turn == null) null else {
-                val parentLink = linkOf(lineage.parent, byId)
-                SpanLink(
-                    traceId = parentLink?.traceId ?: traceIdFor(lineage.parent, turn, config.inbound),
-                    parentSpanId = SpanIds.tool(lineage.parent, lineage.parentCall),
-                )
-            }
-        }
-        links[id] = result
-        return result
-    }
-
     // ---- 发 ----
 
     private suspend fun flushLocked(signals: Set<Signal>, nowMs: Long = clock()) {
@@ -286,10 +244,5 @@ class OtelTail(
             exporter.export(batch)
             buf.subList(0, batch.size).clear()
         }
-    }
-
-    private companion object {
-        /** 子会话的来历事件紧跟在 SessionCreated 之后，看开头几条就够 */
-        const val ORIGIN_WINDOW = 8
     }
 }
