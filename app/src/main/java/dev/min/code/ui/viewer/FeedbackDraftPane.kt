@@ -54,7 +54,7 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedbackDraftPane(
-    drafts: List<FeedbackDraft>,
+    drafts: List<PendingDraft>,
     onClose: () -> Unit,
 ) {
     val screenH = LocalConfiguration.current.screenHeightDp.dp
@@ -75,20 +75,21 @@ fun FeedbackDraftPane(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.sea.ink,
             )
-            drafts.forEach { draft ->
+            drafts.forEach { item ->
                 Spacer(Modifier.height(12.dp))
-                DraftCard(draft)
+                DraftCard(item)
             }
         }
     }
 }
 
 @Composable
-private fun DraftCard(draft: FeedbackDraft) {
+private fun DraftCard(item: PendingDraft) {
+    val draft = item.draft
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // 每条草稿自己的编辑缓冲：改了正文就替换收件箱里的那条，没改就原样
-    var body by remember(draft) { mutableStateOf(draft.body) }
+    var body by remember(item) { mutableStateOf(draft.body) }
     Column(Modifier.fillMaxWidth()) {
         Text(text = draft.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.sea.ink)
         InkTextField(
@@ -99,10 +100,10 @@ private fun DraftCard(draft: FeedbackDraft) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             InkButton(onClick = {
                 val edited = draft.copy(body = body)
-                if (edited != draft) ViewerInbox.replaceDraft(draft, edited)
+                if (edited != draft) ViewerInbox.replaceDraft(item.id, edited)
                 scope.launch { exportBundle(context, edited) }
             }) { Text(stringResource(R.string.viewer_draft_export)) }
-            InkButton(onClick = { ViewerInbox.discardDraft(draft) }) {
+            InkButton(onClick = { ViewerInbox.discardDraft(item.id) }) {
                 Text(stringResource(R.string.viewer_draft_discard))
             }
         }

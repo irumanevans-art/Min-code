@@ -1565,7 +1565,7 @@
   <string name="viewer_artifact_share">Share</string>
   <string name="viewer_artifact_close">Close</string>
   <string name="viewer_draft_title">Diagnostic report draft</string>
-  <string name="viewer_draft_note">Drafts are not sent. Export makes a local zip that you send yourself, or discard the draft.</string>
+  <string name="viewer_draft_note">Drafts are not sent and stay on this device across restarts. Export makes a local zip that you send yourself, or discard the draft.</string>
   <string name="viewer_draft_export">Export diagnostic zip</string>
   <string name="viewer_draft_discard">Discard</string>
   <string name="settings_telemetry_title">Telemetry (local OpenTelemetry)</string>
