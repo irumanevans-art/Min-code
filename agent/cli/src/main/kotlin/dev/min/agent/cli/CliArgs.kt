@@ -16,7 +16,8 @@ enum class OutputFormat { Text, Json, StreamJson }
 data class CliArgs(
     val prompt: String?,
     val provider: String,
-    val model: String,
+    /** `--model`；没给时按 CC 的优先级往下取：`ANTHROPIC_MODEL` → 设置里的 `model` → 这家供应商的默认（见 [chooseStartupModel]） */
+    val model: String? = null,
     val baseUrl: String?,
     val auth: AuthScheme?,
     val apiKeyEnv: String?,
@@ -83,11 +84,12 @@ data class CliArgs(
 
 class UsageException(message: String, val exitCode: Int = 2) : Exception(message)
 
-const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示>]
+const val USAGE = """用法：min-agent [--model <模型 id>] [选项] [-p <提示>]
 
   -p <提示>              非交互：跑完这一句就退出；不给则进入交互模式（长形 --print）
   --provider <id>        模型目录里的供应商 id，默认 anthropic
-  --model <id>           模型 id 或别名（sonnet / opus / haiku / fable / best / default / opusplan，可加 [1m]；必填）
+  --model <id>           模型 id 或别名（sonnet / opus / haiku / fable / best / default / opusplan，可加 [1m]）；
+                          不给时依次取 ANTHROPIC_MODEL、设置里的 model、这家供应商的默认（opus 档）
   --base-url <url>       覆盖供应商地址（协议路径之前那一段）
   --wire <协议>         anthropic / openai_chat / openai_responses；自定义供应商可现场指定
   --auth x-api-key|bearer  凭证放哪个头，默认按供应商
@@ -257,7 +259,7 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     return CliArgs(
         prompt = prompt,
         provider = values["--provider"] ?: "anthropic",
-        model = values["--model"] ?: throw UsageException("缺少 --model\n\n$USAGE"),
+        model = values["--model"],
         baseUrl = values["--base-url"],
         auth = values["--auth"]?.let {
             when (it) {

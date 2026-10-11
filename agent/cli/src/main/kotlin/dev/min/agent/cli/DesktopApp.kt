@@ -18,7 +18,7 @@ import dev.min.agent.kernel.AgentCatalog
 import dev.min.agent.ext.config.ClaudeConfig
 import dev.min.agent.ext.config.ClaudeConfigLoader
 import dev.min.agent.ext.config.fallbackModelSetting
-import dev.min.agent.ext.config.availableModelsSetting
+import dev.min.agent.ext.config.modelPolicy
 import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.llm.Wire
@@ -168,6 +168,8 @@ internal class DesktopApp(
     private val home: Path = Path.of(System.getProperty("user.home"), ".min-agent"),
     /** 找 `~/.claude/`（settings、CLAUDE.md、agents）的主目录。测试传临时目录，免得读到开发机上的真实配置 */
     private val claudeHome: Path = Path.of(System.getProperty("user.home")),
+    /** 读环境变量的口（现在只读 `ANTHROPIC_MODEL`）：测试给固定表，不随跑测试的机器变 */
+    private val env: (String) -> String? = System::getenv,
 ) {
     private val paths = DesktopPaths(workspace = args.cwd, scratchRoot = home.resolve("root"))
 
@@ -209,10 +211,31 @@ internal class DesktopApp(
     suspend fun logoutMcp(server: String,runtime: SessionRuntime) = hub().logoutMcp(server,runtime.sessionId)
     internal val snapshots = CasWorkspaceSnapshots(home, { paths.fs }, paths.guestOfHost(claudeHome))
 
-    private val selection = resolveModel(args, Catalog.bundled())
-    private val provider = selection.provider
-    private val profile = selection.profile
-    private val keyEnv = selection.keyEnv
+    /**
+     * 启动的模型（CC 的优先级：`--model` → `ANTHROPIC_MODEL` → 设置里的 `model` → 默认选项），连同模型限制（[ModelPolicy]）。
+     * 要先读一遍设置才知道，所以第一次用到时才算；替换与拒绝启动的口径见 [chooseStartupModel]，警告打到标准错误
+     */
+    private val startup: Pair<StartupModel, dev.min.agent.ext.config.ModelPolicy> by lazy {
+        val merged = kotlinx.coroutines.runBlocking {
+            dev.min.agent.ext.config.SettingsLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome, inputs = settingsInputs).merged
+        }
+        val policy = merged.modelPolicy()
+        policy.warnings.forEach { System.err.println(it) }
+        val chosen = chooseStartupModel(args.model, env("ANTHROPIC_MODEL"), merged.model, args.provider, Catalog.bundled(), policy)
+        chosen.warnings.forEach { System.err.println(it) }
+        chosen to policy
+    }
+    private val selection: ModelSelection by lazy { resolveModel(args, Catalog.bundled(), startup.first.model) }
+    private val provider get() = selection.provider
+    private val profile get() = selection.profile
+    private val keyEnv get() = selection.keyEnv
+    /**
+     * 会话里记的模型：通常就是 [profile] 的型号；`opusplan` 留着别名本身，内核才能按计划模式在 opus / sonnet 档之间切（[planAwareModel]）
+     */
+    internal val sessionModel: dev.min.agent.protocol.ModelRef
+        get() = if (dev.min.agent.llm.catalog.ModelAliases.splitSuffix(startup.first.model).first == "opusplan") {
+            dev.min.agent.protocol.ModelRef(provider.id, startup.first.model)
+        } else profile.ref
     /**
      * 这次启动的定制档位（`--bare` / `--safe-mode` 与两个环境变量的归一，[resolveCustomizations]）：
      * deps 交给内核，config() / hub() 的加载点读同一份
@@ -225,20 +248,16 @@ internal class DesktopApp(
     }
     /** 回退链：读完 settings 才知道（[hub] 里填），之前是空的 */
     private var fallback = FallbackModels.None
-    /** availableModels：读完 settings 才知道（[hub] 里填）；null = 不限制。托管层的名单只能从这里来，低层拼不进去 */
-    private var modelListing: dev.min.agent.ext.config.AvailableModelsSetting? = null
-
     /**
-     * availableModels 的判定（切模型、子 agent、顾问、审查、回退链都用它）：别名先解析成这家供应商的型号再比，
-     * 解析不了（这家没有这一档）当不在名单里。没有名单就放行。
+     * 模型限制的判定（切模型、子 agent、顾问、审查、回退链都用它）：别名连同限制一起算（[dev.min.agent.kernel.ModelChoice]），
+     * 被挡的家族别名能换到允许的版本也算放行（解析时换）；解析不了（这家没有这一档）当不放行
      */
-    internal fun modelListed(ref: dev.min.agent.protocol.ModelRef): Boolean {
-        val listing = modelListing ?: return true
-        val concrete = try { ModelAliases.resolve(ref, Catalog.bundled()).ref } catch (_: IllegalArgumentException) { return false }
-        return dev.min.agent.ext.config.AvailableModels.allows(concrete.modelId, listing.entries)
-    }
+    internal fun modelListed(ref: dev.min.agent.protocol.ModelRef): Boolean =
+        dev.min.agent.kernel.ModelChoice.named(ref, Catalog.bundled(), startup.second) is dev.min.agent.kernel.ModelChoice.Result.Ok
     private val searchBackend = desktopSearchBackend(args)
     private var hubInstance: SessionHub? = null
+    /** 会话用的模型解析器（[hub] 里建）：测试据此确认别名、限制与同家目录的型号都解析得出来 */
+    internal var sessionModels: dev.min.agent.kernel.ModelResolver? = null
 
     /** stream-json 的 init 行要列工具名；跟 Hub 用同一份工具表 */
     private var toolNamesCache: List<String> = emptyList()
@@ -255,9 +274,7 @@ internal class DesktopApp(
         if (args.restricted && config.settings.merged.permissions.defaultMode == "bypassPermissions") {
             throw UsageException("--restricted 不允许 bypassPermissions：设置里的 permissions.defaultMode 写了它，去掉它或改掉")
         }
-        modelListing = config.settings.merged.availableModelsSetting()
-        // 启动的主模型不在名单里就不启动（Min 的 --model 必填，没有默认可以替换；CC 在这种情况下换成默认模型并警告）
-        if (!modelListed(selection.profile.ref)) throw UsageException("--model ${selection.profile.ref.modelId} 不在 availableModels 里（${if (modelListing?.managed == true) "托管策略" else "设置"}），换一个模型")
+        // 启动模型已在 [startup] 里按限制选好（被挡的点名换成默认并警告，默认也被挡就拒绝启动），这里不再拦
         fallback = resolveFallbackModels(args, Catalog.bundled(), config.settings.merged.fallbackModelSetting(), selection, allowed = ::modelListed)
         fallback.notes.forEach { System.err.println(it) }
         validateBudgetPricing()
@@ -441,19 +458,28 @@ internal class DesktopApp(
             networkProxy = dev.min.agent.host.LoopbackNetworkProxy(),
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
-            models = { requested ->
-                // 别名（sonnet / opus …）先解析成这家供应商的型号，再找会话需要的那一个（子 agent、顾问、审查都可能写别名）
-                val ref = ModelAliases.resolve(requested, bundledCatalog).ref
+            models = dev.min.agent.kernel.ModelResolver { requested ->
+                // 别名（sonnet / opus …）连同模型限制解析成这家供应商的型号（被挡的家族别名换成允许的同家族最新版），
+                // 再找会话需要的那一个（子 agent、顾问、审查、opusplan 展开出的档位都可能写别名）
+                // 解析不管放不放行（放行与否由内核在切模型、委派、启动时用 modelAllowed 判）：续接的旧会话可能记着现在被排除的型号，
+                // 打开它时也要解析得出来，之后再换掉（restoreAllowedModel）
+                val ref = when (val choice = dev.min.agent.kernel.ModelChoice.named(requested, bundledCatalog, startup.second)) {
+                    is dev.min.agent.kernel.ModelChoice.Result.Ok -> choice.ref
+                    is dev.min.agent.kernel.ModelChoice.Result.Unknown -> throw IllegalStateException(choice.message)
+                    dev.min.agent.kernel.ModelChoice.Result.Blocked -> ModelAliases.resolve(requested, bundledCatalog).ref
+                }
                 // 回退链按写下的样子（可能是别名）记，所以用 requested 找备用；ref 只用来认主模型与快速模型
                 val backup = fallback.selections[requested]
-                val selected = if (ref == profile.ref) profile else fastSelection?.profile?.takeIf { it.ref == ref } ?: backup?.profile
+                // 同一家供应商目录里的别的型号（/model 切过去、opusplan 的另一档）：同一个客户端与凭证，能力取目录里的
+                val sameProvider = if (ref.providerId == provider.id) bundledCatalog.model(ref) else null
+                val selected = if (ref == profile.ref) profile else fastSelection?.profile?.takeIf { it.ref == ref } ?: backup?.profile ?: sameProvider
                 checkNotNull(selected) { "桌面 CLI 没有配置会话需要的模型 $ref" }
                 // 备用模型没有凭证就当用不了（内核会跳过它）；不放它去发一个注定 401 的请求再让回合以鉴权失败收场
                 if (backup != null && ref != profile.ref && System.getenv(backup.keyEnv).isNullOrBlank()) {
                     throw IllegalStateException("没有凭证：请设置环境变量 ${backup.keyEnv}")
                 }
                 ResolvedModel(selected, if (backup != null) fallbackClients.getValue(backup.provider.id) else client)
-            },
+            }.also { sessionModels = it },
             // availableModels 的强制：切模型、子 agent、顾问、审查都经过内核，这里给同一个判定
             modelAllowed = ::modelListed,
             tools = tools,
@@ -571,6 +597,17 @@ internal class DesktopApp(
         )
     }
 
+    /**
+     * 续接的会话沿用存下的模型；存下的模型被模型限制排除时，照常按启动的优先级落到这次启动的模型（CC 模型配置文档
+     * 「Setting your model」：restored model excluded by availableModels → normal precedence），并在标准错误说一句
+     */
+    private suspend fun restoreAllowedModel(runtime: SessionRuntime) {
+        val stored = runtime.state.value.settings.model
+        if (modelListed(stored)) return
+        System.err.println("续接的会话用的 ${stored.modelId} 不在允许的模型里，改用 ${sessionModel.modelId}")
+        runtime.changeSettings(model = sessionModel, modelSwitchSource = "startup")
+    }
+
     suspend fun openSession(): SessionRuntime {
         val resumeId = args.resume?.let { resolveResume(it) }
             ?: if (args.continueMostRecent) latestRootSession() ?: throw UsageException("当前目录还没有可接着的会话。") else null
@@ -580,6 +617,7 @@ internal class DesktopApp(
                 val opened = hub().open(resumeId, resumedByUser = true)
                     ?: throw UsageException("找不到会话 ${resumeId.value}")
                 refuseEndedForPrint(opened)
+                restoreAllowedModel(opened)
                 return opened
             }
             // --fork-session：读原会话（这不算用户 resume），在分支上跑这次的 -p；原会话一个字不动。
@@ -588,11 +626,12 @@ internal class DesktopApp(
             val branch = hub().branch(resumeId)
             val opened = checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
             refuseEndedForPrint(opened)
+            restoreAllowedModel(opened)
             return opened
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         // --name 建会话时命名（同目录重名时内核自动加 -2 变体）；headless 标记进 SessionCreated：--continue 由此跳过 -p 跑的会话（CC :78）
-        val runtime = hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort, name = args.name, headless = args.prompt != null)
+        val runtime = hub().create(paths.guestOfHost(args.cwd), sessionModel, args.mode, args.effort, name = args.name, headless = args.prompt != null)
         if (args.worktree) {
             val result = runtime.enterWorktree(args.worktreeName)
             if (result.isError) throw UsageException(result.content.filterIsInstance<dev.min.agent.protocol.TextPart>().joinToString("") { it.text }, exitCode = 1)
@@ -625,7 +664,7 @@ internal class DesktopApp(
 
     /** 交互模式 /clear：另起一个空会话（同目录、同模型与模式；--name 的名字不带过来，CC 同款）。 */
     suspend fun newSession(name: String?): SessionRuntime =
-        hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort, name = name, headless = false)
+        hub().create(paths.guestOfHost(args.cwd), sessionModel, args.mode, args.effort, name = name, headless = false)
 
     /**
      * 交互模式 /resume <id 或名字>：打开另一个会话并切过去（用户主动接着用，跑 SessionStart(resume)）。
