@@ -1111,7 +1111,7 @@ internal class AsyncHookTimings(
  */
 internal fun continuationTrigger(origin: InputOrigin): TurnTrigger = when (origin) {
     is InputOrigin.Hook -> TurnTrigger.Hook
-    is InputOrigin.Agent, is InputOrigin.Task -> TurnTrigger.Notification
+    is InputOrigin.Agent, is InputOrigin.Task, is InputOrigin.Peer -> TurnTrigger.Notification
     is InputOrigin.Cron -> TurnTrigger.Cron
     InputOrigin.User, is InputOrigin.Parent -> TurnTrigger.User
 }

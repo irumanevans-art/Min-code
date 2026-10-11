@@ -258,3 +258,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - 工具 `advisor` 的入参为 `{ "question": "…" }`，建议沿用 `tool_outcome.result`。顾问请求通过 `ModelBilling` 追加 `model_charged`，预算与运行账本仍按整棵树累计；不给顾问工具或供应商 opaque / reasoning / 图片像素。
 
 - v1 增量（2026-10-11）：session_created.loadingModes 可空，缺字段/null 沿用 KernelDeps 进程默认；对象 safe / bare / restricted 默认 false，safe 与 bare 互斥。显式值在创建时冻结，重开照旧，普通子会话、分身、hook agent 和分支继承；不支持会话中途改变加载档。
+
+- v1 增量（2026-10-11，本机跨会话消息）：新增事件 `peer_message`（`messageId`、`from`（发件会话 id）、可选 `fromName`、`text`、`sentAtMs`），定义在 `spi/PeerEvents.kt`，只写在**收件人**的日志里，与同一次提交里的 `input_received`（`origin = peer`，`session` 为发件会话、可选 `name`，`clientMsgId` 为 `peer:<messageId>`）成对出现：邮件进收件箱走的是 SendMessage 那条路，这条只留「谁发的」。折叠进 `SessionState.peerMessages`（界面用）。`input_received.origin` 新增变体 `peer`，回合触发为 `notification`。被拒收、没批准、超时的消息不写任何事件（它们没有进对方的对话）；发件人收到的结论是一条 `origin = peer` 的输入（`clientMsgId` 为 `peer-outcome:<messageId>`），不写 `peer_message`。待批准队列与发送窗口只在内存里，不落盘。含这些事件或变体的日志旧版本打不开；旧日志照常读。

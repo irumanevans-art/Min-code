@@ -420,6 +420,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         // 邮件事件只记「收到过什么」；校验在发送端（Hub），收件人的日志里不必有团队状态
         is dev.min.agent.spi.TeamMessage -> copy(teamMail = teamMail + TeamMailItem(e.teamId, e.messageId, e.from, e.text, e.broadcast, e.sentAtMs))
+        is dev.min.agent.spi.PeerMessage -> copy(peerMessages = peerMessages + e)
         // 回顾只给人看：不碰 history，不进 modelMessages；花的钱计入会话用量
         is dev.min.agent.spi.SessionRecap -> copy(
             recap = RecapView(e.text, e.trigger, lastTurn?.turnId),

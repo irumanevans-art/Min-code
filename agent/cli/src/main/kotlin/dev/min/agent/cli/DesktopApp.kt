@@ -228,7 +228,11 @@ internal class DesktopApp(
             cronMaxBudgetUsd = cronMaxBudgetUsdFrom(config.settings.merged.raw("cronMaxBudgetUsd"), System.err::println),
             cronEnabled = cronEnabled,
         )
-        SessionHub(store, deps(tools), scope, limits, catalog.definitions).also {
+        // 本机其他进程的会话：登记表与收件目录放在用户目录下（只本用户可读写）。只有交互会话挂这个：它的收件要靠心跳取，
+        // `-p` 跑一次就退出，登记了却没人取会让发件人误以为送到了。退出时 shutdown 会注销本进程的会话；
+        // 进程被杀的，别的进程看见它的登记进程已死，顺手清掉
+        val peers = if (interactive) dev.min.agent.kernel.FilePeerTransport(home.resolve("peers")) else null
+        SessionHub(store, deps(tools), scope, limits, catalog.definitions, peers = peers).also {
             hubInstance = it
             // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器。定时任务的开关在引擎里查（CronEngine 的 enabled），
             // 心跳不跟它走：`/goal` 的 check-in 也挂在这同一个心跳上，定时任务关着时它照常叫醒

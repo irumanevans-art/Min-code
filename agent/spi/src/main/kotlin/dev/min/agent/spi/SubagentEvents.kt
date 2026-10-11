@@ -172,6 +172,14 @@ sealed interface InputOrigin {
     @Serializable
     @SerialName("task")
     data class Task(val taskId: String) : InputOrigin
+
+    /**
+     * 本机另一个会话发来的消息（跨会话邮箱，见 [PeerMessage]）。不是用户的话、也不是授权：
+     * 模型看到的是「来自会话 X」的文字，权限提示照常由收件会话自己的规则判定。[session] 是发件会话，[name] 是它的名字（发件时的登记）
+     */
+    @Serializable
+    @SerialName("peer")
+    data class Peer(val session: SessionId, val name: String? = null) : InputOrigin
 }
 
 @Serializable
