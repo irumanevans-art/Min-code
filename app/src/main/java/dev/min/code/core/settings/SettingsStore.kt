@@ -60,6 +60,10 @@ private val KEY_CRON_MAX_BUDGET_USD = doublePreferencesKey("cron_max_budget_usd"
 private val KEY_WORKFLOWS_ENABLED = booleanPreferencesKey("workflows_enabled")
 /** WebSearch 的后端选择与 key：整块 JSON 经 [TokenCipher] 加密，见 [WebSearchConfig] */
 private val KEY_WEB_SEARCH = stringPreferencesKey("web_search")
+/** 遥测（OpenTelemetry 本地等价）：默认关；头部（含令牌）整串加密存放，见 [SettingsStore.setTelemetryHeaders] */
+private val KEY_TELEMETRY_ENABLED = booleanPreferencesKey("telemetry_enabled")
+private val KEY_TELEMETRY_ENDPOINT = stringPreferencesKey("telemetry_endpoint")
+private val KEY_TELEMETRY_HEADERS = stringPreferencesKey("telemetry_headers")
 private val KEY_CRON_ENABLED = booleanPreferencesKey("cron_enabled")
 private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
 private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
@@ -319,6 +323,8 @@ data class AppSettings(
     val workflowsEnabled: Boolean = true,
     /** Min Agent 的 WebSearch 后端。默认不设：模型看不到 WebSearch，见 [WebSearchConfig] */
     val webSearch: WebSearchConfig = WebSearchConfig(),
+    /** 遥测开关与端点（默认关）。头部不在这里：界面只知道「已设置」，见 [TelemetrySettings] */
+    val telemetry: dev.min.code.core.telemetry.TelemetrySettings = dev.min.code.core.telemetry.TelemetrySettings(),
     /**
      * Min Agent（自研内核的第三个会话引擎）的实验开关。release 默认关、debug 默认开（M2-B 设计 §10.2 拍板 1）：
      * 新引擎首发的通行做法，真机门槛过了再议是否改默认。**关着时一切 Min 入口都不出现**——开始面板的分段、
@@ -561,6 +567,11 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             cronEnabled = p[KEY_CRON_ENABLED] ?: true,
             workflowsEnabled = p[KEY_WORKFLOWS_ENABLED] ?: true,
             webSearch = decodeWebSearch(p[KEY_WEB_SEARCH]),
+            telemetry = dev.min.code.core.telemetry.TelemetrySettings(
+                enabled = p[KEY_TELEMETRY_ENABLED] ?: false,
+                endpoint = p[KEY_TELEMETRY_ENDPOINT].orEmpty(),
+                headersConfigured = !p[KEY_TELEMETRY_HEADERS].isNullOrEmpty(),
+            ),
             minAgentEnabled = minAgentEnabledOf(p[KEY_MIN_AGENT_ENABLED], BuildConfig.DEBUG),
             lastStartEngine = p[KEY_LAST_START_ENGINE].orEmpty(),
             deviceWriteAllowlist = p[KEY_DEVICE_WRITE_ALLOWLIST].orEmpty(),
@@ -916,6 +927,25 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     suspend fun setCronEnabled(enabled: Boolean) =
         context.dataStore.edit { it[KEY_CRON_ENABLED] = enabled }
+
+    suspend fun setTelemetryEnabled(enabled: Boolean) =
+        context.dataStore.edit { it[KEY_TELEMETRY_ENABLED] = enabled }
+
+    suspend fun setTelemetryEndpoint(endpoint: String) =
+        context.dataStore.edit { it[KEY_TELEMETRY_ENDPOINT] = endpoint.trim() }
+
+    /**
+     * 遥测头部（`k=v,k2=v2`，含令牌）：整串经 [TokenCipher] 加密；空串 = 清除。界面拿不到明文，只显示「已设置」。
+     * 为什么不明文进 DataStore：头部里常是 Bearer 令牌，和别的凭证一样走 Keystore。
+     */
+    suspend fun setTelemetryHeaders(raw: String) = context.dataStore.edit { p ->
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) p.remove(KEY_TELEMETRY_HEADERS) else p[KEY_TELEMETRY_HEADERS] = TokenCipher.encrypt(trimmed)
+    }
+
+    /** 解密后的头部，只给导出用。Keystore 解不开（换机、改过锁屏）返回空串，不抛——遥测不许拦住设置页 */
+    suspend fun telemetryHeaders(): String =
+        TokenCipher.decrypt(context.dataStore.data.first()[KEY_TELEMETRY_HEADERS].orEmpty()).orEmpty()
 
     suspend fun setMinAgentEnabled(enabled: Boolean) =
         context.dataStore.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }

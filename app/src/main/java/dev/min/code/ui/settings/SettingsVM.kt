@@ -141,6 +141,19 @@ class SettingsVM(
     fun setWorkflowsEnabled(enabled: Boolean) = viewModelScope.launch { store.setWorkflowsEnabled(enabled) }
     fun setCronEnabled(enabled: Boolean) = viewModelScope.launch { store.setCronEnabled(enabled) }
 
+    fun setTelemetryEnabled(enabled: Boolean) = viewModelScope.launch { store.setTelemetryEnabled(enabled) }
+    fun setTelemetryEndpoint(endpoint: String) = viewModelScope.launch { store.setTelemetryEndpoint(endpoint) }
+    fun setTelemetryHeaders(raw: String) = viewModelScope.launch { store.setTelemetryHeaders(raw) }
+
+    /** 上一次「立即导出」的结果；界面自己把它译成文字（这里拿不到 stringResource） */
+    private val _telemetryReport = MutableStateFlow<dev.min.code.core.telemetry.TelemetryExportReport?>(null)
+    val telemetryReport: StateFlow<dev.min.code.core.telemetry.TelemetryExportReport?> = _telemetryReport
+
+    fun exportTelemetry() = viewModelScope.launch {
+        val report = minEngine.exportTelemetry(store.current().telemetry, store.telemetryHeaders())
+        _telemetryReport.value = report
+    }
+
     /** WebSearch 后端：对话框给的是「改了哪些」，已填的 key 界面拿不到也不回显，所以由商店在一次 edit 里合并 */
     fun saveWebSearch(edit: dev.min.code.core.settings.WebSearchEdit) = viewModelScope.launch {
         // Keystore 加密失败（锁屏变更、系统清了密钥）时不让整个 App 崩在一个搜索 key 上：设置没变，行上的说明还是旧的。
