@@ -95,7 +95,8 @@ class MinWebSearchTest {
         config = WebSearchConfig(backend = SearchBackendKind.BRAVE, braveKey = "BRAVE-KEY-1")
         rt.send(ClientMsgId("u3"), listOf(TextPart("three"))); rig.settle(rt)
         // 未配置服务器时 LSP 会被内核隐去；仍须核对 WebSearch 紧跟其它基础工具，避免过滤影响动态搜索位置。
-        val activeBase = minTools().map { it.name }.filter { it != "LSP" }
+        // EndConversation 在 Min 默认不给模型（session-gaps 单的可用性门），与 LSP 一样要从期望里去掉
+        val activeBase = minTools().map { it.name }.filter { it != "LSP" && it != "EndConversation" }
         assertEquals(activeBase + "WebSearch", toolNamesOf(rig.model.requests[2]).take(activeBase.size + 1))
         config = WebSearchConfig()
         rt.send(ClientMsgId("u4"), listOf(TextPart("four"))); rig.settle(rt)
