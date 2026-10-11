@@ -35,7 +35,7 @@ class ProotExecTest {
         override fun destroy() { error("必须走 reap") }
         override fun isAlive(): Boolean = finished.count != 0L
     }
-    private class FakeHost(val process: FakeProcess = FakeProcess(), val text: String = "hello\n", val complete: Boolean = false) : ProotProcessHost {
+    private class FakeHost(val process: FakeProcess = FakeProcess(), val text: String = "hello\n", val complete: Boolean = false, val cwdText: String? = null) : ProotProcessHost {
         val started = CompletableDeferred<Unit>()
         val kills = AtomicInteger()
         lateinit var context: WorkspaceShellContext

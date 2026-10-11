@@ -39,7 +39,7 @@ class LocalExec(
      * shell 里 `pwd` 打出的路径 → guest 路径（[ShellCommand.trackCwd] 用）。默认原样：Linux / macOS / WSL 的 guest 路径就是本机路径；
      * Windows 的 Git Bash 写法与 guest 不同的部分由桌面组合根传入（[DesktopPaths.guestOfShell]）。返回 null = 认不出，当作这次没换目录
      */
-    private val guestOfShell: (String) -> GuestPath? = { GuestPath(it) },
+    private val guestOfShell: (String) -> GuestPath? = { if (it.startsWith("/")) GuestPath(it) else null },
 ) : Exec {
 
     private val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")

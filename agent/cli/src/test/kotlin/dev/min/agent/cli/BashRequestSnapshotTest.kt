@@ -47,7 +47,7 @@ class BashRequestSnapshotTest {
             val actual = (Json.parseToJsonElement(received.get()) as JsonObject)["tools"] as JsonArray
             val expected = Json.parseToJsonElement("""
                 [{"type":"function","function":{"name":"Bash",
-                  "description":"在 shell 里执行一条命令，返回输出（stdout 与 stderr 合并）与退出码；退出码非 0 视为失败。构建与测试请原样执行用户给出的命令，保留它的最终退出码；不要追加 echo 或用 head/tail 管道掩盖失败。工具会裁剪长输出，无需为截断输出改写命令。每条命令都从会话目录开始执行，cd 与 export 不会保留到下一次调用——需要换目录就在同一条命令里写 cd x && ...。默认超时 120 秒，最大 600 秒。命令前台运行超过 10 秒还没结束会自动转入后台，此时会返回 id 与日志路径，用 Read 看日志；后台命令结束时你会收到通知（带退出码与输出末尾），不用轮询，用 TaskStop 按 id 可以提前停掉。读写文件、搜索请优先用 Read / Write / Edit / Glob / Grep，不要用 cat / sed / grep / find 代替。",
+                  "description":"在 shell 里执行一条命令，返回输出（stdout 与 stderr 合并）与退出码；退出码非 0 视为失败。构建与测试请原样执行用户给出的命令，保留它的最终退出码；不要追加 echo 或用 head/tail 管道掩盖失败。工具会裁剪长输出，无需为截断输出改写命令。主会话里 cd 之后的目录会带到后续命令（前提是仍在项目目录或附加目录之内，否则退回项目目录并在结果末尾说明），子 agent 不带；export 设的环境变量不会保留到下一次调用。默认超时 120 秒，最大 600 秒。命令前台运行超过 10 秒还没结束会自动转入后台，此时会返回 id 与日志路径，用 Read 看日志；后台命令结束时你会收到通知（带退出码与输出末尾），不用轮询，用 TaskStop 按 id 可以提前停掉。读写文件、搜索请优先用 Read / Write / Edit / Glob / Grep，不要用 cat / sed / grep / find 代替。",
                   "parameters":{"type":"object","required":["command"],"properties":{
                     "command":{"type":"string","description":"要执行的 shell 命令"},
                     "timeout":{"type":"integer","description":"超时毫秒数，默认 120000，最大 600000（更大的值按最大算）"},

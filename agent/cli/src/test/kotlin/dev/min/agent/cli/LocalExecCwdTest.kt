@@ -142,6 +142,15 @@ class LocalExecCwdTest {
         assertFalse("日志里也没有探针", log.contains("__min") || log.contains(".cwd"))
     }
 
+    @Test fun `an exec built without a path mapper never throws on Windows style paths`() {
+        // 许多调用方（测试、插件评测）自己建 LocalExec、不传映射；Windows 上 pwd -W 打 C:/...，GuestPath 构造会抛——必须当作没换目录
+        val bare = LocalExec(paths::hostOf, logs, paths.guestOfHost(logs),
+            listOf(if (System.getProperty("os.name").startsWith("Windows")) "C:/Program Files/Git/bin/bash.exe" else "bash", "-lc"))
+        val r = runBlocking { bare.run(ShellCommand("cd 'sub dir 中文'", cwd, trackCwd = true), ExecOptions(60_000)) } as ExecResult.Exited
+        assertEquals(0, r.exitCode)
+        r.endCwd?.let { assertTrue(it.value, it.value.startsWith("/")) }
+    }
+
     @Test fun `directory outside every drive project root is still reported so the kernel can see it is outside`() {
         // Git Bash 自己的目录（/usr 在 Git 安装目录下）：pwd -W 给出它的真实 Windows 位置，必然不在项目目录里
         if (!System.getProperty("os.name").startsWith("Windows")) return
