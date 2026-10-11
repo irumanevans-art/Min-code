@@ -308,6 +308,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             // 本轮 skill 的 allowed-tools 放行（照文档：到用户下一条消息为止）；拒绝与询问规则仍在它之上（PolicyEngine 先看拒绝、再看询问）
             rules = parsedRules + s.skillGrants.mapNotNull { PermissionRule.parse(dev.min.agent.policy.RuleKind.Allow, it, "skill") },
             cwd = s.settings.cwd,
+            // 命令里的相对路径按 shell 当前目录解析（规则与工作区范围仍按 cwd）
+            shellCwd = s.shellCwd,
             home = deps.memoryHome ?: DEFAULT_HOME,
             scopeOf = { path ->
                 val actual = deps.canonicalPath(path)
@@ -707,7 +709,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             val traceparent = if (turnId == null) null else
                 dev.min.agent.spi.catchingNonCancellation { deps.traceContext.toolExecution(rt.sessionId, turnId, callId) }.getOrNull()
             val traced = if (traceparent == null) command else command.copy(env = command.env + ("TRACEPARENT" to traceparent))
-            return rt.runNetworkShell(callId, traced, options, if (callId in networkApprovedCalls) allowedDomains else emptyList())
+            // shell 目录的跟踪（cd 跨命令保留）包在最外层：带 TRACEPARENT 的命令照样按 shell 目录起、跑完记下结束目录
+            return rt.runTrackedShell(traced) { c -> rt.runNetworkShell(callId, c, options, if (callId in networkApprovedCalls) allowedDomains else emptyList()) }
         }
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)

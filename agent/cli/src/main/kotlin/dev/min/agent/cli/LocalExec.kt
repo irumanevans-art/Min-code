@@ -6,6 +6,7 @@ import dev.min.agent.spi.ExecOptions
 import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ShellCommand
+import dev.min.agent.spi.ShellCwdProbe
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * [Exec] 的桌面实现：在本机起 shell 跑命令。只给桌面用（Android 走 proot，另有实现）。
@@ -33,7 +35,14 @@ class LocalExec(
     private val guestLogDir: GuestPath,
     private val shell: List<String> = listOf("bash", "-lc"),
     private val baseEnvironment: Map<String, String>? = null,
+    /**
+     * shell 里 `pwd` 打出的路径 → guest 路径（[ShellCommand.trackCwd] 用）。默认原样：Linux / macOS / WSL 的 guest 路径就是本机路径；
+     * Windows 的 Git Bash 写法与 guest 不同的部分由桌面组合根传入（[DesktopPaths.guestOfShell]）。返回 null = 认不出，当作这次没换目录
+     */
+    private val guestOfShell: (String) -> GuestPath? = { if (it.startsWith("/")) GuestPath(it) else null },
 ) : Exec {
+
+    private val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
 
     /** 还在跑的进程；进程结束（无论前台后台）由等待线程摘除 */
     private val running = ConcurrentHashMap<String, Pair<Process, LocalExecLaunch>>()
@@ -44,9 +53,14 @@ class LocalExec(
         Files.createDirectories(logDir)
         val logFile = logDir.resolve("$id.log")
 
+        // 结束目录写进宿主自己的临时文件、不走输出流（[ShellCwdProbe]）：输出、日志、后台通知里都不会出现标记
+        val cwdFile = if (command.trackCwd) logDir.resolve("$id.cwd") else null
+        val script = if (cwdFile != null) ShellCwdProbe.wrap(command.script, bashPath(cwdFile), pwdCommand = if (windows) "command pwd -W" else "command pwd") else command.script
+        val endCwd = AtomicReference<String?>(null)
+
         val launch = LocalExecLaunch(shell, logDir, id)
         val process = try {
-            val builder = ProcessBuilder(launch.argv(command.script))
+            val builder = ProcessBuilder(launch.argv(script))
                 .directory(hostDirOf(command.cwd).toFile())
                 .redirectErrorStream(true)
             baseEnvironment?.let { builder.environment().clear(); builder.environment().putAll(it) }
@@ -63,6 +77,8 @@ class LocalExec(
                 // 退出码先记、再摘出运行表：[isAlive] 一说「不在了」，[exitOf] 就必须已经查得到
                 rememberExit(id, code)
                 try {
+                    // 进程一退就读走并删掉：转后台的命令事后才结束时同样不留文件；读写发生在 exit 完成之前，前台路径一定读得到
+                    cwdFile?.let { endCwd.set(takeCwdFile(it)) }
                     launch.cleanup()
                 } finally {
                     running.remove(id)
@@ -83,7 +99,8 @@ class LocalExec(
             when {
                 exitCode != null -> {
                     val (output, truncated) = proc.snapshot()
-                    ExecResult.Exited(exitCode, output, truncated, (System.nanoTime() - startedAt) / 1_000_000)
+                    ExecResult.Exited(exitCode, output, truncated, (System.nanoTime() - startedAt) / 1_000_000,
+                        endCwd = endCwd.get()?.let(guestOfShell))
                 }
                 backgroundable -> {
                     val handle = ExecHandle(id, pidOf(process), GuestPath(guestLogDir.value.trimEnd('/') + "/$id.log"))
@@ -132,6 +149,20 @@ class LocalExec(
 
     /** 按宿主进程表判任意 pid：owner 是别的桌面终端的 JVM 进程，问宿主最准（M4） */
     override suspend fun isPidAlive(pid: Long): Boolean? = ProcessHandle.of(pid).isPresent
+
+    /** 读出探针写的目录并删掉文件；读不到、不是路径（脚本 `exit` 了没写、写了半截）都是 null——当作这次没换目录 */
+    private fun takeCwdFile(file: Path): String? {
+        try {
+            return ShellCwdProbe.parse(Files.readString(file, Charsets.UTF_8))
+        } catch (_: java.io.IOException) {
+            return null
+        } finally {
+            try {
+                Files.deleteIfExists(file)
+            } catch (_: java.io.IOException) {
+            }
+        }
+    }
 
     private fun pidOf(process: Process): Int? = try {
         process.pid().toInt()

@@ -46,3 +46,13 @@ interface WorktreePort {
         private fun failure() = ToolResult(listOf(dev.min.agent.protocol.TextPart("Worktree port unavailable.")), isError = true)
     }
 }
+
+/**
+ * Bash 的 `cd` 带到下一条命令的目录（CC：tools-reference「What persists between commands」）。
+ * 与 [CwdChanged]（会话目录，管权限范围、记忆、worktree）是两回事：本事件只改「shell 从哪开始」，
+ * 会话目录与权限范围不动——`cd` 进子目录不能把权限范围缩小。[cwd] = null 表示回到会话目录（出界重置、`cd` 回项目根）。
+ * 会话目录换了（[CwdChanged]）一律清空它。
+ */
+@Serializable
+@SerialName("shell_cwd_changed")
+data class ShellCwdChanged(val cwd: GuestPath? = null) : SessionEvent

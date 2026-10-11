@@ -42,3 +42,14 @@ Android 使用同一内核与既有 proot Exec。AgentSessionState.worktree 暴�
 ## 范围
 
 本单不实现 PR 快捷入场、tmux、.worktreeinclude、孤儿 worktree sweep、FileChanged 监视器、App 操作界面。普通 Bash 的 cd 仍是该命令进程的局部 cwd；会话持久 cwd 由 Enter/Exit 或空闲的 changeSettings(cwd) 更新。隔离是独立 Git 工作副本与工具门禁，不是进程文件系统沙箱。
+
+## Bash 的 cd 跨命令保留（2026-10-11）
+
+上面「范围」里说的「普通 Bash 的 cd 是局部 cwd」已被取代，口径是 CC tools-reference「What persists between commands」：
+
+- 两个目录分开记。会话目录（`settings.cwd`，由 `cwd_changed` 改）管权限范围、记忆、worktree；shell 当前目录（`SessionState.shellCwd`，由 `shell_cwd_changed` 改）只决定下一条 Bash 从哪开始。`cd` 进子目录不改会话目录、不缩小权限范围；`cwd_changed` 一律清空 shell 目录。
+- 目录由宿主在命令跑完后报告（`ExecResult.Exited.endCwd`）：宿主把脚本整个 `eval` 进一层探针（`spi/ShellCwd.kt`），探针把 `pwd` 写进宿主自己的临时文件、不走输出流。所以输出、日志、后台通知里没有标记，截断也丢不了；脚本里 `exit` / `exec` / `set -e` 失败时探针没跑，视为没换目录；超时与转后台不读。桌面 Windows 用 `pwd -W`（普通 `pwd` 会按 msys 挂载表改名），`DesktopPaths.guestOfShell` 映射回 guest 路径；Android proot 原样。
+- 内核（`ShellCwd.kt` 的 `runTrackedShell`）判范围：终点先折 `..`、再交宿主解符号链接，落在会话目录或附加目录之内才带过去，并记**真实路径**；出界则重置回项目目录，在那次结果末尾附 `Shell cwd was reset to <dir>`。起点目录没了或已出界（附加目录被撤）时**不执行**该命令：权限分析是按 shell 目录做的，换个目录跑就成了没分析过的命令。
+- 权限分析：Bash 命令里的相对路径与凭证目标按 shell 目录解析（`PolicyContext.shellCwd`，仅对 Bash）；规则里的相对写法与工作区范围仍以会话目录为准。worktree 隔离守卫同样从 shell 目录起算。
+- 子 agent 从不带；`CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR` 为真值时每条命令都从项目目录起；环境变量本来就不带。
+- shell 目录有效变化时触发 `CwdChanged` hook（`old_cwd` / `new_cwd`），hook 通用输入的 `cwd` 跟着 shell 目录走（原文「cwd follows Claude」）。`CLAUDE_ENV_FILE` 仍待 Bash 支持持久环境。

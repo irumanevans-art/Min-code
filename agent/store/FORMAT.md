@@ -331,3 +331,8 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 
 - v1 增量（2026-10-11，OTel 第三段，TRACEPARENT）：`hooks_ran` 再新增可选字段 `runId`（这批 hook 的 span 标识：`<回合 id>:<事件名>:<本会话第几批>`）。**只在宿主给了追踪上下文（`KernelDeps.traceContext`，遥测开着）时才写**：hook 子进程的 `TRACEPARENT` 要在它启动之前就指向这批 hook 自己的 span，而 span 是事后从日志折出来的，所以标识由内核先定、随记录落盘，遥测 hook span 的 id 由它与会话 id 哈希得出（没有 `runId` 时退回用记录的 seq）。旧日志缺字段照常读，旧版本忽略字段照常读。`TRACEPARENT` 本身（Bash / hook 子进程的环境变量）是运行时的事，不进日志。
   新增事件 `skills_rescanned`（`entries`：新增或改动的 skill，同名替换旧的；`removed`：没了的名字；可选 `notes`），定义在 `spi/SkillEvents.kt`：用户 `~/.claude/skills`、项目 `.claude/skills`（含仓库祖先）与 `--add-dir` 目录里的 `.claude/skills` 在会话中途变了，内核在用户每次开新回合前（以及斜杠展开认名字之前）重扫、有差异才写；`/reload-skills` 手动重扫同一条路，还会读这几处的 `commands` 目录，`entries` 里因此可能有 `kind: command`（`--bare` 的自动重扫不做，手动只扫 `--add-dir` 的 skills；agents 本来就不监视）。2026-10-11 skills-3 起范围由「只 `--add-dir`」扩到这三处，事件形状不变，旧日志照常读。折叠进 `SessionState.nestedSkills`（同名替换）与 `removedSkills`，并把一段 system-reminder 放进 `pendingInputContexts`，随下一条被提升的输入送给模型。压缩之后摘要消息末尾重述仍可用的中途发现的 skill。含这条事件的日志旧版本打不开。
+
+- v1 增量（2026-10-11，Bash 的 cd 跨命令保留）：新增事件 `shell_cwd_changed`（可选 `cwd`），定义在 `spi/Worktrees.kt`。它记「下一条 Bash 从哪个目录开始」，与 `cwd_changed`（会话目录：权限范围、记忆、worktree）是两回事——`cd` 进子目录不改会话目录、不缩小权限范围。
+  `cwd` 缺省 / null = 回到会话目录（出界重置、`cd` 回了项目根）；非 null 时是**真实路径**（符号链接已解），且在会话目录或附加目录之内。折叠进 `SessionState.shellCwd`；`cwd_changed` 一律把它清空（新会话目录才是起点），所以两类事件的相对顺序有意义。
+  只有跑完的前台 Bash 才会写（超时、转后台、脚本里 `exit` 都不写）；子 agent 与设了 `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR` 的运行永远不写。旧日志没有它：重开等于 shell 在会话目录；含它的日志旧版本打不开。
+  同一次变化会触发 `CwdChanged` hook（`old_cwd` / `new_cwd` 为 shell 目录前后），hook 通用输入的 `cwd` 字段跟着 shell 目录走（CC 原文「cwd follows Claude」）。

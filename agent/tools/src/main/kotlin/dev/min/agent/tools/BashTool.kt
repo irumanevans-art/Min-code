@@ -58,7 +58,7 @@ class BashTool(private val allowBackground: Boolean = true) : Tool<BashInput> {
         "在 shell 里执行一条命令，返回输出（stdout 与 stderr 合并）与退出码；退出码非 0 视为失败。" +
             // 模型给测试命令追加 echo 或 head/tail 会把失败伪装成退出码 0，工具本身已负责裁剪输出。
             "构建与测试请原样执行用户给出的命令，保留它的最终退出码；不要追加 echo 或用 head/tail 管道掩盖失败。工具会裁剪长输出，无需为截断输出改写命令。" +
-            "每条命令都从会话目录开始执行，cd 与 export 不会保留到下一次调用——需要换目录就在同一条命令里写 cd x && ...。" +
+            "主会话里 cd 之后的目录会带到后续命令（前提是仍在项目目录或附加目录之内，否则退回项目目录并在结果末尾说明），子 agent 不带；export 设的环境变量不会保留到下一次调用。" +
             "默认超时 ${DEFAULT_TIMEOUT_MS / 1000} 秒，最大 ${MAX_TIMEOUT_MS / 1000} 秒。" +
             (if (allowBackground)
                 "命令前台运行超过 ${FOREGROUND_BUDGET_MS / 1000} 秒还没结束会自动转入后台，此时会返回 id 与日志路径，用 Read 看日志；" +
@@ -108,9 +108,10 @@ class BashTool(private val allowBackground: Boolean = true) : Tool<BashInput> {
             },
             maxOutputChars = traits.resultBudgetChars,
         )
-        return when (val r = ctx.runShell(ShellCommand(input.command, ctx.cwd), options, input.allowedDomains)) {
+        return when (val r = ctx.runShell(ShellCommand(input.command, ctx.cwd, trackCwd = !input.background), options, input.allowedDomains)) {
             is ExecResult.Exited -> {
-                val text = outputBlock(r.output, r.truncated) + "\n退出码 ${r.exitCode}"
+                // 内核的附言（`Shell cwd was reset to <dir>`，英文原样）接在整条结果末尾
+                val text = outputBlock(r.output, r.truncated) + "\n退出码 ${r.exitCode}" + (r.note?.let { "\n$it" } ?: "")
                 if (r.exitCode == 0) okResult(text) else failResult(text)
             }
             is ExecResult.TimedOut -> failResult(

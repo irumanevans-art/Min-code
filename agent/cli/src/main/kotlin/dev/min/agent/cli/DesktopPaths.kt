@@ -48,5 +48,23 @@ internal class DesktopPaths(
 
     fun hostOf(guest: GuestPath): Path = fs.hostPath(guest)
 
+    /**
+     * shell 打出的当前目录 → guest 路径（Bash 的 cd 跨命令保留用）。Linux / macOS / WSL 原样。
+     * Windows 上宿主让 Git Bash 用 `pwd -W` 打 Windows 写法（`D:/kimi/x`）：普通 `pwd` 会按 msys 挂载表换名
+     * （临时目录变 `/tmp/...`，Git 安装目录变 `/`、`/usr`），盘符写法才没有歧义。这里把它转成 guest 的盘符写法（`/d/kimi/x`，盘符小写）；
+     * 也认 `/d/...` 的 msys 盘符写法。
+     * 落在盘符之外的（`//server/share`、msys 自己的 `/usr`）在 guest 里没有对应物，**原样交出去**：它们必然不在项目目录里
+     * （项目与附加目录在 Windows 上都是盘符写法），内核据此判出界并重置，而不是悄悄当成没换目录。
+     */
+    fun guestOfShell(shell: String): GuestPath? {
+        if (!windows) return if (shell.startsWith("/")) GuestPath(shell) else null
+        Regex("^([A-Za-z]):(?:[/\\\\](.*))?$").matchEntire(shell)?.let { m ->
+            val rest = m.groupValues[2].replace('\\', '/').trim('/')
+            return GuestPath("/" + m.groupValues[1].lowercase() + if (rest.isEmpty()) "" else "/$rest")
+        }
+        val m = Regex("^/([A-Za-z])(/.*)?$").matchEntire(shell) ?: return if (shell.startsWith("/")) GuestPath(shell) else null
+        return GuestPath("/" + m.groupValues[1].lowercase() + m.groupValues[2].trimEnd('/'))
+    }
+
     private fun driveLetter(root: Path): String = root.toString().trimEnd('\\', '/', ':').lowercase()
 }
