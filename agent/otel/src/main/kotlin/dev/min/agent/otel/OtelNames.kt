@@ -1,0 +1,46 @@
+package dev.min.agent.otel
+
+/*
+ * 指标名与事件名。CC 的名字照抄（claude_code.*，见 monitoring-usage 原文）；Min 没有对应物的加 min. 前缀。
+ */
+object OtelNames {
+    const val SESSION_COUNT = "claude_code.session.count"
+    const val COST_USAGE = "claude_code.cost.usage"
+    const val TOKEN_USAGE = "claude_code.token.usage"
+    const val LINES_OF_CODE = "claude_code.lines_of_code.count"
+    const val CODE_EDIT_DECISION = "claude_code.code_edit_tool.decision"
+
+    const val USER_PROMPT = "claude_code.user_prompt"
+    const val ASSISTANT_RESPONSE = "claude_code.assistant_response"
+    const val API_REQUEST = "claude_code.api_request"
+    const val API_ERROR = "claude_code.api_error"
+    const val TOOL_DECISION = "claude_code.tool_decision"
+    const val TOOL_RESULT = "claude_code.tool_result"
+    const val PERMISSION_MODE_CHANGED = "claude_code.permission_mode_changed"
+
+    const val MIN_TURN_STARTED = "min.turn.started"
+    const val MIN_TURN_ENDED = "min.turn.ended"
+    const val MIN_CONVERSATION_ENDED = "min.conversation.ended"
+}
+
+/**
+ * 会话日志事件（按 serial 名）到遥测名的映射表。数据即规格：映射实现只能产出这里登记的名字，
+ * 测试用它核对「产出的名字都登记过」，文档也据此对照。
+ */
+val OTEL_NAME_TABLE: Map<String, List<String>> = mapOf(
+    "session_created" to listOf(OtelNames.SESSION_COUNT),
+    "input_received" to listOf(OtelNames.USER_PROMPT),
+    "turn_started" to listOf(OtelNames.MIN_TURN_STARTED),
+    "turn_ended" to listOf(OtelNames.MIN_TURN_ENDED),
+    "model_request_started" to emptyList(),
+    "model_charged" to listOf(OtelNames.COST_USAGE, OtelNames.TOKEN_USAGE, OtelNames.API_REQUEST),
+    "model_request_failed" to listOf(OtelNames.API_ERROR),
+    "assistant_message_completed" to listOf(OtelNames.ASSISTANT_RESPONSE),
+    "tool_planned" to emptyList(),
+    "approval_requested" to emptyList(),
+    "approval_resolved" to listOf(OtelNames.TOOL_DECISION, OtelNames.CODE_EDIT_DECISION),
+    "tool_effect_pending" to emptyList(),
+    "tool_outcome" to listOf(OtelNames.TOOL_RESULT, OtelNames.LINES_OF_CODE),
+    "settings_changed" to listOf(OtelNames.PERMISSION_MODE_CHANGED),
+    "conversation_ended" to listOf(OtelNames.MIN_CONVERSATION_ENDED),
+)

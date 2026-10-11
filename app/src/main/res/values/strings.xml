@@ -1564,4 +1564,20 @@
   <string name="viewer_draft_note">Drafts are not sent. Export makes a local zip that you send yourself, or discard the draft.</string>
   <string name="viewer_draft_export">Export diagnostic zip</string>
   <string name="viewer_draft_discard">Discard</string>
+  <string name="settings_telemetry_title">Telemetry (local OpenTelemetry)</string>
+  <string name="settings_telemetry_on">On. Exports session metrics and events to the endpoint below and to a local JSONL file. Prompt and response text is not included.</string>
+  <string name="settings_telemetry_off">Off. Nothing is exported.</string>
+  <string name="settings_telemetry_endpoint_title">OTLP endpoint</string>
+  <string name="settings_telemetry_endpoint_none">Not set (local file only)</string>
+  <string name="settings_telemetry_endpoint_field">Endpoint, for example https://collector.example.com</string>
+  <string name="settings_telemetry_headers_title">OTLP headers</string>
+  <string name="settings_telemetry_headers_set">Set. Stored encrypted and never shown.</string>
+  <string name="settings_telemetry_headers_unset">Not set</string>
+  <string name="settings_telemetry_headers_field">Name=value pairs, comma separated. Save empty to clear.</string>
+  <string name="settings_telemetry_export_title">Export now</string>
+  <string name="settings_telemetry_export_idle">Not exported yet</string>
+  <string name="settings_telemetry_export_skipped">Telemetry is off, nothing exported</string>
+  <string name="settings_telemetry_export_result">%1$d sessions, %2$d records, %3$d failures</string>
+  <string name="settings_telemetry_problem">Setting problem: %1$s</string>
+  <string name="settings_telemetry_save">Save</string>
 </resources>

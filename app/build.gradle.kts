@@ -152,6 +152,7 @@ dependencies {
     implementation(project(":agent:host"))
     implementation(project(":agent:llm"))
     implementation(project(":agent:store"))
+    implementation(project(":agent:otel"))
     implementation(project(":agent:tools"))
     // McpApprovals：批准 .mcp.json 里的项目服务器时写 settings.local.json（与 CC 互通），不自己再抄一份读改写
     implementation(project(":agent:ext"))

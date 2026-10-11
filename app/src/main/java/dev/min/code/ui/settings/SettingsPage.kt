@@ -760,6 +760,16 @@ private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
     CronBudgetRow(valueUsd = settings.cronMaxBudgetUsd, onChange = vm::setCronMaxBudgetUsd)
     // agent 团队同时运行的成员数（1–8）
     TeamConcurrencyRow(value = settings.teamMaxConcurrent, onChange = vm::setTeamMaxConcurrent)
+    // 遥测（OpenTelemetry 的本地等价，默认关）：开关、端点、加密的头部、立即导出
+    val telemetryReport by vm.telemetryReport.collectAsStateWithLifecycle()
+    TelemetryRows(
+        settings = settings.telemetry,
+        report = telemetryReport,
+        onEnabled = vm::setTelemetryEnabled,
+        onEndpoint = vm::setTelemetryEndpoint,
+        onHeaders = vm::setTelemetryHeaders,
+        onExport = vm::exportTelemetry,
+    )
     // WebSearch 后端：默认不设；key 只显示「已填」
     WebSearchRow(config = settings.webSearch, onSave = vm::saveWebSearch)
 }

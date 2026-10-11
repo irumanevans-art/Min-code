@@ -499,6 +499,14 @@ class MinAgentEngine(
 
     override suspend fun updateIndex(state: SessionState) = index.update(state)
 
+    /** 遥测「立即导出」：把会话日志里的新事件导出到端点与本机 JSONL（默认关，关着什么都不做）。见 [MinTelemetryExporter] */
+    suspend fun exportTelemetry(settings: dev.min.code.core.telemetry.TelemetrySettings, headers: String) =
+        dev.min.code.core.telemetry.MinTelemetryExporter(
+            sessionsDir = sessionsDir,
+            stateDir = File(context.filesDir, "agent"),
+            transport = UrlConnectionTransport(),
+        ).export(settings, headers)
+
     private companion object {
         const val TAG = "MinAgentEngine"
         const val MAX_RESIDENT = 8

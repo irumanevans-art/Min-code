@@ -354,6 +354,19 @@ internal class DesktopApp(
     suspend fun records(sessionId: SessionId, fromSeq: Long): List<EventRecord> =
         requireNotNull(store.peek(sessionId)).read(fromSeq).toList()
 
+    /**
+     * 遥测（OpenTelemetry 的本地等价）：默认关，环境变量开了才返回导出器。
+     * 为什么从 fromSeq 开始：只导出这个进程里发生的事，不把以前的会话在这里重放一遍。配错了的地方照样打到 stderr。
+     */
+    suspend fun telemetryTail(runtime: SessionRuntime): dev.min.agent.otel.OtelTail? {
+        val config = dev.min.agent.otel.OtelConfig.fromEnv(System::getenv)
+        if (config.enabled) config.problems.forEach { System.err.println("遥测设置有问题：$it") }
+        if (!config.active) return null
+        val log = requireNotNull(store.peek(runtime.sessionId)) { "遥测读不到会话日志" }
+        val exporter = dev.min.agent.otel.OtelExporter(config, UrlConnectionTransport())
+        return dev.min.agent.otel.OtelTail(log, config, exporter, fromSeq = runtime.state.value.lastSeq + 1)
+    }
+
     private fun deps(tools: List<Tool<*>>): KernelDeps {
         // Exec 端口为整个 Hub 共用，句柄的随机 id 保证日志互不覆盖。
         val logDir = Files.createDirectories(home.resolve("exec-logs"))
