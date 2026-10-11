@@ -970,6 +970,9 @@ class SessionRuntime private constructor(
             if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
+            // 会话已由模型结束（EndConversation）：任何来源都不再开回合。send 之外还有子 agent 的报告、后台任务的通知、
+            // hook 唤醒、定时任务、界面的「继续」与压缩，只在 send 里拦的话它们照样把模型叫起来。输入照常进收件箱（日志里看得到）
+            if (s.ended) return
             if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification || trigger == TurnTrigger.Hook || trigger == TurnTrigger.Cron) && s.inbox.isEmpty()) return
             turnJob = scope.launch {
                 val runner = TurnRunner(this@SessionRuntime)
