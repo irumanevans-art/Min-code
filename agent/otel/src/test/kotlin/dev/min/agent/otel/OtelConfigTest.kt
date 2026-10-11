@@ -83,10 +83,94 @@ class OtelConfigTest {
     }
 
     @Test
-    fun `不支持的导出器（prometheus、console）给出说明，不静默`() {
+    fun `prometheus 不支持，给出说明、不静默；console 是支持的`() {
         val config = OtelConfig.fromEnv(env("CLAUDE_CODE_ENABLE_TELEMETRY" to "1", "OTEL_METRICS_EXPORTER" to "prometheus,console"))
         assertTrue(config.problems.any { "prometheus" in it })
-        assertFalse(config.active)
+        assertFalse(config.problems.any { "的 console" in it })
+        assertTrue(config.metricsConsole)
+        assertTrue(config.active)
+        // 只有 prometheus：没有任何目的地
+        val only = OtelConfig.fromEnv(env("CLAUDE_CODE_ENABLE_TELEMETRY" to "1", "OTEL_METRICS_EXPORTER" to "prometheus"))
+        assertFalse(only.active)
+    }
+
+    @Test
+    fun `console 导出器按信号分开选，none 与未设都不开`() {
+        val config = OtelConfig.fromEnv(env(
+            "CLAUDE_CODE_ENABLE_TELEMETRY" to "1",
+            "OTEL_METRICS_EXPORTER" to "none",
+            "OTEL_LOGS_EXPORTER" to "console",
+            "OTEL_TRACES_EXPORTER" to "console",
+            "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA" to "1",
+        ))
+        assertFalse(config.metricsConsole)
+        assertTrue(config.logsConsole)
+        assertTrue(config.tracesConsole)
+        assertTrue(config.tracesEnabled)
+        assertTrue(config.problems.isEmpty())
+    }
+
+    @Test
+    fun `traces 是 beta：没有 ENHANCED_TELEMETRY_BETA 就不导出，并说明原因`() {
+        val base = arrayOf(
+            "CLAUDE_CODE_ENABLE_TELEMETRY" to "1",
+            "OTEL_TRACES_EXPORTER" to "otlp",
+            "OTEL_EXPORTER_OTLP_PROTOCOL" to "http/json",
+            "OTEL_EXPORTER_OTLP_ENDPOINT" to "https://c.example.com",
+        )
+        val off = OtelConfig.fromEnv(env(*base))
+        assertFalse(off.tracesEnabled)
+        assertTrue(off.problems.any { "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA" in it })
+
+        val on = OtelConfig.fromEnv(env(*base, "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA" to "1"))
+        assertTrue(on.tracesEnabled)
+        assertEquals("https://c.example.com/v1/traces", on.tracesEndpoint)
+        assertTrue(on.problems.isEmpty())
+
+        // 别名也认（原文：ENABLE_ENHANCED_TELEMETRY_BETA）
+        val alias = OtelConfig.fromEnv(env(*base, "ENABLE_ENHANCED_TELEMETRY_BETA" to "1"))
+        assertTrue(alias.tracesEnabled)
+    }
+
+    @Test
+    fun `traces 的专属端点、头部与间隔，头部与通用头部合并`() {
+        val config = OtelConfig.fromEnv(env(
+            "CLAUDE_CODE_ENABLE_TELEMETRY" to "1",
+            "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA" to "1",
+            "OTEL_TRACES_EXPORTER" to "otlp",
+            "OTEL_EXPORTER_OTLP_PROTOCOL" to "http/json",
+            "OTEL_EXPORTER_OTLP_ENDPOINT" to "https://c.example.com",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" to "http://localhost:4318/v1/traces",
+            "OTEL_EXPORTER_OTLP_HEADERS" to "A=1",
+            "OTEL_EXPORTER_OTLP_TRACES_HEADERS" to "B=2",
+            "OTEL_TRACES_EXPORT_INTERVAL" to "1500",
+        ))
+        assertEquals("http://localhost:4318/v1/traces", config.tracesEndpoint)
+        assertEquals(listOf("A" to "1", "B" to "2"), config.tracesHeaders)
+        assertEquals(1500L, config.traceIntervalMs)
+    }
+
+    @Test
+    fun `导出间隔默认值照原文：指标 60000、日志 5000、traces 5000；非正数回到默认`() {
+        val d = OtelConfig.fromEnv(env())
+        assertEquals(60_000L, d.metricIntervalMs)
+        assertEquals(5_000L, d.logIntervalMs)
+        assertEquals(5_000L, d.traceIntervalMs)
+        val set = OtelConfig.fromEnv(env("OTEL_METRIC_EXPORT_INTERVAL" to "1000", "OTEL_LOGS_EXPORT_INTERVAL" to "200"))
+        assertEquals(1000L, set.metricIntervalMs)
+        assertEquals(200L, set.logIntervalMs)
+        val bad = OtelConfig.fromEnv(env("OTEL_METRIC_EXPORT_INTERVAL" to "0", "OTEL_LOGS_EXPORT_INTERVAL" to "-5", "OTEL_TRACES_EXPORT_INTERVAL" to "abc"))
+        assertEquals(60_000L, bad.metricIntervalMs)
+        assertEquals(5_000L, bad.logIntervalMs)
+        assertEquals(5_000L, bad.traceIntervalMs)
+    }
+
+    @Test
+    fun `只有本机文件时，beta 开着也导出 traces，没开则不`() {
+        val a = OtelConfig.fromEnv(env("CLAUDE_CODE_ENABLE_TELEMETRY" to "1", "MIN_TELEMETRY_FILE" to "/tmp/x.jsonl"))
+        assertFalse(a.tracesEnabled)
+        val b = OtelConfig.fromEnv(env("CLAUDE_CODE_ENABLE_TELEMETRY" to "1", "MIN_TELEMETRY_FILE" to "/tmp/x.jsonl", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA" to "1"))
+        assertTrue(b.tracesEnabled)
     }
 
     @Test
