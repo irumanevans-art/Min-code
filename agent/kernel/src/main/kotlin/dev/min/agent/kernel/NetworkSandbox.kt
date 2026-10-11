@@ -28,7 +28,7 @@ internal suspend fun SessionRuntime.refreshNetworkSettings(): NetworkSettings {
 
 internal suspend fun SessionRuntime.runNetworkShell(callId: CallId, command: ShellCommand, options: ExecOptions, domains: List<String>): ExecResult {
     val settings = refreshNetworkSettings()
-    if (!settings.enabled) return deps.host.exec.run(command, options)
+    if (!settings.enabled) return deps.host.exec.run(command.copy(network = GuestNetwork.Offline), options)
     require(domains.all(NetworkRules::validPattern)) { "allowed_domains 含无效的域名或端口" }
     if ((settings.allowManagedDomainsOnly || settings.strictAllowlist) && state.value.settings.mode == PermissionMode.Auto && domains.isNotEmpty())
         return ExecResult.Exited(1, "网络名单已锁定，不能使用本命令的 allowed_domains。", false, 0)
@@ -39,7 +39,7 @@ internal suspend fun SessionRuntime.runNetworkShell(callId: CallId, command: She
         val lease = if (http == null) requireNotNull(deps.networkProxy) { "网络代理不可用" }.open(sessionId) { target -> decideNetwork(callId, command.script, target, domains) } else null
         val env = networkEnvironment(http ?: requireNotNull(lease).env.getValue("HTTP_PROXY"), socks)
         var background = false
-        try { return deps.host.exec.run(command.copy(env = command.env + env), options).also { result ->
+        try { return deps.host.exec.run(command.copy(env = command.env + env, network = dev.min.agent.policy.GuestIsolationPolicy.proxyNetwork(env)), options).also { result ->
             background = result is ExecResult.Backgrounded
             if (result is ExecResult.Backgrounded && lease != null) watchNetworkLease(result.handle, lease, options.timeoutMs)
         } }
@@ -48,7 +48,7 @@ internal suspend fun SessionRuntime.runNetworkShell(callId: CallId, command: She
     val proxy = requireNotNull(deps.networkProxy) { "沙箱网络代理不可用，命令未执行" }
     val lease = proxy.open(sessionId) { target -> decideNetwork(callId, command.script, target, domains) }
     var background = false
-    try { return deps.host.exec.run(command.copy(env = command.env + lease.env), options).also { result ->
+    try { return deps.host.exec.run(command.copy(env = command.env + lease.env, network = dev.min.agent.policy.GuestIsolationPolicy.proxyNetwork(lease.env)), options).also { result ->
         background = result is ExecResult.Backgrounded
         if (result is ExecResult.Backgrounded) watchNetworkLease(result.handle, lease, options.timeoutMs)
     } }

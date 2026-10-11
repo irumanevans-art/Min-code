@@ -48,7 +48,9 @@ internal class ProotProcessPort(
         // 再用 exit 原样交出去；代价是每个长寿进程多一个 bash（几 MB），回收时进程树照旧自底向上杀
         val script = spec.argv.joinToString(" ") { shellQuote(it) } + "\nexit \$?"
         val env = ProcessEnv.build({ null }, spec.env, secretEnvNames, windows = false)
-        val context = agentCommandContext(base, spec.cwd, script).copy(env = env)
+        // stdio 服务的 env 不是网络租约，不能借 HTTP_PROXY 绕过 guest 的默认禁网。
+        val context = agentCommandContext(base, spec.cwd, script).copy(env = env,
+            isolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand())
         return spawnLive(spec.label, host.reaperFor()) {
             try {
                 host.launch(context)

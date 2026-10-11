@@ -3,7 +3,7 @@
     <string name="settings_group_network">网络</string>
     <string name="settings_group_network_sub">命令联网的域名批准与名单</string>
     <string name="network_enabled">命令联网逐域名批准</string>
-    <string name="network_limit_hint">默认关闭。命令经宿主代理联网；不认代理环境变量的程序可以直连，这不是硬隔离。Android App 被冻结时代理会停，联网可能失败。</string>
+    <string name="network_limit_hint">关闭时：Min guest 由内核禁网。开启时：宿主代理逐域名批准，proot 限制连接到代理的回环端口（防误操作级，有多线程竞态局限）。Android 冻结 App 时联网可能失败。</string>
     <string name="network_managed_readonly">托管设置 · 只读</string>
     <string name="network_managed_only">只用托管名单</string>
     <string name="network_managed_on">由托管层强制；其他允许名单和新批准不能扩大访问范围。</string>

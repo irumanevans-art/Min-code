@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":agent:policy"))
     testImplementation(project(":agent:lsp"))
     implementation(libs.quickjs.jvm)
     // 桌面按页截取 PDF（PdfBoxPages）：只在 CLI，不进 App

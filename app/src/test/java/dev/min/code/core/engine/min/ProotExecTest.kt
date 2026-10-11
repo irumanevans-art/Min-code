@@ -51,6 +51,19 @@ class ProotExecTest {
     }
     private val command = ShellCommand("printf hello", GuestPath("/root/a b'c"))
 
+    @Test fun everyAgentCommandRequiresIsolationAndEnvironmentCannotGrantNetwork() = runBlocking {
+        val host = FakeHost(complete = true)
+        ProotExec(base(), host).run(command.copy(env = mapOf("HTTP_PROXY" to "http://127.0.0.1:8888")), ExecOptions(1000))
+        assertNotNull("guest isolation is mandatory", host.context.isolation)
+        assertEquals(GuestNetwork.Offline, host.context.isolation!!.network)
+    }
+
+    @Test fun explicitProxyLeaseIsTransportedToNativePolicy() = runBlocking {
+        val host = FakeHost(complete = true)
+        ProotExec(base(), host).run(command.copy(network = GuestNetwork.ProxyOnly(listOf(8123))), ExecOptions(1000))
+        assertEquals(GuestNetwork.ProxyOnly(listOf(8123)), host.context.isolation?.network)
+    }
+
     @Test fun completedCommandUsesGuestCwdAndCleanEnvironment() = runBlocking {
         val host = FakeHost(complete = true)
         val result = ProotExec(base(), host).run(command, ExecOptions(1000)) as ExecResult.Exited

@@ -661,7 +661,8 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val harness = HarnessProfile(profile.family, profile.editStyle)
         val tools = availableTools(state, deps, runtime = rt, editStyle = profile.editStyle)
         val specs = tools.map { ToolSpec(it.name, it.description(harness) + if (it.name == "Bash" && rt.state.value.networkSettings.enabled)
-            "网络域名批准已开启：请求经宿主代理；不认代理环境变量的程序可以直连，这不是硬隔离。Android App 被冻结时代理会停，联网可能失败。auto 模式需用 allowed_domains 声明本命令需要的域名，由分类器随命令批准。" else "", it.inputSchema) }
+            (if (deps.host.exec.guestIsolation != null) "网络域名批准已开启：guest 仅可连接宿主代理端口，proot 检查目标（防误操作级，有多线程竞态局限）；危险调用由内核拒绝。" else "网络域名批准已开启：请求经宿主代理；不认代理环境变量的程序可以直连，这不是硬隔离。") +
+            "Android App 被冻结时代理会停，联网可能失败。auto 模式需用 allowed_domains 声明本命令需要的域名，由分类器随命令批准。" else if (it.name == "Bash" && deps.host.exec.guestIsolation != null) "网络默认关闭（内核强制）；写入限工作区、临时与缓存目录（防误操作级）。联网需要开启设置中的逐域名批准。" else "", it.inputSchema) }
         return RequestAssembler.assemble(
             profile = profile,
             environment = environment,

@@ -39,6 +39,7 @@ internal class AndroidProotProcessHost(private val runner: ProotShellRunner) : P
 }
 
 internal class ProotExec(private val base: WorkspaceShellContext, private val host: ProotProcessHost) : Exec {
+    override val guestIsolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand()
     private val running = ConcurrentHashMap<String, Running>()
     private val logDir = File(base.linuxDir, "root/.min/exec-logs")
 
@@ -50,7 +51,8 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         val id = UUID.randomUUID().toString().replace("-", "")
         check(logDir.mkdirs() || logDir.isDirectory)
         val log = File(logDir, "$id.log").apply { createNewFile() }
-        val process = host.launch(agentCommandContext(base, command.cwd, command.script).copy(env = command.env), log)
+        val process = host.launch(agentCommandContext(base, command.cwd, command.script).copy(env = command.env,
+            isolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand(command.network)), log)
         val task = Running(id, process, log, options.timeoutMs) { running.remove(id) }
         running[id] = task
         task.start()

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <activity android:name=".debug.IsolationProbeActivity" android:exported="true" android:permission="android.permission.DUMP" />
         <!-- shell 持有 DUMP；普通应用不能替用户触发这个调试执行入口。 -->
         <receiver
             android:name=".debug.MinAgentDebugReceiver"

@@ -2686,3 +2686,48 @@ agent/m0 的 35ea02a8 合入 Peer 后，App 的 when(origin) 不完整，实际 
 - Tags: android, sealed-origin, cross-session
 
 ---
+## [LRN-20261011-PROOT-DENIAL] best_practice
+
+**Logged**: 2026-10-11T14:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+叠加 seccomp 不能只比较 ERRNO 与 TRACE；Android 外层 TRAP 和 proot 的扩展模拟也必须执行同一份拒绝规则。
+
+### Details
+外层 SECCOMP_RET_TRAP 比内层 ERRNO 优先。proot 的 SIGSYS 处理会把 mount/unshare 模拟为成功；必须在扩展之前解释同一份 BPF，保留 EPERM。另一个实测红点是 fd 的 fchmod：fake_id0 的 syscall exit 扩展将路径策略的 EACCES 改为成功。将拒绝值留在宿主 Tracee 字段并在入口、出口扩展之前直接返回，既保留拒绝结果，也避免扩展副作用。三代进程测试同时覆盖 setsid；CLONE_UNTRACED 需在 L2 拒绝，clone3 指针参数不可由 classic BPF 检查，返回 ENOSYS 让 libc 回退。
+
+### Suggested Action
+原生隔离验收同时跑真实 untrusted_app 组合根和人工外层 TRAP；可写策略测试不仅测 open，还测 fd 元数据修改。变异只计正常编译、基线通过且对应断言失败的弱化；头文件未声明的 #ifdef 代码不构成有效变异。
+
+### Metadata
+- Source: debugging
+- Related Files: workspace/proot/src/tracee/seccomp.c, workspace/proot/src/syscall/exit.c
+- Tags: android, seccomp, ptrace, fake-id0, mutation
+- Pattern-Key: android-proot.keep-policy-denial-through-emulation
+
+---
+## [LRN-20261011-PROOT-PROBE-FIXTURE] best_practice
+
+**Logged**: 2026-10-11T14:30:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+proot --link2symlink 的硬链接红测必须使用测试自有文件，不能拿已有系统文件当无副作用源。
+
+### Details
+基线硬链接会把源文件改为指向 .l2s 的宿主绝对链接，重复测试还会嵌套；虽然内容与 inode 保留，不同 /data/data 与 /data/user/0 启动别名可能让实际 App 报 ENOENT。本轮已核对两级链接的精确目标、确认最终为普通文件后恢复原 inode。后续探针改为宿主预建的 /etc/min-isolation-fd-fixture，红测与正式 App 测试前分别重建，只清理该用例的命名文件。验收解析器须匹配完整 FAIL 单词，不能把 FAILURES=0 当失败。
+
+### Suggested Action
+对原生模拟器文件副作用做红测时，先读扩展实现；使用独立可清理 fixture，并验证受限启动与原始启动两侧正常读取。可写策略还要覆盖 AF_UNIX bind，它也会创建文件；proxy-only 限制还需拒绝 IP bind，堵普通反向连接。
+
+### Metadata
+- Source: debugging
+- Related Files: workspace/proot/tests/min-isolation-probe.c, workspace/proot/src/isolation/policy.c
+- Tags: proot, hardlink, fixture, bind, mutation
+
+---

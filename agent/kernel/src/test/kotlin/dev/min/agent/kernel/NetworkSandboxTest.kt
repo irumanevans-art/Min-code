@@ -15,6 +15,18 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class NetworkSandboxTest {
+    private interface CapturingExec : Exec { val runs: MutableList<ShellCommand> }
+    @Test fun proxyLeaseCarriesExplicitNativeCapability() = run(local = true) { _, rt, _, _, _, _ ->
+        rt.runNetworkShell(CallId("lease"), ShellCommand("true", GuestPath("/workspace")), ExecOptions(1000), emptyList())
+        val exec = rt.deps.host.exec as CapturingExec
+        assertEquals(GuestNetwork.ProxyOnly(listOf(8001)), exec.runs.single().network)
+        assertEquals("http://test-credential@127.0.0.1:8001", exec.runs.single().env["HTTP_PROXY"])
+    }
+    @Test fun disabledNetworkCannotReuseProxyCapability() = run(local = true) { _, rt, fs, _, _, _ ->
+        fs.put("/root/.claude/settings.json", """{"sandbox":{"enabled":false}}""")
+        rt.runNetworkShell(CallId("offline"), ShellCommand("true", GuestPath("/workspace"), network = GuestNetwork.ProxyOnly(listOf(8001))), ExecOptions(1000), emptyList())
+        assertEquals(GuestNetwork.Offline, (rt.deps.host.exec as CapturingExec).runs.single().network)
+    }
     @Test fun brokenManagedSettingsDoNotBlockLocalShell() = run(local = true) { _, rt, fs, _, _, _ ->
         fs.put("/etc/claude-code/managed-settings.json", "broken")
         fs.put("/root/.claude/settings.json", """{"sandbox":{"enabled":false},"permissions":{"allow":["Bash"]}}""")
@@ -57,10 +69,12 @@ class NetworkSandboxTest {
         val raw = buildJsonObject { put("command", if (local) "printf local" else "curl https://example.test"); if (hosts.isNotEmpty()) put("allowed_domains", JsonArray(hosts.map(::JsonPrimitive))) }
         val model = ScriptedModel(reply(ToolCallPart(CallId("c"), "Bash", raw), stop = StopReason.ToolUse), reply(TextPart("finished")))
         val base = testDeps(model, listOf(BashTool()))
-        val exec = object : Exec {
+        val exec = object : CapturingExec {
+            override val runs = mutableListOf<ShellCommand>()
             override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult {
-                assertEquals("http://test-credential@127.0.0.1:8001", command.env["HTTPS_PROXY"])
+                runs += command
                 if (local) return ExecResult.Exited(0, "local", false, 0)
+                assertEquals("http://test-credential@127.0.0.1:8001", command.env["HTTPS_PROXY"])
                 val verdict = proxy.decide(NetworkTarget("example.test", 443))
                 return ExecResult.Exited(if (verdict.outcome == NetworkOutcome.Allow) 0 else 1, verdict.reason, false, 0)
             }

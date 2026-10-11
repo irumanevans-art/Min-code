@@ -126,6 +126,9 @@ internal class MinExec(
 ) : Exec {
     private val owner = ConcurrentHashMap<String, Exec>()
 
+    // 宿主判定和工具说明也要取当前一代；只转发 run 会把隔离策略丢在默认 null 里。
+    override val guestIsolation get() = current().exec.guestIsolation
+
     override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult {
         val exec = current().exec
         val result = exec.run(command, options)
