@@ -201,6 +201,8 @@ private class ItemsBuilder(
                         ChatItem.Note(id, text.agentMessage(child?.agentType ?: "agent", child?.name) + "\n" + raw)
                 }
             }
+            // 同会话之外的对端会话发来的消息（跨会话通信）：不是人在这里说的话，作为说明显示，正文原样
+            is InputOrigin.Peer -> items += ChatItem.Note(id, plain(entry.parts))
             // Stop hook 拦下「结束」时交给模型的理由：不是人说的话，作为说明显示
             is InputOrigin.Hook -> items += ChatItem.Note(id, text.hookFeedback(origin.event) + "\n" + plain(entry.parts))
             // 定时任务到点触发：会话预设的任务，不画成用户气泡（也就不能被当成「回退到这条用户消息」）
