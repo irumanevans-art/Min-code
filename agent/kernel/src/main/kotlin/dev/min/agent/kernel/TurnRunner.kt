@@ -607,6 +607,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                 null
             } ?: continue
             rt.commit(listOf(ModelFallback(turnId, requestId, current, candidate, e.kind, e.message ?: e.kind.name)), Durability.Sync)
+            // 换到别家供应商：对话内容从此发给另一家，要在对话里说清（与顾问的数据去向说明同一口径）；同一家换型号不用说
+            if (candidate.providerId != current.providerId) rt.commit(
+                listOf(Note(NoteLevel.Warning, "本回合已从 ${current.providerId}:${current.modelId} 换到 ${candidate.providerId}:${candidate.modelId}（${e.kind}）：对话内容现在发给 ${candidate.providerId}，用的是它的凭证，费用按它的价格计入会话预算。")),
+                Durability.Batched,
+            )
             return resolved
         }
         return null
