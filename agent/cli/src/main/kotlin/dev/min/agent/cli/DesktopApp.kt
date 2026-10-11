@@ -285,6 +285,15 @@ internal class DesktopApp(
         }
     }
 
+    /**
+     * 把 `--channels` 与（用户已确认的）`--dangerously-load-development-channels` 交给 hub：之后建 / 开的根会话都套用。
+     * 只有点了名的才开；开发参数的条目 [developmentConfirmed] 为假（没确认、或 `-p` 不弹确认）时一律不带
+     */
+    internal suspend fun applyChannels(developmentConfirmed: Boolean) {
+        hub().defaultChannels = args.channels.map { dev.min.agent.ext.mcp.ChannelRequest(it, development = false) } +
+            (if (developmentConfirmed) args.developmentChannels.map { dev.min.agent.ext.mcp.ChannelRequest(it, development = true) } else emptyList())
+    }
+
     /** stream-json 的 init 行用：`供应商/模型 id` */
     internal fun modelLabel(): String = "${provider.id}/${profile.ref.modelId}"
 

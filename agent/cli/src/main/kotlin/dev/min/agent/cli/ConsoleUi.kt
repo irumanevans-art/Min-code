@@ -41,6 +41,7 @@ internal class ConsoleUi(
     private val questionsSeen = mutableSetOf<String>()
     private val notesSeen = mutableSetOf<Long>()
     private var noticesSeen: MutableSet<String>? = null
+    private var channelsSeen: MutableSet<String>? = null
     private val idleAnswers = java.util.concurrent.ConcurrentHashMap<String, MutableList<QuestionAnswer>>()
     @Volatile var mainOwnsInput: Boolean = false
     @Volatile private var idleInput: Pair<dev.min.agent.protocol.SessionId, String>? = null
@@ -65,7 +66,7 @@ internal class ConsoleUi(
             }
             state.presentation.forEach { item ->
                 val note = item.record.event as? dev.min.agent.spi.Note
-                if (note != null && note.text.startsWith("MCP ") && notesSeen.add(item.record.seq)) out.println("\n${terminalText(note.text)}")
+                if (note != null && (note.text.startsWith("MCP ") || note.text.startsWith("Channels")) && notesSeen.add(item.record.seq)) out.println("\n${terminalText(note.text)}")
             }
             // 后台任务（转后台的命令、watch）的通知：它们会叫醒空闲的会话，不打一行的话新回合像是无缘无故开的。
             // 第一次只记下已有的（重开会话时不把旧通知当新的打印）
@@ -75,6 +76,14 @@ internal class ConsoleUi(
             else taskNotices.filter { seenBefore.add(it.messageId.value) }.forEach { entry ->
                 val body = dev.min.agent.kernel.taskNoticeBody(entry.parts.filterIsInstance<dev.min.agent.protocol.TextPart>().joinToString("") { it.text })
                 out.println("\n⟳ 后台任务 ${terminalText((entry.origin as dev.min.agent.spi.InputOrigin.Task).taskId)}：${summarize(body)}")
+            }
+            // MCP channel 推来的消息：终端只画一行摘要（CC：`← 服务器: 正文`），完整的带来源标签文字在对话里
+            val channelNotices = state.history.filterIsInstance<dev.min.agent.kernel.HistoryEntry.User>().filter { it.origin is dev.min.agent.spi.InputOrigin.Channel }
+            val channelsBefore = channelsSeen
+            if (channelsBefore == null) channelsSeen = channelNotices.map { it.messageId.value }.toMutableSet()
+            else channelNotices.filter { channelsBefore.add(it.messageId.value) }.forEach { entry ->
+                val body = dev.min.agent.kernel.channelNoticeBody(entry.parts.filterIsInstance<dev.min.agent.protocol.TextPart>().joinToString("") { it.text })
+                out.println("\n← ${terminalText((entry.origin as dev.min.agent.spi.InputOrigin.Channel).server)}：${summarize(terminalText(body))}")
             }
             tasksSeen?.let { before -> taskProgressLines(before, state.tasks).forEach(out::println) }
             tasksSeen = state.tasks

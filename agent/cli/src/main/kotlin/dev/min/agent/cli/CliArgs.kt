@@ -76,6 +76,13 @@ data class CliArgs(
     val restricted: Boolean = false,
     /** `--settings`（CC :128）：文件或内联 JSON 已读好的一份会话级设置；null = 没给 */
     val settings: dev.min.agent.ext.config.CliSettings? = null,
+    /** `--channels`（CC，研究预览）：要监听 channel 通知的 MCP 服务器，只收 `plugin:<name>@<marketplace>`；用户点名才开 */
+    val channels: List<dev.min.agent.ext.mcp.ChannelRef> = emptyList(),
+    /**
+     * `--dangerously-load-development-channels`（CC）：绕过批准、给本地开发用的 channel，收 `plugin:…` 与 `server:<name>`。
+     * 交互启动时要先确认才生效；`-p` 下忽略（CC：非交互不弹确认，所以不开）
+     */
+    val developmentChannels: List<dev.min.agent.ext.mcp.ChannelRef> = emptyList(),
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
@@ -112,6 +119,12 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --forward-subagent-text stream-json 转发子 agent 的消息行（带 parent_tool_use_id）
   --resume <会话 id>     接着一个已有会话
   --add-dir <目录...>   附加工作目录（CC 同名）：授予文件访问，并加载它的 .claude/skills 与 .claude/commands（--bare 下只加载 skills）
+  --channels <条目...>  让这些 MCP channel 的消息直接进会话（CC 同名，研究预览）：只收 plugin:<名字>@<市场>，空格分隔；
+                         没点名的 channel 一律不开（.mcp.json 里写了也不行）。Min 没有 Anthropic 的批准清单：
+                         点名的插件即视为批准；托管设置的 channelsEnabled / allowedChannelPlugins 照常管控
+  --dangerously-load-development-channels <条目...>
+                         不经批准清单开 channel，给本地开发用（CC 同名）：plugin:<名字>@<市场> 或 server:<名字>；
+                         启动时先要你确认；-p 下忽略；托管的 channelsEnabled 仍然挡得住
   --plugin-dir <目录>   加载本地插件，可重复；项目内的可执行组件仍需 --trust
   --trust                信任当前项目：执行项目 .claude/ 设置里的 hooks（默认只执行用户级与托管的）
   --bare                 最小档（CC 同名）：不自动发现 hooks、skills、命令、子 agent、插件、MCP 服务器、
@@ -162,6 +175,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     val flags = mutableSetOf<String>()
     val pluginDirs = mutableListOf<Path>()
     val addDirs = mutableListOf<Path>()
+    val channels = mutableListOf<dev.min.agent.ext.mcp.ChannelRef>()
+    val developmentChannels = mutableListOf<dev.min.agent.ext.mcp.ChannelRef>()
     var i = 0
     while (i < argv.size) {
         val arg = argv[i]
@@ -174,6 +189,21 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
                     j++
                 }
                 if (j == i + 1) throw UsageException("--add-dir 缺少目录")
+                i = j - 1
+            }
+            // CC：`--channels a b` 一个旗标后面跟一串条目；--channels 只收 plugin:，server: 要走开发参数
+            arg == "--channels" || arg == "--dangerously-load-development-channels" -> {
+                var j = i + 1
+                while (j < argv.size && !argv[j].startsWith('-')) {
+                    val ref = dev.min.agent.ext.mcp.ChannelRef.parse(argv[j])
+                        ?: throw UsageException("$arg 的条目要写成 plugin:<名字>@<市场> 或 server:<名字>，不认识：${argv[j]}")
+                    if (arg == "--channels") {
+                        if (ref is dev.min.agent.ext.mcp.ChannelRef.Server) throw UsageException("--channels 只收 plugin:<名字>@<市场>；server:<名字> 没经批准，请改用 --dangerously-load-development-channels")
+                        channels += ref
+                    } else developmentChannels += ref
+                    j++
+                }
+                if (j == i + 1) throw UsageException("$arg 缺少条目")
                 i = j - 1
             }
             arg == "--plugin-dir" -> {
@@ -323,6 +353,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         safeMode = "--safe-mode" in flags,
         tools = values["--tools"]?.let(::parseToolsArg),
         restricted = "--restricted" in flags,
+        channels = channels,
+        developmentChannels = developmentChannels,
         settings = values["--settings"]?.let { readSettingsArg(it, values["--cwd"]?.let { p -> Path.of(p) } ?: cwdDefault) },
         wire = values["--wire"]?.let {
             when (it) {

@@ -63,6 +63,13 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     val stdin = System.`in`.bufferedReader()
     // 交互模式：未信任的目录先问一句（会话建立时就要读 hooks 的信任，所以必须在 openSession 之前）。-p 不弹框（CC）
     if (args.prompt == null && !confirmWorkspaceTrust(app, stdin, System.err)) return 1
+    // channel：交互启动时开发参数要先确认（选退出就退出）；-p 不弹框，所以开发参数不生效（CC）。--channels 点名的照常开
+    val developmentConfirmed = when {
+        args.developmentChannels.isEmpty() -> false
+        args.prompt != null -> { System.err.println("-p 下 --dangerously-load-development-channels 被忽略：需要交互确认。"); false }
+        else -> confirmDevelopmentChannels(args.developmentChannels, stdin, System.err).also { if (!it) return 1 }
+    }
+    app.applyChannels(developmentConfirmed)
     val runtime = app.openSession()
     val tail = app.telemetryTail(runtime)
     // 遥测在进程退出时把这次运行的新事件导出一次（默认关，tail 为 null）。NonCancellable：取消退出时也要把已有的事件送出去

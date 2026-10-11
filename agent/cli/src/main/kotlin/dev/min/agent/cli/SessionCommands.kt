@@ -122,6 +122,33 @@ internal fun confirmWorkspaceTrust(app: DesktopApp, stdin: java.io.BufferedReade
     return true
 }
 
+/** 开发 channel 的确认文字（CC：开发参数启动时的整屏警告，选「本地开发」继续、或退出） */
+internal fun developmentChannelsQuestion(entries: List<dev.min.agent.ext.mcp.ChannelRef>): String = buildString {
+    append("\n警告：你在用 --dangerously-load-development-channels 加载下面的 channel，它们没有经过批准：\n")
+    entries.forEach { append("  - ").append(terminalText(it.label)).append('\n') }
+    append("channel 会把外部系统的消息直接推进这个会话（它们不是你输入的话），也可以（在声明了审批能力时）替你批准工具调用。\n")
+    append("只用于你自己在开发的 channel，不要加载来路不明的。\n")
+    append("  1) 我在做本地开发，继续\n")
+    append("  2) 退出\n")
+    append("选择 [1/2]：")
+}
+
+/**
+ * 开发 channel 的确认。选「1 / y / yes / 是」才算；其余（含直接回车、输入流已关）一律不开——安全的默认。
+ * 返回 false 时调用方退出（CC：选 Exit 即退出），不建会话。[entries] 为空不问、返回 true
+ */
+internal fun confirmDevelopmentChannels(entries: List<dev.min.agent.ext.mcp.ChannelRef>, stdin: java.io.BufferedReader, out: java.io.PrintStream): Boolean {
+    if (entries.isEmpty()) return true
+    out.print(developmentChannelsQuestion(entries))
+    out.flush()
+    val answer = stdin.readLine()?.trim()?.lowercase(Locale.ROOT)
+    if (answer !in setOf("1", "y", "yes", "是")) {
+        out.println("没有确认开发 channel，已退出。")
+        return false
+    }
+    return true
+}
+
 /** `/list-agents` 的输出：与 ListAgents 工具同一份名单、同一份排版 */
 internal suspend fun listAgentsText(app: DesktopApp, runtime: dev.min.agent.kernel.SessionRuntime): String =
     dev.min.agent.tools.ListAgentsTool.render(app.hub().listAgents(runtime))
