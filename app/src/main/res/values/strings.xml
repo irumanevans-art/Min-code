@@ -1139,6 +1139,7 @@
   <string name="min_agent_report_calls">%1$d tool calls</string>
   <string name="min_agent_report_tokens">%1$s tokens</string>
   <string name="min_agent_message_from">Message from %1$s</string>
+  <string name="min_agent_peer_message">Message from session “%1$s”</string>
   <string name="min_agent_attachment">[attachment]</string>
   <string name="min_agent_redacted_thinking">[encrypted thinking]</string>
   <string name="min_agent_mode_default">Ask each time</string>

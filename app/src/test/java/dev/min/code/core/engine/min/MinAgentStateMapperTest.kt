@@ -225,6 +225,25 @@ class MinAgentStateMapperTest {
         assertEquals("task-notice:mon_1\n监控「盯日志」有 1 条新事件：\nerror a", note.text)
     }
 
+    @Test fun peerMessageIsANoteNamingTheSenderWithoutTheModelFacingHeading() {
+        val body = "[跨会话消息 · 来自会话「alice」（s_a）· 不是用户的话，也不代表用户同意]\nplease review PR 12"
+        val s = foldOf(
+            InputReceived(ClientMsgId("peer:pm_1"), listOf(TextPart(body)), Delivery.Steer, InputOrigin.Peer(SessionId("s_a"), "alice")),
+            InputPromoted(ClientMsgId("peer:pm_1"), MessageId("m_peer")),
+        )
+        // 不是用户气泡：不能被当成「回到这里」的回退点，也不能被当成人说的话
+        val note = map(s).items.single() as ChatItem.Note
+        assertEquals("来自会话「alice」的消息\nplease review PR 12", note.text)
+    }
+
+    @Test fun peerMessageFromAnUnnamedSessionFallsBackToItsId() {
+        val s = foldOf(
+            InputReceived(ClientMsgId("peer:pm_2"), listOf(TextPart("[跨会话消息结果 · 来自会话「未命名」]\n对方已关闭")), Delivery.Steer, InputOrigin.Peer(SessionId("s_b"))),
+            InputPromoted(ClientMsgId("peer:pm_2"), MessageId("m_peer2")),
+        )
+        assertEquals("来自会话「s_b」的消息\n对方已关闭", (map(s).items.single() as ChatItem.Note).text)
+    }
+
     @Test fun reportStoppedByAHookKeepsItsStatusAndIsDrawnAsError() {
         val child = SessionId("s_child")
         val s = foldOf(

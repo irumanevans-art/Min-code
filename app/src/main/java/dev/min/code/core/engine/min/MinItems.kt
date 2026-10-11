@@ -129,6 +129,13 @@ fun triggerViewOf(trigger: TurnTrigger): TurnTriggerView = when (trigger) {
 
 fun EndedTurn.end(): TurnEnd = turnEndOf(outcome)
 
+/**
+ * 跨会话消息给模型看的那行抬头（`[跨会话消息 · 来自会话「…」…]`，内核 PeerMailbox 加的）去掉：
+ * 界面上谁发的已经由说明行写清楚了，再留一遍只是重复。内核每条恰好加一行抬头；不是这个形状就原样留着
+ */
+internal fun peerBody(raw: String): String =
+    if (raw.startsWith("[") && raw.substringBefore('\n').endsWith("]") && '\n' in raw) raw.substringAfter('\n') else raw
+
 // ---- 承载（以后加了 ChatItem 变体只改这两处）----
 
 private fun markerNote(id: String, text: String, isError: Boolean): ChatItem = ChatItem.Note(id, text, isError)
@@ -207,6 +214,8 @@ private class ItemsBuilder(
             is InputOrigin.Cron -> items += ChatItem.Note(id, text.cronFired(origin.cronId) + "\n" + plain(entry.parts))
             // 后台任务的通知：进程的输出，不是人说的话；去掉给模型看的标签壳，只留正文
             is InputOrigin.Task -> items += ChatItem.Note(id, text.taskNotice(origin.taskId) + "\n" + dev.min.agent.kernel.taskNoticeBody(plain(entry.parts)))
+            // 本机别的会话发来的消息（或它对我方消息的批准 / 拒收结论）：不是人说的话，作为说明显示，不能被当成回退点
+            is InputOrigin.Peer -> items += ChatItem.Note(id, text.peerMessage(origin.name ?: origin.session.value) + "\n" + peerBody(plain(entry.parts)))
         }
     }
 

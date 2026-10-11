@@ -44,6 +44,9 @@ interface MinAgentText {
     /** 后台 asyncRewake hook 唤醒了空闲会话：状态行与转录分隔线共用这一句 */
     fun hookWoke(): String
     fun agentMessage(agentType: String, name: String?): String
+
+    /** 本机别的会话发来的消息（跨会话邮箱）：说明它不是人说的话、是哪个会话说的 */
+    fun peerMessage(name: String): String = "来自会话「$name」的消息"
     fun reviewedReport(): String = "已审查"
     fun warningReport(): String = "附警告"
     fun unavailableReport(): String = "未能审查"
@@ -152,6 +155,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun hookWoke() = s(R.string.min_agent_hook_woke)
 
     override fun agentMessage(agentType: String, name: String?) = s(R.string.min_agent_message_from, name ?: agentType)
+    override fun peerMessage(name: String) = s(R.string.min_agent_peer_message, name)
     override fun reviewedReport() = s(R.string.min_agent_report_reviewed)
     override fun warningReport() = s(R.string.min_agent_report_warning)
     override fun unavailableReport() = s(R.string.min_agent_report_unavailable)
