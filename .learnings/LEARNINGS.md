@@ -2754,3 +2754,26 @@ Windows Python 启动仓库工具时，使用可执行文件的绝对路径，�
 - See Also: LRN-20261011-WINDOWS-TEST-PATH
 
 ---
+
+## [LRN-20261011-POLICY-REFLECTION-SHAPE] best_practice
+
+**Logged**: 2026-10-11T14:55:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+PolicyContext 添加字段时，还要更新 CLI 的反射兼容夹具，否则样本根本不能进入生产判定。
+
+### Details
+全量 376 项 CLI 测试中 PermissionCompatTest 将 58 个样本全部报 NoSuchElementException。夹具仍按 14 参数选择 JVM 主构造器；GuestIsolation 新字段将其变为 15 参数。补上普通桌面样本的 null guest 策略，保留全部输入、58 样本与 allow/ask/deny 期望。首次完整失败 XML 保留，不能将夹具结构错误解释成权限语义变更。
+
+### Suggested Action
+新增载荷字段时搜索直接构造和 parameterCount 等反射消费者；验证反射夹具实际进入生产方法。记录完整失败轮与恢复轮，计时门限失败另行复跑，不能放宽门限掩盖失败。
+
+### Metadata
+- Source: debugging
+- Related Files: agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/PermissionCompatTest.kt
+- Tags: reflection, policy-context, compatibility, full-check
+
+---
