@@ -2731,3 +2731,26 @@ proot --link2symlink 的硬链接红测必须使用测试自有文件，不能�
 - Tags: proot, hardlink, fixture, bind, mutation
 
 ---
+
+## [LRN-20261011-WINDOWS-SPAWN-CWD] best_practice
+
+**Logged**: 2026-10-11T14:48:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Windows Python 启动仓库工具时，使用可执行文件的绝对路径，不能靠 subprocess 的 cwd 找到相对 gradlew.bat。
+
+### Details
+同一验证脚本从仓库目录启动正常，从共享 workspace 启动则 CreateProcess error=2，尽管 subprocess 的 cwd 已指向仓库。将 argv[0] 改为仓库下 gradlew.bat 的绝对路径后正常启动；这是验证入口错误，不计入产品测试的红测或 Gradle 失败。
+
+### Suggested Action
+可复用的 Windows 验证脚本同时明确 executable、cwd 和进程级 PATH，确保从任意调用目录都能重现。
+
+### Metadata
+- Source: debugging
+- Tags: windows, subprocess, cwd, gradle
+- See Also: LRN-20261011-WINDOWS-TEST-PATH
+
+---
