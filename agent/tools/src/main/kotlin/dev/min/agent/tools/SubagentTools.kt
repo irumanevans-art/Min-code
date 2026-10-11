@@ -132,7 +132,8 @@ object SendMessageTool : Tool<JsonObject> {
             "对方正在运行时作为插话送达，已结束时唤醒并开始新回合，完成后返回报告。消息不包含发送者的历史。" +
             "在 agent 团队里，to 可以是队友的名字、lead（负责人）或 all（广播给全体）；团队邮件也是这条路。" +
             "to 也可以是本机其他 Claude 会话的名字或 id（ListAgents 能列出）：消息以「来自会话 X」的形式进对方对话，不是用户的话；" +
-            "对方的用户未批准、或对方设为拒收时不会送达，你会收到结论。名字重复时用 id。"
+            "对方的用户未批准、或对方设为拒收时不会送达，你会收到结论。名字重复时用 id。" +
+            "不要请对方去做你自己这边被拒绝、或权限不允许的操作：那要交回给你的用户。"
 
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = validateSubagentInput(raw) {
         requireSubagentString(raw, "to")
