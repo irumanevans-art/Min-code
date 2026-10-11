@@ -268,3 +268,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - v1 增量（2026-10-11，skills 剩余语义）：`skills_loaded.entries[]` 新增可选字段 `agent`（frontmatter `agent`，分身的子 agent 类型）、`background`（默认 true，只对 `context: fork` 有意义）、`allowedTools`（frontmatter `allowed-tools`，调用那一轮免审批；只在内存里生效，重开会话不恢复）。
   新增事件 `skills_discovered`（`entries`、`directories`、可选 `notes`），定义在 `spi/SkillEvents.kt`：模型第一次读写某个子目录里的文件时，懒加载那一层的 `.claude/skills`（`directories` 是检查过的 `.claude/skills` 路径，有没有 skill 都记）。折叠进 `SessionState.nestedSkills`（不改冻结的清单）与 `checkedSkillDirs`；子 agent 继承父会话的这一份。
   `skills_loaded` 的 `source` 新增取值 `add-dir`（`--add-dir` 目录里的 skills / commands）。旧日志缺新字段照常读（默认值即原来的行为），含 `skills_discovered` 的日志旧版本打不开。
+
+- v1 增量（2026-10-11，团队与回退）：`team_disbanded.reason` 新增取值 `rewound`：负责人的对话回退到了建团队之前（`team_created` 的 seq 晚于回退点），内核在写 `conversation_rewound` 之前先写这条（模型的 TeamDisband 选不到它）。团队的任务清单与邮件照旧留在日志里。含该取值的日志旧版本打不开；旧日志照常读。

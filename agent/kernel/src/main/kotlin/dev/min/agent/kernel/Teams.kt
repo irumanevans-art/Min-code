@@ -51,6 +51,8 @@ data class TeamState(
     /** 已分配过的最大任务编号：任务可以删除，编号不复用，所以单列 */
     val taskSeq: Int = 0,
     val disbanded: TeamDisbanded? = null,
+    /** team_created 落盘的 seq：回退对话时据此判断团队是不是建在回退点之后 */
+    val createdSeq: Long = 0,
 ) {
     val active: Boolean get() = disbanded == null
 

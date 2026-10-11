@@ -415,7 +415,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is dev.min.agent.spi.TeamCreated, is dev.min.agent.spi.TeamMemberJoined, is dev.min.agent.spi.TeamTaskCreated,
         is dev.min.agent.spi.TeamTaskUpdated, is dev.min.agent.spi.TeamTaskDeleted, is dev.min.agent.spi.TeamDisbanded -> {
             teamProblem(e)?.let { error("团队事件不合法：$it") }
-            applyTeamEvent(e)
+            applyTeamEvent(e).let { s -> if (e is dev.min.agent.spi.TeamCreated) s.copy(team = s.team?.copy(createdSeq = record.seq)) else s }
         }
         is dev.min.agent.spi.CronScheduled, is dev.min.agent.spi.CronFired, is dev.min.agent.spi.CronCancelled, is dev.min.agent.spi.CronExpired,
         is dev.min.agent.spi.CronBudgetStopped -> {
