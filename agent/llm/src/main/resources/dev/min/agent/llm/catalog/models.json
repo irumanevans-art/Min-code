@@ -1,11 +1,13 @@
 [
   {
     "ref": { "providerId": "openai", "modelId": "gpt-5.4" },
+    "tier": "opus",
     "family": "gpt",
     "editStyle": "apply_patch",
     "contextWindow": 1050000,
     "maxOutputTokens": 128000,
     "supportsImages": true,
+    "supportsPdf": true,
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 2.5,
@@ -18,6 +20,7 @@
   },
   {
     "ref": { "providerId": "anthropic", "modelId": "claude-fable-5-1" },
+    "tier": "fable",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 10.0,
@@ -43,6 +46,7 @@
   },
   {
     "ref": { "providerId": "anthropic", "modelId": "claude-opus-5-5" },
+    "tier": "opus",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 4.0,
@@ -93,6 +97,7 @@
   },
   {
     "ref": { "providerId": "anthropic", "modelId": "claude-sonnet-5-5" },
+    "tier": "sonnet",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 2.0,
@@ -140,6 +145,7 @@
   },
   {
     "ref": { "providerId": "anthropic", "modelId": "claude-haiku-5-5" },
+    "tier": "haiku",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 0.1,
@@ -169,6 +175,7 @@
   },
   {
     "ref": { "providerId": "zhipu", "modelId": "glm-5.3" },
+    "tier": "opus",
     "pricing": {
       "currency": "CNY",
       "inputPerMTok": 8.0,
@@ -183,6 +190,7 @@
   },
   {
     "ref": { "providerId": "zhipu", "modelId": "glm-5.2" },
+    "tier": "sonnet",
     "pricing": {
       "currency": "CNY",
       "inputPerMTok": 8.0,
@@ -197,6 +205,7 @@
   },
   {
     "ref": { "providerId": "qwen", "modelId": "qwen3.8-max" },
+    "tier": "opus",
     "pricing": {
       "currency": "CNY",
       "inputPerMTok": 12.0,
@@ -221,6 +230,7 @@
   },
   {
     "ref": { "providerId": "minimax", "modelId": "MiniMax-M3.1-Flash-Preview" },
+    "tier": "haiku",
     "family": "minimax",
     "contextWindow": 1000000,
     "maxOutputTokens": 131072,
@@ -236,6 +246,7 @@
   },
   {
     "ref": { "providerId": "minimax", "modelId": "MiniMax-M3" },
+    "tier": "opus",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 0.3,
@@ -258,6 +269,7 @@
   },
   {
     "ref": { "providerId": "minimax", "modelId": "MiniMax-M2.7" },
+    "tier": "sonnet",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 0.3,
@@ -288,6 +300,7 @@
   },
   {
     "ref": { "providerId": "deepseek", "modelId": "deepseek-flash" },
+    "tier": "haiku",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 0.3,
@@ -303,6 +316,7 @@
   },
   {
     "ref": { "providerId": "deepseek", "modelId": "deepseek-v4-pro" },
+    "tier": "opus",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 1.32,
@@ -317,6 +331,7 @@
   },
   {
     "ref": { "providerId": "deepseek-openai", "modelId": "deepseek-flash" },
+    "tier": "haiku",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 0.3,
@@ -340,6 +355,7 @@
   },
   {
     "ref": { "providerId": "deepseek-openai", "modelId": "deepseek-v4-pro" },
+    "tier": "opus",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 1.32,
@@ -362,6 +378,7 @@
   },
   {
     "ref": { "providerId": "zhipu-openai", "modelId": "glm-5.3" },
+    "tier": "opus",
     "pricing": {
       "currency": "CNY",
       "inputPerMTok": 8.0,
@@ -381,6 +398,7 @@
   },
   {
     "ref": { "providerId": "zhipu-openai", "modelId": "glm-5.2" },
+    "tier": "sonnet",
     "pricing": {
       "currency": "CNY",
       "inputPerMTok": 8.0,
@@ -399,6 +417,7 @@
   },
   {
     "ref": { "providerId": "qwen-openai", "modelId": "qwen3.8-max" },
+    "tier": "opus",
     "pricing": {
       "currency": "CNY",
       "inputPerMTok": 12.0,
@@ -418,6 +437,7 @@
   },
   {
     "ref": { "providerId": "minimax-openai", "modelId": "MiniMax-M3.1-Flash-Preview" },
+    "tier": "haiku",
     "family": "minimax",
     "contextWindow": 1000000,
     "maxOutputTokens": 131072,
@@ -433,6 +453,7 @@
   },
   {
     "ref": { "providerId": "minimax-openai", "modelId": "MiniMax-M3" },
+    "tier": "opus",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 0.3,
@@ -455,6 +476,7 @@
   },
   {
     "ref": { "providerId": "minimax-openai", "modelId": "MiniMax-M2.7" },
+    "tier": "sonnet",
     "pricing": {
       "currency": "USD",
       "inputPerMTok": 0.3,

@@ -106,4 +106,25 @@ class CatalogTest {
             }
         }
     }
+
+    /** PDF 只标查证过的：Anthropic 全系收 PDF；OpenAI 文档写「gpt-4o 及以后的视觉模型」，gpt-5.4 属此；其余未查证的一律不标 */
+    @Test fun `pdf input is flagged for claude models and the openai vision model only`() {
+        val catalog = Catalog.bundled()
+        for (m in catalog.models) {
+            val expected = m.ref.providerId == "anthropic" || m.ref == dev.min.agent.protocol.ModelRef("openai", "gpt-5.4")
+            assertEquals(m.ref.toString(), expected, m.supportsPdf)
+        }
+    }
+
+    /** 能力位要求：收 PDF 的型号必须也看得了图（PDF 解析依赖视觉），否则目录自相矛盾 */
+    @Test fun `every pdf capable model can also see images`() {
+        for (m in Catalog.bundled().models) if (m.supportsPdf) assertTrue(m.ref.toString(), m.supportsImages)
+    }
+
+    /** 档位只标了供应商目录里真实存在的型号，且每家每档至多一个（别名解析依赖这一点） */
+    @Test fun `tiers are only on bundled models and point at the same provider`() {
+        val tiers = Catalog.bundled().models.mapNotNull { it.tier }
+        assertTrue("目录应有档位数据", tiers.isNotEmpty())
+        assertTrue(tiers.toSet().all { it in setOf("fable", "opus", "sonnet", "haiku") })
+    }
 }
