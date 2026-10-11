@@ -147,6 +147,7 @@ private fun SandboxedHtml(html: String) {
                 settings.allowContentAccess = s.allowContentAccess
                 settings.allowFileAccessFromFileURLs = s.allowFileAccessFromFileUrls
                 settings.allowUniversalAccessFromFileURLs = s.allowUniversalAccessFromFileUrls
+                settings.blockNetworkLoads = s.blockNetworkLoads
                 settings.cacheMode = WebSettings.LOAD_NO_CACHE
                 webViewClient = object : WebViewClient() {
                     // 子请求（图片、脚本、样式、字体、连接）只放行内联数据：其它一律空 403，网络与本机文件都碰不到
@@ -161,7 +162,7 @@ private fun SandboxedHtml(html: String) {
                         return !ArtifactViewerPolicy.allowRequest(url)
                     }
                 }
-                loadDataWithBaseURL(ArtifactViewerPolicy.BASE_URL, html, "text/html", "utf-8", null)
+                loadDataWithBaseURL(ArtifactViewerPolicy.BASE_URL, ArtifactViewerPolicy.document(html), "text/html", "utf-8", null)
                 webView = this
             }
         },
