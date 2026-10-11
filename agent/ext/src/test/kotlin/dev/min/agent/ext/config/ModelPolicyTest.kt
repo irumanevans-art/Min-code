@@ -85,6 +85,13 @@ class ModelPolicyTest {
     }
 
     @Test
+    fun `a deniedModels in a lower layer blocks nothing even without an allowlist`() {
+        fs.file("/workspace/.claude/settings.json", """{"deniedModels":["sonnet"]}""")
+        assertTrue(policy().allows("claude-sonnet-5-5"))
+        assertTrue(policy().allowsDefault("claude-sonnet-5-5"))
+    }
+
+    @Test
     fun `enforceAvailableModels comes from managed settings alone once any managed settings exist`() {
         fs.file(managed, """{"availableModels":["sonnet"]}""")
         fs.file("/root/.claude/settings.json", """{"enforceAvailableModels":true}""")
