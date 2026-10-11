@@ -130,6 +130,11 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is dev.min.agent.spi.WorktreeFinished -> copy(finishedWorktrees = finishedWorktrees + e)
         is dev.min.agent.spi.CwdWatchPathsChanged -> copy(cwdWatchPaths = e.paths)
+        // 世界状态增量：记下新的基准，提醒等着挂到紧接着提升的那条消息上（与 InputPromoted 同批落盘）
+        is dev.min.agent.spi.WorldNoted -> copy(
+            world = WorldFacts(e.date, e.mode, e.model),
+            pendingInputContexts = pendingInputContexts + e.reminder,
+        )
         // 取最后一条：以后显式刷新记忆时再追加一条，整份替换前一份快照
         // 快照里的路径换成新快照的；按需加载过的路径原样保留
         is MemoryLoaded -> copy(
@@ -197,6 +202,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
                     ),
                 pendingInputContexts = emptyList(),
                 pendingHookContexts = if (input.origin == InputOrigin.User) emptyList() else pendingHookContexts,
+                // 第一次提升（或压缩之后第一次）静默记下基准：没写 world_noted 就说明日期与模式和模型眼里的一致
+                world = world ?: WorldFacts(null, settings.mode, settings.effectiveModel.modelId),
             )
         }
         is InputWithdrawn -> copy(inbox = inbox.filterNot { it.clientMsgId == e.clientMsgId })
@@ -321,6 +328,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 compaction = CompactionView(e.compactionId, e.summary, e.through, e.transcriptPath),
                 // 旧摘要连同挂在它末尾的 SessionStart(compact) 上下文一起被新摘要取代
                 compactionContexts = emptyMap(),
+                // 告知过的世界状态可能在被摘要掉的那段里：下一条消息按系统提示重新比一次
+                world = null,
                 openCompaction = null,
                 compactionFailures = 0,
                 lastRequestUsage = null,

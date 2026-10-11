@@ -332,7 +332,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             if (screen(pending)) continue
             val ids = pending.map { it.clientMsgId }.toSet()
             val events = pending.map { InputPromoted(it.clientMsgId, MessageId(deps.ids.next("msg"))) }
-            val committed = rt.commitIf(events, Durability.Sync) { s -> s.inbox.map { it.clientMsgId }.containsAll(ids) }
+            // 世界状态变了（日期、模式、模型）：增量与提升同批落盘，提醒挂到这批第一条消息上
+            val state = rt.state.value
+            val today = LocalDate.ofInstant(Instant.ofEpochMilli(deps.clock.nowMs()), deps.zone).toString()
+            val world = worldDelta(state, promptBasisOf(state, deps).date, today)
+            val committed = rt.commitIf(listOfNotNull(world) + events, Durability.Sync) { s -> s.inbox.map { it.clientMsgId }.containsAll(ids) }
             if (committed != null) {
                 workflowInputs += pending.map { it.clientMsgId }
                 val contexts = events.flatMap { promoted ->

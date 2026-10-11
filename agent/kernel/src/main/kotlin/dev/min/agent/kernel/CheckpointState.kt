@@ -48,6 +48,7 @@ data class ConversationMark(
     val compaction: CompactionView?,
     val compactionContexts: Map<String, List<String>>,
     val tasks: List<TaskRecord>,
+    val world: WorldFacts? = null,
 )
 
 /**
@@ -67,7 +68,7 @@ data class RewoundSegment(
 
 internal fun SessionState.conversationMark() = ConversationMark(
     history.size, toolResults.size, hookContexts.size, memoryAttachments.size, memoryCovered.size, masked.size,
-    pendingHookContexts, pendingInputContexts, memoryPathsInContext, compaction, compactionContexts, tasks,
+    pendingHookContexts, pendingInputContexts, memoryPathsInContext, compaction, compactionContexts, tasks, world,
 )
 
 /**
@@ -143,6 +144,7 @@ internal fun SessionState.withRewind(record: EventRecord, e: ConversationRewound
         compaction = keep.compaction,
         compactionContexts = keep.compactionContexts,
         tasks = keep.tasks,
+        world = keep.world,
         children = children.mapValues { (id, c) -> if (id in deadChildren) c.copy(rewound = true) else c },
         inbox = inbox.filterNot { input -> (input.origin as? InputOrigin.Agent)?.session in deadChildren },
         rewindPoints = rewindPoints.take(at),
