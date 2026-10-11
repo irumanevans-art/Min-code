@@ -126,7 +126,7 @@ class SecurityGuidanceSessionTest {
         }
     }
 
-    private suspend fun session(model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full): SessionRuntime {
+    private fun hubFor(model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full): SessionHub {
         val tools = listOf<Tool<JsonObject>>(write, bash)
         val base = testDeps(model, tools, idTag = "t${++counter}-")
         val deps = KernelDeps(
@@ -137,9 +137,14 @@ class SecurityGuidanceSessionTest {
             trustProjectHooks = { trusted }, customizations = customizations,
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
-        val hub = SessionHub(FileSessionStore(tmp.root.toPath(), { 0L }), deps, scope)
-        return hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        return SessionHub(FileSessionStore(tmp.root.toPath(), { 0L }), deps, scope)
     }
+
+    private suspend fun session(model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full): SessionRuntime =
+        hubFor(model, env, trusted, customizations).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+
+    /** 重开：同一个日志目录、换一个新的内核实例（新的内存状态、新的脚本模型） */
+    private suspend fun reopen(id: dev.min.agent.protocol.SessionId, model: ScriptedModel): SessionRuntime = hubFor(model).open(id)!!
 
     private suspend fun SessionRuntime.say(text: String) {
         val before = state.value.lastTurn?.turnId
@@ -251,6 +256,37 @@ class SecurityGuidanceSessionTest {
         val model = ScriptedModel(reply(writeCall("/workspace/a.py", "k='AKIAXXXX'"), stop = StopReason.ToolUse), reply(TextPart("done")), reply(TextPart(ok)))
         session(model).say("write")
         assertTrue(model.requests[1].reminders().any { "internal_key" in it && "Hardcoded key." in it })
+    }
+
+    @Test
+    fun `reminders and findings already given are not given again after the session is reopened`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val first = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "x = eval(s)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(bad)),
+            reply(TextPart("fixed")),
+        )
+        val rt = session(first)
+        rt.say("write")
+        assertTrue(rt.state.value.securityWarned.isNotEmpty() && rt.state.value.securityReported.isNotEmpty())
+
+        val second = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "y = eval(t)"), stop = StopReason.ToolUse),
+            reply(commitCall(), stop = StopReason.ToolUse),
+            reply(TextPart(bad)),
+            reply(TextPart("done")),
+            reply(TextPart(ok)),
+        )
+        val reopened = reopen(rt.sessionId, second)
+        // 日志里的去重表在新实例里原样恢复
+        assertEquals(rt.state.value.securityWarned, reopened.state.value.securityWarned)
+        reopened.say("again")
+        // 同一个模式同一个文件：重开后不再提醒（历史里只有重开前那一条）
+        assertEquals(1, second.requests[1].reminders().count { "dynamic_code_execution" in it })
+        // 回合末审查已经报过的同一条：提交审查不重复提醒
+        assertTrue(second.requests[3].reminders().none { "published" in it })
     }
 
     // ---- 回合末的独立审查 ----

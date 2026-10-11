@@ -18,6 +18,7 @@ import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.NoteLevel
+import dev.min.agent.spi.SecurityGuidanceSeen
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.sync.Mutex
@@ -25,6 +26,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -52,18 +54,27 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
     private var loaded: Loaded? = null
     private var attempted: GuestPath? = null
 
-    /** 每个模式每个文件每个会话只提醒一次（key 见 [SecurityGuidance.Hit.key]）；只在内存里，重开会话后同一对可能再提醒一次（只会多不会少） */
+    /** 每个模式每个文件每个会话只提醒一次（key 见 [SecurityGuidance.Hit.key]）；以日志为准（[SecurityGuidanceSeen]），第一次用到时从状态恢复 */
     private val warned = ConcurrentHashMap.newKeySet<String>()
+
+    @Volatile
+    private var seeded = false
 
     /** 根会话上记着：这一回合改过的文件（路径 → 这次写进去的内容摘录），审查后清空 */
     private val edited = LinkedHashMap<String, String>()
     private var stopFires = 0
 
-    /** 已经报过的发现（归一化后的文字）：提交审查与回合末审查说同一件事时不重复 */
-    private val reported = mutableSetOf<String>()
+    /** 已经报过的发现（归一化后文字的短哈希，见 [fingerprint]）：提交审查与回合末审查说同一件事时不重复；同样以日志为准 */
+    private val reported = ConcurrentHashMap.newKeySet<String>()
     private val commitStamps = ArrayDeque<Long>()
 
     private suspend fun config(): Loaded? = loadLock.withLock {
+        if (!seeded) {
+            // 重开会话：去重表按日志恢复，同一条不会因为重开又提醒一遍
+            warned += rt.state.value.securityWarned
+            reported += rt.state.value.securityReported
+            seeded = true
+        }
         val cwd = rt.state.value.settings.cwd
         if (attempted == cwd) return@withLock loaded
         attempted = cwd
@@ -136,8 +147,10 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         val hits = files.flatMap { SecurityGuidance.scan(cfg.patterns, it, written) }.filter { warned.add(it.key) }
         if (hits.isEmpty()) return
         val anchor = anchorOf(call) ?: return
+        // 去重表与提醒同一次提交：日志里「提醒过」与「提醒本身」要么都在要么都不在
         rt.commit(
-            hits.map { HookContextAdded(HookContextTarget.ToolResults(anchor), HOOK_LABEL, "Security reminder [${it.rule}] for ${it.path}: ${it.reminder}") },
+            listOf<dev.min.agent.spi.SessionEvent>(SecurityGuidanceSeen(warned = hits.map { it.key })) +
+                hits.map { HookContextAdded(HookContextTarget.ToolResults(anchor), HOOK_LABEL, "Security reminder [${it.rule}] for ${it.path}: ${it.reminder}") },
             Durability.Sync,
         )
     }
@@ -164,9 +177,16 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         val diff = (shown as? ExecResult.Exited)?.takeIf { it.exitCode == 0 && it.output.isNotBlank() }?.output ?: return
         val reason = review(SecurityGuidance.commitReviewPrompt(command, diff.take(MAX_DIFF_CHARS), cfg.guidance), "commit") ?: return
         // 回合末审查已经报过同一件事：不再提醒
-        if (!reported.add(normalize(reason))) return
+        val print = fingerprint(reason)
+        if (!reported.add(print)) return
         val anchor = anchorOf(call) ?: return
-        rt.commit(listOf(HookContextAdded(HookContextTarget.ToolResults(anchor), HOOK_LABEL, "Security review of the change you just published found problems:\n$reason")), Durability.Sync)
+        rt.commit(
+            listOf(
+                SecurityGuidanceSeen(reported = listOf(print)),
+                HookContextAdded(HookContextTarget.ToolResults(anchor), HOOK_LABEL, "Security review of the change you just published found problems:\n$reason"),
+            ),
+            Durability.Sync,
+        )
     }
 
     /**
@@ -193,7 +213,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
             return null
         }
         stopFires++
-        reported += normalize(reason)
+        fingerprint(reason).let { if (reported.add(it)) rt.commit(listOf(SecurityGuidanceSeen(reported = listOf(it))), Durability.Batched) }
         return "An independent security review of the files you changed this turn found problems. Fix them in this session, or explain why a finding is not a real issue:\n$reason"
     }
 
@@ -213,6 +233,10 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
     }
 
     private fun normalize(text: String) = text.lowercase().replace(Regex("\\s+"), " ").trim()
+
+    /** 归一化后的发现文字的 SHA-256 前 16 个十六进制字符：日志里只存这个，不存发现原文 */
+    private fun fingerprint(text: String): String =
+        MessageDigest.getInstance("SHA-256").digest(normalize(text).toByteArray(Charsets.UTF_8)).take(8).joinToString("") { "%02x".format(it) }
 
     companion object {
         /** 会改文件的工具（权限判定里的 Edit 家族）：它们的入参是「写进去的内容」 */

@@ -76,6 +76,9 @@ data class SessionState(
     val checkedSkillDirs: Set<String> = emptySet(),
     /** skill `allowed-tools` 的本轮放行（SkillToolsGranted 追加、SkillToolsCleared 清空）：重开会话时从日志恢复，范围不会比原来大 */
     val skillGrants: List<String> = emptyList(),
+    /** security-guidance 已提醒 / 已报告的去重表（SecurityGuidanceSeen 追加）：重开会话时从日志恢复，同一条不再重复提醒 */
+    val securityWarned: Set<String> = emptySet(),
+    val securityReported: Set<String> = emptySet(),
     /** `--add-dir` 里被删掉的 skill 名（SkillsRescanned）：冻结清单里还有它，但不再算可调用的 */
     val removedSkills: Set<String> = emptySet(),
     /**

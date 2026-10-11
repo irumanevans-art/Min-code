@@ -280,3 +280,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 
 - v1 增量（2026-10-11，嵌套 / 附加目录 skill 的中途通知）：`skills_discovered` 新增可选字段 `assistantMessageId`（触发这次发现的那批工具调用所在的助手消息）：有它时，新发现的 skill 折叠成一段 `<system-reminder>`（`The following skills are now available for use with the Skill tool:` + 每个一行 `- 名字: 说明`）挂在那条助手消息后面的工具结果里，不改冻结的系统提示；缺它（子 agent 继承父会话时）= 只登记、不通知，旧日志同。
   新增事件 `skills_rescanned`（`entries`：新增或改动的 skill，同名替换旧的；`removed`：没了的名字；可选 `notes`），定义在 `spi/SkillEvents.kt`：`--add-dir` 目录里的 `.claude/skills` 在会话中途变了，内核在用户每次开新回合前重扫、有差异才写（`--bare` 不监视，命令与 agents 本来就不监视）。折叠进 `SessionState.nestedSkills`（同名替换）与 `removedSkills`，并把一段 system-reminder 放进 `pendingInputContexts`，随下一条被提升的输入送给模型。压缩之后摘要消息末尾重述仍可用的中途发现的 skill。含这条事件的日志旧版本打不开。
+
+- v1 增量（2026-10-11，security-guidance 的去重表落日志）：新增事件 `security_guidance_seen`（`warned`：逐次编辑提醒的去重键，规则名与文件路径中间隔一个 NUL；`reported`：已交给主模型的审查发现——归一化后文字的 SHA-256 前 16 个十六进制字符，不存原文），定义在 `spi/SecurityEvents.kt`。折叠进 `SessionState.securityWarned` / `securityReported`（追加）。逐次编辑的提醒与它的 `warned` 同一次提交；回合末审查与提交审查报过的发现写 `reported`。重开会话时 SecurityGuidanceRuntime 据此恢复去重表，同一条不再重复提醒（此前只在内存里）。旧日志没有这条事件，重开后去重表为空（与原来一致）；含这条事件的日志旧版本打不开。
