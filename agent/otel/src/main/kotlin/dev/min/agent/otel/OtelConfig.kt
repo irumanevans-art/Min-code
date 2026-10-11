@@ -21,10 +21,21 @@ data class OtelConfig(
     val metricsHeaders: List<Pair<String, String>>,
     /** 日志的全部头部：通用头部 + OTEL_EXPORTER_OTLP_LOGS_HEADERS */
     val logsHeaders: List<Pair<String, String>>,
+    /** OTLP traces 端点（已补好 /v1/traces）；null = traces 不走 OTLP。traces 是 beta，见 [tracesEnabled] */
+    val tracesEndpoint: String?,
+    /** traces 的全部头部：通用头部 + OTEL_EXPORTER_OTLP_TRACES_HEADERS */
+    val tracesHeaders: List<Pair<String, String>>,
+    /** console 导出器（OTEL_*_EXPORTER 含 console）：把条目逐行打印到宿主给的输出口，见 [OtelExporter] */
+    val metricsConsole: Boolean,
+    val logsConsole: Boolean,
+    val tracesConsole: Boolean,
+    /** CLAUDE_CODE_ENHANCED_TELEMETRY_BETA（或别名 ENABLE_ENHANCED_TELEMETRY_BETA）：span 追踪的 beta 开关，原文要求它才有 traces */
+    val tracesBeta: Boolean,
     /** Min 自己的本机导出（MIN_TELEMETRY_FILE）：每条遥测写一行 JSON 到这个文件；null = 不写 */
     val localFile: String?,
     val metricIntervalMs: Long,
     val logIntervalMs: Long,
+    val traceIntervalMs: Long,
     val resourceAttributes: List<Pair<String, String>>,
     val logUserPrompts: Boolean,
     val logAssistantResponses: Boolean,
@@ -35,7 +46,17 @@ data class OtelConfig(
     val problems: List<String>,
 ) {
     /** 真的会导出点什么：开关开着，且至少有一个目的地 */
-    val active: Boolean get() = enabled && (metricsEndpoint != null || logsEndpoint != null || localFile != null)
+    val active: Boolean get() = enabled && (
+        metricsEndpoint != null || logsEndpoint != null || tracesEndpoint != null ||
+            metricsConsole || logsConsole || tracesConsole || localFile != null
+        )
+
+    /**
+     * 要不要产出 span：总开关开着、beta 开关开着，并且 span 有去处（OTLP traces 端点、console 或本机文件）。
+     * 不满足时连映射都不做（见 OtelTail），默认关的口径不变。
+     */
+    val tracesEnabled: Boolean get() = enabled && tracesBeta &&
+        (tracesEndpoint != null || tracesConsole || localFile != null)
 
     fun options(sessionId: String): OtelOptions = OtelOptions(
         sessionId = sessionId,
@@ -48,8 +69,9 @@ data class OtelConfig(
 
     /** 头部的值是令牌：字符串形式里一律遮住 */
     override fun toString(): String = "OtelConfig(enabled=$enabled, active=$active, " +
-        "metricsEndpoint=$metricsEndpoint, logsEndpoint=$logsEndpoint, localFile=$localFile, " +
+        "metricsEndpoint=$metricsEndpoint, logsEndpoint=$logsEndpoint, tracesEndpoint=$tracesEndpoint, localFile=$localFile, " +
         "headers=${masked(headers)}, metricsHeaders=${masked(metricsHeaders)}, logsHeaders=${masked(logsHeaders)}, " +
+        "tracesHeaders=${masked(tracesHeaders)}, " +
         "problems=$problems)"
 
     private fun masked(list: List<Pair<String, String>>) = list.joinToString(prefix = "[", postfix = "]") { "${it.first}=***" }
@@ -57,6 +79,7 @@ data class OtelConfig(
     companion object {
         const val DEFAULT_METRIC_INTERVAL_MS = 60_000L
         const val DEFAULT_LOG_INTERVAL_MS = 5_000L
+        const val DEFAULT_TRACE_INTERVAL_MS = 5_000L
         const val DEFAULT_CONTENT_MAX_LENGTH = 61_440
 
         /** 从环境读配置。[env] 注入是为了测试；宿主传 System::getenv 或设置存储的读取函数 */
@@ -68,21 +91,30 @@ data class OtelConfig(
             val enabled = flag("CLAUDE_CODE_ENABLE_TELEMETRY") &&
                 !nonEmpty("DISABLE_TELEMETRY") && env("DO_NOT_TRACK")?.trim() != "1"
 
-            val selectors = (env("OTEL_METRICS_EXPORTER").orEmpty()) to (env("OTEL_LOGS_EXPORTER").orEmpty())
-            val metricsOtlp = wantsOtlp("OTEL_METRICS_EXPORTER", selectors.first, problems)
-            val logsOtlp = wantsOtlp("OTEL_LOGS_EXPORTER", selectors.second, problems)
+            val metricsSel = selectExporters("OTEL_METRICS_EXPORTER", env("OTEL_METRICS_EXPORTER").orEmpty(), problems)
+            val logsSel = selectExporters("OTEL_LOGS_EXPORTER", env("OTEL_LOGS_EXPORTER").orEmpty(), problems)
+            val tracesSel = selectExporters("OTEL_TRACES_EXPORTER", env("OTEL_TRACES_EXPORTER").orEmpty(), problems)
+            val tracesBeta = flag("CLAUDE_CODE_ENHANCED_TELEMETRY_BETA") || flag("ENABLE_ENHANCED_TELEMETRY_BETA")
+            if (enabled && !tracesBeta && (tracesSel.otlp || tracesSel.console)) {
+                problems += "OTEL_TRACES_EXPORTER 已设置，但没有 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1，traces 不会导出（beta）"
+            }
 
             val generic = env("OTEL_EXPORTER_OTLP_ENDPOINT")?.trim()?.takeIf { it.isNotEmpty() }
             val generalHeaders = parseHeaders("OTEL_EXPORTER_OTLP_HEADERS", env("OTEL_EXPORTER_OTLP_HEADERS"), problems)
 
-            val metricsEndpoint = if (metricsOtlp) endpointFor(env, "METRICS", "/v1/metrics", generic, problems) else null
-            val logsEndpoint = if (logsOtlp) endpointFor(env, "LOGS", "/v1/logs", generic, problems) else null
+            val metricsEndpoint = if (metricsSel.otlp) endpointFor(env, "METRICS", "/v1/metrics", generic, problems) else null
+            val logsEndpoint = if (logsSel.otlp) endpointFor(env, "LOGS", "/v1/logs", generic, problems) else null
+            val tracesEndpoint = if (tracesSel.otlp) endpointFor(env, "TRACES", "/v1/traces", generic, problems) else null
 
             val metricsHeaders = generalHeaders + parseHeaders(
                 "OTEL_EXPORTER_OTLP_METRICS_HEADERS", env("OTEL_EXPORTER_OTLP_METRICS_HEADERS"), problems,
             )
             val logsHeaders = generalHeaders + parseHeaders(
                 "OTEL_EXPORTER_OTLP_LOGS_HEADERS", env("OTEL_EXPORTER_OTLP_LOGS_HEADERS"), problems,
+            )
+
+            val tracesHeaders = generalHeaders + parseHeaders(
+                "OTEL_EXPORTER_OTLP_TRACES_HEADERS", env("OTEL_EXPORTER_OTLP_TRACES_HEADERS"), problems,
             )
 
             return OtelConfig(
@@ -92,9 +124,17 @@ data class OtelConfig(
                 headers = generalHeaders,
                 metricsHeaders = metricsHeaders,
                 logsHeaders = logsHeaders,
+                tracesEndpoint = tracesEndpoint?.takeIf { enabled },
+                tracesHeaders = tracesHeaders,
+                metricsConsole = metricsSel.console && enabled,
+                logsConsole = logsSel.console && enabled,
+                tracesConsole = tracesSel.console && enabled,
+                tracesBeta = tracesBeta,
                 localFile = env("MIN_TELEMETRY_FILE")?.trim()?.takeIf { it.isNotEmpty() },
-                metricIntervalMs = env("OTEL_METRIC_EXPORT_INTERVAL")?.toLongOrNull() ?: DEFAULT_METRIC_INTERVAL_MS,
-                logIntervalMs = env("OTEL_LOGS_EXPORT_INTERVAL")?.toLongOrNull() ?: DEFAULT_LOG_INTERVAL_MS,
+                // 间隔非正数 / 不是数字：回到原文的默认值（0 会让周期导出变成空转）
+                metricIntervalMs = interval(env("OTEL_METRIC_EXPORT_INTERVAL"), DEFAULT_METRIC_INTERVAL_MS),
+                logIntervalMs = interval(env("OTEL_LOGS_EXPORT_INTERVAL"), DEFAULT_LOG_INTERVAL_MS),
+                traceIntervalMs = interval(env("OTEL_TRACES_EXPORT_INTERVAL"), DEFAULT_TRACE_INTERVAL_MS),
                 resourceAttributes = parseHeaders("OTEL_RESOURCE_ATTRIBUTES", env("OTEL_RESOURCE_ATTRIBUTES"), problems),
                 // 隐私开关默认全关（CC 原文）。助手回复未设时跟随用户提示词开关；设 0 可在提示词打开时仍脱敏回复
                 logUserPrompts = flag("OTEL_LOG_USER_PROMPTS"),
@@ -107,13 +147,17 @@ data class OtelConfig(
             )
         }
 
-        /** 选择器里有 otlp 才走 OTLP；none 与未设都不走；别的值（prometheus、console）说明不支持 */
-        private fun wantsOtlp(name: String, value: String, problems: MutableList<String>): Boolean {
+        private fun interval(raw: String?, default: Long): Long = raw?.trim()?.toLongOrNull()?.takeIf { it > 0 } ?: default
+
+        private class Selection(val otlp: Boolean, val console: Boolean)
+
+        /** 选择器（逗号分隔）：otlp、console 支持；none 与未设都不走；别的值（prometheus……）说明不支持 */
+        private fun selectExporters(name: String, value: String, problems: MutableList<String>): Selection {
             val parts = value.split(',').map { it.trim() }.filter { it.isNotEmpty() }
             for (p in parts) {
-                if (p != "otlp" && p != "none") problems += "$name 的 $p 不支持，目前只有 otlp"
+                if (p != "otlp" && p != "console" && p != "none") problems += "$name 的 $p 不支持，目前只有 otlp 与 console"
             }
-            return "otlp" in parts
+            return Selection(otlp = "otlp" in parts, console = "console" in parts)
         }
 
         private fun endpointFor(

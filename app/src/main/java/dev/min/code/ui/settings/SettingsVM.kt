@@ -149,6 +149,9 @@ class SettingsVM(
     private val _telemetryReport = MutableStateFlow<dev.min.code.core.telemetry.TelemetryExportReport?>(null)
     val telemetryReport: StateFlow<dev.min.code.core.telemetry.TelemetryExportReport?> = _telemetryReport
 
+    /** 本机 JSONL 的位置，设置页「分享」用（文件由 [exportTelemetry] 写，不存在时界面提示还没导出过） */
+    fun telemetryFile(): java.io.File = minEngine.telemetryFile()
+
     fun exportTelemetry() = viewModelScope.launch {
         val report = minEngine.exportTelemetry(store.current().telemetry, store.telemetryHeaders())
         _telemetryReport.value = report

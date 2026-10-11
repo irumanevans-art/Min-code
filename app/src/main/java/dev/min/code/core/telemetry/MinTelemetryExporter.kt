@@ -1,11 +1,12 @@
 package dev.min.code.core.telemetry
 
 import dev.min.agent.otel.OtelConfig
+import dev.min.agent.otel.OtelCursor
 import dev.min.agent.otel.OtelExporter
+import dev.min.agent.otel.OtelStoreSessions
 import dev.min.agent.otel.OtelTail
 import dev.min.agent.spi.HttpTransport
 import dev.min.agent.store.FileSessionStore
-import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -56,9 +57,12 @@ class MinTelemetryExporter(
         val env = buildMap {
             put("CLAUDE_CODE_ENABLE_TELEMETRY", "1")
             put("MIN_TELEMETRY_FILE", localFile.path)
+            // traces 是 beta，需要这个开关；App 里「遥测开」就是用户的同意，span 里的提示词与工具入参仍默认脱敏
+            put("CLAUDE_CODE_ENHANCED_TELEMETRY_BETA", "1")
             if (endpoint.isNotEmpty()) {
                 put("OTEL_METRICS_EXPORTER", "otlp")
                 put("OTEL_LOGS_EXPORTER", "otlp")
+                put("OTEL_TRACES_EXPORTER", "otlp")
                 put("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json")
                 put("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
                 if (headers.isNotBlank()) put("OTEL_EXPORTER_OTLP_HEADERS", headers)
@@ -68,42 +72,42 @@ class MinTelemetryExporter(
         if (!config.active) return TelemetryExportReport(false, 0, 0, 0, null, config.problems)
 
         val exporter = OtelExporter(config, transport)
-        val cursors = loadCursors().toMutableMap()
-        var sessions = 0
-        var records = 0
-        try {
-            val store = FileSessionStore(sessionsDir.toPath()) { now() }
-            for (header in store.list()) {
-                val id = header.sessionId
-                val log = store.peek(id) ?: continue
-                val tail = OtelTail(log, config, exporter, fromSeq = cursors[id.value] ?: 1L)
-                records += tail.pump()
-                cursors[id.value] = tail.nextSeq
-                sessions++
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // 读日志坏了也只是这次导出失败，不把错误抛给设置页
-            exporter.noteFailure("读会话日志失败：${e.javaClass.simpleName}")
-        }
-        saveCursors(cursors)
-        return TelemetryExportReport(false, sessions, records, exporter.failures, exporter.lastFailure, config.problems)
+        val store = FileSessionStore(sessionsDir.toPath()) { now() }
+        // 全部会话一次接进来：子 agent 的日志与父会话在同一个存储里，父子关系由日志头部的 parent 带出
+        val tail = OtelTail(OtelStoreSessions.all(store), config, exporter, initialCursors = loadCursors())
+        val records = tail.pump() // 出错只计入 exporter 的失败数，不抛（取消除外）
+        saveCursors(tail.cursors())
+        return TelemetryExportReport(false, tail.sessionCount, records, exporter.failures, exporter.lastFailure, config.problems)
     }
 
-    private fun loadCursors(): Map<String, Long> = try {
+    /** 本机 JSONL 的位置：设置页「分享」据此取文件 */
+    val localFilePath: File get() = localFile
+
+    /**
+     * 游标文件：`{"会话 id": {"next": N, "spansFrom": M}}`。旧版只存数字（`{"会话 id": N}`），读到数字就当两个游标相同。
+     */
+    private fun loadCursors(): Map<String, OtelCursor> = try {
         if (!cursorFile.isFile) emptyMap() else {
-            Json.parseToJsonElement(cursorFile.readText()).jsonObject.mapValues { it.value.jsonPrimitive.content.toLong() }
+            Json.parseToJsonElement(cursorFile.readText()).jsonObject.mapValues { (_, v) ->
+                if (v is JsonObject) {
+                    OtelCursor(v["next"]!!.jsonPrimitive.content.toLong(), v["spansFrom"]!!.jsonPrimitive.content.toLong())
+                } else {
+                    val n = v.jsonPrimitive.content.toLong()
+                    OtelCursor(n, n)
+                }
+            }
         }
     } catch (e: Exception) {
         // 游标文件坏了就从头来：最多重发一遍，比漏发好，且不影响会话
         emptyMap()
     }
 
-    private fun saveCursors(cursors: Map<String, Long>) {
+    private fun saveCursors(cursors: Map<String, OtelCursor>) {
         try {
             stateDir.mkdirs()
-            val json = JsonObject(cursors.mapValues { JsonPrimitive(it.value) })
+            val json = JsonObject(cursors.mapValues { (_, c) ->
+                JsonObject(mapOf("next" to JsonPrimitive(c.next), "spansFrom" to JsonPrimitive(c.spansFrom)))
+            })
             cursorFile.writeText(json.toString())
         } catch (e: java.io.IOException) {
             // 存不下游标只意味着下次可能重发，不值得让导出失败

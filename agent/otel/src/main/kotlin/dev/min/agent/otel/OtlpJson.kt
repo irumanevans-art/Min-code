@@ -59,6 +59,26 @@ internal object OtlpJson {
         return envelope("resourceLogs", "logRecords", records, resource)
     }
 
+    /** span：traceId / spanId 是十六进制字符串（OTLP JSON 的约定），kind = INTERNAL，状态 ERROR 时带说明 */
+    fun spans(items: List<OtelSpan>, resource: List<Pair<String, String>>): String {
+        val spans = items.map { span ->
+            JsonObject(buildMap {
+                put("traceId", JsonPrimitive(span.traceId))
+                put("spanId", JsonPrimitive(span.spanId))
+                span.parentSpanId?.let { put("parentSpanId", JsonPrimitive(it)) }
+                put("name", JsonPrimitive(span.name))
+                put("kind", JsonPrimitive(SPAN_KIND_INTERNAL))
+                put("startTimeUnixNano", JsonPrimitive(nanos(span.startMs)))
+                put("endTimeUnixNano", JsonPrimitive(nanos(span.endMs)))
+                put("attributes", keyValues(span.attributes))
+                span.error?.let {
+                    put("status", JsonObject(mapOf("code" to JsonPrimitive(STATUS_ERROR), "message" to JsonPrimitive(it))))
+                }
+            })
+        }
+        return envelope("resourceSpans", "spans", spans, resource)
+    }
+
     /** 本机 JSONL 的一行：不是 OTLP 形状，是给人看、给脚本读的平铺形状 */
     fun fileLine(item: OtelItem): String {
         val attrs = JsonObject(item.attributes.mapValues { (_, v) -> value(v) })
@@ -77,6 +97,18 @@ internal object OtlpJson {
                 "name" to JsonPrimitive(item.name),
                 "attributes" to attrs,
             ))
+            is OtelSpan -> JsonObject(buildMap {
+                put("t", JsonPrimitive(item.endMs))
+                put("kind", JsonPrimitive("span"))
+                put("name", JsonPrimitive(item.name))
+                put("trace_id", JsonPrimitive(item.traceId))
+                put("span_id", JsonPrimitive(item.spanId))
+                item.parentSpanId?.let { put("parent_span_id", JsonPrimitive(it)) }
+                put("start_ms", JsonPrimitive(item.startMs))
+                put("end_ms", JsonPrimitive(item.endMs))
+                item.error?.let { put("error", JsonPrimitive(it)) }
+                put("attributes", attrs)
+            })
         }
         return json.toString()
     }
@@ -90,7 +122,11 @@ internal object OtlpJson {
         return JsonObject(mapOf(
             outer to JsonArray(listOf(JsonObject(mapOf(
                 "resource" to res,
-                (if (outer == "resourceMetrics") "scopeMetrics" else "scopeLogs") to JsonArray(listOf(scoped)),
+                (when (outer) {
+                    "resourceMetrics" -> "scopeMetrics"
+                    "resourceSpans" -> "scopeSpans"
+                    else -> "scopeLogs"
+                }) to JsonArray(listOf(scoped)),
             )))),
         )).toString()
     }
@@ -117,5 +153,7 @@ internal object OtlpJson {
     private fun nanos(ms: Long): String = (ms * 1_000_000L).toString()
 
     private const val DELTA = 1
+    private const val SPAN_KIND_INTERNAL = 1
+    private const val STATUS_ERROR = 2
     private const val SEVERITY_INFO = 9
 }

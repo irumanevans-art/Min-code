@@ -11,7 +11,6 @@ import dev.min.agent.spi.ApprovalRequested
 import dev.min.agent.spi.ApprovalResolved
 import dev.min.agent.spi.AssistantMessageCompleted
 import dev.min.agent.spi.ConversationEnded
-import dev.min.agent.spi.DecidedBy
 import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.FileEdit
 import dev.min.agent.spi.InputOrigin
@@ -169,7 +168,7 @@ class OtelMapper(private val options: OtelOptions) {
         val call = approvalCall.remove(e.approvalId) ?: return emptyList()
         val tool = planned[call]?.name ?: return emptyList()
         val accepted = e.choice !is ApprovalChoice.Deny
-        val source = sourceOf(e.decidedBy, e.choice)
+        val source = approvalSource(e.decidedBy, e.choice)
         approvalSource[call] = source
         if (!accepted) rejected += call
         val decision = if (accepted) "accept" else "reject"
@@ -257,31 +256,14 @@ class OtelMapper(private val options: OtelOptions) {
         put("output_tokens", OtelValue.Whole(e.usage.outputTokens))
     }
 
-    private fun sourceOf(by: DecidedBy, choice: ApprovalChoice): String = when (by) {
-        is DecidedBy.Rule -> "config"
-        is DecidedBy.Hook -> "hook"
-        is DecidedBy.Mode -> "min_mode"
-        is DecidedBy.Classifier -> "min_classifier"
-        // 无人应答按拒绝处理：不是用户的动作，单列，免得被算成 user_abort
-        is DecidedBy.Timeout -> "min_timeout"
-        is DecidedBy.User -> when (choice) {
-            is ApprovalChoice.Once -> "user_temporary"
-            is ApprovalChoice.Always -> "user_permanent"
-            is ApprovalChoice.Deny -> "user_reject"
-        }
-    }
-
     // ---- 属性与条目的小工具 ----
 
     private fun text(value: String): OtelValue = OtelValue.Text(value)
 
-    /** 内容类属性：不许记就写占位，记就按上限截断（截断标记计入上限，满足 OTLP 属性长度约定） */
-    private fun content(value: String, allowed: Boolean): String {
-        if (!allowed) return REDACTED
-        val max = options.contentMaxLength
-        if (value.length <= max) return value
-        return value.take((max - TRUNCATED.length).coerceAtLeast(0)) + TRUNCATED
-    }
+    private fun content(value: String, allowed: Boolean): String = options.content(value, allowed)
+
+    /** 子会话的来历属性（agent_id、min.parent_session_id……），根会话为 null */
+    private val lineage: Map<String, OtelValue>? = options.lineage?.attributes(options.sessionId)
 
     private fun metric(name: String, unit: String, value: Double, attrs: Map<String, OtelValue>, at: Long): OtelMetric =
         OtelMetric(name, unit, value, withSession(attrs), at)
@@ -289,6 +271,7 @@ class OtelMapper(private val options: OtelOptions) {
     private fun log(record: EventRecord, name: String, attrs: Map<String, OtelValue>): OtelLog {
         val all = LinkedHashMap<String, OtelValue>()
         all["session.id"] = text(options.sessionId)
+        lineage?.let { all.putAll(it) }
         all["event.sequence"] = OtelValue.Whole(record.seq)
         promptId?.let { all["prompt.id"] = text(it) }
         all.putAll(attrs)
@@ -299,13 +282,12 @@ class OtelMapper(private val options: OtelOptions) {
         if (!options.includeSessionId) return attrs
         return LinkedHashMap<String, OtelValue>().apply {
             put("session.id", text(options.sessionId))
+            lineage?.let { putAll(it) }
             putAll(attrs)
         }
     }
 
     private companion object {
-        const val REDACTED = "<REDACTED>"
-        const val TRUNCATED = "...[truncated]"
         val CODE_EDIT_TOOLS = setOf("Edit", "Write", "NotebookEdit")
 
         /** CC 的 mode 取值是驼峰小写开头（default / acceptEdits / bypassPermissions…），这里照这个写 */

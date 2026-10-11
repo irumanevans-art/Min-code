@@ -423,16 +423,25 @@ internal class DesktopApp(
         requireNotNull(store.peek(sessionId)).read(fromSeq).toList()
 
     /**
-     * 遥测（OpenTelemetry 的本地等价）：默认关，环境变量开了才返回导出器。
-     * 为什么从 fromSeq 开始：只导出这个进程里发生的事，不把以前的会话在这里重放一遍。配错了的地方照样打到 stderr。
+     * 遥测（OpenTelemetry 的本地等价）：默认关，环境变量开了才返回。会话进行中按间隔导出，进程退出时补一次。
+     * 为什么从 lastSeq + 1 开始：只导出这个进程里发生的事，不把以前的会话在这里重放一遍；
+     * 子会话（子 agent、团队成员）一并纳入，本进程启动之前就存在的老子会话同理从末尾起。配错了的地方照样打到 stderr。
+     * console 导出器写 stderr：stdout 是会话输出（-p 的结果、管道），混进遥测会毁掉脚本消费。
      */
-    suspend fun telemetryTail(runtime: SessionRuntime): dev.min.agent.otel.OtelTail? {
+    suspend fun telemetry(runtime: SessionRuntime): dev.min.agent.otel.OtelRun? {
         val config = dev.min.agent.otel.OtelConfig.fromEnv(System::getenv)
         if (config.enabled) config.problems.forEach { System.err.println("遥测设置有问题：$it") }
         if (!config.active) return null
-        val log = requireNotNull(store.peek(runtime.sessionId)) { "遥测读不到会话日志" }
-        val exporter = dev.min.agent.otel.OtelExporter(config, UrlConnectionTransport())
-        return dev.min.agent.otel.OtelTail(log, config, exporter, fromSeq = runtime.state.value.lastSeq + 1)
+        requireNotNull(store.peek(runtime.sessionId)) { "遥测读不到会话日志" }
+        val exporter = dev.min.agent.otel.OtelExporter(config, UrlConnectionTransport(), console = { System.err.println(it) })
+        val next = runtime.state.value.lastSeq + 1
+        val tail = dev.min.agent.otel.OtelTail(
+            dev.min.agent.otel.OtelStoreSessions.descendantsOf(store, runtime.sessionId),
+            config, exporter,
+            initialCursors = mapOf(runtime.sessionId.value to dev.min.agent.otel.OtelCursor(next, next)),
+            replayFromMs = System.currentTimeMillis(),
+        )
+        return dev.min.agent.otel.OtelRun(tail, config)
     }
 
     private fun deps(tools: List<Tool<*>>): KernelDeps {

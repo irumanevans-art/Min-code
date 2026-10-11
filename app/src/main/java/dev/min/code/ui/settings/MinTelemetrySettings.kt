@@ -30,6 +30,7 @@ internal fun TelemetryRows(
     onEndpoint: (String) -> Unit,
     onHeaders: (String) -> Unit,
     onExport: () -> Unit,
+    onShare: () -> Unit,
 ) {
     var editingEndpoint by remember { mutableStateOf(false) }
     var editingHeaders by remember { mutableStateOf(false) }
@@ -55,6 +56,11 @@ internal fun TelemetryRows(
         title = stringResource(R.string.settings_telemetry_export_title),
         subtitle = exportSubtitle(report),
         onClick = onExport,
+    )
+    SettingRow(
+        title = stringResource(R.string.settings_telemetry_share_title),
+        subtitle = stringResource(R.string.settings_telemetry_share_subtitle),
+        onClick = onShare,
     )
     if (editingEndpoint) {
         TelemetryTextDialog(

@@ -503,6 +503,9 @@ class MinAgentEngine(
 
     override suspend fun updateIndex(state: SessionState) = index.update(state)
 
+    /** 遥测的本机 JSONL（App 私有目录）；分享前由界面拷进缓存目录，见 TelemetryShareFiles */
+    fun telemetryFile(): File = File(File(context.filesDir, "agent"), dev.min.code.core.telemetry.MinTelemetryExporter.LOCAL_FILE_NAME)
+
     /** 遥测「立即导出」：把会话日志里的新事件导出到端点与本机 JSONL（默认关，关着什么都不做）。见 [MinTelemetryExporter] */
     suspend fun exportTelemetry(settings: dev.min.code.core.telemetry.TelemetrySettings, headers: String) =
         dev.min.code.core.telemetry.MinTelemetryExporter(
