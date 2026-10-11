@@ -1546,4 +1546,10 @@
     <string name="plugins_auto_update">Auto-update</string>
     <string name="plugins_cancel">Cancel</string>
     <string name="plugins_install">Install</string>
+  <string name="viewer_artifact_share">Share</string>
+  <string name="viewer_artifact_close">Close</string>
+  <string name="viewer_draft_title">Diagnostic report draft</string>
+  <string name="viewer_draft_note">Drafts are not sent. Export makes a local zip that you send yourself, or discard the draft.</string>
+  <string name="viewer_draft_export">Export diagnostic zip</string>
+  <string name="viewer_draft_discard">Discard</string>
 </resources>

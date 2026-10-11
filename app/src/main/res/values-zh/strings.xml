@@ -1540,4 +1540,10 @@
     <string name="plugins_auto_update">自动更新</string>
     <string name="plugins_cancel">取消</string>
     <string name="plugins_install">安装</string>
+  <string name="viewer_artifact_share">分享</string>
+  <string name="viewer_artifact_close">关闭</string>
+  <string name="viewer_draft_title">诊断包草稿</string>
+  <string name="viewer_draft_note">草稿不会发出去。导出只在本机生成一个 zip，由你自己决定发给谁，或丢弃这份草稿。</string>
+  <string name="viewer_draft_export">导出诊断包</string>
+  <string name="viewer_draft_discard">丢弃</string>
 </resources>
