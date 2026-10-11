@@ -1057,7 +1057,7 @@ class SessionHub(
                 ?: return DelegateResult.Rejected("不认识模型「${request.model ?: definition.model}」。不写 model 就用当前模型。")
             // 子 agent 的 model 也受 availableModels 约束（CC：被挡的覆盖不让请求失败，子 agent 改用后备模型跑，并告诉用户换了什么）。
             // Min 的后备就是父会话的模型（它本来就在名单之内）
-            val model = if (deps.modelAllowed(requested)) requested else ps.settings.model.also { fallbackTo ->
+            val model = if (parent.modelPermitted(requested)) requested else ps.settings.model.also { fallbackTo ->
                 parent.commit(
                     listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "子 agent「${definition.name}」要的模型 ${requested.providerId}:${requested.modelId} 不在 availableModels 里，改用 ${fallbackTo.providerId}:${fallbackTo.modelId}")),
                     Durability.Batched,
@@ -1233,7 +1233,9 @@ class SessionHub(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            null
+            // 别名在这家供应商那里落不了地（目录里没有这一档）：CC 的子 agent 覆盖失败时改用后备模型跑而不是让请求失败，
+            // Min 的后备是当前（父会话的）模型；写错的具体型号仍拒绝，让模型自己改
+            if (dev.min.agent.llm.catalog.ModelAliases.isAlias(dev.min.agent.llm.catalog.ModelAliases.splitSuffix(ref.modelId).first)) current else null
         }
     }
 

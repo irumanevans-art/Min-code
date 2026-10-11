@@ -33,7 +33,7 @@ internal class AutoReviewer(private val rt: SessionRuntime) {
     suspend fun review(turnId: TurnId, call: ToolCallPart, ask: PermissionAsk, context: PolicyContext, alwaysAsk: Boolean): Verdict {
         rt.refreshAutoUserContext()
         val settings = rt.state.value.autoReviewSettings
-        val ref = autoReviewerModel(settings.reviewer?.model, rt.state.value.settings.effectiveModel, rt.deps.providerFastModel, rt.deps.modelAllowed)
+        val ref = autoReviewerModel(settings.reviewer?.model, rt.state.value.settings.effectiveModel, rt.deps.providerFastModel, rt::modelPermitted)
         var usage = Usage()
         var calledModel: ModelRef? = null
         val result = try {
