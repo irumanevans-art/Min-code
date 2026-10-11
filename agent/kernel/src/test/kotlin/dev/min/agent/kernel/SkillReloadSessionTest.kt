@@ -245,6 +245,23 @@ class SkillReloadSessionTest {
         assertTrue(BundledSkills.isBundled(rt.entry("loop").path.value))
     }
 
+    @Test
+    fun `a sub-agent inherits the hot-discovered skills and does not get back one that was deleted`() = run {
+        fs.files["/workspace/.claude/skills/gone/SKILL.md"] = skillFile("short lived")
+        val model = ScriptedModel(reply(TextPart("1")), reply(TextPart("child done")))
+        val hub = SessionHub(store, deps(model, Customizations.Full, emptyList()), newScope(), HubLimits())
+        val parent = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+        fs.files.remove("/workspace/.claude/skills/gone/SKILL.md")
+        fs.files["/workspace/.claude/skills/fresh/SKILL.md"] = skillFile("brand new")
+        parent.say("first")
+        assertTrue(parent.state.value.skillEntries().none { it.name == "gone" })
+        val res = hub.spawn(parent, TurnId("t1"), CallId("c1"),
+            dev.min.agent.spi.DelegateRequest(description = "d", prompt = "p", agentType = "Explore", background = false))
+        val child = hub.get((res as dev.min.agent.spi.DelegateResult.Finished).child)!!
+        assertTrue(child.state.value.skillEntries().any { it.name == "fresh" })
+        assertTrue("删掉的不能在子 agent 里复活", child.state.value.skillEntries().none { it.name == "gone" })
+    }
+
     // ---- /reload-skills：手动重扫，含命令 ----
 
     @Test

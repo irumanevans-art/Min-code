@@ -1301,9 +1301,11 @@ class SessionHub(
      * 子 agent 继承父会话冻结的 skill 清单，不自己再读磁盘：分身的系统提示必须与父会话逐字相同；新开的子 agent
      * 也不该因为磁盘上 skill 中途变了而与父会话看到不同的清单（Skill 工具按各自日志里的清单找 skill）。
      */
-    // 嵌套懒加载的 skills 也照父会话继承（它们不进冻结清单，所以单独一条 SkillsDiscovered，连同已查过的目录）
+    // 嵌套懒加载 / 热重扫来的 skills 也照父会话继承（它们不进冻结清单，所以单独一条 SkillsDiscovered，连同已查过的目录）；
+    // 重扫时被删掉的名字同理单独一条 SkillsRescanned（冻结清单里还有它，不带这条子 agent 就还能调到磁盘上已经没有的 skill）
     private fun inheritedSkills(parent: SessionState): List<SessionEvent> = listOfNotNull(parent.skills) +
-        listOfNotNull(parent.nestedSkills.takeIf { it.isNotEmpty() || parent.checkedSkillDirs.isNotEmpty() }?.let { dev.min.agent.spi.SkillsDiscovered(it, parent.checkedSkillDirs.toList()) })
+        listOfNotNull(parent.nestedSkills.takeIf { it.isNotEmpty() || parent.checkedSkillDirs.isNotEmpty() }?.let { dev.min.agent.spi.SkillsDiscovered(it, parent.checkedSkillDirs.toList()) }) +
+        listOfNotNull(parent.removedSkills.takeIf { it.isNotEmpty() }?.let { dev.min.agent.spi.SkillsRescanned(emptyList(), it.sorted()) })
 
     /**
      * MCP 同理：子 agent 用父会话那份快照（分身的工具表与系统提示必须与父会话逐字相同；新开的子 agent 按来历里的写法再筛）。
