@@ -156,8 +156,4 @@ internal object PluginEval {
     }
 }
 
-internal fun evalRegex(pattern: String, flags: String = ""): Regex {
-    require(flags.all { it in "imsug" } && !Regex("\\(\\?[a-z-]+[):]").containsMatchIn(pattern)) { "仅支持可移植的 JavaScript regex 子集；flags: i/m/s/u/g" }
-    val options = buildSet { if ('i' in flags) add(RegexOption.IGNORE_CASE); if ('m' in flags) add(RegexOption.MULTILINE); if ('s' in flags) add(RegexOption.DOT_MATCHES_ALL) }
-    return Regex(pattern, options)
-}
+internal fun evalRegex(pattern: String, flags: String = ""): JsEvalRegex = JsEvalRegex(pattern, flags)
