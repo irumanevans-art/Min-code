@@ -1,4 +1,4 @@
-package dev.min.agent.cli
+package dev.min.agent.kernel
 
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals

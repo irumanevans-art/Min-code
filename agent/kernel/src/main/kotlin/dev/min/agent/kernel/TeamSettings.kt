@@ -1,6 +1,5 @@
-package dev.min.agent.cli
+package dev.min.agent.kernel
 
-import dev.min.agent.kernel.TeamLimits
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
@@ -9,7 +8,7 @@ import kotlinx.serialization.json.intOrNull
  * settings.json 的 `teamMaxConcurrent`：agent 团队同时运行的成员数（默认 3，硬上限 [TeamLimits.MAX_CONCURRENT]）。
  * 超过硬上限的值按上限用并提示（不再有「要用户确认」的路径）；写错的值用默认值并提示。
  */
-internal fun teamMaxConcurrentFrom(raw: JsonElement?, note: (String) -> Unit): Int {
+fun teamMaxConcurrentFrom(raw: JsonElement?, note: (String) -> Unit): Int {
     if (raw == null) return TeamLimits.DEFAULT_MAX_CONCURRENT
     val requested = (raw as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull
     if (requested == null) {

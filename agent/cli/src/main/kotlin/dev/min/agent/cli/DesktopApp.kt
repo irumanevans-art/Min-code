@@ -5,6 +5,9 @@ import dev.min.agent.host.JvmSearch
 import dev.min.agent.host.UrlConnectionTransport
 import dev.min.agent.kernel.HostPorts
 import dev.min.agent.kernel.HubLimits
+import dev.min.agent.kernel.cronDisabledBy
+import dev.min.agent.kernel.cronMaxBudgetUsdFrom
+import dev.min.agent.kernel.teamMaxConcurrentFrom
 import dev.min.agent.kernel.KernelDeps
 import dev.min.agent.kernel.ResolvedModel
 import dev.min.agent.kernel.SessionBranchRefused
