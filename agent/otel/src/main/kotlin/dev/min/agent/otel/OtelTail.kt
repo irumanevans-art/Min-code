@@ -1,11 +1,15 @@
 package dev.min.agent.otel
 
+import dev.min.agent.protocol.Effort
 import dev.min.agent.spi.EventRecord
+import dev.min.agent.spi.SessionCreated
+import dev.min.agent.spi.SettingsChanged
 import dev.min.agent.spi.SessionLog
 import dev.min.agent.spi.SubagentOrigin
 import dev.min.agent.spi.ToolPlanned
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -198,11 +202,29 @@ class OtelTail(
             }
             else -> 1L
         }
-        val spans = if (config.tracesEnabled) OtelSpanMapper(options, link) else null
+        // 跨进程续导时 span 映射器不是从日志开头读起：开头的 SessionCreated / SettingsChanged 里的 effort 要先折出来，否则续导的 llm_request 会缺 effort
+        val readFromSeq = cursor?.let { minOf(it.next, it.spansFrom) } ?: metricsFrom
+        val spans = if (config.tracesEnabled) OtelSpanMapper(options, link, initialEffort = if (readFromSeq > 1) effortBefore(log, readFromSeq) else null) else null
         // 首次读的起点：span 要从游标里记的「开着的 span 的起点」重放，指标与日志从 metricsFrom 起
         val readFrom = if (spans != null && cursor != null) minOf(cursor.next, cursor.spansFrom) else metricsFrom
         cursorsIn.remove(id)
         return SessionState(log, OtelMapper(options), spans, metricsFrom, readFrom)
+    }
+
+    /** [seq] 之前最后生效的 effort：读日志里的 SessionCreated 与 SettingsChanged 折出来 */
+    private suspend fun effortBefore(log: SessionLog, seq: Long): Effort? {
+        var effort: Effort? = null
+        for (record in log.read(1).takeWhile { it.seq < seq }.toList()) {
+            when (val e = record.event) {
+                is SessionCreated -> effort = e.effort
+                is SettingsChanged -> {
+                    if (e.clearEffort) effort = null
+                    e.effort?.let { effort = it }
+                }
+                else -> Unit
+            }
+        }
+        return effort
     }
 
     /** 子会话的来历：读日志开头的 SubagentOrigin；没有它但头部指着父会话时，只知道父是谁 */
@@ -239,7 +261,7 @@ class OtelTail(
             if (parentLog == null || turn == null) null else {
                 val parentLink = linkOf(lineage.parent, byId)
                 SpanLink(
-                    traceId = parentLink?.traceId ?: SpanIds.trace(lineage.parent, turn),
+                    traceId = parentLink?.traceId ?: traceIdFor(lineage.parent, turn, config.inbound),
                     parentSpanId = SpanIds.tool(lineage.parent, lineage.parentCall),
                 )
             }

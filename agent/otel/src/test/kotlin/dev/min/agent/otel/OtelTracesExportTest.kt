@@ -107,6 +107,43 @@ class OtelTracesExportTest {
         assertFalse(lines.joinToString().contains(token))
     }
 
+
+    // ---- span 事件、数组属性、tracestate ----
+
+    @Test
+    fun `span 事件与 tracestate 与数组属性按 OTLP 形状发出，本机文件也带事件`() = runBlocking {
+        val dir = Files.createTempDirectory("otel-events")
+        val file = dir.resolve("out.jsonl").toFile()
+        val transport = ScriptedTransport(OK)
+        val withEvents = span().copy(
+            attributes = mapOf("gen_ai.response.finish_reasons" to OtelValue.Texts(listOf("end_turn"))),
+            events = listOf(OtelSpanEvent("gen_ai.request.attempt", 1_200, mapOf("attempt" to OtelValue.Whole(2)))),
+            traceState = "vendor=x",
+        )
+        OtelExporter(config("MIN_TELEMETRY_FILE" to file.path), transport).export(listOf(withEvents))
+        val s = body(transport)["resourceSpans"]!!.jsonArray[0].jsonObject["scopeSpans"]!!.jsonArray[0].jsonObject["spans"]!!.jsonArray[0].jsonObject
+        assertEquals("vendor=x", s["traceState"]!!.jsonPrimitive.content)
+        val event = s["events"]!!.jsonArray.single().jsonObject
+        assertEquals("gen_ai.request.attempt", event["name"]!!.jsonPrimitive.content)
+        assertEquals("1200000000", event["timeUnixNano"]!!.jsonPrimitive.content)
+        assertEquals("2", event["attributes"]!!.jsonArray.single().jsonObject["value"]!!.jsonObject["intValue"]!!.jsonPrimitive.content)
+        val reasons = s["attributes"]!!.jsonArray.single().jsonObject["value"]!!.jsonObject["arrayValue"]!!.jsonObject["values"]!!.jsonArray
+        assertEquals("end_turn", reasons.single().jsonObject["stringValue"]!!.jsonPrimitive.content)
+
+        val line = Json.parseToJsonElement(file.readLines().single()).jsonObject
+        assertEquals("vendor=x", line["trace_state"]!!.jsonPrimitive.content)
+        assertEquals("gen_ai.request.attempt", line["events"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `没有事件的 span 不带 events 与 traceState 键`() = runBlocking {
+        val transport = ScriptedTransport(OK)
+        OtelExporter(config(), transport).export(listOf(span()))
+        val s = body(transport)["resourceSpans"]!!.jsonArray[0].jsonObject["scopeSpans"]!!.jsonArray[0].jsonObject["spans"]!!.jsonArray[0].jsonObject
+        assertFalse(s.containsKey("events"))
+        assertFalse(s.containsKey("traceState"))
+    }
+
     // ---- console 导出器 ----
 
     private fun consoleConfig(vararg extra: Pair<String, String>): OtelConfig {

@@ -71,6 +71,14 @@ internal object OtlpJson {
                 put("startTimeUnixNano", JsonPrimitive(nanos(span.startMs)))
                 put("endTimeUnixNano", JsonPrimitive(nanos(span.endMs)))
                 put("attributes", keyValues(span.attributes))
+                if (span.events.isNotEmpty()) put("events", JsonArray(span.events.map { e ->
+                    JsonObject(mapOf(
+                        "timeUnixNano" to JsonPrimitive(nanos(e.timeMs)),
+                        "name" to JsonPrimitive(e.name),
+                        "attributes" to keyValues(e.attributes),
+                    ))
+                }))
+                span.traceState?.let { put("traceState", JsonPrimitive(it)) }
                 span.error?.let {
                     put("status", JsonObject(mapOf("code" to JsonPrimitive(STATUS_ERROR), "message" to JsonPrimitive(it))))
                 }
@@ -107,6 +115,14 @@ internal object OtlpJson {
                 put("start_ms", JsonPrimitive(item.startMs))
                 put("end_ms", JsonPrimitive(item.endMs))
                 item.error?.let { put("error", JsonPrimitive(it)) }
+                if (item.events.isNotEmpty()) put("events", JsonArray(item.events.map { e ->
+                    JsonObject(mapOf(
+                        "t" to JsonPrimitive(e.timeMs),
+                        "name" to JsonPrimitive(e.name),
+                        "attributes" to JsonObject(e.attributes.mapValues { (_, v) -> value(v) }),
+                    ))
+                }))
+                item.traceState?.let { put("trace_state", JsonPrimitive(it)) }
                 put("attributes", attrs)
             })
         }
@@ -148,6 +164,7 @@ internal object OtlpJson {
         is OtelValue.Whole -> JsonObject(mapOf("intValue" to JsonPrimitive(v.value.toString())))
         is OtelValue.Real -> JsonObject(mapOf("doubleValue" to JsonPrimitive(v.value)))
         is OtelValue.Flag -> JsonObject(mapOf("boolValue" to JsonPrimitive(v.value)))
+        is OtelValue.Texts -> JsonObject(mapOf("arrayValue" to JsonObject(mapOf("values" to JsonArray(v.value.map { JsonObject(mapOf("stringValue" to JsonPrimitive(it))) })))))
     }
 
     private fun nanos(ms: Long): String = (ms * 1_000_000L).toString()

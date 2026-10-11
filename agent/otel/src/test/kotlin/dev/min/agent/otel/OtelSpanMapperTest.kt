@@ -267,7 +267,9 @@ class OtelSpanMapperTest {
         val exec = span("claude_code.tool.execution")
         assertEquals(false, exec.flag("success"))
         assertTrue(exec.error != null) // 失败：状态为错误
-        assertFalse(exec.attributes.containsKey("error")) // 错误正文受 OTEL_LOG_TOOL_DETAILS 门控
+        // error 是类别，错误正文（"boom"）受 OTEL_LOG_TOOL_DETAILS 门控
+        assertEquals("ShellError", exec.text("error"))
+        assertFalse(exec.attributes.values.any { it is OtelValue.Text && it.value.contains("boom") })
     }
 
     @Test
@@ -295,24 +297,29 @@ class OtelSpanMapperTest {
     }
 
     @Test
-    fun `请求失败的 span 状态为错误，带错误说明与状态码，重试是新的一次 span`() {
+    fun `请求最终失败的 span 状态为错误，带错误说明与状态码；中途失败但重试成功的不留错误 span`() {
         seq = 0
-        val spans = spansOf(listOf(
+        // 最终失败：一个错误 span
+        val failedSpans = spansOf(listOf(
+            turnStart(1000), reqStart(1010),
+            rec(1200, ModelRequestFailed(turn(1), RequestId("r1"), 1, ModelFailureKind.Network, "断网", httpStatus = 503)),
+            turnEnd(1300),
+        )).filter { it.name == "claude_code.llm_request" }
+        val failed = failedSpans.single()
+        assertEquals("断网", failed.error)
+        assertEquals(503L, (failed.attributes["status_code"] as OtelValue.Whole).value)
+        assertEquals(false, (failed.attributes["success"] as OtelValue.Flag).value)
+        // 重试成功：原文一个 llm_request 覆盖全部重试（attempt 是总次数），失败的那次只留成事件
+        seq = 0
+        val retried = spansOf(listOf(
             turnStart(1000), reqStart(1010),
             rec(1200, ModelRequestFailed(turn(1), RequestId("r1"), 1, ModelFailureKind.RateLimited, "太快了", httpStatus = 429, willRetry = true)),
             reqStart(1300, "r1", attempt = 2), charged(1400), reply(1410),
             turnEnd(1500),
-        ))
-        val llms = spans.filter { it.name == "claude_code.llm_request" }
-        assertEquals(2, llms.size)
-        val failed = llms.single { it.error != null }
-        assertEquals("太快了", failed.error)
-        assertEquals(429L, (failed.attributes["status_code"] as OtelValue.Whole).value)
-        assertEquals(false, (failed.attributes["success"] as OtelValue.Flag).value)
-        assertEquals(1L, (failed.attributes["attempt"] as OtelValue.Whole).value)
-        val ok = llms.single { it.error == null }
-        assertEquals(2L, (ok.attributes["attempt"] as OtelValue.Whole).value)
-        assertNotEquals(failed.spanId, ok.spanId)
+        )).filter { it.name == "claude_code.llm_request" }.single()
+        assertNull(retried.error)
+        assertEquals(2L, (retried.attributes["attempt"] as OtelValue.Whole).value)
+        assertEquals(1, retried.events.size)
     }
 
     @Test
@@ -405,7 +412,7 @@ class OtelSpanMapperTest {
         assertEquals(
             setOf(
                 "claude_code.interaction", "claude_code.llm_request", "claude_code.tool",
-                "claude_code.tool.blocked_on_user", "claude_code.tool.execution",
+                "claude_code.tool.blocked_on_user", "claude_code.tool.execution", "claude_code.hook",
             ),
             OTEL_SPAN_NAMES,
         )
