@@ -74,7 +74,7 @@ class ChannelPolicy(
     fun refusal(request: ChannelRequest): String? = when {
         admits(request) -> null
         !enabled -> disabledReason
-        request.ref is ChannelRef.Server -> "server: 形式不在批准范围内：它只能走 --dangerously-load-development-channels（需要确认）"
+        request.ref is ChannelRef.Server -> "server: 形式不在批准范围内：它只能走开发参数 --dangerously-load-development-channels（需要确认）"
         else -> "${request.ref.label} 不在组织批准的 channel 插件名单里（allowedChannelPlugins）"
     }
 

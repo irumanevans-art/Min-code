@@ -21,8 +21,8 @@ sealed interface McpChannelEvent {
     data class Verdict(val requestId: String, val allow: Boolean) : McpChannelEvent
 }
 
-internal const val CHANNEL_CAPABILITY = "claude/channel"
-internal const val CHANNEL_PERMISSION_CAPABILITY = "claude/channel/permission"
+const val CHANNEL_CAPABILITY = "claude/channel"
+const val CHANNEL_PERMISSION_CAPABILITY = "claude/channel/permission"
 internal const val CHANNEL_METHOD = "notifications/claude/channel"
 internal const val CHANNEL_VERDICT_METHOD = "notifications/claude/channel/permission"
 internal const val CHANNEL_PERMISSION_REQUEST_METHOD = "notifications/claude/channel/permission_request"
@@ -30,7 +30,7 @@ internal const val CHANNEL_PERMISSION_REQUEST_METHOD = "notifications/claude/cha
 private val META_KEY = Regex("[A-Za-z0-9_]+")
 
 /** 服务器声明了 `experimental[name]` 且值是对象。`false`、`null`、字符串都不算声明（CC：v2.1.234 起 `false` 视为没声明） */
-internal fun JsonObject.declaresExperimental(name: String): Boolean =
+fun JsonObject.declaresExperimental(name: String): Boolean =
     ((this["experimental"] as? JsonObject)?.get(name) as? JsonObject) != null
 
 internal fun parseChannelMessage(params: JsonObject?): McpChannelEvent.Message? {

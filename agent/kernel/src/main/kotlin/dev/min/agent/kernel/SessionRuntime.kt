@@ -636,6 +636,24 @@ class SessionRuntime private constructor(
     }
 
     /**
+     * channel 服务器转回来的审批答复（[McpManager.applyVerdict] 已认过 request_id 与来源服务器）。
+     * 比人的答复收得更紧：只有「还在等的那次审批」才算；**放行**还要求它没踩安全底线（[CallPhase.AwaitingApproval.floorReason] 为空）且不是 alwaysAsk 的工具——
+     * 这两类是「连 bypass 也要人来批」的，不能借远端一句 yes 放过去；拒绝总是收。
+     * 只给「这一次」：放行记 [ApprovalChoice.Once]（不写「总是允许」规则），拒绝的说明标为宿主生成（不冒充成用户的话）
+     */
+    internal suspend fun answerApprovalFromChannel(approvalId: ApprovalId, allow: Boolean, server: String): Boolean {
+        val choice = if (allow) ApprovalChoice.Once
+        else ApprovalChoice.Deny("已通过 channel「$server」拒绝。", fromHost = true)
+        return commitIf(listOf(ApprovalResolved(approvalId, choice, DecidedBy.Channel(server))), Durability.Sync) { s ->
+            s.turn?.calls?.values?.any {
+                val phase = it.phase as? CallPhase.AwaitingApproval
+                phase != null && phase.approvalId == approvalId &&
+                    (!allow || (phase.floorReason == null && deps.tools.none { t -> t.name == it.tool && t.traits.alwaysAsk }))
+            } == true
+        } != null
+    }
+
+    /**
      * 回答一次提问。[answers] 与问题一一对应（[answerProblem] 的规则）；对不上抛 [IllegalArgumentException]——
      * 那是界面的 bug，不是用户的选择，什么都不写。那次提问已经不在等了（另一端先答了、回合已结束）返回 false。
      */

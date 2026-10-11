@@ -477,6 +477,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             listOf(ApprovalRequested(turnId, approvalId, ready.call.callId, ask, suggested, PolicyEngine.floorReason(ask, context))),
             Durability.Sync,
         )
+        // 转给开成 channel 的服务器（远端也能答）。必须由人批的（alwaysAsk、踩底线）不转：它们连 bypass 都不放，更不该能被远端一句 yes 放行
+        if (!ready.tool.traits.alwaysAsk && PolicyEngine.floorReason(ask, context) == null) rt.hub?.mcp?.relayApproval(rt, approvalId, ask, ready.raw)
         val resolved = rt.state.first { s -> s.phaseOf(ready.call.callId) !is CallPhase.AwaitingApproval }
         when (val phase = resolved.phaseOf(ready.call.callId)) {
             is CallPhase.Denied -> outcome(turnId, ready.call.callId, deniedResult(ready.call.name, phase.note, phase.fromHost))

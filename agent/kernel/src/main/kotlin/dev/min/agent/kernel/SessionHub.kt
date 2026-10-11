@@ -530,13 +530,18 @@ class SessionHub(
         if (runtime.state.value.origin != null) return
         // --bare / --safe-mode：MCP 服务器不自动发现（CC :72；safe 连托管配的也不连——原文保留清单里没有它）。
         // create / open / branch / reload 都汇到这一点，闸在这里关得严
-        if (deps.customizations != Customizations.Full) return
+        if (deps.customizations != Customizations.Full) {
+            // channel 是 MCP 的一种：MCP 不连的档位 channel 也不连（点了名的要说清为什么没开）
+            applyChannels(runtime, null, dev.min.agent.ext.mcp.ChannelPolicy.Open, blocked = "当前启动档位（--bare / --safe-mode）不连 MCP 服务器")
+            return
+        }
         // 连接配置冻结在会话起点，cwd 切换只更新 roots；否则重开会话会悄悄接上另一套服务器。
         val cwd = runtime.state.value.created.cwd
         bindLsp(runtime, cwd, runtime.plugins()?.lspSources().orEmpty())
-        val config = dev.min.agent.spi.catchingNonCancellation {
+        val (config, channelPolicy) = dev.min.agent.spi.catchingNonCancellation {
             val settings = dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs)
-            dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env, plugins = runtime.plugins()?.mcpSources().orEmpty(), restricted = deps.settingsInputs.restricted)
+            dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env, plugins = runtime.plugins()?.mcpSources().orEmpty(), restricted = deps.settingsInputs.restricted) to
+                dev.min.agent.ext.mcp.ChannelPolicy.fromLayers(settings.merged.layers)
         }.getOrElse { e ->
             // 只写异常类名：异常消息可能带着配置里的 env / headers 值
             runtime.commit(
@@ -551,6 +556,93 @@ class SessionHub(
             if (it.spec.name in off && it.gate == dev.min.agent.ext.mcp.McpGate.Enabled) it.copy(gate = dev.min.agent.ext.mcp.McpGate.Disabled, reason = "本会话已关闭。") else it
         })
         mcp.attach(runtime, gated, cwd, fresh)
+        applyChannels(runtime, gated, channelPolicy)
+    }
+
+    // ---- MCP channel（CC channels）----
+
+    /**
+     * 本进程默认要开的 channel（CLI 的 `--channels` / `--dangerously-load-development-channels`）：新建、重开的根会话套用。
+     * 宿主在开会话前设；开发参数的那些必须是**用户已确认过**的（内核不替宿主确认）。会话自己设过（[setChannels]）就以它为准
+     */
+    var defaultChannels: List<dev.min.agent.ext.mcp.ChannelRequest> = emptyList()
+
+    private val channelRequests = ConcurrentHashMap<SessionId, List<dev.min.agent.ext.mcp.ChannelRequest>>()
+    private val channelRefusals = ConcurrentHashMap<SessionId, List<String>>()
+
+    /**
+     * 设定一个根会话要开的 channel（整份替换），并立刻生效：重读 MCP 配置、按托管策略与 MCP 闸把请求落到服务器上。
+     * 返回没开成的原因（逐项）。只有用户点名的才会开；要给的 [requests] 里带 `development = true` 的须是宿主确认过的
+     */
+    suspend fun setChannels(id: SessionId, requests: List<dev.min.agent.ext.mcp.ChannelRequest>): List<String> {
+        if (runtimes[id] == null) return emptyList()
+        channelRequests[id] = requests
+        reloadMcp(id)
+        return channelRefusals[id].orEmpty()
+    }
+
+    /** 本会话现在要开的 channel 请求（没单独设过就是 [defaultChannels]） */
+    fun channelRequestsOf(id: SessionId): List<dev.min.agent.ext.mcp.ChannelRequest> = channelRequests[id] ?: defaultChannels
+
+    /** 面板「channel」一栏的一行：声明了 channel 能力、已连上的服务器，和它对应的点名写法 */
+    data class ChannelOption(val server: String, val ref: dev.min.agent.ext.mcp.ChannelRef, val state: ChannelState)
+
+    /**
+     * 本会话里可以开成 channel 的服务器（连上了、握手时声明了 channel 能力）。[ChannelOption.ref]：插件清单声明为 channel 的
+     * 服务器是 `plugin:<name>@<market>`（批准口径：用户点名即可）；别的是 `server:<name>`（只能走开发参数、宿主要先确认）
+     */
+    suspend fun channelOptions(id: SessionId): List<ChannelOption> {
+        val runtime = runtimes[id] ?: return emptyList()
+        val pluginServers = runtime.plugins()?.channelServers().orEmpty()
+        return mcp.panelOf(id).mapNotNull { row ->
+            val state = row.channel ?: return@mapNotNull null
+            val declared = pluginServers.firstOrNull { it.serverName == row.info.name }
+            ChannelOption(row.info.name, declared?.ref?.marketplace?.let { market -> dev.min.agent.ext.mcp.ChannelRef.Plugin(declared.ref.name, market) } ?: dev.min.agent.ext.mcp.ChannelRef.Server(row.info.name), state)
+        }
+    }
+
+    /**
+     * 面板勾选：开 / 关一台服务器的 channel。开的是 `server:` 形式（没经批准清单）时 [confirmedDevelopment] 必须为真
+     * ——宿主要先弹确认（CC：开发参数「Prompts for confirmation」）；没确认抛 [IllegalArgumentException]，什么都不改
+     */
+    suspend fun setChannelEnabled(id: SessionId, server: String, enabled: Boolean, confirmedDevelopment: Boolean = false): List<String> {
+        val option = channelOptions(id).firstOrNull { it.server == server } ?: throw IllegalArgumentException("MCP 服务器 $server 没有声明 channel 能力，或还没连上。")
+        val others = channelRequestsOf(id).filterNot { it.ref == option.ref }
+        if (!enabled) return setChannels(id, others)
+        val development = option.ref is dev.min.agent.ext.mcp.ChannelRef.Server
+        require(!development || confirmedDevelopment) { "这台服务器不在批准范围内，开成 channel 要先确认（开发用途）。" }
+        return setChannels(id, others + dev.min.agent.ext.mcp.ChannelRequest(option.ref, development))
+    }
+
+    /**
+     * 把点名的请求落成本会话的 channel 授权（[resolveChannels]）。授权变化与没开成的原因各记一条说明（相同的不重复记）。
+     * [blocked] 非空 = 这个档位根本不连 MCP：点了名的全部拒绝，原因就是它
+     */
+    private suspend fun applyChannels(
+        runtime: SessionRuntime,
+        config: dev.min.agent.ext.mcp.McpConfigSnapshot?,
+        policy: dev.min.agent.ext.mcp.ChannelPolicy,
+        blocked: String? = null,
+    ) {
+        val id = runtime.sessionId
+        val requests = channelRequests[id] ?: defaultChannels
+        val resolution = if (blocked != null || config == null) {
+            ChannelResolution(emptyMap(), requests.map { "${it.ref.label}：$blocked" })
+        } else resolveChannels(requests, config, runtime.plugins()?.channelServers().orEmpty(), policy)
+        val before = mcp.channelsOf(id)
+        mcp.setChannels(id, resolution.grants)
+        val added = resolution.grants.filterKeys { it !in before }
+        val notes = added.map { (server, grant) ->
+            dev.min.agent.spi.Note(
+                dev.min.agent.spi.NoteLevel.Info,
+                "Channels（实验）：来自 $server 的消息会直接进入本会话（外部来源，不是用户本人输入）" +
+                    if (grant.development) "；这是用开发参数开启的，没有经过批准清单。" else "。",
+            )
+        } + if (resolution.refusals != channelRefusals[id].orEmpty()) resolution.refusals.map {
+            dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "Channels 没有开启：$it")
+        } else emptyList()
+        channelRefusals[id] = resolution.refusals
+        if (notes.isNotEmpty()) runtime.commit(notes, Durability.Batched)
     }
 
     private fun bindLsp(runtime: SessionRuntime, root: GuestPath, servers: List<dev.min.agent.spi.LspServerSpec>) {
@@ -758,6 +850,7 @@ class SessionHub(
         var deletedRoot = false
         for (id in order) {
             mcpOff.remove(id)
+            channelRequests.remove(id); channelRefusals.remove(id)
             forgetSnapshots(id)
             val deleted = store.delete(id)
             if (id == root) deletedRoot = deleted
