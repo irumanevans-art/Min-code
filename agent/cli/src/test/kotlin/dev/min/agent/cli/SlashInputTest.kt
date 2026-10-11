@@ -66,11 +66,11 @@ class SlashInputTest {
     @Test
     fun `the Skill tool follows tasks and web tools append after the stable prefix`() {
         val names = desktopTools().map { it.name }
-        assertEquals(listOf("Skill", "WebFetch", "EnterWorktree", "ExitWorktree", "Monitor", "TaskOutput", "TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "EndConversation", "PushNotification", "ListAgents", "SendUserFile"), names.takeLast(16))
+        assertEquals(listOf("Skill", "WebFetch", "EnterWorktree", "ExitWorktree", "Monitor", "TaskOutput", "TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "EndConversation", "PushNotification", "ListAgents", "SendUserFile", "ReportFindings"), names.takeLast(17))
         assertEquals(
             listOf("Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Bash", "LSP", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Agent", "SendMessage", "TaskStop",
                 "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"),
-            names.dropLast(16),
+            names.dropLast(17),
         )
     }
 }

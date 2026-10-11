@@ -632,6 +632,12 @@
   <string name="transcript_receipt_duration">用时 %1$s</string>
   <string name="transcript_more_lines">… 还有 %1$d 行</string>
   <string name="transcript_revert">撤销此修改</string>
+  <!-- 审查结果卡片（ReportFindings）：计数、严重度、失败场景 -->
+  <string name="findings_count">审查发现：%1$d 条</string>
+  <string name="findings_severity_important">重要</string>
+  <string name="findings_severity_nit">小问题</string>
+  <string name="findings_severity_pre_existing">既有问题</string>
+  <string name="findings_scenario">失败场景：%1$s</string>
   <!-- 工具卡：折叠行摘要、角标与 diff 省略。文案经 TranscriptLabels 传递，
        非 Composable 的调用方（搜索、导出）拿到的也是同一份 -->
   <string name="tool_summary_range">%1$d–%2$d 行</string>

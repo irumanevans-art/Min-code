@@ -637,6 +637,12 @@
   <string name="transcript_receipt_duration">took %1$s</string>
   <string name="transcript_more_lines">… %1$d more lines</string>
   <string name="transcript_revert">Undo this change</string>
+  <!-- Review findings card (ReportFindings): count, severity, failure scenario -->
+  <string name="findings_count">Review findings: %1$d</string>
+  <string name="findings_severity_important">Important</string>
+  <string name="findings_severity_nit">Nit</string>
+  <string name="findings_severity_pre_existing">Pre-existing</string>
+  <string name="findings_scenario">Failure scenario: %1$s</string>
   <!-- Tool cards: folded-line summary, badge and diff elision. The copy travels through
        TranscriptLabels so non-composable callers (search, export) read the same strings -->
   <string name="tool_summary_range">lines %1$d–%2$d</string>

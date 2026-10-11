@@ -136,9 +136,10 @@ class SkillSessionTest {
         val rt = create(model)
 
         val loaded = events()[1] as SkillsLoaded
-        assertEquals(listOf("deploy", "fix", "manual", "notes"), loaded.entries.map { it.name })
-        assertEquals(listOf(SkillKind.Skill, SkillKind.Skill, SkillKind.Skill, SkillKind.Command), loaded.entries.map { it.kind })
-        assertEquals(listOf("user", "project", "project", "project"), loaded.entries.map { it.source })
+        // 内置 skill（loop / code-review / simplify / batch）排在磁盘 skill 之后、命令之前
+        assertEquals(listOf("deploy", "fix", "manual", "loop", "code-review", "simplify", "batch", "notes"), loaded.entries.map { it.name })
+        assertEquals(List(7) { SkillKind.Skill } + SkillKind.Command, loaded.entries.map { it.kind })
+        assertEquals(listOf("user", "project", "project", "内置", "内置", "内置", "内置", "project"), loaded.entries.map { it.source })
         assertEquals(listOf("issue", "branch"), loaded.entries.single { it.name == "fix" }.arguments)
         assertEquals(loaded, rt.state.value.skills)
 
@@ -147,16 +148,12 @@ class SkillSessionTest {
         val system = model.requests.single().system
         assertEquals(SystemPrompt.build(TEST_PROFILE, env(), skills = loaded), system)
         assertEquals(3, system.size)
-        assertEquals(
-            listOf(
-                "The following skills are available for use with the Skill tool:",
-                "",
-                "- deploy: Ship the app - when asked to release",
-                "- fix: Fix an issue",
-                "- notes: Take notes",
-            ),
-            system[2].lines(),
-        )
+        // 内置 skill 的说明来自随包的 SKILL.md，这里只对名字；batch 禁止模型调用，不列
+        val lines = system[2].lines()
+        assertEquals("The following skills are available for use with the Skill tool:", lines[0])
+        assertEquals("", lines[1])
+        assertEquals("- deploy: Ship the app - when asked to release", lines[2])
+        assertEquals(listOf("deploy", "fix", "loop", "code-review", "simplify", "notes"), lines.drop(2).map { it.removePrefix("- ").substringBefore(":") })
         // 禁止模型调用的不列
         assertFalse(system.any { "manual" in it })
     }
@@ -193,7 +190,8 @@ class SkillSessionTest {
     fun `no skills and no home both mean no event`() = run {
         fs.files["/workspace/README.md"] = "x"
         create(ScriptedModel())
-        assertFalse(events().any { it is SkillsLoaded })
+        // 只有内置 skill 时仍然写清单事件（它们进清单）
+        assertTrue(events().filterIsInstance<SkillsLoaded>().single().entries.all { it.source == "内置" })
 
         seedSkills()
         SessionRuntime.create(
@@ -289,7 +287,7 @@ class SkillSessionTest {
         val result = invoke(rt, model)
         assertTrue(result.isError)
         val message = (result.content.single() as TextPart).text
-        assertTrue(message, "没有名为「newcomer」" in message && "deploy、fix、notes" in message)
+        assertTrue(message, "没有名为「newcomer」" in message && "deploy、fix、loop、code-review、simplify、notes" in message)
         assertFalse("manual" in message)
     }
 

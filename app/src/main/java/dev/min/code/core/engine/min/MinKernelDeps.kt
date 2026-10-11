@@ -178,6 +178,8 @@ fun minTools(): List<Tool<*>> = listOf(
     dev.min.agent.tools.ListAgentsTool,
     // 把文件发给用户（只往末尾追加）
     dev.min.agent.tools.SendUserFileTool,
+    // 内置 /code-review 的审查结果列表（只往末尾追加）
+    dev.min.agent.tools.ReportFindingsTool,
 )
 
 object MinKernelDeps {

@@ -1,5 +1,8 @@
 package dev.min.code.ui.session
 
+import dev.min.agent.tools.FindingRow
+import dev.min.agent.tools.FindingSeverity
+import dev.min.agent.tools.ReportFindings
 import dev.min.code.core.engine.min.monitorWsAddress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -458,6 +461,9 @@ internal fun ToolCallDetail(
 
             "TodoWrite" -> TodoList(item.input)
 
+            // /code-review 交上来的审查结果：一条一行，入参不合格时退回原样 JSON
+            "ReportFindings" -> FindingsList(item.input)
+
             "ExitPlanMode", "EnterPlanMode" -> {
                 item.input["plan"].asStringOrNull()?.let { MarkdownBlock(content = it) }
             }
@@ -469,6 +475,63 @@ internal fun ToolCallDetail(
             }
         }
     }
+}
+
+/**
+ * ReportFindings 的入参 → 卡片行。入参不合格返回 null（纯函数，单测直接调）：
+ * 渲染层拿到坏数据要退回原样显示，不能因为一条发现的字段缺了就整条消息炸掉。
+ */
+internal fun findingRowsOf(input: JsonObject): List<FindingRow>? = ReportFindings.fromOrNull(input)?.let(ReportFindings::rows)
+
+/** 审查结果卡片：一条一行，先是严重度、位置，再是说明与失败场景。字符串中英两份在 values 与 values-zh */
+@Composable
+private fun FindingsList(input: JsonObject) {
+    val rows = remember(input) { findingRowsOf(input) }
+    if (rows == null) {
+        MonoText(prettyInput(input))
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            stringResource(R.string.findings_count, rows.size),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        rows.forEach { row ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    row.severity?.let { FindingSeverityTag(it) }
+                    Text(
+                        row.location,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetbrainsMono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        overflow = TextOverflow.Ellipsis,
+                        maxLines = 1,
+                    )
+                }
+                Text(row.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    stringResource(R.string.findings_scenario, row.failureScenario),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FindingSeverityTag(severity: FindingSeverity) {
+    Text(
+        text = when (severity) {
+            FindingSeverity.Important -> stringResource(R.string.findings_severity_important)
+            FindingSeverity.Nit -> stringResource(R.string.findings_severity_nit)
+            FindingSeverity.PreExisting -> stringResource(R.string.findings_severity_pre_existing)
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = if (severity == FindingSeverity.Important) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /** 入参美化。渲染失败就退回原样，绝不因为格式化炸掉一条消息 */

@@ -36,7 +36,7 @@ object ClaudeConfigLoader {
                 ConfigSource.Managed -> DefinitionRoot(source, GuestPaths.join(managedDir, sub))
                 ConfigSource.User -> if (inputs.restricted) null else DefinitionRoot(source, GuestPaths.join(userDir, sub))
                 ConfigSource.Project -> if (projectIsUser) null else DefinitionRoot(source, GuestPaths.join(projectDir, sub))
-                ConfigSource.Local, ConfigSource.Plugin -> null
+                ConfigSource.Local, ConfigSource.Plugin, ConfigSource.Bundled -> null
             }
         }
 

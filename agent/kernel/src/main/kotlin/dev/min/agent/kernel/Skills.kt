@@ -1,6 +1,7 @@
 package dev.min.agent.kernel
 
 import dev.min.agent.ext.config.ClaudeConfigLoader
+import dev.min.agent.ext.skills.BundledSkills
 import dev.min.agent.ext.skills.SkillFiles
 import dev.min.agent.ext.skills.SkillPrompt
 import dev.min.agent.ext.skills.SkillVars
@@ -13,6 +14,7 @@ import dev.min.agent.spi.SkillsLoaded
 import dev.min.agent.spi.WorkspaceFs
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 
@@ -31,14 +33,21 @@ internal object SkillSnapshots {
     ): SkillsLoaded? {
         val config = ClaudeConfigLoader.load(fs, cwd, home, inputs = inputs)
         val notes = config.notes.drop(config.settings.notes.size).toMutableList()
-        val entries = (config.skills + plugins?.skills.orEmpty()).distinctBy { it.name }.map {
+        val merged = config.settings.merged
+        // 内置 skill（CC 的 bundled skills）排在磁盘与插件之后：同名时让位，文档写的是「你的 skill 替换内置的」。
+        // `disableBundledSkills: true` 整体关掉；--bare / --safe-mode 不走到这里（见 SessionRuntime）
+        val disk = (config.skills + plugins?.skills.orEmpty()).distinctBy { it.name }
+        val bundled = if (merged.raw("disableBundledSkills").isTrueFlag()) emptyList() else BundledSkills.defs().filter { b -> disk.none { it.name == b.name } }
+        // 内置 skill 替换同名的内置命令（文档：skill 替换 command）；磁盘与插件的命令照旧
+        val bundledNames = bundled.map { it.name }.toSet()
+        val entries = (disk + bundled).map {
             SkillEntry(
                 name = it.name, description = it.description, path = it.path, kind = SkillKind.Skill, whenToUse = it.whenToUse,
                 source = it.sourceLabel, argumentHint = it.argumentHint, arguments = it.arguments,
                 disableModelInvocation = it.disableModelInvocation, userInvocable = it.userInvocable,
                 context = it.context, hooks = it.hooks,
             )
-        } + (config.commands + plugins?.commands.orEmpty()).distinctBy { it.name }.map {
+        } + (config.commands + plugins?.commands.orEmpty()).distinctBy { it.name }.filter { it.name !in bundledNames }.map {
             SkillEntry(
                 name = it.name, description = it.description, path = it.path, kind = SkillKind.Command, whenToUse = it.whenToUse,
                 source = it.sourceLabel, argumentHint = it.argumentHint, arguments = it.arguments,
@@ -46,7 +55,6 @@ internal object SkillSnapshots {
                 context = it.context, hooks = it.hooks,
             )
         }
-        val merged = config.settings.merged
         val fraction = number(merged.raw("skillListingBudgetFraction"))?.takeIf { it > 0 && it <= 1 }
         if (merged.raw("skillListingBudgetFraction") != null && fraction == null) {
             notes += "忽略 skillListingBudgetFraction：必须是大于 0 且不超过 1 的数字"
@@ -60,6 +68,9 @@ internal object SkillSnapshots {
     }
 
     private fun number(e: JsonElement?): Double? = (e as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull
+
+    /** 布尔开关：只认真正的 true / false，字符串 "true" 不算 */
+    private fun JsonElement?.isTrueFlag(): Boolean = (this as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull == true
 }
 
 /**
@@ -94,7 +105,13 @@ internal class KernelSkillPort(
             projectDir = state.settings.cwd.value,
             effort = state.settings.effort?.name?.lowercase(),
         )
-        return SkillInvocation.Loaded(name, SkillPrompt.render(body, args, entry.arguments, baseDir, vars))
+        val rendered = SkillPrompt.render(body, args, entry.arguments, baseDir, vars)
+        // 内置 /loop：间隔取整、提示词选择由内核算好，附在正文后面（照 LoopCommand.planBlock 的说明）
+        if (BundledSkills.isBundled(entry.path.value) && name == "loop") {
+            val (project, user) = BundledSkills.loopMdTexts(fs, state.settings.cwd, rt.deps.memoryHome)
+            return SkillInvocation.Loaded(name, rendered + "\n\n" + LoopCommand.planBlock(args.orEmpty(), project, user))
+        }
+        return SkillInvocation.Loaded(name, rendered)
     }
 
     private fun unknown(name: String, entries: List<SkillEntry>): String {

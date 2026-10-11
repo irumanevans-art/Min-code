@@ -240,6 +240,34 @@ class BareSafeModeTest {
         assertTrue(rt.state.value.toolResults.getValue(CallId("c1")).isError)
     }
 
+    // ---- 内置 skill 与启动档 ----
+
+    /**
+     * 内置 skill 是「skills」的一部分：完整档进清单，--bare 与 --safe-mode 都整体不进（CC 的跳过清单点名 skills，
+     * 内置的也不从磁盘发现，但照同一条「整体不发现」处理；这是按原文的读法，不是 CC 二进制里的实测）。
+     */
+    @Test
+    fun `内置 skill：完整档进清单`() = run {
+        seed()
+        val rt = createIn(hub(Customizations.Full, ScriptedModel(reply(TextPart("done"))), listOf(read), FakeExec()))
+        val names = rt.state.value.skills!!.entries.filter { it.source == "内置" }.map { it.name }
+        assertEquals(listOf("loop", "code-review", "simplify", "batch"), names)
+    }
+
+    @Test
+    fun `内置 skill：--bare 整体不进清单`() = run {
+        seed()
+        val rt = createIn(hub(Customizations.Bare, ScriptedModel(reply(TextPart("done"))), listOf(read), FakeExec()))
+        assertNull("bare 不该有内置 skill", rt.state.value.skills)
+    }
+
+    @Test
+    fun `内置 skill：--safe-mode 整体不进清单`() = run {
+        seed()
+        val rt = createIn(hub(Customizations.Safe, ScriptedModel(reply(TextPart("done"))), listOf(read), FakeExec()))
+        assertNull("safe 不该有内置 skill", rt.state.value.skills)
+    }
+
     // ---- --safe-mode ----
 
     @Test

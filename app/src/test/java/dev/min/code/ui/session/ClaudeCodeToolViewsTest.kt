@@ -3,6 +3,7 @@ package dev.min.code.ui.session
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -310,6 +311,22 @@ class ClaudeCodeToolViewsTest {
 
         val multiline = toolSummary("Bash", input("""{"command":"a\n\n   b\tc"}"""), labels)
         assertEquals("a b c", multiline)
+    }
+
+    // endregion
+
+    // region ReportFindings 卡片
+
+    @Test
+    fun `report findings input becomes card rows with the location and the severity`() {
+        val rows = findingRowsOf(input("""{"findings":[{"file":"a.kt","line":3,"summary":"s","failure_scenario":"f","severity":"nit"}]}"""))!!
+        assertEquals("a.kt:3", rows.single().location)
+        assertEquals(dev.min.agent.tools.FindingSeverity.Nit, rows.single().severity)
+    }
+
+    @Test
+    fun `a malformed report input has no rows, so the card falls back to the raw input`() {
+        assertNull(findingRowsOf(input("""{"findings":[]}""")))
     }
 
     // endregion

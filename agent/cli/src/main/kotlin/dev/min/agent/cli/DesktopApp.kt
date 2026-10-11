@@ -119,7 +119,9 @@ internal fun desktopTools(
     // 能发消息的对象（ListAgents）：只列本会话的子 agent 与团队成员
     listOf(dev.min.agent.tools.ListAgentsTool) +
     // 把文件发给用户（SendUserFile）：桌面打印路径（见下面的 userFileSink）
-    listOf(dev.min.agent.tools.SendUserFileTool)
+    listOf(dev.min.agent.tools.SendUserFileTool) +
+    // 内置 /code-review 的审查结果列表（只往末尾追加）；bare 档的五件套不含它，bare 也不发现 skills
+    listOf(dev.min.agent.tools.ReportFindingsTool)
 
 /** 团队与定时调度的工具（只在交互会话里提供） */
 private val M5_TOOLS: List<Tool<*>> = listOf(TeamCreateTool, TeamDisbandTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool)

@@ -341,6 +341,8 @@ private fun priority(source: ConfigSource): Int = when (source) {
     ConfigSource.Cli -> 2
     ConfigSource.Plugin -> 0
     ConfigSource.Managed -> 3
+    // 内置 skill 不带 hooks，这个优先级只是为了 when 穷尽
+    ConfigSource.Bundled -> 0
 }
 
 internal val IF_EVENTS = setOf(HookEvent.PreToolUse, HookEvent.PostToolUse, HookEvent.PostToolUseFailure,

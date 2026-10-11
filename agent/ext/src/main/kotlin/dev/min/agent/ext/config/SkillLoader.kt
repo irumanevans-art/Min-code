@@ -100,9 +100,14 @@ internal object SkillLoader {
     internal suspend fun readSkill(io: ConfigIo, source: ConfigSource, dir: String, dirName: String): SkillDef? {
         val file = GuestPaths.join(dir, "SKILL.md")
         val text = io.readText(file) ?: return null
+        return skillFromText(text, source, file, dirName, io.notes)
+    }
+
+    /** 一份 SKILL.md 的文本 → 定义；磁盘与随包资源（[BundledSkills]）共用这一条解析 */
+    internal fun skillFromText(text: String, source: ConfigSource, file: String, dirName: String, notes: MutableList<String>): SkillDef {
         val fm = FrontmatterParser.parse(text, file)
-        io.notes += fm.notes
-        val f = FrontmatterFields(fm.fields, file, io.notes)
+        notes += fm.notes
+        val f = FrontmatterFields(fm.fields, file, notes)
         val p = PromptFields.read(f)
         val name = f.string("name")?.trim()?.takeIf { it.isNotEmpty() } ?: dirName
         return SkillDef(
