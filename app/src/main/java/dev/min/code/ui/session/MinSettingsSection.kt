@@ -158,11 +158,18 @@ internal fun MinUsageSection(usage: UsageView) {
             )
         }
         usage.cacheReadRatio?.let { UsageLine(stringResource(R.string.min_usage_cache), "${(it * 100).roundToInt()}%") }
+        if (usage.totalInputTokens != null && usage.totalOutputTokens != null) {
+            UsageLine(
+                stringResource(R.string.min_usage_tokens),
+                stringResource(R.string.composer_tokens, compactTokens(usage.totalInputTokens), compactTokens(usage.totalOutputTokens)),
+            )
+        }
         usage.costLabel?.let { UsageLine(stringResource(R.string.min_usage_cost), it) }
         usage.subagentCostLabel?.let { UsageLine(stringResource(R.string.min_usage_cost_subagents), it) }
         if (usage.costLabel == null && used != null) SettingsSubHeader(stringResource(R.string.min_usage_no_price))
     }
 }
+
 
 /** 手风琴行右边那段摘要：优先花费（用户最关心），没有就写上下文占比 */
 @Composable

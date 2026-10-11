@@ -1142,6 +1142,9 @@
   <string name="session_notification_peer">别的会话发来一条消息，等你批准</string>
   <string name="user_file_card_title">发给你的文件（%1$d 个）</string>
   <string name="user_file_gone">已不在本机缓存</string>
+  <string name="composer_cost_session">本次 %1$s</string>
+  <string name="composer_tokens">↑%1$s ↓%2$s</string>
+  <string name="min_usage_tokens">累计发出 / 收回</string>
   <string name="min_agent_attachment">[附件]</string>
   <string name="min_agent_redacted_thinking">[加密思考]</string>
   <string name="min_agent_mode_default">每次询问</string>

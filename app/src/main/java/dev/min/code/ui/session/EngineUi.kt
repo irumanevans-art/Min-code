@@ -8,6 +8,7 @@ import dev.min.code.core.engine.EngineCapabilities
 import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.claude.ClaudeStateMapper
+import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
 
 /**
  * 会话页里「哪个引擎长什么样」的**唯一分派处**（设计 §3.8；`AgentSession` 头注释的第 3 条规矩）。
@@ -36,6 +37,15 @@ internal object EngineUi {
      * 别的引擎的会话里不该冒出一个和它无关的数。Min 的花费是会话自己的 [dev.min.code.core.engine.UsageView.costLabel]
      */
     fun dailyCost(kind: EngineKind): Boolean = kind == EngineKind.ClaudeCode
+
+    /**
+     * 底栏潮环的分母（上下文窗口）取谁。Min 的窗口来自目录与供应商档，是准的，照用——以前和 CC 共用「按 CC 目录取较大值」，
+     * 128k 窗口的模型被画成 200k，环永远到不了朱；CC 的 CLI 对不认识的 id 报 200k（Fable 5.1 是原生 1M），要按目录纠正
+     */
+    fun contextLimit(kind: EngineKind, reported: Int?, model: String?): Int = when (kind) {
+        EngineKind.MinAgent -> reported?.takeIf { it > 0 } ?: ClaudeCodeModelCatalog.effectiveContextLimit(null, model)
+        EngineKind.ClaudeCode, EngineKind.Codex -> ClaudeCodeModelCatalog.effectiveContextLimit(reported, model)
+    }
 
     /** 抽屉里会话行上的引擎标签。CC 是默认引擎，不标；Codex 在自己的页里，不在这个列表里 */
     @StringRes

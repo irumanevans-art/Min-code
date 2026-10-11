@@ -1148,6 +1148,9 @@
   <string name="session_notification_peer">Another session sent a message for your approval</string>
   <string name="user_file_card_title">Files sent to you (%1$d)</string>
   <string name="user_file_gone">No longer cached on this device</string>
+  <string name="composer_cost_session">This session %1$s</string>
+  <string name="composer_tokens">↑%1$s ↓%2$s</string>
+  <string name="min_usage_tokens">Tokens sent / received</string>
   <string name="min_agent_attachment">[attachment]</string>
   <string name="min_agent_redacted_thinking">[encrypted thinking]</string>
   <string name="min_agent_mode_default">Ask each time</string>

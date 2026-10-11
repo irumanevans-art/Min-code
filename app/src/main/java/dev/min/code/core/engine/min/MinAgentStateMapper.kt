@@ -120,7 +120,13 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             resume = minResumeOffer(root, canRun = !removed, stopping = input.stopping),
             interactions = interactions,
             settings = settingsOf(root, providerLabel),
-            usage = usageViewOf(root, profile?.contextWindow).copy(costLabel = cost.totalLabel(), subagentCostLabel = cost.subagentLabel()),
+            usage = usageViewOf(root, profile?.contextWindow).let { base ->
+                val (tokensIn, tokensOut) = treeTokensOf(input.nodes)
+                base.copy(
+                    costLabel = cost.totalLabel(), subagentCostLabel = cost.subagentLabel(),
+                    totalInputTokens = tokensIn.takeIf { it > 0 }, totalOutputTokens = tokensOut.takeIf { it > 0 },
+                )
+            },
             tasks = input.tasks,
             threads = threads.withPendingCounts(interactions),
             slashCommands = text.slashCommands() + input.workflowCommands,
@@ -256,3 +262,4 @@ fun usageViewOf(state: SessionState, contextWindow: Int?): UsageView {
         cacheReadRatio = if (inputs > 0) total.cacheReadTokens.toDouble() / inputs else null,
     )
 }
+

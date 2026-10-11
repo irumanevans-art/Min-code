@@ -317,11 +317,18 @@ data class UsageView(
     val costLabel: String? = null,
     /** [costLabel] 里子 agent（含团队成员）花的那一份；没有子 agent 花钱、或总数不全时 null。只有 Min 填（整棵树求和，设计 5.7） */
     val subagentCostLabel: String? = null,
+    /**
+     * 整个会话累计发出 / 收回的 token（CC statusline 的 `total_input_tokens` / `total_output_tokens`）。输入含缓存读写——
+     * 那是真发过去的上下文，只是计价不同。Min 填（整棵树求和，与 [costLabel] 同口径）；别的引擎没有可靠来源为 null
+     */
+    val totalInputTokens: Long? = null,
+    val totalOutputTokens: Long? = null,
 ) {
     companion object {
         val Empty = UsageView(null, null, null, null, null, null)
     }
 }
+
 
 /**
  * @param stale 会话启动之后供应商档改过，要重启才生效（CC 的 `StaleSessionsNotice`）
