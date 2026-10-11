@@ -94,8 +94,8 @@ class SkillShellRunTest {
     }
 
     /** 带 Hub 的根会话：分身的 skill 要经它派生子 agent */
-    private suspend fun hubSession(model: ModelClient): SessionRuntime =
-        SessionHub(store, deps(model, true), newScope(), HubLimits()).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+    private suspend fun hubSession(model: ModelClient, mode: PermissionMode = PermissionMode.Default, tools: List<dev.min.agent.spi.Tool<*>> = emptyList()): SessionRuntime =
+        SessionHub(store, deps(model, true, tools), newScope(), HubLimits()).create(GuestPath("/workspace"), TEST_MODEL, mode)
 
     private fun project(name: String, body: String, allowed: List<String> = emptyList(), context: String? = null, agent: String? = null, background: Boolean = true) = SkillDef(
         name = name, description = "d", path = GuestPath("/workspace/.claude/skills/$name/SKILL.md"), body = body,
@@ -246,7 +246,7 @@ class SkillShellRunTest {
         val noShell = session(mode = PermissionMode.Auto)
         assertTrue(typed(noShell, project("build", "!`make build`")) is SlashResult.Refused)
         // 指定了 agent 的分身 skill：照文档中止（命令要在子 agent 里跑，那边没有这条交接）
-        val rt = session(mode = PermissionMode.Auto, tools = bash)
+        val rt = hubSession(ScriptedModel(), PermissionMode.Auto, bash)
         val forked = typed(rt, project("build", "!`make build`", context = "fork", agent = "Explore"))
         assertTrue("got $forked", forked is SlashResult.Refused)
         assertTrue(exec.runs.isEmpty())
