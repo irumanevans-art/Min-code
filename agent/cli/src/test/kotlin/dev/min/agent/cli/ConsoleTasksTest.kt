@@ -40,7 +40,7 @@ class ConsoleTasksTest {
         val names = DESKTOP_TOOLS.map { it.name }
         val at = names.indexOf("TaskStop")
         assertEquals(listOf("TaskCreate", "TaskGet", "TaskList", "TaskUpdate"), names.subList(at + 1, at + 5))
-        assertEquals(listOf("Skill", "WebFetch", "EnterWorktree", "ExitWorktree", "Monitor", "TaskOutput", "TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "EndConversation", "PushNotification", "ListAgents", "SendUserFile"), names.drop(at + 5))
+        assertEquals(listOf("Skill", "WebFetch", "EnterWorktree", "ExitWorktree", "Monitor", "TaskOutput", "TeamCreate", "TeamDisband", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "EndConversation", "PushNotification", "ListAgents", "SendUserFile", "Artifact", "SendFeedback"), names.drop(at + 5))
         assertEquals(names.size, names.toSet().size)
     }
 }
