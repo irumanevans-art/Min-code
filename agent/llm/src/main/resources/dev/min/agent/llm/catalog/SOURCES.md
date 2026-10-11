@@ -39,6 +39,7 @@
 | claude-fable-5-1 | contextWindow / maxOutputTokens | 1000000 / 128000 | anthropic.md §2（1M / 128K） |
 | claude-fable-5-1 | supportsImages | true | anthropic.md §2（"All current models support text and image input"） |
 | claude-* （目录内全部 Claude 条目） | supportsPdf | true | 官方 pdf-support 页（platform.claude.com/docs/en/build-with-claude/pdf-support）"All active models support PDF processing"（2026-10-10 抓取） |
+| claude-fable-5-1、claude-opus-5-5、claude-sonnet-5、claude-sonnet-5-5 | supportsEndConversation | true | CC tools-reference「EndConversation tool behavior」：「the session's model is Claude Opus 4.8, Claude Sonnet 5, Claude Fable 5, or a later version of one of those families」（2026-10-11 抓取）。目录里的 opus / sonnet / fable 型号都在 4.8 / 5 及以上；haiku 与非 Anthropic 的型号不标。原文还排除 Bedrock / Vertex / Foundry / 云网关供应商：目录里这些型号都挂在 `anthropic` 供应商下，走中转的自定义供应商本来就查不到目录条目，按默认不露出 |
 | claude-fable-5-1 | effortPatches | adaptive + `output_config.effort` × low/medium/high/xhigh/max | anthropic.md §2（"Adaptive (always on)"）+ §3（`output_config.effort` 取值 low–max 含 xhigh；形状为任务单给定示例） |
 | claude-fable-5-1 | reasoningEcho | always | anthropic.md §3（thinking 块 "must be passed back unmodified"；§10 无相反） |
 | claude-opus-5-5 | 同上各字段 | 1000000 / 128000 / true / adaptive×5 / always | anthropic.md §2、§3（"Adaptive (always on)"） |

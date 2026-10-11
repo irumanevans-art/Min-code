@@ -144,6 +144,11 @@ data class ModelProfile(
     /** 能否收 PDF（document 块）。与图片分开：OpenAI / Gemini 的视觉模型不等于都收文档，由目录逐条标 */
     val supportsPdf: Boolean = false,
     /**
+     * 工具表里露出 EndConversation：CC tools-reference 只给 Opus 4.8、Sonnet 5、Fable 5 与这三个家族的更新版本。
+     * 目录逐条标；没标（默认）= 不露出，自定义供应商、未收录的型号也一样
+     */
+    val supportsEndConversation: Boolean = false,
+    /**
      * 供应商内的档位（`opus` / `sonnet` / `haiku` / `fable`），给别名解析用：`sonnet` 在这家就是标了 sonnet 的那个型号。
      * 没标 = 这一档不由它代表；每家每档至多一个。非 Anthropic 的标法是按型号名的强弱判断，见 SOURCES.md
      */

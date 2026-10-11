@@ -121,6 +121,19 @@ class CatalogTest {
         for (m in Catalog.bundled().models) if (m.supportsPdf) assertTrue(m.ref.toString(), m.supportsImages)
     }
 
+    /**
+     * EndConversation 只给 CC 点名的型号：Opus 4.8、Sonnet 5、Fable 5 或这三个家族的更新版本（tools-reference「EndConversation tool behavior」）。
+     * 目录里用 supportsEndConversation 标出：Anthropic 的 opus / sonnet / fable 型号标，haiku 与别家的型号一律不标
+     */
+    @Test fun `end conversation is flagged for the opus, sonnet and fable families from the named versions on`() {
+        val flagged = Catalog.bundled().models.filter { it.supportsEndConversation }.map { it.ref.modelId }.toSet()
+        assertEquals(setOf("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-sonnet-5-5"), flagged)
+        for (m in Catalog.bundled().models) {
+            if (m.ref.providerId != "anthropic") org.junit.Assert.assertFalse(m.ref.toString(), m.supportsEndConversation)
+            if ("haiku" in m.ref.modelId) org.junit.Assert.assertFalse(m.ref.toString(), m.supportsEndConversation)
+        }
+    }
+
     /** 档位只标了供应商目录里真实存在的型号，且每家每档至多一个（别名解析依赖这一点） */
     @Test fun `tiers are only on bundled models and point at the same provider`() {
         val tiers = Catalog.bundled().models.mapNotNull { it.tier }

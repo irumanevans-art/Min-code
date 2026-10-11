@@ -49,6 +49,8 @@ fun testDeps(
     fs: dev.min.agent.spi.WorkspaceFs = Unused,
     /** 会话 id 的前缀标签：同一个测试里起两个内核实例（模拟两个进程）时各用各的，免得 id 撞车 */
     idTag: String = "",
+    /** 模型的目录条目：要测「型号不同工具表不同」（如 EndConversation 的能力位）时换一个 */
+    profile: dev.min.agent.llm.ModelProfile = TEST_PROFILE,
 ): KernelDeps {
     val time = AtomicLong(1_000)
     val counter = AtomicLong(0)
@@ -57,7 +59,7 @@ fun testDeps(
         ids = IdGenerator { prefix -> "${idTag}${prefix}_${counter.incrementAndGet()}" },
         models = { ref ->
             check(ref == TEST_MODEL) { "未知模型 $ref" }
-            ResolvedModel(TEST_PROFILE, model)
+            ResolvedModel(profile, model)
         },
         tools = tools,
         host = HostPorts(fs, Unused, Unused) { _: SessionId -> artifacts },

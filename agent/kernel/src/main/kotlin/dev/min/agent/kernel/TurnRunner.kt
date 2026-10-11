@@ -53,6 +53,10 @@ import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.PromptBasis
 import dev.min.agent.spi.Tool
+import dev.min.agent.spi.GuestPath
+import dev.min.agent.policy.PermissionRule
+import dev.min.agent.policy.PolicyContext
+import dev.min.agent.policy.PolicyEngine
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
@@ -800,7 +804,7 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
         (if (runtime != null && !deps.settingsInputs.restricted && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList())
     val builtin = (if (allowed == null) builtins else builtins.filter { it.name in allowed || it.name == "apply_patch" && allowed.any { name -> name in setOf("Edit", "Write") } })
         .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
-        // 子 agent 与分身从不拿到 EndConversation（CC：Subagents never get the tool）
+        // 子 agent 与分身从不拿到 EndConversation（CC：Subagents never get the tool）；根会话按型号与 deny 规则在末尾再筛一次
         .filterNot { it.name == dev.min.agent.tools.END_CONVERSATION_TOOL_NAME && state.origin != null }
         .filterNot { it.name == "LSP" && runtime?.lsp?.available != true }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
@@ -821,8 +825,29 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
     val plan = state.origin?.workflowSchema?.let(::StructuredOutputPlan) ?: deps.structuredOutput.takeIf { state.origin == null }
     val prefix = if (plan != null) base + StructuredOutputTool(plan) else base
     val loaded = if (search) state.loadedMcpTools.mapNotNull { name -> allMcp.firstOrNull { it.name == name && !it.alwaysLoad } } else emptyList()
-    return prefix + loaded.map { McpToolAdapter(it, mcp) } +
+    val all = prefix + loaded.map { McpToolAdapter(it, mcp) } +
         if (runtime != null && state.handbackAvailable()) listOf(SubagentHandbackTool(runtime)) else emptyList()
+    return if (all.any { it.name == dev.min.agent.tools.END_CONVERSATION_TOOL_NAME } && endConversationHidden(state, deps, runtime, all)) {
+        all.filterNot { it.name == dev.min.agent.tools.END_CONVERSATION_TOOL_NAME }
+    } else all
+}
+
+/**
+ * 这一刻要不要把 EndConversation 从工具表里拿掉（CC tools-reference「EndConversation tool behavior」与 permissions 页）：
+ * - 型号：只有目录标了 [dev.min.agent.llm.ModelProfile.supportsEndConversation] 的型号（Opus 4.8 / Sonnet 5 / Fable 5 及更新版本）才露出；
+ * - deny / ask 规则一般挡不住它（见 ToolTraits.exemptFromPolicy）。唯一的例外：deny 规则把其余工具**全部**移除、且匹配了它本身（`*` 就是），
+ *   这时连它也移除，免得它成为唯一的工具——除非有 allow 规则点名 EndConversation。deny 把其余工具全移除却没匹配它的，它留着。
+ */
+internal fun endConversationHidden(state: SessionState, deps: KernelDeps, runtime: SessionRuntime?, all: List<Tool<*>>): Boolean {
+    val name = dev.min.agent.tools.END_CONVERSATION_TOOL_NAME
+    val profile = resolveActiveModel(state, deps, runtime?.let { it::modelPermitted } ?: deps.modelAllowed).profile
+    if (!profile.supportsEndConversation) return true
+    val rules = (state.rules + state.sessionRules).mapNotNull(PermissionRule::from)
+    val policy = PolicyContext(mode = state.settings.mode, rules = rules, cwd = state.settings.cwd, home = deps.memoryHome ?: GuestPath("/root"))
+    val others = all.filter { it.name != name }
+    if (others.isEmpty() || !PolicyEngine.deniesWholeTool(name, policy)) return false
+    if (rules.any { it.kind == dev.min.agent.policy.RuleKind.Allow && it.tool == name && it.specifier == null }) return false
+    return others.all { PolicyEngine.deniesWholeTool(it.name, policy) }
 }
 
 /**
