@@ -124,6 +124,8 @@ class FakeFs : WorkspaceFs {
         put(path.value, bytes)
     }
 
+    override suspend fun deleteFile(path: GuestPath) { delete(path.value) }
+
     override suspend fun list(dir: GuestPath): List<DirEntry> {
         val prefix = dir.value.trimEnd('/') + "/"
         val names = files.keys.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }

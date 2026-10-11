@@ -149,7 +149,7 @@ class ClaudeCodeSession internal constructor(
                 if (manager.revertToolCall(command.toolUseId)) CommandResult.Accepted else CommandResult.Rejected("没有这次改动的快照")
             is SessionCommand.Refresh -> refresh(command)
             // CC 的 auto 模式在它自己的 CLI 里，没有审查模型可选：能力位为假，supports 已挡掉
-            is SessionCommand.SetAutoReviewer -> CommandResult.Unsupported
+            is SessionCommand.SetAutoReviewer, is SessionCommand.SetAdvisor -> CommandResult.Unsupported
         }
     }
 

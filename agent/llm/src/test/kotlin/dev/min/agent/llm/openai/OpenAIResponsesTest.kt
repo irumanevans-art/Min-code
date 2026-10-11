@@ -14,6 +14,28 @@ import java.io.IOException
 
 /** 手写请求与流夹具；不能用客户端自己生成期望，否则丢 phase/推理也会看似通过。 */
 class OpenAIResponsesTest {
+    @Test fun `patch custom tool definition and transcript roundtrip`() {
+        val patch = "*** Begin Patch\n*** Add File: a\n+x\n*** End Patch"
+        val tool = ToolSpec("apply_patch", "patch", obj("{}"))
+        val body = buildResponsesBody(request().copy(tools = listOf(tool), toolChoice = ToolChoice.Named("apply_patch")))
+        val definition = (body["tools"] as JsonArray).single().jsonObject
+        assertEquals(JsonPrimitive("custom"), definition["type"])
+        assertEquals(JsonPrimitive("grammar"), definition["format"]!!.jsonObject["type"])
+        assertTrue(definition["format"].toString().contains("*** Move to:"))
+        assertEquals(obj("""{"type":"custom","name":"apply_patch"}"""), body["tool_choice"])
+        val raw = buildJsonObject { put("type", "custom_tool_call"); put("id", "ct_1"); put("call_id", "call_p"); put("name", "apply_patch"); put("input", patch) }
+        val terminal = event(buildJsonObject { put("type", "response.completed"); putJsonObject("response") { put("output", JsonArray(listOf(raw))) } }.toString())
+        val done = collect(FakeHttpTransport(FakeHttpTransport.Reply.Sse(listOf(terminal)))).filterIsInstance<ModelStreamEvent.Completed>().single()
+        assertEquals(StopReason.ToolUse, done.stop)
+        assertEquals(JsonPrimitive(patch), done.message.parts.filterIsInstance<ToolCallPart>().single().input["input"])
+        val next = request(listOf(done.message, toolResults(ToolResultPart(CallId("call_p"), listOf(TextPart("ok")))))).copy(tools = listOf(tool))
+        val input = buildResponsesBody(next)["input"]!!.jsonArray
+        assertEquals(raw, input[1])
+        assertEquals(obj("""{"type":"custom_tool_call_output","call_id":"call_p","output":"ok"}"""), input[2])
+        assertEquals(3, input.size)
+        val foreign = next.copy(profile = profile.copy(ref = ModelRef("foreign", "m")))
+        assertEquals(JsonPrimitive(patch), buildResponsesBody(foreign)["input"]!!.jsonArray[1].jsonObject["input"])
+    }
     private val ref = ModelRef("responses", "test-model")
     private val profile = ModelProfile(ref, family = ModelFamily.Other, contextWindow = 20000, maxOutputTokens = 2000)
     private val provider = ProviderDescriptor("responses", "https://example.invalid/v1/", Wire.OpenAIResponses, AuthScheme.Bearer)

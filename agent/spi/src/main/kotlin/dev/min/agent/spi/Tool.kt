@@ -161,6 +161,8 @@ interface ToolContext {
     val callId: CallId
     val cwd: GuestPath
     val fs: WorkspaceFs
+    /** 多文件事务去重用真实 guest 路径，避免两个链接别名分别覆盖同一个文件。 */
+    fun canonicalPath(path: GuestPath): GuestPath = path
     val search: Search
     val exec: Exec
     suspend fun runShell(command: ShellCommand, options: ExecOptions, allowedDomains: List<String> = emptyList()): ExecResult = exec.run(command, options)

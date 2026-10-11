@@ -45,11 +45,12 @@ class EngineCapabilitiesTest {
         "autoReview" to Triple("false", "false", "true"),
         "schedule" to Triple("false", "false", "true"),
         "claudeConfigFiles" to Triple("Full", "None", "Partial"),
+        "advisor" to Triple("false", "false", "true"),
     )
 
     @Test
-    fun `the table has the 32 rows the design lists and covers every field`() {
-        assertEquals(32, table.size)
+    fun `the table has the 33 rows the design lists and covers every field`() {
+        assertEquals(33, table.size)
         val fields = EngineCapabilities::class.java.declaredFields
             .filter { !Modifier.isStatic(it.modifiers) }
             .map { it.name }

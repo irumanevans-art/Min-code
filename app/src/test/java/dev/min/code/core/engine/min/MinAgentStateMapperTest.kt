@@ -80,6 +80,31 @@ class MinAgentStateMapperTest {
     private val ref = SessionRef(EngineKind.MinAgent, "s_root")
     private val empty = JsonObject(emptyMap())
 
+    @Test fun advisorSelectionSurvivesProjectionAndOffRemainsAVisibleSetting() {
+        val selected = map(foldOf(dev.min.agent.spi.AdvisorConfigured(ModelRef("other", "oracle"))))
+        assertEquals("oracle", selected.settings.advisor!!.model!!.id)
+        assertEquals("other", selected.settings.advisor!!.model!!.profileId)
+        assertNotNull(map(foldOf()).settings.advisor)
+        assertNull(map(foldOf(dev.min.agent.spi.AdvisorConfigured(ModelRef("other", "oracle")), dev.min.agent.spi.AdvisorConfigured())).settings.advisor!!.model)
+    }
+
+    @Test fun patchMoveAndDeleteReachTheChangedFilesPanel() {
+        val call = ToolCallPart(CallId("patch"), "apply_patch", empty)
+        val edits = listOf(
+            FileEdit(GuestPath("/workspace/b"), created = true, diff = "--- /workspace/b\n+++ /workspace/b\n+new"),
+            FileEdit(GuestPath("/workspace/a"), deleted = true, diff = "--- /workspace/a\n+++ /workspace/a\n-old"),
+            FileEdit(GuestPath("/workspace/d"), deleted = true, diff = "--- /workspace/d\n+++ /workspace/d\n-deleted"),
+        )
+        val s = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(call)).toTypedArray(),
+            ToolPlanned(tid, call.callId, call.name, empty, ResumePolicy.Unknown), ToolEffectPending(tid, call.callId),
+            ToolOutcome(tid, call.callId, ToolResult(listOf(TextPart("done")), fileEdits = edits)))
+        val card = map(s).items.filterIsInstance<ChatItem.ToolCall>().single()
+        assertTrue(card.editDiff.orEmpty().contains("new file mode"))
+        assertEquals(2, card.editDiff.orEmpty().lineSequence().count { it.startsWith("deleted file mode") })
+        assertEquals(listOf("/workspace/b", "/workspace/a", "/workspace/d"),
+            card.editDiff!!.lineSequence().filter { it.startsWith("+++ ") }.map { it.removePrefix("+++ ") }.toList())
+    }
+
     @Test fun lspDiagnosticsRemainVisibleAboveLongEditOutput() {
         val issue = dev.min.agent.spi.LspDiagnostic(GuestPath("/workspace/a.t"), 2, 3, "新增类型错误")
         val s = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(ToolCallPart(CallId("edit"), "Edit", empty))).toTypedArray(),

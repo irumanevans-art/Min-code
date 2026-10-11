@@ -28,13 +28,19 @@ internal const val GOAL_TOOL_INPUT_KEEP = 200
  * 超过 [budgetChars] 时的截断：保留第一条用户消息（完成条件通常就在它里面）与尽量多的最近内容，中间用一行标明省略了几条。
  * 第一条本身超长时截它的开头；最近的那条也放不下时只留它的末尾（结论在最后）。
  */
-internal fun goalTranscript(messages: List<ModelMessage>, budgetChars: Int = GOAL_TRANSCRIPT_CHARS): String {
-    val blocks = messages.map(::renderBlock)
+internal fun goalTranscript(messages: List<ModelMessage>, budgetChars: Int = GOAL_TRANSCRIPT_CHARS, toolInputKeep: Int = GOAL_TOOL_INPUT_KEEP, toolResultKeep: Int = GOAL_TOOL_RESULT_KEEP, markTruncation: Boolean = false): String {
+    val blocks = messages.map { renderBlock(it, toolInputKeep, toolResultKeep) }
     if (blocks.isEmpty()) return ""
     val all = blocks.joinToString("\n\n")
     if (all.length <= budgetChars) return all
+    if (markTruncation && blocks.size == 1) {
+        // 单条也可能超过窗口：保留首尾并明确省略，不能悄悄丢掉任务末尾。
+        val mark = "\n\n…（消息过长，省略中间正文）\n\n"
+        val room = (budgetChars - mark.length).coerceAtLeast(0)
+        return (all.take(room / 2) + mark + all.takeLast(room - room / 2)).take(budgetChars)
+    }
     val head = blocks.first().take(budgetChars / 2)
-    var room = budgetChars - head.length - OMITTED_MARK.length - 4
+    var room = budgetChars - head.length - (if (markTruncation) ADVISOR_OMITTED_MARK else OMITTED_MARK).length - 4
     val tail = ArrayDeque<String>()
     for (block in blocks.drop(1).asReversed()) {
         if (block.length > room) {
@@ -48,29 +54,31 @@ internal fun goalTranscript(messages: List<ModelMessage>, budgetChars: Int = GOA
     val omitted = blocks.size - 1 - tail.size
     return buildString {
         append(head)
-        if (omitted > 0) append("\n\n").append("…（中间省略了 $omitted 条消息）")
+        if (markTruncation) append("\n\n").append("…（中间省略了 $omitted 条消息，正文有截取）")
+        else if (omitted > 0) append("\n\n").append("…（中间省略了 $omitted 条消息）")
         tail.forEach { append("\n\n").append(it) }
     }
 }
 
 /** 截断时的省略标记（只用来估长度；真正的标记在 [goalTranscript] 里按省略条数写） */
 private const val OMITTED_MARK = "…（中间省略了 999 条消息）"
+private const val ADVISOR_OMITTED_MARK = "…（中间省略了 999 条消息，正文有截取）"
 
-private fun renderBlock(message: ModelMessage): String {
+private fun renderBlock(message: ModelMessage, toolInputKeep: Int, toolResultKeep: Int): String {
     val who = if (message.role == Role.User) "用户" else "助手"
-    val body = message.parts.mapNotNull(::renderPart).joinToString("\n")
+    val body = message.parts.mapNotNull { renderPart(it, toolInputKeep, toolResultKeep) }.joinToString("\n")
     return "[$who]\n$body"
 }
 
-private fun renderPart(part: Part): String? = when (part) {
+private fun renderPart(part: Part, toolInputKeep: Int, toolResultKeep: Int): String? = when (part) {
     is TextPart -> part.text
-    is ToolCallPart -> "（调用工具 ${part.name}：${part.input.toString().take(GOAL_TOOL_INPUT_KEEP)}）"
+    is ToolCallPart -> "（调用工具 ${part.name}：${part.input.toString().take(toolInputKeep)}）"
     is ToolResultPart -> {
         val text = part.content.filterIsInstance<TextPart>().joinToString("\n") { it.text }
         val label = if (part.isError) "工具报错" else "工具结果"
         when {
-            text.length <= GOAL_TOOL_RESULT_KEEP -> "（$label：$text）"
-            else -> "（$label：${text.take(GOAL_TOOL_RESULT_KEEP)}…省略 ${text.length - GOAL_TOOL_RESULT_KEEP} 字）"
+            text.length <= toolResultKeep -> "（$label：$text）"
+            else -> "（$label：${text.take(toolResultKeep)}…省略 ${text.length - toolResultKeep} 字）"
         }
     }
     is ImagePart -> "（图片）"

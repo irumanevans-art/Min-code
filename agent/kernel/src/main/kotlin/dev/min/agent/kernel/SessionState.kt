@@ -106,6 +106,7 @@ data class SessionState(
     val permissionNotes: List<String> = emptyList(),
     val additionalDirectories: List<GuestPath> = emptyList(),
     val autoReviewSettings: dev.min.agent.spi.AutoReviewSettingsLoaded = dev.min.agent.spi.AutoReviewSettingsLoaded(),
+    val advisor: dev.min.agent.spi.AdvisorConfigured = dev.min.agent.spi.AdvisorConfigured(),
     val autoReviewDenials: Int = 0,
     val lastAutoReview: dev.min.agent.spi.AutoReviewed? = null,
     val inheritedAutoUserContext: List<String> = emptyList(),

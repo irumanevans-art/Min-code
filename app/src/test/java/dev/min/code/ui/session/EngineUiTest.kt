@@ -38,6 +38,13 @@ class EngineUiTest {
     )
     private val minSettings = SettingsView.Empty.copy(efforts = listOf(Choice("", ""), Choice("high", "high")))
 
+    @Test fun advisorSectionUsesBothCapabilityAndSettingEvenWhenOff() {
+        val settings = minSettings.copy(advisor = dev.min.code.core.engine.AdvisorView())
+        assertTrue(EngineUi.settingsLayout(EngineKind.MinAgent, EngineCapabilities.MinAgent, session(minRef, settings)).advisor)
+        assertFalse(EngineUi.settingsLayout(EngineKind.MinAgent, EngineCapabilities.MinAgent, session(minRef, minSettings)).advisor)
+        assertFalse(EngineUi.settingsLayout(EngineKind.ClaudeCode, EngineCapabilities.ClaudeCode, session(claudeRef, settings)).advisor)
+    }
+
     @Test fun `Claude Code keeps every section it had`() {
         val layout = EngineUi.settingsLayout(EngineKind.ClaudeCode, EngineCapabilities.ClaudeCode, session(claudeRef, claudeSettings, commands = true))
         assertEquals(ModelPickerStyle.Cli, layout.modelPicker)

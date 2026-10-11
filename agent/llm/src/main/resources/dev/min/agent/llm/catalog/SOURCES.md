@@ -229,3 +229,8 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
 来源：用户给定端点与型号限制；鉴权 GET https://api.uselunora.com/v1/models（外部 lunora-anthropic-models.json）；实际 POST /v1/messages 的请求 / SSE（sonnet55-thinking、sonnet55-high-cache、evaluation-sonnet55-high、cc-sonnet55-full）。精确 ID claude-sonnet-5-5，Bearer 认证，200 text/event-stream；接受 thinking.type=adaptive、output_config.effort=high，返回 thinking_delta / signature_delta，跨工具与用户回合原样回传签名均成功。未检出需要供应商特殊怪癖的差异。此是中转实测，不宣称原厂模型路由或未知参数上限。
 
 GET /models 的 created_at 固定日期与 display_name 不提供上下文 / 最大输出证据；未据此创建新的随包 ModelProfile。外部 classpath profile 只使用 context=200000、maxOutputTokens=4096 作为实验限制。默认未知 profile 没有 effortPatches，CLI --effort high 不等于已开启思考；验证依据是实际请求快照。Min / CC adaptive/high 均 20/20，实际输出未截断；max_tokens=4096 / 128000 与不同 TTL、system/tools 的成本不能直接公平比较。恢复测试的 system/tools 指纹稳定，不包括完整 effort 配置复现。详见进度 §8 与外部报告。
+# M4 GPT 编辑 profile（2026-10-11）
+
+基线目录没有任何 `family=gpt` 项，新增 OpenAI `gpt-5.4`，明确 `editStyle=apply_patch`；其余模型不改。
+能力与 USD 单价按 https://developers.openai.com/api/docs/models/gpt-5.4 核对：窗口 1,050,000，输出 128,000，文本和图像输入；输入/缓存输入/输出每百万 2.5/0.25/15，超过 272k 输入按 2x 输入、1.5x 输出。
+未推定 PDF、未知中转供应的 GPT 型号或未来型号的能力与价格。Responses 使用官方 Codex 自由文本 grammar，Chat 用 input 字符串承载相同 V4A。

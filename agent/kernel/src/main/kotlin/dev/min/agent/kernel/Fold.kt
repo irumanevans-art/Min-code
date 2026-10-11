@@ -97,6 +97,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
             presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is dev.min.agent.spi.SessionRenamed -> copy(name = e.name)
         is dev.min.agent.spi.AutoReviewSettingsLoaded -> copy(autoReviewSettings = e)
+        is dev.min.agent.spi.AdvisorConfigured -> copy(advisor = e)
         is dev.min.agent.spi.AutoUserContextInherited -> copy(inheritedAutoUserContext = e.messages)
         is dev.min.agent.spi.AutoReviewed -> updateTurn(e.turnId) { it.copy(usage = it.usage + e.usage) }.copy(
             lastAutoReview = e,

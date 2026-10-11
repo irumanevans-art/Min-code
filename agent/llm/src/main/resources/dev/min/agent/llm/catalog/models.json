@@ -1,5 +1,22 @@
 [
   {
+    "ref": { "providerId": "openai", "modelId": "gpt-5.4" },
+    "family": "gpt",
+    "editStyle": "apply_patch",
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "pricing": {
+      "currency": "USD",
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 15.0,
+      "cacheReadPerMTok": 0.25,
+      "asOf": "2026-10-11",
+      "tiers": [{ "aboveInputTokens": 272000, "inputPerMTok": 5.0, "outputPerMTok": 22.5, "cacheReadPerMTok": 0.5 }]
+    },
+    "reasoningEcho": "never"
+  },
+  {
     "ref": { "providerId": "anthropic", "modelId": "claude-fable-5-1" },
     "pricing": {
       "currency": "USD",

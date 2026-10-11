@@ -86,6 +86,10 @@ sealed interface SessionCommand {
     @Serializable @SerialName("set_auto_reviewer")
     data class SetAutoReviewer(override val commandId: String, val modelId: String?, val profileId: String? = null) : SessionCommand
 
+    /** null 关闭顾问；选择其它供应商前，界面必须展示对话的数据去向。 */
+    @Serializable @SerialName("set_advisor")
+    data class SetAdvisor(override val commandId: String, val modelId: String?, val profileId: String? = null) : SessionCommand
+
     @Serializable @SerialName("set_cwd")
     data class SetCwd(override val commandId: String, val path: String) : SessionCommand
 

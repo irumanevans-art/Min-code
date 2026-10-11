@@ -61,7 +61,7 @@ data class PermissionRule(
 
 /** 读类工具的规则写成 Read(…)，写类写成 Edit(…)（Claude Code 的约定：Write / NotebookEdit 也认 Edit 规则） */
 private val READ_FAMILY = setOf("Read", "Grep", "Glob", "LSP")
-private val EDIT_FAMILY = setOf("Edit", "Write", "MultiEdit", "NotebookEdit")
+private val EDIT_FAMILY = setOf("Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch")
 
 /**
  * 规则匹配。纯函数，按 Claude Code 文档的语义（research/inventory/claude-code/01-tools-permissions.md §2）：
@@ -80,7 +80,7 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
             return Regex(globToRegex(rule.tool, anyChars = true, questionWildcard = true)).matches(tool)
         }
         if (rule.tool == tool) return true
-        if (rule.tool == "Read" && (tool in READ_FAMILY || rule.kind == RuleKind.Deny && tool in setOf("Edit", "Write"))) return true
+        if (rule.tool == "Read" && (tool in READ_FAMILY || rule.kind == RuleKind.Deny && tool in setOf("Edit", "Write", "apply_patch"))) return true
         if (rule.tool == "Edit" && tool in EDIT_FAMILY) return true
         if (rule.tool.startsWith("mcp__") && tool.startsWith("mcp__")) {
             if ('*' in rule.tool || '?' in rule.tool) return Regex(globToRegex(rule.tool, anyChars = true, questionWildcard = true)).matches(tool)
@@ -106,7 +106,7 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
         }
         // Read 的拒绝也阻止 Edit/Write 的先读后写；允许与询问不能借此授予写权限。
         val readDenyWrite = rule.tool == "Read" && rule.kind == RuleKind.Deny && access.kind == AccessKind.Write &&
-            (tool == null || tool in setOf("Edit", "Write", "Bash", "Monitor"))
+            (tool == null || tool in setOf("Edit", "Write", "apply_patch", "Bash", "Monitor"))
         if (access.kind != family && !readDenyWrite) return false
         val spec = rule.specifier?.removePrefix("!") ?: return false
         return pathPattern(spec, rule.baseDir, rule.kind).matches(normalizePolicyPath(access.path.value))

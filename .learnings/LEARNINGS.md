@@ -2571,3 +2571,49 @@ LSP 诊断等待限 300ms，服务器初始化在独立 scope 中继续。等待
 - Promoted: AGENTS.md
 
 ---
+# [LRN-20261011-PATCH-CATALOG] best_practice
+
+**Logged**: 2026-10-11T12:00:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+模型家族接线验收须先断言该家族真实存在，不能只遍历过滤后的空列表。
+
+### Details
+M4 基线 models.json 没有任何 GPT 项。逐个检查 family=GPT 是否选择 ApplyPatch 的测试空集通过，不能证明产品可选择该形态。补充官方资料可核实的 gpt-5.4 profile，并断言 GPT 项非空；目录 editStyle 弱化另做变异。
+
+### Suggested Action
+类似工具或能力接线检查同时验证可达性与逐项正确性；官方资料未核实的型号不能用猜测元数据填充目录。
+
+### Metadata
+- Source: self_review
+- Related Files: agent/llm/src/test/kotlin/dev/min/agent/llm/catalog/CatalogTest.kt
+- Tags: catalog, vacuous-test, profile
+
+---
+
+## [LRN-20261011-ADVISOR-PENDING-VIEW] best_practice
+
+**Logged**: 2026-10-11T11:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+工具内部的顾问读取历史时，当前工具调用尚未配对结果；给辅助文字视图明确 pending，保留主模型请求的严格校验。
+
+### Details
+advisor 第一次端到端调用复用 modelMessages()，因 advisor 自身尚无 toolResults 而返回 unavailable，费用和建议都未发生。改为临时只读投影，把缺失结果标注为尚在执行 / 等待执行，再按 /goal 的首尾截取渲染；不写假结果事件，不放松 API 历史配对约束。feature-green-3 的 AdvisorTest 五项全部通过，包括真实回合建议交回、三笔收费与共享预算拦住下一次主请求。
+
+### Suggested Action
+任何在工具执行中咨询模型的功能都要用真实工具循环验收；不能只测试没有进行中调用的空闲历史。包括同批等待执行的调用，防止误把未执行动作当成成功结果。
+
+### Metadata
+- Source: debugging
+- Related Files: agent/kernel/src/main/kotlin/dev/min/agent/kernel/Advisor.kt, agent/kernel/src/test/kotlin/dev/min/agent/kernel/AdvisorTest.kt
+- Tags: advisor, pending-tools, transcript, billing
+- Pattern-Key: auxiliary-model.pending-tool-view
+
+---

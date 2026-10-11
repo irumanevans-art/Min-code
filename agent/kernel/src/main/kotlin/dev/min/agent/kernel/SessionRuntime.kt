@@ -420,6 +420,13 @@ class SessionRuntime private constructor(
 
     private suspend fun loadSettings(snapshot: SettingsSnapshot) {
         refreshNetworkSettings()
+        try {
+            val trustProject = deps.trustProjectHooks(state.value.created.cwd)
+            val locals = trustedLocalSettings(deps, snapshot, state.value.created.cwd, trustProject || state.value.created.headless)
+            val advisor = dev.min.agent.ext.config.advisorSettingsOf(snapshot.merged, state.value.settings.model.providerId, trustProject || state.value.created.headless, locals)
+            if (advisor.model != null) changeAdvisor(advisor.model)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { commit(listOf(Note(NoteLevel.Warning, "advisorModel 未启用：${e.message}")), Durability.Sync) }
         if ((snapshot.merged.raw("disableWorkflows") as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull == true || snapshot.merged.env["CLAUDE_CODE_DISABLE_WORKFLOWS"] == "1")
             commit(listOf(dev.min.agent.spi.WorkflowSettingsDisabled()), Durability.Sync)
         val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)

@@ -207,6 +207,8 @@ internal suspend fun interact(
             trimmed == "/cost" -> System.err.println(costReport(app, app.hub(), runtime))
             trimmed == "/auto-reviewer" || trimmed.startsWith("/auto-reviewer ") ->
                 autoReviewerCommand(app, runtime, trimmed.removePrefix("/auto-reviewer").trim())
+            trimmed == "/advisor" || trimmed.startsWith("/advisor ") ->
+                advisorCommand(runtime, trimmed.removePrefix("/advisor").trim(), app.settingsUserFile(), app::validateAdvisor)
             trimmed == "/output-style" || trimmed.startsWith("/output-style ") ->
                 outputStyleCommand(app, runtime, trimmed.removePrefix("/output-style").trim())
             trimmed == "/rename" || trimmed.startsWith("/rename ") -> {

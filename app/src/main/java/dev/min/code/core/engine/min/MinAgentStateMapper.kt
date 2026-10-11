@@ -182,6 +182,9 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
                 reviewer = root.autoReviewSettings.reviewer?.let { r -> models.firstOrNull { it.id == r.model.modelId && it.profileId == r.model.providerId } ?: Choice(r.model.modelId, r.model.modelId, profileId = r.model.providerId) },
                 defaultModel = dev.min.agent.kernel.defaultAutoReviewer(model, lookup::fastModelOf).modelId,
             ),
+            advisor = dev.min.code.core.engine.AdvisorView(root.advisor.model?.let { ref ->
+                models.firstOrNull { it.id == ref.modelId && it.profileId == ref.providerId } ?: Choice(ref.modelId, ref.modelId, profileId = ref.providerId)
+            }),
             applying = false,
             extras = emptyList(),
             // 档被删了拿不到能力：按「不吃图」处理，反正会话只读，发不了

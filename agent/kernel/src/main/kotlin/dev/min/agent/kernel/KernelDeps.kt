@@ -195,6 +195,8 @@ class KernelDeps(
     val previewSink: dev.min.agent.spi.PreviewSink = dev.min.agent.spi.PreviewSink.Unavailable,
     /** SendFeedback 的宿主出口（本机草稿队列）。默认不可用：工具照实回告「没有保存」 */
     val feedbackSink: dev.min.agent.spi.FeedbackSink = dev.min.agent.spi.FeedbackSink.Unavailable,
+    /** 桌面 CLI 的主模型解析器只认当前会话链；顾问可另接目录或自定义供应商，App 直接复用 models。 */
+    val advisorModels: ModelResolver? = null,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }

@@ -672,6 +672,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             rt.runNetworkShell(callId, command, options, if (callId in networkApprovedCalls) allowedDomains else emptyList())
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
+        override fun canonicalPath(path: GuestPath): GuestPath = deps.canonicalPath(path)
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
         override val worktrees: dev.min.agent.spi.WorktreePort = if (turnId == null) dev.min.agent.spi.WorktreePort.Unavailable else rt.worktrees
         override val background: dev.min.agent.spi.BackgroundPort = if (turnId == null) dev.min.agent.spi.BackgroundPort.Unavailable else rt.background.portFor(callId)

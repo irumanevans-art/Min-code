@@ -643,7 +643,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val origin = state.origin
         val environment = promptBasisOf(state, deps).let { Environment(it.platform, it.cwd, it.date) }
         val harness = HarnessProfile(profile.family, profile.editStyle)
-        val tools = availableTools(state, deps, runtime = rt)
+        val tools = availableTools(state, deps, runtime = rt, editStyle = profile.editStyle)
         val specs = tools.map { ToolSpec(it.name, it.description(harness) + if (it.name == "Bash" && rt.state.value.networkSettings.enabled)
             "网络域名批准已开启：请求经宿主代理；不认代理环境变量的程序可以直连，这不是硬隔离。Android App 被冻结时代理会停，联网可能失败。auto 模式需用 allowed_domains 声明本命令需要的域名，由分类器随命令批准。" else "", it.inputSchema) }
         return RequestAssembler.assemble(
@@ -738,11 +738,22 @@ internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
         )
 
 /** 本会话能用的工具，保持 [KernelDeps.tools] 的固定顺序。新开的子 agent 按定义取子集；分身与根会话是全部 */
-internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable, runtime: SessionRuntime? = null): List<Tool<*>> {
+internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable, runtime: SessionRuntime? = null, editStyle: dev.min.agent.spi.EditStyle? = null): List<Tool<*>> {
     val allowed = state.origin?.tools
+    val style = editStyle ?: if (deps.tools.any { it.name in setOf("Edit", "Write", "apply_patch") })
+        deps.models.resolve(state.activeModel).profile.editStyle else dev.min.agent.spi.EditStyle.StrReplace
+    // 按实际请求的 profile 选编辑形态，回退模型也在此接线；权限仍统一按 Edit 家族判定。
+    val editTools = if (style == dev.min.agent.spi.EditStyle.ApplyPatch) {
+        val selected = deps.tools.filterNot { it.name in setOf("Edit", "Write", "apply_patch") }.toMutableList()
+        val at = deps.tools.indexOfFirst { it.name in setOf("Edit", "Write", "apply_patch") }
+        if (at >= 0) selected.add(at.coerceAtMost(selected.size), dev.min.agent.tools.ApplyPatchTool)
+        selected.toList()
+    } else deps.tools.filterNot { it.name == "apply_patch" }
     // --restricted（CC :123）：Workflow 是内置的 JavaScript 执行器（"run … code"），受限会话不给；它不在 CLI 的工具表里，只能在这里去掉
-    val builtins = deps.tools + if (runtime != null && !deps.settingsInputs.restricted && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList()
-    val builtin = (if (allowed == null) builtins else builtins.filter { it.name in allowed })
+    val builtins = editTools +
+        (if (runtime != null && state.advisor.model != null) listOf(AdvisorTool(runtime)) else emptyList()) +
+        (if (runtime != null && !deps.settingsInputs.restricted && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList())
+    val builtin = (if (allowed == null) builtins else builtins.filter { it.name in allowed || it.name == "apply_patch" && allowed.any { name -> name in setOf("Edit", "Write") } })
         .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
         // 子 agent 与分身从不拿到 EndConversation（CC：Subagents never get the tool）
         .filterNot { it.name == dev.min.agent.tools.END_CONVERSATION_TOOL_NAME && state.origin != null }
