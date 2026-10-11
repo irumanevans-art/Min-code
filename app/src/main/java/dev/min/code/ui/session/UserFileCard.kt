@@ -26,6 +26,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.min.agent.spi.UserFileDisplay
 import dev.min.agent.tools.SendUserFileTool
+import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.PreviewFile
+import dev.min.code.ui.viewer.ViewerInbox
 import dev.min.code.R
 import dev.min.code.core.engine.min.SentFileRow
 import dev.min.code.core.engine.min.prefersView
@@ -126,8 +129,23 @@ private fun displayOf(preferView: Boolean?): UserFileDisplay? = when (preferView
     null -> null
 }
 
-/** 交给系统：打开或分享，一律走选择器（和通知同一种 Intent，见 [userFileIntent]） */
+/**
+ * 交给系统：打开或分享，一律走选择器（和通知同一种 Intent，见 [userFileIntent]）。
+ * 例外：打开 HTML / Markdown 而系统里没有能看它的应用（Markdown 常见）时，退回 App 自己的预览槽——
+ * 与 Artifact 同一个离线查看器（不联网、不读文件），里面有分享；不然选择器只会写「没有应用能执行此操作」
+ */
 private fun openUserFile(context: Context, file: File, name: String, view: Boolean) {
-    val intent = userFileIntent(context.fileProviderUri(file), SendUserFileTool.mimeOf(name), view)
+    val mime = SendUserFileTool.mimeOf(name)
+    val intent = userFileIntent(context.fileProviderUri(file), mime, view)
+    if (view && mime in IN_APP_PREVIEW_MIMES && intent.resolveActivity(context.packageManager) == null && file.length() <= IN_APP_PREVIEW_MAX_BYTES) {
+        ViewerInbox.showArtifact(PreviewFile(name, GuestPath(file.path), mime, file.readText(), null))
+        return
+    }
     context.startActivity(Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
+
+/** 预览槽能显示的两种（与 Artifact 工具一致） */
+private val IN_APP_PREVIEW_MIMES = setOf("text/html", "text/markdown")
+
+/** 点开时在界面线程上读进内存，限 2 MB 免得卡顿（Artifact 工具自己的上限是 8 MB）；更大的仍交给系统 */
+private const val IN_APP_PREVIEW_MAX_BYTES = 2L * 1024 * 1024
