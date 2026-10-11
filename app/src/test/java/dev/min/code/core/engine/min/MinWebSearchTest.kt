@@ -94,8 +94,9 @@ class MinWebSearchTest {
         assertTrue("WebSearch" !in toolNamesOf(rig.model.requests[1]))
         config = WebSearchConfig(backend = SearchBackendKind.BRAVE, braveKey = "BRAVE-KEY-1")
         rt.send(ClientMsgId("u3"), listOf(TextPart("three"))); rig.settle(rt)
-        // 未配置服务器时 LSP 会被内核隐去；仍须核对 WebSearch 紧跟其它基础工具，避免过滤影响动态搜索位置。
-        val activeBase = minTools().map { it.name }.filter { it != "LSP" }
+        // 未配置服务器时 LSP 会被内核隐去；测试模型的目录档没标 supportsEndConversation，EndConversation 也不露出。
+        // 仍须核对 WebSearch 紧跟其它基础工具，避免过滤影响动态搜索位置。
+        val activeBase = minTools().map { it.name }.filter { it != "LSP" && it != "EndConversation" }
         assertEquals(activeBase + "WebSearch", toolNamesOf(rig.model.requests[2]).take(activeBase.size + 1))
         config = WebSearchConfig()
         rt.send(ClientMsgId("u4"), listOf(TextPart("four"))); rig.settle(rt)
