@@ -264,6 +264,8 @@ class OtelMapper(private val options: OtelOptions) {
         is DecidedBy.Classifier -> "min_classifier"
         // 无人应答按拒绝处理：不是用户的动作，单列，免得被算成 user_abort
         is DecidedBy.Timeout -> "min_timeout"
+        // 远端 channel 转回来的答复：不是本机用户的动作，单列
+        is DecidedBy.Channel -> "min_channel"
         is DecidedBy.User -> when (choice) {
             is ApprovalChoice.Once -> "user_temporary"
             is ApprovalChoice.Always -> "user_permanent"
