@@ -135,6 +135,25 @@ class ProotShellRunner(
             command += "${host.absolutePath}:$guest"
         }
 
+        context.isolation?.let { policy ->
+            // 与宿主文件工具共用 guest 链接解析，不能把 /tmp 的绝对 guest 链接交给宿主 realpath。
+            val mapper = dev.min.agent.host.RootfsFileSystem(context.linuxDir.toPath(),
+                listOf(dev.min.agent.host.BindMount(dev.min.agent.spi.GuestPath(WORKSPACE_DIR), context.filesDir.toPath()),
+                    dev.min.agent.host.BindMount(dev.min.agent.spi.GuestPath("/dev/shm"), File(context.tempDir, "shm").toPath())) +
+                    context.bindMounts.map { dev.min.agent.host.BindMount(dev.min.agent.spi.GuestPath(it.target), it.source.toPath()) })
+            require(policy.writableRoots.size in 1..16)
+            for (root in policy.writableRoots) {
+                check(dev.min.agent.policy.GuestIsolationPolicy.canWrite(policy, mapper.canonical(root))) { "可写根链接指向隔离范围之外" }
+                val host = mapper.hostPath(root).toFile()
+                check(host.mkdirs() || host.isDirectory) { "无法准备可写隔离目录" }
+                command += "--min-writable=${host.canonicalPath}"
+            }
+            command += when (val network = policy.network) {
+                dev.min.agent.spi.GuestNetwork.Offline -> "--min-isolation=offline"
+                is dev.min.agent.spi.GuestNetwork.ProxyOnly -> "--min-isolation=proxy:${network.ports.distinct().joinToString(",")}"
+            }
+        }
+
         command += listOf(
             "/usr/bin/env",
             "-i",

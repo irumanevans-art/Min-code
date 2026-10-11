@@ -22,6 +22,9 @@ android {
 }
 
 dependencies {
+    implementation(project(":agent:spi"))
+    implementation(project(":agent:host"))
+    implementation(project(":agent:policy"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.xz)

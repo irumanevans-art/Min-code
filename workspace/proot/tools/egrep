@@ -1,0 +1,4 @@
+#!/bin/sh
+# 坑：NDK make.exe 会自己在 PATH 里解析 egrep 并直接执行 `sh C:\Program Files\Git\usr\bin\egrep`（路径带空格必炸）；
+# 这里放个无空格路径的垫片并把 tools 顶在 PATH 最前
+exec grep -E "$@"

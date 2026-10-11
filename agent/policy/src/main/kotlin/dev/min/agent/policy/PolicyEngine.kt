@@ -43,6 +43,7 @@ data class PolicyContext(
      * bypass 都越不过去（bypass 在受限会话里本来也不许开，见 KernelDeps.settingsInputs）
      */
     val confineToWorkingDirectories: Boolean = false,
+    val guestIsolation: dev.min.agent.spi.GuestIsolation? = null,
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -88,6 +89,13 @@ object PolicyEngine {
         // 宿主凭证不能经工具进入模型或事件；这个拒绝不能降级为可由用户或 hook 批准的询问。
         if (facts.credentialTargets.any { credentialPath(it, context, includeAncestors = runsShellCommand(facts.tool)) }) {
             return Verdict.Deny(DecidedBy.Mode(context.mode), "这是 Min 保存的凭证文件，工具不能读取、搜索或修改它。")
+        }
+
+        // 宿主工具与 proot 共用同一份可写根；允许规则和 bypass 不能授予隔离范围外的写入。
+        context.guestIsolation?.let { policy ->
+            facts.paths.firstOrNull { it.kind == AccessKind.Write && !GuestIsolationPolicy.canWrite(policy, context.canonicalPath(it.path)) }?.let { outside ->
+                return Verdict.Deny(DecidedBy.Mode(context.mode), "写入范围仅含工作区、临时与缓存目录：${outside.path.value} 在范围之外。")
+            }
         }
 
         // 受限会话的工作目录线（CC :123）：在规则之前拒绝，不能被允许规则或模式放行，也不降级为询问——人点一下就能过的，不算限制

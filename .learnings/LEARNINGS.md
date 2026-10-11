@@ -2664,3 +2664,140 @@ Windows 全量证据同时记录进程级环境前缀、命令、版本、退出
 - Pattern-Key: windows-test.explicit-shell-path
 
 ---
+## [LRN-20261011-ISOLATION-PEER] best_practice
+
+**Logged**: 2026-10-11T13:45:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+新增 InputOrigin 的 sealed 分支后，必须同时编译 Android 的 MinItems 渲染器。
+
+### Details
+agent/m0 的 35ea02a8 合入 Peer 后，App 的 when(origin) 不完整，实际 compileDebugKotlin 失败。补为不可回退的说明消息，与已有 Agent 消息一致；本次编译失败不能计入隔离需求的先红验证。
+
+### Suggested Action
+事件或输入来源跨端扩展同时检查桌面、Android 和重放投影，验证范围至少包含 App 编译。
+
+### Metadata
+- Source: debugging
+- Related Files: app/src/main/java/dev/min/code/core/engine/min/MinItems.kt
+- Tags: android, sealed-origin, cross-session
+
+---
+## [LRN-20261011-PROOT-DENIAL] best_practice
+
+**Logged**: 2026-10-11T14:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+叠加 seccomp 不能只比较 ERRNO 与 TRACE；Android 外层 TRAP 和 proot 的扩展模拟也必须执行同一份拒绝规则。
+
+### Details
+外层 SECCOMP_RET_TRAP 比内层 ERRNO 优先。proot 的 SIGSYS 处理会把 mount/unshare 模拟为成功；必须在扩展之前解释同一份 BPF，保留 EPERM。另一个实测红点是 fd 的 fchmod：fake_id0 的 syscall exit 扩展将路径策略的 EACCES 改为成功。将拒绝值留在宿主 Tracee 字段并在入口、出口扩展之前直接返回，既保留拒绝结果，也避免扩展副作用。三代进程测试同时覆盖 setsid；CLONE_UNTRACED 需在 L2 拒绝，clone3 指针参数不可由 classic BPF 检查，返回 ENOSYS 让 libc 回退。
+
+### Suggested Action
+原生隔离验收同时跑真实 untrusted_app 组合根和人工外层 TRAP；可写策略测试不仅测 open，还测 fd 元数据修改。变异只计正常编译、基线通过且对应断言失败的弱化；头文件未声明的 #ifdef 代码不构成有效变异。
+
+### Metadata
+- Source: debugging
+- Related Files: workspace/proot/src/tracee/seccomp.c, workspace/proot/src/syscall/exit.c
+- Tags: android, seccomp, ptrace, fake-id0, mutation
+- Pattern-Key: android-proot.keep-policy-denial-through-emulation
+
+---
+## [LRN-20261011-PROOT-PROBE-FIXTURE] best_practice
+
+**Logged**: 2026-10-11T14:30:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+proot --link2symlink 的硬链接红测必须使用测试自有文件，不能拿已有系统文件当无副作用源。
+
+### Details
+基线硬链接会把源文件改为指向 .l2s 的宿主绝对链接，重复测试还会嵌套；虽然内容与 inode 保留，不同 /data/data 与 /data/user/0 启动别名可能让实际 App 报 ENOENT。本轮已核对两级链接的精确目标、确认最终为普通文件后恢复原 inode。后续探针改为宿主预建的 /etc/min-isolation-fd-fixture，红测与正式 App 测试前分别重建，只清理该用例的命名文件。验收解析器须匹配完整 FAIL 单词，不能把 FAILURES=0 当失败。
+
+### Suggested Action
+对原生模拟器文件副作用做红测时，先读扩展实现；使用独立可清理 fixture，并验证受限启动与原始启动两侧正常读取。可写策略还要覆盖 AF_UNIX bind，它也会创建文件；proxy-only 限制还需拒绝 IP bind，堵普通反向连接。
+
+### Metadata
+- Source: debugging
+- Related Files: workspace/proot/tests/min-isolation-probe.c, workspace/proot/src/isolation/policy.c
+- Tags: proot, hardlink, fixture, bind, mutation
+
+---
+
+## [LRN-20261011-WINDOWS-SPAWN-CWD] best_practice
+
+**Logged**: 2026-10-11T14:48:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Windows Python 启动仓库工具时，使用可执行文件的绝对路径，不能靠 subprocess 的 cwd 找到相对 gradlew.bat。
+
+### Details
+同一验证脚本从仓库目录启动正常，从共享 workspace 启动则 CreateProcess error=2，尽管 subprocess 的 cwd 已指向仓库。将 argv[0] 改为仓库下 gradlew.bat 的绝对路径后正常启动；这是验证入口错误，不计入产品测试的红测或 Gradle 失败。
+
+### Suggested Action
+可复用的 Windows 验证脚本同时明确 executable、cwd 和进程级 PATH，确保从任意调用目录都能重现。
+
+### Metadata
+- Source: debugging
+- Tags: windows, subprocess, cwd, gradle
+- See Also: LRN-20261011-WINDOWS-TEST-PATH
+
+---
+
+## [LRN-20261011-POLICY-REFLECTION-SHAPE] best_practice
+
+**Logged**: 2026-10-11T14:55:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+PolicyContext 添加字段时，还要更新 CLI 的反射兼容夹具，否则样本根本不能进入生产判定。
+
+### Details
+全量 376 项 CLI 测试中 PermissionCompatTest 将 58 个样本全部报 NoSuchElementException。夹具仍按 14 参数选择 JVM 主构造器；GuestIsolation 新字段将其变为 15 参数。补上普通桌面样本的 null guest 策略，保留全部输入、58 样本与 allow/ask/deny 期望。首次完整失败 XML 保留，不能将夹具结构错误解释成权限语义变更。
+
+### Suggested Action
+新增载荷字段时搜索直接构造和 parameterCount 等反射消费者；验证反射夹具实际进入生产方法。记录完整失败轮与恢复轮，计时门限失败另行复跑，不能放宽门限掩盖失败。
+
+### Metadata
+- Source: debugging
+- Related Files: agent/policy/src/main/kotlin/dev/min/agent/policy/PolicyEngine.kt, agent/cli/src/test/kotlin/dev/min/agent/cli/PermissionCompatTest.kt
+- Tags: reflection, policy-context, compatibility, full-check
+
+---
+
+## [LRN-20261011-NATIVE-STOCK-BASELINE] best_practice
+
+**Logged**: 2026-10-11T17:13:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+原生策略 benchmark 同时保留原始 ELF 对照；新版关闭策略不能覆盖新增 TRACE 注册的开销。
+
+### Details
+同一新版 proot 的策略开关对照只显示开关差异。改用起点 Git blob 的 ELF 与最终隔离 ELF，五组交替负载均成功，整套均值受缓存与调度影响，但 100 次 fork/exec 均值为 1290.6 对 2026.6 ms，增加约 57%；报告必须保留分项开销，不能只报整套均值下降。暂停恢复后的探针还要重新核对 adb 目标、包登记与 rootfs；boot_completed 不等于调试包可用，保留准备失败而不计作需求红测。
+
+### Suggested Action
+从 Git blob 固定原始二进制与哈希；记录顺序、逐次数据、分项与整套负载。恢复设备任务时验证包和 fixture，再按 owner 清理并释放 lock。
+
+### Metadata
+- Source: debugging
+- Related Files: workspace/proot/src/syscall/seccomp.c
+- Tags: native, benchmark, trace, emulator, baseline
+- Pattern-Key: native-benchmark.include-original-instrumentation-cost
+
+---

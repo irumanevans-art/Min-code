@@ -14,6 +14,19 @@ import java.nio.file.Files
 
 class MinSnapshotCompositionTest {
     @get:Rule val tmp = TemporaryFolder()
+    @Test fun isolationDescriptorSurvivesTheAndroidExecForwarderAndGenerationChange() {
+        val fs = RootfsFileSystem(tmp.newFolder().toPath())
+        var policy = dev.min.agent.policy.GuestIsolationPolicy.forCommand()
+        val exec = object : Exec {
+            override val guestIsolation get() = policy
+            override suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult = error("not used")
+            override suspend fun kill(handle: ExecHandle) = Unit
+        }
+        val ports = MinHostPorts({ MinHostGeneration(fs, JvmSearch(fs), exec, "test") }, MinBackgroundTasks(), Clock { 0L })
+        assertEquals(policy, ports.exec.guestIsolation)
+        policy = policy.copy(writableRoots = listOf(GuestPath("/workspace/second")))
+        assertEquals(policy, ports.exec.guestIsolation)
+    }
     @Test fun android_budget_and_real_snapshot_port_follow_current_filesystem_generation() = runBlocking {
         val first = tmp.newFolder("first").toPath()
         val second = tmp.newFolder("second").toPath()

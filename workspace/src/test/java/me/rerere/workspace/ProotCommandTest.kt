@@ -15,6 +15,18 @@ import java.nio.file.Files
  * 之间**哪些必须一致、哪些是故意不同**由这里钉住。
  */
 class ProotCommandTest {
+    @Test fun isolatedCommandsCarryNativeWriteRootsAndOnlyExplicitProxyPorts() {
+        val isolated = context(command = "true").copy(isolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand())
+        val argv = runner().buildCommand(isolated)
+        assertTrue("--min-isolation=offline" in argv)
+        assertEquals(7, argv.count { it.startsWith("--min-writable=") })
+        assertTrue("--min-writable=${isolated.filesDir.canonicalPath}" in argv)
+        val proxy = runner().buildCommand(isolated.copy(isolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand(dev.min.agent.spi.GuestNetwork.ProxyOnly(listOf(8123, 8124)))))
+        assertTrue("--min-isolation=proxy:8123,8124" in proxy)
+        assertFalse("--min-isolation=offline" in proxy)
+        val environmentOnly = runner().buildCommand(isolated.copy(env = mapOf("HTTP_PROXY" to "http://127.0.0.1:8000")))
+        assertTrue("--min-isolation=offline" in environmentOnly)
+    }
     private fun tempDir(name: String): File =
         Files.createTempDirectory(name).toFile().apply { deleteOnExit() }
 

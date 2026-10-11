@@ -50,6 +50,7 @@ data class WorkspaceShellContext(
     val killOnExit: Boolean = true,
     /** 见 [ProotShellEntry]。默认非交互, 终端页签才换成交互 shell。 */
     val entry: ProotShellEntry = ProotShellEntry.LoginCommand,
+    val isolation: dev.min.agent.spi.GuestIsolation? = null,
 )
 
 class HostShellRunner : WorkspaceShellRunner {

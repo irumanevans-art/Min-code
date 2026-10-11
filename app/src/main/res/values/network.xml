@@ -3,7 +3,7 @@
     <string name="settings_group_network">Network</string>
     <string name="settings_group_network_sub">Command domain approvals and lists</string>
     <string name="network_enabled">Approve command network domains</string>
-    <string name="network_limit_hint">Off by default. Commands use a host proxy. Programs that ignore proxy variables can connect directly; this is not hard isolation. On Android, network requests can fail when the app is frozen.</string>
+    <string name="network_limit_hint">Off: Min guest network is disabled by the kernel. On: the host proxy approves domains; proot limits connections to its loopback ports (best effort, subject to thread races). Network requests can fail when Android freezes the app.</string>
     <string name="network_managed_readonly">Managed · read only</string>
     <string name="network_managed_only">Only use managed domains</string>
     <string name="network_managed_on">Enforced by managed settings. Other allow lists and new approvals cannot widen it.</string>

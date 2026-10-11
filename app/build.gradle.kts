@@ -148,6 +148,7 @@ dependencies {
     implementation(project(":highlight"))
     implementation(project(":workspace"))
     implementation(project(":agent:kernel"))
+    implementation(project(":agent:policy"))
     debugImplementation(project(":agent:lsp"))
     implementation(project(":agent:host"))
     implementation(project(":agent:llm"))

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Makefile 里 loader/loader-info.c 规则直接调 readelf，用 llvm-readelf 顶替
+exec llvm-readelf "$@"

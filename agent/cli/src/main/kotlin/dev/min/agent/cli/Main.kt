@@ -91,6 +91,8 @@ internal suspend fun interact(
     var ui = uiConsole?.attach(scope)
     try {
         System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
+        System.err.println("桌面仅防误操作级；Windows 没有 Android 的 proot / seccomp 对等机制。")
+        dev.min.agent.policy.IsolationStatus.desktop.forEach { layer -> System.err.println("${layer.name}：${layer.state}；${layer.strength}") }
         // 交互式续接一个又老又大的会话：缓存早过期了，问一句要不要先压成摘要（-p 不问，照原样续接）
         if (shouldOfferResume(args)) offerResume(runtime.resumeAdvice(), stdin, System.err, runtime::continueFromSummary)
 

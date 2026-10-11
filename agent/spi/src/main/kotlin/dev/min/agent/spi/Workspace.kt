@@ -75,6 +75,7 @@ data class ShellCommand(
     val script: String,
     val cwd: GuestPath,
     val env: Map<String, String> = emptyMap(),
+    val network: GuestNetwork = GuestNetwork.Offline,
 )
 
 data class ExecOptions(
@@ -100,6 +101,8 @@ sealed interface ExecResult {
  * 基线实测 SIGKILL 掉 proot 后 tracee 全部存活（research/baseline）。
  */
 interface Exec {
+    /** null 表示这个宿主没有 guest 隔离；不能由 IS_SANDBOX 或代理 env 推断。 */
+    val guestIsolation: GuestIsolation? get() = null
     suspend fun run(command: ShellCommand, options: ExecOptions): ExecResult
     suspend fun kill(handle: ExecHandle)
 

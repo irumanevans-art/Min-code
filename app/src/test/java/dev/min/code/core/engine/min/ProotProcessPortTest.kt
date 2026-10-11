@@ -106,6 +106,14 @@ class ProotProcessPortTest {
 
     // ---------------------------------------------------------------- 命令行与环境
 
+    @Test fun stdioServersAlwaysRequireOfflineIsolation() = runBlocking {
+        val (port, host) = port("echo")
+        val live = port.spawn(spec("/bin/true", env = mapOf("HTTP_PROXY" to "http://127.0.0.1:8888")))
+        spawned += live
+        assertTrue("stdio isolation is mandatory", host.context.isolation != null)
+        assertEquals(dev.min.agent.spi.GuestNetwork.Offline, host.context.isolation!!.network)
+    }
+
     @Test
     fun `argv 逐项单引号转义后交给 guest 的 bash 跑、末尾原样交出退出码，且 cwd 用 guest 路径`() = runBlocking {
         val (port, host) = port("echo")
