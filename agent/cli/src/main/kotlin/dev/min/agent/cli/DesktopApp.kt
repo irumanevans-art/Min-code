@@ -181,6 +181,21 @@ internal class DesktopApp(
     internal val cwd: Path get() = args.cwd
 
     /**
+     * `/add-dir` 与 SDK 的 `register_repo_root` 收到的路径（用户写的原文）→ guest 路径：相对路径按会话**当前**目录、`~` 是家目录，
+     * Windows 上 `D:\x` 与 Git Bash 的 `/d/x` 两种盘符写法都认。网络路径（UNC）调用方在这之前用 [dev.min.agent.kernel.isNetworkPathText] 挡掉。
+     */
+    internal fun guestOfUserPath(runtime: SessionRuntime, raw: String): dev.min.agent.spi.GuestPath {
+        paths.guestOfShell(raw)?.let { return it }
+        val base = paths.hostOf(runtime.state.value.settings.cwd)
+        val home = Path.of(System.getProperty("user.home"))
+        val candidate = if (raw == "~" || raw.startsWith("~/") || raw.startsWith("~\\")) home.resolve(raw.removePrefix("~").trimStart('/', '\\')) else Path.of(raw)
+        return paths.guestOfHost(base.resolve(candidate))
+    }
+
+    /** guest 路径在终端里的写法（给人看的提示用本机路径） */
+    internal fun hostPathText(guest: dev.min.agent.spi.GuestPath): String = paths.hostOf(guest).toString()
+
+    /**
      * 工作区信任账本（`~/.min-agent/workspace-trust.txt`）。交互首次确认的「信任」记在这里；`-p` 只读不写。
      * 为什么只在组合根里持有：内核的 trustProjectHooks 与插件信任都从 [isWorkspaceTrusted] 读同一个答案。
      */

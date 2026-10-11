@@ -432,7 +432,8 @@ private suspend fun SessionRuntime.rescanSkills(manual: Boolean): SkillReload = 
     }
     val s = state.value
     val fs = deps.host.fs
-    val inputs = deps.settingsInputs
+    // 会话中途 /add-dir 加的目录与 --add-dir 同待遇：它们的 skills（与手动重扫时的 commands）也要被扫到
+    val inputs = deps.settingsInputs.let { it.copy(addDirs = (it.addDirs + s.addedDirectories).distinct()) }
     val bare = mode == Customizations.Bare
     val fresh: List<SkillEntry>
     val notes: List<String>

@@ -135,6 +135,8 @@ internal class HookDriver(private val rt: SessionRuntime) {
         turnId: TurnId? = null,
         callId: CallId? = null,
         executionCwd: dev.min.agent.spi.GuestPath? = null,
+        /** false = hook 的 systemMessage 不当成「给人看的提示」写 Note（DirectoryAdded 把它交给模型或只进日志，不显示给人） */
+        notifyUser: Boolean = true,
         ifMatches: ((String) -> Boolean)? = null,
     ): HookOutcome? {
         if (rt.state.value.hooks.isEmpty() && rt.state.value.componentHooks.isEmpty()) return null
@@ -284,7 +286,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
                 ),
             )
             if (problems.isNotEmpty()) add(Note(NoteLevel.Warning, "$event hook：" + problems.joinToString("；")))
-            outcome.systemMessages.forEach { add(Note(NoteLevel.Info, it)) }
+            if (notifyUser) outcome.systemMessages.forEach { add(Note(NoteLevel.Info, it)) }
         }
         rt.commit(events, Durability.Batched)
         return outcome

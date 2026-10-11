@@ -246,6 +246,7 @@ internal suspend fun interact(
                 }
             }
             trimmed == "/recap" -> System.err.println(recapNote(runtime.recap()))
+            trimmed == "/add-dir" || trimmed.startsWith("/add-dir ") -> addDirCommand(app, runtime, trimmed.removePrefix("/add-dir"), System.err)
             trimmed == "/reload-skills" -> reloadSkillsCommand(runtime, System.err)
             trimmed == "/cost" -> System.err.println(costReport(app, app.hub(), runtime))
             trimmed == "/auto-reviewer" || trimmed.startsWith("/auto-reviewer ") ->

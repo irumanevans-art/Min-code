@@ -636,6 +636,9 @@ class SessionRuntime private constructor(
         commit(listOf(snapshot), Durability.Sync)
     }
 
+    /** 会话自己的后台协程作用域：加目录的 hook、文件监视这类「不等它、也不挂在某个回合上」的活跑在这里（随会话卸下一起取消） */
+    internal val hostScope: CoroutineScope get() = scope
+
     internal fun emitLive(update: LiveUpdate) {
         _live.tryEmit(update)
     }

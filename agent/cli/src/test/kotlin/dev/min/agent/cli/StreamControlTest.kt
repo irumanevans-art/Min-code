@@ -157,6 +157,40 @@ class StreamControlTest {
         }
     }
 
+    @Test fun `register_repo_root adds a working directory mid-session, bad paths get an error response`() = run {
+        val shared = tmp.newFolder("rr-shared").toPath()
+        val before = shared.resolve("before.txt")
+        val after = shared.resolve("after.txt")
+        ModelServer { last ->
+            when {
+                last.contains("T_W1") -> toolResponse("w1", "Write", buildJsonObject { put("file_path", guest(before)); put("content", "x") })
+                last.contains("T_W2") -> toolResponse("w2", "Write", buildJsonObject { put("file_path", guest(after)); put("content", "x") })
+                else -> textResponse("WRITE_DONE")
+            }
+        }.use { server ->
+            // acceptEdits：工作目录外的写要审批，没有宿主批准 = 拒绝
+            val live = startLive(tmp.root.toPath(), scope(), "rr", server, base + listOf("--mode", "acceptEdits"))
+            live.send(user("T_W1"))
+            live.awaitLine { it.str("type") == "result" }
+            assertFalse("没加之前，工作目录外的写不该落盘", Files.exists(before))
+            live.send(control("r0", """{"subtype":"register_repo_root"}"""))
+            assertEquals("缺 path", "error", live.awaitLine(pred = isResponseTo("r0"))["response"]!!.jsonObject.str("subtype"))
+            live.send(control("r1", """{"subtype":"register_repo_root","path":${JsonPrimitive(shared.resolve("nope").toString())}}"""))
+            assertEquals("不存在", "error", live.awaitLine(pred = isResponseTo("r1"))["response"]!!.jsonObject.str("subtype"))
+            live.send(control("r2", """{"subtype":"register_repo_root","path":${JsonPrimitive("\\\\server\\share")}}"""))
+            assertTrue("网络路径", live.awaitLine(pred = isResponseTo("r2"))["response"]!!.jsonObject.str("error")!!.contains("网络路径"))
+            live.send(control("r3", """{"subtype":"register_repo_root","path":${JsonPrimitive(shared.toString())}}"""))
+            val ok = live.awaitLine(pred = isResponseTo("r3"))["response"]!!.jsonObject
+            assertEquals("success", ok.str("subtype"))
+            assertEquals(JsonPrimitive(true), ok["response"]!!.jsonObject["added"])
+            live.send(user("T_W2"))
+            val out = live.finish()
+            assertTrue("加了之后，写进这个目录按权限模式（acceptEdits）直接放行", Files.exists(after))
+            assertFalse(Files.exists(before))
+            assertEquals(0, out.exit)
+        }
+    }
+
     @Test fun `set_model switches among the models the CLI was started with and refuses the rest`() = run {
         ModelServer { textResponse("MODEL_OK") }.use { server ->
             val live = startLive(tmp.root.toPath(), scope(), "model", server, base + listOf("--fast-model", "scripted-fast"))

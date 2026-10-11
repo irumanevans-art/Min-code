@@ -82,6 +82,7 @@ class HooksCompatTest {
      * Elicitation=SessionRuntime.handleMcpElicitation（服务器反问时先问 hooks，hookSpecificOutput 程序化应答、跳过对话框），
      * 见 McpElicitationHookTest；ElicitationResult=同函数的用户答复出口（用户真的答了才发，覆写 action/content），
      * 见 McpElicitationResultHookTest。
+     * DirectoryAdded=SessionRuntime.addDirectory（宿主的 /add-dir 与 SDK register_repo_root 加目录之后后台触发；见 DirectoryAddedTest / AddDirCommandTest）。
      * 给内核接新事件时更新这份清单：对应 minTrigger:"none" 的样本会开始失败，提醒升级样本并摘掉标记。
      */
     private val KERNEL_FIRED = setOf(
@@ -90,7 +91,7 @@ class HooksCompatTest {
         "PreCompact", "PostCompact", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
         "PostToolBatch", "TaskCreated", "TaskCompleted", "PreModelSwitch", "PostModelSwitch",
         "UserPromptExpansion", "PermissionDenied", "TeammateIdle", "InstructionsLoaded", "StopFailure",
-        "Elicitation", "ElicitationResult",
+        "Elicitation", "ElicitationResult", "DirectoryAdded",
     )
 
     @Test fun `hooks 每个事件都有输入与决策样本，触发现状标记与内核清单一致`() {
