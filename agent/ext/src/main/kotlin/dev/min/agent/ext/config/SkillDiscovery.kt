@@ -86,3 +86,33 @@ suspend fun addDirSkills(fs: WorkspaceFs, dirs: List<GuestPath>): AddDirSkills {
     val roots = dirs.map { DefinitionRoot(ConfigSource.AddDir, GuestPaths.join(GuestPaths.normalize(it.value), ".claude/skills")) }
     return AddDirSkills(SkillLoader.load(io, roots), io.notes.toList())
 }
+
+/** 热更新重扫要看的目录：[skillDirs] 下的 `<名字>/SKILL.md`、[commandDirs] 下的命令文件（[commandDirs] 只在手动重扫时有） */
+class SkillWatchRoots(val skillDirs: List<String>, val commandDirs: List<String>) {
+    /** [path] 是否落在这几个目录之下（嵌套目录懒加载、托管、内置、插件的清单项都不在内） */
+    fun covers(path: String, command: Boolean): Boolean = (if (command) commandDirs else skillDirs).any { path.startsWith("$it/") }
+}
+
+/**
+ * 会话中途重扫的目录（CC skills 文档监视的：用户 `~/.claude/skills`、项目 `.claude/skills`（含仓库祖先，与启动时同一套）、`--add-dir` 的
+ * `.claude/skills`）。[manual]（`/reload-skills`）再加上同样几处的 `commands` 目录；[bare] 只剩 `--add-dir` 的 skills。
+ * `--restricted` 不读用户目录。纯路径计算，不读盘（祖先链要问 `.git` 在不在，经 [fs]）。
+ */
+suspend fun skillWatchRoots(fs: WorkspaceFs, cwd: GuestPath, home: GuestPath, addDirs: List<GuestPath>, restricted: Boolean, manual: Boolean, bare: Boolean): SkillWatchRoots {
+    val skillDirs = mutableListOf<String>()
+    val commandDirs = mutableListOf<String>()
+    addDirs.map { GuestPaths.normalize(it.value) }.distinct().forEach { dir ->
+        skillDirs += GuestPaths.join(dir, ".claude/skills")
+        if (manual && !bare) commandDirs += GuestPaths.join(dir, ".claude/commands")
+    }
+    if (!bare) {
+        if (!restricted) {
+            val userDir = GuestPaths.join(GuestPaths.normalize(home.value), ".claude")
+            skillDirs += GuestPaths.join(userDir, "skills")
+            if (manual) commandDirs += GuestPaths.join(userDir, "commands")
+        }
+        skillDirs += SkillDiscovery.ancestorSkillDirs(fs, cwd)
+        if (manual) commandDirs += GuestPaths.join(GuestPaths.normalize(cwd.value), ".claude/commands")
+    }
+    return SkillWatchRoots(skillDirs, commandDirs)
+}

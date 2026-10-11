@@ -80,3 +80,8 @@ internal class ForkWatch(private val approve: ApprovalAnswer, private val out: P
         }
     }
 }
+
+/** `/fork` 在 `--tools` 白名单会话里的拒绝说明（agent-view 文档：说明原因、不做半份复制）。同一句也给「复制出来的会话不会带着白名单」的理由 */
+internal const val FORK_REFUSED_TOOLS =
+    "这个会话是用 --tools 白名单启动的，不能 /fork：复制出来的会话不会带着这份白名单，Claude Code 在这种情况下也是直接说明、不做半份复制。" +
+        "想留着原会话另走一支，用 /branch（切到分支上继续）；或去掉 --tools 重新启动再 /fork。"

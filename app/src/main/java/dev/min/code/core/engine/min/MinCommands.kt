@@ -13,14 +13,13 @@ import dev.min.agent.kernel.setGoal
 import dev.min.agent.kernel.userInvokedSkills
 import dev.min.agent.kernel.savedWorkflows
 import dev.min.agent.kernel.userSkillRunPort
-import dev.min.agent.ext.config.CommandDef
-import dev.min.agent.ext.config.ConfigSource
-import dev.min.agent.ext.config.SkillDef
+import dev.min.agent.kernel.slashDefs
+import dev.min.agent.kernel.currentSkillEntries
+import dev.min.agent.kernel.reloadSkills
 import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.ext.skills.SlashCommands
 import dev.min.agent.ext.skills.SlashGate
 import dev.min.agent.ext.skills.SlashResult
-import dev.min.agent.spi.SkillKind
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
@@ -173,6 +172,8 @@ class MinCommandHandler(
         val delivery = if (runtime.state.value.turn != null) Delivery.Steer else Delivery.Queue
         // `/goal` 是会话命令，不是 skill：在斜杠展开之前接住（子 agent 里的 /goal 当普通话，不设子会话的目标）
         if (command.target == SendTarget.Main) goalArgumentOf(command.input.text)?.let { return goal(runtime, it) }
+        // `/reload-skills`：手动重扫 skill 与命令目录（会话命令，不是 skill；回执经 Notice 给界面，不进对话）。子 agent 里当普通话
+        if (command.target == SendTarget.Main && command.input.text.trim() == "/reload-skills") return notice(text.skillsReloaded(runtime.reloadSkills()))
         val expanded = expandSlash(runtime, command.input.text)
         if (expanded is SlashInput.Refused) return CommandResult.Rejected(expanded.reason)
         val input = if (expanded is SlashInput.Expanded) command.input.copy(text = expanded.body) else command.input
@@ -190,28 +191,14 @@ class MinCommandHandler(
         val typed = line.trim()
         if (!typed.startsWith("/")) return SlashInput.Plain
         val name = typed.removePrefix("/").takeWhile { !it.isWhitespace() }
-        // 工作流由内核接管；用户插件命令用冻结清单，不能把安装后的磁盘变化偷渡进旧会话。
+        // 工作流由内核接管；已安装插件的命令仍用冻结清单（插件的变化走 /reload-plugins，不经这里偷渡进旧会话）。
         if (runtime.savedWorkflows().any { it.name == name }) return SlashInput.Plain
-        val entries = runtime.state.value.skills?.entries.orEmpty() + runtime.state.value.nestedSkills
-        val skills = mutableListOf<SkillDef>()
-        val commands = mutableListOf<CommandDef>()
-        val unreadable = mutableSetOf<String>()
-        entries.forEach { entry ->
-            val body = runtime.readSkillBody(entry.path)
-            if (body == null) { unreadable += entry.name; return@forEach }
-            val source = ConfigSource.entries.firstOrNull { it.label == entry.source }
-                ?: if (entry.source?.startsWith("plugin:") == true) ConfigSource.Plugin else ConfigSource.User
-            if (entry.kind == SkillKind.Command) commands += CommandDef(
-                entry.name, entry.description, entry.path, body, source,
-                arguments = entry.arguments, userInvocable = entry.userInvocable, context = entry.context,
-                allowedTools = entry.allowedTools, agent = entry.agent, background = entry.background,
-            ) else skills += SkillDef(
-                entry.name, entry.description, entry.path, body, source,
-                arguments = entry.arguments, userInvocable = entry.userInvocable, context = entry.context,
-                allowedTools = entry.allowedTools, agent = entry.agent, background = entry.background,
-            )
-        }
-        if (name in unreadable) return SlashInput.Refused("/$name 的文件现在读不了。")
+        // 与模型调 Skill 工具同一份当前清单（冻结快照 + 中途重扫 / 嵌套发现，见 slashDefs；认名字之前先重扫一次，热发现的能展开）
+        val defs = runtime.slashDefs(typed)
+        val entries = runtime.state.value.currentSkillEntries()
+        if (name in defs.unreadable) return SlashInput.Refused("/$name 的文件现在读不了。")
+        val skills = defs.skills
+        val commands = defs.commands
         val snapshot = runtime.state.value
         val result = SlashCommands.expandRun(typed, skills, commands, SkillVars(
             runtime.sessionId.value, snapshot.settings.cwd.value, snapshot.settings.effort?.name?.lowercase(),

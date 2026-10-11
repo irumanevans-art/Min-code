@@ -136,6 +136,62 @@ class MinCommandTest {
         assertFalse(awaitValue { r.session.state.value.slashCommands.takeIf { it.any { c -> c.name == "market-demo:hello" } } }.any { it.name == "market-demo:private" })
     }
 
+    // ---- skills 的热更新与 /reload-skills（App 入口） ----
+
+    private fun skillsRig(files: MutableMap<String, String>): Rig {
+        val fs = object : dev.min.agent.spi.WorkspaceFs {
+            override suspend fun stat(path: dev.min.agent.spi.GuestPath): dev.min.agent.spi.FileStat? =
+                files[path.value]?.let { dev.min.agent.spi.FileStat(dev.min.agent.spi.FileKind.File, it.toByteArray().size.toLong(), 0) }
+                    ?: if (files.keys.any { it.startsWith(path.value.trimEnd('/') + "/") }) dev.min.agent.spi.FileStat(dev.min.agent.spi.FileKind.Directory, 0, 0) else null
+            override suspend fun read(path: dev.min.agent.spi.GuestPath, offset: Long, limit: Int): ByteArray =
+                files.getValue(path.value).toByteArray().drop(offset.toInt()).take(limit).toByteArray()
+            override suspend fun writeAtomic(path: dev.min.agent.spi.GuestPath, bytes: ByteArray) { files[path.value] = bytes.decodeToString() }
+            override suspend fun list(dir: dev.min.agent.spi.GuestPath): List<dev.min.agent.spi.DirEntry> = files.keys
+                .filter { it.startsWith(dir.value.trimEnd('/') + "/") }
+                .map { it.removePrefix(dir.value.trimEnd('/') + "/").substringBefore('/') }.distinct()
+                .map { dev.min.agent.spi.DirEntry(it, stat(dev.min.agent.spi.GuestPath(dir.value.trimEnd('/') + "/" + it))!!.kind) }
+            override fun scopeOf(path: dev.min.agent.spi.GuestPath) = dev.min.agent.spi.PathScope.Workspace
+        }
+        val k = TestKernel(ScriptedModel(answer("done"), answer("done2")), fs = fs, memoryHome = dev.min.agent.spi.GuestPath("/root")).also { kernel = it }
+        val host = FakeHost(k)
+        val session = MinAgentSession(runBlocking { k.newRoot() }, host, k.scope)
+        return Rig(k, host, session).also { r ->
+            k.scope.launch(Dispatchers.Unconfined) { session.signals.collect { r.signals += it } }
+        }
+    }
+
+    private fun skillFile(description: String, body: String) = "---\ndescription: $description\n---\n$body"
+
+    @Test fun `slash reload-skills in the app picks up a new skill, says so with a notice and puts it in the menu`() {
+        val files = mutableMapOf("/workspace/.claude/skills/old/SKILL.md" to skillFile("old one", "OLD"))
+        val r = skillsRig(files)
+        files["/workspace/.claude/skills/fresh/SKILL.md"] = skillFile("brand new", "FRESH BODY")
+        files.remove("/workspace/.claude/skills/old/SKILL.md")
+        assertEquals(CommandResult.Accepted, r.send("/reload-skills"))
+        val notice = r.signals.filterIsInstance<SessionSignal.Notice>().single()
+        assertTrue(notice.text, notice.text.startsWith("skills-reloaded:true:") && notice.text.endsWith(":1:1:0"))
+        assertTrue("不进对话", r.events().filterIsInstance<InputReceived>().isEmpty())
+        val menu = awaitValue { r.session.state.value.slashCommands.takeIf { c -> c.any { it.name == "fresh" } } }
+        assertTrue("删掉的不再列", menu.none { it.name == "old" })
+    }
+
+    @Test fun `a skill added to the project mid-session expands from the app slash entry`() {
+        val files = mutableMapOf<String, String>()
+        val r = skillsRig(files)
+        files["/workspace/.claude/skills/fresh/SKILL.md"] = skillFile("brand new", "FRESH BODY for ${'$'}ARGUMENTS")
+        assertEquals(CommandResult.Accepted, r.send("/fresh sea"))
+        r.awaitIdle()
+        assertTrue((r.events().filterIsInstance<InputReceived>().single().parts.single() as TextPart).text.endsWith("FRESH BODY for sea"))
+    }
+
+    @Test fun `a skill deleted mid-session is refused by the app slash entry`() {
+        val files = mutableMapOf("/workspace/.claude/skills/gone/SKILL.md" to skillFile("short lived", "GONE"))
+        val r = skillsRig(files)
+        files.remove("/workspace/.claude/skills/gone/SKILL.md")
+        assertTrue(r.send("/gone") is CommandResult.Rejected)
+        assertTrue(r.events().filterIsInstance<InputReceived>().isEmpty())
+    }
+
     // ---- 发送 ----
 
     @Test fun sendWhileIdleQueuesAndWhileBusySteers() {

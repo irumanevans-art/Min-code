@@ -731,6 +731,10 @@ internal class DesktopApp(
      * 带提示词的复制会话在 [hub] 里自己跑回合（进程退出就断，日志在磁盘上，可 --resume）；改文件前先建 worktree 的指令见 [forkPrompt]
      */
     suspend fun forkCopy(runtime: SessionRuntime, prompt: String? = null): SessionRuntime {
+        // agent-view 文档：「Sessions started with launch flags the copy wouldn't inherit, such as a replaced system prompt or a `--tools`
+        // allowlist, can't be forked; Claude Code says so instead of making a partial copy.」复制出来的会话是另一个后台会话，
+        // 不会带着这次启动的白名单，所以直接说明、不做半份复制（Min 没有替换系统提示的参数；`/branch` 不在文档的这条限制里，照常可用）
+        if (args.tools != null) throw dev.min.agent.kernel.SessionBranchRefused(FORK_REFUSED_TOOLS)
         val copy = hub().branch(runtime.sessionId)
         if (!prompt.isNullOrBlank()) {
             val isolate = copy.state.value.worktree == null && inGitCheckout(args.cwd) && "EnterWorktree" in toolNames()

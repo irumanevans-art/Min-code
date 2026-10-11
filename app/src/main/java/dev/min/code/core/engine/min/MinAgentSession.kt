@@ -1,6 +1,7 @@
 package dev.min.code.core.engine.min
 
 import dev.min.agent.kernel.savedWorkflows
+import dev.min.agent.kernel.currentSkillEntries
 
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.kernel.SessionRuntime
@@ -107,11 +108,12 @@ class MinAgentSession(
     private val stopping = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
     private val mapper = MinAgentStateMapper(host.text, host.lookup)
-    private val workflowCommands = runtime.state.map { it.settings.cwd to it.lastTurn?.turnId }
+    private val workflowCommands = runtime.state.map { Triple(it.settings.cwd, it.lastTurn?.turnId, it.nestedSkills to it.removedSkills) }
         .distinctUntilChanged().map {
             val workflows = runtime.savedWorkflows().map { saved -> dev.min.code.core.engine.SlashCommandView(saved.name, saved.description) }
-            // 列表与发送共用会话冻结清单，用户可调但禁止模型调用的命令也必须能在这里找到。
-            workflows + runtime.state.value.skills?.entries.orEmpty().filter { it.userInvocable }
+            // 列表与发送共用同一份当前清单（slashDefs 用的也是它）：用户可调但禁止模型调用的命令也必须能在这里找到；
+            // 嵌套目录的 skill 要读写过那个子目录才会进来（原文：「Until then they don't appear in the / menu」），删掉的、被重扫换掉的同样跟着变
+            workflows + runtime.state.value.currentSkillEntries().filter { it.userInvocable }
                 .filter { entry -> workflows.none { it.name == entry.name } }
                 .map { dev.min.code.core.engine.SlashCommandView(it.name, it.description) }
         }.flowOn(Dispatchers.IO).stateIn(scope, SharingStarted.Eagerly, emptyList())

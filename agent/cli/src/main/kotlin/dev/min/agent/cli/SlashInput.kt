@@ -7,6 +7,9 @@ import dev.min.agent.ext.skills.SlashGate
 import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.ext.skills.SlashCommands
 import dev.min.agent.ext.skills.SlashResult
+import dev.min.agent.kernel.savedWorkflows
+import dev.min.agent.kernel.slashDefs
+import dev.min.agent.kernel.userSkillRunPort
 
 /** 终端里敲下的一行该怎么处理 */
 internal sealed interface InputAction {
@@ -72,4 +75,22 @@ internal suspend fun promptExpansionBlock(runtime: dev.min.agent.kernel.SessionR
     val source = if (action is InputAction.Prompt) "mcp" else
         runtime.state.value.skills?.entries?.firstOrNull { it.name == name }?.source ?: "user"
     return runtime.promptExpansionHooks(if (action is InputAction.Prompt) "mcp_prompt" else "slash_command", name, args, source, typed)
+}
+
+/**
+ * 交互入口（Main 的 `say`）的斜杠展开：用内核**当前**的清单（[dev.min.agent.kernel.slashDefs]：冻结快照 + 中途重扫 / 嵌套发现的变化），
+ * 不是启动时读的那一份——会话中途热发现的 skill 能展开，删掉的不能，与模型调 Skill 工具看到的一致。已存的工作流由内核接管（原样发送）。
+ * 清单里有、正文却读不了的（被删了 / 改了权限）返回提示，不发给模型。
+ */
+internal suspend fun interpretSlashLine(
+    runtime: dev.min.agent.kernel.SessionRuntime,
+    line: String,
+    vars: SkillVars,
+    prompts: List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList(),
+): InputAction {
+    if (runtime.savedWorkflows().any { it.name == line.trim().removePrefix("/").takeWhile { c -> !c.isWhitespace() } }) return InputAction.Send(line, humanInput = true)
+    val defs = runtime.slashDefs(line)
+    val first = line.trim().split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty().removePrefix("/")
+    if (line.trimStart().startsWith("/") && first in defs.unreadable) return InputAction.Notice("skill「$first」的文件现在读不了（可能在会话开始后被删除或改动）。")
+    return interpretInputRun(line, defs.skills, defs.commands, vars, runtime.userSkillRunPort(), prompts, slashGate(runtime))
 }

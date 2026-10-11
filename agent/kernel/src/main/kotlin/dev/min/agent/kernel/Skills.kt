@@ -2,6 +2,7 @@ package dev.min.agent.kernel
 
 import dev.min.agent.ext.config.ClaudeConfigLoader
 import dev.min.agent.ext.config.ConfigSource
+import dev.min.agent.ext.config.skillWatchRoots
 import dev.min.agent.ext.config.SettingsLoader
 import dev.min.agent.ext.config.SkillDef
 import dev.min.agent.ext.config.SkillDiscovery
@@ -34,6 +35,7 @@ import dev.min.agent.spi.SkillPort
 import dev.min.agent.spi.SkillsDiscovered
 import dev.min.agent.spi.SkillsLoaded
 import dev.min.agent.spi.WorkspaceFs
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -189,7 +191,7 @@ internal class KernelSkillRunPort(
     private var shellDisabledByPolicy: Boolean? = null
 
     override suspend fun begin(owner: SkillRunOwner) {
-        rt.grantSkillTools(owner.allowedTools, owner.baseDir, owner.name)
+        rt.grantSkillRules(rt.skillGrantRules(owner), owner.name)
     }
 
     override suspend fun shell(owner: SkillRunOwner, command: String): RunResult {
@@ -241,7 +243,7 @@ internal class KernelSkillRunPort(
         if (owner.agent == FORK_AGENT_TYPE) return RunResult.Refused("skill「${owner.name}」的 agent 写成了 fork，分身只能由内核派生，skill 不能指定它。")
         val request = DelegateRequest(
             description = "skill ${owner.name}", prompt = prompt, agentType = owner.agent, background = owner.background,
-            skillGrants = resolveSkillGrantRules(owner.allowedTools, owner.baseDir),
+            skillGrants = rt.skillGrantRules(owner),
         )
         return when (val r = hub.spawn(rt, turnId, callId, request)) {
             is DelegateResult.Started -> RunResult.Ok("skill「${owner.name}」已在后台的子 agent（${r.child.value}）里运行，结果会作为消息回到会话。")
@@ -319,30 +321,207 @@ suspend fun SessionRuntime.nestedSkillDefs(): List<SkillDef> = state.value.neste
     )
 }
 
+
+
+/**
+ * 托管层设了 `allowManagedPermissionRulesOnly` 时仍然保留 `allowed-tools` 的来源（settings 页原文：「Skills from managed settings and
+ * bundled skills keep their allowed-tools」）。原文列为**忽略**的是仓库 `.claude/`、用户 `~/.claude/skills|commands`、`--add-dir`、
+ * 放在这两处 skills 目录里的 `.claude-plugin` 清单插件——它们在 Min 里的来源标签都是 project / user / add-dir；
+ * 已安装的插件不在原文的名单里，保留。标签认不出来的一律当作受影响（失败关闭）。
+ */
+private fun keepsAllowedToolsUnderManagedOnly(source: String?): Boolean =
+    source == ConfigSource.Managed.label || source == ConfigSource.Bundled.label || source?.startsWith("plugin:") == true
+
+/**
+ * 这次调用真正该放行的 `allowed-tools` 规则（已代入 `${CLAUDE_SKILL_DIR}`）。托管层设了 `allowManagedPermissionRulesOnly`、
+ * 而这个 skill 来自受影响的来源时返回空：那几条工具回到托管规则与常规的权限提示（原文：「go through your organization's managed rules
+ * and the normal permission prompt instead」），并留一条给人看的说明、记进 [ignoredSkillTools]（原文用 `/status` 列出；Min 没有 `/status`）。
+ * 每次调用都重读设置：托管文件会话中途变了，下一次调用就按新的算。放行的写入口（[SessionRuntime.grantSkillRules]）与分身交接
+ * （[KernelSkillRunPort.fork]）都经这里，没有第二条路能把被忽略的规则放进去。
+ */
+internal suspend fun SessionRuntime.skillGrantRules(owner: SkillRunOwner): List<String> {
+    if (owner.allowedTools.isEmpty()) return emptyList()
+    if (!keepsAllowedToolsUnderManagedOnly(owner.source) && managedPermissionRulesOnly()) {
+        if (ignoredSkillToolNames.add(owner.name)) {
+            commit(
+                listOf(dev.min.agent.spi.Note(
+                    dev.min.agent.spi.NoteLevel.Info,
+                    "托管设置里 allowManagedPermissionRulesOnly 已开：skill「${owner.name}」（来自 ${owner.source ?: "未知来源"}）的 allowed-tools 被忽略，" +
+                        "它列的工具按托管规则与常规权限提示处理。",
+                )),
+                Durability.Sync,
+            )
+        }
+        return emptyList()
+    }
+    return resolveSkillGrantRules(owner.allowedTools, owner.baseDir)
+}
+
+/** 本会话里 `allowed-tools` 被 `allowManagedPermissionRulesOnly` 忽略过的 skill 名（按出现顺序，重开会话后重新累积） */
+fun SessionRuntime.ignoredSkillTools(): List<String> = synchronized(ignoredSkillToolNames) { ignoredSkillToolNames.toList() }
+
+private suspend fun SessionRuntime.managedPermissionRulesOnly(): Boolean {
+    val home = deps.memoryHome ?: return false
+    return SettingsLoader.load(deps.host.fs, state.value.settings.cwd, home, inputs = deps.settingsInputs).merged.allowManagedPermissionRulesOnly
+}
+
 /** skill 的 `allowed-tools` 规则文字：`${CLAUDE_SKILL_DIR}`（文档：允许在 allowed-tools 的 Bash 规则里用它）代入 skill 所在目录 */
 internal fun resolveSkillGrantRules(allowed: List<String>, baseDir: String?): List<String> =
     allowed.map { if (baseDir != null) it.replace("\${CLAUDE_SKILL_DIR}", baseDir) else it }
 
+/** 命令定义 → 清单项（与启动时 [SkillSnapshots.load] 里对命令的映射一致，重扫比对要逐字段相等） */
+internal fun dev.min.agent.ext.config.CommandDef.toEntry(): SkillEntry = SkillEntry(
+    name = name, description = description, path = path, kind = SkillKind.Command, whenToUse = whenToUse,
+    source = sourceLabel, argumentHint = argumentHint, arguments = arguments,
+    disableModelInvocation = disableModelInvocation, userInvocable = userInvocable,
+    context = context, hooks = hooks, agent = agent, background = background, allowedTools = allowedTools,
+)
+
 /**
- * `--add-dir` 目录里 `.claude/skills` 的热发现（CC skills 文档：「picks up the change within the current session, without a restart」，
- * 但「doesn't watch the added directory's `.claude/commands/` or `.claude/agents/`」，bare 档不监视）。
- * Min 没有常驻文件监视，改在用户每次开新回合之前重扫一遍：只读这些目录的 SKILL.md，与会话当前已知的 add-dir skill 比对，
- * 有新增 / 改动 / 删除才写一条 [dev.min.agent.spi.SkillsRescanned]——系统提示里冻结的清单不动（前缀与缓存不断），
- * 差异以 system-reminder 附在这条用户消息后告诉模型，Skill 工具按新的找。与完整档的 skills 同样要求项目来源已开放：safe / bare 不走这里。
+ * 一次重扫的结果。[available] = false 表示这个会话不读 skills（`--safe-mode`），没有扫；[added] 是新出现的名字、[changed] 是说明 / 参数等
+ * 元数据变了的、[removed] 是没了的（只改正文的不算：正文每次调用时现读）；[total] 是重扫之后会话里可按名字调用的 skill 与命令的个数。
  */
-internal suspend fun SessionRuntime.rescanAddDirSkills() {
-    if (deps.customizations != Customizations.Full) return
-    val dirs = deps.settingsInputs.addDirs
-    if (dirs.isEmpty()) return
-    val s = state.value
-    val current = s.skillEntries()
-    val known = current.filter { it.source == ConfigSource.AddDir.label && it.kind == SkillKind.Skill }.associateBy { it.name }
-    // 别的来源占着的名字（项目、用户、托管、插件、内置、命令）还是它们的：附加目录里的同名项当初就没进清单，现在也不进
-    val foreign = current.filter { it.source != ConfigSource.AddDir.label || it.kind != SkillKind.Skill }.map { it.name }.toSet()
-    val scanned = addDirSkills(deps.host.fs, dirs)
-    val fresh = scanned.skills.filter { it.name !in foreign }.map { it.toEntry() }
-    val changed = fresh.filter { known[it.name] != it }
-    val gone = known.keys - fresh.map { it.name }.toSet()
-    if (changed.isEmpty() && gone.isEmpty()) return
-    commit(listOf(dev.min.agent.spi.SkillsRescanned(changed, gone.sorted(), scanned.notes)), Durability.Sync)
+class SkillReload(
+    val available: Boolean,
+    val total: Int,
+    val added: List<String>,
+    val removed: List<String>,
+    val changed: List<String>,
+    val notes: List<String> = emptyList(),
+) {
+    /** 给人看的一行（`/reload-skills` 的回执）：原文「Reports how many skills are available and how many were added or removed」 */
+    fun summary(): String {
+        if (!available) return "这个会话不加载 skills（--safe-mode），没有可重扫的。"
+        val parts = buildList {
+            if (added.isNotEmpty()) add("新增 ${added.size}（${added.joinToString("、")}）")
+            if (removed.isNotEmpty()) add("移除 ${removed.size}（${removed.joinToString("、")}）")
+            if (changed.isNotEmpty()) add("更新 ${changed.size}（${changed.joinToString("、")}）")
+        }
+        return "已重新扫描：现有 $total 个 skill / 命令可用" + if (parts.isEmpty()) "，没有变化。" else "；" + parts.joinToString("，") + "。"
+    }
 }
+
+/**
+ * 手动重扫（`/reload-skills`，commands 文档：「Re-scan skill and command directories so skills added or changed on disk during the session
+ * become available without restarting. Reports how many skills are available and how many were added or removed」）。
+ * 范围：用户 `~/.claude`、项目（含仓库祖先）与 `--add-dir` 的 skills **和 commands**；已安装插件另有 `/reload-plugins`，托管目录与内置不读。
+ * `--bare` 只重扫 `--add-dir` 的 skills（bare 启动时就只加载这一块）；`--safe-mode` 什么都不扫。差异的呈现与自动重扫同一条路（[SkillsRescanned]）。
+ */
+suspend fun SessionRuntime.reloadSkills(): SkillReload = rescanSkills(manual = true)
+
+/**
+ * 用户 / 项目 / `--add-dir` 层 skills 的热更新（skills 文档「Edit a skill during a session」：「Claude Code watches skill directories for file
+ * changes, except in bare mode. When you add, edit, or remove a skill under `~/.claude/skills/`, the project `.claude/skills/`, or a
+ * `.claude/skills/` inside an `--add-dir` directory, Claude Code picks up the change within the current session, without a restart」；
+ * 「Live change detection covers SKILL.md text only」，`--add-dir` 的 commands / agents 不监视）。
+ * Min 没有常驻文件监视，改在用户每次开新回合之前重扫一遍（[SessionRuntime.send]），与原文的差别：新建的顶层 skills 目录原文要 `/reload-skills`
+ * 才认，这里下一回合就认（范围比原文大）；换来的是不必常驻监视进程。只读那几处目录，与会话当前已知的比对，
+ * 有新增 / 改动 / 删除才写一条 [dev.min.agent.spi.SkillsRescanned]——系统提示里冻结的清单不动（前缀与缓存不断），
+ * 差异以 system-reminder 附在这条用户消息后告诉模型，Skill 工具按新的找。`manual` = `/reload-skills`：多读 commands 目录、bare 也扫 add-dir。
+ *
+ * 什么算「受监视的」按文件路径判：落在这几个根目录之下的清单项才参与比对（嵌套目录懒加载来的、托管、内置、插件的不碰，
+ * 免得被当成「没了」）。同名的优先级沿用启动时的（[ClaudeConfigLoader] 的顺序）；某个受监视的 skill 删掉后，被它遮住的内置 / 插件同名项还给会话。
+ */
+private suspend fun SessionRuntime.rescanSkills(manual: Boolean): SkillReload = skillRescanLock.withLock {
+    val mode = deps.customizations
+    val home = deps.memoryHome
+    if (mode == Customizations.Safe || home == null || (mode == Customizations.Bare && !manual)) {
+        return@withLock SkillReload(available = false, total = state.value.skillEntries().size, added = emptyList(), removed = emptyList(), changed = emptyList())
+    }
+    val s = state.value
+    val fs = deps.host.fs
+    val inputs = deps.settingsInputs
+    val bare = mode == Customizations.Bare
+    val fresh: List<SkillEntry>
+    val notes: List<String>
+    if (bare) {
+        val added = addDirSkills(fs, inputs.addDirs)
+        fresh = added.skills.map { it.toEntry() }
+        notes = added.notes
+    } else {
+        val cwd = s.created.cwd
+        val config = ClaudeConfigLoader.load(fs, cwd, home, inputs = inputs)
+        notes = config.notes.drop(config.settings.notes.size)
+        fresh = config.skills.map { it.toEntry() } + if (manual) config.commands.map { it.toEntry() } else emptyList()
+    }
+    val roots = skillWatchRoots(fs, s.created.cwd, home, inputs.addDirs, inputs.restricted, manual, bare)
+    fun watched(e: SkillEntry): Boolean = roots.covers(e.path.value, command = e.kind == SkillKind.Command)
+    val current = s.skillEntries()
+    val byName = current.associateBy { it.name }
+    // 内置 skill 替换同名的命令（与启动时一致）：别让重扫把被内置顶掉的命令又加回来
+    val freshWatched = fresh.filter { e ->
+        watched(e) && !(e.kind == SkillKind.Command && byName[e.name]?.let { it.kind == SkillKind.Skill && BundledSkills.isBundled(it.path.value) } == true)
+    }
+    val freshNames = freshWatched.map { it.name }.toSet()
+    val changedEntries = freshWatched.filter { byName[it.name] != it }
+    val gone = current.filter { watched(it) && it.name !in freshNames }.map { it.name }
+    // 被删掉的 skill 若遮住了冻结清单里的内置 / 插件同名项，把那一项还回去而不是标成「没了」
+    val frozen = s.skills?.entries.orEmpty()
+    val restored = gone.mapNotNull { n -> frozen.firstOrNull { it.name == n && !watched(it) } }
+    val removed = gone.filter { n -> restored.none { it.name == n } }
+    if (changedEntries.isNotEmpty() || gone.isNotEmpty()) {
+        commit(listOf(dev.min.agent.spi.SkillsRescanned(changedEntries + restored, removed.sorted(), notes)), Durability.Sync)
+    }
+    SkillReload(
+        available = true,
+        total = state.value.skillEntries().size,
+        added = changedEntries.filter { it.name !in byName }.map { it.name },
+        removed = removed.sorted(),
+        changed = changedEntries.filter { it.name in byName }.map { it.name } + restored.map { it.name },
+        notes = notes,
+    )
+}
+
+/** 每次开新回合前的自动重扫（[SessionRuntime.send]，以及斜杠入口展开之前——[slashDefs]）：回合在跑时不做，safe / bare 不做 */
+internal suspend fun SessionRuntime.rescanSkillsBeforeTurn() {
+    if (state.value.turn != null) return
+    rescanSkills(manual = false)
+}
+
+/**
+ * 会话里此刻可按名字调用的 skill 与命令（冻结的清单 + 中途重扫 / 嵌套发现的变化）。系统提示里的清单不走这里，那是冻结的。
+ * 斜杠菜单与斜杠展开用它，保证与模型调 Skill 工具时看到的是同一份。
+ */
+fun SessionState.currentSkillEntries(): List<SkillEntry> = skillEntries()
+
+/**
+ * 斜杠入口展开用的清单（CLI 与手机界面共用）：[line] 开头连着的 `/名字`（最多 7 个：第一个加叠放的 5 个，多留一个不影响）对应的当前清单项，
+ * 正文**此刻**才读（与模型路径同一条，所以改过正文的 skill 用新的）；读不了的名字进 [SlashDefs.unreadable]，调用处提示。
+ * 不是斜杠开头的输入返回空清单。**不**用启动时的清单：热发现的 skill 要能展开（认名字之前先重扫一次），删掉的不能展开。
+ */
+suspend fun SessionRuntime.slashDefs(line: String): SlashDefs {
+    // 磁盘上的 skill 中途变了：先重扫再认名字（与 [SessionRuntime.send] 回合前的重扫是同一套，没变化就不写事件）。
+    // 展开发生在 send 之前，所以这一步不能等 send 里的那次
+    if (line.trimStart().startsWith("/")) rescanSkillsBeforeTurn()
+    val names = line.trimStart().split(Regex("\\s+")).take(7).takeWhile { it.startsWith("/") && it.length > 1 }.map { it.removePrefix("/") }.toSet()
+    if (names.isEmpty()) return SlashDefs(emptyList(), emptyList(), emptySet())
+    val skills = mutableListOf<SkillDef>()
+    val commands = mutableListOf<dev.min.agent.ext.config.CommandDef>()
+    val unreadable = mutableSetOf<String>()
+    for (entry in state.value.skillEntries().filter { it.name in names }) {
+        val body = readSkillBody(entry.path)
+        if (body == null) {
+            unreadable += entry.name
+            continue
+        }
+        val source = ConfigSource.entries.firstOrNull { it.label == entry.source }
+            ?: if (entry.source?.startsWith("plugin:") == true) ConfigSource.Plugin else ConfigSource.User
+        if (entry.kind == SkillKind.Command) commands += dev.min.agent.ext.config.CommandDef(
+            entry.name, entry.description, entry.path, body, source,
+            whenToUse = entry.whenToUse, argumentHint = entry.argumentHint, arguments = entry.arguments,
+            disableModelInvocation = entry.disableModelInvocation, userInvocable = entry.userInvocable, allowedTools = entry.allowedTools,
+            context = entry.context, agent = entry.agent, background = entry.background, hooks = entry.hooks,
+            sourceLabel = entry.source ?: source.label,
+        ) else skills += SkillDef(
+            entry.name, entry.description, entry.path, body, source,
+            whenToUse = entry.whenToUse, argumentHint = entry.argumentHint, arguments = entry.arguments,
+            disableModelInvocation = entry.disableModelInvocation, userInvocable = entry.userInvocable, allowedTools = entry.allowedTools,
+            context = entry.context, agent = entry.agent, background = entry.background, hooks = entry.hooks,
+            sourceLabel = entry.source ?: source.label,
+        )
+    }
+    return SlashDefs(skills, commands, unreadable)
+}
+
+/** [slashDefs] 的结果 */
+class SlashDefs(val skills: List<SkillDef>, val commands: List<dev.min.agent.ext.config.CommandDef>, val unreadable: Set<String>)

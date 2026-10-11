@@ -2,7 +2,7 @@ package dev.min.agent.cli
 
 import dev.min.agent.kernel.savedWorkflows
 import dev.min.agent.kernel.userSkillRunPort
-import dev.min.agent.kernel.nestedSkillDefs
+import dev.min.agent.kernel.currentSkillEntries
 import dev.min.agent.kernel.userInvokedSkills
 
 import dev.min.agent.protocol.ClientMsgId
@@ -107,54 +107,16 @@ internal suspend fun interact(
         // 交互式续接一个又老又大的会话：缓存早过期了，问一句要不要先压成摘要（-p 不问，照原样续接）
         if (shouldOfferResume(args)) offerResume(runtime.resumeAdvice(), stdin, System.err, runtime::continueFromSummary)
 
-    /** 会话冻结清单拼成 ext 的展开形状。正文此刻才读（与模型路径同一条）；读不了的记下名字，调用处提示 */
-    suspend fun frozenDefs(entries: List<dev.min.agent.spi.SkillEntry>): FrozenDefs {
-        val skills = mutableListOf<dev.min.agent.ext.config.SkillDef>()
-        val commands = mutableListOf<dev.min.agent.ext.config.CommandDef>()
-        val unreadable = mutableSetOf<String>()
-        entries.forEach { e ->
-            val body = app.readSkillBody(e.path)
-            if (body == null) {
-                unreadable += e.name
-                return@forEach
-            }
-            val source = dev.min.agent.ext.config.ConfigSource.entries.firstOrNull { it.label == e.source }
-                ?: if (e.source?.startsWith("plugin:") == true) dev.min.agent.ext.config.ConfigSource.Plugin else dev.min.agent.ext.config.ConfigSource.User
-            if (e.kind == dev.min.agent.spi.SkillKind.Command) {
-                commands += dev.min.agent.ext.config.CommandDef(
-                    e.name, e.description, e.path, body, source,
-                    whenToUse = e.whenToUse, argumentHint = e.argumentHint, arguments = e.arguments,
-                    disableModelInvocation = e.disableModelInvocation, userInvocable = e.userInvocable, context = e.context,
-                )
-            } else {
-                skills += dev.min.agent.ext.config.SkillDef(
-                    e.name, e.description, e.path, body, source,
-                    whenToUse = e.whenToUse, argumentHint = e.argumentHint, arguments = e.arguments,
-                    disableModelInvocation = e.disableModelInvocation, userInvocable = e.userInvocable, context = e.context,
-                )
-            }
-        }
-        return FrozenDefs(skills, commands, unreadable)
-    }
-
     // `/名字 参数` 先展开成 skill / command 的内容再发；展不开的（未知命令等）在终端提示、不发给模型。返回是否发出去了
     suspend fun say(input: String): Boolean {
-        // 斜杠路径与模型路径用同一份清单（会话冻结的快照，L8）：不读实时配置——磁盘上中途改了，两条路看到的一致
-        val entries = runtime.state.value.skills?.entries.orEmpty()
-        val defs = if (input.trimStart().startsWith("/")) frozenDefs(entries) else null
-        if (defs != null) {
-            val first = input.trim().split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty().removePrefix("/")
-            if (first in defs.unreadable) {
-                System.err.println("skill「$first」的文件现在读不了（可能在会话开始后被删除或改动）。")
-                return false
-            }
-        }
+        // 斜杠路径与模型路径用同一份当前清单（冻结的快照 + 中途重扫 / 嵌套发现的变化，见 interpretSlashLine）
+        val entries = runtime.state.value.currentSkillEntries()
         val prompts = if (input.trimStart().startsWith("/mcp__")) {
             try { runtime.listMcpPrompts() }
             catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e }
             catch (e: Exception) { System.err.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
         } else emptyList()
-        val action = if (runtime.savedWorkflows().any { it.name == input.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(input, humanInput = true) else interpretInputRun(input, defs?.skills.orEmpty() + runtime.nestedSkillDefs(), defs?.commands.orEmpty(), app.skillVars(runtime), runtime.userSkillRunPort(), prompts, slashGate(runtime))
+        val action = interpretSlashLine(runtime, input, app.skillVars(runtime), prompts)
         // UserPromptExpansion：展开之后、发送之前；被拦就把理由给人看，不发
         if (action is InputAction.Prompt) promptExpansionBlock(runtime, input, action)?.let { System.err.println(it); return false }
         val parts = when (action) {
@@ -284,6 +246,7 @@ internal suspend fun interact(
                 }
             }
             trimmed == "/recap" -> System.err.println(recapNote(runtime.recap()))
+            trimmed == "/reload-skills" -> reloadSkillsCommand(runtime, System.err)
             trimmed == "/cost" -> System.err.println(costReport(app, app.hub(), runtime))
             trimmed == "/auto-reviewer" || trimmed.startsWith("/auto-reviewer ") ->
                 autoReviewerCommand(app, runtime, trimmed.removePrefix("/auto-reviewer").trim())
@@ -331,13 +294,6 @@ internal suspend fun interact(
         cleanup.join()
     }
 }
-
-/** [interpretInput] 要的两组定义，外加「清单里有、正文读不了」的名字（调用处给人提示） */
-private class FrozenDefs(
-    val skills: List<dev.min.agent.ext.config.SkillDef>,
-    val commands: List<dev.min.agent.ext.config.CommandDef>,
-    val unreadable: Set<String>,
-)
 
 /** /compact 之后给人看的一句话：压缩成了没有、原文在哪 */
 internal fun compactionNote(state: dev.min.agent.kernel.SessionState): String {

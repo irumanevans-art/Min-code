@@ -1172,9 +1172,13 @@
   <string name="min_agent_delegation">Delegate to %1$s · %2$s</string>
   <string name="min_agent_slash_model">Switch the model</string>
   <string name="min_agent_slash_goal">Set, show or clear the goal: keep working until the condition holds</string>
+  <string name="min_agent_slash_reload_skills">Re-scan skill and command folders so ones added or changed on disk this session work now</string>
   <string name="goal_set_started">Goal set: %1$s</string>
   <string name="goal_set_deferred">Goal set: %1$s (evaluated when the current turn ends)</string>
   <string name="goal_cleared">Goal cleared: %1$s</string>
+  <string name="skills_reloaded_none">Re-scanned: %1$d skills and commands available, no changes.</string>
+  <string name="skills_reloaded_changed">Re-scanned: %1$d skills and commands available; %2$d added, %3$d removed, %4$d updated.</string>
+  <string name="skills_reload_unavailable">This session does not load skills (safe mode), so there is nothing to re-scan.</string>
   <string name="goal_none">No goal set</string>
   <string name="goal_status_active_line">◎ /goal active: %1$s\nEvaluated %2$d times</string>
   <string name="goal_status_deferred_line">◎ /goal waiting on background work: %1$s\nEvaluated %2$d times</string>

@@ -11,6 +11,7 @@ import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.StopReason
 import dev.min.agent.protocol.TextPart
+import dev.min.agent.protocol.TurnId
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.spi.DelegateRequest
 import dev.min.agent.spi.DelegateResult
@@ -279,11 +280,10 @@ class SkillSessionTest {
     }
 
     @Test
-    fun `an unknown skill lists the callable names and a skill added after the snapshot is unknown`() = run {
+    fun `an unknown skill lists the callable names`() = run {
         seedSkills()
         val model = ScriptedModel(reply(call("c1", "skill" to "newcomer"), stop = StopReason.ToolUse), reply(TextPart("好")))
         val rt = create(model)
-        fs.files["/workspace/.claude/skills/newcomer/SKILL.md"] = skillFile("Brand new", "x")
         val result = invoke(rt, model)
         assertTrue(result.isError)
         val message = (result.content.single() as TextPart).text
@@ -292,14 +292,27 @@ class SkillSessionTest {
     }
 
     @Test
-    fun `a skill file deleted after the snapshot is reported as unreadable`() = run {
+    fun `a skill added after the snapshot is callable from the next turn on and a deleted one is unknown`() = run {
+        // 热更新（skills 文档：「picks up the change within the current session」）：这条原先断言「会话中途新增的是未知的」，现反过来
         seedSkills()
-        val model = ScriptedModel(reply(call("c1", "skill" to "fix"), stop = StopReason.ToolUse), reply(TextPart("好")))
+        val model = ScriptedModel(reply(call("c1", "skill" to "newcomer"), stop = StopReason.ToolUse), reply(TextPart("好")))
         val rt = create(model)
+        fs.files["/workspace/.claude/skills/newcomer/SKILL.md"] = skillFile("Brand new", "x")
         fs.files.remove("/workspace/.claude/skills/fix/SKILL.md")
         val result = invoke(rt, model)
-        assertTrue(result.isError)
-        assertTrue((result.content.single() as TextPart).text.contains("读不了"))
+        assertFalse((result.content.single() as TextPart).text, result.isError)
+        val gone = KernelSkillPort(rt, fs, TurnId("t"), CallId("c2")).invoke("fix", null)
+        assertTrue("got $gone", gone is dev.min.agent.spi.SkillInvocation.Rejected && "没有名为「fix」" in gone.messageForModel)
+    }
+
+    @Test
+    fun `a skill file that vanishes between the listing and the invocation is reported as unreadable`() = run {
+        // 清单里有、调用时正文读不了：只剩「重扫之后到调用之前被删」这一小段窗口（回合前的重扫已经把删掉的摘出清单），这里直接走端口复现
+        seedSkills()
+        val rt = create(ScriptedModel(reply(TextPart("好"))))
+        fs.files.remove("/workspace/.claude/skills/fix/SKILL.md")
+        val result = KernelSkillPort(rt, fs, TurnId("t"), CallId("c1")).invoke("fix", null)
+        assertTrue("got $result", result is dev.min.agent.spi.SkillInvocation.Rejected && "读不了" in result.messageForModel)
     }
 
     @Test
@@ -359,7 +372,8 @@ class SkillSessionTest {
         when {
             // 子 agent 的第一个请求：分身的最后一条是分身须知，新开的最后一条就是委派的任务
             "You are a fork" in last || last == "do the task" -> reply(call("k1", "skill" to "deploy", "args" to "prod"), stop = StopReason.ToolUse)
-            last == "开始" -> reply(
+            // 父会话回合前的重扫发现了新 skill：提醒随这条消息一起来，所以不再是整句相等
+            last.startsWith("开始") -> reply(
                 ToolCallPart(CallId("a1"), "Agent", args("subagent_type" to type, "prompt" to "do the task")),
                 stop = StopReason.ToolUse,
             )
@@ -377,7 +391,6 @@ class SkillSessionTest {
             // 父会话建好后磁盘上的 skill 变了：子 agent 仍应沿用父会话冻结的那份
             fs.files["/root/.claude/skills/deploy/SKILL.md"] = skillFile("Ship the app", "NEW BODY \$ARGUMENTS", "when_to_use: when asked to release\n")
             fs.files["/workspace/.claude/skills/extra/SKILL.md"] = skillFile("Added later", "x")
-            val readsBefore = fs.reads.size
             parent.send(msg(), text("开始"))
             parent.state.first { it.turn == null && it.children.isNotEmpty() && it.lastTurn != null }
             val childId = parent.state.value.children.keys.single()
@@ -393,7 +406,9 @@ class SkillSessionTest {
             // 子 agent 调 Skill：用的是继承来的清单，正文读的是此刻的文件
             val result = child.state.value.toolResults.getValue(CallId("k1"))
             assertTrue(type, (result.content.single() as TextPart).text.contains("NEW BODY prod"))
-            assertTrue("子会话创建不重读清单目录：$type", fs.reads.drop(readsBefore).none { it.endsWith("/extra/SKILL.md") })
+            // 父会话回合前的重扫读到了 extra（热更新），它以「中途发现」的身份随继承交给子 agent；子会话自己的冻结清单仍是父会话那份、没有 extra——
+            // 上面 assertEquals(skills) 已经钉住：子会话创建时若自己重读了磁盘，它的 SkillsLoaded 里就会有 extra
+            assertTrue("$type 热发现的 skill 随继承到子 agent", child.state.value.skillEntries().any { it.name == "extra" })
             fs.files.clear()
             fs.reads.clear()
         }

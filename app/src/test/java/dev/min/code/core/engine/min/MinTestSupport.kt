@@ -92,6 +92,7 @@ class FakeText : MinAgentText {
     override fun cronFired(cronId: String) = "cron-fired:$cronId"
     override fun goalSet(condition: String, startedTurn: Boolean) = "goal-set:$condition:$startedTurn"
     override fun goalCleared(condition: String) = "goal-cleared:$condition"
+    override fun skillsReloaded(result: dev.min.agent.kernel.SkillReload) = "skills-reloaded:${result.available}:${result.total}:${result.added.size}:${result.removed.size}:${result.changed.size}"
     override fun goalStatus(goal: dev.min.code.core.engine.GoalView?) = "goal-status:${goal?.condition}:${goal?.status}"
     override fun taskNotice(taskId: String) = "task-notice:$taskId"
     override fun channelNotice(server: String) = "channel-notice:$server"

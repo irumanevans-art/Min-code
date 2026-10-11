@@ -126,11 +126,17 @@ class SessionRuntime private constructor(
      * 记的是**已代入**的规则文字，不回头读磁盘上的 skill，所以恢复出来的范围不会比当初大；拒绝与询问规则仍在它之上。
      * 规则里的 CLAUDE_SKILL_DIR 占位符在此代入（文档：允许在 allowed-tools 的 Bash 规则里用它）
      */
-    internal suspend fun grantSkillTools(allowed: List<String>, baseDir: String?, skill: String = "") {
-        val rules = resolveSkillGrantRules(allowed, baseDir)
+    internal suspend fun grantSkillTools(allowed: List<String>, baseDir: String?, skill: String = "") =
+        grantSkillRules(resolveSkillGrantRules(allowed, baseDir), skill)
+
+    /** 同上，规则已经算好（来源与托管层策略的判断在 [skillGrantRules]，那里返回什么这里就放行什么） */
+    internal suspend fun grantSkillRules(rules: List<String>, skill: String = "") {
         if (rules.isEmpty() || state.value.skillGrants.containsAll(rules)) return
         commit(listOf(dev.min.agent.spi.SkillToolsGranted(skill, rules)), Durability.Sync)
     }
+
+    /** `allowed-tools` 被托管层策略忽略过的 skill 名，每个只提示一次（[ignoredSkillTools]） */
+    internal val ignoredSkillToolNames: MutableSet<String> = java.util.Collections.synchronizedSet(LinkedHashSet())
 
     private var cachedMemoryDiscovery: MemoryDiscovery? = null
     internal val memoryDiscovery: MemoryDiscovery? get() {
@@ -240,6 +246,8 @@ class SessionRuntime private constructor(
 
     private val commitLock = Mutex()
     private val inputPrepareLock = Mutex()
+    /** 重扫 skills（回合前自动重扫与手动 /reload-skills）互斥：两边同时算差异会重复写事件、重复提醒 */
+    internal val skillRescanLock = Mutex()
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
@@ -634,8 +642,8 @@ class SessionRuntime private constructor(
         // 用户的新输入开始新的一轮：上一轮 skill 的 allowed-tools 放行到此为止（文档）
         if (state.value.skillGrants.isNotEmpty()) commit(listOf(dev.min.agent.spi.SkillToolsCleared()), Durability.Sync)
         security.onUserMessage()
-        // `--add-dir` 里的 skill 在会话中途变了：新回合开始前重扫（回合进行中收到的追加输入不重扫，等下一个空闲点）
-        if (state.value.turn == null) rescanAddDirSkills()
+        // 用户 / 项目 / `--add-dir` 层的 skill 在会话中途变了：新回合开始前重扫（回合进行中收到的追加输入不重扫，等下一个空闲点）
+        if (state.value.turn == null) rescanSkillsBeforeTurn()
         val prepared = if (scanMcpMentions) attachMcpResources(parts, clientMsgId) else parts
         val workflow = prepareSavedWorkflow(clientMsgId, prepared)
         startsInFlight.incrementAndGet()
