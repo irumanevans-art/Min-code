@@ -2827,3 +2827,25 @@ Windows 多工作树验证应隔离 daemon 注册目录，传递 argv 数组，�
 - Pattern-Key: windows.gradle.isolated-daemon-frozen-inputs
 - Related Files: agent/cli/src/main/kotlin/dev/min/agent/cli/PluginEvalKernel.kt
 ---
+
+## [LRN-20261011-PLUGFIN-VERIFY] best_practice
+
+**Logged**: 2026-10-11T23:20:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Windows 的并行进程测试应直接验证执行区间重叠；认证显示要处理编码后的 URL 参数，私有 Git 应保留系统凭据配置。
+
+### Details
+- 全量 HookBatchIntegrationTest 在 7013ms 时超过 7000ms 墙钟阈值，单独复测 4895ms 通过。改为真实处理器 start/end 顺序证明三个处理器在任一正常处理器结束前都已开始，保留 stdin、输出、超时与清理断言；无需放宽执行器超时或只调大性能阈值。
+- headersHelper 的确认目标直接显示 URL 会泄露 userinfo 与百分号编码 query key 的凭据。先解码 key 再匹配敏感字段，显示脱敏目标，授权 SHA 仍用完整原始值；privacy-red-hook-recheck 的 AssertionError 与第 8 个安全变异证明断言有效。
+- Windows Git 凭据管理器通常注册在系统配置。强制 GIT_CONFIG_NOSYSTEM 会使已登录的私有源仍报无认证。用本机 Basic 挑战的 bare Git 仓库与假系统 helper 得到真实红测，保留系统/用户配置后通过；禁交互与无日志端口继续生效。
+
+### Metadata
+- Source: debugging
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/HookBatchIntegrationTest.kt, agent/host/src/main/kotlin/dev/min/agent/host/FilePluginSources.kt
+- Pattern-Key: private-source.auth-redaction-and-native-concurrency-proof
+
+---

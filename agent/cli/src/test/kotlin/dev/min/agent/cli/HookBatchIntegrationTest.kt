@@ -33,11 +33,14 @@ class HookBatchIntegrationTest {
             val shellPath: (GuestPath) -> String = { paths.guestOfHost(fs.hostPath(it)).value }
             val exec = LocalExec({ fs.hostPath(it) }, root.resolve("logs"), GuestPath("/logs"))
             val quoted = "中文 it's \$(touch injected)"
+            val order = paths.guestOfHost(work.resolve("execution-order.log")).value
             val commands = (0..2).map { i ->
                 val receive = "cat > ${q(paths.guestOfHost(work.resolve("receipt.$i")).value)}; "
-                receive + when (i) {
-                    0 -> "sleep 3; printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}'; printf '%s' \"\$HOOK_VALUE\" >&2"
-                    1 -> "sleep 3; printf '%s' \"\$HOOK_VALUE\" >&2; exit 2"
+                val begin = "printf '%s\n' 'start.$i' >> ${q(order)}; "
+                val end = "printf '%s\n' 'end.$i' >> ${q(order)}; "
+                receive + begin + when (i) {
+                    0 -> "sleep 3; " + end + "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}'; printf '%s' \"\$HOOK_VALUE\" >&2"
+                    1 -> "sleep 3; " + end + "printf '%s' \"\$HOOK_VALUE\" >&2; exit 2"
                     else -> "printf 'discarded'; printf 'timeout stderr' >&2; sleep 30"
                 }
             }
@@ -51,7 +54,12 @@ class HookBatchIntegrationTest {
             val runs = invokeSuspend(method, runner, arrayOf(handlers, stdin, mapOf("HOOK_VALUE" to quoted), cwd.value,
                 { h: Any -> if (get(h, "Command") == commands[2]) 2 else 15 })) as List<*>
             val elapsed = (System.nanoTime() - started) / 1_000_000
-            assertTrue("并行一批应少于串行的 8 秒，实际 $elapsed ms", elapsed < 7_000)
+            // 观察三个处理器的实际执行重叠，避免 Windows 进程启动和清理耗时影响并行性判断。
+            val intervals = Files.readAllLines(work.resolve("execution-order.log"))
+            val starts = (0..2).map { intervals.indexOf("start.$it") }
+            val ends = (0..1).map { intervals.indexOf("end.$it") }
+            assertTrue("处理器都应开始，实际 $intervals（$elapsed ms）", starts.all { it >= 0 } && ends.all { it >= 0 })
+            assertTrue("三个处理器必须在任一正常处理器结束前启动，实际 $intervals（$elapsed ms）", starts.max() < ends.min())
             assertEquals(3, runs.size)
             assertEquals(runs.toString(), 0, get(runs[0]!!, "ExitCode"))
             (0..2).forEach { i -> assertEquals(stdin.toString(), Files.readString(work.resolve("receipt.$i"))) }
