@@ -9,6 +9,7 @@ import dev.min.code.core.device.AgentDisplaySession
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppSettings
 import dev.min.code.core.settings.applying
+import dev.min.code.core.engine.min.withManaged
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.SkinStyle
 import dev.min.code.core.settings.ThemeMode
@@ -139,18 +140,35 @@ class SettingsVM(
     fun setMinAgentEnabled(enabled: Boolean) = viewModelScope.launch { store.setMinAgentEnabled(enabled) }
 
     fun setWorkflowsEnabled(enabled: Boolean) = viewModelScope.launch { store.setWorkflowsEnabled(enabled) }
-    fun setCronEnabled(enabled: Boolean) = viewModelScope.launch { store.setCronEnabled(enabled) }
 
-    fun setTelemetryEnabled(enabled: Boolean) = viewModelScope.launch { store.setTelemetryEnabled(enabled) }
-    fun setTelemetryEndpoint(endpoint: String) = viewModelScope.launch { store.setTelemetryEndpoint(endpoint) }
-    fun setTelemetryHeaders(raw: String) = viewModelScope.launch { store.setTelemetryHeaders(raw) }
+    /** 托管层锁住的项（[dev.min.code.core.engine.min.ManagedLocks]）：设置页据此把那几行写成「已由管理员锁定」、点不动 */
+    val managedLocks: StateFlow<dev.min.code.core.engine.min.ManagedLocks> = minEngine.managedLocks
+
+    /** 打开设置页时重读一次托管层：管理员改了文件，不用重启 App 就能看到 */
+    fun refreshManaged() = viewModelScope.launch { minEngine.refreshManaged() }
+
+    // 锁住的项连写都不写：界面已经点不动，这里再挡一层，免得别的入口（以后的命令、调试广播）绕过去
+    fun setCronEnabled(enabled: Boolean) = unlessLocked({ it.cronEnabled }) { store.setCronEnabled(enabled) }
+
+    fun setTelemetryEnabled(enabled: Boolean) = unlessLocked({ it.telemetryEnabled }) { store.setTelemetryEnabled(enabled) }
+    fun setTelemetryEndpoint(endpoint: String) = unlessLocked({ it.telemetryEndpoint }) { store.setTelemetryEndpoint(endpoint) }
+    fun setTelemetryHeaders(raw: String) = unlessLocked({ it.telemetryHeaders }) { store.setTelemetryHeaders(raw) }
+
+    private fun unlessLocked(lock: (dev.min.code.core.engine.min.ManagedLocks) -> Any?, write: suspend () -> Unit) = viewModelScope.launch {
+        if (lock(managedLocks.value) == null) write()
+    }
 
     /** 上一次「立即导出」的结果；界面自己把它译成文字（这里拿不到 stringResource） */
     private val _telemetryReport = MutableStateFlow<dev.min.code.core.telemetry.TelemetryExportReport?>(null)
     val telemetryReport: StateFlow<dev.min.code.core.telemetry.TelemetryExportReport?> = _telemetryReport
 
     fun exportTelemetry() = viewModelScope.launch {
-        val report = minEngine.exportTelemetry(store.current().telemetry, store.telemetryHeaders())
+        // 生效值：托管层锁住的开关 / 端点 / 头部用托管层的（头部原文只在这里用，界面从不显示）
+        val locks = managedLocks.value
+        val report = minEngine.exportTelemetry(
+            store.current().withManaged(locks).telemetry,
+            locks.telemetryHeaders ?: store.telemetryHeaders(),
+        )
         _telemetryReport.value = report
     }
 
@@ -163,10 +181,10 @@ class SettingsVM(
     }
 
     /** 定时任务单次花费上限：null = 不设（默认）。输入框已经按 [dev.min.code.core.settings.parseCronBudgetInput] 校验过 */
-    fun setCronMaxBudgetUsd(value: Double?) = viewModelScope.launch { store.setCronMaxBudgetUsd(value) }
+    fun setCronMaxBudgetUsd(value: Double?) = unlessLocked({ it.cronMaxBudgetUsd }) { store.setCronMaxBudgetUsd(value) }
 
     /** 团队同时运行的成员数；选择器只给 1–8，越界的值商店自己按硬上限处理 */
-    fun setTeamMaxConcurrent(value: Int) = viewModelScope.launch { store.setTeamMaxConcurrent(value) }
+    fun setTeamMaxConcurrent(value: Int) = unlessLocked({ it.teamMaxConcurrent }) { store.setTeamMaxConcurrent(value) }
 
     fun setDeviceWriteAllowlist(packages: Set<String>) =
         viewModelScope.launch { store.setDeviceWriteAllowlist(packages) }

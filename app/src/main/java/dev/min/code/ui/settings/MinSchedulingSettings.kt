@@ -37,13 +37,16 @@ import dev.min.code.ui.components.SettingRow
  * 需要当前模型有 USD 价格，核对不了的运行会被跳过——说明写在输入框下面。
  */
 @Composable
-internal fun CronBudgetRow(valueUsd: Double?, onChange: (Double?) -> Unit) {
+internal fun CronBudgetRow(valueUsd: Double?, onChange: (Double?) -> Unit, locked: Boolean = false) {
     var editing by remember { mutableStateOf(false) }
     SettingRow(
         title = stringResource(R.string.settings_cron_budget_title),
-        subtitle = valueUsd?.let { stringResource(R.string.settings_cron_budget_value, formatCost(Cost(it, "USD"))) }
-            ?: stringResource(R.string.settings_cron_budget_none),
-        onClick = { editing = true },
+        subtitle = lockedSubtitle(
+            valueUsd?.let { stringResource(R.string.settings_cron_budget_value, formatCost(Cost(it, "USD"))) }
+                ?: stringResource(R.string.settings_cron_budget_none),
+            locked,
+        ),
+        onClick = if (locked) null else { { editing = true } },
     )
     if (editing) CronBudgetDialog(valueUsd, onDismiss = { editing = false }, onSave = { onChange(it); editing = false })
 }
@@ -92,18 +95,19 @@ internal fun trimmed(usd: Double): String = java.math.BigDecimal.valueOf(usd).st
  * 8 是硬上限（手机既跑不动更多，负责人也看不过来）。
  */
 @Composable
-internal fun TeamConcurrencyRow(value: Int, onChange: (Int) -> Unit) {
+internal fun TeamConcurrencyRow(value: Int, onChange: (Int) -> Unit, locked: Boolean = false) {
     val range = 1..TeamLimits.MAX_CONCURRENT
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SettingRow(
             title = stringResource(R.string.settings_team_title),
-            subtitle = stringResource(R.string.settings_team_subtitle, value, TeamLimits.MAX_CONCURRENT),
+            subtitle = lockedSubtitle(stringResource(R.string.settings_team_subtitle, value, TeamLimits.MAX_CONCURRENT), locked),
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             InkSegmented(
                 options = range.map { it.toString() },
                 selected = (value - range.first).coerceIn(0, range.last - range.first),
                 onSelect = { onChange(range.first + it) },
+                enabled = !locked,
             )
         }
     }

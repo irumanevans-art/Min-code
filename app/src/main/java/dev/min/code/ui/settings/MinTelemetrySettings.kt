@@ -25,6 +25,8 @@ import dev.min.code.ui.components.SettingRow
 @Composable
 internal fun TelemetryRows(
     settings: TelemetrySettings,
+    /** 托管层锁住的开关 / 端点 / 头部：[settings] 已经是生效值，这里只决定哪几行点不动 */
+    locks: dev.min.code.core.engine.min.ManagedLocks,
     report: TelemetryExportReport?,
     onEnabled: (Boolean) -> Unit,
     onEndpoint: (String) -> Unit,
@@ -35,21 +37,26 @@ internal fun TelemetryRows(
     var editingHeaders by remember { mutableStateOf(false) }
     SettingRow(
         title = stringResource(R.string.settings_telemetry_title),
-        subtitle = stringResource(if (settings.enabled) R.string.settings_telemetry_on else R.string.settings_telemetry_off),
-        onClick = { onEnabled(!settings.enabled) },
-        trailing = { InkSwitch(checked = settings.enabled, onCheckedChange = onEnabled) },
+        subtitle = lockedSubtitle(
+            stringResource(if (settings.enabled) R.string.settings_telemetry_on else R.string.settings_telemetry_off),
+            locks.telemetryEnabled != null,
+        ),
+        onClick = if (locks.telemetryEnabled != null) null else { { onEnabled(!settings.enabled) } },
+        trailing = { InkSwitch(checked = settings.enabled, onCheckedChange = onEnabled, enabled = locks.telemetryEnabled == null) },
     )
     SettingRow(
         title = stringResource(R.string.settings_telemetry_endpoint_title),
-        subtitle = settings.endpoint.ifBlank { stringResource(R.string.settings_telemetry_endpoint_none) },
-        onClick = { editingEndpoint = true },
+        subtitle = lockedSubtitle(settings.endpoint.ifBlank { stringResource(R.string.settings_telemetry_endpoint_none) }, locks.telemetryEndpoint != null),
+        onClick = if (locks.telemetryEndpoint != null) null else { { editingEndpoint = true } },
     )
     SettingRow(
         title = stringResource(R.string.settings_telemetry_headers_title),
-        subtitle = stringResource(
-            if (settings.headersConfigured) R.string.settings_telemetry_headers_set else R.string.settings_telemetry_headers_unset,
+        // 锁住时只说「已由管理员设置」：托管层里的原文（令牌）不在界面上出现
+        subtitle = lockedSubtitle(
+            stringResource(if (settings.headersConfigured) R.string.settings_telemetry_headers_set else R.string.settings_telemetry_headers_unset),
+            locks.telemetryHeaders != null,
         ),
-        onClick = { editingHeaders = true },
+        onClick = if (locks.telemetryHeaders != null) null else { { editingHeaders = true } },
     )
     SettingRow(
         title = stringResource(R.string.settings_telemetry_export_title),

@@ -1162,6 +1162,8 @@
   <string name="cache_break_effort">Thinking effort changed</string>
   <string name="cache_break_idle">%1$s minutes since the previous request; the provider may have expired the cache</string>
   <string name="cache_break_unknown">Nothing in the session log explains it (the provider may have dropped the cache)</string>
+  <string name="managed_locked_suffix">%1$s · Locked by your administrator</string>
+  <string name="managed_broken">The managed settings file can\'t be read; settings your administrator locked may not be in effect</string>
   <string name="min_agent_attachment">[attachment]</string>
   <string name="min_agent_redacted_thinking">[encrypted thinking]</string>
   <string name="min_agent_mode_default">Ask each time</string>

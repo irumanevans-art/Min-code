@@ -1156,6 +1156,8 @@
   <string name="cache_break_effort">改了思考强度</string>
   <string name="cache_break_idle">距上一次请求 %1$s 分钟，供应商的缓存可能已过期</string>
   <string name="cache_break_unknown">会话日志里没有能解释的变化（可能是供应商那边清了缓存）</string>
+  <string name="managed_locked_suffix">%1$s · 已由管理员锁定</string>
+  <string name="managed_broken">托管设置文件读不了，管理员锁定的设置可能没有生效</string>
   <string name="min_agent_attachment">[附件]</string>
   <string name="min_agent_redacted_thinking">[加密思考]</string>
   <string name="min_agent_mode_default">每次询问</string>

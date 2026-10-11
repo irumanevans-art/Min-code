@@ -128,6 +128,13 @@ class MinAgentEngine(
     internal val snapshots = CasWorkspaceSnapshots(File(context.filesDir, "agent").toPath(), { generation.fs }, MinKernelDeps.MEMORY_HOME)
     /** 工作区信任：账本在 SettingsStore，内核据它决定项目层 hooks 与 `.mcp.json` 放不放行（见 [MinWorkspaceTrust]） */
     private val trust = MinWorkspaceTrust(settings, { generation.fs }, changed = { reloadMcpOfOnlineSessions() })
+
+    /** 托管层锁住的设置项（[ManagedLocks]）：Hub 的上限、定时任务开关取生效值，设置页显示「已由管理员锁定」 */
+    private val managed = MinManagedSettings { generation.fs }
+    val managedLocks: StateFlow<ManagedLocks> get() = managed.locks
+
+    /** 重读托管层：引擎起来时一次，设置页打开时一次（管理员改了文件不必重启 App） */
+    suspend fun refreshManaged() = managed.refresh()
     override val workspaceTrust: dev.min.code.core.engine.WorkspaceTrustControl = trust
 
     /** 设置快照还没读出来时按「没配」：宁可这一刻看不到 WebSearch，也不拿半截配置去搜 */
@@ -231,10 +238,13 @@ class MinAgentEngine(
         // 团队并发上限与定时任务花费天花板跟着设置走：构造 Hub 时设置快照可能还没读出来（那时按默认值），读出来之后、以及用户改设置之后都要生效。
         // 值越界（设置里不该有）就保持现状，不能因为一个坏值让引擎起不来
         scope.launch {
-            settings.settings.map { Triple(it.teamMaxConcurrent, it.cronMaxBudgetUsd, it.cronEnabled) }.distinctUntilChanged().collect { (team, ceiling, cron) ->
+            // 取生效值：托管层锁住的项用托管层的（ManagedLocks），用户在设置页里改不动它们，引擎也不能绕过去用 DataStore 里的旧值
+            combine(settings.settings, managed.locks) { s, locks -> s.withManaged(locks) }
+                .map { Triple(it.teamMaxConcurrent, it.cronMaxBudgetUsd, it.cronEnabled) }.distinctUntilChanged().collect { (team, ceiling, cron) ->
                 catchingNonCancellation { hub.updateHostLimits(team, ceiling, cron) }.onFailure { Log.w(TAG, "host limits update refused", it) }
             }
         }
+        scope.launch { managed.refresh() }
         hub.startScheduling(cronHeartbeat)
         // 定时任务出了事（到期、被花费上限停下、因缺价格跳过、连续超限暂停）：日志里有 Note，这里再发一条系统通知——
         // 无人值守的任务停了，人不在会话页就看不到那条 Note
