@@ -11,6 +11,8 @@ dependencies {
     implementation(project(":agent:tools"))
     implementation(project(":agent:llm"))
     implementation(project(":agent:store"))
+    // 遥测（默认关）：CLI 进程退出时把会话日志的新事件导出（OTLP / 本机 JSONL）
+    implementation(project(":agent:otel"))
     implementation(project(":agent:context"))
     implementation(project(":agent:ext"))
     testImplementation(project(":agent:testkit"))

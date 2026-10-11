@@ -15,6 +15,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.UUID
 import kotlin.system.exitProcess
@@ -55,7 +57,14 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     }
     val app = DesktopApp(args, scope)
     app.checkKey()
-    return interact(app, app.openSession(), args, scope)
+    val runtime = app.openSession()
+    val tail = app.telemetryTail(runtime)
+    // 遥测在进程退出时把这次运行的新事件导出一次（默认关，tail 为 null）。NonCancellable：取消退出时也要把已有的事件送出去
+    try {
+        return interact(app, runtime, args, scope)
+    } finally {
+        if (tail != null) withContext(NonCancellable) { tail.pump() }
+    }
 }
 
 /** 交互循环。[stdin] 默认是进程的标准输入；测试传一个脚本化的 reader 来驱动 `say` 这条斜杠 / 发送路径 */
