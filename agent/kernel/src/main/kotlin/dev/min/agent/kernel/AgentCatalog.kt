@@ -17,17 +17,10 @@ data class AgentCatalog(val definitions: List<AgentDefinition>, val notes: List<
             return AgentCatalog(BuiltinAgents.all.filterNot { it.name in names } + mapped, notes)
         }
 
-        /** Claude Code 的模型别名：在多供应商的 Min 里没有对应物，退回父会话的模型，而不是让整个定义不能用 */
-        private val CLAUDE_MODEL_ALIASES = setOf("sonnet", "opus", "haiku", "fable")
-
         private fun definitionOf(def: AgentDef, notes: MutableList<String>): AgentDefinition {
             val where = "子 agent「${def.name}」（${def.path}）"
-            val model = def.model?.trim()?.takeIf { it.isNotEmpty() }?.let { m ->
-                if (m.lowercase() in CLAUDE_MODEL_ALIASES) {
-                    notes += "$where 的 model: $m 是 Claude Code 的别名，Min 里改用父会话的模型"
-                    null
-                } else m
-            }
+            // 别名（sonnet / opus …）原样保留，用的时候再解析成当前供应商的型号（[dev.min.agent.llm.catalog.ModelAliases]）
+            val model = def.model?.trim()?.takeIf { it.isNotEmpty() }
             val mode = def.permissionMode?.let { raw ->
                 modeOf(raw) ?: run { notes += "$where 的 permissionMode: $raw 认不出，继承父会话"; null }
             }

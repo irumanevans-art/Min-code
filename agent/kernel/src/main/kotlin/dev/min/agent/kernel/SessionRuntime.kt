@@ -668,7 +668,9 @@ class SessionRuntime private constructor(
         }
         // 切模型先过 PreModelSwitch：被拒就不改模型（mode / effort 照常生效，它们不归这个 hook 管），理由落一条 Note
         val from = state.value.settings.model
-        val refusal = if (model != null && model != from) modelSwitchHooks.refusal(from, model, modelSwitchSource) else null
+        // availableModels 在 PreModelSwitch 之前挡：名单外的模型不让切（CC：/model 直接报错，不问 hook）
+        val listed = if (model != null && model != from && !deps.modelAllowed(model)) "模型 ${model.providerId}:${model.modelId} 不在 availableModels 里，没有切换" else null
+        val refusal = listed ?: if (model != null && model != from) modelSwitchHooks.refusal(from, model, modelSwitchSource) else null
         if (refusal != null) modelSwitchHooks.noteRefused(refusal)
         val newModel = model.takeIf { refusal == null }
         val clear = clearEffort && effort == null && state.value.settings.effort != null
@@ -685,8 +687,11 @@ class SessionRuntime private constructor(
         commit(listOf(state.value.autoReviewSettings.copy(reviewer = reviewer)), Durability.Sync)
     }
 
-    internal fun resolveReviewer(reviewer: dev.min.agent.spi.AutoModeReviewer): ResolvedModel =
-        deps.reviewerModels?.invoke(reviewer) ?: deps.models.resolve(reviewer.model)
+    internal fun resolveReviewer(reviewer: dev.min.agent.spi.AutoModeReviewer): ResolvedModel {
+        // 显式设置的审查模型受 availableModels 约束（CC）；默认的小模型由宿主的名单管，见 AutoReviewer
+        require(deps.modelAllowed(reviewer.model)) { "审查模型 ${reviewer.model.providerId}:${reviewer.model.modelId} 不在 availableModels 里" }
+        return deps.reviewerModels?.invoke(reviewer) ?: deps.models.resolve(reviewer.model)
+    }
 
     internal val modelBilling = ModelBilling(this)
 

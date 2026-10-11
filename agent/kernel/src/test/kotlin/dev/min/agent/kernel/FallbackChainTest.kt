@@ -60,4 +60,15 @@ class FallbackChainTest {
         }
         assertEquals(2, resolve("sonnet,openai:gpt-5").models.size)
     }
+
+    @Test
+    fun `entries outside availableModels are dropped with a note naming the layer`() {
+        val chain = FallbackChain.resolve(
+            "sonnet,openai:gpt-5,haiku", null, primary,
+            allowed = { it.modelId != "gpt-5" },
+        ) { it in known }
+        assertEquals(listOf(ModelRef("anthropic", "sonnet"), ModelRef("anthropic", "haiku")), chain.models)
+        // 丢了要说清是哪一项、为什么（给人看）
+        assertTrue(chain.notes.single().let { it.contains("gpt-5") && it.contains("availableModels") })
+    }
 }

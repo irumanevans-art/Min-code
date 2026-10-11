@@ -16,8 +16,11 @@ suspend fun SessionRuntime.changeAdvisor(model: ModelRef?) {
     commit(listOf(AdvisorConfigured(model)) + if (model == null) emptyList() else listOf(Note(NoteLevel.Warning, advisorDisclosure(state.value.settings.model, model))), Durability.Sync)
 }
 
-internal fun SessionRuntime.resolveAdvisor(model: ModelRef): ResolvedModel =
-    (deps.advisorModels ?: deps.models).resolve(model)
+internal fun SessionRuntime.resolveAdvisor(model: ModelRef): ResolvedModel {
+    // 顾问也受 availableModels 约束（CC）：不在名单里的顾问不解析、不发送对话
+    require(deps.modelAllowed(model)) { "顾问 ${model.providerId}:${model.modelId} 不在 availableModels 里" }
+    return (deps.advisorModels ?: deps.models).resolve(model)
+}
 
 fun SessionRuntime.validateAdvisor(model: ModelRef) { resolveAdvisor(model) }
 
