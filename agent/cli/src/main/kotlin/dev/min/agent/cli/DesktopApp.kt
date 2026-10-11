@@ -18,11 +18,13 @@ import dev.min.agent.kernel.AgentCatalog
 import dev.min.agent.ext.config.ClaudeConfig
 import dev.min.agent.ext.config.ClaudeConfigLoader
 import dev.min.agent.ext.config.fallbackModelSetting
+import dev.min.agent.ext.config.availableModelsSetting
 import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.llm.Wire
 import dev.min.agent.llm.anthropic.AnthropicMessagesClient
 import dev.min.agent.llm.catalog.Catalog
+import dev.min.agent.llm.catalog.ModelAliases
 import dev.min.agent.llm.openai.OpenAIChatClient
 import dev.min.agent.llm.openai.OpenAIResponsesClient
 import dev.min.agent.protocol.ModelRef
@@ -223,6 +225,18 @@ internal class DesktopApp(
     }
     /** 回退链：读完 settings 才知道（[hub] 里填），之前是空的 */
     private var fallback = FallbackModels.None
+    /** availableModels：读完 settings 才知道（[hub] 里填）；null = 不限制。托管层的名单只能从这里来，低层拼不进去 */
+    private var modelListing: dev.min.agent.ext.config.AvailableModelsSetting? = null
+
+    /**
+     * availableModels 的判定（切模型、子 agent、顾问、审查、回退链都用它）：别名先解析成这家供应商的型号再比，
+     * 解析不了（这家没有这一档）当不在名单里。没有名单就放行。
+     */
+    internal fun modelListed(ref: dev.min.agent.protocol.ModelRef): Boolean {
+        val listing = modelListing ?: return true
+        val concrete = try { ModelAliases.resolve(ref, Catalog.bundled()).ref } catch (_: IllegalArgumentException) { return false }
+        return dev.min.agent.ext.config.AvailableModels.allows(concrete.modelId, listing.entries)
+    }
     private val searchBackend = desktopSearchBackend(args)
     private var hubInstance: SessionHub? = null
 
@@ -241,7 +255,10 @@ internal class DesktopApp(
         if (args.restricted && config.settings.merged.permissions.defaultMode == "bypassPermissions") {
             throw UsageException("--restricted 不允许 bypassPermissions：设置里的 permissions.defaultMode 写了它，去掉它或改掉")
         }
-        fallback = resolveFallbackModels(args, Catalog.bundled(), config.settings.merged.fallbackModelSetting(), selection)
+        modelListing = config.settings.merged.availableModelsSetting()
+        // 启动的主模型不在名单里就不启动（Min 的 --model 必填，没有默认可以替换；CC 在这种情况下换成默认模型并警告）
+        if (!modelListed(selection.profile.ref)) throw UsageException("--model ${selection.profile.ref.modelId} 不在 availableModels 里（${if (modelListing?.managed == true) "托管策略" else "设置"}），换一个模型")
+        fallback = resolveFallbackModels(args, Catalog.bundled(), config.settings.merged.fallbackModelSetting(), selection, allowed = ::modelListed)
         fallback.notes.forEach { System.err.println(it) }
         validateBudgetPricing()
         val catalog = AgentCatalog.of(config.agents)
@@ -422,8 +439,11 @@ internal class DesktopApp(
             networkProxy = dev.min.agent.host.LoopbackNetworkProxy(),
             clock = { System.currentTimeMillis() },
             ids = IdGenerator { prefix -> "${prefix}_${UUID.randomUUID().toString().replace("-", "").take(20)}" },
-            models = { ref ->
-                val backup = fallback.selections[ref]
+            models = { requested ->
+                // 别名（sonnet / opus …）先解析成这家供应商的型号，再找会话需要的那一个（子 agent、顾问、审查都可能写别名）
+                val ref = ModelAliases.resolve(requested, bundledCatalog).ref
+                // 回退链按写下的样子（可能是别名）记，所以用 requested 找备用；ref 只用来认主模型与快速模型
+                val backup = fallback.selections[requested]
                 val selected = if (ref == profile.ref) profile else fastSelection?.profile?.takeIf { it.ref == ref } ?: backup?.profile
                 checkNotNull(selected) { "桌面 CLI 没有配置会话需要的模型 $ref" }
                 // 备用模型没有凭证就当用不了（内核会跳过它）；不放它去发一个注定 401 的请求再让回合以鉴权失败收场
@@ -432,6 +452,8 @@ internal class DesktopApp(
                 }
                 ResolvedModel(selected, if (backup != null) fallbackClients.getValue(backup.provider.id) else client)
             },
+            // availableModels 的强制：切模型、子 agent、顾问、审查都经过内核，这里给同一个判定
+            modelAllowed = ::modelListed,
             tools = tools,
             // SendUserFile：桌面没有可推送的客户端，打印文件在磁盘上的路径（终端里能直接打开）
             userFileSink = object : dev.min.agent.spi.UserFileSink {

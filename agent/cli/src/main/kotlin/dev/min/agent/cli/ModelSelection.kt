@@ -6,6 +6,7 @@ import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.llm.ProviderQuirks
 import dev.min.agent.llm.Wire
 import dev.min.agent.llm.catalog.Catalog
+import dev.min.agent.llm.catalog.ModelAliases
 import dev.min.agent.protocol.ModelRef
 import dev.min.agent.spi.ModelFamily
 import java.util.Locale
@@ -29,12 +30,15 @@ internal fun resolveModel(args: CliArgs, catalog: Catalog): ModelSelection {
         quirks = if (bundled?.wire == wire) bundled.quirks else ProviderQuirks(),
         fastModel = bundled?.fastModel,
     )
-    val ref = ModelRef(args.provider, args.model)
+    // 别名（sonnet / opus / haiku / fable / best / default / opusplan，可带 [1m]）先解析成这家供应商目录里的型号；完整 id 原样
+    val resolved = try { ModelAliases.resolve(ModelRef(args.provider, args.model), catalog) } catch (e: IllegalArgumentException) { throw UsageException(e.message ?: "模型别名解析失败") }
+    val ref = resolved.ref
     val profile = (catalog.model(ref) ?: ModelProfile(
         ref = ref, family = ModelFamily.Other, contextWindow = 200_000, maxOutputTokens = 8_192,
     )).let {
         it.copy(
-            contextWindow = args.contextWindow ?: it.contextWindow,
+            // 带 [1m]：窗口标到 1M（型号本来就是 1M 的没有变化）；命令行 --context 仍然优先
+            contextWindow = args.contextWindow ?: if (resolved.oneMillion) maxOf(it.contextWindow, 1_000_000) else it.contextWindow,
             maxOutputTokens = args.maxOutput ?: it.maxOutputTokens,
             // 目录里的能力是查证过的，--images 只能补上（目录外的自定义模型默认当它看不了图），不能关掉
             supportsImages = args.images || it.supportsImages,

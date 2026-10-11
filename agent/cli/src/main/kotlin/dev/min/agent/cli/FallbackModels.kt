@@ -29,8 +29,9 @@ internal fun resolveFallbackModels(
     catalog: Catalog,
     setting: FallbackModelSetting?,
     primary: ModelSelection,
+    allowed: (ModelRef) -> Boolean = { true },
 ): FallbackModels {
-    val resolved = FallbackChain.resolve(args.fallbackModel, setting, primary.profile.ref) { id ->
+    val resolved = FallbackChain.resolve(args.fallbackModel, setting, primary.profile.ref, allowed = allowed) { id ->
         id == primary.provider.id || catalog.provider(id) != null
     }
     val notes = resolved.notes.toMutableList()
