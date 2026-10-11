@@ -88,6 +88,12 @@ sealed interface DecidedBy {
     @Serializable @SerialName("classifier") data object Classifier : DecidedBy
     @Serializable @SerialName("user") data object User : DecidedBy
 
+    /**
+     * MCP channel 服务器转回来的答复（审批转发，CC channels-reference「Relay permission prompts」）。
+     * 只对「本会话订阅了该 channel、服务器声明了审批能力、request_id 是内核发出过的」成立；只能放行 / 拒绝这一次，不能「总是允许」
+     */
+    @Serializable @SerialName("channel") data class Channel(val server: String) : DecidedBy
+
     /** 无人应答按拒绝处理（DeepSeek Harness 的默认拒绝） */
     @Serializable @SerialName("timeout") data object Timeout : DecidedBy
 }

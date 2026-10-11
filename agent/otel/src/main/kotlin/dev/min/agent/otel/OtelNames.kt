@@ -58,6 +58,8 @@ internal fun approvalSource(by: DecidedBy, choice: ApprovalChoice): String = whe
     is DecidedBy.Mode -> "min_mode"
     is DecidedBy.Classifier -> "min_classifier"
     is DecidedBy.Timeout -> "min_timeout"
+    // 远端 channel 转回来的答复：不是本机用户的动作，单列
+    is DecidedBy.Channel -> "min_channel"
     is DecidedBy.User -> when (choice) {
         is ApprovalChoice.Once -> "user_temporary"
         is ApprovalChoice.Always -> "user_permanent"

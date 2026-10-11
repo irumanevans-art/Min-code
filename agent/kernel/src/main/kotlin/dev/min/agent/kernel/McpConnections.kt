@@ -64,6 +64,12 @@ internal interface McpConnection {
     suspend fun readResource(uri: String): McpCallResult = error("服务器不支持读取资源。")
     suspend fun listPrompts(): List<JsonObject> = emptyList()
     suspend fun getPrompt(name: String, arguments: JsonObject): List<dev.min.agent.mcp.McpPromptMessage> = error("服务器不支持 prompts。")
+
+    /** channel 事件（推来的消息、审批转发的答复）。服务器没声明 channel 能力时协议层一条都不会放过来 */
+    val channelEvents: Flow<dev.min.agent.mcp.McpChannelEvent> get() = kotlinx.coroutines.flow.emptyFlow()
+
+    /** 把一次工具审批转给服务器（它声明了 `claude/channel/permission` 才会调到这里） */
+    suspend fun sendChannelPermissionRequest(requestId: String, toolName: String, description: String, inputPreview: String): Unit = error("服务器不支持审批转发。")
 }
 
 /** 起一条连接并握手完成（失败抛异常，消息给人看）。测试换成替身 */
@@ -158,6 +164,9 @@ internal class ClientConnector(
             override suspend fun readResource(uri: String) = client.readResource(uri)
             override suspend fun listPrompts() = client.listPrompts()
             override suspend fun getPrompt(name: String, arguments: JsonObject) = client.getPrompt(name, arguments)
+            override val channelEvents: Flow<dev.min.agent.mcp.McpChannelEvent> = client.channelEvents
+            override suspend fun sendChannelPermissionRequest(requestId: String, toolName: String, description: String, inputPreview: String) =
+                client.sendChannelPermissionRequest(requestId, toolName, description, inputPreview)
             override suspend fun call(tool: String, arguments: JsonObject, onProgress: (McpProgress) -> Unit, idleTimeoutMs: Long, hardTimeoutMs: Long?) =
                 client.callTool(tool, arguments, onProgress, idleTimeoutMs, hardTimeoutMs)
             override fun stderrTail(): List<String> = tail()

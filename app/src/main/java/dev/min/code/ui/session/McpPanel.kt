@@ -21,12 +21,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.min.code.R
+import dev.min.code.core.engine.McpChannelView
 import dev.min.code.core.engine.McpServerState
 import dev.min.code.core.engine.McpServerView
 import dev.min.code.ui.components.InkButton
 import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkSwitch
+import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.LiveDot
 import dev.min.code.ui.theme.JetbrainsMono
 import dev.min.code.ui.theme.sea
@@ -55,6 +57,7 @@ internal fun McpPanelSection(
     onLogin: (String) -> Unit,
     onLogout: (String) -> Unit,
     onApprove: (String, Boolean) -> Unit,
+    onChannel: (server: String, enabled: Boolean, confirmedDevelopment: Boolean) -> Unit,
     onTrust: () -> Unit,
 ) {
     Column {
@@ -68,7 +71,8 @@ internal fun McpPanelSection(
                 server = server, busy = server.name in busy,
                 onReconnect = { onReconnect(server.name) }, onToggle = { onToggle(server.name, it) },
                 onLogin = { onLogin(server.name) }, onLogout = { onLogout(server.name) },
-                onApprove = { onApprove(server.name, it) }, onTrust = onTrust,
+                onApprove = { onApprove(server.name, it) }, onChannel = { enabled, confirmed -> onChannel(server.name, enabled, confirmed) },
+                onTrust = onTrust,
             )
         }
     }
@@ -83,6 +87,7 @@ private fun McpServerRow(
     onLogin: () -> Unit,
     onLogout: () -> Unit,
     onApprove: (Boolean) -> Unit,
+    onChannel: (enabled: Boolean, confirmedDevelopment: Boolean) -> Unit,
     onTrust: () -> Unit,
 ) {
     val palette = MaterialTheme.sea
@@ -131,6 +136,7 @@ private fun McpServerRow(
                 )
             }
         }
+        server.channel?.let { channel -> ChannelBlock(server.name, channel, enabled = !busy, onChannel = onChannel) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             when (server.state) {
                 McpServerState.Untrusted -> ActionButton(R.string.mcp_action_trust, !busy, onClick = onTrust)
@@ -154,6 +160,44 @@ private fun McpServerRow(
             }
         }
     }
+}
+
+/**
+ * channel 一栏（服务器声明了 channel 能力才有）：开关 + 说明。开的是没经批准清单的服务器（`needsConfirmation`）时，
+ * 打开前先弹确认——开发用途才该继续（CC 的开发参数也要确认）；关掉不需要确认
+ */
+@Composable
+private fun ChannelBlock(server: String, channel: McpChannelView, enabled: Boolean, onChannel: (Boolean, Boolean) -> Unit) {
+    var asking by remember(server) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.mcp_channel_label), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+            InkSwitch(
+                checked = channel.enabled,
+                onCheckedChange = { on -> if (on && channel.needsConfirmation) asking = true else onChannel(on, false) },
+                enabled = enabled && (channel.available || channel.enabled),
+            )
+        }
+        Text(
+            stringResource(if (channel.available) R.string.mcp_channel_hint else R.string.mcp_channel_unavailable),
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (channel.permissionRelay) {
+            Text(stringResource(R.string.mcp_channel_relay), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (channel.enabled && channel.development) {
+            Text(stringResource(R.string.mcp_channel_dev_on), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.sea.vermilion)
+        }
+    }
+    RikkaConfirmDialog(
+        show = asking,
+        title = stringResource(R.string.mcp_channel_confirm_title, server),
+        confirmText = stringResource(R.string.mcp_channel_confirm_ok),
+        dismissText = stringResource(R.string.mcp_channel_confirm_cancel),
+        onConfirm = { asking = false; onChannel(true, true) },
+        onDismiss = { asking = false },
+        destructive = true,
+    ) { Text(stringResource(R.string.mcp_channel_confirm_body)) }
 }
 
 @Composable

@@ -4,6 +4,8 @@ import dev.min.agent.ext.mcp.McpConfigSnapshot
 import dev.min.agent.ext.mcp.McpGate
 import dev.min.agent.ext.mcp.McpServerSpec
 import dev.min.agent.mcp.McpConnectionState
+import dev.min.agent.mcp.declaresExperimental
+import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.mcp.McpHttpException
 import dev.min.agent.mcp.McpToolDef
 import dev.min.agent.mcp.McpTransportClosed
@@ -74,6 +76,8 @@ internal class McpManager(
         @Volatile var tools: List<McpToolDef>? = null
         /** 服务器的使用说明：同工具表，掉线后保留最后一次的（系统提示不跟着抖） */
         @Volatile var instructions: String? = null
+        /** channel 消息的序号：进对话的 clientMsgId 的一部分（再加时间，进程重启后序号归零也不会撞上日志里旧的） */
+        val channelSeq = java.util.concurrent.atomic.AtomicLong()
         @Volatile var status: String = PENDING
         @Volatile var reason: String? = null
         @Volatile var restarts = 0
@@ -160,6 +164,7 @@ internal class McpManager(
             val binding = bindings[rt.sessionId]?.takeIf { it.rt === rt } ?: return
             bindings.remove(rt.sessionId)
             binding.rootsWatch?.cancel()
+            dropChannels(rt.sessionId)
             binding.entries.values.forEach { release(it) }
             binding.entries.values.map { it.projectRoot }.distinct().forEach { notifyRoots(it) }
         }
@@ -173,6 +178,7 @@ internal class McpManager(
         val all = lock.withLock {
             bindings.values.forEach { it.rootsWatch?.cancel() }
             bindings.clear()
+            channelGrants.clear(); relays.clear()
             entries.values.toList().also { entries.clear(); it.forEach { e -> e.retired = true; e.linger?.cancel() } }
         }
         all.forEach { e ->
@@ -230,7 +236,7 @@ internal class McpManager(
             val signedIn = if (entry != null && entry.spec is McpServerSpec.Remote && oauth != null) {
                 dev.min.agent.spi.catchingNonCancellation { oauth.store.load(tokenKey(entry))?.accessToken != null }.getOrNull()
             } else null
-            McpServerPanel(infos.getValue(configured.spec.name), entry?.connection?.stderrTail()?.takeIf { it.isNotEmpty() } ?: entry?.lastStderr.orEmpty(), signedIn)
+            McpServerPanel(infos.getValue(configured.spec.name), entry?.connection?.stderrTail()?.takeIf { it.isNotEmpty() } ?: entry?.lastStderr.orEmpty(), signedIn, channel = entry?.let { channelStateOf(binding, it) })
         }
     }
 
@@ -325,6 +331,7 @@ internal class McpManager(
             entry.challenge=null
             entry.usedAccessToken=usedAccessToken
             watch(entry,connection)
+            watchChannel(entry, connection)
             return connection
         } catch(e: Exception) { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { connection.close() } }; throw e }
     }
@@ -505,6 +512,158 @@ internal class McpManager(
         val (servers, tools) = snapshotOf(binding, current)
         if (current != null && current.tools == tools.tools && current.instructions == tools.instructions && current.resourceServers == tools.resourceServers) return
         binding.rt.stageMcp(servers, tools.copy(note = changeNote(current?.tools.orEmpty(), tools.tools)))
+    }
+
+    // ---- channel（CC channels：MCP 服务器把外部事件推进正在跑的会话）----
+
+    /** 转发给远端的一次审批：谁的、哪个审批、发给哪台服务器。远端的答复要带 [id] 回来才算数 */
+    private class Relay(val entry: Entry, val rt: SessionRuntime, val rootId: SessionId, val approvalId: dev.min.agent.protocol.ApprovalId, val issuedAtMs: Long)
+
+    /** 会话 → 已开成 channel 的服务器（只存在内存里，与 CC 的 `--channels` 一样每次启动重新点名） */
+    private val channelGrants = ConcurrentHashMap<SessionId, Map<String, ChannelGrant>>()
+    private val relays = ConcurrentHashMap<String, Relay>()
+    private val overflowNoted = ConcurrentHashMap.newKeySet<Pair<SessionId, String>>()
+
+    /** 设定某个根会话开成 channel 的服务器（整份替换）。撤掉的服务器名下还开着的审批转发一并作废 */
+    fun setChannels(sessionId: SessionId, grants: Map<String, ChannelGrant>) {
+        if (grants.isEmpty()) channelGrants.remove(sessionId) else channelGrants[sessionId] = grants
+        relays.entries.removeIf { (_, r) -> r.rootId == sessionId && r.entry.spec.name !in grants }
+    }
+
+    fun channelsOf(sessionId: SessionId): Map<String, ChannelGrant> = channelGrants[sessionId].orEmpty()
+
+    private fun dropChannels(sessionId: SessionId) {
+        channelGrants.remove(sessionId)
+        relays.entries.removeIf { (_, r) -> r.rootId == sessionId }
+        overflowNoted.removeIf { it.first == sessionId }
+    }
+
+    /** 服务器声明了 channel 能力（握手时给的；协议层已按它放行事件，这里再认一次，防着别的连接实现绕过） */
+    private fun Entry.declaresChannel(): Boolean = connection?.capabilities?.declaresExperimental(dev.min.agent.mcp.CHANNEL_CAPABILITY) == true
+
+    private fun Entry.declaresChannelPermission(): Boolean = connection?.capabilities?.declaresExperimental(dev.min.agent.mcp.CHANNEL_PERMISSION_CAPABILITY) == true
+
+    /**
+     * 盯着一条连接的 channel 事件。只有本机 stdio 服务器才盯（channel 是本机子进程，远程服务器不开）；
+     * 连接换了（重启 / 重连）旧连接的事件不再处理
+     */
+    private fun watchChannel(entry: Entry, connection: McpConnection) {
+        if (entry.spec !is McpServerSpec.Stdio) return
+        scope.launch {
+            connection.channelEvents.collect { event ->
+                if (entry.connection !== connection) return@collect
+                dev.min.agent.spi.catchingNonCancellation {
+                    when (event) {
+                        is dev.min.agent.mcp.McpChannelEvent.Message -> deliverChannel(entry, event)
+                        is dev.min.agent.mcp.McpChannelEvent.Verdict -> applyVerdict(entry, event)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 一条 channel 消息进对话：只送给「订阅了这台服务器」的**根会话**（子 agent 不收；同一连接被几个会话共用时各开各的）。
+     * 与后台任务通知同一条路——进收件箱、不是用户的话；会话忙就在当前这批工具之后插话，空闲（且上一回合不是被人停下的）就开回合。
+     * 一台服务器在收件箱里排着的消息有上限，推送洪水不能把对话塞满。
+     */
+    private suspend fun deliverChannel(entry: Entry, msg: dev.min.agent.mcp.McpChannelEvent.Message) {
+        val name = entry.spec.name
+        if (!entry.declaresChannel()) return
+        val targets = bindings.values.filter { b ->
+            b.rt.state.value.origin == null && b.entries[name] === entry && channelGrants[b.rt.sessionId]?.containsKey(name) == true
+        }
+        for (b in targets) {
+            val rt = b.rt
+            val queued = rt.state.value.inbox.count { (it.origin as? dev.min.agent.spi.InputOrigin.Channel)?.server == name }
+            if (queued >= Channels.INBOX_CAP) {
+                if (overflowNoted.add(rt.sessionId to name)) {
+                    rt.commit(listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "channel「$name」推来的消息积压太多（超过 ${Channels.INBOX_CAP} 条还没被读到），新到的先丢弃，直到积压消下去。")), dev.min.agent.spi.Durability.Batched)
+                }
+                continue
+            }
+            overflowNoted.remove(rt.sessionId to name)
+            val meta = msg.meta - "source"
+            val now = nowMs()
+            rt.receive(
+                dev.min.agent.protocol.ClientMsgId("channel:$name:$now:${entry.channelSeq.incrementAndGet()}"),
+                listOf(TextPart(Channels.tag(name, meta, msg.content))),
+                dev.min.agent.spi.Delivery.Steer,
+                dev.min.agent.spi.InputOrigin.Channel(name),
+                startTurn = if (rt.state.value.lastTurnAllowsAutoStart()) TurnTrigger.Notification else null,
+                extra = listOf(dev.min.agent.spi.ChannelMessage(name, meta, Channels.truncate(msg.content), now)),
+            )
+        }
+    }
+
+    /**
+     * 一次要人批准的工具调用转给 channel 服务器（CC「Relay permission prompts」）：本地对话框照常开着，哪边先答用哪边的。
+     * 只转给本会话（子 agent 的审批算它所在树的根）**开成 channel 且声明了审批能力**的 stdio 服务器；
+     * 每台服务器一个独立的 request_id，远端的答复必须带着它回来（[applyVerdict]）。发送在后台做，不拖住回合
+     */
+    fun relayApproval(rt: SessionRuntime, approvalId: dev.min.agent.protocol.ApprovalId, ask: dev.min.agent.spi.PermissionAsk, input: JsonObject) {
+        val rootId = rt.state.value.origin?.root ?: rt.sessionId
+        val grants = channelGrants[rootId] ?: return
+        val binding = bindings[rootId] ?: return
+        val targets = grants.keys.mapNotNull { name ->
+            binding.entries[name]?.takeIf { it.spec is McpServerSpec.Stdio && it.status == CONNECTED && it.declaresChannel() && it.declaresChannelPermission() }
+        }
+        if (targets.isEmpty()) return
+        val tool = Channels.sanitizeForRelay(ask.tool)
+        val description = Channels.sanitizeForRelay(ask.summary)
+        val preview = Channels.relayInputPreview(input)
+        scope.launch {
+            for (entry in targets) {
+                val connection = entry.connection ?: continue
+                val id = register(Relay(entry, rt, rootId, approvalId, nowMs()))
+                try {
+                    connection.sendChannelPermissionRequest(id, tool, description, preview)
+                } catch (e: CancellationException) {
+                    relays.remove(id); throw e
+                } catch (e: Exception) {
+                    relays.remove(id)
+                }
+            }
+        }
+    }
+
+    private fun register(relay: Relay): String {
+        val now = relay.issuedAtMs
+        relays.entries.removeIf { (_, r) -> now - r.issuedAtMs > Channels.RELAY_TTL_MS }
+        while (relays.size >= Channels.RELAY_OPEN_CAP) relays.entries.minByOrNull { it.value.issuedAtMs }?.let { relays.remove(it.key) } ?: break
+        while (true) {
+            val id = Channels.newRequestId()
+            if (relays.putIfAbsent(id, relay) == null) return id
+        }
+    }
+
+    /**
+     * 远端的答复。认三件事，缺一就悄悄丢（CC：找不到对应请求的答复静默丢弃）：
+     * 一，request_id 是我们发出过、还没用过的；二，答复来自**当初发给的那台服务器**（别的服务器猜到 id 也答不了）；
+     * 三，那台服务器此刻仍是本会话开着的 channel 且仍声明着审批能力。id 取出即作废，只认一次。
+     * 答复只落到「那次审批」上（[SessionRuntime.answerApprovalFromChannel]），只能放行这一次或拒绝，不会写任何规则
+     */
+    private suspend fun applyVerdict(entry: Entry, verdict: dev.min.agent.mcp.McpChannelEvent.Verdict) {
+        val relay = relays[verdict.requestId] ?: return
+        if (relay.entry !== entry) return
+        val name = entry.spec.name
+        if (channelGrants[relay.rootId]?.containsKey(name) != true || !entry.declaresChannelPermission()) { relays.remove(verdict.requestId, relay); return }
+        if (nowMs() - relay.issuedAtMs > Channels.RELAY_TTL_MS) { relays.remove(verdict.requestId, relay); return }
+        if (!relays.remove(verdict.requestId, relay)) return
+        relay.rt.answerApprovalFromChannel(relay.approvalId, verdict.allow, name)
+    }
+
+    private fun channelStateOf(binding: Binding, entry: Entry): ChannelState? {
+        if (!entry.declaresChannel()) return null
+        val stdio = entry.spec is McpServerSpec.Stdio
+        val grant = channelGrants[binding.rt.sessionId]?.get(entry.spec.name)
+        return ChannelState(
+            enabled = grant != null,
+            permissionRelay = entry.declaresChannelPermission(),
+            development = grant?.development == true,
+            available = stdio,
+            reason = if (stdio) null else "channel 只支持本机 stdio 服务器",
+        )
     }
 
     // ---- 快照 ----
@@ -700,5 +859,5 @@ internal class McpManager(
     }
 }
 
-/** 面板用的一行（[McpManager.panelOf]）：状态、stdio 的 stderr 尾巴、是否已登录（远程且有令牌；其余 null）、是否被本会话关掉 */
-data class McpServerPanel(val info: McpServerInfo, val stderrTail: List<String>, val signedIn: Boolean?, val sessionOff: Boolean = false)
+/** 面板用的一行（[McpManager.panelOf]）：状态、stdio 的 stderr 尾巴、是否已登录（远程且有令牌；其余 null）、是否被本会话关掉、channel 状态（服务器声明了 channel 能力才有） */
+data class McpServerPanel(val info: McpServerInfo, val stderrTail: List<String>, val signedIn: Boolean?, val sessionOff: Boolean = false, val channel: ChannelState? = null)

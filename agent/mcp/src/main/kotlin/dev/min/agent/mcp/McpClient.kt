@@ -39,6 +39,12 @@ class McpClient(
     /** 幂等失效信号：慢订阅者可合并中间版本，晚订阅者也能看到已经变过。 */
     val toolsListVersion: StateFlow<Long> = listVersion.asStateFlow()
     val notifications: Flow<McpNotification> = toolsListVersion.filter { it > 0 }.map { McpNotification.ToolsListChanged }
+    /**
+     * channel 事件：缓冲着等收集者（一条连接只有一个收集者，管理器连上就收），所以握手后立刻推来的也不丢。
+     * 缓冲满了丢新的——慢消费者不能把内存撑爆；丢了记一条固定说明。连接关了就收口，收集者随之结束
+     */
+    private val channelQueue = Channel<McpChannelEvent>(CHANNEL_QUEUE)
+    val channelEvents: Flow<McpChannelEvent> = channelQueue.receiveAsFlow()
     private var server: McpServerInfo? = null
     private val displayName: String get() = safeLog(options.serverLabel)
 
@@ -153,6 +159,18 @@ class McpClient(
     }
 
     suspend fun ping() { ready(); request("ping", null, options.requestTimeoutMs) }
+
+    /**
+     * 把一次工具审批转给 channel 服务器（`notifications/claude/channel/permission_request`）。
+     * 服务器没声明 `claude/channel/permission` 就不发——不能把审批内容推给没表态接收的进程
+     */
+    suspend fun sendChannelPermissionRequest(requestId: String, toolName: String, description: String, inputPreview: String) {
+        ready()
+        check(server?.capabilities?.declaresExperimental(CHANNEL_PERMISSION_CAPABILITY) == true) { "$displayName：服务器没有声明审批转发能力。" }
+        transport.send(rpcNotification(CHANNEL_PERMISSION_REQUEST_METHOD, buildJsonObject {
+            put("request_id", requestId); put("tool_name", toolName); put("description", description); put("input_preview", inputPreview)
+        }), options.requestTimeoutMs)
+    }
 
     suspend fun rootsChanged() {
         ready()
@@ -314,6 +332,13 @@ class McpClient(
                     synchronized(serverRequests) { serverRequests[requestId]?.also { serverCancelled.add(requestId); it.cancel() } }
                 }
                 "notifications/tools/list_changed" -> listVersion.update { it + 1 }
+                // 能力闸在这里：握手时没声明的服务器推来的 channel 通知一律丢（CC：没声明就没有监听器）
+                CHANNEL_METHOD -> if (server?.capabilities?.declaresExperimental(CHANNEL_CAPABILITY) == true) {
+                    parseChannelMessage(message.obj("params"))?.let(::offerChannel)
+                }
+                CHANNEL_VERDICT_METHOD -> if (server?.capabilities?.declaresExperimental(CHANNEL_PERMISSION_CAPABILITY) == true) {
+                    parseChannelVerdict(message.obj("params"))?.let(::offerChannel)
+                }
                 "notifications/progress" -> {
                     val params = message.obj("params") ?: return
                     val token = (params["progressToken"] as? JsonPrimitive)?.longOrNull ?: return
@@ -337,6 +362,10 @@ class McpClient(
             } else if (message.containsKey("result")) p.result.complete(message.getValue("result"))
             else debug("MCP 忽略没有 result 或 error 的响应。")
         } else debug("MCP 忽略无法路由的消息。")
+    }
+
+    private fun offerChannel(event: McpChannelEvent) {
+        if (channelQueue.trySend(event).isFailure) debug("MCP channel 事件积压太多，已丢弃新到的一条。")
     }
 
     private fun debug(message: String) { catchingNonCancellation { options.onDebug(message) } }
@@ -367,6 +396,7 @@ class McpClient(
         synchronized(pending) {
             if (state.value is McpConnectionState.Closed) return
             mutableState.value = McpConnectionState.Closed(reason.reason, reason.exitCode, reason.stderrTail, reason.httpStatus, reason.authChallenge)
+            channelQueue.close()
             pending.values.forEach { it.result.completeExceptionally(reason) }
         }
     }
@@ -375,5 +405,8 @@ class McpClient(
         try { withContext(NonCancellable) { transport.close() } }
         finally { job.cancel() }
     }
-    private companion object { val NO_PROGRESS: (McpProgress) -> Unit = {} }
+    private companion object {
+        val NO_PROGRESS: (McpProgress) -> Unit = {}
+        const val CHANNEL_QUEUE = 256
+    }
 }

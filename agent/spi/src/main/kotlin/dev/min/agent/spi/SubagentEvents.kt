@@ -180,6 +180,14 @@ sealed interface InputOrigin {
     @Serializable
     @SerialName("peer")
     data class Peer(val session: SessionId, val name: String? = null) : InputOrigin
+
+    /**
+     * MCP channel 服务器推来的消息（见 [ChannelMessage]）：外部系统的话，不是用户在本会话里输入的，更不是授权——
+     * 与 [Task]、[Peer] 一样不进 UserPromptSubmit hook、不记回退点、auto 审查不把它当用户意图。[server] 是配置里的服务器名
+     */
+    @Serializable
+    @SerialName("channel")
+    data class Channel(val server: String) : InputOrigin
 }
 
 @Serializable

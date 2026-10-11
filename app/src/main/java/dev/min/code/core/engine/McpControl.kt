@@ -37,6 +37,13 @@ interface McpControl {
     /** 退出登录：只清本机令牌、关掉相关连接（不向服务器撤销令牌） */
     suspend fun logout(server: String): Result<Unit>
 
+    /**
+     * 开 / 关一台 MCP channel 服务器（它把外部系统的消息直接推进本会话）。[McpChannelView.needsConfirmation] 的服务器
+     * （没经批准清单、只能当开发用途开）开启时 [confirmedDevelopment] 必须为真——界面先弹确认再调；没确认内核拒绝、什么都不改。
+     * 失败消息是内核给人看的话（托管策略关着、服务器没放行……）
+     */
+    suspend fun setChannel(server: String, enabled: Boolean, confirmedDevelopment: Boolean = false): Result<Unit>
+
     /** 正在等人确认的登录；null = 没有。界面显示成一张卡，点哪个按钮就调 [answerLoginPrompt] */
     val loginPrompt: StateFlow<McpLoginPrompt?>
 
@@ -60,6 +67,8 @@ data class McpServerView(
     val signedIn: Boolean?,
     /** 本会话在面板里把它关了（[McpControl.setEnabled]）；此时 [state] 是 [McpServerState.Disabled] */
     val sessionOff: Boolean = false,
+    /** 它声明了 channel 能力时的状态；没声明为 null（面板上不出 channel 一栏） */
+    val channel: McpChannelView? = null,
 ) {
     /** 项目服务器等批准：批准卡的触发条件 */
     val needsApproval: Boolean get() = state == McpServerState.NotApproved
@@ -71,6 +80,21 @@ data class McpServerView(
     val sessionToggle: Boolean
         get() = sessionOff || state in setOf(McpServerState.Pending, McpServerState.Connected, McpServerState.Failed, McpServerState.NeedsAuth)
 }
+
+/** 一台声明了 channel 能力的服务器在本会话里的 channel 状态 */
+data class McpChannelView(
+    /** 本会话已把它开成 channel：消息会直接进对话 */
+    val enabled: Boolean,
+    /** 它还声明了审批转发：开着时，要你批准的工具调用也会发给它，它能回答 */
+    val permissionRelay: Boolean,
+    /** 此刻开着的这一次是按开发用途开的（没经批准清单） */
+    val development: Boolean,
+    /** 开启前要确认：不是插件清单声明的 channel，只能当开发用途开 */
+    val needsConfirmation: Boolean,
+    /** 能不能勾（远程服务器不行） */
+    val available: Boolean,
+    val reason: String? = null,
+)
 
 enum class McpServerState {
     Pending, Connected, Failed, NeedsAuth,

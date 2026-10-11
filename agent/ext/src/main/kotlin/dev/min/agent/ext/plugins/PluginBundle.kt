@@ -71,6 +71,16 @@ class PluginBundle(
         }
     }
 
+    /**
+     * 插件清单里声明为 channel 的 MCP 服务器（`channels[].server` 指向本插件 mcpServers 的键）。
+     * 只回答「哪个插件的哪台服务器是 channel」；能不能连由 MCP 的信任 / 批准闸决定，要不要开由用户点名（`--channels plugin:…`）
+     */
+    fun channelServers(): List<PluginChannelServer> = batch.plugins.flatMap { plugin ->
+        plugin.channels.mapNotNull { channel ->
+            plugin.mcpServers.firstOrNull { it.key == channel.server }?.let { PluginChannelServer(plugin.ref, it.serverName) }
+        }
+    }
+
     fun lspSources(): List<LspServerSpec> = batch.plugins.filter { it.ref.id in trusted }.flatMap { plugin ->
         val (vars, values) = contexts.getValue(plugin.ref.id)
         fun expand(value: JsonElement): JsonElement = when (value) {
@@ -348,6 +358,9 @@ class PluginBundle(
         }
     }
 }
+
+/** [ref] 插件的 [serverName]（`plugin:<插件>:<server>`，与 MCP 面板里的名字一致）被清单声明为 channel */
+data class PluginChannelServer(val ref: PluginRef, val serverName: String)
 
 /** 已经由目录信任闸门判定的配置输入；toString 不得打印展开后的 env / headers。 */
 class PluginMcpSource(val name: String, val config: JsonObject, val trusted: Boolean, val error: String? = null, val requiresApproval: Boolean = false) {

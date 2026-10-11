@@ -38,13 +38,18 @@ internal class MinMcpControl(
 
     override fun answerLoginPrompt(proceed: Boolean) = gate.answer(proceed)
 
-    override suspend fun servers(): List<McpServerView> = hub.mcpPanel(session).map { row ->
+    override suspend fun servers(): List<McpServerView> {
+        val channels = hub.channelOptions(session).associateBy { it.server }
+        return hub.mcpPanel(session).map { row -> serverView(row, channels[row.info.name]) }
+    }
+
+    private fun serverView(row: dev.min.agent.kernel.McpServerPanel, option: SessionHub.ChannelOption?): McpServerView =
         McpServerView(
             name = row.info.name, scope = row.info.scope, transport = row.info.transport,
             state = McpServerState.of(row.info.state), reason = row.info.reason, toolCount = row.info.toolCount,
             stderrTail = row.stderrTail, signedIn = row.signedIn, sessionOff = row.sessionOff,
+            channel = option?.let(::channelView),
         )
-    }
 
     override suspend fun describe(server: String): McpServerCommandLine? = catchingNonCancellation {
         val file = GuestPath("${cwd().trimEnd('/')}/.mcp.json")
@@ -80,10 +85,27 @@ internal class MinMcpControl(
 
     override suspend fun logout(server: String): Result<Unit> = catchingNonCancellation { hub.logoutMcp(server, session) }
 
+    override suspend fun setChannel(server: String, enabled: Boolean, confirmedDevelopment: Boolean): Result<Unit> = catchingNonCancellation {
+        // 内核返回「没开成的原因」：开的这一台没开成就当失败，把原因说给人听（别的 channel 的老问题不算这次的）
+        val refusals = hub.setChannelEnabled(session, server, enabled, confirmedDevelopment)
+        val mine = refusals.firstOrNull { it.contains(server) }
+        if (enabled && mine != null) throw IllegalStateException(mine)
+    }
+
     private companion object {
         const val MAX_CONFIG_BYTES = 256 * 1024
     }
 }
+
+/** 内核的 channel 一行翻成界面的样子：不在批准范围内（`server:` 形式）的开启前要确认 */
+internal fun channelView(option: SessionHub.ChannelOption): dev.min.code.core.engine.McpChannelView = dev.min.code.core.engine.McpChannelView(
+    enabled = option.state.enabled,
+    permissionRelay = option.state.permissionRelay,
+    development = option.state.development,
+    needsConfirmation = option.ref is dev.min.agent.ext.mcp.ChannelRef.Server,
+    available = option.state.available,
+    reason = option.state.reason,
+)
 
 /** 用户在登录确认卡上点了取消。继承 [CancellationException]：内核的登录流程对「取消」有现成的收尾（记审计、不把连接标失败） */
 internal class LoginDeclined : CancellationException("用户取消了 MCP 登录。")

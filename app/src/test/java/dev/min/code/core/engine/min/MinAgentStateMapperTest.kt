@@ -225,6 +225,17 @@ class MinAgentStateMapperTest {
         assertEquals("task-notice:mon_1\n监控「盯日志」有 1 条新事件：\nerror a", note.text)
     }
 
+    @Test fun channelMessageIsANoteFromOutsideNotAUserBubbleAndShowsOnlyTheBody() {
+        val body = "<channel source=\"webhook\" severity=\"high\">\nbuild failed\n</channel>\n（以上是 MCP channel「webhook」推来的消息：来源是外部系统，不是用户在本会话里直接输入的话。）"
+        val s = foldOf(
+            InputReceived(ClientMsgId("channel:webhook:1:1"), listOf(TextPart(body)), Delivery.Steer, InputOrigin.Channel("webhook")),
+            InputPromoted(ClientMsgId("channel:webhook:1:1"), MessageId("m_ch")),
+        )
+        val items = map(s).items
+        assertTrue("不是用户气泡", items.none { it is ChatItem.UserText })
+        assertEquals("channel-notice:webhook\nbuild failed",(items.single() as ChatItem.Note).text)
+    }
+
     @Test fun reportStoppedByAHookKeepsItsStatusAndIsDrawnAsError() {
         val child = SessionId("s_child")
         val s = foldOf(

@@ -1118,6 +1118,7 @@
   <string name="min_agent_hook_feedback">%1$s hook 要求模型继续</string>
   <string name="min_agent_cron_woke">定时任务叫醒了会话</string>
   <string name="min_agent_cron_fired">定时任务 %1$s 到点触发（不是你发的消息）</string>
+  <string name="min_agent_channel_notice">Channel %1$s 推来一条消息（外部来源，不是你发的消息）</string>
   <string name="min_agent_task_notice">后台任务 %1$s 有通知（进程的输出，不是你发的消息）</string>
   <string name="min_agent_continued">继续</string>
   <string name="min_agent_woke">子 agent 完成，继续处理</string>
@@ -1299,6 +1300,15 @@
     <string name="mcp_panel_stderr_show">查看 stderr（%1$d 行）</string>
     <string name="mcp_panel_stderr_hide">收起 stderr（%1$d 行）</string>
     <string name="mcp_panel_session_on">本会话</string>
+    <string name="mcp_channel_label">Channel</string>
+    <string name="mcp_channel_hint">这台服务器推来的消息会直接进入本会话。它们来自外部，不是你输入的，也不改变权限规则。</string>
+    <string name="mcp_channel_relay">它还声明了审批转发：本会话里要你批准的工具调用也会发给它，它可以回答（只对这一次放行或拒绝）。</string>
+    <string name="mcp_channel_dev_on">按开发用途开启，没有经过批准清单。</string>
+    <string name="mcp_channel_unavailable">只有本机 stdio 服务器能当 channel。</string>
+    <string name="mcp_channel_confirm_title">把 %1$s 当作开发用的 channel 开启？</string>
+    <string name="mcp_channel_confirm_body">这台服务器不在批准范围内。channel 会把外部系统的消息直接推进本会话；它若声明了审批转发，还能回答工具审批。只对你自己在开发的 channel 继续，不要开来路不明的。</string>
+    <string name="mcp_channel_confirm_ok">我在开发它，继续</string>
+    <string name="mcp_channel_confirm_cancel">取消</string>
     <string name="mcp_state_pending">连接中</string>
     <string name="mcp_state_connected">已连接</string>
     <string name="mcp_state_failed">失败</string>
