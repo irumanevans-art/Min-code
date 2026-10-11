@@ -100,3 +100,18 @@ data class SkillsDiscovered(
     val directories: List<String>,
     val notes: List<String> = emptyList(),
 ) : SessionEvent
+
+/**
+ * skill 的 `allowed-tools` 本轮放行（CC 文档：「Tools Claude can use without asking permission during the turn that invokes this skill.
+ * The grant clears when you send your next message」）。[rules] 是**已代入 `${CLAUDE_SKILL_DIR}`** 的权限规则文字：
+ * 日志里记的就是实际放行的那几条，重开会话时按日志恢复，不再回头读磁盘上的 skill（skill 文件中途改宽了也不会让放行变大）。
+ * [skill] 只给人看。折叠进 `SessionState.skillGrants`（追加去重）；拒绝与询问规则仍在它之上。
+ */
+@Serializable
+@SerialName("skill_tools_granted")
+data class SkillToolsGranted(val skill: String, val rules: List<String>) : SessionEvent
+
+/** 用户发了下一条消息：本轮放行到此为止（照文档）。折叠时清空 `SessionState.skillGrants` */
+@Serializable
+@SerialName("skill_tools_cleared")
+data class SkillToolsCleared(val reason: String = "user_message") : SessionEvent

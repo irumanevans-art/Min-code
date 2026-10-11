@@ -305,7 +305,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             mode = s.settings.mode,
             classifyAllShell = s.autoReviewSettings.config.classifyAllShell,
             // 本轮 skill 的 allowed-tools 放行（照文档：到用户下一条消息为止）；拒绝与询问规则仍在它之上（PolicyEngine 先看拒绝、再看询问）
-            rules = parsedRules + rt.skillGrants.mapNotNull { PermissionRule.parse(dev.min.agent.policy.RuleKind.Allow, it, "skill") },
+            rules = parsedRules + s.skillGrants.mapNotNull { PermissionRule.parse(dev.min.agent.policy.RuleKind.Allow, it, "skill") },
             cwd = s.settings.cwd,
             home = deps.memoryHome ?: DEFAULT_HOME,
             scopeOf = { path ->

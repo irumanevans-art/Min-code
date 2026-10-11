@@ -162,6 +162,48 @@ class SkillShellRunTest {
         assertTrue("got $again", again is SlashResult.Refused)
     }
 
+    // ---- allowed-tools 的生命周期：落日志，重开会话后原样恢复（不大于原来） ----
+
+    @Test
+    fun `the allowed-tools grant is logged and restored when the session is reopened`() = run {
+        val rt = session()
+        assertTrue(typed(rt, project("build", "!`make build`", allowed = listOf("Bash(make build)"))) is SlashResult.Expanded)
+        assertEquals(listOf("Bash(make build)"), rt.state.value.skillGrants)
+
+        val reopened = SessionRuntime.open(store, rt.sessionId, rt.deps, newScope())!!
+        assertEquals(listOf("Bash(make build)"), reopened.state.value.skillGrants)
+        // 恢复出来的放行真的生效：另一个没有 allowed-tools 的 skill 要跑同一条命令，不再被拒
+        assertTrue(typed(reopened, project("plain", "!`make build`")) is SlashResult.Expanded)
+        // 但只有原来那条规则：别的命令照样要询问（失败关闭）
+        assertTrue(typed(reopened, project("plain2", "!`make install`")) is SlashResult.Refused)
+    }
+
+    @Test
+    fun `a grant cleared by the next user message stays cleared after reopening`() = run {
+        val rt = session(model = ScriptedModel(reply(TextPart("ok"))))
+        assertTrue(typed(rt, project("build", "!`make build`", allowed = listOf("Bash(make build)"))) is SlashResult.Expanded)
+        assertTrue(rt.send(ClientMsgId("m1"), listOf(TextPart("next")), dev.min.agent.spi.Delivery.Queue))
+        rt.awaitIdle()
+        assertTrue(rt.state.value.skillGrants.isEmpty())
+
+        val reopened = SessionRuntime.open(store, rt.sessionId, rt.deps, newScope())!!
+        assertTrue(reopened.state.value.skillGrants.isEmpty())
+        assertTrue(typed(reopened, project("plain", "!`make build`")) is SlashResult.Refused)
+    }
+
+    @Test
+    fun `a restored grant never outranks a deny rule and the log holds the substituted rule`() = run {
+        setProjectSettings("""{"permissions":{"deny":["Bash(make build)"]}}""")
+        val rt = session()
+        // 调用时 CLAUDE_SKILL_DIR 已代入：日志里记的是实际放行的那条规则，不是模板，重开时不会再读一遍磁盘上的 skill
+        rt.grantSkillTools(listOf("Bash(\${CLAUDE_SKILL_DIR}/run.sh)", "Bash(make build)"), "/workspace/.claude/skills/x")
+        assertEquals(listOf("Bash(/workspace/.claude/skills/x/run.sh)", "Bash(make build)"), rt.state.value.skillGrants)
+        val reopened = SessionRuntime.open(store, rt.sessionId, rt.deps, newScope())!!
+        assertEquals(rt.state.value.skillGrants, reopened.state.value.skillGrants)
+        assertTrue(typed(reopened, project("plain", "!`make build`")) is SlashResult.Refused)
+        assertTrue(exec.runs.isEmpty())
+    }
+
     // ---- 信任与开关 ----
 
     @Test

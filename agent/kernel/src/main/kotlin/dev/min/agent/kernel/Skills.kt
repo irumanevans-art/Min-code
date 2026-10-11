@@ -189,7 +189,7 @@ internal class KernelSkillRunPort(
     private var shellDisabledByPolicy: Boolean? = null
 
     override suspend fun begin(owner: SkillRunOwner) {
-        rt.grantSkillTools(owner.allowedTools, owner.baseDir)
+        rt.grantSkillTools(owner.allowedTools, owner.baseDir, owner.name)
     }
 
     override suspend fun shell(owner: SkillRunOwner, command: String): RunResult {

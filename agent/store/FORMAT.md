@@ -266,3 +266,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - v1 增量（2026-10-11，skills 剩余语义）：`skills_loaded.entries[]` 新增可选字段 `agent`（frontmatter `agent`，分身的子 agent 类型）、`background`（默认 true，只对 `context: fork` 有意义）、`allowedTools`（frontmatter `allowed-tools`，调用那一轮免审批；只在内存里生效，重开会话不恢复）。
   新增事件 `skills_discovered`（`entries`、`directories`、可选 `notes`），定义在 `spi/SkillEvents.kt`：模型第一次读写某个子目录里的文件时，懒加载那一层的 `.claude/skills`（`directories` 是检查过的 `.claude/skills` 路径，有没有 skill 都记）。折叠进 `SessionState.nestedSkills`（不改冻结的清单）与 `checkedSkillDirs`；子 agent 继承父会话的这一份。
   `skills_loaded` 的 `source` 新增取值 `add-dir`（`--add-dir` 目录里的 skills / commands）。旧日志缺新字段照常读（默认值即原来的行为），含 `skills_discovered` 的日志旧版本打不开。
+
+- v1 增量（2026-10-11，skill 的 allowed-tools 落日志）：新增事件 `skill_tools_granted`（`skill`（只给人看）、`rules`：**已代入 `${CLAUDE_SKILL_DIR}`** 的权限规则文字）与 `skill_tools_cleared`（可选 `reason`，默认 `user_message`），定义在 `spi/SkillEvents.kt`。前者在 skill 被调用（模型调 Skill 工具，或用户敲 `/名字`）时追加，后者在用户的下一条消息到来时写（照 CC：本轮放行到下一条消息为止）。折叠进 `SessionState.skillGrants`（追加去重、清空）；重开会话据日志原样恢复，不回头读磁盘上的 skill（skill 文件中途改宽不会让放行变大），拒绝与询问规则仍在它之上。上面「只在内存里生效，重开会话不恢复」的旧说法作废；旧日志没有这两个事件，重开后没有放行（与原来一致）。含这两个事件的日志旧版本打不开。

@@ -74,6 +74,8 @@ data class SessionState(
     val nestedSkills: List<dev.min.agent.spi.SkillEntry> = emptyList(),
     /** 已经检查过的嵌套 `.claude/skills` 目录（有没有 skill 都记），同一个目录不重复查 */
     val checkedSkillDirs: Set<String> = emptySet(),
+    /** skill `allowed-tools` 的本轮放行（SkillToolsGranted 追加、SkillToolsCleared 清空）：重开会话时从日志恢复，范围不会比原来大 */
+    val skillGrants: List<String> = emptyList(),
     /**
      * 会话创建时冻结的 output style（最后一条 OutputStyleLoaded）。系统提示的样式段只由它拼，会话内不变；
      * 分身继承这份快照（前缀与父会话逐字相同），普通子 agent 不用样式。没设 / Default / 找不到时为 null
