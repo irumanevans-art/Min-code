@@ -2,6 +2,8 @@
 
 `formatVersion: 1`
 
+- 非持久插件拉取载荷（2026-10-11）：`PluginFetchSource` 新增 version/registry、commandTimeout/mode、headers/headersHelper、helperEnvironment/scrubCredentials/inheritedAuthentication；`PluginProcess` 私有 stdout 端口与 `PluginSourceTag` 不写会话事件。source 的 toString 不回显 URL、命令或认证；headers 在 Android 仅加密保存。安装前 command/helper 确认绑定 id/command/target 的 SHA256；索引格式仍为 v2。
+
 - 非持久执行载荷（2026-10-11，L1/L2）：`ShellCommand.network` 默认 `Offline`，只有宿主代理租约能授予 `ProxyOnly(ports)`；`Exec.guestIsolation` 与 `WorkspaceShellContext.isolation` 是当次进程启动策略，不写事件。代理端口、原生可写宿主路径与代理认证不写会话日志；恢复时从本机策略和新租约重建。事件格式及版本不变。
 
 - v1 增量（2026-10-10，LSP）：`tool_outcome.result.diagnostics` 缺省空数组，记录本次编辑新增的 severity=1 错误。每项为 path（guest 路径）、line / character（1 起 UTF-16 位置）、message、可选 code / source。模型正文附同一诊断，工具卡优先显示数量、位置及明细；旧日志按空数组读取。进程、文档版本与诊断基线不落盘，重开时重新握手取基线。插件配置按来源信任后惰性启动，不新增事件或改版本号。

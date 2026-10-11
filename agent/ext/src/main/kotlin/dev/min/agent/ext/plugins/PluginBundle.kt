@@ -149,6 +149,7 @@ class PluginBundle(
             val index = if (!installed || !installIndex) null else io.readText("$pluginsDir/installed_plugins.json")?.let {
                 SettingsReader.parseObject(it, "installed_plugins.json", io.notes)?.get("plugins") as? JsonObject
             }
+            val blockedCommands = mutableSetOf<String>()
             index?.forEach { (id, installs) ->
                 if (!validId(id)) return@forEach
                 // 只接已有本地安装记录；远程源、市场安装及自动下载不属于本期。
@@ -159,6 +160,9 @@ class PluginBundle(
                         (record["projectPath"] as? JsonPrimitive)?.content?.let { localInstall(it)?.let(canonical) == canonical(cwd) } == true)
                 }
                 val record = eligible.lastOrNull() ?: return@forEach
+                val commandSource = ((record["marketplaceEntry"] as? JsonObject)?.get("source") as? JsonObject)?.get("source")?.jsonPrimitive?.content == "command"
+                val disableCommands = managed?.raw?.get("disableCommandPluginSources")?.jsonPrimitive?.booleanOrNull == true || (managed?.raw?.get("allowManagedHooksOnly")?.jsonPrimitive?.booleanOrNull == true && managed.raw["disableCommandPluginSources"]?.jsonPrimitive?.booleanOrNull != false)
+                if (commandSource && disableCommands) { blockedCommands += id; io.notes += "plugin:$id 托管设置禁止 command 源加载"; return@forEach }
                 val rawPath = (record["installPath"] as? JsonPrimitive)?.content ?: return@forEach
                 val path = localInstall(rawPath) ?: return@forEach
                 scopes[canonical(path).value] = (record["scope"] as? JsonPrimitive)?.content
@@ -166,7 +170,7 @@ class PluginBundle(
                     enabledPlugins = enabled + (id to (enabled[id] ?: false)), disabledDependencies = disabledDependencies)
             }
             // 未安装索引的本地缓存也可以按 enabledPlugins 找到；禁用项仍留作依赖候选。
-            if (installed) for (id in enabled.keys) {
+            if (installed) for (id in enabled.keys - blockedCommands) {
                 if (!validId(id)) continue
                 if (candidates.any { it.ref?.id == id }) continue
                 val market = id.substringAfter('@', "")

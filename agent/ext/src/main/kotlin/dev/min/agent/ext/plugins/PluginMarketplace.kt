@@ -16,9 +16,23 @@ const val OFFICIAL_MARKETPLACE = "claude-plugins-official"
 data class Marketplace(val name: String, val source: JsonObject, val installLocation: String?, val confirmed: Boolean, val autoUpdate: Boolean)
 data class MarketplaceCatalog(val name: String, val owner: String, val plugins: List<JsonObject>)
 data class InstalledPlugin(val id: String, val scope: String, val installPath: String, val projectPath: String?, val version: String, val enabled: Boolean)
+data class PluginCommandRequest(val id: String, val command: String, val target: String, val sha256: String)
+
+fun redactedPluginSource(source: JsonObject): JsonObject = JsonObject(source.mapValues { (key, value) ->
+    when {
+        key.lowercase() in setOf("headers", "token", "password", "authorization") -> JsonPrimitive("[已设置]")
+        value is JsonObject -> redactedPluginSource(value)
+        key in setOf("url", "registry") && value is JsonPrimitive && value.isString -> try {
+            val uri = URI(value.content)
+            JsonPrimitive(URI(uri.scheme, null, uri.host, uri.port, uri.path,
+                uri.rawQuery?.split('&')?.joinToString("&") { part -> if (Regex("(?i)token|key|secret|password|signature|credential").containsMatchIn(part.substringBefore('='))) part.substringBefore('=') + "=[已设置]" else part }, null).toString())
+        } catch (_: Exception) { JsonPrimitive("[地址]") }
+        else -> value
+    }
+})
 
 /** 预览只能由管理器产生；安装使用已拉取的同一份文件，确认后不能换成另一版远端内容。 */
-class PluginInstallPreview internal constructor(val id: String, val components: LoadedPlugin, internal val staging: GuestPath, internal val entry: JsonObject, internal val owner: String, internal val fingerprint: String, internal val container: GuestPath)
+class PluginInstallPreview internal constructor(val id: String, val components: LoadedPlugin, internal val staging: GuestPath, internal val entry: JsonObject, internal val owner: String, internal val fingerprint: String, internal val container: GuestPath, internal val resolvedVersion: String? = null)
 
 class PluginMarketplace(
     private val fs: WorkspaceFs,
@@ -78,7 +92,7 @@ class PluginMarketplace(
         return when (type) {
             "hostPattern" -> {
                 val hostname = if (source.text("source") == "github") "github.com" else source.text("url")?.let { url ->
-                    if (url.startsWith("git@")) url.substringAfter('@').substringBefore(':') else URI(url).host
+                    if (url.startsWith("git@")) url.substringAfter('@').substringBefore(':') else pluginUri(url).host
                 }
                 hostname != null && Regex(rule.text("hostPattern") ?: return false).containsMatchIn(hostname)
             }
@@ -104,11 +118,12 @@ class PluginMarketplace(
         return result
     }
     private fun fresh(label: String) = path(".staging/$label-${UUID.randomUUID()}")
-    private suspend fun fetchedCatalog(source: JsonObject): Pair<GuestPath, MarketplaceCatalog> {
+    private suspend fun fetchedCatalog(source: JsonObject, name: String? = null): Pair<GuestPath, MarketplaceCatalog> {
         allowed(source)
+        if (source.text("headersHelper") != null) checkCommandPolicy(source)
         val staging = fresh("market")
         try {
-            host.fetch(fetchSource(source, plugin = false), staging, limits)
+            host.fetch(fetchSource(source, plugin = false).let { fetch -> if (name == null) fetch else fetch.copy(helperEnvironment = fetch.helperEnvironment + ("CLAUDE_CODE_MARKETPLACE_NAME" to name)) }, staging, limits)
             val raw = readObject(GuestPath(staging.value + "/.claude-plugin/marketplace.json"))
             val catalog = parseCatalog(raw)
             require(catalog.name != OFFICIAL_MARKETPLACE || source == OFFICIAL_MARKETPLACE_SOURCE) { "官方市场名不能被第三方冒用" }
@@ -145,7 +160,7 @@ class PluginMarketplace(
     suspend fun refresh(name: String): MarketplaceCatalog = host.locked { refreshUnlocked(name) }
     private suspend fun refreshUnlocked(name: String): MarketplaceCatalog {
         val market = market(name)
-        val (staging, catalog) = fetchedCatalog(market.source)
+        val (staging, catalog) = fetchedCatalog(market.source, name)
         if (catalog.name != name) { host.remove(staging); error("市场更新改变了名字") }
         val previous = marketsRaw().getValue(name).jsonObject
         val location = path("marketplaces/$name/${UUID.randomUUID()}")
@@ -163,25 +178,67 @@ class PluginMarketplace(
         if (market.installLocation == null) refreshUnlocked(name)
         else parseCatalog(readObject(GuestPath(market.installLocation + "/.claude-plugin/marketplace.json")))
     }
-    suspend fun preview(id: String): PluginInstallPreview = host.locked {
+    private suspend fun checkCommandPolicy(marketSource: JsonObject? = null) {
+        val snapshot = settings()
+        require(!snapshot.managedPolicyBroken) { "托管市场策略不可用" }
+        val managed = JsonObject(snapshot.layers.lastOrNull { it.source == ConfigSource.Managed }?.raw.orEmpty())
+        if (marketSource != null && (managed["extraKnownMarketplaces"] as? JsonObject)?.values?.any { (it as? JsonObject)?.get("source") == marketSource } == true) return
+        require(managed.bool("disableCommandPluginSources") != true && (managed.bool("allowManagedHooksOnly") != true || managed.bool("disableCommandPluginSources") == false)) { "托管设置禁止插件 command / headersHelper" }
+    }
+    private fun commandRequests(id: String, entry: JsonObject): List<PluginCommandRequest> {
+        val source = entry["source"] as? JsonObject
+        val commands = buildList {
+            if (source?.text("source") == "command") add(source.text("command")!! to "plugin directory")
+            entry.text("headersHelper")?.let { add(it to (source?.text("url") ?: error("headersHelper 需要 archive URL"))) }
+        }
+        return commands.map { (command, target) ->
+            require(command.isNotBlank() && command.length <= 500 && command.all { it.code in 32..126 } && "    " !in command) { "无效插件命令" }
+            PluginCommandRequest(id, command, target, MessageDigest.getInstance("SHA-256").digest("$id\u0000$command\u0000$target".toByteArray()).joinToString("") { "%02x".format(it) })
+        }
+    }
+    suspend fun commandsToAccept(id: String): List<PluginCommandRequest> = host.locked {
+        val ref = parseId(id)
+        var market = market(ref.marketplace!!)
+        if (market.installLocation == null) { refreshUnlocked(market.name); market = market(market.name) }
+        val entry = parseCatalog(readObject(GuestPath(market.installLocation + "/.claude-plugin/marketplace.json"))).plugins.singleOrNull { it.text("name") == ref.name } ?: error("市场没有插件 $id")
+        commandRequests(id, entry).also { if (it.isNotEmpty()) checkCommandPolicy() }
+    }
+    suspend fun preview(id: String, acceptedCommands: Set<String> = emptySet()): PluginInstallPreview = host.locked { previewUnlocked(id, acceptedCommands) }
+    private suspend fun previewUnlocked(id: String, acceptedCommands: Set<String> = emptySet()): PluginInstallPreview {
         val ref = parseId(id)
         var market = market(requireNotNull(ref.marketplace))
         if (market.installLocation == null) { refreshUnlocked(market.name); market = market(market.name) }
         val catalog = parseCatalog(readObject(GuestPath(market.installLocation + "/.claude-plugin/marketplace.json")))
         val entry = catalog.plugins.singleOrNull { it.text("name") == ref.name } ?: error("市场没有插件 $id")
         val source = entry.getValue("source")
+        val commands = commandRequests(id, entry)
+        if (commands.isNotEmpty()) {
+            checkCommandPolicy()
+            require(commands.all { it.sha256 in acceptedCommands }) { "请先确认命令与目标；command 或 headersHelper 已变化时必须重新确认" }
+        }
         val stage = fresh("plugin")
         try {
             if (source is JsonPrimitive && source.isString) {
                 require(market.source.text("source") != "url") { "URL 清单不提供相对路径插件" }
                 val relative = relativeSource(source.content, catalog = readObject(GuestPath(market.installLocation + "/.claude-plugin/marketplace.json")))
                 host.copy(GuestPath(market.installLocation + relative.removePrefix(".")), stage, limits)
-            } else host.fetch(fetchSource(source as? JsonObject ?: error("无效插件 source"), plugin = true), stage, limits)
+            } else {
+                val raw = source as? JsonObject ?: error("无效插件 source")
+                var fetch = fetchSource(raw, plugin = true)
+                if (fetch.type == "archive") {
+                    val inherited = if (market.source.text("source") == "url" && sameOrigin(market.source.text("url")!!, fetch.location)) fetchSource(market.source, false) else null
+                    entry.text("headersHelper")?.let { require(entry.bool("strict") == false) { "headersHelper 的条目必须 strict: false" } }
+                    fetch = fetch.copy(headers = headerValues(entry), headersHelper = entry.text("headersHelper"), inheritedAuthentication = inherited?.copy(
+                        helperEnvironment = inherited.helperEnvironment + ("CLAUDE_CODE_MARKETPLACE_NAME" to market.name)),
+                        helperEnvironment = buildMap { put("CLAUDE_CODE_PLUGIN_NAME", ref.name); put("CLAUDE_CODE_PLUGIN_ARCHIVE_URL", fetch.location) }, scrubCredentials = true)
+                }
+                host.fetch(fetch, stage, limits)
+            }
             val pluginRoot = archiveRoot(stage)
             val outcome = PluginLoader(fs, canonical).load(PluginRequest(pluginRoot.value, ref, entry))
             val plugin = outcome.plugin ?: error("插件清单无效：${outcome.errors.joinToString()}")
             require(outcome.errors.isEmpty()) { "插件组件无效：${outcome.errors.joinToString()}" }
-            PluginInstallPreview(id, plugin, pluginRoot, entry, owner, fingerprint(pluginRoot, entry), stage).also { previews += it }
+            return PluginInstallPreview(id, plugin, pluginRoot, entry, owner, fingerprint(pluginRoot, entry), stage).also { previews += it }
         } catch (e: Exception) { withContext(NonCancellable) { host.remove(stage) }; throw e }
     }
     private suspend fun archiveRoot(stage: GuestPath): GuestPath {
@@ -386,6 +443,7 @@ class PluginMarketplace(
         fun fetchSource(raw: JsonObject, plugin: Boolean): PluginFetchSource {
             val type = raw.text("source") ?: error("source 对象缺类型")
             val location = when (type) { "github" -> raw.text("repo"); "file", "directory" -> raw.text("path"); "npm" -> raw.text("package"); "command" -> raw.text("command"); else -> raw.text("url") }?.takeIf { it.isNotBlank() } ?: error("source 缺位置字段")
+            if (!plugin && type == "npm") error("NPM marketplace sources not yet implemented")
             require(type in (if (plugin) setOf("github", "url", "git-subdir", "archive", "npm", "command") else setOf("github", "git", "url", "file", "directory"))) { "source 类型不适用于此处" }
             if (type == "github") require(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+").matches(location)) { "无效 github repo" }
             val subdir = raw.text("path").takeIf { type in setOf("git", "github", "git-subdir") }
@@ -394,7 +452,19 @@ class PluginMarketplace(
             raw.text("sha256")?.let { require(Regex("[0-9a-fA-F]{64}").matches(it)) { "无效 SHA256" } }
             return PluginFetchSource(if (plugin && type in setOf("url", "git-subdir")) "git" else type,
                 if (type == "git-subdir" && Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+").matches(location)) "https://github.com/$location.git" else location,
-                raw.text("ref"), raw.text("sha"), subdir, raw.text("sha256"))
+                raw.text("ref"), raw.text("sha"), subdir, raw.text("sha256"), raw.text("version"), raw.text("registry"),
+                (raw["timeout"] as? JsonPrimitive)?.intOrNull ?: 60, raw.text("mode") ?: "copy", headerValues(raw), raw.text("headersHelper"),
+                helperEnvironment = buildMap { if (type == "url" && !plugin) put("CLAUDE_CODE_MARKETPLACE_URL", location) }, scrubCredentials = false)
+        }
+        private fun pluginUri(value: String): URI = try { URI(value) } catch (_: Exception) { error("插件源 URL 格式无效") }
+        private fun sameOrigin(a: String, b: String): Boolean {
+            fun origin(raw: String) = pluginUri(raw).let { listOf(it.scheme?.lowercase(), it.host?.lowercase(), if (it.port >= 0) it.port else if (it.scheme.equals("https", true)) 443 else 80) }
+            return origin(a) == origin(b)
+        }
+        private fun headerValues(raw: JsonObject): Map<String, String> {
+            val headers = raw["headers"] ?: return emptyMap()
+            require(headers is JsonObject && headers.values.all { it is JsonPrimitive && it.isString }) { "headers 必须是字符串值对象" }
+            return headers.mapValues { it.value.jsonPrimitive.content }
         }
     }
 }

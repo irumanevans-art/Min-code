@@ -11,10 +11,22 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.StandardOpenOption.*
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
+import java.util.zip.GZIPInputStream
+import kotlinx.serialization.json.*
 import kotlin.coroutines.coroutineContext
 
 /** 文件副作用限制在 plugins 根下；新包拒绝所有链接，防止解压、复制和清理越过安装边界。 */
-class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec, private val pluginsRoot: GuestPath) : PluginSourceHost {
+class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec, private val pluginsRoot: GuestPath,
+    private val privateProcess: PluginProcess? = null,
+    private val processPath: (GuestPath) -> String = { it.value },
+    private val outputPath: (String) -> GuestPath = { GuestPath(it) },
+    private val sessionCwd: GuestPath? = null,
+    private val storedHeaders: suspend (String) -> Map<String, String> = { emptyMap() },
+) : PluginSourceHost {
+    private val home = GuestPath(pluginsRoot.value.substringBeforeLast("/.claude/plugins"))
+    private val helperCache = mutableMapOf<String, Pair<Long, Map<String, String>>>()
+    private suspend fun privateRun(script: String, cwd: GuestPath, timeoutMs: Long, env: Map<String, String> = emptyMap(), scrub: Boolean = false) =
+        requireNotNull(privateProcess) { "宿主未提供无日志插件进程端口" }.run(script, cwd, timeoutMs, env, scrub)
     private fun owned(path: GuestPath): Path {
         val root = fs.hostPath(pluginsRoot).toAbsolutePath().normalize()
         val result = fs.hostPath(path).toAbsolutePath().normalize()
@@ -76,6 +88,35 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
             }
         } }
     }
+    private suspend fun gitEnvironment(source: PluginFetchSource): Map<String, String> {
+        val base = mapOf("GIT_TERMINAL_PROMPT" to "0", "GIT_CONFIG_NOSYSTEM" to "1", "GCM_INTERACTIVE" to "never")
+        val location = if (source.type == "github") "https://github.com/${source.location}.git" else source.location
+        if (!location.startsWith("https://") && !location.startsWith("http://")) return base
+        val credentialHeaders = headers(source.copy(location = location)).toMutableMap()
+        if (sourceUri(location).host == "github.com" && credentialHeaders.keys.none { it.equals("Authorization", true) }) {
+            System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() }?.let { token ->
+                credentialHeaders["Authorization"] = "Basic " + java.util.Base64.getEncoder().encodeToString("x-access-token:$token".toByteArray())
+            }
+        }
+        // git 的 argv 和日志里不携带认证值，extraHeader 经私有端口的环境传入。
+        return base + buildMap {
+            put("GIT_CONFIG_COUNT", credentialHeaders.size.toString())
+            credentialHeaders.entries.forEachIndexed { i, (key, value) ->
+                put("GIT_CONFIG_KEY_$i", "http.$location.extraHeader"); put("GIT_CONFIG_VALUE_$i", "$key: $value")
+            }
+        }
+    }
+    override suspend fun tags(source: PluginFetchSource, pluginName: String): List<PluginSourceTag> {
+        if (privateProcess == null || source.type !in setOf("git", "github", "directory")) return emptyList()
+        require(pluginName.matches(Regex("[A-Za-z0-9][A-Za-z0-9_.-]*")))
+        val location = when(source.type) { "github" -> "https://github.com/${source.location}.git"; "directory" -> processPath(GuestPath(source.location)); else -> source.location }
+        if (source.type == "directory" && !Files.exists(fs.hostPath(GuestPath(source.location)).resolve(".git"))) return emptyList()
+        val output = privateRun("git -c protocol.ext.allow=never ls-remote --tags --refs -- ${processQuote(location)} ${processQuote("refs/tags/$pluginName--v*")}", home, 120_000, gitEnvironment(source))
+        return output.lineSequence().mapNotNull { line ->
+            val parts = line.split(Regex("\\s+")); if (parts.size != 2 || !parts[0].matches(Regex("[0-9a-f]{40}"))) null
+            else parts[1].removePrefix("refs/tags/").takeIf { it.startsWith("$pluginName--v") }?.let { PluginSourceTag(it, it.substringAfter("--v"), parts[0]) }
+        }.toList()
+    }
     override suspend fun fetch(source: PluginFetchSource, destination: GuestPath, limits: PluginFetchLimits) {
         when (source.type) {
             "directory" -> copy(GuestPath(source.location), destination, limits)
@@ -84,11 +125,11 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
                 require(Files.size(file) <= limits.downloadBytes && !Files.isSymbolicLink(file)) { "清单过大或是链接" }
                 fs.writeAtomic(GuestPath(destination.value + "/.claude-plugin/marketplace.json"), Files.readAllBytes(file))
             }
-            "url" -> fs.writeAtomic(GuestPath(destination.value + "/.claude-plugin/marketplace.json"), download(source.location, limits.downloadBytes))
+            "url" -> fs.writeAtomic(GuestPath(destination.value + "/.claude-plugin/marketplace.json"), download(source.location, limits.downloadBytes, headers(source)))
             "archive" -> {
                 val bytes = if (source.location.startsWith("/")) withContext(Dispatchers.IO) {
                     val file = fs.hostPath(GuestPath(source.location)); require(Files.size(file) <= limits.downloadBytes) { "压缩包超过下载上限" }; Files.readAllBytes(file)
-                } else download(source.location, limits.downloadBytes)
+                } else download(source.location, limits.downloadBytes, headers(source))
                 source.sha256?.let { expected -> require(digest(bytes).equals(expected, true)) { "压缩包 SHA256 不匹配" } }
                 extract(bytes, owned(destination), limits)
             }
@@ -101,22 +142,61 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
                 owned(raw); Files.createDirectories(owned(raw).parent)
                 val flags = source.ref?.let { " --branch ${quote(it)}" }.orEmpty()
                 try {
-                    val result = exec.run(ShellCommand("git -c core.hooksPath=/dev/null -c protocol.ext.allow=never clone --no-recurse-submodules$flags -- ${quote(location)} ${quote(raw.value)}" +
-                        (source.sha?.let { " && git -C ${quote(raw.value)} -c core.hooksPath=/dev/null checkout --detach ${quote(it)}" }.orEmpty()), pluginsRoot,
-                        mapOf("GIT_TERMINAL_PROMPT" to "0", "GIT_CONFIG_NOSYSTEM" to "1", "GIT_CONFIG_GLOBAL" to "/dev/null")), ExecOptions(120_000))
-                    require(result is ExecResult.Exited && result.exitCode == 0) { "git 拉取失败或超时" }
+                    val env = gitEnvironment(source)
+                    if (privateProcess != null) {
+                        privateRun("git -c core.hooksPath=/dev/null -c protocol.ext.allow=never clone --no-recurse-submodules" +
+                            source.ref?.let { " --branch ${processQuote(it)}" }.orEmpty() + " -- ${processQuote(location)} ${processQuote(processPath(raw))}" +
+                            source.sha?.let { " && git -C ${processQuote(processPath(raw))} -c core.hooksPath=/dev/null checkout --detach ${processQuote(it)}" }.orEmpty(),
+                            home, 120_000, env)
+                    } else {
+                        val result = exec.run(ShellCommand("git -c core.hooksPath=/dev/null -c protocol.ext.allow=never clone --no-recurse-submodules$flags -- ${quote(location)} ${quote(raw.value)}" +
+                            source.sha?.let { " && git -C ${quote(raw.value)} -c core.hooksPath=/dev/null checkout --detach ${quote(it)}" }.orEmpty(), pluginsRoot, env), ExecOptions(120_000))
+                        require(result is ExecResult.Exited && result.exitCode == 0) { "git 拉取失败或超时" }
+                    }
                     val path = source.path?.let { safeRelative(it); "/$it" }.orEmpty()
                     copy(GuestPath(raw.value + path), destination, limits)
                 } finally { withContext(NonCancellable) { remove(raw) } }
             }
+            "command" -> {
+                PrivatePluginProcess.validateCommand(source.location)
+                require(source.commandTimeout in 1..600 && source.mode in setOf("copy", "link")) { "无效 command timeout/mode" }
+                require(source.mode == "copy") { "此宿主不支持 command link 模式；Windows 原文要求 copy" }
+                val printed = privateRun(source.location, home, source.commandTimeout * 1000L, scrub = true).trimEnd('\r', '\n')
+                require(printed.isNotBlank() && '\n' !in printed && '\r' !in printed && !printed.startsWith("\\\\") && !printed.startsWith("//")) { "command 必须只输出一行绝对插件目录，不能是 UNC" }
+                val plugin = outputPath(printed)
+                val physical = fs.hostPath(plugin).toRealPath()
+                sessionCwd?.let { require(!fs.hostPath(it).toRealPath().startsWith(physical)) { "command 输出不能是会话目录或其父目录" } }
+                require(Files.isDirectory(physical) && listOf(".claude-plugin", "skills", "commands", "agents", "hooks").any { Files.isDirectory(physical.resolve(it)) }) { "command 输出目录没有插件内容" }
+                copy(plugin, destination, limits.copy(expandedBytes = minOf(limits.expandedBytes, 256L * 1024 * 1024), files = minOf(limits.files, 20_000)))
+            }
+            "npm" -> fetchNpm(source, destination, limits)
             else -> error("暂不支持源类型 ${source.type}；支持 git / github / url / archive / directory / file")
         }
     }
-    private suspend fun download(raw: String, limit: Long): ByteArray = runInterruptible(Dispatchers.IO) {
-        val uri = URI(raw)
+    private suspend fun headers(source: PluginFetchSource): Map<String, String> {
+        val inherited = source.inheritedAuthentication?.let { headers(it) }.orEmpty()
+        val dynamic = source.headersHelper?.let helper@ { command ->
+            PrivatePluginProcess.validateCommand(command)
+            val cacheKey = command + source.helperEnvironment.toString() + source.scrubCredentials
+            helperCache[cacheKey]?.takeIf { System.nanoTime() - it.first < 60_000_000_000L }?.let { return@helper it.second }
+            val text = privateRun(command, GuestPath(home.value + "/.claude"), 10_000, source.helperEnvironment, source.scrubCredentials)
+            try {
+                val obj = Json.parseToJsonElement(text).jsonObject
+                require(obj.values.all { it is JsonPrimitive && it.isString })
+                obj.mapValues { it.value.jsonPrimitive.content }.also { helperCache[cacheKey] = System.nanoTime() to it }
+            } catch(e: CancellationException) { throw e } catch(_: Exception) { error("headersHelper 必须只输出字符串值的 JSON 对象") }
+        }.orEmpty()
+        val entry = (source.headers + dynamic).filterKeys { source.type != "archive" || !it.equals("Host", true) && !it.equals("Cookie", true) && !it.startsWith("X-Forwarded-", true) && it.lowercase() !in setOf("connection", "content-length", "transfer-encoding") }
+        val result = storedHeaders(source.location) + inherited + entry
+        require(result.all { (key, value) -> key.matches(Regex("[A-Za-z0-9-]+")) && value.none { it == '\r' || it == '\n' || it == '\u0000' } }) { "认证头格式无效" }
+        return result
+    }
+    private suspend fun download(raw: String, limit: Long, headers: Map<String, String> = emptyMap()): ByteArray = runInterruptible(Dispatchers.IO) {
+        val uri = sourceUri(raw)
         require(uri.scheme == "https" || uri.scheme == "http" && uri.host in setOf("localhost", "127.0.0.1", "10.0.2.2", "::1")) { "下载须用 HTTPS（本机测试可用 HTTP）" }
         val connection = uri.toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000; connection.readTimeout = 30_000; connection.instanceFollowRedirects = false
+        headers.forEach(connection::setRequestProperty)
         try {
             require(connection.responseCode == 200) { "下载失败：HTTP ${connection.responseCode}" }
             require(connection.contentLengthLong <= limit) { "下载超过大小上限" }
@@ -131,6 +211,77 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
                 output.toByteArray()
             }
         } finally { connection.disconnect() }
+    }
+    private fun sourceUri(value: String): URI = try { URI(value) } catch (_: Exception) { error("插件源 URL 格式无效") }
+    private fun processQuote(value: String): String {
+        require(value.none { it == '\u0000' || it == '\n' || it == '\r' }) { "无效进程参数" }
+        if (!System.getProperty("os.name").startsWith("Windows")) return quote(value)
+        require(value.none { it in "\"%!" }) { "进程参数包含 shell 元字符" }
+        return "\"$value\""
+    }
+    private suspend fun fetchNpm(source: PluginFetchSource, destination: GuestPath, limits: PluginFetchLimits) {
+        val defaultRegistry = privateRun("npm config get registry", home, 10_000).trim().trimEnd('/')
+        val registry = (source.registry ?: defaultRegistry).trimEnd('/')
+        fun validRegistry(value: String) = sourceUri(value).let { it.scheme == "https" || it.scheme == "http" && value.trimEnd('/') == defaultRegistry }
+        require(validRegistry(registry)) { "npm registry 必须为 HTTPS 或用户默认 registry" }
+        val packageName = source.location
+        require(".." !in packageName) { "npm package 不能含 .." }
+        val uri = if (packageName.startsWith("https://") || packageName.startsWith("http://")) sourceUri(packageName) else null
+        if (uri != null) {
+            require(uri.scheme == "https" || packageName.startsWith(defaultRegistry + "/")) { "npm tarball HTTP 仅限默认 registry" }
+            require(uri.host !in setOf("github.com", "gist.github.com", "bitbucket.org", "git.sr.ht") && (uri.host != "gitlab.com" || uri.path.startsWith("/api/v4/"))) { "npm package 不能是 git 托管 tarball" }
+        } else require(Regex("(?:@[a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+(?:@[a-zA-Z0-9_.~^*+<>=| -]+)?").matches(packageName)) { "npm package 必须是 registry 包名，不能是路径、git 或 alias" }
+        val spec = if (uri == null && packageName.substringAfter('/').indexOf('@') < 0) packageName + "@" + (source.version ?: "latest") else packageName
+        val staging = GuestPath(destination.value + "-npm")
+        Files.createDirectories(owned(staging))
+        try {
+            val output = privateRun("npm pack --ignore-scripts --json --registry ${processQuote(registry)} --pack-destination ${processQuote(processPath(staging))} -- ${processQuote(spec)}", home, 120_000)
+            val filename = try { Json.parseToJsonElement(output).jsonArray.single().jsonObject.getValue("filename").jsonPrimitive.content }
+                catch(e: CancellationException) { throw e } catch(_: Exception) { error("npm pack 返回格式无效") }
+            require(filename.matches(Regex("[A-Za-z0-9_.-]+\\.tgz"))) { "npm tarball 名称无效" }
+            val archive = owned(staging).resolve(filename)
+            require(Files.size(archive) <= limits.downloadBytes) { "npm 下载超限" }
+            extractTar(Files.readAllBytes(archive), owned(destination), limits)
+        } finally { withContext(NonCancellable) { remove(staging) } }
+    }
+    // API 26 的 InputStream 没有 readNBytes；有界读取也让截断压缩包不能伪装完整。
+    private fun readBounded(input: java.io.InputStream, size: Int): ByteArray {
+        val buffer = ByteArray(size); var offset = 0
+        while (offset < size) { val n = input.read(buffer, offset, size-offset); if (n < 0) break; offset += n }
+        return buffer.copyOf(offset)
+    }
+    private suspend fun extractTar(bytes: ByteArray, root: Path, limits: PluginFetchLimits) = withContext(Dispatchers.IO) {
+        var total = 0L; var count = 0
+        val seen = mutableSetOf<String>()
+        GZIPInputStream(bytes.inputStream()).use { input ->
+            while (true) {
+                coroutineContext.ensureActive()
+                val header = readBounded(input, 512)
+                if (header.isEmpty() || header.all { it == 0.toByte() }) break
+                require(header.size == 512) { "npm tar 头不完整" }
+                fun text(start: Int, length: Int) = header.copyOfRange(start, start + length).toString(Charsets.UTF_8).trimEnd('\u0000', ' ')
+                val checksum = text(148, 8).trim().toLongOrNull(8) ?: error("npm tar 校验值无效")
+                require(header.indices.sumOf { if (it in 148..155) 32L else (header[it].toInt() and 255).toLong() } == checksum) { "npm tar 校验失败" }
+                val prefix = text(345, 155)
+                val raw = (if (prefix.isEmpty()) "" else "$prefix/") + text(0, 100)
+                require(raw.startsWith("package/")) { "npm tar 必须在 package 根下" }
+                val name = raw.removePrefix("package/").trimEnd('/')
+                if (name.isNotEmpty()) safeRelative(name)
+                require(seen.add(raw) && ++count <= limits.files) { "npm tar 重复路径或文件数超限" }
+                val size = text(124, 12).trim().toLongOrNull(8) ?: error("npm tar 大小无效")
+                require(size >= 0 && size <= limits.expandedBytes && total + size <= limits.expandedBytes) { "npm tar 展开超限" }; total += size
+                val target = root.resolve(name).normalize(); require(target.startsWith(root))
+                when(header[156].toInt().toChar()) {
+                    '5' -> { require(size == 0L); Files.createDirectories(target) }
+                    '0', '\u0000' -> { require(name.isNotEmpty()); Files.createDirectories(target.parent); Files.newOutputStream(target, CREATE_NEW).use { out ->
+                        var remaining = size; val buffer = ByteArray(8192)
+                        while (remaining > 0) { val n = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt()); require(n > 0) { "npm tar 内容截断" }; out.write(buffer, 0, n); remaining -= n }
+                    } }
+                    else -> error("npm tar 链接或特殊条目被拒绝")
+                }
+                val padding = ((512 - size % 512) % 512).toInt(); require(readBounded(input, padding).size == padding) { "npm tar 截断" }
+            }
+        }
     }
     private suspend fun extract(bytes: ByteArray, root: Path, limits: PluginFetchLimits) = withContext(Dispatchers.IO) {
         require(bytes.size.toLong() <= limits.downloadBytes) { "压缩包超过下载上限" }
