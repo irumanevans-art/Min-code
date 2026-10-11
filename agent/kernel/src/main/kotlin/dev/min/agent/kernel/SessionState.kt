@@ -159,6 +159,8 @@ data class SessionState(
     val pendingHookContexts: List<String> = emptyList(),
     /** 等着挂到下一条提升为正式消息的输入上的 hook 上下文（SubagentStart，不区分来源） */
     val pendingInputContexts: List<String> = emptyList(),
+    /** 模型最后被告知的世界状态（[WorldFacts]）；null = 还没提升过消息，或压缩把告知过的那段摘要掉了 */
+    val world: WorldFacts? = null,
     val webSearches: Int = 0,
     /** 会话创建时冻结的自动记忆状态（最后一条 MemoryLoaded 带的）；null = 没开。系统提示里自动记忆那一段只由它与 [memory] 拼 */
     val autoMemory: AutoMemoryInfo? = null,
@@ -284,6 +286,55 @@ val SessionState.activeModel: ModelRef get() = turn?.fallback?.model ?: settings
  * 别名本身留给宿主的解析器解析成这家供应商的型号（[ModelResolver]）
  */
 val SessionSettings.effectiveModel: ModelRef get() = planAwareModel(model, mode)
+
+/**
+ * 模型眼里的世界状态，[dev.min.agent.spi.WorldNoted] 比对的基准。[date] 为 null = 还是系统提示里写的会话日期；
+ * [model] 为 null = 没记过（第一次提升消息时静默记下，不提醒——系统提示本来就不报模型）
+ */
+data class WorldFacts(val date: String?, val mode: dev.min.agent.protocol.PermissionMode, val model: String?)
+
+/**
+ * 这次提升消息前要不要补一段世界状态增量（docs/agent/04-子系统设计.md §4.5）；没有变化返回 null。
+ * [basisDate] 是系统提示里的会话日期，[today] 是此刻的当地日期。模式的基准是默认模式：会话一开始就在计划模式里，
+ * 第一条消息就要说——系统提示不随模式变（变了就断缓存），模型只能从这里知道
+ */
+internal fun worldDelta(state: SessionState, basisDate: String, today: String): dev.min.agent.spi.WorldNoted? {
+    val known = state.world
+    val mode = state.settings.mode
+    val model = state.settings.effectiveModel.modelId
+    val lines = buildList {
+        if (today != (known?.date ?: basisDate)) {
+            add("Date update: today is $today. Dates mentioned earlier in this conversation, including the session date, are no longer current.")
+        }
+        val knownMode = known?.mode ?: dev.min.agent.protocol.PermissionMode.Default
+        if (mode != knownMode) add(modeLine(mode, knownMode))
+        val knownModel = known?.model
+        if (knownModel != null && model != knownModel) {
+            add("Model update: this conversation now runs on $model; earlier replies may have been written by $knownModel.")
+        }
+    }
+    return if (lines.isEmpty()) null else dev.min.agent.spi.WorldNoted(today, mode, model, lines.joinToString("\n"))
+}
+
+private fun modeLine(mode: dev.min.agent.protocol.PermissionMode, from: dev.min.agent.protocol.PermissionMode): String {
+    // 与 settings.json / --permission-mode 里的写法一致
+    val name = when (mode) {
+        dev.min.agent.protocol.PermissionMode.Default -> "default"
+        dev.min.agent.protocol.PermissionMode.AcceptEdits -> "acceptEdits"
+        dev.min.agent.protocol.PermissionMode.Plan -> "plan"
+        dev.min.agent.protocol.PermissionMode.Auto -> "auto"
+        dev.min.agent.protocol.PermissionMode.DontAsk -> "dontAsk"
+        dev.min.agent.protocol.PermissionMode.BypassPermissions -> "bypassPermissions"
+    }
+    return when {
+        mode == dev.min.agent.protocol.PermissionMode.Plan ->
+            "Mode update: plan mode is on. Investigate and design only; do not edit files or run commands with side effects. " +
+                "When the plan is ready, submit it with ExitPlanMode for the user's approval."
+        from == dev.min.agent.protocol.PermissionMode.Plan ->
+            "Mode update: plan mode is off; the permission mode is now $name and you may make changes again."
+        else -> "Mode update: the permission mode is now $name."
+    }
+}
 
 internal fun planAwareModel(model: ModelRef, mode: dev.min.agent.protocol.PermissionMode): ModelRef {
     val (name, oneMillion) = dev.min.agent.llm.catalog.ModelAliases.splitSuffix(model.modelId)

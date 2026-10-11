@@ -89,6 +89,22 @@ data class SettingsChanged(
     val clearEffort: Boolean = false,
 ) : SessionEvent
 
+/**
+ * 世界状态增量（docs/agent/04-子系统设计.md §4.5）：日期、权限模式、模型与模型上次被告知的不一样了，
+ * 在下一条提升为正式消息的输入上追加一段 [reminder]。系统提示与之前的消息一个字不改，缓存前缀不断。
+ * 三个字段是这一刻的事实（之后比的基准）；文字落进日志而不是折叠时现拼：措辞以后改了，旧会话重放出的字节也不变
+ */
+@Serializable
+@SerialName("world_noted")
+data class WorldNoted(
+    /** 当地日期 yyyy-MM-dd（按宿主时区） */
+    val date: String,
+    val mode: PermissionMode,
+    /** 计划感知后的会话模型 id（opusplan 在计划里是 opus 档） */
+    val model: String,
+    val reminder: String,
+) : SessionEvent
+
 // ---- 输入：先进收件箱，到安全点才成为正式消息 ----
 
 @Serializable
