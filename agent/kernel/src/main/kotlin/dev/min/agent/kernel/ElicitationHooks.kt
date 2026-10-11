@@ -1,6 +1,7 @@
 package dev.min.agent.kernel
 
 import dev.min.agent.ext.hooks.ElicitationInput
+import dev.min.agent.ext.hooks.ElicitationResultInput
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
 import kotlinx.serialization.json.JsonObject
@@ -45,4 +46,32 @@ internal fun elicitationAnswerOf(specific: JsonObject): Pair<String, JsonObject?
     // content 只在 accept 时有意义（原文 :3419）；不是对象就当没给
     val content = (specific["content"] as? JsonObject)?.takeIf { action == "accept" }
     return action to content
+}
+
+/**
+ * ElicitationResult hook 的覆写口（原文 :3452–:3473）：返回生效的 (action, content)。
+ * 只在用户真的答完时调——超时、关停、各道自动拒绝不是用户答复，不发。没有 hook / hook 没说话时原样返回；
+ * exit 2（引擎翻成 Block）把有效动作改成 decline，此时 hookSpecificOutput 被忽略
+ */
+internal suspend fun SessionRuntime.elicitationResultOverride(
+    server: String,
+    mode: String?,
+    elicitationId: String?,
+    action: String,
+    content: JsonObject?,
+): Pair<String, JsonObject?> {
+    val driver = HookDriver(this)
+    val input = ElicitationResultInput(
+        mcpServerName = server, action = action, mode = mode, elicitationId = elicitationId, content = content,
+    )
+    if (!driver.has(HookEvent.ElicitationResult, server)) return action to content
+    val outcome = driver.run(HookEvent.ElicitationResult, server, HookJson.encodeToJsonElement(ElicitationResultInput.serializer(), input).jsonObject)
+        ?: return action to content
+    if (outcome.decision == HookOutcome.Decision.Block) return "decline" to null
+    val specific = outcome.specific ?: return action to content
+    val (hookAction, hookContent) = elicitationAnswerOf(specific) ?: return action to content
+    // content 的覆写只在 accept 时有意义（原文 :3470）：hook 改成 accept 但没给值就沿用用户填的，改成别的动作就清掉
+    @Suppress("NAME_SHADOWING") val effectiveContent =
+        if (hookAction == "accept") hookContent ?: content else null
+    return hookAction to effectiveContent
 }

@@ -37,6 +37,8 @@ internal val HOOK_OUTPUT_DISCARDS: Map<HookEvent, Set<DiscardedField>> = mapOf(
     HookEvent.InstructionsLoaded to ALL_OUTPUT,
     // :3421 只认 hookSpecificOutput（程序化应答）；systemMessage 与 continue 丢弃
     HookEvent.Elicitation to setOf(DiscardedField.Continue, DiscardedField.SystemMessage),
+    // :3468 只认 hookSpecificOutput（覆写答复）；systemMessage 与 continue 丢弃
+    HookEvent.ElicitationResult to setOf(DiscardedField.Continue, DiscardedField.SystemMessage),
     // :1487 只认 displayContent（留在 specificOutput 里），不能阻断；systemMessage 与 continue 丢弃
     HookEvent.MessageDisplay to setOf(DiscardedField.Decision, DiscardedField.Reason, DiscardedField.Continue,
         DiscardedField.SystemMessage),
