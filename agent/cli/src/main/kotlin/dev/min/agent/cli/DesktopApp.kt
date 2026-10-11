@@ -391,6 +391,13 @@ internal class DesktopApp(
     /** /output-style 写回的位置：项目 `.claude/settings.local.json`（CC 同一个键，互通） */
     fun settingsLocalFile(): java.nio.file.Path = args.cwd.resolve(".claude").resolve("settings.local.json")
 
+    /** 反馈草稿队列（SendFeedback 与 `/feedback` 共用；每份是去过凭证的诊断包 zip，什么都不发送） */
+    val feedbackDrafts: FeedbackDrafts by lazy { FeedbackDrafts(home.resolve("feedback").resolve("drafts")) }
+
+    /** 草稿 → 诊断包：凭证在这里就去掉，不靠用户记得检查（见 FeedbackBundle） */
+    fun buildFeedbackZip(draft: dev.min.agent.spi.FeedbackDraft): ByteArray =
+        dev.min.agent.tools.FeedbackBundle.build(draft, draft.sessionLog, "Min desktop CLI", System.getenv(), emptyMap())
+
     fun settingsUserFile(): Path = claudeHome.resolve(".claude").resolve("settings.json")
     fun pluginMarketplace() = desktopMarketplace(args.cwd, isWorkspaceTrusted(), claudeHome)
 
@@ -512,10 +519,8 @@ internal class DesktopApp(
             // 导出走 FeedbackBundle，凭证在这里就去掉，不靠用户记得检查
             feedbackSink = object : dev.min.agent.spi.FeedbackSink {
                 override suspend fun queue(draft: dev.min.agent.spi.FeedbackDraft): Boolean {
-                    val dir = home.resolve("feedback").resolve("drafts").toFile().apply { mkdirs() }
-                    val zip = java.io.File(dir, "draft-" + System.currentTimeMillis() + ".zip")
-                    zip.writeBytes(dev.min.agent.tools.FeedbackBundle.build(draft, draft.sessionLog, "Min desktop CLI", System.getenv(), emptyMap()))
-                    System.err.println("[反馈草稿] " + zip.absolutePath + "（未发送）")
+                    val zip = feedbackDrafts.queue(buildFeedbackZip(draft))
+                    System.err.println("[反馈草稿] " + zip.toAbsolutePath() + "（未发送；/feedback 看队列）")
                     return true
                 }
             },

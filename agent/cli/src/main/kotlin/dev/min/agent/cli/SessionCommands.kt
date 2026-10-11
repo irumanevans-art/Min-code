@@ -75,7 +75,7 @@ internal fun endedLockNotice(ended: Boolean, line: String): String? {
 }
 
 /** 交互模式的 `/help` 与启动时的命令一览（原来只在启动时打印一次） */
-internal const val INTERACTIVE_HELP = "输入要说的话，回车发送；/goal [条件|clear] 设定、查看或清除目标（做到条件满足为止）；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/fork 把当前会话分身到另一个会话（不切过去）；/clear [名字] 另起一个空会话；/resume <id 或名字> 切到另一个会话；/list-agents（/peers）列出能发消息的对象；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。"
+internal const val INTERACTIVE_HELP = "输入要说的话，回车发送；/goal [条件|clear] 设定、查看或清除目标（做到条件满足为止）；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/fork 把当前会话分身到另一个会话（不切过去）；/clear [名字] 另起一个空会话；/resume <id 或名字> 切到另一个会话；/list-agents（/peers）列出能发消息的对象；/rename [名字] 查看或改名；/feedback [文字] 看反馈草稿队列或写一份（只排队不发送）；/名字 参数 调用 skill 或自定义命令；/exit 退出。"
 
 /**
  * `/loop …` 附上内核的解析结果（间隔取整、提示词选择），与模型调 Skill 工具时附的是同一段（[loopPlanBlock]）。

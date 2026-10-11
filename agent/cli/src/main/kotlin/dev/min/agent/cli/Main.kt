@@ -289,6 +289,8 @@ internal suspend fun interact(
                     System.err.println(e.message)
                 }
             }
+            // 反馈（CC 的 /feedback）：无参 = 草稿队列，带文字 = 自己写一份；只排队、不发送（Min 没有发送通道）。会话锁住后也放行（endedLockNotice）
+            trimmed == "/feedback" || trimmed.startsWith("/feedback ") -> feedbackCommand(app.feedbackDrafts, trimmed.removePrefix("/feedback"), app::buildFeedbackZip, System.err)
             trimmed in REWIND_COMMANDS -> rewindCommand(runtime, stdin)
             trimmed.startsWith("/rewind-undo ") -> rewindUndoCommand(runtime, trimmed.removePrefix("/rewind-undo ").trim())
             else -> say(line)
