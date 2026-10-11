@@ -750,7 +750,9 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
         selected.toList()
     } else deps.tools.filterNot { it.name == "apply_patch" }
     // --restricted（CC :123）：Workflow 是内置的 JavaScript 执行器（"run … code"），受限会话不给；它不在 CLI 的工具表里，只能在这里去掉
-    val builtins = editTools + if (runtime != null && !deps.settingsInputs.restricted && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList()
+    val builtins = editTools +
+        (if (runtime != null && state.advisor.model != null) listOf(AdvisorTool(runtime)) else emptyList()) +
+        (if (runtime != null && !deps.settingsInputs.restricted && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList())
     val builtin = (if (allowed == null) builtins else builtins.filter { it.name in allowed || it.name == "apply_patch" && allowed.any { name -> name in setOf("Edit", "Write") } })
         .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
         // 子 agent 与分身从不拿到 EndConversation（CC：Subagents never get the tool）

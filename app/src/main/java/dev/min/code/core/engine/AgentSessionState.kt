@@ -229,6 +229,8 @@ data class SettingsView(
     val applied: AppliedSettings = AppliedSettings(),
     /** auto 权限模式的审查模型（[EngineCapabilities.autoReview]，Min）。引擎没有 auto 模式为 null */
     val autoReview: AutoReviewView? = null,
+    /** null = 引擎不支持；view.model=null = 已关闭。 */
+    val advisor: AdvisorView? = null,
 ) {
     /** 按键取一个引擎专有设置项 */
     fun extra(key: String): EngineOptionView? = extras.firstOrNull { it.key == key }
@@ -283,6 +285,8 @@ data class Choice(
  *   「默认」那一行写出它，免得用户不知道默认是谁
  */
 data class AutoReviewView(val reviewer: Choice?, val defaultModel: String)
+
+data class AdvisorView(val model: Choice? = null)
 
 /** 引擎回读的实际生效配置。null / false = 没读到 */
 data class AppliedSettings(val model: String? = null, val effort: String? = null, val ultracode: Boolean = false)

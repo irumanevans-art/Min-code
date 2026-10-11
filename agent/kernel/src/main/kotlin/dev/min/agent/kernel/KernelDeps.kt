@@ -191,6 +191,8 @@ class KernelDeps(
      * 所以子会话与分身自然跟随父会话；宿主在组合根给一次。
      */
     val settingsInputs: dev.min.agent.ext.config.SettingsInputs = dev.min.agent.ext.config.SettingsInputs(),
+    /** 桌面 CLI 的主模型解析器只认当前会话链；顾问可另接目录或自定义供应商，App 直接复用 models。 */
+    val advisorModels: ModelResolver? = null,
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }

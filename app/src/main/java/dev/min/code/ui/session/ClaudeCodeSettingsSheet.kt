@@ -59,6 +59,7 @@ internal enum class SettingsSection(@StringRes val labelRes: Int) {
     MODEL(R.string.session_section_model),
     MODE(R.string.session_section_mode),
     AUTO_REVIEW(R.string.session_section_auto_review),
+    ADVISOR(R.string.session_section_advisor),
     EFFORT(R.string.session_section_effort),
     CACHE(R.string.session_section_cache),
     CWD(R.string.session_section_cwd),
@@ -218,6 +219,13 @@ internal fun ClaudeCodeSettingsSheet(
                         onPick = extras::setAutoReviewer,
                     )
                 }
+            }
+        }
+
+        if (layout.advisor && extras != null) settings.advisor?.let { advisor ->
+            Section(section = SettingsSection.ADVISOR,
+                value = advisor.model?.label ?: stringResource(R.string.advisor_off), open = open, onToggle = { open = it }) {
+                AdvisorSection(advisor, settings.models, session.connection, !settingsBusy && !session.readOnly, extras::setAdvisor)
             }
         }
 

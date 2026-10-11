@@ -1,5 +1,7 @@
 package dev.min.code.core.engine.min
 
+import dev.min.agent.kernel.changeAdvisor
+
 import dev.min.agent.kernel.SessionHub
 import dev.min.agent.kernel.GoalCommand
 import dev.min.agent.kernel.GoalSetResult
@@ -110,6 +112,7 @@ class MinCommandHandler(
             else { root.changeSettings(mode = mode); CommandResult.Accepted }
         }
         is SessionCommand.SetAutoReviewer -> setAutoReviewer(command)
+        is SessionCommand.SetAdvisor -> setAdvisor(command)
         // 名字写进内核日志（session_renamed）：CLI 的按名续接与列表读同一个。规整后为空（全是空白 / 控制字符）内核拒绝
         is SessionCommand.Rename -> if (root.rename(command.title) != null) CommandResult.Accepted else CommandResult.Rejected("名字是空的")
         is SessionCommand.StopSubagent -> {
@@ -317,6 +320,14 @@ class MinCommandHandler(
         val ref = ModelRef(command.profileId ?: root.state.value.settings.model.providerId, modelId)
         if (lookup.providerLabel(ref.providerId) == null) return CommandResult.Rejected(text.providerRemoved())
         root.changeAutoModeReviewer(dev.min.agent.spi.AutoModeReviewer(ref))
+        return CommandResult.Accepted
+    }
+
+    private suspend fun setAdvisor(command: SessionCommand.SetAdvisor): CommandResult {
+        if (state().readOnly) return CommandResult.Rejected(text.providerRemoved())
+        val ref = command.modelId?.let { ModelRef(command.profileId ?: root.state.value.settings.model.providerId, it) }
+        if (ref != null && lookup.providerLabel(ref.providerId) == null) return CommandResult.Rejected(text.providerRemoved())
+        root.changeAdvisor(ref)
         return CommandResult.Accepted
     }
 

@@ -80,6 +80,14 @@ class MinAgentStateMapperTest {
     private val ref = SessionRef(EngineKind.MinAgent, "s_root")
     private val empty = JsonObject(emptyMap())
 
+    @Test fun advisorSelectionSurvivesProjectionAndOffRemainsAVisibleSetting() {
+        val selected = map(foldOf(dev.min.agent.spi.AdvisorConfigured(ModelRef("other", "oracle"))))
+        assertEquals("oracle", selected.settings.advisor!!.model!!.id)
+        assertEquals("other", selected.settings.advisor!!.model!!.profileId)
+        assertNotNull(map(foldOf()).settings.advisor)
+        assertNull(map(foldOf(dev.min.agent.spi.AdvisorConfigured(ModelRef("other", "oracle")), dev.min.agent.spi.AdvisorConfigured())).settings.advisor!!.model)
+    }
+
     @Test fun patchMoveAndDeleteReachTheChangedFilesPanel() {
         val call = ToolCallPart(CallId("patch"), "apply_patch", empty)
         val edits = listOf(

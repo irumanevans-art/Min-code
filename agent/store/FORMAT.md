@@ -250,3 +250,9 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolCallPart`；回送使用 `custom_tool_call_output`。
 `fileEdits` / `touched` / 内容 id 沿用已有字段。Delete 的 `deleted=true, after=null`；Move 记为目标 created 与源 deleted 两条编辑，便于既有撤销与改动面板处理。
 失败且成功回滚时不报 fileEdits。WorkspaceFs 新增非递归 deleteFile 端口，没有新增序列化载荷或版本号。
+
+# M4 advisor（2026-10-11）
+
+- 新增 v1 事件 `advisor_configured`：`model` 为可选 `{providerId, modelId}`，缺省 / null 表示关闭。折叠为会话顾问选择，子会话继承快照、根会话分支复制事件；恢复沿用冻结值，不重读磁盘默认。含此事件的日志旧版本不认识；旧日志的顾问默认关闭。没有改 formatVersion。
+- 配置 `advisorModel` 是 Any-file 的标量，按 user → project → local → CLI → managed 覆盖；项目来源沿用工作区信任过滤，显式 null / `off` 关闭。CLI `/advisor` 显示状态，指定模型 / off 写用户 settings.json；App 命令 `set_advisor` 的 modelId=null 关闭，profileId 缺省为会话供应商，仅更改会话事件。
+- 工具 `advisor` 的入参为 `{ "question": "…" }`，建议沿用 `tool_outcome.result`。顾问请求通过 `ModelBilling` 追加 `model_charged`，预算与运行账本仍按整棵树累计；不给顾问工具或供应商 opaque / reasoning / 图片像素。

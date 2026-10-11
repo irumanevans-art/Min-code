@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="session_section_advisor">Advisor model</string>
+    <string name="advisor_off">No advisor</string>
+    <string name="advisor_strength">Choose a model at least as capable as the main model. This catalog has no comparable capability ranks.</string>
+    <string name="advisor_other_provider">Conversation and tool results will be sent to this provider</string>
+    <string name="advisor_privacy">Consultations send the conversation, including tool calls and results, to the advisor provider. Usage is billed at that model’s rates and counts toward the shared session budget.</string>
+    <string name="advisor_failed">Could not set advisor: %1$s</string>
   <string name="app_name">Min</string>
   <string name="app_tagline">Claude Code in your pocket</string>
   <string name="loading_preparing">Preparing the workspace</string>

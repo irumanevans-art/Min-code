@@ -47,11 +47,15 @@ internal suspend fun runHeadless(
     // 交给 hub：子 agent 的审批也按 --approve 答掉——以前只答根会话的，子 agent 要审批时整次运行挂到超时（评测集 v1 第 32 题实测）
     val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub()).attach(scope)
     try {
+        val effective = if (args.jsonSchema != null) structuredOutputPrompt(args.prompt!!) else args.prompt!!
+        val command = effective.trim()
+        if (command == "/advisor" || command.startsWith("/advisor ")) {
+            return if (advisorCommand(runtime, command.removePrefix("/advisor").trim(), app.settingsUserFile(), app::validateAdvisor, stderr)) 0 else 1
+        }
         val renderer = if (args.outputFormat == OutputFormat.StreamJson) {
             StreamJsonRenderer(app, runtime, args, stdout).also { it.start(scope) }
         } else null
         val fromSeq = runtime.state.value.lastSeq + 1
-        val effective = if (args.jsonSchema != null) structuredOutputPrompt(args.prompt!!) else args.prompt!!
         val goalLine = goalArgumentOf(effective)
         val parsed = goalLine?.let(::parseGoalCommand)
         if (parsed != null && parsed !is GoalCommand.Set) {

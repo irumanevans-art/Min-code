@@ -76,6 +76,22 @@ class MinCommandTest {
     private fun Rig.awaitBusy() = awaitValue { root.state.value.turn }
     private fun Rig.awaitIdle() = runBlocking { root.awaitIdle() }
 
+    @Test fun advisorSelectionUsesExplicitProviderAndOffClearsIt() = runBlocking {
+        val r = rig(ScriptedModel())
+        assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.SetAdvisor(cmd(), "oracle", "other")))
+        assertEquals(ModelRef("other", "oracle"), r.root.state.value.advisor.model)
+        assertTrue(r.events().filterIsInstance<dev.min.agent.spi.Note>().any { "不同的供应商 other" in it.text })
+        assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.SetAdvisor(cmd(), null)))
+        assertEquals(null, r.root.state.value.advisor.model)
+        assertEquals(2, r.events().filterIsInstance<dev.min.agent.spi.AdvisorConfigured>().size)
+    }
+
+    @Test fun missingAdvisorProviderIsRejectedWithoutChangingSelection() = runBlocking {
+        val r = rig(ScriptedModel())
+        assertTrue(r.session.submit(SessionCommand.SetAdvisor(cmd(), "oracle", "gone")) is CommandResult.Rejected)
+        assertTrue(r.events().filterIsInstance<dev.min.agent.spi.AdvisorConfigured>().isEmpty())
+    }
+
     private fun installedCommandRig(): Rig {
         val files = mutableMapOf(
             "/root/.claude/settings.json" to """{"enabledPlugins":{"market-demo@local":true}}""",

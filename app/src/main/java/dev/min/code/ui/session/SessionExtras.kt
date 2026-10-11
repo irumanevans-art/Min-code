@@ -326,6 +326,14 @@ internal class SessionExtras(
         }
     }
 
+    fun setAdvisor(modelId: String?, profileId: String?) {
+        val session = shown.value ?: return
+        scope.launch {
+            val result = session.submit(SessionCommand.SetAdvisor(java.util.UUID.randomUUID().toString(), modelId, profileId))
+            if (result is CommandResult.Rejected) notice(context.getString(R.string.advisor_failed, result.message), error = true)
+        }
+    }
+
     // ---- 定时任务 ----
 
     private val scheduleControl: StateFlow<ScheduleControl?> = shown.map { it?.schedule }

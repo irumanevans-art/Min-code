@@ -111,6 +111,26 @@ internal fun AutoReviewSection(
     }
 }
 
+/** 顾问可选任意配置供应商；能力没有统一分档，选择前提醒用户自己比较。 */
+@Composable
+internal fun AdvisorSection(
+    view: dev.min.code.core.engine.AdvisorView,
+    models: List<Choice>, connection: ConnectionView?, enabled: Boolean,
+    onPick: (String?, String?) -> Unit,
+) {
+    Column {
+        OptionRow(title = stringResource(R.string.advisor_off), subtitle = null, selected = view.model == null, enabled = enabled, onClick = { onPick(null, null) })
+        SettingsSubHeader(stringResource(R.string.advisor_strength))
+        models.forEach { choice ->
+            OptionRow(title = choice.label,
+                subtitle = stringResource(R.string.advisor_other_provider).takeIf { choice.switchesProviderFrom(connection) },
+                selected = view.model?.let { it.id == choice.id && it.profileId == choice.profileId } == true,
+                monospaceTitle = true, enabled = enabled, onClick = { onPick(choice.id, choice.profileId) })
+        }
+        SettingsSubHeader(stringResource(R.string.advisor_privacy))
+    }
+}
+
 /**
  * 用量段：上下文占比、缓存命中率、花费。三样都只读，没有数就不画那一行（而不是画「—」）。
  *

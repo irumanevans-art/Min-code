@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="session_section_advisor">顾问模型</string>
+    <string name="advisor_off">不使用顾问</string>
+    <string name="advisor_strength">请选择至少和主模型一样强的模型。目录没有可比较的能力分档，请自行判断。</string>
+    <string name="advisor_other_provider">对话和工具结果会发送到这家供应商</string>
+    <string name="advisor_privacy">咨询时，对话（包括工具调用和结果）会发给顾问所在供应商。按顾问模型计费，并计入会话共享预算。</string>
+    <string name="advisor_failed">无法设置顾问模型：%1$s</string>
   <string name="app_name">Min</string>
   <string name="app_tagline">口袋里的 Claude Code</string>
   <string name="loading_preparing">正在准备工作区</string>

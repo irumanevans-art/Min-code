@@ -2,7 +2,7 @@ package dev.min.code.core.engine
 
 /**
  * 一个引擎能做什么。**控件显隐只看它**，界面不按 [EngineKind] 写分支（规矩 2）。
- * 32 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
+ * 33 项 × 3 引擎的取值写在下面的 companion 里，由 `EngineCapabilitiesTest` 逐格钉住——
  * 改一格要同时改测试，审查时一眼看得到。
  *
  * 位与命令一一对应的那些，[supports] 能统一兜底；对不上的（引擎专有设置项等）由适配器自己判。
@@ -60,6 +60,8 @@ data class EngineCapabilities(
     val schedule: Boolean,
     /** `/mcp /agents /memory /permissions /config` 面板。设计草稿是 Boolean，但表里 Min 写的是「部分」，见 [ConfigFiles] */
     val claudeConfigFiles: ConfigFiles,
+    /** 本地顾问模型选择（Min）；其它引擎使用自己的会话设置。 */
+    val advisor: Boolean = false,
 ) {
     /** 这条命令从能力位上看能不能受理。适配器的 `submit` 先问它，false 就直接返回 [CommandResult.Unsupported] */
     fun supports(command: SessionCommand): Boolean = when (command) {
@@ -78,6 +80,7 @@ data class EngineCapabilities(
         is SessionCommand.StopTask -> backgroundTasks
         is SessionCommand.Revert -> checkpointRevert
         is SessionCommand.SetAutoReviewer -> autoReview
+        is SessionCommand.SetAdvisor -> advisor
         // 没有对应能力位的：停止永远可以；强度 / 模式换不换得了走重启路径，命令照样受理；
         // 引擎专有设置项由适配器按键判（Min 没有任何设置项，自己返回 Unsupported）；改名、刷新都不挑引擎
         is SessionCommand.Interrupt,
@@ -123,6 +126,7 @@ data class EngineCapabilities(
         "autoReview" to autoReview.toString(),
         "schedule" to schedule.toString(),
         "claudeConfigFiles" to claudeConfigFiles.name,
+        "advisor" to advisor.toString(),
     )
 
     companion object {
@@ -243,6 +247,7 @@ data class EngineCapabilities(
             workspaceTrust = true,
             team = true,
             autoReview = true,
+            advisor = true,
             schedule = true,
             claudeConfigFiles = ConfigFiles.Partial,
         )

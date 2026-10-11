@@ -328,6 +328,14 @@ internal class DesktopApp(
         reviewer?.let { resolveReviewerSelection(it, Catalog.bundled(), selection) }
     }
 
+    private fun advisorSelection(ref: ModelRef): ModelSelection {
+        val selected = resolveAdvisorSelection(ref, Catalog.bundled(), selection)
+        if (System.getenv(selected.keyEnv).isNullOrBlank()) throw UsageException("没有顾问凭证：请设置环境变量 ${selected.keyEnv}")
+        return selected
+    }
+
+    fun validateAdvisor(ref: ModelRef) { advisorSelection(ref) }
+
     private val userHome get() = paths.guestOfHost(claudeHome)
 
     /** 凭证只从环境变量读、只进请求头；这里不打印、不落盘。回退链上别家的凭证也只认它自己的那个变量 */
@@ -436,6 +444,10 @@ internal class DesktopApp(
             maxBudgetUsd = args.maxBudgetUsd,
             reviewerModels = { reviewer ->
                 val selected = resolveReviewerSelection(reviewer, bundledCatalog, selection)
+                ResolvedModel(selected.profile, clientFor(selected.provider))
+            },
+            advisorModels = { ref ->
+                val selected = advisorSelection(ref)
                 ResolvedModel(selected.profile, clientFor(selected.provider))
             },
             fallbackModels = fallback.chain,
