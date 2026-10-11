@@ -274,7 +274,11 @@ class SettingsSecurityFixTest {
             assertNull(rt.changeSettings(model = ModelRef("anthropic", "claude-sonnet-5-5")))
             assertEquals(ModelRef("anthropic", "claude-sonnet-5-5"), rt.state.value.settings.model)
             val result = hub.portFor(rt, TurnId("parent"), CallId("d")).delegate(DelegateRequest("Help", "help", agentType = "x", background = false))
-            assertTrue("子 agent 的 model 不在名单里要拒绝：$result", result is DelegateResult.Rejected)
+            // CC：子 agent 的 model 被名单挡住时不让请求失败，改用后备模型（Min：父会话的模型）跑，并告诉用户换了什么
+            assertTrue("名单挡住的子 agent 模型改用后备，不拒绝：$result", result is DelegateResult.Finished)
+            val child = hub.get((result as DelegateResult.Finished).child)!!
+            assertEquals(ModelRef("anthropic", "claude-sonnet-5-5"), child.state.value.settings.model)
+            assertTrue(rt.state.value.presentation.map { it.record.event }.filterIsInstance<dev.min.agent.spi.Note>().any { "availableModels" in it.text && "claude-opus-5-5" in it.text })
             try { rt.changeAdvisor(ModelRef("anthropic", "claude-opus-5-5")); fail("顾问不在名单里") } catch (_: IllegalArgumentException) { }
         }
     } }

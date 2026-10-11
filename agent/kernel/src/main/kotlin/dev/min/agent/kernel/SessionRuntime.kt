@@ -294,7 +294,7 @@ class SessionRuntime private constructor(
         // 旧日志沿用原来的全量工具表；新会话冻结策略，迟到服务器只在快照生效边界重新估算。
         if (state.value.mcpTools != null && previous == null) return events
         val tools = events.filterIsInstance<dev.min.agent.spi.McpToolsSnapshot>().lastOrNull() ?: return events
-        val window = deps.models.resolve(state.value.settings.model).profile.contextWindow
+        val window = deps.models.resolve(state.value.settings.effectiveModel).profile.contextWindow
         val selected = selectMcpSearchMode(tools, window, previous?.strategy ?: deps.env("ENABLE_TOOL_SEARCH"), previous?.denied ?: state.value.deniesToolSearch(deps))
             .let { if (previous?.enabled == true) it.copy(enabled=true) else it }
         return if (selected == previous) events else events + selected

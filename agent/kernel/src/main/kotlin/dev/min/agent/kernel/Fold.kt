@@ -226,9 +226,9 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is ModelFallback -> updateTurn(e.turnId) { t ->
             check(t.openRequest == null) { "模型回退发生在请求失败之后，当前仍有进行中的请求 ${t.openRequest?.requestId}" }
-            val failed = t.fallback?.model ?: settings.model
+            val failed = t.fallback?.model ?: settings.effectiveModel
             check(failed == e.from) { "回退的起点 ${e.from} 与失败的模型 $failed 对不上" }
-            t.copy(fallback = FallbackInUse(settings.model, e.to, e.reason, e.message))
+            t.copy(fallback = FallbackInUse(settings.effectiveModel, e.to, e.reason, e.message))
         }.copy(presentation = presentation + SessionPresentation(record, history.lastOrNull()?.messageId))
         is ToolPlanned -> updateTurn(e.turnId) { t ->
             check(e.callId !in t.calls) { "重复规划调用 ${e.callId}" }

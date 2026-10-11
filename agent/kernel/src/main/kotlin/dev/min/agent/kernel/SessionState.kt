@@ -275,8 +275,22 @@ data class SessionPresentation(
     val partialParts: List<Part> = emptyList(),
 )
 
-/** 现在发请求该用的模型：回退链生效中用回退模型，否则是会话设置里的 */
-val SessionState.activeModel: ModelRef get() = turn?.fallback?.model ?: settings.model
+/** 现在发请求该用的模型：回退链生效中用回退模型，否则是会话设置里的（`opusplan` 按计划模式展开，见 [effectiveModel]） */
+val SessionState.activeModel: ModelRef get() = turn?.fallback?.model ?: settings.effectiveModel
+
+/**
+ * 会话设置里的模型落到这一刻该用的那个：`opusplan`（CC 的组合别名）在计划模式下是 opus 档、其余是 sonnet 档，
+ * 带 `[1m]` 的照带；其它（具体型号、别的别名）原样。纯函数：折叠与运行时用同一份，日志重放不依赖宿主。
+ * 别名本身留给宿主的解析器解析成这家供应商的型号（[ModelResolver]）
+ */
+val SessionSettings.effectiveModel: ModelRef get() = planAwareModel(model, mode)
+
+internal fun planAwareModel(model: ModelRef, mode: dev.min.agent.protocol.PermissionMode): ModelRef {
+    val (name, oneMillion) = dev.min.agent.llm.catalog.ModelAliases.splitSuffix(model.modelId)
+    if (name != "opusplan") return model
+    val tier = if (mode == dev.min.agent.protocol.PermissionMode.Plan) "opus" else "sonnet"
+    return ModelRef(model.providerId, if (oneMillion) "$tier[1m]" else tier)
+}
 
 data class SessionSettings(
     val cwd: GuestPath,

@@ -494,6 +494,11 @@ class AutoReviewerTest {
         assertEquals(ModelRef("provider", "fast"), defaultAutoReviewer(main) { ModelRef(it, "fast") })
         assertEquals(main, defaultAutoReviewer(main) { null })
         assertEquals(main, defaultAutoReviewer(main) { ModelRef("other", "fast") })
+        // availableModels 挡住默认的小模型时改用会话模型；显式设置的审查模型照用（它在设置时已经过名单）
+        val session = ModelRef("anthropic", "claude-sonnet-5-5")
+        assertEquals(session, autoReviewerModel(null, session, { null }) { it.modelId != "claude-haiku-5-5" })
+        assertEquals(ModelRef("anthropic", "claude-haiku-5-5"), autoReviewerModel(null, session, { null }) { true })
+        assertEquals(ModelRef("x", "y"), autoReviewerModel(ModelRef("x", "y"), session, { null }) { false })
     }
 
     @Test fun `credential output from old history never enters review request`() = run {
