@@ -29,14 +29,14 @@ private val WORKTREE_DISCARDS = setOf(DiscardedField.Decision, DiscardedField.Re
  * 原文改了，只改这张表。出处行号指 `research/glm/cache/cc/hooks.md`。
  *
  * 表里没有的事件 = 原文没说丢弃，输出按各自的决策控制处理。
- * Elicitation / ElicitationResult 原文也丢 systemMessage 与 continue（:3421、:3468），但它们的样本还挂着
- * 「等 MCP elicitation」，这里先不动，等那条线接上时一起加。
  */
 internal val HOOK_OUTPUT_DISCARDS: Map<HookEvent, Set<DiscardedField>> = mapOf(
     // :1282 每个退出码都丢 JSON 输出字段（systemMessage / continue / additionalContext…），退出码与 stderr 也忽略（:882）
     HookEvent.Setup to ALL_OUTPUT,
     // :1321 无决策控制，JSON 输出字段丢弃；退出码忽略（:895）
     HookEvent.InstructionsLoaded to ALL_OUTPUT,
+    // :3421 只认 hookSpecificOutput（程序化应答）；systemMessage 与 continue 丢弃
+    HookEvent.Elicitation to setOf(DiscardedField.Continue, DiscardedField.SystemMessage),
     // :1487 只认 displayContent（留在 specificOutput 里），不能阻断；systemMessage 与 continue 丢弃
     HookEvent.MessageDisplay to setOf(DiscardedField.Decision, DiscardedField.Reason, DiscardedField.Continue,
         DiscardedField.SystemMessage),

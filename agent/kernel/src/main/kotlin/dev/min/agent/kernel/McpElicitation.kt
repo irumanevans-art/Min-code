@@ -82,7 +82,7 @@ internal fun urlQuestion(request: McpUrlElicitationAsked) = UserQuestion(
     "打开网址", listOf(QuestionOption("y", "同意后由宿主打开"), QuestionOption("n", "拒绝")),
 )
 
-private fun elicitationResult(action: String, content: JsonObject? = null) = buildJsonObject {
+internal fun elicitationResult(action: String, content: JsonObject? = null) = buildJsonObject {
     put("action", action); content?.let { put("content", it) }
 }
 
@@ -91,15 +91,20 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
     if (mcpClosed.isCompleted) return elicitationResult("cancel")
     val message = (params?.get("message") as? JsonPrimitive)?.content ?: return elicitationResult("decline")
     val mode = (params["mode"] as? JsonPrimitive)?.content ?: "form"
+    val url = (params["url"] as? JsonPrimitive)?.content
+    val schema = params["requestedSchema"] as? JsonObject
+    val elicitationId = (params["elicitationId"] as? JsonPrimitive)?.content
+    // Elicitation（hooks.md :3358）：先问 hooks。给了程序化应答就整段跳过（含下面的对话框与各道自动拒绝——
+    // headless / DontAsk 问不了人的场合，hook 正是应答的口子）；没给就照原路走
+    elicitationHookAnswer(server, message, mode, url, elicitationId, schema)?.let { return it }
     val linked = callId?.let { id -> state.value.turn?.takeIf { it.calls[id]?.phase is CallPhase.EffectPending } }
     if (callId != null && linked == null) return elicitationResult("cancel")
     val id = QuestionId(deps.ids.next("mcpq"))
     if (mode == "url") {
         if (!deps.canAnswerMcpUrlElicitation) return elicitationResult("decline")
-        val url = (params["url"] as? JsonPrimitive)?.content ?: return elicitationResult("decline")
-        val uri = catchingNonCancellation { URI(url) }.getOrNull()
-        if (uri?.scheme?.lowercase() !in setOf("http", "https") || uri?.host.isNullOrBlank()) return elicitationResult("decline")
-        val request = McpUrlElicitationAsked(id, server, url, uri!!.host, message, (params["elicitationId"] as? JsonPrimitive)?.content, linked?.turnId, callId)
+        val uri = url?.let { catchingNonCancellation { URI(it) }.getOrNull() }
+        if (url == null || uri?.scheme?.lowercase() !in setOf("http", "https") || uri?.host.isNullOrBlank()) return elicitationResult("decline")
+        val request = McpUrlElicitationAsked(id, server, url, uri!!.host, message, elicitationId, linked?.turnId, callId)
         if (commitIf(listOf(request), Durability.Sync) { current -> callId == null || (current.turn?.turnId == linked?.turnId && current.turn?.calls?.get(callId)?.phase is CallPhase.EffectPending) } == null) return elicitationResult("cancel")
         val answer = try { withTimeoutOrNull(deps.mcpElicitationTimeoutMs) {
             state.first { it.mcpUrls[id]?.action != null || (callId != null && it.pendingMcpUrls.none { p -> p.request.questionId == id }) }
@@ -108,7 +113,6 @@ internal suspend fun SessionRuntime.handleMcpElicitation(server: String, params:
         if (answer == null) resolveMcpUrl(id, "cancel")
         return elicitationResult(state.value.mcpUrls[id]?.action ?: "cancel")
     }
-    val schema = params["requestedSchema"] as? JsonObject
     val sensitive = (schema?.get("properties") as? JsonObject)?.any { (name, raw) ->
         CREDENTIAL_FIELD.containsMatchIn(name) || CREDENTIAL_FIELD.containsMatchIn(((raw as? JsonObject)?.get("title") as? JsonPrimitive)?.content.orEmpty())
     } == true

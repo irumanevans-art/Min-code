@@ -14,6 +14,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§Elicitation：MCP 服务器请求用户输入时触发，matcher 对服务器名；form 模式带 requested_schema，url 模式带 url（:3358–3401）。",
-  "pendingFix": "依赖未做功能：Min 的 MCP 还没有 elicitation，事件无法端到端触发；输入形状已按原文钉住。",
-  "minTrigger": "none"
+  "kernelWiring": "handleMcpElicitation 入口（McpElicitation.kt）：服务器反问时先问 hooks，给了程序化应答就跳过对话框；端到端见 McpElicitationHookTest"
 }

@@ -290,6 +290,7 @@ internal class HookDriver(private val rt: SessionRuntime) {
             updatedInput = c.updatedInput,
             stopReason = c.stopReasons.map { text(event, it) }.joinToString("\n").ifBlank { null },
             systemMessages = c.systemMessages.map { text(event, it) },
+            specific = c.verdicts.lastOrNull { it.specificOutput != null }?.specificOutput,
         )
     }
 
@@ -367,6 +368,8 @@ internal data class HookOutcome(
     val stopReason: String?,
     val systemMessages: List<String>,
     val runs: List<dev.min.agent.ext.hooks.HandlerRun> = emptyList(),
+    /** 事件专属的 hookSpecificOutput（Elicitation 一类）：多个 hook 都给了时取最后一个（与兼容样本同一口径） */
+    val specific: JsonObject? = null,
 ) {
     enum class Decision { Neutral, Allow, Ask, Block, Stop }
 
