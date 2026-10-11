@@ -16,7 +16,9 @@ const val OFFICIAL_MARKETPLACE = "claude-plugins-official"
 data class Marketplace(val name: String, val source: JsonObject, val installLocation: String?, val confirmed: Boolean, val autoUpdate: Boolean)
 data class MarketplaceCatalog(val name: String, val owner: String, val plugins: List<JsonObject>)
 data class InstalledPlugin(val id: String, val scope: String, val installPath: String, val projectPath: String?, val version: String, val enabled: Boolean)
-data class PluginCommandRequest(val id: String, val command: String, val target: String, val sha256: String)
+data class PluginCommandRequest(val id: String, val command: String, val target: String, val sha256: String) {
+    override fun toString() = "PluginCommandRequest(id=$id, target=${redactedPluginCommandTarget(target)}, sha256=$sha256)"
+}
 
 fun redactedPluginSource(source: JsonObject): JsonObject = JsonObject(source.mapValues { (key, value) ->
     when {
@@ -25,11 +27,17 @@ fun redactedPluginSource(source: JsonObject): JsonObject = JsonObject(source.map
         key in setOf("url", "registry") && value is JsonPrimitive && value.isString -> try {
             val uri = URI(value.content)
             JsonPrimitive(URI(uri.scheme, null, uri.host, uri.port, uri.path,
-                uri.rawQuery?.split('&')?.joinToString("&") { part -> if (Regex("(?i)token|key|secret|password|signature|credential").containsMatchIn(part.substringBefore('='))) part.substringBefore('=') + "=[已设置]" else part }, null).toString())
+                uri.rawQuery?.split('&')?.joinToString("&") { part -> if (Regex("(?i)token|key|secret|password|signature|credential").containsMatchIn(java.net.URLDecoder.decode(part.substringBefore('='), Charsets.UTF_8.name()))) part.substringBefore('=') + "=[已设置]" else part }, null).toString())
         } catch (_: Exception) { JsonPrimitive("[地址]") }
         else -> value
     }
 })
+
+// 目标可含 archive URL 的认证参数；人工确认也不能成为凭据的显示或日志出口。
+fun redactedPluginCommandTarget(target: String): String =
+    if (target.startsWith("https://", true) || target.startsWith("http://", true))
+        redactedPluginSource(buildJsonObject { put("url", target) })["url"]!!.jsonPrimitive.content
+    else target
 
 /** 预览只能由管理器产生；安装使用已拉取的同一份文件，确认后不能换成另一版远端内容。 */
 class PluginInstallPreview internal constructor(val id: String, val components: LoadedPlugin, internal val staging: GuestPath, internal val entry: JsonObject, internal val owner: String, internal val fingerprint: String, internal val container: GuestPath, internal val resolvedVersion: String? = null)

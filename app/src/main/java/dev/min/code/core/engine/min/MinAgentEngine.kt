@@ -321,7 +321,7 @@ class MinAgentEngine(
         val rawUrl = source["url"]?.jsonPrimitive?.content ?: return source
         if (!rawUrl.startsWith("https://") && !rawUrl.startsWith("http://")) return source
         val uri = privatePluginUri(rawUrl)
-        require(uri.rawQuery?.split('&')?.none { Regex("(?i)token|secret|password|signature|credential|api[_-]?key").containsMatchIn(it.substringBefore('=')) } != false) { "URL 查询凭据请改用认证头，以便加密保存" }
+        require(uri.rawQuery?.split('&')?.none { Regex("(?i)token|secret|password|signature|credential|api[_-]?key").containsMatchIn(java.net.URLDecoder.decode(it.substringBefore('='), Charsets.UTF_8.name())) } != false) { "URL 查询凭据请改用认证头，以便加密保存" }
         val values = (source["headers"] as? kotlinx.serialization.json.JsonObject).orEmpty().toMutableMap()
         require(values.values.all { it is kotlinx.serialization.json.JsonPrimitive && it.isString }) { "认证头必须是字符串值的 JSON" }
         uri.userInfo?.let { values["Authorization"] = kotlinx.serialization.json.JsonPrimitive("Basic " + java.util.Base64.getEncoder().encodeToString(it.toByteArray())) }

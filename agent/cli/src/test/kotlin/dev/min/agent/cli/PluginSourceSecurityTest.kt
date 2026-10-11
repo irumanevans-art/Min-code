@@ -60,6 +60,21 @@ class PluginSourceSecurityTest {
         try { manager.preview("generated@security", accepted) } catch(e: CancellationException) { throw e } catch(e: IllegalArgumentException) { refused = true }
         assertTrue("旧 SHA 不授权新命令", refused)
     }
+    @Test fun `拒绝认证助手前展示的目标 URL 不回显凭据`(): Unit = runBlocking {
+        val market = root.resolve("target-privacy")
+        val source = buildJsonObject {
+            put("source", "archive"); put("url", "https://user:$secret@example.invalid/plugin.zip?%74oken=$secret")
+        }
+        put(market.resolve(".claude-plugin/marketplace.json"), buildJsonObject {
+            put("name", "target-privacy"); put("owner", buildJsonObject { put("name", "test") })
+            put("plugins", JsonArray(listOf(buildJsonObject { put("name", "private"); put("source", source); put("strict", false); put("headersHelper", "echo {}") })))
+        }.toString())
+        val manager = manager(); manager.add(buildJsonObject { put("source", "directory"); put("path", paths.guestOfHost(market).value) }, true)
+        val bytes = java.io.ByteArrayOutputStream()
+        assertEquals(1, pluginCommand(manager, listOf("install", "private@target-privacy"), "n\n".reader().buffered(), java.io.PrintStream(bytes)))
+        assertFalse("确认目标也不能把 URL 凭据写到终端", bytes.toString().contains(secret))
+        assertTrue(bytes.toString().contains("example.invalid/plugin.zip"))
+    }
     @Test fun `headersHelper 认证可用但凭据不进 Exec 日志与插件记录`(): Unit = runBlocking {
         val received = mutableListOf<String>()
         val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)

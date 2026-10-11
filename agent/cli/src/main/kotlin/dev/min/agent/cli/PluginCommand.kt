@@ -70,7 +70,7 @@ internal suspend fun pluginCommand(manager: PluginMarketplace, arguments: List<S
                     manager.refresh(PluginMarketplace.parseId(id).marketplace!!)
                 }
                 val accepted = manager.commandsToAccept(id).map { request ->
-                    if (!confirm("插件命令：${request.command}\n目标：${request.target}")) return 1
+                    if (!confirm("插件命令：${request.command}\n目标：${redactedPluginCommandTarget(request.target)}")) return 1
                     request.sha256
                 }.toSet()
                 val preview = manager.preview(id, accepted)

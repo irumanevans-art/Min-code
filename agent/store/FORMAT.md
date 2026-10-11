@@ -2,6 +2,8 @@
 
 `formatVersion: 1`
 
+- 非持久确认文本（2026-10-11）：PluginCommandRequest.toString 隐藏命令并脱敏目标；CLI/App 的确认目标剔除 URL userinfo，并解码 query key 后脱敏凭据。确认指纹仍绑定完整原始 command/target，不改变授权或持久格式。
+
 - v1 快照语义（2026-10-11，热重载）：在回合边界写入现有 HooksLoaded/SkillsLoaded/OutputStyleLoaded 全量替换；Default+空 prompt+false 表示清除插件样式。ComponentHooksUpdated 的空对象撤销旧插件组件登记。MCP/LSP 变化经 --force 确认缓存成本再重连，当前请求不改，monitors 保留启动快照到下会话；不新增事件或改版本号。
 
 - 插件安装索引 v2 增量：record 可带 resolvedVersion（git tag 版本，覆盖 manifest 的滞后版本）与 commandSha256（人工确认的命令指纹）；version 仍为版本加内容散列的不可变缓存键。PluginRequest 新增可选 resolvedVersion。依赖图先完整解析再发布设置/索引，源受相同信任和托管策略限制；不改会话版本。

@@ -102,7 +102,7 @@ fun PluginsPage(engine: MinAgentEngine = koinInject()) {
     pendingCommand?.let { (id, commands) ->
         RikkaConfirmDialog(show = true, onDismiss = { pendingCommand = null }, title = "确认插件命令", confirmText = "执行并预览", dismissText = stringResource(R.string.plugins_cancel), destructive = false,
             onConfirm = { pendingCommand = null; action { preview = manager.preview(id, commands.map { it.sha256 }.toSet()) } }) {
-            Text(commands.joinToString("\n\n") { "${it.command}\n目标：${it.target}" })
+            Text(commands.joinToString("\n\n") { "${it.command}\n目标：${redactedPluginCommandTarget(it.target)}" })
         }
     }
     preview?.let { selected ->
