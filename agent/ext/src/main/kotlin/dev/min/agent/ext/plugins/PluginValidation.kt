@@ -53,7 +53,7 @@ internal fun PluginParser.validate(
             checkUserConfig(entry["userConfig"], violations)
             checkChannels(entry["channels"], mcpKeys, violations)
         }
-        lspConfigSources(files, manifest).forEach { (label, config) ->
+        lspConfigSources(files, manifest ?: entry).forEach { (label, config) ->
             lspProblem(config)?.let { violations += Violation(Kind.LSP_CONFIG_RULES, "清单 lspServers 的 $label 非法：$it（PLG:324）") }
         }
         files[".lsp.json"]?.let { f ->
@@ -61,8 +61,8 @@ internal fun PluginParser.validate(
             o.forEach { (key, config) ->
                 lspProblem(config)?.let {
                     violations += Violation(
-                        Kind.LSP_FILE_INVALID,
-                        ".lsp.json 的 $key 非法：$it —— 整个文件在装载时跳过（CMP:869）",
+                        if (config is JsonObject && (config.keys - dev.min.agent.spi.LspServerSpec.FIELDS).isNotEmpty()) Kind.LSP_CONFIG_RULES else Kind.LSP_FILE_INVALID,
+                        ".lsp.json 的 $key 非法：$it（未知键拒绝插件，其余配置错误按 CMP:869 跳过整个文件）",
                         docFragment = "Invalid LSP server config",
                     )
                     return@forEach

@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - `resume yes`：打开后按 ▶（Resume 命令，带当前 offerId），不发新话
  * - `op list`：列出会话目录（含「中断」标记）；`op delete`（配 `session`）：经目录删除整个会话
  * - `op proc-probe`：长寿进程端口的设备验收探针，日志里看 `PROBE` 开头的行与最后的 `PROBE_DONE`
+ * - `op lsp-probe`（可选 `install=yes`）：真实 proot 的 clangd / Bash 退路验收，不消耗模型请求或密钥
  * - `op profiles`：列出供应商档案（id / 备注 / 地址 / 是否激活；**不打印 key**），验收时据此给 `profile` 传假档案的 id，
  *   免得没指定档案的会话落到用户真实的端点上
  * - `op mcp`（配 `session`）：打印该会话日志折叠出的 MCP 服务器清单与工具快照（`MCP_SERVER` / `MCP_TOOL` 行）
@@ -65,6 +66,11 @@ class MinAgentDebugReceiver : BroadcastReceiver() {
             var ownsRun = false
             try {
                 val engine = DebugDriver.engine(context.applicationContext)
+                if (op == "lsp-probe") {
+                    finish()
+                    LspProbe.run(engine, install = intent.getStringExtra("install") == "yes")
+                    return@launch
+                }
                 if (op == "snapshot-probe") {
                     // 拍第一张可能超过 Broadcast 的 10 秒；交给现有 debug 长寿 scope。
                     finish()

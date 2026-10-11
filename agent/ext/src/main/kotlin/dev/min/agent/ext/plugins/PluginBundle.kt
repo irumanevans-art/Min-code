@@ -71,6 +71,22 @@ class PluginBundle(
         }
     }
 
+    fun lspSources(): List<LspServerSpec> = batch.plugins.filter { it.ref.id in trusted }.flatMap { plugin ->
+        val (vars, values) = contexts.getValue(plugin.ref.id)
+        fun expand(value: JsonElement): JsonElement = when (value) {
+            is JsonPrimitive -> if (value.isString) JsonPrimitive(resolvePluginMcp(value.content, vars, values)) else value
+            is JsonArray -> JsonArray(value.map(::expand))
+            is JsonObject -> JsonObject(value.mapValues { expand(it.value) })
+        }
+        plugin.lspServers.map { server ->
+            val expanded = expand(server.config).jsonObject
+            LspServerSpec("plugin:${plugin.namespace}:${server.key}", JsonObject(expanded + ("env" to JsonObject(
+                (expanded["env"] as? JsonObject).orEmpty() + mapOf("CLAUDE_PLUGIN_ROOT" to JsonPrimitive(vars.root),
+                    "CLAUDE_PLUGIN_DATA" to JsonPrimitive(vars.data), "CLAUDE_PROJECT_DIR" to JsonPrimitive(vars.project)),
+            ))))
+        }
+    }
+
     companion object {
         fun inlinePath(plugin: LoadedPlugin, command: PluginCommand) = GuestPath(
             plugin.root.trimEnd('/') + "/.claude-plugin/inline/" + command.name.substringAfter(':').replace(':', '/') + ".md",
@@ -201,7 +217,7 @@ class PluginBundle(
                 var isTrusted = realRoot in inlineRoots || if (projectEnabled) trust(cwd)
                     else source in setOf(ConfigSource.User, ConfigSource.Managed) || scopes[realRoot] == "user"
                 if (isTrusted) trusted += plugin.ref.id
-                else if (plugin.hooks.isNotEmpty() || plugin.mcpServers.isNotEmpty()) notes += "plugin:${plugin.namespace} 启用来源所属工作区未信任，hooks / MCP 未启用"
+                else if (plugin.hooks.isNotEmpty() || plugin.mcpServers.isNotEmpty() || plugin.lspServers.isNotEmpty()) notes += "plugin:${plugin.namespace} 启用来源所属工作区未信任，hooks / MCP / LSP 未启用"
                 val vars = PluginVars(shellPath(GuestPath(plugin.root)), shellPath(GuestPath("$pluginsDir/data/${pluginDataId(plugin.ref)}")), shellPath(cwd))
                 val label = "plugin:${plugin.namespace}"
                 val public = options[plugin.ref.id] ?: options[plugin.ref.name] ?: JsonObject(emptyMap())

@@ -254,6 +254,7 @@ class SessionHub(
         nowMs = deps.clock::nowMs,
     )
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
+    internal val lsp = dev.min.agent.lsp.LspManager(scope, deps.host.processes, deps.mcpServerPath, guestPath = deps.lspGuestPath)
     private val openLock = Mutex()
 
     /** agent 团队的运行时：建团队、任务清单、邮箱、并发名额（状态本身在负责人日志的折叠里） */
@@ -517,6 +518,7 @@ class SessionHub(
         if (deps.customizations != Customizations.Full) return
         // 连接配置冻结在会话起点，cwd 切换只更新 roots；否则重开会话会悄悄接上另一套服务器。
         val cwd = runtime.state.value.created.cwd
+        bindLsp(runtime, cwd, runtime.plugins()?.lspSources().orEmpty())
         val config = dev.min.agent.spi.catchingNonCancellation {
             val settings = dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs)
             dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env, plugins = runtime.plugins()?.mcpSources().orEmpty(), restricted = deps.settingsInputs.restricted)
@@ -534,6 +536,25 @@ class SessionHub(
             if (it.spec.name in off && it.gate == dev.min.agent.ext.mcp.McpGate.Enabled) it.copy(gate = dev.min.agent.ext.mcp.McpGate.Disabled, reason = "本会话已关闭。") else it
         })
         mcp.attach(runtime, gated, cwd, fresh)
+    }
+
+    private fun bindLsp(runtime: SessionRuntime, root: GuestPath, servers: List<dev.min.agent.spi.LspServerSpec>) {
+        runtime.lspServers = servers
+        runtime.lspRoot = root
+        val policy = ToolExecutor(runtime)
+        fun verdict(path: dev.min.agent.spi.GuestPath): dev.min.agent.policy.Verdict {
+            val context = policy.policyContext()
+            val ask = dev.min.agent.spi.PermissionAsk("LSP", "读取代码诊断", paths = listOf(dev.min.agent.spi.PathAccess(path, dev.min.agent.spi.AccessKind.Read, context.scopeOf(path))))
+            return dev.min.agent.policy.PolicyEngine.evaluate(ask, true, context)
+        }
+        // 主文件已经过工具批准；服务器返回的其它文件仍须已获 Read 许可，不能借符号结果读取待批准文件。
+        runtime.lsp = lsp.port(root, servers, deps.host.fs,
+            canReturn = { verdict(it) is dev.min.agent.policy.Verdict.Allow },
+            canRead = { verdict(it) !is dev.min.agent.policy.Verdict.Deny })
+    }
+
+    private fun inheritLsp(runtime: SessionRuntime, parent: SessionRuntime) {
+        bindLsp(runtime, parent.lspRoot ?: parent.state.value.created.cwd, parent.lspServers)
     }
 
     internal suspend fun cwdChanged(runtime: SessionRuntime) {
@@ -677,10 +698,10 @@ class SessionHub(
      * 宿主退出前调用：把全部 MCP 服务器连接按礼貌顺序关掉（关 stdin → 等 2 秒 → SIGTERM → SIGKILL），连同还在等回收的。
      * 只靠卸下会话不够：那只是开始计「无人使用」的两分钟，宿主进程先退出了的话，不看 stdin 的服务器就成了孤儿进程
      */
-    suspend fun closeMcpConnections() = mcp.closeAll()
+    suspend fun closeMcpConnections() { lsp.closeAll(); mcp.closeAll() }
 
     /** 没有会话在用、正等着回收的 MCP 连接现在就关（宿主进后台时用，见 [McpManager.closeUnused]）；还在用的不动 */
-    suspend fun closeUnusedMcp() = mcp.closeUnused()
+    suspend fun closeUnusedMcp() { lsp.closeUnused(); mcp.closeUnused() }
 
     suspend fun loginMcp(server: String, sessionId: SessionId? = null) = mcp.login(server, sessionId)
     suspend fun logoutMcp(server: String, sessionId: SessionId? = null) = mcp.logout(server, sessionId)
@@ -774,7 +795,7 @@ class SessionHub(
             crons.attach(runtime)
             // 重开会话：带着进行中的 /goal 恢复（回合与 check-in 计数清零；已达成或已清除的没有条件，不恢复）
             runtime.resumeGoal(deps.clock.nowMs())
-        } else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it) }
+        } else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it); inheritLsp(runtime, it) }
         if (resumedByUser) resumeStart(runtime)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         for (child in runtime.state.value.children.keys) open(child)
@@ -1070,6 +1091,7 @@ class SessionHub(
         // 工作流自己的节点闸同时管排队与模型请求，不能再被默认 Hub 的 3 个流式槽压回去。
         child.requestGate = if (request.workflow) null else childGate
         mcp.attachInherited(child, parent)
+        inheritLsp(child, parent)
         register(child)
         parent.commit(
             listOf(SubagentSpawned(turnId, callId, childId, type, fork, background, request.description, request.name)),

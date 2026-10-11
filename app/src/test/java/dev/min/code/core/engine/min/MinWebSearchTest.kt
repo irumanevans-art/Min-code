@@ -94,8 +94,9 @@ class MinWebSearchTest {
         assertTrue("WebSearch" !in toolNamesOf(rig.model.requests[1]))
         config = WebSearchConfig(backend = SearchBackendKind.BRAVE, braveKey = "BRAVE-KEY-1")
         rt.send(ClientMsgId("u3"), listOf(TextPart("three"))); rig.settle(rt)
-        // 内核会在工具表后面再追加自己的工具（Workflow 等），所以看的是「基础表之后紧跟 WebSearch」
-        assertEquals(minTools().map { it.name } + "WebSearch", toolNamesOf(rig.model.requests[2]).take(minTools().size + 1))
+        // 未配置服务器时 LSP 会被内核隐去；仍须核对 WebSearch 紧跟其它基础工具，避免过滤影响动态搜索位置。
+        val activeBase = minTools().map { it.name }.filter { it != "LSP" }
+        assertEquals(activeBase + "WebSearch", toolNamesOf(rig.model.requests[2]).take(activeBase.size + 1))
         config = WebSearchConfig()
         rt.send(ClientMsgId("u4"), listOf(TextPart("four"))); rig.settle(rt)
         assertTrue("清掉配置后工具消失", "WebSearch" !in toolNamesOf(rig.model.requests[3]))

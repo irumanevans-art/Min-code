@@ -83,6 +83,7 @@ object WriteTool : Tool<WriteInput> {
                 before?.let { fileEdit(path, it, input.content, created = existing == null, stored = stored) }
                     ?: FileEdit(path, created = existing == null, before = stored.before, after = stored.after),
             ),
+            diagnostics = stored.diagnostics,
         )
     }
 

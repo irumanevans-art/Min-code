@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    testImplementation(project(":agent:lsp"))
     implementation(libs.quickjs.jvm)
     implementation(project(":agent:kernel"))
     implementation(project(":agent:host"))

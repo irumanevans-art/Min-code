@@ -80,6 +80,17 @@ class MinAgentStateMapperTest {
     private val ref = SessionRef(EngineKind.MinAgent, "s_root")
     private val empty = JsonObject(emptyMap())
 
+    @Test fun lspDiagnosticsRemainVisibleAboveLongEditOutput() {
+        val issue = dev.min.agent.spi.LspDiagnostic(GuestPath("/workspace/a.t"), 2, 3, "新增类型错误")
+        val s = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(ToolCallPart(CallId("edit"), "Edit", empty))).toTypedArray(),
+            ToolPlanned(tid, CallId("edit"), "Edit", empty, ResumePolicy.Unknown),
+            ToolEffectPending(tid, CallId("edit")),
+            ToolOutcome(tid, CallId("edit"), ToolResult(listOf(TextPart("x".repeat(50_000) + "\n新增类型错误")), diagnostics = listOf(issue))))
+        val card = map(s).items.filterIsInstance<ChatItem.ToolCall>().single()
+        assertTrue(card.result.orEmpty().startsWith("LSP：本次编辑新增 1 个错误"))
+        assertTrue(card.result.orEmpty().contains("/workspace/a.t:2:3 新增类型错误"))
+    }
+
     private fun mapper(lookup: MinModelLookup = FakeLookup()) = MinAgentStateMapper(text, lookup)
 
     private fun user(id: String, body: String) = listOf<SessionEvent>(

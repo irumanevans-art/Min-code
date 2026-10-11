@@ -100,7 +100,7 @@ internal fun desktopTools(
     // bare 档的 Bash 没有后台任务（CC headless 页：none run，到超时就停），由实例自己管 schema / 描述 / 前台预算
     if (bare) listOf(ReadTool, WriteTool, EditTool, NotebookEditTool, BashTool(allowBackground = false)) else
     listOf(
-    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool(),
+    ReadTool, WriteTool, EditTool, NotebookEditTool, GlobTool, GrepTool, BashTool(), dev.min.agent.tools.LspTool,
     AskUserQuestionTool, EnterPlanModeTool, ExitPlanModeTool,
     AgentToolOf(customAgents), SendMessageTool, TaskStopTool,
     TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
@@ -455,6 +455,7 @@ internal class DesktopApp(
             mcpTokenStore = mcpTokens,
             mcpAuthorizer = mcpAuthorizer,
             mcpServerPath = { paths.hostOf(it).toString() },
+            lspGuestPath = { uri -> paths.guestOfHost(java.nio.file.Path.of(java.net.URI(uri))) },
             gitPath = { paths.hostOf(it).toString() },
             pluginDirs = args.pluginDirs.map(paths::guestOfHost),
             pluginInstalledPath = { paths.guestOfHost(java.nio.file.Path.of(it)) },

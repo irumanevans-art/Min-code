@@ -746,6 +746,7 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
         .filterNot { it.name == "ExitWorktree" && state.worktree?.pinned == true }
         // 子 agent 与分身从不拿到 EndConversation（CC：Subagents never get the tool）
         .filterNot { it.name == dev.min.agent.tools.END_CONVERSATION_TOOL_NAME && state.origin != null }
+        .filterNot { it.name == "LSP" && runtime?.lsp?.available != true }
     // MCP 工具排在内置工具之后（MCP设计 §5.3）：内置那段前缀不受 MCP 变化影响
     val resourceServers = state.visibleMcpResourceServers(deps)
     val resourceTools = if (resourceServers.isEmpty()) emptyList() else listOf(

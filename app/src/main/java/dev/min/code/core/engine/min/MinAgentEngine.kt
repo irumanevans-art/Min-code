@@ -157,6 +157,7 @@ class MinAgentEngine(
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
     internal val processes: dev.min.agent.spi.ProcessPort get() = kernelDeps.host.processes
+    internal val execForProbe: dev.min.agent.spi.Exec get() = kernelDeps.host.exec
 
     override val hub = SessionHub(
         store = store,

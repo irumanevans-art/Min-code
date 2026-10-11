@@ -67,7 +67,7 @@ data class AgentDefinition(
 object BuiltinAgents {
     const val GENERAL_PURPOSE = "general-purpose"
 
-    private val READ_ONLY_TOOLS = listOf("Read", "Grep", "Glob", "Bash")
+    private val READ_ONLY_TOOLS = listOf("Read", "Grep", "Glob", "Bash", "LSP")
 
     val all: List<AgentDefinition> = listOf(
         AgentDefinition(

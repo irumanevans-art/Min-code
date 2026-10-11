@@ -187,6 +187,9 @@ class SessionRuntime private constructor(
     }
 
     private var pluginsInstance: dev.min.agent.ext.plugins.PluginBundle? = null
+    internal var lsp: dev.min.agent.spi.LspPort = dev.min.agent.spi.LspPort.Unavailable
+    internal var lspServers: List<dev.min.agent.spi.LspServerSpec> = emptyList()
+    internal var lspRoot: GuestPath? = null
     private var pluginsAttempted = false
     internal suspend fun plugins(): dev.min.agent.ext.plugins.PluginBundle? {
         pluginsInstance?.let { return it }
