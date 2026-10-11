@@ -127,7 +127,7 @@ class SessionRuntime private constructor(
      * 规则里的 CLAUDE_SKILL_DIR 占位符在此代入（文档：允许在 allowed-tools 的 Bash 规则里用它）
      */
     internal suspend fun grantSkillTools(allowed: List<String>, baseDir: String?, skill: String = "") {
-        val rules = allowed.map { if (baseDir != null) it.replace("\${CLAUDE_SKILL_DIR}", baseDir) else it }
+        val rules = resolveSkillGrantRules(allowed, baseDir)
         if (rules.isEmpty() || state.value.skillGrants.containsAll(rules)) return
         commit(listOf(dev.min.agent.spi.SkillToolsGranted(skill, rules)), Durability.Sync)
     }

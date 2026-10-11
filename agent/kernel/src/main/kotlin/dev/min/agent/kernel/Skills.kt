@@ -210,14 +210,18 @@ internal class KernelSkillRunPort(
             is Verdict.Allow -> Unit
             is Verdict.Deny -> return RunResult.Refused(refusal(command, verdict.messageToModel))
             Verdict.Ask -> {
-                // 文档：注入的命令不弹审批；非自动模式下 ask 与 deny 一样中止调用。自动模式走分类器审查（与普通 Bash 一致），
-                // 分身里不许（文档：forked skill 的 ask 直接中止）
-                if (rt.state.value.settings.mode != PermissionMode.Auto || owner.fork) {
-                    return RunResult.Refused(refusal(command, "这条命令需要用户批准。用 allowed-tools 预先放行它，或让用户批准后再调用。"))
+                // 文档：注入的命令不弹审批；非自动模式下 ask 与 deny 一样中止调用。
+                // 自动模式下不中止：skill 带着「先自己跑这条命令」的指示加载，模型自己的 Bash 调用再走自动模式的常规判定（含分类器）——
+                // 内核不替它先跑、也不在这里单独送审。例外仍中止：指定了 agent 的分身 skill（命令要在子 agent 里跑，没有这条交接），
+                // 以及这个会话里模型没有 Bash 工具（没法照着做）
+                val abortReason = when {
+                    rt.state.value.settings.mode != PermissionMode.Auto -> "这条命令需要用户批准。用 allowed-tools 预先放行它，或让用户批准后再调用。"
+                    owner.fork && owner.agent != null -> "这条命令需要批准，而分身 skill 指定了 agent，自动模式下也不能交给模型代跑。用 allowed-tools 预先放行它。"
+                    availableTools(rt.state.value, rt.deps, runtime = rt).none { it.name == "Bash" } -> "这条命令需要批准，而当前会话里没有 Bash 工具可以让模型自己去跑。"
+                    else -> null
                 }
-                val input = buildJsonObject { put("command", JsonPrimitive(command)) }
-                val review = rt.reviewAutoAction(turnId, "Bash", input, ask.summary)
-                if (review is Verdict.Deny) return RunResult.Refused(refusal(command, review.messageToModel))
+                if (abortReason != null) return RunResult.Refused(refusal(command, abortReason))
+                return RunResult.Ok(deferredCommand(command))
             }
         }
         val result = rt.runNetworkShell(callId, ShellCommand(command, rt.state.value.settings.cwd), ExecOptions(timeoutMs = SHELL_TIMEOUT_MS, foregroundBudgetMs = null), emptyList())
@@ -235,13 +239,20 @@ internal class KernelSkillRunPort(
         val hub = rt.hub ?: return RunResult.Refused("skill「${owner.name}」要在分身里运行，这个环境没有子 agent 支持。")
         // 分身类型只能由内核派生；skill 写成 fork 就是想绕过「分身不能再委派」之类的约束
         if (owner.agent == FORK_AGENT_TYPE) return RunResult.Refused("skill「${owner.name}」的 agent 写成了 fork，分身只能由内核派生，skill 不能指定它。")
-        val request = DelegateRequest(description = "skill ${owner.name}", prompt = prompt, agentType = owner.agent, background = owner.background)
+        val request = DelegateRequest(
+            description = "skill ${owner.name}", prompt = prompt, agentType = owner.agent, background = owner.background,
+            skillGrants = resolveSkillGrantRules(owner.allowedTools, owner.baseDir),
+        )
         return when (val r = hub.spawn(rt, turnId, callId, request)) {
             is DelegateResult.Started -> RunResult.Ok("skill「${owner.name}」已在后台的子 agent（${r.child.value}）里运行，结果会作为消息回到会话。")
             is DelegateResult.Finished -> if (r.isError) RunResult.Refused(r.report) else RunResult.Ok(r.report)
             is DelegateResult.Rejected -> RunResult.Refused(r.messageForModel)
         }
     }
+
+    /** 自动模式下留给模型的交接：这条命令没有被预执行，请它自己用 Bash 先跑（原样给出命令），再按 skill 余下的内容继续 */
+    private fun deferredCommand(command: String) =
+        "[Not pre-run: this command needs approval. Run it yourself with the Bash tool first, then continue with the rest of this skill: $command]"
 
     private fun refusal(command: String, reason: String) = "Shell command permission check failed for pattern \"$command\"：$reason"
 
@@ -305,3 +316,7 @@ suspend fun SessionRuntime.nestedSkillDefs(): List<SkillDef> = state.value.neste
         allowedTools = entry.allowedTools, context = entry.context, agent = entry.agent, background = entry.background, hooks = entry.hooks,
     )
 }
+
+/** skill 的 `allowed-tools` 规则文字：`${CLAUDE_SKILL_DIR}`（文档：允许在 allowed-tools 的 Bash 规则里用它）代入 skill 所在目录 */
+internal fun resolveSkillGrantRules(allowed: List<String>, baseDir: String?): List<String> =
+    allowed.map { if (baseDir != null) it.replace("\${CLAUDE_SKILL_DIR}", baseDir) else it }

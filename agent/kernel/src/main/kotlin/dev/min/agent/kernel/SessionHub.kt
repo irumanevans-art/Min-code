@@ -1080,6 +1080,8 @@ class SessionHub(
                 workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
             )
         }
+        // 分身 skill 的 allowed-tools：只记那个 skill 自己声明的（已代入），不是父会话当下的全部放行
+        if (request.skillGrants.isNotEmpty()) initial += dev.min.agent.spi.SkillToolsGranted(request.description, request.skillGrants.distinct())
         initial += dev.min.agent.spi.AutoUserContextInherited(AutoReviewer(parent).trustedUserTexts(ps, ToolExecutor(parent, HookDriver(parent)).policyContext()))
         val background = !request.workflow && (request.background || definition?.alwaysBackground == true)
 

@@ -63,13 +63,13 @@ class SkillShellRunTest {
 
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(20_000) { block() } }
 
-    private fun deps(model: ModelClient, trust: Boolean): KernelDeps {
-        val base = testDeps(model, emptyList())
+    private fun deps(model: ModelClient, trust: Boolean, tools: List<dev.min.agent.spi.Tool<*>> = emptyList()): KernelDeps {
+        val base = testDeps(model, tools)
         return KernelDeps(
             clock = base.clock,
             ids = base.ids,
             models = base.models,
-            tools = emptyList(),
+            tools = tools,
             host = HostPorts(fs, base.host.search, exec, base.host.artifacts),
             platform = base.platform,
             zone = base.zone,
@@ -80,17 +80,26 @@ class SkillShellRunTest {
         )
     }
 
-    private suspend fun session(trust: Boolean = true, model: ModelClient = ScriptedModel()): SessionRuntime {
+    private suspend fun session(
+        trust: Boolean = true,
+        model: ModelClient = ScriptedModel(),
+        mode: PermissionMode = PermissionMode.Default,
+        tools: List<dev.min.agent.spi.Tool<*>> = emptyList(),
+    ): SessionRuntime {
         val n = ++sessions
         return SessionRuntime.create(
             store, LogHeader(LOG_FORMAT_VERSION, SessionId("skill-run-$n"), 0),
-            SessionCreated(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default), deps(model, trust), newScope(),
+            SessionCreated(GuestPath("/workspace"), TEST_MODEL, mode), deps(model, trust, tools), newScope(),
         )
     }
 
-    private fun project(name: String, body: String, allowed: List<String> = emptyList(), context: String? = null, agent: String? = null) = SkillDef(
+    /** 带 Hub 的根会话：分身的 skill 要经它派生子 agent */
+    private suspend fun hubSession(model: ModelClient): SessionRuntime =
+        SessionHub(store, deps(model, true), newScope(), HubLimits()).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+
+    private fun project(name: String, body: String, allowed: List<String> = emptyList(), context: String? = null, agent: String? = null, background: Boolean = true) = SkillDef(
         name = name, description = "d", path = GuestPath("/workspace/.claude/skills/$name/SKILL.md"), body = body,
-        source = ConfigSource.Project, allowedTools = allowed, context = context, agent = agent,
+        source = ConfigSource.Project, allowedTools = allowed, context = context, agent = agent, background = background,
     )
 
     /** 用户敲 `/名字 参数`：走斜杠入口的 expandRun 与内核的用户端口，与 CLI / 手机界面同一条路 */
@@ -202,6 +211,72 @@ class SkillShellRunTest {
         assertEquals(rt.state.value.skillGrants, reopened.state.value.skillGrants)
         assertTrue(typed(reopened, project("plain", "!`make build`")) is SlashResult.Refused)
         assertTrue(exec.runs.isEmpty())
+    }
+
+    // ---- 自动模式：注入命令需要批准时，不中止也不自己跑，交给模型自己调 Bash（CC skills 文档） ----
+
+    private val bash = listOf<dev.min.agent.spi.Tool<*>>(dev.min.agent.tools.BashTool())
+
+    @Test
+    fun `in auto mode a command that would need approval is left for the model to run itself`() = run {
+        val rt = session(mode = PermissionMode.Auto, tools = bash)
+        val r = typed(rt, project("build", "before !`make build` after"))
+        assertTrue("got $r", r is SlashResult.Expanded)
+        val text = (r as SlashResult.Expanded).text
+        // 命令没有被内核替人跑（模型自己的 Bash 调用才走自动模式的常规判定），正文里留一句让模型先跑它的话
+        assertTrue(exec.runs.isEmpty())
+        assertTrue(text, text.contains("make build") && text.contains("Bash") && text.contains("before [Not pre-run") && text.endsWith("] after"))
+        assertTrue(text, !text.contains("!`make build`"))
+    }
+
+    @Test
+    fun `in auto mode an allowed command still runs and a denied one still aborts`() = run {
+        setProjectSettings("""{"permissions":{"allow":["Bash(make build)"],"deny":["Bash(rm *)"]}}""")
+        val rt = session(mode = PermissionMode.Auto, tools = bash)
+        assertTrue(typed(rt, project("ok", "!`make build`")) is SlashResult.Expanded)
+        assertEquals(listOf("make build"), exec.runs.map { it.first.script })
+        val denied = typed(rt, project("bad", "!`rm -rf x`"))
+        assertTrue("got $denied", denied is SlashResult.Refused)
+        assertEquals(1, exec.runs.size)
+    }
+
+    @Test
+    fun `in auto mode the deferral still aborts without a shell tool or in a forked skill that sets an agent`() = run {
+        // 没有 Bash 工具：模型没法照着「先自己跑」去做，照文档中止
+        val noShell = session(mode = PermissionMode.Auto)
+        assertTrue(typed(noShell, project("build", "!`make build`")) is SlashResult.Refused)
+        // 指定了 agent 的分身 skill：照文档中止（命令要在子 agent 里跑，那边没有这条交接）
+        val rt = session(mode = PermissionMode.Auto, tools = bash)
+        val forked = typed(rt, project("build", "!`make build`", context = "fork", agent = "Explore"))
+        assertTrue("got $forked", forked is SlashResult.Refused)
+        assertTrue(exec.runs.isEmpty())
+    }
+
+    // ---- 分身带上父 skill 的 allowed-tools ----
+
+    @Test
+    fun `a forked skill hands its allowed-tools to the sub-agent it spawns`() = run {
+        val rt = hubSession(ScriptedModel(reply(TextPart("child done"))))
+        // 父会话里别的 skill 已放行的工具不跟着漏给它：子 agent 只拿这个 skill 自己声明的
+        rt.grantSkillTools(listOf("Bash(make build)"), null, "other")
+        val r = typed(rt, project("pr", "summarize", allowed = listOf("Bash(gh pr view *)"), context = "fork", agent = "Explore", background = false))
+        assertTrue("got $r", r is SlashResult.Forked)
+        val childId = rt.state.value.children.keys.single()
+        val child = rt.hub!!.get(childId)!!
+        assertEquals(listOf("Bash(gh pr view *)"), child.state.value.skillGrants)
+    }
+
+    @Test
+    fun `a sub-agent spawned without a skill gets no allowed-tools grant`() = run {
+        val rt = hubSession(ScriptedModel(reply(TextPart("child done"))))
+        // 父会话里别的 skill 已经放行了一批工具：它们不能漏给一个与它无关的子 agent
+        rt.grantSkillTools(listOf("Bash(make build)"), null, "other")
+        val hub = rt.hub!!
+        val res = hub.spawn(rt, dev.min.agent.protocol.TurnId("t1"), dev.min.agent.protocol.CallId("c1"),
+            dev.min.agent.spi.DelegateRequest(description = "d", prompt = "p", agentType = "Explore", background = false))
+        assertTrue("got $res", res is dev.min.agent.spi.DelegateResult.Finished)
+        val child = hub.get((res as dev.min.agent.spi.DelegateResult.Finished).child)!!
+        assertTrue(child.state.value.skillGrants.isEmpty())
     }
 
     // ---- 信任与开关 ----
