@@ -64,12 +64,14 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     // 交互模式：未信任的目录先问一句（会话建立时就要读 hooks 的信任，所以必须在 openSession 之前）。-p 不弹框（CC）
     if (args.prompt == null && !confirmWorkspaceTrust(app, stdin, System.err)) return 1
     val runtime = app.openSession()
-    val tail = app.telemetryTail(runtime)
-    // 遥测在进程退出时把这次运行的新事件导出一次（默认关，tail 为 null）。NonCancellable：取消退出时也要把已有的事件送出去
+    val telemetry = app.telemetry(runtime)
+    // 遥测（默认关，telemetry 为 null）：会话进行中按间隔导出，进程退出时补一次。
+    // NonCancellable：取消退出时也要把已有的事件送出去
+    telemetry?.start(scope)
     try {
         return interact(app, runtime, args, scope, stdin)
     } finally {
-        if (tail != null) withContext(NonCancellable) { tail.pump() }
+        if (telemetry != null) withContext(NonCancellable) { telemetry.finish() }
     }
 }
 

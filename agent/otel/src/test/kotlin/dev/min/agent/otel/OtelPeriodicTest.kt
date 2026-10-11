@@ -100,4 +100,22 @@ class OtelPeriodicTest {
         val fast = config("OTEL_LOGS_EXPORT_INTERVAL" to "200")
         assertEquals(OtelPeriodic.MIN_TICK_MS, OtelPeriodic.tickMs(fast))
     }
+
+    @Test
+    fun `OtelRun：start 起周期导出，finish 停掉循环后补最后一次，再无后续导出`() = runTest {
+        val log = FakeSessionLog("p")
+        val cfg = config("OTEL_LOGS_EXPORT_INTERVAL" to "1000")
+        val transport = ScriptedTransport(OK, OK)
+        val tail = OtelTail(OtelSessionSource { _ -> listOf(log) }, cfg, OtelExporter(cfg, transport), clock = { currentTime })
+        val run = OtelRun(tail, cfg)
+        run.start(this)
+        log.turn(1, 10)
+        advanceTimeBy(1001)
+        assertEquals(1, transport.requests.size)
+        log.turn(2, 20) // 还没到下一个间隔：留给收尾
+        run.finish()
+        assertEquals(2, transport.requests.size)
+        advanceTimeBy(10_000)
+        assertEquals(2, transport.requests.size)
+    }
 }
