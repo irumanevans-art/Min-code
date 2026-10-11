@@ -33,6 +33,9 @@ data class OtelLog(
     val name: String,
     override val attributes: Map<String, OtelValue>,
     override val timeMs: Long,
+    /** 关联的 trace / span（原文：-p 与 SDK 会话带入站 TRACEPARENT 时才有，见 [OtelMapper]） */
+    val traceId: String? = null,
+    val spanId: String? = null,
 ) : OtelItem
 
 /** span 上的一个事件（OTLP span events）：gen_ai.request.attempt、tool.output。时间来自会话日志的 atMs */

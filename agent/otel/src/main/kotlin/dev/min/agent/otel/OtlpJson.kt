@@ -47,14 +47,16 @@ internal object OtlpJson {
             val attrs = LinkedHashMap<String, OtelValue>()
             attrs["event.name"] = OtelValue.Text(log.name)
             attrs.putAll(log.attributes)
-            JsonObject(mapOf(
-                "timeUnixNano" to JsonPrimitive(nanos(log.timeMs)),
-                "observedTimeUnixNano" to JsonPrimitive(nanos(log.timeMs)),
-                "severityNumber" to JsonPrimitive(SEVERITY_INFO),
-                "severityText" to JsonPrimitive("INFO"),
-                "body" to JsonObject(mapOf("stringValue" to JsonPrimitive(log.name))),
-                "attributes" to keyValues(attrs),
-            ))
+            JsonObject(buildMap {
+                put("timeUnixNano", JsonPrimitive(nanos(log.timeMs)))
+                put("observedTimeUnixNano", JsonPrimitive(nanos(log.timeMs)))
+                put("severityNumber", JsonPrimitive(SEVERITY_INFO))
+                put("severityText", JsonPrimitive("INFO"))
+                put("body", JsonObject(mapOf("stringValue" to JsonPrimitive(log.name))))
+                put("attributes", keyValues(attrs))
+                log.traceId?.let { put("traceId", JsonPrimitive(it)) }
+                log.spanId?.let { put("spanId", JsonPrimitive(it)) }
+            })
         }
         return envelope("resourceLogs", "logRecords", records, resource)
     }
@@ -99,12 +101,14 @@ internal object OtlpJson {
                 "value" to JsonPrimitive(item.value),
                 "attributes" to attrs,
             ))
-            is OtelLog -> JsonObject(mapOf(
-                "t" to JsonPrimitive(item.timeMs),
-                "kind" to JsonPrimitive("log"),
-                "name" to JsonPrimitive(item.name),
-                "attributes" to attrs,
-            ))
+            is OtelLog -> JsonObject(buildMap {
+                put("t", JsonPrimitive(item.timeMs))
+                put("kind", JsonPrimitive("log"))
+                put("name", JsonPrimitive(item.name))
+                item.traceId?.let { put("trace_id", JsonPrimitive(it)) }
+                item.spanId?.let { put("span_id", JsonPrimitive(it)) }
+                put("attributes", attrs)
+            })
             is OtelSpan -> JsonObject(buildMap {
                 put("t", JsonPrimitive(item.endMs))
                 put("kind", JsonPrimitive("span"))
