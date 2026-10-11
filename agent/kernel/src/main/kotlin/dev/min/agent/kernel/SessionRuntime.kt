@@ -1056,10 +1056,22 @@ class SessionRuntime private constructor(
             val quietSince = state.lastEventAtMs
             val runtime = SessionRuntime(log, state, deps, scope, hub)
             runtime.commit(planRecovery(state), Durability.Sync)
+            // --restricted 拒绝 bypassPermissions，对续接的会话同样成立：模式与锁都是上次启动（可能不受限）写进日志的，
+            // 这里不重新兑现的话，--resume / --continue 就把 bypass 原样带进受限会话，之后还能随时切回去
+            if (deps.settingsInputs.restricted) restrictedLockEvents(runtime.state.value).takeIf { it.isNotEmpty() }?.let { runtime.commit(it, Durability.Sync) }
             runtime.resumeBasis = ResumeBasis(quietSince, runtime.state.value.lastTurn?.turnId)
             runtime.cancelMcpElicitations(close = false)
             return runtime
         }
+    }
+}
+
+/** 受限启动续接一个会话时补上的事件：bypass 锁没上就上锁（与创建时的锁同一个字段），模式还是 bypass 就降为 Default 并说明 */
+internal fun restrictedLockEvents(s: SessionState): List<SessionEvent> = buildList {
+    if (!s.autoReviewSettings.disableBypassPermissionsMode) add(s.autoReviewSettings.copy(disableBypassPermissionsMode = true))
+    if (s.settings.mode == PermissionMode.BypassPermissions) {
+        add(SettingsChanged(mode = PermissionMode.Default))
+        add(Note(NoteLevel.Warning, "这次启动禁用了 ${PermissionMode.BypassPermissions}（--restricted），续接的会话改用 Default 模式"))
     }
 }
 
