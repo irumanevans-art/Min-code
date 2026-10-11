@@ -20,6 +20,9 @@ class OtelTail(
     fromSeq: Long = 1,
 ) {
     private var cursor = fromSeq
+
+    /** 下一条要读的 seq（宿主据此把游标存下来，下次进程从这里续）*/
+    val nextSeq: Long get() = cursor
     private val mapper = OtelMapper(config.options(log.header.sessionId.value))
 
     /** 导出游标之后的新记录，返回处理了几条。遥测关闭时直接返回 0，既不读日志也不映射 */

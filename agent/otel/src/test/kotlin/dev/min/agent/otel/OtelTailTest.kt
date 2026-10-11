@@ -89,6 +89,7 @@ class OtelTailTest {
         assertEquals(listOf(listOf("min.turn.started", "min.turn.ended")), names(transport))
 
         log.add(TurnStarted(turn, TurnTrigger.Resume)) // seq 4
+        assertEquals(4L, tail.nextSeq)
         assertEquals(1, tail.pump())
         assertEquals(listOf("min.turn.started", "min.turn.ended"), names(transport)[0])
         assertEquals(listOf("min.turn.started"), names(transport)[1])
