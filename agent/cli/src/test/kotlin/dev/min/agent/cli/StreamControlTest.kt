@@ -343,6 +343,20 @@ class StreamControlTest {
         }
     }
 
+    @Test fun `an ask that comes after stdin was closed is denied`() = run {
+        val target = tmp.newFolder("late").toPath().resolve("no.txt")
+        ModelServer { last ->
+            if (last.contains("T_WRITE")) toolResponse("call_l", "Write", buildJsonObject { put("file_path", guest(target)); put("content", "x") }) else textResponse("LATE_DONE")
+        }.use { server ->
+            val live = startLive(tmp.root.toPath(), scope(), "late", server, hosted)
+            // 消息和 EOF 一起到：回合起来的时候宿主早就走了，没人能答复——不批准
+            live.send(user("T_WRITE"))
+            val out = live.finish()
+            assertFalse("宿主已断开，工具不能执行", Files.exists(target))
+            assertEquals(1, out.ofType("user").size)
+        }
+    }
+
     @Test fun `a forged request id cannot approve anything and the real ask stays pending`() = run {
         val target = tmp.newFolder("forged").toPath().resolve("no.txt")
         ModelServer { last ->
