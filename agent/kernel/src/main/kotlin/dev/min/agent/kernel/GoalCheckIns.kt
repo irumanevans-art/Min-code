@@ -80,7 +80,7 @@ internal suspend fun SessionRuntime.goalCheckInAtTurnEnd(nowMs: Long, minutes: L
 
 /** 送给模型的 check-in 话（CC：列出在跑的任务，请它读输出；还在推进就继续等，卡住的修掉或停掉；已停没报告的就接着朝目标干） */
 internal fun goalCheckInText(rt: SessionRuntime, lastIdle: Boolean): String {
-    val running = rt.background.runningJobsText()
+    val running = rt.goalBackgroundWork()
     val head = if (running.isEmpty()) {
         "/goal 还没达成，后台工作已经停了但没有报告结果：接着朝目标干。"
     } else {

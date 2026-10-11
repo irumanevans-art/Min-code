@@ -16,12 +16,38 @@ object FeedbackBundle {
     /** 键名像凭证的项，它的值就是要去掉的凭证 */
     private val SECRET_NAME = Regex("(?i)key|token|secret|password|passwd|auth|credential")
 
-    /** 长得像凭证的字符串：即便不在环境里（模型或工具把它打印出来了），也要去掉 */
+    /**
+     * 长得像凭证的字符串：即便不在环境里（模型或工具把它打印出来了），也要去掉。
+     * 手机端没有凭证名单（env 与 settings 传空表），只能靠这张表，所以按常见几家的公开格式列全：
+     * 各家 API key / 令牌、JWT、PEM 私钥块、HTTP 认证头、Slack Webhook。
+     */
     private val SHAPED = listOf(
+        Regex("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
         Regex("sk-[A-Za-z0-9_\\-]{8,}"),
+        Regex("[sr]k_(?:live|test)_[A-Za-z0-9]{8,}"),
         Regex("gh[pousr]_[A-Za-z0-9]{8,}"),
-        Regex("(?i)bearer\\s+[A-Za-z0-9._\\-]+"),
+        Regex("github_pat_[A-Za-z0-9_]{20,}"),
+        Regex("glpat-[A-Za-z0-9_\\-]{20,}"),
+        Regex("hf_[A-Za-z0-9]{30,}"),
+        Regex("xox[abposr]-[A-Za-z0-9\\-]{10,}"),
+        Regex("\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"),
+        Regex("AIza[0-9A-Za-z_\\-]{35}"),
+        Regex("eyJ[A-Za-z0-9_\\-]{8,}\\.[A-Za-z0-9_\\-]{8,}\\.[A-Za-z0-9_\\-]{8,}"),
+        Regex("https://hooks\\.slack\\.com/services/\\S+"),
+        Regex("(?i)\\b(?:bearer|basic)\\s+[A-Za-z0-9._~+/=\\-]{6,}"),
     )
+
+    /** 地址里的 `用户:口令@`（数据库地址、带认证的中转地址）：只换掉这一段，主机名留着方便排查 */
+    private val URL_USERINFO = Regex("(?<=://)[^/\\s:@]+:[^/\\s@]+@")
+
+    /** 文本里的口令赋值（`password: …`、`api_key=…`）：键名留着，值换掉。值已经是占位的不再算 */
+    private val ASSIGNED = Regex("(?i)(?<![A-Za-z0-9])((?:api[_-]?key|access[_-]?key|secret|token|password|passwd)\\s*[:=]\\s*)(?!\\[已去除\\])[^\\s,;]+")
+
+    /**
+     * 诊断包只收 agent 自己的环境变量。桌面传进来的是整份 System.getenv()：数据库地址、Webhook、本机用户名这些
+     * 既与排查无关，名字又不一定像凭证（`SLACK_WEBHOOK_URL` 的值本身就是钥匙），只按名字去凭证兜不住，所以先按前缀筛
+     */
+    private val RELEVANT_ENV_PREFIXES = listOf("CLAUDE_", "ANTHROPIC_", "MIN_")
 
     private const val REDACTED = "[已去除]"
 
@@ -44,11 +70,12 @@ object FeedbackBundle {
             .values
             .filter { it.length >= MIN_SECRET_LENGTH }
             .toSet()
+        val shownEnv = env.filterKeys { key -> RELEVANT_ENV_PREFIXES.any { key.startsWith(it) } }
         val files = linkedMapOf<String, String>()
         files["draft.md"] = scrub("# ${draft.title}\n\n${draft.body}\n", secrets)
         files["version.txt"] = scrub(versionInfo + "\n", secrets)
         files["config.txt"] = scrub(
-            (env.map { "${it.key}=${it.value}" } + settings.map { "${it.key}=${it.value}" }).joinToString("\n", postfix = "\n"),
+            (shownEnv.map { "${it.key}=${it.value}" } + settings.map { "${it.key}=${it.value}" }).joinToString("\n", postfix = "\n"),
             secrets,
         )
         if (sessionLog != null) files["session-log.txt"] = scrub(sessionLog, secrets)
@@ -61,12 +88,14 @@ object FeedbackBundle {
         var out = text
         for (s in secrets) out = out.replace(s, REDACTED)
         for (r in SHAPED) out = r.replace(out, REDACTED)
+        out = URL_USERINFO.replace(out, "$REDACTED@")
+        out = ASSIGNED.replace(out) { it.groupValues[1] + REDACTED }
         return out
     }
 
     /** 成品里有没有任何一个凭证的值。导出前的最后一道扫描 */
     internal fun leaks(files: Map<String, String>, secrets: Set<String>): Boolean =
-        files.values.any { text -> secrets.any { text.contains(it) } }
+        files.values.any { text -> secrets.any { text.contains(it) } || SHAPED.any { it.containsMatchIn(text) } || URL_USERINFO.containsMatchIn(text) }
 
     private fun zip(files: Map<String, String>): ByteArray {
         val bytes = ByteArrayOutputStream()

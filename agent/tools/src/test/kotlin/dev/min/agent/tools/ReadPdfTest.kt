@@ -88,6 +88,43 @@ class ReadPdfTest {
         assertEquals(1, r.content.filterIsInstance<DocumentPart>().size)
     }
 
+    /**
+     * PDF 1.5 起的写法（pdfTeX 等默认）：页对象放进 FlateDecode 压缩的对象流（/Type /ObjStm），明文里一个 `/Type /Page` 都没有
+     */
+    private fun objectStreamPdf(pages: Int): ByteArray {
+        val objs = (0 until pages).joinToString("\n") { "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>" }
+        val deflater = java.util.zip.Deflater()
+        deflater.setInput(objs.toByteArray(Charsets.ISO_8859_1))
+        deflater.finish()
+        val buf = ByteArray(64 * 1024)
+        val packed = buf.copyOf(deflater.deflate(buf))
+        val out = java.io.ByteArrayOutputStream()
+        fun w(s: String) = out.write(s.toByteArray(Charsets.ISO_8859_1))
+        w("%PDF-1.5\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n")
+        w("5 0 obj << /Type /ObjStm /N $pages /First 0 /Filter /FlateDecode /Length ${packed.size} >>\nstream\n")
+        out.write(packed)
+        w("\nendstream\nendobj\ntrailer << /Root 1 0 R >>\n%%EOF\n")
+        return out.toByteArray()
+    }
+
+    @Test
+    fun `pages hidden in a compressed object stream are still counted, so a long pdf is refused`() = runTest {
+        fs.put("/work/latex.pdf", objectStreamPdf(12))
+        val r = ReadTool.call(ctx, "file_path" to "/work/latex.pdf")
+        assertTrue(r.text, r.isError)
+        assertTrue(r.text, r.text.contains("共 12 页"))
+        assertTrue(r.content.none { it is DocumentPart })
+    }
+
+    @Test
+    fun `a short pdf with compressed pages is sent whole with its real page count`() = runTest {
+        fs.put("/work/short.pdf", objectStreamPdf(3))
+        val r = ReadTool.call(ctx, "file_path" to "/work/short.pdf")
+        assertFalse(r.text, r.isError)
+        assertTrue(r.text, r.text.contains("3 页"))
+        assertEquals(1, r.content.filterIsInstance<DocumentPart>().size)
+    }
+
     @Test
     fun `file without pdf header is reported as not a pdf`() = runTest {
         fs.put("/work/fake.pdf", "hello\n%%EOF\n")

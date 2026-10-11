@@ -138,6 +138,48 @@ class RestrictedModeTest {
         assertEquals(PermissionMode.BypassPermissions, rt.state.value.settings.mode)
     }
 
+    // ---- 续接（--resume / --continue）：模式与锁都来自上次启动写下的日志 ----
+
+    /** 先在不受限的启动里建一个 bypass 会话并卸下，返回它的 id：日志里的模式是 bypass、锁是开着的 */
+    private suspend fun bypassSessionFromUnrestrictedRun(alsoEnterPlan: Boolean = false): dev.min.agent.protocol.SessionId {
+        val first = hub(restricted = false, ScriptedModel(reply(TextPart("done"))))
+        val rt = first.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        if (alsoEnterPlan) rt.changeSettings(mode = PermissionMode.Plan)
+        assertTrue(first.close(rt.sessionId))
+        return rt.sessionId
+    }
+
+    @Test
+    fun `restricted：续接上次 bypass 的会话降为 Default，且不能再切回 bypass`() = run {
+        val id = bypassSessionFromUnrestrictedRun()
+        val rt = requireNotNull(hub(restricted = true, ScriptedModel(reply(TextPart("done")))).open(id, resumedByUser = true))
+        assertEquals(PermissionMode.Default, rt.state.value.settings.mode)
+        try {
+            rt.changeSettings(mode = PermissionMode.BypassPermissions)
+            fail("restricted 续接的会话也不许切到 bypassPermissions")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(PermissionMode.Default, rt.state.value.settings.mode)
+    }
+
+    @Test
+    fun `对照组：不开 restricted 续接，bypass 照旧`() = run {
+        val id = bypassSessionFromUnrestrictedRun()
+        val rt = requireNotNull(hub(restricted = false, ScriptedModel(reply(TextPart("done")))).open(id, resumedByUser = true))
+        assertEquals(PermissionMode.BypassPermissions, rt.state.value.settings.mode)
+    }
+
+    @Test
+    fun `restricted：续接的计划模式退出时回不到 bypass`() = run {
+        val id = bypassSessionFromUnrestrictedRun(alsoEnterPlan = true)
+        val rt = requireNotNull(hub(restricted = true, ScriptedModel(reply(TextPart("done")))).open(id, resumedByUser = true))
+        assertEquals("计划模式本身不受影响", PermissionMode.Plan, rt.state.value.settings.mode)
+        assertEquals(PermissionMode.BypassPermissions, rt.state.value.settings.modeBeforePlan)
+        // ExitPlanMode 的效果是「回到进计划模式之前的模式」：锁住时只能回到 Default
+        val back = ToolResult(listOf(TextPart("ok")), effects = listOf(dev.min.agent.spi.SessionEffect.ModeChange(PermissionMode.BypassPermissions)))
+            .effectEvents(rt.state.value, 0)
+        assertEquals(listOf(PermissionMode.Default), back.filterIsInstance<dev.min.agent.spi.SettingsChanged>().map { it.mode })
+    }
+
     // ---- 内置的 Workflow（跑 JavaScript）----
 
     @Test

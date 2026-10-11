@@ -237,6 +237,41 @@ class GoalSessionTest {
     }
 
     @Test
+    fun `a background subagent still working defers the evaluation, and its report brings the evaluation back`() = run {
+        // CC：「If a subagent or a background shell command is still running when a turn ends, Claude Code skips the evaluation」。
+        // 只看后台命令的话，主回合把活派给后台子 agent 就收尾，评估器在活还没干完时就被问、甚至判成已达成
+        val childMayFinish = CompletableDeferred<Unit>()
+        var evaluations = 0
+        val model = RoutingModel { req ->
+            when {
+                isEvaluator(req) -> { evaluations++; reply(TextPart("""{"ok": true, "reason": "完成"}""")) }
+                req.messages.size == 1 && req.lastText().contains("慢活") -> { r -> flow { childMayFinish.await(); emitAll(reply(TextPart("慢活做完了"))(r)) } }
+                req.messages.last().parts.any { it is dev.min.agent.protocol.ToolResultPart } -> reply(TextPart("派出去了，等它回报"))
+                req.lastText().contains("开始") -> reply(
+                    ToolCallPart(CallId("a1"), "Agent", kotlinx.serialization.json.buildJsonObject {
+                        put("description", kotlinx.serialization.json.JsonPrimitive("慢活"))
+                        put("prompt", kotlinx.serialization.json.JsonPrimitive("慢活"))
+                        put("run_in_background", kotlinx.serialization.json.JsonPrimitive(true))
+                    }),
+                    stop = StopReason.ToolUse,
+                )
+                else -> reply(TextPart("收到回报，活干完了"))
+            }
+        }
+        val deps = kernelDeps(model, null, AtomicLong(1_000_000L), tools = listOf(dev.min.agent.tools.AgentToolOf(emptyList())))
+        val rt = hub(model, deps = deps).create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.commitGoal("慢活做完")
+        rt.say("开始")
+        assertEquals("子 agent 还在干活：这一回合不该评估", 0, evaluations)
+        assertEquals("慢活做完", rt.state.value.goal.condition)
+
+        childMayFinish.complete(Unit)
+        withTimeout(10_000) { rt.state.first { it.goal.condition == null } }
+        assertEquals(1, evaluations)
+        assertEquals(GoalEndReason.Achieved, rt.state.value.goal.lastEnded?.reason)
+    }
+
+    @Test
     fun `three turns in a row without tool use stop the loop with a warning and keep the goal`() = run {
         val model = model(List(20) { """{"ok": false, "reason": "还差测试"}""" })
         val rt = hub(model).create(GuestPath("/work"), TEST_MODEL, PermissionMode.BypassPermissions)

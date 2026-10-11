@@ -133,4 +133,23 @@ class EndConversationSessionTest {
         assertTrue(evs.none { it is ApprovalRequested })
         assertTrue(rt.state.value.ended)
     }
+
+    @Test
+    fun `after the session is locked, reports, notifications and resume start no turn either`() = run {
+        // 锁住之后还会有不经 send 的输入：后台子 agent 的报告、后台任务的通知、asyncRewake hook、定时任务，以及界面的「继续」。
+        // 它们都不该再把模型叫起来（模型结束会话的意义就在于此）
+        val model = ScriptedModel(reply(endCall, stop = StopReason.ToolUse), reply(TextPart("我又回来了")))
+        val rt = hub(model, listOf(EndConversationTool)).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
+        rt.say("你好")
+
+        rt.receive(ClientMsgId("hook-late"), listOf(TextPart("后台检查完成")), dev.min.agent.spi.Delivery.Queue,
+            dev.min.agent.spi.InputOrigin.Hook("asyncRewake"), startTurn = dev.min.agent.spi.TurnTrigger.Hook)
+        rt.awaitIdle()
+        rt.resume()
+        rt.awaitIdle()
+        rt.runInbox()
+        rt.awaitIdle()
+        assertEquals("锁住之后不该再请求模型", 1, model.requests.size)
+        assertNull(rt.state.value.turn)
+    }
 }

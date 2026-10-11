@@ -110,4 +110,40 @@ class SendUserFileToolTest {
         assertTrue(result.isError)
         assertTrue(sink.got.isEmpty())
     }
+
+    // ---- 工作区边界：路径要按「实际指向哪里」判，不是按字符串前缀 ----
+
+    @Test
+    fun `a dot-dot path that leaves the workspace is refused and nothing is read`() = runBlocking {
+        val sink = RecordingSink()
+        val c = TestToolContext().also { it.fs.put("/etc/secret.txt", "s3cret") }
+        val result = SendUserFileTool.call(object : ToolContext by c { override val userFiles: UserFileSink = sink }, "files" to paths("/work/../etc/secret.txt"))
+        assertTrue(result.isError)
+        assertTrue(result.text, result.text.contains("不在工作区"))
+        assertTrue(sink.got.isEmpty())
+    }
+
+    @Test
+    fun `a link inside the workspace that points outside is refused`() = runBlocking {
+        val sink = RecordingSink()
+        // /work/creds 是一个指向工作区外的链接：宿主的 canonicalPath 解析出它的真实位置，读盘时文件系统会跟随它
+        val c = TestToolContext().also { it.fs.put("/work/creds", "token=abc") }
+        val ctx = object : ToolContext by c {
+            override val userFiles: UserFileSink = sink
+            override fun canonicalPath(path: dev.min.agent.spi.GuestPath) =
+                if (path.value == "/work/creds") dev.min.agent.spi.GuestPath("/root/.min/credentials.json") else path
+        }
+        val result = SendUserFileTool.call(ctx, "files" to paths("/work/creds"))
+        assertTrue(result.isError)
+        assertTrue(result.text, result.text.contains("不在工作区"))
+        assertTrue(sink.got.isEmpty())
+    }
+
+    @Test
+    fun `the permission ask names every file as a read, so deny rules and --restricted see them`() {
+        val input = SendUserFileTool.parsed("files" to paths("/work/a.md", "/work/../etc/b.md"))
+        val ask = SendUserFileTool.permissionAsk(input, TestToolContext())
+        assertEquals(listOf("/work/a.md", "/work/../etc/b.md"), ask.paths.map { it.path.value })
+        assertTrue(ask.paths.all { it.kind == dev.min.agent.spi.AccessKind.Read })
+    }
 }

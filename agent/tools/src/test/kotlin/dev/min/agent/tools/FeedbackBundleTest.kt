@@ -40,7 +40,7 @@ class FeedbackBundleTest {
     @Test
     fun `no key or token from the environment or the settings reaches the exported zip`() {
         // 环境与设置里都带上假 key：导出的每个条目都不能含它们的值
-        val env = mapOf("ANTHROPIC_API_KEY" to fakeKey, "HOME" to "/data/home", "INTERNAL_PASSWORD" to "plainpw-XYZ123")
+        val env = mapOf("ANTHROPIC_API_KEY" to fakeKey, "CLAUDE_CODE_USE_BEDROCK" to "1", "MIN_INTERNAL_PASSWORD" to "plainpw-XYZ123")
         val settings = mapOf("github.token" to fakeToken, "theme" to "dark")
         // 草稿正文与会话日志里模型或工具也可能把 key 写了出来
         val draft = FeedbackDraft("鉴权失败", "我把 $fakeKey 粘进了命令里，还有 $fakeToken")
@@ -51,7 +51,7 @@ class FeedbackBundleTest {
         assertFalse(all, all.contains("FAKETOKEN"))
         // 不带 sk-/gh_ 形状的凭证只能靠值替换去掉：这一条断言的就是值替换本身
         assertFalse(all, all.contains("plainpw-XYZ123"))
-        assertTrue(all, all.contains("HOME=/data/home"))
+        assertTrue(all, all.contains("CLAUDE_CODE_USE_BEDROCK=1"))
         assertTrue(all, all.contains("theme=dark"))
         assertTrue(all, all.contains("ANTHROPIC_API_KEY=[已去除]"))
     }
@@ -62,6 +62,50 @@ class FeedbackBundleTest {
         val all = entries(FeedbackBundle.build(draft, null, "v", emptyMap(), emptyMap())).values.joinToString("\n")
         assertFalse(all, all.contains("UNKNOWNKEY"))
         assertFalse(all, all.contains("abc.def.ghi"))
+    }
+
+    @Test
+    fun `only the agent's own environment variables go into the bundle, and credentials inside URLs are removed`() {
+        // 桌面把整份 System.getenv() 交进来：数据库地址里的口令、Webhook 地址、本机用户名都不该进一份要发给别人的包
+        val env = mapOf(
+            "ANTHROPIC_BASE_URL" to "https://relay-user:Relay-S3cretValue@relay.example.com/v1",
+            "DATABASE_URL" to "postgres://admin:Pg-S3cretValue@db:5432/app",
+            "SLACK_WEBHOOK_URL" to "https://hooks.slack.com/services/T000/B000/WebhookS3cretValue",
+            "USERNAME" to "alice-on-this-machine",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS" to "32000",
+        )
+        val all = entries(FeedbackBundle.build(FeedbackDraft("t", "b"), null, "v", env, emptyMap())).values.joinToString("\n")
+        for (leak in listOf("Relay-S3cretValue", "Pg-S3cretValue", "WebhookS3cretValue", "alice-on-this-machine")) assertFalse(leak + " in " + all, all.contains(leak))
+        assertTrue(all, all.contains("CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000"))
+        assertTrue(all, all.contains("ANTHROPIC_BASE_URL=https://[已去除]@relay.example.com/v1"))
+    }
+
+    @Test
+    fun `common credential shapes are removed from text even without a list of secrets (the phone has none)`() {
+        // 手机端没有凭证名单（env 与 settings 都是空表），全靠形状：常见几家的 key、JWT、私钥块、认证头、口令赋值、带口令的地址
+        val samples = listOf(
+            "AKIAABCDEFGHIJKLMNOP",
+            "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+            "xoxb-1234567890-abcdefghijkl",
+            "github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz",
+            "glpat-abcdefghij0123456789",
+            "hf_abcdefghijklmnopqrstuvwxyz0123456789",
+            "sk_live_abcdefghijklmnop0123",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----",
+            "Authorization: Basic dXNlcjpodW50ZXIyLXNlY3JldA==",
+            "password: hunter2-secret",
+            "MY_SERVICE_TOKEN=ZZ-plain-token-ZZ",
+            "https://bob:Url-S3cret@example.com/x",
+        )
+        val body = samples.joinToString("\n")
+        val all = entries(FeedbackBundle.build(FeedbackDraft("t", body), body, "v", emptyMap(), emptyMap())).values.joinToString("\n")
+        val markers = listOf(
+            "ABCDEFGHIJKLMNOP", "SyA1234567890", "1234567890-abcdefghijkl", "11ABCDEFG", "abcdefghij0123456789",
+            "abcdefghijklmnopqrstuvwxyz0123456789", "abcdefghijklmnop0123", "dozjgNryP4J3", "b3BlbnNzaC1rZXktdjEAAAAA",
+            "dXNlcjpodW50ZXIyLXNlY3JldA", "hunter2-secret", "ZZ-plain-token-ZZ", "Url-S3cret",
+        )
+        for (m in markers) assertFalse(m + " in " + all, all.contains(m))
     }
 
     @Test

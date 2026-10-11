@@ -970,6 +970,9 @@ class SessionRuntime private constructor(
             if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
             val s = _state.value
             if (s.turn != null) return
+            // 会话已由模型结束（EndConversation）：任何来源都不再开回合。send 之外还有子 agent 的报告、后台任务的通知、
+            // hook 唤醒、定时任务、界面的「继续」与压缩，只在 send 里拦的话它们照样把模型叫起来。输入照常进收件箱（日志里看得到）
+            if (s.ended) return
             if ((trigger == TurnTrigger.User || trigger == TurnTrigger.Notification || trigger == TurnTrigger.Hook || trigger == TurnTrigger.Cron) && s.inbox.isEmpty()) return
             turnJob = scope.launch {
                 val runner = TurnRunner(this@SessionRuntime)
@@ -1056,10 +1059,22 @@ class SessionRuntime private constructor(
             val quietSince = state.lastEventAtMs
             val runtime = SessionRuntime(log, state, deps, scope, hub)
             runtime.commit(planRecovery(state), Durability.Sync)
+            // --restricted 拒绝 bypassPermissions，对续接的会话同样成立：模式与锁都是上次启动（可能不受限）写进日志的，
+            // 这里不重新兑现的话，--resume / --continue 就把 bypass 原样带进受限会话，之后还能随时切回去
+            if (deps.settingsInputs.restricted) restrictedLockEvents(runtime.state.value).takeIf { it.isNotEmpty() }?.let { runtime.commit(it, Durability.Sync) }
             runtime.resumeBasis = ResumeBasis(quietSince, runtime.state.value.lastTurn?.turnId)
             runtime.cancelMcpElicitations(close = false)
             return runtime
         }
+    }
+}
+
+/** 受限启动续接一个会话时补上的事件：bypass 锁没上就上锁（与创建时的锁同一个字段），模式还是 bypass 就降为 Default 并说明 */
+internal fun restrictedLockEvents(s: SessionState): List<SessionEvent> = buildList {
+    if (!s.autoReviewSettings.disableBypassPermissionsMode) add(s.autoReviewSettings.copy(disableBypassPermissionsMode = true))
+    if (s.settings.mode == PermissionMode.BypassPermissions) {
+        add(SettingsChanged(mode = PermissionMode.Default))
+        add(Note(NoteLevel.Warning, "这次启动禁用了 ${PermissionMode.BypassPermissions}（--restricted），续接的会话改用 Default 模式"))
     }
 }
 

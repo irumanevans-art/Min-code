@@ -79,7 +79,7 @@ object SendUserFileTool : Tool<SendUserFileInput> {
     }
 
     override fun permissionAsk(input: SendUserFileInput, ctx: ToolContext) =
-        PermissionAsk(name, "把 ${input.files.joinToString("、") { it.value }} 发给用户")
+        PermissionAsk(name, "把 ${input.files.joinToString("、") { it.value }} 发给用户", paths = workspaceFileReads(input.files, ctx))
 
     override fun run(input: SendUserFileInput, ctx: ToolContext): Flow<ToolProgress> = flow {
         emit(ToolProgress.Done(send(input, ctx)))

@@ -32,7 +32,8 @@ internal fun ToolResult.effectEvents(state: SessionState, nowMs: Long): List<Ses
                 if (names.isEmpty()) continue
                 dev.min.agent.spi.McpToolsLoaded(names)
             }
-            is SessionEffect.ModeChange -> SettingsChanged(mode = effect.mode)
+            // 退出计划模式回到「进计划之前的模式」：那个模式若被锁（托管禁用，或 --restricted 续接了一个 bypass 会话）只能回到 Default
+            is SessionEffect.ModeChange -> SettingsChanged(mode = working.permittedMode(effect.mode))
             // 只改父会话对子 agent 的记账，Fold 在 ToolOutcome 上直接应用，不另写事件
             is SessionEffect.ReportDelivered -> continue
             is SessionEffect.TaskCreate ->
@@ -68,6 +69,11 @@ internal fun ToolResult.effectEvents(state: SessionState, nowMs: Long): List<Ses
     }
     return events
 }
+
+/** 这次启动锁住的模式（托管禁用、--restricted）换成 Default；其余原样 */
+internal fun SessionState.permittedMode(mode: PermissionMode): PermissionMode =
+    if (mode == PermissionMode.Auto && autoReviewSettings.disableAutoMode ||
+        mode == PermissionMode.BypassPermissions && autoReviewSettings.disableBypassPermissionsMode) PermissionMode.Default else mode
 
 /**
  * 一次模式变更之后的「进计划模式之前的模式」：从别的模式切进 Plan 时记下原模式；

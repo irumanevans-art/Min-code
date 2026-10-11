@@ -380,7 +380,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val condition = goal.condition ?: return false
         val now = deps.clock.nowMs()
         val minutes = goalCheckInMinutes(deps.env)
-        if (goalEvaluationDeferred(rt.background.runningCount())) {
+        if (goalEvaluationDeferred(rt.goalBackgroundWork().size)) {
             // 后台还在跑：这一回合不评估（挂起时刻照记）。check-in 到点就在这里送，让模型去看后台的输出
             return rt.goalCheckInAtTurnEnd(now, minutes) && promote(setOf(Delivery.Steer)) > 0
         }

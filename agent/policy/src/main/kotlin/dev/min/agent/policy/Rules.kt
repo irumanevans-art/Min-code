@@ -198,7 +198,8 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
     }
 }
 
-internal fun normalizePolicyPath(path: String): String {
+/** 去掉 `.`、`..` 与重复的斜杠（`..` 到根为止）。权限判定与按工作区边界检查路径的工具（[dev.min.agent.policy] 之外）共用这一份 */
+fun normalizePolicyPath(path: String): String {
     val parts = ArrayDeque<String>()
     for (part in path.split('/')) when (part) {
         "", "." -> Unit
