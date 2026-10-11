@@ -256,7 +256,14 @@ internal class BackgroundJobs(
         }
         val timeout = if (request.persistent) null else clampTimeout(request.timeoutMs)
         val id = deps.ids.next("mon")
-        val cwd = rt.state.value.settings.cwd
+        // 模型起的 watch 从 shell 目录起（原文没写 Monitor 的目录，按「同 Bash」处理，理由见 [shellStart]）；插件声明的常驻 watch 是会话级配置，
+        // 与哪次 cd 无关，仍从会话目录起
+        val cwd = if (request.persistent) rt.state.value.settings.cwd else {
+            val start = rt.shellStart()
+            // 起点失效：权限分析是按失效的目录做的，换个目录跑就成了没分析过的命令——不启动，让模型重发（Bash 同口径）
+            if (start.stale) return MonitorStart.Rejected("没有启动：上一条命令把 shell 带到的目录已经不存在，或不在项目目录与附加目录里了，已重置到项目目录。请重新发出这条 Monitor。")
+            start.dir
+        }
         return launchLock.withLock {
             val source = try {
                 CommandMonitorSource.start(

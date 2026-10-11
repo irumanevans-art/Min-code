@@ -331,6 +331,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             // --restricted（CC :123）：内置文件工具限制在工作目录内（PolicyEngine 里排在允许规则之前）
             confineToWorkingDirectories = deps.settingsInputs.restricted,
             guestIsolation = deps.host.exec.guestIsolation,
+            // 会话的 CLAUDE_ENV_FILE 目录：里面的脚本会在后续每条 Bash 命令前执行，模型不能自己写它（安全底线，见 SessionEnvFile.kt）
+            shellEnvDir = rt.envFiles.dir(),
         )
     }
 

@@ -37,6 +37,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -170,6 +171,49 @@ class SkillShellRunTest {
         val plain = project("build2", "!`make build`")
         val again = typed(rt, plain)
         assertTrue("got $again", again is SlashResult.Refused)
+    }
+
+    // ---- 起点目录：session shell 的当前目录（skills 页「How injected commands run」） ----
+
+    @Test
+    fun `a pre-run command starts in the shell directory Claude cd'd into, not the session directory`() = run {
+        setProjectSettings("""{"permissions":{"allow":["Bash(make build)"]}}""")
+        fs.files["/workspace/sub/keep"] = "k"
+        val rt = session()
+        rt.commit(listOf(dev.min.agent.spi.ShellCwdChanged(GuestPath("/workspace/sub"))), dev.min.agent.spi.Durability.Sync)
+        assertTrue(typed(rt, project("ship", "!`make build`")) is SlashResult.Expanded)
+        assertEquals("/workspace/sub", exec.runs.single().first.cwd.value)
+        assertEquals("预执行不改 shell 目录，也不把自己的 cd 带回去", GuestPath("/workspace/sub"), rt.state.value.shellCwd)
+    }
+
+    @Test
+    fun `without a cd the pre-run command starts in the session directory as before`() = run {
+        setProjectSettings("""{"permissions":{"allow":["Bash(make build)"]}}""")
+        val rt = session()
+        assertTrue(typed(rt, project("ship", "!`make build`")) is SlashResult.Expanded)
+        assertEquals("/workspace", exec.runs.single().first.cwd.value)
+    }
+
+    @Test
+    fun `a carried directory that is gone is reset before the decision and the command runs from the session directory`() = run {
+        setProjectSettings("""{"permissions":{"allow":["Bash(make build)"]}}""")
+        val rt = session()
+        // /workspace/gone 不存在：权限判定若按它解析、命令却在别处跑，就成了没分析过的命令——先重置，判定与起点同为会话目录
+        rt.commit(listOf(dev.min.agent.spi.ShellCwdChanged(GuestPath("/workspace/gone"))), dev.min.agent.spi.Durability.Sync)
+        assertTrue(typed(rt, project("ship", "!`make build`")) is SlashResult.Expanded)
+        assertEquals("/workspace", exec.runs.single().first.cwd.value)
+        assertNull(rt.state.value.shellCwd)
+    }
+
+    @Test
+    fun `a carried directory outside the project is not used either`() = run {
+        setProjectSettings("""{"permissions":{"allow":["Bash(make build)"]}}""")
+        fs.files["/elsewhere/x"] = "x"
+        val rt = session()
+        rt.commit(listOf(dev.min.agent.spi.ShellCwdChanged(GuestPath("/elsewhere"))), dev.min.agent.spi.Durability.Sync)
+        assertTrue(typed(rt, project("ship", "!`make build`")) is SlashResult.Expanded)
+        assertEquals("/workspace", exec.runs.single().first.cwd.value)
+        assertNull(rt.state.value.shellCwd)
     }
 
     // ---- allowed-tools 的生命周期：落日志，重开会话后原样恢复（不大于原来） ----

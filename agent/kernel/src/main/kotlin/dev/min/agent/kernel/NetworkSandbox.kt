@@ -26,7 +26,12 @@ internal suspend fun SessionRuntime.refreshNetworkSettings(): NetworkSettings {
     return settings
 }
 
-internal suspend fun SessionRuntime.runNetworkShell(callId: CallId, command: ShellCommand, options: ExecOptions, domains: List<String>): ExecResult {
+/**
+ * Bash、Monitor、Skill 预执行三条路径起 shell 的唯一出口。权限判定与网络批准都在它之前 / 之内按**原文**命令做；
+ * `CLAUDE_ENV_FILE` 的前导是在这里、判定之后才接到进程脚本前的（[SessionEnvFiles]），所以执行它不改变任何判定。
+ */
+internal suspend fun SessionRuntime.runNetworkShell(callId: CallId, request: ShellCommand, options: ExecOptions, domains: List<String>): ExecResult {
+    val command = envFiles.arm(request)
     val settings = refreshNetworkSettings()
     if (!settings.enabled) return deps.host.exec.run(command.copy(network = GuestNetwork.Offline), options)
     require(domains.all(NetworkRules::validPattern)) { "allowed_domains 含无效的域名或端口" }

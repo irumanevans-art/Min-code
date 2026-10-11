@@ -105,6 +105,8 @@ class MinHostPorts(private val current: () -> MinHostGeneration, tasks: MinBackg
             current().fs.writeAtomic(path, bytes)
             return path.value
         }
+        // 只给路径不写文件（CLAUDE_ENV_FILE 要在 hook 启动前把路径交给它）
+        override fun locate(name: String): String = artifactPath(session, name).value
     }
 }
 

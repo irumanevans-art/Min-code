@@ -52,4 +52,9 @@ Android 使用同一内核与既有 proot Exec。AgentSessionState.worktree 暴�
 - 内核（`ShellCwd.kt` 的 `runTrackedShell`）判范围：终点先折 `..`、再交宿主解符号链接，落在会话目录或附加目录之内才带过去，并记**真实路径**；出界则重置回项目目录，在那次结果末尾附 `Shell cwd was reset to <dir>`。起点目录没了或已出界（附加目录被撤）时**不执行**该命令：权限分析是按 shell 目录做的，换个目录跑就成了没分析过的命令。
 - 权限分析：Bash 命令里的相对路径与凭证目标按 shell 目录解析（`PolicyContext.shellCwd`，仅对 Bash）；规则里的相对写法与工作区范围仍以会话目录为准。worktree 隔离守卫同样从 shell 目录起算。
 - 子 agent 从不带；`CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR` 为真值时每条命令都从项目目录起；环境变量本来就不带。
-- shell 目录有效变化时触发 `CwdChanged` hook（`old_cwd` / `new_cwd`），hook 通用输入的 `cwd` 跟着 shell 目录走（原文「cwd follows Claude」）。`CLAUDE_ENV_FILE` 仍待 Bash 支持持久环境。
+- shell 目录有效变化时触发 `CwdChanged` hook（`old_cwd` / `new_cwd`），hook 通用输入的 `cwd` 跟着 shell 目录走（原文「cwd follows Claude」）。`CLAUDE_ENV_FILE` 见 `hooks设计.md` 末节。
+
+## Monitor 与 Skill 预执行的起点目录（2026-10-12）
+
+- Skill 的 `!` 预执行：原文（skills 页「How injected commands run」）明说「run each command in the session shell's current working directory」，与 Bash 共用工作目录。实现 `shellStart()`：主会话从 shell 目录起，子 agent 与 `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR` 为真时从会话目录起；带过来的目录失效（被删、出了范围）时**先重置再判定**，判定读到的 shell 目录与真正起进程的目录才是同一个。预执行里的 `cd` 不带回 shell 目录。
+- Monitor：原文只说权限与 Bash 同一套、没写目录，按「同 Bash」处理：模型起的 watch 从 shell 目录起（起点失效就拒绝这次启动，让模型重发，与 Bash 同口径）；插件声明的常驻 watch 是会话级配置，仍从会话目录起。权限分析把 Monitor 与 Bash 一样按 shell 目录解析相对路径与凭证目标（`PolicyEngine.runsShellCommand`），否则「分析的目录」与「实际跑的目录」是两个。

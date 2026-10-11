@@ -163,8 +163,11 @@ internal class HookDriver(private val rt: SessionRuntime) {
         ) return null
         val state = rt.state.value
         val processCwd = executionCwd ?: state.settings.cwd
+        // CLAUDE_ENV_FILE 只给 SessionStart / Setup / CwdChanged / FileChanged 的 command hook（原文：其他事件没有这个变量）；没有要跑的 shell 命令就不用备
+        val envFile = if (commandHandlers.isNotEmpty() || asyncHandlers.isNotEmpty()) rt.envFiles.forHook(event, target) else null
         val stdin = JsonObject(HookJson.encodeToJsonElement(HookInputCommon.serializer(), common(event, state)).jsonObject + specific)
         val env = buildMap {
+            envFile?.let { put("CLAUDE_ENV_FILE", it) }
             // 项目根：会话开始时的 cwd，cd 之后也不变（CC 的 CLAUDE_PROJECT_DIR 语义）；写成 shell 里看得见的路径
             put("CLAUDE_PROJECT_DIR", deps.hookShellPath(state.created.cwd))
             put("MIN_HOOK", "1")

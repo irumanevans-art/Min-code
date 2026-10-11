@@ -336,3 +336,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
   `cwd` 缺省 / null = 回到会话目录（出界重置、`cd` 回了项目根）；非 null 时是**真实路径**（符号链接已解），且在会话目录或附加目录之内。折叠进 `SessionState.shellCwd`；`cwd_changed` 一律把它清空（新会话目录才是起点），所以两类事件的相对顺序有意义。
   只有跑完的前台 Bash 才会写（超时、转后台、脚本里 `exit` 都不写）；子 agent 与设了 `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR` 的运行永远不写。旧日志没有它：重开等于 shell 在会话目录；含它的日志旧版本打不开。
   同一次变化会触发 `CwdChanged` hook（`old_cwd` / `new_cwd` 为 shell 目录前后），hook 通用输入的 `cwd` 字段跟着 shell 目录走（CC 原文「cwd follows Claude」）。
+
+- 无日志格式变化（2026-10-12，`CLAUDE_ENV_FILE`）：hook 往里追加 `export` 的脚本**不进事件日志**，放在会话附件目录的 `env/` 下（[ArtifactSink.locate] 给路径：桌面 `<home>/sessions/<id>/artifacts/env/`，Android `/root/.min/artifacts/<id>/env/`）。文件：`setup.sh`（Setup）、`sessionstart-<source>.sh`（SessionStart；`source` 取 startup / resume / clear / compact / fork，其余归 `other`）、`cwd.sh`（CwdChanged 与 FileChanged 共用，下一次 CwdChanged 触发时清空）。同一会话重开沿用这些文件，所以它们不属于「日志即真相」的折叠范围——和 shell 环境本身一样是宿主侧状态，丢了只是少了 hook 写过的变量，下一次对应的 hook 触发会重写。不新增事件、不改载荷：旧日志与旧版本不受影响。

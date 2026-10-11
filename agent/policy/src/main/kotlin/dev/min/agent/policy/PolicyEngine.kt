@@ -50,6 +50,11 @@ data class PolicyContext(
      * null = shell 就在 [cwd]
      */
     val shellCwd: GuestPath? = null,
+    /**
+     * 会话的 `CLAUDE_ENV_FILE` 目录（hook 写 `export`、每条 Bash 命令前被执行的脚本放在这里）。里面的内容等同 shell 启动脚本：
+     * 模型若能直接写它，就绕过了 Bash 命令自己的权限判定，所以写它是安全底线（任何模式都要人确认），与 `.bashrc` 同级。null = 没有
+     */
+    val shellEnvDir: GuestPath? = null,
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -228,6 +233,8 @@ object PolicyEngine {
             ?.let { return "要写手机上的真实文件 ${it.path}" }
         facts.paths.firstOrNull { it.kind == AccessKind.Write && protectedPath(it.path.value, facts.worktreeRoot) }
             ?.let { return "要改受保护的路径 ${it.path}（版本库元数据、agent 配置或 shell 启动脚本）" }
+        facts.shellEnvWrites.firstOrNull()
+            ?.let { return "要改会话的 shell 环境脚本 ${it.path}（后续每条 Bash 命令前都会执行它，等同 shell 启动脚本）" }
         facts.unresolvedWrites.firstOrNull { CommandSafety.isProtectedPath("/$it") }
             ?.let { return "要改受保护的文件 $it（版本库元数据、agent 配置或 shell 启动脚本）" }
         facts.commands.firstNotNullOfOrNull { CommandSafety.dangerReason(it, facts.commands) }?.let { return it }
@@ -364,6 +371,8 @@ object PolicyEngine {
         val specifiers: List<String>,
         val memoryDir: String?,
         val worktreeRoot: String?,
+        /** 这次调用里写进会话 shell 环境目录的路径（见 [PolicyContext.shellEnvDir]） */
+        val shellEnvWrites: List<PathAccess> = emptyList(),
     ) {
         val untrusted: Boolean get() = untrustedRaw.isNotEmpty()
 
@@ -412,8 +421,9 @@ object PolicyEngine {
                 val credentialTargets = ask.paths.map { it.path }.toMutableList()
                 // 按顺序跟踪 cd：`cd /sdcard && echo x > a` 写的是 /sdcard/a。管道里的 cd 其实不生效，这里一律当生效（宁可多问）
                 // Bash 的命令是从 shell 当前目录（cd 带过来的）开始跑的：相对路径、凭证目标都按它解析，不能按会话目录。
-                // 只对 Bash：Monitor 等其他带命令的工具仍从会话目录起跑，按 shell 目录分析反而会错位
-                val start = (if (ask.tool == "Bash") context.shellCwd else null) ?: context.cwd
+                // Bash 与 Monitor（原文没写 Monitor 的目录，按「同 Bash」处理，见 BackgroundJobs）都从 shell 目录起；
+                // Skill 的预执行命令以 Bash 的名义送判，同样从那里起
+                val start = (if (runsShellCommand(ask.tool)) context.shellCwd else null) ?: context.cwd
                 var cwd: String? = start.value
                 var credentialCwd: String? = start.value
                 for (cmd in commands) {
@@ -455,6 +465,14 @@ object PolicyEngine {
                         credentialCwd = nextCwd(cmd, credentialCwd, context, normalize=false)
                     }
                 }
+                val allPaths = ask.paths.map {
+                    val path = GuestPath(normalize(it.path.value))
+                    it.copy(path = path, scope = if (it.scope == PathScope.Device) it.scope else scope(path, context))
+                } + redirectWrites + redirectReads + filePaths
+                // 写进会话 shell 环境目录：字面路径与解析后的真实路径都比（链接不能把写入带进去）
+                val envDir = context.shellEnvDir?.let { normalize(it.value) }
+                val envDirReal = context.shellEnvDir?.let { normalize(context.canonicalPath(it).value) }
+                fun inEnvDir(p: String) = listOfNotNull(envDir, envDirReal).any { p == it || p.startsWith(it.trimEnd('/') + "/") }
                 return Facts(
                     tool = ask.tool,
                     commands = commands,
@@ -467,15 +485,13 @@ object PolicyEngine {
                     fileCommandsCovered = fileCommandsCovered && gitAfterCd.isEmpty(),
                     gitAfterCd = gitAfterCd,
                     unresolvedWrites = unresolved,
-                    paths = ask.paths.map {
-                        val path = GuestPath(normalize(it.path.value))
-                        it.copy(path = path, scope = if (it.scope == PathScope.Device) it.scope else scope(path, context))
-                    } + redirectWrites + redirectReads + filePaths,
+                    paths = allPaths,
                     domains = ask.domains,
                     credentialTargets = credentialTargets,
                     specifiers = ask.specifiers,
                     memoryDir = context.autoMemoryDir?.let { normalize(it.value) },
                     worktreeRoot = context.worktreeRoot?.let { normalize(it.value) },
+                    shellEnvWrites = allPaths.filter { it.kind == AccessKind.Write && (inEnvDir(it.path.value) || inEnvDir(normalize(context.canonicalPath(it.path).value))) },
                 )
             }
 

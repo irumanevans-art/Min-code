@@ -7,6 +7,7 @@ import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.ShellCwdProbe
+import dev.min.agent.spi.ShellPreamble
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +56,9 @@ class LocalExec(
 
         // 结束目录写进宿主自己的临时文件、不走输出流（[ShellCwdProbe]）：输出、日志、后台通知里都不会出现标记
         val cwdFile = if (command.trackCwd) logDir.resolve("$id.cwd") else null
-        val script = if (cwdFile != null) ShellCwdProbe.wrap(command.script, bashPath(cwdFile), pwdCommand = if (windows) "command pwd -W" else "command pwd") else command.script
+        // 前导（CLAUDE_ENV_FILE）接在探针的 eval 外面：export 要留在同一个 shell 里，用户脚本里的 exit 也吞不掉它
+        val body = if (cwdFile != null) ShellCwdProbe.wrap(command.script, bashPath(cwdFile), pwdCommand = if (windows) "command pwd -W" else "command pwd") else command.script
+        val script = ShellPreamble.apply(command.preamble, body)
         val endCwd = AtomicReference<String?>(null)
 
         val launch = LocalExecLaunch(shell, logDir, id)

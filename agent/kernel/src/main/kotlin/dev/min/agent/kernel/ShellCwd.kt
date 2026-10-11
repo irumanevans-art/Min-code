@@ -86,3 +86,27 @@ private suspend fun SessionRuntime.moveShellCwd(from: GuestPath, stored: GuestPa
     val to = stored ?: state.value.settings.cwd
     if (from != to) runCwdChangedHooks(from, to)
 }
+
+/** [shellStart] 的结果：起点目录；[stale] = 带过来的目录已经失效（被删、出了范围），已重置回会话目录 */
+internal data class ShellStart(val dir: GuestPath, val stale: Boolean = false)
+
+/**
+ * 不跟踪目录的 shell 命令（Monitor、Skill 的 `!` 预执行）从哪个目录起。
+ * 原文（skills 页「How injected commands run」）：skill 的预执行命令「run each command in the session shell's current working directory.
+ * That directory moves when Claude runs `cd`」，且「the same way it runs Claude's own shell commands」；Monitor 的原文没写目录，
+ * 只说权限与 Bash 同一套，所以也按 Bash 的口径：从 shell 目录起。理由还有一条：这两处的权限分析（[PolicyContext.shellCwd]）本来就按 shell
+ * 目录解析相对路径与凭证目标，起点若是会话目录，分析的与实际跑的就是两个目录。
+ *
+ * 子 agent、`CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR` 为真时与 Bash 一样一律从会话目录起。带过来的目录失效时重置（同 [runTrackedShell]）并报 [ShellStart.stale]：
+ * 调用方要在**判定之前**取起点（重置后判定读到的就是会话目录），Monitor 这种判定在前、起进程在后的，遇到 stale 就拒绝这次启动。
+ * 这些命令的 `cd` 不带回 shell 目录（它们不是「Claude 在主会话里敲的 cd」）。
+ */
+internal suspend fun SessionRuntime.shellStart(): ShellStart {
+    val s = state.value
+    val project = s.settings.cwd
+    if (s.origin != null || isTruthyEnv(deps.env(MAINTAIN_PROJECT_DIR_ENV))) return ShellStart(project)
+    val carried = s.shellCwd ?: return ShellStart(project)
+    if (withinScope(carried) && isDirectory(carried)) return ShellStart(carried)
+    moveShellCwd(carried, null)
+    return ShellStart(project, stale = true)
+}

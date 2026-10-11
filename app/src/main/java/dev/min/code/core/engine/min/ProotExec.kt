@@ -7,6 +7,7 @@ import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.ShellCwdProbe
+import dev.min.agent.spi.ShellPreamble
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -59,7 +60,9 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         val log = File(logDir, "$id.log").apply { createNewFile() }
         // 结束目录写进 guest 里的临时文件、不走输出流（[ShellCwdProbe]）：日志与通知里不会出现标记，输出截断也丢不了
         val cwdFile = if (command.trackCwd) File(logDir, "$id.cwd") else null
-        val script = if (cwdFile != null) ShellCwdProbe.wrap(command.script, "/root/.min/exec-logs/$id.cwd") else command.script
+        // 前导（CLAUDE_ENV_FILE）接在探针的 eval 外面：export 要留在同一个 shell 里，用户脚本里的 exit 也吞不掉它
+        val body = if (cwdFile != null) ShellCwdProbe.wrap(command.script, "/root/.min/exec-logs/$id.cwd") else command.script
+        val script = ShellPreamble.apply(command.preamble, body)
         val process = host.launch(agentCommandContext(base, command.cwd, script).copy(env = command.env,
             isolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand(command.network)), log)
         val task = Running(id, process, log, options.timeoutMs, cwdFile) { running.remove(id) }
