@@ -83,7 +83,7 @@ internal class Worktrees(private val rt: SessionRuntime) : WorktreePort {
         val exclude = resolved(git(root, "rev-parse", "--git-path", "info/exclude").trim(), root)
         val old = if (deps.host.fs.stat(exclude) != null) deps.host.fs.read(exclude).decodeToString() else ""
         if ("/.claude/worktrees/" !in old.lineSequence().toList()) deps.host.fs.writeAtomic(exclude, (old.trimEnd() + "\n/.claude/worktrees/\n").encodeToByteArray())
-        val settings = deps.memoryHome?.let { dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, it) }
+        val settings = deps.memoryHome?.let { dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, it, inputs = deps.settingsInputs) }
         val baseRef = (settings?.merged?.layers?.asReversed()?.firstNotNullOfOrNull { it.raw["worktree"] } as? kotlinx.serialization.json.JsonObject)?.get("baseRef")?.jsonPrimitive?.content
         // 远端基线过期时尽力刷新，离线或超时沿用缓存；既有 Exec 负责超时回收。
         if (baseRef != "head" && gitOrNull(root, "symbolic-ref", "refs/remotes/origin/HEAD") != null) {

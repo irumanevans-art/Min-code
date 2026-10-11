@@ -68,6 +68,12 @@ data class CliArgs(
     val bare: Boolean = false,
     /** `--safe-mode`（CC :125）：排障档，用户与项目层的定制全不加载；托管 hooks 照常 */
     val safeMode: Boolean = false,
+    /** `--tools`（CC :136）：内置工具表点名收窄；null = 预设（`default` 或没给，不收窄），空集 = 不给任何内置工具 */
+    val tools: Set<String>? = null,
+    /** `--restricted`（CC :123）：受限启动（去掉跑命令的内置工具与 WebFetch，文件工具限在工作目录，只读托管与 --settings，拒绝 bypassPermissions） */
+    val restricted: Boolean = false,
+    /** `--settings`（CC :128）：文件或内联 JSON 已读好的一份会话级设置；null = 没给 */
+    val settings: dev.min.agent.ext.config.CliSettings? = null,
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
@@ -112,6 +118,12 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
                          MCP、命令与 agents、输出样式、工作流、自动记忆）；托管层的 hooks 照常生效，
                          托管的插件、skills、CLAUDE.md、MCP 也不加载；权限与内置工具照常；
                          CLAUDE_CODE_SAFE_MODE=1 等效；两者同时给报错（原文没规定并存）
+  --settings <文件或 JSON> 会话级设置（CC 同名）：盖过三个 settings.json，managed 仍盖过它；相对 --cwd 解析；文件不超过 2 MiB
+  --restricted           受限启动（CC 同名）：去掉跑命令的内置工具（Bash、Monitor）、Workflow 与 WebFetch（--tools 逐个点名才放回）；
+                         内置文件工具只能碰工作目录（cwd 与 additionalDirectories）；只读托管层与 --settings（用户、项目、local 设置不读）；
+                         拒绝 bypassPermissions。云会话 Min 没有，不涉及
+  --tools <名字,...>     限定内置工具表（CC 同名）：逗号或空格分隔；default 为预设（不限定）；""（空串）为不给任何内置工具；
+                         未知工具名报错。只管内置工具，MCP 工具照常
   --no-browser           MCP OAuth 打印授权 URL，手工粘贴回调 URL
   --search-backend <id>  brave / tavily / searxng；也可用 MIN_AGENT_SEARCH_BACKEND
   --search-url <id>      SearXNG 基础地址，也可用 MIN_AGENT_SEARXNG_URL
@@ -134,11 +146,12 @@ private val VALUE_ARGS = setOf(
     "--max-output", "--effort", "--mode", "--approve", "--cwd", "--output-format", "--resume", "--search-backend",
     "--search-url", "--fast-model", "--max-web-searches", "--web-cache-ttl-ms", "--web-deadline-ms", "--max-turns",
     "--json-schema", "--name", "-n", "--fallback-model", "--auto-mode-reviewer", "--max-budget-usd", "--model-timeout-ms",
+    "--tools", "--settings",
 )
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
     "--include-partial-messages", "--forward-subagent-text", "--no-browser",
-    "--bare", "--safe-mode",
+    "--bare", "--safe-mode", "--restricted",
 )
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -174,6 +187,10 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         value.toIntOrNull()?.takeIf { it > 0 } ?: throw UsageException("$name 必须是正整数")
     }
 
+    // --restricted 拒绝 bypassPermissions（CC :123）：启动时就报错，不让它先起来再降级
+    if ("--restricted" in flags && values["--mode"]?.equals("bypassPermissions", ignoreCase = true) == true) {
+        throw UsageException("--restricted 不允许 bypassPermissions（--mode bypassPermissions 与受限启动互斥）")
+    }
     // --print 是 -p 的长形（CC :116）：同一个提示词，两边都给是写错了
     if (values["-p"] != null && values["--print"] != null) throw UsageException("-p 与 --print 只能给一个")
     // 两个档位参数互斥：CC 原文没规定并存的行为，报用法错误比悄悄选一个稳（环境变量的冲突在 resolveCustomizations 里同样报）
@@ -287,6 +304,9 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         pluginDirs = pluginDirs,
         bare = "--bare" in flags,
         safeMode = "--safe-mode" in flags,
+        tools = values["--tools"]?.let(::parseToolsArg),
+        restricted = "--restricted" in flags,
+        settings = values["--settings"]?.let { readSettingsArg(it, values["--cwd"]?.let { p -> Path.of(p) } ?: cwdDefault) },
         wire = values["--wire"]?.let {
             when (it) {
                 "anthropic" -> Wire.AnthropicMessages
@@ -297,6 +317,64 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         },
     )
 }
+
+/**
+ * `--tools` 的取值（CC :136）：逗号或空格分隔的工具名。空串（或只有空白）= 不给任何内置工具（返回空集）；
+ * `default` = 预设，返回 null（不收窄），与具体名字混用是写错了，报错。未知名报错并列出可用的名字——
+ * 静默忽略写错的工具名，会让人以为某个工具已经关掉了
+ */
+internal fun parseToolsArg(raw: String): Set<String>? {
+    val names = raw.split(Regex("[,\\s]+")).filter { it.isNotEmpty() }
+    if (names.isEmpty()) return emptySet()
+    if ("default" in names) {
+        if (names.size > 1) throw UsageException("--tools 的 default 是预设，不能和具体工具名混用")
+        return null
+    }
+    val unknown = names.filterNot { it in ALL_BUILTIN_TOOL_NAMES }
+    if (unknown.isNotEmpty()) {
+        throw UsageException("--tools 不认识的工具：${unknown.joinToString("、")}。可用的内置工具：" +
+            ALL_BUILTIN_TOOL_NAMES.sorted().joinToString("、"))
+    }
+    return names.toSet()
+}
+
+/**
+ * `--settings` 的取值（CC :128）：以 `{` 开头的是内联 JSON；否则是文件路径，相对 [cwd]（会话的工作目录）解析，
+ * 必须是普通文件且不超过 2 MiB（CC 原文）。JSON 解析失败、或不是对象，在启动时报用法错误——设置错了却悄悄不生效，
+ * 比停下来更危险（与 --json-schema 同一个口径）
+ */
+internal fun readSettingsArg(raw: String, cwd: Path): dev.min.agent.ext.config.CliSettings {
+    val label: String
+    val text: String
+    if (raw.trimStart().startsWith("{")) {
+        label = "--settings"
+        text = raw
+    } else {
+        val file = cwd.resolve(raw).toAbsolutePath().normalize()
+        if (!java.nio.file.Files.isRegularFile(file)) {
+            throw UsageException("--settings 找不到文件 $file（内联 JSON 要以 { 开头）")
+        }
+        if (java.nio.file.Files.size(file) > SETTINGS_FILE_MAX_BYTES) {
+            throw UsageException("--settings 文件超过 2 MiB：$file")
+        }
+        text = try {
+            java.nio.file.Files.readString(file)
+        } catch (e: java.io.IOException) {
+            throw UsageException("读不了 --settings 的文件 $file：${e.message}")
+        }
+        label = file.toString()
+    }
+    val parsed = try {
+        dev.min.agent.protocol.AgentJson.parseToJsonElement(text)
+    } catch (e: kotlinx.serialization.SerializationException) {
+        throw UsageException("--settings 不是合法的 JSON：${e.message?.lineSequence()?.firstOrNull()}")
+    }
+    if (parsed !is kotlinx.serialization.json.JsonObject) throw UsageException("--settings 必须是一个 JSON 对象（设置文件的内容）")
+    return dev.min.agent.ext.config.CliSettings(label, text)
+}
+
+/** `--settings` 文件的大小上限（CC cli-reference :128：regular file no larger than 2 MiB） */
+private const val SETTINGS_FILE_MAX_BYTES = 2L * 1024 * 1024
 
 /**
  * `--json-schema` 的取值：要么是 schema 的 JSON 文本，要么 `@文件路径`（内容整份当 schema）。

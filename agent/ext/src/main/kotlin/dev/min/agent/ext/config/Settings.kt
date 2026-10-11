@@ -14,6 +14,8 @@ enum class ConfigSource(val label: String) {
     User("user"),
     Project("project"),
     Local("local"),
+    /** `--settings`（CC :128）：会话级的一份设置，排在 local 之上、managed 之下 */
+    Cli("cli"),
     Plugin("plugin"),
 }
 
@@ -163,7 +165,9 @@ class MergedSettings internal constructor(
     fun hookSnapshot(trustProject: Boolean): HookSnapshot {
         val notes = mutableListOf<String>()
         val effective = layers.filter { layer ->
-            val trusted = trustProject || layer.source == ConfigSource.User || layer.source == ConfigSource.Managed
+            // --settings 是用户自己在命令行给的（与 user 层同等可信）：它的 hooks 不受「工作区未信任」约束
+            val trusted = trustProject || layer.source == ConfigSource.User || layer.source == ConfigSource.Managed ||
+                layer.source == ConfigSource.Cli
             if (!trusted) {
                 val parts = buildList {
                     layer.hooks?.let { add("带了 ${it.size} 个事件的 hooks") }

@@ -15,7 +15,7 @@ private val networkSettingsWriteLock = Mutex()
 internal suspend fun SessionRuntime.refreshNetworkSettings(): NetworkSettings {
     val home = deps.memoryHome ?: return state.value.networkSettings
     val cwd = state.value.settings.cwd
-    val snapshot = SettingsLoader.load(deps.host.fs, cwd, home)
+    val snapshot = SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs)
     val trust = deps.trustProjectHooks(cwd)
     val locals = trustedLocalSettings(deps, snapshot, cwd, trust || state.value.created.headless)
     // 企业策略损坏不能放宽网络，也不能让纯本地回合失败；强制代理拒绝所有目标，关在连接这一侧。

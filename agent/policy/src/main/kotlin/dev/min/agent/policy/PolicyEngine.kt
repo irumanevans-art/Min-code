@@ -37,6 +37,12 @@ data class PolicyContext(
     val worktreeRoot: GuestPath? = null,
     val autoHardDeny: List<String> = emptyList(),
     val classifyAllShell: Boolean = false,
+    /**
+     * CC `--restricted`（cli-reference :123）：内置文件工具只能碰工作目录（cwd 与 additionalDirectories，即 [PathScope.Workspace]）。
+     * 为真时，这次调用碰到任何工作目录外的路径都直接拒绝：它排在允许规则与模式之前，所以允许规则、acceptEdits、
+     * bypass 都越不过去（bypass 在受限会话里本来也不许开，见 KernelDeps.settingsInputs）
+     */
+    val confineToWorkingDirectories: Boolean = false,
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -82,6 +88,17 @@ object PolicyEngine {
         // 宿主凭证不能经工具进入模型或事件；这个拒绝不能降级为可由用户或 hook 批准的询问。
         if (facts.credentialTargets.any { credentialPath(it, context, includeAncestors = runsShellCommand(facts.tool)) }) {
             return Verdict.Deny(DecidedBy.Mode(context.mode), "这是 Min 保存的凭证文件，工具不能读取、搜索或修改它。")
+        }
+
+        // 受限会话的工作目录线（CC :123）：在规则之前拒绝，不能被允许规则或模式放行，也不降级为询问——人点一下就能过的，不算限制
+        if (context.confineToWorkingDirectories) {
+            facts.paths.firstOrNull { it.scope != PathScope.Workspace }?.let { outside ->
+                return Verdict.Deny(
+                    DecidedBy.Mode(context.mode),
+                    "受限模式（--restricted）：只能读写工作目录（cwd 与 additionalDirectories）里的文件，${outside.path.value} 不在里面。" +
+                        "不要原样重试，换工作目录内的做法。",
+                )
+            }
         }
 
         val deny = context.rules.filter { it.kind == RuleKind.Deny }

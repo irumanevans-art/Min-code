@@ -72,7 +72,7 @@ internal class Recapper(private val rt: SessionRuntime) {
     /** settings 的 `awaySummaryEnabled`；读不到当没写（回顾不该因为配置读不出来而失败） */
     private suspend fun settingValue(state: SessionState): Boolean? {
         val home = deps.memoryHome ?: return null
-        return catchingNonCancellation { SettingsLoader.load(deps.host.fs, state.created.cwd, home) }
+        return catchingNonCancellation { SettingsLoader.load(deps.host.fs, state.created.cwd, home, inputs = deps.settingsInputs) }
             .getOrNull()?.merged?.awaySummaryEnabled()
     }
 

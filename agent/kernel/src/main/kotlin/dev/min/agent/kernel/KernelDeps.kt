@@ -185,6 +185,11 @@ class KernelDeps(
     val pushSink: dev.min.agent.spi.PushSink = dev.min.agent.spi.PushSink.Unavailable,
     /** SendUserFile 的宿主出口（把文件交给用户的设备）。默认不可用：工具照实回告「没有送达」 */
     val userFileSink: dev.min.agent.spi.UserFileSink = dev.min.agent.spi.UserFileSink.Unavailable,
+    /**
+     * 这次启动读哪些设置（`--settings` 的一份、CC `--restricted` 的层限制）。每次会话创建、换目录、重读设置都经这里，
+     * 所以子会话与分身自然跟随父会话；宿主在组合根给一次。
+     */
+    val settingsInputs: dev.min.agent.ext.config.SettingsInputs = dev.min.agent.ext.config.SettingsInputs(),
 ) {
     init {
         require(maxWebSearches > 0) { "搜索会话上限必须是正整数。" }

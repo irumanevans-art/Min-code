@@ -129,6 +129,30 @@ private val CRON_TOOL_NAMES = setOf("CronCreate", "CronDelete", "CronList", "Sch
 internal val DESKTOP_TOOLS: List<Tool<*>> = desktopTools()
 
 /**
+ * 全部内置工具的名字（不论这次启动配没配搜索、是不是交互、有没有定时）：`--tools` 据此报未知名。
+ * 名字不在这里 = 不是 Min 的内置工具（写错了，或是 MCP 工具——后者 `--tools` 不管）
+ */
+internal val ALL_BUILTIN_TOOL_NAMES: Set<String> by lazy { desktopTools(searchConfigured = true).map { it.name }.toSet() }
+
+/**
+ * `--tools`（CC :136）：内置工具表按点名收窄；null = 预设，不收窄。表序不变（稳定前缀，见 [desktopTools]）。
+ * 只收窄内置工具，MCP 工具不经这里
+ */
+internal fun selectTools(all: List<Tool<*>>, named: Set<String>?, restricted: Boolean = false): List<Tool<*>> {
+    val byName = if (named == null) all else all.filter { it.name in named }
+    if (!restricted) return byName
+    // --restricted（CC :123）：去掉的几个只有逐个点名才放回；default 预设不算点名
+    return byName.filter { it.name !in RESTRICTED_REMOVED_TOOLS || named != null && it.name in named }
+}
+
+/**
+ * CC `--restricted` 去掉的内置工具（原文：「the built-in tools that run commands or code, and WebFetch」）：
+ * Bash 与 Monitor（跑 shell 命令）、WebFetch。Workflow（跑 JavaScript）不在这张表里，由内核在 availableTools 里去掉。
+ * NotebookEdit 只改笔记本单元格、不执行，照原文不算。
+ */
+internal val RESTRICTED_REMOVED_TOOLS: Set<String> = setOf("Bash", "Monitor", "WebFetch")
+
+/**
  * 桌面宿主的组合根：把内核与各个端口实现装在一起（docs/agent/02-总体架构.md §2：构造注入，一处组装）。
  * 模型能力来自随包目录，命令行可以覆盖或描述目录外的模型。
  */
@@ -160,6 +184,8 @@ internal class DesktopApp(
      * deps 交给内核，config() / hub() 的加载点读同一份
      */
     private val customizations = resolveCustomizations(args.bare, args.safeMode)
+    /** 这次启动读哪些设置：`--settings` 的一份（CC :128）。内核与 config() 读同一份 */
+    private val settingsInputs = dev.min.agent.ext.config.SettingsInputs(cli = args.settings, restricted = args.restricted)
     private val fastSelection = args.fastModel?.let {
         resolveModel(args.copy(model = it, contextWindow = null, maxOutput = null), Catalog.bundled())
     }
@@ -177,6 +203,12 @@ internal class DesktopApp(
      */
     internal suspend fun hub(): SessionHub = hubInstance ?: run {
         val config = config()
+        // --restricted 拒绝 bypassPermissions（CC :123）：设置里写了 defaultMode bypassPermissions 也在启动时报错。
+        // 说明：Min 目前不把 permissions.defaultMode 用作会话模式（模式只由 --mode 定），所以这里是显式的启动错误，
+        // 运行中的切换由内核的锁拦（KernelDeps.settingsInputs.restricted → disableBypassPermissionsMode）
+        if (args.restricted && config.settings.merged.permissions.defaultMode == "bypassPermissions") {
+            throw UsageException("--restricted 不允许 bypassPermissions：设置里的 permissions.defaultMode 写了它，去掉它或改掉")
+        }
         fallback = resolveFallbackModels(args, Catalog.bundled(), config.settings.merged.fallbackModelSetting(), selection)
         fallback.notes.forEach { System.err.println(it) }
         validateBudgetPricing()
@@ -184,8 +216,8 @@ internal class DesktopApp(
         val interactive = args.prompt == null
         val cronEnabled = !cronDisabledBy(System::getenv)
         // --bare：工具表收窄到 CC 点名的那几个（其余档位全表）
-        val tools = desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive, cronEnabled,
-            bare = customizations == dev.min.agent.kernel.Customizations.Bare)
+        val tools = selectTools(desktopTools(config.agents.map { AgentType(it.name, it.description) }, searchBackend != null, interactive, cronEnabled,
+            bare = customizations == dev.min.agent.kernel.Customizations.Bare), args.tools, restricted = args.restricted)
         toolNamesCache = tools.map { it.name }
         val limits = HUB_LIMITS.copy(
             teamMaxConcurrent = teamMaxConcurrentFrom(config.settings.merged.raw("teamMaxConcurrent"), System.err::println),
@@ -236,7 +268,7 @@ internal class DesktopApp(
     private var pluginBundle: dev.min.agent.ext.plugins.PluginBundle? = null
     suspend fun config(): ClaudeConfig {
         configInstance?.let { return it }
-        val base = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome)
+        val base = ClaudeConfigLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome, inputs = settingsInputs)
         // --bare / --safe-mode：skills / 命令 / 子 agent 定义（含托管层）这次启动不发现（CC :72/:125 的跳过清单；
         // safe 原文的托管保留清单里也没有它们）。settings 照常读——权限规则、模型等键不在清单里
         val definitions = if (customizations == dev.min.agent.kernel.Customizations.Full) base
@@ -250,6 +282,8 @@ internal class DesktopApp(
             trust = { root -> pluginTrusted(root, paths.guestOfHost(args.cwd)) }, secrets = dev.min.agent.ext.plugins.PluginSecretStore(mcpTokens),
             installedPath = { paths.guestOfHost(java.nio.file.Path.of(it)) }, shellPath = { it.value },
             installed = customizations == dev.min.agent.kernel.Customizations.Full,
+            // --restricted（Min 的解释）：安装索引不是来源，只剩托管 / --settings 启用与 --plugin-dir
+            installIndex = !args.restricted,
         )
         pluginBundle = plugins
         return definitions.copy(skills = definitions.skills + plugins?.skills.orEmpty(), commands = definitions.commands + plugins?.commands.orEmpty(),
@@ -279,7 +313,7 @@ internal class DesktopApp(
     /** /output-style 用：磁盘上的样式（managed + 用户 + 项目链，近者胜），与内核会话创建时同一套读法 */
     suspend fun outputStyles(): Map<String, dev.min.agent.ext.styles.OutputStyleDef> {
         config()
-        return dev.min.agent.ext.styles.OutputStyleFiles.available(paths.fs, paths.guestOfHost(args.cwd), userHome) + pluginBundle?.styles.orEmpty()
+        return dev.min.agent.ext.styles.OutputStyleFiles.available(paths.fs, paths.guestOfHost(args.cwd), userHome, includeUser = !args.restricted) + pluginBundle?.styles.orEmpty()
     }
 
     /** /output-style 写回的位置：项目 `.claude/settings.local.json`（CC 同一个键，互通） */
@@ -427,6 +461,7 @@ internal class DesktopApp(
             pluginTrust = { root, cwd -> pluginTrusted(root, cwd) },
             // 这次启动的定制档位（--bare / --safe-mode）：内核的各加载点从这里读，子会话共用同一个 deps 自然跟随
             customizations = customizations,
+            settingsInputs = settingsInputs,
         )
     }
 

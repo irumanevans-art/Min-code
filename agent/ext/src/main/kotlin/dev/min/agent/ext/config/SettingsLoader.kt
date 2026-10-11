@@ -8,11 +8,23 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 /**
+ * `--settings` 的文本（CC cli-reference :128）：宿主把文件读好或拿到内联 JSON，交给 [SettingsLoader]；[label] 是给人看的来源名（文件路径或 `--settings`）
+ */
+data class CliSettings(val label: String, val text: String)
+
+/**
+ * 这次启动读哪些设置（[SettingsLoader.load] 的输入，经 [dev.min.agent.kernel.KernelDeps.settingsInputs] 进内核）：
+ * - [cli]：`--settings` 的一份；
+ * - [restricted]：CC `--restricted`（cli-reference :123）：只读托管层与 [cli]，用户 / 项目 / local 层都不读。
+ */
+data class SettingsInputs(val cli: CliSettings? = null, val restricted: Boolean = false)
+
+/**
  * 发现并读取 Claude Code 的设置文件（docs/agent/04-子系统设计.md §4.7），合并成 [SettingsSnapshot]。
  * 纯逻辑，只经 [WorkspaceFs] 读文件；**只读**，不写任何东西，也不执行 hooks。
  *
- * 优先级高 → 低（CC settings 文档）：managed > `.claude/settings.local.json` > `.claude/settings.json` > `~/.claude/settings.json`。
- * （`claude --settings` 与 `~/.claude.json` 不在这里：前者是会话级输入，后者是登录与 MCP 状态，不是设置文件。）
+ * 优先级高 → 低（CC settings 文档）：managed > `--settings`（[SettingsInputs.cli]） > `.claude/settings.local.json` > `.claude/settings.json` > `~/.claude/settings.json`。
+ * （`~/.claude.json` 不在这里：它是登录与 MCP 状态，不是设置文件。）
  *
  * **项目目录怎么定**——CC 文档（settings.md「Where Claude Code keeps the local file」）：
  * - `.claude/settings.json` 只读**会话主工作目录**（cwd）下的那一份，**不往上找**；文档原文：
@@ -39,6 +51,7 @@ object SettingsLoader {
         cwd: GuestPath,
         home: GuestPath,
         managedPath: GuestPath = DEFAULT_MANAGED_PATH,
+        inputs: SettingsInputs = SettingsInputs(),
     ): SettingsSnapshot {
         val io = ConfigIo(fs)
         val cwdPath = GuestPaths.normalize(cwd.value)
@@ -53,16 +66,28 @@ object SettingsLoader {
             layers += SettingsReader.layer(source, path, GuestPath(baseDir), raw, notes)
         }
 
-        val userFile = GuestPaths.join(userDir, "settings.json")
-        read(ConfigSource.User, userFile, userDir)
+        // --restricted（CC :123）：用户、项目、local 三层一个都不读——评测机上的人的设置不能影响受限会话。
+        // 不读的时候连 git 根也不找（找到了也不读，白走一趟文件系统）
+        if (!inputs.restricted) {
+            val userFile = GuestPaths.join(userDir, "settings.json")
+            read(ConfigSource.User, userFile, userDir)
 
-        val projectFile = GuestPaths.join(cwdPath, ".claude/settings.json")
-        if (projectFile != userFile) read(ConfigSource.Project, projectFile, cwdPath)
+            val projectFile = GuestPaths.join(cwdPath, ".claude/settings.json")
+            if (projectFile != userFile) read(ConfigSource.Project, projectFile, cwdPath)
 
-        read(ConfigSource.Local, GuestPaths.join(cwdPath, ".claude/settings.local.json"), cwdPath)
-        val root = gitRoot(io, cwdPath)
-        if (root != null && root != cwdPath && root != homePath) {
-            read(ConfigSource.Local, GuestPaths.join(root, ".claude/settings.local.json"), cwdPath)
+            read(ConfigSource.Local, GuestPaths.join(cwdPath, ".claude/settings.local.json"), cwdPath)
+            val root = gitRoot(io, cwdPath)
+            if (root != null && root != cwdPath && root != homePath) {
+                read(ConfigSource.Local, GuestPaths.join(root, ".claude/settings.local.json"), cwdPath)
+            }
+        }
+
+        // --settings（CC :128）：文本已由宿主读好（文件或内联 JSON）。坏 JSON 在 [SettingsReader.parseObject] 里记 note 并跳过
+        // 层的 path 只作身份（不是要读的文件，也不参与 local 的信任判定）：用 guest 绝对路径占位，说明文字用 label
+        inputs.cli?.let { cli ->
+            SettingsReader.parseObject(cli.text, cli.label, notes)?.let { raw ->
+                layers += SettingsReader.layer(ConfigSource.Cli, GuestPaths.join(cwdPath, "--settings"), GuestPath(cwdPath), raw, notes)
+            }
         }
 
         val managedBroken = loadManaged(io, managedPath, layers)
@@ -71,7 +96,7 @@ object SettingsLoader {
         return SettingsSnapshot(layers.toList(), merged, notes.toList(), managedBroken)
     }
 
-    /** 从 cwd 往上找最近的含 `.git`（目录或 worktree / 子模块里的文件）的目录 */
+/** 从 cwd 往上找最近的含 `.git`（目录或 worktree / 子模块里的文件）的目录 */
     private suspend fun gitRoot(io: ConfigIo, cwd: String): String? =
         GuestPaths.ancestors(cwd).asReversed().firstOrNull { io.kind(GuestPaths.join(it, ".git")) != null }
 
