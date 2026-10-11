@@ -84,6 +84,13 @@ internal class AndroidMcpTokenStore private constructor(private val file: File,p
         val records=try {read()} catch(e: UnreadableCredentials){Files.deleteIfExists(file.toPath());return@access}
         write(records.filterNot {it.key==key})
     }
+    /**
+     * 诊断包去凭证用的「已知秘密」：所有记录里的 access / refresh 令牌与 client secret。
+     * 解不开（换了锁屏、换机）时给空集——没有名单就只剩形状兜底，但不能因此让导出失败或把异常带出去。
+     */
+    suspend fun knownSecrets(): Set<String> = try {
+        access { read().flatMap { listOfNotNull(it.credentials.accessToken,it.credentials.refreshToken,it.credentials.clientSecret) }.filter { s -> s.isNotBlank() }.toSet() }
+    } catch(e: IllegalStateException) { emptySet() }
     private suspend fun <T> access(block: ()->T): T = lock.withLock { withContext(Dispatchers.IO) {
         try { block() }
         catch(e: CancellationException) { throw e }

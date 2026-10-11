@@ -1,6 +1,7 @@
 package dev.min.code.ui.viewer
 
 import dev.min.agent.spi.FeedbackDraft
+import dev.min.agent.tools.FeedbackBundle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,7 +21,8 @@ data class PendingDraft(val id: String, val draft: FeedbackDraft)
  * 没绑目录时只在内存里（启动之前与测试）。
  *
  * 写不进去时 [add] / [replace] 返回 false，列表不变——不能让界面显示「已保存」，重开却没了。
- * 草稿附带的会话日志是原始的（未去凭证）；它与会话本身放在同一个私有目录里，去凭证只在导出时做（FeedbackBundle）。
+ * 草稿**写入时**就去凭证（[add] / [replace] 的 knownSecrets：App 设置里存的各家 key、搜索 key、遥测令牌、MCP 令牌逐字去掉，
+ * 其余靠形状兜底，见 FeedbackBundle.redact），标题、正文、附带的会话日志都一样：磁盘上的草稿文件里不留凭证。导出时还会再去一遍并扫描成品。
  */
 class FeedbackDraftBox {
     private val _drafts = MutableStateFlow<List<PendingDraft>>(emptyList())
@@ -34,7 +36,8 @@ class FeedbackDraftBox {
         _drafts.value = s.loadAll()
     }
 
-    fun add(draft: FeedbackDraft): Boolean = synchronized(this) {
+    fun add(raw: FeedbackDraft, knownSecrets: Set<String> = emptySet()): Boolean = synchronized(this) {
+        val draft = clean(raw, knownSecrets)
         val id = "%013d-%s".format(System.currentTimeMillis(), UUID.randomUUID())
         if (store?.save(id, draft) == false) return false
         _drafts.value = _drafts.value + PendingDraft(id, draft)
@@ -42,7 +45,8 @@ class FeedbackDraftBox {
     }
 
     /** 用户改了草稿：覆盖同一个文件。找不到这条就什么也不做，返回 false */
-    fun replace(id: String, new: FeedbackDraft): Boolean = synchronized(this) {
+    fun replace(id: String, raw: FeedbackDraft, knownSecrets: Set<String> = emptySet()): Boolean = synchronized(this) {
+        val new = clean(raw, knownSecrets)
         val i = _drafts.value.indexOfFirst { it.id == id }
         if (i < 0 || store?.save(id, new) == false) return false
         _drafts.value = _drafts.value.toMutableList().also { it[i] = PendingDraft(id, new) }
@@ -55,6 +59,13 @@ class FeedbackDraftBox {
         _drafts.value = _drafts.value.filterNot { it.id == id }
         true
     }
+
+    /** 标题、正文、日志各过一遍去凭证；`redact` 幂等，已经去过的再去不变 */
+    private fun clean(d: FeedbackDraft, secrets: Set<String>) = FeedbackDraft(
+        title = FeedbackBundle.redact(d.title, secrets),
+        body = FeedbackBundle.redact(d.body, secrets),
+        sessionLog = d.sessionLog?.let { FeedbackBundle.redact(it, secrets) },
+    )
 
     /** 一条草稿一个 JSON 文件。文件名以毫秒时间戳开头，按名字排序就是放入的先后 */
     private class Store(private val dir: File) {

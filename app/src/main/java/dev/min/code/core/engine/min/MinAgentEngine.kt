@@ -41,6 +41,7 @@ import dev.min.code.core.rootfs.currentBindMounts
 import dev.min.code.core.rootfs.findMentionFiles
 import dev.min.code.core.engine.StartChoices
 import dev.min.code.core.settings.SettingsStore
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
@@ -136,6 +137,9 @@ class MinAgentEngine(
     /** 设置快照还没读出来时按「没配」：宁可这一刻看不到 WebSearch，也不拿半截配置去搜 */
     private fun webSearchConfig() = settings.snapshot?.webSearch ?: dev.min.code.core.settings.WebSearchConfig()
 
+    /** MCP OAuth 令牌库：内核用它存取令牌，诊断包去凭证用它列出已知令牌（[FeedbackKnownSecrets]） */
+    private val mcpTokens = AndroidMcpTokenStore(context)
+
     private val kernelDeps = MinKernelDeps.build(
         resolver, ports, snapshots = snapshots,
         // 与 Claude Code 引擎那边的 DeviceMcpRegistrar 读同一个设置：controlDevice
@@ -147,7 +151,7 @@ class MinAgentEngine(
         // 联网工具与模型请求共用一个注入的 HTTP 传输：测试替换一处就够，真机上都是宿主侧的 UrlConnection（不经 proot）
         web = dev.min.agent.host.CachedWebPort(dev.min.agent.tools.web.HtmlPageConverter, transport),
         searchBackend = ConfiguredSearchBackend(::webSearchConfig, transport),
-        mcpTokenStore = AndroidMcpTokenStore(context), mcpAuthorizer = AndroidMcpAuthorizer(context, mcpLoginGate),
+        mcpTokenStore = mcpTokens, mcpAuthorizer = AndroidMcpAuthorizer(context, mcpLoginGate),
         trustProjectHooks = trust::isTrusted,
         // 界面有 url 卡（McpUrlSheet）：显示完整 URL 与域名，点了才用 Custom Tab 打开
         canAnswerMcpUrlElicitation = true,
@@ -160,6 +164,13 @@ class MinAgentEngine(
         feedbackSink = AndroidFeedbackSink(),
         pdfPages = AndroidPdfPages(AndroidPdfRasterizer(context.cacheDir)),
     )
+
+    // 诊断包的「已知秘密」：设置里存的各家 key、搜索 key、遥测头部令牌、MCP 令牌（草稿写入时与导出时都逐字去掉）
+    init {
+        ViewerInbox.bindSecrets {
+            FeedbackKnownSecrets.collect(settings.settings.first(), settings.telemetryHeaders(), mcpTokens.knownSecrets())
+        }
+    }
 
     /** 内核看到的长寿进程端口（已套配额）。以后 McpManager 从这里拿；debug 探针用它验证 proot 里的进程往返与回收 */
     internal val processes: dev.min.agent.spi.ProcessPort get() = kernelDeps.host.processes
