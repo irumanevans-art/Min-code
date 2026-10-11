@@ -25,13 +25,10 @@ internal class AndroidUserFileSink(private val context: Context) : UserFileSink 
     private val next = AtomicInteger(0)
 
     override suspend fun deliver(file: UserFile): Boolean = withContext(Dispatchers.IO) {
-        val dir = File(context.cacheDir, "user_files").apply {
-            listFiles()?.forEach { it.deleteRecursively() }
-            mkdirs()
-        }
-        val target = File(dir, file.name).apply { writeBytes(file.bytes) }
+        val slot = next.getAndIncrement() and (SLOTS - 1)
+        val target = stageUserFile(File(context.cacheDir, "user_files"), slot, file.name, file.bytes)
         val uri = context.fileProviderUri(target)
-        val id = BASE_ID + (next.getAndIncrement() and (SLOTS - 1))
+        val id = BASE_ID + slot
         val open = openIntent(uri, file)
         val pending = PendingIntent.getActivity(
             context, id, Intent.createChooser(open, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
@@ -64,11 +61,20 @@ internal class AndroidUserFileSink(private val context: Context) : UserFileSink 
         }
     }
 
-    private companion object {
+    internal companion object {
         /** 与推送通知（9_500_000 起）错开 */
         const val BASE_ID = 9_600_000
 
         /** 必须是 2 的幂 */
         const val SLOTS = 32
     }
+}
+
+/** 把要交给用户的文件写进 [root] 下（经 FileProvider 给出 URI）：写之前先清空 [root]，分享过的东西不长期占空间 */
+internal fun stageUserFile(root: File, slot: Int, name: String, bytes: ByteArray): File {
+    root.apply {
+        listFiles()?.forEach { it.deleteRecursively() }
+        mkdirs()
+    }
+    return File(root, name).apply { writeBytes(bytes) }
 }
