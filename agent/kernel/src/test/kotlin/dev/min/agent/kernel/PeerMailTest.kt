@@ -106,6 +106,22 @@ class PeerMailTest {
     }
 
     @Test
+    fun `an unnamed sender is shown by the start of its first user message, never by a bare id alone`() = run {
+        val hub = hub()
+        val api = hub.create(GuestPath("/a"), TEST_MODEL, PermissionMode.Default)
+        val web = hub.newRoot("/b", "web")
+        api.send(dev.min.agent.protocol.ClientMsgId("u1"), listOf(TextPart("please look at the flaky build in module payments\nmore detail")))
+        // 等这条消息提升进历史（发件会话的回合起来了）
+        api.state.first { it.history.isNotEmpty() }
+        val r = hub.portOf(api).message("web", "接口改了")
+        assertFalse(text(r), r.isError)
+        val origin = peerInputs(web).single().origin as InputOrigin.Peer
+        assertEquals("please look at the flaky…", origin.name)
+        // 按名字寻址仍只认真正的名字：拿显示用的称呼寻址找不到它
+        assertTrue(hub.portOf(web).message("please look at the flaky…", "hi").isError)
+    }
+
+    @Test
     fun `a busy receiver takes the message as steering input, queued behind its current batch`() = run {
         val hub = hub()
         val api = hub.newRoot("/a", "api")

@@ -406,6 +406,17 @@ class MinAgentStateMapperTest {
         assertEquals(listOf("— continued@110 —", "— woke —"), map(s).items.map { (it as ChatItem.Note).text })
     }
 
+    @Test fun aTurnWokenByAPeerMessageSaysSoInsteadOfBlamingASubagent() {
+        val s = foldOf(
+            InputReceived(ClientMsgId("peer:pm_1"), listOf(TextPart("[跨会话消息 · 来自会话「alice」（s_a）]\nhi")), Delivery.Queue, InputOrigin.Peer(SessionId("s_a"), "alice")),
+            TurnStarted(tid, TurnTrigger.Notification),
+            InputPromoted(ClientMsgId("peer:pm_1"), MessageId("m_peer")),
+            TurnEnded(tid, TurnOutcome.Completed, Usage(), 0),
+        )
+        val texts = map(s).items.filterIsInstance<ChatItem.Note>().map { it.text }
+        assertTrue(texts.toString(), texts.first() == "— 收到会话消息，继续处理 —")
+    }
+
     @Test fun editsReportedByTheKernelBecomeTheDiffTheFilesPanelReads() {
         val call = ToolCallPart(CallId("c1"), "Edit", empty)
         val body = "--- /workspace/src/Sea.kt\n+++ /workspace/src/Sea.kt\n-val a = 1\n+val a = 2"

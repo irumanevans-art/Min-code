@@ -332,6 +332,16 @@ private class ItemsBuilder(
         state.presentation.filter { it.afterMessageId == after }.forEach(::notice)
     }
 
+    /**
+     * 「通知」唤醒的回合是被哪条输入叫醒的：回合开始前最后一条消息之后的那条用户输入（子 agent 报告、跨会话消息、
+     * 后台任务通知、channel 消息都以输入进来）。找不到就按子 agent 说（最常见，也是原来的说法）
+     */
+    private fun wokeBy(after: MessageId?): InputOrigin? {
+        val i = if (after == null) -1 else state.history.indexOfFirst { it.messageId == after }
+        if (after != null && i < 0) return null
+        return (state.history.getOrNull(i + 1) as? HistoryEntry.User)?.origin
+    }
+
     private fun notice(entry: SessionPresentation) {
         val seq = entry.record.seq
         val atMs = entry.record.atMs
@@ -344,7 +354,12 @@ private class ItemsBuilder(
             is dev.min.agent.spi.WorkflowProgress -> items += ChatItem.Note("workflow:$seq", event.message)
             is TurnStarted -> when (event.trigger) {
                 TurnTrigger.Resume -> items += dividerNote("resume:$seq", text.continued(atMs))
-                TurnTrigger.Notification -> items += dividerNote("wake:$seq", text.subagentWoke())
+                TurnTrigger.Notification -> items += dividerNote("wake:$seq", when (wokeBy(entry.afterMessageId)) {
+                    is InputOrigin.Peer -> text.peerWoke()
+                    is InputOrigin.Task -> text.taskWoke()
+                    is InputOrigin.Channel -> text.channelWoke()
+                    else -> text.subagentWoke()
+                })
                 // 后台 asyncRewake hook 唤醒的回合：分隔线说明「是谁」把会话叫醒的
                 TurnTrigger.Hook -> items += dividerNote("hook:$seq", text.hookWoke())
                 // 定时任务到点唤醒的回合

@@ -89,6 +89,20 @@ private sealed interface PeerTarget {
 }
 
 /**
+ * 会话在跨会话消息里给人看的称呼：改过名用名字；没改过名用人发的第一条消息的开头（与会话列表的标题同一来源），
+ * 免得收件方与批准卡上只看到一串 id。只用于显示——按名字寻址仍只认真正的名字（[SessionState.name]）
+ */
+internal val SessionState.peerLabel: String?
+    get() = name ?: history.asSequence()
+        .filterIsInstance<HistoryEntry.User>()
+        .firstOrNull { it.origin == InputOrigin.User }
+        ?.parts?.filterIsInstance<TextPart>()?.joinToString(" ") { it.text }
+        ?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
+        ?.let { if (it.length > PEER_LABEL_MAX) it.take(PEER_LABEL_MAX) + "…" else it }
+
+private const val PEER_LABEL_MAX = 24
+
+/**
  * 本机跨会话邮箱（Claude Code 的 SendMessage / ListAgents 到「本机其他会话」那一段）。
  *
  * - 发现：Hub 内的根会话直接看内存；别的进程的会话看登记表（[PeerTransport]）。只列根会话，子 agent 与团队成员仍走原来的路。
@@ -178,7 +192,7 @@ internal class PeerMailbox(
             return error("发得太快了：同一个会话一分钟内最多 $PEER_BURST_LIMIT 条，请合并成一条，或稍后再发。")
         }
         val senderBypass = from.bypassing()
-        val msg = Incoming(deps.ids.next("pm"), from.sessionId, from.state.value.name, text, now, senderBypass)
+        val msg = Incoming(deps.ids.next("pm"), from.sessionId, from.state.value.peerLabel, text, now, senderBypass)
 
         val local = target.local
         if (local != null) {
@@ -236,7 +250,7 @@ internal class PeerMailbox(
         val now = deps.clock.nowMs()
         if (local != null) {
             val statusAllowed = peerVerdict(settings(local).policy, local.bypassing(), askerBypass) == PeerVerdict.Deliver
-            addWatch(IdleWatch(deps.ids.next("pw"), from.sessionId, from.state.value.name, local.sessionId, statusAllowed, now))
+            addWatch(IdleWatch(deps.ids.next("pw"), from.sessionId, from.state.value.peerLabel, local.sessionId, statusAllowed, now))
             checkIdle(local.sessionId)
             return ok(prefix + "已订阅：对方下次空闲或退出时你会收到一条通知（最多等 12 小时）。" +
                 if (statusAllowed) "" else "对方设为需要批准，通知里不会带它的状态行。")
@@ -271,7 +285,7 @@ internal class PeerMailbox(
     private suspend fun fire(watched: SessionRuntime, w: IdleWatch, exited: Boolean) {
         val removed = synchronized(guard) { watches.remove(w.asker to w.watched) === w }
         if (!removed) return
-        val name = watched.state.value.name
+        val name = watched.state.value.peerLabel
         val state = watched.state.value
         val status = if (!w.statusAllowed) null else
             (state.history.lastOrNull() as? HistoryEntry.Assistant)?.parts?.filterIsInstance<TextPart>()?.joinToString("") { it.text }
@@ -315,7 +329,7 @@ internal class PeerMailbox(
             out
         }
         for (w in expired) {
-            outcome(w.asker, w.watched, hub.get(w.watched)?.state?.value?.name, w.id, "订阅的空闲通知等了 12 小时也没有等到，已取消。", now)
+            outcome(w.asker, w.watched, hub.get(w.watched)?.state?.value?.peerLabel, w.id, "订阅的空闲通知等了 12 小时也没有等到，已取消。", now)
         }
     }
 
@@ -339,7 +353,7 @@ internal class PeerMailbox(
         } else if (approve) {
             outcome(item.from, receiver, null, item.messageId, "对方已关闭，没有送达。", deps.clock.nowMs())
         } else {
-            outcome(item.from, receiver, rt?.state?.value?.name, item.messageId, "对方的用户拒收了你的消息，它没有进入对方的对话。", deps.clock.nowMs())
+            outcome(item.from, receiver, rt?.state?.value?.peerLabel, item.messageId, "对方的用户拒收了你的消息，它没有进入对方的对话。", deps.clock.nowMs())
         }
         return true
     }
@@ -355,7 +369,7 @@ internal class PeerMailbox(
         val id = rt.sessionId
         val items = synchronized(guard) { held.remove(id).orEmpty() }
         if (items.isNotEmpty()) onHeldChanged()
-        for (item in items) outcome(item.from, id, rt.state.value.name, item.messageId, "对方已关闭，没有送达。", deps.clock.nowMs())
+        for (item in items) outcome(item.from, id, rt.state.value.peerLabel, item.messageId, "对方已关闭，没有送达。", deps.clock.nowMs())
         val ending = synchronized(guard) { watches.values.filter { it.watched == id } }
         for (w in ending) fire(rt, w, exited = true)
         synchronized(guard) { watches.keys.removeAll { it.first == id } }
@@ -423,7 +437,7 @@ internal class PeerMailbox(
             PeerEnvelope.Kind.Message -> {
                 val msg = Incoming(env.messageId, senderId, sender.name, env.text, env.sentAtMs, env.senderBypass)
                 when (peerVerdict(settings(rt).policy, rt.bypassing(), env.senderBypass)) {
-                    PeerVerdict.Refuse -> outcome(senderId, rt.sessionId, rt.state.value.name, env.messageId, "对方设置为不接收跨会话消息，没有送达。", env.sentAtMs)
+                    PeerVerdict.Refuse -> outcome(senderId, rt.sessionId, rt.state.value.peerLabel, env.messageId, "对方设置为不接收跨会话消息，没有送达。", env.sentAtMs)
                     PeerVerdict.Hold -> hold(rt.sessionId, msg)
                     PeerVerdict.Deliver -> deliverTo(rt, msg)
                 }
@@ -432,7 +446,7 @@ internal class PeerMailbox(
                 // 别的进程的会话请我（被盯的一方）空闲时通知它
                 val verdict = peerVerdict(settings(rt).policy, rt.bypassing(), env.senderBypass)
                 if (verdict == PeerVerdict.Refuse) {
-                    outcome(senderId, rt.sessionId, rt.state.value.name, env.messageId, "对方设置为不接收跨会话消息，没有订阅。", env.sentAtMs)
+                    outcome(senderId, rt.sessionId, rt.state.value.peerLabel, env.messageId, "对方设置为不接收跨会话消息，没有订阅。", env.sentAtMs)
                 } else {
                     addWatch(IdleWatch(env.messageId, senderId, sender.name, rt.sessionId, verdict == PeerVerdict.Deliver, deps.clock.nowMs()))
                     checkIdle(rt.sessionId)
@@ -518,7 +532,7 @@ internal class PeerMailbox(
             }
             if (release.isNotEmpty() || reject.isNotEmpty()) onHeldChanged()
             for (item in release) deliverTo(rt, Incoming(item.messageId, item.from, item.fromName, item.text, item.sentAtMs, item.senderBypass))
-            for (item in reject) outcome(item.from, receiver, rt.state.value.name, item.messageId, "对方设置为不接收跨会话消息，没有送达。", deps.clock.nowMs())
+            for (item in reject) outcome(item.from, receiver, rt.state.value.peerLabel, item.messageId, "对方设置为不接收跨会话消息，没有送达。", deps.clock.nowMs())
             if (release.isNotEmpty() || reject.isNotEmpty()) {
                 val parts = listOfNotNull(
                     release.size.takeIf { it > 0 }?.let { "$it 条按现在的设置或权限模式放行了" },

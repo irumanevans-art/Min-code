@@ -44,6 +44,11 @@ interface MinAgentText {
     /** 子 agent 报告唤醒了父会话：回合状态行与转录里的分隔线共用这一句 */
     fun subagentWoke(): String
 
+    /** 同是「通知」唤醒的回合，按叫醒它的那条输入说清是谁：别的会话的消息、后台任务、MCP channel */
+    fun peerWoke(): String = "收到会话消息，继续处理"
+    fun taskWoke(): String = "后台任务有新消息，继续处理"
+    fun channelWoke(): String = "收到 channel 消息，继续处理"
+
     /** 后台 asyncRewake hook 唤醒了空闲会话：状态行与转录分隔线共用这一句 */
     fun hookWoke(): String
     fun agentMessage(agentType: String, name: String?): String
@@ -162,6 +167,9 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun cronWoke() = s(R.string.min_agent_cron_woke)
     override fun continued(atMs: Long?) = timed(s(R.string.min_agent_continued), atMs)
     override fun subagentWoke() = s(R.string.min_agent_woke)
+    override fun peerWoke() = s(R.string.min_agent_peer_woke)
+    override fun taskWoke() = s(R.string.min_agent_task_woke)
+    override fun channelWoke() = s(R.string.min_agent_channel_woke)
     override fun hookWoke() = s(R.string.min_agent_hook_woke)
 
     override fun agentMessage(agentType: String, name: String?) = s(R.string.min_agent_message_from, name ?: agentType)

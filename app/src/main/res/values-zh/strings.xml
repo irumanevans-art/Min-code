@@ -1125,6 +1125,9 @@
   <string name="min_agent_task_notice">后台任务 %1$s 有通知（进程的输出，不是你发的消息）</string>
   <string name="min_agent_continued">继续</string>
   <string name="min_agent_woke">子 agent 完成，继续处理</string>
+  <string name="min_agent_peer_woke">收到会话消息，继续处理</string>
+  <string name="min_agent_task_woke">后台任务有新消息，继续处理</string>
+  <string name="min_agent_channel_woke">收到 channel 消息，继续处理</string>
   <string name="min_agent_hook_woke">后台 hook 报告了问题</string>
   <string name="min_agent_report_completed">完成</string>
   <string name="min_agent_report_failed">失败</string>

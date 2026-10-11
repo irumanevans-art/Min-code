@@ -1131,6 +1131,9 @@
   <string name="min_agent_task_notice">Background task %1$s reported (process output, not a message you typed)</string>
   <string name="min_agent_continued">Continued</string>
   <string name="min_agent_woke">A subagent finished, continuing</string>
+  <string name="min_agent_peer_woke">A message from another session, continuing</string>
+  <string name="min_agent_task_woke">A background task reported, continuing</string>
+  <string name="min_agent_channel_woke">A channel message arrived, continuing</string>
   <string name="min_agent_hook_woke">A background hook reported a problem</string>
   <string name="min_agent_report_completed">done</string>
   <string name="min_agent_report_failed">failed</string>
