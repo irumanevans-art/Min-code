@@ -3,6 +3,7 @@ package dev.min.agent.cli
 import dev.min.agent.ext.config.CommandDef
 import dev.min.agent.ext.config.SkillDef
 import dev.min.agent.ext.skills.SkillRunPort
+import dev.min.agent.ext.skills.SlashGate
 import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.ext.skills.SlashCommands
 import dev.min.agent.ext.skills.SlashResult
@@ -37,7 +38,13 @@ internal suspend fun interpretInputRun(
     vars: SkillVars,
     port: SkillRunPort,
     prompts: List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList(),
-): InputAction = translate(SlashCommands.expandRun(line, skills, commands, vars, port, prompts), line)
+    /** UserPromptExpansion hooks 的闸：先于任何预执行命令与分身 */
+    gate: SlashGate? = null,
+): InputAction = translate(SlashCommands.expandRun(line, skills, commands, vars, port, prompts, gate), line)
+
+/** UserPromptExpansion hooks 作为展开前的闸：先于任何预执行命令与分身（见 SlashGate） */
+internal fun slashGate(runtime: dev.min.agent.kernel.SessionRuntime): SlashGate =
+    SlashGate { info -> runtime.promptExpansionHooks("slash_command", info.name, info.args, info.source ?: "user", info.prompt) }
 
 private fun translate(r: SlashResult, line: String): InputAction = when (r) {
     SlashResult.NotACommand -> InputAction.Send(line, humanInput = true)

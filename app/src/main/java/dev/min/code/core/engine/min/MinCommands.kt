@@ -213,7 +213,10 @@ class MinCommandHandler(
         val snapshot = runtime.state.value
         val result = SlashCommands.expandRun(typed, skills, commands, SkillVars(
             runtime.sessionId.value, snapshot.settings.cwd.value, snapshot.settings.effort?.name?.lowercase(),
-        ), runtime.userSkillRunPort())
+        ), runtime.userSkillRunPort(), gate = SlashGate { info ->
+            // UserPromptExpansion hooks 先于任何预执行命令与分身（拦截必须先于副作用）；来源取冻结清单里的标签
+            runtime.promptExpansionHooks("slash_command", info.name, info.args, entries.firstOrNull { it.name == info.name }?.source ?: info.source ?: "user", info.prompt)
+        })
         return when (result) {
             SlashResult.NotACommand -> SlashInput.Plain
             is SlashResult.Unknown -> SlashInput.Refused("没有名为 /${result.name} 的 skill 或命令。")
@@ -230,9 +233,6 @@ class MinCommandHandler(
                 SlashInput.Refused(result.text)
             }
             is SlashResult.Expanded -> {
-                val args = typed.drop(1 + name.length).trim()
-                runtime.promptExpansionHooks("slash_command", name, args, entries.firstOrNull { it.name == name }?.source ?: "user", typed)
-                    ?.let { return SlashInput.Refused(it) }
                 // 展开的文件内容不是人的引用：不扫描 MCP 提及；组件 hooks 只在调用确实获准后登记。
                 result.names.forEach { called -> entries.firstOrNull { it.name == called }?.let { entry ->
                     entry.hooks?.let { runtime.registerComponentHooks(entry.kind.name.lowercase(), called, entry.source ?: "user", it) }

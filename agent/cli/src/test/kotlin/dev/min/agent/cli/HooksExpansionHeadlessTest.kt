@@ -183,6 +183,36 @@ class HooksExpansionHeadlessTest {
         }
     }
 
+    /** 正文里带一条预执行命令的 skill：展开时就在工作区里建 ran.txt */
+    private val PRE_EXEC_SKILL = listOf("---", "description: example", "---", "state: !`touch ran.txt`").joinToString("\n")
+
+    @Test
+    fun `a blocking UserPromptExpansion hook stops the skill before its pre-executed command runs`() {
+        // 拦截必须先于副作用：skill 正文里的 !`命令` 是展开时就执行的，hook 拦下这次调用时它一条都不能跑
+        val (home, work) = dirs()
+        setUp(home, work, sample = "65-userpromptexpansion-decision")
+        write(work, ".claude/skills/example-skill/SKILL.md", PRE_EXEC_SKILL)
+        ModelServer().use { server ->
+            val run = headless(home, work, server, "/example-skill arg1", trust = true)
+            assertEquals(run.stderr, 2, run.exit)
+            assertEquals("被拦下的命令没有发给模型", 0, server.bodies.size)
+            assertTrue("hook 拦下时预执行命令没有跑", !Files.exists(work.resolve("ran.txt")))
+        }
+    }
+
+    @Test
+    fun `an allowed skill runs its pre-executed command`() {
+        // 对照：没有 hook 拦截时预执行照常跑（上一条用例的「没跑」才有意义）
+        val (home, work) = dirs()
+        setUp(home, work, script = "exit 0")
+        write(work, ".claude/skills/example-skill/SKILL.md", PRE_EXEC_SKILL)
+        ModelServer().use { server ->
+            val run = headless(home, work, server, "/example-skill arg1", trust = true)
+            assertEquals(run.stderr, 0, run.exit)
+            assertTrue("放行时预执行照常跑", Files.exists(work.resolve("ran.txt")))
+        }
+    }
+
     @Test
     fun `an allowing hook adds its context next to the expanded prompt, a non-matching command skips the hook`() {
         val (home, work) = dirs()

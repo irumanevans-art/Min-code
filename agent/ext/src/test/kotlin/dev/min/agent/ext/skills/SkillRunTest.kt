@@ -213,6 +213,27 @@ class SkillRunTest {
         assertEquals(SlashResult.Expanded("deploy web", listOf("apps/web:deploy")), r)
     }
 
+
+    @Test
+    fun `a blocking expansion gate stops the invocation before any command or fork runs`() {
+        val s = skill("ship", "go !`git push`")
+        val port = FakePort()
+        val r = runBlocking {
+            SlashCommands.expandRun("/ship", listOf(s), emptyList(), SkillVars(projectDir = "/workspace"), port, gate = SlashGate { "blocked by hook" })
+        }
+        assertEquals(SlashResult.Refused("blocked by hook"), r)
+        assertTrue("nothing may run before the gate: ${port.log}", port.log.isEmpty())
+    }
+
+    @Test
+    fun `the gate sees the first target's name, args, source and the typed line`() {
+        val s = skill("ship", "x")
+        var seen: SlashGateInfo? = null
+        runBlocking {
+            SlashCommands.expandRun("/ship  now  please", listOf(s), emptyList(), SkillVars(), FakePort(), gate = SlashGate { seen = it; null })
+        }
+        assertEquals(SlashGateInfo("ship", "now  please", "project", "/ship  now  please"), seen)
+    }
     @Test
     fun `the allowed tools reach the port with the owner`() {
         val s = skill("ship", "x", allowed = listOf("Bash(make build)"))

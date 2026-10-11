@@ -3,6 +3,17 @@ package dev.min.agent.ext.skills
 import dev.min.agent.ext.config.CommandDef
 import dev.min.agent.ext.config.SkillDef
 
+
+/** 展开前的闸（UserPromptExpansion hooks）收到的信息：name / args / source 取第一个被展开的目标，prompt 是用户敲的那一行 */
+data class SlashGateInfo(val name: String, val args: String, val source: String?, val prompt: String)
+
+/**
+ * 展开前的闸：返回非 null 即拦下，理由给人看，整次输入不展开、**正文里的命令一条都不跑**。
+ * 安全口径：拦截必须先于副作用（预执行命令是副作用），所以闸排在任何 [SkillRunPort] 调用之前。
+ */
+fun interface SlashGate {
+    suspend fun check(info: SlashGateInfo): String?
+}
 /** 用户输入按斜杠命令解释的结果 */
 sealed interface SlashResult {
     /** 不是命令：没有以 `/` 开头，或 `/` 后面不像命令名（`/etc/hosts` 这种路径、单独一个 `/`）。原样当普通输入发给模型 */
@@ -70,10 +81,13 @@ object SlashCommands {
         vars: SkillVars,
         port: SkillRunPort,
         prompts: List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList(),
+        gate: SlashGate? = null,
     ): SlashResult = when (val p = plan(input, skills, commands, prompts)) {
         is Plan.Done -> p.result
         is Plan.Run -> {
             val first = p.chosen.first()
+            // 闸先于一切副作用：拦下就不跑任何预执行命令、不起分身（安全口径，见 SlashGate）
+            gate?.check(SlashGateInfo(first.name, p.args, first.source, input.trim()))?.let { return SlashResult.Refused(it) }
             if (first.fork) {
                 // 分身不叠放：只有第一个，且它自己跑（正文、命令都在分身那边的上下文里）
                 when (val r = SkillRun.run(first.owner(), first.body, p.args, first.arguments, vars, port)) {
