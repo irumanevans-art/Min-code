@@ -229,9 +229,16 @@ class PeerMailTest {
         val web = hub.newRoot("/b", "web")
         hub.portOf(api).message("web", "一")
         hub.portOf(api).message("web", "二")
-        val log = store.peek(web.sessionId)!!
-        // 回合还在跑（模型不回话），整份状态不必逐字相等；跨会话消息自己的折叠必须与运行时一致
-        val replayed = fold(log.header, log.read().toList())
+        // 回合还在跑（模型不回话），整份状态不必逐字相等；跨会话消息自己的折叠必须与运行时一致。
+        // 读日志与读状态之间回合可能刚把收件箱接走（第一条消息开了回合），所以等两边收敛再比，不在半路上比
+        var replayed = fold(store.peek(web.sessionId)!!.header, store.peek(web.sessionId)!!.read().toList())
+        kotlinx.coroutines.withTimeout(5_000) {
+            while (replayed.peerMessages != web.state.value.peerMessages || replayed.inbox != web.state.value.inbox || replayed.seenInputs != web.state.value.seenInputs) {
+                kotlinx.coroutines.delay(25)
+                val log = store.peek(web.sessionId)!!
+                replayed = fold(log.header, log.read().toList())
+            }
+        }
         assertEquals(web.state.value.peerMessages, replayed.peerMessages)
         assertEquals(2, replayed.peerMessages.size)
         assertEquals(web.state.value.inbox, replayed.inbox)

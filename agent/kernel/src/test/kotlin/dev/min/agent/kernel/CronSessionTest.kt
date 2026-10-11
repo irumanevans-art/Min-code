@@ -812,9 +812,11 @@ class CronSessionTest {
 
         m2.state.first { it.turn == null && it.lastTurn != null }
         m2.awaitIdle()
-        // m2 的报告会叫醒负责人再开一回合：等它进了负责人的历史、负责人也安静，再比对状态
-        rt2.state.first { s -> s.history.any { h -> h is HistoryEntry.User && h.parts.any { p -> (p as? TextPart)?.text?.contains("subagent-report") == true } } }
-        settle(rt2)
+        // m2 的报告去哪取决于时序：m2 自己先撞上上限收尾、报告先到，负责人上一回合正常结束，被叫醒，报告进历史；
+        // 停树先一步把 m2 的结局记成静音，报告就停在负责人的收件箱里。两种都是正常收尾，等报告到了其中一处再比对
+        fun isReport(parts: List<dev.min.agent.protocol.Part>) = parts.any { p -> (p as? TextPart)?.text?.contains("subagent-report") == true }
+        rt2.state.first { s -> s.history.any { h -> h is HistoryEntry.User && isReport(h.parts) } || s.inbox.any { isReport(it.parts) } }
+        settleRun(rt2)
         assertEquals("m2 的第二个请求被这次运行的上限拦下", dev.min.agent.spi.TurnOutcome.Interrupted(dev.min.agent.spi.InterruptedBy.Budget), m2.state.value.lastTurn!!.outcome)
         assertTrue("这次运行被停下（记账没在 m2 开跑前撤掉）", events(rt2.sessionId).any { it is dev.min.agent.spi.CronBudgetStopped })
         assertLogIsTruth(rt2)

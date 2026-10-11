@@ -207,6 +207,8 @@ private class ItemsBuilder(
             is InputOrigin.Cron -> items += ChatItem.Note(id, text.cronFired(origin.cronId) + "\n" + plain(entry.parts))
             // 后台任务的通知：进程的输出，不是人说的话；去掉给模型看的标签壳，只留正文
             is InputOrigin.Task -> items += ChatItem.Note(id, text.taskNotice(origin.taskId) + "\n" + dev.min.agent.kernel.taskNoticeBody(plain(entry.parts)))
+            // 本机别的会话发来的消息：不是用户的话，作为说明显示（正文自带「来自会话 X」的抬头，内核写进去的）
+            is InputOrigin.Peer -> items += ChatItem.Note(id, plain(entry.parts))
         }
     }
 
