@@ -2664,3 +2664,25 @@ Windows 全量证据同时记录进程级环境前缀、命令、版本、退出
 - Pattern-Key: windows-test.explicit-shell-path
 
 ---
+## [LRN-20261011-ISOLATION-PEER] best_practice
+
+**Logged**: 2026-10-11T13:45:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+新增 InputOrigin 的 sealed 分支后，必须同时编译 Android 的 MinItems 渲染器。
+
+### Details
+agent/m0 的 35ea02a8 合入 Peer 后，App 的 when(origin) 不完整，实际 compileDebugKotlin 失败。补为不可回退的说明消息，与已有 Agent 消息一致；本次编译失败不能计入隔离需求的先红验证。
+
+### Suggested Action
+事件或输入来源跨端扩展同时检查桌面、Android 和重放投影，验证范围至少包含 App 编译。
+
+### Metadata
+- Source: debugging
+- Related Files: app/src/main/java/dev/min/code/core/engine/min/MinItems.kt
+- Tags: android, sealed-origin, cross-session
+
+---
