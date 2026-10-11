@@ -22,12 +22,18 @@ fun defaultAutoReviewer(session: ModelRef, fastModel: (String) -> ModelRef?): Mo
     if (session.providerId == "anthropic") ModelRef(session.providerId, "claude-haiku-5-5")
     else fastModel(session.providerId)?.takeIf { it.providerId == session.providerId } ?: session
 
+/**
+ * 这次审查用哪个模型：显式设置的（它在设置时已经过名单）优先；否则默认的小模型——默认的不在 availableModels 里时
+ * 改用会话模型（CC：分类器的默认模型被名单排除时，在会话模型上跑，会话模型本来就受名单管）
+ */
+internal fun autoReviewerModel(explicit: ModelRef?, session: ModelRef, fastModel: (String) -> ModelRef?, allowed: (ModelRef) -> Boolean): ModelRef =
+    explicit ?: defaultAutoReviewer(session, fastModel).takeIf(allowed) ?: session
+
 internal class AutoReviewer(private val rt: SessionRuntime) {
     suspend fun review(turnId: TurnId, call: ToolCallPart, ask: PermissionAsk, context: PolicyContext, alwaysAsk: Boolean): Verdict {
         rt.refreshAutoUserContext()
         val settings = rt.state.value.autoReviewSettings
-        val ref = settings.reviewer?.model
-            ?: defaultAutoReviewer(rt.state.value.settings.model, rt.deps.providerFastModel)
+        val ref = autoReviewerModel(settings.reviewer?.model, rt.state.value.settings.effectiveModel, rt.deps.providerFastModel, rt.deps.modelAllowed)
         var usage = Usage()
         var calledModel: ModelRef? = null
         val result = try {

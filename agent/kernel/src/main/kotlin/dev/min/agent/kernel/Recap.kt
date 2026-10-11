@@ -41,7 +41,7 @@ internal class Recapper(private val rt: SessionRuntime) {
         if (state.history.isEmpty()) return RecapResult.Skipped("还没有对话可以回顾")
         if (trigger == RecapTrigger.Away) autoSkipReason(state)?.let { return RecapResult.Skipped(it) }
 
-        val ref = deps.fastModel ?: state.settings.model
+        val ref = deps.fastModel ?: state.settings.effectiveModel
         val outcome = catchingNonCancellation {
             val model = deps.models.resolve(ref)
             val request = request(state, model.profile)

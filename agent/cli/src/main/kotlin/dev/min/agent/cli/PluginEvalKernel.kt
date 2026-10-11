@@ -41,7 +41,7 @@ internal class LocalEvalKernel(
         if (withPlugin) copyEvalPlugin(suite.plugin, root.resolve("plugin"), suite.directory, suite.hiddenPaths + suite.cases.map { it.dir })
         // 空 rootfs 不挂任何宿主盘；用户目录、配置、结果文件都不在模型可访问的工作目录。
         val fs = RootfsFileSystem(root, scopes = ScopeRules(device = emptyList()))
-        val selected = args.copy(model = if (modelOverride) args.model else case.execution.string("model", args.model))
+        val selected = args.copy(model = if (modelOverride) args.model else case.execution.string("model", args.model ?: "default"))
         val resolver = scripted ?: evalModelResolver(selected)
         val resolvedModels = java.util.concurrent.ConcurrentHashMap<ModelRef, ResolvedModel>()
         fun resolve(ref: ModelRef): ResolvedModel = resolvedModels.computeIfAbsent(ref) { requested ->

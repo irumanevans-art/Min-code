@@ -148,7 +148,7 @@ internal class ModelHookRunner(private val rt: SessionRuntime) {
             }
         } else {
             deps.fastModel?.let { ref -> dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(ref) }.getOrNull() }
-                ?: deps.models.resolve(state.settings.model)
+                ?: deps.models.resolve(state.settings.effectiveModel)
         }
         val timeoutMs = ((handler.timeout ?: PROMPT_HOOK_DEFAULT_TIMEOUT).coerceIn(1, HookDriver.MAX_TIMEOUT)) * 1_000L
         val request = ModelRequest(

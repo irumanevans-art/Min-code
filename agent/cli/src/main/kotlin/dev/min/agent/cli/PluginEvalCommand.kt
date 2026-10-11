@@ -73,7 +73,7 @@ internal suspend fun pluginEvalCommand(arguments: List<String>, cwd: Path, outpu
             hiddenPaths = listOfNotNull(outputDir, jsonPath?.let { cwd.resolve(it).toAbsolutePath() }) + loaded.cases.map { it.dir })
         val options = EvalOptions(runs, concurrency, threshold, ablation == "with-without", keep, ceiling)
         val kernel = LocalEvalKernel(suite, baseArgs, grants, keep, modelOverride = explicitModel, scripted = models?.let { factory -> { ref -> factory(baseArgs, ref) } })
-        val judgeArgs = baseArgs.copy(model = judgeModel ?: baseArgs.fastModel ?: resolveModel(baseArgs, dev.min.agent.llm.catalog.Catalog.bundled()).provider.fastModel ?: baseArgs.model)
+        val judgeArgs = baseArgs.copy(model = judgeModel ?: baseArgs.fastModel ?: resolveModel(baseArgs, dev.min.agent.llm.catalog.Catalog.bundled()).provider.fastModel ?: baseArgs.model ?: "default")
         val judge = EvalJudge { grader, evidence, case ->
             val focus = evalTarget(grader["focus"], evidence)
             val baseline = if (grader.string("type") == "baseline") {

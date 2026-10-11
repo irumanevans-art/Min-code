@@ -1053,10 +1053,16 @@ class SessionHub(
             // 样式快照同样继承：分身的系统提示必须与父会话逐字相同（普通子 agent 不带——它有自己的系统提示）
             ps.outputStyle?.let { initial += it }
         } else {
-            val model = resolveModel(request.model ?: definition.model, ps.settings.model)
+            val requested = resolveModel(request.model ?: definition.model, ps.settings.model)
                 ?: return DelegateResult.Rejected("不认识模型「${request.model ?: definition.model}」。不写 model 就用当前模型。")
-            // 子 agent 的 model 也受 availableModels 约束（CC：子 agent、队友都在名单之内）
-            if (!deps.modelAllowed(model)) return DelegateResult.Rejected("模型 ${model.providerId}:${model.modelId} 不在 availableModels 里，子 agent 不能用它。不写 model 就用当前模型。")
+            // 子 agent 的 model 也受 availableModels 约束（CC：被挡的覆盖不让请求失败，子 agent 改用后备模型跑，并告诉用户换了什么）。
+            // Min 的后备就是父会话的模型（它本来就在名单之内）
+            val model = if (deps.modelAllowed(requested)) requested else ps.settings.model.also { fallbackTo ->
+                parent.commit(
+                    listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "子 agent「${definition.name}」要的模型 ${requested.providerId}:${requested.modelId} 不在 availableModels 里，改用 ${fallbackTo.providerId}:${fallbackTo.modelId}")),
+                    Durability.Batched,
+                )
+            }
             val mode = childPermissionMode(ps.settings.mode, definition, deps.trustProjectHooks(ps.settings.cwd), ps.autoReviewSettings)
             created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort, headless = ps.created.headless, loadingModes = ps.created.loadingModes)
             initial += SubagentOrigin(

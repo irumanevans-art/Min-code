@@ -238,7 +238,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
     /** 用户手动压缩的回合：只做摘要，不让模型回答；收件箱里的输入留给下一回合 */
     private suspend fun compactOnly(turnId: TurnId) {
-        val model = deps.models.resolve(rt.state.value.settings.model)
+        val model = deps.models.resolve(rt.state.value.settings.effectiveModel)
         when (val result = compactor.force(turnId, model, CompactionTrigger.Manual, rt.takeCompactInstructions())) {
             // 被拦不算失败：回合照常完成，免得界面给出「继续」；理由进 Note（CC：manual 的 stderr 给用户看）
             is CompactResult.Blocked -> rt.commit(
@@ -522,11 +522,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         var attempt = 1
         // 发请求前按阈值遮蔽 / 摘要（docs/agent/detail/压缩设计.md §2）；撞墙时再压缩一次，只重试一次。
         // 回退链生效中（同一回合的后续请求）按回退模型的窗口算
-        compactor.beforeRequest(turnId, deps.models.resolve(rt.state.value.activeModel))
+        compactor.beforeRequest(turnId, resolveActiveModel(rt.state.value, deps))
         var overflowCompacted = false
         while (true) {
             val state = rt.state.value
-            val model = deps.models.resolve(state.activeModel)
+            val model = resolveActiveModel(state, deps)
             val request = assemble(state, model.profile)
             rt.commit(
                 listOf(ModelRequestStarted(turnId, requestId, attempt, model.profile.ref, prefixFingerprint(request))),
@@ -598,7 +598,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         if (deps.fallbackModels.isEmpty() || !FallbackPolicy.triggers(e.kind)) return null
         val state = rt.state.value
         val current = state.activeModel
-        for (candidate in FallbackPolicy.after(deps.fallbackModels, state.settings.model, current)) {
+        for (candidate in FallbackPolicy.after(deps.fallbackModels, state.settings.effectiveModel, current)) {
             val resolved = dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(candidate) }.getOrElse { problem ->
                 rt.commit(
                     listOf(Note(NoteLevel.Warning, "回退模型 ${candidate.providerId}:${candidate.modelId} 用不了（${problem.message}），已跳过")),
@@ -769,11 +769,23 @@ internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
             date = LocalDate.ofInstant(Instant.ofEpochMilli(state.header.createdAtMs), deps.zone).toString(),
         )
 
+/**
+ * 解析这一刻发请求用的模型（[activeModel]）。计划模式下 `opusplan` 的「升级」（opus 档）不在 availableModels 里、
+ * 宿主也换不到这一档允许的版本时，跳过升级，按会话模型的非计划档（sonnet）接着计划（CC 模型配置文档「Plan-mode upgrades」）。
+ * 只影响这次解析；日志里的回退起点仍按 [activeModel] 记——升级被跳过的计划回合再触发回退链时，起点写的是 opus 档的别名
+ */
+internal fun resolveActiveModel(state: SessionState, deps: KernelDeps): ResolvedModel {
+    val active = state.activeModel
+    val upgraded = state.turn?.fallback == null && active != planAwareModel(state.settings.model, dev.min.agent.protocol.PermissionMode.Default)
+    if (upgraded && !deps.modelAllowed(active)) return deps.models.resolve(planAwareModel(state.settings.model, dev.min.agent.protocol.PermissionMode.Default))
+    return deps.models.resolve(active)
+}
+
 /** 本会话能用的工具，保持 [KernelDeps.tools] 的固定顺序。新开的子 agent 按定义取子集；分身与根会话是全部 */
 internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable, runtime: SessionRuntime? = null, editStyle: dev.min.agent.spi.EditStyle? = null): List<Tool<*>> {
     val allowed = state.origin?.tools
     val style = editStyle ?: if (deps.tools.any { it.name in setOf("Edit", "Write", "apply_patch") })
-        deps.models.resolve(state.activeModel).profile.editStyle else dev.min.agent.spi.EditStyle.StrReplace
+        resolveActiveModel(state, deps).profile.editStyle else dev.min.agent.spi.EditStyle.StrReplace
     // 按实际请求的 profile 选编辑形态，回退模型也在此接线；权限仍统一按 Edit 家族判定。
     val editTools = if (style == dev.min.agent.spi.EditStyle.ApplyPatch) {
         val selected = deps.tools.filterNot { it.name in setOf("Edit", "Write", "apply_patch") }.toMutableList()

@@ -45,7 +45,7 @@ fun SessionRuntime.resumeAdvice(): ResumeAdvice? {
     if (idle <= limits.idleMs) return null
     val tokens = CompactionPlanner.estimate(s, 0)
     if (tokens <= limits.contextTokens) return null
-    val pricing = catchingNonCancellation { deps.models.resolve(s.settings.model).profile.pricing }.getOrNull()
+    val pricing = catchingNonCancellation { deps.models.resolve(s.settings.effectiveModel).profile.pricing }.getOrNull()
     return ResumeAdvice(idle, tokens, pricing?.let { cost(it, Usage(cacheWriteTokens = tokens)) })
 }
 
