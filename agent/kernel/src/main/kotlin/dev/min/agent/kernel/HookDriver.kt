@@ -255,8 +255,20 @@ internal class HookDriver(private val rt: SessionRuntime) {
             allRuns.filter { it.failedToStart }.map { "「${label(it.handler)}」没能运行（路径写错时门禁会悄悄失效）" } +
             allRuns.filter { it.timedOut }.map { "「${label(it.handler)}」超时" } +
             batches.http.skipped + batches.http.notes + hiddenEnvNotes(httpHandlers) + executionFailures
+        // 各处理器的结局计数（遥测 hook span 用）：一个处理器只落一类，拦下优先于错误
+        val blockingCount = verdicts.count { it.decision == HookDecision.Block || it.decision == HookDecision.Deny || !it.shouldContinue }
+        val errorCount = verdicts.count {
+            !(it.decision == HookDecision.Block || it.decision == HookDecision.Deny || !it.shouldContinue) &&
+                (it.nonBlockingError != null || it.timedOut || it.failedToStart)
+        }
         val events = buildList {
-            add(HooksRan(event.name, commandHandlers.size + httpHandlers.size + promptHandlers.size + agentHandlers.size + mcpHandlers.size, outcome.label, deps.clock.nowMs() - started, turnId, callId, problems))
+            add(
+                HooksRan(
+                    event.name, commandHandlers.size + httpHandlers.size + promptHandlers.size + agentHandlers.size + mcpHandlers.size,
+                    outcome.label, deps.clock.nowMs() - started, turnId, callId, problems,
+                    succeeded = verdicts.size - blockingCount - errorCount, blocking = blockingCount, nonBlockingErrors = errorCount,
+                ),
+            )
             if (problems.isNotEmpty()) add(Note(NoteLevel.Warning, "$event hook：" + problems.joinToString("；")))
             outcome.systemMessages.forEach { add(Note(NoteLevel.Info, it)) }
         }

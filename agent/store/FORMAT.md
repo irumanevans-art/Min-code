@@ -268,3 +268,7 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - v1 增量（2026-10-11，skills 剩余语义）：`skills_loaded.entries[]` 新增可选字段 `agent`（frontmatter `agent`，分身的子 agent 类型）、`background`（默认 true，只对 `context: fork` 有意义）、`allowedTools`（frontmatter `allowed-tools`，调用那一轮免审批；只在内存里生效，重开会话不恢复）。
   新增事件 `skills_discovered`（`entries`、`directories`、可选 `notes`），定义在 `spi/SkillEvents.kt`：模型第一次读写某个子目录里的文件时，懒加载那一层的 `.claude/skills`（`directories` 是检查过的 `.claude/skills` 路径，有没有 skill 都记）。折叠进 `SessionState.nestedSkills`（不改冻结的清单）与 `checkedSkillDirs`；子 agent 继承父会话的这一份。
   `skills_loaded` 的 `source` 新增取值 `add-dir`（`--add-dir` 目录里的 skills / commands）。旧日志缺新字段照常读（默认值即原来的行为），含 `skills_discovered` 的日志旧版本打不开。
+
+- v1 增量（2026-10-11，OTel 第三段）：给遥测补两类「事后从日志推不出来」的事实，都是可选字段，默认 null 不落盘，旧日志照常读、旧版本忽略字段照常读。
+  `assistant_message_completed` 新增 `ttftMs`（流开始后到第一个流事件的毫秒数，响应头 / message_start）与 `firstContentMs`（到第一块内容增量——文本、思考、工具调用——的毫秒数；一个增量都没有的回复不写，不编造）。内核在 `stream()` 里用会话时钟量，随回复同一次提交落盘。遥测的 `ttft_ms` / `first_content_ms` 取自这里。
+  `hooks_ran` 新增 `succeeded` / `blocking` / `nonBlockingErrors`（这一批里各处理器的结局计数；一个处理器只落一类：拦下（block / deny / `continue:false`）→ `blocking`，没跑起来、超时、非阻断错误 → `nonBlockingErrors`，其余 → `succeeded`；后台 hook 与启动失败的批不写）。遥测 `claude_code.hook` span 的 `num_success` / `num_blocking` / `num_non_blocking_error` 取自这里。

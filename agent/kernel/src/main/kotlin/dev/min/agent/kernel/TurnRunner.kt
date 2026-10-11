@@ -633,16 +633,37 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val messageId = MessageId(deps.ids.next("msg"))
         val segments = Segmenter(turnId, requestId, messageId)
         var completed: ModelStreamEvent.Completed? = null
+        // 首字节与首个内容块的耗时：只给遥测（OTel ttft_ms / first_content_ms），随回复一起落盘——事后从日志推不出来
+        val streamStart = deps.clock.nowMs()
+        var ttftMs: Long? = null
+        var firstContentMs: Long? = null
+        fun sawEvent() {
+            if (ttftMs == null) ttftMs = (deps.clock.nowMs() - streamStart).coerceAtLeast(0)
+        }
+        fun sawContent() {
+            sawEvent()
+            if (firstContentMs == null) firstContentMs = (deps.clock.nowMs() - streamStart).coerceAtLeast(0)
+        }
         rt.modelBilling.stream(model, request).collect { event ->
             when (event) {
-                is ModelStreamEvent.Started -> Unit
+                is ModelStreamEvent.Started -> sawEvent()
                 is ModelStreamEvent.TextDelta -> {
+                    sawContent()
                     rt.emitLive(LiveUpdate.Text(turnId, requestId, event.text))
                     segments.add(event.text)
                 }
-                is ModelStreamEvent.ThinkingDelta -> rt.emitLive(LiveUpdate.Thinking(turnId, requestId, event.text))
-                is ModelStreamEvent.ToolCallStarted -> rt.emitLive(LiveUpdate.ToolCallStarted(turnId, requestId, event.index, event.name))
-                is ModelStreamEvent.ToolInputDelta -> rt.emitLive(LiveUpdate.ToolInput(turnId, requestId, event.index, event.partialJson))
+                is ModelStreamEvent.ThinkingDelta -> {
+                    sawContent()
+                    rt.emitLive(LiveUpdate.Thinking(turnId, requestId, event.text))
+                }
+                is ModelStreamEvent.ToolCallStarted -> {
+                    sawContent()
+                    rt.emitLive(LiveUpdate.ToolCallStarted(turnId, requestId, event.index, event.name))
+                }
+                is ModelStreamEvent.ToolInputDelta -> {
+                    sawContent()
+                    rt.emitLive(LiveUpdate.ToolInput(turnId, requestId, event.index, event.partialJson))
+                }
                 is ModelStreamEvent.Completed -> completed = event
             }
         }
@@ -650,7 +671,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             ModelFailureKind.Network, "流在给出完整回复之前结束了", beforeFirstByte = false,
         )
         rt.commit(
-            listOf(AssistantMessageCompleted(turnId, requestId, messageId, done.message.parts, done.usage, done.stop, done.truncated)),
+            listOf(AssistantMessageCompleted(turnId, requestId, messageId, done.message.parts, done.usage, done.stop, done.truncated, ttftMs, firstContentMs)),
             Durability.Sync,
         )
         return done

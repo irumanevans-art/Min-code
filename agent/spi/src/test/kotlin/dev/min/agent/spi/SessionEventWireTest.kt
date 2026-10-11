@@ -144,6 +144,23 @@ class SessionEventWireTest {
             ),
             """{"type":"assistant_message_completed","turnId":"turn_1","requestId":"req_1","messageId":"msg_1","parts":[],"usage":{},"stop":{"type":"max_tokens"},"truncated":true}""",
         )
+        // 流式耗时（遥测 ttft_ms / first_content_ms）有值才落盘
+        assertEventWire(
+            AssistantMessageCompleted(
+                TurnId("turn_1"), RequestId("req_1"), MessageId("msg_1"),
+                parts = listOf(TextPart("done")), usage = Usage(), stop = StopReason.EndTurn, ttftMs = 120, firstContentMs = 180,
+            ),
+            """{"type":"assistant_message_completed","turnId":"turn_1","requestId":"req_1","messageId":"msg_1","parts":[{"type":"text","text":"done"}],"usage":{},"stop":{"type":"end_turn"},"ttftMs":120,"firstContentMs":180}""",
+        )
+        // hook 批的结局计数（遥测 hook span）有值才落盘；旧日志缺这三个键照常读
+        assertEventWire(
+            HooksRan("PreToolUse", 2, "block", 40, TurnId("turn_1"), CallId("call_1"), succeeded = 1, blocking = 1, nonBlockingErrors = 0),
+            """{"type":"hooks_ran","event":"PreToolUse","handlers":2,"decision":"block","durationMs":40,"turnId":"turn_1","callId":"call_1","succeeded":1,"blocking":1,"nonBlockingErrors":0}""",
+        )
+        assertEventWire(
+            HooksRan("PreToolUse", 1, "neutral", 5),
+            """{"type":"hooks_ran","event":"PreToolUse","handlers":1,"decision":"neutral","durationMs":5}""",
+        )
         // httpStatus / willRetry 默认不落盘
         assertEventWire(
             ModelRequestFailed(TurnId("turn_1"), RequestId("req_1"), attempt = 1, kind = ModelFailureKind.RateLimited, message = "429 too many"),
