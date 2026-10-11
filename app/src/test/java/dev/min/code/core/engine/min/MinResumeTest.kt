@@ -136,6 +136,6 @@ class MinResumeTest {
 
     @Test fun capabilityNoneSuppressesIt() {
         val s = foldOf(*userMsg().toTypedArray(), TurnStarted(tid, TurnTrigger.User), ended(TurnOutcome.Interrupted(InterruptedBy.User)))
-        assertNull(minResumeOffer(s, canRun = true, capabilities = EngineCapabilities.Codex))
+        assertNull(minResumeOffer(s, canRun = true, capabilities = EngineCapabilities.CodexWithoutInterrupt))
     }
 }

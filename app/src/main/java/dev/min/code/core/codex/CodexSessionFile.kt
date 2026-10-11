@@ -164,13 +164,26 @@ const val RESTORE_SCAN_LIMIT = 10
  * [maxItems] 是保险丝：一个长会话能攒出上万条，全塞进 LazyColumn 只会让回到页面时卡住。
  * 超了就留最后那些 —— 要回头看的永远是最近发生的事。
  */
-fun readCodexSessionItems(file: File, maxItems: Int = MAX_REPLAY_ITEMS): List<ChatItem> {
+fun readCodexSessionItems(file: File, maxItems: Int = MAX_REPLAY_ITEMS): List<ChatItem> =
+    readCodexRollout(file, maxItems).items
+
+/** [readCodexRollout] 的结果：回放出来的条目，加「最后一个回合有没有收尾」 */
+data class CodexRollout(val items: List<ChatItem>, val endedMidTurn: Boolean)
+
+/**
+ * 一遍读完：条目和回合收尾状态。打开旧会话时两样都要（▶ 靠后者判断上次是不是被杀在半路），
+ * 分两遍读就是把一个可能几十 MB 的文件读两次。
+ */
+fun readCodexRollout(file: File, maxItems: Int = MAX_REPLAY_ITEMS): CodexRollout {
     val items = ArrayList<ChatItem>()
+    val turns = RolloutTurnTracker()
     runCatching {
         file.useLines { lines ->
             lines.forEach { line ->
-                val item = parseLine(line)
-                    ?.takeIf { it.str("type") == "event_msg" }
+                val obj = parseLine(line) ?: return@forEach
+                turns.accept(obj)
+                val item = obj
+                    .takeIf { it.str("type") == "event_msg" }
                     ?.obj("payload")
                     ?.takeIf { it.str("type") == ITEM_COMPLETED }
                     ?.obj("item")
@@ -180,7 +193,50 @@ fun readCodexSessionItems(file: File, maxItems: Int = MAX_REPLAY_ITEMS): List<Ch
             }
         }
     }
-    return if (items.size > maxItems) items.takeLast(maxItems) else items
+    return CodexRollout(if (items.size > maxItems) items.takeLast(maxItems) else items, turns.open)
+}
+
+/**
+ * rollout 的最后一个回合有没有收尾：App 被杀后重开用（设计 §6.5 表最后一行）。
+ * 按 `turn_id` 配对 `task_started` 与收尾事件（见 [RolloutTurnTracker]）。事件名与结论来自 codex-cli 0.162.1 的实测
+ * （隔离 CODEX_HOME + 本机 mock 模型，三种被杀时刻：模型还没出字 / 文本流到一半 / 工具调用中，尾巴都没有收尾行）。
+ */
+fun rolloutEndedMidTurn(lines: Sequence<String>): Boolean {
+    val turns = RolloutTurnTracker()
+    for (line in lines) parseLine(line)?.let(turns::accept)
+    return turns.open
+}
+
+/**
+ * 跟踪 rollout 里「当前有没有开着的回合」。
+ *
+ * 事件名（实测 + 上游 `EventMsg` 的线格式名）：开 = `task_started`（别名 `turn_started`），
+ * 收 = `task_complete`（别名 `turn_complete`，失败也写它，只是多一个 `error` 字段）或 `turn_aborted`（用户打断）。
+ * 被杀的回合什么收尾行都没有，所以 [open] 还是真。
+ *
+ * 按 `payload.turn_id` 配对而不是单一布尔：被打断回合的收尾事件若落在下一回合 `task_started` 之后，
+ * 布尔会把新回合的 open 误清掉。旧格式没有 turn_id 时回退成「直接清」。
+ */
+internal class RolloutTurnTracker {
+    var open = false
+        private set
+    private var openTurn: String? = null
+
+    fun accept(line: JsonObject) {
+        if (line.str("type") != "event_msg") return
+        val payload = line.obj("payload") ?: return
+        when (payload.str("type")) {
+            "task_started", "turn_started" -> {
+                open = true
+                openTurn = payload.str("turn_id")
+            }
+            "task_complete", "turn_complete", "turn_aborted" -> {
+                if (!open) return
+                val id = payload.str("turn_id")
+                if (id == null || openTurn == null || id == openTurn) open = false
+            }
+        }
+    }
 }
 
 private fun parseLine(line: String): JsonObject? {

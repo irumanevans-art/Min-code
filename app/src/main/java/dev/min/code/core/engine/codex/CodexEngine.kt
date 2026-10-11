@@ -6,7 +6,7 @@ import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexDraftStore
 import dev.min.code.core.codex.CodexPermissionPreset
 import dev.min.code.core.codex.orUnset
-import dev.min.code.core.codex.readCodexSessionItems
+import dev.min.code.core.codex.readCodexRollout
 import dev.min.code.core.codex.withPermission
 import dev.min.code.core.engine.AgentEngine
 import dev.min.code.core.engine.AgentSession
@@ -41,7 +41,7 @@ import java.io.File
  * - [create]：`prepare()`（写 config.toml）-> `manager.start(options)` -> 等 thread 就绪拿到 threadId。
  *   通用 [AgentSession.ref] 要 threadId，而 Codex 到握手完成才有，所以 create 是「等握手」的挂起调用；
  * - [open]：只读回放（`manager.restore`），**不起进程**，与 `CodexVM.openSession` 一致（点开看看和继续跑是两件事）。
- *   接回进程（`thread/resume`）属 B8 的 ▶。
+ *   rollout 的最后一个回合没收尾就留一条结局，▶ 据此出现；接回进程（`thread/resume`）在 ▶ 里（[relaunch]）。
  *
  * @param prepare `CodexRuntime.prepare()`：每次起进程前把非机密的路由配置写进 guest
  * @param codexHome `CodexRuntime.codexHome()`
@@ -104,9 +104,9 @@ class CodexEngine internal constructor(
     override suspend fun open(id: String): Result<AgentSession> = runCatching {
         current.value?.takeIf { it.ref.id == id && manager.state.value.threadId == id }?.let { return@runCatching it }
         val summary = codexCatalog.summaries().firstOrNull { it.threadId == id } ?: error("找不到这个 Codex 会话：$id")
-        val items = withContext(Dispatchers.IO) { readCodexSessionItems(summary.file) }
+        val rollout = withContext(Dispatchers.IO) { readCodexRollout(summary.file) }
         // 正跑着别的会话时 restore 返回 false，不覆盖实时状态
-        check(manager.restore(items = items, threadId = id)) { "Codex 正在运行另一个会话，先停掉它" }
+        check(manager.restore(items = rollout.items, threadId = id, endedMidTurn = rollout.endedMidTurn)) { "Codex 正在运行另一个会话，先停掉它" }
         attach(id)
     }
 
@@ -115,9 +115,22 @@ class CodexEngine internal constructor(
         val externals = titles.map { metas ->
             CodexMapContext(title = metas[threadId]?.title?.takeIf { it.isNotBlank() })
         }.stateIn(scope, SharingStarted.Eagerly, CodexMapContext(title = titles.value[threadId]?.title))
-        val session = CodexSession(manager, threadId, scope, externals, metaStore, searchFiles)
+        val session = CodexSession(manager, threadId, scope, externals, metaStore, searchFiles, ::relaunch)
         current.value = session
         return session
+    }
+
+    /**
+     * ▶ 要先把进程接回来：写好路由配置、`thread/resume` 同一条线程，等握手收尾。排队的话与 ▶ 的结局由 manager 的
+     * `start` 带过去（同一条线程）。这条线程在面板里改过的设置也由 manager 带着（`customizedThreadId`），没改过就用连接配置的默认。
+     */
+    private suspend fun relaunch(threadId: String): Boolean {
+        withContext(Dispatchers.IO) { prepare() }
+        if (!manager.start(defaultOptions(), resumeThreadId = threadId)) return false
+        val settled = withTimeoutOrNull(handshakeWaitMs) {
+            manager.state.first { (it.status == SessionStatus.Running && it.threadId != null) || it.status == SessionStatus.Failed || it.status == SessionStatus.Closed }
+        }
+        return settled?.status == SessionStatus.Running
     }
 
     override suspend fun closeAll(reason: CloseReason) {

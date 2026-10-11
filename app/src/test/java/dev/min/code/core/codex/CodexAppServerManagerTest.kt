@@ -745,6 +745,260 @@ class CodexAppServerManagerTest {
         manager.close()
     }
 
+    // ---------------------------------------------------------------- B8：turn/interrupt 与回合结局
+
+    /** 第 5 个请求 = 打断（1 initialize、2 thread/start、3 turn/start，4 被用户消息的本地条目 id 占了：请求号与本地 id 共用一个计数器）。应答空对象，然后收场 interrupted（实测顺序） */
+    private val interruptAck = "turn/interrupt" to listOf("""{"id":"5","result":{}}""", turnCompleted("interrupted"))
+
+    /** [firstId] = initialize 请求的 id（manager 的请求号不随重启复位，第二次 start 从 5 起，依此类推） */
+    private fun handshakeTriggers(thread: String = "thread/start", threadId: String = "t", firstId: Int = 1) = arrayOf(
+        "\"method\":\"initialize\"" to listOf("""{"id":"$firstId","result":{}}"""),
+        thread to listOf("""{"id":"${firstId + 1}","result":{"threadId":"$threadId"}}"""),
+    )
+
+    private suspend fun interruptible(
+        vararg extra: Pair<String, List<String>>,
+        turnLines: List<String> = BUSY_TURN,
+        interruptTimeoutMs: Long = CodexAppServerManager.INTERRUPT_TIMEOUT_MS,
+    ): CodexAppServerManager {
+        scripted = ScriptedProcess(*handshakeTriggers(), "turn/start" to turnLines, *extra)
+        val manager = CodexAppServerManager(interruptTimeoutMs = interruptTimeoutMs) { scripted }
+        manager.start()
+        awaitOn(manager) { manager.state.value.status == SessionStatus.Running }
+        return manager
+    }
+
+    private fun interruptFrames(): List<JsonObject> = scripted.writtenLines()
+        .filter { it.contains(""""method":"turn/interrupt"""") }
+        .map { Json.parseToJsonElement(it) as JsonObject }
+
+    @Test
+    fun `interrupt stops only the turn - the right ids go on the wire, the process lives, the end is recorded`() = runBlocking {
+        val manager = interruptible(interruptAck)
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy && manager.state.value.turnId == "turn-1" }
+
+        assertTrue(manager.interruptTurn())
+        awaitOn(manager) { !manager.state.value.busy }
+
+        val params = interruptFrames().single()["params"] as JsonObject
+        assertEquals("t", params.str("threadId"))
+        assertEquals("turn-1", params.str("turnId"))
+        assertFalse("进程不死：这就是和老停止键的区别", scripted.destroyed)
+        assertEquals(SessionStatus.Running, manager.state.value.status)
+        assertEquals(CodexTurnEnd.Kind.Interrupted, manager.state.value.lastTurnEnd?.kind)
+        assertFalse(manager.state.value.interrupting)
+        manager.close()
+    }
+
+    @Test
+    fun `interrupt keeps the queue, settles the unfinished tool card, and a new turn clears the recorded end`() = runBlocking {
+        val manager = interruptible(interruptAck)
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+        scripted.queue("""{"method":"item/started","params":{"item":{"type":"commandExecution","id":"c1","command":"sleep 30"}}}""")
+        awaitOn(manager) { manager.state.value.items.any { it is ChatItem.ToolCall } }
+        manager.sendTurn("排队一")
+
+        assertTrue(manager.interruptTurn())
+        awaitOn(manager) { !manager.state.value.busy }
+
+        assertEquals("打断不放排队的话（队列留着，让人看得见）", listOf("排队一"), manager.state.value.queued)
+        assertEquals(1, turnStarts())
+        // Codex 打断时不补 item/completed：转圈的工具卡要自己收尾
+        val card = manager.state.value.items.filterIsInstance<ChatItem.ToolCall>().single()
+        assertEquals(ChatItem.ToolCall.Status.Error, card.status)
+        // 新一轮一开始，「上次怎么停的」就清掉（▶ 随之收起）
+        manager.takeQueued(0)
+        assertTrue(manager.sendTurn("接着"))
+        assertNull(manager.state.value.lastTurnEnd)
+        manager.close()
+    }
+
+    @Test
+    fun `the run-queued tier releases the next queued message after the interrupted turn ends`() = runBlocking {
+        val manager = interruptible(interruptAck)
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+        manager.sendTurn("排队一")
+
+        assertTrue(manager.interruptTurn(runQueued = true))
+        awaitOn(manager) { turnStarts() == 2 }
+        assertEquals(emptyList<String>(), manager.state.value.queued)
+        manager.close()
+    }
+
+    @Test
+    fun `stopping before the turn id arrives sends the interrupt as soon as it does`() = runBlocking {
+        // turn/start 的应答先不给：turnId 还是 null
+        val manager = interruptible(interruptAck, turnLines = emptyList())
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+        assertNull(manager.state.value.turnId)
+
+        assertTrue(manager.interruptTurn())
+        assertTrue(manager.state.value.interrupting)
+        assertTrue("turnId 还没有，不能发", interruptFrames().isEmpty())
+
+        scripted.queue("""{"id":"3","result":{"turn":{"id":"turn-1"}}}""")
+        awaitOn(manager) { interruptFrames().size == 1 }
+        assertEquals("turn-1", (interruptFrames().single()["params"] as JsonObject).str("turnId"))
+        manager.close()
+    }
+
+    @Test
+    fun `interrupt with nothing running does nothing, pressing twice is one request`() = runBlocking {
+        val manager = interruptible(interruptAck)
+        assertFalse(manager.interruptTurn())
+        manager.sendTurn("问")
+        awaitOn(manager) { manager.state.value.busy }
+        assertTrue(manager.interruptTurn())
+        assertTrue("重复按 = 同一次", manager.interruptTurn())
+        awaitOn(manager) { !manager.state.value.busy }
+        assertEquals(1, interruptFrames().size)
+        manager.close()
+    }
+
+    @Test
+    fun `an app-server that does not know turn-interrupt is stopped the old way`() = runBlocking {
+        val manager = interruptible("turn/interrupt" to listOf("""{"id":"5","error":{"code":-32601,"message":"Method not found"}}"""))
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+
+        assertTrue(manager.interruptTurn())
+        awaitOn(manager) { scripted.destroyed }
+        awaitOn(manager) { manager.state.value.status == SessionStatus.Closed }
+        // 停止键必须能停；记成用户打断，▶ 之后先接回进程
+        assertEquals(CodexTurnEnd.Kind.Interrupted, manager.state.value.lastTurnEnd?.kind)
+        manager.close()
+    }
+
+    @Test
+    fun `no active turn on the server only clears the interrupting flag`() = runBlocking {
+        val manager = interruptible("turn/interrupt" to listOf("""{"id":"5","error":{"code":-32600,"message":"no active turn to interrupt"}}"""))
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+        assertTrue(manager.interruptTurn())
+        awaitOn(manager) { !manager.state.value.interrupting }
+        assertFalse(scripted.destroyed)
+        assertEquals(SessionStatus.Running, manager.state.value.status)
+        manager.close()
+    }
+
+    @Test
+    fun `a server that never ends the turn is stopped the old way after the deadline`() = runBlocking {
+        // 收下打断请求但永远不发 turn/completed
+        val manager = interruptible("turn/interrupt" to listOf("""{"id":"5","result":{}}"""), interruptTimeoutMs = 150)
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+        assertTrue(manager.interruptTurn())
+        awaitOn(manager) { scripted.destroyed }
+        assertEquals(SessionStatus.Closed, manager.state.value.status)
+        assertEquals(CodexTurnEnd.Kind.Interrupted, manager.state.value.lastTurnEnd?.kind)
+        manager.close()
+    }
+
+    @Test
+    fun `a turn that ends normally clears the deadline - the process is left alone`() = runBlocking {
+        val manager = interruptible(interruptAck, interruptTimeoutMs = 150)
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+        manager.interruptTurn()
+        awaitOn(manager) { !manager.state.value.busy }
+        delay(400)
+        assertFalse(scripted.destroyed)
+        manager.close()
+    }
+
+    @Test
+    fun `how a turn ended is recorded - completed, failed with the server's words, unknown status counts as completed`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("一")
+        awaitOn(manager) { manager.state.value.busy }
+        scripted.queue("""{"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"failed","error":{"message":"unexpected status 401 Unauthorized"}}}}""")
+        awaitOn(manager) { !manager.state.value.busy }
+        val failed = manager.state.value.lastTurnEnd!!
+        assertEquals(CodexTurnEnd.Kind.Failed, failed.kind)
+        assertEquals("unexpected status 401 Unauthorized", failed.detail)
+        manager.close()
+
+        val second = runningManager(BUSY_TURN)
+        second.sendTurn("二")
+        awaitOn(second) { second.state.value.busy }
+        scripted.queue(turnCompleted("completed"))
+        awaitOn(manager) { !second.state.value.busy }
+        assertEquals(CodexTurnEnd.Kind.Completed, second.state.value.lastTurnEnd?.kind)
+        second.close()
+
+        assertEquals(CodexTurnEnd.Kind.Completed, codexTurnEndOf("somethingNew", null, 1L).kind)
+        assertEquals(CodexTurnEnd.Kind.Completed, codexTurnEndOf(null, null, 1L).kind)
+    }
+
+    @Test
+    fun `the process dying mid-turn records EngineExited, one that dies idle records nothing`() = runBlocking {
+        val manager = runningManager(BUSY_TURN)
+        manager.sendTurn("一")
+        awaitOn(manager) { manager.state.value.busy }
+        scripted.destroy()
+        awaitOn(manager) { manager.state.value.status == SessionStatus.Failed }
+        assertEquals(CodexTurnEnd.Kind.EngineExited, manager.state.value.lastTurnEnd?.kind)
+        manager.close()
+
+        val idle = runningManager(BUSY_TURN)
+        scripted.destroy()
+        awaitOn(idle) { idle.state.value.status == SessionStatus.Failed }
+        assertNull(idle.state.value.lastTurnEnd)
+        idle.close()
+    }
+
+    @Test
+    fun `a read-only replay that ended mid-turn carries the death through the relaunch`() = runBlocking {
+        scripted = ScriptedProcess(*handshakeTriggers(thread = "thread/resume", threadId = "t-old"))
+        val manager = CodexAppServerManager { scripted }
+        assertTrue(manager.restore(listOf(ChatItem.UserText("u", "旧问题")), "t-old", endedMidTurn = true))
+        assertEquals(CodexTurnEnd.Kind.ProcessDeath, manager.state.value.lastTurnEnd?.kind)
+
+        assertTrue(manager.start(resumeThreadId = "t-old"))
+        // 接回进程这一段，▶ 靠结局撑着；历史也还在
+        assertEquals(CodexTurnEnd.Kind.ProcessDeath, manager.state.value.lastTurnEnd?.kind)
+        assertEquals(listOf("旧问题"), userTexts(manager))
+        awaitOn(manager) { manager.state.value.status == SessionStatus.Running }
+        manager.close()
+
+        // 不在半路的 rollout 不留结局
+        val clean = CodexAppServerManager { error("不该起进程") }
+        assertTrue(clean.restore(listOf(ChatItem.UserText("u", "旧问题")), "t-old", endedMidTurn = false))
+        assertNull(clean.state.value.lastTurnEnd)
+        clean.close()
+    }
+
+    /** 回归：以前 stop 之后 start 把整个状态重置，排着的话就这样丢了 */
+    @Test
+    fun `relaunching the same thread keeps the queue and the end, another thread starts clean`() = runBlocking {
+        val manager = interruptible(interruptAck)
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+        manager.sendTurn("排队一")
+        manager.interruptTurn()
+        awaitOn(manager) { !manager.state.value.busy }
+        manager.stop()
+        awaitOn(manager) { manager.state.value.status == SessionStatus.Closed }
+
+        scripted = ScriptedProcess(*handshakeTriggers(thread = "thread/resume", firstId = 6))
+        assertTrue(manager.start(resumeThreadId = "t"))
+        assertEquals(listOf("排队一"), manager.state.value.queued)
+        assertEquals(CodexTurnEnd.Kind.Interrupted, manager.state.value.lastTurnEnd?.kind)
+        awaitOn(manager) { manager.state.value.status == SessionStatus.Running }
+
+        manager.stop()
+        awaitOn(manager) { manager.state.value.status == SessionStatus.Closed }
+        scripted = ScriptedProcess(*handshakeTriggers(threadId = "other", firstId = 8))
+        assertTrue(manager.start())
+        assertEquals(emptyList<String>(), manager.state.value.queued)
+        assertNull(manager.state.value.lastTurnEnd)
+        manager.close()
+    }
+
     private fun lastTurnStart(process: ScriptedProcess): JsonObject {
         val line = process.writtenLines().last { it.contains(""""method":"turn/start"""") }
         return (Json.parseToJsonElement(line) as JsonObject)["params"] as JsonObject
@@ -782,6 +1036,19 @@ class CodexAppServerManagerTest {
 
     private fun turnCompleted(status: String): String =
         """{"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"$status"}}}"""
+
+    /** 等条件满足；超时把 manager 的状态与写出去的帧一起报出来，B8 的用例靠它定位 */
+    private suspend fun awaitOn(manager: CodexAppServerManager, condition: () -> Boolean) {
+        repeat(400) {
+            if (condition()) return
+            delay(5)
+        }
+        val st = manager.state.value
+        error(
+            "等待的条件一直没满足：status=${st.status} busy=${st.busy} interrupting=${st.interrupting} turnId=${st.turnId} " +
+                "end=${st.lastTurnEnd} queued=${st.queued}\n写出：\n" + scripted.writtenLines().joinToString("\n"),
+        )
+    }
 
     private suspend fun await(condition: () -> Boolean) {
         repeat(400) {

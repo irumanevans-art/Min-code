@@ -5,10 +5,10 @@ import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.transcriptEndedMidTurn
 import dev.min.code.core.engine.EngineCapabilities
 import dev.min.code.core.engine.HistoryTail
-import dev.min.code.core.engine.InterruptCause
 import dev.min.code.core.engine.ResumeOffer
 import dev.min.code.core.engine.TurnEnd
 import dev.min.code.core.engine.offerResume
+import dev.min.code.core.engine.provesUnfinished
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.SessionStatus
 
@@ -45,19 +45,6 @@ internal object ClaudeResume {
     }
 
     /**
-     * 这种结局本身就证明模型还欠一个回答，不必再看条目末尾长什么样。
-     *
-     * 条目末尾在这几种情形下会误导：用户打断时已出的半截正文、失败时 CLI 合成的那条「API Error」助手消息，
-     * 都是助手条目，按 [tailOf] 会被当成「回答已完整」。但失败 / 打断 / 达到上限都发生在**请求还没得到完整回答**的时候。
-     * 只有进程死亡 / 引擎退出要看条目（死在「最终回答已落盘」与收尾之间时回答其实完整，续跑会变成 assistant prefill）。
-     */
-    private fun provesUnfinished(end: TurnEnd): Boolean = when (end) {
-        is TurnEnd.Failed -> true
-        is TurnEnd.Interrupted -> end.cause == InterruptCause.User || end.cause == InterruptCause.Limit
-        TurnEnd.Completed -> false
-    }
-
-    /**
      * ▶ 的 offer。
      *
      * @param lastEnd 上一回合怎么结束的（manager 的 `lastTurnEnd` 映射来的）；null = 不知道，不出 ▶
@@ -75,7 +62,7 @@ internal object ClaudeResume {
             canRun = state.sessionId != null,
             lastEnd = lastEnd,
             since = since,
-            tail = if (provesUnfinished(lastEnd)) HistoryTail.UserMessage else tailOf(state.items),
+            tail = if (lastEnd.provesUnfinished()) HistoryTail.UserMessage else tailOf(state.items),
             pendingInputs = state.items.count { it is ChatItem.UserText && it.queued },
             offerId = "${state.sessionId}@${since ?: 0L}",
             needsRelaunch = exited,

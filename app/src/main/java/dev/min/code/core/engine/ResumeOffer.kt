@@ -145,6 +145,19 @@ fun offerResume(
     return ResumeOffer(offerId = offerId, reason = reason, since = since, mode = mode, pendingInputs = pendingInputs)
 }
 
+/**
+ * 这种结局本身就证明模型还欠一个回答，不必再看历史末尾长什么样（CC / Codex 共用，见两边的 `Resume.offer`）。
+ *
+ * 末尾在这几种情形下会误导：用户打断时已出的半截正文、失败时引擎合成的那条报错说明，都是助手条目，
+ * 按 [HistoryTail.AssistantFinal] 会被当成「回答已完整」。但失败 / 打断 / 达到上限都发生在**请求还没得到完整回答**的时候。
+ * 只有进程死亡 / 引擎退出要看条目（死在「最终回答已落盘」与收尾之间时回答其实完整，续跑会变成 assistant prefill）。
+ */
+internal fun TurnEnd.provesUnfinished(): Boolean = when (this) {
+    is TurnEnd.Failed -> true
+    is TurnEnd.Interrupted -> cause == InterruptCause.User || cause == InterruptCause.Limit
+    TurnEnd.Completed -> false
+}
+
 /** 结局 → 续跑原因；不该续的结局（完成 / 撤回 / 还没有结局）返回 null */
 private fun reasonOf(end: TurnEnd?, since: Long?): ResumeReason? = when (end) {
     null, TurnEnd.Completed -> null

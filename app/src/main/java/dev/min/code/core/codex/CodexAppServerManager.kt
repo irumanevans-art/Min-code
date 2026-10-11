@@ -55,6 +55,8 @@ fun interface CodexProcessLauncher {
 class CodexAppServerManager(
     /** 从拉起进程到 thread 就绪的上限，见 [HANDSHAKE_TIMEOUT_MS]。测试里调短；放在前面好让启动器照旧写成尾随 lambda */
     private val handshakeTimeoutMs: Long = HANDSHAKE_TIMEOUT_MS,
+    /** 发出 `turn/interrupt` 后等收场的上限，见 [INTERRUPT_TIMEOUT_MS]。测试里调短 */
+    private val interruptTimeoutMs: Long = INTERRUPT_TIMEOUT_MS,
     private val processLauncher: CodexProcessLauncher,
 ) : AutoCloseable {
 
@@ -101,6 +103,13 @@ class CodexAppServerManager(
          */
         val queued: List<String> = emptyList(),
         /**
+         * 上一个回合怎么收场的（只读记录，「继续」键 ▶ 据此判断，见 [CodexTurnEnd]）。新一轮开始时清空；
+         * 重开只读回放时由 rollout 的尾巴决定
+         */
+        val lastTurnEnd: CodexTurnEnd? = null,
+        /** 已发出 `turn/interrupt`（或正等 turnId 好发），还没等到 `turn/completed` */
+        val interrupting: Boolean = false,
+        /**
          * 这条会话此刻的设置（模型 / 强度 / 摘要 / 权限 / 工作目录），下一轮 turn/start 照它写。
          * model 等为 null = 没指定，走 codex 自己的默认。
          */
@@ -115,7 +124,7 @@ class CodexAppServerManager(
         val canSend: Boolean get() = status == SessionStatus.Running && threadId != null
     }
 
-    private enum class RequestKind { Initialize, Thread, Turn }
+    private enum class RequestKind { Initialize, Thread, Turn, Interrupt }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val requestIds = AtomicLong(0)
@@ -176,6 +185,19 @@ class CodexAppServerManager(
     private var options = Options()
     private var resumeThreadId: String? = null
 
+    /** 按了停止、但 turnId 还没回来（turn/start 刚发出）：turnId 一到就补发 `turn/interrupt` */
+    private var interruptWanted = false
+
+    /** 显式的「打断后跑排队」那一档：打断收场后照样放出排着的下一条（默认打断后队列留着，见 [drainQueuedLocked]） */
+    private var runQueuedAfterInterrupt = false
+    private var interruptWatch: Job? = null
+
+    /**
+     * 这个 app-server 认不认 `turn/interrupt`。随包的是 npm 上最新版（0.162.1 起认），但已装的旧版可能不认：
+     * 第一次收到「方法不存在」就记下，之后停止键退回老做法（停整个进程），不再碰它。
+     */
+    private var interruptSupported = true
+
     /**
      * 在会话设置里动过的是哪条线程。「继续」的正是这条时，面板里的设置跟着走
      * （[withSessionSettingsOf]）；没动过就照连接配置重来，和以前一样。
@@ -207,14 +229,21 @@ class CodexAppServerManager(
         outputBuffers.clear()
         streamingTextItemId = null
         streamingThinkingItemId = null
+        val sameThread = resumeThreadId != null && resumeThreadId == _state.value.threadId
         _state.value = State(
             status = SessionStatus.Starting,
             threadId = resumeThreadId,
             // 接着上一条聊时，已经摆在屏幕上的历史要留着 —— 点一下「继续」就清屏，
             // 用户会以为历史没了。开新会话（resumeThreadId 为空）才从白纸开始
             items = if (resumeThreadId != null) _state.value.items else emptyList(),
+            // 同一条线程接回来时，排着的话和「上次怎么停的」都跟着走：以前 start 把整个状态重置，
+            // 停止（= 杀进程）之后排队的消息就这样丢了；▶ 也要靠 lastTurnEnd 撑过「正在接回会话」这一段
+            queued = if (sameThread) _state.value.queued else emptyList(),
+            lastTurnEnd = if (sameThread) _state.value.lastTurnEnd else null,
             options = this.options,
         )
+        interruptWanted = false
+        runQueuedAfterInterrupt = false
 
         val launched = runCatching { processLauncher.start() }.getOrElse { error ->
             failLocked(error.message ?: error::class.java.simpleName)
@@ -242,14 +271,16 @@ class CodexAppServerManager(
      * 重进 App 时先让人看见上次聊到哪儿，再决定要不要接着跑 —— 而不是一进来就
      * 拉起一个进程。会话正活着时不覆盖：那时屏幕上的才是实时的。
      */
-    fun restore(items: List<ChatItem>, threadId: String?): Boolean = synchronized(lock) {
+    fun restore(items: List<ChatItem>, threadId: String?, endedMidTurn: Boolean = false): Boolean = synchronized(lock) {
         if (process != null || _state.value.status == SessionStatus.Running ||
             _state.value.status == SessionStatus.Starting
         ) {
             return false
         }
         if (items.isEmpty() && threadId == null) return false
-        _state.value = _state.value.copy(items = items, threadId = threadId)
+        // rollout 的最后一个回合没有收尾 = 上次被杀在半路：留一条结局，▶ 据此出现（先 thread/resume 接回进程再续）
+        val tail = if (endedMidTurn) CodexTurnEnd(CodexTurnEnd.Kind.ProcessDeath) else null
+        _state.value = _state.value.copy(items = items, threadId = threadId, lastTurnEnd = tail)
         true
     }
 
@@ -333,8 +364,11 @@ class CodexAppServerManager(
             turnId = null,
             busy = true,
             errorMessage = null,
+            lastTurnEnd = null,
+            interrupting = false,
             turnStartedAt = System.currentTimeMillis(),
         )
+        interruptWanted = false
         streamingTextItemId = null
         streamingThinkingItemId = null
 
@@ -371,6 +405,77 @@ class CodexAppServerManager(
         val next = _state.value.queued.firstOrNull() ?: return
         _state.value = _state.value.copy(queued = _state.value.queued.drop(1))
         startTurnLocked(next)
+    }
+
+    /**
+     * 停止键：只打断**这一轮**（`turn/interrupt`），进程不死、排着的话不丢、▶ 能原地接上（设计 §6.5）。
+     * 以前的停止键杀整个 app-server，于是排队的消息连同会话状态一起丢了。
+     *
+     * 收场是随后的 `turn/completed`（status = interrupted），不是这个调用的应答。turnId 还没回来
+     * （`turn/start` 刚发出）时先记下，一到就补发。服务端久不收场、或这个版本根本不认 `turn/interrupt` 时，
+     * 退回老做法杀进程（[forceStopLocked]）：停止键必须能停。
+     *
+     * @param runQueued 显式的「打断后跑排队」那一档：收场后照样放出排着的下一条；默认队列原地留着
+     * @return false = 没有可打断的回合
+     */
+    fun interruptTurn(runQueued: Boolean = false): Boolean = synchronized(lock) {
+        val current = _state.value
+        if (current.status != SessionStatus.Running || !current.busy) return false
+        if (current.interrupting) return true
+        runQueuedAfterInterrupt = runQueued
+        if (!interruptSupported) {
+            forceStopLocked()
+            return true
+        }
+        _state.value = current.copy(interrupting = true)
+        val turnId = current.turnId
+        if (turnId == null) {
+            interruptWanted = true
+            armInterruptWatchLocked()
+        } else {
+            sendInterruptLocked(current.threadId ?: return true, turnId)
+        }
+        true
+    }
+
+    private fun sendInterruptLocked(threadId: String, turnId: String) {
+        interruptWanted = false
+        val id = nextRequestId()
+        pendingRequests[id] = RequestKind.Interrupt
+        if (!writeLineLocked(encodeCodexTurnInterrupt(id, threadId, turnId), "写不进 turn/interrupt 请求")) {
+            pendingRequests.remove(id)
+            forceStopLocked()
+            return
+        }
+        armInterruptWatchLocked()
+    }
+
+    /** 打断请求发出后等不到 `turn/completed` 的兜底：到点还在忙就杀进程，见 [INTERRUPT_TIMEOUT_MS] */
+    private fun armInterruptWatchLocked() {
+        interruptWatch?.cancel()
+        val armedFor = _state.value.threadId
+        interruptWatch = scope.launch {
+            delay(interruptTimeoutMs)
+            synchronized(lock) {
+                val now = _state.value
+                if (now.busy && now.interrupting && now.threadId == armedFor) {
+                    Log.w(TAG, "codex turn/interrupt 超时（${interruptTimeoutMs}ms），退回停进程")
+                    forceStopLocked()
+                }
+            }
+        }
+    }
+
+    /**
+     * 老做法：停整个进程。回合记成用户打断（▶ 会先 thread/resume 接回进程再续）。
+     * 与 [stop] 的区别只在于记了结局：用户有意「结束会话」不该出 ▶，而这里是停止键没停住、被迫杀进程。
+     */
+    private fun forceStopLocked() {
+        val doomed = detachLocked(failed = false, message = null)
+        _state.value = _state.value.copy(
+            lastTurnEnd = CodexTurnEnd(CodexTurnEnd.Kind.Interrupted, System.currentTimeMillis()),
+        )
+        doomed?.let { killAsync(it) }
     }
 
     /**
@@ -444,13 +549,19 @@ class CodexAppServerManager(
             writer = null
             process = null
             pendingRequests.clear()
+            interruptWatch?.cancel()
+            interruptWanted = false
             _state.value = if (stopping) {
-                _state.value.copy(status = SessionStatus.Closed, busy = false, pendingApproval = null)
+                _state.value.copy(status = SessionStatus.Closed, busy = false, interrupting = false, pendingApproval = null)
             } else {
-                _state.value.copy(
+                val before = _state.value
+                before.copy(
                     status = SessionStatus.Failed,
                     busy = false,
+                    interrupting = false,
                     pendingApproval = null,
+                    // 回合进行中进程自己退了：模型还欠一个回答，▶ 会先 thread/resume 接回进程再续
+                    lastTurnEnd = if (before.busy) CodexTurnEnd(CodexTurnEnd.Kind.EngineExited, System.currentTimeMillis()) else before.lastTurnEnd,
                     errorMessage = "codex app-server 退出，退出码 $exitCode",
                 )
             }
@@ -490,28 +601,42 @@ class CodexAppServerManager(
                 errorMessage = null,
             )
 
-            is CodexEvent.TurnStarted -> _state.value = current.copy(
-                turnId = event.turnId,
-                busy = true,
-                turnStartedAt = current.turnStartedAt ?: System.currentTimeMillis(),
-            )
+            is CodexEvent.TurnStarted -> {
+                _state.value = current.copy(
+                    turnId = event.turnId,
+                    busy = true,
+                    turnStartedAt = current.turnStartedAt ?: System.currentTimeMillis(),
+                )
+                // 按了停止时 turnId 还没回来：现在有了，补发
+                if (interruptWanted) current.threadId?.let { sendInterruptLocked(it, event.turnId) }
+            }
 
             is CodexEvent.TurnCompleted -> {
+                val now = System.currentTimeMillis()
+                val end = codexTurnEndOf(event.status, event.errorMessage, now)
+                val settled = current.items.settleStreaming(current)
                 _state.value = current.copy(
                     turnId = event.turnId ?: current.turnId,
                     busy = false,
+                    interrupting = false,
                     // 一轮结束时把没来得及 completed 的增量收尾，不然它会一直挂在那儿
                     streamingText = "",
                     streamingThinking = "",
-                    items = current.items.settleStreaming(current),
+                    // 被打断 / 失败时 Codex 不补 item/completed：还在转圈的工具卡自己收尾
+                    items = if (end.kind == CodexTurnEnd.Kind.Completed) settled else settled.settleRunningTools(),
                     errorMessage = event.errorMessage ?: current.errorMessage,
-                    lastTurnDurationMs = current.turnStartedAt?.let { System.currentTimeMillis() - it },
+                    lastTurnDurationMs = current.turnStartedAt?.let { now - it },
+                    lastTurnEnd = end,
                     turnStartedAt = null,
                 )
                 streamingTextItemId = null
                 streamingThinkingItemId = null
-                // status ∈ completed / interrupted / failed，只有干净跑完才放下一条
-                if (event.status == TURN_COMPLETED) drainQueuedLocked()
+                interruptWanted = false
+                interruptWatch?.cancel()
+                // status ∈ completed / interrupted / failed，只有干净跑完才放下一条；
+                // 用户显式选了「打断后跑排队」时，打断收场也放（默认留着，让人看得见、点得动，见 [drainQueuedLocked]）
+                if (event.status == TURN_COMPLETED || (event.status == TURN_INTERRUPTED && runQueuedAfterInterrupt)) drainQueuedLocked()
+                runQueuedAfterInterrupt = false
             }
 
             is CodexEvent.ItemStarted -> {
@@ -617,7 +742,19 @@ class CodexAppServerManager(
             val message = response.error.str("message") ?: "codex 请求 ${response.id} 失败"
             if (kind == RequestKind.Turn) {
                 // 一轮失败不该把整条会话关掉，用户改一句还能接着问
-                _state.value = _state.value.copy(busy = false, errorMessage = message)
+                _state.value = _state.value.copy(
+                    busy = false, interrupting = false, errorMessage = message,
+                    lastTurnEnd = CodexTurnEnd(CodexTurnEnd.Kind.Failed, System.currentTimeMillis(), message),
+                )
+            } else if (kind == RequestKind.Interrupt) {
+                if (isMethodNotFound(response.error)) {
+                    // 这个版本的 app-server 不认 turn/interrupt：记下来，这一次和以后都退回停进程
+                    interruptSupported = false
+                    forceStopLocked()
+                } else {
+                    // 「没有进行中的回合」之类：回合已经自己收场了，turn/completed 会（或已经）到
+                    _state.value = _state.value.copy(interrupting = false)
+                }
             } else {
                 failLocked(message)
             }
@@ -667,8 +804,14 @@ class CodexAppServerManager(
             RequestKind.Turn -> {
                 val turnId = (response.result as? kotlinx.serialization.json.JsonObject)
                     ?.let { it.obj("turn")?.str("id") ?: it.str("turnId") }
-                if (turnId != null) _state.value = _state.value.copy(turnId = turnId)
+                if (turnId != null) {
+                    _state.value = _state.value.copy(turnId = turnId)
+                    if (interruptWanted) _state.value.threadId?.let { sendInterruptLocked(it, turnId) }
+                }
             }
+
+            // 应答是空对象，收场看 turn/completed
+            RequestKind.Interrupt -> Unit
         }
     }
 
@@ -700,9 +843,16 @@ class CodexAppServerManager(
         stderrJob = null
         waitJob = null
         handshakeJob = null
+        interruptWatch?.cancel()
+        interruptWatch = null
+        interruptWanted = false
+        val midTurn = _state.value.busy
         _state.value = _state.value.copy(
             status = if (failed) SessionStatus.Failed else SessionStatus.Closed,
             busy = false,
+            interrupting = false,
+            // 进程因为写不进 / 握手失败这类故障被收掉、而回合还在进行：和进程自己退了同一个结局。用户有意停止（failed = false）不记
+            lastTurnEnd = if (failed && midTurn) CodexTurnEnd(CodexTurnEnd.Kind.EngineExited, System.currentTimeMillis()) else _state.value.lastTurnEnd,
             pendingApproval = null,
             streamingText = "",
             streamingThinking = "",
@@ -824,5 +974,19 @@ class CodexAppServerManager(
 
         /** `turn/completed` 里干净跑完的那个 status，另外两个是 interrupted / failed */
         private const val TURN_COMPLETED = "completed"
+        private const val TURN_INTERRUPTED = "interrupted"
+
+        /**
+         * 发出 `turn/interrupt` 后等收场的上限。实测（codex-cli 0.162.1）打断后 0.1 秒内就到 `turn/completed`；
+         * 这里取宽：慢设备上 proot 里的 node 偶尔卡几秒，判早了是把还活着的进程杀掉，判晚了只是停止键多转几秒。
+         */
+        const val INTERRUPT_TIMEOUT_MS = 8_000L
     }
+}
+
+/** JSON-RPC 的「方法不存在」：标准码 -32601，或带这个意思的文字（不同版本措辞不一） */
+private fun isMethodNotFound(error: kotlinx.serialization.json.JsonObject): Boolean {
+    if (error.int("code") == -32601) return true
+    val message = error.str("message")?.lowercase().orEmpty()
+    return "method not found" in message || "unknown method" in message || "unknown variant" in message
 }
