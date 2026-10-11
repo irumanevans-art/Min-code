@@ -29,15 +29,25 @@ import java.io.PrintStream
  * 改写了入参、调用本身抛异常，一律拒绝。
  */
 internal class McpApprovalHost(
-    private val runtime: SessionRuntime,
     private val tool: String,
     private val stderr: PrintStream,
+    /** 此刻已连接的 MCP 工具（全名）；测试里换成假的 */
+    private val listTools: suspend () -> List<dev.min.agent.spi.McpToolEntry>,
+    /** 按全名调用一个 MCP 工具；null = 调不了 */
+    private val call: suspend (String, JsonObject) -> dev.min.agent.spi.ToolResult?,
+    /** 中断当前回合（找不到提示工具时） */
+    private val interrupt: () -> Unit,
 ) : ApprovalHost {
+    companion object {
+        fun forRuntime(runtime: SessionRuntime, tool: String, stderr: PrintStream) =
+            McpApprovalHost(tool, stderr, { runtime.mcpToolEntries() }, { name, args -> runtime.callMcpToolByName(name, args) }, { runtime.interrupt() })
+    }
+
     @Volatile override var fatal: String? = null
         private set
 
     override suspend fun ask(ask: StdioControl.HostAsk, rewritable: Boolean): StdioControl.AskDecision {
-        val entries = runtime.mcpToolEntries()
+        val entries = listTools()
         if (entries.none { it.name == tool }) {
             val message = "Error: MCP tool $tool (passed via --permission-prompt-tool) not found. Available MCP tools: " +
                 entries.joinToString(", ") { it.name }.ifEmpty { "none" }
@@ -45,7 +55,7 @@ internal class McpApprovalHost(
                 fatal = message
                 stderr.println(message)
                 // 原文：第一次要权限决定时就以这个错误收场——不让回合带着没人审批的状态继续跑
-                runtime.interrupt()
+                interrupt()
             }
             return StdioControl.AskDecision(StdioControl.denial("找不到权限提示工具 $tool，按拒绝处理"))
         }
@@ -55,7 +65,7 @@ internal class McpApprovalHost(
             put("tool_use_id", ask.callId.value)
         }
         val result = try {
-            runtime.callMcpToolByName(tool, arguments)
+            call(tool, arguments)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

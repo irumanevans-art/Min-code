@@ -12,6 +12,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.contentOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -65,6 +66,61 @@ class McpPromptToolTest {
         val deny = verdict("""{"behavior":"deny","message":"no"}""") as ApprovalChoice.Deny
         assertEquals("no", deny.note)
         assertTrue(deny.fromHost)
+    }
+
+    // ---- McpApprovalHost（假的工具表与调用口，不要 node）----
+
+    private fun entry(name: String, interaction: Boolean = false) = dev.min.agent.spi.McpToolEntry(
+        name = name, server = "s", tool = name.substringAfterLast("__"), description = "", inputSchema = JsonObject(emptyMap()),
+        requiresUserInteraction = interaction,
+    )
+
+    private fun reply(text: String, isError: Boolean = false) =
+        dev.min.agent.spi.ToolResult(listOf(dev.min.agent.protocol.TextPart("<mcp-result server=\"s\" tool=\"approve\">\n$text\n</mcp-result>")), isError)
+
+    private val ask = StdioControl.HostAsk(dev.min.agent.protocol.SessionId("s1"), dev.min.agent.protocol.CallId("c1"), "Write", original, "写入")
+
+    private class Probe { var interrupts = 0; val err = java.io.ByteArrayOutputStream() }
+
+    private fun host(
+        probe: Probe = Probe(), tools: List<dev.min.agent.spi.McpToolEntry> = listOf(entry("mcp__perm__approve")),
+        call: suspend (String, JsonObject) -> dev.min.agent.spi.ToolResult?,
+    ) = McpApprovalHost("mcp__perm__approve", java.io.PrintStream(probe.err, true, "UTF-8"), { tools }, call, { probe.interrupts++ })
+
+    @Test fun `the prompt tool is called with tool_name, input and tool_use_id and an allow runs the tool`() = run {
+        var seen: JsonObject? = null
+        val decision = host { _, args -> seen = args; reply("""{"behavior":"allow"}""") }.ask(ask)
+        assertEquals(ApprovalChoice.Once, decision.choice)
+        assertEquals("Write", seen!!.str("tool_name"))
+        assertEquals("c1", seen!!.str("tool_use_id"))
+        assertEquals(original, seen!!["input"])
+    }
+
+    @Test fun `a prompt tool that throws or cannot be called is a denial`() = run {
+        assertFalse(host { _, _ -> throw IllegalStateException("boom") }.ask(ask).choice == ApprovalChoice.Once)
+        assertFalse(host { _, _ -> null }.ask(ask).choice == ApprovalChoice.Once)
+    }
+
+    @Test fun `a missing prompt tool is fatal with the documented message, interrupts once, and denies`() = run {
+        val probe = Probe()
+        val h = host(probe, tools = listOf(entry("mcp__other__thing"))) { _, _ -> reply("""{"behavior":"allow"}""") }
+        assertFalse(h.ask(ask).choice == ApprovalChoice.Once)
+        assertFalse(h.ask(ask).choice == ApprovalChoice.Once)
+        assertEquals("Error: MCP tool mcp__perm__approve (passed via --permission-prompt-tool) not found. Available MCP tools: mcp__other__thing", h.fatal)
+        assertEquals("同一个错误只报一次、只中断一次", 1, probe.interrupts)
+        assertEquals(1, probe.err.toString("UTF-8").lines().count { it.startsWith("Error:") })
+        // 一个工具都没连上：列表写 none
+        val none = host(tools = emptyList()) { _, _ -> null }
+        none.ask(ask)
+        assertTrue(none.fatal!!.endsWith("Available MCP tools: none"))
+    }
+
+    @Test fun `an allow for a user-interaction tool is converted to a denial with the documented text`() = run {
+        val tools = listOf(entry("mcp__perm__approve"), entry("mcp__perm__consent", interaction = true), entry("mcp__perm__plain"))
+        val h = host(tools = tools) { _, _ -> reply("""{"behavior":"allow"}""") }
+        val converted = h.ask(StdioControl.HostAsk(ask.session, ask.callId, "mcp__perm__consent", original, "同意")).choice as ApprovalChoice.Deny
+        assertEquals("MCP tool requires user interaction; not supported via --permission-prompt-tool", converted.note)
+        assertEquals(ApprovalChoice.Once, h.ask(StdioControl.HostAsk(ask.session, ask.callId, "mcp__perm__plain", original, "普通")).choice)
     }
 
     // ---- 参数 ----
