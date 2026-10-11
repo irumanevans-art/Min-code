@@ -109,6 +109,24 @@ sealed interface ChatItem {
     ) : ChatItem
 
     /**
+     * 模型发给用户的文件（SendUserFile 成功之后，Min）：对话流里一张文件卡片，文件名、大小，点开预览或分享。
+     * 工具卡本身照旧留在工作过程里；这张卡片单独成条，不会被折进「N 步」——文件是交付物，不是过程。
+     *
+     * 只带**找得到文件的线索**，不带文件本身：宿主把文件存在 [stageKey] 指的缓存位置（Min：会话 id + 调用 id 的摘要），
+     * 大小与能不能打开由界面去缓存里看——缓存可能已被系统清掉，那时卡片照旧在，只是打不开。
+     *
+     * @param names 入参里每个文件的文件名（不含目录），按发送顺序
+     * @param preferView 入参的 display：true = render，false = attach，null = 按类型决定
+     */
+    data class SentFiles(
+        override val id: String,
+        val stageKey: String,
+        val names: List<String>,
+        val caption: String?,
+        val preferView: Boolean?,
+    ) : ChatItem
+
+    /**
      * 一条默认折起来的记录：一行 [title]，点开看 [lines]（逐行说明）与 [nested]（原样的条目，只读、淡化）。
      * 回退用它：「已回退的 3 条消息」点开是那段被回退掉的对话，「恢复了 5 个文件，跳过 1 个」点开是逐个文件与跳过的原因。
      * 只有 Min 填（Codex 与 CC 没有这两件事）。

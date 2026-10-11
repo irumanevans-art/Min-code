@@ -504,7 +504,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
     val stamped = next.turn?.let { next.copy(turn = it.copy(lastEventAtMs = record.atMs)) } ?: next
     // 用户每说一句话，目标的 check-in 计数清零（输入事件在 when 里已经处理过别的部分，这里只补目标）
     val goaled = if (record.event is dev.min.agent.spi.InputReceived) stamped.copy(goal = stamped.goal.applyGoal(record.event)) else stamped
-    return goaled.copy(lastSeq = record.seq, lastEventAtMs = record.atMs)
+    return goaled.copy(lastSeq = record.seq, lastEventAtMs = record.atMs, cacheWatch = goaled.cacheWatch.step(record, this))
 }
 
 /** 「总是允许」攒下的规则的来源名（审计时显示「是本会话里你允许的」） */

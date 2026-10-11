@@ -46,11 +46,13 @@ class EngineCapabilitiesTest {
         "schedule" to Triple("false", "false", "true"),
         "claudeConfigFiles" to Triple("Full", "None", "Partial"),
         "advisor" to Triple("false", "false", "true"),
+        // 会话分支（内核 SessionHub.branch）：抽屉行菜单的「从这里分支」
+        "branch" to Triple("false", "false", "true"),
     )
 
     @Test
-    fun `the table has the 33 rows the design lists and covers every field`() {
-        assertEquals(33, table.size)
+    fun `the table has the 34 rows the design lists and covers every field`() {
+        assertEquals(34, table.size)
         val fields = EngineCapabilities::class.java.declaredFields
             .filter { !Modifier.isStatic(it.modifiers) }
             .map { it.name }

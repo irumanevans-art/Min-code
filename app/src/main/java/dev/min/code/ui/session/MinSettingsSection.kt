@@ -158,9 +158,46 @@ internal fun MinUsageSection(usage: UsageView) {
             )
         }
         usage.cacheReadRatio?.let { UsageLine(stringResource(R.string.min_usage_cache), "${(it * 100).roundToInt()}%") }
+        if (usage.totalInputTokens != null && usage.totalOutputTokens != null) {
+            UsageLine(
+                stringResource(R.string.min_usage_tokens),
+                stringResource(R.string.composer_tokens, compactTokens(usage.totalInputTokens), compactTokens(usage.totalOutputTokens)),
+            )
+        }
         usage.costLabel?.let { UsageLine(stringResource(R.string.min_usage_cost), it) }
         usage.subagentCostLabel?.let { UsageLine(stringResource(R.string.min_usage_cost_subagents), it) }
         if (usage.costLabel == null && used != null) SettingsSubHeader(stringResource(R.string.min_usage_no_price))
+        usage.cacheBreak?.let { CacheBreakBlock(it) }
+    }
+}
+
+/**
+ * 最近一次提示缓存失效：什么时候、丢了多少、为什么。原因一行一条，全部来自会话日志里的事实（[cacheBreakLines]）；
+ * 没有能解释的就写「原因不明」。放在用量段最后：缓存命中率掉下去、花费突然跳一截时，人会到这里来找原因
+ */
+@Composable
+private fun CacheBreakBlock(view: dev.min.code.core.engine.CacheBreakView) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(
+            stringResource(R.string.cache_break_title, formatReceiptClock(view.atMs)),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            stringResource(R.string.cache_break_detail, compactTokens(view.cachedBefore), compactTokens(view.readNow), compactTokens(view.written)),
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = dev.min.code.ui.theme.JetbrainsMono,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+        cacheBreakLines(view).forEach { line ->
+            Text(
+                "· " + stringResource(line.res, *line.args.toTypedArray()),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.sea.ink,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
     }
 }
 

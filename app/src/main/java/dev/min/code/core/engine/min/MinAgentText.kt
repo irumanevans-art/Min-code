@@ -47,6 +47,9 @@ interface MinAgentText {
     /** 后台 asyncRewake hook 唤醒了空闲会话：状态行与转录分隔线共用这一句 */
     fun hookWoke(): String
     fun agentMessage(agentType: String, name: String?): String
+
+    /** 本机别的会话发来的消息（跨会话邮箱）：说明它不是人说的话、是哪个会话说的 */
+    fun peerMessage(name: String): String = "来自会话「$name」的消息"
     fun reviewedReport(): String = "已审查"
     fun warningReport(): String = "附警告"
     fun unavailableReport(): String = "未能审查"
@@ -84,6 +87,10 @@ interface MinAgentText {
 
     fun optionAllow(): String
     fun networkApprovalSummary(): String = "这个域名将被访问，请确认"
+    fun peerHoldSummary(name: String): String = "会话「$name」发来一条消息"
+    fun peerHoldReason(): String = "批准后它进入这个会话的对话，模型会把它当作别的会话说的话，不代表你同意；5 分钟内不处理就算没送达"
+    fun peerDeliver(): String = "送达"
+    fun peerRefuse(): String = "拒收"
     fun networkAllowOnce(): String = "允许一次"
     fun networkAllowAlways(): String = "总是允许"
     fun networkDeny(): String = "拒绝"
@@ -158,6 +165,7 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun hookWoke() = s(R.string.min_agent_hook_woke)
 
     override fun agentMessage(agentType: String, name: String?) = s(R.string.min_agent_message_from, name ?: agentType)
+    override fun peerMessage(name: String) = s(R.string.min_agent_peer_message, name)
     override fun reviewedReport() = s(R.string.min_agent_report_reviewed)
     override fun warningReport() = s(R.string.min_agent_report_warning)
     override fun unavailableReport() = s(R.string.min_agent_report_unavailable)
@@ -238,6 +246,10 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
 
     override fun optionAllow() = s(R.string.min_agent_option_allow)
     override fun networkApprovalSummary() = s(R.string.network_approval_summary)
+    override fun peerHoldSummary(name: String) = s(R.string.peer_hold_summary, name)
+    override fun peerHoldReason() = s(R.string.peer_hold_reason)
+    override fun peerDeliver() = s(R.string.peer_hold_deliver)
+    override fun peerRefuse() = s(R.string.peer_hold_refuse)
     override fun networkAllowOnce() = s(R.string.network_allow_once)
     override fun networkAllowAlways() = s(R.string.network_allow_always)
     override fun networkDeny() = s(R.string.network_deny)

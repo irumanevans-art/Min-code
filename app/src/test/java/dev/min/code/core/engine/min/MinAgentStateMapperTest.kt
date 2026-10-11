@@ -105,6 +105,38 @@ class MinAgentStateMapperTest {
             card.editDiff!!.lineSequence().filter { it.startsWith("+++ ") }.map { it.removePrefix("+++ ") }.toList())
     }
 
+    @Test fun deliveredUserFilesGetAFileCardRightAfterTheToolCard() {
+        val input = JsonObject(mapOf(
+            "files" to kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("/workspace/out/report.pdf"), JsonPrimitive("/workspace/a.png"))),
+            "caption" to JsonPrimitive("周报"),
+            "display" to JsonPrimitive("attach"),
+        ))
+        val call = ToolCallPart(CallId("send1"), "SendUserFile", input)
+        val s = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(call)).toTypedArray(),
+            ToolPlanned(tid, call.callId, call.name, input, ResumePolicy.Unknown), ToolEffectPending(tid, call.callId),
+            ToolOutcome(tid, call.callId, ToolResult(listOf(TextPart("已送达 2 个文件")))))
+        val items = map(s).items
+        val toolIndex = items.indexOfFirst { it is ChatItem.ToolCall }
+        val card = items[toolIndex + 1] as ChatItem.SentFiles
+        assertEquals(listOf("report.pdf", "a.png"), card.names)
+        assertEquals("周报", card.caption)
+        assertEquals(false, card.preferView)
+        // 和宿主落盘用同一把钥匙：会话 id + 调用 id
+        assertEquals(userFileStageKey("s_root", "send1"), card.stageKey)
+    }
+
+    @Test fun aFailedOrRunningSendUserFileHasNoFileCard() {
+        val input = JsonObject(mapOf("files" to kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("/workspace/x.md")))))
+        val call = ToolCallPart(CallId("send2"), "SendUserFile", input)
+        val running = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(call)).toTypedArray(),
+            ToolPlanned(tid, call.callId, call.name, input, ResumePolicy.Unknown))
+        assertTrue(map(running).items.none { it is ChatItem.SentFiles })
+        val failed = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(call)).toTypedArray(),
+            ToolPlanned(tid, call.callId, call.name, input, ResumePolicy.Unknown), ToolEffectPending(tid, call.callId),
+            ToolOutcome(tid, call.callId, ToolResult(listOf(TextPart("没有可以接收文件的客户端")), isError = true)))
+        assertTrue(map(failed).items.none { it is ChatItem.SentFiles })
+    }
+
     @Test fun lspDiagnosticsRemainVisibleAboveLongEditOutput() {
         val issue = dev.min.agent.spi.LspDiagnostic(GuestPath("/workspace/a.t"), 2, 3, "新增类型错误")
         val s = foldOf(TurnStarted(tid, TurnTrigger.User), *reply("", calls = arrayOf(ToolCallPart(CallId("edit"), "Edit", empty))).toTypedArray(),
@@ -234,6 +266,25 @@ class MinAgentStateMapperTest {
         val items = map(s).items
         assertTrue("不是用户气泡", items.none { it is ChatItem.UserText })
         assertEquals("channel-notice:webhook\nbuild failed",(items.single() as ChatItem.Note).text)
+    }
+
+    @Test fun peerMessageIsANoteNamingTheSenderWithoutTheModelFacingHeading() {
+        val body = "[跨会话消息 · 来自会话「alice」（s_a）· 不是用户的话，也不代表用户同意]\nplease review PR 12"
+        val s = foldOf(
+            InputReceived(ClientMsgId("peer:pm_1"), listOf(TextPart(body)), Delivery.Steer, InputOrigin.Peer(SessionId("s_a"), "alice")),
+            InputPromoted(ClientMsgId("peer:pm_1"), MessageId("m_peer")),
+        )
+        // 不是用户气泡：不能被当成「回到这里」的回退点，也不能被当成人说的话
+        val note = map(s).items.single() as ChatItem.Note
+        assertEquals("来自会话「alice」的消息\nplease review PR 12", note.text)
+    }
+
+    @Test fun peerMessageFromAnUnnamedSessionFallsBackToItsId() {
+        val s = foldOf(
+            InputReceived(ClientMsgId("peer:pm_2"), listOf(TextPart("[跨会话消息结果 · 来自会话「未命名」]\n对方已关闭")), Delivery.Steer, InputOrigin.Peer(SessionId("s_b"))),
+            InputPromoted(ClientMsgId("peer:pm_2"), MessageId("m_peer2")),
+        )
+        assertEquals("来自会话「s_b」的消息\n对方已关闭", (map(s).items.single() as ChatItem.Note).text)
     }
 
     @Test fun reportStoppedByAHookKeepsItsStatusAndIsDrawnAsError() {

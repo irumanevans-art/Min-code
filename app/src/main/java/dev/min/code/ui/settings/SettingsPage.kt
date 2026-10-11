@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +66,7 @@ import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkSegmented
 import dev.min.code.ui.components.InkSwitch
+import dev.min.code.core.engine.min.withManaged
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.InkTopBar
@@ -750,23 +752,32 @@ private fun ExperimentSettings(vm: SettingsVM, settings: AppSettings) {
         onClick = { vm.setWorkflowsEnabled(!settings.workflowsEnabled) },
         trailing = { InkSwitch(checked = settings.workflowsEnabled, onCheckedChange = vm::setWorkflowsEnabled) },
     )
+    // 下面几项可能被托管层锁住（管理员的 managed-settings.json）：显示的是生效值，锁住的行写「已由管理员锁定」、点不动
+    val locks by vm.managedLocks.collectAsStateWithLifecycle()
+    LaunchedEffect(vm) { vm.refreshManaged() }
+    val effective = settings.withManaged(locks)
+    AnimatedVisibility(visible = locks.broken, enter = InkMotion.enter, exit = InkMotion.exit) {
+        Notice(text = stringResource(R.string.managed_broken), tone = NoticeTone.Warn)
+    }
     // 定时任务的全局开关（Claude Code 的 CLAUDE_CODE_DISABLE_CRON）：只影响 Min 的定时任务，不删任何任务
+    val cronLocked = locks.cronEnabled != null
     SettingRow(
         title = stringResource(R.string.settings_cron_title),
-        subtitle = stringResource(if (settings.cronEnabled) R.string.settings_cron_on else R.string.settings_cron_off),
-        onClick = { vm.setCronEnabled(!settings.cronEnabled) },
-        trailing = { InkSwitch(checked = settings.cronEnabled, onCheckedChange = vm::setCronEnabled) },
+        subtitle = lockedSubtitle(stringResource(if (effective.cronEnabled) R.string.settings_cron_on else R.string.settings_cron_off), cronLocked),
+        onClick = if (cronLocked) null else { { vm.setCronEnabled(!effective.cronEnabled) } },
+        trailing = { InkSwitch(checked = effective.cronEnabled, onCheckedChange = vm::setCronEnabled, enabled = !cronLocked) },
     )
     // 单次花费上限：可选，留空 = 不设（照 Claude Code 的默认）
-    CronBudgetRow(valueUsd = settings.cronMaxBudgetUsd, onChange = vm::setCronMaxBudgetUsd)
+    CronBudgetRow(valueUsd = effective.cronMaxBudgetUsd, locked = locks.cronMaxBudgetUsd != null, onChange = vm::setCronMaxBudgetUsd)
     // agent 团队同时运行的成员数（1–8）
-    TeamConcurrencyRow(value = settings.teamMaxConcurrent, onChange = vm::setTeamMaxConcurrent)
+    TeamConcurrencyRow(value = effective.teamMaxConcurrent, locked = locks.teamMaxConcurrent != null, onChange = vm::setTeamMaxConcurrent)
     // 遥测（OpenTelemetry 的本地等价，默认关）：开关、端点、加密的头部、立即导出
     val telemetryReport by vm.telemetryReport.collectAsStateWithLifecycle()
     val shareContext = LocalContext.current
     val shareScope = androidx.compose.runtime.rememberCoroutineScope()
     TelemetryRows(
-        settings = settings.telemetry,
+        settings = effective.telemetry,
+        locks = locks,
         report = telemetryReport,
         onEnabled = vm::setTelemetryEnabled,
         onEndpoint = vm::setTelemetryEndpoint,

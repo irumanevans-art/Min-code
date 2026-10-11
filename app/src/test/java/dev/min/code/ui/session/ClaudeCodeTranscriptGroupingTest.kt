@@ -39,6 +39,17 @@ class ClaudeCodeTranscriptGroupingTest {
         assertEquals(3, work.items.size)
     }
 
+    /** 模型发给用户的文件是交付物：不能被折进「N 步」里，它把一段工作切开、自己单独成条 */
+    @Test
+    fun `发给用户的文件卡片不折进工作块`() {
+        val files = ChatItem.SentFiles(id(), "key", listOf("report.pdf"), caption = null, preferView = null)
+        val blocks = groupTranscript(listOf(thinking(), tool("SendUserFile"), files, tool(), tool()))
+        assertEquals(3, blocks.size)
+        assertTrue(blocks[0] is TranscriptBlock.Work)
+        assertEquals(files, (blocks[1] as TranscriptBlock.Single).item)
+        assertTrue(blocks[2] is TranscriptBlock.Work)
+    }
+
     /** 为一条 Bash 套一层"1 步，点开看"只是徒增一次点击 */
     @Test
     fun `孤零零一条工作不成块`() {

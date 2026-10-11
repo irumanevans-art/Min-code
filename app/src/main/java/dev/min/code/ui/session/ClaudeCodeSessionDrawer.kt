@@ -85,6 +85,7 @@ import java.util.Date
 import java.util.Locale
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Bookmark02
+import me.rerere.hugeicons.stroke.GitBranch
 import me.rerere.hugeicons.stroke.ComputerTerminal01
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete02
@@ -132,6 +133,8 @@ fun ClaudeCodeSessionDrawer(
     onExportSession: ((SessionListVM.SessionEntry) -> Unit)? = null,
     /** 行菜单里的「结束会话」（只对进程还活着的行给）；null 时不给这一项 */
     onEndSession: ((SessionRef) -> Unit)? = null,
+    /** 行菜单里的「从这里分支」（只对引擎支持分支的行给，[EngineCapabilities.branch]）；null 时不给这一项 */
+    onBranchSession: ((SessionRef) -> Unit)? = null,
     /** 题跋上的「导入」；null 时不给这个按钮 */
     onImportSession: (() -> Unit)? = null,
     onOpenFiles: () -> Unit = {},
@@ -297,6 +300,9 @@ fun ClaudeCodeSessionDrawer(
                                 // 还没落盘的会话没有文件可导出
                                 onExport = onExportSession?.takeIf { s.onDisk }?.let { export -> { export(s) } },
                                 onEnd = onEndSession?.takeIf { s.isLive }?.let { end -> { end(s.ref) } },
+                                onBranch = onBranchSession
+                                    ?.takeIf { dev.min.code.core.engine.EngineCapabilities.of(s.engine).branch && s.messageCount > 0 }
+                                    ?.let { branch -> { branch(s.ref) } },
                             )
                         }
                     }
@@ -510,6 +516,7 @@ private fun SessionRow(
     onDelete: () -> Unit,
     onExport: (() -> Unit)?,
     onEnd: (() -> Unit)?,
+    onBranch: (() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val palette = MaterialTheme.sea
@@ -611,6 +618,7 @@ private fun SessionRow(
                 onCategorize = onCategorize,
                 onExport = onExport,
                 onEnd = onEnd,
+                onBranch = onBranch,
                 triggerTint = if (entry.isActive) palette.onSea.copy(alpha = 0.8f) else scheme.outline,
             )
         }
@@ -641,6 +649,8 @@ internal fun SessionRowMenu(
     onExport: (() -> Unit)? = null,
     /** 进程还活着的 Claude 会话才有；null 时不显示这一项 */
     onEnd: (() -> Unit)? = null,
+    /** 「从这里分支」：复制整段对话成一个新会话（Min）；null 时不显示这一项 */
+    onBranch: (() -> Unit)? = null,
     triggerTint: Color = MaterialTheme.colorScheme.outline,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -683,6 +693,13 @@ internal fun SessionRowMenu(
                     stringResource(R.string.session_export),
                     icon = HugeIcons.FileUpload,
                     onClick = { menu = false; onExport() },
+                )
+            }
+            if (onBranch != null) {
+                InkMenuItem(
+                    stringResource(R.string.session_branch),
+                    icon = HugeIcons.GitBranch,
+                    onClick = { menu = false; onBranch() },
                 )
             }
             if (onEnd != null) {

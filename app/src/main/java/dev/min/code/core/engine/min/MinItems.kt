@@ -129,6 +129,13 @@ fun triggerViewOf(trigger: TurnTrigger): TurnTriggerView = when (trigger) {
 
 fun EndedTurn.end(): TurnEnd = turnEndOf(outcome)
 
+/**
+ * 跨会话消息给模型看的那行抬头（`[跨会话消息 · 来自会话「…」…]`，内核 PeerMailbox 加的）去掉：
+ * 界面上谁发的已经由说明行写清楚了，再留一遍只是重复。内核每条恰好加一行抬头；不是这个形状就原样留着
+ */
+internal fun peerBody(raw: String): String =
+    if (raw.startsWith("[") && raw.substringBefore('\n').endsWith("]") && '\n' in raw) raw.substringAfter('\n') else raw
+
 // ---- 承载（以后加了 ChatItem 变体只改这两处）----
 
 private fun markerNote(id: String, text: String, isError: Boolean): ChatItem = ChatItem.Note(id, text, isError)
@@ -209,8 +216,8 @@ private class ItemsBuilder(
             is InputOrigin.Task -> items += ChatItem.Note(id, text.taskNotice(origin.taskId) + "\n" + dev.min.agent.kernel.taskNoticeBody(plain(entry.parts)))
             // MCP channel 推来的消息：外部系统的话，不是人发的；去掉给模型看的标签壳，只留正文
             is InputOrigin.Channel -> items += ChatItem.Note(id, text.channelNotice(origin.server) + "\n" + dev.min.agent.kernel.channelNoticeBody(plain(entry.parts)))
-            // 本机别的会话发来的消息：不是用户的话，作为说明显示（正文自带「来自会话 X」的抬头，内核写进去的）
-            is InputOrigin.Peer -> items += ChatItem.Note(id, plain(entry.parts))
+            // 本机别的会话发来的消息（或它对我方消息的批准 / 拒收结论）：不是人说的话，作为说明显示，不能被当成回退点
+            is InputOrigin.Peer -> items += ChatItem.Note(id, text.peerMessage(origin.name ?: origin.session.value) + "\n" + peerBody(plain(entry.parts)))
         }
     }
 
@@ -237,10 +244,36 @@ private class ItemsBuilder(
                 is TextPart -> if (part.text.isNotEmpty()) items += ChatItem.AssistantText(id, part.text)
                 is ThinkingPart -> items += ChatItem.Thinking(id, part.text)
                 is RedactedThinkingPart -> items += ChatItem.Thinking(id, text.redactedThinking())
-                is ToolCallPart -> items += toolCard(id, part)
+                is ToolCallPart -> {
+                    val card = toolCard(id, part)
+                    items += card
+                    if (part.name == dev.min.agent.tools.SendUserFileTool.name && card.status == ChatItem.ToolCall.Status.Done) sentFiles(id, part)?.let { items += it }
+                }
                 else -> Unit
             }
         }
+    }
+
+    /**
+     * SendUserFile 送达之后的文件卡片。文件在宿主缓存里的位置由本会话 id + 调用 id 算出（与 [AndroidUserFileSink] 同一个函数），
+     * 子 agent 发的文件用的是子会话自己的 id——这里的 [state] 就是发出调用的那个会话。入参不合格（没有 files）就不出卡片
+     */
+    private fun sentFiles(id: String, part: ToolCallPart): ChatItem.SentFiles? {
+        val names = (part.input["files"] as? kotlinx.serialization.json.JsonArray).orEmpty()
+            .mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content?.substringAfterLast('/') }
+        if (names.isEmpty()) return null
+        fun str(key: String) = (part.input[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        return ChatItem.SentFiles(
+            id = "$id:files",
+            stageKey = userFileStageKey(state.header.sessionId.value, part.callId.value),
+            names = names,
+            caption = str("caption")?.takeIf { it.isNotBlank() },
+            preferView = when (str("display")) {
+                "render" -> true
+                "attach" -> false
+                else -> null
+            },
+        )
     }
 
     private fun toolCard(id: String, part: ToolCallPart): ChatItem.ToolCall {

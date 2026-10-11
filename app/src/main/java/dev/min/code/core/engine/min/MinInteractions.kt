@@ -13,6 +13,7 @@ import dev.min.code.core.engine.CommandResult
 import dev.min.code.core.engine.InteractionAnswer
 import dev.min.code.core.engine.InteractionIds
 import dev.min.code.core.engine.InteractionOrigin
+import dev.min.code.core.engine.PEER_MESSAGE_APPROVAL
 import dev.min.code.core.engine.PathView
 import dev.min.code.core.engine.PendingInteraction
 import dev.min.code.core.engine.QuestionOptionView
@@ -66,6 +67,10 @@ fun minInteractions(
                 ),
             )
         }
+        is HubPending.What.Peer -> {
+            id = InteractionIds.scoped(item.session.value, PEER_ID_PREFIX + what.messageId)
+            peerHold(id, origin, what, text)
+        }
         is HubPending.What.Approval -> {
             id = InteractionIds.scoped(item.session.value, what.approvalId.value)
             val input = nodes[item.session]?.turn?.calls?.get(what.callId)?.input ?: JsonObject(emptyMap())
@@ -87,6 +92,23 @@ fun minInteractions(
     }
     card
 }.withQueueDepth()
+
+/** 交互 id 里待批准的跨会话消息的前缀：答复时路由据此改走「批准 / 拒收这封信」，而不是答复一次工具审批 */
+internal const val PEER_ID_PREFIX = "peer:"
+
+/**
+ * 待批准的跨会话消息：一张只有「送达 / 拒收」的审批卡。正文就是对方写的原话（[PendingInteraction.Approval.description]）；
+ * 两个按钮都能放进通知——批不批一封信不需要回 App 看规则。没有「总是允许」：要长期收某个会话的信，改的是收件口径，不是在卡上攒规则
+ */
+private fun peerHold(id: String, origin: InteractionOrigin, what: HubPending.What.Peer, text: MinAgentText) = PendingInteraction.Approval(
+    id = id, origin = origin, toolUseId = null, toolName = PEER_MESSAGE_APPROVAL, input = JsonObject(emptyMap()),
+    summary = text.peerHoldSummary(what.fromName ?: what.from.value), description = what.text,
+    paths = emptyList(), commands = emptyList(), domains = emptyList(), reason = text.peerHoldReason(), blockedPath = null,
+    options = listOf(
+        ApprovalOption(ApprovalOption.ALLOW, text.peerDeliver(), ApprovalOption.Kind.Allow, acceptsNote = false, notificationSafe = true),
+        ApprovalOption(ApprovalOption.DENY, text.peerRefuse(), ApprovalOption.Kind.Deny, acceptsNote = false, notificationSafe = true),
+    ),
+)
 
 private fun approval(
     id: String, origin: InteractionOrigin, what: HubPending.What.Approval, input: JsonObject, text: MinAgentText,
@@ -159,6 +181,15 @@ class MinInteractionRouter(
     suspend fun answer(interactionId: String, answer: InteractionAnswer): CommandResult {
         val (sessionId, localId) = InteractionIds.split(interactionId) ?: return CommandResult.Rejected("交互 id 不合法：$interactionId")
         val target = session(SessionId(sessionId)) ?: return CommandResult.Stale("会话已不在线")
+        if (localId.startsWith(PEER_ID_PREFIX)) {
+            val approve = when ((answer as? InteractionAnswer.Choose)?.optionId) {
+                ApprovalOption.ALLOW -> true
+                ApprovalOption.DENY -> false
+                else -> return CommandResult.Rejected("跨会话消息只能送达或拒收")
+            }
+            // 返回 false：已经处理过（另一端先点了）、已经过期，或收件会话关了——都是「这张卡已经过时」
+            return if (target.resolvePeer(localId.removePrefix(PEER_ID_PREFIX), approve)) CommandResult.Accepted else CommandResult.Stale("已在别处处理或已过期")
+        }
         val applied = when (answer) {
             is InteractionAnswer.Choose -> when (answer.optionId) {
                 ApprovalOption.ALLOW -> target.approve(ApprovalId(localId), ApprovalChoice.Once)
@@ -193,9 +224,13 @@ interface MinAnswerTarget {
     suspend fun approve(id: ApprovalId, choice: ApprovalChoice): Boolean
     suspend fun answer(id: QuestionId, answers: List<QuestionAnswer>): Boolean
     suspend fun decline(id: QuestionId): Boolean
+
+    /** 批准 / 拒收一封待批准的跨会话消息（它挂在 Hub 的邮箱里，不在运行时的状态里）。默认没有：测试替身不用管 */
+    suspend fun resolvePeer(messageId: String, approve: Boolean): Boolean = false
 }
 
-fun dev.min.agent.kernel.SessionRuntime.asAnswerTarget(): MinAnswerTarget = object : MinAnswerTarget {
+fun dev.min.agent.kernel.SessionRuntime.asAnswerTarget(hub: dev.min.agent.kernel.SessionHub): MinAnswerTarget = object : MinAnswerTarget {
+    override suspend fun resolvePeer(messageId: String, approve: Boolean) = hub.resolvePeerHold(sessionId, messageId, approve)
     override suspend fun approve(id: ApprovalId, choice: ApprovalChoice) = answerApproval(id, choice)
     override suspend fun answer(id: QuestionId, answers: List<QuestionAnswer>) = answerQuestion(id, answers)
     override suspend fun decline(id: QuestionId) = declineQuestion(id)

@@ -75,7 +75,7 @@ class MinCommandHandler(
 ) {
     private val deduper = CommandDeduper()
     private val router = MinInteractionRouter(
-        session = { id -> hub.get(id)?.asAnswerTarget() },
+        session = { id -> hub.get(id)?.asAnswerTarget(hub) },
         interrupt = ::interruptFrom,
         persistRule = { layer, rule -> effects.persistAllowRule(layer, rule, root.state.value.created.cwd.value) },
     )

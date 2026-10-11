@@ -162,6 +162,8 @@ internal class ConsoleUi(
                 val target = hub?.get(item.session) ?: return@forEach
                 when (val what = item.what) {
                     is dev.min.agent.kernel.HubPending.What.Network -> Unit
+                    // 待批准的跨会话消息挂在根会话名下（session == root），走不到这里；终端还没有批它的界面
+                    is dev.min.agent.kernel.HubPending.What.Peer -> Unit
                     is dev.min.agent.kernel.HubPending.What.Approval -> if (answered.add(what.approvalId.value)) {
                         if (host != null) {
                             val input = target.state.value.turn?.calls?.get(what.callId)?.input ?: kotlinx.serialization.json.JsonObject(emptyMap())

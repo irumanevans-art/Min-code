@@ -46,6 +46,7 @@ import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.theme.sea
 import dev.min.code.ui.components.HeroCanvas
 import dev.min.code.ui.components.InkButton
+import dev.min.code.ui.components.InkButtonTone
 import dev.min.code.ui.components.InkCheckbox
 import dev.min.code.ui.components.InkDivider
 import dev.min.code.ui.components.InkTextButton
@@ -58,6 +59,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Play
+import me.rerere.hugeicons.stroke.ArrowTurnBackward
 
 /**
  * 开始面板顶部那条引擎分段要的东西（设计 §9.2 B7）。分开打包而不是散着传：它们是一个整体——
@@ -106,6 +108,9 @@ internal fun StartPanel(
     /** false = 还没有可用的供应商，见 [SessionVM.connected] */
     connected: Boolean = true,
     onOpenProviders: () -> Unit = {},
+    /** 抽屉里的会话：「继续最近的会话」从中挑同引擎、同目录最近的一个（[latestContinuable]） */
+    sessions: List<SessionListVM.SessionEntry> = emptyList(),
+    onContinue: (SessionListVM.SessionEntry) -> Unit = {},
     engines: StartEngines = StartEngines.ClaudeOnly,
 ) {
     // Min 关掉时即使存着「上次选的是 Min」也回到 Claude Code
@@ -208,6 +213,22 @@ internal fun StartPanel(
                     LoadingModeToggle("bare", stringResource(R.string.min_bare_desc), minBare) { minBare = it; if (it) minSafe = false }
                     LoadingModeToggle("restricted", stringResource(R.string.min_restricted_desc), minRestricted) { minRestricted = it }
                     session.errorMessage?.let { Notice(text = it, tone = NoticeTone.Error, maxLines = 6) }
+                    // CC 的 `--continue`：这个目录里最近的那个会话接着聊。没有就不出这个按钮
+                    latestContinuable(sessions, EngineKind.MinAgent, cwd)?.let { recent ->
+                        InkButton(
+                            onClick = { onContinue(recent) },
+                            enabled = minAvailability.isReady,
+                            modifier = Modifier.fillMaxWidth(),
+                            tone = InkButtonTone.Paper,
+                            icon = HugeIcons.ArrowTurnBackward,
+                        ) {
+                            Text(
+                                stringResource(R.string.session_continue_recent, recent.title),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                     InkButton(
                         onClick = {
                             onStart(

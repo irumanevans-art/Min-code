@@ -66,9 +66,6 @@ import dev.min.code.core.engine.ImageInput
 import dev.min.code.core.engine.SlashCommandView
 import dev.min.code.core.session.SessionStatus
 
-/** 上下文用到这个比例就变告警色 —— CLI 到这一带会自动压缩，值得提前知道 */
-private const val CONTEXT_WARN_RATIO = 0.85f
-
 /** 没有撤回来源时的空事件流。写成常量而不是默认表达式，免得每次重组都换一个实例 */
 private val NoWithdrawals: Flow<ComposerDraft> = emptyFlow()
 
@@ -533,21 +530,24 @@ private fun composerUsage(
     session: AgentSessionState,
     dailyCostUsd: Double,
 ): ComposerUsage {
-    val used = session.usage.contextTokens
-    // CLI 对不认识的 id 会报 200k。Fable 5.1 是原生 1M，信 CLI 就会画出 97k/200k。
-    val limit = ClaudeCodeModelCatalog.effectiveContextLimit(
+    val limit = EngineUi.contextLimit(
+        session.ref.engine,
         session.usage.contextLimit,
         session.settings.applied.model ?: session.settings.requestedModel ?: session.reportedModel,
     )
-    val ratio = if (used != null && limit > 0) (used.toFloat() / limit).coerceIn(0f, 1f) else null
+    val line = statusLineOf(session.usage, limit)
+    // 引擎自己算好的花费（Min：内核按目录价格记的整树花费、币种原样）优先；否则是 CC 的老算法：CLI 原文解析成美元 + 今日合计
+    val cost = session.usage.costLabel?.let { stringResource(R.string.composer_cost_session, it) }
+        ?: costLabel(dailyCostUsd, session.usage.costText?.let { parseSessionCostUsd(it) })
+    val tokens = if (line.tokensIn != null && line.tokensOut != null) {
+        stringResource(R.string.composer_tokens, compactTokens(line.tokensIn), compactTokens(line.tokensOut))
+    } else null
     return ComposerUsage(
-        ratio = ratio,
+        ratio = line.ratio,
         // 带上分母：用户问"默认是不是 1M"时，这里就是答案
-        contextText = used?.let { "${it / 1000}k/${ClaudeCodeModelCatalog.formatContextWindow(limit)}" },
-        // 逼近上限转朱砂 —— CLI 到那一带会自动压缩上下文，这件事发生前用户有权知道
-        warn = (ratio ?: 0f) >= CONTEXT_WARN_RATIO,
-        // 引擎自己算好的花费（Min：按目录价格、币种原样）优先；否则是 CC 的老算法：CLI 原文解析成美元 + 今日合计
-        costText = session.usage.costLabel ?: costLabel(dailyCostUsd, session.usage.costText?.let { parseSessionCostUsd(it) }),
+        contextText = line.contextUsed?.let { "${it / 1000}k/${ClaudeCodeModelCatalog.formatContextWindow(limit)}" },
+        warn = line.warn,
+        costText = listOfNotNull(cost, tokens).joinToString(" · ").ifEmpty { null },
     )
 }
 

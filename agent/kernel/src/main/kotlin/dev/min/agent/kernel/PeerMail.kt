@@ -101,12 +101,15 @@ private sealed interface PeerTarget {
  *
  * 待批准队列、订阅与发送窗口只在内存里：待批准的消息没进日志，宿主重启即丢——CC 的批准框同样不落盘、过期就丢，原文没有「重启后还在」。
  * 会话关闭时还挂着的消息，发件人得到「对方已关闭」，不会悄悄丢；进程被杀的，跨进程发件人得不到结论（与 CC 一致：对方没了就没了）。
+ * 待批准的消息经 [onHeldChanged] 并进 Hub 的 `pending`，界面的卡片与通知读那里。
  */
 internal class PeerMailbox(
     private val hub: SessionHub,
     private val deps: KernelDeps,
     private val transport: PeerTransport?,
     private val settings: suspend (SessionRuntime) -> PeerReceiveSettings,
+    /** 待批准队列变了。在 [guard] 之外调用：Hub 据此把待批准的消息并进 `pending`（界面的卡片、通知都读那里） */
+    private val onHeldChanged: () -> Unit = {},
 ) {
     /** 只护这几张内存表；锁内不挂起，投递一律在锁外做 */
     private val guard = Any()
@@ -329,6 +332,7 @@ internal class PeerMailbox(
             list.remove(hit)
             hit
         }
+        onHeldChanged()
         val rt = hub.get(receiver)
         if (approve && rt != null) {
             deliverTo(rt, Incoming(item.messageId, item.from, item.fromName, item.text, item.sentAtMs, item.senderBypass))
@@ -350,11 +354,15 @@ internal class PeerMailbox(
     suspend fun sessionClosing(rt: SessionRuntime) {
         val id = rt.sessionId
         val items = synchronized(guard) { held.remove(id).orEmpty() }
+        if (items.isNotEmpty()) onHeldChanged()
         for (item in items) outcome(item.from, id, rt.state.value.name, item.messageId, "对方已关闭，没有送达。", deps.clock.nowMs())
         val ending = synchronized(guard) { watches.values.filter { it.watched == id } }
         for (w in ending) fire(rt, w, exited = true)
         synchronized(guard) { watches.keys.removeAll { it.first == id } }
     }
+
+    /** 全部收件会话的待批准消息（Hub 并进 `pending` 用） */
+    fun heldAll(): Map<SessionId, List<HeldPeerMessage>> = synchronized(guard) { held.filterValues { it.isNotEmpty() }.mapValues { it.value.toList() } }
 
     // ---- 收件（别的进程送来的） ----
 
@@ -477,6 +485,7 @@ internal class PeerMailbox(
             list += HeldPeerMessage(m.messageId, m.from, m.fromName, m.text, m.sentAtMs, m.senderBypass, heldAtMs = deps.clock.nowMs())
             if (list.size > PEER_HOLD_LIMIT) list.removeAt(0) else null
         }
+        onHeldChanged()
         if (dropped != null) {
             outcome(dropped.from, receiver, null, dropped.messageId, "待批准的消息超过上限，它没有送达。", deps.clock.nowMs())
         }
@@ -507,6 +516,7 @@ internal class PeerMailbox(
                     }
                 }
             }
+            if (release.isNotEmpty() || reject.isNotEmpty()) onHeldChanged()
             for (item in release) deliverTo(rt, Incoming(item.messageId, item.from, item.fromName, item.text, item.sentAtMs, item.senderBypass))
             for (item in reject) outcome(item.from, receiver, rt.state.value.name, item.messageId, "对方设置为不接收跨会话消息，没有送达。", deps.clock.nowMs())
             if (release.isNotEmpty() || reject.isNotEmpty()) {
@@ -544,6 +554,7 @@ internal class PeerMailbox(
                 }
             }
         }
+        if (expired.isNotEmpty()) onHeldChanged()
         for ((receiver, item) in expired) {
             outcome(item.from, receiver, null, item.messageId, "超时没有人批准，它没有送达。", now)
         }

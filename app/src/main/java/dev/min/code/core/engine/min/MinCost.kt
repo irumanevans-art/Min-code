@@ -44,6 +44,21 @@ fun treeCostOf(root: SessionId, nodes: Map<SessionId, SessionState>): TreeCost {
     return TreeCost(total, subagents, unpriced)
 }
 
+/**
+ * 整棵树累计的 token（底栏的「↑ 发出 ↓ 收回」，CC statusline 的 total_input / total_output）：根与在线后代，与 [treeCostOf] 同口径。
+ * 输入算上缓存读写（真发过去的上下文），进行中的回合也算进去——底栏要跟着回合走，不是等回合结束才跳
+ */
+fun treeTokensOf(nodes: Map<SessionId, SessionState>): Pair<Long, Long> {
+    var input = 0L
+    var output = 0L
+    for (state in nodes.values) {
+        val u = state.usage + (state.turn?.usage ?: dev.min.agent.protocol.Usage())
+        input += u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens
+        output += u.outputTokens
+    }
+    return input to output
+}
+
 /** 按币种写成一句：`$0.0123`、`$0.0123 + ¥0.045`；全是 0 / 空返回 null */
 fun costLabelOf(byCurrency: Map<String, Double>): String? =
     byCurrency.filterValues { it > 0.0 }.entries.joinToString(" + ") { formatCost(Cost(it.value, it.key)) }.ifEmpty { null }

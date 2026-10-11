@@ -18,18 +18,23 @@ import kotlinx.coroutines.withContext
 
 /**
  * 模型用 SendUserFile 发来的文件：先写进缓存目录（经 FileProvider 给出 URI，和工作区分享同一条路），再发一条告警通道的通知。
- * 点通知时按 [UserFile.display] 打开：render 用 ACTION_VIEW 直接看；attach 与未指定用 ACTION_SEND 交给分享面板。
- * 缓存按通知槽位分目录，写之前只清自己的槽位（见 [stageUserFile]），一次发多个文件时前面的通知仍然打得开。
+ * 对话流里同时有一张文件卡片（[UserFileCard]），读的是同一份缓存：落盘位置按会话 id + 调用 id 算（[userFileStageKey]），
+ * 两边不用互相通知。通知只是「人不在这一页时」的提醒，卡片才是常驻的入口。
+ * 点通知时按 [UserFile.display] 打开：render 用 ACTION_VIEW 直接看；attach 与未指定的非预览类型交给分享面板。
  */
 internal class AndroidUserFileSink(private val context: Context) : UserFileSink {
     private val next = AtomicInteger(0)
 
     override suspend fun deliver(file: UserFile): Boolean = withContext(Dispatchers.IO) {
         val slot = next.getAndIncrement() and (SLOTS - 1)
-        val target = stageUserFile(File(context.cacheDir, "user_files"), slot, file.name, file.bytes)
+        // 内核总会带上会话与调用；没带（别的调用方）时退回按通知槽位起名，卡片找不到它，通知仍打得开
+        val session = file.sessionId
+        val call = file.callId
+        val key = if (session != null && call != null) userFileStageKey(session.value, call.value) else "slot-$slot"
+        val target = stageUserFile(userFilesRoot(context), key, file.index, file.name, file.bytes)
         val uri = context.fileProviderUri(target)
         val id = BASE_ID + slot
-        val open = openIntent(uri, file)
+        val open = userFileIntent(uri, file.mime, view = prefersView(file.display, file.mime))
         val pending = PendingIntent.getActivity(
             context, id, Intent.createChooser(open, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -43,42 +48,33 @@ internal class AndroidUserFileSink(private val context: Context) : UserFileSink 
         }
     }
 
-    private fun openIntent(uri: Uri, file: UserFile): Intent {
-        // 未指定展示方式时：图片、文本、PDF 直接看，其余交给分享面板（与 CC「由客户端决定」一致）
-        val view = when (file.display) {
-            UserFileDisplay.Render -> true
-            UserFileDisplay.Attach -> false
-            null -> file.mime.startsWith("image/") || file.mime.startsWith("text/") || file.mime == "application/pdf"
-        }
-        return if (view) {
-            Intent(Intent.ACTION_VIEW).setDataAndType(uri, file.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        } else {
-            Intent(Intent.ACTION_SEND).apply {
-                type = file.mime
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-        }
-    }
-
     internal companion object {
         /** 与推送通知（9_500_000 起）错开 */
         const val BASE_ID = 9_600_000
 
-        /** 必须是 2 的幂 */
+        /** 通知编号的槽位数，必须是 2 的幂。文件不再按槽位存（见 [USER_FILE_CALLS_KEPT]），槽位只管通知别无限堆 */
         const val SLOTS = 32
     }
 }
 
-/**
- * 把要交给用户的文件写进 [root]/[slot]/ 下（经 FileProvider 给出 URI）。只清这个槽位：槽位与通知编号一一对应，
- * 同一槽位的新通知会顶掉旧通知，旧文件随之作废；别的槽位的通知还在，它们指着的文件不能删。
- * 以前每次都清空整个 [root]，一次发两个文件时第一条通知点开就是一个已被删掉的文件。槽位数有上限，缓存占用也就有上限
- */
-internal fun stageUserFile(root: File, slot: Int, name: String, bytes: ByteArray): File {
-    val dir = File(root, slot.toString()).apply {
-        deleteRecursively()
-        mkdirs()
-    }
-    return File(dir, name).apply { writeBytes(bytes) }
+/** 文件缓存的根：通知与卡片共用 */
+internal fun userFilesRoot(context: Context): File = File(context.cacheDir, "user_files")
+
+/** 未指定展示方式时：图片、文本、PDF 直接看，其余交给分享面板（与 CC「由客户端决定」一致） */
+internal fun prefersView(display: UserFileDisplay?, mime: String): Boolean = when (display) {
+    UserFileDisplay.Render -> true
+    UserFileDisplay.Attach -> false
+    null -> mime.startsWith("image/") || mime.startsWith("text/") || mime == "application/pdf"
 }
+
+/** 打开（ACTION_VIEW）或分享（ACTION_SEND）一份缓存里的文件；都只授读权限 */
+internal fun userFileIntent(uri: Uri, mime: String, view: Boolean): Intent =
+    if (view) {
+        Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    } else {
+        Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
