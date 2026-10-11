@@ -123,6 +123,10 @@ internal class SessionExtras(
         control.setEnabled(server, enabled).onFailure { notice(context.getString(R.string.mcp_action_failed, server, it.message.orEmpty()), error = true) }
     }
 
+    fun setChannel(server: String, enabled: Boolean, confirmedDevelopment: Boolean) = withControl(server) { control ->
+        control.setChannel(server, enabled, confirmedDevelopment).onFailure { notice(context.getString(R.string.mcp_action_failed, server, it.message.orEmpty()), error = true) }
+    }
+
     fun login(server: String) = withControl(server) { control ->
         control.login(server)
             .onSuccess { notice(context.getString(R.string.mcp_login_done, server), error = false) }

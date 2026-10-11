@@ -94,6 +94,7 @@ class FakeText : MinAgentText {
     override fun goalCleared(condition: String) = "goal-cleared:$condition"
     override fun goalStatus(goal: dev.min.code.core.engine.GoalView?) = "goal-status:${goal?.condition}:${goal?.status}"
     override fun taskNotice(taskId: String) = "task-notice:$taskId"
+    override fun channelNotice(server: String) = "channel-notice:$server"
     override fun cronWoke() = "cron-woke"
     override fun continued(atMs: Long?) = "continued@$atMs"
     override fun subagentWoke() = "woke"

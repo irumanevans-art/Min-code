@@ -84,4 +84,15 @@ class MinMcpControlTest {
         assertTrue(flow.await().exceptionOrNull() is LoginDeclined)
         assertNull(gate.prompt.value)
     }
+
+    @Test
+    fun `only a server outside the plugin manifest needs the development confirmation`() {
+        val state = dev.min.agent.kernel.ChannelState(enabled = true, permissionRelay = true, development = true, available = true)
+        val bare = channelView(dev.min.agent.kernel.SessionHub.ChannelOption("hook", dev.min.agent.ext.mcp.ChannelRef.Server("hook"), state))
+        assertTrue(bare.needsConfirmation && bare.enabled && bare.permissionRelay && bare.development)
+        val declared = channelView(dev.min.agent.kernel.SessionHub.ChannelOption("plugin:a:b", dev.min.agent.ext.mcp.ChannelRef.Plugin("a", "m"), state.copy(development = false)))
+        assertTrue("插件清单声明的 channel，用户点名即批准，不需要确认", !declared.needsConfirmation && !declared.development)
+        val remote = channelView(dev.min.agent.kernel.SessionHub.ChannelOption("api", dev.min.agent.ext.mcp.ChannelRef.Server("api"), dev.min.agent.kernel.ChannelState(false, false, false, available = false, reason = "只支持 stdio")))
+        assertTrue(!remote.available && remote.reason == "只支持 stdio")
+    }
 }

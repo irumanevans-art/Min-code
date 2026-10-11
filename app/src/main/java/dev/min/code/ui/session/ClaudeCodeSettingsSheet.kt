@@ -310,6 +310,7 @@ internal fun ClaudeCodeSettingsSheet(
                     servers = servers, busy = busy,
                     onReconnect = extras::reconnect, onToggle = extras::setEnabled,
                     onLogin = extras::login, onLogout = extras::logout, onApprove = extras::approve,
+                    onChannel = extras::setChannel,
                     onTrust = { extras.askTrust(session.cwd) },
                 )
             }

@@ -1124,6 +1124,7 @@
   <string name="min_agent_hook_feedback">%1$s hook asked the model to keep going</string>
   <string name="min_agent_cron_woke">A scheduled task woke the session</string>
   <string name="min_agent_cron_fired">Scheduled task %1$s fired (not a message you typed)</string>
+  <string name="min_agent_channel_notice">Channel %1$s pushed a message (external source, not a message you typed)</string>
   <string name="min_agent_task_notice">Background task %1$s reported (process output, not a message you typed)</string>
   <string name="min_agent_continued">Continued</string>
   <string name="min_agent_woke">A subagent finished, continuing</string>
@@ -1305,6 +1306,15 @@
     <string name="mcp_panel_stderr_show">Show stderr (%1$d lines)</string>
     <string name="mcp_panel_stderr_hide">Hide stderr (%1$d lines)</string>
     <string name="mcp_panel_session_on">This session</string>
+    <string name="mcp_channel_label">Channel</string>
+    <string name="mcp_channel_hint">Messages this server pushes go straight into this session. They are from outside, not typed by you, and do not change permission rules.</string>
+    <string name="mcp_channel_relay">It also declares approval relay: tool approvals you would see here are sent to it too, and it can answer them (allow or deny this one call).</string>
+    <string name="mcp_channel_dev_on">Turned on for development, not from an approved list.</string>
+    <string name="mcp_channel_unavailable">Only local stdio servers can be channels.</string>
+    <string name="mcp_channel_confirm_title">Use %1$s as a development channel?</string>
+    <string name="mcp_channel_confirm_body">This server is not an approved channel. A channel pushes messages from an outside system straight into this session, and can answer tool approvals if it relays them. Only continue for a channel you are developing yourself, and never for one from an untrusted source.</string>
+    <string name="mcp_channel_confirm_ok">I am developing it, continue</string>
+    <string name="mcp_channel_confirm_cancel">Cancel</string>
     <string name="mcp_state_pending">Connecting</string>
     <string name="mcp_state_connected">Connected</string>
     <string name="mcp_state_failed">Failed</string>
