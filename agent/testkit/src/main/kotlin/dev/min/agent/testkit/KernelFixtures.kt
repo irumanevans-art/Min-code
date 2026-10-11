@@ -47,12 +47,14 @@ fun testDeps(
     userFileSink: dev.min.agent.spi.UserFileSink = dev.min.agent.spi.UserFileSink.Unavailable,
     /** 工作区文件系统：要测读文件的工具（SendUserFile）时传一个 [FakeFs]，默认不可用 */
     fs: dev.min.agent.spi.WorkspaceFs = Unused,
+    /** 会话 id 的前缀标签：同一个测试里起两个内核实例（模拟两个进程）时各用各的，免得 id 撞车 */
+    idTag: String = "",
 ): KernelDeps {
     val time = AtomicLong(1_000)
     val counter = AtomicLong(0)
     return KernelDeps(
         clock = Clock { time.getAndAdd(10) },
-        ids = IdGenerator { prefix -> "${prefix}_${counter.incrementAndGet()}" },
+        ids = IdGenerator { prefix -> "${idTag}${prefix}_${counter.incrementAndGet()}" },
         models = { ref ->
             check(ref == TEST_MODEL) { "未知模型 $ref" }
             ResolvedModel(TEST_PROFILE, model)

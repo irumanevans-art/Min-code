@@ -118,6 +118,11 @@ data class HubLimits(
      * 已有的任务原样留在日志里，打开后照常继续。默认开
      */
     val cronEnabled: Boolean = true,
+    /**
+     * 本机其他会话发来的消息的收件口径（Claude Code 的 `crossSessionInbound`）。Auto = 收发两边权限类不同时等用户批准，
+     * Refuse = 一律拒收（发件人立刻知道），Accept / Hold 同名。只有宿主一个开关，还没有按会话设置
+     */
+    val crossSessionInbound: PeerInboundPolicy = PeerInboundPolicy.Auto,
 ) {
     init {
         require(teamMaxConcurrent in 1..TeamLimits.MAX_CONCURRENT) { "团队同时运行的成员数必须在 1 到 ${TeamLimits.MAX_CONCURRENT} 之间。" }
@@ -182,6 +187,11 @@ class SessionHub(
     limits: HubLimits = HubLimits(),
     /** 可委派的子 agent 类型：内置 + 组合根从 `.claude/agents/` 读来的（同名时后者覆盖内置） */
     agents: List<AgentDefinition> = BuiltinAgents.all,
+    /**
+     * 本机其他进程的会话登记与收件目录（桌面 CLI 传 [FilePeerTransport]）。null = 只能找到本 Hub 里的会话（Android 与测试）。
+     * 跨会话消息见 [PeerMailbox]
+     */
+    peers: PeerTransport? = null,
 ) {
     /** 宿主可调的上限。会话创建后设置才读出来 / 用户改了设置时用 [updateHostLimits] 更新，之后的决定立刻按新值（读的是这个字段，不是构造时的快照） */
     @Volatile
@@ -291,6 +301,8 @@ class SessionHub(
         scheduler.start {
             crons.tick(deps.clock.nowMs())
             goalCheckIns.tick(runtimes.values)
+            // 别的进程送来的消息：心跳里取（同一时刻只跑一轮，见 PeerMailbox.pump）
+            scope.launch { peerMail.pump() }
         }
 
     /** `/goal` 的 check-in 计时：挂在同一个心跳上（[startScheduling]），不另起定时器 */
@@ -450,6 +462,7 @@ class SessionHub(
             }
         }
         register(runtime)
+        peerMail.publish(runtime)
         attachMcp(runtime, fresh = true)
         crons.attach(runtime)
         // 插件声明的 monitors 随会话创建自动启动（`-p` 与子 agent 不启，见 PluginMonitors.kt）
@@ -904,7 +917,7 @@ class SessionHub(
                 },
             )
         }
-        return subagents + teammates
+        return subagents + teammates + peerMail.roster(from)
     }
 
     /** 团队成员的状态行（界面的团队页读；没有团队返回空）。状态来自日志折叠与成员会话的折叠，不是另存的 */
@@ -1274,6 +1287,7 @@ class SessionHub(
         watched -= id
         quietReports.removeIf { it.first == id }
         teams.forget(id)
+        peerMail.withdraw(id)
         crons.detach(id)
         runtimes.remove(id)
         synchronized(summaryLock) {
@@ -1376,6 +1390,22 @@ class SessionHub(
 
     // ---- 续聊与停止 ----
 
+    /** 本机跨会话邮箱（见 [PeerMailbox]）：发现与送达都走它，拒收与批准的口径也在那里 */
+    internal val peerMail = PeerMailbox(this, deps, peers) { this.limits.crossSessionInbound }
+
+    /** 本 Hub 里在线的根会话（子 agent 不算）。跨会话邮箱只看这一层 */
+    internal fun liveRoots(): List<SessionRuntime> = runtimes.values.filter { it.state.value.origin == null }
+
+    /** 收件方的用户批准（true）或拒收（false）一条待批准的跨会话消息。返回 false = 没有这条 */
+    suspend fun resolvePeerHold(receiver: SessionId, messageId: String, approve: Boolean): Boolean =
+        peerMail.resolveHold(receiver, messageId, approve)
+
+    /** 等批准的跨会话消息（界面列出来让用户批） */
+    fun heldPeerMessages(receiver: SessionId): List<HeldPeerMessage> = peerMail.heldFor(receiver)
+
+    /** 取走别的进程发来的消息并处理（心跳里调用；测试直调） */
+    internal suspend fun pumpPeers() = peerMail.pump()
+
     private suspend fun sendMessage(from: SessionRuntime, callId: CallId, to: String, text: String): ToolResult {
         // 团队邮件与子 agent 消息是同一个入口：发件人和收件人都在团队里就走团队邮箱，其余照旧
         teams.sendMail(from, to, text)?.let { return it }
@@ -1390,7 +1420,8 @@ class SessionHub(
             )
             return ok("已发给上级会话。")
         }
-        val child = findChild(state, target) ?: return error(unknownChild(state, target))
+        // 不是本会话的子 agent / 团队成员：再看是不是本机的其他根会话（跨会话邮箱）；都不是才报「找不到」
+        val child = findChild(state, target) ?: return peerMail.send(from, target, text) ?: error(unknownChild(state, target))
         val runtime = open(child.child) ?: return error("子 agent ${child.child.value} 的会话打不开了。")
         // 归属检查：它得是本会话自己委派的。分支复制来的引用指向原会话的子 agent——只读，不能替原会话发话
         if (runtime.state.value.origin?.parent != from.sessionId) {

@@ -52,7 +52,8 @@ data class AgentListing(
     val description: String? = null,
 )
 
-enum class AgentListingKind { Subagent, Teammate }
+/** 子 agent、团队成员，以及本机其他会话（跨会话邮箱，[PeerMessage]；description 为它的工作目录） */
+enum class AgentListingKind { Subagent, Teammate, Peer }
 
 data class DelegateRequest(
     val description: String,
