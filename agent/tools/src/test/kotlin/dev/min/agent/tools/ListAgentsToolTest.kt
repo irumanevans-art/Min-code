@@ -41,7 +41,7 @@ class ListAgentsToolTest {
         assertTrue(ListAgentsTool.traits.readOnly)
         val text = ListAgentsTool.description(profile)
         assertTrue(text, text.contains("SendMessage"))
-        assertTrue(text, text.contains("其他本地会话") && text.contains("云会话"))
+        assertTrue(text, text.contains("本机的其他会话") && text.contains("云会话"))
     }
 
     @Test
@@ -54,6 +54,17 @@ class ListAgentsToolTest {
         val lines = result.text.lines()
         assertTrue(result.text, lines.any { it.contains("子 agent") && it.contains("研究员") && it.contains("sess_a") && it.contains("运行中") && it.contains("查竞品") })
         assertTrue(result.text, lines.any { it.contains("团队成员") && it.contains("写手") && it.contains("sess_b") && it.contains("排队") })
+    }
+
+    @Test
+    fun `a peer session on this machine is listed by its name, id, state and directory`() = runBlocking {
+        val result = ListAgentsTool.call(ctx(Roster(listOf(
+            AgentListing(AgentListingKind.Peer, "api", "s_api", "running", "/work/api"),
+            AgentListing(AgentListingKind.Peer, null, "s_anon", "idle", "/work/x"),
+        ))))
+        assertFalse(result.isError)
+        assertTrue(result.text, result.text.lines().any { it.contains("本机会话「api」") && it.contains("s_api") && it.contains("运行中") && it.contains("/work/api") })
+        assertTrue(result.text, result.text.lines().any { it.contains("本机会话「未命名」") && it.contains("s_anon") && it.contains("空闲") })
     }
 
     @Test
