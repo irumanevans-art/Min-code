@@ -606,16 +606,15 @@ fun ClaudeCodePage(
     }
 
     // 模型交来的 Artifact 预览（工具调用即「在预览位打开」，所以到了就开）与诊断包草稿（只在本机，导出与丢弃都由人点）。
-    // 草稿面板关掉只是藏，下一份草稿来了（drafts.size 变）再出现
+    // 草稿面板关掉只是藏：记住关的时候看过哪几份（进程级，页面重建不重弹），有没看过的新草稿才再出现
     val artifactFile by ViewerInbox.artifact.collectAsState()
     val drafts by ViewerInbox.drafts.collectAsState()
-    var draftsHidden by remember { mutableStateOf(false) }
-    LaunchedEffect(drafts.size) { draftsHidden = false }
+    val dismissedDrafts by ViewerInbox.dismissedDrafts.collectAsState()
     artifactFile?.let { file ->
         ArtifactViewerPane(file = file, onClose = ViewerInbox::closeArtifact)
     }
-    if (drafts.isNotEmpty() && !draftsHidden) {
-        FeedbackDraftPane(drafts = drafts, onClose = { draftsHidden = true })
+    if (drafts.any { it.id !in dismissedDrafts }) {
+        FeedbackDraftPane(drafts = drafts, onClose = { ViewerInbox.dismissDrafts(drafts.map { it.id }) })
     }
 }
 

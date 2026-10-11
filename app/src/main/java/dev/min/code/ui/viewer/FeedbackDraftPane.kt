@@ -2,6 +2,7 @@ package dev.min.code.ui.viewer
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -97,7 +98,12 @@ private fun DraftCard(item: PendingDraft) {
             onValueChange = { body = it },
             minLines = 3,
         )
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            // 「导出」与「丢弃」是两个方向相反的动作，不能挤在一起误点
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             InkButton(onClick = {
                 scope.launch {
                     // 已知秘密在点击时现取（Keystore 解密）：先把用户的改动按它去凭证存回草稿，再导出

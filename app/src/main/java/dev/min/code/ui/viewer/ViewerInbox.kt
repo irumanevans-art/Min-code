@@ -38,6 +38,17 @@ object ViewerInbox {
     }
 
     /**
+     * 用户关掉草稿面板时已经看过的草稿。放在进程级（不随页面重建清掉）：关了以后只有新草稿来才再弹；
+     * 进程重启后还没处理的草稿会再出现一次，算是提醒——草稿本身在盘上，没导出也没丢
+     */
+    private val _dismissedDrafts = MutableStateFlow<Set<String>>(emptySet())
+    val dismissedDrafts: StateFlow<Set<String>> = _dismissedDrafts.asStateFlow()
+
+    fun dismissDrafts(ids: Collection<String>) {
+        _dismissedDrafts.value = _dismissedDrafts.value + ids
+    }
+
+    /**
      * 已知秘密的读取口（引擎创建时绑一次）：App 设置里存的各家 key、搜索 key、遥测头部令牌、MCP 令牌，导出诊断包与写草稿时都要逐字去掉。
      * 读取要解密 Keystore，所以是挂起的；读不出来（出错）当作空名单，只剩形状兜底。
      */
