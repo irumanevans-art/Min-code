@@ -206,6 +206,8 @@ data class SessionState(
     val team: TeamState? = null,
     /** 本会话收到的团队邮件（team_message），按到达顺序；给界面消息流用，模型看到的是同一次提交里的 input_received */
     val teamMail: List<TeamMailItem> = emptyList(),
+    /** 本会话收到的本机跨会话消息（peer_message），按到达顺序；给界面用，模型看到的是同一次提交里的 input_received（origin = peer） */
+    val peerMessages: List<dev.min.agent.spi.PeerMessage> = emptyList(),
     /** 本会话的定时任务（含已结束的，`status` 区分），按创建顺序；由 cron_* 事件折叠（Crons.kt） */
     val crons: List<dev.min.agent.spi.CronTask> = emptyList(),
     /** 已分配过的最大定时任务编号：编号在会话里只指一条任务，取消 / 过期后不复用 */
