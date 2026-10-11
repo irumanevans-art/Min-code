@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -282,7 +284,7 @@ internal fun ClaudeCodeInputBar(
     val slashQuery = input.takeIf { it.startsWith("/") }?.drop(1)?.substringBefore(' ')
     val matchedCommands = remember(slashQuery, session.slashCommands) {
         if (slashQuery == null) emptyList()
-        else session.slashCommands.filter { it.name.contains(slashQuery, ignoreCase = true) }.take(6)
+        else session.slashCommands.filter { it.name.contains(slashQuery, ignoreCase = true) }.take(SLASH_MENU_MAX)
     }
 
     fun composeMessage(): String {
@@ -593,12 +595,16 @@ private data class Attachment(val name: String, val path: String)
 /** 待随下一条消息发出的图片。不落盘 —— 截图这种一次性图片没有留在工作区的理由。 */
 private data class PendingImage(val name: String, val block: ImageInput)
 
+/** 斜杠菜单最多列几条：够把内置命令加常见的几十个 skill 都放进可滚动的菜单，又不至于把整个清单倒进来 */
+private const val SLASH_MENU_MAX = 40
+
 @Composable
 private fun SlashCommandList(
     commands: List<SlashCommandView>,
     onPick: (SlashCommandView) -> Unit,
 ) {
-    Column(modifier = Modifier.heightIn(max = 200.dp)) {
+    // 菜单高度封顶 200dp 时第六行会被切掉一截、后面的又够不着（模拟器验收见到 14 条只露 5 条）：封顶不变，改成能滚
+    Column(modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
         commands.forEach { cmd ->
             SlashSuggestionRow(command = "/${cmd.name}", description = cmd.description, onClick = { onPick(cmd) })
         }
