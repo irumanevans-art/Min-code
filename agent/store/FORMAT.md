@@ -270,3 +270,8 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
   `skills_loaded` 的 `source` 新增取值 `add-dir`（`--add-dir` 目录里的 skills / commands）。旧日志缺新字段照常读（默认值即原来的行为），含 `skills_discovered` 的日志旧版本打不开。
 
 - v1 增量（2026-10-11，世界状态增量）：新增事件 `world_noted`（`date`：当地日期 yyyy-MM-dd、`mode`：权限模式、`model`：计划感知后的会话模型 id、`reminder`：追加给模型的文字），定义在 `spi/SessionEvent.kt`。只在日期跨天、进出计划模式（其它模式之间的切换不算）、模型与模型上次被告知的不同时，与 `input_promoted` 同批写在它**前面**；折叠把 `reminder` 挂到这批第一条提升的消息上（同 `cwd_changed` 的空闲提醒），并记下新基准 `SessionState.world`。没有这条事件的第一次提升静默记下基准（日期 = 系统提示里的会话日期、模式、模型）；`context_compacted` 清空基准，下一条消息重新比；回退对话把基准连同待挂的提醒一起换回回退点上的样子。文字落进日志而不是折叠时现拼：措辞以后改了，旧会话重放出的字节不变。含它的日志旧版本打不开；旧日志照常读（第一次提升时补记基准，日期跨天的旧会话下一条消息会收到一次日期提醒）。
+
+- v1 增量（2026-10-11，Bash 的 cd 跨命令保留）：新增事件 `shell_cwd_changed`（可选 `cwd`），定义在 `spi/Worktrees.kt`。它记「下一条 Bash 从哪个目录开始」，与 `cwd_changed`（会话目录：权限范围、记忆、worktree）是两回事——`cd` 进子目录不改会话目录、不缩小权限范围。
+  `cwd` 缺省 / null = 回到会话目录（出界重置、`cd` 回了项目根）；非 null 时是**真实路径**（符号链接已解），且在会话目录或附加目录之内。折叠进 `SessionState.shellCwd`；`cwd_changed` 一律把它清空（新会话目录才是起点），所以两类事件的相对顺序有意义。
+  只有跑完的前台 Bash 才会写（超时、转后台、脚本里 `exit` 都不写）；子 agent 与设了 `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR` 的运行永远不写。旧日志没有它：重开等于 shell 在会话目录；含它的日志旧版本打不开。
+  同一次变化会触发 `CwdChanged` hook（`old_cwd` / `new_cwd` 为 shell 目录前后），hook 通用输入的 `cwd` 字段跟着 shell 目录走（CC 原文「cwd follows Claude」）。

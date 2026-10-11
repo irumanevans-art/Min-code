@@ -207,6 +207,11 @@ data class SessionState(
     val finishedWorktrees: List<dev.min.agent.spi.WorktreeFinished> = emptyList(),
     val cwdWatchPaths: List<GuestPath> = emptyList(),
     /**
+     * Bash 的 `cd` 带过来的 shell 当前目录（[dev.min.agent.spi.ShellCwdChanged] 折叠）；null = 就在会话目录。
+     * 与 [settings] 的 cwd 是两回事：权限范围、记忆、worktree 看会话目录，这里只决定下一条 Bash 从哪开始。会话目录一换（cwd_changed）就清空
+     */
+    val shellCwd: GuestPath? = null,
+    /**
      * 本会话作为负责人建的团队（最后一条 team_created 起，由 team_* 事件折叠；解散后仍保留，`active` 为假）。
      * 只有根会话会有；成员的日志里没有它，成员要知道自己的团队去看根会话（[SessionHub.teamMembers]）
      */

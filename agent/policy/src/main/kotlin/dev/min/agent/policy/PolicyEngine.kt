@@ -44,6 +44,12 @@ data class PolicyContext(
      */
     val confineToWorkingDirectories: Boolean = false,
     val guestIsolation: dev.min.agent.spi.GuestIsolation? = null,
+    /**
+     * Bash 的 `cd` 带过来的 shell 当前目录（会话目录之内）。只有分析 Bash 命令里的相对路径时用它做起点——
+     * 命令真正是从这里开始跑的；规则里的相对写法与工作区范围仍以 [cwd] 为准（`cd` 进子目录不改变权限范围）。
+     * null = shell 就在 [cwd]
+     */
+    val shellCwd: GuestPath? = null,
 )
 
 /** 宿主没给分级函数时的兜底，与 app 的 core/session/PermissionScope.kt 同一套前缀 */
@@ -405,8 +411,11 @@ object PolicyEngine {
                 val unresolved = mutableListOf<String>()
                 val credentialTargets = ask.paths.map { it.path }.toMutableList()
                 // 按顺序跟踪 cd：`cd /sdcard && echo x > a` 写的是 /sdcard/a。管道里的 cd 其实不生效，这里一律当生效（宁可多问）
-                var cwd: String? = context.cwd.value
-                var credentialCwd: String? = context.cwd.value
+                // Bash 的命令是从 shell 当前目录（cd 带过来的）开始跑的：相对路径、凭证目标都按它解析，不能按会话目录。
+                // 只对 Bash：Monitor 等其他带命令的工具仍从会话目录起跑，按 shell 目录分析反而会错位
+                val start = (if (ask.tool == "Bash") context.shellCwd else null) ?: context.cwd
+                var cwd: String? = start.value
+                var credentialCwd: String? = start.value
                 for (cmd in commands) {
                     if (changedDirectory && cmd.program == "git") gitAfterCd += cmd
                     for (r in cmd.redirects.filter { it.writesFile || it.readsFile }) {

@@ -184,6 +184,16 @@ class SessionRuntime private constructor(
         val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home), trustProject, trustedLocal)?.let { (state.value.additionalDirectories + it).distinct() }
         commit(listOf(dev.min.agent.spi.CwdChanged(old, cwd, worktree, memory.filter { it.path !in state.value.memoryPathsInContext }, rules, dirs)), Durability.Sync)
         checkpointsBySettings = null
+        runCwdChangedHooks(old, cwd)
+        hub?.cwdChanged(this)
+    }
+
+    /**
+     * CwdChanged hook（文档：工作目录变化时触发，输入 old_cwd / new_cwd；无决策控制，只读 watchPaths 与 systemMessage）。
+     * 会话目录换了（[changeCwd]）与 Bash 的 `cd` 带动 shell 目录变了（[runTrackedShell]）共用这一条，payload 与 watchPaths 处理一致。
+     * watchPaths 里的相对写法按 [cwd]（新目录）解析。
+     */
+    internal suspend fun runCwdChangedHooks(old: GuestPath, cwd: GuestPath) {
         val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
             HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.CwdChangedInput(deps.hookShellPath(old), deps.hookShellPath(cwd))).jsonObject)
         val watchPaths = hooks?.runs?.filter { it.exitCode == 0 }?.mapNotNull { run ->
@@ -200,7 +210,6 @@ class SessionRuntime private constructor(
                 commit(listOf(dev.min.agent.spi.CwdWatchPathsChanged(paths)), Durability.Sync)
             }.onFailure { commit(listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "CwdChanged watchPaths 无效，保留原监视列表。")), Durability.Sync) }
         }
-        hub?.cwdChanged(this)
     }
 
     private var pluginsInstance: dev.min.agent.ext.plugins.PluginBundle? = null

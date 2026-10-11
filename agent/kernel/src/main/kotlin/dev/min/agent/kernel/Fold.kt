@@ -120,6 +120,8 @@ fun SessionState.apply(record: EventRecord): SessionState {
             val anchor = if (turn != null) history.lastOrNull { it is HistoryEntry.Assistant }?.messageId else null
             copy(
                 settings = settings.copy(cwd = e.cwd), worktree = e.worktree,
+                // 会话目录换了，shell 当前目录一并作废（新目录才是起点）
+                shellCwd = null,
                 cwdMemory = (cwdMemory + e.memoryFiles).distinctBy { it.path },
                 rules = e.rules ?: rules,
                 additionalDirectories = e.additionalDirectories ?: additionalDirectories,
@@ -130,6 +132,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         }
         is dev.min.agent.spi.WorktreeFinished -> copy(finishedWorktrees = finishedWorktrees + e)
         is dev.min.agent.spi.CwdWatchPathsChanged -> copy(cwdWatchPaths = e.paths)
+        is dev.min.agent.spi.ShellCwdChanged -> copy(shellCwd = e.cwd)
         // 世界状态增量：记下新的基准，提醒等着挂到紧接着提升的那条消息上（与 InputPromoted 同批落盘）
         is dev.min.agent.spi.WorldNoted -> copy(
             world = WorldFacts(e.date, e.mode, e.model),

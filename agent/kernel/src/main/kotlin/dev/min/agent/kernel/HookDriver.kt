@@ -266,7 +266,8 @@ internal class HookDriver(private val rt: SessionRuntime) {
 
     private fun common(event: HookEvent, state: SessionState) = HookInputCommon(
         sessionId = state.header.sessionId.value,
-        cwd = deps.hookShellPath(state.settings.cwd),
+        // 原文：「cwd follows Claude」——Claude 执行 cd 之后是新目录。shell 目录没换过时就是会话目录
+        cwd = deps.hookShellPath(state.shellCwd ?: state.settings.cwd),
         // CC：Manual 模式以 "default" 到达；序列化名与 CC 的取值相同
         permissionMode = wire(state.settings.mode),
         effort = state.settings.effort?.let { EffortInfo(level = wire(it)) },

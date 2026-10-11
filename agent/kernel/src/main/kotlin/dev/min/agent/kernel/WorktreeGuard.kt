@@ -13,7 +13,8 @@ internal suspend fun worktreeViolation(state: SessionState, deps: KernelDeps, as
     val refusal = "Worktree isolation: cannot redirect this operation into the main checkout $main. Use the active worktree ${binding.path}."
     if (ask.tool in setOf("Edit", "Write", "NotebookEdit") && ask.paths.any { inMain(it.path) }) return refusal
     if (ask.tool !in setOf("Bash", "PowerShell", "Monitor")) return null
-    val cwd = state.settings.cwd
+    // Bash 从 shell 当前目录（cd 带过来的）起跑：隔离判断也按它起算，附加目录里的主 checkout 不能借 cd 进去
+    val cwd = state.shellCwd ?: state.settings.cwd
     if (deps.host.fs.stat(cwd)?.kind != FileKind.Directory || inMain(cwd)) return refusal
     if (ask.tool == "PowerShell") return null
     for (access in ask.commands) {

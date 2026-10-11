@@ -16,4 +16,14 @@ class WorktreeEventsWireTest {
             assertEquals(e, AgentJson.decodeFromString(SessionEvent.serializer(), text))
         }
     }
+
+    @Test fun `shell cwd event round trips and a missing cwd means back to the session directory`() {
+        for ((json, event) in listOf(
+            """{"type":"shell_cwd_changed","cwd":"/old/sub"}""" to ShellCwdChanged(GuestPath("/old/sub")),
+            """{"type":"shell_cwd_changed"}""" to ShellCwdChanged(null),
+        )) {
+            assertEquals(event, AgentJson.decodeFromString(SessionEvent.serializer(), json))
+            assertEquals(AgentJson.parseToJsonElement(json), AgentJson.parseToJsonElement(AgentJson.encodeToString(SessionEvent.serializer(), event)))
+        }
+    }
 }

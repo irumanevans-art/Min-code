@@ -128,6 +128,25 @@ class BashToolTest {
     }
 
     @Test
+    fun `前台命令要求宿主报告结束目录，后台命令不要`() = runTest {
+        BashTool().call(ctx, "command" to "cd sub")
+        BashTool().call(ctx, "command" to "npm run dev", "run_in_background" to true)
+        assertEquals(listOf(true, false), ctx.exec.runs.map { it.first.trackCwd })
+        // 命令从 ctx.cwd 起：内核在 runShell 里把它换成 shell 当前目录，工具不自己管
+        assertEquals(listOf(GuestPath("/work"), GuestPath("/work")), ctx.exec.runs.map { it.first.cwd })
+    }
+
+    @Test
+    fun `内核附的说明接在整条结果末尾（退出码之后）`() = runTest {
+        script(ExecResult.Exited(0, "x\n", truncated = false, durationMs = 1, note = "Shell cwd was reset to /work"))
+        assertEquals("x\n退出码 0\nShell cwd was reset to /work", BashTool().call(ctx, "command" to "cd /").text)
+        script(ExecResult.Exited(1, "", truncated = true, durationMs = 1, note = "Shell cwd was reset to /work"))
+        val r = BashTool().call(ctx, "command" to "cd / && false")
+        assertTrue(r.isError)
+        assertEquals("（无输出）\n（输出过长，中间部分已省略，只保留了头尾）\n退出码 1\nShell cwd was reset to /work", r.text)
+    }
+
+    @Test
     fun `run_in_background 时前台预算是 0`() = runTest {
         BashTool().call(ctx, "command" to "npm run dev", "run_in_background" to true)
         assertEquals(0L, ctx.exec.runs.single().second.foregroundBudgetMs)
@@ -171,9 +190,9 @@ class BashToolTest {
     }
 
     @Test
-    fun `description 写明 cd 与 export 不跨调用保留`() {
+    fun `description 写明 cd 会带到后续命令、export 不会`() {
         val text = BashTool().description(dev.min.agent.spi.HarnessProfile(dev.min.agent.spi.ModelFamily.Claude, dev.min.agent.spi.EditStyle.StrReplace))
-        assertTrue(text, text.contains("cd 与 export 不会保留到下一次调用"))
+        assertTrue(text, text.contains("cd 之后的目录会带到后续命令") && text.contains("export 设的环境变量不会保留"))
     }
 
     // ---- bare：没有后台任务（CC headless 页：none run，到超时就停） ----

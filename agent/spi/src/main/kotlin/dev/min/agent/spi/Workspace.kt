@@ -76,6 +76,12 @@ data class ShellCommand(
     val cwd: GuestPath,
     val env: Map<String, String> = emptyMap(),
     val network: GuestNetwork = GuestNetwork.Offline,
+    /**
+     * 要宿主在命令正常跑完后报告 shell 最终停在哪个目录（[ExecResult.Exited.endCwd]），让 Bash 的 `cd` 能带到下一条命令。
+     * 做法在宿主：把脚本包一层（[ShellCwdProbe]）、目录写进宿主自己的临时文件，**不走输出流**——给模型和给用户的输出、
+     * 日志、后台通知里因此都没有标记，输出被截断也不会丢。默认关：hook、Monitor、Skill 的 shell 与后台 hook 都不要这个。
+     */
+    val trackCwd: Boolean = false,
 )
 
 data class ExecOptions(
@@ -91,7 +97,19 @@ data class ExecHandle(val id: String, val pid: Int? = null, val logPath: GuestPa
 
 sealed interface ExecResult {
     /** [output] 是 stdout 与 stderr 按到达顺序合并、超长时保留头尾各一半的结果 */
-    data class Exited(val exitCode: Int, val output: String, val truncated: Boolean, val durationMs: Long) : ExecResult
+    data class Exited(
+        val exitCode: Int,
+        val output: String,
+        val truncated: Boolean,
+        val durationMs: Long,
+        /**
+         * 命令结束时 shell 所在目录（宿主已换成 guest 路径）。只在 [ShellCommand.trackCwd] 且命令跑完了才有：
+         * 脚本里 `exit` / `exec` / `set -e` 提前结束、宿主认不出路径时为 null，调用方当作这次没换目录
+         */
+        val endCwd: GuestPath? = null,
+        /** 内核追加给模型的一句说明（如 `Shell cwd was reset to <dir>`），工具把它接在结果末尾；宿主不会填 */
+        val note: String? = null,
+    ) : ExecResult
     data class TimedOut(val output: String, val truncated: Boolean) : ExecResult
     data class Backgrounded(val handle: ExecHandle, val outputSoFar: String) : ExecResult
 }

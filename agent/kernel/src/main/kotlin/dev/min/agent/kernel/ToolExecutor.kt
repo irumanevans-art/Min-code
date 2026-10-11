@@ -307,6 +307,8 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             // 本轮 skill 的 allowed-tools 放行（照文档：到用户下一条消息为止）；拒绝与询问规则仍在它之上（PolicyEngine 先看拒绝、再看询问）
             rules = parsedRules + rt.skillGrants.mapNotNull { PermissionRule.parse(dev.min.agent.policy.RuleKind.Allow, it, "skill") },
             cwd = s.settings.cwd,
+            // 命令里的相对路径按 shell 当前目录解析（规则与工作区范围仍按 cwd）
+            shellCwd = s.shellCwd,
             home = deps.memoryHome ?: DEFAULT_HOME,
             scopeOf = { path ->
                 val actual = deps.canonicalPath(path)
@@ -694,7 +696,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val search: Search = credentialSearch(deps.host.search, deps.credentialPaths, deps.canonicalPath)
         override val exec: Exec = deps.host.exec
         override suspend fun runShell(command: dev.min.agent.spi.ShellCommand, options: dev.min.agent.spi.ExecOptions, allowedDomains: List<String>): dev.min.agent.spi.ExecResult =
-            rt.runNetworkShell(callId, command, options, if (callId in networkApprovedCalls) allowedDomains else emptyList())
+            rt.runTrackedShell(command) { c -> rt.runNetworkShell(callId, c, options, if (callId in networkApprovedCalls) allowedDomains else emptyList()) }
         override val artifacts: ArtifactSink = deps.host.artifacts(rt.sessionId)
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override fun canonicalPath(path: GuestPath): GuestPath = deps.canonicalPath(path)
