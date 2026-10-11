@@ -291,17 +291,20 @@ internal class DesktopApp(
             cronMaxBudgetUsd = cronMaxBudgetUsdFrom(config.settings.merged.raw("cronMaxBudgetUsd"), System.err::println),
             cronEnabled = cronEnabled,
         )
-        // 本机其他进程的会话：登记表与收件目录放在用户目录下（只本用户可读写）。只有交互会话挂这个：它的收件要靠心跳取，
-        // `-p` 跑一次就退出，登记了却没人取会让发件人误以为送到了。退出时 shutdown 会注销本进程的会话；
-        // 进程被杀的，别的进程看见它的登记进程已死，顺手清掉
-        val peers = if (interactive) dev.min.agent.kernel.FilePeerTransport(home.resolve("peers")) else null
+        // 本机其他进程的会话：登记表与收件目录放在用户目录下（只本用户可读写）。交互会话与 `-p` 会话都挂（CC：`claude -p` 像交互会话一样绑收件口，
+        // 长跑的 -p worker 也能收信、出现在名单里）；`--bare` 不挂（原文：bare 模式不绑收件口，列表里没有它）。
+        // 登记了就得有人取信，所以下面两种会话都接心跳。退出时 shutdown 会注销本进程的会话；进程被杀的，别的进程看见它的登记进程已死，顺手清掉
+        val peers = if (customizations != dev.min.agent.kernel.Customizations.Bare) dev.min.agent.kernel.FilePeerTransport(home.resolve("peers")) else null
         SessionHub(store, deps(tools), scope, limits, catalog.definitions, peers = peers).also {
             hubInstance = it
             // 交互会话开着的时候定时任务才有意义；`-p` 跑一次就退出，不挂定时器。定时任务的开关在引擎里查（CronEngine 的 enabled），
             // 心跳不跟它走：`/goal` 的 check-in 也挂在这同一个心跳上，定时任务关着时它照常叫醒
             if (interactive) it.startScheduling(dev.min.agent.kernel.InProcessScheduler(scope))
+            // 取信的心跳：`-p` 只挂这一个（一次运行可能只有几十秒，所以间隔比定时心跳短）；交互会话里它与定时心跳里的取信互不干扰（同一时刻只跑一轮）
+            if (peers != null) it.startPeerHeartbeat(dev.min.agent.kernel.InProcessScheduler(scope, PEER_HEARTBEAT_MS))
         }
     }
+
 
     /** stream-json 的 init 行用：`供应商/模型 id` */
     internal fun modelLabel(): String = "${provider.id}/${profile.ref.modelId}"
@@ -398,6 +401,10 @@ internal class DesktopApp(
     /** 草稿 → 诊断包：凭证在这里就去掉，不靠用户记得检查（见 FeedbackBundle） */
     fun buildFeedbackZip(draft: dev.min.agent.spi.FeedbackDraft): ByteArray =
         dev.min.agent.tools.FeedbackBundle.build(draft, draft.sessionLog, "Min desktop CLI", System.getenv(), emptyMap())
+
+    /** 这次启动在 cwd 下读到的各层设置（现读，`/inbound` 写完马上能看到）；managed 与 `--settings` 是否锁了某个键就看它 */
+    suspend fun settingsLayers(): List<dev.min.agent.ext.config.SettingsLayer> =
+        dev.min.agent.ext.config.SettingsLoader.load(paths.fs, paths.guestOfHost(args.cwd), userHome, inputs = settingsInputs).layers
 
     fun settingsUserFile(): Path = claudeHome.resolve(".claude").resolve("settings.json")
     fun pluginMarketplace() = desktopMarketplace(args.cwd, isWorkspaceTrusted(), claudeHome)
@@ -769,3 +776,6 @@ internal class DesktopApp(
         val SESSION_ID_SHAPE = Regex("[A-Za-z0-9_-]{1,128}")
     }
 }
+
+/** 取别的会话来信的心跳间隔（毫秒）：文件邮箱的轮询，一次目录列表很便宜 */
+private const val PEER_HEARTBEAT_MS = 1_000L

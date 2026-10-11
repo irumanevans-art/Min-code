@@ -306,6 +306,8 @@ internal suspend fun interact(
                     System.err.println(e.message)
                 }
             }
+            // 跨会话收件设置与待批准消息（CC 的 /config 行与批准框；Min 的终端没有 /config 面板，所以一个专用命令）
+            trimmed == "/inbound" || trimmed.startsWith("/inbound ") -> inboundCommand(app, runtime, trimmed.removePrefix("/inbound"), System.err)
             // 反馈（CC 的 /feedback）：无参 = 草稿队列，带文字 = 自己写一份；只排队、不发送（Min 没有发送通道）。会话锁住后也放行（endedLockNotice）
             trimmed == "/feedback" || trimmed.startsWith("/feedback ") -> feedbackCommand(app.feedbackDrafts, trimmed.removePrefix("/feedback"), app::buildFeedbackZip, System.err)
             trimmed in REWIND_COMMANDS -> rewindCommand(runtime, stdin)

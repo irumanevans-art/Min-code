@@ -1458,6 +1458,9 @@ class SessionHub(
     suspend fun resolvePeerHold(receiver: SessionId, messageId: String, approve: Boolean): Boolean =
         peerMail.resolveHold(receiver, messageId, approve)
 
+    /** 这个会话此刻适用的跨会话收件口径（设置与宿主级底线合起来的结果；Auto = 按两边权限类判）。终端的 `/inbound` 显示它 */
+    suspend fun peerInboundPolicy(rt: SessionRuntime): PeerInboundPolicy = peerReceiveSettings(rt).policy
+
     /** 等批准的跨会话消息（界面列出来让用户批） */
     fun heldPeerMessages(receiver: SessionId): List<HeldPeerMessage> = peerMail.heldFor(receiver)
 
