@@ -109,6 +109,19 @@ class FeedbackBundleTest {
     }
 
     @Test
+    fun `the session log goes through the same scrub as the draft, and its fake keys never reach the zip`() {
+        // 日志是最容易带凭证的一份：模型读过的文件、工具输出都在里面。环境里的值（不带形状）与假 key 都不能进 session-log.txt
+        val env = mapOf("MIN_INTERNAL_PASSWORD" to "plainpw-LOGONLY9", "ANTHROPIC_API_KEY" to fakeKey)
+        val log = "{\"text\":\"cat ~/.secrets 得到 plainpw-LOGONLY9\"}\n{\"text\":\"用了 $fakeKey\"}\n"
+        val files = entries(FeedbackBundle.build(FeedbackDraft("t", "b"), log, "v", env, emptyMap()))
+        val session = files.getValue("session-log.txt")
+        assertFalse(session, session.contains("plainpw-LOGONLY9"))
+        assertFalse(session, session.contains("FAKEKEY"))
+        assertTrue(session, session.contains("cat ~/.secrets"))
+        assertFalse(files.values.joinToString("\n"), files.values.any { it.contains("FAKEKEY") })
+    }
+
+    @Test
     fun `the leak scan finds a secret that survived, so a bad export cannot be written`() {
         assertTrue(FeedbackBundle.leaks(mapOf("a.txt" to "xx $fakeKey yy"), setOf(fakeKey)))
         assertFalse(FeedbackBundle.leaks(mapOf("a.txt" to "clean"), setOf(fakeKey)))
