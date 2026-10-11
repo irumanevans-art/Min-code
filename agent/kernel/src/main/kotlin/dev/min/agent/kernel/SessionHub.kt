@@ -892,6 +892,12 @@ class SessionHub(
     }
 
     /**
+     * `/list-agents`（CLI 斜杠命令）：与 ListAgents 工具同一份名单（[rosterOf]），界面自己排版。
+     * 为什么不另写一份：两处各列一遍迟早会漏掉一类对象（比如本机其他会话），用户看到的与模型看到的要一致。
+     */
+    fun listAgents(from: SessionRuntime): List<dev.min.agent.spi.AgentListing> = rosterOf(from)
+
+    /**
      * ListAgents：本会话能用 SendMessage 找到的对象。子 agent 从委派记录列（被回退掉的不列，它已经不接收消息）；
      * 团队成员从团队状态列，不重复计入子 agent。只看这一层，其他本地 / 云会话不在内。
      */

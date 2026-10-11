@@ -168,6 +168,34 @@ internal class DesktopApp(
     private val claudeHome: Path = Path.of(System.getProperty("user.home")),
 ) {
     private val paths = DesktopPaths(workspace = args.cwd, scratchRoot = home.resolve("root"))
+
+    /** 这次启动的工作目录（宿主路径）：信任确认与 /cd 之类的口子用 */
+    internal val cwd: Path get() = args.cwd
+
+    /**
+     * 工作区信任账本（`~/.min-agent/workspace-trust.txt`）。交互首次确认的「信任」记在这里；`-p` 只读不写。
+     * 为什么只在组合根里持有：内核的 trustProjectHooks 与插件信任都从 [isWorkspaceTrusted] 读同一个答案。
+     */
+    private val workspaceTrust = WorkspaceTrustLedger(home.resolve("workspace-trust.txt"))
+
+    /**
+     * 这个进程里信任的 home 目录：CC 的口径，在主目录里接受的信任只管这一次运行，不写盘（否则每个项目都等于信任了）。
+     */
+    private var homeTrustedThisRun = false
+
+    /** 这个目录当前算不算信任：`--trust`、账本里信任过（自己或祖先）、或本进程里在 home 目录接受过 */
+    internal fun isWorkspaceTrusted(): Boolean =
+        args.trust || homeTrustedThisRun || workspaceTrust.decision(args.cwd.toString()) == true
+
+    /**
+     * 用户在信任确认里选了「信任」。主目录只记本进程；其余目录记账本，下次不再问。
+     */
+    internal fun acceptWorkspaceTrust() {
+        if (isHomeDirectory(args.cwd)) homeTrustedThisRun = true else workspaceTrust.recordTrusted(args.cwd.toString())
+    }
+
+    private fun isHomeDirectory(dir: Path): Boolean =
+        dir.toAbsolutePath().normalize() == Path.of(System.getProperty("user.home")).toAbsolutePath().normalize()
     private val store = FileSessionStore(home.resolve("sessions"), { System.currentTimeMillis() })
     private val mcpTokens = FileMcpTokenStore(home.resolve("mcp-oauth.json"))
     internal val mcpAuthorizer = DesktopMcpAuthorizer(args.noBrowser)
@@ -299,7 +327,7 @@ internal class DesktopApp(
     }
 
     private fun pluginTrusted(root: GuestPath, cwd: GuestPath): Boolean {
-        if (!args.trust) return false
+        if (!isWorkspaceTrusted()) return false
         val realRoot = desktopCanonicalCredentialPath(paths, root).value
         val realCwd = desktopCanonicalCredentialPath(paths, cwd).value.trimEnd('/')
         return realRoot == realCwd || realRoot.startsWith("$realCwd/")
@@ -328,7 +356,7 @@ internal class DesktopApp(
     fun settingsLocalFile(): java.nio.file.Path = args.cwd.resolve(".claude").resolve("settings.local.json")
 
     fun settingsUserFile(): Path = claudeHome.resolve(".claude").resolve("settings.json")
-    fun pluginMarketplace() = desktopMarketplace(args.cwd, args.trust, claudeHome)
+    fun pluginMarketplace() = desktopMarketplace(args.cwd, isWorkspaceTrusted(), claudeHome)
 
     fun validateReviewer(reviewer: dev.min.agent.spi.AutoModeReviewer?) {
         reviewer?.let { resolveReviewerSelection(it, Catalog.bundled(), selection) }
@@ -475,7 +503,7 @@ internal class DesktopApp(
             canonicalPath = { desktopCanonicalCredentialPath(paths, it) },
             // hook 脚本在本机 shell 里跑：guest 路径换成本机 shell 认得的写法（与 LocalExec 的映射一致）
             hookShellPath = { guest -> paths.guestOfHost(paths.hostOf(guest)).value },
-            trustProjectHooks = { args.trust },
+            trustProjectHooks = { isWorkspaceTrusted() },
             fastModel = fastSelection?.profile?.ref,
             providerFastModel = { id -> bundledCatalog.provider(id)?.fastModel?.let { dev.min.agent.protocol.ModelRef(id, it) } },
             autoModeReviewer = args.autoModeReviewer?.let { dev.min.agent.spi.AutoModeReviewer(dev.min.agent.ext.config.parseReviewerRef(it)) },
@@ -525,14 +553,18 @@ internal class DesktopApp(
         if (resumeId != null) {
             if (!args.forkSession) {
                 // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
-                return hub().open(resumeId, resumedByUser = true)
+                val opened = hub().open(resumeId, resumedByUser = true)
                     ?: throw UsageException("找不到会话 ${resumeId.value}")
+                refuseEndedForPrint(opened)
+                return opened
             }
             // --fork-session：读原会话（这不算用户 resume），在分支上跑这次的 -p；原会话一个字不动。
             // SessionStart(resume) 跑在分支上——用户接着用的是分支
             hub().open(resumeId) ?: throw UsageException("找不到会话 ${resumeId.value}")
             val branch = hub().branch(resumeId)
-            return checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
+            val opened = checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
+            refuseEndedForPrint(opened)
+            return opened
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         // --name 建会话时命名（同目录重名时内核自动加 -2 变体）；headless 标记进 SessionCreated：--continue 由此跳过 -p 跑的会话（CC :78）
@@ -560,6 +592,33 @@ internal class DesktopApp(
 
     /** 交互模式 /branch：从当前会话分出一个新根会话（忙 / 找不到时抛 [SessionBranchRefused]，终端打印原因） */
     suspend fun branchSession(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
+
+    /**
+     * 交互模式 /fork（CC：把当前会话复制成一个新的后台会话，自己留在这里继续）。这里的「后台」是本进程里的另一个根会话：
+     * 复制出来、不切过去、不跑回合。要去看它就 /resume 它。与 /branch 的区别只在切不切过去。
+     */
+    suspend fun forkCopy(runtime: SessionRuntime): SessionRuntime = hub().branch(runtime.sessionId)
+
+    /** 交互模式 /clear：另起一个空会话（同目录、同模型与模式；--name 的名字不带过来，CC 同款）。 */
+    suspend fun newSession(name: String?): SessionRuntime =
+        hub().create(paths.guestOfHost(args.cwd), profile.ref, args.mode, args.effort, name = name, headless = false)
+
+    /**
+     * 交互模式 /resume <id 或名字>：打开另一个会话并切过去（用户主动接着用，跑 SessionStart(resume)）。
+     * 找不到时抛 [UsageException]，终端打印原因。
+     */
+    suspend fun resumeInSession(x: String): SessionRuntime {
+        val id = resolveResume(x)
+        return hub().open(id, resumedByUser = true) ?: throw UsageException("找不到会话 ${id.value}")
+    }
+
+    /**
+     * `-p` 不能接着一个已经结束（模型用 EndConversation 结束过）的会话：报错退出 1，脚本不会把它当成成功（CC tools-reference）。
+     * 交互打开同一个会话不受影响，锁住的是输入。
+     */
+    private fun refuseEndedForPrint(runtime: SessionRuntime) {
+        if (args.prompt != null && runtime.state.value.ended) throw UsageException(CONVERSATION_ENDED_NOTICE, exitCode = 1)
+    }
 
     /**
      * --continue：当前目录最近一次根会话。按日志头两条事件筛（cwd 相同 + 第二条不是 subagent_origin），

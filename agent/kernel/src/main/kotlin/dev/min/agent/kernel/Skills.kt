@@ -74,6 +74,15 @@ internal object SkillSnapshots {
 }
 
 /**
+ * 斜杠 `/loop` 附的「内核解析结果」（CLI 的交互输入用；模型调 Skill 工具的路在 [KernelSkillPort] 里附同一段）。
+ * 为什么公开：斜杠展开在 CLI 模块里，那边看不到内部的 [LoopCommand]；两条路必须算出同一份结果。
+ */
+suspend fun SessionRuntime.loopPlanBlock(args: String): String {
+    val (project, user) = BundledSkills.loopMdTexts(deps.host.fs, state.value.settings.cwd, deps.memoryHome)
+    return LoopCommand.planBlock(args, project, user)
+}
+
+/**
  * Skill 工具背后的端口：按会话**冻结的清单**找 skill（磁盘上中途新增的 skill 这个会话里调不到，与清单里看不到一致），
  * 正文调用时才读、此刻渲染——读到什么都留在那次工具结果里，请求照样能从日志重建。
  */

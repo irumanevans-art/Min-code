@@ -2,6 +2,7 @@ package dev.min.agent.cli
 
 import dev.min.agent.kernel.RecapResult
 import dev.min.agent.kernel.ResumeAdvice
+import dev.min.agent.kernel.loopPlanBlock
 import java.io.BufferedReader
 import java.io.PrintStream
 import java.util.Locale
@@ -55,3 +56,72 @@ internal suspend fun offerResume(
     out.println(if (done) "已压缩较早的对话，接着用摘要继续。" else "没能压缩，按完整续接继续。")
     return done
 }
+
+/** 会话结束后（EndConversation）的统一说法：给人看的锁住提示，也是 `-p` 恢复已结束会话时的报错（CC tools-reference 原文） */
+internal const val CONVERSATION_ENDED_NOTICE = "Claude ended this conversation. Start a new session (or /clear) to continue."
+
+/** 会话锁住后仍可用的斜杠命令（CC：只剩 /clear、/resume、/help、/exit、/feedback） */
+private val ENDED_ALLOWED_COMMANDS = setOf("/clear", "/resume", "/help", "/exit", "/feedback")
+
+/**
+ * 会话锁住时，这一行要不要挡下：返回挡下的提示，null = 照常处理。空行不挡（它本来就什么也不做）。
+ * 为什么在循环入口挡：锁住后的输入不该走到任何一条命令或 send 里，免得各处各挡一次、漏一个。
+ */
+internal fun endedLockNotice(ended: Boolean, line: String): String? {
+    if (!ended) return null
+    val head = line.trim().split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty()
+    if (head.isEmpty()) return null
+    return if (head in ENDED_ALLOWED_COMMANDS) null else CONVERSATION_ENDED_NOTICE
+}
+
+/** 交互模式的 `/help` 与启动时的命令一览（原来只在启动时打印一次） */
+internal const val INTERACTIVE_HELP = "输入要说的话，回车发送；/goal [条件|clear] 设定、查看或清除目标（做到条件满足为止）；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/fork 把当前会话分身到另一个会话（不切过去）；/clear [名字] 另起一个空会话；/resume <id 或名字> 切到另一个会话；/list-agents（/peers）列出能发消息的对象；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。"
+
+/**
+ * `/loop …` 附上内核的解析结果（间隔取整、提示词选择），与模型调 Skill 工具时附的是同一段（[loopPlanBlock]）。
+ * 只对内置的 loop skill 生效；其它斜杠命令返回 null。[typed] 是用户敲的整行（以 `/loop` 开头）。
+ */
+internal suspend fun slashLoopBlock(
+    runtime: dev.min.agent.kernel.SessionRuntime,
+    entries: List<dev.min.agent.spi.SkillEntry>,
+    typed: String,
+    names: List<String>,
+): String? {
+    if ("loop" !in names) return null
+    val entry = entries.firstOrNull { it.name == "loop" } ?: return null
+    if (!dev.min.agent.ext.skills.BundledSkills.isBundled(entry.path.value)) return null
+    val args = typed.trim().substringAfter(' ', "").trim()
+    return "\n\n" + runtime.loopPlanBlock(args)
+}
+
+/** 信任确认的问题（CC：首次进未信任的目录时弹一次）。选项照 CC 的两个：信任此文件夹 / 退出 */
+internal fun trustQuestion(cwd: java.nio.file.Path): String = buildString {
+    append("这个文件夹还没有被信任：").append(cwd).append('\n')
+    append("Claude Code 会读取这个目录里的项目设置（hooks、权限规则、项目里的 MCP 服务器）；")
+    append("只有在你信任这份代码时才继续。\n")
+    append("  1) 是，我信任此文件夹（以后不再询问）\n")
+    append("  2) 否，退出\n")
+    append("选择 [1/2]：")
+}
+
+/**
+ * 交互模式首次进未信任的目录时的确认（[app] 已信任则直接给 true，不问、不读输入）。
+ * 选「1 / y / yes / 是」才算信任并记账；其余（含直接回车、输入流已关）一律不信任——安全的默认。
+ * 返回 false 时调用方退出，不建会话（会话建立时就要读 hooks 的信任）。
+ */
+internal fun confirmWorkspaceTrust(app: DesktopApp, stdin: java.io.BufferedReader, out: java.io.PrintStream): Boolean {
+    if (app.isWorkspaceTrusted()) return true
+    out.print(trustQuestion(app.cwd))
+    out.flush()
+    val answer = stdin.readLine()?.trim()?.lowercase(Locale.ROOT)
+    if (answer !in setOf("1", "y", "yes", "是")) {
+        out.println("没有信任这个文件夹，已退出。")
+        return false
+    }
+    app.acceptWorkspaceTrust()
+    return true
+}
+
+/** `/list-agents` 的输出：与 ListAgents 工具同一份名单、同一份排版 */
+internal suspend fun listAgentsText(app: DesktopApp, runtime: dev.min.agent.kernel.SessionRuntime): String =
+    dev.min.agent.tools.ListAgentsTool.render(app.hub().listAgents(runtime))

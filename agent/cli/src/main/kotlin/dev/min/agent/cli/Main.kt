@@ -57,11 +57,15 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     }
     val app = DesktopApp(args, scope)
     app.checkKey()
+    // 输入流只开一个 reader：信任确认与交互循环共用，免得确认时缓冲住的输入被交互循环丢掉
+    val stdin = System.`in`.bufferedReader()
+    // 交互模式：未信任的目录先问一句（会话建立时就要读 hooks 的信任，所以必须在 openSession 之前）。-p 不弹框（CC）
+    if (args.prompt == null && !confirmWorkspaceTrust(app, stdin, System.err)) return 1
     val runtime = app.openSession()
     val tail = app.telemetryTail(runtime)
     // 遥测在进程退出时把这次运行的新事件导出一次（默认关，tail 为 null）。NonCancellable：取消退出时也要把已有的事件送出去
     try {
-        return interact(app, runtime, args, scope)
+        return interact(app, runtime, args, scope, stdin)
     } finally {
         if (tail != null) withContext(NonCancellable) { tail.pump() }
     }
@@ -139,7 +143,8 @@ internal suspend fun interact(
         // UserPromptExpansion：展开之后、发送之前；被拦就把理由给人看，不发
         promptExpansionBlock(runtime, input, action)?.let { System.err.println(it); return false }
         val parts = when (action) {
-            is InputAction.Send -> listOf(TextPart(action.text))
+            // `/loop …` 附上内核的解析结果（间隔取整、提示词选择），与模型调 Skill 工具时附的是同一段
+            is InputAction.Send -> listOf(TextPart(action.text + slashLoopBlock(runtime, entries, input, action.names).orEmpty()))
             is InputAction.Prompt -> {
                 val result = runtime.getMcpPrompt(action.command.server, action.command.prompt, action.arguments)
                 if (result.isError) { System.err.println(result.content.filterIsInstance<TextPart>().joinToString("\n") { it.text }); return false }
@@ -185,7 +190,16 @@ internal suspend fun interact(
     }
 
 
-    System.err.println("输入要说的话，回车发送；/goal [条件|clear] 设定、查看或清除目标（做到条件满足为止）；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/rename [名字] 查看或改名；/名字 参数 调用 skill 或自定义命令；/exit 退出。")
+    System.err.println(INTERACTIVE_HELP)
+    // 打开的是一个已结束的会话（模型用 EndConversation 结束过）：先说一句，之后的输入只剩 /clear、/resume 等能用
+    if (runtime.state.value.ended) System.err.println(CONVERSATION_ENDED_NOTICE)
+    /** 切到另一个会话继续聊（/branch、/clear、/resume 共用）：旧会话的界面收起，新会话的界面接上 */
+    suspend fun switchTo(next: dev.min.agent.kernel.SessionRuntime) {
+        ui?.cancel()
+        runtime = next
+        uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub())
+        ui = uiConsole?.attach(scope)
+    }
     while (true) {
         print("\n> ")
         uiConsole?.mainOwnsInput = true
@@ -195,7 +209,39 @@ internal suspend fun interact(
         val trimmed = line.trim()
         when {
             trimmed.isEmpty() -> continue
+            // 会话已结束：只放行 /clear、/resume、/help、/exit、/feedback（CC），其余挡下并说明
+            endedLockNotice(runtime.state.value.ended, trimmed) != null -> System.err.println(CONVERSATION_ENDED_NOTICE)
             trimmed == "/exit" -> return 0
+            trimmed == "/help" -> System.err.println(INTERACTIVE_HELP)
+            trimmed == "/clear" || trimmed.startsWith("/clear ") -> {
+                // 另起一个空会话；之前的会话保留，可 /resume 回去。给了名字就先给旧会话起名（CC：标记在 /resume 的列表里）
+                val label = trimmed.removePrefix("/clear").trim()
+                if (label.isNotEmpty()) runtime.rename(label)
+                switchTo(app.newSession(name = null))
+                System.err.println("已开始新的会话 ${runtime.sessionId.value}（之前的会话保留，可用 /resume 接回）")
+            }
+            trimmed == "/resume" || trimmed.startsWith("/resume ") -> {
+                val target = trimmed.removePrefix("/resume").trim()
+                if (target.isEmpty()) System.err.println("用法：/resume <会话 id 或名字>（终端里暂时没有会话选择器）")
+                else try {
+                    switchTo(app.resumeInSession(target))
+                    System.err.println("已切到会话 ${runtime.sessionId.value}")
+                } catch (e: UsageException) {
+                    System.err.println(e.message)
+                }
+            }
+            trimmed == "/fork" || trimmed.startsWith("/fork ") -> {
+                // 分身：复制当前会话成另一个根会话，留在这里继续（CC：后台会话，不切过去）。
+                // 暂不接提示词：分身在本进程里不跑回合，要让它干活就 /resume 过去说
+                if (trimmed.removePrefix("/fork").isNotBlank()) System.err.println("/fork 暂不接提示词：先 /fork 分身，再 /resume 切过去发消息。")
+                else try {
+                    val copy = app.forkCopy(runtime)
+                    System.err.println("已分身为会话 ${copy.sessionId.value}（在这里继续；/resume ${copy.sessionId.value} 切过去）")
+                } catch (e: dev.min.agent.kernel.SessionBranchRefused) {
+                    System.err.println(e.message)
+                }
+            }
+            trimmed == "/list-agents" || trimmed == "/peers" -> System.err.println(listAgentsText(app, runtime))
             trimmed == "/plugin" || trimmed.startsWith("/plugin ") -> {
                 uiConsole?.mainOwnsInput = true
                 try { pluginCommand(app.pluginMarketplace(), trimmed.removePrefix("/plugin").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }, stdin, System.out) }
@@ -236,10 +282,7 @@ internal suspend fun interact(
                 // 分支并切过去继续聊：原会话一个字不动（CC 的 /branch 同样复制转录后切换写入）
                 try {
                     val branched = app.branchSession(runtime)
-                    ui?.cancel()
-                    runtime = branched
-                    uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub())
-                    ui = uiConsole?.attach(scope)
+                    switchTo(branched)
                     System.err.println("已切到分支 ${runtime.sessionId.value}（分支自 ${branched.state.value.branched?.from?.value}；原会话保留，可各自 --resume）")
                 } catch (e: dev.min.agent.kernel.SessionBranchRefused) {
                     System.err.println(e.message)

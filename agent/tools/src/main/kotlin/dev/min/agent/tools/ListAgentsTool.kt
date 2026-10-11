@@ -37,14 +37,19 @@ object ListAgentsTool : Tool<Unit> {
     override fun permissionAsk(input: Unit, ctx: ToolContext) = dev.min.agent.spi.PermissionAsk(name, "列出可发消息的 agent")
 
     override fun run(input: Unit, ctx: ToolContext): Flow<ToolProgress> = flow {
-        val rows = ctx.agents.roster()
-        val text = if (rows.isEmpty()) {
+        emit(ToolProgress.Done(ToolResult(listOf(TextPart(render(ctx.agents.roster()))))))
+    }
+
+    /**
+     * 名单的文字（工具结果与 CLI 的 `/list-agents` 共用，两处同一份排版）。
+     * 为什么公开：`/list-agents` 要的正是模型看到的这份名单，不另起炉灶。
+     */
+    fun render(rows: List<AgentListing>): String =
+        if (rows.isEmpty()) {
             "本会话没有可以发消息的 agent：你还没有委派过子 agent，也没有团队成员。"
         } else {
             "可以用 SendMessage 发消息的 agent（本会话）：\n" + rows.joinToString("\n") { line(it) }
         }
-        emit(ToolProgress.Done(ToolResult(listOf(TextPart(text)))))
-    }
 
     private fun line(row: AgentListing): String {
         val state = STATE_LABELS[row.state] ?: row.state
