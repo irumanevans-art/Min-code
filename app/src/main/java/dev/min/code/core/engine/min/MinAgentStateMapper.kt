@@ -187,6 +187,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
             }),
             applying = false,
             extras = emptyList(),
+            loadingModes = root.created.loadingModes,
             // 档被删了拿不到能力：按「不吃图」处理，反正会话只读，发不了
             modelSupportsImages = profile?.supportsImages ?: false.also { providerLabel },
         )

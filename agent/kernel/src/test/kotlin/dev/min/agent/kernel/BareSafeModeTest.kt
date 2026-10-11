@@ -337,6 +337,62 @@ class BareSafeModeTest {
         )
     }
 
+    @Test
+    fun `同一个 Hub 的两个会话分别加载配置，换目录与重开仍各用各档`() = run {
+        seed(managed = true)
+        fs.put("/workspace/sub/CLAUDE.md", "nested memory")
+        val h = hub(Customizations.Full, ScriptedModel(reply(TextPart("done"))), listOf(read), FakeExec())
+        val full = createIn(h)
+        val safe = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default,
+            loadingModes = dev.min.agent.spi.SessionLoadingModes(safe = true, restricted = true))
+        assertTrue(full.state.value.memory.isNotEmpty())
+        assertTrue(full.state.value.skills!!.entries.isNotEmpty())
+        assertTrue(safe.state.value.memory.isEmpty())
+        assertNull(safe.state.value.skills)
+        assertNull(safe.state.value.outputStyle)
+        assertTrue(safe.savedWorkflows().isEmpty())
+        assertEquals(listOf("managed"), events(safe).filterIsInstance<HooksLoaded>().single().sources.map { it.source })
+        assertFalse(full.deps.settingsInputs.restricted)
+        assertTrue(safe.deps.settingsInputs.restricted)
+        safe.changeCwd(GuestPath("/workspace/sub"), null)
+        assertNull(safe.memoryDiscovery)
+        assertTrue(safe.state.value.cwdMemory.isEmpty())
+        val reopened = SessionRuntime.open(store, safe.sessionId, full.deps, scopes.last())!!
+        assertEquals(Customizations.Safe, reopened.deps.customizations)
+        assertTrue(reopened.deps.settingsInputs.restricted)
+        assertNull(reopened.memoryDiscovery)
+        assertNotNull(full.memoryDiscovery)
+    }
+
+    @Test
+    fun `safe restricted 子会话与分身继承父档，进程保持 Full`() = run {
+        seed()
+        var type = "z"
+        val model = RoutingModel { req ->
+            when {
+                req.messages.last().parts.any { it is ToolResultPart } -> reply(TextPart("done"))
+                req.lastText() == "去查" || "You are a fork" in req.lastText() || req.system.any { "Z instructions" in it } -> reply(TextPart("child done"))
+                else -> reply(ToolCallPart(CallId("delegate"), "Agent", args("description" to "查一下", "prompt" to "去查", "subagent_type" to type)), stop = StopReason.ToolUse)
+            }
+        }
+        val h = hub(Customizations.Full, model, listOf(agentTool), FakeExec())
+        for (selectedType in listOf("z", "fork")) {
+        type = selectedType
+        val parent = h.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default,
+            loadingModes = dev.min.agent.spi.SessionLoadingModes(safe = true, restricted = true))
+        parent.say("委派出去")
+        val child = h.get(parent.state.value.children.keys.single())!!
+        assertEquals(parent.state.value.created.loadingModes, child.state.value.created.loadingModes)
+        assertEquals(Customizations.Safe, child.deps.customizations)
+        assertTrue(child.deps.settingsInputs.restricted)
+        assertTrue(child.state.value.memory.isEmpty())
+        assertNull(child.state.value.skills)
+        val branch = h.branch(parent.sessionId)
+        assertEquals(parent.state.value.created.loadingModes, branch.state.value.created.loadingModes)
+        assertTrue(branch.deps.settingsInputs.restricted)
+        }
+    }
+
     // ---- 子 agent ----
 
     @Test

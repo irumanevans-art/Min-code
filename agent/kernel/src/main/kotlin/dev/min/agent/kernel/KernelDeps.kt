@@ -80,7 +80,7 @@ class HostPorts(
 }
 
 /** 内核的全部外部依赖，由宿主在组合根里一次性给齐（docs/agent/02-总体架构.md §2：构造注入，不做运行时发现） */
-class KernelDeps(
+data class KernelDeps(
     val clock: Clock,
     val ids: IdGenerator,
     val models: ModelResolver,

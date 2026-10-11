@@ -71,4 +71,5 @@ data class StartOptions(
     val modeId: String? = null,
     val effortId: String? = null,
     val engineOptions: Map<String, String> = emptyMap(),
+    val loadingModes: dev.min.agent.spi.SessionLoadingModes? = null,
 )

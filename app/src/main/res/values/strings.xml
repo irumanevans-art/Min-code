@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="min_loading_modes">Session loading switches (fixed at creation)</string>
+    <string name="min_safe_desc">Skip memory, skills, commands, agents, plugins, MCP, styles and workflows. Keep managed policy and managed hooks. Exclusive with bare.</string>
+    <string name="min_bare_desc">Skip memory and extension discovery. Keep file tools and foreground Bash; styles and workflows follow the desktop behavior. Exclusive with safe.</string>
+    <string name="min_restricted_desc">Read only rootfs managed settings; this app has no --settings input. Skip user configuration; remove Bash, Monitor, WebFetch and Workflow; confine files to the working directory and forbid bypass permissions.</string>
     <string name="session_section_advisor">Advisor model</string>
     <string name="advisor_off">No advisor</string>
     <string name="advisor_strength">Choose a model at least as capable as the main model. This catalog has no comparable capability ranks.</string>

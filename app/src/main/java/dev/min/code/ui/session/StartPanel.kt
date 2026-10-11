@@ -80,6 +80,18 @@ internal data class StartEngines(
     }
 }
 
+@Composable
+internal fun LoadingModeToggle(title: String, description: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled = enabled) { onChange(!checked) }.padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        InkCheckbox(checked = checked, onCheckedChange = if (enabled) onChange else null)
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun StartPanel(
@@ -105,6 +117,9 @@ internal fun StartPanel(
     var minModelId by rememberSaveable { mutableStateOf<String?>(null) }
     var minModelTyped by rememberSaveable { mutableStateOf("") }
     var minModeId by rememberSaveable { mutableStateOf<String?>(null) }
+    var minSafe by rememberSaveable { mutableStateOf(false) }
+    var minBare by rememberSaveable { mutableStateOf(false) }
+    var minRestricted by rememberSaveable { mutableStateOf(false) }
     val minProfile = engines.minChoices?.let { choices ->
         choices.profiles.firstOrNull { it.id == minProfileId }
             ?: choices.profiles.firstOrNull { it.id == choices.defaultProfileId }
@@ -188,6 +203,10 @@ internal fun StartPanel(
                         onMode = { minModeId = it },
                         onOpenProviders = onOpenProviders,
                     )
+                    SectionTitle(stringResource(R.string.min_loading_modes))
+                    LoadingModeToggle("safe", stringResource(R.string.min_safe_desc), minSafe) { minSafe = it; if (it) minBare = false }
+                    LoadingModeToggle("bare", stringResource(R.string.min_bare_desc), minBare) { minBare = it; if (it) minSafe = false }
+                    LoadingModeToggle("restricted", stringResource(R.string.min_restricted_desc), minRestricted) { minRestricted = it }
                     session.errorMessage?.let { Notice(text = it, tone = NoticeTone.Error, maxLines = 6) }
                     InkButton(
                         onClick = {
@@ -195,6 +214,7 @@ internal fun StartPanel(
                                 StartRequest(
                                     engine = EngineKind.MinAgent, cwd = cwd,
                                     profileId = minProfile?.id, modelId = minModel.takeIf { it.isNotBlank() }, modeId = minMode,
+                                    loadingModes = dev.min.agent.spi.SessionLoadingModes(minSafe, minBare, minRestricted),
                                 ),
                             )
                         },

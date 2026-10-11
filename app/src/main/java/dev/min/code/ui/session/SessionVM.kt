@@ -261,7 +261,7 @@ class SessionVM(
      */
     fun start(request: StartRequest) {
         if (request.engine == EngineKind.MinAgent) {
-            createMin(StartOptions(cwd = request.cwd, profileId = request.profileId, modelId = request.modelId, modeId = request.modeId))
+            createMin(StartOptions(cwd = request.cwd, profileId = request.profileId, modelId = request.modelId, modeId = request.modeId, loadingModes = request.loadingModes))
             return
         }
         val base = claudeStartBase()
@@ -335,6 +335,7 @@ class SessionVM(
                 modelId = settings.model?.id,
                 modeId = settings.mode.id,
                 effortId = settings.effort?.id ?: "",
+                loadingModes = settings.loadingModes,
             )
         }
         val ultracode = settings.extras.firstOrNull { it.key == ClaudeStateMapper.OPTION_ULTRACODE }?.value == "true"
@@ -624,6 +625,7 @@ data class StartRequest(
     val profileId: String? = null,
     val modelId: String? = null,
     val modeId: String? = null,
+    val loadingModes: dev.min.agent.spi.SessionLoadingModes? = null,
 )
 
 /** 引擎不能新建会话时那一行「原因和去处」的文字（开始面板灰掉引擎下面、新建失败的提示都用它） */

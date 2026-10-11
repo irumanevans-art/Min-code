@@ -90,11 +90,13 @@ private val mcpActivitySequence = java.util.concurrent.atomic.AtomicLong()
 class SessionRuntime private constructor(
     private val log: SessionLog,
     initial: SessionState,
-    internal val deps: KernelDeps,
+    deps: KernelDeps,
     private val scope: CoroutineScope,
     /** 管着它的 Hub；没有时（单会话嵌入、旧测试）工具拿到的子 agent 端口是不可用的 */
     internal val hub: SessionHub? = null,
 ) {
+    // 所有加载点与工具执行都读取本运行时的独立快照，不能改 Hub 共用的进程依赖。
+    internal val deps: KernelDeps = deps.forSession(initial.created.loadingModes)
     /** 重开出来的会话才有（[resumeAdvice] 的基线）；新建的为 null */
     @Volatile
     internal var resumeBasis: ResumeBasis? = null
@@ -1016,7 +1018,7 @@ class SessionRuntime private constructor(
             val home = deps.memoryHome
             if (home != null) {
                 // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照
-                val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home, inputs = deps.settingsInputs) else null
+                val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home, inputs = runtime.deps.settingsInputs) else null
                 runtime.checkpointsBySettings = settings?.let(::checkpointsEnabledIn)
                 if (loadMemory) runtime.loadMemory(settings)
                 if (loadSettings) {

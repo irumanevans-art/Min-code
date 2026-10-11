@@ -256,3 +256,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - 新增 v1 事件 `advisor_configured`：`model` 为可选 `{providerId, modelId}`，缺省 / null 表示关闭。折叠为会话顾问选择，子会话继承快照、根会话分支复制事件；恢复沿用冻结值，不重读磁盘默认。含此事件的日志旧版本不认识；旧日志的顾问默认关闭。没有改 formatVersion。
 - 配置 `advisorModel` 是 Any-file 的标量，按 user → project → local → CLI → managed 覆盖；项目来源沿用工作区信任过滤，显式 null / `off` 关闭。CLI `/advisor` 显示状态，指定模型 / off 写用户 settings.json；App 命令 `set_advisor` 的 modelId=null 关闭，profileId 缺省为会话供应商，仅更改会话事件。
 - 工具 `advisor` 的入参为 `{ "question": "…" }`，建议沿用 `tool_outcome.result`。顾问请求通过 `ModelBilling` 追加 `model_charged`，预算与运行账本仍按整棵树累计；不给顾问工具或供应商 opaque / reasoning / 图片像素。
+
+- v1 增量（2026-10-11）：session_created.loadingModes 可空，缺字段/null 沿用 KernelDeps 进程默认；对象 safe / bare / restricted 默认 false，safe 与 bare 互斥。显式值在创建时冻结，重开照旧，普通子会话、分身、hook agent 和分支继承；不支持会话中途改变加载档。

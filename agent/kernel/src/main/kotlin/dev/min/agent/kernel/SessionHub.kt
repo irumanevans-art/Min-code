@@ -311,7 +311,7 @@ class SessionHub(
         val header = LogHeader(
             dev.min.agent.store.LOG_FORMAT_VERSION, childId, deps.clock.nowMs(), parent = parent.sessionId,
         )
-        val created = SessionCreated(ps.settings.cwd, ps.settings.model, dev.min.agent.protocol.PermissionMode.DontAsk)
+        val created = SessionCreated(ps.settings.cwd, ps.settings.model, dev.min.agent.protocol.PermissionMode.DontAsk, loadingModes = ps.created.loadingModes)
         val origin = SubagentOrigin(
             parent = parent.sessionId, root = ps.origin?.root ?: parent.sessionId,
             parentCall = CallId(deps.ids.next("hookcall")),
@@ -439,10 +439,11 @@ class SessionHub(
         name: String? = null,
         /** 这条会话是不是 `-p` / 无头跑的（CC :78：--continue 跳过 -p 会话）；标记随 SessionCreated 落盘 */
         headless: Boolean = false,
+        loadingModes: dev.min.agent.spi.SessionLoadingModes? = null,
     ): SessionRuntime {
         val id = SessionId(deps.ids.next("s"))
         val header = LogHeader(LOG_FORMAT_VERSION, id, deps.clock.nowMs())
-        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort, headless = headless), deps, scope, initial, hub = this)
+        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort, headless = headless, loadingModes = loadingModes), deps, scope, initial, hub = this)
         name?.let { raw ->
             normalizeSessionName(raw)?.let { wanted ->
                 val final = uniqueName(cwd, wanted)
@@ -511,6 +512,7 @@ class SessionHub(
      * 项目层的信任沿用 hooks 那一个（工作区信任由宿主判定）
      */
     private suspend fun attachMcp(runtime: SessionRuntime, fresh: Boolean) {
+        val deps = runtime.deps
         val home = deps.memoryHome ?: return
         if (runtime.state.value.origin != null) return
         // --bare / --safe-mode：MCP 服务器不自动发现（CC :72；safe 连托管配的也不连——原文保留清单里没有它）。
@@ -1018,7 +1020,7 @@ class SessionHub(
         val initial = mutableListOf<SessionEvent>()
         if (definition == null) {
             // 分身：模型、档位、环境、记忆、缓存键、工具表全部照父会话，前缀才能逐字节相同（设计 §3.2）
-            created = SessionCreated(ps.settings.cwd, ps.settings.model, ps.settings.mode, ps.settings.effort, headless = ps.created.headless)
+            created = SessionCreated(ps.settings.cwd, ps.settings.model, ps.settings.mode, ps.settings.effort, headless = ps.created.headless, loadingModes = ps.created.loadingModes)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = FORK_AGENT_TYPE, fork = true,
                 depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
@@ -1035,7 +1037,7 @@ class SessionHub(
             val model = resolveModel(request.model ?: definition.model, ps.settings.model)
                 ?: return DelegateResult.Rejected("不认识模型「${request.model ?: definition.model}」。不写 model 就用当前模型。")
             val mode = childPermissionMode(ps.settings.mode, definition, deps.trustProjectHooks(ps.settings.cwd), ps.autoReviewSettings)
-            created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort, headless = ps.created.headless)
+            created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort, headless = ps.created.headless, loadingModes = ps.created.loadingModes)
             initial += SubagentOrigin(
                 parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
                 depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
