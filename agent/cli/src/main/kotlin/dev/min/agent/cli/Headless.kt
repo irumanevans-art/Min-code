@@ -49,56 +49,97 @@ internal suspend fun runHeadless(
     // 交给 hub：子 agent 的审批也按 --approve 答掉——以前只答根会话的，子 agent 要审批时整次运行挂到超时（评测集 v1 第 32 题实测）
     val ui = ConsoleUi(runtime, args.approve, stdin, stderr, app.hub()).attach(scope)
     try {
-        val effective = if (args.jsonSchema != null) structuredOutputPrompt(args.prompt!!) else args.prompt!!
-        val command = effective.trim()
-        if (command == "/advisor" || command.startsWith("/advisor ")) {
-            return if (advisorCommand(runtime, command.removePrefix("/advisor").trim(), app.settingsUserFile(), app::validateAdvisor, stderr)) 0 else 1
-        }
+        if (args.inputFormat == InputFormat.StreamJson) return runStreamInput(app, runtime, args, scope, stdin, stdout, stderr)
         val renderer = if (args.outputFormat == OutputFormat.StreamJson) {
             StreamJsonRenderer(app, runtime, args, stdout).also { it.start(scope) }
         } else null
-        val fromSeq = runtime.state.value.lastSeq + 1
-        val goalLine = goalArgumentOf(effective)
-        val parsed = goalLine?.let(::parseGoalCommand)
-        if (parsed != null && parsed !is GoalCommand.Set) {
-            goalCommandLine(runtime, goalLine.orEmpty(), stderr)
-            return 0
+        val result = when (val run = runPrompt(app, runtime, args, scope, stdin, stderr, args.prompt!!)) {
+            is PromptRun.Early -> { renderer?.close(); return run.code }
+            is PromptRun.Done -> run.result
         }
-        val goal = parsed as? GoalCommand.Set
-        if (goal != null) {
-            when (val started = runtime.setGoal(goal.condition)) {
-                is GoalSetResult.Refused -> {
-                    stderr.println(started.reason)
-                    return 1
-                }
-                is GoalSetResult.Set -> Unit
-            }
-            awaitGoalLoop(runtime)
-        } else {
-            sendPrompt(app, runtime, args, effective, stdin, scope, stderr)?.let { return it }
-        }
-        stderr.println()
-        // 树级总账：子 agent / hook agent / 团队成员这次运行花的都在（运行账本按根累计，resume 的旧花费不进）
-        val events = app.records(runtime.sessionId, fromSeq)
-        val result = CliResult(
-            runtime.sessionId.value, events, app.hub().runCostOf(runtime.sessionId),
-            goalUnmet = goal?.let { goalUnmetReason(runtime.state.value.goal, events) },
-        )
         result.errors.forEach(stderr::println)
-        when (args.outputFormat) {
-            OutputFormat.Text ->
-                if (args.jsonSchema != null) {
-                    // 没开 json 也要把结构化答案打出来：跑批要的就是它（text 模式的「最终回复」即交卷值）
-                    result.json()["structured_output"]?.let { stdout.println(it.toString()) }
-                } else {
-                    result.resultText?.let(stdout::println)
-                }
-            OutputFormat.Json -> stdout.println(result.json().toString())
-            OutputFormat.StreamJson -> renderer?.finish(result.json())
-        }
+        printResult(args, result, stdout, renderer)
+        renderer?.close()
         return if (result.completed) 0 else 1
     } finally {
         ui.cancel()
+    }
+}
+
+/** 一个提示词跑完的去向：没有结果对象可给（命令类 / 送不出去），或是正常跑完的结果 */
+internal sealed interface PromptRun {
+    /**
+     * 没进 agent 循环就结束了：[code] 是退出码（0 = 命令成功、非 0 = 送不出去，原因已在 stderr）；
+     * [command] 是本地命令名（`advisor` / `goal`，没有 = 不是命令而是参数 / 展开错误）
+     */
+    data class Early(val code: Int, val command: String? = null) : PromptRun
+    data class Done(val result: CliResult) : PromptRun
+}
+
+/**
+ * 把一个提示词（`-p` 的参数，或 stdin 里一条用户消息的文本）整段跑完：命令类（`/advisor`、`/goal` 状态）直接办，
+ * 其余送进会话、等回合与后台工作收完；`/goal 条件` 跑到目标结束。[extraParts] 是随消息来的非文本块（图片），
+ * 在斜杠展开之后附在消息末尾。结果只看本次之后的事件，所以多轮时每轮各自一份
+ */
+internal suspend fun runPrompt(
+    app: DesktopApp,
+    runtime: SessionRuntime,
+    args: CliArgs,
+    scope: CoroutineScope,
+    stdin: BufferedReader,
+    stderr: PrintStream,
+    prompt: String,
+    extraParts: List<dev.min.agent.protocol.Part> = emptyList(),
+): PromptRun {
+    val effective = if (args.jsonSchema != null) structuredOutputPrompt(prompt) else prompt
+    val command = effective.trim()
+    if (command == "/advisor" || command.startsWith("/advisor ")) {
+        val ok = advisorCommand(runtime, command.removePrefix("/advisor").trim(), app.settingsUserFile(), app::validateAdvisor, stderr)
+        return PromptRun.Early(if (ok) 0 else 1, "advisor")
+    }
+    val fromSeq = runtime.state.value.lastSeq + 1
+    val goalLine = goalArgumentOf(effective)
+    val parsed = goalLine?.let(::parseGoalCommand)
+    if (parsed != null && parsed !is GoalCommand.Set) {
+        goalCommandLine(runtime, goalLine.orEmpty(), stderr)
+        return PromptRun.Early(0, "goal")
+    }
+    val goal = parsed as? GoalCommand.Set
+    if (goal != null) {
+        when (val started = runtime.setGoal(goal.condition)) {
+            is GoalSetResult.Refused -> {
+                stderr.println(started.reason)
+                return PromptRun.Early(1, "goal")
+            }
+            is GoalSetResult.Set -> Unit
+        }
+        awaitGoalLoop(runtime)
+    } else {
+        sendPrompt(app, runtime, args, effective, stdin, scope, stderr, extraParts)?.let { return PromptRun.Early(it) }
+    }
+    stderr.println()
+    // 树级总账：子 agent / hook agent / 团队成员这次运行花的都在（运行账本按根累计，resume 的旧花费不进）
+    val events = app.records(runtime.sessionId, fromSeq)
+    return PromptRun.Done(
+        CliResult(
+            runtime.sessionId.value, events, app.hub().runCostOf(runtime.sessionId),
+            goalUnmet = goal?.let { goalUnmetReason(runtime.state.value.goal, events) },
+        ),
+    )
+}
+
+/** 一个回合的结果送去 stdout：text 打最终回复（给了 --json-schema 时是结构化答案那行）、json 打结果对象、stream-json 发结果行 */
+internal suspend fun printResult(args: CliArgs, result: CliResult, stdout: PrintStream, renderer: StreamJsonRenderer?) {
+    when (args.outputFormat) {
+        OutputFormat.Text ->
+            if (args.jsonSchema != null) {
+                // 没开 json 也要把结构化答案打出来：跑批要的就是它（text 模式的「最终回复」即交卷值）
+                result.json()["structured_output"]?.let { stdout.println(it.toString()) }
+            } else {
+                result.resultText?.let(stdout::println)
+            }
+        OutputFormat.Json -> stdout.println(result.json().toString())
+        OutputFormat.StreamJson -> renderer?.endTurn(result.json())
     }
 }
 
@@ -114,6 +155,7 @@ private suspend fun sendPrompt(
     stdin: BufferedReader,
     scope: CoroutineScope,
     stderr: PrintStream,
+    extraParts: List<dev.min.agent.protocol.Part> = emptyList(),
 ): Int? {
     // -p 的提示词同样过斜杠展开（/名字 一样可用）；展不开（未知命令）在 stderr 提示、按参数错误退出
     val prompts = if (effective.trimStart().startsWith("/mcp__")) {
@@ -126,14 +168,14 @@ private suspend fun sendPrompt(
     // UserPromptExpansion：被拦就按参数错误退出（与展不开的命令同一档），理由给人看
     if (action is InputAction.Prompt) promptExpansionBlock(runtime, effective, action)?.let { stderr.println(it); return 2 }
     val parts = when (action) {
-        is InputAction.Send -> listOf(TextPart(action.text))
+        is InputAction.Send -> listOf(TextPart(action.text)) + extraParts
         is InputAction.Prompt -> {
             val result = runtime.getMcpPrompt(action.command.server, action.command.prompt, action.arguments)
             if (result.isError) {
                 stderr.println(result.content.filterIsInstance<TextPart>().joinToString("\n") { it.text })
                 return 1
             }
-            result.content
+            result.content + extraParts
         }
         is InputAction.Notice -> {
             stderr.println(action.message)

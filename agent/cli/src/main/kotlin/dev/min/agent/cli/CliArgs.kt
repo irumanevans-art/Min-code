@@ -13,6 +13,9 @@ enum class ApprovalAnswer { Ask, Yes, No }
 /** `--output-format`（CC :110）：text（默认，stdout 只出最终回复文本）/ json（一行结果对象）/ stream-json（逐行事件流） */
 enum class OutputFormat { Text, Json, StreamJson }
 
+/** `--input-format`（CC cli-reference）：text（默认，提示词来自 -p 参数）/ stream-json（stdin 逐行 JSON 用户消息，多轮在一个进程里跑） */
+enum class InputFormat { Text, StreamJson }
+
 data class CliArgs(
     val prompt: String?,
     val provider: String,
@@ -56,6 +59,10 @@ data class CliArgs(
     val includePartialMessages: Boolean = false,
     /** --forward-subagent-text（CC :93）：stream-json 里转发子 agent 的消息行（带 parent_tool_use_id） */
     val forwardSubagentText: Boolean = false,
+    /** `--input-format`：stream-json 时 -p 不带提示词，用户消息逐行从 stdin 来（此时 [prompt] 是空串，表示「非交互、无命令行提示」） */
+    val inputFormat: InputFormat = InputFormat.Text,
+    /** `--replay-user-messages`（CC）：把 stdin 收到的用户消息原样回显到 stdout（要求两端都是 stream-json） */
+    val replayUserMessages: Boolean = false,
     /** --no-browser：MCP OAuth 登录不开浏览器，打印授权 URL、让人把回调 URL 粘回来（照 CC） */
     val noBrowser: Boolean = false,
     val worktree: Boolean = false,
@@ -110,6 +117,11 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
   --json                 --output-format json 的别名
   --include-partial-messages stream-json 加输出 text 增量的 stream_event 行
   --forward-subagent-text stream-json 转发子 agent 的消息行（带 parent_tool_use_id）
+  -p --input-format stream-json  非交互多轮：-p 不跟提示词，stdin 逐行读 JSON 用户消息（{"type":"user","message":{"role":"user","content":...}}），
+                         每条消息一个回合，stdin 关闭即结束；输出格式不限（text 逐轮打最终回复，json 只打最后一轮的结果，stream-json 全量）；
+                         --approve ask 不可用（stdin 被占用）
+  --replay-user-messages 把 stdin 收到的用户消息回显到 stdout（要求输入输出都是 stream-json）
+  --verbose              接受不处理（CC 的 -p stream-json 示例都带它；Min 的事件流本来就是全量的，stderr 的输出也不随它变）
   --resume <会话 id>     接着一个已有会话
   --add-dir <目录...>   附加工作目录（CC 同名）：授予文件访问，并加载它的 .claude/skills 与 .claude/commands（--bare 下只加载 skills）
   --plugin-dir <目录>   加载本地插件，可重复；项目内的可执行组件仍需 --trust
@@ -149,12 +161,12 @@ private val VALUE_ARGS = setOf(
     "--max-output", "--effort", "--mode", "--approve", "--cwd", "--output-format", "--resume", "--search-backend",
     "--search-url", "--fast-model", "--max-web-searches", "--web-cache-ttl-ms", "--web-deadline-ms", "--max-turns",
     "--json-schema", "--name", "-n", "--fallback-model", "--auto-mode-reviewer", "--max-budget-usd", "--model-timeout-ms",
-    "--tools", "--settings",
+    "--tools", "--settings", "--input-format",
 )
 private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
     "--include-partial-messages", "--forward-subagent-text", "--no-browser",
-    "--bare", "--safe-mode", "--restricted",
+    "--bare", "--safe-mode", "--restricted", "--replay-user-messages", "--verbose",
 )
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -162,6 +174,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     val flags = mutableSetOf<String>()
     val pluginDirs = mutableListOf<Path>()
     val addDirs = mutableListOf<Path>()
+    // `-p` 后面不跟提示词（stream-json 输入时消息从 stdin 来）：记下是哪个写法，循环后再按 --input-format 判定
+    var barePrint: String? = null
     var i = 0
     while (i < argv.size) {
         val arg = argv[i]
@@ -186,6 +200,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
                 flags += "--worktree"
                 argv.getOrNull(i + 1)?.takeUnless { it.startsWith('-') }?.let { values["--worktree"] = it; i++ }
             }
+            // -p / --print：后面是下一个已知参数或到头了，就是没给提示词（CC 的 -p 本来就是开关，提示词是位置参数）
+            (arg == "-p" || arg == "--print") && argv.getOrNull(i + 1).let { it == null || isOptionName(it) } -> barePrint = arg
             arg in FLAG_ARGS -> flags += arg
             "-h" == arg || "--help" == arg -> throw UsageException(USAGE)
             arg !in VALUE_ARGS -> throw UsageException("不认识的参数：$arg\n\n$USAGE")
@@ -211,7 +227,23 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     if (values["-p"] != null && values["--print"] != null) throw UsageException("-p 与 --print 只能给一个")
     // 两个档位参数互斥：CC 原文没规定并存的行为，报用法错误比悄悄选一个稳（环境变量的冲突在 resolveCustomizations 里同样报）
     if ("--bare" in flags && "--safe-mode" in flags) throw UsageException("--bare 与 --safe-mode 只能给一个")
-    val prompt = values["-p"] ?: values["--print"]
+    val inputFormat = when (val v = values["--input-format"]) {
+        null, "text" -> InputFormat.Text
+        "stream-json" -> InputFormat.StreamJson
+        else -> throw UsageException("--input-format 只能是 text 或 stream-json，实际是 \"$v\"")
+    }
+    // stream-json 输入：-p 不跟提示词（消息从 stdin 来）；给了就是写错了——原文没规定并存，停下来比悄悄选一个稳
+    if (inputFormat == InputFormat.StreamJson && (values["-p"] != null || values["--print"] != null)) {
+        throw UsageException("--input-format stream-json 的消息从 stdin 来，-p 后面不要再跟提示词")
+    }
+    if (barePrint != null && inputFormat != InputFormat.StreamJson) {
+        throw UsageException("$barePrint 缺少取值（后面要跟提示词；只有 --input-format stream-json 时才可以不给，消息从 stdin 读）\n\n$USAGE")
+    }
+    if (inputFormat == InputFormat.StreamJson && barePrint == null) {
+        throw UsageException("--input-format stream-json 要与 -p 一起用（非交互模式才读 stdin 里的消息）")
+    }
+    // 空串 = 非交互、没有命令行提示：既有的 `prompt != null` 判断（非交互 / 交互）照旧成立
+    val prompt = values["-p"] ?: values["--print"] ?: if (barePrint != null) "" else null
     val outputFormat = when {
         "--json" in flags && values["--output-format"] != null ->
             // --json 是 --output-format json 的别名：同时给且不一致是写错了
@@ -235,6 +267,13 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
     }
     if (flags.contains("--forward-subagent-text") && (prompt == null || outputFormat != OutputFormat.StreamJson)) {
         throw UsageException("--forward-subagent-text 要与 -p 和 --output-format stream-json 一起用")
+    }
+    if ("--replay-user-messages" in flags && (inputFormat != InputFormat.StreamJson || outputFormat != OutputFormat.StreamJson)) {
+        throw UsageException("--replay-user-messages 要与 --input-format stream-json 和 --output-format stream-json 一起用")
+    }
+    // 审批问人要读 stdin，而 stdin 此时是消息通道：两边抢同一个流，只能在启动时拒绝
+    if (inputFormat == InputFormat.StreamJson && values["--approve"]?.equals("ask", ignoreCase = true) == true) {
+        throw UsageException("--input-format stream-json 占用了 stdin，--approve ask 没法再从 stdin 读答复；用 --approve yes / no")
     }
     if (values["--json-schema"] != null && prompt == null) {
         throw UsageException("--json-schema 只在 -p 非交互模式下可用（结构化输出是给跑批要结果的，不是给交互会话的）")
@@ -314,6 +353,8 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         images = "--images" in flags,
         includePartialMessages = "--include-partial-messages" in flags,
         forwardSubagentText = "--forward-subagent-text" in flags,
+        inputFormat = inputFormat,
+        replayUserMessages = "--replay-user-messages" in flags,
         noBrowser = "--no-browser" in flags,
         worktree = "--worktree" in flags,
         worktreeName = values["--worktree"],
@@ -447,3 +488,7 @@ internal fun resolveCustomizations(bare: Boolean, safeMode: Boolean, env: (Strin
         else -> Customizations.Full
     }
 }
+
+/** 命令行里 `-p` 之后的这个词是不是一个已知参数名（是 = `-p` 没带提示词；不是 = 它就是提示词，哪怕以 `-` 开头） */
+private fun isOptionName(arg: String): Boolean =
+    arg in VALUE_ARGS || arg in FLAG_ARGS || arg in setOf("--add-dir", "--plugin-dir", "--worktree", "-w", "-h", "--help")

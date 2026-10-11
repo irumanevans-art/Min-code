@@ -119,7 +119,7 @@ class CliResultTest {
     }
 
     @Test
-    fun `denied approvals land in permission_denials with tool, call id and input`() {
+    fun `denied approvals land in permission_denials with the SDK field names tool_name, tool_use_id and tool_input`() {
         val events = listOf(
             record(ToolPlanned(TurnId("t"), CallId("c1"), "Bash", buildJsonObject { put("command", "rm -rf /") }, ResumePolicy.Replay)),
             record(ApprovalRequested(TurnId("t"), ApprovalId("a1"), CallId("c1"), PermissionAsk("Bash", "跑命令"))),
@@ -129,11 +129,11 @@ class CliResultTest {
         val denials = CliResult("s", events).json()["permission_denials"]!!.jsonArray
         assertEquals(1, denials.size)
         val d = denials.single().jsonObject
-        assertEquals("Bash", d["tool"]!!.jsonPrimitive.content)
-        assertEquals("c1", d["call_id"]!!.jsonPrimitive.content)
-        assertEquals("rm -rf /", d["input"]!!.jsonObject["command"]!!.jsonPrimitive.content)
-        // 没有被拒的审批时整个键不出现
-        assertNull(CliResult("s", emptyList()).json()["permission_denials"])
+        assertEquals("Bash", d["tool_name"]!!.jsonPrimitive.content)
+        assertEquals("c1", d["tool_use_id"]!!.jsonPrimitive.content)
+        assertEquals("rm -rf /", d["tool_input"]!!.jsonObject["command"]!!.jsonPrimitive.content)
+        // SDK 的 result 两个臂都必带 permission_denials：没有被拒的审批时是空数组，不省略
+        assertEquals(JsonArray(emptyList()), CliResult("s", emptyList()).json()["permission_denials"])
     }
 
     @Test
@@ -172,5 +172,60 @@ class CliResultTest {
             mapOf("USD" to 3.0), 0, emptyMap(),
         )).json()
         assertEquals(3.0, tree["total_cost_usd"]!!.jsonPrimitive.content.toDouble(), 1e-9)
+    }
+
+    @Test
+    fun `the result carries a uuid, the last stop reason and the terminal reason`() {
+        val usage = Usage(1, 2, 0, 0)
+        val events = listOf(
+            record(AssistantMessageCompleted(TurnId("t"), RequestId("r"), MessageId("m1"), listOf(TextPart("答案")), usage, StopReason.EndTurn)),
+            record(TurnEnded(TurnId("t"), TurnOutcome.Completed, usage, 1)),
+        )
+        val json = CliResult("s", events, uuid = "fixed-uuid").json()
+        assertEquals(JsonPrimitive("fixed-uuid"), json["uuid"])
+        assertEquals(JsonPrimitive("end_turn"), json["stop_reason"])
+        assertEquals(JsonPrimitive("completed"), json["terminal_reason"])
+        // 没有任何模型请求：stop_reason 是 null（SDK 类型 string | null），不省略
+        assertEquals(kotlinx.serialization.json.JsonNull, CliResult("s", emptyList()).json()["stop_reason"])
+        // 两次生成的 uuid 不同（默认每个结果新生成）
+        assertFalse(CliResult("s", events).json()["uuid"] == CliResult("s", events).json()["uuid"])
+    }
+
+    @Test
+    fun `terminal_reason is only filled where Min's verdict maps cleanly onto CC's table`() {
+        fun terminal(outcome: TurnOutcome, limitCause: String? = null) =
+            CliResult("s", listOf(record(TurnEnded(TurnId("t"), outcome, Usage(), 0, limitCause = limitCause)))).json()["terminal_reason"]
+        assertEquals(JsonPrimitive("max_turns"), terminal(TurnOutcome.Interrupted(InterruptedBy.Limit)))
+        assertEquals(JsonPrimitive("budget_exhausted"), terminal(TurnOutcome.Interrupted(InterruptedBy.Limit), dev.min.agent.spi.LIMIT_CAUSE_MAX_BUDGET_USD))
+        assertEquals(JsonPrimitive("hook_stopped"), terminal(TurnOutcome.Interrupted(InterruptedBy.Hook)))
+        assertEquals(
+            JsonPrimitive("structured_output_retry_exhausted"),
+            terminal(TurnOutcome.Failed("用尽", cause = FAILURE_CAUSE_STRUCTURED_OUTPUT_RETRIES)),
+        )
+        // 对不上取值表的（笼统的失败、用户中断）省略，不编
+        assertNull(terminal(TurnOutcome.Failed("HTTP 401")))
+        assertNull(terminal(TurnOutcome.Interrupted(InterruptedBy.User)))
+    }
+
+    @Test
+    fun `a protocol error without any turn is an error_during_execution result with the reason in errors`() {
+        val result = CliResult("s", emptyList(), protocolError = "stdin 第 1 行不是合法的 JSON")
+        assertFalse(result.completed)
+        assertEquals("error_during_execution", result.subtype)
+        val json = result.json()
+        assertEquals(JsonPrimitive(true), json["is_error"])
+        assertNull(json["result"])
+        assertEquals(JsonArray(listOf(JsonPrimitive("stdin 第 1 行不是合法的 JSON"))), json["errors"])
+        assertNull("对不上取值表，省略", json["terminal_reason"])
+    }
+
+    @Test
+    fun `a local command is a success without turn events and names the command`() {
+        val json = CliResult("s", emptyList(), localCommand = "advisor").json()
+        assertEquals(JsonPrimitive("success"), json["subtype"])
+        assertEquals(JsonPrimitive(false), json["is_error"])
+        assertEquals(JsonPrimitive("advisor"), json["local_command"])
+        assertEquals(JsonPrimitive(0), json["num_turns"])
+        assertNull(CliResult("s", emptyList()).json()["local_command"])
     }
 }

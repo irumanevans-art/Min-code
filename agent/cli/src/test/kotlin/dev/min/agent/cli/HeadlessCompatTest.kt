@@ -193,53 +193,6 @@ class HeadlessCompatTest {
             .toList()
     }
 
-    /** 本地假模型（照 DesktopSubagentTest 的做法）：OpenAI Chat SSE；route 返回 null = 回 400（不可重试） */
-    private class ModelServer(val route: (String) -> String?) : AutoCloseable {
-        private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        val requests = CopyOnWriteArrayList<JsonObject>()
-        val baseUrl get() = "http://127.0.0.1:${server.address.port}"
-
-        init {
-            server.createContext("/chat/completions") { exchange ->
-                val body = exchange.requestBody.use { it.readBytes().decodeToString() }
-                val request = Json.parseToJsonElement(body).jsonObject
-                requests += request
-                val messages = request.getValue("messages").jsonArray
-                // 结构化输出的重试提醒是相邻的 user 消息，取最后一段 user 文本当路由键
-                val tail = if (messages.last().jsonObject["role"]?.jsonPrimitive?.content == "user") {
-                    messages.reversed().takeWhile { it.jsonObject["role"]?.jsonPrimitive?.content == "user" }.reversed()
-                } else listOf(messages.last())
-                val last = tail.joinToString("\n") {
-                    val content = it.jsonObject["content"]
-                    (content as? JsonPrimitive)?.content ?: content.toString()
-                }
-                val answer = route(last)
-                if (answer == null) {
-                    val payload = """{"error":{"message":"CC_FAIL_BAD_REQUEST"}}""".encodeToByteArray()
-                    exchange.responseHeaders.add("content-type", "application/json")
-                    exchange.sendResponseHeaders(400, payload.size.toLong())
-                    exchange.responseBody.use { it.write(payload) }
-                } else {
-                    val payload = ("data: " + answer + "\n\ndata: [DONE]\n\n").encodeToByteArray()
-                    exchange.responseHeaders.add("content-type", "text/event-stream")
-                    exchange.sendResponseHeaders(200, payload.size.toLong())
-                    exchange.responseBody.use { it.write(payload) }
-                }
-            }
-            server.start()
-        }
-
-        override fun close() { server.stop(0) }
-    }
-
-    private fun baselineArgv(server: ModelServer, work: Path): Array<String> = arrayOf(
-        "--provider", "desktop-test", "--model", "scripted", "--base-url", server.baseUrl,
-        "--wire", "openai_chat", "--mode", "bypassPermissions",
-        // 本地模型只需要存在的普通环境变量，不读真实凭证
-        "--api-key-env", if (System.getenv("USERNAME") != null) "USERNAME" else "USER",
-        "--cwd", work.toString(),
-    )
-
     private fun freshDir(name: String): Path = Files.createDirectories(tmp.root.toPath().resolve(name))
 
     /**
@@ -577,26 +530,5 @@ class HeadlessCompatTest {
         }
         name.startsWith("36") || name.startsWith("27") || name.startsWith("28") -> { _ -> null }
         else -> { _ -> textResponse("CC_OK") }
-    }
-
-    private companion object {
-        fun textResponse(text: String) = response("stop", buildJsonObject { put("role", "assistant"); put("content", text) })
-
-        fun toolResponse(id: String, name: String, input: JsonObject) = response("tool_calls", buildJsonObject {
-            put("role", "assistant")
-            put("tool_calls", buildJsonArray {
-                add(buildJsonObject {
-                    put("index", 0); put("id", id); put("type", "function")
-                    put("function", buildJsonObject { put("name", name); put("arguments", input.toString()) })
-                })
-            })
-        })
-
-        fun response(stop: String, delta: JsonObject) = buildJsonObject {
-            put("id", "response")
-            put("choices", buildJsonArray { add(buildJsonObject {
-                put("index", 0); put("delta", delta); put("finish_reason", stop)
-            }) })
-        }.toString()
     }
 }

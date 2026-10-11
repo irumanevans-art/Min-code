@@ -288,6 +288,13 @@ internal class DesktopApp(
     /** stream-json 的 init 行用：`供应商/模型 id` */
     internal fun modelLabel(): String = "${provider.id}/${profile.ref.modelId}"
 
+    /** stream-json 的助手消息 / 流事件里 `message.model` 用：不带供应商前缀的模型 id（Anthropic 消息里的 model 就是这个形状） */
+    internal fun modelId(): String = profile.ref.modelId
+
+    /** stream-json init 行用：已装载插件的名字与根路径（没装载 / safe 档 = 空） */
+    internal fun loadedPlugins(): List<Pair<String, String>> =
+        pluginBundle?.batch?.plugins.orEmpty().map { it.namespace to it.root }
+
     /**
      * `--max-budget-usd` fail-closed 的启动面：设了上限，这次运行**可能用到的模型**就都得有 USD 价格——
      * 主模型、回退链、`--fast-model`、点名的 `--auto-mode-reviewer`，一个没有就启动报错（说清是哪个）。
