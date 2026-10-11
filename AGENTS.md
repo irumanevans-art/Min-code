@@ -2,6 +2,7 @@
 
 - Android proot 的隔离拒绝须贯穿 syscall 入口、出口与 SIGSYS 模拟：外层 seccomp TRAP 和 fake-id0 扩展都可能改写拒绝。用真实 untrusted_app 身份及人工外层 TRAP 验证，不只测独立 BPF。
 - 原生红测仅修改测试自有 fixture；先核对 proot 的 link2symlink 等扩展副作用，红/绿轮之间重建自有文件。可写策略覆盖 fd 元数据与文件型 AF_UNIX bind，代理限制覆盖 IP bind 的反向连接入口。
+- 改原生 TRACE/BPF 后的性能对照保留起点原始 ELF；同一新版关闭策略的 control 仅衡量开关差异，不能隐藏新增 TRACE 本身的开销。整套均值与 fork/exec 等分项同时报告，不用冷缓存噪声掩盖分项回退。
 
 - 权限兼容用例应分别验证规则是否匹配和模式最终判定；只读免批可能在 allow 规则不匹配后继续生效，不能为了匹配表而扩大审批范围。
 - 涉及权限目录设置时，验证设置解析、事件冻结、重放、策略上下文和子会话继承；附加文件访问目录不参与配置发现，宿主解析后的 Device 分级优先。

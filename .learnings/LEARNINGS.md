@@ -2777,3 +2777,27 @@ PolicyContext 添加字段时，还要更新 CLI 的反射兼容夹具，否则�
 - Tags: reflection, policy-context, compatibility, full-check
 
 ---
+
+## [LRN-20261011-NATIVE-STOCK-BASELINE] best_practice
+
+**Logged**: 2026-10-11T17:13:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+原生策略 benchmark 同时保留原始 ELF 对照；新版关闭策略不能覆盖新增 TRACE 注册的开销。
+
+### Details
+同一新版 proot 的策略开关对照只显示开关差异。改用起点 Git blob 的 ELF 与最终隔离 ELF，五组交替负载均成功，整套均值受缓存与调度影响，但 100 次 fork/exec 均值为 1290.6 对 2026.6 ms，增加约 57%；报告必须保留分项开销，不能只报整套均值下降。暂停恢复后的探针还要重新核对 adb 目标、包登记与 rootfs；boot_completed 不等于调试包可用，保留准备失败而不计作需求红测。
+
+### Suggested Action
+从 Git blob 固定原始二进制与哈希；记录顺序、逐次数据、分项与整套负载。恢复设备任务时验证包和 fixture，再按 owner 清理并释放 lock。
+
+### Metadata
+- Source: debugging
+- Related Files: workspace/proot/src/syscall/seccomp.c
+- Tags: native, benchmark, trace, emulator, baseline
+- Pattern-Key: native-benchmark.include-original-instrumentation-cost
+
+---
