@@ -28,6 +28,7 @@ import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.ModelRef
+import dev.min.agent.ext.config.modelPolicy
 import dev.min.agent.protocol.Part
 import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.protocol.QuestionId
@@ -171,6 +172,8 @@ class SessionRuntime private constructor(
         // --bare / --safe-mode：换目录也不能把被跳过的记忆装回来（权限规则照常重读）
         val memory = if (home != null && deps.memoryEnabled && state.value.origin == null && deps.customizations == Customizations.Full) MemoryLoader.load(deps.host.fs, cwd, home, deps.memoryLimits, includeUser = !deps.settingsInputs.restricted).files else emptyList()
         val snapshot = if (home != null && state.value.origin == null) SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs) else null
+        // 模型限制跟着新目录的设置走（项目层也能写 availableModels）
+        snapshot?.let { modelPolicy = it.merged.modelPolicy() }
         val trustProject = deps.trustProjectHooks(cwd)
         val trustedLocal = snapshot?.let { trustedLocalSettings(deps, it, cwd, trustProject || state.value.created.headless) }.orEmpty()
         val rules = snapshot?.merged?.ruleSpecs(trustProject, trustedLocal)?.map { spec -> RuleEntry(
@@ -540,7 +543,36 @@ class SessionRuntime private constructor(
         }
     }
 
+    /**
+     * 这个会话的模型限制（`availableModels` / `deniedModels` / `availableModelsMatch` / `enforceAvailableModels`，[ModelPolicy]）：
+     * 根会话读设置时算（创建、续接、换目录），子会话跟随根会话。只在内存里：和 [KernelDeps.modelAllowed] 一样是运行时判断，
+     * 每次启动从设置重算，不进日志。两个宿主都经它管住切模型、子 agent、顾问、审查——Android 的设置在 rootfs 里，宿主自己读不到
+     */
+    @Volatile
+    internal var modelPolicy: dev.min.agent.ext.config.ModelPolicy? = null
+
+    /** 根会话按当前目录重读一次模型限制（续接时用；创建与换目录在读设置的地方顺手算） */
+    internal suspend fun refreshModelPolicy() {
+        if (state.value.origin != null) return
+        val home = deps.memoryHome ?: return
+        modelPolicy = dev.min.agent.spi.catchingNonCancellation {
+            SettingsLoader.load(deps.host.fs, state.value.settings.cwd, home, inputs = deps.settingsInputs).merged.modelPolicy()
+        }.getOrNull()
+    }
+
+    /**
+     * [ref] 能不能用：宿主的判定（[KernelDeps.modelAllowed]）与这个会话的模型限制都放行才行。
+     * 别名先交给宿主的解析器落到具体型号再比（被挡的家族别名，宿主能换到允许版本的就算放行）；解析不了的按原样的 id 比
+     */
+    internal fun modelPermitted(ref: ModelRef): Boolean {
+        if (!deps.modelAllowed(ref)) return false
+        val policy = modelPolicy ?: state.value.origin?.root?.let { hub?.get(it)?.modelPolicy } ?: return true
+        val concrete = dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(ref).profile.ref.modelId }.getOrNull() ?: ref.modelId
+        return policy.allows(concrete)
+    }
+
     private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
+        if (state.value.origin == null) modelPolicy = snapshot.merged.modelPolicy()
         val trustProject = deps.trustProjectHooks(state.value.created.cwd)
         val trustedLocal = trustedLocalSettings(deps, snapshot, state.value.created.cwd, trustProject || state.value.created.headless)
         val notes = snapshot.notes.toMutableList()
@@ -685,7 +717,7 @@ class SessionRuntime private constructor(
         // 切模型先过 PreModelSwitch：被拒就不改模型（mode / effort 照常生效，它们不归这个 hook 管），理由落一条 Note
         val from = state.value.settings.model
         // availableModels 在 PreModelSwitch 之前挡：名单外的模型不让切（CC：/model 直接报错，不问 hook）
-        val listed = if (model != null && model != from && !deps.modelAllowed(model)) "模型 ${model.providerId}:${model.modelId} 不在 availableModels 里，没有切换" else null
+        val listed = if (model != null && model != from && !modelPermitted(model)) "模型 ${model.providerId}:${model.modelId} 不在 availableModels 里，没有切换" else null
         val refusal = listed ?: if (model != null && model != from) modelSwitchHooks.refusal(from, model, modelSwitchSource) else null
         if (refusal != null) modelSwitchHooks.noteRefused(refusal)
         val newModel = model.takeIf { refusal == null }
@@ -705,7 +737,7 @@ class SessionRuntime private constructor(
 
     internal fun resolveReviewer(reviewer: dev.min.agent.spi.AutoModeReviewer): ResolvedModel {
         // 显式设置的审查模型受 availableModels 约束（CC）；默认的小模型由宿主的名单管，见 AutoReviewer
-        require(deps.modelAllowed(reviewer.model)) { "审查模型 ${reviewer.model.providerId}:${reviewer.model.modelId} 不在 availableModels 里" }
+        require(modelPermitted(reviewer.model)) { "审查模型 ${reviewer.model.providerId}:${reviewer.model.modelId} 不在 availableModels 里" }
         return deps.reviewerModels?.invoke(reviewer) ?: deps.models.resolve(reviewer.model)
     }
 
@@ -1105,6 +1137,7 @@ class SessionRuntime private constructor(
             // --restricted 拒绝 bypassPermissions，对续接的会话同样成立：模式与锁都是上次启动（可能不受限）写进日志的，
             // 这里不重新兑现的话，--resume / --continue 就把 bypass 原样带进受限会话，之后还能随时切回去
             if (deps.settingsInputs.restricted) restrictedLockEvents(runtime.state.value).takeIf { it.isNotEmpty() }?.let { runtime.commit(it, Durability.Sync) }
+            runtime.refreshModelPolicy()
             runtime.resumeBasis = ResumeBasis(quietSince, runtime.state.value.lastTurn?.turnId)
             runtime.cancelMcpElicitations(close = false)
             return runtime

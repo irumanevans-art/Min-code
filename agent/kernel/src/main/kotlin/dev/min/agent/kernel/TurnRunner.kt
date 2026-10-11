@@ -522,11 +522,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         var attempt = 1
         // 发请求前按阈值遮蔽 / 摘要（docs/agent/detail/压缩设计.md §2）；撞墙时再压缩一次，只重试一次。
         // 回退链生效中（同一回合的后续请求）按回退模型的窗口算
-        compactor.beforeRequest(turnId, resolveActiveModel(rt.state.value, deps))
+        compactor.beforeRequest(turnId, resolveActiveModel(rt.state.value, deps, rt::modelPermitted))
         var overflowCompacted = false
         while (true) {
             val state = rt.state.value
-            val model = resolveActiveModel(state, deps)
+            val model = resolveActiveModel(state, deps, rt::modelPermitted)
             val request = assemble(state, model.profile)
             rt.commit(
                 listOf(ModelRequestStarted(turnId, requestId, attempt, model.profile.ref, prefixFingerprint(request))),
@@ -775,10 +775,10 @@ internal fun promptBasisOf(state: SessionState, deps: KernelDeps): PromptBasis =
  * 宿主也换不到这一档允许的版本时，跳过升级，按会话模型的非计划档（sonnet）接着计划（CC 模型配置文档「Plan-mode upgrades」）。
  * 只影响这次解析；日志里的回退起点仍按 [activeModel] 记——升级被跳过的计划回合再触发回退链时，起点写的是 opus 档的别名
  */
-internal fun resolveActiveModel(state: SessionState, deps: KernelDeps): ResolvedModel {
+internal fun resolveActiveModel(state: SessionState, deps: KernelDeps, allowed: (dev.min.agent.protocol.ModelRef) -> Boolean = deps.modelAllowed): ResolvedModel {
     val active = state.activeModel
     val upgraded = state.turn?.fallback == null && active != planAwareModel(state.settings.model, dev.min.agent.protocol.PermissionMode.Default)
-    if (upgraded && !deps.modelAllowed(active)) return deps.models.resolve(planAwareModel(state.settings.model, dev.min.agent.protocol.PermissionMode.Default))
+    if (upgraded && !allowed(active)) return deps.models.resolve(planAwareModel(state.settings.model, dev.min.agent.protocol.PermissionMode.Default))
     return deps.models.resolve(active)
 }
 
@@ -786,7 +786,7 @@ internal fun resolveActiveModel(state: SessionState, deps: KernelDeps): Resolved
 internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCaller = McpCaller.Unavailable, runtime: SessionRuntime? = null, editStyle: dev.min.agent.spi.EditStyle? = null): List<Tool<*>> {
     val allowed = state.origin?.tools
     val style = editStyle ?: if (deps.tools.any { it.name in setOf("Edit", "Write", "apply_patch") })
-        resolveActiveModel(state, deps).profile.editStyle else dev.min.agent.spi.EditStyle.StrReplace
+        resolveActiveModel(state, deps, runtime?.let { it::modelPermitted } ?: deps.modelAllowed).profile.editStyle else dev.min.agent.spi.EditStyle.StrReplace
     // 按实际请求的 profile 选编辑形态，回退模型也在此接线；权限仍统一按 Edit 家族判定。
     val editTools = if (style == dev.min.agent.spi.EditStyle.ApplyPatch) {
         val selected = deps.tools.filterNot { it.name in setOf("Edit", "Write", "apply_patch") }.toMutableList()

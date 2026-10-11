@@ -18,7 +18,7 @@ suspend fun SessionRuntime.changeAdvisor(model: ModelRef?) {
 
 internal fun SessionRuntime.resolveAdvisor(model: ModelRef): ResolvedModel {
     // 顾问也受 availableModels 约束（CC）：不在名单里的顾问不解析、不发送对话
-    require(deps.modelAllowed(model)) { "顾问 ${model.providerId}:${model.modelId} 不在 availableModels 里" }
+    require(modelPermitted(model)) { "顾问 ${model.providerId}:${model.modelId} 不在 availableModels 里" }
     return (deps.advisorModels ?: deps.models).resolve(model)
 }
 
