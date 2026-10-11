@@ -7,6 +7,7 @@ import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookHandler
 import dev.min.agent.ext.security.SecurityGuidance
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.ModelRef
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.TurnId
@@ -175,7 +176,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         )
         // 不在仓库里 / 没有提交可看：静默跳过（文档：在仓库之外这两层静默跳过）
         val diff = (shown as? ExecResult.Exited)?.takeIf { it.exitCode == 0 && it.output.isNotBlank() }?.output ?: return
-        val reason = review(SecurityGuidance.commitReviewPrompt(command, diff.take(MAX_DIFF_CHARS), cfg.guidance), "commit") ?: return
+        val reason = review(SecurityGuidance.commitReviewPrompt(command, diff.take(MAX_DIFF_CHARS), cfg.guidance), "commit", COMMIT_MODEL_VAR) ?: return
         // 回合末审查已经报过同一件事：不再提醒
         val print = fingerprint(reason)
         if (!reported.add(print)) return
@@ -207,7 +208,7 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
             return null
         }
         val prompt = SecurityGuidance.turnReviewPrompt(files.map { (p, t) -> SecurityGuidance.Changed(p, t) }, cfg.guidance)
-        val reason = review(prompt, "turn-end")
+        val reason = review(prompt, "turn-end", TURN_MODEL_VAR)
         if (reason == null) {
             stopFires = 0
             return null
@@ -218,18 +219,36 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
     }
 
     /** 起审查者跑一遍：发现（ok:false 的 reason）返回文字，没发现或没有结论返回 null（没有结论记一条说明） */
-    private suspend fun review(prompt: String, trigger: String): String? {
+    private suspend fun review(prompt: String, trigger: String, modelVar: String): String? {
         val handler = HookHandler(
             event = HookEvent.Stop, matcher = null, type = "agent", command = null, args = null, timeout = REVIEW_TIMEOUT_SECONDS, condition = null,
             source = ConfigSource.Managed, raw = JsonObject(emptyMap()), prompt = prompt,
         )
         val stdin = buildJsonObject { put("trigger", JsonPrimitive(trigger)) }
-        val verdict = ModelHookRunner(rt).runAgents(listOf(handler), stdin, HookEvent.Stop).single()
+        val verdict = ModelHookRunner(rt).runAgents(listOf(handler), stdin, HookEvent.Stop, reviewModel(modelVar)).single()
         if (verdict.timedOut || verdict.nonBlockingError != null) {
             rt.commit(listOf(Note(NoteLevel.Warning, "security-guidance 的审查没有得出结论：${verdict.nonBlockingError ?: "超时"}")), Durability.Batched)
             return null
         }
         return if (verdict.decision == HookDecision.Block) verdict.reason?.text?.takeIf { it.isNotBlank() } else null
+    }
+
+    /**
+     * 审查者用哪个模型（文档：两个模型侧审查默认用 Claude Opus 4.7，`SECURITY_REVIEW_MODEL` 换回合末审查的、`SG_AGENTIC_MODEL` 换提交审查的）。
+     * 值写「供应商/型号」或只写型号（供应商取会话的）；别名交宿主的解析器落到具体型号。Min 没有「默认 Opus」这回事——不设就用会话模型。
+     * 名单约束：点名的型号必须过 [SessionRuntime.modelPermitted]（availableModels / deniedModels）才用；过不了、或解析不出来，
+     * 落回会话模型并留一条警告——审查不能因为变量写错就停掉，也不能借变量绕开托管设置里的模型限制。
+     */
+    private suspend fun reviewModel(variable: String): ModelRef? {
+        val name = rt.deps.env(variable)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val ref = if ('/' in name) ModelRef(name.substringBefore('/'), name.substringAfter('/')) else ModelRef(rt.state.value.settings.model.providerId, name)
+        val problem = when {
+            !rt.modelPermitted(ref) -> "不在 availableModels 里（或被 deniedModels 挡了）"
+            catchingNonCancellation { rt.deps.models.resolve(ref) }.isFailure -> "解析不出这个模型"
+            else -> return ref
+        }
+        rt.commit(listOf(Note(NoteLevel.Warning, "security-guidance：$variable=$name $problem，这次审查改用会话模型")), Durability.Batched)
+        return null
     }
 
     private fun normalize(text: String) = text.lowercase().replace(Regex("\\s+"), " ").trim()
@@ -251,6 +270,10 @@ internal class SecurityGuidanceRuntime(private val rt: SessionRuntime) {
         private const val REVIEW_TIMEOUT_SECONDS = 180
         private const val MAX_DIFF_CHARS = 60_000
         private const val HOOK_LABEL = "security-guidance"
+
+        /** 两个模型侧审查各自的模型变量（CC 文档 Usage cost 一节） */
+        const val TURN_MODEL_VAR = "SECURITY_REVIEW_MODEL"
+        const val COMMIT_MODEL_VAR = "SG_AGENTIC_MODEL"
 
         /** 命令里有 `git commit` 或 `git push`（可带 `-C dir` 之类的全局选项，可在 `&&` 链里） */
         private val GIT_PUBLISH = Regex("""(?:^|[\s;&|(])git\s+(?:-[^\s]+\s+(?:[^\s-][^\s]*\s+)?)*(?:commit|push)\b""")

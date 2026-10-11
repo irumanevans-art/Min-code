@@ -325,14 +325,15 @@ class SessionHub(
      * 谁记）。跑完就从 Hub 卸下（L3）：它不在任何在线汇总里，挂着只是泄漏；日志都在磁盘上，要查随时
      * peek。父回合被取消时由调用方（ModelHookRunner）经 [stopHookAgent] 停掉它
      */
-    internal suspend fun runHookAgent(parent: SessionRuntime, prompt: String): String? {
+    internal suspend fun runHookAgent(parent: SessionRuntime, prompt: String, model: dev.min.agent.protocol.ModelRef? = null): String? {
         val ps = parent.state.value
         // hook 不能再钩出 hook：hook-agent 的来历类型在 HookDriver 里挡掉模型侧 hook 类型
         val childId = SessionId(deps.ids.next("s"))
         val header = LogHeader(
             dev.min.agent.store.LOG_FORMAT_VERSION, childId, deps.clock.nowMs(), parent = parent.sessionId,
         )
-        val created = SessionCreated(ps.settings.cwd, ps.settings.model, dev.min.agent.protocol.PermissionMode.DontAsk, loadingModes = ps.created.loadingModes)
+        // [model] 是调用方点名的审查模型（security-guidance 的 SECURITY_REVIEW_MODEL / SG_AGENTIC_MODEL，已过 availableModels 名单）；不给就用父会话的
+        val created = SessionCreated(ps.settings.cwd, model ?: ps.settings.model, dev.min.agent.protocol.PermissionMode.DontAsk, loadingModes = ps.created.loadingModes)
         val origin = SubagentOrigin(
             parent = parent.sessionId, root = ps.origin?.root ?: parent.sessionId,
             parentCall = CallId(deps.ids.next("hookcall")),

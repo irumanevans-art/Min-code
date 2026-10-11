@@ -26,6 +26,8 @@ import dev.min.agent.spi.ToolTraits
 import dev.min.agent.spi.WorkspaceFs
 import dev.min.agent.store.FileSessionStore
 import dev.min.agent.testkit.FakeExec
+import dev.min.agent.testkit.TEST_PROFILE
+import dev.min.agent.protocol.ModelRef
 import dev.min.agent.testkit.ScriptedModel
 import dev.min.agent.testkit.TEST_MODEL
 import dev.min.agent.testkit.args
@@ -126,11 +128,16 @@ class SecurityGuidanceSessionTest {
         }
     }
 
-    private fun hubFor(model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full): SessionHub {
+    private fun hubFor(
+        model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full,
+        reviewer: ScriptedModel? = null,
+    ): SessionHub {
         val tools = listOf<Tool<JsonObject>>(write, bash)
         val base = testDeps(model, tools, idTag = "t${++counter}-")
         val deps = KernelDeps(
-            clock = { now.addAndGet(10) }, ids = base.ids, models = base.models, tools = tools,
+            clock = { now.addAndGet(10) }, ids = base.ids, tools = tools,
+            // 点名了别的审查模型时，除会话模型之外的型号都交给 reviewer 这条脚本
+            models = if (reviewer == null) base.models else ModelResolver { ref -> if (ref == TEST_MODEL) base.models.resolve(ref) else ResolvedModel(TEST_PROFILE.copy(ref = ref), reviewer) },
             host = HostPorts(fs, base.host.search, exec, base.host.artifacts),
             platform = "test", zone = ZoneOffset.UTC, memoryHome = GuestPath("/root"),
             env = { name -> env[name] ?: if (name == "CLAUDE_CODE_DISABLE_AUTO_MEMORY") "1" else null },
@@ -140,8 +147,11 @@ class SecurityGuidanceSessionTest {
         return SessionHub(FileSessionStore(tmp.root.toPath(), { 0L }), deps, scope)
     }
 
-    private suspend fun session(model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full): SessionRuntime =
-        hubFor(model, env, trusted, customizations).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+    private suspend fun session(
+        model: ScriptedModel, env: Map<String, String> = emptyMap(), trusted: Boolean = true, customizations: Customizations = Customizations.Full,
+        reviewer: ScriptedModel? = null,
+    ): SessionRuntime =
+        hubFor(model, env, trusted, customizations, reviewer).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
 
     /** 重开：同一个日志目录、换一个新的内核实例（新的内存状态、新的脚本模型） */
     private suspend fun reopen(id: dev.min.agent.protocol.SessionId, model: ScriptedModel): SessionRuntime = hubFor(model).open(id)!!
@@ -356,6 +366,69 @@ class SecurityGuidanceSessionTest {
         val model2 = ScriptedModel(reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse), reply(TextPart("done")))
         session(model2, mapOf("ENABLE_CODE_SECURITY_REVIEW" to "0")).say("write")
         assertEquals(2, model2.requests.size)
+    }
+
+    // ---- 审查模型（SECURITY_REVIEW_MODEL / SG_AGENTIC_MODEL） ----
+
+    @Test
+    fun `the review model variables pick the model of each model-backed review`() = run {
+        enable()
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val main = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(commitCall(), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart("fixed")),
+        )
+        // 审查者的回话按发生顺序：提交审查先、回合末审查后
+        val reviewer = ScriptedModel(reply(TextPart(ok)), reply(TextPart(bad)))
+        session(main, mapOf("SECURITY_REVIEW_MODEL" to "turn-model", "SG_AGENTIC_MODEL" to "other/commit-model"), reviewer = reviewer).say("go")
+        assertEquals(
+            listOf(ModelRef("test", "commit-model").copy(providerId = "other"), ModelRef("test", "turn-model")),
+            reviewer.requests.map { it.profile.ref },
+        )
+        // 主模型自己只有 4 次请求：写、提交、结束、被审查发现重新提示后的收尾
+        assertEquals(4, main.requests.size)
+    }
+
+    @Test
+    fun `without the variables the reviews run on the session model`() = run {
+        enable()
+        val main = ScriptedModel(reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse), reply(TextPart("done")), reply(TextPart(ok)))
+        val reviewer = ScriptedModel()
+        session(main, reviewer = reviewer).say("go")
+        assertEquals(3, main.requests.size)
+        assertTrue(reviewer.requests.isEmpty())
+    }
+
+    @Test
+    fun `a review model outside availableModels is refused and the session model reviews instead`() = run {
+        enable()
+        files["/etc/claude-code/managed-settings.json"] = """{"availableModels":["scripted"]}"""
+        val main = ScriptedModel(
+            reply(writeCall("/workspace/a.py", "print(1)"), stop = StopReason.ToolUse),
+            reply(TextPart("done")),
+            reply(TextPart(ok)),
+        )
+        val reviewer = ScriptedModel(reply(TextPart(ok)))
+        val rt = session(main, mapOf("SECURITY_REVIEW_MODEL" to "turn-model"), reviewer = reviewer)
+        rt.say("go")
+        // 名单外的型号一次都没有被调用；审查落回会话模型
+        assertTrue(reviewer.requests.isEmpty())
+        assertEquals(3, main.requests.size)
+        assertTrue(rt.state.value.presentation.map { it.record.event }.filterIsInstance<dev.min.agent.spi.Note>().any { "availableModels" in it.text && "turn-model" in it.text })
+    }
+
+    @Test
+    fun `a deniedModels entry also stops a named review model`() = run {
+        enable()
+        files["/etc/claude-code/managed-settings.json"] = """{"deniedModels":["commit-model"]}"""
+        exec.script = { cmd, _ -> if (cmd.script.startsWith("git show")) ExecResult.Exited(0, "diff", false, 1) else ExecResult.Exited(0, "", false, 1) }
+        val main = ScriptedModel(reply(commitCall(), stop = StopReason.ToolUse), reply(TextPart(ok)), reply(TextPart("done")))
+        val reviewer = ScriptedModel(reply(TextPart(ok)))
+        session(main, mapOf("SG_AGENTIC_MODEL" to "commit-model"), reviewer = reviewer).say("commit")
+        assertTrue(reviewer.requests.isEmpty())
+        assertEquals(3, main.requests.size)
     }
 
     // ---- 提交 / 推送后的审查 ----
