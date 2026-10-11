@@ -120,7 +120,8 @@ data class HubLimits(
     val cronEnabled: Boolean = true,
     /**
      * 本机其他会话发来的消息的收件口径（Claude Code 的 `crossSessionInbound`）。Auto = 收发两边权限类不同时等用户批准，
-     * Refuse = 一律拒收（发件人立刻知道），Accept / Hold 同名。只有宿主一个开关，还没有按会话设置
+     * Refuse = 一律拒收（发件人立刻知道），Accept / Hold 同名。这是宿主级的底线；每个会话另按自己 cwd 下的设置（user / project / local / `--settings` / managed）
+     * 定自己的口径，两者取更严的（见 [SessionHub.peerReceiveSettings]）
      */
     val crossSessionInbound: PeerInboundPolicy = PeerInboundPolicy.Auto,
 ) {
@@ -304,6 +305,14 @@ class SessionHub(
             // 别的进程送来的消息：心跳里取（同一时刻只跑一轮，见 PeerMailbox.pump）
             scope.launch { peerMail.pump() }
         }
+
+    /**
+     * 只接跨会话邮箱的心跳（取别的进程送来的消息、重判与过期待批准的消息、订阅的空闲检查），不带定时任务与 /goal 的 check-in。
+     * `-p` 会话用它：跑一次就退出、不需要定时任务，但原文要求它也能收信，它得有人取信。间隔比 [startScheduling] 短，
+     * 因为一次 `-p` 运行可能只有几十秒。关掉返回的句柄就停
+     */
+    fun startPeerHeartbeat(scheduler: dev.min.agent.spi.Scheduler): AutoCloseable =
+        scheduler.start { scope.launch { peerMail.pump() } }
 
     /** `/goal` 的 check-in 计时：挂在同一个心跳上（[startScheduling]），不另起定时器 */
     private val goalCheckIns = GoalCheckIns(deps)
@@ -639,6 +648,8 @@ class SessionHub(
         // 卸下即杀后台 hook 进程并清掉暂存目录：手机上不能留孤儿进程（async 设计的边界；`-p` teardown 同此）
         closing.forEach { it.asyncHooks.cancelAll() }
         closing.forEach { it.background.cancelAll() }
+        // 还挂着的跨会话消息与订阅在卸下前交代清楚：发件人得到「对方已关闭」，盯着它的人收到「退出了」
+        closing.filter { it.state.value.origin == null }.forEach { peerMail.sessionClosing(it) }
         tree.forEach(::unload)
         return true
     }
@@ -754,6 +765,7 @@ class SessionHub(
         rootRuntime?.asyncHooks?.cancelAll()
         order.mapNotNull { runtimes[it] }.forEach { it.background.cancelAll() }
         rootRuntime?.background?.cancelAll()
+        order.mapNotNull { runtimes[it] }.filter { it.state.value.origin == null }.forEach { peerMail.sessionClosing(it) }
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {
@@ -886,6 +898,7 @@ class SessionHub(
     internal fun portFor(rt: SessionRuntime, turnId: TurnId, callId: CallId): AgentPort = object : AgentPort {
         override suspend fun delegate(request: DelegateRequest): DelegateResult = spawn(rt, turnId, callId, request)
         override suspend fun message(to: String, text: String): ToolResult = sendMessage(rt, callId, to, text)
+        override suspend fun notifyWhenIdle(to: String, text: String?): ToolResult = watchIdle(rt, to, text)
         override suspend fun stop(target: String): ToolResult = stopTask(rt, target)
         override suspend fun team(op: dev.min.agent.spi.TeamOp): ToolResult = teams.handle(rt, turnId, callId, op)
         override suspend fun roster(): List<dev.min.agent.spi.AgentListing> = rosterOf(rt)
@@ -1295,6 +1308,10 @@ class SessionHub(
                     _running.value = runningIds.toSet()
                     _pending.value = pendingBySession.values.flatten().sortedBy { it.atMs }
                 }
+                // 有人订阅了「空闲时通知我」：回合收尾（含接着排队的下一回合）之后查一次。等回合 Job 结束再判，免得在两个回合之间的空档误报
+                if (s.turn == null && runtime.state.value.origin == null && peerMail.isWatched(id)) {
+                    scope.launch { runtime.awaitIdle(); peerMail.checkIdle(id) }
+                }
             }
         }
     }
@@ -1412,7 +1429,27 @@ class SessionHub(
     // ---- 续聊与停止 ----
 
     /** 本机跨会话邮箱（见 [PeerMailbox]）：发现与送达都走它，拒收与批准的口径也在那里 */
-    internal val peerMail = PeerMailbox(this, deps, peers) { this.limits.crossSessionInbound }
+    internal val peerMail = PeerMailbox(this, deps, peers) { rt -> peerReceiveSettings(rt) }
+
+    /**
+     * 收件会话此刻适用的跨会话设置：口径 = 它自己 cwd 下读到的 `crossSessionInbound`（[crossSessionInboundFrom]）与宿主级的 [HubLimits.crossSessionInbound]
+     * 取更严的那个（宿主说不收，设置文件改不了它）；期限 = `dialogExpiry`（[dialogExpiryMsFrom]）。
+     * 每次都现读设置文件：用户改了设置，下一条消息、下一次心跳就生效，不用重开会话。读不了设置就只按宿主级的口径与默认期限
+     */
+    internal suspend fun peerReceiveSettings(rt: SessionRuntime): PeerReceiveSettings {
+        val host = limits.crossSessionInbound
+        val home = deps.memoryHome ?: return PeerReceiveSettings(host, PEER_HOLD_EXPIRY_MS)
+        val snapshot = dev.min.agent.spi.catchingNonCancellation {
+            dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, rt.state.value.created.cwd, home, inputs = deps.settingsInputs)
+        }.getOrNull() ?: return PeerReceiveSettings(host, PEER_HOLD_EXPIRY_MS)
+        val fromSettings = crossSessionInboundFrom(snapshot.layers)
+        val policy = when {
+            fromSettings == null -> host
+            host == PeerInboundPolicy.Auto -> fromSettings
+            else -> stricterOf(host, fromSettings)
+        }
+        return PeerReceiveSettings(policy, dialogExpiryMsFrom(snapshot.layers, deps.env))
+    }
 
     /** 本 Hub 里在线的根会话（子 agent 不算）。跨会话邮箱只看这一层 */
     internal fun liveRoots(): List<SessionRuntime> = runtimes.values.filter { it.state.value.origin == null }
@@ -1426,6 +1463,21 @@ class SessionHub(
 
     /** 取走别的进程发来的消息并处理（心跳里调用；测试直调） */
     internal suspend fun pumpPeers() = peerMail.pump()
+
+    /**
+     * SendMessage 的 notify_when_idle：只有主会话（根）能订阅、只能订阅本机上自己的其他会话。
+     * 对队友、子 agent、上级会话（`main`）订阅整个调用都拒绝，连附带的消息也不送（CC tools-reference 与 cross-session-messaging 原文）。
+     */
+    private suspend fun watchIdle(from: SessionRuntime, to: String, text: String?): ToolResult {
+        val state = from.state.value
+        val target = to.trim()
+        if (state.origin != null) return error("只有主会话能订阅对方的空闲通知；子 agent 不行。整个调用没有执行。")
+        val isTeammate = teams.members(from).any { it.name == target || it.session?.value == target }
+        if (target == "main" || isTeammate || findChild(state, target) != null) {
+            return error("空闲通知只能订阅你自己在本机的其他会话；队友与子 agent 不行（它们空闲时本来就会给你报告）。整个调用没有执行，附带的消息也没有送出。")
+        }
+        return peerMail.watch(from, target, text)
+    }
 
     private suspend fun sendMessage(from: SessionRuntime, callId: CallId, to: String, text: String): ToolResult {
         // 团队邮件与子 agent 消息是同一个入口：发件人和收件人都在团队里就走团队邮箱，其余照旧

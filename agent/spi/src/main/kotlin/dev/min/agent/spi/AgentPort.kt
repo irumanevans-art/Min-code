@@ -15,6 +15,13 @@ interface AgentPort {
     /** 给子 agent（按 id 或名字；子 agent 里写 `main` 指父会话）发一句话。返回给模型看的结论 */
     suspend fun message(to: String, text: String): ToolResult
 
+    /**
+     * SendMessage 的 `notify_when_idle`：请本机上自己的另一个会话空闲（或退出）时给我发一次通知。[text] 非空 = 先送这条消息再订阅，
+     * 为空 = 只订阅（不给对方开回合）。只有主会话能订阅、对象只能是本机的其他会话。有默认值（不可用）：测试替身不用管它
+     */
+    suspend fun notifyWhenIdle(to: String, text: String?): ToolResult =
+        ToolResult(listOf(dev.min.agent.protocol.TextPart("这个环境不支持订阅其他会话的空闲通知。")), isError = true)
+
     /** TaskStop：停后台任务（命令、watch）或中断子 agent / 队友的当前回合（id 或名字）。返回给模型看的结论 */
     suspend fun stop(target: String): ToolResult
 
