@@ -114,8 +114,8 @@ suspend fun SessionRuntime.loopPlanBlock(args: String): String {
 }
 
 /**
- * Skill 工具背后的端口：按会话**冻结的清单**找 skill（磁盘上中途新增的 skill 这个会话里调不到，与清单里看不到一致），
- * 正文调用时才读、此刻渲染——读到什么都留在那次工具结果里，请求照样能从日志重建。
+ * Skill 工具背后的端口：按会话**冻结的清单**找 skill，再叠上日志里记着的中途变化（嵌套目录懒加载、`--add-dir` 重扫，见 [skillEntries]）；
+ * 用户 / 项目层磁盘上中途新增的 skill 这个会话里调不到。正文调用时才读、此刻渲染——读到什么都留在那次工具结果里，请求照样能从日志重建。
  */
 internal class KernelSkillPort(
     private val rt: SessionRuntime,
