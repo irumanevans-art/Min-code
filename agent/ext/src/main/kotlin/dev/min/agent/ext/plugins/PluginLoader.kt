@@ -69,7 +69,8 @@ class PluginLoader(private val fs: WorkspaceFs, private val canonical: (GuestPat
             walk(root, 0, setOf(realRoot))
             val result = PluginParser(directories, unreadable).parse(request, root, files)
             val allErrors = (errors + io.notes + result.errors).distinct()
-            return result.copy(plugin = result.plugin?.copy(errors = allErrors), errors = allErrors)
+            return result.copy(plugin = result.plugin?.let { plugin -> plugin.copy(errors = allErrors,
+                manifest = plugin.manifest?.let { if (request.resolvedVersion == null) it else it.copy(version = request.resolvedVersion) }) }, errors = allErrors)
         } catch (e: CancellationException) { throw e }
         catch (e: PluginInvalid) { return PluginLoadOutcome(warnings = warnings, errors = errors + e.message.orEmpty()) }
         catch (e: Exception) {

@@ -86,4 +86,16 @@ class PluginFinishTest {
         put(root.resolve("managed.json"), """{"disableCommandPluginSources":true}""")
         assertEquals(1, pluginCommand(manager, listOf("update", "generated@commands", "--yes"), "".reader().buffered(), java.io.PrintStream(output)))
     }
+    @Test fun `安装自动解析同市场依赖且循环不写索引`(): Unit = runBlocking {
+        val market = root.resolve("market")
+        put(market.resolve(".claude-plugin/marketplace.json"), """{"name":"deps","owner":{"name":"test"},"plugins":[{"name":"main","source":"./main"},{"name":"base","source":"./base"}]}""")
+        put(market.resolve("main/.claude-plugin/plugin.json"), """{"name":"main","dependencies":["base"]}""")
+        put(market.resolve("base/.claude-plugin/plugin.json"), """{"name":"base"}""")
+        val manager = manager()
+        manager.add(buildJsonObject { put("source", "directory"); put("path", paths.guestOfHost(market).value) }, true)
+        var failure: Exception? = null
+        try { manager.install(manager.preview("main@deps"), confirmed = true) } catch(e: CancellationException) { throw e } catch(e: Exception) { failure = e }
+        assertNull("安装应自动拉取声明依赖", failure)
+        assertEquals(setOf("main@deps", "base@deps"), manager.installed().map { it.id }.toSet())
+    }
 }

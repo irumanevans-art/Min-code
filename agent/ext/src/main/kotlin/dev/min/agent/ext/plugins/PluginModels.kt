@@ -155,6 +155,7 @@ data class PluginRequest(
     val enabledPlugins: Map<String, Boolean> = emptyMap(),
     val sideload: Boolean = false,
     val disabledDependencies: Set<String> = emptySet(),
+    val resolvedVersion: String? = null,
 )
 
 data class PluginLoadOutcome(

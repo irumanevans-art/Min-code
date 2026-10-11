@@ -167,7 +167,8 @@ class PluginBundle(
                 val path = localInstall(rawPath) ?: return@forEach
                 scopes[canonical(path).value] = (record["scope"] as? JsonPrimitive)?.content
                 candidates += PluginRequest(path.value, PluginRef(id.substringBefore('@'), id.substringAfter('@', "").ifEmpty { null }), entry = record["marketplaceEntry"] as? JsonObject,
-                    enabledPlugins = enabled + (id to (enabled[id] ?: false)), disabledDependencies = disabledDependencies)
+                    enabledPlugins = enabled + (id to (enabled[id] ?: false)), disabledDependencies = disabledDependencies,
+                    resolvedVersion = record["resolvedVersion"]?.jsonPrimitive?.content)
             }
             // 未安装索引的本地缓存也可以按 enabledPlugins 找到；禁用项仍留作依赖候选。
             if (installed) for (id in enabled.keys - blockedCommands) {

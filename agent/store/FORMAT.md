@@ -2,6 +2,8 @@
 
 `formatVersion: 1`
 
+- 插件安装索引 v2 增量：record 可带 resolvedVersion（git tag 版本，覆盖 manifest 的滞后版本）与 commandSha256（人工确认的命令指纹）；version 仍为版本加内容散列的不可变缓存键。PluginRequest 新增可选 resolvedVersion。依赖图先完整解析再发布设置/索引，源受相同信任和托管策略限制；不改会话版本。
+
 - eval 报告 schemaVersion=1 新增 partialReason=interrupted，SIGINT 只取消运行/评分子任务，保留已完成 arms，落盘 JSON/HTML 后退出 2；外部 CancellationException 继续传播。信号控制器不写会话事件。
 
 - 交互 init 使用现有隔离评测与本地报告载荷，候选经加载校验和试跑后发布；不新增事件或改版本号。
