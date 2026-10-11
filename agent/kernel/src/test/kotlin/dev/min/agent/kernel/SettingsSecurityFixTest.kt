@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicLong
 class SettingsSecurityFixTest {
     @get:Rule val tmp = TemporaryFolder()
     private suspend fun withSession(fs: FakeFs, trust: Boolean = false, mode: PermissionMode = PermissionMode.Default,
-        canonical: (GuestPath) -> GuestPath = { it }, cwd: GuestPath = GuestPath("/work"), headless: Boolean = false,
+        canonical: (GuestPath) -> GuestPath = { it }, cwd: GuestPath = GuestPath("/work"), headless: Boolean = false, modelAllowed: (ModelRef) -> Boolean = { true },
         exec: FakeExec = FakeExec(), workflowEngine: WorkflowEngine? = null, env: Map<String, String> = emptyMap(),
         block: suspend (SessionRuntime, SessionHub) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -29,7 +29,7 @@ class SettingsSecurityFixTest {
                     if (ref == reviewer) """{"decision":"allow","reason":"local test","hard_deny_matches":[]}""" else "done")))) }, tools = emptyList(),
                 host = HostPorts(fs, FakeSearch(), exec) { FakeArtifacts() }, platform = "test", zone = ZoneOffset.UTC,
                 memoryHome = GuestPath("/home"), trustProjectHooks = { trust }, canonicalPath = canonical,
-                pluginDirs = listOf(GuestPath("/plug")), workflowEngine = workflowEngine, env = env::get, autoModeReviewer = AutoModeReviewer(reviewer))
+                pluginDirs = listOf(GuestPath("/plug")), workflowEngine = workflowEngine, env = env::get, autoModeReviewer = AutoModeReviewer(reviewer), modelAllowed = modelAllowed)
             val definitions = dev.min.agent.ext.config.ClaudeConfigLoader.load(fs, cwd, GuestPath("/home")).agents
             val catalog = AgentCatalog.of(definitions)
             val hub = SessionHub(FileSessionStore(tmp.newFolder().toPath(), { 0L }), deps, scope, agents = catalog.definitions)
@@ -261,4 +261,21 @@ class SettingsSecurityFixTest {
         try { withSession(FakeFs(), canonical = { throw CancellationException("cancel") }) { _, _ -> }; fail("取消") }
         catch (_: CancellationException) { }
     }
+
+    /** availableModels 在内核里的强制：切模型、子 agent 的 model、顾问都不能越过名单（名单由宿主算好给 [KernelDeps.modelAllowed]） */
+    @Test fun available_models_block_switch_subagent_and_advisor_outside_the_list(): Unit = runBlocking { withTimeout(15_000) {
+        val fs = FakeFs().apply { put("/home/.claude/agents/x.md", "---\nname: x\ndescription: helper\nmodel: claude-opus-5-5\n---\nHelp") }
+        val allowed = { ref: ModelRef -> dev.min.agent.ext.config.AvailableModels.allows(ref.modelId, listOf("sonnet")) }
+        withSession(fs, modelAllowed = allowed) { rt, hub ->
+            val refusal = rt.changeSettings(model = ModelRef("anthropic", "claude-opus-5-5"))
+            assertNotNull(refusal)
+            assertTrue(refusal!!.contains("availableModels"))
+            assertEquals(TEST_MODEL, rt.state.value.settings.model)
+            assertNull(rt.changeSettings(model = ModelRef("anthropic", "claude-sonnet-5-5")))
+            assertEquals(ModelRef("anthropic", "claude-sonnet-5-5"), rt.state.value.settings.model)
+            val result = hub.portFor(rt, TurnId("parent"), CallId("d")).delegate(DelegateRequest("Help", "help", agentType = "x", background = false))
+            assertTrue("子 agent 的 model 不在名单里要拒绝：$result", result is DelegateResult.Rejected)
+            try { rt.changeAdvisor(ModelRef("anthropic", "claude-opus-5-5")); fail("顾问不在名单里") } catch (_: IllegalArgumentException) { }
+        }
+    } }
 }

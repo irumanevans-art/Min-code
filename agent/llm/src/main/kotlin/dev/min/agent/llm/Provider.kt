@@ -143,6 +143,11 @@ data class ModelProfile(
     val supportsImages: Boolean = false,
     /** 能否收 PDF（document 块）。与图片分开：OpenAI / Gemini 的视觉模型不等于都收文档，由目录逐条标 */
     val supportsPdf: Boolean = false,
+    /**
+     * 供应商内的档位（`opus` / `sonnet` / `haiku` / `fable`），给别名解析用：`sonnet` 在这家就是标了 sonnet 的那个型号。
+     * 没标 = 这一档不由它代表；每家每档至多一个。非 Anthropic 的标法是按型号名的强弱判断，见 SOURCES.md
+     */
+    val tier: String? = null,
     val editStyle: EditStyle = EditStyle.StrReplace,
     val effortPatches: Map<Effort, JsonObject> = emptyMap(),
     val reasoningEcho: ReasoningEcho = ReasoningEcho.Always,

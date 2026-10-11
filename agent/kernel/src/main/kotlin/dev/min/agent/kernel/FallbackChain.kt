@@ -31,18 +31,24 @@ object FallbackChain {
         flag: String?,
         setting: FallbackModelSetting?,
         primary: ModelRef,
+        /** availableModels 的名单：链上不让选的模型直接丢掉并记一条说明（CC：读链时就丢） */
+        allowed: (ModelRef) -> Boolean = { true },
         isProvider: (String) -> Boolean,
     ): ResolvedFallbackChain {
         val notes = mutableListOf<String>()
         val raw = flag?.let(::listOf) ?: setting?.entries.orEmpty()
         val trustedForCrossProvider = flag != null || setting?.source !in setOf(ConfigSource.Project, ConfigSource.Local)
         val parsed = parse(raw, primary.providerId, isProvider).filter { ref ->
-            val allowed = ref.providerId == primary.providerId || trustedForCrossProvider
-            if (!allowed) {
+            if (!allowed(ref)) {
+                notes += "回退模型 ${ref.providerId}:${ref.modelId} 不在 availableModels 里，已从回退链中去掉"
+                return@filter false
+            }
+            val crossOk = ref.providerId == primary.providerId || trustedForCrossProvider
+            if (!crossOk) {
                 notes += "忽略 ${setting?.source?.label} 层 fallbackModel 里的 ${ref.providerId}:${ref.modelId}：" +
                     "项目设置不能把对话送去别的供应商，要用请写进用户设置或 --fallback-model"
             }
-            allowed
+            crossOk
         }
         return ResolvedFallbackChain(parsed.filter { it != primary }.take(MAX_MODELS), notes)
     }

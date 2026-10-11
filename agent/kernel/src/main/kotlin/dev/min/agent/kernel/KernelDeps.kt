@@ -118,6 +118,11 @@ data class KernelDeps(
      * `--fallback-model` 不随 resume 恢复）。链上每一项都要能被 [models] 解析，解析不了的跳过并给一条 Note
      */
     val fallbackModels: List<ModelRef> = emptyList(),
+    /**
+     * `availableModels` 的强制（宿主算好：托管层优先、别名先解析成型号再比）。切模型（`/model`、set_model）、子 agent 的 `model`、
+     * 顾问与审查模型的显式设置都经过它；默认全放行（没有名单）。运行时的判断，不进日志——名单每次启动从设置重算。
+     */
+    val modelAllowed: (ModelRef) -> Boolean = { true },
     /** 重开会话时建议「从摘要续接」的阈值（[resumeAdvice]）；照 CC：空闲 > 1 小时且上下文 > 100,000 token */
     val resumeThresholds: ResumeThresholds = ResumeThresholds(),
     val maxWebSearches: Int = 200,

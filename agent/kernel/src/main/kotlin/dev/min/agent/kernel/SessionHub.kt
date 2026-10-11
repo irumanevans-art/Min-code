@@ -1055,6 +1055,8 @@ class SessionHub(
         } else {
             val model = resolveModel(request.model ?: definition.model, ps.settings.model)
                 ?: return DelegateResult.Rejected("不认识模型「${request.model ?: definition.model}」。不写 model 就用当前模型。")
+            // 子 agent 的 model 也受 availableModels 约束（CC：子 agent、队友都在名单之内）
+            if (!deps.modelAllowed(model)) return DelegateResult.Rejected("模型 ${model.providerId}:${model.modelId} 不在 availableModels 里，子 agent 不能用它。不写 model 就用当前模型。")
             val mode = childPermissionMode(ps.settings.mode, definition, deps.trustProjectHooks(ps.settings.cwd), ps.autoReviewSettings)
             created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort, headless = ps.created.headless, loadingModes = ps.created.loadingModes)
             initial += SubagentOrigin(

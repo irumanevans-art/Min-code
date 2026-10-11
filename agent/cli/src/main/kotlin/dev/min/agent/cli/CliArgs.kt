@@ -87,7 +87,7 @@ const val USAGE = """用法：min-agent --model <模型 id> [选项] [-p <提示
 
   -p <提示>              非交互：跑完这一句就退出；不给则进入交互模式（长形 --print）
   --provider <id>        模型目录里的供应商 id，默认 anthropic
-  --model <id>           模型 id（必填）
+  --model <id>           模型 id 或别名（sonnet / opus / haiku / fable / best / default / opusplan，可加 [1m]；必填）
   --base-url <url>       覆盖供应商地址（协议路径之前那一段）
   --wire <协议>         anthropic / openai_chat / openai_responses；自定义供应商可现场指定
   --auth x-api-key|bearer  凭证放哪个头，默认按供应商

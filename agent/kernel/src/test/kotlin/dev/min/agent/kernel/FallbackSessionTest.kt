@@ -292,6 +292,19 @@ class FallbackSessionTest {
     }
 
     @Test
+    fun `a switch to another provider leaves a note saying where the conversation now goes`() = run {
+        val primary = ScriptedModel(*failures(3))
+        val other = RoutingModel { reply(TextPart("另一家的回答")) }
+        val rt = session("s-cross-note", deps(mapOf(TEST_MODEL to primary, fb2 to other), listOf(fb2)))
+        rt.say("你好")
+
+        // 对话内容换了供应商，要在对话里说一声（与顾问的数据去向说明同一口径）
+        val note = events(rt).filterIsInstance<Note>().single { it.text.contains("other:fb2") }
+        assertTrue(note.text, note.text.contains("发给"))
+        assertLogIsTruth(rt)
+    }
+
+    @Test
     fun `the rest of the turn stays on the fallback and the next turn tries the primary first`() = run {
         val read = FakeTool("Read", READ_ONLY) { dev.min.agent.spi.ToolResult(listOf(TextPart("内容"))) }
         val callRead = ToolCallPart(CallId("c1"), "Read", JsonObject(mapOf("k" to JsonPrimitive("a"))))

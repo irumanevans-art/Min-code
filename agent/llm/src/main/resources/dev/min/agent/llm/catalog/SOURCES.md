@@ -234,3 +234,19 @@ GET /models 的 created_at 固定日期与 display_name 不提供上下文 / 最
 基线目录没有任何 `family=gpt` 项，新增 OpenAI `gpt-5.4`，明确 `editStyle=apply_patch`；其余模型不改。
 能力与 USD 单价按 https://developers.openai.com/api/docs/models/gpt-5.4 核对：窗口 1,050,000，输出 128,000，文本和图像输入；输入/缓存输入/输出每百万 2.5/0.25/15，超过 272k 输入按 2x 输入、1.5x 输出。
 未推定 PDF、未知中转供应的 GPT 型号或未来型号的能力与价格。Responses 使用官方 Codex 自由文本 grammar，Chat 用 input 字符串承载相同 V4A。
+
+## 别名档位（`tier`）与 OpenAI PDF（2026-10-11 补）
+
+| 模型 | 字段 | 值 | 出处 |
+|---|---|---|---|
+| gpt-5.4 | supportsPdf | true | OpenAI 文件输入指南（developers.openai.com/api/docs/guides/pdf-files）："On models with vision capabilities, such as `gpt-4o` and later models, the API extracts both text and page images"；gpt-5.4 属 gpt-4o 之后的视觉模型。Chat Completions 以 `file` 内容块收 PDF（与 openai_chat 线协议一致）。Gemini 目录里目前没有型号，未标 |
+| claude-* | tier | fable / opus / sonnet / haiku | CC 模型配置页的别名表：`opus` = Opus 5.5、`sonnet` = Sonnet 5.5、`haiku` = Haiku 5.5、`fable` = Fable 5.1（同页 "What each alias resolves to" 与 fable 说明）。`claude-sonnet-5` 不标档（被 5.5 取代） |
+| gpt-5.4 | tier | opus | 本家只有这一个型号，作为该家的旗舰档 |
+| deepseek-v4-pro / deepseek-openai 同 | tier | opus | 非 Anthropic 的档是按型号名判断的强弱（Pro = 旗舰，Flash = 快速档）。没有 sonnet 档，`sonnet` 在这家解析报错 |
+| deepseek-flash / deepseek-openai 同 | tier | haiku | 同上（Flash） |
+| glm-5.3 / zhipu-openai 同 | tier | opus | 同系列最新版本作旗舰档 |
+| glm-5.2 / zhipu-openai 同 | tier | sonnet | 同系列上一版作中档 |
+| qwen3.8-max / qwen-openai 同 | tier | opus | Max 系列作旗舰档 |
+| MiniMax-M3 / minimax-openai 同 | tier | opus | 同系列最新、旗舰 |
+| MiniMax-M2.7 / minimax-openai 同 | tier | sonnet | 上一代作中档 |
+| MiniMax-M3.1-Flash-Preview / minimax-openai 同 | tier | haiku | Flash 为快速档。M2.7-highspeed 是 M2.7 的提速版本，不另占一档，不标 |
