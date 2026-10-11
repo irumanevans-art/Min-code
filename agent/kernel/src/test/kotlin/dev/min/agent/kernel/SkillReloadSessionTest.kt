@@ -206,6 +206,20 @@ class SkillReloadSessionTest {
     }
 
     @Test
+    fun `a nested skill is in the current list only after a file in its directory was touched`() = run {
+        fs.files["/workspace/apps/web/.claude/skills/deploy/SKILL.md"] = skillFile("web deploy")
+        fs.files["/workspace/apps/web/src/a.ts"] = "x"
+        val model = ScriptedModel(reply(readCall("/workspace/apps/web/src/a.ts"), stop = StopReason.ToolUse), reply(TextPart("done")))
+        val rt = create(model)
+        // 原文：「Until then they don't appear in the / menu and you can't invoke them by name」
+        assertTrue(rt.state.value.currentSkillEntries().none { it.name == "deploy" })
+        assertTrue(rt.slashDefs("/deploy").skills.isEmpty())
+        rt.say("look at the web app")
+        assertTrue(rt.state.value.currentSkillEntries().any { it.name == "deploy" })
+        assertEquals(listOf("deploy"), rt.slashDefs("/deploy now").skills.map { it.name })
+    }
+
+    @Test
     fun `bare and safe do not watch the user and project skills`() = run {
         for (mode in listOf(Customizations.Bare, Customizations.Safe)) {
             val model = ScriptedModel(reply(TextPart("1")), reply(TextPart("2")))
