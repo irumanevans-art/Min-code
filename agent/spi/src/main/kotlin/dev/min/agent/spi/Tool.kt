@@ -172,6 +172,9 @@ interface ToolContext {
     val search: Search
     val exec: Exec
     suspend fun runShell(command: ShellCommand, options: ExecOptions, allowedDomains: List<String> = emptyList()): ExecResult = exec.run(command, options)
+
+    /** 这次工具执行 span 的 W3C trace context（追踪开着且按原文口径该传播时才有；HTTP MCP 请求带它），否则 null */
+    suspend fun traceparent(): String? = null
     val artifacts: ArtifactSink
 
     /** 本会话里最近一次（读或写）看到 [path] 时它的状态；没看过为 null。由内核从日志里的 [ToolResult.touched] 推出 */

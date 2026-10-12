@@ -705,11 +705,13 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override val fs: WorkspaceFs = deps.host.fs
         override val search: Search = credentialSearch(deps.host.search, deps.credentialPaths, deps.canonicalPath)
         override val exec: Exec = deps.host.exec
+        override suspend fun traceparent(): String? = if (turnId == null) null else
+            dev.min.agent.spi.catchingNonCancellation { deps.traceContext.toolExecution(rt.sessionId, turnId, callId) }.getOrNull()
+
         override suspend fun runShell(command: dev.min.agent.spi.ShellCommand, options: dev.min.agent.spi.ExecOptions, allowedDomains: List<String>): dev.min.agent.spi.ExecResult {
             // 追踪开着时，子进程继承这次工具执行 span 的 TRACEPARENT（原文：Bash 子进程继承当前执行 span）。
             // 值由宿主算好；算不出来（没开追踪、出错）就什么都不加，遥测不许挡住命令
-            val traceparent = if (turnId == null) null else
-                dev.min.agent.spi.catchingNonCancellation { deps.traceContext.toolExecution(rt.sessionId, turnId, callId) }.getOrNull()
+            val traceparent = traceparent()
             val traced = if (traceparent == null) command else command.copy(env = command.env + ("TRACEPARENT" to traceparent))
             // shell 目录的跟踪（cd 跨命令保留）包在最外层：带 TRACEPARENT 的命令照样按 shell 目录起、跑完记下结束目录
             return rt.runTrackedShell(traced) { c -> rt.runNetworkShell(callId, c, options, if (callId in networkApprovedCalls) allowedDomains else emptyList()) }

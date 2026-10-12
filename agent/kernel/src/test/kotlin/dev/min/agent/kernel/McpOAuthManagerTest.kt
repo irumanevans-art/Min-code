@@ -50,6 +50,8 @@ class McpOAuthManagerTest {
         @Volatile var omitChallenge=false
         @Volatile var failedCallsGate: CompletableDeferred<Unit>? = null
         val simultaneousFailures=AtomicInteger()
+        /** 每次 tools/call 请求带的 traceparent 头（没带记 null） */
+        val callTraces=java.util.concurrent.CopyOnWriteArrayList<String?>()
         val store=Store()
         fun saved(expiry: Long?=null)=McpOAuthCredentials(issuer,"$base/authorize","$base/token","client",null,"$base/mcp/oauth/callback",access,"FAKE_REFRESH",expiry)
         val http=object : HttpTransport {
@@ -57,6 +59,7 @@ class McpOAuthManagerTest {
                 val c=URI(request.url).toURL().openConnection() as HttpURLConnection
                 c.requestMethod=request.method; c.connectTimeout=2000; c.readTimeout=2000
                 request.headers.forEach { c.setRequestProperty(it.first,it.second) }
+                if(request.body?.decodeToString()?.contains("\"method\":\"tools/call\"")==true) callTraces += request.headers.firstOrNull { it.first.equals("traceparent",ignoreCase=true) }?.second
                 request.body?.let { c.doOutput=true; c.outputStream.use { out -> out.write(it) } }
                 val status=c.responseCode
                 val bytes=(if(status<400) c.inputStream else c.errorStream)?.use { it.readBytes() } ?: byteArrayOf()
@@ -137,6 +140,14 @@ class McpOAuthManagerTest {
         } finally { scope.cancel() }
     }
     private suspend fun invoke(rt: SessionRuntime)=rt.mcpCaller.call(McpCallRequest("db","ping",args(),rt.sessionId,CallId("c"),FakeArtifacts(),{}))
+    @Test fun `a traced tool call carries traceparent on its HTTP request and an untraced one does not`() = runBlocking {
+        Server().use {s ->s.store.unavailable=true;case(s,mapOf("Authorization" to "Bearer ${s.access}")) {_,rt,_ ->
+            val tp="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+            assertFalse(rt.mcpCaller.call(McpCallRequest("db","ping",args(),rt.sessionId,CallId("c1"),FakeArtifacts(),{},traceparent=tp)).isError)
+            assertFalse(invoke(rt).isError)
+            assertEquals(listOf(tp,null),s.callTraces.toList())
+        }};Unit
+    }
     @Test fun `configured authorization does not depend on OAuth repository availability`() = runBlocking {
         Server().use {s ->s.store.unavailable=true;case(s,mapOf("Authorization" to "Bearer ${s.access}")) {hub,rt,_ ->
             assertEquals("connected",hub.mcp.statusOf(rt.sessionId).single().state)

@@ -59,6 +59,32 @@ class HttpMcpTransportTest {
             assertEquals(2, initialized.get()); assertEquals(listOf(null, null), initializeSessions); assertEquals(toolRequests[0], toolRequests[1])
         }
     }
+    @Test fun `a trace context in the caller's coroutine rides on that call's POST only`() = runBlocking {
+        LoopbackHttp().use { s ->
+            val seen = Collections.synchronizedList(mutableListOf<Pair<String?, String?>>())
+            s.server.createContext("/mcp") { e ->
+                if (e.requestMethod != "POST") e.reply(405)
+                else {
+                    val m = json(e.requestBody.readBytes().decodeToString())
+                    seen += m.text("method") to e.requestHeaders.getFirst("traceparent")
+                    when (m.text("method")) {
+                        "initialize" -> e.reply(200, result(m.getValue("id"), initializeResult()).toString())
+                        "notifications/initialized" -> e.reply(202)
+                        "tools/call" -> e.reply(200, result(m.getValue("id"), json("""{"content":[{"type":"text","text":"ok"}]}""")).toString())
+                        else -> e.reply(202)
+                    }
+                }
+            }
+            val tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+            withClient(StreamableHttpMcpTransport(s.url + "/mcp", { listOf("traceparent" to "from-config") }, s.http, enableGetStream = false)) { c ->
+                c.connect()
+                withContext(McpTraceContext(tp)) { c.callTool("traced", emptyObject, idleTimeoutMs = 3_000) }
+                c.callTool("plain", emptyObject, idleTimeoutMs = 3_000)
+            }
+            val calls = seen.filter { it.first == "tools/call" }.map { it.second }
+            assertEquals("带上下文的那次用调用方的值，配置里的同名头让位；没带的照配置原样", listOf(tp, "from-config"), calls)
+        }
+    }
     @Test fun `second 404 after recovery fails instead of looping`() = runBlocking {
         LoopbackHttp().use { s ->
             val count = AtomicInteger()

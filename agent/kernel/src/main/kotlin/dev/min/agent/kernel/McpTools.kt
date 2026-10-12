@@ -41,6 +41,8 @@ internal data class McpCallRequest(
     val artifacts: dev.min.agent.spi.ArtifactSink,
     val progress: (String) -> Unit,
     val resourceUri: String? = null,
+    /** 这次工具执行 span 的 `traceparent`（[dev.min.agent.spi.ToolContext.traceparent]）；HTTP 传输随请求发出，null = 不传播 */
+    val traceparent: String? = null,
 )
 
 /**
@@ -94,7 +96,7 @@ internal class McpToolAdapter(private val entry: McpToolEntry, private val calle
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = channelFlow {
         val result = caller.call(
-            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts, { text -> trySend(ToolProgress.Status(text)) }),
+            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts, { text -> trySend(ToolProgress.Status(text)) }, traceparent = ctx.traceparent()),
         )
         send(ToolProgress.Done(result))
     }

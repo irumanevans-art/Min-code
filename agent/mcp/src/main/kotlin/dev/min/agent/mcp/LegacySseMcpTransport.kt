@@ -90,6 +90,11 @@ class LegacySseMcpTransport(
         if (body != null) all += "Content-Type" to "application/json"
         protocolVersion?.let { all += "MCP-Protocol-Version" to it }
         lastId?.takeIf { it.isNotEmpty() }?.let { all += "Last-Event-ID" to it }
+        // 同 Streamable HTTP：调用方带了 trace 上下文就随这次 POST 发出
+        if (body != null) kotlin.coroutines.coroutineContext[McpTraceContext]?.let { trace ->
+            all.removeAll { it.first.equals("traceparent", ignoreCase = true) }
+            all += "traceparent" to trace.traceparent
+        }
         return HttpRequest(method, address, all, body, readTimeoutMs)
     }
     override suspend fun send(message: JsonObject) = send(message, null)

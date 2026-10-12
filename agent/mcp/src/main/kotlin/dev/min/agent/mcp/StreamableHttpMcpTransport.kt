@@ -111,6 +111,11 @@ class StreamableHttpMcpTransport(
         sessionId?.let { all += "Mcp-Session-Id" to it }
         protocolVersion?.let { all += "MCP-Protocol-Version" to it }
         lastId?.takeIf { it.isNotEmpty() }?.let { all += "Last-Event-ID" to it }
+        // 调用方带了 trace 上下文（[McpTraceContext]）就随这次 POST 发出；配置里的同名头让位
+        if (body != null) kotlin.coroutines.coroutineContext[McpTraceContext]?.let { trace ->
+            all.removeAll { it.first.equals("traceparent", ignoreCase = true) }
+            all += "traceparent" to trace.traceparent
+        }
         return HttpRequest(method, endpoint, all, body, readTimeoutMs)
     }
 

@@ -783,7 +783,7 @@ internal class McpManager(
         }
 
         override suspend fun readResourceFor(server: String, uri: String, ctx: dev.min.agent.spi.ToolContext) = call(
-            McpCallRequest(server, "resources/read", JsonObject(emptyMap()), ctx.sessionId, ctx.callId, ctx.artifacts, {}, resourceUri = uri),
+            McpCallRequest(server, "resources/read", JsonObject(emptyMap()), ctx.sessionId, ctx.callId, ctx.artifacts, {}, resourceUri = uri, traceparent = ctx.traceparent()),
         )
 
         override suspend fun call(request: McpCallRequest): ToolResult {
@@ -797,12 +797,14 @@ internal class McpManager(
         val key = request.sessionId to request.callId
         entry.activeCalls[key] = request
         try {
-            val result = authenticated(entry) { connection -> if (request.resourceUri != null) connection.readResource(request.resourceUri) else connection.call(
+            // 追踪开着时 HTTP MCP 请求带这次工具执行 span 的 traceparent（原文：「the same way」，同一个开关管）；放进协程上下文，HTTP 传输发 POST 时取
+            val trace = request.traceparent?.let { dev.min.agent.mcp.McpTraceContext(it) } ?: kotlin.coroutines.EmptyCoroutineContext
+            val result = withContext(trace) { authenticated(entry) { connection -> if (request.resourceUri != null) connection.readResource(request.resourceUri) else connection.call(
                 request.tool, request.arguments,
                 onProgress = { p -> request.progress(p.message ?: p.total?.let { "${p.progress.toLong()} / ${it.toLong()}" } ?: "进度 ${p.progress}") },
                 idleTimeoutMs = if (entry.spec is McpServerSpec.Stdio) STDIO_IDLE_TIMEOUT_MS else REMOTE_IDLE_TIMEOUT_MS,
                 hardTimeoutMs = entry.spec.timeoutMs,
-            ) }
+            ) } }
             McpResults.toToolResult(request.server, request.tool, request.callId.value, result, request.artifacts)
         } catch (e: CancellationException) {
             throw e
