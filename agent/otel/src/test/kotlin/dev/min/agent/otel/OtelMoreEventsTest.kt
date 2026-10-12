@@ -20,6 +20,8 @@ import dev.min.agent.spi.HookSourceData
 import dev.min.agent.spi.HooksDisabledBy
 import dev.min.agent.spi.HooksLoaded
 import dev.min.agent.spi.HooksRan
+import dev.min.agent.spi.McpServerInfo
+import dev.min.agent.spi.McpServersLoaded
 import dev.min.agent.spi.ModelCharged
 import dev.min.agent.spi.ModelFailureKind
 import dev.min.agent.spi.ModelRequestFailed
@@ -342,6 +344,37 @@ class OtelMoreEventsTest {
         assertEquals(true, out.flag("model_swapped"))
         assertEquals("claude-test", out.text("model"))
         assertEquals("claude-fallback", out.text("final_model"))
+    }
+
+    // ---- mcp_server_connection ----
+
+    private fun mcp(vararg servers: McpServerInfo) = McpServersLoaded(servers.toList())
+    private fun server(name: String, state: String, reason: String? = null) = McpServerInfo(name, "project", "stdio", state, reason)
+
+    @Test
+    fun `mcp_server_connection：状态变化才记，连上 失败 断开各一种，名字与错误受 TOOL_DETAILS 管`() {
+        val events = listOf(
+            rec(1000, mcp(server("github", "pending"), server("jira", "pending"))),
+            rec(2000, mcp(server("github", "connected"), server("jira", "failed", "token SECRET-MCP-ERR 无效"))),
+            rec(3000, mcp(server("github", "connected"), server("jira", "failed", "token SECRET-MCP-ERR 无效"))),
+            rec(4000, mcp(server("github", "disabled"))),
+        )
+        val off = logs(events).named(OtelNames.MCP_SERVER_CONNECTION)
+        assertEquals("pending 不记；第三份状态没变不记", listOf("connected", "failed", "disconnected"), off.map { it.text("status") })
+        assertTrue(off.all { it.text("transport_type") == "stdio" || it.text("status") == "disconnected" })
+        assertEquals("project", off[0].text("server_scope"))
+        assertFalse("默认没有服务器名与错误正文", off.any { it.attributes.containsKey("server_name") || it.attributes.containsKey("error") })
+        assertFalse(off.joinToString { it.attributes.toString() }.contains("SECRET-MCP-ERR"))
+        val on = logs(events, OtelOptions(sessionId = sid, logToolDetails = true)).named(OtelNames.MCP_SERVER_CONNECTION)
+        assertEquals(listOf("github", "jira", "github"), on.map { it.text("server_name") })
+        assertEquals("token SECRET-MCP-ERR 无效", on[1].text("error"))
+        assertFalse("日志里没有的耗时与错误码不编造", on.any { it.attributes.containsKey("duration_ms") || it.attributes.containsKey("error_code") })
+    }
+
+    @Test
+    fun `整台服务器从清单里消失也算断开`() {
+        val out = logs(listOf(rec(1000, mcp(server("github", "connected"))), rec(2000, mcp()))).named(OtelNames.MCP_SERVER_CONNECTION)
+        assertEquals(listOf("connected", "disconnected"), out.map { it.text("status") })
     }
 
     // ---- skill_activated ----

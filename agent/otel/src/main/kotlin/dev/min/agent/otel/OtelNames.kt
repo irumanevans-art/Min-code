@@ -28,6 +28,7 @@ object OtelNames {
     const val COMPACTION = "claude_code.compaction"
     const val SUBAGENT_COMPLETED = "claude_code.subagent_completed"
     const val SKILL_ACTIVATED = "claude_code.skill_activated"
+    const val MCP_SERVER_CONNECTION = "claude_code.mcp_server_connection"
 
     const val MIN_TURN_STARTED = "min.turn.started"
     const val MIN_TURN_ENDED = "min.turn.ended"
@@ -52,6 +53,7 @@ val OTEL_NAME_TABLE: Map<String, List<String>> = mapOf(
     "compaction_started" to emptyList(),
     "context_compacted" to listOf(OtelNames.COMPACTION),
     "compaction_failed" to listOf(OtelNames.COMPACTION),
+    "mcp_servers_loaded" to listOf(OtelNames.MCP_SERVER_CONNECTION),
     "skills_loaded" to emptyList(),
     "skills_discovered" to emptyList(),
     "skills_rescanned" to emptyList(),

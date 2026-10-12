@@ -18,6 +18,7 @@ import dev.min.agent.spi.ConversationEnded
 import dev.min.agent.spi.ComponentHooksRegistered
 import dev.min.agent.spi.HooksDisabledBy
 import dev.min.agent.spi.HooksLoaded
+import dev.min.agent.spi.McpServersLoaded
 import dev.min.agent.spi.HooksRan
 import dev.min.agent.spi.SkillEntry
 import dev.min.agent.spi.SkillsDiscovered
@@ -84,6 +85,9 @@ class OtelMapper(private val options: OtelOptions) {
 
     /** skill 清单（按名字）：skill_activated 要 source；SkillsLoaded / SkillsDiscovered / SkillsRescanned 折出 */
     private val skills = HashMap<String, SkillEntry>()
+
+    /** MCP 服务器上一份快照里的状态：mcp_server_connection 在状态变化时才记 */
+    private val mcpState = HashMap<String, String>()
 
     /** 压缩开始的时刻与触发：ContextCompacted / CompactionFailed 到时算耗时 */
     private val compactions = HashMap<String, Pair<Long, CompactionTrigger>>()
@@ -238,6 +242,7 @@ class OtelMapper(private val options: OtelOptions) {
                 }))
             }
             is HooksLoaded -> hooksLoaded(record, e)
+            is McpServersLoaded -> mcpConnections(record, e)
             is HooksRan -> hooksRan(record, e)
             is CompactionStarted -> {
                 compactions[e.compactionId] = at to e.trigger
@@ -384,6 +389,45 @@ class OtelMapper(private val options: OtelOptions) {
         "managed" -> "policySettings"
         "plugin" -> "plugin"
         else -> label
+    }
+
+    // ---- mcp_server_connection ----
+
+    /**
+     * 原文 mcp_server_connection：服务器连上、连接失败、断开各一条。日志里的对应是 `mcp_servers_loaded`（每次服务器集合或状态变化时整份落盘），
+     * 所以拿它与上一份比：状态变成 connected / failed 记 connected / failed，从 connected 变成别的（或整台消失）记 disconnected；状态没变不记。
+     * `duration_ms`（连接耗时）与 `error_code` 日志里没有，不写；`is_plugin` 日志里分不出，不写。
+     * `server_name` 与 `error` 受 OTEL_LOG_TOOL_DETAILS 管（原文），默认只有传输、范围与状态。
+     */
+    private fun mcpConnections(record: EventRecord, e: McpServersLoaded): List<OtelItem> {
+        val out = ArrayList<OtelItem>()
+        fun emit(status: String, name: String, transport: String?, scope: String?, reason: String?) {
+            out += log(record, OtelNames.MCP_SERVER_CONNECTION, buildMap {
+                put("status", text(status))
+                transport?.let { put("transport_type", text(it)) }
+                scope?.let { put("server_scope", text(it)) }
+                if (options.logToolDetails) {
+                    put("server_name", text(name))
+                    if (status == "failed" && reason != null) put("error", text(content(reason, true)))
+                }
+            })
+        }
+        val seen = HashSet<String>()
+        for (s in e.servers) {
+            seen += s.name
+            val prev = mcpState[s.name]
+            when {
+                s.state == "connected" && prev != "connected" -> emit("connected", s.name, s.transport, s.scope, null)
+                s.state == "failed" && prev != "failed" -> emit("failed", s.name, s.transport, s.scope, s.reason)
+                prev == "connected" && s.state != "connected" && s.state != "failed" -> emit("disconnected", s.name, s.transport, s.scope, null)
+            }
+            mcpState[s.name] = s.state
+        }
+        for ((name, prev) in mcpState.toMap()) if (name !in seen) {
+            if (prev == "connected") emit("disconnected", name, null, null, null)
+            mcpState.remove(name)
+        }
+        return out
     }
 
     // ---- hook 事件 ----
