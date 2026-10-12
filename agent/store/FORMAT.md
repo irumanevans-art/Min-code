@@ -342,3 +342,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - v1 增量（2026-10-12，`/add-dir` 与 DirectoryAdded hook）：新增事件 `directory_added`（`directory`：规范化的绝对 guest 路径；`source`：`slash_command` / `register_repo_root`），定义在 `spi/DirectoryEvents.kt`。会话中途加的工作目录：折叠时并进 `additionalDirectories`（权限引擎按它判：读不再问、写按权限模式；手机文件底线不被覆盖，所以这类目录加不进来），同时记进单独的 `addedDirectories`——`permission_rules_loaded` 重读设置时整份替换的是 settings 里的目录，这一份会被并回去、不会被冲掉。只授予文件访问，目录里的配置不生效；**不写任何 settings 文件**，只在本会话有效，重开会话由这条事件恢复。已经是（或在）工作目录里的目录不写事件、不触发 hook。事件落盘之后在后台跑 DirectoryAdded hooks（不拦加目录；`slash_command` 的 `systemMessage` 以 `hook_context_added`（`NextUserMessage`）交给模型，`register_repo_root` 的只进 `hooks_ran` 记录）。含新事件的日志旧版本打不开；旧日志照常读。
 
 - 无日志格式变化（2026-10-12，FileChanged 文件监视）：监视基线（被监视文件上一次的大小与修改时间）只在内存里，不进日志——它是宿主文件系统的现状快照，重开会话时重新取（那一刻起的变化才算变化）。变化触发的 FileChanged hook 照常以 `hooks_ran`（`event: "FileChanged"`）记录，hook 返回的 watchPaths 落 `cwd_watch_paths_changed`。
+
+- 无日志格式变化（2026-10-12，Setup）：`--init-only` / `-p --init` / `-p --maintenance` 启动时在 SessionStart 之前触发 Setup hooks，只留一条 `hooks_ran`（`event: "Setup"`）；触发旗标是启动参数，不进 `session_created`，也不随重开恢复。

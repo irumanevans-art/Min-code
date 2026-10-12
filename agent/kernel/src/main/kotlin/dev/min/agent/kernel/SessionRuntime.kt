@@ -504,6 +504,19 @@ class SessionRuntime private constructor(
     }
 
     /**
+     * Setup（官方 hooks 页「Setup」）：只在 CLI 以 `--init-only`（matcher `init`）、或 `-p` 下 `--init`（`init`）/ `--maintenance`（`maintenance`）启动时触发，
+     * 在会话的 SessionStart 之前跑，普通启动不触发。无决策控制，每个退出码都丢弃它的 JSON 输出（引擎里的丢弃表），退出码与 stderr 也忽略；
+     * mcp_tool 在 Setup 上永远跳过（那时 MCP 还没接好，见 [HookDriver.run]）；CLAUDE_ENV_FILE 照发（写进去的变量对之后的 Bash 生效）
+     */
+    internal suspend fun runSetup(trigger: String) {
+        require(trigger == "init" || trigger == "maintenance") { "未知的 Setup 触发：$trigger" }
+        HookDriver(this).run(
+            HookEvent.Setup, trigger,
+            HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.SetupInput.serializer(), dev.min.agent.ext.hooks.SetupInput(trigger)).jsonObject,
+        )
+    }
+
+    /**
      * SessionStart：startup（新建根会话）与 resume（用户打开已有会话，[SessionHub.open] 判定）两条 source，
      * 加的上下文挂到下一条人发的消息上——resume 也走同一条路（CC：hook 的上下文要赶在第一个请求之前到达模型）
      */
@@ -1118,6 +1131,8 @@ class SessionRuntime private constructor(
             hub: SessionHub? = null,
             /** false = 不跑 SessionStart(startup)。分支（Hub.branch）用它：分支是原对话的延续，不是新会话（CC 的 fork 同样不跑） */
             runStartHooks: Boolean = true,
+            /** 这次启动要触发的 Setup（matcher：init / maintenance，按顺序），在 SessionStart 之前跑；空 = 普通启动，不触发 */
+            setupTriggers: List<String> = emptyList(),
         ): SessionRuntime {
             val events = listOf(created) + initial
             // 先折叠再落盘：初始事件里有折叠不了的（比如分支带来别的会话的 team_created）就在这里失败，磁盘上不留下
@@ -1151,7 +1166,10 @@ class SessionRuntime private constructor(
                 runtime.commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "这次启动禁用了 $currentMode（托管策略，或 --restricted），使用 Default 模式")), Durability.Sync)
             }
             if (loadSkills) runtime.loadSkills()
-            if (runStartHooks && runtime.state.value.origin == null) runtime.runSessionStart("startup")
+            if (runStartHooks && runtime.state.value.origin == null) {
+                setupTriggers.forEach { runtime.runSetup(it) }
+                runtime.runSessionStart("startup")
+            }
             // 文件监视的基线：SessionStart 之后的样子（它的 hook 可能刚写过被监视的文件，那不算「会话中的变化」）
             if (runtime.state.value.origin == null) runtime.fileWatches.arm()
             return runtime

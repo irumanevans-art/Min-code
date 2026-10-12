@@ -73,6 +73,13 @@ data class CliArgs(
     val permissionPrompts: PermissionPrompts = PermissionPrompts.Host,
     /** `--include-hook-events`（CC）：stream-json 里发全部 hook 生命周期行；没有它时只发 SessionStart / Setup 的 */
     val includeHookEvents: Boolean = false,
+    /**
+     * `--init`（CC，仅 `-p`）：会话开始前跑 Setup hooks（matcher `init`）；`--maintenance`（仅 `-p`）同理（matcher `maintenance`）；
+     * `--init-only`：跑 Setup（`init`）与 SessionStart hooks 就退出，不开对话。三个都只是启动时的一次性准备（CI / 脚本）
+     */
+    val init: Boolean = false,
+    val initOnly: Boolean = false,
+    val maintenance: Boolean = false,
     /** --no-browser：MCP OAuth 登录不开浏览器，打印授权 URL、让人把回调 URL 粘回来（照 CC） */
     val noBrowser: Boolean = false,
     val worktree: Boolean = false,
@@ -103,6 +110,15 @@ data class CliArgs(
 ) {
     /** 既有调用点的便利读法：`--json` 与 `--output-format json` 等价 */
     val json: Boolean get() = outputFormat == OutputFormat.Json
+
+    /**
+     * 这次启动要触发的 Setup hooks 的 matcher（官方 cli-reference / hooks 页）：`--init-only` 与 `-p --init` 是 `init`，`-p --maintenance` 是 `maintenance`。
+     * `--init` / `--maintenance` 只在 `-p` 下生效（原文「print mode only」），交互模式下不触发；没给任何旗标 = 空（普通启动不触发 Setup）
+     */
+    val setupTriggers: List<String> get() = buildList {
+        if (initOnly || (prompt != null && init)) add("init")
+        if (prompt != null && maintenance) add("maintenance")
+    }
 }
 
 class UsageException(message: String, val exitCode: Int = 2) : Exception(message)
@@ -144,6 +160,9 @@ const val USAGE = """用法：min-agent [--model <模型 id>] [选项] [-p <提�
   --permission-prompt-tool stdio  权限询问交给 stdio 上的宿主（要求 -p 与两端 stream-json）：要审批的调用以 control_request / can_use_tool 发到 stdout，
                          宿主用 control_response（behavior: allow / deny）答复；未应答（含 stdin 关闭）= 拒绝。只认 stdio，不接 MCP 权限提示工具
   --permission-prompts host|none  none = 不问宿主，要审批的一律拒绝（-p 专用）
+  --init                 -p 专用：会话开始前跑 Setup hooks（matcher init；CC 同名）。非 -p 下不生效
+  --init-only            跑 Setup（init）与 SessionStart hooks 后直接退出，不开对话（CC 同名；一次性准备用，如 CI）
+  --maintenance          -p 专用：会话开始前跑 Setup hooks（matcher maintenance；CC 同名）。非 -p 下不生效
   --include-hook-events  stream-json 发全部 hook 的 hook_started / hook_response（没给时只发 SessionStart / Setup 的）
   --verbose              接受不处理（CC 的 -p stream-json 示例都带它；Min 的事件流本来就是全量的，stderr 的输出也不随它变）
   --resume <会话 id>     接着一个已有会话
@@ -197,6 +216,7 @@ private val FLAG_ARGS = setOf(
     "--json", "--trust", "--fork-session", "--continue", "--images",
     "--include-partial-messages", "--forward-subagent-text", "--no-browser",
     "--bare", "--safe-mode", "--restricted", "--replay-user-messages", "--verbose", "--include-hook-events",
+    "--init", "--init-only", "--maintenance",
 )
 
 fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
@@ -429,6 +449,9 @@ fun parseArgs(argv: Array<String>, cwdDefault: Path): CliArgs {
         permissionPromptTool = promptTool,
         permissionPrompts = permissionPrompts,
         includeHookEvents = "--include-hook-events" in flags,
+        init = "--init" in flags,
+        initOnly = "--init-only" in flags,
+        maintenance = "--maintenance" in flags,
         noBrowser = "--no-browser" in flags,
         worktree = "--worktree" in flags,
         worktreeName = values["--worktree"],

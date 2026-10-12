@@ -62,7 +62,8 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     // 输入流只开一个 reader：信任确认与交互循环共用，免得确认时缓冲住的输入被交互循环丢掉
     val stdin = System.`in`.bufferedReader()
     // 交互模式：未信任的目录先问一句（会话建立时就要读 hooks 的信任，所以必须在 openSession 之前）。-p 不弹框（CC）
-    if (args.prompt == null && !confirmWorkspaceTrust(app, stdin, System.err)) return 1
+    // --init-only 是一次性准备（CI / 脚本），不弹信任框：没被信任的目录里项目层 hooks 不跑（要跑加 --trust）
+    if (args.prompt == null && !args.initOnly && !confirmWorkspaceTrust(app, stdin, System.err)) return 1
     // channel：交互启动时开发参数要先确认（选退出就退出）；-p 不弹框，所以开发参数不生效（CC）。--channels 点名的照常开
     val developmentConfirmed = when {
         args.developmentChannels.isEmpty() -> false
@@ -71,6 +72,8 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     }
     app.applyChannels(developmentConfirmed)
     val runtime = app.openSession()
+    // --init-only（CC）：Setup 与 SessionStart hooks 已在建会话时跑完（openSession），到此为止，不开对话
+    if (args.initOnly) return 0
     val telemetry = app.telemetry(runtime)
     // 遥测（默认关，telemetry 为 null）：会话进行中按间隔导出，进程退出时补一次。
     // NonCancellable：取消退出时也要把已有的事件送出去

@@ -704,7 +704,7 @@ internal class DesktopApp(
         if (resumeId != null) {
             if (!args.forkSession) {
                 // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
-                val opened = hub().open(resumeId, resumedByUser = true)
+                val opened = hub().open(resumeId, resumedByUser = true, setupTriggers = args.setupTriggers)
                     ?: throw UsageException("找不到会话 ${resumeId.value}")
                 refuseEndedForPrint(opened)
                 restoreAllowedModel(opened)
@@ -714,14 +714,14 @@ internal class DesktopApp(
             // SessionStart(resume) 跑在分支上——用户接着用的是分支
             hub().open(resumeId) ?: throw UsageException("找不到会话 ${resumeId.value}")
             val branch = hub().branch(resumeId)
-            val opened = checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
+            val opened = checkNotNull(hub().open(branch.sessionId, resumedByUser = true, setupTriggers = args.setupTriggers))
             refuseEndedForPrint(opened)
             restoreAllowedModel(opened)
             return opened
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         // --name 建会话时命名（同目录重名时内核自动加 -2 变体）；headless 标记进 SessionCreated：--continue 由此跳过 -p 跑的会话（CC :78）
-        val runtime = hub().create(paths.guestOfHost(args.cwd), sessionModel, args.mode, args.effort, name = args.name, headless = args.prompt != null)
+        val runtime = hub().create(paths.guestOfHost(args.cwd), sessionModel, args.mode, args.effort, name = args.name, headless = args.prompt != null, setupTriggers = args.setupTriggers)
         if (args.worktree) {
             val result = runtime.enterWorktree(args.worktreeName)
             if (result.isError) throw UsageException(result.content.filterIsInstance<dev.min.agent.protocol.TextPart>().joinToString("") { it.text }, exitCode = 1)
