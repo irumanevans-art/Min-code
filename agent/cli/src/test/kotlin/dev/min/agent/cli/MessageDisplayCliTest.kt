@@ -110,7 +110,7 @@ class MessageDisplayCliTest {
                         writer.write("hello\n"); writer.flush()
                         // 等两批都上了屏再退出（每批要真起一次 shell 跑 hook，机器忙时可能要几秒）
                         val deadline = System.currentTimeMillis() + 90_000
-                        while (Regex("\[SHOWN\]").findAll(out.toString("UTF-8")).count() < 2 && System.currentTimeMillis() < deadline) Thread.sleep(100)
+                        while (Regex("\\[SHOWN\\]").findAll(out.toString("UTF-8")).count() < 2 && System.currentTimeMillis() < deadline) Thread.sleep(100)
                         Thread.sleep(500)
                         writer.write("/exit\n"); writer.flush()
                     }.also { it.isDaemon = true; it.start() }
