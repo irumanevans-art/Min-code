@@ -45,6 +45,11 @@ interface MinAgentText {
     fun subagentWoke(): String
 
     /** 同是「通知」唤醒的回合，按叫醒它的那条输入说清是谁：别的会话的消息、后台任务、MCP channel */
+    /** `/fork` 的回执：分出的会话在后台（[running] = 带了提示词、已开跑） */
+    fun forked(running: Boolean): String = if (running) "已分出一个会话在后台继续，抽屉里能看到它" else "已分出一个会话，抽屉里能看到它"
+    fun forkNotStarted(): String = "分出的会话没能接上，抽屉里刷新后再打开它"
+    fun branchUnsupported(): String = "这个会话不能分支"
+
     fun peerWoke(): String = "收到会话消息，继续处理"
     fun taskWoke(): String = "后台任务有新消息，继续处理"
     fun channelWoke(): String = "收到 channel 消息，继续处理"
@@ -168,6 +173,9 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun continued(atMs: Long?) = timed(s(R.string.min_agent_continued), atMs)
     override fun subagentWoke() = s(R.string.min_agent_woke)
     override fun peerWoke() = s(R.string.min_agent_peer_woke)
+    override fun forked(running: Boolean) = s(if (running) R.string.min_agent_forked_running else R.string.min_agent_forked)
+    override fun forkNotStarted() = s(R.string.min_agent_fork_not_started)
+    override fun branchUnsupported() = s(R.string.session_branch_unsupported)
     override fun taskWoke() = s(R.string.min_agent_task_woke)
     override fun channelWoke() = s(R.string.min_agent_channel_woke)
     override fun hookWoke() = s(R.string.min_agent_hook_woke)
@@ -288,6 +296,8 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
         SlashCommandView("new", s(R.string.min_agent_slash_new)),
         SlashCommandView("goal", s(R.string.min_agent_slash_goal)),
         SlashCommandView("reload-skills", s(R.string.min_agent_slash_reload_skills)),
+        SlashCommandView("branch", s(R.string.min_agent_slash_branch)),
+        SlashCommandView("fork", s(R.string.min_agent_slash_fork)),
     )
 
     override fun backgroundTask(command: String) = command.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(60)

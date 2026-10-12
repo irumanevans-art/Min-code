@@ -229,6 +229,11 @@ class SessionVM(
         session?.signals?.filterIsInstance<SessionSignal.Notice>() ?: emptyFlow()
     }
 
+    /** 会话请界面切到另一个会话（`/branch` 分出来的新会话）。页面收着就照「打开会话」接上 */
+    val sessionOpenRequests: Flow<SessionRef> = active.flatMapLatest { session ->
+        session?.signals?.filterIsInstance<SessionSignal.OpenSession>()?.map { it.ref } ?: emptyFlow()
+    }
+
     /** 今天的累计花费，跨会话、跨重启。底栏那个金额读它 */
     val dailyCostUsd: StateFlow<Double> = costLedger.dailyCostUsd
 

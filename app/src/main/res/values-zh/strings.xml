@@ -1128,6 +1128,9 @@
   <string name="min_agent_continued">继续</string>
   <string name="min_agent_woke">子 agent 完成，继续处理</string>
   <string name="min_agent_peer_woke">收到会话消息，继续处理</string>
+  <string name="min_agent_forked_running">已分出一个会话在后台继续，抽屉里能看到它</string>
+  <string name="min_agent_forked">已分出一个会话，抽屉里能看到它</string>
+  <string name="min_agent_fork_not_started">分出的会话没能接上，抽屉里刷新后再打开它</string>
   <string name="min_agent_task_woke">后台任务有新消息，继续处理</string>
   <string name="min_agent_channel_woke">收到 channel 消息，继续处理</string>
   <string name="min_agent_hook_woke">后台 hook 报告了问题</string>
@@ -1199,6 +1202,8 @@
   <string name="min_agent_delegation">委派 %1$s · %2$s</string>
   <string name="min_agent_slash_model">切换模型</string>
   <string name="min_agent_slash_goal">设定、查看或清除目标：做到条件满足为止</string>
+  <string name="min_agent_slash_branch">把这段对话复制成新会话并切过去（可带名字）</string>
+  <string name="min_agent_slash_fork">把这段对话复制成后台会话，自己留在这里（可带提示词让它开跑）</string>
   <string name="min_agent_slash_reload_skills">重新扫描 skill 与自定义命令目录：会话中途在磁盘上新增、改动的立即可用</string>
   <string name="goal_set_started">已设定目标：%1$s</string>
   <string name="goal_set_deferred">已设定目标：%1$s（当前回合结束时开始评估）</string>

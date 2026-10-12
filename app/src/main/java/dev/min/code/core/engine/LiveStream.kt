@@ -53,4 +53,7 @@ sealed interface SessionSignal {
     data class PreviewUrl(val url: String) : SessionSignal
 
     data class Notice(val text: String, val isError: Boolean) : SessionSignal
+
+    /** 请界面切到另一个会话（`/branch` 分出来的新会话）。界面照「打开会话」那条路接上 */
+    data class OpenSession(val ref: SessionRef) : SessionSignal
 }

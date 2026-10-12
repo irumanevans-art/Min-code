@@ -254,6 +254,12 @@ fun ClaudeCodePage(
         vm.signalNotices.collect { toaster.show(it.text, if (it.isError) ToastType.Error else ToastType.Success) }
     }
     LaunchedEffect(vm) {
+        vm.sessionOpenRequests.collect { ref ->
+            listVm.refreshSessions()
+            vm.openSession(ref)
+        }
+    }
+    LaunchedEffect(vm) {
         vm.extras.notices.collect { toaster.show(it.text, if (it.isError) ToastType.Error else ToastType.Success) }
     }
     LaunchedEffect(notice) {

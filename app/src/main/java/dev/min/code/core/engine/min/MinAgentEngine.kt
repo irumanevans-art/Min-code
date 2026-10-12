@@ -593,6 +593,16 @@ class MinAgentEngine(
 
     override suspend fun reconcilePluginDependencies(cwd: String) = pluginMarketplace(cwd).reconcileDependencies()
 
+    /**
+     * `/fork`：分出来的会话照「打开会话」那条路登记成在线会话（抽屉里能看到、监督器管它的前台服务），有提示词就发过去开跑。
+     * 用户留在原会话；分身自己在后台跑完，结果在它自己的会话里
+     */
+    override suspend fun startForked(id: String, prompt: String?): Boolean {
+        val session = open(id).getOrNull() ?: return false
+        if (prompt != null) session.submit(dev.min.code.core.engine.SessionCommand.Send(java.util.UUID.randomUUID().toString(), UserInput(prompt)))
+        return true
+    }
+
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = withContext(Dispatchers.IO) {
         // watch 的输出文件在内核的任务表里（命令源是宿主日志，WebSocket 源是内核自己写的事件文件）
         val logRef = tasks.find(taskId)?.handle?.logPath ?: hub.backgroundJobInfo(taskId)?.outputPath ?: return@withContext null

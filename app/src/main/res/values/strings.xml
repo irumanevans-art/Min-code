@@ -1134,6 +1134,9 @@
   <string name="min_agent_continued">Continued</string>
   <string name="min_agent_woke">A subagent finished, continuing</string>
   <string name="min_agent_peer_woke">A message from another session, continuing</string>
+  <string name="min_agent_forked_running">Forked a session that keeps going in the background; find it in the drawer</string>
+  <string name="min_agent_forked">Forked a session; find it in the drawer</string>
+  <string name="min_agent_fork_not_started">The forked session could not be started; refresh the drawer and open it there</string>
   <string name="min_agent_task_woke">A background task reported, continuing</string>
   <string name="min_agent_channel_woke">A channel message arrived, continuing</string>
   <string name="min_agent_hook_woke">A background hook reported a problem</string>
@@ -1205,6 +1208,8 @@
   <string name="min_agent_delegation">Delegate to %1$s · %2$s</string>
   <string name="min_agent_slash_model">Switch the model</string>
   <string name="min_agent_slash_goal">Set, show or clear the goal: keep working until the condition holds</string>
+  <string name="min_agent_slash_branch">Copy this conversation into a new session and switch to it (optional name)</string>
+  <string name="min_agent_slash_fork">Copy this conversation into a background session and keep working here (optional prompt to start it)</string>
   <string name="min_agent_slash_reload_skills">Re-scan skill and command folders so ones added or changed on disk this session work now</string>
   <string name="goal_set_started">Goal set: %1$s</string>
   <string name="goal_set_deferred">Goal set: %1$s (evaluated when the current turn ends)</string>

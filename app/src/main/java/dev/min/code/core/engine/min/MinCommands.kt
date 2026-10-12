@@ -51,6 +51,12 @@ interface MinCommandEffects {
     suspend fun killTask(taskId: String)
     suspend fun reconcilePluginDependencies(cwd: String): List<String> = emptyList()
 
+    /** `/branch [名字]`：复制整段对话成新会话（原会话不动） */
+    suspend fun branch(name: String?): dev.min.code.core.engine.BranchOutcome = dev.min.code.core.engine.BranchOutcome.Refused(null)
+
+    /** `/fork [提示词]`：复制整段对话成新会话、在后台接上并（有提示词就）开跑，自己留在原会话 */
+    suspend fun fork(prompt: String?): dev.min.code.core.engine.BranchOutcome = dev.min.code.core.engine.BranchOutcome.Refused(null)
+
     /** 「总是允许」写进某一层 settings 文件。[cwd] 是会话的工作目录（guest 路径）。结局以轻提示告诉用户（成功 / 没写成的原因） */
     suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String)
 }
@@ -154,6 +160,31 @@ class MinCommandHandler(
             }
         }
 
+    /**
+     * `/branch [名字]`：分出新会话并切过去（界面经 [SessionSignal.OpenSession] 打开它）；`/fork [提示词]`：分出新会话在后台接上，
+     * 有提示词就让它开跑，自己留在原会话（CC 原文：复制会话在后台跑、你留在原处）。回合进行中内核拒绝分支，原因原样回给界面。
+     * 不是这两个命令返回 null
+     */
+    private suspend fun sessionCopy(typed: String): CommandResult? {
+        val name = typed.substringBefore(' ').substringBefore('\n')
+        if (name != "/branch" && name != "/fork") return null
+        val argument = typed.removePrefix(name).trim().takeIf { it.isNotEmpty() }
+        return if (name == "/branch") {
+            when (val outcome = effects.branch(argument)) {
+                is dev.min.code.core.engine.BranchOutcome.Branched -> {
+                    effects.emit(SessionSignal.OpenSession(dev.min.code.core.engine.SessionRef(dev.min.code.core.engine.EngineKind.MinAgent, outcome.id)))
+                    CommandResult.Accepted
+                }
+                is dev.min.code.core.engine.BranchOutcome.Refused -> CommandResult.Rejected(outcome.reason ?: text.branchUnsupported())
+            }
+        } else {
+            when (val outcome = effects.fork(argument)) {
+                is dev.min.code.core.engine.BranchOutcome.Branched -> notice(text.forked(argument != null))
+                is dev.min.code.core.engine.BranchOutcome.Refused -> CommandResult.Rejected(outcome.reason ?: text.branchUnsupported())
+            }
+        }
+    }
+
     private fun notice(message: String): CommandResult {
         effects.emit(SessionSignal.Notice(message, isError = false))
         return CommandResult.Accepted
@@ -178,6 +209,8 @@ class MinCommandHandler(
         if (command.target == SendTarget.Main) goalArgumentOf(command.input.text)?.let { return goal(runtime, it) }
         // `/reload-skills`：手动重扫 skill 与命令目录（会话命令，不是 skill；回执经 Notice 给界面，不进对话）。子 agent 里当普通话
         if (command.target == SendTarget.Main && command.input.text.trim() == "/reload-skills") return notice(text.skillsReloaded(runtime.reloadSkills()))
+        // `/branch` / `/fork`（CC 的会话命令，先于同名 skill）：会话级的复制，不是 skill；子 agent 里当普通话
+        if (command.target == SendTarget.Main && command.input.images.isEmpty()) sessionCopy(command.input.text.trim())?.let { return it }
         if (command.target == SendTarget.Main && command.input.images.isEmpty()) {
             val typed = command.input.text.trim()
             if (typed == "/reload-plugins" || typed.startsWith("/reload-plugins ")) {

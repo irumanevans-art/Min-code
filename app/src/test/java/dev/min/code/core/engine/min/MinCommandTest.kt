@@ -170,6 +170,25 @@ class MinCommandTest {
         assertTrue("这次输入不进主对话", r.events().filterIsInstance<InputReceived>().none { it.clientMsgId.value == "send-/forky now" })
     }
 
+    @Test fun `slash branch copies the session, names the copy and asks the page to open it`() {
+        val r = rig(ScriptedModel())
+        assertEquals(CommandResult.Accepted, r.send("/branch side quest"))
+        val open = r.signals.filterIsInstance<SessionSignal.OpenSession>().single()
+        assertTrue("新会话，不是原会话", open.ref.id != r.root.sessionId.value)
+        assertEquals("side quest", r.k.hub.get(dev.min.agent.protocol.SessionId(open.ref.id))!!.state.value.name)
+        assertTrue("不进原会话的对话", r.events().filterIsInstance<InputReceived>().isEmpty())
+    }
+
+    @Test fun `slash fork copies the session into the background with the prompt and stays here`() {
+        val r = rig(ScriptedModel())
+        assertEquals(CommandResult.Accepted, r.send("/fork fix the flaky test"))
+        val (id, prompt) = r.host.forked.single()
+        assertTrue(id != r.root.sessionId.value)
+        assertEquals("fix the flaky test", prompt)
+        assertTrue("留在原会话：不请界面切过去", r.signals.none { it is SessionSignal.OpenSession })
+        assertTrue(r.signals.filterIsInstance<SessionSignal.Notice>().isNotEmpty())
+    }
+
     @Test fun `set cwd moves the session directory through the kernel and a missing directory is rejected`() {
         val r = skillsRig(mutableMapOf("/workspace/sub/README.md" to "x"))
         runBlocking {

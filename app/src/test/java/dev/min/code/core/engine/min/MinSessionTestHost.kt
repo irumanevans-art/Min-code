@@ -40,4 +40,15 @@ class FakeHost(val kernel: TestKernel, override val lookup: MinModelLookup = Fak
     override fun saveWithdrawnDraft(ref: SessionRef, input: UserInput) { drafts += ref to input }
     override suspend fun updateIndex(state: SessionState) { indexed += state }
     override suspend fun closeSession(session: MinAgentSession, reason: CloseReason) { closed += reason }
+
+    /** 分支走真 Hub；`/fork` 在后台接上的会话只记下来（id、提示词） */
+    val forked = mutableListOf<Pair<String, String?>>()
+    override suspend fun branchSession(id: String): dev.min.code.core.engine.BranchOutcome = try {
+        dev.min.code.core.engine.BranchOutcome.Branched(kernel.hub.branch(dev.min.agent.protocol.SessionId(id)).sessionId.value)
+    } catch (e: dev.min.agent.kernel.SessionBranchRefused) {
+        dev.min.code.core.engine.BranchOutcome.Refused(e.message)
+    }
+    override suspend fun renameSession(id: String, title: String): Boolean =
+        kernel.hub.get(dev.min.agent.protocol.SessionId(id))?.rename(title) != null
+    override suspend fun startForked(id: String, prompt: String?): Boolean { forked += id to prompt; return true }
 }

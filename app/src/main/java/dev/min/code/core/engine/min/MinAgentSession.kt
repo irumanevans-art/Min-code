@@ -75,6 +75,13 @@ interface MinSessionHost {
     /** 把「总是允许」的规则写进某一层 settings 文件，返回给人看的结局 */
     suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String): PersistRule
     suspend fun reconcilePluginDependencies(cwd: String): List<String> = emptyList()
+
+    /** 会话分支（`/branch`、`/fork` 用）：同 [dev.min.code.core.engine.AgentEngine.branchSession] */
+    suspend fun branchSession(id: String): dev.min.code.core.engine.BranchOutcome = dev.min.code.core.engine.BranchOutcome.Refused(null)
+    suspend fun renameSession(id: String, title: String): Boolean = false
+
+    /** 把分出来的会话 [id] 在后台接上（登记为在线会话、出现在抽屉里），有 [prompt] 就让它开跑；接不上返回 false */
+    suspend fun startForked(id: String, prompt: String?): Boolean = false
     suspend fun readTaskOutput(taskId: String, maxChars: Int): String?
     suspend fun searchFiles(cwd: String, query: String, limit: Int): List<String>
 
@@ -154,6 +161,18 @@ class MinAgentSession(
                 }
             }
             override suspend fun reconcilePluginDependencies(cwd: String) = host.reconcilePluginDependencies(cwd)
+            override suspend fun branch(name: String?): dev.min.code.core.engine.BranchOutcome {
+                val outcome = host.branchSession(rootId.value)
+                if (outcome is dev.min.code.core.engine.BranchOutcome.Branched && name != null) host.renameSession(outcome.id, name)
+                return outcome
+            }
+            override suspend fun fork(prompt: String?): dev.min.code.core.engine.BranchOutcome {
+                val outcome = host.branchSession(rootId.value)
+                if (outcome is dev.min.code.core.engine.BranchOutcome.Branched && !host.startForked(outcome.id, prompt)) {
+                    return dev.min.code.core.engine.BranchOutcome.Refused(host.text.forkNotStarted())
+                }
+                return outcome
+            }
             override fun emit(signal: SessionSignal) {
                 // 撤回的话不能丢：没人在收信号（界面不在）就落成草稿
                 if (signal is SessionSignal.Withdrawn && _signals.subscriptionCount.value == 0) host.saveWithdrawnDraft(ref, signal.input)
