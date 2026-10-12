@@ -97,6 +97,44 @@ object SettingsLoader {
         return SettingsSnapshot(layers.toList(), merged, notes.toList(), managedBroken)
     }
 
+    /**
+     * 会话中途要盯的设置文件（ConfigChange，官方 hooks 页「ConfigChange」的 matcher：`user_settings` / `project_settings` / `local_settings` / `policy_settings`）。
+     * 与 [load] 读的是同一批路径（同一套 cwd / git 根 / managed 的算法），文件不存在也在表里——创建一个新文件同样是变化。
+     * `--restricted` 只读托管层，所以只盯托管文件；`--settings` 是启动时给定的内联 / 文件快照，不盯。
+     * managed 盯主文件与 `managed-settings.d` 里的碎片（原文：只有这两处变了才触发；服务端下发 / MDM / 注册表不经文件，不在这里）
+     */
+    suspend fun watchedFiles(
+        fs: WorkspaceFs,
+        cwd: GuestPath,
+        home: GuestPath,
+        managedPath: GuestPath = DEFAULT_MANAGED_PATH,
+        inputs: SettingsInputs = SettingsInputs(),
+    ): List<WatchedSettingsFile> {
+        val io = ConfigIo(fs)
+        val cwdPath = GuestPaths.normalize(cwd.value)
+        val homePath = GuestPaths.normalize(home.value)
+        val out = mutableListOf<WatchedSettingsFile>()
+        if (!inputs.restricted) {
+            val userFile = GuestPaths.join(GuestPaths.join(homePath, ".claude"), "settings.json")
+            out += WatchedSettingsFile(GuestPath(userFile), "user_settings")
+            val projectFile = GuestPaths.join(cwdPath, ".claude/settings.json")
+            if (projectFile != userFile) out += WatchedSettingsFile(GuestPath(projectFile), "project_settings")
+            out += WatchedSettingsFile(GuestPath(GuestPaths.join(cwdPath, ".claude/settings.local.json")), "local_settings")
+            val root = gitRoot(io, cwdPath)
+            if (root != null && root != cwdPath && root != homePath) {
+                out += WatchedSettingsFile(GuestPath(GuestPaths.join(root, ".claude/settings.local.json")), "local_settings")
+            }
+        }
+        val mainFile = GuestPaths.normalize(managedPath.value)
+        out += WatchedSettingsFile(GuestPath(mainFile), "policy_settings")
+        val dropInDir = GuestPaths.join(GuestPaths.parentOf(mainFile), "managed-settings.d")
+        io.entries(dropInDir)
+            .filter { !it.name.startsWith(".") && it.name.endsWith(".json") }
+            .sortedBy { it.name }
+            .forEach { out += WatchedSettingsFile(GuestPath(GuestPaths.join(dropInDir, it.name)), "policy_settings") }
+        return out.distinctBy { it.path }
+    }
+
 /** 从 cwd 往上找最近的含 `.git`（目录或 worktree / 子模块里的文件）的目录 */
     private suspend fun gitRoot(io: ConfigIo, cwd: String): String? =
         GuestPaths.ancestors(cwd).asReversed().firstOrNull { io.kind(GuestPaths.join(it, ".git")) != null }
@@ -148,3 +186,6 @@ object SettingsLoader {
         return JsonObject(out)
     }
 }
+
+/** [SettingsLoader.watchedFiles] 的一项：设置文件路径与它在 ConfigChange 里的 source 名 */
+data class WatchedSettingsFile(val path: GuestPath, val source: String)

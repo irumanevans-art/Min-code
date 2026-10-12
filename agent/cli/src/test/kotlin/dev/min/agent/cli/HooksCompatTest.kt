@@ -85,6 +85,7 @@ class HooksCompatTest {
      * DirectoryAdded=SessionRuntime.addDirectory（宿主的 /add-dir 与 SDK register_repo_root 加目录之后后台触发；见 DirectoryAddedTest / AddDirCommandTest）。
      * FileChanged=FileWatches（matcher 点名的工作目录文件 + hooks 返回的 watchPaths；回合开始前 / 每批工具之后 / 回合里每 2 秒 / 回合结束时 stat 比对；见 FileChangedHookTest / FileChangedIntegrationTest）。
      * Setup=SessionRuntime.runSetup（CLI 的 --init-only / -p --init / -p --maintenance 经 Hub.create / open 的 setupTriggers，在 SessionStart 之前跑；见 SetupHookTest / SetupFlagsTest）。
+     * ConfigChange=ConfigWatch（会话中途 user / project / local / 托管设置文件的内容变了，与 FileChanged 同一个轮询器；放行才并进会话、被拦就钉住旧内容；skills 来源挂在 skill 重扫上；见 ConfigChangeHookTest / ConfigChangeIntegrationTest）。
      * 给内核接新事件时更新这份清单：对应 minTrigger:"none" 的样本会开始失败，提醒升级样本并摘掉标记。
      */
     private val KERNEL_FIRED = setOf(
@@ -93,7 +94,7 @@ class HooksCompatTest {
         "PreCompact", "PostCompact", "CwdChanged", "WorktreeCreate", "WorktreeRemove",
         "PostToolBatch", "TaskCreated", "TaskCompleted", "PreModelSwitch", "PostModelSwitch",
         "UserPromptExpansion", "PermissionDenied", "TeammateIdle", "InstructionsLoaded", "StopFailure",
-        "Elicitation", "ElicitationResult", "DirectoryAdded", "FileChanged", "Setup",
+        "Elicitation", "ElicitationResult", "DirectoryAdded", "FileChanged", "Setup", "ConfigChange",
     )
 
     @Test fun `hooks 每个事件都有输入与决策样本，触发现状标记与内核清单一致`() {

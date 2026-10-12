@@ -210,6 +210,14 @@ class SessionRuntime private constructor(
         applyWatchPaths(watchPathsOf(hooks), cwd, "CwdChanged")
     }
 
+    /** 被 ConfigChange（skills）hook 拦下的那份 skill 差异的摘要：同一份差异不再反复触发 hook */
+    @Volatile
+    internal var skillsBlockedDigest: Any? = null
+
+    /** 读设置 / 扫 skills 用的输入：启动参数加上会话中途 /add-dir 加的目录（它们与 `--add-dir` 同待遇） */
+    internal fun effectiveSettingsInputs(): dev.min.agent.ext.config.SettingsInputs =
+        deps.settingsInputs.let { it.copy(addDirs = (it.addDirs + state.value.addedDirectories).distinct()) }
+
     /** 文件监视（FileChanged / ConfigChange，[FileWatches]）：回合进行中轮询，空闲时不保活 */
     internal val fileWatches = FileWatches(this)
 
@@ -475,8 +483,16 @@ class SessionRuntime private constructor(
             commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "这次启动禁用了 $mode（托管策略，或 --restricted），使用 Default 模式")), Durability.Sync)
         }
         loadPermissionRules(snapshot)
+        hooksEventOf(snapshot, state.value.created.cwd)?.let { commit(listOf(it), Durability.Sync) }
+    }
+
+    /**
+     * settings 各层算出的 hooks 快照事件（创建时与 ConfigChange 重读都用它）；没有任何 hook、说明与闸时没有东西可冻结，返回 null。
+     * 项目层（project / local）按 [cwd] 的信任筛层；--bare / --safe-mode 的取舍照旧
+     */
+    private suspend fun hooksEventOf(snapshot: SettingsSnapshot, cwd: GuestPath): HooksLoaded? {
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
-        val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
+        val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(cwd))
         // --bare / --safe-mode 对 hooks 的取舍（CC :72/:125）：bare 一律不发现（原文对托管层也没有例外）；
         // safe 只留托管层的（原文点名「managed settings policy still applies, including policy-configured hooks」），
         // 托管插件声明的 hooks 随插件一起不加载（plugins() 在这两种档位下是 null）
@@ -486,7 +502,7 @@ class SessionRuntime private constructor(
             Customizations.Full -> {
                 val plugins = plugins()
                 val pluginHooks = if (snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Managed && it.allowManagedHooksOnly == true } ||
-                    snapshot.merged.layers.filter { it.source == dev.min.agent.ext.config.ConfigSource.User || it.source == dev.min.agent.ext.config.ConfigSource.Managed || deps.trustProjectHooks(state.value.created.cwd) }.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true) emptyList()
+                    snapshot.merged.layers.filter { it.source == dev.min.agent.ext.config.ConfigSource.User || it.source == dev.min.agent.ext.config.ConfigSource.Managed || deps.trustProjectHooks(cwd) }.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true) emptyList()
                 else plugins?.hookSources.orEmpty().map { dev.min.agent.ext.config.HookSource(dev.min.agent.ext.config.ConfigSource.Plugin, it) }
                 baseHooks.copy(sources = baseHooks.sources + pluginHooks, notes = baseHooks.notes + plugins?.notes.orEmpty())
             }
@@ -494,13 +510,23 @@ class SessionRuntime private constructor(
         val policy = hooks.httpPolicy.takeIf { it.allowedUrls != null || it.allowedEnvVars != null }
             ?.let { HttpPolicyData(it.allowedUrls, it.allowedEnvVars) }
         // 只有闸、没有任何 hook 也没有说明时没有东西可冻结（闸只管 http hook）
-        if (hooks.sources.isNotEmpty() || hooks.notes.isNotEmpty() || hooks.disabledBy != null) {
-            // http 的两道闸随快照一起冻结：设置只在会话创建时读得到，之后 hook 执行时再看就晚了
-            commit(
-                listOf(HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy, hooks.disabledBy)),
-                Durability.Sync,
-            )
-        }
+        if (hooks.sources.isEmpty() && hooks.notes.isEmpty() && hooks.disabledBy == null) return null
+        // http 的两道闸随快照一起冻结：设置只在创建（或重读）时读得到，之后 hook 执行时再看就晚了
+        return HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy, hooks.disabledBy)
+    }
+
+    /**
+     * ConfigChange 放行之后把重读的设置并进运行中的会话（官方 settings 页「When edits take effect」：权限与 hooks 的编辑不用重启就生效）。
+     * **当场生效**的：权限规则（allow / ask / deny）、附加目录（settings 里列的；`--add-dir` 与会话中途 /add-dir 加的会并回去）、hooks（含 http 两道闸、
+     * disableAllHooks / allowManagedHooksOnly，项目层仍按工作区信任筛）、模型限制（availableModels 等）。
+     * **等下一个会话**的：model / effort / outputStyle / env / advisor / MCP 服务器 / 插件 / 网络设置 / 检查点开关 / 托管的模式锁——它们在创建时读一次、冻结进日志，
+     * 中途改文件不会悄悄换掉正在跑的会话的前缀与规矩（与原文「some keys are read only once at session start」同一类）。
+     */
+    internal suspend fun reapplySettings(snapshot: SettingsSnapshot, cwd: GuestPath) {
+        loadPermissionRules(snapshot, cwd, force = true)
+        val event = hooksEventOf(snapshot, cwd) ?: HooksLoaded(emptyList())
+        val s = state.value
+        if (event.sources != s.hooks || event.httpPolicy != s.hooksHttpPolicy || event.disabledBy != s.hooksDisabledBy) commit(listOf(event), Durability.Sync)
     }
 
     /**
@@ -601,10 +627,11 @@ class SessionRuntime private constructor(
         return policy.allows(concrete)
     }
 
-    private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
+    /** [cwd]：按哪个目录算信任与相对规则（创建时是会话起点，ConfigChange 重读时是当前目录）；[force]：重读时即使什么都没有也要写，才能把删掉的规则撤掉 */
+    private suspend fun loadPermissionRules(snapshot: SettingsSnapshot, cwd: GuestPath = state.value.created.cwd, force: Boolean = false) {
         if (state.value.origin == null) modelPolicy = snapshot.merged.modelPolicy()
-        val trustProject = deps.trustProjectHooks(state.value.created.cwd)
-        val trustedLocal = trustedLocalSettings(deps, snapshot, state.value.created.cwd, trustProject || state.value.created.headless)
+        val trustProject = deps.trustProjectHooks(cwd)
+        val trustedLocal = trustedLocalSettings(deps, snapshot, cwd, trustProject || state.value.created.headless)
         val notes = snapshot.notes.toMutableList()
         if (!trustProject && snapshot.merged.layers.any { (it.source == dev.min.agent.ext.config.ConfigSource.Project ||
                 it.source == dev.min.agent.ext.config.ConfigSource.Local && it.path !in trustedLocal) &&
@@ -623,8 +650,8 @@ class SessionRuntime private constructor(
             )
         }
         // `--add-dir`（CC）：与 permissions.additionalDirectories 同一口径，授予文件访问
-        val directories = (snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject, trustedLocal) + deps.settingsInputs.addDirs).distinct()
-        if (rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
+        val directories = (snapshot.merged.fileAccessDirectories(cwd, deps.memoryHome ?: GuestPath("/root"), trustProject, trustedLocal) + deps.settingsInputs.addDirs).distinct()
+        if (!force && rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
         commit(listOf(PermissionRulesLoaded(rules, notes, directories)), Durability.Sync)
     }
 

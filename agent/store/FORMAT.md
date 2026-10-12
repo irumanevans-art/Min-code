@@ -344,3 +344,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - 无日志格式变化（2026-10-12，FileChanged 文件监视）：监视基线（被监视文件上一次的大小与修改时间）只在内存里，不进日志——它是宿主文件系统的现状快照，重开会话时重新取（那一刻起的变化才算变化）。变化触发的 FileChanged hook 照常以 `hooks_ran`（`event: "FileChanged"`）记录，hook 返回的 watchPaths 落 `cwd_watch_paths_changed`。
 
 - 无日志格式变化（2026-10-12，Setup）：`--init-only` / `-p --init` / `-p --maintenance` 启动时在 SessionStart 之前触发 Setup hooks，只留一条 `hooks_ran`（`event: "Setup"`）；触发旗标是启动参数，不进 `session_created`，也不随重开恢复。
+
+- 无新事件（2026-10-12，ConfigChange）：会话中途设置文件变了放行时，重读结果走已有的 `permission_rules_loaded`（权限规则、settings 里的附加目录；中途 /add-dir 加的目录由折叠并回去）与 `hooks_loaded`（hooks 与 http 两道闸，空列表也写，用来撤掉删掉的 hooks）——这两条原来只在创建时写一次，现在中途也会写；日志格式不变、旧日志照常读。被 hook 拦下的变更不写任何设置事件，只留 ConfigChange 的 `hooks_ran`（拦下时的「调试日志」）；被拦文件的「钉住旧内容」与比对基线只在内存里，重开会话时以磁盘现状为新基线。
