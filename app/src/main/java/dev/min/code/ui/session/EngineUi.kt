@@ -67,8 +67,8 @@ internal object EngineUi {
 
     /**
      * 排队中的消息能不能点一下取回。能力位 [EngineCapabilities.withdrawQueued] 说引擎「能撤回」，但 CC 的适配器还没接上
-     * 按 id 撤回（manager 只有停止时整体撤回，设计 §4.1 的缺口，`ClaudeCodeSession.withdrawQueued` 返回 Unsupported），
-     * 给一个点了没反应的气泡比没有更糟，所以 CC 先不给。接上之后只需改这里
+     * 按 id 撤回（manager 只有 ■ 时整体退回 `interruptReturningQueued`；已交棒的帧在 CLI 的 stdin 里撤不回，
+     * `ClaudeCodeSession.withdrawQueued` 返回 Unsupported），给一个点了没反应的气泡比没有更糟，所以 CC 先不给。接上之后只需改这里
      */
     fun tapToWithdraw(capabilities: EngineCapabilities, kind: EngineKind): Boolean =
         capabilities.withdrawQueued && kind != EngineKind.ClaudeCode

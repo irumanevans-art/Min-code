@@ -51,8 +51,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 一个 Claude Code 会话对通用层的样子：包住一个 [ClaudeCodeManager]（一个 CLI 进程），
  * 把状态翻成 [AgentSessionState]、命令转成 manager 的现有方法（设计 §4.1 的命令表）。
  *
- * **只转发**：manager 没有的能力（按 id 撤回排队消息、停止时把排队输入退回输入框）这里返回
- * [CommandResult.Unsupported] 并在对应分支写明缺什么。续跑（▶）的 manager 侧只读字段 `lastTurnEnd` 是 B8 补的。
+ * **只转发**：manager 没有的能力（按 id 撤回排队消息）这里返回
+ * [CommandResult.Unsupported] 并在对应分支写明缺什么。停止时把排队输入退回输入框的 `interruptReturningQueued`
+ * 与续跑（▶）要的只读字段 `lastTurnEnd` 是 manager 侧仅有的两处补充（只加不改既有行为）。
  *
  * @param key 注册表 key = CLI 的 session id；新建会话在 manager 起来之前就定好了
  * @param externals 映射要的外部信息（人手标题、进程表、当前供应商档…），变了会重算状态
@@ -184,12 +185,12 @@ class ClaudeCodeSession internal constructor(
     /**
      * 停止键。「哪一档」由 [stopActionFor] 判（界面算按钮样子用的是同一个函数）。
      *
-     * manager 的 `interrupt()` 自己按 `escapeAction` 分三档：撤回 / 打断后跑排队 / 打断，与 [stopActionFor]
-     * 在「没有排队」时完全一致。分歧只在**有排队输入**时：设计 §10.2 拍板 2 要 ■ 默认把排队输入退回输入框
-     * （[StopAction.InterruptReturnQueued]），「打断后跑排队」是显式的一档；而 manager 只会后者。
-     * 退回输入框需要 manager 提供「打断并交还排队消息」的入口（现在 `sendQueue` 是私有的），这是 B8 要补的。
-     * 在那之前 [StopAction.InterruptReturnQueued] 退回现行为（打断，排队的紧接着跑）而不是什么都不做：
-     * 停止键必须能停。
+     * 有排队输入时（设计 §10.2 拍板 2，与 Codex 同口径）：
+     * - 默认（[StopAction.InterruptReturnQueued]）：全停，排队的输入由 manager 取走、合成一次 [SessionSignal.Withdrawn]
+     *   退回输入框（[ClaudeCodeManager.interruptReturningQueued]），不会有哪一条被放出去跑；
+     * - 显式的 [SessionCommand.Interrupt.runQueuedAfter]：manager 原有的「打断后排队的紧接着跑」。
+     * 没有排队时 manager 的 `interrupt()` 自己按 `escapeAction` 分撤回 / 打断，与 [stopActionFor] 一致。
+     * 停止键必须能停：不论哪一档，都至少写出 interrupt 帧。
      */
     private fun interrupt(command: SessionCommand.Interrupt, current: ClaudeCodeManager.SessionState): CommandResult {
         val queued = current.items.count { it is ChatItem.UserText && it.queued }
@@ -199,7 +200,7 @@ class ClaudeCodeSession internal constructor(
             stopActionFor(fresh().turn, queued, capabilities)
         }
         if (action == StopAction.Nothing) return CommandResult.Stale("没有在跑的回合")
-        manager.interrupt()
+        if (action == StopAction.InterruptReturnQueued) manager.interruptReturningQueued() else manager.interrupt()
         return CommandResult.Accepted
     }
 
@@ -236,8 +237,8 @@ class ClaudeCodeSession internal constructor(
 
     /**
      * 撤回一条排队消息。manager 只有「停止时整体撤回」，没有按 id 撤回的入口（设计 §4.1 的「待确认」），
-     * 所以这里只能认出「有没有这条」：没有 = Stale；有 = Unsupported（B8 在 manager 补
-     * `withdrawQueued(itemId)` 后接上）。
+     * 所以这里只能认出「有没有这条」：没有 = Stale；有 = Unsupported。
+     * 已交棒的那几条帧已经在 CLI 的 stdin 里，单条撤不回，只有 ■ 带的 `cancel_queued` 能整批清（见 [interrupt]）。
      */
     private fun withdrawQueued(command: SessionCommand.WithdrawQueued): CommandResult {
         val exists = manager.state.value.items.any { it is ChatItem.UserText && it.queued && it.id == command.clientId }
