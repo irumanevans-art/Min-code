@@ -39,6 +39,9 @@ class NetworkSandboxTest {
     @Test fun brokenManagedSettingsKeepLocalTurnsButCloseNetwork() = run { _, rt, fs, _, _, _ ->
         fs.put("/etc/claude-code/managed-settings.json", "broken")
         fs.put("/root/.claude/settings.json", """{"sandbox":{"enabled":false}}""")
+        // 这两个文件是「会话开始时磁盘上的样子」：会话中途设置文件变了会被 ConfigChange 监视并入（权限规则当场生效），
+        // 本用例只想验证网络设置每次现读，所以把监视基线挪到这个状态，避免回合开始前把 allow 规则换掉
+        rt.fileWatches.arm()
         assertTrue("损坏的托管策略必须强制关闭网络", rt.refreshNetworkSettings().enabled)
         rt.send(ClientMsgId("one"), listOf(TextPart("fetch")))
         rt.state.first { it.turn == null && it.lastTurn != null }

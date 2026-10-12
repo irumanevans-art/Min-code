@@ -48,6 +48,8 @@ internal class FileWatches(private val rt: SessionRuntime) {
     /** 回合开始：起一个只在这个回合里存活的轮询协程。子会话与没有主目录的宿主不监视 */
     fun beginTurn(): Job? {
         if (rt.state.value.origin != null) return null
+        // 没有主目录（读不了设置文件）、也没有被点名的文件时，没有东西可看：连轮询协程都不起（回合收尾不多拖任何东西）
+        if (rt.deps.memoryHome == null && watchTargets().isEmpty()) return null
         return rt.hostScope.launch {
             while (isActive) {
                 delay(pollMs)
@@ -60,8 +62,15 @@ internal class FileWatches(private val rt: SessionRuntime) {
     suspend fun pollNow() {
         if (rt.state.value.origin != null) return
         lock.withLock {
-            config.poll(driver)
-            pollFiles()
+            // 监视出任何意外（设置文件读崩、hook 执行器抛出……）都不许带倒回合：记一条说明，下次轮询再试
+            catchingNonCancellation {
+                config.poll(driver)
+                pollFiles()
+            }.onFailure { e ->
+                catchingNonCancellation {
+                    rt.commit(listOf(Note(NoteLevel.Warning, "文件监视出错（${e.javaClass.simpleName}），本次跳过。")), Durability.Batched)
+                }
+            }
         }
     }
 

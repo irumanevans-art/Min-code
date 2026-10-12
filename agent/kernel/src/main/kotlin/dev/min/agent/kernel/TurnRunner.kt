@@ -95,10 +95,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val watching = rt.fileWatches.beginTurn()
         try {
             rt.fileWatches.pollNow()
-            val completed = runTurn(trigger)
-            // 回合结束时再看一遍：最后一批工具之后、没赶上轮询的变化。被中断的回合（抛 CancellationException）不补——用户按了停，不该再等 hook
-            rt.fileWatches.pollNow()
-            return completed
+            return runTurn(trigger)
         } finally {
             watching?.cancel()
         }
@@ -138,6 +135,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                     }
                 }
             }
+            // 回合正常结束前再看一遍文件监视：最后一批工具之后、没赶上轮询的变化。放在 TurnEnded 之前（回合还「在跑」），
+            // 不然回合 Job 在回合收尾之后还拖着 hook，界面与卸下会话都会以为它没空闲；被中断的回合（走 CancellationException）不补
+            rt.fileWatches.pollNow()
             val usage = rt.state.value.turn?.usage ?: Usage()
             rt.commit(listOf(TurnEnded(turnId, TurnOutcome.Completed, usage, deps.clock.nowMs() - startedAt)), Durability.Sync)
             true

@@ -105,16 +105,17 @@ class MessageDisplayCliTest {
                     val runtime = app.openSession()
                     val writer = PipedWriter()
                     val reader = BufferedReader(PipedReader(writer))
+                    val out = ByteArrayOutputStream()
                     val feeder = Thread {
                         writer.write("hello\n"); writer.flush()
-                        val deadline = System.currentTimeMillis() + 60_000
-                        while (server.requests.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(50)
-                        Thread.sleep(2_500)
+                        // 等两批都上了屏再退出（每批要真起一次 shell 跑 hook，机器忙时可能要几秒）
+                        val deadline = System.currentTimeMillis() + 90_000
+                        while (Regex("\[SHOWN\]").findAll(out.toString("UTF-8")).count() < 2 && System.currentTimeMillis() < deadline) Thread.sleep(100)
+                        Thread.sleep(500)
                         writer.write("/exit\n"); writer.flush()
                     }.also { it.isDaemon = true; it.start() }
                     val originalOut = System.out
                     val originalErr = System.err
-                    val out = ByteArrayOutputStream()
                     System.setOut(PrintStream(out, true, "UTF-8"))
                     System.setErr(PrintStream(ByteArrayOutputStream(), true, "UTF-8"))
                     try {
