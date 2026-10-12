@@ -713,6 +713,9 @@ private fun ConnectionSettings(vm: SettingsVM, settings: AppSettings) {
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    InkDivider(Modifier.padding(vertical = 4.dp), brush = true)
+    // 应用内代理：只代理 Min 自己，不用开 VPN；密码只显示「已填」
+    ProxyRow(config = settings.proxy, onSave = vm::saveProxy)
 }
 
 @Composable

@@ -183,6 +183,12 @@ class SettingsVM(
             .onFailure { android.util.Log.w("SettingsVM", "web search settings not saved: ${it.javaClass.simpleName}") }
     }
 
+    /** 应用内代理：同 [saveWebSearch]，已填的密码界面拿不到，由商店合并；存下后 MinApp 那边跟着换掉出口 */
+    fun saveProxy(edit: dev.min.code.core.settings.ProxyEdit) = viewModelScope.launch {
+        dev.min.agent.spi.catchingNonCancellation { store.updateProxy { it.applying(edit) } }
+            .onFailure { android.util.Log.w("SettingsVM", "proxy settings not saved: ${it.javaClass.simpleName}") }
+    }
+
     /** 定时任务单次花费上限：null = 不设（默认）。输入框已经按 [dev.min.code.core.settings.parseCronBudgetInput] 校验过 */
     fun setCronMaxBudgetUsd(value: Double?) = unlessLocked({ it.cronMaxBudgetUsd }) { store.setCronMaxBudgetUsd(value) }
 

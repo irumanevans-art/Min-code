@@ -1583,6 +1583,26 @@
     <string name="settings_web_search_url_label">SearXNG address</string>
     <string name="settings_web_search_url_invalid">Only http or https addresses, without a username, query or fragment</string>
     <string name="settings_web_search_hint">Keys are encrypted with the Android Keystore and never shown again. Searches go from this phone to the service you pick; an instance on your LAN works too. With none picked, the model cannot search.</string>
+    <string name="settings_proxy_title">Proxy</string>
+    <string name="settings_proxy_off">Off. Min connects directly.</string>
+    <string name="settings_proxy_incomplete">Server or port missing. Min connects directly for now.</string>
+    <string name="settings_proxy_kind_off">Off</string>
+    <string name="settings_proxy_save">Save</string>
+    <string name="settings_proxy_host">Server</string>
+    <string name="settings_proxy_host_hint">You can also paste a whole link: socks5://user:pass@host:port, http://host:port, or a Telegram tg://socks link</string>
+    <string name="settings_proxy_port">Port</string>
+    <string name="settings_proxy_port_invalid">Port must be 1–65535</string>
+    <string name="settings_proxy_username">Username</string>
+    <string name="settings_proxy_password">Password</string>
+    <string name="settings_proxy_optional">Optional</string>
+    <string name="settings_proxy_test">Test</string>
+    <string name="settings_proxy_testing">Testing…</string>
+    <string name="settings_proxy_clear_password">Clear password</string>
+    <string name="settings_proxy_paste">Paste link</string>
+    <string name="settings_proxy_paste_none">No proxy link found on the clipboard. Supported: socks5://, http://, and Telegram socks links.</string>
+    <string name="settings_proxy_test_ok">Reached api.anthropic.com through the proxy in %1$d ms.</string>
+    <string name="settings_proxy_test_failed">Could not get through: %1$s</string>
+    <string name="settings_proxy_hint">Like the proxy in Telegram: only Min goes through it, so no VPN is needed and other apps are untouched. Covers model requests, downloads, and everything Claude Code, Codex and the terminal run. Sessions already running when you turn it on keep connecting directly until restarted. The password is encrypted with the Android Keystore and never shown again.</string>
     <string name="settings_web_search_save">Save</string>
     <!-- M5: teamMaxConcurrent -->
     <string name="settings_team_title">Team members running at once</string>

@@ -4,6 +4,8 @@
 
 ## 未发布
 
+- **应用内代理（设置 → 连接 → 代理）**：和 Telegram 一样，只给 Min 自己挂代理，手机不用开 VPN，别的 App 不受影响。支持 HTTP 与 SOCKS5（可带账号密码，密码用 Keystore 加密、不回显）。模型请求、下载与更新、Min 引擎的命令联网，以及 proot 里的 Claude Code、Codex、终端、npm、git 都经它出网；本机地址（127.0.0.1 等）照旧直连。SOCKS5 把域名交给代理去解析，本地 DNS 被污染也不受影响。服务器一栏可以直接粘贴 `socks5://`、`http://` 或 Telegram 的 `tg://socks` / `t.me/socks` 链接，也可以点「粘贴链接」从剪贴板读；「测试」会经代理和 api.anthropic.com 完成 TLS 握手并显示耗时。开启前就在跑的会话仍然直连，重开后生效；已经走代理的会话换服务器或关掉代理立即生效。
+
 ## 2.1.33 — 2026-10-12
 
 - **跟进 Claude Code 2.1.293 的 Haiku 5.5**：官方 CLI 的 `haiku` 别名从这一版起指向 Haiku 5.5（原生 1M 上下文、有 low…max 思考强度、每百万 token $0.10 / $0.50）。之前选 `haiku` 时 Min 还把它当 Haiku 4.5——思考强度档位被藏掉、底栏上限按 200k 算、模型说明写着旧价格。现在这些都对了；Haiku 4.x 和中转站的 `claude-haiku-4.5`、`claude-3-5-haiku` 等老写法仍按 200k、无思考强度处理。模型说明里补上 `claude-haiku-5-5`。在「环境与更新」里把 CLI 更新到 2.1.293 以上即可。

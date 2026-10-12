@@ -62,6 +62,8 @@ private val KEY_CRON_MAX_BUDGET_USD = doublePreferencesKey("cron_max_budget_usd"
 private val KEY_WORKFLOWS_ENABLED = booleanPreferencesKey("workflows_enabled")
 /** WebSearch 的后端选择与 key：整块 JSON 经 [TokenCipher] 加密，见 [WebSearchConfig] */
 private val KEY_WEB_SEARCH = stringPreferencesKey("web_search")
+/** 应用内代理：整块 JSON（含账号密码）经 [TokenCipher] 加密，见 [ProxyConfig] */
+private val KEY_PROXY = stringPreferencesKey("proxy")
 /** 遥测（OpenTelemetry 本地等价）：默认关；头部（含令牌）整串加密存放，见 [SettingsStore.setTelemetryHeaders] */
 private val KEY_TELEMETRY_ENABLED = booleanPreferencesKey("telemetry_enabled")
 private val KEY_TELEMETRY_ENDPOINT = stringPreferencesKey("telemetry_endpoint")
@@ -326,6 +328,8 @@ data class AppSettings(
     val workflowsEnabled: Boolean = true,
     /** Min Agent 的 WebSearch 后端。默认不设：模型看不到 WebSearch，见 [WebSearchConfig] */
     val webSearch: WebSearchConfig = WebSearchConfig(),
+    /** 应用内代理（只代理 Min 自己）。默认关 = 直连，见 [ProxyConfig] */
+    val proxy: ProxyConfig = ProxyConfig(),
     /** 遥测开关与端点（默认关）。头部不在这里：界面只知道「已设置」，见 [TelemetrySettings] */
     val telemetry: dev.min.code.core.telemetry.TelemetrySettings = dev.min.code.core.telemetry.TelemetrySettings(),
     /**
@@ -570,6 +574,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             cronEnabled = p[KEY_CRON_ENABLED] ?: true,
             workflowsEnabled = p[KEY_WORKFLOWS_ENABLED] ?: true,
             webSearch = decodeWebSearch(p[KEY_WEB_SEARCH]),
+            proxy = decodeProxy(p[KEY_PROXY]),
             telemetry = dev.min.code.core.telemetry.TelemetrySettings(
                 enabled = p[KEY_TELEMETRY_ENABLED] ?: false,
                 endpoint = p[KEY_TELEMETRY_ENDPOINT].orEmpty(),
@@ -925,6 +930,14 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
         context.dataStore.edit { p ->
             val next = transform(decodeWebSearch(p[KEY_WEB_SEARCH]))
             if (next == WebSearchConfig()) p.remove(KEY_WEB_SEARCH) else p[KEY_WEB_SEARCH] = TokenCipher.encrypt(encodeWebSearchJson(next))
+        }
+    }
+
+    /** 改应用内代理：同 [updateWebSearch]，一次 edit 里读—改—写，界面拿不到的已填密码由这里合并 */
+    suspend fun updateProxy(transform: (ProxyConfig) -> ProxyConfig) {
+        context.dataStore.edit { p ->
+            val next = transform(decodeProxy(p[KEY_PROXY]))
+            if (next == ProxyConfig()) p.remove(KEY_PROXY) else p[KEY_PROXY] = TokenCipher.encrypt(encodeProxyJson(next))
         }
     }
 
@@ -1297,6 +1310,9 @@ private fun decodeCodexProfiles(raw: String?): List<CodexProfile> {
 
 private fun decodeWebSearch(raw: String?): WebSearchConfig =
     decodeWebSearchJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
+
+private fun decodeProxy(raw: String?): ProxyConfig =
+    decodeProxyJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
 
 private fun decodeProfiles(raw: String?): List<ApiProfile> =
     decodeProfilesJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())

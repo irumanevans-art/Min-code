@@ -19,7 +19,8 @@ class LoopbackNetworkProxy(
     private val approvalTimeoutMs: Long = 65_000,
     private val socketTimeoutMs: Int = 15_000,
     private val maxConnections: Int = 32,
-    private val connect: (NetworkTarget) -> Socket = { target -> Socket().apply { connect(InetSocketAddress(target.domain, target.port), 10_000) } },
+    // 已批准的连接照样经应用代理（设置 → 代理）拨出，否则开了代理 Min 命令里的 curl / git 还是直连
+    private val connect: (NetworkTarget) -> Socket = { target -> OutboundProxy.dial(target.domain, target.port, 10_000) },
 ) : NetworkProxy, AutoCloseable {
     private val leases = ConcurrentHashMap<Lease, SessionId>()
     private val slots = Semaphore(maxConnections)

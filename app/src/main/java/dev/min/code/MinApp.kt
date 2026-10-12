@@ -81,6 +81,17 @@ class MinApp : Application() {
                 .distinctUntilChanged()
                 .collect { AppLocale.apply(this@MinApp, it) }
         }
+        // 应用内代理（设置 → 连接 → 代理）：Kotlin 侧的请求、Min 命令、proot 里的 CLI 全按它出网，见 OutboundProxy。
+        // 要赶在用户开会话之前装好：会话启动那一刻的 env 决定了 CLI 这一整场走不走代理
+        getKoin().get<AppScope>().launch(Dispatchers.IO) {
+            getKoin().get<SettingsStore>().settings
+                .map { it.proxy.upstream() }
+                .distinctUntilChanged()
+                .collect { proxy ->
+                    runCatching { dev.min.agent.host.OutboundProxy.install(proxy) }
+                        .onFailure { Log.w(TAG, "outbound proxy not installed: ${it.javaClass.simpleName}") }
+                }
+        }
         // 设备操控的 MCP server：跟着设置里的开关起停，并把地址写进 CLI 的 mcpServers。
         // **必须在用户可能开始会话之前就位** —— CLI 是启动时读一次 MCP 配置的，
         // 等模型想用了再起，那会儿它手里的配置已经是旧的了（见 DeviceMcpRegistrar）

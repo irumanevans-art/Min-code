@@ -177,6 +177,12 @@ class ProotShellRunner(
             // 所以这三条跟着 entry 走。
             command += listOf("CI=true", "NO_COLOR=1", "PAGER=cat")
         }
+        // 应用内代理（设置 → 代理）：Claude Code、Codex、终端、npm / git 全从这里出命令行，所以只在这里注入一次。
+        // 排在调用方 env 之前：供应商自定义 env 里自己写了 HTTPS_PROXY 的照样覆盖。
+        // Min 引擎的隔离命令不给：它们只能走各自审批租约的代理（那条同样经应用代理拨出，见 LoopbackNetworkProxy）
+        if (context.isolation == null) {
+            dev.min.agent.host.OutboundProxy.guestEnv.forEach { (key, value) -> command += "$key=$value" }
+        }
         // 调用方注入的额外环境变量 (如 ANTHROPIC_*), key 做白名单校验, 值作为独立 argv 不经 shell。
         // 必须排在上面那批之后: `env -i` 里同名变量后者覆盖前者, 调用方因此可以按需
         // 覆盖 CI / NO_COLOR / PAGER 这些默认值。

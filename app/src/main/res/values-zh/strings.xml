@@ -1577,6 +1577,26 @@
     <string name="settings_web_search_url_label">SearXNG 地址</string>
     <string name="settings_web_search_url_invalid">只收 http 或 https 地址，不能带用户名、查询串或片段</string>
     <string name="settings_web_search_hint">key 用 Android Keystore 加密保存，之后不再显示。搜索由这台手机直接发给你选的服务；局域网里自建的实例也可以。不选则模型不能搜索。</string>
+    <string name="settings_proxy_title">代理</string>
+    <string name="settings_proxy_off">未开启，Min 直连。</string>
+    <string name="settings_proxy_incomplete">缺服务器或端口，暂时直连。</string>
+    <string name="settings_proxy_kind_off">关闭</string>
+    <string name="settings_proxy_save">保存</string>
+    <string name="settings_proxy_host">服务器</string>
+    <string name="settings_proxy_host_hint">也可以直接粘贴整条链接：socks5://用户:密码@地址:端口、http://地址:端口，或 Telegram 的 tg://socks 链接</string>
+    <string name="settings_proxy_port">端口</string>
+    <string name="settings_proxy_port_invalid">端口要在 1–65535 之间</string>
+    <string name="settings_proxy_username">用户名</string>
+    <string name="settings_proxy_password">密码</string>
+    <string name="settings_proxy_optional">选填</string>
+    <string name="settings_proxy_test">测试</string>
+    <string name="settings_proxy_testing">测试中…</string>
+    <string name="settings_proxy_clear_password">清除密码</string>
+    <string name="settings_proxy_paste">粘贴链接</string>
+    <string name="settings_proxy_paste_none">剪贴板里没有认得出的代理链接（支持 socks5://、http:// 和 Telegram 的 socks 链接）。</string>
+    <string name="settings_proxy_test_ok">经代理连上 api.anthropic.com，用时 %1$d ms。</string>
+    <string name="settings_proxy_test_failed">连不通：%1$s</string>
+    <string name="settings_proxy_hint">和 Telegram 里的代理一样：只有 Min 走代理，手机不用开 VPN，别的 App 不受影响。模型请求、下载，以及 Claude Code、Codex、终端里跑的一切都会经过它。开启前就在跑的会话仍然直连，重开后生效。密码用 Android Keystore 加密保存，之后不再显示。</string>
     <string name="settings_web_search_save">保存</string>
     <!-- M5: teamMaxConcurrent -->
     <string name="settings_team_title">团队同时运行的成员数</string>

@@ -101,13 +101,17 @@ class SocketWebSocketPort(
     private fun connect(addresses: List<InetAddress>, target: Target): Socket {
         var last: IOException? = null
         for (address in addresses) {
-            val socket = Socket()
+            // 开了应用代理就经代理连同一个已审过的 IP：钉住地址的防重绑定不变，只是出口换成代理
             try {
-                socket.connect(InetSocketAddress(address, target.port), connectTimeoutMs)
-                socket.tcpNoDelay = true
-                return socket
+                val socket = OutboundProxy.dial(address.hostAddress, target.port, connectTimeoutMs)
+                try {
+                    socket.tcpNoDelay = true
+                    return socket
+                } catch (e: IOException) {
+                    closeQuietly(socket)
+                    throw e
+                }
             } catch (e: IOException) {
-                closeQuietly(socket)
                 last = e
             }
         }
